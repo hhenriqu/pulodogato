@@ -1,0 +1,36 @@
+services:
+  # 💰 Aplicação PuloDoGato - Sistema de Investimentos
+  pulodogato-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pulodogato-app
+    restart: unless-stopped
+    ports:
+      - "3003:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_TELEMETRY_DISABLED=1
+      # Adicione aqui as variáveis de ambiente específicas do Supabase
+      # - NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+      # - NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+      # - SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+    volumes:
+      # Opcional: volume para dados persistentes se necessário
+      - pulodogato_data:/app/data
+    networks:
+      - nginx-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  pulodogato_data:
+    driver: local
+
+networks:
+  nginx-network:
+    external: true
