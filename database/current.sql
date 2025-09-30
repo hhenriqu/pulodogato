@@ -1,0 +1,290 @@
+-- WARNING: This schema is for context only and is not meant to be run.
+-- Table order and constraints may not be valid for execution.
+
+CREATE TABLE public.expense_groups (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  description text,
+  photo_url text,
+  group_code text NOT NULL UNIQUE,
+  group_type text NOT NULL DEFAULT 'private'::text CHECK (group_type = ANY (ARRAY['public'::text, 'private'::text])),
+  default_split_type text NOT NULL DEFAULT 'equal'::text CHECK (default_split_type = ANY (ARRAY['equal'::text, 'percentage'::text, 'custom'::text, 'proportional'::text])),
+  created_by uuid NOT NULL,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  is_active boolean DEFAULT true,
+  CONSTRAINT expense_groups_pkey PRIMARY KEY (id),
+  CONSTRAINT expense_groups_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.profiles(id)
+);
+CREATE TABLE public.expense_splits (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  transaction_id uuid NOT NULL,
+  participant_id uuid NOT NULL,
+  percentage numeric NOT NULL CHECK (percentage > 0::numeric AND percentage <= 100::numeric),
+  amount numeric NOT NULL,
+  status text NOT NULL DEFAULT 'pending'::text CHECK (status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text, 'expired'::text])),
+  approved_at timestamp with time zone,
+  rejection_reason text,
+  comments text,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT expense_splits_pkey PRIMARY KEY (id),
+  CONSTRAINT expense_splits_transaction_id_fkey FOREIGN KEY (transaction_id) REFERENCES public.financial_transactions(id),
+  CONSTRAINT expense_splits_participant_id_fkey FOREIGN KEY (participant_id) REFERENCES public.profiles(id)
+);
+CREATE TABLE public.financial_accounts (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  name text NOT NULL,
+  account_type USER-DEFINED NOT NULL,
+  bank_name text,
+  last_four_digits character varying,
+  credit_limit numeric,
+  current_balance numeric DEFAULT 0,
+  is_active boolean DEFAULT true,
+  color_hex text DEFAULT '#3B82F6'::text,
+  icon text DEFAULT 'credit-card'::text,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT financial_accounts_pkey PRIMARY KEY (id),
+  CONSTRAINT financial_accounts_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.financial_services (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  name text NOT NULL UNIQUE,
+  description text,
+  icon text,
+  color_hex text DEFAULT '#3B82F6'::text,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT financial_services_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.financial_transactions (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  service_id uuid NOT NULL,
+  category_id uuid NOT NULL,
+  account_id uuid,
+  description text NOT NULL,
+  amount numeric NOT NULL,
+  transaction_date date NOT NULL,
+  transaction_type USER-DEFINED,
+  attachment_url text,
+  notes text,
+  is_shared boolean DEFAULT false,
+  installment_parent_id uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  group_id uuid,
+  CONSTRAINT financial_transactions_pkey PRIMARY KEY (id),
+  CONSTRAINT financial_transactions_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT financial_transactions_service_id_fkey FOREIGN KEY (service_id) REFERENCES public.financial_services(id),
+  CONSTRAINT financial_transactions_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.transaction_categories(id),
+  CONSTRAINT financial_transactions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.financial_accounts(id),
+  CONSTRAINT financial_transactions_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.expense_groups(id)
+);
+CREATE TABLE public.group_expense_splits (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  group_transaction_id uuid NOT NULL,
+  member_id uuid NOT NULL,
+  percentage numeric NOT NULL CHECK (percentage > 0::numeric AND percentage <= 100::numeric),
+  amount numeric NOT NULL,
+  status text NOT NULL DEFAULT 'pending'::text CHECK (status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text, 'expired'::text])),
+  approved_at timestamp with time zone,
+  comments text,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT group_expense_splits_pkey PRIMARY KEY (id),
+  CONSTRAINT group_expense_splits_group_transaction_id_fkey FOREIGN KEY (group_transaction_id) REFERENCES public.group_transactions(id),
+  CONSTRAINT group_expense_splits_member_id_fkey FOREIGN KEY (member_id) REFERENCES public.group_members(id)
+);
+CREATE TABLE public.group_invitations (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  group_id uuid NOT NULL,
+  invited_by uuid NOT NULL,
+  invite_method text NOT NULL CHECK (invite_method = ANY (ARRAY['email'::text, 'phone'::text, 'code'::text, 'request'::text])),
+  invite_target text NOT NULL,
+  invited_user_id uuid,
+  message text,
+  status text NOT NULL DEFAULT 'pending'::text CHECK (status = ANY (ARRAY['pending'::text, 'accepted'::text, 'rejected'::text, 'expired'::text])),
+  expires_at timestamp with time zone NOT NULL,
+  responded_at timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT group_invitations_pkey PRIMARY KEY (id),
+  CONSTRAINT group_invitations_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.expense_groups(id),
+  CONSTRAINT group_invitations_invited_by_fkey FOREIGN KEY (invited_by) REFERENCES public.profiles(id),
+  CONSTRAINT group_invitations_invited_user_id_fkey FOREIGN KEY (invited_user_id) REFERENCES public.profiles(id)
+);
+CREATE TABLE public.group_member_proportions (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  group_id uuid NOT NULL,
+  member_id uuid NOT NULL,
+  calculation_month date NOT NULL,
+  total_income numeric NOT NULL DEFAULT 0,
+  proportion_percentage numeric NOT NULL CHECK (proportion_percentage >= 0::numeric AND proportion_percentage <= 100::numeric),
+  calculated_at timestamp with time zone DEFAULT now(),
+  is_active boolean DEFAULT true,
+  CONSTRAINT group_member_proportions_pkey PRIMARY KEY (id),
+  CONSTRAINT group_member_proportions_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.expense_groups(id),
+  CONSTRAINT group_member_proportions_member_id_fkey FOREIGN KEY (member_id) REFERENCES public.group_members(id)
+);
+CREATE TABLE public.group_members (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  group_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  role text NOT NULL DEFAULT 'member'::text CHECK (role = ANY (ARRAY['admin'::text, 'member'::text])),
+  status text NOT NULL DEFAULT 'active'::text CHECK (status = ANY (ARRAY['active'::text, 'inactive'::text, 'pending'::text, 'removed'::text])),
+  percentage numeric DEFAULT 0.00 CHECK (percentage >= 0::numeric AND percentage <= 100::numeric),
+  joined_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT group_members_pkey PRIMARY KEY (id),
+  CONSTRAINT group_members_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.expense_groups(id),
+  CONSTRAINT group_members_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id)
+);
+CREATE TABLE public.group_transactions (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  group_id uuid NOT NULL,
+  transaction_id uuid NOT NULL,
+  split_type text NOT NULL CHECK (split_type = ANY (ARRAY['equal'::text, 'percentage'::text, 'custom'::text])),
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT group_transactions_pkey PRIMARY KEY (id),
+  CONSTRAINT group_transactions_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.expense_groups(id),
+  CONSTRAINT group_transactions_transaction_id_fkey FOREIGN KEY (transaction_id) REFERENCES public.financial_transactions(id)
+);
+CREATE TABLE public.profiles (
+  id uuid NOT NULL,
+  full_name text,
+  email text,
+  phone text,
+  avatar_url text,
+  birth_date date,
+  preferences jsonb DEFAULT '{"currency": "BRL", "language": "pt-BR", "timezone": "America/Sao_Paulo", "notifications": {"push": true, "email": true, "financial_alerts": true}}'::jsonb,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  allow_connections boolean DEFAULT true,
+  bio text,
+  location text,
+  nickname text,
+  is_public boolean DEFAULT true,
+  CONSTRAINT profiles_pkey PRIMARY KEY (id),
+  CONSTRAINT profiles_id_fkey FOREIGN KEY (id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.schema_migrations (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  version character varying NOT NULL UNIQUE,
+  name text NOT NULL,
+  description text,
+  checksum text,
+  executed_at timestamp with time zone DEFAULT now(),
+  execution_time_ms integer,
+  rollback_sql text,
+  status character varying DEFAULT 'success'::character varying CHECK (status::text = ANY (ARRAY['success'::character varying, 'failed'::character varying, 'rolled_back'::character varying]::text[])),
+  executed_by uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT schema_migrations_pkey PRIMARY KEY (id),
+  CONSTRAINT schema_migrations_executed_by_fkey FOREIGN KEY (executed_by) REFERENCES auth.users(id)
+);
+CREATE TABLE public.subscription_history (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  user_id uuid NOT NULL,
+  subscription_id uuid NOT NULL,
+  from_plan USER-DEFINED,
+  to_plan USER-DEFINED NOT NULL,
+  from_status USER-DEFINED,
+  to_status USER-DEFINED NOT NULL,
+  reason text,
+  amount_paid numeric,
+  currency character DEFAULT 'BRL'::bpchar,
+  metadata jsonb DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT subscription_history_pkey PRIMARY KEY (id),
+  CONSTRAINT subscription_history_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id),
+  CONSTRAINT subscription_history_subscription_id_fkey FOREIGN KEY (subscription_id) REFERENCES public.user_subscriptions(id)
+);
+CREATE TABLE public.transaction_categories (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  service_id uuid NOT NULL,
+  name text NOT NULL,
+  description text,
+  icon text,
+  color_hex text DEFAULT '#6B7280'::text,
+  is_expense boolean NOT NULL,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT transaction_categories_pkey PRIMARY KEY (id),
+  CONSTRAINT transaction_categories_service_id_fkey FOREIGN KEY (service_id) REFERENCES public.financial_services(id)
+);
+CREATE TABLE public.transaction_installments (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  parent_transaction_id uuid,
+  account_id uuid,
+  category_id uuid NOT NULL,
+  description text NOT NULL,
+  total_amount numeric NOT NULL CHECK (total_amount > 0::numeric),
+  installment_amount numeric NOT NULL CHECK (installment_amount > 0::numeric),
+  installment_number integer NOT NULL,
+  total_installments integer NOT NULL CHECK (total_installments > 0),
+  due_date date NOT NULL,
+  paid_date date,
+  transaction_type USER-DEFINED NOT NULL,
+  group_id uuid,
+  group_split_type text CHECK (group_split_type = ANY (ARRAY['equal'::text, 'percentage'::text, 'custom'::text, 'proportional'::text])),
+  notes text,
+  attachment_url text,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT transaction_installments_pkey PRIMARY KEY (id),
+  CONSTRAINT transaction_installments_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT transaction_installments_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.financial_accounts(id),
+  CONSTRAINT transaction_installments_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.transaction_categories(id),
+  CONSTRAINT transaction_installments_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.expense_groups(id)
+);
+CREATE TABLE public.user_balances (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  creditor_id uuid NOT NULL,
+  debtor_id uuid NOT NULL,
+  amount numeric NOT NULL DEFAULT 0.00,
+  last_updated timestamp with time zone DEFAULT now(),
+  CONSTRAINT user_balances_pkey PRIMARY KEY (id),
+  CONSTRAINT user_balances_creditor_id_fkey FOREIGN KEY (creditor_id) REFERENCES public.profiles(id),
+  CONSTRAINT user_balances_debtor_id_fkey FOREIGN KEY (debtor_id) REFERENCES public.profiles(id)
+);
+CREATE TABLE public.user_subscriptions (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  user_id uuid NOT NULL UNIQUE,
+  plan USER-DEFINED NOT NULL DEFAULT 'free'::user_plan_type,
+  status USER-DEFINED NOT NULL DEFAULT 'active'::subscription_status,
+  current_period_start timestamp with time zone NOT NULL DEFAULT now(),
+  current_period_end timestamp with time zone NOT NULL DEFAULT (now() + '1 mon'::interval),
+  cancel_at_period_end boolean NOT NULL DEFAULT false,
+  canceled_at timestamp with time zone,
+  trial_start timestamp with time zone,
+  trial_end timestamp with time zone,
+  payment_method text,
+  stripe_subscription_id text,
+  stripe_customer_id text,
+  metadata jsonb DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT user_subscriptions_pkey PRIMARY KEY (id),
+  CONSTRAINT user_subscriptions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id)
+);
+CREATE TABLE public.user_usage_limits (
+  user_id uuid NOT NULL,
+  current_transactions integer DEFAULT 0,
+  current_accounts integer DEFAULT 0,
+  current_categories integer DEFAULT 0,
+  current_portfolios integer DEFAULT 0,
+  current_expense_groups integer DEFAULT 0,
+  max_transactions integer,
+  max_accounts integer,
+  max_categories integer,
+  max_portfolios integer,
+  max_expense_groups integer,
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT user_usage_limits_pkey PRIMARY KEY (user_id),
+  CONSTRAINT user_usage_limits_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id)
+);

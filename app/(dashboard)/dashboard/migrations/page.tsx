@@ -1,0 +1,253 @@
+"use client";
+
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  CheckCircle2,
+  XCircle,
+  Database,
+  ExternalLink,
+  Copy,
+} from "lucide-react";
+
+interface MigrationStatus {
+  migration: string;
+  status: string;
+  tables: string[];
+}
+
+export default function MigrationsPage() {
+  const [migrationStatus, setMigrationStatus] = useState<MigrationStatus[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const checkMigrations = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/migrations/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ migrationName: "check" }),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setMigrationStatus(result.migrationStatus);
+      } else {
+        setError(result.error || "Erro ao verificar migrações");
+      }
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const copyMigrationPath = (migration: string) => {
+    const path = `database/migrations/${migration}`;
+    navigator.clipboard.writeText(path);
+  };
+
+  const migrations = [
+    {
+      name: "002_personal_finance.sql",
+      title: "Sistema de Finanças Pessoais",
+      description:
+        "Tabelas básicas para transações, categorias e serviços financeiros",
+      required: true,
+      order: 1,
+    },
+    {
+      name: "003_expense_groups.sql",
+      title: "Grupos de Gastos Compartilhados",
+      description: "Sistema para dividir gastos entre múltiplos usuários",
+      required: false,
+      order: 2,
+    },
+    {
+      name: "004_financial_extensions.sql",
+      title: "Extensões Financeiras Avançadas",
+      description: "Contas bancárias, cartões de crédito e parcelamento",
+      required: false,
+      order: 3,
+    },
+  ];
+
+  return (
+    <div className="container mx-auto p-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold">Migrações do Banco de Dados</h1>
+          <p className="text-muted-foreground mt-2">
+            Gerencie e verifique o status das migrações do sistema
+          </p>
+        </div>
+        <Button onClick={checkMigrations} disabled={loading} variant="outline">
+          <Database className="mr-2 h-4 w-4" />
+          {loading ? "Verificando..." : "Verificar Status"}
+        </Button>
+      </div>
+
+      {error && (
+        <Alert variant="destructive">
+          <XCircle className="h-4 w-4" />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      <Alert>
+        <Database className="h-4 w-4" />
+        <AlertDescription>
+          <strong>Importante:</strong> As migrações devem ser executadas
+          manualmente no Supabase SQL Editor. Esta página apenas verifica o
+          status atual das tabelas.
+        </AlertDescription>
+      </Alert>
+
+      <div className="grid gap-4">
+        {migrations.map((migration) => {
+          const statusInfo = migrationStatus.find(
+            (s) => s.migration === migration.name
+          );
+          const isInstalled = statusInfo?.status.includes("✅");
+
+          return (
+            <Card key={migration.name} className="relative">
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10 text-primary text-sm font-medium">
+                      {migration.order}
+                    </div>
+                    <div>
+                      <CardTitle className="text-lg">
+                        {migration.title}
+                      </CardTitle>
+                      <CardDescription>{migration.description}</CardDescription>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {migration.required && (
+                      <Badge variant="secondary">Obrigatório</Badge>
+                    )}
+                    {statusInfo && (
+                      <Badge variant={isInstalled ? "default" : "destructive"}>
+                        {isInstalled ? (
+                          <>
+                            <CheckCircle2 className="mr-1 h-3 w-3" />
+                            Instalado
+                          </>
+                        ) : (
+                          <>
+                            <XCircle className="mr-1 h-3 w-3" />
+                            Pendente
+                          </>
+                        )}
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+              </CardHeader>
+
+              <CardContent className="space-y-4">
+                {statusInfo && (
+                  <div>
+                    <p className="text-sm text-muted-foreground mb-2">
+                      Tabelas criadas:
+                    </p>
+                    <div className="flex flex-wrap gap-1">
+                      {statusInfo.tables.map((table) => (
+                        <Badge
+                          key={table}
+                          variant="outline"
+                          className="text-xs"
+                        >
+                          {table}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between pt-2 border-t">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <span>Arquivo:</span>
+                    <code className="bg-muted px-2 py-1 rounded text-xs">
+                      {migration.name}
+                    </code>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => copyMigrationPath(migration.name)}
+                    >
+                      <Copy className="h-3 w-3 mr-1" />
+                      Copiar Path
+                    </Button>
+                    <Button size="sm" variant="outline" asChild>
+                      <a
+                        href="https://supabase.com/dashboard"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        <ExternalLink className="h-3 w-3 mr-1" />
+                        Abrir Supabase
+                      </a>
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Como Executar as Migrações</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <h4 className="font-medium mb-2">Passo 1: Acessar Supabase</h4>
+              <p className="text-sm text-muted-foreground">
+                Faça login em supabase.com/dashboard e selecione seu projeto
+              </p>
+            </div>
+            <div>
+              <h4 className="font-medium mb-2">Passo 2: SQL Editor</h4>
+              <p className="text-sm text-muted-foreground">
+                Navegue até "SQL Editor" no menu lateral
+              </p>
+            </div>
+            <div>
+              <h4 className="font-medium mb-2">Passo 3: Copiar Migração</h4>
+              <p className="text-sm text-muted-foreground">
+                Copie o conteúdo completo do arquivo de migração
+              </p>
+            </div>
+            <div>
+              <h4 className="font-medium mb-2">Passo 4: Executar</h4>
+              <p className="text-sm text-muted-foreground">
+                Cole no editor e clique "Run" para executar
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

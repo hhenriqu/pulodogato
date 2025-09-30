@@ -1,0 +1,74 @@
+{
+  "project": {
+    "name": "PulodoGato Investments",
+    "version": "1.0.0",
+    "type": "PWA",
+    "prdVersion": "1.0",
+    "status": "development"
+  },
+  "documentation": {
+    "prd": "./docs/PRD.md",
+    "governance": "./docs/PRD-Governance.md",
+    "apiSpec": "./docs/API-Specification.md",
+    "databaseSetup": "./docs/database-setup.sql"
+  },
+  "development": {
+    "guidedByPRD": true,
+    "currentPhase": "Phase 1 - Core Features",
+    "nextMilestone": "Dashboard Implementation",
+    "prdSections": {
+      "architecture": "Section 6",
+      "businessRules": "Section 5",
+      "database": "Section 7",
+      "security": "Section 9",
+      "performance": "Section 10"
+    }
+  },
+  "implementation": {
+    "checkpoints": [
+      {
+        "phase": "Phase 0 - Foundation",
+        "status": "completed",
+        "features": [
+          "Next.js 14 setup",
+          "PWA configuration",
+          "Authentication system",
+          "UI components"
+        ]
+      },
+      {
+        "phase": "Phase 1 - Core Features",
+        "status": "in-progress",
+        "features": [
+          "Dashboard implementation",
+          "Asset management",
+          "Transaction CRUD",
+          "Portfolio positions"
+        ]
+      }
+    ]
+  },
+  "compliance": {
+    "businessRules": {
+      "RN001": "User Registration - Implemented",
+      "RN002": "Asset Management - Pending",
+      "RN003": "Transactions - Pending",
+      "RN004": "Average Price Calculation - Pending",
+      "RN005": "Dividends Management - Pending",
+      "RN006": "Performance Calculation - Pending",
+      "RN007": "Security & Privacy - Partial"
+    },
+    "architecture": {
+      "stack": "Next.js 14 + Supabase + TypeScript ✅",
+      "pwa": "Configured ✅",
+      "database": "PostgreSQL with RLS ⏳",
+      "authentication": "Supabase Auth ✅"
+    }
+  },
+  "governance": {
+    "changeProcess": "See PRD-Governance.md",
+    "approvalRequired": true,
+    "versioningMandatory": true,
+    "implementationGuidance": "Must follow PRD specifications"
+  }
+}

@@ -1,0 +1,11 @@
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" viewBox="0 0 512 512" style="enable-background:new 0 0 512 512;" xml:space="preserve">
+<style type="text/css">
+	.st0{fill:#3B82F6;}
+	.st1{fill:#FFFFFF;}
+</style>
+<rect class="st0" width="512" height="512" rx="64"/>
+<circle class="st1" cx="256" cy="256" r="144"/>
+<path class="st0" d="M256,128c70.7,0,128,57.3,128,128s-57.3,128-128,128s-128-57.3-128-128S185.3,128,256,128z M256,172
+	c-46.4,0-84,37.6-84,84s37.6,84,84,84s84-37.6,84-84S302.4,172,256,172z M272,204v64h54v32H218V204H272z"/>
+</svg>

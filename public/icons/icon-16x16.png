@@ -1,0 +1,10 @@
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" viewBox="0 0 16 16" style="enable-background:new 0 0 16 16;" xml:space="preserve">
+<style type="text/css">
+	.st0{fill:#3B82F6;}
+	.st1{fill:#FFFFFF;}
+</style>
+<rect class="st0" width="16" height="16" rx="2"/>
+<path class="st1" d="M8,3c2.8,0,5,2.2,5,5s-2.2,5-5,5s-5-2.2-5-5S5.2,3,8,3z M8,4.5c-1.9,0-3.5,1.6-3.5,3.5S6.1,11.5,8,11.5
+	s3.5-1.6,3.5-3.5S9.9,4.5,8,4.5z M8.5,6v2.5H10v1H7.5V6H8.5z"/>
+</svg>
