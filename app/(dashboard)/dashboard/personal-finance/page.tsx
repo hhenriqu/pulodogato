@@ -443,8 +443,8 @@ export default function PersonalFinancePage() {
               notes: formData.notes,
               is_shared: Boolean(
                 formData.is_shared &&
-                (formData.splits.length > 0 ||
-                  (formData.group_id && formData.group_id !== "none"))
+                  (formData.splits.length > 0 ||
+                    (formData.group_id && formData.group_id !== "none"))
               ),
               group_id:
                 formData.group_id && formData.group_id !== "none"
@@ -480,8 +480,8 @@ export default function PersonalFinancePage() {
               notes: formData.notes,
               is_shared: Boolean(
                 formData.is_shared &&
-                (formData.splits.length > 0 ||
-                  (formData.group_id && formData.group_id !== "none"))
+                  (formData.splits.length > 0 ||
+                    (formData.group_id && formData.group_id !== "none"))
               ),
               group_id:
                 formData.group_id && formData.group_id !== "none"
