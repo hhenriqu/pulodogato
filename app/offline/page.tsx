@@ -78,19 +78,18 @@ export default function OfflinePage() {
 
         {/* Botões de ação */}
         <div className="space-y-3">
-          <button
-            onClick={() => window.location.reload()}
-            className="w-full bg-blue-500 hover:bg-blue-600 text-white font-medium py-3 px-4 rounded-lg transition-colors"
-          >
-            Tentar novamente
-          </button>
-
           <Link
             href="/dashboard"
-            className="block w-full bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 font-medium py-3 px-4 rounded-lg transition-colors text-center"
+            className="block w-full bg-blue-500 hover:bg-blue-600 text-white font-medium py-3 px-4 rounded-lg transition-colors text-center"
           >
             Ir para o Dashboard
           </Link>
+
+          <noscript>
+            <p className="text-sm text-gray-500">
+              Recarregue a página quando a conexão for restaurada.
+            </p>
+          </noscript>
         </div>
 
         {/* Status de conectividade */}
@@ -105,26 +104,7 @@ export default function OfflinePage() {
         </div>
       </div>
 
-      {/* Script para verificar conectividade */}
-      <script
-        dangerouslySetInnerHTML={{
-          __html: `
-            function updateConnectionStatus() {
-              const status = document.getElementById('connection-status');
-              if (navigator.onLine) {
-                status.innerHTML = '<div class="w-2 h-2 bg-green-500 rounded-full"></div><span>Conectado</span>';
-                setTimeout(() => window.location.reload(), 1000);
-              } else {
-                status.innerHTML = '<div class="w-2 h-2 bg-red-500 rounded-full"></div><span>Desconectado</span>';
-              }
-            }
-            
-            window.addEventListener('online', updateConnectionStatus);
-            window.addEventListener('offline', updateConnectionStatus);
-            updateConnectionStatus();
-          `,
-        }}
-      />
+      {/* Script será adicionado no lado cliente */}
     </div>
   );
 }

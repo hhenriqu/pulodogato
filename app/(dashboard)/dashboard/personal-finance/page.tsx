@@ -86,6 +86,7 @@ interface FinancialTransaction {
   attachment_url?: string;
   notes?: string;
   is_shared: boolean;
+  group_id?: string;
   created_at: string;
   category?: TransactionCategory;
   expense_splits?: ExpenseSplit[];
