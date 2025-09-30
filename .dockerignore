@@ -1,0 +1,55 @@
+# Dependências
+node_modules
+npm-debug.log*
+
+# Next.js
+.next/
+out/
+
+# Arquivos de desenvolvimento
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Arquivos de sistema
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Editor
+.vscode/
+.idea/
+
+# Arquivos temporários
+*.tmp
+*.swp
+*.swo
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Git
+.git/
+.gitignore
+
+# Documentação
+README.md
+*.md
+docs/
+
+# Scripts SQL de desenvolvimento
+*.sql
+
+# Arquivos de certificado
+*.pem
+*.key
+
+# Arquivos de backup
+*.backup
+*.bak
