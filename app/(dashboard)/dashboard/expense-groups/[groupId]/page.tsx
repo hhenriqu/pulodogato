@@ -43,6 +43,7 @@ import {
   CheckCircle,
   Clock,
 } from "lucide-react";
+import SplitSuggestions from "@/components/financial/SplitSuggestions";
 
 interface ExpenseGroup {
   id: string;
@@ -147,6 +148,8 @@ export default function GroupDetailPage() {
     notes: "",
     split_type: "equal" as "equal" | "percentage" | "custom",
   });
+  const [selectedSplitSuggestion, setSelectedSplitSuggestion] =
+    useState<any>(null);
 
   // Estados dos accordions
   const [openSections, setOpenSections] = useState<string[]>(["current"]);
@@ -239,15 +242,30 @@ export default function GroupDetailPage() {
     }
 
     try {
+      // Preparar dados da despesa
+      const expenseData: any = {
+        ...expenseForm,
+        amount: parseFloat(expenseForm.amount),
+      };
+
+      // Adicionar dados da sugestão selecionada se houver
+      if (selectedSplitSuggestion) {
+        expenseData.split_type = selectedSplitSuggestion.type;
+        expenseData.custom_splits = selectedSplitSuggestion.splits.map(
+          (split: any) => ({
+            member_id: split.member_id,
+            percentage: split.percentage,
+            amount: split.amount,
+          })
+        );
+      }
+
       const response = await fetch(
         `/api/expense-groups/${groupId}/transactions`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ...expenseForm,
-            amount: parseFloat(expenseForm.amount),
-          }),
+          body: JSON.stringify(expenseData),
         }
       );
 
@@ -264,6 +282,7 @@ export default function GroupDetailPage() {
           notes: "",
           split_type: "equal",
         });
+        setSelectedSplitSuggestion(null);
         await loadTransactions();
         await loadBalances();
         await loadTransfers();
@@ -857,7 +876,7 @@ export default function GroupDetailPage() {
       {/* Add Expense Modal */}
       {showAddExpense && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <Card className="w-full max-w-md">
+          <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <CardHeader>
               <CardTitle>Adicionar Nova Despesa</CardTitle>
               <CardDescription>
@@ -930,6 +949,18 @@ export default function GroupDetailPage() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                {/* Sugestões de Split */}
+                {parseFloat(expenseForm.amount) > 0 && (
+                  <div className="space-y-2">
+                    <SplitSuggestions
+                      groupId={groupId}
+                      amount={parseFloat(expenseForm.amount)}
+                      onSelectSuggestion={setSelectedSplitSuggestion}
+                      selectedSuggestion={selectedSplitSuggestion}
+                    />
+                  </div>
+                )}
 
                 <div className="space-y-2">
                   <Label htmlFor="notes">Observações</Label>
