@@ -57,3 +57,153 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* PWA e Device-specific styles */
+@layer utilities {
+  /* Safe Area para dispositivos com notch */
+  .safe-area-padding {
+    padding-top: env(safe-area-inset-top, 0);
+    padding-bottom: env(safe-area-inset-bottom, 0);
+    padding-left: env(safe-area-inset-left, 0);
+    padding-right: env(safe-area-inset-right, 0);
+  }
+
+  .safe-area-margin {
+    margin-top: env(safe-area-inset-top, 0);
+    margin-bottom: env(safe-area-inset-bottom, 0);
+    margin-left: env(safe-area-inset-left, 0);
+    margin-right: env(safe-area-inset-right, 0);
+  }
+
+  /* Estilos específicos para PWA standalone */
+  .device-standalone {
+    /* Remove seleção de texto em elementos de UI */
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+  }
+
+  .device-standalone input,
+  .device-standalone textarea {
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
+    user-select: text;
+  }
+
+  /* iOS specific */
+  .device-ios {
+    /* Remove bounce scroll */
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .device-ios.device-standalone {
+    /* Prevent zoom on input focus */
+    touch-action: manipulation;
+  }
+
+  .device-ios input,
+  .device-ios select,
+  .device-ios textarea {
+    font-size: 16px !important; /* Prevent zoom on iOS */
+  }
+
+  /* iPhone com notch */
+  .device-ios.device-notch {
+    padding-top: env(safe-area-inset-top, 44px);
+  }
+
+  .device-ios.device-notch .header {
+    padding-top: calc(env(safe-area-inset-top, 44px) + 1rem);
+  }
+
+  /* Android specific */
+  .device-android {
+    /* Remove highlight on tap */
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Desktop PWA */
+  .device-desktop.device-pwa {
+    /* Permitir arrastar a janela */
+    -webkit-app-region: drag;
+  }
+
+  .device-desktop.device-pwa button,
+  .device-desktop.device-pwa input,
+  .device-desktop.device-pwa select,
+  .device-desktop.device-pwa textarea,
+  .device-desktop.device-pwa a {
+    -webkit-app-region: no-drag;
+  }
+
+  /* Landscape mode adjustments */
+  .device-landscape.device-mobile {
+    /* Ajustes para modo paisagem em mobile */
+  }
+
+  /* Tablet specific */
+  .device-tablet {
+    /* Estilos específicos para tablet */
+  }
+
+  /* PWA install prompt hidden when standalone */
+  .device-standalone .pwa-install-prompt {
+    display: none !important;
+  }
+
+  /* Custom scrollbar for PWA */
+  .device-pwa ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .device-pwa ::-webkit-scrollbar-track {
+    @apply bg-gray-100 dark:bg-gray-800;
+  }
+
+  .device-pwa ::-webkit-scrollbar-thumb {
+    @apply bg-gray-400 dark:bg-gray-600 rounded-full;
+  }
+
+  .device-pwa ::-webkit-scrollbar-thumb:hover {
+    @apply bg-gray-500 dark:bg-gray-500;
+  }
+
+  /* Prevent text selection on buttons and interactive elements */
+  button,
+  .btn,
+  [role="button"] {
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+  }
+
+  /* Better touch targets for mobile */
+  .device-mobile button,
+  .device-mobile .btn,
+  .device-mobile [role="button"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Focus styles for desktop PWA */
+  .device-desktop button:focus,
+  .device-desktop input:focus,
+  .device-desktop select:focus,
+  .device-desktop textarea:focus {
+    @apply outline-none ring-2 ring-primary ring-offset-2;
+  }
+
+  /* Hide scrollbar on mobile for cleaner look */
+  .device-mobile {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .device-mobile::-webkit-scrollbar {
+    display: none;
+  }
+}
