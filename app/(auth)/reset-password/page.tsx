@@ -1,40 +1,52 @@
-'use client'
+"use client";
 
-import { useState, useEffect } from 'react'
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
-import { useRouter, useSearchParams } from 'next/navigation'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import { Label } from '@/components/ui/label'
-import { PasswordInput, PasswordStrength } from '@/components/ui/form'
-import { createClient } from '@/utils/supabase/client'
-import { Key, CheckCircle } from 'lucide-react'
+import { useState, useEffect, Suspense } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { useRouter, useSearchParams } from "next/navigation";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { PasswordInput, PasswordStrength } from "@/components/ui/form";
+import { createClient } from "@/utils/supabase/client";
+import { Key, CheckCircle } from "lucide-react";
 
-const resetPasswordSchema = z.object({
-  password: z.string()
-    .min(8, 'A senha deve ter pelo menos 8 caracteres')
-    .regex(/[A-Z]/, 'A senha deve conter pelo menos uma letra maiúscula')
-    .regex(/[a-z]/, 'A senha deve conter pelo menos uma letra minúscula')
-    .regex(/[0-9]/, 'A senha deve conter pelo menos um número')
-    .regex(/[^A-Za-z0-9]/, 'A senha deve conter pelo menos um caractere especial'),
-  confirmPassword: z.string(),
-}).refine((data) => data.password === data.confirmPassword, {
-  message: 'As senhas não coincidem',
-  path: ['confirmPassword'],
-})
+const resetPasswordSchema = z
+  .object({
+    password: z
+      .string()
+      .min(8, "A senha deve ter pelo menos 8 caracteres")
+      .regex(/[A-Z]/, "A senha deve conter pelo menos uma letra maiúscula")
+      .regex(/[a-z]/, "A senha deve conter pelo menos uma letra minúscula")
+      .regex(/[0-9]/, "A senha deve conter pelo menos um número")
+      .regex(
+        /[^A-Za-z0-9]/,
+        "A senha deve conter pelo menos um caractere especial"
+      ),
+    confirmPassword: z.string(),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: "As senhas não coincidem",
+    path: ["confirmPassword"],
+  });
 
-type ResetPasswordFormData = z.infer<typeof resetPasswordSchema>
+type ResetPasswordFormData = z.infer<typeof resetPasswordSchema>;
 
-export default function ResetPasswordPage() {
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState(false)
-  const [validToken, setValidToken] = useState<boolean | null>(null)
-  const router = useRouter()
-  const searchParams = useSearchParams()
-  const supabase = createClient()
+function ResetPasswordContent() {
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+  const [validToken, setValidToken] = useState<boolean | null>(null);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const supabase = createClient();
 
   const {
     register,
@@ -43,45 +55,47 @@ export default function ResetPasswordPage() {
     watch,
   } = useForm<ResetPasswordFormData>({
     resolver: zodResolver(resetPasswordSchema),
-  })
+  });
 
-  const password = watch('password')
+  const password = watch("password");
 
   useEffect(() => {
     const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession()
-      
-      // Verificar se existe uma sessão válida para redefinição de senha
-      if (session && session.user.aud === 'authenticated') {
-        setValidToken(true)
-      } else {
-        setValidToken(false)
-      }
-    }
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-    checkSession()
-  }, [supabase])
+      // Verificar se existe uma sessão válida para redefinição de senha
+      if (session && session.user.aud === "authenticated") {
+        setValidToken(true);
+      } else {
+        setValidToken(false);
+      }
+    };
+
+    checkSession();
+  }, [supabase]);
 
   const onSubmit = async (data: ResetPasswordFormData) => {
-    setIsLoading(true)
-    setError(null)
+    setIsLoading(true);
+    setError(null);
 
     const { error } = await supabase.auth.updateUser({
-      password: data.password
-    })
+      password: data.password,
+    });
 
     if (error) {
-      setError(error.message)
+      setError(error.message);
     } else {
-      setSuccess(true)
+      setSuccess(true);
       // Redirecionar após 3 segundos
       setTimeout(() => {
-        router.push('/login?message=Senha redefinida com sucesso!')
-      }, 3000)
+        router.push("/login?message=Senha redefinida com sucesso!");
+      }, 3000);
     }
 
-    setIsLoading(false)
-  }
+    setIsLoading(false);
+  };
 
   if (validToken === null) {
     return (
@@ -93,7 +107,7 @@ export default function ResetPasswordPage() {
           </CardContent>
         </Card>
       </div>
-    )
+    );
   }
 
   if (validToken === false) {
@@ -107,8 +121,8 @@ export default function ResetPasswordPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="text-center">
-            <Button 
-              onClick={() => router.push('/forgot-password')}
+            <Button
+              onClick={() => router.push("/forgot-password")}
               className="w-full"
             >
               Solicitar Nova Redefinição
@@ -116,7 +130,7 @@ export default function ResetPasswordPage() {
           </CardContent>
         </Card>
       </div>
-    )
+    );
   }
 
   if (success) {
@@ -127,22 +141,23 @@ export default function ResetPasswordPage() {
             <div className="mx-auto w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mb-4">
               <CheckCircle className="h-6 w-6 text-green-600" />
             </div>
-            <CardTitle className="text-2xl text-green-600">Senha Redefinida!</CardTitle>
+            <CardTitle className="text-2xl text-green-600">
+              Senha Redefinida!
+            </CardTitle>
             <CardDescription>
               Sua senha foi alterada com sucesso
             </CardDescription>
           </CardHeader>
           <CardContent className="text-center">
             <p className="text-sm text-gray-600 mb-4">
-              Você será redirecionado para a página de login em alguns segundos...
+              Você será redirecionado para a página de login em alguns
+              segundos...
             </p>
-            <Button onClick={() => router.push('/login')}>
-              Ir para Login
-            </Button>
+            <Button onClick={() => router.push("/login")}>Ir para Login</Button>
           </CardContent>
         </Card>
       </div>
-    )
+    );
   }
 
   return (
@@ -153,9 +168,7 @@ export default function ResetPasswordPage() {
             <Key className="h-6 w-6 text-blue-600" />
           </div>
           <CardTitle className="text-2xl">Redefinir Senha</CardTitle>
-          <CardDescription>
-            Digite sua nova senha abaixo
-          </CardDescription>
+          <CardDescription>Digite sua nova senha abaixo</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
@@ -164,10 +177,12 @@ export default function ResetPasswordPage() {
               <PasswordInput
                 id="password"
                 placeholder="Digite sua nova senha"
-                {...register('password')}
+                {...register("password")}
               />
               {errors.password && (
-                <p className="text-sm text-red-600">{errors.password.message}</p>
+                <p className="text-sm text-red-600">
+                  {errors.password.message}
+                </p>
               )}
               {password && <PasswordStrength password={password} />}
             </div>
@@ -177,10 +192,12 @@ export default function ResetPasswordPage() {
               <PasswordInput
                 id="confirmPassword"
                 placeholder="Confirme sua nova senha"
-                {...register('confirmPassword')}
+                {...register("confirmPassword")}
               />
               {errors.confirmPassword && (
-                <p className="text-sm text-red-600">{errors.confirmPassword.message}</p>
+                <p className="text-sm text-red-600">
+                  {errors.confirmPassword.message}
+                </p>
               )}
             </div>
 
@@ -190,16 +207,26 @@ export default function ResetPasswordPage() {
               </div>
             )}
 
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={isLoading}
-            >
-              {isLoading ? 'Redefinindo...' : 'Redefinir Senha'}
+            <Button type="submit" className="w-full" disabled={isLoading}>
+              {isLoading ? "Redefinindo..." : "Redefinir Senha"}
             </Button>
           </form>
         </CardContent>
       </Card>
     </div>
-  )
+  );
+}
+
+export default function ResetPasswordPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center">
+          <div>Carregando...</div>
+        </div>
+      }
+    >
+      <ResetPasswordContent />
+    </Suspense>
+  );
 }
