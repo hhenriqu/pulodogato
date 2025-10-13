@@ -488,7 +488,24 @@ export default function ExpenseGroupsPage() {
   };
 
   const handleLeaveGroup = async (group: ExpenseGroup) => {
-    if (!confirm(`Tem certeza que deseja sair do grupo "${group.name}"?`)) {
+    // Determinar o papel do usuário no grupo
+    const userMember = group.members?.find((m) => m.user?.id === user?.id);
+    const isAdmin = userMember?.role === "admin";
+    const totalMembers = group.members?.length || 0;
+    const adminCount =
+      group.members?.filter((m) => m.role === "admin").length || 0;
+
+    let confirmMessage = `Tem certeza que deseja sair do grupo "${group.name}"?`;
+
+    if (totalMembers === 1) {
+      confirmMessage = `Você é o único membro do grupo "${group.name}". Ao sair, o grupo será ARQUIVADO (não excluído). Confirma?`;
+    } else if (isAdmin && adminCount === 1) {
+      confirmMessage = `Você é o único administrador do grupo "${group.name}". Para sair, primeiro promova outro membro a administrador ou arquive o grupo. Esta ação não será permitida.`;
+      alert(confirmMessage);
+      return;
+    }
+
+    if (!confirm(confirmMessage)) {
       return;
     }
 
@@ -500,10 +517,26 @@ export default function ExpenseGroupsPage() {
       const data = await response.json();
 
       if (response.ok) {
-        toast.success("Você saiu do grupo com sucesso!");
+        // Mostrar mensagem específica baseada na ação realizada
+        if (data.action === "group_archived") {
+          toast.success(
+            data.message || "Grupo arquivado pois você era o último membro"
+          );
+        } else if (data.action === "user_left") {
+          toast.success(data.message || "Você saiu do grupo com sucesso!");
+        } else {
+          toast.success(data.message || "Operação realizada com sucesso!");
+        }
         loadData();
       } else {
-        toast.error(data.error || "Erro ao sair do grupo");
+        // Tratar erro específico de admin único
+        if (data.action_required === "promote_admin_or_archive") {
+          toast.error(data.error, {
+            duration: 8000, // Mostrar por mais tempo para dar tempo de ler
+          });
+        } else {
+          toast.error(data.error || "Erro ao sair do grupo");
+        }
       }
     } catch (error) {
       console.error("Leave group error:", error);

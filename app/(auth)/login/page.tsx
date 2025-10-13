@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/lib/hooks/useAuth";
+import { DatabaseDiagnostic } from "@/components/DatabaseDiagnostic";
 import { Eye, EyeOff } from "lucide-react";
 
 const loginSchema = z.object({
@@ -159,6 +160,12 @@ function LoginContent() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Show database diagnostic if there's a database-related error */}
+      {error &&
+        (error.includes("banco de dados") ||
+          error.includes("Database error") ||
+          error.includes("ENOTFOUND")) && <DatabaseDiagnostic />}
     </div>
   );
 }

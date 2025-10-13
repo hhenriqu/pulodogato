@@ -1,6 +1,8 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(request: NextRequest) {
   try {
     const supabase = await createClient();
@@ -15,27 +17,14 @@ export async function GET(request: NextRequest) {
 
     console.log("👤 USUÁRIO API:", user.id, user.email);
 
-    // ABORDAGEM ALTERNATIVA: Usar RPC (Remote Procedure Call) para evitar problemas de RLS
-    try {
-      // Primeiro, buscar grupos usando uma função SQL personalizada ou query direta
-      const { data: groupsData, error: groupsError } = await supabase.rpc(
-        "get_user_groups",
-        {
-          user_id_param: user.id,
-        }
-      );
+    // Usar abordagem direta e simples
+    console.log("🔧 Buscando grupos do usuário...");
 
-      console.log("🔧 TENTATIVA RPC:", { groupsData, groupsError });
-
-      // Se RPC falhar, usar abordagem manual (sempre usar manual para garantir)
-      // if (groupsError) {
-      console.log("🔧 Usando abordagem manual para garantir funcionamento...");
-
-      // Buscar todos os grupos primeiro
-      const { data: allGroups, error: allGroupsError } = await supabase
-        .from("expense_groups")
-        .select(
-          `
+    // Buscar todos os grupos ativos apenas (não arquivados)
+    const { data: allGroups, error: allGroupsError } = await supabase
+      .from("expense_groups")
+      .select(
+        `
             id,
             name,
             description,
@@ -47,22 +36,22 @@ export async function GET(request: NextRequest) {
             created_by,
             creator:profiles!expense_groups_created_by_fkey(full_name, avatar_url)
           `
-        )
-        .eq("is_active", true);
+      )
+      .eq("is_active", true);
 
-      if (allGroupsError) {
-        console.error("Erro ao buscar grupos:", allGroupsError);
-        return NextResponse.json(
-          { error: "Failed to fetch groups" },
-          { status: 500 }
-        );
-      }
+    if (allGroupsError) {
+      console.error("Erro ao buscar grupos:", allGroupsError);
+      return NextResponse.json(
+        { error: "Failed to fetch groups" },
+        { status: 500 }
+      );
+    }
 
-      // Buscar todos os membros
-      const { data: allMembers, error: allMembersError } = await supabase
-        .from("group_members")
-        .select(
-          `
+    // Buscar todos os membros
+    const { data: allMembers, error: allMembersError } = await supabase
+      .from("group_members")
+      .select(
+        `
             id,
             group_id,
             user_id,
@@ -71,62 +60,62 @@ export async function GET(request: NextRequest) {
             percentage,
             user:profiles!group_members_user_id_fkey(id, full_name, avatar_url)
           `
-        )
-        .eq("status", "active");
+      )
+      .eq("status", "active");
 
-      if (allMembersError) {
-        console.error("Erro ao buscar membros:", allMembersError);
-        return NextResponse.json(
-          { error: "Failed to fetch members" },
-          { status: 500 }
-        );
-      }
-
-      console.log("📊 DADOS BRUTOS:", {
-        totalGroups: allGroups?.length || 0,
-        totalMembers: allMembers?.length || 0,
-        userGroups:
-          allMembers
-            ?.filter((m) => m.user_id === user.id)
-            .map((m) => m.group_id) || [],
-      });
-
-      // Filtrar grupos onde o usuário é membro
-      const userGroupIds =
-        allMembers
-          ?.filter((member) => member.user_id === user.id)
-          ?.map((member) => member.group_id) || [];
-
-      const userGroups =
-        allGroups?.filter((group) => userGroupIds.includes(group.id)) || [];
-
-      // Combinar grupos com seus membros
-      const groupsWithMembers = userGroups.map((group) => ({
-        ...group,
-        members:
-          allMembers?.filter((member) => member.group_id === group.id) || [],
-      }));
-
-      console.log("🎯 RESULTADO FINAL:", {
-        groupsCount: groupsWithMembers.length,
-        groups: groupsWithMembers.map((g) => ({
-          id: g.id,
-          name: g.name,
-          membersCount: g.members.length,
-          memberNames: g.members
-            .map((m: any) => m.user?.full_name)
-            .filter(Boolean),
-        })),
-      });
-
-      return NextResponse.json({ groups: groupsWithMembers });
-    } catch (apiError) {
-      console.error("Erro na API:", apiError);
+    if (allMembersError) {
+      console.error("Erro ao buscar membros:", allMembersError);
       return NextResponse.json(
-        { error: "Internal server error" },
+        { error: "Failed to fetch members" },
         { status: 500 }
       );
     }
+
+    console.log("📊 DADOS BRUTOS:", {
+      totalGroups: allGroups?.length || 0,
+      totalMembers: allMembers?.length || 0,
+      userGroups:
+        allMembers
+          ?.filter((m) => m.user_id === user.id)
+          .map((m) => m.group_id) || [],
+    });
+
+    // Filtrar grupos onde o usuário é membro
+    const userGroupIds =
+      allMembers
+        ?.filter((member) => member.user_id === user.id)
+        ?.map((member) => member.group_id) || [];
+
+    const userGroups =
+      allGroups?.filter((group) => userGroupIds.includes(group.id)) || [];
+
+    // Combinar grupos com seus membros
+    const groupsWithMembers = userGroups.map((group) => ({
+      ...group,
+      members:
+        allMembers?.filter((member) => member.group_id === group.id) || [],
+    }));
+
+    console.log("🎯 RESULTADO FINAL:", {
+      groupsCount: groupsWithMembers.length,
+      groups: groupsWithMembers.map((g) => ({
+        id: g.id,
+        name: g.name,
+        membersCount: g.members.length,
+        memberNames: g.members
+          .map((m: any) => m.user?.full_name)
+          .filter(Boolean),
+      })),
+    });
+
+    return NextResponse.json({
+      groups: groupsWithMembers,
+      debug: {
+        total_groups_found: allGroups?.length || 0,
+        user_groups_found: groupsWithMembers.length,
+        user_id: user.id,
+      },
+    });
   } catch (error) {
     console.error("API error:", error);
     return NextResponse.json(
