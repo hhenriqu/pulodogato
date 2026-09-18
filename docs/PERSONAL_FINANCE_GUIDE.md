@@ -34,17 +34,19 @@
 
 1. **Acesse o Supabase Dashboard**: https://supabase.com/dashboard
 2. **Navegue até SQL Editor**
-3. **Execute o script de migração**:
+3. **Execute os scripts de migração, nesta ordem**:
 
    ```sql
-   -- Cole o conteúdo completo do arquivo:
-   -- database/migrations/002_personal_finance.sql
+   -- 1) database/migrations/001_baseline.sql   (schema + seed)
+   -- 2) database/migrations/002_rls_lockdown.sql  (RLS - obrigatório)
    ```
 
+   Rodar apenas o `001` deixa o banco legível e gravável por qualquer pessoa
+   com a chave anon pública. Ver `database/README.md`.
+
 4. **Verifique a instalação**:
-   ```sql
-   -- Cole o conteúdo do arquivo:
-   -- database/check_setup.sql
+   ```bash
+   node scripts/extract-schema.mjs --audit
    ```
 
 ### 2. Verificar Configuração do Projeto

@@ -28,14 +28,16 @@ graph LR
 
 ```
 database/migrations/
-├── 001_initial_setup.sql        → Setup básico (auth, profiles)
-├── 002_personal_finance.sql     → Sistema financeiro base
-├── 003_expense_groups.sql       → Grupos compartilhados
-├── 004_financial_extensions.sql → Contas/Cartões/Parcelamento
-├── 005_investments.sql          → Sistema de investimentos (próximo)
-├── 006_goals_budgets.sql        → Metas e orçamentos (futuro)
-└── 007_analytics.sql            → Relatórios avançados (futuro)
+├── 001_baseline.sql       → Schema completo + seed de referência
+└── 002_rls_lockdown.sql   → RLS e privilégios (obrigatório)
 ```
+
+> **Correção (2026-09-18).** Versões anteriores deste documento listavam
+> `001_initial_setup.sql`, `002_personal_finance.sql`, `003_expense_groups.sql`
+> e `004_financial_extensions.sql` como "migrations atuais". **Esses arquivos
+> nunca existiram no repositório** — o schema só existia no banco de produção.
+> `001_baseline.sql` foi reconstruído a partir de produção; leia
+> `database/README.md` para saber o que nele é verificado e o que é inferido.
 
 ### **Convenções de Naming:**
 

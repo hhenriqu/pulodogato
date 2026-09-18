@@ -10,7 +10,7 @@
     "prd": "./docs/PRD.md",
     "governance": "./docs/PRD-Governance.md",
     "apiSpec": "./docs/API-Specification.md",
-    "databaseSetup": "./docs/database-setup.sql"
+    "databaseSetup": "./database/migrations/001_baseline.sql"
   },
   "development": {
     "guidedByPRD": true,

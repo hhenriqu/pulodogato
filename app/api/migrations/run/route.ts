@@ -1,11 +1,61 @@
 import { createClient } from "@/utils/supabase/server";
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
-export async function POST(request: NextRequest) {
+// Este endpoint NAO executa migracoes - nunca executou, apesar do nome e da
+// mensagem antiga dizerem que sim. Ele so reporta se o schema ja esta aplicado.
+// Migracao continua sendo manual, via SQL Editor do Supabase.
+//
+// Ate 2026-09-18 ele listava 002_personal_finance.sql, 003_expense_groups.sql e
+// 004_financial_extensions.sql, arquivos que nunca existiram no repositorio.
+// As migracoes reais estao em database/migrations/.
+
+export const dynamic = "force-dynamic";
+
+const MIGRATIONS = [
+  {
+    name: "001_baseline.sql",
+    description: "Schema completo (16 tabelas) + seed de referencia",
+    required: true,
+    // Uma tabela representativa por migracao, so para detectar se rodou.
+    probeTable: "financial_services",
+  },
+  {
+    name: "002_rls_lockdown.sql",
+    description: "Row Level Security e privilegios de role",
+    required: true,
+    probeTable: null, // nao da pra detectar RLS por fora; ver abaixo
+  },
+];
+
+async function checkMigrationStatus(supabase: any) {
+  const checks = [];
+
+  for (const m of MIGRATIONS) {
+    if (!m.probeTable) {
+      checks.push({
+        migration: m.name,
+        status: "desconhecido",
+        note:
+          "Nao e verificavel por esta API. Rode `node scripts/extract-schema.mjs --audit` " +
+          "ou a query de pg_class no fim de database/migrations/002_rls_lockdown.sql.",
+      });
+      continue;
+    }
+
+    const { error } = await supabase.from(m.probeTable).select("id").limit(1);
+    checks.push({
+      migration: m.name,
+      status: error ? "nao instalado" : "instalado",
+      probeTable: m.probeTable,
+    });
+  }
+
+  return checks;
+}
+
+export async function GET() {
   try {
-    const supabase = createClient();
-
-    // Verificar se o usuário é admin ou tem permissão
+    const supabase = await createClient();
     const {
       data: { user },
       error: authError,
@@ -18,153 +68,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
-    const { migrationName } = body;
-
-    if (!migrationName) {
-      return NextResponse.json(
-        { error: "Nome da migração é obrigatório" },
-        { status: 400 }
-      );
-    }
-
-    // Verificar status das migrações
-    const migrationStatus = await checkMigrationStatus(supabase);
-
     return NextResponse.json({
-      success: true,
-      message:
-        "Verificação de migração concluída. Execute manualmente no Supabase.",
-      migrationStatus,
-      instructions: {
-        step1: "Acesse https://supabase.com/dashboard",
-        step2: "Navegue para SQL Editor",
-        step3: "Cole e execute o conteúdo da migração solicitada",
-        step4: `Para ${migrationName}: copie o arquivo database/migrations/${migrationName}`,
-      },
-    });
-  } catch (error: any) {
-    console.error("Erro ao verificar migração:", error);
-    return NextResponse.json(
-      { error: "Erro interno do servidor", details: error.message },
-      { status: 500 }
-    );
-  }
-}
-
-async function checkMigrationStatus(supabase: any) {
-  const checks = [];
-
-  // Verificar 002_personal_finance.sql
-  try {
-    const { data: personalFinanceCheck } = await supabase
-      .from("financial_services")
-      .select("id")
-      .limit(1);
-
-    checks.push({
-      migration: "002_personal_finance.sql",
-      status: personalFinanceCheck ? "✅ Instalado" : "❌ Não instalado",
-      tables: [
-        "financial_services",
-        "transaction_categories",
-        "financial_transactions",
+      migrations: MIGRATIONS.map(({ name, description, required }) => ({
+        name,
+        description,
+        required,
+      })),
+      status: await checkMigrationStatus(supabase),
+      howToApply: [
+        "Acesse https://supabase.com/dashboard → SQL Editor",
+        "Execute database/migrations/001_baseline.sql",
+        "Execute database/migrations/002_rls_lockdown.sql",
+        "Confirme com: node scripts/extract-schema.mjs --audit",
       ],
-    });
-  } catch {
-    checks.push({
-      migration: "002_personal_finance.sql",
-      status: "❌ Não instalado",
-      tables: [
-        "financial_services",
-        "transaction_categories",
-        "financial_transactions",
-      ],
-    });
-  }
-
-  // Verificar 003_expense_groups.sql
-  try {
-    const { data: groupsCheck } = await supabase
-      .from("expense_groups")
-      .select("id")
-      .limit(1);
-
-    checks.push({
-      migration: "003_expense_groups.sql",
-      status: groupsCheck ? "✅ Instalado" : "❌ Não instalado",
-      tables: ["expense_groups", "group_members", "group_invites"],
-    });
-  } catch {
-    checks.push({
-      migration: "003_expense_groups.sql",
-      status: "❌ Não instalado",
-      tables: ["expense_groups", "group_members", "group_invites"],
-    });
-  }
-
-  // Verificar 004_financial_extensions.sql
-  try {
-    const { data: accountsCheck } = await supabase
-      .from("financial_accounts")
-      .select("id")
-      .limit(1);
-
-    checks.push({
-      migration: "004_financial_extensions.sql",
-      status: accountsCheck ? "✅ Instalado" : "❌ Não instalado",
-      tables: [
-        "financial_accounts",
-        "transaction_installments",
-        "group_member_proportions",
-      ],
-    });
-  } catch {
-    checks.push({
-      migration: "004_financial_extensions.sql",
-      status: "❌ Não instalado",
-      tables: [
-        "financial_accounts",
-        "transaction_installments",
-        "group_member_proportions",
-      ],
-    });
-  }
-
-  return checks;
-}
-
-// GET para listar migrações disponíveis
-export async function GET() {
-  try {
-    const migrations = [
-      {
-        name: "002_personal_finance.sql",
-        description:
-          "Sistema básico de finanças pessoais com categorias e transações",
-        required: true,
-      },
-      {
-        name: "003_expense_groups.sql",
-        description: "Sistema de grupos para divisão de gastos compartilhados",
-        required: false,
-      },
-      {
-        name: "004_financial_extensions.sql",
-        description:
-          "Extensões financeiras: contas, cartões de crédito e parcelamento",
-        required: false,
-      },
-    ];
-
-    return NextResponse.json({
-      migrations,
-      message:
-        "Use POST com { migrationName: 'nome_do_arquivo.sql' } para executar",
+      note: "Este endpoint é somente leitura. Ver database/README.md.",
     });
   } catch (error: any) {
     return NextResponse.json(
-      { error: "Erro ao listar migrações", details: error.message },
+      { error: "Erro ao verificar migrações", details: error.message },
       { status: 500 }
     );
   }
