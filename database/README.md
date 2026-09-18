@@ -8,6 +8,7 @@ database/
 │   ├── 001_baseline.sql      schema + seed de referencia
 │   └── 002_rls_lockdown.sql  RLS, privilegios e RPCs  (OBRIGATORIO)
 ├── tests/
+│   ├── 00_supabase_shim.sql    auth.uid() e roles, so para Postgres cru
 │   └── rls_isolation_test.sql  prova que um usuario nao le dados de outro
 └── README.md
 ```
@@ -16,19 +17,28 @@ Ordem: `001` e depois `002`. Rodar `001` sozinho deixa o banco aberto.
 
 ### Validado num banco limpo
 
-As duas migrations foram executadas do zero num Postgres 17 vazio, e o teste de
-isolamento passou nas 20 asserções:
-
 ```bash
-psql "$DB_URL" -f database/migrations/001_baseline.sql
-psql "$DB_URL" -f database/migrations/002_rls_lockdown.sql
-psql "$DB_URL" -f database/tests/rls_isolation_test.sql   # roda em transacao, da ROLLBACK no fim
+# so em Postgres cru (CI, docker). Num projeto Supabase o shim se recusa a rodar.
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/00_supabase_shim.sql
+
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/001_baseline.sql
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/002_rls_lockdown.sql
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/rls_isolation_test.sql  # da ROLLBACK no fim
 ```
 
-O teste assume `auth.users` e `auth.uid()` e as roles `anon`/`authenticated` — num
-projeto Supabase real ja existem. Num Postgres cru e preciso criar esse minimo
-antes. Ressalva: foi validado em Postgres puro, **nao** num projeto Supabase
-limpo de verdade; extensoes e roles extras do Supabase nao foram exercitadas.
+Executado do zero num Postgres 17 vazio: 16 tabelas, 16 com RLS, 40 policies, as
+20 asserções de isolamento passando e a role `anon` sem privilegio fora das duas
+tabelas de referencia. O mesmo roda no CI (`.github/workflows/db-verify.yml`) a
+cada PR que toca `database/`.
+
+O teste depende de `auth.users`, `auth.uid()` e das roles `anon`/`authenticated`,
+que num projeto Supabase ja existem; `00_supabase_shim.sql` recria esse minimo
+num Postgres cru — e aborta se detectar que o banco e um Supabase de verdade,
+onde sobrescrever `auth.uid()` quebraria a autenticacao inteira.
+
+Ressalva que continua de pe: validado em Postgres puro, **nao** num projeto
+Supabase limpo de verdade. Extensoes, roles extras e o GoTrue nao foram
+exercitados.
 
 ---
 
@@ -132,20 +142,63 @@ quebrar telas do app. Sequencia segura:
 
 ## Backup
 
-**Ainda nao configurado** — depende de acesso que o agente nao tem.
+Escrito e testado; **falta ligar**. O codigo todo existe e o ciclo completo roda
+no CI a cada mudanca — o que falta sao dois secrets, que dependem da senha do
+Postgres.
 
-O plano de Point-in-Time Recovery do Supabase e o caminho mais curto
-(Settings → Database → Point in Time Recovery); no plano Free existe apenas
-backup diario com retencao curta, o que nao e suficiente antes de entrar dinheiro
-real. Alternativa versionada, para rodar num runner com a senha em secret:
+| | |
+|---|---|
+| `scripts/db-backup.sh` | dump de schema + dados + `auth.users` + inventario de RLS, criptografado |
+| `scripts/db-restore.sh` | restaura num banco vazio, na ordem certa; recusa apontar para producao |
+| `.github/workflows/db-backup.yml` | roda 03:00 BRT, guarda artefato por 90 dias, acusa drift |
+| `.github/workflows/db-verify.yml` | a cada PR: sobe o schema do zero, roda o teste de RLS e faz o drill de backup→restauracao |
+
+### Para ligar (Helio)
+
+GitHub → Settings → Secrets and variables → Actions → New repository secret:
+
+| Secret | De onde vem |
+|---|---|
+| `SUPABASE_DB_URL` | Supabase → Settings → Database → Connection string → **Session pooler** |
+| `BACKUP_PASSPHRASE` | frase forte, guardada no gerenciador de senhas |
+
+Use o **Session Pooler (porta 5432)**. O Transaction Pooler (6543) nao aguenta
+`pg_dump`, e a conexao direta `db.<ref>.supabase.co` e IPv6 — runner do GitHub
+nao tem IPv6.
+
+Sem os secrets o job **falha todo dia**, de proposito: backup que nao roda em
+silencio e pior do que nenhum backup.
+
+Depois de ligar: Actions → db-backup → Run workflow, e confira no resumo do job
+o inventario de RLS de producao e o resultado do drift.
+
+### Na mao
 
 ```bash
-supabase db dump --db-url "$SUPABASE_DB_URL" --schema public \
-  > "backup-$(date +%F).sql"
+export SUPABASE_DB_URL='postgresql://postgres.<ref>:<senha>@aws-0-<regiao>.pooler.supabase.com:5432/postgres'
+export BACKUP_PASSPHRASE='...'
+./scripts/db-backup.sh ./backups
+
+# restaurar num banco de teste (NUNCA em producao)
+export RESTORE_DB_URL='postgresql://...'
+./scripts/db-restore.sh ./backups
 ```
 
-Guardar fora do Supabase (S3/R2/Drive). Um backup nunca restaurado nao e backup:
-testar a restauracao num projeto limpo pelo menos uma vez.
+Os arquivos gerados estao no `.gitignore`: contem PII, saldos e as senhas
+hasheadas de `auth.users`. Nao versionar, nao anexar em issue.
+
+### O que o backup cobre e o que nao cobre
+
+Cobre `public` (estrutura, dados e privilegios) e `auth.users` — sem esta ultima
+os dados restaurados ficam orfaos, porque todo `user_id` aponta para la.
+
+**Nao cobre:** Storage, Edge Functions, e o resto do schema `auth` (sessoes,
+identidades de OAuth). Um desastre real exige recriar essas partes na mao.
+
+Artefato do GitHub tem retencao maxima de 90 dias e vive na mesma conta do
+codigo. Quando houver dado de cliente de verdade, copiar tambem para fora
+(S3/R2/Drive) e ligar o Point-in-Time Recovery do Supabase (Settings → Database);
+o plano Free so tem backup diario com retencao curta.
 
 ---
 
