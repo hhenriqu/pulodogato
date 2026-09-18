@@ -43,8 +43,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Instalar o cliente psql
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
+      # Tem que ser o 17: o ubuntu-latest traz o cliente 16, e o pg_dump se
+      # recusa a falar com um servidor mais novo que ele.
+      - name: Instalar o cliente Postgres 17
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-client-17
+          pg_dump --version
 
       # O Supabase de verdade ja tem schema auth e roles anon/authenticated;
       # num Postgres cru e preciso recria-los antes.
