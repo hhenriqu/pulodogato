@@ -2,10 +2,12 @@
 # =====================================================
 # Backup do banco de producao (schema + dados)
 # =====================================================
-# Roda igual na mao e no CI (.github/workflows/db-backup.yml).
+# Nao ha backup agendado: por decisao (HMO-121) este script roda na mao.
+# O db-verify tambem o executa a cada PR, contra um Postgres descartavel do
+# runner, para provar que o ciclo dump -> restauracao continua funcionando.
 #
 #   export SUPABASE_DB_URL='postgresql://postgres.<ref>:<senha>@aws-0-<regiao>.pooler.supabase.com:5432/postgres'
-#   export BACKUP_PASSPHRASE='...'          # opcional na mao, obrigatorio no CI
+#   export BACKUP_PASSPHRASE='...'          # opcional na mao, obrigatorio no drill do CI
 #   ./scripts/db-backup.sh ./backups
 #
 # Gera em $DESTINO:

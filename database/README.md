@@ -142,20 +142,32 @@ quebrar telas do app. Sequencia segura:
 
 ## Backup
 
-Escrito e testado; **falta ligar**. O codigo todo existe e o ciclo completo roda
-no CI a cada mudanca — o que falta sao dois secrets, que dependem da senha do
-Postgres.
+**Nao ha backup automatico deste repositorio.** Decisao do Helio em 18/09/2026
+(HMO-121): o PITR do Supabase fica desligado e o dump diario em CI foi removido,
+para nao exigir os secrets de producao. O que existe hoje e so o backup diario do
+plano Free do Supabase — retencao curta, e nao e testado por ninguem.
+
+O que **sobrou** no repositorio, e continua funcionando:
 
 | | |
 |---|---|
-| `scripts/db-backup.sh` | dump de schema + dados + `auth.users` + inventario de RLS, criptografado |
+| `scripts/db-backup.sh` | dump de schema + dados + `auth.users` + inventario de RLS, criptografado — roda na mao |
 | `scripts/db-restore.sh` | restaura num banco vazio, na ordem certa; recusa apontar para producao |
-| `.github/workflows/db-backup.yml` | roda 03:00 BRT, guarda artefato por 90 dias, acusa drift |
-| `.github/workflows/db-verify.yml` | a cada PR: sobe o schema do zero, roda o teste de RLS e faz o drill de backup→restauracao |
+| `.github/workflows/db-verify.yml` | a cada PR: sobe o schema do zero, roda o teste de RLS e faz o drill de backup→restauracao num Postgres descartavel |
 
-### Para ligar (Helio)
+O drill do `db-verify` roda contra um Postgres do proprio runner, sem secret
+nenhum: ele prova que os dois scripts continuam funcionando, nao que exista
+copia de producao em algum lugar. Sao coisas diferentes.
 
-GitHub → Settings → Secrets and variables → Actions → New repository secret:
+### Se um dia quiser ligar de novo
+
+Sao duas coisas independentes:
+
+1. **PITR** (perda de segundos, dentro do Supabase): Settings → Database →
+   Point in Time Recovery. Exige plano pago.
+2. **Dump diario em CI** (copia fora do fornecedor): recriar um workflow que
+   chame `scripts/db-backup.sh` e por dois secrets em Settings → Secrets and
+   variables → Actions:
 
 | Secret | De onde vem |
 |---|---|
@@ -165,12 +177,6 @@ GitHub → Settings → Secrets and variables → Actions → New repository sec
 Use o **Session Pooler (porta 5432)**. O Transaction Pooler (6543) nao aguenta
 `pg_dump`, e a conexao direta `db.<ref>.supabase.co` e IPv6 — runner do GitHub
 nao tem IPv6.
-
-Sem os secrets o job **falha todo dia**, de proposito: backup que nao roda em
-silencio e pior do que nenhum backup.
-
-Depois de ligar: Actions → db-backup → Run workflow, e confira no resumo do job
-o inventario de RLS de producao e o resultado do drift.
 
 ### Na mao
 
@@ -195,10 +201,10 @@ os dados restaurados ficam orfaos, porque todo `user_id` aponta para la.
 **Nao cobre:** Storage, Edge Functions, e o resto do schema `auth` (sessoes,
 identidades de OAuth). Um desastre real exige recriar essas partes na mao.
 
-Artefato do GitHub tem retencao maxima de 90 dias e vive na mesma conta do
-codigo. Quando houver dado de cliente de verdade, copiar tambem para fora
-(S3/R2/Drive) e ligar o Point-in-Time Recovery do Supabase (Settings → Database);
-o plano Free so tem backup diario com retencao curta.
+Quando houver dado de cliente de verdade, revisitar a decisao: ligar o
+Point-in-Time Recovery do Supabase (Settings → Database) e guardar uma copia
+fora do fornecedor (S3/R2/Drive). Hoje a unica rede de seguranca e o backup
+diario do plano Free, com retencao curta e sem teste de restauracao.
 
 ---
 
