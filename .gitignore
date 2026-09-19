@@ -55,7 +55,7 @@ next-env.d.ts
 *.sw?
 
 # dumps de backup: PII e dados financeiros reais, nunca versionar
-# (scripts/db-backup.sh, .github/workflows/db-backup.yml)
+# (scripts/db-backup.sh, rodado na mao)
 /backups/
 *-schema.sql
 *-data.sql.gz
