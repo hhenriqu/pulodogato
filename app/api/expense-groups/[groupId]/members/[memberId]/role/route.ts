@@ -115,7 +115,11 @@ export async function POST(
 
     const actionText =
       action === "promote" ? "promovido a administrador" : "rebaixado a membro";
-    const memberName = targetMember.user?.full_name || "Membro";
+    // O embed do Supabase vem como array; normalizamos para pegar o nome.
+    const targetProfile = Array.isArray(targetMember.user)
+      ? targetMember.user[0]
+      : targetMember.user;
+    const memberName = targetProfile?.full_name || "Membro";
 
     return NextResponse.json({
       success: true,

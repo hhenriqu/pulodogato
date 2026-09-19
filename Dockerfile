@@ -16,9 +16,11 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Copiar variáveis de ambiente
-COPY .env.local* .env.local
-COPY .env.production* .env.production
+# Não copiar .env.local aqui: o .dockerignore exclui o .env.local real, então o
+# glob acabava casando só com .env.local.example e gravava valores placeholder
+# num .env.local — que o Next.js carrega com precedência MAIOR que .env.production,
+# vazando "your_supabase_project_url" para dentro do bundle do cliente.
+# O .env.production já vem no `COPY . .`; segredos de build entram por --build-arg.
 
 # Desabilitar telemetria do Next.js durante o build
 ENV NEXT_TELEMETRY_DISABLED=1

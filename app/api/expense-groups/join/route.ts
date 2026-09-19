@@ -138,117 +138,53 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Verificar se o grupo existe e está ativo
-    const { data: group, error: groupError } = await supabase
-      .from("expense_groups")
-      .select(
-        `
-        *,
-        creator:profiles!expense_groups_created_by_fkey(full_name, avatar_url),
-        members:group_members(
-          id,
-          user_id,
-          status,
-          user:profiles!group_members_user_id_fkey(full_name, avatar_url)
-        )
-      `
-      )
-      .eq("group_code", group_code.toUpperCase())
-      .eq("is_active", true)
+    // A entrada por código passa pela RPC join_group_by_code, não por
+    // SELECT + INSERT direto. Com RLS ligada, quem ainda não é membro não
+    // enxerga o grupo, então o SELECT pelo código voltaria vazio; e liberar o
+    // INSERT direto na policy deixaria qualquer um entrar em qualquer grupo
+    // sabendo só o UUID. A RPC valida o código e entra na mesma transação.
+    // Ver database/migrations/002_rls_lockdown.sql.
+    const { data: joined, error: joinError } = await supabase
+      .rpc("join_group_by_code", { p_group_code: group_code })
       .single();
 
-    if (groupError || !group) {
-      return NextResponse.json(
-        {
-          error: "Group not found or invalid code",
-        },
-        { status: 404 }
-      );
-    }
-
-    // Verificar se o usuário já é membro
-    const existingMember = group.members?.find(
-      (member: any) => member.user_id === user.id
-    );
-
-    if (existingMember) {
-      if (existingMember.status === "active") {
+    if (joinError) {
+      // no_data_found = código inválido; unique_violation = já é membro
+      if (joinError.code === "P0002" || joinError.code === "no_data_found") {
         return NextResponse.json(
-          {
-            error: "You are already a member of this group",
-          },
+          { error: "Group not found or invalid code" },
+          { status: 404 }
+        );
+      }
+      if (joinError.code === "23505") {
+        return NextResponse.json(
+          { error: "You are already a member of this group" },
           { status: 400 }
         );
       }
-
-      if (existingMember.status === "pending") {
-        return NextResponse.json(
-          {
-            error: "Your membership is pending approval",
-          },
-          { status: 400 }
-        );
-      }
-    }
-
-    // Se o grupo é público, adicionar diretamente
-    // Se é privado, criar solicitação de entrada
-    const memberStatus = group.group_type === "public" ? "active" : "pending";
-
-    // Adicionar como membro
-    const { data: membership, error: memberError } = await supabase
-      .from("group_members")
-      .insert({
-        group_id: group.id,
-        user_id: user.id,
-        role: "member",
-        status: memberStatus,
-      })
-      .select()
-      .single();
-
-    if (memberError) {
-      console.error("Membership creation error:", memberError);
+      console.error("Join error:", joinError);
       return NextResponse.json(
         { error: "Failed to join group" },
         { status: 500 }
       );
     }
 
-    // Se é grupo privado, criar registro de convite como solicitação
-    if (group.group_type === "private") {
-      await supabase.from("group_invitations").insert({
-        group_id: group.id,
-        invited_by: user.id, // Auto-convite via código
-        invite_method: "code",
-        invite_target: user.id,
-        invited_user_id: user.id,
-        status: "pending",
-        expires_at: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(), // 48h
-      });
-
-      return NextResponse.json(
-        {
-          message: "Request sent! Waiting for admin approval",
-          group: {
-            id: group.id,
-            name: group.name,
-            description: group.description,
-            status: "pending",
-          },
-        },
-        { status: 201 }
-      );
-    }
+    const result = joined as {
+      group_id: string;
+      group_name: string;
+      member_status: string;
+    };
 
     return NextResponse.json(
       {
-        message: "Successfully joined the group!",
+        message:
+          result.member_status === "active"
+            ? "Successfully joined the group!"
+            : "Request sent! Waiting for admin approval",
         group: {
-          id: group.id,
-          name: group.name,
-          description: group.description,
-          status: "active",
+          id: result.group_id,
+          name: result.group_name,
+          status: result.member_status,
         },
       },
       { status: 201 }

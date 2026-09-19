@@ -67,18 +67,18 @@
 
 ### **✅ MANTENHA Database-First + Melhorias:**
 
-#### **1. Estrutura Atual (Perfeita):**
+#### **1. Estrutura Atual:**
 
 ```
 database/migrations/
-├── 000_migration_control.sql    → Sistema de controle (NOVO)
-├── 002_personal_finance.sql     → Base financeira ✅
-├── 003_expense_groups.sql       → Grupos ✅
-├── 004_financial_extensions.sql → Contas/Cartões ✅
-├── 005_investments.sql          → Próximo: Investimentos
-├── 006_goals_budgets.sql        → Futuro: Metas
-└── 007_analytics.sql            → Futuro: Relatórios
+├── 001_baseline.sql       → Schema completo + seed ✅
+└── 002_rls_lockdown.sql   → RLS e privilégios ✅
 ```
+
+> **Correção (2026-09-18).** Este documento descrevia a estrutura acima como
+> "Perfeita" e marcava com ✅ arquivos que **nunca existiram**. Até 2026-09-18
+> não havia nenhuma migration versionada: a única cópia do schema era o banco
+> de produção. Ver `database/README.md`.
 
 #### **2. Processo Otimizado:**
 

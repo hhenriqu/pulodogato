@@ -3,38 +3,32 @@ import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
+// Endpoint público: nunca expor mensagens cruas do banco ou do Supabase.
+// Detalhes ficam no log do servidor; o cliente recebe apenas ok/error.
 export async function GET() {
   try {
     const supabase = createClient();
 
-    // Test basic connection
-    const { data: connectionTest, error: connectionError } = await supabase
+    const { error: connectionError } = await supabase
       .from("profiles")
-      .select("count(*)")
+      .select("id")
       .limit(1);
 
     if (connectionError) {
+      console.error("Health check: database connection failed", connectionError);
       return NextResponse.json(
         {
           status: "error",
           message: "Database connection failed",
-          error: connectionError.message,
-          details: connectionError,
+          timestamp: new Date().toISOString(),
         },
-        { status: 500 }
+        { status: 503 }
       );
     }
-
-    // Check if essential tables exist
-    const { data: tablesCheck, error: tablesError } = await supabase.rpc(
-      "check_essential_tables"
-    );
 
     return NextResponse.json({
       status: "ok",
       message: "Database connection successful",
-      connection: "ok",
-      tables: tablesCheck || "checking...",
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
@@ -43,9 +37,9 @@ export async function GET() {
       {
         status: "error",
         message: "Health check failed",
-        error: error instanceof Error ? error.message : "Unknown error",
+        timestamp: new Date().toISOString(),
       },
-      { status: 500 }
+      { status: 503 }
     );
   }
 }

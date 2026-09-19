@@ -22,7 +22,8 @@ import {
 interface MigrationStatus {
   migration: string;
   status: string;
-  tables: string[];
+  probeTable?: string;
+  note?: string;
 }
 
 export default function MigrationsPage() {
@@ -35,16 +36,11 @@ export default function MigrationsPage() {
     setError(null);
 
     try {
-      const response = await fetch("/api/migrations/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ migrationName: "check" }),
-      });
-
+      const response = await fetch("/api/migrations/run");
       const result = await response.json();
 
-      if (result.success) {
-        setMigrationStatus(result.migrationStatus);
+      if (response.ok) {
+        setMigrationStatus(result.status ?? []);
       } else {
         setError(result.error || "Erro ao verificar migrações");
       }
@@ -62,26 +58,20 @@ export default function MigrationsPage() {
 
   const migrations = [
     {
-      name: "002_personal_finance.sql",
-      title: "Sistema de Finanças Pessoais",
+      name: "001_baseline.sql",
+      title: "Schema Base",
       description:
-        "Tabelas básicas para transações, categorias e serviços financeiros",
+        "As 16 tabelas do app mais o seed de serviços e categorias",
       required: true,
       order: 1,
     },
     {
-      name: "003_expense_groups.sql",
-      title: "Grupos de Gastos Compartilhados",
-      description: "Sistema para dividir gastos entre múltiplos usuários",
-      required: false,
+      name: "002_rls_lockdown.sql",
+      title: "Row Level Security",
+      description:
+        "Fecha o acesso anônimo e isola os dados por usuário. Sem isto o banco fica aberto.",
+      required: true,
       order: 2,
-    },
-    {
-      name: "004_financial_extensions.sql",
-      title: "Extensões Financeiras Avançadas",
-      description: "Contas bancárias, cartões de crédito e parcelamento",
-      required: false,
-      order: 3,
     },
   ];
 
@@ -121,7 +111,8 @@ export default function MigrationsPage() {
           const statusInfo = migrationStatus.find(
             (s) => s.migration === migration.name
           );
-          const isInstalled = statusInfo?.status.includes("✅");
+          const isInstalled = statusInfo?.status === "instalado";
+          const isUnknown = statusInfo?.status === "desconhecido";
 
           return (
             <Card key={migration.name} className="relative">
@@ -143,12 +134,22 @@ export default function MigrationsPage() {
                       <Badge variant="secondary">Obrigatório</Badge>
                     )}
                     {statusInfo && (
-                      <Badge variant={isInstalled ? "default" : "destructive"}>
+                      <Badge
+                        variant={
+                          isInstalled
+                            ? "default"
+                            : isUnknown
+                            ? "secondary"
+                            : "destructive"
+                        }
+                      >
                         {isInstalled ? (
                           <>
                             <CheckCircle2 className="mr-1 h-3 w-3" />
                             Instalado
                           </>
+                        ) : isUnknown ? (
+                          "Não verificável aqui"
                         ) : (
                           <>
                             <XCircle className="mr-1 h-3 w-3" />
@@ -162,23 +163,21 @@ export default function MigrationsPage() {
               </CardHeader>
 
               <CardContent className="space-y-4">
-                {statusInfo && (
+                {statusInfo?.probeTable && (
                   <div>
                     <p className="text-sm text-muted-foreground mb-2">
-                      Tabelas criadas:
+                      Verificado pela tabela:
                     </p>
-                    <div className="flex flex-wrap gap-1">
-                      {statusInfo.tables.map((table) => (
-                        <Badge
-                          key={table}
-                          variant="outline"
-                          className="text-xs"
-                        >
-                          {table}
-                        </Badge>
-                      ))}
-                    </div>
+                    <Badge variant="outline" className="text-xs">
+                      {statusInfo.probeTable}
+                    </Badge>
                   </div>
+                )}
+
+                {statusInfo?.note && (
+                  <p className="text-sm text-muted-foreground">
+                    {statusInfo.note}
+                  </p>
                 )}
 
                 <div className="flex items-center justify-between pt-2 border-t">
