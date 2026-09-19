@@ -186,22 +186,57 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon;
 -- =====================================================
 -- SECAO 3: HABILITAR RLS EM TODAS AS TABELAS
 -- =====================================================
-ALTER TABLE public.profiles                  ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.financial_services        ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.transaction_categories    ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.financial_accounts        ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.financial_transactions    ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.expense_groups            ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.group_members             ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.group_transactions        ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.group_expense_splits      ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.group_member_proportions  ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.group_invitations         ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.expense_splits            ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.transaction_installments  ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.user_balances             ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.user_subscriptions        ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.user_usage_limits         ENABLE ROW LEVEL SECURITY;
+-- Percorre o catalogo em vez de listar tabela por tabela: uma lista fixa
+-- deixaria de fora qualquer tabela criada em producao que nao esteja no
+-- 001_baseline.sql, e e justamente essa que passaria despercebida. Assim a
+-- migracao cobre exatamente o mesmo conjunto que a query de verificacao de
+-- pg_class no fim do arquivo.
+DO $$
+DECLARE
+  r RECORD;
+BEGIN
+  FOR r IN
+    SELECT c.relname
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public'
+      AND c.relkind = 'r'
+      AND NOT c.relrowsecurity
+  LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', r.relname);
+    RAISE NOTICE 'RLS habilitada em public.%', r.relname;
+  END LOOP;
+END $$;
+
+-- =====================================================
+-- SECAO 3.1: REMOVER POLITICAS PREEXISTENTES
+-- =====================================================
+-- As policies da SECAO 4 sao dropadas e recriadas pelo nome que este arquivo
+-- usa. Isso nao alcanca policy antiga com outro nome (as do painel do Supabase
+-- costumam se chamar "Enable read access for all users" e afins).
+--
+-- Policies permissivas se somam por OR: uma unica policy esquecida com
+-- USING (true) em `authenticated` mantem todo usuario logado lendo os dados de
+-- todos os outros, mesmo com RLS ligada e com tudo o que vem abaixo aplicado.
+-- Pior: a auditoria anonima de scripts/extract-schema.mjs --audit NAO pega esse
+-- caso, porque ela testa sem login - passaria verde com o vazamento aberto.
+--
+-- Entao este arquivo passa a ser a definicao canonica: zera as policies do
+-- schema public e recria so o conjunto abaixo. Rode o
+-- 000_preflight_inventory.sql antes para ter registro do que existia.
+DO $$
+DECLARE
+  r RECORD;
+BEGIN
+  FOR r IN
+    SELECT schemaname, tablename, policyname
+    FROM pg_policies
+    WHERE schemaname = 'public'
+  LOOP
+    EXECUTE format('DROP POLICY %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+    RAISE NOTICE 'policy preexistente removida: % em %.%', r.policyname, r.schemaname, r.tablename;
+  END LOOP;
+END $$;
 
 -- =====================================================
 -- SECAO 4: POLITICAS

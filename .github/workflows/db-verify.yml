@@ -105,6 +105,24 @@ jobs:
           $PSQL -tAc "SELECT 'financial_services=' || count(*) FROM financial_services"
           $PSQL -tAc "SELECT 'transaction_categories=' || count(*) FROM transaction_categories"
 
+      # Os passos acima rodam num banco limpo, onde as unicas policies sao as
+      # que o 002 cria. Producao nao e assim: pode ter policy feita pelo painel
+      # do Supabase, com nome que o DROP POLICY IF EXISTS nominal do 002 nunca
+      # alcancaria. Uma sobrevivente com USING (true) vaza os dados de um
+      # usuario logado para outro - e a auditoria anonima passa verde, porque
+      # ela testa sem login. Este job planta essa policy e exige que o 002 a
+      # remova. Vai em banco proprio: o estado sujo nao pode contaminar o
+      # drill de backup abaixo.
+      - name: Deriva de policies legadas
+        env:
+          PGDATABASE: pulodogato_drift
+        run: |
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 --no-psqlrc -d postgres -c "CREATE DATABASE pulodogato_drift"
+          $PSQL -f database/tests/00_supabase_shim.sql
+          $PSQL -f database/migrations/001_baseline.sql
+          $PSQL -f database/tests/legacy_policy_drift_test.sql
+
       # Backup que nunca foi restaurado nao e backup. O ciclo inteiro
       # (dump -> banco vazio -> conferencia) roda aqui a cada mudanca, para o
       # drill de verdade contra producao nunca ser a primeira execucao.
