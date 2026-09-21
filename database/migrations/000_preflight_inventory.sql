@@ -97,12 +97,18 @@ ORDER BY grantee, table_name;
 -- Q5: funcoes do schema public e quem pode executar ----------------
 -- Confere se `join_group_by_code` ja existe (nao deve existir ainda) e se ha
 -- SECURITY DEFINER inesperada, que ignora RLS por definicao.
+--
+-- A assinatura completa (nao so o nome) esta aqui de proposito: em 2026-09-21 a
+-- aplicacao do 002 parou porque producao tinha uma `is_group_member` com um
+-- parametro a mais, que o CREATE OR REPLACE nao substituiu. Duas linhas com o
+-- mesmo nome e aridade diferente = a SECAO 0.2 do 002 vai remover as duas e
+-- recriar a canonica.
 SELECT
-  p.proname                          AS funcao,
+  p.oid::regprocedure::TEXT          AS assinatura,
   p.prosecdef                        AS security_definer,
   pg_get_userbyid(p.proowner)        AS dono,
   array_to_string(p.proacl, ' | ')   AS acl
 FROM pg_proc p
 JOIN pg_namespace n ON n.oid = p.pronamespace
 WHERE n.nspname = 'public'
-ORDER BY p.proname;
+ORDER BY p.proname, assinatura;

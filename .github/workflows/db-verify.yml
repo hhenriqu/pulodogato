@@ -123,6 +123,21 @@ jobs:
           $PSQL -f database/migrations/001_baseline.sql
           $PSQL -f database/tests/legacy_policy_drift_test.sql
 
+      # A outra deriva de producao, descoberta em 2026-09-21 ao aplicar o 002:
+      # uma is_group_member de outra safra, com assinatura diferente. O
+      # CREATE OR REPLACE nao a substitui, ela sobrevive ao lado da nova e as
+      # policies param com 42725 "function is not unique". Banco proprio pelo
+      # mesmo motivo do job anterior.
+      - name: Deriva de funcoes legadas
+        env:
+          PGDATABASE: pulodogato_fndrift
+        run: |
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 --no-psqlrc -d postgres -c "CREATE DATABASE pulodogato_fndrift"
+          $PSQL -f database/tests/00_supabase_shim.sql
+          $PSQL -f database/migrations/001_baseline.sql
+          $PSQL -f database/tests/legacy_function_drift_test.sql
+
       # Backup que nunca foi restaurado nao e backup. O ciclo inteiro
       # (dump -> banco vazio -> conferencia) roda aqui a cada mudanca, para o
       # drill de verdade contra producao nunca ser a primeira execucao.

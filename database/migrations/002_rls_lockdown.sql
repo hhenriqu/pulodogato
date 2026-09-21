@@ -33,6 +33,84 @@
 BEGIN;
 
 -- =====================================================
+-- SECAO 0: ZERAR O ESTADO LEGADO (policies + funcoes)
+-- =====================================================
+-- Producao tem objetos que nunca passaram por este repositorio. Duas variedades
+-- de deriva quebram a aplicacao, e as duas sao tratadas aqui, antes de tudo.
+--
+-- (a) POLICIES COM OUTRO NOME
+-- As policies da SECAO 4 sao dropadas e recriadas pelo nome que este arquivo
+-- usa. Isso nao alcanca policy antiga com outro nome (as do painel do Supabase
+-- costumam se chamar "Enable read access for all users" e afins).
+-- Policies permissivas se somam por OR: uma unica policy esquecida com
+-- USING (true) em `authenticated` mantem todo usuario logado lendo os dados de
+-- todos os outros, mesmo com RLS ligada e com tudo o que vem abaixo aplicado.
+-- Pior: a auditoria anonima de scripts/extract-schema.mjs --audit NAO pega esse
+-- caso, porque ela testa sem login - passaria verde com o vazamento aberto.
+--
+-- (b) FUNCOES AUXILIARES COM OUTRA ASSINATURA
+-- Producao ja tem uma `is_group_member` de outra safra. CREATE OR REPLACE so
+-- substitui a funcao de assinatura identica, entao a antiga sobrevive ao lado
+-- da nova e toda chamada `is_group_member(group_id)` na SECAO 4 passa a ter
+-- dois candidatos:
+--     ERROR: 42725: function public.is_group_member(uuid) is not unique
+-- (foi exatamente onde a primeira tentativa de aplicacao parou, em 2026-09-21).
+-- Manter a antiga tambem nao serve: ela e SECURITY DEFINER com regra de
+-- visibilidade desconhecida, e passaria a decidir quem ve o que. Entao este
+-- arquivo vira a definicao canonica dos dois conjuntos: zera e recria.
+--
+-- A ORDEM IMPORTA: as policies saem primeiro, porque uma policy que referencia
+-- a funcao antiga e uma dependencia e faria o DROP FUNCTION falhar.
+--
+-- Rode o 000_preflight_inventory.sql antes para ter registro do que existia.
+
+-- 0.1: remover TODAS as policies do schema public
+DO $$
+DECLARE
+  r RECORD;
+BEGIN
+  FOR r IN
+    SELECT schemaname, tablename, policyname
+    FROM pg_policies
+    WHERE schemaname = 'public'
+  LOOP
+    EXECUTE format('DROP POLICY %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+    RAISE NOTICE 'policy preexistente removida: % em %.%', r.policyname, r.schemaname, r.tablename;
+  END LOOP;
+END $$;
+
+-- 0.2: remover qualquer versao anterior das funcoes que a SECAO 1 recria,
+-- seja qual for a assinatura.
+--
+-- Sem CASCADE de proposito. Se sobrar objeto dependente que este arquivo nao
+-- conhece (uma view, um trigger, uma constraint), o DROP falha, a transacao
+-- inteira volta atras e nada em producao muda - que e o desfecho certo. Nesse
+-- caso o texto do erro diz qual e o objeto: mande a mensagem no HMO-120.
+DO $$
+DECLARE
+  r RECORD;
+BEGIN
+  FOR r IN
+    -- ::TEXT ja aqui: depois do DROP o regprocedure nao resolve mais o nome e
+    -- a NOTICE sairia com o OID cru, que nao serve de registro.
+    SELECT p.oid::regprocedure::TEXT AS assinatura
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public'
+      AND p.proname IN (
+        'is_group_member',
+        'is_group_admin',
+        'owns_group_member',
+        'has_pending_invitation',
+        'join_group_by_code'
+      )
+  LOOP
+    EXECUTE format('DROP FUNCTION %s', r.assinatura);
+    RAISE NOTICE 'funcao preexistente removida: %', r.assinatura;
+  END LOOP;
+END $$;
+
+-- =====================================================
 -- SECAO 1: FUNCOES AUXILIARES
 -- =====================================================
 -- SECURITY DEFINER de proposito: sem isso, uma policy de group_members que
@@ -99,6 +177,27 @@ AS $$
       AND (expires_at IS NULL OR expires_at > NOW())
   );
 $$;
+
+-- ACL explicita das auxiliares. Ate agora elas nasciam com CREATE OR REPLACE,
+-- que preserva a ACL existente; como a SECAO 0.2 passou a dropa-las, cada uma
+-- renasce com o padrao do Postgres (EXECUTE para PUBLIC, o que inclui `anon`).
+-- Sao SECURITY DEFINER: quem executa le group_members ignorando RLS. Para anon
+-- o resultado e sempre falso (auth.uid() e NULL), mas nao ha motivo para expor.
+-- As policies da SECAO 4 chamam estas funcoes como `authenticated`, e avaliacao
+-- de policy exige EXECUTE - por isso o GRANT abaixo nao e opcional.
+REVOKE ALL ON FUNCTION
+  public.is_group_member(UUID),
+  public.is_group_admin(UUID),
+  public.owns_group_member(UUID),
+  public.has_pending_invitation(UUID)
+FROM PUBLIC, anon;
+
+GRANT EXECUTE ON FUNCTION
+  public.is_group_member(UUID),
+  public.is_group_admin(UUID),
+  public.owns_group_member(UUID),
+  public.has_pending_invitation(UUID)
+TO authenticated;
 
 -- Entrar em grupo pelo codigo de 6 caracteres.
 --
@@ -209,34 +308,11 @@ BEGIN
 END $$;
 
 -- =====================================================
--- SECAO 3.1: REMOVER POLITICAS PREEXISTENTES
+-- SECAO 3.1: (vazia - subiu para a SECAO 0.1)
 -- =====================================================
--- As policies da SECAO 4 sao dropadas e recriadas pelo nome que este arquivo
--- usa. Isso nao alcanca policy antiga com outro nome (as do painel do Supabase
--- costumam se chamar "Enable read access for all users" e afins).
---
--- Policies permissivas se somam por OR: uma unica policy esquecida com
--- USING (true) em `authenticated` mantem todo usuario logado lendo os dados de
--- todos os outros, mesmo com RLS ligada e com tudo o que vem abaixo aplicado.
--- Pior: a auditoria anonima de scripts/extract-schema.mjs --audit NAO pega esse
--- caso, porque ela testa sem login - passaria verde com o vazamento aberto.
---
--- Entao este arquivo passa a ser a definicao canonica: zera as policies do
--- schema public e recria so o conjunto abaixo. Rode o
--- 000_preflight_inventory.sql antes para ter registro do que existia.
-DO $$
-DECLARE
-  r RECORD;
-BEGIN
-  FOR r IN
-    SELECT schemaname, tablename, policyname
-    FROM pg_policies
-    WHERE schemaname = 'public'
-  LOOP
-    EXECUTE format('DROP POLICY %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
-    RAISE NOTICE 'policy preexistente removida: % em %.%', r.policyname, r.schemaname, r.tablename;
-  END LOOP;
-END $$;
+-- A limpeza das policies preexistentes ficava aqui. Ela precisou subir para
+-- antes da SECAO 1: policy legada que referencia a funcao legada e dependencia,
+-- e travaria o DROP FUNCTION da SECAO 0.2.
 
 -- =====================================================
 -- SECAO 4: POLITICAS
