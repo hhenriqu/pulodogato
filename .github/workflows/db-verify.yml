@@ -8,9 +8,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -58,6 +58,13 @@ jobs:
 
       # O Supabase de verdade ja tem schema auth e roles anon/authenticated;
       # num Postgres cru e preciso recria-los antes.
+      # O bundle de database/validation/ e uma copia gerada das migrations, para
+      # o dono do projeto colar no SQL Editor do Supabase. Copia que sai de
+      # sincronia e pior do que nao ter copia: ele validaria um schema que nao e
+      # mais o nosso e o relatorio sairia verde. O --check nao toca no banco.
+      - name: Bundle de validacao em dia com as migrations
+        run: node scripts/gen-validation-bundle.mjs --check
+
       - name: Shim do Supabase
         run: $PSQL -f database/tests/00_supabase_shim.sql
 
@@ -66,6 +73,13 @@ jobs:
 
       - name: 002_rls_lockdown
         run: $PSQL -f database/migrations/002_rls_lockdown.sql
+
+      # O 002 ligou RLS nas tabelas derivadas, que sao mantidas por trigger --
+      # e trigger roda com o privilegio de quem disparou o comando. Sem o 003
+      # (SECURITY DEFINER) o cadastro de usuario e a aprovacao de divisao
+      # batem na propria RLS e derrubam a transacao. Ver HMO-123 / HMO-125.
+      - name: 003_fix_trigger_privileges
+        run: $PSQL -f database/migrations/003_fix_trigger_privileges.sql
 
       # O teste prova ausencia de vazamento. Uma tabela sem RLS e vazia passaria
       # nele, entao a cobertura e checada separadamente logo abaixo.
@@ -222,10 +236,15 @@ jobs:
           INSERT INTO public.financial_accounts (id, user_id, name, account_type)
             VALUES ('22222222-2222-2222-2222-222222222222',
                     '11111111-1111-1111-1111-111111111111', 'Conta Drill', 'checking');
+          -- service_id e category_id sao NOT NULL em producao; os UUIDs sao os
+          -- do seed de referencia que o 001_baseline.sql carrega.
           INSERT INTO public.financial_transactions
-                 (user_id, account_id, amount, transaction_date, description)
+                 (user_id, account_id, service_id, category_id,
+                  amount, transaction_date, description)
             VALUES ('11111111-1111-1111-1111-111111111111',
                     '22222222-2222-2222-2222-222222222222',
+                    '8730cd96-d656-4c48-863e-673e1016a832',
+                    'b9db286c-ce4f-4fbe-b0bf-f3133185f90f',
                     1234.56, '2026-01-01', 'Transacao do drill');
           SQL
 
@@ -245,4 +264,63 @@ jobs:
             echo "::error::O ciclo de backup/restauracao perdeu dados (esperado 1234.56, obtido '$valor')"
             exit 1
           fi
-          echo "Ciclo completo: o dado atravessou dump, criptografia e restauracao."
+
+          # O dado bruto sobreviver nao basta: o que quebra em silencio e o
+          # DERIVADO. Se a restauracao carregar os dados com os triggers
+          # ligados, update_account_balance roda de novo por cima do saldo que
+          # ja veio no dump e o valor DOBRA (medido: 2469.12). Nada falha, e o
+          # banco restaurado passa a mentir sobre dinheiro. Por isso o
+          # db-restore.sh usa session_replication_role = replica -- e por isso
+          # esta assercao existe.
+          saldo=$(psql "$URL_DESTINO" --no-psqlrc -tAc \
+            "SELECT current_balance FROM public.financial_accounts
+              WHERE id = '22222222-2222-2222-2222-222222222222'")
+          if [ "$saldo" != '1234.56' ]; then
+            echo "::error::Saldo derivado errado apos restaurar (esperado 1234.56, obtido '$saldo')."
+            echo "::error::Sinal classico de trigger reaplicado durante a carga."
+            exit 1
+          fi
+          echo "Ciclo completo: dado bruto e saldo derivado atravessaram o ciclo intactos."
+
+          # ------------------------------------------------------------------
+          # Restaurar por cima de um destino que JA tem contas
+          # ------------------------------------------------------------------
+          # O bloco acima restaura num banco recem-criado, com auth.users vazio.
+          # O caso real e o oposto: restaurar por cima de um projeto que ainda
+          # tem os usuarios. Ate 2026-09-21 isso apagava o schema public e so
+          # ENTAO estourava em "duplicate key ... users_pkey" -- o banco ficava
+          # sem dados e sem contas, pior do que antes de restaurar. Achado
+          # restaurando num Supabase de verdade; aqui vira regressao.
+          echo "== restaurar por cima de destino com contas: tem que recusar"
+          if RESTORE_DB_URL="$URL_DESTINO" BACKUP_PASSPHRASE='ci-drill' \
+               ./scripts/db-restore.sh "$RUNNER_TEMP/drill" > "$RUNNER_TEMP/recusa.log" 2>&1; then
+            echo "::error::A restauracao aceitou um destino que ja tinha contas."
+            exit 1
+          fi
+          grep -q 'ja tem 1 conta' "$RUNNER_TEMP/recusa.log" || {
+            echo "::error::Recusou, mas sem explicar que o destino ja tem contas."
+            cat "$RUNNER_TEMP/recusa.log"; exit 1; }
+
+          # E, o mais importante: tem que ter recusado ANTES de apagar nada.
+          sobrou=$(psql "$URL_DESTINO" --no-psqlrc -tAc "
+            SELECT count(*) FROM public.financial_transactions
+             WHERE description = 'Transacao do drill'")
+          if [ "$sobrou" != '1' ]; then
+            echo "::error::A recusa veio DEPOIS de destruir o public (transacoes: $sobrou)."
+            exit 1
+          fi
+          echo "Recusou sem tocar no destino."
+
+          echo "== o mesmo com RESTORE_AUTH_MODE=merge: tem que passar"
+          RESTORE_AUTH_MODE=merge RESTORE_DB_URL="$URL_DESTINO" BACKUP_PASSPHRASE='ci-drill' \
+            ./scripts/db-restore.sh "$RUNNER_TEMP/drill"
+
+          saldo=$(psql "$URL_DESTINO" --no-psqlrc -tAc \
+            "SELECT current_balance FROM public.financial_accounts
+              WHERE id = '22222222-2222-2222-2222-222222222222'")
+          contas=$(psql "$URL_DESTINO" --no-psqlrc -tAc "SELECT count(*) FROM auth.users")
+          if [ "$saldo" != '1234.56' ] || [ "$contas" != '1' ]; then
+            echo "::error::merge terminou errado (saldo '$saldo', contas '$contas')."
+            exit 1
+          fi
+          echo "merge restaurou por cima das contas existentes sem duplicar nada."

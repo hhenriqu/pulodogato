@@ -44,7 +44,11 @@ DROP TABLE public.user_usage_limits CASCADE;
 -- (c) O indice unico de que o ON CONFLICT de join_group_by_code depende. O
 --     plpgsql nao valida o corpo na criacao: sem esta checagem a falha (42P10)
 --     so apareceria quando alguem entrasse num grupo pelo codigo.
-ALTER TABLE public.group_members DROP CONSTRAINT group_members_group_id_user_id_key;
+--     O nome real em producao e `unique_user_per_group`. O baseline antigo,
+--     reconstruido pela API, tinha inventado o nome que o Postgres geraria
+--     por padrao (`group_members_group_id_user_id_key`) -- a API nao expoe
+--     nome de constraint.
+ALTER TABLE public.group_members DROP CONSTRAINT unique_user_per_group;
 
 DO $$
 BEGIN

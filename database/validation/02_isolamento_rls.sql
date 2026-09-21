@@ -1,4 +1,21 @@
 -- =====================================================
+-- PULODOGATO -- VALIDACAO PASSO 2: um usuario le os dados do outro?
+-- =====================================================
+-- GERADO por scripts/gen-validation-bundle.mjs. Nao edite este arquivo:
+-- a fonte e database/migrations/*.sql e database/tests/rls_isolation_test.sql.
+--
+-- Rode DEPOIS do 01_migrations.sql, no mesmo projeto descartavel.
+--
+-- Cria dois usuarios de mentira, poe dados em cada um e tenta ler os dados de A
+-- com a identidade de B (o mesmo claim que auth.uid() le). Tudo dentro de uma
+-- transacao que termina em ROLLBACK: nao fica nada no banco.
+--
+-- O QUE ESPERAR: uma unica linha "ISOLAMENTO DE RLS: TUDO OK". Se em vez dela vier
+-- erro em vermelho, copie o texto na issue -- a mensagem ja diz qual assercao
+-- falhou e o que era esperado.
+-- =====================================================
+
+-- =====================================================
 -- Teste de isolamento de RLS
 -- =====================================================
 -- Responde a pergunta do escopo da HMO-117: "um usuario consegue ler dados de
@@ -10,8 +27,6 @@
 --
 -- Qualquer FALHA lanca excecao e aborta.
 -- =====================================================
-
-\set ON_ERROR_STOP on
 
 BEGIN;
 
@@ -250,3 +265,7 @@ SELECT pg_temp.expect('anon ainda le as categorias de referencia',
 RESET ROLE;
 
 ROLLBACK;
+
+-- Se esta linha aparecer, nenhuma assercao acima abortou o lote: o teste passou.
+-- Ela roda DEPOIS do ROLLBACK, ou seja, fora da transacao que foi desfeita.
+SELECT 'ISOLAMENTO DE RLS: TUDO OK -- nenhuma assercao falhou, e os fixtures foram desfeitos pelo ROLLBACK' AS resultado;

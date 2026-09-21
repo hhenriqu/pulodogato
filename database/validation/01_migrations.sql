@@ -1,4 +1,78 @@
 -- =====================================================
+-- PULODOGATO -- VALIDACAO PASSO 1: schema do zero
+-- =====================================================
+-- GERADO por scripts/gen-validation-bundle.mjs. Nao edite este arquivo:
+-- a fonte e database/migrations/*.sql e database/tests/rls_isolation_test.sql.
+--
+-- Cole este arquivo inteiro no SQL Editor do projeto Supabase DESCARTAVEL e
+-- rode. Ele aplica 001 -> 002 -> 003 num banco vazio e termina imprimindo uma
+-- tabela de verificacoes.
+--
+-- O QUE FAZER COM O RESULTADO: copie a tabela final (ou tire um print) e cole na
+-- issue HMO-117. Se aparecer erro em vermelho, cole o texto do erro -- e ele que
+-- diz qual migration nao sobe num Supabase de verdade.
+--
+-- NUNCA rode isto no projeto de producao (odxqjvtxsioksguuevqm): as migrations
+-- criam objetos. A guarda abaixo recusa qualquer banco que ja tenha tabelas em
+-- public, o que ja barra producao.
+--
+-- Depois deste, rode o 02_isolamento_rls.sql.
+-- =====================================================
+
+
+-- ---------------------------------------------------------------------------
+-- 0. Guarda: o alvo e mesmo um Supabase descartavel e vazio?
+-- ---------------------------------------------------------------------------
+DO $guarda$
+DECLARE
+  faltando TEXT[] := '{}';
+  ja_existe BIGINT;
+BEGIN
+  IF to_regprocedure('auth.uid()') IS NULL THEN
+    faltando := faltando || 'funcao auth.uid()'::TEXT;
+  END IF;
+  IF to_regclass('auth.users') IS NULL THEN
+    faltando := faltando || 'tabela auth.users'::TEXT;
+  END IF;
+  IF (SELECT count(*) FROM pg_roles
+       WHERE rolname IN ('anon', 'authenticated', 'service_role')) <> 3 THEN
+    faltando := faltando || 'roles anon/authenticated/service_role'::TEXT;
+  END IF;
+  -- O 00_supabase_shim.sql do CI tambem cria auth.uid() e as roles. O que ele
+  -- NAO tem e o auth.users do GoTrue (3 colunas contra ~30). Sem esta linha,
+  -- um Postgres cru + shim passaria na guarda e a validacao viraria uma copia
+  -- mais lenta do CI -- justamente o item que ela existe para fechar.
+  IF (SELECT count(*) FROM information_schema.columns
+       WHERE table_schema = 'auth' AND table_name = 'users'
+         AND column_name IN ('encrypted_password', 'raw_app_meta_data')) <> 2 THEN
+    faltando := faltando || 'auth.users do GoTrue (o alvo parece um Postgres cru)'::TEXT;
+  END IF;
+  IF (SELECT count(*) FROM pg_roles WHERE rolname = 'supabase_auth_admin') <> 1 THEN
+    faltando := faltando || 'role supabase_auth_admin'::TEXT;
+  END IF;
+
+  IF array_length(faltando, 1) IS NOT NULL THEN
+    RAISE EXCEPTION E'O alvo nao parece um projeto Supabase. Faltou: %\n\nRode este arquivo no SQL Editor do projeto Supabase descartavel.',
+      array_to_string(faltando, ', ');
+  END IF;
+
+  SELECT count(*) INTO ja_existe
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname = 'public' AND c.relkind = 'r';
+  IF ja_existe > 0 THEN
+    RAISE EXCEPTION E'O schema public ja tem % tabela(s); a validacao precisa comecar do zero.\n\nSe este e mesmo o projeto DESCARTAVEL (nunca o de producao), limpe com:\n  DROP SCHEMA public CASCADE; CREATE SCHEMA public;\ne rode este arquivo de novo.',
+      ja_existe;
+  END IF;
+END
+$guarda$;
+
+
+-- ---------------------------------------------------------------------------
+-- 1. 001_baseline.sql
+-- ---------------------------------------------------------------------------
+-- Cada migration traz o proprio BEGIN/COMMIT: se uma falhar, ela volta atras
+-- inteira e as seguintes nem chegam a rodar.
+-- =====================================================
 -- PULODOGATO - BASELINE SCHEMA (public)
 -- =====================================================
 -- Migration: 001_baseline
@@ -2348,3 +2422,902 @@ COMMIT;
 -- Sem ele o schema fica sem RLS e qualquer portador da chave anon le e
 -- escreve tudo. Depois, 003_fix_trigger_privileges.sql.
 -- =====================================================
+
+
+-- ---------------------------------------------------------------------------
+-- 2. 002_rls_lockdown.sql
+-- ---------------------------------------------------------------------------
+-- Cada migration traz o proprio BEGIN/COMMIT: se uma falhar, ela volta atras
+-- inteira e as seguintes nem chegam a rodar.
+-- =====================================================
+-- PULODOGATO - RLS LOCKDOWN
+-- =====================================================
+-- Migration: 002_rls_lockdown
+-- Gerado em: 2026-09-18
+--
+-- POR QUE ESTE ARQUIVO EXISTE
+-- ---------------------------
+-- Auditoria de 2026-09-18 contra producao (odxqjvtxsioksguuevqm), usando
+-- SOMENTE a chave anon publica e SEM autenticar:
+--
+--   profiles                2 linhas lidas   (nome, telefone, email, bio)
+--   financial_accounts      8 linhas lidas   (banco, limite, saldo)
+--   financial_transactions  4 linhas lidas   (valor, data, descricao)
+--   expense_groups          6 linhas lidas
+--   group_members           7 linhas lidas
+--   group_expense_splits    5 linhas lidas
+--   group_transactions      3 linhas lidas
+--
+-- E um INSERT anonimo em `profiles` retornou 23505 (duplicate key), nao 42501
+-- (RLS violation) - ou seja, a escrita tambem passa. A chave anon vai embutida
+-- no bundle JS publico, entao isso equivale a um banco aberto na internet.
+--
+-- Este script fecha tudo por padrao e reabre apenas o necessario.
+--
+-- ATENCAO - TESTAR ANTES DE RODAR EM PRODUCAO:
+-- As politicas abaixo foram derivadas dos padroes de acesso do codigo, nao das
+-- politicas reais (que nao foi possivel ler sem credencial de Postgres).
+-- Rode primeiro num projeto Supabase limpo com 001_baseline.sql, exercite o
+-- app, e so depois aplique aqui. Ver database/README.md.
+-- =====================================================
+
+BEGIN;
+
+-- =====================================================
+-- SECAO 0.0: O ARQUIVO CABE NESTE BANCO?
+-- =====================================================
+-- As duas primeiras tentativas de aplicar este arquivo em producao pararam em
+-- deriva - objeto que existe la e nunca passou por aqui - e cada parada custou
+-- um dia, porque so o Helio tem credencial no projeto e o Postgres reporta um
+-- erro por vez: corrige, roda de novo, para no proximo.
+--
+-- Este bloco troca essa fila por uma resposta so. Ele confere de uma vez tudo
+-- que as SECOES 1, 2 e 4 assumem sobre o schema - tabela, coluna, role e a
+-- constraint de que o ON CONFLICT depende - e, se faltar qualquer coisa, aborta
+-- listando o conjunto inteiro antes de tocar em nada.
+--
+-- Por que abortar em vez de pular a policy da tabela que falta: policy que nao
+-- e criada deixa a tabela com RLS ligada e zero policies, ou seja, o app perde
+-- a tela. Preferimos parar com a lista na mao e ajustar este arquivo sabendo o
+-- que producao tem. A transacao inteira volta atras: nada muda no banco.
+--
+-- A Q6 do 000_preflight_inventory.sql e esta mesma verificacao em forma de
+-- SELECT. Rode aquela primeiro: se voltar 0 linhas, este bloco passa.
+DO $$
+DECLARE
+  v_faltando TEXT;
+BEGIN
+  SELECT string_agg(DISTINCT msg, E'\n' ORDER BY msg) INTO v_faltando
+  FROM (
+    -- (a) tabelas e colunas citadas pelas policies da SECAO 4 e pelos corpos
+    -- das funcoes da SECAO 1. As das funcoes entram aqui de proposito: corpo
+    -- de funcao em LANGUAGE SQL/plpgsql nao registra dependencia de coluna, e
+    -- por isso a funcao e criada sem erro e so quebra quando o app a chama.
+    SELECT CASE
+             WHEN to_regclass('public.' || quote_ident(r.tabela)) IS NULL
+               THEN format('  - tabela public.%s nao existe', r.tabela)
+             WHEN NOT EXISTS (
+                    SELECT 1 FROM pg_attribute a
+                    WHERE a.attrelid = to_regclass('public.' || quote_ident(r.tabela))
+                      AND a.attname = r.coluna
+                      AND a.attnum > 0
+                      AND NOT a.attisdropped)
+               THEN format('  - coluna public.%s.%s nao existe', r.tabela, r.coluna)
+           END AS msg
+    FROM (VALUES
+      ('profiles', 'id'), ('profiles', 'is_public'),
+      ('financial_services', 'is_active'),
+      ('transaction_categories', 'is_active'),
+      ('financial_accounts', 'user_id'),
+      ('financial_transactions', 'id'), ('financial_transactions', 'user_id'),
+      ('financial_transactions', 'group_id'),
+      ('transaction_installments', 'user_id'),
+      ('expense_groups', 'id'), ('expense_groups', 'name'),
+      ('expense_groups', 'created_by'), ('expense_groups', 'group_code'),
+      ('expense_groups', 'group_type'), ('expense_groups', 'is_active'),
+      ('group_members', 'id'), ('group_members', 'group_id'),
+      ('group_members', 'user_id'), ('group_members', 'role'),
+      ('group_members', 'status'), ('group_members', 'updated_at'),
+      ('group_transactions', 'id'), ('group_transactions', 'group_id'),
+      ('group_transactions', 'created_by'),
+      ('group_expense_splits', 'member_id'),
+      ('group_expense_splits', 'group_transaction_id'),
+      ('group_member_proportions', 'group_id'),
+      ('group_invitations', 'group_id'), ('group_invitations', 'invited_by'),
+      ('group_invitations', 'invited_user_id'), ('group_invitations', 'status'),
+      ('group_invitations', 'expires_at'),
+      ('expense_splits', 'participant_id'), ('expense_splits', 'transaction_id'),
+      ('user_balances', 'creditor_id'), ('user_balances', 'debtor_id'),
+      ('user_subscriptions', 'user_id'),
+      ('user_usage_limits', 'user_id')
+    ) AS r(tabela, coluna)
+
+    UNION ALL
+
+    -- (b) as roles do Supabase que a SECAO 2 revoga e concede
+    SELECT format('  - role %s nao existe neste banco', r.rolname)
+    FROM (VALUES ('anon'), ('authenticated')) AS r(rolname)
+    WHERE NOT EXISTS (SELECT 1 FROM pg_roles g WHERE g.rolname = r.rolname)
+
+    UNION ALL
+
+    -- (c) o ON CONFLICT (group_id, user_id) de join_group_by_code precisa de um
+    -- indice unico exatamente nessas duas colunas. Sem ele a funcao e criada
+    -- sem reclamar (plpgsql nao valida o corpo) e quebra na primeira entrada em
+    -- grupo por codigo, com 42P10 - ou seja, em producao, no usuario.
+    SELECT '  - falta indice/constraint UNIQUE em public.group_members (group_id, user_id), '
+           'que o ON CONFLICT de join_group_by_code exige'
+    WHERE to_regclass('public.group_members') IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM pg_index i
+        WHERE i.indrelid = to_regclass('public.group_members')
+          AND i.indisunique
+          AND i.indnkeyatts = 2
+          AND (SELECT array_agg(a.attname::TEXT ORDER BY a.attname)
+                 FROM unnest(i.indkey::SMALLINT[]) k
+                 JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k)
+              = ARRAY['group_id', 'user_id'])
+  ) x
+  WHERE msg IS NOT NULL;
+
+  IF v_faltando IS NOT NULL THEN
+    RAISE EXCEPTION E'o 002 nao cabe no schema deste banco - nada foi alterado.\nFaltando:\n%\n\nMande esta lista inteira no HMO-120: o arquivo sera ajustado de uma vez, sem mais uma rodada de tentativa e erro.',
+      v_faltando
+      USING ERRCODE = '42703';
+  END IF;
+
+  RAISE NOTICE 'pre-requisitos de schema conferidos: o 002 cabe neste banco';
+END $$;
+
+-- =====================================================
+-- SECAO 0: ZERAR O ESTADO LEGADO (policies + funcoes)
+-- =====================================================
+-- Producao tem objetos que nunca passaram por este repositorio. Duas variedades
+-- de deriva quebram a aplicacao, e as duas sao tratadas aqui, antes de tudo.
+--
+-- (a) POLICIES COM OUTRO NOME
+-- As policies da SECAO 4 sao dropadas e recriadas pelo nome que este arquivo
+-- usa. Isso nao alcanca policy antiga com outro nome (as do painel do Supabase
+-- costumam se chamar "Enable read access for all users" e afins).
+-- Policies permissivas se somam por OR: uma unica policy esquecida com
+-- USING (true) em `authenticated` mantem todo usuario logado lendo os dados de
+-- todos os outros, mesmo com RLS ligada e com tudo o que vem abaixo aplicado.
+-- Pior: a auditoria anonima de scripts/extract-schema.mjs --audit NAO pega esse
+-- caso, porque ela testa sem login - passaria verde com o vazamento aberto.
+--
+-- (b) FUNCOES AUXILIARES COM OUTRA ASSINATURA
+-- Producao ja tem uma `is_group_member` de outra safra. CREATE OR REPLACE so
+-- substitui a funcao de assinatura identica, entao a antiga sobrevive ao lado
+-- da nova e toda chamada `is_group_member(group_id)` na SECAO 4 passa a ter
+-- dois candidatos:
+--     ERROR: 42725: function public.is_group_member(uuid) is not unique
+-- (foi exatamente onde a primeira tentativa de aplicacao parou, em 2026-09-21).
+-- Manter a antiga tambem nao serve: ela e SECURITY DEFINER com regra de
+-- visibilidade desconhecida, e passaria a decidir quem ve o que. Entao este
+-- arquivo vira a definicao canonica dos dois conjuntos: zera e recria.
+--
+-- A ORDEM IMPORTA: as policies saem primeiro, porque uma policy que referencia
+-- a funcao antiga e uma dependencia e faria o DROP FUNCTION falhar.
+--
+-- Rode o 000_preflight_inventory.sql antes para ter registro do que existia.
+
+-- 0.1: remover TODAS as policies do schema public
+DO $$
+DECLARE
+  r RECORD;
+BEGIN
+  FOR r IN
+    SELECT schemaname, tablename, policyname
+    FROM pg_policies
+    WHERE schemaname = 'public'
+  LOOP
+    EXECUTE format('DROP POLICY %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+    RAISE NOTICE 'policy preexistente removida: % em %.%', r.policyname, r.schemaname, r.tablename;
+  END LOOP;
+END $$;
+
+-- 0.2: remover qualquer versao anterior das funcoes que a SECAO 1 recria,
+-- seja qual for a assinatura.
+--
+-- Sem CASCADE de proposito. Se sobrar objeto dependente que este arquivo nao
+-- conhece (uma view, um trigger, uma constraint), o DROP falha, a transacao
+-- inteira volta atras e nada em producao muda - que e o desfecho certo. Nesse
+-- caso o texto do erro diz qual e o objeto: mande a mensagem no HMO-120.
+DO $$
+DECLARE
+  r RECORD;
+BEGIN
+  FOR r IN
+    -- ::TEXT ja aqui: depois do DROP o regprocedure nao resolve mais o nome e
+    -- a NOTICE sairia com o OID cru, que nao serve de registro.
+    SELECT p.oid::regprocedure::TEXT AS assinatura
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public'
+      AND p.proname IN (
+        'is_group_member',
+        'is_group_admin',
+        'owns_group_member',
+        'has_pending_invitation',
+        'join_group_by_code'
+      )
+  LOOP
+    EXECUTE format('DROP FUNCTION %s', r.assinatura);
+    RAISE NOTICE 'funcao preexistente removida: %', r.assinatura;
+  END LOOP;
+END $$;
+
+-- =====================================================
+-- SECAO 1: FUNCOES AUXILIARES
+-- =====================================================
+-- SECURITY DEFINER de proposito: sem isso, uma policy de group_members que
+-- consulta group_members entra em recursao infinita (erro 42P17).
+
+CREATE OR REPLACE FUNCTION public.is_group_member(p_group_id UUID)
+RETURNS BOOLEAN
+LANGUAGE SQL
+SECURITY DEFINER
+SET search_path = public
+STABLE
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.group_members
+    WHERE group_id = p_group_id
+      AND user_id = auth.uid()
+      AND status = 'active'
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_group_admin(p_group_id UUID)
+RETURNS BOOLEAN
+LANGUAGE SQL
+SECURITY DEFINER
+SET search_path = public
+STABLE
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.group_members
+    WHERE group_id = p_group_id
+      AND user_id = auth.uid()
+      AND role = 'admin'
+      AND status = 'active'
+  );
+$$;
+
+-- Dono da linha de group_members (usado por splits/proporcoes)
+CREATE OR REPLACE FUNCTION public.owns_group_member(p_member_id UUID)
+RETURNS BOOLEAN
+LANGUAGE SQL
+SECURITY DEFINER
+SET search_path = public
+STABLE
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.group_members
+    WHERE id = p_member_id AND user_id = auth.uid()
+  );
+$$;
+
+-- Convite pendente e valido endereçado a quem esta chamando
+CREATE OR REPLACE FUNCTION public.has_pending_invitation(p_group_id UUID)
+RETURNS BOOLEAN
+LANGUAGE SQL
+SECURITY DEFINER
+SET search_path = public
+STABLE
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.group_invitations
+    WHERE group_id = p_group_id
+      AND invited_user_id = auth.uid()
+      AND status = 'pending'
+      AND (expires_at IS NULL OR expires_at > NOW())
+  );
+$$;
+
+-- ACL explicita das auxiliares. Ate agora elas nasciam com CREATE OR REPLACE,
+-- que preserva a ACL existente; como a SECAO 0.2 passou a dropa-las, cada uma
+-- renasce com o padrao do Postgres (EXECUTE para PUBLIC, o que inclui `anon`).
+-- Sao SECURITY DEFINER: quem executa le group_members ignorando RLS. Para anon
+-- o resultado e sempre falso (auth.uid() e NULL), mas nao ha motivo para expor.
+-- As policies da SECAO 4 chamam estas funcoes como `authenticated`, e avaliacao
+-- de policy exige EXECUTE - por isso o GRANT abaixo nao e opcional.
+REVOKE ALL ON FUNCTION
+  public.is_group_member(UUID),
+  public.is_group_admin(UUID),
+  public.owns_group_member(UUID),
+  public.has_pending_invitation(UUID)
+FROM PUBLIC, anon;
+
+GRANT EXECUTE ON FUNCTION
+  public.is_group_member(UUID),
+  public.is_group_admin(UUID),
+  public.owns_group_member(UUID),
+  public.has_pending_invitation(UUID)
+TO authenticated;
+
+-- Entrar em grupo pelo codigo de 6 caracteres.
+--
+-- Precisa ser SECURITY DEFINER: a checagem de autorizacao aqui e "conhece o
+-- group_code", e isso nao da pra expressar numa policy de RLS - o INSERT em
+-- group_members so carrega o group_id, nao o codigo. Sem esta funcao, a policy
+-- teria que liberar auto-insercao em qualquer grupo (bastaria descobrir o UUID
+-- para virar membro e passar a ler as transacoes do grupo).
+-- Nota: a busca do grupo pelo codigo TAMBEM precisa estar aqui dentro. A policy
+-- de SELECT de expense_groups so mostra grupos em que voce ja esta - quem esta
+-- entrando ainda nao esta, entao um SELECT pelo codigo feito pelo app voltaria
+-- vazio. Grupo publico entra como 'active'; privado entra como 'pending', que e
+-- a regra que app/api/expense-groups/join/route.ts ja aplicava.
+CREATE OR REPLACE FUNCTION public.join_group_by_code(p_group_code TEXT)
+RETURNS TABLE (group_id UUID, group_name TEXT, member_status TEXT)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+-- use_column: as colunas de saida (group_id, ...) tem o mesmo nome de colunas
+-- de group_members. Sem esta diretiva, o ON CONFLICT abaixo nao compila
+-- ("column reference group_id is ambiguous").
+#variable_conflict use_column
+DECLARE
+  v_group   public.expense_groups%ROWTYPE;
+  v_status  TEXT;
+  v_current TEXT;
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'nao autenticado' USING ERRCODE = '28000';
+  END IF;
+
+  SELECT * INTO v_group
+  FROM public.expense_groups
+  WHERE group_code = UPPER(p_group_code) AND is_active = TRUE;
+
+  IF v_group.id IS NULL THEN
+    RAISE EXCEPTION 'grupo nao encontrado' USING ERRCODE = 'no_data_found';
+  END IF;
+
+  -- alias obrigatorio: sem ele, `group_id` colide com a coluna de saida da
+  -- funcao (RETURNS TABLE) e o Postgres recusa com "column reference ambiguous".
+  SELECT gm.status INTO v_current
+  FROM public.group_members gm
+  WHERE gm.group_id = v_group.id
+    AND gm.user_id = auth.uid();
+
+  IF v_current IN ('active', 'pending') THEN
+    RAISE EXCEPTION 'ja e membro (%)', v_current USING ERRCODE = 'unique_violation';
+  END IF;
+
+  v_status := CASE WHEN v_group.group_type = 'public' THEN 'active' ELSE 'pending' END;
+
+  INSERT INTO public.group_members AS gm (group_id, user_id, role, status)
+  VALUES (v_group.id, auth.uid(), 'member', v_status)
+  ON CONFLICT (group_id, user_id)
+  DO UPDATE SET status = v_status, updated_at = NOW();
+
+  RETURN QUERY SELECT v_group.id, v_group.name, v_status;
+END $$;
+
+REVOKE ALL ON FUNCTION public.join_group_by_code(TEXT) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.join_group_by_code(TEXT) TO authenticated;
+
+-- =====================================================
+-- SECAO 2: REVOGAR PRIVILEGIOS DE TABELA DO ANON
+-- =====================================================
+-- RLS so protege se a role tambem nao tiver privilegio amplo. Hoje `anon`
+-- tem SELECT/INSERT/UPDATE/DELETE nas tabelas de dados.
+
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon;
+
+GRANT USAGE ON SCHEMA public TO anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO authenticated;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated;
+
+-- Tabelas de referencia continuam legiveis sem login (o app usa na tela de
+-- cadastro de transacao antes de resolver a sessao).
+GRANT SELECT ON public.financial_services TO anon;
+GRANT SELECT ON public.transaction_categories TO anon;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon;
+
+-- =====================================================
+-- SECAO 3: HABILITAR RLS EM TODAS AS TABELAS
+-- =====================================================
+-- Percorre o catalogo em vez de listar tabela por tabela: uma lista fixa
+-- deixaria de fora qualquer tabela criada em producao que nao esteja no
+-- 001_baseline.sql, e e justamente essa que passaria despercebida. Assim a
+-- migracao cobre exatamente o mesmo conjunto que a query de verificacao de
+-- pg_class no fim do arquivo.
+DO $$
+DECLARE
+  r RECORD;
+BEGIN
+  FOR r IN
+    SELECT c.relname
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public'
+      AND c.relkind = 'r'
+      AND NOT c.relrowsecurity
+  LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', r.relname);
+    RAISE NOTICE 'RLS habilitada em public.%', r.relname;
+  END LOOP;
+END $$;
+
+-- =====================================================
+-- SECAO 3.1: (vazia - subiu para a SECAO 0.1)
+-- =====================================================
+-- A limpeza das policies preexistentes ficava aqui. Ela precisou subir para
+-- antes da SECAO 1: policy legada que referencia a funcao legada e dependencia,
+-- e travaria o DROP FUNCTION da SECAO 0.2.
+
+-- =====================================================
+-- SECAO 4: POLITICAS
+-- =====================================================
+
+-- ---------- profiles ----------
+DROP POLICY IF EXISTS profiles_select_own_or_public ON public.profiles;
+CREATE POLICY profiles_select_own_or_public ON public.profiles
+  FOR SELECT TO authenticated
+  USING (id = auth.uid() OR is_public = TRUE);
+
+DROP POLICY IF EXISTS profiles_insert_own ON public.profiles;
+CREATE POLICY profiles_insert_own ON public.profiles
+  FOR INSERT TO authenticated
+  WITH CHECK (id = auth.uid());
+
+DROP POLICY IF EXISTS profiles_update_own ON public.profiles;
+CREATE POLICY profiles_update_own ON public.profiles
+  FOR UPDATE TO authenticated
+  USING (id = auth.uid()) WITH CHECK (id = auth.uid());
+
+-- Sem policy de DELETE: perfil some junto com auth.users (ON DELETE CASCADE).
+
+-- ---------- tabelas de referencia (somente leitura) ----------
+DROP POLICY IF EXISTS financial_services_read ON public.financial_services;
+CREATE POLICY financial_services_read ON public.financial_services
+  FOR SELECT TO anon, authenticated USING (is_active = TRUE);
+
+DROP POLICY IF EXISTS transaction_categories_read ON public.transaction_categories;
+CREATE POLICY transaction_categories_read ON public.transaction_categories
+  FOR SELECT TO anon, authenticated USING (is_active = TRUE);
+
+-- ---------- financial_accounts ----------
+DROP POLICY IF EXISTS financial_accounts_own ON public.financial_accounts;
+CREATE POLICY financial_accounts_own ON public.financial_accounts
+  FOR ALL TO authenticated
+  USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+-- ---------- financial_transactions ----------
+-- Dono sempre; membros do grupo so leem o que foi compartilhado no grupo.
+DROP POLICY IF EXISTS financial_transactions_select ON public.financial_transactions;
+CREATE POLICY financial_transactions_select ON public.financial_transactions
+  FOR SELECT TO authenticated
+  USING (
+    user_id = auth.uid()
+    OR (group_id IS NOT NULL AND public.is_group_member(group_id))
+  );
+
+DROP POLICY IF EXISTS financial_transactions_write ON public.financial_transactions;
+CREATE POLICY financial_transactions_write ON public.financial_transactions
+  FOR INSERT TO authenticated WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS financial_transactions_update ON public.financial_transactions;
+CREATE POLICY financial_transactions_update ON public.financial_transactions
+  FOR UPDATE TO authenticated
+  USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS financial_transactions_delete ON public.financial_transactions;
+CREATE POLICY financial_transactions_delete ON public.financial_transactions
+  FOR DELETE TO authenticated USING (user_id = auth.uid());
+
+-- ---------- transaction_installments ----------
+DROP POLICY IF EXISTS transaction_installments_own ON public.transaction_installments;
+CREATE POLICY transaction_installments_own ON public.transaction_installments
+  FOR ALL TO authenticated
+  USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+-- ---------- expense_groups ----------
+DROP POLICY IF EXISTS expense_groups_select ON public.expense_groups;
+CREATE POLICY expense_groups_select ON public.expense_groups
+  FOR SELECT TO authenticated
+  USING (created_by = auth.uid() OR public.is_group_member(id));
+
+DROP POLICY IF EXISTS expense_groups_insert ON public.expense_groups;
+CREATE POLICY expense_groups_insert ON public.expense_groups
+  FOR INSERT TO authenticated WITH CHECK (created_by = auth.uid());
+
+DROP POLICY IF EXISTS expense_groups_update ON public.expense_groups;
+CREATE POLICY expense_groups_update ON public.expense_groups
+  FOR UPDATE TO authenticated
+  USING (public.is_group_admin(id)) WITH CHECK (public.is_group_admin(id));
+
+DROP POLICY IF EXISTS expense_groups_delete ON public.expense_groups;
+CREATE POLICY expense_groups_delete ON public.expense_groups
+  FOR DELETE TO authenticated USING (created_by = auth.uid());
+
+-- ---------- group_members ----------
+DROP POLICY IF EXISTS group_members_select ON public.group_members;
+CREATE POLICY group_members_select ON public.group_members
+  FOR SELECT TO authenticated
+  USING (user_id = auth.uid() OR public.is_group_member(group_id));
+
+-- Entrar num grupo exige convite pendente, ou ser admin do grupo. Entrar pelo
+-- codigo passa por public.join_group_by_code(), nao por INSERT direto.
+DROP POLICY IF EXISTS group_members_insert ON public.group_members;
+CREATE POLICY group_members_insert ON public.group_members
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    public.is_group_admin(group_id)
+    OR (user_id = auth.uid() AND public.has_pending_invitation(group_id))
+  );
+
+DROP POLICY IF EXISTS group_members_update ON public.group_members;
+CREATE POLICY group_members_update ON public.group_members
+  FOR UPDATE TO authenticated
+  USING (user_id = auth.uid() OR public.is_group_admin(group_id))
+  WITH CHECK (user_id = auth.uid() OR public.is_group_admin(group_id));
+
+DROP POLICY IF EXISTS group_members_delete ON public.group_members;
+CREATE POLICY group_members_delete ON public.group_members
+  FOR DELETE TO authenticated
+  USING (user_id = auth.uid() OR public.is_group_admin(group_id));
+
+-- ---------- group_transactions ----------
+DROP POLICY IF EXISTS group_transactions_select ON public.group_transactions;
+CREATE POLICY group_transactions_select ON public.group_transactions
+  FOR SELECT TO authenticated USING (public.is_group_member(group_id));
+
+DROP POLICY IF EXISTS group_transactions_insert ON public.group_transactions;
+CREATE POLICY group_transactions_insert ON public.group_transactions
+  FOR INSERT TO authenticated
+  WITH CHECK (created_by = auth.uid() AND public.is_group_member(group_id));
+
+DROP POLICY IF EXISTS group_transactions_modify ON public.group_transactions;
+CREATE POLICY group_transactions_modify ON public.group_transactions
+  FOR UPDATE TO authenticated
+  USING (created_by = auth.uid() OR public.is_group_admin(group_id))
+  WITH CHECK (created_by = auth.uid() OR public.is_group_admin(group_id));
+
+DROP POLICY IF EXISTS group_transactions_delete ON public.group_transactions;
+CREATE POLICY group_transactions_delete ON public.group_transactions
+  FOR DELETE TO authenticated
+  USING (created_by = auth.uid() OR public.is_group_admin(group_id));
+
+-- ---------- group_expense_splits ----------
+DROP POLICY IF EXISTS group_expense_splits_select ON public.group_expense_splits;
+CREATE POLICY group_expense_splits_select ON public.group_expense_splits
+  FOR SELECT TO authenticated
+  USING (
+    public.owns_group_member(member_id)
+    OR EXISTS (
+      SELECT 1 FROM public.group_transactions gt
+      WHERE gt.id = group_transaction_id AND public.is_group_member(gt.group_id)
+    )
+  );
+
+DROP POLICY IF EXISTS group_expense_splits_write ON public.group_expense_splits;
+CREATE POLICY group_expense_splits_write ON public.group_expense_splits
+  FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM public.group_transactions gt
+    WHERE gt.id = group_transaction_id AND public.is_group_member(gt.group_id)
+  ));
+
+-- Cada membro aprova/comenta a propria divisao; admin do grupo ajusta qualquer uma.
+DROP POLICY IF EXISTS group_expense_splits_update ON public.group_expense_splits;
+CREATE POLICY group_expense_splits_update ON public.group_expense_splits
+  FOR UPDATE TO authenticated
+  USING (
+    public.owns_group_member(member_id)
+    OR EXISTS (
+      SELECT 1 FROM public.group_transactions gt
+      WHERE gt.id = group_transaction_id AND public.is_group_admin(gt.group_id)
+    )
+  )
+  WITH CHECK (
+    public.owns_group_member(member_id)
+    OR EXISTS (
+      SELECT 1 FROM public.group_transactions gt
+      WHERE gt.id = group_transaction_id AND public.is_group_admin(gt.group_id)
+    )
+  );
+
+DROP POLICY IF EXISTS group_expense_splits_delete ON public.group_expense_splits;
+CREATE POLICY group_expense_splits_delete ON public.group_expense_splits
+  FOR DELETE TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM public.group_transactions gt
+    WHERE gt.id = group_transaction_id AND public.is_group_admin(gt.group_id)
+  ));
+
+-- ---------- group_member_proportions ----------
+DROP POLICY IF EXISTS group_member_proportions_select ON public.group_member_proportions;
+CREATE POLICY group_member_proportions_select ON public.group_member_proportions
+  FOR SELECT TO authenticated USING (public.is_group_member(group_id));
+
+DROP POLICY IF EXISTS group_member_proportions_write ON public.group_member_proportions;
+CREATE POLICY group_member_proportions_write ON public.group_member_proportions
+  FOR ALL TO authenticated
+  USING (public.is_group_admin(group_id)) WITH CHECK (public.is_group_admin(group_id));
+
+-- ---------- group_invitations ----------
+-- Convidado ve o proprio convite; admin do grupo ve e gerencia os do grupo.
+DROP POLICY IF EXISTS group_invitations_select ON public.group_invitations;
+CREATE POLICY group_invitations_select ON public.group_invitations
+  FOR SELECT TO authenticated
+  USING (
+    invited_user_id = auth.uid()
+    OR invited_by = auth.uid()
+    OR public.is_group_admin(group_id)
+  );
+
+DROP POLICY IF EXISTS group_invitations_insert ON public.group_invitations;
+CREATE POLICY group_invitations_insert ON public.group_invitations
+  FOR INSERT TO authenticated
+  WITH CHECK (invited_by = auth.uid() AND public.is_group_admin(group_id));
+
+DROP POLICY IF EXISTS group_invitations_update ON public.group_invitations;
+CREATE POLICY group_invitations_update ON public.group_invitations
+  FOR UPDATE TO authenticated
+  USING (invited_user_id = auth.uid() OR public.is_group_admin(group_id))
+  WITH CHECK (invited_user_id = auth.uid() OR public.is_group_admin(group_id));
+
+DROP POLICY IF EXISTS group_invitations_delete ON public.group_invitations;
+CREATE POLICY group_invitations_delete ON public.group_invitations
+  FOR DELETE TO authenticated USING (public.is_group_admin(group_id));
+
+-- ---------- expense_splits ----------
+DROP POLICY IF EXISTS expense_splits_select ON public.expense_splits;
+CREATE POLICY expense_splits_select ON public.expense_splits
+  FOR SELECT TO authenticated
+  USING (
+    participant_id = auth.uid()
+    OR EXISTS (
+      SELECT 1 FROM public.financial_transactions ft
+      WHERE ft.id = transaction_id AND ft.user_id = auth.uid()
+    )
+  );
+
+DROP POLICY IF EXISTS expense_splits_insert ON public.expense_splits;
+CREATE POLICY expense_splits_insert ON public.expense_splits
+  FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM public.financial_transactions ft
+    WHERE ft.id = transaction_id AND ft.user_id = auth.uid()
+  ));
+
+DROP POLICY IF EXISTS expense_splits_update ON public.expense_splits;
+CREATE POLICY expense_splits_update ON public.expense_splits
+  FOR UPDATE TO authenticated
+  USING (
+    participant_id = auth.uid()
+    OR EXISTS (
+      SELECT 1 FROM public.financial_transactions ft
+      WHERE ft.id = transaction_id AND ft.user_id = auth.uid()
+    )
+  )
+  WITH CHECK (
+    participant_id = auth.uid()
+    OR EXISTS (
+      SELECT 1 FROM public.financial_transactions ft
+      WHERE ft.id = transaction_id AND ft.user_id = auth.uid()
+    )
+  );
+
+DROP POLICY IF EXISTS expense_splits_delete ON public.expense_splits;
+CREATE POLICY expense_splits_delete ON public.expense_splits
+  FOR DELETE TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM public.financial_transactions ft
+    WHERE ft.id = transaction_id AND ft.user_id = auth.uid()
+  ));
+
+-- ---------- user_balances ----------
+-- Saldo e derivado; so leitura pelo app. Recalculo roda com service_role.
+DROP POLICY IF EXISTS user_balances_select ON public.user_balances;
+CREATE POLICY user_balances_select ON public.user_balances
+  FOR SELECT TO authenticated
+  USING (creditor_id = auth.uid() OR debtor_id = auth.uid());
+
+-- ---------- user_subscriptions ----------
+-- Leitura propria apenas. Alteracao de plano NAO pode sair do cliente.
+DROP POLICY IF EXISTS user_subscriptions_select ON public.user_subscriptions;
+CREATE POLICY user_subscriptions_select ON public.user_subscriptions
+  FOR SELECT TO authenticated USING (user_id = auth.uid());
+
+REVOKE INSERT, UPDATE, DELETE ON public.user_subscriptions FROM authenticated;
+
+-- ---------- user_usage_limits ----------
+DROP POLICY IF EXISTS user_usage_limits_select ON public.user_usage_limits;
+CREATE POLICY user_usage_limits_select ON public.user_usage_limits
+  FOR SELECT TO authenticated USING (user_id = auth.uid());
+
+REVOKE INSERT, UPDATE, DELETE ON public.user_usage_limits FROM authenticated;
+
+COMMIT;
+
+-- =====================================================
+-- VERIFICACAO POS-APLICACAO
+-- =====================================================
+-- 1) Nenhuma tabela pode ficar sem RLS:
+--
+--   SELECT relname FROM pg_class c
+--   JOIN pg_namespace n ON n.oid = c.relnamespace
+--   WHERE n.nspname = 'public' AND c.relkind = 'r' AND NOT c.relrowsecurity;
+--   -- deve retornar 0 linhas
+--
+-- 2) Repetir a auditoria anonima (deve dar 0 linhas em tudo, menos nas duas
+--    tabelas de referencia):
+--
+--   node scripts/extract-schema.mjs --audit
+-- =====================================================
+
+
+-- ---------------------------------------------------------------------------
+-- 3. 003_fix_trigger_privileges.sql
+-- ---------------------------------------------------------------------------
+-- Cada migration traz o proprio BEGIN/COMMIT: se uma falhar, ela volta atras
+-- inteira e as seguintes nem chegam a rodar.
+-- =====================================================
+-- 003 - CORRIGE OS TRIGGERS QUEBRADOS PELA RLS DO 002
+-- =====================================================
+-- Encontrado em 2026-09-21 (HMO-123) lendo o banco de producao pela primeira
+-- vez, com o papel de leitura `paperclip_ro`.
+--
+-- O 002 ligou RLS nas tabelas derivadas e deu a elas SO policy de SELECT.
+-- A intencao estava certa: user_balances, user_subscriptions, user_usage_limits
+-- e subscription_history sao escritas pelo sistema, nunca pelo usuario.
+--
+-- O que passou batido e que quem faz essa escrita sao TRIGGERS, e os triggers
+-- rodam com os privilegios de quem disparou a instrucao -- `authenticated`.
+-- Entao eles batem na RLS da propria tabela que deveriam manter e derrubam a
+-- transacao inteira do usuario.
+--
+-- Duas quebras confirmadas, ambas alcancaveis pelo app hoje:
+--
+--   1. Cadastro de usuario. `lib/hooks/useAuth.ts:101` insere em `profiles`
+--      com o JWT do usuario -> trigger `create_user_subscription_trigger` ->
+--      `create_free_subscription` tenta INSERT em `user_subscriptions`, onde
+--      `authenticated` nao tem nem o grant de INSERT -> "permission denied".
+--      A transacao inteira reverte: o usuario fica em auth.users mas sem
+--      profile, sem assinatura e sem limites. E `useAuth.ts:106` so faz
+--      console.error, entao o cadastro ainda parece ter dado certo na tela.
+--
+--   2. Aprovar uma divisao de despesa. `app/api/personal-finance/splits/route.ts:173`
+--      faz UPDATE em `expense_splits` para status='approved' -> trigger
+--      `update_balances_trigger` -> `update_user_balances` tenta INSERT em
+--      `user_balances`, que so tem policy de SELECT -> violacao de RLS -> 500.
+--
+-- Uma terceira funcao tem o mesmo defeito mas nao esta quebrada hoje:
+-- `update_usage_limits_on_plan_change` so dispara em UPDATE de
+-- `user_subscriptions`, e `authenticated` nao tem grant de UPDATE ali -- so o
+-- `service_role` muda plano, e ele tem BYPASSRLS. Fica corrigida junto porque
+-- o dia em que existir troca de plano self-service ela quebra igual, e porque
+-- o UPDATE dela em `user_usage_limits` falha do jeito pior: sob RLS um UPDATE
+-- sem policy nao da erro, so afeta zero linhas. Os limites ficariam
+-- silenciosamente errados.
+--
+-- A correcao e SECURITY DEFINER, nao policy de escrita nova: abrir INSERT/UPDATE
+-- dessas tabelas para `authenticated` desfaria exatamente o que o 002 quis
+-- fazer -- um usuario poderia forjar o proprio saldo ou o proprio plano.
+-- SECURITY DEFINER mantem a tabela fechada para o usuario e deixa so o codigo
+-- do trigger escrever.
+--
+-- `SET search_path` em cada funcao e obrigatorio junto com SECURITY DEFINER:
+-- sem isso um objeto plantado num schema que venha antes no search_path do
+-- chamador seria executado com os privilegios do dono da funcao.
+
+BEGIN;
+
+-- 1. Cadastro: cria assinatura free e limites de uso.
+ALTER FUNCTION public.create_free_subscription()
+  SECURITY DEFINER
+  SET search_path = public, pg_temp;
+
+-- 2. Aprovacao de divisao: mantem o saldo entre credor e devedor.
+ALTER FUNCTION public.update_user_balances()
+  SECURITY DEFINER
+  SET search_path = public, pg_temp;
+
+-- 3. Troca de plano: ajusta limites e grava o historico.
+ALTER FUNCTION public.update_usage_limits_on_plan_change()
+  SECURITY DEFINER
+  SET search_path = public, pg_temp;
+
+-- SECURITY DEFINER faz a funcao rodar como o dono dela. Estas sao chamadas
+-- so por trigger, entao ninguem precisa de EXECUTE direto: revogar de PUBLIC
+-- evita que virem uma porta para escrever nas tabelas derivadas fora do fluxo
+-- do trigger.
+REVOKE EXECUTE ON FUNCTION public.create_free_subscription() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.update_user_balances() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.update_usage_limits_on_plan_change() FROM PUBLIC;
+
+COMMIT;
+
+-- =====================================================
+-- VERIFICACAO (rodar depois do COMMIT)
+-- =====================================================
+-- Deve voltar as tres funcoes com prosecdef = true:
+--
+--   SELECT p.proname, p.prosecdef, p.proconfig
+--   FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+--   WHERE n.nspname = 'public'
+--     AND p.proname IN ('create_free_subscription', 'update_user_balances',
+--                       'update_usage_limits_on_plan_change');
+--
+-- E `scripts/db-introspect.sh` (passo 7/7) deve voltar a imprimir
+-- "ok: nenhum trigger escrevendo em tabela sem policy de escrita".
+--
+-- =====================================================
+-- O QUE ESTA MIGRATION NAO RESOLVE
+-- =====================================================
+-- Os usuarios que se cadastraram enquanto o bug estava em producao ficaram
+-- sem profile/assinatura/limites. Corrigir os triggers nao cria essas linhas
+-- retroativamente -- isso e backfill e esta separado, na issue filha do HMO-123,
+-- porque precisa primeiro medir quantos usuarios em auth.users nao tem profile.
+
+
+-- ---------------------------------------------------------------------------
+-- 4. Relatorio -- ESTA e a tabela para copiar de volta na issue
+-- ---------------------------------------------------------------------------
+WITH sem_rls AS (
+  SELECT coalesce(string_agg(c.relname, ', ' ORDER BY c.relname), '') AS v
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname = 'public' AND c.relkind = 'r' AND NOT c.relrowsecurity
+), anon_extra AS (
+  -- A chave anon vai embutida no bundle JS publico: privilegio dela alem das
+  -- duas tabelas de referencia e dado aberto na internet.
+  SELECT coalesce(string_agg(DISTINCT table_name, ', '), '') AS v
+    FROM information_schema.role_table_grants
+   WHERE grantee = 'anon' AND table_schema = 'public'
+     AND table_name NOT IN ('financial_services', 'transaction_categories')
+), sem_definer AS (
+  SELECT coalesce(string_agg(p.proname, ', ' ORDER BY p.proname), '') AS v
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'public' AND NOT p.prosecdef
+     AND p.proname IN ('create_free_subscription', 'update_user_balances',
+                       'update_usage_limits_on_plan_change')
+), contagem AS (
+  SELECT
+    (SELECT count(*) FROM public.financial_services)      AS servicos,
+    (SELECT count(*) FROM public.transaction_categories)  AS categorias,
+    (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relkind = 'r')     AS tabelas,
+    (SELECT count(*) FROM pg_policies WHERE schemaname = 'public') AS policies,
+    (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'public')                         AS funcoes,
+    (SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal) AS triggers
+), linhas AS (
+  SELECT r.*
+    FROM sem_rls, anon_extra, sem_definer, contagem,
+    LATERAL (VALUES
+      (1, 'todas as tabelas de public com RLS ligada',
+          CASE WHEN sem_rls.v = '' THEN 'OK' ELSE 'FALHA' END,
+          coalesce(nullif(sem_rls.v, ''), 'nenhuma tabela sem RLS')),
+      (2, 'anon limitada as 2 tabelas de referencia',
+          CASE WHEN anon_extra.v = '' THEN 'OK' ELSE 'FALHA' END,
+          coalesce(nullif(anon_extra.v, ''), 'nenhum privilegio sobrando')),
+      (3, 'seed financial_services = 3',
+          CASE WHEN contagem.servicos = 3 THEN 'OK' ELSE 'FALHA' END,
+          contagem.servicos::text),
+      (4, 'seed transaction_categories = 12',
+          CASE WHEN contagem.categorias = 12 THEN 'OK' ELSE 'FALHA' END,
+          contagem.categorias::text),
+      (5, 'as 3 funcoes de trigger com SECURITY DEFINER (003)',
+          CASE WHEN sem_definer.v = '' THEN 'OK' ELSE 'FALHA' END,
+          coalesce(nullif(sem_definer.v, ''), 'as 3 estao SECURITY DEFINER')),
+      (6, 'inventario do que subiu', 'INFO',
+          contagem.tabelas || ' tabelas, ' || contagem.policies || ' policies, ' ||
+          contagem.funcoes || ' funcoes, ' || contagem.triggers || ' triggers')
+    ) AS r(ord, verificacao, status, detalhe)
+)
+SELECT ord AS "#", verificacao, status, detalhe FROM linhas
+UNION ALL
+SELECT 9, 'VEREDITO (migrations)',
+       CASE WHEN count(*) FILTER (WHERE status = 'FALHA') = 0 THEN 'TUDO OK' ELSE 'FALHOU' END,
+       count(*) FILTER (WHERE status = 'FALHA')::text || ' falha(s) em ' ||
+       count(*) FILTER (WHERE status <> 'INFO')::text || ' verificacoes'
+  FROM linhas
+ORDER BY 1;
