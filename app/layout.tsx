@@ -19,8 +19,22 @@ export const viewport: Viewport = {
   ],
 };
 
+// Base das URLs absolutas (Open Graph, manifest, icones).
+// Sem isso, um deploy na Vercel anuncia "http://localhost:3000" nas metatags.
+// Ordem: dominio explicito > dominio de producao da Vercel > URL do deploy
+// atual (preview) > local. As VERCEL_* sao injetadas no build e vem sem esquema.
+function resolveSiteUrl(): string {
+  if (process.env.NEXT_PUBLIC_URL) return process.env.NEXT_PUBLIC_URL;
+
+  const vercelHost =
+    process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL;
+  if (vercelHost) return `https://${vercelHost}`;
+
+  return "http://localhost:3000";
+}
+
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_URL || "http://localhost:3000"),
+  metadataBase: new URL(resolveSiteUrl()),
   title: {
     default: "Pulo do Gato - Investimentos",
     template: "%s | Pulo do Gato",

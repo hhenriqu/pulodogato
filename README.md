@@ -225,20 +225,13 @@ O aplicativo funciona como uma Progressive Web App:
 
 ## 🌐 Deploy
 
-### Vercel (Recomendado)
+O destino é a Vercel. O passo a passo — variáveis de ambiente, configuração do
+Supabase Auth e verificação pós-deploy — está em
+[docs/DEPLOY_VERCEL.md](docs/DEPLOY_VERCEL.md).
 
-1. Conecte o repositório ao Vercel
-2. Configure as variáveis de ambiente
-3. Deploy automático
-
-### Outras plataformas
-
-O projeto é compatível com qualquer plataforma que suporte Next.js:
-
-- Netlify
-- Railway
-- Heroku
-- AWS Amplify
+**Hoje a aplicação roda apenas em `localhost`.** Não há ambiente de produção no
+ar. O `deploy.sh` e o `docker-compose.yml` são de um caminho de VPS que nunca
+chegou a subir; continuam no repositório, mas não deploiam nada.
 
 ## 📝 Licença
 
