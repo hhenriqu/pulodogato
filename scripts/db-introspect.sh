@@ -172,6 +172,55 @@ else
   echo "    ok: nenhum trigger escrevendo em tabela sem policy de escrita"
 fi
 
+echo "==> 7b/7 triggers em SECURITY INVOKER que encostam em tabela com RLS"
+# O passo 7 acima so pega um caso: escrita em tabela que nao tem NENHUMA policy
+# de escrita. O HMO-125 mostrou, rodando os fluxos de verdade, que ele da "ok"
+# com dois bugs vivos -- porque duas outras formas de quebrar nao aparecem ali:
+#
+#   1. LEITURA bloqueada. `calculate_split_amount` nao escreve em tabela
+#      fechada: ele LE `financial_transactions`, que o participante nao enxerga.
+#      O SELECT ... INTO volta vazio, deixa NEW.amount NULL e a transacao morre
+#      no NOT NULL. O passo 7 so olha INSERT/UPDATE/DELETE, entao nao ve.
+#
+#   2. Policy que EXISTE mas nao passa. `add_group_creator` escreve em
+#      `group_members`, que tem policy de INSERT -- o passo 7 considera isso
+#      resolvido. So que a policy exige `is_group_admin(group_id)`, que consulta
+#      a propria `group_members`: quando o trigger roda o criador ainda nao e
+#      membro, e a checagem e circular.
+#
+# Nao da para decidir isso por catalogo -- se a policy passa ou nao depende de
+# quem chamou e do estado da linha. Entao aqui o criterio e mais grosso de
+# proposito: lista toda funcao de trigger em SECURITY INVOKER que mencione
+# qualquer tabela com RLS, tirando as que ja foram exercitadas como
+# `authenticated` e passaram (HMO-125, scripts/hmo125-audit-triggers.sql).
+# Serve como lista de revisao: o que aparecer aqui e trigger novo ou alterado
+# que ainda nao foi testado sob RLS.
+psql_ro -Atc "
+  SELECT DISTINCT p.proname || ' (trigger em ' || c.relname || ') menciona ' || w.relname
+  FROM pg_trigger t
+  JOIN pg_class c ON c.oid = t.tgrelid
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  JOIN pg_proc p ON p.oid = t.tgfoid
+  JOIN pg_class w ON w.relkind = 'r' AND w.relrowsecurity
+  JOIN pg_namespace wn ON wn.oid = w.relnamespace AND wn.nspname = 'public'
+  WHERE n.nspname = 'public' AND NOT t.tgisinternal AND NOT p.prosecdef
+    AND p.prosrc ~* ('\\m' || w.relname || '\\M')
+    AND p.proname NOT IN (
+      -- verificadas sob RLS no HMO-125: passam como \`authenticated\`
+      'update_updated_at_column',      -- so seta NEW.updated_at
+      'set_group_code',                -- le expense_groups so para achar codigo livre
+      'auto_create_group_transaction', -- escreve em tabelas do proprio grupo
+      'sync_transaction_with_group',   -- idem
+      'calculate_equal_split',         -- le group_members/financial_transactions do grupo
+      'update_account_balance'         -- atualiza conta do proprio usuario
+    )
+  ORDER BY 1;" | tee "$OUT/trigger-rls-invoker-review.txt"
+if [[ -s "$OUT/trigger-rls-invoker-review.txt" ]]; then
+  echo "    ATENCAO: $(wc -l < "$OUT/trigger-rls-invoker-review.txt") trigger(s) em SECURITY INVOKER nunca testados sob RLS. Ver HMO-125." >&2
+else
+  echo "    ok: nenhum trigger em SECURITY INVOKER pendente de revisao"
+fi
+
 echo
 echo "Saida em: $OUT"
 echo "Proximo passo: diff contra database/migrations/001_baseline.sql (HMO-123 Parte C item 5)."
