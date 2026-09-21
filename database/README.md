@@ -5,11 +5,14 @@ Projeto Supabase: `odxqjvtxsioksguuevqm`.
 ```
 database/
 ├── migrations/
-│   ├── 001_baseline.sql      schema + seed de referencia
-│   └── 002_rls_lockdown.sql  RLS, privilegios e RPCs  (OBRIGATORIO)
+│   ├── 000_preflight_inventory.sql  inventario somente leitura, roda antes
+│   ├── 001_baseline.sql             schema + seed de referencia
+│   └── 002_rls_lockdown.sql         RLS, privilegios e RPCs  (OBRIGATORIO)
 ├── tests/
-│   ├── 00_supabase_shim.sql    auth.uid() e roles, so para Postgres cru
-│   └── rls_isolation_test.sql  prova que um usuario nao le dados de outro
+│   ├── 00_supabase_shim.sql             auth.uid() e roles, so para Postgres cru
+│   ├── rls_isolation_test.sql           prova que um usuario nao le dados de outro
+│   ├── legacy_policy_drift_test.sql     policy antiga de producao tem que sumir
+│   └── legacy_function_drift_test.sql   funcao antiga de producao tem que sumir
 └── README.md
 ```
 
@@ -39,6 +42,26 @@ onde sobrescrever `auth.uid()` quebraria a autenticacao inteira.
 Ressalva que continua de pe: validado em Postgres puro, **nao** num projeto
 Supabase limpo de verdade. Extensoes, roles extras e o GoTrue nao foram
 exercitados.
+
+### Deriva de producao
+
+Banco limpo nao e producao. Producao tem objeto que nunca passou por este
+repositorio, e cada variedade ja quebrou a aplicacao uma vez:
+
+```bash
+# policy criada pelo painel do Supabase, com outro nome (USING (true) vaza
+# dados entre usuarios logados e a auditoria anonima passa verde)
+psql "$DB_URL" -f database/tests/legacy_policy_drift_test.sql
+
+# funcao auxiliar de outra safra, com assinatura diferente: o CREATE OR REPLACE
+# nao a substitui e as policies param com 42725 "function is not unique"
+psql "$DB_URL" -f database/tests/legacy_function_drift_test.sql
+```
+
+Os dois plantam a deriva num banco que tem so o `001` e exigem que o `002` a
+elimine — por isso rodam **sem** o `002` aplicado antes. A SECAO 0 do `002` e
+quem faz essa limpeza, e nela a ordem e obrigatoria: policies primeiro, funcoes
+depois (policy que usa a funcao antiga e dependencia e travaria o DROP).
 
 ---
 

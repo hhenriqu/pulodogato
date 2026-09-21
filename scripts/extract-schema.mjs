@@ -47,14 +47,29 @@ async function anonRowCount(table) {
     headers: { ...H, Prefer: "count=exact", Range: "0-0" },
   });
   if (res.status === 404) return { missing: true };
+
+  // Privilegio negado e a resposta que queremos: `anon` sem SELECT na tabela.
+  // Separar este caso de "li e vieram 0 linhas" importa - so ele prova que a
+  // tabela esta protegida; zero linhas pode ser so uma tabela vazia.
+  if (res.status === 401 || res.status === 403) return { denied: true };
+  const corpo = res.ok ? null : await res.text().catch(() => "");
+  if (corpo && corpo.includes('"42501"')) return { denied: true };
+
+  // Qualquer outra falha nao e veredito: sem isso, um projeto pausado ou uma
+  // chave trocada devolveriam count=NaN, que nao e > 0 e passava como "ok".
+  if (!res.ok) return { erro: `HTTP ${res.status} ${(corpo || "").slice(0, 120)}` };
+
   const cr = res.headers.get("content-range") || "";
   const total = cr.split("/")[1];
+  if (total === undefined) return { erro: "resposta 2xx sem content-range" };
   return { count: total === "*" ? 0 : Number(total) };
 }
 
 async function audit() {
   console.log("Auditoria de RLS - requisicoes ANONIMAS (sem login)\n");
   let leaks = 0;
+  let erros = 0;
+  let ambiguas = 0;
   for (const t of TABLES) {
     const r = await anonRowCount(t);
     if (r.missing) {
@@ -62,23 +77,46 @@ async function audit() {
       continue;
     }
     const expected = PUBLIC_BY_DESIGN.has(t);
+
+    if (r.erro) {
+      erros++;
+      console.log(`  ${t.padEnd(26)} ${"?".padStart(5)}          INCONCLUSIVO  ${r.erro}`);
+      continue;
+    }
+    if (r.denied) {
+      // Veredito positivo: `anon` nao tem privilegio na tabela.
+      const tag = expected ? "BLOQUEADA (deveria ser publica)" : "bloqueada (42501)";
+      if (expected) leaks++; // tabela de referencia inacessivel quebra o app
+      console.log(`  ${t.padEnd(26)} ${"-".padStart(5)}          ${tag}`);
+      continue;
+    }
+
     const bad = r.count > 0 && !expected;
     if (bad) leaks++;
-    const tag = bad ? "VAZAMENTO" : expected ? "ok (publica de proposito)" : "ok";
+    if (!bad && !expected && r.count === 0) ambiguas++;
+    const tag = bad ? "VAZAMENTO" : expected ? "ok (publica de proposito)" : "0 linhas (ver ressalva)";
     console.log(`  ${t.padEnd(26)} ${String(r.count).padStart(5)} linhas  ${tag}`);
   }
-  console.log(
-    leaks === 0
-      ? "\nOK: nenhuma tabela de dados legivel sem autenticacao."
-      : `\nFALHA: ${leaks} tabela(s) legiveis sem autenticacao.`
-  );
-  console.log(
-    "\nRessalva: uma tabela vazia aparece como 'ok' mesmo sem RLS - 0 linhas\n" +
-    "pode significar protegida OU so vazia. Este teste prova vazamento,\n" +
-    "nao prova protecao. A prova de protecao e a query de pg_class no fim\n" +
-    "de database/migrations/002_rls_lockdown.sql."
-  );
-  return leaks === 0 ? 0 : 1;
+
+  if (erros > 0) {
+    console.log(`\nFALHA: ${erros} tabela(s) sem veredito - a auditoria nao pode concluir nada.`);
+  } else {
+    console.log(
+      leaks === 0
+        ? "\nOK: nenhuma tabela de dados legivel sem autenticacao."
+        : `\nFALHA: ${leaks} tabela(s) com problema de acesso anonimo.`
+    );
+  }
+
+  if (ambiguas > 0) {
+    console.log(
+      `\nRessalva: ${ambiguas} tabela(s) responderam 200 com 0 linhas. Isso pode ser\n` +
+      "protecao OU so tabela vazia - este teste prova vazamento, nao prova\n" +
+      "protecao. A prova esta em 'bloqueada (42501)' acima e na query de\n" +
+      "pg_class no fim de database/migrations/002_rls_lockdown.sql."
+    );
+  }
+  return erros === 0 && leaks === 0 ? 0 : 1;
 }
 
 async function columnsFromRows(table) {
