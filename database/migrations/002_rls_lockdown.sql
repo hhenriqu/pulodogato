@@ -33,6 +33,113 @@
 BEGIN;
 
 -- =====================================================
+-- SECAO 0.0: O ARQUIVO CABE NESTE BANCO?
+-- =====================================================
+-- As duas primeiras tentativas de aplicar este arquivo em producao pararam em
+-- deriva - objeto que existe la e nunca passou por aqui - e cada parada custou
+-- um dia, porque so o Helio tem credencial no projeto e o Postgres reporta um
+-- erro por vez: corrige, roda de novo, para no proximo.
+--
+-- Este bloco troca essa fila por uma resposta so. Ele confere de uma vez tudo
+-- que as SECOES 1, 2 e 4 assumem sobre o schema - tabela, coluna, role e a
+-- constraint de que o ON CONFLICT depende - e, se faltar qualquer coisa, aborta
+-- listando o conjunto inteiro antes de tocar em nada.
+--
+-- Por que abortar em vez de pular a policy da tabela que falta: policy que nao
+-- e criada deixa a tabela com RLS ligada e zero policies, ou seja, o app perde
+-- a tela. Preferimos parar com a lista na mao e ajustar este arquivo sabendo o
+-- que producao tem. A transacao inteira volta atras: nada muda no banco.
+--
+-- A Q6 do 000_preflight_inventory.sql e esta mesma verificacao em forma de
+-- SELECT. Rode aquela primeiro: se voltar 0 linhas, este bloco passa.
+DO $$
+DECLARE
+  v_faltando TEXT;
+BEGIN
+  SELECT string_agg(DISTINCT msg, E'\n' ORDER BY msg) INTO v_faltando
+  FROM (
+    -- (a) tabelas e colunas citadas pelas policies da SECAO 4 e pelos corpos
+    -- das funcoes da SECAO 1. As das funcoes entram aqui de proposito: corpo
+    -- de funcao em LANGUAGE SQL/plpgsql nao registra dependencia de coluna, e
+    -- por isso a funcao e criada sem erro e so quebra quando o app a chama.
+    SELECT CASE
+             WHEN to_regclass('public.' || quote_ident(r.tabela)) IS NULL
+               THEN format('  - tabela public.%s nao existe', r.tabela)
+             WHEN NOT EXISTS (
+                    SELECT 1 FROM pg_attribute a
+                    WHERE a.attrelid = to_regclass('public.' || quote_ident(r.tabela))
+                      AND a.attname = r.coluna
+                      AND a.attnum > 0
+                      AND NOT a.attisdropped)
+               THEN format('  - coluna public.%s.%s nao existe', r.tabela, r.coluna)
+           END AS msg
+    FROM (VALUES
+      ('profiles', 'id'), ('profiles', 'is_public'),
+      ('financial_services', 'is_active'),
+      ('transaction_categories', 'is_active'),
+      ('financial_accounts', 'user_id'),
+      ('financial_transactions', 'id'), ('financial_transactions', 'user_id'),
+      ('financial_transactions', 'group_id'),
+      ('transaction_installments', 'user_id'),
+      ('expense_groups', 'id'), ('expense_groups', 'name'),
+      ('expense_groups', 'created_by'), ('expense_groups', 'group_code'),
+      ('expense_groups', 'group_type'), ('expense_groups', 'is_active'),
+      ('group_members', 'id'), ('group_members', 'group_id'),
+      ('group_members', 'user_id'), ('group_members', 'role'),
+      ('group_members', 'status'), ('group_members', 'updated_at'),
+      ('group_transactions', 'id'), ('group_transactions', 'group_id'),
+      ('group_transactions', 'created_by'),
+      ('group_expense_splits', 'member_id'),
+      ('group_expense_splits', 'group_transaction_id'),
+      ('group_member_proportions', 'group_id'),
+      ('group_invitations', 'group_id'), ('group_invitations', 'invited_by'),
+      ('group_invitations', 'invited_user_id'), ('group_invitations', 'status'),
+      ('group_invitations', 'expires_at'),
+      ('expense_splits', 'participant_id'), ('expense_splits', 'transaction_id'),
+      ('user_balances', 'creditor_id'), ('user_balances', 'debtor_id'),
+      ('user_subscriptions', 'user_id'),
+      ('user_usage_limits', 'user_id')
+    ) AS r(tabela, coluna)
+
+    UNION ALL
+
+    -- (b) as roles do Supabase que a SECAO 2 revoga e concede
+    SELECT format('  - role %s nao existe neste banco', r.rolname)
+    FROM (VALUES ('anon'), ('authenticated')) AS r(rolname)
+    WHERE NOT EXISTS (SELECT 1 FROM pg_roles g WHERE g.rolname = r.rolname)
+
+    UNION ALL
+
+    -- (c) o ON CONFLICT (group_id, user_id) de join_group_by_code precisa de um
+    -- indice unico exatamente nessas duas colunas. Sem ele a funcao e criada
+    -- sem reclamar (plpgsql nao valida o corpo) e quebra na primeira entrada em
+    -- grupo por codigo, com 42P10 - ou seja, em producao, no usuario.
+    SELECT '  - falta indice/constraint UNIQUE em public.group_members (group_id, user_id), '
+           'que o ON CONFLICT de join_group_by_code exige'
+    WHERE to_regclass('public.group_members') IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM pg_index i
+        WHERE i.indrelid = to_regclass('public.group_members')
+          AND i.indisunique
+          AND i.indnkeyatts = 2
+          AND (SELECT array_agg(a.attname::TEXT ORDER BY a.attname)
+                 FROM unnest(i.indkey::SMALLINT[]) k
+                 JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k)
+              = ARRAY['group_id', 'user_id'])
+  ) x
+  WHERE msg IS NOT NULL;
+
+  IF v_faltando IS NOT NULL THEN
+    RAISE EXCEPTION E'o 002 nao cabe no schema deste banco - nada foi alterado.\nFaltando:\n%\n\nMande esta lista inteira no HMO-120: o arquivo sera ajustado de uma vez, sem mais uma rodada de tentativa e erro.',
+      v_faltando
+      USING ERRCODE = '42703';
+  END IF;
+
+  RAISE NOTICE 'pre-requisitos de schema conferidos: o 002 cabe neste banco';
+END $$;
+
+-- =====================================================
 -- SECAO 0: ZERAR O ESTADO LEGADO (policies + funcoes)
 -- =====================================================
 -- Producao tem objetos que nunca passaram por este repositorio. Duas variedades
