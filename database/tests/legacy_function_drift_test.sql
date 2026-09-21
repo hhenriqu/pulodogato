@@ -136,19 +136,26 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO public.financial_accounts (id, user_id, name, account_type) VALUES
   ('a0000000-0000-0000-0000-0000000000a1', 'aaaaaaaa-0000-0000-0000-000000000001', 'Conta A', 'checking');
 
-INSERT INTO public.financial_transactions (id, user_id, account_id, amount, transaction_date, description) VALUES
+-- service_id e category_id sao NOT NULL em producao; faltavam no baseline
+-- reconstruido pela API. Os UUIDs sao os do seed de referencia.
+INSERT INTO public.financial_transactions
+  (id, user_id, account_id, service_id, category_id, amount, transaction_date, description) VALUES
   ('a0000000-0000-0000-0000-0000000000a2', 'aaaaaaaa-0000-0000-0000-000000000001',
-   'a0000000-0000-0000-0000-0000000000a1', 100.00, '2026-01-01', 'Racha do A');
+   'a0000000-0000-0000-0000-0000000000a1',
+   '8730cd96-d656-4c48-863e-673e1016a832', 'b9db286c-ce4f-4fbe-b0bf-f3133185f90f',
+   100.00, '2026-01-01', 'Racha do A');
 
 INSERT INTO public.expense_groups (id, name, created_by) VALUES
   ('a0000000-0000-0000-0000-0000000000a3', 'Grupo do A', 'aaaaaaaa-0000-0000-0000-000000000001');
 
+-- O admin (o criador) ja entrou pelo trigger add_group_creator_trigger, que
+-- passou a existir com o baseline extraido por pg_dump. So o B e inserido.
 INSERT INTO public.group_members (group_id, user_id, role, status) VALUES
-  ('a0000000-0000-0000-0000-0000000000a3', 'aaaaaaaa-0000-0000-0000-000000000001', 'admin', 'active'),
   ('a0000000-0000-0000-0000-0000000000a3', 'bbbbbbbb-0000-0000-0000-000000000002', 'member', 'pending');
 
-INSERT INTO public.group_transactions (group_id, transaction_id, created_by) VALUES
-  ('a0000000-0000-0000-0000-0000000000a3', 'a0000000-0000-0000-0000-0000000000a2',
+-- split_type e NOT NULL com CHECK em ('equal','percentage','custom').
+INSERT INTO public.group_transactions (group_id, transaction_id, split_type, created_by) VALUES
+  ('a0000000-0000-0000-0000-0000000000a3', 'a0000000-0000-0000-0000-0000000000a2', 'equal',
    'aaaaaaaa-0000-0000-0000-000000000001');
 
 -- Personificacao como no legacy_policy_drift_test.sql: SET LOCAL dentro de uma

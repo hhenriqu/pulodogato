@@ -28,15 +28,25 @@ INSERT INTO public.financial_accounts (id, user_id, name, account_type) VALUES
   ('a0000000-0000-0000-0000-0000000000a1', 'aaaaaaaa-0000-0000-0000-000000000001', 'Conta A', 'checking'),
   ('b0000000-0000-0000-0000-0000000000b1', 'bbbbbbbb-0000-0000-0000-000000000002', 'Conta B', 'checking');
 
-INSERT INTO public.financial_transactions (id, user_id, account_id, amount, transaction_date, description) VALUES
-  ('a0000000-0000-0000-0000-0000000000a2', 'aaaaaaaa-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-0000000000a1', 100.00, '2026-01-01', 'Segredo do A'),
-  ('b0000000-0000-0000-0000-0000000000b2', 'bbbbbbbb-0000-0000-0000-000000000002', 'b0000000-0000-0000-0000-0000000000b1', 200.00, '2026-01-01', 'Segredo do B');
+-- service_id e category_id sao NOT NULL em producao. O baseline reconstruido
+-- pela API PostgREST tinha as duas como nulavel, e este fixture nascera sem
+-- elas; o baseline extraido por pg_dump (2026-09-21) reintroduziu a
+-- constraint e o INSERT passou a falhar. Os UUIDs abaixo sao os do seed de
+-- referencia, que o 001_baseline.sql carrega.
+INSERT INTO public.financial_transactions
+  (id, user_id, account_id, service_id, category_id, amount, transaction_date, description) VALUES
+  ('a0000000-0000-0000-0000-0000000000a2', 'aaaaaaaa-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-0000000000a1',
+   '8730cd96-d656-4c48-863e-673e1016a832', 'b9db286c-ce4f-4fbe-b0bf-f3133185f90f', 100.00, '2026-01-01', 'Segredo do A'),
+  ('b0000000-0000-0000-0000-0000000000b2', 'bbbbbbbb-0000-0000-0000-000000000002', 'b0000000-0000-0000-0000-0000000000b1',
+   '8730cd96-d656-4c48-863e-673e1016a832', 'b9db286c-ce4f-4fbe-b0bf-f3133185f90f', 200.00, '2026-01-01', 'Segredo do B');
 
--- Grupo privado so do A
+-- Grupo privado so do A.
+-- O membro admin NAO e inserido aqui: o trigger add_group_creator_trigger faz
+-- isso sozinho. O baseline antigo nao tinha trigger nenhum, entao este teste
+-- inseria a mao; com o baseline extraido por pg_dump o INSERT manual passou a
+-- colidir com unique_user_per_group. A assercao logo abaixo cobre o trigger.
 INSERT INTO public.expense_groups (id, name, created_by) VALUES
   ('a0000000-0000-0000-0000-0000000000a3', 'Grupo do A', 'aaaaaaaa-0000-0000-0000-000000000001');
-INSERT INTO public.group_members (group_id, user_id, role, status) VALUES
-  ('a0000000-0000-0000-0000-0000000000a3', 'aaaaaaaa-0000-0000-0000-000000000001', 'admin', 'active');
 
 CREATE OR REPLACE FUNCTION pg_temp.expect(label TEXT, got BIGINT, want BIGINT)
 RETURNS VOID LANGUAGE plpgsql AS $$
@@ -46,6 +56,18 @@ BEGIN
   END IF;
   RAISE NOTICE 'ok: % (%)', label, got;
 END $$;
+
+-- O trigger add_group_creator_trigger entrou no versionamento junto com o
+-- baseline extraido por pg_dump. Sem ele o criador do grupo fica de fora de
+-- group_members e perde o proprio grupo na tela seguinte -- e, como as
+-- policies de grupo do 002 passam por is_group_member(), perde tambem o
+-- acesso via RLS. Vale uma assercao propria.
+SELECT pg_temp.expect('trigger poe o criador como admin do grupo',
+  (SELECT count(*) FROM public.group_members
+    WHERE group_id = 'a0000000-0000-0000-0000-0000000000a3'
+      AND user_id  = 'aaaaaaaa-0000-0000-0000-000000000001'
+      AND role     = 'admin'
+      AND status   = 'active'), 1);
 
 -- =====================================================
 -- Vira o usuario B
@@ -124,10 +146,15 @@ RESET ROLE;
 -- O caminho legitimo continua funcionando
 -- =====================================================
 -- (1) com convite pendente, B entra
-INSERT INTO public.group_invitations (group_id, invited_user_id, invited_by, status, expires_at)
+-- invite_method e invite_target sao NOT NULL em producao, e invite_method tem
+-- CHECK em ('email','phone','code','request'). As duas colunas faltavam no
+-- baseline reconstruido pela API, entao este fixture nascera sem elas.
+INSERT INTO public.group_invitations
+  (group_id, invited_user_id, invited_by, invite_method, invite_target, status, expires_at)
 VALUES ('a0000000-0000-0000-0000-0000000000a3',
         'bbbbbbbb-0000-0000-0000-000000000002',
         'aaaaaaaa-0000-0000-0000-000000000001',
+        'email', 'b@test.local',
         'pending', NOW() + INTERVAL '7 days');
 
 SET LOCAL ROLE authenticated;

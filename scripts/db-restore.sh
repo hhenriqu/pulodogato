@@ -75,6 +75,18 @@ if ! "${PSQL[@]}" -tAc "SELECT to_regprocedure('auth.uid()') IS NOT NULL" | grep
   "${PSQL[@]}" -f "$(dirname "$0")/../database/tests/00_supabase_shim.sql"
 fi
 
+# O Supabase instala as extensoes num schema `extensions`, e duas colunas
+# (group_invitations.id e schema_migrations.id) tem
+# `DEFAULT extensions.uuid_generate_v4()` gravado no catalogo -- ou seja, o
+# dump de producao vem com essa referencia dentro do CREATE TABLE. Num destino
+# limpo esse schema nao existe e a restauracao para em 3F000 logo na primeira
+# das duas tabelas. Fica fora do `if` do shim de proposito: um destino pode ter
+# `auth` (e pular o shim) e mesmo assim nao ter `extensions`.
+echo "==> extensoes"
+"${PSQL[@]}" -c 'CREATE SCHEMA IF NOT EXISTS extensions;' \
+             -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA extensions;' \
+             -c 'CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;'
+
 echo "==> estrutura"
 "${PSQL_MUDO[@]}" -f "$SCHEMA_SQL"
 
@@ -86,8 +98,24 @@ else
   echo "AVISO: backup sem auth.users -- as linhas de public vao ficar sem dono." >&2
 fi
 
-echo "==> dados"
-abrir "$DEST/$STAMP-data.sql" | "${PSQL_MUDO[@]}"
+# `session_replication_role = replica` desliga os triggers de usuario durante a
+# carga. Nao e otimizacao, e correcao -- por dois motivos:
+#
+#  1. As tabelas derivadas (user_balances, financial_accounts.current_balance,
+#     user_subscriptions, user_usage_limits) JA VEM no dump, com o valor certo.
+#     Com os triggers ligados, reinserir as transacoes recalcularia tudo POR
+#     CIMA do que acabou de ser restaurado: saldo dobrado, assinatura duplicada.
+#  2. O dump do pg_dump roda com `search_path = ''`, e ha funcao de trigger que
+#     referencia tabela sem qualificar (update_account_balance -> UPDATE
+#     financial_accounts). Com o trigger ativo a carga para em 42P01.
+#
+# O `SET` entra no mesmo fluxo do psql de proposito: precisa ser a mesma sessao
+# que carrega os dados. Volta para `origin` logo depois, no mesmo processo.
+echo "==> dados (triggers desligados durante a carga)"
+{ echo 'SET session_replication_role = replica;'
+  abrir "$DEST/$STAMP-data.sql"
+  echo 'SET session_replication_role = origin;'
+} | "${PSQL_MUDO[@]}"
 
 echo
 echo "==> conferencia"
