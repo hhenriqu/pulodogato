@@ -49,10 +49,10 @@ export PGCONNECT_TIMEOUT=15
 # arquivo de saida vazio que passa despercebido no diff.
 psql_ro() { psql "$DB_URL" -v ON_ERROR_STOP=1 "$@"; }
 
-echo "==> 1/6 smoke test"
+echo "==> 1/7 smoke test"
 psql_ro -Atc 'select current_user, current_database(), version()'
 
-echo "==> 2/6 tabelas sem RLS (verificacao do 002; deve vir vazio)"
+echo "==> 2/7 tabelas sem RLS (verificacao do 002; deve vir vazio)"
 psql_ro -Atc "
   SELECT relname FROM pg_class c
   JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -64,30 +64,48 @@ else
   echo "    ok: nenhuma tabela sem RLS"
 fi
 
-echo "==> 3/6 policies reais de public"
+echo "==> 3/7 policies reais de public"
 psql_ro -c "
   SELECT tablename, policyname, cmd, roles, qual, with_check
   FROM pg_policies WHERE schemaname = 'public'
   ORDER BY tablename, policyname;" > "$OUT/pg_policies.txt"
 
 # Versao normalizada, uma policy por linha, para diff estavel entre execucoes.
+# `qual` e `with_check` vem do pg_get_expr com quebras de linha e indentacao
+# (um EXISTS(...) ocupa 3 linhas), entao e preciso achatar: sem isso uma policy
+# ocupa varias linhas e `wc -l` deixa de contar policies. Na primeira execucao
+# real isso reportou "60 policies" onde existiam 40.
 psql_ro -Atc "
   SELECT tablename || '|' || policyname || '|' || cmd || '|' ||
-         array_to_string(roles, ',') || '|' || coalesce(qual, '') || '|' ||
-         coalesce(with_check, '')
+         array_to_string(roles, ',') || '|' ||
+         regexp_replace(coalesce(qual, ''), '\s+', ' ', 'g') || '|' ||
+         regexp_replace(coalesce(with_check, ''), '\s+', ' ', 'g')
   FROM pg_policies WHERE schemaname = 'public'
   ORDER BY tablename, policyname;" > "$OUT/pg_policies.tsv"
-echo "    $(wc -l < "$OUT/pg_policies.tsv") policies"
+echo "    $(psql_ro -Atc "SELECT count(*) FROM pg_policies WHERE schemaname = 'public'") policies"
 
-echo "==> 4/6 grants de authenticated/anon"
+echo "==> 4/7 grants de authenticated/anon"
+# NAO usar information_schema.role_table_grants aqui. Essa view so mostra as
+# linhas em que o usuario atual e o grantor, o grantee, ou membro do grantee.
+# O paperclip_ro nao e nada disso em relacao a anon/authenticated, entao a view
+# volta VAZIA -- e um arquivo vazio aqui nao parece erro, parece resposta
+# ("nenhum grant"), que e a conclusao oposta da verdade. Aconteceu na primeira
+# execucao real (2026-09-21). O pg_class.relacl nao tem esse filtro.
 psql_ro -c "
-  SELECT table_name, grantee, string_agg(privilege_type, ',' ORDER BY privilege_type) AS privs
-  FROM information_schema.role_table_grants
-  WHERE table_schema = 'public' AND grantee IN ('anon', 'authenticated')
-  GROUP BY table_name, grantee
-  ORDER BY table_name, grantee;" > "$OUT/grants.txt"
+  SELECT c.relname AS table_name, a.grantee::regrole::text AS grantee,
+         string_agg(a.privilege_type, ',' ORDER BY a.privilege_type) AS privs
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  CROSS JOIN LATERAL aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) a
+  WHERE n.nspname = 'public' AND c.relkind = 'r'
+    AND a.grantee::regrole::text IN ('anon', 'authenticated')
+  GROUP BY 1, 2 ORDER BY 1, 2;" > "$OUT/grants.txt"
+if ! grep -q 'authenticated' "$OUT/grants.txt"; then
+  echo "    ATENCAO: nenhum grant de authenticated encontrado -- suspeite da query," >&2
+  echo "             nao do banco. O app nao funcionaria sem esses grants." >&2
+fi
 
-echo "==> 5/6 policies de storage/auth (escopo mais_auth do HMO-123)"
+echo "==> 5/7 policies de storage/auth (escopo mais_auth do HMO-123)"
 # pg_policies vem do pg_catalog e e legivel por qualquer papel -- esta secao
 # funciona mesmo sem nenhum grant em storage/auth. E por isso que auditar as
 # policies de storage NAO exigia ampliar o escopo.
@@ -99,7 +117,7 @@ psql_ro -Atc "
   SELECT count(*) FROM pg_policies WHERE schemaname IN ('storage', 'auth');" \
   | xargs -I{} echo "    {} policies em storage/auth"
 
-echo "==> 6/6 pg_dump --schema-only"
+echo "==> 6/7 pg_dump --schema-only"
 # --no-owner/--no-acl: o paperclip_ro nao e dono de nada, entao as linhas de
 # ownership sairiam erradas e poluiriam o diff contra o 001_baseline.sql.
 pg_dump "$DB_URL" \
@@ -115,6 +133,43 @@ if pg_dump "$DB_URL" \
   echo "    $(wc -l < "$OUT/schema-storage.sql") linhas em $OUT/schema-storage.sql"
 else
   echo "    storage: pg_dump recusado (ver $OUT/schema-storage.err) -- esperado se o grant nao passou" >&2
+fi
+
+echo "==> 7/7 triggers que escrevem em tabela sem policy de escrita"
+# Esta secao existe por causa do que a primeira execucao real encontrou.
+#
+# O 002 ligou RLS nas tabelas derivadas (user_balances, user_subscriptions,
+# user_usage_limits, subscription_history) e deu a elas SO policy de SELECT --
+# correto, porque quem escreve nelas e o sistema, nao o usuario. So que os
+# triggers que fazem essa escrita NAO sao SECURITY DEFINER: eles rodam como
+# `authenticated`, batem na propria RLS e derrubam a transacao inteira.
+#
+# O modo de falha e traicoeiro: nada disso aparece em `pg_policies`, nem no
+# diff de schema, nem numa leitura do 002 isolado. So aparece cruzando trigger
+# + secdef + policies da tabela escrita. Por isso virou passo fixo.
+psql_ro -Atc "
+  SELECT p.proname || ' (trigger em ' || c.relname || ') escreve sem SECURITY DEFINER'
+  FROM pg_trigger t
+  JOIN pg_class c ON c.oid = t.tgrelid
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  JOIN pg_proc p ON p.oid = t.tgfoid
+  WHERE n.nspname = 'public' AND NOT t.tgisinternal AND NOT p.prosecdef
+    AND EXISTS (
+      SELECT 1 FROM pg_class w
+      JOIN pg_namespace wn ON wn.oid = w.relnamespace
+      WHERE wn.nspname = 'public' AND w.relkind = 'r' AND w.relrowsecurity
+        AND p.prosrc ~* ('(insert into|update|delete from)\\s+' || w.relname)
+        AND NOT EXISTS (
+          SELECT 1 FROM pg_policies pol
+          WHERE pol.schemaname = 'public' AND pol.tablename = w.relname
+            AND pol.cmd IN ('INSERT', 'UPDATE', 'DELETE', 'ALL')
+        )
+    )
+  ORDER BY 1;" | tee "$OUT/trigger-rls-conflicts.txt"
+if [[ -s "$OUT/trigger-rls-conflicts.txt" ]]; then
+  echo "    ATENCAO: $(wc -l < "$OUT/trigger-rls-conflicts.txt") trigger(s) quebram sob RLS. Ver HMO-123." >&2
+else
+  echo "    ok: nenhum trigger escrevendo em tabela sem policy de escrita"
 fi
 
 echo
