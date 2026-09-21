@@ -21,7 +21,7 @@
 --
 -- O que fazemos com o resultado:
 --   - Q2 lista as policies que existem hoje. Se aparecer policy que o 002 nao
---     recria, a SECAO 3.1 do 002 vai remover - e precisamos conferir antes se
+--     recria, a SECAO 0.1 do 002 vai remover - e precisamos conferir antes se
 --     alguma delas cobre um acesso legitimo que o 002 esqueceu.
 --   - Q3 mostra se alguma policy atual e permissiva demais (USING true).
 --   - Q4 confirma o que `anon` pode fazer hoje - a causa raiz do vazamento.
