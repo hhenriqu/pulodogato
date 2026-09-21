@@ -31,10 +31,10 @@ export PGCONNECT_TIMEOUT=15
 # arquivo de saida vazio que passa despercebido no diff.
 psql_ro() { psql "$SUPABASE_DB_URL_RO" -v ON_ERROR_STOP=1 "$@"; }
 
-echo "==> 1/5 smoke test"
+echo "==> 1/6 smoke test"
 psql_ro -Atc 'select current_user, current_database(), version()'
 
-echo "==> 2/5 tabelas sem RLS (verificacao do 002; deve vir vazio)"
+echo "==> 2/6 tabelas sem RLS (verificacao do 002; deve vir vazio)"
 psql_ro -Atc "
   SELECT relname FROM pg_class c
   JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -46,7 +46,7 @@ else
   echo "    ok: nenhuma tabela sem RLS"
 fi
 
-echo "==> 3/5 policies reais de public"
+echo "==> 3/6 policies reais de public"
 psql_ro -c "
   SELECT tablename, policyname, cmd, roles, qual, with_check
   FROM pg_policies WHERE schemaname = 'public'
@@ -61,7 +61,7 @@ psql_ro -Atc "
   ORDER BY tablename, policyname;" > "$OUT/pg_policies.tsv"
 echo "    $(wc -l < "$OUT/pg_policies.tsv") policies"
 
-echo "==> 4/5 grants de authenticated/anon"
+echo "==> 4/6 grants de authenticated/anon"
 psql_ro -c "
   SELECT table_name, grantee, string_agg(privilege_type, ',' ORDER BY privilege_type) AS privs
   FROM information_schema.role_table_grants
@@ -69,13 +69,35 @@ psql_ro -c "
   GROUP BY table_name, grantee
   ORDER BY table_name, grantee;" > "$OUT/grants.txt"
 
-echo "==> 5/5 pg_dump --schema-only"
+echo "==> 5/6 policies de storage/auth (escopo mais_auth do HMO-123)"
+# pg_policies vem do pg_catalog e e legivel por qualquer papel -- esta secao
+# funciona mesmo sem nenhum grant em storage/auth. E por isso que auditar as
+# policies de storage NAO exigia ampliar o escopo.
+psql_ro -c "
+  SELECT schemaname, tablename, policyname, cmd, roles, qual, with_check
+  FROM pg_policies WHERE schemaname IN ('storage', 'auth')
+  ORDER BY schemaname, tablename, policyname;" > "$OUT/pg_policies-storage-auth.txt"
+psql_ro -Atc "
+  SELECT count(*) FROM pg_policies WHERE schemaname IN ('storage', 'auth');" \
+  | xargs -I{} echo "    {} policies em storage/auth"
+
+echo "==> 6/6 pg_dump --schema-only"
 # --no-owner/--no-acl: o paperclip_ro nao e dono de nada, entao as linhas de
 # ownership sairiam erradas e poluiriam o diff contra o 001_baseline.sql.
 pg_dump "$SUPABASE_DB_URL_RO" \
   --schema-only --schema=public --no-owner --no-acl --no-comments \
   > "$OUT/schema-real.sql"
 echo "    $(wc -l < "$OUT/schema-real.sql") linhas em $OUT/schema-real.sql"
+
+# O dump do storage e separado e best-effort: e material de auditoria, nao
+# entra no diff contra o 001_baseline.sql (que so descreve o public).
+if pg_dump "$SUPABASE_DB_URL_RO" \
+     --schema-only --schema=storage --no-owner --no-acl --no-comments \
+     > "$OUT/schema-storage.sql" 2> "$OUT/schema-storage.err"; then
+  echo "    $(wc -l < "$OUT/schema-storage.sql") linhas em $OUT/schema-storage.sql"
+else
+  echo "    storage: pg_dump recusado (ver $OUT/schema-storage.err) -- esperado se o grant nao passou" >&2
+fi
 
 echo
 echo "Saida em: $OUT"
