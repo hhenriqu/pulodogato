@@ -23,13 +23,31 @@ if [[ -z "${SUPABASE_DB_URL_RO:-}" ]]; then
   exit 1
 fi
 
+# O cofre devolveu a URI com uma quebra de linha no fim na primeira credencial
+# cadastrada (2026-09-21). O psql nao trima: o `\n` entra no ultimo parametro da
+# query string e vira `invalid sslmode value: "require\n"` -- erro que parece de
+# sintaxe da URI e manda a gente procurar no lugar errado. Uma URI valida nao
+# tem espaco em branco em lugar nenhum, entao da para remover todos.
+DB_URL="${SUPABASE_DB_URL_RO//[$'\t\r\n ']/}"
+
+# Falha cedo se a URI ainda estiver com o placeholder da descricao do HMO-123.
+# Sem isto o erro que aparece e `password authentication failed`, que e o mesmo
+# erro de senha trocada e de papel inexistente -- tres causas, uma mensagem so.
+DB_PW="${DB_URL#*://*:}"; DB_PW="${DB_PW%%@*}"
+if [[ "$DB_PW" =~ ^(SENHA|TROQUE_POR_UMA_SENHA_FORTE)$ ]]; then
+  echo "ERRO: a URI ainda esta com o placeholder de senha (\"$DB_PW\")." >&2
+  echo "      Troque pelo valor real usado no \`create role paperclip_ro\`" >&2
+  echo "      e regrave o segredo \`supabase_db_url_ro\`. Ver HMO-123, Parte A3." >&2
+  exit 1
+fi
+
 OUT="${1:-${PAPERCLIP_SCRATCH_DIR:-.}/db-introspect}"
 mkdir -p "$OUT"
 export PGCONNECT_TIMEOUT=15
 
 # `-v ON_ERROR_STOP=1` para que uma falha de permissao vire exit code, nao um
 # arquivo de saida vazio que passa despercebido no diff.
-psql_ro() { psql "$SUPABASE_DB_URL_RO" -v ON_ERROR_STOP=1 "$@"; }
+psql_ro() { psql "$DB_URL" -v ON_ERROR_STOP=1 "$@"; }
 
 echo "==> 1/6 smoke test"
 psql_ro -Atc 'select current_user, current_database(), version()'
@@ -84,14 +102,14 @@ psql_ro -Atc "
 echo "==> 6/6 pg_dump --schema-only"
 # --no-owner/--no-acl: o paperclip_ro nao e dono de nada, entao as linhas de
 # ownership sairiam erradas e poluiriam o diff contra o 001_baseline.sql.
-pg_dump "$SUPABASE_DB_URL_RO" \
+pg_dump "$DB_URL" \
   --schema-only --schema=public --no-owner --no-acl --no-comments \
   > "$OUT/schema-real.sql"
 echo "    $(wc -l < "$OUT/schema-real.sql") linhas em $OUT/schema-real.sql"
 
 # O dump do storage e separado e best-effort: e material de auditoria, nao
 # entra no diff contra o 001_baseline.sql (que so descreve o public).
-if pg_dump "$SUPABASE_DB_URL_RO" \
+if pg_dump "$DB_URL" \
      --schema-only --schema=storage --no-owner --no-acl --no-comments \
      > "$OUT/schema-storage.sql" 2> "$OUT/schema-storage.err"; then
   echo "    $(wc -l < "$OUT/schema-storage.sql") linhas em $OUT/schema-storage.sql"
