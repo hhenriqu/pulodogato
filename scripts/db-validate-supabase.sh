@@ -67,6 +67,29 @@ fi
 DB_URL="${VALIDATION_DB_URL//[$'\t\r\n ']/}"
 
 DB_PW="${DB_URL#*://*:}"; DB_PW="${DB_PW%%@*}"
+
+# ---------------------------------------------------------------------------
+# Impressao digital da senha
+# ---------------------------------------------------------------------------
+# Quando a senha e recusada duas vezes seguidas, existem dois defeitos
+# diferentes por tras -- "o segredo nao foi atualizado" e "a senha nova tambem
+# nao bate" -- e eles pedem acoes opostas. Sem um jeito de distinguir, a
+# conversa vira "tenta de novo" ate alguem desistir (aconteceu na HMO-117 em
+# 2026-09-21).
+#
+# O digest resolve isso: se ele nao mudou entre duas execucoes, o valor do
+# segredo nao mudou -- nao adianta pedir outro reset, o que falhou foi a
+# gravacao. A senha em si nao aparece: sao 12 hex de um SHA-256 com sal fixo,
+# e o comprimento, que denuncia o caso de a senha ter sido cortada na copia.
+impressao_digital_da_senha() {
+  printf 'Impressao digital do que esta no segredo agora (a senha NAO aparece):\n'
+  printf '  digest=%s  comprimento=%s\n' \
+    "$(printf '%s' "pulodogato-validation-fp:$DB_PW" | sha256sum | cut -c1-12)" \
+    "${#DB_PW}"
+  printf 'Se este digest for igual ao da execucao anterior, o segredo nao mudou:\n'
+  printf 'o reset da senha nao chegou ao VALIDATION_DB_URL.\n'
+}
+
 if [[ "$DB_PW" =~ ^(SENHA|SUA_SENHA|TROQUE_POR_UMA_SENHA_FORTE|\[YOUR-PASSWORD\])$ ]]; then
   echo "ERRO: a URI ainda esta com o placeholder de senha (\"$DB_PW\")." >&2
   echo "      Troque pela senha real do projeto descartavel." >&2
@@ -150,6 +173,8 @@ Copie a senha nova e troque APENAS essa parte da URI (entre os ':' e o '@').
 Se a senha tiver caractere fora de [A-Za-z0-9], ela precisa ir percent-encoded
 na URI (@ vira %40, / vira %2F, : vira %3A) -- senao o psql corta a URI no lugar
 errado e o erro que aparece e este mesmo.
+
+$(impressao_digital_da_senha)
 EOF
   elif [[ "$IDENT" == *'tenant'*'not found'* || "$IDENT" == *ENOTFOUND* ]]; then
     cat >&2 <<EOF

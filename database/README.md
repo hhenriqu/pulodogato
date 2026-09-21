@@ -47,6 +47,16 @@ cada PR que toca `database/`.
 
 ### Validado num projeto Supabase limpo
 
+> **Executado em 2026-09-21**, no projeto descartavel `vccfpqazgtwtymmrphxd`
+> (PostgreSQL 17.6, pelo Session Pooler). Resultado: **8 verificacoes, todas
+> OK** — `001` → `002` → `003` sobem num `public` vazio, as 21 assercoes de
+> isolamento de RLS passam, o seed carrega (3 + 12) e o inventario fecha em
+> 18 tabelas, 40 policies, 28 funcoes e 21 triggers. O drill de desastre
+> (`pg_dump` pelo pooler → `DROP SCHEMA` → restauracao) rodou em seguida com
+> dado sintetico: R$ 1.234,56 atravessou o ciclo e o saldo derivado ficou em
+> R$ 1.234,56, sem dobrar. Foi essa execucao que achou o defeito da
+> restauracao por cima de contas existentes, corrigido abaixo.
+
 O bloco acima roda num Postgres cru mais o `00_supabase_shim.sql` — e o shim e
 uma imitacao. Ele nao traz as extensoes do schema `extensions`, o `auth.users`
 do GoTrue, as roles de servico, nem o fato de que pelo pooler voce conecta como
@@ -71,6 +81,33 @@ script existe para fechar.
 As verificacoes independentes rodam todas e o relatorio sai junto no fim, em vez
 de parar na primeira: so o dono do projeto consegue criar o ambiente e passar a
 credencial, entao uma ida e volta por defeito custaria um dia cada.
+
+### O mesmo, sem precisar de credencial: `database/validation/`
+
+O script acima depende da senha do Postgres do projeto descartavel — e quem tem
+o painel nao e quem roda o script, entao cada senha errada custa uma ida e
+volta inteira (na HMO-117 custou duas, sem nunca conectar). O SQL Editor do
+Supabase nao pede senha: quem esta no painel ja esta autenticado.
+
+Por isso as mesmas assercoes existem tambem como dois arquivos para colar la:
+
+| Arquivo | O que faz | O que voce devolve |
+|---|---|---|
+| `database/validation/01_migrations.sql` | guarda + `001` → `002` → `003` + relatorio | a tabela final (7 linhas, termina em `VEREDITO`) |
+| `database/validation/02_isolamento_rls.sql` | o teste de isolamento, dentro de `ROLLBACK` | a linha `ISOLAMENTO DE RLS: TUDO OK`, ou o erro |
+
+Os dois sao **gerados** por `node scripts/gen-validation-bundle.mjs` a partir de
+`migrations/` e `tests/rls_isolation_test.sql` — nunca editados a mao. Uma copia
+do schema que sai de sincronia e pior do que nao ter copia: validaria um schema
+que nao e mais o nosso, e o relatorio sairia verde. O job `db-verify` roda
+`--check` e fecha se alguem mexer nas migrations sem regerar.
+
+A guarda do `01` e a mesma do script: recusa um `public` que ja tenha tabelas e
+recusa um alvo que nao seja Supabase de verdade (a checagem que separa o
+`auth.users` do GoTrue, ~30 colunas, do shim do CI, 3 colunas).
+
+O que o bundle **nao** cobre: o drill de restauracao de backup, que precisa ler
+um `.gpg` do disco. Esse continua rodando a cada push no `db-verify`.
 
 ### Prova de que o baseline reproduz producao
 
@@ -172,10 +209,10 @@ esta no baseline.
 
 ### O que continua em aberto
 
-- **Restaurar num projeto Supabase limpo de verdade.** O procedimento esta
-  pronto e testado (`scripts/db-validate-supabase.sh`), mas ainda nao foi
-  executado: falta o projeto descartavel, que so o dono da conta Supabase pode
-  criar. Ate rodar, extensoes, roles extras e o GoTrue seguem nao exercitados.
+- **O backup criptografado** (`.gpg`) so foi exercitado no CI: o ambiente do
+  agente nao tem `gpg`, entao o drill contra o Supabase de verdade rodou com os
+  dumps em claro. O caminho do `gpg` em si e coberto a cada push pelo
+  `db-verify`, que exige o `.gz.gpg` e restaura a partir dele.
 - **Os valores do seed** nao sao reconferidos a cada geracao: `paperclip_ro` e
   uma role comum, sujeita a RLS, e as policies das duas tabelas de referencia
   sao `TO anon, authenticated` — para ela as duas voltam vazias. A lista de
@@ -311,6 +348,32 @@ banco restaurado fica de pe, parecendo certo, mentindo sobre dinheiro.
 
 O drill do CI confere o saldo derivado alem do valor bruto justamente para
 impedir que essa linha volte a sumir.
+
+### Restaurar por cima de um banco que ainda tem contas
+
+Se o destino ja tiver linhas em `auth.users`, `db-restore.sh` **para antes de
+apagar qualquer coisa** e pede uma escolha explicita:
+
+| Modo | O que faz |
+|---|---|
+| (default) | recusa e explica |
+| `RESTORE_AUTH_MODE=merge` | carrega as contas do backup com `ON CONFLICT (id) DO NOTHING`; as que ja existem no destino ficam como estao |
+| `RESTORE_AUTH_MODE=so-public` | nao toca em `auth.users`; restaura so o conteudo de `public` |
+
+Isso nasceu de um defeito real, achado em 2026-09-21 ao restaurar num Supabase
+de verdade. O dump de contas e `--column-inserts` puro: uma conta repetida
+estourava `duplicate key ... users_pkey` — **depois** de o script ja ter rodado
+`DROP SCHEMA public CASCADE`. O destino ficava com a estrutura, sem dados e sem
+contas: a restauracao deixava o banco pior do que antes de comecar. O CI nunca
+pegaria isso sozinho, porque la o destino e sempre um `CREATE DATABASE` novo,
+com `auth.users` vazio — o caso raro no mundo real, onde o normal e restaurar
+por cima de um projeto que ainda tem os usuarios. Hoje o `db-verify` cobre os
+dois caminhos.
+
+Detalhe de implementacao que vale lembrar: o `merge` usa a lista de colunas do
+proprio dump, nao `SELECT *`. O `auth.users` do Supabase tem `confirmed_at`
+GERADA, que o `pg_dump` ja omite; um `SELECT *` a traria de volta e o INSERT
+morreria em `cannot insert a non-DEFAULT value into column "confirmed_at"`.
 
 Quando houver dado de cliente de verdade, revisitar a decisao: ligar o
 Point-in-Time Recovery do Supabase (Settings → Database) e guardar uma copia

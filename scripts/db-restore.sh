@@ -7,6 +7,10 @@
 #   ./scripts/db-restore.sh ./backups            # usa o backup mais recente
 #   ./scripts/db-restore.sh ./backups 2026-09-18T155210Z
 #
+# Se o destino ja tiver contas em auth.users, o script para antes de apagar
+# nada e pede RESTORE_AUTH_MODE=merge (mantem as contas existentes) ou
+# =so-public (nao toca em auth.users). Ver o bloco na SECAO das contas.
+#
 # APAGA o schema `public` do destino antes de restaurar. Por isso recusa rodar
 # contra o projeto de producao, a nao ser com a variavel de escape explicita.
 #
@@ -65,6 +69,57 @@ abrir() {
   fi
 }
 
+# ---------------------------------------------------------------------------
+# Contas que ja existem no destino: conferir ANTES de destruir o public
+# ---------------------------------------------------------------------------
+# Descoberto em 2026-09-21, restaurando num Supabase de verdade. O dump de
+# auth.users e `--column-inserts` puro: se o destino ja tiver uma conta com o
+# mesmo id, o INSERT estoura `duplicate key ... users_pkey` e, com
+# ON_ERROR_STOP, a restauracao morre ali. So que o `DROP SCHEMA public CASCADE`
+# ja rodou -- o destino fica com a estrutura, sem dados e sem contas. A
+# restauracao deixou o banco PIOR do que antes de comecar.
+#
+# O CI nunca pegaria isso: la o destino e um `CREATE DATABASE` novinho, com
+# auth.users vazio. O caso real e o oposto -- restaurar por cima de um projeto
+# que ainda tem os usuarios (rollback no lugar, ou um projeto onde alguem ja
+# se cadastrou).
+#
+# Entao a checagem vem antes de qualquer comando destrutivo, e o default e
+# recusar: quem restaura backup esta num dia ruim e nao deveria ter que
+# adivinhar por que o banco ficou vazio.
+CONTAS_NO_DESTINO="$("${PSQL[@]}" -tAc 'SELECT count(*) FROM auth.users' 2>/dev/null || echo 0)"
+MODO_AUTH="${RESTORE_AUTH_MODE:-recusar}"
+
+if [ "${CONTAS_NO_DESTINO:-0}" != '0' ] && [ "$MODO_AUTH" = 'recusar' ]; then
+  cat >&2 <<EOF
+ERRO: o destino ja tem $CONTAS_NO_DESTINO conta(s) em auth.users.
+
+Carregar o dump de contas por cima estouraria em "duplicate key ... users_pkey"
+DEPOIS de este script ja ter apagado o schema public -- o banco terminaria sem
+dados e sem contas. Por isso paramos agora, antes de mexer em qualquer coisa.
+
+Escolha:
+
+  RESTORE_AUTH_MODE=merge $0 $DEST $STAMP
+      Restaura o public normalmente e carrega as contas do backup com
+      ON CONFLICT (id) DO NOTHING: as contas que ja existem no destino ficam
+      como estao, as que so existem no backup entram.
+
+  RESTORE_AUTH_MODE=so-public $0 $DEST $STAMP
+      Nao toca em auth.users. Use quando as contas do destino ja sao as certas
+      e o que se quer recuperar e so o conteudo de public.
+
+Se o destino era para estar vazio, provavelmente e o projeto errado: confira a
+RESTORE_DB_URL.
+EOF
+  exit 2
+fi
+
+case "$MODO_AUTH" in
+  recusar|merge|so-public) ;;
+  *) echo "ERRO: RESTORE_AUTH_MODE='$MODO_AUTH' -- use merge ou so-public." >&2; exit 2 ;;
+esac
+
 echo "==> limpando o schema public do destino"
 "${PSQL[@]}" -c 'DROP SCHEMA IF EXISTS public CASCADE;'
 
@@ -91,9 +146,38 @@ echo "==> estrutura"
 "${PSQL_MUDO[@]}" -f "$SCHEMA_SQL"
 
 # Antes dos dados: todo user_id de public referencia auth.users.
-if abrir "$DEST/$STAMP-auth-users.sql" > /dev/null 2>&1; then
+if [ "$MODO_AUTH" = 'so-public' ]; then
+  echo "==> contas (auth.users): puladas (RESTORE_AUTH_MODE=so-public)"
+  echo "    As $CONTAS_NO_DESTINO conta(s) do destino ficam como estao." >&2
+elif abrir "$DEST/$STAMP-auth-users.sql" > /dev/null 2>&1; then
   echo "==> contas (auth.users)"
-  abrir "$DEST/$STAMP-auth-users.sql" | "${PSQL_MUDO[@]}"
+  if [ "$MODO_AUTH" = 'merge' ]; then
+    # O ON CONFLICT nao da para colar no dump por regex: uma linha de
+    # `--column-inserts` pode quebrar no meio se algum valor tiver \n, e o
+    # `);` final cairia noutra linha. Redirecionar o INSERT para uma tabela
+    # temporaria so depende do INICIO da linha, que e estavel, e o
+    # `INSERT ... SELECT` final resolve o conflito de uma vez.
+    #
+    # A lista de colunas sai do proprio dump, e nao de `SELECT *`: o
+    # auth.users do Supabase tem `confirmed_at` GERADA, que o pg_dump ja omite
+    # do INSERT. Um `SELECT *` a traria de volta e o INSERT morreria em
+    # "cannot insert a non-DEFAULT value into column confirmed_at".
+    COLUNAS="$(abrir "$DEST/$STAMP-auth-users.sql" \
+      | sed -n 's/^INSERT INTO auth\.users (\([^)]*\)).*/\1/p' | head -1)"
+    if [ -z "$COLUNAS" ]; then
+      echo "    backup sem nenhuma conta -- nada a carregar."
+    else
+      { echo 'CREATE TEMP TABLE _contas_do_backup (LIKE auth.users);'
+        abrir "$DEST/$STAMP-auth-users.sql" \
+          | sed 's/^INSERT INTO auth\.users /INSERT INTO _contas_do_backup /'
+        echo "INSERT INTO auth.users ($COLUNAS)"
+        echo "SELECT $COLUNAS FROM _contas_do_backup ON CONFLICT (id) DO NOTHING;"
+        echo 'DROP TABLE _contas_do_backup;'
+      } | "${PSQL_MUDO[@]}"
+    fi
+  else
+    abrir "$DEST/$STAMP-auth-users.sql" | "${PSQL_MUDO[@]}"
+  fi
 else
   echo "AVISO: backup sem auth.users -- as linhas de public vao ficar sem dono." >&2
 fi

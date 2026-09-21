@@ -8,9 +8,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-baseline.mjs', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-baseline.mjs', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -58,6 +58,13 @@ jobs:
 
       # O Supabase de verdade ja tem schema auth e roles anon/authenticated;
       # num Postgres cru e preciso recria-los antes.
+      # O bundle de database/validation/ e uma copia gerada das migrations, para
+      # o dono do projeto colar no SQL Editor do Supabase. Copia que sai de
+      # sincronia e pior do que nao ter copia: ele validaria um schema que nao e
+      # mais o nosso e o relatorio sairia verde. O --check nao toca no banco.
+      - name: Bundle de validacao em dia com as migrations
+        run: node scripts/gen-validation-bundle.mjs --check
+
       - name: Shim do Supabase
         run: $PSQL -f database/tests/00_supabase_shim.sql
 
@@ -274,3 +281,46 @@ jobs:
             exit 1
           fi
           echo "Ciclo completo: dado bruto e saldo derivado atravessaram o ciclo intactos."
+
+          # ------------------------------------------------------------------
+          # Restaurar por cima de um destino que JA tem contas
+          # ------------------------------------------------------------------
+          # O bloco acima restaura num banco recem-criado, com auth.users vazio.
+          # O caso real e o oposto: restaurar por cima de um projeto que ainda
+          # tem os usuarios. Ate 2026-09-21 isso apagava o schema public e so
+          # ENTAO estourava em "duplicate key ... users_pkey" -- o banco ficava
+          # sem dados e sem contas, pior do que antes de restaurar. Achado
+          # restaurando num Supabase de verdade; aqui vira regressao.
+          echo "== restaurar por cima de destino com contas: tem que recusar"
+          if RESTORE_DB_URL="$URL_DESTINO" BACKUP_PASSPHRASE='ci-drill' \
+               ./scripts/db-restore.sh "$RUNNER_TEMP/drill" > "$RUNNER_TEMP/recusa.log" 2>&1; then
+            echo "::error::A restauracao aceitou um destino que ja tinha contas."
+            exit 1
+          fi
+          grep -q 'ja tem 1 conta' "$RUNNER_TEMP/recusa.log" || {
+            echo "::error::Recusou, mas sem explicar que o destino ja tem contas."
+            cat "$RUNNER_TEMP/recusa.log"; exit 1; }
+
+          # E, o mais importante: tem que ter recusado ANTES de apagar nada.
+          sobrou=$(psql "$URL_DESTINO" --no-psqlrc -tAc "
+            SELECT count(*) FROM public.financial_transactions
+             WHERE description = 'Transacao do drill'")
+          if [ "$sobrou" != '1' ]; then
+            echo "::error::A recusa veio DEPOIS de destruir o public (transacoes: $sobrou)."
+            exit 1
+          fi
+          echo "Recusou sem tocar no destino."
+
+          echo "== o mesmo com RESTORE_AUTH_MODE=merge: tem que passar"
+          RESTORE_AUTH_MODE=merge RESTORE_DB_URL="$URL_DESTINO" BACKUP_PASSPHRASE='ci-drill' \
+            ./scripts/db-restore.sh "$RUNNER_TEMP/drill"
+
+          saldo=$(psql "$URL_DESTINO" --no-psqlrc -tAc \
+            "SELECT current_balance FROM public.financial_accounts
+              WHERE id = '22222222-2222-2222-2222-222222222222'")
+          contas=$(psql "$URL_DESTINO" --no-psqlrc -tAc "SELECT count(*) FROM auth.users")
+          if [ "$saldo" != '1234.56' ] || [ "$contas" != '1' ]; then
+            echo "::error::merge terminou errado (saldo '$saldo', contas '$contas')."
+            exit 1
+          fi
+          echo "merge restaurou por cima das contas existentes sem duplicar nada."
