@@ -3227,9 +3227,21 @@ ALTER FUNCTION public.update_usage_limits_on_plan_change()
   SET search_path = public, pg_temp;
 
 -- SECURITY DEFINER faz a funcao rodar como o dono dela. Estas sao chamadas
--- so por trigger, entao ninguem precisa de EXECUTE direto: revogar de PUBLIC
--- evita que virem uma porta para escrever nas tabelas derivadas fora do fluxo
--- do trigger.
+-- so por trigger, entao ninguem precisa de EXECUTE direto.
+--
+-- Ressalva, medida em producao depois de aplicar (2026-09-21): este REVOKE
+-- tira o EXECUTE de PUBLIC, mas NAO de `anon`/`authenticated`/`service_role`.
+-- O Supabase concede EXECUTE a esses tres EXPLICITAMENTE, via ALTER DEFAULT
+-- PRIVILEGES, no momento em que a funcao e criada -- e revogar de PUBLIC nao
+-- encosta em grant explicito. O `proacl` continua com `authenticated=X/postgres`.
+--
+-- Nao virou porta mesmo assim, por outro motivo: as cinco retornam `trigger`,
+-- e o Postgres recusa chamada direta de funcao de trigger
+-- ("trigger functions can only be called as triggers"). O PostgREST tambem nao
+-- expoe esse tipo de retorno como RPC. Ou seja, quem fecha a porta e o tipo de
+-- retorno, nao este REVOKE -- ele fica porque e barato e correto em intencao.
+-- Se algum dia uma delas deixar de retornar `trigger`, o REVOKE precisa passar
+-- a nomear os tres papeis.
 REVOKE EXECUTE ON FUNCTION public.create_free_subscription() FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION public.update_user_balances() FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION public.update_usage_limits_on_plan_change() FROM PUBLIC;
