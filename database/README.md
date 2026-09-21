@@ -45,6 +45,33 @@ Executado do zero num Postgres 17 vazio: 18 tabelas, 18 com RLS, 40 policies, as
 tabelas de referencia. O mesmo roda no CI (`.github/workflows/db-verify.yml`) a
 cada PR que toca `database/`.
 
+### Validado num projeto Supabase limpo
+
+O bloco acima roda num Postgres cru mais o `00_supabase_shim.sql` — e o shim e
+uma imitacao. Ele nao traz as extensoes do schema `extensions`, o `auth.users`
+do GoTrue, as roles de servico, nem o fato de que pelo pooler voce conecta como
+`postgres.<ref>`, que **nao** e superusuario. Um backup que restaura no CI e
+falha num Supabase de verdade continua sendo um backup que nao restaura.
+
+```bash
+# URI do Session Pooler de um projeto DESCARTAVEL (Connect -> Session pooler)
+export VALIDATION_DB_URL='postgresql://postgres.<ref>:<senha>@aws-1-sa-east-1.pooler.supabase.com:5432/postgres'
+./scripts/db-validate-supabase.sh
+
+# para exercitar tambem o ciclo de desastre (apaga o public do alvo):
+BACKUP_DIR=./backups BACKUP_PASSPHRASE=... ./scripts/db-validate-supabase.sh
+```
+
+O script recusa rodar contra producao, recusa um `public` que ja tenha tabelas
+(sem `RESET_PUBLIC=sim`) e — o mais importante — **recusa um alvo que nao seja
+Supabase de verdade**, inclusive um Postgres com o shim aplicado. Sem essa
+ultima recusa o relatorio sairia "VALIDACAO OK" para exatamente o item que o
+script existe para fechar.
+
+As verificacoes independentes rodam todas e o relatorio sai junto no fim, em vez
+de parar na primeira: so o dono do projeto consegue criar o ambiente e passar a
+credencial, entao uma ida e volta por defeito custaria um dia cada.
+
 ### Prova de que o baseline reproduz producao
 
 O `001` + `002` foram aplicados num Postgres 17 vazio, o resultado foi extraido
@@ -145,9 +172,10 @@ esta no baseline.
 
 ### O que continua em aberto
 
-- **Restaurar num projeto Supabase limpo de verdade.** A validacao e num
-  Postgres 17 puro, com o shim. Extensoes, roles extras e o GoTrue nao foram
-  exercitados.
+- **Restaurar num projeto Supabase limpo de verdade.** O procedimento esta
+  pronto e testado (`scripts/db-validate-supabase.sh`), mas ainda nao foi
+  executado: falta o projeto descartavel, que so o dono da conta Supabase pode
+  criar. Ate rodar, extensoes, roles extras e o GoTrue seguem nao exercitados.
 - **Os valores do seed** nao sao reconferidos a cada geracao: `paperclip_ro` e
   uma role comum, sujeita a RLS, e as policies das duas tabelas de referencia
   sao `TO anon, authenticated` — para ela as duas voltam vazias. A lista de
