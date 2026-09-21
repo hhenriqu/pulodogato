@@ -125,8 +125,45 @@ echo "=============================================="
 # ---------------------------------------------------------------------------
 echo
 echo "==> 0/5 identificando o alvo"
-if ! IDENT="$(q "select current_user || ' @ ' || current_database() || ' / ' || substring(version() from 'PostgreSQL [0-9.]+')")"; then
-  echo "ERRO: nao consegui conectar. Confira a URI e se o projeto terminou de subir." >&2
+IDENT_SQL="select current_user || ' @ ' || current_database() || ' / ' || substring(version() from 'PostgreSQL [0-9.]+')"
+if ! IDENT="$(psql "$DB_URL" --no-psqlrc -v ON_ERROR_STOP=1 -tAc "$IDENT_SQL" 2>&1)"; then
+  # "nao consegui conectar" sozinho custa uma ida e volta com o dono do projeto,
+  # que e quem tem o painel. O Supavisor distingue os dois casos no texto do
+  # erro, e a acao de correcao e diferente em cada um -- entao vale classificar
+  # aqui em vez de deixar para a proxima conversa.
+  #
+  # Cuidado com a ordem: o pooler relata a role como "postgres", sem o sufixo
+  # `.<ref>` do tenant. Ler isso como "o usuario esta errado" manda consertar o
+  # que ja esta certo.
+  echo "    $IDENT" | head -2 >&2
+  echo >&2
+  if [[ "$IDENT" == *'password authentication failed'* ]]; then
+    cat >&2 <<EOF
+ERRO: o projeto existe e o pooler reconheceu o tenant -- a SENHA e que nao bate.
+
+Se o tenant nao existisse, o erro seria "(ENOTFOUND) tenant/user ... not found".
+Ele nao foi esse: host, porta e ref do projeto estao corretos. Falta so a senha.
+
+No painel do projeto descartavel: Settings -> Database -> Reset database password.
+Copie a senha nova e troque APENAS essa parte da URI (entre os ':' e o '@').
+
+Se a senha tiver caractere fora de [A-Za-z0-9], ela precisa ir percent-encoded
+na URI (@ vira %40, / vira %2F, : vira %3A) -- senao o psql corta a URI no lugar
+errado e o erro que aparece e este mesmo.
+EOF
+  elif [[ "$IDENT" == *'tenant'*'not found'* || "$IDENT" == *ENOTFOUND* ]]; then
+    cat >&2 <<EOF
+ERRO: o pooler nao conhece este tenant -- a senha nem chegou a ser conferida.
+
+Quase sempre e regiao errada no hostname: a URI tem de vir do painel DO PROJETO
+descartavel (Connect -> Session pooler -> URI), nao adaptada de outra. O trecho
+aws-<n>-<regiao> muda de projeto para projeto.
+
+Confira tambem se o ref depois de "postgres." e o do projeto novo.
+EOF
+  else
+    echo "ERRO: nao consegui conectar. Confira a URI e se o projeto terminou de subir." >&2
+  fi
   exit 2
 fi
 echo "    $IDENT"
