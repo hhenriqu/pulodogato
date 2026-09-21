@@ -64,6 +64,9 @@ ALTER FUNCTION public.add_group_creator()
   SET search_path = public, pg_temp;
 
 -- Sao chamadas so por trigger; ninguem precisa de EXECUTE direto.
+-- Vale a mesma ressalva do 003: isto tira PUBLIC, nao os grants explicitos que
+-- o Supabase da a `anon`/`authenticated`/`service_role`. Quem impede a chamada
+-- direta e o tipo de retorno `trigger`. Detalhe completo no 003.
 REVOKE EXECUTE ON FUNCTION public.calculate_split_amount() FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION public.add_group_creator() FROM PUBLIC;
 
