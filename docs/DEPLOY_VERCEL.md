@@ -26,12 +26,12 @@ Ja feito e verificado (`next build` limpo, so warnings de lint):
 
 ## Quem faz o que (decidido na HMO-122)
 
-- **Passos 1, 2 e 4** (import, variaveis, verificacao): o agente, via
-  `VERCEL_TOKEN`. O token precisa ser de escopo **Account** com permissao de
-  criar projeto e deploy; entra no Paperclip como segredo `vercel_token` com
-  binding `env`. Um token de escopo somente-leitura nao serve.
-- **Passo 3** (Supabase Auth): so o Helio. Um token da Vercel nao alcanca o
-  dashboard do Supabase.
+- **Passos 1, 2 e 3** (import, variaveis, Supabase Auth): o Helio, no browser.
+  Nenhum dos tres sai da conta dele -- e a razao de nao haver `VERCEL_TOKEN`
+  neste fluxo.
+- **Passo 4** (verificacao pos-deploy): o agente, assim que receber a URL do
+  deploy. E um script, nao precisa de credencial nenhuma -- so de uma URL
+  publica.
 
 ## Passos
 
@@ -39,6 +39,11 @@ Ja feito e verificado (`next build` limpo, so warnings de lint):
 
 Vercel → Add New → Project → importar `pulodogato`. O framework e detectado
 como Next.js; nao mude build command nem output directory.
+
+O nome do projeto fica o padrao (`pulodogato`), decidido na HMO-122. O dominio
+tende a ser `pulodogato.vercel.app`, mas se o nome ja estiver tomado por outra
+conta a Vercel acrescenta um sufixo. **Copie a URL que a Vercel mostrar** em vez
+de assumir -- o passo 3 e o 4 dependem dela estar exata.
 
 ### 2. Variaveis de ambiente
 
