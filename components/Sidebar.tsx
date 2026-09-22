@@ -22,6 +22,7 @@ import {
   X,
   Wallet,
   CalendarClock,
+  PiggyBank,
   Target,
   Lock,
   Crown,
@@ -59,6 +60,12 @@ const navigation: NavigationItem[] = [
     name: "Contas Previstas",
     href: "/dashboard/bills",
     icon: CalendarClock,
+    requiredFeature: "personal_finance",
+  },
+  {
+    name: "Orçamento",
+    href: "/dashboard/budgets",
+    icon: PiggyBank,
     requiredFeature: "personal_finance",
   },
   {
