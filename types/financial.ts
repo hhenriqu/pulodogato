@@ -267,3 +267,124 @@ export interface GroupWithMembers extends ExpenseGroup {
   members: Array<GroupMember & { user: Profile }>;
   member_count: number;
 }
+
+// =====================================================
+// GASTOS FIXOS E CONTAS PREVISTAS (migration 005)
+// =====================================================
+// A regra guarda "aluguel, todo dia 10, R$ 2.500"; a ocorrencia guarda
+// "aluguel de outubro, vence 10/10, ainda nao pago". Editar a regra nao
+// reescreve o passado, e cada ocorrencia pode ter valor proprio (conta de luz).
+
+export type RecurrenceFrequency =
+  | "weekly"
+  | "biweekly"
+  | "monthly"
+  | "bimonthly"
+  | "quarterly"
+  | "semiannual"
+  | "annual";
+
+/** `overdue` nunca e gravado: e derivado de due_date < hoje (view _effective). */
+export type ScheduledStatus =
+  | "pending"
+  | "paid"
+  | "overdue"
+  | "skipped"
+  | "cancelled";
+
+export interface RecurringRule {
+  id: string;
+  user_id: string;
+  category_id: string;
+  account_id?: string;
+  group_id?: string;
+  description: string;
+  amount: number;
+  transaction_type: TransactionFinancialType;
+  frequency: RecurrenceFrequency;
+  interval_count: number;
+  due_day?: number;
+  start_date: string;
+  end_date?: string;
+  max_occurrences?: number;
+  reminder_days: number;
+  auto_post: boolean;
+  is_active: boolean;
+  notes?: string;
+  created_at: string;
+  updated_at: string;
+
+  // Relacionamentos
+  category?: TransactionCategory;
+  account?: FinancialAccount;
+  group?: ExpenseGroup;
+}
+
+export interface ScheduledTransaction {
+  id: string;
+  user_id: string;
+  recurring_rule_id?: string;
+  category_id: string;
+  account_id?: string;
+  group_id?: string;
+  description: string;
+  amount: number;
+  due_date: string;
+  status: ScheduledStatus;
+  paid_date?: string;
+  transaction_id?: string;
+  notes?: string;
+  created_at: string;
+  updated_at: string;
+
+  /** Vem da view scheduled_transactions_effective, calculado na hora. */
+  effective_status?: ScheduledStatus;
+  /** Negativo = vencida ha N dias. */
+  days_until_due?: number;
+
+  // Relacionamentos
+  category?: TransactionCategory;
+  account?: FinancialAccount;
+  group?: ExpenseGroup;
+  recurring_rule?: RecurringRule;
+}
+
+export interface NewRecurringRuleForm {
+  description: string;
+  amount: number;
+  category_id: string;
+  account_id?: string;
+  group_id?: string;
+  transaction_type?: TransactionFinancialType;
+  frequency?: RecurrenceFrequency;
+  interval_count?: number;
+  due_day?: number;
+  start_date?: string;
+  end_date?: string;
+  max_occurrences?: number;
+  reminder_days?: number;
+  notes?: string;
+}
+
+export interface NewScheduledTransactionForm {
+  description: string;
+  amount: number;
+  category_id: string;
+  due_date: string;
+  account_id?: string;
+  group_id?: string;
+  notes?: string;
+}
+
+/** Resumo do mes para a tela de contas previstas e o widget do dashboard. */
+export interface ScheduledSummary {
+  /** 'YYYY-MM' */
+  month: string;
+  total_pending: number;
+  total_overdue: number;
+  total_paid: number;
+  /** Custo mensal normalizado das regras ativas (anual/12, semanal*52/12...). */
+  fixed_monthly_cost: number;
+  count_pending: number;
+  count_overdue: number;
+}

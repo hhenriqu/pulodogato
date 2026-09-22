@@ -19,6 +19,11 @@ Todas as rotas protegidas requerem um token JWT válido do Supabase Auth.
 Authorization: Bearer <jwt_token>
 ```
 
+> **Contas previstas e gastos fixos** (`/api/recurring-rules`,
+> `/api/scheduled-transactions`) estão documentados em
+> [`CONTAS_PREVISTAS.md`](./CONTAS_PREVISTAS.md), com o modelo de dados e as
+> decisões por trás dele.
+
 ### Formato de Resposta
 
 ```json

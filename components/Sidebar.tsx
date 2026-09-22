@@ -21,6 +21,7 @@ import {
   Menu,
   X,
   Wallet,
+  CalendarClock,
   Target,
   Lock,
   Crown,
@@ -52,6 +53,12 @@ const navigation: NavigationItem[] = [
     name: "Finanças Pessoais",
     href: "/dashboard/personal-finance",
     icon: Wallet,
+    requiredFeature: "personal_finance",
+  },
+  {
+    name: "Contas Previstas",
+    href: "/dashboard/bills",
+    icon: CalendarClock,
     requiredFeature: "personal_finance",
   },
   {
