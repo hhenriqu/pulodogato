@@ -24,6 +24,8 @@ import {
   CalendarClock,
   PiggyBank,
   Target,
+  Bell,
+  FileUp,
   Lock,
   Crown,
   Zap,
@@ -63,9 +65,21 @@ const navigation: NavigationItem[] = [
     requiredFeature: "personal_finance",
   },
   {
+    name: "Avisos",
+    href: "/dashboard/notifications",
+    icon: Bell,
+    requiredFeature: "personal_finance",
+  },
+  {
     name: "Orçamento",
     href: "/dashboard/budgets",
     icon: PiggyBank,
+    requiredFeature: "personal_finance",
+  },
+  {
+    name: "Importar Extrato",
+    href: "/dashboard/statements",
+    icon: FileUp,
     requiredFeature: "personal_finance",
   },
   {

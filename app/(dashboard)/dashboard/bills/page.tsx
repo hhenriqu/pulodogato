@@ -38,11 +38,13 @@ import {
   CalendarClock,
   Check,
   Loader2,
+  Paperclip,
   Plus,
   Repeat,
   SkipForward,
   Wallet,
 } from "lucide-react";
+import { Receipts } from "@/components/Receipts";
 import type {
   RecurringRule,
   ScheduledTransaction,
@@ -357,9 +359,13 @@ export default function BillsPage() {
   const Linha = ({ conta }: { conta: ScheduledTransaction }) => {
     const vencida = conta.effective_status === "overdue";
     const dias = conta.days_until_due ?? 0;
+    // O comprovante fica fechado por padrao: a lista existe para responder "o
+    // que falta pagar", e um bloco de anexo por conta afogaria essa resposta.
+    const [anexosAbertos, setAnexosAbertos] = useState(false);
 
     return (
-      <div className="flex flex-col gap-3 border-b border-gray-100 py-3 last:border-0 sm:flex-row sm:items-center sm:justify-between">
+      <div className="border-b border-gray-100 py-3 last:border-0">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-start gap-3">
           <div
             className="mt-1 h-8 w-1 rounded"
@@ -410,8 +416,26 @@ export default function BillsPage() {
             >
               <SkipForward className="h-4 w-4" />
             </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setAnexosAbertos((v) => !v)}
+              title="Comprovante"
+            >
+              <Paperclip className="h-4 w-4" />
+            </Button>
           </div>
         </div>
+      </div>
+
+        {/* O componente so e montado quando abre: cada instancia faz uma
+            chamada a API, e montar um por conta da lista dispararia dezenas de
+            requisicoes para anexos que ninguem pediu para ver. */}
+        {anexosAbertos && (
+          <div className="mt-3 rounded-md bg-gray-50 p-3">
+            <Receipts alvo={{ scheduled_transaction_id: conta.id }} />
+          </div>
+        )}
       </div>
     );
   };
