@@ -26,7 +26,6 @@ import {
   Clock,
   MessageCircle,
   Mail,
-  Shield,
 } from "lucide-react";
 
 interface Profile {
@@ -51,23 +50,16 @@ interface Connection {
   requested?: Profile;
 }
 
-interface Group {
-  id: string;
-  name: string;
-  description?: string;
-  owner_id: string;
-  is_private: boolean;
-  max_members: number;
-  invite_code?: string;
-  member_count: number;
-  user_role?: string;
-}
+// A aba "Grupos" saiu daqui (HMO-124). Ela lia `user_groups`, uma tabela que
+// nunca existiu no banco: as colunas que ela pedia (owner_id, is_private,
+// max_members, invite_code) nao sao as de `expense_groups`, que e a tabela de
+// grupos de verdade -- entao nao era um nome errado, era uma tela de outro
+// produto. Grupos funcionam em /dashboard/expense-groups.
 
 export default function ConnectionsPage() {
   const [user, setUser] = useState<User | null>(null);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [pendingRequests, setPendingRequests] = useState<Connection[]>([]);
-  const [groups, setGroups] = useState<Group[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -125,50 +117,6 @@ export default function ConnectionsPage() {
         .eq("status", "pending");
 
       setPendingRequests(pendingData || []);
-
-      // Carregar grupos do usuário
-      const { data: groupsData } = await supabase
-        .from("group_members")
-        .select(
-          `
-          role,
-          user_groups (
-            id,
-            name,
-            description,
-            owner_id,
-            is_private,
-            max_members,
-            invite_code
-          )
-        `
-        )
-        .eq("user_id", user.id);
-
-      if (groupsData) {
-        const groupsWithCounts = await Promise.all(
-          groupsData.map(async (item: any) => {
-            const group = item.user_groups;
-            const { count } = await supabase
-              .from("group_members")
-              .select("*", { count: "exact" })
-              .eq("group_id", group.id);
-
-            return {
-              id: group.id,
-              name: group.name,
-              description: group.description,
-              owner_id: group.owner_id,
-              is_private: group.is_private,
-              max_members: group.max_members,
-              invite_code: group.invite_code,
-              member_count: count || 0,
-              user_role: item.role,
-            } as Group;
-          })
-        );
-        setGroups(groupsWithCounts);
-      }
     } catch (error) {
       console.error("Error loading data:", error);
       toast.error("Erro ao carregar dados");
@@ -286,7 +234,7 @@ export default function ConnectionsPage() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="connections">Conexões</TabsTrigger>
           <TabsTrigger value="requests" className="relative">
             Solicitações
@@ -297,7 +245,6 @@ export default function ConnectionsPage() {
             )}
           </TabsTrigger>
           <TabsTrigger value="search">Buscar</TabsTrigger>
-          <TabsTrigger value="groups">Grupos</TabsTrigger>
         </TabsList>
 
         <TabsContent value="connections" className="space-y-4">
@@ -511,82 +458,6 @@ export default function ConnectionsPage() {
                     </p>
                   </div>
                 )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="groups" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Users className="h-5 w-5" />
-                Meus Grupos
-              </CardTitle>
-              <CardDescription>
-                Grupos de investimento para compartilhar estratégias e dividir
-                contas
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {groups.length > 0 ? (
-                <div className="space-y-4">
-                  {groups.map((group) => (
-                    <div key={group.id} className="p-4 border rounded-lg">
-                      <div className="flex items-center justify-between mb-2">
-                        <h3 className="font-medium">{group.name}</h3>
-                        <div className="flex items-center gap-2">
-                          <Badge
-                            variant={
-                              group.user_role === "owner"
-                                ? "default"
-                                : "secondary"
-                            }
-                          >
-                            {group.user_role === "owner"
-                              ? "Dono"
-                              : group.user_role === "admin"
-                              ? "Admin"
-                              : "Membro"}
-                          </Badge>
-                          {group.is_private && (
-                            <Badge variant="outline">
-                              <Shield className="h-3 w-3 mr-1" />
-                              Privado
-                            </Badge>
-                          )}
-                        </div>
-                      </div>
-                      {group.description && (
-                        <p className="text-sm text-muted-foreground mb-2">
-                          {group.description}
-                        </p>
-                      )}
-                      <div className="flex items-center justify-between text-sm text-muted-foreground">
-                        <span>
-                          {group.member_count}/{group.max_members} membros
-                        </span>
-                        {group.invite_code && (
-                          <span>Código: {group.invite_code}</span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-center py-8">
-                  <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                  <h3 className="text-lg font-medium mb-2">
-                    Nenhum grupo ainda
-                  </h3>
-                  <p className="text-muted-foreground mb-4">
-                    Crie ou participe de grupos para compartilhar investimentos
-                  </p>
-                  <Button>
-                    <UserPlus className="h-4 w-4 mr-2" />
-                    Criar Grupo
-                  </Button>
-                </div>
-              )}
             </CardContent>
           </Card>
         </TabsContent>

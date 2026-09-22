@@ -382,9 +382,61 @@ diario do plano Free, com retencao curta e sem teste de restauracao.
 
 ---
 
-## Divida conhecida: tabelas que o codigo usa e nao existem
+## Tabelas que o codigo usa e nao existem (HMO-124)
 
-`dividends`, `transactions`, `user_connections`, `user_groups` sao referenciadas
-no codigo mas **nao existem em producao** — sao restos do produto de
-investimentos. Esses caminhos falham em runtime. Nao foram criadas aqui de
-proposito: o certo e remover o codigo morto, nao inventar tabela.
+O codigo citava cinco tabelas que nunca existiram em producao. Nenhuma foi
+criada: o certo e remover o codigo morto, nao inventar tabela para sustentar
+uma tela do produto errado.
+
+| tabela | o que era | o que foi feito |
+|---|---|---|
+| `transactions` | compra/venda de ativo (`asset_id`, `quantity`, `price`, `fees`) | `app/api/transactions/` removida |
+| `assets` | embed dentro da rota acima | idem |
+| `dividends` | proventos, com um RPC `get_portfolio_summary` que tambem nao existe | `app/api/portfolio/` removida |
+| `user_groups` | grupo com `owner_id`/`is_private`/`max_members`/`invite_code` | `app/api/groups/` e a aba "Grupos" de `/dashboard/connections` removidas |
+| `user_connections` | conexao entre usuarios | **em aberto** — ver abaixo |
+
+`transactions` **nao** era `financial_transactions` com o nome errado, e
+`user_groups` **nao** era `expense_groups`: em ambos os casos as colunas sao de
+outro modelo de dados. Renomear teria trocado um erro barulhento (PGRST205) por
+um silencioso. Nenhuma das rotas removidas tinha um unico chamador — a
+aplicacao usa `/api/personal-finance/transactions` e `/api/expense-groups`.
+
+`user_connections` continua citada em sete arquivos (`/dashboard/connections`,
+`/api/connections/*`, `/api/personal-finance/connections`, `/api/users/search`)
+e a pagina esta no menu lateral: hoje ela responde 500 em producao. Falta
+decidir se "conexoes entre usuarios" e feature pretendida (precisa de migration
++ RLS) ou se sai. Ate la esta registrada em `PENDENTES`, em
+`scripts/check-table-drift.mjs`.
+
+### O que impede isto de voltar
+
+`npm run check-table-drift` (job `code-schema-drift`, roda em todo PR) falha se
+o codigo citar tabela que as migrations nao criam. E estatico e nao precisa de
+banco.
+
+Existe porque nada mais pegava este defeito: o cliente do Supabase aceita
+qualquer string em `.from()`, entao `tsc`, `next build` e `next lint` passam, e
+o erro so nasce em producao como PGRST205 dentro de um `catch` que devolve 500.
+
+Cobre as duas formas de citar uma tabela, e a segunda e a que importa:
+
+```ts
+.from("user_groups")                       // 1. a obvia
+.from("group_members").select(`
+   role,
+   user_groups ( id, name )                // 2. o embed do PostgREST
+`)
+```
+
+Foi a forma 2 que escondeu o defeito em `app/api/groups/route.ts`: a linha do
+`.from()` apontava para `group_members`, que existe. Foi ela tambem que revelou
+`assets`, que a auditoria manual da HMO-124 nao tinha listado.
+
+O `PENDENTES` do script tem prazo de validade embutido: o job tambem falha se
+uma entrada ficar obsoleta (a tabela passou a existir, ou o codigo parou de
+cita-la). Sem essa metade a lista de excecoes so cresce e a verificacao vira
+decoracao.
+
+Nao cobre SQL cru em `.rpc()` nem nome de tabela montado em runtime — nenhum
+dos dois aparece no codigo hoje.
