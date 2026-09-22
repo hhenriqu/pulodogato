@@ -172,6 +172,45 @@ Sai com codigo 1 se algo falhar.
 Depois, no browser: cadastro → email de confirmacao (o link deve apontar para o
 dominio `.vercel.app`, nao para localhost) → login → dashboard carrega dados.
 
+## Commits do agente: a Vercel se recusa a buildar
+
+A Vercel verifica o **autor** do commit. Se o email do autor nao estiver ligado
+a uma conta com acesso ao time, ela nao falha o build -- ela **nao builda**, e
+comenta no PR:
+
+```
+Vercel didn't deploy this pull request to the Helio Moraes' projects team.
+GitHub couldn't verify an account for commit <sha>.
+```
+
+Foi o que aconteceu no PR #10: os quatro commits estavam como
+`Chief of staff (Paperclip) <agent@hmoraes.tec>`, um email sem conta, e nenhum
+preview subiu.
+
+O que escondia isso: todo commit que chegou na `main` ate hoje veio de **squash
+merge**, e o squash reescreve o autor para quem clicou o merge (o Helio). Por
+isso producao sempre deployou e so o preview quebrava.
+
+A armadilha e que os tres metodos de merge estao habilitados no repo. Um
+**"Create a merge commit"** ou **"Rebase and merge"** preserva a autoria
+original -- e ai a Vercel recusa o deploy **de producao** do mesmo jeito. O
+resultado e pior que um erro: a `main` avanca, nenhum build comeca, e o site
+continua servindo o bundle antigo sem nada vermelho em lugar nenhum.
+
+Duas saidas, nessa ordem:
+
+1. **Autorar os commits como o Helio** antes de abrir o PR, preservando o
+   credito do agente no trailer -- que e exatamente o que o squash ja produzia:
+
+   ```bash
+   git rebase <base> --exec 'git commit --amend --no-edit \
+     --author="Helio Moraes <95727027+hhenriqu@users.noreply.github.com>" \
+     --trailer "Co-authored-by: Chief of staff (Paperclip) <agent@hmoraes.tec>"'
+   ```
+
+2. Se um PR ja estiver aberto com a autoria errada, **mergear por squash** e o
+   unico metodo seguro.
+
 ## Dominio proprio, quando for a hora
 
 Apontar um CNAME para a Vercel, adicionar o dominio no projeto e entao:
