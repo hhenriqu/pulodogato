@@ -79,6 +79,10 @@ export interface FinancialAccount {
   is_active: boolean;
   color_hex: string;
   icon: string;
+  /** Cartao (migration 006): dia do fechamento da fatura. */
+  closing_day?: number;
+  /** Cartao (migration 006): dia do vencimento da fatura. */
+  due_day?: number;
   created_at: string;
   updated_at: string;
 }
@@ -387,4 +391,137 @@ export interface ScheduledSummary {
   fixed_monthly_cost: number;
   count_pending: number;
   count_overdue: number;
+}
+
+// =====================================================
+// ORCAMENTO E FATURA DE CARTAO (migration 006)
+// =====================================================
+// Mesma logica da Fase 1: uma linha por mes. O teto de dezembro pode ser
+// diferente sem reescrever o julgamento de agosto.
+
+/** Derivado na leitura pela view budget_consumption; nunca gravado. */
+export type BudgetConsumptionStatus = "ok" | "alert" | "exceeded";
+
+export interface Budget {
+  id: string;
+  user_id: string;
+  category_id: string;
+  /** NULL = orcamento pessoal. Preenchido = teto da casa/viagem. */
+  group_id?: string;
+  /** Sempre o primeiro dia do mes ('YYYY-MM-01'); o banco tem CHECK. */
+  month: string;
+  amount_limit: number;
+  /** Fracao do teto que ja acende o alerta. 0.8 = avisa aos 80%. */
+  alert_threshold: number;
+  /** Se true, o app recria esta linha no mes seguinte. */
+  carry_forward: boolean;
+  notes?: string;
+  created_at: string;
+  updated_at: string;
+
+  // Relacionamentos
+  category?: TransactionCategory;
+  group?: ExpenseGroup;
+}
+
+/**
+ * Budget + consumo, vindo da view budget_consumption.
+ *
+ * `spent` ja vem positivo: despesa e gravada NEGATIVA neste banco e a view
+ * aplica ABS. Nao aplique Math.abs de novo em cima.
+ */
+export interface BudgetWithConsumption extends Budget {
+  spent: number;
+  /** amount_limit - spent. Negativo quando estourou. */
+  remaining: number;
+  /** spent / amount_limit, com 4 casas. 1.0 = no limite exato. */
+  consumed_ratio: number;
+  consumption_status: BudgetConsumptionStatus;
+}
+
+export interface NewBudgetForm {
+  category_id: string;
+  amount_limit: number;
+  /** 'YYYY-MM' ou 'YYYY-MM-DD'; a API normaliza para o dia 1. */
+  month?: string;
+  group_id?: string;
+  alert_threshold?: number;
+  carry_forward?: boolean;
+  notes?: string;
+}
+
+/**
+ * Uma linha da fatura, vinda da view card_invoice_lines.
+ *
+ * `amount` e o valor cru (despesa negativa); `invoice_amount` e o valor com o
+ * sinal invertido, que e o que se soma para obter o total da fatura -- assim a
+ * compra soma e o estorno abate.
+ */
+export interface CardInvoiceLine {
+  transaction_id: string;
+  user_id: string;
+  account_id: string;
+  account_name: string;
+  closing_day?: number;
+  due_day?: number;
+  category_id: string;
+  description: string;
+  amount: number;
+  invoice_amount: number;
+  transaction_date: string;
+  transaction_type: TransactionFinancialType;
+  group_id?: string;
+  /** Primeiro dia do mes da fatura em que a compra caiu. */
+  invoice_month: string;
+  /** NULL quando o cartao nao tem due_day configurado. */
+  invoice_due_date?: string;
+}
+
+/** Uma fatura fechada: as linhas de um cartao num mes, com o total. */
+export interface CardInvoice {
+  account_id: string;
+  account_name: string;
+  closing_day?: number;
+  due_day?: number;
+  /** 'YYYY-MM-01' */
+  invoice_month: string;
+  due_date?: string;
+  /** Soma de invoice_amount: compras menos estornos. */
+  total: number;
+  line_count: number;
+  lines: CardInvoiceLine[];
+  /** Preenchido quando a fatura ja virou conta prevista (scheduled_transactions). */
+  scheduled_transaction_id?: string;
+}
+
+/**
+ * Projecao de saldo: onde a conta chega no fim do periodo se tudo que esta
+ * previsto acontecer. E uma leitura -- nao existe tabela para isso.
+ */
+export interface AccountProjection {
+  account_id: string;
+  account_name: string;
+  account_type: AccountType;
+  /** Saldo de hoje, mantido por trigger. */
+  current_balance: number;
+  /** Contas previstas a pagar ate o fim do periodo (positivo = vai sair). */
+  scheduled_out: number;
+  /** Receitas previstas a receber ate o fim do periodo. */
+  scheduled_in: number;
+  /** current_balance - scheduled_out + scheduled_in. */
+  projected_balance: number;
+  /** True quando a projecao fecha no vermelho e o saldo de hoje nao esta. */
+  goes_negative: boolean;
+}
+
+export interface ProjectionSummary {
+  /** 'YYYY-MM-DD' - ate onde a projecao foi calculada. */
+  through: string;
+  current_total: number;
+  projected_total: number;
+  scheduled_out: number;
+  scheduled_in: number;
+  /** Contas vencidas ainda nao pagas; ja estao "fora" do previsto. */
+  overdue_total: number;
+  accounts: AccountProjection[];
 }
