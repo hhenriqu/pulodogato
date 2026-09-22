@@ -48,11 +48,13 @@ const MIGRATIONS = [
   '005_recurring_and_scheduled',
   '006_budgets_and_card_invoices',
   '007_group_settlements',
+  '008_goals_and_reports',
 ];
 const TESTE_RLS = 'database/tests/rls_isolation_test.sql';
 const TESTE_AGENDA = 'database/tests/scheduled_rls_test.sql';
 const TESTE_ORCAMENTO = 'database/tests/budget_invoice_test.sql';
 const TESTE_ACERTO = 'database/tests/group_settlement_test.sql';
+const TESTE_METAS = 'database/tests/goals_reports_test.sql';
 
 const ler = (rel) => readFileSync(join(REPO, rel), 'utf8');
 
@@ -215,7 +217,7 @@ const partes = [
   cabecalho(
     'VALIDACAO PASSO 1: schema do zero',
     `Cole este arquivo inteiro no SQL Editor do projeto Supabase DESCARTAVEL e
-rode. Ele aplica 001 -> 002 -> 003 -> 004 -> 005 -> 006 -> 007 num banco vazio e termina imprimindo uma
+rode. Ele aplica 001 -> 002 -> 003 -> 004 -> 005 -> 006 -> 007 -> 008 num banco vazio e termina imprimindo uma
 tabela de verificacoes.
 
 O QUE FAZER COM O RESULTADO: copie a tabela final (ou tire um print) e cole na
@@ -309,6 +311,15 @@ const testeAcerto = semMetaComandos(
   'group_settlement_test.sql (preparado)',
 );
 
+const testeMetas = semMetaComandos(
+  prepararTeste(
+    ler(TESTE_METAS),
+    TESTE_METAS,
+    'METAS E RELATORIOS: TUDO OK -- progresso, sinal do gasto, previsto x realizado e patrimonio conferidos',
+  ),
+  'goals_reports_test.sql (preparado)',
+);
+
 const arquivos = {
   '01_migrations.sql': partes.join('\n'),
   '02_isolamento_rls.sql':
@@ -371,6 +382,28 @@ vezes do saldo da conta. Tudo dentro de BEGIN/ROLLBACK.
 
 O QUE ESPERAR: uma unica linha "ACERTO DE CONTAS: TUDO OK".`
     ) + testeAcerto,
+  '06_metas_relatorios.sql':
+    cabecalho(
+      'VALIDACAO PASSO 6: metas e relatorios (008)',
+      `Rode DEPOIS do 01_migrations.sql, no mesmo projeto descartavel.
+
+Confere o que o 008 sozinho nao prova. A assercao central e de novo o SINAL:
+despesa e gravada NEGATIVA neste banco, e um SUM cru nas views de relatorio
+devolveria gasto negativo -- a tela desenharia a barra para baixo e diria
+"voce economizou" onde houve gasto. Mesma familia do erro que quase passou no
+006.
+
+Confere tambem que o progresso da meta sai dos APORTES e nao do saldo da conta
+(o saldo derivou ate o 007 entrar), que a meta sem prazo nao inventa um ritmo
+mensal, que transferencia entre contas proprias nao vira receita nem despesa no
+fluxo de caixa mas CONTA no patrimonio, que o previsto x realizado casa o mes
+pessoal (onde group_id e NULL dos dois lados, e NULL = NULL nao casa), que o
+patrimonio reconstruido de tras para frente fecha com o saldo de hoje, e que um
+usuario nao enxerga a renda, o gasto nem o patrimonio de outro. Tudo dentro de
+BEGIN/ROLLBACK.
+
+O QUE ESPERAR: uma unica linha "METAS E RELATORIOS: TUDO OK".`
+    ) + testeMetas,
 };
 
 // ---------------------------------------------------------------------------
