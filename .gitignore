@@ -63,3 +63,6 @@ next-env.d.ts
 *-auth-users.sql.gz
 *-auth-users.sql.gz.gpg
 *-roles-rls.txt
+
+# saida do `npm run test:recurrence` (tsc avulso, so para o node --test)
+/.tmp-recurrence/
