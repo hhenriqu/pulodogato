@@ -159,6 +159,17 @@ protege as branches sem estorvar producao).
 Checa `/api/health` (200) e as **10** rotas removidas na Fase 1 (404 em todas).
 Sai com codigo 1 se algo falhar.
 
+Para verificar um **preview de PR antes do merge** -- desligar a protecao para
+Production nao a desliga para Preview, entao o preview continua atras do SSO:
+
+```bash
+VERCEL_BYPASS_TOKEN=<token> ./scripts/verify-deploy.sh https://<preview>.vercel.app
+```
+
+O token sai de Settings → Deployment Protection → **Protection Bypass for
+Automation**. Vale a pena: e a diferenca entre verificar o fix num deploy real
+antes do merge e descobrir o problema em producao.
+
 > A lista de rotas dentro do script veio do `git log --diff-filter=D`, nao de
 > memoria -- e isso e o ponto. Uma versao anterior deste runbook mandava checar
 > `/api/debug/database`, que **nunca existiu** (a rota era
