@@ -116,10 +116,29 @@ jobs:
       - name: Teste de isolamento de RLS
         run: $PSQL -f database/tests/rls_isolation_test.sql
 
+      - name: 006_budgets_and_card_invoices
+        run: $PSQL -f database/migrations/006_budgets_and_card_invoices.sql
+
+      # Mesmo motivo do 005: depois que o 006 entrar em producao, o 001
+      # regerado ja vai trazer budgets e as duas views.
+      - name: 006 e idempotente
+        run: $PSQL -f database/migrations/006_budgets_and_card_invoices.sql
+
       # Contas previstas: isolamento, a view security_invoker e as invariantes
       # de dinheiro (paga sem transacao, ocorrencia duplicada).
       - name: Teste das contas previstas
         run: $PSQL -f database/tests/scheduled_rls_test.sql
+
+      # Orcamento e fatura: o consumo soma as transacoes certas, o teto pessoal
+      # nao se confunde com o do grupo, as duas views respeitam a RLS e a
+      # aritmetica da fatura acerta os meses curtos.
+      #
+      # A assercao que mais importa e a do SINAL: despesa e gravada NEGATIVA
+      # neste banco, entao um SUM(amount) cru na view de consumo devolveria -800
+      # para quem gastou 800 -- ratio negativo, status 'ok' para sempre, alerta
+      # de estouro que nunca dispara, e nenhum erro em lugar nenhum.
+      - name: Teste do orcamento e da fatura
+        run: $PSQL -f database/tests/budget_invoice_test.sql
 
       - name: Aritmetica de recorrencia
         run: npm run test:recurrence

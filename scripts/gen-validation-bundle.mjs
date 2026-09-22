@@ -46,9 +46,11 @@ const MIGRATIONS = [
   '003_fix_trigger_privileges',
   '004_fix_remaining_trigger_privileges',
   '005_recurring_and_scheduled',
+  '006_budgets_and_card_invoices',
 ];
 const TESTE_RLS = 'database/tests/rls_isolation_test.sql';
 const TESTE_AGENDA = 'database/tests/scheduled_rls_test.sql';
+const TESTE_ORCAMENTO = 'database/tests/budget_invoice_test.sql';
 
 const ler = (rel) => readFileSync(join(REPO, rel), 'utf8');
 
@@ -211,7 +213,7 @@ const partes = [
   cabecalho(
     'VALIDACAO PASSO 1: schema do zero',
     `Cole este arquivo inteiro no SQL Editor do projeto Supabase DESCARTAVEL e
-rode. Ele aplica 001 -> 002 -> 003 -> 004 -> 005 num banco vazio e termina imprimindo uma
+rode. Ele aplica 001 -> 002 -> 003 -> 004 -> 005 -> 006 num banco vazio e termina imprimindo uma
 tabela de verificacoes.
 
 O QUE FAZER COM O RESULTADO: copie a tabela final (ou tire um print) e cole na
@@ -287,6 +289,15 @@ const testeAgenda = semMetaComandos(
   'scheduled_rls_test.sql (preparado)',
 );
 
+const testeOrcamento = semMetaComandos(
+  prepararTeste(
+    ler(TESTE_ORCAMENTO),
+    TESTE_ORCAMENTO,
+    'ORCAMENTO E FATURA: TUDO OK -- consumo, isolamento, views e aritmetica de fatura conferidos',
+  ),
+  'budget_invoice_test.sql (preparado)',
+);
+
 const arquivos = {
   '01_migrations.sql': partes.join('\n'),
   '02_isolamento_rls.sql':
@@ -315,6 +326,21 @@ duplicada da mesma regra. Tudo dentro de BEGIN/ROLLBACK.
 
 O QUE ESPERAR: uma unica linha "CONTAS PREVISTAS: TUDO OK".`
     ) + testeAgenda,
+  '04_orcamento_fatura.sql':
+    cabecalho(
+      'VALIDACAO PASSO 4: orcamento e fatura de cartao (006)',
+      `Rode DEPOIS do 01_migrations.sql, no mesmo projeto descartavel.
+
+Confere o que o 006 sozinho nao prova: que o consumo do teto soma as transacoes
+certas -- e so elas (despesa e gravada NEGATIVA neste banco, entao um SUM cru
+daria consumo negativo e o alerta de estouro nunca dispararia), que o teto
+pessoal e o do grupo nao se confundem, que budget_consumption e
+card_invoice_lines respeitam a RLS das tabelas base, e que a aritmetica da
+fatura acerta fechamento dia 31 em fevereiro e a virada de ano. Tudo dentro de
+BEGIN/ROLLBACK.
+
+O QUE ESPERAR: uma unica linha "ORCAMENTO E FATURA: TUDO OK".`
+    ) + testeOrcamento,
 };
 
 // ---------------------------------------------------------------------------
