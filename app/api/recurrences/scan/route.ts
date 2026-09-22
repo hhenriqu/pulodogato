@@ -28,9 +28,10 @@ import {
 // lista.
 //
 // A janela padrao aqui e 24 meses, que e o minimo para o anual existir. O
-// parametro `?months=` permite voltar para 6 sem mexer no codigo. Pendente de
-// decisao do Helio: se a resposta for "6 meses mesmo", a saida honesta e tirar
-// YEARLY do dominio, e nao deixar a opcao morta no banco.
+// parametro `?months=` permite ajustar sem mexer no codigo. Decidido pelo Helio
+// na HMO-145 em 22/09/2026: fica em 24 meses, para a anuidade de cartao e o
+// seguro anual entrarem na lista. Quem voltar isso para 6 precisa tirar YEARLY
+// do dominio junto, senao a opcao fica morta no banco.
 // =====================================================
 
 /** Ver o bloco acima. 24 = o minimo para uma serie anual ter 3 ocorrencias. */
