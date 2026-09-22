@@ -10,7 +10,8 @@ database/
 │   ├── 002_rls_lockdown.sql         RLS, privilegios e RPCs  (OBRIGATORIO)
 │   ├── 003_fix_trigger_privileges.sql  SECURITY DEFINER nos triggers
 │   ├── 004_fix_remaining_trigger_privileges.sql  os triggers que sobraram
-│   └── 005_recurring_and_scheduled.sql  gastos fixos + contas previstas
+│   ├── 005_recurring_and_scheduled.sql  gastos fixos + contas previstas
+│   └── 006_budgets_and_card_invoices.sql  orcamento por categoria + fatura de cartao
 ├── seed/
 │   └── reference_data.sql           financial_services + transaction_categories
 ├── tests/
@@ -22,9 +23,9 @@ database/
 └── README.md
 ```
 
-Ordem: `001`, `002`, `003`, `004`, `005`. Rodar `001` sozinho deixa o banco aberto.
+Ordem: `001`, `002`, `003`, `004`, `005`, `006`. Rodar `001` sozinho deixa o banco aberto.
 
-O `005` e **re-executavel de proposito** (`CREATE TABLE IF NOT EXISTS`, ENUM em
+Os `005` e `006` sao **re-executaveis de proposito** (`CREATE TABLE IF NOT EXISTS`, ENUM em
 bloco `DO`, `DROP POLICY IF EXISTS`): depois que ele entrar em producao, o `001`
 regenerado ja vai trazer as tabelas dele, e a cadeia precisa continuar subindo
 do zero mesmo assim.
@@ -47,6 +48,7 @@ psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/002_rls_lockdown.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/003_fix_trigger_privileges.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/004_fix_remaining_trigger_privileges.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/005_recurring_and_scheduled.sql
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/006_budgets_and_card_invoices.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/rls_isolation_test.sql  # da ROLLBACK no fim
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/scheduled_rls_test.sql  # idem
 ```
@@ -104,9 +106,10 @@ Por isso as mesmas assercoes existem tambem como dois arquivos para colar la:
 
 | Arquivo | O que faz | O que voce devolve |
 |---|---|---|
-| `database/validation/01_migrations.sql` | guarda + `001` → `002` → `003` → `004` → `005` + relatorio | a tabela final (7 linhas, termina em `VEREDITO`) |
+| `database/validation/01_migrations.sql` | guarda + `001` → `002` → `003` → `004` → `005` → `006` + relatorio | a tabela final (7 linhas, termina em `VEREDITO`) |
 | `database/validation/02_isolamento_rls.sql` | o teste de isolamento, dentro de `ROLLBACK` | a linha `ISOLAMENTO DE RLS: TUDO OK`, ou o erro |
 | `database/validation/03_contas_previstas.sql` | a agenda do `005`: isolamento, view e invariantes de dinheiro | a linha `CONTAS PREVISTAS: TUDO OK`, ou o erro |
+| `database/validation/04_orcamento_fatura.sql` | o `006`: consumo do teto, sinal do valor, isolamento das duas views e aritmetica da fatura | a linha `ORCAMENTO E FATURA: TUDO OK`, ou o erro |
 
 Os dois sao **gerados** por `node scripts/gen-validation-bundle.mjs` a partir de
 `migrations/` e `tests/rls_isolation_test.sql` — nunca editados a mao. Uma copia
