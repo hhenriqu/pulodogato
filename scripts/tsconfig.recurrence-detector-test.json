@@ -1,0 +1,13 @@
+{
+  "//": "Build so do teste. lib/recurrence-detector.ts nao importa nada -- nem com o alias @/ -- entao aqui nao ha o passo de reescrita que scripts/test-reports.mjs precisa. Se algum dia esse arquivo passar a importar outro modulo, o teste quebra com ERR_MODULE_NOT_FOUND e e este comentario que explica por que.",
+  "compilerOptions": {
+    "outDir": "../.tmp-recurrence-detector",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true
+  },
+  "include": ["../lib/recurrence-detector.ts"]
+}
