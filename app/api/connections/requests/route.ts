@@ -1,4 +1,5 @@
 import { createClient } from "@/utils/supabase/server";
+import { PUBLIC_PROFILE_FIELDS } from "@/lib/profile-fields";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +24,7 @@ export async function GET() {
       .select(
         `
         *,
-        requester:profiles!user_connections_requester_id_fkey(*)
+        requester:profiles!user_connections_requester_id_fkey(${PUBLIC_PROFILE_FIELDS})
       `
       )
       .eq("requested_id", user.id)

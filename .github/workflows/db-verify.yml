@@ -218,6 +218,33 @@ jobs:
       - name: Teste do extrato, dos avisos e dos comprovantes
         run: $PSQL -f database/tests/statements_alerts_test.sql
 
+      - name: 010_user_connections
+        run: $PSQL -f database/migrations/010_user_connections.sql
+
+      # Mesmo motivo do 005 ao 009.
+      - name: 010 e idempotente
+        run: $PSQL -f database/migrations/010_user_connections.sql
+
+      # Conexoes entre usuarios. A assercao central e o CONSENTIMENTO: quem
+      # pede a conexao nao pode aceita-la sozinho. Sem o `status = 'pending'`
+      # no WITH CHECK da policy de INSERT, qualquer usuario logado gravaria
+      # (eu, a vitima, 'accepted') e passaria a constar como conexao aceita
+      # dela -- e conexao aceita e o que habilita puxar alguem para o rateio
+      # de uma despesa. Nada falharia, e a vitima so descobriria vendo um
+      # estranho na propria lista de divisao.
+      #
+      # Cobre tambem: o par unico nos DOIS sentidos (A->B e B->A viram dois
+      # pendentes, e aceitar um deixa o outro pendente para sempre), o
+      # bloqueio que dura (com DELETE simetrico, quem foi recusado apaga a
+      # linha e pede de novo indefinidamente), e os NOMES das duas foreign
+      # keys -- a PostgREST resolve o embed do perfil pelo nome da constraint,
+      # entao com nome gerado a tabela existe e a tela continua quebrada.
+      #
+      # Tem dois controles negativos: as duas regras sao reintroduzidas
+      # quebradas no fim do arquivo e o defeito tem que voltar a acontecer.
+      - name: Teste das conexoes entre usuarios
+        run: $PSQL -f database/tests/user_connections_test.sql
+
       - name: Aritmetica de recorrencia
         run: npm run test:recurrence
 

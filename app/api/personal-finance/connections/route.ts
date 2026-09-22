@@ -20,6 +20,8 @@ export async function GET(request: NextRequest) {
       .from("user_connections")
       .select(
         `
+        requester_id,
+        requested_id,
         requester:profiles!user_connections_requester_id_fkey(id, full_name, nickname, avatar_url),
         requested:profiles!user_connections_requested_id_fkey(id, full_name, nickname, avatar_url)
       `
@@ -39,8 +41,11 @@ export async function GET(request: NextRequest) {
     const connectionsList =
       connections
         ?.map((conn: any) => {
+          // Decidir por requester_id, e nao por `conn.requester?.id`: se o
+          // embed do perfil vier nulo, a comparacao antiga escolhe justamente
+          // o lado nulo e a pessoa some da lista de rateio em silencio.
           const profile =
-            conn.requester?.id === user.id ? conn.requested : conn.requester;
+            conn.requester_id === user.id ? conn.requested : conn.requester;
           return {
             id: profile?.id,
             full_name: profile?.full_name,
