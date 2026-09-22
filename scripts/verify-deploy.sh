@@ -39,9 +39,28 @@ set -uo pipefail
 BASE="${1:-}"
 if [[ -z "$BASE" ]]; then
   echo "uso: $0 https://<projeto>.vercel.app" >&2
+  echo "     VERCEL_BYPASS_TOKEN=<token> $0 https://<preview>.vercel.app" >&2
   exit 2
 fi
 BASE="${BASE%/}"
+
+# Preview deployment fica atras da Deployment Protection mesmo quando producao
+# esta aberta -- desligar a protecao para Production nao a desliga para Preview.
+# Com o token de Protection Bypass for Automation da para verificar um preview
+# ANTES do merge, em vez de descobrir em producao.
+#
+#   Vercel > Settings > Deployment Protection > Protection Bypass for Automation
+#
+# x-vercel-set-bypass-cookie: false evita que a borda devolva um Set-Cookie de
+# sessao -- queremos o header valendo por requisicao, sem estado entre chamadas.
+BYPASS_ARGS=()
+if [[ -n "${VERCEL_BYPASS_TOKEN:-}" ]]; then
+  BYPASS_ARGS=(
+    -H "x-vercel-protection-bypass: $VERCEL_BYPASS_TOKEN"
+    -H "x-vercel-set-bypass-cookie: false"
+  )
+  echo "(usando VERCEL_BYPASS_TOKEN para atravessar a Deployment Protection)"
+fi
 
 # Rotas apagadas no PR #1 (HMO-121). Conferidas contra o historico do git.
 REMOVED_ROUTES=(
@@ -59,12 +78,16 @@ REMOVED_ROUTES=(
 
 failures=0
 
+# ${arr[@]+"${arr[@]}"} e a forma que sobrevive a `set -u` com array vazio no
+# bash 4.2 (macOS ainda traz 3.2/4.x antigo). "${arr[@]}" sozinho aborta la.
 status_of() {
-  curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$1"
+  curl -s -o /dev/null -w '%{http_code}' --max-time 20 \
+    ${BYPASS_ARGS[@]+"${BYPASS_ARGS[@]}"} "$1"
 }
 
 redirect_of() {
-  curl -s -o /dev/null -w '%{redirect_url}' --max-time 20 "$1"
+  curl -s -o /dev/null -w '%{redirect_url}' --max-time 20 \
+    ${BYPASS_ARGS[@]+"${BYPASS_ARGS[@]}"} "$1"
 }
 
 echo "== $BASE =="
@@ -94,7 +117,8 @@ fi
 echo "-- ancora: e a NOSSA app que responde aqui? --"
 anchored=1
 
-health_body="$(curl -s --max-time 20 "$BASE/api/health")"
+health_body="$(curl -s --max-time 20 \
+  ${BYPASS_ARGS[@]+"${BYPASS_ARGS[@]}"} "$BASE/api/health")"
 health_code="$(status_of "$BASE/api/health")"
 if [[ "$health_code" == "200" ]]; then
   echo "OK   200  /api/health"
@@ -112,7 +136,8 @@ fi
 # Se a ancora caiu, dizer o que esta servindo ali ajuda a distinguir
 # "deploy inexistente" de "outra app ocupando o hostname".
 if [[ "$anchored" -eq 0 ]]; then
-  root_html="$(curl -s -L --max-time 20 "$BASE/")"
+  root_html="$(curl -s -L --max-time 20 \
+    ${BYPASS_ARGS[@]+"${BYPASS_ARGS[@]}"} "$BASE/")"
   root_code="$(status_of "$BASE/")"
   if [[ "$root_code" == "200" ]] && ! grep -q '/_next/' <<<"$root_html"; then
     titulo="$(grep -o '<title>[^<]*</title>' <<<"$root_html" | head -1)"
