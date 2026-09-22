@@ -11,24 +11,43 @@ database/
 │   ├── 003_fix_trigger_privileges.sql  SECURITY DEFINER nos triggers
 │   ├── 004_fix_remaining_trigger_privileges.sql  os triggers que sobraram
 │   ├── 005_recurring_and_scheduled.sql  gastos fixos + contas previstas
-│   └── 006_budgets_and_card_invoices.sql  orcamento por categoria + fatura de cartao
+│   ├── 006_budgets_and_card_invoices.sql  orcamento por categoria + fatura de cartao
+│   ├── 007_group_settlements.sql    acerto de contas do grupo (+ 3 correcoes de dinheiro)
+│   └── 008_goals_and_reports.sql    metas com aportes + as views dos relatorios
+├── maintenance/
+│   └── 007_auditoria_saldos.sql     SOMENTE LEITURA: mede a deriva de current_balance
 ├── seed/
 │   └── reference_data.sql           financial_services + transaction_categories
 ├── tests/
 │   ├── 00_supabase_shim.sql             auth.uid() e roles, so para Postgres cru
 │   ├── rls_isolation_test.sql           prova que um usuario nao le dados de outro
 │   ├── scheduled_rls_test.sql           agenda de contas: isolamento e invariantes
+│   ├── budget_invoice_test.sql          orcamento e fatura: o SINAL do valor gravado
+│   ├── group_settlement_test.sql        acerto: o sinal do pagamento e o rateio em centavos
+│   ├── goals_reports_test.sql           metas e relatorios: sinal, transfer e group_id NULL
 │   ├── legacy_policy_drift_test.sql     policy antiga de producao tem que sumir
 │   └── legacy_function_drift_test.sql   funcao antiga de producao tem que sumir
 └── README.md
 ```
 
-Ordem: `001`, `002`, `003`, `004`, `005`, `006`. Rodar `001` sozinho deixa o banco aberto.
+Ordem: `001`, `002`, `003`, `004`, `005`, `006`, `007`, `008`. Rodar `001` sozinho deixa o
+banco aberto.
 
-Os `005` e `006` sao **re-executaveis de proposito** (`CREATE TABLE IF NOT EXISTS`, ENUM em
-bloco `DO`, `DROP POLICY IF EXISTS`): depois que ele entrar em producao, o `001`
-regenerado ja vai trazer as tabelas dele, e a cadeia precisa continuar subindo
-do zero mesmo assim.
+Do `005` em diante todas sao **re-executaveis de proposito**
+(`CREATE TABLE IF NOT EXISTS`, ENUM em bloco `DO`, `DROP POLICY IF EXISTS`):
+depois que entrarem em producao, o `001` regenerado ja vai trazer as tabelas
+delas, e a cadeia precisa continuar subindo do zero mesmo assim. Cada uma tem
+um preflight que aborta a transacao inteira listando **tudo** que falta de uma
+vez, em vez de um erro por vez.
+
+> **O `007` conserta um bug de dinheiro que esta em producao hoje.**
+> `update_account_balance()` somava `NEW.amount` no `UPDATE` sem estornar
+> `OLD.amount`: **qualquer** edicao de lancamento — inclusive trocar so a
+> descricao — descontava o valor de novo. Ele para o sangramento mas **nao
+> mexe no passado**, de proposito: recalcular `current_balance` a partir das
+> transacoes apagaria o saldo de abertura de quem cadastrou a conta com um.
+> Para medir a deriva antes de decidir, rode
+> `database/maintenance/007_auditoria_saldos.sql`, que e somente leitura.
 
 `001_baseline.sql` **nao se edita a mao** — e gerado por
 `node scripts/gen-baseline.mjs` a partir de um `pg_dump --schema-only` de
@@ -49,8 +68,15 @@ psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/003_fix_trigger_privile
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/004_fix_remaining_trigger_privileges.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/005_recurring_and_scheduled.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/006_budgets_and_card_invoices.sql
-psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/rls_isolation_test.sql  # da ROLLBACK no fim
-psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/scheduled_rls_test.sql  # idem
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/007_group_settlements.sql
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/008_goals_and_reports.sql
+
+# todos dao ROLLBACK no fim: nao deixam nada no banco
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/rls_isolation_test.sql
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/scheduled_rls_test.sql
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/budget_invoice_test.sql
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/group_settlement_test.sql
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/goals_reports_test.sql
 ```
 
 Executado do zero num Postgres 17 vazio: 18 tabelas, 18 com RLS, 40 policies, as
