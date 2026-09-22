@@ -61,10 +61,13 @@ psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/rls_isolation_test.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/user_connections_test.sql
 ```
 
-Executado do zero num Postgres 17 vazio: 18 tabelas, 18 com RLS, 40 policies, as
-21 asserções de isolamento passando e a role `anon` sem privilegio fora das duas
-tabelas de referencia. O mesmo roda no CI (`.github/workflows/db-verify.yml`) a
-cada PR que toca `database/`.
+A cadeia `001` → `002` → `003` executada do zero num Postgres 17 vazio da 18
+tabelas, 18 com RLS, 40 policies, as 21 asserções de isolamento passando e a
+role `anon` sem privilegio fora das duas tabelas de referencia (medido em
+2026-09-21). O `010` acrescenta `user_connections` e 5 policies, e o `004` nao
+cria objeto nenhum — so troca o dono de trigger. O mesmo roda no CI
+(`.github/workflows/db-verify.yml`) a cada PR que toca `database/`, e la os
+numeros sao conferidos por assercao em vez de por este paragrafo.
 
 ### Validado num projeto Supabase limpo
 
@@ -110,15 +113,20 @@ o painel nao e quem roda o script, entao cada senha errada custa uma ida e
 volta inteira (na HMO-117 custou duas, sem nunca conectar). O SQL Editor do
 Supabase nao pede senha: quem esta no painel ja esta autenticado.
 
-Por isso as mesmas assercoes existem tambem como dois arquivos para colar la:
+Por isso as mesmas assercoes existem tambem como arquivos para colar la:
 
 | Arquivo | O que faz | O que voce devolve |
 |---|---|---|
-| `database/validation/01_migrations.sql` | guarda + `001` → `002` → `003` + relatorio | a tabela final (7 linhas, termina em `VEREDITO`) |
+| `database/validation/01_migrations.sql` | guarda + `001` → `002` → `003` → `004` → `010` + relatorio | a tabela final (7 linhas, termina em `VEREDITO`) |
 | `database/validation/02_isolamento_rls.sql` | o teste de isolamento, dentro de `ROLLBACK` | a linha `ISOLAMENTO DE RLS: TUDO OK`, ou o erro |
+| `database/validation/08_conexoes.sql` | conexoes entre usuarios (`010`), dentro de `ROLLBACK` | a linha `CONEXOES: TUDO OK`, ou o erro |
 
-Os dois sao **gerados** por `node scripts/gen-validation-bundle.mjs` a partir de
-`migrations/` e `tests/rls_isolation_test.sql` — nunca editados a mao. Uma copia
+O `08` mantem o numero da pilha da HMO-137 (passos `03` a `07`) de proposito,
+para nao renumerar no dia em que ela entrar; rode-o depois do `01`, como os
+outros.
+
+Os tres sao **gerados** por `node scripts/gen-validation-bundle.mjs` a partir de
+`migrations/` e dos testes em `tests/` — nunca editados a mao. Uma copia
 do schema que sai de sincronia e pior do que nao ter copia: validaria um schema
 que nao e mais o nosso, e o relatorio sairia verde. O job `db-verify` roda
 `--check` e fecha se alguem mexer nas migrations sem regerar.
@@ -420,3 +428,48 @@ destinos diferentes porque as quatro nao eram a mesma coisa:
 O que **nao** mudou: `expense_groups.group_members.role` continua aceitando so
 `admin` e `member`. A rota `/api/groups` apagada inseria `role: 'owner'` — ela
 teria estourado no CHECK mesmo se `user_groups` existisse.
+
+Houve uma quinta, que a auditoria manual da issue nao listou: `assets`, no
+embed do `.select()` de `app/api/transactions/route.ts`. Saiu junto com a rota.
+
+### O que impede isto de voltar
+
+`npm run check-table-drift` (job `code-schema-drift`, roda em **todo** PR)
+falha se o codigo citar tabela que as migrations nao criam. E estatico, Node
+puro, nao precisa de banco — por isso pode ser obrigatorio sem virar pedagio.
+
+Existe porque nada mais pegava este defeito: o cliente do Supabase aceita
+qualquer string em `.from()`, entao `tsc`, `next build` e `next lint` passam, e
+o erro so nasce em producao como PGRST205 dentro de um `catch` que devolve 500.
+Tela vazia para o usuario, CI verde para nos.
+
+Vive fora do `db-verify` de proposito: aquele job e filtrado por
+`paths: ['database/**']`, e esta deriva nasce do lado do **codigo** — uma rota
+nova que cita tabela inexistente nao toca em `database/` nenhuma vez.
+
+Cobre as duas formas de citar uma tabela, e a segunda e a que importa:
+
+```ts
+.from("user_groups")                       // 1. a obvia
+.from("group_members").select(`
+   role,
+   user_groups ( id, name )                // 2. o embed do PostgREST
+`)
+```
+
+Foi a forma 2 que escondeu o defeito em `app/api/groups/route.ts`: a linha do
+`.from()` apontava para `group_members`, que existe. Foi ela tambem que revelou
+`assets`.
+
+O job tem **controle negativo**: planta as duas formas de deriva e exige
+vermelho nas duas. Uma verificacao que nunca viu vermelho sai verde tambem
+quando a regex quebra numa refatoracao, e isso e indistinguivel de estar tudo
+certo.
+
+O `PENDENTES` do script (hoje vazio) tem prazo de validade embutido: o job
+tambem falha se uma entrada ficar obsoleta — a tabela passou a existir, ou o
+codigo parou de cita-la. Sem essa metade a lista de excecoes so cresce e a
+verificacao vira decoracao.
+
+Nao cobre SQL cru em `.rpc()` nem nome de tabela montado em runtime — nenhum
+dos dois aparece no codigo hoje.
