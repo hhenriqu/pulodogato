@@ -12,9 +12,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-recurrence.mjs', 'lib/recurrence.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-recurrence.mjs', 'scripts/test-settlement.mjs', 'lib/recurrence.ts', 'lib/settlement.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-recurrence.mjs', 'lib/recurrence.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-recurrence.mjs', 'scripts/test-settlement.mjs', 'lib/recurrence.ts', 'lib/settlement.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -140,8 +140,39 @@ jobs:
       - name: Teste do orcamento e da fatura
         run: $PSQL -f database/tests/budget_invoice_test.sql
 
+      - name: 007_group_settlements
+        run: $PSQL -f database/migrations/007_group_settlements.sql
+
+      # Mesmo motivo do 005 e do 006. O 007 tem um agravante proprio: ele faz
+      # um UPDATE de manutencao em financial_transactions (backfill de
+      # group_id), e rodar duas vezes nao pode mexer no saldo das contas na
+      # segunda passada. A propria migration aborta se mexer.
+      - name: 007 e idempotente
+        run: $PSQL -f database/migrations/007_group_settlements.sql
+
+      # Acerto de contas do grupo. A assercao que mais importa e o SINAL:
+      # registrar um pagamento tem que APROXIMAR o saldo de zero. O erro
+      # simetrico dobra a divida a cada Pix registrado e a tela mostraria a
+      # sugestao de transferencia CRESCENDO depois de cada pagamento -- sem
+      # erro nenhum em lugar nenhum.
+      #
+      # Cobre tambem os tres defeitos que o 007 conserta no schema herdado:
+      # o rateio que perdia centavo (grupo nunca fechava), o trigger que
+      # reescrevia divisao personalizada como igualitaria, e o trigger de saldo
+      # que cobrava o valor de novo a cada edicao de lancamento.
+      - name: Teste do acerto de contas do grupo
+        run: $PSQL -f database/tests/group_settlement_test.sql
+
       - name: Aritmetica de recorrencia
         run: npm run test:recurrence
+
+      # O acerto e metade SQL, metade aritmetica: a view diz QUANTO cada um
+      # deve, o TypeScript decide QUEM paga quem. Em ponto flutuante o guloso
+      # fecha deixando residuo de fracao de centavo, que vira transferencia de
+      # R$ 0,00 na tela. lib/settlement.ts trabalha em centavos inteiros e isto
+      # prova que a conta fecha.
+      - name: Acerto de contas simplificado
+        run: npm run test:settlement
 
       - name: Nenhuma tabela pode ficar sem RLS
         run: |

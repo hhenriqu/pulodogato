@@ -208,52 +208,69 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Se tem group_id e é uma despesa, criar group_transaction e splits automaticamente
+    // Despesa com group_id: o trigger `auto_create_group_transaction` do banco
+    // ja criou a ligacao e o rateio igualitario no INSERT acima.
+    //
+    // Esta rota criava tudo DE NOVO -- uma segunda linha em group_transactions
+    // (nao ha indice unico que impeca) com um segundo jogo de rateios. O efeito
+    // era cada membro devendo o DOBRO da parte dele naquela despesa, em
+    // silencio. So ficou visivel com a view de saldo da 007, porque antes o
+    // saldo era calculado de dois jeitos diferentes e nenhum deles fechava.
+    //
+    // O rateio em centavos inteiros tambem passou a ser do banco (007): a
+    // divisao em TypeScript aqui perdia centavo na divisao inexata.
     if (group_id && isExpense) {
-      // Criar group_transaction
-      const { data: groupTransaction, error: groupTransactionError } =
-        await supabase
+      const { data: groupTransaction } = await supabase
+        .from("group_transactions")
+        .select("id")
+        .eq("group_id", group_id)
+        .eq("transaction_id", transaction.id)
+        .maybeSingle();
+
+      if (!groupTransaction) {
+        // Banco sem a 007: mantem o caminho antigo para nao deixar a despesa
+        // sem rateio nenhum.
+        const { data: criada, error: groupTransactionError } = await supabase
           .from("group_transactions")
           .insert({
             group_id: group_id,
             transaction_id: transaction.id,
             split_type: "equal",
           })
-          .select()
+          .select("id")
           .single();
 
-      if (groupTransactionError) {
-        console.error(
-          "Group transaction creation error:",
-          groupTransactionError
-        );
-      } else {
-        // Buscar membros ativos do grupo
-        const { data: members } = await supabase
-          .from("group_members")
-          .select("id")
-          .eq("group_id", group_id)
-          .eq("status", "active");
+        if (groupTransactionError) {
+          console.error(
+            "Group transaction creation error:",
+            groupTransactionError
+          );
+        } else {
+          const { data: members } = await supabase
+            .from("group_members")
+            .select("id")
+            .eq("group_id", group_id)
+            .eq("status", "active");
 
-        if (members && members.length > 0) {
-          // Criar splits igualmente divididos entre todos os membros
-          const splitAmount = Math.abs(finalAmount) / members.length;
-          const splitPercentage = 100 / members.length;
+          if (members && members.length > 0) {
+            const splitAmount = Math.abs(finalAmount) / members.length;
+            const splitPercentage = 100 / members.length;
 
-          const groupSplitsData = members.map((member: any) => ({
-            group_transaction_id: groupTransaction.id,
-            member_id: member.id,
-            percentage: splitPercentage,
-            amount: splitAmount,
-            status: "pending",
-          }));
+            const { error: groupSplitsError } = await supabase
+              .from("group_expense_splits")
+              .insert(
+                members.map((member: any) => ({
+                  group_transaction_id: criada.id,
+                  member_id: member.id,
+                  percentage: splitPercentage,
+                  amount: splitAmount,
+                  status: "pending",
+                }))
+              );
 
-          const { error: groupSplitsError } = await supabase
-            .from("group_expense_splits")
-            .insert(groupSplitsData);
-
-          if (groupSplitsError) {
-            console.error("Group splits creation error:", groupSplitsError);
+            if (groupSplitsError) {
+              console.error("Group splits creation error:", groupSplitsError);
+            }
           }
         }
       }
