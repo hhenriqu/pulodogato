@@ -11,7 +11,8 @@
     "check-table-drift": "node scripts/check-table-drift.mjs",
     "check-color-tokens": "node scripts/check-color-tokens.mjs",
     "pre-commit": "npm run check-table-drift && npm run check-color-tokens && npm run check-prd && npm run lint",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test:recurrence-detector": "tsc -p scripts/tsconfig.recurrence-detector-test.json && node --test scripts/test-recurrence-detector.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
