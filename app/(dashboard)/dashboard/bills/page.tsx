@@ -78,6 +78,10 @@ interface FormGastoFixo {
   account_id: string;
   frequency: RecurrenceFrequency;
   due_day: string;
+  // O aluguel dividido com a esposa, a internet da casa. As tabelas do 005 ja
+  // tinham group_id e a API ja aceitava; faltava a tela -- sem ela o gasto fixo
+  // compartilhado nascia sempre pessoal e os outros membros nunca o viam.
+  group_id: string;
 }
 
 interface FormContaAvulsa {
@@ -95,6 +99,9 @@ export default function BillsPage() {
   const [rules, setRules] = useState<RecurringRule[]>([]);
   const [categories, setCategories] = useState<TransactionCategory[]>([]);
   const [accounts, setAccounts] = useState<FinancialAccount[]>([]);
+  // Grupos de despesa (casa, viagem) -- nao confundir com `grupos` mais
+  // abaixo, que agrupa as contas por vencimento.
+  const [gruposDespesa, setGruposDespesa] = useState<{ id: string; name: string }[]>([]);
   const [custoFixo, setCustoFixo] = useState(0);
   const [loading, setLoading] = useState(true);
   const [agindo, setAgindo] = useState<string | null>(null);
@@ -108,6 +115,7 @@ export default function BillsPage() {
     account_id: "",
     frequency: "monthly",
     due_day: "5",
+    group_id: "",
   });
 
   const [formAvulsa, setFormAvulsa] = useState<FormContaAvulsa>({
@@ -120,12 +128,14 @@ export default function BillsPage() {
 
   const carregar = useCallback(async () => {
     try {
-      const [respAgenda, respRegras, respCategorias, respContas, respResumo] = await Promise.all([
+      const [respAgenda, respRegras, respCategorias, respContas, respResumo, respGrupos] =
+        await Promise.all([
         fetch("/api/scheduled-transactions?status=open"),
         fetch("/api/recurring-rules"),
         fetch("/api/personal-finance/categories"),
         fetch("/api/financial-accounts"),
         fetch("/api/scheduled-transactions/summary?months=1"),
+        fetch("/api/expense-groups"),
       ]);
 
       if (respAgenda.ok) {
@@ -153,6 +163,11 @@ export default function BillsPage() {
       if (respResumo.ok) {
         const dados = await respResumo.json();
         setCustoFixo(dados.fixed_monthly_cost ?? 0);
+      }
+
+      if (respGrupos.ok) {
+        const dados = await respGrupos.json();
+        setGruposDespesa(dados.groups ?? []);
       }
     } catch (erro) {
       console.error("Erro ao carregar contas previstas:", erro);
@@ -261,6 +276,7 @@ export default function BillsPage() {
           account_id: formFixo.account_id || undefined,
           frequency: formFixo.frequency,
           due_day: formFixo.due_day ? Number(formFixo.due_day) : undefined,
+          group_id: formFixo.group_id || undefined,
         }),
       });
       const dados = await resposta.json();
@@ -283,6 +299,7 @@ export default function BillsPage() {
         account_id: "",
         frequency: "monthly",
         due_day: "5",
+        group_id: "",
       });
       await carregar();
     } catch (erro) {
@@ -653,6 +670,43 @@ export default function BillsPage() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                {/* Gasto fixo compartilhado: o aluguel dividido com a esposa, a
+                    internet da casa. As tabelas do 005 sempre tiveram group_id
+                    e a API sempre aceitou -- faltava este seletor, e sem ele
+                    toda regra nascia pessoal e invisivel para os outros
+                    membros. So aparece para quem tem grupo. */}
+                {gruposDespesa.length > 0 && (
+                  <div>
+                    <Label>Dividir com um grupo (opcional)</Label>
+                    <Select
+                      value={formFixo.group_id || "pessoal"}
+                      onValueChange={(valor) =>
+                        setFormFixo((atual) => ({
+                          ...atual,
+                          group_id: valor === "pessoal" ? "" : valor,
+                        }))
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Só meu" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="pessoal">Só meu</SelectItem>
+                        {gruposDespesa.map((grupo) => (
+                          <SelectItem key={grupo.id} value={grupo.id}>
+                            {grupo.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="mt-1 text-xs text-gray-500">
+                      Os membros do grupo passam a ver esta conta na agenda
+                      deles — sem enxergar o resto das suas contas.
+                    </p>
+                  </div>
+                )}
+
                 <Button
                   className="w-full"
                   onClick={criarGastoFixo}
