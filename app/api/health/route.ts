@@ -9,8 +9,21 @@ export async function GET() {
   try {
     const supabase = createClient();
 
+    // A sonda TEM de ser uma tabela que `anon` pode ler. Esta rota e publica,
+    // entao roda sem sessao -- com a role `anon`.
+    //
+    // Ja foi `profiles`, e isso quebrou o health check em producao no dia em
+    // que a 002_rls_lockdown subiu: ela faz
+    // `REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon` e so devolve
+    // SELECT para duas tabelas de referencia. `profiles` nao e uma delas, e as
+    // policies dela sao `TO authenticated`. Resultado: permission denied ->
+    // 503 permanente, com o banco inteiramente saudavel. Alarme falso.
+    //
+    // `transaction_categories` tem GRANT SELECT explicito para anon na 002
+    // (conferido em producao), entao ela mede o que a rota quer medir: se a
+    // app alcanca o Postgres -- nao se a role tem privilegio.
     const { error: connectionError } = await supabase
-      .from("profiles")
+      .from("transaction_categories")
       .select("id")
       .limit(1);
 
