@@ -18,6 +18,20 @@
 # verificacao passaria sem provar nada. Se mexer na lista, confira contra o
 # historico.
 #
+# A ANCORA VEM PRIMEIRO, e o resto so vale se ela passar. Duas maneiras de um
+# 404 mentir, as duas ja aconteceram de verdade aqui:
+#
+#   a) o deploy nao existe -- a Vercel devolve 404 para qualquer subdominio
+#      desconhecido, entao as 10 rotas "passam" contra um host morto;
+#   b) o hostname serve OUTRA app -- foi o caso em 22/09, quando
+#      pulodogato.vercel.app respondia 200 com um SPA estatico do Lovable.
+#      Checar so "a raiz responde 200" nao separa isso: provava que *alguma*
+#      app servia ali, nao que era a nossa.
+#
+# Por isso a ancora e /api/health dar 200: e rota nossa e so responde se a
+# camada de API do Next estiver no ar. Sem ela, os 404 viram "?" em vez de
+# "OK" e o script diz NAO VERIFICADO -- nunca "tudo certo".
+#
 # Sai com codigo 1 se qualquer checagem falhar.
 
 set -uo pipefail
@@ -52,51 +66,63 @@ status_of() {
 echo "== $BASE =="
 echo
 
-echo "-- health --"
+# -------- ANCORA --------
+# Tem que passar antes de qualquer 404 valer como prova. Ver o cabecalho.
+echo "-- ancora: e a NOSSA app que responde aqui? --"
+anchored=1
+
 health_body="$(curl -s --max-time 20 "$BASE/api/health")"
 health_code="$(status_of "$BASE/api/health")"
 if [[ "$health_code" == "200" ]]; then
   echo "OK   200  /api/health"
 elif [[ "$health_code" == "000" ]]; then
   echo "ERRO 000  /api/health -- sem resposta (host nao resolve? TLS? timeout?)"
+  anchored=0
   failures=$((failures + 1))
 else
   echo "FALHA $health_code  /api/health (esperado 200)"
+  anchored=0
   failures=$((failures + 1))
 fi
 [[ -n "$health_body" ]] && echo "     corpo: ${health_body:0:200}"
+
+# Se a ancora caiu, dizer o que esta servindo ali ajuda a distinguir
+# "deploy inexistente" de "outra app ocupando o hostname".
+if [[ "$anchored" -eq 0 ]]; then
+  root_html="$(curl -s -L --max-time 20 "$BASE/")"
+  root_code="$(status_of "$BASE/")"
+  if [[ "$root_code" == "200" ]] && ! grep -q '/_next/' <<<"$root_html"; then
+    titulo="$(grep -o '<title>[^<]*</title>' <<<"$root_html" | head -1)"
+    echo "AVISO     / responde 200 mas nao parece Next.js -- outra app no hostname?"
+    [[ -n "$titulo" ]] && echo "          $titulo"
+  fi
+fi
 echo
 
 echo "-- rotas removidas na Fase 1 (esperado 404) --"
 for route in "${REMOVED_ROUTES[@]}"; do
   code="$(status_of "$BASE$route")"
-  if [[ "$code" == "404" ]]; then
-    echo "OK   404  $route"
-  elif [[ "$code" == "000" ]]; then
-    # 000 = o curl nao completou (DNS, TLS, timeout). Nao e um 200 nem um 404;
-    # nao da para concluir nada sobre a rota.
-    echo "ERRO 000  $route -- sem resposta (conexao falhou, nao e conclusivo)"
-    failures=$((failures + 1))
-  else
+  if [[ "$code" != "404" && "$code" != "000" ]]; then
+    # Um 200/500 aqui e conclusivo mesmo sem ancora: a rota respondeu.
     echo "FALHA $code  $route -- AINDA RESPONDE"
+    failures=$((failures + 1))
+  elif [[ "$anchored" -eq 0 ]]; then
+    # Sem ancora, 404 nao prova remocao: um host morto ou uma app estranha
+    # devolve 404 para tudo. Nao conta como OK nem soma falha -- e indefinido.
+    echo "?    $code  $route -- inconclusivo (ancora falhou)"
+  elif [[ "$code" == "404" ]]; then
+    echo "OK   404  $route"
+  else
+    echo "ERRO 000  $route -- sem resposta (conexao falhou, nao e conclusivo)"
     failures=$((failures + 1))
   fi
 done
 echo
 
-# As rotas com [groupId] sao dinamicas: mesmo removidas, um 404 podia vir do
-# segmento e nao da rota. Checar a raiz sem o parametro separa os dois casos.
-echo "-- sanidade: a app esta servindo mesmo? --"
-root_code="$(status_of "$BASE/")"
-if [[ "$root_code" =~ ^(200|302|307)$ ]]; then
-  echo "OK   $root_code  / (a app responde, entao os 404 acima sao reais)"
-else
-  echo "FALHA $root_code  / -- se a app nao serve nada, os 404 acima nao provam nada"
-  failures=$((failures + 1))
-fi
-echo
-
-if [[ "$failures" -eq 0 ]]; then
+if [[ "$anchored" -eq 0 ]]; then
+  echo "NAO VERIFICADO -- a ancora (/api/health) nao respondeu 200, entao os 404"
+  echo "acima nao provam que a Fase 1 chegou ao ar. Confirme a URL do deploy."
+elif [[ "$failures" -eq 0 ]]; then
   echo "TUDO OK -- health de pe e as 10 rotas da Fase 1 fora do ar."
 else
   echo "$failures checagem(ns) falharam."
