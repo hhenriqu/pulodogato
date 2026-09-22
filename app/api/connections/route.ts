@@ -1,4 +1,5 @@
 import { createClient } from "@/utils/supabase/server";
+import { PUBLIC_PROFILE_FIELDS } from "@/lib/profile-fields";
 import { NextResponse } from "next/server";
 
 export async function GET() {
@@ -21,8 +22,8 @@ export async function GET() {
       .select(
         `
         *,
-        requester:profiles!user_connections_requester_id_fkey(*),
-        requested:profiles!user_connections_requested_id_fkey(*)
+        requester:profiles!user_connections_requester_id_fkey(${PUBLIC_PROFILE_FIELDS}),
+        requested:profiles!user_connections_requested_id_fkey(${PUBLIC_PROFILE_FIELDS})
       `
       )
       .or(`requester_id.eq.${user.id},requested_id.eq.${user.id}`)

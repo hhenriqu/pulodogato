@@ -8,18 +8,34 @@ database/
 │   ├── 000_preflight_inventory.sql  inventario somente leitura, roda antes
 │   ├── 001_baseline.sql             schema + seed de referencia  (GERADO)
 │   ├── 002_rls_lockdown.sql         RLS, privilegios e RPCs  (OBRIGATORIO)
-│   └── 003_fix_trigger_privileges.sql  SECURITY DEFINER nos triggers
+│   ├── 003_fix_trigger_privileges.sql  SECURITY DEFINER nos triggers
+│   ├── 004_fix_remaining_trigger_privileges.sql  os triggers que sobraram
+│   └── 010_user_connections.sql     conexoes entre usuarios (a tabela que a tela ja chamava)
 ├── seed/
 │   └── reference_data.sql           financial_services + transaction_categories
 ├── tests/
 │   ├── 00_supabase_shim.sql             auth.uid() e roles, so para Postgres cru
 │   ├── rls_isolation_test.sql           prova que um usuario nao le dados de outro
+│   ├── user_connections_test.sql        conexoes: consentimento, par unico e bloqueio duravel
 │   ├── legacy_policy_drift_test.sql     policy antiga de producao tem que sumir
 │   └── legacy_function_drift_test.sql   funcao antiga de producao tem que sumir
 └── README.md
 ```
 
-Ordem: `001`, `002`, `003`. Rodar `001` sozinho deixa o banco aberto.
+Ordem: `001`, `002`, `003`, `004`, `010`. Rodar `001` sozinho deixa o banco aberto.
+
+> **O salto de `004` para `010` e proposital.** As migrations `005` a `009`
+> (contas previstas, orcamento, acerto de grupo, metas e extrato) vivem na pilha
+> de PRs da HMO-137, que ainda nao foi mergeada. O `010` nao depende de nenhuma
+> delas -- so de `profiles`, que vem do `001` --, entao ele entra sozinho sem
+> buraco de dependencia. Os numeros ficam reservados de proposito: renumerar o
+> `010` para `005` agora criaria colisao no dia em que a pilha entrar.
+
+O `010` e **re-executavel de proposito** (`CREATE TABLE IF NOT EXISTS`, ENUM em
+bloco `DO`, `DROP POLICY IF EXISTS`): depois que ele entrar em producao, o `001`
+regenerado ja vai trazer `user_connections`, e a cadeia precisa continuar subindo
+do zero mesmo assim. Ele tem um preflight que aborta a transacao inteira listando
+**tudo** que falta de uma vez, em vez de um erro por vez.
 
 `001_baseline.sql` **nao se edita a mao** — e gerado por
 `node scripts/gen-baseline.mjs` a partir de um `pg_dump --schema-only` de
@@ -37,7 +53,12 @@ psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/00_supabase_shim.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/001_baseline.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/002_rls_lockdown.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/003_fix_trigger_privileges.sql
-psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/rls_isolation_test.sql  # da ROLLBACK no fim
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/004_fix_remaining_trigger_privileges.sql
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/010_user_connections.sql
+
+# os dois dao ROLLBACK no fim: nao deixam nada no banco
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/rls_isolation_test.sql
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/user_connections_test.sql
 ```
 
 Executado do zero num Postgres 17 vazio: 18 tabelas, 18 com RLS, 40 policies, as
@@ -382,9 +403,20 @@ diario do plano Free, com retencao curta e sem teste de restauracao.
 
 ---
 
-## Divida conhecida: tabelas que o codigo usa e nao existem
+## Tabelas que o codigo usava e nao existiam — resolvido na HMO-124
 
-`dividends`, `transactions`, `user_connections`, `user_groups` sao referenciadas
-no codigo mas **nao existem em producao** — sao restos do produto de
-investimentos. Esses caminhos falham em runtime. Nao foram criadas aqui de
-proposito: o certo e remover o codigo morto, nao inventar tabela.
+Eram quatro: `dividends`, `transactions`, `user_connections` e `user_groups`.
+A regra que valeu foi a mesma para as quatro — **nao inventar tabela para
+codigo morto, e nao apagar codigo que tem produto atras** —, e ela levou a
+destinos diferentes porque as quatro nao eram a mesma coisa:
+
+| tabela | destino | por que |
+|---|---|---|
+| `user_connections` | **criada** (`010`) | nao era codigo morto: a tela `/dashboard/connections` (596 linhas), seis rotas e a coluna `profiles.allow_connections` ja existiam e ja funcionavam. Faltava so a tabela. |
+| `user_groups` | **repontada** para `expense_groups` | era o MESMO conceito com outro nome: a aba Grupos da tela de Conexoes passou a ler a tabela de verdade (`owner_id`→`created_by`, `is_private`→`group_type`, `invite_code`→`group_code`; `max_members` nao existe no produto). A rota `/api/groups`, duplicata morta de `/api/expense-groups`, foi apagada. |
+| `transactions` | **codigo apagado** | nao era `financial_transactions`, como a issue supunha: tinha `asset_id`, `quantity`, `price`, `fees` e um join com `assets`. Era a compra e venda de acoes do produto de investimentos. A rota nao tinha nenhum consumidor no app. |
+| `dividends` | **codigo apagado** | mesmo produto. A rota `/api/portfolio/summary` tambem nao tinha consumidor, e a `/api/assets/prices`, que saiu junto, devolvia `Math.random() * 100 + 10` como cotacao. |
+
+O que **nao** mudou: `expense_groups.group_members.role` continua aceitando so
+`admin` e `member`. A rota `/api/groups` apagada inseria `role: 'owner'` — ela
+teria estourado no CHECK mesmo se `user_groups` existisse.
