@@ -410,7 +410,11 @@ export function detectRecurrences(
 
   const saida: RecurrenceCandidate[] = [];
 
-  for (const [merchantKey, itens] of grupos) {
+  // Array.from em vez de iterar o Map direto: o tsconfig da app declara
+  // "lib": es6 sem target es2015+, e o for...of sobre Map nao compila ali
+  // (TS2802). O teste compila com target es2020 e passaria sem isto -- o erro
+  // so apareceria no `next build`.
+  for (const [merchantKey, itens] of Array.from(grupos.entries())) {
     // Duas cobrancas no mesmo dia (anuidade dividida, retentativa) nao formam
     // intervalo: dariam um intervalo 0 que reprovaria a serie inteira. Contam
     // como uma ocorrencia so, somada.
@@ -421,7 +425,7 @@ export function detectRecurrences(
       else porData.set(t.transaction_date, [t]);
     }
 
-    const datas = [...porData.keys()].sort();
+    const datas = Array.from(porData.keys()).sort();
     if (datas.length < MIN_OCORRENCIAS) continue;
 
     const valores = datas.map((d) =>
