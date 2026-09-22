@@ -1,0 +1,82 @@
+name: code-schema-drift
+
+# Prova, a cada mudanca no codigo, que toda tabela consultada pela aplicacao
+# existe no schema versionado.
+#
+# Vive separado do db-verify de proposito, por duas razoes:
+#
+#   1. O db-verify e filtrado por `paths: ['database/**', ...]`. A deriva que a
+#      HMO-124 encontrou nasce do lado do CODIGO -- uma rota nova que cita uma
+#      tabela que ninguem criou nao toca em database/ nenhuma vez, e passaria
+#      por baixo daquele filtro. Este job nao tem filtro de path.
+#
+#   2. Nao precisa de Postgres. Roda em segundos, entao pode ser obrigatorio em
+#      todo PR sem virar pedagio.
+#
+# O modo de falha que ele cobre e o silencioso: o cliente do Supabase aceita
+# qualquer string em `.from()`, o `tsc` e o `next build` passam, e o erro so
+# aparece em producao como PGRST205 dentro de um catch que devolve 500 --
+# tela vazia para o usuario, CI verde para nos.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  drift:
+    name: codigo nao cita tabela fora do schema
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Sem `npm ci`: a verificacao e Node puro, so com a biblioteca padrao.
+      # Instalar dependencia aqui so somaria minuto e um jeito novo de quebrar.
+      - name: Tabelas citadas pelo codigo existem nas migrations
+        run: node scripts/check-table-drift.mjs
+
+      # Controles negativos. Uma verificacao que nunca viu vermelho nao e
+      # verificacao: se a regex quebrar numa refatoracao, o passo acima passa a
+      # sair verde por nao achar NADA, que e indistinguivel de estar tudo certo.
+      # Aqui plantamos as duas formas de deriva e exigimos vermelho nas duas.
+      - name: A verificacao sabe falhar
+        run: |
+          set -uo pipefail
+          probe='app/api/_drift_probe/route.ts'
+          mkdir -p "$(dirname "$probe")"
+          trap 'rm -rf "$(dirname "$probe")"' EXIT
+
+          # 1) A forma obvia: .from("nome").
+          cat > "$probe" <<'TS'
+          export async function GET() {
+            await supabase.from("tabela_que_nao_existe").select("*");
+          }
+          TS
+          if node scripts/check-table-drift.mjs > /dev/null 2>&1; then
+            echo "::error::A verificacao passou verde com um .from() inventado."
+            exit 1
+          fi
+
+          # 2) A forma que escapa da leitura humana, e que foi exatamente o caso
+          #    de app/api/groups/route.ts: o .from() aponta para tabela que
+          #    existe, e o nome inventado esta no embed do .select().
+          cat > "$probe" <<'TS'
+          export async function GET() {
+            await supabase.from("profiles").select(`
+              id,
+              tabela_que_nao_existe ( nome )
+            `);
+          }
+          TS
+          if node scripts/check-table-drift.mjs > /dev/null 2>&1; then
+            echo "::error::A verificacao passou verde com um embed inventado."
+            exit 1
+          fi
+
+          echo "A verificacao fica vermelha nas duas formas de deriva."
