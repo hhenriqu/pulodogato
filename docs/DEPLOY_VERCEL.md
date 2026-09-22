@@ -40,10 +40,14 @@ Ja feito e verificado (`next build` limpo, so warnings de lint):
 Vercel → Add New → Project → importar `pulodogato`. O framework e detectado
 como Next.js; nao mude build command nem output directory.
 
-O nome do projeto fica o padrao (`pulodogato`), decidido na HMO-122. O dominio
-tende a ser `pulodogato.vercel.app`, mas se o nome ja estiver tomado por outra
-conta a Vercel acrescenta um sufixo. **Copie a URL que a Vercel mostrar** em vez
-de assumir -- o passo 3 e o 4 dependem dela estar exata.
+O nome do projeto fica o padrao (`pulodogato`), decidido na HMO-122.
+
+> **`pulodogato.vercel.app` ja esta tomado.** Verificado em 22/09: aquele
+> hostname responde 200 servindo um SPA estatico do Lovable, que nao tem nada a
+> ver com este projeto. Entao a Vercel **vai** dar um sufixo ao dominio deste
+> deploy. **Copie a URL que a Vercel mostrar** em vez de assumir -- os passos 3 e
+> 4 dependem dela estar exata, e apontar o passo 4 para o hostname errado ja
+> custou uma rodada de verificacao em cima da app de outra pessoa.
 
 ### 2. Variaveis de ambiente
 
