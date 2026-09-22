@@ -13,7 +13,8 @@ database/
 │   ├── 005_recurring_and_scheduled.sql  gastos fixos + contas previstas
 │   ├── 006_budgets_and_card_invoices.sql  orcamento por categoria + fatura de cartao
 │   ├── 007_group_settlements.sql    acerto de contas do grupo (+ 3 correcoes de dinheiro)
-│   └── 008_goals_and_reports.sql    metas com aportes + as views dos relatorios
+│   ├── 008_goals_and_reports.sql    metas com aportes + as views dos relatorios
+│   └── 009_statements_alerts_receipts.sql  extrato OFX/CSV + avisos de vencimento + comprovantes
 ├── maintenance/
 │   └── 007_auditoria_saldos.sql     SOMENTE LEITURA: mede a deriva de current_balance
 ├── seed/
@@ -25,13 +26,21 @@ database/
 │   ├── budget_invoice_test.sql          orcamento e fatura: o SINAL do valor gravado
 │   ├── group_settlement_test.sql        acerto: o sinal do pagamento e o rateio em centavos
 │   ├── goals_reports_test.sql           metas e relatorios: sinal, transfer e group_id NULL
+│   ├── statements_alerts_test.sql       extrato: deduplicacao por conta, sinal, janela de aviso
 │   ├── legacy_policy_drift_test.sql     policy antiga de producao tem que sumir
 │   └── legacy_function_drift_test.sql   funcao antiga de producao tem que sumir
 └── README.md
 ```
 
-Ordem: `001`, `002`, `003`, `004`, `005`, `006`, `007`, `008`. Rodar `001` sozinho deixa o
-banco aberto.
+Ordem: `001`, `002`, `003`, `004`, `005`, `006`, `007`, `008`, `009`. Rodar `001` sozinho
+deixa o banco aberto.
+
+> **A SECAO 11 do `009` so roda num Supabase de verdade.** Ela cria o bucket
+> privado `receipts` e depende do schema `storage`, que num Postgres cru nao
+> existe -- ali ela se pula sozinha com um `NOTICE` e o resto do arquivo aplica
+> normalmente. E por isso que o CI consegue provar as outras dez secoes num
+> `postgres:17` puro. **No Supabase ela roda**, e sem ela o anexo de comprovante
+> responde 503 dizendo exatamente isso.
 
 Do `005` em diante todas sao **re-executaveis de proposito**
 (`CREATE TABLE IF NOT EXISTS`, ENUM em bloco `DO`, `DROP POLICY IF EXISTS`):
@@ -70,6 +79,7 @@ psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/005_recurring_and_sched
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/006_budgets_and_card_invoices.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/007_group_settlements.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/008_goals_and_reports.sql
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/009_statements_alerts_receipts.sql
 
 # todos dao ROLLBACK no fim: nao deixam nada no banco
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/rls_isolation_test.sql
@@ -77,6 +87,7 @@ psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/scheduled_rls_test.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/budget_invoice_test.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/group_settlement_test.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/goals_reports_test.sql
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/statements_alerts_test.sql
 ```
 
 Executado do zero num Postgres 17 vazio: 18 tabelas, 18 com RLS, 40 policies, as

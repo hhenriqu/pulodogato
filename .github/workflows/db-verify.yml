@@ -12,9 +12,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-recurrence.mjs', 'scripts/test-settlement.mjs', 'scripts/test-reports.mjs', 'scripts/resolve-aliases.mjs', 'scripts/tsconfig.reports-test.json', 'lib/recurrence.ts', 'lib/settlement.ts', 'lib/services/reports.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-recurrence.mjs', 'scripts/test-settlement.mjs', 'scripts/test-reports.mjs', 'scripts/test-statement.mjs', 'scripts/resolve-aliases.mjs', 'scripts/tsconfig.reports-test.json', 'lib/recurrence.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/services/reports.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-recurrence.mjs', 'scripts/test-settlement.mjs', 'scripts/test-reports.mjs', 'scripts/resolve-aliases.mjs', 'scripts/tsconfig.reports-test.json', 'lib/recurrence.ts', 'lib/settlement.ts', 'lib/services/reports.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-recurrence.mjs', 'scripts/test-settlement.mjs', 'scripts/test-reports.mjs', 'scripts/test-statement.mjs', 'scripts/resolve-aliases.mjs', 'scripts/tsconfig.reports-test.json', 'lib/recurrence.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/services/reports.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -186,6 +186,38 @@ jobs:
       - name: Teste das metas e dos relatorios
         run: $PSQL -f database/tests/goals_reports_test.sql
 
+      - name: 009_statements_alerts_receipts
+        run: $PSQL -f database/migrations/009_statements_alerts_receipts.sql
+
+      # Mesmo motivo do 005 ao 008. A SECAO 11 do 009 (bucket de comprovantes)
+      # se pula sozinha aqui: o schema `storage` so existe num Supabase de
+      # verdade. As outras dez secoes sao provadas normalmente.
+      - name: 009 e idempotente
+        run: $PSQL -f database/migrations/009_statements_alerts_receipts.sql
+
+      # Extrato, avisos e comprovantes. A assercao central e a DEDUPLICACAO,
+      # nas duas metades: reimportar o mesmo arquivo nao pode duplicar nada, e
+      # a mesma linha em OUTRA conta tem que entrar. Sem a primeira, cada
+      # reimportacao dobra o mes; sem a segunda, o extrato da poupanca perde
+      # lancamentos que existiram de verdade.
+      #
+      # Cobre tambem:
+      #   - o SINAL do extrato (debito importado continua NEGATIVO, e portanto
+      #     continua sendo despesa nas views do 008);
+      #   - a paridade status <-> transaction_id, que impede uma linha ficar
+      #     'imported' sem lancamento -- invisivel para sempre sem nunca ter
+      #     virado dinheiro;
+      #   - o COALESCE(3) da janela de aviso: um INNER JOIN em
+      #     notification_preferences daria view vazia e o cron sairia verde sem
+      #     avisar ninguem, que e a pior falha possivel por ser silenciosa;
+      #   - a UNIQUE que impede o mesmo aviso sair todo dia -- e o adiamento,
+      #     que merece aviso novo.
+      #
+      # Tem dois controles negativos: sem security_invoker o vazamento aparece,
+      # e sem o indice unico o duplicado entra.
+      - name: Teste do extrato, dos avisos e dos comprovantes
+        run: $PSQL -f database/tests/statements_alerts_test.sql
+
       - name: Aritmetica de recorrencia
         run: npm run test:recurrence
 
@@ -205,6 +237,15 @@ jobs:
       # o usuario le valores na coluna errada sem nenhum sinal de erro).
       - name: Janela de meses e CSV dos relatorios
         run: npm run test:reports
+
+      # A leitura do extrato e 100% TypeScript e o SQL nao alcanca nada dela.
+      # Tres coisas erram em silencio aqui: parseFloat("1.234,56") = 1.234 (um
+      # extrato de mil reais entra como um e vinte), new Date() numa data OFX
+      # com fuso joga 1o de janeiro para 31 de dezembro, e a conciliacao sem a
+      # regra de um-para-um faz dois saques iguais casarem com o mesmo
+      # lancamento -- um deles some do app para sempre.
+      - name: Leitura de extrato OFX/CSV e conciliacao
+        run: npm run test:statement
 
       - name: Nenhuma tabela pode ficar sem RLS
         run: |

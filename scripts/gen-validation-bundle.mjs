@@ -49,12 +49,14 @@ const MIGRATIONS = [
   '006_budgets_and_card_invoices',
   '007_group_settlements',
   '008_goals_and_reports',
+  '009_statements_alerts_receipts',
 ];
 const TESTE_RLS = 'database/tests/rls_isolation_test.sql';
 const TESTE_AGENDA = 'database/tests/scheduled_rls_test.sql';
 const TESTE_ORCAMENTO = 'database/tests/budget_invoice_test.sql';
 const TESTE_ACERTO = 'database/tests/group_settlement_test.sql';
 const TESTE_METAS = 'database/tests/goals_reports_test.sql';
+const TESTE_EXTRATO = 'database/tests/statements_alerts_test.sql';
 
 const ler = (rel) => readFileSync(join(REPO, rel), 'utf8');
 
@@ -217,7 +219,7 @@ const partes = [
   cabecalho(
     'VALIDACAO PASSO 1: schema do zero',
     `Cole este arquivo inteiro no SQL Editor do projeto Supabase DESCARTAVEL e
-rode. Ele aplica 001 -> 002 -> 003 -> 004 -> 005 -> 006 -> 007 -> 008 num banco vazio e termina imprimindo uma
+rode. Ele aplica 001 -> 002 -> 003 -> 004 -> 005 -> 006 -> 007 -> 008 -> 009 num banco vazio e termina imprimindo uma
 tabela de verificacoes.
 
 O QUE FAZER COM O RESULTADO: copie a tabela final (ou tire um print) e cole na
@@ -320,6 +322,15 @@ const testeMetas = semMetaComandos(
   'goals_reports_test.sql (preparado)',
 );
 
+const testeExtrato = semMetaComandos(
+  prepararTeste(
+    ler(TESTE_EXTRATO),
+    TESTE_EXTRATO,
+    'EXTRATO, AVISOS E COMPROVANTES: TUDO OK -- deduplicacao, sinal, janela de aviso e isolamento conferidos',
+  ),
+  'statements_alerts_test.sql (preparado)',
+);
+
 const arquivos = {
   '01_migrations.sql': partes.join('\n'),
   '02_isolamento_rls.sql':
@@ -404,6 +415,33 @@ BEGIN/ROLLBACK.
 
 O QUE ESPERAR: uma unica linha "METAS E RELATORIOS: TUDO OK".`
     ) + testeMetas,
+  '07_extrato_avisos.sql':
+    cabecalho(
+      'VALIDACAO PASSO 7: extrato, avisos de vencimento e comprovantes (009)',
+      `Rode DEPOIS do 01_migrations.sql, no mesmo projeto descartavel.
+
+Confere o que o 009 sozinho nao prova. A assercao central e a DEDUPLICACAO do
+extrato: ela e por CONTA, e o teste prova as duas metades -- reimportar o mesmo
+arquivo nao duplica nada, e a mesma linha em outra conta entra normalmente. Sem
+a primeira metade, cada reimportacao dobraria o mes; sem a segunda, o extrato da
+poupanca perderia lancamentos que existiram de verdade.
+
+Confere tambem que o SINAL do extrato sobrevive (debito importado continua
+NEGATIVO, e portanto continua sendo despesa nas views do 008), que uma linha nao
+consegue ficar marcada como importada sem lancamento -- invisivel para sempre
+sem nunca ter virado dinheiro --, que apagar o lancamento DEVOLVE a linha para
+pendente, que quem nunca abriu a tela de preferencias recebe aviso assim mesmo
+(o default de 3 dias sai de um COALESCE; um INNER JOIN zeraria a view e o cron
+nao avisaria ninguem, sem erro nenhum), que o mesmo aviso nao sai duas vezes mas
+adiar a conta merece um aviso novo, e que um usuario nao enxerga o extrato, o
+vencimento nem o comprovante de outro. Tudo dentro de BEGIN/ROLLBACK.
+
+O QUE ESPERAR: uma unica linha "EXTRATO, AVISOS E COMPROVANTES: TUDO OK".
+
+A secao 11 do 009 (bucket de comprovantes) SO roda num Supabase de verdade --
+num Postgres cru ela se pula sozinha com um NOTICE. Neste bundle, que roda num
+Supabase descartavel, ela roda.`
+    ) + testeExtrato,
 };
 
 // ---------------------------------------------------------------------------
