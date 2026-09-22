@@ -100,26 +100,26 @@ export default function SplitSuggestions({
   const getSuggestionIcon = (type: string) => {
     switch (type) {
       case "equal":
-        return <Users className="h-5 w-5 text-blue-600" />;
+        return <Users className="h-5 w-5 text-info" />;
       case "proportional":
-        return <TrendingUp className="h-5 w-5 text-green-600" />;
+        return <TrendingUp className="h-5 w-5 text-success" />;
       case "historical":
-        return <History className="h-5 w-5 text-purple-600" />;
+        return <History className="h-5 w-5 text-premium" />;
       default:
-        return <Calculator className="h-5 w-5 text-gray-600" />;
+        return <Calculator className="h-5 w-5 text-muted-foreground" />;
     }
   };
 
   const getSuggestionColor = (type: string) => {
     switch (type) {
       case "equal":
-        return "border-blue-200 hover:border-blue-300";
+        return "border-info/30 hover:border-info/60";
       case "proportional":
-        return "border-green-200 hover:border-green-300";
+        return "border-success/30 hover:border-success/60";
       case "historical":
-        return "border-purple-200 hover:border-purple-300";
+        return "border-premium/30 hover:border-premium/60";
       default:
-        return "border-gray-200 hover:border-gray-300";
+        return "border-border hover:border-muted-foreground/40";
     }
   };
 
@@ -128,7 +128,7 @@ export default function SplitSuggestions({
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Lightbulb className="h-5 w-5 text-yellow-500" />
+            <Lightbulb className="h-5 w-5 text-warning" />
             Sugestões de Divisão
           </CardTitle>
         </CardHeader>
@@ -143,20 +143,20 @@ export default function SplitSuggestions({
 
   if (error) {
     return (
-      <Card className="border-red-200">
+      <Card className="border-destructive/30">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-red-600">
+          <CardTitle className="flex items-center gap-2 text-destructive">
             <AlertCircle className="h-5 w-5" />
             Erro ao Carregar Sugestões
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-red-600 mb-4">{error}</p>
+          <p className="text-sm text-destructive mb-4">{error}</p>
           <Button
             variant="outline"
             size="sm"
             onClick={loadSuggestions}
-            className="border-red-200 text-red-600 hover:bg-red-50"
+            className="border-destructive/30 text-destructive hover:bg-destructive/10"
           >
             Tentar Novamente
           </Button>
@@ -170,7 +170,7 @@ export default function SplitSuggestions({
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Lightbulb className="h-5 w-5 text-yellow-500" />
+            <Lightbulb className="h-5 w-5 text-warning" />
             Sugestões de Divisão
           </CardTitle>
         </CardHeader>
@@ -187,7 +187,7 @@ export default function SplitSuggestions({
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Lightbulb className="h-5 w-5 text-yellow-500" />
+          <Lightbulb className="h-5 w-5 text-warning" />
           Sugestões de Divisão
         </CardTitle>
         <CardDescription>
@@ -302,18 +302,18 @@ export default function SplitSuggestions({
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs text-muted-foreground">
             <div className="flex items-center gap-1">
-              <Users className="h-3 w-3 text-blue-600" />
+              <Users className="h-3 w-3 text-info" />
               <span>Divisão igual padrão</span>
             </div>
             {suggestions.some((s) => s.type === "proportional") && (
               <div className="flex items-center gap-1">
-                <TrendingUp className="h-3 w-3 text-green-600" />
+                <TrendingUp className="h-3 w-3 text-success" />
                 <span>Proporcional configurada</span>
               </div>
             )}
             {suggestions.some((s) => s.type === "historical") && (
               <div className="flex items-center gap-1">
-                <History className="h-3 w-3 text-purple-600" />
+                <History className="h-3 w-3 text-premium" />
                 <span>Baseada no histórico</span>
               </div>
             )}

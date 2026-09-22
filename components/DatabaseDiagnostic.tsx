@@ -55,11 +55,11 @@ export function DatabaseDiagnostic() {
           {loading ? (
             <RefreshCw className="h-5 w-5 animate-spin" />
           ) : isOk ? (
-            <CheckCircle className="h-5 w-5 text-green-600" />
+            <CheckCircle className="h-5 w-5 text-success" />
           ) : (
-            <AlertCircle className="h-5 w-5 text-red-600" />
+            <AlertCircle className="h-5 w-5 text-destructive" />
           )}
-          <CardTitle className={isOk ? "text-green-600" : "text-red-600"}>
+          <CardTitle className={isOk ? "text-success" : "text-destructive"}>
             Diagnóstico do Banco de Dados
           </CardTitle>
         </div>
@@ -78,8 +78,8 @@ export function DatabaseDiagnostic() {
             <div
               className={`rounded-lg border p-3 text-sm ${
                 isOk
-                  ? "bg-green-50 border-green-200 text-green-800"
-                  : "bg-red-50 border-red-200 text-red-800"
+                  ? "bg-success/10 border-success/30 text-success"
+                  : "bg-destructive/10 border-destructive/30 text-destructive"
               }`}
             >
               {isOk
@@ -115,7 +115,7 @@ export function DatabaseDiagnostic() {
             </div>
           </>
         ) : (
-          <div className="text-center py-4 text-gray-500">
+          <div className="text-center py-4 text-muted-foreground">
             Falha ao verificar status do banco de dados
           </div>
         )}

@@ -3,7 +3,7 @@ import Link from "next/link";
 
 export default function OfflinePage() {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-background to-muted flex items-center justify-center p-4">
       <div className="max-w-md w-full text-center space-y-8">
         {/* Logo */}
         <div className="flex justify-center">
@@ -18,10 +18,10 @@ export default function OfflinePage() {
 
         {/* Título */}
         <div className="space-y-2">
-          <h1 className="text-2xl font-bold text-gray-800 dark:text-gray-200">
+          <h1 className="text-2xl font-bold text-foreground">
             Você está offline
           </h1>
-          <p className="text-gray-600 dark:text-gray-400">
+          <p className="text-muted-foreground">
             Sem conexão com a internet. Algumas funcionalidades podem estar
             limitadas.
           </p>
@@ -30,9 +30,9 @@ export default function OfflinePage() {
         {/* Ilustração offline */}
         <div className="flex justify-center py-8">
           <div className="relative">
-            <div className="w-24 h-24 bg-gray-200 dark:bg-gray-700 rounded-full flex items-center justify-center">
+            <div className="w-24 h-24 bg-muted rounded-full flex items-center justify-center">
               <svg
-                className="w-12 h-12 text-gray-400 dark:text-gray-500"
+                className="w-12 h-12 text-muted-foreground"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -48,7 +48,7 @@ export default function OfflinePage() {
             {/* Sinal Wi-Fi riscado */}
             <div className="absolute -top-2 -right-2">
               <svg
-                className="w-8 h-8 text-red-500"
+                className="w-8 h-8 text-destructive"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -65,11 +65,11 @@ export default function OfflinePage() {
         </div>
 
         {/* Informações úteis */}
-        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 text-left space-y-2">
-          <h3 className="font-medium text-blue-800 dark:text-blue-200">
+        <div className="bg-info/10 border border-info/30 rounded-lg p-4 text-left space-y-2">
+          <h3 className="font-medium text-info">
             O que você pode fazer offline:
           </h3>
-          <ul className="text-sm text-blue-700 dark:text-blue-300 space-y-1">
+          <ul className="text-sm text-info space-y-1">
             <li>• Visualizar dados salvos anteriormente</li>
             <li>• Navegar entre páginas já visitadas</li>
             <li>• Usar calculadoras financeiras básicas</li>
@@ -80,25 +80,25 @@ export default function OfflinePage() {
         <div className="space-y-3">
           <Link
             href="/dashboard"
-            className="block w-full bg-blue-500 hover:bg-blue-600 text-white font-medium py-3 px-4 rounded-lg transition-colors text-center"
+            className="block w-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium py-3 px-4 rounded-lg transition-colors text-center"
           >
             Ir para o Dashboard
           </Link>
 
           <noscript>
-            <p className="text-sm text-gray-500">
+            <p className="text-sm text-muted-foreground">
               Recarregue a página quando a conexão for restaurada.
             </p>
           </noscript>
         </div>
 
         {/* Status de conectividade */}
-        <div className="text-sm text-gray-500 dark:text-gray-400">
+        <div className="text-sm text-muted-foreground">
           <div
             id="connection-status"
             className="flex items-center justify-center gap-2"
           >
-            <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+            <div className="w-2 h-2 bg-destructive rounded-full"></div>
             <span>Desconectado</span>
           </div>
         </div>

@@ -118,13 +118,13 @@ export default function AdminPage() {
   const getPlanBadgeColor = (plan: string) => {
     switch (plan) {
       case "admin":
-        return "bg-purple-100 text-purple-800";
+        return "bg-premium/10 text-premium";
       case "trader":
-        return "bg-yellow-100 text-yellow-800";
+        return "bg-warning/10 text-warning";
       case "invest":
-        return "bg-blue-100 text-blue-800";
+        return "bg-info/10 text-info";
       default:
-        return "bg-gray-100 text-gray-800";
+        return "bg-muted text-foreground";
     }
   };
 
@@ -157,7 +157,7 @@ export default function AdminPage() {
               Gerencie usuários, planos e monitore o sistema
             </p>
           </div>
-          <Badge variant="outline" className="bg-purple-100 text-purple-800">
+          <Badge variant="outline" className="bg-premium/10 text-premium">
             <Crown className="h-3 w-3 mr-1" />
             Administrador
           </Badge>
@@ -223,7 +223,7 @@ export default function AdminPage() {
                 <Activity className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-green-600">Online</div>
+                <div className="text-2xl font-bold text-success">Online</div>
                 <p className="text-xs text-muted-foreground">Uptime: 99.9%</p>
               </CardContent>
             </Card>
@@ -302,7 +302,7 @@ export default function AdminPage() {
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     Investidor
-                    <Badge className="bg-blue-100 text-blue-800">
+                    <Badge className="bg-info/10 text-info">
                       {stats?.investUsers}
                     </Badge>
                   </CardTitle>
@@ -317,7 +317,7 @@ export default function AdminPage() {
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     Trader
-                    <Badge className="bg-yellow-100 text-yellow-800">
+                    <Badge className="bg-warning/10 text-warning">
                       {stats?.traderUsers}
                     </Badge>
                   </CardTitle>
@@ -332,7 +332,7 @@ export default function AdminPage() {
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     Admin
-                    <Badge className="bg-purple-100 text-purple-800">
+                    <Badge className="bg-premium/10 text-premium">
                       {stats?.adminUsers}
                     </Badge>
                   </CardTitle>
@@ -358,19 +358,19 @@ export default function AdminPage() {
               <CardContent className="space-y-4">
                 <div className="flex justify-between items-center">
                   <span>Banco de Dados</span>
-                  <Badge className="bg-green-100 text-green-800">
+                  <Badge className="bg-success/10 text-success">
                     Conectado
                   </Badge>
                 </div>
                 <div className="flex justify-between items-center">
                   <span>API</span>
-                  <Badge className="bg-green-100 text-green-800">
+                  <Badge className="bg-success/10 text-success">
                     Funcionando
                   </Badge>
                 </div>
                 <div className="flex justify-between items-center">
                   <span>Supabase Auth</span>
-                  <Badge className="bg-green-100 text-green-800">Ativo</Badge>
+                  <Badge className="bg-success/10 text-success">Ativo</Badge>
                 </div>
                 <div className="flex justify-between items-center">
                   <span>Últimas 24h</span>

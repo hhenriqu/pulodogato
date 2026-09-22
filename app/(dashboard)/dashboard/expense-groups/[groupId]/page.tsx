@@ -305,13 +305,13 @@ export default function GroupDetailPage() {
   const getStatusColor = (status: string) => {
     switch (status) {
       case "approved":
-        return "bg-green-100 text-green-800";
+        return "bg-success/10 text-success";
       case "pending":
-        return "bg-yellow-100 text-yellow-800";
+        return "bg-warning/10 text-warning";
       case "rejected":
-        return "bg-red-100 text-red-800";
+        return "bg-destructive/10 text-destructive";
       default:
-        return "bg-gray-100 text-gray-800";
+        return "bg-muted text-foreground";
     }
   };
 
@@ -386,7 +386,7 @@ export default function GroupDetailPage() {
     return (
       <div className="container mx-auto py-6">
         <div className="text-center">
-          <h1 className="text-2xl font-bold text-red-600 mb-4">
+          <h1 className="text-2xl font-bold text-destructive mb-4">
             Grupo não encontrado
           </h1>
           <Button onClick={() => router.push("/dashboard/expense-groups")}>
@@ -749,10 +749,10 @@ export default function GroupDetailPage() {
                           <p
                             className={`font-bold text-lg ${
                               balance.balance > 0
-                                ? "text-green-600"
+                                ? "text-success"
                                 : balance.balance < 0
-                                ? "text-red-600"
-                                : "text-gray-500"
+                                ? "text-destructive"
+                                : "text-muted-foreground"
                             }`}
                           >
                             {formatCurrency(Math.abs(balance.balance))}
@@ -780,7 +780,7 @@ export default function GroupDetailPage() {
                       {transfers.map((transfer, index) => (
                         <div
                           key={index}
-                          className="flex items-center justify-between p-4 bg-blue-50 rounded-lg border border-blue-200"
+                          className="flex items-center justify-between p-4 bg-info/10 rounded-lg border border-info/30"
                         >
                           <div className="flex items-center gap-3">
                             <Avatar className="h-8 w-8">
@@ -792,7 +792,7 @@ export default function GroupDetailPage() {
                             <span className="font-medium">
                               {transfer.from.full_name}
                             </span>
-                            <TrendingUp className="h-4 w-4 text-blue-600" />
+                            <TrendingUp className="h-4 w-4 text-info" />
                             <Avatar className="h-8 w-8">
                               <AvatarImage src={transfer.to.avatar_url} />
                               <AvatarFallback>
@@ -804,10 +804,10 @@ export default function GroupDetailPage() {
                             </span>
                           </div>
                           <div className="text-right">
-                            <p className="font-bold text-lg text-blue-600">
+                            <p className="font-bold text-lg text-info">
                               {formatCurrency(transfer.amount)}
                             </p>
-                            <p className="text-sm text-blue-700">
+                            <p className="text-sm text-info">
                               Pagamento sugerido
                             </p>
                           </div>
@@ -848,7 +848,7 @@ export default function GroupDetailPage() {
                         <h4 className="font-medium flex items-center gap-2">
                           {member.user.full_name}
                           {member.role === "admin" && (
-                            <Crown className="h-4 w-4 text-yellow-500" />
+                            <Crown className="h-4 w-4 text-warning" />
                           )}
                         </h4>
                         <p className="text-sm text-muted-foreground capitalize">

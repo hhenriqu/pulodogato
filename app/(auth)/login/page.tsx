@@ -67,7 +67,7 @@ function LoginContent() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-primary/10 p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1">
           <CardTitle className="text-2xl text-center">Entrar</CardTitle>
@@ -86,7 +86,7 @@ function LoginContent() {
                 {...register("email")}
               />
               {errors.email && (
-                <p className="text-sm text-red-600">{errors.email.message}</p>
+                <p className="text-sm text-destructive">{errors.email.message}</p>
               )}
             </div>
 
@@ -105,27 +105,27 @@ function LoginContent() {
                   onClick={() => setShowPassword(!showPassword)}
                 >
                   {showPassword ? (
-                    <EyeOff className="h-4 w-4 text-gray-500" />
+                    <EyeOff className="h-4 w-4 text-muted-foreground" />
                   ) : (
-                    <Eye className="h-4 w-4 text-gray-500" />
+                    <Eye className="h-4 w-4 text-muted-foreground" />
                   )}
                 </button>
               </div>
               {errors.password && (
-                <p className="text-sm text-red-600">
+                <p className="text-sm text-destructive">
                   {errors.password.message}
                 </p>
               )}
             </div>
 
             {message && (
-              <div className="p-3 text-sm text-blue-600 bg-blue-50 border border-blue-200 rounded-md">
+              <div className="p-3 text-sm text-info bg-info/10 border border-info/30 rounded-md">
                 {message}
               </div>
             )}
 
             {error && (
-              <div className="p-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-md">
+              <div className="p-3 text-sm text-destructive bg-destructive/10 border border-destructive/30 rounded-md">
                 {error}
               </div>
             )}
@@ -138,23 +138,23 @@ function LoginContent() {
           <div className="mt-4 text-center">
             <Link
               href="/forgot-password"
-              className="text-sm text-blue-600 hover:underline"
+              className="text-sm text-info hover:underline"
             >
               Esqueceu a senha?
             </Link>
           </div>
 
           <div className="mt-6 text-center">
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-muted-foreground">
               Não tem uma conta?{" "}
-              <Link href="/signup" className="text-blue-600 hover:underline">
+              <Link href="/signup" className="text-info hover:underline">
                 Cadastre-se
               </Link>
             </p>
           </div>
 
           <div className="mt-4 text-center">
-            <Link href="/" className="text-sm text-gray-500 hover:underline">
+            <Link href="/" className="text-sm text-muted-foreground hover:underline">
               ← Voltar ao início
             </Link>
           </div>

@@ -87,7 +87,7 @@ export default function SignUpPage() {
     return {
       strength,
       label: labels[strength - 1] || '',
-      color: colors[strength - 1] || 'bg-gray-300'
+      color: colors[strength - 1] || 'bg-muted'
     }
   }
 
@@ -95,19 +95,19 @@ export default function SignUpPage() {
 
   if (success) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-primary/10 p-4">
         <Card className="w-full max-w-md">
           <CardHeader className="space-y-1 text-center">
-            <div className="mx-auto w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mb-4">
-              <UserPlus className="h-6 w-6 text-green-600" />
+            <div className="mx-auto w-12 h-12 bg-success/10 rounded-full flex items-center justify-center mb-4">
+              <UserPlus className="h-6 w-6 text-success" />
             </div>
-            <CardTitle className="text-2xl text-green-600">Conta Criada!</CardTitle>
+            <CardTitle className="text-2xl text-success">Conta Criada!</CardTitle>
             <CardDescription>
               Enviamos um email de confirmação para ativar sua conta
             </CardDescription>
           </CardHeader>
           <CardContent className="text-center">
-            <p className="text-sm text-gray-600 mb-4">
+            <p className="text-sm text-muted-foreground mb-4">
               Verifique sua caixa de entrada e clique no link de confirmação para ativar sua conta.
             </p>
             <Link href="/login">
@@ -122,7 +122,7 @@ export default function SignUpPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-primary/10 p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1">
           <div className="flex items-center gap-2 mb-2">
@@ -150,7 +150,7 @@ export default function SignUpPage() {
                 {...register('fullName')}
               />
               {errors.fullName && (
-                <p className="text-sm text-red-600">{errors.fullName.message}</p>
+                <p className="text-sm text-destructive">{errors.fullName.message}</p>
               )}
             </div>
 
@@ -164,7 +164,7 @@ export default function SignUpPage() {
                 {...register('email')}
               />
               {errors.email && (
-                <p className="text-sm text-red-600">{errors.email.message}</p>
+                <p className="text-sm text-destructive">{errors.email.message}</p>
               )}
             </div>
 
@@ -184,9 +184,9 @@ export default function SignUpPage() {
                   onClick={() => setShowPassword(!showPassword)}
                 >
                   {showPassword ? (
-                    <EyeOff className="h-4 w-4 text-gray-500" />
+                    <EyeOff className="h-4 w-4 text-muted-foreground" />
                   ) : (
-                    <Eye className="h-4 w-4 text-gray-500" />
+                    <Eye className="h-4 w-4 text-muted-foreground" />
                   )}
                 </button>
               </div>
@@ -201,13 +201,13 @@ export default function SignUpPage() {
                         className={`h-2 flex-1 rounded ${
                           index < passwordStrength.strength
                             ? passwordStrength.color
-                            : 'bg-gray-200'
+                            : 'bg-muted'
                         }`}
                       />
                     ))}
                   </div>
                   <p className={`text-xs ${
-                    passwordStrength.strength >= 3 ? 'text-green-600' : 'text-orange-600'
+                    passwordStrength.strength >= 3 ? 'text-success' : 'text-warning'
                   }`}>
                     {passwordStrength.label}
                   </p>
@@ -215,7 +215,7 @@ export default function SignUpPage() {
               )}
               
               {errors.password && (
-                <p className="text-sm text-red-600">{errors.password.message}</p>
+                <p className="text-sm text-destructive">{errors.password.message}</p>
               )}
             </div>
 
@@ -235,20 +235,20 @@ export default function SignUpPage() {
                   onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                 >
                   {showConfirmPassword ? (
-                    <EyeOff className="h-4 w-4 text-gray-500" />
+                    <EyeOff className="h-4 w-4 text-muted-foreground" />
                   ) : (
-                    <Eye className="h-4 w-4 text-gray-500" />
+                    <Eye className="h-4 w-4 text-muted-foreground" />
                   )}
                 </button>
               </div>
               {errors.confirmPassword && (
-                <p className="text-sm text-red-600">{errors.confirmPassword.message}</p>
+                <p className="text-sm text-destructive">{errors.confirmPassword.message}</p>
               )}
             </div>
 
             {/* Erro */}
             {error && (
-              <div className="p-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-md">
+              <div className="p-3 text-sm text-destructive bg-destructive/10 border border-destructive/30 rounded-md">
                 {error}
               </div>
             )}
@@ -263,13 +263,13 @@ export default function SignUpPage() {
             </Button>
 
             {/* Termos e Condições */}
-            <p className="text-xs text-gray-600 text-center">
+            <p className="text-xs text-muted-foreground text-center">
               Ao criar uma conta, você concorda com nossos{' '}
-              <button className="text-blue-600 hover:underline">
+              <button className="text-info hover:underline">
                 Termos de Uso
               </button>{' '}
               e{' '}
-              <button className="text-blue-600 hover:underline">
+              <button className="text-info hover:underline">
                 Política de Privacidade
               </button>
             </p>
@@ -277,9 +277,9 @@ export default function SignUpPage() {
 
           {/* Link para Login */}
           <div className="mt-6 text-center">
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-muted-foreground">
               Já tem uma conta?{' '}
-              <Link href="/login" className="text-blue-600 hover:underline">
+              <Link href="/login" className="text-info hover:underline">
                 Fazer login
               </Link>
             </p>

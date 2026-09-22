@@ -99,10 +99,10 @@ function ResetPasswordContent() {
 
   if (validToken === null) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-primary/10 p-4">
         <Card className="w-full max-w-md">
           <CardContent className="p-6 text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
             <p>Verificando...</p>
           </CardContent>
         </Card>
@@ -112,10 +112,10 @@ function ResetPasswordContent() {
 
   if (validToken === false) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-primary/10 p-4">
         <Card className="w-full max-w-md">
           <CardHeader className="text-center">
-            <CardTitle className="text-red-600">Link Inválido</CardTitle>
+            <CardTitle className="text-destructive">Link Inválido</CardTitle>
             <CardDescription>
               Este link de redefinição de senha é inválido ou expirou.
             </CardDescription>
@@ -135,13 +135,13 @@ function ResetPasswordContent() {
 
   if (success) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-primary/10 p-4">
         <Card className="w-full max-w-md">
           <CardHeader className="space-y-1 text-center">
-            <div className="mx-auto w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mb-4">
-              <CheckCircle className="h-6 w-6 text-green-600" />
+            <div className="mx-auto w-12 h-12 bg-success/10 rounded-full flex items-center justify-center mb-4">
+              <CheckCircle className="h-6 w-6 text-success" />
             </div>
-            <CardTitle className="text-2xl text-green-600">
+            <CardTitle className="text-2xl text-success">
               Senha Redefinida!
             </CardTitle>
             <CardDescription>
@@ -149,7 +149,7 @@ function ResetPasswordContent() {
             </CardDescription>
           </CardHeader>
           <CardContent className="text-center">
-            <p className="text-sm text-gray-600 mb-4">
+            <p className="text-sm text-muted-foreground mb-4">
               Você será redirecionado para a página de login em alguns
               segundos...
             </p>
@@ -161,11 +161,11 @@ function ResetPasswordContent() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-primary/10 p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1 text-center">
-          <div className="mx-auto w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mb-4">
-            <Key className="h-6 w-6 text-blue-600" />
+          <div className="mx-auto w-12 h-12 bg-info/10 rounded-full flex items-center justify-center mb-4">
+            <Key className="h-6 w-6 text-info" />
           </div>
           <CardTitle className="text-2xl">Redefinir Senha</CardTitle>
           <CardDescription>Digite sua nova senha abaixo</CardDescription>
@@ -180,7 +180,7 @@ function ResetPasswordContent() {
                 {...register("password")}
               />
               {errors.password && (
-                <p className="text-sm text-red-600">
+                <p className="text-sm text-destructive">
                   {errors.password.message}
                 </p>
               )}
@@ -195,14 +195,14 @@ function ResetPasswordContent() {
                 {...register("confirmPassword")}
               />
               {errors.confirmPassword && (
-                <p className="text-sm text-red-600">
+                <p className="text-sm text-destructive">
                   {errors.confirmPassword.message}
                 </p>
               )}
             </div>
 
             {error && (
-              <div className="p-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-md">
+              <div className="p-3 text-sm text-destructive bg-destructive/10 border border-destructive/30 rounded-md">
                 {error}
               </div>
             )}

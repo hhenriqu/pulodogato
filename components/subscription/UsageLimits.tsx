@@ -36,16 +36,16 @@ export function UsageLimitsCard({ user }: UsageLimitsCardProps) {
       <Card>
         <CardHeader>
           <div className="animate-pulse space-y-2">
-            <div className="h-4 bg-gray-200 rounded w-1/3"></div>
-            <div className="h-3 bg-gray-200 rounded w-2/3"></div>
+            <div className="h-4 bg-muted rounded w-1/3"></div>
+            <div className="h-3 bg-muted rounded w-2/3"></div>
           </div>
         </CardHeader>
         <CardContent>
           <div className="animate-pulse space-y-3">
             {[1, 2, 3].map((i) => (
               <div key={i} className="space-y-2">
-                <div className="h-3 bg-gray-200 rounded w-1/4"></div>
-                <div className="h-2 bg-gray-200 rounded"></div>
+                <div className="h-3 bg-muted rounded w-1/4"></div>
+                <div className="h-2 bg-muted rounded"></div>
               </div>
             ))}
           </div>
@@ -123,7 +123,7 @@ export function UsageLimitsCard({ user }: UsageLimitsCardProps) {
         {subscription.plan === "free" && (
           <div className="pt-4 border-t">
             <div className="flex items-center gap-2 mb-2">
-              <Crown className="h-4 w-4 text-yellow-600" />
+              <Crown className="h-4 w-4 text-warning" />
               <span className="text-sm font-medium">Upgrade para Premium</span>
             </div>
             <p className="text-xs text-muted-foreground mb-3">
@@ -169,9 +169,9 @@ function LimitItem({ label, icon: Icon, current, max }: LimitItemProps) {
               </Badge>
             )}
           </span>
-          {isAtLimit && <AlertTriangle className="h-3 w-3 text-red-500" />}
+          {isAtLimit && <AlertTriangle className="h-3 w-3 text-destructive" />}
           {!isAtLimit && !isNearLimit && (
-            <CheckCircle className="h-3 w-3 text-green-500" />
+            <CheckCircle className="h-3 w-3 text-success" />
           )}
         </div>
       </div>
@@ -181,23 +181,23 @@ function LimitItem({ label, icon: Icon, current, max }: LimitItemProps) {
           value={percentage}
           className={`h-1 ${
             isAtLimit
-              ? "bg-red-100"
+              ? "bg-destructive/10"
               : isNearLimit
-              ? "bg-yellow-100"
-              : "bg-green-100"
+              ? "bg-warning/10"
+              : "bg-success/10"
           }`}
         />
       )}
 
       {isAtLimit && (
-        <p className="text-xs text-red-600">
+        <p className="text-xs text-destructive">
           Limite atingido. Faça upgrade para continuar usando esta
           funcionalidade.
         </p>
       )}
 
       {isNearLimit && !isAtLimit && (
-        <p className="text-xs text-yellow-600">
+        <p className="text-xs text-warning">
           Você está próximo do limite. Considere fazer upgrade.
         </p>
       )}
@@ -243,7 +243,7 @@ export function QuickUsage({
         <span className="text-muted-foreground">{label}</span>
         <span
           className={`font-mono ${
-            isAtLimit ? "text-red-600" : "text-muted-foreground"
+            isAtLimit ? "text-destructive" : "text-muted-foreground"
           }`}
         >
           {current} / {max}
@@ -254,7 +254,7 @@ export function QuickUsage({
 
       {isAtLimit && showUpgrade && (
         <div className="flex items-center gap-1 pt-1">
-          <AlertTriangle className="h-3 w-3 text-red-500" />
+          <AlertTriangle className="h-3 w-3 text-destructive" />
           <Button variant="link" size="sm" className="h-auto p-0 text-xs">
             Fazer upgrade
           </Button>

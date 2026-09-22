@@ -11,13 +11,13 @@ import { TrendingUp, Shield, Smartphone, BarChart3 } from "lucide-react";
 
 export default function HomePage() {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+    <div className="min-h-screen bg-gradient-to-br from-background to-primary/10">
       {/* Header */}
       <header className="p-4">
         <nav className="max-w-6xl mx-auto flex justify-between items-center">
           <div className="flex items-center space-x-2">
-            <TrendingUp className="h-8 w-8 text-blue-600" />
-            <h1 className="text-2xl font-bold text-gray-900">PulodoGato</h1>
+            <TrendingUp className="h-8 w-8 text-info" />
+            <h1 className="text-2xl font-bold text-foreground">PulodoGato</h1>
           </div>
           <Link href="/login">
             <Button>Entrar</Button>
@@ -28,11 +28,11 @@ export default function HomePage() {
       {/* Hero Section */}
       <main className="max-w-6xl mx-auto px-4 py-16">
         <div className="text-center mb-16">
-          <h2 className="text-5xl font-bold text-gray-900 mb-6">
-            Controle suas <span className="text-blue-600">Finanças</span> e{" "}
-            <span className="text-green-600">Investimentos</span>
+          <h2 className="text-5xl font-bold text-foreground mb-6">
+            Controle suas <span className="text-info">Finanças</span> e{" "}
+            <span className="text-success">Investimentos</span>
           </h2>
-          <p className="text-xl text-gray-600 mb-8 max-w-3xl mx-auto">
+          <p className="text-xl text-muted-foreground mb-8 max-w-3xl mx-auto">
             A plataforma completa para gerenciar suas finanças pessoais,
             investimentos e trading. Do controle de gastos aos sinais de trading
             profissionais, tudo em um só lugar.
@@ -55,7 +55,7 @@ export default function HomePage() {
         <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 mb-16">
           <Card>
             <CardHeader className="text-center">
-              <BarChart3 className="h-12 w-12 text-blue-600 mx-auto mb-4" />
+              <BarChart3 className="h-12 w-12 text-info mx-auto mb-4" />
               <CardTitle className="text-lg">Finanças Pessoais</CardTitle>
             </CardHeader>
             <CardContent>
@@ -68,7 +68,7 @@ export default function HomePage() {
 
           <Card>
             <CardHeader className="text-center">
-              <TrendingUp className="h-12 w-12 text-green-600 mx-auto mb-4" />
+              <TrendingUp className="h-12 w-12 text-success mx-auto mb-4" />
               <CardTitle className="text-lg">Investimentos</CardTitle>
             </CardHeader>
             <CardContent>
@@ -81,7 +81,7 @@ export default function HomePage() {
 
           <Card>
             <CardHeader className="text-center">
-              <Smartphone className="h-12 w-12 text-purple-600 mx-auto mb-4" />
+              <Smartphone className="h-12 w-12 text-premium mx-auto mb-4" />
               <CardTitle className="text-lg">Trading Profissional</CardTitle>
             </CardHeader>
             <CardContent>
@@ -93,7 +93,7 @@ export default function HomePage() {
 
           <Card>
             <CardHeader className="text-center">
-              <Shield className="h-12 w-12 text-orange-600 mx-auto mb-4" />
+              <Shield className="h-12 w-12 text-warning mx-auto mb-4" />
               <CardTitle className="text-lg">Planos Flexíveis</CardTitle>
             </CardHeader>
             <CardContent>
@@ -105,11 +105,11 @@ export default function HomePage() {
         </div>
 
         {/* CTA Section */}
-        <div className="text-center bg-white rounded-lg p-8 shadow-lg">
-          <h3 className="text-3xl font-bold text-gray-900 mb-4">
+        <div className="text-center bg-card rounded-lg p-8 shadow-lg">
+          <h3 className="text-3xl font-bold text-foreground mb-4">
             Pronto para começar?
           </h3>
-          <p className="text-gray-600 mb-6">
+          <p className="text-muted-foreground mb-6">
             Cadastre-se gratuitamente e comece a organizar suas finanças e
             investimentos hoje mesmo. Plano gratuito disponível!
           </p>
@@ -129,13 +129,13 @@ export default function HomePage() {
       </main>
 
       {/* Footer */}
-      <footer className="bg-gray-900 text-white py-8 mt-16">
+      <footer className="bg-muted text-foreground border-t py-8 mt-16">
         <div className="max-w-6xl mx-auto px-4 text-center">
           <div className="flex items-center justify-center space-x-2 mb-4">
             <TrendingUp className="h-6 w-6" />
             <span className="text-lg font-semibold">PulodoGato</span>
           </div>
-          <p className="text-gray-400">
+          <p className="text-muted-foreground">
             © 2025 PulodoGato. Todos os direitos reservados.
           </p>
         </div>

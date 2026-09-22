@@ -54,7 +54,7 @@ export function PerformanceChart({
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       return (
-        <div className="bg-white p-3 shadow-lg rounded-lg border">
+        <div className="bg-card p-3 shadow-lg rounded-lg border">
           <p className="font-medium">{formatDate(label)}</p>
           {payload.map((entry: any, index: number) => (
             <p key={index} style={{ color: entry.color }}>
@@ -77,13 +77,24 @@ export function PerformanceChart({
         <div className="h-80">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={data}>
-              <CartesianGrid strokeDasharray="3 3" />
+              {/* O recharts nao le classe CSS: grade e eixos vem com cinza
+                  fixo, que some no tema escuro. Os tokens entram como valor
+                  de atributo SVG mesmo. */}
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke="hsl(var(--border))"
+              />
               <XAxis
                 dataKey="date"
                 tickFormatter={formatDate}
-                tick={{ fontSize: 12 }}
+                tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
+                stroke="hsl(var(--border))"
               />
-              <YAxis tickFormatter={formatCurrency} tick={{ fontSize: 12 }} />
+              <YAxis
+                tickFormatter={formatCurrency}
+                tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
+                stroke="hsl(var(--border))"
+              />
               <Tooltip content={<CustomTooltip />} />
               <Legend />
               <Line

@@ -177,9 +177,9 @@ export default function Sidebar({
     <>
       {/* Desktop Sidebar */}
       <div className="hidden lg:flex lg:w-64 lg:flex-col lg:fixed lg:inset-y-0">
-        <div className="flex flex-col flex-grow pt-5 bg-white overflow-y-auto border-r">
+        <div className="flex flex-col flex-grow pt-5 bg-card overflow-y-auto border-r">
           <div className="flex flex-col flex-shrink-0 px-6 space-y-4">
-            <h1 className="text-xl font-bold text-gray-900">PulodoGato</h1>
+            <h1 className="text-xl font-bold text-foreground">PulodoGato</h1>
             {planConfig && (
               <div className="flex items-center justify-center">
                 <PlanBadge plan={planConfig.id} size="sm" />
@@ -198,7 +198,7 @@ export default function Sidebar({
                   className={cn(
                     isActive
                       ? "bg-primary/10 text-primary border-r-2 border-primary"
-                      : "text-gray-600 hover:bg-gray-50 hover:text-gray-900",
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
                     "group flex items-center px-3 py-2 text-sm font-medium rounded-l-md transition-colors"
                   )}
                 >
@@ -206,7 +206,7 @@ export default function Sidebar({
                     className={cn(
                       isActive
                         ? "text-primary"
-                        : "text-gray-400 group-hover:text-gray-500",
+                        : "text-muted-foreground group-hover:text-foreground",
                       "mr-3 flex-shrink-0 h-5 w-5"
                     )}
                     aria-hidden="true"
@@ -226,7 +226,7 @@ export default function Sidebar({
                           "h-3 w-3",
                           isPremiumButNoAccess(item)
                             ? "text-muted-foreground"
-                            : "text-yellow-500"
+                            : "text-warning"
                         )}
                       />
                     )}
@@ -242,9 +242,9 @@ export default function Sidebar({
           <div className="flex-shrink-0 p-4">
             <button
               onClick={handleLogout}
-              className="group flex w-full items-center px-3 py-2 text-sm font-medium text-gray-600 rounded-md hover:bg-gray-50 hover:text-gray-900 transition-colors"
+              className="group flex w-full items-center px-3 py-2 text-sm font-medium text-muted-foreground rounded-md hover:bg-muted hover:text-foreground transition-colors"
             >
-              <LogOut className="mr-3 h-5 w-5 text-gray-400 group-hover:text-gray-500" />
+              <LogOut className="mr-3 h-5 w-5 text-muted-foreground group-hover:text-foreground" />
               Sair
             </button>
           </div>
@@ -260,7 +260,9 @@ export default function Sidebar({
       >
         <div
           className={cn(
-            "fixed inset-0 bg-gray-600 bg-opacity-75 transition-opacity",
+            // Veu do menu mobile: escurece o conteudo atras nos dois temas,
+            // entao e preto com opacidade em vez de token.
+            "fixed inset-0 bg-black/60 transition-opacity",
             isMobileMenuOpen ? "opacity-100" : "opacity-0"
           )}
           onClick={() => setIsMobileMenuOpen(false)}
@@ -268,7 +270,7 @@ export default function Sidebar({
 
         <div
           className={cn(
-            "relative flex-1 flex flex-col max-w-xs w-full bg-white transition-transform",
+            "relative flex-1 flex flex-col max-w-xs w-full bg-card transition-transform",
             isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"
           )}
         >
@@ -283,7 +285,7 @@ export default function Sidebar({
 
           <div className="flex-1 h-0 pt-5 pb-4 overflow-y-auto">
             <div className="flex flex-col flex-shrink-0 px-6 space-y-4">
-              <h1 className="text-xl font-bold text-gray-900">PulodoGato</h1>
+              <h1 className="text-xl font-bold text-foreground">PulodoGato</h1>
               {planConfig && (
                 <div className="flex items-center justify-center">
                   <PlanBadge plan={planConfig.id} size="sm" />
@@ -304,7 +306,7 @@ export default function Sidebar({
                     className={cn(
                       isActive
                         ? "bg-primary/10 text-primary"
-                        : "text-gray-600 hover:bg-gray-50 hover:text-gray-900",
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground",
                       "group flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors"
                     )}
                   >
@@ -312,7 +314,7 @@ export default function Sidebar({
                       className={cn(
                         isActive
                           ? "text-primary"
-                          : "text-gray-400 group-hover:text-gray-500",
+                          : "text-muted-foreground group-hover:text-foreground",
                         "mr-3 flex-shrink-0 h-5 w-5"
                       )}
                       aria-hidden="true"
@@ -332,7 +334,7 @@ export default function Sidebar({
                             "h-3 w-3",
                             isPremiumButNoAccess(item)
                               ? "text-muted-foreground"
-                              : "text-yellow-500"
+                              : "text-warning"
                           )}
                         />
                       )}
@@ -349,9 +351,9 @@ export default function Sidebar({
           <div className="flex-shrink-0 p-4">
             <button
               onClick={handleLogout}
-              className="group flex w-full items-center px-3 py-2 text-sm font-medium text-gray-600 rounded-md hover:bg-gray-50 hover:text-gray-900 transition-colors"
+              className="group flex w-full items-center px-3 py-2 text-sm font-medium text-muted-foreground rounded-md hover:bg-muted hover:text-foreground transition-colors"
             >
-              <LogOut className="mr-3 h-5 w-5 text-gray-400 group-hover:text-gray-500" />
+              <LogOut className="mr-3 h-5 w-5 text-muted-foreground group-hover:text-foreground" />
               Sair
             </button>
           </div>

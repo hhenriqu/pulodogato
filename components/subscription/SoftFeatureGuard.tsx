@@ -36,10 +36,10 @@ export function SoftFeatureGuard({
   // Se não tem usuário, mostrar aviso de login
   if (!user) {
     return (
-      <Card className="border-amber-200 bg-amber-50">
+      <Card className="border-warning/30 bg-warning/10">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Lock className="h-5 w-5 text-amber-600" />
+            <Lock className="h-5 w-5 text-warning" />
             Login Necessário
           </CardTitle>
           <CardDescription>
@@ -74,14 +74,14 @@ export function SoftFeatureGuard({
           <div className="pointer-events-none opacity-50 select-none">
             {children}
           </div>
-          <div className="absolute inset-0 bg-gradient-to-t from-white/90 via-transparent to-transparent pointer-events-none" />
+          <div className="absolute inset-0 bg-gradient-to-t from-background/90 via-transparent to-transparent pointer-events-none" />
         </div>
 
         {/* Card de upgrade */}
-        <Card className="border-yellow-200 bg-yellow-50">
+        <Card className="border-warning/30 bg-warning/10">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Crown className="h-5 w-5 text-yellow-600" />
+              <Crown className="h-5 w-5 text-warning" />
               Funcionalidade Premium
             </CardTitle>
             <CardDescription>
@@ -148,7 +148,7 @@ export function PremiumBadge({
   return (
     <Badge
       variant="outline"
-      className={`bg-yellow-50 text-yellow-700 border-yellow-200 ${className}`}
+      className={`bg-warning/10 text-warning border-warning/30 ${className}`}
     >
       <Crown className="h-3 w-3 mr-1" />
       Premium

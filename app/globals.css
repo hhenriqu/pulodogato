@@ -2,10 +2,24 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Tokens de cor. Toda cor da interface sai daqui -- o tema claro e o escuro
+ * sao a MESMA folha de estilo com valores diferentes para as variaveis, entao
+ * um componente escrito em cima dos tokens (bg-card, text-muted-foreground,
+ * text-success) nao precisa de nenhuma variante `dark:`.
+ *
+ * Os valores sao HSL sem a funcao `hsl()` de proposito: o tailwind.config.js
+ * envolve cada um em `hsl(var(--token))`, e e isso que faz `bg-success/10`
+ * funcionar (o modificador de opacidade vira `hsl(var(--success) / 0.1)`).
+ *
+ * Ao adicionar um token, adicione SEMPRE o par claro + escuro e o mapeamento
+ * em tailwind.config.js -- um token so no :root some no modo escuro.
+ */
 @layer base {
   :root {
     --background: 0 0% 100%;
     --foreground: 222.2 84% 4.9%;
+    /* Superficie elevada (cards, popovers) sobre o fundo da pagina. */
     --card: 0 0% 100%;
     --card-foreground: 222.2 84% 4.9%;
     --popover: 0 0% 100%;
@@ -18,8 +32,26 @@
     --muted-foreground: 215.4 16.3% 46.9%;
     --accent: 210 40% 96%;
     --accent-foreground: 222.2 84% 4.9%;
-    --destructive: 0 84.2% 60.2%;
+
+    /* Cores semanticas de dinheiro e de estado. `destructive` tambem e o
+     * vermelho de valor negativo/despesa -- o app nao tem outro vermelho. */
+    --destructive: 0 72.2% 50.6%;
     --destructive-foreground: 210 40% 98%;
+    /* Luminosidade escolhida pelo contraste, nao pela paleta: nos tons
+     * "naturais" (green-600, amber-500) o verde da 3.7:1 e o ambar 4.2:1
+     * sobre branco -- reprovam no AA e o valor positivo da tela fica lavado.
+     * scripts/check-color-tokens.mjs trava se isso regredir. */
+    --success: 142.1 70.6% 30%;
+    --success-foreground: 0 0% 100%;
+    --warning: 32.1 94.6% 35%;
+    --warning-foreground: 0 0% 100%;
+    --info: 221.2 83.2% 53.3%;
+    --info-foreground: 210 40% 98%;
+    /* Roxo de plano pago / admin -- o app ja usava esse roxo para coroa,
+     * selo de administrador e destaque premium. */
+    --premium: 271.5 81.3% 55.9%;
+    --premium-foreground: 0 0% 100%;
+
     --border: 214.3 31.8% 91.4%;
     --input: 214.3 31.8% 91.4%;
     --ring: 221.2 83.2% 53.3%;
@@ -29,23 +61,39 @@
   .dark {
     --background: 222.2 84% 4.9%;
     --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
+    /* Mais claro que o --background de proposito: com os dois iguais (como
+     * vinha do template) um Card fica invisivel no escuro, so a borda aparece. */
+    --card: 222.2 47.4% 11.2%;
     --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
+    --popover: 222.2 47.4% 11.2%;
     --popover-foreground: 210 40% 98%;
     --primary: 217.2 91.2% 59.8%;
-    --primary-foreground: 222.2 84% 4.9%;
+    --primary-foreground: 222.2 47.4% 11.2%;
     --secondary: 217.2 32.6% 17.5%;
     --secondary-foreground: 210 40% 98%;
     --muted: 217.2 32.6% 17.5%;
     --muted-foreground: 215 20.2% 65.1%;
     --accent: 217.2 32.6% 17.5%;
     --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 224.3 76.3% 94.1%;
+
+    /* Versoes mais claras e menos saturadas: as do tema claro sao escuras
+     * demais para texto sobre fundo escuro (o vermelho do template, 30% de
+     * luminosidade, era ilegivel como texto). */
+    --destructive: 0 90.6% 70.8%;
+    --destructive-foreground: 222.2 47.4% 11.2%;
+    --success: 141.9 69.2% 58%;
+    --success-foreground: 222.2 47.4% 11.2%;
+    --warning: 43.3 96.4% 56.3%;
+    --warning-foreground: 222.2 47.4% 11.2%;
+    --info: 213.1 93.9% 67.8%;
+    --info-foreground: 222.2 47.4% 11.2%;
+    --premium: 269.2 97.4% 75.3%;
+    --premium-foreground: 222.2 47.4% 11.2%;
+
+    /* Um pouco mais clara que --muted para a borda nao sumir na superficie. */
+    --border: 215 27.9% 23%;
+    --input: 215 27.9% 23%;
+    --ring: 217.2 91.2% 59.8%;
   }
 }
 
@@ -160,15 +208,15 @@
   }
 
   .device-pwa ::-webkit-scrollbar-track {
-    @apply bg-gray-100 dark:bg-gray-800;
+    @apply bg-muted;
   }
 
   .device-pwa ::-webkit-scrollbar-thumb {
-    @apply bg-gray-400 dark:bg-gray-600 rounded-full;
+    @apply bg-muted-foreground/40 rounded-full;
   }
 
   .device-pwa ::-webkit-scrollbar-thumb:hover {
-    @apply bg-gray-500 dark:bg-gray-500;
+    @apply bg-muted-foreground/60;
   }
 
   /* Prevent text selection on buttons and interactive elements */
@@ -194,7 +242,7 @@
   .device-desktop input:focus,
   .device-desktop select:focus,
   .device-desktop textarea:focus {
-    @apply outline-none ring-2 ring-primary ring-offset-2;
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
   }
 
   /* Hide scrollbar on mobile for cleaner look */

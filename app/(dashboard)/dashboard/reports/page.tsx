@@ -64,7 +64,7 @@ export default function ReportsPage() {
                 <CardTitle className="flex items-center gap-2">
                   <BarChart3 className="h-5 w-5" />
                   Relatórios Disponíveis
-                  <Crown className="h-4 w-4 text-yellow-600" />
+                  <Crown className="h-4 w-4 text-warning" />
                 </CardTitle>
                 <CardDescription>
                   Análises detalhadas dos seus dados financeiros
@@ -74,7 +74,7 @@ export default function ReportsPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="p-4 border rounded-lg">
                     <div className="flex items-center gap-2 mb-2">
-                      <BarChart3 className="h-5 w-5 text-blue-600" />
+                      <BarChart3 className="h-5 w-5 text-info" />
                       <span className="font-medium">Fluxo de Caixa</span>
                     </div>
                     <p className="text-sm text-muted-foreground mb-3">
@@ -88,7 +88,7 @@ export default function ReportsPage() {
 
                   <div className="p-4 border rounded-lg">
                     <div className="flex items-center gap-2 mb-2">
-                      <Calendar className="h-5 w-5 text-green-600" />
+                      <Calendar className="h-5 w-5 text-success" />
                       <span className="font-medium">Categorias</span>
                     </div>
                     <p className="text-sm text-muted-foreground mb-3">
@@ -102,7 +102,7 @@ export default function ReportsPage() {
 
                   <div className="p-4 border rounded-lg">
                     <div className="flex items-center gap-2 mb-2">
-                      <BarChart3 className="h-5 w-5 text-purple-600" />
+                      <BarChart3 className="h-5 w-5 text-premium" />
                       <span className="font-medium">Investimentos</span>
                     </div>
                     <p className="text-sm text-muted-foreground mb-3">
@@ -116,7 +116,7 @@ export default function ReportsPage() {
 
                   <div className="p-4 border rounded-lg">
                     <div className="flex items-center gap-2 mb-2">
-                      <Calendar className="h-5 w-5 text-orange-600" />
+                      <Calendar className="h-5 w-5 text-warning" />
                       <span className="font-medium">Anual</span>
                     </div>
                     <p className="text-sm text-muted-foreground mb-3">
@@ -136,26 +136,26 @@ export default function ReportsPage() {
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2">
-                  <Crown className="h-5 w-5 text-yellow-600" />
+                  <Crown className="h-5 w-5 text-warning" />
                   Relatórios Premium
                 </CardTitle>
                 <CardDescription>Funcionalidades avançadas</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="flex items-center gap-2">
-                  <Crown className="h-4 w-4 text-yellow-600" />
+                  <Crown className="h-4 w-4 text-warning" />
                   <span className="text-sm">Exportação em Excel/PDF</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Crown className="h-4 w-4 text-yellow-600" />
+                  <Crown className="h-4 w-4 text-warning" />
                   <span className="text-sm">Agendamento automático</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Crown className="h-4 w-4 text-yellow-600" />
+                  <Crown className="h-4 w-4 text-warning" />
                   <span className="text-sm">Comparativos históricos</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Crown className="h-4 w-4 text-yellow-600" />
+                  <Crown className="h-4 w-4 text-warning" />
                   <span className="text-sm">Análises preditivas</span>
                 </div>
               </CardContent>

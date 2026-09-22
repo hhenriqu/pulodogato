@@ -125,8 +125,8 @@ export default function DashboardPage() {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Carregando dashboard...</p>
+          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary mx-auto"></div>
+          <p className="mt-4 text-muted-foreground">Carregando dashboard...</p>
         </div>
       </div>
     )
@@ -137,13 +137,13 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="bg-white shadow-sm border-b">
+      <header className="bg-card shadow-sm border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center">
-              <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+              <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
             </div>
             <div className="flex items-center space-x-4">
               <Button
@@ -191,27 +191,27 @@ export default function DashboardPage() {
       </main>
 
       {/* Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t md:hidden">
+      <nav className="fixed bottom-0 left-0 right-0 bg-card border-t md:hidden">
         <div className="grid grid-cols-4 h-16">
-          <button className="flex flex-col items-center justify-center text-blue-600">
+          <button className="flex flex-col items-center justify-center text-info">
             <Menu className="h-5 w-5" />
             <span className="text-xs mt-1">Dashboard</span>
           </button>
           <button 
-            className="flex flex-col items-center justify-center text-gray-400"
+            className="flex flex-col items-center justify-center text-muted-foreground"
             onClick={() => router.push('/dashboard/investments' as any)}
           >
             <span className="text-xs mt-1">Carteira</span>
           </button>
           <button 
-            className="flex flex-col items-center justify-center text-gray-400"
+            className="flex flex-col items-center justify-center text-muted-foreground"
             onClick={() => router.push('/dashboard/transactions' as any)}
           >
             <Plus className="h-5 w-5" />
             <span className="text-xs mt-1">Transação</span>
           </button>
           <button 
-            className="flex flex-col items-center justify-center text-gray-400"
+            className="flex flex-col items-center justify-center text-muted-foreground"
             onClick={() => router.push('/dashboard/reports' as any)}
           >
             <span className="text-xs mt-1">Relatórios</span>

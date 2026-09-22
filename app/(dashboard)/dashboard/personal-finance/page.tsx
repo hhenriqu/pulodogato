@@ -725,10 +725,10 @@ export default function PersonalFinancePage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Receitas</CardTitle>
-            <TrendingUp className="h-4 w-4 text-green-600" />
+            <TrendingUp className="h-4 w-4 text-success" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">
+            <div className="text-2xl font-bold text-success">
               {formatCurrency(income)}
             </div>
             <p className="text-xs text-muted-foreground">Este mês</p>
@@ -738,10 +738,10 @@ export default function PersonalFinancePage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Despesas</CardTitle>
-            <TrendingDown className="h-4 w-4 text-red-600" />
+            <TrendingDown className="h-4 w-4 text-destructive" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-red-600">
+            <div className="text-2xl font-bold text-destructive">
               {formatCurrency(expenses)}
             </div>
             <p className="text-xs text-muted-foreground">Este mês</p>
@@ -756,7 +756,7 @@ export default function PersonalFinancePage() {
           <CardContent>
             <div
               className={`text-2xl font-bold ${
-                balance >= 0 ? "text-green-600" : "text-red-600"
+                balance >= 0 ? "text-success" : "text-destructive"
               }`}
             >
               {formatCurrency(balance)}
@@ -807,19 +807,19 @@ export default function PersonalFinancePage() {
                       <SelectContent>
                         <SelectItem value="income">
                           <div className="flex items-center gap-2">
-                            <TrendingUp className="h-4 w-4 text-green-600" />
+                            <TrendingUp className="h-4 w-4 text-success" />
                             <span>Receita</span>
                           </div>
                         </SelectItem>
                         <SelectItem value="expense">
                           <div className="flex items-center gap-2">
-                            <TrendingDown className="h-4 w-4 text-red-600" />
+                            <TrendingDown className="h-4 w-4 text-destructive" />
                             <span>Despesa</span>
                           </div>
                         </SelectItem>
                         <SelectItem value="transfer">
                           <div className="flex items-center gap-2">
-                            <ArrowUpDown className="h-4 w-4 text-blue-600" />
+                            <ArrowUpDown className="h-4 w-4 text-info" />
                             <span>Transferência/Balanço</span>
                           </div>
                         </SelectItem>
@@ -1255,7 +1255,7 @@ export default function PersonalFinancePage() {
                             )}
 
                             {totalSplitPercentage !== 100 && (
-                              <p className="text-sm text-orange-600">
+                              <p className="text-sm text-warning">
                                 Restam {100 - totalSplitPercentage}% para
                                 distribuir
                               </p>
@@ -1344,8 +1344,8 @@ export default function PersonalFinancePage() {
                           <p
                             className={`font-semibold ${
                               transaction.amount >= 0
-                                ? "text-green-600"
-                                : "text-red-600"
+                                ? "text-success"
+                                : "text-destructive"
                             }`}
                           >
                             {formatCurrency(Math.abs(transaction.amount))}
@@ -1371,7 +1371,7 @@ export default function PersonalFinancePage() {
                             variant="ghost"
                             size="sm"
                             onClick={() => deleteTransaction(transaction.id)}
-                            className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                            className="h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
                             title="Excluir transação"
                           >
                             <Trash2 className="h-4 w-4" />
@@ -1441,10 +1441,10 @@ export default function PersonalFinancePage() {
               </Card>
 
               {!isPremium && (
-                <Card className="border-yellow-200 bg-yellow-50">
+                <Card className="border-warning/30 bg-warning/10">
                   <CardHeader>
                     <CardTitle className="text-lg flex items-center gap-2">
-                      <Crown className="h-5 w-5 text-yellow-600" />
+                      <Crown className="h-5 w-5 text-warning" />
                       Upgrade Premium
                     </CardTitle>
                     <CardDescription>

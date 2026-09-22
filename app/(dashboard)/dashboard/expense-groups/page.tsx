@@ -782,7 +782,7 @@ export default function ExpenseGroupsPage() {
                           <CardTitle className="text-lg flex items-center gap-2">
                             {group.name}
                             {isAdmin && (
-                              <Crown className="h-4 w-4 text-yellow-500" />
+                              <Crown className="h-4 w-4 text-warning" />
                             )}
                           </CardTitle>
                           <CardDescription className="mt-1">
@@ -825,7 +825,7 @@ export default function ExpenseGroupsPage() {
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem
                                   onClick={() => handleDeleteGroup(group)}
-                                  className="text-red-600"
+                                  className="text-destructive"
                                 >
                                   <Trash2 className="h-4 w-4 mr-2" />
                                   Excluir Grupo
@@ -844,7 +844,7 @@ export default function ExpenseGroupsPage() {
                                 )}
                                 <DropdownMenuItem
                                   onClick={() => handleLeaveGroup(group)}
-                                  className="text-red-600"
+                                  className="text-destructive"
                                 >
                                   <UserMinus className="h-4 w-4 mr-2" />
                                   Sair do Grupo
@@ -1098,7 +1098,7 @@ export default function ExpenseGroupsPage() {
 
                       {/* Personal Message */}
                       {invitation.message && (
-                        <div className="p-3 bg-blue-50 rounded-md border-l-4 border-blue-500">
+                        <div className="p-3 bg-info/10 rounded-md border-l-4 border-info">
                           <p className="text-sm">
                             <strong>Mensagem:</strong> {invitation.message}
                           </p>
@@ -1143,7 +1143,7 @@ export default function ExpenseGroupsPage() {
                         >
                           {acceptLoading === invitation.id ? (
                             <div className="flex items-center gap-2">
-                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current"></div>
                               Entrando...
                             </div>
                           ) : (
@@ -1161,7 +1161,7 @@ export default function ExpenseGroupsPage() {
                         >
                           {rejectLoading === invitation.id ? (
                             <div className="flex items-center gap-2">
-                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-600"></div>
+                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-border"></div>
                               Rejeitando...
                             </div>
                           ) : (
@@ -1183,9 +1183,9 @@ export default function ExpenseGroupsPage() {
                         );
                         if (hoursLeft < 24) {
                           return (
-                            <div className="flex items-center gap-2 p-3 bg-amber-50 rounded-md border-l-4 border-amber-500">
-                              <AlertCircle className="h-4 w-4 text-amber-600" />
-                              <p className="text-sm text-amber-800">
+                            <div className="flex items-center gap-2 p-3 bg-warning/10 rounded-md border-l-4 border-warning">
+                              <AlertCircle className="h-4 w-4 text-warning" />
+                              <p className="text-sm text-warning">
                                 <strong>Atenção:</strong> Este convite expira em
                                 menos de 24 horas!
                               </p>
@@ -1222,15 +1222,15 @@ export default function ExpenseGroupsPage() {
 
           {/* Notificação de Convites Órfãos */}
           {orphanedCount > 0 && (
-            <Card className="border-amber-200 bg-amber-50 mt-4">
+            <Card className="border-warning/30 bg-warning/10 mt-4">
               <CardContent className="pt-6">
                 <div className="flex items-start gap-3">
-                  <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5" />
+                  <AlertTriangle className="h-5 w-5 text-warning mt-0.5" />
                   <div className="flex-1">
-                    <h4 className="text-sm font-medium text-amber-800 mb-1">
+                    <h4 className="text-sm font-medium text-warning mb-1">
                       Convites Órfãos Detectados
                     </h4>
-                    <p className="text-sm text-amber-700 mb-3">
+                    <p className="text-sm text-warning mb-3">
                       Encontramos {orphanedCount} convite
                       {orphanedCount > 1 ? "s" : ""} para grupos que não existem
                       mais. Estes convites foram automaticamente marcados como
@@ -1247,7 +1247,7 @@ export default function ExpenseGroupsPage() {
                           alert(`Erro: ${result.error}`);
                         }
                       }}
-                      className="border-amber-300 text-amber-800 hover:bg-amber-100"
+                      className="border-warning/30 text-warning hover:bg-warning/10"
                     >
                       Limpar Convites Órfãos
                     </Button>
@@ -1529,7 +1529,7 @@ export default function ExpenseGroupsPage() {
                                 {member?.user?.full_name ||
                                   "Membro desconhecido"}
                                 {member?.role === "admin" && (
-                                  <Crown className="h-3 w-3 text-yellow-500 inline ml-1" />
+                                  <Crown className="h-3 w-3 text-warning inline ml-1" />
                                 )}
                               </div>
                               {prop.total_income && (

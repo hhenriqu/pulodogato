@@ -33,7 +33,7 @@ export function LoadingScreen({ onLoadingComplete }: LoadingScreenProps) {
   if (!isVisible) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-background to-muted">
       <div className="flex flex-col items-center space-y-8">
         {/* Logo animado */}
         <div className="relative">
@@ -49,7 +49,7 @@ export function LoadingScreen({ onLoadingComplete }: LoadingScreenProps) {
           </div>
 
           {/* Círculo de progresso */}
-          <div className="absolute -inset-4 rounded-full border-4 border-gray-200 dark:border-gray-700">
+          <div className="absolute -inset-4 rounded-full border-4 border-border">
             <svg
               className="absolute inset-0 -rotate-90 transform"
               width="100%"
@@ -63,7 +63,7 @@ export function LoadingScreen({ onLoadingComplete }: LoadingScreenProps) {
                 stroke="currentColor"
                 strokeWidth="4"
                 fill="none"
-                className="text-blue-500"
+                className="text-primary"
                 strokeDasharray={377}
                 strokeDashoffset={377 - (377 * progress) / 100}
                 strokeLinecap="round"
@@ -77,22 +77,22 @@ export function LoadingScreen({ onLoadingComplete }: LoadingScreenProps) {
 
         {/* Texto de loading */}
         <div className="text-center space-y-2">
-          <h1 className="text-2xl font-bold text-gray-800 dark:text-gray-200">
+          <h1 className="text-2xl font-bold text-foreground">
             Pulo do Gato
           </h1>
-          <p className="text-gray-600 dark:text-gray-400">
+          <p className="text-muted-foreground">
             Carregando seus investimentos...
           </p>
 
           {/* Barra de progresso */}
-          <div className="w-64 h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+          <div className="w-64 h-2 bg-muted rounded-full overflow-hidden">
             <div
-              className="h-full bg-gradient-to-r from-blue-500 to-purple-600 rounded-full transition-all duration-300 ease-out"
+              className="h-full bg-gradient-to-r from-primary to-premium rounded-full transition-all duration-300 ease-out"
               style={{ width: `${progress}%` }}
             />
           </div>
 
-          <div className="text-sm text-gray-500 dark:text-gray-400">
+          <div className="text-sm text-muted-foreground">
             {Math.round(progress)}%
           </div>
         </div>
@@ -102,7 +102,7 @@ export function LoadingScreen({ onLoadingComplete }: LoadingScreenProps) {
           {[0, 1, 2].map((i) => (
             <div
               key={i}
-              className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"
+              className="w-2 h-2 bg-primary rounded-full animate-bounce"
               style={{
                 animationDelay: `${i * 0.2}s`,
                 animationDuration: "1s",

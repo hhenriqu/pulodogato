@@ -132,7 +132,7 @@ export function NotificationBell({ user }: NotificationsProps) {
                 <div
                   key={notification.id}
                   className={`p-4 hover:bg-muted/50 transition-colors ${
-                    !notification.read ? "bg-blue-50/50" : ""
+                    !notification.read ? "bg-info/5" : ""
                   }`}
                   onClick={() =>
                     !notification.read && markAsRead(notification.id)
@@ -142,8 +142,8 @@ export function NotificationBell({ user }: NotificationsProps) {
                     {/* Icon */}
                     <div className="mt-1">
                       {notification.type === "group_invitation" && (
-                        <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
-                          <Users className="h-4 w-4 text-blue-600" />
+                        <div className="h-8 w-8 rounded-full bg-info/10 flex items-center justify-center">
+                          <Users className="h-4 w-4 text-info" />
                         </div>
                       )}
                     </div>
@@ -159,7 +159,7 @@ export function NotificationBell({ user }: NotificationsProps) {
                             {formatTimeAgo(notification.created_at)}
                           </span>
                           {!notification.read && (
-                            <div className="h-2 w-2 rounded-full bg-blue-500"></div>
+                            <div className="h-2 w-2 rounded-full bg-primary"></div>
                           )}
                         </div>
                       </div>

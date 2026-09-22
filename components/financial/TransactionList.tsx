@@ -74,13 +74,13 @@ export function TransactionList({
   const getTransactionIcon = (type?: string) => {
     switch (type) {
       case "income":
-        return <TrendingUp className="h-4 w-4 text-green-600" />;
+        return <TrendingUp className="h-4 w-4 text-success" />;
       case "expense":
-        return <TrendingDown className="h-4 w-4 text-red-600" />;
+        return <TrendingDown className="h-4 w-4 text-destructive" />;
       case "transfer":
-        return <ArrowUpDown className="h-4 w-4 text-blue-600" />;
+        return <ArrowUpDown className="h-4 w-4 text-info" />;
       default:
-        return <CreditCard className="h-4 w-4 text-gray-600" />;
+        return <CreditCard className="h-4 w-4 text-muted-foreground" />;
     }
   };
 
@@ -100,13 +100,13 @@ export function TransactionList({
   const getTransactionTypeColor = (type?: string) => {
     switch (type) {
       case "income":
-        return "bg-green-100 text-green-800 border-green-200";
+        return "bg-success/10 text-success border-success/30";
       case "expense":
-        return "bg-red-100 text-red-800 border-red-200";
+        return "bg-destructive/10 text-destructive border-destructive/30";
       case "transfer":
-        return "bg-blue-100 text-blue-800 border-blue-200";
+        return "bg-info/10 text-info border-info/30";
       default:
-        return "bg-gray-100 text-gray-800 border-gray-200";
+        return "bg-muted text-foreground border-border";
     }
   };
 
@@ -135,7 +135,7 @@ export function TransactionList({
         </CardHeader>
         <CardContent>
           <div className="flex items-center justify-center py-8">
-            <div className="text-sm text-red-600">
+            <div className="text-sm text-destructive">
               Erro ao carregar: {error}
             </div>
           </div>
@@ -242,8 +242,8 @@ export function TransactionList({
                     <span
                       className={
                         transaction.amount >= 0
-                          ? "text-green-600"
-                          : "text-red-600"
+                          ? "text-success"
+                          : "text-destructive"
                       }
                     >
                       {formatCurrency(transaction.amount)}
@@ -275,7 +275,7 @@ export function TransactionList({
                           Editar
                         </DropdownMenuItem>
                         <DropdownMenuItem
-                          className="text-red-600"
+                          className="text-destructive"
                           onClick={() =>
                             handleDeleteTransaction(
                               transaction.id,

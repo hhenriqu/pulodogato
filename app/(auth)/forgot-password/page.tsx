@@ -52,19 +52,19 @@ export default function ForgotPasswordPage() {
 
   if (success) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-primary/10 p-4">
         <Card className="w-full max-w-md">
           <CardHeader className="space-y-1 text-center">
-            <div className="mx-auto w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mb-4">
-              <CheckCircle className="h-6 w-6 text-green-600" />
+            <div className="mx-auto w-12 h-12 bg-success/10 rounded-full flex items-center justify-center mb-4">
+              <CheckCircle className="h-6 w-6 text-success" />
             </div>
-            <CardTitle className="text-2xl text-green-600">Email Enviado!</CardTitle>
+            <CardTitle className="text-2xl text-success">Email Enviado!</CardTitle>
             <CardDescription>
               Enviamos as instruções para redefinir sua senha
             </CardDescription>
           </CardHeader>
           <CardContent className="text-center">
-            <p className="text-sm text-gray-600 mb-4">
+            <p className="text-sm text-muted-foreground mb-4">
               Verifique sua caixa de entrada do email <strong>{getValues('email')}</strong> e 
               clique no link para redefinir sua senha.
             </p>
@@ -89,7 +89,7 @@ export default function ForgotPasswordPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-primary/10 p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1">
           <div className="flex items-center gap-2 mb-2">
@@ -100,8 +100,8 @@ export default function ForgotPasswordPage() {
             </Link>
           </div>
           <div className="text-center">
-            <div className="mx-auto w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mb-4">
-              <Mail className="h-6 w-6 text-blue-600" />
+            <div className="mx-auto w-12 h-12 bg-info/10 rounded-full flex items-center justify-center mb-4">
+              <Mail className="h-6 w-6 text-info" />
             </div>
             <CardTitle className="text-2xl">Esqueceu a Senha?</CardTitle>
             <CardDescription>
@@ -120,12 +120,12 @@ export default function ForgotPasswordPage() {
                 {...register('email')}
               />
               {errors.email && (
-                <p className="text-sm text-red-600">{errors.email.message}</p>
+                <p className="text-sm text-destructive">{errors.email.message}</p>
               )}
             </div>
 
             {error && (
-              <div className="p-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-md">
+              <div className="p-3 text-sm text-destructive bg-destructive/10 border border-destructive/30 rounded-md">
                 {error}
               </div>
             )}
@@ -140,9 +140,9 @@ export default function ForgotPasswordPage() {
           </form>
 
           <div className="mt-6 text-center">
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-muted-foreground">
               Lembrou da senha?{' '}
-              <Link href="/login" className="text-blue-600 hover:underline">
+              <Link href="/login" className="text-info hover:underline">
                 Fazer login
               </Link>
             </p>
