@@ -525,3 +525,183 @@ export interface ProjectionSummary {
   overdue_total: number;
   accounts: AccountProjection[];
 }
+
+// =====================================================
+// METAS E RELATORIOS (008 - HMO-137 Fase 4)
+// =====================================================
+
+export type GoalStatus = "active" | "completed" | "paused" | "cancelled";
+
+/**
+ * Estado calculado na leitura, separado de `status` (que o usuario controla).
+ * 'reached' aparece sozinho quando os aportes alcancam o alvo.
+ */
+export type GoalProgressStatus =
+  | "on_track"
+  | "reached"
+  | "overdue"
+  | "paused"
+  | "cancelled";
+
+export interface FinancialGoal {
+  id: string;
+  user_id: string;
+  /** Meta de grupo (a viagem da familia); null = pessoal. */
+  group_id: string | null;
+  /** Onde o dinheiro esta guardado. Anotacao: o progresso vem dos aportes. */
+  account_id: string | null;
+  title: string;
+  description: string | null;
+  target_amount: number;
+  /** 'YYYY-MM-DD'; null = meta sem prazo, que e valida. */
+  target_date: string | null;
+  status: GoalStatus;
+  color_hex: string;
+  icon: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** financial_goals + o progresso que a view goal_progress calcula. */
+export interface GoalWithProgress extends FinancialGoal {
+  /** Soma dos aportes. NUNCA o saldo da conta vinculada -- ver a migration 008. */
+  saved: number;
+  /** Nunca negativo: quem passou da meta ve 0, nao um valor negativo. */
+  remaining: number;
+  /** Fracao com 4 casas (0.1667 = 16,67%). */
+  progress_ratio: number;
+  contribution_count: number;
+  last_contribution_at: string | null;
+  /** Meses cheios ate o prazo; null quando a meta nao tem prazo. */
+  months_left: number | null;
+  /** Quanto por mes para chegar no prazo; null sem prazo, 0 se ja alcancou. */
+  monthly_required: number | null;
+  progress_status: GoalProgressStatus;
+  account?: Pick<
+    FinancialAccount,
+    "id" | "name" | "account_type" | "color_hex"
+  > | null;
+}
+
+export interface GoalContribution {
+  id: string;
+  goal_id: string;
+  /** Quem aportou. Numa meta de grupo, cada membro aporta o seu. */
+  user_id: string;
+  /** Sempre positivo (CHECK do 008). Retirada se faz apagando o aporte. */
+  amount: number;
+  contributed_at: string;
+  notes: string | null;
+  created_at: string;
+  user?: { id: string; full_name: string | null; avatar_url?: string | null } | null;
+  is_mine?: boolean;
+}
+
+export interface NewGoalForm {
+  title: string;
+  description: string;
+  target_amount: string;
+  target_date: string;
+  account_id: string;
+  group_id: string;
+}
+
+// ---- Relatorios ----
+
+export interface CashFlowMonth {
+  /** 'YYYY-MM-01'. */
+  month: string;
+  income: number;
+  /** POSITIVO. A view aplica ABS; despesa e gravada negativa no banco. */
+  expense: number;
+  net: number;
+  transaction_count: number;
+}
+
+export interface CashFlowReport {
+  months: CashFlowMonth[];
+  summary: {
+    total_income: number;
+    total_expense: number;
+    net: number;
+    /** Denominador das medias: meses COM movimento, nao a janela inteira. */
+    months_with_activity: number;
+    average_expense: number;
+    average_income: number;
+  };
+  window: { from: string; to: string; months: number };
+}
+
+export interface CategoryTotal {
+  category_id: string;
+  category: Pick<
+    TransactionCategory,
+    "id" | "name" | "icon" | "color_hex" | "is_expense"
+  > | null;
+  expense: number;
+  income: number;
+  transaction_count: number;
+  /** Fatia do gasto total, 0..1. Zero quando nao houve gasto no periodo. */
+  share: number;
+}
+
+export interface CategoryReport {
+  categories: CategoryTotal[];
+  by_month: {
+    month: string;
+    category_id: string;
+    category_name: string;
+    expense: number;
+    income: number;
+  }[];
+  summary: { total_expense: number; category_count: number };
+  window: { from: string; to: string; months: number };
+}
+
+export interface PlannedVsActualMonth {
+  month: string;
+  planned_expense: number;
+  planned_income: number;
+  actual_expense: number;
+  actual_income: number;
+  /** Positivo = gastou mais do que tinha previsto. */
+  expense_variance: number;
+  pending_count: number;
+  overdue_count: number;
+}
+
+export interface PlannedVsActualReport {
+  months: PlannedVsActualMonth[];
+  summary: {
+    total_planned_expense: number;
+    total_actual_expense: number;
+    variance: number;
+    months_with_plan: number;
+    overdue_count: number;
+  };
+  window: { from: string; to: string; months: number };
+}
+
+export interface NetWorthMonth {
+  month: string;
+  net_change: number;
+  /** Patrimonio no fim do mes, reconstruido de tras para frente. */
+  net_worth: number;
+}
+
+export interface NetWorthReport {
+  months: NetWorthMonth[];
+  accounts: FinancialAccount[];
+  summary: {
+    current: number;
+    change_in_window: number;
+    total_saved: number;
+  };
+  /**
+   * A variacao mes a mes e exata; o NIVEL da curva herda a deriva de
+   * current_balance. A tela mostra este texto -- esconde-lo faria o usuario
+   * decidir sobre um numero que o proprio app sabe que pode estar errado.
+   */
+  caveat: string;
+  window: { from: string; to: string; months: number };
+}
