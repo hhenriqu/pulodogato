@@ -37,8 +37,18 @@ import { dirname, join } from 'node:path';
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DESTINO = join(REPO, 'database/validation');
 
-const MIGRATIONS = ['001_baseline', '002_rls_lockdown', '003_fix_trigger_privileges'];
+// A cadeia inteira, na ordem em que producao a recebeu. O 004 estava faltando
+// aqui ate 2026-09-22: o bundle validava uma cadeia que nao era a de producao,
+// e sairia verde mesmo assim.
+const MIGRATIONS = [
+  '001_baseline',
+  '002_rls_lockdown',
+  '003_fix_trigger_privileges',
+  '004_fix_remaining_trigger_privileges',
+  '005_recurring_and_scheduled',
+];
 const TESTE_RLS = 'database/tests/rls_isolation_test.sql';
+const TESTE_AGENDA = 'database/tests/scheduled_rls_test.sql';
 
 const ler = (rel) => readFileSync(join(REPO, rel), 'utf8');
 
@@ -201,7 +211,7 @@ const partes = [
   cabecalho(
     'VALIDACAO PASSO 1: schema do zero',
     `Cole este arquivo inteiro no SQL Editor do projeto Supabase DESCARTAVEL e
-rode. Ele aplica 001 -> 002 -> 003 num banco vazio e termina imprimindo uma
+rode. Ele aplica 001 -> 002 -> 003 -> 004 -> 005 num banco vazio e termina imprimindo uma
 tabela de verificacoes.
 
 O QUE FAZER COM O RESULTADO: copie a tabela final (ou tire um print) e cole na
@@ -240,12 +250,12 @@ partes.push('\n' + RELATORIO);
 // ultima instrucao, e o ROLLBACK nao devolve linha nenhuma. Sem ele, "passou"
 // apareceria como uma tela vazia, indistinguivel de "nao rodou". Como o SELECT
 // vem DEPOIS do ROLLBACK, ele so e alcancado se nada tiver abortado antes.
-function prepararTesteRls(sql) {
+function prepararTeste(sql, origem, veredito) {
   // O \set ON_ERROR_STOP e do psql; no SQL Editor o lote ja aborta sozinho no
   // primeiro erro, entao a linha some sem mudar o comportamento.
   const semSet = sql.replace(/^\s*\\set\s+ON_ERROR_STOP\s+on\s*$/m, '');
   if (!/^\s*ROLLBACK\s*;\s*$/m.test(semSet)) {
-    console.error(`ERRO: ${TESTE_RLS} nao termina em ROLLBACK;`);
+    console.error(`ERRO: ${origem} nao termina em ROLLBACK;`);
     console.error('      O bundle depende disso para nao deixar fixture no banco.');
     process.exit(1);
   }
@@ -253,13 +263,29 @@ function prepararTesteRls(sql) {
 
 -- Se esta linha aparecer, nenhuma assercao acima abortou o lote: o teste passou.
 -- Ela roda DEPOIS do ROLLBACK, ou seja, fora da transacao que foi desfeita.
-SELECT 'ISOLAMENTO DE RLS: TUDO OK -- nenhuma assercao falhou, e os fixtures foram desfeitos pelo ROLLBACK' AS resultado;
+SELECT '${veredito}' AS resultado;
 `;
 }
 
 // A checagem de meta-comando roda no arquivo ja preparado: o unico \set
 // conhecido e tratado acima, e qualquer outro tem que estourar.
-const testeRls = semMetaComandos(prepararTesteRls(ler(TESTE_RLS)), 'rls_isolation_test.sql (preparado)');
+const testeRls = semMetaComandos(
+  prepararTeste(
+    ler(TESTE_RLS),
+    TESTE_RLS,
+    'ISOLAMENTO DE RLS: TUDO OK -- nenhuma assercao falhou, e os fixtures foram desfeitos pelo ROLLBACK',
+  ),
+  'rls_isolation_test.sql (preparado)',
+);
+
+const testeAgenda = semMetaComandos(
+  prepararTeste(
+    ler(TESTE_AGENDA),
+    TESTE_AGENDA,
+    'CONTAS PREVISTAS: TUDO OK -- isolamento, view e invariantes de dinheiro conferidos',
+  ),
+  'scheduled_rls_test.sql (preparado)',
+);
 
 const arquivos = {
   '01_migrations.sql': partes.join('\n'),
@@ -276,6 +302,19 @@ O QUE ESPERAR: uma unica linha "ISOLAMENTO DE RLS: TUDO OK". Se em vez dela vier
 erro em vermelho, copie o texto na issue -- a mensagem ja diz qual assercao
 falhou e o que era esperado.`
     ) + testeRls,
+  '03_contas_previstas.sql':
+    cabecalho(
+      'VALIDACAO PASSO 3: contas previstas e gastos fixos (005)',
+      `Rode DEPOIS do 01_migrations.sql, no mesmo projeto descartavel.
+
+Confere o que o 005 sozinho nao prova: que um usuario nao ve a agenda de contas
+do outro, que a view scheduled_transactions_effective respeita a RLS da tabela
+base (view comum rodaria com o privilegio do dono e devolveria a agenda inteira)
+e que o banco recusa conta marcada como paga sem transacao e ocorrencia
+duplicada da mesma regra. Tudo dentro de BEGIN/ROLLBACK.
+
+O QUE ESPERAR: uma unica linha "CONTAS PREVISTAS: TUDO OK".`
+    ) + testeAgenda,
 };
 
 // ---------------------------------------------------------------------------

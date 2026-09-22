@@ -5,12 +5,16 @@ name: db-verify
 # o repositorio perdeu a capacidade de reconstruir o banco -- que e exatamente o
 # problema que a HMO-117 existiu para resolver.
 
+# lib/recurrence.ts e scripts/test-recurrence.mjs entram nos paths porque a
+# agenda de contas previstas e metade SQL, metade aritmetica de data: o indice
+# unico do 005 so garante que a MESMA data nao duplica -- quem decide QUAL data
+# e o TypeScript. Testar os dois lados no mesmo job e o que fecha o buraco.
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-recurrence.mjs', 'lib/recurrence.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-recurrence.mjs', 'lib/recurrence.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -42,6 +46,17 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      # O `npm ci` e so pelo tsc: o teste de recorrencia compila
+      # lib/recurrence.ts com o TypeScript que ja e devDependency, em vez de
+      # trazer um runner de teste novo so para conferir aritmetica de data.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Instalar dependencias
+        run: npm ci
 
       # Tem que ser o 17: o ubuntu-latest traz o cliente 16, e o pg_dump se
       # recusa a falar com um servidor mais novo que ele.
@@ -81,10 +96,33 @@ jobs:
       - name: 003_fix_trigger_privileges
         run: $PSQL -f database/migrations/003_fix_trigger_privileges.sql
 
+      # O 004 fecha os triggers que sobraram do 003 (HMO-125). Ficou de fora
+      # deste job ate 2026-09-22, entao o CI validava uma cadeia que nao era a
+      # de producao.
+      - name: 004_fix_remaining_trigger_privileges
+        run: $PSQL -f database/migrations/004_fix_remaining_trigger_privileges.sql
+
+      - name: 005_recurring_and_scheduled
+        run: $PSQL -f database/migrations/005_recurring_and_scheduled.sql
+
+      # Aplicar duas vezes tem que ser inofensivo: o 005 e re-executavel de
+      # proposito, porque depois que ele entrar em producao o 001 regerado ja
+      # vai trazer as tabelas dele.
+      - name: 005 e idempotente
+        run: $PSQL -f database/migrations/005_recurring_and_scheduled.sql
+
       # O teste prova ausencia de vazamento. Uma tabela sem RLS e vazia passaria
       # nele, entao a cobertura e checada separadamente logo abaixo.
       - name: Teste de isolamento de RLS
         run: $PSQL -f database/tests/rls_isolation_test.sql
+
+      # Contas previstas: isolamento, a view security_invoker e as invariantes
+      # de dinheiro (paga sem transacao, ocorrencia duplicada).
+      - name: Teste das contas previstas
+        run: $PSQL -f database/tests/scheduled_rls_test.sql
+
+      - name: Aritmetica de recorrencia
+        run: npm run test:recurrence
 
       - name: Nenhuma tabela pode ficar sem RLS
         run: |
