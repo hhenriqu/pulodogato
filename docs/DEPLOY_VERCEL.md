@@ -51,6 +51,9 @@ O nome do projeto fica o padrao (`pulodogato`), decidido na HMO-122.
 
 ### 2. Variaveis de ambiente
 
+**Este passo e obrigatorio: sem ele o build falha.** Nao e configuracao
+opcional -- o deploy nao chega a subir.
+
 Defina em Project Settings → Environment Variables, escopo **Production**:
 
 | Variavel | Valor |
@@ -58,13 +61,39 @@ Defina em Project Settings → Environment Variables, escopo **Production**:
 | `NEXT_PUBLIC_SUPABASE_URL` | URL do projeto Supabase |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | chave `anon` do projeto |
 
-> **Atencao ao `.env.production` versionado.** Esse arquivo esta commitado e ja
-> contem os valores de producao. O Next carrega ele durante o build, entao a
-> aplicacao sobe funcionando mesmo sem configurar nada na Vercel -- inclusive
-> nos **preview deployments de qualquer branch**, que passariam a falar com o
-> banco de producao. Definir as variaveis na Vercel nao resolve isso sozinho
-> (variaveis do ambiente tem precedencia, mas o preview tambem herdaria). Se o
-> incomodo aparecer, o proximo passo e tirar `.env.production` do versionamento.
+Os dois valores de producao estao em `.env.production`, na raiz do repositorio
+(o repo e privado). E o mesmo projeto Supabase que o banco de producao --
+conferido comparando o ref `odxqjvtxsioksguuevqm` com o host de
+`SUPABASE_DB_URL_RO`.
+
+> **O `.env.production` versionado NAO vale na Vercel.** Uma versao anterior
+> deste runbook dizia o contrario -- que o Next carregava o arquivo no build e
+> por isso a aplicacao subiria funcionando mesmo sem configurar nada. Esta
+> errado, e a primeira tentativa de deploy (commit `432d23f`) falhou por causa
+> disso:
+>
+> ```
+> Error: Variavel de ambiente ausente: NEXT_PUBLIC_SUPABASE_URL
+> Error occurred prerendering page "/forgot-password"
+> Error: Command "npm run build" exited with 1
+> ```
+>
+> O mesmo commit **builda limpo na nossa maquina**, em clone novo e sem
+> `.env.local` -- ou seja, o arquivo do repo e suficiente localmente. Na Vercel
+> nao: a camada de Environment Variables do projeto substitui/sombreia o
+> `.env.production` do clone, e como as variaveis nao estavam definidas o valor
+> chegou vazio no prerender. O log ainda mostra `- Environments: .env.production`,
+> o que faz parecer que o arquivo do repo foi lido. Nao foi.
+>
+> Consequencia pratica: o arquivo commitado nao e rede de seguranca nem risco de
+> preview apontando para producao **na Vercel** -- ele e simplesmente inerte ali.
+> Continua sendo usado localmente (`scripts/extract-schema.mjs` le ele como
+> fallback), entao nao saiu do versionamento.
+
+A validacao que produz esse erro (`utils/supabase/env.ts`) esta fazendo o que
+deveria: falhar no build em vez de subir uma aplicacao que quebraria na cara do
+usuario. Nao contorne prerender nem afrouxe a validacao para o build passar --
+o jeito de fazer passar e definir as variaveis.
 
 A chave `anon` e publica por design (vai para o bundle do browser); o que
 protege os dados e a RLS, aplicada em producao em 21/09 (HMO-120, HMO-125).
