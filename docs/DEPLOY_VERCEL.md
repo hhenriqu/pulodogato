@@ -24,12 +24,26 @@ Ja feito e verificado (`next build` limpo, so warnings de lint):
   o dominio da Vercel sem hardcode. Mas veja o passo 3 -- o Supabase precisa
   autorizar esse dominio.
 
-## Passos (precisam da conta do Helio)
+## Quem faz o que (decidido na HMO-122)
+
+- **Passos 1, 2 e 3** (import, variaveis, Supabase Auth): o Helio, no browser.
+  Nenhum dos tres sai da conta dele -- e a razao de nao haver `VERCEL_TOKEN`
+  neste fluxo.
+- **Passo 4** (verificacao pos-deploy): o agente, assim que receber a URL do
+  deploy. E um script, nao precisa de credencial nenhuma -- so de uma URL
+  publica.
+
+## Passos
 
 ### 1. Importar o repositorio
 
 Vercel → Add New → Project → importar `pulodogato`. O framework e detectado
 como Next.js; nao mude build command nem output directory.
+
+O nome do projeto fica o padrao (`pulodogato`), decidido na HMO-122. O dominio
+tende a ser `pulodogato.vercel.app`, mas se o nome ja estiver tomado por outra
+conta a Vercel acrescenta um sufixo. **Copie a URL que a Vercel mostrar** em vez
+de assumir -- o passo 3 e o 4 dependem dela estar exata.
 
 ### 2. Variaveis de ambiente
 
@@ -66,15 +80,21 @@ maquina local de quem clicar.
 ### 4. Verificar depois do deploy
 
 ```bash
-BASE=https://<projeto>.vercel.app
-
-# 200 + {"status":"ok"} -- prova que a app alcanca o Supabase
-curl -s $BASE/api/health
-
-# 404 nas duas -- prova que a Fase 1 (HMO-121) chegou ao ar de verdade
-curl -s -o /dev/null -w "%{http_code}\n" $BASE/api/debug/database
-curl -s -o /dev/null -w "%{http_code}\n" $BASE/api/test/create-transaction
+./scripts/verify-deploy.sh https://<projeto>.vercel.app
 ```
+
+Checa `/api/health` (200) e as **10** rotas removidas na Fase 1 (404 em todas).
+Sai com codigo 1 se algo falhar.
+
+> A lista de rotas dentro do script veio do `git log --diff-filter=D`, nao de
+> memoria -- e isso e o ponto. Uma versao anterior deste runbook mandava checar
+> `/api/debug/database`, que **nunca existiu** (a rota era
+> `/api/debug/database-check`). O curl devolvia 404 pelo caminho errado e a
+> verificacao passava sem provar nada.
+>
+> Pelo mesmo motivo o script termina checando `/`: num deploy que nao existe,
+> *todas* as rotas dao 404 e os 10 checks "passam". Se a raiz nao responde, os
+> 404 nao valem como prova.
 
 Depois, no browser: cadastro → email de confirmacao (o link deve apontar para o
 dominio `.vercel.app`, nao para localhost) → login → dashboard carrega dados.
