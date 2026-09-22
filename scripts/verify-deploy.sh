@@ -2,7 +2,7 @@
 # =====================================================
 # PULODOGATO - VERIFICACAO POS-DEPLOY
 # =====================================================
-# Roda o passo 4 do docs/DEPLOY_VERCEL.md de uma vez so, contra um deploy
+# Roda o passo 5 do docs/DEPLOY_VERCEL.md de uma vez so, contra um deploy
 # que acabou de subir:
 #
 #   ./scripts/verify-deploy.sh https://<projeto>.vercel.app
@@ -63,8 +63,31 @@ status_of() {
   curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$1"
 }
 
+redirect_of() {
+  curl -s -o /dev/null -w '%{redirect_url}' --max-time 20 "$1"
+}
+
 echo "== $BASE =="
 echo
+
+# -------- PROTECAO DE DEPLOY --------
+# A Vercel Deployment Protection intercepta as requisicoes ANTES da aplicacao:
+# tudo vira 302 para vercel.com/sso-api. Nesse estado nada abaixo significa
+# nada -- a ancora "falha" com a URL certa, e as 10 rotas dao 302 em vez de 404.
+# Sem esta checagem o script mandava "confirme a URL do deploy", que e a pista
+# errada: a URL esta certa, o que falta e liberar o acesso publico.
+if [[ "$(redirect_of "$BASE/api/health")" == *"vercel.com/sso"* ]]; then
+  echo "NAO VERIFICADO -- Deployment Protection esta LIGADA neste deploy."
+  echo
+  echo "Toda requisicao e redirecionada (302) para vercel.com/sso-api antes de"
+  echo "chegar na aplicacao, entao nao da para verificar nada daqui -- e nenhum"
+  echo "usuario final consegue entrar. A URL nao e o problema."
+  echo
+  echo "Saida: Vercel > o projeto > Settings > Deployment Protection e desligar"
+  echo "a Vercel Authentication para Production (ou restringi-la a preview)."
+  echo "Depois rode este script de novo."
+  exit 1
+fi
 
 # -------- ANCORA --------
 # Tem que passar antes de qualquer 404 valer como prova. Ver o cabecalho.

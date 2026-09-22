@@ -26,10 +26,10 @@ Ja feito e verificado (`next build` limpo, so warnings de lint):
 
 ## Quem faz o que (decidido na HMO-122)
 
-- **Passos 1, 2 e 3** (import, variaveis, Supabase Auth): o Helio, no browser.
-  Nenhum dos tres sai da conta dele -- e a razao de nao haver `VERCEL_TOKEN`
-  neste fluxo.
-- **Passo 4** (verificacao pos-deploy): o agente, assim que receber a URL do
+- **Passos 1 a 4** (import, variaveis, Supabase Auth, Deployment Protection): o
+  Helio, no browser. Nenhum dos quatro sai da conta dele -- e a razao de nao
+  haver `VERCEL_TOKEN` neste fluxo.
+- **Passo 5** (verificacao pos-deploy): o agente, assim que receber a URL do
   deploy. E um script, nao precisa de credencial nenhuma -- so de uma URL
   publica.
 
@@ -46,8 +46,20 @@ O nome do projeto fica o padrao (`pulodogato`), decidido na HMO-122.
 > hostname responde 200 servindo um SPA estatico do Lovable, que nao tem nada a
 > ver com este projeto. Entao a Vercel **vai** dar um sufixo ao dominio deste
 > deploy. **Copie a URL que a Vercel mostrar** em vez de assumir -- os passos 3 e
-> 4 dependem dela estar exata, e apontar o passo 4 para o hostname errado ja
+> 5 dependem dela estar exata, e apontar a verificacao para o hostname errado ja
 > custou uma rodada de verificacao em cima da app de outra pessoa.
+
+O projeto ja foi importado (22/09) e a Vercel deu, como previsto, dominios com
+sufixo de time. Os dois que ela lista em Domains:
+
+| Dominio | O que e |
+| --- | --- |
+| `pulodogato-git-main-helio-moraes-projects.vercel.app` | alias da branch `main` -- **e este o endereco estavel de producao**, use nos passos 3 a 5 |
+| `pulodogato-mckko4ekk-helio-moraes-projects.vercel.app` | alias imutavel de um deploy especifico; muda a cada deploy, nao serve de referencia |
+
+Onde este runbook escreve `<projeto>.vercel.app`, leia o dominio da primeira
+linha. **Nao existe deploy nosso em `pulodogato.vercel.app`** -- aquele hostname
+e de terceiros.
 
 ### 2. Variaveis de ambiente
 
@@ -103,17 +115,45 @@ protege os dados e a RLS, aplicada em producao em 21/09 (HMO-120, HMO-125).
 **Sem este passo o login por email quebra.** Supabase Dashboard → Authentication
 → URL Configuration:
 
-- **Site URL**: `https://<projeto>.vercel.app`
-- **Redirect URLs**: adicionar `https://<projeto>.vercel.app/**`
+- **Site URL**: `https://pulodogato-git-main-helio-moraes-projects.vercel.app`
+- **Redirect URLs**: adicionar `https://pulodogato-git-main-helio-moraes-projects.vercel.app/**`
 
 O padrao do Supabase e `http://localhost:3000`. Enquanto estiver assim, o link
 de confirmacao de cadastro e o de redefinicao de senha chegam apontando para a
 maquina local de quem clicar.
 
-### 4. Verificar depois do deploy
+> **Corrigir o que esta la agora.** Em 22/09 o Site URL foi preenchido com
+> `https://pulodogato.vercel.app` -- o hostname de terceiros do passo 1, nao o
+> nosso. Isso e pior que ter deixado `localhost`: o link de confirmacao de
+> cadastro e o de redefinicao de senha saem apontando para a aplicacao de outra
+> pessoa, levando o usuario (e o token que vai na URL) para fora daqui. Troque
+> pelo dominio `-git-main-` acima antes de testar login.
+
+### 4. Liberar o acesso publico (Deployment Protection)
+
+**Conferido em 22/09: esta LIGADA, e enquanto estiver o deploy nao serve a
+ninguem.** A Vercel Authentication vem habilitada por padrao em projetos novos.
+Ela intercepta a requisicao antes da aplicacao e devolve 302 para
+`vercel.com/sso-api`:
+
+```
+$ curl -sI https://pulodogato-git-main-helio-moraes-projects.vercel.app/api/health
+HTTP/2 302
+location: https://vercel.com/sso-api?url=...&nonce=...
+```
+
+Quem nao esta logado na conta da Vercel do projeto nao passa dali -- nao e
+"protegido por login do app", e inacessivel. E independente do passo 2: mesmo
+com as variaveis certas e o build verde, continua assim ate ser desligada.
+
+Vercel → o projeto → Settings → Deployment Protection → desligar **Vercel
+Authentication** para Production (pode continuar ligada em preview, que ai
+protege as branches sem estorvar producao).
+
+### 5. Verificar depois do deploy
 
 ```bash
-./scripts/verify-deploy.sh https://<projeto>.vercel.app
+./scripts/verify-deploy.sh https://pulodogato-git-main-helio-moraes-projects.vercel.app
 ```
 
 Checa `/api/health` (200) e as **10** rotas removidas na Fase 1 (404 em todas).
