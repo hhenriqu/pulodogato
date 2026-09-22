@@ -12,9 +12,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-recurrence.mjs', 'scripts/test-settlement.mjs', 'lib/recurrence.ts', 'lib/settlement.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-recurrence.mjs', 'scripts/test-settlement.mjs', 'scripts/test-reports.mjs', 'scripts/resolve-aliases.mjs', 'scripts/tsconfig.reports-test.json', 'lib/recurrence.ts', 'lib/settlement.ts', 'lib/services/reports.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-recurrence.mjs', 'scripts/test-settlement.mjs', 'lib/recurrence.ts', 'lib/settlement.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-recurrence.mjs', 'scripts/test-settlement.mjs', 'scripts/test-reports.mjs', 'scripts/resolve-aliases.mjs', 'scripts/tsconfig.reports-test.json', 'lib/recurrence.ts', 'lib/settlement.ts', 'lib/services/reports.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -163,6 +163,29 @@ jobs:
       - name: Teste do acerto de contas do grupo
         run: $PSQL -f database/tests/group_settlement_test.sql
 
+      - name: 008_goals_and_reports
+        run: $PSQL -f database/migrations/008_goals_and_reports.sql
+
+      # Mesmo motivo do 005, 006 e 007: depois que o 008 entrar em producao, o
+      # 001 regerado ja vai trazer as metas e as cinco views.
+      - name: 008 e idempotente
+        run: $PSQL -f database/migrations/008_goals_and_reports.sql
+
+      # Metas e relatorios. A assercao que mais importa e de novo o SINAL:
+      # despesa e gravada NEGATIVA, e um SUM cru nas views devolveria gasto
+      # negativo -- barra para baixo e um "voce economizou" onde houve gasto,
+      # sem erro em lugar nenhum. Mesma familia do erro que quase passou no 006.
+      #
+      # Cobre tambem as tres armadilhas proprias desta fase:
+      #   - 'transfer' nao e receita nem despesa no fluxo de caixa, mas CONTA
+      #     no patrimonio (o trigger de saldo mexe em qualquer tipo);
+      #   - previsto x realizado casa o mes pessoal, onde group_id e NULL dos
+      #     dois lados -- com `=` em vez de IS NOT DISTINCT FROM a tela diria
+      #     que o usuario nao realizou nada do que planejou;
+      #   - o progresso da meta sai dos APORTES, nunca do saldo da conta.
+      - name: Teste das metas e dos relatorios
+        run: $PSQL -f database/tests/goals_reports_test.sql
+
       - name: Aritmetica de recorrencia
         run: npm run test:recurrence
 
@@ -173,6 +196,15 @@ jobs:
       # prova que a conta fecha.
       - name: Acerto de contas simplificado
         run: npm run test:settlement
+
+      # Os numeros dos relatorios sao provados em SQL logo acima. O que resta
+      # para o TypeScript sao duas coisas que erram em silencio: a janela de
+      # meses (um off-by-one mostra 11 barras onde o usuario pediu 12, e
+      # ninguem conta as barras) e o escape do CSV (um ponto e virgula na
+      # descricao quebra a linha em duas colunas e desloca TODA a planilha --
+      # o usuario le valores na coluna errada sem nenhum sinal de erro).
+      - name: Janela de meses e CSV dos relatorios
+        run: npm run test:reports
 
       - name: Nenhuma tabela pode ficar sem RLS
         run: |
