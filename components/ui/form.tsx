@@ -12,7 +12,7 @@ const FormField = React.forwardRef<HTMLDivElement, FormFieldProps>(
     return (
       <div ref={ref} className={cn("space-y-2", className)} {...props}>
         {children}
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {error && <p className="text-sm text-destructive">{error}</p>}
       </div>
     );
   }
@@ -41,7 +41,7 @@ const PasswordInput = React.forwardRef<HTMLInputElement, PasswordInputProps>(
         {onTogglePassword && (
           <button
             type="button"
-            className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-gray-700"
+            className="absolute right-3 top-1/2 transform -translate-y-1/2 text-muted-foreground hover:text-foreground"
             onClick={onTogglePassword}
           >
             {showPassword ? (
@@ -118,7 +118,7 @@ export function PasswordStrength({
     return {
       strength,
       label: labels[strength - 1] || "",
-      color: colors[strength - 1] || "bg-gray-300",
+      color: colors[strength - 1] || "bg-muted",
     };
   };
 
@@ -132,7 +132,7 @@ export function PasswordStrength({
             key={index}
             className={cn(
               "h-2 flex-1 rounded transition-colors",
-              index < strength ? color : "bg-gray-200"
+              index < strength ? color : "bg-muted"
             )}
           />
         ))}
@@ -140,7 +140,7 @@ export function PasswordStrength({
       <p
         className={cn(
           "text-xs transition-colors",
-          strength >= 3 ? "text-green-600" : "text-orange-600"
+          strength >= 3 ? "text-success" : "text-warning"
         )}
       >
         {label}

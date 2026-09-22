@@ -1,7 +1,9 @@
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
-import { Toaster } from "sonner";
 import { PWAWrapper } from "@/components/PWAWrapper";
+import { ThemeProvider } from "@/components/ThemeProvider";
+import { ThemedToaster } from "@/components/ThemedToaster";
+import { THEME_COLOR, THEME_INIT_SCRIPT } from "@/lib/theme";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"] });
@@ -13,10 +15,10 @@ export const viewport: Viewport = {
   minimumScale: 1,
   userScalable: true,
   viewportFit: "cover",
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
-    { media: "(prefers-color-scheme: dark)", color: "#1a1a1a" },
-  ],
+  // O theme-color NAO sai daqui: as duas entradas com `media` seguiam o
+  // prefers-color-scheme, que passa a estar errado assim que o usuario escolhe
+  // um tema diferente do sistema. Viraram uma unica meta no <head> abaixo, que
+  // o THEME_INIT_SCRIPT reescreve junto com a classe `dark`.
 };
 
 // Base das URLs absolutas (Open Graph, manifest, icones).
@@ -145,8 +147,20 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="pt-BR">
+    // suppressHydrationWarning: o script abaixo escreve class/style no <html>
+    // antes do React hidratar, entao o HTML do servidor nunca bate com o do
+    // cliente aqui. E so neste no -- nao esconde diferenca no resto da arvore.
+    <html lang="pt-BR" suppressHydrationWarning>
       <head>
+        {/* Uma unica meta theme-color, sem `media`. O script logo abaixo troca
+            o content conforme o tema -- por isso ela vem antes dele. */}
+        <meta name="theme-color" content={THEME_COLOR.light} />
+
+        {/* Aplica o tema salvo antes da primeira pintura. Tem que ser o
+            primeiro elemento do <head> e sincrono: qualquer coisa depois disso
+            ja pode ter pintado a tela branca para quem usa o modo escuro. */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+
         {/* PWA Meta Tags */}
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta
@@ -213,8 +227,10 @@ export default function RootLayout({
         <link rel="dns-prefetch" href="//fonts.googleapis.com" />
       </head>
       <body className={inter.className}>
-        <PWAWrapper>{children}</PWAWrapper>
-        <Toaster />
+        <ThemeProvider>
+          <PWAWrapper>{children}</PWAWrapper>
+          <ThemedToaster />
+        </ThemeProvider>
       </body>
     </html>
   );

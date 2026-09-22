@@ -133,7 +133,7 @@ export function PortfolioTable({
                     <TableCell className="font-medium">
                       <div>
                         <div className="font-semibold">{item.symbol}</div>
-                        <div className="text-sm text-gray-500">{item.name}</div>
+                        <div className="text-sm text-muted-foreground">{item.name}</div>
                       </div>
                     </TableCell>
                     <TableCell>{getAssetTypeBadge(item.type)}</TableCell>
@@ -155,7 +155,7 @@ export function PortfolioTable({
                     <TableCell className="text-right">
                       <div
                         className={`flex items-center justify-end ${
-                          isProfit ? "text-green-600" : "text-red-600"
+                          isProfit ? "text-success" : "text-destructive"
                         }`}
                       >
                         {isProfit ? (
@@ -189,8 +189,8 @@ export function PortfolioTable({
 
         {data.length === 0 && (
           <div className="text-center py-8">
-            <p className="text-gray-500">Nenhum investimento encontrado</p>
-            <p className="text-sm text-gray-400 mt-2">
+            <p className="text-muted-foreground">Nenhum investimento encontrado</p>
+            <p className="text-sm text-muted-foreground mt-2">
               Comece adicionando sua primeira transação
             </p>
           </div>

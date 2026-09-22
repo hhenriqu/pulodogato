@@ -314,13 +314,13 @@ export function NewTransactionDialog({
               </SelectContent>
             </Select>
             {formData.group_id && (
-              <div className="text-sm text-green-600 mt-1">
+              <div className="text-sm text-success mt-1">
                 ✅ Grupo selecionado:{" "}
                 {groups.find((g) => g.id === formData.group_id)?.name ||
                   formData.group_id}
               </div>
             )}
-            <div className="text-xs text-gray-500 mt-1 p-2 bg-gray-50 rounded">
+            <div className="text-xs text-muted-foreground mt-1 p-2 bg-muted rounded">
               🔍 DEBUG: group_id = "{formData.group_id || "undefined"}"
             </div>
           </FormField>

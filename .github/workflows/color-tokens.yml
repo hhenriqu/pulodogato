@@ -1,0 +1,67 @@
+name: color-tokens
+
+# Prova, a cada mudanca no codigo, que o modo noturno continua inteiro.
+#
+# O modo de falha aqui e silencioso do mesmo jeito que o da deriva de schema:
+# uma tela nova escrita com `bg-white text-gray-900` compila, passa no tsc,
+# passa no next build e fica perfeita para quem revisa de dia. Ela so aparece
+# como um retangulo branco na cara de quem usa o app as 23h -- e ninguem
+# associa isso ao PR que a introduziu.
+#
+# O mesmo vale para o contraste: mexer em um --success de 30% para 45% de
+# luminosidade nao quebra nada, so deixa o valor positivo lavado no fundo
+# claro. Por isso a verificacao le os tokens e calcula a razao de contraste em
+# vez de confiar no olho.
+#
+# Nao precisa de Postgres nem de dependencia: Node puro, roda em segundos.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tokens:
+    name: cores saem dos tokens e tem contraste
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Nenhuma cor fixa fora dos tokens, contraste AA nos dois temas
+        run: node scripts/check-color-tokens.mjs
+
+      # Controle negativo. Uma verificacao que nunca viu vermelho nao e
+      # verificacao: se a regex de classes quebrar, o passo acima passa a sair
+      # verde por nao achar NADA -- indistinguivel de estar tudo certo.
+      - name: A verificacao sabe falhar
+        run: |
+          set -uo pipefail
+          probe='components/_color_probe.tsx'
+          trap 'rm -f "$probe" && git checkout -- app/globals.css' EXIT
+
+          # 1) Cor fixa: a classe existe, o Tailwind gera, o tema ignora.
+          cat > "$probe" <<'TSX'
+          export function Probe() {
+            return <div className="bg-white text-gray-900">oi</div>;
+          }
+          TSX
+          if node scripts/check-color-tokens.mjs > /dev/null 2>&1; then
+            echo "::error::A verificacao passou verde com bg-white/text-gray-900."
+            exit 1
+          fi
+          rm -f "$probe"
+
+          # 2) Token legal, contraste ilegal.
+          sed -i 's/--success: [0-9.]* [0-9.]*% [0-9.]*%/--success: 142.1 70.6% 45%/' app/globals.css
+          if node scripts/check-color-tokens.mjs > /dev/null 2>&1; then
+            echo "::error::A verificacao passou verde com --success em 2.3:1."
+            exit 1
+          fi
+
+          echo "A verificacao fica vermelha nas duas formas de regressao."

@@ -166,7 +166,7 @@ export default function PlansPage() {
                   <div className="space-y-2">
                     {getFeatureDisplayList(plan).map((feature, index) => (
                       <div key={index} className="flex items-start gap-2">
-                        <Check className="h-4 w-4 text-green-500 mt-0.5 flex-shrink-0" />
+                        <Check className="h-4 w-4 text-success mt-0.5 flex-shrink-0" />
                         <span className="text-sm">{feature}</span>
                       </div>
                     ))}

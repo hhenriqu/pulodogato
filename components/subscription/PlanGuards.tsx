@@ -40,7 +40,7 @@ export function FeatureGuard({
   if (loading) {
     return (
       <div className="animate-pulse">
-        <div className="h-4 bg-gray-200 rounded w-3/4"></div>
+        <div className="h-4 bg-muted rounded w-3/4"></div>
       </div>
     );
   }
@@ -78,7 +78,7 @@ export function PlanGuard({
   if (loading) {
     return (
       <div className="animate-pulse">
-        <div className="h-4 bg-gray-200 rounded w-3/4"></div>
+        <div className="h-4 bg-muted rounded w-3/4"></div>
       </div>
     );
   }
@@ -252,8 +252,8 @@ export function AccessDenied({ currentPlan, allowedPlans }: AccessDeniedProps) {
 
   return (
     <div className="flex flex-col items-center justify-center p-8 text-center">
-      <div className="mb-4 p-3 rounded-full bg-red-100">
-        <Lock className="h-8 w-8 text-red-600" />
+      <div className="mb-4 p-3 rounded-full bg-destructive/10">
+        <Lock className="h-8 w-8 text-destructive" />
       </div>
       <h2 className="text-xl font-semibold mb-2">Acesso Restrito</h2>
       <p className="text-muted-foreground mb-4">

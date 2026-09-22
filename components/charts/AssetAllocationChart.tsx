@@ -46,10 +46,10 @@ export function AssetAllocationChart({ data }: AssetAllocationChartProps) {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
       return (
-        <div className="bg-white p-3 shadow-lg rounded-lg border">
+        <div className="bg-card p-3 shadow-lg rounded-lg border">
           <p className="font-medium">{data.name}</p>
-          <p className="text-blue-600">{formatCurrency(data.value)}</p>
-          <p className="text-gray-600">{data.percentage.toFixed(1)}%</p>
+          <p className="text-info">{formatCurrency(data.value)}</p>
+          <p className="text-muted-foreground">{data.percentage.toFixed(1)}%</p>
         </div>
       );
     }
@@ -76,6 +76,9 @@ export function AssetAllocationChart({ data }: AssetAllocationChartProps) {
                 label={(entry: any) =>
                   `${entry.name}: ${entry.percentage.toFixed(1)}%`
                 }
+                // Sem isso o rotulo sai no cinza escuro padrao do recharts e
+                // fica ilegivel sobre o card escuro.
+                style={{ fill: "hsl(var(--foreground))" }}
                 outerRadius={80}
                 fill="#8884d8"
                 dataKey="value"

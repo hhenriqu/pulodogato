@@ -99,22 +99,22 @@ export default function GoalsPage() {
   const getStatusIcon = (status: string) => {
     switch (status) {
       case "completed":
-        return <CheckCircle className="h-4 w-4 text-green-600" />;
+        return <CheckCircle className="h-4 w-4 text-success" />;
       case "paused":
-        return <AlertCircle className="h-4 w-4 text-orange-600" />;
+        return <AlertCircle className="h-4 w-4 text-warning" />;
       default:
-        return <Clock className="h-4 w-4 text-blue-600" />;
+        return <Clock className="h-4 w-4 text-info" />;
     }
   };
 
   const getStatusColor = (status: string) => {
     switch (status) {
       case "completed":
-        return "bg-green-100 text-green-800";
+        return "bg-success/10 text-success";
       case "paused":
-        return "bg-orange-100 text-orange-800";
+        return "bg-warning/10 text-warning";
       default:
-        return "bg-blue-100 text-blue-800";
+        return "bg-info/10 text-info";
     }
   };
 
@@ -168,10 +168,10 @@ export default function GoalsPage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Metas Ativas</CardTitle>
-            <Target className="h-4 w-4 text-blue-600" />
+            <Target className="h-4 w-4 text-info" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-blue-600">
+            <div className="text-2xl font-bold text-info">
               {activeGoals}
             </div>
             <p className="text-xs text-muted-foreground">Em andamento</p>
@@ -181,10 +181,10 @@ export default function GoalsPage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Concluídas</CardTitle>
-            <CheckCircle className="h-4 w-4 text-green-600" />
+            <CheckCircle className="h-4 w-4 text-success" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">
+            <div className="text-2xl font-bold text-success">
               {completedGoals}
             </div>
             <p className="text-xs text-muted-foreground">
@@ -198,10 +198,10 @@ export default function GoalsPage() {
             <CardTitle className="text-sm font-medium">
               Total Objetivo
             </CardTitle>
-            <DollarSign className="h-4 w-4 text-purple-600" />
+            <DollarSign className="h-4 w-4 text-premium" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-purple-600">
+            <div className="text-2xl font-bold text-premium">
               {formatCurrency(totalTarget)}
             </div>
             <p className="text-xs text-muted-foreground">
@@ -215,10 +215,10 @@ export default function GoalsPage() {
             <CardTitle className="text-sm font-medium">
               Total Economizado
             </CardTitle>
-            <DollarSign className="h-4 w-4 text-green-600" />
+            <DollarSign className="h-4 w-4 text-success" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">
+            <div className="text-2xl font-bold text-success">
               {formatCurrency(totalCurrent)}
             </div>
             <p className="text-xs text-muted-foreground">
@@ -308,8 +308,8 @@ export default function GoalsPage() {
 
                     {/* Amount remaining */}
                     {goal.status === "active" && (
-                      <div className="bg-blue-50 p-3 rounded-lg">
-                        <p className="text-sm text-blue-600 font-medium">
+                      <div className="bg-info/10 p-3 rounded-lg">
+                        <p className="text-sm text-info font-medium">
                           Faltam{" "}
                           {formatCurrency(
                             goal.target_amount - goal.current_amount
@@ -317,7 +317,7 @@ export default function GoalsPage() {
                           para atingir a meta
                         </p>
                         {daysRemaining > 0 && (
-                          <p className="text-xs text-blue-500 mt-1">
+                          <p className="text-xs text-primary mt-1">
                             Economize cerca de{" "}
                             {formatCurrency(
                               (goal.target_amount - goal.current_amount) /

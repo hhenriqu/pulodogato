@@ -9,7 +9,8 @@
     "lint": "next lint",
     "check-prd": "node scripts/check-prd-compliance.js",
     "check-table-drift": "node scripts/check-table-drift.mjs",
-    "pre-commit": "npm run check-table-drift && npm run check-prd && npm run lint",
+    "check-color-tokens": "node scripts/check-color-tokens.mjs",
+    "pre-commit": "npm run check-table-drift && npm run check-color-tokens && npm run check-prd && npm run lint",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
