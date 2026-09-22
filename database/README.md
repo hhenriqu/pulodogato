@@ -455,3 +455,48 @@ destinos diferentes porque as quatro nao eram a mesma coisa:
 O que **nao** mudou: `expense_groups.group_members.role` continua aceitando so
 `admin` e `member`. A rota `/api/groups` apagada inseria `role: 'owner'` — ela
 teria estourado no CHECK mesmo se `user_groups` existisse.
+
+Houve uma quinta, que a auditoria manual da issue nao listou: `assets`, no
+embed do `.select()` de `app/api/transactions/route.ts`. Saiu junto com a rota.
+
+### O que impede isto de voltar
+
+`npm run check-table-drift` (job `code-schema-drift`, roda em **todo** PR)
+falha se o codigo citar tabela que as migrations nao criam. E estatico, Node
+puro, nao precisa de banco — por isso pode ser obrigatorio sem virar pedagio.
+
+Existe porque nada mais pegava este defeito: o cliente do Supabase aceita
+qualquer string em `.from()`, entao `tsc`, `next build` e `next lint` passam, e
+o erro so nasce em producao como PGRST205 dentro de um `catch` que devolve 500.
+Tela vazia para o usuario, CI verde para nos.
+
+Vive fora do `db-verify` de proposito: aquele job e filtrado por
+`paths: ['database/**']`, e esta deriva nasce do lado do **codigo** — uma rota
+nova que cita tabela inexistente nao toca em `database/` nenhuma vez.
+
+Cobre as duas formas de citar uma tabela, e a segunda e a que importa:
+
+```ts
+.from("user_groups")                       // 1. a obvia
+.from("group_members").select(`
+   role,
+   user_groups ( id, name )                // 2. o embed do PostgREST
+`)
+```
+
+Foi a forma 2 que escondeu o defeito em `app/api/groups/route.ts`: a linha do
+`.from()` apontava para `group_members`, que existe. Foi ela tambem que revelou
+`assets`.
+
+O job tem **controle negativo**: planta as duas formas de deriva e exige
+vermelho nas duas. Uma verificacao que nunca viu vermelho sai verde tambem
+quando a regex quebra numa refatoracao, e isso e indistinguivel de estar tudo
+certo.
+
+O `PENDENTES` do script (hoje vazio) tem prazo de validade embutido: o job
+tambem falha se uma entrada ficar obsoleta — a tabela passou a existir, ou o
+codigo parou de cita-la. Sem essa metade a lista de excecoes so cresce e a
+verificacao vira decoracao.
+
+Nao cobre SQL cru em `.rpc()` nem nome de tabela montado em runtime — nenhum
+dos dois aparece no codigo hoje.
