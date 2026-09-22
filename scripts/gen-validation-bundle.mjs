@@ -37,8 +37,19 @@ import { dirname, join } from 'node:path';
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DESTINO = join(REPO, 'database/validation');
 
-const MIGRATIONS = ['001_baseline', '002_rls_lockdown', '003_fix_trigger_privileges'];
+// A cadeia inteira, na ordem em que producao a recebeu. O 004 estava faltando
+// aqui ate 2026-09-22: o bundle validava uma cadeia que nao era a de producao,
+// e sairia verde mesmo assim. O salto 004 -> 010 e proposital: 005 a 009 vivem
+// na pilha da HMO-137, ainda nao mergeada, e o 010 nao depende de nenhum deles.
+const MIGRATIONS = [
+  '001_baseline',
+  '002_rls_lockdown',
+  '003_fix_trigger_privileges',
+  '004_fix_remaining_trigger_privileges',
+  '010_user_connections',
+];
 const TESTE_RLS = 'database/tests/rls_isolation_test.sql';
+const TESTE_CONEXOES = 'database/tests/user_connections_test.sql';
 
 const ler = (rel) => readFileSync(join(REPO, rel), 'utf8');
 
@@ -240,12 +251,12 @@ partes.push('\n' + RELATORIO);
 // ultima instrucao, e o ROLLBACK nao devolve linha nenhuma. Sem ele, "passou"
 // apareceria como uma tela vazia, indistinguivel de "nao rodou". Como o SELECT
 // vem DEPOIS do ROLLBACK, ele so e alcancado se nada tiver abortado antes.
-function prepararTesteRls(sql) {
+function prepararTeste(sql, origem, veredito) {
   // O \set ON_ERROR_STOP e do psql; no SQL Editor o lote ja aborta sozinho no
   // primeiro erro, entao a linha some sem mudar o comportamento.
   const semSet = sql.replace(/^\s*\\set\s+ON_ERROR_STOP\s+on\s*$/m, '');
   if (!/^\s*ROLLBACK\s*;\s*$/m.test(semSet)) {
-    console.error(`ERRO: ${TESTE_RLS} nao termina em ROLLBACK;`);
+    console.error(`ERRO: ${origem} nao termina em ROLLBACK;`);
     console.error('      O bundle depende disso para nao deixar fixture no banco.');
     process.exit(1);
   }
@@ -253,13 +264,29 @@ function prepararTesteRls(sql) {
 
 -- Se esta linha aparecer, nenhuma assercao acima abortou o lote: o teste passou.
 -- Ela roda DEPOIS do ROLLBACK, ou seja, fora da transacao que foi desfeita.
-SELECT 'ISOLAMENTO DE RLS: TUDO OK -- nenhuma assercao falhou, e os fixtures foram desfeitos pelo ROLLBACK' AS resultado;
+SELECT '${veredito}' AS resultado;
 `;
 }
 
 // A checagem de meta-comando roda no arquivo ja preparado: o unico \set
 // conhecido e tratado acima, e qualquer outro tem que estourar.
-const testeRls = semMetaComandos(prepararTesteRls(ler(TESTE_RLS)), 'rls_isolation_test.sql (preparado)');
+const testeRls = semMetaComandos(
+  prepararTeste(
+    ler(TESTE_RLS),
+    TESTE_RLS,
+    'ISOLAMENTO DE RLS: TUDO OK -- nenhuma assercao falhou, e os fixtures foram desfeitos pelo ROLLBACK',
+  ),
+  'rls_isolation_test.sql (preparado)',
+);
+
+const testeConexoes = semMetaComandos(
+  prepararTeste(
+    ler(TESTE_CONEXOES),
+    TESTE_CONEXOES,
+    'CONEXOES: TUDO OK -- consentimento, par unico nos dois sentidos, bloqueio duravel e isolamento conferidos',
+  ),
+  'user_connections_test.sql (preparado)',
+);
 
 const arquivos = {
   '01_migrations.sql': partes.join('\n'),
@@ -276,6 +303,32 @@ O QUE ESPERAR: uma unica linha "ISOLAMENTO DE RLS: TUDO OK". Se em vez dela vier
 erro em vermelho, copie o texto na issue -- a mensagem ja diz qual assercao
 falhou e o que era esperado.`
     ) + testeRls,
+  '08_conexoes.sql':
+    cabecalho(
+      'VALIDACAO PASSO 8: conexoes entre usuarios (010)',
+      `Rode DEPOIS do 01_migrations.sql, no mesmo projeto descartavel.
+
+Confere o que o 010 sozinho nao prova. A assercao central e o CONSENTIMENTO:
+quem pede uma conexao nao pode aceita-la sozinho -- nem por UPDATE, nem gravando
+a linha ja como 'accepted' de saida. Conexao aceita e o que habilita puxar
+alguem para o rateio de uma despesa, entao uma conexao que nasce aceita e uma
+pessoa entrando na vida financeira de outra sem ter clicado em nada.
+
+Confere tambem que o par e unico NOS DOIS SENTIDOS (senao A->B e B->A viram dois
+pedidos pendentes, e aceitar um deixa o outro pendente para sempre), que o
+bloqueio dura -- quem foi recusado nao apaga a propria linha de bloqueio para
+pedir de novo --, que um terceiro nao enxerga nem apaga a conexao alheia, que
+uma conexao ja respondida nao volta para pendente, que os NOMES das duas
+foreign keys existem (a PostgREST resolve o embed do perfil pelo nome da
+constraint; com nome diferente a tabela existe e a tela continua quebrada), e
+que anon nao tem privilegio nenhum. Tudo dentro de BEGIN/ROLLBACK.
+
+O teste tem DOIS CONTROLES NEGATIVOS no fim: ele reintroduz as duas regras
+quebradas e exige que o defeito volte a acontecer. Se eles nao dispararem, o
+arquivo nao esta medindo o que diz medir.
+
+O QUE ESPERAR: uma unica linha "CONEXOES: TUDO OK".`
+    ) + testeConexoes,
 };
 
 // ---------------------------------------------------------------------------

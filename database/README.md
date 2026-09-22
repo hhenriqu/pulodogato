@@ -8,18 +8,34 @@ database/
 │   ├── 000_preflight_inventory.sql  inventario somente leitura, roda antes
 │   ├── 001_baseline.sql             schema + seed de referencia  (GERADO)
 │   ├── 002_rls_lockdown.sql         RLS, privilegios e RPCs  (OBRIGATORIO)
-│   └── 003_fix_trigger_privileges.sql  SECURITY DEFINER nos triggers
+│   ├── 003_fix_trigger_privileges.sql  SECURITY DEFINER nos triggers
+│   ├── 004_fix_remaining_trigger_privileges.sql  os triggers que sobraram
+│   └── 010_user_connections.sql     conexoes entre usuarios (a tabela que a tela ja chamava)
 ├── seed/
 │   └── reference_data.sql           financial_services + transaction_categories
 ├── tests/
 │   ├── 00_supabase_shim.sql             auth.uid() e roles, so para Postgres cru
 │   ├── rls_isolation_test.sql           prova que um usuario nao le dados de outro
+│   ├── user_connections_test.sql        conexoes: consentimento, par unico e bloqueio duravel
 │   ├── legacy_policy_drift_test.sql     policy antiga de producao tem que sumir
 │   └── legacy_function_drift_test.sql   funcao antiga de producao tem que sumir
 └── README.md
 ```
 
-Ordem: `001`, `002`, `003`. Rodar `001` sozinho deixa o banco aberto.
+Ordem: `001`, `002`, `003`, `004`, `010`. Rodar `001` sozinho deixa o banco aberto.
+
+> **O salto de `004` para `010` e proposital.** As migrations `005` a `009`
+> (contas previstas, orcamento, acerto de grupo, metas e extrato) vivem na pilha
+> de PRs da HMO-137, que ainda nao foi mergeada. O `010` nao depende de nenhuma
+> delas -- so de `profiles`, que vem do `001` --, entao ele entra sozinho sem
+> buraco de dependencia. Os numeros ficam reservados de proposito: renumerar o
+> `010` para `005` agora criaria colisao no dia em que a pilha entrar.
+
+O `010` e **re-executavel de proposito** (`CREATE TABLE IF NOT EXISTS`, ENUM em
+bloco `DO`, `DROP POLICY IF EXISTS`): depois que ele entrar em producao, o `001`
+regenerado ja vai trazer `user_connections`, e a cadeia precisa continuar subindo
+do zero mesmo assim. Ele tem um preflight que aborta a transacao inteira listando
+**tudo** que falta de uma vez, em vez de um erro por vez.
 
 `001_baseline.sql` **nao se edita a mao** — e gerado por
 `node scripts/gen-baseline.mjs` a partir de um `pg_dump --schema-only` de
@@ -37,13 +53,21 @@ psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/00_supabase_shim.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/001_baseline.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/002_rls_lockdown.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/003_fix_trigger_privileges.sql
-psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/rls_isolation_test.sql  # da ROLLBACK no fim
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/004_fix_remaining_trigger_privileges.sql
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/010_user_connections.sql
+
+# os dois dao ROLLBACK no fim: nao deixam nada no banco
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/rls_isolation_test.sql
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/user_connections_test.sql
 ```
 
-Executado do zero num Postgres 17 vazio: 18 tabelas, 18 com RLS, 40 policies, as
-21 asserções de isolamento passando e a role `anon` sem privilegio fora das duas
-tabelas de referencia. O mesmo roda no CI (`.github/workflows/db-verify.yml`) a
-cada PR que toca `database/`.
+A cadeia `001` → `002` → `003` executada do zero num Postgres 17 vazio da 18
+tabelas, 18 com RLS, 40 policies, as 21 asserções de isolamento passando e a
+role `anon` sem privilegio fora das duas tabelas de referencia (medido em
+2026-09-21). O `010` acrescenta `user_connections` e 5 policies, e o `004` nao
+cria objeto nenhum — so troca o dono de trigger. O mesmo roda no CI
+(`.github/workflows/db-verify.yml`) a cada PR que toca `database/`, e la os
+numeros sao conferidos por assercao em vez de por este paragrafo.
 
 ### Validado num projeto Supabase limpo
 
@@ -89,15 +113,20 @@ o painel nao e quem roda o script, entao cada senha errada custa uma ida e
 volta inteira (na HMO-117 custou duas, sem nunca conectar). O SQL Editor do
 Supabase nao pede senha: quem esta no painel ja esta autenticado.
 
-Por isso as mesmas assercoes existem tambem como dois arquivos para colar la:
+Por isso as mesmas assercoes existem tambem como arquivos para colar la:
 
 | Arquivo | O que faz | O que voce devolve |
 |---|---|---|
-| `database/validation/01_migrations.sql` | guarda + `001` → `002` → `003` + relatorio | a tabela final (7 linhas, termina em `VEREDITO`) |
+| `database/validation/01_migrations.sql` | guarda + `001` → `002` → `003` → `004` → `010` + relatorio | a tabela final (7 linhas, termina em `VEREDITO`) |
 | `database/validation/02_isolamento_rls.sql` | o teste de isolamento, dentro de `ROLLBACK` | a linha `ISOLAMENTO DE RLS: TUDO OK`, ou o erro |
+| `database/validation/08_conexoes.sql` | conexoes entre usuarios (`010`), dentro de `ROLLBACK` | a linha `CONEXOES: TUDO OK`, ou o erro |
 
-Os dois sao **gerados** por `node scripts/gen-validation-bundle.mjs` a partir de
-`migrations/` e `tests/rls_isolation_test.sql` — nunca editados a mao. Uma copia
+O `08` mantem o numero da pilha da HMO-137 (passos `03` a `07`) de proposito,
+para nao renumerar no dia em que ela entrar; rode-o depois do `01`, como os
+outros.
+
+Os tres sao **gerados** por `node scripts/gen-validation-bundle.mjs` a partir de
+`migrations/` e dos testes em `tests/` — nunca editados a mao. Uma copia
 do schema que sai de sincronia e pior do que nao ter copia: validaria um schema
 que nao e mais o nosso, e o relatorio sairia verde. O job `db-verify` roda
 `--check` e fecha se alguem mexer nas migrations sem regerar.
@@ -382,9 +411,65 @@ diario do plano Free, com retencao curta e sem teste de restauracao.
 
 ---
 
-## Divida conhecida: tabelas que o codigo usa e nao existem
+## Tabelas que o codigo usava e nao existiam — resolvido na HMO-124
 
-`dividends`, `transactions`, `user_connections`, `user_groups` sao referenciadas
-no codigo mas **nao existem em producao** — sao restos do produto de
-investimentos. Esses caminhos falham em runtime. Nao foram criadas aqui de
-proposito: o certo e remover o codigo morto, nao inventar tabela.
+Eram quatro: `dividends`, `transactions`, `user_connections` e `user_groups`.
+A regra que valeu foi a mesma para as quatro — **nao inventar tabela para
+codigo morto, e nao apagar codigo que tem produto atras** —, e ela levou a
+destinos diferentes porque as quatro nao eram a mesma coisa:
+
+| tabela | destino | por que |
+|---|---|---|
+| `user_connections` | **criada** (`010`) | nao era codigo morto: a tela `/dashboard/connections` (596 linhas), seis rotas e a coluna `profiles.allow_connections` ja existiam e ja funcionavam. Faltava so a tabela. |
+| `user_groups` | **repontada** para `expense_groups` | era o MESMO conceito com outro nome: a aba Grupos da tela de Conexoes passou a ler a tabela de verdade (`owner_id`→`created_by`, `is_private`→`group_type`, `invite_code`→`group_code`; `max_members` nao existe no produto). A rota `/api/groups`, duplicata morta de `/api/expense-groups`, foi apagada. |
+| `transactions` | **codigo apagado** | nao era `financial_transactions`, como a issue supunha: tinha `asset_id`, `quantity`, `price`, `fees` e um join com `assets`. Era a compra e venda de acoes do produto de investimentos. A rota nao tinha nenhum consumidor no app. |
+| `dividends` | **codigo apagado** | mesmo produto. A rota `/api/portfolio/summary` tambem nao tinha consumidor, e a `/api/assets/prices`, que saiu junto, devolvia `Math.random() * 100 + 10` como cotacao. |
+
+O que **nao** mudou: `expense_groups.group_members.role` continua aceitando so
+`admin` e `member`. A rota `/api/groups` apagada inseria `role: 'owner'` — ela
+teria estourado no CHECK mesmo se `user_groups` existisse.
+
+Houve uma quinta, que a auditoria manual da issue nao listou: `assets`, no
+embed do `.select()` de `app/api/transactions/route.ts`. Saiu junto com a rota.
+
+### O que impede isto de voltar
+
+`npm run check-table-drift` (job `code-schema-drift`, roda em **todo** PR)
+falha se o codigo citar tabela que as migrations nao criam. E estatico, Node
+puro, nao precisa de banco — por isso pode ser obrigatorio sem virar pedagio.
+
+Existe porque nada mais pegava este defeito: o cliente do Supabase aceita
+qualquer string em `.from()`, entao `tsc`, `next build` e `next lint` passam, e
+o erro so nasce em producao como PGRST205 dentro de um `catch` que devolve 500.
+Tela vazia para o usuario, CI verde para nos.
+
+Vive fora do `db-verify` de proposito: aquele job e filtrado por
+`paths: ['database/**']`, e esta deriva nasce do lado do **codigo** — uma rota
+nova que cita tabela inexistente nao toca em `database/` nenhuma vez.
+
+Cobre as duas formas de citar uma tabela, e a segunda e a que importa:
+
+```ts
+.from("user_groups")                       // 1. a obvia
+.from("group_members").select(`
+   role,
+   user_groups ( id, name )                // 2. o embed do PostgREST
+`)
+```
+
+Foi a forma 2 que escondeu o defeito em `app/api/groups/route.ts`: a linha do
+`.from()` apontava para `group_members`, que existe. Foi ela tambem que revelou
+`assets`.
+
+O job tem **controle negativo**: planta as duas formas de deriva e exige
+vermelho nas duas. Uma verificacao que nunca viu vermelho sai verde tambem
+quando a regex quebra numa refatoracao, e isso e indistinguivel de estar tudo
+certo.
+
+O `PENDENTES` do script (hoje vazio) tem prazo de validade embutido: o job
+tambem falha se uma entrada ficar obsoleta — a tabela passou a existir, ou o
+codigo parou de cita-la. Sem essa metade a lista de excecoes so cresce e a
+verificacao vira decoracao.
+
+Nao cobre SQL cru em `.rpc()` nem nome de tabela montado em runtime — nenhum
+dos dois aparece no codigo hoje.

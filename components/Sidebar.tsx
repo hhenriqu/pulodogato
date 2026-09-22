@@ -12,11 +12,9 @@ import { User as UserType } from "@supabase/supabase-js";
 import {
   LayoutDashboard,
   TrendingUp,
-  ArrowLeftRight,
   BarChart3,
   User,
   Users,
-  Settings,
   LogOut,
   Menu,
   X,
@@ -67,12 +65,12 @@ const navigation: NavigationItem[] = [
     icon: Target,
     requiredFeature: "financial_goals",
   },
-  {
-    name: "Transações",
-    href: "/dashboard/transactions",
-    icon: ArrowLeftRight,
-    requiredFeature: "personal_finance",
-  },
+  // "Transações" saiu daqui na HMO-124. O item levava a uma tela que dizia
+  // "Nenhuma transação encontrada" mesmo para quem tinha lançamentos -- ela
+  // nunca consultou nada. A lista de verdade é "Finanças Pessoais", logo
+  // acima; dois itens de menu para a mesma lista só ensinam o usuário a
+  // desconfiar do menu. A rota /dashboard/transactions continua existindo e
+  // redireciona.
   {
     name: "Relatórios",
     href: "/dashboard/reports",
@@ -104,11 +102,13 @@ const navigation: NavigationItem[] = [
     href: "/dashboard/connections",
     icon: Users,
   },
-  {
-    name: "Configurações",
-    href: "/dashboard/settings",
-    icon: Settings,
-  },
+  // "Configurações" saiu daqui na HMO-124. Ele apontava para
+  // /dashboard/settings, que NÃO EXISTE -- não há
+  // app/(dashboard)/dashboard/settings/, então o item dava 404 do Next para
+  // todo usuário logado, sem exceção de plano. As preferências reais (nome,
+  // apelido, perfil público, aceitar conexões) estão em "Perfil", logo acima;
+  // apontar os dois itens para a mesma tela só repetiria a duplicação que
+  // "Transações" tinha.
   {
     name: "Admin",
     href: "/dashboard/admin",

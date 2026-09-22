@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "check-prd": "node scripts/check-prd-compliance.js",
-    "pre-commit": "npm run check-prd && npm run lint",
+    "check-table-drift": "node scripts/check-table-drift.mjs",
+    "pre-commit": "npm run check-table-drift && npm run check-prd && npm run lint",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
