@@ -297,12 +297,21 @@ export default function PersonalFinancePage() {
 
       setTransactions(transactionsData || []);
 
-      // Carregar conexões para divisão
-      // TEMPORÁRIO: Desabilitar user_connections completamente
-      const connectionsData = null;
-      const connectionsList: any[] = [];
-
-      setConnections(connectionsList);
+      // Carregar conexões para divisão.
+      //
+      // Isto estava desligado no codigo ("TEMPORARIO: Desabilitar
+      // user_connections completamente", com a lista fixa em []), porque a
+      // tabela user_connections nunca existiu no banco -- HMO-124. O efeito
+      // nao era um erro na tela: era o seletor "Adicionar pessoa" abrir sempre
+      // vazio, e dividir uma despesa com alguem de fora de um grupo ficar
+      // impossivel sem nada indicar o motivo. A migration 010 criou a tabela.
+      const connectionsResponse = await fetch("/api/personal-finance/connections");
+      if (connectionsResponse.ok) {
+        const connectionsData = await connectionsResponse.json();
+        setConnections(connectionsData.connections || []);
+      } else {
+        setConnections([]);
+      }
 
       // Carregar contas financeiras
       const accountsResponse = await fetch("/api/financial-accounts");

@@ -14,7 +14,8 @@ database/
 │   ├── 006_budgets_and_card_invoices.sql  orcamento por categoria + fatura de cartao
 │   ├── 007_group_settlements.sql    acerto de contas do grupo (+ 3 correcoes de dinheiro)
 │   ├── 008_goals_and_reports.sql    metas com aportes + as views dos relatorios
-│   └── 009_statements_alerts_receipts.sql  extrato OFX/CSV + avisos de vencimento + comprovantes
+│   ├── 009_statements_alerts_receipts.sql  extrato OFX/CSV + avisos de vencimento + comprovantes
+│   └── 010_user_connections.sql     conexoes entre usuarios (a tabela que a tela ja chamava)
 ├── maintenance/
 │   └── 007_auditoria_saldos.sql     SOMENTE LEITURA: mede a deriva de current_balance
 ├── seed/
@@ -27,12 +28,13 @@ database/
 │   ├── group_settlement_test.sql        acerto: o sinal do pagamento e o rateio em centavos
 │   ├── goals_reports_test.sql           metas e relatorios: sinal, transfer e group_id NULL
 │   ├── statements_alerts_test.sql       extrato: deduplicacao por conta, sinal, janela de aviso
+│   ├── user_connections_test.sql        conexoes: consentimento, par unico e bloqueio duravel
 │   ├── legacy_policy_drift_test.sql     policy antiga de producao tem que sumir
 │   └── legacy_function_drift_test.sql   funcao antiga de producao tem que sumir
 └── README.md
 ```
 
-Ordem: `001`, `002`, `003`, `004`, `005`, `006`, `007`, `008`, `009`. Rodar `001` sozinho
+Ordem: `001`, `002`, `003`, `004`, `005`, `006`, `007`, `008`, `009`, `010`. Rodar `001` sozinho
 deixa o banco aberto.
 
 > **A SECAO 11 do `009` so roda num Supabase de verdade.** Ela cria o bucket
@@ -80,6 +82,7 @@ psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/006_budgets_and_card_in
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/007_group_settlements.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/008_goals_and_reports.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/009_statements_alerts_receipts.sql
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/010_user_connections.sql
 
 # todos dao ROLLBACK no fim: nao deixam nada no banco
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/rls_isolation_test.sql
@@ -88,6 +91,7 @@ psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/budget_invoice_test.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/group_settlement_test.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/goals_reports_test.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/statements_alerts_test.sql
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/user_connections_test.sql
 ```
 
 Executado do zero num Postgres 17 vazio: 18 tabelas, 18 com RLS, 40 policies, as
@@ -434,9 +438,20 @@ diario do plano Free, com retencao curta e sem teste de restauracao.
 
 ---
 
-## Divida conhecida: tabelas que o codigo usa e nao existem
+## Tabelas que o codigo usava e nao existiam — resolvido na HMO-124
 
-`dividends`, `transactions`, `user_connections`, `user_groups` sao referenciadas
-no codigo mas **nao existem em producao** — sao restos do produto de
-investimentos. Esses caminhos falham em runtime. Nao foram criadas aqui de
-proposito: o certo e remover o codigo morto, nao inventar tabela.
+Eram quatro: `dividends`, `transactions`, `user_connections` e `user_groups`.
+A regra que valeu foi a mesma para as quatro — **nao inventar tabela para
+codigo morto, e nao apagar codigo que tem produto atras** —, e ela levou a
+destinos diferentes porque as quatro nao eram a mesma coisa:
+
+| tabela | destino | por que |
+|---|---|---|
+| `user_connections` | **criada** (`010`) | nao era codigo morto: a tela `/dashboard/connections` (596 linhas), seis rotas e a coluna `profiles.allow_connections` ja existiam e ja funcionavam. Faltava so a tabela. |
+| `user_groups` | **repontada** para `expense_groups` | era o MESMO conceito com outro nome: a aba Grupos da tela de Conexoes passou a ler a tabela de verdade (`owner_id`→`created_by`, `is_private`→`group_type`, `invite_code`→`group_code`; `max_members` nao existe no produto). A rota `/api/groups`, duplicata morta de `/api/expense-groups`, foi apagada. |
+| `transactions` | **codigo apagado** | nao era `financial_transactions`, como a issue supunha: tinha `asset_id`, `quantity`, `price`, `fees` e um join com `assets`. Era a compra e venda de acoes do produto de investimentos. A rota nao tinha nenhum consumidor no app. |
+| `dividends` | **codigo apagado** | mesmo produto. A rota `/api/portfolio/summary` tambem nao tinha consumidor, e a `/api/assets/prices`, que saiu junto, devolvia `Math.random() * 100 + 10` como cotacao. |
+
+O que **nao** mudou: `expense_groups.group_members.role` continua aceitando so
+`admin` e `member`. A rota `/api/groups` apagada inseria `role: 'owner'` — ela
+teria estourado no CHECK mesmo se `user_groups` existisse.

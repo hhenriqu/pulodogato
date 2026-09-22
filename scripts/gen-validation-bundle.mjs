@@ -50,6 +50,7 @@ const MIGRATIONS = [
   '007_group_settlements',
   '008_goals_and_reports',
   '009_statements_alerts_receipts',
+  '010_user_connections',
 ];
 const TESTE_RLS = 'database/tests/rls_isolation_test.sql';
 const TESTE_AGENDA = 'database/tests/scheduled_rls_test.sql';
@@ -57,6 +58,7 @@ const TESTE_ORCAMENTO = 'database/tests/budget_invoice_test.sql';
 const TESTE_ACERTO = 'database/tests/group_settlement_test.sql';
 const TESTE_METAS = 'database/tests/goals_reports_test.sql';
 const TESTE_EXTRATO = 'database/tests/statements_alerts_test.sql';
+const TESTE_CONEXOES = 'database/tests/user_connections_test.sql';
 
 const ler = (rel) => readFileSync(join(REPO, rel), 'utf8');
 
@@ -331,6 +333,15 @@ const testeExtrato = semMetaComandos(
   'statements_alerts_test.sql (preparado)',
 );
 
+const testeConexoes = semMetaComandos(
+  prepararTeste(
+    ler(TESTE_CONEXOES),
+    TESTE_CONEXOES,
+    'CONEXOES: TUDO OK -- consentimento, par unico nos dois sentidos, bloqueio duravel e isolamento conferidos',
+  ),
+  'user_connections_test.sql (preparado)',
+);
+
 const arquivos = {
   '01_migrations.sql': partes.join('\n'),
   '02_isolamento_rls.sql':
@@ -442,6 +453,32 @@ A secao 11 do 009 (bucket de comprovantes) SO roda num Supabase de verdade --
 num Postgres cru ela se pula sozinha com um NOTICE. Neste bundle, que roda num
 Supabase descartavel, ela roda.`
     ) + testeExtrato,
+  '08_conexoes.sql':
+    cabecalho(
+      'VALIDACAO PASSO 8: conexoes entre usuarios (010)',
+      `Rode DEPOIS do 01_migrations.sql, no mesmo projeto descartavel.
+
+Confere o que o 010 sozinho nao prova. A assercao central e o CONSENTIMENTO:
+quem pede uma conexao nao pode aceita-la sozinho -- nem por UPDATE, nem gravando
+a linha ja como 'accepted' de saida. Conexao aceita e o que habilita puxar
+alguem para o rateio de uma despesa, entao uma conexao que nasce aceita e uma
+pessoa entrando na vida financeira de outra sem ter clicado em nada.
+
+Confere tambem que o par e unico NOS DOIS SENTIDOS (senao A->B e B->A viram dois
+pedidos pendentes, e aceitar um deixa o outro pendente para sempre), que o
+bloqueio dura -- quem foi recusado nao apaga a propria linha de bloqueio para
+pedir de novo --, que um terceiro nao enxerga nem apaga a conexao alheia, que
+uma conexao ja respondida nao volta para pendente, que os NOMES das duas
+foreign keys existem (a PostgREST resolve o embed do perfil pelo nome da
+constraint; com nome diferente a tabela existe e a tela continua quebrada), e
+que anon nao tem privilegio nenhum. Tudo dentro de BEGIN/ROLLBACK.
+
+O teste tem DOIS CONTROLES NEGATIVOS no fim: ele reintroduz as duas regras
+quebradas e exige que o defeito volte a acontecer. Se eles nao dispararem, o
+arquivo nao esta medindo o que diz medir.
+
+O QUE ESPERAR: uma unica linha "CONEXOES: TUDO OK".`
+    ) + testeConexoes,
 };
 
 // ---------------------------------------------------------------------------

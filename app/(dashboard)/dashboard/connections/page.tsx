@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { createClient } from "@/utils/supabase/client";
+import { PUBLIC_PROFILE_FIELDS } from "@/lib/profile-fields";
+import Link from "next/link";
 import { User } from "@supabase/supabase-js";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,7 +17,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 import {
   Users,
@@ -24,8 +25,7 @@ import {
   Check,
   X,
   Clock,
-  MessageCircle,
-  Mail,
+  ArrowLeftRight,
   Shield,
 } from "lucide-react";
 
@@ -51,14 +51,18 @@ interface Connection {
   requested?: Profile;
 }
 
+// O grupo desta aba e o MESMO da tela de Grupos: public.expense_groups.
+// Ate a HMO-124 esta tela lia uma tabela `user_groups` que nunca existiu no
+// banco, com colunas (owner_id, is_private, max_members, invite_code) que sao
+// de um esquema que nunca foi criado. As equivalentes reais sao created_by,
+// group_type, group_code -- e teto de membros nao existe no produto.
 interface Group {
   id: string;
   name: string;
   description?: string;
-  owner_id: string;
-  is_private: boolean;
-  max_members: number;
-  invite_code?: string;
+  created_by: string;
+  group_type: string;
+  group_code?: string;
   member_count: number;
   user_role?: string;
 }
@@ -103,8 +107,8 @@ export default function ConnectionsPage() {
         .select(
           `
           *,
-          requester:profiles!user_connections_requester_id_fkey(*),
-          requested:profiles!user_connections_requested_id_fkey(*)
+          requester:profiles!user_connections_requester_id_fkey(${PUBLIC_PROFILE_FIELDS}),
+          requested:profiles!user_connections_requested_id_fkey(${PUBLIC_PROFILE_FIELDS})
         `
         )
         .or(`requester_id.eq.${user.id},requested_id.eq.${user.id}`)
@@ -118,7 +122,7 @@ export default function ConnectionsPage() {
         .select(
           `
           *,
-          requester:profiles!user_connections_requester_id_fkey(*)
+          requester:profiles!user_connections_requester_id_fkey(${PUBLIC_PROFILE_FIELDS})
         `
         )
         .eq("requested_id", user.id)
@@ -132,40 +136,47 @@ export default function ConnectionsPage() {
         .select(
           `
           role,
-          user_groups (
+          expense_groups (
             id,
             name,
             description,
-            owner_id,
-            is_private,
-            max_members,
-            invite_code
+            created_by,
+            group_type,
+            group_code,
+            is_active
           )
         `
         )
-        .eq("user_id", user.id);
+        .eq("user_id", user.id)
+        .eq("status", "active");
 
       if (groupsData) {
         const groupsWithCounts = await Promise.all(
-          groupsData.map(async (item: any) => {
-            const group = item.user_groups;
-            const { count } = await supabase
-              .from("group_members")
-              .select("*", { count: "exact" })
-              .eq("group_id", group.id);
+          groupsData
+            // group_members guarda tambem quem saiu ou foi removido; e o
+            // is_active separa o grupo arquivado. Sem os dois filtros, a viagem
+            // que acabou e o grupo de que o usuario saiu continuariam nesta
+            // lista, e so aqui -- a tela de Grupos ja os esconde.
+            .filter((item: any) => item.expense_groups?.is_active !== false)
+            .map(async (item: any) => {
+              const group = item.expense_groups;
+              const { count } = await supabase
+                .from("group_members")
+                .select("*", { count: "exact", head: true })
+                .eq("group_id", group.id)
+                .eq("status", "active");
 
-            return {
-              id: group.id,
-              name: group.name,
-              description: group.description,
-              owner_id: group.owner_id,
-              is_private: group.is_private,
-              max_members: group.max_members,
-              invite_code: group.invite_code,
-              member_count: count || 0,
-              user_role: item.role,
-            } as Group;
-          })
+              return {
+                id: group.id,
+                name: group.name,
+                description: group.description,
+                created_by: group.created_by,
+                group_type: group.group_type,
+                group_code: group.group_code,
+                member_count: count || 0,
+                user_role: item.role,
+              } as Group;
+            })
         );
         setGroups(groupsWithCounts);
       }
@@ -184,7 +195,7 @@ export default function ConnectionsPage() {
     try {
       const { data, error } = await supabase
         .from("profiles")
-        .select("*")
+        .select(PUBLIC_PROFILE_FIELDS)
         .or(`full_name.ilike.%${searchQuery}%,nickname.ilike.%${searchQuery}%`)
         .eq("is_public", true)
         .eq("allow_connections", true)
@@ -268,7 +279,7 @@ export default function ConnectionsPage() {
         <div className="space-y-1">
           <h1 className="text-3xl font-bold">Conexões</h1>
           <p className="text-muted-foreground">
-            Conecte-se com outros investidores e compartilhe experiências
+            As pessoas com quem você divide despesas fora de um grupo
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -335,16 +346,23 @@ export default function ConnectionsPage() {
                           )}
                         </div>
                       </div>
-                      <div className="flex gap-2 mt-4">
-                        <Button size="sm" variant="outline" className="flex-1">
-                          <MessageCircle className="h-4 w-4 mr-2" />
-                          Mensagem
-                        </Button>
-                        <Button size="sm" variant="outline" className="flex-1">
-                          <Mail className="h-4 w-4 mr-2" />
-                          Perfil
-                        </Button>
-                      </div>
+                      {/* Aqui havia dois botoes, "Mensagem" e "Perfil", sem
+                          onClick e sem tela do outro lado -- nao existe
+                          mensageria nem perfil publico no produto. Um botao
+                          que nao faz nada ensina o usuario a nao clicar nos
+                          que fazem. No lugar deles fica a acao que a conexao
+                          realmente habilita. */}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full mt-4"
+                        asChild
+                      >
+                        <Link href="/dashboard/personal-finance">
+                          <ArrowLeftRight className="h-4 w-4 mr-2" />
+                          Dividir uma despesa
+                        </Link>
+                      </Button>
                     </CardContent>
                   </Card>
                 );
@@ -358,7 +376,7 @@ export default function ConnectionsPage() {
                   Nenhuma conexão ainda
                 </h3>
                 <p className="text-muted-foreground text-center">
-                  Comece buscando e se conectando com outros investidores
+                  Busque a pessoa pelo nome na aba Buscar e mande um convite
                 </p>
               </CardContent>
             </Card>
@@ -441,11 +459,11 @@ export default function ConnectionsPage() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Search className="h-5 w-5" />
-                Buscar Investidores
+                Buscar pessoas
               </CardTitle>
               <CardDescription>
-                Encontre outros investidores para se conectar e compartilhar
-                experiências
+                Encontre quem já usa o app pelo nome ou pelo apelido. Só aparece
+                quem deixou o perfil público.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -523,32 +541,31 @@ export default function ConnectionsPage() {
                 Meus Grupos
               </CardTitle>
               <CardDescription>
-                Grupos de investimento para compartilhar estratégias e dividir
-                contas
+                Os grupos de que você participa: a viagem, a casa, o que for
               </CardDescription>
             </CardHeader>
             <CardContent>
               {groups.length > 0 ? (
                 <div className="space-y-4">
                   {groups.map((group) => (
-                    <div key={group.id} className="p-4 border rounded-lg">
+                    <Link
+                      key={group.id}
+                      href={`/dashboard/expense-groups/${group.id}`}
+                      className="block p-4 border rounded-lg hover:bg-muted/50 transition-colors"
+                    >
                       <div className="flex items-center justify-between mb-2">
                         <h3 className="font-medium">{group.name}</h3>
                         <div className="flex items-center gap-2">
                           <Badge
                             variant={
-                              group.user_role === "owner"
+                              group.user_role === "admin"
                                 ? "default"
                                 : "secondary"
                             }
                           >
-                            {group.user_role === "owner"
-                              ? "Dono"
-                              : group.user_role === "admin"
-                              ? "Admin"
-                              : "Membro"}
+                            {group.user_role === "admin" ? "Admin" : "Membro"}
                           </Badge>
-                          {group.is_private && (
+                          {group.group_type === "private" && (
                             <Badge variant="outline">
                               <Shield className="h-3 w-3 mr-1" />
                               Privado
@@ -563,13 +580,14 @@ export default function ConnectionsPage() {
                       )}
                       <div className="flex items-center justify-between text-sm text-muted-foreground">
                         <span>
-                          {group.member_count}/{group.max_members} membros
+                          {group.member_count}{" "}
+                          {group.member_count === 1 ? "membro" : "membros"}
                         </span>
-                        {group.invite_code && (
-                          <span>Código: {group.invite_code}</span>
+                        {group.group_code && (
+                          <span>Código: {group.group_code}</span>
                         )}
                       </div>
-                    </div>
+                    </Link>
                   ))}
                 </div>
               ) : (
@@ -579,11 +597,14 @@ export default function ConnectionsPage() {
                     Nenhum grupo ainda
                   </h3>
                   <p className="text-muted-foreground mb-4">
-                    Crie ou participe de grupos para compartilhar investimentos
+                    Crie um grupo para dividir as contas de uma viagem ou da
+                    casa
                   </p>
-                  <Button>
-                    <UserPlus className="h-4 w-4 mr-2" />
-                    Criar Grupo
+                  <Button asChild>
+                    <Link href="/dashboard/expense-groups">
+                      <UserPlus className="h-4 w-4 mr-2" />
+                      Criar Grupo
+                    </Link>
                   </Button>
                 </div>
               )}
