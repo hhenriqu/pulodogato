@@ -47,10 +47,12 @@ const MIGRATIONS = [
   '004_fix_remaining_trigger_privileges',
   '005_recurring_and_scheduled',
   '006_budgets_and_card_invoices',
+  '007_group_settlements',
 ];
 const TESTE_RLS = 'database/tests/rls_isolation_test.sql';
 const TESTE_AGENDA = 'database/tests/scheduled_rls_test.sql';
 const TESTE_ORCAMENTO = 'database/tests/budget_invoice_test.sql';
+const TESTE_ACERTO = 'database/tests/group_settlement_test.sql';
 
 const ler = (rel) => readFileSync(join(REPO, rel), 'utf8');
 
@@ -213,7 +215,7 @@ const partes = [
   cabecalho(
     'VALIDACAO PASSO 1: schema do zero',
     `Cole este arquivo inteiro no SQL Editor do projeto Supabase DESCARTAVEL e
-rode. Ele aplica 001 -> 002 -> 003 -> 004 -> 005 -> 006 num banco vazio e termina imprimindo uma
+rode. Ele aplica 001 -> 002 -> 003 -> 004 -> 005 -> 006 -> 007 num banco vazio e termina imprimindo uma
 tabela de verificacoes.
 
 O QUE FAZER COM O RESULTADO: copie a tabela final (ou tire um print) e cole na
@@ -298,6 +300,15 @@ const testeOrcamento = semMetaComandos(
   'budget_invoice_test.sql (preparado)',
 );
 
+const testeAcerto = semMetaComandos(
+  prepararTeste(
+    ler(TESTE_ACERTO),
+    TESTE_ACERTO,
+    'ACERTO DE CONTAS: TUDO OK -- sinal do acerto, rateio em centavos, isolamento e o trigger de saldo conferidos',
+  ),
+  'group_settlement_test.sql (preparado)',
+);
+
 const arquivos = {
   '01_migrations.sql': partes.join('\n'),
   '02_isolamento_rls.sql':
@@ -341,6 +352,25 @@ BEGIN/ROLLBACK.
 
 O QUE ESPERAR: uma unica linha "ORCAMENTO E FATURA: TUDO OK".`
     ) + testeOrcamento,
+  '05_acerto_grupo.sql':
+    cabecalho(
+      'VALIDACAO PASSO 5: acerto de contas do grupo (007)',
+      `Rode DEPOIS do 01_migrations.sql, no mesmo projeto descartavel.
+
+Confere o que o 007 sozinho nao prova. A assercao central e o SINAL do acerto:
+registrar um pagamento tem que APROXIMAR o saldo de zero. O erro simetrico
+dobra a divida a cada pagamento registrado, e a tela passaria a sugerir uma
+transferencia MAIOR depois de cada Pix -- sem erro nenhum aparecer.
+
+Confere tambem que o rateio soma exatamente o valor da despesa (dividir R$ 100
+por tres perdia um centavo, e era esse centavo que impedia o grupo de fechar),
+que a divisao personalizada nao e achatada para partes iguais, que os dois
+membros do mesmo grupo leem o MESMO saldo, que quem nao e parte no pagamento
+nao consegue registra-lo, e que editar um lancamento nao desconta o valor duas
+vezes do saldo da conta. Tudo dentro de BEGIN/ROLLBACK.
+
+O QUE ESPERAR: uma unica linha "ACERTO DE CONTAS: TUDO OK".`
+    ) + testeAcerto,
 };
 
 // ---------------------------------------------------------------------------

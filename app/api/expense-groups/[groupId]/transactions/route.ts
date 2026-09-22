@@ -192,6 +192,14 @@ export async function POST(
         transaction_date: body.transaction_date,
         notes: body.notes,
         is_shared: true,
+        // Sem esta coluna a despesa fica invisivel para os OUTROS membros: a
+        // policy de SELECT de financial_transactions (migration 002) libera a
+        // transacao alheia justamente por `group_id IS NOT NULL AND
+        // is_group_member(group_id)`. Ate a 007 esta rota nao a gravava, e o
+        // resultado era cada membro abrindo a mesma viagem e lendo que todos os
+        // outros pagaram zero -- sem erro nenhum aparecer. O consumo de
+        // orcamento de grupo (006) depende da mesma coluna.
+        group_id: groupId,
       })
       .select()
       .single();
@@ -204,54 +212,80 @@ export async function POST(
       );
     }
 
-    // Link transaction to group
-    const { data: groupTransaction, error: groupError } = await supabase
+    // A partir da 007 a transacao acima ja nasce com `group_id`, e o trigger
+    // `auto_create_group_transaction` do banco JA criou a ligacao e o rateio
+    // igualitario. Inserir de novo aqui criaria uma SEGUNDA linha em
+    // group_transactions para a mesma despesa -- nao ha indice unico que
+    // impeca -- e um segundo jogo de rateios: cada membro passaria a dever o
+    // dobro, sem erro nenhum aparecer. Entao aqui so lemos o que o banco fez.
+    const { data: existente } = await supabase
       .from("group_transactions")
-      .insert({
-        group_id: groupId,
-        transaction_id: transaction.id,
-        split_type: body.split_type || "equal",
-      })
-      .select()
-      .single();
+      .select("id, split_type")
+      .eq("group_id", groupId)
+      .eq("transaction_id", transaction.id)
+      .maybeSingle();
 
-    if (groupError) {
-      console.error("Error linking to group:", groupError);
-      // Try to clean up the transaction
-      await supabase
-        .from("financial_transactions")
-        .delete()
-        .eq("id", transaction.id);
+    let groupTransaction = existente;
 
-      return NextResponse.json(
-        { error: "Failed to link transaction to group" },
-        { status: 500 }
-      );
+    // Rede de seguranca: se o trigger nao rodou (despesa positiva, banco sem a
+    // 007 aplicada), a ligacao ainda precisa existir.
+    if (!groupTransaction) {
+      const { data: criada, error: groupError } = await supabase
+        .from("group_transactions")
+        .insert({
+          group_id: groupId,
+          transaction_id: transaction.id,
+          split_type: body.split_type || "equal",
+        })
+        .select("id, split_type")
+        .single();
+
+      if (groupError) {
+        console.error("Error linking to group:", groupError);
+        await supabase
+          .from("financial_transactions")
+          .delete()
+          .eq("id", transaction.id);
+
+        return NextResponse.json(
+          { error: "Failed to link transaction to group" },
+          { status: 500 }
+        );
+      }
+      groupTransaction = criada;
     }
 
-    // Get group members for splitting
-    const { data: members } = await supabase
-      .from("group_members")
-      .select(
-        "id, user_id, profiles!group_members_user_id_fkey (full_name, avatar_url)"
-      )
-      .eq("group_id", groupId)
-      .eq("status", "active");
+    // O trigger sempre rateia igualmente. Divisao combinada (custom,
+    // percentage, proporcional) substitui o rateio automatico -- e precisa
+    // trocar o split_type ANTES de inserir, porque e ele que faz o trigger
+    // `calculate_equal_split` devolver os valores intactos em vez de achatar
+    // tudo para partes iguais.
+    const splitTypeDesejado = body.split_type || "equal";
+    const temSplitsCustomizados =
+      splitTypeDesejado !== "equal" &&
+      Array.isArray(body.splits) &&
+      body.splits.length > 0;
 
-    if (members && members.length > 0) {
-      // Create equal splits for all members
-      const splitAmount = Math.abs(body.amount) / members.length;
-      const splitPercentage = 100 / members.length;
+    if (temSplitsCustomizados) {
+      await supabase
+        .from("group_transactions")
+        .update({ split_type: splitTypeDesejado })
+        .eq("id", groupTransaction.id);
 
-      const splits = members.map((member: any) => ({
-        group_transaction_id: groupTransaction.id,
-        member_id: member.id,
-        percentage: splitPercentage,
-        amount: splitAmount,
-        status: "pending",
-      }));
+      await supabase
+        .from("group_expense_splits")
+        .delete()
+        .eq("group_transaction_id", groupTransaction.id);
 
-      await supabase.from("group_expense_splits").insert(splits);
+      await supabase.from("group_expense_splits").insert(
+        body.splits.map((s: any) => ({
+          group_transaction_id: groupTransaction!.id,
+          member_id: s.member_id,
+          percentage: s.percentage,
+          amount: Math.abs(s.amount),
+          status: "pending",
+        }))
+      );
     }
 
     return NextResponse.json({

@@ -10,7 +10,8 @@
     "check-prd": "node scripts/check-prd-compliance.js",
     "pre-commit": "npm run check-prd && npm run lint",
     "type-check": "tsc --noEmit",
-    "test:recurrence": "tsc lib/recurrence.ts --outDir .tmp-recurrence --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-recurrence.mjs"
+    "test:recurrence": "tsc lib/recurrence.ts --outDir .tmp-recurrence --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-recurrence.mjs",
+    "test:settlement": "tsc lib/settlement.ts --outDir .tmp-settlement --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-settlement.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
