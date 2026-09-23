@@ -45,6 +45,8 @@ import {
   Filter,
   Search,
   Receipt,
+  CreditCard,
+  Repeat,
   DollarSign,
   ArrowUpDown,
   Eye,
@@ -138,6 +140,17 @@ export default function PersonalFinancePage() {
     account_id: "",
     notes: "",
 
+    // Natureza da despesa. Nao e coluna nova no banco: cada valor ROTEIA para
+    // um modelo que ja existe.
+    //   one_off -> financial_transactions, como sempre foi
+    //   card    -> a mesma transacao, mas numa conta do tipo credit_card, que e
+    //              o que faz a compra entrar na fatura do 006
+    //   fixed   -> recurring_rules (005), que gera a agenda mes a mes
+    // Guardar um quarto rotulo solto em financial_transactions criaria uma
+    // segunda fonte de verdade para "e fixa?", competindo com a regra.
+    expense_kind: "one_off",
+    due_day: "",
+
     // Parcelamento
     is_installment: false,
     total_installments: 1,
@@ -176,6 +189,8 @@ export default function PersonalFinancePage() {
       transaction_type: "",
       account_id: "",
       notes: "",
+      expense_kind: "one_off",
+      due_day: "",
       is_installment: false,
       total_installments: 1,
       installment_amount: "",
@@ -207,6 +222,15 @@ export default function PersonalFinancePage() {
       transaction_type: transactionType,
       account_id: transaction.account_id || "",
       notes: transaction.notes || "",
+      // Editar nunca cai em "fixa": uma transacao ja gravada e um lancamento,
+      // nao uma regra. A regra se edita na tela de Contas Previstas. Aqui so
+      // distinguimos se o lancamento saiu de um cartao ou nao.
+      expense_kind:
+        accounts.find((c) => c.id === transaction.account_id)?.account_type ===
+        "credit_card"
+          ? "card"
+          : "one_off",
+      due_day: "",
       is_installment: false,
       total_installments: 1,
       installment_amount: "",
@@ -334,6 +358,74 @@ export default function PersonalFinancePage() {
     }
   };
 
+  const ehGastoNoCartao =
+    formData.transaction_type === "expense" && formData.expense_kind === "card";
+
+  // "Gasto no cartao" so lista cartao de credito. E o `account_type` que faz a
+  // compra entrar na fatura do 006 -- apontar para a conta corrente gravaria um
+  // gasto que sai do saldo hoje, que e o oposto do que o usuario pediu.
+  const contasDoSeletor = ehGastoNoCartao
+    ? accounts.filter((conta) => conta.account_type === "credit_card")
+    : accounts;
+
+  /**
+   * Despesa fixa vira uma regra em `recurring_rules` (migration 005), nao um
+   * lancamento. A rota ja materializa a agenda, entao a conta aparece em
+   * Contas Previstas no mesmo instante -- e la que ela sera dada como paga mes
+   * a mes. Gravar tambem uma transacao aqui cobraria o valor duas vezes: uma
+   * agora e outra quando a ocorrencia do mes fosse baixada.
+   */
+  const criarDespesaFixa = async () => {
+    const dia = Number(formData.due_day);
+    if (!Number.isInteger(dia) || dia < 1 || dia > 31) {
+      toast.error("Informe o dia do vencimento, entre 1 e 31");
+      return;
+    }
+
+    const valor = parseFloat(formData.amount);
+    if (!valor || valor <= 0) {
+      toast.error("Valor deve ser maior que zero");
+      return;
+    }
+
+    try {
+      const resposta = await fetch("/api/recurring-rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          description: formData.description,
+          // A rota espera o valor positivo: quem aplica o sinal de despesa e a
+          // baixa da ocorrencia, nao a regra.
+          amount: Math.abs(valor),
+          category_id: formData.category_id,
+          account_id: formData.account_id || null,
+          transaction_type: "expense",
+          frequency: "monthly",
+          due_day: dia,
+          start_date: formData.transaction_date,
+          notes: formData.notes || null,
+          group_id:
+            formData.group_id && formData.group_id !== "none"
+              ? formData.group_id
+              : null,
+        }),
+      });
+
+      const dados = await resposta.json();
+      if (!resposta.ok) {
+        toast.error(dados.error || "Erro ao criar a despesa fixa");
+        return;
+      }
+
+      toast.success("Despesa fixa criada. Ela aparece em Contas Previstas.");
+      cancelForm();
+      loadData();
+    } catch (error) {
+      console.error("Erro ao criar despesa fixa:", error);
+      toast.error("Erro ao criar a despesa fixa");
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -345,6 +437,22 @@ export default function PersonalFinancePage() {
       !formData.transaction_type
     ) {
       toast.error("Preencha todos os campos obrigatórios");
+      return;
+    }
+
+    if (ehGastoNoCartao && !formData.account_id) {
+      toast.error("Escolha em qual cartão foi o gasto");
+      return;
+    }
+
+    // Despesa fixa nao e um lancamento: e uma REGRA. Sai por outro caminho e
+    // nem chega no insert de financial_transactions abaixo.
+    if (
+      formData.transaction_type === "expense" &&
+      formData.expense_kind === "fixed" &&
+      !editingTransaction
+    ) {
+      await criarDespesaFixa();
       return;
     }
 
@@ -604,6 +712,8 @@ export default function PersonalFinancePage() {
         transaction_type: "",
         account_id: "",
         notes: "",
+        expense_kind: "one_off",
+        due_day: "",
         is_installment: false,
         total_installments: 1,
         installment_amount: "",
@@ -827,6 +937,90 @@ export default function PersonalFinancePage() {
                     </Select>
                   </div>
 
+                  {/* Natureza da despesa. So aparece em despesa: receita e
+                      transferencia nao tem fatura nem viram gasto fixo. */}
+                  {formData.transaction_type === "expense" && (
+                    <div className="space-y-2">
+                      <Label>Tipo de Despesa *</Label>
+                      <Select
+                        value={formData.expense_kind}
+                        onValueChange={(value) =>
+                          setFormData({
+                            ...formData,
+                            expense_kind: value,
+                            // Trocar de natureza invalida a conta escolhida: a
+                            // lista de contas muda (cartao x todas), e manter o
+                            // id antigo deixaria selecionada uma conta que nao
+                            // esta mais no seletor.
+                            account_id:
+                              value === "card" ? "" : formData.account_id,
+                          })
+                        }
+                        disabled={Boolean(editingTransaction)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="one_off">
+                            <div className="flex items-center gap-2">
+                              <Receipt className="h-4 w-4 text-muted-foreground" />
+                              <span>Despesa Pontual</span>
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="card">
+                            <div className="flex items-center gap-2">
+                              <CreditCard className="h-4 w-4 text-info" />
+                              <span>Gasto no Cartão</span>
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="fixed">
+                            <div className="flex items-center gap-2">
+                              <Repeat className="h-4 w-4 text-warning" />
+                              <span>Despesa Fixa</span>
+                            </div>
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        {formData.expense_kind === "card" &&
+                          "Entra na fatura do cartão escolhido, no mês certo conforme o dia do fechamento."}
+                        {formData.expense_kind === "fixed" &&
+                          "Vira uma regra mensal em Contas Previstas, que passa a cobrar você todo mês."}
+                        {formData.expense_kind === "one_off" &&
+                          "Um gasto avulso, lançado só nesta data."}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Despesa fixa: o dia do vencimento e o que a agenda usa
+                      para saber quando cobrar. */}
+                  {formData.transaction_type === "expense" &&
+                    formData.expense_kind === "fixed" &&
+                    !editingTransaction && (
+                      <div className="space-y-2">
+                        <Label htmlFor="due_day">Vence todo dia *</Label>
+                        <Input
+                          id="due_day"
+                          type="number"
+                          min={1}
+                          max={31}
+                          value={formData.due_day}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              due_day: e.target.value,
+                            })
+                          }
+                          placeholder="Ex: 10"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Dia 29, 30 ou 31 cai no último dia do mês quando o mês
+                          for mais curto.
+                        </p>
+                      </div>
+                    )}
+
                   {/* Informações Básicas */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
@@ -897,7 +1091,9 @@ export default function PersonalFinancePage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="account">Conta/Cartão</Label>
+                      <Label htmlFor="account">
+                        {ehGastoNoCartao ? "Cartão *" : "Conta/Cartão"}
+                      </Label>
                       <Select
                         value={formData.account_id}
                         onValueChange={(value: string) =>
@@ -905,10 +1101,16 @@ export default function PersonalFinancePage() {
                         }
                       >
                         <SelectTrigger>
-                          <SelectValue placeholder="Selecione uma conta" />
+                          <SelectValue
+                            placeholder={
+                              ehGastoNoCartao
+                                ? "Selecione um cartão"
+                                : "Selecione uma conta"
+                            }
+                          />
                         </SelectTrigger>
                         <SelectContent>
-                          {accounts.map((account) => (
+                          {contasDoSeletor.map((account) => (
                             <SelectItem key={account.id} value={account.id}>
                               <div className="flex items-center gap-2">
                                 <div
@@ -926,6 +1128,14 @@ export default function PersonalFinancePage() {
                           ))}
                         </SelectContent>
                       </Select>
+                      {/* Sem isto, escolher "Gasto no Cartao" sem ter cartao
+                          nenhum abre um seletor vazio e sem explicacao. */}
+                      {ehGastoNoCartao && contasDoSeletor.length === 0 && (
+                        <p className="text-xs text-warning">
+                          Você ainda não tem nenhum cartão de crédito
+                          cadastrado. Cadastre em Contas e Cartões.
+                        </p>
+                      )}
                     </div>
 
                     <div className="space-y-2">
