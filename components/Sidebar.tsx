@@ -19,6 +19,7 @@ import {
   Menu,
   X,
   Wallet,
+  CreditCard,
   CalendarClock,
   PiggyBank,
   Target,
@@ -56,6 +57,15 @@ const navigation: NavigationItem[] = [
     href: "/dashboard/personal-finance",
     icon: Wallet,
     requiredFeature: "personal_finance",
+  },
+  {
+    // Sem `requiredFeature` de proposito: cadastrar a conta e o passo ZERO.
+    // Toda tela que pede conta (lancamento, orcamento, fatura, extrato, meta)
+    // fica inutil antes disto, e travar o cadastro atras de um plano deixaria o
+    // usuario preso numa tela que so sabe dizer "selecione uma conta".
+    name: "Contas e Cartões",
+    href: "/dashboard/accounts",
+    icon: CreditCard,
   },
   {
     name: "Contas Previstas",

@@ -14,13 +14,23 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
     }
 
-    // Buscar contas do usuário
-    const { data: accounts, error: fetchError } = await supabase
+    // A tela de gerenciamento precisa ver o que foi arquivado para poder
+    // reativar; todo o resto do app (seletor de conta em lancamento, orcamento,
+    // extrato) so quer as ativas, que segue sendo o padrao.
+    const incluirArquivadas =
+      request.nextUrl.searchParams.get("include_inactive") === "1";
+
+    let query = supabase
       .from("financial_accounts")
       .select("*")
-      .eq("user_id", user.id)
-      .eq("is_active", true)
-      .order("created_at", { ascending: false });
+      .eq("user_id", user.id);
+
+    if (!incluirArquivadas) query = query.eq("is_active", true);
+
+    const { data: accounts, error: fetchError } = await query.order(
+      "created_at",
+      { ascending: false }
+    );
 
     if (fetchError) {
       console.error("Error fetching accounts:", fetchError);
