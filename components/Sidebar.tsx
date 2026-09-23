@@ -32,6 +32,7 @@ import {
   Shield,
   Repeat,
   Tags,
+  Calculator,
 } from "lucide-react";
 
 interface SidebarProps {
@@ -139,6 +140,15 @@ const navigation: NavigationItem[] = [
     href: "/dashboard/goals",
     icon: Target,
     requiredFeature: "financial_goals",
+  },
+  // "Calculadoras" entrou na HMO-145. Sem `requiredFeature`, e aqui o motivo é
+  // mais forte que o de "Assinaturas" e "Regras": a tela não lê o banco nem
+  // uma vez. São quatro funções puras rodando no navegador -- não há custo por
+  // uso para gatear, e o item some do menu sem contrapartida nenhuma.
+  {
+    name: "Calculadoras",
+    href: "/dashboard/calculators",
+    icon: Calculator,
   },
   // "Transações" saiu daqui na HMO-124. O item levava a uma tela que dizia
   // "Nenhuma transação encontrada" mesmo para quem tinha lançamentos -- ela

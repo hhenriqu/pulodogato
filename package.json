@@ -19,7 +19,8 @@
     "test:settlement": "tsc lib/settlement.ts --outDir .tmp-settlement --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-settlement.mjs",
     "test:reports": "rm -rf .tmp-reports && tsc -p scripts/tsconfig.reports-test.json && node scripts/resolve-aliases.mjs .tmp-reports lib && node --test scripts/test-reports.mjs",
     "test:statement": "tsc lib/statement.ts --outDir .tmp-statement --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-statement.mjs",
-    "test:categorization": "rm -rf .tmp-categorization && tsc -p scripts/tsconfig.categorization-test.json && node scripts/resolve-aliases.mjs .tmp-categorization lib && node --test scripts/test-categorization.mjs"
+    "test:categorization": "rm -rf .tmp-categorization && tsc -p scripts/tsconfig.categorization-test.json && node scripts/resolve-aliases.mjs .tmp-categorization lib && node --test scripts/test-categorization.mjs",
+    "test:calculadoras": "rm -rf .tmp-calculadoras && tsc lib/calculadoras.ts --outDir .tmp-calculadoras --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-calculadoras.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
