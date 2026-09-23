@@ -276,6 +276,31 @@ jobs:
       - name: Teste do contracheque
         run: $PSQL -f database/tests/payroll_test.sql
 
+      # O 013 fecha a unica view do schema que ficou sem security_invoker: a
+      # `user_subscription_details`, criada no 001_baseline antes de a 002
+      # ligar RLS. As migrations que ligaram a opcao (006, 008, 012) so
+      # cobriram as views que elas mesmas criaram, e essa passou por doze
+      # migrations devolvendo nome, email e plano de TODOS os usuarios para
+      # qualquer usuario logado (HMO-145).
+      - name: 013_fix_user_subscription_details_leak
+        run: $PSQL -f database/migrations/013_fix_user_subscription_details_leak.sql
+
+      # Mesmo motivo do 005 ao 012.
+      - name: 013 e idempotente
+        run: $PSQL -f database/migrations/013_fix_user_subscription_details_leak.sql
+
+      # Duas metades que falham por motivos diferentes: a estrutural varre o
+      # schema INTEIRO atras de view sem security_invoker (uma view criada
+      # amanha reprova sem ninguem lembrar de atualizar o teste -- que e o
+      # esquecimento que deixou esta passar), e a de comportamento cria dois
+      # usuarios privados e conta as linhas que um enxerga pela view.
+      #
+      # A segunda metade nao e redundante: a primeira confere uma OPCAO, e o
+      # que importa e a LINHA que volta. Sem o 013 ela sozinha ja reprova,
+      # devolvendo 2 linhas onde deveria devolver 1.
+      - name: Nenhuma view escapa da RLS
+        run: $PSQL -f database/tests/view_security_invoker_test.sql
+
       - name: Aritmetica de recorrencia
         run: npm run test:recurrence
 

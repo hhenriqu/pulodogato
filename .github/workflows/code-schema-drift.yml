@@ -41,6 +41,15 @@ jobs:
       - name: Tabelas citadas pelo codigo existem nas migrations
         run: node scripts/check-table-drift.mjs
 
+      # Mora aqui, e nao no db-verify, pela mesma razao do passo acima: o
+      # db-verify e filtrado por `paths` e este job nao. Uma migration nova
+      # TOCA em database/, entao o filtro nao e o problema -- o problema e que
+      # quem esquece o step do db-verify recebe o job VERDE, porque o arquivo
+      # esquecido e justamente o que nao roda. A verificacao precisa vir de um
+      # job que nao dependa do db-verify ter sido atualizado (HMO-145).
+      - name: Toda migration e exercitada pelo db-verify
+        run: node scripts/check-migrations-in-ci.mjs
+
       # Controles negativos. Uma verificacao que nunca viu vermelho nao e
       # verificacao: se a regex quebrar numa refatoracao, o passo acima passa a
       # sair verde por nao achar NADA, que e indistinguivel de estar tudo certo.
