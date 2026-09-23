@@ -13,6 +13,7 @@
     "pre-commit": "npm run check-table-drift && npm run check-color-tokens && npm run check-prd && npm run lint",
     "type-check": "tsc --noEmit",
     "test:recurrence-detector": "tsc -p scripts/tsconfig.recurrence-detector-test.json && node --test scripts/test-recurrence-detector.mjs",
+    "test:recurrence-scan": "rm -rf .tmp-recurrence-scan && tsc -p scripts/tsconfig.recurrence-scan-test.json && node scripts/resolve-aliases.mjs .tmp-recurrence-scan lib && node --test scripts/test-recurrence-scan.mjs",
     "test:recurrence": "tsc lib/recurrence.ts --outDir .tmp-recurrence --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-recurrence.mjs",
     "test:settlement": "tsc lib/settlement.ts --outDir .tmp-settlement --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-settlement.mjs",
     "test:reports": "rm -rf .tmp-reports && tsc -p scripts/tsconfig.reports-test.json && node scripts/resolve-aliases.mjs .tmp-reports lib && node --test scripts/test-reports.mjs",

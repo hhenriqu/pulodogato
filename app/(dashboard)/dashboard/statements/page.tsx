@@ -133,6 +133,40 @@ export default function StatementsPage() {
     carregarBase();
   }, [carregarBase]);
 
+  // -------------------------------------------------------------------
+  // Varredura de assinaturas depois de mexer no extrato
+  // -------------------------------------------------------------------
+  // Importar extrato e o momento em que aparece a cobranca que o detector de
+  // assinaturas procura. Sem este gatilho, a tela /dashboard/recurrences so
+  // muda quando o usuario lembra de clicar em "Procurar agora" -- e quem nao
+  // sabe que o botao existe nunca ve assinatura nenhuma.
+  //
+  // UMA varredura por SESSAO de importacao, e nao uma por linha. Quem processa
+  // 40 linhas de um OFX dispararia 40 varreduras de 24 meses de historico, cada
+  // uma reescrevendo o resultado da anterior. Por isso o clique so levanta uma
+  // bandeira; a varredura sai quando o usuario fecha o extrato ou deixa a tela.
+  //
+  // E fire-and-forget de proposito: a varredura e idempotente e o cron diario
+  // passa de qualquer jeito, entao uma falha aqui nao tem o que informar ao
+  // usuario -- e um toast de erro sobre um job que ele nao pediu so assustaria.
+  const extratoMexido = useRef(false);
+
+  const varrerSeMexeu = useCallback(() => {
+    if (!extratoMexido.current) return;
+    extratoMexido.current = false;
+    fetch("/api/recurrences/scan", { method: "POST" }).catch(() => {});
+  }, []);
+
+  // Sair da tela sem fechar o extrato e o caminho mais comum. Sem esta limpeza,
+  // a bandeira morreria junto com o componente e a lista de assinaturas so
+  // andaria no dia seguinte, pelo cron.
+  useEffect(() => varrerSeMexeu, [varrerSeMexeu]);
+
+  const fecharExtrato = useCallback(() => {
+    setAbertoId(null);
+    varrerSeMexeu();
+  }, [varrerSeMexeu]);
+
   const abrirExtrato = useCallback(async (id: string) => {
     setAbertoId(id);
     setCarregandoLinhas(true);
@@ -209,6 +243,12 @@ export default function StatementsPage() {
         return;
       }
 
+      // So `import` e `reset` mexem no conjunto de lancamentos que o detector
+      // le -- um cria a financial_transaction, o outro apaga a que tinha sido
+      // criada. `link` aponta para lancamento que ja existia e `ignore` nao
+      // toca em nada: varrer depois deles seria trabalho garantidamente inutil.
+      if (action === "import" || action === "reset") extratoMexido.current = true;
+
       if (dados.aviso) toast.info(dados.aviso);
       else
         toast.success(
@@ -238,7 +278,11 @@ export default function StatementsPage() {
     }
 
     toast.success("Extrato descartado");
-    if (abertoId === id) setAbertoId(null);
+    // Descartar o extrato NAO apaga as financial_transactions ja criadas a
+    // partir dele (ver o comentario do DELETE em /api/statements/[id]), entao a
+    // bandeira levantada pelos imports continua valendo e a varredura sai aqui.
+    if (abertoId === id) fecharExtrato();
+    else varrerSeMexeu();
     await carregarBase();
   };
 
@@ -356,7 +400,7 @@ export default function StatementsPage() {
                 {pendentes.length} esperando decisão · {resolvidas.length} já resolvido(s)
               </CardDescription>
             </div>
-            <Button variant="ghost" size="sm" onClick={() => setAbertoId(null)}>
+            <Button variant="ghost" size="sm" onClick={fecharExtrato}>
               <X className="h-4 w-4" />
             </Button>
           </CardHeader>

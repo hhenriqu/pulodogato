@@ -304,6 +304,27 @@ jobs:
       - name: Aritmetica de recorrencia
         run: npm run test:recurrence
 
+      # Estes dois existiam desde a HMO-145 e NAO rodavam em lugar nenhum: o
+      # script estava no package.json e nenhum workflow o chamava. Uma suite que
+      # ninguem executa e pior que suite nenhuma -- ela da a sensacao de
+      # cobertura enquanto a regressao passa verde.
+      #
+      # O detector e 100% TypeScript e o SQL nao alcanca nada dele: normalizar
+      # "NETFLIX.COM*123" e "NETFLIX COM" para a mesma chave, e recusar 3
+      # compras de supermercado com 10, 40 e 70 dias de intervalo como se
+      # fossem assinatura mensal.
+      - name: Normalizacao e deteccao de assinaturas
+        run: npm run test:recurrence-detector
+
+      # A varredura e a fronteira com o banco, compartilhada pelos tres
+      # gatilhos (botao, importacao de extrato, cron diario). O que se prova
+      # aqui erra em silencio: `status` no payload do upsert faz a assinatura
+      # que o usuario mandou ignorar voltar para a tela na manha seguinte, e
+      # perder o filtro `amount < 0` poe o salario como a primeira "assinatura"
+      # da lista.
+      - name: Fronteira da varredura de assinaturas
+        run: npm run test:recurrence-scan
+
       # O acerto e metade SQL, metade aritmetica: a view diz QUANTO cada um
       # deve, o TypeScript decide QUEM paga quem. Em ponto flutuante o guloso
       # fecha deixando residuo de fracao de centavo, que vira transferencia de
