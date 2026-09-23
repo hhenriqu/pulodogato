@@ -50,6 +50,14 @@ jobs:
       - name: Toda migration e exercitada pelo db-verify
         run: node scripts/check-migrations-in-ci.mjs
 
+      # Mesma familia do passo acima, e pela mesma razao. O
+      # test:recurrence-detector entrou na main pelo PR #20 e ficou dias sem
+      # rodar em workflow nenhum: o script existia, nada o chamava, e os jobs
+      # continuavam verdes. Uma suite que ninguem executa da sensacao de
+      # cobertura enquanto a regressao passa.
+      - name: Toda suite de teste roda em algum workflow
+        run: node scripts/check-tests-in-ci.mjs
+
       # Controles negativos. Uma verificacao que nunca viu vermelho nao e
       # verificacao: se a regex quebrar numa refatoracao, o passo acima passa a
       # sair verde por nao achar NADA, que e indistinguivel de estar tudo certo.
@@ -89,3 +97,25 @@ jobs:
           fi
 
           echo "A verificacao fica vermelha nas duas formas de deriva."
+
+      # O mesmo tratamento para a verificacao de suite fora do CI: ela tambem
+      # sai verde por nao achar nada se a leitura do package.json quebrar.
+      - name: A verificacao de teste fora do CI sabe falhar
+        run: |
+          set -uo pipefail
+          cp package.json package.json.orig
+          trap 'mv package.json.orig package.json' EXIT
+
+          node -e '
+            const fs = require("node:fs");
+            const p = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            p.scripts["test:sonda-que-nenhum-workflow-roda"] = "node -e 0";
+            fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");
+          '
+
+          if node scripts/check-tests-in-ci.mjs > /dev/null 2>&1; then
+            echo "::error::A verificacao passou verde com uma suite que nenhum workflow roda."
+            exit 1
+          fi
+
+          echo "A verificacao fica vermelha quando uma suite fica fora do CI."
