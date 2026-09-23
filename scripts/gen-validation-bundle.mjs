@@ -39,16 +39,25 @@ const DESTINO = join(REPO, 'database/validation');
 
 // A cadeia inteira, na ordem em que producao a recebeu. O 004 estava faltando
 // aqui ate 2026-09-22: o bundle validava uma cadeia que nao era a de producao,
-// e sairia verde mesmo assim. O salto 004 -> 010 e proposital: 005 a 009 vivem
-// na pilha da HMO-137, ainda nao mergeada, e o 010 nao depende de nenhum deles.
+// e sairia verde mesmo assim.
 const MIGRATIONS = [
   '001_baseline',
   '002_rls_lockdown',
   '003_fix_trigger_privileges',
   '004_fix_remaining_trigger_privileges',
+  '005_recurring_and_scheduled',
+  '006_budgets_and_card_invoices',
+  '007_group_settlements',
+  '008_goals_and_reports',
+  '009_statements_alerts_receipts',
   '010_user_connections',
 ];
 const TESTE_RLS = 'database/tests/rls_isolation_test.sql';
+const TESTE_AGENDA = 'database/tests/scheduled_rls_test.sql';
+const TESTE_ORCAMENTO = 'database/tests/budget_invoice_test.sql';
+const TESTE_ACERTO = 'database/tests/group_settlement_test.sql';
+const TESTE_METAS = 'database/tests/goals_reports_test.sql';
+const TESTE_EXTRATO = 'database/tests/statements_alerts_test.sql';
 const TESTE_CONEXOES = 'database/tests/user_connections_test.sql';
 
 const ler = (rel) => readFileSync(join(REPO, rel), 'utf8');
@@ -212,7 +221,7 @@ const partes = [
   cabecalho(
     'VALIDACAO PASSO 1: schema do zero',
     `Cole este arquivo inteiro no SQL Editor do projeto Supabase DESCARTAVEL e
-rode. Ele aplica 001 -> 002 -> 003 num banco vazio e termina imprimindo uma
+rode. Ele aplica 001 -> 002 -> 003 -> 004 -> 005 -> 006 -> 007 -> 008 -> 009 num banco vazio e termina imprimindo uma
 tabela de verificacoes.
 
 O QUE FAZER COM O RESULTADO: copie a tabela final (ou tire um print) e cole na
@@ -279,6 +288,51 @@ const testeRls = semMetaComandos(
   'rls_isolation_test.sql (preparado)',
 );
 
+const testeAgenda = semMetaComandos(
+  prepararTeste(
+    ler(TESTE_AGENDA),
+    TESTE_AGENDA,
+    'CONTAS PREVISTAS: TUDO OK -- isolamento, view e invariantes de dinheiro conferidos',
+  ),
+  'scheduled_rls_test.sql (preparado)',
+);
+
+const testeOrcamento = semMetaComandos(
+  prepararTeste(
+    ler(TESTE_ORCAMENTO),
+    TESTE_ORCAMENTO,
+    'ORCAMENTO E FATURA: TUDO OK -- consumo, isolamento, views e aritmetica de fatura conferidos',
+  ),
+  'budget_invoice_test.sql (preparado)',
+);
+
+const testeAcerto = semMetaComandos(
+  prepararTeste(
+    ler(TESTE_ACERTO),
+    TESTE_ACERTO,
+    'ACERTO DE CONTAS: TUDO OK -- sinal do acerto, rateio em centavos, isolamento e o trigger de saldo conferidos',
+  ),
+  'group_settlement_test.sql (preparado)',
+);
+
+const testeMetas = semMetaComandos(
+  prepararTeste(
+    ler(TESTE_METAS),
+    TESTE_METAS,
+    'METAS E RELATORIOS: TUDO OK -- progresso, sinal do gasto, previsto x realizado e patrimonio conferidos',
+  ),
+  'goals_reports_test.sql (preparado)',
+);
+
+const testeExtrato = semMetaComandos(
+  prepararTeste(
+    ler(TESTE_EXTRATO),
+    TESTE_EXTRATO,
+    'EXTRATO, AVISOS E COMPROVANTES: TUDO OK -- deduplicacao, sinal, janela de aviso e isolamento conferidos',
+  ),
+  'statements_alerts_test.sql (preparado)',
+);
+
 const testeConexoes = semMetaComandos(
   prepararTeste(
     ler(TESTE_CONEXOES),
@@ -303,6 +357,102 @@ O QUE ESPERAR: uma unica linha "ISOLAMENTO DE RLS: TUDO OK". Se em vez dela vier
 erro em vermelho, copie o texto na issue -- a mensagem ja diz qual assercao
 falhou e o que era esperado.`
     ) + testeRls,
+  '03_contas_previstas.sql':
+    cabecalho(
+      'VALIDACAO PASSO 3: contas previstas e gastos fixos (005)',
+      `Rode DEPOIS do 01_migrations.sql, no mesmo projeto descartavel.
+
+Confere o que o 005 sozinho nao prova: que um usuario nao ve a agenda de contas
+do outro, que a view scheduled_transactions_effective respeita a RLS da tabela
+base (view comum rodaria com o privilegio do dono e devolveria a agenda inteira)
+e que o banco recusa conta marcada como paga sem transacao e ocorrencia
+duplicada da mesma regra. Tudo dentro de BEGIN/ROLLBACK.
+
+O QUE ESPERAR: uma unica linha "CONTAS PREVISTAS: TUDO OK".`
+    ) + testeAgenda,
+  '04_orcamento_fatura.sql':
+    cabecalho(
+      'VALIDACAO PASSO 4: orcamento e fatura de cartao (006)',
+      `Rode DEPOIS do 01_migrations.sql, no mesmo projeto descartavel.
+
+Confere o que o 006 sozinho nao prova: que o consumo do teto soma as transacoes
+certas -- e so elas (despesa e gravada NEGATIVA neste banco, entao um SUM cru
+daria consumo negativo e o alerta de estouro nunca dispararia), que o teto
+pessoal e o do grupo nao se confundem, que budget_consumption e
+card_invoice_lines respeitam a RLS das tabelas base, e que a aritmetica da
+fatura acerta fechamento dia 31 em fevereiro e a virada de ano. Tudo dentro de
+BEGIN/ROLLBACK.
+
+O QUE ESPERAR: uma unica linha "ORCAMENTO E FATURA: TUDO OK".`
+    ) + testeOrcamento,
+  '05_acerto_grupo.sql':
+    cabecalho(
+      'VALIDACAO PASSO 5: acerto de contas do grupo (007)',
+      `Rode DEPOIS do 01_migrations.sql, no mesmo projeto descartavel.
+
+Confere o que o 007 sozinho nao prova. A assercao central e o SINAL do acerto:
+registrar um pagamento tem que APROXIMAR o saldo de zero. O erro simetrico
+dobra a divida a cada pagamento registrado, e a tela passaria a sugerir uma
+transferencia MAIOR depois de cada Pix -- sem erro nenhum aparecer.
+
+Confere tambem que o rateio soma exatamente o valor da despesa (dividir R$ 100
+por tres perdia um centavo, e era esse centavo que impedia o grupo de fechar),
+que a divisao personalizada nao e achatada para partes iguais, que os dois
+membros do mesmo grupo leem o MESMO saldo, que quem nao e parte no pagamento
+nao consegue registra-lo, e que editar um lancamento nao desconta o valor duas
+vezes do saldo da conta. Tudo dentro de BEGIN/ROLLBACK.
+
+O QUE ESPERAR: uma unica linha "ACERTO DE CONTAS: TUDO OK".`
+    ) + testeAcerto,
+  '06_metas_relatorios.sql':
+    cabecalho(
+      'VALIDACAO PASSO 6: metas e relatorios (008)',
+      `Rode DEPOIS do 01_migrations.sql, no mesmo projeto descartavel.
+
+Confere o que o 008 sozinho nao prova. A assercao central e de novo o SINAL:
+despesa e gravada NEGATIVA neste banco, e um SUM cru nas views de relatorio
+devolveria gasto negativo -- a tela desenharia a barra para baixo e diria
+"voce economizou" onde houve gasto. Mesma familia do erro que quase passou no
+006.
+
+Confere tambem que o progresso da meta sai dos APORTES e nao do saldo da conta
+(o saldo derivou ate o 007 entrar), que a meta sem prazo nao inventa um ritmo
+mensal, que transferencia entre contas proprias nao vira receita nem despesa no
+fluxo de caixa mas CONTA no patrimonio, que o previsto x realizado casa o mes
+pessoal (onde group_id e NULL dos dois lados, e NULL = NULL nao casa), que o
+patrimonio reconstruido de tras para frente fecha com o saldo de hoje, e que um
+usuario nao enxerga a renda, o gasto nem o patrimonio de outro. Tudo dentro de
+BEGIN/ROLLBACK.
+
+O QUE ESPERAR: uma unica linha "METAS E RELATORIOS: TUDO OK".`
+    ) + testeMetas,
+  '07_extrato_avisos.sql':
+    cabecalho(
+      'VALIDACAO PASSO 7: extrato, avisos de vencimento e comprovantes (009)',
+      `Rode DEPOIS do 01_migrations.sql, no mesmo projeto descartavel.
+
+Confere o que o 009 sozinho nao prova. A assercao central e a DEDUPLICACAO do
+extrato: ela e por CONTA, e o teste prova as duas metades -- reimportar o mesmo
+arquivo nao duplica nada, e a mesma linha em outra conta entra normalmente. Sem
+a primeira metade, cada reimportacao dobraria o mes; sem a segunda, o extrato da
+poupanca perderia lancamentos que existiram de verdade.
+
+Confere tambem que o SINAL do extrato sobrevive (debito importado continua
+NEGATIVO, e portanto continua sendo despesa nas views do 008), que uma linha nao
+consegue ficar marcada como importada sem lancamento -- invisivel para sempre
+sem nunca ter virado dinheiro --, que apagar o lancamento DEVOLVE a linha para
+pendente, que quem nunca abriu a tela de preferencias recebe aviso assim mesmo
+(o default de 3 dias sai de um COALESCE; um INNER JOIN zeraria a view e o cron
+nao avisaria ninguem, sem erro nenhum), que o mesmo aviso nao sai duas vezes mas
+adiar a conta merece um aviso novo, e que um usuario nao enxerga o extrato, o
+vencimento nem o comprovante de outro. Tudo dentro de BEGIN/ROLLBACK.
+
+O QUE ESPERAR: uma unica linha "EXTRATO, AVISOS E COMPROVANTES: TUDO OK".
+
+A secao 11 do 009 (bucket de comprovantes) SO roda num Supabase de verdade --
+num Postgres cru ela se pula sozinha com um NOTICE. Neste bundle, que roda num
+Supabase descartavel, ela roda.`
+    ) + testeExtrato,
   '08_conexoes.sql':
     cabecalho(
       'VALIDACAO PASSO 8: conexoes entre usuarios (010)',

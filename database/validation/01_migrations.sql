@@ -5,7 +5,7 @@
 -- a fonte e database/migrations/*.sql e database/tests/rls_isolation_test.sql.
 --
 -- Cole este arquivo inteiro no SQL Editor do projeto Supabase DESCARTAVEL e
--- rode. Ele aplica 001 -> 002 -> 003 num banco vazio e termina imprimindo uma
+-- rode. Ele aplica 001 -> 002 -> 003 -> 004 -> 005 -> 006 -> 007 -> 008 -> 009 num banco vazio e termina imprimindo uma
 -- tabela de verificacoes.
 --
 -- O QUE FAZER COM O RESULTADO: copie a tabela final (ou tire um print) e cole na
@@ -3373,7 +3373,2770 @@ COMMIT;
 
 
 -- ---------------------------------------------------------------------------
--- 5. 010_user_connections.sql
+-- 5. 005_recurring_and_scheduled.sql
+-- ---------------------------------------------------------------------------
+-- Cada migration traz o proprio BEGIN/COMMIT: se uma falhar, ela volta atras
+-- inteira e as seguintes nem chegam a rodar.
+-- =====================================================
+-- PULODOGATO - GASTOS FIXOS E CONTAS PREVISTAS
+-- =====================================================
+-- Migration: 005_recurring_and_scheduled
+-- Gerado em: 2026-09-22  (HMO-137, Fase 1 da evolucao do produto)
+--
+-- O QUE ESTE ARQUIVO ADICIONA
+-- ---------------------------
+--   public.recurring_rules        regra de repeticao (gasto/receita fixo)
+--   public.scheduled_transactions ocorrencia prevista, com vencimento e status
+--
+-- A separacao entre "regra" e "ocorrencia" e o que os apps grandes (Mobills,
+-- Organizze, YNAB) fazem: a regra guarda "aluguel, todo dia 10, R$ 2.500" e a
+-- ocorrencia guarda "aluguel de outubro/2026, vence 10/10, ainda nao pago".
+-- Editar a regra nao reescreve o passado; cada ocorrencia tem vida propria,
+-- pode ter valor diferente (conta de luz), ser adiada ou cancelada sozinha.
+--
+-- POR QUE A GERACAO NAO E UMA FUNCAO SQL
+-- --------------------------------------
+-- A materializacao das ocorrencias vive em lib/recurrence.ts, no app. As
+-- migrations 003 e 004 existiram justamente para consertar triggers que
+-- gravavam em tabela derivada sem SECURITY DEFINER; repetir esse padrao aqui
+-- para calcular datas nao paga o risco. O unico trigger criado abaixo e o
+-- update_updated_at_column, que so escreve em NEW.
+--
+-- RELACAO COM transaction_installments
+-- ------------------------------------
+-- Parcelamento (12x no cartao) continua em transaction_installments: e uma
+-- divida fechada, com total conhecido. `scheduled_transactions` e a conta que
+-- se repete sem fim definido (aluguel, escola, streaming) ou o lancamento
+-- avulso que ainda vai vencer. As duas convivem.
+--
+-- COMO RODAR
+-- ----------
+--   psql "$URL" -v ON_ERROR_STOP=1 -f database/migrations/005_recurring_and_scheduled.sql
+--
+-- Aplicar em producao depois de 001 -> 002 -> 003 -> 004. O bloco de preflight
+-- abaixo aborta a transacao inteira se faltar qualquer pre-requisito, listando
+-- tudo de uma vez - o Postgres reporta um erro por vez e cada ida e volta com
+-- producao custa um dia.
+-- =====================================================
+
+BEGIN;
+
+-- =====================================================
+-- SECAO 0: O ARQUIVO CABE NESTE BANCO?
+-- =====================================================
+DO $$
+DECLARE
+  v_faltando TEXT;
+BEGIN
+  SELECT string_agg(DISTINCT msg, E'\n' ORDER BY msg) INTO v_faltando
+  FROM (
+    SELECT CASE
+             WHEN to_regclass('public.' || quote_ident(r.tabela)) IS NULL
+               THEN format('  - tabela public.%s nao existe', r.tabela)
+             WHEN NOT EXISTS (
+                    SELECT 1 FROM pg_attribute a
+                    WHERE a.attrelid = to_regclass('public.' || quote_ident(r.tabela))
+                      AND a.attname = r.coluna
+                      AND a.attnum > 0
+                      AND NOT a.attisdropped)
+               THEN format('  - coluna public.%s.%s nao existe', r.tabela, r.coluna)
+           END AS msg
+    FROM (VALUES
+      ('profiles', 'id'),
+      ('financial_accounts', 'id'),
+      ('transaction_categories', 'id'),
+      ('financial_transactions', 'id'),
+      ('expense_groups', 'id'),
+      ('group_members', 'group_id'),
+      ('schema_migrations', 'version')
+    ) AS r(tabela, coluna)
+
+    UNION ALL
+    -- o ENUM que as duas tabelas reusam
+    SELECT '  - tipo public.transaction_financial_type nao existe'
+    WHERE to_regtype('public.transaction_financial_type') IS NULL
+
+    UNION ALL
+    -- funcoes de que as policies e o trigger dependem
+    SELECT format('  - funcao public.%s nao existe', f.nome)
+    FROM (VALUES
+      ('update_updated_at_column()'),
+      ('is_group_member(uuid)')
+    ) AS f(nome)
+    WHERE to_regprocedure('public.' || f.nome) IS NULL
+
+    UNION ALL
+    -- roles do Supabase
+    SELECT format('  - role %s nao existe', r.rolname)
+    FROM (VALUES ('anon'), ('authenticated')) AS r(rolname)
+    WHERE NOT EXISTS (SELECT 1 FROM pg_roles p WHERE p.rolname = r.rolname)
+  ) AS checks
+  WHERE msg IS NOT NULL;
+
+  IF v_faltando IS NOT NULL THEN
+    RAISE EXCEPTION E'005 nao pode ser aplicado neste banco. Faltando:\n%\n\nRode 001 -> 002 -> 003 -> 004 antes.', v_faltando;
+  END IF;
+END $$;
+
+-- =====================================================
+-- SECAO 1: ENUMS
+-- =====================================================
+-- CREATE TYPE nao aceita IF NOT EXISTS; o DO torna o arquivo re-executavel.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'recurrence_frequency'
+                   AND typnamespace = 'public'::regnamespace) THEN
+    CREATE TYPE public.recurrence_frequency AS ENUM (
+      'weekly',      -- semanal
+      'biweekly',    -- quinzenal
+      'monthly',     -- mensal
+      'bimonthly',   -- bimestral
+      'quarterly',   -- trimestral
+      'semiannual',  -- semestral
+      'annual'       -- anual
+    );
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'scheduled_status'
+                   AND typnamespace = 'public'::regnamespace) THEN
+    CREATE TYPE public.scheduled_status AS ENUM (
+      'pending',    -- prevista, ainda nao venceu
+      'paid',       -- paga/recebida, virou financial_transaction
+      'overdue',    -- venceu e nao foi paga (derivado; ver SECAO 5)
+      'skipped',    -- pulada neste mes, sem cancelar a regra
+      'cancelled'   -- cancelada de vez
+    );
+  END IF;
+END $$;
+
+-- =====================================================
+-- SECAO 2: recurring_rules  (gastos e receitas fixos)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS public.recurring_rules (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    category_id uuid NOT NULL,
+    account_id uuid,
+    group_id uuid,
+    description text NOT NULL,
+    amount numeric(15,2) NOT NULL,
+    transaction_type public.transaction_financial_type NOT NULL DEFAULT 'expense',
+    frequency public.recurrence_frequency NOT NULL DEFAULT 'monthly',
+    -- de quantos em quantos periodos: frequency='monthly' + interval_count=3
+    -- equivale a trimestral, e existe para o caso que o ENUM nao cobre.
+    interval_count integer NOT NULL DEFAULT 1,
+    -- dia do vencimento. Em mes curto, o app fixa no ultimo dia do mes
+    -- (dia 31 em fevereiro vira 28/29) - ver lib/recurrence.ts.
+    due_day integer,
+    start_date date NOT NULL DEFAULT CURRENT_DATE,
+    end_date date,
+    -- quantas ocorrencias no total; NULL = sem fim definido
+    max_occurrences integer,
+    -- quantos dias antes avisar (usado pela tela de proximos vencimentos)
+    reminder_days integer NOT NULL DEFAULT 3,
+    -- se true, a ocorrencia vencida vira transacao sozinha quando o usuario
+    -- confirmar em lote; nunca lanca dinheiro sem acao humana.
+    auto_post boolean NOT NULL DEFAULT false,
+    is_active boolean NOT NULL DEFAULT true,
+    notes text,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT recurring_rules_pkey PRIMARY KEY (id),
+    CONSTRAINT recurring_rules_amount_check CHECK (amount > (0)::numeric),
+    CONSTRAINT recurring_rules_interval_check CHECK (interval_count > 0 AND interval_count <= 60),
+    CONSTRAINT recurring_rules_due_day_check CHECK (due_day IS NULL OR (due_day >= 1 AND due_day <= 31)),
+    CONSTRAINT recurring_rules_reminder_check CHECK (reminder_days >= 0 AND reminder_days <= 90),
+    CONSTRAINT recurring_rules_end_check CHECK (end_date IS NULL OR end_date >= start_date),
+    CONSTRAINT recurring_rules_max_occurrences_check CHECK (max_occurrences IS NULL OR max_occurrences > 0),
+    CONSTRAINT recurring_rules_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE,
+    CONSTRAINT recurring_rules_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.transaction_categories(id),
+    CONSTRAINT recurring_rules_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.financial_accounts(id),
+    CONSTRAINT recurring_rules_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.expense_groups(id)
+);
+
+COMMENT ON TABLE public.recurring_rules IS
+  'Gastos e receitas fixos: a regra de repeticao. As ocorrencias ficam em scheduled_transactions.';
+
+CREATE INDEX IF NOT EXISTS idx_recurring_rules_user ON public.recurring_rules (user_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_recurring_rules_group ON public.recurring_rules (group_id) WHERE group_id IS NOT NULL;
+
+-- =====================================================
+-- SECAO 3: scheduled_transactions  (contas previstas)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS public.scheduled_transactions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    recurring_rule_id uuid,
+    category_id uuid NOT NULL,
+    account_id uuid,
+    group_id uuid,
+    description text NOT NULL,
+    amount numeric(15,2) NOT NULL,
+    due_date date NOT NULL,
+    status public.scheduled_status NOT NULL DEFAULT 'pending',
+    paid_date date,
+    -- transacao real criada quando a conta foi paga; e o elo que impede
+    -- contar a mesma despesa duas vezes (uma prevista + uma realizada).
+    transaction_id uuid,
+    notes text,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT scheduled_transactions_pkey PRIMARY KEY (id),
+    CONSTRAINT scheduled_transactions_amount_check CHECK (amount > (0)::numeric),
+    -- status 'paid' exige data e transacao; o resto nao pode ter nenhuma das duas
+    CONSTRAINT scheduled_transactions_paid_check CHECK (
+      (status = 'paid' AND paid_date IS NOT NULL AND transaction_id IS NOT NULL)
+      OR (status <> 'paid' AND paid_date IS NULL AND transaction_id IS NULL)
+    ),
+    CONSTRAINT scheduled_transactions_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE,
+    CONSTRAINT scheduled_transactions_rule_id_fkey FOREIGN KEY (recurring_rule_id) REFERENCES public.recurring_rules(id) ON DELETE CASCADE,
+    CONSTRAINT scheduled_transactions_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.transaction_categories(id),
+    CONSTRAINT scheduled_transactions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.financial_accounts(id),
+    CONSTRAINT scheduled_transactions_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.expense_groups(id),
+    CONSTRAINT scheduled_transactions_transaction_id_fkey FOREIGN KEY (transaction_id) REFERENCES public.financial_transactions(id) ON DELETE SET NULL
+);
+
+COMMENT ON TABLE public.scheduled_transactions IS
+  'Contas previstas (a pagar e a receber). Uma linha por vencimento.';
+
+-- A geracao roda varias vezes sobre o mesmo periodo (toda vez que a tela abre).
+-- Este indice e o que torna isso idempotente: a mesma regra nao materializa o
+-- mesmo vencimento duas vezes.
+--
+-- Nao e indice parcial (WHERE recurring_rule_id IS NOT NULL) por dois motivos.
+-- Primeiro, nao precisa: no Postgres dois NULL nunca colidem num indice unico,
+-- entao lancamento avulso continua podendo repetir no mesmo dia - duas contas
+-- de luz com o mesmo vencimento sao legitimas. Segundo, um indice parcial
+-- quebraria o upsert: o ON CONFLICT (recurring_rule_id, due_date) que o
+-- PostgREST monta nao consegue inferir um indice com predicado e estoura 42P10
+-- "no unique or exclusion constraint matching the ON CONFLICT specification".
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_rule_due_unique
+  ON public.scheduled_transactions (recurring_rule_id, due_date);
+
+CREATE INDEX IF NOT EXISTS idx_scheduled_user_due ON public.scheduled_transactions (user_id, due_date);
+CREATE INDEX IF NOT EXISTS idx_scheduled_status ON public.scheduled_transactions (user_id, status, due_date);
+CREATE INDEX IF NOT EXISTS idx_scheduled_group ON public.scheduled_transactions (group_id, due_date) WHERE group_id IS NOT NULL;
+
+-- =====================================================
+-- SECAO 4: updated_at
+-- =====================================================
+DROP TRIGGER IF EXISTS update_recurring_rules_updated_at ON public.recurring_rules;
+CREATE TRIGGER update_recurring_rules_updated_at
+  BEFORE UPDATE ON public.recurring_rules
+  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_scheduled_transactions_updated_at ON public.scheduled_transactions;
+CREATE TRIGGER update_scheduled_transactions_updated_at
+  BEFORE UPDATE ON public.scheduled_transactions
+  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+-- =====================================================
+-- SECAO 5: visao de vencidas
+-- =====================================================
+-- 'overdue' nao e gravado: seria um status que envelhece sozinho e exigiria um
+-- job diario so para virar a chave a meia-noite. A conta esta vencida quando
+-- due_date < hoje e status = 'pending' - isso e uma pergunta, nao um estado.
+-- A view existe para que a resposta seja a mesma no app, no SQL e no relatorio.
+CREATE OR REPLACE VIEW public.scheduled_transactions_effective AS
+  SELECT
+    s.*,
+    CASE
+      WHEN s.status = 'pending' AND s.due_date < CURRENT_DATE THEN 'overdue'::public.scheduled_status
+      ELSE s.status
+    END AS effective_status,
+    (s.due_date - CURRENT_DATE) AS days_until_due
+  FROM public.scheduled_transactions s;
+
+COMMENT ON VIEW public.scheduled_transactions_effective IS
+  'scheduled_transactions com o status vencido calculado na hora (nunca gravado).';
+
+-- =====================================================
+-- SECAO 6: RLS
+-- =====================================================
+-- Mesmo desenho do 002: nega por padrao, libera o dono e - para linhas de
+-- grupo - os membros do grupo. Sem policy para anon: a chave anon vai no
+-- bundle publico.
+-- Sem FORCE ROW LEVEL SECURITY, igual as 18 tabelas do 002: o app nunca conecta
+-- como dono da tabela, e ligar FORCE so nestas duas criaria uma diferenca em
+-- relforcerowsecurity que a Q1 do 000_preflight_inventory.sql leria como deriva.
+ALTER TABLE public.recurring_rules ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.scheduled_transactions ENABLE ROW LEVEL SECURITY;
+
+-- ---------- recurring_rules ----------
+DROP POLICY IF EXISTS recurring_rules_select ON public.recurring_rules;
+CREATE POLICY recurring_rules_select ON public.recurring_rules
+  FOR SELECT TO authenticated
+  USING (
+    user_id = auth.uid()
+    OR (group_id IS NOT NULL AND public.is_group_member(group_id))
+  );
+
+DROP POLICY IF EXISTS recurring_rules_insert ON public.recurring_rules;
+CREATE POLICY recurring_rules_insert ON public.recurring_rules
+  FOR INSERT TO authenticated WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS recurring_rules_update ON public.recurring_rules;
+CREATE POLICY recurring_rules_update ON public.recurring_rules
+  FOR UPDATE TO authenticated
+  USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS recurring_rules_delete ON public.recurring_rules;
+CREATE POLICY recurring_rules_delete ON public.recurring_rules
+  FOR DELETE TO authenticated USING (user_id = auth.uid());
+
+-- ---------- scheduled_transactions ----------
+DROP POLICY IF EXISTS scheduled_transactions_select ON public.scheduled_transactions;
+CREATE POLICY scheduled_transactions_select ON public.scheduled_transactions
+  FOR SELECT TO authenticated
+  USING (
+    user_id = auth.uid()
+    OR (group_id IS NOT NULL AND public.is_group_member(group_id))
+  );
+
+DROP POLICY IF EXISTS scheduled_transactions_insert ON public.scheduled_transactions;
+CREATE POLICY scheduled_transactions_insert ON public.scheduled_transactions
+  FOR INSERT TO authenticated WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS scheduled_transactions_update ON public.scheduled_transactions;
+CREATE POLICY scheduled_transactions_update ON public.scheduled_transactions
+  FOR UPDATE TO authenticated
+  USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS scheduled_transactions_delete ON public.scheduled_transactions;
+CREATE POLICY scheduled_transactions_delete ON public.scheduled_transactions
+  FOR DELETE TO authenticated USING (user_id = auth.uid());
+
+-- =====================================================
+-- SECAO 7: GRANTS
+-- =====================================================
+-- O 002 rodou GRANT ... ON ALL TABLES antes destas tabelas existirem, e
+-- ALL TABLES nao alcanca o futuro. Sem estas linhas, as tabelas novas ficam
+-- invisiveis para o app mesmo com as policies certas.
+REVOKE ALL ON public.recurring_rules FROM anon;
+REVOKE ALL ON public.scheduled_transactions FROM anon;
+REVOKE ALL ON public.scheduled_transactions_effective FROM anon;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.recurring_rules TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.scheduled_transactions TO authenticated;
+GRANT SELECT ON public.scheduled_transactions_effective TO authenticated;
+
+-- A view roda com os privilegios do dono (security definer por padrao no
+-- Postgres < 15 e ainda o default em 15+). O RLS da tabela base so vale para a
+-- view se ela for security_invoker - sem isto, a view devolve a agenda de
+-- todo mundo para qualquer usuario logado.
+ALTER VIEW public.scheduled_transactions_effective SET (security_invoker = true);
+
+-- =====================================================
+-- SECAO 8: registro
+-- =====================================================
+-- A coluna e `executed_at`, nao `applied_at`; e o ON CONFLICT depende da
+-- constraint schema_migrations_version_key, conferida na SECAO 0.
+INSERT INTO public.schema_migrations (version, name, description, executed_at)
+VALUES ('005', '005_recurring_and_scheduled',
+        'Gastos fixos (recurring_rules) e contas previstas (scheduled_transactions) - HMO-137', now())
+ON CONFLICT (version) DO NOTHING;
+
+COMMIT;
+
+
+-- ---------------------------------------------------------------------------
+-- 6. 006_budgets_and_card_invoices.sql
+-- ---------------------------------------------------------------------------
+-- Cada migration traz o proprio BEGIN/COMMIT: se uma falhar, ela volta atras
+-- inteira e as seguintes nem chegam a rodar.
+-- =====================================================
+-- PULODOGATO - ORCAMENTO POR CATEGORIA E FATURA DE CARTAO
+-- =====================================================
+-- Migration: 006_budgets_and_card_invoices
+-- Gerado em: 2026-09-22  (HMO-137, Fase 2 da evolucao do produto)
+--
+-- O QUE ESTE ARQUIVO ADICIONA
+-- ---------------------------
+--   public.budgets                 teto de gasto por categoria e por mes
+--   public.budget_consumption      quanto ja foi gasto de cada teto (view)
+--   financial_accounts.closing_day dia do fechamento da fatura
+--   financial_accounts.due_day     dia do vencimento da fatura
+--   public.card_invoice_month()    em que fatura cai uma compra
+--   public.card_invoice_lines      cada compra no cartao com a fatura dela (view)
+--
+-- ORCAMENTO: POR QUE UMA LINHA POR MES
+-- ------------------------------------
+-- A alternativa seria uma linha por categoria com validade aberta ("R$ 800 de
+-- mercado, a partir de marco"). Fica mais enxuto e e pior: o teto de dezembro
+-- nao pode ser diferente sem fechar o periodo e abrir outro, e qualquer
+-- correcao no valor reescreve o julgamento de todos os meses passados -- "voce
+-- estourou o mercado em agosto" mudaria de resposta hoje.
+--
+-- Uma linha por (categoria, mes) e o mesmo desenho que o 005 usou para regra x
+-- ocorrencia, e pela mesma razao: o passado nao pode se mexer. O custo e ter
+-- que criar as linhas do mes seguinte; `carry_forward` marca quais o app
+-- recria, em lib/services/budget.ts, e o indice unico abaixo torna isso
+-- idempotente igual a agenda da Fase 1.
+--
+-- CONSUMO NAO E COLUNA
+-- --------------------
+-- `spent` sai da soma de financial_transactions na hora da leitura. Guardar o
+-- consumido exigiria trigger em financial_transactions -- exatamente a familia
+-- de trigger que as migrations 003 e 004 existiram para consertar, e desta vez
+-- sobre a tabela de dinheiro. Editar uma transacao de mes passado tambem teria
+-- que reabrir o orcamento daquele mes. A soma na leitura nao tem esse problema.
+--
+-- FATURA DE CARTAO: O QUE ESTE ARQUIVO **NAO** FAZ
+-- ------------------------------------------------
+-- Nao mexe em current_balance nem no trigger update_account_balance. O saldo de
+-- cartao continua sendo calculado exatamente como hoje. A fatura aqui e uma
+-- LEITURA (em que fatura a compra do dia 28 caiu) mais duas colunas de
+-- configuracao. Fechar a fatura como conta a pagar reusa scheduled_transactions
+-- da Fase 1 e acontece no app, nao no banco.
+--
+-- Essa foi uma decisao de risco deliberada: o plano da HMO-137 marcou a fatura
+-- como a mudanca mais perigosa da Fase 2 justamente por encostar no saldo
+-- mantido por trigger. Ela nao encosta.
+--
+-- COMO RODAR
+-- ----------
+--   psql "$URL" -v ON_ERROR_STOP=1 -f database/migrations/006_budgets_and_card_invoices.sql
+--
+-- Aplicar depois de 001 -> 002 -> 003 -> 004 -> 005. O preflight abaixo aborta
+-- a transacao inteira se faltar qualquer pre-requisito, listando tudo de uma
+-- vez -- o Postgres reporta um erro por vez e cada ida e volta com producao
+-- custa um dia.
+-- =====================================================
+
+BEGIN;
+
+-- =====================================================
+-- SECAO 0: O ARQUIVO CABE NESTE BANCO?
+-- =====================================================
+DO $$
+DECLARE
+  v_faltando TEXT;
+BEGIN
+  SELECT string_agg(DISTINCT msg, E'\n' ORDER BY msg) INTO v_faltando
+  FROM (
+    SELECT CASE
+             WHEN to_regclass('public.' || quote_ident(r.tabela)) IS NULL
+               THEN format('  - tabela public.%s nao existe', r.tabela)
+             WHEN NOT EXISTS (
+                    SELECT 1 FROM pg_attribute a
+                    WHERE a.attrelid = to_regclass('public.' || quote_ident(r.tabela))
+                      AND a.attname = r.coluna
+                      AND a.attnum > 0
+                      AND NOT a.attisdropped)
+               THEN format('  - coluna public.%s.%s nao existe', r.tabela, r.coluna)
+           END AS msg
+    FROM (VALUES
+      ('financial_accounts', 'account_type'),
+      ('transaction_categories', 'id'),
+      ('financial_transactions', 'transaction_date'),
+      ('financial_transactions', 'transaction_type'),
+      ('financial_transactions', 'group_id'),
+      ('expense_groups', 'id'),
+      ('schema_migrations', 'version'),
+      -- a Fase 2 fecha a fatura como conta prevista: sem o 005 isso nao existe
+      ('scheduled_transactions', 'due_date')
+    ) AS r(tabela, coluna)
+
+    UNION ALL
+    SELECT format('  - tipo public.%s nao existe', t.nome)
+    FROM (VALUES ('transaction_financial_type'), ('account_type')) AS t(nome)
+    WHERE to_regtype('public.' || t.nome) IS NULL
+
+    UNION ALL
+    SELECT format('  - funcao public.%s nao existe', f.nome)
+    FROM (VALUES
+      ('update_updated_at_column()'),
+      ('is_group_member(uuid)')
+    ) AS f(nome)
+    WHERE to_regprocedure('public.' || f.nome) IS NULL
+
+    UNION ALL
+    SELECT format('  - role %s nao existe', r.rolname)
+    FROM (VALUES ('anon'), ('authenticated')) AS r(rolname)
+    WHERE NOT EXISTS (SELECT 1 FROM pg_roles p WHERE p.rolname = r.rolname)
+
+    UNION ALL
+    -- 'credit_card' tem que ser um valor do enum account_type, senao a view de
+    -- faturas filtra por um rotulo que nunca casa e sai sempre vazia -- sem
+    -- erro nenhum, que e o pior jeito de descobrir.
+    SELECT '  - o enum public.account_type nao tem o valor ''credit_card'''
+    WHERE to_regtype('public.account_type') IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM pg_enum e
+        WHERE e.enumtypid = 'public.account_type'::regtype
+          AND e.enumlabel = 'credit_card')
+  ) AS checks
+  WHERE msg IS NOT NULL;
+
+  IF v_faltando IS NOT NULL THEN
+    RAISE EXCEPTION E'006 nao pode ser aplicado neste banco. Faltando:\n%\n\nRode 001 -> 002 -> 003 -> 004 -> 005 antes.', v_faltando;
+  END IF;
+END $$;
+
+-- =====================================================
+-- SECAO 1: budgets  (teto por categoria e mes)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS public.budgets (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    category_id uuid NOT NULL,
+    -- teto da casa/viagem: o consumo passa a somar o gasto do grupo inteiro,
+    -- nao so o de quem cadastrou. NULL = orcamento pessoal.
+    group_id uuid,
+    -- sempre o dia 1: o mes e a unidade do orcamento, e gravar dia 1 deixa o
+    -- indice unico e o BETWEEN da view sem caso especial.
+    month date NOT NULL,
+    amount_limit numeric(15,2) NOT NULL,
+    -- fracao do teto que ja acende o alerta amarelo. 0.8 = avisa aos 80%.
+    alert_threshold numeric(4,3) NOT NULL DEFAULT 0.800,
+    -- o app recria esta linha no mes seguinte. Ficar false e o jeito de dizer
+    -- "isto era so de dezembro".
+    carry_forward boolean NOT NULL DEFAULT true,
+    notes text,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT budgets_pkey PRIMARY KEY (id),
+    CONSTRAINT budgets_amount_check CHECK (amount_limit > (0)::numeric),
+    CONSTRAINT budgets_threshold_check CHECK (alert_threshold > (0)::numeric AND alert_threshold <= (1)::numeric),
+    -- a unica forma de month nao ser dia 1 e alguem escrever direto no SQL
+    -- Editor; a partir dai o indice unico deixa de impedir o teto duplicado.
+    CONSTRAINT budgets_month_is_first_day CHECK (month = date_trunc('month', month)::date),
+    CONSTRAINT budgets_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE,
+    CONSTRAINT budgets_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.transaction_categories(id),
+    CONSTRAINT budgets_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.expense_groups(id) ON DELETE CASCADE
+);
+
+COMMENT ON TABLE public.budgets IS
+  'Teto de gasto por categoria e mes. Uma linha por (usuario, categoria, grupo, mes).';
+COMMENT ON COLUMN public.budgets.month IS
+  'Primeiro dia do mes orcado. O CHECK garante isso.';
+COMMENT ON COLUMN public.budgets.carry_forward IS
+  'Se true, lib/services/budget.ts recria a linha no mes seguinte.';
+
+-- Um teto por categoria por mes -- e aqui o 006 faz o CONTRARIO do 005 de
+-- proposito, entao vale dizer por que.
+--
+-- O 005 evitou indice parcial porque o ON CONFLICT que o PostgREST monta nao
+-- consegue inferir um indice com predicado (42P10). Um indice comum sobre
+-- (user_id, category_id, group_id, month) resolveria isso aqui tambem -- e
+-- estaria errado: em Postgres dois NULL nunca colidem num indice unico, entao
+-- ele deixaria passar DOIS orcamentos pessoais da mesma categoria no mesmo
+-- mes, que e justamente o que ele deveria impedir.
+--
+-- Entao os dois indices sao parciais, a constraint fica correta, e quem paga a
+-- conta e o app: repetirOrcamentos() em lib/services/budget.ts le o mes
+-- destino e insere so o que falta, em vez de usar upsert. Corrida continua
+-- coberta -- o indice devolve 23505 e a rota trata como "ja estava la".
+CREATE UNIQUE INDEX IF NOT EXISTS idx_budgets_pessoal_unico
+  ON public.budgets (user_id, category_id, month)
+  WHERE group_id IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_budgets_grupo_unico
+  ON public.budgets (group_id, category_id, month)
+  WHERE group_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_budgets_user_month ON public.budgets (user_id, month DESC);
+
+DROP TRIGGER IF EXISTS update_budgets_updated_at ON public.budgets;
+CREATE TRIGGER update_budgets_updated_at
+  BEFORE UPDATE ON public.budgets
+  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+-- =====================================================
+-- SECAO 2: fatura de cartao - configuracao
+-- =====================================================
+-- ADD COLUMN IF NOT EXISTS para o arquivo continuar re-executavel.
+ALTER TABLE public.financial_accounts
+  ADD COLUMN IF NOT EXISTS closing_day integer,
+  ADD COLUMN IF NOT EXISTS due_day integer;
+
+COMMENT ON COLUMN public.financial_accounts.closing_day IS
+  'Dia do fechamento da fatura (cartao). Compra depois dele cai na fatura seguinte.';
+COMMENT ON COLUMN public.financial_accounts.due_day IS
+  'Dia do vencimento da fatura (cartao). Pode ser menor que closing_day: vence no mes seguinte.';
+
+-- Os CHECK nao entram com IF NOT EXISTS (nao existe); o DO deixa re-executavel.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'public.financial_accounts'::regclass
+                    AND conname = 'financial_accounts_closing_day_check') THEN
+    ALTER TABLE public.financial_accounts
+      ADD CONSTRAINT financial_accounts_closing_day_check
+      CHECK (closing_day IS NULL OR (closing_day >= 1 AND closing_day <= 31));
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'public.financial_accounts'::regclass
+                    AND conname = 'financial_accounts_due_day_check') THEN
+    ALTER TABLE public.financial_accounts
+      ADD CONSTRAINT financial_accounts_due_day_check
+      CHECK (due_day IS NULL OR (due_day >= 1 AND due_day <= 31));
+  END IF;
+END $$;
+
+-- =====================================================
+-- SECAO 3: em que fatura cai uma compra
+-- =====================================================
+-- A regra do mercado (Nubank, Itau, Mobills): compra ATE o dia do fechamento
+-- entra na fatura do proprio mes; depois dele, na do mes seguinte.
+--
+-- Fechamento dia 31 em fevereiro: o dia 31 nao existe, entao "ate o
+-- fechamento" precisa virar "ate o ultimo dia do mes" -- sem o LEAST abaixo,
+-- nenhuma compra de fevereiro fecharia e todas escorregariam para marco.
+--
+-- IMMUTABLE porque depende so dos argumentos: e o que permite indexar a
+-- expressao depois, se a view ficar pesada.
+CREATE OR REPLACE FUNCTION public.card_invoice_month(
+  p_transaction_date date,
+  p_closing_day integer
+) RETURNS date
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+SET search_path = ''
+AS $$
+  SELECT CASE
+    -- cartao sem fechamento configurado: a compra e da fatura do proprio mes.
+    WHEN p_closing_day IS NULL THEN date_trunc('month', p_transaction_date)::date
+    WHEN EXTRACT(DAY FROM p_transaction_date) <= LEAST(
+           p_closing_day,
+           EXTRACT(DAY FROM (date_trunc('month', p_transaction_date)
+                             + INTERVAL '1 month - 1 day'))::integer)
+      THEN date_trunc('month', p_transaction_date)::date
+    ELSE (date_trunc('month', p_transaction_date) + INTERVAL '1 month')::date
+  END;
+$$;
+
+COMMENT ON FUNCTION public.card_invoice_month(date, integer) IS
+  'Primeiro dia do mes da fatura em que a compra cai. Fonte unica desta regra.';
+
+-- Vencimento da fatura: due_day do mes da fatura, ou do mes seguinte quando o
+-- vencimento vem antes do fechamento (fecha dia 28, vence dia 5). Clampa o dia
+-- ao ultimo do mes pelo mesmo motivo do LEAST acima.
+CREATE OR REPLACE FUNCTION public.card_invoice_due_date(
+  p_invoice_month date,
+  p_closing_day integer,
+  p_due_day integer
+) RETURNS date
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+SET search_path = ''
+AS $$
+  SELECT CASE WHEN p_due_day IS NULL THEN NULL ELSE
+    (base + (LEAST(
+       p_due_day,
+       EXTRACT(DAY FROM (base + INTERVAL '1 month - 1 day'))::integer
+     ) - 1) * INTERVAL '1 day')::date
+  END
+  FROM (
+    SELECT CASE
+             WHEN p_closing_day IS NOT NULL AND p_due_day <= p_closing_day
+               THEN (date_trunc('month', p_invoice_month) + INTERVAL '1 month')
+             ELSE date_trunc('month', p_invoice_month)
+           END AS base
+  ) AS b;
+$$;
+
+COMMENT ON FUNCTION public.card_invoice_due_date(date, integer, integer) IS
+  'Data de vencimento da fatura daquele mes. NULL quando o cartao nao tem due_day.';
+
+-- =====================================================
+-- SECAO 4: card_invoice_lines  (cada compra com a fatura dela)
+-- =====================================================
+-- Nao e tabela: a fatura e uma pergunta sobre lancamentos que ja existem. Uma
+-- tabela precisaria ser mantida em sincronia a cada edicao de transacao -- de
+-- novo, trigger sobre a tabela de dinheiro.
+CREATE OR REPLACE VIEW public.card_invoice_lines AS
+  SELECT
+    t.id                AS transaction_id,
+    t.user_id,
+    t.account_id,
+    a.name              AS account_name,
+    a.closing_day,
+    a.due_day,
+    t.category_id,
+    t.description,
+    t.amount,
+    -- O total da fatura e SUM(invoice_amount), nao SUM(amount).
+    -- Despesa e gravada negativa e estorno/pagamento positivo (ver a nota de
+    -- sinal na SECAO 5), entao inverter o sinal aqui faz a compra somar e o
+    -- estorno abater, que e exatamente o que a fatura deve mostrar. Somar
+    -- amount cru daria a fatura com o sinal trocado; somar ABS faria o estorno
+    -- AUMENTAR o que se deve.
+    (-t.amount) AS invoice_amount,
+    t.transaction_date,
+    t.transaction_type,
+    t.group_id,
+    public.card_invoice_month(t.transaction_date, a.closing_day) AS invoice_month,
+    public.card_invoice_due_date(
+      public.card_invoice_month(t.transaction_date, a.closing_day),
+      a.closing_day, a.due_day)                                  AS invoice_due_date
+  FROM public.financial_transactions t
+  JOIN public.financial_accounts a ON a.id = t.account_id
+  WHERE a.account_type = 'credit_card'
+    -- estorno e pagamento da fatura nao sao compra; entram como income na
+    -- conta do cartao e abatem o total.
+    AND t.transaction_type IN ('expense', 'income');
+
+COMMENT ON VIEW public.card_invoice_lines IS
+  'Lancamentos de cartao com o mes e o vencimento da fatura em que caem.';
+
+-- =====================================================
+-- SECAO 5: budget_consumption  (quanto ja foi gasto de cada teto)
+-- =====================================================
+-- `spent` soma as despesas da categoria no mes. Tres decisoes:
+--
+-- 1) orcamento de grupo soma o gasto de TODOS os membros (t.group_id = b.group_id);
+--    orcamento pessoal soma so o do dono E ignora o que ja esta rateado num
+--    grupo -- senao a despesa da viagem consumiria os dois tetos.
+-- 2) so 'expense'. Um estorno lancado como income da categoria nao devolve
+--    espaco no teto; para isso o caminho e corrigir a despesa.
+-- 3) **ABS(t.amount)**, e esta e a linha que mais importa. Neste banco despesa
+--    e gravada NEGATIVA: lib/services/scheduled.ts:valorComSinal faz
+--    `-Math.abs(amount)`, e o trigger update_account_balance soma NEW.amount
+--    direto no saldo. Um SUM(t.amount) cru devolveria -800 para quem gastou
+--    800: o consumo ficaria negativo, consumed_ratio negativo, e o status
+--    seria 'ok' para sempre -- o alerta de estouro simplesmente nunca
+--    dispararia, sem erro nenhum aparecer. O resto do app ja le assim
+--    (Math.abs em balances, transfers e split-suggestions).
+CREATE OR REPLACE VIEW public.budget_consumption AS
+  SELECT
+    b.id,
+    b.user_id,
+    b.category_id,
+    b.group_id,
+    b.month,
+    b.amount_limit,
+    b.alert_threshold,
+    b.carry_forward,
+    b.notes,
+    b.created_at,
+    b.updated_at,
+    COALESCE(g.spent, 0)::numeric(15,2) AS spent,
+    (b.amount_limit - COALESCE(g.spent, 0))::numeric(15,2) AS remaining,
+    -- percentual com 4 casas; a tela arredonda. Divisao sem risco de zero: o
+    -- CHECK garante amount_limit > 0.
+    ROUND(COALESCE(g.spent, 0) / b.amount_limit, 4) AS consumed_ratio,
+    CASE
+      WHEN COALESCE(g.spent, 0) >= b.amount_limit THEN 'exceeded'
+      WHEN COALESCE(g.spent, 0) >= b.amount_limit * b.alert_threshold THEN 'alert'
+      ELSE 'ok'
+    END AS consumption_status
+  FROM public.budgets b
+  LEFT JOIN LATERAL (
+    SELECT SUM(ABS(t.amount)) AS spent
+    FROM public.financial_transactions t
+    WHERE t.category_id = b.category_id
+      AND t.transaction_type = 'expense'
+      AND t.transaction_date >= b.month
+      AND t.transaction_date < (b.month + INTERVAL '1 month')::date
+      AND CASE
+            WHEN b.group_id IS NOT NULL THEN t.group_id = b.group_id
+            ELSE t.user_id = b.user_id AND t.group_id IS NULL
+          END
+  ) AS g ON TRUE;
+
+COMMENT ON VIEW public.budget_consumption IS
+  'budgets com o consumido, o que resta e o status (ok/alert/exceeded) calculados na leitura.';
+
+-- =====================================================
+-- SECAO 6: RLS
+-- =====================================================
+-- Mesmo desenho do 002 e do 005: nega por padrao, libera o dono e - nas linhas
+-- de grupo - os membros. Sem policy para anon: a chave anon vai no bundle
+-- publico.
+ALTER TABLE public.budgets ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS budgets_select ON public.budgets;
+CREATE POLICY budgets_select ON public.budgets
+  FOR SELECT TO authenticated
+  USING (
+    user_id = auth.uid()
+    OR (group_id IS NOT NULL AND public.is_group_member(group_id))
+  );
+
+DROP POLICY IF EXISTS budgets_insert ON public.budgets;
+CREATE POLICY budgets_insert ON public.budgets
+  FOR INSERT TO authenticated WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS budgets_update ON public.budgets;
+CREATE POLICY budgets_update ON public.budgets
+  FOR UPDATE TO authenticated
+  USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS budgets_delete ON public.budgets;
+CREATE POLICY budgets_delete ON public.budgets
+  FOR DELETE TO authenticated USING (user_id = auth.uid());
+
+-- =====================================================
+-- SECAO 7: GRANTS
+-- =====================================================
+-- O 002 rodou GRANT ... ON ALL TABLES antes destes objetos existirem, e ALL
+-- TABLES nao alcanca o futuro.
+REVOKE ALL ON public.budgets FROM anon;
+REVOKE ALL ON public.budget_consumption FROM anon;
+REVOKE ALL ON public.card_invoice_lines FROM anon;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.budgets TO authenticated;
+GRANT SELECT ON public.budget_consumption TO authenticated;
+GRANT SELECT ON public.card_invoice_lines TO authenticated;
+
+-- Sem security_invoker a view roda com o privilegio do dono e a RLS da tabela
+-- base nao vale: budget_consumption devolveria o orcamento de todo mundo, e
+-- card_invoice_lines a fatura de todo mundo, para qualquer usuario logado.
+-- Mesma pegadinha da SECAO 7 do 005.
+ALTER VIEW public.budget_consumption SET (security_invoker = true);
+ALTER VIEW public.card_invoice_lines SET (security_invoker = true);
+
+-- As funcoes sao IMMUTABLE e so fazem aritmetica de data; nao leem tabela e
+-- por isso nao precisam de SECURITY DEFINER (o oposto do caso das 003/004).
+--
+-- Fechar a execucao para anon exige DOIS revokes, e cada um sozinho e um
+-- falso negativo:
+--
+--   PUBLIC  - o Postgres concede EXECUTE a PUBLIC em toda funcao nova, e anon
+--             faz parte de PUBLIC. Este e o vazamento num banco cru.
+--   anon    - o Supabase concede EXECUTE a anon/authenticated/service_role
+--             EXPLICITAMENTE, via ALTER DEFAULT PRIVILEGES na criacao da
+--             funcao. Revogar de PUBLIC nao encosta num grant explicito: o
+--             proacl continua com `anon=X/postgres`. Este e o vazamento em
+--             producao, e foi o erro que as 003/004 cometeram -- la ficou
+--             inofensivo so porque aquelas funcoes retornam `trigger`, que o
+--             PostgREST nao expoe como RPC.
+--
+-- Estas duas retornam `date`: sem as quatro linhas abaixo,
+-- /rest/v1/rpc/card_invoice_month fica chamavel com a chave que vai no bundle
+-- JS publico. O teste database/tests/budget_invoice_test.sql cobre os dois
+-- caminhos -- foi ele que pegou a falta do revoke de PUBLIC.
+REVOKE EXECUTE ON FUNCTION public.card_invoice_month(date, integer) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.card_invoice_due_date(date, integer, integer) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.card_invoice_month(date, integer) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.card_invoice_due_date(date, integer, integer) FROM anon;
+GRANT EXECUTE ON FUNCTION public.card_invoice_month(date, integer) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.card_invoice_due_date(date, integer, integer) TO authenticated;
+
+-- =====================================================
+-- SECAO 8: registro
+-- =====================================================
+INSERT INTO public.schema_migrations (version, name, description, executed_at)
+VALUES ('006', '006_budgets_and_card_invoices',
+        'Orcamento por categoria (budgets) e fatura de cartao (colunas + views) - HMO-137 Fase 2', now())
+ON CONFLICT (version) DO NOTHING;
+
+COMMIT;
+
+
+-- ---------------------------------------------------------------------------
+-- 7. 007_group_settlements.sql
+-- ---------------------------------------------------------------------------
+-- Cada migration traz o proprio BEGIN/COMMIT: se uma falhar, ela volta atras
+-- inteira e as seguintes nem chegam a rodar.
+-- =====================================================
+-- PULODOGATO - ACERTO DE CONTAS DO GRUPO
+-- =====================================================
+-- Migration: 007_group_settlements
+-- Gerado em: 2026-09-22  (HMO-137, Fase 3 da evolucao do produto)
+--
+-- O QUE ESTE ARQUIVO ADICIONA
+-- ---------------------------
+--   public.group_settlements       cada pagamento de um membro para outro
+--   public.group_member_balances   quanto cada membro deve ou tem a receber (view)
+--   correcao de public.update_account_balance()  -- ver AVISO abaixo
+--   correcao de public.calculate_equal_split()   -- ver AVISO abaixo
+--   backfill de financial_transactions.group_id
+--
+-- AVISO: ESTE ARQUIVO CORRIGE UM BUG DE DINHEIRO QUE JA ESTA EM PRODUCAO
+-- ---------------------------------------------------------------------
+-- `update_account_balance()` roda em AFTER INSERT OR UPDATE OR DELETE e, no
+-- ramo de UPDATE, soma NEW.amount no saldo sem estornar OLD.amount. O efeito
+-- e que QUALQUER edicao de lancamento desconta o valor uma segunda vez --
+-- inclusive uma edicao que nao encosta no valor, como trocar a descricao.
+--
+--   saldo 1000, lanca despesa de 300  -> 700   (certo)
+--   edita a descricao dessa despesa   -> 400   (errado, e sem erro nenhum)
+--
+-- Reproduzido num Postgres 17 com a cadeia 001->006, e alcancavel hoje pelo
+-- app: app/api/personal-finance/transactions/[id] (PUT) e a tela de lancamentos
+-- fazem exatamente esse UPDATE. A SECAO 3a conserta a funcao.
+--
+-- `calculate_equal_split()` rateia pela porcentagem arredondada em duas casas:
+-- uma despesa de R$ 300 dividida por tres vira tres partes de R$ 99,99, e
+-- R$ 0,03 somem. Numa viagem inteira isso vira um saldo residual que pagamento
+-- nenhum zera. Pior: o trigger nao olha o split_type, entao reescreve TODO
+-- rateio como igualitario -- divisao 70/30 combinada com a esposa era gravada
+-- 50/50. A SECAO 3b conserta as duas coisas.
+--
+-- Saldos que JA derivaram nao sao corrigidos por este arquivo. Recalcular
+-- current_balance a partir das transacoes apagaria o saldo inicial de quem
+-- cadastrou a conta com um valor de abertura -- seria trocar um erro por
+-- outro, em cima de dinheiro. Para medir a deriva antes de decidir, rode a
+-- consulta somente-leitura de database/maintenance/007_auditoria_saldos.sql.
+--
+-- O BURACO QUE ELE FECHA
+-- ----------------------
+-- O app ja calculava o saldo do grupo e ja sugeria as transferencias
+-- ("Helio paga R$ 120 para Ana"), em dois lugares diferentes:
+-- app/api/expense-groups/[groupId]/balances e .../transfers. Faltava o unico
+-- passo que fazia a sugestao valer alguma coisa: **registrar que ela foi
+-- paga**. Sem isso a sugestao nunca sumia -- depois de acertar a viagem
+-- inteira, o app continuava dizendo que Helio devia R$ 120, para sempre. E o
+-- caminho de escape seria apagar as despesas do grupo, isto e, perder o
+-- historico da viagem para calar um aviso.
+--
+-- POR QUE UMA TABELA SO PARA ISSO
+-- -------------------------------
+-- A alternativa era lancar o acerto como duas financial_transactions (uma
+-- despesa em quem paga, uma receita em quem recebe). Rejeitada por duas razoes:
+--
+--   1) current_balance e mantido por TRIGGER (update_account_balance). Um
+--      acerto de grupo passaria a mexer no saldo das contas pessoais de dois
+--      usuarios -- exatamente a familia de risco que a Fase 2 contornou com a
+--      fatura de cartao, e desta vez sobre a conta de OUTRA pessoa.
+--   2) O acerto nao e uma despesa nova. O dinheiro ja foi gasto quando alguem
+--      pagou o hotel; o acerto so move quem e o dono daquele buraco. Lancar
+--      como despesa contaria o hotel duas vezes em qualquer relatorio por
+--      categoria -- inclusive no consumo de orcamento que o 006 acabou de
+--      criar.
+--
+-- Entao o acerto e um livro proprio, que so a view de saldo le. Quem quiser
+-- ver o dinheiro sair da conta corrente lanca a transferencia normalmente:
+-- sao fatos diferentes e continuam separados.
+--
+-- COMO RODAR
+-- ----------
+--   psql "$URL" -v ON_ERROR_STOP=1 -f database/migrations/007_group_settlements.sql
+--
+-- Aplicar depois de 001 -> 002 -> 003 -> 004 -> 005 -> 006. O preflight aborta
+-- a transacao inteira listando tudo que falta de uma vez.
+-- =====================================================
+
+BEGIN;
+
+-- =====================================================
+-- SECAO 0: O ARQUIVO CABE NESTE BANCO?
+-- =====================================================
+DO $$
+DECLARE
+  v_faltando TEXT;
+BEGIN
+  SELECT string_agg(DISTINCT msg, E'\n' ORDER BY msg) INTO v_faltando
+  FROM (
+    SELECT CASE
+             WHEN to_regclass('public.' || quote_ident(r.tabela)) IS NULL
+               THEN format('  - tabela public.%s nao existe', r.tabela)
+             WHEN NOT EXISTS (
+                    SELECT 1 FROM pg_attribute a
+                    WHERE a.attrelid = to_regclass('public.' || quote_ident(r.tabela))
+                      AND a.attname = r.coluna
+                      AND a.attnum > 0
+                      AND NOT a.attisdropped)
+               THEN format('  - coluna public.%s.%s nao existe', r.tabela, r.coluna)
+           END AS msg
+    FROM (VALUES
+      ('expense_groups', 'id'),
+      ('group_members', 'user_id'),
+      ('group_members', 'status'),
+      ('group_transactions', 'transaction_id'),
+      ('group_expense_splits', 'member_id'),
+      ('group_expense_splits', 'status'),
+      ('financial_transactions', 'transaction_type'),
+      ('schema_migrations', 'version')
+    ) AS r(tabela, coluna)
+
+    UNION ALL
+    SELECT format('  - funcao public.%s nao existe', f.nome)
+    FROM (VALUES
+      ('update_updated_at_column()'),
+      ('is_group_member(uuid)')
+    ) AS f(nome)
+    WHERE to_regprocedure('public.' || f.nome) IS NULL
+
+    UNION ALL
+    SELECT format('  - role %s nao existe', r.rolname)
+    FROM (VALUES ('anon'), ('authenticated')) AS r(rolname)
+    WHERE NOT EXISTS (SELECT 1 FROM pg_roles p WHERE p.rolname = r.rolname)
+  ) AS checks
+  WHERE msg IS NOT NULL;
+
+  IF v_faltando IS NOT NULL THEN
+    RAISE EXCEPTION E'007 nao pode ser aplicado neste banco. Faltando:\n%\n\nRode 001 -> 002 -> 003 -> 004 -> 005 -> 006 antes.', v_faltando;
+  END IF;
+END $$;
+
+-- =====================================================
+-- SECAO 1: group_settlements  (quem pagou quem)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS public.group_settlements (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    group_id uuid NOT NULL,
+    -- quem PAGOU. Nao referencia group_members: um membro pode sair do grupo
+    -- e a divida que ele quitou continua tendo acontecido. Apontar para a
+    -- linha de participacao faria o ON DELETE levar o pagamento junto, e o
+    -- saldo de quem RECEBEU voltaria a subir sozinho meses depois.
+    from_user_id uuid NOT NULL,
+    -- quem RECEBEU.
+    to_user_id uuid NOT NULL,
+    -- sempre positivo: a direcao esta nas duas colunas acima, nao no sinal.
+    -- (O resto do banco grava despesa negativa; aqui isso seria ambiguo.)
+    amount numeric(15,2) NOT NULL,
+    settled_on date NOT NULL DEFAULT CURRENT_DATE,
+    note text,
+    created_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT group_settlements_pkey PRIMARY KEY (id),
+    CONSTRAINT group_settlements_amount_check CHECK (amount > (0)::numeric),
+    -- pagar a si mesmo zeraria o proprio saldo em qualquer direcao e nao
+    -- corresponde a nada no mundo.
+    CONSTRAINT group_settlements_parties_differ CHECK (from_user_id <> to_user_id),
+    CONSTRAINT group_settlements_group_id_fkey FOREIGN KEY (group_id)
+      REFERENCES public.expense_groups(id) ON DELETE CASCADE,
+    CONSTRAINT group_settlements_from_user_id_fkey FOREIGN KEY (from_user_id)
+      REFERENCES auth.users(id) ON DELETE CASCADE,
+    CONSTRAINT group_settlements_to_user_id_fkey FOREIGN KEY (to_user_id)
+      REFERENCES auth.users(id) ON DELETE CASCADE,
+    CONSTRAINT group_settlements_created_by_fkey FOREIGN KEY (created_by)
+      REFERENCES auth.users(id) ON DELETE CASCADE
+);
+
+COMMENT ON TABLE public.group_settlements IS
+  'Pagamento de um membro do grupo para outro, para zerar o saldo. Nao mexe em financial_transactions.';
+COMMENT ON COLUMN public.group_settlements.amount IS
+  'Sempre positivo. A direcao do dinheiro esta em from_user_id -> to_user_id.';
+COMMENT ON COLUMN public.group_settlements.settled_on IS
+  'Data em que o pagamento aconteceu, que pode ser anterior ao registro.';
+
+CREATE INDEX IF NOT EXISTS idx_group_settlements_group
+  ON public.group_settlements (group_id, settled_on DESC);
+CREATE INDEX IF NOT EXISTS idx_group_settlements_from
+  ON public.group_settlements (from_user_id);
+CREATE INDEX IF NOT EXISTS idx_group_settlements_to
+  ON public.group_settlements (to_user_id);
+
+DROP TRIGGER IF EXISTS update_group_settlements_updated_at ON public.group_settlements;
+CREATE TRIGGER update_group_settlements_updated_at
+  BEFORE UPDATE ON public.group_settlements
+  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+-- Nao ha indice unico aqui, de proposito: dois pagamentos identicos no mesmo
+-- dia sao um fato possivel (duas parcelas de R$ 50 para a mesma pessoa). A
+-- protecao contra clique duplo e a idempotencia da rota, nao o banco.
+
+-- =====================================================
+-- SECAO 2: group_member_balances  (quanto cada um deve)
+-- =====================================================
+-- Ate aqui o saldo era calculado em TypeScript, duas vezes, com regras
+-- ligeiramente diferentes -- balances/route.ts refazia a consulta uma vez por
+-- membro e ignorava o status do rateio; transfers/route.ts fazia numa consulta
+-- so. Duas respostas possiveis para "quanto eu devo" na mesma tela.
+--
+-- A view e a terceira implementacao e a unica que fica: as duas rotas passam a
+-- le-la. Tres regras, cada uma com uma razao:
+--
+--  1) PAGO = SUM(ABS(amount)) das despesas do grupo lancadas por aquele
+--     usuario. ABS porque despesa e gravada NEGATIVA neste banco (a mesma
+--     armadilha que a Fase 2 pegou na view de consumo de orcamento). Somente
+--     'expense': uma receita lancada no grupo nao e alguem pagando a conta do
+--     restaurante, e conta-la como pagamento daria credito a quem recebeu
+--     dinheiro.
+--
+--  2) DEVE = SUM(amount) dos rateios em que o membro aparece, EXCETO os
+--     rejeitados e os expirados. Hoje o app cria todo rateio como 'pending' e
+--     nada nunca os aprova (ver app/api/expense-groups/[groupId]/transactions),
+--     entao filtrar por 'approved' zeraria o saldo de todo mundo -- seria
+--     "consertar" a regra quebrando o produto. Contar 'rejected' era o bug
+--     oposto, e e o que as duas rotas antigas faziam: o membro que recusou a
+--     divisao continuava devendo.
+--
+--  3) ACERTOS entram com o sinal INVERTIDO em relacao a intuicao de quem le
+--     rapido: quem PAGA tem o saldo AUMENTADO. O saldo negativo significa "deve",
+--     e pagar e justamente o ato de sair do negativo em direcao ao zero. Somar
+--     no receptor e subtrair no pagador -- o erro simetrico -- faria a divida
+--     DOBRAR a cada acerto registrado, e a tela mostraria a sugestao de
+--     transferencia crescendo depois de cada pagamento. O teste
+--     database/tests/group_settlement_test.sql trava esse sinal.
+--
+-- A juncao com group_members e por user_id (nao por group_members.id) porque
+-- quem sai e volta ganha uma linha de participacao nova, e o rateio antigo
+-- continua apontando para a linha velha. Por user_id o historico dele se
+-- reencontra; por member_id ele apareceria como duas pessoas.
+CREATE OR REPLACE VIEW public.group_member_balances AS
+  SELECT
+    m.group_id,
+    m.user_id,
+    m.id                                        AS member_id,
+    COALESCE(p.paid, 0)::numeric(15,2)          AS total_paid,
+    COALESCE(o.owed, 0)::numeric(15,2)          AS total_owed,
+    COALESCE(s.paid_out, 0)::numeric(15,2)      AS settlements_paid,
+    COALESCE(s.received, 0)::numeric(15,2)      AS settlements_received,
+    (COALESCE(p.paid, 0)
+     - COALESCE(o.owed, 0)
+     + COALESCE(s.paid_out, 0)
+     - COALESCE(s.received, 0))::numeric(15,2)  AS net_balance,
+    COALESCE(p.paid_count, 0)                   AS paid_count,
+    COALESCE(o.owed_count, 0)                   AS owed_count
+  FROM public.group_members m
+
+  -- o que este usuario pagou pelo grupo
+  LEFT JOIN LATERAL (
+    SELECT SUM(ABS(t.amount)) AS paid, COUNT(*) AS paid_count
+    FROM public.group_transactions gt
+    JOIN public.financial_transactions t ON t.id = gt.transaction_id
+    WHERE gt.group_id = m.group_id
+      AND t.user_id = m.user_id
+      AND t.transaction_type = 'expense'
+  ) AS p ON TRUE
+
+  -- a parte que cabe a ele nas despesas do grupo
+  LEFT JOIN LATERAL (
+    SELECT SUM(es.amount) AS owed, COUNT(*) AS owed_count
+    FROM public.group_expense_splits es
+    JOIN public.group_members em ON em.id = es.member_id
+    JOIN public.group_transactions gt ON gt.id = es.group_transaction_id
+    WHERE gt.group_id = m.group_id
+      AND em.user_id = m.user_id
+      AND es.status NOT IN ('rejected', 'expired')
+  ) AS o ON TRUE
+
+  -- os acertos ja registrados, nas duas direcoes
+  LEFT JOIN LATERAL (
+    SELECT
+      SUM(CASE WHEN gs.from_user_id = m.user_id THEN gs.amount ELSE 0 END) AS paid_out,
+      SUM(CASE WHEN gs.to_user_id   = m.user_id THEN gs.amount ELSE 0 END) AS received
+    FROM public.group_settlements gs
+    WHERE gs.group_id = m.group_id
+      AND (gs.from_user_id = m.user_id OR gs.to_user_id = m.user_id)
+  ) AS s ON TRUE
+
+  WHERE m.status = 'active';
+
+COMMENT ON VIEW public.group_member_balances IS
+  'Saldo de cada membro ativo: pago - devido + acertos pagos - acertos recebidos. Negativo = deve.';
+
+-- =====================================================
+-- SECAO 3a: update_account_balance() -- o UPDATE que cobrava duas vezes
+-- =====================================================
+-- Ver o AVISO no cabecalho. A versao de producao faz, no ramo de UPDATE:
+--
+--     current_balance = current_balance + NEW.amount
+--
+-- sem nunca estornar OLD.amount. Toda edicao de lancamento tira o valor do
+-- saldo de novo, e trocar a conta do lancamento deixa o valor nas DUAS contas.
+--
+-- Este arquivo precisa da correcao por um motivo proprio, alem do bug: a
+-- SECAO 4 abaixo faz um UPDATE de manutencao em financial_transactions. Com a
+-- funcao velha, a migration destruiria o saldo de todas as contas com despesa
+-- de grupo -- uma migration que corrompe dinheiro para consertar um join.
+-- Corrigida a funcao, o mesmo UPDATE estorna o valor antigo e reaplica o novo:
+-- resultado liquido zero, como tem que ser.
+--
+-- Fica SECURITY INVOKER de proposito: a 004 auditou esta funcao e concluiu que
+-- ela escreve em tabela onde o proprio usuario ja tem grant e policy. O que
+-- muda e so a aritmetica. O `SET search_path` entra porque a funcao referencia
+-- `financial_accounts` sem qualificar o schema.
+CREATE OR REPLACE FUNCTION public.update_account_balance() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.account_id IS NOT NULL THEN
+            UPDATE public.financial_accounts
+               SET current_balance = current_balance + NEW.amount, updated_at = NOW()
+             WHERE id = NEW.account_id;
+        END IF;
+        RETURN NEW;
+    END IF;
+
+    IF TG_OP = 'UPDATE' THEN
+        -- Estorna o efeito antigo e aplica o novo. Os dois passos sao
+        -- separados porque a conta pode ter mudado na edicao: um unico UPDATE
+        -- com o delta so funcionaria quando OLD.account_id = NEW.account_id, e
+        -- falharia em silencio justamente no caso de mover o lancamento de
+        -- conta -- que e quando o saldo das duas contas depende disso.
+        IF OLD.account_id IS NOT NULL THEN
+            UPDATE public.financial_accounts
+               SET current_balance = current_balance - OLD.amount, updated_at = NOW()
+             WHERE id = OLD.account_id;
+        END IF;
+        IF NEW.account_id IS NOT NULL THEN
+            UPDATE public.financial_accounts
+               SET current_balance = current_balance + NEW.amount, updated_at = NOW()
+             WHERE id = NEW.account_id;
+        END IF;
+        RETURN NEW;
+    END IF;
+
+    IF TG_OP = 'DELETE' THEN
+        IF OLD.account_id IS NOT NULL THEN
+            UPDATE public.financial_accounts
+               SET current_balance = current_balance - OLD.amount, updated_at = NOW()
+             WHERE id = OLD.account_id;
+        END IF;
+        RETURN OLD;
+    END IF;
+
+    RETURN NULL;
+END;
+$$;
+
+COMMENT ON FUNCTION public.update_account_balance() IS
+  'Mantem financial_accounts.current_balance. No UPDATE estorna OLD.amount antes de somar NEW.amount.';
+
+-- =====================================================
+-- SECAO 3b: calculate_equal_split() -- os centavos que sumiam
+-- =====================================================
+-- Sem esta correcao o acerto de contas que este arquivo introduz NAO FECHA, e
+-- e por isso que ela entra aqui e nao numa migration futura.
+--
+-- A versao de producao rateia pela PORCENTAGEM, arredondada para duas casas:
+--
+--     equal_percentage := 100.0 / 3          -> 33.33  (DECIMAL(5,2))
+--     NEW.amount := 300 * (33.33 / 100.0)    -> 99.99
+--
+-- Tres vezes 99,99 e 299,97. A despesa foi de R$ 300: somem R$ 0,03 a cada
+-- divisao por 3, R$ 0,01 por 6, e por ai vai -- toda divisao cujo resultado
+-- nao tem duas casas exatas. O dinheiro nao volta: quem pagou fica credor de
+-- uma sobra que rateio nenhum atribuiu a ninguem.
+--
+-- Numa viagem com trinta contas isso vira alguns centavos de saldo residual
+-- que NENHUM pagamento zera -- a tela diria "voce ainda deve R$ 0,07" para
+-- sempre, e o acerto simplificado nunca terminaria. Essa foi a razao de
+-- descobrir: o teste do acerto exige que a soma dos saldos do grupo seja zero.
+--
+-- A correcao e o metodo do maior resto: divide em centavos inteiros e
+-- distribui o que sobra, um centavo para cada um dos primeiros restos. Com
+-- R$ 300 por 3 da 100,00 para cada; com R$ 100 por 3 da 33,34 / 33,33 / 33,33,
+-- que soma exatamente 100,00. Qual membro recebe o centavo a mais e decidido
+-- pela ordem de group_members.id -- arbitraria, mas ESTAVEL: cada linha calcula
+-- a propria parte sem saber das outras, e mesmo assim o total bate.
+--
+-- E O SEGUNDO DEFEITO, QUE E MAIOR
+-- --------------------------------
+-- O trigger e BEFORE INSERT em group_expense_splits SEM clausula WHEN, e a
+-- funcao nao olha o split_type. Ou seja: ela reescreve TODO rateio como
+-- igualitario, inclusive o personalizado. O app oferece divisao por
+-- porcentagem, custom e proporcional a renda (ha ate um endpoint
+-- /expense-groups/proportions para calcular esta ultima) -- e o banco achatava
+-- as tres para "cada um paga o mesmo", em silencio, na hora do INSERT. Quem
+-- combinasse 70/30 com a esposa via 50/50 gravado.
+--
+-- Agora a funcao so calcula quando o rateio E igualitario e quem inseriu nao
+-- trouxe valor proprio. Nos outros casos ela devolve NEW intacto.
+CREATE OR REPLACE FUNCTION public.calculate_equal_split() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_split_type TEXT;
+    v_total_cents BIGINT;
+    v_n INTEGER;
+    v_rank INTEGER;
+    v_base BIGINT;
+    v_resto BIGINT;
+BEGIN
+    SELECT gt.split_type INTO v_split_type
+      FROM public.group_transactions gt
+     WHERE gt.id = NEW.group_transaction_id;
+
+    -- Rateio que nao e igualitario: o valor veio de quem inseriu e manda quem
+    -- inseriu. Antes, este era o caminho que apagava a divisao combinada.
+    IF v_split_type IS NOT NULL AND v_split_type <> 'equal' THEN
+        RETURN NEW;
+    END IF;
+
+    SELECT ROUND(ABS(ft.amount) * 100)::bigint INTO v_total_cents
+      FROM public.financial_transactions ft
+      JOIN public.group_transactions gt ON gt.transaction_id = ft.id
+     WHERE gt.id = NEW.group_transaction_id;
+
+    IF v_total_cents IS NULL THEN
+        RETURN NEW;
+    END IF;
+
+    -- Quantos membros ativos, e em que posicao esta o desta linha. As duas
+    -- consultas tem que enxergar o MESMO conjunto, senao os restos nao somam.
+    SELECT count(*) INTO v_n
+      FROM public.group_members gm
+      JOIN public.group_transactions gt ON gt.group_id = gm.group_id
+     WHERE gt.id = NEW.group_transaction_id
+       AND gm.status = 'active';
+
+    IF v_n IS NULL OR v_n = 0 THEN
+        RETURN NEW;
+    END IF;
+
+    SELECT posicao INTO v_rank
+      FROM (
+        SELECT gm.id, row_number() OVER (ORDER BY gm.id) - 1 AS posicao
+          FROM public.group_members gm
+          JOIN public.group_transactions gt ON gt.group_id = gm.group_id
+         WHERE gt.id = NEW.group_transaction_id
+           AND gm.status = 'active'
+      ) AS r
+     WHERE r.id = NEW.member_id;
+
+    -- Membro inativo (ou de outro grupo) recebendo rateio: nao esta na
+    -- ordenacao, entao nao ha parte justa a calcular. Deixa como veio, em vez
+    -- de inventar um valor.
+    IF v_rank IS NULL THEN
+        RETURN NEW;
+    END IF;
+
+    v_base  := v_total_cents / v_n;
+    v_resto := v_total_cents - (v_base * v_n);
+
+    NEW.amount := ((v_base + CASE WHEN v_rank < v_resto THEN 1 ELSE 0 END)::numeric) / 100;
+
+    -- A porcentagem vira DISPLAY: com R$ 100 por 3, as partes em dinheiro sao
+    -- 33,34 / 33,33 / 33,33 e nenhuma porcentagem de duas casas descreve as
+    -- duas coisas ao mesmo tempo. Quem manda e o valor. O CHECK da coluna
+    -- exige > 0, entao o GREATEST cobre o grupo grande demais (mais de 10 mil
+    -- membros arredondaria para 0,00 e derrubaria o INSERT).
+    NEW.percentage := GREATEST(ROUND(100.0 / v_n, 2), 0.01);
+
+    RETURN NEW;
+END;
+$$;
+
+COMMENT ON FUNCTION public.calculate_equal_split() IS
+  'Rateio igualitario em centavos inteiros (maior resto), somando exatamente o valor da despesa. Nao toca em rateio custom/percentage/proporcional.';
+
+-- =====================================================
+-- SECAO 4: backfill de financial_transactions.group_id
+-- =====================================================
+-- A despesa lancada pela tela do grupo
+-- (app/api/expense-groups/[groupId]/transactions) grava a transacao SEM
+-- group_id -- so cria a linha de ligacao em group_transactions. E a policy de
+-- SELECT de financial_transactions, escrita pela 002, libera a transacao de
+-- outro membro exatamente por essa coluna:
+--
+--     user_id = auth.uid() OR (group_id IS NOT NULL AND is_group_member(group_id))
+--
+-- Ou seja: hoje cada membro so enxerga o que ELE MESMO pagou. A tela de saldos
+-- do grupo ja mostra, para cada um, que todos os outros pagaram zero -- dois
+-- membros abrem a mesma viagem e leem numeros diferentes, sem nenhum erro
+-- aparecer. A view da SECAO 2 herdaria o mesmo buraco, porque e security_invoker.
+--
+-- O consumo de orcamento de grupo que a Fase 2 criou depende da MESMA coluna
+-- (budget_consumption casa t.group_id = b.group_id), entao sem este backfill o
+-- teto da viagem leria zero para sempre.
+--
+-- Daqui para a frente quem grava a coluna e a rota, corrigida no mesmo commit.
+-- Este bloco so alcanca o que ja existe.
+--
+-- Transacao ligada a DOIS grupos fica de fora: nao ha resposta certa para qual
+-- deles vai na coluna, e escolher um calado seria mover a despesa de grupo sem
+-- avisar. O NOTICE reporta quantas foram.
+DO $$
+DECLARE
+  v_saldo_antes  numeric;
+  v_saldo_depois numeric;
+  v_corrigidas   integer;
+  v_ambiguas     integer;
+BEGIN
+  SELECT COALESCE(SUM(current_balance), 0) INTO v_saldo_antes
+    FROM public.financial_accounts;
+
+  SELECT count(*) INTO v_ambiguas
+    FROM (SELECT gt.transaction_id
+            FROM public.group_transactions gt
+            JOIN public.financial_transactions t ON t.id = gt.transaction_id
+           WHERE t.group_id IS NULL
+           GROUP BY gt.transaction_id
+          HAVING count(DISTINCT gt.group_id) > 1) AS x;
+
+  WITH unico AS (
+    SELECT gt.transaction_id, MIN(gt.group_id::text)::uuid AS group_id
+      FROM public.group_transactions gt
+      JOIN public.financial_transactions t ON t.id = gt.transaction_id
+     WHERE t.group_id IS NULL
+     GROUP BY gt.transaction_id
+    HAVING count(DISTINCT gt.group_id) = 1
+  )
+  UPDATE public.financial_transactions t
+     SET group_id = u.group_id
+    FROM unico u
+   WHERE t.id = u.transaction_id;
+
+  GET DIAGNOSTICS v_corrigidas = ROW_COUNT;
+
+  SELECT COALESCE(SUM(current_balance), 0) INTO v_saldo_depois
+    FROM public.financial_accounts;
+
+  -- A rede de seguranca: se a correcao da SECAO 3 nao tivesse pegado, este
+  -- UPDATE teria mexido no saldo e a migration inteira volta atras aqui, em
+  -- vez de deixar producao com dinheiro errado e sair verde.
+  IF v_saldo_antes IS DISTINCT FROM v_saldo_depois THEN
+    RAISE EXCEPTION
+      'ABORTADO: o backfill de group_id mudou o saldo das contas (% -> %). Nenhuma alteracao foi gravada.',
+      v_saldo_antes, v_saldo_depois;
+  END IF;
+
+  RAISE NOTICE 'backfill de group_id: % transacoes ligadas ao grupo, % ambiguas deixadas como estavam, saldo total inalterado (%).',
+    v_corrigidas, v_ambiguas, v_saldo_depois;
+END $$;
+
+-- =====================================================
+-- SECAO 5: RLS
+-- =====================================================
+ALTER TABLE public.group_settlements ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS group_settlements_select ON public.group_settlements;
+CREATE POLICY group_settlements_select ON public.group_settlements
+  FOR SELECT TO authenticated
+  USING (public.is_group_member(group_id));
+
+-- Quem registra tem que ser membro E uma das duas partes. Um terceiro membro
+-- registrando "A pagou B" apagaria uma divida que nao e dele -- seria o botao
+-- de perdoar a divida alheia, disponivel para qualquer um do grupo.
+DROP POLICY IF EXISTS group_settlements_insert ON public.group_settlements;
+CREATE POLICY group_settlements_insert ON public.group_settlements
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    created_by = auth.uid()
+    AND public.is_group_member(group_id)
+    AND (from_user_id = auth.uid() OR to_user_id = auth.uid())
+  );
+
+-- Corrigir o valor digitado errado: so quem registrou, e sem poder transformar
+-- o registro num acerto entre outras duas pessoas.
+DROP POLICY IF EXISTS group_settlements_update ON public.group_settlements;
+CREATE POLICY group_settlements_update ON public.group_settlements
+  FOR UPDATE TO authenticated
+  USING (created_by = auth.uid() AND public.is_group_member(group_id))
+  WITH CHECK (
+    created_by = auth.uid()
+    AND (from_user_id = auth.uid() OR to_user_id = auth.uid())
+  );
+
+DROP POLICY IF EXISTS group_settlements_delete ON public.group_settlements;
+CREATE POLICY group_settlements_delete ON public.group_settlements
+  FOR DELETE TO authenticated
+  USING (created_by = auth.uid() AND public.is_group_member(group_id));
+
+-- =====================================================
+-- SECAO 6: GRANTS
+-- =====================================================
+-- O 002 rodou GRANT ... ON ALL TABLES antes destes objetos existirem, e ALL
+-- TABLES nao alcanca o futuro.
+REVOKE ALL ON public.group_settlements FROM anon;
+REVOKE ALL ON public.group_member_balances FROM anon;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.group_settlements TO authenticated;
+GRANT SELECT ON public.group_member_balances TO authenticated;
+
+-- Sem security_invoker a view roda com o privilegio do dono e a RLS das
+-- tabelas base nao vale: group_member_balances devolveria o saldo de todos os
+-- grupos do sistema para qualquer usuario logado -- quanto cada casal gasta e
+-- com quem cada um viaja. Mesma pegadinha do 005 e do 006.
+ALTER VIEW public.group_member_balances SET (security_invoker = true);
+
+-- =====================================================
+-- SECAO 7: registro
+-- =====================================================
+INSERT INTO public.schema_migrations (version, name, description, executed_at)
+VALUES ('007', '007_group_settlements',
+        'Acerto de contas do grupo (group_settlements) e saldo por membro (view) - HMO-137 Fase 3', now())
+ON CONFLICT (version) DO NOTHING;
+
+COMMIT;
+
+
+-- ---------------------------------------------------------------------------
+-- 8. 008_goals_and_reports.sql
+-- ---------------------------------------------------------------------------
+-- Cada migration traz o proprio BEGIN/COMMIT: se uma falhar, ela volta atras
+-- inteira e as seguintes nem chegam a rodar.
+-- =====================================================
+-- PULODOGATO - METAS E RELATORIOS
+-- =====================================================
+-- Migration: 008_goals_and_reports
+-- Gerado em: 2026-09-22  (HMO-137, Fase 4 da evolucao do produto)
+--
+-- O QUE ESTE ARQUIVO ADICIONA
+-- ---------------------------
+--   public.financial_goals           a meta ("Reserva de emergencia, R$ 15.000")
+--   public.goal_contributions        cada aporte feito para uma meta
+--   public.goal_progress             quanto ja juntou, quanto falta, quanto por mes (view)
+--   public.category_monthly_totals   entrada/saida por categoria e por mes (view)
+--   public.monthly_cash_flow         entrada/saida por mes (view, rollup da anterior)
+--   public.planned_vs_actual         previsto x realizado por mes (view)
+--   public.net_worth_history         evolucao do patrimonio mes a mes (view)
+--
+-- Nenhuma funcao de producao e alterada aqui. Ao contrario do 007, este
+-- arquivo so acrescenta: as quatro views sao leitura pura e as duas tabelas
+-- sao novas.
+--
+-- A TELA DE METAS ERA UM MOCK
+-- ---------------------------
+-- app/(dashboard)/dashboard/goals/page.tsx tinha duas metas escritas no
+-- codigo ("Reserva de Emergencia", "Viagem Europa") com um TODO em cima. O
+-- usuario via barras de progresso que nunca mudavam, nao havia onde cadastrar
+-- e o botao "Nova Meta" nao fazia nada. A tela de Relatorios era do mesmo
+-- tipo: quatro cartoes com um botao "Gerar" que nao chamava nada.
+--
+-- POR QUE O PROGRESSO E SOMA DE APORTES, E NAO O SALDO DA CONTA
+-- -------------------------------------------------------------
+-- A tentacao e ligar a meta a uma financial_account e dizer que o progresso e
+-- o current_balance dela. Rejeitado por tres razoes, em ordem de gravidade:
+--
+--   1) current_balance e mantido por TRIGGER e, ate o 007 ser aplicado em
+--      producao, ele derivou a cada edicao de lancamento. A meta herdaria a
+--      deriva e diria que voce juntou dinheiro que nao existe -- ou o
+--      contrario. Ver database/maintenance/007_auditoria_saldos.sql.
+--   2) A conta poupanca costuma guardar dinheiro de mais de uma meta ao mesmo
+--      tempo (a reserva E a viagem). Duas metas lendo o mesmo saldo mostrariam
+--      as duas cheias com o dinheiro de uma so.
+--   3) Aporte e um fato datado: "em marco eu botei R$ 500". Saldo e um numero
+--      do presente, sem historia. Sem os aportes nao da para desenhar a
+--      evolucao da meta nem responder "no ritmo atual eu chego?".
+--
+-- Entao goal_contributions e a fonte da verdade do progresso, e account_id na
+-- meta e so uma anotacao de ONDE o dinheiro esta guardado. Quem quiser ver o
+-- dinheiro sair da conta corrente lanca a transferencia normalmente: sao
+-- fatos diferentes, como o acerto de grupo do 007.
+--
+-- O SINAL DO VALOR, DE NOVO
+-- -------------------------
+-- Despesa e gravada NEGATIVA em financial_transactions. Foi o que quase passou
+-- na Fase 2 (SUM cru no consumo de orcamento daria -800 para quem gastou 800).
+-- As views deste arquivo somam com ABS() e filtram por transaction_type, nunca
+-- pelo sinal, e o teste tem controle negativo para as duas coisas.
+--
+-- 'transfer' NAO E NEM ENTRADA NEM SAIDA
+-- --------------------------------------
+-- O ENUM transaction_financial_type tem tres valores, nao dois. Transferir
+-- R$ 1.000 da conta corrente para a poupanca nao e renda nem gasto: somar
+-- transfer na entrada faria o fluxo de caixa mostrar uma receita de mil reais
+-- que ninguem recebeu, e o mes fecharia positivo sem nenhum dinheiro novo.
+-- category_monthly_totals ignora transfer de proposito.
+--
+-- Em net_worth_history e o oposto: transfer ENTRA na conta, porque o trigger
+-- update_account_balance mexe no saldo em QUALQUER tipo. A view espelha
+-- exatamente o que o trigger faz -- ver a SECAO 8.
+--
+-- COMO RODAR
+-- ----------
+--   psql "$URL" -v ON_ERROR_STOP=1 -f database/migrations/008_goals_and_reports.sql
+--
+-- Aplicar depois de 001 -> 002 -> 003 -> 004 -> 005 -> 006 -> 007. O preflight
+-- aborta a transacao inteira listando tudo que falta de uma vez.
+-- =====================================================
+
+BEGIN;
+
+-- =====================================================
+-- SECAO 0: O ARQUIVO CABE NESTE BANCO?
+-- =====================================================
+DO $$
+DECLARE
+  v_faltando TEXT;
+BEGIN
+  SELECT string_agg(DISTINCT msg, E'\n' ORDER BY msg) INTO v_faltando
+  FROM (
+    SELECT CASE
+             WHEN to_regclass('public.' || quote_ident(r.tabela)) IS NULL
+               THEN format('  - tabela public.%s nao existe', r.tabela)
+             WHEN NOT EXISTS (
+                    SELECT 1 FROM pg_attribute a
+                    WHERE a.attrelid = to_regclass('public.' || quote_ident(r.tabela))
+                      AND a.attname = r.coluna
+                      AND a.attnum > 0
+                      AND NOT a.attisdropped)
+               THEN format('  - coluna public.%s.%s nao existe', r.tabela, r.coluna)
+           END AS msg
+    FROM (VALUES
+      ('financial_accounts', 'current_balance'),
+      ('financial_accounts', 'is_active'),
+      ('financial_transactions', 'transaction_type'),
+      ('financial_transactions', 'group_id'),
+      ('transaction_categories', 'is_expense'),
+      ('expense_groups', 'id'),
+      -- do 005: previsto x realizado le a agenda de contas previstas
+      ('scheduled_transactions', 'due_date'),
+      ('scheduled_transactions', 'status'),
+      ('recurring_rules', 'transaction_type'),
+      ('schema_migrations', 'version')
+    ) AS r(tabela, coluna)
+
+    UNION ALL
+    SELECT format('  - funcao public.%s nao existe', f.nome)
+    FROM (VALUES
+      ('update_updated_at_column()'),
+      ('is_group_member(uuid)')
+    ) AS f(nome)
+    WHERE to_regprocedure('public.' || f.nome) IS NULL
+
+    UNION ALL
+    SELECT format('  - role %s nao existe', r.rolname)
+    FROM (VALUES ('anon'), ('authenticated')) AS r(rolname)
+    WHERE NOT EXISTS (SELECT 1 FROM pg_roles p WHERE p.rolname = r.rolname)
+  ) AS checks
+  WHERE msg IS NOT NULL;
+
+  IF v_faltando IS NOT NULL THEN
+    RAISE EXCEPTION E'008 nao pode ser aplicado neste banco. Faltando:\n%\n\nRode 001 -> 002 -> 003 -> 004 -> 005 -> 006 -> 007 antes.', v_faltando;
+  END IF;
+END $$;
+
+-- =====================================================
+-- SECAO 1: financial_goals  (a meta)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS public.financial_goals (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    -- meta de grupo: a viagem que a familia inteira esta juntando dinheiro
+    -- para fazer. NULL = meta pessoal. Mesmo desenho das tabelas do 005/006.
+    group_id uuid,
+    title text NOT NULL,
+    description text,
+    target_amount numeric(15,2) NOT NULL,
+    -- prazo opcional: "juntar 15 mil" e uma meta valida sem data. Quando tem
+    -- data, goal_progress calcula quanto falta por mes.
+    target_date date,
+    -- ONDE o dinheiro esta guardado. Anotacao, nao fonte do progresso -- ver o
+    -- cabecalho. ON DELETE SET NULL: apagar a conta nao pode apagar a meta
+    -- nem, pior, zerar o que ja foi juntado.
+    account_id uuid,
+    status text NOT NULL DEFAULT 'active',
+    color_hex text DEFAULT '#8B5CF6'::text,
+    icon text DEFAULT 'target'::text,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT financial_goals_pkey PRIMARY KEY (id),
+    -- meta de R$ 0 quebraria a divisao do percentual em goal_progress, do
+    -- mesmo jeito que amount_limit > 0 protege budget_consumption no 006.
+    CONSTRAINT financial_goals_target_check CHECK (target_amount > (0)::numeric),
+    CONSTRAINT financial_goals_status_check CHECK (status IN ('active', 'completed', 'paused', 'cancelled')),
+    CONSTRAINT financial_goals_title_check CHECK (length(btrim(title)) > 0),
+    CONSTRAINT financial_goals_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE,
+    CONSTRAINT financial_goals_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.expense_groups(id) ON DELETE CASCADE,
+    CONSTRAINT financial_goals_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.financial_accounts(id) ON DELETE SET NULL
+);
+
+COMMENT ON TABLE public.financial_goals IS
+  'Metas de economia. O progresso NAO fica aqui: e a soma de goal_contributions, lida em goal_progress.';
+COMMENT ON COLUMN public.financial_goals.account_id IS
+  'Onde o dinheiro esta guardado. Anotacao: o progresso vem dos aportes, nao do saldo da conta.';
+
+CREATE INDEX IF NOT EXISTS idx_financial_goals_user ON public.financial_goals(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_financial_goals_group ON public.financial_goals(group_id) WHERE group_id IS NOT NULL;
+
+-- =====================================================
+-- SECAO 2: goal_contributions  (cada aporte)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS public.goal_contributions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    goal_id uuid NOT NULL,
+    -- QUEM aportou. Numa meta de grupo cada membro aporta o seu, e a tela
+    -- mostra quanto cada um ja botou. Nao e redundante com financial_goals
+    -- .user_id, que e quem CRIOU a meta.
+    user_id uuid NOT NULL,
+    amount numeric(15,2) NOT NULL,
+    contributed_at date NOT NULL DEFAULT CURRENT_DATE,
+    notes text,
+    created_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT goal_contributions_pkey PRIMARY KEY (id),
+    -- Aporte e sempre positivo. Tirar dinheiro da meta se registra apagando o
+    -- aporte, nao lancando um negativo: um aporte negativo passaria despercebido
+    -- na soma e o historico mentiria sobre quanto cada um contribuiu.
+    CONSTRAINT goal_contributions_amount_check CHECK (amount > (0)::numeric),
+    CONSTRAINT goal_contributions_goal_id_fkey FOREIGN KEY (goal_id) REFERENCES public.financial_goals(id) ON DELETE CASCADE,
+    CONSTRAINT goal_contributions_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE
+);
+
+COMMENT ON TABLE public.goal_contributions IS
+  'Aportes para uma meta. Fonte da verdade do progresso; sempre positivo.';
+
+CREATE INDEX IF NOT EXISTS idx_goal_contributions_goal ON public.goal_contributions(goal_id, contributed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_goal_contributions_user ON public.goal_contributions(user_id);
+
+-- =====================================================
+-- SECAO 3: updated_at
+-- =====================================================
+DROP TRIGGER IF EXISTS set_financial_goals_updated_at ON public.financial_goals;
+CREATE TRIGGER set_financial_goals_updated_at
+  BEFORE UPDATE ON public.financial_goals
+  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+-- =====================================================
+-- SECAO 4: goal_progress  (quanto ja juntou)
+-- =====================================================
+-- O `saved` sai de goal_contributions, nunca do saldo da conta -- ver o
+-- cabecalho do arquivo.
+--
+-- `monthly_required` responde "no ritmo de quanto por mes eu chego no prazo?".
+-- A divisao usa GREATEST(months_left, 1): sem isso, uma meta que vence neste
+-- mes daria divisao por zero e a tela inteira quebraria com erro 500 no dia do
+-- vencimento -- o unico dia em que o usuario mais quer olhar para ela.
+CREATE OR REPLACE VIEW public.goal_progress AS
+  SELECT
+    g.id,
+    g.user_id,
+    g.group_id,
+    g.account_id,
+    g.title,
+    g.description,
+    g.target_amount,
+    g.target_date,
+    g.status,
+    g.color_hex,
+    g.icon,
+    g.created_at,
+    g.updated_at,
+    COALESCE(c.saved, 0)::numeric(15,2) AS saved,
+    -- nunca negativo: quem passou da meta ve "faltam R$ 0,00", nao um valor
+    -- negativo que a tela formataria como "-R$ 300,00 restantes".
+    GREATEST(g.target_amount - COALESCE(c.saved, 0), 0)::numeric(15,2) AS remaining,
+    -- 4 casas; a tela arredonda. O CHECK garante target_amount > 0.
+    ROUND(COALESCE(c.saved, 0) / g.target_amount, 4) AS progress_ratio,
+    COALESCE(c.contribution_count, 0) AS contribution_count,
+    c.last_contribution_at,
+    d.months_left,
+    CASE
+      WHEN g.target_date IS NULL THEN NULL
+      WHEN COALESCE(c.saved, 0) >= g.target_amount THEN 0::numeric(15,2)
+      ELSE ROUND(
+        (g.target_amount - COALESCE(c.saved, 0)) / GREATEST(d.months_left, 1),
+        2)::numeric(15,2)
+    END AS monthly_required,
+    -- Estado calculado na leitura, separado de g.status (que o usuario controla
+    -- ao pausar ou cancelar). 'reached' aparece sozinho quando os aportes
+    -- alcancam o alvo: sem isso a meta ficaria "em andamento" com barra cheia
+    -- ate alguem lembrar de marcar como concluida na mao.
+    CASE
+      WHEN g.status IN ('paused', 'cancelled') THEN g.status
+      WHEN COALESCE(c.saved, 0) >= g.target_amount THEN 'reached'
+      WHEN g.target_date IS NOT NULL AND g.target_date < CURRENT_DATE THEN 'overdue'
+      ELSE 'on_track'
+    END AS progress_status
+  FROM public.financial_goals g
+  LEFT JOIN LATERAL (
+    SELECT SUM(gc.amount) AS saved,
+           COUNT(*) AS contribution_count,
+           MAX(gc.contributed_at) AS last_contribution_at
+    FROM public.goal_contributions gc
+    WHERE gc.goal_id = g.id
+  ) AS c ON TRUE
+  -- meses cheios entre o mes corrente e o mes do prazo, NULL sem prazo.
+  -- Calculado uma vez num LATERAL porque monthly_required precisa do mesmo
+  -- numero: duplicar a expressao e como duas versoes da mesma regra, e a
+  -- segunda deixa de acompanhar a primeira na primeira vez que alguem mexer.
+  -- O ::integer nao e cosmetico -- date_part() devolve double precision, e
+  -- ROUND(double, int) nao existe no Postgres: a view nem chega a ser criada.
+  LEFT JOIN LATERAL (
+    SELECT CASE
+             WHEN g.target_date IS NULL THEN NULL
+             ELSE GREATEST(
+               (date_part('year',  g.target_date) - date_part('year',  CURRENT_DATE)) * 12
+                 + (date_part('month', g.target_date) - date_part('month', CURRENT_DATE)),
+               0)::integer
+           END AS months_left
+  ) AS d ON TRUE;
+
+COMMENT ON VIEW public.goal_progress IS
+  'Metas com o juntado, o que falta e o ritmo mensal necessario, calculados na leitura.';
+
+-- =====================================================
+-- SECAO 5: category_monthly_totals  (gasto por categoria)
+-- =====================================================
+-- Grao: (user_id, group_id, mes, categoria). Cada transacao pertence a
+-- exatamente um par (user_id, group_id), entao somar todas as linhas de um
+-- usuario da o total dele, sem dupla contagem.
+--
+-- O relatorio pessoal le group_id IS NULL; o da viagem le um group_id fixo, e
+-- ai aparece uma linha por membro -- que e exatamente "quem gastou o que na
+-- viagem".
+--
+-- ABS() + filtro por transaction_type, nunca pelo sinal: despesa e gravada
+-- negativa e um SUM cru devolveria -800 para quem gastou 800. Foi o erro que
+-- quase passou na Fase 2.
+--
+-- 'transfer' fica de fora das duas colunas de proposito: mover dinheiro entre
+-- as proprias contas nao e renda nem gasto.
+CREATE OR REPLACE VIEW public.category_monthly_totals AS
+  SELECT
+    t.user_id,
+    t.group_id,
+    date_trunc('month', t.transaction_date)::date AS month,
+    t.category_id,
+    COALESCE(SUM(ABS(t.amount)) FILTER (WHERE t.transaction_type = 'expense'), 0)::numeric(15,2) AS expense,
+    COALESCE(SUM(ABS(t.amount)) FILTER (WHERE t.transaction_type = 'income'), 0)::numeric(15,2) AS income,
+    (COALESCE(SUM(ABS(t.amount)) FILTER (WHERE t.transaction_type = 'income'), 0)
+     - COALESCE(SUM(ABS(t.amount)) FILTER (WHERE t.transaction_type = 'expense'), 0))::numeric(15,2) AS net,
+    COUNT(*) FILTER (WHERE t.transaction_type IN ('expense', 'income')) AS transaction_count
+  FROM public.financial_transactions t
+  WHERE t.transaction_type IN ('expense', 'income')
+  GROUP BY t.user_id, t.group_id, date_trunc('month', t.transaction_date)::date, t.category_id;
+
+COMMENT ON VIEW public.category_monthly_totals IS
+  'Entrada e saida por categoria e por mes. Ignora transfer: mover dinheiro entre contas proprias nao e renda nem gasto.';
+
+-- =====================================================
+-- SECAO 6: monthly_cash_flow  (fluxo de caixa)
+-- =====================================================
+-- Rollup de category_monthly_totals de proposito, em vez de uma segunda
+-- consulta sobre financial_transactions: duas definicoes do mesmo numero saem
+-- de sincronia na primeira vez que alguem mexer no tratamento de sinal, e o
+-- relatorio por categoria deixaria de somar o total do fluxo de caixa sem que
+-- nada acusasse.
+CREATE OR REPLACE VIEW public.monthly_cash_flow AS
+  SELECT
+    c.user_id,
+    c.group_id,
+    c.month,
+    SUM(c.income)::numeric(15,2) AS income,
+    SUM(c.expense)::numeric(15,2) AS expense,
+    SUM(c.net)::numeric(15,2) AS net,
+    SUM(c.transaction_count) AS transaction_count
+  FROM public.category_monthly_totals c
+  GROUP BY c.user_id, c.group_id, c.month;
+
+COMMENT ON VIEW public.monthly_cash_flow IS
+  'Entrada, saida e resultado por mes. Rollup de category_monthly_totals para nao ter duas versoes do mesmo numero.';
+
+-- =====================================================
+-- SECAO 7: planned_vs_actual  (previsto x realizado)
+-- =====================================================
+-- A armadilha desta view e o JOIN. O grao e (user_id, group_id, mes) e
+-- group_id e NULL na maioria absoluta das linhas -- e em SQL, `NULL = NULL` e
+-- NULL, nao verdadeiro. Um FULL OUTER JOIN ingenuo entre previsto e realizado
+-- nao casaria NENHUMA linha pessoal: a tela mostraria previsto e realizado em
+-- meses separados, cada um com o outro lado zerado, como se o usuario nunca
+-- tivesse pago nada do que planejou.
+--
+-- Por isso as chaves saem de um UNION (que trata NULL como igual, ao contrario
+-- do `=`) e os dois lados entram por LATERAL com IS NOT DISTINCT FROM. O teste
+-- tem controle negativo: trocando por `=`, ele fica vermelho.
+--
+-- scheduled_transactions.amount e sempre POSITIVO (CHECK do 005) e a tabela
+-- nao tem transaction_type -- o tipo mora na regra. COALESCE(r.transaction_type,
+-- 'expense') espelha exatamente o que a rota de baixa faz ao criar a transacao
+-- real (app/api/scheduled-transactions/[id]/pay). Se os dois discordassem, uma
+-- conta prevista de receita entraria como despesa prevista e viraria receita
+-- realizada ao ser paga: o previsto x realizado acusaria um estouro que nao
+-- houve.
+--
+-- Contar a conta paga nos DOIS lados e correto e nao e dupla contagem: previsto
+-- e o que estava na agenda, realizado e o que saiu da conta. Sao eixos
+-- diferentes do mesmo mes, e a diferenca entre eles e justamente o relatorio.
+CREATE OR REPLACE VIEW public.planned_vs_actual AS
+  WITH chaves AS (
+    SELECT s.user_id, s.group_id, date_trunc('month', s.due_date)::date AS month
+    FROM public.scheduled_transactions s
+    UNION
+    SELECT t.user_id, t.group_id, date_trunc('month', t.transaction_date)::date AS month
+    FROM public.financial_transactions t
+    WHERE t.transaction_type IN ('expense', 'income')
+  )
+  SELECT
+    k.user_id,
+    k.group_id,
+    k.month,
+    COALESCE(p.planned_expense, 0)::numeric(15,2) AS planned_expense,
+    COALESCE(p.planned_income, 0)::numeric(15,2)  AS planned_income,
+    COALESCE(a.income, 0)::numeric(15,2)  AS actual_income,
+    COALESCE(a.expense, 0)::numeric(15,2) AS actual_expense,
+    -- positivo = gastou mais do que tinha previsto
+    (COALESCE(a.expense, 0) - COALESCE(p.planned_expense, 0))::numeric(15,2) AS expense_variance,
+    COALESCE(p.pending_count, 0) AS pending_count,
+    COALESCE(p.overdue_count, 0) AS overdue_count
+  FROM chaves k
+  LEFT JOIN LATERAL (
+    SELECT
+      SUM(s.amount) FILTER (WHERE COALESCE(r.transaction_type, 'expense') = 'expense') AS planned_expense,
+      SUM(s.amount) FILTER (WHERE COALESCE(r.transaction_type, 'expense') = 'income')  AS planned_income,
+      COUNT(*) FILTER (WHERE s.status = 'pending') AS pending_count,
+      COUNT(*) FILTER (WHERE s.status = 'pending' AND s.due_date < CURRENT_DATE) AS overdue_count
+    FROM public.scheduled_transactions s
+    LEFT JOIN public.recurring_rules r ON r.id = s.recurring_rule_id
+    WHERE s.user_id = k.user_id
+      AND s.group_id IS NOT DISTINCT FROM k.group_id
+      AND date_trunc('month', s.due_date)::date = k.month
+      -- cancelada nunca foi previsao de verdade
+      AND s.status <> 'cancelled'
+  ) AS p ON TRUE
+  LEFT JOIN LATERAL (
+    SELECT f.income, f.expense
+    FROM public.monthly_cash_flow f
+    WHERE f.user_id = k.user_id
+      AND f.group_id IS NOT DISTINCT FROM k.group_id
+      AND f.month = k.month
+  ) AS a ON TRUE;
+
+COMMENT ON VIEW public.planned_vs_actual IS
+  'Previsto (agenda do 005) contra realizado (transacoes) por mes. Chaves por UNION: group_id e NULL e NULL = NULL nao casa.';
+
+-- =====================================================
+-- SECAO 8: net_worth_history  (evolucao do patrimonio)
+-- =====================================================
+-- O banco nao guarda historico de saldo: financial_accounts.current_balance e
+-- um numero do presente, mantido por trigger. Entao o patrimonio de um mes
+-- passado e reconstruido ANDANDO PARA TRAS a partir de hoje:
+--
+--   patrimonio(mes M) = saldo de hoje - (tudo que entrou e saiu depois de M)
+--
+-- Duas consequencias que precisam estar ditas, porque a tela nao tem como
+-- adivinhar:
+--
+--   1) A VARIACAO mes a mes e exata -- ela sai so das transacoes.
+--   2) O NIVEL herda qualquer erro que exista hoje em current_balance. Ate o
+--      007 ser aplicado em producao, o saldo derivou a cada edicao de
+--      lancamento, e a curva inteira sobe ou desce junto com essa deriva. Nao
+--      da para corrigir aqui: seria adivinhar qual parte do saldo e abertura
+--      de conta e qual e erro. Rode database/maintenance/007_auditoria_saldos.sql.
+--
+-- Por que 'transfer' ENTRA aqui e fica de fora do fluxo de caixa: a view tem
+-- que espelhar o que o trigger update_account_balance faz, e ele soma
+-- NEW.amount em QUALQUER tipo. Ignorar transfer aqui faria a conta de tras
+-- para frente nao fechar com o saldo de hoje -- e o erro so apareceria para
+-- quem usa transferencia, isto e, para quem tem poupanca.
+--
+-- Pelo mesmo motivo a soma so olha transacoes com account_id NOT NULL: sem
+-- conta, o trigger nao mexe em saldo nenhum.
+--
+-- Contas inativas entram no saldo de hoje. Uma conta encerrada com saldo
+-- residual continua sendo patrimonio, e exclui-la faria o patrimonio cair de
+-- degrau no mes em que alguem arquivou a conta, sem nenhuma transacao
+-- explicando a queda.
+CREATE OR REPLACE VIEW public.net_worth_history AS
+  WITH saldo_hoje AS (
+    SELECT a.user_id, COALESCE(SUM(a.current_balance), 0)::numeric(15,2) AS total
+    FROM public.financial_accounts a
+    GROUP BY a.user_id
+  ),
+  movimento AS (
+    SELECT
+      t.user_id,
+      date_trunc('month', t.transaction_date)::date AS month,
+      SUM(t.amount)::numeric(15,2) AS net
+    FROM public.financial_transactions t
+    WHERE t.account_id IS NOT NULL
+    GROUP BY t.user_id, date_trunc('month', t.transaction_date)::date
+  )
+  SELECT
+    m.user_id,
+    m.month,
+    m.net AS net_change,
+    -- saldo de hoje menos tudo que se moveu DEPOIS deste mes. A janela nao tem
+    -- ORDER BY porque precisa da soma de todas as linhas seguintes, nao de um
+    -- acumulado parcial; SUM() OVER (PARTITION BY ...) sem ORDER BY soma a
+    -- particao inteira, e por isso o "depois" e feito subtraindo o acumulado
+    -- ate o mes corrente do acumulado total.
+    (s.total
+     - (SUM(m.net) OVER (PARTITION BY m.user_id)
+        - SUM(m.net) OVER (PARTITION BY m.user_id ORDER BY m.month
+                           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW))
+    )::numeric(15,2) AS net_worth
+  FROM movimento m
+  JOIN saldo_hoje s ON s.user_id = m.user_id;
+
+COMMENT ON VIEW public.net_worth_history IS
+  'Patrimonio mes a mes, reconstruido de tras para frente a partir do saldo de hoje. A variacao e exata; o nivel herda a deriva de current_balance.';
+
+-- =====================================================
+-- SECAO 9: RLS
+-- =====================================================
+-- Mesmo desenho do 002, 005, 006 e 007: nega por padrao, libera o dono e - nas
+-- linhas de grupo - os membros. Sem policy para anon: a chave anon vai no
+-- bundle JS publico.
+ALTER TABLE public.financial_goals ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.goal_contributions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS financial_goals_select ON public.financial_goals;
+CREATE POLICY financial_goals_select ON public.financial_goals
+  FOR SELECT TO authenticated
+  USING (
+    user_id = auth.uid()
+    OR (group_id IS NOT NULL AND public.is_group_member(group_id))
+  );
+
+DROP POLICY IF EXISTS financial_goals_insert ON public.financial_goals;
+CREATE POLICY financial_goals_insert ON public.financial_goals
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    user_id = auth.uid()
+    AND (group_id IS NULL OR public.is_group_member(group_id))
+  );
+
+-- Editar e apagar ficam so com quem criou, inclusive na meta de grupo: mudar o
+-- alvo de uma meta coletiva e uma decisao de quem propos, e apagar levaria
+-- junto (ON DELETE CASCADE) os aportes de todo mundo.
+DROP POLICY IF EXISTS financial_goals_update ON public.financial_goals;
+CREATE POLICY financial_goals_update ON public.financial_goals
+  FOR UPDATE TO authenticated
+  USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS financial_goals_delete ON public.financial_goals;
+CREATE POLICY financial_goals_delete ON public.financial_goals
+  FOR DELETE TO authenticated USING (user_id = auth.uid());
+
+-- Aportes: quem enxerga a meta enxerga os aportes dela (numa meta de grupo,
+-- ver quanto cada um ja botou e o ponto). Mas so da para aportar em SEU nome,
+-- e so em meta que voce enxerga.
+DROP POLICY IF EXISTS goal_contributions_select ON public.goal_contributions;
+CREATE POLICY goal_contributions_select ON public.goal_contributions
+  FOR SELECT TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.financial_goals g
+      WHERE g.id = goal_contributions.goal_id
+        AND (g.user_id = auth.uid()
+             OR (g.group_id IS NOT NULL AND public.is_group_member(g.group_id)))
+    )
+  );
+
+DROP POLICY IF EXISTS goal_contributions_insert ON public.goal_contributions;
+CREATE POLICY goal_contributions_insert ON public.goal_contributions
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    user_id = auth.uid()
+    AND EXISTS (
+      SELECT 1 FROM public.financial_goals g
+      WHERE g.id = goal_contributions.goal_id
+        AND (g.user_id = auth.uid()
+             OR (g.group_id IS NOT NULL AND public.is_group_member(g.group_id)))
+    )
+  );
+
+DROP POLICY IF EXISTS goal_contributions_update ON public.goal_contributions;
+CREATE POLICY goal_contributions_update ON public.goal_contributions
+  FOR UPDATE TO authenticated
+  USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS goal_contributions_delete ON public.goal_contributions;
+CREATE POLICY goal_contributions_delete ON public.goal_contributions
+  FOR DELETE TO authenticated USING (user_id = auth.uid());
+
+-- =====================================================
+-- SECAO 10: GRANTS
+-- =====================================================
+-- O 002 rodou GRANT ... ON ALL TABLES antes destes objetos existirem, e ALL
+-- TABLES nao alcanca o futuro.
+REVOKE ALL ON public.financial_goals FROM anon;
+REVOKE ALL ON public.goal_contributions FROM anon;
+REVOKE ALL ON public.goal_progress FROM anon;
+REVOKE ALL ON public.category_monthly_totals FROM anon;
+REVOKE ALL ON public.monthly_cash_flow FROM anon;
+REVOKE ALL ON public.planned_vs_actual FROM anon;
+REVOKE ALL ON public.net_worth_history FROM anon;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.financial_goals TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.goal_contributions TO authenticated;
+GRANT SELECT ON public.goal_progress TO authenticated;
+GRANT SELECT ON public.category_monthly_totals TO authenticated;
+GRANT SELECT ON public.monthly_cash_flow TO authenticated;
+GRANT SELECT ON public.planned_vs_actual TO authenticated;
+GRANT SELECT ON public.net_worth_history TO authenticated;
+
+-- Sem security_invoker a view roda com o privilegio do DONO e a RLS das
+-- tabelas base nao vale. Aqui isso seria o pior vazamento do projeto ate agora:
+-- monthly_cash_flow devolveria a renda e o gasto mensal de TODOS os usuarios do
+-- sistema para qualquer um que estivesse logado, e net_worth_history devolveria
+-- o patrimonio de cada um. Mesma pegadinha do 005, do 006 e do 007 -- e o teste
+-- tem controle negativo para ela.
+ALTER VIEW public.goal_progress SET (security_invoker = true);
+ALTER VIEW public.category_monthly_totals SET (security_invoker = true);
+ALTER VIEW public.monthly_cash_flow SET (security_invoker = true);
+ALTER VIEW public.planned_vs_actual SET (security_invoker = true);
+ALTER VIEW public.net_worth_history SET (security_invoker = true);
+
+-- =====================================================
+-- SECAO 11: registro
+-- =====================================================
+INSERT INTO public.schema_migrations (version, name, description, executed_at)
+VALUES ('008', '008_goals_and_reports',
+        'Metas com aportes (financial_goals, goal_contributions) e as views dos relatorios - HMO-137 Fase 4', now())
+ON CONFLICT (version) DO NOTHING;
+
+COMMIT;
+
+
+-- ---------------------------------------------------------------------------
+-- 9. 009_statements_alerts_receipts.sql
+-- ---------------------------------------------------------------------------
+-- Cada migration traz o proprio BEGIN/COMMIT: se uma falhar, ela volta atras
+-- inteira e as seguintes nem chegam a rodar.
+-- =====================================================
+-- PULODOGATO - EXTRATO, AVISOS DE VENCIMENTO E COMPROVANTES
+-- =====================================================
+-- Migration: 009_statements_alerts_receipts
+-- Gerado em: 2026-09-22  (HMO-137, Fase 5 da evolucao do produto)
+--
+-- O QUE ESTE ARQUIVO ADICIONA
+-- ---------------------------
+--   public.statement_imports        um arquivo de extrato enviado (OFX ou CSV)
+--   public.statement_entries        cada linha lida do arquivo, antes de virar lancamento
+--   public.notification_preferences quantos dias antes avisar, e se avisa
+--   public.push_subscriptions       os aparelhos que aceitaram receber push
+--   public.bill_notifications       o que ja foi avisado  (e o que impede repetir)
+--   public.bill_alerts              o que vence, com quantos dias faltam (view)
+--   public.receipts                 comprovante anexado a um lancamento
+--
+-- Como o 008, este arquivo so ACRESCENTA: nenhuma funcao, tabela ou trigger de
+-- producao e alterada. As tabelas sao novas e a unica view e leitura pura.
+--
+-- POR QUE O EXTRATO NAO ENTRA DIRETO EM financial_transactions
+-- -------------------------------------------------------------
+-- A tentacao e ler o OFX e dar INSERT em financial_transactions direto. Foi
+-- rejeitado por quatro razoes, em ordem de gravidade:
+--
+--   1) financial_transactions.category_id e NOT NULL e o extrato do banco NAO
+--      traz categoria. Sem uma area de espera, ou o import falha na primeira
+--      linha, ou inventa uma categoria "Outros" e o orcamento por categoria do
+--      006 passa a mentir em silencio -- que e pior.
+--   2) O INSERT dispara update_account_balance. Importar duas vezes o mesmo
+--      arquivo mexeria no saldo duas vezes, e o 007 mostrou o que custa uma
+--      linha de trigger que mexe em dinheiro sem ninguem ver.
+--   3) Metade do extrato JA ESTA lancado a mao. Sem conciliacao, o usuario
+--      importa e ve o mes dobrado de tamanho -- cada almoco aparece duas vezes.
+--   4) O arquivo do banco e a fonte de um fato bruto e imutavel; o lancamento
+--      e uma coisa editavel que pertence ao usuario. Misturar os dois tira a
+--      possibilidade de reconferir "o que o banco realmente mandou".
+--
+-- Entao statement_entries e uma AREA DE ESPERA: o arquivo entra inteiro, a
+-- conciliacao marca o que ja existe, e o usuario decide linha a linha. So
+-- quando ele decide e que nasce a financial_transaction -- e a entrada guarda
+-- o transaction_id para nunca mais oferecer a mesma linha.
+--
+-- O SINAL DO VALOR, MAIS UMA VEZ
+-- -------------------------------
+-- Despesa e gravada NEGATIVA em financial_transactions, e o <TRNAMT> do OFX ja
+-- vem negativo num debito. statement_entries.amount guarda o sinal EXATAMENTE
+-- como o banco mandou, sem ABS e sem normalizar: e desse sinal que sai o
+-- transaction_type na hora de criar o lancamento (negativo -> expense,
+-- positivo -> income). Um ABS() aqui faria toda despesa importada virar
+-- receita, e os quatro relatorios do 008 passariam a mostrar um mes de lucro
+-- onde houve um mes de gasto -- sem nenhum erro aparecer. O teste tem controle
+-- negativo para isso.
+--
+-- POR QUE A DEDUPLICACAO E UM `fingerprint`, E NAO O FITID
+-- --------------------------------------------------------
+-- O OFX traz <FITID>, um id unico do banco por lancamento. O CSV nao traz
+-- nada. Duas regras de deduplicacao diferentes viram duas versoes da mesma
+-- regra, e a segunda para de acompanhar a primeira. Entao ha uma coluna so,
+-- `fingerprint`, calculada no TypeScript (lib/statement.ts):
+--
+--   com FITID:  'fitid:' || fit_id
+--   sem FITID:  'h:' || data || '|' || valor || '|' || descricao || '|#' || n
+--
+-- O `#n` e o que impede um falso positivo caro: dois cafes de R$ 8,00 no mesmo
+-- dia e na mesma cafeteria sao dois fatos, nao um repetido. O n e a ordem da
+-- linha DENTRO do arquivo entre as linhas identicas, entao reimportar o mesmo
+-- arquivo devolve exatamente os mesmos fingerprints (e nao duplica), enquanto
+-- dois cafes de verdade recebem #1 e #2 e entram os dois.
+--
+-- POR QUE bill_notifications EXISTE
+-- ----------------------------------
+-- Sem um registro do que ja foi avisado, o cron que roda de manha manda "o
+-- aluguel vence em 3 dias" TODO dia ate o aluguel ser pago. Tres notificacoes
+-- da mesma conta e o usuario desliga o aviso -- e ai o produto perde a unica
+-- funcionalidade desta secao. A chave unica inclui reference_date de proposito:
+-- mudar a data de vencimento e um fato novo e merece um aviso novo.
+--
+-- COMO RODAR
+-- ----------
+--   psql "$URL" -v ON_ERROR_STOP=1 -f database/migrations/009_statements_alerts_receipts.sql
+--
+-- Aplicar depois de 001 -> ... -> 008. O preflight aborta a transacao inteira
+-- listando tudo que falta de uma vez.
+--
+-- A SECAO 9 (bucket de comprovantes) SO RODA NUM SUPABASE de verdade: ela
+-- depende do schema `storage`, que num Postgres cru nao existe. Num Postgres
+-- cru ela e pulada com um NOTICE, e o resto do arquivo aplica normalmente --
+-- e por isso que o CI consegue provar as outras oito secoes.
+-- =====================================================
+
+BEGIN;
+
+-- =====================================================
+-- SECAO 0: O ARQUIVO CABE NESTE BANCO?
+-- =====================================================
+DO $$
+DECLARE
+  v_faltando TEXT;
+BEGIN
+  SELECT string_agg(DISTINCT msg, E'\n' ORDER BY msg) INTO v_faltando
+  FROM (
+    SELECT CASE
+             WHEN to_regclass('public.' || quote_ident(r.tabela)) IS NULL
+               THEN format('  - tabela public.%s nao existe', r.tabela)
+             WHEN NOT EXISTS (
+                    SELECT 1 FROM pg_attribute a
+                    WHERE a.attrelid = to_regclass('public.' || quote_ident(r.tabela))
+                      AND a.attname = r.coluna
+                      AND a.attnum > 0
+                      AND NOT a.attisdropped)
+               THEN format('  - coluna public.%s.%s nao existe', r.tabela, r.coluna)
+           END AS msg
+    FROM (VALUES
+      ('financial_accounts', 'user_id'),
+      ('financial_transactions', 'amount'),
+      ('financial_transactions', 'transaction_date'),
+      ('financial_transactions', 'account_id'),
+      -- do 005: o aviso de vencimento le a agenda de contas previstas
+      ('scheduled_transactions', 'due_date'),
+      ('scheduled_transactions', 'status'),
+      ('recurring_rules', 'transaction_type'),
+      -- do 007: o comprovante tambem serve para o acerto de grupo
+      ('group_settlements', 'id'),
+      ('schema_migrations', 'version')
+    ) AS r(tabela, coluna)
+
+    UNION ALL
+    SELECT format('  - funcao public.%s nao existe', f.nome)
+    FROM (VALUES
+      ('update_updated_at_column()'),
+      ('is_group_member(uuid)')
+    ) AS f(nome)
+    WHERE to_regprocedure('public.' || f.nome) IS NULL
+
+    UNION ALL
+    SELECT format('  - role %s nao existe', r.rolname)
+    FROM (VALUES ('anon'), ('authenticated')) AS r(rolname)
+    WHERE NOT EXISTS (SELECT 1 FROM pg_roles p WHERE p.rolname = r.rolname)
+  ) AS checks
+  WHERE msg IS NOT NULL;
+
+  IF v_faltando IS NOT NULL THEN
+    RAISE EXCEPTION E'009 nao pode ser aplicado neste banco. Faltando:\n%\n\nRode 001 -> 002 -> 003 -> 004 -> 005 -> 006 -> 007 -> 008 antes.', v_faltando;
+  END IF;
+END $$;
+
+-- =====================================================
+-- SECAO 1: statement_imports  (o arquivo enviado)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS public.statement_imports (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    -- NOT NULL de proposito: um extrato sem conta nao pode ser conciliado nem
+    -- deduplicado (o fingerprint e unico POR CONTA). "Importar e escolher a
+    -- conta depois" produziria linhas que nao casam com nada.
+    account_id uuid NOT NULL,
+    file_name text NOT NULL,
+    file_format text NOT NULL,
+    -- periodo coberto pelo arquivo, lido do proprio conteudo. Serve para a tela
+    -- dizer "este extrato vai de 01/09 a 30/09" antes de o usuario confirmar --
+    -- e para ele perceber que mandou o arquivo do mes errado.
+    period_start date,
+    period_end date,
+    entry_count integer NOT NULL DEFAULT 0,
+    -- quantas linhas o arquivo tinha a mais do que entraram: o que foi
+    -- descartado por ja existir. Sem este numero o usuario manda o arquivo de
+    -- novo, ve "0 lancamentos novos" e acha que o import quebrou.
+    duplicate_count integer NOT NULL DEFAULT 0,
+    status text NOT NULL DEFAULT 'open',
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT statement_imports_pkey PRIMARY KEY (id),
+    CONSTRAINT statement_imports_format_check CHECK (file_format IN ('ofx', 'csv')),
+    CONSTRAINT statement_imports_status_check CHECK (status IN ('open', 'done', 'discarded')),
+    CONSTRAINT statement_imports_counts_check CHECK (entry_count >= 0 AND duplicate_count >= 0),
+    -- periodo invertido e sinal de parser quebrado, nao de extrato estranho
+    CONSTRAINT statement_imports_period_check CHECK (
+      period_start IS NULL OR period_end IS NULL OR period_start <= period_end
+    ),
+    CONSTRAINT statement_imports_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE,
+    CONSTRAINT statement_imports_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.financial_accounts(id) ON DELETE CASCADE
+);
+
+COMMENT ON TABLE public.statement_imports IS
+  'Um arquivo de extrato enviado. As linhas ficam em statement_entries; nada entra direto em financial_transactions.';
+COMMENT ON COLUMN public.statement_imports.duplicate_count IS
+  'Linhas do arquivo que ja existiam (mesmo fingerprint). Sem este numero, reimportar parece um import quebrado.';
+
+CREATE INDEX IF NOT EXISTS idx_statement_imports_user ON public.statement_imports(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_statement_imports_account ON public.statement_imports(account_id);
+
+-- =====================================================
+-- SECAO 2: statement_entries  (cada linha do arquivo)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS public.statement_entries (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    import_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    -- repetida do import de proposito: o indice unico da deduplicacao e por
+    -- CONTA e precisa alcancar linhas de arquivos diferentes. Buscar a conta
+    -- pelo import dentro de um indice nao e possivel.
+    account_id uuid NOT NULL,
+    fit_id text,
+    fingerprint text NOT NULL,
+    posted_at date NOT NULL,
+    -- SINAL PRESERVADO. Ver o cabecalho: e daqui que sai o transaction_type.
+    amount numeric(15,2) NOT NULL,
+    description text NOT NULL,
+    memo text,
+    status text NOT NULL DEFAULT 'pending',
+    -- o lancamento que nasceu desta linha ('imported') ou o lancamento que ja
+    -- existia e a conciliacao encontrou ('linked'). Nos dois casos a linha para
+    -- de ser oferecida.
+    transaction_id uuid,
+    created_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT statement_entries_pkey PRIMARY KEY (id),
+    -- lancamento de R$ 0,00 nao existe em extrato: e linha de cabecalho ou de
+    -- saldo que o parser leu errado.
+    CONSTRAINT statement_entries_amount_check CHECK (amount <> 0),
+    CONSTRAINT statement_entries_status_check CHECK (status IN ('pending', 'imported', 'linked', 'ignored')),
+    -- Paridade status <-> transaction_id, no mesmo espirito do
+    -- scheduled_transactions_paid_check do 005: 'imported' e 'linked' EXIGEM um
+    -- lancamento, 'pending' e 'ignored' nao podem ter nenhum. Sem isto, uma
+    -- linha marcada como importada sem transacao ficaria invisivel para sempre
+    -- sem nunca ter virado dinheiro nenhum.
+    CONSTRAINT statement_entries_link_check CHECK (
+      (status IN ('imported', 'linked') AND transaction_id IS NOT NULL)
+      OR (status IN ('pending', 'ignored') AND transaction_id IS NULL)
+    ),
+    CONSTRAINT statement_entries_import_id_fkey FOREIGN KEY (import_id) REFERENCES public.statement_imports(id) ON DELETE CASCADE,
+    CONSTRAINT statement_entries_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE,
+    CONSTRAINT statement_entries_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.financial_accounts(id) ON DELETE CASCADE,
+    -- SET NULL e nao CASCADE: apagar o lancamento nao pode apagar o registro de
+    -- que o banco mandou aquela linha. Mas ai a paridade acima seria violada,
+    -- entao a trigger da SECAO 3 devolve a linha para 'pending' -- e ela volta
+    -- a ser oferecida, que e exatamente o certo.
+    CONSTRAINT statement_entries_transaction_id_fkey FOREIGN KEY (transaction_id) REFERENCES public.financial_transactions(id) ON DELETE SET NULL
+);
+
+COMMENT ON TABLE public.statement_entries IS
+  'Linhas do extrato em area de espera. amount guarda o SINAL do banco: negativo = saida.';
+COMMENT ON COLUMN public.statement_entries.fingerprint IS
+  'Chave de deduplicacao, calculada em lib/statement.ts. fitid:<id> no OFX, hash da linha + ordinal no CSV.';
+
+-- A deduplicacao inteira mora neste indice. Reimportar o mesmo arquivo nao
+-- duplica nada porque o ON CONFLICT DO NOTHING da rota bate exatamente aqui.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_statement_entries_fingerprint
+  ON public.statement_entries(account_id, fingerprint);
+
+CREATE INDEX IF NOT EXISTS idx_statement_entries_import ON public.statement_entries(import_id, posted_at);
+CREATE INDEX IF NOT EXISTS idx_statement_entries_pending
+  ON public.statement_entries(user_id, posted_at DESC) WHERE status = 'pending';
+
+-- =====================================================
+-- SECAO 3: a linha volta a ser oferecida se o lancamento sumir
+-- =====================================================
+-- Sem esta funcao, apagar um lancamento que nasceu de um import violaria
+-- statement_entries_link_check e o DELETE falharia com um erro de constraint na
+-- cara do usuario -- ou, se o check nao existisse, deixaria uma linha
+-- 'imported' apontando para o nada, invisivel para sempre.
+--
+-- SECURITY DEFINER e SET search_path pelo mesmo motivo do 003 e do 004: o
+-- trigger roda como `authenticated`, que nao tem privilegio direto de UPDATE
+-- garantido em toda tabela, e sem o search_path fixo um schema no caminho do
+-- usuario poderia sequestrar o nome.
+CREATE OR REPLACE FUNCTION public.statement_entry_release_on_transaction_delete()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  UPDATE public.statement_entries
+     SET status = 'pending',
+         transaction_id = NULL
+   WHERE transaction_id = OLD.id;
+  RETURN OLD;
+END;
+$$;
+
+COMMENT ON FUNCTION public.statement_entry_release_on_transaction_delete() IS
+  'Apagou o lancamento? A linha do extrato volta para pending e e oferecida de novo.';
+
+-- BEFORE DELETE e nao AFTER: o ON DELETE SET NULL da FK roda junto com o
+-- DELETE, e um AFTER encontraria transaction_id ja NULL -- o UPDATE nao acharia
+-- nenhuma linha e a entrada ficaria 'imported' com transaction_id NULL, que e
+-- justamente o estado que o check proibe.
+DROP TRIGGER IF EXISTS release_statement_entry ON public.financial_transactions;
+CREATE TRIGGER release_statement_entry
+  BEFORE DELETE ON public.financial_transactions
+  FOR EACH ROW EXECUTE FUNCTION public.statement_entry_release_on_transaction_delete();
+
+DROP TRIGGER IF EXISTS set_statement_imports_updated_at ON public.statement_imports;
+CREATE TRIGGER set_statement_imports_updated_at
+  BEFORE UPDATE ON public.statement_imports
+  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+-- =====================================================
+-- SECAO 4: notification_preferences  (avisar quando?)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS public.notification_preferences (
+    user_id uuid NOT NULL,
+    -- 3 dias e o default porque e o prazo que ainda da para agir: ver a conta
+    -- no dia do vencimento nao evita a multa se o banco ja fechou.
+    days_before integer NOT NULL DEFAULT 3,
+    notify_due_soon boolean NOT NULL DEFAULT true,
+    notify_overdue boolean NOT NULL DEFAULT true,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT notification_preferences_pkey PRIMARY KEY (user_id),
+    -- 0 = so no dia. Acima de 30 o aviso deixa de ser aviso e vira ruido de
+    -- fundo; e o limite tambem protege a varredura do cron.
+    CONSTRAINT notification_preferences_days_check CHECK (days_before BETWEEN 0 AND 30),
+    CONSTRAINT notification_preferences_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE
+);
+
+COMMENT ON TABLE public.notification_preferences IS
+  'Quantos dias antes avisar. Linha ausente = o default de 3 dias, aplicado por COALESCE em bill_alerts.';
+
+DROP TRIGGER IF EXISTS set_notification_preferences_updated_at ON public.notification_preferences;
+CREATE TRIGGER set_notification_preferences_updated_at
+  BEFORE UPDATE ON public.notification_preferences
+  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+-- =====================================================
+-- SECAO 5: push_subscriptions  (os aparelhos)
+-- =====================================================
+-- Um usuario tem varios: o celular, o notebook, o tablet. Cada um e um
+-- endpoint distinto do servico de push do navegador.
+CREATE TABLE IF NOT EXISTS public.push_subscriptions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    endpoint text NOT NULL,
+    -- as duas chaves da assinatura. Sem elas nao da para cifrar o payload, e o
+    -- servico de push recusa a entrega.
+    p256dh text NOT NULL,
+    auth text NOT NULL,
+    user_agent text,
+    last_success_at timestamp with time zone,
+    -- o navegador devolve 404/410 quando o usuario desinstalou o PWA ou limpou
+    -- os dados. Contar a falha permite parar de tentar em vez de acumular
+    -- endpoints mortos para sempre.
+    failure_count integer NOT NULL DEFAULT 0,
+    created_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT push_subscriptions_pkey PRIMARY KEY (id),
+    -- UNIQUE no endpoint sozinho, sem o user_id: o mesmo navegador reassinando
+    -- gera o mesmo endpoint, e duas linhas iguais mandariam a notificacao em
+    -- duplicata para o mesmo aparelho.
+    CONSTRAINT push_subscriptions_endpoint_key UNIQUE (endpoint),
+    CONSTRAINT push_subscriptions_failure_check CHECK (failure_count >= 0),
+    CONSTRAINT push_subscriptions_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE
+);
+
+COMMENT ON TABLE public.push_subscriptions IS
+  'Aparelhos que aceitaram push. endpoint e UNIQUE global: o mesmo navegador reassinando nao vira duas linhas.';
+
+CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON public.push_subscriptions(user_id);
+
+-- =====================================================
+-- SECAO 6: bill_notifications  (o que ja foi avisado)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS public.bill_notifications (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    scheduled_transaction_id uuid NOT NULL,
+    kind text NOT NULL,
+    -- o due_date que originou o aviso. Faz parte da chave unica: adiar a conta
+    -- e um fato novo e merece um aviso novo. Ver o cabecalho.
+    reference_date date NOT NULL,
+    title text NOT NULL,
+    body text NOT NULL,
+    -- entregue por push, ou so no sino do app? 'inapp' e o que acontece quando
+    -- o usuario nao assinou push, ou quando o VAPID nao esta configurado no
+    -- servidor -- e continua sendo um aviso util.
+    channel text NOT NULL DEFAULT 'inapp',
+    read_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT bill_notifications_pkey PRIMARY KEY (id),
+    CONSTRAINT bill_notifications_kind_check CHECK (kind IN ('due_soon', 'overdue')),
+    CONSTRAINT bill_notifications_channel_check CHECK (channel IN ('inapp', 'push')),
+    -- ESTA e a linha que impede o aplicativo de virar spam. Ver o cabecalho.
+    CONSTRAINT bill_notifications_unique UNIQUE (scheduled_transaction_id, kind, reference_date),
+    CONSTRAINT bill_notifications_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE,
+    CONSTRAINT bill_notifications_scheduled_id_fkey FOREIGN KEY (scheduled_transaction_id) REFERENCES public.scheduled_transactions(id) ON DELETE CASCADE
+);
+
+COMMENT ON TABLE public.bill_notifications IS
+  'Avisos de vencimento ja emitidos. A UNIQUE (conta, tipo, data) e o que impede repetir o mesmo aviso todo dia.';
+
+CREATE INDEX IF NOT EXISTS idx_bill_notifications_user
+  ON public.bill_notifications(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_bill_notifications_unread
+  ON public.bill_notifications(user_id) WHERE read_at IS NULL;
+
+-- =====================================================
+-- SECAO 7: bill_alerts  (o que vence, e ja foi avisado?)
+-- =====================================================
+-- Uma definicao so, usada por dois consumidores: o cron, que filtra
+-- `already_notified = false` e manda; e o sino do app, que mostra tudo. Duas
+-- consultas separadas sairiam de sincronia na primeira vez que alguem mudasse
+-- a janela de dias, e o usuario veria no sino uma conta que o push nunca
+-- mandou (ou o contrario).
+--
+-- `status = 'pending'` e o filtro central: conta paga ou cancelada nao gera
+-- aviso. O CHECK do 005 garante que 'paid' tem paid_date e transaction_id,
+-- entao nao ha estado ambiguo aqui.
+--
+-- COALESCE(p.days_before, 3) e o que faz a view funcionar para quem nunca
+-- abriu a tela de preferencias -- que e todo mundo, no dia em que isto sobe.
+-- Um INNER JOIN em notification_preferences daria uma view vazia e o cron
+-- silenciosamente nao avisaria ninguem, sem erro nenhum.
+CREATE OR REPLACE VIEW public.bill_alerts AS
+  SELECT
+    s.id AS scheduled_transaction_id,
+    s.user_id,
+    s.group_id,
+    s.account_id,
+    s.description,
+    s.amount,
+    s.due_date,
+    (s.due_date - CURRENT_DATE) AS days_until,
+    CASE WHEN s.due_date < CURRENT_DATE THEN 'overdue' ELSE 'due_soon' END AS kind,
+    COALESCE(p.days_before, 3) AS days_before,
+    -- o tipo mora na regra, nao na ocorrencia; sem regra e despesa. Mesmo
+    -- COALESCE de planned_vs_actual no 008 e da rota de baixa -- as tres
+    -- precisam concordar ou uma conta prevista de receita vira despesa.
+    COALESCE(r.transaction_type, 'expense') AS transaction_type,
+    EXISTS (
+      SELECT 1 FROM public.bill_notifications n
+      WHERE n.scheduled_transaction_id = s.id
+        AND n.kind = (CASE WHEN s.due_date < CURRENT_DATE THEN 'overdue' ELSE 'due_soon' END)
+        AND n.reference_date = s.due_date
+    ) AS already_notified
+  FROM public.scheduled_transactions s
+  LEFT JOIN public.notification_preferences p ON p.user_id = s.user_id
+  LEFT JOIN public.recurring_rules r ON r.id = s.recurring_rule_id
+  WHERE s.status = 'pending'
+    -- vencida entra sempre que o usuario quiser ver vencidas; a vencer, so
+    -- dentro da janela dele.
+    AND (
+      (s.due_date < CURRENT_DATE AND COALESCE(p.notify_overdue, true))
+      OR (s.due_date >= CURRENT_DATE
+          AND COALESCE(p.notify_due_soon, true)
+          AND s.due_date - CURRENT_DATE <= COALESCE(p.days_before, 3))
+    );
+
+COMMENT ON VIEW public.bill_alerts IS
+  'Contas que merecem aviso hoje, com already_notified. Uma definicao para o cron e para o sino do app.';
+
+-- =====================================================
+-- SECAO 8: receipts  (o comprovante)
+-- =====================================================
+-- financial_transactions.attachment_url ja existe no 001 e e um texto livre --
+-- qualquer URL, sem dono, sem tamanho, sem tipo. Ela continua onde esta e NAO e
+-- alterada por este arquivo: mexer nela migraria dados de producao as cegas.
+-- `receipts` e o caminho novo, com arquivo de verdade no Storage, e aceita mais
+-- de um comprovante por lancamento (a nota fiscal E o boleto).
+CREATE TABLE IF NOT EXISTS public.receipts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    -- exatamente UM dos tres. Um comprovante solto nao tem a que se referir, e
+    -- um comprovante ligado a dois lugares apareceria duas vezes no total.
+    transaction_id uuid,
+    scheduled_transaction_id uuid,
+    settlement_id uuid,
+    -- caminho dentro do bucket 'receipts', sempre '<user_id>/<uuid>.<ext>'. A
+    -- policy do Storage (SECAO 9) le a primeira pasta do caminho para decidir
+    -- o dono, entao o prefixo nao e cosmetico.
+    storage_path text NOT NULL,
+    file_name text NOT NULL,
+    mime_type text NOT NULL,
+    byte_size integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT receipts_pkey PRIMARY KEY (id),
+    CONSTRAINT receipts_storage_path_key UNIQUE (storage_path),
+    CONSTRAINT receipts_target_check CHECK (
+      num_nonnulls(transaction_id, scheduled_transaction_id, settlement_id) = 1
+    ),
+    -- 10 MB. Foto de boleto pelo celular da 2-4 MB; acima de 10 e video ou PDF
+    -- digitalizado em 600dpi, e o plano gratuito do Storage some em uma semana.
+    CONSTRAINT receipts_size_check CHECK (byte_size > 0 AND byte_size <= 10485760),
+    CONSTRAINT receipts_mime_check CHECK (
+      mime_type IN ('image/jpeg', 'image/png', 'image/webp', 'image/heic', 'application/pdf')
+    ),
+    CONSTRAINT receipts_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE,
+    CONSTRAINT receipts_transaction_id_fkey FOREIGN KEY (transaction_id) REFERENCES public.financial_transactions(id) ON DELETE CASCADE,
+    CONSTRAINT receipts_scheduled_id_fkey FOREIGN KEY (scheduled_transaction_id) REFERENCES public.scheduled_transactions(id) ON DELETE CASCADE,
+    CONSTRAINT receipts_settlement_id_fkey FOREIGN KEY (settlement_id) REFERENCES public.group_settlements(id) ON DELETE CASCADE
+);
+
+COMMENT ON TABLE public.receipts IS
+  'Comprovante no Storage. O arquivo em si NAO e apagado pelo CASCADE -- ver a nota da SECAO 9.';
+COMMENT ON COLUMN public.receipts.storage_path IS
+  'Sempre <user_id>/<uuid>.<ext>: a policy do Storage decide o dono pela primeira pasta do caminho.';
+
+CREATE INDEX IF NOT EXISTS idx_receipts_transaction ON public.receipts(transaction_id) WHERE transaction_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_receipts_scheduled ON public.receipts(scheduled_transaction_id) WHERE scheduled_transaction_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_receipts_settlement ON public.receipts(settlement_id) WHERE settlement_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_receipts_user ON public.receipts(user_id, created_at DESC);
+
+-- =====================================================
+-- SECAO 9: RLS
+-- =====================================================
+-- Mesmo desenho do 002, 005, 006, 007 e 008: nega por padrao, libera o dono e
+-- - nas linhas de grupo - os membros. Sem policy para anon: a chave anon vai no
+-- bundle JS publico.
+ALTER TABLE public.statement_imports ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.statement_entries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.notification_preferences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.push_subscriptions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.bill_notifications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.receipts ENABLE ROW LEVEL SECURITY;
+
+-- Extrato e sempre pessoal, mesmo quando a conta e usada para gastos de grupo:
+-- o arquivo do banco traz TUDO que passou na conta, inclusive o que nao tem
+-- nada a ver com a viagem. Nenhuma policy de grupo aqui, de proposito.
+DROP POLICY IF EXISTS statement_imports_all ON public.statement_imports;
+CREATE POLICY statement_imports_all ON public.statement_imports
+  FOR ALL TO authenticated
+  USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS statement_entries_all ON public.statement_entries;
+CREATE POLICY statement_entries_all ON public.statement_entries
+  FOR ALL TO authenticated
+  USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS notification_preferences_all ON public.notification_preferences;
+CREATE POLICY notification_preferences_all ON public.notification_preferences
+  FOR ALL TO authenticated
+  USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS push_subscriptions_all ON public.push_subscriptions;
+CREATE POLICY push_subscriptions_all ON public.push_subscriptions
+  FOR ALL TO authenticated
+  USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+-- O usuario le e marca como lido; quem CRIA o aviso e o cron, com a
+-- service_role, que passa por cima de RLS. Sem policy de INSERT para
+-- authenticated de proposito: nada no navegador deveria poder fabricar um
+-- aviso de vencimento.
+DROP POLICY IF EXISTS bill_notifications_select ON public.bill_notifications;
+CREATE POLICY bill_notifications_select ON public.bill_notifications
+  FOR SELECT TO authenticated USING (user_id = auth.uid());
+
+DROP POLICY IF EXISTS bill_notifications_update ON public.bill_notifications;
+CREATE POLICY bill_notifications_update ON public.bill_notifications
+  FOR UPDATE TO authenticated
+  USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS bill_notifications_delete ON public.bill_notifications;
+CREATE POLICY bill_notifications_delete ON public.bill_notifications
+  FOR DELETE TO authenticated USING (user_id = auth.uid());
+
+-- O comprovante do acerto de grupo o grupo inteiro precisa ver: e a prova de
+-- que o pagamento aconteceu, e foi por isso que o acerto existiu no 007. Os
+-- outros dois alvos sao pessoais.
+DROP POLICY IF EXISTS receipts_select ON public.receipts;
+CREATE POLICY receipts_select ON public.receipts
+  FOR SELECT TO authenticated
+  USING (
+    user_id = auth.uid()
+    OR (settlement_id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM public.group_settlements gs
+          WHERE gs.id = receipts.settlement_id
+            AND public.is_group_member(gs.group_id)
+        ))
+  );
+
+DROP POLICY IF EXISTS receipts_insert ON public.receipts;
+CREATE POLICY receipts_insert ON public.receipts
+  FOR INSERT TO authenticated WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS receipts_delete ON public.receipts;
+CREATE POLICY receipts_delete ON public.receipts
+  FOR DELETE TO authenticated USING (user_id = auth.uid());
+
+-- =====================================================
+-- SECAO 10: GRANTS
+-- =====================================================
+-- O 002 rodou GRANT ... ON ALL TABLES antes destes objetos existirem, e ALL
+-- TABLES nao alcanca o futuro.
+REVOKE ALL ON public.statement_imports FROM anon;
+REVOKE ALL ON public.statement_entries FROM anon;
+REVOKE ALL ON public.notification_preferences FROM anon;
+REVOKE ALL ON public.push_subscriptions FROM anon;
+REVOKE ALL ON public.bill_notifications FROM anon;
+REVOKE ALL ON public.receipts FROM anon;
+REVOKE ALL ON public.bill_alerts FROM anon;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.statement_imports TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.statement_entries TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.notification_preferences TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.push_subscriptions TO authenticated;
+GRANT SELECT, UPDATE, DELETE ON public.bill_notifications TO authenticated;
+GRANT SELECT, INSERT, DELETE ON public.receipts TO authenticated;
+GRANT SELECT ON public.bill_alerts TO authenticated;
+
+-- Sem security_invoker a view roda com o privilegio do DONO e a RLS das tabelas
+-- base nao vale: bill_alerts devolveria as contas a vencer de TODOS os usuarios
+-- do sistema -- descricao, valor e data -- para qualquer um logado. Mesma
+-- pegadinha do 005, 006, 007 e 008, e o teste tem controle negativo para ela.
+ALTER VIEW public.bill_alerts SET (security_invoker = true);
+
+-- =====================================================
+-- SECAO 11: bucket de comprovantes  (SO NO SUPABASE)
+-- =====================================================
+-- Num Postgres cru o schema `storage` nao existe e este bloco e pulado inteiro
+-- com um NOTICE -- e por isso que o CI consegue provar as dez secoes acima.
+--
+-- O bucket e PRIVADO. Publico seria uma URL adivinhavel com a foto do boleto de
+-- alguem: nome, CPF parcial, valor e codigo de barras. A leitura sai por URL
+-- assinada, gerada pela rota com o usuario ja autenticado.
+--
+-- A policy decide o dono por (storage.foldername(name))[1] -- a primeira pasta
+-- do caminho. E por isso que storage_path e sempre '<user_id>/<uuid>.<ext>'.
+--
+-- O ARQUIVO NAO E APAGADO PELO CASCADE: apagar o lancamento apaga a linha de
+-- `receipts`, mas o objeto continua no bucket ocupando espaco. Isso e
+-- deliberado -- um trigger que apaga arquivo e irreversivel e roda fora da
+-- transacao. A rota DELETE /api/receipts/[id] apaga os dois na ordem certa; o
+-- que sobra e o orfao de quem apagou o lancamento direto pela tela de
+-- lancamentos, e isso fica como divida anotada aqui.
+DO $$
+BEGIN
+  IF to_regclass('storage.objects') IS NULL THEN
+    RAISE NOTICE '009: schema storage ausente (Postgres cru) - bucket de comprovantes PULADO. Num Supabase esta secao roda.';
+    RETURN;
+  END IF;
+
+  INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+  VALUES ('receipts', 'receipts', false, 10485760,
+          ARRAY['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'application/pdf'])
+  ON CONFLICT (id) DO UPDATE
+    SET public = false,
+        file_size_limit = EXCLUDED.file_size_limit,
+        allowed_mime_types = EXCLUDED.allowed_mime_types;
+
+  EXECUTE $pol$ DROP POLICY IF EXISTS receipts_objects_select ON storage.objects $pol$;
+  EXECUTE $pol$
+    CREATE POLICY receipts_objects_select ON storage.objects
+      FOR SELECT TO authenticated
+      USING (bucket_id = 'receipts'
+             AND (storage.foldername(name))[1] = auth.uid()::text)
+  $pol$;
+
+  EXECUTE $pol$ DROP POLICY IF EXISTS receipts_objects_insert ON storage.objects $pol$;
+  EXECUTE $pol$
+    CREATE POLICY receipts_objects_insert ON storage.objects
+      FOR INSERT TO authenticated
+      WITH CHECK (bucket_id = 'receipts'
+                  AND (storage.foldername(name))[1] = auth.uid()::text)
+  $pol$;
+
+  EXECUTE $pol$ DROP POLICY IF EXISTS receipts_objects_delete ON storage.objects $pol$;
+  EXECUTE $pol$
+    CREATE POLICY receipts_objects_delete ON storage.objects
+      FOR DELETE TO authenticated
+      USING (bucket_id = 'receipts'
+             AND (storage.foldername(name))[1] = auth.uid()::text)
+  $pol$;
+
+  RAISE NOTICE '009: bucket receipts criado/atualizado (privado) com as tres policies.';
+END $$;
+
+-- =====================================================
+-- SECAO 12: registro
+-- =====================================================
+INSERT INTO public.schema_migrations (version, name, description, executed_at)
+VALUES ('009', '009_statements_alerts_receipts',
+        'Importacao de extrato com conciliacao, avisos de vencimento e comprovantes - HMO-137 Fase 5', now())
+ON CONFLICT (version) DO NOTHING;
+
+COMMIT;
+
+
+-- ---------------------------------------------------------------------------
+-- 10. 010_user_connections.sql
 -- ---------------------------------------------------------------------------
 -- Cada migration traz o proprio BEGIN/COMMIT: se uma falhar, ela volta atras
 -- inteira e as seguintes nem chegam a rodar.

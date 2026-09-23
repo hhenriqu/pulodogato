@@ -19,7 +19,13 @@ import {
   Menu,
   X,
   Wallet,
+  CreditCard,
+  Landmark,
+  CalendarClock,
+  PiggyBank,
   Target,
+  Bell,
+  FileUp,
   Lock,
   Crown,
   Zap,
@@ -51,6 +57,45 @@ const navigation: NavigationItem[] = [
     name: "Finanças Pessoais",
     href: "/dashboard/personal-finance",
     icon: Wallet,
+    requiredFeature: "personal_finance",
+  },
+  {
+    // Sem `requiredFeature` de proposito: cadastrar a conta e o passo ZERO.
+    // Toda tela que pede conta (lancamento, orcamento, fatura, extrato, meta)
+    // fica inutil antes disto, e travar o cadastro atras de um plano deixaria o
+    // usuario preso numa tela que so sabe dizer "selecione uma conta".
+    name: "Contas e Cartões",
+    href: "/dashboard/accounts",
+    icon: CreditCard,
+  },
+  {
+    name: "Contracheque",
+    href: "/dashboard/payroll",
+    icon: Landmark,
+    requiredFeature: "personal_finance",
+  },
+  {
+    name: "Contas Previstas",
+    href: "/dashboard/bills",
+    icon: CalendarClock,
+    requiredFeature: "personal_finance",
+  },
+  {
+    name: "Avisos",
+    href: "/dashboard/notifications",
+    icon: Bell,
+    requiredFeature: "personal_finance",
+  },
+  {
+    name: "Orçamento",
+    href: "/dashboard/budgets",
+    icon: PiggyBank,
+    requiredFeature: "personal_finance",
+  },
+  {
+    name: "Importar Extrato",
+    href: "/dashboard/statements",
+    icon: FileUp,
     requiredFeature: "personal_finance",
   },
   {

@@ -14,13 +14,23 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
     }
 
-    // Buscar contas do usuário
-    const { data: accounts, error: fetchError } = await supabase
+    // A tela de gerenciamento precisa ver o que foi arquivado para poder
+    // reativar; todo o resto do app (seletor de conta em lancamento, orcamento,
+    // extrato) so quer as ativas, que segue sendo o padrao.
+    const incluirArquivadas =
+      request.nextUrl.searchParams.get("include_inactive") === "1";
+
+    let query = supabase
       .from("financial_accounts")
       .select("*")
-      .eq("user_id", user.id)
-      .eq("is_active", true)
-      .order("created_at", { ascending: false });
+      .eq("user_id", user.id);
+
+    if (!incluirArquivadas) query = query.eq("is_active", true);
+
+    const { data: accounts, error: fetchError } = await query.order(
+      "created_at",
+      { ascending: false }
+    );
 
     if (fetchError) {
       console.error("Error fetching accounts:", fetchError);
@@ -83,6 +93,9 @@ export async function POST(request: NextRequest) {
       credit_limit,
       color_hex = "#3B82F6",
       icon = "credit-card",
+      // Cartao de credito (migration 006): fechamento e vencimento da fatura.
+      closing_day,
+      due_day,
     } = body;
 
     // Validações
@@ -100,6 +113,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // O banco tem CHECK de 1 a 31 nos dois; validar aqui devolve uma mensagem
+    // em vez de um 500 com codigo 23514.
+    const dia = (valor: unknown) => (valor == null || valor === "" ? null : Number(valor));
+    const diaFechamento = dia(closing_day);
+    const diaVencimento = dia(due_day);
+
+    for (const [rotulo, valor] of [
+      ["fechamento", diaFechamento],
+      ["vencimento", diaVencimento],
+    ] as const) {
+      if (valor !== null && (!Number.isInteger(valor) || valor < 1 || valor > 31)) {
+        return NextResponse.json(
+          { error: `O dia de ${rotulo} deve estar entre 1 e 31` },
+          { status: 400 }
+        );
+      }
+    }
+
     // Criar conta
     const { data: account, error: createError } = await supabase
       .from("financial_accounts")
@@ -112,6 +143,8 @@ export async function POST(request: NextRequest) {
         credit_limit: credit_limit ? parseFloat(credit_limit) : null,
         color_hex,
         icon,
+        closing_day: diaFechamento,
+        due_day: diaVencimento,
       })
       .select()
       .single();

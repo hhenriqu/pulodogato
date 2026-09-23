@@ -5,12 +5,16 @@ name: db-verify
 # o repositorio perdeu a capacidade de reconstruir o banco -- que e exatamente o
 # problema que a HMO-117 existiu para resolver.
 
+# lib/recurrence.ts e scripts/test-recurrence.mjs entram nos paths porque a
+# agenda de contas previstas e metade SQL, metade aritmetica de data: o indice
+# unico do 005 so garante que a MESMA data nao duplica -- quem decide QUAL data
+# e o TypeScript. Testar os dois lados no mesmo job e o que fecha o buraco.
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-recurrence.mjs', 'scripts/test-settlement.mjs', 'scripts/test-reports.mjs', 'scripts/test-statement.mjs', 'scripts/resolve-aliases.mjs', 'scripts/tsconfig.reports-test.json', 'lib/recurrence.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/services/reports.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-recurrence.mjs', 'scripts/test-settlement.mjs', 'scripts/test-reports.mjs', 'scripts/test-statement.mjs', 'scripts/resolve-aliases.mjs', 'scripts/tsconfig.reports-test.json', 'lib/recurrence.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/services/reports.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -42,6 +46,17 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      # O `npm ci` e so pelo tsc: o teste de recorrencia compila
+      # lib/recurrence.ts com o TypeScript que ja e devDependency, em vez de
+      # trazer um runner de teste novo so para conferir aritmetica de data.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Instalar dependencias
+        run: npm ci
 
       # Tem que ser o 17: o ubuntu-latest traz o cliente 16, e o pg_dump se
       # recusa a falar com um servidor mais novo que ele.
@@ -81,16 +96,127 @@ jobs:
       - name: 003_fix_trigger_privileges
         run: $PSQL -f database/migrations/003_fix_trigger_privileges.sql
 
+      # O 004 fecha os triggers que sobraram do 003 (HMO-125). Ficou de fora
+      # deste job ate 2026-09-22, entao o CI validava uma cadeia que nao era a
+      # de producao.
+      - name: 004_fix_remaining_trigger_privileges
+        run: $PSQL -f database/migrations/004_fix_remaining_trigger_privileges.sql
+
+      - name: 005_recurring_and_scheduled
+        run: $PSQL -f database/migrations/005_recurring_and_scheduled.sql
+
+      # Aplicar duas vezes tem que ser inofensivo: o 005 e re-executavel de
+      # proposito, porque depois que ele entrar em producao o 001 regerado ja
+      # vai trazer as tabelas dele.
+      - name: 005 e idempotente
+        run: $PSQL -f database/migrations/005_recurring_and_scheduled.sql
+
       # O teste prova ausencia de vazamento. Uma tabela sem RLS e vazia passaria
       # nele, entao a cobertura e checada separadamente logo abaixo.
       - name: Teste de isolamento de RLS
         run: $PSQL -f database/tests/rls_isolation_test.sql
 
-      # O 004 fecha os triggers que o 003 nao alcancou. Ele ja esta aplicado em
-      # producao desde 2026-09-21, mas este job nunca o rodava: o banco de CI
-      # divergia do real justamente na correcao mais recente.
-      - name: 004_fix_remaining_trigger_privileges
-        run: $PSQL -f database/migrations/004_fix_remaining_trigger_privileges.sql
+      - name: 006_budgets_and_card_invoices
+        run: $PSQL -f database/migrations/006_budgets_and_card_invoices.sql
+
+      # Mesmo motivo do 005: depois que o 006 entrar em producao, o 001
+      # regerado ja vai trazer budgets e as duas views.
+      - name: 006 e idempotente
+        run: $PSQL -f database/migrations/006_budgets_and_card_invoices.sql
+
+      # Contas previstas: isolamento, a view security_invoker e as invariantes
+      # de dinheiro (paga sem transacao, ocorrencia duplicada).
+      - name: Teste das contas previstas
+        run: $PSQL -f database/tests/scheduled_rls_test.sql
+
+      # Orcamento e fatura: o consumo soma as transacoes certas, o teto pessoal
+      # nao se confunde com o do grupo, as duas views respeitam a RLS e a
+      # aritmetica da fatura acerta os meses curtos.
+      #
+      # A assercao que mais importa e a do SINAL: despesa e gravada NEGATIVA
+      # neste banco, entao um SUM(amount) cru na view de consumo devolveria -800
+      # para quem gastou 800 -- ratio negativo, status 'ok' para sempre, alerta
+      # de estouro que nunca dispara, e nenhum erro em lugar nenhum.
+      - name: Teste do orcamento e da fatura
+        run: $PSQL -f database/tests/budget_invoice_test.sql
+
+      - name: 007_group_settlements
+        run: $PSQL -f database/migrations/007_group_settlements.sql
+
+      # Mesmo motivo do 005 e do 006. O 007 tem um agravante proprio: ele faz
+      # um UPDATE de manutencao em financial_transactions (backfill de
+      # group_id), e rodar duas vezes nao pode mexer no saldo das contas na
+      # segunda passada. A propria migration aborta se mexer.
+      - name: 007 e idempotente
+        run: $PSQL -f database/migrations/007_group_settlements.sql
+
+      # Acerto de contas do grupo. A assercao que mais importa e o SINAL:
+      # registrar um pagamento tem que APROXIMAR o saldo de zero. O erro
+      # simetrico dobra a divida a cada Pix registrado e a tela mostraria a
+      # sugestao de transferencia CRESCENDO depois de cada pagamento -- sem
+      # erro nenhum em lugar nenhum.
+      #
+      # Cobre tambem os tres defeitos que o 007 conserta no schema herdado:
+      # o rateio que perdia centavo (grupo nunca fechava), o trigger que
+      # reescrevia divisao personalizada como igualitaria, e o trigger de saldo
+      # que cobrava o valor de novo a cada edicao de lancamento.
+      - name: Teste do acerto de contas do grupo
+        run: $PSQL -f database/tests/group_settlement_test.sql
+
+      - name: 008_goals_and_reports
+        run: $PSQL -f database/migrations/008_goals_and_reports.sql
+
+      # Mesmo motivo do 005, 006 e 007: depois que o 008 entrar em producao, o
+      # 001 regerado ja vai trazer as metas e as cinco views.
+      - name: 008 e idempotente
+        run: $PSQL -f database/migrations/008_goals_and_reports.sql
+
+      # Metas e relatorios. A assercao que mais importa e de novo o SINAL:
+      # despesa e gravada NEGATIVA, e um SUM cru nas views devolveria gasto
+      # negativo -- barra para baixo e um "voce economizou" onde houve gasto,
+      # sem erro em lugar nenhum. Mesma familia do erro que quase passou no 006.
+      #
+      # Cobre tambem as tres armadilhas proprias desta fase:
+      #   - 'transfer' nao e receita nem despesa no fluxo de caixa, mas CONTA
+      #     no patrimonio (o trigger de saldo mexe em qualquer tipo);
+      #   - previsto x realizado casa o mes pessoal, onde group_id e NULL dos
+      #     dois lados -- com `=` em vez de IS NOT DISTINCT FROM a tela diria
+      #     que o usuario nao realizou nada do que planejou;
+      #   - o progresso da meta sai dos APORTES, nunca do saldo da conta.
+      - name: Teste das metas e dos relatorios
+        run: $PSQL -f database/tests/goals_reports_test.sql
+
+      - name: 009_statements_alerts_receipts
+        run: $PSQL -f database/migrations/009_statements_alerts_receipts.sql
+
+      # Mesmo motivo do 005 ao 008. A SECAO 11 do 009 (bucket de comprovantes)
+      # se pula sozinha aqui: o schema `storage` so existe num Supabase de
+      # verdade. As outras dez secoes sao provadas normalmente.
+      - name: 009 e idempotente
+        run: $PSQL -f database/migrations/009_statements_alerts_receipts.sql
+
+      # Extrato, avisos e comprovantes. A assercao central e a DEDUPLICACAO,
+      # nas duas metades: reimportar o mesmo arquivo nao pode duplicar nada, e
+      # a mesma linha em OUTRA conta tem que entrar. Sem a primeira, cada
+      # reimportacao dobra o mes; sem a segunda, o extrato da poupanca perde
+      # lancamentos que existiram de verdade.
+      #
+      # Cobre tambem:
+      #   - o SINAL do extrato (debito importado continua NEGATIVO, e portanto
+      #     continua sendo despesa nas views do 008);
+      #   - a paridade status <-> transaction_id, que impede uma linha ficar
+      #     'imported' sem lancamento -- invisivel para sempre sem nunca ter
+      #     virado dinheiro;
+      #   - o COALESCE(3) da janela de aviso: um INNER JOIN em
+      #     notification_preferences daria view vazia e o cron sairia verde sem
+      #     avisar ninguem, que e a pior falha possivel por ser silenciosa;
+      #   - a UNIQUE que impede o mesmo aviso sair todo dia -- e o adiamento,
+      #     que merece aviso novo.
+      #
+      # Tem dois controles negativos: sem security_invoker o vazamento aparece,
+      # e sem o indice unico o duplicado entra.
+      - name: Teste do extrato, dos avisos e dos comprovantes
+        run: $PSQL -f database/tests/statements_alerts_test.sql
 
       - name: 010_user_connections
         run: $PSQL -f database/migrations/010_user_connections.sql
@@ -118,6 +244,66 @@ jobs:
       # quebradas no fim do arquivo e o defeito tem que voltar a acontecer.
       - name: Teste das conexoes entre usuarios
         run: $PSQL -f database/tests/user_connections_test.sql
+
+      # O 011 entrou na main pelo PR #20 e nunca foi exercitado aqui: o CI
+      # validava uma cadeia que parava no 010 enquanto producao ja tinha o 011.
+      - name: 011_detected_recurrences
+        run: $PSQL -f database/migrations/011_detected_recurrences.sql
+
+      # Mesmo motivo do 005 ao 010.
+      - name: 011 e idempotente
+        run: $PSQL -f database/migrations/011_detected_recurrences.sql
+
+      - name: 012_payroll
+        run: $PSQL -f database/migrations/012_payroll.sql
+
+      - name: 012 e idempotente
+        run: $PSQL -f database/migrations/012_payroll.sql
+
+      # Contracheque. A assercao central e QUAL valor vira lancamento: tem que
+      # ser o LIQUIDO e POSITIVO. Gravando o bruto, o fluxo de caixa do 008
+      # mostraria uma receita que nunca foi recebida; gravando o liquido com
+      # sinal trocado, as views do 008 leriam salario como DESPESA. Nos dois
+      # casos o saldo da conta continua fechando -- que e o que torna o erro
+      # invisivel.
+      #
+      # Cobre tambem: o teto do desconto (um IRRF com um zero a mais produz
+      # liquido negativo, que vira despesa nos relatorios), o UNIQUE que impede
+      # a renda do mes dobrar, e o security_invoker da view do liquido.
+      #
+      # Tem dois controles negativos: sem security_invoker a view vaza o
+      # salario alheio, e sem o trigger o liquido fica negativo.
+      - name: Teste do contracheque
+        run: $PSQL -f database/tests/payroll_test.sql
+
+      - name: Aritmetica de recorrencia
+        run: npm run test:recurrence
+
+      # O acerto e metade SQL, metade aritmetica: a view diz QUANTO cada um
+      # deve, o TypeScript decide QUEM paga quem. Em ponto flutuante o guloso
+      # fecha deixando residuo de fracao de centavo, que vira transferencia de
+      # R$ 0,00 na tela. lib/settlement.ts trabalha em centavos inteiros e isto
+      # prova que a conta fecha.
+      - name: Acerto de contas simplificado
+        run: npm run test:settlement
+
+      # Os numeros dos relatorios sao provados em SQL logo acima. O que resta
+      # para o TypeScript sao duas coisas que erram em silencio: a janela de
+      # meses (um off-by-one mostra 11 barras onde o usuario pediu 12, e
+      # ninguem conta as barras) e o escape do CSV (um ponto e virgula na
+      # descricao quebra a linha em duas colunas e desloca TODA a planilha --
+      # o usuario le valores na coluna errada sem nenhum sinal de erro).
+      - name: Janela de meses e CSV dos relatorios
+        run: npm run test:reports
+
+      # A leitura do extrato e 100% TypeScript e o SQL nao alcanca nada dela.
+      # Tres coisas erram em silencio aqui: parseFloat("1.234,56") = 1.234 (um
+      # extrato de mil reais entra como um e vinte), new Date() numa data OFX
+      # com fuso joga 1o de janeiro para 31 de dezembro, e a conciliacao sem a
+      # regra de um-para-um faz dois saques iguais casarem com o mesmo
+      # lancamento -- um deles some do app para sempre.
+      - name: Leitura de extrato OFX/CSV e conciliacao
+        run: npm run test:statement
 
       - name: Nenhuma tabela pode ficar sem RLS
         run: |

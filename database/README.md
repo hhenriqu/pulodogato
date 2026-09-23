@@ -10,32 +10,58 @@ database/
 │   ├── 002_rls_lockdown.sql         RLS, privilegios e RPCs  (OBRIGATORIO)
 │   ├── 003_fix_trigger_privileges.sql  SECURITY DEFINER nos triggers
 │   ├── 004_fix_remaining_trigger_privileges.sql  os triggers que sobraram
-│   └── 010_user_connections.sql     conexoes entre usuarios (a tabela que a tela ja chamava)
+│   ├── 005_recurring_and_scheduled.sql  gastos fixos + contas previstas
+│   ├── 006_budgets_and_card_invoices.sql  orcamento por categoria + fatura de cartao
+│   ├── 007_group_settlements.sql    acerto de contas do grupo (+ 3 correcoes de dinheiro)
+│   ├── 008_goals_and_reports.sql    metas com aportes + as views dos relatorios
+│   ├── 009_statements_alerts_receipts.sql  extrato OFX/CSV + avisos de vencimento + comprovantes
+│   ├── 010_user_connections.sql     conexoes entre usuarios (a tabela que a tela ja chamava)
+│   ├── 011_detected_recurrences.sql detector de assinaturas e gastos recorrentes
+│   └── 012_payroll.sql              contracheque: bruto, descontos em folha e o liquido
+├── maintenance/
+│   └── 007_auditoria_saldos.sql     SOMENTE LEITURA: mede a deriva de current_balance
 ├── seed/
 │   └── reference_data.sql           financial_services + transaction_categories
 ├── tests/
 │   ├── 00_supabase_shim.sql             auth.uid() e roles, so para Postgres cru
 │   ├── rls_isolation_test.sql           prova que um usuario nao le dados de outro
+│   ├── scheduled_rls_test.sql           agenda de contas: isolamento e invariantes
+│   ├── budget_invoice_test.sql          orcamento e fatura: o SINAL do valor gravado
+│   ├── group_settlement_test.sql        acerto: o sinal do pagamento e o rateio em centavos
+│   ├── goals_reports_test.sql           metas e relatorios: sinal, transfer e group_id NULL
+│   ├── statements_alerts_test.sql       extrato: deduplicacao por conta, sinal, janela de aviso
 │   ├── user_connections_test.sql        conexoes: consentimento, par unico e bloqueio duravel
+│   ├── payroll_test.sql                 contracheque: o lancamento e o LIQUIDO, e o teto do desconto
 │   ├── legacy_policy_drift_test.sql     policy antiga de producao tem que sumir
 │   └── legacy_function_drift_test.sql   funcao antiga de producao tem que sumir
 └── README.md
 ```
 
-Ordem: `001`, `002`, `003`, `004`, `010`. Rodar `001` sozinho deixa o banco aberto.
+Ordem: `001`, `002`, `003`, `004`, `005`, `006`, `007`, `008`, `009`, `010`,
+`011`, `012`. Rodar `001` sozinho deixa o banco aberto.
 
-> **O salto de `004` para `010` e proposital.** As migrations `005` a `009`
-> (contas previstas, orcamento, acerto de grupo, metas e extrato) vivem na pilha
-> de PRs da HMO-137, que ainda nao foi mergeada. O `010` nao depende de nenhuma
-> delas -- so de `profiles`, que vem do `001` --, entao ele entra sozinho sem
-> buraco de dependencia. Os numeros ficam reservados de proposito: renumerar o
-> `010` para `005` agora criaria colisao no dia em que a pilha entrar.
+> **A SECAO 11 do `009` so roda num Supabase de verdade.** Ela cria o bucket
+> privado `receipts` e depende do schema `storage`, que num Postgres cru nao
+> existe -- ali ela se pula sozinha com um `NOTICE` e o resto do arquivo aplica
+> normalmente. E por isso que o CI consegue provar as outras dez secoes num
+> `postgres:17` puro. **No Supabase ela roda**, e sem ela o anexo de comprovante
+> responde 503 dizendo exatamente isso.
 
-O `010` e **re-executavel de proposito** (`CREATE TABLE IF NOT EXISTS`, ENUM em
-bloco `DO`, `DROP POLICY IF EXISTS`): depois que ele entrar em producao, o `001`
-regenerado ja vai trazer `user_connections`, e a cadeia precisa continuar subindo
-do zero mesmo assim. Ele tem um preflight que aborta a transacao inteira listando
-**tudo** que falta de uma vez, em vez de um erro por vez.
+Do `005` em diante todas sao **re-executaveis de proposito**
+(`CREATE TABLE IF NOT EXISTS`, ENUM em bloco `DO`, `DROP POLICY IF EXISTS`):
+depois que entrarem em producao, o `001` regenerado ja vai trazer as tabelas
+delas, e a cadeia precisa continuar subindo do zero mesmo assim. Cada uma tem
+um preflight que aborta a transacao inteira listando **tudo** que falta de uma
+vez, em vez de um erro por vez.
+
+> **O `007` conserta um bug de dinheiro que esta em producao hoje.**
+> `update_account_balance()` somava `NEW.amount` no `UPDATE` sem estornar
+> `OLD.amount`: **qualquer** edicao de lancamento — inclusive trocar so a
+> descricao — descontava o valor de novo. Ele para o sangramento mas **nao
+> mexe no passado**, de proposito: recalcular `current_balance` a partir das
+> transacoes apagaria o saldo de abertura de quem cadastrou a conta com um.
+> Para medir a deriva antes de decidir, rode
+> `database/maintenance/007_auditoria_saldos.sql`, que e somente leitura.
 
 `001_baseline.sql` **nao se edita a mao** — e gerado por
 `node scripts/gen-baseline.mjs` a partir de um `pg_dump --schema-only` de
@@ -54,20 +80,27 @@ psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/001_baseline.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/002_rls_lockdown.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/003_fix_trigger_privileges.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/004_fix_remaining_trigger_privileges.sql
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/005_recurring_and_scheduled.sql
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/006_budgets_and_card_invoices.sql
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/007_group_settlements.sql
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/008_goals_and_reports.sql
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/009_statements_alerts_receipts.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/migrations/010_user_connections.sql
 
-# os dois dao ROLLBACK no fim: nao deixam nada no banco
+# todos dao ROLLBACK no fim: nao deixam nada no banco
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/rls_isolation_test.sql
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/scheduled_rls_test.sql
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/budget_invoice_test.sql
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/group_settlement_test.sql
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/goals_reports_test.sql
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/statements_alerts_test.sql
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f database/tests/user_connections_test.sql
 ```
 
-A cadeia `001` → `002` → `003` executada do zero num Postgres 17 vazio da 18
-tabelas, 18 com RLS, 40 policies, as 21 asserções de isolamento passando e a
-role `anon` sem privilegio fora das duas tabelas de referencia (medido em
-2026-09-21). O `010` acrescenta `user_connections` e 5 policies, e o `004` nao
-cria objeto nenhum — so troca o dono de trigger. O mesmo roda no CI
-(`.github/workflows/db-verify.yml`) a cada PR que toca `database/`, e la os
-numeros sao conferidos por assercao em vez de por este paragrafo.
+Executado do zero num Postgres 17 vazio: 18 tabelas, 18 com RLS, 40 policies, as
+21 asserções de isolamento passando e a role `anon` sem privilegio fora das duas
+tabelas de referencia. O mesmo roda no CI (`.github/workflows/db-verify.yml`) a
+cada PR que toca `database/`.
 
 ### Validado num projeto Supabase limpo
 
@@ -113,20 +146,17 @@ o painel nao e quem roda o script, entao cada senha errada custa uma ida e
 volta inteira (na HMO-117 custou duas, sem nunca conectar). O SQL Editor do
 Supabase nao pede senha: quem esta no painel ja esta autenticado.
 
-Por isso as mesmas assercoes existem tambem como arquivos para colar la:
+Por isso as mesmas assercoes existem tambem como dois arquivos para colar la:
 
 | Arquivo | O que faz | O que voce devolve |
 |---|---|---|
-| `database/validation/01_migrations.sql` | guarda + `001` → `002` → `003` → `004` → `010` + relatorio | a tabela final (7 linhas, termina em `VEREDITO`) |
+| `database/validation/01_migrations.sql` | guarda + `001` → `002` → `003` → `004` → `005` → `006` + relatorio | a tabela final (7 linhas, termina em `VEREDITO`) |
 | `database/validation/02_isolamento_rls.sql` | o teste de isolamento, dentro de `ROLLBACK` | a linha `ISOLAMENTO DE RLS: TUDO OK`, ou o erro |
-| `database/validation/08_conexoes.sql` | conexoes entre usuarios (`010`), dentro de `ROLLBACK` | a linha `CONEXOES: TUDO OK`, ou o erro |
+| `database/validation/03_contas_previstas.sql` | a agenda do `005`: isolamento, view e invariantes de dinheiro | a linha `CONTAS PREVISTAS: TUDO OK`, ou o erro |
+| `database/validation/04_orcamento_fatura.sql` | o `006`: consumo do teto, sinal do valor, isolamento das duas views e aritmetica da fatura | a linha `ORCAMENTO E FATURA: TUDO OK`, ou o erro |
 
-O `08` mantem o numero da pilha da HMO-137 (passos `03` a `07`) de proposito,
-para nao renumerar no dia em que ela entrar; rode-o depois do `01`, como os
-outros.
-
-Os tres sao **gerados** por `node scripts/gen-validation-bundle.mjs` a partir de
-`migrations/` e dos testes em `tests/` — nunca editados a mao. Uma copia
+Os dois sao **gerados** por `node scripts/gen-validation-bundle.mjs` a partir de
+`migrations/` e `tests/rls_isolation_test.sql` — nunca editados a mao. Uma copia
 do schema que sai de sincronia e pior do que nao ter copia: validaria um schema
 que nao e mais o nosso, e o relatorio sairia verde. O job `db-verify` roda
 `--check` e fecha se alguem mexer nas migrations sem regerar.
