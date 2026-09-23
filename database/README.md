@@ -16,7 +16,8 @@ database/
 │   ├── 008_goals_and_reports.sql    metas com aportes + as views dos relatorios
 │   ├── 009_statements_alerts_receipts.sql  extrato OFX/CSV + avisos de vencimento + comprovantes
 │   ├── 010_user_connections.sql     conexoes entre usuarios (a tabela que a tela ja chamava)
-│   └── 011_detected_recurrences.sql detector de assinaturas e gastos recorrentes
+│   ├── 011_detected_recurrences.sql detector de assinaturas e gastos recorrentes
+│   └── 012_payroll.sql              contracheque: bruto, descontos em folha e o liquido
 ├── maintenance/
 │   └── 007_auditoria_saldos.sql     SOMENTE LEITURA: mede a deriva de current_balance
 ├── seed/
@@ -30,13 +31,14 @@ database/
 │   ├── goals_reports_test.sql           metas e relatorios: sinal, transfer e group_id NULL
 │   ├── statements_alerts_test.sql       extrato: deduplicacao por conta, sinal, janela de aviso
 │   ├── user_connections_test.sql        conexoes: consentimento, par unico e bloqueio duravel
+│   ├── payroll_test.sql                 contracheque: o lancamento e o LIQUIDO, e o teto do desconto
 │   ├── legacy_policy_drift_test.sql     policy antiga de producao tem que sumir
 │   └── legacy_function_drift_test.sql   funcao antiga de producao tem que sumir
 └── README.md
 ```
 
 Ordem: `001`, `002`, `003`, `004`, `005`, `006`, `007`, `008`, `009`, `010`,
-`011`. Rodar `001` sozinho deixa o banco aberto.
+`011`, `012`. Rodar `001` sozinho deixa o banco aberto.
 
 > **A SECAO 11 do `009` so roda num Supabase de verdade.** Ela cria o bucket
 > privado `receipts` e depende do schema `storage`, que num Postgres cru nao

@@ -245,6 +245,37 @@ jobs:
       - name: Teste das conexoes entre usuarios
         run: $PSQL -f database/tests/user_connections_test.sql
 
+      # O 011 entrou na main pelo PR #20 e nunca foi exercitado aqui: o CI
+      # validava uma cadeia que parava no 010 enquanto producao ja tinha o 011.
+      - name: 011_detected_recurrences
+        run: $PSQL -f database/migrations/011_detected_recurrences.sql
+
+      # Mesmo motivo do 005 ao 010.
+      - name: 011 e idempotente
+        run: $PSQL -f database/migrations/011_detected_recurrences.sql
+
+      - name: 012_payroll
+        run: $PSQL -f database/migrations/012_payroll.sql
+
+      - name: 012 e idempotente
+        run: $PSQL -f database/migrations/012_payroll.sql
+
+      # Contracheque. A assercao central e QUAL valor vira lancamento: tem que
+      # ser o LIQUIDO e POSITIVO. Gravando o bruto, o fluxo de caixa do 008
+      # mostraria uma receita que nunca foi recebida; gravando o liquido com
+      # sinal trocado, as views do 008 leriam salario como DESPESA. Nos dois
+      # casos o saldo da conta continua fechando -- que e o que torna o erro
+      # invisivel.
+      #
+      # Cobre tambem: o teto do desconto (um IRRF com um zero a mais produz
+      # liquido negativo, que vira despesa nos relatorios), o UNIQUE que impede
+      # a renda do mes dobrar, e o security_invoker da view do liquido.
+      #
+      # Tem dois controles negativos: sem security_invoker a view vaza o
+      # salario alheio, e sem o trigger o liquido fica negativo.
+      - name: Teste do contracheque
+        run: $PSQL -f database/tests/payroll_test.sql
+
       - name: Aritmetica de recorrencia
         run: npm run test:recurrence
 

@@ -20,6 +20,7 @@ import {
   X,
   Wallet,
   CreditCard,
+  Landmark,
   CalendarClock,
   PiggyBank,
   Target,
@@ -66,6 +67,12 @@ const navigation: NavigationItem[] = [
     name: "Contas e Cartões",
     href: "/dashboard/accounts",
     icon: CreditCard,
+  },
+  {
+    name: "Contracheque",
+    href: "/dashboard/payroll",
+    icon: Landmark,
+    requiredFeature: "personal_finance",
   },
   {
     name: "Contas Previstas",
