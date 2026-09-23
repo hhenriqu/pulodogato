@@ -125,6 +125,29 @@ interface TransferSuggestion {
   amount: number;
 }
 
+/** Um pagamento de um membro para outro, ja registrado (migration 007). */
+interface Settlement {
+  id: string;
+  amount: number;
+  settled_on: string;
+  note?: string | null;
+  from_user: { id: string; full_name: string; avatar_url?: string };
+  to_user: { id: string; full_name: string; avatar_url?: string };
+  /** A RLS so deixa desfazer quem registrou; a API ja resolve isto. */
+  can_delete: boolean;
+}
+
+/**
+ * Inicial do nome para o avatar.
+ *
+ * `full_name` e opcional em profiles e chega null para quem nunca preencheu o
+ * perfil. `null.charAt(0)` derruba a tela inteira com "Cannot read properties
+ * of null" -- e a pessoa sem nome aparece justamente na tela de grupo, que e
+ * onde entram os convidados recem-chegados.
+ */
+const inicial = (nome?: string | null) =>
+  nome && nome.length > 0 ? nome.charAt(0).toUpperCase() : "?";
+
 export default function GroupDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -135,6 +158,14 @@ export default function GroupDetailPage() {
   const [transactions, setTransactions] = useState<GroupTransaction[]>([]);
   const [balances, setBalances] = useState<BalanceSummary[]>([]);
   const [transfers, setTransfers] = useState<TransferSuggestion[]>([]);
+  const [settlements, setSettlements] = useState<Settlement[]>([]);
+  // Sobra que nao pertence a ninguem. Zero em grupo saudavel.
+  const [residual, setResidual] = useState(0);
+  // Chave "pagador->recebedor" da linha em que o botao esta rodando, para nao
+  // registrar o mesmo acerto duas vezes num clique duplo -- o banco aceita
+  // pagamentos repetidos de proposito (duas parcelas de R$ 50 sao um fato
+  // possivel), entao a protecao contra o clique acidental e aqui.
+  const [settling, setSettling] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("expenses");
 
@@ -179,6 +210,7 @@ export default function GroupDetailPage() {
         loadTransactions(),
         loadBalances(),
         loadTransfers(),
+        loadSettlements(),
       ]);
     } catch (error) {
       console.error("Error loading data:", error);
@@ -228,8 +260,84 @@ export default function GroupDetailPage() {
 
     if (response.ok) {
       setTransfers(data.transfers || []);
+      // Diferente de zero: o grupo nao fecha. Ver a nota de `residual` em
+      // lib/settlement.ts -- despesa sem rateio, rateio parcial, ou parte no
+      // nome de quem ja saiu. Sem este aviso o usuario tentaria acertar uma
+      // conta que nao tem como terminar.
+      setResidual(Number(data.residual) || 0);
     } else {
       console.error("Error loading transfers:", data.error);
+    }
+  };
+
+  const loadSettlements = async () => {
+    const response = await fetch(`/api/expense-groups/${groupId}/settlements`);
+    const data = await response.json();
+
+    if (response.ok) {
+      setSettlements(data.settlements || []);
+    } else {
+      console.error("Error loading settlements:", data.error);
+    }
+  };
+
+  /**
+   * Registra a transferencia sugerida como paga.
+   *
+   * Recarrega saldos, sugestoes e historico juntos: os tres derivam do mesmo
+   * dado, e atualizar so um deixaria a tela mostrando uma divida que a lista de
+   * baixo ja diz estar quitada.
+   */
+  const handleLiquidar = async (transfer: TransferSuggestion) => {
+    setSettling(`${transfer.from.id}->${transfer.to.id}`);
+    try {
+      const response = await fetch(
+        `/api/expense-groups/${groupId}/settlements`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            from_user_id: transfer.from.id,
+            to_user_id: transfer.to.id,
+            amount: transfer.amount,
+          }),
+        }
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        toast.error(data.error || "Não foi possível registrar o acerto");
+        return;
+      }
+
+      toast.success("Acerto registrado");
+      await Promise.all([loadBalances(), loadTransfers(), loadSettlements()]);
+    } catch (error) {
+      console.error("Erro ao registrar acerto:", error);
+      toast.error("Não foi possível registrar o acerto");
+    } finally {
+      setSettling(null);
+    }
+  };
+
+  const handleDesfazerAcerto = async (settlementId: string) => {
+    try {
+      const response = await fetch(
+        `/api/expense-groups/${groupId}/settlements/${settlementId}`,
+        { method: "DELETE" }
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        toast.error(data.error || "Não foi possível desfazer o acerto");
+        return;
+      }
+
+      toast.success("Acerto desfeito");
+      await Promise.all([loadBalances(), loadTransfers(), loadSettlements()]);
+    } catch (error) {
+      console.error("Erro ao desfazer acerto:", error);
+      toast.error("Não foi possível desfazer o acerto");
     }
   };
 
@@ -300,6 +408,17 @@ export default function GroupDetailPage() {
       style: "currency",
       currency: "BRL",
     }).format(amount);
+  };
+
+  /**
+   * `settled_on` e um DATE do Postgres, que chega como "2026-09-22".
+   * `new Date("2026-09-22")` e interpretado como MEIA-NOITE UTC e, no fuso de
+   * Brasilia, volta como dia 21 -- o pagamento apareceria um dia antes do que
+   * foi registrado. Formatando os pedacos direto, sem Date, isso nao acontece.
+   */
+  const formatDate = (iso: string) => {
+    const [ano, mes, dia] = (iso || "").split("-");
+    return dia && mes && ano ? `${dia}/${mes}/${ano}` : iso;
   };
 
   const getStatusColor = (status: string) => {
@@ -550,7 +669,7 @@ export default function GroupDetailPage() {
                             <Avatar className="h-8 w-8">
                               <AvatarImage src={transaction.payer.avatar_url} />
                               <AvatarFallback>
-                                {transaction.payer.full_name.charAt(0)}
+                                {inicial(transaction.payer.full_name)}
                               </AvatarFallback>
                             </Avatar>
                             <div>
@@ -592,7 +711,7 @@ export default function GroupDetailPage() {
                                       src={split.member.avatar_url}
                                     />
                                     <AvatarFallback className="text-xs">
-                                      {split.member.full_name.charAt(0)}
+                                      {inicial(split.member.full_name)}
                                     </AvatarFallback>
                                   </Avatar>
                                   <span className="text-sm">
@@ -673,7 +792,7 @@ export default function GroupDetailPage() {
                             <Avatar className="h-8 w-8">
                               <AvatarImage src={transaction.payer.avatar_url} />
                               <AvatarFallback>
-                                {transaction.payer.full_name.charAt(0)}
+                                {inicial(transaction.payer.full_name)}
                               </AvatarFallback>
                             </Avatar>
                             <div>
@@ -732,7 +851,7 @@ export default function GroupDetailPage() {
                           <Avatar className="h-8 w-8">
                             <AvatarImage src={balance.member.avatar_url} />
                             <AvatarFallback>
-                              {balance.member.full_name.charAt(0)}
+                              {inicial(balance.member.full_name)}
                             </AvatarFallback>
                           </Avatar>
                           <div>
@@ -770,46 +889,160 @@ export default function GroupDetailPage() {
                   ))}
                 </div>
 
+                {/* O grupo nao fecha: avisa antes de sugerir um acerto que
+                    nunca termina. */}
+                {Math.abs(residual) >= 0.02 && (
+                  <div className="flex items-start gap-3 p-4 bg-warning/10 rounded-lg border border-warning/30">
+                    <AlertCircle className="h-5 w-5 text-warning shrink-0 mt-0.5" />
+                    <div className="text-sm">
+                      <p className="font-medium text-warning">
+                        As contas deste grupo não fecham por{" "}
+                        {formatCurrency(Math.abs(residual))}
+                      </p>
+                      <p className="text-warning">
+                        Sobra um valor que não foi atribuído a ninguém.
+                        Costuma ser despesa lançada sem divisão, divisão que não
+                        cobre o valor inteiro, ou parte no nome de quem já saiu
+                        do grupo. Mesmo acertando tudo abaixo, esse valor
+                        continuará aparecendo.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 {/* Transfer Suggestions */}
-                {transfers.length > 0 && (
+                {transfers.length > 0 ? (
                   <div className="space-y-3">
                     <h3 className="text-lg font-semibold">
                       Sugestões de Pagamento
                     </h3>
+                    <p className="text-sm text-muted-foreground">
+                      O menor número de transferências que zera o grupo. Ao
+                      registrar, a sugestão sai da lista.
+                    </p>
                     <div className="space-y-2">
-                      {transfers.map((transfer, index) => (
+                      {transfers.map((transfer, index) => {
+                        const chave = `${transfer.from.id}->${transfer.to.id}`;
+                        // So quem paga ou quem recebe pode registrar: a policy
+                        // de INSERT da 007 exige isso, e oferecer o botao a um
+                        // terceiro seria prometer uma acao que o banco recusa.
+                        const souParte =
+                          user?.id === transfer.from.id ||
+                          user?.id === transfer.to.id;
+
+                        return (
+                          <div
+                            key={index}
+                            className="flex items-center justify-between p-4 bg-info/10 rounded-lg border border-info/30"
+                          >
+                            <div className="flex items-center gap-3">
+                              <Avatar className="h-8 w-8">
+                                <AvatarImage src={transfer.from.avatar_url} />
+                                <AvatarFallback>
+                                  {inicial(transfer.from.full_name)}
+                                </AvatarFallback>
+                              </Avatar>
+                              <span className="font-medium">
+                                {transfer.from.full_name || "Sem nome"}
+                              </span>
+                              <TrendingUp className="h-4 w-4 text-info" />
+                              <Avatar className="h-8 w-8">
+                                <AvatarImage src={transfer.to.avatar_url} />
+                                <AvatarFallback>
+                                  {inicial(transfer.to.full_name)}
+                                </AvatarFallback>
+                              </Avatar>
+                              <span className="font-medium">
+                                {transfer.to.full_name || "Sem nome"}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-4">
+                              <div className="text-right">
+                                <p className="font-bold text-lg text-info">
+                                  {formatCurrency(transfer.amount)}
+                                </p>
+                                <p className="text-sm text-info">
+                                  Pagamento sugerido
+                                </p>
+                              </div>
+                              {souParte && (
+                                <Button
+                                  size="sm"
+                                  onClick={() => handleLiquidar(transfer)}
+                                  disabled={settling === chave}
+                                >
+                                  <CheckCircle className="h-4 w-4 mr-1" />
+                                  {settling === chave
+                                    ? "Registrando..."
+                                    : "Já paguei"}
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  balances.length > 0 && (
+                    <div className="flex items-center gap-3 p-4 bg-success/10 rounded-lg border border-success/30">
+                      <CheckCircle className="h-5 w-5 text-success" />
+                      <p className="text-sm text-success">
+                        Tudo acertado. Ninguém deve nada a ninguém neste grupo.
+                      </p>
+                    </div>
+                  )
+                )}
+
+                {/* Acertos ja registrados */}
+                {settlements.length > 0 && (
+                  <div className="space-y-3">
+                    <h3 className="text-lg font-semibold">
+                      Pagamentos registrados
+                    </h3>
+                    <div className="space-y-2">
+                      {settlements.map((s) => (
                         <div
-                          key={index}
-                          className="flex items-center justify-between p-4 bg-info/10 rounded-lg border border-info/30"
+                          key={s.id}
+                          className="flex items-center justify-between p-3 border rounded-lg"
                         >
-                          <div className="flex items-center gap-3">
-                            <Avatar className="h-8 w-8">
-                              <AvatarImage src={transfer.from.avatar_url} />
+                          <div className="flex items-center gap-2 text-sm">
+                            <Avatar className="h-6 w-6">
+                              <AvatarImage src={s.from_user?.avatar_url} />
                               <AvatarFallback>
-                                {transfer.from.full_name.charAt(0)}
+                                {inicial(s.from_user?.full_name)}
                               </AvatarFallback>
                             </Avatar>
                             <span className="font-medium">
-                              {transfer.from.full_name}
+                              {s.from_user?.full_name || "Sem nome"}
                             </span>
-                            <TrendingUp className="h-4 w-4 text-info" />
-                            <Avatar className="h-8 w-8">
-                              <AvatarImage src={transfer.to.avatar_url} />
+                            <span className="text-muted-foreground">pagou</span>
+                            <Avatar className="h-6 w-6">
+                              <AvatarImage src={s.to_user?.avatar_url} />
                               <AvatarFallback>
-                                {transfer.to.full_name.charAt(0)}
+                                {inicial(s.to_user?.full_name)}
                               </AvatarFallback>
                             </Avatar>
                             <span className="font-medium">
-                              {transfer.to.full_name}
+                              {s.to_user?.full_name || "Sem nome"}
+                            </span>
+                            <span className="text-muted-foreground">
+                              em {formatDate(s.settled_on)}
                             </span>
                           </div>
-                          <div className="text-right">
-                            <p className="font-bold text-lg text-info">
-                              {formatCurrency(transfer.amount)}
-                            </p>
-                            <p className="text-sm text-info">
-                              Pagamento sugerido
-                            </p>
+                          <div className="flex items-center gap-3">
+                            <span className="font-semibold">
+                              {formatCurrency(s.amount)}
+                            </span>
+                            {s.can_delete && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => handleDesfazerAcerto(s.id)}
+                              >
+                                Desfazer
+                              </Button>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -841,7 +1074,7 @@ export default function GroupDetailPage() {
                       <Avatar className="h-10 w-10">
                         <AvatarImage src={member.user.avatar_url} />
                         <AvatarFallback>
-                          {member.user.full_name.charAt(0)}
+                          {inicial(member.user.full_name)}
                         </AvatarFallback>
                       </Avatar>
                       <div>

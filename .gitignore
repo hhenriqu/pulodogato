@@ -66,3 +66,8 @@ next-env.d.ts
 
 # saida do `npm run test:recurrence-detector` (tsc avulso, so para o node --test)
 /.tmp-recurrence-detector/
+# saida do `npm run test:recurrence` (tsc avulso, so para o node --test)
+/.tmp-recurrence/
+/.tmp-settlement/
+/.tmp-reports/
+/.tmp-statement/
