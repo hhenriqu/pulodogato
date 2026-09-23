@@ -19,6 +19,13 @@ import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { getServiceId } from "@/lib/services/scheduled";
 import { tipoPeloSinal } from "@/lib/statement";
+import { sugerirCategoria } from "@/lib/categorization";
+import {
+  aprenderRegra,
+  lerCategorias,
+  lerRegras,
+  registrarAplicacao,
+} from "@/lib/services/categorization";
 
 const ACOES = ["import", "link", "ignore", "reset"] as const;
 type Acao = (typeof ACOES)[number];
@@ -176,7 +183,41 @@ export async function PATCH(
     // ---------------------------------------------------------------
     // import  (nasce o lancamento)
     // ---------------------------------------------------------------
-    const categoryId = body?.category_id as string | undefined;
+    // A categoria pode vir de tres lugares, e a ordem nao e arbitraria:
+    //
+    //   1. o corpo da requisicao  -- o usuario escolheu, explicitamente
+    //   2. uma REGRA dele         -- ele ja escolheu antes, para este lojista
+    //   3. nenhum                 -> 400, como sempre foi
+    //
+    // O CATALOGO EMBUTIDO NAO ENTRA AQUI. Ele aparece como sugestao na tela
+    // (GET /api/statements/[id]) e so vira categoria se o usuario aceitar,
+    // porque ai a escolha volta pelo caminho 1. Deixa-lo aplicar sozinho seria
+    // o app adivinhando e gravando: a linha nasceria na categoria errada sem
+    // ninguem ter dito nada, e o erro so apareceria no relatorio do mes.
+    // Regra, sim, aplica sozinha -- foi o proprio usuario quem a escreveu.
+    const escolhaExplicita = body?.category_id as string | undefined;
+    let categoryId = escolhaExplicita;
+    let regraAplicada: string | undefined;
+
+    if (!categoryId) {
+      const [categorias, regras] = await Promise.all([
+        lerCategorias(supabase),
+        lerRegras(supabase, user.id),
+      ]);
+
+      const sugestao = sugerirCategoria(
+        linha.description ?? "",
+        Number(linha.amount),
+        regras,
+        categorias
+      );
+
+      if (sugestao?.origin === "rule") {
+        categoryId = sugestao.categoryId;
+        regraAplicada = sugestao.ruleId;
+      }
+    }
+
     if (!categoryId) {
       return NextResponse.json(
         { error: "Escolha uma categoria para este lançamento" },
@@ -246,7 +287,38 @@ export async function PATCH(
       );
     }
 
-    return NextResponse.json({ ok: true, transaction: transacao }, { status: 201 });
+    // --- o aprendizado ------------------------------------------------------
+    // Depois de a linha fechar, nunca antes: gravar a regra e um efeito
+    // secundario, e nenhuma falha dele pode desfazer um lancamento que ja
+    // nasceu. Por isso `aprenderRegra` e `registrarAplicacao` nao lancam -- o
+    // pior resultado aceitavel e "na proxima o usuario escolhe de novo".
+    let aprendizado;
+    if (escolhaExplicita) {
+      // O usuario escolheu a mao: e exatamente isto que vale a pena aprender.
+      aprendizado = await aprenderRegra(
+        supabase,
+        user.id,
+        linha.description ?? "",
+        escolhaExplicita
+      );
+    } else if (regraAplicada) {
+      // A categoria veio de uma regra: nao ha o que aprender, so o que contar.
+      await registrarAplicacao(supabase, regraAplicada);
+    }
+
+    return NextResponse.json(
+      {
+        ok: true,
+        transaction: transacao,
+        // A tela usa isto para dizer "criei uma regra: proximo iFood ja vem
+        // categorizado" -- e o momento em que o usuario descobre que a feature
+        // existe. Uma regra criada em silencio e uma regra que ele nunca vai
+        // procurar na tela de regras.
+        rule_learned: aprendizado?.outcome === "created" ? aprendizado.ruleId : undefined,
+        rule_applied: regraAplicada,
+      },
+      { status: 201 }
+    );
   } catch (error) {
     console.error("Erro na ação do extrato:", error);
     return NextResponse.json({ error: "Erro interno" }, { status: 500 });

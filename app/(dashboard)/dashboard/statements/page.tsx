@@ -87,6 +87,17 @@ interface StatementEntry {
   status: "pending" | "imported" | "linked" | "ignored";
   transaction_id: string | null;
   suggestion: Sugestao | null;
+  category_suggestion: SugestaoCategoria | null;
+}
+
+// A categoria sugerida para a linha. `origin` distingue a REGRA do usuario
+// ("voce ja disse que isto e X") do palpite do catalogo ("acho que e X"), e a
+// tela precisa tratar as duas diferente -- ver o rotulo mais abaixo.
+interface SugestaoCategoria {
+  category_id: string;
+  category_name: string;
+  origin: "rule" | "catalog";
+  matched_key: string;
 }
 
 export default function StatementsPage() {
@@ -180,7 +191,28 @@ export default function StatementsPage() {
         return;
       }
 
-      setLinhas(dados.entries ?? []);
+      const entradas: StatementEntry[] = dados.entries ?? [];
+      setLinhas(entradas);
+
+      // O seletor ja abre preenchido com a sugestao. E aqui que a feature
+      // aparece para quem usa: em vez de dezenas de escolhas, o usuario percorre
+      // a lista clicando "Lançar".
+      //
+      // Preenche, mas NAO lanca sozinho -- nem quando a sugestao vem de uma
+      // regra. A linha do extrato e a ultima chance de olhar para o gasto antes
+      // de ele virar dinheiro no app; importar em massa sem ninguem ver
+      // transformaria um erro de regra em dezenas de lancamentos errados
+      // descobertos so no relatorio do mes.
+      //
+      // `(m) => ({ ...m, ...novas })` e nao substituicao: o usuario pode ter
+      // aberto outro extrato antes e mexido em linhas de la.
+      const novas: Record<string, string> = {};
+      for (const linha of entradas) {
+        if (linha.status === "pending" && linha.category_suggestion) {
+          novas[linha.id] = linha.category_suggestion.category_id;
+        }
+      }
+      setCategoriaPorLinha((m) => ({ ...m, ...novas }));
     } finally {
       setCarregandoLinhas(false);
     }
@@ -248,6 +280,13 @@ export default function StatementsPage() {
       // criada. `link` aponta para lancamento que ja existia e `ignore` nao
       // toca em nada: varrer depois deles seria trabalho garantidamente inutil.
       if (action === "import" || action === "reset") extratoMexido.current = true;
+
+      // A regra nasceu escondida atras de um "Lançar". Se o app nao contar
+      // agora, o usuario nunca vai saber que ela existe -- e vai continuar
+      // achando que escolhe a categoria toda vez porque nao ha alternativa.
+      if (dados.rule_learned) {
+        toast.info("Guardei essa categoria: a próxima cobrança deste lugar já vem preenchida.");
+      }
 
       if (dados.aviso) toast.info(dados.aviso);
       else
@@ -475,7 +514,24 @@ export default function StatementsPage() {
 
                   <div className="mt-3 flex flex-wrap items-end gap-2">
                     <div className="min-w-[180px] flex-1 space-y-1">
-                      <Label className="text-xs">Categoria</Label>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Label className="text-xs">Categoria</Label>
+                        {/* Regra e catalogo NAO podem ter a mesma cara. A regra
+                            e uma decisao que o usuario ja tomou; o catalogo e
+                            palpite nosso. Apresentar os dois igual ensinaria
+                            ele a confiar no chute tanto quanto na propria
+                            escolha -- e e o chute que erra. */}
+                        {linha.category_suggestion?.origin === "rule" && (
+                          <span className="text-primary text-[11px] font-medium">
+                            sua regra: {linha.category_suggestion.matched_key}
+                          </span>
+                        )}
+                        {linha.category_suggestion?.origin === "catalog" && (
+                          <span className="text-muted-foreground text-[11px]">
+                            sugestão — confira
+                          </span>
+                        )}
+                      </div>
                       <Select
                         value={categoriaPorLinha[linha.id] ?? ""}
                         onValueChange={(v) =>

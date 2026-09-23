@@ -31,6 +31,7 @@ import {
   Zap,
   Shield,
   Repeat,
+  Tags,
 } from "lucide-react";
 
 interface SidebarProps {
@@ -118,6 +119,20 @@ const navigation: NavigationItem[] = [
     name: "Assinaturas",
     href: "/dashboard/recurrences",
     icon: Repeat,
+  },
+  // "Regras" entrou na HMO-145, logo abaixo de "Importar Extrato" e
+  // "Assinaturas" de propósito: as três dividem a mesma normalização de
+  // descrição, e é importando um extrato que o usuário cria a primeira regra
+  // sem perceber.
+  //
+  // Sem `requiredFeature`, pelo mesmo motivo de "Assinaturas": a regra só lê o
+  // que o usuário já digitou e não consome nada além do banco. Gatear atrás de
+  // plano esconderia do menu justamente a tela que explica por que a categoria
+  // apareceu preenchida.
+  {
+    name: "Regras",
+    href: "/dashboard/categorization",
+    icon: Tags,
   },
   {
     name: "Metas",

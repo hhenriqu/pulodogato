@@ -73,3 +73,5 @@ next-env.d.ts
 /.tmp-settlement/
 /.tmp-reports/
 /.tmp-statement/
+# saida do `npm run test:categorization` (idem, com reescrita de alias depois)
+/.tmp-categorization/

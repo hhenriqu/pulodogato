@@ -19,6 +19,7 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { conciliar, TOLERANCIA_DIAS_PADRAO } from "@/lib/statement";
+import { sugerirParaLinhas } from "@/lib/services/categorization";
 
 function somarDias(iso: string, dias: number): string {
   const d = new Date(`${iso}T00:00:00Z`);
@@ -140,10 +141,24 @@ export async function GET(
       : { data: [] };
     const sugeridoPorId = new Map((sugeridos ?? []).map((t) => [t.id, t]));
 
+    // A categoria sugerida para cada linha pendente -- a regra do usuario ou,
+    // na falta dela, o catalogo embutido. Calculada na leitura pela mesma razao
+    // da conciliacao (ver o cabecalho): a regra pode ter mudado desde o import,
+    // e uma coluna gravada mostraria a categoria de ontem.
+    //
+    // Em lote, uma leitura de regras para o extrato inteiro. Uma consulta por
+    // linha faria dezenas de viagens ao banco a cada abertura da tela.
+    const categorias = await sugerirParaLinhas(
+      supabase,
+      user.id,
+      pendentes.map((l) => ({ id: l.id, description: l.description ?? "", amount: l.amount }))
+    );
+
     return NextResponse.json({
       import: extrato,
       entries: (linhas ?? []).map((l) => {
         const s = sugestoes.get(l.fingerprint);
+        const c = categorias.get(l.id);
         return {
           ...l,
           suggestion: s
@@ -151,6 +166,18 @@ export async function GET(
                 transaction: sugeridoPorId.get(s.transactionId) ?? null,
                 day_gap: s.dayGap,
                 similarity: s.similarity,
+              }
+            : null,
+          // `origin` viaja junto de proposito: e o que permite a tela tratar a
+          // regra ("voce ja disse que isto e X") diferente do palpite ("acho
+          // que e X"). Sem o campo, as duas teriam a mesma cara e o usuario
+          // confiaria no chute tanto quanto na propria decisao.
+          category_suggestion: c
+            ? {
+                category_id: c.categoryId,
+                category_name: c.categoryName,
+                origin: c.origin,
+                matched_key: c.matchedKey,
               }
             : null,
         };
