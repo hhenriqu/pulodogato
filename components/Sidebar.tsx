@@ -24,6 +24,7 @@ import {
   Crown,
   Zap,
   Shield,
+  Repeat,
 } from "lucide-react";
 
 interface SidebarProps {
@@ -58,6 +59,20 @@ const navigation: NavigationItem[] = [
     icon: TrendingUp,
     requiredFeature: "investment_tracking",
     isPremium: true,
+  },
+  // "Assinaturas" entrou na HMO-145. A tela, as rotas e a tabela subiram para
+  // produção sem nenhum item de menu apontando para elas: /dashboard/recurrences
+  // respondia 200, mas não havia como chegar lá clicando, então a feature
+  // existia e ao mesmo tempo não existia para quem usa o app.
+  //
+  // Vai sem `requiredFeature` de propósito. O detector lê as transações que o
+  // usuário já importou e não consome nada além do banco; gatear atrás de um
+  // plano repetiria o problema de outra forma -- o item some do menu e a queixa
+  // volta a ser "não tem feature nova".
+  {
+    name: "Assinaturas",
+    href: "/dashboard/recurrences",
+    icon: Repeat,
   },
   {
     name: "Metas",
