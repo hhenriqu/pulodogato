@@ -325,6 +325,15 @@ jobs:
       - name: Fronteira da varredura de assinaturas
         run: npm run test:recurrence-scan
 
+      # A categorizacao automatica erra de tres jeitos que nao levantam excecao
+      # nenhuma: a categoria de despesa pegando um estorno (e o relatorio passa
+      # a contar dinheiro que VOLTOU como gasto), o desempate sumindo (e
+      # "uber eats" vira Transporte de forma nao reproduzivel), e uma chave do
+      # catalogo que a propria normalizacao reescreve (e a chave fica morta, o
+      # app so deixa de sugerir). Os tres passam verde sem este teste.
+      - name: Regras de categorizacao e o sinal do valor
+        run: npm run test:categorization
+
       # O acerto e metade SQL, metade aritmetica: a view diz QUANTO cada um
       # deve, o TypeScript decide QUEM paga quem. Em ponto flutuante o guloso
       # fecha deixando residuo de fracao de centavo, que vira transferencia de
