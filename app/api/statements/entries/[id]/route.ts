@@ -19,11 +19,9 @@ import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { getServiceId } from "@/lib/services/scheduled";
 import { tipoPeloSinal } from "@/lib/statement";
-import { sugerirCategoria } from "@/lib/categorization";
 import {
   aprenderRegra,
-  lerCategorias,
-  lerRegras,
+  regraParaLinha,
   registrarAplicacao,
 } from "@/lib/services/categorization";
 
@@ -200,19 +198,17 @@ export async function PATCH(
     let regraAplicada: string | undefined;
 
     if (!categoryId) {
-      const [categorias, regras] = await Promise.all([
-        lerCategorias(supabase),
-        lerRegras(supabase, user.id),
-      ]);
-
-      const sugestao = sugerirCategoria(
+      // NAO LANCA: sem regra disponivel a importacao cai no 400 logo abaixo,
+      // que e como ela se comportava antes desta feature existir. Ver
+      // `lerInsumos` em lib/services/categorization.ts.
+      const sugestao = await regraParaLinha(
+        supabase,
+        user.id,
         linha.description ?? "",
-        Number(linha.amount),
-        regras,
-        categorias
+        Number(linha.amount)
       );
 
-      if (sugestao?.origin === "rule") {
+      if (sugestao) {
         categoryId = sugestao.categoryId;
         regraAplicada = sugestao.ruleId;
       }

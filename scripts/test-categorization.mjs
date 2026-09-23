@@ -327,3 +327,147 @@ test("chaveDaDescricao e a mesma normalizacao do detector de assinaturas", () =>
     assert.equal(chaveDaDescricao(descricao), normalizeMerchant(descricao));
   }
 });
+
+// ===========================================================================
+// 7. A CAMADA DE BANCO DEGRADA, NAO DERRUBA
+// ===========================================================================
+// `categorization_rules` nasceu na migration 014. Codigo e schema sobem por
+// caminhos separados neste projeto -- o deploy publica codigo, nao migration --
+// entao existe uma janela real em que a tabela NAO existe no banco e o codigo
+// que a consulta ja esta no ar.
+//
+// Nessa janela a leitura de regras falha. O que estes testes fixam e o que
+// acontece EM VOLTA dela: a tela de extrato lista as linhas e a conciliacao
+// como sempre listou, e a importacao volta a pedir a categoria a mao. As duas
+// coisas funcionavam antes da feature existir e nao podem cair junto com ela.
+//
+// O sintoma que isto evita nao e cosmetico: `sugerirParaLinhas` lancando
+// dentro do try/catch da rota transforma a tela inteira de revisao de extrato
+// num 500 generico -- some a lista, some a conciliacao, e a mensagem nao diz
+// qual das consultas falhou.
+// ===========================================================================
+
+const { sugerirParaLinhas, regraParaLinha } = await import(
+  "../.tmp-categorization/services/categorization.js"
+);
+
+/**
+ * Um supabase-js de mentira: so a cadeia que estas funcoes usam
+ * (`.from().select().eq().order().limit()`), resolvendo no `{ data, error }`
+ * que a tabela daria.
+ *
+ * `respostas` mapeia nome de tabela -> `{ data }` ou `{ error }`.
+ */
+function supabaseFalso(respostas) {
+  return {
+    from(tabela) {
+      const resultado = respostas[tabela] ?? {
+        error: { code: "42P01", message: `relation "public.${tabela}" does not exist` },
+      };
+      const elo = {
+        select: () => elo,
+        eq: () => elo,
+        order: () => elo,
+        limit: () => elo,
+        // O await da cadeia cai aqui.
+        then: (resolve) => resolve({ data: null, error: null, ...resultado }),
+      };
+      return elo;
+    },
+  };
+}
+
+/** Banco com as categorias do seed, mas SEM a 014 aplicada. */
+function bancoSemA014() {
+  return supabaseFalso({
+    transaction_categories: {
+      data: CATEGORIAS.map((c) => ({ id: c.id, name: c.name, is_expense: c.isExpense })),
+    },
+    // categorization_rules cai no default: 42P01.
+  });
+}
+
+/** Banco completo, com uma regra de iFood do usuario. */
+function bancoCompleto() {
+  return supabaseFalso({
+    transaction_categories: {
+      data: CATEGORIAS.map((c) => ({ id: c.id, name: c.name, is_expense: c.isExpense })),
+    },
+    categorization_rules: {
+      data: [
+        {
+          id: "regra-ifood",
+          merchant_key: "ifood",
+          display_name: "PAG*IFOOD",
+          category_id: ALIMENTACAO.id,
+          is_active: true,
+        },
+      ],
+    },
+  });
+}
+
+const LINHAS = [
+  { id: "linha-1", description: "PAG*IFOOD 8891", amount: "-52.90" },
+  { id: "linha-2", description: "UBER *TRIP 4471", amount: "-23.10" },
+];
+
+test("sem a tabela de regras, sugerirParaLinhas NAO lanca", async () => {
+  // Este e o teste que importa: a excecao subia ate o catch da rota e virava
+  // "Erro interno" para a tela inteira do extrato.
+  await assert.doesNotReject(() => sugerirParaLinhas(bancoSemA014(), "user-1", LINHAS));
+});
+
+test("sem a tabela de regras, a resposta diz que a sugestao esta indisponivel", async () => {
+  const r = await sugerirParaLinhas(bancoSemA014(), "user-1", LINHAS);
+
+  assert.equal(r.disponivel, false);
+  // Zero sugestoes E o aviso. Sem o aviso, isto e indistinguivel de "o usuario
+  // nao tem regra nenhuma e o catalogo nao reconheceu nada" -- e a investigacao
+  // de "minha regra parou de funcionar" comeca sem pista.
+  assert.equal(r.porLinha.size, 0);
+});
+
+test("com a tabela no lugar, a sugestao volta a sair e disponivel e true", async () => {
+  // A contraprova: se este teste passasse tambem com a tabela ausente, os dois
+  // de cima estariam medindo "nao sugere nada" em vez de "degradou".
+  const r = await sugerirParaLinhas(bancoCompleto(), "user-1", LINHAS);
+
+  assert.equal(r.disponivel, true);
+  assert.equal(r.porLinha.get("linha-1")?.categoryId, ALIMENTACAO.id);
+  assert.equal(r.porLinha.get("linha-1")?.origin, "rule");
+  // Uber nao tem regra do usuario, mas o catalogo embutido reconhece.
+  assert.equal(r.porLinha.get("linha-2")?.origin, "catalog");
+});
+
+test("lista vazia nao consulta o banco e nao se diz indisponivel", async () => {
+  // `disponivel: false` aqui faria a tela de um extrato ja todo importado
+  // acusar falha que nao houve.
+  const r = await sugerirParaLinhas(bancoSemA014(), "user-1", []);
+  assert.equal(r.disponivel, true);
+  assert.equal(r.porLinha.size, 0);
+});
+
+test("sem a tabela de regras, regraParaLinha devolve null em vez de lancar", async () => {
+  // A rota de importacao trata null como "o usuario nao escolheu" e responde
+  // 400 pedindo a categoria -- o comportamento anterior a feature. Lancar aqui
+  // trocaria esse 400 acionavel por um 500 mudo.
+  await assert.doesNotReject(() =>
+    regraParaLinha(bancoSemA014(), "user-1", "PAG*IFOOD 8891", -52.9)
+  );
+  assert.equal(await regraParaLinha(bancoSemA014(), "user-1", "PAG*IFOOD 8891", -52.9), null);
+});
+
+test("regraParaLinha aplica a REGRA sozinha, mas nunca o catalogo", async () => {
+  const banco = bancoCompleto();
+
+  // Regra do usuario: aplica sozinha.
+  const comRegra = await regraParaLinha(banco, "user-1", "IFD*IFOOD 3947", -31.5);
+  assert.equal(comRegra?.categoryId, ALIMENTACAO.id);
+
+  // Catalogo: o Uber e reconhecido pelo catalogo (provado no teste acima), e
+  // ainda assim NAO pode virar lancamento sem o clique do usuario. Se este
+  // assert cair, o app passou a adivinhar e gravar: a linha nasce na categoria
+  // errada sem ninguem dizer nada, e o erro so aparece no relatorio do mes.
+  assert.equal(await regraParaLinha(banco, "user-1", "UBER *TRIP 4471", -23.1), null);
+});

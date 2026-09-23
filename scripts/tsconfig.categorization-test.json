@@ -11,5 +11,5 @@
     "baseUrl": "..",
     "paths": { "@/*": ["./*"] }
   },
-  "include": ["../lib/categorization.ts"]
+  "include": ["../lib/categorization.ts", "../lib/services/categorization.ts"]
 }

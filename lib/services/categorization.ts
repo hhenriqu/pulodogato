@@ -74,6 +74,61 @@ export async function lerRegras(
 }
 
 /**
+ * O que a camada de decisao precisa, ou o aviso de que ela nao esta disponivel.
+ *
+ * `disponivel: false` nao e "o usuario nao tem regra" -- e "nao deu para
+ * perguntar". Os dois produzem zero sugestoes, e sem o campo a tela contaria a
+ * mesma historia nos dois casos.
+ */
+interface InsumosDaSugestao {
+  categorias: CategoriaConhecida[];
+  regras: RegraCategorizacao[];
+  disponivel: boolean;
+}
+
+/**
+ * Le categorias e regras SEM LANCAR.
+ *
+ * A sugestao de categoria decora a tela de extrato; ela nao e a tela. Uma falha
+ * aqui -- tabela ausente porque a migration 014 ainda nao rodou naquele banco,
+ * RLS, rede -- nao pode derrubar a listagem das linhas nem a conciliacao, que
+ * funcionavam antes desta feature existir e nao dependem dela.
+ *
+ * E a mesma regra que `aprenderRegra` ja seguia do outro lado: o aprendizado
+ * nao derruba um lancamento. Faltava aplica-la na LEITURA -- e era por ali que
+ * a tela caia inteira, com um 500 generico que nao dizia qual das duas
+ * consultas falhou.
+ *
+ * Degradar nao e engolir: a falha vai para o log com a causa, e quem chama
+ * recebe `disponivel: false` para poder dizer isso na resposta.
+ */
+async function lerInsumos(
+  supabase: SupabaseClient,
+  userId: string
+): Promise<InsumosDaSugestao> {
+  try {
+    const [categorias, regras] = await Promise.all([
+      lerCategorias(supabase),
+      lerRegras(supabase, userId),
+    ]);
+    return { categorias, regras, disponivel: true };
+  } catch (erro) {
+    console.error(
+      "Sugestao de categoria indisponivel (a tela de extrato segue sem ela):",
+      erro
+    );
+    return { categorias: [], regras: [], disponivel: false };
+  }
+}
+
+export interface SugestoesDasLinhas {
+  /** Linha -> sugestao. Vazio quando nao ha o que sugerir OU quando `disponivel` e false. */
+  porLinha: Map<string, Sugestao>;
+  /** false = nao deu para consultar regras/categorias. Ver `lerInsumos`. */
+  disponivel: boolean;
+}
+
+/**
  * Sugestao para uma lista de linhas, com UMA leitura de regras e UMA de
  * categorias.
  *
@@ -81,30 +136,54 @@ export async function lerRegras(
  * pendentes, e uma consulta por linha faria dezenas de viagens ao banco a cada
  * abertura. O custo aparece como lentidao, nao como erro, que e o tipo de
  * problema que ninguem atribui a causa certa.
+ *
+ * NAO LANCA -- ver `lerInsumos`.
  */
 export async function sugerirParaLinhas(
   supabase: SupabaseClient,
   userId: string,
   linhas: Array<{ id: string; description: string; amount: number | string }>
-): Promise<Map<string, Sugestao>> {
-  if (linhas.length === 0) return new Map();
+): Promise<SugestoesDasLinhas> {
+  if (linhas.length === 0) return { porLinha: new Map(), disponivel: true };
 
-  const [categorias, regras] = await Promise.all([
-    lerCategorias(supabase),
-    lerRegras(supabase, userId),
-  ]);
+  const { categorias, regras, disponivel } = await lerInsumos(supabase, userId);
+  const porLinha = new Map<string, Sugestao>();
 
-  const saida = new Map<string, Sugestao>();
+  if (!disponivel) return { porLinha, disponivel };
 
   for (const linha of linhas) {
     // `numeric` chega como STRING no supabase-js. Converter na fronteira, e nao
     // no uso, pelo mesmo motivo do recurrence-scan: a peneira do sinal faz
     // comparacao numerica, e `"-52.90" < 0` so funciona por coercao acidental.
     const s = sugerirCategoria(linha.description, Number(linha.amount), regras, categorias);
-    if (s) saida.set(linha.id, s);
+    if (s) porLinha.set(linha.id, s);
   }
 
-  return saida;
+  return { porLinha, disponivel };
+}
+
+/**
+ * A regra que decide a categoria de UMA linha na importacao, ou `null`.
+ *
+ * NAO LANCA, pelo mesmo motivo. Sem regra disponivel a rota cai no 400
+ * "escolha uma categoria" -- que e exatamente como a importacao se comportava
+ * antes desta feature. Deixar a excecao subir trocaria esse 400 acionavel por
+ * um 500 que nao diz o que fazer.
+ */
+export async function regraParaLinha(
+  supabase: SupabaseClient,
+  userId: string,
+  descricao: string,
+  valor: number
+): Promise<Sugestao | null> {
+  const { categorias, regras, disponivel } = await lerInsumos(supabase, userId);
+  if (!disponivel) return null;
+
+  const sugestao = sugerirCategoria(descricao, valor, regras, categorias);
+
+  // So REGRA aplica sozinha. O catalogo embutido e chute nosso e precisa do
+  // clique do usuario -- ver o comentario da rota de importacao da linha.
+  return sugestao?.origin === "rule" ? sugestao : null;
 }
 
 export interface ResultadoAprendizado {
