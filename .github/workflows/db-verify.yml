@@ -289,6 +289,17 @@ jobs:
       - name: 013 e idempotente
         run: $PSQL -f database/migrations/013_fix_user_subscription_details_leak.sql
 
+      - name: 014_categorization_rules
+        run: $PSQL -f database/migrations/014_categorization_rules.sql
+
+      # Mesmo motivo do 005 ao 013. Aqui a re-execucao prova tambem que a
+      # SECAO 7 do proprio arquivo (a prova que aborta se a RLS, as 4 policies,
+      # o UNIQUE, a trigger ou o fechamento do anon nao tiverem pegado) passa
+      # num banco onde a tabela JA existe -- que e o caso de producao no dia em
+      # que alguem rodar a migration duas vezes.
+      - name: 014 e idempotente
+        run: $PSQL -f database/migrations/014_categorization_rules.sql
+
       # Duas metades que falham por motivos diferentes: a estrutural varre o
       # schema INTEIRO atras de view sem security_invoker (uma view criada
       # amanha reprova sem ninguem lembrar de atualizar o teste -- que e o
