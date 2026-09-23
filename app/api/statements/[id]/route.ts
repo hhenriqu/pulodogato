@@ -148,11 +148,16 @@ export async function GET(
     //
     // Em lote, uma leitura de regras para o extrato inteiro. Uma consulta por
     // linha faria dezenas de viagens ao banco a cada abertura da tela.
-    const categorias = await sugerirParaLinhas(
-      supabase,
-      user.id,
-      pendentes.map((l) => ({ id: l.id, description: l.description ?? "", amount: l.amount }))
-    );
+    //
+    // NAO derruba a tela se falhar: a sugestao de categoria e um enfeite desta
+    // resposta, enquanto as linhas e a conciliacao sao o conteudo dela. Ver
+    // `lerInsumos` em lib/services/categorization.ts.
+    const { porLinha: categorias, disponivel: categoriasDisponiveis } =
+      await sugerirParaLinhas(
+        supabase,
+        user.id,
+        pendentes.map((l) => ({ id: l.id, description: l.description ?? "", amount: l.amount }))
+      );
 
     return NextResponse.json({
       import: extrato,
@@ -182,6 +187,11 @@ export async function GET(
             : null,
         };
       }),
+      // false = a consulta de regras/categorias falhou, e TODA `category_suggestion`
+      // acima e null por isso -- nao porque nao haja regra. Sem este campo os dois
+      // casos sao indistinguiveis na resposta, e "a regra que criei parou de
+      // funcionar" viraria uma investigacao sem pista nenhuma.
+      category_suggestions_available: categoriasDisponiveis,
     });
   } catch (error) {
     console.error("Erro na API do extrato:", error);

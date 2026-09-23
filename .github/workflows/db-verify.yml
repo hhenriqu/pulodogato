@@ -12,9 +12,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-recurrence.mjs', 'scripts/test-settlement.mjs', 'scripts/test-reports.mjs', 'scripts/test-statement.mjs', 'scripts/resolve-aliases.mjs', 'scripts/tsconfig.reports-test.json', 'lib/recurrence.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/services/reports.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-recurrence.mjs', 'scripts/test-settlement.mjs', 'scripts/test-reports.mjs', 'scripts/test-statement.mjs', 'scripts/resolve-aliases.mjs', 'scripts/tsconfig.reports-test.json', 'lib/recurrence.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/services/reports.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
