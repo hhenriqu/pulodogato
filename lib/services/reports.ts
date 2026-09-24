@@ -147,11 +147,31 @@ export function formatarNumeroCsv(n: number): string {
   return n.toFixed(2).replace(".", ",");
 }
 
+/**
+ * Nome do arquivo de um relatorio: prefixo + periodo exportado.
+ *
+ * O periodo vai no nome de proposito. Quem exporta o mesmo relatorio em 3 e em
+ * 12 meses termina com dois arquivos na pasta de downloads, e sem o periodo no
+ * nome o segundo chega como `fluxo-de-caixa (1).csv` -- indistinguivel do
+ * primeiro sem abrir os dois.
+ */
+export function nomeArquivoCsv(
+  prefixo: string,
+  janela: { inicio: string; fim: string },
+): string {
+  return `${prefixo}-${janela.inicio.slice(0, 7)}-a-${janela.fim.slice(0, 7)}.csv`;
+}
+
 /** Cabecalhos para o browser baixar o arquivo em vez de exibi-lo. */
 export function cabecalhosCsv(nomeArquivo: string): HeadersInit {
   return {
     "Content-Type": "text/csv; charset=utf-8",
-    "Content-Disposition": `attachment; filename="${nomeArquivo}"`,
+    // Aspas e quebras de linha saem do nome antes de ele virar cabecalho: uma
+    // aspa fecharia o `filename="..."` no meio, e uma quebra de linha
+    // encerraria o cabecalho -- o resto do nome chegaria ao browser como um
+    // cabecalho HTTP proprio. Hoje os prefixos sao todos internos, mas quem um
+    // dia montar o nome com texto do usuario nao vai lembrar desta linha.
+    "Content-Disposition": `attachment; filename="${nomeArquivo.replace(/["\\\r\n]/g, "")}"`,
     // Relatorio financeiro nao pode ficar em cache de proxy: o proximo usuario
     // na mesma rede receberia o extrato do anterior.
     "Cache-Control": "no-store",
