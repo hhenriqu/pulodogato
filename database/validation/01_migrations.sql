@@ -6422,6 +6422,2215 @@ COMMIT;
 
 
 -- ---------------------------------------------------------------------------
+-- 11. 011_detected_recurrences.sql
+-- ---------------------------------------------------------------------------
+-- Cada migration traz o proprio BEGIN/COMMIT: se uma falhar, ela volta atras
+-- inteira e as seguintes nem chegam a rodar.
+-- =====================================================
+-- PULODOGATO - RECORRENCIAS DETECTADAS
+-- =====================================================
+-- Migration: 011_detected_recurrences
+-- Gerado em: 2026-09-22  (HMO-145)
+--
+-- O QUE ESTE ARQUIVO ADICIONA
+-- ---------------------------
+--   public.detected_recurrences   a assinatura que o app INFERIU do extrato,
+--                                 e o que o usuario decidiu sobre ela
+--
+-- Como o 010, este arquivo so ACRESCENTA: nenhuma funcao, tabela, policy ou
+-- trigger de producao e alterada.
+--
+-- POR QUE ESTA TABELA NAO E A `recurring_rules`
+-- ----------------------------------------------
+-- A `recurring_rules` (migration 005, ainda na pilha) guarda o gasto fixo que
+-- o USUARIO cadastrou: ele digita "aluguel, dia 10, mensal" e o app projeta os
+-- vencimentos. Esta tabela e o caminho contrario -- o app le o extrato e
+-- descobre a cobranca que o usuario nao cadastrou, que e justamente a que ele
+-- esqueceu que assinou. As duas convivem: a primeira e declaracao, a segunda e
+-- observacao, e confundi-las faria o detector apagar o que o usuario digitou.
+--
+-- O QUE O JOB PODE E O QUE ELE NAO PODE SOBRESCREVER
+-- ---------------------------------------------------
+-- O detector roda de novo a cada importacao. Ele recalcula valor medio, data
+-- da ultima cobranca e proxima prevista -- esses campos sao observacao e
+-- precisam acompanhar o extrato. Mas `status` e DECISAO DO USUARIO: se ele
+-- marcou "ignorar", a proxima importacao nao pode devolver a linha para
+-- DETECTED e fazer a assinatura reaparecer na tela que ele acabou de limpar.
+--
+-- A amarra disso e o UNIQUE (user_id, merchant_key) da SECAO 2 somado ao
+-- `ON CONFLICT DO UPDATE` que NAO lista `status` entre as colunas atualizadas.
+-- Esta escrito aqui, no schema, e nao so na rota, porque uma segunda rota que
+-- esqueca a regra reintroduz o bug sem que nada falhe.
+--
+-- POR QUE NAO HA TABELA DE ALERTA
+-- --------------------------------
+-- Os dois alertas do criterio de aceite (preco subiu, cobrou depois de
+-- cancelada) sao DERIVADOS: dao para calcular na leitura a partir desta tabela
+-- mais as transacoes, e calcular e mais barato que manter sincronizado. O que
+-- exigiria persistencia e "ja avisei este usuario sobre este alerta" -- e esse
+-- estado pertence a `alerts` da migration 009, que ainda esta na pilha. Quando
+-- o 009 entrar, o disparo de notificacao pendura nele; ate la o alerta aparece
+-- na tela, que e onde o criterio 3 ja pede que ele apareca.
+--
+-- =====================================================
+
+BEGIN;
+
+-- =====================================================
+-- SECAO 0: pre-requisitos
+-- =====================================================
+-- Sem isto a tabela nasce e so o USO descobre que financial_transactions nao
+-- tem a forma que o detector espera.
+DO $$
+DECLARE
+  faltando text;
+BEGIN
+  SELECT string_agg(msg, E'\n') INTO faltando
+  FROM (
+    SELECT CASE
+             WHEN to_regclass('public.financial_transactions') IS NULL
+               THEN '  - tabela public.financial_transactions nao existe'
+             WHEN NOT EXISTS (
+                    SELECT 1 FROM pg_attribute a
+                    WHERE a.attrelid = to_regclass('public.financial_transactions')
+                      AND a.attname = r.coluna
+                      AND a.attnum > 0 AND NOT a.attisdropped)
+               THEN format('  - coluna public.financial_transactions.%s nao existe', r.coluna)
+           END AS msg
+    FROM (VALUES ('id'), ('user_id'), ('description'), ('amount'), ('transaction_date')) AS r(coluna)
+  ) t
+  WHERE msg IS NOT NULL;
+
+  IF faltando IS NOT NULL THEN
+    RAISE EXCEPTION E'011 nao pode ser aplicado neste banco:\n%', faltando;
+  END IF;
+END $$;
+
+-- =====================================================
+-- SECAO 1: a tabela
+-- =====================================================
+CREATE TABLE IF NOT EXISTS public.detected_recurrences (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+
+    -- Chave normalizada do estabelecimento ("netflix"). E o que AGRUPA, e sai
+    -- de normalizeMerchant() em lib/recurrence-detector.ts. Nao e para a tela.
+    merchant_key text NOT NULL,
+    -- O que a tela mostra ("Netflix"). Vem da descricao original mais recente.
+    display_name text NOT NULL,
+
+    -- POSITIVOS. financial_transactions.amount grava despesa NEGATIVA, mas
+    -- aqui o numero responde "quanto custa", e a soma da tela e um total de
+    -- custo. O CHECK abaixo e o que impede o sinal cru de entrar: sem ele, um
+    -- job que esqueca o modulo grava -39,90, o total mensal vira negativo e
+    -- nada falha.
+    avg_amount numeric(15,2) NOT NULL,
+    last_amount numeric(15,2) NOT NULL,
+    -- Quanto pesa por mes. Existe como coluna para somar semanal, mensal e
+    -- anual na mesma consulta, sem a tela ter que saber converter.
+    monthly_cost numeric(15,2) NOT NULL,
+
+    frequency text NOT NULL,
+    occurrences integer NOT NULL,
+
+    last_charge_date date NOT NULL,
+    next_expected_date date NOT NULL,
+
+    status text NOT NULL DEFAULT 'DETECTED',
+    -- Quando o status virou o que e hoje. E a data a partir da qual uma
+    -- cobranca nova conta como "cobrou depois de cancelada" (criterio 4) --
+    -- sem ela, a propria cobranca que motivou o cancelamento dispararia o
+    -- alerta no mesmo instante do clique.
+    status_changed_at timestamp with time zone,
+
+    -- As transacoes que sustentam a recorrencia. Array, e nao tabela de
+    -- ligacao, porque a lista e sempre lida inteira junto com a linha e nunca
+    -- consultada pelo lado da transacao.
+    transaction_ids uuid[] NOT NULL DEFAULT '{}',
+
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+
+    CONSTRAINT detected_recurrences_pkey PRIMARY KEY (id),
+
+    CONSTRAINT detected_recurrences_user_id_fkey
+      FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE,
+
+    CONSTRAINT detected_recurrences_frequency_check
+      CHECK (frequency IN ('WEEKLY', 'MONTHLY', 'YEARLY')),
+
+    CONSTRAINT detected_recurrences_status_check
+      CHECK (status IN ('DETECTED', 'CONFIRMED', 'IGNORED', 'CANCELLED')),
+
+    -- Ver o comentario das colunas de valor.
+    CONSTRAINT detected_recurrences_amounts_positive_check
+      CHECK (avg_amount > 0 AND last_amount > 0 AND monthly_cost > 0),
+
+    -- O criterio de aceite 2 pede no minimo 3 ocorrencias. Gravar uma linha
+    -- com 2 significa que o detector foi contornado.
+    CONSTRAINT detected_recurrences_occurrences_check
+      CHECK (occurrences >= 3),
+
+    -- A proxima cobranca prevista e sempre DEPOIS da ultima observada. Uma
+    -- linha que viole isso mostra na tela uma "proxima cobranca" no passado.
+    CONSTRAINT detected_recurrences_next_after_last_check
+      CHECK (next_expected_date > last_charge_date),
+
+    -- Status diferente de DETECTED e resultado de uma acao do usuario, e acao
+    -- tem data. Sem esta amarra, uma linha CANCELLED sem carimbo faz o alerta
+    -- do criterio 4 nao ter a partir de quando comparar -- e ele
+    -- silenciosamente nunca dispara.
+    CONSTRAINT detected_recurrences_status_changed_at_check
+      CHECK ((status = 'DETECTED') = (status_changed_at IS NULL))
+);
+
+COMMENT ON TABLE public.detected_recurrences IS
+  'Assinatura/cobranca recorrente inferida do extrato pelo detector, e a decisao do usuario sobre ela. Nao confundir com recurring_rules, que e o gasto fixo que o usuario cadastrou.';
+COMMENT ON COLUMN public.detected_recurrences.merchant_key IS
+  'Chave normalizada do estabelecimento. Sai de normalizeMerchant() em lib/recurrence-detector.ts -- mudar a normalizacao muda o agrupamento das linhas ja gravadas.';
+COMMENT ON COLUMN public.detected_recurrences.status IS
+  'DETECTED e do detector; os outros tres sao decisao do usuario. O job NAO sobrescreve este campo -- ver o cabecalho.';
+COMMENT ON COLUMN public.detected_recurrences.avg_amount IS
+  'Positivo (modulo). A despesa e negativa em financial_transactions; aqui o numero e custo.';
+
+-- =====================================================
+-- SECAO 2: uma linha por estabelecimento por usuario
+-- =====================================================
+-- E o que torna o job idempotente: rodar a mesma importacao duas vezes atualiza
+-- a linha em vez de criar a segunda. Sem isto, cada importacao acrescenta uma
+-- Netflix a tela e o total mensal cresce sozinho.
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_detected_recurrences_user_merchant
+  ON public.detected_recurrences (user_id, merchant_key);
+
+COMMENT ON INDEX public.uniq_detected_recurrences_user_merchant IS
+  'Alvo do ON CONFLICT do job. E o que faz reimportar o mesmo extrato nao duplicar a assinatura.';
+
+-- =====================================================
+-- SECAO 3: indice de leitura
+-- =====================================================
+-- A tela abre em uma consulta: as recorrencias do usuario que nao foram
+-- ignoradas, da mais cara por mes para a mais barata.
+CREATE INDEX IF NOT EXISTS idx_detected_recurrences_user_status
+  ON public.detected_recurrences (user_id, status, monthly_cost DESC);
+
+-- =====================================================
+-- SECAO 4: RLS
+-- =====================================================
+ALTER TABLE public.detected_recurrences ENABLE ROW LEVEL SECURITY;
+
+-- Ver: so o dono.
+DROP POLICY IF EXISTS detected_recurrences_select ON public.detected_recurrences;
+CREATE POLICY detected_recurrences_select ON public.detected_recurrences
+  FOR SELECT TO authenticated
+  USING (user_id = auth.uid());
+
+-- Gravar: so em nome proprio, e so como DETECTED.
+--
+-- O `status = 'DETECTED'` no WITH CHECK nao e formalidade. Quem escreve aqui e
+-- o detector, e detector nao decide -- ele observa. Sem a amarra, um cliente
+-- poderia inserir a linha ja como CONFIRMED e pular a unica etapa em que o
+-- usuario olha para a cobranca e diz o que ela e.
+DROP POLICY IF EXISTS detected_recurrences_insert ON public.detected_recurrences;
+CREATE POLICY detected_recurrences_insert ON public.detected_recurrences
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    user_id = auth.uid()
+    AND status = 'DETECTED'
+    AND status_changed_at IS NULL
+  );
+
+-- Atualizar: so o dono, e sem trocar de dono nem de estabelecimento.
+--
+-- O merchant_key preso no WITH CHECK fecha um buraco silencioso: trocar a
+-- chave de uma linha existente a faz colidir com outra assinatura do mesmo
+-- usuario (ou escapar do UNIQUE e virar uma segunda Netflix), e os
+-- transaction_ids gravados passam a apontar para cobrancas de outro lojista.
+DROP POLICY IF EXISTS detected_recurrences_update ON public.detected_recurrences;
+CREATE POLICY detected_recurrences_update ON public.detected_recurrences
+  FOR UPDATE TO authenticated
+  USING (user_id = auth.uid())
+  WITH CHECK (user_id = auth.uid());
+
+-- Apagar: so o dono. Apagar aqui nao perde nada de verdade -- a proxima
+-- passada do detector reencontra a cobranca no extrato. O que se perde e a
+-- decisao (o "ignorar"), e por isso a tela oferece IGNORED em vez de DELETE.
+DROP POLICY IF EXISTS detected_recurrences_delete ON public.detected_recurrences;
+CREATE POLICY detected_recurrences_delete ON public.detected_recurrences
+  FOR DELETE TO authenticated
+  USING (user_id = auth.uid());
+
+-- =====================================================
+-- SECAO 5: carimbo do updated_at
+-- =====================================================
+-- Funcao propria, e nao a `update_updated_at_column()` legada do 001: as
+-- migrations 003 e 004 existiram inteiras para consertar trigger que gravava
+-- sem privilegio suficiente sob a RLS do 002. Esta nasce ja com
+-- SECURITY INVOKER explicito e search_path fixo -- ela so toca a linha que a
+-- transacao ja esta gravando, entao nao precisa de privilegio nenhum alem do
+-- de quem chamou.
+CREATE OR REPLACE FUNCTION public.detected_recurrences_touch_updated_at()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  NEW.updated_at := now();
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_detected_recurrences_touch ON public.detected_recurrences;
+CREATE TRIGGER trg_detected_recurrences_touch
+  BEFORE UPDATE ON public.detected_recurrences
+  FOR EACH ROW EXECUTE FUNCTION public.detected_recurrences_touch_updated_at();
+
+-- =====================================================
+-- SECAO 6: GRANTS
+-- =====================================================
+-- O 002 rodou GRANT ... ON ALL TABLES antes desta tabela existir, e ALL TABLES
+-- e uma fotografia do momento -- nao alcanca objeto criado depois.
+REVOKE ALL ON public.detected_recurrences FROM anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.detected_recurrences TO authenticated;
+
+-- =====================================================
+-- SECAO 7: registro
+-- =====================================================
+INSERT INTO public.schema_migrations (version, name, description, executed_at)
+VALUES ('011', '011_detected_recurrences',
+        'Tabela detected_recurrences: assinaturas inferidas do extrato - HMO-145', now())
+ON CONFLICT (version) DO NOTHING;
+
+COMMIT;
+
+
+-- ---------------------------------------------------------------------------
+-- 12. 012_payroll.sql
+-- ---------------------------------------------------------------------------
+-- Cada migration traz o proprio BEGIN/COMMIT: se uma falhar, ela volta atras
+-- inteira e as seguintes nem chegam a rodar.
+-- =====================================================
+-- PULODOGATO - CONTRACHEQUE: SALARIO BRUTO E DESCONTOS
+-- =====================================================
+-- Migration: 012_payroll
+-- Gerado em: 2026-09-22  (HMO-145)
+--
+-- O QUE ESTE ARQUIVO ADICIONA
+-- ---------------------------
+--   public.payroll_entries       o contracheque do mes: bruto e de quem
+--   public.payroll_deductions    INSS, IRRF e os demais descontos em folha
+--   public.payroll_entry_totals  view: bruto, total descontado e LIQUIDO
+--   public.register_payroll()    grava o contracheque inteiro numa transacao
+--
+-- Como o 010 e o 011, este arquivo so ACRESCENTA: nenhuma funcao, tabela,
+-- policy ou trigger que ja esta em producao e alterada.
+--
+-- POR QUE O LANCAMENTO E O LIQUIDO, E NAO O BRUTO
+-- ------------------------------------------------
+-- O caminho obvio seria gravar o bruto como receita e cada desconto como
+-- despesa. Ele esta errado de um jeito que nao falha em lugar nenhum: o
+-- dinheiro do INSS e do IRRF NUNCA passou pela conta do usuario. Gravando
+-- assim, o fluxo de caixa do 008 mostraria uma receita que ele nao recebeu e
+-- uma despesa que ele nao pagou, as duas infladas pelo mesmo valor. O saldo
+-- final fecharia certo -- o que torna o erro invisivel --, mas "quanto eu
+-- ganho" e "quanto eu gasto" ficariam ambos maiores que a verdade, e sao esses
+-- dois numeros que a tela de relatorios existe para responder.
+--
+-- Entao: UMA transacao de receita, com o valor LIQUIDO, que e o que de fato
+-- caiu na conta. O bruto e os descontos vivem aqui, e sao a memoria de como se
+-- chegou naquele liquido.
+--
+-- POR QUE ISTO NAO E UMA CATEGORIA DE TRANSACAO
+-- ----------------------------------------------
+-- Descontos em folha nao sao lancamentos: eles nao tem data propria, nao
+-- afetam saldo de conta nenhuma e nao existem fora do contracheque que os
+-- gerou. Modelados como transacao, precisariam de conta (nao tem) e entrariam
+-- em todo relatorio de gasto (nao sao gasto do usuario).
+--
+-- O FGTS NAO ESTA NA LISTA DE PROPOSITO
+-- --------------------------------------
+-- FGTS nao e desconto: o empregador deposita por fora e o bruto nao diminui
+-- por causa dele. Inclui-lo entre os `kind` faria o liquido calculado ficar
+-- ~8% abaixo do que a pessoa recebeu, todo mes, e o erro seria copiado do
+-- proprio contracheque impresso, onde o FGTS aparece na mesma coluna.
+--
+-- =====================================================
+
+BEGIN;
+
+-- =====================================================
+-- SECAO 0: pre-requisitos
+-- =====================================================
+-- Sem isto as tabelas nascem e so o USO descobre que financial_transactions
+-- nao tem a forma que register_payroll() espera.
+DO $$
+DECLARE
+  faltando text;
+BEGIN
+  SELECT string_agg(msg, E'\n') INTO faltando
+  FROM (
+    SELECT CASE
+             WHEN to_regclass('public.financial_transactions') IS NULL
+               THEN '  - tabela public.financial_transactions nao existe'
+             WHEN NOT EXISTS (
+                    SELECT 1 FROM pg_attribute a
+                    WHERE a.attrelid = to_regclass('public.financial_transactions')
+                      AND a.attname = r.coluna
+                      AND a.attnum > 0 AND NOT a.attisdropped)
+               THEN format('  - coluna public.financial_transactions.%s nao existe', r.coluna)
+           END AS msg
+    FROM (VALUES
+      ('id'), ('user_id'), ('service_id'), ('category_id'), ('account_id'),
+      ('description'), ('amount'), ('transaction_date'), ('transaction_type')
+    ) AS r(coluna)
+  ) t
+  WHERE msg IS NOT NULL;
+
+  IF to_regclass('public.financial_accounts') IS NULL THEN
+    faltando := concat_ws(E'\n', faltando, '  - tabela public.financial_accounts nao existe');
+  END IF;
+
+  IF faltando IS NOT NULL THEN
+    RAISE EXCEPTION E'012 nao pode ser aplicado neste banco:\n%', faltando;
+  END IF;
+END $$;
+
+-- =====================================================
+-- SECAO 1: o contracheque
+-- =====================================================
+CREATE TABLE IF NOT EXISTS public.payroll_entries (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+
+    -- Sempre o dia 1: o contracheque e do MES, nao de uma data. O CHECK abaixo
+    -- e o que impede duas linhas do mesmo mes (dia 1 e dia 5) escaparem do
+    -- UNIQUE da SECAO 3 e a renda do mes aparecer dobrada.
+    reference_month date NOT NULL,
+
+    -- Quem paga. NOT NULL com default porque ele entra no UNIQUE, e em coluna
+    -- anulavel o UNIQUE deixa de valer justamente para quem nao preencheu.
+    employer text NOT NULL DEFAULT 'Principal',
+
+    -- POSITIVO. Salario e receita; a convencao de sinal negativo deste banco e
+    -- so para despesa em financial_transactions.
+    gross_amount numeric(15,2) NOT NULL,
+
+    -- Onde o liquido cai, e o lancamento que ele gerou. O lancamento pode ser
+    -- apagado pela tela de transacoes sem levar o contracheque junto: por isso
+    -- SET NULL, e por isso a tela sabe mostrar "sem lancamento".
+    account_id uuid,
+    transaction_id uuid,
+
+    notes text,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+
+    CONSTRAINT payroll_entries_pkey PRIMARY KEY (id),
+
+    CONSTRAINT payroll_entries_user_id_fkey
+      FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE,
+
+    CONSTRAINT payroll_entries_account_id_fkey
+      FOREIGN KEY (account_id) REFERENCES public.financial_accounts(id) ON DELETE SET NULL,
+
+    CONSTRAINT payroll_entries_transaction_id_fkey
+      FOREIGN KEY (transaction_id) REFERENCES public.financial_transactions(id) ON DELETE SET NULL,
+
+    CONSTRAINT payroll_entries_gross_positive_check
+      CHECK (gross_amount > 0),
+
+    -- Ver o comentario de reference_month.
+    CONSTRAINT payroll_entries_reference_month_is_first_check
+      CHECK (date_trunc('month', reference_month)::date = reference_month),
+
+    CONSTRAINT payroll_entries_employer_not_blank_check
+      CHECK (btrim(employer) <> '')
+);
+
+COMMENT ON TABLE public.payroll_entries IS
+  'Contracheque do mes: o salario BRUTO e de quem. O liquido nao e coluna -- sai da view payroll_entry_totals, para nao existir em dois lugares.';
+COMMENT ON COLUMN public.payroll_entries.gross_amount IS
+  'Positivo. O sinal negativo deste banco e convencao de despesa em financial_transactions, e salario nao e despesa.';
+COMMENT ON COLUMN public.payroll_entries.transaction_id IS
+  'O lancamento de receita com o valor LIQUIDO. NULL significa que o contracheque existe mas nao virou dinheiro em conta nenhuma.';
+
+-- =====================================================
+-- SECAO 2: os descontos
+-- =====================================================
+CREATE TABLE IF NOT EXISTS public.payroll_deductions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    payroll_entry_id uuid NOT NULL,
+
+    -- Lista fechada. INSS e IRRF sao nomeados porque sao os dois que todo
+    -- contracheque brasileiro tem e os dois que o usuario pediu por nome; o
+    -- resto cai em OTHER com descricao livre.
+    --
+    -- FGTS nao esta aqui de proposito -- ver o cabecalho.
+    kind text NOT NULL,
+
+    description text,
+
+    -- POSITIVO. O desconto e uma subtracao feita pela view; gravar o valor ja
+    -- negativo faria a subtracao virar soma e o liquido ficar MAIOR que o
+    -- bruto, sem nada falhar.
+    amount numeric(15,2) NOT NULL,
+
+    created_at timestamp with time zone DEFAULT now(),
+
+    CONSTRAINT payroll_deductions_pkey PRIMARY KEY (id),
+
+    CONSTRAINT payroll_deductions_entry_fkey
+      FOREIGN KEY (payroll_entry_id) REFERENCES public.payroll_entries(id) ON DELETE CASCADE,
+
+    CONSTRAINT payroll_deductions_kind_check
+      CHECK (kind IN ('INSS', 'IRRF', 'PENSION', 'HEALTH', 'UNION', 'ADVANCE', 'OTHER')),
+
+    CONSTRAINT payroll_deductions_amount_positive_check
+      CHECK (amount > 0)
+);
+
+COMMENT ON TABLE public.payroll_deductions IS
+  'Descontos em folha de um contracheque. Nao sao transacoes: nao tem data propria, nao mexem em saldo e nao existem fora do contracheque.';
+COMMENT ON COLUMN public.payroll_deductions.amount IS
+  'Positivo. A view subtrai; valor negativo aqui faria o liquido passar do bruto.';
+
+CREATE INDEX IF NOT EXISTS idx_payroll_deductions_entry
+  ON public.payroll_deductions (payroll_entry_id);
+
+-- =====================================================
+-- SECAO 3: um contracheque por empregador por mes
+-- =====================================================
+-- Lancar o mesmo contracheque duas vezes dobraria a renda do mes. Quem tem
+-- dois empregos continua podendo lancar dois, porque o empregador entra na
+-- chave.
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_payroll_entries_user_month_employer
+  ON public.payroll_entries (user_id, reference_month, employer);
+
+-- =====================================================
+-- SECAO 4: o desconto nao pode passar do bruto
+-- =====================================================
+-- Isto e um CHECK entre tabelas, que o Postgres nao tem -- por isso trigger.
+--
+-- Ele nao calcula dinheiro nenhum: so recusa. Um IRRF digitado como 5000 em
+-- vez de 500 produziria liquido NEGATIVO, e o liquido negativo seria gravado
+-- como transacao de receita com valor negativo -- que as views do 008 leem
+-- como DESPESA, por causa da convencao de sinal. O mes apareceria com renda
+-- zero e uma despesa que ninguem fez, e nada teria falhado.
+CREATE OR REPLACE FUNCTION public.payroll_deductions_within_gross()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_entry uuid := COALESCE(NEW.payroll_entry_id, OLD.payroll_entry_id);
+  v_gross numeric(15,2);
+  v_total numeric(15,2);
+BEGIN
+  SELECT gross_amount INTO v_gross
+  FROM public.payroll_entries WHERE id = v_entry;
+
+  -- A entrada sumiu no mesmo comando (DELETE em cascata): nao ha o que checar.
+  IF v_gross IS NULL THEN
+    RETURN COALESCE(NEW, OLD);
+  END IF;
+
+  SELECT COALESCE(sum(amount), 0) INTO v_total
+  FROM public.payroll_deductions WHERE payroll_entry_id = v_entry;
+
+  IF v_total > v_gross THEN
+    RAISE EXCEPTION
+      'Os descontos (%) passam do salario bruto (%) neste contracheque',
+      v_total, v_gross
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  RETURN COALESCE(NEW, OLD);
+END $$;
+
+COMMENT ON FUNCTION public.payroll_deductions_within_gross() IS
+  'Recusa desconto que faria o liquido ficar negativo. SECURITY INVOKER de proposito: ele so le linhas que o proprio usuario acabou de gravar.';
+
+DROP TRIGGER IF EXISTS trg_payroll_deductions_within_gross ON public.payroll_deductions;
+CREATE TRIGGER trg_payroll_deductions_within_gross
+  AFTER INSERT OR UPDATE ON public.payroll_deductions
+  FOR EACH ROW EXECUTE FUNCTION public.payroll_deductions_within_gross();
+
+-- IMEDIATO, e nao CONSTRAINT TRIGGER DEFERRED. A tentacao e adiar para o
+-- commit "porque os descontos entram um a um e a soma parcial nao vale". Mas
+-- soma parcial de parcelas POSITIVAS nunca passa da soma final: se a parcial
+-- ja estourou o bruto, a final tambem estoura. Adiar so tiraria o erro do
+-- comando que o causou -- e, pior, um trigger adiado nao dispara dentro do
+-- bloco EXCEPTION do plpgsql, entao o UPDATE que infla um desconto ja gravado
+-- pareceria ter passado.
+--
+-- Nao dispara em DELETE de proposito: apagar desconto so diminui o total.
+
+-- =====================================================
+-- SECAO 5: a view do liquido
+-- =====================================================
+-- O liquido NAO e coluna. Como coluna, ele seria uma terceira copia de um
+-- numero que ja esta em dois lugares (bruto e descontos) e passaria a divergir
+-- no primeiro desconto editado sem recalculo.
+DROP VIEW IF EXISTS public.payroll_entry_totals;
+CREATE VIEW public.payroll_entry_totals
+WITH (security_invoker = true) AS
+SELECT
+  e.id,
+  e.user_id,
+  e.reference_month,
+  e.employer,
+  e.gross_amount,
+  e.account_id,
+  e.transaction_id,
+  e.notes,
+  COALESCE(d.total_deductions, 0)::numeric(15,2) AS total_deductions,
+  (e.gross_amount - COALESCE(d.total_deductions, 0))::numeric(15,2) AS net_amount,
+  COALESCE(d.inss, 0)::numeric(15,2) AS inss_amount,
+  COALESCE(d.irrf, 0)::numeric(15,2) AS irrf_amount,
+  e.created_at,
+  e.updated_at
+FROM public.payroll_entries e
+LEFT JOIN (
+  SELECT
+    payroll_entry_id,
+    sum(amount) AS total_deductions,
+    sum(amount) FILTER (WHERE kind = 'INSS') AS inss,
+    sum(amount) FILTER (WHERE kind = 'IRRF') AS irrf
+  FROM public.payroll_deductions
+  GROUP BY payroll_entry_id
+) d ON d.payroll_entry_id = e.id;
+
+-- security_invoker: sem ele a view roda com o privilegio do DONO e devolve o
+-- contracheque de TODO MUNDO para qualquer usuario logado -- a RLS da tabela
+-- base nao alcanca view comum. Mesmo motivo das views do 006 e do 008.
+COMMENT ON VIEW public.payroll_entry_totals IS
+  'Contracheque com total descontado e LIQUIDO calculados. security_invoker: a RLS de payroll_entries e quem filtra.';
+
+-- =====================================================
+-- SECAO 6: RLS
+-- =====================================================
+ALTER TABLE public.payroll_entries ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS payroll_entries_select ON public.payroll_entries;
+CREATE POLICY payroll_entries_select ON public.payroll_entries
+  FOR SELECT TO authenticated
+  USING (user_id = auth.uid());
+
+DROP POLICY IF EXISTS payroll_entries_insert ON public.payroll_entries;
+CREATE POLICY payroll_entries_insert ON public.payroll_entries
+  FOR INSERT TO authenticated
+  WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS payroll_entries_update ON public.payroll_entries;
+CREATE POLICY payroll_entries_update ON public.payroll_entries
+  FOR UPDATE TO authenticated
+  USING (user_id = auth.uid())
+  WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS payroll_entries_delete ON public.payroll_entries;
+CREATE POLICY payroll_entries_delete ON public.payroll_entries
+  FOR DELETE TO authenticated
+  USING (user_id = auth.uid());
+
+ALTER TABLE public.payroll_deductions ENABLE ROW LEVEL SECURITY;
+
+-- O desconto nao tem user_id proprio: quem manda e o dono do contracheque. O
+-- EXISTS abaixo e o que impede alguem pendurar um desconto no contracheque de
+-- outro -- e desconto alheio mudaria o liquido alheio.
+DROP POLICY IF EXISTS payroll_deductions_select ON public.payroll_deductions;
+CREATE POLICY payroll_deductions_select ON public.payroll_deductions
+  FOR SELECT TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM public.payroll_entries e
+    WHERE e.id = payroll_deductions.payroll_entry_id AND e.user_id = auth.uid()
+  ));
+
+DROP POLICY IF EXISTS payroll_deductions_insert ON public.payroll_deductions;
+CREATE POLICY payroll_deductions_insert ON public.payroll_deductions
+  FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM public.payroll_entries e
+    WHERE e.id = payroll_deductions.payroll_entry_id AND e.user_id = auth.uid()
+  ));
+
+DROP POLICY IF EXISTS payroll_deductions_update ON public.payroll_deductions;
+CREATE POLICY payroll_deductions_update ON public.payroll_deductions
+  FOR UPDATE TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM public.payroll_entries e
+    WHERE e.id = payroll_deductions.payroll_entry_id AND e.user_id = auth.uid()
+  ))
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM public.payroll_entries e
+    WHERE e.id = payroll_deductions.payroll_entry_id AND e.user_id = auth.uid()
+  ));
+
+DROP POLICY IF EXISTS payroll_deductions_delete ON public.payroll_deductions;
+CREATE POLICY payroll_deductions_delete ON public.payroll_deductions
+  FOR DELETE TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM public.payroll_entries e
+    WHERE e.id = payroll_deductions.payroll_entry_id AND e.user_id = auth.uid()
+  ));
+
+-- =====================================================
+-- SECAO 6b: GRANTS
+-- =====================================================
+-- O 002 rodou GRANT ... ON ALL TABLES antes destas tabelas existirem, e ALL
+-- TABLES nao alcanca o futuro. Sem isto a RLS esta certa e o usuario leva
+-- "permission denied" -- que nao se parece nada com um problema de policy.
+REVOKE ALL ON public.payroll_entries FROM anon;
+REVOKE ALL ON public.payroll_deductions FROM anon;
+REVOKE ALL ON public.payroll_entry_totals FROM anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.payroll_entries TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.payroll_deductions TO authenticated;
+GRANT SELECT ON public.payroll_entry_totals TO authenticated;
+
+-- =====================================================
+-- SECAO 7: gravar o contracheque inteiro de uma vez
+-- =====================================================
+-- Contracheque, descontos e lancamento sao tres escritas que so fazem sentido
+-- juntas. Feitas em tres chamadas HTTP, uma falha no meio deixa o estado
+-- errado de um jeito que ninguem ve: contracheque sem desconto tem liquido =
+-- bruto, e a renda do mes aparece maior do que foi.
+--
+-- SECURITY INVOKER (o padrao): a funcao escreve em nome do usuario e a RLS das
+-- SECOES 6 continua valendo dentro dela. SECURITY DEFINER aqui recriaria o
+-- problema que o 003 e o 004 passaram duas migrations consertando.
+CREATE OR REPLACE FUNCTION public.register_payroll(
+  p_reference_month date,
+  p_employer text,
+  p_gross_amount numeric,
+  p_account_id uuid,
+  p_category_id uuid,
+  p_service_id uuid,
+  p_deductions jsonb DEFAULT '[]'::jsonb,
+  p_notes text DEFAULT NULL
+)
+RETURNS uuid
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_entry_id uuid;
+  v_total numeric(15,2);
+  v_net numeric(15,2);
+  v_transaction_id uuid;
+BEGIN
+  INSERT INTO public.payroll_entries (
+    user_id, reference_month, employer, gross_amount, account_id, notes
+  ) VALUES (
+    auth.uid(),
+    date_trunc('month', p_reference_month)::date,
+    COALESCE(NULLIF(btrim(p_employer), ''), 'Principal'),
+    p_gross_amount,
+    p_account_id,
+    p_notes
+  )
+  RETURNING id INTO v_entry_id;
+
+  INSERT INTO public.payroll_deductions (payroll_entry_id, kind, description, amount)
+  SELECT
+    v_entry_id,
+    d->>'kind',
+    NULLIF(btrim(COALESCE(d->>'description', '')), ''),
+    (d->>'amount')::numeric
+  FROM jsonb_array_elements(COALESCE(p_deductions, '[]'::jsonb)) AS d;
+
+  SELECT COALESCE(sum(amount), 0) INTO v_total
+  FROM public.payroll_deductions WHERE payroll_entry_id = v_entry_id;
+
+  v_net := p_gross_amount - v_total;
+
+  -- O trigger da SECAO 4 ja barrou desconto MAIOR que o bruto. Falta o caso do
+  -- igual: desconto exatamente igual ao bruto passa pelo trigger e deixaria
+  -- liquido zero, que viraria uma transacao de receita de R$ 0,00 -- uma linha
+  -- no extrato que nao e dinheiro nenhum.
+  IF v_net <= 0 THEN
+    RAISE EXCEPTION
+      'Os descontos (%) deixam o liquido em % -- confira os valores',
+      v_total, v_net
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  -- POSITIVO e transaction_type = 'income': e o liquido que caiu na conta.
+  -- Ver o cabecalho para por que nao e o bruto.
+  IF p_account_id IS NOT NULL AND p_category_id IS NOT NULL AND p_service_id IS NOT NULL THEN
+    INSERT INTO public.financial_transactions (
+      user_id, service_id, category_id, account_id,
+      description, amount, transaction_date, transaction_type, notes
+    ) VALUES (
+      auth.uid(), p_service_id, p_category_id, p_account_id,
+      format('Salário %s', to_char(date_trunc('month', p_reference_month), 'MM/YYYY')),
+      v_net,
+      date_trunc('month', p_reference_month)::date,
+      'income',
+      p_notes
+    )
+    RETURNING id INTO v_transaction_id;
+
+    UPDATE public.payroll_entries
+      SET transaction_id = v_transaction_id, updated_at = now()
+      WHERE id = v_entry_id;
+  END IF;
+
+  RETURN v_entry_id;
+END $$;
+
+COMMENT ON FUNCTION public.register_payroll IS
+  'Grava contracheque + descontos + o lancamento do LIQUIDO numa transacao so. SECURITY INVOKER: a RLS continua valendo dentro dela.';
+
+COMMIT;
+
+
+-- ---------------------------------------------------------------------------
+-- 13. 013_fix_user_subscription_details_leak.sql
+-- ---------------------------------------------------------------------------
+-- Cada migration traz o proprio BEGIN/COMMIT: se uma falhar, ela volta atras
+-- inteira e as seguintes nem chegam a rodar.
+-- =====================================================
+-- PULODOGATO - FECHA O VAZAMENTO DA user_subscription_details
+-- =====================================================
+-- Migration: 013_fix_user_subscription_details_leak
+-- Gerado em: 2026-09-23  (HMO-145)
+--
+-- O QUE ESTE ARQUIVO CORRIGE
+-- --------------------------
+-- `public.user_subscription_details` e a unica view do schema que ficou sem
+-- `security_invoker`. Ela nasceu no 001_baseline, antes de a 002 ligar RLS, e
+-- nenhuma migration posterior passou por ela: a 006, a 008 e a 012 ligaram
+-- security_invoker nas views que ELAS criaram, e esta sobrou.
+--
+-- O EFEITO, MEDIDO
+-- ----------------
+-- Sem `security_invoker`, a leitura das tabelas de baixo e checada com o
+-- privilegio do DONO da view (`postgres`), nao de quem consulta. `profiles`,
+-- `user_subscriptions` e `user_usage_limits` tambem pertencem ao `postgres` e
+-- estao com `relforcerowsecurity = false` -- e RLS nao se aplica ao dono da
+-- tabela quando FORCE esta desligado. Resultado: a RLS simplesmente nao roda.
+--
+-- Reproduzido num Postgres 17 com a cadeia 001->012 aplicada, com dois
+-- usuarios e `is_public = false` nos dois (nenhum publico, nenhuma conexao
+-- aceita entre eles), consultando como `authenticated` com o JWT do primeiro:
+--
+--     SELECT count(*) FROM public.profiles                   -> 1   (RLS vale)
+--     SELECT count(*) FROM public.user_subscription_details  -> 2   (RLS nao vale)
+--
+-- A view devolve `full_name`, `email`, plano, status da assinatura e os
+-- contadores de uso de TODOS os usuarios. `authenticated` tem GRANT SELECT
+-- nela, e o PostgREST expoe todo objeto do schema `public` em que o papel tem
+-- grant -- em producao a view responde 401 para `anon` (que nao tem grant) e
+-- 404 para relacao inexistente, ou seja: ela existe e esta publicada. Qualquer
+-- usuario logado alcanca `/rest/v1/user_subscription_details` com a chave anon
+-- publica mais o proprio JWT.
+--
+-- Nenhuma tela usa esta view -- nao ha uma citacao dela em `app/`,
+-- `components/`, `lib/`, `utils/` ou `worker/`. Isso e o que torna a correcao
+-- barata, e tambem e por que ninguem percebeu: o vazamento nao depende de o
+-- app chamar a view, so de ela estar publicada.
+--
+-- POR QUE `security_invoker` E NAO `REVOKE`
+-- -----------------------------------------
+-- Revogar de `authenticated` fecharia o vazamento e deixaria a view morta --
+-- ela passaria a nao servir para nada, e a proxima pessoa que precisasse do
+-- dado daria o GRANT de volta sem saber por que ele tinha sumido. Com
+-- `security_invoker` a view passa a valer o que ela sempre deveria ter valido:
+-- cada um enxerga por ela exatamente as linhas que enxergaria consultando as
+-- tabelas direto. O comportamento fica igual ao das outras 11 views.
+--
+-- IDEMPOTENTE
+-- -----------
+-- `ALTER VIEW ... SET` pode rodar quantas vezes for. A SECAO 2 aborta a
+-- transacao se, no fim, a opcao nao estiver valendo -- ou seja, este arquivo
+-- nao consegue terminar com sucesso deixando o vazamento aberto.
+-- =====================================================
+
+BEGIN;
+
+-- =====================================================
+-- SECAO 0: pre-requisitos
+-- =====================================================
+DO $$
+BEGIN
+  IF to_regclass('public.user_subscription_details') IS NULL THEN
+    RAISE EXCEPTION
+      'Faltando: a view public.user_subscription_details nao existe. Rode o 001_baseline antes deste arquivo.';
+  END IF;
+END $$;
+
+-- =====================================================
+-- SECAO 1: a correcao
+-- =====================================================
+ALTER VIEW public.user_subscription_details SET (security_invoker = true);
+
+COMMENT ON VIEW public.user_subscription_details IS
+  'Assinatura, limites de uso e dados do perfil do usuario. security_invoker: a RLS de profiles, user_subscriptions e user_usage_limits e quem filtra as linhas -- sem ele a view roda com o privilegio do dono e devolve todos os usuarios.';
+
+-- =====================================================
+-- SECAO 2: prova
+-- =====================================================
+-- A migration nao termina se a opcao nao estiver valendo no fim. Sem isto,
+-- este arquivo poderia "rodar com sucesso" sem ter mudado nada -- que e a
+-- forma como um conserto de privilegio costuma falhar em silencio.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+     CROSS JOIN LATERAL unnest(coalesce(c.reloptions, '{}')) AS o(opt)
+     WHERE n.nspname = 'public'
+       AND c.relname = 'user_subscription_details'
+       AND o.opt ILIKE 'security_invoker=%true%'
+  ) THEN
+    RAISE EXCEPTION
+      'security_invoker nao ficou ativo em public.user_subscription_details -- a view continuaria devolvendo todos os usuarios.';
+  END IF;
+END $$;
+
+-- =====================================================
+-- SECAO 3: registro
+-- =====================================================
+INSERT INTO public.schema_migrations (version, name, description, executed_at)
+VALUES ('013', '013_fix_user_subscription_details_leak',
+        'security_invoker na user_subscription_details: a view expunha nome, email e plano de todos os usuarios a qualquer usuario logado - HMO-145', now())
+ON CONFLICT (version) DO NOTHING;
+
+COMMIT;
+
+
+-- ---------------------------------------------------------------------------
+-- 14. 014_categorization_rules.sql
+-- ---------------------------------------------------------------------------
+-- Cada migration traz o proprio BEGIN/COMMIT: se uma falhar, ela volta atras
+-- inteira e as seguintes nem chegam a rodar.
+-- =====================================================
+-- PULODOGATO - REGRAS DE CATEGORIZACAO
+-- =====================================================
+-- Migration: 014_categorization_rules
+-- Gerado em: 2026-09-23  (HMO-145)
+--
+-- O QUE ESTE ARQUIVO ADICIONA
+-- ---------------------------
+--   public.categorization_rules   "toda vez que aparecer ESTE estabelecimento,
+--                                  a categoria e ESTA"
+--
+-- Como o 010 e o 011, este arquivo so ACRESCENTA: nenhuma funcao, tabela,
+-- policy ou trigger de producao e alterada.
+--
+-- O PROBLEMA QUE ELA RESOLVE
+-- ---------------------------
+-- `financial_transactions.category_id` e NOT NULL, e a rota de importacao do
+-- extrato (app/api/statements/entries/[id]/route.ts) recusa a linha sem
+-- categoria com um 400. Ou seja: hoje o usuario escolhe a categoria A MAO,
+-- uma linha de cada vez, para cada linha de cada extrato. Um OFX de mes cheio
+-- sao dezenas de cliques, e o ifood do dia 3 recebe a mesma escolha que o
+-- ifood do dia 17.
+--
+-- Esta tabela guarda essa escolha UMA vez por estabelecimento.
+--
+-- POR QUE A CHAVE E `merchant_key` E NAO O TEXTO DO EXTRATO
+-- ----------------------------------------------------------
+-- Casar pelo texto cru nao funciona: o mesmo lojista chega como "IFD*IFOOD
+-- 3947", "IFOOD .COM AG" e "PAG*IFOOD". Uma regra por variacao nunca termina
+-- -- o adquirente inventa uma nova no mes seguinte.
+--
+-- A chave aqui e a saida de `normalizeMerchant()` de lib/recurrence-detector.ts,
+-- a MESMA funcao que o detector de assinaturas usa para agrupar. E o principal
+-- motivo desta feature ter vindo depois do detector: a normalizacao ja existe,
+-- ja tem 31 testes com descricao real de extrato, e reaproveita-la significa
+-- que "netflix" quer dizer a mesma coisa nas duas telas.
+--
+-- CONSEQUENCIA QUE PRECISA ESTAR ESCRITA: mudar a normalizacao muda o
+-- casamento das regras JA gravadas. Uma regra gravada como "ifood" para de
+-- pegar no dia em que a funcao passar a devolver "ifood com". E o mesmo
+-- acoplamento que o `merchant_key` da detected_recurrences tem, e vale o mesmo
+-- aviso -- por isso os dois saem da mesma funcao e nao de duas copias.
+--
+-- POR QUE `learned` E `manual` SAO A MESMA TABELA
+-- ------------------------------------------------
+-- A regra nasce de dois jeitos: o usuario cadastra na tela ('manual'), ou ele
+-- importa uma linha escolhendo a categoria e o app grava o que ele fez
+-- ('learned'). Sao a mesma coisa no momento de aplicar -- a diferenca so serve
+-- para a tela poder dizer "isto aqui eu aprendi sozinho, confere?" e para o
+-- aprendizado nunca sobrescrever o que a pessoa digitou (SECAO 2).
+--
+-- POR QUE NAO HA COLUNA DE CONFIANCA
+-- -----------------------------------
+-- Uma regra ou casa ou nao casa: a chave normalizada e igual, ou e diferente.
+-- Um numero de confianca aqui seria inventado -- e pior, daria a impressao de
+-- que existe um limiar ajustavel que na verdade nao existe. O que existe de
+-- incerto (o palpite do catalogo embutido, quando NAO ha regra) mora no
+-- codigo, em lib/categorization.ts, e nunca e gravado sem o usuario confirmar.
+-- =====================================================
+
+BEGIN;
+
+-- =====================================================
+-- SECAO 0: pre-requisitos
+-- =====================================================
+-- Sem isto a tabela nasce e so o USO descobre que falta a categoria para
+-- apontar. O FK abaixo ja falharia, mas com a mensagem do Postgres sobre
+-- relacao inexistente, que nao diz qual migration ficou faltando.
+DO $$
+DECLARE
+  faltando text;
+BEGIN
+  SELECT string_agg(msg, E'\n') INTO faltando
+  FROM (
+    SELECT CASE
+             WHEN to_regclass('public.transaction_categories') IS NULL
+               THEN '  - tabela public.transaction_categories nao existe (rode o 001_baseline)'
+           END AS msg
+    UNION ALL
+    SELECT CASE
+             WHEN to_regclass('public.financial_transactions') IS NULL
+               THEN '  - tabela public.financial_transactions nao existe (rode o 001_baseline)'
+           END
+  ) t
+  WHERE msg IS NOT NULL;
+
+  IF faltando IS NOT NULL THEN
+    RAISE EXCEPTION E'014 nao pode ser aplicado neste banco:\n%', faltando;
+  END IF;
+END $$;
+
+-- =====================================================
+-- SECAO 1: a tabela
+-- =====================================================
+CREATE TABLE IF NOT EXISTS public.categorization_rules (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+
+    -- Chave normalizada do estabelecimento ("ifood"). E o que CASA, e sai de
+    -- normalizeMerchant() em lib/recurrence-detector.ts. Nao e para a tela.
+    merchant_key text NOT NULL,
+    -- O que a tela mostra ("iFood"). Vem da descricao original que originou a
+    -- regra -- a pessoa reconhece "IFD*IFOOD 3947", nao "ifood".
+    display_name text NOT NULL,
+
+    category_id uuid NOT NULL,
+
+    -- 'manual'  = o usuario cadastrou na tela de regras
+    -- 'learned' = o app gravou o que ele escolheu ao importar uma linha
+    source text NOT NULL DEFAULT 'manual',
+
+    -- Desligar em vez de apagar. Apagar perde a informacao de que a pessoa ja
+    -- decidiu sobre este estabelecimento, e o aprendizado (SECAO 2) recriaria
+    -- a regra na proxima importacao -- exatamente a regra que ela removeu.
+    is_active boolean NOT NULL DEFAULT true,
+
+    -- Quantas linhas esta regra ja categorizou. E o que a tela usa para
+    -- ordenar por utilidade e para o usuario ver que a regra esta trabalhando.
+    times_applied integer NOT NULL DEFAULT 0,
+    last_applied_at timestamp with time zone,
+
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+
+    CONSTRAINT categorization_rules_pkey PRIMARY KEY (id),
+
+    CONSTRAINT categorization_rules_user_id_fkey
+      FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE,
+
+    -- RESTRICT, e nao CASCADE: apagar uma categoria que tem regra apontando
+    -- para ela nao pode levar a regra junto em silencio. A categoria some, as
+    -- importacoes seguintes voltam a pedir escolha manual, e ninguem entende
+    -- por que. Com RESTRICT o DELETE falha e a pessoa decide.
+    CONSTRAINT categorization_rules_category_id_fkey
+      FOREIGN KEY (category_id) REFERENCES public.transaction_categories(id)
+      ON DELETE RESTRICT,
+
+    CONSTRAINT categorization_rules_source_check
+      CHECK (source IN ('manual', 'learned')),
+
+    -- Chave vazia casaria com toda descricao que normaliza para nada -- e
+    -- normalizeMerchant() devolve "" para uma linha so de digitos, que existe
+    -- em extrato. Uma regra assim categorizaria lixo com a cara de acerto.
+    CONSTRAINT categorization_rules_merchant_key_check
+      CHECK (length(trim(merchant_key)) > 0),
+
+    CONSTRAINT categorization_rules_display_name_check
+      CHECK (length(trim(display_name)) > 0),
+
+    CONSTRAINT categorization_rules_times_applied_check
+      CHECK (times_applied >= 0),
+
+    -- Contador e carimbo andam juntos: `times_applied > 0` sem data deixa a
+    -- tela sem ter o que mostrar em "ultima vez", e data sem contador e uma
+    -- aplicacao que ninguem contou.
+    CONSTRAINT categorization_rules_applied_check
+      CHECK ((times_applied = 0) = (last_applied_at IS NULL))
+);
+
+COMMENT ON TABLE public.categorization_rules IS
+  'Regra "este estabelecimento vai nesta categoria", aplicada na importacao do extrato. Casa por merchant_key normalizada, nao pelo texto cru do banco.';
+COMMENT ON COLUMN public.categorization_rules.merchant_key IS
+  'Chave normalizada. Sai de normalizeMerchant() em lib/recurrence-detector.ts, a mesma do detector de assinaturas -- mudar a normalizacao muda o casamento das regras ja gravadas.';
+COMMENT ON COLUMN public.categorization_rules.source IS
+  'manual = cadastrada na tela; learned = o app gravou a escolha feita numa importacao. O aprendizado nunca sobrescreve uma regra manual.';
+COMMENT ON COLUMN public.categorization_rules.is_active IS
+  'Regra desligada nao casa, mas continua existindo -- e o que impede o aprendizado de recriar na proxima importacao a regra que o usuario acabou de remover.';
+
+-- =====================================================
+-- SECAO 2: uma regra por estabelecimento por usuario
+-- =====================================================
+-- E o que torna o aprendizado idempotente e o que da sentido ao `ON CONFLICT`
+-- da rota de importacao: importar dez linhas do iFood grava UMA regra, nao dez.
+--
+-- E e tambem a amarra que protege a escolha manual. O aprendizado grava com
+-- `ON CONFLICT (user_id, merchant_key) DO UPDATE ... WHERE source = 'learned'`:
+-- se ja existe regra 'manual' para o estabelecimento, o UPDATE nao acontece e a
+-- categoria que a pessoa escolheu na tela sobrevive a importacao. Sem o indice
+-- nao ha `ON CONFLICT` possivel e essa protecao nao tem onde se apoiar.
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_categorization_rules_user_merchant
+  ON public.categorization_rules (user_id, merchant_key);
+
+COMMENT ON INDEX public.uniq_categorization_rules_user_merchant IS
+  'Alvo do ON CONFLICT do aprendizado. Importar dez linhas do mesmo lojista grava uma regra, nao dez.';
+
+-- =====================================================
+-- SECAO 3: indice de leitura
+-- =====================================================
+-- A tela de regras abre em uma consulta: as regras do usuario, da mais usada
+-- para a menos usada.
+CREATE INDEX IF NOT EXISTS idx_categorization_rules_user_usage
+  ON public.categorization_rules (user_id, times_applied DESC);
+
+-- =====================================================
+-- SECAO 4: RLS
+-- =====================================================
+ALTER TABLE public.categorization_rules ENABLE ROW LEVEL SECURITY;
+
+-- Ver: so o dono.
+DROP POLICY IF EXISTS categorization_rules_select ON public.categorization_rules;
+CREATE POLICY categorization_rules_select ON public.categorization_rules
+  FOR SELECT TO authenticated
+  USING (user_id = auth.uid());
+
+-- Gravar: so em nome proprio.
+DROP POLICY IF EXISTS categorization_rules_insert ON public.categorization_rules;
+CREATE POLICY categorization_rules_insert ON public.categorization_rules
+  FOR INSERT TO authenticated
+  WITH CHECK (user_id = auth.uid());
+
+-- Atualizar: so o dono, e sem trocar de dono nem de estabelecimento.
+--
+-- O `merchant_key` preso pela trigger da SECAO 5 (e nao aqui) porque a policy
+-- so enxerga a linha NOVA -- `WITH CHECK` nao tem como comparar com o valor
+-- anterior. A RLS garante o dono; a trigger garante a chave.
+DROP POLICY IF EXISTS categorization_rules_update ON public.categorization_rules;
+CREATE POLICY categorization_rules_update ON public.categorization_rules
+  FOR UPDATE TO authenticated
+  USING (user_id = auth.uid())
+  WITH CHECK (user_id = auth.uid());
+
+-- Apagar: so o dono. A tela oferece desligar (is_active) em vez de apagar,
+-- pelo motivo do comentario da coluna, mas apagar de fato continua sendo
+-- direito do dono.
+DROP POLICY IF EXISTS categorization_rules_delete ON public.categorization_rules;
+CREATE POLICY categorization_rules_delete ON public.categorization_rules
+  FOR DELETE TO authenticated
+  USING (user_id = auth.uid());
+
+-- =====================================================
+-- SECAO 5: carimbo do updated_at + chave imutavel
+-- =====================================================
+-- Funcao propria, e nao a `update_updated_at_column()` legada do 001, pelo
+-- mesmo motivo do 011: as migrations 003 e 004 existiram inteiras para
+-- consertar trigger que gravava sem privilegio suficiente sob a RLS do 002.
+-- Esta nasce com SECURITY INVOKER explicito e search_path fixo.
+--
+-- Ela tambem congela `merchant_key` e `user_id`. Trocar a chave de uma regra
+-- existente a faz casar com OUTRO estabelecimento mantendo o display_name
+-- antigo: a tela continuaria escrito "iFood" e a regra passaria a categorizar
+-- Uber. Nada falharia -- os lancamentos so nasceriam na categoria errada.
+CREATE OR REPLACE FUNCTION public.categorization_rules_guard()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NEW.merchant_key IS DISTINCT FROM OLD.merchant_key THEN
+    RAISE EXCEPTION 'merchant_key de uma regra nao muda: apague a regra e crie outra (era %, veio %)',
+      OLD.merchant_key, NEW.merchant_key;
+  END IF;
+
+  IF NEW.user_id IS DISTINCT FROM OLD.user_id THEN
+    RAISE EXCEPTION 'regra de categorizacao nao troca de dono';
+  END IF;
+
+  NEW.updated_at := now();
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_categorization_rules_guard ON public.categorization_rules;
+CREATE TRIGGER trg_categorization_rules_guard
+  BEFORE UPDATE ON public.categorization_rules
+  FOR EACH ROW EXECUTE FUNCTION public.categorization_rules_guard();
+
+-- =====================================================
+-- SECAO 6: GRANTS
+-- =====================================================
+-- O 002 rodou GRANT ... ON ALL TABLES antes desta tabela existir, e ALL TABLES
+-- e uma fotografia do momento -- nao alcanca objeto criado depois.
+REVOKE ALL ON public.categorization_rules FROM anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.categorization_rules TO authenticated;
+
+-- =====================================================
+-- SECAO 7: prova
+-- =====================================================
+-- O arquivo aborta se nao tiver pegado. Sem isto, rodar a migration num banco
+-- onde algo falhou em silencio sai verde e o problema aparece semanas depois,
+-- como leitura de regra de outro usuario.
+DO $$
+DECLARE
+  problemas text := '';
+BEGIN
+  IF to_regclass('public.categorization_rules') IS NULL THEN
+    RAISE EXCEPTION '014 nao criou public.categorization_rules';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_class
+    WHERE oid = to_regclass('public.categorization_rules') AND relrowsecurity
+  ) THEN
+    problemas := problemas || E'\n  - RLS nao ficou habilitada';
+  END IF;
+
+  -- Quatro policies: select, insert, update, delete.
+  IF (SELECT count(*) FROM pg_policies
+      WHERE schemaname = 'public' AND tablename = 'categorization_rules') <> 4 THEN
+    problemas := problemas || E'\n  - esperava 4 policies em categorization_rules';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND indexname = 'uniq_categorization_rules_user_merchant'
+  ) THEN
+    problemas := problemas || E'\n  - falta o UNIQUE (user_id, merchant_key): o aprendizado duplicaria regra';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid = to_regclass('public.categorization_rules')
+      AND tgname = 'trg_categorization_rules_guard'
+      AND NOT tgisinternal
+  ) THEN
+    problemas := problemas || E'\n  - falta a trigger que congela merchant_key';
+  END IF;
+
+  -- `has_table_privilege` de anon: a leitura precisa estar fechada.
+  IF has_table_privilege('anon', 'public.categorization_rules', 'SELECT') THEN
+    problemas := problemas || E'\n  - anon ainda le categorization_rules';
+  END IF;
+
+  IF problemas <> '' THEN
+    RAISE EXCEPTION E'014 aplicou parcialmente:%', problemas;
+  END IF;
+
+  RAISE NOTICE '014 conferido: tabela, RLS, 4 policies, UNIQUE, trigger e anon fechado.';
+END $$;
+
+-- =====================================================
+-- SECAO 8: registro
+-- =====================================================
+INSERT INTO public.schema_migrations (version, name, description, executed_at)
+VALUES ('014', '014_categorization_rules',
+        'Tabela categorization_rules: categoria automatica por estabelecimento na importacao - HMO-145', now())
+ON CONFLICT (version) DO NOTHING;
+
+COMMIT;
+
+
+-- ---------------------------------------------------------------------------
+-- 15. 015_card_invoice_payment.sql
+-- ---------------------------------------------------------------------------
+-- Cada migration traz o proprio BEGIN/COMMIT: se uma falhar, ela volta atras
+-- inteira e as seguintes nem chegam a rodar.
+-- =====================================================
+-- PULODOGATO - PAGAMENTO DE FATURA: ELO ENTRE AS PERNAS E REPARO DO DADO TORTO
+-- =====================================================
+-- Migration: 015_card_invoice_payment
+-- Gerado em: 2026-09-24  (HMO-149)
+--
+-- O BUG
+-- -----
+-- Pagar a fatura do cartao contava a mesma despesa DUAS vezes.
+--
+-- `app/api/card-invoices/close` cria a conta a pagar da fatura com
+-- `account_id` do proprio cartao, e `app/api/scheduled-transactions/[id]/pay`
+-- dava baixa inserindo UMA transacao negativa nesse mesmo `account_id`. O
+-- trigger `update_account_balance` soma `NEW.amount` na conta indicada, entao:
+--
+--   momento                  | conta corrente |  cartao  | patrimonio
+--   -------------------------+----------------+----------+-----------
+--   depois da compra de 1000 |        5000.00 | -1000.00 |    4000.00
+--   depois de pagar a fatura |        5000.00 | -2000.00 |    3000.00
+--
+-- O cartao ficava MAIS negativo pelo valor da fatura e a conta de onde o
+-- dinheiro realmente saiu nao se mexia. O patrimonio certo e 4000 nos dois
+-- momentos: a despesa aconteceu na compra, nao no pagamento.
+--
+-- Nada quebrava. Nao havia excecao, 500 nem tela vazia -- havia um patrimonio
+-- 25% menor, plausivel, com duas casas decimais.
+--
+-- O CONSERTO, QUE E METADE CODIGO E METADE ESTE ARQUIVO
+-- -----------------------------------------------------
+-- No codigo (lib/card-invoice.ts): a baixa da fatura passa a gravar DUAS
+-- pernas com `transaction_type = 'transfer'` -- `-total` na conta pagadora e
+-- `+total` na conta do cartao. 'transfer' e o que faz as views fecharem: o
+-- fluxo de caixa do 008 filtra `('expense','income')` e ignora as duas pernas
+-- (a despesa continua contada uma vez, na compra); `net_worth_history` soma
+-- qualquer tipo, espelhando o trigger de saldo, e la as duas se anulam; e
+-- `card_invoice_lines` tambem filtra ('expense','income'), entao a perna de
+-- entrada nao aparece como credito abatendo a fatura do mes SEGUINTE.
+--
+-- (A nota da SECAO 4 do 006 diz que o pagamento da fatura "entra como income
+-- na conta do cartao". Era a intencao antiga e estava errada por dois motivos:
+-- income infla a receita do mes, e a linha abateria a fatura seguinte. Estorno
+-- de compra continua sendo income; pagamento e transferencia.)
+--
+-- Aqui, duas coisas que o TypeScript nao alcanca:
+--
+--   1. `counterpart_transaction_id`: o elo entre as duas pernas, para que o
+--      ESTORNO da baixa apague as duas sem adivinhar por valor e data.
+--   2. o reparo do dado que ja entrou torto em producao.
+--
+-- POR QUE O REPARO DEVOLVE A CONTA PARA 'pending' EM VEZ DE CORRIGIR
+-- ------------------------------------------------------------------
+-- Para corrigir seria preciso saber DE QUAL CONTA o dinheiro saiu, e essa
+-- informacao nunca foi gravada -- a baixa antiga so registrava o cartao.
+-- Escolher uma conta ("a primeira conta corrente") lancaria dinheiro saindo de
+-- uma conta que o usuario nao escolheu: trocaria um erro visivel no patrimonio
+-- por um saldo errado em duas contas, que e pior porque ninguem procura.
+--
+-- Entao o reparo desfaz: apaga a transacao errada (o trigger devolve o saldo
+-- do cartao no mesmo movimento) e devolve a conta prevista para 'pending'. A
+-- fatura volta para a agenda e o usuario da baixa de novo, agora escolhendo a
+-- conta pagadora. O `paid_date` original de cada uma sai no RAISE NOTICE --
+-- guarde a saida antes de fechar o SQL Editor.
+--
+-- O reparo e uma FUNCAO, nao um bloco solto, por dois motivos: o teste
+-- (database/tests/card_invoice_payment_test.sql) precisa criar uma baixa torta
+-- e chamar o reparo para provar que ele repara, e quem rodar a migration duas
+-- vezes tem que poder confiar que a segunda nao faz nada. A funcao fica no
+-- schema depois, sem EXECUTE para anon nem para authenticated.
+--
+-- ORDEM DAS OPERACOES NO REPARO (nao e arbitraria)
+-- ------------------------------------------------
+-- Solta a conta prevista ANTES de apagar a transacao. A constraint
+-- `scheduled_transactions_paid_check` do 005 exige que `paid_date` e
+-- `transaction_id` saiam junto com o status, e o FK e ON DELETE SET NULL:
+-- apagar a transacao primeiro tentaria deixar a linha em 'paid' com
+-- `transaction_id` NULL, exatamente o estado que a constraint existe para
+-- impedir -- e o DELETE falharia. E a mesma ordem do DELETE /pay.
+--
+-- ESTE ARQUIVO SO ACRESCENTA: nenhuma funcao, view, policy ou trigger de
+-- producao e alterada. A unica escrita em dado existente e o reparo, e ele so
+-- alcanca linha que casa a chave canonica da fatura.
+--
+-- SEM META-COMANDO DE psql AQUI -- ESTE ARQUIVO E COLADO NO SQL EDITOR
+-- ---------------------------------------------------------------------
+-- Producao nao tem runner de migration: quem aplica e uma pessoa, colando o
+-- arquivo no SQL Editor do Supabase, que fala Postgres e NAO e o psql. Uma
+-- linha comecando com barra invertida vira `syntax error at or near "\"` na
+-- PRIMEIRA linha executavel -- e como o erro e no topo, NADA e aplicado. O
+-- arquivo parece rodado e o banco nao mudou. Foi o que aconteceu na primeira
+-- tentativa de aplicar esta migration (HMO-149, 2026-09-24).
+--
+-- Nenhuma das migrations 000-014 usa meta-comando; esta era a unica. O CI ja
+-- passa ON_ERROR_STOP pela linha de comando (`psql -v ON_ERROR_STOP=1`), entao
+-- declara-lo aqui dentro nao acrescentava nada la.
+--
+-- E a seguranca nao dependia dele: o arquivo inteiro esta num BEGIN/COMMIT.
+-- Erro no meio aborta a transacao, todo comando seguinte falha com "current
+-- transaction is aborted" e o COMMIT final vira ROLLBACK. Aplicar pela metade
+-- continua sendo impossivel -- e a SECAO 4 ainda confere objeto por objeto e
+-- da RAISE EXCEPTION se faltar alguma coisa.
+-- =====================================================
+
+BEGIN;
+
+-- =====================================================
+-- SECAO 1: o elo entre as duas pernas
+-- =====================================================
+-- Uma direcao so: a perna de ENTRADA (a que quita o cartao) aponta para a
+-- perna de SAIDA (a que tirou o dinheiro da conta, e a que
+-- `scheduled_transactions.transaction_id` referencia). Apontar nos dois
+-- sentidos exigiria um UPDATE depois dos dois INSERTs -- um terceiro passo
+-- para falhar no meio, sem nada em troca: o estorno procura pela entrada a
+-- partir da saida, nunca o contrario.
+ALTER TABLE public.financial_transactions
+  ADD COLUMN IF NOT EXISTS counterpart_transaction_id uuid;
+
+COMMENT ON COLUMN public.financial_transactions.counterpart_transaction_id IS
+  'Perna oposta de uma transferencia entre contas proprias (hoje: pagamento de fatura). A perna de entrada aponta para a de saida.';
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.financial_transactions'::regclass
+      AND conname = 'financial_transactions_counterpart_fkey'
+  ) THEN
+    -- ON DELETE SET NULL, nao CASCADE: apagar a perna de saida nao pode
+    -- apagar a perna de entrada em silencio. Quem apaga as duas e o estorno,
+    -- explicitamente, para que a rota possa avisar se a segunda falhar.
+    ALTER TABLE public.financial_transactions
+      ADD CONSTRAINT financial_transactions_counterpart_fkey
+      FOREIGN KEY (counterpart_transaction_id)
+      REFERENCES public.financial_transactions(id) ON DELETE SET NULL;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.financial_transactions'::regclass
+      AND conname = 'financial_transactions_counterpart_not_self'
+  ) THEN
+    -- Uma perna apontando para si mesma passaria por par valido e o estorno
+    -- apagaria uma linha so, deixando metade da transferencia no saldo.
+    ALTER TABLE public.financial_transactions
+      ADD CONSTRAINT financial_transactions_counterpart_not_self
+      CHECK (counterpart_transaction_id IS NULL OR counterpart_transaction_id <> id);
+  END IF;
+END $$;
+
+-- O estorno busca a perna de entrada por counterpart_transaction_id. Sem
+-- indice isso e um seq scan na tabela que mais cresce no banco.
+CREATE INDEX IF NOT EXISTS idx_financial_transactions_counterpart
+  ON public.financial_transactions (counterpart_transaction_id)
+  WHERE counterpart_transaction_id IS NOT NULL;
+
+-- =====================================================
+-- SECAO 2: o reparo
+-- =====================================================
+-- A chave canonica que `POST /api/card-invoices/close` grava em
+-- `scheduled_transactions.notes` e `fatura:YYYY-MM-01:<uuid do cartao>`.
+--
+-- A deteccao e pela CHAVE, nunca pelo tipo da conta. Assinatura cobrada no
+-- cartao e cadastrada como conta prevista com `account_id` do cartao, e pagar
+-- aquela conta COM o cartao e despesa de verdade: quem varresse por
+-- `account_type = 'credit_card'` apagaria o lancamento de toda assinatura de
+-- cartao ja paga e faria a despesa desaparecer do relatorio.
+--
+-- A regex e ancorada nas duas pontas pelo mesmo motivo que em
+-- lib/card-invoice.ts: sem o `$`, uma nota escrita a mao pelo usuario entraria
+-- no reparo.
+CREATE OR REPLACE FUNCTION public.reparar_pagamentos_de_fatura()
+RETURNS integer
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
+DECLARE
+  v_total integer := 0;
+  r record;
+BEGIN
+  FOR r IN
+    SELECT
+      s.id            AS scheduled_id,
+      s.transaction_id,
+      s.user_id,
+      s.description,
+      s.paid_date,
+      t.amount,
+      t.account_id
+    FROM public.scheduled_transactions s
+    JOIN public.financial_transactions t ON t.id = s.transaction_id
+    WHERE s.status = 'paid'
+      AND s.notes ~ '^fatura:\d{4}-\d{2}-\d{2}:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      -- a transacao da baixa caiu no PROPRIO cartao da chave: e a baixa antiga
+      AND t.account_id = (substring(s.notes from '^fatura:\d{4}-\d{2}-\d{2}:(.+)$'))::uuid
+      -- cinto e suspensorio: a baixa nova grava 'transfer' e jamais entra aqui
+      AND t.transaction_type IS DISTINCT FROM 'transfer'
+  LOOP
+    -- Ordem inversa da baixa. Ver a nota no cabecalho: soltar a conta depois
+    -- do DELETE violaria scheduled_transactions_paid_check.
+    UPDATE public.scheduled_transactions
+       SET status = 'pending', paid_date = NULL, transaction_id = NULL
+     WHERE id = r.scheduled_id;
+
+    -- O trigger update_account_balance devolve o saldo do cartao aqui
+    -- (current_balance - OLD.amount), no mesmo comando.
+    DELETE FROM public.financial_transactions WHERE id = r.transaction_id;
+
+    v_total := v_total + 1;
+
+    RAISE NOTICE
+      'reparada: "%" (usuario %, paga em %, valor %) -> voltou para pending; o saldo do cartao % foi devolvido em %',
+      r.description, r.user_id, r.paid_date, r.amount, r.account_id, abs(r.amount);
+  END LOOP;
+
+  RETURN v_total;
+END $$;
+
+COMMENT ON FUNCTION public.reparar_pagamentos_de_fatura() IS
+  'Desfaz baixas de fatura lancadas no proprio cartao (bug HMO-149): apaga a transacao e devolve a conta prevista para pending. Idempotente.';
+
+-- Sem EXECUTE para os papeis do app. A funcao escreve em dinheiro e existe
+-- para manutencao; deixar o EXECUTE default (PUBLIC) a publicaria como RPC em
+-- /rest/v1/rpc para qualquer usuario logado.
+--
+-- REVOKE de PUBLIC nao basta neste banco: o Supabase concede explicitamente a
+-- anon e authenticated, e um grant explicito sobrevive ao REVOKE de PUBLIC --
+-- a mesma armadilha do 002. Por isso os tres REVOKEs.
+REVOKE ALL ON FUNCTION public.reparar_pagamentos_de_fatura() FROM PUBLIC;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+    REVOKE ALL ON FUNCTION public.reparar_pagamentos_de_fatura() FROM anon;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+    REVOKE ALL ON FUNCTION public.reparar_pagamentos_de_fatura() FROM authenticated;
+  END IF;
+END $$;
+
+-- =====================================================
+-- SECAO 3: roda o reparo uma vez
+-- =====================================================
+DO $$
+DECLARE
+  v_total integer;
+BEGIN
+  v_total := public.reparar_pagamentos_de_fatura();
+  IF v_total = 0 THEN
+    RAISE NOTICE '015: nenhuma baixa de fatura torta encontrada.';
+  ELSE
+    RAISE NOTICE '015: % baixa(s) de fatura desfeita(s). As faturas voltaram para a agenda em Contas Previstas -- de baixa de novo escolhendo a conta pagadora.', v_total;
+  END IF;
+END $$;
+
+-- =====================================================
+-- SECAO 4: prova
+-- =====================================================
+-- Aborta se qualquer metade nao pegou. O motivo de existir e o mesmo do 014: a
+-- migration e colada a mao num SQL Editor, e um erro no meio de um script
+-- longo passa despercebido entre os NOTICEs.
+DO $$
+DECLARE
+  problemas text := '';
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'financial_transactions'
+      AND column_name = 'counterpart_transaction_id'
+  ) THEN
+    problemas := problemas || E'\n  - falta a coluna counterpart_transaction_id';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.financial_transactions'::regclass
+      AND conname = 'financial_transactions_counterpart_fkey'
+  ) THEN
+    problemas := problemas || E'\n  - falta o FK da perna oposta';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.financial_transactions'::regclass
+      AND conname = 'financial_transactions_counterpart_not_self'
+  ) THEN
+    problemas := problemas || E'\n  - falta o CHECK que impede a perna apontar para si mesma';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'reparar_pagamentos_de_fatura'
+  ) THEN
+    problemas := problemas || E'\n  - falta a funcao de reparo';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated')
+     AND has_function_privilege('authenticated', 'public.reparar_pagamentos_de_fatura()', 'EXECUTE') THEN
+    problemas := problemas || E'\n  - authenticated ainda pode executar o reparo (RPC aberta)';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon')
+     AND has_function_privilege('anon', 'public.reparar_pagamentos_de_fatura()', 'EXECUTE') THEN
+    problemas := problemas || E'\n  - anon ainda pode executar o reparo (RPC aberta)';
+  END IF;
+
+  -- Nenhuma baixa de fatura pode ter sobrado apontando para o proprio cartao.
+  IF EXISTS (
+    SELECT 1
+    FROM public.scheduled_transactions s
+    JOIN public.financial_transactions t ON t.id = s.transaction_id
+    WHERE s.status = 'paid'
+      AND s.notes ~ '^fatura:\d{4}-\d{2}-\d{2}:[0-9a-fA-F-]{36}$'
+      AND t.account_id = (substring(s.notes from '^fatura:\d{4}-\d{2}-\d{2}:(.+)$'))::uuid
+      AND t.transaction_type IS DISTINCT FROM 'transfer'
+  ) THEN
+    problemas := problemas || E'\n  - sobrou baixa de fatura lancada no proprio cartao';
+  END IF;
+
+  IF problemas <> '' THEN
+    RAISE EXCEPTION E'015 aplicou parcialmente:%', problemas;
+  END IF;
+
+  RAISE NOTICE '015 conferido: coluna, FK, CHECK, indice, funcao de reparo fechada para anon/authenticated, e nenhuma baixa torta restante.';
+END $$;
+
+-- =====================================================
+-- SECAO 5: registro
+-- =====================================================
+INSERT INTO public.schema_migrations (version, name, description, executed_at)
+VALUES ('015', '015_card_invoice_payment',
+        'Elo entre as pernas da transferencia e reparo das baixas de fatura lancadas no proprio cartao - HMO-149', now())
+ON CONFLICT (version) DO NOTHING;
+
+COMMIT;
+
+
+-- ---------------------------------------------------------------------------
+-- 16. 016_recurrence_notifications.sql
+-- ---------------------------------------------------------------------------
+-- Cada migration traz o proprio BEGIN/COMMIT: se uma falhar, ela volta atras
+-- inteira e as seguintes nem chegam a rodar.
+-- =====================================================
+-- PULODOGATO - AVISO DE ASSINATURA: O "JA AVISEI" DOS ALERTAS DE RECORRENCIA
+-- =====================================================
+-- Migration: 016_recurrence_notifications
+-- Gerado em: 2026-09-24  (HMO-148)
+--
+-- O QUE FALTAVA
+-- -------------
+-- Os dois alertas do detector -- preco subiu mais de 10%, e cobranca depois de
+-- marcada como cancelada -- ja sao CALCULADOS (lib/recurrence-detector.ts) e
+-- aparecem na tela /dashboard/recurrences. O que nao existia era o DISPARO:
+-- push e sino.
+--
+-- Disparar exige uma coisa que o calculo nao tem: o estado "ja avisei ESTE
+-- usuario sobre ESTE alerta". Sem ele o aviso sai de novo a cada varredura --
+-- e a varredura roda no cron diario E ao fim de cada importacao de extrato
+-- (HMO-147). Quem importa tres extratos numa tarde recebe o mesmo "a Netflix
+-- subiu 12%" tres vezes. O app vira spam e o usuario desliga a notificacao, o
+-- que apaga junto o aviso de vencimento, que e o que ele mais precisa.
+--
+-- POR QUE A REGRA CONTINUA EM TYPESCRIPT E SO O "JA AVISEI" VEM PARA O BANCO
+-- --------------------------------------------------------------------------
+-- Reescrever "subiu mais de 10% em relacao a media das ANTERIORES" numa view
+-- criaria DUAS definicoes do mesmo alerta -- a de lib/recurrence-detector.ts,
+-- que tem teste, e a daqui. Duas definicoes do mesmo numero e o erro que o
+-- cabecalho da monthly_cash_flow (008) existe para nao repetir: as duas
+-- parecem certas e divergem na primeira correcao aplicada em so uma delas.
+--
+-- Entao o banco guarda so o fato consumado: "em tal data, avisei tal pessoa
+-- sobre tal recorrencia". Isso nenhum TypeScript guarda, porque o processo que
+-- avisa morre no fim do request.
+--
+-- POR QUE GENERALIZAR bill_notifications E NAO CRIAR UMA SEGUNDA TABELA
+-- ---------------------------------------------------------------------
+-- O sino do app e UMA lista. Com duas tabelas, cada consumidor (o sino, o
+-- contador de nao-lidos, o "marcar como lido") teria que ler as duas e
+-- intercalar por data -- e o dia em que alguem esquecer a segunda tabela num
+-- desses lugares produz um sino que mostra 2 avisos e um contador que diz 5.
+-- Uma tabela so, com duas familias de `kind`, faz o PATCH /api/notifications/[id]
+-- que ja existe funcionar para os avisos novos sem uma linha de codigo.
+--
+-- O PRECO: a tabela passa a ter duas referencias opcionais no lugar de uma
+-- obrigatoria, e e por isso que as SECOES 3 e 4 existem.
+--
+-- =====================================================
+-- A ARMADILHA QUE ESTA MIGRATION EVITA -- LEIA ANTES DE MEXER NO INDICE
+-- =====================================================
+-- O desenho da issue pedia um indice unico PARCIAL:
+--
+--   CREATE UNIQUE INDEX ... ON bill_notifications (recurrence_id, kind, reference_date)
+--     WHERE recurrence_id IS NOT NULL;
+--
+-- O raciocinio estava certo (a UNIQUE antiga nao deduplica linha de
+-- recorrencia, porque NULL nao colide com NULL). A FORMA e que nao serve, e o
+-- motivo nao aparece em lugar nenhum ate o cron rodar em producao:
+--
+-- **Um indice unico parcial nao pode ser inferido como arbitro de ON CONFLICT
+-- sem repetir o predicado do indice na propria clausula.** Conferido em
+-- PostgreSQL 17:
+--
+--   INSERT ... ON CONFLICT (recurrence_id, kind, reference_date) DO NOTHING
+--   -- com indice PARCIAL:
+--   ERROR: there is no unique or exclusion constraint matching the ON CONFLICT
+--          specification
+--
+--   INSERT ... ON CONFLICT (recurrence_id, kind, reference_date)
+--     WHERE recurrence_id IS NOT NULL DO NOTHING
+--   -- passa.
+--
+-- E o `onConflict:` do supabase-js/PostgREST aceita uma LISTA DE COLUNAS. Nao
+-- existe jeito de mandar o `WHERE` do indice por ali. Com o indice parcial, a
+-- rota /api/cron/recurrence-alerts responderia 500 em toda execucao e ninguem
+-- receberia aviso nenhum -- e o sintoma ("falha ao gravar os avisos") nao
+-- aponta para o indice.
+--
+-- Por isso o indice aqui e CHEIO. O que se perde e uma entrada de indice por
+-- linha de conta prevista (recurrence_id NULL); o que se ganha e um upsert que
+-- funciona pelo cliente que o projeto realmente usa. E o indice cheio dedupica
+-- exatamente igual para a familia de recorrencia, porque duas linhas de conta
+-- prevista com `recurrence_id` NULL nunca colidem entre si -- NULL nao e igual
+-- a NULL em indice unico. Conferido nos tres casos em
+-- database/tests/recurrence_notifications_test.sql.
+--
+-- REFERENCE_DATE DE UMA RECORRENCIA = last_charge_date
+-- ---------------------------------------------------
+-- Mesma ideia do `due_date` na familia de conta prevista: a chave unica inclui
+-- uma data para que um FATO NOVO mereca um aviso novo. Adiar a conta gera
+-- aviso novo; uma cobranca nova da assinatura tambem. Se a chave fosse so
+-- (recurrence_id, kind), o usuario seria avisado do aumento uma unica vez na
+-- vida daquela assinatura -- o reajuste do ano seguinte passaria calado.
+--
+-- SEM META-COMANDO DE psql AQUI -- ESTE ARQUIVO E COLADO NO SQL EDITOR
+-- ---------------------------------------------------------------------
+-- Producao nao tem runner de migration: quem aplica e uma pessoa, colando o
+-- arquivo no SQL Editor do Supabase, que fala Postgres e NAO e o psql. Uma
+-- linha comecando com barra invertida vira `syntax error at or near "\"`, e
+-- como ela estava ANTES do primeiro comando executavel, NADA era aplicado --
+-- nem a coluna, nem os CHECKs, nem o indice. O arquivo parecia rodado e o
+-- banco nao mudava. Foi exatamente o que aconteceu com a 015 (HMO-149,
+-- 2026-09-24); este arquivo tinha o mesmo defeito e ainda nao havia sido
+-- aplicado em producao, entao ia falhar do mesmo jeito na vez dele.
+--
+-- O CI ja passa ON_ERROR_STOP pela linha de comando (`psql -v
+-- ON_ERROR_STOP=1`), entao declara-lo aqui dentro nao acrescentava nada la.
+-- E a seguranca nao dependia dele: o arquivo inteiro esta num BEGIN/COMMIT.
+-- Erro no meio aborta a transacao, todo comando seguinte falha com "current
+-- transaction is aborted" e o COMMIT final vira ROLLBACK -- aplicar pela
+-- metade continua impossivel, e a SECAO 6 ainda confere objeto por objeto e
+-- da RAISE EXCEPTION se faltar alguma coisa.
+--
+-- scripts/check-migrations-in-ci.mjs agora reprova qualquer migration nova com
+-- meta-comando, para que isto nao volte numa terceira.
+-- =====================================================
+
+BEGIN;
+
+-- =====================================================
+-- SECAO 0: pre-requisitos
+-- =====================================================
+-- Sem isto a migration falha mais adiante com "relation does not exist", que
+-- nao diz QUAL migration ficou para tras.
+DO $$
+BEGIN
+  IF to_regclass('public.bill_notifications') IS NULL THEN
+    RAISE EXCEPTION '016 exige public.bill_notifications (migration 009) -- aplique o 009 primeiro.';
+  END IF;
+
+  IF to_regclass('public.detected_recurrences') IS NULL THEN
+    RAISE EXCEPTION '016 exige public.detected_recurrences (migration 011) -- aplique o 011 primeiro.';
+  END IF;
+END $$;
+
+-- =====================================================
+-- SECAO 1: a referencia deixa de ser obrigatoria
+-- =====================================================
+-- Um aviso de recorrencia nao tem conta prevista. Enquanto a coluna for
+-- NOT NULL, a unica saida seria inventar um valor -- e a alternativa comum
+-- (apontar para uma conta prevista qualquer) faz o clique no sino levar o
+-- usuario para a conta errada.
+ALTER TABLE public.bill_notifications
+  ALTER COLUMN scheduled_transaction_id DROP NOT NULL;
+
+-- =====================================================
+-- SECAO 2: a referencia nova
+-- =====================================================
+-- ON DELETE CASCADE: apagada a recorrencia, o aviso perde o destino do clique.
+-- Manter a linha deixaria um item no sino que abre uma tela vazia.
+ALTER TABLE public.bill_notifications
+  ADD COLUMN IF NOT EXISTS recurrence_id uuid;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.bill_notifications'::regclass
+      AND conname = 'bill_notifications_recurrence_id_fkey'
+  ) THEN
+    ALTER TABLE public.bill_notifications
+      ADD CONSTRAINT bill_notifications_recurrence_id_fkey
+      FOREIGN KEY (recurrence_id) REFERENCES public.detected_recurrences(id) ON DELETE CASCADE;
+  END IF;
+END $$;
+
+COMMENT ON COLUMN public.bill_notifications.recurrence_id IS
+  'A assinatura que originou o aviso, quando kind e da familia de recorrencia. Exclusivo com scheduled_transaction_id -- ver o CHECK.';
+
+-- =====================================================
+-- SECAO 3: o dominio de `kind` cresce
+-- =====================================================
+-- O CHECK antigo so admitia 'due_soon' e 'overdue'. Sem trocar por este, o
+-- INSERT do cron novo seria recusado pela constraint -- o que, ao menos, e uma
+-- falha visivel. O que NAO se pode fazer e largar o dominio aberto: `kind` e o
+-- que a tela e o push usam para escolher icone e para onde o clique leva, e um
+-- `kind` digitado errado viraria uma linha invisivel em vez de um erro.
+ALTER TABLE public.bill_notifications
+  DROP CONSTRAINT IF EXISTS bill_notifications_kind_check;
+
+ALTER TABLE public.bill_notifications
+  ADD CONSTRAINT bill_notifications_kind_check
+  CHECK (kind IN ('due_soon', 'overdue', 'price_increase', 'charge_after_cancel'));
+
+-- =====================================================
+-- SECAO 4: exatamente UMA referencia, e coerente com o `kind`
+-- =====================================================
+-- Sao duas constraints porque sao dois erros diferentes, e um nome de
+-- constraint que aparece no log de producao deve dizer qual dos dois aconteceu.
+--
+-- (a) exatamente uma referencia preenchida. Nenhuma das duas = aviso orfao:
+--     aparece no sino e o clique nao tem para onde ir. As duas = o clique tem
+--     dois destinos e quem escolhe passa a ser a ordem do `if` no componente.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.bill_notifications'::regclass
+      AND conname = 'bill_notifications_one_reference_check'
+  ) THEN
+    ALTER TABLE public.bill_notifications
+      ADD CONSTRAINT bill_notifications_one_reference_check
+      CHECK (
+        (scheduled_transaction_id IS NOT NULL) <> (recurrence_id IS NOT NULL)
+      );
+  END IF;
+END $$;
+
+-- (b) a referencia combina com a familia do `kind`. O (a) sozinho aceita um
+--     'due_soon' apontando para uma recorrencia: a linha nasce valida, entra
+--     no sino, e desaparece do `already_notified` da view bill_alerts (que
+--     casa por scheduled_transaction_id) -- ou seja, o aviso de vencimento
+--     sairia DE NOVO no dia seguinte. Um aviso repetido por causa de uma linha
+--     que o banco aceitou e exatamente a falha que esta issue existe para
+--     fechar, entao a regra vira constraint em vez de convencao.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.bill_notifications'::regclass
+      AND conname = 'bill_notifications_kind_reference_check'
+  ) THEN
+    ALTER TABLE public.bill_notifications
+      ADD CONSTRAINT bill_notifications_kind_reference_check
+      CHECK (
+        (kind IN ('due_soon', 'overdue') AND scheduled_transaction_id IS NOT NULL)
+        OR
+        (kind IN ('price_increase', 'charge_after_cancel') AND recurrence_id IS NOT NULL)
+      );
+  END IF;
+END $$;
+
+-- =====================================================
+-- SECAO 5: o indice que impede o aviso repetido
+-- =====================================================
+-- Ver "A ARMADILHA" no cabecalho para o porque de ele ser CHEIO e nao parcial.
+-- Esta e a linha que faz o cron poder rodar dez vezes por dia -- e depois de
+-- cada importacao de extrato -- sem avisar duas vezes.
+CREATE UNIQUE INDEX IF NOT EXISTS bill_notifications_recurrence_unique
+  ON public.bill_notifications (recurrence_id, kind, reference_date);
+
+COMMENT ON INDEX public.bill_notifications_recurrence_unique IS
+  'Deduplica o aviso de assinatura. Cheio (nao parcial) porque indice parcial nao serve de arbitro de ON CONFLICT pelo PostgREST -- ver o cabecalho do 016.';
+
+COMMENT ON TABLE public.bill_notifications IS
+  'Avisos ja emitidos, das DUAS familias: vencimento de conta prevista (scheduled_transaction_id) e alerta de assinatura (recurrence_id). As duas UNIQUEs sao o que impede repetir o mesmo aviso a cada varredura.';
+
+-- =====================================================
+-- SECAO 6: conferencia
+-- =====================================================
+-- Uma migration que aplica METADE e o pior resultado possivel aqui: a coluna
+-- existiria, o cron gravaria, e a deduplicacao -- a razao de ser do arquivo --
+-- estaria faltando sem nenhum sintoma ate o segundo aviso chegar no celular.
+DO $$
+DECLARE
+  problemas text := '';
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = 'public.bill_notifications'::regclass
+      AND attname = 'scheduled_transaction_id'
+      AND attnotnull
+  ) THEN
+    problemas := problemas || E'\n  - scheduled_transaction_id continua NOT NULL';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = 'public.bill_notifications'::regclass
+      AND attname = 'recurrence_id' AND attnum > 0 AND NOT attisdropped
+  ) THEN
+    problemas := problemas || E'\n  - coluna recurrence_id nao existe';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.bill_notifications'::regclass
+      AND conname = 'bill_notifications_recurrence_id_fkey' AND confdeltype = 'c'
+  ) THEN
+    problemas := problemas || E'\n  - FK de recurrence_id ausente ou sem ON DELETE CASCADE';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.bill_notifications'::regclass
+      AND conname = 'bill_notifications_kind_check'
+      AND pg_get_constraintdef(oid) LIKE '%price_increase%'
+      AND pg_get_constraintdef(oid) LIKE '%charge_after_cancel%'
+  ) THEN
+    problemas := problemas || E'\n  - o CHECK de kind nao admite as duas familias novas';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.bill_notifications'::regclass
+      AND conname = 'bill_notifications_one_reference_check'
+  ) THEN
+    problemas := problemas || E'\n  - CHECK de referencia exclusiva ausente';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.bill_notifications'::regclass
+      AND conname = 'bill_notifications_kind_reference_check'
+  ) THEN
+    problemas := problemas || E'\n  - CHECK de coerencia entre kind e referencia ausente';
+  END IF;
+
+  -- Nao basta o indice existir: PARCIAL nao serve de arbitro de ON CONFLICT
+  -- pelo PostgREST, e essa e a diferenca entre o cron funcionar e responder
+  -- 500 em toda execucao. `indpred IS NULL` e o que distingue os dois.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_index i
+    JOIN pg_class c ON c.oid = i.indexrelid
+    WHERE i.indrelid = 'public.bill_notifications'::regclass
+      AND c.relname = 'bill_notifications_recurrence_unique'
+      AND i.indisunique
+      AND i.indpred IS NULL
+  ) THEN
+    problemas := problemas || E'\n  - indice unico de deduplicacao ausente, nao-unico, ou PARCIAL (parcial nao serve de arbitro de ON CONFLICT)';
+  END IF;
+
+  -- A UNIQUE da familia de conta prevista tem que continuar de pe: e ela que
+  -- impede o aviso de vencimento de repetir.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.bill_notifications'::regclass
+      AND conname = 'bill_notifications_unique'
+  ) THEN
+    problemas := problemas || E'\n  - a UNIQUE de conta prevista desapareceu';
+  END IF;
+
+  IF problemas <> '' THEN
+    RAISE EXCEPTION E'016 aplicou parcialmente:%', problemas;
+  END IF;
+
+  RAISE NOTICE '016 conferido: referencia opcional, recurrence_id com CASCADE, dominio de kind, os dois CHECKs e o indice unico CHEIO de deduplicacao.';
+END $$;
+
+-- =====================================================
+-- SECAO 7: registro
+-- =====================================================
+INSERT INTO public.schema_migrations (version, name, description, executed_at)
+VALUES ('016', '016_recurrence_notifications',
+        'bill_notifications passa a guardar tambem o "ja avisei" dos alertas de assinatura - HMO-148', now())
+ON CONFLICT (version) DO NOTHING;
+
+COMMIT;
+
+
+-- ---------------------------------------------------------------------------
+-- 17. 017_monthly_summary_notifications.sql
+-- ---------------------------------------------------------------------------
+-- Cada migration traz o proprio BEGIN/COMMIT: se uma falhar, ela volta atras
+-- inteira e as seguintes nem chegam a rodar.
+-- =====================================================
+-- PULODOGATO - O RESUMO DO MES FECHADO ENTRA NO SINO
+-- =====================================================
+-- Migration: 017_monthly_summary_notifications
+-- Gerado em: 2026-09-24  (HMO-154)
+--
+-- O QUE FALTAVA
+-- -------------
+-- O resumo do mes fechado ja e CALCULADO (lib/anomalies.ts, com 27 testes e
+-- sete mutacoes provadas). O que nao existia era o canal: o cron precisa
+-- gravar em bill_notifications, e a tabela -- do jeito que a 016 a deixou --
+-- RECUSA a linha do resumo. Nao e falta de coluna: e o CHECK
+-- `bill_notifications_one_reference_check`, que exige exatamente UMA referencia
+-- preenchida entre `scheduled_transaction_id` e `recurrence_id`.
+--
+-- E um resumo de mes nao aponta para nenhum dos dois. Ele nao e sobre uma conta
+-- nem sobre uma assinatura; e sobre um MES. Sem esta migration o cron responde
+-- 500 com "violates check constraint" em toda execucao -- e a mensagem cita o
+-- nome da constraint, nao o desenho, entao quem for depurar vai olhar para a
+-- rota antes de olhar para a tabela.
+--
+-- A 016 acertou em generalizar bill_notifications em vez de criar uma segunda
+-- tabela (o sino do app e UMA lista, e duas tabelas produzem um sino que mostra
+-- 2 avisos e um contador que diz 5). Esta migration segue a mesma linha e
+-- admite a TERCEIRA familia -- com a diferenca de que esta nao tem objeto para
+-- apontar.
+--
+-- =====================================================
+-- POR QUE UMA COLUNA NOVA, E NAO A `reference_date` QUE JA EXISTE
+-- =====================================================
+-- A deduplicacao e a razao de ser deste arquivo: o cron do resumo roda todo dia
+-- 1, e a Vercel no plano Hobby tem +-59min de precisao -- uma execucao dupla na
+-- virada nao e hipotese remota. Sem chave unica, quem acorda dia 1 recebe o
+-- resumo de setembro duas vezes.
+--
+-- A chave obvia seria (user_id, kind, reference_date). Ela NAO serve, e o
+-- motivo nao aparece ate a familia antiga quebrar em producao: duas contas
+-- diferentes que vencem NO MESMO DIA geram dois avisos `due_soon` do mesmo
+-- usuario com a mesma `reference_date`. Um indice unico sobre essas tres
+-- colunas recusaria o segundo -- e o usuario deixaria de ser avisado de uma
+-- conta que vence hoje, sem nada no log dizendo por que. Seria trocar um aviso
+-- repetido por um aviso PERDIDO, que e o erro caro dos dois.
+--
+-- Entao a familia do resumo ganha a propria coluna, `summary_month`, e o indice
+-- e sobre ela. Nas linhas das outras duas familias `summary_month` e NULL, e em
+-- indice unico NULL nunca colide com NULL -- as linhas de conta e de assinatura
+-- atravessam o indice sem se ver. E o mesmo mecanismo que a 016 usou para o
+-- indice de recorrencia conviver com as linhas de conta prevista.
+--
+-- O INDICE E CHEIO, NAO PARCIAL -- e tem que continuar assim. Um indice unico
+-- PARCIAL nao pode ser inferido como arbitro de ON CONFLICT pela lista de
+-- colunas que o PostgREST manda (o `onConflict:` do supabase-js nao tem como
+-- transportar o `WHERE` do indice), e o upsert do cron passaria a responder
+-- "there is no unique or exclusion constraint matching the ON CONFLICT
+-- specification" em TODA execucao. Ver a secao "A ARMADILHA" no cabecalho da
+-- 016: e a mesma, e ela ja custou uma migration refeita.
+--
+-- `summary_month` guarda o primeiro dia do mes FECHADO ('2026-09-01' para o
+-- resumo de setembro), igual ao grao de `date_trunc('month', ...)` das views do
+-- 008. `reference_date` continua sendo preenchida com o mesmo valor, porque e
+-- NOT NULL desde a 009 e e ela que a tela usa para ordenar -- a redundancia e
+-- consciente e o preco de manter a familia antiga intacta.
+--
+-- SEM META-COMANDO DE psql AQUI -- ESTE ARQUIVO E COLADO NO SQL EDITOR
+-- ---------------------------------------------------------------------
+-- Producao nao tem runner de migration: quem aplica e uma pessoa, colando o
+-- arquivo no SQL Editor do Supabase, que fala Postgres e NAO e o psql. Uma
+-- unica linha comecando com barra invertida vira `syntax error at or near "\"`
+-- e, por estar ANTES do primeiro comando executavel, faz o arquivo INTEIRO ser
+-- recusado -- nada e aplicado e o banco nao muda. Aconteceu com a 015 e a 016.
+-- Ha guard no CI para isso desde entao (scripts/check-migrations-in-ci.mjs).
+-- =====================================================
+
+BEGIN;
+
+-- =====================================================
+-- SECAO 0: pre-requisitos
+-- =====================================================
+-- Sem isto a migration falha mais adiante com "constraint does not exist", que
+-- nao diz QUAL migration ficou para tras.
+DO $$
+BEGIN
+  IF to_regclass('public.bill_notifications') IS NULL THEN
+    RAISE EXCEPTION '017 exige public.bill_notifications (migration 009) -- aplique o 009 primeiro.';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = 'public.bill_notifications'::regclass
+      AND attname = 'recurrence_id' AND attnum > 0 AND NOT attisdropped
+  ) THEN
+    RAISE EXCEPTION '017 exige bill_notifications.recurrence_id (migration 016) -- aplique o 016 primeiro.';
+  END IF;
+END $$;
+
+-- =====================================================
+-- SECAO 1: a coluna que identifica o mes resumido
+-- =====================================================
+ALTER TABLE public.bill_notifications
+  ADD COLUMN IF NOT EXISTS summary_month date;
+
+COMMENT ON COLUMN public.bill_notifications.summary_month IS
+  'Primeiro dia do mes FECHADO que este resumo cobre. Preenchida so na familia monthly_summary; NULL nas outras duas -- e esse NULL que deixa o indice unico cheio conviver com elas.';
+
+-- O resumo e sobre um mes inteiro: um valor que nao seja o dia 1 significa que
+-- alguem gravou uma data de transacao no lugar do mes, e ai duas execucoes do
+-- mesmo mes deixam de colidir no indice -- o aviso repetiria, que e exatamente
+-- o que este arquivo existe para impedir. Barato de verificar, caro de nao ver.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.bill_notifications'::regclass
+      AND conname = 'bill_notifications_summary_month_check'
+  ) THEN
+    ALTER TABLE public.bill_notifications
+      ADD CONSTRAINT bill_notifications_summary_month_check
+      CHECK (summary_month IS NULL OR summary_month = date_trunc('month', summary_month)::date);
+  END IF;
+END $$;
+
+-- =====================================================
+-- SECAO 2: o dominio de `kind` admite a terceira familia
+-- =====================================================
+-- Continua FECHADO de proposito: `kind` e o que a tela e o push usam para
+-- escolher icone e destino do clique, e um `kind` digitado errado precisa virar
+-- erro, nao uma linha invisivel no sino.
+ALTER TABLE public.bill_notifications
+  DROP CONSTRAINT IF EXISTS bill_notifications_kind_check;
+
+ALTER TABLE public.bill_notifications
+  ADD CONSTRAINT bill_notifications_kind_check
+  CHECK (kind IN ('due_soon', 'overdue', 'price_increase', 'charge_after_cancel', 'monthly_summary'));
+
+-- =====================================================
+-- SECAO 3: as duas regras de coerencia, agora com tres familias
+-- =====================================================
+-- (a) exatamente UMA referencia. A 016 escreveu isto como `<>` entre dois
+--     booleanos, que e XOR e so funciona para dois. Com tres termos o XOR
+--     encadeado ACEITA os tres preenchidos (true <> true <> true = true), que e
+--     precisamente o caso que a regra existe para recusar. Por isso vira
+--     contagem: soma quantas estao preenchidas e exige 1.
+ALTER TABLE public.bill_notifications
+  DROP CONSTRAINT IF EXISTS bill_notifications_one_reference_check;
+
+ALTER TABLE public.bill_notifications
+  ADD CONSTRAINT bill_notifications_one_reference_check
+  CHECK (
+    (CASE WHEN scheduled_transaction_id IS NOT NULL THEN 1 ELSE 0 END)
+    + (CASE WHEN recurrence_id IS NOT NULL THEN 1 ELSE 0 END)
+    + (CASE WHEN summary_month IS NOT NULL THEN 1 ELSE 0 END)
+    = 1
+  );
+
+-- (b) a referencia combina com a familia do `kind`. Sem isto, um 'due_soon'
+--     poderia nascer com `summary_month` no lugar de `scheduled_transaction_id`:
+--     a linha entraria no sino e sumiria do `already_notified` da view
+--     bill_alerts (que casa por scheduled_transaction_id), e o aviso de
+--     vencimento sairia DE NOVO no dia seguinte.
+ALTER TABLE public.bill_notifications
+  DROP CONSTRAINT IF EXISTS bill_notifications_kind_reference_check;
+
+ALTER TABLE public.bill_notifications
+  ADD CONSTRAINT bill_notifications_kind_reference_check
+  CHECK (
+    (kind IN ('due_soon', 'overdue') AND scheduled_transaction_id IS NOT NULL)
+    OR
+    (kind IN ('price_increase', 'charge_after_cancel') AND recurrence_id IS NOT NULL)
+    OR
+    (kind = 'monthly_summary' AND summary_month IS NOT NULL)
+  );
+
+-- =====================================================
+-- SECAO 4: o indice que impede o resumo duplicado
+-- =====================================================
+-- CHEIO, nao parcial -- ver o cabecalho. E a linha que torna seguro o cron do
+-- dia 1 rodar duas vezes.
+CREATE UNIQUE INDEX IF NOT EXISTS bill_notifications_summary_unique
+  ON public.bill_notifications (user_id, kind, summary_month);
+
+COMMENT ON INDEX public.bill_notifications_summary_unique IS
+  'Deduplica o resumo mensal. Cheio (nao parcial) porque indice parcial nao serve de arbitro de ON CONFLICT pelo PostgREST -- ver o cabecalho do 016 e do 017. As linhas das outras familias tem summary_month NULL e nao colidem entre si.';
+
+COMMENT ON TABLE public.bill_notifications IS
+  'Avisos ja emitidos, das TRES familias: vencimento de conta prevista (scheduled_transaction_id), alerta de assinatura (recurrence_id) e resumo do mes fechado (summary_month). As tres chaves unicas sao o que impede repetir o mesmo aviso a cada passada do cron.';
+
+-- =====================================================
+-- SECAO 5: conferencia
+-- =====================================================
+-- Aplicar METADE e o pior resultado possivel: a coluna existiria, o cron
+-- gravaria, e a deduplicacao -- a razao de ser do arquivo -- estaria faltando
+-- sem nenhum sintoma ate o segundo resumo chegar no celular.
+DO $$
+DECLARE
+  problemas text := '';
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = 'public.bill_notifications'::regclass
+      AND attname = 'summary_month' AND attnum > 0 AND NOT attisdropped
+  ) THEN
+    problemas := problemas || E'\n  - coluna summary_month nao existe';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.bill_notifications'::regclass
+      AND conname = 'bill_notifications_kind_check'
+      AND pg_get_constraintdef(oid) LIKE '%monthly_summary%'
+  ) THEN
+    problemas := problemas || E'\n  - o CHECK de kind nao admite monthly_summary';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.bill_notifications'::regclass
+      AND conname = 'bill_notifications_one_reference_check'
+      AND pg_get_constraintdef(oid) LIKE '%summary_month%'
+  ) THEN
+    problemas := problemas || E'\n  - o CHECK de referencia exclusiva nao conhece summary_month';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.bill_notifications'::regclass
+      AND conname = 'bill_notifications_kind_reference_check'
+      AND pg_get_constraintdef(oid) LIKE '%monthly_summary%'
+  ) THEN
+    problemas := problemas || E'\n  - o CHECK de coerencia entre kind e referencia nao conhece a familia do resumo';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.bill_notifications'::regclass
+      AND conname = 'bill_notifications_summary_month_check'
+  ) THEN
+    problemas := problemas || E'\n  - CHECK de primeiro-dia-do-mes ausente';
+  END IF;
+
+  -- Nao basta o indice existir: PARCIAL nao serve de arbitro de ON CONFLICT
+  -- pelo PostgREST, e essa e a diferenca entre o cron funcionar e responder 500
+  -- em toda execucao. `indpred IS NULL` e o que distingue os dois.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_index i
+    JOIN pg_class c ON c.oid = i.indexrelid
+    WHERE i.indrelid = 'public.bill_notifications'::regclass
+      AND c.relname = 'bill_notifications_summary_unique'
+      AND i.indisunique
+      AND i.indpred IS NULL
+  ) THEN
+    problemas := problemas || E'\n  - indice unico do resumo ausente, nao-unico, ou PARCIAL (parcial nao serve de arbitro de ON CONFLICT)';
+  END IF;
+
+  -- As duas chaves das familias antigas tem que continuar de pe: sao elas que
+  -- impedem o aviso de vencimento e o de assinatura de repetirem.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.bill_notifications'::regclass
+      AND conname = 'bill_notifications_unique'
+  ) THEN
+    problemas := problemas || E'\n  - a UNIQUE de conta prevista desapareceu';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_index i
+    JOIN pg_class c ON c.oid = i.indexrelid
+    WHERE i.indrelid = 'public.bill_notifications'::regclass
+      AND c.relname = 'bill_notifications_recurrence_unique'
+      AND i.indisunique
+  ) THEN
+    problemas := problemas || E'\n  - o indice unico de assinatura (016) desapareceu';
+  END IF;
+
+  IF problemas <> '' THEN
+    RAISE EXCEPTION E'017 aplicou parcialmente:%', problemas;
+  END IF;
+
+  RAISE NOTICE '017 conferido: summary_month, dominio de kind com tres familias, os dois CHECKs de coerencia e o indice unico CHEIO do resumo.';
+END $$;
+
+-- =====================================================
+-- SECAO 6: registro
+-- =====================================================
+INSERT INTO public.schema_migrations (version, name, description, executed_at)
+VALUES ('017', '017_monthly_summary_notifications',
+        'bill_notifications admite a terceira familia de aviso: o resumo do mes fechado - HMO-154', now())
+ON CONFLICT (version) DO NOTHING;
+
+COMMIT;
+
+
+-- ---------------------------------------------------------------------------
 -- 4. Relatorio -- ESTA e a tabela para copiar de volta na issue
 -- ---------------------------------------------------------------------------
 WITH sem_rls AS (

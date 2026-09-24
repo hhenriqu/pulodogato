@@ -30,28 +30,48 @@
 // e o CI roda --check: se alguem mexer nas migrations sem regerar, o job fecha.
 // =====================================================
 
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DESTINO = join(REPO, 'database/validation');
 
-// A cadeia inteira, na ordem em que producao a recebeu. O 004 estava faltando
-// aqui ate 2026-09-22: o bundle validava uma cadeia que nao era a de producao,
-// e sairia verde mesmo assim.
-const MIGRATIONS = [
-  '001_baseline',
-  '002_rls_lockdown',
-  '003_fix_trigger_privileges',
-  '004_fix_remaining_trigger_privileges',
-  '005_recurring_and_scheduled',
-  '006_budgets_and_card_invoices',
-  '007_group_settlements',
-  '008_goals_and_reports',
-  '009_statements_alerts_receipts',
-  '010_user_connections',
-];
+// A cadeia inteira, na ordem em que producao a recebeu.
+//
+// ESTA LISTA ERA ESCRITA A MAO, E ISSO FALHOU DUAS VEZES (HMO-154)
+// ----------------------------------------------------------------
+// O 004 ficou de fora ate 2026-09-22. Corrigido o 004, a lista parou no 010 e
+// as SETE migrations seguintes (011 a 017) nunca entraram no bundle -- ou seja,
+// o arquivo que o dono do projeto cola no SQL Editor para validar o schema nao
+// continha detected_recurrences, payroll, as regras de categorizacao, o
+// pagamento de fatura nem os avisos. Ele validaria uma cadeia que parou em
+// agosto e o relatorio sairia VERDE.
+//
+// E o `--check` do CI nao pegava, porque ele comparava a saida gerada com a
+// saida commitada: as duas concordavam sobre uma lista errada. A verificacao
+// respondia "o bundle esta em dia com a LISTA", e o que importa e "em dia com
+// as MIGRATIONS".
+//
+// Por isso a lista deixou de ser escrita: ela agora sai do diretorio. Uma
+// migration nova entra no bundle por existir, que e a unica forma de isso nao
+// acontecer uma terceira vez.
+//
+// O 000 e inventario de preflight, nao muda schema -- mesma excecao explicita
+// do scripts/check-migrations-in-ci.mjs, e pelo mesmo motivo: excecao visivel
+// em vez de filtro esperto escondido na leitura.
+const FORA_DA_CADEIA = new Set(['000_preflight_inventory.sql']);
+
+const MIGRATIONS = readdirSync(join(REPO, 'database/migrations'))
+  .filter((f) => f.endsWith('.sql'))
+  .filter((f) => !FORA_DA_CADEIA.has(f))
+  .sort()
+  .map((f) => f.replace(/\.sql$/, ''));
+
+if (MIGRATIONS.length === 0) {
+  console.error('Nenhuma migration encontrada -- o bundle perdeu a fonte.');
+  process.exit(1);
+}
 const TESTE_RLS = 'database/tests/rls_isolation_test.sql';
 const TESTE_AGENDA = 'database/tests/scheduled_rls_test.sql';
 const TESTE_ORCAMENTO = 'database/tests/budget_invoice_test.sql';

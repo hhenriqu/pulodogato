@@ -14,6 +14,10 @@
     {
       "path": "/api/cron/bill-alerts",
       "schedule": "0 11 * * *"
+    },
+    {
+      "path": "/api/cron/monthly-summary",
+      "schedule": "0 12 1 * *"
     }
   ]
 }
