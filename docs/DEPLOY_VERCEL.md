@@ -110,6 +110,34 @@ o jeito de fazer passar e definir as variaveis.
 A chave `anon` e publica por design (vai para o bundle do browser); o que
 protege os dados e a RLS, aplicada em producao em 21/09 (HMO-120, HMO-125).
 
+#### As variaveis dos crons: o build passa sem elas, os avisos nao saem
+
+As duas acima quebram o build quando faltam, entao e impossivel esquecer delas.
+Estas duas **nao**:
+
+| Variavel | Valor |
+| --- | --- |
+| `CRON_SECRET` | frase longa e aleatoria -- `openssl rand -base64 32` |
+| `SUPABASE_SERVICE_ROLE_KEY` | chave `service_role` do projeto Supabase |
+
+Sem elas o deploy sobe verde, o site funciona inteiro e **os tres crons de
+`vercel.json` respondem 503 todo dia, para sempre**: o de vencimento de contas
+(11:00 UTC), a varredura de assinaturas (09:00) e o aviso de assinatura (09:30).
+Foi exatamente o que aconteceu -- `CRON_SECRET` nunca foi definida, entao desde
+a HMO-141 nenhum aviso de vencimento chegou a ninguem, e ninguem percebeu,
+porque uma rota que nunca roda com sucesso tambem nao gera erro nenhum no
+painel. A HMO-152 e essa descoberta.
+
+O 503 e deliberado: a rota se recusa a rodar sem a `service_role` em vez de
+rodar com a chave anon, ver zero linhas pela RLS e sair verde sem avisar
+ninguem. Nao afrouxe essa checagem -- defina as variaveis.
+
+A `service_role` **ignora a RLS inteira**. E a unica rota do projeto que a usa;
+nunca a exponha com prefixo `NEXT_PUBLIC_`.
+
+Depois de definir, **redeploy** (variavel nova nao alcanca um deploy que ja
+existe) e confira com `./scripts/verify-crons.sh` do passo 5.
+
 ### 3. Autorizar o dominio no Supabase Auth
 
 **Sem este passo o login por email quebra.** Supabase Dashboard → Authentication
@@ -182,6 +210,36 @@ antes do merge e descobrir o problema em producao.
 
 Depois, no browser: cadastro → email de confirmacao (o link deve apontar para o
 dominio `.vercel.app`, nao para localhost) → login → dashboard carrega dados.
+
+#### Os crons estao armados?
+
+```bash
+./scripts/verify-crons.sh https://pulodogato-theta.vercel.app
+```
+
+`verify-deploy.sh` nao cobre isso: ele prova que a app esta no ar, e os crons
+podem estar 100% mortos com a app no ar. Este segundo script le `crons[].path`
+do `vercel.json` (nao uma lista escrita a mao, que repetiria o bug do
+`/api/debug/database`) e sonda cada um **sem header nenhum**. Como as rotas
+checam as variaveis antes do `Authorization`, a resposta anonima diz tudo:
+
+| Resposta | Leitura |
+| --- | --- |
+| **401** | certo -- variaveis no lugar; a Vercel manda o Bearer e passa, a internet nao |
+| **503** | falta variavel (o corpo diz qual). Este cron nunca rodou |
+| **500** | segredo ok, rota quebrada -- suspeita 1: migration pendente no Supabase |
+| **404** | `vercel.json` agenda um caminho que nao existe no deploy |
+| **200** | alarme: a rota roda sem autenticacao para qualquer um |
+
+401 prova que a variavel existe, nao que a Vercel disparou o job. Isso so o
+painel mostra: Project → **Cron Jobs**, que lista cada agendamento e o ultimo
+disparo (e cada execucao aparece no log da funcao).
+
+No plano **Hobby** o disparo tem precisao de hora, `±59 min`: `30 9 * * *` sai
+entre 09:30 e 10:29. Com a varredura as 09:00 e o aviso as 09:30, em alguns dias
+o aviso roda antes da varredura daquele dia -- nada quebra (o aviso le as
+assinaturas ja conhecidas), mas uma assinatura detectada naquela manha so e
+avisada no dia seguinte. Ordem garantida exige o plano Pro.
 
 ## Commits do agente: a Vercel se recusa a buildar
 

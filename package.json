@@ -13,6 +13,7 @@
     "check-tests-in-ci": "node scripts/check-tests-in-ci.mjs",
     "pre-commit": "npm run check-table-drift && npm run check-color-tokens && npm run check-tests-in-ci && npm run check-prd && npm run lint",
     "type-check": "tsc --noEmit",
+    "verify:crons": "bash scripts/verify-crons.sh",
     "test:recurrence-detector": "tsc -p scripts/tsconfig.recurrence-detector-test.json && node --test scripts/test-recurrence-detector.mjs",
     "test:recurrence-scan": "rm -rf .tmp-recurrence-scan && tsc -p scripts/tsconfig.recurrence-scan-test.json && node scripts/resolve-aliases.mjs .tmp-recurrence-scan lib && node --test scripts/test-recurrence-scan.mjs",
     "test:recurrence-alerts": "rm -rf .tmp-recurrence-alerts && tsc -p scripts/tsconfig.recurrence-alerts-test.json && node scripts/resolve-aliases.mjs .tmp-recurrence-alerts lib && node --test scripts/test-recurrence-alerts.mjs",
