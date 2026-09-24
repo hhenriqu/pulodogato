@@ -52,7 +52,7 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
 
   const supabase = createClient();
-  const { isAdmin } = useSubscription(user);
+  const { isAdmin, loading: subscriptionLoading } = useSubscription(user);
 
   useEffect(() => {
     const getUser = async () => {
@@ -64,11 +64,23 @@ export default function AdminPage() {
     getUser();
   }, []);
 
+  // O `else` nao e detalhe: sem ele o `<PlanGuard>` la embaixo era codigo
+  // morto. `loading` nasce `true` e so `loadAdminData` o desligava, entao o
+  // nao-admin -- unico que o guard existe para barrar -- ficava preso no spinner
+  // e nunca chegava ao guard. Parecia protecao e era um travamento; o dia em que
+  // alguem trocasse o valor inicial por `false`, a tela abriria para todos.
+  // Esperar `subscriptionLoading` evita o outro extremo: enquanto o plano nao
+  // chegou, `isAdmin` e `false` e o admin de verdade veria "acesso negado"
+  // piscar antes dos dados.
   useEffect(() => {
-    if (user && isAdmin) {
+    if (!user || subscriptionLoading) return;
+
+    if (isAdmin) {
       loadAdminData();
+    } else {
+      setLoading(false);
     }
-  }, [user, isAdmin]);
+  }, [user, isAdmin, subscriptionLoading]);
 
   const loadAdminData = async () => {
     try {
