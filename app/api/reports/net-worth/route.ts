@@ -13,13 +13,7 @@
 
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
-import { janelaDeMeses, mesesDaJanela } from "@/lib/services/reports";
-
-interface LinhaPatrimonio {
-  month: string;
-  net_change: number;
-  net_worth: number;
-}
+import { janelaDeMeses, completarPatrimonio } from "@/lib/services/reports";
 
 export async function GET(request: NextRequest) {
   try {
@@ -66,27 +60,12 @@ export async function GET(request: NextRequest) {
       net_worth: Number(d.net_worth),
     }));
 
-    // Um mes SEM movimento nao tem linha na view, mas o patrimonio dele nao e
-    // zero -- e o mesmo do mes anterior. Preencher com zero desenharia o
-    // patrimonio despencando ate a origem e voltando: um "V" que nunca
-    // aconteceu, num grafico que existe exatamente para mostrar tendencia.
-    //
-    // Por isso aqui o preenchimento e para a FRENTE, e nao o completarMeses()
-    // das outras rotas: o mes vazio herda o ultimo patrimonio conhecido, com
-    // variacao zero.
-    const porMes = new Map(brutas.map((b) => [b.month, b]));
-    let ultimoPatrimonio = 0;
-    const linhas: LinhaPatrimonio[] = mesesDaJanela(
-      janela.inicio,
-      janela.meses
-    ).map((mes) => {
-      const linha = porMes.get(mes);
-      if (linha) {
-        ultimoPatrimonio = linha.net_worth;
-        return linha;
-      }
-      return { month: mes, net_change: 0, net_worth: ultimoPatrimonio };
-    });
+    // Preenchimento para a FRENTE, e nao o completarMeses() das outras rotas:
+    // o mes vazio herda o ultimo patrimonio conhecido. O porque esta em
+    // `completarPatrimonio`, que /api/net-worth tambem usa -- duas copias
+    // desta regra iam divergir, e a divergencia apareceria como dois graficos
+    // do mesmo numero com formatos diferentes.
+    const linhas = completarPatrimonio(brutas, janela.inicio, janela.meses);
 
     const { data: contas } = await supabase
       .from("financial_accounts")

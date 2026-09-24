@@ -107,6 +107,19 @@ const navigation: NavigationItem[] = [
     requiredFeature: "investment_tracking",
     isPremium: true,
   },
+  // "Patrimônio" entrou na HMO-145, logo abaixo de "Investimentos" de
+  // propósito: é a tela que responde o que "Investimentos" promete e ainda não
+  // entrega -- quanto do que o usuário tem está aplicado.
+  //
+  // Sem `requiredFeature`, pelo mesmo motivo de "Assinaturas", "Regras" e
+  // "Calculadoras": a tela só soma contas que o usuário já cadastrou e não
+  // consome nada além do banco. Gatear atrás de plano esconderia do menu
+  // justamente o número que dá sentido a todas as outras telas.
+  {
+    name: "Patrimônio",
+    href: "/dashboard/net-worth",
+    icon: Landmark,
+  },
   // "Assinaturas" entrou na HMO-145. A tela, as rotas e a tabela subiram para
   // produção sem nenhum item de menu apontando para elas: /dashboard/recurrences
   // respondia 200, mas não havia como chegar lá clicando, então a feature

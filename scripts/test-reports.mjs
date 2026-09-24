@@ -27,6 +27,7 @@ const {
   janelaDeMeses,
   mesesDaJanela,
   completarMeses,
+  completarPatrimonio,
   campoCsv,
   montarCsv,
   formatarNumeroCsv,
@@ -204,4 +205,63 @@ test("rotuloMes nao passa por Date", () => {
   // dezembro de 2025 -- o relatorio inteiro sairia um mes atrasado.
   assert.equal(rotuloMes("2026-01-01"), "01/2026");
   assert.equal(rotuloMes("2026-12-01"), "12/2026");
+});
+
+// ---------------------------------------------------------------------------
+// completarPatrimonio  (preenchimento para a FRENTE)
+// ---------------------------------------------------------------------------
+// Patrimonio e saldo, nao fluxo. O mes sem transacao nenhuma nao tem linha na
+// view, e o valor dele nao e zero -- e o mesmo do mes anterior. Estes testes
+// separam `completarPatrimonio` de `completarMeses`, que faz o oposto.
+
+test("o mes sem movimento herda o patrimonio do mes anterior", () => {
+  const linhas = completarPatrimonio(
+    [
+      { month: "2026-01-01", net_change: 1000, net_worth: 5000 },
+      { month: "2026-03-01", net_change: 200, net_worth: 5200 },
+    ],
+    "2026-01-01",
+    3,
+  );
+
+  assert.equal(linhas.length, 3);
+  // Fevereiro nao tem linha na view. Com zero, o grafico desenharia um "V" de
+  // 5000 ate a origem e de volta a 5200 -- uma queda que nunca aconteceu.
+  assert.equal(linhas[1].month, "2026-02-01");
+  assert.equal(linhas[1].net_worth, 5000, "fevereiro herda janeiro");
+  assert.equal(linhas[1].net_change, 0, "sem movimento, variacao zero");
+});
+
+test("os meses antes do primeiro dado ficam em zero", () => {
+  // Nao ha de onde herdar para tras. Repetir o primeiro valor desenharia uma
+  // reta de patrimonio que ninguem mediu.
+  const linhas = completarPatrimonio(
+    [{ month: "2026-03-01", net_change: 900, net_worth: 900 }],
+    "2026-01-01",
+    3,
+  );
+
+  assert.equal(linhas[0].net_worth, 0);
+  assert.equal(linhas[1].net_worth, 0);
+  assert.equal(linhas[2].net_worth, 900);
+});
+
+test("o preenchimento tolera a data com hora que o PostgREST devolve", () => {
+  const linhas = completarPatrimonio(
+    [{ month: "2026-01-01T00:00:00+00:00", net_change: 10, net_worth: 700 }],
+    "2026-01-01",
+    2,
+  );
+
+  assert.equal(linhas[0].net_worth, 700, "a linha casou com o mes");
+  assert.equal(linhas[1].net_worth, 700, "e fevereiro herdou dela");
+});
+
+test("janela sem nenhuma linha devolve a janela inteira em zero", () => {
+  const linhas = completarPatrimonio([], "2026-01-01", 2);
+  assert.equal(linhas.length, 2);
+  assert.deepEqual(
+    linhas.map((l) => l.net_worth),
+    [0, 0],
+  );
 });

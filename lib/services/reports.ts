@@ -59,6 +59,43 @@ export function completarMeses<T extends { month: string }>(
   return mesesDaJanela(inicio, meses).map((m) => porMes.get(m) ?? vazio(m));
 }
 
+/** Uma linha da view `net_worth_history` depois de convertida para numero. */
+export interface LinhaPatrimonio {
+  month: string;
+  net_change: number;
+  net_worth: number;
+}
+
+/**
+ * Preenche os meses sem linha HERDANDO o patrimonio do mes anterior.
+ *
+ * Este e o oposto de `completarMeses`, e a diferenca importa. Patrimonio e
+ * saldo, nao fluxo: um mes sem nenhuma transacao nao tem linha na view, mas o
+ * patrimonio dele nao e zero -- e o mesmo do mes anterior. Preencher com zero
+ * desenharia o patrimonio despencando ate a origem e voltando, um "V" que
+ * nunca aconteceu, justamente no grafico que existe para mostrar tendencia.
+ *
+ * Os meses ANTES da primeira linha ficam em zero: nao ha de onde herdar, e
+ * inventar o patrimonio de antes do primeiro dado seria desenhar uma reta que
+ * ninguem mediu.
+ */
+export function completarPatrimonio(
+  linhas: LinhaPatrimonio[],
+  inicio: string,
+  meses: number,
+): LinhaPatrimonio[] {
+  const porMes = new Map(linhas.map((l) => [l.month.slice(0, 10), l]));
+  let ultimo = 0;
+  return mesesDaJanela(inicio, meses).map((mes) => {
+    const linha = porMes.get(mes);
+    if (linha) {
+      ultimo = linha.net_worth;
+      return linha;
+    }
+    return { month: mes, net_change: 0, net_worth: ultimo };
+  });
+}
+
 // =====================================================
 // CSV
 // =====================================================
