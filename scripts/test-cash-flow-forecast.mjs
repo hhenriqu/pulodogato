@@ -548,3 +548,159 @@ test("a origem de cada evento vai junto -- a tela separa conta de assinatura", (
     ]
   );
 });
+
+// ---------------------------------------------------------------------------
+// 7. A segunda linha: gasto variavel do dia a dia
+// ---------------------------------------------------------------------------
+// A linha otimista continua sendo o piso de tudo que este arquivo afirma, e
+// nenhum destes testes pode mexer nela. O que se prova aqui:
+//
+//   * sem media, as duas linhas sao a MESMA -- quem nao tem historico nao
+//     ganha uma segunda linha desenhada em cima de nada;
+//   * a linha provavel nunca fica acima da otimista, nem com valor absurdo,
+//     nem com sinal trocado. E a unica coisa que ela nao pode ser;
+//   * o gasto comeca AMANHA, porque o saldo de hoje ja carrega o de hoje.
+
+test("sem gasto variavel, a linha provavel e identica a otimista", () => {
+  const f = fluxo({ previstas: [prevista("2026-09-15", 300)] });
+
+  assert.equal(f.gastoDiario, 0);
+  assert.equal(f.gastoVariavelTotal, 0);
+  assert.equal(f.saldoFinalProvavel, f.saldoFinal);
+  assert.equal(f.primeiroDiaNegativoProvavel, f.primeiroDiaNegativo);
+  for (const d of f.linha) {
+    assert.equal(d.saldoProvavel, d.saldo, `divergiu em ${d.data}`);
+  }
+});
+
+test("o gasto variavel comeca amanha, nao hoje", () => {
+  // O saldo de hoje ja e o saldo da conta, e nele ja esta o que a pessoa
+  // gastou e lancou hoje. Cobrar o dia cheio de hoje por cima disso conta
+  // parte do dia duas vezes.
+  const f = fluxo({ gastoDiario: 50 });
+
+  assert.equal(dia(f, HOJE).saldoProvavel, 1000);
+  assert.equal(dia(f, "2026-09-11").saldoProvavel, 950);
+  assert.equal(dia(f, "2026-09-12").saldoProvavel, 900);
+  // 30 dias de horizonte, 29 dias cobrados.
+  assert.equal(f.gastoVariavelTotal, 50 * 29);
+  assert.equal(f.saldoFinalProvavel, 1000 - 50 * 29);
+});
+
+test("a linha provavel desce mais cedo que a otimista", () => {
+  const f = fluxo({
+    contas: [corrente(1000)],
+    previstas: [prevista("2026-09-28", 900)],
+    gastoDiario: 50,
+    dias: 30,
+  });
+
+  // Otimista: so a conta de 900 no dia 28 -> sobram 100, e a linha nunca cruza
+  // o zero. E a tela diria "voce nao fica negativo" para quem vai ficar.
+  assert.equal(f.primeiroDiaNegativo, null);
+  assert.ok(f.saldoFinal > 0);
+
+  // Provavel: os 50/dia desde amanha ja tinham comido 900 quando a conta
+  // chegou (18 dias, de 11 a 28), entao o dia 28 fecha em -800.
+  assert.equal(f.primeiroDiaNegativoProvavel, "2026-09-28");
+  assert.equal(dia(f, "2026-09-28").saldoProvavel, -800);
+  assert.ok(f.saldoFinalProvavel < 0);
+});
+
+test("a linha provavel NUNCA fica acima da otimista", () => {
+  const f = fluxo({
+    previstas: [prevista("2026-09-15", 300), prevista("2026-09-20", 2000, { tipo: "income" })],
+    recorrencias: [recorrencia("2026-09-12", 55)],
+    gastoDiario: 37.5,
+  });
+
+  for (const d of f.linha) {
+    assert.ok(
+      d.saldoProvavel <= d.saldo + 1e-9,
+      `${d.data}: provavel ${d.saldoProvavel} acima da otimista ${d.saldo}`
+    );
+  }
+});
+
+test("gasto variavel negativo vira zero, nunca receita", () => {
+  // Este e o repositorio onde despesa e gravada NEGATIVA: um sinal trocado
+  // chegando aqui e questao de tempo. Somado, ele desenharia a linha provavel
+  // ACIMA da otimista -- prometendo dinheiro que nao existe.
+  const f = fluxo({ gastoDiario: -80 });
+
+  assert.equal(f.gastoDiario, 0);
+  assert.equal(f.saldoFinalProvavel, f.saldoFinal);
+});
+
+test("gasto variavel invalido vira zero, e nao NaN na tela", () => {
+  for (const ruim of [Number.NaN, Infinity, null, undefined, "abc"]) {
+    const f = fluxo({ gastoDiario: ruim });
+    assert.equal(f.gastoDiario, 0, `${String(ruim)} deveria virar zero`);
+    assert.ok(Number.isFinite(f.saldoFinalProvavel));
+  }
+});
+
+test("o gastoDiario devolvido e o SANEADO, nao o que foi pedido", () => {
+  // A tela imprime o numero que entrou na conta. Se ela imprimisse o que
+  // pediu, as duas passariam a discordar em silencio.
+  assert.equal(fluxo({ gastoDiario: -5 }).gastoDiario, 0);
+  assert.equal(fluxo({ gastoDiario: 42.5 }).gastoDiario, 42.5);
+});
+
+test("o fundo do poco da linha provavel e proprio dela", () => {
+  const f = fluxo({
+    previstas: [prevista("2026-09-12", 500), prevista("2026-09-14", 500, { tipo: "income" })],
+    gastoDiario: 20,
+    dias: 30,
+  });
+
+  // Otimista: mergulha no dia 12 (500 -> 500) e volta no dia 14 (-> 1000).
+  assert.equal(f.diaDoMenorSaldo, "2026-09-12");
+  assert.equal(f.menorSaldo, 500);
+
+  // Provavel: o gasto diario nunca para, entao o fundo e o ULTIMO dia.
+  assert.equal(f.diaDoMenorSaldoProvavel, "2026-10-09");
+  assert.ok(f.menorSaldoProvavel < f.menorSaldo);
+});
+
+test("quem ja esta negativo hoje nao recebe data de mergulho em nenhuma das linhas", () => {
+  const f = fluxo({ contas: [corrente(-200)], gastoDiario: 50 });
+
+  assert.equal(f.comecaNegativo, true);
+  assert.equal(f.primeiroDiaNegativo, null);
+  assert.equal(f.primeiroDiaNegativoProvavel, null);
+});
+
+test("o gasto variavel nao mexe na linha otimista", () => {
+  // A blindagem: nenhum numero da linha de compromissos pode mudar por causa
+  // da media. Se mudar, a media parou de ser uma segunda leitura e virou uma
+  // correcao da primeira.
+  const semMedia = fluxo({
+    previstas: [prevista("2026-09-15", 300)],
+    recorrencias: [recorrencia("2026-09-12", 55)],
+  });
+  const comMedia = fluxo({
+    previstas: [prevista("2026-09-15", 300)],
+    recorrencias: [recorrencia("2026-09-12", 55)],
+    gastoDiario: 75,
+  });
+
+  assert.equal(comMedia.saldoFinal, semMedia.saldoFinal);
+  assert.equal(comMedia.menorSaldo, semMedia.menorSaldo);
+  assert.equal(comMedia.diaDoMenorSaldo, semMedia.diaDoMenorSaldo);
+  assert.equal(comMedia.totalSai, semMedia.totalSai);
+  assert.equal(comMedia.totalEntra, semMedia.totalEntra);
+  assert.equal(comMedia.primeiroDiaNegativo, semMedia.primeiroDiaNegativo);
+  assert.deepEqual(
+    comMedia.linha.map((d) => d.saldo),
+    semMedia.linha.map((d) => d.saldo)
+  );
+});
+
+test("o gasto variavel NAO entra no totalSai", () => {
+  // `totalSai` e o cartao "A pagar" da tela, e ele fala de compromissos com
+  // data. Misturar a media ali faria a soma das contas previstas mudar sem que
+  // nenhuma conta tenha sido criada.
+  const f = fluxo({ previstas: [prevista("2026-09-15", 300)], gastoDiario: 50 });
+  assert.equal(f.totalSai, 300);
+});

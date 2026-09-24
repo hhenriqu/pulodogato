@@ -1,4 +1,4 @@
-// GET /api/cash-flow?dias=90
+// GET /api/cash-flow?dias=90&gastoDiario=62.50
 //
 // "Em que dia o meu saldo fica negativo?" A aritmetica inteira -- e cada
 // armadilha dela -- mora em lib/cash-flow-forecast.ts, com teste unitario
@@ -20,6 +20,28 @@
 // este passo o aluguel do mes que vem pode simplesmente nao existir como
 // linha, e a previsao mostraria um saldo confortavel ate o fim do horizonte --
 // o pior sentido para errar numa tela cujo produto e uma DATA.
+//
+// -----------------------------------------------------------------------
+// AS CHAVES COMPROMETIDAS, QUE E A PARTE DELICADA DESTA ROTA
+// -----------------------------------------------------------------------
+// A linha provavel desconta um gasto variavel diario (lib/variable-spend.ts).
+// Para essa media nao cobrar de novo o que ja vira evento datado, ela exclui do
+// historico as chaves de estabelecimento ja comprometidas -- e o conjunto
+// montado AQUI e a unica coisa que mantem as duas metades coerentes.
+//
+// Entram duas fontes, e so duas:
+//
+//   * as assinaturas detectadas que a previsao projeta, ou seja exatamente a
+//     mesma lista de `DETECTED`/`CONFIRMED` que alimenta o calculo. Reusar a
+//     variavel, em vez de refazer a consulta, e o que impede os dois conjuntos
+//     de divergirem quando alguem mudar o filtro de um lado so: uma assinatura
+//     em `IGNORED` nao projeta evento e TEM que continuar dentro da media.
+//
+//   * as regras recorrentes ATIVAS, que geram conta prevista todo periodo.
+//
+// Conta prevista avulsa fica de fora de proposito -- ela acontece uma vez e a
+// media fala de todo mes. Ver o cabecalho do lib/variable-spend.ts, que explica
+// por que excluir de mais e pior que nao excluir.
 
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
@@ -29,11 +51,19 @@ import {
   projetarFluxoDeCaixa,
   proximosEventos,
   horizonteValido,
+  gastoDiarioValido,
   DIAS_PADRAO,
   type PrevistaParaFluxo,
   type RecorrenciaParaFluxo,
 } from "@/lib/cash-flow-forecast";
-import { addDays } from "@/lib/recurrence-detector";
+import {
+  calcularGastoVariavel,
+  inicioDaJanela,
+  type GastoVariavel,
+  type TransacaoParaGastoVariavel,
+} from "@/lib/variable-spend";
+import { addDays, normalizeMerchant } from "@/lib/recurrence-detector";
+import { COLUNAS_DA_TRANSACAO, MAX_TRANSACOES } from "@/lib/services/monthly-summary";
 
 interface LinhaPrevista {
   id: string;
@@ -155,17 +185,89 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    const recorrencias = (recorrenciasBrutas ?? []) as RecorrenciaParaFluxo[];
+
+    // ---------------------------------------------------------------
+    // O gasto variavel do dia a dia -- a segunda linha
+    // ---------------------------------------------------------------
+    const desde = inicioDaJanela(hoje);
+
+    const [regras, transacoes] = await Promise.all([
+      supabase
+        .from("recurring_rules")
+        .select("description")
+        .eq("user_id", user.id)
+        .eq("is_active", true),
+      supabase
+        .from("financial_transactions")
+        .select(COLUNAS_DA_TRANSACAO)
+        .eq("user_id", user.id)
+        .eq("transaction_type", "expense")
+        .gte("transaction_date", desde)
+        // Teto EXPLICITO pelo mesmo motivo do lib/services/monthly-summary.ts:
+        // o PostgREST pagina em silencio, e sem pedir o limite o truncamento
+        // viraria uma media calculada sobre parte do historico, sem aviso.
+        .limit(MAX_TRANSACOES),
+    ]);
+
+    // Ver o cabecalho: a lista de assinaturas e a MESMA que alimenta o calculo,
+    // por variavel e nao por consulta nova.
+    const chavesComprometidas = [
+      ...recorrencias.map((r) => r.merchant_key),
+      ...((regras.data ?? []) as { description: string | null }[]).map((r) =>
+        normalizeMerchant(r.description ?? "")
+      ),
+    ].filter(Boolean);
+
+    // Falha de leitura NAO derruba a tela -- mesmo criterio das assinaturas --
+    // mas tambem nao passa calada: sem historico a linha provavel simplesmente
+    // nao existe, e a tela precisa dizer isso em vez de mostrar uma linha so e
+    // deixar o usuario achar que ela e a resposta completa.
+    const gastoIndisponivel = Boolean(transacoes.error);
+    if (transacoes.error) {
+      console.error(
+        "Fluxo de caixa seguiu SEM o gasto variavel:",
+        transacoes.error
+      );
+    }
+
+    const gastoVariavel: GastoVariavel = calcularGastoVariavel({
+      transacoes: (transacoes.data ?? []) as unknown as TransacaoParaGastoVariavel[],
+      chavesComprometidas,
+      hoje,
+    });
+
+    // O ajuste do usuario (a media tem que ser VISIVEL e mudavel, ver o
+    // cabecalho do lib/variable-spend.ts). Um valor fora de faixa e saneado
+    // pela mesma funcao do calculo, entao a tela nunca ve um numero que o
+    // grafico nao usou. `gastoDiario=0` e legitimo: e o usuario pedindo a linha
+    // otimista de volta, e por isso o teste e `has`, nao "veio vazio".
+    const ajustado = url.searchParams.has("gastoDiario")
+      ? gastoDiarioValido(Number(url.searchParams.get("gastoDiario")))
+      : null;
+
+    const gastoDiario = ajustado ?? gastoVariavel.porDia;
+
     const fluxo = projetarFluxoDeCaixa({
       contas: contas ?? [],
       previstas: paraCalculo,
-      recorrencias: (recorrenciasBrutas ?? []) as RecorrenciaParaFluxo[],
+      recorrencias,
       hoje,
       dias,
+      gastoDiario,
     });
 
     return NextResponse.json({
       today: hoje,
       recorrencias_indisponiveis: recorrenciasIndisponiveis,
+      gasto_indisponivel: gastoIndisponivel,
+      // A procedencia da media vai junto com ela: quantos meses a sustentam,
+      // quais sao, e quanto foi descartado por ja estar comprometido. Sem isso
+      // o usuario compara com o proprio extrato, acha a diferenca e conclui que
+      // a conta esta errada -- quando ela esta certa por causa da diferenca.
+      variable_spend: gastoVariavel,
+      gasto_ajustado: ajustado !== null,
+      gasto_truncado: (transacoes.data ?? []).length >= MAX_TRANSACOES,
       cash_flow: fluxo,
       // A lista de "o que vem por ai" sai pronta do servidor: o saldo ao lado
       // de cada linha e acumulado, e recalcula-lo no cliente seria uma segunda
