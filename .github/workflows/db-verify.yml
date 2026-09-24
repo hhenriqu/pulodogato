@@ -12,9 +12,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -350,6 +350,24 @@ jobs:
       # fecha deixando residuo de fracao de centavo, que vira transferencia de
       # R$ 0,00 na tela. lib/settlement.ts trabalha em centavos inteiros e isto
       # prova que a conta fecha.
+      # As calculadoras nao tocam no banco -- sao quatro funcoes puras rodando
+      # no navegador. Estao aqui porque e onde vive todo `test:*`, e porque o
+      # check-tests-in-ci exige que a suite rode em algum workflow cujo
+      # `paths:` cubra lib/calculadoras.ts.
+      #
+      # Nada aqui levanta excecao quando erra: devolve um numero plausivel, com
+      # duas casas, que o usuario leva para uma conversa com o RH. Os quatro
+      # erros de maior valor em dinheiro, todos travados por teste proprio:
+      #   - INSS com aliquota cheia em vez de progressiva (R$ 198,49/mes);
+      #   - INSS sem o teto (R$ 1.613/mes num salario de R$ 20.000);
+      #   - IRRF sem o redutor da Lei 15.270/2025, que cobra R$ 312,89 de quem
+      #     e isento desde 01/01/2026 -- e a tabela progressiva sozinha esta
+      #     certa, entao o numero errado parece conferido;
+      #   - taxa anual convertida por divisao por 12, que transforma 12% a.a.
+      #     em 12,68% e infla 30 anos de aporte em mais de 20%.
+      - name: Tabelas de INSS/IRRF e aritmetica das calculadoras
+        run: npm run test:calculadoras
+
       - name: Acerto de contas simplificado
         run: npm run test:settlement
 
