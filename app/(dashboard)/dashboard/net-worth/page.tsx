@@ -443,7 +443,15 @@ export default function NetWorthPage() {
                           </Badge>
                         )}
                       </div>
-                      <p className={`text-2xl font-semibold ${c.total < 0 ? texto : ""}`}>
+                      {/* Saldo negativo e sempre o token de alerta, e nao a cor
+                          da classe: uma conta corrente no cheque especial
+                          pintada com a cor de "disponivel" diz o contrario do
+                          que aconteceu. */}
+                      <p
+                        className={`text-2xl font-semibold ${
+                          c.total < 0 ? "text-destructive" : ""
+                        }`}
+                      >
                         {brl(c.total)}
                       </p>
                       <p className="text-xs text-muted-foreground">{descricao}</p>
