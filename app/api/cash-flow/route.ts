@@ -42,6 +42,21 @@
 // Conta prevista avulsa fica de fora de proposito -- ela acontece uma vez e a
 // media fala de todo mes. Ver o cabecalho do lib/variable-spend.ts, que explica
 // por que excluir de mais e pior que nao excluir.
+//
+// -----------------------------------------------------------------------
+// A ABERTURA POR CATEGORIA NAO GANHOU PARAMETRO PROPRIO, E ISSO E DE PROPOSITO
+// -----------------------------------------------------------------------
+// A tela deixa mexer no valor de cada categoria, mas nao existe `?categoria[]=`
+// aqui. O que chega continua sendo UM `?gastoDiario=`, recomposto no cliente
+// pelo `gastoDiarioComAjustes` -- a mesma funcao pura que tem teste, chamada do
+// outro lado do fio.
+//
+// A alternativa (mandar os ajustes e recompor no servidor) teria duas
+// aritmeticas para o mesmo numero, uma em cada ponta, e a divergencia entre
+// elas apareceria como uma tela que mostra um valor e um grafico que usa outro.
+// Do jeito que esta, o servidor recebe o numero final, sane-o com o mesmo
+// `gastoDiarioValido` de sempre e devolve em `cash_flow.gastoDiario` -- entao a
+// tela desenha exatamente o que o calculo usou, sem uma segunda copia da regra.
 
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
@@ -63,7 +78,11 @@ import {
   type TransacaoParaGastoVariavel,
 } from "@/lib/variable-spend";
 import { addDays, normalizeMerchant } from "@/lib/recurrence-detector";
-import { COLUNAS_DA_TRANSACAO, MAX_TRANSACOES } from "@/lib/services/monthly-summary";
+import {
+  COLUNAS_DA_TRANSACAO,
+  MAX_TRANSACOES,
+  nomesDasCategorias,
+} from "@/lib/services/monthly-summary";
 
 interface LinhaPrevista {
   id: string;
@@ -192,7 +211,7 @@ export async function GET(request: NextRequest) {
     // ---------------------------------------------------------------
     const desde = inicioDaJanela(hoje);
 
-    const [regras, transacoes] = await Promise.all([
+    const [regras, transacoes, nomesDeCategoria] = await Promise.all([
       supabase
         .from("recurring_rules")
         .select("description")
@@ -208,6 +227,16 @@ export async function GET(request: NextRequest) {
         // o PostgREST pagina em silencio, e sem pedir o limite o truncamento
         // viraria uma media calculada sobre parte do historico, sem aviso.
         .limit(MAX_TRANSACOES),
+      // O nome da categoria e so ROTULO: a abertura por categoria e calculada
+      // por `category_id` e nao depende disto. Por isso o catch devolve `{}` em
+      // vez de derrubar a rota -- a tela cai para o id, feia mas correta, e o
+      // grafico nao muda em nada. (`nomesDasCategorias` lanca em erro de
+      // leitura; sem o catch, uma falha ao ler uma tabela de ROTULOS levaria a
+      // previsao inteira junto.)
+      nomesDasCategorias(supabase, user.id).catch((erro) => {
+        console.error("Fluxo de caixa seguiu sem os nomes de categoria:", erro);
+        return {} as Record<string, string>;
+      }),
     ]);
 
     // Ver o cabecalho: a lista de assinaturas e a MESMA que alimenta o calculo,
@@ -235,6 +264,7 @@ export async function GET(request: NextRequest) {
       transacoes: (transacoes.data ?? []) as unknown as TransacaoParaGastoVariavel[],
       chavesComprometidas,
       hoje,
+      nomesDeCategoria,
     });
 
     // O ajuste do usuario (a media tem que ser VISIVEL e mudavel, ver o
