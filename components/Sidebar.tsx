@@ -33,6 +33,7 @@ import {
   Repeat,
   Tags,
   Calculator,
+  LineChart,
 } from "lucide-react";
 
 interface SidebarProps {
@@ -81,6 +82,20 @@ const navigation: NavigationItem[] = [
     href: "/dashboard/bills",
     icon: CalendarClock,
     requiredFeature: "personal_finance",
+  },
+  // "Fluxo de Caixa" entrou na HMO-145, logo abaixo de "Contas Previstas" de
+  // propósito: é a mesma agenda, lida no eixo do tempo. Quem acabou de
+  // cadastrar uma conta com vencimento tem, uma linha abaixo, a tela que
+  // responde o que aquilo faz com o saldo dele.
+  //
+  // Sem `requiredFeature`, pelo mesmo motivo de "Assinaturas" e "Patrimônio": a
+  // previsão só lê o que o usuário já cadastrou e não consome nada além do
+  // banco. E a pergunta que ela responde -- "em que dia eu fico no vermelho" --
+  // é justamente a que não pode depender de plano para ser respondida.
+  {
+    name: "Fluxo de Caixa",
+    href: "/dashboard/cash-flow",
+    icon: LineChart,
   },
   {
     name: "Avisos",
