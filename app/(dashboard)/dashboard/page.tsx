@@ -89,9 +89,18 @@ interface PossoGastar {
   compromissos: number;
   compromissosVencidos: number;
   dividaDeCartao: number;
+  reservaDeMetas: number;
   livre: number;
   porDia: number;
   cartoes: { id: string; name: string; divida: number }[];
+  metas: {
+    id: string;
+    title: string;
+    alvoMensal: number;
+    aportado: number;
+    reserva: number;
+    derivado: boolean;
+  }[];
 }
 
 interface Meta {
@@ -321,7 +330,7 @@ export default function DashboardPage() {
       {/* Quanto ainda posso gastar                                         */}
       {/* ---------------------------------------------------------------- */}
       {/* O numero vem inteiro de /api/safe-to-spend, que por sua vez chama
-          lib/safe-to-spend.ts. Nenhuma das quatro parcelas e recalculada aqui:
+          lib/safe-to-spend.ts. Nenhuma das cinco parcelas e recalculada aqui:
           refazer a subtracao na tela criaria uma segunda versao da mesma conta,
           e no dia em que a definicao mudasse -- o que entra como divida de
           cartao, por exemplo -- o total e as parcelas passariam a discordar
@@ -370,7 +379,7 @@ export default function DashboardPage() {
               </Button>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
               <div className="rounded-lg bg-muted p-3">
                 <p className="text-xs text-muted-foreground">Em conta</p>
                 <p className="font-semibold">{moeda(possoGastar.disponivel)}</p>
@@ -410,6 +419,25 @@ export default function DashboardPage() {
                   Fatura e período aberto
                 </p>
               </div>
+              {/* A quinta parcela. Aparece SEMPRE, inclusive zerada: um tile
+                  que some quando o valor e zero faz a soma das parcelas nao
+                  fechar com o total para quem esta conferindo a conta na mao --
+                  e "some quando e zero" e indistinguivel de "o desconto parou
+                  de funcionar". */}
+              <div className="rounded-lg bg-muted p-3">
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Target className="h-3 w-3" />
+                  Nas metas
+                </p>
+                <p className="font-semibold text-destructive">
+                  − {moeda(possoGastar.reservaDeMetas)}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {possoGastar.reservaDeMetas > 0
+                    ? "Falta aportar no mês"
+                    : "Nada a separar este mês"}
+                </p>
+              </div>
             </div>
 
             {/* A divida do cartao e a parcela que mais surpreende quem olha:
@@ -422,6 +450,25 @@ export default function DashboardPage() {
                 {possoGastar.cartoes
                   .filter((c) => c.divida > 0)
                   .map((c) => `${c.name} ${moeda(c.divida)}`)
+                  .join(" · ")}
+              </p>
+            )}
+
+            {/* Abrir por meta pelo mesmo motivo do cartao: o valor descontado
+                NAO e o alvo mensal, e o que ainda falta aportar. Quem ja
+                aportou R$ 200 de um alvo de R$ 500 ve "− R$ 300", e sem esta
+                linha concluiria que o app esqueceu o aporte. */}
+            {possoGastar.metas.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Metas:{" "}
+                {possoGastar.metas
+                  .map((m) =>
+                    m.aportado > 0
+                      ? `${m.title} ${moeda(m.reserva)} (de ${moeda(
+                          m.alvoMensal
+                        )}, ${moeda(m.aportado)} já aportado)`
+                      : `${m.title} ${moeda(m.reserva)}`
+                  )
                   .join(" · ")}
               </p>
             )}

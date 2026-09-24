@@ -25,6 +25,11 @@
 //   5. VERBA DIARIA. Dia 31 nao pode dividir por zero, e mes no vermelho nao
 //      tem verba diaria negativa.
 //
+//   6. A RESERVA DE META DESCONTADA DUAS VEZES (HMO-155). Gemeo do item 1: o
+//      aporte do dia 5 ja saiu do saldo da conta, entao descontar o alvo mensal
+//      CHEIO por cima dele tira o mesmo dinheiro duas vezes. Junto com isso:
+//      meta encerrada nao reserva, e prazo vencido nao pode virar Infinity.
+//
 // Mesmo desenho do test-categorization.mjs: .mjs rodando o JS que o tsc
 // emitiu, com o passo de reescrita de alias no meio, sem runner novo.
 // =====================================================
@@ -32,8 +37,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-const { calcularQuantoPossoGastar, fimDoMes, diasRestantesNoMes } =
-  await import("../.tmp-safe-to-spend/safe-to-spend.js");
+const {
+  calcularQuantoPossoGastar,
+  fimDoMes,
+  diasRestantesNoMes,
+  mesesAteOAlvo,
+  reservaDaMeta,
+} = await import("../.tmp-safe-to-spend/safe-to-spend.js");
 
 const { chaveFatura } = await import("../.tmp-safe-to-spend/card-invoice.js");
 
@@ -490,4 +500,315 @@ test("mes tipico: salario a receber, aluguel a pagar, fatura fechada e compra no
   assert.equal(r.dividaDeCartao, 1500);
   assert.equal(r.livre, 3580); // 2000 + 5000 - 1920 - 1500
   assert.equal(r.porDia, 3580 / 21);
+});
+
+// ---------------------------------------------------------------------------
+// 7. A quinta parcela: a reserva das metas (HMO-155)
+// ---------------------------------------------------------------------------
+// O buraco que o PR #37 deixou documentado no cabecalho do lib: o app dizia que
+// havia R$ 1.200 livres no mes exatamente para quem planejava separar R$ 800
+// deles.
+//
+// A armadilha central aqui e a mesma do item 1 com outra roupa: o aporte ja
+// lancado saiu do saldo da conta, entao descontar o alvo mensal CHEIO por cima
+// dele desconta o mesmo dinheiro duas vezes.
+
+const meta = (mudancas = {}) => ({
+  id: "g-1",
+  title: "Viagem",
+  status: "active",
+  target_amount: 12000,
+  saved: 0,
+  target_date: null,
+  monthly_contribution: null,
+  aportadoNoMes: 0,
+  ...mudancas,
+});
+
+/** Cenario base + metas, para a diferenca ser atribuivel so as metas. */
+const comMetas = (metas) =>
+  calcularQuantoPossoGastar({
+    contas: [corrente(3000), cartao(0)],
+    previstas: [],
+    metas,
+    hoje: HOJE,
+  });
+
+test("alvo mensal escolhido desconta do 'posso gastar'", () => {
+  const r = comMetas([meta({ monthly_contribution: 800 })]);
+
+  assert.equal(r.reservaDeMetas, 800);
+  assert.equal(r.livre, 2200); // 3000 - 800
+  assert.equal(r.porDia, 2200 / 21);
+});
+
+test("o que JA foi aportado no mes nao e descontado de novo", () => {
+  // O caso que da nome ao bug. Alvo de 800, dos quais 300 ja sairam da conta
+  // corrente no dia 5 -- e por isso os 3000 de saldo ja estao 300 menores.
+  // Descontar 800 aqui tiraria esses 300 pela segunda vez.
+  const r = comMetas([
+    meta({ monthly_contribution: 800, aportadoNoMes: 300, saved: 300 }),
+  ]);
+
+  assert.equal(r.reservaDeMetas, 500); // 800 - 300, nao 800
+  assert.equal(r.livre, 2500);
+  // A tela abre o numero: o alvo continua sendo 800, o descontado e 500.
+  assert.equal(r.metas[0].alvoMensal, 800);
+  assert.equal(r.metas[0].aportado, 300);
+  assert.equal(r.metas[0].reserva, 500);
+});
+
+test("aporte MAIOR que o alvo do mes nao vira reserva negativa", () => {
+  // Reserva negativa AUMENTARIA o "posso gastar": quem adiantou o aporte de
+  // dezembro ganharia dinheiro de mentira para gastar em setembro.
+  const r = comMetas([
+    meta({ monthly_contribution: 800, aportadoNoMes: 1000, saved: 1000 }),
+  ]);
+
+  assert.equal(r.reservaDeMetas, 0);
+  assert.equal(r.livre, 3000);
+  // Meta sem reserva sai da lista da tela -- nao ha o que mostrar.
+  assert.deepEqual(r.metas, []);
+});
+
+test("meta pausada, concluida ou cancelada nao reserva nada", () => {
+  // Desconto fantasma: encolheria o "posso gastar" todo mes, para sempre, e a
+  // tela de metas mostraria a meta como encerrada -- sem lugar onde consertar.
+  for (const status of ["paused", "completed", "cancelled"]) {
+    const r = comMetas([meta({ status, monthly_contribution: 800 })]);
+    assert.equal(r.reservaDeMetas, 0, `status ${status} nao pode reservar`);
+    assert.equal(r.livre, 3000, `status ${status} nao pode mexer no livre`);
+  }
+});
+
+test("meta ja atingida nao reserva, mesmo com status 'active'", () => {
+  // A view chama isso de progress_status 'reached': os aportes alcancaram o
+  // alvo mas ninguem marcou a meta como concluida na mao.
+  const r = comMetas([
+    meta({ target_amount: 5000, saved: 5000, monthly_contribution: 800 }),
+  ]);
+
+  assert.equal(r.reservaDeMetas, 0);
+});
+
+test("a reserva nunca passa do que falta para fechar a meta", () => {
+  // Alvo de 300 por mes, mas so faltam 50 para a meta inteira.
+  const r = comMetas([
+    meta({ target_amount: 5000, saved: 4950, monthly_contribution: 300 }),
+  ]);
+
+  assert.equal(r.reservaDeMetas, 50);
+  assert.equal(r.metas[0].alvoMensal, 50);
+});
+
+// --- a derivacao pelo prazo ------------------------------------------------
+
+test("sem alvo escolhido, o prazo deriva o alvo do mes", () => {
+  // Faltam 900 e faltam 3 meses (setembro -> dezembro): 300 por mes. E o mesmo
+  // numero que goal_progress.monthly_required publica e que a tela de metas ja
+  // mostra ao usuario.
+  const r = comMetas([
+    meta({
+      target_amount: 1000,
+      saved: 100,
+      target_date: "2026-12-20",
+      monthly_contribution: null,
+    }),
+  ]);
+
+  assert.equal(r.reservaDeMetas, 300);
+  assert.equal(r.metas[0].derivado, true);
+});
+
+test("alvo escolhido MANDA sobre o prazo", () => {
+  // A mesma meta do teste anterior (derivaria 300), agora com 120 escolhidos.
+  const r = comMetas([
+    meta({
+      target_amount: 1000,
+      saved: 100,
+      target_date: "2026-12-20",
+      monthly_contribution: 120,
+    }),
+  ]);
+
+  assert.equal(r.reservaDeMetas, 120);
+  assert.equal(r.metas[0].derivado, false);
+});
+
+test("prazo VENCIDO nao vira Infinity nem reserva negativa", () => {
+  // O divisor seria -2 (setembro -> julho). Sem o piso de 1 mes isso produz um
+  // alvo NEGATIVO, que aumentaria o "posso gastar" de quem esta atrasado na
+  // meta. Com prazo no mes corrente o divisor seria 0 -> Infinity, e a tela
+  // imprimiria "-R$ Infinity".
+  const vencida = comMetas([
+    meta({ target_amount: 1000, saved: 400, target_date: "2026-07-10" }),
+  ]);
+
+  assert.equal(Number.isFinite(vencida.reservaDeMetas), true);
+  assert.equal(vencida.reservaDeMetas, 600); // piso de 1 mes -> o que falta
+  assert.equal(vencida.livre, 2400);
+
+  const esteMes = comMetas([
+    meta({ target_amount: 1000, saved: 400, target_date: "2026-09-28" }),
+  ]);
+
+  assert.equal(Number.isFinite(esteMes.reservaDeMetas), true);
+  assert.equal(esteMes.reservaDeMetas, 600);
+});
+
+test("meta sem alvo e sem prazo reserva zero", () => {
+  // "Juntar 15 mil" e uma meta valida sem data -- esta escrito no comentario da
+  // coluna target_date no 008. Nao ha o que derivar, e inventar um alvo
+  // encolheria o numero sem o usuario ter pedido.
+  const r = comMetas([meta({ target_date: null, monthly_contribution: null })]);
+
+  assert.equal(r.reservaDeMetas, 0);
+  assert.equal(r.livre, 3000);
+});
+
+// --- forma da saida --------------------------------------------------------
+
+test("a lista de metas vem da maior reserva para a menor, sem as zeradas", () => {
+  const r = comMetas([
+    meta({ id: "a", title: "Reserva", monthly_contribution: 200 }),
+    meta({ id: "b", title: "Viagem", monthly_contribution: 900 }),
+    meta({ id: "c", title: "Pausada", status: "paused", monthly_contribution: 500 }),
+    meta({ id: "d", title: "Carro", monthly_contribution: 400 }),
+  ]);
+
+  assert.deepEqual(r.metas.map((m) => m.id), ["b", "d", "a"]);
+  assert.equal(r.reservaDeMetas, 1500);
+});
+
+test("numeric do PostgREST chega como string e nao vira NaN", () => {
+  // `goal_progress.saved` e `target_amount` sao numeric(15,2): o PostgREST
+  // devolve os dois como texto. Somar texto aqui produziria NaN, e NaN
+  // subtraido do livre apaga o numero inteiro da tela.
+  const r = comMetas([
+    meta({
+      target_amount: "1000.00",
+      saved: "100.00",
+      monthly_contribution: "250.50",
+      aportadoNoMes: "50.50",
+    }),
+  ]);
+
+  assert.equal(Number.isNaN(r.reservaDeMetas), false);
+  assert.equal(r.reservaDeMetas, 200);
+  assert.equal(r.livre, 2800);
+});
+
+test("sem metas o resultado e o de antes da HMO-155", () => {
+  // Controle: a parcela nova so pode mexer no numero quando ha meta.
+  const semCampo = base();
+  const listaVazia = comMetas([]);
+
+  assert.equal(semCampo.reservaDeMetas, 0);
+  assert.equal(semCampo.livre, 3000);
+  assert.deepEqual(semCampo.metas, []);
+  assert.equal(listaVazia.livre, semCampo.livre);
+});
+
+test("as cinco parcelas somam exatamente o total da tela", () => {
+  // Criterio de aceite 2: quem conferir a conta na mao, a partir dos cinco
+  // tiles, tem que chegar no numero grande. Se um dia aparecer uma sexta
+  // parcela que nao tenha tile, este assert quebra antes da tela mentir.
+  const r = calcularQuantoPossoGastar({
+    contas: [corrente(1200), cartao(-1500)],
+    previstas: [
+      prevista(5000, "2026-09-05", { tipo: "income" }),
+      prevista(1800, "2026-09-10", { tipo: "expense" }),
+    ],
+    metas: [
+      meta({ id: "a", monthly_contribution: 800, aportadoNoMes: 300, saved: 300 }),
+      meta({ id: "b", target_amount: 1000, saved: 100, target_date: "2026-12-20" }),
+    ],
+    hoje: HOJE,
+  });
+
+  assert.equal(r.reservaDeMetas, 800); // 500 que faltam + 300 derivados
+  assert.equal(
+    r.livre,
+    r.disponivel +
+      r.receitasPrevistas -
+      r.compromissos -
+      r.dividaDeCartao -
+      r.reservaDeMetas
+  );
+  assert.equal(r.livre, 1200 + 5000 - 1800 - 1500 - 800);
+});
+
+// --- as duas funcoes soltas ------------------------------------------------
+
+test("mesesAteOAlvo conta meses cheios, com piso de 1", () => {
+  assert.equal(mesesAteOAlvo("2026-09-10", "2026-12-20"), 3);
+  assert.equal(mesesAteOAlvo("2026-09-10", "2027-03-01"), 6);
+  // Grao de MES: o dia dentro do mes do prazo nao muda o numero, porque a
+  // pergunta e "quantas vezes eu ainda separo dinheiro".
+  assert.equal(mesesAteOAlvo("2026-09-10", "2026-11-01"), 2);
+  assert.equal(mesesAteOAlvo("2026-09-10", "2026-11-30"), 2);
+  // Piso: mes corrente e passado.
+  assert.equal(mesesAteOAlvo("2026-09-10", "2026-09-28"), 1);
+  assert.equal(mesesAteOAlvo("2026-09-10", "2026-07-10"), 1);
+  assert.equal(mesesAteOAlvo("2026-09-10", "2025-01-10"), 1);
+});
+
+test("reservaDaMeta nao devolve reserva negativa para quem aportou a mais", () => {
+  // Este assert existe no nivel da funcao, e nao so no total, de proposito. No
+  // total a reserva negativa nunca aparece porque o `filter(reserva > 0)` do
+  // calculo a descarta antes da soma -- o que significa que o total NAO prova
+  // nada sobre esta guarda. Uma mutacao que apaga o `Math.max(0, ...)` daqui
+  // passa verde por todos os testes de total. Quem chamar reservaDaMeta
+  // direto, ou quem mexer no filtro, ficaria sem rede.
+  const r = reservaDaMeta(
+    meta({ monthly_contribution: 800, aportadoNoMes: 1000, saved: 1000 }),
+    HOJE
+  );
+
+  assert.equal(r.reserva, 0);
+  assert.equal(r.alvoMensal, 800);
+});
+
+test("meta com MAIS dinheiro do que o alvo nao devolve alvo mensal negativo", () => {
+  // Passar do alvo acontece -- e a razao do GREATEST(..., 0) do `remaining` na
+  // view goal_progress. Aqui o que importa e o campo `alvoMensal` do retorno:
+  // a tela o imprime ("de R$ X, R$ Y ja aportado"), e um valor negativo viraria
+  // "de -R$ 200,00". A reserva ja sairia 0 pelo Math.max de baixo -- e por isso
+  // o assert precisa ser sobre o alvoMensal, nao sobre o total.
+  const r = reservaDaMeta(
+    meta({ target_amount: 1000, saved: 1200, monthly_contribution: 300 }),
+    HOJE
+  );
+
+  assert.equal(r.alvoMensal, 0);
+  assert.equal(r.reserva, 0);
+});
+
+test("aporte negativo e tratado como zero, nao como credito", () => {
+  // `goal_contributions.amount` tem CHECK > 0 no 008, entao a rota nao consegue
+  // produzir isto hoje. A guarda e para o outro lado: MetaParaGastar e uma
+  // interface publica, e um numero negativo aqui AUMENTARIA o alvo a reservar
+  // -- com sinal trocado, a meta viraria fonte de dinheiro para gastar. Zerar
+  // erra para o lado conservador, que e o mesmo criterio do resto do arquivo.
+  const r = reservaDaMeta(
+    meta({ monthly_contribution: 800, aportadoNoMes: -500 }),
+    HOJE
+  );
+
+  assert.equal(r.aportado, 0);
+  assert.equal(r.reserva, 800); // nao 1300
+});
+
+test("reservaDaMeta devolve a meta zerada com o aporte preservado", () => {
+  // A tela nao mostra meta encerrada, mas quem depurar precisa ver que o aporte
+  // foi lido -- zerar tudo esconderia a diferenca entre "nao reservou porque
+  // esta pausada" e "nao reservou porque nao chegou dado nenhum".
+  const r = reservaDaMeta(
+    meta({ status: "paused", monthly_contribution: 800, aportadoNoMes: 120 }),
+    HOJE
+  );
+
+  assert.equal(r.reserva, 0);
+  assert.equal(r.alvoMensal, 0);
+  assert.equal(r.aportado, 120);
 });
