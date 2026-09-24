@@ -15,7 +15,8 @@
 // A conta, e por que ela e delicada
 // -----------------------------------------------------------------------
 //
-//   livre = disponivel + receitas previstas - compromissos do mes - divida de cartao
+//   livre = disponivel + receitas previstas
+//           - compromissos do mes - divida de cartao - reserva de metas
 //
 // Cada termo tem uma armadilha, e cada armadilha tem teste proprio:
 //
@@ -66,11 +67,49 @@
 //      significa nada. Nesse caso `porDia` e 0 e quem le a tela recebe outra
 //      mensagem.
 //
+//   7. RESERVA DE META DESCONTADA DUAS VEZES (HMO-155). A quinta parcela, e a
+//      unica cujo erro tem a mesma forma do item 1. O aporte lancado no dia 5
+//      JA saiu do saldo da conta corrente -- ele e uma transferencia comum, nao
+//      um numero guardado a parte. Descontar o alvo mensal CHEIO depois dele
+//      desconta o mesmo dinheiro duas vezes, e a tela diz que sobra menos do
+//      que sobra. O que se desconta e o que FALTA aportar no mes:
+//
+//        reserva da meta = max(0, alvo do mes - ja aportado no mes)
+//
+//      E o alvo do mes nunca passa do que falta para a meta inteira: quem tem
+//      alvo de R$ 300 e precisa de R$ 50 para fechar reserva R$ 50, nao 300.
+//
+//   8. META ENCERRADA QUE CONTINUA RESERVANDO. So meta `active` reserva. Uma
+//      meta concluida, pausada ou cancelada com alvo mensal preenchido seria um
+//      desconto fantasma -- encolheria o "posso gastar" todo mes, para sempre,
+//      e nao apareceria em lugar nenhum da tela de metas, que mostra a meta
+//      como encerrada.
+//
+//   9. PRAZO NO PASSADO. Quando o alvo do mes e derivado do prazo, o divisor e
+//      o numero de meses que faltam -- que pode ser zero ou negativo numa meta
+//      vencida. Piso de 1 mes, igual ao `GREATEST(d.months_left, 1)` da view
+//      goal_progress: sem ele a divisao produz Infinity (ou um valor negativo),
+//      e Infinity subtraido do `livre` imprime "-R$ Infinity" na tela.
+//
 // O que esta conta NAO sabe: fatura paga por fora do app (o saldo do cartao
-// zera mas a conta prevista fica `pending`), parcelamento futuro do cartao
-// (entra por inteiro no mes em que a compra foi feita) e reserva de metas --
-// aporte de meta ainda nao tem alvo mensal no schema, entao nao ha o que
-// descontar sem inventar semantica.
+// zera mas a conta prevista fica `pending`) e parcelamento futuro do cartao
+// (entra por inteiro no mes em que a compra foi feita).
+//
+// -----------------------------------------------------------------------
+// De onde sai o alvo mensal da meta
+// -----------------------------------------------------------------------
+// `monthly_contribution` (coluna da 018) e a fonte da verdade. Quando ela e
+// NULL e a meta tem prazo, o alvo e DERIVADO -- pela mesma formula que a view
+// goal_progress publica em `monthly_required`, que e o numero que a tela de
+// metas ja mostra ao usuario. Duas formulas diferentes para o mesmo "voce
+// precisa de X por mes" seriam duas versoes da mesma regra. Sem valor e sem
+// prazo, a meta reserva zero: nao ha o que inferir, e inventar um alvo
+// encolheria o numero sem o usuario ter pedido nada.
+//
+// Meta de GRUPO fica de fora, e a rota e quem filtra (`group_id IS NULL`): o
+// alvo mensal de uma meta de grupo e do grupo, e descontar o valor cheio da
+// carteira de cada membro faria tres pessoas reservarem R$ 900 para uma meta de
+// R$ 300 por mes. Ver o cabecalho da migration 018.
 // =====================================================
 
 import { classificarConta } from "@/lib/net-worth";
@@ -109,6 +148,47 @@ export interface CartaoNoCalculo {
   divida: number;
 }
 
+/**
+ * Uma meta do jeito que a view `goal_progress` entrega, mais o que o usuario ja
+ * aportou nela NESTE mes.
+ *
+ * `aportadoNoMes` nao vem da view de proposito: a view decidiria "que mes e
+ * hoje" com o `CURRENT_DATE` do Postgres, e a rota decide com o `today()` do
+ * app. Na virada do mes os dois discordam por algumas horas (o servidor do
+ * banco nao esta no fuso de Sao Paulo), e o preco dessa discordancia e
+ * exatamente a armadilha 7: a soma viria do mes errado, daria zero, e o alvo
+ * cheio seria descontado de novo por cima de um aporte ja feito. Uma fonte so
+ * para "que mes e hoje", e ela e a mesma que o resto do calculo usa.
+ */
+export interface MetaParaGastar {
+  id: string;
+  title: string;
+  /** 'active' | 'completed' | 'paused' | 'cancelled' -- so 'active' reserva. */
+  status: string;
+  target_amount: number | string;
+  /** Soma dos aportes de todos os tempos (coluna `saved` da view). */
+  saved?: number | string | null;
+  /** 'YYYY-MM-DD' ou null. Usado so quando nao ha alvo explicito. */
+  target_date?: string | null;
+  /** O alvo escolhido pelo usuario (coluna da 018). NULL = nao escolheu. */
+  monthly_contribution?: number | string | null;
+  /** Quanto o usuario ja aportou nesta meta dentro do mes corrente. */
+  aportadoNoMes?: number | string | null;
+}
+
+export interface MetaNoCalculo {
+  id: string;
+  title: string;
+  /** Alvo do mes, ja limitado ao que falta para fechar a meta. */
+  alvoMensal: number;
+  /** Quanto ja foi aportado neste mes. */
+  aportado: number;
+  /** O que ainda vai ser separado: max(0, alvoMensal - aportado). */
+  reserva: number;
+  /** true quando o alvo veio do prazo, nao de um valor escolhido. */
+  derivado: boolean;
+}
+
 export interface QuantoPossoGastar {
   /** Ultimo dia do mes corrente, 'YYYY-MM-DD'. O horizonte da conta. */
   ate: string;
@@ -124,16 +204,26 @@ export interface QuantoPossoGastar {
   compromissosVencidos: number;
   /** Divida somada dos cartoes: faturas fechadas + periodo aberto. */
   dividaDeCartao: number;
+  /** O que ainda falta separar para as metas ativas neste mes. */
+  reservaDeMetas: number;
   /** O numero da tela. Pode ser negativo. */
   livre: number;
   /** Verba diaria. 0 quando `livre` <= 0 -- ver armadilha 6. */
   porDia: number;
   cartoes: CartaoNoCalculo[];
+  /** Metas que reservam alguma coisa, da maior reserva para a menor. */
+  metas: MetaNoCalculo[];
 }
 
 export interface EntradaDoCalculo {
   contas: ContaParaGastar[];
   previstas: PrevistaParaGastar[];
+  /**
+   * Metas do usuario. OBRIGATORIO, mesmo que vazio: se fosse opcional, uma
+   * rota nova que esquecesse de passar as metas devolveria um "posso gastar"
+   * maior do que o real, sem erro de compilacao e sem sintoma na tela.
+   */
+  metas: MetaParaGastar[];
   /** 'YYYY-MM-DD'. Injetado para o teste nao depender do calendario. */
   hoje: string;
 }
@@ -166,6 +256,84 @@ export function diasRestantesNoMes(hoje: string): number {
 }
 
 /**
+ * Meses que faltam ate o mes do prazo, com piso de 1.
+ *
+ * Copia deliberada do `months_left` da view goal_progress combinado com o
+ * `GREATEST(d.months_left, 1)` que o `monthly_required` dela aplica na divisao
+ * -- e o que faz o desconto bater com o "voce precisa de R$ X por mes" que a
+ * tela de metas ja mostra.
+ *
+ * O grao e MES, nao dia: prazo em 30/11 e prazo em 01/11 dao o mesmo numero,
+ * porque a pergunta e "quantas vezes eu ainda separo dinheiro", e se separa uma
+ * vez por mes. Prazo no mes corrente ou vencido cai no piso 1 (armadilha 9).
+ */
+export function mesesAteOAlvo(hoje: string, alvo: string): number {
+  const [anoHoje, mesHoje] = hoje.split("-").map(Number);
+  const [anoAlvo, mesAlvo] = alvo.split("-").map(Number);
+  const cheios = (anoAlvo - anoHoje) * 12 + (mesAlvo - mesHoje);
+  return Math.max(1, cheios);
+}
+
+/**
+ * Quanto esta meta ainda vai consumir do dinheiro deste mes.
+ *
+ * As armadilhas 7, 8 e 9 do cabecalho moram todas aqui.
+ */
+export function reservaDaMeta(
+  meta: MetaParaGastar,
+  hoje: string
+): MetaNoCalculo {
+  const aportado = Math.max(0, numero(meta.aportadoNoMes));
+  const zerada: MetaNoCalculo = {
+    id: meta.id,
+    title: meta.title,
+    alvoMensal: 0,
+    aportado,
+    reserva: 0,
+    derivado: false,
+  };
+
+  // Armadilha 8: meta encerrada nao reserva. `status` e o que o usuario
+  // controla -- o `progress_status` da view diz 'reached' sozinho quando os
+  // aportes alcancam o alvo, e esse caso ja cai no `falta === 0` abaixo.
+  if (meta.status !== "active") return zerada;
+
+  const falta = Math.max(0, numero(meta.target_amount) - numero(meta.saved));
+  const explicito = numero(meta.monthly_contribution);
+  let alvoMensal: number;
+  let derivado: boolean;
+
+  if (explicito > 0) {
+    alvoMensal = explicito;
+    derivado = false;
+  } else if (meta.target_date) {
+    alvoMensal = falta / mesesAteOAlvo(hoje, meta.target_date);
+    derivado = true;
+  } else {
+    // Sem valor escolhido e sem prazo nao ha o que derivar.
+    return zerada;
+  }
+
+  // Nunca reservar mais do que falta para fechar a meta: alvo de R$ 300 com
+  // R$ 50 faltando reserva R$ 50. Sem este teto o app cobraria do usuario, todo
+  // mes, um dinheiro que a meta ja nao precisa.
+  //
+  // Este teto e TAMBEM o que trata a meta ja atingida (`falta === 0`), e por
+  // isso nao existe um `if (falta <= 0)` acima. Havia um: nenhuma mutacao
+  // conseguia deixa-lo vermelho, porque `Math.min(alvo, 0)` ja e 0 nos dois
+  // caminhos -- explicito e derivado. Guarda que nenhum teste distingue e
+  // guarda que apodrece sem ninguem notar.
+  alvoMensal = Math.min(alvoMensal, falta);
+
+  // Armadilha 7: o aporte deste mes JA saiu do saldo da conta. Desconta-se o
+  // que FALTA aportar, nunca o alvo cheio -- e nunca um numero negativo, que
+  // aumentaria o "posso gastar" de quem aportou a mais.
+  const reserva = Math.max(0, alvoMensal - aportado);
+
+  return { id: meta.id, title: meta.title, alvoMensal, aportado, reserva, derivado };
+}
+
+/**
  * Quanto ainda pode ser gasto este mes, e quanto por dia.
  *
  * Todas as decisoes de sinal e de exclusao estao no cabecalho do arquivo. A
@@ -176,6 +344,10 @@ export function calcularQuantoPossoGastar(
   entrada: EntradaDoCalculo
 ): QuantoPossoGastar {
   const { contas, previstas, hoje } = entrada;
+  // `?? []` apesar de o campo ser obrigatorio no tipo: os testes rodam o JS
+  // emitido, onde o tipo nao existe mais, e um `undefined` aqui viraria
+  // TypeError em vez de um numero errado.
+  const metasDeEntrada = entrada.metas ?? [];
   const ate = fimDoMes(hoje);
   const diasRestantes = diasRestantesNoMes(hoje);
 
@@ -227,8 +399,19 @@ export function calcularQuantoPossoGastar(
     if (p.due_date < hoje) compromissosVencidos += valor;
   }
 
+  const metas = metasDeEntrada
+    .map((m) => reservaDaMeta(m, hoje))
+    .filter((m) => m.reserva > 0)
+    .sort((a, b) => b.reserva - a.reserva);
+
+  const reservaDeMetas = metas.reduce((s, m) => s + m.reserva, 0);
+
   const livre =
-    disponivel + receitasPrevistas - compromissos - dividaDeCartao;
+    disponivel +
+    receitasPrevistas -
+    compromissos -
+    dividaDeCartao -
+    reservaDeMetas;
 
   cartoes.sort((a, b) => b.divida - a.divida);
 
@@ -240,8 +423,10 @@ export function calcularQuantoPossoGastar(
     compromissos,
     compromissosVencidos,
     dividaDeCartao,
+    reservaDeMetas,
     livre,
     porDia: livre > 0 ? livre / diasRestantes : 0,
     cartoes,
+    metas,
   };
 }

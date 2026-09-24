@@ -24,6 +24,7 @@ import {
   calcularQuantoPossoGastar,
   fimDoMes,
   type PrevistaParaGastar,
+  type MetaParaGastar,
 } from "@/lib/safe-to-spend";
 
 interface LinhaPrevista {
@@ -35,6 +36,16 @@ interface LinhaPrevista {
     | { transaction_type: string }
     | { transaction_type: string }[]
     | null;
+}
+
+interface LinhaMeta {
+  id: string;
+  title: string;
+  status: string;
+  target_amount: number | string;
+  saved: number | string | null;
+  target_date: string | null;
+  monthly_contribution: number | string | null;
 }
 
 export async function GET() {
@@ -112,11 +123,86 @@ export async function GET() {
       };
     });
 
+    // ------------------------------------------------------------------
+    // A quinta parcela: o que ainda falta separar para as metas (HMO-155)
+    // ------------------------------------------------------------------
+    // `group_id IS NULL` de proposito: a RLS do 008 devolve tambem as metas dos
+    // grupos do usuario, e o alvo mensal de uma meta de grupo e do GRUPO.
+    // Descontar o valor cheio da carteira de cada membro faria tres pessoas
+    // reservarem R$ 900 para uma meta de R$ 300 por mes. Ver a migration 018.
+    //
+    // So `active`: o filtro tambem esta dentro do calculo (e tem teste la), e
+    // repetir aqui e o que evita trazer do banco meta cancelada de anos atras.
+    const { data: metasBrutas, error: erroMetas } = await supabase
+      .from("goal_progress")
+      .select(
+        "id, title, status, target_amount, saved, target_date, monthly_contribution"
+      )
+      .eq("status", "active")
+      .is("group_id", null);
+
+    if (erroMetas) {
+      console.error("Erro ao carregar metas:", erroMetas);
+      return NextResponse.json(
+        { error: "Não foi possível carregar as metas" },
+        { status: 500 }
+      );
+    }
+
+    // Quanto ja foi aportado em CADA meta dentro deste mes. Sem isto o aporte
+    // do dia 5 seria descontado duas vezes: uma no saldo da conta, de onde o
+    // dinheiro saiu, e outra no alvo mensal cheio.
+    //
+    // A janela vem de `hoje`, nao do CURRENT_DATE do Postgres: e a mesma fonte
+    // que o resto do calculo usa para saber em que mes esta. Aporte com data
+    // mais adiante no mes conta como ja feito -- ele ja foi lancado, e o
+    // dinheiro ja saiu da conta que alimenta o "disponivel".
+    const inicioDoMes = `${hoje.slice(0, 7)}-01`;
+    const idsDeMeta = (metasBrutas ?? []).map((m) => m.id);
+
+    const { data: aportes, error: erroAportes } = idsDeMeta.length
+      ? await supabase
+          .from("goal_contributions")
+          .select("goal_id, amount")
+          .eq("user_id", user.id)
+          .in("goal_id", idsDeMeta)
+          .gte("contributed_at", inicioDoMes)
+          .lte("contributed_at", ate)
+      : { data: [], error: null };
+
+    if (erroAportes) {
+      console.error("Erro ao carregar aportes do mes:", erroAportes);
+      return NextResponse.json(
+        { error: "Não foi possível carregar os aportes das metas" },
+        { status: 500 }
+      );
+    }
+
+    const aportadoPorMeta = new Map<string, number>();
+    for (const a of aportes ?? []) {
+      const atual = aportadoPorMeta.get(a.goal_id) ?? 0;
+      aportadoPorMeta.set(a.goal_id, atual + Number(a.amount ?? 0));
+    }
+
+    const metas: MetaParaGastar[] = ((metasBrutas ?? []) as LinhaMeta[]).map(
+      (m) => ({
+        id: m.id,
+        title: m.title,
+        status: m.status,
+        target_amount: m.target_amount,
+        saved: m.saved,
+        target_date: m.target_date,
+        monthly_contribution: m.monthly_contribution,
+        aportadoNoMes: aportadoPorMeta.get(m.id) ?? 0,
+      })
+    );
+
     return NextResponse.json({
       today: hoje,
       safe_to_spend: calcularQuantoPossoGastar({
         contas: contas ?? [],
         previstas: paraCalculo,
+        metas,
         hoje,
       }),
     });

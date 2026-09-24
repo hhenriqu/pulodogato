@@ -405,6 +405,30 @@ jobs:
       - name: O resumo do mes nao sai duas vezes, e nao engole o aviso de conta
         run: $PSQL -f database/tests/monthly_summary_notifications_test.sql
 
+      - name: 018_goal_monthly_contribution
+        run: $PSQL -f database/migrations/018_goal_monthly_contribution.sql
+
+      # Mesmo motivo do 005 ao 017. O risco proprio deste e o CREATE OR REPLACE
+      # VIEW: a segunda passada nao pode quebrar por a coluna ja estar no fim do
+      # SELECT, e nao pode derrubar o security_invoker da view.
+      - name: 018 e idempotente
+        run: $PSQL -f database/migrations/018_goal_monthly_contribution.sql
+
+      # O alvo mensal da meta e a quinta parcela do "quanto posso gastar". O que
+      # so o Postgres pega aqui:
+      #
+      #   - `goal_progress` foi recriada copiando o corpo inteiro do 008 para
+      #     acrescentar uma coluna. CREATE OR REPLACE VIEW impede remover e
+      #     reordenar coluna, mas NAO impede trocar a EXPRESSAO de uma delas --
+      #     uma copia errada de `saved` ou de `monthly_required` passa pelo tsc,
+      #     pelo lint e pelos 49 testes de TypeScript, porque nenhum deles le a
+      #     view;
+      #   - se a coluna nova nao chegar na view, a rota le `undefined`, o alvo
+      #     explicito vira NULL e a derivacao pelo prazo assume o lugar dele --
+      #     o desconto sai com outro valor e sem erro em lugar nenhum.
+      - name: O alvo mensal chega na view e o CHECK recusa zero e negativo
+        run: $PSQL -f database/tests/goal_monthly_contribution_test.sql
+
       # Duas metades que falham por motivos diferentes: a estrutural varre o
       # schema INTEIRO atras de view sem security_invoker (uma view criada
       # amanha reprova sem ninguem lembrar de atualizar o teste -- que e o
