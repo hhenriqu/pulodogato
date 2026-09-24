@@ -16,6 +16,7 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { primeiroDiaDoMes, mesCorrente } from "@/lib/services/budget";
+import { chaveFatura } from "@/lib/card-invoice";
 
 export async function POST(request: NextRequest) {
   try {
@@ -123,7 +124,13 @@ export async function POST(request: NextRequest) {
     // reconhecer que esta fatura ja foi fechada, sem uma coluna nova em
     // scheduled_transactions so para isso -- e o que torna esta rota
     // idempotente: clicar "fechar" duas vezes nao cria duas contas a pagar.
-    const chave = `fatura:${mes}:${accountId}`;
+    //
+    // Desde o conserto do HMO-149 esta chave tem um terceiro papel: e por ela
+    // que a rota de baixa sabe que esta conta prevista e uma FATURA, e portanto
+    // que pagar nao e gastar -- e uma transferencia da conta pagadora para o
+    // cartao. O formato mora em lib/card-invoice.ts, com a leitura ao lado da
+    // escrita: quem mudar a chave aqui quebra a deteccao la, e vice-versa.
+    const chave = chaveFatura(mes, accountId);
 
     const { data: existente } = await supabase
       .from("scheduled_transactions")
@@ -155,6 +162,10 @@ export async function POST(request: NextRequest) {
       .insert({
         user_id: user.id,
         category_id: categoriaId,
+        // O cartao, e nao a conta de onde o dinheiro vai sair: esta conta a
+        // pagar PERTENCE ao cartao. Qual conta paga so se sabe na baixa, e e la
+        // que o usuario escolhe (HMO-149). Gravar aqui uma conta pagadora
+        // adivinhada foi o que produziu o bug da despesa em dobro.
         account_id: accountId,
         description: descricao,
         amount: total,

@@ -102,6 +102,12 @@ export interface FinancialTransaction {
   is_shared: boolean;
   installment_parent_id?: string;
   group_id?: string;
+  /**
+   * A outra perna de uma transferencia entre contas proprias (migration 015).
+   * Hoje so o pagamento de fatura usa: a perna que quita o cartao aponta para a
+   * que tirou o dinheiro da conta. Ver lib/card-invoice.ts.
+   */
+  counterpart_transaction_id?: string;
   created_at: string;
   updated_at: string;
 

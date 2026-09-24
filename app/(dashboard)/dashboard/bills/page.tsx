@@ -45,6 +45,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { Receipts } from "@/components/Receipts";
+import { ehFatura } from "@/lib/card-invoice";
 import type {
   RecurringRule,
   ScheduledTransaction,
@@ -109,6 +110,10 @@ export default function BillsPage() {
   const [agindo, setAgindo] = useState<string | null>(null);
   const [dialogFixo, setDialogFixo] = useState(false);
   const [dialogAvulsa, setDialogAvulsa] = useState(false);
+  // Fatura aguardando a escolha da conta pagadora (HMO-149).
+  const [faturaParaPagar, setFaturaParaPagar] =
+    useState<ScheduledTransaction | null>(null);
+  const [contaPagadora, setContaPagadora] = useState("");
 
   const [formFixo, setFormFixo] = useState<FormGastoFixo>({
     description: "",
@@ -212,13 +217,29 @@ export default function BillsPage() {
     };
   }, [grupos]);
 
-  const darBaixa = async (conta: ScheduledTransaction) => {
+  // Contas que podem pagar uma fatura: tudo que nao e cartao de credito.
+  // Cartao pagando cartao nao existe neste app, e o proprio cartao pagando a
+  // propria fatura faria as duas pernas se anularem -- a fatura ficaria paga
+  // sem dinheiro nenhum ter saido. A API recusa os dois casos; o seletor nem
+  // os oferece.
+  const contasPagadoras = useMemo(
+    () => accounts.filter((conta) => conta.account_type !== "credit_card"),
+    [accounts]
+  );
+
+  const darBaixa = async (
+    conta: ScheduledTransaction,
+    contaPagadoraId?: string
+  ) => {
     setAgindo(conta.id);
     try {
       const resposta = await fetch(`/api/scheduled-transactions/${conta.id}/pay`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ paid_date: HOJE }),
+        body: JSON.stringify({
+          paid_date: HOJE,
+          ...(contaPagadoraId ? { payment_account_id: contaPagadoraId } : {}),
+        }),
       });
       const dados = await resposta.json();
 
@@ -227,7 +248,20 @@ export default function BillsPage() {
         return;
       }
 
-      toast.success(`${conta.description} paga`);
+      // Pagar a fatura nao muda o patrimonio: a despesa foi a compra, e esta
+      // baixa so move dinheiro da conta para o cartao. Quem acabou de pagar
+      // R$ 1.000 e ve o patrimonio parado precisa ler isso de alguem -- senao
+      // conclui que a tela nao registrou.
+      if (dados.is_transfer) {
+        toast.success(dados.message ?? `${conta.description} paga`, {
+          description:
+            "Transferência: saiu da conta e quitou o cartão. O patrimônio não muda — a despesa já foi contada nas compras.",
+        });
+      } else {
+        toast.success(`${conta.description} paga`);
+      }
+
+      setFaturaParaPagar(null);
       await carregar();
     } catch (erro) {
       console.error(erro);
@@ -235,6 +269,16 @@ export default function BillsPage() {
     } finally {
       setAgindo(null);
     }
+  };
+
+  /** A fatura precisa da conta pagadora antes da baixa; o resto nao. */
+  const pedirBaixa = (conta: ScheduledTransaction) => {
+    if (ehFatura(conta.notes)) {
+      setContaPagadora(contasPagadoras[0]?.id ?? "");
+      setFaturaParaPagar(conta);
+      return;
+    }
+    void darBaixa(conta);
   };
 
   const pular = async (conta: ScheduledTransaction) => {
@@ -378,6 +422,7 @@ export default function BillsPage() {
               {conta.category ? ` · ${conta.category.name}` : ""}
               {conta.group ? ` · ${conta.group.name}` : ""}
               {conta.recurring_rule_id ? " · fixo" : ""}
+              {ehFatura(conta.notes) ? " · fatura de cartão" : ""}
             </p>
           </div>
         </div>
@@ -397,9 +442,13 @@ export default function BillsPage() {
           <div className="flex gap-1">
             <Button
               size="sm"
-              onClick={() => darBaixa(conta)}
+              onClick={() => pedirBaixa(conta)}
               disabled={agindo === conta.id}
-              title="Marcar como paga"
+              title={
+                ehFatura(conta.notes)
+                  ? "Pagar a fatura (escolher a conta)"
+                  : "Marcar como paga"
+              }
             >
               {agindo === conta.id ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -814,6 +863,85 @@ export default function BillsPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Pagamento de fatura: a unica baixa que pergunta algo antes (HMO-149).
+          A fatura nao e um gasto novo -- a compra ja foi o gasto. O que falta
+          saber e DE ONDE o dinheiro saiu, e nao havia como adivinhar: e por
+          isso que a baixa antiga lancava tudo no proprio cartao e contava a
+          despesa duas vezes. */}
+      <Dialog
+        open={faturaParaPagar !== null}
+        onOpenChange={(aberto) => {
+          if (!aberto) setFaturaParaPagar(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Pagar a fatura</DialogTitle>
+          </DialogHeader>
+
+          {faturaParaPagar && (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-border p-3">
+                <p className="font-medium text-foreground">
+                  {faturaParaPagar.description}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {moeda(Number(faturaParaPagar.amount))} · vence em{" "}
+                  {dataCurta(faturaParaPagar.due_date)}
+                </p>
+              </div>
+
+              {contasPagadoras.length === 0 ? (
+                <p className="text-sm text-destructive">
+                  Você não tem nenhuma conta que possa pagar a fatura. Cadastre
+                  uma conta corrente, poupança ou carteira em Contas — cartão de
+                  crédito não paga cartão de crédito.
+                </p>
+              ) : (
+                <>
+                  <div>
+                    <Label>De qual conta o dinheiro saiu? *</Label>
+                    <Select
+                      value={contaPagadora}
+                      onValueChange={setContaPagadora}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Selecione" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {contasPagadoras.map((conta) => (
+                          <SelectItem key={conta.id} value={conta.id}>
+                            {conta.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <p className="text-xs text-muted-foreground">
+                    Pagar a fatura não é um gasto novo: as compras já foram
+                    contadas no mês em que você fez cada uma. Esta baixa tira o
+                    dinheiro da conta escolhida e quita a dívida do cartão, então
+                    seu patrimônio fica igual — e é isso que estava errado antes.
+                  </p>
+
+                  <Button
+                    className="w-full"
+                    disabled={!contaPagadora || agindo === faturaParaPagar.id}
+                    onClick={() => darBaixa(faturaParaPagar, contaPagadora)}
+                  >
+                    {agindo === faturaParaPagar.id && (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    )}
+                    Confirmar pagamento
+                  </Button>
+                </>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

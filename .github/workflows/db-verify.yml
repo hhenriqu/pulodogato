@@ -12,9 +12,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -300,6 +300,37 @@ jobs:
       - name: 014 e idempotente
         run: $PSQL -f database/migrations/014_categorization_rules.sql
 
+      - name: 015_card_invoice_payment
+        run: $PSQL -f database/migrations/015_card_invoice_payment.sql
+
+      # Mesmo motivo do 005 ao 014, com um agravante proprio: o 015 ESCREVE em
+      # dado existente (desfaz baixas de fatura tortas). Rodar duas vezes prova
+      # que a segunda passada nao desfaz uma baixa correta feita no meio.
+      - name: 015 e idempotente
+        run: $PSQL -f database/migrations/015_card_invoice_payment.sql
+
+      # Pagar a fatura do cartao contava a mesma despesa DUAS vezes: a baixa
+      # lancava a fatura como despesa no PROPRIO cartao, entao o cartao ficava
+      # mais negativo e a conta de onde o dinheiro saiu nao se mexia. Nada
+      # quebrava -- o patrimonio ficava 25% menor, plausivel, com duas casas.
+      #
+      # O teste tem controle POSITIVO: ele reproduz o bug antes de consertar
+      # (patrimonio caindo de 4.000 para 3.000, fluxo de caixa acusando 3.000
+      # de despesa num mes de 2.000). Sem isso, o teste do conserto passaria
+      # num banco onde o bug nunca existiu.
+      #
+      # E tem os dois controles negativos que mais importam, porque um reparo
+      # ingenuo destruiria dado bom: a assinatura cobrada NO cartao (pagar
+      # aquela conta com o cartao e despesa de verdade -- um reparo por
+      # account_type apagaria o lancamento e a despesa desapareceria do
+      # relatorio) e a nota escrita a mao que so PARECE a chave canonica.
+      #
+      # lib/card-invoice.ts prova a aritmetica das duas pernas; o que so o SQL
+      # alcanca e o trigger de saldo e as views do 006/008, que e exatamente a
+      # junta onde o bug vivia -- o VALOR estava certo, a CONTA estava errada.
+      - name: Pagamento de fatura nao conta a despesa duas vezes
+        run: $PSQL -f database/tests/card_invoice_payment_test.sql
+
       # Duas metades que falham por motivos diferentes: a estrutural varre o
       # schema INTEIRO atras de view sem security_invoker (uma view criada
       # amanha reprova sem ninguem lembrar de atualizar o teste -- que e o
@@ -394,6 +425,19 @@ jobs:
       #     divisao por zero a tela imprime NaN% em quatro tiles.
       - name: Consolidacao do patrimonio liquido
         run: npm run test:net-worth
+
+      # A outra metade do conserto do pagamento de fatura (a de SQL esta logo
+      # depois do 015). Aqui ficam as decisoes que o banco nao alcanca:
+      #   - detectar a fatura pela chave canonica em `notes` e nao pelo tipo da
+      #     conta, senao toda assinatura de cartao vira transferencia e
+      #     desaparece do fluxo de caixa;
+      #   - recusar o proprio cartao como conta pagadora: as duas pernas
+      #     cairiam na mesma conta, se anulariam, e a fatura ficaria paga sem
+      #     dinheiro nenhum ter saido -- o mesmo bug com outra roupa;
+      #   - o sinal das pernas, que invertido continua somando zero (o
+      #     patrimonio "fecha") mas dobra a divida do cartao.
+      - name: Fatura de cartao e transferencia, nao despesa
+        run: npm run test:card-invoice
 
       # A leitura do extrato e 100% TypeScript e o SQL nao alcanca nada dela.
       # Tres coisas erram em silencio aqui: parseFloat("1.234,56") = 1.234 (um

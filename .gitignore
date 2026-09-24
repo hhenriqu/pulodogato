@@ -79,3 +79,5 @@ next-env.d.ts
 /.tmp-calculadoras/
 # saida do `npm run test:net-worth` (idem)
 /.tmp-net-worth/
+# saida do `npm run test:card-invoice` (idem)
+/.tmp-card-invoice/
