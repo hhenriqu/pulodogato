@@ -12,9 +12,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -601,6 +601,27 @@ jobs:
       # IGNORED, entre outras) e cada uma ficou vermelha.
       - name: Previsao de fluxo de caixa
         run: npm run test:cash-flow
+
+      # A media de gasto do dia a dia e o que tira a previsao do otimismo, e ela
+      # erra de dois jeitos opostos -- os dois silenciosos, os dois plausiveis:
+      #   - CONTAR DUAS VEZES: a Netflix ja e evento datado na previsao; se ela
+      #     tambem estiver dentro da media, a linha mergulha num dia que nao vai
+      #     acontecer;
+      #   - EXCLUIR DE MAIS, que e pior: uma chave tirada da media SEM virar
+      #     evento some das duas metades, e a linha "provavel" fica mais
+      #     otimista que a "otimista" -- o oposto exato do que ela promete. E
+      #     como a assinatura marcada como IGNORED evaporaria.
+      # Somam-se a isso o mes corrente (esta pela metade e puxa a mediana para
+      # baixo), o mes sem extrato importado (zero nao e um mes barato) e o
+      # sinal, que neste banco e NEGATIVO para despesa.
+      # Os 18 testes foram submetidos a 12 mutacoes (a exclusao por chave, a
+      # chave vazia, o mes corrente, media no lugar de mediana, o piso de tres
+      # meses, o teto da janela, o filtro por transaction_type, a comparacao de
+      # texto cru, entre outras) e cada uma ficou vermelha. Uma delas so ficou
+      # depois de o proprio teste ser corrigido: com o ruido em um mes so, a
+      # mediana o engolia e o teste passava verde sem provar nada.
+      - name: Gasto variavel do dia a dia
+        run: npm run test:variable-spend
 
       # A leitura do extrato e 100% TypeScript e o SQL nao alcanca nada dela.
       # Tres coisas erram em silencio aqui: parseFloat("1.234,56") = 1.234 (um

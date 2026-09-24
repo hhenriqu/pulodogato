@@ -97,15 +97,31 @@
 //      e o alerta CHARGED_AFTER_CANCEL do lib/services/recurrence-alerts.ts.)
 //
 // -----------------------------------------------------------------------
-// O que esta previsao NAO sabe -- e a tela diz isso em voz alta
+// AS DUAS LINHAS: OTIMISTA E PROVAVEL
 // -----------------------------------------------------------------------
-// GASTO DO DIA A DIA. Mercado, restaurante, posto: nada disso entra. A linha
-// mostra o que ja esta comprometido, e por construcao ela e OTIMISTA. Nao
-// inventamos uma media diaria de gasto variavel aqui porque o numero da tela
-// e uma DATA -- "voce fica negativo em 12/10" --, e uma data que nasce de uma
-// media invisivel e uma data que o usuario nao tem como conferir nem corrigir.
-// Melhor uma resposta estreita e verdadeira, com o limite escrito na tela, do
-// que uma resposta larga que ninguem sabe de onde veio.
+// GASTO DO DIA A DIA -- mercado, restaurante, posto -- nao e compromisso e nao
+// tem data. Por isso ele nao vira evento: ele vira uma SEGUNDA LINHA.
+//
+//   `saldo`          -> otimista. So o que esta comprometido. E a unica linha
+//                       que sai inteiramente de fatos datados, e continua
+//                       sendo o piso de tudo que este arquivo afirma.
+//   `saldoProvavel`  -> otimista menos o gasto variavel tipico, acumulado dia
+//                       a dia. A resposta que a pessoa de fato vive.
+//
+// A condicao para a segunda linha existir nao mudou desde que este arquivo
+// dizia que ela nao deveria existir: o numero da tela e uma DATA, e uma data
+// que nasce de uma media INVISIVEL e uma data que o usuario nao tem como
+// conferir nem corrigir. Entao a media entra por parametro -- ela e calculada
+// no lib/variable-spend.ts, com procedencia, e a tela mostra e deixa mudar.
+// `gastoDiario` em zero devolve as duas linhas iguais, que e o comportamento
+// de antes: quem nao tem historico suficiente nao recebe uma segunda linha
+// desenhada em cima de nada.
+//
+// O gasto variavel comeca AMANHA, nao hoje. O saldo inicial ja e o saldo da
+// conta, e nele ja esta o que a pessoa gastou hoje e lancou. Cobrar o dia
+// cheio de hoje por cima disso e contar parte do dia duas vezes. A diferenca
+// e de um dia de media no horizonte inteiro, e o lado escolhido e o que nao
+// inventa gasto que ja foi descontado.
 //
 // PERIODO ABERTO DO CARTAO. A compra de ontem no cartao so vira evento quando
 // a fatura fechar e virar conta prevista (ver armadilha 2). Ate la ela esta no
@@ -210,8 +226,15 @@ export interface DiaDoFluxo {
   data: string;
   entra: number;
   sai: number;
-  /** Saldo ao FIM do dia, depois de todos os eventos dele. */
+  /** Saldo ao FIM do dia, depois de todos os eventos dele. Linha OTIMISTA. */
   saldo: number;
+  /**
+   * O mesmo saldo, descontado o gasto variavel tipico acumulado ate aqui.
+   *
+   * Igual a `saldo` quando `gastoDiario` e zero -- e assim que a tela de quem
+   * nao tem historico suficiente continua tendo uma linha so.
+   */
+  saldoProvavel: number;
   eventos: EventoDoFluxo[];
 }
 
@@ -236,6 +259,30 @@ export interface FluxoDeCaixa {
   totalEntra: number;
   totalSai: number;
   /**
+   * O gasto variavel diario que a linha provavel usou, ja saneado.
+   *
+   * Sai na resposta porque a tela precisa IMPRIMIR o numero que entrou na
+   * conta -- nao o que ela pediu. Se a rota sanear um valor absurdo e a tela
+   * continuar mostrando o que o usuario digitou, as duas passam a discordar
+   * em silencio.
+   */
+  gastoDiario: number;
+  /** Quanto de gasto variavel a linha provavel descontou no periodo inteiro. */
+  gastoVariavelTotal: number;
+  /** Fim do periodo na linha PROVAVEL. */
+  saldoFinalProvavel: number;
+  menorSaldoProvavel: number;
+  diaDoMenorSaldoProvavel: string;
+  /**
+   * O dia em que a linha PROVAVEL cruza o zero -- a resposta que a pessoa de
+   * fato vive, e por isso a que a tela mostra primeiro.
+   *
+   * `null` pelas mesmas duas razoes do `primeiroDiaNegativo`: nao cruza, ou ja
+   * nasce negativo (armadilha 4, e `comecaNegativo` vale para as duas linhas
+   * porque as duas partem do mesmo saldo de hoje).
+   */
+  primeiroDiaNegativoProvavel: string | null;
+  /**
    * Assinaturas cujas cobrancas foram descartadas por ja existirem como conta
    * prevista (armadilha 1). Vai para a tela: sem isso o usuario procura a
    * Netflix na lista, nao acha, e conclui que a previsao esqueceu dela.
@@ -258,12 +305,37 @@ export interface EntradaDoFluxo {
   hoje: string;
   /** Horizonte em dias. Fora de [1, DIAS_MAX] e corrigido, nao rejeitado. */
   dias?: number;
+  /**
+   * Gasto variavel tipico por dia, em reais positivos. Vem do
+   * lib/variable-spend.ts ou do ajuste que o usuario fez na tela.
+   *
+   * OPCIONAL, ao contrario de `recorrencias`, e a assimetria e proposital:
+   * esquece-lo devolve a linha de antes -- otimista, mas verdadeira e rotulada
+   * como tal. Esquecer as recorrencias devolveria uma linha que se apresenta
+   * como completa e nao e.
+   */
+  gastoDiario?: number;
 }
 
 /** Le o valor tolerando o texto que o PostgREST devolve para `numeric`. */
 function numero(valor: number | string | null | undefined): number {
   const bruto = Number(valor ?? 0);
   return Number.isFinite(bruto) ? bruto : 0;
+}
+
+/**
+ * Gasto diario efetivo: numero finito >= 0.
+ *
+ * Negativo vira zero em vez de virar receita: um sinal trocado -- e este e o
+ * repositorio onde despesa e gravada NEGATIVA, entao trocar o sinal aqui e
+ * questao de tempo -- desenharia a linha "provavel" ACIMA da otimista, que e a
+ * unica coisa que ela nunca pode estar. Preferir a linha de antes a uma linha
+ * que promete dinheiro que nao existe.
+ */
+export function gastoDiarioValido(valor: number | undefined | null): number {
+  const bruto = Number(valor ?? 0);
+  if (!Number.isFinite(bruto) || bruto <= 0) return 0;
+  return bruto;
 }
 
 /** Horizonte efetivo: inteiro dentro de [1, DIAS_MAX]. */
@@ -321,6 +393,7 @@ export function projetarFluxoDeCaixa(entrada: EntradaDoFluxo): FluxoDeCaixa {
   // TypeError em vez de um numero errado.
   const recorrencias = entrada.recorrencias ?? [];
   const dias = horizonteValido(entrada.dias);
+  const gastoDiario = gastoDiarioValido(entrada.gastoDiario);
   const ate = addDays(hoje, dias - 1);
 
   // ---------------------------------------------------------------
@@ -422,6 +495,16 @@ export function projetarFluxoDeCaixa(entrada: EntradaDoFluxo): FluxoDeCaixa {
   let diaDoMenorSaldo = hoje;
   const comecaNegativo = saldoInicial < 0;
 
+  // A linha provavel anda em paralelo, nao depois: as duas partem do mesmo
+  // saldo de hoje e recebem os mesmos eventos, e a unica diferenca entre elas
+  // e o gasto variavel acumulado. Calcular a segunda num laco separado abriria
+  // a porta para as duas divergirem em qualquer coisa alem disso.
+  let gastoVariavelTotal = 0;
+  let saldoProvavel = saldoInicial;
+  let menorSaldoProvavel = saldoInicial;
+  let diaDoMenorSaldoProvavel = hoje;
+  let primeiroDiaNegativoProvavel: string | null = null;
+
   for (let i = 0; i < dias; i++) {
     const data = addDays(hoje, i);
     const doDia = porDia.get(data) ?? [];
@@ -442,9 +525,18 @@ export function projetarFluxoDeCaixa(entrada: EntradaDoFluxo): FluxoDeCaixa {
     totalEntra += entra;
     totalSai += sai;
 
+    // `i > 0`: o gasto variavel comeca AMANHA. Ver o cabecalho -- o saldo de
+    // hoje ja carrega o que foi gasto e lancado hoje.
+    const variavelDoDia = i > 0 ? gastoDiario : 0;
+    gastoVariavelTotal += variavelDoDia;
+    saldoProvavel += entra - sai - variavelDoDia;
+
     // Armadilha 4: quem ja esta no vermelho nao recebe uma data de mergulho.
     if (!comecaNegativo && primeiroDiaNegativo === null && saldo < 0) {
       primeiroDiaNegativo = data;
+    }
+    if (!comecaNegativo && primeiroDiaNegativoProvavel === null && saldoProvavel < 0) {
+      primeiroDiaNegativoProvavel = data;
     }
 
     // `<` e nao `<=`: empate fica com o dia MAIS CEDO, que e o que a tela quer
@@ -453,8 +545,12 @@ export function projetarFluxoDeCaixa(entrada: EntradaDoFluxo): FluxoDeCaixa {
       menorSaldo = saldo;
       diaDoMenorSaldo = data;
     }
+    if (saldoProvavel < menorSaldoProvavel) {
+      menorSaldoProvavel = saldoProvavel;
+      diaDoMenorSaldoProvavel = data;
+    }
 
-    linha.push({ data, entra, sai, saldo, eventos: doDia });
+    linha.push({ data, entra, sai, saldo, saldoProvavel, eventos: doDia });
   }
 
   return {
@@ -469,6 +565,12 @@ export function projetarFluxoDeCaixa(entrada: EntradaDoFluxo): FluxoDeCaixa {
     diaDoMenorSaldo,
     totalEntra,
     totalSai,
+    gastoDiario,
+    gastoVariavelTotal,
+    saldoFinalProvavel: saldoProvavel,
+    menorSaldoProvavel,
+    diaDoMenorSaldoProvavel,
+    primeiroDiaNegativoProvavel,
     absorvidasPelaAgenda: Array.from(absorvidas).sort(),
     linha,
   };

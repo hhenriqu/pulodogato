@@ -1,0 +1,15 @@
+{
+  "//": "Build so do teste: lib/variable-spend.ts puxa lib/anomalies.ts (a leitura de `amount` com sinal e o mes anterior) e lib/recurrence-detector.ts (a normalizacao da descricao e a mediana) pelo alias @/. O tsc resolve o alias por causa de `paths`, mas NAO o reescreve no JS emitido -- por isso o npm script tem um passo de reescrita depois (scripts/resolve-aliases.mjs), igual ao test:cash-flow. Sem ele o node morre com ERR_MODULE_NOT_FOUND no primeiro import.",
+  "compilerOptions": {
+    "outDir": "../.tmp-variable-spend",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/variable-spend.ts"]
+}
