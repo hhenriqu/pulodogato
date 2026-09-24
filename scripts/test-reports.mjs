@@ -8,13 +8,17 @@
 //
 // Os numeros dos relatorios sao calculados nas views do 008 e provados por
 // database/tests/goals_reports_test.sql. O que sobra para o TypeScript sao
-// duas coisas que erram em SILENCIO, e e o que este arquivo cobre:
+// tres coisas que erram em SILENCIO, e e o que este arquivo cobre:
 //
 //   1. a janela de meses. Um off-by-one faz o grafico de 12 meses mostrar 11
 //      ou 13, e ninguem conta as barras.
 //   2. o escape do CSV. Uma descricao com ponto e virgula quebra a linha em
 //      duas colunas e desloca TODO o resto da planilha -- o usuario abre no
 //      Excel e le valores na coluna errada, sem nenhum sinal de erro.
+//   3. os cabecalhos do download. Sem o `attachment` o browser mostra a
+//      planilha como texto na aba em vez de baixar, e sem o periodo no nome
+//      duas exportacoes viram `arquivo.csv` e `arquivo (1).csv`. Nenhum dos
+//      dois aparece num teste que olhe so o conteudo do CSV.
 //
 // Mesmo desenho do test-recurrence.mjs e do test-settlement.mjs: .mjs
 // compilado pelo tsc que ja e dependencia, sem runner de teste novo.
@@ -31,6 +35,8 @@ const {
   campoCsv,
   montarCsv,
   formatarNumeroCsv,
+  cabecalhosCsv,
+  nomeArquivoCsv,
   rotuloMes,
 } = await import("../.tmp-reports/services/reports.js");
 
@@ -198,6 +204,76 @@ test("o CSV inteiro fica com o numero certo de colunas", () => {
       `a linha deslocaria a planilha: ${linha}`,
     );
   }
+});
+
+// ---------------------------------------------------------------------------
+// Download: cabecalho HTTP e nome do arquivo
+// ---------------------------------------------------------------------------
+// O CSV so chega ao usuario como ARQUIVO por causa destes cabecalhos. Sem o
+// `attachment` o browser exibe a planilha como texto na aba e nao baixa nada;
+// o usuario ve uma tela de `Mês;Entradas;...` e conclui que a exportacao
+// quebrou. Nada disso aparece num teste do conteudo do CSV.
+
+test("o browser baixa o arquivo em vez de exibi-lo na aba", () => {
+  const h = cabecalhosCsv("extrato-2026-01-a-2026-09.csv");
+
+  assert.equal(h["Content-Type"], "text/csv; charset=utf-8");
+  assert.match(h["Content-Disposition"], /^attachment;/);
+  assert.equal(
+    h["Content-Disposition"],
+    'attachment; filename="extrato-2026-01-a-2026-09.csv"',
+  );
+});
+
+test("o relatorio nao fica em cache de proxy", () => {
+  // Cache compartilhado com extrato financeiro dentro: o proximo usuario da
+  // mesma rede receberia o relatorio do anterior.
+  assert.equal(cabecalhosCsv("extrato.csv")["Cache-Control"], "no-store");
+});
+
+test("aspas no nome nao escapam do cabecalho", () => {
+  // Uma aspa fecharia o filename="..." no meio; uma quebra de linha encerraria
+  // o cabecalho e o resto do nome viraria um cabecalho HTTP proprio.
+  const h = cabecalhosCsv('extrato";\r\nX-Injetado: 1.csv');
+
+  assert.equal(h["Content-Disposition"].split("\r\n").length, 1);
+  assert.equal(
+    (h["Content-Disposition"].match(/"/g) ?? []).length,
+    2,
+    "o filename tem que ter exatamente as duas aspas que o delimitam",
+  );
+});
+
+test("o nome do arquivo carrega o periodo exportado", () => {
+  // Sem o periodo no nome, exportar 3 e depois 12 meses deixa na pasta de
+  // downloads um `fluxo-de-caixa.csv` e um `fluxo-de-caixa (1).csv`, que sao
+  // indistinguiveis sem abrir os dois.
+  assert.equal(
+    nomeArquivoCsv("fluxo-de-caixa", {
+      inicio: "2025-10-01",
+      fim: "2026-09-01",
+    }),
+    "fluxo-de-caixa-2025-10-a-2026-09.csv",
+  );
+});
+
+test("o nome sai do periodo REAL, e nao dos 12 meses do padrao", () => {
+  // A tela exporta a janela que o usuario selecionou. Um nome fixo em 12 meses
+  // sobre uma exportacao de 3 arquiva o arquivo com o periodo errado.
+  const janela = janelaDeMeses("3");
+  const nome = nomeArquivoCsv("extrato", janela);
+
+  assert.equal(nome, `extrato-${janela.inicio.slice(0, 7)}-a-${janela.fim.slice(0, 7)}.csv`);
+  assert.ok(nome.endsWith(".csv"));
+});
+
+test("janela de um mes nao vira nome quebrado", () => {
+  const janela = janelaDeMeses("1");
+  assert.equal(janela.inicio, janela.fim);
+  assert.match(
+    nomeArquivoCsv("patrimonio", janela),
+    /^patrimonio-\d{4}-\d{2}-a-\d{4}-\d{2}\.csv$/,
+  );
 });
 
 test("rotuloMes nao passa por Date", () => {

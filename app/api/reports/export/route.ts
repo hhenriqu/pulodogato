@@ -16,6 +16,10 @@
 // como PDF" no dialogo do sistema e leva o relatorio COM os graficos. O CSV
 // cobre o outro uso, que e levar os numeros para a planilha.
 //
+// Metade desse estilo de impressao mora em app/(dashboard)/layout.tsx, nao na
+// pagina: header e sidebar sao renderizados pelo layout, fora da arvore da
+// pagina, que por isso nao consegue esconder nenhum dos dois.
+//
 // Se algum dia for preciso PDF sem interacao humana (envio por e-mail, por
 // exemplo), o lugar e um job separado, nao esta rota.
 
@@ -25,6 +29,7 @@ import {
   janelaDeMeses,
   montarCsv,
   cabecalhosCsv,
+  nomeArquivoCsv,
   rotuloMes,
 } from "@/lib/services/reports";
 import { somarMeses } from "@/lib/services/budget";
@@ -38,6 +43,16 @@ const RELATORIOS = [
 ] as const;
 
 type Relatorio = (typeof RELATORIOS)[number];
+
+/**
+ * Formatos que esta rota entrega. So CSV -- ver a nota sobre PDF no topo.
+ *
+ * `format` e conferido em vez de ignorado, e a diferenca importa: quem pedir
+ * `?format=pdf` tem que receber um erro dizendo onde o PDF esta, e nao um CSV
+ * com 200 no cabecalho. Um parametro ignorado responde "deu certo" entregando
+ * o arquivo errado, e quem integrar com a rota conclui que o PDF existe.
+ */
+const FORMATOS = ["csv"] as const;
 
 export async function GET(request: NextRequest) {
   try {
@@ -57,6 +72,18 @@ export async function GET(request: NextRequest) {
     if (!RELATORIOS.includes(report)) {
       return NextResponse.json(
         { error: `Relatório inválido. Use um de: ${RELATORIOS.join(", ")}` },
+        { status: 400 }
+      );
+    }
+
+    const format = url.searchParams.get("format") ?? "csv";
+
+    if (!FORMATOS.includes(format as (typeof FORMATOS)[number])) {
+      return NextResponse.json(
+        {
+          error:
+            "Formato inválido. Esta rota exporta apenas csv. Para PDF, use o botão \"Salvar em PDF\" na tela de relatórios, que imprime a página pelo navegador.",
+        },
         { status: 400 }
       );
     }
@@ -98,7 +125,7 @@ export async function GET(request: NextRequest) {
           Number(d.transaction_count),
         ])
       );
-      nome = `fluxo-de-caixa-${janela.inicio.slice(0, 7)}-a-${janela.fim.slice(0, 7)}.csv`;
+      nome = nomeArquivoCsv("fluxo-de-caixa", janela);
     } else if (report === "categories") {
       const base = supabase
         .from("category_monthly_totals")
@@ -132,7 +159,7 @@ export async function GET(request: NextRequest) {
             Number(l.transaction_count),
           ])
       );
-      nome = `gastos-por-categoria-${janela.inicio.slice(0, 7)}-a-${janela.fim.slice(0, 7)}.csv`;
+      nome = nomeArquivoCsv("gastos-por-categoria", janela);
     } else if (report === "planned") {
       const q = supabase
         .from("planned_vs_actual")
@@ -168,7 +195,7 @@ export async function GET(request: NextRequest) {
           Number(d.overdue_count),
         ])
       );
-      nome = `previsto-x-realizado-${janela.inicio.slice(0, 7)}-a-${janela.fim.slice(0, 7)}.csv`;
+      nome = nomeArquivoCsv("previsto-x-realizado", janela);
     } else if (report === "net-worth") {
       const { data } = await supabase
         .from("net_worth_history")
@@ -186,7 +213,7 @@ export async function GET(request: NextRequest) {
           Number(d.net_worth),
         ])
       );
-      nome = `patrimonio-${janela.inicio.slice(0, 7)}-a-${janela.fim.slice(0, 7)}.csv`;
+      nome = nomeArquivoCsv("patrimonio", janela);
     } else {
       // O extrato: uma linha por lancamento. E o que o contador pede e o que o
       // usuario quer quando desconfia de um numero agregado.
@@ -254,7 +281,7 @@ export async function GET(request: NextRequest) {
           Number(l.amount),
         ])
       );
-      nome = `extrato-${janela.inicio.slice(0, 7)}-a-${janela.fim.slice(0, 7)}.csv`;
+      nome = nomeArquivoCsv("extrato", janela);
     }
 
     return new NextResponse(csv, { headers: cabecalhosCsv(nome) });
