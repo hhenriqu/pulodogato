@@ -227,13 +227,22 @@ checam as variaveis antes do `Authorization`, a resposta anonima diz tudo:
 | --- | --- |
 | **401** | certo -- variaveis no lugar; a Vercel manda o Bearer e passa, a internet nao |
 | **503** | falta variavel (o corpo diz qual). Este cron nunca rodou |
-| **500** | segredo ok, rota quebrada -- suspeita 1: migration pendente no Supabase |
+| **500** | a rota quebrou antes do guard de auth -- **nao** e migration pendente (veja abaixo) |
 | **404** | `vercel.json` agenda um caminho que nao existe no deploy |
 | **200** | alarme: a rota roda sem autenticacao para qualquer um |
 
 401 prova que a variavel existe, nao que a Vercel disparou o job. Isso so o
 painel mostra: Project → **Cron Jobs**, que lista cada agendamento e o ultimo
 disparo (e cada execucao aparece no log da funcao).
+
+E prova menos ainda do que parece. O guard de `Authorization` vem **antes** de
+qualquer acesso ao banco, entao a sonda anonima para no 401 e **nunca executa o
+corpo da rota**: schema faltando, RLS errada e erro de runtime sao todos
+invisiveis para ela. Os tres crons podem dar 401 e mesmo assim estourar 500
+quando a Vercel dispara com o Bearer correto — foi exatamente o caso do aviso de
+assinatura (09:30), que depende da migration **016**. Um 500 nesta sonda so
+aparece se a rota quebrar antes do guard, que e outra coisa. Para saber se o job
+*funcionou*, o unico lugar e o log da execucao no painel.
 
 No plano **Hobby** o disparo tem precisao de hora, `±59 min`: `30 9 * * *` sai
 entre 09:30 e 10:29. Com a varredura as 09:00 e o aviso as 09:30, em alguns dias

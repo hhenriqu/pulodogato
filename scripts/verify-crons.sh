@@ -17,10 +17,20 @@
 #           e passa; a internet inteira nao.
 #   200  -> a rota rodou de verdade SEM autenticacao. Alarme: qualquer um na
 #           internet dispara a varredura.
-#   500  -> segredo configurado, mas a rota quebrou por outro motivo -- o mais
-#           provavel aqui e migration pendente no Supabase (o deploy publica
-#           codigo, nao schema).
+#   500  -> a rota quebrou ANTES de chegar no guard de Authorization. Nao
+#           confunda com migration pendente: o acesso ao banco fica DEPOIS do
+#           401, entao uma tabela ausente e invisivel para esta sonda (veja
+#           "O que o 401 NAO prova" abaixo).
 #   404  -> a rota nao existe no deploy. O cron da Vercel bate e nao acha nada.
+#
+# O QUE O 401 NAO PROVA
+#
+# O guard de Authorization vem ANTES de qualquer acesso ao banco. Sem o segredo
+# em maos esta sonda para no 401 e nunca executa o corpo da rota -- entao ela
+# nao consegue ver schema faltando, RLS errada, nem qualquer erro de runtime.
+# Os tres crons podem dar 401 verdinho aqui e mesmo assim estourar 500 quando a
+# Vercel dispara com o Bearer certo. O unico lugar que mostra isso e o log da
+# funcao no painel (Project > Cron Jobs -> o job -> a execucao).
 #
 # Foi assim que a HMO-152 apareceu: os tres crons responderam 503 desde que
 # nasceram (o de vencimento desde a HMO-141), entao nenhum deles jamais avisou
@@ -161,8 +171,8 @@ for path in "${CRON_PATHS[@]}"; do
       failures=$((failures + 1))
       ;;
     500)
-      echo "FALHA 500  $path -- segredo no lugar, mas a rota quebrou"
-      echo "          suspeita numero 1: migration pendente no Supabase"
+      echo "FALHA 500  $path -- a rota quebrou antes mesmo do guard de auth"
+      echo "          NAO e migration pendente: o banco so e tocado depois do 401"
       echo "          corpo: $(body_of "$BASE$path" | head -c 200)"
       failures=$((failures + 1))
       ;;
@@ -193,8 +203,11 @@ fi
 
 if [[ "$failures" -eq 0 ]]; then
   echo "TUDO OK -- os ${#CRON_PATHS[@]} crons estao armados (401 para anonimo)."
-  echo "Isso prova que as variaveis existem. Que a Vercel DISPAROU o job so o"
-  echo "painel (Project > Cron Jobs) e o log da funcao mostram."
+  echo "Isso prova que as variaveis existem -- e SO isso. O guard de auth vem"
+  echo "antes do banco, entao esta sonda para no 401 sem executar o corpo da"
+  echo "rota: migration faltando e erro de runtime nao aparecem aqui. Que a"
+  echo "Vercel DISPAROU o job, e que ele terminou bem, so o painel mostra"
+  echo "(Project > Cron Jobs > a execucao > log da funcao)."
 else
   echo "$failures checagem(ns) falharam."
 fi
