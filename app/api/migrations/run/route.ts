@@ -1,9 +1,17 @@
 import { createClient } from "@/utils/supabase/server";
+import { requireAdmin } from "@/utils/supabase/admin";
 import { NextResponse } from "next/server";
 
 // Este endpoint NAO executa migracoes - nunca executou, apesar do nome e da
 // mensagem antiga dizerem que sim. Ele so reporta se o schema ja esta aplicado.
 // Migracao continua sendo manual, via SQL Editor do Supabase.
+//
+// Mesmo sendo leitura, e restrito a admin desde a HMO-150: ate entao bastava
+// estar logado. O que ele devolve nao e dado de usuario, mas e inventario de
+// infraestrutura -- quais migracoes existem, quais faltam e o caminho dos
+// arquivos. Isso descreve o estado do banco para quem nao tem nada que ver com
+// ele, e o nome da rota promete um poder (`/run`) que ela nao tem: se algum dia
+// alguem implementar o POST que o nome sugere, o furo ja estaria aberto.
 //
 // Ate 2026-09-18 ele listava 002_personal_finance.sql, 003_expense_groups.sql e
 // 004_financial_extensions.sql, arquivos que nunca existiram no repositorio.
@@ -55,18 +63,14 @@ async function checkMigrationStatus(supabase: any) {
 
 export async function GET() {
   try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      return NextResponse.json(
-        { error: "Usuário não autenticado" },
-        { status: 401 }
-      );
+    // `requireAdmin` ja cobre o nao-autenticado (401) antes do nao-admin (403),
+    // entao nao ha checagem de sessao separada aqui.
+    const admin = await requireAdmin();
+    if (!admin.ok) {
+      return admin.response;
     }
+
+    const supabase = createClient();
 
     return NextResponse.json({
       migrations: MIGRATIONS.map(({ name, description, required }) => ({
