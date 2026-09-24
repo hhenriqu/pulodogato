@@ -21,6 +21,13 @@ import {
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
+import {
+  gastoDiarioComAjustes,
+  DIAS_MEDIOS_DO_MES,
+  SEM_CATEGORIA,
+  type GastoVariavel,
+  type CategoriaDoGasto,
+} from "@/lib/variable-spend";
 
 // =====================================================
 // Previsao de fluxo de caixa (HMO-145)
@@ -99,15 +106,11 @@ interface FluxoDeCaixa {
   linha: DiaDoFluxo[];
 }
 
-interface GastoVariavel {
-  porDia: number;
-  porMes: number;
-  mesesBase: number;
-  temBase: boolean;
-  meses: { mes: string; total: number }[];
-  totalComprometidoDescartado: number;
-  chavesDescartadas: number;
-}
+// `GastoVariavel` e `CategoriaDoGasto` sao IMPORTADOS do lib/variable-spend, e
+// nao redeclarados aqui. A copia local existia e foi removida: a rota devolve o
+// objeto do calculo inteiro, e uma segunda declaracao da mesma forma e como um
+// campo novo (`categorias`, agora) chega ao JSON sem chegar a tela -- sem erro
+// de compilacao, so uma secao que nao aparece.
 
 const HORIZONTES = [30, 60, 90] as const;
 
@@ -119,6 +122,21 @@ const HORIZONTES = [30, 60, 90] as const;
  * na unidade errada -- que seria uma linha silenciosamente 30x fora.
  */
 const CHAVE_AJUSTE = "pulodogato:cash-flow:gasto-diario:v1";
+
+/**
+ * Onde ficam os valores que o usuario digitou POR CATEGORIA, em reais por mes.
+ *
+ * Deliberadamente SEPARADA do `CHAVE_AJUSTE`, que continua guardando o unico
+ * numero que vai para o servidor (reais por DIA). Sao papeis diferentes: o
+ * numero total e o que a previsao usa e o que evita a tela piscar na primeira
+ * pintura; este mapa e o que redesenha o editor e o que permite recompor o
+ * total quando a base mudar -- um mes novo importado move as medianas, e um
+ * total guardado sozinho envelheceria sem ninguem perceber.
+ */
+const CHAVE_AJUSTE_CATEGORIAS = "pulodogato:cash-flow:gasto-por-categoria:v1";
+
+/** O que a linha "sem categoria" mostra. O calculo so conhece a chave vazia. */
+const ROTULO_SEM_CATEGORIA = "Sem categoria";
 
 function formatarBRL(valor: number): string {
   return Number(valor).toLocaleString("pt-BR", {
@@ -245,6 +263,138 @@ function LinhaDoSaldo({
 }
 
 /**
+ * A abertura do gasto do dia a dia, categoria a categoria.
+ *
+ * Um numero so ("R$ 62 por dia") e conferivel em teoria e nao em pratica: o
+ * usuario nao sabe se ele esta alto por causa do mercado ou do restaurante, e
+ * sem saber disso nao tem o que mexer. Aqui cada categoria mostra a SUA mediana
+ * mensal -- um numero que da para procurar no extrato -- e um campo para
+ * digitar outro valor.
+ *
+ * A LINHA DE "AJUSTE DA MEDIANA" NAO E UMA SOBRA, e ela precisa estar escrita.
+ * A mediana nao e aditiva: a mediana dos totais mensais nao e a soma das
+ * medianas por categoria, porque cada mediana descarta o pico da propria
+ * categoria e os picos caem em meses diferentes. A diferenca e o
+ * `residuoPorMes`, e ela pode ser NEGATIVA. Chamar isso de "outros gastos"
+ * seria mentira na metade dos casos -- e, pior, convidaria o usuario a
+ * procurar no extrato uma despesa que nao existe.
+ *
+ * A linha so aparece quando o residuo passa de um real: abaixo disso ela e
+ * arredondamento, e explicar estatistica para justificar R$ 0,40 custa mais
+ * atencao do que vale.
+ */
+function AberturaPorCategoria({
+  categorias,
+  residuoPorMes,
+  mesesBase,
+  ajustes,
+  aplicarCategoria,
+}: {
+  categorias: CategoriaDoGasto[];
+  residuoPorMes: number;
+  mesesBase: number;
+  ajustes: Record<string, number>;
+  aplicarCategoria: (categoriaId: string, porMes: number | null) => void;
+}) {
+  if (categorias.length === 0) return null;
+
+  return (
+    <div className="space-y-2 rounded-md border border-border p-3">
+      <p className="text-xs font-medium text-foreground">De onde vem</p>
+      <ul className="space-y-1.5">
+        {categorias.map((c) => {
+          const ajustada = Object.prototype.hasOwnProperty.call(ajustes, c.categoriaId);
+          const valor = ajustada ? ajustes[c.categoriaId] : c.porMes;
+
+          return (
+            <li
+              key={c.categoriaId}
+              className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1"
+            >
+              <span className="text-sm text-foreground">
+                {c.categoriaId === SEM_CATEGORIA ? ROTULO_SEM_CATEGORIA : c.rotulo}
+                {/* A procedencia de cada linha, e ela e o que explica o zero:
+                    "R$ 0/mes" sozinho parece defeito; "em 1 de 6 meses" e a
+                    razao, e e verdade -- quem compra farmacia uma vez por
+                    semestre gasta mesmo perto de zero por mes com farmacia. */}
+                <span className="ml-1 text-xs text-muted-foreground">
+                  · em {c.mesesComMovimento} de {mesesBase}{" "}
+                  {mesesBase === 1 ? "mês" : "meses"}
+                </span>
+              </span>
+              <span className="flex items-center gap-2">
+                <span
+                  className={
+                    ajustada
+                      ? "text-sm font-medium text-primary"
+                      : "text-sm font-medium text-foreground"
+                  }
+                >
+                  {formatarBRL(valor)}
+                </span>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  inputMode="decimal"
+                  aria-label={`Gasto mensal com ${c.categoriaId === SEM_CATEGORIA ? ROTULO_SEM_CATEGORIA : c.rotulo}, em reais`}
+                  placeholder={c.porMes.toFixed(2)}
+                  className="h-8 w-28"
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter") return;
+                    const alvo = e.currentTarget;
+                    const digitado = Number(alvo.value.replace(",", "."));
+                    if (!Number.isFinite(digitado) || digitado < 0) return;
+                    aplicarCategoria(c.categoriaId, digitado);
+                    alvo.value = "";
+                  }}
+                />
+                {ajustada && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-8 px-2 text-xs"
+                    onClick={() => aplicarCategoria(c.categoriaId, null)}
+                  >
+                    Desfazer
+                  </Button>
+                )}
+              </span>
+            </li>
+          );
+        })}
+
+        {Math.abs(residuoPorMes) >= 1 && (
+          <li className="flex items-center justify-between gap-3 border-t border-border pt-1.5">
+            <span className="text-sm text-muted-foreground">
+              Ajuste da mediana
+            </span>
+            <span className="text-sm text-muted-foreground">
+              {residuoPorMes > 0 ? "+" : "−"}
+              {formatarBRL(Math.abs(residuoPorMes))}
+            </span>
+          </li>
+        )}
+      </ul>
+
+      {Math.abs(residuoPorMes) >= 1 && (
+        <p className="text-xs text-muted-foreground">
+          As categorias não somam o total porque cada uma tem a{" "}
+          <strong className="text-foreground">sua própria</strong> mediana, e os
+          meses caros de cada uma são meses diferentes. Esta linha é a diferença
+          — ela fecha a conta e não é uma despesa que você possa procurar no
+          extrato.
+        </p>
+      )}
+      <p className="text-xs text-muted-foreground">
+        Digite um valor e aperte Enter para trocar a mediana de uma categoria. O
+        total acima anda exatamente o que você mexer.
+      </p>
+    </div>
+  );
+}
+
+/**
  * O cartao que torna a media VISIVEL -- e por isso legitima.
  *
  * Ele imprime tres coisas que normalmente ficariam escondidas dentro do
@@ -262,6 +412,8 @@ function GastoDoDiaADia({
   rascunho,
   setRascunho,
   aplicar,
+  ajustesPorCategoria,
+  aplicarCategoria,
 }: {
   gasto: GastoVariavel | null;
   fluxo: FluxoDeCaixa;
@@ -270,6 +422,8 @@ function GastoDoDiaADia({
   rascunho: string;
   setRascunho: (v: string) => void;
   aplicar: (v: number | null) => void;
+  ajustesPorCategoria: Record<string, number>;
+  aplicarCategoria: (categoriaId: string, porMes: number | null) => void;
 }) {
   if (indisponivel) {
     return (
@@ -294,6 +448,13 @@ function GastoDoDiaADia({
   // Sem base e sem ajuste manual nao ha segunda linha, e o cartao passa a
   // explicar por que -- em vez de mostrar um zero que parece um resultado.
   const semBase = !gasto?.temBase && !ajustado;
+
+  // `ajustado` vem do servidor e so diz que UM `?gastoDiario=` chegou -- ele nao
+  // distingue o total digitado a mao da recomposicao por categoria, porque as
+  // duas viajam pelo mesmo parametro (ver o cabecalho da rota). Quem sabe a
+  // diferenca e o cliente, que tem o mapa: por isso a frase sai daqui e nao de
+  // uma flag nova na resposta, que seria uma segunda fonte para o mesmo fato.
+  const categoriasMexidas = Object.keys(ajustesPorCategoria).length;
 
   return (
     <Card>
@@ -322,14 +483,22 @@ function GastoDoDiaADia({
           <p className="text-sm text-muted-foreground">
             Equivale a{" "}
             <span className="font-medium text-foreground">
-              {formatarBRL(fluxo.gastoDiario * 30.44)}
+              {formatarBRL(fluxo.gastoDiario * DIAS_MEDIOS_DO_MES)}
             </span>{" "}
             por mês, e a{" "}
             <span className="font-medium text-foreground">
               {formatarBRL(fluxo.gastoVariavelTotal)}
             </span>{" "}
             nos {fluxo.dias} dias da previsão.{" "}
-            {ajustado ? (
+            {categoriasMexidas > 0 ? (
+              <>
+                Você mudou{" "}
+                {categoriasMexidas === 1
+                  ? "1 categoria"
+                  : `${categoriasMexidas} categorias`}{" "}
+                abaixo.
+              </>
+            ) : ajustado ? (
               <>Valor informado por você.</>
             ) : (
               <>
@@ -354,6 +523,19 @@ function GastoDoDiaADia({
             de fora desta média, porque {gasto.chavesDescartadas === 1 ? "ela já entra" : "elas já entram"}{" "}
             na previsão com data própria.
           </p>
+        )}
+
+        {/* A abertura. Fica ACIMA do campo de total de proposito: a pergunta
+            "de onde vem?" tem que ser respondida antes de a tela oferecer o
+            atalho de sobrescrever tudo com um numero chutado. */}
+        {gasto && gasto.temBase && (
+          <AberturaPorCategoria
+            categorias={gasto.categorias}
+            residuoPorMes={gasto.residuoPorMes}
+            mesesBase={gasto.mesesBase}
+            ajustes={ajustesPorCategoria}
+            aplicarCategoria={aplicarCategoria}
+          />
         )}
 
         <div className="flex flex-wrap items-center gap-2">
@@ -407,6 +589,11 @@ export default function CashFlowPage() {
   const [ajuste, setAjuste] = useState<number | null | undefined>(undefined);
   const [rascunho, setRascunho] = useState("");
 
+  // Os valores por categoria, em reais por MES. O `ajuste` acima continua sendo
+  // o unico numero que vai para o servidor (reais por dia) -- este mapa serve
+  // para redesenhar o editor e para recompor o total. Ver CHAVE_AJUSTE_CATEGORIAS.
+  const [ajustesPorCategoria, setAjustesPorCategoria] = useState<Record<string, number>>({});
+
   useEffect(() => {
     try {
       const guardado = window.localStorage.getItem(CHAVE_AJUSTE);
@@ -416,6 +603,22 @@ export default function CashFlowPage() {
       // Navegador com armazenamento bloqueado: segue com o calculado. Uma
       // preferencia de leitura nao vale derrubar a tela.
       setAjuste(null);
+    }
+
+    try {
+      const bruto = window.localStorage.getItem(CHAVE_AJUSTE_CATEGORIAS);
+      const lido = bruto ? JSON.parse(bruto) : {};
+      const limpo: Record<string, number> = {};
+      // Saneado na LEITURA, e nao so na escrita: o localStorage e editavel pelo
+      // usuario e sobrevive a versoes do app. Um `"abc"` guardado ali viraria
+      // NaN na recomposicao, e NaN se propaga em silencio ate o grafico sumir.
+      for (const [id, v] of Object.entries(lido ?? {})) {
+        const n = Number(v);
+        if (Number.isFinite(n) && n >= 0) limpo[id] = n;
+      }
+      setAjustesPorCategoria(limpo);
+    } catch {
+      setAjustesPorCategoria({});
     }
   }, []);
 
@@ -445,7 +648,7 @@ export default function CashFlowPage() {
     carregar();
   }, [carregar]);
 
-  const aplicarAjuste = useCallback((valor: number | null) => {
+  const guardarAjuste = useCallback((valor: number | null) => {
     setAjuste(valor);
     try {
       if (valor === null) window.localStorage.removeItem(CHAVE_AJUSTE);
@@ -454,6 +657,96 @@ export default function CashFlowPage() {
       // Sem armazenamento o ajuste vale so nesta visita -- e ainda vale.
     }
   }, []);
+
+  /**
+   * O total digitado a mao. Ele LIMPA os ajustes por categoria, e isso e uma
+   * decisao, nao uma faxina: se os dois sobrevivessem, a tela mostraria uma
+   * abertura marcando "Mercado R$ 600 (alterado)" enquanto o grafico usa um
+   * total que nao tem nada a ver com esse 600. Um numero na tela que o calculo
+   * nao usou e o comeco de toda desconfianca nesta previsao.
+   */
+  const aplicarAjuste = useCallback(
+    (valor: number | null) => {
+      setAjustesPorCategoria({});
+      try {
+        window.localStorage.removeItem(CHAVE_AJUSTE_CATEGORIAS);
+      } catch {
+        // idem
+      }
+      guardarAjuste(valor);
+    },
+    [guardarAjuste]
+  );
+
+  /**
+   * Mexer numa categoria. `porMes === null` desfaz aquela linha.
+   *
+   * O total que vai para o servidor sai do `gastoDiarioComAjustes` -- a MESMA
+   * funcao pura que tem teste unitario, e nao uma soma escrita aqui. E por isso
+   * que mexer -200 no mercado move a linha em exatamente -200: quem garante
+   * isso e o invariante `soma(categorias) + residuo == porMes`, do lado de la.
+   */
+  const aplicarCategoria = useCallback(
+    (categoriaId: string, porMes: number | null) => {
+      if (!gasto?.temBase) return;
+
+      const proximo = { ...ajustesPorCategoria };
+      if (porMes === null) delete proximo[categoriaId];
+      else proximo[categoriaId] = porMes;
+
+      setAjustesPorCategoria(proximo);
+      try {
+        if (Object.keys(proximo).length === 0) {
+          window.localStorage.removeItem(CHAVE_AJUSTE_CATEGORIAS);
+        } else {
+          window.localStorage.setItem(CHAVE_AJUSTE_CATEGORIAS, JSON.stringify(proximo));
+        }
+      } catch {
+        // idem
+      }
+
+      // Sem nenhuma categoria mexida o certo e VOLTAR ao calculado, e nao
+      // congelar o ultimo total recomposto: senao "Desfazer" na ultima linha
+      // deixaria a previsao presa num numero que ja nao corresponde a nada na
+      // tela, e ele sobreviveria ao proximo extrato importado.
+      if (Object.keys(proximo).length === 0) {
+        guardarAjuste(null);
+        return;
+      }
+
+      guardarAjuste(
+        gastoDiarioComAjustes(
+          gasto,
+          Object.entries(proximo).map(([id, v]) => ({ categoriaId: id, porMes: v }))
+        )
+      );
+    },
+    [gasto, ajustesPorCategoria, guardarAjuste]
+  );
+
+  /**
+   * Recompoe o total quando a BASE muda debaixo de um ajuste guardado.
+   *
+   * O total vai para o localStorage ja pronto (e o que evita a tela piscar na
+   * primeira pintura, mesmo criterio do ajuste manual). So que ele envelhece:
+   * um extrato novo importado move as medianas das categorias que o usuario NAO
+   * mexeu, e o numero guardado passa a nao corresponder mais a soma que a tela
+   * mostra. Aqui ele e refeito, e a comparacao de centavo e o que impede este
+   * efeito de disparar busca a cada render -- `carregar` depende de `ajuste`.
+   */
+  useEffect(() => {
+    if (!gasto?.temBase) return;
+    if (Object.keys(ajustesPorCategoria).length === 0) return;
+
+    const recomposto = gastoDiarioComAjustes(
+      gasto,
+      Object.entries(ajustesPorCategoria).map(([id, v]) => ({ categoriaId: id, porMes: v }))
+    );
+
+    if (ajuste === null || ajuste === undefined) return;
+    if (Math.abs(recomposto - ajuste) < 0.005) return;
+    guardarAjuste(recomposto);
+  }, [gasto, ajustesPorCategoria, ajuste, guardarAjuste]);
 
   // A faixa so existe quando ha um numero POSITIVO de verdade por tras dela.
   // Com gasto diario zero as duas linhas sao a mesma, e desenhar duas linhas
@@ -660,6 +953,8 @@ export default function CashFlowPage() {
             rascunho={rascunho}
             setRascunho={setRascunho}
             aplicar={aplicarAjuste}
+            ajustesPorCategoria={ajustesPorCategoria}
+            aplicarCategoria={aplicarCategoria}
           />
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

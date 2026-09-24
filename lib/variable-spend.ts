@@ -96,6 +96,60 @@
 //      e indistinguivel de "voce nao gasta nada". `temBase` carrega essa
 //      diferenca para a tela, e `porDia` fica em zero para quem ignorar a flag
 //      errar para o lado de nao mudar nada.
+//
+// -----------------------------------------------------------------------
+// A ABERTURA POR CATEGORIA, E POR QUE ELA PRECISA DE UM RESIDUO
+// -----------------------------------------------------------------------
+// Um numero so ("R$ 62 por dia") nao da para conferir nem para corrigir: o
+// usuario nao sabe se ele esta alto por causa do mercado ou do restaurante, e
+// sem saber disso nao tem o que mexer. A abertura por categoria existe para
+// isso -- e assim que o usuario pode mexer em cada linha, a soma das partes
+// PRECISA fechar com o total. Senao mudar o mercado em -200 move a linha em
+// outra coisa qualquer, e a tela perde o unico atributo que a torna util.
+//
+// E aqui mora um fato desconfortavel: A MEDIANA NAO E ADITIVA. A mediana dos
+// totais mensais nao e a soma das medianas por categoria, porque os picos de
+// cada categoria caem em MESES DIFERENTES e cada mediana descarta o pico da
+// sua propria categoria -- descartando, no total, mais do que a mediana do
+// total descartou. Com 3 meses de (mercado 800/900/1000, restaurante
+// 500/300/400) a mediana do total e 1.300 e a soma das medianas e 900+400 =
+// 1.300 por acaso; basta um mes em que os dois sobem juntos para os dois
+// numeros se separarem.
+//
+// Ha tres saidas, e duas sao ruins:
+//
+//   * trocar o total pela soma das medianas por categoria. Mudaria o numero
+//     que ja esta em producao e o deixaria MENOS robusto: quanto mais fina a
+//     categoria, mais pico cada mediana joga fora, e o total encolhe -- ou
+//     seja, a linha provavel ficaria mais otimista so porque o usuario
+//     categorizou melhor. Errado no sentido perigoso.
+//
+//   * ratear o total entre as categorias proporcionalmente ao gasto. Fecha a
+//     conta, mas o numero de cada linha deixa de ser a mediana daquela
+//     categoria e passa a ser um numero que nao existe em lugar nenhum do
+//     extrato. Confere e nao e verdade.
+//
+//   * publicar a diferenca como uma linha propria, que e o que este arquivo
+//     faz. Cada categoria mostra a SUA mediana -- conferivel contra o extrato
+//     -- e `residuoPorMes` carrega o que falta para fechar com o total. Por
+//     construcao: soma das categorias + residuo == `porMes`, exatamente. Ha
+//     teste so para esse invariante, e ele e o que segura a edicao por
+//     categoria.
+//
+// O residuo pode ser NEGATIVO (quando as categorias sobem juntas, a soma das
+// medianas passa a mediana do total) e isso nao e bug. Quem escreve a tela
+// precisa saber disso: um rotulo do tipo "outros gastos" mentiria na metade
+// dos casos.
+//
+// A base de cada categoria sao os MESMOS meses fechados do total, contando
+// ZERO no mes em que aquela categoria nao teve movimento -- e essa e a
+// diferenca em relacao ao `compararComHistorico` do lib/anomalies.ts, que
+// descarta o mes vazio. La a pergunta e "este mes foi atipico PARA esta
+// categoria", e diluir a farmacia pelos meses sem farmacia faria a primeira
+// compra do ano virar anomalia. Aqui a pergunta e "quanto sai por mes, no
+// total", e quem compra farmacia em 1 de 6 meses gasta mesmo pouco por mes
+// com farmacia. Descartar o zero aqui somaria seis medianas de meses cheios e
+// estouraria o total.
 // =====================================================
 
 import { mediana, normalizeMerchant } from "@/lib/recurrence-detector";
@@ -135,6 +189,31 @@ export interface MesDaBase {
   total: number;
 }
 
+/**
+ * A chave da linha "sem categoria".
+ *
+ * String vazia e nao `null` porque ela e chave de Map, de objeto JSON e de
+ * `key` de React -- e `null` vira `"null"` em dois desses tres lugares, sem
+ * erro e sem sintoma. O nome fica com quem desenha a tela.
+ */
+export const SEM_CATEGORIA = "";
+
+/** Uma categoria dentro do gasto do dia a dia. */
+export interface CategoriaDoGasto {
+  /** `category_id`, ou `SEM_CATEGORIA` para o que veio sem categoria. */
+  categoriaId: string;
+  /** O que a tela mostra. Cai para o proprio id quando nao ha nome. */
+  rotulo: string;
+  /** A mediana mensal desta categoria, sobre os MESMOS meses da base. */
+  porMes: number;
+  /** O mesmo valor em reais por dia. */
+  porDia: number;
+  /** Em quantos dos meses da base esta categoria teve movimento. */
+  mesesComMovimento: number;
+  /** Quanto esta categoria somou na janela inteira. Para conferir com o extrato. */
+  total: number;
+}
+
 export interface GastoVariavel {
   /** O que sai por dia, sem que exista uma conta pedindo. Zero quando nao ha base. */
   porDia: number;
@@ -156,6 +235,31 @@ export interface GastoVariavel {
   totalComprometidoDescartado: number;
   /** Quantas chaves distintas foram descartadas. */
   chavesDescartadas: number;
+  /**
+   * De onde vem o `porMes`, categoria a categoria, da maior para a menor.
+   *
+   * Vazio quando nao ha base -- sem "normal" nao ha de onde abrir nada.
+   */
+  categorias: CategoriaDoGasto[];
+  /**
+   * O que falta para as categorias fecharem com o `porMes`. Pode ser negativo.
+   *
+   * Invariante: `soma(categorias.porMes) + residuoPorMes === porMes`. Ver o
+   * cabecalho -- e a diferenca entre a mediana do total e a soma das medianas.
+   */
+  residuoPorMes: number;
+}
+
+/**
+ * Um valor por mes que o usuario digitou no lugar da mediana de uma categoria.
+ *
+ * `categoriaId` vazio e a linha "sem categoria", nao "todas": ver
+ * `SEM_CATEGORIA`.
+ */
+export interface AjusteDeCategoria {
+  categoriaId: string;
+  /** Reais por mes. Negativo e ignorado -- gasto nao volta para a conta. */
+  porMes: number;
 }
 
 export interface EntradaDoGastoVariavel {
@@ -175,6 +279,8 @@ export interface EntradaDoGastoVariavel {
   hoje: string;
   /** Meses fechados olhados para tras. Fora de faixa e corrigido, nao rejeitado. */
   meses?: number;
+  /** `category_id` -> nome, para a tela nao mostrar UUID. Mesma forma do lib/anomalies.ts. */
+  nomesDeCategoria?: Record<string, string>;
 }
 
 /** Janela efetiva: inteiro dentro de [MIN_MESES_JANELA, MESES_JANELA_MAX]. */
@@ -231,6 +337,10 @@ export function calcularGastoVariavel(entrada: EntradaDoGastoVariavel): GastoVar
   const naJanela = new Set(mesesFechados(hoje, meses));
 
   const porMes = new Map<string, number>();
+  // (categoriaId -> (mes -> total)). So os meses COM movimento da categoria
+  // entram aqui; os zeros sao preenchidos depois, contra a base ja fechada --
+  // preencher agora exigiria saber a base, que ainda nao existe.
+  const porCategoria = new Map<string, Map<string, number>>();
   const descartadas = new Set<string>();
   let totalComprometidoDescartado = 0;
 
@@ -257,6 +367,19 @@ export function calcularGastoVariavel(entrada: EntradaDoGastoVariavel): GastoVar
     }
 
     porMes.set(mes, (porMes.get(mes) ?? 0) + valor);
+
+    // A abertura sai do MESMO laco, depois dos mesmos filtros. Um segundo laco
+    // sobre `transacoes` compilaria e seria a forma de as duas metades
+    // divergirem no dia em que alguem mexesse num filtro so -- e o sintoma
+    // seria a soma das categorias nao fechar com o total, que e exatamente o
+    // que a abertura promete.
+    const categoria = t.category_id ?? SEM_CATEGORIA;
+    let meses = porCategoria.get(categoria);
+    if (!meses) {
+      meses = new Map<string, number>();
+      porCategoria.set(categoria, meses);
+    }
+    meses.set(mes, (meses.get(mes) ?? 0) + valor);
   }
 
   // Ordem crescente para a tela ler a procedencia da esquerda para a direita.
@@ -280,6 +403,15 @@ export function calcularGastoVariavel(entrada: EntradaDoGastoVariavel): GastoVar
   // proximo leitor confia a toa.
   const porMesTipico = temBase ? mediana(base.map((m) => m.total)) : 0;
 
+  // Sem base nao ha "normal" e nao ha o que abrir: devolver as categorias
+  // mesmo assim daria a tela um detalhamento de um numero que ela nao vai
+  // mostrar, e a soma das partes contradiria o zero da manchete.
+  const categorias = temBase
+    ? abrirPorCategoria(porCategoria, base.map((m) => m.mes), entrada.nomesDeCategoria ?? {})
+    : [];
+
+  const somaDasCategorias = categorias.reduce((s, c) => s + c.porMes, 0);
+
   return {
     porDia: porMesTipico / DIAS_MEDIOS_DO_MES,
     porMes: porMesTipico,
@@ -288,5 +420,102 @@ export function calcularGastoVariavel(entrada: EntradaDoGastoVariavel): GastoVar
     meses: base,
     totalComprometidoDescartado,
     chavesDescartadas: descartadas.size,
+    categorias,
+    // Por subtracao, e nao por uma segunda formula: assim o invariante
+    // (soma + residuo == porMes) vale por construcao, inclusive quando a
+    // mediana de alguma categoria mudar de definicao.
+    residuoPorMes: porMesTipico - somaDasCategorias,
   };
+}
+
+/**
+ * A mediana mensal de cada categoria, sobre os meses da base.
+ *
+ * `mesesDaBase` sao os mesmos meses do total, e o zero do mes sem movimento
+ * ENTRA na mediana -- ver o cabecalho: e o que impede a soma das categorias de
+ * estourar o total quando alguem gasta com farmacia uma vez por semestre.
+ */
+function abrirPorCategoria(
+  porCategoria: Map<string, Map<string, number>>,
+  mesesDaBase: string[],
+  nomes: Record<string, string>
+): CategoriaDoGasto[] {
+  const saida: CategoriaDoGasto[] = [];
+
+  for (const [categoriaId, porMesDaCategoria] of Array.from(porCategoria.entries())) {
+    const valores = mesesDaBase.map((mes) => porMesDaCategoria.get(mes) ?? 0);
+    const tipico = mediana(valores);
+
+    saida.push({
+      categoriaId,
+      rotulo: nomes[categoriaId] ?? categoriaId,
+      porMes: tipico,
+      porDia: tipico / DIAS_MEDIOS_DO_MES,
+      // Hoje isto e sempre igual a `porMesDaCategoria.size`, e a rodada de
+      // mutacao provou: nenhum teste separa os dois. E consequencia de a base
+      // ser definida pelos meses com movimento -- todo mes de uma categoria e,
+      // por construcao, um mes da base. Sai de `valores` mesmo assim porque
+      // `valores` E a base: no dia em que a base deixar de ser "todo mes com
+      // movimento" (um piso de valor, por exemplo), esta contagem acompanha e
+      // o `.size` passaria a dizer "apareceu em 4 de 6" quando so 3 contaram.
+      mesesComMovimento: valores.filter((v) => v > 0).length,
+      total: valores.reduce((s, v) => s + v, 0),
+    });
+  }
+
+  // Maior primeiro, que e a ordem em que a tela quer ler. O desempate e pelo
+  // total da janela, e ele importa: categoria esporadica tem mediana ZERO, e
+  // sem o desempate a ordem entre elas seria a de insercao do Map -- ou seja,
+  // a ordem em que o banco devolveu as linhas, que muda sozinha entre duas
+  // chamadas iguais e faz a lista pular na tela.
+  saida.sort((a, b) => b.porMes - a.porMes || b.total - a.total || a.categoriaId.localeCompare(b.categoriaId));
+  return saida;
+}
+
+/**
+ * O gasto diario depois dos valores que o usuario digitou por categoria.
+ *
+ * Recompoe a partir das PARTES -- categorias (com o ajuste no lugar da
+ * mediana, quando houver) mais o residuo. Como `soma + residuo == porMes`, uma
+ * categoria mexida em -200 move o total em exatamente -200: o ajuste vale o que
+ * o usuario ve, que e a unica razao de a abertura existir.
+ *
+ * A regra mora aqui, e nao na tela, porque o `?gastoDiario=` que a tela envia e
+ * saneado por `gastoDiarioValido` no servidor -- duas aritmeticas diferentes
+ * dos dois lados dariam uma tela que mostra um numero e um grafico que usa
+ * outro.
+ */
+export function gastoDiarioComAjustes(
+  gasto: GastoVariavel,
+  ajustes: AjusteDeCategoria[]
+): number {
+  // NAO ha `if (!temBase) return 0` aqui, e a ausencia e deliberada: sem base o
+  // `calcularGastoVariavel` devolve `categorias: []` e `residuoPorMes: 0`, entao
+  // a recomposicao ja da zero sozinha -- nenhum ajuste tem categoria em que
+  // pegar. A guarda foi escrita, a rodada de mutacao mostrou que remove-la nao
+  // quebra teste nenhum, e o motivo e que ela e inalcancavel. Mesma decisao do
+  // `porDia` la em cima: guarda que nao pode falhar e guarda que o proximo
+  // leitor confia a toa.
+  const porId = new Map<string, number>();
+  for (const a of ajustes) {
+    const valor = Number(a.porMes);
+    // Nao-numero e negativo sao DESCARTADOS, nao zerados: zerar seria obedecer
+    // a um campo mal digitado tirando uma categoria inteira da conta, e a linha
+    // provavel ficaria otimista sem nada na tela dizendo por que.
+    if (!Number.isFinite(valor) || valor < 0) continue;
+    porId.set(a.categoriaId, valor);
+  }
+
+  const soma = gasto.categorias.reduce(
+    (s, c) => s + (porId.get(c.categoriaId) ?? c.porMes),
+    0
+  );
+
+  // O residuo NAO e ajustavel e segue inteiro: ele nao e uma categoria, e a
+  // diferenca entre a mediana do total e a soma das medianas. Deixa-lo de fora
+  // faria o total cair sozinho assim que o usuario mexesse em qualquer linha.
+  // O piso em zero e o unico lugar onde o residuo negativo pode morder: com
+  // ajustes pequenos a recomposicao daria um gasto negativo, que viraria
+  // RECEITA diaria na previsao.
+  return Math.max(0, soma + gasto.residuoPorMes) / DIAS_MEDIOS_DO_MES;
 }

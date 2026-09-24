@@ -45,6 +45,8 @@ const {
   MESES_JANELA_MAX,
   MIN_MESES_JANELA,
   DIAS_MEDIOS_DO_MES,
+  SEM_CATEGORIA,
+  gastoDiarioComAjustes,
 } = await import("../.tmp-variable-spend/variable-spend.js");
 
 const HOJE = "2026-09-10";
@@ -363,4 +365,319 @@ test("a conversao mensal -> diario usa 365,25/12, nao 30", () => {
 
   assert.equal(DIAS_MEDIOS_DO_MES, 30.44);
   assert.equal(r.porDia, 100);
+});
+
+// ---------------------------------------------------------------------------
+// A ABERTURA POR CATEGORIA
+//
+// O que estes testes protegem, e por que:
+//
+//   A. O INVARIANTE. `soma(categorias) + residuo == porMes`, exatamente. E ele
+//      que torna a edicao por categoria honesta: sem ele, mexer no mercado em
+//      -200 moveria a linha em outro valor qualquer.
+//
+//   B. O ZERO DO MES SEM MOVIMENTO. Se a mediana da categoria descartasse o mes
+//      vazio -- como o lib/anomalies.ts faz, por outro motivo -- a soma das
+//      categorias estouraria o total de quem tem categoria esporadica.
+//
+//   C. QUE O RESIDUO NAO E SEMPRE ZERO. Um fixture em que todas as categorias
+//      sao constantes tem residuo zero por acidente, e passaria verde mesmo se
+//      o residuo fosse `0` cravado no codigo.
+// ---------------------------------------------------------------------------
+
+/** Uma despesa com categoria. `amount` negativo, como o banco grava. */
+const gastoCat = (data, valor, categoria, descricao = "COMPRA") => ({
+  transaction_date: data,
+  amount: -Math.abs(valor),
+  transaction_type: "expense",
+  category_id: categoria,
+  description: descricao,
+});
+
+const somaDasCategorias = (r) => r.categorias.reduce((s, c) => s + c.porMes, 0);
+
+test("as categorias mais o residuo fecham EXATAMENTE com o porMes", () => {
+  const r = calcularGastoVariavel({
+    transacoes: [
+      ...FECHADOS.map((m, i) => gastoCat(`${m}-05`, 800 + i * 50, "mercado", "MERCADO EXTRA")),
+      ...FECHADOS.map((m, i) => gastoCat(`${m}-12`, 400 - i * 30, "restaurante", "RESTAURANTE X")),
+      gastoCat("2026-05-20", 220, "farmacia", "DROGARIA Y"),
+    ],
+    chavesComprometidas: [],
+    hoje: HOJE,
+  });
+
+  assert.equal(r.temBase, true);
+  assert.equal(somaDasCategorias(r) + r.residuoPorMes, r.porMes);
+});
+
+test("o residuo NAO e zero quando os picos das categorias caem em meses diferentes", () => {
+  // Mercado pica em 06, restaurante pica em 07. Cada mediana joga fora o
+  // PROPRIO pico e cai em 500; a mediana do total nao joga fora nenhum dos
+  // dois, e fica em 1.100. A diferenca de 100 e o residuo.
+  //
+  //   mercado     [1000, 100, 500] -> 500
+  //   restaurante [ 100,1000, 500] -> 500   soma = 1000
+  //   total       [1100,1100,1000] -> 1100  residuo = +100
+  const r = calcularGastoVariavel({
+    transacoes: [
+      gastoCat("2026-06-05", 1000, "mercado"),
+      gastoCat("2026-07-05", 100, "mercado"),
+      gastoCat("2026-08-05", 500, "mercado"),
+      gastoCat("2026-06-12", 100, "restaurante"),
+      gastoCat("2026-07-12", 1000, "restaurante"),
+      gastoCat("2026-08-12", 500, "restaurante"),
+    ],
+    chavesComprometidas: [],
+    hoje: HOJE,
+  });
+
+  assert.equal(r.porMes, 1100);
+  assert.equal(somaDasCategorias(r), 1000);
+  assert.equal(r.residuoPorMes, 100);
+  assert.equal(somaDasCategorias(r) + r.residuoPorMes, r.porMes);
+});
+
+test("categoria esporadica conta ZERO nos meses da base em que nao apareceu", () => {
+  // Farmacia: 600 em UM dos seis meses. Se o mes vazio saisse da base dela, a
+  // mediana da farmacia seria 600 e a soma das categorias estouraria o total.
+  const r = calcularGastoVariavel({
+    transacoes: [
+      ...FECHADOS.map((m) => gastoCat(`${m}-05`, 1000, "mercado")),
+      gastoCat("2026-06-20", 600, "farmacia"),
+    ],
+    chavesComprometidas: [],
+    hoje: HOJE,
+  });
+
+  const farmacia = r.categorias.find((c) => c.categoriaId === "farmacia");
+  assert.equal(farmacia.porMes, 0);
+  assert.equal(farmacia.mesesComMovimento, 1);
+  // O dinheiro nao some: ele aparece no total da janela e no residuo.
+  assert.equal(farmacia.total, 600);
+  assert.equal(somaDasCategorias(r) + r.residuoPorMes, r.porMes);
+});
+
+test("o mes fechado SEM movimento nenhum nao vira zero na base da categoria", () => {
+  // Tres meses com extrato, tres sem. A base tem 3 meses, nao 6 -- entao a
+  // mediana do mercado e 1000, e nao 0 (que seria a mediana de [0,0,0,1000,1000,1000]).
+  const r = calcularGastoVariavel({
+    transacoes: ["2026-06", "2026-07", "2026-08"].map((m) => gastoCat(`${m}-05`, 1000, "mercado")),
+    chavesComprometidas: [],
+    hoje: HOJE,
+  });
+
+  assert.equal(r.mesesBase, 3);
+  assert.equal(r.categorias[0].porMes, 1000);
+  assert.equal(r.categorias[0].mesesComMovimento, 3);
+});
+
+test("a chave comprometida sai da categoria tambem, nao so do total", () => {
+  // Netflix esta em `lazer`. Se ela saisse do total mas ficasse na categoria, a
+  // soma das categorias passaria o total e o residuo ficaria negativo por bug.
+  const r = calcularGastoVariavel({
+    transacoes: [
+      ...FECHADOS.map((m) => gastoCat(`${m}-05`, 1000, "mercado", "MERCADO EXTRA")),
+      ...FECHADOS.map((m) => gastoCat(`${m}-08`, 55, "lazer", "NETFLIX.COM*4455")),
+    ],
+    chavesComprometidas: ["netflix"],
+    hoje: HOJE,
+  });
+
+  assert.equal(r.chavesDescartadas, 1);
+  assert.equal(r.categorias.some((c) => c.categoriaId === "lazer"), false);
+  assert.equal(r.porMes, 1000);
+  assert.equal(somaDasCategorias(r) + r.residuoPorMes, r.porMes);
+});
+
+test("transacao sem categoria cai em SEM_CATEGORIA e nao some", () => {
+  const r = calcularGastoVariavel({
+    transacoes: [
+      ...FECHADOS.map((m) => gastoCat(`${m}-05`, 1000, "mercado")),
+      ...FECHADOS.map((m) => gastoCat(`${m}-09`, 200, null)),
+    ],
+    chavesComprometidas: [],
+    hoje: HOJE,
+  });
+
+  const sem = r.categorias.find((c) => c.categoriaId === SEM_CATEGORIA);
+  assert.equal(SEM_CATEGORIA, "");
+  assert.equal(sem.porMes, 200);
+  assert.equal(somaDasCategorias(r) + r.residuoPorMes, r.porMes);
+});
+
+test("o rotulo vem do nome da categoria, e cai para o id quando nao ha nome", () => {
+  const r = calcularGastoVariavel({
+    transacoes: [
+      ...FECHADOS.map((m) => gastoCat(`${m}-05`, 1000, "uuid-mercado")),
+      ...FECHADOS.map((m) => gastoCat(`${m}-09`, 200, "uuid-sem-nome")),
+    ],
+    chavesComprometidas: [],
+    hoje: HOJE,
+    nomesDeCategoria: { "uuid-mercado": "Supermercado" },
+  });
+
+  assert.equal(r.categorias.find((c) => c.categoriaId === "uuid-mercado").rotulo, "Supermercado");
+  assert.equal(r.categorias.find((c) => c.categoriaId === "uuid-sem-nome").rotulo, "uuid-sem-nome");
+});
+
+test("as categorias vem da maior para a menor", () => {
+  const r = calcularGastoVariavel({
+    transacoes: [
+      ...FECHADOS.map((m) => gastoCat(`${m}-05`, 300, "restaurante")),
+      ...FECHADOS.map((m) => gastoCat(`${m}-06`, 1200, "mercado")),
+      ...FECHADOS.map((m) => gastoCat(`${m}-07`, 700, "combustivel")),
+    ],
+    chavesComprometidas: [],
+    hoje: HOJE,
+  });
+
+  assert.deepEqual(
+    r.categorias.map((c) => c.categoriaId),
+    ["mercado", "combustivel", "restaurante"]
+  );
+});
+
+test("duas categorias esporadicas (mediana zero) saem em ordem ESTAVEL, pelo total", () => {
+  // Ambas tem mediana 0. Sem o desempate por total a ordem seria a de insercao
+  // do Map -- ou seja, a ordem em que o banco devolveu as linhas.
+  const base = FECHADOS.map((m) => gastoCat(`${m}-05`, 1000, "mercado"));
+  const pequena = gastoCat("2026-04-02", 80, "livraria");
+  const grande = gastoCat("2026-04-03", 900, "viagem");
+
+  const a = calcularGastoVariavel({
+    transacoes: [...base, pequena, grande],
+    chavesComprometidas: [],
+    hoje: HOJE,
+  });
+  const b = calcularGastoVariavel({
+    transacoes: [...base, grande, pequena],
+    chavesComprometidas: [],
+    hoje: HOJE,
+  });
+
+  assert.deepEqual(a.categorias.map((c) => c.categoriaId), b.categorias.map((c) => c.categoriaId));
+  assert.deepEqual(a.categorias.map((c) => c.categoriaId), ["mercado", "viagem", "livraria"]);
+});
+
+test("sem base nao ha abertura: categorias vazias e residuo zero", () => {
+  const r = calcularGastoVariavel({
+    transacoes: [gastoCat("2026-07-05", 1000, "mercado"), gastoCat("2026-08-05", 900, "mercado")],
+    chavesComprometidas: [],
+    hoje: HOJE,
+  });
+
+  assert.equal(r.temBase, false);
+  assert.deepEqual(r.categorias, []);
+  assert.equal(r.residuoPorMes, 0);
+});
+
+test("o porDia da categoria usa a MESMA conversao do total", () => {
+  const r = calcularGastoVariavel({
+    transacoes: FECHADOS.map((m) => gastoCat(`${m}-05`, 3044, "mercado")),
+    chavesComprometidas: [],
+    hoje: HOJE,
+  });
+
+  assert.equal(r.categorias[0].porDia, 100);
+  assert.equal(r.categorias[0].porDia, r.categorias[0].porMes / DIAS_MEDIOS_DO_MES);
+});
+
+// ---------------------------------------------------------------------------
+// gastoDiarioComAjustes -- o que a edicao por categoria vale
+// ---------------------------------------------------------------------------
+
+/**
+ * Uma base com residuo diferente de zero, que e o unico caso capaz de separar
+ * "recompor pelas partes" de "usar a mediana do total". Com residuo zero as
+ * duas formulas dao o mesmo numero e o teste nao prova nada.
+ *
+ * mercado 500, restaurante 500, total 1.100, residuo +100.
+ */
+const comResiduo = () =>
+  calcularGastoVariavel({
+    transacoes: [
+      gastoCat("2026-06-05", 1000, "mercado"),
+      gastoCat("2026-07-05", 100, "mercado"),
+      gastoCat("2026-08-05", 500, "mercado"),
+      gastoCat("2026-06-12", 100, "restaurante"),
+      gastoCat("2026-07-12", 1000, "restaurante"),
+      gastoCat("2026-08-12", 500, "restaurante"),
+    ],
+    chavesComprometidas: [],
+    hoje: HOJE,
+  });
+
+test("sem nenhum ajuste, a recomposicao devolve o MESMO porDia calculado", () => {
+  const r = comResiduo();
+  assert.notEqual(r.residuoPorMes, 0);
+  assert.equal(gastoDiarioComAjustes(r, []), r.porDia);
+});
+
+test("mexer uma categoria em -200 move o total em exatamente -200 por mes", () => {
+  const r = comResiduo();
+  const mercado = r.categorias.find((c) => c.categoriaId === "mercado");
+
+  const depois = gastoDiarioComAjustes(r, [
+    { categoriaId: "mercado", porMes: mercado.porMes - 200 },
+  ]);
+
+  // Em reais por MES, que e a unidade que o usuario digitou.
+  assert.equal(
+    Math.round((depois - r.porDia) * DIAS_MEDIOS_DO_MES * 100) / 100,
+    -200
+  );
+});
+
+test("um ajuste de categoria inexistente nao muda nada", () => {
+  const r = comResiduo();
+  assert.equal(gastoDiarioComAjustes(r, [{ categoriaId: "nao-existe", porMes: 9999 }]), r.porDia);
+});
+
+test("ajuste negativo ou nao-numerico e DESCARTADO, nao vira zero", () => {
+  const r = comResiduo();
+  assert.equal(gastoDiarioComAjustes(r, [{ categoriaId: "mercado", porMes: -50 }]), r.porDia);
+  assert.equal(gastoDiarioComAjustes(r, [{ categoriaId: "mercado", porMes: NaN }]), r.porDia);
+  assert.equal(gastoDiarioComAjustes(r, [{ categoriaId: "mercado", porMes: "abc" }]), r.porDia);
+});
+
+test("zerar TODAS as categorias nao devolve um gasto negativo", () => {
+  // Com residuo negativo, `soma + residuo` daria abaixo de zero -- e um gasto
+  // diario negativo viraria RECEITA na previsao, empurrando a data de mergulho
+  // para longe. O piso em zero e o que impede isso.
+  //   mercado     [1000,1000, 100] -> 1000
+  //   restaurante [1000, 100,1000] -> 1000   soma = 2000
+  //   total       [2000,1100,1100] -> 1100   residuo = -900
+  const r = calcularGastoVariavel({
+    transacoes: [
+      gastoCat("2026-06-05", 1000, "mercado"),
+      gastoCat("2026-07-05", 1000, "mercado"),
+      gastoCat("2026-08-05", 100, "mercado"),
+      gastoCat("2026-06-12", 1000, "restaurante"),
+      gastoCat("2026-07-12", 100, "restaurante"),
+      gastoCat("2026-08-12", 1000, "restaurante"),
+    ],
+    chavesComprometidas: [],
+    hoje: HOJE,
+  });
+
+  // O residuo negativo e a premissa do teste: sem ele o piso nunca e exercido.
+  assert.equal(r.residuoPorMes, -900);
+
+  const zerados = r.categorias.map((c) => ({ categoriaId: c.categoriaId, porMes: 0 }));
+  assert.ok(gastoDiarioComAjustes(r, zerados) >= 0);
+});
+
+// Sem base o zero sai da ESTRUTURA (categorias vazias, residuo zero), nao de
+// uma guarda: nao ha em que categoria o ajuste pegar. O teste continua valendo
+// -- ele descreve o contrato -- mas quem quiser ver a guarda que o sustenta nao
+// vai achar nenhuma, e e de proposito.
+test("sem base, nenhum ajuste por categoria produz gasto", () => {
+  const r = calcularGastoVariavel({
+    transacoes: [gastoCat("2026-08-05", 1000, "mercado")],
+    chavesComprometidas: [],
+    hoje: HOJE,
+  });
+
+  assert.equal(gastoDiarioComAjustes(r, [{ categoriaId: "mercado", porMes: 5000 }]), 0);
 });
