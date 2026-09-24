@@ -45,6 +45,8 @@ import {
   FileUp,
   Users,
   ArrowRight,
+  Coins,
+  CreditCard,
 } from "lucide-react";
 
 const moeda = (valor: number) =>
@@ -52,6 +54,10 @@ const moeda = (valor: number) =>
     style: "currency",
     currency: "BRL",
   }).format(valor);
+
+// 'AAAA-MM-DD' -> 'DD/MM'. Fatiando a string, sem passar por Date: um
+// `new Date('2026-09-30')` nasce em UTC e, no fuso de Sao Paulo, imprimiria 29.
+const diaEMes = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
 
 interface Conta {
   id: string;
@@ -75,6 +81,19 @@ interface ResumoMesPrevisto {
   fixed_monthly_cost: number;
 }
 
+interface PossoGastar {
+  ate: string;
+  diasRestantes: number;
+  disponivel: number;
+  receitasPrevistas: number;
+  compromissos: number;
+  compromissosVencidos: number;
+  dividaDeCartao: number;
+  livre: number;
+  porDia: number;
+  cartoes: { id: string; name: string; divida: number }[];
+}
+
 interface Meta {
   id: string;
   title: string;
@@ -90,6 +109,7 @@ export default function DashboardPage() {
   const [fluxo, setFluxo] = useState<ResumoFluxo | null>(null);
   const [previstas, setPrevistas] = useState<ResumoMesPrevisto | null>(null);
   const [metas, setMetas] = useState<Meta[]>([]);
+  const [possoGastar, setPossoGastar] = useState<PossoGastar | null>(null);
 
   useEffect(() => {
     carregar();
@@ -98,13 +118,16 @@ export default function DashboardPage() {
   const carregar = async () => {
     try {
       // Em paralelo de proposito: em serie, a tela inicial esperaria a soma
-      // dos quatro tempos de resposta antes de mostrar qualquer coisa.
-      const [rContas, rFluxo, rPrevistas, rMetas] = await Promise.all([
-        fetch("/api/financial-accounts"),
-        fetch("/api/reports/cash-flow?months=1"),
-        fetch("/api/scheduled-transactions/summary"),
-        fetch("/api/goals?status=active"),
-      ]);
+      // dos tempos de resposta de todas as rotas antes de mostrar qualquer
+      // coisa.
+      const [rContas, rFluxo, rPrevistas, rMetas, rPossoGastar] =
+        await Promise.all([
+          fetch("/api/financial-accounts"),
+          fetch("/api/reports/cash-flow?months=1"),
+          fetch("/api/scheduled-transactions/summary"),
+          fetch("/api/goals?status=active"),
+          fetch("/api/safe-to-spend"),
+        ]);
 
       if (rContas.ok) {
         const d = await rContas.json();
@@ -140,6 +163,11 @@ export default function DashboardPage() {
       if (rMetas.ok) {
         const d = await rMetas.json();
         setMetas((d.goals ?? []).slice(0, 3));
+      }
+
+      if (rPossoGastar.ok) {
+        const d = await rPossoGastar.json();
+        setPossoGastar(d.safe_to_spend ?? null);
       }
     } catch (erro) {
       console.error("Erro ao carregar o painel:", erro);
@@ -288,6 +316,118 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* Quanto ainda posso gastar                                         */}
+      {/* ---------------------------------------------------------------- */}
+      {/* O numero vem inteiro de /api/safe-to-spend, que por sua vez chama
+          lib/safe-to-spend.ts. Nenhuma das quatro parcelas e recalculada aqui:
+          refazer a subtracao na tela criaria uma segunda versao da mesma conta,
+          e no dia em que a definicao mudasse -- o que entra como divida de
+          cartao, por exemplo -- o total e as parcelas passariam a discordar
+          dentro do mesmo cartao. */}
+      {possoGastar && (
+        <Card
+          className={
+            possoGastar.livre < 0 ? "border-destructive/40" : "border-primary/40"
+          }
+        >
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Coins className="h-5 w-5" />
+              Quanto ainda posso gastar
+            </CardTitle>
+            <CardDescription>
+              O que sobra até {diaEMes(possoGastar.ate)} depois de tudo que já
+              está comprometido
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-end justify-between flex-wrap gap-4">
+              <div>
+                <div
+                  className={`text-3xl font-bold ${
+                    possoGastar.livre < 0 ? "text-destructive" : "text-success"
+                  }`}
+                >
+                  {moeda(possoGastar.livre)}
+                </div>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {possoGastar.livre > 0
+                    ? `${moeda(possoGastar.porDia)} por dia nos ${
+                        possoGastar.diasRestantes
+                      } ${
+                        possoGastar.diasRestantes === 1 ? "dia" : "dias"
+                      } que faltam`
+                    : "O mês já está comprometido além do que existe em conta — não há verba diária"}
+                </p>
+              </div>
+              <Button variant="outline" size="sm" asChild>
+                <Link href="/dashboard/bills">
+                  Ver compromissos
+                  <ArrowRight className="h-4 w-4 ml-2" />
+                </Link>
+              </Button>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="rounded-lg bg-muted p-3">
+                <p className="text-xs text-muted-foreground">Em conta</p>
+                <p className="font-semibold">{moeda(possoGastar.disponivel)}</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Sem investimentos
+                </p>
+              </div>
+              <div className="rounded-lg bg-muted p-3">
+                <p className="text-xs text-muted-foreground">A receber</p>
+                <p className="font-semibold text-success">
+                  + {moeda(possoGastar.receitasPrevistas)}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Receitas previstas
+                </p>
+              </div>
+              <div className="rounded-lg bg-muted p-3">
+                <p className="text-xs text-muted-foreground">A pagar</p>
+                <p className="font-semibold text-destructive">
+                  − {moeda(possoGastar.compromissos)}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {possoGastar.compromissosVencidos > 0
+                    ? `${moeda(possoGastar.compromissosVencidos)} em atraso`
+                    : "Contas do mês"}
+                </p>
+              </div>
+              <div className="rounded-lg bg-muted p-3">
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <CreditCard className="h-3 w-3" />
+                  No cartão
+                </p>
+                <p className="font-semibold text-destructive">
+                  − {moeda(possoGastar.dividaDeCartao)}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Fatura e período aberto
+                </p>
+              </div>
+            </div>
+
+            {/* A divida do cartao e a parcela que mais surpreende quem olha:
+                ela inclui a compra de ontem, que ainda nao esta em fatura
+                nenhuma. Abrir por cartao e o que evita a conclusao de que o
+                numero esta errado. */}
+            {possoGastar.cartoes.some((c) => c.divida > 0) && (
+              <p className="text-xs text-muted-foreground">
+                Cartões:{" "}
+                {possoGastar.cartoes
+                  .filter((c) => c.divida > 0)
+                  .map((c) => `${c.name} ${moeda(c.divida)}`)
+                  .join(" · ")}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* ---------------------------------------------------------------- */}
       {/* O que vence -- e o que ja venceu                                  */}
