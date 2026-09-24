@@ -82,3 +82,5 @@ next-env.d.ts
 # saida do `npm run test:card-invoice` (idem)
 /.tmp-card-invoice/
 /.tmp-recurrence-alerts/
+# saida do `npm run test:safe-to-spend` (idem, com reescrita de alias depois)
+/.tmp-safe-to-spend/

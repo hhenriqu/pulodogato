@@ -1,0 +1,15 @@
+{
+  "//": "Build so do teste: lib/safe-to-spend.ts puxa lib/net-worth.ts (a classe da conta), lib/card-invoice.ts (a chave canonica da fatura) e lib/recurrence.ts (o ultimo dia do mes) pelo alias @/. O tsc resolve o alias por causa de `paths`, mas NAO o reescreve no JS emitido -- por isso o npm script tem um passo de reescrita depois (scripts/resolve-aliases.mjs), igual ao test:categorization. Sem ele o node morre com ERR_MODULE_NOT_FOUND no primeiro import.",
+  "compilerOptions": {
+    "outDir": "../.tmp-safe-to-spend",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/safe-to-spend.ts"]
+}
