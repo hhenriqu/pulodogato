@@ -77,3 +77,5 @@ next-env.d.ts
 /.tmp-categorization/
 # saida do `npm run test:calculadoras` (tsc avulso, so para o node --test)
 /.tmp-calculadoras/
+# saida do `npm run test:net-worth` (idem)
+/.tmp-net-worth/

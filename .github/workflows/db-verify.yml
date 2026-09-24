@@ -12,9 +12,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -379,6 +379,21 @@ jobs:
       # o usuario le valores na coluna errada sem nenhum sinal de erro).
       - name: Janela de meses e CSV dos relatorios
         run: npm run test:reports
+
+      # A consolidacao do patrimonio nao levanta excecao quando erra: ela
+      # desenha uma composicao errada. Neste banco o dinheiro e a divida moram
+      # na MESMA coluna (`current_balance`), e e dai que saem os erros:
+      #   - classificar pelo SINAL do saldo faz um cartao com estorno virar
+      #     ativo e uma conta no cheque especial virar divida, e a carteira
+      #     muda de forma sozinha quando um saldo cruza o zero;
+      #   - dividir a participacao pelo patrimonio LIQUIDO em vez do total de
+      #     ativos: quem tem R$ 10.000 aplicados e R$ 9.500 de fatura aparece
+      #     com "investimentos = 2000% da carteira", e com patrimonio negativo
+      #     a barra inteira sai invertida;
+      #   - usuario novo tem as quatro contas padrao zeradas, e sem guarda de
+      #     divisao por zero a tela imprime NaN% em quatro tiles.
+      - name: Consolidacao do patrimonio liquido
+        run: npm run test:net-worth
 
       # A leitura do extrato e 100% TypeScript e o SQL nao alcanca nada dela.
       # Tres coisas erram em silencio aqui: parseFloat("1.234,56") = 1.234 (um
