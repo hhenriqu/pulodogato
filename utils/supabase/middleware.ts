@@ -14,6 +14,20 @@ import { getSupabaseEnv } from "./env";
  * nenhum erro aparecer. Com `setAll` os pedacos saem todos na MESMA resposta.
  */
 export async function updateSession(request: NextRequest) {
+  const { response } = await resolveSession(request);
+  return response;
+}
+
+/**
+ * Faz o mesmo que `updateSession` e ainda devolve o client e o usuario, para
+ * quem precisa decidir algo no middleware -- hoje, a guarda de rota de admin.
+ *
+ * Existe separada porque a decisao tem que sair ANTES da renderizacao. Guardar
+ * a pagina dentro do Server Component protege o conteudo, mas o Next ja comecou
+ * a transmitir a resposta quando `notFound()` roda: o corpo sai como 404 e o
+ * status sai 200. Aqui ainda nao ha byte enviado, entao o status e honesto.
+ */
+export async function resolveSession(request: NextRequest) {
   let response = NextResponse.next({ request });
 
   const { url, anonKey } = getSupabaseEnv();
@@ -39,7 +53,11 @@ export async function updateSession(request: NextRequest) {
 
   // Nao remover: e esta chamada que renova o token. Sem ela a sessao expira no
   // prazo do access token (1h por padrao) mesmo com o refresh token valido.
-  await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  return response;
+  // `response` so e reatribuido dentro de `setAll`, que `getUser()` ja disparou
+  // se havia token a renovar -- entao aqui ele ja e o definitivo.
+  return { response, supabase, user };
 }
