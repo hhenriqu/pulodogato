@@ -331,6 +331,25 @@ jobs:
       - name: Pagamento de fatura nao conta a despesa duas vezes
         run: $PSQL -f database/tests/card_invoice_payment_test.sql
 
+      # A auditoria e o arquivo que o Helio COLA no SQL Editor de producao
+      # antes de aplicar a 015. Um nome de coluna errado ali nao aparece em
+      # lugar nenhum ate o momento em que ele precisa da resposta -- e a
+      # resposta que ele precisa e sobre dinheiro ja gravado.
+      #
+      # `BEGIN READ ONLY` faz o proprio postgres provar as duas coisas que o
+      # arquivo promete: que toda referencia a tabela, coluna e funcao resolve
+      # contra o schema real (001 -> 015 ja aplicados acima), e que ele NAO
+      # ESCREVE -- um INSERT, UPDATE ou DELETE que entrasse aqui por descuido
+      # aborta a transacao em vez de passar despercebido. O ROLLBACK no fim e
+      # cinto e suspensorio: nada a desfazer, por construcao.
+      #
+      # Nenhum outro script de database/maintenance/ tinha cobertura de CI ate
+      # aqui, incluindo o 007. Este e o primeiro.
+      - name: A auditoria de faturas roda e nao escreve nada
+        run: |
+          printf 'BEGIN READ ONLY;\n\\i database/maintenance/015_auditoria_faturas.sql\nROLLBACK;\n' \
+            | $PSQL
+
       # Duas metades que falham por motivos diferentes: a estrutural varre o
       # schema INTEIRO atras de view sem security_invoker (uma view criada
       # amanha reprova sem ninguem lembrar de atualizar o teste -- que e o
