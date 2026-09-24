@@ -17,6 +17,11 @@
 //
 // O que ela NAO cobre: se o step existe mas roda o arquivo errado, ou se o
 // `ON_ERROR_STOP` sair do $PSQL. Isto e um piso, nao uma garantia.
+//
+// A SEGUNDA verificacao daqui (HMO-149) e sobre o outro lado: o CI roda as
+// migrations com psql, mas PRODUCAO nao. Producao nao tem runner de migration
+// -- quem aplica e uma pessoa, colando o arquivo no SQL Editor do Supabase.
+// Ver a nota no topo de database/migrations/015 e /016.
 
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -24,6 +29,7 @@ import { fileURLToPath } from "node:url";
 
 const RAIZ = fileURLToPath(new URL("..", import.meta.url));
 const DIR_MIGRATIONS = join(RAIZ, "database/migrations");
+const DIR_MAINTENANCE = join(RAIZ, "database/maintenance");
 
 // O 000 e inventario de preflight, nao muda schema: nunca entrou na cadeia do
 // db-verify e nao deve entrar. Fica explicito aqui para que a excecao seja uma
@@ -50,9 +56,58 @@ const citadas = [...workflow.matchAll(/database\/migrations\/([0-9A-Za-z_]+\.sql
 const existentes = new Set(readdirSync(DIR_MIGRATIONS));
 const fantasmas = [...new Set(citadas)].filter((f) => !existentes.has(f));
 
-if (ausentes.length === 0 && fantasmas.length === 0) {
+// -----------------------------------------------------------------------------
+// Meta-comando de psql num arquivo que uma PESSOA cola no SQL Editor
+// -----------------------------------------------------------------------------
+// O SQL Editor do Supabase manda o texto inteiro como um lote unico de SQL: ele
+// fala Postgres, nao psql. Uma linha comecando com barra invertida vira
+//
+//   ERROR:  42601: syntax error at or near "\"
+//
+// e -- porque o lote e um so -- o arquivo INTEIRO e recusado. Nada e aplicado,
+// nem o que vinha antes da linha. Quem colou ve um erro de sintaxe, fecha, e o
+// banco continua exatamente como estava.
+//
+// O CI nunca ve isso: ele roda `psql -f`, onde a linha e valida. Foi assim que
+// o defeito chegou em producao duas vezes -- a 015 (HMO-149) e a 016, que tinha
+// a mesma linha e ainda nao tinha sido aplicada.
+//
+// Cobre database/maintenance/ tambem: aqueles scripts existem justamente para
+// serem colados no mesmo lugar.
+//
+// A checagem e textual: "primeiro caractere nao-branco da linha e barra
+// invertida". Ela nao sabe distinguir uma barra invertida dentro de corpo
+// dollar-quoted (onde seria inofensiva); se algum dia reprovar por isso, a saida
+// e reescrever a linha para nao comecar com a barra -- nunca afrouxar a
+// verificacao, porque o custo do falso negativo e uma migration que parece
+// aplicada e nao esta.
+const COLADOS = [
+  ...readdirSync(DIR_MIGRATIONS)
+    .filter((f) => f.endsWith(".sql"))
+    .sort()
+    .map((f) => [`database/migrations/${f}`, join(DIR_MIGRATIONS, f)]),
+  ...readdirSync(DIR_MAINTENANCE)
+    .filter((f) => f.endsWith(".sql"))
+    .sort()
+    .map((f) => [`database/maintenance/${f}`, join(DIR_MAINTENANCE, f)]),
+];
+
+const metaComandos = [];
+for (const [rotulo, caminho] of COLADOS) {
+  const linhas = readFileSync(caminho, "utf8").split("\n");
+  linhas.forEach((linha, i) => {
+    if (/^\s*\\/.test(linha)) {
+      metaComandos.push({ rotulo, linha: i + 1, texto: linha.trim() });
+    }
+  });
+}
+
+if (ausentes.length === 0 && fantasmas.length === 0 && metaComandos.length === 0) {
   console.log(
     `Nenhuma migration fora do CI: as ${migrations.length} da cadeia aparecem no db-verify.yml.`,
+  );
+  console.log(
+    `Nenhum meta-comando de psql nos ${COLADOS.length} arquivos que sao colados no SQL Editor.`,
   );
   process.exit(0);
 }
@@ -77,6 +132,22 @@ if (fantasmas.length > 0) {
     "\nO db-verify aponta para migration que nao existe mais:\n",
   );
   for (const f of fantasmas) console.error(`  database/migrations/${f}`);
+}
+
+if (metaComandos.length > 0) {
+  console.error(
+    "\nMeta-comando de psql em arquivo que uma PESSOA cola no SQL Editor do\n" +
+      "Supabase. La isso vira `syntax error at or near \"\\\"` e o arquivo\n" +
+      "INTEIRO e recusado -- nada e aplicado, e parece que rodou:\n",
+  );
+  for (const m of metaComandos) {
+    console.error(`  ${m.rotulo}:${m.linha}  ${m.texto}`);
+  }
+  console.error(
+    "\nApague a linha. O ON_ERROR_STOP do CI vem da linha de comando\n" +
+      "(`psql -v ON_ERROR_STOP=1` no db-verify.yml), e o BEGIN/COMMIT do proprio\n" +
+      "arquivo e que garante que nao se aplica pela metade.",
+  );
 }
 
 process.exit(1);
