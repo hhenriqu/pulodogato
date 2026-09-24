@@ -79,9 +79,26 @@
 -- ESTE ARQUIVO SO ACRESCENTA: nenhuma funcao, view, policy ou trigger de
 -- producao e alterada. A unica escrita em dado existente e o reparo, e ele so
 -- alcanca linha que casa a chave canonica da fatura.
+--
+-- SEM META-COMANDO DE psql AQUI -- ESTE ARQUIVO E COLADO NO SQL EDITOR
+-- ---------------------------------------------------------------------
+-- Producao nao tem runner de migration: quem aplica e uma pessoa, colando o
+-- arquivo no SQL Editor do Supabase, que fala Postgres e NAO e o psql. Uma
+-- linha comecando com barra invertida vira `syntax error at or near "\"` na
+-- PRIMEIRA linha executavel -- e como o erro e no topo, NADA e aplicado. O
+-- arquivo parece rodado e o banco nao mudou. Foi o que aconteceu na primeira
+-- tentativa de aplicar esta migration (HMO-149, 2026-09-24).
+--
+-- Nenhuma das migrations 000-014 usa meta-comando; esta era a unica. O CI ja
+-- passa ON_ERROR_STOP pela linha de comando (`psql -v ON_ERROR_STOP=1`), entao
+-- declara-lo aqui dentro nao acrescentava nada la.
+--
+-- E a seguranca nao dependia dele: o arquivo inteiro esta num BEGIN/COMMIT.
+-- Erro no meio aborta a transacao, todo comando seguinte falha com "current
+-- transaction is aborted" e o COMMIT final vira ROLLBACK. Aplicar pela metade
+-- continua sendo impossivel -- e a SECAO 4 ainda confere objeto por objeto e
+-- da RAISE EXCEPTION se faltar alguma coisa.
 -- =====================================================
-
-\set ON_ERROR_STOP on
 
 BEGIN;
 
