@@ -84,3 +84,6 @@ next-env.d.ts
 /.tmp-recurrence-alerts/
 # saida do `npm run test:safe-to-spend` (idem, com reescrita de alias depois)
 /.tmp-safe-to-spend/
+
+# saida do `npm run test:cash-flow` (idem, com reescrita de alias depois)
+/.tmp-cash-flow/

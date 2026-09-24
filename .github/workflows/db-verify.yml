@@ -12,9 +12,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -583,6 +583,24 @@ jobs:
       # uma ficou vermelha.
       - name: Anomalia de gasto e resumo do mes fechado
         run: npm run test:anomalies
+
+      # A previsao de fluxo de caixa entrega uma DATA ("voce fica negativo em
+      # 12/10"), e data errada e pior que numero errado: ninguem desconfia de
+      # uma data. Tres erros cabem aqui sem quebrar nada:
+      #   - DUPLICATA: quem cadastrou a Netflix como conta prevista E deixou o
+      #     detector rodar tem a cobranca nas duas fontes; somar as duas
+      #     antecipa (ou inventa) o dia negativo;
+      #   - FATURA: aqui ela entra pelo evento datado e o saldo do cartao NAO e
+      #     descontado -- regra OPOSTA a do "posso gastar", onde a pergunta nao
+      #     tem data. Alinhar os dois arquivos reintroduz a contagem dupla;
+      #   - DIA NEGATIVO: quem ja esta no vermelho nao pode receber uma data de
+      #     mergulho, e a data tem que ser o PRIMEIRO cruzamento.
+      # Os 42 testes foram submetidos a 17 mutacoes (tolerancia da duplicata,
+      # a borda dela, o consumo por ocorrencia, o cartao no saldo inicial, o
+      # vencido, o corte de horizonte, o empate do menor saldo, o status
+      # IGNORED, entre outras) e cada uma ficou vermelha.
+      - name: Previsao de fluxo de caixa
+        run: npm run test:cash-flow
 
       # A leitura do extrato e 100% TypeScript e o SQL nao alcanca nada dela.
       # Tres coisas erram em silencio aqui: parseFloat("1.234,56") = 1.234 (um
