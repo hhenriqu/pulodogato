@@ -141,11 +141,26 @@ export async function GET() {
       .eq("status", "active")
       .is("group_id", null);
 
+    // NAO devolve 500 quando a leitura das metas falha, e o motivo e concreto:
+    // entre o merge deste codigo e a migration 018 rodar no SQL Editor de
+    // producao existe uma JANELA em que `monthly_contribution` nao existe na
+    // view. O PostgREST responde 42703 (`column ... does not exist`) e, com um
+    // 500 aqui, o card inteiro do "quanto posso gastar" -- as outras quatro
+    // parcelas, que nao dependem de meta nenhuma -- sumiria da tela inicial.
+    //
+    // Perder a quinta parcela e ruim; perder o card e pior, e seria uma
+    // regressao de algo que ja funcionava. Mesmo criterio (e mesmo comentario)
+    // da materializacao da agenda no topo do arquivo.
+    //
+    // O que NAO se faz aqui e calar: sem a flag, a tela mostraria
+    // "Nas metas − R$ 0,00" e o usuario leria isso como "nao tenho nada a
+    // separar este mes", que e uma afirmacao FALSA sobre o dinheiro dele. A
+    // flag existe para a tela poder dizer "indisponivel" em vez de zero.
+    const metasIndisponiveis = Boolean(erroMetas);
     if (erroMetas) {
-      console.error("Erro ao carregar metas:", erroMetas);
-      return NextResponse.json(
-        { error: "Não foi possível carregar as metas" },
-        { status: 500 }
+      console.error(
+        "Posso gastar seguiu SEM a reserva de metas (a 018 ja rodou em producao?):",
+        erroMetas
       );
     }
 
@@ -170,12 +185,13 @@ export async function GET() {
           .lte("contributed_at", ate)
       : { data: [], error: null };
 
+    // Aqui o 500 seria ATIVAMENTE perigoso, nao so inconveniente: sem os
+    // aportes do mes, cada meta reservaria o alvo CHEIO por cima de dinheiro
+    // que ja saiu da conta -- o desconto em dobro que esta rota existe para
+    // evitar. Entao ou se tem a lista de aportes, ou nao se desconta nada.
+    const aportesIndisponiveis = Boolean(erroAportes);
     if (erroAportes) {
       console.error("Erro ao carregar aportes do mes:", erroAportes);
-      return NextResponse.json(
-        { error: "Não foi possível carregar os aportes das metas" },
-        { status: 500 }
-      );
     }
 
     const aportadoPorMeta = new Map<string, number>();
@@ -184,7 +200,11 @@ export async function GET() {
       aportadoPorMeta.set(a.goal_id, atual + Number(a.amount ?? 0));
     }
 
-    const metas: MetaParaGastar[] = ((metasBrutas ?? []) as LinhaMeta[]).map(
+    const semReserva = metasIndisponiveis || aportesIndisponiveis;
+
+    const metas: MetaParaGastar[] = (
+      semReserva ? [] : ((metasBrutas ?? []) as LinhaMeta[])
+    ).map(
       (m) => ({
         id: m.id,
         title: m.title,
@@ -199,6 +219,10 @@ export async function GET() {
 
     return NextResponse.json({
       today: hoje,
+      // A tela usa isto para escrever "indisponivel" no tile em vez de
+      // "R$ 0,00" -- zero seria uma afirmacao sobre o dinheiro do usuario que
+      // a rota nao tem como sustentar.
+      reserva_indisponivel: semReserva,
       safe_to_spend: calcularQuantoPossoGastar({
         contas: contas ?? [],
         previstas: paraCalculo,

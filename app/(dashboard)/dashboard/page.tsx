@@ -119,6 +119,11 @@ export default function DashboardPage() {
   const [previstas, setPrevistas] = useState<ResumoMesPrevisto | null>(null);
   const [metas, setMetas] = useState<Meta[]>([]);
   const [possoGastar, setPossoGastar] = useState<PossoGastar | null>(null);
+  // A rota nao conseguiu ler as metas -- e o caso, por exemplo, da janela entre
+  // o merge do codigo e a migration 018 rodar no banco de producao. O tile
+  // escreve "indisponivel" em vez de R$ 0,00: zero seria uma afirmacao sobre o
+  // dinheiro do usuario que ninguem conferiu.
+  const [reservaIndisponivel, setReservaIndisponivel] = useState(false);
 
   useEffect(() => {
     carregar();
@@ -177,6 +182,7 @@ export default function DashboardPage() {
       if (rPossoGastar.ok) {
         const d = await rPossoGastar.json();
         setPossoGastar(d.safe_to_spend ?? null);
+        setReservaIndisponivel(Boolean(d.reserva_indisponivel));
       }
     } catch (erro) {
       console.error("Erro ao carregar o painel:", erro);
@@ -429,11 +435,21 @@ export default function DashboardPage() {
                   <Target className="h-3 w-3" />
                   Nas metas
                 </p>
-                <p className="font-semibold text-destructive">
-                  − {moeda(possoGastar.reservaDeMetas)}
+                <p
+                  className={`font-semibold ${
+                    reservaIndisponivel
+                      ? "text-muted-foreground"
+                      : "text-destructive"
+                  }`}
+                >
+                  {reservaIndisponivel
+                    ? "—"
+                    : `− ${moeda(possoGastar.reservaDeMetas)}`}
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  {possoGastar.reservaDeMetas > 0
+                  {reservaIndisponivel
+                    ? "Não foi possível ler as metas"
+                    : possoGastar.reservaDeMetas > 0
                     ? "Falta aportar no mês"
                     : "Nada a separar este mês"}
                 </p>
