@@ -25,7 +25,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
-import { AlertCircle, Bell, BellOff, CalendarClock, Check, Loader2 } from "lucide-react";
+import {
+  AlertCircle,
+  Bell,
+  BellOff,
+  CalendarClock,
+  Check,
+  Loader2,
+  TrendingUp,
+} from "lucide-react";
 
 const moeda = (valor: number | string) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(
@@ -59,6 +67,19 @@ interface Aviso {
   created_at: string;
 }
 
+/**
+ * A familia de assinatura (HMO-148). O texto chega pronto do servidor, igual ao
+ * do vencimento: e a MESMA frase que o push manda e que a tela de assinaturas
+ * mostra. Formatar de novo aqui faria as tres divergirem.
+ */
+interface AlertaDeAssinatura {
+  recurrenceId: string;
+  kind: "price_increase" | "charge_after_cancel";
+  referenceDate: string;
+  title: string;
+  body: string;
+}
+
 interface Preferencias {
   days_before: number;
   notify_due_soon: boolean;
@@ -85,6 +106,7 @@ function chaveParaBytes(base64: string): ArrayBuffer {
 
 export default function NotificationsPage() {
   const [alertas, setAlertas] = useState<Alerta[]>([]);
+  const [alertasAssinatura, setAlertasAssinatura] = useState<AlertaDeAssinatura[]>([]);
   const [avisos, setAvisos] = useState<Aviso[]>([]);
   const [prefs, setPrefs] = useState<Preferencias>({
     days_before: 3,
@@ -107,6 +129,7 @@ export default function NotificationsPage() {
       if (rAvisos.ok) {
         const d = await rAvisos.json();
         setAlertas(d.alerts ?? []);
+        setAlertasAssinatura(d.recurrence_alerts ?? []);
         setAvisos(d.notifications ?? []);
       }
 
@@ -259,9 +282,10 @@ export default function NotificationsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Avisos de vencimento</h1>
+        <h1 className="text-2xl font-bold tracking-tight">Avisos</h1>
         <p className="text-muted-foreground">
-          O que vence, o que já venceu, e quantos dias antes você quer ser lembrado.
+          O que vence, o que já venceu, o que ficou mais caro, e quantos dias antes você
+          quer ser lembrado.
         </p>
       </div>
 
@@ -326,6 +350,39 @@ export default function NotificationsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* ---------------- assinaturas (HMO-148) ---------------- */}
+      {/* So aparece quando ha alerta. Um cartao vazio dizendo "nenhum aumento
+          detectado" empurraria a configuracao para fora da tela sem informar
+          nada -- e o padrao desta pagina e mostrar o que exige acao. */}
+      {alertasAssinatura.length > 0 && (
+        <Card className="border-warning/30 bg-warning/10">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-lg text-warning">
+              <TrendingUp className="h-5 w-5" /> Assinaturas
+            </CardTitle>
+            <CardDescription>
+              Preço que subiu e cobrança depois de cancelada. O aviso sai uma vez por
+              cobrança.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {alertasAssinatura.map((a) => (
+              <a
+                key={`${a.recurrenceId}-${a.kind}-${a.referenceDate}`}
+                href="/dashboard/recurrences"
+                className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-background p-3 hover:bg-muted/50"
+              >
+                <div>
+                  <p className="font-medium">{a.title}</p>
+                  <p className="text-sm text-muted-foreground">{a.body}</p>
+                </div>
+                <Badge variant="outline">{dataCurta(a.referenceDate)}</Badge>
+              </a>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {/* ---------------- configuracao ---------------- */}
       <Card>

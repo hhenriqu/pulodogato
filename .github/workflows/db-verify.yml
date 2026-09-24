@@ -12,9 +12,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -350,6 +350,37 @@ jobs:
           printf 'BEGIN READ ONLY;\n\\i database/maintenance/015_auditoria_faturas.sql\nROLLBACK;\n' \
             | $PSQL
 
+      - name: 016_recurrence_notifications
+        run: $PSQL -f database/migrations/016_recurrence_notifications.sql
+
+      # Mesmo motivo do 005 ao 015. O risco proprio deste e o ALTER: a segunda
+      # passada nao pode quebrar na coluna que ja existe nem recriar constraint.
+      - name: 016 e idempotente
+        run: $PSQL -f database/migrations/016_recurrence_notifications.sql
+
+      # A HMO-148 existe por UM motivo: nao avisar o usuario duas vezes do mesmo
+      # alerta de assinatura. A varredura roda no cron diario E ao fim de cada
+      # importacao de extrato, entao sem deduplicacao quem importa tres extratos
+      # numa tarde recebe o mesmo push tres vezes, desliga a notificacao do app,
+      # e perde junto o aviso de vencimento -- que e o que ele mais precisa.
+      #
+      # O assert que justifica o arquivo: o `ON CONFLICT (recurrence_id, kind,
+      # reference_date)` que a rota manda -- lista de colunas NUA, que e tudo o
+      # que o PostgREST sabe mandar -- tem que RESOLVER contra o indice do 016.
+      # O desenho original da issue pedia um indice unico PARCIAL, e indice
+      # parcial nao serve de arbitro de ON CONFLICT sem repetir o predicado na
+      # clausula: com ele o cron responderia 500 em toda execucao e ninguem
+      # receberia aviso nenhum. Nenhum teste de TypeScript com cliente dublado
+      # pega isso -- so o Postgres.
+      #
+      # E tem os controles negativos que importam: uma cobranca NOVA tem que
+      # gerar aviso novo (senao um indice sem a data passaria verde e o reajuste
+      # do ano seguinte sairia calado), e duas contas previstas vencendo no mesmo
+      # dia continuam gerando dois avisos (o que so funciona porque NULL nao
+      # colide com NULL no indice novo).
+      - name: O aviso de assinatura nao sai duas vezes
+        run: $PSQL -f database/tests/recurrence_notifications_test.sql
+
       # Duas metades que falham por motivos diferentes: a estrutural varre o
       # schema INTEIRO atras de view sem security_invoker (uma view criada
       # amanha reprova sem ninguem lembrar de atualizar o teste -- que e o
@@ -385,6 +416,21 @@ jobs:
       # da lista.
       - name: Fronteira da varredura de assinaturas
         run: npm run test:recurrence-scan
+
+      # O disparo dos alertas, que a HMO-148 acrescentou. O SQL logo acima prova
+      # que o banco nao deixa o aviso repetir; o que so o TypeScript alcanca e a
+      # TRADUCAO do alerta para a linha de notificacao, e os tres erros dela sao
+      # silenciosos:
+      #
+      #   - `reference_date` do aviso de cancelamento tirado de last_charge_date
+      #     manda a MESMA frase (mesmo valor, mesma data) todo mes -- o spam que
+      #     a issue existe para impedir, chegando pelo caminho que ela abriu;
+      #   - assinatura marcada como IGNORED gerando push desfaz a decisao do
+      #     usuario pelo canal mais intrusivo que o app tem;
+      #   - `kind` fora do dominio do CHECK do 016 derruba o upsert INTEIRO, e
+      #     como o cron grava tudo num lote, NINGUEM recebe aviso naquele dia.
+      - name: Disparo dos alertas de assinatura
+        run: npm run test:recurrence-alerts
 
       # A categorizacao automatica erra de tres jeitos que nao levantam excecao
       # nenhuma: a categoria de despesa pegando um estorno (e o relatorio passa
