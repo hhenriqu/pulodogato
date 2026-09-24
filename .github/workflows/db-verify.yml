@@ -12,9 +12,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/safe-to-spend.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/safe-to-spend.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -381,6 +381,30 @@ jobs:
       - name: O aviso de assinatura nao sai duas vezes
         run: $PSQL -f database/tests/recurrence_notifications_test.sql
 
+      - name: 017_monthly_summary_notifications
+        run: $PSQL -f database/migrations/017_monthly_summary_notifications.sql
+
+      # Mesmo motivo do 005 ao 016. O risco proprio deste e o ALTER: a segunda
+      # passada nao pode quebrar na coluna que ja existe nem recriar constraint.
+      - name: 017 e idempotente
+        run: $PSQL -f database/migrations/017_monthly_summary_notifications.sql
+
+      # O resumo do mes fechado e a TERCEIRA familia de aviso, e a unica que nao
+      # aponta para objeto nenhum -- e sobre um mes, nao sobre uma conta nem
+      # sobre uma assinatura. Dois riscos que so o Postgres pega:
+      #
+      #   - o `ON CONFLICT (user_id, kind, summary_month)` que o cron manda e
+      #     lista de colunas NUA (e tudo o que o PostgREST sabe mandar) e tem
+      #     que resolver contra o indice. Trocar o indice por um PARCIAL -- que
+      #     e a forma que parece mais limpa -- faz o cron responder 500 em toda
+      #     execucao, e a mensagem nao aponta para o indice;
+      #   - a familia ANTIGA tem que sobreviver: duas contas vencendo no mesmo
+      #     dia continuam gerando DOIS avisos. Um indice ingenuo sobre
+      #     (user_id, kind, reference_date) recusaria o segundo, trocando aviso
+      #     repetido por aviso PERDIDO -- o erro caro dos dois.
+      - name: O resumo do mes nao sai duas vezes, e nao engole o aviso de conta
+        run: $PSQL -f database/tests/monthly_summary_notifications_test.sql
+
       # Duas metades que falham por motivos diferentes: a estrutural varre o
       # schema INTEIRO atras de view sem security_invoker (uma view criada
       # amanha reprova sem ninguem lembrar de atualizar o teste -- que e o
@@ -517,6 +541,24 @@ jobs:
       # diaria e 1 e nao 0.
       - name: Quanto ainda posso gastar
         run: npm run test:safe-to-spend
+
+      # A anomalia de gasto e o resumo do mes erram de formas que a tela nao
+      # denuncia, e as quatro sao plausiveis:
+      #   - SINAL: despesa e gravada NEGATIVA; um SUM cru troca o mes caro pelo
+      #     mes barato e o alerta vai para a pessoa errada -- e um fixture de
+      #     teste com valor positivo passa verde sem provar nada;
+      #   - JANELA: comparar o dia 12 do mes corrente com meses CHEIOS acusa
+      #     "queda de 90%" todo comeco de mes e esconde o estouro de verdade;
+      #   - MEDIA vs MEDIANA: um unico mes de ferias na base levanta a media o
+      #     bastante para engolir o estouro do mes seguinte;
+      #   - USUARIO NOVO: sem historico nao pode haver alerta, divisao por zero
+      #     nem "+Infinity%" na tela.
+      # Os 27 testes foram submetidos a sete mutacoes (media no lugar da
+      # mediana, sem o corte por dia, amount cru, cada uma das duas reguas
+      # isolada, transfer contando como gasto, mes futuro no historico) e cada
+      # uma ficou vermelha.
+      - name: Anomalia de gasto e resumo do mes fechado
+        run: npm run test:anomalies
 
       # A leitura do extrato e 100% TypeScript e o SQL nao alcanca nada dela.
       # Tres coisas erram em silencio aqui: parseFloat("1.234,56") = 1.234 (um

@@ -24,6 +24,7 @@ import {
   SoftFeatureGuard,
   PremiumBadge,
 } from "@/components/subscription/SoftFeatureGuard";
+import { AnomaliesCard } from "@/components/financial/AnomaliesCard";
 import {
   Card,
   CardContent,
@@ -356,6 +357,12 @@ export default function ReportsPage() {
                 </CardContent>
               </Card>
             </div>
+
+            {/* Antes das abas de proposito: os relatorios abaixo respondem
+                "quanto", e este responde "o que mudou". Quem abre esta tela
+                depois de um mes caro procura a segunda resposta, e ela nao
+                aparece em nenhum dos quatro graficos. */}
+            <AnomaliesCard />
 
             <Tabs defaultValue="fluxo" className="space-y-4">
               <TabsList className="print:hidden">
