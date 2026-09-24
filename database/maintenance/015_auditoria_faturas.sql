@@ -136,11 +136,16 @@ ORDER BY SUM(-t.amount) DESC;
 --                          vezes, a segunda passada nao desfaz nenhuma.
 -- ---------------------------------------------------------------------
 SELECT
+  -- `notes IS NULL OR notes !~ ...`, e nao so o `!~`: com notes NULL o `!~`
+  -- devolve NULL, o FILTER descarta a linha, e a assinatura sem anotacao --
+  -- o caso mais comum -- sumiria justamente da contagem que existe para
+  -- garantir que ela NAO sera tocada. Undercount aqui le como "nao ha nada a
+  -- proteger", que e o contrario do que o numero deve dizer.
   count(*) FILTER (
     WHERE t.account_id = s.account_id
       AND a.account_type = 'credit_card'
-      AND s.notes IS DISTINCT FROM NULL
-      AND s.notes !~ '^fatura:\d{4}-\d{2}-\d{2}:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      AND (s.notes IS NULL
+           OR s.notes !~ '^fatura:\d{4}-\d{2}-\d{2}:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
   )                                            AS assinaturas_no_cartao,
   count(*) FILTER (
     WHERE s.notes LIKE 'fatura:%'
