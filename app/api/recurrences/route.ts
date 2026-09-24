@@ -1,12 +1,10 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
+import { totalMensal, type RecurrenceStatus } from "@/lib/recurrence-detector";
 import {
-  alertaDeAumento,
-  alertaDeCobrancaAposCancelamento,
-  totalMensal,
-  type Alerta,
-  type RecurrenceStatus,
-} from "@/lib/recurrence-detector";
+  alertasDasRecorrencias,
+  type RecorrenciaParaAlerta,
+} from "@/lib/services/recurrence-alerts";
 
 // =====================================================
 // GET /api/recurrences
@@ -23,6 +21,14 @@ import {
 // "o preco subiu" e uma comparacao entre colunas que ja estao na linha -- e
 // manter uma tabela sincronizada com isso custaria mais que recalcular. Ver o
 // cabecalho da migration 011.
+//
+// O CALCULO SAIU DAQUI NA HMO-148
+// -------------------------------
+// Ele mora em lib/services/recurrence-alerts.ts porque ganhou um terceiro
+// consumidor: o cron que manda o push. Enquanto era so esta rota, uma funcao
+// local bastava; com o push, a tela e o sino, uma copia da regra em cada lugar
+// significaria tres textos que divergem na primeira correcao de redacao. O que
+// o banco passou a guardar (migration 016) e so o "ja avisei", nao a regra.
 // =====================================================
 
 export async function GET(request: NextRequest) {
@@ -64,7 +70,11 @@ export async function GET(request: NextRequest) {
     }
 
     const lista = recorrencias || [];
-    const alertas = await montarAlertas(supabase, user.id, lista);
+    const alertas = await alertasDasRecorrencias(
+      supabase,
+      user.id,
+      lista as RecorrenciaParaAlerta[]
+    );
 
     return NextResponse.json({
       recurrences: lista,
@@ -86,74 +96,4 @@ export async function GET(request: NextRequest) {
     console.error("Erro em GET /api/recurrences:", error);
     return NextResponse.json({ error: "Erro interno" }, { status: 500 });
   }
-}
-
-/**
- * Monta os dois alertas do criterio de aceite a partir das transacoes que
- * sustentam cada recorrencia.
- *
- * Uma consulta so para todas as recorrencias, e nao uma por linha: com 20
- * assinaturas o laco ingenuo faria 20 viagens ao banco a cada abertura da
- * tela.
- */
-async function montarAlertas(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  userId: string,
-  recorrencias: Array<{
-    id: string;
-    merchant_key: string;
-    display_name: string;
-    status: RecurrenceStatus;
-    status_changed_at: string | null;
-    transaction_ids: string[];
-  }>
-): Promise<Alerta[]> {
-  const todosIds = recorrencias.flatMap((r) => r.transaction_ids || []);
-  if (todosIds.length === 0) return [];
-
-  const { data: transacoes } = await supabase
-    .from("financial_transactions")
-    .select("id, description, amount, transaction_date")
-    .eq("user_id", userId)
-    .in("id", todosIds)
-    .order("transaction_date", { ascending: true });
-
-  if (!transacoes) return [];
-
-  const porId = new Map(transacoes.map((t) => [t.id, t]));
-  const alertas: Alerta[] = [];
-
-  for (const r of recorrencias) {
-    const doGrupo = (r.transaction_ids || [])
-      .map((id) => porId.get(id))
-      .filter((t): t is NonNullable<typeof t> => Boolean(t))
-      .sort((a, b) => a.transaction_date.localeCompare(b.transaction_date));
-
-    if (doGrupo.length === 0) continue;
-
-    const aumento = alertaDeAumento(
-      r.merchant_key,
-      r.display_name,
-      doGrupo.map((t) => Number(t.amount))
-    );
-    if (aumento) alertas.push(aumento);
-
-    if (r.status === "CANCELLED" && r.status_changed_at) {
-      const cobrou = alertaDeCobrancaAposCancelamento(
-        r.merchant_key,
-        r.display_name,
-        r.status,
-        r.status_changed_at.slice(0, 10),
-        doGrupo.map((t) => ({
-          id: t.id,
-          description: t.description,
-          amount: Number(t.amount),
-          transaction_date: t.transaction_date,
-        }))
-      );
-      if (cobrou) alertas.push(cobrou);
-    }
-  }
-
-  return alertas;
 }

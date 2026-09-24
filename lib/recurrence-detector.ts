@@ -514,6 +514,17 @@ export interface Alerta {
   mensagem: string;
   /** Presente so no aumento de preco. */
   variacao?: number;
+  /**
+   * A data da cobranca de que a mensagem FALA. Presente so na cobranca depois
+   * do cancelamento.
+   *
+   * Existe para o aviso (HMO-148) ter uma chave de deduplicacao que combina com
+   * a frase. A mensagem desse alerta cita sempre a PRIMEIRA cobranca posterior
+   * ao cancelamento, entao deduplicar por `last_charge_date` -- que anda a cada
+   * cobranca nova -- mandaria a MESMA frase de novo todo mes, como se fosse um
+   * fato novo. Ver lib/services/recurrence-alerts.ts.
+   */
+  dataDaCobranca?: string;
 }
 
 /**
@@ -550,7 +561,10 @@ export function alertaDeAumento(
     merchantKey,
     displayName,
     variacao: Math.round(variacao * 1000) / 1000,
-    mensagem: `${displayName} subiu ${(variacao * 100).toFixed(1)}% (de ${formatarBRL(mediaAnterior)} para ${formatarBRL(ultimo)}).`,
+    // Virgula decimal: a mesma frase ja diz "R$ 39,90" duas palavras depois, e
+    // "subiu 12.5%" ao lado de "R$ 39,90" le como texto traduzido pela metade.
+    // Passou a importar na HMO-148, quando esta frase virou o corpo do push.
+    mensagem: `${displayName} subiu ${(variacao * 100).toFixed(1).replace(".", ",")}% (de ${formatarBRL(mediaAnterior)} para ${formatarBRL(ultimo)}).`,
   };
 }
 
@@ -583,6 +597,7 @@ export function alertaDeCobrancaAposCancelamento(
     tipo: "CHARGED_AFTER_CANCEL",
     merchantKey,
     displayName,
+    dataDaCobranca: primeira.transaction_date,
     mensagem: `${displayName} foi marcada como cancelada, mas cobrou ${formatarBRL(valorDaDespesa(primeira.amount))} em ${formatarData(primeira.transaction_date)}.`,
   };
 }

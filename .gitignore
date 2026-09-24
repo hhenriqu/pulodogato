@@ -81,3 +81,4 @@ next-env.d.ts
 /.tmp-net-worth/
 # saida do `npm run test:card-invoice` (idem)
 /.tmp-card-invoice/
+/.tmp-recurrence-alerts/

@@ -8,6 +8,10 @@
       "schedule": "0 9 * * *"
     },
     {
+      "path": "/api/cron/recurrence-alerts",
+      "schedule": "30 9 * * *"
+    },
+    {
       "path": "/api/cron/bill-alerts",
       "schedule": "0 11 * * *"
     }
