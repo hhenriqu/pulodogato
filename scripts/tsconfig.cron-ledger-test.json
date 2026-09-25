@@ -1,0 +1,15 @@
+{
+  "//": "Build so do teste: lib/services/cron-ledger.ts nao importa por alias hoje, mas o passo resolve-aliases fica no npm script do mesmo jeito -- assim o dia em que ele passar a importar @/lib/... nao quebra com ERR_MODULE_NOT_FOUND, que e o modo de falha do test:recurrence-scan e do test:recurrence-alerts.",
+  "compilerOptions": {
+    "outDir": "../.tmp-cron-ledger",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/services/cron-ledger.ts"]
+}

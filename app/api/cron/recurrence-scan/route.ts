@@ -43,6 +43,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { janelaPedida, varrerRecorrencias } from "@/lib/services/recurrence-scan";
+import { comRegistro } from "@/lib/services/cron-ledger";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -91,8 +92,17 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
   }
 
-  try {
-    const admin = createClient(url as string, serviceRole as string, {
+  // O `faltando` acima ja garantiu que as duas existem, mas o TypeScript nao
+  // enxerga isso atraves do array -- dai o estreitamento explicito aqui.
+  const env = { url: url as string, serviceRole: serviceRole as string };
+
+  // Daqui para baixo toda saida passa pelo livro-razao (`cron_runs`, 019) --
+  // inclusive o `usuarios: 0` logo abaixo, que e EXATAMENTE o caminho que a
+  // producao percorre hoje: `profiles` tem uma linha e `detected_recurrences`
+  // esta fisicamente vazia. Sem este registro, a varredura mais bem-sucedida e
+  // a varredura que nunca aconteceu deixam o mesmo rastro no banco: nenhum.
+  const saida = await comRegistro("recurrence-scan", env, async () => {
+    const admin = createClient(env.url, env.serviceRole, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
 
@@ -105,12 +115,12 @@ export async function GET(request: NextRequest) {
 
     if (erroPerfis) {
       console.error("Cron: erro ao listar usuarios:", erroPerfis);
-      return NextResponse.json({ error: "Falha ao listar os usuários" }, { status: 500 });
+      return { status: 500, body: { error: "Falha ao listar os usuários" } };
     }
 
     const usuarios = (perfis ?? []).map((p) => p.id as string);
     if (usuarios.length === 0) {
-      return NextResponse.json({ ok: true, usuarios: 0, detectadas: 0 });
+      return { status: 200, body: { ok: true, usuarios: 0, detectadas: 0 } };
     }
 
     let detectadas = 0;
@@ -145,31 +155,33 @@ export async function GET(request: NextRequest) {
     // -- por exemplo no dia em que a migration 011 nao estiver no banco.
     if (falhas.length === usuarios.length) {
       console.error("Cron: a varredura falhou para todos os usuarios:", falhas[0]?.erro);
-      return NextResponse.json(
-        { error: "A varredura falhou para todos os usuários", exemplo: falhas[0]?.erro },
-        { status: 500 }
-      );
+      return {
+        status: 500,
+        body: { error: "A varredura falhou para todos os usuários", exemplo: falhas[0]?.erro },
+      };
     }
 
     if (falhas.length) {
       console.error(`Cron: ${falhas.length} usuário(s) falharam na varredura`, falhas);
     }
 
-    return NextResponse.json({
-      ok: true,
-      usuarios: usuarios.length,
-      transacoes_lidas: varridos,
-      detectadas,
-      falhas: falhas.length,
-      // `truncated` por usuario (historico maior que o teto do detector) e
-      // `truncated_usuarios` (mais gente que MAX_USUARIOS) sao coisas
-      // diferentes, e as duas precisam aparecer.
-      historicos_truncados: truncados,
-      truncated_usuarios: usuarios.length >= MAX_USUARIOS,
-      window: { months: meses },
-    });
-  } catch (error) {
-    console.error("Cron: erro inesperado na varredura de assinaturas:", error);
-    return NextResponse.json({ error: "Erro interno" }, { status: 500 });
-  }
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        usuarios: usuarios.length,
+        transacoes_lidas: varridos,
+        detectadas,
+        falhas: falhas.length,
+        // `truncated` por usuario (historico maior que o teto do detector) e
+        // `truncated_usuarios` (mais gente que MAX_USUARIOS) sao coisas
+        // diferentes, e as duas precisam aparecer.
+        historicos_truncados: truncados,
+        truncated_usuarios: usuarios.length >= MAX_USUARIOS,
+        window: { months: meses },
+      },
+    };
+  });
+
+  return NextResponse.json(saida.body, { status: saida.status });
 }

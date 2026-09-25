@@ -26,6 +26,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { enviarPush } from "@/lib/services/notifications";
+import { comRegistro } from "@/lib/services/cron-ledger";
 import {
   linhaDoResumo,
   resumoDoUsuario,
@@ -72,8 +73,15 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
   }
 
-  try {
-    const admin = createClient(url as string, serviceRole as string, {
+  // O `faltando` acima ja garantiu que as duas existem, mas o TypeScript nao
+  // enxerga isso atraves do array -- dai o estreitamento explicito aqui.
+  const env = { url: url as string, serviceRole: serviceRole as string };
+
+  // Daqui para baixo toda saida passa pelo livro-razao (`cron_runs`, 019) --
+  // inclusive o "nao havia nada a fazer", que e o caso normal e o unico que
+  // distingue um cron ocioso de um cron que nunca foi chamado.
+  const saida = await comRegistro("monthly-summary", env, async () => {
+    const admin = createClient(env.url, env.serviceRole, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
 
@@ -94,12 +102,12 @@ export async function GET(request: NextRequest) {
 
     if (error) {
       console.error("Cron: erro ao listar perfis:", error);
-      return NextResponse.json({ error: "Falha ao listar os usuários" }, { status: 500 });
+      return { status: 500, body: { error: "Falha ao listar os usuários" } };
     }
 
     const usuarios = (perfis ?? []) as Array<{ id: string }>;
     if (usuarios.length === 0) {
-      return NextResponse.json({ ok: true, resumos: 0, push: 0, usuarios: 0 });
+      return { status: 200, body: { ok: true, resumos: 0, push: 0, usuarios: 0 } };
     }
 
     // Um resumo por usuario. `allSettled` e nao `all`: um usuario com dado
@@ -128,13 +136,16 @@ export async function GET(request: NextRequest) {
     }
 
     if (linhas.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        resumos: 0,
-        push: 0,
-        usuarios: usuarios.length,
-        falhas,
-      });
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          resumos: 0,
+          push: 0,
+          usuarios: usuarios.length,
+          falhas,
+        },
+      };
     }
 
     // Gravar ANTES de mandar o push e deliberado, igual ao /api/cron/bill-alerts:
@@ -155,7 +166,7 @@ export async function GET(request: NextRequest) {
 
     if (erroGravar) {
       console.error("Cron: erro ao gravar o resumo:", erroGravar);
-      return NextResponse.json({ error: "Falha ao gravar os resumos" }, { status: 500 });
+      return { status: 500, body: { error: "Falha ao gravar os resumos" } };
     }
 
     const novos = gravados ?? [];
@@ -190,18 +201,20 @@ export async function GET(request: NextRequest) {
         );
     }
 
-    return NextResponse.json({
-      ok: true,
-      usuarios: usuarios.length,
-      resumos: novos.length,
-      push: enviados,
-      inscricoesRemovidas: removidos,
-      pushDesligado,
-      falhas,
-      truncado: usuarios.length >= MAX_USUARIOS,
-    });
-  } catch (e) {
-    console.error("Cron: falha inesperada no resumo mensal:", e);
-    return NextResponse.json({ error: "Falha ao gerar os resumos" }, { status: 500 });
-  }
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        usuarios: usuarios.length,
+        resumos: novos.length,
+        push: enviados,
+        inscricoesRemovidas: removidos,
+        pushDesligado,
+        falhas,
+        truncado: usuarios.length >= MAX_USUARIOS,
+      },
+    };
+  });
+
+  return NextResponse.json(saida.body, { status: saida.status });
 }
