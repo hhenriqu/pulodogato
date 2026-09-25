@@ -100,3 +100,6 @@ next-env.d.ts
 
 # saida do `npm run test:auth-callback`
 /.tmp-auth-callback/
+
+# saida do `npm run test:signup-outcome` (tsc avulso, so para o node --test)
+/.tmp-signup-outcome/

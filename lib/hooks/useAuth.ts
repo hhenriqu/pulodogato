@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
 import type { User } from "@supabase/supabase-js";
+import { garantirPerfil } from "@/lib/ensure-profile";
+import { decidirPosCadastro } from "@/lib/signup-outcome";
 
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
@@ -85,7 +87,7 @@ export function useAuth() {
   };
 
   const signUp = async (email: string, password: string, fullName?: string) => {
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -103,13 +105,33 @@ export function useAuth() {
       },
     });
 
-    // O perfil NAO nasce aqui. A policy de INSERT de `profiles` e `TO
-    // authenticated`, e com a confirmacao de email ligada o `signUp` nao deixa
-    // sessao nenhuma -- o insert rodava como `anon`, a RLS recusava, o erro ia
-    // para o console e o cadastro terminava sem perfil e sem assinatura. Quem
-    // cria o perfil e `/auth/callback`, depois de trocar o link por sessao.
+    if (error) return { error, resultado: null };
 
-    return { error };
+    // A partir daqui o cadastro pode terminar de DOIS jeitos, e quem escolhe e
+    // `mailer_autoconfirm`, um botao do dashboard do Supabase:
+    //
+    // - confirmacao ligada  -> `session` vem null. O perfil nao pode nascer
+    //   agora: a policy `profiles_insert_own` e `TO authenticated` e o insert
+    //   rodaria como `anon`. Ele nasce em `/auth/callback`.
+    // - confirmacao desligada -> `session` vem preenchida, e NINGUEM vai passar
+    //   por `/auth/callback`. Se o perfil nao nascer aqui, nao nasce em lugar
+    //   nenhum -- e sem perfil o `create_user_subscription_trigger` nao dispara
+    //   e a conta fica sem assinatura.
+    const resultado = decidirPosCadastro(data.session);
+
+    if (resultado.kind === "logado" && data.user) {
+      // Agora ha sessao de verdade, entao este cliente fala como
+      // `authenticated` e a RLS aceita o insert.
+      const { error: erroPerfil } = await garantirPerfil(supabase, data.user);
+
+      if (erroPerfil) {
+        // A conta existe e a sessao vale -- barrar a entrada aqui seria pior.
+        // Mas isto tem que aparecer: sem perfil nao ha assinatura.
+        console.error("Falha ao criar o perfil no cadastro:", erroPerfil);
+      }
+    }
+
+    return { error: null, resultado };
   };
 
   const signOut = async () => {

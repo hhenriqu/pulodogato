@@ -35,7 +35,8 @@
     "test:png": "node --test scripts/test-png.mjs",
     "test:pwa-assets": "node --test scripts/test-pwa-assets.mjs",
     "test:pwa-install": "rm -rf .tmp-pwa-install && tsc lib/pwa-install.ts --outDir .tmp-pwa-install --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-pwa-install.mjs",
-    "test:auth-callback": "rm -rf .tmp-auth-callback && tsc lib/auth-callback.ts --outDir .tmp-auth-callback --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-auth-callback.mjs"
+    "test:auth-callback": "rm -rf .tmp-auth-callback && tsc lib/auth-callback.ts --outDir .tmp-auth-callback --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-auth-callback.mjs",
+    "test:signup-outcome": "rm -rf .tmp-signup-outcome && tsc lib/signup-outcome.ts lib/ensure-profile.ts --outDir .tmp-signup-outcome --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-signup-outcome.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

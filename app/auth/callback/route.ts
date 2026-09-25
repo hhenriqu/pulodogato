@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/utils/supabase/server";
 import { decidirCallback } from "@/lib/auth-callback";
+import { garantirPerfil } from "@/lib/ensure-profile";
 
 /**
  * O retorno do link de email: troca o `code`/`token_hash` por sessao e cria o
@@ -44,7 +45,7 @@ export async function GET(request: NextRequest) {
     return redirecionarComErro(origem, error.message);
   }
 
-  await garantirPerfil(supabase);
+  await criarPerfilDaSessao(supabase);
 
   return NextResponse.redirect(new URL(acao.next, origem));
 }
@@ -56,37 +57,20 @@ function redirecionarComErro(origem: string, mensagem: string) {
 }
 
 /**
- * Cria o perfil do usuario recem-confirmado, se ainda nao existir.
+ * Cria o perfil de quem acabou de confirmar o link, se ainda nao existir.
  *
- * `upsert` com `onConflict: "id"` porque esta rota e chamada de novo em toda
- * troca de senha e em todo magic link: na segunda visita o perfil ja existe, e
- * um `insert` cru viraria erro de chave duplicada num caminho que deu certo.
- * `id` e a PRIMARY KEY de profiles -- indice cheio, entao serve de arbitro do
- * ON CONFLICT (indice parcial nao serviria: o supabase-js nao manda o
- * predicado).
- *
- * `ignoreDuplicates` fica ligado de proposito: quem ja tem perfil pode ter
- * editado o nome na tela de configuracoes, e sobrescrever com o `full_name` que
- * veio do cadastro apagaria essa edicao.
+ * A regra do upsert vive em `lib/ensure-profile.ts` porque o cadastro com a
+ * confirmacao de email DESLIGADA nunca passa por aqui e precisa da mesma
+ * gravacao.
  */
-async function garantirPerfil(supabase: ReturnType<typeof createClient>) {
+async function criarPerfilDaSessao(supabase: ReturnType<typeof createClient>) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
   if (!user) return;
 
-  const { error } = await supabase.from("profiles").upsert(
-    {
-      id: user.id,
-      email: user.email ?? null,
-      // O nome vem do `options.data` do signUp, o unico lugar onde ele existe
-      // antes do perfil.
-      full_name:
-        (user.user_metadata?.full_name as string | undefined) ?? null,
-    },
-    { onConflict: "id", ignoreDuplicates: true }
-  );
+  const { error } = await garantirPerfil(supabase, user);
 
   if (error) {
     // Nao derruba o login por causa disto: a sessao ja e valida e o usuario

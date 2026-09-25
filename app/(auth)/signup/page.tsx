@@ -56,19 +56,30 @@ export default function SignUpPage() {
     setIsLoading(true)
     setError(null)
 
-    const { error } = await signUp(data.email, data.password)
+    // `fullName` vai junto: é o único caminho pelo qual o nome digitado chega
+    // ao perfil. Sem ele todo cadastro gravava `full_name: null`.
+    const { error, resultado } = await signUp(data.email, data.password, data.fullName)
 
-    if (error) {
-      setError(error.message)
+    if (error || !resultado) {
+      setError(error?.message ?? 'Não foi possível criar a conta. Tente novamente.')
       setIsLoading(false)
-    } else {
-      setSuccess(true)
-      setIsLoading(false)
-      // Redirecionar para verificação de email ou login
-      setTimeout(() => {
-        router.push('/login?message=Verifique seu email para ativar a conta')
-      }, 2000)
+      return
     }
+
+    setIsLoading(false)
+
+    // Com a confirmação de email desligada o cadastro já termina logado: mandar
+    // essa pessoa para `/login` pedindo um email que não foi enviado era a tela
+    // errada. Quem decide é a sessão que o `signUp` devolveu.
+    if (resultado.kind === 'logado') {
+      router.push(resultado.destino)
+      return
+    }
+
+    setSuccess(true)
+    setTimeout(() => {
+      router.push(`/login?message=${encodeURIComponent(resultado.mensagem)}`)
+    }, 2000)
   }
 
   const getPasswordStrength = (password: string) => {
