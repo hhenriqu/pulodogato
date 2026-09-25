@@ -93,11 +93,17 @@ export function useAuth() {
       options: {
         // Sem isto o link de confirmacao usa o "Site URL" do projeto Supabase,
         // que e um valor unico para todos os ambientes: o cadastro feito num
-        // dominio manda o email apontando para OUTRO. Em 22/09 esse campo
-        // estava preenchido com o hostname de uma aplicacao de terceiros, ou
-        // seja o link de confirmacao -- com o token na URL -- saia deste site.
-        // `window.location.origin` faz o link voltar para o dominio em que a
-        // pessoa se cadastrou, seja ele o de producao ou um preview.
+        // dominio manda o email apontando para OUTRO. `window.location.origin`
+        // faz o link voltar para o dominio em que a pessoa se cadastrou, seja
+        // ele o de producao ou um preview.
+        //
+        // ATENCAO: mandar o valor nao basta. O "Redirect URLs" do Supabase e
+        // uma lista de permissao -- um valor que nao casa com ela e descartado
+        // EM SILENCIO e o link cai na raiz do Site URL, que nao troca o token
+        // por sessao. Medido em 25/09: nenhum dos nossos hostnames esta na
+        // lista, ou seja esta linha hoje nao tem efeito em producao. Liberar os
+        // dominios e passo de painel, rastreado na HMO-158; ver
+        // docs/DEPLOY_VERCEL.md, passo 3, para conferir sem o painel.
         emailRedirectTo: `${window.location.origin}/auth/callback`,
         data: {
           full_name: fullName,

@@ -193,12 +193,39 @@ todo, ou seja para producao e preview ao mesmo tempo. Por isso mantenha os dois
 dominios na lista de Redirect URLs: com so um deles, cadastrar-se pelo outro
 manda o link de confirmacao para o endereco errado.
 
-> **Corrigir o que esta la agora.** Em 22/09 o Site URL foi preenchido com
-> `https://pulodogato.vercel.app` -- o hostname de terceiros do passo 1, nao o
-> nosso. Isso e pior que ter deixado `localhost`: o link de confirmacao de
-> cadastro e o de redefinicao de senha saem apontando para a aplicacao de outra
-> pessoa, levando o usuario (e o token que vai na URL) para fora daqui. Troque
-> antes de testar cadastro.
+> **Medido em 25/09 (HMO-157), e o estado e outro.** O Site URL **nao** e mais
+> `https://pulodogato.vercel.app` (o hostname de terceiros do passo 1): hoje esta
+> `https://pulodogato-helio-moraes-projects.vercel.app`, que e um alias do nosso
+> proprio projeto na Vercel. Nao ha token saindo para fora daqui.
+>
+> **O que esta errado e a outra metade.** A lista de *Redirect URLs* nao contem
+> nenhum dos nossos hostnames -- nem `pulodogato-theta.vercel.app`, nem
+> `localhost:3000`. Como nenhum valor que o app manda casa com a lista, o
+> Supabase descarta os dois em silencio e manda o link para a **raiz** do Site
+> URL. A raiz nao troca o token por sessao (`app/page.tsx` nao le o fragmento),
+> entao o link de confirmacao nunca chega em `/auth/callback` e a redefinicao de
+> senha nao chega em `/reset-password`. Corrigir e o item 2 da **HMO-158**.
+
+#### Conferir a allow-list sem o painel (e sem disparar email)
+
+O endpoint `/auth/v1/verify` com um token invalido revela as duas configuracoes:
+um `redirect_to` **aceito** volta ecoado com o caminho preservado, um **recusado**
+cai na raiz do Site URL. Nenhum email e enviado.
+
+```bash
+curl -s -o /dev/null -w '%{redirect_url}\n' \
+  -H "apikey: $NEXT_PUBLIC_SUPABASE_ANON_KEY" \
+  "https://<project-ref>.supabase.co/auth/v1/verify?token=x&type=signup&redirect_to=<url-encodada>"
+```
+
+Sem o parametro `redirect_to`, o destino e o **Site URL** -- e assim que se le o
+valor dele de fora do painel.
+
+**Use um controle positivo ou a leitura inverte.** "Caiu na raiz do Site URL" e
+tambem o que acontece se o endpoint simplesmente ignorasse `redirect_to` em caso
+de erro. Mande primeiro um caminho sob o **proprio Site URL**
+(`.../auth/callback`): se ele voltar com o caminho preservado, a allow-list esta
+sendo respeitada e as recusas seguintes sao reais.
 
 ### 4. Liberar o acesso publico (Deployment Protection)
 
