@@ -153,3 +153,38 @@ jobs:
 
       - name: iOS recebe instrucao, Android recebe o prompt, instalado nao recebe nada
         run: npm run test:pwa-install
+
+  leitura-honesta:
+    name: sem rede, a tela nao afirma o que nao sabe
+    runs-on: ubuntu-latest
+
+    # AQUI, e nao no db-verify, de proposito. O db-verify e filtrado por
+    # `paths:`, e estas duas suites vigiam tambem o `app/` -- a guarda que
+    # impede uma das telas precacheadas de voltar a LER com `fetch` cru. Num
+    # job filtrado por lib/ e database/, mexer so na pagina nao dispararia
+    # nada e a guarda dormiria em verde.
+    #
+    # Foi assim que tres suites deste repositorio ficaram paradas: o step
+    # existia, o job e que nao disparava.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      # `--include=dev` explicito: com NODE_ENV=production a instalacao poda
+      # as devDeps e o tsc some sem dizer por que.
+      - run: npm ci --include=dev
+
+      # O cache padrao do next-pwa guarda as respostas de /api/. Sem rede a
+      # tela nao recebe zero: ela pode receber o JSON de ontem, com `ok`
+      # verdadeiro e todo campo no lugar. Estas duas suites cobrem as duas
+      # metades disso -- o service worker carimbar o que veio do aparelho, e a
+      # tela so imprimir numero quando ha dado atras dele.
+      - name: O service worker carimba a resposta que veio do aparelho
+        run: npm run test:pwa-runtime-cache
+
+      - name: Nenhum total, nenhuma frase de vazio sem dado que os sustente
+        run: npm run test:offline-leitura

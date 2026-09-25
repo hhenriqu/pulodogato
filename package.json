@@ -41,7 +41,9 @@
     "test:account-reset": "rm -rf .tmp-account-reset && tsc lib/account-reset.ts --outDir .tmp-account-reset --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-account-reset.mjs",
     "test:offline-session": "rm -rf .tmp-offline-session && tsc -p scripts/tsconfig.offline-session-test.json && node scripts/resolve-aliases.mjs .tmp-offline-session lib && node --test scripts/test-offline-session.mjs",
     "test:offline-queue": "rm -rf .tmp-offline-queue && tsc -p scripts/tsconfig.offline-queue-test.json && node scripts/resolve-aliases.mjs .tmp-offline-queue lib && node --test scripts/test-offline-queue.mjs",
-    "test:pwa-precache": "node --test scripts/test-pwa-precache.mjs"
+    "test:pwa-precache": "node --test scripts/test-pwa-precache.mjs",
+    "test:offline-leitura": "rm -rf .tmp-offline-leitura && tsc lib/offline-leitura.ts --outDir .tmp-offline-leitura --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-offline-leitura.mjs",
+    "test:pwa-runtime-cache": "node --test scripts/test-pwa-runtime-cache.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
