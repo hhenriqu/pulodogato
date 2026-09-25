@@ -452,13 +452,14 @@ funcionar, nao o DNS:
 **Ja aplicado e conferido de fora em 25/09 as 20h45** (HMO-158); a medicao esta
 no passo 3.
 
-#### 6.4 Desligar a confirmacao de email — ainda NAO aplicado
+#### 6.4 Desligar a confirmacao de email — feito em 25/09
 
-**Decidido em 25/09 (HMO-157): a conta passa a valer na hora.** Em 25/09 as
-20h45 o endpoint abaixo ainda devolvia `"mailer_autoconfirm":false`, ou seja a
-confirmacao continua **ligada**. Este botao vive numa pagina diferente da do
-passo 6.3 (*Sign In / Providers*, nao *URL Configuration*) e tem Save proprio --
-salvar a URL Configuration nao mexe nele.
+**Decidido em 25/09 (HMO-157): a conta passa a valer na hora.** Aplicado e
+medido em 25/09 as 20h55 (HMO-158): o endpoint abaixo devolve
+`"mailer_autoconfirm":true`, ou seja a confirmacao esta **desligada**. Este
+botao vive numa pagina diferente da do passo 6.3 (*Sign In / Providers*, nao
+*URL Configuration*) e tem Save proprio -- salvar a URL Configuration nao mexe
+nele, e foi exatamente assim que ele ficou para tras entre 20h45 e 20h55.
 
 Supabase → Authentication → Sign In / Providers → **Email** → desmarcar
 **Confirm email** → Save.
@@ -471,7 +472,8 @@ curl -s https://<project-ref>.supabase.co/auth/v1/settings \
 ```
 
 `"mailer_autoconfirm":true` e o estado novo (o nome e invertido: `autoconfirm`
-ligado = confirmacao desligada). Em 25/09, as 15h e as 20h45, estava `false`.
+ligado = confirmacao desligada). Historico da medicao: `false` as 15h e as
+20h45, `true` as 20h55.
 
 **Com o passo 6.3 aplicado, isto deixou de ser conserto e virou escolha.**
 Enquanto a lista de Redirect URLs estava vazia dos nossos dominios, o link de
@@ -523,6 +525,47 @@ desligada no passo 6.4 o roteiro e: criar uma conta em
 direto, sem email nenhum**. Se a tela disser "Enviamos um email de confirmacao",
 uma das duas coisas esta acontecendo: o passo 6.4 nao foi salvo, ou o deploy e
 anterior a este commit.
+
+**Feito em 25/09 as 20h55 (HMO-158).** Um cadastro de verdade em producao criou
+a linha em `profiles` **e** a assinatura `plan=free, status=active` em
+`user_subscriptions`, criada pelo `create_user_subscription_trigger`. Conta de
+teste: `teste-hmo158-20260925175353@hmoraes.com.br`, `cb6651a9-a9fe-4710-bdf8-8abf9425415b`.
+
+Da para provar isso **sem caixa de email e sem navegador**, com a chave anon e o
+mesmo par de chamadas que o browser faz -- util porque quem verifica raramente
+tem acesso ao email de quem se cadastra:
+
+```bash
+# 1. o signUp: com autoconfirm ligado a resposta ja traz access_token
+curl -s -X POST "$NEXT_PUBLIC_SUPABASE_URL/auth/v1/signup" \
+  -H "apikey: $NEXT_PUBLIC_SUPABASE_ANON_KEY" -H 'Content-Type: application/json' \
+  -d '{"email":"...","password":"...","data":{"full_name":"..."}}'
+
+# 2. o perfil, falando como `authenticated` (a policy e TO authenticated)
+curl -s -X POST "$NEXT_PUBLIC_SUPABASE_URL/rest/v1/profiles?on_conflict=id" \
+  -H "apikey: $NEXT_PUBLIC_SUPABASE_ANON_KEY" -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H 'Content-Type: application/json' -H 'Prefer: resolution=ignore-duplicates,return=minimal' \
+  -d '{"id":"<user.id>","email":"...","full_name":"..."}'
+
+# 3. a assinatura, que ninguem escreve: se ela existe, o trigger disparou
+curl -s "$NEXT_PUBLIC_SUPABASE_URL/rest/v1/user_subscriptions?select=plan,status&user_id=eq.<user.id>" \
+  -H "apikey: $NEXT_PUBLIC_SUPABASE_ANON_KEY" -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+O passo 2 e o que o `/signup` deployado faz de fato, nao uma reconstrucao: o
+chunk servido em producao contem `"logado"===t.kind` e o `criarPerfil` do
+`lib/signup-outcome.ts`. Conferir assim, se desconfiar de deploy velho:
+
+```bash
+curl -s https://pulodogato.hmoraes.com.br/signup \
+  | grep -o '/_next/static/chunks/[^"]*\.js' | sort -u \
+  | while read -r c; do curl -s "https://pulodogato.hmoraes.com.br$c"; done \
+  | grep -c 'logado'
+```
+
+Esta receita deixa uma conta de verdade em producao. Apagar e no painel:
+Authentication → Users → a conta → Delete (leva junto `profiles` e
+`user_subscriptions` pelo ON DELETE CASCADE).
 
 Rota importante: o `.vercel.app` tem que redirecionar, e nao servir o app.
 
