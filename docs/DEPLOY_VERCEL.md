@@ -65,7 +65,8 @@ sufixo de time. Os dois que ela lista em Domains:
 
 | Dominio | O que e |
 | --- | --- |
-| `pulodogato-theta.vercel.app` | **o dominio de PRODUCAO, e o unico publico** -- use nos passos 3 a 6 |
+| `pulodogato.hmoraes.com.br` | **o dominio principal desde 25/09** (passo 6) -- e onde o app e servido: `/` e `/api/health` em 200 |
+| `pulodogato-theta.vercel.app` | era o dominio de producao ate 25/09; hoje **308 para o dominio principal**, com caminho e query preservados |
 | `pulodogato-git-main-helio-moraes-projects.vercel.app` | alias da branch `main`; a Vercel o trata como URL de branch, ou seja continua atras da Deployment Protection |
 | `pulodogato-mckko4ekk-helio-moraes-projects.vercel.app` | alias imutavel de um deploy especifico; muda a cada deploy, nao serve de referencia |
 
@@ -175,8 +176,7 @@ existe) e confira com `./scripts/verify-crons.sh` do passo 5.
 **Sem este passo o login por email quebra.** Supabase Dashboard → Authentication
 → URL Configuration:
 
-- **Site URL**: `https://pulodogato.hmoraes.com.br` (ate o dominio proprio
-  existir, `https://pulodogato-theta.vercel.app`)
+- **Site URL**: `https://pulodogato.hmoraes.com.br`
 - **Redirect URLs**: `https://pulodogato.hmoraes.com.br/**` e
   `https://pulodogato-theta.vercel.app/**`
 
@@ -193,18 +193,26 @@ todo, ou seja para producao e preview ao mesmo tempo. Por isso mantenha os dois
 dominios na lista de Redirect URLs: com so um deles, cadastrar-se pelo outro
 manda o link de confirmacao para o endereco errado.
 
-> **Medido em 25/09 (HMO-157), e o estado e outro.** O Site URL **nao** e mais
-> `https://pulodogato.vercel.app` (o hostname de terceiros do passo 1): hoje esta
-> `https://pulodogato-helio-moraes-projects.vercel.app`, que e um alias do nosso
-> proprio projeto na Vercel. Nao ha token saindo para fora daqui.
+> **Aplicado e medido em 25/09 as 20h45 (HMO-158).** Os dois campos estao com os
+> valores acima. A sonda da secao seguinte, rodada inteira:
 >
-> **O que esta errado e a outra metade.** A lista de *Redirect URLs* nao contem
-> nenhum dos nossos hostnames -- nem `pulodogato-theta.vercel.app`, nem
-> `localhost:3000`. Como nenhum valor que o app manda casa com a lista, o
-> Supabase descarta os dois em silencio e manda o link para a **raiz** do Site
-> URL. A raiz nao troca o token por sessao (`app/page.tsx` nao le o fragmento),
-> entao o link de confirmacao nunca chega em `/auth/callback` e a redefinicao de
-> senha nao chega em `/reset-password`. Corrigir e o item 2 da **HMO-158**.
+> | `redirect_to` enviado | Para onde foi |
+> | --- | --- |
+> | `https://pulodogato.hmoraes.com.br/auth/callback` | ecoado, `/auth/callback` preservado |
+> | `https://pulodogato-theta.vercel.app/auth/callback` | ecoado, `/auth/callback` preservado |
+> | `https://pulodogato-helio-moraes-projects.vercel.app/auth/callback` | ecoado, `/auth/callback` preservado |
+> | `https://exemplo-invasor-xyz.test/auth/callback` | raiz de `https://pulodogato.hmoraes.com.br/` |
+> | `http://localhost:3000/auth/callback` | raiz de `https://pulodogato.hmoraes.com.br/` |
+>
+> As duas ultimas linhas sao o controle negativo e tambem revelam o *Site URL*
+> novo: quem e recusado cai na raiz dele, e a raiz agora e o dominio proprio. O
+> estado anterior (nenhum hostname nosso na lista, Site URL num alias atras do
+> login da Vercel) esta no historico da HMO-158.
+>
+> `pulodogato-theta.vercel.app` hoje devolve **308 para o dominio proprio**, com
+> caminho e query preservados, entao o `emailRedirectTo` na pratica nasce sempre
+> `pulodogato.hmoraes.com.br`. Mantenha o `/**` do theta na lista mesmo assim: e
+> o que sustenta o redirecionamento se alguem abrir um link antigo.
 
 #### Conferir a allow-list sem o painel (e sem disparar email)
 
@@ -229,9 +237,11 @@ sendo respeitada e as recusas seguintes sao reais.
 
 ### 4. Liberar o acesso publico (Deployment Protection)
 
-**Ja foi desligada para Production** (`pulodogato-theta.vercel.app` responde 200
-em 25/09). O que segue vale para entender o sintoma, e continua valendo para
-preview. A Vercel Authentication vem habilitada por padrao em projetos novos.
+**Ja foi desligada para Production** (`https://pulodogato.hmoraes.com.br/`
+responde 200 em 25/09; `pulodogato-theta.vercel.app` responde **308** para ele
+desde que o dominio proprio virou o principal -- um 308 ali e o esperado, nao
+falha de protecao). O que segue vale para entender o sintoma, e continua valendo
+para preview. A Vercel Authentication vem habilitada por padrao em projetos novos.
 Ela intercepta a requisicao antes da aplicacao e devolve 302 para
 `vercel.com/sso-api`:
 
@@ -430,7 +440,7 @@ curl -s -H 'accept: application/dns-json' \
 `"Status":3` e NXDOMAIN, ou seja ainda nao propagou. Com `"Status":0` e o CNAME
 da Vercel na resposta, siga.
 
-#### 6.3 Autorizar o dominio no Supabase
+#### 6.3 Autorizar o dominio no Supabase — feito em 25/09
 
 Repetir o passo 3 com o dominio novo -- e **este** e o passo que faz o cadastro
 funcionar, nao o DNS:
@@ -439,9 +449,16 @@ funcionar, nao o DNS:
 - **Redirect URLs**: `https://pulodogato.hmoraes.com.br/**` e
   `https://pulodogato-theta.vercel.app/**`
 
-#### 6.4 Desligar a confirmacao de email
+**Ja aplicado e conferido de fora em 25/09 as 20h45** (HMO-158); a medicao esta
+no passo 3.
 
-**Decidido em 25/09 (HMO-157): a conta passa a valer na hora.**
+#### 6.4 Desligar a confirmacao de email — ainda NAO aplicado
+
+**Decidido em 25/09 (HMO-157): a conta passa a valer na hora.** Em 25/09 as
+20h45 o endpoint abaixo ainda devolvia `"mailer_autoconfirm":false`, ou seja a
+confirmacao continua **ligada**. Este botao vive numa pagina diferente da do
+passo 6.3 (*Sign In / Providers*, nao *URL Configuration*) e tem Save proprio --
+salvar a URL Configuration nao mexe nele.
 
 Supabase → Authentication → Sign In / Providers → **Email** → desmarcar
 **Confirm email** → Save.
@@ -454,7 +471,17 @@ curl -s https://<project-ref>.supabase.co/auth/v1/settings \
 ```
 
 `"mailer_autoconfirm":true` e o estado novo (o nome e invertido: `autoconfirm`
-ligado = confirmacao desligada). Em 25/09 estava `false`.
+ligado = confirmacao desligada). Em 25/09, as 15h e as 20h45, estava `false`.
+
+**Com o passo 6.3 aplicado, isto deixou de ser conserto e virou escolha.**
+Enquanto a lista de Redirect URLs estava vazia dos nossos dominios, o link de
+confirmacao caia na raiz do Site URL e o cadastro nao terminava em lugar nenhum
+-- desligar a confirmacao era o unico jeito de tirar o cadastro daquele caminho.
+Agora o link chega em `/auth/callback` no dominio certo, entao o cadastro com a
+confirmacao **ligada** fecha sozinho: `/auth/callback` troca o token por sessao,
+cria o perfil e o trigger cria a assinatura. O que sobra a favor de desligar e o
+que esta na lista abaixo -- principalmente nao depender do SMTP embutido, cujo
+limite de envio e baixo.
 
 O que muda no comportamento:
 

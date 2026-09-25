@@ -100,9 +100,10 @@ export function useAuth() {
         // ATENCAO: mandar o valor nao basta. O "Redirect URLs" do Supabase e
         // uma lista de permissao -- um valor que nao casa com ela e descartado
         // EM SILENCIO e o link cai na raiz do Site URL, que nao troca o token
-        // por sessao. Medido em 25/09: nenhum dos nossos hostnames esta na
-        // lista, ou seja esta linha hoje nao tem efeito em producao. Liberar os
-        // dominios e passo de painel, rastreado na HMO-158; ver
+        // por sessao. Ate 25/09 nenhum hostname nosso estava na lista e esta
+        // linha nao tinha efeito nenhum em producao; os dois dominios foram
+        // liberados no painel em 25/09 (HMO-158) e a sonda confirmou. Liberar
+        // dominio novo continua sendo passo de painel: ver
         // docs/DEPLOY_VERCEL.md, passo 3, para conferir sem o painel.
         emailRedirectTo: `${window.location.origin}/auth/callback`,
         data: {
