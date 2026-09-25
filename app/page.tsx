@@ -37,14 +37,14 @@ export default function HomePage() {
             investimentos e trading. Do controle de gastos aos sinais de trading
             profissionais, tudo em um só lugar.
           </p>
-          <div className="space-x-4">
-            <Link href="/signup">
-              <Button size="lg" className="px-8 py-3">
+          <div className="flex flex-col sm:flex-row sm:flex-wrap items-center justify-center gap-4">
+            <Link href="/signup" className="w-full sm:w-auto">
+              <Button size="lg" className="w-full px-8 py-3">
                 Criar Conta Grátis
               </Button>
             </Link>
-            <Link href="/login">
-              <Button variant="outline" size="lg" className="px-8 py-3">
+            <Link href="/login" className="w-full sm:w-auto">
+              <Button variant="outline" size="lg" className="w-full px-8 py-3">
                 Fazer Login
               </Button>
             </Link>
@@ -113,14 +113,14 @@ export default function HomePage() {
             Cadastre-se gratuitamente e comece a organizar suas finanças e
             investimentos hoje mesmo. Plano gratuito disponível!
           </p>
-          <div className="space-x-4">
-            <Link href="/login">
-              <Button size="lg" className="px-8 py-3">
+          <div className="flex flex-col sm:flex-row sm:flex-wrap items-center justify-center gap-4">
+            <Link href="/login" className="w-full sm:w-auto">
+              <Button size="lg" className="w-full px-8 py-3">
                 Criar Conta Grátis
               </Button>
             </Link>
-            <Link href="/dashboard/plans">
-              <Button variant="outline" size="lg" className="px-8 py-3">
+            <Link href="/dashboard/plans" className="w-full sm:w-auto">
+              <Button variant="outline" size="lg" className="w-full px-8 py-3">
                 Ver Planos
               </Button>
             </Link>

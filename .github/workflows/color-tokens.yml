@@ -65,3 +65,15 @@ jobs:
           fi
 
           echo "A verificacao fica vermelha nas duas formas de regressao."
+
+      # Mora aqui, e nao no db-verify, de proposito. O db-verify e filtrado por
+      # `paths: ['database/**', 'lib/...']` -- mexer em app/page.tsx nao casa
+      # com nenhum padrao, o job e pulado, e o PR sai verde com a suite parada.
+      # Este workflow nao tem filtro nenhum.
+      #
+      # E e a mesma familia de defeito que o resto do arquivo vigia: uma classe
+      # do Tailwind que compila, passa no tsc, passa no next build, e so erra
+      # no aparelho de quem usa -- ali um retangulo branco as 23h, aqui dois
+      # botoes desencontrados no celular (HMO-160).
+      - name: Os botoes da home empilham alinhados e com espaco no celular
+        run: npm run test:home-cta

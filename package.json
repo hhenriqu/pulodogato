@@ -43,7 +43,8 @@
     "test:offline-queue": "rm -rf .tmp-offline-queue && tsc -p scripts/tsconfig.offline-queue-test.json && node scripts/resolve-aliases.mjs .tmp-offline-queue lib && node --test scripts/test-offline-queue.mjs",
     "test:pwa-precache": "node --test scripts/test-pwa-precache.mjs",
     "test:offline-leitura": "rm -rf .tmp-offline-leitura && tsc lib/offline-leitura.ts --outDir .tmp-offline-leitura --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-offline-leitura.mjs",
-    "test:pwa-runtime-cache": "node --test scripts/test-pwa-runtime-cache.mjs"
+    "test:pwa-runtime-cache": "node --test scripts/test-pwa-runtime-cache.mjs",
+    "test:home-cta": "node --test scripts/test-home-cta-layout.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
