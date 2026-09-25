@@ -414,6 +414,32 @@ jobs:
       - name: 018 e idempotente
         run: $PSQL -f database/migrations/018_goal_monthly_contribution.sql
 
+      - name: 019_cron_runs
+        run: $PSQL -f database/migrations/019_cron_runs.sql
+
+      # Re-executavel: o IF NOT EXISTS de cada CHECK e o DO/IF da policy tem
+      # que atravessar a segunda passada sem erro. A policy tem um ramo a mais
+      # que os outros arquivos -- ela so nasce se o papel `paperclip_ro`
+      # existir, e aqui ele NAO existe (e credencial de producao). Este step
+      # exercita justamente o ramo do RAISE NOTICE.
+      - name: 019 e idempotente
+        run: $PSQL -f database/migrations/019_cron_runs.sql
+
+      # O livro-razao das execucoes de cron. O que so o Postgres pega:
+      #
+      #   - o CHECK de `job` tem que bater com os quatro `crons[].path` do
+      #     vercel.json. Um job renomeado no vercel.json e esquecido aqui grava
+      #     sob nome que a consulta de auditoria nunca procura -- e a ausencia
+      #     seria lida como "nao rodou";
+      #   - `finished_at >= started_at` recusa a linha que o relogio para tras
+      #     produziria, e como a gravacao nao derruba a rota de proposito, essa
+      #     recusa sumiria em silencio;
+      #   - NAO pode haver indice unico: duas execucoes do mesmo job no mesmo
+      #     dia sao evento real no plano Hobby (+-59min de folga), e um unique
+      #     apagaria justamente a evidencia da execucao dupla.
+      - name: Livro-razao de cron aceita a execucao ociosa e recusa o resto
+        run: $PSQL -f database/tests/cron_runs_test.sql
+
       # O alvo mensal da meta e a quinta parcela do "quanto posso gastar". O que
       # so o Postgres pega aqui:
       #
