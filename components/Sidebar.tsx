@@ -34,6 +34,7 @@ import {
   Tags,
   Calculator,
   LineChart,
+  Settings,
 } from "lucide-react";
 
 interface SidebarProps {
@@ -215,13 +216,19 @@ const navigation: NavigationItem[] = [
     href: "/dashboard/connections",
     icon: Users,
   },
-  // "Configurações" saiu daqui na HMO-124. Ele apontava para
-  // /dashboard/settings, que NÃO EXISTE -- não há
-  // app/(dashboard)/dashboard/settings/, então o item dava 404 do Next para
-  // todo usuário logado, sem exceção de plano. As preferências reais (nome,
-  // apelido, perfil público, aceitar conexões) estão em "Perfil", logo acima;
-  // apontar os dois itens para a mesma tela só repetiria a duplicação que
-  // "Transações" tinha.
+  // "Configurações" saiu daqui na HMO-124 porque /dashboard/settings NÃO
+  // EXISTIA: o item dava 404 do Next para todo usuário logado, sem exceção de
+  // plano. A HMO-159 criou a tela, e o item volta apontando para ela.
+  //
+  // Ele NÃO duplica "Perfil", logo acima, e a fronteira é esta: "Perfil" é
+  // quem você é (nome, apelido, perfil público, aceitar conexões);
+  // "Configurações" é como o app se comporta (o que aparece no painel, em que
+  // ordem) e o que fazer com os seus dados (apagar tudo e recomeçar).
+  {
+    name: "Configurações",
+    href: "/dashboard/settings",
+    icon: Settings,
+  },
   {
     name: "Admin",
     href: "/dashboard/admin",

@@ -103,3 +103,9 @@ next-env.d.ts
 
 # saida do `npm run test:signup-outcome` (tsc avulso, so para o node --test)
 /.tmp-signup-outcome/
+
+# saida do `npm run test:dashboard-layout`
+/.tmp-dashboard-layout/
+
+# saida do `npm run test:account-reset`
+/.tmp-account-reset/

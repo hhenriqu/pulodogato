@@ -1,0 +1,86 @@
+name: configuracoes
+
+# Prova, a cada PR, as duas regras da aba de Configuracoes (HMO-159):
+#
+#   1. o painel mostra tudo que existe, na ordem que o usuario escolheu;
+#   2. o "apagar tudo" apaga na ordem certa, e so o que e do usuario.
+#
+# SEM FILTRO DE `paths`, e por duas razoes diferentes:
+#
+#   * o teste do painel quebra quando alguem mexe em lib/dashboard-layout.ts,
+#     que nao esta em database/ nem em nenhuma das listas do db-verify;
+#
+#   * o teste do reset le database/migrations e confronta com o plano de
+#     apagamento. Ele precisa rodar quando a MIGRATION muda -- uma policy de
+#     DELETE removida numa migration nova deixa o reset apagando zero linhas em
+#     silencio, com a tela dizendo "pronto, a conta esta como nova".
+#
+# Um filtro de path acertaria um caso e perderia o outro. Os dois testes sao
+# aritmetica e leitura de arquivo, rodam em segundos, e nao precisam de
+# Postgres -- entao podem ser obrigatorios em todo PR sem virar pedagio.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  configuracoes:
+    name: o painel obedece a configuracao e o reset apaga na ordem
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      # Os dois precisam do tsc, que e devDependency. O `--include=dev` e
+      # explicito porque um ambiente com NODE_ENV=production poda as devDeps na
+      # instalacao e o tsc some sem mensagem que explique o motivo.
+      - run: npm ci --include=dev
+
+      - name: Bloco novo nasce visivel, e arrastar para no lugar certo
+        run: npm run test:dashboard-layout
+
+      - name: O plano de reset bate com o schema, e os filhos vem antes dos pais
+        run: npm run test:account-reset
+
+      # Controle negativo. O teste do reset confere o plano contra as
+      # migrations lendo arquivo e casando expressao regular -- ou seja, ele
+      # passa a sair VERDE se parar de achar o que deveria conferir. Uma
+      # verificacao que nunca viu vermelho nao e verificacao.
+      #
+      # Plantamos aqui os dois defeitos de maior consequencia e exigimos
+      # vermelho nos dois.
+      - name: A verificacao do reset sabe falhar
+        run: |
+          set -uo pipefail
+          cp lib/account-reset.ts lib/account-reset.ts.orig
+          trap 'mv lib/account-reset.ts.orig lib/account-reset.ts' EXIT
+
+          # 1) Tabela que nao existe no schema. O plano usa `.from(variavel)`,
+          #    entao o check-table-drift NAO enxerga estes nomes -- este teste
+          #    e a unica coisa entre um nome errado e um reset que falha no
+          #    meio, com parte da conta ja apagada.
+          sed -i 's/tabela: "budgets"/tabela: "budgetz"/' lib/account-reset.ts
+          if npm run test:account-reset > /dev/null 2>&1; then
+            echo "::error::A verificacao passou verde com uma tabela inventada no plano."
+            exit 1
+          fi
+          cp lib/account-reset.ts.orig lib/account-reset.ts
+
+          # 2) Tabela real, com user_id, mas SEM policy de DELETE para
+          #    authenticated. Este e o defeito mudo: a rota apaga com a sessao
+          #    do usuario, e RLS sem policy de DELETE nao da erro -- apaga zero
+          #    linhas e devolve sucesso.
+          sed -i 's/tabela: "budgets"/tabela: "user_usage_limits"/' lib/account-reset.ts
+          if npm run test:account-reset > /dev/null 2>&1; then
+            echo "::error::A verificacao passou verde com uma tabela sem policy de DELETE."
+            exit 1
+          fi
+
+          echo "A verificacao fica vermelha nos dois defeitos."
