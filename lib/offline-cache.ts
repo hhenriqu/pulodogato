@@ -114,3 +114,111 @@ export function esquecerCatalogo(storage: ArmazenamentoSimples): void {
     // Idem.
   }
 }
+
+// =====================================================
+// ABRIR A TELA DE LANCAMENTO QUANDO `getUser()` NAO DEU USUARIO
+// =====================================================
+// Este e o conserto do defeito que o Helio viu em 25/09, com o modo offline
+// ja no ar: "funciona offline mas as categorias nao carregaram".
+//
+// A causa e uma linha que parecia uma guarda trivial:
+//
+//     const { data: { user } } = await supabase.auth.getUser();
+//     if (!user) return;
+//
+// `getUser()` vai na rede. Quando a rede falha, o supabase-js **nao lanca**:
+// ele devolve `user: null` com o erro ao lado. Entao o `return` seco saia da
+// funcao ANTES do try/catch que sabia repor o catalogo -- e a tela terminava
+// sem categoria, sem conta, sem `service_id` e sem usuario, **sem nenhum erro
+// na tela**. A fila de lancamentos, que e a razao de existir do modo offline,
+// ficava inalcancavel: o submit comeca com `if (!user)` e recusava com a
+// mensagem errada ("preencha todos os campos obrigatorios").
+//
+// Por que a decisao mora aqui, e nao na pagina: o defeito nao era um calculo
+// errado, era um caso que ninguem tinha escrito. Um caso que nao existe no
+// codigo tambem nao existe no teste. Como tabela de casos exaustiva -- e com
+// um teste que percorre os quatro -- o caso que falta passa a ser visivel.
+// =====================================================
+
+/** O que a tela de lancamento deve fazer quando o servidor nao confirmou o usuario. */
+export type AberturaDaTela =
+  /** O servidor confirmou: segue o carregamento normal. */
+  | "seguir"
+  /** Ninguem respondeu, e o aparelho tem o que repor: abre em modo offline. */
+  | "repor-do-aparelho"
+  /** Ninguem respondeu, e o aparelho nao tem nada. Nao ha o que inventar. */
+  | "aparelho-vazio"
+  /** O servidor respondeu que a sessao nao vale. Quem manda para /login e o layout. */
+  | "desistir";
+
+export interface UsuarioLembrado {
+  id: string;
+  email: string | null;
+}
+
+export interface EstadoDeAbertura {
+  decisao: AberturaDaTela;
+  /**
+   * Quem usar para `user_id` na fila, quando a decisao e `repor-do-aparelho`.
+   * Vem do bilhete de `lib/offline-session.ts`, que so e gravado quando o
+   * SERVIDOR confirma a sessao -- e nao destrava leitura nenhuma: toda consulta
+   * continua indo com o token de verdade e batendo na RLS.
+   */
+  usuario: UsuarioLembrado | null;
+  /** O catalogo a repor, quando ha um. */
+  catalogo: CatalogoDeLancamento | null;
+}
+
+export interface LeituraDeAbertura {
+  /** `data.user` de `supabase.auth.getUser()`. */
+  usuarioConfirmado: UsuarioLembrado | null;
+  /**
+   * `"recusa"` quando o servidor disse que o token nao vale, `"rede"` quando
+   * ninguem respondeu. Use `classificarFalhaDeAuth()` do `offline-session` --
+   * nao chute por `navigator.onLine`, que mente em wi-fi de hotel.
+   */
+  origemDaFalha: "rede" | "recusa";
+  /** O bilhete da sessao confirmada, ou null. */
+  sessaoLembrada: UsuarioLembrado | null;
+  /** `lerCatalogo(localStorage)`. */
+  catalogo: CatalogoDeLancamento | null;
+}
+
+export function decidirAbertura(leitura: LeituraDeAbertura): EstadoDeAbertura {
+  // Vem primeiro e sozinho, como em `decidirSessao`: confirmado pelo servidor
+  // manda, mesmo com catalogo velho no aparelho ou `navigator.onLine` mentindo.
+  if (leitura.usuarioConfirmado) {
+    return {
+      decisao: "seguir",
+      usuario: leitura.usuarioConfirmado,
+      catalogo: null,
+    };
+  }
+
+  // O servidor respondeu que nao. Repor o catalogo aqui seria mostrar as
+  // categorias de uma sessao que o proprio servidor acabou de recusar.
+  if (leitura.origemDaFalha === "recusa") {
+    return { decisao: "desistir", usuario: null, catalogo: null };
+  }
+
+  // Daqui para baixo ninguem respondeu, e o aparelho e tudo o que ha.
+  //
+  // Os dois tem que existir. So o catalogo, sem bilhete, enche os seletores e
+  // deixa a pessoa preencher um lancamento que a fila vai recusar no fim, por
+  // falta de `user_id` -- o pior momento para descobrir. So o bilhete, sem
+  // catalogo, e um formulario sem categoria: ele nao passa na propria
+  // validacao.
+  if (!leitura.sessaoLembrada || !leitura.catalogo) {
+    return {
+      decisao: "aparelho-vazio",
+      usuario: leitura.sessaoLembrada,
+      catalogo: null,
+    };
+  }
+
+  return {
+    decisao: "repor-do-aparelho",
+    usuario: leitura.sessaoLembrada,
+    catalogo: leitura.catalogo,
+  };
+}
