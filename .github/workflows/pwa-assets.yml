@@ -62,7 +62,7 @@ jobs:
       - name: A verificacao sabe falhar
         run: |
           set -uo pipefail
-          trap 'git checkout -- public/icons/icon-192x192.png public/manifest.json' EXIT
+          trap 'git checkout -- public/icons/icon-192x192.png public/manifest.json next.config.js' EXIT
 
           # 1) O defeito original: SVG com nome .png, servido como image/png.
           printf '<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"><svg/>' \
@@ -85,8 +85,34 @@ jobs:
             echo "::error::A verificacao passou verde com atalho para rota inexistente."
             exit 1
           fi
+          git checkout -- public/manifest.json
 
-          echo "A verificacao fica vermelha nas duas formas de regressao."
+          # 3) O desvio para /offline desligado. Este e o defeito que estava em
+          #    producao ate aqui: a pagina existia, estava pronta, e NADA
+          #    navegava ate ela -- o sw.js de producao tinha zero desvios. Com o
+          #    default (`{}`), o next-pwa procura `pages/_offline.*`, nao acha
+          #    (este projeto e App Router) e desliga os fallbacks sem imprimir
+          #    nada no log do build.
+          node -e '
+            const fs = require("fs");
+            const s = fs.readFileSync("next.config.js", "utf8");
+            fs.writeFileSync("next.config.js", s.replace(/fallbacks:\s*\{[^}]*\},?/s, ""));
+          '
+          if npm run check-pwa-assets > /dev/null 2>&1; then
+            echo "::error::A verificacao passou verde sem o desvio para /offline."
+            exit 1
+          fi
+          git checkout -- next.config.js
+
+          # 4) O desvio apontando para rota que nao existe -- o jeito de
+          #    reintroduzir o mesmo defeito sem apagar nenhuma linha.
+          sed -i 's|document: "/offline"|document: "/rota-que-nao-existe"|' next.config.js
+          if npm run check-pwa-assets > /dev/null 2>&1; then
+            echo "::error::A verificacao passou verde com o desvio para rota inexistente."
+            exit 1
+          fi
+
+          echo "A verificacao fica vermelha nas quatro formas de regressao."
 
       # Prova que os icones commitados sao os que o gerador produz hoje. Sem
       # isto, alguem pode editar um icone a mao e o proximo `npm run

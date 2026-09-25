@@ -55,6 +55,13 @@ const BROWSERCONFIG_BOM =
   '<square150x150logo src="/icons/icon-192x192.png"/>' +
   "</tile></msapplication></browserconfig>";
 
+const NEXT_CONFIG_BOM = `const withPWA = require("next-pwa")({
+  dest: "public",
+  fallbacks: { document: "/offline" },
+});
+module.exports = withPWA({});
+`;
+
 const LAYOUT_BOM = `export const metadata = {
   icons: { icon: [{ url: "/icons/icon-192x192.png" }] },
 };
@@ -72,6 +79,8 @@ async function rodarGuard(ajustar = () => {}) {
     ["public/manifest.json", JSON.stringify(structuredClone(MANIFEST_BOM), null, 2)],
     ["public/icons/browserconfig.xml", BROWSERCONFIG_BOM],
     ["app/layout.tsx", LAYOUT_BOM],
+    ["next.config.js", NEXT_CONFIG_BOM],
+    ["app/offline/page.tsx", "export default function P() {}"],
     ["app/(dashboard)/dashboard/page.tsx", "export default function P() {}"],
     ["app/(dashboard)/dashboard/transactions/page.tsx", "export default function P() {}"],
     ["public/icons/icon-192x192.png", await png(192)],
@@ -237,4 +246,38 @@ test("relata TODOS os problemas, nao so o primeiro", async () => {
 
   assert.equal(codigo, 1);
   assert.match(saida, /3 problema\(s\)/);
+});
+
+// ---------------------------------------------------------------------------
+// O desvio para /offline (HMO-145)
+// ---------------------------------------------------------------------------
+// Mesma familia dos defeitos acima: o arquivo existe, o caminho parece
+// configurado, e a peca que ligaria os dois nao esta la. A pagina /offline
+// ficou meses assim -- pronta, bonita e inalcancavel.
+
+test("reprova next.config.js sem o desvio para a pagina de offline", async () => {
+  const { codigo, saida } = await rodarGuard(({ arquivos }) => {
+    // Exatamente o estado que estava em producao: o next-pwa configurado, sem
+    // a chave `fallbacks`. Com o default ele procura `pages/_offline.*`, nao
+    // acha (App Router), e desliga os desvios sem imprimir nada.
+    arquivos.set(
+      "next.config.js",
+      'const withPWA = require("next-pwa")({ dest: "public" });\nmodule.exports = withPWA({});\n'
+    );
+  });
+
+  assert.equal(codigo, 1);
+  assert.match(saida, /fallbacks/);
+});
+
+test("reprova desvio apontando para rota sem page.tsx", async () => {
+  // O jeito de reintroduzir o defeito sem apagar nenhuma linha: renomear a
+  // rota e deixar a configuracao apontando para o vazio. A pagina some e a
+  // chave continua la, parecendo certa.
+  const { codigo, saida } = await rodarGuard(({ arquivos }) => {
+    arquivos.set("app/offline/page.tsx", null);
+  });
+
+  assert.equal(codigo, 1);
+  assert.match(saida, /nao ha page\.tsx para essa rota/);
 });

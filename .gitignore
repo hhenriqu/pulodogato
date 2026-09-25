@@ -109,3 +109,12 @@ next-env.d.ts
 
 # saida do `npm run test:account-reset`
 /.tmp-account-reset/
+# saida do `npm run test:offline-session`
+/.tmp-offline-session/
+
+# saida do `npm run test:offline-queue`
+/.tmp-offline-queue/
+
+# gerado pelo next-pwa a cada build (fallbacks), como o sw.js acima
+/public/fallback-*.js
+/public/fallback-*.js.map

@@ -35,6 +35,8 @@ import {
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
+import { useOfflineQueue } from "@/lib/hooks/useOfflineQueue";
+import { guardarCatalogo, lerCatalogo } from "@/lib/offline-cache";
 import {
   Wallet,
   Plus,
@@ -122,6 +124,16 @@ export default function PersonalFinancePage() {
   const [expenseGroups, setExpenseGroups] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("transactions");
+  /**
+   * `service_id` de `personal_finance`. Ele e NOT NULL na tabela e nao aparece
+   * em tela nenhuma -- ate aqui era buscado dentro do submit, o que offline
+   * significa "nao ha lancamento possivel". Agora fica em estado e no catalogo
+   * do aparelho.
+   */
+  const [serviceId, setServiceId] = useState("");
+  /** De quando sao os dados na tela, quando eles vieram do aparelho. */
+  const [catalogoDe, setCatalogoDe] = useState<number | null>(null);
+  const { online, enfileirar } = useOfflineQueue();
 
   // Subscription and plan management
   const { canCreateMore, hasFeature, planConfig, isPremium } =
@@ -290,7 +302,16 @@ export default function PersonalFinancePage() {
         .eq("name", "personal_finance")
         .single();
 
+      // Guardados em variavel, e nao lidos do estado depois: `setCategories`
+      // so vale no proximo render, e o catalogo e gravado ainda dentro desta
+      // funcao. Lendo do estado, ele salvaria a lista do carregamento
+      // ANTERIOR -- e na primeira visita salvaria vazio.
+      let categoriasCarregadas: TransactionCategory[] = [];
+      let contasCarregadas: any[] = [];
+
       if (serviceData) {
+        setServiceId(serviceData.id);
+
         const { data: categoriesData } = await supabase
           .from("transaction_categories")
           .select("*")
@@ -298,7 +319,8 @@ export default function PersonalFinancePage() {
           .eq("is_active", true)
           .order("name");
 
-        setCategories(categoriesData || []);
+        categoriasCarregadas = categoriesData || [];
+        setCategories(categoriasCarregadas);
       }
 
       // Carregar transações
@@ -341,7 +363,8 @@ export default function PersonalFinancePage() {
       const accountsResponse = await fetch("/api/financial-accounts");
       const accountsData = await accountsResponse.json();
       if (accountsResponse.ok) {
-        setAccounts(accountsData.accounts || []);
+        contasCarregadas = accountsData.accounts || [];
+        setAccounts(contasCarregadas);
       }
 
       // Carregar grupos de despesas do usuário
@@ -350,9 +373,55 @@ export default function PersonalFinancePage() {
       if (groupsResponse.ok) {
         setExpenseGroups(groupsData.groups || []);
       }
+
+      // Deu tudo certo: renova o catalogo que vai sustentar o formulario na
+      // proxima vez que faltar rede. Fica no fim de proposito -- salvar antes
+      // gravaria um catalogo pela metade se alguma das chamadas acima
+      // falhasse, e um catalogo pela metade e pior que nenhum: o formulario
+      // abriria com meia lista de categorias, sem nada indicando o que falta.
+      if (serviceData?.id && categoriasCarregadas.length > 0) {
+        guardarCatalogo(window.localStorage, {
+          serviceId: serviceData.id,
+          categorias: categoriasCarregadas.map((c) => ({
+            id: c.id,
+            name: c.name,
+            is_expense: c.is_expense,
+          })),
+          contas: contasCarregadas.map((c: any) => ({
+            id: c.id,
+            name: c.name,
+            account_type: c.account_type,
+          })),
+          guardadoEm: Date.now(),
+        });
+        setCatalogoDe(null);
+      }
     } catch (error) {
       console.error("Error loading data:", error);
-      toast.error("Erro ao carregar dados");
+
+      // -------------------------------------------------------------------
+      // SEM REDE: A TELA MOSTRA O QUE O APARELHO TEM, E DIZ QUE E ISSO
+      // -------------------------------------------------------------------
+      // O ramo antigo era so um toast de erro, e o efeito colateral dele era
+      // pior que a mensagem: os seletores ficavam VAZIOS. Nao ha como lancar
+      // nada sem categoria, entao a fila offline existiria e nao poderia ser
+      // usada. E uma tela sem nenhum lancamento, sem aviso de que a lista nao
+      // carregou, e o "zero confiante" de que este projeto ja sofreu --
+      // parece que os dados sumiram.
+      const catalogo = lerCatalogo(window.localStorage);
+
+      if (catalogo) {
+        setServiceId(catalogo.serviceId);
+        setCategories(catalogo.categorias as TransactionCategory[]);
+        setAccounts(catalogo.contas);
+        setCatalogoDe(catalogo.guardadoEm);
+        toast.message("Sem conexão: dá para lançar, envio quando a rede voltar.");
+      } else {
+        // Primeira visita, e sem rede. Nao ha catalogo para inventar.
+        toast.error(
+          "Sem conexão e sem dados no aparelho. Abra esta tela uma vez com internet."
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -426,6 +495,89 @@ export default function PersonalFinancePage() {
     }
   };
 
+  /**
+   * O erro que chegou foi a rede caindo, ou o servidor recusando?
+   *
+   * Vale para o caso em que `navigator.onLine` mentiu -- ele so e confiavel
+   * quando diz que NAO ha rede. Aqui erramos para o lado de guardar: um
+   * lancamento a mais na fila custa uma requisicao, e um lancamento a menos
+   * custa um gasto que nunca foi anotado.
+   */
+  const ehFalhaDeRede = (erro: unknown) => {
+    const e = erro as { message?: string; code?: string; status?: number };
+    if (e?.status === 0) return true;
+    if (typeof e?.status === "number" && e.status >= 500) return true;
+    // As tres mensagens sao dos tres motores de navegador para a MESMA falha:
+    // so a do Safari ("Load failed") nao contem a palavra "fetch".
+    return /failed to fetch|networkerror|load failed/i.test(e?.message ?? "");
+  };
+
+  const fecharELimparFormulario = () => {
+    setShowAddForm(false);
+    setEditingTransaction(null);
+    setFormData({
+      description: "",
+      amount: "",
+      category_id: "",
+      transaction_date: new Date().toISOString().split("T")[0],
+      transaction_type: "",
+      account_id: "",
+      notes: "",
+      expense_kind: "one_off",
+      due_day: "",
+      is_installment: false,
+      total_installments: 1,
+      installment_amount: "",
+      first_due_date: new Date().toISOString().split("T")[0],
+      is_shared: false,
+      group_id: "",
+      splits: [],
+    });
+  };
+
+  /**
+   * Manda o lancamento para a fila do aparelho.
+   *
+   * Devolve `false` quando ele NAO pode esperar a rede -- parcelamento,
+   * divisao, despesa fixa e edicao escrevem em varias tabelas, e uma fila que
+   * acerta metade delas erra dinheiro em silencio. O motivo de cada recusa
+   * esta em `lib/offline-queue.ts`, e vem pronto para a tela mostrar.
+   */
+  const guardarOffline = async (mensagemDeSucesso: string) => {
+    const categoria = categories.find((c) => c.id === formData.category_id);
+
+    const resultado = await enfileirar({
+      userId: user?.id ?? "",
+      // `service_id` e NOT NULL e nao aparece em tela nenhuma: ele vem do
+      // catalogo guardado na ultima vez que a tela carregou com rede.
+      serviceId,
+      categoryId: formData.category_id,
+      accountId: formData.account_id || null,
+      descricao: formData.description,
+      valor: formData.amount,
+      tipo: formData.transaction_type,
+      categoriaEhDespesa: categoria?.is_expense,
+      data: formData.transaction_date,
+      notas: formData.notes || null,
+      parcelado: formData.is_installment,
+      compartilhado: formData.is_shared,
+      grupoId: formData.group_id || null,
+      editando: Boolean(editingTransaction),
+      tipoDeDespesa: formData.expense_kind,
+    });
+
+    if (resultado.estado === "recusado") {
+      // Sem rede, este aviso e o fim da linha para este lancamento -- entao
+      // ele precisa dizer o que fazer, nao so que deu errado.
+      if (!online) toast.error(resultado.mensagem);
+      return false;
+    }
+
+    toast.success(mensagemDeSucesso);
+    fecharELimparFormulario();
+    return true;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -443,6 +595,25 @@ export default function PersonalFinancePage() {
     if (ehGastoNoCartao && !formData.account_id) {
       toast.error("Escolha em qual cartão foi o gasto");
       return;
+    }
+
+    // -----------------------------------------------------------------------
+    // SEM REDE: NAO ADIANTA TENTAR, MAS O LANCAMENTO NAO SE PERDE
+    // -----------------------------------------------------------------------
+    // Este ramo vem antes do `try` de proposito. Offline, a primeira coisa que
+    // o caminho normal faz e consultar `financial_services` -- ou seja, ele
+    // falha na consulta AUXILIAR, nao no insert, e o erro que chega no catch
+    // nao tem relacao nenhuma com o lancamento. Tentar assim so gasta tempo e
+    // produz uma mensagem enganosa.
+    //
+    // `guardarOffline` devolve false quando este lancamento especifico nao
+    // pode esperar -- parcelado, dividido, despesa fixa. Nesses casos seguimos
+    // para o caminho normal, que vai falhar e explicar o motivo certo.
+    if (!online && !editingTransaction) {
+      const guardou = await guardarOffline(
+        "Sem conexão. Guardei no aparelho e envio quando a rede voltar."
+      );
+      if (guardou) return;
     }
 
     // Despesa fixa nao e um lancamento: e uma REGRA. Sai por outro caminho e
@@ -702,29 +873,24 @@ export default function PersonalFinancePage() {
       }
 
       // Reset formulário e fechar
-      setShowAddForm(false);
-      setEditingTransaction(null);
-      setFormData({
-        description: "",
-        amount: "",
-        category_id: "",
-        transaction_date: new Date().toISOString().split("T")[0],
-        transaction_type: "",
-        account_id: "",
-        notes: "",
-        expense_kind: "one_off",
-        due_day: "",
-        is_installment: false,
-        total_installments: 1,
-        installment_amount: "",
-        first_due_date: new Date().toISOString().split("T")[0],
-        is_shared: false,
-        group_id: "",
-        splits: [],
-      });
+      fecharELimparFormulario();
       loadData();
     } catch (error) {
       console.error("Error creating transaction:", error);
+
+      // O segundo caminho da fila offline, e o mais traicoeiro: o navegador
+      // disse que havia rede e nao havia. `navigator.onLine` so e confiavel no
+      // negativo -- wi-fi de hotel que exige login, ou sinal que cai no meio
+      // do envio, aparecem como "online". Sem este ramo o lancamento morreria
+      // aqui, com um "Erro ao criar lançamento" generico, que e exatamente a
+      // situacao que a fila veio evitar.
+      if (!editingTransaction && ehFalhaDeRede(error)) {
+        const guardou = await guardarOffline(
+          "Sem conexão no meio do envio. Guardei no aparelho."
+        );
+        if (guardou) return;
+      }
+
       toast.error("Erro ao criar lançamento");
     }
   };
@@ -812,6 +978,18 @@ export default function PersonalFinancePage() {
             Gerencie seus gastos e receitas com divisão inteligente entre
             conexões
           </p>
+          {/*
+            Sem esta linha, a tela offline mostra as categorias do aparelho e
+            uma lista de lançamentos VAZIA, com a mesma cara de quem nunca
+            lançou nada. O aviso do topo do app diz que não há conexão; este
+            diz de quando é o que está na tela, que é a pergunta seguinte.
+          */}
+          {catalogoDe !== null && (
+            <p className="text-sm text-warning">
+              Lista de lançamentos indisponível sem conexão. As categorias são
+              as de {new Date(catalogoDe).toLocaleString("pt-BR")}.
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {planConfig && <PlanBadge plan={planConfig.id} size="sm" />}

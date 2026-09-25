@@ -38,7 +38,9 @@
     "test:auth-callback": "rm -rf .tmp-auth-callback && tsc lib/auth-callback.ts --outDir .tmp-auth-callback --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-auth-callback.mjs",
     "test:signup-outcome": "rm -rf .tmp-signup-outcome && tsc lib/signup-outcome.ts lib/ensure-profile.ts --outDir .tmp-signup-outcome --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-signup-outcome.mjs",
     "test:dashboard-layout": "rm -rf .tmp-dashboard-layout && tsc lib/dashboard-layout.ts --outDir .tmp-dashboard-layout --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-dashboard-layout.mjs",
-    "test:account-reset": "rm -rf .tmp-account-reset && tsc lib/account-reset.ts --outDir .tmp-account-reset --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-account-reset.mjs"
+    "test:account-reset": "rm -rf .tmp-account-reset && tsc lib/account-reset.ts --outDir .tmp-account-reset --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-account-reset.mjs",
+    "test:offline-session": "rm -rf .tmp-offline-session && tsc -p scripts/tsconfig.offline-session-test.json && node scripts/resolve-aliases.mjs .tmp-offline-session lib && node --test scripts/test-offline-session.mjs",
+    "test:offline-queue": "rm -rf .tmp-offline-queue && tsc -p scripts/tsconfig.offline-queue-test.json && node scripts/resolve-aliases.mjs .tmp-offline-queue lib && node --test scripts/test-offline-queue.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

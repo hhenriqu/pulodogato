@@ -5,18 +5,83 @@ import { createClient } from "@/utils/supabase/client";
 import type { User } from "@supabase/supabase-js";
 import { garantirPerfil } from "@/lib/ensure-profile";
 import { decidirPosCadastro } from "@/lib/signup-outcome";
+import {
+  decidirSessao,
+  classificarFalhaDeAuth,
+  expiracaoEmMs,
+  lembrarSessao,
+  lerSessaoLembrada,
+  esquecerSessao,
+} from "@/lib/offline-session";
 
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  /**
+   * `offline` quer dizer: ninguem confirmou esta sessao agora, estamos indo
+   * pelo que o aparelho lembra. A interface usa isto para avisar que os
+   * numeros podem estar velhos -- ver `components/OfflineBanner.tsx`.
+   */
+  const [modo, setModo] = useState<"online" | "offline">("online");
   const supabase = createClient();
 
   useEffect(() => {
+    // -----------------------------------------------------------------------
+    // ESTE BLOCO E O CONSERTO DO "FICAR SEM SINAL DESLOGA"
+    // -----------------------------------------------------------------------
+    // `getUser()` SEMPRE vai na rede -- e para isso que ele existe, confirmar
+    // o token com o servidor em vez de confiar no aparelho. Antes, a falha
+    // dele virava `user = null`, e `user = null` faz o layout do dashboard
+    // empurrar para /login. Sem rede, /login nao tem como funcionar: a pessoa
+    // ficava presa numa tela de login inutilizavel, com o app instalado.
+    //
+    // Agora a falha e classificada antes de virar decisao: rede e uma coisa,
+    // servidor dizendo "nao" e outra. A tabela de casos esta em
+    // `lib/offline-session.ts`, fora do React, que e onde da para testa-la.
+    // -----------------------------------------------------------------------
     const getUser = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      setUser(user);
+      const { data, error } = await supabase.auth.getUser();
+
+      if (data?.user) {
+        setUser(data.user);
+        setModo("online");
+        setLoading(false);
+
+        // O servidor confirmou: renova o bilhete que vai valer quando a rede
+        // faltar. `getSession()` aqui le do armazenamento e nao vai na rede --
+        // o token acabou de ser confirmado, entao nao esta vencido.
+        const { data: sessaoAtual } = await supabase.auth.getSession();
+        const expiraEm = expiracaoEmMs(sessaoAtual?.session);
+        if (expiraEm !== null) {
+          lembrarSessao(window.localStorage, {
+            id: data.user.id,
+            email: data.user.email ?? null,
+            expiraEm,
+          });
+        }
+        return;
+      }
+
+      const lembrada = lerSessaoLembrada(window.localStorage);
+      const decisao = decidirSessao({
+        usuarioConfirmado: false,
+        origemDaFalha: classificarFalhaDeAuth(error),
+        sessaoLocalExpiraEm: lembrada?.expiraEm ?? null,
+        agora: Date.now(),
+      });
+
+      if (decisao === "entrar-offline" && lembrada) {
+        // O objeto vem do bilhete, nao do servidor -- e so o suficiente para o
+        // cabecalho e o menu desenharem. Nenhuma leitura de dado sai daqui: as
+        // consultas continuam indo com o token de verdade e batendo na RLS.
+        setUser({ id: lembrada.id, email: lembrada.email ?? undefined } as User);
+        setModo("offline");
+      } else {
+        if (decisao === "login") esquecerSessao(window.localStorage);
+        setUser(null);
+        setModo("online");
+      }
+
       setLoading(false);
     };
 
@@ -25,8 +90,36 @@ export function useAuth() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
-      setUser(session?.user ?? null);
-      setLoading(false);
+      // Com sessao: a rede voltou e o servidor confirmou de novo.
+      if (session?.user) {
+        setUser(session.user);
+        setModo("online");
+        const expiraEm = expiracaoEmMs(session);
+        if (expiraEm !== null) {
+          lembrarSessao(window.localStorage, {
+            id: session.user.id,
+            email: session.user.email ?? null,
+            expiraEm,
+          });
+        }
+        setLoading(false);
+        return;
+      }
+
+      // Saiu da conta: o bilhete morre junto. Sem isto, sair e depois ficar
+      // sem rede reabriria o app na conta de quem saiu -- a pessoa clicou em
+      // Sair e o app voltaria sozinho.
+      if (event === "SIGNED_OUT") {
+        esquecerSessao(window.localStorage);
+        setUser(null);
+        setModo("online");
+        setLoading(false);
+      }
+
+      // Qualquer outro evento sem sessao e ignorado de proposito. O
+      // `INITIAL_SESSION` vazio e o caso real: ele chega quando o cookie ainda
+      // nao foi lido, e zerar o usuario aqui desfaria a decisao offline que o
+      // `getUser()` acima acabou de tomar -- o logout voltaria pela janela.
     });
 
     return () => subscription.unsubscribe();
@@ -142,6 +235,12 @@ export function useAuth() {
   };
 
   const signOut = async () => {
+    // Apaga o bilhete ANTES de chamar o servidor, e nao depois: `signOut()`
+    // tambem precisa de rede, e sair da conta com o wi-fi caindo devolveria um
+    // erro -- com o bilhete intacto e o app reabrindo offline na conta de quem
+    // acabou de sair. O evento `SIGNED_OUT` apaga de novo, e apagar duas vezes
+    // nao custa nada.
+    esquecerSessao(window.localStorage);
     const { error } = await supabase.auth.signOut();
     return { error };
   };
@@ -149,6 +248,8 @@ export function useAuth() {
   return {
     user,
     loading,
+    /** "offline" = a sessao nao foi confirmada agora; os dados podem estar velhos. */
+    modo,
     signIn,
     signUp,
     signOut,
