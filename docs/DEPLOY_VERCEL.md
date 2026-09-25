@@ -35,13 +35,14 @@ Ja feito e verificado (`next build` limpo, so warnings de lint):
 
 ## Quem faz o que (decidido na HMO-122, estendido na HMO-157)
 
-- **Passos 1 a 4 e 6.1 a 6.4** (import, variaveis, Supabase Auth, Deployment
-  Protection, dominio na Vercel, zona no Registro.br): o Helio, no browser.
-  Nenhum deles sai da conta dele -- e a razao de nao haver `VERCEL_TOKEN` nem
-  credencial de DNS neste fluxo.
-- **Passos 5 e 6.5** (verificacao pos-deploy): o agente, assim que o dominio
+- **Passos 1 a 4 e 6.1 a 6.5** (import, variaveis, Supabase Auth, Deployment
+  Protection, dominio na Vercel, zona no Registro.br, confirmacao de email): o
+  Helio, no browser. Nenhum deles sai da conta dele -- e a razao de nao haver
+  `VERCEL_TOKEN` nem credencial de DNS nem token de management do Supabase neste
+  fluxo.
+- **Passos 5 e 6.6** (verificacao pos-deploy): o agente, assim que o dominio
   resolver. Sao scripts, nao precisam de credencial nenhuma -- so de uma URL
-  publica.
+  publica e do `SUPABASE_DB_URL_RO`, que ele ja tem.
 
 ## Passos
 
@@ -361,9 +362,19 @@ Ela vai mostrar o registro a criar, quase certamente um `CNAME` para um host
 (`f16a85fe47e1b081`) e daquele dominio, nao deste -- reaproveita-lo produz um
 dominio que nunca verifica.
 
-Escolha tambem o que fazer com `pulodogato-theta.vercel.app`: manter os dois
-servindo (mais simples, e o que este runbook assume) ou marcar o novo como
-dominio principal e redirecionar o antigo.
+**Decidido em 25/09 (HMO-157): `pulodogato.hmoraes.com.br` e o dominio
+PRINCIPAL, e `pulodogato-theta.vercel.app` redireciona para ele.** Na mesma tela
+de Domains, no menu do dominio novo, marque *Set as Primary Domain*; a Vercel
+passa a responder 307/308 no `.vercel.app` apontando para o proprio.
+
+Duas consequencias que valem por si:
+
+- `VERCEL_PROJECT_PRODUCTION_URL` passa a ser o dominio novo, e com isso o
+  `metadataBase` acerta sozinho (veja 6.4).
+- o cadastro deixa de poder comecar num dominio e terminar no outro. Isso
+  importa por causa do PKCE: o verificador vive num COOKIE, entao um link de
+  recuperacao de senha aberto no dominio errado nao consegue trocar o `code` por
+  sessao. Com um dominio so servindo de verdade, esse caso deixa de existir.
 
 #### 6.2 Criar o registro no Registro.br
 
@@ -401,28 +412,91 @@ funcionar, nao o DNS:
 - **Redirect URLs**: `https://pulodogato.hmoraes.com.br/**` e
   `https://pulodogato-theta.vercel.app/**`
 
-#### 6.4 Opcional: `NEXT_PUBLIC_URL`
+#### 6.4 Desligar a confirmacao de email
+
+**Decidido em 25/09 (HMO-157): a conta passa a valer na hora.**
+
+Supabase → Authentication → Sign In / Providers → **Email** → desmarcar
+**Confirm email** → Save.
+
+Conferir sem o painel (e publico, nao precisa de chave):
+
+```bash
+curl -s https://<project-ref>.supabase.co/auth/v1/settings \
+  -H "apikey: $NEXT_PUBLIC_SUPABASE_ANON_KEY" | grep -o '"mailer_autoconfirm":[a-z]*'
+```
+
+`"mailer_autoconfirm":true` e o estado novo (o nome e invertido: `autoconfirm`
+ligado = confirmacao desligada). Em 25/09 estava `false`.
+
+O que muda no comportamento:
+
+- o `signUp` passa a devolver **sessao na hora**, e o usuario cai direto no
+  `/dashboard` sem passar por `/auth/callback`;
+- ninguem mais depende do SMTP embutido para criar conta, ou seja o limite de
+  envio sai do caminho do cadastro (ele continua valendo para recuperacao de
+  senha);
+- em troca, um email digitado errado cria uma conta que funciona com um endereco
+  que nao existe. O preco de recuperar a senha dessa conta e o dono nao ter como
+  receber o link.
+
+O codigo funciona nos **dois** estados e nao precisa de deploy quando a chave
+vira: `lib/signup-outcome.ts` decide o fim do cadastro pela sessao que o
+`signUp` devolveu, e `lib/ensure-profile.ts` cria o perfil nos dois caminhos --
+no `signUp` quando ja ha sessao, no `/auth/callback` quando o perfil so pode
+nascer depois do link. Isso e o que evita o modo de falha antigo: com a
+confirmacao desligada ninguem visita o callback, e um perfil que nascesse *so*
+la deixaria a conta sem perfil e -- porque
+`create_user_subscription_trigger` dispara AFTER INSERT ON profiles -- sem
+assinatura, sem erro nenhum em tela.
+
+#### 6.5 Opcional: `NEXT_PUBLIC_URL`
 
 Só para as metatags (`metadataBase` em `app/layout.tsx`). Sem ela o app usa
 `VERCEL_PROJECT_PRODUCTION_URL`, que a Vercel preenche com o dominio de
-producao: se o passo 6.1 marcou `pulodogato.hmoraes.com.br` como principal, nao
-ha nada a fazer. Se os dois dominios ficarem servindo e voce quiser que as
-metatags citem sempre o proprio, defina
-`NEXT_PUBLIC_URL=https://pulodogato.hmoraes.com.br` e redeploy.
+producao: como o passo 6.1 marca `pulodogato.hmoraes.com.br` como principal,
+nao ha nada a fazer aqui.
 
-#### 6.5 Verificar
+#### 6.6 Verificar
 
 ```bash
 ./scripts/verify-deploy.sh https://pulodogato.hmoraes.com.br
 ```
 
-E o cadastro de ponta a ponta, que e o objetivo da HMO-157: criar uma conta,
-receber o email, **conferir que o link aponta para `pulodogato.hmoraes.com.br`**,
-clicar, e cair logado no dashboard. O clique passa por `/auth/callback` -- se
-essa rota der 404, o deploy e anterior a HMO-157.
+E o cadastro de ponta a ponta, que e o objetivo da HMO-157. Com a confirmacao
+desligada no passo 6.4 o roteiro e: criar uma conta em
+`https://pulodogato.hmoraes.com.br/signup` e **cair logado no `/dashboard`
+direto, sem email nenhum**. Se a tela disser "Enviamos um email de confirmacao",
+uma das duas coisas esta acontecendo: o passo 6.4 nao foi salvo, ou o deploy e
+anterior a este commit.
 
-> **O email de confirmacao tem limite baixo.** O SMTP embutido do Supabase e
-> para desenvolvimento: poucos emails por hora por projeto, e ele nao garante
-> entrega. Para uma familia serve; se o cadastro de alguem "nao chega email",
-> conferir Authentication → Logs antes de suspeitar do dominio. SMTP proprio e
-> assunto de outra issue.
+Rota importante: o `.vercel.app` tem que redirecionar, e nao servir o app.
+
+```bash
+curl -s -o /dev/null -w '%{http_code} -> %{redirect_url}\n' \
+  https://pulodogato-theta.vercel.app/dashboard
+```
+
+Esperado: `307` (ou `308`) apontando para `pulodogato.hmoraes.com.br`. Um `200`
+aqui significa que o *Set as Primary Domain* do passo 6.1 nao pegou.
+
+E a prova que nao aparece na tela -- o perfil e a assinatura nasceram? Com o
+`SUPABASE_DB_URL_RO`:
+
+```sql
+select
+  (select count(*) from profiles)          as perfis,
+  (select count(*) from user_subscriptions) as assinaturas;
+```
+
+Os dois numeros tem que subir de 1 a cada conta criada. Se `perfis` subir e
+`assinaturas` nao, o problema e o trigger, nao o cadastro. Em 25/09, antes
+disto, `user_subscriptions` tinha **zero** linhas desde que o banco existe --
+esse e o numero que este passo existe para mudar.
+
+> **A recuperacao de senha continua dependendo de email**, e o SMTP embutido do
+> Supabase e para desenvolvimento: poucos emails por hora por projeto, sem
+> garantia de entrega. Desligar a confirmacao tirou o cadastro dessa
+> dependencia, nao o "esqueci minha senha". Se um link nao chegar, conferir
+> Authentication → Logs antes de suspeitar do dominio. SMTP proprio e assunto de
+> outra issue.
