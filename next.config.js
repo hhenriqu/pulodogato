@@ -1,11 +1,27 @@
 const path = require("path");
 const { montarPrecache, revisaoDoDeploy } = require("./lib/pwa-precache");
+const { montarRuntimeCaching } = require("./lib/pwa-runtime-cache");
 
 const withPWA = require("next-pwa")({
   dest: "public",
   register: true,
   skipWaiting: true,
   disable: process.env.NODE_ENV === "development",
+
+  // ---------------------------------------------------------------------
+  // O SERVICE WORKER CARIMBA O QUE SERVIU DO APARELHO
+  // ---------------------------------------------------------------------
+  // O cache padrao do next-pwa JA guarda as respostas de `/api/` por 24h --
+  // descoberto ao abrir as telas de leitura sem rede. Quer dizer que offline
+  // a tela nao recebe zero: ela pode receber o JSON de ontem, com `ok`
+  // verdadeiro e todo campo no lugar, sem nenhuma forma de distinguir do de
+  // agora. Numero velho com cara de atual e pior que numero nenhum.
+  //
+  // A troca abaixo mantem a lista padrao INTEIRA e substitui so a regra de
+  // `apis`, acrescentando o carimbo que a tela le. O porque de cada decisao
+  // -- inclusive por que o plugin nao pode citar constante de fora -- esta em
+  // `lib/pwa-runtime-cache.js`, com teste.
+  runtimeCaching: montarRuntimeCaching(require("next-pwa/cache")),
 
   // ---------------------------------------------------------------------
   // O HTML DAS TELAS QUE ABREM SEM REDE

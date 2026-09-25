@@ -115,6 +115,9 @@ next-env.d.ts
 # saida do `npm run test:offline-queue`
 /.tmp-offline-queue/
 
+# saida do `npm run test:offline-leitura`
+/.tmp-offline-leitura/
+
 # gerado pelo next-pwa a cada build (fallbacks), como o sw.js acima
 /public/fallback-*.js
 /public/fallback-*.js.map

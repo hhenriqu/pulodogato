@@ -82,6 +82,39 @@ test("as rotas que abrem sem rede estao na lista", () => {
   );
   assert.ok(lista.includes("/dashboard"));
   assert.ok(lista.includes("/dashboard/personal-finance"));
+  // As tres de leitura entraram quando aprenderam a dizer "sem rede" em vez
+  // de imprimir R$ 0,00 -- ver `lib/offline-leitura.ts`.
+  assert.ok(lista.includes("/dashboard/bills"));
+  assert.ok(lista.includes("/dashboard/accounts"));
+  assert.ok(lista.includes("/dashboard/recurrences"));
+});
+
+test("toda rota precacheada tem `page.tsx`, e ele nao le o pedido", () => {
+  // Duas regressoes que o teste de cima nao alcanca, porque nenhuma das duas
+  // aparece no NOME da rota:
+  //
+  //   1. rota que nao existe -- o workbox nao acha o HTML na instalacao e
+  //      FALHA A INSTALACAO INTEIRA do service worker. O app perde o offline
+  //      inteiro por causa de um item da lista, e o erro so aparece no
+  //      console do aparelho de quem instalou;
+  //   2. a pagina passa a pedir `cookies()` ou a declarar `force-dynamic`.
+  //      O nome continua o mesmo e a rota vira `ƒ`: o HTML passa a sair com
+  //      o dado de quem pediu, e o precache guarda a pagina de UMA pessoa no
+  //      aparelho.
+  for (const rota of ROTAS_QUE_ABREM_SEM_REDE) {
+    const arquivo = path.join(RAIZ, "app/(dashboard)", rota, "page.tsx");
+    assert.ok(
+      fs.existsSync(arquivo),
+      `${rota} esta no precache e nao tem ${path.relative(RAIZ, arquivo)} -- ` +
+        `a instalacao do service worker falha inteira`
+    );
+
+    const fonte = fs.readFileSync(arquivo, "utf8");
+    assert.ok(
+      !/\bcookies\s*\(/.test(fonte) && !/force-dynamic/.test(fonte),
+      `${rota} e renderizada por pedido: precachear guardaria a pagina de uma pessoa`
+    );
+  }
 });
 
 test("a pasta public e as rotas convivem -- este e o ponto do arquivo", () => {
@@ -189,8 +222,10 @@ test("subpasta entra com o caminho inteiro, nao so o nome do arquivo", () => {
 test("so entra rota de prerender estatico (○), nunca dinamica (ƒ)", () => {
   // O HTML de uma rota `ƒ` e renderizado com o cookie de quem pediu. Precachear
   // uma delas guardaria a pagina de UMA pessoa no aparelho -- e o service
-  // worker a serviria para a proxima sessao. As duas de hoje sao `○` no
+  // worker a serviria para a proxima sessao. As cinco de hoje sao `○` no
   // `next build`: HTML igual para todo mundo, sem um byte de dado de usuario.
+  // Os numeros das telas chegam depois, por chamada do cliente, com o token
+  // de verdade batendo na RLS.
   //
   // As tres dinamicas do projeto hoje: /dashboard/expense-groups/[groupId],
   // /dashboard/migrations e toda /api/*.

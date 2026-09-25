@@ -5,6 +5,16 @@
 // A tela responde, em ordem: o que esta vencido, o que vence agora, quanto
 // ainda sai este mes. E so depois disso oferece o cadastro -- quem abre esta
 // tela quer saber se esqueceu de pagar algo, nao cadastrar.
+//
+// ESTA TELA ABRE SEM REDE (HMO-145), e aqui a frase errada era a mais cara do
+// app inteiro: offline o `Promise.all` abaixo falhava, as listas ficavam
+// vazias e a secao "Vencidas" imprimia **"Nada em atraso."** -- o app dizendo
+// a alguem com tres boletos vencidos que esta tudo em dia, com um toast que
+// some em cinco segundos como unica ressalva.
+//
+// A leitura agora vem classificada (`lib/offline-leitura.ts`): sem dado, o
+// painel de sem-conexao SUBSTITUI os totais e as tres secoes. As frases de
+// "nada previsto" exigem resposta do servidor de agora.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -46,6 +56,19 @@ import {
 } from "lucide-react";
 import { Receipts } from "@/components/Receipts";
 import { ehFatura } from "@/lib/card-invoice";
+import {
+  buscarLeitura,
+  podeAfirmarVazio,
+  podeMostrarNumero,
+  type EstadoDaLeitura,
+} from "@/lib/offline-leitura";
+import {
+  FaixaDadoDoAparelho,
+  NumeroIndisponivel,
+  PainelErroDoServidor,
+  PainelSemRede,
+} from "@/components/SemRede";
+import { useEstaOnline } from "@/lib/hooks/useEstaOnline";
 import type {
   RecurringRule,
   ScheduledTransaction,
@@ -107,6 +130,13 @@ export default function BillsPage() {
   const [gruposDespesa, setGruposDespesa] = useState<{ id: string; name: string }[]>([]);
   const [custoFixo, setCustoFixo] = useState(0);
   const [loading, setLoading] = useState(true);
+  // De onde veio a agenda -- ela e a tela. Ver `lib/offline-leitura.ts`.
+  const [estado, setEstado] = useState<EstadoDaLeitura | null>(null);
+  const [guardadoEm, setGuardadoEm] = useState<Date | null>(null);
+  const [estadoDoResumo, setEstadoDoResumo] = useState<EstadoDaLeitura | null>(
+    null
+  );
+  const online = useEstaOnline();
   const [agindo, setAgindo] = useState<string | null>(null);
   const [dialogFixo, setDialogFixo] = useState(false);
   const [dialogAvulsa, setDialogAvulsa] = useState(false);
@@ -134,54 +164,49 @@ export default function BillsPage() {
   });
 
   const carregar = useCallback(async () => {
-    try {
-      const [respAgenda, respRegras, respCategorias, respContas, respResumo, respGrupos] =
-        await Promise.all([
-        fetch("/api/scheduled-transactions?status=open"),
-        fetch("/api/recurring-rules"),
-        fetch("/api/personal-finance/categories"),
-        fetch("/api/financial-accounts"),
-        fetch("/api/scheduled-transactions/summary?months=1"),
-        fetch("/api/expense-groups"),
-      ]);
+    // Seis buscas, e o `Promise.all` de `fetch` cru tinha um efeito que nao
+    // se ve lendo o codigo: basta UMA rejeitar para o catch engolir as outras
+    // cinco. Sem rede as seis rejeitam, mas online bastava a rede oscilar em
+    // qualquer uma delas para a tela inteira abrir vazia.
+    //
+    // `buscarLeitura` nao rejeita: cada busca volta com o seu proprio estado,
+    // e uma nao derruba mais as outras.
+    const [agenda, regras, cats, contas, resumo, gruposResp] = await Promise.all([
+      buscarLeitura<{ scheduled?: ScheduledTransaction[] }>(
+        "/api/scheduled-transactions?status=open"
+      ),
+      buscarLeitura<{ rules?: RecurringRule[] }>("/api/recurring-rules"),
+      buscarLeitura<{ categories?: TransactionCategory[] }>(
+        "/api/personal-finance/categories"
+      ),
+      buscarLeitura<{ accounts?: FinancialAccount[] }>("/api/financial-accounts"),
+      buscarLeitura<{ fixed_monthly_cost?: number }>(
+        "/api/scheduled-transactions/summary?months=1"
+      ),
+      buscarLeitura<{ groups?: { id: string; name: string }[] }>(
+        "/api/expense-groups"
+      ),
+    ]);
 
-      if (respAgenda.ok) {
-        const dados = await respAgenda.json();
-        setScheduled(dados.scheduled ?? []);
-      } else {
-        toast.error("Não foi possível carregar as contas previstas");
-      }
+    // A agenda e a tela: e dela que saem as tres secoes e os dois totais. O
+    // estado dela e o estado da pagina.
+    setEstado(agenda.estado);
+    setGuardadoEm(agenda.guardadoEm);
+    if (agenda.dados) setScheduled(agenda.dados.scheduled ?? []);
 
-      if (respRegras.ok) {
-        const dados = await respRegras.json();
-        setRules(dados.rules ?? []);
-      }
+    if (regras.dados) setRules(regras.dados.rules ?? []);
+    if (cats.dados) setCategories(cats.dados.categories ?? []);
+    if (contas.dados) setAccounts(contas.dados.accounts ?? []);
+    if (gruposResp.dados) setGruposDespesa(gruposResp.dados.groups ?? []);
 
-      if (respCategorias.ok) {
-        const dados = await respCategorias.json();
-        setCategories(dados.categories ?? dados ?? []);
-      }
+    // O custo fixo tem estado PROPRIO porque vem de outro endereco: com o
+    // cache do aparelho, a agenda pode estar guardada e o resumo nao. Um
+    // estado so para a tela inteira mostraria este numero como bom apoiado na
+    // resposta de outra busca.
+    setEstadoDoResumo(resumo.estado);
+    if (resumo.dados) setCustoFixo(resumo.dados.fixed_monthly_cost ?? 0);
 
-      if (respContas.ok) {
-        const dados = await respContas.json();
-        setAccounts(dados.accounts ?? dados ?? []);
-      }
-
-      if (respResumo.ok) {
-        const dados = await respResumo.json();
-        setCustoFixo(dados.fixed_monthly_cost ?? 0);
-      }
-
-      if (respGrupos.ok) {
-        const dados = await respGrupos.json();
-        setGruposDespesa(dados.groups ?? []);
-      }
-    } catch (erro) {
-      console.error("Erro ao carregar contas previstas:", erro);
-      toast.error("Erro ao carregar a página");
-    } finally {
-      setLoading(false);
-    }
+    setLoading(false);
   }, []);
 
   useEffect(() => {
@@ -443,7 +468,7 @@ export default function BillsPage() {
             <Button
               size="sm"
               onClick={() => pedirBaixa(conta)}
-              disabled={agindo === conta.id}
+              disabled={agindo === conta.id || !online}
               title={
                 ehFatura(conta.notes)
                   ? "Pagar a fatura (escolher a conta)"
@@ -460,7 +485,7 @@ export default function BillsPage() {
               size="sm"
               variant="outline"
               onClick={() => pular(conta)}
-              disabled={agindo === conta.id}
+              disabled={agindo === conta.id || !online}
               title="Pular este vencimento"
             >
               <SkipForward className="h-4 w-4" />
@@ -539,7 +564,9 @@ export default function BillsPage() {
         <div className="flex gap-2">
           <Dialog open={dialogAvulsa} onOpenChange={setDialogAvulsa}>
             <DialogTrigger asChild>
-              <Button variant="outline">
+              {/* Cadastrar precisa de rede: o formulario tem sete campos, e
+                  perde-los no botao Salvar e pior do que o botao apagado. */}
+              <Button variant="outline" disabled={!online}>
                 <Plus className="mr-2 h-4 w-4" />
                 Conta avulsa
               </Button>
@@ -637,7 +664,7 @@ export default function BillsPage() {
 
           <Dialog open={dialogFixo} onOpenChange={setDialogFixo}>
             <DialogTrigger asChild>
-              <Button>
+              <Button disabled={!online}>
                 <Repeat className="mr-2 h-4 w-4" />
                 Gasto fixo
               </Button>
@@ -794,44 +821,102 @@ export default function BillsPage() {
         </div>
       </div>
 
+      {estado === "do-aparelho" && (
+        <FaixaDadoDoAparelho
+          guardadoEm={guardadoEm}
+          soLeitura
+          aoTentarDeNovo={carregar}
+        />
+      )}
+
+      {estado === "sem-rede" ? (
+        <PainelSemRede
+          oQue="as contas previstas"
+          aoTentarDeNovo={carregar}
+        />
+      ) : estado === "erro-do-servidor" ? (
+        <PainelErroDoServidor
+          oQue="as contas previstas"
+          aoTentarDeNovo={carregar}
+        />
+      ) : (
+        <>
       <div className="grid gap-4 sm:grid-cols-3">
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Em atraso</CardDescription>
-            <CardTitle className="text-2xl text-destructive">{moeda(totais.vencido)}</CardTitle>
+            <CardTitle className="text-2xl text-destructive">
+              {podeMostrarNumero(estado) ? (
+                moeda(totais.vencido)
+              ) : (
+                <NumeroIndisponivel />
+              )}
+            </CardTitle>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Total em aberto</CardDescription>
-            <CardTitle className="text-2xl">{moeda(totais.aberto)}</CardTitle>
+            <CardTitle className="text-2xl">
+              {podeMostrarNumero(estado) ? (
+                moeda(totais.aberto)
+              ) : (
+                <NumeroIndisponivel />
+              )}
+            </CardTitle>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Custo fixo mensal</CardDescription>
-            <CardTitle className="text-2xl">{moeda(custoFixo)}</CardTitle>
+            {/* Estado proprio: este numero vem de outro endereco, e pode
+                faltar com a agenda presente (ou o contrario). */}
+            <CardTitle className="text-2xl">
+              {podeMostrarNumero(estadoDoResumo) ? (
+                moeda(custoFixo)
+              ) : (
+                <NumeroIndisponivel />
+              )}
+            </CardTitle>
           </CardHeader>
         </Card>
       </div>
 
+      {/*
+        As tres frases de vazio passaram a depender de `podeAfirmarVazio`. A
+        primeira delas, "Nada em atraso.", e a razao desta tela ter ficado
+        fora do precache ate aqui: dita sem dado, ela e o app afirmando que
+        voce nao deve nada.
+      */}
       <Secao
         titulo="Vencidas"
         icone={<AlertCircle className="h-4 w-4 text-destructive" />}
         contas={grupos.vencidas}
-        vazio="Nada em atraso."
+        vazio={
+          podeAfirmarVazio(estado)
+            ? "Nada em atraso."
+            : "Não dá para conferir o que está em atraso agora."
+        }
       />
       <Secao
         titulo="Próximos 7 dias"
         icone={<CalendarClock className="h-4 w-4 text-warning" />}
         contas={grupos.semana}
-        vazio="Nenhuma conta vence nesta semana."
+        vazio={
+          podeAfirmarVazio(estado)
+            ? "Nenhuma conta vence nesta semana."
+            : "Não dá para conferir a semana agora."
+        }
       />
       <Secao
         titulo="Mais adiante"
         icone={<Wallet className="h-4 w-4 text-info" />}
         contas={grupos.depois}
-        vazio="Nada previsto no período."
+        vazio={
+          podeAfirmarVazio(estado)
+            ? "Nada previsto no período."
+            : "Não dá para conferir o período agora."
+        }
       />
 
       {rules.length > 0 && (
@@ -862,6 +947,8 @@ export default function BillsPage() {
             ))}
           </CardContent>
         </Card>
+      )}
+        </>
       )}
 
       {/* Pagamento de fatura: a unica baixa que pergunta algo antes (HMO-149).

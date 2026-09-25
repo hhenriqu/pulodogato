@@ -20,6 +20,19 @@ import {
   Ban,
   CalendarClock,
 } from "lucide-react";
+import {
+  buscarLeitura,
+  podeAfirmarVazio,
+  podeMostrarNumero,
+  type EstadoDaLeitura,
+} from "@/lib/offline-leitura";
+import {
+  FaixaDadoDoAparelho,
+  NumeroIndisponivel,
+  PainelErroDoServidor,
+  PainelSemRede,
+} from "@/components/SemRede";
+import { useEstaOnline } from "@/lib/hooks/useEstaOnline";
 
 // =====================================================
 // Assinaturas e cobrancas recorrentes (HMO-145)
@@ -94,24 +107,38 @@ export default function RecurrencesPage() {
   const [varrendo, setVarrendo] = useState(false);
   const [mostrarIgnoradas, setMostrarIgnoradas] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  // De onde veio o que esta na tela (HMO-145). Antes disto, sem rede o
+  // `catch` escrevia "Failed to fetch" numa tarja e a tela seguia mostrando
+  // "Total por mes R$ 0,00" com a frase "Nenhuma cobranca recorrente
+  // encontrada ainda" embaixo -- a mensagem do navegador ao lado de uma
+  // afirmacao nossa sobre o dinheiro da pessoa.
+  const [estado, setEstado] = useState<EstadoDaLeitura | null>(null);
+  const [guardadoEm, setGuardadoEm] = useState<Date | null>(null);
+  const online = useEstaOnline();
 
   const carregar = useCallback(async () => {
     setCarregando(true);
     setErro(null);
-    try {
-      const resp = await fetch(
-        `/api/recurrences${mostrarIgnoradas ? "?status=all" : ""}`
-      );
-      if (!resp.ok) throw new Error("Nao foi possivel carregar as recorrencias.");
-      const dados = await resp.json();
-      setRecorrencias(dados.recurrences || []);
-      setAlertas(dados.alerts || []);
-      setTotalMensal(dados.monthlyTotal || 0);
-    } catch (e) {
-      setErro(e instanceof Error ? e.message : "Erro inesperado.");
-    } finally {
-      setCarregando(false);
+
+    const leitura = await buscarLeitura<{
+      recurrences?: Recurrence[];
+      alerts?: Alerta[];
+      monthlyTotal?: number;
+    }>(`/api/recurrences${mostrarIgnoradas ? "?status=all" : ""}`);
+
+    setEstado(leitura.estado);
+    setGuardadoEm(leitura.guardadoEm);
+
+    // Sem corpo, o que ja estava na tela fica. Zerar aqui faria as
+    // assinaturas sumirem ao perder o sinal, que e o oposto do que a copia
+    // guardada no aparelho existe para permitir.
+    if (leitura.dados) {
+      setRecorrencias(leitura.dados.recurrences || []);
+      setAlertas(leitura.dados.alerts || []);
+      setTotalMensal(leitura.dados.monthlyTotal || 0);
     }
+
+    setCarregando(false);
   }, [mostrarIgnoradas]);
 
   useEffect(() => {
@@ -172,11 +199,29 @@ export default function RecurrencesPage() {
             Cobranças que se repetem no seu extrato, encontradas automaticamente.
           </p>
         </div>
-        <Button onClick={varrer} disabled={varrendo} className="gap-2">
+        {/* A varredura le meses de extrato no servidor: sem rede ela nao tem
+            como acontecer, e o botao habilitado so entregaria um erro. */}
+        <Button
+          onClick={varrer}
+          disabled={varrendo || !online}
+          className="gap-2"
+        >
           <RefreshCw className={`h-4 w-4 ${varrendo ? "animate-spin" : ""}`} />
-          {varrendo ? "Procurando..." : "Procurar agora"}
+          {!online
+            ? "Procurar (precisa de rede)"
+            : varrendo
+              ? "Procurando..."
+              : "Procurar agora"}
         </Button>
       </div>
+
+      {estado === "do-aparelho" && (
+        <FaixaDadoDoAparelho
+          guardadoEm={guardadoEm}
+          soLeitura
+          aoTentarDeNovo={carregar}
+        />
+      )}
 
       {erro && (
         <Card className="border-destructive">
@@ -192,7 +237,11 @@ export default function RecurrencesPage() {
         <CardHeader className="pb-2">
           <CardDescription>Total por mês</CardDescription>
           <CardTitle className="text-3xl text-foreground">
-            {formatarBRL(totalMensal)}
+            {podeMostrarNumero(estado) ? (
+              formatarBRL(totalMensal)
+            ) : (
+              <NumeroIndisponivel />
+            )}
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -222,8 +271,14 @@ export default function RecurrencesPage() {
       )}
 
       <div className="flex items-center justify-between">
+        {/* A contagem e um numero como qualquer outro: "0 cobrancas" sem dado
+            afirma a mesma coisa que o total zerado afirmava. */}
         <span className="text-sm text-muted-foreground">
-          {visiveis.length} {visiveis.length === 1 ? "cobrança" : "cobranças"}
+          {podeMostrarNumero(estado)
+            ? `${visiveis.length} ${
+                visiveis.length === 1 ? "cobrança" : "cobranças"
+              }`
+            : "Lista indisponível agora"}
         </span>
         <Button
           variant="ghost"
@@ -240,7 +295,17 @@ export default function RecurrencesPage() {
             Carregando...
           </CardContent>
         </Card>
-      ) : visiveis.length === 0 ? (
+      ) : estado === "sem-rede" ? (
+        <PainelSemRede
+          oQue="suas assinaturas"
+          aoTentarDeNovo={carregar}
+        />
+      ) : estado === "erro-do-servidor" ? (
+        <PainelErroDoServidor
+          oQue="suas assinaturas"
+          aoTentarDeNovo={carregar}
+        />
+      ) : visiveis.length === 0 && podeAfirmarVazio(estado) ? (
         <Card>
           <CardContent className="space-y-2 pt-6 text-center">
             <p className="text-sm text-foreground">
@@ -303,12 +368,18 @@ export default function RecurrencesPage() {
                     )}
                   </div>
 
+                  {/*
+                    Sem rede as tres decisoes nao tem para onde ir. A
+                    atualizacao otimista mostraria a escolha aplicada por um
+                    instante e a desfaria em seguida -- pior que o botao
+                    apagado, porque a pessoa acreditaria ter decidido.
+                  */}
                   <div className="flex gap-1">
                     <Button
                       variant="ghost"
                       size="sm"
                       title="Confirmar que é uma assinatura"
-                      disabled={r.status === "CONFIRMED"}
+                      disabled={r.status === "CONFIRMED" || !online}
                       onClick={() => decidir(r.id, "CONFIRMED")}
                     >
                       <Check className="h-4 w-4" />
@@ -317,7 +388,7 @@ export default function RecurrencesPage() {
                       variant="ghost"
                       size="sm"
                       title="Não é uma assinatura, ignorar"
-                      disabled={r.status === "IGNORED"}
+                      disabled={r.status === "IGNORED" || !online}
                       onClick={() => decidir(r.id, "IGNORED")}
                     >
                       <EyeOff className="h-4 w-4" />
@@ -326,7 +397,7 @@ export default function RecurrencesPage() {
                       variant="ghost"
                       size="sm"
                       title="Já cancelei esta assinatura"
-                      disabled={r.status === "CANCELLED"}
+                      disabled={r.status === "CANCELLED" || !online}
                       onClick={() => decidir(r.id, "CANCELLED")}
                     >
                       <Ban className="h-4 w-4" />

@@ -12,6 +12,19 @@
 // toda compra como da fatura do proprio mes: a fatura nao fecha e a compra de
 // dia 28 aparece no mes errado. Por isso o formulario cobra os dois dias quando
 // o tipo e cartao de credito.
+//
+// ESTA TELA ABRE SEM REDE (HMO-145). Ate aqui ela nao entrava no precache por
+// um motivo especifico: offline a busca falhava, a lista ficava vazia, e o
+// `useMemo` dos totais somava lista vazia. O resultado era
+//
+//     Saldo somado das contas  R$ 0,00
+//     Faturas em aberto        R$ 0,00
+//     Voce ainda nao tem contas / Cadastre sua conta corrente...
+//
+// para quem tem seis contas cadastradas. Nada disso e erro de calculo -- e o
+// app afirmando sobre o dinheiro da pessoa uma coisa que ele nao tem como
+// saber. Agora cada numero passa por `podeMostrarNumero()`, e a frase de
+// estado vazio exige `podeAfirmarVazio()`: ver `lib/offline-leitura.ts`.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -53,6 +66,19 @@ import {
   Wallet,
 } from "lucide-react";
 import type { FinancialAccount, AccountType } from "@/types/financial";
+import {
+  buscarLeitura,
+  podeAfirmarVazio,
+  podeMostrarNumero,
+  type EstadoDaLeitura,
+} from "@/lib/offline-leitura";
+import {
+  FaixaDadoDoAparelho,
+  NumeroIndisponivel,
+  PainelErroDoServidor,
+  PainelSemRede,
+} from "@/components/SemRede";
+import { useEstaOnline } from "@/lib/hooks/useEstaOnline";
 
 const TIPOS: Array<{
   valor: AccountType;
@@ -107,22 +133,32 @@ export default function AccountsPage() {
   const [salvando, setSalvando] = useState(false);
   const [aberto, setAberto] = useState(false);
   const [form, setForm] = useState<Formulario>(VAZIO);
+  // De onde veio o que esta na tela. `null` = ainda nao carregou -- e mesmo
+  // nesse caso nenhum total pode aparecer como R$ 0,00.
+  const [estado, setEstado] = useState<EstadoDaLeitura | null>(null);
+  const [guardadoEm, setGuardadoEm] = useState<Date | null>(null);
+  const online = useEstaOnline();
 
   const carregar = useCallback(async () => {
-    try {
-      // include_inactive: esta e a unica tela que mostra conta arquivada, para
-      // poder reativar. O resto do app so enxerga as ativas.
-      const resposta = await fetch(
-        "/api/financial-accounts?include_inactive=1"
-      );
-      if (!resposta.ok) throw new Error("falha ao carregar");
-      const dados = await resposta.json();
-      setContas(dados.accounts ?? []);
-    } catch {
-      toast.error("Não foi possível carregar suas contas");
-    } finally {
-      setCarregando(false);
-    }
+    setCarregando(true);
+    // include_inactive: esta e a unica tela que mostra conta arquivada, para
+    // poder reativar. O resto do app so enxerga as ativas.
+    const leitura = await buscarLeitura<{ accounts?: FinancialAccount[] }>(
+      "/api/financial-accounts?include_inactive=1"
+    );
+
+    setEstado(leitura.estado);
+    setGuardadoEm(leitura.guardadoEm);
+
+    // So sobrescreve a lista quando houve resposta com corpo. Zerar aqui no
+    // caminho de falha apagaria da tela o que uma busca anterior ja tinha
+    // trazido -- e a pessoa veria as contas sumirem ao perder o sinal.
+    if (leitura.dados) setContas(leitura.dados.accounts ?? []);
+
+    // O aviso de erro agora e o painel no corpo da tela, que fica. O toast
+    // desaparece em cinco segundos e deixava para tras justamente a tela de
+    // zeros que ele tentava explicar.
+    setCarregando(false);
   }, []);
 
   useEffect(() => {
@@ -271,20 +307,55 @@ export default function AccountsPage() {
             Onde seu dinheiro entra, fica e sai.
           </p>
         </div>
-        <Button onClick={abrirNovo}>
+        {/*
+          Sem rede o envio falharia no fim. Deixar a pessoa preencher nome,
+          banco, limite, fechamento e vencimento para perder tudo no botao
+          Salvar e pior do que dizer antes que agora nao da.
+        */}
+        <Button onClick={abrirNovo} disabled={!online}>
           <Plus className="mr-2 h-4 w-4" />
-          Nova conta
+          {online ? "Nova conta" : "Nova conta (precisa de rede)"}
         </Button>
       </div>
 
+      {estado === "do-aparelho" && (
+        <FaixaDadoDoAparelho
+          guardadoEm={guardadoEm}
+          soLeitura
+          aoTentarDeNovo={carregar}
+        />
+      )}
+
+      {/*
+        Sem dado, o painel SUBSTITUI os totais e a lista -- nao acompanha. Um
+        "R$ 0,00" ao lado de um aviso de sem conexao continua sendo um numero
+        na tela, e numero na tela e lido.
+      */}
+      {estado === "sem-rede" ? (
+        <PainelSemRede
+          oQue="suas contas"
+          aoTentarDeNovo={carregar}
+        />
+      ) : estado === "erro-do-servidor" ? (
+        <PainelErroDoServidor oQue="suas contas" aoTentarDeNovo={carregar} />
+      ) : (
+        <>
       <div className="grid gap-4 sm:grid-cols-2">
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Saldo somado das contas</CardDescription>
             <CardTitle
-              className={`text-2xl ${totais.saldo < 0 ? "text-destructive" : ""}`}
+              className={`text-2xl ${
+                podeMostrarNumero(estado) && totais.saldo < 0
+                  ? "text-destructive"
+                  : ""
+              }`}
             >
-              {moeda(totais.saldo)}
+              {podeMostrarNumero(estado) ? (
+                moeda(totais.saldo)
+              ) : (
+                <NumeroIndisponivel />
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -298,7 +369,11 @@ export default function AccountsPage() {
           <CardHeader className="pb-2">
             <CardDescription>Faturas em aberto</CardDescription>
             <CardTitle className="text-2xl text-warning">
-              {moeda(totais.fatura)}
+              {podeMostrarNumero(estado) ? (
+                moeda(totais.fatura)
+              ) : (
+                <NumeroIndisponivel />
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -309,7 +384,7 @@ export default function AccountsPage() {
         </Card>
       </div>
 
-      {ativas.length === 0 ? (
+      {ativas.length === 0 && podeAfirmarVazio(estado) ? (
         <Card>
           <CardContent className="py-10 text-center">
             <Wallet className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
@@ -464,6 +539,8 @@ export default function AccountsPage() {
             ))}
           </CardContent>
         </Card>
+      )}
+        </>
       )}
 
       <Dialog open={aberto} onOpenChange={setAberto}>
