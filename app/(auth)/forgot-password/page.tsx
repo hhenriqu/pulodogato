@@ -37,8 +37,14 @@ export default function ForgotPasswordPage() {
     setIsLoading(true)
     setError(null)
 
+    // Passa pelo /auth/callback em vez de ir direto para /reset-password: o
+    // link de recuperacao chega com um `code` (PKCE), e o verificador do PKCE
+    // esta num cookie -- so o servidor consegue trocar o code por sessao.
+    // Apontando direto para /reset-password a pagina chamava `getSession()`,
+    // nao achava sessao nenhuma (ninguem trocou o code) e dizia que o link era
+    // invalido, mesmo recem-gerado.
     const { error } = await supabase.auth.resetPasswordForEmail(data.email, {
-      redirectTo: `${window.location.origin}/reset-password`,
+      redirectTo: `${window.location.origin}/auth/callback?next=/reset-password`,
     })
 
     if (error) {

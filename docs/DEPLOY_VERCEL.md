@@ -1,8 +1,9 @@
 # Deploy na Vercel
 
-Runbook para colocar o PuloDoGato no ar. Decisao registrada em HMO-122: a
-aplicacao roda so em `localhost` hoje; o destino e a Vercel, usando o dominio
-`*.vercel.app` por enquanto (sem dominio proprio).
+Runbook para colocar o PuloDoGato no ar. Decisao registrada em HMO-122: o
+destino e a Vercel. Desde 22/09 o app esta no ar em
+`pulodogato-theta.vercel.app`; a HMO-157 acrescenta o dominio proprio
+`pulodogato.hmoraes.com.br` (passo 6).
 
 O caminho antigo (`deploy.sh` + `docker-compose` numa VPS, atras de
 `pulodogato.heliomoraes.dev`) **nunca chegou a subir**. Os arquivos continuam no
@@ -21,16 +22,25 @@ Ja feito e verificado (`next build` limpo, so warnings de lint):
 - Nenhuma rota usa filesystem ou `process.cwd()`; tudo roda em serverless sem
   ajuste.
 - Os redirects de autenticacao usam `window.location.origin`, entao acompanham
-  o dominio da Vercel sem hardcode. Mas veja o passo 3 -- o Supabase precisa
-  autorizar esse dominio.
+  o dominio sem hardcode. Mas veja o passo 3 -- o Supabase precisa autorizar
+  esse dominio, senao ele ignora o valor e usa o Site URL do projeto.
+- O retorno do link de email tem rota propria, `/auth/callback` (HMO-157). Ela
+  troca o `code`/`token_hash` por sessao e **cria o perfil**. Antes dela o
+  cadastro nao terminava: a policy de INSERT de `profiles` e `TO authenticated`,
+  e com a confirmacao de email ligada o `signUp` nao devolve sessao -- o insert
+  que o cliente tentava rodava como `anon`, a RLS recusava, e o erro ia para o
+  console. Sem perfil, `create_user_subscription_trigger` tambem nunca disparava:
+  em 25/09 producao tinha `user_subscriptions.n_tup_ins = 0`, nenhuma assinatura
+  criada desde que o banco existe.
 
-## Quem faz o que (decidido na HMO-122)
+## Quem faz o que (decidido na HMO-122, estendido na HMO-157)
 
-- **Passos 1 a 4** (import, variaveis, Supabase Auth, Deployment Protection): o
-  Helio, no browser. Nenhum dos quatro sai da conta dele -- e a razao de nao
-  haver `VERCEL_TOKEN` neste fluxo.
-- **Passo 5** (verificacao pos-deploy): o agente, assim que receber a URL do
-  deploy. E um script, nao precisa de credencial nenhuma -- so de uma URL
+- **Passos 1 a 4 e 6.1 a 6.4** (import, variaveis, Supabase Auth, Deployment
+  Protection, dominio na Vercel, zona no Registro.br): o Helio, no browser.
+  Nenhum deles sai da conta dele -- e a razao de nao haver `VERCEL_TOKEN` nem
+  credencial de DNS neste fluxo.
+- **Passos 5 e 6.5** (verificacao pos-deploy): o agente, assim que o dominio
+  resolver. Sao scripts, nao precisam de credencial nenhuma -- so de uma URL
   publica.
 
 ## Passos
@@ -54,12 +64,33 @@ sufixo de time. Os dois que ela lista em Domains:
 
 | Dominio | O que e |
 | --- | --- |
-| `pulodogato-git-main-helio-moraes-projects.vercel.app` | alias da branch `main` -- **e este o endereco estavel de producao**, use nos passos 3 a 5 |
+| `pulodogato-theta.vercel.app` | **o dominio de PRODUCAO, e o unico publico** -- use nos passos 3 a 6 |
+| `pulodogato-git-main-helio-moraes-projects.vercel.app` | alias da branch `main`; a Vercel o trata como URL de branch, ou seja continua atras da Deployment Protection |
 | `pulodogato-mckko4ekk-helio-moraes-projects.vercel.app` | alias imutavel de um deploy especifico; muda a cada deploy, nao serve de referencia |
 
-Onde este runbook escreve `<projeto>.vercel.app`, leia o dominio da primeira
-linha. **Nao existe deploy nosso em `pulodogato.vercel.app`** -- aquele hostname
-e de terceiros.
+Onde este runbook escreve `<projeto>.vercel.app`, leia `pulodogato-theta.vercel.app`.
+**Nao existe deploy nosso em `pulodogato.vercel.app`** -- aquele hostname e de
+terceiros.
+
+> **Correcao de 25/09.** Ate aqui este documento afirmava que o alias
+> `-git-main-` era "o endereco estavel de producao". Nao e, e a diferenca nao e
+> cosmetica -- os passos 3 a 5 mandavam configurar o Supabase e rodar a
+> verificacao contra um hostname que **nao serve a ninguem**. Medido no mesmo
+> minuto:
+>
+> ```
+> $ curl -sI https://pulodogato-theta.vercel.app/api/health
+> HTTP/2 200        {"status":"ok","message":"Database connection successful"}
+>
+> $ curl -sI https://pulodogato-git-main-helio-moraes-projects.vercel.app/api/health
+> HTTP/2 302        location: https://vercel.com/sso-api?url=...
+> ```
+>
+> Desligar a Deployment Protection (passo 4) vale para **Production**, e a
+> Vercel nao conta o alias de branch como producao: ele fica no regime de
+> preview e segue pedindo login da Vercel. Um 302 para `vercel.com/sso-api` se
+> parece com URL errada, nao com protecao ligada -- e o que faz esse erro
+> sobreviver.
 
 ### 2. Variaveis de ambiente
 
@@ -143,24 +174,36 @@ existe) e confira com `./scripts/verify-crons.sh` do passo 5.
 **Sem este passo o login por email quebra.** Supabase Dashboard → Authentication
 → URL Configuration:
 
-- **Site URL**: `https://pulodogato-git-main-helio-moraes-projects.vercel.app`
-- **Redirect URLs**: adicionar `https://pulodogato-git-main-helio-moraes-projects.vercel.app/**`
+- **Site URL**: `https://pulodogato.hmoraes.com.br` (ate o dominio proprio
+  existir, `https://pulodogato-theta.vercel.app`)
+- **Redirect URLs**: `https://pulodogato.hmoraes.com.br/**` e
+  `https://pulodogato-theta.vercel.app/**`
 
 O padrao do Supabase e `http://localhost:3000`. Enquanto estiver assim, o link
 de confirmacao de cadastro e o de redefinicao de senha chegam apontando para a
 maquina local de quem clicar.
+
+**Os dois campos fazem coisas diferentes, e so um deles o codigo consegue
+contornar.** O *Redirect URLs* e uma lista de permissao: o `emailRedirectTo` que
+o app manda em `signUp` (e o `redirectTo` da recuperacao de senha) so e aceito
+se casar com um padrao dessa lista -- se nao casar, o Supabase ignora o valor
+sem reclamar e cai no *Site URL*. O *Site URL* e um valor unico para o projeto
+todo, ou seja para producao e preview ao mesmo tempo. Por isso mantenha os dois
+dominios na lista de Redirect URLs: com so um deles, cadastrar-se pelo outro
+manda o link de confirmacao para o endereco errado.
 
 > **Corrigir o que esta la agora.** Em 22/09 o Site URL foi preenchido com
 > `https://pulodogato.vercel.app` -- o hostname de terceiros do passo 1, nao o
 > nosso. Isso e pior que ter deixado `localhost`: o link de confirmacao de
 > cadastro e o de redefinicao de senha saem apontando para a aplicacao de outra
 > pessoa, levando o usuario (e o token que vai na URL) para fora daqui. Troque
-> pelo dominio `-git-main-` acima antes de testar login.
+> antes de testar cadastro.
 
 ### 4. Liberar o acesso publico (Deployment Protection)
 
-**Conferido em 22/09: esta LIGADA, e enquanto estiver o deploy nao serve a
-ninguem.** A Vercel Authentication vem habilitada por padrao em projetos novos.
+**Ja foi desligada para Production** (`pulodogato-theta.vercel.app` responde 200
+em 25/09). O que segue vale para entender o sintoma, e continua valendo para
+preview. A Vercel Authentication vem habilitada por padrao em projetos novos.
 Ela intercepta a requisicao antes da aplicacao e devolve 302 para
 `vercel.com/sso-api`:
 
@@ -181,7 +224,9 @@ protege as branches sem estorvar producao).
 ### 5. Verificar depois do deploy
 
 ```bash
-./scripts/verify-deploy.sh https://pulodogato-git-main-helio-moraes-projects.vercel.app
+./scripts/verify-deploy.sh https://pulodogato-theta.vercel.app
+# e, depois do passo 6, tambem:
+./scripts/verify-deploy.sh https://pulodogato.hmoraes.com.br
 ```
 
 Checa `/api/health` (200) e as **10** rotas removidas na Fase 1 (404 em todas).
@@ -289,9 +334,95 @@ Duas saidas, nessa ordem:
 2. Se um PR ja estiver aberto com a autoria errada, **mergear por squash** e o
    unico metodo seguro.
 
-## Dominio proprio, quando for a hora
+### 6. Dominio proprio: `pulodogato.hmoraes.com.br`
 
-Apontar um CNAME para a Vercel, adicionar o dominio no projeto e entao:
+Decidido na HMO-157. O dominio `hmoraes.com.br` **ja existe e ja aponta para a
+Vercel** -- o site institucional da H. Moraes roda nele. Ou seja, este passo nao
+e "comprar e configurar um dominio", e adicionar um subdominio a uma zona que ja
+funciona. Levantado em 25/09, e o que decide onde cada registro entra:
 
-1. Definir `NEXT_PUBLIC_URL=https://<dominio>` nas variaveis de ambiente.
-2. Repetir o passo 3 com o dominio novo (Site URL + Redirect URLs).
+| O que | Valor medido | De onde sai |
+| --- | --- | --- |
+| Registrador / DNS | **Registro.br** | `NS` de `hmoraes.com.br` = `e.sec.dns.br` / `f.sec.dns.br`, e o `SOA` e `hostmaster.registro.br` |
+| Apex (`hmoraes.com.br`) | `A 216.198.79.1` → 308 para `www` | IP anycast da Vercel |
+| `www` | `CNAME f16a85fe47e1b081.vercel-dns-017.com` | ja servindo o site institucional |
+| `pulodogato.hmoraes.com.br` | **NXDOMAIN** | nao existe ainda |
+
+**A zona nao esta na Vercel, esta no Registro.br.** Isso importa: nao da para
+criar o registro pelo painel da Vercel: ela vai *pedir* um registro e ficar
+esperando. Quem cria e o Registro.br.
+
+#### 6.1 Adicionar o dominio no projeto da Vercel (primeiro)
+
+Vercel → projeto `pulodogato` → Settings → Domains → Add → `pulodogato.hmoraes.com.br`.
+
+Ela vai mostrar o registro a criar, quase certamente um `CNAME` para um host
+`*.vercel-dns-017.com`. **Copie o valor que ela mostrar.** O hash do `www`
+(`f16a85fe47e1b081`) e daquele dominio, nao deste -- reaproveita-lo produz um
+dominio que nunca verifica.
+
+Escolha tambem o que fazer com `pulodogato-theta.vercel.app`: manter os dois
+servindo (mais simples, e o que este runbook assume) ou marcar o novo como
+dominio principal e redirecionar o antigo.
+
+#### 6.2 Criar o registro no Registro.br
+
+<https://painel.registro.br> → `hmoraes.com.br` → **DNS** → editar a zona →
+adicionar a linha que a Vercel pediu:
+
+```
+pulodogato    CNAME    <valor-que-a-vercel-mostrou>.
+```
+
+O nome e so `pulodogato` (a zona ja e `hmoraes.com.br`), e o ponto final no
+destino nao e enfeite: sem ele alguns editores concatenam a zona e o destino
+vira `...vercel-dns-017.com.hmoraes.com.br`. Salvar e publicar a zona.
+
+A propagacao costuma levar minutos; o TTL da zona hoje e 3600s, entao no pior
+caso uma hora. O certificado TLS a Vercel emite sozinha depois de ver o
+registro.
+
+Conferir sem browser:
+
+```bash
+curl -s -H 'accept: application/dns-json' \
+  'https://cloudflare-dns.com/dns-query?name=pulodogato.hmoraes.com.br&type=CNAME'
+```
+
+`"Status":3` e NXDOMAIN, ou seja ainda nao propagou. Com `"Status":0` e o CNAME
+da Vercel na resposta, siga.
+
+#### 6.3 Autorizar o dominio no Supabase
+
+Repetir o passo 3 com o dominio novo -- e **este** e o passo que faz o cadastro
+funcionar, nao o DNS:
+
+- **Site URL**: `https://pulodogato.hmoraes.com.br`
+- **Redirect URLs**: `https://pulodogato.hmoraes.com.br/**` e
+  `https://pulodogato-theta.vercel.app/**`
+
+#### 6.4 Opcional: `NEXT_PUBLIC_URL`
+
+Só para as metatags (`metadataBase` em `app/layout.tsx`). Sem ela o app usa
+`VERCEL_PROJECT_PRODUCTION_URL`, que a Vercel preenche com o dominio de
+producao: se o passo 6.1 marcou `pulodogato.hmoraes.com.br` como principal, nao
+ha nada a fazer. Se os dois dominios ficarem servindo e voce quiser que as
+metatags citem sempre o proprio, defina
+`NEXT_PUBLIC_URL=https://pulodogato.hmoraes.com.br` e redeploy.
+
+#### 6.5 Verificar
+
+```bash
+./scripts/verify-deploy.sh https://pulodogato.hmoraes.com.br
+```
+
+E o cadastro de ponta a ponta, que e o objetivo da HMO-157: criar uma conta,
+receber o email, **conferir que o link aponta para `pulodogato.hmoraes.com.br`**,
+clicar, e cair logado no dashboard. O clique passa por `/auth/callback` -- se
+essa rota der 404, o deploy e anterior a HMO-157.
+
+> **O email de confirmacao tem limite baixo.** O SMTP embutido do Supabase e
+> para desenvolvimento: poucos emails por hora por projeto, e ele nao garante
+> entrega. Para uma familia serve; se o cadastro de alguem "nao chega email",
+> conferir Authentication → Logs antes de suspeitar do dominio. SMTP proprio e
+> assunto de outra issue.

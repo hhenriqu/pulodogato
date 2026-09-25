@@ -85,28 +85,29 @@ export function useAuth() {
   };
 
   const signUp = async (email: string, password: string, fullName?: string) => {
-    const { data, error } = await supabase.auth.signUp({
+    const { error } = await supabase.auth.signUp({
       email,
       password,
       options: {
+        // Sem isto o link de confirmacao usa o "Site URL" do projeto Supabase,
+        // que e um valor unico para todos os ambientes: o cadastro feito num
+        // dominio manda o email apontando para OUTRO. Em 22/09 esse campo
+        // estava preenchido com o hostname de uma aplicacao de terceiros, ou
+        // seja o link de confirmacao -- com o token na URL -- saia deste site.
+        // `window.location.origin` faz o link voltar para o dominio em que a
+        // pessoa se cadastrou, seja ele o de producao ou um preview.
+        emailRedirectTo: `${window.location.origin}/auth/callback`,
         data: {
           full_name: fullName,
         },
       },
     });
 
-    // Se o usuário foi criado com sucesso e não há confirmação pendente
-    if (data.user && !error) {
-      // Criar perfil na tabela profiles
-      const { error: profileError } = await supabase.from("profiles").insert({
-        id: data.user.id,
-        full_name: fullName,
-      });
-
-      if (profileError) {
-        console.error("Erro ao criar perfil:", profileError);
-      }
-    }
+    // O perfil NAO nasce aqui. A policy de INSERT de `profiles` e `TO
+    // authenticated`, e com a confirmacao de email ligada o `signUp` nao deixa
+    // sessao nenhuma -- o insert rodava como `anon`, a RLS recusava, o erro ia
+    // para o console e o cadastro terminava sem perfil e sem assinatura. Quem
+    // cria o perfil e `/auth/callback`, depois de trocar o link por sessao.
 
     return { error };
   };
