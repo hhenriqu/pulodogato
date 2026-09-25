@@ -147,31 +147,55 @@ Um 401 **não** descarta e **não** gasta o teto de tentativas: a causa é a
 sessão, não o lançamento, e queimar as dez tentativas numa viagem longa
 transformaria "faça login" em "o seu lançamento virou erro permanente".
 
-## O limite honesto: 24 horas
+## O limite das 24 horas — resolvido
 
-**O app abre offline se você usou aquela tela nas últimas 24 horas.** Depois
-disso aparece a página /offline.
+Até aqui valia: **o app só abria offline se você tivesse usado aquela tela nas
+últimas 24 horas.** Depois disso aparecia a página /offline — no aparelho com o
+app instalado, os 110 chunks precacheados e a fila de lançamentos intacta.
 
-O motivo está no `sw.js`: os documentos de navegação passam pelo cache `others`
-do next-pwa, que é `NetworkFirst` com `maxEntries: 32` e `maxAgeSeconds: 86400`.
-Os **chunks JS** não têm esse problema — eles estão no precache, versionados com
-o build — mas o HTML da tela não está.
+O motivo estava no `sw.js`: os documentos de navegação passavam pelo cache
+`others` do next-pwa, que é `NetworkFirst` com `maxEntries: 32` e
+`maxAgeSeconds: 86400`. Os **chunks JS** nunca tiveram esse problema — eles
+estão no precache, versionados com o build — mas o HTML da tela não estava.
 
-**Por que não foi só aumentar o prazo.** Seria pior. O HTML guardado referencia
-os chunks daquele build pelo nome. Depois de alguns deploys, um HTML de 30 dias
-atrás aponta para chunks que não existem mais em lugar nenhum, e offline isso
-não dá a página /offline: dá uma **tela quebrada**. Trocar "você vê a página de
-offline" por "você vê uma página branca" não é progresso.
+**Aumentar o prazo teria sido pior**, e é por isso que não foi o caminho. O HTML
+guardado referencia os chunks daquele build pelo nome. Depois de alguns deploys,
+um HTML de 30 dias atrás aponta para chunks que não existem mais em lugar
+nenhum, e offline isso não dá a página /offline: dá uma **tela branca**, que é
+onde ninguém consegue investigar.
 
-**O conserto certo** é precachear as telas do dashboard junto com os chunks, no
-mesmo manifesto do build — assim HTML e JS trocam sempre juntos e não têm como
-sair de sincronia. Fica como próximo passo, nomeado, em vez de um prazo maior
-fingindo resolver.
+**O que foi feito.** O HTML das telas entrou no mesmo manifesto de precache dos
+chunks (`lib/pwa-precache.js`, ligado em `next.config.js`). O workbox troca o
+precache como um bloco só: ou tudo do deploy N, ou tudo do N+1 — HTML e JS não
+têm mais como sair de sincronia. Conferido no `sw.js` gerado: 112 entradas, as
+duas rotas com a revisão do commit.
+
+**Duas rotas, não todas as telas.** Só entra rota que tem o que fazer offline:
+
+| rota | por quê |
+| --- | --- |
+| `/dashboard` | a casca. Sem ela o menu não existe e não dá para chegar na tela de lançamento |
+| `/dashboard/personal-finance` | a única que **funciona** offline: catálogo no aparelho + fila |
+
+As outras ficam no cache de 24h de propósito. Uma tela de leitura precacheada
+abre sem rede e imprime **R$ 0,00 com toda a confiança** — o "zero confiante",
+que é pior que a página /offline porque parece um número. Cada tela que entrar
+nessa lista precisa antes saber dizer "estou sem rede" em vez de "você não tem
+nada".
+
+**A armadilha de quem for mexer nisso.** No next-pwa 5.6,
+`additionalManifestEntries` **substitui** a varredura de `public/` em vez de
+somar (`index.js`, linha 142). Quem devolver só as rotas tira do precache o
+`manifest.json`, o `favicon.ico` e os 20 ícones — e o app volta a não ser
+instalável, com build verde e HTTP 200 em todos eles. `npm run
+test:pwa-precache` cobra os arquivos críticos pelo nome, e roda no workflow
+`pwa-assets`.
 
 Vale notar que quase todo `/dashboard/*` é **estático** no build (`○` na saída
 do `next build`): o HTML é uma casca sem dado de usuário, e os dados vêm de
 chamadas do navegador ao Supabase. Guardar essa casca não guarda dado de
-ninguém.
+ninguém — e é por isso que a lista não pode receber rota `ƒ` (dinâmica), que é
+renderizada com o cookie de quem pediu. Há teste para isso.
 
 ## O que a tela diz quando não há rede
 
