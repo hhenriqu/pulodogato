@@ -36,7 +36,16 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { useOfflineQueue } from "@/lib/hooks/useOfflineQueue";
-import { guardarCatalogo, lerCatalogo } from "@/lib/offline-cache";
+import {
+  guardarCatalogo,
+  lerCatalogo,
+  decidirAbertura,
+  type CatalogoDeLancamento,
+} from "@/lib/offline-cache";
+import {
+  classificarFalhaDeAuth,
+  lerSessaoLembrada,
+} from "@/lib/offline-session";
 import {
   Wallet,
   Plus,
@@ -286,13 +295,73 @@ export default function PersonalFinancePage() {
     loadData();
   }, []);
 
+  /**
+   * Repoe na tela o que o aparelho guardou da ultima vez que ela carregou com
+   * rede: o `service_id`, as categorias e as contas.
+   *
+   * Existe como funcao propria porque ha DOIS caminhos sem rede, e so um deles
+   * passa pelo catch -- ver `loadData`.
+   */
+  const reporCatalogo = (catalogo: CatalogoDeLancamento) => {
+    setServiceId(catalogo.serviceId);
+    setCategories(catalogo.categorias as TransactionCategory[]);
+    setAccounts(catalogo.contas);
+    setCatalogoDe(catalogo.guardadoEm);
+    toast.message("Sem conexão: dá para lançar, envio quando a rede voltar.");
+  };
+
+  /** Fim da linha sem rede: nao ha catalogo, e nao ha o que inventar. */
+  const avisarAparelhoVazio = () => {
+    toast.error(
+      "Sem conexão e sem dados no aparelho. Abra esta tela uma vez com internet."
+    );
+  };
+
   const loadData = async () => {
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
+      const { data: dadosDeAuth, error: erroDeAuth } =
+        await supabase.auth.getUser();
 
+      if (!dadosDeAuth?.user) {
+        // ----------------------------------------------------------------
+        // SEM USUARIO NAO QUER DIZER SEM SESSAO
+        // ----------------------------------------------------------------
+        // `getUser()` vai na rede, e quando a rede falha o supabase-js NAO
+        // lanca: ele devolve `user: null` com o erro ao lado. O `if (!user)
+        // return;` que estava aqui saia da funcao ANTES do catch que sabia
+        // repor o catalogo -- entao offline a tela terminava sem categoria,
+        // sem conta, sem `serviceId` e sem usuario, e nada disso aparecia
+        // como erro. Era o "funciona offline mas as categorias nao
+        // carregaram" de 25/09. A tabela de casos esta em `offline-cache.ts`.
+        const abertura = decidirAbertura({
+          usuarioConfirmado: null,
+          origemDaFalha: classificarFalhaDeAuth(erroDeAuth),
+          sessaoLembrada: lerSessaoLembrada(window.localStorage),
+          catalogo: lerCatalogo(window.localStorage),
+        });
+
+        // O servidor respondeu que a sessao nao vale: quem manda para /login e
+        // o layout do dashboard. Nao ha o que repor.
+        if (abertura.decisao === "desistir") return;
+
+        if (abertura.usuario) {
+          // Vem do bilhete, nao do servidor -- e so o suficiente para o
+          // `user_id` da fila e para o submit deixar de recusar por
+          // `if (!user)`. Nenhuma leitura sai daqui: as consultas continuam
+          // indo com o token de verdade e batendo na RLS.
+          setUser({
+            id: abertura.usuario.id,
+            email: abertura.usuario.email ?? undefined,
+          } as User);
+        }
+
+        if (abertura.catalogo) reporCatalogo(abertura.catalogo);
+        else avisarAparelhoVazio();
+
+        return;
+      }
+
+      const user = dadosDeAuth.user;
       setUser(user);
 
       // Carregar categorias de finanças pessoais
@@ -408,20 +477,12 @@ export default function PersonalFinancePage() {
       // usada. E uma tela sem nenhum lancamento, sem aviso de que a lista nao
       // carregou, e o "zero confiante" de que este projeto ja sofreu --
       // parece que os dados sumiram.
+      //
+      // Aqui o usuario ja esta em estado: quem chega neste catch passou pelo
+      // `getUser()` com sucesso e caiu depois, numa das consultas.
       const catalogo = lerCatalogo(window.localStorage);
-
-      if (catalogo) {
-        setServiceId(catalogo.serviceId);
-        setCategories(catalogo.categorias as TransactionCategory[]);
-        setAccounts(catalogo.contas);
-        setCatalogoDe(catalogo.guardadoEm);
-        toast.message("Sem conexão: dá para lançar, envio quando a rede voltar.");
-      } else {
-        // Primeira visita, e sem rede. Nao ha catalogo para inventar.
-        toast.error(
-          "Sem conexão e sem dados no aparelho. Abra esta tela uma vez com internet."
-        );
-      }
+      if (catalogo) reporCatalogo(catalogo);
+      else avisarAparelhoVazio();
     } finally {
       setLoading(false);
     }

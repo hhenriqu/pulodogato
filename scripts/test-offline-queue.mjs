@@ -25,6 +25,7 @@ import {
   guardarCatalogo,
   lerCatalogo,
   esquecerCatalogo,
+  decidirAbertura,
 } from "../.tmp-offline-queue/offline-cache.js";
 
 const ID = "11111111-1111-4111-8111-111111111111";
@@ -463,4 +464,111 @@ test("esquecerCatalogo apaga", () => {
   guardarCatalogo(s, catalogo);
   esquecerCatalogo(s);
   assert.equal(lerCatalogo(s), null);
+});
+
+// ---------------------------------------------------------------------------
+// ABRIR A TELA QUANDO `getUser()` NAO DEU USUARIO (decidirAbertura)
+// ---------------------------------------------------------------------------
+// Esta secao existe por causa de um defeito que chegou em producao com o modo
+// offline INTEIRO funcionando: "funciona offline mas as categorias nao
+// carregaram" (25/09). A fila estava certa, o catalogo estava gravado no
+// aparelho, e mesmo assim o seletor abria vazio.
+//
+// A causa era uma guarda que ninguem leria duas vezes:
+//
+//     const { data: { user } } = await supabase.auth.getUser();
+//     if (!user) return;
+//
+// `getUser()` vai na rede e, quando a rede falha, o supabase-js NAO lanca --
+// devolve `user: null` com o erro ao lado. O `return` seco saia da funcao
+// antes do catch que sabia repor o catalogo. Nada aparecia como erro.
+//
+// A licao que estes testes travam: **"sem usuario" tem quatro causas, e elas
+// pedem quatro comportamentos diferentes.** Enquanto isso fosse um `if` de uma
+// linha dentro da pagina, nao havia onde perguntar "e os outros tres casos?".
+
+const usuario = { id: "u-1", email: "helio@exemplo.com" };
+
+test("servidor confirmou: segue o carregamento normal", () => {
+  const d = decidirAbertura({
+    usuarioConfirmado: usuario,
+    origemDaFalha: "rede",
+    sessaoLembrada: { id: "u-velho", email: null },
+    catalogo,
+  });
+  // Confirmado manda sozinho: nem o bilhete velho nem `origemDaFalha` mudam
+  // isso. E a mesma precedencia de `decidirSessao`.
+  assert.equal(d.decisao, "seguir");
+  assert.equal(d.usuario.id, "u-1");
+});
+
+test("SEM REDE com catalogo guardado: repoe, e este e o caso do defeito", () => {
+  const d = decidirAbertura({
+    usuarioConfirmado: null,
+    origemDaFalha: "rede",
+    sessaoLembrada: usuario,
+    catalogo,
+  });
+  assert.equal(d.decisao, "repor-do-aparelho");
+  // As duas metades precisam voltar juntas: o catalogo enche os seletores, e o
+  // usuario e o `user_id` que a fila exige -- sem ele o submit recusa com
+  // "preencha todos os campos obrigatorios", que e uma mensagem falsa.
+  assert.deepEqual(d.catalogo.categorias, catalogo.categorias);
+  assert.equal(d.usuario.id, "u-1");
+});
+
+test("servidor RECUSOU o token: nao repoe nada, mesmo com catalogo no aparelho", () => {
+  const d = decidirAbertura({
+    usuarioConfirmado: null,
+    origemDaFalha: "recusa",
+    sessaoLembrada: usuario,
+    catalogo,
+  });
+  // Repor aqui seria mostrar as categorias de uma sessao que o proprio
+  // servidor acabou de recusar -- e deixar lancar na fila em nome dela.
+  assert.equal(d.decisao, "desistir");
+  assert.equal(d.catalogo, null);
+  assert.equal(d.usuario, null);
+});
+
+test("sem rede e sem catalogo: avisa, nao abre um formulario vazio", () => {
+  const d = decidirAbertura({
+    usuarioConfirmado: null,
+    origemDaFalha: "rede",
+    sessaoLembrada: usuario,
+    catalogo: null,
+  });
+  assert.equal(d.decisao, "aparelho-vazio");
+});
+
+test("sem rede, com catalogo e SEM bilhete: nao deixa preencher para recusar no fim", () => {
+  // Este e o caso assimetrico, e o unico que nao e obvio. O catalogo sozinho
+  // encheria os seletores, a pessoa preencheria o lancamento inteiro, e so no
+  // envio a fila recusaria por falta de `user_id` -- o pior momento possivel
+  // para descobrir. Melhor dizer antes que falta abrir uma vez com conexao.
+  const d = decidirAbertura({
+    usuarioConfirmado: null,
+    origemDaFalha: "rede",
+    sessaoLembrada: null,
+    catalogo,
+  });
+  assert.equal(d.decisao, "aparelho-vazio");
+  assert.equal(d.catalogo, null);
+});
+
+test("as quatro decisoes sao alcancaveis, e nenhuma outra existe", () => {
+  // Guarda contra o proximo caso esquecido: se alguem acrescentar um valor ao
+  // tipo sem dar um caminho para ele, ou trocar o default silenciosamente,
+  // este teste e o que cobra.
+  const casos = [
+    { usuarioConfirmado: usuario, origemDaFalha: "rede", sessaoLembrada: null, catalogo: null },
+    { usuarioConfirmado: null, origemDaFalha: "recusa", sessaoLembrada: usuario, catalogo },
+    { usuarioConfirmado: null, origemDaFalha: "rede", sessaoLembrada: usuario, catalogo },
+    { usuarioConfirmado: null, origemDaFalha: "rede", sessaoLembrada: null, catalogo: null },
+  ];
+  const vistas = new Set(casos.map((c) => decidirAbertura(c).decisao));
+  assert.deepEqual(
+    [...vistas].sort(),
+    ["aparelho-vazio", "desistir", "repor-do-aparelho", "seguir"]
+  );
 });
