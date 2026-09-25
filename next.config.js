@@ -1,8 +1,26 @@
+const path = require("path");
+const { montarPrecache, revisaoDoDeploy } = require("./lib/pwa-precache");
+
 const withPWA = require("next-pwa")({
   dest: "public",
   register: true,
   skipWaiting: true,
   disable: process.env.NODE_ENV === "development",
+
+  // ---------------------------------------------------------------------
+  // O HTML DAS TELAS QUE ABREM SEM REDE
+  // ---------------------------------------------------------------------
+  // Sem esta chave o next-pwa precacheia todo o JavaScript e NENHUM HTML, e a
+  // navegacao cai na regra `others` do cache padrao: NetworkFirst com 24h e 32
+  // entradas. Passado um dia sem abrir a tela, o app instalado responde com a
+  // pagina /offline -- com os 110 chunks e a fila de lancamentos intactos no
+  // aparelho. O motivo completo, as duas rotas escolhidas e a armadilha de
+  // `additionalManifestEntries` SUBSTITUIR a varredura de `public/` (em vez de
+  // somar) estao em `lib/pwa-precache.js`, com teste.
+  additionalManifestEntries: montarPrecache({
+    publicDir: path.join(__dirname, "public"),
+    revisaoDasRotas: revisaoDoDeploy(),
+  }),
 
   // ---------------------------------------------------------------------
   // A PAGINA /offline EXISTIA E ERA INALCANCAVEL

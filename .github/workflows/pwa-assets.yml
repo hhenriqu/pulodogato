@@ -56,6 +56,14 @@ jobs:
       - name: O guard reprova cada defeito que ja esteve em producao
         run: npm run test:pwa-assets
 
+      # `additionalManifestEntries` SUBSTITUI a varredura de `public/` no
+      # next-pwa 5.6, em vez de somar. Quem mexer em `lib/pwa-precache.js` e
+      # devolver so as rotas tira do precache o manifest e os 20 icones -- e o
+      # app volta a nao ser instalavel, com build verde e 200 em tudo. E o
+      # mesmo modo de falha que motivou este workflow inteiro.
+      - name: O precache leva as telas offline SEM perder os icones
+        run: npm run test:pwa-precache
+
       # Controle negativo. Uma verificacao que nunca viu vermelho nao e
       # verificacao -- e esta, em particular, passaria verde se parasse de
       # achar os arquivos que deve conferir.
