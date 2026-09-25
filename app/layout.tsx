@@ -64,55 +64,34 @@ export const metadata: Metadata = {
     ],
     shortcut: "/favicon.ico",
     apple: [
-      { url: "/icons/icon-152x152.png", sizes: "152x152", type: "image/png" },
-      { url: "/icons/icon-192x192.png", sizes: "192x192", type: "image/png" },
+      {
+        url: "/icons/apple-touch-icon-152x152.png",
+        sizes: "152x152",
+        type: "image/png",
+      },
+      {
+        url: "/icons/apple-touch-icon-180x180.png",
+        sizes: "180x180",
+        type: "image/png",
+      },
     ],
     other: {
       rel: "apple-touch-icon-precomposed",
-      url: "/icons/icon-192x192.png",
+      url: "/icons/apple-touch-icon-180x180.png",
     },
   },
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
     title: "Pulo do Gato",
-    startupImage: [
-      {
-        url: "/splash/apple-splash-2048-2732.png",
-        media:
-          "(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)",
-      },
-      {
-        url: "/splash/apple-splash-1668-2388.png",
-        media:
-          "(device-width: 834px) and (device-height: 1194px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)",
-      },
-      {
-        url: "/splash/apple-splash-1536-2048.png",
-        media:
-          "(device-width: 768px) and (device-height: 1024px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)",
-      },
-      {
-        url: "/splash/apple-splash-1125-2436.png",
-        media:
-          "(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)",
-      },
-      {
-        url: "/splash/apple-splash-1242-2688.png",
-        media:
-          "(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)",
-      },
-      {
-        url: "/splash/apple-splash-750-1334.png",
-        media:
-          "(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)",
-      },
-      {
-        url: "/splash/apple-splash-828-1792.png",
-        media:
-          "(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)",
-      },
-    ],
+    // SEM `startupImage`. Havia sete aqui, todas apontando para /splash/*, e
+    // as sete davam 404 -- o iOS abria no branco. Gerar as sete custaria entre
+    // 1,3 e 3,9 MB commitados (a medida esta em scripts/generate-pwa-icons.mjs)
+    // e cobriria so aparelhos ate o iPhone 11: o iOS exige que a imagem bata
+    // EXATAMENTE com a resolucao fisica, entao todo iPhone recente cairia no
+    // fallback de qualquer forma. O fallback e a cor `background_color` do
+    // manifest, hoje apontada para o creme do proprio logo -- abertura colorida
+    // em todo aparelho, por zero byte.
   },
   formatDetection: {
     telephone: false,
@@ -168,7 +147,6 @@ export default function RootLayout({
           content="black-translucent"
         />
         <meta name="apple-mobile-web-app-title" content="Pulo do Gato" />
-        <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-touch-fullscreen" content="yes" />
 
         {/* Microsoft */}
@@ -178,15 +156,17 @@ export default function RootLayout({
         <meta name="msapplication-navbutton-color" content="#1a1a1a" />
         <meta name="msapplication-starturl" content="/dashboard" />
 
-        {/* General */}
+        {/* General. `mobile-web-app-capable` aparecia duas vezes -- aqui e no
+            bloco de cima. Duplicata nao quebra nada, mas a segunda esconde a
+            primeira de quem for editar. */}
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="application-name" content="Pulo do Gato" />
         <meta name="format-detection" content="telephone=no" />
 
-        {/* Favicons */}
+        {/* Favicons. Nao ha mais <link> para /logo_pulodogato.svg: esse arquivo
+            nunca existiu (so o .png de 1024px), e o Safari que seguisse o link
+            recebia a pagina de 404 no lugar do icone. */}
         <link rel="icon" href="/favicon.ico" sizes="any" />
-        <link rel="icon" type="image/svg+xml" href="/logo_pulodogato.svg" />
-        <link rel="apple-touch-icon" href="/icons/icon-192x192.png" />
         <link
           rel="icon"
           type="image/png"
@@ -205,25 +185,30 @@ export default function RootLayout({
           color="#1a1a1a"
         />
 
-        {/* Additional Apple Touch Icons */}
+        {/* Apple Touch Icons. O iOS ignora o manifest e escolhe daqui: cada
+            tamanho aponta para um arquivo daquele tamanho, em vez de os tres
+            reusarem o icone de 192 -- reescalar no aparelho borra o desenho. */}
         <link
           rel="apple-touch-icon"
-          sizes="152x152"
-          href="/icons/icon-152x152.png"
+          href="/icons/apple-touch-icon-180x180.png"
         />
         <link
           rel="apple-touch-icon"
-          sizes="180x180"
-          href="/icons/icon-192x192.png"
+          sizes="152x152"
+          href="/icons/apple-touch-icon-152x152.png"
         />
         <link
           rel="apple-touch-icon"
           sizes="167x167"
-          href="/icons/icon-192x192.png"
+          href="/icons/apple-touch-icon-167x167.png"
+        />
+        <link
+          rel="apple-touch-icon"
+          sizes="180x180"
+          href="/icons/apple-touch-icon-180x180.png"
         />
 
         {/* Preload critical resources */}
-        <link rel="preload" href="/icons/icon-192x192.png" as="image" />
         <link rel="dns-prefetch" href="//fonts.googleapis.com" />
       </head>
       <body className={inter.className}>

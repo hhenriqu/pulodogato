@@ -87,3 +87,13 @@ next-env.d.ts
 
 # saida do `npm run test:cash-flow` (idem, com reescrita de alias depois)
 /.tmp-cash-flow/
+
+# As tres abaixo faltavam: os diretorios eram gerados a cada `npm run test:*` e
+# ficavam aparecendo como nao rastreados no `git status`, onde escondem mudanca
+# de verdade e convidam a um `git add .` que commita saida de build.
+/.tmp-anomalies/
+/.tmp-variable-spend/
+/.tmp-cron-ledger/
+
+# saida do `npm run test:pwa-install`
+/.tmp-pwa-install/
