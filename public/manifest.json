@@ -2,8 +2,8 @@
   "name": "Pulo do Gato - Investimentos",
   "short_name": "Pulo do Gato",
   "description": "Aplicativo para controle inteligente de investimentos financeiros",
-  "theme_color": "#1a1a1a",
-  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "background_color": "#faf4e9",
   "display": "standalone",
   "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
   "orientation": "any",
@@ -13,22 +13,6 @@
   "lang": "pt-BR",
   "dir": "ltr",
   "categories": ["finance", "productivity", "business"],
-  "screenshots": [
-    {
-      "src": "/screenshots/desktop-wide.png",
-      "sizes": "1280x720",
-      "type": "image/png",
-      "form_factor": "wide",
-      "label": "Dashboard principal no desktop"
-    },
-    {
-      "src": "/screenshots/mobile-narrow.png",
-      "sizes": "390x844",
-      "type": "image/png",
-      "form_factor": "narrow",
-      "label": "Dashboard principal no mobile"
-    }
-  ],
   "icons": [
     {
       "src": "/icons/icon-16x16.png",
@@ -52,73 +36,98 @@
       "src": "/icons/icon-72x72.png",
       "sizes": "72x72",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
       "src": "/icons/icon-96x96.png",
       "sizes": "96x96",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
       "src": "/icons/icon-128x128.png",
       "sizes": "128x128",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
       "src": "/icons/icon-144x144.png",
       "sizes": "144x144",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
       "src": "/icons/icon-152x152.png",
       "sizes": "152x152",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
       "src": "/icons/icon-192x192.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
       "src": "/icons/icon-384x384.png",
       "sizes": "384x384",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
       "src": "/icons/icon-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-maskable-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/icon-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ],
   "shortcuts": [
     {
-      "name": "Nova Transação",
-      "short_name": "Transação",
-      "description": "Adicionar uma nova transação",
-      "url": "/dashboard/transactions/new",
+      "name": "Transações",
+      "short_name": "Transações",
+      "description": "Ver e lançar transações",
+      "url": "/dashboard/transactions",
       "icons": [
         {
-          "src": "/icons/shortcut-transaction.png",
+          "src": "/icons/shortcut-transactions.png",
           "sizes": "96x96",
           "type": "image/png"
         }
       ]
     },
     {
-      "name": "Portfólio",
-      "short_name": "Portfólio",
-      "description": "Ver carteira de investimentos",
-      "url": "/dashboard/portfolio",
+      "name": "Fluxo de Caixa",
+      "short_name": "Fluxo",
+      "description": "Em que dia o saldo fica negativo",
+      "url": "/dashboard/cash-flow",
       "icons": [
         {
-          "src": "/icons/shortcut-portfolio.png",
+          "src": "/icons/shortcut-cash-flow.png",
+          "sizes": "96x96",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Assinaturas",
+      "short_name": "Assinaturas",
+      "description": "Recorrências detectadas e total mensal",
+      "url": "/dashboard/recurrences",
+      "icons": [
+        {
+          "src": "/icons/shortcut-recurrences.png",
           "sizes": "96x96",
           "type": "image/png"
         }

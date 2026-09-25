@@ -11,7 +11,9 @@
     "check-table-drift": "node scripts/check-table-drift.mjs",
     "check-color-tokens": "node scripts/check-color-tokens.mjs",
     "check-tests-in-ci": "node scripts/check-tests-in-ci.mjs",
-    "pre-commit": "npm run check-table-drift && npm run check-color-tokens && npm run check-tests-in-ci && npm run check-prd && npm run lint",
+    "check-pwa-assets": "node scripts/check-pwa-assets.mjs",
+    "generate-pwa-icons": "node scripts/generate-pwa-icons.mjs",
+    "pre-commit": "npm run check-table-drift && npm run check-color-tokens && npm run check-tests-in-ci && npm run check-pwa-assets && npm run check-prd && npm run lint",
     "type-check": "tsc --noEmit",
     "verify:crons": "bash scripts/verify-crons.sh",
     "test:recurrence-detector": "tsc -p scripts/tsconfig.recurrence-detector-test.json && node --test scripts/test-recurrence-detector.mjs",
@@ -29,7 +31,10 @@
     "test:anomalies": "rm -rf .tmp-anomalies && tsc -p scripts/tsconfig.anomalies-test.json && node scripts/resolve-aliases.mjs .tmp-anomalies lib && node --test scripts/test-anomalies.mjs",
     "test:cash-flow": "rm -rf .tmp-cash-flow && tsc -p scripts/tsconfig.cash-flow-test.json && node scripts/resolve-aliases.mjs .tmp-cash-flow lib && node --test scripts/test-cash-flow-forecast.mjs",
     "test:variable-spend": "rm -rf .tmp-variable-spend && tsc -p scripts/tsconfig.variable-spend-test.json && node scripts/resolve-aliases.mjs .tmp-variable-spend lib && node --test scripts/test-variable-spend.mjs",
-    "test:cron-ledger": "rm -rf .tmp-cron-ledger && tsc -p scripts/tsconfig.cron-ledger-test.json && node scripts/resolve-aliases.mjs .tmp-cron-ledger lib && node --test scripts/test-cron-ledger.mjs"
+    "test:cron-ledger": "rm -rf .tmp-cron-ledger && tsc -p scripts/tsconfig.cron-ledger-test.json && node scripts/resolve-aliases.mjs .tmp-cron-ledger lib && node --test scripts/test-cron-ledger.mjs",
+    "test:png": "node --test scripts/test-png.mjs",
+    "test:pwa-assets": "node --test scripts/test-pwa-assets.mjs",
+    "test:pwa-install": "rm -rf .tmp-pwa-install && tsc lib/pwa-install.ts --outDir .tmp-pwa-install --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-pwa-install.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
