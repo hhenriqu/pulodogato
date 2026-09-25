@@ -29,8 +29,23 @@
 # em maos esta sonda para no 401 e nunca executa o corpo da rota -- entao ela
 # nao consegue ver schema faltando, RLS errada, nem qualquer erro de runtime.
 # Os tres crons podem dar 401 verdinho aqui e mesmo assim estourar 500 quando a
-# Vercel dispara com o Bearer certo. O unico lugar que mostra isso e o log da
-# funcao no painel (Project > Cron Jobs -> o job -> a execucao).
+# Vercel dispara com o Bearer certo.
+#
+# A OUTRA METADE DA VERIFICACAO (HMO-156 / migration 019)
+#
+# Desde a 019 isso nao depende mais do painel: cada execucao que atravessa o
+# guard de auth grava uma linha em `cron_runs`, inclusive quando nao havia nada
+# a fazer. As duas verificacoes sao complementares e nenhuma substitui a outra:
+#
+#   este script -> a rota esta ARMADA? (variaveis existem, guard responde)
+#   cron_runs   -> a rota FOI CHAMADA, e como terminou?
+#
+#   psql "$SUPABASE_DB_URL_RO" -f scripts/hmo156-prove-crons.sql
+#
+# O caminho 503 continua sendo exclusividade DESTE script, e por construcao:
+# gravar em `cron_runs` exige a service_role, que e uma das variaveis cuja
+# ausencia produz o 503 -- um cron nessa situacao nao teria com o que gravar
+# que nao consegue gravar.
 #
 # Foi assim que a HMO-152 apareceu: os tres crons responderam 503 desde que
 # nasceram (o de vencimento desde a HMO-141), entao nenhum deles jamais avisou
@@ -205,9 +220,13 @@ if [[ "$failures" -eq 0 ]]; then
   echo "TUDO OK -- os ${#CRON_PATHS[@]} crons estao armados (401 para anonimo)."
   echo "Isso prova que as variaveis existem -- e SO isso. O guard de auth vem"
   echo "antes do banco, entao esta sonda para no 401 sem executar o corpo da"
-  echo "rota: migration faltando e erro de runtime nao aparecem aqui. Que a"
-  echo "Vercel DISPAROU o job, e que ele terminou bem, so o painel mostra"
-  echo "(Project > Cron Jobs > a execucao > log da funcao)."
+  echo "rota: migration faltando e erro de runtime nao aparecem aqui."
+  echo
+  echo "Para saber se a Vercel DISPAROU o job, e como ele terminou:"
+  echo "  psql \"\$SUPABASE_DB_URL_RO\" -f scripts/hmo156-prove-crons.sql"
+  echo "Cada execucao que passa do guard grava uma linha em cron_runs (019) --"
+  echo "inclusive quando nao havia nada a fazer, que e o caso que distingue um"
+  echo "cron ocioso de um cron que nunca foi chamado."
 else
   echo "$failures checagem(ns) falharam."
 fi

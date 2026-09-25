@@ -44,6 +44,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { enviarPush } from "@/lib/services/notifications";
+import { comRegistro } from "@/lib/services/cron-ledger";
 import {
   alertasDasRecorrencias,
   COLUNAS_PARA_ALERTA,
@@ -83,8 +84,15 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
   }
 
-  try {
-    const admin = createClient(url as string, serviceRole as string, {
+  // O `faltando` acima ja garantiu que as duas existem, mas o TypeScript nao
+  // enxerga isso atraves do array -- dai o estreitamento explicito aqui.
+  const env = { url: url as string, serviceRole: serviceRole as string };
+
+  // Daqui para baixo toda saida passa pelo livro-razao (`cron_runs`, 019) --
+  // inclusive o "nao havia nada a fazer", que e o caso normal e o unico que
+  // distingue um cron ocioso de um cron que nunca foi chamado.
+  const saida = await comRegistro("recurrence-alerts", env, async () => {
+    const admin = createClient(env.url, env.serviceRole, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
 
@@ -99,7 +107,7 @@ export async function GET(request: NextRequest) {
 
     if (error) {
       console.error("Cron: erro ao ler detected_recurrences:", error);
-      return NextResponse.json({ error: "Falha ao ler as assinaturas" }, { status: 500 });
+      return { status: 500, body: { error: "Falha ao ler as assinaturas" } };
     }
 
     const lista = (recorrencias ?? []) as unknown as Array<
@@ -107,7 +115,7 @@ export async function GET(request: NextRequest) {
     >;
 
     if (lista.length === 0) {
-      return NextResponse.json({ ok: true, avisos: 0, push: 0, usuarios: 0 });
+      return { status: 200, body: { ok: true, avisos: 0, push: 0, usuarios: 0 } };
     }
 
     // Agrupar por usuario e nao varrer por linha: `alertasDasRecorrencias` faz
@@ -141,13 +149,16 @@ export async function GET(request: NextRequest) {
     }
 
     if (linhas.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        avisos: 0,
-        push: 0,
-        usuarios: porUsuario.size,
-        falhas: falhas.length,
-      });
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          avisos: 0,
+          push: 0,
+          usuarios: porUsuario.size,
+          falhas: falhas.length,
+        },
+      };
     }
 
     // Gravar ANTES de mandar o push e deliberado, igual ao bill-alerts: se a
@@ -164,7 +175,7 @@ export async function GET(request: NextRequest) {
 
     if (erroGravar) {
       console.error("Cron: erro ao gravar avisos de assinatura:", erroGravar);
-      return NextResponse.json({ error: "Falha ao gravar os avisos" }, { status: 500 });
+      return { status: 500, body: { error: "Falha ao gravar os avisos" } };
     }
 
     const novos = gravados ?? [];
@@ -199,21 +210,23 @@ export async function GET(request: NextRequest) {
         );
     }
 
-    return NextResponse.json({
-      ok: true,
-      avisos: novos.length,
-      ja_avisados: linhas.length - novos.length,
-      push: enviados,
-      usuarios: porUsuario.size,
-      falhas: falhas.length,
-      assinaturas_removidas: removidos,
-      push_desligado: pushDesligado,
-      // O corte tem que aparecer na resposta: sem isto o cron avisaria um pedaco
-      // da base e sairia verde. Ver MAX_RECORRENCIAS.
-      truncated: lista.length >= MAX_RECORRENCIAS,
-    });
-  } catch (error) {
-    console.error("Cron: erro inesperado nos alertas de assinatura:", error);
-    return NextResponse.json({ error: "Erro interno" }, { status: 500 });
-  }
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        avisos: novos.length,
+        ja_avisados: linhas.length - novos.length,
+        push: enviados,
+        usuarios: porUsuario.size,
+        falhas: falhas.length,
+        assinaturas_removidas: removidos,
+        push_desligado: pushDesligado,
+        // O corte tem que aparecer na resposta: sem isto o cron avisaria um pedaco
+        // da base e sairia verde. Ver MAX_RECORRENCIAS.
+        truncated: lista.length >= MAX_RECORRENCIAS,
+      },
+    };
+  });
+
+  return NextResponse.json(saida.body, { status: saida.status });
 }

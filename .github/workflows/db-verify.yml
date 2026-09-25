@@ -12,9 +12,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -414,6 +414,32 @@ jobs:
       - name: 018 e idempotente
         run: $PSQL -f database/migrations/018_goal_monthly_contribution.sql
 
+      - name: 019_cron_runs
+        run: $PSQL -f database/migrations/019_cron_runs.sql
+
+      # Re-executavel: o IF NOT EXISTS de cada CHECK e o DO/IF da policy tem
+      # que atravessar a segunda passada sem erro. A policy tem um ramo a mais
+      # que os outros arquivos -- ela so nasce se o papel `paperclip_ro`
+      # existir, e aqui ele NAO existe (e credencial de producao). Este step
+      # exercita justamente o ramo do RAISE NOTICE.
+      - name: 019 e idempotente
+        run: $PSQL -f database/migrations/019_cron_runs.sql
+
+      # O livro-razao das execucoes de cron. O que so o Postgres pega:
+      #
+      #   - o CHECK de `job` tem que bater com os quatro `crons[].path` do
+      #     vercel.json. Um job renomeado no vercel.json e esquecido aqui grava
+      #     sob nome que a consulta de auditoria nunca procura -- e a ausencia
+      #     seria lida como "nao rodou";
+      #   - `finished_at >= started_at` recusa a linha que o relogio para tras
+      #     produziria, e como a gravacao nao derruba a rota de proposito, essa
+      #     recusa sumiria em silencio;
+      #   - NAO pode haver indice unico: duas execucoes do mesmo job no mesmo
+      #     dia sao evento real no plano Hobby (+-59min de folga), e um unique
+      #     apagaria justamente a evidencia da execucao dupla.
+      - name: Livro-razao de cron aceita a execucao ociosa e recusa o resto
+        run: $PSQL -f database/tests/cron_runs_test.sql
+
       # O alvo mensal da meta e a quinta parcela do "quanto posso gastar". O que
       # so o Postgres pega aqui:
       #
@@ -622,6 +648,18 @@ jobs:
       # mediana o engolia e o teste passava verde sem provar nada.
       - name: Gasto variavel do dia a dia
         run: npm run test:variable-spend
+
+      # O livro-razao das execucoes de cron (019). O que esta suite protege e
+      # uma linha so: a execucao OCIOSA tem que ser registrada. Se ela parar de
+      # gravar, um cron morto e um cron sem trabalho voltam a ser
+      # indistinguiveis no banco -- que e como a HMO-152 escondeu tres crons em
+      # 503 por semanas. Os 25 mutantes de scripts/mutantes-cron-ledger.mjs
+      # morreram; dois deles so depois de o teste ganhar assercao nova (o
+      # http_status exato e o createClient que estoura antes do fetch), e um
+      # terceiro foi trocado por ser equivalente -- o `throw` caia dentro do
+      # proprio try e o catch devolvia um objeto identico.
+      - name: Livro-razao das execucoes de cron
+        run: npm run test:cron-ledger
 
       # A leitura do extrato e 100% TypeScript e o SQL nao alcanca nada dela.
       # Tres coisas erram em silencio aqui: parseFloat("1.234,56") = 1.234 (um
