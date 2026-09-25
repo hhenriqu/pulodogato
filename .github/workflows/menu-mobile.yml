@@ -1,0 +1,78 @@
+name: menu-mobile
+
+# Prova, a cada PR, a regra que a HMO-161 pediu em uma linha: existe X na tela
+# quando, e somente quando, o menu do celular esta aberto.
+#
+# O bug que originou isto era invisivel para todo o resto do CI. O X da gaveta
+# era renderizado sempre e posicionado FORA dos limites do painel; com a gaveta
+# fechada, a translacao levava o painel para fora da tela e o botao reaparecia
+# em cima do hamburguer do header. Compila, nao ha erro de runtime, nenhum teste
+# reclama -- o unico sintoma e visual, e so no celular.
+#
+# SEM FILTRO DE `paths`, pelo mesmo motivo do configuracoes.yml: o cromo do menu
+# depende de tres arquivos em dois diretorios (components/MobileMenuChrome.tsx,
+# components/ui/button.tsx e lib/utils.ts), e o botao do header vive num quarto.
+# Um filtro que liste os tres perde o dia em que alguem mexer no quarto. O teste
+# renderiza HTML em memoria, roda em segundos e nao precisa de banco, entao pode
+# ser obrigatorio em todo PR sem virar pedagio.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  menu-mobile:
+    name: o X aparece so com o menu aberto
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      # O `--include=dev` e explicito porque um ambiente com NODE_ENV=production
+      # poda as devDeps na instalacao e o tsc some sem mensagem que explique.
+      - run: npm ci --include=dev
+
+      - name: Um controle na tela por vez, e o X so com a gaveta aberta
+        run: npm run test:menu-mobile
+
+      # Controle negativo. O teste renderiza o componente e conta icones no
+      # HTML -- ou seja, ele passa a sair VERDE se parar de achar o que deveria
+      # contar. Uma verificacao que nunca viu vermelho nao e verificacao.
+      #
+      # Plantamos aqui os dois defeitos que a HMO-161 corrigiu, nas formas
+      # exatas em que eles existiam, e exigimos vermelho nos dois.
+      - name: A verificacao do menu sabe falhar
+        run: |
+          set -uo pipefail
+          cp components/MobileMenuChrome.tsx components/MobileMenuChrome.tsx.orig
+          trap 'mv components/MobileMenuChrome.tsx.orig components/MobileMenuChrome.tsx' EXIT
+
+          # 1) O X renderizado sempre, sem depender do estado. Era assim antes:
+          #    a gaveta ficava montada o tempo todo e o botao junto com ela.
+          sed -i 's|  if (!aberto) return null;|  // defeito plantado|' components/MobileMenuChrome.tsx
+          if npm run test:menu-mobile > /dev/null 2>&1; then
+            echo "::error::A verificacao passou verde com o X renderizado tambem com o menu fechado."
+            exit 1
+          fi
+          cp components/MobileMenuChrome.tsx.orig components/MobileMenuChrome.tsx
+
+          # 2) O X de volta para fora do painel, por margem negativa. Este e o
+          #    defeito mudo: com o gate acima intacto, o X so aparece com o menu
+          #    aberto -- e ainda assim fica inalcancavel em tela de 320px, onde o
+          #    painel ocupa a largura inteira e empurra o botao para fora da area
+          #    visivel. Sem X alcancavel e com o veu todo coberto, a gaveta nao
+          #    fecha mais.
+          sed -i 's|className="absolute top-0 right-0 pt-3 pr-3"|className="absolute top-0 right-0 -mr-12 pt-2"|' components/MobileMenuChrome.tsx
+          if npm run test:menu-mobile > /dev/null 2>&1; then
+            echo "::error::A verificacao passou verde com o X posicionado fora do painel."
+            exit 1
+          fi
+
+          echo "A verificacao fica vermelha nos dois defeitos."

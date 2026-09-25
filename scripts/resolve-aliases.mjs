@@ -21,12 +21,37 @@
 import { readdirSync, readFileSync, writeFileSync, statSync } from "node:fs";
 import { join, relative, dirname } from "node:path";
 
-const [destino, raizAlias] = process.argv.slice(2);
+const argumentos = process.argv.slice(2);
+const espelhaRaiz = argumentos.includes("--espelha-raiz");
+const [destino, raizAlias] = argumentos.filter((a) => !a.startsWith("--"));
 
 if (!destino || !raizAlias) {
-  console.error("uso: node scripts/resolve-aliases.mjs <dir-compilado> <raiz-do-alias>");
+  console.error(
+    "uso: node scripts/resolve-aliases.mjs <dir-compilado> <raiz-do-alias> [--espelha-raiz]",
+  );
   process.exit(1);
 }
+
+// ---------------------------------------------------------------------------
+// ONDE A RAIZ DO ALIAS CAI DENTRO DO DIRETORIO COMPILADO
+// ---------------------------------------------------------------------------
+// Sem a flag: o tsc recebeu apenas arquivos de UMA raiz (todos os testes de
+// lib/ sao assim), entao ele calcula o rootDir como essa propria raiz e emite
+// `.tmp-x/services/reports.js` para `lib/services/reports.ts`. O prefixo `lib/`
+// desaparece na emissao, e o alias tem que perde-lo tambem.
+//
+// Com a flag: a suite compila arquivos de DUAS raizes -- o teste do menu mobile
+// puxa components/ e lib/ juntos, porque components/ui/button.tsx importa
+// lib/utils.ts. O rootDir comum passa a ser a raiz do repositorio, a emissao
+// vira `.tmp-x/components/...` e `.tmp-x/lib/...`, e agora o prefixo PRECISA
+// ser mantido.
+//
+// A flag e explicita de proposito: adivinhar o layout olhando se o diretorio
+// existe daria uma resposta plausivel e errada no dia em que as duas formas
+// coexistirem, e o sintoma seria ERR_MODULE_NOT_FOUND num teste que passou a
+// vida inteira verde.
+// ---------------------------------------------------------------------------
+const prefixoEmitido = espelhaRaiz ? raizAlias : "";
 
 function arquivosJs(dir) {
   return readdirSync(dir).flatMap((nome) => {
@@ -46,7 +71,7 @@ for (const arquivo of arquivosJs(destino)) {
   const novo = original.replace(
     new RegExp(`(["'])@/${raizAlias}/([^"']+)\\1`, "g"),
     (_todo, aspas, alvo) => {
-      let rel = relative(dirname(arquivo), join(destino, alvo));
+      let rel = relative(dirname(arquivo), join(destino, prefixoEmitido, alvo));
       if (!rel.startsWith(".")) rel = `./${rel}`;
       return `${aspas}${rel}.js${aspas}`;
     },

@@ -44,7 +44,8 @@
     "test:pwa-precache": "node --test scripts/test-pwa-precache.mjs",
     "test:offline-leitura": "rm -rf .tmp-offline-leitura && tsc lib/offline-leitura.ts --outDir .tmp-offline-leitura --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-offline-leitura.mjs",
     "test:pwa-runtime-cache": "node --test scripts/test-pwa-runtime-cache.mjs",
-    "test:home-cta": "node --test scripts/test-home-cta-layout.mjs"
+    "test:home-cta": "node --test scripts/test-home-cta-layout.mjs",
+    "test:menu-mobile": "rm -rf .tmp-menu-mobile && tsc -p scripts/tsconfig.menu-mobile-test.json && node scripts/resolve-aliases.mjs .tmp-menu-mobile components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-menu-mobile lib --espelha-raiz && node --test scripts/test-menu-mobile.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
