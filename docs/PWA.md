@@ -112,6 +112,11 @@ confere que os arquivos existem e têm a dimensão anunciada.
 O que ele **não** cobre: se o ícone está bonito, e se o service worker está
 cacheando o que deveria.
 
+Desde a HMO-145 ele também confere que `next.config.js` declara
+`fallbacks.document` e que a rota apontada tem `page.tsx` — sem essa chave o
+next-pwa desliga os desvios em silêncio e a página `/offline` fica
+inalcançável. O detalhe está em [`docs/OFFLINE.md`](OFFLINE.md).
+
 ## Testar de verdade
 
 Rota 200 não prova tela instalável. Para conferir o critério real, baixe o

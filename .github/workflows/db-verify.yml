@@ -12,9 +12,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/ensure-profile.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/ensure-profile.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -691,6 +691,26 @@ jobs:
       # lancamento -- um deles some do app para sempre.
       - name: Leitura de extrato OFX/CSV e conciliacao
         run: npm run test:statement
+
+      # Ficar sem sinal DESLOGAVA a pessoa: `getUser()` sempre vai na rede, a
+      # falha virava `user = null` e o layout empurrava para /login -- uma tela
+      # que, offline, nao tem como funcionar. A suite prende a distincao que o
+      # codigo antigo nao fazia: a rede falhando e uma coisa, o servidor dizendo
+      # "essa sessao nao vale" e outra. Inclui o caso do auth do Supabase em
+      # 5xx, que nao pode deslogar a base inteira numa instabilidade de minutos.
+      - name: Sessao sem rede (o offline nao desloga, a recusa desloga)
+        run: npm run test:offline-session
+
+      # A fila de lancamentos feitos sem rede, onde os dois erros possiveis sao
+      # os dois caros: reenviar uma linha ja gravada cobra o almoco duas vezes,
+      # e tratar o reenvio bem-sucedido como falha (ele volta SEM erro e com
+      # ZERO linhas, por causa do ON CONFLICT DO NOTHING) prende a fila para
+      # sempre. Cobre tambem o sinal -- despesa e gravada negativa aqui -- e o
+      # catalogo local, sem o qual o formulario offline abre sem categoria
+      # nenhuma e nao da para lancar nada. 16 de 18 mutantes mortos; os dois
+      # sobreviventes sao no-op, explicados no cabecalho da suite de sessao.
+      - name: Fila de lancamentos offline e catalogo local
+        run: npm run test:offline-queue
 
       - name: Nenhuma tabela pode ficar sem RLS
         run: |

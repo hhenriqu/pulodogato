@@ -1,0 +1,22 @@
+{
+  "//": "Build so do teste. Os dois modulos saem juntos porque a suite e a mesma: a fila guarda o lancamento e o catalogo e o que permite preencher o formulario sem rede -- um sem o outro nao entrega o modo offline. Ver o comentario gemeo em tsconfig.cron-ledger-test.json.",
+  "compilerOptions": {
+    "outDir": "../.tmp-offline-queue",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
+  },
+  "include": [
+    "../lib/offline-queue.ts",
+    "../lib/offline-cache.ts"
+  ]
+}

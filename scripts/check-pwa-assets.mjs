@@ -33,6 +33,7 @@ import { lerDimensoes } from "./png.mjs";
 const MANIFEST = "public/manifest.json";
 const LAYOUT = "app/layout.tsx";
 const BROWSERCONFIG = "public/icons/browserconfig.xml";
+const NEXT_CONFIG = "next.config.js";
 
 /** Menor lado que o Chrome aceita como icone instalavel. */
 const LADO_MINIMO_INSTALAVEL = 192;
@@ -238,6 +239,55 @@ function conferirAtalhos(manifest, rotas) {
   }
 }
 
+/**
+ * A pagina /offline continua ALCANCAVEL?
+ *
+ * Ela existiu por meses sem que nada navegasse ate ela. O next-pwa so registra
+ * o desvio quando `fallbacks.document` esta declarado -- com o default (`{}`)
+ * ele procura por `pages/_offline.*`, nao acha (este projeto e App Router, nao
+ * existe diretorio `pages/`), desliga os fallbacks EM SILENCIO e nao imprime
+ * nada no log do build. O resultado e um app que, sem rede, mostra a tela de
+ * erro do proprio navegador, com a nossa pagina de offline pronta e nunca
+ * alcancada.
+ *
+ * E o mesmo defeito dos icones, da mesma familia: o arquivo existe, o caminho
+ * parece configurado, e a peca que ligaria os dois nao esta la.
+ *
+ * O que esta verificacao NAO cobre: que o build realmente gerou o
+ * `fallback-*.js` e o ligou nas rotas do service worker. Isso exigiria rodar o
+ * `next build`, que este job nao faz de proposito -- ele e Node puro e roda em
+ * segundos. O que ela cobre e o modo de falha realista: alguem tirar a chave,
+ * ou renomear a rota e deixar a configuracao apontando para o vazio.
+ */
+function conferirFallbackOffline(rotas) {
+  const config = readFileSync(NEXT_CONFIG, "utf8");
+
+  // Regex, e nao `require()` do config: ele chama o next-pwa na primeira linha,
+  // e carrega-lo aqui arrastaria o webpack inteiro para dentro de um guard que
+  // precisa rodar sem `npm ci`.
+  const m = config.match(
+    /fallbacks\s*:\s*\{[^}]*document\s*:\s*["'`]([^"'`]+)["'`]/s
+  );
+
+  if (!m) {
+    reclamar(
+      NEXT_CONFIG,
+      "sem `fallbacks: { document: ... }` -- o next-pwa nao registra desvio " +
+        "nenhum e a pagina /offline fica inalcancavel: sem rede o usuario ve a " +
+        "tela do navegador, nao a nossa"
+    );
+    return;
+  }
+
+  const rota = m[1].split("?")[0].replace(/\/$/, "");
+  if (!rotas.has(rota)) {
+    reclamar(
+      NEXT_CONFIG,
+      `fallbacks.document aponta para ${m[1]} -- nao ha page.tsx para essa rota`
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 
 function main() {
@@ -286,6 +336,7 @@ function main() {
 
   conferirInstalabilidade(manifest);
   conferirAtalhos(manifest, rotas);
+  conferirFallbackOffline(rotas);
 
   if (problemas.length) {
     console.error(`\ncheck-pwa-assets: ${problemas.length} problema(s)\n`);

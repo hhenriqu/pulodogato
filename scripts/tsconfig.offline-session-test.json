@@ -1,0 +1,15 @@
+{
+  "//": "Build so do teste. Ver o comentario gemeo em tsconfig.cron-ledger-test.json: o passo resolve-aliases fica no npm script mesmo sem import por alias hoje, para que o dia em que houver um nao quebre com ERR_MODULE_NOT_FOUND.",
+  "compilerOptions": {
+    "outDir": "../.tmp-offline-session",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/offline-session.ts"]
+}

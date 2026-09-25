@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/hooks/useAuth";
 import Sidebar from "@/components/Sidebar";
 import { DashboardHeader } from "@/components/DashboardHeader";
+import { OfflineBanner } from "@/components/OfflineBanner";
 
 export default function DashboardLayout({
   children,
@@ -64,6 +65,16 @@ export default function DashboardLayout({
       <div className="lg:pl-64 print:pl-0">
         {/* Espaço para o header fixo -- no papel nao ha header fixo. */}
         <div className="h-16 lg:h-12 print:hidden"></div>
+        {/*
+          O aviso de "sem conexao / lancamentos esperando" mora aqui, e nao
+          dentro de cada tela, por dois motivos: ele vale para o app inteiro, e
+          o layout e o unico lugar que continua montado quando a pessoa navega
+          entre as telas -- dentro de uma pagina o aviso sumiria e voltaria a
+          cada clique, junto com a releitura da fila.
+
+          Ele se esconde sozinho quando ha rede e a fila esta vazia.
+        */}
+        <OfflineBanner />
         <main className="py-6 px-4 sm:px-6 lg:px-8 print:p-0">{children}</main>
       </div>
     </div>
