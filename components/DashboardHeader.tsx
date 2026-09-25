@@ -2,8 +2,7 @@
 
 import { User } from "@supabase/supabase-js";
 import { NotificationBell } from "@/components/ui/notifications";
-import { Menu, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { MobileMenuToggle } from "@/components/MobileMenuChrome";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
 interface DashboardHeaderProps {
@@ -22,17 +21,10 @@ export function DashboardHeader({
       {/* Mobile Header */}
       <div className="lg:hidden fixed top-0 left-0 right-0 z-40 bg-card border-b shadow-sm">
         <div className="flex items-center justify-between px-4 py-3">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-          >
-            {isMobileMenuOpen ? (
-              <X className="h-6 w-6" />
-            ) : (
-              <Menu className="h-6 w-6" />
-            )}
-          </Button>
+          <MobileMenuToggle
+            aberto={isMobileMenuOpen}
+            onToggle={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+          />
 
           <h1 className="text-lg font-bold text-foreground">PulodoGato</h1>
 

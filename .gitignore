@@ -121,3 +121,5 @@ next-env.d.ts
 # gerado pelo next-pwa a cada build (fallbacks), como o sw.js acima
 /public/fallback-*.js
 /public/fallback-*.js.map
+# saida do `npm run test:menu-mobile` (tsx compilado para o react-dom/server)
+/.tmp-menu-mobile/

@@ -31,12 +31,19 @@ const ALLOWED = [
     reason: "veu/overlay translucido",
   },
   {
-    // Conteudo sobre uma cor propria (chip da categoria, veu do menu), onde o
-    // fundo nao vem do tema.
+    // Conteudo sobre uma cor propria (chip da categoria, tela de carregamento),
+    // onde o fundo nao vem do tema.
+    //
+    // O Sidebar saiu desta lista na HMO-161. A excecao dele era o X do menu
+    // mobile, que flutuava sobre o veu escuro e por isso era claro nos dois
+    // temas. O botao passou a morar DENTRO do painel, cujo fundo VEM do tema --
+    // e ali a mesma cor fixa fica invisivel no tema claro. O X agora vive em
+    // components/MobileMenuChrome.tsx, que nao esta em nenhuma excecao: se
+    // alguem reintroduzir a cor fixa junto com a posicao antiga, esta guarda
+    // reprova.
     test: (cls, file) =>
       ["text-white", "ring-white", "border-white", "bg-black"].includes(cls) &&
       [
-        "components/Sidebar.tsx",
         "components/ui/LoadingScreen.tsx",
         "app/(dashboard)/dashboard/personal-finance/page.tsx",
       ].includes(file),

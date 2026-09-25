@@ -7,6 +7,10 @@ import { createClient } from "@/utils/supabase/client";
 import { useSubscription } from "@/lib/hooks/useSubscription";
 import { PlanFeature, UserPlan } from "@/types/subscription";
 import { PlanBadge } from "@/components/subscription/PlanGuards";
+import {
+  ID_MENU_MOBILE,
+  MobileMenuClose,
+} from "@/components/MobileMenuChrome";
 import { cn } from "@/lib/utils";
 import { User as UserType } from "@supabase/supabase-js";
 import {
@@ -16,8 +20,6 @@ import {
   User,
   Users,
   LogOut,
-  Menu,
-  X,
   Wallet,
   CreditCard,
   Landmark,
@@ -389,19 +391,22 @@ export default function Sidebar({
         />
 
         <div
+          id={ID_MENU_MOBILE}
           className={cn(
             "relative flex-1 flex flex-col max-w-xs w-full bg-card transition-transform",
             isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"
           )}
         >
-          <div className="absolute top-0 right-0 -mr-12 pt-2">
-            <button
-              onClick={() => setIsMobileMenuOpen(false)}
-              className="ml-1 flex items-center justify-center h-10 w-10 rounded-full focus:outline-none focus:ring-2 focus:ring-inset focus:ring-white"
-            >
-              <X className="h-6 w-6 text-white" />
-            </button>
-          </div>
+          {/*
+            O X mora DENTRO do painel (ver components/MobileMenuChrome.tsx). Ele
+            ficava fora, empurrado para depois da borda direita por margem
+            negativa, e reaparecia sobre o hamburguer do header sempre que a
+            gaveta fechava -- a HMO-161.
+          */}
+          <MobileMenuClose
+            aberto={isMobileMenuOpen}
+            onClose={() => setIsMobileMenuOpen(false)}
+          />
 
           <div className="flex-1 h-0 pt-5 pb-4 overflow-y-auto">
             <div className="flex flex-col flex-shrink-0 px-6 space-y-4">

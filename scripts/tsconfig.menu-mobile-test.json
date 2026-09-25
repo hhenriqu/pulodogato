@@ -1,0 +1,28 @@
+{
+  "//": [
+    "Compila o cromo do menu mobile para o teste rodar o COMPONENTE de verdade,",
+    "e nao uma copia da logica dele. O `jsx: react-jsx` e o que permite",
+    "renderizar com react-dom/server no node, sem runner de teste novo.",
+    "",
+    "O include puxa components/ e lib/ juntos porque button.tsx importa",
+    "lib/utils.ts -- e por isso o resolve-aliases roda com --espelha-raiz."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-menu-mobile",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../components/MobileMenuChrome.tsx",
+    "../components/ui/button.tsx",
+    "../lib/utils.ts"
+  ]
+}
