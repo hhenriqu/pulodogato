@@ -266,7 +266,15 @@ export default function ReportsPage() {
             </p>
           </div>
 
-          <div className="flex items-center gap-2 print:hidden">
+          {/*
+            O `flex-wrap` aqui e o resto da HMO-168, e ele so apareceu DEPOIS do
+            primeiro conserto: com o cabecalho ja quebrando e a barra de abas ja
+            rolando, sobraram 6px de vazamento em 320px. O seletor de janela
+            (`w-36` = 144px) mais "Salvar em PDF" (158px) mais o gap dao 310px,
+            e o container deixa 288px uteis. Um vazamento de 6px nao chama
+            atencao de ninguem e mexe a pagina do mesmo jeito.
+          */}
+          <div className="flex flex-wrap items-center gap-2 print:hidden">
             <Select value={meses} onValueChange={setMeses}>
               <SelectTrigger className="w-36">
                 <SelectValue />
