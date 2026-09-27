@@ -721,6 +721,19 @@ jobs:
       - name: Separacao contabil das tres movimentacoes
         run: npm run test:movimentacoes
 
+      # O guard de deriva de COLUNA (scripts/check-column-drift.mjs) roda no job
+      # code-schema-drift, que nao tem Postgres, entao ele le o schema de
+      # database/schema-columns.json. Este passo e o que impede aquele arquivo de
+      # envelhecer: aqui ele e comparado com a FONTE -- este banco, construido
+      # pela cadeia inteira de migrations logo acima -- e nao com outra copia
+      # gerada pelo mesmo script (foi assim que o bundle de validacao ficou sete
+      # migrations atras e saiu verde, HMO-154).
+      #
+      # Quem acrescentar coluna numa migration e nao rodar
+      # `node scripts/gen-schema-columns.mjs` recebe este passo vermelho.
+      - name: schema-columns.json em dia com as migrations
+        run: node scripts/gen-schema-columns.mjs --check
+
       - name: Nenhuma tabela pode ficar sem RLS
         run: |
           semrls=$($PSQL -tAc "

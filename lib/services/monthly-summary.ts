@@ -80,9 +80,11 @@ export interface AnomaliasDoUsuario {
  * As anomalias do mes corrente de UM usuario.
  *
  * `userId` e obrigatorio mesmo quando o cliente e o da sessao (onde a RLS ja
- * filtraria): com a service_role nao ha RLS nenhuma, e sem o filtro explicito
- * esta funcao cruzaria a transacao de um com a categoria de outro. Exigir o
+ * filtraria): com a service_role nao ha RLS nenhuma, e sem o `.eq("user_id")`
+ * abaixo esta funcao somaria a despesa de TODO MUNDO no resumo de um. Exigir o
  * parametro nos dois casos e o que impede essa diferenca de passar despercebida.
+ * (Ele nao serve para as categorias -- aquilo e catalogo global, ver
+ * `nomesDasCategorias`.)
  */
 export async function anomaliasDoUsuario(
   client: SupabaseClient,
@@ -104,7 +106,7 @@ export async function anomaliasDoUsuario(
 
   const transacoes = (data ?? []) as unknown as TransacaoParaAnomalia[];
 
-  const nomesDeCategoria = await nomesDasCategorias(client, userId);
+  const nomesDeCategoria = await nomesDasCategorias(client);
 
   return {
     anomalias: detectarAnomalias({ transacoes, hoje, nomesDeCategoria }),
@@ -112,18 +114,28 @@ export async function anomaliasDoUsuario(
   };
 }
 
-/** `category_id` -> nome, para a tela e a notificacao nao mostrarem UUID. */
+/**
+ * `category_id` -> nome, para a tela e a notificacao nao mostrarem UUID.
+ *
+ * `transaction_categories` e CATALOGO GLOBAL, nao tabela de usuario: a chave
+ * dela e `service_id` (o servico `personal_finance`) e ela **nunca teve coluna
+ * `user_id`** -- ver `001_baseline.sql`, `CREATE TABLE
+ * public.transaction_categories`. Nao ha categoria "do usuario" para filtrar, e
+ * a RLS de producao (`transaction_categories_read`, `is_active = true`, para
+ * `authenticated` e `anon`) ja diz isso: todo mundo le o mesmo catalogo.
+ *
+ * Por isso NAO ha filtro por dono aqui, e nao e esquecimento. A versao anterior
+ * filtrava por `user_id`, o PostgREST devolvia `42703 column ... does not
+ * exist`, e o `throw` abaixo virava **500 em producao para todo usuario** em
+ * `GET /api/anomalies`. Ver `scripts/check-column-drift.mjs`, que passou a
+ * reprovar o build nesse caso.
+ */
 export async function nomesDasCategorias(
-  client: SupabaseClient,
-  userId: string
+  client: SupabaseClient
 ): Promise<Record<string, string>> {
-  // As categorias padrao do app nao tem dono (`user_id` nulo) e as do usuario
-  // tem. Ler so as dele deixaria toda categoria padrao sem nome na tela -- que
-  // e a maioria delas.
   const { data, error } = await client
     .from("transaction_categories")
-    .select("id, name, user_id")
-    .or(`user_id.eq.${userId},user_id.is.null`);
+    .select("id, name");
 
   if (error) throw error;
 
@@ -152,7 +164,7 @@ export async function resumoDoUsuario(
   const [fluxo, porCategoria, nomesDeCategoria, extras] = await Promise.all([
     lerFluxo(client, userId, desde),
     lerCategorias(client, userId, desde),
-    nomesDasCategorias(client, userId),
+    nomesDasCategorias(client),
     lerExtras(client, userId, mes, primeiroDia),
   ]);
 

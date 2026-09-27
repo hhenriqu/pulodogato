@@ -233,7 +233,7 @@ export async function GET(request: NextRequest) {
       // grafico nao muda em nada. (`nomesDasCategorias` lanca em erro de
       // leitura; sem o catch, uma falha ao ler uma tabela de ROTULOS levaria a
       // previsao inteira junto.)
-      nomesDasCategorias(supabase, user.id).catch((erro) => {
+      nomesDasCategorias(supabase).catch((erro) => {
         console.error("Fluxo de caixa seguiu sem os nomes de categoria:", erro);
         return {} as Record<string, string>;
       }),

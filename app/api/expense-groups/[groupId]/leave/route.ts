@@ -1,5 +1,6 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
+import { divisaoPendenteDoGrupo } from "@/lib/services/expense-groups";
 
 export const dynamic = "force-dynamic";
 
@@ -98,15 +99,23 @@ async function archiveEmptyGroup(
   groupId: string,
   userId: string
 ) {
-  // Verificar se há transações pendentes
-  const { data: pendingTransactions } = await supabase
-    .from("group_expense_splits")
-    .select("id")
-    .eq("group_id", groupId)
-    .eq("status", "pending")
-    .limit(1);
+  // Verificar se há transações pendentes. Ver lib/services/expense-groups.ts:
+  // "não deu para saber" recusa igual a "há", porque arquivar o grupo apaga o
+  // registro de quem devia a quem e isso não tem volta.
+  const pendencia = await divisaoPendenteDoGrupo(supabase, groupId);
 
-  if (pendingTransactions && pendingTransactions.length > 0) {
+  if (pendencia.situacao === "nao-deu-para-saber") {
+    console.error("Não deu para verificar as divisões pendentes:", pendencia.erro);
+    return NextResponse.json(
+      {
+        error:
+          "Não foi possível verificar se há divisões pendentes no grupo. Tente de novo em instantes.",
+      },
+      { status: 503 }
+    );
+  }
+
+  if (pendencia.situacao === "ha") {
     return NextResponse.json(
       {
         error:
