@@ -36,6 +36,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { useOfflineQueue } from "@/lib/hooks/useOfflineQueue";
+import { resumoDoPeriodo } from "@/lib/movimentacoes";
 import {
   guardarCatalogo,
   lerCatalogo,
@@ -993,16 +994,22 @@ export default function PersonalFinancePage() {
     });
   };
 
+  // A separacao das tres movimentacoes esta em lib/movimentacoes.ts, com testes.
+  // Aqui ficava uma soma por sinal do valor -- `amount > 0` receita, `amount < 0`
+  // despesa -- que contava as DUAS pernas de uma transferencia (migration 015):
+  // pagar uma fatura de R$ 1.000 somava R$ 1.000 em Receitas e R$ 1.000 em
+  // Despesas. O saldo continuava certo, porque as pernas se anulam, e por isso o
+  // erro nao aparecia em lugar nenhum.
   const calculateBalance = () => {
-    const income = transactions
-      .filter((t) => t.amount > 0)
-      .reduce((sum, t) => sum + t.amount, 0);
+    const resumo = resumoDoPeriodo(transactions);
 
-    const expenses = transactions
-      .filter((t) => t.amount < 0)
-      .reduce((sum, t) => sum + Math.abs(t.amount), 0);
-
-    return { income, expenses, balance: income - expenses };
+    return {
+      income: resumo.receitas,
+      expenses: resumo.despesas,
+      balance: resumo.saldo,
+      transferido: resumo.transferido,
+      transferencias: resumo.transferencias,
+    };
   };
 
   const formatCurrency = (value: number) => {
@@ -1020,7 +1027,8 @@ export default function PersonalFinancePage() {
     );
   }
 
-  const { income, expenses, balance } = calculateBalance();
+  const { income, expenses, balance, transferido, transferencias } =
+    calculateBalance();
   const totalSplitPercentage = formData.splits.reduce(
     (sum, s) => sum + s.percentage,
     0
@@ -1111,6 +1119,17 @@ export default function PersonalFinancePage() {
               {formatCurrency(balance)}
             </div>
             <p className="text-xs text-muted-foreground">Receitas - Despesas</p>
+            {/*
+              Transferencia entre contas proprias nao e receita nem despesa, e
+              por isso saiu das duas somas acima. Sem esta linha ela desapareceria
+              da tela inteira, e o valor "que faltou" pareceria dado perdido.
+            */}
+            {transferencias > 0 && (
+              <p className="text-xs text-muted-foreground">
+                + {formatCurrency(transferido)} em transferências entre contas,
+                fora do saldo
+              </p>
+            )}
           </CardContent>
         </Card>
       </div>
