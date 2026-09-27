@@ -257,6 +257,23 @@ test("Financas Pessoais: a linha de acao quebra, e com gap", () => {
   );
 });
 
+// A medicao pos-deploy do primeiro conserto deixou este de fora: com o
+// cabecalho ja quebrando e a barra de abas ja rolando, /dashboard/reports ainda
+// vazava 6px em 320px. O seletor de janela (`w-36`) + "Salvar em PDF" + gap dao
+// 310px contra 288px uteis. Seis pixels nao chamam atencao e mexem a pagina do
+// mesmo jeito -- o valor do numero medido e justamente pegar esse tamanho.
+test("Relatorios: a linha de janela + PDF quebra no celular", () => {
+  const fonte = ler("app/(dashboard)/dashboard/reports/page.tsx");
+  const linha = linhaDeAcao(fonte, "window.print()");
+
+  assert.ok(
+    linha,
+    "nao achei a linha de acao dos relatorios (ancorada em `window.print()`)",
+  );
+  assert.match(linha, /\bflex-wrap\b/);
+  assert.doesNotMatch(linha, /\bspace-x-/);
+});
+
 test("Grupos de Despesas: cabecalho empilha e os dois botoes quebram", () => {
   const fonte = ler(GRUPOS);
   const container = containerDoCabecalho(fonte, "Grupos de Despesas");
