@@ -467,7 +467,7 @@ export default function ReportsPage() {
                         Nenhum gasto registrado no período.
                       </p>
                     ) : (
-                      <div className="grid gap-6 md:grid-cols-2">
+                      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
                         <div className="h-80">
                           <ResponsiveContainer width="100%" height="100%">
                             <PieChart>

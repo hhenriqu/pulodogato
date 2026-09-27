@@ -554,8 +554,10 @@ export default function ExpenseGroupsPage() {
 
   return (
     <div className="container mx-auto py-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+      {/* Header -- empilha no celular (HMO-168): "Entrar no Grupo" + "Criar
+          Grupo" somam 312px, quase a largura inteira de um aparelho de 320px,
+          e ao lado do titulo davam 193px de scroll horizontal na pagina. */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="space-y-1">
           <h1 className="text-3xl font-bold flex items-center gap-2">
             <Users className="h-8 w-8" />
@@ -565,7 +567,7 @@ export default function ExpenseGroupsPage() {
             Organize gastos compartilhados com amigos, família ou colegas
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button
             onClick={() => setShowJoinForm(true)}
             variant="outline"

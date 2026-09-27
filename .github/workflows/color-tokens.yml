@@ -77,3 +77,33 @@ jobs:
       # botoes desencontrados no celular (HMO-160).
       - name: Os botoes da home empilham alinhados e com espaco no celular
         run: npm run test:home-cta
+
+      # Oito rotas do painel andavam para o lado no celular (HMO-168), por dois
+      # mecanismos: linha de acao que nao quebra e barra de abas que nao rola.
+      - name: Nenhuma tela do painel volta a empurrar a pagina para o lado
+        run: npm run test:mobile-overflow
+
+      # Controle negativo do passo acima, pelo mesmo motivo do de cores: um
+      # teste que le classes por regex passa a sair verde se a regex parar de
+      # encontrar o alvo, e verde-por-nao-olhar e indistinguivel de verde.
+      - name: A verificacao de scroll horizontal sabe falhar
+        run: |
+          set -uo pipefail
+          trap 'git checkout -- components/ui/tabs.tsx components/subscription/SoftFeatureGuard.tsx' EXIT
+
+          # 1) A barra de abas volta a ter a largura do conteudo.
+          sed -i 's/ overflow-x-auto//' components/ui/tabs.tsx
+          if npm run test:mobile-overflow --silent > /dev/null 2>&1; then
+            echo "::error::Passou verde com o TabsList sem overflow-x-auto."
+            exit 1
+          fi
+          git checkout -- components/ui/tabs.tsx
+
+          # 2) Os dois botoes do cartao Premium voltam a brigar por uma linha.
+          sed -i 's/flex flex-wrap gap-2/flex gap-2/' components/subscription/SoftFeatureGuard.tsx
+          if npm run test:mobile-overflow --silent > /dev/null 2>&1; then
+            echo "::error::Passou verde com o cartao Premium sem flex-wrap."
+            exit 1
+          fi
+
+          echo "A verificacao fica vermelha nos dois mecanismos da HMO-168."
