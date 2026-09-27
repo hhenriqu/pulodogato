@@ -123,3 +123,5 @@ next-env.d.ts
 /public/fallback-*.js.map
 # saida do `npm run test:menu-mobile` (tsx compilado para o react-dom/server)
 /.tmp-menu-mobile/
+# saida do `npm run test:movimentacoes`
+/.tmp-movimentacoes/
