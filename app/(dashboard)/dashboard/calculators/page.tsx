@@ -267,8 +267,21 @@ function CalculadoraJuros() {
   // Um ponto por ano, para a tabela nao virar 360 linhas.
   const porAno = r.evolucao.filter((p) => p.mes % 12 === 0);
 
+  // O `grid-cols-1` nao e redundante, e ele que conserta a HMO-168 nesta tela.
+  //
+  // `grid` sozinho cria UMA coluna implicita de tamanho `auto`, e trilho `auto`
+  // tem o min-content do conteudo como piso -- ele cresce alem do container em
+  // vez de apertar. Aqui o par "Taxa de juros / Periodo da taxa" tem min-content
+  // de 364px, entao num aparelho de 320px o trilho ficava com 364px dentro de um
+  // container de 288px e a pagina inteira andava 60px para o lado. Os dois
+  // numeros sao medidos no navegador, em producao, nao estimados.
+  //
+  // `grid-cols-1` do Tailwind e `repeat(1, minmax(0, 1fr))`: o `minmax(0, ...)`
+  // remove esse piso, o trilho passa a caber no container e quem aperta e o
+  // conteudo -- que e o que se espera de um formulario em tela estreita. De `lg`
+  // para cima nada muda, as duas colunas voltam.
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
       <div className="space-y-4">
         <CampoNumero id="j-inicial" rotulo="Valor inicial" valor={inicial} aoMudar={setInicial} prefixo="R$" />
         <CampoNumero id="j-aporte" rotulo="Aporte mensal" valor={aporte} aoMudar={setAporte} prefixo="R$" />
@@ -373,7 +386,7 @@ function CalculadoraDecimoTerceiro() {
   );
 
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
       <div className="space-y-4">
         <CampoNumero id="d-salario" rotulo="Salario bruto mensal" valor={salario} aoMudar={setSalario} prefixo="R$" />
         <CampoNumero
@@ -446,7 +459,7 @@ function CalculadoraFerias() {
   );
 
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
       <div className="space-y-4">
         <CampoNumero id="f-salario" rotulo="Salario bruto mensal" valor={salario} aoMudar={setSalario} prefixo="R$" />
         <div className="grid grid-cols-2 gap-3">
@@ -556,7 +569,7 @@ function CalculadoraFGTS() {
   );
 
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
       <div className="space-y-4">
         <CampoNumero id="g-salario" rotulo="Salario bruto mensal" valor={salario} aoMudar={setSalario} prefixo="R$" />
         <CampoNumero id="g-meses" rotulo="Meses a projetar" valor={meses} aoMudar={setMeses} passo="1" />

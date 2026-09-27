@@ -1037,7 +1037,13 @@ export default function PersonalFinancePage() {
   return (
     <div className="container mx-auto py-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      {/*
+        No celular o titulo e a linha de acao empilham (HMO-168): o par
+        "selo do plano + Novo Lançamento" mede 257px e nao divide uma linha de
+        320px com mais nada. Enquanto ficavam lado a lado a la força, a tela
+        inteira ganhava 125px de scroll horizontal.
+      */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="space-y-1">
           <h1 className="text-3xl font-bold flex items-center gap-2">
             <Wallet className="h-8 w-8" />
@@ -1060,7 +1066,7 @@ export default function PersonalFinancePage() {
             </p>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {planConfig && <PlanBadge plan={planConfig.id} size="sm" />}
           <Button
             onClick={toggleAddForm}

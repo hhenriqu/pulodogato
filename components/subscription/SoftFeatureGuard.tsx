@@ -108,7 +108,15 @@ export function SoftFeatureGuard({
                 <li>🎯 Alertas e notificações personalizadas</li>
               </ul>
             </div>
-            <div className="flex gap-2">
+            {/*
+              Este cartao e o que aparece em /dashboard/investments,
+              /dashboard/trading e /dashboard/reports para quem esta no plano
+              gratuito -- ou seja, para o usuario padrao. Sem `flex-wrap`,
+              "Ver Planos Premium" + "Voltar ao Dashboard" nao cabiam em 390px
+              e as TRES telas ganhavam scroll horizontal (HMO-168). Um defeito
+              num lugar, sintoma em tres rotas.
+            */}
+            <div className="flex flex-wrap gap-2">
               <Button asChild>
                 <Link href="/dashboard/plans">
                   <Crown className="h-4 w-4 mr-2" />
