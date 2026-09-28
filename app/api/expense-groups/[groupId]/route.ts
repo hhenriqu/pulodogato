@@ -173,58 +173,20 @@ export async function DELETE(
       );
     }
 
-    // Tentar arquivar o grupo - primeiro verificar quais campos existem
-    const { data: existingGroup } = await supabase
-      .from("expense_groups")
-      .select("*")
-      .eq("id", groupId)
-      .single();
-
-    console.log(
-      "🔍 Campos disponíveis no grupo:",
-      Object.keys(existingGroup || {})
-    );
-
-    // Preparar update baseado nos campos disponíveis
-    let updateData: any = {};
-
-    // Se tem is_active, usar
-    if (existingGroup && "is_active" in existingGroup) {
-      updateData.is_active = false;
-    }
-
-    // Se tem archived_at, usar
-    if (existingGroup && "archived_at" in existingGroup) {
-      updateData.archived_at = new Date().toISOString();
-    }
-
-    // Se tem archived_by, usar
-    if (existingGroup && "archived_by" in existingGroup) {
-      updateData.archived_by = user.id;
-    }
-
-    // Se não tem campos de arquivamento, usar uma abordagem alternativa
-    if (Object.keys(updateData).length === 0) {
-      // Adicionar um campo de metadata para marcar como arquivado
-      updateData = {
-        description: (existingGroup?.description || "") + " [ARQUIVADO]",
-        // Ou usar um campo JSON se disponível
-        ...(existingGroup && "metadata" in existingGroup
-          ? {
-              metadata: {
-                ...(existingGroup.metadata || {}),
-                archived: true,
-                archived_at: new Date().toISOString(),
-                archived_by: user.id,
-              },
-            }
-          : {}),
-      };
-    }
+    // As colunas de arquivamento existem desde a migration 020 (HMO-167). Antes
+    // dela, este bloco farejava o schema em tempo de execucao: nao achava as
+    // colunas, caia num ramo que concatenava "[ARQUIVADO]" na DESCRICAO do
+    // grupo -- texto visivel para o usuario, que nenhuma consulta sabia desfazer
+    // -- e ainda tentava gravar `metadata`, coluna que nunca existiu.
+    const arquivadoEm = new Date().toISOString();
 
     const { error: archiveError } = await supabase
       .from("expense_groups")
-      .update(updateData)
+      .update({
+        is_active: false,
+        archived_at: arquivadoEm,
+        archived_by: user.id,
+      })
       .eq("id", groupId);
 
     if (archiveError) {
@@ -235,44 +197,36 @@ export async function DELETE(
       );
     }
 
-    // Tentar arquivar membros - verificar se a tabela suporta
-    const { data: existingMember } = await supabase
+    // Arquivar os membros. Este erro NAO pode ser apenas logado, e era: o
+    // comentario dizia "Nao falhar se nao conseguir arquivar membros", e como
+    // `status = 'archived'` violava group_members_status_check (que so aceitava
+    // active/inactive/pending/removed ate a 020), a gravacao falhava SEMPRE.
+    // A rota respondia "Grupo arquivado com sucesso" com um `archived_at` que
+    // nunca foi gravado, e a listagem de arquivados -- que procura os grupos
+    // pelo `status = 'archived'` do membro -- nunca acharia nada.
+    const { error: membersArchiveError } = await supabase
       .from("group_members")
-      .select("*")
+      .update({ status: "archived", archived_at: arquivadoEm })
       .eq("group_id", groupId)
-      .eq("user_id", user.id)
-      .single();
+      .eq("status", "active");
 
-    console.log(
-      "🔍 Campos disponíveis no membro:",
-      Object.keys(existingMember || {})
-    );
-
-    if (existingMember && "status" in existingMember) {
-      const { error: membersArchiveError } = await supabase
-        .from("group_members")
-        .update({
-          status: "archived",
-          ...(existingMember && "archived_at" in existingMember
-            ? {
-                archived_at: new Date().toISOString(),
-              }
-            : {}),
-        })
-        .eq("group_id", groupId)
-        .eq("status", "active");
-
-      if (membersArchiveError) {
-        console.error("Error archiving members:", membersArchiveError);
-        // Não falhar se não conseguir arquivar membros
-      }
+    if (membersArchiveError) {
+      console.error("Error archiving members:", membersArchiveError);
+      return NextResponse.json(
+        {
+          error:
+            "O grupo foi arquivado, mas os membros nao: ele nao apareceria na lista de arquivados. " +
+            membersArchiveError.message,
+        },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({
       success: true,
       message:
         "Grupo arquivado com sucesso. O histórico de transações foi preservado.",
-      archived_at: new Date().toISOString(),
+      archived_at: arquivadoEm,
     });
   } catch (error) {
     console.error("Error archiving group:", error);

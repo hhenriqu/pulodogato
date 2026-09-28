@@ -132,37 +132,20 @@ async function archiveEmptyGroup(
     .eq("id", groupId)
     .single();
 
-  // Arquivar o grupo
-  const updateData: any = {};
-
-  // Detectar campos disponíveis
-  const { data: existingGroup } = await supabase
-    .from("expense_groups")
-    .select("*")
-    .eq("id", groupId)
-    .single();
-
-  if (existingGroup && "is_active" in existingGroup) {
-    updateData.is_active = false;
-  }
-
-  if (existingGroup && "archived_at" in existingGroup) {
-    updateData.archived_at = new Date().toISOString();
-  }
-
-  if (existingGroup && "archived_by" in existingGroup) {
-    updateData.archived_by = userId;
-  }
-
-  // Se não tem campos de arquivamento, usar alternativa
-  if (Object.keys(updateData).length === 0) {
-    updateData.description =
-      (existingGroup?.description || "") + " [ARQUIVADO - ÚLTIMO MEMBRO SAIU]";
-  }
+  // Arquivar o grupo. As colunas de arquivamento existem desde a migration 020
+  // (HMO-167); antes dela este bloco farejava o schema em tempo de execucao e,
+  // quando nao achava as colunas, concatenava "[ARQUIVADO]" na DESCRICAO do
+  // grupo -- texto que ficava visivel para o usuario e que nenhuma consulta
+  // sabia desfazer.
+  const arquivadoEm = new Date().toISOString();
 
   const { error: archiveError } = await supabase
     .from("expense_groups")
-    .update(updateData)
+    .update({
+      is_active: false,
+      archived_at: arquivadoEm,
+      archived_by: userId,
+    })
     .eq("id", groupId);
 
   if (archiveError) {
@@ -173,22 +156,26 @@ async function archiveEmptyGroup(
     );
   }
 
-  // Arquivar membros
+  // Arquivar membros. O erro daqui NAO pode ser so logado: a rota de listagem
+  // de arquivados encontra o grupo pelo `status = 'archived'` do membro, entao
+  // um grupo arquivado cujos membros continuaram 'active' fica invisivel nas
+  // duas telas -- e o usuario recebeu "arquivado com sucesso".
   const { error: membersError } = await supabase
     .from("group_members")
-    .update({
-      status: "archived",
-      ...(existingGroup && "archived_at" in existingGroup
-        ? {
-            archived_at: new Date().toISOString(),
-          }
-        : {}),
-    })
+    .update({ status: "archived", archived_at: arquivadoEm })
     .eq("group_id", groupId)
     .eq("status", "active");
 
   if (membersError) {
     console.error("Error archiving members:", membersError);
+    return NextResponse.json(
+      {
+        error:
+          "O grupo foi arquivado, mas os membros nao: ele nao apareceria na lista de arquivados. " +
+          membersError.message,
+      },
+      { status: 500 }
+    );
   }
 
   return NextResponse.json({

@@ -425,6 +425,31 @@ jobs:
       - name: 019 e idempotente
         run: $PSQL -f database/migrations/019_cron_runs.sql
 
+      - name: 020_group_archive_schema
+        run: $PSQL -f database/migrations/020_group_archive_schema.sql
+
+      # Re-executavel: as colunas entram com ADD COLUMN IF NOT EXISTS, as FKs
+      # passam por um DO/IF sobre pg_constraint, e os dois CHECK sao
+      # DROP IF EXISTS + ADD.
+      - name: 020 e idempotente
+        run: $PSQL -f database/migrations/020_group_archive_schema.sql
+
+      # O schema que a feature de grupos arquivados sempre pediu e nunca teve.
+      # O que so o Postgres pega aqui:
+      #
+      #   - `group_members_status_check` NAO aceitava 'archived', e o codigo
+      #     grava exatamente esse valor ao arquivar. So criar as colunas deixaria
+      #     a tela vazia para sempre, porque as duas consultas da rota filtram
+      #     por esse status -- com cara de "voce nao tem grupos arquivados";
+      #   - o `ON DELETE SET NULL` de `archived_by` ESCREVE a linha, e o CHECK e
+      #     avaliado nessa escrita. A primeira versao da 020 usava o par
+      #     simetrico e tornava impossivel apagar um perfil que ja arquivou um
+      #     grupo -- este teste foi quem reprovou;
+      #   - o caso 5 e controle POSITIVO: sem ele, os casos de recusa ficariam
+      #     satisfeitos por um CHECK que recusa tudo.
+      - name: A 020 recusa a linha errada e aceita a certa
+        run: $PSQL -f database/tests/020_group_archive_test.sql
+
       # O livro-razao das execucoes de cron. O que so o Postgres pega:
       #
       #   - o CHECK de `job` tem que bater com os quatro `crons[].path` do

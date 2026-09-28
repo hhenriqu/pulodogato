@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import { useState, useEffect } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { User } from "@supabase/supabase-js";
@@ -33,6 +35,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import {
+  Archive,
   Users,
   Plus,
   Settings,
@@ -575,6 +578,15 @@ export default function ExpenseGroupsPage() {
           >
             <LogIn className="h-4 w-4" />
             Entrar no Grupo
+          </Button>
+          {/* O caminho de clique para os grupos arquivados. Sem este botao a
+              tela existe e ninguem chega nela -- foi o que aconteceu com a
+              tela de assinaturas, que ficou um dia no ar sem entrada no menu. */}
+          <Button variant="outline" className="flex items-center gap-2" asChild>
+            <Link href="/dashboard/expense-groups/archived">
+              <Archive className="h-4 w-4" />
+              Arquivados
+            </Link>
           </Button>
           <Button
             onClick={() => setShowCreateForm(true)}

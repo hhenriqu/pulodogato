@@ -63,20 +63,18 @@ const EXTENSOES = [".ts", ".tsx"];
 // coluna passou a existir, ou o codigo parou de pedi-la). Sem isso a lista so
 // cresce e o guard vira decoracao. Chave: `relacao.coluna`.
 //
-// As tres entradas de hoje sao a MESMA divida: a feature "grupos arquivados"
-// foi escrita contra um schema que nunca foi criado. Nenhuma migration
-// acrescenta `archived_at`/`archived_by`, e as FKs que a rota embute
-// (`expense_groups_archived_by_fkey`) tambem nao existem. Entram como pendencia,
-// e nao como correcao, porque `GET /api/expense-groups/archived` e a UNICA
-// consumidora e **nenhuma tela chama essa rota** -- decidir entre criar a
-// migration e apagar a feature e escopo proprio, e esta na HMO-167. O lado da
-// ESCRITA daquele fluxo nao quebra: ele testa `"archived_at" in existingGroup`
-// antes de gravar, entao degrada para `is_active = false`.
-const PENDENTES = new Map([
-  ["expense_groups.archived_at", "HMO-167: feature de grupo arquivado sem migration"],
-  ["expense_groups.archived_by", "HMO-167: feature de grupo arquivado sem migration"],
-  ["group_members.archived_at", "HMO-167: feature de grupo arquivado sem migration"],
-]);
+// Hoje a lista esta VAZIA, e isso e o estado saudavel. As tres entradas que
+// viviam aqui eram a mesma divida -- a feature "grupos arquivados" escrita
+// contra um schema que nunca foi criado -- e a HMO-167 fechou: a migration 020
+// cria `archived_at`/`archived_by` (mais `restored_at`/`restored_by`, que este
+// guard nao viu, porque elas aparecem so dentro da carga de um `.update({...})`
+// e aqui lemos `.select()` e os filtros).
+//
+// Se uma entrada voltar, ela e divida ABERTA e precisa de issue no texto: a
+// verificacao tambem falha quando uma entrada fica OBSOLETA (a coluna passou a
+// existir, ou o codigo parou de pedi-la). Sem isso a lista so cresce e o guard
+// vira decoracao.
+const PENDENTES = new Map([]);
 
 // Metodos do postgrest-js cujo PRIMEIRO argumento e um nome de coluna.
 const FILTROS = [
