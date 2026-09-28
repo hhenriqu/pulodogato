@@ -99,7 +99,19 @@ export async function POST(
 
     if (membersRestoreError) {
       console.error("Error restoring members:", membersRestoreError);
-      // Não falhar se não conseguir restaurar membros
+      // Este erro tambem nao pode ser so logado. O grupo volta a is_active =
+      // true e sai da listagem de arquivados (que filtra archived_at NOT NULL),
+      // mas os membros continuam 'archived' -- e o grupo fica sem ninguem
+      // dentro, inalcancavel pelas duas telas, depois de dizer "restaurado com
+      // sucesso".
+      return NextResponse.json(
+        {
+          error:
+            "O grupo foi restaurado, mas os membros nao: ele ficaria sem participantes. " +
+            membersRestoreError.message,
+        },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({

@@ -128,6 +128,8 @@
     "user_id"
   ],
   "expense_groups": [
+    "archived_at",
+    "archived_by",
     "created_at",
     "created_by",
     "default_split_type",
@@ -138,6 +140,8 @@
     "is_active",
     "name",
     "photo_url",
+    "restored_at",
+    "restored_by",
     "updated_at"
   ],
   "expense_splits": [
@@ -296,10 +300,12 @@
     "total_income"
   ],
   "group_members": [
+    "archived_at",
     "group_id",
     "id",
     "joined_at",
     "percentage",
+    "restored_at",
     "role",
     "status",
     "updated_at",
