@@ -67,6 +67,16 @@ jobs:
       - name: Toda suite de teste roda em algum workflow
         run: node scripts/check-tests-in-ci.mjs
 
+      # Mora aqui pela mesma razao dos passos acima: e deriva do lado do CODIGO,
+      # nao toca em database/, e o sintoma e a AUSENCIA de sintoma. Um modulo de
+      # interface sem importador compila, passa no tsc, passa no next build e
+      # nao cresce o bundle -- o empacotador nunca chega nele. O custo aparece
+      # quando alguem abre o arquivo de nome mais obvio para "evoluir a tela" e
+      # edita codigo que usuario nenhum ve (HMO-163: 2555 linhas assim, e o
+      # arquivo mais convidativo era um dos mortos).
+      - name: Nenhum modulo de interface fica sem importador
+        run: node scripts/check-dead-components.mjs
+
       # Controles negativos. Uma verificacao que nunca viu vermelho nao e
       # verificacao: se a regex quebrar numa refatoracao, o passo acima passa a
       # sair verde por nao achar NADA, que e indistinguivel de estar tudo certo.
@@ -186,3 +196,85 @@ jobs:
           fi
 
           echo "A verificacao fica vermelha quando uma suite fica fora do CI."
+
+      # E o mesmo para o codigo morto. Aqui o controle da varredura CEGA e o que
+      # mais importa: se a regex do `from` quebrar, ela le quase nenhum import,
+      # conclui que nada esta morto e sai VERDE -- indistinguivel de uma arvore
+      # limpa. O script tem um piso de especificadores lidos justamente por
+      # isso, e a sonda 4 prova que o piso morde.
+      - name: A verificacao de codigo morto sabe falhar
+        run: |
+          set -uo pipefail
+          guard='scripts/check-dead-components.mjs'
+          cp "$guard" /tmp/guard.orig
+          trap 'cp /tmp/guard.orig "$guard"; rm -rf components/_sonda_morta components/_sonda.tsx.bak' EXIT
+
+          # 1) Um componente novo que ninguem importa.
+          mkdir -p components/_sonda_morta
+          cat > components/_sonda_morta/SondaSemImportador.tsx <<'TS'
+          export function SondaSemImportador() {
+            return null;
+          }
+          TS
+          if node "$guard" > /dev/null 2>&1; then
+            echo "::error::Passou verde com um componente que ninguem importa."
+            exit 1
+          fi
+          rm -rf components/_sonda_morta
+
+          # 2) Copia de rascunho: extensao que import nenhum alcanca.
+          echo '// rascunho' > components/_sonda.tsx.bak
+          if node "$guard" > /dev/null 2>&1; then
+            echo "::error::Passou verde com um arquivo .bak na arvore."
+            exit 1
+          fi
+          rm -f components/_sonda.tsx.bak
+
+          # 3) O registro de ESPERANDO_TELA tem que se invalidar sozinho. Uma
+          #    lista de perdao que so cresce e envelhece calada e exatamente o
+          #    mecanismo que este guard existe para quebrar.
+          node -e '
+            const fs = require("node:fs");
+            const p = "scripts/check-dead-components.mjs";
+            let s = fs.readFileSync(p, "utf8");
+            const antes = s;
+            s = s.replace(
+              "const ESPERANDO_TELA = [",
+              "const ESPERANDO_TELA = [\n  { arquivo: \"components/ArquivoQueNaoExiste.tsx\", tela: \"/sonda\", issue: \"SONDA\" },"
+            );
+            if (s === antes) { console.error("sonda 3 nao aplicou"); process.exit(2); }
+            fs.writeFileSync(p, s);
+          '
+          if node "$guard" > /dev/null 2>&1; then
+            echo "::error::Passou verde com um registro apontando para arquivo inexistente."
+            exit 1
+          fi
+          cp /tmp/guard.orig "$guard"
+
+          # 4) Varredura cega: quebra o padrao que le quase todo import. Sem o
+          #    piso, este e o caso que sai VERDE.
+          node -e '
+            const fs = require("node:fs");
+            const p = "scripts/check-dead-components.mjs";
+            let s = fs.readFileSync(p, "utf8");
+            const antes = s;
+            s = s.replace("/\\bfrom\\s*", "/\\bZZZZfrom\\s*");
+            if (s === antes) { console.error("sonda 4 nao aplicou"); process.exit(2); }
+            fs.writeFileSync(p, s);
+          '
+          if node "$guard" > /dev/null 2>&1; then
+            echo "::error::Passou verde com a varredura cega -- o piso nao mordeu."
+            exit 1
+          fi
+          cp /tmp/guard.orig "$guard"
+
+          # Controle POSITIVO: restaurado, a arvore de verdade passa. Sem isto,
+          # os quatro testes acima estariam satisfeitos por um script que
+          # simplesmente sempre falha.
+          if ! node "$guard" > /dev/null 2>&1; then
+            echo "::error::Reprovou a arvore limpa."
+            node "$guard" || true
+            exit 1
+          fi
+
+          echo "Vermelho nas quatro sondas, verde na arvore limpa."
