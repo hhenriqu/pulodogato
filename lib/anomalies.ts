@@ -425,6 +425,16 @@ export interface EntradaDoResumo {
   nomesDeCategoria?: Record<string, string>;
   assinaturasQueSubiram?: AssinaturaQueSubiu[];
   vencidas?: ContaVencida[];
+  /**
+   * A moeda das linhas que vieram em `fluxo` e `porCategoria` (HMO-171).
+   *
+   * Quem chama e responsavel por so mandar linhas de UMA moeda -- as views tem a
+   * moeda no grao desde a 022, e a soma abaixo juntaria moedas diferentes.
+   * `resumoDoUsuario` faz isso filtrando a consulta pela moeda oficial.
+   *
+   * Ausente = BRL, o mesmo DEFAULT da coluna.
+   */
+  moeda?: string;
 }
 
 export interface ResumoDoMes {
@@ -441,6 +451,17 @@ export interface ResumoDoMes {
   totalVencido: number;
   /** Houve movimento no mes fechado. Falso = nao ha resumo a enviar. */
   temMovimento: boolean;
+  /**
+   * A moeda em que `entrou`, `saiu` e `saldo` estao (ISO 4217, HMO-171).
+   *
+   * Viaja junto com os numeros de proposito, e nao e assumida pelo leitor: o
+   * resumo e lido por `resumoDoUsuario`, que restringe a consulta a moeda
+   * oficial do usuario. Sem este campo o texto da notificacao formataria tudo
+   * com "R$" -- e um resumo em dolar chegaria no celular anunciando reais, que e
+   * exatamente o erro que esta issue existe para impedir, no unico lugar do app
+   * onde nao ha tela ao lado para conferir.
+   */
+  moeda: string;
 }
 
 /** A view devolve 'YYYY-MM-01' (date_trunc); a chave de comparacao e 'YYYY-MM'. */
@@ -467,6 +488,7 @@ export function resumoDoMesFechado(entrada: EntradaDoResumo): ResumoDoMes {
     nomesDeCategoria = {},
     assinaturasQueSubiram = [],
     vencidas = [],
+    moeda = "BRL",
   } = entrada;
 
   const mes = mesAnterior(hoje);
@@ -550,5 +572,6 @@ export function resumoDoMesFechado(entrada: EntradaDoResumo): ResumoDoMes {
     vencidas,
     totalVencido,
     temMovimento: entrou > 0 || saiu > 0,
+    moeda,
   };
 }
