@@ -37,6 +37,7 @@ import {
   periodoDaQuery,
   ultimoDiaDoMes,
 } from "@/lib/periodo-do-painel";
+import { lerPreferenciaDeMoeda, separarSeriePorMoeda } from "@/lib/moeda";
 
 interface LinhaFluxo {
   month: string;
@@ -172,14 +173,27 @@ export async function GET(request: NextRequest) {
 
     let query = supabase
       .from("monthly_cash_flow")
-      .select("month, income, expense, net, transaction_count")
+      .select("month, income, expense, net, transaction_count, currency")
       .eq("user_id", user.id)
       .gte("month", janela.inicio)
       .lte("month", janela.fim);
 
     query = groupId ? query.eq("group_id", groupId) : query.is("group_id", null);
 
-    const { data, error } = await query.order("month", { ascending: true });
+    // A moeda oficial decide qual bloco e o PRINCIPAL da resposta. Lida em
+    // paralelo com o relatorio, e sem derrubar nada quando falha: ela so ordena
+    // blocos, e um erro aqui nao pode custar o relatorio inteiro. Perfil ausente
+    // ou `error` cai no padrao de `lerPreferenciaDeMoeda`.
+    const perfilPromessa = supabase
+      .from("profiles")
+      .select("preferences")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    const [{ data, error }, { data: perfil }] = await Promise.all([
+      query.order("month", { ascending: true }),
+      perfilPromessa,
+    ]);
 
     if (error) {
       console.error("Erro no relatório de fluxo de caixa:", error);
@@ -189,48 +203,122 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const linhas = completarMeses<LinhaFluxo>(
+    // A MOEDA MUDA A ARITMETICA DAQUI (HMO-171)
+    //
+    // `monthly_cash_flow` passou a ter a moeda no GRAO (022): onde antes vinha
+    // uma linha por mes, agora vem uma por (mes, moeda). Os `reduce` abaixo eram
+    // somas sobre meses e viraram somas entre MOEDAS -- 1000 reais com 180
+    // dolares dando 1180, que nao esta em moeda nenhuma, com cara de total e
+    // para MAIS.
+    //
+    // A correcao nao e converter (nao ha cotacao neste app, e a issue pede para
+    // mostrar SEPARADO): a serie e separada por moeda e a aritmetica que ja
+    // existia roda uma vez por moeda, intacta.
+    const moedaOficial = lerPreferenciaDeMoeda(perfil?.preferences).oficial;
+
+    const porMoeda = separarSeriePorMoeda(
       (data ?? []).map((d) => ({
         month: String(d.month).slice(0, 10),
         income: Number(d.income),
         expense: Number(d.expense),
         net: Number(d.net),
         transaction_count: Number(d.transaction_count),
+        currency: d.currency as string | null,
       })),
-      janela.inicio,
-      janela.meses,
-      (mes) => ({
+      moedaOficial
+    );
+
+    const blocos = porMoeda.map((grupo) => {
+      const linhas = completarMeses<LinhaFluxo>(
+        grupo.linhas.map((l) => ({
+          month: l.month,
+          income: l.income,
+          expense: l.expense,
+          net: l.net,
+          transaction_count: l.transaction_count,
+        })),
+        janela.inicio,
+        janela.meses,
+        (mes) => ({
+          month: mes,
+          income: 0,
+          expense: 0,
+          net: 0,
+          transaction_count: 0,
+        })
+      );
+
+      const totalEntrada = linhas.reduce((s, l) => s + l.income, 0);
+      const totalSaida = linhas.reduce((s, l) => s + l.expense, 0);
+
+      // Media sobre os meses COM movimento, nao sobre a janela inteira: quem usa
+      // o app ha dois meses e pede doze veria a media dividida por doze e
+      // concluiria que gasta um sexto do que gasta.
+      //
+      // "Com movimento NESTA MOEDA": um mes sem nenhum lancamento em dolar nao
+      // entra na media do dolar, senao a media em dolar de quem gastou num mes
+      // so sairia dividida pelos doze da janela.
+      const mesesComMovimento = linhas.filter(
+        (l) => l.transaction_count > 0
+      ).length;
+
+      return {
+        currency: grupo.moeda,
+        symbol: grupo.simbolo,
+        months: linhas,
+        summary: {
+          total_income: Number(totalEntrada.toFixed(2)),
+          total_expense: Number(totalSaida.toFixed(2)),
+          net: Number((totalEntrada - totalSaida).toFixed(2)),
+          months_with_activity: mesesComMovimento,
+          average_expense: mesesComMovimento
+            ? Number((totalSaida / mesesComMovimento).toFixed(2))
+            : 0,
+          average_income: mesesComMovimento
+            ? Number((totalEntrada / mesesComMovimento).toFixed(2))
+            : 0,
+        },
+      };
+    });
+
+    // O bloco PRINCIPAL, para as telas que leem `months` e `summary` direto.
+    //
+    // E o primeiro de `separarSeriePorMoeda`: a moeda oficial quando ela tem
+    // movimento, senao a mais movimentada. Nao e "o BRL": um mes inteiro no
+    // exterior tem so dolar, e fixar reais aqui devolveria uma serie de zeros
+    // para quem gastou -- dinheiro desaparecendo da tela.
+    //
+    // Periodo sem movimento nenhum nao tem bloco: aqui a serie e a de meses
+    // vazios na moeda oficial, que e o que a tela ja sabia desenhar.
+    const principal = blocos[0] ?? {
+      currency: moedaOficial,
+      symbol: "",
+      months: completarMeses<LinhaFluxo>([], janela.inicio, janela.meses, (mes) => ({
         month: mes,
         income: 0,
         expense: 0,
         net: 0,
         transaction_count: 0,
-      })
-    );
-
-    const totalEntrada = linhas.reduce((s, l) => s + l.income, 0);
-    const totalSaida = linhas.reduce((s, l) => s + l.expense, 0);
-
-    // Media sobre os meses COM movimento, nao sobre a janela inteira: quem usa
-    // o app ha dois meses e pede doze veria a media dividida por doze e
-    // concluiria que gasta um sexto do que gasta.
-    const mesesComMovimento = linhas.filter(
-      (l) => l.transaction_count > 0
-    ).length;
+      })),
+      summary: {
+        total_income: 0,
+        total_expense: 0,
+        net: 0,
+        months_with_activity: 0,
+        average_expense: 0,
+        average_income: 0,
+      },
+    };
 
     return NextResponse.json({
-      months: linhas,
+      months: principal.months,
+      currency: principal.currency,
+      // A lista COMPLETA, uma entrada por moeda com movimento. A tela mostra
+      // separado quando ela tem mais de uma -- que e o pedido da parte 3.
+      by_currency: blocos,
+      multi_currency: blocos.length > 1,
       summary: {
-        total_income: Number(totalEntrada.toFixed(2)),
-        total_expense: Number(totalSaida.toFixed(2)),
-        net: Number((totalEntrada - totalSaida).toFixed(2)),
-        months_with_activity: mesesComMovimento,
-        average_expense: mesesComMovimento
-          ? Number((totalSaida / mesesComMovimento).toFixed(2))
-          : 0,
-        average_income: mesesComMovimento
-          ? Number((totalEntrada / mesesComMovimento).toFixed(2))
-          : 0,
+        ...principal.summary,
       },
       grao: "mes",
       // O `to` e o ULTIMO DIA do ultimo mes, nao o dia 1 dele. `janela.fim` e

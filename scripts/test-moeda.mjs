@@ -477,3 +477,61 @@ test("o padrao de moeda do formulario e o mesmo de MOEDA_PADRAO", async () => {
   // seletor de moeda aberto mesmo para quem so usa uma moeda.
   assert.equal(valoresIniciais().moedaSobreposta, false);
 });
+
+// ---------------------------------------------------------------------------
+// separarSeriePorMoeda -- a serie mensal que as rotas de relatorio leem
+// ---------------------------------------------------------------------------
+
+test("a serie mensal e separada por moeda, mantendo os meses de cada uma", async () => {
+  const { separarSeriePorMoeda } = await import("../.tmp-moeda/moeda.js");
+
+  const linhas = [
+    { month: "2026-01-01", currency: "BRL", income: 3000, expense: 1000, net: 2000, transaction_count: 3 },
+    { month: "2026-02-01", currency: "BRL", income: 3000, expense: 1200, net: 1800, transaction_count: 4 },
+    { month: "2026-02-01", currency: "USD", income: 0, expense: 180, net: -180, transaction_count: 2 },
+  ];
+
+  const grupos = separarSeriePorMoeda(linhas, "BRL");
+
+  assert.equal(grupos.length, 2);
+  assert.deepEqual(grupos.map((g) => g.moeda), ["BRL", "USD"]);
+  assert.equal(grupos[0].linhas.length, 2);
+  assert.equal(grupos[1].linhas.length, 1);
+  // A linha de dolar NAO aparece no grupo de reais -- que e a soma de 1180 que
+  // esta funcao existe para impedir.
+  assert.ok(grupos[0].linhas.every((l) => l.currency === "BRL"));
+  assert.equal(grupos[1].simbolo, "US$");
+});
+
+test("a ordem dos grupos e a mesma de resumirPorMoeda", async () => {
+  const { separarSeriePorMoeda } = await import("../.tmp-moeda/moeda.js");
+  // Duas ordens diferentes para a mesma informacao e como uma delas fica errada
+  // sem ninguem notar: o resumo listaria dolar primeiro e os graficos abaixo
+  // viriam em real.
+  const linhas = [
+    { month: "2026-01-01", currency: "USD", income: 0, expense: 9000, net: -9000, transaction_count: 9 },
+    { month: "2026-01-01", currency: "EUR", income: 0, expense: 10, net: -10, transaction_count: 1 },
+  ];
+
+  for (const oficial of ["BRL", "EUR", "USD"]) {
+    assert.deepEqual(
+      separarSeriePorMoeda(linhas, oficial).map((g) => g.moeda),
+      resumirPorMoeda(linhas, oficial).map((b) => b.moeda),
+      `ordens discordam com oficial=${oficial}`
+    );
+  }
+});
+
+test("serie de uma moeda so da um grupo, e serie vazia da nenhum", async () => {
+  const { separarSeriePorMoeda } = await import("../.tmp-moeda/moeda.js");
+  assert.equal(
+    separarSeriePorMoeda(
+      [{ month: "2026-01-01", currency: "BRL", expense: 10, transaction_count: 1 }],
+      "BRL"
+    ).length,
+    1
+  );
+  for (const vazio of [[], null, undefined]) {
+    assert.deepEqual(separarSeriePorMoeda(vazio, "BRL"), []);
+  }
+});

@@ -254,3 +254,32 @@ export function opcoesDeMoeda() {
         rotulo: `${m.codigo} - ${m.nome} (${m.simbolo})`,
     }));
 }
+/**
+ * Separa linhas de serie mensal por moeda, preservando a ordem de blocos de
+ * `resumirPorMoeda` (oficial primeiro, depois por volume).
+ *
+ * Existe porque as views passaram a ter a moeda no GRAO (022) e as rotas de
+ * relatorio leem serie MENSAL: antes elas recebiam uma linha por mes e agora
+ * recebem uma por (mes, moeda). Todo `reduce` sobre esse array virou uma soma
+ * entre moedas -- 1000 reais com 180 dolares dando 1180, sem erro nenhum e para
+ * MAIS.
+ *
+ * Devolve a moeda de cada grupo junto com as linhas DELA. A rota entao roda a
+ * aritmetica que ja tinha (completar meses vazios, media, total) uma vez por
+ * moeda, em vez de uma vez sobre a mistura.
+ *
+ * As linhas de cada grupo NAO sao reagrupadas por mes aqui: dentro de uma moeda
+ * `monthly_cash_flow` ja tem uma linha por mes, e `category_monthly_totals` tem
+ * uma por categoria de propósito. Quem sabe qual dos dois esta lendo e a rota.
+ */
+export function separarSeriePorMoeda(linhas, moedaOficial = MOEDA_PADRAO) {
+    const todas = linhas ?? [];
+    // A ordem vem de `resumirPorMoeda` para que a tela mostre os blocos na mesma
+    // ordem em que o resumo os lista. Duas ordens diferentes para a mesma
+    // informacao e como uma delas fica errada sem ninguem notar.
+    return resumirPorMoeda(todas, moedaOficial).map((bloco) => ({
+        moeda: bloco.moeda,
+        simbolo: bloco.simbolo,
+        linhas: todas.filter((l) => moedaSugerida({ doLancamento: l.currency }) === bloco.moeda),
+    }));
+}
