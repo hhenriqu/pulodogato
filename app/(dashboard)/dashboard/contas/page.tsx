@@ -61,6 +61,7 @@ import {
   PainelSemRede,
 } from "@/components/SemRede";
 import { useEstaOnline } from "@/lib/hooks/useEstaOnline";
+import { usePreferenciaDeMoeda } from "@/lib/hooks/usePreferenciaDeMoeda";
 
 export default function ContasPage() {
   const {
@@ -81,12 +82,15 @@ export default function ContasPage() {
     valoresIniciais("conta")
   );
   const online = useEstaOnline();
+  // Decide se o seletor de moeda aparece nesta tela, e qual moeda uma conta
+  // nova ganha por padrao. Ver lib/hooks/usePreferenciaDeMoeda.
+  const { moeda: preferenciaDeMoeda } = usePreferenciaDeMoeda();
 
   // Saldo com SINAL: uma conta no vermelho tem que puxar o total para baixo.
   const saldo = useMemo(() => totalDoEscopo(ativas, "conta"), [ativas]);
 
   function abrirNovo() {
-    setForm(valoresIniciais("conta"));
+    setForm(valoresIniciais("conta", preferenciaDeMoeda.oficial));
     setAberto(true);
   }
 
@@ -303,6 +307,7 @@ export default function ContasPage() {
               valores={form}
               aoMudar={setForm}
               editando={Boolean(form.id)}
+              mostrarMoeda={preferenciaDeMoeda.porLancamento}
             />
 
             <div className="flex justify-end gap-2 pt-2">

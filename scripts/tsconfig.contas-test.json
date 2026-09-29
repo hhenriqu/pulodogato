@@ -19,5 +19,10 @@
     "baseUrl": "..",
     "paths": { "@/*": ["./*"] }
   },
-  "include": ["../lib/contas.ts", "../types/financial.ts"]
+  "include": [
+    "../lib/contas.ts",
+    "../lib/dinheiro.ts",
+    "../lib/moeda.ts",
+    "../types/financial.ts"
+  ]
 }

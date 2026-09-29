@@ -32,6 +32,7 @@
     "../components/ui/select.tsx",
     "../lib/contas.ts",
     "../lib/dinheiro.ts",
+    "../lib/moeda.ts",
     "../lib/calculadora-de-campo.ts",
     "../lib/utils.ts"
   ]
