@@ -1,4 +1,5 @@
 // GET /api/scheduled-transactions/summary?months=3
+// GET /api/scheduled-transactions/summary?de=AAAA-MM-DD&ate=AAAA-MM-DD
 //
 // O numero que o app nao sabia responder antes: quanto ainda vai sair este mes.
 // Serve o cabecalho da tela de contas e o widget do dashboard.
@@ -7,11 +8,28 @@
 // nao expoe agregacao sem criar uma RPC, e uma RPC nova significaria mais uma
 // funcao SECURITY DEFINER para auditar (ver migrations 003 e 004). O volume e
 // de dezenas de linhas por mes - cabe na memoria sem pensar duas vezes.
+//
+// ESTA ROTA NAO CONSEGUIA RESPONDER O PASSADO (HMO-173)
+// ------------------------------------------------------
+// Com `?months=N` a janela comeca no primeiro dia do mes CORRENTE e caminha
+// para a frente. Isso e certo para "o que ainda vai sair", e e por isso que o
+// painel, ao navegar para agosto, recebia uma lista que nao continha agosto --
+// e mostrava zero. `de`/`ate` explicitos resolvem.
+//
+// O QUE A JANELA EXPLICITA NAO PODE FAZER
+// ----------------------------------------
+// `materializarAgenda` CRIA linhas de vencimento a partir das regras
+// recorrentes. Rodar isso sobre um mes que ja passou fabricaria contas
+// retroativas -- e, como elas nasceriam vencidas, o app passaria a acusar
+// atraso em dividas que o usuario nunca teve. Navegar para tras e leitura; a
+// janela de escrita sai de `janelaParaMaterializar`, que nunca comeca antes de
+// hoje e devolve `null` quando o periodo inteiro ja passou.
 
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { materializarAgenda } from "@/lib/services/scheduled";
 import { addMonthsClamped, monthlyCost, today } from "@/lib/recurrence";
+import { janelaParaMaterializar, periodoDaQuery } from "@/lib/periodo-do-painel";
 import type { RecurringRule, ScheduledSummary } from "@/types/financial";
 
 export async function GET(request: NextRequest) {
@@ -27,18 +45,45 @@ export async function GET(request: NextRequest) {
     }
 
     const url = new URL(request.url);
-    const meses = Math.min(Math.max(Number(url.searchParams.get("months") ?? 3), 1), 12);
-
     const hoje = today();
-    // Do primeiro dia do mes corrente ate o fim da janela: o resumo do mes tem
-    // que incluir o que ja foi pago nos dias que passaram.
-    const de = `${hoje.slice(0, 7)}-01`;
-    const ate = addMonthsClamped(de, meses);
 
-    try {
-      await materializarAgenda(supabase, user.id, { de: hoje, ate });
-    } catch (erroAgenda) {
-      console.error("Resumo seguiu sem materializar a agenda:", erroAgenda);
+    const periodo = periodoDaQuery(
+      url.searchParams.get("de") ?? url.searchParams.get("from"),
+      url.searchParams.get("ate") ?? url.searchParams.get("to")
+    );
+
+    if (periodo === "invalido") {
+      return NextResponse.json(
+        { error: "de e ate devem ser datas AAAA-MM-DD, com de <= ate" },
+        { status: 400 }
+      );
+    }
+
+    let de: string;
+    let ate: string;
+
+    if (periodo) {
+      de = periodo.de;
+      ate = periodo.ate;
+    } else {
+      const meses = Math.min(
+        Math.max(Number(url.searchParams.get("months") ?? 3), 1),
+        12
+      );
+      // Do primeiro dia do mes corrente ate o fim da janela: o resumo do mes
+      // tem que incluir o que ja foi pago nos dias que passaram.
+      de = `${hoje.slice(0, 7)}-01`;
+      ate = addMonthsClamped(de, meses);
+    }
+
+    const aMaterializar = janelaParaMaterializar({ de, ate }, hoje);
+
+    if (aMaterializar) {
+      try {
+        await materializarAgenda(supabase, user.id, aMaterializar);
+      } catch (erroAgenda) {
+        console.error("Resumo seguiu sem materializar a agenda:", erroAgenda);
+      }
     }
 
     const { data: linhas, error } = await supabase

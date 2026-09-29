@@ -1,0 +1,14 @@
+{
+  "//": "Build so do teste: lib/periodo-do-painel.ts importa @/lib/recurrence -- de proposito, porque `today()` e a UNICA definicao de 'hoje em Sao Paulo' do projeto e duplica-la aqui reintroduziria o bug da HMO-173. O tsc resolve o alias @/ por causa de `paths` mas NAO o reescreve no JS emitido, entao o npm script tem um passo de reescrita depois. Ver scripts/test-periodo-painel.mjs.",
+  "compilerOptions": {
+    "outDir": "../.tmp-periodo-painel",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/periodo-do-painel.ts"]
+}
