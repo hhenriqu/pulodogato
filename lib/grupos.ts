@@ -174,3 +174,38 @@ export function rotuloDoResumo(resumo: ResumoDeGrupos): {
 export function precisaDetalhar(resumo: ResumoDeGrupos): boolean {
   return resumo.aPagar > 0 && resumo.aReceber > 0;
 }
+
+/**
+ * A EDICAO QUE O BANCO RECUSA, E POR QUE ELA PRECISA DE COPIA PROPRIA
+ * ------------------------------------------------------------------
+ * A migration 024 (HMO-176) passou a refazer a divisao quando a despesa de
+ * grupo e editada -- e a recusar a edicao quando alguem JA APROVOU a parte
+ * dele, porque recalcular ali apagaria uma conferencia que outra pessoa fez.
+ * Essa recusa chega no cliente como um erro de banco com SQLSTATE `PDG01`.
+ *
+ * Sem tradução, o que a pessoa ve e "Erro ao gravar o lançamento." -- a frase
+ * que ela ja viu quando a internet caiu, quando faltou campo e quando o
+ * servidor esta fora. Ou seja: ela tentaria de novo, e de novo, e o resultado
+ * seria sempre o mesmo, sem nunca descobrir que o problema nao esta nela nem
+ * na conexao, e sim numa aprovacao de outra pessoa.
+ *
+ * O SQLSTATE e o que se casa aqui, nao o texto: mensagem e para ler, codigo e
+ * para programar. Casar por trecho de frase quebraria na primeira vez que a
+ * mensagem do banco ganhasse um acento.
+ */
+export function avisoDeEdicaoTravada(erro: unknown): string | null {
+  if (!erro || typeof erro !== "object") return null;
+
+  const codigo = (erro as { code?: unknown }).code;
+  if (codigo !== "PDG01") return null;
+
+  const mensagem = (erro as { message?: unknown }).message;
+
+  // A mensagem do banco ja e escrita para ser lida por quem lanca (ela
+  // distingue "mudar o valor" de "trocar o grupo", e as duas saidas sao
+  // diferentes). Quando ela vier vazia, sobra o texto generico -- que ainda
+  // assim diz a coisa certa, em vez de culpar a conexao.
+  if (typeof mensagem === "string" && mensagem.trim()) return mensagem.trim();
+
+  return "Alguém já aprovou a parte desta despesa no grupo. Estorne e relance, ou peça para reabrir a aprovação.";
+}

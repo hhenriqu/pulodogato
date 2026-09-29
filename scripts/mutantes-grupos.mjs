@@ -121,6 +121,23 @@ const mutantes = [
     "      total_paid: Number(linha.total_paid) || 0,\n      total_owed: Number(linha.total_owed) || 0,",
     "      total_paid: 0,\n      total_owed: 0,",
   ],
+
+  // --- a recusa PDG01 da edicao de despesa de grupo (HMO-176) ---
+  [
+    "qualquer erro de banco vira \"alguem ja aprovou\"",
+    '  if (codigo !== "PDG01") return null;',
+    "  if (false) return null;",
+  ],
+  [
+    "a recusa PDG01 deixa de ser reconhecida",
+    '  if (codigo !== "PDG01") return null;',
+    "  return null;",
+  ],
+  [
+    "o aviso passa a casar pelo texto da mensagem",
+    '  const codigo = (erro as { code?: unknown }).code;',
+    '  const codigo = String((erro as { message?: unknown }).message ?? "").includes("aprovou") ? "PDG01" : "outro";',
+  ],
 ];
 
 let sobreviventes = 0;
