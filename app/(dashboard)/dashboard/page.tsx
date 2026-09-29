@@ -216,6 +216,8 @@ function Painel() {
   );
 
   const [carregando, setCarregando] = useState(true);
+  // Trocando de periodo, com os numeros do periodo anterior ainda na tela.
+  const [atualizando, setAtualizando] = useState(false);
   const [contas, setContas] = useState<Conta[]>([]);
   const [fluxo, setFluxo] = useState<ResumoFluxo | null>(null);
   const [previstas, setPrevistas] = useState<ResumoMesPrevisto | null>(null);
@@ -247,6 +249,13 @@ function Painel() {
   }, [periodo.de, periodo.ate]);
 
   const carregar = async () => {
+    // Trocar de periodo NAO volta para o giro de tela cheia: o painel inteiro
+    // piscando a cada clique na seta torna a navegacao desagradavel de usar.
+    // Mas os numeros da tela ainda sao os do periodo anterior ate a resposta
+    // chegar, e deixa-los nitidos debaixo do rotulo novo e -- por alguns
+    // instantes -- exatamente o erro que esta issue existe para corrigir:
+    // numero de um periodo com o nome de outro. Dai o estado intermediario.
+    setAtualizando(true);
     const query = periodoParaQuery(periodo);
     // O periodo ja acabou? Entao "quanto posso gastar" nao tem o que
     // responder: ele fala do que sobra ate o fim do MES CORRENTE. Nem se
@@ -341,6 +350,7 @@ function Painel() {
       console.error("Erro ao carregar o painel:", erro);
     } finally {
       setCarregando(false);
+      setAtualizando(false);
     }
   };
 
@@ -898,6 +908,18 @@ function Painel() {
           explicando por que o painel nao navega mais. */}
       <SeletorDePeriodo periodo={periodo} hoje={hoje} aoMudar={irPara} />
 
+      {/* `aria-busy` alem da opacidade: quem usa leitor de tela nao ve o
+          esmaecido, e sem isto ouviria os numeros do periodo anterior como se
+          fossem a resposta ja pronta para o periodo novo. */}
+      <div
+        aria-busy={atualizando}
+        className={
+          atualizando
+            ? "space-y-6 opacity-50 transition-opacity"
+            : "space-y-6 transition-opacity"
+        }
+      >
+
       {semNada && (
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center justify-center p-8 text-center">
@@ -966,6 +988,7 @@ function Painel() {
           </CardContent>
         </Card>
       )}
+      </div>
     </div>
   );
 }
