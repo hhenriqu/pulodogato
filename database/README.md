@@ -274,9 +274,25 @@ esta no baseline.
   `db-verify`, que exige o `.gz.gpg` e restaura a partir dele.
 - **Os valores do seed** nao sao reconferidos a cada geracao: `paperclip_ro` e
   uma role comum, sujeita a RLS, e as policies das duas tabelas de referencia
-  sao `TO anon, authenticated` — para ela as duas voltam vazias. A lista de
-  colunas de cada `INSERT` foi conferida contra o catalogo em 2026-09-21; os
-  valores vem da extracao de 2026-09-18 pela API. Ver HMO-127.
+  sao `TO anon, authenticated` — para ela as duas voltam vazias, entao o
+  `pg_dump` do gerador nunca ve esses valores. A conferencia existe, mas e um
+  passo a parte, por fora do `pg_dump` (HMO-127):
+
+  ```bash
+  node scripts/check-seed-vs-prod.mjs           # 15 linhas ativas, chave anon
+  node scripts/check-seed-vs-prod.mjs --login   # + a linha reservada do 023
+  ```
+
+  Rode depois de qualquer mudanca em `seed/reference_data.sql` e antes de um
+  restore. Nao esta no `db-verify` de proposito: ele fala com **producao** pela
+  rede, e uma indisponibilidade do Supabase reprovaria PRs que nao tem nada a
+  ver com o seed. Conferido pela ultima vez em **2026-09-29**: as 3 + 12 linhas
+  batem campo a campo.
+
+  O que este caminho ainda **nao** cobre: linha `is_active = FALSE` que nao seja
+  a categoria de transferencia fica invisivel para as duas policies de leitura.
+  So a opcao 1 da HMO-127 (uma policy `FOR SELECT TO paperclip_ro`, que e DDL do
+  Helio) fecharia tambem esse resto.
 
 ---
 
