@@ -489,6 +489,40 @@ jobs:
       - name: A 021 recusa a linha errada e aceita a certa
         run: $PSQL -f database/tests/021_investments_test.sql
 
+      - name: 022_currency
+        run: $PSQL -f database/migrations/022_currency.sql
+
+      - name: 022 e idempotente
+        run: $PSQL -f database/migrations/022_currency.sql
+
+      # A moeda por conta e por lancamento. O que so o Postgres pega:
+      #
+      #   - a 022 nao acrescenta coluna, ela muda o GRAO das tres views de
+      #     relatorio do 008. Guardar a moeda sem isso e o pior resultado
+      #     possivel: o app ganharia o seletor e `SUM(ABS(amount))` passaria a
+      #     somar 1000 reais com 180 dolares e devolver 1180 -- um numero que nao
+      #     esta em moeda nenhuma, com cara de total, e para MAIS, que e o lado do
+      #     qual ninguem reclama. Nenhum teste de TypeScript le view;
+      #   - `planned_vs_actual` nao pediu nada nesta issue e quebra do mesmo jeito:
+      #     ela le `monthly_cash_flow` por LEFT JOIN LATERAL sem agregado e sem
+      #     LIMIT. Uma linha por mes virou uma por MOEDA, e o LATERAL multiplica a
+      #     chave -- o mes sai duplicado com o previsto repetido inteiro em cada
+      #     copia. O caso 5 do teste e o controle negativo disso: ele reproduz o
+      #     LATERAL antigo sobre a view nova e EXIGE que 900 previstos virem 1800.
+      #     Sem ele, o caso 4 nao distingue "a correcao funciona" de "o cenario
+      #     nunca exercitou o bug";
+      #   - a moeda que vale e a do LANCAMENTO, nao a da conta ("os-dois" na
+      #     interaction). Um mutante que le a moeda da conta por JOIN aplica
+      #     limpo e devolve 1080 no lugar de 1000 -- o gasto em dolar no cartao
+      #     em reais contado como real;
+      #   - o default 'BRL' e a decisao "ficam-brl": o INSERT sem moeda -- que e
+      #     o INSERT de todo codigo anterior a esta issue -- tem de dar BRL;
+      #   - as tres views sao recriadas, e `CREATE OR REPLACE` preserva
+      #     reloptions apenas em teoria. Sem `security_invoker`, `monthly_cash_flow`
+      #     devolve a renda mensal de TODOS os usuarios para qualquer um logado.
+      - name: A moeda entra no grao e o total para de misturar
+        run: $PSQL -f database/tests/022_currency_test.sql
+
       # O livro-razao das execucoes de cron. O que so o Postgres pega:
       #
       #   - o CHECK de `job` tem que bater com os quatro `crons[].path` do
