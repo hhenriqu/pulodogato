@@ -106,10 +106,12 @@ Defina em Project Settings → Environment Variables, escopo **Production**:
 | `NEXT_PUBLIC_SUPABASE_URL` | URL do projeto Supabase |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | chave `anon` do projeto |
 
-Os dois valores de producao estao em `.env.production`, na raiz do repositorio
-(o repo e privado). E o mesmo projeto Supabase que o banco de producao --
-conferido comparando o ref `odxqjvtxsioksguuevqm` com o host de
-`SUPABASE_DB_URL_RO`.
+Os dois valores saem do dashboard do Supabase (Project Settings → API) do
+projeto **`odxqjvtxsioksguuevqm`**, que e o banco de producao -- conferido
+comparando esse ref com o host de `SUPABASE_DB_URL_RO`. Depois da HMO-132 eles
+**nao estao mais no repositorio**: a Vercel e a unica fonte da verdade, e o
+`.env.production` saiu do versionamento (segue existindo na maquina de quem ja
+o tinha, porque o `git rm` foi `--cached`).
 
 > **O `.env.production` versionado NAO vale na Vercel.** Uma versao anterior
 > deste runbook dizia o contrario -- que o Next carregava o arquivo no build e
@@ -130,10 +132,43 @@ conferido comparando o ref `odxqjvtxsioksguuevqm` com o host de
 > chegou vazio no prerender. O log ainda mostra `- Environments: .env.production`,
 > o que faz parecer que o arquivo do repo foi lido. Nao foi.
 >
-> Consequencia pratica: o arquivo commitado nao e rede de seguranca nem risco de
-> preview apontando para producao **na Vercel** -- ele e simplesmente inerte ali.
-> Continua sendo usado localmente (`scripts/extract-schema.mjs` le ele como
-> fallback), entao nao saiu do versionamento.
+> Consequencia pratica: o arquivo commitado nao era rede de seguranca nem risco
+> de preview apontando para producao **na Vercel** -- ele era simplesmente
+> inerte ali. O risco que ele criava era **local**: `next build` num clone sem
+> `.env.local` ligava a maquina de quem clonasse no banco real. Por isso a
+> HMO-132 o tirou do versionamento.
+
+#### Escopo Preview: o que preview nao pode fazer
+
+Preview deployment de branch **tambem e build de producao** na Vercel -- o
+`NODE_ENV` la vale `production`. Entao nenhuma checagem baseada em `NODE_ENV`
+distingue preview de producao; quem distingue e o `VERCEL_ENV`, que a
+plataforma define como `preview` no build e no runtime.
+
+Isso importa porque abrir um PR cria uma URL publica. Se o escopo **Preview**
+apontar para o banco de producao, um "criar transacao" de teste no preview vira
+lancamento de verdade na conta do Helio, e nada na tela avisa.
+
+> **Cuidado com o padrao da Vercel**: ao adicionar uma variavel, o dashboard vem
+> com Production, Preview e Development **todos marcados**. Deixar assim e
+> exatamente a configuracao errada aqui.
+
+Duas configuracoes corretas para o escopo Preview:
+
+1. **Sem as variaveis.** O build do preview falha com a mensagem de
+   `utils/supabase/env.ts` -- que e o resultado desejado: preview nenhum precisa
+   subir para a `main` seguir.
+2. **Apontando para um projeto Supabase separado**, se um dia preview precisar
+   funcionar de verdade.
+
+Desde a HMO-132 isso nao depende so de lembrar de desmarcar a caixinha:
+`utils/supabase/env.ts` derruba o build quando `VERCEL_ENV=preview` **e** a URL
+e a do projeto `odxqjvtxsioksguuevqm`. O guard tem escotilha
+(`PREVIEW_ALLOW_PRODUCTION_DB=1`), que existe para nao convidar ao conserto pior
+-- apagar o guard no codigo. Se voce se pegar definindo essa variavel, o que
+voce quer provavelmente e a opcao 2. A regra e testada em `npm run
+test:env-preview`, no workflow `env-preview` (sem filtro de `paths`, porque o
+modo de falhar dela e a ausencia de sintoma).
 
 A validacao que produz esse erro (`utils/supabase/env.ts`) esta fazendo o que
 deveria: falhar no build em vez de subir uma aplicacao que quebraria na cara do
