@@ -5,10 +5,6 @@ import { createClient } from "@/utils/supabase/client";
 import { User } from "@supabase/supabase-js";
 import { useSubscription } from "@/lib/hooks/useSubscription";
 import { PlanBadge } from "@/components/subscription/PlanGuards";
-import {
-  QuickUsage,
-  UsageLimitsCard,
-} from "@/components/subscription/UsageLimits";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -20,7 +16,14 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { resumoDoPeriodo } from "@/lib/movimentacoes";
+import {
+  FILTROS_DE_LANCAMENTO,
+  classificarMovimentacao,
+  contarPorFiltro,
+  filtrarLancamentos,
+  resumoDoPeriodo,
+  type FiltroDeLancamento,
+} from "@/lib/movimentacoes";
 import { rotaDoTipo, tipoDoLancamento } from "@/lib/lancamento";
 import { ROTA_DA_TRANSFERENCIA } from "@/lib/transferencia";
 import {
@@ -43,7 +46,6 @@ import {
   Pencil,
   Trash2,
   Share2,
-  Crown,
   ArrowRightLeft,
 } from "lucide-react";
 import Link from "next/link";
@@ -93,11 +95,12 @@ export default function PersonalFinancePage() {
   const [user, setUser] = useState<User | null>(null);
   const [transactions, setTransactions] = useState<FinancialTransaction[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState("transactions");
+  /** Qual dos quatro filtros da lista esta selecionado. */
+  const [filtro, setFiltro] = useState<FiltroDeLancamento>("todos");
   /** De quando sao os dados na tela, quando eles vieram do aparelho. */
   const [catalogoDe, setCatalogoDe] = useState<number | null>(null);
 
-  const { canCreateMore, planConfig, isPremium } = useSubscription(user);
+  const { canCreateMore, planConfig } = useSubscription(user);
 
   // Função para deletar transação
   //
@@ -372,6 +375,13 @@ export default function PersonalFinancePage() {
   const { income, expenses, balance, transferido, transferencias } =
     calculateBalance();
 
+  // As duas saem da mesma fonte que os cartoes do topo (`classificarMovimentacao`),
+  // de proposito: a aba "Despesas" tem que mostrar exatamente as linhas que o
+  // cartao "Despesas" somou. Filtrar aqui por sinal do valor daria uma lista
+  // que discorda do total logo acima dela, na mesma tela.
+  const visiveis = filtrarLancamentos(transactions, filtro);
+  const contagem = contarPorFiltro(transactions);
+
   return (
     <div className="container mx-auto py-6 space-y-6">
       {/* Header */}
@@ -508,33 +518,67 @@ export default function PersonalFinancePage() {
       </div>
 
       {/*
-        Duas abas, nao quatro. "Visão Geral" e "Gastos Compartilhados" eram
-        gatilhos sem `TabsContent` nenhum: clicar em qualquer uma das duas
-        trocava a lista de lançamentos por uma área em branco. Uma aba vazia não
-        parece um recurso que falta -- parece que a tela quebrou.
+        A barra agora filtra a lista por TIPO -- ela não troca de assunto.
 
-        Os gastos compartilhados têm tela própria (`/dashboard/expense-groups`),
-        que é onde eles de fato existem.
+        Antes eram "Lançamentos" e "Limites", e a segunda não falava de dinheiro
+        nenhum: era quanto do plano já foi usado. Ela mudou de tela (está em
+        Configurações › Plano e limites), e o lugar ficou para o que esta tela
+        de fato precisava. Os três tipos sempre estiveram na lista -- a consulta
+        nunca filtrou por tipo --, só que misturados e sem rótulo: uma perna de
+        transferência tem a mesma cara de uma despesa, valor negativo e tudo.
+
+        Sem `grid w-full`: o `TabsList` deste projeto já resolve o estouro no
+        celular com `overflow-x-auto`, e o trilho de grid não escapa disso --
+        ele cresce até o conteúdo mínimo, e "Transferências" sem quebra tem um
+        mínimo largo. Foi assim que a barra de abas empurrou a página inteira
+        para o lado na HMO-168.
       */}
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="transactions">Lançamentos</TabsTrigger>
-          <TabsTrigger value="limits">Limites</TabsTrigger>
+      <Tabs
+        value={filtro}
+        onValueChange={(v) => setFiltro(v as FiltroDeLancamento)}
+        className="w-full"
+      >
+        <TabsList>
+          {FILTROS_DE_LANCAMENTO.map((f) => (
+            <TabsTrigger key={f.id} value={f.id} className="gap-1.5">
+              {f.rotulo}
+              {/*
+                A contagem é o que responde "cadê minhas transferências?" sem
+                exigir um clique: um zero aqui distingue "não há linha desse
+                tipo" de "a aba abriu vazia porque quebrou".
+              */}
+              <span className="text-xs text-muted-foreground">
+                {contagem[f.id]}
+              </span>
+            </TabsTrigger>
+          ))}
         </TabsList>
 
-        <TabsContent value="transactions" className="space-y-4">
+        {/*
+          Um `TabsContent` por filtro, todos com o MESMO conteúdo: o Radix só
+          monta o painel do valor ativo, e `visiveis` já está filtrado por
+          `filtro`. Um painel só, fora do `Tabs`, deixaria os outros três
+          gatilhos sem painel nenhum -- que é exatamente o bug das abas vazias
+          que esta tela já teve.
+        */}
+        {FILTROS_DE_LANCAMENTO.map((f) => (
+          <TabsContent key={f.id} value={f.id} className="space-y-4">
           {/* Transactions List */}
           <Card>
             <CardHeader>
-              <CardTitle>Transações Recentes</CardTitle>
+              <CardTitle>
+                {filtro === "todos" ? "Transações Recentes" : f.rotulo}
+              </CardTitle>
               <CardDescription>
-                Últimas movimentações financeiras
+                {filtro === "todos"
+                  ? "Últimas movimentações financeiras — receitas, despesas e transferências"
+                  : `Mostrando ${visiveis.length} de ${transactions.length} lançamentos`}
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {transactions.length > 0 ? (
+              {visiveis.length > 0 ? (
                 <div className="space-y-3">
-                  {transactions.map((transaction) => (
+                  {visiveis.map((transaction) => (
                     <div
                       key={transaction.id}
                       className="flex items-center justify-between p-3 border rounded-lg transition-colors hover:bg-muted/50"
@@ -553,6 +597,23 @@ export default function PersonalFinancePage() {
                             {transaction.description}
                           </p>
                           <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                            {/*
+                              O tipo, escrito, em toda linha. Sem ele a perna de
+                              saída de uma transferência é indistinguível de uma
+                              despesa: as duas chegam com valor negativo e são
+                              pintadas de vermelho logo ali do lado. Quem
+                              procurava para onde foi o dinheiro lia um gasto
+                              que nunca existiu.
+                            */}
+                            <Badge variant="outline" className="shrink-0">
+                              {
+                                {
+                                  income: "Receita",
+                                  expense: "Despesa",
+                                  transfer: "Transferência",
+                                }[classificarMovimentacao(transaction)]
+                              }
+                            </Badge>
                             <span>{transaction.category?.name}</span>
                             <span>•</span>
                             <span>
@@ -651,6 +712,30 @@ export default function PersonalFinancePage() {
                     </div>
                   ))}
                 </div>
+              ) : transactions.length > 0 ? (
+                /*
+                  Vazio por causa do FILTRO, não por falta de lançamento. Os
+                  dois casos são diferentes e a mensagem antiga só sabia um
+                  deles: "Nenhum lançamento ainda" numa conta com 40 despesas,
+                  só porque a aba "Transferências" está aberta, é a tela
+                  afirmando com confiança algo falso -- e o botão "Nova Receita"
+                  logo abaixo manda resolver o problema errado.
+                */
+                <div className="text-center py-8 space-y-4">
+                  <Receipt className="h-12 w-12 text-muted-foreground mx-auto" />
+                  <div>
+                    <h3 className="text-lg font-medium mb-2">
+                      Nenhum lançamento deste tipo
+                    </h3>
+                    <p className="text-muted-foreground">
+                      Você tem {transactions.length} lançamento(s), mas nenhum
+                      em {f.rotulo.toLowerCase()}.
+                    </p>
+                  </div>
+                  <Button variant="outline" onClick={() => setFiltro("todos")}>
+                    Ver todos os lançamentos
+                  </Button>
+                </div>
               ) : (
                 <div className="text-center py-8 space-y-4">
                   <Receipt className="h-12 w-12 text-muted-foreground mx-auto" />
@@ -675,86 +760,19 @@ export default function PersonalFinancePage() {
                         Nova Despesa
                       </Link>
                     </Button>
+                    <Button variant="outline" asChild className="gap-2">
+                      <Link href={ROTA_DA_TRANSFERENCIA}>
+                        <ArrowRightLeft className="h-4 w-4 text-info" />
+                        Transferência
+                      </Link>
+                    </Button>
                   </div>
                 </div>
               )}
             </CardContent>
           </Card>
-        </TabsContent>
-
-        <TabsContent value="limits" className="space-y-4">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Usage Limits Card */}
-            <div className="lg:col-span-2">
-              <UsageLimitsCard user={user} />
-            </div>
-
-            {/* Quick Stats */}
-            <div className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">Uso Atual</CardTitle>
-                  <CardDescription>
-                    Resumo do seu uso em tempo real
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <QuickUsage
-                    user={user}
-                    type="maxTransactions"
-                    label="Transações"
-                    showUpgrade={true}
-                  />
-                  <QuickUsage
-                    user={user}
-                    type="maxAccounts"
-                    label="Contas"
-                    showUpgrade={true}
-                  />
-                  <QuickUsage
-                    user={user}
-                    type="maxCategories"
-                    label="Categorias"
-                    showUpgrade={true}
-                  />
-                  <QuickUsage
-                    user={user}
-                    type="maxExpenseGroups"
-                    label="Grupos"
-                    showUpgrade={true}
-                  />
-                </CardContent>
-              </Card>
-
-              {!isPremium && (
-                <Card className="border-warning/30 bg-warning/10">
-                  <CardHeader>
-                    <CardTitle className="text-lg flex items-center gap-2">
-                      <Crown className="h-5 w-5 text-warning" />
-                      Upgrade Premium
-                    </CardTitle>
-                    <CardDescription>
-                      Desbloqueie funcionalidades avançadas
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-3">
-                      <div className="text-sm space-y-1">
-                        <p>✨ Transações ilimitadas</p>
-                        <p>📈 Análise de investimentos</p>
-                        <p>📊 Relatórios avançados</p>
-                        <p>🎯 Alertas personalizados</p>
-                      </div>
-                      <Button className="w-full" asChild>
-                        <Link href="/dashboard/plans">Ver Planos Premium</Link>
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-            </div>
-          </div>
-        </TabsContent>
+          </TabsContent>
+        ))}
       </Tabs>
     </div>
   );

@@ -15,7 +15,10 @@ import assert from "node:assert/strict";
 
 import {
   classificarMovimentacao,
+  contarPorFiltro,
+  filtrarLancamentos,
   resumoDoPeriodo,
+  FILTROS_DE_LANCAMENTO,
 } from "../.tmp-movimentacoes/movimentacoes.js";
 
 const despesa = (amount, extra = {}) => ({
@@ -134,4 +137,102 @@ test("periodo vazio soma zero", () => {
     transferido: 0,
     transferencias: 0,
   });
+});
+
+// ---------------------------------------------------------------------------
+// O FILTRO DA LISTA (HMO-162)
+// ---------------------------------------------------------------------------
+// A barra "Lançamentos | Receitas | Despesas | Transferências" tem que
+// concordar com os cartoes do topo da mesma tela. Por isso as asercoes abaixo
+// cruzam as duas funcoes: o que a aba "Despesas" mostra e o que o cartao
+// "Despesas" somou. Testar so o filtro deixaria passar uma divergencia entre os
+// dois -- dois numeros certos pela propria regra, discordando na tela.
+// ---------------------------------------------------------------------------
+
+test("cada filtro devolve so o seu tipo, e 'todos' nao esconde nada", () => {
+  const linhas = [
+    receita(3000),
+    despesa(-200),
+    despesa(-50),
+    ...pernasDeFatura(1000),
+  ];
+
+  assert.equal(filtrarLancamentos(linhas, "todos").length, 5);
+  assert.equal(filtrarLancamentos(linhas, "income").length, 1);
+  assert.equal(filtrarLancamentos(linhas, "expense").length, 2);
+  assert.equal(filtrarLancamentos(linhas, "transfer").length, 2);
+});
+
+test("a aba Despesas NAO mostra a perna de saida da transferencia", () => {
+  // O controle negativo desta suite. A perna de saida chega com valor
+  // NEGATIVO, igualzinha a uma despesa: um filtro escrito como `amount < 0`
+  // passaria em todo teste de contagem acima e reprovaria aqui. Sem esta
+  // asercao explicita de NEGACAO, o bug que a HMO-162 existe para consertar
+  // voltaria pela lista depois de ter saido da soma.
+  const saida = { amount: -1000, transaction_type: "transfer" };
+  const gasto = despesa(-1000);
+
+  const despesas = filtrarLancamentos([saida, gasto], "expense");
+
+  assert.equal(despesas.length, 1);
+  assert.equal(despesas[0], gasto);
+  assert.ok(!despesas.includes(saida));
+});
+
+test("filtro e resumo classificam a MESMA linha do mesmo jeito", () => {
+  // Cruza as duas funcoes. Uma linha antiga, sem `transaction_type`, com
+  // categoria de despesa e valor POSITIVO (um estorno): o sinal diz receita e a
+  // categoria diz despesa. As duas tem que escolher a categoria -- se o filtro
+  // decidisse por sinal, a linha apareceria em "Receitas" enquanto o cartao
+  // "Despesas" a estaria somando.
+  const estorno = { amount: 80, category: { is_expense: true } };
+
+  assert.equal(classificarMovimentacao(estorno), "expense");
+  assert.equal(filtrarLancamentos([estorno], "expense").length, 1);
+  assert.equal(filtrarLancamentos([estorno], "income").length, 0);
+  assert.equal(resumoDoPeriodo([estorno]).despesas, 80);
+});
+
+test("a contagem de cada filtro bate com o que o filtro devolve", () => {
+  const linhas = [
+    receita(3000),
+    receita(120),
+    despesa(-200),
+    ...pernasDeFatura(1000),
+    { amount: 80, category: { is_expense: true } },
+  ];
+
+  const contagem = contarPorFiltro(linhas);
+
+  // Contra o rotulo que mente: o numero ao lado de cada aba tem que ser
+  // exatamente o tamanho da lista que aquela aba abre.
+  for (const { id } of FILTROS_DE_LANCAMENTO) {
+    assert.equal(
+      contagem[id],
+      filtrarLancamentos(linhas, id).length,
+      `contagem de "${id}" nao bate com a lista`
+    );
+  }
+
+  assert.equal(contagem.todos, 6);
+  assert.equal(contagem.transfer, 2);
+});
+
+test("os quatro filtros da barra existem, e nenhum fica sem contagem", () => {
+  // `FILTROS_DE_LANCAMENTO` alimenta a barra da tela. Um filtro acrescentado la
+  // sem tratamento em `contarPorFiltro` apareceria com contagem `undefined` --
+  // que o React renderiza como nada, sem erro nenhum.
+  assert.deepEqual(
+    FILTROS_DE_LANCAMENTO.map((f) => f.id),
+    ["todos", "income", "expense", "transfer"]
+  );
+  assert.deepEqual(
+    FILTROS_DE_LANCAMENTO.map((f) => f.rotulo),
+    ["Lançamentos", "Receitas", "Despesas", "Transferências"]
+  );
+
+  const contagem = contarPorFiltro([]);
+  for (const { id } of FILTROS_DE_LANCAMENTO) {
+    assert.equal(contagem[id], 0, `filtro "${id}" ficou sem contagem`);
+  }
 });
