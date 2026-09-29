@@ -18,6 +18,17 @@
 //
 // O QUE A JANELA EXPLICITA NAO PODE FAZER
 // ----------------------------------------
+// NENHUMA DAS DUAS CONSULTAS FILTRA POR user_id (HMO-177)
+// -------------------------------------------------------
+// Isso e deliberado -- a RLS filtra --, mas as policies do 005 nao sao
+// `user_id = auth.uid()` e mais nada: elas tambem liberam
+// `group_id IS NOT NULL AND is_group_member(group_id)`. Entao a consulta sem
+// filtro traz, junto com as minhas linhas, as linhas de GRUPO dos outros
+// membros. Um aluguel de R$ 3.000 do grupo Casa aparecia inteiro para as duas
+// pessoas: para quem cadastrou a regra e para quem nunca cadastrou nada.
+// Por isso cada linha de grupo entra aqui pela parte de um membro -- ver
+// lib/parte-do-grupo.ts, que tem a medicao e o controle negativo.
+//
 // `materializarAgenda` CRIA linhas de vencimento a partir das regras
 // recorrentes. Rodar isso sobre um mes que ja passou fabricaria contas
 // retroativas -- e, como elas nasceriam vencidas, o app passaria a acusar
@@ -28,7 +39,12 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { materializarAgenda } from "@/lib/services/scheduled";
-import { addMonthsClamped, monthlyCost, today } from "@/lib/recurrence";
+import { addMonthsClamped, today } from "@/lib/recurrence";
+import {
+  contarMembrosAtivos,
+  custoFixoMensalDaMinhaParte,
+  parteDoMembro,
+} from "@/lib/parte-do-grupo";
 import { janelaParaMaterializar, periodoDaQuery } from "@/lib/periodo-do-painel";
 import type { RecurringRule, ScheduledSummary } from "@/types/financial";
 
@@ -88,7 +104,7 @@ export async function GET(request: NextRequest) {
 
     const { data: linhas, error } = await supabase
       .from("scheduled_transactions_effective")
-      .select("due_date, amount, status, effective_status")
+      .select("due_date, amount, status, effective_status, group_id")
       .gte("due_date", de)
       .lte("due_date", ate);
 
@@ -102,20 +118,50 @@ export async function GET(request: NextRequest) {
 
     const { data: regras } = await supabase
       .from("recurring_rules")
-      .select("amount, frequency, interval_count, transaction_type")
+      .select("amount, frequency, interval_count, transaction_type, group_id")
       .eq("is_active", true);
 
-    const custoFixoMensal = ((regras ?? []) as RecurringRule[])
-      .filter((r) => r.transaction_type !== "income")
-      .reduce(
-        (soma, r) =>
-          soma +
-          monthlyCost(
-            { frequency: r.frequency, interval_count: r.interval_count, start_date: hoje },
-            Number(r.amount)
-          ),
-        0
-      );
+    // Quantos membros ativos tem cada grupo que aparece nas duas consultas.
+    // Sem isto a parte dos outros continua contando como minha - ver o cabecalho
+    // de lib/parte-do-grupo.ts para a medicao que mostra o numero inflado.
+    const gruposEnvolvidos = Array.from(
+      new Set(
+        [
+          ...((regras ?? []) as { group_id?: string | null }[]),
+          ...((linhas ?? []) as { group_id?: string | null }[]),
+        ]
+          .map((r) => r.group_id)
+          .filter((id): id is string => Boolean(id))
+      )
+    );
+
+    let membrosAtivosPorGrupo: Map<string, number> = new Map();
+
+    if (gruposEnvolvidos.length > 0) {
+      const { data: membros, error: erroMembros } = await supabase
+        .from("group_members")
+        .select("group_id, status")
+        .in("group_id", gruposEnvolvidos)
+        .eq("status", "active");
+
+      if (erroMembros) {
+        // Sem a contagem, `parteDoMembro` mantem o valor CHEIO. Erra para cima,
+        // que e o comportamento antigo, em vez de subestimar o custo fixo e
+        // fazer o safe-to-spend prometer dinheiro que nao sobra.
+        console.error(
+          "Resumo seguiu sem dividir a parte do grupo:",
+          erroMembros
+        );
+      } else {
+        membrosAtivosPorGrupo = contarMembrosAtivos(membros ?? []);
+      }
+    }
+
+    const custoFixoMensal = custoFixoMensalDaMinhaParte(
+      (regras ?? []) as RecurringRule[],
+      membrosAtivosPorGrupo,
+      hoje
+    );
 
     const porMes = new Map<string, ScheduledSummary>();
 
@@ -133,7 +179,15 @@ export async function GET(request: NextRequest) {
           count_overdue: 0,
         } as ScheduledSummary);
 
-      const valor = Number(linha.amount);
+      // A linha de grupo entra pela MINHA parte. Nao e refinamento do custo
+      // fixo: a policy do 005 devolve tambem as previstas de grupo dos OUTROS
+      // membros, entao sem esta divisao a Lais via uma conta de R$ 3.000 no nome
+      // do Helio somada ao "quanto ainda vai sair" dela.
+      const valor = parteDoMembro(
+        linha.amount,
+        (linha as { group_id?: string | null }).group_id,
+        membrosAtivosPorGrupo
+      );
 
       if (linha.effective_status === "overdue") {
         atual.total_overdue += valor;

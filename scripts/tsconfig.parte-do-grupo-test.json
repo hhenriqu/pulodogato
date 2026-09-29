@@ -1,0 +1,30 @@
+{
+  "//": [
+    "A MINHA parte da despesa de grupo (HMO-177).",
+    "",
+    "`rootDir` e a raiz do projeto, e nao `lib`, porque lib/parte-do-grupo.ts",
+    "importa `@/types/financial` para tipar `frequency` com o enum de verdade --",
+    "com `rootDir: lib` o tsc reprova com TS6059. O import e de TIPO, entao o",
+    "tsc o elimina no emit; o que sobra para reescrever sao os imports de",
+    "@/lib/settlement e @/lib/recurrence, que o passo do resolve-aliases resolve",
+    "com --espelha-raiz. Ver scripts/test-parte-do-grupo.mjs."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-parte-do-grupo",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../lib/parte-do-grupo.ts",
+    "../lib/settlement.ts",
+    "../lib/recurrence.ts",
+    "../types/financial.ts"
+  ]
+}

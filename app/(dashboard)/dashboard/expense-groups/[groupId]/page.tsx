@@ -102,6 +102,35 @@ interface GroupTransaction {
   };
 }
 
+/**
+ * Uma despesa do grupo que ainda NAO aconteceu: conta prevista com `group_id`.
+ *
+ * Nao tem `splits`, e a diferenca importa. A divisao de verdade so existe
+ * depois que a transacao nasce (na baixa), entao aqui `share_amount` e o que
+ * cada membro VAI dever -- calculado pela mesma regra que o trigger usa, e nao
+ * uma divida que alguem ja possa aprovar ou recusar.
+ */
+interface GroupScheduled {
+  id: string;
+  description: string;
+  amount: number;
+  share_amount: number;
+  due_date: string;
+  status: "pending" | "overdue" | "paid" | "cancelled";
+  is_overdue: boolean;
+  days_until_due: number;
+  is_recurring: boolean;
+  payer: {
+    id: string;
+    full_name: string;
+    avatar_url?: string;
+  } | null;
+  category?: {
+    name: string;
+    icon?: string;
+  } | null;
+}
+
 interface BalanceSummary {
   member: {
     id: string;
@@ -157,6 +186,7 @@ export default function GroupDetailPage() {
   const [user, setUser] = useState<User | null>(null);
   const [group, setGroup] = useState<ExpenseGroup | null>(null);
   const [transactions, setTransactions] = useState<GroupTransaction[]>([]);
+  const [scheduled, setScheduled] = useState<GroupScheduled[]>([]);
   const [balances, setBalances] = useState<BalanceSummary[]>([]);
   const [transfers, setTransfers] = useState<TransferSuggestion[]>([]);
   const [settlements, setSettlements] = useState<Settlement[]>([]);
@@ -184,7 +214,12 @@ export default function GroupDetailPage() {
     useState<any>(null);
 
   // Estados dos accordions
-  const [openSections, setOpenSections] = useState<string[]>(["current"]);
+  // "scheduled" comece aberta: a despesa fixa de grupo era invisivel nesta tela
+  // (HMO-177), e nascer fechada atras de um clique repetiria o sintoma.
+  const [openSections, setOpenSections] = useState<string[]>([
+    "scheduled",
+    "current",
+  ]);
 
   const supabase = createClient();
 
@@ -209,6 +244,7 @@ export default function GroupDetailPage() {
       await Promise.all([
         loadGroup(),
         loadTransactions(),
+        loadScheduled(),
         loadBalances(),
         loadTransfers(),
         loadSettlements(),
@@ -241,6 +277,19 @@ export default function GroupDetailPage() {
       setTransactions(data.transactions || []);
     } else {
       console.error("Error loading transactions:", data.error);
+    }
+  };
+
+  // A despesa "fixa" do grupo nao existe em group_transactions ate a baixa da
+  // conta prevista -- ate entao ela era invisivel aqui (HMO-177).
+  const loadScheduled = async () => {
+    const response = await fetch(`/api/expense-groups/${groupId}/scheduled`);
+    const data = await response.json();
+
+    if (response.ok) {
+      setScheduled(data.scheduled || []);
+    } else {
+      console.error("Error loading scheduled:", data.error);
     }
   };
 
@@ -624,6 +673,112 @@ export default function GroupDetailPage() {
         <TabsContent value="expenses" className="space-y-4">
           {/* Expenses by Period */}
           <div className="space-y-4">
+            {/*
+              Previstas: o que o grupo AINDA VAI pagar (HMO-177).
+
+              Fica separada das outras secoes de proposito. As demais listam
+              despesa que ja aconteceu e tem divisao gravada, que alguem pode
+              aprovar ou recusar; aqui nao ha divisao nenhuma ainda -- ela nasce
+              na baixa da conta prevista. Misturar as duas na mesma lista faria
+              o total do grupo somar dinheiro que ninguem gastou.
+
+              So aparece quando existe alguma: grupo sem despesa fixa continua
+              vendo a tela de antes.
+            */}
+            {scheduled.length > 0 && (
+              <Card>
+                <CardHeader
+                  className="cursor-pointer hover:bg-muted/50 transition-colors"
+                  onClick={() => toggleSection("scheduled")}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="flex items-center gap-2">
+                        <Clock className="h-5 w-5" />
+                        Previstas
+                        <Badge variant="outline">
+                          {scheduled.length} a vencer
+                        </Badge>
+                      </CardTitle>
+                      <CardDescription>
+                        Ainda não aconteceram • Total:{" "}
+                        {formatCurrency(
+                          scheduled.reduce((sum, s) => sum + s.amount, 0)
+                        )}{" "}
+                        • Sua parte:{" "}
+                        {formatCurrency(
+                          scheduled.reduce((sum, s) => sum + s.share_amount, 0)
+                        )}
+                      </CardDescription>
+                    </div>
+                    {openSections.includes("scheduled") ? (
+                      <ChevronDown className="h-5 w-5" />
+                    ) : (
+                      <ChevronRight className="h-5 w-5" />
+                    )}
+                  </div>
+                </CardHeader>
+                {openSections.includes("scheduled") && (
+                  <CardContent className="space-y-3">
+                    {scheduled.map((item) => (
+                      <div key={item.id} className="border rounded-lg p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <Avatar className="h-8 w-8">
+                              <AvatarImage src={item.payer?.avatar_url} />
+                              <AvatarFallback>
+                                {inicial(item.payer?.full_name)}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div>
+                              <h4 className="font-medium flex items-center gap-2">
+                                {item.description}
+                                {item.is_recurring && (
+                                  <Badge
+                                    variant="secondary"
+                                    className="text-xs"
+                                  >
+                                    Fixa
+                                  </Badge>
+                                )}
+                              </h4>
+                              <p className="text-sm text-muted-foreground">
+                                {item.payer
+                                  ? `Vai pagar: ${item.payer.full_name}`
+                                  : "Responsável não identificado"}{" "}
+                                • vence{" "}
+                                {new Date(
+                                  `${item.due_date}T00:00:00`
+                                ).toLocaleDateString("pt-BR")}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-bold text-lg">
+                              {formatCurrency(item.amount)}
+                            </p>
+                            <p className="text-sm text-muted-foreground">
+                              sua parte {formatCurrency(item.share_amount)}
+                            </p>
+                            <Badge
+                              variant="outline"
+                              className={`text-xs ${
+                                item.is_overdue
+                                  ? "bg-destructive/10 text-destructive"
+                                  : "bg-warning/10 text-warning"
+                              }`}
+                            >
+                              {item.is_overdue ? "Vencida" : "A vencer"}
+                            </Badge>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </CardContent>
+                )}
+              </Card>
+            )}
+
             {/* Current Month */}
             <Card>
               <CardHeader

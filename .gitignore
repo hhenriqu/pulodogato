@@ -170,3 +170,7 @@ next-env.d.ts
 # saida do `npm run test:lista-lancamentos` (HMO-118; leva o movimentacoes.js
 # junto, porque lib/lista-de-lancamentos.ts importa os rotulos dos filtros de la)
 /.tmp-lista-lancamentos/
+
+# saida do `npm run test:parte-do-grupo` (HMO-177; espelha a raiz, entao leva
+# lib/settlement.js, lib/recurrence.js e o types/ junto)
+/.tmp-parte-do-grupo/
