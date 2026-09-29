@@ -12,9 +12,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/movimentacoes.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/movimentacoes.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/movimentacoes.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/movimentacoes.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -450,6 +450,45 @@ jobs:
       - name: A 020 recusa a linha errada e aceita a certa
         run: $PSQL -f database/tests/020_group_archive_test.sql
 
+      - name: 021_investments
+        run: $PSQL -f database/migrations/021_investments.sql
+
+      # Re-executavel, e aqui houve um detalhe: o UNIQUE (id, user_id) da tabela
+      # de ativos NAO pode usar o padrao DROP IF EXISTS + ADD do resto do
+      # arquivo. A FK composta da tabela de lancamentos depende do indice dele, e
+      # o DROP falha com "other objects depend on it" na segunda passada -- este
+      # passo foi quem pegou. Ele entra por um DO/IF sobre pg_constraint.
+      - name: 021 e idempotente
+        run: $PSQL -f database/migrations/021_investments.sql
+
+      # A carteira de investimentos. O que so o Postgres pega:
+      #
+      #   - a politica de INSERT (`user_id = auth.uid()`) olha a coluna user_id da
+      #     LINHA NOVA, que o atacante preenche corretamente com a propria
+      #     identidade -- nada nela olha de QUEM e o asset_id. Sem a FK COMPOSTA
+      #     para (id, user_id), o usuario A grava lancamento dentro da carteira do
+      #     usuario B e a soma de proventos de B muda sem B fazer nada. A RLS de
+      #     SELECT esconde o ativo de B, mas esconder na leitura nao impede a
+      #     escrita. O caso 1 do teste e exatamente esse, e o mutante (FK simples
+      #     para `id`) morre nele;
+      #   - o par `current_price` / `current_price_at`: preco sem data e um numero
+      #     que o usuario nao sabe de quando e, e e nele que ele decide se vende;
+      #   - `symbol = upper(symbol)` com o UNIQUE por usuario. Sem isso "petr4" e
+      #     "PETR4" viram duas linhas e a carteira mostra o mesmo ativo duas
+      #     vezes, cada uma com METADE da posicao -- os dois numeros parecem
+      #     plausiveis e nenhum esta certo;
+      #   - os CHECK de valor positivo, que e onde a convencao desta tabela se
+      #     separa de `financial_transactions`: aqui o sinal NAO carrega
+      #     significado, quem carrega e `kind`. Quem tentar representar venda como
+      #     quantidade negativa bate no CHECK em vez de produzir preco medio
+      #     errado em silencio;
+      #   - o caso 8 e controle POSITIVO da RLS: ele grava um ativo do usuario A
+      #     de volta antes de checar o isolamento, porque o caso 7 apagou o unico
+      #     que existia -- sem isso "B nao ve ativo do A" passaria por AUSENCIA de
+      #     dado, que e a assercao mais convincente que existe e nao prova nada.
+      - name: A 021 recusa a linha errada e aceita a certa
+        run: $PSQL -f database/tests/021_investments_test.sql
+
       # O livro-razao das execucoes de cron. O que so o Postgres pega:
       #
       #   - o CHECK de `job` tem que bater com os quatro `crons[].path` do
@@ -745,6 +784,26 @@ jobs:
       # Os dois mutantes (classificar por sinal; contar as duas pernas) morrem.
       - name: Separacao contabil das tres movimentacoes
         run: npm run test:movimentacoes
+
+      # A carteira de investimentos erra dinheiro sem levantar excecao: ela mostra
+      # um preco medio de R$ 31,14 onde o certo e R$ 30,00, e ninguem estranha
+      # 31,14. Os casos que valem:
+      #   - somar a VENDA na ponderacao do preco medio. E o erro central do custo
+      #     medio e o mais plausivel de escrever -- `soma(qtd*preco)/soma(qtd)`
+      #     parece obviamente certo -- e ele contamina o lucro, a rentabilidade e
+      #     o "Valor Atual" da tela de uma vez;
+      #   - a taxa fora do custo, que infla o lucro em exatamente o valor das
+      #     corretagens e deixa o "investido" abaixo do que saiu da conta;
+      #   - preco ausente tratado como ZERO: como nao ha fonte de cotacao
+      #     contratada, `current_price` nasce NULL, e o caminho ingenuo faz a tela
+      #     anunciar carteira de R$ 0,00 com -100% no dia em que o usuario
+      #     cadastra o primeiro ativo;
+      #   - dividir a rentabilidade pelo valor atual em vez do custo, e a alocacao
+      #     pelo patrimonio em vez do total da carteira (o defeito da HMO-146).
+      # 26 de 28 mutantes mortos; os dois sobreviventes sao no-op algebrico,
+      # explicados no cabecalho de scripts/mutantes-investments.mjs.
+      - name: Custo medio, alocacao e evolucao da carteira
+        run: npm run test:investments
 
       # O guard de deriva de COLUNA (scripts/check-column-drift.mjs) roda no job
       # code-schema-drift, que nao tem Postgres, entao ele le o schema de

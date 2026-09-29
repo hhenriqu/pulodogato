@@ -21,7 +21,14 @@ import {
 interface PerformanceData {
   date: string;
   portfolio: number;
-  benchmark: number;
+  /**
+   * Opcional desde a HMO-169, e essa é a diferença que importa: não existe fonte
+   * de cotação contratada neste app (HMO-141 item 2), então não há série do IBOV
+   * para comparar. Enquanto era obrigatório, a única forma de usar o componente
+   * era passar zero — e uma linha reta no zero chamada "IBOV" não é um dado
+   * faltando, é um dado errado: quem olha lê "o índice não saiu do lugar".
+   */
+  benchmark?: number;
 }
 
 interface PerformanceChartProps {
@@ -35,6 +42,12 @@ export function PerformanceChart({
   title = "Performance da Carteira",
   description = "Comparação com benchmark ao longo do tempo",
 }: PerformanceChartProps) {
+  // A linha do benchmark só entra se algum ponto tiver o valor. `?? undefined`
+  // não bastaria: o recharts desenha a série declarada de qualquer jeito e ela
+  // aparece na legenda, prometendo uma comparação que o gráfico não tem.
+  const temBenchmark = data.some(
+    (p) => p.benchmark !== undefined && p.benchmark !== null
+  );
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat("pt-BR", {
       style: "currency",
@@ -105,14 +118,16 @@ export function PerformanceChart({
                 name="Carteira"
                 dot={{ r: 3 }}
               />
-              <Line
-                type="monotone"
-                dataKey="benchmark"
-                stroke="#10b981"
-                strokeWidth={2}
-                name="IBOV"
-                dot={{ r: 3 }}
-              />
+              {temBenchmark && (
+                <Line
+                  type="monotone"
+                  dataKey="benchmark"
+                  stroke="#10b981"
+                  strokeWidth={2}
+                  name="IBOV"
+                  dot={{ r: 3 }}
+                />
+              )}
             </LineChart>
           </ResponsiveContainer>
         </div>

@@ -331,6 +331,30 @@
     "split_type",
     "transaction_id"
   ],
+  "investment_assets": [
+    "created_at",
+    "currency",
+    "current_price",
+    "current_price_at",
+    "id",
+    "name",
+    "symbol",
+    "type",
+    "updated_at",
+    "user_id"
+  ],
+  "investment_transactions": [
+    "asset_id",
+    "created_at",
+    "fees",
+    "id",
+    "kind",
+    "notes",
+    "quantity",
+    "trade_date",
+    "unit_price",
+    "user_id"
+  ],
   "monthly_cash_flow": [
     "expense",
     "group_id",
