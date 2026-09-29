@@ -64,7 +64,8 @@ const ROTAS = [
   // As que passavam. Ficam na lista como controle: se o conserto tiver
   // quebrado uma delas, aparece aqui.
   "/dashboard",
-  "/dashboard/accounts",
+  "/dashboard/contas",
+  "/dashboard/cartoes",
   "/dashboard/bills",
   "/dashboard/goals",
   "/dashboard/recurrences",

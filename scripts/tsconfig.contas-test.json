@@ -1,0 +1,23 @@
+{
+  "//": [
+    "As REGRAS do corte entre conta e cartao (HMO-166).",
+    "",
+    "Tem tsconfig proprio, e nao `tsc lib/contas.ts` solto na linha de comando,",
+    "porque lib/contas.ts importa `@/types/financial` -- o alias so resolve com",
+    "`paths`. O import e de TIPO, entao o tsc o elimina no emit e o JavaScript",
+    "que o node roda nao tem alias nenhum para reescrever."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-contas",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/contas.ts", "../types/financial.ts"]
+}

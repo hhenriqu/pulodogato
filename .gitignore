@@ -136,3 +136,7 @@ next-env.d.ts
 /.tmp-calculadora-campo/
 # saida do `npm run test:investments` (faltava desde a HMO-169)
 /.tmp-investments/
+
+# saida das duas suites da HMO-166 (tsc avulso; a de campos com reescrita de alias)
+/.tmp-contas/
+/.tmp-campos-da-conta/

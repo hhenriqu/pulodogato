@@ -1,0 +1,180 @@
+name: contas
+
+# Prova, a cada PR, as duas coisas que a HMO-166 separou: as REGRAS do corte
+# (qual tipo mora em qual tela, o que entra em cada total, o que vai `null` para
+# o banco) e a ARVORE de cada tela -- Contas sem limite, sem dia de fechamento e
+# sem dia de vencimento.
+#
+# SEM FILTRO DE `paths`, e de proposito, pelo mesmo motivo do lancamento.yml: o
+# comportamento destas telas nasce de tres lugares em dois diretorios
+# (lib/contas.ts, components/contas/*.tsx e os primitivos de components/ui), e um
+# filtro que liste os de hoje perde o dia em que alguem mexer no de amanha. Foi
+# exatamente assim que tres suites deste repositorio ficaram paradas em verde:
+# elas so rodavam no db-verify, que e filtrado por path.
+#
+# As duas suites renderizam HTML em memoria, rodam em segundos e nao precisam de
+# banco -- podem ser obrigatorias em todo PR sem virar pedagio.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  contas:
+    name: conta tem saldo, cartao tem fatura
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      # O `--include=dev` e explicito porque um ambiente com NODE_ENV=production
+      # poda as devDeps na instalacao e o tsc some sem mensagem que explique.
+      - run: npm ci --include=dev
+
+      # O que erra DINHEIRO: separar a tela nao pode mover um centavo de lugar.
+      # A tela unica somava saldo e fatura sobre a lista inteira; agora sao duas
+      # telas somando cada uma a sua metade. Um tipo que saia de Contas sem
+      # entrar em Cartoes faz o dinheiro sumir de uma tela sem aparecer na outra
+      # -- e ninguem procura um total que sumiu de uma tela que nao abriu.
+      - name: As regras do corte entre conta e cartao
+        run: npm run test:contas
+
+      # O que erra a TELA. A queixa da HMO-166 era de arvore: o cadastro era um
+      # formulario so para os oito tipos, e quem abria para cadastrar uma conta
+      # corrente via limite, fechamento e vencimento aparecerem e sumirem
+      # conforme trocava o tipo.
+      - name: Os campos que cada tela mostra
+        run: npm run test:campos-da-conta
+
+      # O modo offline das duas. A tela antiga era precacheada; as duas novas
+      # entraram no lugar dela. Deixar uma de fora apagaria metade do modo
+      # offline por um caminho que nao parece com isso -- o menu abriria sem rede
+      # com os dois itens e um deles cairia na pagina /offline.
+      - name: As duas telas abrem sem rede
+        run: npm run test:pwa-precache
+
+      # Controle negativo. As suites afirmam sobre AUSENCIA -- "a tela de Contas
+      # nao tem limite" -- e uma asercao de ausencia passa verde tambem quando
+      # ela deixa de achar o que deveria procurar. Uma verificacao que nunca viu
+      # vermelho nao e verificacao.
+      #
+      # Plantamos os sete defeitos exatos que a separacao corrigiu ou evita.
+      - name: A verificacao sabe falhar
+        run: |
+          set -uo pipefail
+          REGRAS=lib/contas.ts
+          CAMPOS=components/contas/CamposDaConta.tsx
+          PRECACHE=lib/pwa-precache.js
+          cp $REGRAS $REGRAS.orig
+          cp $CAMPOS $CAMPOS.orig
+          cp $PRECACHE $PRECACHE.orig
+          trap 'mv $REGRAS.orig $REGRAS; mv $CAMPOS.orig $CAMPOS; mv $PRECACHE.orig $PRECACHE' EXIT
+
+          # 1) A tela de Contas volta a pedir os campos de fatura. E a issue ao
+          #    contrario, e o caso mais obvio -- esta aqui para provar que o
+          #    oraculo esta ligado no que a issue pediu.
+          sed -i 's|return { tipo: true, fatura: false, substantivo: "conta" };|return { tipo: true, fatura: true, substantivo: "conta" };|' $REGRAS
+          if npm run test:campos-da-conta > /dev/null 2>&1; then
+            echo "::error::Verde com limite e dias de fatura na tela de Contas."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 2) O JSX ignorando a decisao. Este e o defeito que o teste de regra
+          #    NAO pega: `camposDoEscopo` continua certo, e o formulario
+          #    renderiza os tres campos nas duas telas do mesmo jeito. E a forma
+          #    exata do bug que a tela antiga tinha.
+          sed -i 's|{campos.fatura && (|{true \&\& (|' $CAMPOS
+          if npm run test:campos-da-conta > /dev/null 2>&1; then
+            echo "::error::Verde com o bloco de fatura renderizado nas duas telas."
+            exit 1
+          fi
+          cp $CAMPOS.orig $CAMPOS
+
+          # 3) O limite voltando a ser gravado fora do cartao. Era o que a tela
+          #    antiga fazia -- ela zerava os dois dias e mandava `credit_limit`
+          #    sempre. Defeito MUDO: nenhuma tela le limite de conta corrente,
+          #    entao o valor fica no banco sem nada que o denuncie.
+          #
+          #    O delimitador aqui e `#`, e nao `|`: o proprio trecho mutado tem
+          #    um `||` dentro, e com `|` de delimitador o sed corta a expressao
+          #    no meio. Ele sai com erro, o arquivo fica INTACTO, e a suite
+          #    seguinte passa verde sobre o codigo correto -- um controle
+          #    negativo que nao controla nada. Aconteceu ao escrever este job.
+          sed -i 's#credit_limit: temFatura ? valores.credit_limit || null : null,#credit_limit: valores.credit_limit || null,#' $REGRAS
+          if npm run test:contas > /dev/null 2>&1; then
+            echo "::error::Verde com limite gravado numa conta corrente."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 4) A fatura somada com o sinal cru. O valor gravado e negativo, entao
+          #    "Faturas em aberto" viraria -R$ 1.280,35. O saldo das contas
+          #    continua certo, que e o que faz ninguem procurar.
+          sed -i 's|return soma + (escopo === "cartao" ? Math.abs(valor) : valor);|return soma + valor;|' $REGRAS
+          if npm run test:contas > /dev/null 2>&1; then
+            echo "::error::Verde com a fatura somada com o sinal negativo."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 5) O cartao de debito mudando de tela. E a decisao que a issue mandou
+          #    confirmar com o Helio: ela tem que estar escrita em um lugar so, e
+          #    mexer nela tem que acender vermelho -- porque move um tipo inteiro
+          #    de um total para o outro.
+          sed -i 's|{ valor: "debit_card", rotulo: "Cartão de débito", escopo: "conta" },|{ valor: "debit_card", rotulo: "Cartão de débito", escopo: "cartao" },|' $REGRAS
+          if npm run test:contas > /dev/null 2>&1; then
+            echo "::error::Verde com o cartao de debito na tela de Cartoes, sem ninguem ter decidido isso."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 6) A frase que explica por que o tipo nao muda depois de criada a
+          #    conta -- trocar o tipo de uma conta que ja tem lancamento
+          #    reinterpreta o historico inteiro: o mesmo saldo passa a ser lido
+          #    como fatura.
+          #
+          #    O mutante e a FRASE, e nao o `disabled={editando}`, porque o
+          #    `disabled` do Select do radix nao aparece no HTML do servidor: o
+          #    `<button role="combobox">` sai byte a byte igual nos dois estados.
+          #    Um controle plantado nele ficaria verde sempre, e isso e pior do
+          #    que nao ter controle -- foi tentado primeiro, e passou.
+          sed -i 's#{editando \&\& (#{false \&\& (#' $CAMPOS
+          if npm run test:campos-da-conta > /dev/null 2>&1; then
+            echo "::error::Verde sem a frase que explica o tipo travado na edicao."
+            exit 1
+          fi
+          cp $CAMPOS.orig $CAMPOS
+
+          # 7) Metade do modo offline apagada. A tela antiga era precacheada; se
+          #    so uma das duas novas entrar, o toque no item que ficou de fora
+          #    cai na pagina /offline -- com o app instalado e tudo no aparelho.
+          sed -i '/^  "\/dashboard\/cartoes",$/d' $PRECACHE
+          if npm run test:pwa-precache > /dev/null 2>&1; then
+            echo "::error::Verde com a tela de Cartoes fora do precache."
+            exit 1
+          fi
+          cp $PRECACHE.orig $PRECACHE
+
+          # 8) O cartao nascendo como conta corrente. A tela de Cartoes nao tem
+          #    seletor de tipo -- nao ha nada para o usuario escolher errado --,
+          #    entao o `account_type` vem inteiro do padrao do escopo. Se ele
+          #    errar, o POST grava `checking`, o cartao aparece na tela de
+          #    Contas, e `POST /api/card-invoices/close` devolve 400 dizendo
+          #    "Esta conta nao e um cartao de credito" sobre um cartao que a
+          #    pessoa cadastrou na tela de Cartoes.
+          sed -i 's#  tiposDoEscopo(escopo)\[0\].valor;#  tiposDoEscopo("conta")[0].valor;#' $REGRAS
+          if npm run test:contas > /dev/null 2>&1; then
+            echo "::error::Verde com o cartao sendo criado como conta corrente."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          echo "A verificacao fica vermelha nos oito defeitos."

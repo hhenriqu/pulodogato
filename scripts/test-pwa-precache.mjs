@@ -89,7 +89,11 @@ test("as rotas que abrem sem rede estao na lista", () => {
   // As tres de leitura entraram quando aprenderam a dizer "sem rede" em vez
   // de imprimir R$ 0,00 -- ver `lib/offline-leitura.ts`.
   assert.ok(lista.includes("/dashboard/bills"));
-  assert.ok(lista.includes("/dashboard/accounts"));
+  // HMO-166: a tela unica virou duas, e as DUAS entraram. Cobrar so uma
+  // deixaria passar a metade que caiu fora do precache -- o menu abriria sem
+  // rede com os dois itens e um deles levaria para a pagina /offline.
+  assert.ok(lista.includes("/dashboard/contas"));
+  assert.ok(lista.includes("/dashboard/cartoes"));
   assert.ok(lista.includes("/dashboard/recurrences"));
 });
 

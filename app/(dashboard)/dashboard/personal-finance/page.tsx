@@ -632,7 +632,7 @@ export default function PersonalFinancePage() {
                               size="sm"
                               disabled
                               className="h-8 w-8 p-0"
-                              title="Transferência se edita em Contas e Cartões"
+                              title="Transferência não se edita por aqui: são duas pernas, e abrir só uma deixaria a outra órfã"
                             >
                               <Pencil className="h-4 w-4" />
                             </Button>
