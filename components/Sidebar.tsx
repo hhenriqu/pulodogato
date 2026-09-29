@@ -70,8 +70,18 @@ const navigation: NavigationItem[] = [
     // Toda tela que pede conta (lancamento, orcamento, fatura, extrato, meta)
     // fica inutil antes disto, e travar o cadastro atras de um plano deixaria o
     // usuario preso numa tela que so sabe dizer "selecione uma conta".
-    name: "Contas e Cartões",
-    href: "/dashboard/accounts",
+    name: "Contas",
+    href: "/dashboard/contas",
+    icon: Wallet,
+  },
+  {
+    // A outra metade do mesmo passo ZERO (HMO-166), e sem `requiredFeature`
+    // pelo mesmo motivo. Duas entradas e nao uma porque as duas telas cadastram
+    // coisas diferentes: conta tem saldo, cartao tem fatura, limite e
+    // vencimento. Um item so voltaria a ser o menu dizendo que sao a mesma
+    // coisa -- que era a premissa da tela que esta issue desfez.
+    name: "Cartões",
+    href: "/dashboard/cartoes",
     icon: CreditCard,
   },
   {

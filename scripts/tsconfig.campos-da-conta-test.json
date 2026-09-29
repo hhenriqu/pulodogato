@@ -1,0 +1,38 @@
+{
+  "//": [
+    "Compila os CAMPOS do cadastro de conta/cartao para o teste renderizar o",
+    "componente de verdade, e nao uma copia da logica dele. O `jsx: react-jsx` e",
+    "o que permite renderizar com react-dom/server no node, sem runner novo.",
+    "",
+    "O include puxa components/ui/* e lib/* juntos porque cada primitivo importa",
+    "lib/utils.ts, e o campo de dinheiro arrasta a calculadora (HMO-171) -- por",
+    "isso o resolve-aliases roda com --espelha-raiz."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-campos-da-conta",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../components/contas/CamposDaConta.tsx",
+    "../components/ui/campo-de-valor.tsx",
+    "../components/ui/calculadora-de-valor.tsx",
+    "../components/ui/button.tsx",
+    "../components/ui/input.tsx",
+    "../components/ui/label.tsx",
+    "../components/ui/dialog.tsx",
+    "../components/ui/select.tsx",
+    "../lib/contas.ts",
+    "../lib/dinheiro.ts",
+    "../lib/calculadora-de-campo.ts",
+    "../lib/utils.ts"
+  ]
+}

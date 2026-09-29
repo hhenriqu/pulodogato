@@ -354,7 +354,7 @@ export function CamposDeLancamento({
           {campos.contaObrigatoria && contasVisiveis.length === 0 && (
             <p className="text-xs text-warning">
               Você ainda não tem nenhum cartão de crédito cadastrado. Cadastre
-              em Contas e Cartões.
+              em Cartões.
             </p>
           )}
         </div>

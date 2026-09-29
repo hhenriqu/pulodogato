@@ -273,7 +273,7 @@ export default function NetWorthPage() {
               uma para o número aparecer aqui.
             </p>
             <Button asChild size="sm">
-              <Link href="/dashboard/accounts">
+              <Link href="/dashboard/contas">
                 Cadastrar conta <ArrowRight className="h-4 w-4 ml-2" />
               </Link>
             </Button>

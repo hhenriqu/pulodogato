@@ -287,21 +287,38 @@ test("o nome do carimbo e o mesmo aqui e no service worker", () => {
   );
 });
 
-test("a pagina que le nao pode voltar a usar fetch cru", () => {
-  // Guarda de arquitetura. As tres telas entraram no precache porque sabem
-  // dizer "sem rede"; um `fetch(` de leitura solto numa delas devolve o
-  // comportamento antigo para aquela busca, e o sintoma e de novo um numero
-  // plausivel -- nao um erro.
+// Onde a leitura de cada tela precacheada mora.
+//
+// Ate a HMO-166 era sempre o proprio `page.tsx`, e a lista podia ser so o nome
+// da tela. Depois que "Contas e Cartões" virou duas telas, a conversa com
+// `/api/financial-accounts` passou a morar num hook compartilhado -- as duas
+// paginas nao leem nada por conta propria. A guarda segue o ARQUIVO QUE LE, e
+// nao a pagina, senao ela cobraria `buscarLeitura` de quem nao busca e deixaria
+// de olhar o unico arquivo onde a regressao pode acontecer.
+const QUEM_LE = [
+  { rotulo: "bills/page.tsx", caminho: "app/(dashboard)/dashboard/bills/page.tsx" },
+  {
+    rotulo: "recurrences/page.tsx",
+    caminho: "app/(dashboard)/dashboard/recurrences/page.tsx",
+  },
+  { rotulo: "lib/hooks/useContas.ts", caminho: "lib/hooks/useContas.ts" },
+];
+
+/** As telas precacheadas que nao podem ler por conta propria. */
+const QUEM_NAO_LE = [
+  "app/(dashboard)/dashboard/contas/page.tsx",
+  "app/(dashboard)/dashboard/cartoes/page.tsx",
+];
+
+test("quem le por uma tela precacheada nao pode voltar a usar fetch cru", () => {
+  // Guarda de arquitetura. As telas entraram no precache porque sabem dizer
+  // "sem rede"; um `fetch(` de leitura solto devolve o comportamento antigo
+  // para aquela busca, e o sintoma e de novo um numero plausivel -- nao um erro.
   const RAIZ = path.join(import.meta.dirname, "..");
-  for (const tela of ["bills", "accounts", "recurrences"]) {
-    const fonte = fs.readFileSync(
-      path.join(RAIZ, "app/(dashboard)/dashboard", tela, "page.tsx"),
-      "utf8"
-    );
-    assert.ok(
-      fonte.includes("buscarLeitura"),
-      `${tela}/page.tsx nao usa buscarLeitura`
-    );
+
+  for (const { rotulo, caminho } of QUEM_LE) {
+    const fonte = fs.readFileSync(path.join(RAIZ, caminho), "utf8");
+    assert.ok(fonte.includes("buscarLeitura"), `${rotulo} nao usa buscarLeitura`);
 
     for (const chamada of fonte.matchAll(/\bfetch\(/g)) {
       // So leitura. Escrita continua com `fetch` e trata o erro na hora --
@@ -311,8 +328,28 @@ test("a pagina que le nao pode voltar a usar fetch cru", () => {
       // isso o verbo e procurado na linha inteira e nao colado nos dois pontos.
       assert.ok(
         /method:[^\n]*"(POST|PATCH|PUT|DELETE)"/.test(trecho),
-        `${tela}/page.tsx voltou a LER com fetch cru:\n${trecho.split("\n")[0]}`
+        `${rotulo} voltou a LER com fetch cru:\n${trecho.split("\n")[0]}`
       );
     }
+  }
+});
+
+test("as telas que delegam a leitura nao buscam por fora do hook", () => {
+  // O outro lado da guarda de cima. Uma delas voltar a chamar a API direto e o
+  // caminho pelo qual o tratamento de "sem rede" se perde sem ninguem tirar
+  // nada do lugar: o hook continua la, correto, e a tela simplesmente deixa de
+  // passar por ele.
+  const RAIZ = path.join(import.meta.dirname, "..");
+
+  for (const caminho of QUEM_NAO_LE) {
+    const fonte = fs.readFileSync(path.join(RAIZ, caminho), "utf8");
+    assert.ok(
+      !/\bfetch\(/.test(fonte),
+      `${caminho} voltou a chamar a API por fora do useContas`
+    );
+    assert.ok(
+      fonte.includes("useContas"),
+      `${caminho} nao le pelo hook que trata a falta de rede`
+    );
   }
 });
