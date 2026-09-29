@@ -68,6 +68,15 @@ export default function SignUpPage() {
 
     setIsLoading(false)
 
+    // A conta existe e a sessão vale, mas o perfil não foi gravado — e sem
+    // perfil não há assinatura nem limites de uso. Mandar essa pessoa para o
+    // dashboard era o comportamento antigo: o app abria meio quebrado e o
+    // único registro da falha ficava no console do navegador dela.
+    if (resultado.kind === 'perfil-incompleto') {
+      setError(`${resultado.mensagem} (${resultado.detalhe})`)
+      return
+    }
+
     // Com a confirmação de email desligada o cadastro já termina logado: mandar
     // essa pessoa para `/login` pedindo um email que não foi enviado era a tela
     // errada. Quem decide é a sessão que o `signUp` devolveu.

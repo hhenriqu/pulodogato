@@ -3,8 +3,12 @@ import assert from "node:assert/strict";
 
 import {
   DESTINO_LOGADO,
+  DETALHE_SEM_MENSAGEM,
   MENSAGEM_CONFIRMACAO,
+  MENSAGEM_PERFIL_INCOMPLETO,
   decidirPosCadastro,
+  detalheDoErroDePerfil,
+  resultadoAposPerfil,
   temSessaoUtil,
 } from "../.tmp-signup-outcome/signup-outcome.js";
 
@@ -134,6 +138,75 @@ test("garantirPerfil grava com a chave e as opcoes certas", async () => {
     full_name: "Z",
   });
   assert.equal(chamadas[1].opcoes.onConflict, "id");
+});
+
+// ---------------------------------------------------------------------------
+// HMO-126: a falha de perfil nao pode terminar em `console.error`
+// ---------------------------------------------------------------------------
+
+const logado = decidirPosCadastro(sessaoValida);
+const erroDeRls = { message: "new row violates row-level security policy" };
+
+test("perfil que falha NAO manda ninguem para o dashboard", () => {
+  // Este e o bug inteiro. Antes, o erro virava log e o cadastro seguia para
+  // `resultado.destino`: a pessoa entrava com conta sem perfil, e portanto sem
+  // assinatura e sem limites de uso.
+  const r = resultadoAposPerfil(logado, erroDeRls);
+
+  assert.equal(r.kind, "perfil-incompleto");
+  assert.equal(r.destino, undefined);
+  assert.equal(r.criarPerfil, undefined);
+});
+
+test("a tela recebe o aviso E o erro do banco", () => {
+  // O detalhe importa: sem ele o proximo jeito de quebrar o cadastro chega na
+  // tela como um aviso generico, impossivel de diagnosticar por print.
+  const r = resultadoAposPerfil(logado, erroDeRls);
+
+  assert.equal(r.mensagem, MENSAGEM_PERFIL_INCOMPLETO);
+  assert.equal(r.detalhe, erroDeRls.message);
+  assert.notEqual(r.mensagem, MENSAGEM_CONFIRMACAO);
+});
+
+test("sem erro o caminho feliz fica intacto", () => {
+  const r = resultadoAposPerfil(logado, null);
+
+  assert.equal(r.kind, "logado");
+  assert.equal(r.destino, DESTINO_LOGADO);
+  assert.deepEqual(r, logado);
+});
+
+test("erro ausente em qualquer forma nao inventa falha", () => {
+  for (const vazio of [null, undefined]) {
+    assert.equal(resultadoAposPerfil(logado, vazio).kind, "logado", String(vazio));
+  }
+});
+
+test("quem vai confirmar o email nao recebe aviso de perfil", () => {
+  // Esse perfil nasce depois, em `/auth/callback`. Trocar a tela dele por uma
+  // falha seria mentir sobre o que aconteceu.
+  const confirmar = decidirPosCadastro(null);
+  const r = resultadoAposPerfil(confirmar, erroDeRls);
+
+  assert.equal(r.kind, "confirmar");
+  assert.equal(r.mensagem, MENSAGEM_CONFIRMACAO);
+});
+
+test("erro sem mensagem util ainda produz um detalhe legivel", () => {
+  // Cair para string vazia devolveria "(...)" na tela -- um aviso pela metade
+  // e, de novo, uma falha sem sintoma.
+  for (const erro of [{}, { message: "" }, { message: "   " }, { message: null }, { message: 7 }]) {
+    const r = resultadoAposPerfil(logado, erro);
+
+    assert.equal(r.kind, "perfil-incompleto", JSON.stringify(erro));
+    assert.equal(r.detalhe, DETALHE_SEM_MENSAGEM, JSON.stringify(erro));
+    assert.notEqual(r.detalhe.trim(), "");
+  }
+});
+
+test("detalheDoErroDePerfil tira o espaco sobrando da mensagem", () => {
+  assert.equal(detalheDoErroDePerfil({ message: "  quebrou  " }), "quebrou");
+  assert.equal(detalheDoErroDePerfil(null), DETALHE_SEM_MENSAGEM);
 });
 
 test("o erro do banco volta para quem chamou, em vez de ser engolido", async () => {

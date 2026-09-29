@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
 import type { User } from "@supabase/supabase-js";
 import { garantirPerfil } from "@/lib/ensure-profile";
-import { decidirPosCadastro } from "@/lib/signup-outcome";
+import { decidirPosCadastro, resultadoAposPerfil } from "@/lib/signup-outcome";
 import {
   decidirSessao,
   classificarFalhaDeAuth,
@@ -219,19 +219,36 @@ export function useAuth() {
     //   e a conta fica sem assinatura.
     const resultado = decidirPosCadastro(data.session);
 
-    if (resultado.kind === "logado" && data.user) {
-      // Agora ha sessao de verdade, entao este cliente fala como
-      // `authenticated` e a RLS aceita o insert.
-      const { error: erroPerfil } = await garantirPerfil(supabase, data.user);
+    if (resultado.kind !== "logado") return { error: null, resultado };
 
-      if (erroPerfil) {
-        // A conta existe e a sessao vale -- barrar a entrada aqui seria pior.
-        // Mas isto tem que aparecer: sem perfil nao ha assinatura.
-        console.error("Falha ao criar o perfil no cadastro:", erroPerfil);
-      }
+    // `data.user` e `data.session.user` sao o mesmo usuario, mas ler os dois
+    // fecha um buraco: com `data.user` nulo, a versao antiga caia fora do `if`
+    // e devolvia "logado" sem NUNCA ter tentado gravar o perfil -- um cadastro
+    // quebrado sem sequer um erro para contar a historia.
+    const usuario = data.user ?? data.session?.user ?? null;
+
+    if (!usuario) {
+      return {
+        error: null,
+        resultado: resultadoAposPerfil(resultado, {
+          message: "o cadastro voltou com sessao mas sem usuario",
+        }),
+      };
     }
 
-    return { error: null, resultado };
+    // Agora ha sessao de verdade, entao este cliente fala como
+    // `authenticated` e a RLS aceita o insert.
+    const { error: erroPerfil } = await garantirPerfil(supabase, usuario);
+
+    if (erroPerfil) {
+      // O log continua, mas ele deixou de ser o UNICO sintoma: o erro agora
+      // sai daqui dentro do `resultado` e a tela de cadastro o mostra. Foi
+      // este `console.error` sozinho que deixou o cadastro quebrado por meses
+      // -- ninguem abre o console do celular de outra pessoa.
+      console.error("Falha ao criar o perfil no cadastro:", erroPerfil);
+    }
+
+    return { error: null, resultado: resultadoAposPerfil(resultado, erroPerfil) };
   };
 
   const signOut = async () => {
