@@ -1,0 +1,358 @@
+#!/usr/bin/env node
+// =====================================================
+// PULODOGATO - as regras de um lancamento (HMO-165)
+// =====================================================
+// Receita e despesa passaram a ter tela propria, e as regras que as duas telas
+// compartilham estao em `lib/lancamento.ts`. Este arquivo cobra as que erram
+// DINHEIRO em silencio se quebrarem:
+//
+//   - o sinal (despesa e gravada negativa; positiva ela SOMA no saldo);
+//   - a categoria combinar com a tela (receita com categoria de despesa gravaria
+//     `transaction_type = income` com valor negativo -- a tela exibe com
+//     `Math.abs` e mostra o numero certo, enquanto todo agregado que soma a
+//     coluna crua fica errado);
+//   - quais campos existem em cada tela (a separacao e o ponto da issue).
+//
+// O teste de arvore -- que os campos de despesa NAO aparecem na tela de receita
+// -- esta em `test-campos-de-lancamento.mjs`, que renderiza o componente. Uma
+// funcao pura nao prova JSX.
+// =====================================================
+
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  camposDoTipo,
+  categoriasDoTipo,
+  contasDoSeletor,
+  valoresIniciais,
+  validarLancamento,
+  valorGravado,
+  rotaDoTipo,
+  tipoDoLancamento,
+} from "../.tmp-lancamento/lib/lancamento.js";
+
+const CATEGORIA_DESPESA = { id: "c1", name: "Mercado", is_expense: true };
+const CATEGORIA_RECEITA = { id: "c2", name: "Salário", is_expense: false };
+
+/** Um formulario preenchido e valido, para cada caso mexer em um campo so. */
+function preenchido(extra = {}) {
+  return {
+    ...valoresIniciais(),
+    descricao: "Compra",
+    valor: "100",
+    categoriaId: "c1",
+    data: "2026-09-28",
+    ...extra,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// O SINAL
+// ---------------------------------------------------------------------------
+
+test("despesa e gravada negativa, receita positiva", () => {
+  assert.equal(valorGravado("expense", 100), -100);
+  assert.equal(valorGravado("income", 100), 100);
+});
+
+test("o menos digitado na frente nao inverte o lancamento", () => {
+  // O input e `type=number`: "-30" passa. Sem o `Math.abs` dos dois lados, uma
+  // despesa digitada como -30 viraria +30 -- dinheiro ENTRANDO -- e o saldo
+  // fecharia errado para mais, que e o lado do qual ninguem reclama.
+  assert.equal(valorGravado("expense", -30), -30);
+  assert.equal(valorGravado("income", -30), 30);
+});
+
+// ---------------------------------------------------------------------------
+// A CATEGORIA TEM QUE COMBINAR COM A TELA
+// ---------------------------------------------------------------------------
+
+test("receita com categoria de despesa e recusada", () => {
+  const r = validarLancamento("income", preenchido({ categoriaId: "c1" }), {
+    categoria: CATEGORIA_DESPESA,
+    editando: false,
+  });
+  assert.equal(r.ok, false);
+  assert.match(r.mensagem, /categoria é de despesa/i);
+});
+
+test("despesa com categoria de receita e recusada", () => {
+  const r = validarLancamento("expense", preenchido({ categoriaId: "c2" }), {
+    categoria: CATEGORIA_RECEITA,
+    editando: false,
+  });
+  assert.equal(r.ok, false);
+  assert.match(r.mensagem, /categoria é de receita/i);
+});
+
+test("os dois pares certos passam", () => {
+  assert.equal(
+    validarLancamento("expense", preenchido(), {
+      categoria: CATEGORIA_DESPESA,
+      editando: false,
+    }).ok,
+    true
+  );
+  assert.equal(
+    validarLancamento("income", preenchido({ categoriaId: "c2" }), {
+      categoria: CATEGORIA_RECEITA,
+      editando: false,
+    }).ok,
+    true
+  );
+});
+
+test("sem a categoria em maos, a validacao nao inventa recusa", () => {
+  // Offline o catalogo pode nao ter a categoria que o `?id=` trouxe. Recusar
+  // por ausencia de informacao travaria o lancamento sem motivo -- o banco
+  // ainda tem a FK e o `is_expense` para conferir.
+  assert.equal(
+    validarLancamento("income", preenchido(), {
+      categoria: undefined,
+      editando: false,
+    }).ok,
+    true
+  );
+});
+
+// ---------------------------------------------------------------------------
+// QUAIS CAMPOS EXISTEM
+// ---------------------------------------------------------------------------
+
+test("receita nao tem natureza, parcelamento nem rateio", () => {
+  const campos = camposDoTipo("income", "one_off", false);
+  assert.equal(campos.natureza, false);
+  assert.equal(campos.parcelamento, false);
+  assert.equal(campos.rateio, false);
+  assert.equal(campos.diaDeVencimento, false);
+  assert.equal(campos.contaObrigatoria, false);
+});
+
+test("despesa tem os tres", () => {
+  const campos = camposDoTipo("expense", "one_off", false);
+  assert.equal(campos.natureza, true);
+  assert.equal(campos.parcelamento, true);
+  assert.equal(campos.rateio, true);
+});
+
+test("receita nao ganha campo de despesa nem passando natureza de cartao", () => {
+  // O estado do formulario e um objeto so para os dois tipos, entao `natureza`
+  // existe na tela de receita. Quem decide e o TIPO: se esta funcao olhasse a
+  // natureza antes do tipo, a tela de receita passaria a exigir cartao.
+  const campos = camposDoTipo("income", "card", false);
+  assert.equal(campos.contaObrigatoria, false);
+  assert.equal(campos.natureza, false);
+});
+
+test("gasto no cartao torna a conta obrigatoria", () => {
+  const campos = camposDoTipo("expense", "card", false);
+  assert.equal(campos.contaObrigatoria, true);
+
+  const r = validarLancamento(
+    "expense",
+    preenchido({ natureza: "card", contaId: "" }),
+    { categoria: CATEGORIA_DESPESA, editando: false }
+  );
+  assert.equal(r.ok, false);
+  assert.match(r.mensagem, /cartão/i);
+});
+
+test("editar nunca oferece despesa fixa nem parcelamento", () => {
+  // Transacao gravada e lancamento, nao regra: a regra mora em
+  // `recurring_rules` e se edita em Contas Previstas. E parcelar o que ja existe
+  // exigiria apagar a linha e criar N no lugar.
+  const campos = camposDoTipo("expense", "fixed", true);
+  assert.equal(campos.diaDeVencimento, false);
+  assert.equal(campos.parcelamento, false);
+});
+
+test("parcelar um lancamento existente e recusado com a mensagem certa", () => {
+  const r = validarLancamento(
+    "expense",
+    preenchido({ parcelado: true, valorDaParcela: "50", totalDeParcelas: 3 }),
+    { categoria: CATEGORIA_DESPESA, editando: true }
+  );
+  assert.equal(r.ok, false);
+  assert.match(r.mensagem, /já existe/i);
+});
+
+// ---------------------------------------------------------------------------
+// DESPESA FIXA
+// ---------------------------------------------------------------------------
+
+test("despesa fixa exige dia de vencimento entre 1 e 31", () => {
+  const base = { categoria: CATEGORIA_DESPESA, editando: false };
+
+  for (const dia of ["", "0", "32", "12.5", "abc"]) {
+    const r = validarLancamento(
+      "expense",
+      preenchido({ natureza: "fixed", diaDeVencimento: dia }),
+      base
+    );
+    assert.equal(r.ok, false, `dia ${JSON.stringify(dia)} deveria ser recusado`);
+    assert.match(r.mensagem, /dia do vencimento/i);
+  }
+
+  assert.equal(
+    validarLancamento(
+      "expense",
+      preenchido({ natureza: "fixed", diaDeVencimento: "31" }),
+      base
+    ).ok,
+    true
+  );
+});
+
+// ---------------------------------------------------------------------------
+// VALOR, DESCRICAO, DATA
+// ---------------------------------------------------------------------------
+
+test("valor zero, negativo ou vazio e recusado", () => {
+  for (const valor of ["", "0", "-5", "abc"]) {
+    const r = validarLancamento("expense", preenchido({ valor }), {
+      categoria: CATEGORIA_DESPESA,
+      editando: false,
+    });
+    assert.equal(r.ok, false, `valor ${JSON.stringify(valor)} passou`);
+    assert.match(r.mensagem, /maior que zero/i);
+  }
+});
+
+test("descricao so de espaco nao conta como descricao", () => {
+  const r = validarLancamento("expense", preenchido({ descricao: "   " }), {
+    categoria: CATEGORIA_DESPESA,
+    editando: false,
+  });
+  assert.equal(r.ok, false);
+  assert.match(r.mensagem, /descrição/i);
+});
+
+test("data fora do formato do banco e recusada", () => {
+  for (const data of ["28/09/2026", "2026-9-8", ""]) {
+    const r = validarLancamento("expense", preenchido({ data }), {
+      categoria: CATEGORIA_DESPESA,
+      editando: false,
+    });
+    assert.equal(r.ok, false, `data ${JSON.stringify(data)} passou`);
+  }
+});
+
+test("parcelamento exige parcela positiva e mais de uma parcela", () => {
+  const base = { categoria: CATEGORIA_DESPESA, editando: false };
+
+  const semValor = validarLancamento(
+    "expense",
+    preenchido({ parcelado: true, valorDaParcela: "0", totalDeParcelas: 3 }),
+    base
+  );
+  assert.equal(semValor.ok, false);
+  assert.match(semValor.mensagem, /parcela deve ser maior/i);
+
+  const umaParcela = validarLancamento(
+    "expense",
+    preenchido({ parcelado: true, valorDaParcela: "50", totalDeParcelas: 1 }),
+    base
+  );
+  assert.equal(umaParcela.ok, false);
+  assert.match(umaParcela.mensagem, /maior que 1/i);
+
+  assert.equal(
+    validarLancamento(
+      "expense",
+      preenchido({ parcelado: true, valorDaParcela: "50", totalDeParcelas: 3 }),
+      base
+    ).ok,
+    true
+  );
+});
+
+test("receita com parcelado ligado no estado nao cai nas regras de parcela", () => {
+  // A tela de receita nao mostra parcelamento, entao a mensagem sobre parcela
+  // falaria de um campo invisivel. Sem esta porta, um `parcelado: true` vindo do
+  // estado (ou de um estado reaproveitado) travaria a receita para sempre.
+  const r = validarLancamento(
+    "income",
+    preenchido({
+      categoriaId: "c2",
+      parcelado: true,
+      valorDaParcela: "",
+      totalDeParcelas: 1,
+    }),
+    { categoria: CATEGORIA_RECEITA, editando: false }
+  );
+  assert.equal(r.ok, true);
+});
+
+// ---------------------------------------------------------------------------
+// AS LISTAS DOS SELETORES
+// ---------------------------------------------------------------------------
+
+test("cada tela lista so as suas categorias", () => {
+  const todas = [CATEGORIA_DESPESA, CATEGORIA_RECEITA];
+  assert.deepEqual(categoriasDoTipo(todas, "expense"), [CATEGORIA_DESPESA]);
+  assert.deepEqual(categoriasDoTipo(todas, "income"), [CATEGORIA_RECEITA]);
+});
+
+test("gasto no cartao lista apenas cartao de credito", () => {
+  const contas = [
+    { id: "a", name: "Corrente", account_type: "checking" },
+    { id: "b", name: "Visa", account_type: "credit_card" },
+  ];
+
+  assert.deepEqual(
+    contasDoSeletor(contas, "expense", "card").map((c) => c.id),
+    ["b"]
+  );
+  // Pontual e fixa listam todas: pagar do saldo e legitimo.
+  assert.equal(contasDoSeletor(contas, "expense", "one_off").length, 2);
+  assert.equal(contasDoSeletor(contas, "income", "card").length, 2);
+});
+
+// ---------------------------------------------------------------------------
+// PARA ONDE O BOTAO DE EDITAR LEVA
+// ---------------------------------------------------------------------------
+
+test("o tipo sai da coluna quando ela existe", () => {
+  assert.equal(
+    tipoDoLancamento({ amount: -50, transaction_type: "expense" }),
+    "expense"
+  );
+  assert.equal(
+    tipoDoLancamento({ amount: 50, transaction_type: "income" }),
+    "income"
+  );
+});
+
+test("transferencia nao tem tela de edicao: devolve null", () => {
+  // A perna de saida de uma transferencia tem a MESMA cara de uma despesa
+  // (valor negativo, categoria de despesa). Abri-la na tela de despesa
+  // transformaria a perna em despesa e deixaria a outra orfa: o saldo passaria a
+  // somar sozinho, e nada apareceria como erro.
+  assert.equal(
+    tipoDoLancamento({ amount: -1000, transaction_type: "transfer" }),
+    null
+  );
+});
+
+test("linha antiga sem a coluna: a categoria sabe mais que o sinal", () => {
+  // Estorno de despesa chega POSITIVO e continua sendo da categoria de despesa.
+  // Pelo sinal ele iria para a tela de receita, e o Salvar gravaria a linha como
+  // receita -- inflando as duas somas do mes.
+  assert.equal(
+    tipoDoLancamento({ amount: 80, category: { is_expense: true } }),
+    "expense"
+  );
+  assert.equal(
+    tipoDoLancamento({ amount: -80, category: { is_expense: false } }),
+    "income"
+  );
+  // Sem categoria nem coluna, o sinal e o melhor disponivel.
+  assert.equal(tipoDoLancamento({ amount: -80 }), "expense");
+  assert.equal(tipoDoLancamento({ amount: 80 }), "income");
+});
+
+test("a rota de cada tipo", () => {
+  assert.equal(rotaDoTipo("income"), "/dashboard/movimentacoes/receita");
+  assert.equal(rotaDoTipo("expense"), "/dashboard/movimentacoes/despesa");
+});

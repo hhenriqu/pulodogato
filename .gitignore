@@ -125,3 +125,7 @@ next-env.d.ts
 /.tmp-menu-mobile/
 # saida do `npm run test:movimentacoes`
 /.tmp-movimentacoes/
+# saida do `npm run test:lancamento`
+/.tmp-lancamento/
+# saida do `npm run test:campos-lancamento` (tsx compilado para o react-dom/server)
+/.tmp-campos-lancamento/

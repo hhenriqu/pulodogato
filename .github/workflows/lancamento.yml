@@ -1,0 +1,98 @@
+name: lancamento
+
+# Prova, a cada PR, as duas coisas que a HMO-165 separou: as REGRAS de um
+# lancamento (sinal, categoria, campos obrigatorios) e a ARVORE de cada tela --
+# receita sem natureza de despesa, sem parcelamento e sem rateio.
+#
+# SEM FILTRO DE `paths`, e de proposito. O comportamento destas telas nasce de
+# tres lugares em dois diretorios (lib/lancamento.ts,
+# components/movimentacoes/*.tsx e os primitivos de components/ui), e um filtro
+# que liste os de hoje perde o dia em que alguem mexer no de amanha. Foi
+# exatamente assim que tres suites deste repositorio ficaram paradas em verde:
+# elas so rodavam no db-verify, que e filtrado por path.
+#
+# As duas suites renderizam HTML em memoria, rodam em segundos e nao precisam de
+# banco -- podem ser obrigatorias em todo PR sem virar pedagio.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lancamento:
+    name: receita e despesa, cada uma com os seus campos
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      # O `--include=dev` e explicito porque um ambiente com NODE_ENV=production
+      # poda as devDeps na instalacao e o tsc some sem mensagem que explique.
+      - run: npm ci --include=dev
+
+      # O que erra DINHEIRO: despesa e gravada negativa, e a categoria tem que
+      # combinar com a tela. Uma receita com categoria de despesa gravaria
+      # `transaction_type = income` com valor negativo -- a tela exibe com
+      # `Math.abs` e mostra o numero certo, enquanto todo agregado que soma a
+      # coluna crua fica errado. O erro nao aparece na tela que o produziu.
+      - name: As regras de um lancamento
+        run: npm run test:lancamento
+
+      # O que erra a TELA. A queixa da HMO-162 era de arvore: o formulario
+      # antigo trocava os campos por `if (transaction_type === ...)`, e quem
+      # abria para lancar uma receita via o seletor de natureza da despesa, o
+      # parcelamento e o rateio aparecendo e desaparecendo.
+      - name: Os campos que cada tela mostra
+        run: npm run test:campos-lancamento
+
+      # Controle negativo. As duas suites afirmam sobre AUSENCIA -- "a tela de
+      # receita nao tem parcelamento" -- e uma asercao de ausencia passa verde
+      # tambem quando ela deixa de achar o que deveria procurar. Uma verificacao
+      # que nunca viu vermelho nao e verificacao.
+      #
+      # Plantamos os tres defeitos exatos que a separacao corrigiu.
+      - name: A verificacao sabe falhar
+        run: |
+          set -uo pipefail
+          CAMPOS=components/movimentacoes/CamposDeLancamento.tsx
+          REGRAS=lib/lancamento.ts
+          cp $CAMPOS $CAMPOS.orig
+          cp $REGRAS $REGRAS.orig
+          trap 'mv $CAMPOS.orig $CAMPOS; mv $REGRAS.orig $REGRAS' EXIT
+
+          # 1) O rateio renderizado nas duas telas, que e o que a tela antiga
+          #    fazia: o bloco existia sempre e so era escondido por condicao.
+          sed -i 's|{campos.rateio && rateio}|{rateio}|' $CAMPOS
+          if npm run test:campos-lancamento > /dev/null 2>&1; then
+            echo "::error::Verde com o bloco de rateio aparecendo na tela de receita."
+            exit 1
+          fi
+          cp $CAMPOS.orig $CAMPOS
+
+          # 2) O seletor de categoria recebendo a lista inteira. Este e o defeito
+          #    MUDO: a tela abre igual, e o seletor da despesa oferece "Salario".
+          sed -i 's|const categoriasVisiveis = categoriasDoTipo(categorias, tipo);|const categoriasVisiveis = categorias;|' $CAMPOS
+          if npm run test:campos-lancamento > /dev/null 2>&1; then
+            echo "::error::Verde com o seletor de categoria sem filtro por tipo."
+            exit 1
+          fi
+          cp $CAMPOS.orig $CAMPOS
+
+          # 3) O sinal sem `Math.abs`. O input e `type=number` e aceita "-30":
+          #    sem o abs, uma despesa digitada com o menos na frente vira +30 --
+          #    dinheiro ENTRANDO -- e o saldo fecha errado para mais, que e o
+          #    lado do qual ninguem reclama.
+          sed -i 's|return tipo === "expense" ? -Math.abs(valor) : Math.abs(valor);|return tipo === "expense" ? -valor : valor;|' $REGRAS
+          if npm run test:lancamento > /dev/null 2>&1; then
+            echo "::error::Verde com o sinal da despesa dependendo do que foi digitado."
+            exit 1
+          fi
+
+          echo "A verificacao fica vermelha nos tres defeitos."
