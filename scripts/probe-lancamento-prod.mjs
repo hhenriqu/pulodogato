@@ -27,8 +27,10 @@
 //      de componente de cliente e so existem depois da hidratacao);
 //   3. lancar de verdade nas duas e cair de volta na lista;
 //   4. o SINAL e o `transaction_type` da linha gravada, que e o criterio que
-//      erra dinheiro em silencio. Este ultimo passo se confirma no banco --
-//      ver a consulta impressa no fim.
+//      erra dinheiro em silencio. Este ultimo passo NAO sai daqui: a sonda
+//      imprime como conferir, e o caminho nao e o obvio -- ver o item 4 no fim
+//      do arquivo, porque a credencial de leitura do banco responde (0 rows)
+//      com toda a confianca.
 //
 // A ARMADILHA QUE ESTE PROJETO JA PREGOU
 // --------------------------------------
@@ -171,7 +173,14 @@ try {
   await pagina.goto(`${APP}/dashboard/personal-finance`, {
     waitUntil: "domcontentloaded",
   });
-  await pagina.waitForSelector("h1", { state: "visible", timeout: 20000 });
+  // O seletor e o titulo DESTA tela, nao um `h1` qualquer: o cabecalho do app
+  // tem um `h1` com o nome do produto que fica escondido no desktop, e esperar
+  // por "o primeiro h1 visivel" expira com a tela inteira pintada na frente.
+  await pagina.waitForSelector('h1:has-text("Finanças Pessoais")', {
+    state: "visible",
+    timeout: 20000,
+  });
+  // A lista chega por consulta do cliente, depois da pintura.
   await pagina.waitForTimeout(3000);
 
   for (const sufixo of ["receita", "despesa"]) {
@@ -180,12 +189,27 @@ try {
     if (!presente) falhas.push(`o lancamento de ${sufixo} nao apareceu na lista`);
   }
 
+  // -----------------------------------------------------------------------
+  // 4. O SINAL DA LINHA GRAVADA -- E COMO NAO LER ISSO ERRADO
+  // -----------------------------------------------------------------------
+  // NAO da para conferir com a credencial de leitura do banco de producao:
+  // `paperclip_ro` nao tem BYPASSRLS e `financial_transactions` tem RLS ligada,
+  // entao um `select ... where description like '...'` volta com **(0 rows)** --
+  // sem erro, sem aviso, parecendo que a tela nao gravou nada. E o formato de
+  // resposta mais perigoso que existe: uma medicao confiante e errada.
+  //
+  // O caminho honesto e o PostgREST com o token DA SESSAO do usuario de teste,
+  // que e quem a RLS deixa ler as proprias linhas -- as mesmas tres chamadas do
+  // roteiro de cadastro.
   console.log(
-    `\nPara fechar o criterio do SINAL, conferir no banco:\n` +
-      `  select description, amount, transaction_type\n` +
-      `    from financial_transactions\n` +
-      `   where description like '${MARCA}%'\n` +
-      `   order by description;\n` +
+    `\nPara fechar o criterio do SINAL (a credencial de leitura do banco NAO\n` +
+      `serve: sem BYPASSRLS ela devolve 0 linhas com cara de "nao gravou"):\n\n` +
+      `  TOKEN=$(curl -s -X POST "$SB/auth/v1/token?grant_type=password" \\\n` +
+      `    -H "apikey: $AK" -H "Content-Type: application/json" \\\n` +
+      `    -d '{"email":"'"$APP_EMAIL"'","password":"..."}' | jq -r .access_token)\n\n` +
+      `  curl -s "$SB/rest/v1/financial_transactions?description=like.${MARCA}*\\\n` +
+      `&select=description,amount,transaction_type" \\\n` +
+      `    -H "apikey: $AK" -H "Authorization: Bearer $TOKEN"\n\n` +
       `  esperado: receita ${VALOR_RECEITA} / income, despesa -${VALOR_DESPESA} / expense`,
   );
 } finally {
