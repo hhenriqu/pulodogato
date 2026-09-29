@@ -64,12 +64,16 @@ const EXT_TOLERADA = ['.css', '.scss', '.svg', '.png', '.woff', '.woff2', '.json
 // for apagado, o passo falha; se alguma tela passar a importa-lo, o passo falha
 // pedindo que saia daqui. Uma lista que so cresce e envelhece em silencio e
 // justamente o mecanismo que esta verificacao existe para quebrar.
-const ESPERANDO_TELA = [
-  { arquivo: 'components/DashboardSummary.tsx', tela: '/dashboard/investments', issue: 'HMO-169' },
-  { arquivo: 'components/PortfolioTable.tsx', tela: '/dashboard/investments', issue: 'HMO-169' },
-  { arquivo: 'components/charts/AssetAllocationChart.tsx', tela: '/dashboard/investments', issue: 'HMO-169' },
-  { arquivo: 'components/charts/PerformanceChart.tsx', tela: '/dashboard/investments', issue: 'HMO-169' },
-];
+//
+// VAZIA DESDE A HMO-169, e esse e o estado saudavel. Os quatro componentes que
+// moravam aqui -- DashboardSummary, PortfolioTable, AssetAllocationChart e
+// PerformanceChart -- ganharam a tela que esperavam: /dashboard/investments
+// passou a importar os quatro, e o registro se invalidou sozinho como prometido.
+//
+// `/dashboard/trading` continua no EmDesenvolvimento, de proposito: "sinais de
+// trading em tempo real" e recomendacao de investimento, com implicacao
+// regulatoria (CVM), e nao ha componente esperando por ela.
+const ESPERANDO_TELA = [];
 
 function listar(dir) {
   const saida = [];

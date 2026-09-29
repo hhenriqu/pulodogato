@@ -27,6 +27,7 @@
     "test:categorization": "rm -rf .tmp-categorization && tsc -p scripts/tsconfig.categorization-test.json && node scripts/resolve-aliases.mjs .tmp-categorization lib && node --test scripts/test-categorization.mjs",
     "test:calculadoras": "rm -rf .tmp-calculadoras && tsc lib/calculadoras.ts --outDir .tmp-calculadoras --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-calculadoras.mjs",
     "test:net-worth": "rm -rf .tmp-net-worth && tsc lib/net-worth.ts --outDir .tmp-net-worth --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-net-worth.mjs",
+    "test:investments": "rm -rf .tmp-investments && tsc lib/investments.ts --outDir .tmp-investments --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-investments.mjs",
     "test:card-invoice": "rm -rf .tmp-card-invoice && tsc lib/card-invoice.ts --outDir .tmp-card-invoice --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-card-invoice.mjs",
     "test:movimentacoes": "rm -rf .tmp-movimentacoes && tsc lib/movimentacoes.ts --outDir .tmp-movimentacoes --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-movimentacoes.mjs",
     "test:safe-to-spend": "rm -rf .tmp-safe-to-spend && tsc -p scripts/tsconfig.safe-to-spend-test.json && node scripts/resolve-aliases.mjs .tmp-safe-to-spend lib && node --test scripts/test-safe-to-spend.mjs",
