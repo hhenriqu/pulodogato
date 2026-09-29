@@ -555,6 +555,42 @@ jobs:
       - name: A transferencia acha a categoria reservada e grava as duas pernas
         run: $PSQL -f database/tests/023_categoria_de_transferencia_test.sql
 
+      - name: 024_edicao_de_despesa_de_grupo
+        run: $PSQL -f database/migrations/024_edicao_de_despesa_de_grupo.sql
+
+      # Re-executavel: as funcoes entram por CREATE OR REPLACE, o gemeo sai por
+      # DROP IF EXISTS, o indice unico e IF NOT EXISTS e o reparo da SECAO 4 nao
+      # acha nada para consertar na segunda passada -- ele so olha divergencia,
+      # e a primeira passada ja a desfez.
+      - name: 024 e idempotente
+        run: $PSQL -f database/migrations/024_edicao_de_despesa_de_grupo.sql
+
+      # Editar despesa de grupo. O que so o Postgres pega aqui:
+      #
+      #   - o recalculo tem que passar pelo `calculate_equal_split` do 007, e
+      #     nao por uma divisao nova: R$ 100 entre 3 depois da edicao da
+      #     33,34 / 33,33 / 33,33. Uma formula propria daria 33,33 tres vezes e
+      #     deixaria um centavo de saldo residual que nenhum pagamento zera --
+      #     o defeito que o 007 existiu para tirar, voltando pela edicao;
+      #   - SECURITY INVOKER passa neste teste se ele rodar so como postgres. A
+      #     SECAO 6 edita como `authenticated` sendo membro COMUM, que e quem a
+      #     policy de DELETE de group_expense_splits (so admin) barraria -- em
+      #     silencio, afetando zero linhas, e so para quem nao e admin;
+      #   - e a contrapartida do DEFINER: a SECAO 6 tambem chama
+      #     `refazer_rateio_do_grupo` na mao, com a despesa de OUTRO usuario, e
+      #     exige 42501. Sem essa checagem a funcao seria uma porta para
+      #     reescrever a divisao de qualquer grupo do banco;
+      #   - rateio combinado (70/30) tem que ser reescalado pela porcentagem, e
+      #     nao achatado para partes iguais -- o achatamento e exatamente a
+      #     regressao que o 007 tirou, e refazer a divisao "do zero" a traria de
+      #     volta pela porta dos fundos;
+      #   - a trava da opcao (b) nao pode ser meia trava: depois do PDG01 o
+      #     teste exige que o VALOR da transacao tenha ficado como estava. Uma
+      #     trava que so impede o rateio deixaria valor novo com partes velhas,
+      #     que e o bug original com outra roupa.
+      - name: Editar despesa de grupo refaz a divisao, e parte aprovada trava
+        run: $PSQL -f database/tests/024_edicao_de_despesa_de_grupo_test.sql
+
       # O livro-razao das execucoes de cron. O que so o Postgres pega:
       #
       #   - o CHECK de `job` tem que bater com os quatro `crons[].path` do
