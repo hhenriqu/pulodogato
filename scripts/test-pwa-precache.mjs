@@ -82,6 +82,10 @@ test("as rotas que abrem sem rede estao na lista", () => {
   );
   assert.ok(lista.includes("/dashboard"));
   assert.ok(lista.includes("/dashboard/personal-finance"));
+  // As duas que escrevem offline desde a HMO-165. Antes dela o formulario
+  // morava dentro de personal-finance, ou seja, de graca no precache dela.
+  assert.ok(lista.includes("/dashboard/movimentacoes/receita"));
+  assert.ok(lista.includes("/dashboard/movimentacoes/despesa"));
   // As tres de leitura entraram quando aprenderam a dizer "sem rede" em vez
   // de imprimir R$ 0,00 -- ver `lib/offline-leitura.ts`.
   assert.ok(lista.includes("/dashboard/bills"));
@@ -237,11 +241,23 @@ test("so entra rota de prerender estatico (○), nunca dinamica (ƒ)", () => {
   assert.ok(!ROTAS_QUE_ABREM_SEM_REDE.includes("/dashboard/migrations"));
 });
 
-test("a tela que funciona offline nao pode sair da lista", () => {
-  // /dashboard/personal-finance e a unica que tem catalogo e fila no aparelho.
-  // Tirar ela daqui devolve o limite das 24h exatamente onde ele doi.
-  assert.ok(
-    ROTAS_QUE_ABREM_SEM_REDE.includes("/dashboard/personal-finance"),
-    "sem esta rota o modo offline volta a depender de ter aberto a tela ontem"
-  );
+test("as telas que funcionam offline nao podem sair da lista", () => {
+  // Tirar qualquer uma destas daqui devolve o limite das 24h exatamente onde
+  // ele doi. Sao tres porque a HMO-165 separou o formulario da lista:
+  //
+  //   - personal-finance RENOVA o catalogo do aparelho a cada visita com rede;
+  //   - as duas de movimentacao sao as que ESCREVEM, com a fila do IndexedDB.
+  //
+  // O caminho quebrado nao se parece com uma quebra: a lista abre sem rede, o
+  // botao "Nova Despesa" esta la, e o toque nele cai na pagina /offline.
+  for (const rota of [
+    "/dashboard/personal-finance",
+    "/dashboard/movimentacoes/receita",
+    "/dashboard/movimentacoes/despesa",
+  ]) {
+    assert.ok(
+      ROTAS_QUE_ABREM_SEM_REDE.includes(rota),
+      `sem ${rota} o modo offline volta a depender de ter aberto a tela ontem`
+    );
+  }
 });

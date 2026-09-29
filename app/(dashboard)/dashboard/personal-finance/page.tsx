@@ -4,17 +4,12 @@ import { useState, useEffect } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { User } from "@supabase/supabase-js";
 import { useSubscription } from "@/lib/hooks/useSubscription";
-import { FeatureGuard, PlanBadge } from "@/components/subscription/PlanGuards";
-import {
-  SoftFeatureGuard,
-  PremiumBadge,
-} from "@/components/subscription/SoftFeatureGuard";
+import { PlanBadge } from "@/components/subscription/PlanGuards";
 import {
   QuickUsage,
   UsageLimitsCard,
 } from "@/components/subscription/UsageLimits";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   Card,
   CardContent,
@@ -24,19 +19,9 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { useOfflineQueue } from "@/lib/hooks/useOfflineQueue";
 import { resumoDoPeriodo } from "@/lib/movimentacoes";
+import { rotaDoTipo, tipoDoLancamento } from "@/lib/lancamento";
 import {
   guardarCatalogo,
   lerCatalogo,
@@ -52,30 +37,14 @@ import {
   Plus,
   TrendingDown,
   TrendingUp,
-  Users,
-  Calendar,
-  Filter,
-  Search,
   Receipt,
-  CreditCard,
-  Repeat,
   DollarSign,
-  ArrowUpDown,
-  Eye,
   Pencil,
   Trash2,
   Share2,
   Crown,
 } from "lucide-react";
 import Link from "next/link";
-
-interface FinancialService {
-  id: string;
-  name: string;
-  description: string;
-  icon: string;
-  color_hex: string;
-}
 
 interface TransactionCategory {
   id: string;
@@ -118,154 +87,15 @@ interface ExpenseSplit {
   };
 }
 
-interface Connection {
-  id: string;
-  full_name: string;
-  nickname?: string;
-  avatar_url?: string;
-}
-
 export default function PersonalFinancePage() {
   const [user, setUser] = useState<User | null>(null);
   const [transactions, setTransactions] = useState<FinancialTransaction[]>([]);
-  const [categories, setCategories] = useState<TransactionCategory[]>([]);
-  const [connections, setConnections] = useState<Connection[]>([]);
-  const [accounts, setAccounts] = useState<any[]>([]);
-  const [expenseGroups, setExpenseGroups] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("transactions");
-  /**
-   * `service_id` de `personal_finance`. Ele e NOT NULL na tabela e nao aparece
-   * em tela nenhuma -- ate aqui era buscado dentro do submit, o que offline
-   * significa "nao ha lancamento possivel". Agora fica em estado e no catalogo
-   * do aparelho.
-   */
-  const [serviceId, setServiceId] = useState("");
   /** De quando sao os dados na tela, quando eles vieram do aparelho. */
   const [catalogoDe, setCatalogoDe] = useState<number | null>(null);
-  const { online, enfileirar } = useOfflineQueue();
 
-  // Subscription and plan management
-  const { canCreateMore, hasFeature, planConfig, isPremium } =
-    useSubscription(user);
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [editingTransaction, setEditingTransaction] =
-    useState<FinancialTransaction | null>(null);
-
-  // Form states
-  const [formData, setFormData] = useState({
-    description: "",
-    amount: "",
-    category_id: "",
-    transaction_date: new Date().toISOString().split("T")[0],
-    transaction_type: "",
-    account_id: "",
-    notes: "",
-
-    // Natureza da despesa. Nao e coluna nova no banco: cada valor ROTEIA para
-    // um modelo que ja existe.
-    //   one_off -> financial_transactions, como sempre foi
-    //   card    -> a mesma transacao, mas numa conta do tipo credit_card, que e
-    //              o que faz a compra entrar na fatura do 006
-    //   fixed   -> recurring_rules (005), que gera a agenda mes a mes
-    // Guardar um quarto rotulo solto em financial_transactions criaria uma
-    // segunda fonte de verdade para "e fixa?", competindo com a regra.
-    expense_kind: "one_off",
-    due_day: "",
-
-    // Parcelamento
-    is_installment: false,
-    total_installments: 1,
-    installment_amount: "",
-    first_due_date: new Date().toISOString().split("T")[0],
-
-    // Divisão/Grupos
-    is_shared: false,
-    group_id: "",
-    splits: [] as { participant_id: string; percentage: number }[],
-  });
-
-  // Função para alternar o formulário
-  const toggleAddForm = () => {
-    if (showAddForm) {
-      // Se está fechando, cancelar tudo
-      cancelForm();
-    } else {
-      // Se está abrindo, mostrar formulário
-      setShowAddForm(true);
-      if (activeTab !== "transactions") {
-        setActiveTab("transactions");
-      }
-    }
-  };
-
-  // Função para cancelar o formulário
-  const cancelForm = () => {
-    setShowAddForm(false);
-    setEditingTransaction(null);
-    setFormData({
-      description: "",
-      amount: "",
-      category_id: "",
-      transaction_date: new Date().toISOString().split("T")[0],
-      transaction_type: "",
-      account_id: "",
-      notes: "",
-      expense_kind: "one_off",
-      due_day: "",
-      is_installment: false,
-      total_installments: 1,
-      installment_amount: "",
-      first_due_date: new Date().toISOString().split("T")[0],
-      is_shared: false,
-      group_id: "",
-      splits: [],
-    });
-  };
-
-  // Função para iniciar edição de transação
-  const startEdit = (transaction: FinancialTransaction) => {
-    setEditingTransaction(transaction);
-    setShowAddForm(true);
-
-    // Determinar tipo da transação baseado no valor
-    let transactionType = "expense";
-    if (transaction.amount > 0) {
-      transactionType = "income";
-    } else if (transaction.category?.is_expense === false) {
-      transactionType = "transfer";
-    }
-
-    setFormData({
-      description: transaction.description,
-      amount: Math.abs(transaction.amount).toString(),
-      category_id: transaction.category_id,
-      transaction_date: transaction.transaction_date,
-      transaction_type: transactionType,
-      account_id: transaction.account_id || "",
-      notes: transaction.notes || "",
-      // Editar nunca cai em "fixa": uma transacao ja gravada e um lancamento,
-      // nao uma regra. A regra se edita na tela de Contas Previstas. Aqui so
-      // distinguimos se o lancamento saiu de um cartao ou nao.
-      expense_kind:
-        accounts.find((c) => c.id === transaction.account_id)?.account_type ===
-        "credit_card"
-          ? "card"
-          : "one_off",
-      due_day: "",
-      is_installment: false,
-      total_installments: 1,
-      installment_amount: "",
-      first_due_date: new Date().toISOString().split("T")[0],
-      is_shared: transaction.is_shared,
-      group_id: transaction.group_id || "",
-      splits:
-        transaction.expense_splits?.map((split) => ({
-          participant_id: split.participant_id,
-          percentage: split.percentage,
-        })) || [],
-    });
-  };
+  const { canCreateMore, planConfig, isPremium } = useSubscription(user);
 
   // Função para deletar transação
   const deleteTransaction = async (transactionId: string) => {
@@ -297,16 +127,18 @@ export default function PersonalFinancePage() {
   }, []);
 
   /**
-   * Repoe na tela o que o aparelho guardou da ultima vez que ela carregou com
-   * rede: o `service_id`, as categorias e as contas.
+   * Sem rede, esta tela nao tem lista para mostrar -- ela mostra DE QUANDO e o
+   * que o aparelho guardou, e diz que da para lancar mesmo assim.
+   *
+   * O catalogo em si (categorias, contas, `service_id`) nao entra mais em
+   * estado aqui: quem o consome e o formulario, que virou tela propria e le o
+   * mesmo `localStorage`. Guardar uma segunda copia em estado nesta tela seria
+   * uma copia que ninguem le.
    *
    * Existe como funcao propria porque ha DOIS caminhos sem rede, e so um deles
    * passa pelo catch -- ver `loadData`.
    */
   const reporCatalogo = (catalogo: CatalogoDeLancamento) => {
-    setServiceId(catalogo.serviceId);
-    setCategories(catalogo.categorias as TransactionCategory[]);
-    setAccounts(catalogo.contas);
     setCatalogoDe(catalogo.guardadoEm);
     toast.message("Sem conexão: dá para lançar, envio quando a rede voltar.");
   };
@@ -365,23 +197,26 @@ export default function PersonalFinancePage() {
       const user = dadosDeAuth.user;
       setUser(user);
 
-      // Carregar categorias de finanças pessoais
+      // Categorias e contas nao aparecem nesta tela: elas sao carregadas para
+      // RENOVAR o catalogo do aparelho, no fim desta funcao. Esta e a tela que
+      // a pessoa abre primeiro e a que o service worker precacheia, entao e
+      // aqui que o catalogo tem a melhor chance de existir antes de faltar
+      // rede. Sem isso, quem nunca abriu o formulario COM rede nao conseguiria
+      // lancar offline -- e nada nisso apareceria como erro.
       const { data: serviceData } = await supabase
         .from("financial_services")
         .select("id")
         .eq("name", "personal_finance")
         .single();
 
-      // Guardados em variavel, e nao lidos do estado depois: `setCategories`
-      // so vale no proximo render, e o catalogo e gravado ainda dentro desta
-      // funcao. Lendo do estado, ele salvaria a lista do carregamento
-      // ANTERIOR -- e na primeira visita salvaria vazio.
+      // Variaveis locais, nao estado: o catalogo e gravado ainda dentro desta
+      // funcao, e `setState` so vale no proximo render -- lendo do estado ele
+      // salvaria a lista do carregamento ANTERIOR, e na primeira visita
+      // salvaria vazio.
       let categoriasCarregadas: TransactionCategory[] = [];
       let contasCarregadas: any[] = [];
 
       if (serviceData) {
-        setServiceId(serviceData.id);
-
         const { data: categoriesData } = await supabase
           .from("transaction_categories")
           .select("*")
@@ -390,7 +225,6 @@ export default function PersonalFinancePage() {
           .order("name");
 
         categoriasCarregadas = categoriesData || [];
-        setCategories(categoriasCarregadas);
       }
 
       // Carregar transações
@@ -413,35 +247,17 @@ export default function PersonalFinancePage() {
 
       setTransactions(transactionsData || []);
 
-      // Carregar conexões para divisão.
+      // Carregar contas financeiras.
       //
-      // Isto estava desligado no codigo ("TEMPORARIO: Desabilitar
-      // user_connections completamente", com a lista fixa em []), porque a
-      // tabela user_connections nunca existiu no banco -- HMO-124. O efeito
-      // nao era um erro na tela: era o seletor "Adicionar pessoa" abrir sempre
-      // vazio, e dividir uma despesa com alguem de fora de um grupo ficar
-      // impossivel sem nada indicar o motivo. A migration 010 criou a tabela.
-      const connectionsResponse = await fetch("/api/personal-finance/connections");
-      if (connectionsResponse.ok) {
-        const connectionsData = await connectionsResponse.json();
-        setConnections(connectionsData.connections || []);
-      } else {
-        setConnections([]);
-      }
-
-      // Carregar contas financeiras
+      // Elas nao aparecem nesta tela: sao carregadas para entrar no catalogo do
+      // aparelho, logo abaixo. Conexoes e grupos sairam daqui junto com o
+      // formulario -- quem os usa agora e a tela de despesa, e busca-los aqui
+      // eram duas requisicoes por visita para alimentar um bloco que esta tela
+      // nao tem mais.
       const accountsResponse = await fetch("/api/financial-accounts");
       const accountsData = await accountsResponse.json();
       if (accountsResponse.ok) {
         contasCarregadas = accountsData.accounts || [];
-        setAccounts(contasCarregadas);
-      }
-
-      // Carregar grupos de despesas do usuário
-      const groupsResponse = await fetch("/api/expense-groups");
-      const groupsData = await groupsResponse.json();
-      if (groupsResponse.ok) {
-        setExpenseGroups(groupsData.groups || []);
       }
 
       // Deu tudo certo: renova o catalogo que vai sustentar o formulario na
@@ -489,511 +305,6 @@ export default function PersonalFinancePage() {
     }
   };
 
-  const ehGastoNoCartao =
-    formData.transaction_type === "expense" && formData.expense_kind === "card";
-
-  // "Gasto no cartao" so lista cartao de credito. E o `account_type` que faz a
-  // compra entrar na fatura do 006 -- apontar para a conta corrente gravaria um
-  // gasto que sai do saldo hoje, que e o oposto do que o usuario pediu.
-  const contasDoSeletor = ehGastoNoCartao
-    ? accounts.filter((conta) => conta.account_type === "credit_card")
-    : accounts;
-
-  /**
-   * Despesa fixa vira uma regra em `recurring_rules` (migration 005), nao um
-   * lancamento. A rota ja materializa a agenda, entao a conta aparece em
-   * Contas Previstas no mesmo instante -- e la que ela sera dada como paga mes
-   * a mes. Gravar tambem uma transacao aqui cobraria o valor duas vezes: uma
-   * agora e outra quando a ocorrencia do mes fosse baixada.
-   */
-  const criarDespesaFixa = async () => {
-    const dia = Number(formData.due_day);
-    if (!Number.isInteger(dia) || dia < 1 || dia > 31) {
-      toast.error("Informe o dia do vencimento, entre 1 e 31");
-      return;
-    }
-
-    const valor = parseFloat(formData.amount);
-    if (!valor || valor <= 0) {
-      toast.error("Valor deve ser maior que zero");
-      return;
-    }
-
-    try {
-      const resposta = await fetch("/api/recurring-rules", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          description: formData.description,
-          // A rota espera o valor positivo: quem aplica o sinal de despesa e a
-          // baixa da ocorrencia, nao a regra.
-          amount: Math.abs(valor),
-          category_id: formData.category_id,
-          account_id: formData.account_id || null,
-          transaction_type: "expense",
-          frequency: "monthly",
-          due_day: dia,
-          start_date: formData.transaction_date,
-          notes: formData.notes || null,
-          group_id:
-            formData.group_id && formData.group_id !== "none"
-              ? formData.group_id
-              : null,
-        }),
-      });
-
-      const dados = await resposta.json();
-      if (!resposta.ok) {
-        toast.error(dados.error || "Erro ao criar a despesa fixa");
-        return;
-      }
-
-      toast.success("Despesa fixa criada. Ela aparece em Contas Previstas.");
-      cancelForm();
-      loadData();
-    } catch (error) {
-      console.error("Erro ao criar despesa fixa:", error);
-      toast.error("Erro ao criar a despesa fixa");
-    }
-  };
-
-  /**
-   * O erro que chegou foi a rede caindo, ou o servidor recusando?
-   *
-   * Vale para o caso em que `navigator.onLine` mentiu -- ele so e confiavel
-   * quando diz que NAO ha rede. Aqui erramos para o lado de guardar: um
-   * lancamento a mais na fila custa uma requisicao, e um lancamento a menos
-   * custa um gasto que nunca foi anotado.
-   */
-  const ehFalhaDeRede = (erro: unknown) => {
-    const e = erro as { message?: string; code?: string; status?: number };
-    if (e?.status === 0) return true;
-    if (typeof e?.status === "number" && e.status >= 500) return true;
-    // As tres mensagens sao dos tres motores de navegador para a MESMA falha:
-    // so a do Safari ("Load failed") nao contem a palavra "fetch".
-    return /failed to fetch|networkerror|load failed/i.test(e?.message ?? "");
-  };
-
-  const fecharELimparFormulario = () => {
-    setShowAddForm(false);
-    setEditingTransaction(null);
-    setFormData({
-      description: "",
-      amount: "",
-      category_id: "",
-      transaction_date: new Date().toISOString().split("T")[0],
-      transaction_type: "",
-      account_id: "",
-      notes: "",
-      expense_kind: "one_off",
-      due_day: "",
-      is_installment: false,
-      total_installments: 1,
-      installment_amount: "",
-      first_due_date: new Date().toISOString().split("T")[0],
-      is_shared: false,
-      group_id: "",
-      splits: [],
-    });
-  };
-
-  /**
-   * Manda o lancamento para a fila do aparelho.
-   *
-   * Devolve `false` quando ele NAO pode esperar a rede -- parcelamento,
-   * divisao, despesa fixa e edicao escrevem em varias tabelas, e uma fila que
-   * acerta metade delas erra dinheiro em silencio. O motivo de cada recusa
-   * esta em `lib/offline-queue.ts`, e vem pronto para a tela mostrar.
-   */
-  const guardarOffline = async (mensagemDeSucesso: string) => {
-    const categoria = categories.find((c) => c.id === formData.category_id);
-
-    const resultado = await enfileirar({
-      userId: user?.id ?? "",
-      // `service_id` e NOT NULL e nao aparece em tela nenhuma: ele vem do
-      // catalogo guardado na ultima vez que a tela carregou com rede.
-      serviceId,
-      categoryId: formData.category_id,
-      accountId: formData.account_id || null,
-      descricao: formData.description,
-      valor: formData.amount,
-      tipo: formData.transaction_type,
-      categoriaEhDespesa: categoria?.is_expense,
-      data: formData.transaction_date,
-      notas: formData.notes || null,
-      parcelado: formData.is_installment,
-      compartilhado: formData.is_shared,
-      grupoId: formData.group_id || null,
-      editando: Boolean(editingTransaction),
-      tipoDeDespesa: formData.expense_kind,
-    });
-
-    if (resultado.estado === "recusado") {
-      // Sem rede, este aviso e o fim da linha para este lancamento -- entao
-      // ele precisa dizer o que fazer, nao so que deu errado.
-      if (!online) toast.error(resultado.mensagem);
-      return false;
-    }
-
-    toast.success(mensagemDeSucesso);
-    fecharELimparFormulario();
-    return true;
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    // Validações básicas
-    if (
-      !user ||
-      !formData.description ||
-      !formData.category_id ||
-      !formData.transaction_type
-    ) {
-      toast.error("Preencha todos os campos obrigatórios");
-      return;
-    }
-
-    if (ehGastoNoCartao && !formData.account_id) {
-      toast.error("Escolha em qual cartão foi o gasto");
-      return;
-    }
-
-    // -----------------------------------------------------------------------
-    // SEM REDE: NAO ADIANTA TENTAR, MAS O LANCAMENTO NAO SE PERDE
-    // -----------------------------------------------------------------------
-    // Este ramo vem antes do `try` de proposito. Offline, a primeira coisa que
-    // o caminho normal faz e consultar `financial_services` -- ou seja, ele
-    // falha na consulta AUXILIAR, nao no insert, e o erro que chega no catch
-    // nao tem relacao nenhuma com o lancamento. Tentar assim so gasta tempo e
-    // produz uma mensagem enganosa.
-    //
-    // `guardarOffline` devolve false quando este lancamento especifico nao
-    // pode esperar -- parcelado, dividido, despesa fixa. Nesses casos seguimos
-    // para o caminho normal, que vai falhar e explicar o motivo certo.
-    if (!online && !editingTransaction) {
-      const guardou = await guardarOffline(
-        "Sem conexão. Guardei no aparelho e envio quando a rede voltar."
-      );
-      if (guardou) return;
-    }
-
-    // Despesa fixa nao e um lancamento: e uma REGRA. Sai por outro caminho e
-    // nem chega no insert de financial_transactions abaixo.
-    if (
-      formData.transaction_type === "expense" &&
-      formData.expense_kind === "fixed" &&
-      !editingTransaction
-    ) {
-      await criarDespesaFixa();
-      return;
-    }
-
-    // Se estiver editando, não permitir parcelamento
-    if (editingTransaction && formData.is_installment) {
-      toast.error(
-        "Não é possível parcelar uma transação existente. Crie uma nova transação."
-      );
-      return;
-    }
-
-    // Validação de valores para parcelamento
-    if (formData.is_installment) {
-      if (
-        !formData.installment_amount ||
-        parseFloat(formData.installment_amount) <= 0
-      ) {
-        toast.error("Valor da parcela deve ser maior que zero");
-        return;
-      }
-      if (formData.total_installments < 2) {
-        toast.error("Número de parcelas deve ser maior que 1");
-        return;
-      }
-    } else {
-      if (!formData.amount || parseFloat(formData.amount) <= 0) {
-        toast.error("Valor deve ser maior que zero");
-        return;
-      }
-    }
-
-    try {
-      // Se é parcelamento, criar parcelas
-      if (formData.is_installment) {
-        const installmentData = {
-          account_id: formData.account_id || null,
-          category_id: formData.category_id,
-          description: formData.description,
-          total_amount:
-            parseFloat(formData.installment_amount) *
-            formData.total_installments,
-          total_installments: formData.total_installments,
-          first_due_date: formData.first_due_date,
-          transaction_type: formData.transaction_type,
-          group_id:
-            formData.group_id && formData.group_id !== "none"
-              ? formData.group_id
-              : null,
-          group_split_type:
-            formData.group_id && formData.group_id !== "none"
-              ? expenseGroups.find((g) => g.id === formData.group_id)
-                  ?.default_split_type || "equal"
-              : null,
-          notes: formData.notes,
-        };
-
-        const response = await fetch("/api/financial-installments", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(installmentData),
-        });
-
-        const result = await response.json();
-
-        if (response.ok) {
-          toast.success(result.message);
-        } else {
-          toast.error(result.error || "Erro ao criar parcelas");
-          return;
-        }
-      } else {
-        // Transação única (sem parcelamento)
-        const amount = parseFloat(formData.amount);
-        const selectedCategory = categories.find(
-          (c) => c.id === formData.category_id
-        );
-        const isExpense = selectedCategory?.is_expense;
-
-        // Ajustar sinal do valor
-        let finalAmount = amount;
-        if (formData.transaction_type === "expense" || isExpense) {
-          finalAmount = -Math.abs(amount);
-        } else if (formData.transaction_type === "income") {
-          finalAmount = Math.abs(amount);
-        }
-
-        const { data: serviceData } = await supabase
-          .from("financial_services")
-          .select("id")
-          .eq("name", "personal_finance")
-          .single();
-
-        let transaction;
-
-        if (editingTransaction) {
-          // Atualizar transação existente
-          const { data: updatedTransaction, error } = await supabase
-            .from("financial_transactions")
-            .update({
-              category_id: formData.category_id,
-              account_id: formData.account_id || null,
-              description: formData.description,
-              amount: finalAmount,
-              transaction_date: formData.transaction_date,
-              transaction_type: formData.transaction_type,
-              notes: formData.notes,
-              is_shared: Boolean(
-                formData.is_shared &&
-                  (formData.splits.length > 0 ||
-                    (formData.group_id && formData.group_id !== "none"))
-              ),
-              group_id:
-                formData.group_id && formData.group_id !== "none"
-                  ? formData.group_id
-                  : null,
-            })
-            .eq("id", editingTransaction.id)
-            .eq("user_id", user.id)
-            .select()
-            .single();
-
-          if (error) throw error;
-          transaction = updatedTransaction;
-
-          // Remover splits existentes se estiver editando
-          await supabase
-            .from("expense_splits")
-            .delete()
-            .eq("transaction_id", editingTransaction.id);
-        } else {
-          // Criar nova transação
-          const { data: newTransaction, error } = await supabase
-            .from("financial_transactions")
-            .insert({
-              user_id: user.id,
-              service_id: serviceData?.id,
-              category_id: formData.category_id,
-              account_id: formData.account_id || null,
-              description: formData.description,
-              amount: finalAmount,
-              transaction_date: formData.transaction_date,
-              transaction_type: formData.transaction_type,
-              notes: formData.notes,
-              is_shared: Boolean(
-                formData.is_shared &&
-                  (formData.splits.length > 0 ||
-                    (formData.group_id && formData.group_id !== "none"))
-              ),
-              group_id:
-                formData.group_id && formData.group_id !== "none"
-                  ? formData.group_id
-                  : null,
-            })
-            .select()
-            .single();
-
-          if (error) throw error;
-          transaction = newTransaction;
-        }
-
-        // SINCRONIZAÇÃO COM GRUPOS - Criar group_transaction se tem group_id
-        if (
-          formData.group_id &&
-          formData.group_id !== "none" &&
-          finalAmount < 0
-        ) {
-          console.log("🔄 Criando sincronização com grupo:", formData.group_id);
-
-          // Criar group_transaction
-          const { data: groupTransaction, error: groupTransactionError } =
-            await supabase
-              .from("group_transactions")
-              .insert({
-                group_id: formData.group_id,
-                transaction_id: transaction.id,
-                split_type: "equal",
-              })
-              .select()
-              .single();
-
-          if (groupTransactionError) {
-            console.error(
-              "Erro ao criar group_transaction:",
-              groupTransactionError
-            );
-          } else {
-            console.log("✅ Group transaction criada:", groupTransaction.id);
-
-            // Buscar membros ativos do grupo e criar splits
-            const { data: members } = await supabase
-              .from("group_members")
-              .select("id")
-              .eq("group_id", formData.group_id)
-              .eq("status", "active");
-
-            if (members && members.length > 0) {
-              const splitAmount = Math.abs(finalAmount) / members.length;
-              const splitPercentage = 100 / members.length;
-
-              const groupSplitsData = members.map((member: any) => ({
-                group_transaction_id: groupTransaction.id,
-                member_id: member.id,
-                percentage: splitPercentage,
-                amount: splitAmount,
-                status: "pending",
-              }));
-
-              const { error: groupSplitsError } = await supabase
-                .from("group_expense_splits")
-                .insert(groupSplitsData);
-
-              if (groupSplitsError) {
-                console.error("Erro ao criar group splits:", groupSplitsError);
-              } else {
-                console.log("✅ Group splits criados:", members.length);
-              }
-            }
-          }
-        }
-
-        // Se tem divisão por conexões individuais
-        if (
-          formData.is_shared &&
-          formData.splits.length > 0 &&
-          (!formData.group_id || formData.group_id === "none")
-        ) {
-          const splitsData = formData.splits.map((split) => ({
-            transaction_id: transaction.id,
-            participant_id: split.participant_id,
-            percentage: split.percentage,
-            amount: Math.abs(finalAmount) * (split.percentage / 100),
-            status: "pending",
-          }));
-
-          const { error: splitError } = await supabase
-            .from("expense_splits")
-            .insert(splitsData);
-
-          if (splitError) throw splitError;
-        }
-
-        toast.success(
-          editingTransaction
-            ? "Transação atualizada com sucesso!"
-            : "Lançamento criado com sucesso!"
-        );
-      }
-
-      // Reset formulário e fechar
-      fecharELimparFormulario();
-      loadData();
-    } catch (error) {
-      console.error("Error creating transaction:", error);
-
-      // O segundo caminho da fila offline, e o mais traicoeiro: o navegador
-      // disse que havia rede e nao havia. `navigator.onLine` so e confiavel no
-      // negativo -- wi-fi de hotel que exige login, ou sinal que cai no meio
-      // do envio, aparecem como "online". Sem este ramo o lancamento morreria
-      // aqui, com um "Erro ao criar lançamento" generico, que e exatamente a
-      // situacao que a fila veio evitar.
-      if (!editingTransaction && ehFalhaDeRede(error)) {
-        const guardou = await guardarOffline(
-          "Sem conexão no meio do envio. Guardei no aparelho."
-        );
-        if (guardou) return;
-      }
-
-      toast.error("Erro ao criar lançamento");
-    }
-  };
-
-  const addSplit = (participantId: string) => {
-    if (formData.splits.find((s) => s.participant_id === participantId)) return;
-
-    const currentTotal = formData.splits.reduce(
-      (sum, s) => sum + s.percentage,
-      0
-    );
-    const remainingPercentage = 100 - currentTotal;
-
-    setFormData({
-      ...formData,
-      splits: [
-        ...formData.splits,
-        {
-          participant_id: participantId,
-          percentage: Math.min(remainingPercentage, 50),
-        },
-      ],
-    });
-  };
-
-  const updateSplitPercentage = (participantId: string, percentage: number) => {
-    setFormData({
-      ...formData,
-      splits: formData.splits.map((s) =>
-        s.participant_id === participantId ? { ...s, percentage } : s
-      ),
-    });
-  };
-
-  const removeSplit = (participantId: string) => {
-    setFormData({
-      ...formData,
-      splits: formData.splits.filter((s) => s.participant_id !== participantId),
-    });
-  };
-
   // A separacao das tres movimentacoes esta em lib/movimentacoes.ts, com testes.
   // Aqui ficava uma soma por sinal do valor -- `amount > 0` receita, `amount < 0`
   // despesa -- que contava as DUAS pernas de uma transferencia (migration 015):
@@ -1029,10 +340,6 @@ export default function PersonalFinancePage() {
 
   const { income, expenses, balance, transferido, transferencias } =
     calculateBalance();
-  const totalSplitPercentage = formData.splits.reduce(
-    (sum, s) => sum + s.percentage,
-    0
-  );
 
   return (
     <div className="container mx-auto py-6 space-y-6">
@@ -1050,8 +357,8 @@ export default function PersonalFinancePage() {
             Finanças Pessoais
           </h1>
           <p className="text-muted-foreground">
-            Gerencie seus gastos e receitas com divisão inteligente entre
-            conexões
+            Seus lançamentos e o resumo do mês. Receita e despesa se lançam em
+            telas próprias.
           </p>
           {/*
             Sem esta linha, a tela offline mostra as categorias do aparelho e
@@ -1066,20 +373,40 @@ export default function PersonalFinancePage() {
             </p>
           )}
         </div>
+        {/*
+          Duas portas em vez de uma, porque receita e despesa deixaram de ser
+          uma escolha DENTRO do formulario (HMO-165). A tela antiga abria um
+          bloco que era tres formularios sobrepostos: quem vinha lancar uma
+          receita via, piscando, a natureza da despesa, o parcelamento e o
+          rateio.
+
+          O limite do plano desabilita os dois botoes, e nao um so: o limite e
+          de transacoes, nao de receitas. Um botao habilitado que leva a uma
+          tela onde o Salvar vai ser recusado e pior que um botao apagado.
+        */}
         <div className="flex flex-wrap items-center gap-2">
           {planConfig && <PlanBadge plan={planConfig.id} size="sm" />}
-          <Button
-            onClick={toggleAddForm}
-            className="flex items-center gap-2"
-            disabled={!canCreateMore("maxTransactions") && !editingTransaction}
-          >
-            <Plus className="h-4 w-4" />
-            {showAddForm
-              ? editingTransaction
-                ? "Cancelar Edição"
-                : "Fechar Formulário"
-              : "Novo Lançamento"}
-          </Button>
+          {canCreateMore("maxTransactions") ? (
+            <>
+              <Button variant="outline" asChild className="gap-2">
+                <Link href="/dashboard/movimentacoes/receita">
+                  <TrendingUp className="h-4 w-4 text-success" />
+                  Nova Receita
+                </Link>
+              </Button>
+              <Button asChild className="gap-2">
+                <Link href="/dashboard/movimentacoes/despesa">
+                  <TrendingDown className="h-4 w-4" />
+                  Nova Despesa
+                </Link>
+              </Button>
+            </>
+          ) : (
+            <Button disabled className="gap-2">
+              <Plus className="h-4 w-4" />
+              Limite de lançamentos atingido
+            </Button>
+          )}
         </div>
       </div>
 
@@ -1140,623 +467,22 @@ export default function PersonalFinancePage() {
         </Card>
       </div>
 
+      {/*
+        Duas abas, nao quatro. "Visão Geral" e "Gastos Compartilhados" eram
+        gatilhos sem `TabsContent` nenhum: clicar em qualquer uma das duas
+        trocava a lista de lançamentos por uma área em branco. Uma aba vazia não
+        parece um recurso que falta -- parece que a tela quebrou.
+
+        Os gastos compartilhados têm tela própria (`/dashboard/expense-groups`),
+        que é onde eles de fato existem.
+      */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="overview">Visão Geral</TabsTrigger>
-          <TabsTrigger value="transactions">Transações</TabsTrigger>
-          <TabsTrigger value="shared">Gastos Compartilhados</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-2">
+          <TabsTrigger value="transactions">Lançamentos</TabsTrigger>
           <TabsTrigger value="limits">Limites</TabsTrigger>
         </TabsList>
 
         <TabsContent value="transactions" className="space-y-4">
-          {/* Enhanced Add Transaction Form */}
-          {showAddForm && (
-            <Card>
-              <CardHeader>
-                <CardTitle>
-                  {editingTransaction
-                    ? "Editar Transação"
-                    : "Novo Lançamento Financeiro"}
-                </CardTitle>
-                <CardDescription>
-                  {editingTransaction
-                    ? "Modifique os dados da transação selecionada"
-                    : "Adicione receitas, despesas, balanços com parcelamento e divisão em grupos"}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <form onSubmit={handleSubmit} className="space-y-6">
-                  {/* Tipo de Transação */}
-                  <div className="space-y-2">
-                    <Label>Tipo de Lançamento *</Label>
-                    <Select
-                      value={formData.transaction_type || ""}
-                      onValueChange={(value) =>
-                        setFormData({ ...formData, transaction_type: value })
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Selecione o tipo" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="income">
-                          <div className="flex items-center gap-2">
-                            <TrendingUp className="h-4 w-4 text-success" />
-                            <span>Receita</span>
-                          </div>
-                        </SelectItem>
-                        <SelectItem value="expense">
-                          <div className="flex items-center gap-2">
-                            <TrendingDown className="h-4 w-4 text-destructive" />
-                            <span>Despesa</span>
-                          </div>
-                        </SelectItem>
-                        <SelectItem value="transfer">
-                          <div className="flex items-center gap-2">
-                            <ArrowUpDown className="h-4 w-4 text-info" />
-                            <span>Transferência/Balanço</span>
-                          </div>
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Natureza da despesa. So aparece em despesa: receita e
-                      transferencia nao tem fatura nem viram gasto fixo. */}
-                  {formData.transaction_type === "expense" && (
-                    <div className="space-y-2">
-                      <Label>Tipo de Despesa *</Label>
-                      <Select
-                        value={formData.expense_kind}
-                        onValueChange={(value) =>
-                          setFormData({
-                            ...formData,
-                            expense_kind: value,
-                            // Trocar de natureza invalida a conta escolhida: a
-                            // lista de contas muda (cartao x todas), e manter o
-                            // id antigo deixaria selecionada uma conta que nao
-                            // esta mais no seletor.
-                            account_id:
-                              value === "card" ? "" : formData.account_id,
-                          })
-                        }
-                        disabled={Boolean(editingTransaction)}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="one_off">
-                            <div className="flex items-center gap-2">
-                              <Receipt className="h-4 w-4 text-muted-foreground" />
-                              <span>Despesa Pontual</span>
-                            </div>
-                          </SelectItem>
-                          <SelectItem value="card">
-                            <div className="flex items-center gap-2">
-                              <CreditCard className="h-4 w-4 text-info" />
-                              <span>Gasto no Cartão</span>
-                            </div>
-                          </SelectItem>
-                          <SelectItem value="fixed">
-                            <div className="flex items-center gap-2">
-                              <Repeat className="h-4 w-4 text-warning" />
-                              <span>Despesa Fixa</span>
-                            </div>
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs text-muted-foreground">
-                        {formData.expense_kind === "card" &&
-                          "Entra na fatura do cartão escolhido, no mês certo conforme o dia do fechamento."}
-                        {formData.expense_kind === "fixed" &&
-                          "Vira uma regra mensal em Contas Previstas, que passa a cobrar você todo mês."}
-                        {formData.expense_kind === "one_off" &&
-                          "Um gasto avulso, lançado só nesta data."}
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Despesa fixa: o dia do vencimento e o que a agenda usa
-                      para saber quando cobrar. */}
-                  {formData.transaction_type === "expense" &&
-                    formData.expense_kind === "fixed" &&
-                    !editingTransaction && (
-                      <div className="space-y-2">
-                        <Label htmlFor="due_day">Vence todo dia *</Label>
-                        <Input
-                          id="due_day"
-                          type="number"
-                          min={1}
-                          max={31}
-                          value={formData.due_day}
-                          onChange={(e) =>
-                            setFormData({
-                              ...formData,
-                              due_day: e.target.value,
-                            })
-                          }
-                          placeholder="Ex: 10"
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          Dia 29, 30 ou 31 cai no último dia do mês quando o mês
-                          for mais curto.
-                        </p>
-                      </div>
-                    )}
-
-                  {/* Informações Básicas */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="description">Descrição *</Label>
-                      <Input
-                        id="description"
-                        value={formData.description}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            description: e.target.value,
-                          })
-                        }
-                        placeholder="Ex: Compra no supermercado"
-                        required
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="amount">Valor *</Label>
-                      <Input
-                        id="amount"
-                        type="number"
-                        step="0.01"
-                        value={formData.amount}
-                        onChange={(e) =>
-                          setFormData({ ...formData, amount: e.target.value })
-                        }
-                        placeholder="0,00"
-                        required
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="category">Categoria *</Label>
-                      <Select
-                        value={formData.category_id}
-                        onValueChange={(value: string) =>
-                          setFormData({ ...formData, category_id: value })
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Selecione uma categoria" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {categories
-                            .filter((cat) => {
-                              if (!formData.transaction_type) return true;
-                              return formData.transaction_type === "income"
-                                ? !cat.is_expense
-                                : cat.is_expense;
-                            })
-                            .map((category) => (
-                              <SelectItem key={category.id} value={category.id}>
-                                <div className="flex items-center gap-2">
-                                  <div
-                                    className="w-3 h-3 rounded-full"
-                                    style={{
-                                      backgroundColor: category.color_hex,
-                                    }}
-                                  />
-                                  {category.name}
-                                </div>
-                              </SelectItem>
-                            ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="account">
-                        {ehGastoNoCartao ? "Cartão *" : "Conta/Cartão"}
-                      </Label>
-                      <Select
-                        value={formData.account_id}
-                        onValueChange={(value: string) =>
-                          setFormData({ ...formData, account_id: value })
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue
-                            placeholder={
-                              ehGastoNoCartao
-                                ? "Selecione um cartão"
-                                : "Selecione uma conta"
-                            }
-                          />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {contasDoSeletor.map((account) => (
-                            <SelectItem key={account.id} value={account.id}>
-                              <div className="flex items-center gap-2">
-                                <div
-                                  className="w-3 h-3 rounded-full"
-                                  style={{ backgroundColor: account.color_hex }}
-                                />
-                                {account.name}
-                                {account.last_four_digits && (
-                                  <span className="text-xs text-muted-foreground">
-                                    •••• {account.last_four_digits}
-                                  </span>
-                                )}
-                              </div>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {/* Sem isto, escolher "Gasto no Cartao" sem ter cartao
-                          nenhum abre um seletor vazio e sem explicacao. */}
-                      {ehGastoNoCartao && contasDoSeletor.length === 0 && (
-                        <p className="text-xs text-warning">
-                          Você ainda não tem nenhum cartão de crédito
-                          cadastrado. Cadastre em Contas e Cartões.
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="date">Data da Transação</Label>
-                      <Input
-                        id="date"
-                        type="date"
-                        value={formData.transaction_date}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            transaction_date: e.target.value,
-                          })
-                        }
-                      />
-                    </div>
-                  </div>
-
-                  {/* Seção de Parcelamento */}
-                  {!editingTransaction && (
-                    <div className="space-y-4 p-4 border rounded-lg bg-muted/20">
-                      <div className="flex items-center space-x-2">
-                        <input
-                          type="checkbox"
-                          id="is_installment"
-                          checked={formData.is_installment}
-                          onChange={(e) =>
-                            setFormData({
-                              ...formData,
-                              is_installment: e.target.checked,
-                            })
-                          }
-                        />
-                        <Label htmlFor="is_installment" className="font-medium">
-                          Parcelar este lançamento
-                        </Label>
-                        <Badge variant="outline" className="text-xs">
-                          Apenas para novas transações
-                        </Badge>
-                      </div>
-
-                      {formData.is_installment && (
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                          <div className="space-y-2">
-                            <Label htmlFor="total_installments">
-                              Número de Parcelas
-                            </Label>
-                            <Input
-                              id="total_installments"
-                              type="number"
-                              min="2"
-                              max="60"
-                              value={formData.total_installments}
-                              onChange={(e) =>
-                                setFormData({
-                                  ...formData,
-                                  total_installments:
-                                    parseInt(e.target.value) || 1,
-                                })
-                              }
-                            />
-                          </div>
-
-                          <div className="space-y-2">
-                            <Label htmlFor="installment_amount">
-                              Valor da Parcela
-                            </Label>
-                            <Input
-                              id="installment_amount"
-                              type="number"
-                              step="0.01"
-                              value={formData.installment_amount}
-                              onChange={(e) => {
-                                const installmentValue =
-                                  parseFloat(e.target.value) || 0;
-                                setFormData({
-                                  ...formData,
-                                  installment_amount: e.target.value,
-                                  amount: (
-                                    installmentValue *
-                                    formData.total_installments
-                                  ).toFixed(2),
-                                });
-                              }}
-                              placeholder="Valor de cada parcela"
-                            />
-                            <p className="text-xs text-muted-foreground">
-                              Total: R${" "}
-                              {(
-                                (parseFloat(formData.installment_amount) || 0) *
-                                formData.total_installments
-                              ).toLocaleString("pt-BR", {
-                                minimumFractionDigits: 2,
-                              })}
-                            </p>
-                          </div>
-
-                          <div className="space-y-2">
-                            <Label htmlFor="first_due_date">
-                              Primeira Parcela
-                            </Label>
-                            <Input
-                              id="first_due_date"
-                              type="date"
-                              value={formData.first_due_date}
-                              onChange={(e) =>
-                                setFormData({
-                                  ...formData,
-                                  first_due_date: e.target.value,
-                                })
-                              }
-                            />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  <div className="space-y-2">
-                    <Label htmlFor="notes">Observações</Label>
-                    <Textarea
-                      id="notes"
-                      value={formData.notes}
-                      onChange={(e) =>
-                        setFormData({ ...formData, notes: e.target.value })
-                      }
-                      placeholder="Informações adicionais..."
-                      rows={3}
-                    />
-                  </div>
-
-                  {/* Seção de Grupos e Divisão */}
-                  {formData.transaction_type === "expense" && (
-                    <SoftFeatureGuard feature="expense_groups" user={user}>
-                      <div className="space-y-4 p-4 border rounded-lg bg-muted/20">
-                        <div className="space-y-4">
-                          <div className="flex items-center space-x-2">
-                            <input
-                              type="checkbox"
-                              id="is_shared"
-                              checked={
-                                formData.is_shared ||
-                                (!!formData.group_id &&
-                                  formData.group_id !== "none")
-                              }
-                              onChange={(e) =>
-                                setFormData({
-                                  ...formData,
-                                  is_shared: e.target.checked,
-                                  splits: e.target.checked
-                                    ? formData.splits
-                                    : [],
-                                  group_id: e.target.checked
-                                    ? formData.group_id
-                                    : "",
-                                })
-                              }
-                            />
-                            <Label htmlFor="is_shared" className="font-medium">
-                              Dividir esta despesa
-                            </Label>
-                          </div>
-
-                          {(formData.is_shared ||
-                            (formData.group_id &&
-                              formData.group_id !== "none")) && (
-                            <div className="space-y-4">
-                              {/* Seleção entre Grupo ou Conexões */}
-                              <div className="grid grid-cols-2 gap-4">
-                                <div className="space-y-2">
-                                  <Label>Dividir com Grupo</Label>
-                                  <Select
-                                    value={formData.group_id}
-                                    onValueChange={(value: string) =>
-                                      setFormData({
-                                        ...formData,
-                                        group_id: value === "none" ? "" : value,
-                                        splits:
-                                          value !== "none" && value
-                                            ? []
-                                            : formData.splits, // Limpar splits se selecionar grupo
-                                      })
-                                    }
-                                  >
-                                    <SelectTrigger>
-                                      <SelectValue placeholder="Selecione um grupo" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="none">
-                                        Nenhum grupo
-                                      </SelectItem>
-                                      {expenseGroups.map((group) => (
-                                        <SelectItem
-                                          key={group.id}
-                                          value={group.id}
-                                        >
-                                          <div className="flex items-center gap-2">
-                                            <Users className="h-4 w-4" />
-                                            {group.name}
-                                            <span className="text-xs text-muted-foreground">
-                                              ({group.members?.length || 0}{" "}
-                                              membros)
-                                            </span>
-                                          </div>
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-
-                                {formData.group_id &&
-                                  formData.group_id !== "none" && (
-                                    <div className="space-y-2">
-                                      <Label>Tipo de Divisão do Grupo</Label>
-                                      <div className="text-sm text-muted-foreground">
-                                        {(() => {
-                                          const group = expenseGroups.find(
-                                            (g) => g.id === formData.group_id
-                                          );
-                                          switch (group?.default_split_type) {
-                                            case "equal":
-                                              return "⚖️ Divisão igual entre membros";
-                                            case "percentage":
-                                              return "📊 Por percentual fixo";
-                                            case "proportional":
-                                              return "💰 Proporcional à renda";
-                                            case "custom":
-                                              return "🎯 Personalizada por despesa";
-                                            default:
-                                              return "Configuração do grupo";
-                                          }
-                                        })()}
-                                      </div>
-                                    </div>
-                                  )}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-
-                        {formData.is_shared && (
-                          <div className="space-y-3">
-                            <Label>
-                              Divisão com conexões ({totalSplitPercentage}%
-                              usado)
-                            </Label>
-
-                            {formData.splits.map((split) => {
-                              const connection = connections.find(
-                                (c) => c.id === split.participant_id
-                              );
-                              return (
-                                <div
-                                  key={split.participant_id}
-                                  className="flex items-center gap-3 p-3 border rounded"
-                                >
-                                  <Avatar className="h-8 w-8">
-                                    <AvatarImage src={connection?.avatar_url} />
-                                    <AvatarFallback>
-                                      {connection?.full_name?.charAt(0)}
-                                    </AvatarFallback>
-                                  </Avatar>
-                                  <span className="flex-1">
-                                    {connection?.full_name}
-                                  </span>
-                                  <Input
-                                    type="number"
-                                    min="0"
-                                    max="100"
-                                    value={split.percentage}
-                                    onChange={(e) =>
-                                      updateSplitPercentage(
-                                        split.participant_id,
-                                        Number(e.target.value)
-                                      )
-                                    }
-                                    className="w-20"
-                                  />
-                                  <span>%</span>
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() =>
-                                      removeSplit(split.participant_id)
-                                    }
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </Button>
-                                </div>
-                              );
-                            })}
-
-                            {totalSplitPercentage < 100 && (
-                              <Select onValueChange={addSplit}>
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Adicionar pessoa" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {connections
-                                    .filter(
-                                      (c) =>
-                                        !formData.splits.find(
-                                          (s) => s.participant_id === c.id
-                                        )
-                                    )
-                                    .map((connection) => (
-                                      <SelectItem
-                                        key={connection.id}
-                                        value={connection.id}
-                                      >
-                                        <div className="flex items-center gap-2">
-                                          <Avatar className="h-6 w-6">
-                                            <AvatarImage
-                                              src={connection.avatar_url}
-                                            />
-                                            <AvatarFallback>
-                                              {connection.full_name?.charAt(0)}
-                                            </AvatarFallback>
-                                          </Avatar>
-                                          {connection.full_name}
-                                        </div>
-                                      </SelectItem>
-                                    ))}
-                                </SelectContent>
-                              </Select>
-                            )}
-
-                            {totalSplitPercentage !== 100 && (
-                              <p className="text-sm text-warning">
-                                Restam {100 - totalSplitPercentage}% para
-                                distribuir
-                              </p>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </SoftFeatureGuard>
-                  )}
-
-                  <div className="flex gap-2">
-                    <Button type="submit">
-                      {editingTransaction ? "Atualizar" : "Salvar"}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={cancelForm}
-                    >
-                      Cancelar
-                    </Button>
-                  </div>
-                </form>
-              </CardContent>
-            </Card>
-          )}
-
           {/* Transactions List */}
           <Card>
             <CardHeader>
@@ -1771,11 +497,7 @@ export default function PersonalFinancePage() {
                   {transactions.map((transaction) => (
                     <div
                       key={transaction.id}
-                      className={`flex items-center justify-between p-3 border rounded-lg transition-colors ${
-                        editingTransaction?.id === transaction.id
-                          ? "border-primary bg-primary/5"
-                          : "hover:bg-muted/50"
-                      }`}
+                      className="flex items-center justify-between p-3 border rounded-lg transition-colors hover:bg-muted/50"
                     >
                       <div className="flex items-center gap-3">
                         <div
@@ -1832,15 +554,49 @@ export default function PersonalFinancePage() {
                             )}
                         </div>
                         <div className="flex items-center gap-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => startEdit(transaction)}
-                            className="h-8 w-8 p-0"
-                            title="Editar transação"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
+                          {/*
+                            Editar leva para a tela do TIPO do lançamento, com
+                            o id na URL. `tipoDoLancamento` devolve `null` para
+                            transferência, e aí o botão fica apagado: uma perna
+                            de transferência aberta na tela de despesa viraria
+                            uma despesa e deixaria a outra perna órfã -- o saldo
+                            passaria a somar sozinho. Transferência é a HMO-164.
+                          */}
+                          {tipoDoLancamento(transaction) ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              asChild
+                              className="h-8 w-8 p-0"
+                              title="Editar lançamento"
+                            >
+                              {/*
+                                Objeto, e nao string interpolada: as rotas
+                                tipadas do Next recusam `${rota}?id=${id}`
+                                porque o tipo da string nao e literal.
+                              */}
+                              <Link
+                                href={{
+                                  pathname: rotaDoTipo(
+                                    tipoDoLancamento(transaction)!
+                                  ),
+                                  query: { id: transaction.id },
+                                }}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Link>
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled
+                              className="h-8 w-8 p-0"
+                              title="Transferência se edita em Contas e Cartões"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                          )}
                           <Button
                             variant="ghost"
                             size="sm"
@@ -1856,14 +612,30 @@ export default function PersonalFinancePage() {
                   ))}
                 </div>
               ) : (
-                <div className="text-center py-8">
-                  <Receipt className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                  <h3 className="text-lg font-medium mb-2">
-                    Nenhuma transação ainda
-                  </h3>
-                  <p className="text-muted-foreground">
-                    Comece adicionando suas receitas e despesas
-                  </p>
+                <div className="text-center py-8 space-y-4">
+                  <Receipt className="h-12 w-12 text-muted-foreground mx-auto" />
+                  <div>
+                    <h3 className="text-lg font-medium mb-2">
+                      Nenhum lançamento ainda
+                    </h3>
+                    <p className="text-muted-foreground">
+                      Comece registrando o que entrou ou o que saiu.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap justify-center gap-2">
+                    <Button variant="outline" asChild className="gap-2">
+                      <Link href="/dashboard/movimentacoes/receita">
+                        <TrendingUp className="h-4 w-4 text-success" />
+                        Nova Receita
+                      </Link>
+                    </Button>
+                    <Button asChild className="gap-2">
+                      <Link href="/dashboard/movimentacoes/despesa">
+                        <TrendingDown className="h-4 w-4" />
+                        Nova Despesa
+                      </Link>
+                    </Button>
+                  </div>
                 </div>
               )}
             </CardContent>
