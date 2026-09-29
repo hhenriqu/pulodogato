@@ -1,0 +1,150 @@
+name: build
+
+# Prova, a cada PR, as tres coisas que este repositorio nunca provou: que o
+# projeto COMPILA, que os TIPOS fecham, e que a IMAGEM DOCKER sobe.
+#
+# Isto e a HMO-119, e a razao de existir dela e um buraco que durou meses: dos
+# nove workflows que este repositorio tinha antes deste, NENHUM rodava
+# `next build` nem `tsc --noEmit`. Cada um prova uma regra de negocio muito bem
+# -- a mascara de dinheiro, o corte de Contas x Cartoes, o isolamento da RLS,
+# os icones do PWA -- e todos eles passam em verde num commit que nao compila.
+#
+# O modo de falha nao e teorico. O `type-check` existe no package.json desde o
+# inicio e so rodava quando alguem se lembrava de rodar; o `pre-commit` que o
+# chamaria sai 1 na main antes de chegar no lint, entao na pratica ninguem
+# executava nenhum dos dois. O unico lugar onde o build de verdade acontecia
+# era a Vercel, DEPOIS do merge -- ou seja, o sinal de "quebrou" chegava com o
+# codigo ja na main e, quando o autor do commit nao era verificado, a Vercel
+# nem comecava o build e o sinal nao chegava nunca.
+#
+# SEM FILTRO DE `paths`, e aqui isso nao e preferencia: um build quebra por
+# qualquer arquivo do projeto. Qualquer lista de caminhos que eu escrevesse
+# hoje estaria errada amanha, e foi exatamente assim que tres suites deste
+# repositorio ficaram paradas em verde -- elas so rodavam no db-verify, que e
+# filtrado por path.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # TIPOS
+  # ---------------------------------------------------------------------------
+  # Separado do build de proposito. O `next build` tambem checa tipos, mas ele
+  # gasta minutos antes de chegar la e a mensagem sai no meio de centenas de
+  # linhas de webpack. Este job sai em segundos e diz "arquivo X, linha Y".
+  tipos:
+    name: os tipos fecham
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      # O `--include=dev` e explicito porque um ambiente com NODE_ENV=production
+      # poda as devDeps na instalacao e o tsc some sem mensagem que explique.
+      - run: npm ci --include=dev
+
+      - name: tsc --noEmit
+        run: npm run type-check
+
+      # Controle negativo. Uma verificacao que nunca viu vermelho nao e
+      # verificacao: se o tsconfig passar a excluir o projeto (um `include`
+      # errado, um `exclude` novo), o passo acima continua saindo 0 e o job fica
+      # verde sem checar uma linha. Aqui um erro de tipo OBVIO tem que reprovar.
+      #
+      # O arquivo nasce e morre dentro do job. Fica em `lib/` porque o `include`
+      # de hoje e `**/*.ts` e pegaria qualquer lugar, mas um `include` futuro que
+      # liste diretorios tende a citar `lib` e nao a raiz -- entao `lib/` e onde
+      # o controle tem mais chance de continuar valendo.
+      - name: Controle negativo (erro de tipo tem que reprovar)
+        run: |
+          set -u
+          cat > lib/__controle_negativo__.ts <<'EOF'
+          export const quantosCentavos: number = "isto nao e um numero";
+          EOF
+          if npm run type-check > /tmp/controle.log 2>&1; then
+            rm -f lib/__controle_negativo__.ts
+            echo "::error::O tsc APROVOU um erro de tipo obvio. A checagem de tipos nao esta olhando o projeto -- confira o include/exclude do tsconfig.json."
+            exit 1
+          fi
+          rm -f lib/__controle_negativo__.ts
+          echo "OK: o tsc reprovou o erro plantado, entao ele esta lendo o projeto."
+
+          # E o arquivo plantado tem que ter ido embora, senao o proximo passo
+          # herdaria um projeto que nao compila.
+          test ! -f lib/__controle_negativo__.ts
+
+  # ---------------------------------------------------------------------------
+  # BUILD
+  # ---------------------------------------------------------------------------
+  build:
+    name: o projeto compila
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm ci --include=dev
+
+      # SEM SEGREDO, e isto foi conferido arquivo por arquivo antes de escrever:
+      # toda leitura de `process.env` do app (SUPABASE_SERVICE_ROLE_KEY,
+      # CRON_SECRET, as chaves VAPID) acontece DENTRO do handler da rota, nunca
+      # no topo do modulo, e nenhuma delas lanca quando falta. Os dois valores
+      # publicos que o bundle do cliente precisa vem do `.env.production`
+      # versionado.
+      #
+      # Quer dizer que este job prova COMPILACAO, nao deploy: o artefato aqui e
+      # descartado. Quem publica e a Vercel, com as variaveis do painel dela --
+      # que ela le com precedencia MAIOR que o `.env.production` do repositorio.
+      - name: next build
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+
+  # ---------------------------------------------------------------------------
+  # IMAGEM DOCKER
+  # ---------------------------------------------------------------------------
+  # Herdado da Fase 1 (HMO-116): o ambiente do agente nao tem Docker, entao esta
+  # validacao so podia existir aqui ou na maquina do Helio. Ate agora ela nao
+  # existia em lugar nenhum -- o Dockerfile estava commitado, com estagio de
+  # `deps`, `builder` e `runner`, e ninguem nunca o tinha rodado.
+  #
+  # O que so este job pega: o `runner` copia `/app/.next/standalone`, que o Next
+  # so produz porque `next.config.js` tem `output: "standalone"`. Remover ou
+  # renomear essa chave nao quebra `npm run build`, nao quebra o tsc e nao
+  # quebra nenhum dos outros workflows -- quebra o `COPY` do estagio final, e o
+  # sintoma apareceria na primeira vez que alguem tentasse subir a imagem.
+  #
+  # Roda sem filtro de path e leva alguns minutos, porque ele repete o
+  # `npm ci` + `next build` dentro da imagem. E o preco de saber que a imagem
+  # sobe; os tres jobs rodam em paralelo, entao o relogio do PR e o do mais
+  # lento, nao a soma.
+  docker:
+    name: a imagem Docker sobe
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # `load: false` e `push: false`: ninguem consome esta imagem, o que
+      # importa e que o build chegue ao fim. Nao exportar economiza o tempo de
+      # escrever as camadas no daemon.
+      - name: docker build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: false
