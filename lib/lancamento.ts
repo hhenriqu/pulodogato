@@ -28,7 +28,7 @@
 export type TipoLancamento = "income" | "expense";
 
 /**
- * Natureza da despesa. Nao e coluna nova no banco: cada valor ROTEIA para um
+ * Natureza do lancamento. Nao e coluna nova no banco: cada valor ROTEIA para um
  * modelo que ja existe.
  *
  *   one_off -> `financial_transactions`, como sempre foi
@@ -38,8 +38,41 @@ export type TipoLancamento = "income" | "expense";
  *
  * Guardar um quarto rotulo solto em `financial_transactions` criaria uma
  * segunda fonte de verdade para "e fixa?", competindo com a regra.
+ *
+ * O nome fala de despesa por heranca: ate a HMO-170 so a despesa tinha este
+ * seletor. Hoje a RECEITA tambem tem -- salario e o caso que motivou a issue --
+ * e quem diz quais valores cabem em cada tela e `naturezasDoTipo`.
  */
 export type NaturezaDespesa = "one_off" | "card" | "fixed";
+
+/**
+ * Por quanto tempo a regra se repete (HMO-170).
+ *
+ *   indefinida -> todo mes, sem fim. `max_occurrences` NULL na regra.
+ *   contada    -> por N meses. Vira `max_occurrences` = N.
+ *
+ * Nao existe "por N meses" como data final na tela de proposito: o usuario
+ * conta MESES ("financiei em 18x", "o aluguel vai ate o fim do contrato, 10
+ * meses"), e pedir a data de fim obriga ele a fazer a conta de calendario que o
+ * `lib/recurrence.ts` ja sabe fazer -- inclusive o mes curto.
+ */
+export type DuracaoDaRepeticao = "indefinida" | "contada";
+
+/** O maximo de meses que a tela aceita em "por N meses". */
+export const MAX_MESES_DE_REPETICAO = 360;
+
+/**
+ * Quais naturezas cabem nesta tela.
+ *
+ * Receita nao tem "no cartao": cartao de credito e instrumento de PAGAMENTO, e
+ * uma entrada apontada para ele entraria na fatura reduzindo o que se deve --
+ * que e um estorno, nao uma receita.
+ */
+export function naturezasDoTipo(tipo: TipoLancamento): NaturezaDespesa[] {
+  return tipo === "expense"
+    ? ["one_off", "card", "fixed"]
+    : ["one_off", "fixed"];
+}
 
 export interface CategoriaDeLancamento {
   id: string;
@@ -55,10 +88,12 @@ export interface ContaDeLancamento {
 
 /** Quais blocos do formulario existem para este tipo e esta natureza. */
 export interface CamposDoTipo {
-  /** O seletor pontual / cartao / fixa. So despesa tem. */
+  /** O seletor pontual / cartao / fixa. As duas telas tem (HMO-170). */
   natureza: boolean;
-  /** O dia do vencimento da regra mensal. So despesa fixa. */
+  /** O dia do vencimento da regra mensal. So natureza fixa. */
   diaDeVencimento: boolean;
+  /** "Todos os meses" x "por N meses". So natureza fixa (HMO-170). */
+  duracao: boolean;
   /** Parcelar em N vezes. So despesa, e so criando. */
   parcelamento: boolean;
   /** Dividir com grupo ou conexoes. So despesa. */
@@ -67,6 +102,8 @@ export interface CamposDoTipo {
   contaObrigatoria: boolean;
   /** O rotulo do seletor de conta muda com a natureza. */
   rotuloDaConta: string;
+  /** O rotulo do seletor de natureza muda com o tipo. */
+  rotuloDaNatureza: string;
 }
 
 /**
@@ -83,14 +120,21 @@ export function camposDoTipo(
   natureza: NaturezaDespesa,
   editando: boolean
 ): CamposDoTipo {
+  // Uma regra de repeticao so se CRIA aqui; editar uma que existe e outra
+  // tela, porque a pergunta "muda so este mes ou os proximos tambem?" nao tem
+  // resposta sobre um lancamento ja gravado. Ver `lib/recorrencia-edicao.ts`.
+  const ehFixa = natureza === "fixed" && !editando;
+
   if (tipo === "income") {
     return {
-      natureza: false,
-      diaDeVencimento: false,
+      natureza: true,
+      diaDeVencimento: ehFixa,
+      duracao: ehFixa,
       parcelamento: false,
       rateio: false,
       contaObrigatoria: false,
       rotuloDaConta: "Conta de entrada",
+      rotuloDaNatureza: "Tipo de Receita *",
     };
   }
 
@@ -98,11 +142,13 @@ export function camposDoTipo(
 
   return {
     natureza: true,
-    diaDeVencimento: natureza === "fixed" && !editando,
+    diaDeVencimento: ehFixa,
+    duracao: ehFixa,
     parcelamento: !editando,
     rateio: true,
     contaObrigatoria: ehNoCartao,
     rotuloDaConta: ehNoCartao ? "Cartão *" : "Conta/Cartão",
+    rotuloDaNatureza: "Tipo de Despesa *",
   };
 }
 
@@ -155,9 +201,15 @@ export interface ValoresDeLancamento {
   data: string;
   notas: string;
 
-  // So despesa usa daqui para baixo.
+  /** Pontual, no cartao ou fixa. As duas telas usam (HMO-170). */
   natureza: NaturezaDespesa;
   diaDeVencimento: string;
+  /** Se repete sem fim ou por um numero de meses (HMO-170). */
+  duracao: DuracaoDaRepeticao;
+  /** Como veio do input: string, ainda nao numero. So vale com `contada`. */
+  mesesDeRepeticao: string;
+
+  // So despesa usa daqui para baixo.
   parcelado: boolean;
   totalDeParcelas: number;
   valorDaParcela: string;
@@ -181,6 +233,10 @@ export function valoresIniciais(): ValoresDeLancamento {
     notas: "",
     natureza: "one_off",
     diaDeVencimento: "",
+    // "indefinida" e o padrao porque e o caso comum de um gasto fixo (aluguel,
+    // escola, salario): ele nao tem fim previsto. Quem tem prazo digita.
+    duracao: "indefinida",
+    mesesDeRepeticao: "",
     parcelado: false,
     totalDeParcelas: 1,
     valorDaParcela: "",
@@ -264,6 +320,30 @@ export function validarLancamento(
     }
   }
 
+  // Por quantos meses (HMO-170). So cobrado quando a tela MOSTRA o bloco: o
+  // estado carrega `mesesDeRepeticao` nas duas telas, e cobrar sem olhar para
+  // `campos.duracao` recusaria um lancamento pontual por causa de um campo que
+  // ele nao tem.
+  if (campos.duracao && valores.duracao === "contada") {
+    const meses = Number(valores.mesesDeRepeticao);
+    if (!Number.isInteger(meses) || meses < 2) {
+      // Menos de 2 nao e repeticao: um mes so e o lancamento pontual, e
+      // aceitar 1 aqui criaria uma REGRA que gera uma unica ocorrencia -- a
+      // pessoa procuraria em Contas Previstas por uma cobranca mensal que
+      // nunca vem de novo.
+      return {
+        ok: false,
+        mensagem: "Por quantos meses? Informe 2 ou mais.",
+      };
+    }
+    if (meses > MAX_MESES_DE_REPETICAO) {
+      return {
+        ok: false,
+        mensagem: `No máximo ${MAX_MESES_DE_REPETICAO} meses. Para algo sem fim, escolha "todos os meses".`,
+      };
+    }
+  }
+
   // Parcelamento so existe onde `camposDoTipo` o mostra. Sem esta porta, uma
   // receita com `parcelado: true` no estado (ou uma edicao) cairia nas regras
   // de parcela, que a tela nem exibe -- e a mensagem falaria de um campo
@@ -309,6 +389,58 @@ export function validarLancamento(
  */
 export function valorGravado(tipo: TipoLancamento, valor: number): number {
   return tipo === "expense" ? -Math.abs(valor) : Math.abs(valor);
+}
+
+/**
+ * O corpo do POST /api/recurring-rules para um lancamento fixo (HMO-170).
+ *
+ * Existe como funcao pura por dois motivos que ja custaram dinheiro aqui:
+ *
+ *   1. O VALOR vai POSITIVO, sempre, nos dois tipos. A regra nao tem sinal --
+ *      quem aplica o sinal de despesa e a baixa da ocorrencia. Mandar o valor
+ *      ja negativo faria o CHECK `amount > 0` da migration 005 recusar, e a
+ *      tela mostraria "nao foi possivel criar" sem dizer por que.
+ *   2. `transaction_type` sai do TIPO DA TELA. Antes da HMO-170 a unica regra
+ *      criada aqui era de despesa e o valor estava escrito na mao; com a
+ *      receita fixa entrando pelo mesmo caminho, um literal "expense" faria o
+ *      salario nascer como gasto -- e a agenda cobraria a pessoa pelo proprio
+ *      salario.
+ *
+ * `max_occurrences` e o numero de MESES porque a frequencia e mensal. Se algum
+ * dia a tela oferecer outra frequencia, os dois deixam de ser a mesma coisa.
+ */
+export function regraDeRecorrencia(
+  tipo: TipoLancamento,
+  valores: ValoresDeLancamento
+): {
+  description: string;
+  amount: number;
+  category_id: string;
+  account_id: string | null;
+  transaction_type: TipoLancamento;
+  frequency: "monthly";
+  due_day: number;
+  start_date: string;
+  max_occurrences: number | null;
+  notes: string | null;
+  group_id: string | null;
+} {
+  return {
+    description: valores.descricao,
+    amount: Math.abs(Number.parseFloat(valores.valor)),
+    category_id: valores.categoriaId,
+    account_id: valores.contaId || null,
+    transaction_type: tipo,
+    frequency: "monthly",
+    due_day: Number(valores.diaDeVencimento),
+    start_date: valores.data,
+    // NULL e "sem fim": e assim que a migration 005 le a coluna. Mandar 0
+    // esbarraria no CHECK `max_occurrences > 0`.
+    max_occurrences:
+      valores.duracao === "contada" ? Number(valores.mesesDeRepeticao) : null,
+    notes: valores.notas || null,
+    group_id: valores.grupoId || null,
+  };
 }
 
 /**

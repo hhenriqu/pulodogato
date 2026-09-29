@@ -54,6 +54,7 @@ import { CamposDeLancamento } from "@/components/movimentacoes/CamposDeLancament
 import { useOfflineQueue } from "@/lib/hooks/useOfflineQueue";
 import {
   camposDoTipo,
+  regraDeRecorrencia,
   valoresIniciais,
   validarLancamento,
   valorGravado,
@@ -82,10 +83,13 @@ interface Conexao {
 const COPIA = {
   income: {
     titulo: "Nova Receita",
-    descricao: "Dinheiro que entrou: salário, venda, rendimento, reembolso.",
+    descricao:
+      "Dinheiro que entrou: salário, venda, rendimento, reembolso. Pode ser pontual ou fixa mensal.",
     salvar: "Salvar receita",
     salvo: "Receita lançada.",
     atualizado: "Receita atualizada.",
+    regraCriada: "Receita fixa criada. Ela aparece em Contas Previstas.",
+    erroDaRegra: "Erro ao criar a receita fixa",
   },
   expense: {
     titulo: "Nova Despesa",
@@ -94,6 +98,8 @@ const COPIA = {
     salvar: "Salvar despesa",
     salvo: "Despesa lançada.",
     atualizado: "Despesa atualizada.",
+    regraCriada: "Despesa fixa criada. Ela aparece em Contas Previstas.",
+    erroDaRegra: "Erro ao criar a despesa fixa",
   },
 } as const;
 
@@ -310,44 +316,45 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       // Editar nunca cai em "fixa": o que esta gravado e um lancamento, nao uma
       // regra. A regra se edita em Contas Previstas. Aqui so distinguimos se o
       // lancamento saiu de um cartao.
-      natureza: contaDaLinha?.account_type === "credit_card" ? "card" : "one_off",
+      //
+      // O `tipo === "expense"` e o que mantem o seletor coerente: "card" nao
+      // esta em `naturezasDoTipo("income")`, e uma receita apontada para um
+      // cartao (estorno lancado como entrada, por exemplo) abriria o seletor com
+      // um valor que nao e nenhuma das opcoes -- o radix mostra o gatilho VAZIO,
+      // como se a tela nao tivesse carregado.
+      natureza:
+        tipo === "expense" && contaDaLinha?.account_type === "credit_card"
+          ? "card"
+          : "one_off",
       compartilhado: Boolean(linha.is_shared),
       grupoId: linha.group_id ?? "",
     });
   };
 
   /**
-   * Despesa fixa vira uma regra em `recurring_rules`, nao um lancamento. A rota
-   * ja materializa a agenda, entao a conta aparece em Contas Previstas no mesmo
-   * instante -- e la que ela e dada como paga mes a mes.
+   * Lancamento fixo vira uma regra em `recurring_rules`, nao um lancamento. A
+   * rota ja materializa a agenda, entao a conta aparece em Contas Previstas no
+   * mesmo instante -- e la que ela e dada como paga/recebida mes a mes.
+   *
+   * Serve as DUAS telas desde a HMO-170: salario e o caso que motivou a issue.
+   * O corpo do pedido sai de `regraDeRecorrencia`, que e quem garante o valor
+   * positivo e o `transaction_type` vindo do tipo da tela -- um literal
+   * "expense" aqui faria o salario nascer como gasto.
    */
-  const criarDespesaFixa = async () => {
+  const criarRegraFixa = async () => {
     const resposta = await fetch("/api/recurring-rules", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        description: valores.descricao,
-        // A rota espera o valor positivo: quem aplica o sinal de despesa e a
-        // baixa da ocorrencia, nao a regra.
-        amount: Math.abs(Number.parseFloat(valores.valor)),
-        category_id: valores.categoriaId,
-        account_id: valores.contaId || null,
-        transaction_type: "expense",
-        frequency: "monthly",
-        due_day: Number(valores.diaDeVencimento),
-        start_date: valores.data,
-        notes: valores.notas || null,
-        group_id: valores.grupoId || null,
-      }),
+      body: JSON.stringify(regraDeRecorrencia(tipo, valores)),
     });
 
     const dados = await resposta.json();
     if (!resposta.ok) {
-      toast.error(dados.error || "Erro ao criar a despesa fixa");
+      toast.error(dados.error || copia.erroDaRegra);
       return false;
     }
 
-    toast.success("Despesa fixa criada. Ela aparece em Contas Previstas.");
+    toast.success(copia.regraCriada);
     return true;
   };
 
@@ -424,7 +431,12 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       compartilhado: valores.compartilhado,
       grupoId: valores.grupoId || null,
       editando,
-      tipoDeDespesa: tipo === "expense" ? valores.natureza : undefined,
+      // Vai nos DOIS tipos desde a HMO-170. A fila recusa `fixed` porque regra
+      // nao e lancamento; enquanto isto era `tipo === "expense" ? ... :
+      // undefined`, a receita fixa passava pela peneira como receita PONTUAL --
+      // a fila gravaria uma entrada avulsa, e o salario seria contado de novo
+      // quando a ocorrencia do mes fosse baixada. Dinheiro em dobro, sem erro.
+      tipoDeDespesa: valores.natureza,
     });
 
     if (resultado.estado === "recusado") {
@@ -476,7 +488,7 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       }
 
       if (campos.diaDeVencimento && valores.natureza === "fixed") {
-        if (await criarDespesaFixa()) voltarParaLista();
+        if (await criarRegraFixa()) voltarParaLista();
         return;
       }
 

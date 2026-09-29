@@ -49,11 +49,13 @@ import {
   Check,
   Loader2,
   Paperclip,
+  Pencil,
   Plus,
   Repeat,
   SkipForward,
   Wallet,
 } from "lucide-react";
+import type { AlcanceDaEdicao } from "@/lib/recorrencia-edicao";
 import { Receipts } from "@/components/Receipts";
 import { ehFatura } from "@/lib/card-invoice";
 import {
@@ -144,6 +146,15 @@ export default function BillsPage() {
   const [faturaParaPagar, setFaturaParaPagar] =
     useState<ScheduledTransaction | null>(null);
   const [contaPagadora, setContaPagadora] = useState("");
+
+  // A ocorrencia em edicao e o alcance escolhido (HMO-170). O alcance volta para
+  // "apenas_esta" a cada abertura: ele e a escolha mais conservadora, e herdar a
+  // resposta da edicao anterior faria um acerto pontual reajustar a serie sem a
+  // pessoa ter pedido de novo.
+  const [contaParaEditar, setContaParaEditar] =
+    useState<ScheduledTransaction | null>(null);
+  const [formEdicao, setFormEdicao] = useState({ description: "", amount: "" });
+  const [alcance, setAlcance] = useState<AlcanceDaEdicao>("apenas_esta");
 
   const [formFixo, setFormFixo] = useState<FormGastoFixo>({
     description: "",
@@ -329,6 +340,76 @@ export default function BillsPage() {
     }
   };
 
+  /** Abre o dialogo ja com os valores de hoje, para a pessoa corrigir um so. */
+  const pedirEdicao = (conta: ScheduledTransaction) => {
+    setFormEdicao({
+      description: conta.description,
+      amount: String(Number(conta.amount)),
+    });
+    setAlcance("apenas_esta");
+    setContaParaEditar(conta);
+  };
+
+  /**
+   * Grava a edicao no alcance escolhido (HMO-170).
+   *
+   * Quem decide quais linhas mudam e o servidor -- `lib/recorrencia-edicao.ts`
+   * pelo `alcance` que vai aqui. A tela nao monta lista de ids: ela nem tem a
+   * serie inteira carregada (a agenda vem filtrada por `status=open`), e montar
+   * a lista aqui alteraria so o que esta na tela, deixando de fora os meses que
+   * a pessoa nao rolou ate ver.
+   */
+  const salvarEdicao = async () => {
+    const conta = contaParaEditar;
+    if (!conta) return;
+
+    const valor = Number(formEdicao.amount);
+    if (!formEdicao.description.trim()) {
+      toast.error("Informe a descrição");
+      return;
+    }
+    if (!Number.isFinite(valor) || valor <= 0) {
+      toast.error("Valor deve ser maior que zero");
+      return;
+    }
+
+    setAgindo(conta.id);
+    try {
+      const resposta = await fetch(`/api/scheduled-transactions/${conta.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          description: formEdicao.description.trim(),
+          amount: valor,
+          alcance,
+        }),
+      });
+      const dados = await resposta.json();
+
+      if (!resposta.ok) {
+        toast.error(dados.error ?? "Não foi possível alterar");
+        return;
+      }
+
+      // A contagem do que ficou como estava e o que torna a garantia visivel:
+      // "nunca muda o que ja passou" so tranquiliza quem VE o numero.
+      const preservadas = Number(dados.preservadas ?? 0);
+      toast.success(
+        preservadas > 0
+          ? `${dados.message} ${preservadas} anterior(es) ficaram como estavam.`
+          : dados.message
+      );
+
+      setContaParaEditar(null);
+      await carregar();
+    } catch (erro) {
+      console.error(erro);
+      toast.error("Erro ao alterar a conta");
+    } finally {
+      setAgindo(null);
+    }
+  };
+
   const criarGastoFixo = async () => {
     if (!formFixo.description.trim() || !formFixo.amount || !formFixo.category_id) {
       toast.error("Preencha descrição, valor e categoria");
@@ -480,6 +561,19 @@ export default function BillsPage() {
               ) : (
                 <Check className="h-4 w-4" />
               )}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => pedirEdicao(conta)}
+              disabled={agindo === conta.id || !online}
+              title={
+                conta.recurring_rule_id
+                  ? "Alterar (só esta ou as próximas)"
+                  : "Alterar esta conta"
+              }
+            >
+              <Pencil className="h-4 w-4" />
             </Button>
             <Button
               size="sm"
@@ -1025,6 +1119,92 @@ export default function BillsPage() {
                   </Button>
                 </>
               )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ALTERAR UMA OCORRENCIA, E ATE ONDE (HMO-170) */}
+      <Dialog
+        open={contaParaEditar !== null}
+        onOpenChange={(aberto) => !aberto && setContaParaEditar(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Alterar conta prevista</DialogTitle>
+          </DialogHeader>
+
+          {contaParaEditar && (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="edicao-descricao">Descrição</Label>
+                <Input
+                  id="edicao-descricao"
+                  value={formEdicao.description}
+                  onChange={(e) =>
+                    setFormEdicao((f) => ({ ...f, description: e.target.value }))
+                  }
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="edicao-valor">Valor</Label>
+                <Input
+                  id="edicao-valor"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={formEdicao.amount}
+                  onChange={(e) =>
+                    setFormEdicao((f) => ({ ...f, amount: e.target.value }))
+                  }
+                />
+              </div>
+
+              {/* A escolha so existe quando ha serie. Numa conta avulsa nao ha
+                  "proximas", e oferecer a pergunta faria a pessoa procurar uma
+                  diferenca entre duas opcoes que fazem a mesma coisa. */}
+              {contaParaEditar.recurring_rule_id ? (
+                <div className="space-y-2 rounded-lg border border-border p-3">
+                  <Label>Esta alteração vale para</Label>
+                  <Select
+                    value={alcance}
+                    onValueChange={(v) => setAlcance(v as AlcanceDaEdicao)}
+                  >
+                    <SelectTrigger id="edicao-alcance">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="apenas_esta">
+                        Apenas esta ({dataCurta(contaParaEditar.due_date)})
+                      </SelectItem>
+                      <SelectItem value="esta_e_proximas">
+                        Esta e as próximas
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {alcance === "apenas_esta"
+                      ? "Só este mês muda. O gasto fixo continua com o valor de hoje."
+                      : "Muda este mês, os seguintes ainda em aberto e o próprio gasto fixo. Meses anteriores e já pagos não são alterados."}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Conta avulsa: a alteração vale só para ela.
+                </p>
+              )}
+
+              <Button
+                className="w-full"
+                disabled={agindo === contaParaEditar.id}
+                onClick={salvarEdicao}
+              >
+                {agindo === contaParaEditar.id && (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                )}
+                Salvar alteração
+              </Button>
             </div>
           )}
         </DialogContent>

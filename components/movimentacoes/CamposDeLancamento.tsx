@@ -28,17 +28,74 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { CreditCard, Receipt, Repeat } from "lucide-react";
+import { CalendarClock, CreditCard, Receipt, Repeat } from "lucide-react";
 import {
   camposDoTipo,
   categoriasDoTipo,
   contasDoSeletor,
+  naturezasDoTipo,
+  MAX_MESES_DE_REPETICAO,
   type CategoriaDeLancamento,
   type ContaDeLancamento,
+  type DuracaoDaRepeticao,
   type NaturezaDespesa,
   type TipoLancamento,
   type ValoresDeLancamento,
 } from "@/lib/lancamento";
+
+// ---------------------------------------------------------------------------
+// OS ROTULOS DE CADA NATUREZA, POR TELA
+// ---------------------------------------------------------------------------
+// Tabela em vez de `tipo === "expense" ? ... : ...` espalhado pelo JSX: com duas
+// telas e tres naturezas sao seis textos, e o ternario aninhado e onde a receita
+// herdou "Despesa Fixa" escrito na tela dela.
+const ROTULO_DA_NATUREZA: Record<
+  TipoLancamento,
+  Record<NaturezaDespesa, string>
+> = {
+  expense: {
+    one_off: "Despesa Pontual",
+    card: "Gasto no Cartão",
+    fixed: "Despesa Fixa",
+  },
+  income: {
+    one_off: "Receita Pontual",
+    // O caso que deu nome a issue: salario. "Receita Fixa" e o rotulo generico,
+    // e o texto de ajuda abaixo cita o salario para quem procura por ele.
+    card: "Gasto no Cartão",
+    fixed: "Receita Fixa",
+  },
+};
+
+const AJUDA_DA_NATUREZA: Record<
+  TipoLancamento,
+  Record<NaturezaDespesa, string>
+> = {
+  expense: {
+    one_off: "Um gasto avulso, lançado só nesta data.",
+    card: "Entra na fatura do cartão escolhido, no mês certo conforme o dia do fechamento.",
+    fixed:
+      "Vira uma regra mensal em Contas Previstas, que passa a cobrar você todo mês.",
+  },
+  income: {
+    one_off: "Uma entrada avulsa, lançada só nesta data.",
+    card: "",
+    fixed:
+      "Salário, aluguel recebido, mensalidade: vira uma regra mensal em Contas Previstas, que passa a prever essa entrada todo mês.",
+  },
+};
+
+const ICONE_DA_NATUREZA: Record<NaturezaDespesa, typeof Receipt> = {
+  one_off: Receipt,
+  card: CreditCard,
+  fixed: Repeat,
+};
+
+const COR_DA_NATUREZA: Record<NaturezaDespesa, string> = {
+  one_off: "text-muted-foreground",
+  card: "text-info",
+  fixed: "text-warning",
+};
 
 interface CamposDeLancamentoProps {
   tipo: TipoLancamento;
@@ -64,12 +121,13 @@ export function CamposDeLancamento({
   const campos = camposDoTipo(tipo, valores.natureza, editando);
   const categoriasVisiveis = categoriasDoTipo(categorias, tipo);
   const contasVisiveis = contasDoSeletor(contas, tipo, valores.natureza);
+  const naturezasVisiveis = naturezasDoTipo(tipo);
 
   return (
     <div className="space-y-6">
       {campos.natureza && (
         <div className="space-y-2">
-          <Label>Tipo de Despesa *</Label>
+          <Label>{campos.rotuloDaNatureza}</Label>
           <Select
             value={valores.natureza}
             onValueChange={(value) =>
@@ -87,40 +145,33 @@ export function CamposDeLancamento({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="one_off">
-                <div className="flex items-center gap-2">
-                  <Receipt className="h-4 w-4 text-muted-foreground" />
-                  <span>Despesa Pontual</span>
-                </div>
-              </SelectItem>
-              <SelectItem value="card">
-                <div className="flex items-center gap-2">
-                  <CreditCard className="h-4 w-4 text-info" />
-                  <span>Gasto no Cartão</span>
-                </div>
-              </SelectItem>
-              <SelectItem value="fixed">
-                <div className="flex items-center gap-2">
-                  <Repeat className="h-4 w-4 text-warning" />
-                  <span>Despesa Fixa</span>
-                </div>
-              </SelectItem>
+              {/* As opcoes saem de `naturezasDoTipo`, nao de tres itens fixos:
+                  receita nao tem "no cartao", e um item a mais aqui deixaria a
+                  tela oferecer um caminho que a validacao recusa depois. */}
+              {naturezasVisiveis.map((opcao) => {
+                const Icone = ICONE_DA_NATUREZA[opcao];
+                return (
+                  <SelectItem key={opcao} value={opcao}>
+                    <div className="flex items-center gap-2">
+                      <Icone className={`h-4 w-4 ${COR_DA_NATUREZA[opcao]}`} />
+                      <span>{ROTULO_DA_NATUREZA[tipo][opcao]}</span>
+                    </div>
+                  </SelectItem>
+                );
+              })}
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">
-            {valores.natureza === "card" &&
-              "Entra na fatura do cartão escolhido, no mês certo conforme o dia do fechamento."}
-            {valores.natureza === "fixed" &&
-              "Vira uma regra mensal em Contas Previstas, que passa a cobrar você todo mês."}
-            {valores.natureza === "one_off" &&
-              "Um gasto avulso, lançado só nesta data."}
+            {AJUDA_DA_NATUREZA[tipo][valores.natureza]}
           </p>
         </div>
       )}
 
       {campos.diaDeVencimento && (
         <div className="space-y-2">
-          <Label htmlFor="due_day">Vence todo dia *</Label>
+          <Label htmlFor="due_day">
+            {tipo === "expense" ? "Vence todo dia *" : "Cai todo dia *"}
+          </Label>
           <Input
             id="due_day"
             type="number"
@@ -134,6 +185,75 @@ export function CamposDeLancamento({
             Dia 29, 30 ou 31 cai no último dia do mês quando o mês for mais
             curto.
           </p>
+        </div>
+      )}
+
+      {/* POR QUANTOS MESES (HMO-170)
+          O bloco so existe junto com o dia do vencimento -- `campos.duracao` tem
+          a mesma condicao -- porque as duas perguntas descrevem a MESMA regra.
+          Mostrar a duracao sem o dia deixaria a pessoa dizer "por 12 meses" sem
+          dizer quando vence. */}
+      {campos.duracao && (
+        <div className="space-y-3 p-4 border rounded-lg bg-muted/20">
+          <Label>Por quanto tempo *</Label>
+          <Select
+            value={valores.duracao}
+            onValueChange={(value) =>
+              aoMudar({
+                duracao: value as DuracaoDaRepeticao,
+                // Voltar para "todos os meses" limpa a contagem: deixar o numero
+                // no estado faria ele voltar a valer se a pessoa trocasse de
+                // novo, cadastrando um prazo que ela ja tinha desistido de por.
+                mesesDeRepeticao:
+                  value === "contada" ? valores.mesesDeRepeticao : "",
+              })
+            }
+          >
+            <SelectTrigger id="duracao">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="indefinida">
+                <div className="flex items-center gap-2">
+                  <Repeat className="h-4 w-4 text-warning" />
+                  <span>Todos os meses, sem data de fim</span>
+                </div>
+              </SelectItem>
+              <SelectItem value="contada">
+                <div className="flex items-center gap-2">
+                  <CalendarClock className="h-4 w-4 text-info" />
+                  <span>Por um número de meses</span>
+                </div>
+              </SelectItem>
+            </SelectContent>
+          </Select>
+
+          {valores.duracao === "contada" && (
+            <div className="space-y-2">
+              <Label htmlFor="meses_de_repeticao">Quantos meses *</Label>
+              <Input
+                id="meses_de_repeticao"
+                type="number"
+                min={2}
+                max={MAX_MESES_DE_REPETICAO}
+                value={valores.mesesDeRepeticao}
+                onChange={(e) =>
+                  aoMudar({ mesesDeRepeticao: e.target.value })
+                }
+                placeholder="Ex: 12"
+              />
+              <p className="text-xs text-muted-foreground">
+                Conta a partir deste mês. Depois do último, a cobrança para
+                sozinha.
+              </p>
+            </div>
+          )}
+
+          {valores.duracao === "indefinida" && (
+            <p className="text-xs text-muted-foreground">
+              Continua até você desativar em Contas Previstas.
+            </p>
+          )}
         </div>
       )}
 
