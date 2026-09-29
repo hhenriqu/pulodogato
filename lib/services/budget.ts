@@ -63,6 +63,47 @@ export function somarMeses(mesIso: string, meses: number): string {
  * Se o usuario ajustou o mercado de outubro para R$ 1.200, repetir setembro
  * por cima desfaria o ajuste dele -- e ele nao teria como saber.
  */
+export interface TetoARepetir {
+  category_id: string;
+  group_id?: string | null;
+  amount_limit: number | string;
+  alert_threshold: number | string;
+  notes?: string | null;
+}
+
+/**
+ * Quais tetos de `base` ainda faltam no mes destino.
+ *
+ * A chave e o PAR (categoria, grupo), nunca a categoria sozinha, porque os
+ * dois indices unicos do 006 sao separados: o mercado pessoal e o mercado da
+ * viagem coexistem no mesmo mes de proposito. Com a categoria sozinha, repetir
+ * o mes deixaria de criar um dos dois -- sem erro, e so no mes seguinte.
+ */
+export function linhasParaRepetir(
+  base: TetoARepetir[],
+  existentes: { category_id: string; group_id?: string | null }[],
+  userId: string,
+  destino: string,
+) {
+  const chave = (categoria: string, grupo: string | null) => `${categoria}|${grupo ?? ""}`;
+  const jaExiste = new Set(
+    existentes.map((e) => chave(e.category_id, e.group_id ?? null)),
+  );
+
+  return base
+    .filter((b) => !jaExiste.has(chave(b.category_id, b.group_id ?? null)))
+    .map((b) => ({
+      user_id: userId,
+      category_id: b.category_id,
+      group_id: b.group_id ?? null,
+      month: destino,
+      amount_limit: b.amount_limit,
+      alert_threshold: b.alert_threshold,
+      carry_forward: true,
+      notes: b.notes ?? null,
+    }));
+}
+
 export async function repetirOrcamentos(
   supabase: SupabaseClient,
   userId: string,
@@ -81,31 +122,24 @@ export async function repetirOrcamentos(
   if (error) throw error;
   if (!base?.length) return { criados: 0, origem, destino };
 
+  // O que ja existe no destino se le SEM filtrar por user_id, e a diferenca so
+  // aparece depois que existe teto de grupo (HMO-138): o teto da viagem e unico
+  // por (grupo, categoria, mes), nao por usuario. Com o filtro, o teto que
+  // OUTRO membro ja criou em outubro nao entra em `existentes`, a linha vai no
+  // lote, bate no indice e volta 23505 -- e como o 23505 e tratado aqui como
+  // "ja estava la", o lote INTEIRO se perde: os tetos pessoais daquele mes
+  // tambem deixam de ser criados, e a tela responde "nada a repetir".
+  //
+  // Sem o filtro a RLS do 006 entrega exatamente o conjunto certo: os tetos
+  // pessoais do proprio usuario mais os dos grupos de que ele participa.
   const { data: existentes, error: erroExistentes } = await supabase
     .from("budgets")
     .select("category_id, group_id")
-    .eq("user_id", userId)
     .eq("month", destino);
 
   if (erroExistentes) throw erroExistentes;
 
-  const chave = (categoria: string, grupo: string | null) => `${categoria}|${grupo ?? ""}`;
-  const jaExiste = new Set(
-    (existentes ?? []).map((e) => chave(e.category_id, e.group_id ?? null)),
-  );
-
-  const linhas = base
-    .filter((b) => !jaExiste.has(chave(b.category_id, b.group_id ?? null)))
-    .map((b) => ({
-      user_id: userId,
-      category_id: b.category_id,
-      group_id: b.group_id ?? null,
-      month: destino,
-      amount_limit: b.amount_limit,
-      alert_threshold: b.alert_threshold,
-      carry_forward: true,
-      notes: b.notes ?? null,
-    }));
+  const linhas = linhasParaRepetir(base, existentes ?? [], userId, destino);
 
   if (!linhas.length) return { criados: 0, origem, destino };
 
