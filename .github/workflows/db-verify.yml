@@ -12,9 +12,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -770,6 +770,22 @@ jobs:
       # 18 de 18 mutantes mortos em scripts/mutantes-orcamento-de-grupo.mjs.
       - name: Orcamento de grupo
         run: npm run test:orcamento-de-grupo
+
+      # A MINHA parte da despesa de grupo (HMO-177). As policies do 005 liberam
+      # `user_id = auth.uid() OR is_group_member(group_id)`, e a rota do resumo
+      # nao filtra por user_id -- de proposito, porque a RLS filtra. O efeito
+      # colateral e que um aluguel de R$ 3.000 do grupo Casa aparecia inteiro
+      # como custo fixo para as DUAS pessoas: para quem cadastrou a regra e para
+      # quem nunca cadastrou nada. Numero inflado que ainda alimenta
+      # safe-to-spend e cash-flow, e cujo unico sintoma e parecer alto.
+      #
+      # O teste cobra os dois lados: dividir a linha de grupo E nao dividir a
+      # pessoal. So o primeiro deixaria passar o mutante que divide tudo, que
+      # erra para BAIXO e faz o app prometer dinheiro que nao sobra.
+      #
+      # 12 de 12 mutantes mortos em scripts/mutantes-parte-do-grupo.mjs.
+      - name: A minha parte da despesa fixa de grupo
+        run: npm run test:parte-do-grupo
 
       # Os numeros dos relatorios sao provados em SQL logo acima. O que resta
       # para o TypeScript sao duas coisas que erram em silencio: a janela de
