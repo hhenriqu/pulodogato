@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { CampoDeValor } from "@/components/ui/campo-de-valor";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
@@ -385,15 +386,11 @@ export default function GoalsPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-2">
                   <Label htmlFor="alvo">Quanto quer juntar</Label>
-                  <Input
+                  <CampoDeValor
                     id="alvo"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    placeholder="15000,00"
                     value={form.target_amount}
-                    onChange={(e) =>
-                      setForm({ ...form, target_amount: e.target.value })
+                    onChange={(target_amount) =>
+                      setForm({ ...form, target_amount })
                     }
                   />
                 </div>
@@ -701,14 +698,10 @@ export default function GoalsPage() {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label htmlFor="aporte">Quanto</Label>
-                <Input
+                <CampoDeValor
                   id="aporte"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="500,00"
                   value={valorAporte}
-                  onChange={(e) => setValorAporte(e.target.value)}
+                  onChange={setValorAporte}
                 />
               </div>
               <div className="space-y-2">

@@ -12,6 +12,8 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { CampoDeValor } from "@/components/ui/campo-de-valor";
+import { valorNumerico } from "@/lib/dinheiro";
 import {
   AlertTriangle,
   CalendarClock,
@@ -296,6 +298,12 @@ function AberturaPorCategoria({
   ajustes: Record<string, number>;
   aplicarCategoria: (categoriaId: string, porMes: number | null) => void;
 }) {
+  // Um rascunho por categoria. Antes o texto vivia no proprio DOM (input sem
+  // `value`, lido por `e.currentTarget.value` e limpo por `alvo.value = ""`).
+  // Um campo mascarado nao pode ser assim: a mascara precisa reformatar o texto
+  // a cada tecla, e para isso o React tem que ser o dono do valor.
+  const [rascunhos, setRascunhos] = useState<Record<string, string>>({});
+
   if (categorias.length === 0) return null;
 
   return (
@@ -332,21 +340,30 @@ function AberturaPorCategoria({
                 >
                   {formatarBRL(valor)}
                 </span>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  inputMode="decimal"
-                  aria-label={`Gasto mensal com ${c.categoriaId === SEM_CATEGORIA ? ROTULO_SEM_CATEGORIA : c.rotulo}, em reais`}
-                  placeholder={c.porMes.toFixed(2)}
-                  className="h-8 w-28"
+                <CampoDeValor
+                  value={rascunhos[c.categoriaId] ?? ""}
+                  onChange={(v) =>
+                    setRascunhos((atual) => ({ ...atual, [c.categoriaId]: v }))
+                  }
+                  aria-label={`Gasto mensal com ${c.categoriaId === SEM_CATEGORIA ? ROTULO_SEM_CATEGORIA : c.rotulo}`}
+                  placeholder={formatarBRL(c.porMes)}
+                  className="h-8 w-32"
                   onKeyDown={(e) => {
                     if (e.key !== "Enter") return;
-                    const alvo = e.currentTarget;
-                    const digitado = Number(alvo.value.replace(",", "."));
-                    if (!Number.isFinite(digitado) || digitado < 0) return;
+                    const rascunho = rascunhos[c.categoriaId] ?? "";
+                    // Campo vazio no Enter nao e "zerar a categoria": e
+                    // engano. Para voltar ao calculado ha o botao Desfazer.
+                    //
+                    // Zerar uma categoria (R$ 0/mes) deixou de ser possivel por
+                    // aqui: a mascara trata "so zeros" como campo vazio, porque
+                    // e a unica forma de o backspace conseguir limpar o campo
+                    // (ver lib/dinheiro.ts). E um ajuste de estimativa, nao um
+                    // lancamento, e um centavo tem o mesmo efeito pratico.
+                    if (rascunho === "") return;
+                    const digitado = valorNumerico(rascunho);
+                    if (digitado < 0) return;
                     aplicarCategoria(c.categoriaId, digitado);
-                    alvo.value = "";
+                    setRascunhos((atual) => ({ ...atual, [c.categoriaId]: "" }));
                   }}
                 />
                 {ajustada && (
@@ -439,8 +456,13 @@ function GastoDoDiaADia({
   }
 
   const enviar = () => {
-    const valor = Number(rascunho.replace(",", "."));
-    if (!Number.isFinite(valor) || valor < 0) return;
+    // `valorNumerico` e nao `Number(rascunho.replace(",", "."))`: desde a
+    // HMO-171 o campo emite o valor plano ("1000.00"), e a troca de virgula por
+    // ponto do jeito antigo deixava o separador de milhar no texto -- o que
+    // fazia `Number` devolver NaN e o botao nao fazer nada, em silencio.
+    if (rascunho === "") return;
+    const valor = valorNumerico(rascunho);
+    if (valor < 0) return;
     aplicar(valor);
     setRascunho("");
   };
@@ -539,21 +561,17 @@ function GastoDoDiaADia({
         )}
 
         <div className="flex flex-wrap items-center gap-2">
-          <Input
-            type="number"
-            min="0"
-            step="0.01"
-            inputMode="decimal"
-            aria-label="Gasto do dia a dia, por dia, em reais"
+          <CampoDeValor
+            aria-label="Gasto do dia a dia, por dia"
             placeholder={
-              gasto?.temBase ? gasto.porDia.toFixed(2) : "Valor por dia"
+              gasto?.temBase ? formatarBRL(gasto.porDia) : "Valor por dia"
             }
             value={rascunho}
-            onChange={(e) => setRascunho(e.target.value)}
+            onChange={setRascunho}
             onKeyDown={(e) => {
               if (e.key === "Enter") enviar();
             }}
-            className="w-36"
+            className="w-40"
           />
           <Button size="sm" variant="outline" onClick={enviar} disabled={!rascunho}>
             Usar este valor

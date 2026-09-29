@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { CampoDeValor } from "@/components/ui/campo-de-valor";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -683,14 +684,12 @@ export default function BillsPage() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <Label>Valor *</Label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      min="0"
+                    <CampoDeValor
                       value={formAvulsa.amount}
-                      onChange={(evento) =>
-                        setFormAvulsa((atual) => ({ ...atual, amount: evento.target.value }))
+                      onChange={(amount) =>
+                        setFormAvulsa((atual) => ({ ...atual, amount }))
                       }
+                      aria-label="Valor da conta avulsa"
                     />
                   </div>
                   <div>
@@ -781,14 +780,12 @@ export default function BillsPage() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <Label>Valor *</Label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      min="0"
+                    <CampoDeValor
                       value={formFixo.amount}
-                      onChange={(evento) =>
-                        setFormFixo((atual) => ({ ...atual, amount: evento.target.value }))
+                      onChange={(amount) =>
+                        setFormFixo((atual) => ({ ...atual, amount }))
                       }
+                      aria-label="Valor da conta fixa"
                     />
                   </div>
                   <div>
@@ -1149,15 +1146,10 @@ export default function BillsPage() {
 
               <div className="space-y-2">
                 <Label htmlFor="edicao-valor">Valor</Label>
-                <Input
+                <CampoDeValor
                   id="edicao-valor"
-                  type="number"
-                  step="0.01"
-                  min="0"
                   value={formEdicao.amount}
-                  onChange={(e) =>
-                    setFormEdicao((f) => ({ ...f, amount: e.target.value }))
-                  }
+                  onChange={(amount) => setFormEdicao((f) => ({ ...f, amount }))}
                 />
               </div>
 

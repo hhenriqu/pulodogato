@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { CampoDeValor } from "@/components/ui/campo-de-valor";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -446,19 +447,16 @@ export default function BudgetsPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label>Teto do mês (R$)</Label>
-                  <Input
-                    type="number"
-                    min="0"
-                    step="0.01"
+                  {/* O "(R$)" saiu do rotulo: a mascara ja mostra o simbolo
+                      dentro do campo, e os dois juntos escrevem a moeda duas
+                      vezes na mesma linha. */}
+                  <Label>Teto do mês</Label>
+                  <CampoDeValor
                     value={formOrcamento.amount_limit}
-                    onChange={(e) =>
-                      setFormOrcamento({
-                        ...formOrcamento,
-                        amount_limit: e.target.value,
-                      })
+                    onChange={(amount_limit) =>
+                      setFormOrcamento({ ...formOrcamento, amount_limit })
                     }
-                    placeholder="800,00"
+                    aria-label="Teto do mês"
                   />
                 </div>
 
