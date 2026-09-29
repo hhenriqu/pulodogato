@@ -442,3 +442,81 @@ test("o campo de valor nao oferece o menos", () => {
     `o campo de despesa mostrou algo que ele nao sabe emitir: ${exibido}`
   );
 });
+
+// ---------------------------------------------------------------------------
+// A calculadora ao lado do campo (HMO-171, comentario da issue)
+// ---------------------------------------------------------------------------
+// "Todos os campos de valor ao lado do input deve ter uma calculadora que abre
+// como um modal."
+//
+// A conta em si tem suite propria (test-calculadora-de-campo.mjs) e 14 mutantes.
+// O que SO da para afirmar aqui e o que o JSX faz: que o botao chega junto do
+// campo dentro de um formulario de verdade, e que ele nao envia esse formulario.
+//
+// O conteudo do modal nao da para afirmar: o radix monta o `DialogContent` num
+// portal que so existe com o modal ABERTO, e no HTML do servidor ele nao sai --
+// a mesma limitacao que o comentario do topo deste arquivo descreve para os
+// seletores.
+
+/** Os botoes de calculadora presentes no HTML, pelo `aria-label`. */
+function botoesDeCalculadora(html) {
+  return html.match(/<button[^>]*aria-label="Abrir calculadora[^"]*"[^>]*>/g) ?? [];
+}
+
+test("todo campo de valor da tela vem com a calculadora ao lado", () => {
+  // Um campo de valor por tela no caso simples...
+  for (const tipo of ["income", "expense"]) {
+    const html = renderizar({ tipo, valores: { valor: "1000.00" } });
+    assert.equal(
+      botoesDeCalculadora(html).length,
+      1,
+      `a tela de ${tipo} nao trouxe exatamente uma calculadora`
+    );
+  }
+
+  // ...e DOIS quando o parcelamento abre o campo da parcela. Esta metade e a que
+  // denuncia uma calculadora pendurada numa tela so em vez de no componente
+  // compartilhado: com o botao no lugar errado, o campo da parcela ficaria sem.
+  const parcelado = renderizar({
+    tipo: "expense",
+    valores: { parcelado: true, valorDaParcela: "1000.00", totalDeParcelas: 3 },
+  });
+  assert.equal(
+    botoesDeCalculadora(parcelado).length,
+    2,
+    "o campo da parcela ficou sem calculadora"
+  );
+});
+
+test("o botao da calculadora NAO envia o formulario", () => {
+  // Um `<button>` sem `type` e `submit` por padrao. Estes campos vivem dentro de
+  // um <form>, entao um botao sem `type` gravaria o lancamento -- com o valor
+  // ANTIGO -- no clique que devia abrir a calculadora. Compila, renderiza, e o
+  // sintoma e "o app salva sozinho quando eu abro a calculadora".
+  const html = renderizar({ tipo: "expense", valores: { valor: "1000.00" } });
+
+  for (const botao of botoesDeCalculadora(html)) {
+    assert.match(
+      botao,
+      /type="button"/,
+      `a calculadora enviaria o formulario ao abrir: ${botao}`
+    );
+  }
+});
+
+test("a calculadora acompanha o campo desabilitado", () => {
+  // Campo travado com calculadora ativa e um jeito de escrever no que nao se
+  // pode escrever: o `aoAplicar` e o proprio `onChange` do campo.
+  const html = renderizar({ tipo: "expense", valores: { valor: "10.00" }, editando: true });
+  const campo = html.match(/<input[^>]*id="amount"[^>]*>/)?.[0];
+  assert.ok(campo, "o campo de valor sumiu da tela");
+
+  // Esta tela nao desabilita o valor; a asercao e condicional de proposito, para
+  // o dia em que alguma desabilitar. Sem isto o teste seria uma afirmacao sobre
+  // a tela de hoje, e nao sobre a regra.
+  if (campo.includes("disabled")) {
+    for (const botao of botoesDeCalculadora(html)) {
+      assert.match(botao, /disabled/, `campo travado com calculadora ativa: ${botao}`);
+    }
+  }
+});
