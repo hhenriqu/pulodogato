@@ -23,61 +23,47 @@ import {
 import { moedaSugerida } from "@/lib/moeda";
 
 /**
- * A categoria reservada das pernas, criada sob demanda.
+ * A categoria reservada das pernas. So leitura -- ela e SEED (migration 023).
  *
  * `financial_transactions.category_id` e NOT NULL e transferencia nao tem
- * categoria -- ver `NOME_DA_CATEGORIA_DE_TRANSFERENCIA`. Nasce com
- * `is_active = false`, que e o que a mantem fora dos dois seletores de
- * categoria do app.
+ * categoria -- ver `NOME_DA_CATEGORIA_DE_TRANSFERENCIA`. A linha esta no banco
+ * com `is_active = false`, que e o que a mantem fora dos dois seletores de
+ * categoria do app, e uma policy propria do 023 e o que a torna legivel mesmo
+ * desativada.
  *
- * O SELECT vem antes do INSERT de proposito, em vez de um upsert: se o usuario
- * ja tiver uma categoria com esse nome (a UNIQUE e `(service_id, name)`), o
- * upsert sobrescreveria os campos dela e desativaria uma categoria que ele usa.
- * Ler primeiro nunca mexe no que ja existe.
+ * ESTA FUNCAO JA TENTOU CRIAR A LINHA, e foi assim que a transferencia passou
+ * meses respondendo 500 em producao sem ninguem ver. `transaction_categories` e
+ * tabela de REFERENCIA: nao tem `user_id`, o 002_rls_lockdown so deu
+ * `GRANT SELECT`, e a unica policy dela e `FOR SELECT`. O insert voltava 42501
+ * em toda chamada, de todo usuario -- e como nao e 23505, nem o ramo de "outro
+ * pedido criou primeiro" pegava. O SELECT que vinha antes tambem nao achava
+ * nada, porque a policy antiga e `USING (is_active = TRUE)`.
  *
- * O `insert` ainda pode colidir quando duas transferencias sao criadas ao mesmo
- * tempo no primeiro uso; 23505 e unique_violation, e ai a linha do outro pedido
- * ja serve.
+ * Abrir INSERT para `authenticated` faria a rota funcionar e seria o conserto
+ * errado: a tabela e global, e quem escreve nela escreve na tela de todos os
+ * usuarios do app. Por isso a linha nasce de migration, e por isso aqui so se
+ * le. Ausencia dela e schema desatualizado, nao caso de uso -- e o log diz
+ * exatamente isso, em vez de um "erro ao criar" que apontava para o lugar
+ * errado.
  */
 async function categoriaDaTransferencia(
   supabase: ReturnType<typeof createClient>,
   serviceId: string
 ): Promise<string | null> {
-  const { data: existente } = await supabase
+  const { data, error } = await supabase
     .from("transaction_categories")
     .select("id")
     .eq("service_id", serviceId)
     .eq("name", NOME_DA_CATEGORIA_DE_TRANSFERENCIA)
     .maybeSingle();
 
-  if (existente?.id) return existente.id;
+  if (data?.id) return data.id;
 
-  const { data: criada, error } = await supabase
-    .from("transaction_categories")
-    .insert({
-      service_id: serviceId,
-      name: NOME_DA_CATEGORIA_DE_TRANSFERENCIA,
-      description:
-        "Reservada para as duas pernas de uma transferência. Não aparece nos seletores.",
-      is_expense: false,
-      is_active: false,
-    })
-    .select("id")
-    .single();
-
-  if (criada?.id) return criada.id;
-
-  if (error?.code === "23505") {
-    const { data: doOutroPedido } = await supabase
-      .from("transaction_categories")
-      .select("id")
-      .eq("service_id", serviceId)
-      .eq("name", NOME_DA_CATEGORIA_DE_TRANSFERENCIA)
-      .maybeSingle();
-    return doOutroPedido?.id ?? null;
-  }
-
-  console.error("Erro ao criar a categoria de transferência:", error);
+  console.error(
+    `A categoria "${NOME_DA_CATEGORIA_DE_TRANSFERENCIA}" nao esta legivel no banco. ` +
+      "Aplique database/migrations/023_categoria_de_transferencia.sql.",
+    error
+  );
   return null;
 }
 
@@ -167,8 +153,14 @@ export async function POST(request: NextRequest) {
 
     const categoriaId = await categoriaDaTransferencia(supabase, servico.id);
     if (!categoriaId) {
+      // Nao ha nada que a pessoa possa fazer na tela para contornar isto, entao
+      // a mensagem diz que o problema e do lado de ca. "Tente novamente" seria
+      // mentira: sem a migration 023, a proxima tentativa falha igual.
       return NextResponse.json(
-        { error: "Não foi possível registrar a transferência" },
+        {
+          error:
+            "A transferência não pôde ser registrada por uma configuração pendente do sistema. Nada foi lançado.",
+        },
         { status: 500 }
       );
     }
