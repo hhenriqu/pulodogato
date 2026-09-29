@@ -455,3 +455,25 @@ test("todo codigo do seletor e aceito pela escrita", () => {
     assert.equal(r.ok, true, `${opcao.codigo} deveria ser aceito`);
   }
 });
+
+// ---------------------------------------------------------------------------
+// A terceira copia do padrao
+// ---------------------------------------------------------------------------
+// `MOEDA_PADRAO` (lib/dinheiro.ts) e o DEFAULT da coluna (022) sao duas copias,
+// e o teste da suite `dinheiro` cuida delas. `valoresIniciais()` em
+// lib/lancamento.ts e a TERCEIRA: ela repete "BRL" como literal porque aquele
+// arquivo nao pode importar nada -- `test:lancamento` o compila sozinho, sem o
+// passo que reescreve o alias `@/`, e um import ali derruba a suite com
+// ERR_MODULE_NOT_FOUND.
+//
+// Se as duas divergirem, o formulario de lancamento abre numa moeda e o banco
+// grava outra quando o campo nao e mandado. Nenhum dos dois lados da erro.
+test("o padrao de moeda do formulario e o mesmo de MOEDA_PADRAO", async () => {
+  const { MOEDA_PADRAO } = await import("../.tmp-moeda/dinheiro.js");
+  const { valoresIniciais } = await import("../.tmp-moeda/lancamento.js");
+
+  assert.equal(valoresIniciais().moeda, MOEDA_PADRAO);
+  // E a checkbox nasce desmarcada: marcada, todo lancamento abriria com o
+  // seletor de moeda aberto mesmo para quem so usa uma moeda.
+  assert.equal(valoresIniciais().moedaSobreposta, false);
+});

@@ -83,6 +83,16 @@ export interface FinancialAccount {
   closing_day?: number;
   /** Cartao (migration 006): dia do vencimento da fatura. */
   due_day?: number;
+  /**
+   * Moeda desta conta (ISO 4217, migration 022). E o padrao que os lancamentos
+   * dela herdam -- o lancamento pode sobrepor, e quem resolve a precedencia e
+   * `moedaSugerida` em lib/moeda.ts.
+   *
+   * Opcional no tipo porque uma resposta guardada no cache offline de antes da
+   * 022 nao tem o campo. `moedaSugerida` trata ausente como BRL, que e o mesmo
+   * DEFAULT da coluna.
+   */
+  currency?: string;
   created_at: string;
   updated_at: string;
 }
@@ -108,6 +118,13 @@ export interface FinancialTransaction {
    * que tirou o dinheiro da conta. Ver lib/card-invoice.ts.
    */
   counterpart_transaction_id?: string;
+  /**
+   * Moeda deste lancamento (ISO 4217, migration 022). Sobrepoe a moeda da conta,
+   * e e a coluna que as views de relatorio AGRUPAM -- nunca somar `amount` de
+   * moedas diferentes: 1000 reais com 180 dolares dao 1180, que nao esta em
+   * moeda nenhuma.
+   */
+  currency?: string;
   created_at: string;
   updated_at: string;
 

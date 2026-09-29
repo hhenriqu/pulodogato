@@ -51,6 +51,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { SoftFeatureGuard } from "@/components/subscription/SoftFeatureGuard";
 import { ArrowLeft, Trash2, TrendingDown, TrendingUp, Users } from "lucide-react";
 import { CamposDeLancamento } from "@/components/movimentacoes/CamposDeLancamento";
+import { usePreferenciaDeMoeda } from "@/lib/hooks/usePreferenciaDeMoeda";
+import { moedaSugerida } from "@/lib/moeda";
 import { useOfflineQueue } from "@/lib/hooks/useOfflineQueue";
 import {
   camposDoTipo,
@@ -121,6 +123,32 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
   const [catalogoDe, setCatalogoDe] = useState<number | null>(null);
   const [valores, setValores] = useState<ValoresDeLancamento>(valoresIniciais);
   const [editando, setEditando] = useState(false);
+  // Decide se a checkbox de moeda aparece, e qual moeda um lancamento novo ganha.
+  const { moeda: preferenciaDeMoeda, carregando: carregandoMoeda } =
+    usePreferenciaDeMoeda();
+
+  // A moeda oficial chega DEPOIS do primeiro render (ela vem de `fetch`), e
+  // `valoresIniciais()` nao pode conhece-la -- aquele modulo nao importa nada, de
+  // proposito. Sem este efeito, quem configurou dolar como moeda principal abre
+  // um lancamento novo em REAIS e so descobre ao olhar o simbolo do campo de
+  // valor.
+  //
+  // As tres guardas importam:
+  //   - `carregandoMoeda` evita escrever a preferencia padrao (BRL) em cima de
+  //     algo antes de saber a de verdade;
+  //   - `editando` protege o lancamento que ja existe: a moeda dele veio do
+  //     banco e a oficial nao pode sobrepo-la;
+  //   - `contaId` vazio limita a correcao ao caso em que nao ha conta escolhida.
+  //     Com conta escolhida quem manda e a moeda DELA, e o seletor de conta ja
+  //     cuida disso.
+  useEffect(() => {
+    if (carregandoMoeda || editando) return;
+    setValores((atual) =>
+      atual.moedaSobreposta || atual.contaId
+        ? atual
+        : { ...atual, moeda: preferenciaDeMoeda.oficial }
+    );
+  }, [carregandoMoeda, editando, preferenciaDeMoeda.oficial]);
 
   const { online, enfileirar } = useOfflineQueue();
   const supabase = createClient();
@@ -266,6 +294,10 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
             // significa "nao e cartao", que e a leitura certa: quem decide a
             // fatura e a comparacao com "credit_card".
             account_type: c.account_type ?? "",
+            // A moeda da conta vai para o cache tambem: offline o formulario
+            // ainda precisa sugerir a moeda certa, e sem ela toda conta em dolar
+            // voltaria a sugerir real assim que a pessoa perdesse o sinal.
+            currency: c.currency ?? "",
           })),
           guardadoEm: Date.now(),
         });
@@ -328,6 +360,22 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
           : "one_off",
       compartilhado: Boolean(linha.is_shared),
       grupoId: linha.group_id ?? "",
+      // A moeda GRAVADA ganha da moeda atual da conta -- e por isso
+      // `doLancamento` vem primeiro. Ler a da conta aqui faria a edicao de uma
+      // conta que trocou de moeda reabrir todo lancamento antigo dela na moeda
+      // NOVA, e o Salvar (sem mexer em nada) converteria o historico na razao de
+      // 1 para 1.
+      moeda: moedaSugerida({
+        doLancamento: linha.currency,
+        daConta: contaDaLinha?.currency,
+      }),
+      // A checkbox aparece MARCADA quando o lancamento esta numa moeda diferente
+      // da que a conta dele sugere. E o unico jeito de a tela nao esconder a
+      // informacao: desmarcada, o seletor fica invisivel e a pessoa edita um
+      // lancamento em dolar sem nada na tela dizendo que ele e em dolar.
+      moedaSobreposta:
+        moedaSugerida({ doLancamento: linha.currency }) !==
+        moedaSugerida({ daConta: contaDaLinha?.currency }),
     });
   };
 
@@ -417,6 +465,9 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
     const categoria = categorias.find((c) => c.id === valores.categoriaId);
 
     const resultado = await enfileirar({
+      // Sem isto a fila grava pelo DEFAULT da coluna, e todo lancamento feito
+      // offline numa conta em dolar entra como real na sincronizacao.
+      moeda: valores.moeda,
       userId: user?.id ?? "",
       serviceId,
       categoryId: valores.categoriaId,
@@ -536,6 +587,12 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       notes: valores.notas,
       is_shared: Boolean(temGrupo || temRateio),
       group_id: temGrupo ? valores.grupoId : null,
+      // A moeda vai SEMPRE, inclusive com a checkbox desmarcada e com o recurso
+      // desligado nas configuracoes -- nesses casos ela e a moeda da conta (ou a
+      // oficial), nunca vazia. Mandar so quando a checkbox esta marcada faria o
+      // lancamento de uma conta em dolar ser gravado em reais pelo DEFAULT da
+      // coluna, e o relatorio somaria ele no balde errado sem erro nenhum.
+      currency: valores.moeda,
     };
 
     let transacao: { id: string };
@@ -709,6 +766,8 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
               categorias={categorias}
               contas={contas}
               editando={editando}
+              moedaPorLancamento={preferenciaDeMoeda.porLancamento}
+              moedaOficial={preferenciaDeMoeda.oficial}
               rateio={
                 <SoftFeatureGuard feature="expense_groups" user={user}>
                   <div className="space-y-4 p-4 border rounded-lg bg-muted/20">

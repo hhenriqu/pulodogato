@@ -19,6 +19,8 @@
 import type { ReactNode } from "react";
 import { Input } from "@/components/ui/input";
 import { CampoDeValor } from "@/components/ui/campo-de-valor";
+import { MOEDA_PADRAO } from "@/lib/dinheiro";
+import { moedaSugerida, opcoesDeMoeda } from "@/lib/moeda";
 import { formatarValor, valorNumerico } from "@/lib/dinheiro";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -109,6 +111,21 @@ interface CamposDeLancamentoProps {
   editando: boolean;
   /** O bloco de divisao/grupo, montado pelo container. So despesa o recebe. */
   rateio?: ReactNode;
+  /**
+   * A checkbox de moeda aparece? Vem da preferencia do usuario
+   * (`preferences.moeda.porLancamento`), e a issue pede exatamente isso: a
+   * checkbox "deve aparecer quando configurado para aparecer através das
+   * configuracoes".
+   *
+   * Nao e lida aqui por hook de proposito -- este componente e usado pelas duas
+   * telas e pelo teste de JSX, que nao tem `fetch`.
+   */
+  moedaPorLancamento?: boolean;
+  /**
+   * A moeda oficial da pessoa. Ultimo recurso da sugestao, para o instante em
+   * que ainda nao ha conta escolhida.
+   */
+  moedaOficial?: string;
 }
 
 export function CamposDeLancamento({
@@ -119,11 +136,15 @@ export function CamposDeLancamento({
   contas,
   editando,
   rateio,
+  moedaPorLancamento = false,
+  moedaOficial = MOEDA_PADRAO,
 }: CamposDeLancamentoProps) {
   const campos = camposDoTipo(tipo, valores.natureza, editando);
   const categoriasVisiveis = categoriasDoTipo(categorias, tipo);
   const contasVisiveis = contasDoSeletor(contas, tipo, valores.natureza);
   const naturezasVisiveis = naturezasDoTipo(tipo);
+  // A conta escolhida, para saber que moeda ela sugere.
+  const contaEscolhida = contas.find((c) => c.id === valores.contaId);
 
   return (
     <div className="space-y-6">
@@ -279,10 +300,15 @@ export function CamposDeLancamento({
 
         <div className="space-y-2">
           <Label htmlFor="amount">Valor *</Label>
+          {/* `moeda` decide o simbolo E O NUMERO DE CASAS da mascara. Sem
+              isto um valor em iene apareceria como "R$ 1.000,00" -- e iene nao
+              tem centavos, entao a mascara inventaria uma subdivisao que a moeda
+              nao possui e o numero digitado sairia cem vezes menor. */}
           <CampoDeValor
             id="amount"
             value={valores.valor}
             onChange={(valor) => aoMudar({ valor })}
+            moeda={valores.moeda}
             required
           />
           {/* O valor e digitado positivo nas duas telas. Quem aplica o sinal de
@@ -330,7 +356,25 @@ export function CamposDeLancamento({
           <Label htmlFor="account">{campos.rotuloDaConta}</Label>
           <Select
             value={valores.contaId}
-            onValueChange={(value: string) => aoMudar({ contaId: value })}
+            // Trocar de conta arrasta a moeda -- MENOS quando a pessoa marcou a
+            // checkbox. Sem a excecao, escolher dolar e depois corrigir a conta
+            // jogaria a moeda de volta para a da conta, desfazendo em silencio
+            // uma escolha explicita com o campo ainda aberto na tela mostrando o
+            // valor antigo.
+            onValueChange={(value: string) => {
+              if (valores.moedaSobreposta) {
+                aoMudar({ contaId: value });
+                return;
+              }
+              const conta = contas.find((c) => c.id === value);
+              aoMudar({
+                contaId: value,
+                moeda: moedaSugerida({
+                  daConta: conta?.currency,
+                  oficial: moedaOficial,
+                }),
+              });
+            }}
           >
             <SelectTrigger id="account">
               <SelectValue
@@ -356,6 +400,70 @@ export function CamposDeLancamento({
               Você ainda não tem nenhum cartão de crédito cadastrado. Cadastre
               em Cartões.
             </p>
+          )}
+
+          {/* A MOEDA DESTE LANCAMENTO (HMO-171)
+
+              Fica logo DEPOIS do seletor de conta, e nao antes, porque a conta e
+              quem sugere a moeda: ler "Conta: Nubank / Moeda: R$" na ordem
+              inversa faz a pessoa escolher a moeda e depois ver o valor mudar
+              debaixo do dedo ao trocar a conta.
+
+              A checkbox nao guarda moeda nenhuma -- ela REVELA o seletor, e ao
+              ser desmarcada devolve a moeda para a sugestao da conta. Sem esse
+              retorno, quem marcasse, escolhesse dolar e desmarcasse gravaria em
+              dolar com o campo invisivel na tela. */}
+          {moedaPorLancamento && (
+            <div className="space-y-2 pt-1">
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-input accent-primary"
+                  checked={valores.moedaSobreposta}
+                  onChange={(e) =>
+                    aoMudar(
+                      e.target.checked
+                        ? { moedaSobreposta: true }
+                        : {
+                            moedaSobreposta: false,
+                            moeda: moedaSugerida({
+                              daConta: contaEscolhida?.currency,
+                              oficial: moedaOficial,
+                            }),
+                          }
+                    )
+                  }
+                />
+                Este lançamento está em outra moeda
+              </label>
+
+              {valores.moedaSobreposta && (
+                <>
+                  <Select
+                    value={valores.moeda}
+                    onValueChange={(valor) => aoMudar({ moeda: valor })}
+                  >
+                    <SelectTrigger id="lancamento-moeda">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {opcoesDeMoeda().map((o) => (
+                        <SelectItem key={o.codigo} value={o.codigo}>
+                          {o.rotulo}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {/* Diz que nao ha conversao. E a expectativa errada mais
+                      provavel: o app nao tem cotacao, e o periodo com mais de uma
+                      moeda aparece SEPARADO em vez de somado. */}
+                  <p className="text-xs text-muted-foreground">
+                    O valor é registrado nesta moeda, sem conversão. No período,
+                    os resultados aparecem separados por moeda.
+                  </p>
+                </>
+              )}
+            </div>
           )}
         </div>
 
@@ -409,6 +517,7 @@ export function CamposDeLancamento({
                 <Label htmlFor="installment_amount">Valor da Parcela</Label>
                 <CampoDeValor
                   id="installment_amount"
+                  moeda={valores.moeda}
                   value={valores.valorDaParcela}
                   onChange={(valorDaParcela) => {
                     // `valorNumerico` em vez de `parseFloat` solto: e a mesma

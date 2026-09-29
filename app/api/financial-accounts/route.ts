@@ -1,5 +1,6 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
+import { moedaConhecida } from "@/lib/dinheiro";
 
 export async function GET(request: NextRequest) {
   const supabase = createClient();
@@ -96,6 +97,9 @@ export async function POST(request: NextRequest) {
       // Cartao de credito (migration 006): fechamento e vencimento da fatura.
       closing_day,
       due_day,
+      // Moeda da conta (migration 022). E o padrao que os lancamentos dela
+      // herdam -- ver lib/moeda.ts.
+      currency,
     } = body;
 
     // Validações
@@ -131,6 +135,26 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // A moeda e recusada aqui quando nao esta no catalogo, e nao corrigida em
+    // silencio: o banco tem CHECK (022), entao deixar passar daria um 500 com
+    // codigo 23514 -- que a tela mostra como "Erro ao criar conta", sem dizer o
+    // que esta errado. Ausente cai no DEFAULT 'BRL' da coluna, que e a decisao
+    // "ficam-brl" e tambem o que mantem compativel todo cliente que nao manda o
+    // campo (a fila offline, por exemplo).
+    if (currency !== undefined && currency !== null && currency !== "") {
+      if (!moedaConhecida(currency)) {
+        return NextResponse.json(
+          { error: "Moeda inválida" },
+          { status: 400 }
+        );
+      }
+    }
+
+    const moedaDaConta =
+      currency === undefined || currency === null || currency === ""
+        ? undefined
+        : String(currency).trim().toUpperCase();
+
     // Criar conta
     const { data: account, error: createError } = await supabase
       .from("financial_accounts")
@@ -138,6 +162,9 @@ export async function POST(request: NextRequest) {
         user_id: user.id,
         name: name.trim(),
         account_type,
+        // `undefined` e omitido pelo supabase-js e a coluna fica com o DEFAULT.
+        // Mandar `null` aqui violaria o NOT NULL da 022.
+        ...(moedaDaConta ? { currency: moedaDaConta } : {}),
         bank_name: bank_name?.trim(),
         last_four_digits: last_four_digits?.trim(),
         credit_limit: credit_limit ? parseFloat(credit_limit) : null,
