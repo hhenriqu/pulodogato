@@ -15,8 +15,35 @@ const SETUP_HINT_LOCAL =
 const SETUP_HINT_VERCEL =
   "Defina em Project Settings → Environment Variables, escopo Production, e redeploy. O .env.production versionado NÃO chega ao build na Vercel. Ver docs/DEPLOY_VERCEL.md.";
 
+// HMO-132. Num preview, variavel ausente e a configuracao ESCOLHIDA, nao um
+// defeito: o escopo Preview ficou sem as variaveis de proposito.
+//
+// A dica de producao acima seria ativamente perigosa aqui. Ela manda "defina em
+// Environment Variables e redeploy" -- e quem seguir isso encontra um dashboard
+// que marca Production, Preview e Development por PADRAO, e assim remarca o
+// Preview no banco real, desfazendo a decisao sem perceber. Por isso o preview
+// tem dica propria, que explica o motivo e aponta o unico caminho seguro.
+const SETUP_HINT_PREVIEW =
+  "Este build e um preview deployment, e o escopo Preview foi deixado SEM as variaveis do Supabase de proposito (HMO-132): preview nenhum precisa subir para a main seguir, e preview ligado no banco real gravaria lancamento de verdade na conta do Helio. Falhar aqui e o resultado esperado -- producao nao e afetada. Se um dia preview precisar funcionar, aponte o escopo Preview para um projeto Supabase SEPARADO; nao remarque o escopo Preview nas variaveis de producao. Ver docs/DEPLOY_VERCEL.md.";
+
+/**
+ * Qual dica acompanha um erro de variavel ausente.
+ *
+ * Funcao pura (e exportada) porque a dica errada aqui nao quebra nada agora --
+ * ela induz o leitor, meses depois, a reabrir o banco de producao para os
+ * previews. Isso nao tem sintoma; so um teste segura.
+ */
+export function setupHintFor(
+  onVercel: boolean,
+  vercelEnv: string | undefined
+): string {
+  if (!onVercel) return SETUP_HINT_LOCAL;
+  if (vercelEnv === "preview") return SETUP_HINT_PREVIEW;
+  return SETUP_HINT_VERCEL;
+}
+
 function setupHint(): string {
-  return process.env.VERCEL ? SETUP_HINT_VERCEL : SETUP_HINT_LOCAL;
+  return setupHintFor(Boolean(process.env.VERCEL), process.env.VERCEL_ENV);
 }
 
 function required(name: string, value: string | undefined): string {
