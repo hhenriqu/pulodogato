@@ -89,6 +89,7 @@
   ],
   "category_monthly_totals": [
     "category_id",
+    "currency",
     "expense",
     "group_id",
     "income",
@@ -164,6 +165,7 @@
     "color_hex",
     "created_at",
     "credit_limit",
+    "currency",
     "current_balance",
     "due_day",
     "icon",
@@ -206,6 +208,7 @@
     "category_id",
     "counterpart_transaction_id",
     "created_at",
+    "currency",
     "description",
     "group_id",
     "id",
@@ -356,6 +359,7 @@
     "user_id"
   ],
   "monthly_cash_flow": [
+    "currency",
     "expense",
     "group_id",
     "income",
@@ -417,6 +421,7 @@
   "planned_vs_actual": [
     "actual_expense",
     "actual_income",
+    "currency",
     "expense_variance",
     "group_id",
     "month",
@@ -492,6 +497,7 @@
     "amount",
     "category_id",
     "created_at",
+    "currency",
     "description",
     "due_date",
     "group_id",
