@@ -46,6 +46,9 @@ interface LinhaFluxo {
   transaction_count: number;
 }
 
+/** Quantas linhas por ida ao banco, na agregacao por intervalo. */
+const TAMANHO_DA_PAGINA = 1000;
+
 export async function GET(request: NextRequest) {
   try {
     const supabase = createClient();
@@ -81,31 +84,59 @@ export async function GET(request: NextRequest) {
     // Modo intervalo: nenhuma view responde, a soma vem das transacoes
     // ---------------------------------------------------------------------
     if (periodo && periodo.modo === "intervalo") {
-      const base = supabase
-        .from("financial_transactions")
-        // `transaction_type` nao e decoracao: e ele que `agregarTransacoes`
-        // usa para deixar as duas pernas de transferencia e de pagamento de
-        // fatura FORA da conta, repetindo o filtro que
-        // `category_monthly_totals` aplica no lado do banco.
-        .select("amount, transaction_type")
-        .gte("transaction_date", periodo.de)
-        // `lte` e nao `lt`: o periodo e fechado nos dois extremos, e o ultimo
-        // dia escolhido pelo usuario tem que entrar.
-        .lte("transaction_date", periodo.ate);
+      // A consulta e remontada a cada pagina: o builder do supabase-js e de uso
+      // unico, e reaproveitar o mesmo objeto acumularia os `.range()`.
+      const pagina = (inicio: number) => {
+        const base = supabase
+          .from("financial_transactions")
+          // `transaction_type` nao e decoracao: e ele que `agregarTransacoes`
+          // usa para deixar as duas pernas de transferencia e de pagamento de
+          // fatura FORA da conta, repetindo o filtro que
+          // `category_monthly_totals` aplica no lado do banco.
+          .select("amount, transaction_type")
+          .gte("transaction_date", periodo.de)
+          // `lte` e nao `lt`: o periodo e fechado nos dois extremos, e o ultimo
+          // dia escolhido pelo usuario tem que entrar.
+          .lte("transaction_date", periodo.ate)
+          // Ordem estavel: sem ela, duas paginas podem repetir e pular linhas.
+          .order("id", { ascending: true })
+          .range(inicio, inicio + TAMANHO_DA_PAGINA - 1);
 
-      const { data, error } = groupId
-        ? await base.eq("group_id", groupId)
-        : await base.eq("user_id", user.id).is("group_id", null);
+        return groupId
+          ? base.eq("group_id", groupId)
+          : base.eq("user_id", user.id).is("group_id", null);
+      };
 
-      if (error) {
-        console.error("Erro no fluxo de caixa por intervalo:", error);
-        return NextResponse.json(
-          { error: "Não foi possível montar o relatório" },
-          { status: 500 }
-        );
+      // ------------------------------------------------------------------
+      // POR QUE PAGINAR, SE NENHUMA OUTRA ROTA DESTE REPOSITORIO PAGINA
+      // ------------------------------------------------------------------
+      // Porque este e o unico lugar onde a SOMA e feita no JavaScript sobre
+      // as linhas cruas. O PostgREST tem teto de linhas por resposta; batendo
+      // nele, a resposta vem truncada e sem erro nenhum -- o total do periodo
+      // sairia MENOR que o real, com cara de numero certo. Nos caminhos que
+      // usam as views do 008 isso nao existe: quem soma e o banco, e a
+      // resposta ja vem agregada em poucas linhas.
+      const linhas: { amount: number | string; transaction_type: string }[] = [];
+
+      for (let inicio = 0; ; inicio += TAMANHO_DA_PAGINA) {
+        const { data, error } = await pagina(inicio);
+
+        if (error) {
+          console.error("Erro no fluxo de caixa por intervalo:", error);
+          return NextResponse.json(
+            { error: "Não foi possível montar o relatório" },
+            { status: 500 }
+          );
+        }
+
+        const lote = data ?? [];
+        for (const linha of lote) linhas.push(linha);
+        // Pagina incompleta = acabou. Uma pagina cheia pode ser a ultima, e
+        // nesse caso a proxima volta vazia e o laco encerra do mesmo jeito.
+        if (lote.length < TAMANHO_DA_PAGINA) break;
       }
 
-      const resumo = agregarTransacoes(data ?? []);
+      const resumo = agregarTransacoes(linhas);
 
       return NextResponse.json({
         // Vazio de proposito -- ver o cabecalho do arquivo.
