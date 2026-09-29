@@ -591,6 +591,42 @@ jobs:
       - name: Editar despesa de grupo refaz a divisao, e parte aprovada trava
         run: $PSQL -f database/tests/024_edicao_de_despesa_de_grupo_test.sql
 
+      - name: 025_travar_repontamento_de_divisao
+        run: $PSQL -f database/migrations/025_travar_repontamento_de_divisao.sql
+
+      # Re-executavel: a funcao entra por CREATE OR REPLACE e o trigger sai por
+      # DROP IF EXISTS antes de ser recriado. A prova da migration nao depende
+      # de estado anterior -- ela so olha o catalogo.
+      - name: 025 e idempotente
+        run: $PSQL -f database/migrations/025_travar_repontamento_de_divisao.sql
+
+      # A trava de repontamento de divisao (HMO-130). O que so o Postgres pega:
+      #
+      #   - o vazamento nao esta em nenhuma policy nem em nenhuma rota: ele sai
+      #     da COMBINACAO de `expense_splits_update` (que alcanca a linha
+      #     inteira, porque policy de RLS nao compara OLD com NEW) com
+      #     `calculate_split_amount` em SECURITY DEFINER (que le
+      #     financial_transactions sem RLS). Ler qualquer um dos dois sozinho
+      #     nao mostra nada -- so um UPDATE de verdade, como `authenticated`,
+      #     junta as duas metades;
+      #   - a SECAO 2 e CONTROLE POSITIVO: ela DERRUBA o trigger dentro da
+      #     transacao e exige que o ataque devolva 777,77, o valor da despesa
+      #     que o participante nao enxerga. Sem ela o arquivo estaria provando
+      #     que um ataque impossivel continua impossivel, e passaria verde num
+      #     banco onde a 025 nem tivesse sido aplicada;
+      #   - a SECAO 6 e a contrapartida: o DONO tem que continuar remanejando a
+      #     porcentagem. Congelar a coluna para todo mundo tranca o vazamento e
+      #     o produto junto -- e passa em todas as outras assercoes;
+      #   - a SECAO 5 roda o que a rota de divisoes realmente escreve (status,
+      #     approved_at, rejection_reason). Uma trava larga demais aqui refaria
+      #     a HMO-125, em que aprovar divisao ficou quebrado em producao sem
+      #     ninguem notar;
+      #   - e a SECAO 8 prova que `amount` nao precisa de trava propria: e
+      #     coluna derivada, reescrita pelo recalculo em toda passada. Se um dia
+      #     deixar de ser, o participante baixa a propria divida na mao.
+      - name: Participante nao reaponta a divisao nem le valor de despesa alheia
+        run: $PSQL -f database/tests/025_travar_repontamento_de_divisao_test.sql
+
       # O livro-razao das execucoes de cron. O que so o Postgres pega:
       #
       #   - o CHECK de `job` tem que bater com os quatro `crons[].path` do
