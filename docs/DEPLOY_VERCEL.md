@@ -161,6 +161,13 @@ Duas configuracoes corretas para o escopo Preview:
 2. **Apontando para um projeto Supabase separado**, se um dia preview precisar
    funcionar de verdade.
 
+> **Decidido (HMO-132, 2026-09-29): opcao 1.** O Helio escolheu deixar o escopo
+> Preview **sem as variaveis**. Ou seja: todo preview deployment aparecendo como
+> build falho no PR e o comportamento esperado, nao um incidente -- o CI e que
+> valida os PRs. Se algum dia isso incomodar, a saida e a opcao 2 (projeto
+> Supabase separado); **nao** remarcar o escopo Preview nas variaveis de
+> producao, que e desfazer a decisao.
+
 Desde a HMO-132 isso nao depende so de lembrar de desmarcar a caixinha:
 `utils/supabase/env.ts` derruba o build quando `VERCEL_ENV=preview` **e** a URL
 e a do projeto `odxqjvtxsioksguuevqm`. O guard tem escotilha
@@ -173,7 +180,13 @@ modo de falhar dela e a ausencia de sintoma).
 A validacao que produz esse erro (`utils/supabase/env.ts`) esta fazendo o que
 deveria: falhar no build em vez de subir uma aplicacao que quebraria na cara do
 usuario. Nao contorne prerender nem afrouxe a validacao para o build passar --
-o jeito de fazer passar e definir as variaveis.
+em **producao**, o jeito de fazer passar e definir as variaveis.
+
+Num **preview** a leitura e outra, e o proprio erro avisa: ali a variavel
+ausente e a configuracao escolhida, entao "definir as variaveis" e a acao
+errada -- o dashboard marca os tres escopos por padrao e voce reabriria o banco
+real para os previews. Por isso `setupHintFor()` da uma mensagem diferente
+quando `VERCEL_ENV=preview`.
 
 A chave `anon` e publica por design (vai para o bundle do browser); o que
 protege os dados e a RLS, aplicada em producao em 21/09 (HMO-120, HMO-125).
