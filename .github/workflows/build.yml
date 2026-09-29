@@ -99,20 +99,37 @@ jobs:
 
       - run: npm ci --include=dev
 
-      # SEM SEGREDO, e isto foi conferido arquivo por arquivo antes de escrever:
-      # toda leitura de `process.env` do app (SUPABASE_SERVICE_ROLE_KEY,
-      # CRON_SECRET, as chaves VAPID) acontece DENTRO do handler da rota, nunca
-      # no topo do modulo, e nenhuma delas lanca quando falta. Os dois valores
-      # publicos que o bundle do cliente precisa vem do `.env.production`
-      # versionado.
+      # AS DUAS CHAVES PUBLICAS SAO EXIGIDAS NO BUILD, NAO SO EM RUNTIME.
       #
-      # Quer dizer que este job prova COMPILACAO, nao deploy: o artefato aqui e
-      # descartado. Quem publica e a Vercel, com as variaveis do painel dela --
-      # que ela le com precedencia MAIOR que o `.env.production` do repositorio.
+      # A primeira execucao deste job reprovou em 31 paginas com "Variavel de
+      # ambiente ausente: NEXT_PUBLIC_SUPABASE_URL", e o que ela revelou vale
+      # registrar: o `.env.production` deste projeto NAO e versionado -- ele
+      # existe so na maquina de quem desenvolve. Ou seja, um clone limpo nunca
+      # compilou, e ninguem sabia, porque o unico build que existia era o da
+      # Vercel, que tem as variaveis no painel dela.
+      #
+      # Nao bastava conferir que o app le `process.env` dentro do handler (le, e
+      # as secretas de servidor nao lancam quando faltam): `utils/supabase/env.ts`
+      # valida presenca, formato de URL e valor-de-exemplo, e o `next build`
+      # PRE-RENDERIZA as telas de login -- entao a validacao roda no build.
+      #
+      # Os valores abaixo sao falsos de proposito, e tem que continuar sendo:
+      #
+      #   * o host NAO pode ser o projeto Supabase de producao -- o guard da
+      #     HMO-132 compara o ref exatamente para impedir que um build que nao e
+      #     de producao fale com o banco real;
+      #   * nao pode ser nenhum dos `your_supabase_*` dos arquivos .example, que
+      #     o `env.ts` rejeita de proposito;
+      #   * a URL precisa ser parseavel por `new URL()`.
+      #
+      # Este job prova COMPILACAO, nao deploy: o artefato e descartado e nada
+      # aqui fala com banco nenhum.
       - name: next build
         run: npm run build
         env:
           NEXT_TELEMETRY_DISABLED: "1"
+          NEXT_PUBLIC_SUPABASE_URL: https://ci-build-check.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: chave-falsa-apenas-para-o-build-do-ci
 
   # ---------------------------------------------------------------------------
   # IMAGEM DOCKER
@@ -142,9 +159,17 @@ jobs:
       # `load: false` e `push: false`: ninguem consome esta imagem, o que
       # importa e que o build chegue ao fim. Nao exportar economiza o tempo de
       # escrever as camadas no daemon.
+      # Os mesmos valores falsos do job `build`, e pelo mesmo motivo: o
+      # `next build` roda DENTRO da imagem e `utils/supabase/env.ts` valida as
+      # duas chaves. O Dockerfile as recebe por ARG porque o `.env.production`
+      # nao e versionado -- sem isto a imagem nao sobe a partir de um clone
+      # limpo, que foi o que este job descobriu na primeira execucao.
       - name: docker build
         uses: docker/build-push-action@v6
         with:
           context: .
           push: false
           load: false
+          build-args: |
+            NEXT_PUBLIC_SUPABASE_URL=https://ci-build-check.supabase.co
+            NEXT_PUBLIC_SUPABASE_ANON_KEY=chave-falsa-apenas-para-o-build-do-ci
