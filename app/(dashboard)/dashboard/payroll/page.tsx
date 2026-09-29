@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { CampoDeValor } from "@/components/ui/campo-de-valor";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -476,14 +477,7 @@ export default function PayrollPage() {
 
             <div className="space-y-2">
               <Label htmlFor="bruto">Salário bruto *</Label>
-              <Input
-                id="bruto"
-                type="number"
-                step="0.01"
-                value={bruto}
-                onChange={(e) => setBruto(e.target.value)}
-                placeholder="0,00"
-              />
+              <CampoDeValor id="bruto" value={bruto} onChange={setBruto} />
             </div>
 
             <div className="space-y-3">
@@ -529,19 +523,14 @@ export default function PayrollPage() {
                     </Select>
                   </div>
                   <div className="w-32 space-y-1">
-                    <Input
-                      type="number"
-                      step="0.01"
+                    <CampoDeValor
                       value={desconto.amount}
-                      onChange={(e) => {
+                      onChange={(amount) => {
                         const copia = [...descontos];
-                        copia[indice] = {
-                          ...copia[indice],
-                          amount: e.target.value,
-                        };
+                        copia[indice] = { ...copia[indice], amount };
                         setDescontos(copia);
                       }}
-                      placeholder="0,00"
+                      aria-label="Valor do desconto"
                     />
                   </div>
                   <Button

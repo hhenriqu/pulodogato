@@ -2,6 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { Input } from "@/components/ui/input";
+import { CampoDeValor } from "@/components/ui/campo-de-valor";
+import { valorNumerico } from "@/lib/dinheiro";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -65,7 +67,18 @@ function pct(fracao: number, casas = 2): string {
   })}%`;
 }
 
-/** Le um campo numerico sem transformar vazio em zero de forma confusa. */
+/**
+ * Le um campo numerico sem transformar vazio em zero de forma confusa.
+ *
+ * SO para os campos que NAO sao dinheiro (taxa, anos, meses, dependentes, dias).
+ * Ele trata o ponto como separador de MILHAR, entao passar um valor de
+ * `CampoDeValor` por aqui multiplica por cem em silencio:
+ *
+ *   num("1000.00")  ->  100000
+ *
+ * Campo de dinheiro se le com `valorNumerico` (lib/dinheiro.ts), que e a
+ * conversao que combina com o que o campo emite.
+ */
 function num(texto: string): number {
   const limpo = texto.replace(/\./g, "").replace(",", ".");
   const valor = Number.parseFloat(limpo);
@@ -77,6 +90,7 @@ function CampoNumero({
   rotulo,
   valor,
   aoMudar,
+  dinheiro,
   prefixo,
   sufixo,
   passo = "0.01",
@@ -86,6 +100,15 @@ function CampoNumero({
   rotulo: string;
   valor: string;
   aoMudar: (v: string) => void;
+  /**
+   * O campo e de dinheiro: entra mascarado (HMO-171) e o estado guarda o valor
+   * plano. Quem le esse estado usa `valorNumerico`, NAO `num`.
+   *
+   * Nao ha `prefixo` junto com isto: a mascara ja escreve o simbolo dentro do
+   * campo, e o "R$" absoluto que ficava a esquerda passaria a aparecer duas
+   * vezes -- uma sobre a outra, porque os dois ocupam a mesma posicao.
+   */
+  dinheiro?: boolean;
   prefixo?: string;
   sufixo?: string;
   passo?: string;
@@ -94,28 +117,32 @@ function CampoNumero({
   return (
     <div className="space-y-1.5">
       <Label htmlFor={id}>{rotulo}</Label>
-      <div className="relative">
-        {prefixo && (
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-            {prefixo}
-          </span>
-        )}
-        <Input
-          id={id}
-          type="number"
-          inputMode="decimal"
-          min="0"
-          step={passo}
-          value={valor}
-          onChange={(e) => aoMudar(e.target.value)}
-          className={prefixo ? "pl-10" : sufixo ? "pr-10" : undefined}
-        />
-        {sufixo && (
-          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-            {sufixo}
-          </span>
-        )}
-      </div>
+      {dinheiro ? (
+        <CampoDeValor id={id} value={valor} onChange={aoMudar} />
+      ) : (
+        <div className="relative">
+          {prefixo && (
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+              {prefixo}
+            </span>
+          )}
+          <Input
+            id={id}
+            type="number"
+            inputMode="decimal"
+            min="0"
+            step={passo}
+            value={valor}
+            onChange={(e) => aoMudar(e.target.value)}
+            className={prefixo ? "pl-10" : sufixo ? "pr-10" : undefined}
+          />
+          {sufixo && (
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+              {sufixo}
+            </span>
+          )}
+        </div>
+      )}
       {dica && <p className="text-xs text-muted-foreground">{dica}</p>}
     </div>
   );
@@ -255,8 +282,8 @@ function CalculadoraJuros() {
   const r = useMemo(
     () =>
       calcularJurosCompostos({
-        valorInicial: num(inicial),
-        aporteMensal: num(aporte),
+        valorInicial: valorNumerico(inicial),
+        aporteMensal: valorNumerico(aporte),
         taxa: num(taxa),
         unidadeTaxa: unidade,
         meses,
@@ -283,8 +310,8 @@ function CalculadoraJuros() {
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
       <div className="space-y-4">
-        <CampoNumero id="j-inicial" rotulo="Valor inicial" valor={inicial} aoMudar={setInicial} prefixo="R$" />
-        <CampoNumero id="j-aporte" rotulo="Aporte mensal" valor={aporte} aoMudar={setAporte} prefixo="R$" />
+        <CampoNumero id="j-inicial" rotulo="Valor inicial" valor={inicial} aoMudar={setInicial} dinheiro />
+        <CampoNumero id="j-aporte" rotulo="Aporte mensal" valor={aporte} aoMudar={setAporte} dinheiro />
         <div className="grid grid-cols-2 gap-3">
           <CampoNumero id="j-taxa" rotulo="Taxa de juros" valor={taxa} aoMudar={setTaxa} sufixo="%" passo="0.1" />
           <div className="space-y-1.5">
@@ -378,7 +405,7 @@ function CalculadoraDecimoTerceiro() {
   const r = useMemo(
     () =>
       calcularDecimoTerceiro({
-        salarioBruto: num(salario),
+        salarioBruto: valorNumerico(salario),
         mesesTrabalhados: num(meses),
         dependentes: num(dependentes),
       }),
@@ -388,7 +415,7 @@ function CalculadoraDecimoTerceiro() {
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
       <div className="space-y-4">
-        <CampoNumero id="d-salario" rotulo="Salario bruto mensal" valor={salario} aoMudar={setSalario} prefixo="R$" />
+        <CampoNumero id="d-salario" rotulo="Salario bruto mensal" valor={salario} aoMudar={setSalario} dinheiro />
         <CampoNumero
           id="d-meses"
           rotulo="Meses trabalhados no ano"
@@ -449,7 +476,7 @@ function CalculadoraFerias() {
   const r = useMemo(
     () =>
       calcularFerias({
-        salarioBruto: num(salario),
+        salarioBruto: valorNumerico(salario),
         diasFerias: num(dias),
         diasAbono: num(abono),
         adiantarDecimoTerceiro: adiantarDecimo,
@@ -461,7 +488,7 @@ function CalculadoraFerias() {
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
       <div className="space-y-4">
-        <CampoNumero id="f-salario" rotulo="Salario bruto mensal" valor={salario} aoMudar={setSalario} prefixo="R$" />
+        <CampoNumero id="f-salario" rotulo="Salario bruto mensal" valor={salario} aoMudar={setSalario} dinheiro />
         <div className="grid grid-cols-2 gap-3">
           <CampoNumero id="f-dias" rotulo="Dias de descanso" valor={dias} aoMudar={setDias} passo="1" />
           <CampoNumero
@@ -560,9 +587,9 @@ function CalculadoraFGTS() {
   const r = useMemo(
     () =>
       calcularFGTS({
-        salarioBruto: num(salario),
+        salarioBruto: valorNumerico(salario),
         mesesTrabalhados: num(meses),
-        saldoInicial: num(saldoInicial),
+        saldoInicial: valorNumerico(saldoInicial),
         motivoSaida: motivo,
       }),
     [salario, meses, saldoInicial, motivo],
@@ -571,14 +598,14 @@ function CalculadoraFGTS() {
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
       <div className="space-y-4">
-        <CampoNumero id="g-salario" rotulo="Salario bruto mensal" valor={salario} aoMudar={setSalario} prefixo="R$" />
+        <CampoNumero id="g-salario" rotulo="Salario bruto mensal" valor={salario} aoMudar={setSalario} dinheiro />
         <CampoNumero id="g-meses" rotulo="Meses a projetar" valor={meses} aoMudar={setMeses} passo="1" />
         <CampoNumero
           id="g-saldo"
           rotulo="Saldo que ja existe na conta"
           valor={saldoInicial}
           aoMudar={setSaldoInicial}
-          prefixo="R$"
+          dinheiro
         />
         <div className="space-y-1.5">
           <Label htmlFor="g-motivo">Motivo da saida</Label>

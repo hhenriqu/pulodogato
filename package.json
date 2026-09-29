@@ -30,6 +30,7 @@
     "test:investments": "rm -rf .tmp-investments && tsc lib/investments.ts --outDir .tmp-investments --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-investments.mjs",
     "test:card-invoice": "rm -rf .tmp-card-invoice && tsc lib/card-invoice.ts --outDir .tmp-card-invoice --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-card-invoice.mjs",
     "test:movimentacoes": "rm -rf .tmp-movimentacoes && tsc lib/movimentacoes.ts --outDir .tmp-movimentacoes --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-movimentacoes.mjs",
+    "test:dinheiro": "rm -rf .tmp-dinheiro && tsc lib/dinheiro.ts --outDir .tmp-dinheiro --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-dinheiro.mjs",
     "test:safe-to-spend": "rm -rf .tmp-safe-to-spend && tsc -p scripts/tsconfig.safe-to-spend-test.json && node scripts/resolve-aliases.mjs .tmp-safe-to-spend lib && node --test scripts/test-safe-to-spend.mjs",
     "test:anomalies": "rm -rf .tmp-anomalies && tsc -p scripts/tsconfig.anomalies-test.json && node scripts/resolve-aliases.mjs .tmp-anomalies lib && node --test scripts/test-anomalies.mjs",
     "test:cash-flow": "rm -rf .tmp-cash-flow && tsc -p scripts/tsconfig.cash-flow-test.json && node scripts/resolve-aliases.mjs .tmp-cash-flow lib && node --test scripts/test-cash-flow-forecast.mjs",

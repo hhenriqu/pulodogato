@@ -6,6 +6,7 @@ import { createClient } from "@/utils/supabase/client";
 import { User } from "@supabase/supabase-js";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { CampoDeValor } from "@/components/ui/campo-de-valor";
 import {
   Card,
   CardContent,
@@ -1136,15 +1137,12 @@ export default function GroupDetailPage() {
 
                 <div className="space-y-2">
                   <Label htmlFor="amount">Valor *</Label>
-                  <Input
+                  <CampoDeValor
                     id="amount"
-                    type="number"
-                    step="0.01"
                     value={expenseForm.amount}
-                    onChange={(e) =>
-                      setExpenseForm({ ...expenseForm, amount: e.target.value })
+                    onChange={(amount) =>
+                      setExpenseForm({ ...expenseForm, amount })
                     }
-                    placeholder="0,00"
                     required
                   />
                 </div>

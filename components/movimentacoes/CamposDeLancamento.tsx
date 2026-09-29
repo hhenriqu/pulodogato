@@ -18,6 +18,8 @@
 
 import type { ReactNode } from "react";
 import { Input } from "@/components/ui/input";
+import { CampoDeValor } from "@/components/ui/campo-de-valor";
+import { formatarValor, valorNumerico } from "@/lib/dinheiro";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -277,19 +279,17 @@ export function CamposDeLancamento({
 
         <div className="space-y-2">
           <Label htmlFor="amount">Valor *</Label>
-          <Input
+          <CampoDeValor
             id="amount"
-            type="number"
-            step="0.01"
-            min="0"
             value={valores.valor}
-            onChange={(e) => aoMudar({ valor: e.target.value })}
-            placeholder="0,00"
+            onChange={(valor) => aoMudar({ valor })}
             required
           />
           {/* O valor e digitado positivo nas duas telas. Quem aplica o sinal de
               despesa e `valorGravado`, e a tela diz isso em vez de deixar a
-              pessoa somar um menos na frente "para garantir". */}
+              pessoa somar um menos na frente "para garantir".
+              O campo tambem nao ACEITA mais o menos (HMO-171): era `type=number`
+              e "-30" numa tela de despesa virava `-(-30) = +30`. */}
           <p className="text-xs text-muted-foreground">
             {tipo === "expense"
               ? "Digite quanto saiu, sem sinal. A despesa é lançada como saída."
@@ -407,29 +407,30 @@ export function CamposDeLancamento({
 
               <div className="space-y-2">
                 <Label htmlFor="installment_amount">Valor da Parcela</Label>
-                <Input
+                <CampoDeValor
                   id="installment_amount"
-                  type="number"
-                  step="0.01"
                   value={valores.valorDaParcela}
-                  onChange={(e) => {
-                    const parcela = parseFloat(e.target.value) || 0;
+                  onChange={(valorDaParcela) => {
+                    // `valorNumerico` em vez de `parseFloat` solto: e a mesma
+                    // conversao que o resto do app usa, e ela devolve 0 no lugar
+                    // de NaN -- um NaN aqui contaminaria o valor TOTAL, que e o
+                    // que a rota de parcelas grava.
+                    const parcela = valorNumerico(valorDaParcela);
                     aoMudar({
-                      valorDaParcela: e.target.value,
+                      valorDaParcela,
                       // O valor total acompanha a parcela: e ele que a rota de
                       // parcelas recebe, e deixar os dois independentes ja
                       // gravou compra de 10x com o total de uma parcela.
                       valor: (parcela * valores.totalDeParcelas).toFixed(2),
                     });
                   }}
-                  placeholder="Valor de cada parcela"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Total: R${" "}
-                  {(
-                    (parseFloat(valores.valorDaParcela) || 0) *
-                    valores.totalDeParcelas
-                  ).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                  Total:{" "}
+                  {formatarValor(
+                    valorNumerico(valores.valorDaParcela) *
+                      valores.totalDeParcelas
+                  )}
                 </p>
               </div>
 

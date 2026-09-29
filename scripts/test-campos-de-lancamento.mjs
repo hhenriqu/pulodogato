@@ -358,3 +358,87 @@ test("editando, nem o dia nem a duracao aparecem", () => {
     assert.ok(!html.includes('id="due_day"'), `${tipo}: dia de vencimento ao editar`);
   }
 });
+
+// ---------------------------------------------------------------------------
+// A MASCARA DE DINHEIRO (HMO-171)
+// ---------------------------------------------------------------------------
+// `test-dinheiro.mjs` prova a mascara como funcao. Aqui a pergunta e outra, e e
+// a que o teste de funcao pura nao alcanca: o campo do formulario esta LIGADO
+// nela? O defeito que isso cobre e mudo -- `CampoDeValor` existir no repositorio
+// e a tela continuar com o `type="number"` de antes compila, passa no tsc e
+// passa em todas as outras suites.
+
+test("o campo de valor e mascarado, nao um type=number", () => {
+  for (const tipo of ["income", "expense"]) {
+    const html = renderizar({ tipo, valores: { valor: "1000.00" } });
+
+    // O que a pessoa ve.
+    assert.ok(
+      html.includes("R$ 1.000,00"),
+      `a tela de ${tipo} nao mascarou o valor`
+    );
+
+    // E o que ela NAO pode ver: o valor plano cru dentro do campo. Esta metade e
+    // a que denuncia o campo que ficou para tras -- um `type="number"` com
+    // `value="1000.00"` tambem "mostra mil", e passaria pela asercao de cima se
+    // ela estivesse sozinha.
+    assert.ok(
+      !html.includes('value="1000.00"'),
+      `a tela de ${tipo} exibiu o valor plano em vez da mascara`
+    );
+  }
+});
+
+test("o campo de valor deixou de ser numerico e continua com teclado numerico", () => {
+  // `type="number"` nao aceita mascara: o navegador rejeita o ponto de milhar e
+  // devolve string vazia, o que apagaria o campo a cada tecla. O `inputMode` e
+  // o que mantem o teclado do celular numerico depois da troca -- este app roda
+  // instalado, e um campo de dinheiro que abre o teclado de letras e uma
+  // regressao que nenhum teste de funcao pura ve.
+  const html = renderizar({ tipo: "expense", valores: { valor: "50.00" } });
+  const campo = html.match(/<input[^>]*id="amount"[^>]*>/)?.[0];
+
+  assert.ok(campo, "o campo de valor sumiu da tela");
+  assert.ok(!campo.includes('type="number"'), `o campo de valor voltou a ser numerico: ${campo}`);
+  // Case-insensitive: este React entrega `inputMode` em camelCase no
+  // `renderToStaticMarkup`, e o navegador aceita as duas formas. Fixar a caixa
+  // aqui seria um teste sobre a versao do React, nao sobre a tela.
+  assert.match(campo, /inputmode="decimal"/i, `o campo de valor perdeu o teclado numerico: ${campo}`);
+});
+
+test("o valor da parcela tambem e mascarado, e o total sai formatado", () => {
+  const html = renderizar({
+    tipo: "expense",
+    valores: { parcelado: true, valorDaParcela: "1000.00", totalDeParcelas: 3 },
+  });
+
+  const campo = html.match(/<input[^>]*id="installment_amount"[^>]*>/)?.[0];
+  assert.ok(campo, "o campo de parcela sumiu");
+  assert.ok(!campo.includes('type="number"'), "o campo de parcela ficou numerico");
+  assert.ok(campo.includes("R$ 1.000,00"), `a parcela nao foi mascarada: ${campo}`);
+
+  // 3 x 1000 = 3000. Com separador de milhar, que era justamente o que o
+  // `toLocaleString` antigo escrevia sem simbolo nenhum na frente.
+  assert.ok(html.includes("R$ 3.000,00"), "o total das parcelas nao saiu formatado");
+});
+
+test("o campo de valor nao oferece o menos", () => {
+  // O campo era `type="number"` e aceitava "-30". `valorGravado` aplica
+  // `-Math.abs`, entao "-30" numa tela de despesa virava `-(-30) = +30` --
+  // dinheiro ENTRANDO numa tela de saida, e o saldo fechando errado para mais,
+  // que e o lado do qual ninguem reclama.
+  const html = renderizar({ tipo: "expense", valores: { valor: "-30" } });
+  const campo = html.match(/<input[^>]*id="amount"[^>]*>/)?.[0];
+  assert.ok(campo, "o campo de valor sumiu da tela");
+
+  // So o `value`, e nao a tag inteira: a tag carrega as classes do primitivo
+  // (`rounded-md`, `border-input`, ...) e "nao ha hifen no <input>" seria uma
+  // asercao que nunca pode passar -- teste que falha por motivo errado e teste
+  // que alguem apaga.
+  const exibido = campo.match(/value="([^"]*)"/)?.[1];
+  assert.equal(
+    exibido,
+    "R$ 30,00",
+    `o campo de despesa mostrou algo que ele nao sabe emitir: ${exibido}`
+  );
+});

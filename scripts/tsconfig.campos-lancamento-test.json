@@ -22,12 +22,14 @@
   },
   "include": [
     "../components/movimentacoes/CamposDeLancamento.tsx",
+    "../components/ui/campo-de-valor.tsx",
     "../components/ui/input.tsx",
     "../components/ui/label.tsx",
     "../components/ui/textarea.tsx",
     "../components/ui/badge.tsx",
     "../components/ui/select.tsx",
     "../lib/lancamento.ts",
+    "../lib/dinheiro.ts",
     "../lib/utils.ts"
   ]
 }

@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { CampoDeValor } from "@/components/ui/campo-de-valor";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -413,6 +414,9 @@ export default function InvestmentsPage() {
 
                 <div className="flex flex-wrap items-end gap-2">
                   <div className="space-y-1">
+                    {/* Sem a mascara de R$ de proposito: cotacao tem oito
+                        casas, e a mascara tem as da moeda. Ver o bloco de
+                        Quantidade, mais abaixo, para o porque completo. */}
                     <Label htmlFor={`preco-${ativo.id}`} className="text-xs">
                       Preço atual
                     </Label>
@@ -511,6 +515,8 @@ export default function InvestmentsPage() {
                 </Select>
               </div>
               <div className="space-y-2">
+                {/* Cotacao, nao valor em reais: fica sem mascara. Ver o bloco
+                    de Quantidade para o porque. */}
                 <Label htmlFor="novo-preco">Preço atual (opcional)</Label>
                 <Input
                   id="novo-preco"
@@ -596,6 +602,21 @@ export default function InvestmentsPage() {
                   />
                 </div>
                 <div className="space-y-2">
+                  {/* POR QUE QUANTIDADE E COTACAO NAO LEVAM A MASCARA DE R$
+                      (HMO-171)
+
+                      A mascara de dinheiro tem as casas da MOEDA -- duas, em
+                      real. Estes campos tem oito (`step="0.00000001"`), e por
+                      um motivo: cripto e fracao de cota nao cabem em centavos.
+
+                      Mascarar aqui nao deixaria o campo feio, arredondaria o
+                      dado: um preco de 0,00000001 viraria R$ 0,01, um erro de um
+                      milhao de vezes, em silencio -- exatamente a classe de bug
+                      que a mascara foi criada para evitar. E quantidade de cotas
+                      nem e dinheiro; nao tem simbolo de moeda para levar.
+
+                      Se um dia a cotacao precisar de mascara, ela precisa de
+                      casas por CAMPO e nao por moeda, que e outra decisao. */}
                   <Label htmlFor="lanc-quantidade">
                     {lancKind === "dividend" ? "Cotas" : "Quantidade"}
                   </Label>
@@ -627,14 +648,13 @@ export default function InvestmentsPage() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="lanc-taxas">Taxas (opcional)</Label>
-                  <Input
+                  {/* Taxa de corretagem e dinheiro comum, com duas casas: entra
+                      mascarado como todo campo de valor do app (HMO-171). Os
+                      campos de COTACAO acima nao -- ver o comentario deles. */}
+                  <CampoDeValor
                     id="lanc-taxas"
-                    type="number"
-                    step="0.01"
-                    min="0"
                     value={lancTaxas}
-                    onChange={(e) => setLancTaxas(e.target.value)}
-                    placeholder="5,90"
+                    onChange={setLancTaxas}
                   />
                 </div>
                 <div className="sm:col-span-2 lg:col-span-3">
