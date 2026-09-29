@@ -38,7 +38,15 @@
 --   5. quem nao e parte no pagamento nao consegue registra-lo -- seria o botao
 --      de perdoar a divida alheia, aberto a qualquer membro;
 --   6. o trigger de saldo corrigido: editar um lancamento nao cobra duas vezes,
---      e mover de conta nao deixa o valor nas duas.
+--      e mover de conta nao deixa o valor nas duas;
+--   7. (HMO-175) QUEM divide a despesa e o banco, e so ele: um insert em
+--      financial_transactions com group_id produz a linha de grupo e os
+--      rateios sozinho, e um segundo insert e RECUSADO. A tela de despesa
+--      tinha um bloco que refazia esse trabalho, batia na constraint e
+--      anunciava "nao consegui dividir no grupo" em toda despesa de grupo --
+--      com a divisao intacta do outro lado. Os dois controles negativos que
+--      valem a pena guardar: derrubar a constraint reprova a secao 7, e
+--      derrubar os DOIS triggers (um so nao basta) reprova a fixture.
 --
 -- Rodar num banco limpo, depois de 001 -> ... -> 007:
 --   psql "$DB_URL" -f database/tests/group_settlement_test.sql
@@ -567,6 +575,71 @@ SELECT pg_temp.expect_num('a porcentagem combinada tambem sobreviveu',
      JOIN public.group_members m ON m.id = es.member_id
     WHERE es.group_transaction_id = '60000000-0000-0000-0000-000000000001'
       AND m.user_id = 'aaaaaaaa-0000-0000-0000-00000000a001'), 70.00);
+
+-- =====================================================
+-- 7. O BANCO E O UNICO QUE DIVIDE (HMO-175)
+-- =====================================================
+-- A tela de despesa gravava a linha de grupo e os rateios por conta propria,
+-- logo depois do insert do lancamento. Como o banco ja fez isso no mesmo
+-- comando -- em DOIS triggers AFTER INSERT quase identicos,
+-- `trigger_auto_create_group_transaction` e `trigger_sync_transaction_group`,
+-- cada um guardado por um `IF NOT EXISTS` que faz o segundo desistir --, o
+-- insert da tela batia sempre em
+-- `unique_transaction_per_group` e a tela avisava que nao tinha conseguido
+-- dividir -- com a divisao inteira gravada e certa do outro lado. Quem lia o
+-- aviso lancava a despesa de novo.
+--
+-- As duas metades sao afirmadas aqui porque as duas sustentam a remocao: se o
+-- trigger sumir, a tela passa a nao dividir nada; se a constraint sumir, um
+-- caminho paralelo volta a poder duplicar a despesa do grupo.
+
+-- Lancamento novo, do jeito que a tela grava: UM insert em
+-- financial_transactions com group_id, e nenhuma escrita em group_transactions.
+-- (O hotel do inicio do arquivo nao serve: a secao do trigger de saldo o
+-- apagou para provar o estorno.)
+INSERT INTO public.financial_transactions
+  (id, user_id, account_id, service_id, category_id, group_id, description,
+   amount, transaction_date, transaction_type)
+SELECT '70000000-0000-0000-0000-0000000000e1',
+       'aaaaaaaa-0000-0000-0000-00000000a001',
+       'f0000000-0000-0000-0000-0000000000a1',
+       c.service_id, c.id, '99999999-0000-0000-0000-000000000001',
+       'Jantar', -120.00, CURRENT_DATE, 'expense'
+  FROM public.transaction_categories c WHERE c.is_expense LIMIT 1;
+
+SELECT pg_temp.expect('o trigger criou UMA linha de grupo para o jantar',
+  (SELECT count(*) FROM public.group_transactions
+    WHERE transaction_id = '70000000-0000-0000-0000-0000000000e1'), 1);
+
+SELECT pg_temp.expect('e um rateio por membro ativo, sem a tela pedir',
+  (SELECT count(*) FROM public.group_expense_splits es
+     JOIN public.group_transactions gt ON gt.id = es.group_transaction_id
+    WHERE gt.transaction_id = '70000000-0000-0000-0000-0000000000e1'), 3);
+
+-- O que a tela fazia: inserir de novo. Tem que ser recusado, e nao criar uma
+-- segunda divisao da mesma despesa.
+DO $$
+DECLARE
+  v_recusou BOOLEAN := FALSE;
+BEGIN
+  BEGIN
+    INSERT INTO public.group_transactions (group_id, transaction_id, split_type)
+    VALUES ('99999999-0000-0000-0000-000000000001',
+            '70000000-0000-0000-0000-0000000000e1', 'equal');
+  EXCEPTION WHEN unique_violation THEN
+    v_recusou := TRUE;
+  END;
+
+  IF NOT v_recusou THEN
+    RAISE EXCEPTION 'FALHA: a segunda divisao da mesma despesa foi ACEITA -- a despesa do grupo pode ser contada duas vezes';
+  END IF;
+  RAISE NOTICE 'ok: a segunda divisao da mesma despesa e recusada';
+END $$;
+
+-- E depois da tentativa recusada continua havendo UMA divisao, nao duas.
+SELECT pg_temp.expect('o jantar continua com uma divisao so',
+  (SELECT count(*) FROM public.group_transactions
+    WHERE transaction_id = '70000000-0000-0000-0000-0000000000e1'), 1);
 
 ROLLBACK;
 

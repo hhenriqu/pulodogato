@@ -624,55 +624,44 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       transacao = data;
     }
 
-    // Grupo: a despesa vira uma linha de grupo com um split por membro ativo.
-    if (temGrupo && tipo === "expense") {
-      const { data: transacaoDeGrupo, error: erroDeGrupo } = await supabase
-        .from("group_transactions")
-        .insert({
-          group_id: valores.grupoId,
-          transaction_id: transacao.id,
-          split_type: "equal",
-        })
-        .select()
-        .single();
-
-      if (erroDeGrupo) {
-        // A despesa esta gravada; o que falhou e o rateio. Dizer isso e melhor
-        // que um sucesso limpo que esconde metade.
-        console.error("Erro ao criar group_transaction:", erroDeGrupo);
-        toast.error(
-          "Lancei a despesa, mas não consegui dividir no grupo. Confira em Grupos."
-        );
-      } else {
-        const { data: membros } = await supabase
-          .from("group_members")
-          .select("id")
-          .eq("group_id", valores.grupoId)
-          .eq("status", "active");
-
-        if (membros && membros.length > 0) {
-          const porMembro = Math.abs(valor) / membros.length;
-          const { error: erroDeSplits } = await supabase
-            .from("group_expense_splits")
-            .insert(
-              membros.map((membro: { id: string }) => ({
-                group_transaction_id: transacaoDeGrupo.id,
-                member_id: membro.id,
-                percentage: 100 / membros.length,
-                amount: porMembro,
-                status: "pending",
-              }))
-            );
-
-          if (erroDeSplits) {
-            console.error("Erro ao criar group splits:", erroDeSplits);
-            toast.error(
-              "Lancei a despesa, mas o rateio do grupo não foi gravado."
-            );
-          }
-        }
-      }
-    }
+    // -----------------------------------------------------------------------
+    // GRUPO: QUEM DIVIDE E O BANCO, E ESTA TELA DIZIA QUE TINHA FALHADO
+    // -----------------------------------------------------------------------
+    // Aqui havia um bloco que criava a linha de `group_transactions` e um
+    // `group_expense_splits` por membro ativo. Ele NUNCA funcionou, e o modo
+    // como falhava e o pior possivel: dizia a coisa errada com confianca.
+    //
+    // O banco ja faz exatamente isso em AFTER INSERT de
+    // `financial_transactions`, quando a linha tem `group_id` e valor negativo
+    // -- inclusive o rateio, corrigido pela 007 para nao perder centavos.
+    // Quando o `await` do insert acima retorna, a linha de grupo JA EXISTE.
+    //
+    // E sao DOIS triggers quase identicos fazendo isso, nao um:
+    // `trigger_auto_create_group_transaction` e `trigger_sync_transaction_group`
+    // (os dois do 001_baseline). Cada um so age se o outro ainda nao agiu, pelo
+    // `IF NOT EXISTS` que ambos tem -- desligar um nao muda nada, o que torna
+    // "e so remover o trigger" uma conclusao errada e facil de tirar.
+    //
+    // Entao o insert que vinha aqui batia sempre na constraint
+    // `unique_transaction_per_group`, caia no ramo de erro e mostrava
+    //
+    //     "Lancei a despesa, mas nao consegui dividir no grupo. Confira em Grupos."
+    //
+    // em TODA despesa de grupo lancada por esta tela. A divisao estava certa e
+    // a pessoa era mandada conferir um estrago que nao existia -- ou, pior,
+    // lancava a despesa de novo achando que a primeira nao tinha pegado.
+    // Reproduzido num Postgres 17 com a cadeia 001->007: um unico insert em
+    // `financial_transactions` com `group_id` produz 1 linha de grupo e 1
+    // rateio por membro ativo, e o segundo insert e recusado.
+    //
+    // `app/api/personal-finance/transactions` ja tinha chegado nessa conclusao
+    // e se protege consultando antes de inserir. Esta tela grava direto pelo
+    // supabase-js, sem passar por la, e por isso nao herdou a protecao.
+    //
+    // Uma diferenca fica registrada: o trigger exige `amount < 0`, entao uma
+    // despesa de valor ZERO nao vira linha de grupo. O bloco antigo criava --
+    // um rateio de R$ 0,00 por cabeca, que a view do 008 conta como despesa de
+    // gasto zero. Nao vale um caminho de escrita paralelo para sustentar isso.
 
     // Rateio com conexoes individuais (fora de grupo).
     if (temRateio && !temGrupo) {

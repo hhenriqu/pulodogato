@@ -148,3 +148,6 @@ next-env.d.ts
 
 # saida do `npm run test:moeda`
 /.tmp-moeda/
+# saida do `npm run test:grupos` (HMO-175; leva o settlement.js junto, porque
+# lib/grupos.ts importa a conversao para centavos de la)
+/.tmp-grupos/
