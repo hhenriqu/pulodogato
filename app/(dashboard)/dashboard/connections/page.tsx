@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { PUBLIC_PROFILE_FIELDS } from "@/lib/profile-fields";
+import { montarFiltroDeBusca } from "@/lib/busca-de-perfil";
 import Link from "next/link";
 import { User } from "@supabase/supabase-js";
 import { Button } from "@/components/ui/button";
@@ -191,12 +192,21 @@ export default function ConnectionsPage() {
   const searchUsers = async () => {
     if (!user) return;
 
+    // Um nome com virgula ("Silva, Joao") quebrava a arvore logica do
+    // PostgREST e a busca inteira caia em "Erro ao buscar usuários". O filtro
+    // agora sai citado, em `lib/busca-de-perfil`, com teste.
+    const filtro = montarFiltroDeBusca(searchQuery);
+    if (!filtro) {
+      setSearchResults([]);
+      return;
+    }
+
     setSearchLoading(true);
     try {
       const { data, error } = await supabase
         .from("profiles")
         .select(PUBLIC_PROFILE_FIELDS)
-        .or(`full_name.ilike.%${searchQuery}%,nickname.ilike.%${searchQuery}%`)
+        .or(filtro)
         .eq("is_public", true)
         .eq("allow_connections", true)
         .neq("id", user.id)

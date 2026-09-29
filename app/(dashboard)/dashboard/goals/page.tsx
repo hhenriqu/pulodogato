@@ -264,7 +264,7 @@ export default function GoalsPage() {
 
   const desfazerAporte = async (meta: GoalWithProgress, aporteId: string) => {
     const res = await fetch(
-      `/api/goals/${meta.id}/contributions?id=${aporteId}`,
+      `/api/goals/${meta.id}/contributions?contributionId=${aporteId}`,
       { method: "DELETE" }
     );
 

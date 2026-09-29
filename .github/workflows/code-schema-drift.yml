@@ -77,6 +77,16 @@ jobs:
       - name: Nenhum modulo de interface fica sem importador
         run: node scripts/check-dead-components.mjs
 
+      # Mesma familia: deriva do lado do CODIGO, invisivel para tsc e para o
+      # next build, e o sintoma so existe em producao. Numa rota sob `[id]`, o
+      # Next usa a query string para carregar o segmento e consome a chave de
+      # mesmo nome ao montar `params` -- entao `searchParams.get("id")` volta
+      # null com o parametro chegando inteiro na URL. Desfazer aporte
+      # (DELETE /api/goals/[id]/contributions) ficou 100% quebrado assim, com a
+      # tela acusando o usuario de nao informar o que ele informou (HMO-142).
+      - name: Rota nao le query com nome de segmento dinamico
+        run: node scripts/check-rota-query-colidente.mjs
+
       # Controles negativos. Uma verificacao que nunca viu vermelho nao e
       # verificacao: se a regex quebrar numa refatoracao, o passo acima passa a
       # sair verde por nao achar NADA, que e indistinguivel de estar tudo certo.
@@ -278,3 +288,65 @@ jobs:
           fi
 
           echo "Vermelho nas quatro sondas, verde na arvore limpa."
+
+      # Controle do guard de colisao query x segmento dinamico. As duas sondas
+      # cobrem as duas formas reais: o acesso direto e o por apelido, que foi
+      # justamente o que a primeira versao do guard deixou passar.
+      - name: A verificacao de colisao sabe falhar
+        run: |
+          set -uo pipefail
+          guard='scripts/check-rota-query-colidente.mjs'
+          probe='app/api/_colisao_probe/[id]/route.ts'
+          mkdir -p "$(dirname "$probe")"
+          trap 'rm -rf app/api/_colisao_probe' EXIT
+
+          # 1) Acesso direto: searchParams.get("id") sob o segmento [id].
+          cat > "$probe" <<'TS'
+          import { NextRequest, NextResponse } from "next/server";
+          export async function DELETE(request: NextRequest) {
+            const alvo = new URL(request.url).searchParams.get("id");
+            return NextResponse.json({ alvo });
+          }
+          TS
+          if node "$guard" > /dev/null 2>&1; then
+            echo "::error::Passou verde com a colisao direta."
+            exit 1
+          fi
+
+          # 2) Por apelido. Esta e a forma que escapa de uma regex ingenua, e o
+          #    guard nasceu cego para ela.
+          cat > "$probe" <<'TS'
+          import { NextRequest, NextResponse } from "next/server";
+          export async function DELETE(request: NextRequest) {
+            const sp = new URL(request.url).searchParams;
+            return NextResponse.json({ alvo: sp.get("id") });
+          }
+          TS
+          if node "$guard" > /dev/null 2>&1; then
+            echo "::error::Passou verde com a colisao por apelido."
+            exit 1
+          fi
+
+          # 3) Controle NEGATIVO de falso positivo: parametro de outro nome sob
+          #    [id] e legitimo e chega normalmente em producao (medido com
+          #    ?purge=true). Se o guard reprovasse isto, seria desligado.
+          cat > "$probe" <<'TS'
+          import { NextRequest, NextResponse } from "next/server";
+          export async function DELETE(request: NextRequest) {
+            const sp = new URL(request.url).searchParams;
+            return NextResponse.json({ purge: sp.get("purge") });
+          }
+          TS
+          if ! node "$guard" > /dev/null 2>&1; then
+            echo "::error::Reprovou parametro que NAO colide."
+            node "$guard" || true
+            exit 1
+          fi
+
+          rm -rf app/api/_colisao_probe
+          if ! node "$guard" > /dev/null 2>&1; then
+            echo "::error::Reprovou a arvore limpa."
+            exit 1
+          fi
+
+          echo "Vermelho nas duas colisoes, verde no parametro legitimo e na arvore limpa."

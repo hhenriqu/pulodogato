@@ -160,3 +160,6 @@ next-env.d.ts
 /.tmp-grupos/
 # saida do `npm run test:env-preview` (HMO-132)
 /.tmp-env-preview/
+
+# suite da busca de perfil (HMO-142)
+/.tmp-busca-de-perfil/
