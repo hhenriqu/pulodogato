@@ -132,5 +132,7 @@ next-env.d.ts
 /.tmp-campos-lancamento/
 # saida do `npm run test:dinheiro`
 /.tmp-dinheiro/
+# saida do `npm run test:calculadora-campo`
+/.tmp-calculadora-campo/
 # saida do `npm run test:investments` (faltava desde a HMO-169)
 /.tmp-investments/

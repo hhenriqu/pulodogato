@@ -35,6 +35,7 @@
 
 import { useEffect, useRef, type KeyboardEvent } from "react";
 import { Input } from "@/components/ui/input";
+import { CalculadoraDeValor } from "@/components/ui/calculadora-de-valor";
 import {
   MOEDA_PADRAO,
   aoDigitarValor,
@@ -99,29 +100,55 @@ export function CampoDeValor({
   }, [exibicao]);
 
   return (
-    <Input
-      ref={ref}
-      id={id}
-      name={name}
-      // `text` com `inputMode="decimal"`: `type="number"` nao aceita mascara --
-      // o navegador rejeita o ponto de milhar e devolve string vazia em
-      // `e.target.value`, o que apagaria o campo a cada tecla. O `inputMode`
-      // e o que mantem o teclado numerico no celular, que e onde este app roda
-      // instalado.
-      type="text"
-      inputMode="decimal"
-      autoComplete="off"
-      value={exibicao}
-      onChange={(e) => onChange(aoDigitarValor(e.target.value, moeda).valor)}
-      onKeyDown={onKeyDown}
-      // O zero da propria moeda, e nao "R$ 0,00" escrito na mao: iene nao tem
-      // centavos, e um placeholder com duas casas prometeria uma subdivisao que
-      // a moeda escolhida nao possui.
-      placeholder={placeholder ?? formatarValor(0, moeda)}
-      required={required}
-      disabled={disabled}
-      className={className}
-      {...aria}
-    />
+    // A CALCULADORA ENTRA AQUI, E NAO EM CADA TELA (HMO-171)
+    // -----------------------------------------------------
+    // "Todos os campos de valor ao lado do input deve ter uma calculadora." Sao
+    // 15 campos em 10 arquivos, e pendurar o botao em cada um deles seria 15
+    // chances de esquecer um -- incluindo o proximo campo de valor, que ninguem
+    // vai lembrar de equipar. Aqui e o gargalo por onde todos passam.
+    //
+    // `gap` e nao `space-x`: o espaco lateral desaparece quando a linha quebra,
+    // e estes campos quebram no celular.
+    //
+    // O `className` de quem chama continua indo para o INPUT, e nao para esta
+    // caixa. Em Fluxo de Caixa ele e `h-8 w-32`, uma largura pensada para o
+    // campo; na caixa, a largura passaria a incluir o botao e o campo encolheria.
+    <div className="flex items-center gap-2">
+      <Input
+        ref={ref}
+        id={id}
+        name={name}
+        // `text` com `inputMode="decimal"`: `type="number"` nao aceita mascara --
+        // o navegador rejeita o ponto de milhar e devolve string vazia em
+        // `e.target.value`, o que apagaria o campo a cada tecla. O `inputMode`
+        // e o que mantem o teclado numerico no celular, que e onde este app roda
+        // instalado.
+        type="text"
+        inputMode="decimal"
+        autoComplete="off"
+        value={exibicao}
+        onChange={(e) => onChange(aoDigitarValor(e.target.value, moeda).valor)}
+        onKeyDown={onKeyDown}
+        // O zero da propria moeda, e nao "R$ 0,00" escrito na mao: iene nao tem
+        // centavos, e um placeholder com duas casas prometeria uma subdivisao que
+        // a moeda escolhida nao possui.
+        placeholder={placeholder ?? formatarValor(0, moeda)}
+        required={required}
+        disabled={disabled}
+        className={className}
+        {...aria}
+      />
+
+      <CalculadoraDeValor
+        valorAtual={value}
+        moeda={moeda}
+        // O mesmo `onChange` do campo, e por isso a calculadora devolve o valor
+        // PLANO: se ela mandasse o texto mascarado, o estado do formulario
+        // guardaria "R$ 1.000,00" e `parseFloat` gravaria 1.
+        aoAplicar={onChange}
+        rotuloDoCampo={aria["aria-label"]}
+        disabled={disabled}
+      />
+    </div>
   );
 }
