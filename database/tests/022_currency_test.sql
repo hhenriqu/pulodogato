@@ -100,11 +100,16 @@ DO $$
 BEGIN
   BEGIN
     INSERT INTO public.financial_transactions
-      (user_id, service_id, category_id, account_id, description, amount, transaction_date, transaction_type, currency)
+      (user_id, service_id, category_id, account_id, description, amount, transaction_date, transaction_type, currency, exchange_rate)
     VALUES
       ('e1e1e1e1-0000-0000-0000-000000000001',
        'e1000000-0000-0000-0000-00000000f001', 'e1000000-0000-0000-0000-00000000c001',
-       'e1000000-0000-0000-0000-00000000a001', 'Moeda inventada', -10.00, '2026-03-10', 'expense', 'CZK');
+       -- A cotacao 5,35 aqui e deliberada, e nao enfeite: a 026 poe um CHECK
+       -- que recusa moeda estrangeira com cotacao 1 (a DEFAULT). Sem a cotacao,
+       -- este INSERT violaria DOIS CHECKs, os dois `check_violation`, e o
+       -- `EXCEPTION` abaixo ficaria verde sem que o catalogo de moedas -- que e
+       -- o assunto deste caso -- tivesse sido exercitado.
+       'e1000000-0000-0000-0000-00000000a001', 'Moeda inventada', -10.00, '2026-03-10', 'expense', 'CZK', 5.35);
     RAISE EXCEPTION 'FALHA: o banco aceitou moeda fora do catalogo';
   EXCEPTION WHEN check_violation THEN
     RAISE NOTICE 'ok: moeda fora do catalogo recusada pelo CHECK';
@@ -133,22 +138,22 @@ END $$;
 -- da moeda do LANCAMENTO, esse ultimo cairia no balde errado.
 
 INSERT INTO public.financial_transactions
-  (user_id, service_id, category_id, account_id, description, amount, transaction_date, transaction_type, currency)
+  (user_id, service_id, category_id, account_id, description, amount, transaction_date, transaction_type, currency, exchange_rate)
 VALUES
   -- reais: 600 de gasto (+ os 400 do caso 1 = 1000) e 3000 de renda
   ('e1e1e1e1-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-00000000f001',
    'e1000000-0000-0000-0000-00000000c001', 'e1000000-0000-0000-0000-00000000a001',
-   'Mercado', -600.00, '2026-03-12', 'expense', 'BRL'),
+   'Mercado', -600.00, '2026-03-12', 'expense', 'BRL', 1),
   ('e1e1e1e1-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-00000000f001',
    'e1000000-0000-0000-0000-00000000c002', 'e1000000-0000-0000-0000-00000000a001',
-   'Salario', 3000.00, '2026-03-05', 'income', 'BRL'),
+   'Salario', 3000.00, '2026-03-05', 'income', 'BRL', 1),
   -- dolares: 100 na conta em dolar + 80 numa conta em REAL (a sobreposicao)
   ('e1e1e1e1-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-00000000f001',
    'e1000000-0000-0000-0000-00000000c001', 'e1000000-0000-0000-0000-00000000a002',
-   'Assinatura em dolar', -100.00, '2026-03-14', 'expense', 'USD'),
+   'Assinatura em dolar', -100.00, '2026-03-14', 'expense', 'USD', 5.35),
   ('e1e1e1e1-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-00000000f001',
    'e1000000-0000-0000-0000-00000000c001', 'e1000000-0000-0000-0000-00000000a001',
-   'Compra em dolar no cartao BRL', -80.00, '2026-03-15', 'expense', 'USD');
+   'Compra em dolar no cartao BRL', -80.00, '2026-03-15', 'expense', 'USD', 5.35);
 
 SELECT pg_temp.expect('marco tem duas linhas em monthly_cash_flow, uma por moeda',
   (SELECT count(*) FROM public.monthly_cash_flow
@@ -184,14 +189,14 @@ SELECT pg_temp.expect_num('resultado de marco em USD = -180',
 -- entram), e e correto que nao se anulem -- houve cambio. O que nao pode e ela
 -- virar renda ou gasto de alguma das duas moedas.
 INSERT INTO public.financial_transactions
-  (user_id, service_id, category_id, account_id, description, amount, transaction_date, transaction_type, currency)
+  (user_id, service_id, category_id, account_id, description, amount, transaction_date, transaction_type, currency, exchange_rate)
 VALUES
   ('e1e1e1e1-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-00000000f001',
    'e1000000-0000-0000-0000-00000000c001', 'e1000000-0000-0000-0000-00000000a001',
-   'Cambio: saida em real', -1000.00, '2026-03-20', 'transfer', 'BRL'),
+   'Cambio: saida em real', -1000.00, '2026-03-20', 'transfer', 'BRL', 1),
   ('e1e1e1e1-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-00000000f001',
    'e1000000-0000-0000-0000-00000000c001', 'e1000000-0000-0000-0000-00000000a002',
-   'Cambio: entrada em dolar', 180.00, '2026-03-20', 'transfer', 'USD');
+   'Cambio: entrada em dolar', 180.00, '2026-03-20', 'transfer', 'USD', 5.55555556);
 
 SELECT pg_temp.expect_num('o cambio nao mexeu no gasto em BRL',
   (SELECT expense FROM public.monthly_cash_flow
