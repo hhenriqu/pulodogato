@@ -14,6 +14,10 @@
 
 import { readFileSync } from "node:fs";
 
+// `.env.production` saiu do versionamento na HMO-132 e pode simplesmente nao
+// existir num clone novo -- o `catch {}` abaixo cobre isso. Quem clonar do zero
+// precisa de `.env.local` (veja .env.local.example); e o mesmo caminho que
+// `next dev` ja exige, entao nao ha passo novo.
 for (const f of [".env.local", ".env.production"]) {
   try {
     for (const line of readFileSync(f, "utf8").split("\n")) {

@@ -27,6 +27,13 @@ yarn-error.log*
 # local env files
 .env*.local
 
+# HMO-132. Saiu do versionamento: a fonte da verdade das variaveis de producao
+# e Project Settings → Environment Variables na Vercel, e um arquivo com os
+# valores de producao no repo e um pe-de-cabra local -- `next build` num clone
+# sem .env.local liga a maquina de qualquer um no banco real, sem avisar.
+# Continua existindo na maquina de quem ja tem (o `git rm` foi --cached).
+.env.production
+
 # vercel
 .vercel
 
@@ -151,3 +158,5 @@ next-env.d.ts
 # saida do `npm run test:grupos` (HMO-175; leva o settlement.js junto, porque
 # lib/grupos.ts importa a conversao para centavos de la)
 /.tmp-grupos/
+# saida do `npm run test:env-preview` (HMO-132)
+/.tmp-env-preview/

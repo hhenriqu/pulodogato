@@ -37,6 +37,55 @@ const PLACEHOLDERS = [
   "your_supabase_anon_key_here",
 ];
 
+// O ref do projeto Supabase de producao. Ver docs/DEPLOY_VERCEL.md.
+//
+// Esta escrito aqui, e nao lido de um .env, de proposito: a pergunta que o
+// guard abaixo responde e "este build esta apontando para o banco real?", e uma
+// resposta que vem da mesma camada de configuracao que pode estar errada nao
+// responde nada.
+const PRODUCTION_PROJECT_REF = "odxqjvtxsioksguuevqm";
+
+// Escotilha de saida, so para o caso de o guard errar o alvo. Fica como
+// variavel de ambiente porque a alternativa -- guard sem desvio -- convida ao
+// conserto pior, que e apagar o guard no codigo e nunca mais repor.
+const PREVIEW_OVERRIDE = "PREVIEW_ALLOW_PRODUCTION_DB";
+
+/**
+ * `https://odxqjvtxsioksguuevqm.supabase.co` -> `odxqjvtxsioksguuevqm`.
+ *
+ * Devolve `null` para qualquer coisa que nao seja um host de projeto Supabase
+ * (URL invalida, Supabase local em `127.0.0.1`, dominio proprio). `null` faz o
+ * guard liberar: ele so sabe reconhecer o banco de producao, e o que ele nao
+ * reconhece nao e producao.
+ */
+export function projectRefFromSupabaseUrl(url: string): string | null {
+  let hostname: string;
+  try {
+    hostname = new URL(url).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+  const match = hostname.match(/^([a-z0-9-]+)\.supabase\.[a-z.]+$/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Um preview deployment esta prestes a escrever no banco de producao?
+ *
+ * Preview deployment na Vercel tambem e build de producao, e por isso passa
+ * batido por qualquer checagem baseada em `NODE_ENV`. Quem separa os dois e o
+ * `VERCEL_ENV`, que a plataforma define no build e no runtime.
+ */
+export function previewPointsAtProduction(
+  vercelEnv: string | undefined,
+  url: string,
+  override: string | undefined
+): boolean {
+  if (vercelEnv !== "preview") return false;
+  if (override === "1") return false;
+  return projectRefFromSupabaseUrl(url) === PRODUCTION_PROJECT_REF;
+}
+
 function notPlaceholder(name: string, value: string): string {
   if (PLACEHOLDERS.includes(value.trim())) {
     throw new Error(
@@ -57,6 +106,28 @@ export function getSupabaseEnv() {
   } catch {
     throw new Error(
       `NEXT_PUBLIC_SUPABASE_URL não é uma URL válida ("${url}"). ${setupHint()}`
+    );
+  }
+
+  // HMO-132. Sem isto, abrir um PR cria uma URL publica que escreve no banco
+  // real: um "criar transacao" de teste no preview vira lancamento de verdade
+  // na conta do Helio, e nada na tela avisa. Falhar o build do preview e o
+  // resultado desejado -- preview nenhum precisa subir para a main seguir.
+  if (
+    previewPointsAtProduction(
+      process.env.VERCEL_ENV,
+      url,
+      process.env[PREVIEW_OVERRIDE]
+    )
+  ) {
+    throw new Error(
+      `Este preview deployment esta apontando para o banco de PRODUCAO ` +
+        `(projeto ${PRODUCTION_PROJECT_REF}). Um teste feito aqui gravaria ` +
+        `dado real. Em Project Settings → Environment Variables, tire o escopo ` +
+        `Preview de NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY ` +
+        `(deixar preview sem as variaveis derruba o build com mensagem clara), ` +
+        `ou aponte o escopo Preview para um projeto Supabase separado. ` +
+        `Para liberar mesmo assim: ${PREVIEW_OVERRIDE}=1.`
     );
   }
 

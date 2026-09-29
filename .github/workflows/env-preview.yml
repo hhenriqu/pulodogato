@@ -1,0 +1,64 @@
+name: env-preview
+
+# HMO-132: preview deployment da Vercel nao fala com o banco de producao.
+#
+# Preview de branch tambem e build de producao na Vercel, entao `NODE_ENV` nao
+# separa os dois -- quem separa e `VERCEL_ENV`. Sem o guard de
+# utils/supabase/env.ts, abrir um PR publica uma URL que escreve no banco real.
+#
+# SEM FILTRO DE `paths`, de proposito. O modo de falhar desta regra e a
+# ausencia de sintoma: se o guard parar de disparar, o preview sobe verde e a
+# unica pista e um lancamento de teste aparecendo na conta real dias depois.
+# Um filtro de path so acertaria se quem quebrasse o guard mexesse justamente
+# em utils/supabase/env.ts, e a quebra mais provavel nao e essa -- e alguem
+# mexer no fluxo de env por outro arquivo. O teste e aritmetica de string, roda
+# em segundos e nao precisa de Postgres, entao cabe em todo PR sem virar pedagio.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  env-preview:
+    name: preview nao aponta para o banco de producao
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      # Precisa do tsc, que e devDependency. O `--include=dev` e explicito
+      # porque um ambiente com NODE_ENV=production poda as devDeps na
+      # instalacao e o tsc some sem mensagem que explique o motivo.
+      - run: npm ci --include=dev
+
+      - name: O guard reconhece o banco de producao, e so barra no preview
+        run: npm run test:env-preview
+
+      # Controle negativo. Uma verificacao que nunca viu vermelho nao e
+      # verificacao: se o guard virar `return false` constante, os sete testes
+      # acima precisam acusar. Sem este passo, um guard desligado passaria o
+      # workflow inteiro em verde -- que e exatamente o estado que a HMO-132
+      # existe para evitar.
+      - name: A verificacao sabe falhar
+        run: |
+          cp utils/supabase/env.ts /tmp/env.orig.ts
+          sed -i 's|if (vercelEnv !== "preview") return false;|if (true) return false;|' \
+            utils/supabase/env.ts
+          if ! grep -q 'if (true) return false;' utils/supabase/env.ts; then
+            echo "O mutante nao foi aplicado -- o sed nao casou com o codigo."
+            echo "Controle negativo que nao muda nada passa verde por nao rodar nada."
+            exit 1
+          fi
+          if npm run test:env-preview > /dev/null 2>&1; then
+            echo "O guard foi desligado e a suite continuou verde."
+            exit 1
+          fi
+          cp /tmp/env.orig.ts utils/supabase/env.ts
+          echo "OK: com o guard desligado, a suite acusa."
