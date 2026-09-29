@@ -2389,9 +2389,18 @@ ALTER TABLE ONLY public.user_usage_limits
 -- Os UUIDs sao preservados de proposito: ha dados de producao apontando
 -- para eles. Trocar um id aqui orfana transacoes reais.
 --
--- Para reconferir os VALORES contra producao seria preciso uma role que nao
--- esteja sujeita a RLS, ou uma policy `TO paperclip_ro` nestas duas tabelas.
--- Ver HMO-127.
+-- CONFERENCIA DOS VALORES (HMO-127): rode
+--
+--     node scripts/check-seed-vs-prod.mjs [--login]
+--
+-- que le producao pela mesma API PostgREST e compara campo a campo. Rode
+-- depois de mexer neste arquivo e antes de um restore -- nao ha guarda no CI,
+-- porque a conferencia depende da rede e de producao estar no ar.
+-- Ultima passada limpa: 2026-09-29 (3 + 12 linhas, todos os campos iguais).
+--
+-- A linha reservada de transferencia (`is_active = FALSE`) NAO entra aqui: ela
+-- nasce no 023_categoria_de_transferencia.sql, que e idempotente e roda depois
+-- deste seed. O `--login` a enxerga e a reporta como linha extra esperada.
 -- =====================================================
 
 INSERT INTO public.financial_services (id, name, description, icon, color_hex, is_active) VALUES
