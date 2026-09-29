@@ -1,0 +1,22 @@
+{
+  "//": "Build so do teste. Antes da HMO-164 isto era um `tsc lib/card-invoice.ts` de uma linha no package.json. Deixou de servir quando o arquivo passou a importar `@/lib/transferencia`: o tsc RESOLVE o alias mas nao o REESCREVE na emissao, entao o node recebia `import ... from \"@/lib/transferencia\"` e morria com ERR_MODULE_NOT_FOUND -- uma suite verde ha semanas quebrando por causa de um import, nao de uma regra.",
+  "compilerOptions": {
+    "outDir": "../.tmp-card-invoice",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
+  },
+  "include": [
+    "../lib/card-invoice.ts",
+    "../lib/transferencia.ts"
+  ]
+}

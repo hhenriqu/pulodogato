@@ -12,9 +12,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/movimentacoes.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/movimentacoes.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -784,6 +784,21 @@ jobs:
       # Os dois mutantes (classificar por sinal; contar as duas pernas) morrem.
       - name: Separacao contabil das tres movimentacoes
         run: npm run test:movimentacoes
+
+      # A transferencia em si (HMO-164), que ate aqui era uma opcao dentro do
+      # formulario de lancamento e gravava UMA linha: o dinheiro saia de uma
+      # conta e nao entrava em nenhuma. Nao havia excecao nem 500 -- havia um
+      # patrimonio menor pelo valor transferido, plausivel, com duas casas.
+      # As quatro maneiras de errar que a suite prende: as duas pernas com o
+      # mesmo sinal (o saldo erra pelo DOBRO); `Math.abs` ausente, que faz
+      # "-500" andar ao contrario; origem igual ao destino, em que as pernas se
+      # anulam na mesma conta e a tela diz "transferido" sem nada ter se movido;
+      # e cartao de credito como origem, que criaria divida sem compra por tras.
+      # Cobre tambem o pagamento de fatura, que passou a sair daqui: a traducao
+      # cartao/pagadora -> destino/origem e invertivel sem o compilador notar, e
+      # inverte-la ressuscitaria o HMO-149. 12 de 12 mutantes mortos.
+      - name: Transferencia entre contas, as duas pernas
+        run: npm run test:transferencia
 
       # A carteira de investimentos erra dinheiro sem levantar excecao: ela mostra
       # um preco medio de R$ 31,14 onde o certo e R$ 30,00, e ninguem estranha

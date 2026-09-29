@@ -128,6 +128,29 @@ test('grupoId "none" e ausencia de grupo, nao um grupo chamado none', () => {
   assert.equal(avaliarLancamento({ ...base, grupoId: "none" }, ID).ok, true);
 });
 
+test("transferencia e recusada: sao duas linhas que se anulam (HMO-164)", () => {
+  // A fila envia uma linha de cada vez, e cada envio falha por conta propria.
+  // Metade de uma transferencia enviada deixa o dinheiro so saindo (ou so
+  // entrando) e erra o saldo das duas contas pelo valor inteiro.
+  const r = avaliarLancamento({ ...base, tipo: "transfer" }, ID);
+  assert.equal(r.ok, false);
+  assert.equal(r.motivo, "transferencia");
+});
+
+test("transferencia sem categoria e recusada PELO motivo certo", () => {
+  // Este e o teste que vale. Transferencia nao tem categoria, entao ela ja era
+  // recusada antes da HMO-164 -- mas pelo ramo `invalido`, com a mensagem
+  // "Escolha uma categoria", mandando a pessoa procurar um campo que a tela de
+  // transferencia nao tem. Um `motivo: "invalido"` aqui e a regressao.
+  const r = avaliarLancamento(
+    { ...base, tipo: "transfer", categoryId: "" },
+    ID
+  );
+  assert.equal(r.ok, false);
+  assert.equal(r.motivo, "transferencia");
+  assert.doesNotMatch(r.mensagem, /categoria/i);
+});
+
 test("edicao e recusada: a versao do servidor pode ter mudado", () => {
   const r = avaliarLancamento({ ...base, editando: true }, ID);
   assert.equal(r.ok, false);
