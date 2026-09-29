@@ -1,251 +1,197 @@
-# 🏦 Controle de Investimentos
+# Pulo do Gato
 
-Um aplicativo Progressive Web App (PWA) para controle e acompanhamento de investimentos financeiros, desenvolvido com Next.js 14, Supabase e TypeScript.
+Gestão financeira **familiar** — um Progressive Web App para o controle do dinheiro
+de casa: contas, cartões, lançamentos, despesas divididas em grupo, orçamento,
+metas e relatórios. Tem um módulo de investimentos, mas ele é uma parte do
+produto, não o produto.
 
-## 🚀 Funcionalidades
+No ar em **https://pulodogato.hmoraes.com.br**.
 
-- **Dashboard Completo**: Visão geral da carteira com métricas em tempo real
-- **Gestão de Investimentos**: Controle de ações, FIIs, renda fixa e internacionais
-- **Registro de Transações**: Compra, venda e dividendos
-- **Gráficos Interativos**: Performance e alocação de ativos
-- **Cálculo Automático**: Preço médio e rentabilidade
-- **PWA**: Funciona offline e pode ser instalado no smartphone
-- **Responsivo**: Interface adaptada para desktop e mobile
-
-## 🛠️ Stack Técnica
-
-- **Frontend**: Next.js 14 (App Router) + TypeScript
-- **Database**: Supabase (PostgreSQL)
-- **Styling**: Tailwind CSS
-- **Authentication**: Supabase Auth
-- **PWA**: Next-PWA
-- **Icons**: Lucide React
-- **Charts**: Recharts
-- **Forms**: React Hook Form + Zod
-
-## 📦 Instalação
-
-### Pré-requisitos
-
-- Node.js 18+
-- npm ou yarn
-- Conta no [Supabase](https://supabase.com/)
-
-### 1. Clone o repositório
-
-```bash
-git clone https://github.com/your-username/investment-tracker.git
-cd investment-tracker
-```
-
-### 2. Instale as dependências
-
-```bash
-npm install
-```
-
-### 3. Configuração do Supabase
-
-1. Crie um novo projeto no [Supabase](https://supabase.com/)
-2. Copie o arquivo `.env.local.example` para `.env.local`
-3. Preencha as variáveis de ambiente:
-
-```env
-NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
-```
-
-### 4. Execute as migrações do banco
-
-Execute os seguintes comandos SQL no editor SQL do Supabase:
-
-```sql
--- Tabela de perfis de usuário
-CREATE TABLE profiles (
-  id UUID REFERENCES auth.users ON DELETE CASCADE,
-  full_name TEXT,
-  avatar_url TEXT,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  PRIMARY KEY (id)
-);
-
--- Tabela de ativos
-CREATE TABLE assets (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  symbol TEXT NOT NULL UNIQUE,
-  name TEXT NOT NULL,
-  type TEXT NOT NULL CHECK (type IN ('stock', 'fii', 'fixed_income', 'international')),
-  currency TEXT NOT NULL DEFAULT 'BRL',
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- Tabela de transações
-CREATE TABLE transactions (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id UUID REFERENCES auth.users ON DELETE CASCADE NOT NULL,
-  asset_id UUID REFERENCES assets ON DELETE CASCADE NOT NULL,
-  type TEXT NOT NULL CHECK (type IN ('buy', 'sell', 'dividend')),
-  quantity DECIMAL(15,2) NOT NULL,
-  price DECIMAL(15,2) NOT NULL,
-  fees DECIMAL(15,2) DEFAULT 0,
-  date DATE NOT NULL,
-  notes TEXT,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- Tabela de dividendos
-CREATE TABLE dividends (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id UUID REFERENCES auth.users ON DELETE CASCADE NOT NULL,
-  asset_id UUID REFERENCES assets ON DELETE CASCADE NOT NULL,
-  amount_per_share DECIMAL(15,4) NOT NULL,
-  quantity DECIMAL(15,2) NOT NULL,
-  payment_date DATE NOT NULL,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- Políticas RLS (Row Level Security)
-ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE dividends ENABLE ROW LEVEL SECURITY;
-
--- Políticas para profiles
-CREATE POLICY "Users can view own profile" ON profiles FOR SELECT USING (auth.uid() = id);
-CREATE POLICY "Users can update own profile" ON profiles FOR UPDATE USING (auth.uid() = id);
-
--- Políticas para transactions
-CREATE POLICY "Users can view own transactions" ON transactions FOR SELECT USING (auth.uid() = user_id);
-CREATE POLICY "Users can insert own transactions" ON transactions FOR INSERT WITH CHECK (auth.uid() = user_id);
-CREATE POLICY "Users can update own transactions" ON transactions FOR UPDATE USING (auth.uid() = user_id);
-CREATE POLICY "Users can delete own transactions" ON transactions FOR DELETE USING (auth.uid() = user_id);
-
--- Políticas para dividends
-CREATE POLICY "Users can view own dividends" ON dividends FOR SELECT USING (auth.uid() = user_id);
-CREATE POLICY "Users can insert own dividends" ON dividends FOR INSERT WITH CHECK (auth.uid() = user_id);
-CREATE POLICY "Users can update own dividends" ON dividends FOR UPDATE USING (auth.uid() = user_id);
-CREATE POLICY "Users can delete own dividends" ON dividends FOR DELETE USING (auth.uid() = user_id);
-
--- Assets são públicos para leitura
-ALTER TABLE assets ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Assets are viewable by everyone" ON assets FOR SELECT USING (true);
-```
-
-### 5. Insira alguns ativos de exemplo
-
-```sql
-INSERT INTO assets (symbol, name, type, currency) VALUES
-('PETR4', 'Petrobras ON', 'stock', 'BRL'),
-('VALE3', 'Vale ON', 'stock', 'BRL'),
-('ITUB4', 'Itaú Unibanco ON', 'stock', 'BRL'),
-('BBDC4', 'Bradesco ON', 'stock', 'BRL'),
-('HGLG11', 'CSHG Logística FII', 'fii', 'BRL'),
-('KNRI11', 'Kinea Renda Imobiliária FII', 'fii', 'BRL');
-```
-
-## 🚀 Execução
-
-### Desenvolvimento
-
-```bash
-npm run dev
-```
-
-Abra [http://localhost:3000](http://localhost:3000) no seu navegador.
-
-### Produção
-
-```bash
-npm run build
-npm start
-```
-
-## 📱 PWA Features
-
-O aplicativo funciona como uma Progressive Web App:
-
-- **Instalável**: Pode ser instalado no smartphone
-- **Offline**: Funcionalidades básicas disponíveis offline
-- **Push Notifications**: (implementar se necessário)
-- **Responsivo**: Interface adaptada para todos os dispositivos
-
-## 🎨 Estrutura do Projeto
-
-```
-/
-├── app/                    # Next.js App Router
-│   ├── dashboard/          # Páginas do dashboard
-│   ├── api/               # API Routes
-│   └── login/             # Autenticação
-├── components/            # Componentes React
-│   ├── ui/               # Componentes de UI base
-│   ├── charts/           # Componentes de gráficos
-│   └── forms/            # Componentes de formulários
-├── lib/                  # Utilitários e configurações
-├── types/                # Definições TypeScript
-├── utils/                # Utilitários gerais
-└── public/               # Assets estáticos e PWA
-```
-
-## 🔧 Scripts Disponíveis
-
-- `npm run dev` - Executa em modo desenvolvimento
-- `npm run build` - Build para produção
-- `npm run start` - Executa em modo produção
-- `npm run lint` - Executa o linter
-
-## 📊 Funcionalidades Detalhadas
-
-### Dashboard
-
-- Resumo patrimonial com cards informativos
-- Gráfico de pizza para alocação de ativos
-- Gráfico de linha para performance vs benchmark
-- Tabela detalhada da carteira
-
-### Transações
-
-- Formulário para registro de compra/venda
-- Histórico completo de transações
-- Cálculo automático de preço médio
-- Registro de dividendos
-
-### Relatórios
-
-- Performance por período
-- Análise de alocação
-- Histórico de dividendos
-- Exportação para Excel/PDF
-
-## 🔒 Segurança
-
-- Autenticação via Supabase Auth
-- Row Level Security (RLS) no banco
-- Validação de dados com Zod
-- Proteção de rotas
-
-## 🌐 Deploy
-
-O destino é a Vercel. O passo a passo — variáveis de ambiente, configuração do
-Supabase Auth e verificação pós-deploy — está em
-[docs/DEPLOY_VERCEL.md](docs/DEPLOY_VERCEL.md).
-
-**Hoje a aplicação roda apenas em `localhost`.** Não há ambiente de produção no
-ar. O `deploy.sh` e o `docker-compose.yml` são de um caminho de VPS que nunca
-chegou a subir; continuam no repositório, mas não deploiam nada.
-
-## 📝 Licença
-
-Este projeto está sob a licença MIT. Veja o arquivo [LICENSE](LICENSE) para mais detalhes.
-
-## 🤝 Contribuição
-
-Contribuições são bem-vindas! Por favor, leia o guia de contribuição antes de submeter PRs.
-
-## 📞 Suporte
-
-Para dúvidas ou suporte, abra uma issue no GitHub ou entre em contato.
+> **Sobre este arquivo.** Até setembro de 2026 o README e a PRD descreviam um
+> "Controle de Investimentos": um app de carteira de ações, FIIs e dividendos que
+> nunca foi o que este repositório construiu. O passo a passo de instalação
+> chegava a mandar colar `CREATE TABLE assets`, `transactions` e `dividends` no
+> SQL Editor — tabelas que não existem no schema real e que conflitam com as 25
+> migrations de `database/migrations/`. Quem seguisse o README montava um banco
+> que o app não sabe ler. Isto é a HMO-119.
 
 ---
 
-Desenvolvido com ❤️ usando Next.js e Supabase
-# pulodogato
+## O que o app faz
+
+**Dinheiro entrando e saindo**
+
+- **Contas** (corrente, poupança) e **Cartões** (limite, dia de fechamento, dia
+  de vencimento) em telas separadas — o que é conta não tem fatura, o que é
+  cartão não tem saldo.
+- **Lançamentos** de despesa, receita e transferência, com parcelamento,
+  recorrência e rateio. Despesa é gravada com valor **negativo**.
+- **Fatura de cartão**: o pagamento da fatura entra como transferência de duas
+  pernas, para não contar a despesa duas vezes.
+- **Transferência** entre contas, com categoria reservada própria.
+- **Extratos** (OFX/CSV) com deduplicação por conta, e comprovantes em bucket
+  privado.
+- **Categorização automática** por regras.
+
+**Dividir com outras pessoas**
+
+- **Grupos de despesa**: rateio em centavos, acerto de contas (quem deve a
+  quem), arquivamento e as regras de saída do grupo. A divisão é feita pelo
+  **banco**, por trigger — não pela tela.
+- **Conexões** entre usuários, com consentimento.
+
+**Planejar**
+
+- **Orçamento** por categoria.
+- **Metas** com aporte mensal.
+- **Contas previstas** e **recorrências**, incluindo um detector de assinaturas.
+- **Fluxo de caixa** com previsão, **quanto posso gastar**, **anomalias** e
+  **gasto variável**.
+- **Patrimônio líquido**, **relatórios** e **calculadoras**.
+- **Contracheque**: bruto, descontos em folha e o líquido.
+- **Investimentos** e multi-moeda.
+
+**O resto**
+
+- **PWA instalável**, com leitura offline e fila de lançamentos feitos sem rede.
+- **Notificações** push (VAPID) e resumo mensal.
+- **Planos/assinatura**, perfil, e um painel de configurações onde a pessoa
+  escolhe a ordem dos blocos do dashboard e pode zerar a conta.
+- Modo noturno: **toda cor sai de token**, com contraste AA verificado no CI.
+
+## Stack
+
+| | |
+| --- | --- |
+| Frontend | Next.js 14 (App Router) + TypeScript + Tailwind |
+| Componentes | Radix UI, Recharts, Lucide |
+| Formulários | React Hook Form + Zod |
+| Banco / Auth | Supabase (PostgreSQL, RLS) |
+| PWA | next-pwa |
+| Hospedagem | Vercel (+ Vercel Cron) |
+
+## Rodando localmente
+
+Precisa de Node 20 e de um projeto Supabase.
+
+```bash
+npm install
+cp .env.local.example .env.local   # preencha as duas chaves do seu projeto
+npm run dev                        # http://localhost:3000
+```
+
+As variáveis que o app lê:
+
+| variável | para quê |
+| --- | --- |
+| `NEXT_PUBLIC_SUPABASE_URL` | cliente e servidor |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | cliente e servidor |
+| `SUPABASE_SERVICE_ROLE_KEY` | só as rotas de cron |
+| `CRON_SECRET` | autentica as rotas de cron |
+| `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | push |
+| `NEXT_PUBLIC_URL` | links absolutos em e-mail e push |
+
+As duas primeiras são **obrigatórias já no build**: `utils/supabase/env.ts`
+valida que existem, que a URL é válida e que não são o valor de exemplo — e
+`next build` pré-renderiza as telas de login, então um build sem elas falha em 31
+páginas com `Variável de ambiente ausente`. As demais são lidas **dentro** dos
+handlers: faltar não quebra o build, quebra a rota que precisa delas.
+
+> `.env.production` **não está versionado** (nem poderia: o `.env.local.example`
+> existe justamente para isso). Um clone limpo não constrói sem que você
+> preencha as duas chaves — foi assim que o job `build` do CI reprovou na sua
+> primeira execução.
+
+## Banco de dados
+
+O schema vive versionado em `database/migrations/`, hoje `001` a `024`, e a ordem
+importa — **`001` sozinho deixa o banco aberto**, é o `002` que liga a RLS.
+`001_baseline.sql` é **gerado** por `pg_dump`; não edite à mão.
+
+**O deploy publica código, não schema.** Não existe runner de migration neste
+projeto: subir um PR para a Vercel não aplica nada no banco. Migration nova é um
+passo manual, colada no SQL Editor do Supabase a partir do bundle de
+`database/validation/` — que o CI mantém em sincronia com as migrations
+(`node scripts/gen-validation-bundle.mjs --check`).
+
+Detalhes de cada arquivo, a ordem completa e as armadilhas conhecidas estão em
+**[`database/README.md`](database/README.md)**.
+
+## Testes
+
+Cálculo financeiro é testado dos dois lados. A aritmética em TypeScript roda com
+o runner nativo do Node sobre o JS compilado:
+
+```bash
+npm run test:lancamento      # sinal, categoria, campos obrigatórios
+npm run test:grupos          # rateio e acerto de grupo
+npm run test:card-invoice    # fatura de cartão
+npm run test:dinheiro        # máscara de valor (R$ 1.000,00 -> 1000)
+npm run test:contas          # o corte entre Contas e Cartões
+# ...~50 suítes no total; veja os scripts `test:*` do package.json
+```
+
+E as regras que moram no banco — RLS, triggers, invariantes de dinheiro — rodam
+em Postgres de verdade, em `database/tests/`, dentro do workflow `db-verify`.
+
+```bash
+npm run type-check     # tsc --noEmit
+npm run lint           # hoje 142 warnings, nenhum erro
+```
+
+## CI
+
+Onze workflows no GitHub Actions. O primeiro nasceu com a HMO-119:
+
+| workflow | prova |
+| --- | --- |
+| `build` | `next build`, `tsc --noEmit` e o **build da imagem Docker** |
+| `db-verify` | o schema sobe do zero e a RLS isola um usuário do outro |
+| `code-schema-drift` | todo `.from("tabela")` do código existe no schema |
+| `color-tokens` | nenhuma cor fixa fora dos tokens, contraste AA nos dois temas |
+| `pwa-assets` | todo asset declarado existe e é o que diz ser |
+| `lancamento`, `contas`, `dinheiro`, `configuracoes`, `menu-mobile` | as regras e a árvore de cada tela |
+| `env-preview` | o preview da Vercel não escreve no banco de produção |
+
+Quase todos rodam **sem filtro de `paths`**, de propósito: o `db-verify` é
+filtrado e foi assim que três suítes deste repositório ficaram paradas em verde.
+
+Vários deles carregam **controle negativo** — um passo que planta o defeito e
+exige que a verificação reprove. Verificação que nunca viu vermelho não é
+verificação.
+
+## Deploy
+
+Vercel, a partir da `main`. Duas coisas que este projeto aprendeu doendo:
+
+- **Squash merge.** Merge commit não dispara o deploy de produção.
+- A Vercel **não builda commit de autor não verificado** — o build nem começa, e
+  o squash pelo GitHub resolve porque atribui o commit ao dono do repositório.
+- As variáveis vivem no painel da Vercel (Project Settings → Environment
+  Variables). Um `.env.production` local **não chega** ao build de lá.
+
+Os crons (`/api/cron/*`) rodam pelo Vercel Cron, autenticados por `CRON_SECRET`.
+No plano Hobby o horário tem tolerância de ±59 min, então a ordem entre dois
+jobs do mesmo dia não é garantida.
+
+## Docker
+
+```bash
+docker build -t pulodogato .
+docker run -p 3000:3000 pulodogato
+```
+
+A imagem é multi-stage e o estágio final copia `.next/standalone`, que só existe
+porque `next.config.js` tem `output: "standalone"`. O job `docker` do CI existe
+para pegar justamente isso: tirar essa chave não quebra `next build` nem o `tsc`,
+só o `COPY` da imagem.
+
+## Documentação
+
+`docs/` tem a PRD, a especificação da API, as decisões de arquitetura e os guias
+de cada área (offline, PWA, grupos, contas previstas, deploy). O guia de
+governança da PRD (`docs/PRD-Governance.md`) descreve como mudá-la.
+
+> Um aviso sobre `docs/`: documento que se declara **FINAL** costuma ser o menos
+> confiável da pasta. Este repositório já teve um `STATUS_FINAL` anunciando
+> pronto uma pendência que o guia ao lado listava como aberta.

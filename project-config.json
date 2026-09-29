@@ -1,68 +1,92 @@
 {
   "project": {
-    "name": "PulodoGato Investments",
+    "name": "Pulo do Gato",
+    "description": "Gestão financeira familiar (PWA)",
     "version": "1.0.0",
     "type": "PWA",
-    "prdVersion": "1.0",
-    "status": "development"
+    "prdVersion": "2.0",
+    "status": "production",
+    "url": "https://pulodogato.hmoraes.com.br"
   },
   "documentation": {
     "prd": "./docs/PRD.md",
     "governance": "./docs/PRD-Governance.md",
     "apiSpec": "./docs/API-Specification.md",
+    "databaseGuide": "./database/README.md",
     "databaseSetup": "./database/migrations/001_baseline.sql"
   },
   "development": {
     "guidedByPRD": true,
-    "currentPhase": "Phase 1 - Core Features",
-    "nextMilestone": "Dashboard Implementation",
+    "currentPhase": "Fase 4 - Sustentar",
+    "nextMilestone": "Zerar o backlog de warnings de lint",
     "prdSections": {
-      "architecture": "Section 6",
-      "businessRules": "Section 5",
-      "database": "Section 7",
-      "security": "Section 9",
-      "performance": "Section 10"
+      "businessRules": "Regras de negócio",
+      "architecture": "Arquitetura técnica",
+      "database": "Banco de dados",
+      "security": "Segurança",
+      "quality": "Qualidade e sustentação"
     }
   },
   "implementation": {
     "checkpoints": [
       {
-        "phase": "Phase 0 - Foundation",
+        "phase": "Fase 0 - Fundação",
         "status": "completed",
         "features": [
-          "Next.js 14 setup",
-          "PWA configuration",
-          "Authentication system",
-          "UI components"
+          "Next.js 14 + App Router",
+          "PWA instalável com fila offline",
+          "Supabase Auth",
+          "Componentes de UI com tokens de cor"
         ]
       },
       {
-        "phase": "Phase 1 - Core Features",
+        "phase": "Fases 1-3 - Produto",
+        "status": "completed",
+        "features": [
+          "Contas e cartões em telas separadas",
+          "Lançamentos com parcelamento e recorrência",
+          "Fatura de cartão sem dupla contagem",
+          "Grupos de despesa: rateio, acerto e arquivamento",
+          "Orçamento, metas, relatórios e fluxo de caixa",
+          "Extratos OFX/CSV, comprovantes e categorização"
+        ]
+      },
+      {
+        "phase": "Fase 4 - Sustentar",
         "status": "in-progress",
         "features": [
-          "Dashboard implementation",
-          "Asset management",
-          "Transaction CRUD",
-          "Portfolio positions"
+          "CI com next build, tsc --noEmit e imagem Docker",
+          "~50 suítes de cálculo financeiro + testes SQL em Postgres",
+          "README e PRD reescritos para o produto real",
+          "Backlog: 142 warnings de lint"
         ]
       }
     ]
   },
   "compliance": {
     "businessRules": {
-      "RN001": "User Registration - Implemented",
-      "RN002": "Asset Management - Pending",
-      "RN003": "Transactions - Pending",
-      "RN004": "Average Price Calculation - Pending",
-      "RN005": "Dividends Management - Pending",
-      "RN006": "Performance Calculation - Pending",
-      "RN007": "Security & Privacy - Partial"
+      "RN001": "Cadastro e sessão - Implementada",
+      "RN002": "Sinal do valor (despesa é negativa) - Implementada",
+      "RN003": "Transferência de duas pernas - Implementada",
+      "RN004": "Fatura de cartão sem dupla contagem - Implementada",
+      "RN005": "Parcelamento em centavos - Implementada",
+      "RN006": "Recorrência e contas previstas - Implementada",
+      "RN007": "Divisão de despesa em grupo (por trigger) - Implementada",
+      "RN008": "Acerto do grupo - Implementada",
+      "RN009": "Divisão proporcional à renda - Parcial",
+      "RN010": "Conexões entre usuários - Implementada",
+      "RN011": "Aprovações e convites - Parcial",
+      "RN012": "Isolamento por usuário (RLS) - Implementada",
+      "RN013": "Planos e limites de uso - Implementada",
+      "RN014": "Offline - Implementada",
+      "RN015": "Rotas de cron - Implementada"
     },
     "architecture": {
       "stack": "Next.js 14 + Supabase + TypeScript ✅",
-      "pwa": "Configured ✅",
-      "database": "PostgreSQL with RLS ⏳",
-      "authentication": "Supabase Auth ✅"
+      "pwa": "Instalável, com fila offline ✅",
+      "database": "PostgreSQL com RLS ✅",
+      "authentication": "Supabase Auth ✅",
+      "ci": "build, tsc, Docker, schema, cor e PWA ✅"
     }
   },
   "governance": {

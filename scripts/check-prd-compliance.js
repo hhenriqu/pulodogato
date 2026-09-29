@@ -163,11 +163,16 @@ class PRDComplianceChecker {
   checkDocumentation() {
     console.log("\n📚 Verificando Documentação...");
 
+    // `docs/database-setup.sql` morava nesta lista e NUNCA existiu neste
+    // repositorio -- o schema sempre viveu em database/migrations/. Como esta
+    // verificacao exige 100%, um arquivo fantasma a mantinha reprovada para
+    // sempre; e como ela vem antes do `lint` na cadeia do `pre-commit`, o lint
+    // nunca chegava a rodar. Ver HMO-119.
     const requiredDocs = [
       { file: "docs/PRD.md", name: "PRD Principal" },
       { file: "docs/PRD-Governance.md", name: "Governança da PRD" },
       { file: "docs/API-Specification.md", name: "Especificação da API" },
-      { file: "docs/database-setup.sql", name: "Script do Banco" },
+      { file: "database/README.md", name: "Guia do Banco" },
       { file: "README.md", name: "README do Projeto" },
     ];
 
@@ -192,26 +197,44 @@ class PRDComplianceChecker {
   checkBusinessRulesImplementation() {
     console.log("\n⚖️ Verificando Implementação das Regras de Negócio...");
 
+    // Esta lista cobrava o app de INVESTIMENTOS que a PRD antiga descrevia:
+    // `app/api/assets/route.ts`, `app/api/transactions/route.ts` e um calculo de
+    // preco medio, todos com `implemented: false` fixo no codigo -- ou seja,
+    // tres regras que jamais poderiam passar, porque descrevem um produto que
+    // este repositorio nao construiu. A quarta apontava para
+    // `app/signup/page.tsx`, e o cadastro real mora em `app/(auth)/signup/`.
+    // Resultado: 0% para sempre. Agora a lista cita as regras de dinheiro da
+    // PRD v2.0, nos arquivos onde elas realmente moram.
     const businessRulesChecks = [
       {
-        rule: "RN001 - Cadastro de Usuário",
-        files: ["app/signup/page.tsx", "lib/hooks/useAuth.ts"],
+        rule: "RN001 - Cadastro e sessão",
+        files: ["app/(auth)/signup/page.tsx", "lib/hooks/useAuth.ts"],
         implemented: true,
       },
       {
-        rule: "RN002 - Gestão de Ativos",
-        files: ["app/api/assets/route.ts"],
-        implemented: false,
+        rule: "RN002 - Sinal do valor (despesa é negativa)",
+        files: ["lib/lancamento.ts"],
+        implemented: true,
       },
       {
-        rule: "RN003 - Transações",
-        files: ["app/api/transactions/route.ts"],
-        implemented: false,
+        rule: "RN003 - Transferência de duas pernas",
+        files: ["lib/transferencia.ts"],
+        implemented: true,
       },
       {
-        rule: "RN004 - Cálculo de Preço Médio",
-        files: ["lib/utils/calculations.ts"],
-        implemented: false,
+        rule: "RN004 - Fatura de cartão sem dupla contagem",
+        files: ["lib/card-invoice.ts"],
+        implemented: true,
+      },
+      {
+        rule: "RN007 - Divisão de despesa em grupo",
+        files: ["lib/grupos.ts"],
+        implemented: true,
+      },
+      {
+        rule: "RN008 - Acerto do grupo",
+        files: ["lib/settlement.ts"],
+        implemented: true,
       },
     ];
 
@@ -239,7 +262,11 @@ class PRDComplianceChecker {
       `\n📊 Regras de Negócio: ${compliance.toFixed(1)}% implementadas`
     );
 
-    return compliance >= 25; // Pelo menos 1 de 4 implementada
+    // 100%, nao "pelo menos uma": as seis regras acima JA estao implementadas e
+    // tem teste. O valor deste passo e pegar o dia em que uma delas sumir de
+    // lugar -- renomear `lib/grupos.ts` sem atualizar quem o cita passa pelo tsc
+    // quando o import morre junto, e este passo reclama.
+    return compliance >= 100;
   }
 
   generateReport() {
