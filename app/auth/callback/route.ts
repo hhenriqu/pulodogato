@@ -2,6 +2,10 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/utils/supabase/server";
 import { decidirCallback } from "@/lib/auth-callback";
 import { garantirPerfil } from "@/lib/ensure-profile";
+import {
+  MENSAGEM_PERFIL_INCOMPLETO,
+  detalheDoErroDePerfil,
+} from "@/lib/signup-outcome";
 
 /**
  * O retorno do link de email: troca o `code`/`token_hash` por sessao e cria o
@@ -45,7 +49,18 @@ export async function GET(request: NextRequest) {
     return redirecionarComErro(origem, error.message);
   }
 
-  await criarPerfilDaSessao(supabase);
+  const erroDePerfil = await criarPerfilDaSessao(supabase);
+
+  // Sem perfil nao ha assinatura nem limites de uso: seguir para `acao.next`
+  // entregaria um app pela metade sem dizer nada. A tela de login mostra o
+  // `message` e nao expulsa quem ja tem sessao, entao a pessoa le o motivo em
+  // vez de descobrir sozinha que a conta esta incompleta.
+  if (erroDePerfil) {
+    return redirecionarComErro(
+      origem,
+      `${MENSAGEM_PERFIL_INCOMPLETO} (${detalheDoErroDePerfil(erroDePerfil)})`
+    );
+  }
 
   return NextResponse.redirect(new URL(acao.next, origem));
 }
@@ -57,25 +72,37 @@ function redirecionarComErro(origem: string, mensagem: string) {
 }
 
 /**
- * Cria o perfil de quem acabou de confirmar o link, se ainda nao existir.
+ * Cria o perfil de quem acabou de confirmar o link, se ainda nao existir, e
+ * DEVOLVE a falha em vez de engoli-la.
  *
  * A regra do upsert vive em `lib/ensure-profile.ts` porque o cadastro com a
  * confirmacao de email DESLIGADA nunca passa por aqui e precisa da mesma
  * gravacao.
+ *
+ * O retorno existe por causa do HMO-126: enquanto esta falha era so um
+ * `console.error`, o callback redirecionava para `/dashboard` como se tudo
+ * tivesse dado certo, e quem se cadastrou ficou em `auth.users` sem perfil,
+ * sem `user_subscriptions` e sem `user_usage_limits` -- por meses, sem nenhum
+ * sintoma na tela.
  */
-async function criarPerfilDaSessao(supabase: ReturnType<typeof createClient>) {
+async function criarPerfilDaSessao(
+  supabase: ReturnType<typeof createClient>
+): Promise<{ message: string } | null> {
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (!user) return;
+  // Sem usuario nao ha o que gravar, e tambem nao ha sessao: o proprio
+  // `acao.next` ja leva para uma tela que exige login.
+  if (!user) return null;
 
   const { error } = await garantirPerfil(supabase, user);
 
   if (error) {
-    // Nao derruba o login por causa disto: a sessao ja e valida e o usuario
-    // consegue usar o app. Mas precisa aparecer no log -- foi exatamente um
-    // `console.error` engolido que deixou o cadastro quebrado sem sintoma.
+    // O log continua, para quem tem acesso aos logs do servidor. O que mudou e
+    // que ele deixou de ser o unico lugar onde a falha aparece.
     console.error("Falha ao criar o perfil no callback de auth:", error);
   }
+
+  return error;
 }
