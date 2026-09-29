@@ -121,7 +121,20 @@ export async function DELETE(
       return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
     }
 
-    const contributionId = new URL(request.url).searchParams.get("id");
+    // O nome do parametro NAO pode ser `id`. Esta rota vive sob o segmento
+    // dinamico `[id]`, e o Next passa o valor do segmento pela propria query
+    // string internamente: ao montar `params`, ele consome a chave de mesmo
+    // nome, entao `searchParams.get("id")` volta null mesmo com `?id=<uuid>`
+    // chegando no servidor. O efeito era desfazer aporte responder
+    // "Informe qual aporte desfazer" em 100% das tentativas, em producao.
+    //
+    // Conferido em producao com controle: na mesma familia de rota `[id]`, um
+    // parametro de outro nome (`?purge=true`) chega normalmente -- so a chave
+    // que colide com o segmento some. Por isso o nome aqui e `contributionId`,
+    // e ha teste que reprova a volta de qualquer colisao desse tipo.
+    const contributionId = new URL(request.url).searchParams.get(
+      "contributionId"
+    );
 
     if (!contributionId) {
       return NextResponse.json(

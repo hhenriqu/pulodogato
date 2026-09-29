@@ -14,7 +14,7 @@
     "check-tests-in-ci": "node scripts/check-tests-in-ci.mjs",
     "check-pwa-assets": "node scripts/check-pwa-assets.mjs",
     "generate-pwa-icons": "node scripts/generate-pwa-icons.mjs",
-    "pre-commit": "npm run check-table-drift && npm run check-column-drift && npm run check-color-tokens && npm run check-tests-in-ci && npm run check-pwa-assets && npm run check-prd && npm run lint",
+    "pre-commit": "npm run check-table-drift && npm run check-column-drift && npm run check-color-tokens && npm run check-tests-in-ci && npm run check-pwa-assets && npm run check-rota-query-colidente && npm run check-prd && npm run lint",
     "type-check": "tsc --noEmit",
     "verify:crons": "bash scripts/verify-crons.sh",
     "test:recurrence-detector": "tsc -p scripts/tsconfig.recurrence-detector-test.json && node --test scripts/test-recurrence-detector.mjs",
@@ -61,7 +61,9 @@
     "test:periodo-painel": "rm -rf .tmp-periodo-painel && tsc -p scripts/tsconfig.periodo-painel-test.json && node scripts/resolve-aliases.mjs .tmp-periodo-painel lib && node --test scripts/test-periodo-painel.mjs",
     "test:moeda": "rm -rf .tmp-moeda && tsc -p scripts/tsconfig.moeda-test.json && node scripts/resolve-aliases.mjs .tmp-moeda lib && node --test scripts/test-moeda.mjs",
     "test:grupos": "rm -rf .tmp-grupos && tsc -p scripts/tsconfig.grupos-test.json && node scripts/resolve-aliases.mjs .tmp-grupos lib && node --test scripts/test-grupos.mjs",
-    "test:env-preview": "rm -rf .tmp-env-preview && tsc utils/supabase/env.ts --outDir .tmp-env-preview --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-env-preview.mjs"
+    "test:env-preview": "rm -rf .tmp-env-preview && tsc utils/supabase/env.ts --outDir .tmp-env-preview --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-env-preview.mjs",
+    "test:busca-de-perfil": "rm -rf .tmp-busca-de-perfil && tsc lib/busca-de-perfil.ts --outDir .tmp-busca-de-perfil --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-busca-de-perfil.mjs",
+    "check-rota-query-colidente": "node scripts/check-rota-query-colidente.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
