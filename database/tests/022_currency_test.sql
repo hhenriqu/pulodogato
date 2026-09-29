@@ -4,6 +4,16 @@
 --
 -- Roda no db-verify, contra o banco que as migrations constroem do zero.
 --
+-- ESTE ARQUIVO SO PASSA NA POSICAO DELE NA CADEIA: depois da 022, ANTES da 026.
+-- A 026 poe um CHECK que recusa moeda estrangeira com cotacao 1 (a DEFAULT), e
+-- os lancamentos em dolar daqui nao mandam cotacao -- na 022 a coluna
+-- `exchange_rate` ainda nao existe. Rodar este arquivo num banco com a 026 ja
+-- aplicada da `financial_transactions_rate_matches_currency`, e isso nao e
+-- regressao: e o CHECK da 026 funcionando sobre uma fixture escrita antes dele.
+-- Nao conserte adicionando a cotacao: o step do db-verify quebraria, porque la a
+-- coluna nao existe ainda. Ver database/tests/026_cambio_do_grupo_test.sql, que
+-- e onde o mundo pos-026 e exercitado.
+--
 -- "A coluna existe" nao prova nada aqui. O que a 022 entrega e a promessa de que
 -- NENHUM numero de relatorio mistura moedas -- e essa promessa vive nas views,
 -- nao nas colunas. Um `ALTER TABLE ADD COLUMN` que passa verde com as views

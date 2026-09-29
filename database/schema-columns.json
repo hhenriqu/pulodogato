@@ -133,6 +133,7 @@
     "archived_by",
     "created_at",
     "created_by",
+    "currency",
     "default_split_type",
     "description",
     "group_code",
@@ -210,6 +211,7 @@
     "created_at",
     "currency",
     "description",
+    "exchange_rate",
     "group_id",
     "id",
     "installment_parent_id",
@@ -281,6 +283,8 @@
     "updated_at"
   ],
   "group_member_balances": [
+    "amount_currency",
+    "group_currency",
     "group_id",
     "member_id",
     "net_balance",
@@ -318,6 +322,8 @@
     "amount",
     "created_at",
     "created_by",
+    "currency",
+    "exchange_rate",
     "from_user_id",
     "group_id",
     "id",

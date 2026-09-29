@@ -627,6 +627,59 @@ jobs:
       - name: Participante nao reaponta a divisao nem le valor de despesa alheia
         run: $PSQL -f database/tests/025_travar_repontamento_de_divisao_test.sql
 
+      - name: 026_cambio_do_grupo
+        run: $PSQL -f database/migrations/026_cambio_do_grupo.sql
+
+      # Re-executavel: as colunas entram por ADD COLUMN IF NOT EXISTS, os CHECKs
+      # so sao criados quando `pg_constraint` nao os tem, e as duas views entram
+      # por CREATE OR REPLACE.
+      - name: 026 e idempotente
+        run: $PSQL -f database/migrations/026_cambio_do_grupo.sql
+
+      # O cambio do grupo (HMO-138 item 3). O que so o Postgres pega aqui:
+      #
+      #   - as duas views que somavam dinheiro sem saber de moeda. A 022 resolveu
+      #     o relatorio PESSOAL mostrando separado por moeda; grupo nao pode
+      #     mostrar separado -- um acerto de contas em duas colunas nao e um
+      #     acerto de contas. O teste mede o erro que a soma cega produz: no
+      #     cenario dele a credora de R$ 81,50 aparece devendo R$ 310, ou seja o
+      #     defeito erra o SINAL e o acerto manda o dinheiro na direcao
+      #     contraria. E a conta cega FECHA (os saldos somam zero, residual
+      #     zero), entao nenhuma assercao de consistencia a pega;
+      #   - a SECAO 3 e CONTROLE POSITIVO: reproduz a formula do 007 sobre os
+      #     mesmos dados e exige o numero errado. Sem ela o arquivo passaria
+      #     verde num banco onde a 026 nem tivesse sido aplicada;
+      #   - a conversao tem que ser por LINHA, dentro do SUM. Aplicada ao total
+      #     (`SUM(...) * MAX(exchange_rate)`) ela da o MESMO numero enquanto cada
+      #     pessoa tiver uma moeda so -- medido: esse mutante sobreviveu a 39
+      #     assercoes. Por isso o cenario tem uma pessoa pagando nas duas moedas;
+      #   - o CHECK `(currency = 'BRL') = (exchange_rate = 1)`, que e o que fecha
+      #     o unico caminho de perda silenciosa que sobra: lancamento em dolar
+      #     gravado com a cotacao DEFAULT de 1 vale um quinto do que deveria, a
+      #     tela mostra "US$ 180,00" certinho e o saldo do grupo fecha. O teste
+      #     exige as DUAS metades -- recusa a cotacao 1 no dolar E aceita 5,35 --,
+      #     porque uma trava que recusasse toda moeda estrangeira passaria em
+      #     todas as assercoes de bloqueio;
+      #   - e o acerto pago em moeda estrangeira. Ele entra na mesma soma das
+      #     despesas: US$ 10 lidos como R$ 10 abatem um quinto da divida, e a
+      #     tela continua pedindo o resto DEPOIS de o dinheiro ter sido pago.
+      - name: Cambio do grupo converte saldo e orcamento, e cotacao ausente e recusada
+        run: $PSQL -f database/tests/026_cambio_do_grupo_test.sql
+
+      # As duas suites que guardam as views que a 026 REESCREVEU rodam la atras na
+      # cadeia (steps do 006 e do 007), ou seja: contra a definicao ANTIGA de
+      # `group_member_balances` e `budget_consumption`. Elas nunca viram a versao
+      # nova -- e sao elas que travam o sinal do acerto, o ABS() da despesa
+      # negativa, o `rejected/expired` fora da conta e a janela de mes do teto.
+      #
+      # Rodar de novo, aqui, e o que prova que a 026 preservou esse contrato em
+      # vez de apenas nao ter quebrado nada que a 026 mesma testa. As duas sao
+      # re-executaveis (conferido); custa segundos.
+      - name: O contrato do 006 e do 007 sobrevive as views reescritas
+        run: |
+          $PSQL -f database/tests/group_settlement_test.sql
+          $PSQL -f database/tests/budget_invoice_test.sql
+
       # O livro-razao das execucoes de cron. O que so o Postgres pega:
       #
       #   - o CHECK de `job` tem que bater com os quatro `crons[].path` do
