@@ -32,6 +32,10 @@ import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { montarCsv, cabecalhosCsv } from "@/lib/services/reports";
 import { periodoCorrente, periodoDaQuery } from "@/lib/periodo-do-painel";
+import {
+  classificarMovimentacao,
+  type TipoMovimentacao,
+} from "@/lib/movimentacoes";
 
 /**
  * Teto de linhas do arquivo.
@@ -44,7 +48,22 @@ import { periodoCorrente, periodoDaQuery } from "@/lib/periodo-do-painel";
  */
 const TETO_DE_LINHAS = 10000;
 
-const ROTULO_DO_TIPO: Record<string, string> = {
+/**
+ * O rotulo do tipo, e ele NAO sai direto de `transaction_type`.
+ *
+ * Provado em producao em 2026-09-29: ha linha em `financial_transactions` com
+ * `transaction_type` NULO. Uma delas nasceu do POST desta mesma pasta, que nao
+ * grava a coluna. Lendo `ROTULO[l.transaction_type]` a coluna "Tipo" do CSV sai
+ * VAZIA para essas linhas -- enquanto a TELA mostra "Despesa" na mesma linha,
+ * porque ela classifica por `classificarMovimentacao`, que cai para
+ * `category.is_expense` e depois para o sinal do valor quando a coluna falta.
+ *
+ * Duas respostas diferentes para a mesma linha, uma na tela e outra no arquivo,
+ * e o defeito que esta rota existe para nao ter (ver o cabecalho). Entao a
+ * classificacao aqui e a MESMA funcao da tela, e por isso o `select` pede
+ * `is_expense` junto com o nome da categoria.
+ */
+const ROTULO_DO_TIPO: Record<TipoMovimentacao, string> = {
   income: "Receita",
   expense: "Despesa",
   transfer: "Transferência",
@@ -154,15 +173,20 @@ export async function GET(request: NextRequest) {
     const contaIds = ids(linhas.map((l) => l.account_id));
     const grupoIds = ids(linhas.map((l) => l.group_id));
 
+    // `is_expense` entra no select das CATEGORIAS porque a classificacao do tipo
+    // precisa dela quando `transaction_type` vem nulo -- ver `ROTULO_DO_TIPO`.
+    const vazioCat = {
+      data: [] as { id: string; name: string; is_expense: boolean }[],
+    };
     const vazio = { data: [] as { id: string; name: string }[] };
     const [{ data: categorias }, { data: contas }, { data: grupos }] =
       await Promise.all([
         catIds.length
           ? supabase
               .from("transaction_categories")
-              .select("id, name")
+              .select("id, name, is_expense")
               .in("id", catIds)
-          : Promise.resolve(vazio),
+          : Promise.resolve(vazioCat),
         contaIds.length
           ? supabase
               .from("financial_accounts")
@@ -175,6 +199,9 @@ export async function GET(request: NextRequest) {
       ]);
 
     const nomeCat = new Map((categorias ?? []).map((c) => [c.id, c.name]));
+    const gastoDaCat = new Map(
+      (categorias ?? []).map((c) => [c.id, c.is_expense])
+    );
     const nomeConta = new Map((contas ?? []).map((c) => [c.id, c.name]));
     const nomeGrupo = new Map((grupos ?? []).map((g) => [g.id, g.name]));
 
@@ -194,7 +221,13 @@ export async function GET(request: NextRequest) {
         l.description,
         nomeCat.get(l.category_id) ?? "",
         l.account_id ? nomeConta.get(l.account_id) ?? "" : "",
-        ROTULO_DO_TIPO[l.transaction_type as string] ?? l.transaction_type,
+        ROTULO_DO_TIPO[
+          classificarMovimentacao({
+            amount: Number(l.amount),
+            transaction_type: l.transaction_type,
+            category: { is_expense: gastoDaCat.get(l.category_id) },
+          })
+        ],
         // A coluna "Grupo" existe porque as linhas de grupo ENTRAM neste
         // arquivo. Sem ela, uma despesa de R$ 300 rateada entre tres pessoas e
         // indistinguivel de uma despesa pessoal de R$ 300 -- e a planilha soma
