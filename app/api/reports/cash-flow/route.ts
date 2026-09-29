@@ -32,7 +32,7 @@ import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { janelaDeMeses, completarMeses } from "@/lib/services/reports";
 import {
-  agregarTransacoes,
+  agregarTransacoesPorMoeda,
   mesesDoPeriodo,
   periodoDaQuery,
   ultimoDiaDoMes,
@@ -94,7 +94,11 @@ export async function GET(request: NextRequest) {
           // usa para deixar as duas pernas de transferencia e de pagamento de
           // fatura FORA da conta, repetindo o filtro que
           // `category_monthly_totals` aplica no lado do banco.
-          .select("amount, transaction_type")
+          //
+          // `currency` e o que impede este caminho de refazer, no JavaScript, a
+          // mistura que a 022 tirou das views: sem ela, um periodo com gasto em
+          // real e em dolar volta 1000 + 180 = 1180.
+          .select("amount, transaction_type, currency")
           .gte("transaction_date", periodo.de)
           // `lte` e nao `lt`: o periodo e fechado nos dois extremos, e o ultimo
           // dia escolhido pelo usuario tem que entrar.
@@ -117,7 +121,24 @@ export async function GET(request: NextRequest) {
       // sairia MENOR que o real, com cara de numero certo. Nos caminhos que
       // usam as views do 008 isso nao existe: quem soma e o banco, e a
       // resposta ja vem agregada em poucas linhas.
-      const linhas: { amount: number | string; transaction_type: string }[] = [];
+      const linhas: {
+        amount: number | string;
+        transaction_type: string;
+        currency?: string | null;
+      }[] = [];
+
+      // A moeda oficial decide qual bloco e o PRINCIPAL, igual ao caminho
+      // mensal. Erro aqui cai no padrao de `lerPreferenciaDeMoeda` e nao custa
+      // o relatorio.
+      const { data: perfilDoIntervalo } = await supabase
+        .from("profiles")
+        .select("preferences")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      const moedaDoIntervalo = lerPreferenciaDeMoeda(
+        perfilDoIntervalo?.preferences
+      ).oficial;
 
       for (let inicio = 0; ; inicio += TAMANHO_DA_PAGINA) {
         const { data, error } = await pagina(inicio);
@@ -137,18 +158,50 @@ export async function GET(request: NextRequest) {
         if (lote.length < TAMANHO_DA_PAGINA) break;
       }
 
-      const resumo = agregarTransacoes(linhas);
+      const blocosDoIntervalo = agregarTransacoesPorMoeda(
+        linhas,
+        moedaDoIntervalo
+      );
+
+      // O bloco principal, pela mesma regra do caminho mensal: a moeda oficial
+      // quando ela tem movimento, senao a mais movimentada. Periodo sem
+      // movimento nenhum nao produz bloco, e a resposta sai zerada na oficial.
+      const principalDoIntervalo = blocosDoIntervalo[0] ?? {
+        currency: moedaDoIntervalo,
+        symbol: "",
+        summary: {
+          total_income: 0,
+          total_expense: 0,
+          net: 0,
+          transaction_count: 0,
+        },
+      };
+
+      const comMedias = (resumo: typeof principalDoIntervalo.summary) => ({
+        ...resumo,
+        // O intervalo e UM balde, nao uma serie de meses: a media de um periodo
+        // unico e o proprio total. Dividir por uma contagem de meses aqui daria
+        // um numero que nao corresponde a nada na tela.
+        months_with_activity: resumo.transaction_count > 0 ? 1 : 0,
+        average_expense: resumo.total_expense,
+        average_income: resumo.total_income,
+      });
 
       return NextResponse.json({
         // Vazio de proposito -- ver o cabecalho do arquivo.
         months: [],
         grao: "intervalo",
-        summary: {
-          ...resumo,
-          months_with_activity: resumo.transaction_count > 0 ? 1 : 0,
-          average_expense: resumo.total_expense,
-          average_income: resumo.total_income,
-        },
+        currency: principalDoIntervalo.currency,
+        by_currency: blocosDoIntervalo.map((bloco) => ({
+          currency: bloco.currency,
+          symbol: bloco.symbol,
+          // Sem `months`: neste grao nao ha serie mensal para desenhar, e
+          // inventar uma seria um grafico de meses que nao existiram.
+          months: [],
+          summary: comMedias(bloco.summary),
+        })),
+        multi_currency: blocosDoIntervalo.length > 1,
+        summary: comMedias(principalDoIntervalo.summary),
         window: { from: periodo.de, to: periodo.ate, months: null },
       });
     }
