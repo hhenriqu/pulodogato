@@ -50,16 +50,20 @@
 -- logico, a linha continua em `auth.users`, e criar perfil para ela seria
 -- ressuscitar conta que alguem mandou apagar.
 --
--- A UNICA COISA AQUI QUE NAO FOI CONFERIDA CONTRA PRODUCAO
--- --------------------------------------------------------
--- As colunas `deleted_at` e `raw_user_meta_data`. O papel `paperclip_ro` nao le
--- o schema `auth` (as tabelas sao do `supabase_auth_admin`), entao nao deu para
--- confirmar que elas existem neste projeto -- sao colunas padrao do GoTrue, mas
--- "padrao" nao e "verificado". Se o SQL Editor responder `column ... does not
--- exist`, nada foi gravado (as tres partes falham antes de escrever): apague as
--- duas linhas `deleted_at IS NULL` e troque a expressao do nome por `NULL`, e o
--- backfill continua correto -- so para de distinguir conta apagada e de
--- aproveitar o nome do formulario.
+-- JA RODOU EM PRODUCAO, EM 29/09, E NAO HAVIA O QUE REPARAR
+-- ---------------------------------------------------------
+-- O arquivo inteiro foi colado no SQL Editor de producao e a PARTE 3 devolveu
+-- `usuarios 7 / perfis 7 / assinaturas 7 / limites 7 / orfaos_restantes 0`. A
+-- PARTE 1 ja tinha vindo com zero orfaos, entao a PARTE 2 gravou zero linhas:
+-- nenhum usuario ficou pelo caminho enquanto o bug esteve no ar. O arquivo fica
+-- aqui como rede -- rodar de novo continua sendo seguro e continua gravando
+-- zero linhas enquanto nao houver orfao.
+--
+-- Isso tambem resolve a unica duvida que restava sobre este SQL: as colunas
+-- `deleted_at` e `raw_user_meta_data` existem mesmo neste projeto. Nao dava
+-- para confirmar daqui (o `paperclip_ro` nao le o schema `auth`, que pertence
+-- ao `supabase_auth_admin`) -- sao colunas padrao do GoTrue, mas "padrao" nao
+-- era "verificado". O arquivo rodou sem erro, entao estao la.
 --
 -- COMO ESTE ARQUIVO FOI TESTADO
 -- -----------------------------
