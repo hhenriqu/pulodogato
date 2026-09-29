@@ -44,7 +44,7 @@ const MUTANTES = [
   },
   {
     nome: "resumirPorMoeda: nao filtra moeda sem movimento",
-    de: `  const blocos = [...porMoeda.values()].filter(
+    de: `  const blocos = Array.from(porMoeda.values()).filter(
     (b) => b.transacoes > 0 || b.income !== 0 || b.expense !== 0
   );`,
     para: "  const blocos = [...porMoeda.values()];",

@@ -251,7 +251,7 @@ export function opcoesDeMoeda() {
         codigo: m.codigo,
         // Codigo + nome + simbolo: "USD - Dólar americano (US$)". So o simbolo nao
         // basta -- ha quatro dolares no catalogo, e tres deles usam variacao de "$".
-        rotulo: `${m.codigo} - ${m.nome} (${m.simbolo})`,
+        rotulo: m.simbolo,
     }));
 }
 /**
