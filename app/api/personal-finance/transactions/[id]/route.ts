@@ -99,75 +99,41 @@ export async function PATCH(
 
     if (updateError) {
       console.error("Transaction update error:", updateError);
+
+      // PDG01 e a recusa da migration 024 (HMO-176): a edicao mudaria uma
+      // divisao de grupo cuja parte alguem ja aprovou. Nao e falha do servidor
+      // -- e uma regra de negocio, e a mensagem vem escrita para ser lida por
+      // quem lancou. Devolver 500 com "Failed to update transaction" faria a
+      // tela dizer "tente de novo" para algo que nunca vai passar.
+      if (updateError.code === "PDG01") {
+        return NextResponse.json({ error: updateError.message }, { status: 409 });
+      }
+
       return NextResponse.json(
         { error: "Failed to update transaction" },
         { status: 500 }
       );
     }
 
-    // Gerenciar grupos se necessário
-    if (group_id !== undefined && isExpense) {
-      // Remover ligação com grupo anterior se existir
-      if (existingTransaction.group_id) {
-        await supabase
-          .from("group_transactions")
-          .delete()
-          .eq("transaction_id", id)
-          .eq("group_id", existingTransaction.group_id);
-      }
-
-      // Adicionar ao novo grupo se fornecido
-      if (group_id) {
-        // Criar group_transaction
-        const { data: groupTransaction, error: groupTransactionError } =
-          await supabase
-            .from("group_transactions")
-            .insert({
-              group_id: group_id,
-              transaction_id: id,
-              split_type: "equal",
-            })
-            .select()
-            .single();
-
-        if (groupTransactionError) {
-          console.error(
-            "Group transaction creation error:",
-            groupTransactionError
-          );
-        } else {
-          // Buscar membros ativos do grupo
-          const { data: members } = await supabase
-            .from("group_members")
-            .select("id")
-            .eq("group_id", group_id)
-            .eq("status", "active");
-
-          if (members && members.length > 0) {
-            // Criar splits igualmente divididos entre todos os membros
-            const transactionAmount = Math.abs(updatedTransaction.amount);
-            const splitAmount = transactionAmount / members.length;
-            const splitPercentage = 100 / members.length;
-
-            const groupSplitsData = members.map((member: any) => ({
-              group_transaction_id: groupTransaction.id,
-              member_id: member.id,
-              percentage: splitPercentage,
-              amount: splitAmount,
-              status: "pending",
-            }));
-
-            const { error: groupSplitsError } = await supabase
-              .from("group_expense_splits")
-              .insert(groupSplitsData);
-
-            if (groupSplitsError) {
-              console.error("Group splits creation error:", groupSplitsError);
-            }
-          }
-        }
-      }
-    }
+    // -----------------------------------------------------------------------
+    // GRUPO: QUEM REFAZ A DIVISAO E O BANCO (HMO-176)
+    // -----------------------------------------------------------------------
+    // Aqui havia um bloco que apagava a ligacao do grupo antigo e inseria a do
+    // novo, com um rateio calculado a mao (valor / numero de membros). Ele
+    // duplicava o que o trigger de financial_transactions faz -- e desde a
+    // migration 024 o trigger faz isso CERTO, inclusive na edicao: move a
+    // divisao de grupo, recalcula as partes pendentes pelo metodo do maior
+    // resto do 007 (que nao perde centavo) e recusa a edicao quando alguem ja
+    // aprovou a propria parte.
+    //
+    // Mantido, o bloco produziria dois defeitos novos: o INSERT bateria no
+    // indice unico por transaction_id que a 024 criou -- e o erro so era
+    // registrado no console, entao a rota responderia 200 com uma falha
+    // silenciosa dentro --, e o rateio a mao reintroduziria o centavo perdido
+    // que o 007 existiu para tirar (R$ 100 entre 3 davam 33,33 tres vezes).
+    //
+    // E a mesma conclusao a que a HMO-175 chegou na tela de lancamento: quando
+    // o `await` do update acima retorna, a divisao JA esta em dia.
 
     // Buscar transação completa para retorno
     const { data: completeTransaction } = await supabase

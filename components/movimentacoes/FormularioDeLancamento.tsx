@@ -53,6 +53,7 @@ import { ArrowLeft, Trash2, TrendingDown, TrendingUp, Users } from "lucide-react
 import { CamposDeLancamento } from "@/components/movimentacoes/CamposDeLancamento";
 import { usePreferenciaDeMoeda } from "@/lib/hooks/usePreferenciaDeMoeda";
 import { moedaSugerida } from "@/lib/moeda";
+import { avisoDeEdicaoTravada } from "@/lib/grupos";
 import { useOfflineQueue } from "@/lib/hooks/useOfflineQueue";
 import {
   camposDoTipo,
@@ -552,6 +553,16 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       voltarParaLista();
     } catch (erro) {
       console.error("Erro ao gravar lançamento:", erro);
+
+      // A recusa do banco que tem explicacao (HMO-176): editar uma despesa de
+      // grupo cuja parte alguem ja aprovou. Vem ANTES da fila offline de
+      // proposito -- guardar no aparelho para reenviar depois so adiaria a
+      // mesma recusa, e a pessoa levaria o erro duas vezes.
+      const travada = avisoDeEdicaoTravada(erro);
+      if (travada) {
+        toast.error(travada);
+        return;
+      }
 
       // O segundo caminho da fila, e o mais traicoeiro: o navegador disse que
       // havia rede e nao havia. Sem este ramo o lancamento morreria aqui com um

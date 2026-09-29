@@ -33,6 +33,7 @@ import {
   resumoDosGrupos,
   rotuloDoResumo,
   precisaDetalhar,
+  avisoDeEdicaoTravada,
 } from "../.tmp-grupos/grupos.js";
 
 /** Uma linha da view, no formato em que a rota a entrega. */
@@ -228,4 +229,65 @@ test("sem grupo nenhum a resposta e vazia, e nao um erro", () => {
   assert.equal(resumo.totalDeGrupos, 0);
   assert.equal(resumo.liquido, 0);
   assert.equal(rotuloDoResumo(resumo).estado, "quitado");
+});
+
+// =====================================================
+// A edicao que o banco recusa (HMO-176 / migration 024)
+// =====================================================
+// Editar uma despesa de grupo cuja parte alguem ja aprovou volta do banco como
+// SQLSTATE PDG01. Sem traduzir isso, a tela diz "Erro ao gravar o lançamento."
+// -- a mesma frase da queda de rede --, e a pessoa tenta de novo para sempre.
+
+test("a recusa PDG01 chega na tela com a explicacao do banco", () => {
+  const aviso = avisoDeEdicaoTravada({
+    code: "PDG01",
+    message:
+      "Alguem ja aprovou a parte desta despesa no grupo. Mudar o valor mudaria o que essa pessoa aprovou: estorne e relance, ou peca para reabrir a aprovacao.",
+  });
+
+  assert.ok(aviso);
+  assert.match(aviso, /aprovou/);
+});
+
+test("PDG01 sem mensagem ainda diz a coisa certa", () => {
+  // O PostgREST pode entregar o codigo sem texto util. O que nao pode e a tela
+  // cair no generico e culpar a conexao.
+  const aviso = avisoDeEdicaoTravada({ code: "PDG01", message: "" });
+
+  assert.ok(aviso);
+  assert.match(aviso, /aprov/i);
+});
+
+test("erro de banco que NAO e PDG01 nao vira este aviso", () => {
+  // Controle negativo: se isto passasse, qualquer falha de gravacao viraria
+  // "alguem ja aprovou" -- uma explicacao errada e confiante, que e pior do
+  // que a generica.
+  assert.equal(
+    avisoDeEdicaoTravada({ code: "23505", message: "duplicate key value" }),
+    null
+  );
+  assert.equal(
+    avisoDeEdicaoTravada({ code: "PGRST116", message: "no rows" }),
+    null
+  );
+});
+
+test("o que casa e o CODIGO, nao o texto da mensagem", () => {
+  // Uma mensagem que fala de aprovacao mas vem com outro codigo nao e a
+  // recusa da 024. Casar por trecho de frase quebraria no primeiro acento que
+  // mudasse -- e acertaria pelo motivo errado aqui.
+  assert.equal(
+    avisoDeEdicaoTravada({
+      code: "42501",
+      message: "Alguem ja aprovou a parte desta despesa no grupo",
+    }),
+    null
+  );
+});
+
+test("erro que nao e objeto nao derruba a tela", () => {
+  assert.equal(avisoDeEdicaoTravada(null), null);
+  assert.equal(avisoDeEdicaoTravada(undefined), null);
+  assert.equal(avisoDeEdicaoTravada("PDG01"), null);
+  assert.equal(avisoDeEdicaoTravada(new Error("boom")), null);
 });
