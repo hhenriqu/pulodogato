@@ -14,6 +14,7 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { janelaDeMeses, completarPatrimonio } from "@/lib/services/reports";
+import { mesesDoPeriodo, periodoDaQuery } from "@/lib/periodo-do-painel";
 
 export async function GET(request: NextRequest) {
   try {
@@ -27,9 +28,32 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
     }
 
-    const janela = janelaDeMeses(
-      new URL(request.url).searchParams.get("months")
+    const params = new URL(request.url).searchParams;
+
+    // HMO-173: o painel navega para o passado e precisa do patrimonio no FIM
+    // do periodo, que e o unico numero de saldo que existe para um mes que ja
+    // terminou. A view tem grao de mes; um `ate` no meio do mes e arredondado
+    // para o mes inteiro a que ele pertence, e quem chama sabe disso -- o
+    // painel so pergunta em modo mes.
+    const periodo = periodoDaQuery(
+      params.get("de") ?? params.get("from"),
+      params.get("ate") ?? params.get("to")
     );
+
+    if (periodo === "invalido") {
+      return NextResponse.json(
+        { error: "de e ate devem ser datas AAAA-MM-DD, com de <= ate" },
+        { status: 400 }
+      );
+    }
+
+    const janela = periodo
+      ? {
+          inicio: `${periodo.de.slice(0, 7)}-01`,
+          fim: `${periodo.ate.slice(0, 7)}-01`,
+          meses: mesesDoPeriodo(periodo).length,
+        }
+      : janelaDeMeses(params.get("months"));
 
     if (!janela) {
       return NextResponse.json(

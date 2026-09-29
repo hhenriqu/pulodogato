@@ -20,10 +20,41 @@
 // Nenhum numero aqui e calculado nesta tela: todos vem das mesmas rotas que
 // alimentam as telas de detalhe. Recalcular localmente criaria uma segunda
 // versao da mesma conta, e as duas telas passariam a discordar.
+//
+// -----------------------------------------------------------------------------
+// O PAINEL PASSOU A TER UM PERIODO (HMO-173)
+// -----------------------------------------------------------------------------
+// Ate aqui a tela nao tinha eixo de tempo: cada rota decidia sozinha de que mes
+// estava falando, e o mes "corrente" era calculado com
+// `new Date().toISOString()`, que e UTC. Em America/Sao_Paulo, das 21:00 as
+// 23:59 do ultimo dia do mes esse valor ja era o mes SEGUINTE -- e como o
+// resumo de contas previstas chega com varios meses, o `find` ACHAVA outubro e
+// o tile "a vencer neste mes" mostrava as contas de outubro no dia 30 de
+// setembro. Agora existe um `periodo` so, ele nasce de `today()` (fuso de Sao
+// Paulo) e desce para todo bloco.
+//
+// A REGRA QUE VALE PARA CADA BLOCO
+// ---------------------------------
+// Ou ele honra o periodo, ou ele DIZ na tela que nao tem eixo de tempo. Nao ha
+// terceira opcao, e a razao e especifica: `financial_accounts.current_balance`
+// e o saldo de HOJE, nao existe versao dele para julho. Navegar para julho e
+// continuar exibindo o mesmo numero debaixo do rotulo "julho" seria uma
+// afirmacao falsa sobre o dinheiro do usuario -- do tipo que nao da erro, nao
+// fica vazia e nao levanta suspeita.
+//
+// Por isso:
+//   * resumo de entrada/saida e contas previstas -> passam o periodo adiante
+//   * saldo das contas, em periodo que ja terminou -> vem de `net_worth_history`
+//     (patrimonio no fim daquele mes); quando nao da, o numero de hoje aparece
+//     com o rotulo "hoje", explicitamente FORA do periodo
+//   * custo fixo mensal -> e uma definicao do presente, rotulado como tal
+//   * "quanto posso gastar" e metas -> falam do mes corrente por definicao;
+//     fora dele, somem e explicam por que sumiram
 // -----------------------------------------------------------------------------
 
-import { ReactNode, useEffect, useState } from "react";
+import { ReactNode, Suspense, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Card,
   CardContent,
@@ -55,6 +86,18 @@ import {
   normalizarLayout,
   secoesVisiveis,
 } from "@/lib/dashboard-layout";
+import { today } from "@/lib/recurrence";
+import {
+  contemHoje,
+  lerPeriodo,
+  periodoParaQuery,
+  rotuloDoPeriodo,
+  rotuloDoSaldo,
+  somarPrevistas,
+  terminaNoPassado,
+  type Periodo,
+} from "@/lib/periodo-do-painel";
+import { SeletorDePeriodo } from "@/components/dashboard/SeletorDePeriodo";
 
 const moeda = (valor: number) =>
   new Intl.NumberFormat("pt-BR", {
@@ -119,13 +162,71 @@ interface Meta {
   status: string;
 }
 
+// `useSearchParams` obriga a um limite de Suspense: sem ele o `next build`
+// para com "useSearchParams() should be wrapped in a suspense boundary". O
+// componente de verdade e o `Painel` abaixo.
 export default function DashboardPage() {
+  return (
+    <Suspense fallback={<Girando />}>
+      <Painel />
+    </Suspense>
+  );
+}
+
+function Girando() {
+  return (
+    <div className="flex items-center justify-center min-h-[400px]">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+    </div>
+  );
+}
+
+function Painel() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // O fuso de Sao Paulo, uma vez so, para a tela inteira concordar sobre que
+  // dia e hoje. `today()` e o mesmo helper que bills, budgets e goals usam.
+  const hoje = today();
+
+  // ---------------------------------------------------------------------
+  // A FONTE DA VERDADE DO PERIODO E A URL
+  // ---------------------------------------------------------------------
+  // Nao e `useState`. Tres coisas quebram com estado local: recarregar a
+  // pagina volta para o mes corrente, mandar o link para alguem manda o mes de
+  // quem abrir, e o botao voltar do navegador sai do painel em vez de desfazer
+  // a navegacao de periodo.
+  //
+  // `push` e nao `replace`: com replace, o historico nao ganha entrada e
+  // voltar NAO anda entre periodos -- que e justamente um dos comportamentos
+  // pedidos. Na primeira carga, sem parametro nenhum, nada e escrito na URL:
+  // /dashboard continua sendo /dashboard, e voltar dali sai do painel como
+  // sempre saiu.
+  const periodo = lerPeriodo(
+    searchParams.get("de"),
+    searchParams.get("ate"),
+    hoje
+  );
+
+  const irPara = useCallback(
+    (novo: Periodo) => {
+      router.push(`/dashboard?${periodoParaQuery(novo)}`);
+    },
+    [router]
+  );
+
   const [carregando, setCarregando] = useState(true);
+  // Trocando de periodo, com os numeros do periodo anterior ainda na tela.
+  const [atualizando, setAtualizando] = useState(false);
   const [contas, setContas] = useState<Conta[]>([]);
   const [fluxo, setFluxo] = useState<ResumoFluxo | null>(null);
   const [previstas, setPrevistas] = useState<ResumoMesPrevisto | null>(null);
   const [metas, setMetas] = useState<Meta[]>([]);
   const [possoGastar, setPossoGastar] = useState<PossoGastar | null>(null);
+  // O patrimonio no fim de um periodo que ja terminou, de `net_worth_history`.
+  // `null` significa "nao existe versao historica deste numero" -- e nesse caso
+  // o tile mostra o saldo de HOJE, dizendo que e de hoje.
+  const [saldoNoFim, setSaldoNoFim] = useState<number | null>(null);
   // A rota nao conseguiu ler as metas -- e o caso, por exemplo, da janela entre
   // o merge do codigo e a migration 018 rodar no banco de producao. O tile
   // escreve "indisponivel" em vez de R$ 0,00: zero seria uma afirmacao sobre o
@@ -139,24 +240,55 @@ export default function DashboardPage() {
     secoesVisiveis(layoutPadrao())
   );
 
+  // Recarrega a cada mudanca de periodo. As duas datas na lista de dependencias
+  // em vez do objeto: `lerPeriodo` devolve um objeto novo a cada render, e o
+  // efeito dispararia para sempre.
   useEffect(() => {
     carregar();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [periodo.de, periodo.ate]);
 
   const carregar = async () => {
+    // Trocar de periodo NAO volta para o giro de tela cheia: o painel inteiro
+    // piscando a cada clique na seta torna a navegacao desagradavel de usar.
+    // Mas os numeros da tela ainda sao os do periodo anterior ate a resposta
+    // chegar, e deixa-los nitidos debaixo do rotulo novo e -- por alguns
+    // instantes -- exatamente o erro que esta issue existe para corrigir:
+    // numero de um periodo com o nome de outro. Dai o estado intermediario.
+    setAtualizando(true);
+    const query = periodoParaQuery(periodo);
+    // O periodo ja acabou? Entao "quanto posso gastar" nao tem o que
+    // responder: ele fala do que sobra ate o fim do MES CORRENTE. Nem se
+    // pergunta.
+    const periodoTemHoje = contemHoje(periodo, hoje);
+    // Em periodo encerrado E alinhado a mes, existe um saldo historico de
+    // verdade: `net_worth_history` (008) reconstroi o patrimonio no fim de
+    // cada mes. Em modo intervalo nao existe -- a view tem grao de mes --, e
+    // ai o tile mostra o numero de hoje dizendo que e de hoje.
+    const temSaldoHistorico =
+      periodo.modo === "mes" && terminaNoPassado(periodo, hoje);
+
     try {
       // Em paralelo de proposito: em serie, a tela inicial esperaria a soma
       // dos tempos de resposta de todas as rotas antes de mostrar qualquer
       // coisa.
-      const [rContas, rFluxo, rPrevistas, rMetas, rPossoGastar, rLayout] =
-        await Promise.all([
-          fetch("/api/financial-accounts"),
-          fetch("/api/reports/cash-flow?months=1"),
-          fetch("/api/scheduled-transactions/summary"),
-          fetch("/api/goals?status=active"),
-          fetch("/api/safe-to-spend"),
-          fetch("/api/settings/dashboard"),
-        ]);
+      const [
+        rContas,
+        rFluxo,
+        rPrevistas,
+        rMetas,
+        rPossoGastar,
+        rLayout,
+        rPatrimonio,
+      ] = await Promise.all([
+        fetch("/api/financial-accounts"),
+        fetch(`/api/reports/cash-flow?${query}`),
+        fetch(`/api/scheduled-transactions/summary?${query}`),
+        fetch("/api/goals?status=active"),
+        periodoTemHoje ? fetch("/api/safe-to-spend") : null,
+        fetch("/api/settings/dashboard"),
+        temSaldoHistorico ? fetch(`/api/reports/net-worth?${query}`) : null,
+      ]);
 
       if (rContas.ok) {
         const d = await rContas.json();
@@ -168,25 +300,30 @@ export default function DashboardPage() {
         setFluxo(d.summary ?? null);
       }
 
+      // O patrimonio no fim do periodo e a ULTIMA linha da janela, nao a
+      // primeira: a janela vai do comeco do periodo ate o mes em que ele
+      // termina, e e esse fim que o tile rotula.
+      if (rPatrimonio?.ok) {
+        const d = await rPatrimonio.json();
+        const meses = d.months ?? [];
+        setSaldoNoFim(
+          meses.length ? Number(meses[meses.length - 1].net_worth) : null
+        );
+      } else {
+        setSaldoNoFim(null);
+      }
+
       if (rPrevistas.ok) {
         const d = await rPrevistas.json();
-        // A rota devolve um resumo POR MES. A tela inicial e sobre o mes
-        // corrente: pegar `summary[0]` traria o primeiro mes da janela, que
-        // nem sempre e este -- e o numero estaria errado sem parecer errado.
-        const mesAtual = new Date().toISOString().slice(0, 7);
-        const doMes = (d.summary ?? []).find(
-          (m: ResumoMesPrevisto) => m.month === mesAtual
-        );
-        setPrevistas(
-          doMes ?? {
-            month: mesAtual,
-            total_pending: 0,
-            total_overdue: 0,
-            count_pending: 0,
-            count_overdue: 0,
-            fixed_monthly_cost: d.fixed_monthly_cost ?? 0,
-          }
-        );
+        // A rota devolve uma linha POR MES, ja recortada pelo periodo. Somar
+        // as linhas e o total do periodo; a versao antiga PROCURAVA a linha do
+        // mes corrente calculado em UTC, e nas tres ultimas horas do mes
+        // achava a do mes seguinte. Ver lib/periodo-do-painel.ts.
+        setPrevistas({
+          ...somarPrevistas(d.summary ?? []),
+          month: periodo.de.slice(0, 7),
+          fixed_monthly_cost: Number(d.fixed_monthly_cost ?? 0),
+        });
       }
 
       if (rMetas.ok) {
@@ -194,10 +331,15 @@ export default function DashboardPage() {
         setMetas((d.goals ?? []).slice(0, 3));
       }
 
-      if (rPossoGastar.ok) {
+      if (rPossoGastar?.ok) {
         const d = await rPossoGastar.json();
         setPossoGastar(d.safe_to_spend ?? null);
         setReservaIndisponivel(Boolean(d.reserva_indisponivel));
+      } else if (!periodoTemHoje) {
+        // Limpar e obrigatorio, nao higiene. Sem isto, quem navega de setembro
+        // para julho continua vendo o cartao "quanto ainda posso gastar" com o
+        // numero de setembro dentro de uma tela que diz julho em tudo mais.
+        setPossoGastar(null);
       }
 
       if (rLayout.ok) {
@@ -208,6 +350,7 @@ export default function DashboardPage() {
       console.error("Erro ao carregar o painel:", erro);
     } finally {
       setCarregando(false);
+      setAtualizando(false);
     }
   };
 
@@ -216,15 +359,26 @@ export default function DashboardPage() {
     0
   );
 
-  if (carregando) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-      </div>
-    );
-  }
+  if (carregando) return <Girando />;
 
   const semNada = contas.length === 0 && !previstas?.count_pending;
+
+  // O periodo em uma palavra, para os rotulos dos tiles. "neste mês" so quando
+  // o periodo E um mes; nos outros casos o rotulo nomeia o periodo inteiro,
+  // porque "neste mês" sobre uma janela de tres meses e simplesmente falso.
+  const rotulo = rotuloDoPeriodo(periodo);
+  const temHoje = contemHoje(periodo, hoje);
+
+  // O titulo e a nota do tile de saldo saem da lib, nao de um ternario aqui:
+  // a regra que eles carregam -- numero sem versao historica nunca aparece
+  // debaixo do nome do periodo -- e o aceite da issue, e no JSX ela seria
+  // conferida por inspecao visual em vez de por teste.
+  const rotuloSaldo = rotuloDoSaldo({
+    periodo,
+    hoje,
+    saldoHistorico: saldoNoFim,
+    quantidadeDeContas: contas.length,
+  });
 
   // ------------------------------------------------------------------------
   // OS BLOCOS CONFIGURAVEIS
@@ -243,24 +397,37 @@ export default function DashboardPage() {
   const blocos: Record<string, ReactNode> = {
     resumo: (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* ----------------------------------------------------------------
+            O TILE QUE NAO TEM EIXO DE TEMPO
+            ----------------------------------------------------------------
+            `current_balance` e o saldo de HOJE -- o banco nao guarda historico
+            de saldo. Sao dois numeros diferentes debaixo do mesmo icone, e o
+            que muda entre eles e a FRASE, nunca o silencio:
+
+              * periodo encerrado e alinhado a mes -> o patrimonio no fim
+                daquele mes, reconstruido por `net_worth_history`
+              * qualquer outro caso -> o saldo de hoje, dito com todas as
+                letras, e o rotulo avisa que ele esta FORA do periodo
+
+            O que nao pode existir e a terceira versao, que era a de antes
+            desta issue: o numero de hoje debaixo de uma tela que diz julho. */}
         <Card>
           <CardHeader className="pb-2">
             <CardDescription className="flex items-center gap-2">
               <Wallet className="h-4 w-4" />
-              Saldo das contas
+              {rotuloSaldo.titulo}
             </CardDescription>
           </CardHeader>
           <CardContent>
             <div
               className={`text-2xl font-bold ${
-                saldoTotal < 0 ? "text-destructive" : ""
+                (saldoNoFim ?? saldoTotal) < 0 ? "text-destructive" : ""
               }`}
             >
-              {moeda(saldoTotal)}
+              {moeda(saldoNoFim ?? saldoTotal)}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              {contas.length}{" "}
-              {contas.length === 1 ? "conta ativa" : "contas ativas"}
+              {rotuloSaldo.nota}
             </p>
           </CardContent>
         </Card>
@@ -269,13 +436,16 @@ export default function DashboardPage() {
           <CardHeader className="pb-2">
             <CardDescription className="flex items-center gap-2">
               <TrendingUp className="h-4 w-4" />
-              Entrou neste mês
+              Entrou
             </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-success">
               {moeda(fluxo?.total_income ?? 0)}
             </div>
+            <p className="text-xs text-muted-foreground mt-1 capitalize">
+              {rotulo}
+            </p>
           </CardContent>
         </Card>
 
@@ -283,7 +453,7 @@ export default function DashboardPage() {
           <CardHeader className="pb-2">
             <CardDescription className="flex items-center gap-2">
               <TrendingDown className="h-4 w-4" />
-              Saiu neste mês
+              Saiu
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -296,11 +466,15 @@ export default function DashboardPage() {
               {moeda(fluxo?.total_expense ?? 0)}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Saldo do mês: {moeda(fluxo?.net ?? 0)}
+              Saldo do período: {moeda(fluxo?.net ?? 0)}
             </p>
           </CardContent>
         </Card>
 
+        {/* Outro tile sem eixo de tempo, e de um tipo diferente do saldo: o
+            custo fixo sai das regras recorrentes ATIVAS, que sao uma
+            afirmacao sobre o presente. Ele nao tem versao de julho nem
+            reconstrucao possivel -- so o aviso. */}
         <Card>
           <CardHeader className="pb-2">
             <CardDescription className="flex items-center gap-2">
@@ -313,7 +487,9 @@ export default function DashboardPage() {
               {moeda(previstas?.fixed_monthly_cost ?? 0)}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Soma dos gastos fixos cadastrados
+              {temHoje
+                ? "Soma dos gastos fixos cadastrados"
+                : "Gastos fixos de hoje — não é do período escolhido"}
             </p>
           </CardContent>
         </Card>
@@ -329,7 +505,25 @@ export default function DashboardPage() {
           e no dia em que a definicao mudasse -- o que entra como divida de
           cartao, por exemplo -- o total e as parcelas passariam a discordar
           dentro do mesmo cartao. */
-    "posso-gastar": possoGastar && (
+    // Fora do mes corrente este cartao nao some: ele explica. Um bloco que
+    // desaparece sozinho e indistinguivel de bloco quebrado -- e o arquivo ja
+    // tomou essa decisao uma vez, no aviso de "escondeu tudo" la embaixo.
+    "posso-gastar": !temHoje ? (
+      <Card className="border-dashed">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <Coins className="h-5 w-5" />
+            Quanto ainda posso gastar
+          </CardTitle>
+          <CardDescription>
+            Só existe para o mês corrente: a conta é o que sobra dos próximos
+            dias depois do que já está comprometido. Não há versão dela para{" "}
+            {rotulo}.
+          </CardDescription>
+        </CardHeader>
+      </Card>
+    ) : (
+      possoGastar && (
       <Card
         className={
           possoGastar.livre < 0 ? "border-destructive/40" : "border-primary/40"
@@ -478,6 +672,7 @@ export default function DashboardPage() {
           )}
         </CardContent>
       </Card>
+      )
     ),
 
     // ------------------------------------------------------------------
@@ -517,8 +712,9 @@ export default function DashboardPage() {
       <Card className="h-full">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
-            <CalendarClock className="h-5 w-5" />A vencer neste mês
+            <CalendarClock className="h-5 w-5" />A vencer
           </CardTitle>
+          <CardDescription className="capitalize">{rotulo}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex items-baseline justify-between">
@@ -547,6 +743,16 @@ export default function DashboardPage() {
             <Target className="h-5 w-5" />
             Metas
           </CardTitle>
+          {/* Progresso de meta e acumulado desde o inicio dela, nao um total
+              do periodo: `goal_progress` soma TODOS os aportes. Navegar para
+              julho nao muda estas barras -- entao, fora do mes corrente, o
+              cartao diz de quando elas falam. Dentro dele a frase seria ruido:
+              "ate hoje" e o que qualquer um ja supoe. */}
+          {!temHoje && (
+            <CardDescription>
+              Progresso acumulado até hoje — não é do período escolhido
+            </CardDescription>
+          )}
         </CardHeader>
         <CardContent className="space-y-4">
           {metas.length > 0 ? (
@@ -600,6 +806,12 @@ export default function DashboardPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">Suas contas</CardTitle>
+          {/* Mesmo motivo do tile de saldo: `current_balance` e de hoje. A
+              abertura por conta nao tem reconstrucao historica -- a view do
+              008 devolve o patrimonio TOTAL, nao o saldo de cada conta. */}
+          <CardDescription>
+            {temHoje ? "Saldo de hoje" : "Saldo de hoje — não é do período escolhido"}
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-1">
@@ -669,7 +881,9 @@ export default function DashboardPage() {
         <div className="space-y-1">
           <h1 className="text-3xl font-bold">Visão geral</h1>
           <p className="text-muted-foreground">
-            Onde o seu dinheiro está hoje, e o que vence nos próximos dias
+            {temHoje
+              ? "Onde o seu dinheiro está hoje, e o que vence nos próximos dias"
+              : "O que entrou, saiu e venceu no período escolhido"}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -686,6 +900,25 @@ export default function DashboardPage() {
           </Button>
         </div>
       </div>
+
+      {/* O seletor fica FORA do mapa `blocos`, com o cabecalho e o estado
+          vazio: ele nao e um bloco de conteudo, e a moldura da tela. Se
+          entrasse no mapa, o usuario poderia desliga-lo em /dashboard/settings
+          e ficar sem como sair do mes corrente -- e, pior, sem nada na tela
+          explicando por que o painel nao navega mais. */}
+      <SeletorDePeriodo periodo={periodo} hoje={hoje} aoMudar={irPara} />
+
+      {/* `aria-busy` alem da opacidade: quem usa leitor de tela nao ve o
+          esmaecido, e sem isto ouviria os numeros do periodo anterior como se
+          fossem a resposta ja pronta para o periodo novo. */}
+      <div
+        aria-busy={atualizando}
+        className={
+          atualizando
+            ? "space-y-6 opacity-50 transition-opacity"
+            : "space-y-6 transition-opacity"
+        }
+      >
 
       {semNada && (
         <Card className="border-dashed">
@@ -755,6 +988,7 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       )}
+      </div>
     </div>
   );
 }

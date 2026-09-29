@@ -27,7 +27,7 @@ on:
 
 jobs:
   configuracoes:
-    name: o painel obedece a configuracao e o reset apaga na ordem
+    name: o painel obedece a configuracao e o periodo, e o reset apaga na ordem
     runs-on: ubuntu-latest
 
     steps:
@@ -45,6 +45,19 @@ jobs:
 
       - name: Bloco novo nasce visivel, e arrastar para no lugar certo
         run: npm run test:dashboard-layout
+
+      # HMO-173. Mora aqui, e nao no db-verify, pelo motivo que o cabecalho
+      # deste arquivo ja explica: o db-verify tem filtro de `paths`, e
+      # lib/periodo-do-painel.ts nao esta em nenhuma das listas dele -- a suite
+      # ficaria no package.json sem nunca rodar num PR que mexesse nela.
+      #
+      # O que ela guarda: o mes corrente sai do fuso de Sao Paulo (em UTC, as
+      # 22:00 de 30/09 o painel abria em outubro) e a transferencia fica FORA
+      # da agregacao por intervalo (dentro dela, receita e despesa incham
+      # juntas e o saldo liquido continua exato -- o erro nao aparece no numero
+      # que as pessoas conferem).
+      - name: O painel abre no mes certo, e a transferencia fica fora da soma
+        run: npm run test:periodo-painel
 
       - name: O plano de reset bate com o schema, e os filhos vem antes dos pais
         run: npm run test:account-reset

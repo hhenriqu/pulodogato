@@ -140,3 +140,5 @@ next-env.d.ts
 # saida das duas suites da HMO-166 (tsc avulso; a de campos com reescrita de alias)
 /.tmp-contas/
 /.tmp-campos-da-conta/
+# saida do `npm run test:periodo-painel` (HMO-173)
+/.tmp-periodo-painel/
