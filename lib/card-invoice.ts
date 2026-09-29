@@ -49,6 +49,11 @@
 // transferencia e faria a despesa desaparecer do relatorio.
 // =====================================================
 
+import {
+  pernasDaTransferencia,
+  type PernaDeTransferencia,
+} from "@/lib/transferencia";
+
 /**
  * Prefixo da chave canonica que `POST /api/card-invoices/close` grava em
  * `scheduled_transactions.notes`.
@@ -154,13 +159,14 @@ export function mensagemContaPagadora(problema: ProblemaContaPagadora): string {
   }
 }
 
-/** Uma das duas linhas que a baixa da fatura grava. */
-export interface PernaPagamento {
-  account_id: string;
-  description: string;
-  amount: number;
-  transaction_type: "transfer";
-}
+/**
+ * Uma das duas linhas que a baixa da fatura grava.
+ *
+ * Alias de `PernaDeTransferencia` desde a HMO-164: pagar a fatura E uma
+ * transferencia, e o tipo estar escrito duas vezes deixaria os dois lados
+ * divergirem sem o compilador notar.
+ */
+export type PernaPagamento = PernaDeTransferencia;
 
 /**
  * As duas pernas do pagamento da fatura.
@@ -171,10 +177,12 @@ export interface PernaPagamento {
  * 015), para que o estorno da baixa encontre as duas sem adivinhar por
  * valor e data.
  *
- * O valor entra por `Math.abs`: `scheduled_transactions.amount` e sempre
- * positivo (CHECK do 005), mas quem chamar daqui a um ano nao sabe disso, e o
- * sinal trocado nas duas pernas inverteria a transferencia sem erro nenhum
- * aparecer.
+ * Desde a HMO-164 isto e uma transferencia comum com outro rotulo na perna de
+ * entrada -- a montagem mora em `lib/transferencia.ts`, que e quem garante o
+ * `Math.abs` e o sinal oposto. Aqui fica so a traducao do vocabulario da
+ * fatura (cartao / conta pagadora) para o da transferencia (destino / origem):
+ * quem paga a fatura tira dinheiro da conta corrente (origem) e quita a divida
+ * do cartao (destino).
  */
 export function pernasDoPagamentoDeFatura(params: {
   valor: number;
@@ -182,19 +190,11 @@ export function pernasDoPagamentoDeFatura(params: {
   contaPagadoraId: string;
   descricao: string;
 }): { saida: PernaPagamento; entrada: PernaPagamento } {
-  const total = Math.abs(params.valor);
-  return {
-    saida: {
-      account_id: params.contaPagadoraId,
-      description: params.descricao,
-      amount: -total,
-      transaction_type: "transfer",
-    },
-    entrada: {
-      account_id: params.cartaoId,
-      description: `Pagamento — ${params.descricao}`,
-      amount: total,
-      transaction_type: "transfer",
-    },
-  };
+  return pernasDaTransferencia({
+    valor: params.valor,
+    origemId: params.contaPagadoraId,
+    destinoId: params.cartaoId,
+    descricao: params.descricao,
+    descricaoDaEntrada: `Pagamento — ${params.descricao}`,
+  });
 }

@@ -22,6 +22,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { resumoDoPeriodo } from "@/lib/movimentacoes";
 import { rotaDoTipo, tipoDoLancamento } from "@/lib/lancamento";
+import { ROTA_DA_TRANSFERENCIA } from "@/lib/transferencia";
 import {
   guardarCatalogo,
   lerCatalogo,
@@ -43,6 +44,7 @@ import {
   Trash2,
   Share2,
   Crown,
+  ArrowRightLeft,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -98,25 +100,54 @@ export default function PersonalFinancePage() {
   const { canCreateMore, planConfig, isPremium } = useSubscription(user);
 
   // Função para deletar transação
-  const deleteTransaction = async (transactionId: string) => {
-    if (!confirm("Tem certeza que deseja excluir esta transação?")) {
+  //
+  // Transferencia sai por outro caminho (HMO-164). Ela sao DUAS linhas, e o
+  // delete daqui apaga uma: a FK de `counterpart_transaction_id` e ON DELETE
+  // SET NULL (015), entao a outra perna nao e apagada nem da erro -- ela fica,
+  // com o elo zerado, mexendo o saldo de UMA conta. Meia transferencia nao tem
+  // sintoma: o extrato parece completo e o patrimonio esta errado pelo valor
+  // inteiro. A rota apaga o par.
+  const deleteTransaction = async (transaction: any) => {
+    const ehTransferencia = transaction.transaction_type === "transfer";
+
+    if (
+      !confirm(
+        ehTransferencia
+          ? "Esta é uma transferência: ela existe nas duas contas. Excluir as duas pernas?"
+          : "Tem certeza que deseja excluir esta transação?"
+      )
+    ) {
       return;
     }
 
     try {
-      const { error } = await supabase
-        .from("financial_transactions")
-        .delete()
-        .eq("id", transactionId)
-        .eq("user_id", user?.id);
+      if (ehTransferencia) {
+        const resposta = await fetch(
+          `/api/movimentacoes/transferencia?id=${transaction.id}`,
+          { method: "DELETE" }
+        );
+        const dados = await resposta.json();
+        if (!resposta.ok) throw new Error(dados.error);
+        toast.success(dados.message || "Transferência excluída.");
+      } else {
+        const { error } = await supabase
+          .from("financial_transactions")
+          .delete()
+          .eq("id", transaction.id)
+          .eq("user_id", user?.id);
 
-      if (error) throw error;
+        if (error) throw error;
+        toast.success("Transação excluída com sucesso!");
+      }
 
-      toast.success("Transação excluída com sucesso!");
       loadData();
     } catch (error) {
       console.error("Error deleting transaction:", error);
-      toast.error("Erro ao excluir transação");
+      toast.error(
+        error instanceof Error && error.message
+          ? error.message
+          : "Erro ao excluir transação"
+      );
     }
   };
 
@@ -400,6 +431,15 @@ export default function PersonalFinancePage() {
                   Nova Despesa
                 </Link>
               </Button>
+              {/* A terceira porta (HMO-164). Ate aqui transferencia era uma
+                  opcao DENTRO do formulario de lancamento, e por isso gravava
+                  uma linha so, com categoria de despesa. */}
+              <Button variant="outline" asChild className="gap-2">
+                <Link href={ROTA_DA_TRANSFERENCIA}>
+                  <ArrowRightLeft className="h-4 w-4 text-info" />
+                  Transferência
+                </Link>
+              </Button>
             </>
           ) : (
             <Button disabled className="gap-2">
@@ -600,7 +640,7 @@ export default function PersonalFinancePage() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => deleteTransaction(transaction.id)}
+                            onClick={() => deleteTransaction(transaction)}
                             className="h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
                             title="Excluir transação"
                           >

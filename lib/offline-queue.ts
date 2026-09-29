@@ -94,6 +94,7 @@ export type MotivoDeRecusa =
   | "parcelado"
   | "compartilhado"
   | "despesa-fixa"
+  | "transferencia"
   | "edicao"
   | "invalido";
 
@@ -105,10 +106,10 @@ export type Avaliacao =
  * Este lancamento pode ir para a fila?
  *
  * O criterio nao e "da para gravar depois" -- quase tudo daria. E "da para
- * gravar depois SEM errar dinheiro". As quatro recusas abaixo tem todas a
- * mesma causa: elas nao sao um insert, sao varios, em tabelas diferentes, e um
- * reenvio que acerta metade deixa o livro desencontrado de um jeito que
- * ninguem percebe olhando a tela.
+ * gravar depois SEM errar dinheiro". As cinco recusas abaixo tem todas a
+ * mesma causa: elas nao sao um insert, sao varios -- em tabelas diferentes, ou
+ * duas linhas que so fazem sentido juntas -- e um reenvio que acerta metade
+ * deixa o livro desencontrado de um jeito que ninguem percebe olhando a tela.
  */
 export function avaliarLancamento(
   entrada: EntradaDeLancamento,
@@ -143,6 +144,24 @@ export function avaliarLancamento(
       ok: false,
       motivo: "despesa-fixa",
       mensagem: "Despesa fixa precisa de conexao para criar a regra mensal.",
+    };
+  }
+
+  if (entrada.tipo === "transfer") {
+    // Transferencia sao DUAS linhas que se anulam (HMO-164). A fila envia uma
+    // linha de cada vez e cada envio falha por conta propria, entao um reenvio
+    // que acerta metade deixaria o dinheiro so saindo, ou so entrando -- e o
+    // saldo das duas contas erraria pelo valor inteiro.
+    //
+    // Esta porta vem ANTES da checagem de categoria de proposito. Transferencia
+    // nao tem categoria, entao sem ela a recusa acontecia mesmo assim, so que
+    // pelo ramo `invalido` com a mensagem "Escolha uma categoria" -- mandando a
+    // pessoa procurar um campo que a tela de transferencia nao tem.
+    return {
+      ok: false,
+      motivo: "transferencia",
+      mensagem:
+        "Transferencia precisa de conexao: ela grava duas linhas, e metade delas erraria o saldo das duas contas.",
     };
   }
 

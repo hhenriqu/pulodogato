@@ -51,7 +51,7 @@ if (!EMAIL || !SENHA) {
 
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
 
-/** As vinte e tres rotas do painel. As oito da HMO-168 primeiro. */
+/** As rotas do painel. As oito da HMO-168 primeiro. */
 const ROTAS = [
   "/dashboard/transactions",
   "/dashboard/personal-finance",
@@ -78,6 +78,17 @@ const ROTAS = [
   "/dashboard/net-worth",
   "/dashboard/cash-flow",
   "/dashboard/alerts",
+  // As tres telas de lancamento. NUNCA FORAM MEDIDAS: as duas primeiras
+  // nasceram na HMO-165, depois da HMO-168 ter feito a varredura, e ninguem as
+  // acrescentou aqui -- a lista dizia "as vinte e tres rotas do painel" e havia
+  // vinte e cinco. A terceira e a da HMO-164, e entra junto pelo mesmo motivo.
+  //
+  // Um vermelho nelas na proxima execucao nao e regressao: e a primeira
+  // medicao. E a HMO-168 mostrou que vazamento pequeno so aparece depois que o
+  // grande para de vazar na frente dele.
+  "/dashboard/movimentacoes/receita",
+  "/dashboard/movimentacoes/despesa",
+  "/dashboard/movimentacoes/transferencia",
 ];
 
 const LARGURAS = [390, 320];

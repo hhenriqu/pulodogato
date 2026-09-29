@@ -1,0 +1,22 @@
+{
+  "//": "Build so do teste. `card-invoice.ts` entra junto porque desde a HMO-164 ele IMPORTA `transferencia.ts` -- pagar a fatura e uma transferencia, e as pernas sao montadas num lugar so. Compilar os dois na mesma passada e o que permite a suite afirmar que o pagamento da fatura continua com o mesmo sinal e o mesmo rotulo depois da generalizacao.",
+  "compilerOptions": {
+    "outDir": "../.tmp-transferencia",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
+  },
+  "include": [
+    "../lib/transferencia.ts",
+    "../lib/card-invoice.ts"
+  ]
+}
