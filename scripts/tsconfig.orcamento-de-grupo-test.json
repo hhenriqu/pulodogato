@@ -1,0 +1,14 @@
+{
+  "//": "Build so do teste: lib/orcamento-de-grupo.ts importa @/lib/settlement (a UNICA conversao reais -> centavos do projeto) e lib/services/budget.ts puxa @/lib/recurrence. O tsc resolve o alias @/ por causa de `paths` mas NAO o reescreve no JS emitido, entao o npm script tem um passo de reescrita depois. Ver scripts/test-orcamento-de-grupo.mjs.",
+  "compilerOptions": {
+    "outDir": "../.tmp-orcamento-de-grupo",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/orcamento-de-grupo.ts", "../lib/services/budget.ts"]
+}

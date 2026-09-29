@@ -46,6 +46,7 @@ import {
   Repeat,
   TrendingDown,
   Trash2,
+  Users,
 } from "lucide-react";
 import type {
   BudgetWithConsumption,
@@ -54,6 +55,11 @@ import type {
   TransactionCategory,
   FinancialAccount,
 } from "@/types/financial";
+import {
+  separarOrcamentos,
+  fraseDoRestante,
+  type GrupoOrcado,
+} from "@/lib/orcamento-de-grupo";
 
 const moeda = (valor: number) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(valor);
@@ -84,7 +90,13 @@ interface FormOrcamento {
   category_id: string;
   amount_limit: string;
   alert_threshold: string;
+  /** "" = teto pessoal. Preenchido = teto da viagem/casa (HMO-138). */
+  group_id: string;
 }
+
+/** O valor que o Select usa para "nenhum grupo": Radix nao aceita item com
+ *  value="". */
+const SEM_GRUPO = "pessoal";
 
 interface FormCartao {
   account_id: string;
@@ -99,6 +111,9 @@ export default function BudgetsPage() {
   const [projecao, setProjecao] = useState<ProjectionSummary | null>(null);
   const [categories, setCategories] = useState<TransactionCategory[]>([]);
   const [accounts, setAccounts] = useState<FinancialAccount[]>([]);
+  // Grupos de despesa (casa, viagem): a lista existe para o seletor do dialogo.
+  // Só aparece para quem tem grupo -- ver a nota na aba "Grupo".
+  const [grupos, setGrupos] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [agindo, setAgindo] = useState<string | null>(null);
   const [dialogOrcamento, setDialogOrcamento] = useState(false);
@@ -108,6 +123,7 @@ export default function BudgetsPage() {
     category_id: "",
     amount_limit: "",
     alert_threshold: "80",
+    group_id: "",
   });
 
   const [formCartao, setFormCartao] = useState<FormCartao>({
@@ -118,12 +134,13 @@ export default function BudgetsPage() {
 
   const carregar = useCallback(async () => {
     try {
-      const [rOrc, rFat, rProj, rCat, rCon] = await Promise.all([
+      const [rOrc, rFat, rProj, rCat, rCon, rGru] = await Promise.all([
         fetch(`/api/budgets?month=${mes}`),
         fetch(`/api/card-invoices?month=${mes}`),
         fetch("/api/projection"),
         fetch("/api/personal-finance/categories"),
         fetch("/api/financial-accounts"),
+        fetch("/api/expense-groups"),
       ]);
 
       if (rOrc.ok) {
@@ -142,6 +159,10 @@ export default function BudgetsPage() {
       if (rCon.ok) {
         const dados = await rCon.json();
         setAccounts(dados.accounts ?? []);
+      }
+      if (rGru.ok) {
+        const dados = await rGru.json();
+        setGrupos(dados.groups ?? []);
       }
     } catch (erro) {
       console.error(erro);
@@ -168,16 +189,26 @@ export default function BudgetsPage() {
     [categories]
   );
 
-  const totais = useMemo(() => {
-    const limite = budgets.reduce((s, b) => s + Number(b.amount_limit), 0);
-    const gasto = budgets.reduce((s, b) => s + Number(b.spent), 0);
-    return {
-      limite,
-      gasto,
-      estourados: budgets.filter((b) => b.consumption_status === "exceeded"),
-      emAlerta: budgets.filter((b) => b.consumption_status === "alert"),
-    };
-  }, [budgets]);
+  // A separacao entre teto pessoal e teto de grupo mora em
+  // lib/orcamento-de-grupo.ts, com teste. A lista de `/api/budgets` traz os
+  // dois juntos (e a RLS do 006 faz isso de proposito), e somar tudo num numero
+  // so produziria um "ja gasto" que nao e nem o meu -- inclui o gasto dos
+  // outros membros da viagem -- nem o da viagem -- inclui o meu mercado de
+  // casa. Ver o cabecalho daquele arquivo.
+  const { pessoais, pessoal, grupos: gruposOrcados } = useMemo(
+    () => separarOrcamentos(budgets),
+    [budgets]
+  );
+
+  const totais = useMemo(
+    () => ({
+      limite: pessoal.limite,
+      gasto: pessoal.gasto,
+      estourados: pessoais.filter((b) => b.consumption_status === "exceeded"),
+      emAlerta: pessoais.filter((b) => b.consumption_status === "alert"),
+    }),
+    [pessoal, pessoais]
+  );
 
   const criarOrcamento = async () => {
     if (!formOrcamento.category_id || !formOrcamento.amount_limit) {
@@ -196,6 +227,12 @@ export default function BudgetsPage() {
           month: mes,
           // A tela fala em porcentagem; a API e o banco guardam a fracao.
           alert_threshold: Number(formOrcamento.alert_threshold) / 100,
+          // Vazio tem que virar `undefined`, nunca "": o `group_id || null` da
+          // rota converteria a string vazia em NULL de qualquer jeito, mas o
+          // guard de participacao dela testa `if (group_id)` -- e um dia em que
+          // ele passe a testar `!== undefined` a string vazia atravessaria a
+          // checagem e bateria na FK como erro 500.
+          group_id: formOrcamento.group_id || undefined,
         }),
       });
       const dados = await resposta.json();
@@ -205,9 +242,16 @@ export default function BudgetsPage() {
         return;
       }
 
-      toast.success("Orçamento criado");
+      toast.success(
+        formOrcamento.group_id ? "Orçamento do grupo criado" : "Orçamento criado"
+      );
       setDialogOrcamento(false);
-      setFormOrcamento({ category_id: "", amount_limit: "", alert_threshold: "80" });
+      setFormOrcamento({
+        category_id: "",
+        amount_limit: "",
+        alert_threshold: "80",
+        group_id: "",
+      });
       await carregar();
     } catch (erro) {
       console.error(erro);
@@ -386,6 +430,69 @@ export default function BudgetsPage() {
     );
   };
 
+  /**
+   * Uma viagem (ou a casa): a barra do grupo inteiro em cima, os tetos por
+   * categoria embaixo.
+   *
+   * A barra de cima e a resposta que a tela existe para dar -- "quanto já
+   * gastamos da viagem" -- e ela soma o gasto de TODOS os membros, nao só o de
+   * quem esta olhando: quem paga o hotel e quem paga a gasolina consomem o
+   * mesmo teto. Por isso a frase de apoio diz isso com todas as letras; sem
+   * ela, o numero parece alto demais para quem lembra so do que pagou.
+   */
+  const CartaoDoGrupo = ({ grupo }: { grupo: GrupoOrcado<BudgetWithConsumption> }) => {
+    const pct = Math.round(grupo.ratio * 100);
+    const cor =
+      grupo.status === "exceeded"
+        ? "text-destructive"
+        : grupo.status === "alert"
+        ? "text-warning"
+        : "text-success";
+
+    return (
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="min-w-0">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Users className="h-4 w-4 shrink-0" />
+                <span className="truncate">{grupo.group_name}</span>
+              </CardTitle>
+              <CardDescription>
+                {moeda(grupo.gasto)} de {moeda(grupo.limite)} — soma o gasto de
+                todos os membros
+              </CardDescription>
+            </div>
+            <span className={`text-lg font-semibold ${cor}`}>{pct}%</span>
+          </div>
+        </CardHeader>
+
+        <CardContent className="space-y-4">
+          {/* Mesma regra da linha individual: a barra para em 100 e o
+              percentual acima e quem conta o tamanho do estouro. */}
+          <div className="space-y-1">
+            <Progress value={Math.min(pct, 100)} />
+            <p
+              className={`text-sm ${
+                grupo.restante < 0
+                  ? "font-medium text-destructive"
+                  : "text-muted-foreground"
+              }`}
+            >
+              {fraseDoRestante(grupo)}
+            </p>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2">
+            {grupo.orcamentos.map((b) => (
+              <LinhaOrcamento key={b.id} budget={b} />
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
+
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center">
@@ -476,6 +583,44 @@ export default function BudgetsPage() {
                   />
                 </div>
 
+                {/* Teto da viagem/casa. Só aparece para quem tem grupo: sem
+                    grupo o seletor seria um campo com uma unica opcao chamada
+                    "Só eu", que nao decide nada. O teto de grupo e unico por
+                    (grupo, categoria, mes) -- vale para o grupo todo, nao por
+                    membro -- e por isso o texto de apoio abaixo. */}
+                {grupos.length > 0 && (
+                  <div className="space-y-2">
+                    <Label>De quem é este teto</Label>
+                    <Select
+                      value={formOrcamento.group_id || SEM_GRUPO}
+                      onValueChange={(v) =>
+                        setFormOrcamento({
+                          ...formOrcamento,
+                          group_id: v === SEM_GRUPO ? "" : v,
+                        })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={SEM_GRUPO}>Só meu (pessoal)</SelectItem>
+                        {grupos.map((g) => (
+                          <SelectItem key={g.id} value={g.id}>
+                            {g.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {formOrcamento.group_id && (
+                      <p className="text-xs text-muted-foreground">
+                        Vale para o grupo inteiro: o consumo soma o gasto de
+                        todos os membros, e o teto é um só por categoria.
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 <Button
                   className="w-full"
                   onClick={criarOrcamento}
@@ -511,16 +656,23 @@ export default function BudgetsPage() {
 
       {/* ---------- a resposta curta ---------- */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {/* Os dois primeiros cartoes sao SO o teto pessoal. O "(só meu)" só
+            entra quando existe teto de grupo: sem grupo ele seria uma ressalva
+            sobre uma distincao que nao existe na tela daquela pessoa. */}
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>Orçado no mês</CardDescription>
+            <CardDescription>
+              Orçado no mês{gruposOrcados.length > 0 ? " (só meu)" : ""}
+            </CardDescription>
             <CardTitle className="text-2xl">{moeda(totais.limite)}</CardTitle>
           </CardHeader>
         </Card>
 
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>Já gasto</CardDescription>
+            <CardDescription>
+              Já gasto{gruposOrcados.length > 0 ? " (só meu)" : ""}
+            </CardDescription>
             <CardTitle className="text-2xl">{moeda(totais.gasto)}</CardTitle>
           </CardHeader>
         </Card>
@@ -561,6 +713,14 @@ export default function BudgetsPage() {
             <PiggyBank className="mr-2 h-4 w-4" />
             Por categoria
           </TabsTrigger>
+          {/* A aba do grupo só existe para quem participa de algum: para quem
+              nao participa ela seria uma aba permanentemente vazia. */}
+          {grupos.length > 0 && (
+            <TabsTrigger value="grupo">
+              <Users className="mr-2 h-4 w-4" />
+              Grupo
+            </TabsTrigger>
+          )}
           <TabsTrigger value="faturas">
             <CreditCard className="mr-2 h-4 w-4" />
             Faturas
@@ -589,7 +749,10 @@ export default function BudgetsPage() {
             </Button>
           </div>
 
-          {budgets.length === 0 ? (
+          {/* Só os tetos pessoais: os de grupo tem aba propria. Misturar os
+              dois aqui e o que fazia "Já gasto" crescer a cada membro novo da
+              viagem -- ver lib/orcamento-de-grupo.ts. */}
+          {pessoais.length === 0 ? (
             <Card>
               <CardContent className="py-10 text-center text-muted-foreground">
                 <PiggyBank className="mx-auto mb-3 h-8 w-8 opacity-40" />
@@ -601,12 +764,34 @@ export default function BudgetsPage() {
             </Card>
           ) : (
             <div className="grid gap-3 md:grid-cols-2">
-              {budgets.map((b) => (
+              {pessoais.map((b) => (
                 <LinhaOrcamento key={b.id} budget={b} />
               ))}
             </div>
           )}
         </TabsContent>
+
+        {/* ---------- grupo: quanto ja gastamos da viagem ---------- */}
+        {grupos.length > 0 && (
+          <TabsContent value="grupo" className="space-y-4">
+            {gruposOrcados.length === 0 ? (
+              <Card>
+                <CardContent className="py-10 text-center text-muted-foreground">
+                  <Users className="mx-auto mb-3 h-8 w-8 opacity-40" />
+                  <p>
+                    Nenhum teto de grupo em {nomeDoMes(`${mes}-01`)}.
+                  </p>
+                  <p className="text-sm">
+                    Em &ldquo;Novo teto&rdquo;, escolha o grupo para acompanhar
+                    o quanto a viagem já consumiu.
+                  </p>
+                </CardContent>
+              </Card>
+            ) : (
+              gruposOrcados.map((g) => <CartaoDoGrupo key={g.group_id} grupo={g} />)
+            )}
+          </TabsContent>
+        )}
 
         {/* ---------- faturas ---------- */}
         <TabsContent value="faturas" className="space-y-4">

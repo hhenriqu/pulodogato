@@ -1,5 +1,6 @@
 // GET  /api/budgets?month=YYYY-MM   tetos do mes, com o consumido de cada um
-// POST /api/budgets                 cria um teto
+// GET  /api/budgets?group_id=UUID   so os tetos daquele grupo
+// POST /api/budgets                 cria um teto (pessoal ou de grupo)
 //
 // A leitura sai de `budget_consumption`, nao de `budgets`: o consumido e
 // calculado na hora, sobre financial_transactions. Ver a SECAO 5 da migration
@@ -8,10 +9,22 @@
 // A RLS do 006 e quem filtra: o SELECT devolve os tetos do proprio usuario
 // mais os dos grupos de que ele participa. Nao repetimos o filtro aqui para
 // nao ter duas versoes da mesma regra de acesso.
+//
+// O `summary` E SO O PESSOAL (HMO-138)
+// ------------------------------------
+// Ele somava a lista inteira. Enquanto nao existiu tela para criar teto de
+// grupo isso nao teve efeito; com ela, somar os dois produz um "ja gasto" que
+// nao e nem o meu (inclui o gasto dos outros membros da viagem) nem o da
+// viagem (inclui o meu mercado de casa), e que sobe a cada membro novo do
+// grupo. O teto de grupo continua na lista `budgets`, agora com o nome do
+// grupo junto, e cada viagem soma na sua propria barra -- a separacao mora em
+// lib/orcamento-de-grupo.ts, em funcao pura com teste, para a rota e a tela
+// nao terem duas versoes dela.
 
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { primeiroDiaDoMes, mesCorrente } from "@/lib/services/budget";
+import { separarOrcamentos } from "@/lib/orcamento-de-grupo";
 
 export async function GET(request: NextRequest) {
   try {
@@ -28,6 +41,7 @@ export async function GET(request: NextRequest) {
     const url = new URL(request.url);
     const mesParam = url.searchParams.get("month");
     const mes = mesParam ? primeiroDiaDoMes(mesParam) : mesCorrente();
+    const grupoParam = url.searchParams.get("group_id");
 
     if (!mes) {
       return NextResponse.json(
@@ -36,11 +50,18 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const { data: budgets, error } = await supabase
+    let consulta = supabase
       .from("budget_consumption")
       .select("*")
       .eq("month", mes)
       .order("amount_limit", { ascending: false });
+
+    // Filtro opcional para quem quer a barra de UMA viagem (a tela do grupo).
+    // Nao substitui a RLS: um group_id de grupo alheio nao devolve linha
+    // nenhuma porque a policy do 006 ja nao deixa a linha aparecer.
+    if (grupoParam) consulta = consulta.eq("group_id", grupoParam);
+
+    const { data: budgets, error } = await consulta;
 
     if (error) {
       console.error("Erro ao listar orçamentos:", error);
@@ -66,27 +87,47 @@ export async function GET(request: NextRequest) {
 
     const porId = new Map((categorias ?? []).map((c) => [c.id, c]));
 
+    // O nome do grupo vem pelo mesmo caminho da categoria, e pelo mesmo
+    // motivo: budget_consumption e uma view, e o PostgREST nao infere FK
+    // atraves dela. Sem o nome, a barra da viagem sairia rotulada com um UUID.
+    const grupoIds = Array.from(
+      new Set(
+        (budgets ?? [])
+          .map((b) => b.group_id)
+          .filter((id): id is string => Boolean(id))
+      )
+    );
+
+    const { data: grupos } = grupoIds.length
+      ? await supabase
+          .from("expense_groups")
+          .select("id, name")
+          .in("id", grupoIds)
+      : { data: [] };
+
+    const grupoPorId = new Map((grupos ?? []).map((g) => [g.id, g]));
+
     const comCategoria = (budgets ?? []).map((b) => ({
       ...b,
       category: porId.get(b.category_id) ?? null,
+      group: b.group_id ? grupoPorId.get(b.group_id) ?? null : null,
     }));
 
-    const totalLimite = comCategoria.reduce(
-      (soma, b) => soma + Number(b.amount_limit),
-      0
-    );
-    const totalGasto = comCategoria.reduce((soma, b) => soma + Number(b.spent), 0);
+    // `summary` e so o pessoal -- ver a nota no topo do arquivo. Sai da mesma
+    // funcao que a tela usa para desenhar, para os dois numeros nao poderem
+    // discordar.
+    const { pessoais, pessoal } = separarOrcamentos(comCategoria);
 
     return NextResponse.json({
       month: mes,
       budgets: comCategoria,
       summary: {
-        total_limit: totalLimite,
-        total_spent: totalGasto,
-        total_remaining: totalLimite - totalGasto,
-        count_alert: comCategoria.filter((b) => b.consumption_status === "alert")
+        total_limit: pessoal.limite,
+        total_spent: pessoal.gasto,
+        total_remaining: pessoal.restante,
+        count_alert: pessoais.filter((b) => b.consumption_status === "alert")
           .length,
-        count_exceeded: comCategoria.filter(
+        count_exceeded: pessoais.filter(
           (b) => b.consumption_status === "exceeded"
         ).length,
       },
@@ -151,6 +192,29 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Teto de grupo so vale para membro ativo. A policy budgets_insert do 006
+    // checa apenas `user_id = auth.uid()` -- ela protege a coluna do DONO, nao
+    // a linha-pai -- entao sem esta checagem qualquer pessoa logada pendura um
+    // teto num grupo de que nao participa, e a policy de SELECT (que libera os
+    // membros) o entrega para o grupo inteiro ver. Mesma checagem que
+    // /api/recurring-rules ja faz, e pela mesma razao.
+    if (group_id) {
+      const { data: membro } = await supabase
+        .from("group_members")
+        .select("id")
+        .eq("group_id", group_id)
+        .eq("user_id", user.id)
+        .eq("status", "active")
+        .single();
+
+      if (!membro) {
+        return NextResponse.json(
+          { error: "Você não participa deste grupo" },
+          { status: 403 }
+        );
+      }
+    }
+
     const { data: budget, error } = await supabase
       .from("budgets")
       .insert({
@@ -169,9 +233,19 @@ export async function POST(request: NextRequest) {
     if (error) {
       // 23505: ja existe teto para esta categoria neste mes. E o caso comum de
       // quem clica duas vezes, e merece uma mensagem propria em vez de 500.
+      //
+      // Os dois indices do 006 sao parciais e separados (um por grupo, um
+      // pessoal), entao a colisao do teto de grupo tem outra causa: OUTRO
+      // membro ja criou aquele teto para o grupo. Dizer "você já tem" para
+      // quem nunca criou nada manda a pessoa procurar na tela dela um teto que
+      // esta na lista do grupo.
       if (error.code === "23505") {
         return NextResponse.json(
-          { error: "Já existe um orçamento para esta categoria neste mês" },
+          {
+            error: group_id
+              ? "O grupo já tem um orçamento para esta categoria neste mês"
+              : "Já existe um orçamento para esta categoria neste mês",
+          },
           { status: 409 }
         );
       }
