@@ -20,7 +20,22 @@ COPY . .
 # glob acabava casando só com .env.local.example e gravava valores placeholder
 # num .env.local — que o Next.js carrega com precedência MAIOR que .env.production,
 # vazando "your_supabase_project_url" para dentro do bundle do cliente.
-# O .env.production já vem no `COPY . .`; segredos de build entram por --build-arg.
+
+# As duas chaves públicas são exigidas JÁ NO BUILD: `utils/supabase/env.ts` valida
+# presença, formato de URL e valor-de-exemplo, e o `next build` pré-renderiza as
+# telas de login. Sem elas o build morre em 31 páginas.
+#
+# Elas entram por `--build-arg`, e não pelo `COPY . .`, porque o `.env.production`
+# NÃO é versionado: ele existe apenas na máquina de quem desenvolve. Um comentário
+# antigo aqui dizia "o .env.production já vem no COPY . ." — não vinha, e era por
+# isso que esta imagem nunca subiu a partir de um clone limpo (HMO-119).
+#
+# Valor público, não segredo: vai inlinado no bundle do cliente de qualquer jeito.
+# Segredo de servidor não entra aqui — as rotas os leem em runtime.
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+ENV NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
 
 # Desabilitar telemetria do Next.js durante o build
 ENV NEXT_TELEMETRY_DISABLED=1
