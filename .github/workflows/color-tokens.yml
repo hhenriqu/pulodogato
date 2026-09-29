@@ -107,3 +107,44 @@ jobs:
           fi
 
           echo "A verificacao fica vermelha nos dois mecanismos da HMO-168."
+
+      # Terceiro inquilino sem filtro de path, pelo mesmo motivo dos dois de
+      # cima -- e o que ele vigia nao tem dono topico nenhum: as 34 suites deste
+      # repositorio compilam para `.tmp-<nome>/` e cada uma comeca com `rm -rf`
+      # nesse caminho. Enquanto o diretorio estiver no .gitignore isso e inocuo.
+      # Quando um escapa, nada fica vermelho: o .js compilado entra na main como
+      # se fosse fonte, e quem rodar aquela suite passa a APAGAR um arquivo
+      # rastreado e fica com uma delecao fantasma pronta para ser varrida para
+      # dentro do commit seguinte. Aconteceu na HMO-166, que levou junto o
+      # `.tmp-recorrencia-edicao/` da HMO-170 -- o unico dos 34 fora do
+      # .gitignore.
+      - name: Nenhum artefato de build rastreado, nenhum .tmp-* fora do .gitignore
+        run: node scripts/check-artefatos-de-build.mjs
+
+      # Controle negativo, pela mesma razao dos outros dois: as duas metades da
+      # verificacao sao varreduras que sairiam verdes se parassem de achar o
+      # alvo. A segunda metade reproduz o estado exato em que a main ficou.
+      - name: A verificacao de artefatos sabe falhar
+        run: |
+          set -uo pipefail
+          trap 'git checkout -- .gitignore && rm -rf .tmp-contas' EXIT
+
+          # 1) Um artefato de build rastreado pelo git.
+          mkdir -p .tmp-contas && echo "compilado" > .tmp-contas/lixo.js
+          git add -f .tmp-contas/lixo.js
+          if node scripts/check-artefatos-de-build.mjs > /dev/null 2>&1; then
+            echo "::error::Passou verde com .tmp-contas/lixo.js no indice."
+            exit 1
+          fi
+          git rm -q --cached -f .tmp-contas/lixo.js
+          rm -rf .tmp-contas
+
+          # 2) A lacuna original: suite que compila para um diretorio que o
+          #    .gitignore nao cobre.
+          sed -i '/^\/\.tmp-recorrencia-edicao\/$/d' .gitignore
+          if node scripts/check-artefatos-de-build.mjs > /dev/null 2>&1; then
+            echo "::error::Passou verde com .tmp-recorrencia-edicao fora do .gitignore."
+            exit 1
+          fi
+
+          echo "A verificacao fica vermelha nas duas formas de vazamento."
