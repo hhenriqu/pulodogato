@@ -523,6 +523,38 @@ jobs:
       - name: A moeda entra no grao e o total para de misturar
         run: $PSQL -f database/tests/022_currency_test.sql
 
+      - name: 023_categoria_de_transferencia
+        run: $PSQL -f database/migrations/023_categoria_de_transferencia.sql
+
+      # Re-executavel: o seed entra por `WHERE NOT EXISTS` sobre (service_id,
+      # name), que e a UNIQUE da tabela. Um `ON CONFLICT (id)` sozinho passaria
+      # na primeira passada e estouraria por nome duplicado na segunda.
+      - name: 023 e idempotente
+        run: $PSQL -f database/migrations/023_categoria_de_transferencia.sql
+
+      # A categoria reservada da transferencia. Este passo existe por um defeito
+      # que atravessou o CI inteiro e ficou 100% quebrado em producao:
+      #
+      #   - `transaction_categories` e tabela de REFERENCIA (sem user_id). O 002
+      #     so deu `GRANT SELECT`, e a unica policy dela e FOR SELECT. A HMO-164
+      #     criava a categoria reservada SOB DEMANDA, de dentro da rota -- um
+      #     INSERT que volta 42501 em toda chamada, de todo usuario, para sempre;
+      #   - e o SELECT anterior a ele tambem nao achava nada, porque a policy de
+      #     leitura e `USING (is_active = TRUE)` e a linha reservada precisa
+      #     nascer FALSE para ficar fora dos seletores. As duas metades falhavam;
+      #   - nada disso aparece em teste de unidade: `pernasDaTransferencia` e
+      #     funcao pura e devolvia -- e devolve -- as duas pernas certas. O
+      #     defeito mora na PERMISSAO, e so um INSERT de verdade o encontra;
+      #   - a policy nova tem que ser ESTREITA. "Toda categoria inativa e
+      #     legivel" passa na assercao de leitura e ressuscita, na tela de todo
+      #     mundo, qualquer categoria que alguem desativou -- o terceiro caso do
+      #     teste e o controle negativo disso;
+      #   - e `authenticated` tem que continuar SEM escrever na tabela: abrir o
+      #     INSERT faria a rota funcionar e e o conserto errado, porque a tabela
+      #     e global. O teste recusa esse conserto explicitamente.
+      - name: A transferencia acha a categoria reservada e grava as duas pernas
+        run: $PSQL -f database/tests/023_categoria_de_transferencia_test.sql
+
       # O livro-razao das execucoes de cron. O que so o Postgres pega:
       #
       #   - o CHECK de `job` tem que bater com os quatro `crons[].path` do
