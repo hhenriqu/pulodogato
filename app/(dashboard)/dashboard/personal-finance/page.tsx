@@ -27,6 +27,11 @@ import {
 import { rotaDoTipo, tipoDoLancamento } from "@/lib/lancamento";
 import { ROTA_DA_TRANSFERENCIA } from "@/lib/transferencia";
 import {
+  rotuloDoResumo,
+  precisaDetalhar,
+  type ResumoDeGrupos,
+} from "@/lib/grupos";
+import {
   guardarCatalogo,
   lerCatalogo,
   decidirAbertura,
@@ -47,6 +52,7 @@ import {
   Trash2,
   Share2,
   ArrowRightLeft,
+  Users,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -99,6 +105,17 @@ export default function PersonalFinancePage() {
   const [filtro, setFiltro] = useState<FiltroDeLancamento>("todos");
   /** De quando sao os dados na tela, quando eles vieram do aparelho. */
   const [catalogoDe, setCatalogoDe] = useState<number | null>(null);
+  /**
+   * O acerto com os grupos (HMO-175). `null` enquanto nao respondeu e tambem
+   * quando a chamada falhou: o cartao some, em vez de mostrar R$ 0,00 -- um
+   * zero aqui e indistinguivel de "esta tudo quitado", e mandaria a pessoa
+   * concluir que nao deve nada quando so a consulta caiu.
+   */
+  const [resumoDeGrupos, setResumoDeGrupos] = useState<ResumoDeGrupos | null>(
+    null
+  );
+  /** id -> nome dos meus grupos ativos, para rotular a linha do lançamento. */
+  const [nomeDoGrupo, setNomeDoGrupo] = useState<Record<string, string>>({});
 
   const { canCreateMore, planConfig } = useSubscription(user);
 
@@ -182,6 +199,40 @@ export default function PersonalFinancePage() {
     toast.error(
       "Sem conexão e sem dados no aparelho. Abra esta tela uma vez com internet."
     );
+  };
+
+  /**
+   * O acerto com os grupos, num try/catch PROPRIO.
+   *
+   * Dentro do `try` grande do `loadData` esta chamada teria um efeito que ela
+   * nao deveria ter: qualquer falha aqui -- grupo nenhum, rota fora do ar, 500
+   * -- cairia no catch que trata FALTA DE REDE, e a tela reagiria repondo o
+   * catalogo do aparelho e avisando "sem conexão", com a lista de lançamentos
+   * que ja tinha carregado. Um recurso secundario nao pode apagar o principal.
+   *
+   * Quem participa de zero grupos recebe um resumo com zero grupos, e o cartao
+   * simplesmente nao aparece -- nao ha erro nenhum nesse caminho.
+   */
+  const carregarGrupos = async () => {
+    try {
+      const resposta = await fetch("/api/expense-groups/my-balance");
+      if (!resposta.ok) return;
+
+      const dados = await resposta.json();
+      if (!dados?.resumo) return;
+
+      setResumoDeGrupos(dados.resumo);
+      setNomeDoGrupo(
+        Object.fromEntries(
+          (dados.grupos || []).map((g: { id: string; name: string }) => [
+            g.id,
+            g.name,
+          ])
+        )
+      );
+    } catch (erro) {
+      console.error("Erro ao carregar o acerto dos grupos:", erro);
+    }
   };
 
   const loadData = async () => {
@@ -280,6 +331,8 @@ export default function PersonalFinancePage() {
         .limit(50);
 
       setTransactions(transactionsData || []);
+
+      await carregarGrupos();
 
       // Carregar contas financeiras.
       //
@@ -518,6 +571,103 @@ export default function PersonalFinancePage() {
       </div>
 
       {/*
+        O ACERTO COM OS GRUPOS (HMO-175)
+        --------------------------------
+        Uma despesa de grupo é gravada inteira na minha conta -- quem pagou o
+        restaurante desembolsou os R$ 300, não os R$ 100 da parte dele. Então o
+        cartão "Despesas" acima está certo e, ainda assim, não responde "quanto
+        disso volta pra mim?". Esse número vivia só dentro da tela de cada
+        grupo, uma tela por grupo, e nunca somado.
+
+        Fora do grid de cima de propósito: os três cartões falam do MÊS, e este
+        fala do saldo acumulado em aberto, que não tem recorte de mês nenhum.
+        Um quarto cartão ali dentro herdaria o "Este mês" dos vizinhos e diria
+        uma data que a conta não tem.
+
+        Ele some quando não há grupo com saldo aberto -- e quando a consulta
+        falha (`resumoDeGrupos` fica `null`). Ver a nota do estado.
+      */}
+      {resumoDeGrupos && resumoDeGrupos.grupos.length > 0 && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <div className="space-y-1">
+              <CardTitle className="text-sm font-medium">
+                {rotuloDoResumo(resumoDeGrupos).titulo}
+              </CardTitle>
+              <CardDescription>
+                O que cabe a você nas despesas dos grupos, menos o que você já
+                pagou por eles
+              </CardDescription>
+            </div>
+            <Users className="h-4 w-4 shrink-0" />
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <div
+                className={`text-2xl font-bold ${
+                  rotuloDoResumo(resumoDeGrupos).estado === "devo"
+                    ? "text-destructive"
+                    : "text-success"
+                }`}
+              >
+                {formatCurrency(rotuloDoResumo(resumoDeGrupos).valor)}
+              </div>
+              {/*
+                O líquido sozinho mente quando há grupos nos dois sentidos:
+                dever R$ 500 na viagem e ter R$ 500 a receber em casa dá zero,
+                e ninguém paga a viagem com um crédito que está com outras
+                pessoas. Nesse caso as duas pontas aparecem escritas.
+              */}
+              {precisaDetalhar(resumoDeGrupos) && (
+                <p className="text-xs text-muted-foreground">
+                  {formatCurrency(resumoDeGrupos.aPagar)} a pagar e{" "}
+                  {formatCurrency(resumoDeGrupos.aReceber)} a receber, em grupos
+                  diferentes
+                </p>
+              )}
+            </div>
+
+            {/* `grid-cols-1` explícito: sem ele o trilho automático usa o
+                conteúdo mínimo como piso e a linha estoura a largura do
+                celular (HMO-168). */}
+            <div className="grid grid-cols-1 gap-2">
+              {resumoDeGrupos.grupos.map((grupo) => (
+                <Link
+                  key={grupo.group_id}
+                  href={`/dashboard/expense-groups/${grupo.group_id}`}
+                  className="flex items-center justify-between gap-3 p-3 border rounded-lg transition-colors hover:bg-muted/50"
+                >
+                  <div className="min-w-0">
+                    <p className="font-medium truncate">{grupo.nome}</p>
+                    <p className="text-xs text-muted-foreground">
+                      Você pagou {formatCurrency(grupo.total_paid)} · sua parte
+                      é {formatCurrency(grupo.total_owed)}
+                    </p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p
+                      className={`font-semibold ${
+                        grupo.devo > 0 ? "text-destructive" : "text-success"
+                      }`}
+                    >
+                      {formatCurrency(Math.abs(grupo.devo))}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {grupo.devo > 0 ? "você deve" : "a receber"}
+                    </p>
+                  </div>
+                </Link>
+              ))}
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              Quem paga quem está na tela de cada grupo.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/*
         A barra agora filtra a lista por TIPO -- ela não troca de assunto.
 
         Antes eram "Lançamentos" e "Limites", e a segunda não falava de dinheiro
@@ -621,6 +771,23 @@ export default function PersonalFinancePage() {
                                 transaction.transaction_date
                               ).toLocaleDateString("pt-BR")}
                             </span>
+                            {/*
+                              O NOME DO GRUPO, e não "Compartilhado" (HMO-175).
+
+                              O selo genérico aparecia igual para os dois tipos
+                              de rateio -- grupo e conexão avulsa -- e não
+                              dizia com QUEM. Quem lançava a despesa marcando o
+                              grupo não tinha, nesta tela, nenhuma confirmação
+                              de que ela de fato entrou lá: uma despesa de
+                              grupo e uma dividida com uma pessoa só ficavam
+                              com exatamente a mesma cara.
+
+                              O selo genérico continua para o rateio sem grupo,
+                              e para o grupo cujo nome não veio (a chamada de
+                              grupos falha sem derrubar a lista): ali "•
+                              Compartilhado" é menos informação, não informação
+                              errada.
+                            */}
                             {transaction.is_shared && (
                               <>
                                 <span>•</span>
@@ -628,8 +795,18 @@ export default function PersonalFinancePage() {
                                   variant="outline"
                                   className="flex items-center gap-1"
                                 >
-                                  <Share2 className="h-3 w-3" />
-                                  Compartilhado
+                                  {transaction.group_id &&
+                                  nomeDoGrupo[transaction.group_id] ? (
+                                    <>
+                                      <Users className="h-3 w-3" />
+                                      {nomeDoGrupo[transaction.group_id]}
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Share2 className="h-3 w-3" />
+                                      Compartilhado
+                                    </>
+                                  )}
                                 </Badge>
                               </>
                             )}
