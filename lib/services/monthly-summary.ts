@@ -39,7 +39,8 @@ import {
   type AssinaturaQueSubiu,
   type ContaVencida,
 } from "@/lib/anomalies";
-import { formatarBRL } from "@/lib/services/notifications";
+import { lerPreferenciaDeMoeda } from "@/lib/moeda";
+import { formatarValor } from "@/lib/dinheiro";
 
 /** O `kind` de bill_notifications, na familia do resumo (migration 017). */
 export const KIND_RESUMO = "monthly_summary" as const;
@@ -161,9 +162,35 @@ export async function resumoDoUsuario(
   const primeiroDia = `${mes}-01`;
   const desde = inicioDoHistorico(hoje, MESES_DE_HISTORICO);
 
+  // ESTE RESUMO E DE UMA MOEDA SO, E ISSO E DELIBERADO (HMO-171)
+  //
+  // `resumoDoMesFechado` soma todas as linhas que casam o mes -- de proposito,
+  // porque quem participa de um grupo tem uma linha pessoal e uma por grupo no
+  // mesmo mes. Depois da 022 as views tem a moeda no GRAO, entao essa mesma soma
+  // passaria a juntar 1000 reais com 180 dolares e o resumo mensal anunciaria
+  // "voce gastou 1180" -- numa notificacao, que e o pior lugar para um numero
+  // errado: ela chega sozinha, sem tela ao lado para conferir.
+  //
+  // A escolha aqui e RESTRINGIR a leitura a moeda oficial, e nao somar nem
+  // quebrar o resumo em varios blocos. O motivo e o formato: e uma mensagem de
+  // texto com um numero, nao um relatorio -- e o resumo de quem movimenta duas
+  // moedas passa a cobrir a principal, em vez de inventar um total que nao
+  // existe. As telas de relatorio (fluxo de caixa, categorias) mostram TODAS as
+  // moedas separadas; esta notificacao e o unico lugar que fica parcial, e fica
+  // parcial de um jeito que nao mente sobre a unidade.
+  const moedaOficial = lerPreferenciaDeMoeda(
+    (
+      await client
+        .from("profiles")
+        .select("preferences")
+        .eq("id", userId)
+        .maybeSingle()
+    ).data?.preferences
+  ).oficial;
+
   const [fluxo, porCategoria, nomesDeCategoria, extras] = await Promise.all([
-    lerFluxo(client, userId, desde),
-    lerCategorias(client, userId, desde),
+    lerFluxo(client, userId, desde, moedaOficial),
+    lerCategorias(client, userId, desde, moedaOficial),
     nomesDasCategorias(client),
     lerExtras(client, userId, mes, primeiroDia),
   ]);
@@ -175,24 +202,37 @@ export async function resumoDoUsuario(
     nomesDeCategoria,
     assinaturasQueSubiram: extras.assinaturas,
     vencidas: extras.vencidas,
+    moeda: moedaOficial,
   });
 }
 
-async function lerFluxo(client: SupabaseClient, userId: string, desde: string) {
+async function lerFluxo(
+  client: SupabaseClient,
+  userId: string,
+  desde: string,
+  moeda: string
+) {
   const { data, error } = await client
     .from("monthly_cash_flow")
     .select("month, income, expense")
     .eq("user_id", userId)
+    .eq("currency", moeda)
     .gte("month", desde);
   if (error) throw error;
   return (data ?? []) as Array<{ month: string; income: number; expense: number }>;
 }
 
-async function lerCategorias(client: SupabaseClient, userId: string, desde: string) {
+async function lerCategorias(
+  client: SupabaseClient,
+  userId: string,
+  desde: string,
+  moeda: string
+) {
   const { data, error } = await client
     .from("category_monthly_totals")
     .select("month, category_id, expense")
     .eq("user_id", userId)
+    .eq("currency", moeda)
     .gte("month", desde);
   if (error) throw error;
   return (data ?? []) as Array<{ month: string; category_id: string | null; expense: number }>;
@@ -294,14 +334,20 @@ export function rotuloDoMes(mes: string): string {
 export function textoDoResumo(resumo: ResumoDoMes): { title: string; body: string } {
   const title = `Como foi ${rotuloDoMes(resumo.mes)}`;
 
+  // `formatarValor` na moeda do RESUMO, e nao `formatarBRL`. O resumo e gerado
+  // sobre a moeda oficial do usuario (ver `resumoDoUsuario`), entao um resumo em
+  // dolar com "R$" na frente seria um numero certo com a unidade errada -- numa
+  // notificacao, onde nao ha tela ao lado para desconfiar dele.
+  const dinheiro = (valor: number) => formatarValor(Math.abs(valor), resumo.moeda);
+
   const partes: string[] = [
-    `Entrou ${formatarBRL(resumo.entrou)} e saiu ${formatarBRL(resumo.saiu)}.`,
+    `Entrou ${dinheiro(resumo.entrou)} e saiu ${dinheiro(resumo.saiu)}.`,
   ];
 
   const maior = resumo.crescimentos[0];
   if (maior) {
     partes.push(
-      `${maior.rotulo} foi ${formatarBRL(maior.excesso)} acima do seu normal.`
+      `${maior.rotulo} foi ${dinheiro(maior.excesso)} acima do seu normal.`
     );
   }
 
@@ -313,7 +359,7 @@ export function textoDoResumo(resumo: ResumoDoMes): { title: string; body: strin
 
   if (resumo.vencidas.length > 0) {
     partes.push(
-      `${resumo.vencidas.length} conta(s) viraram o mes vencidas, ${formatarBRL(resumo.totalVencido)}.`
+      `${resumo.vencidas.length} conta(s) viraram o mes vencidas, ${dinheiro(resumo.totalVencido)}.`
     );
   }
 

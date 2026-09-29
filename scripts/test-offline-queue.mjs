@@ -595,3 +595,33 @@ test("as quatro decisoes sao alcancaveis, e nenhuma outra existe", () => {
     ["aparelho-vazio", "desistir", "repor-do-aparelho", "seguir"]
   );
 });
+
+// ---------------------------------------------------------------------------
+// A moeda atravessa a fila (HMO-171)
+// ---------------------------------------------------------------------------
+// A coluna `currency` tem DEFAULT 'BRL' (022). Isso faz o defeito aqui ser
+// invisivel: uma linha que chega a fila SEM moeda e gravada como real, sem erro
+// nenhum, e um lancamento feito offline numa conta em dolar entra no balde errado
+// do relatorio na hora da sincronizacao. So conferindo lancamento por lancamento
+// se descobre.
+
+test("a moeda escolhida na tela chega na linha da fila", () => {
+  assert.equal(linhaDe({ ...base, moeda: "USD" }).currency, "USD");
+});
+
+test("linha sem moeda cai em BRL, e nao em undefined", () => {
+  // `undefined` aqui seria omitido do JSON e a coluna cairia no DEFAULT -- o
+  // mesmo resultado, por acidente. A asercao existe para que o campo seja
+  // SEMPRE presente e explicito: uma linha na fila e um registro que o aparelho
+  // guarda por horas, e ela tem que dizer em que moeda esta.
+  assert.equal(linhaDe().currency, "BRL");
+  assert.equal(linhaDe({ ...base, moeda: "" }).currency, "BRL");
+  assert.equal(linhaDe({ ...base, moeda: "   " }).currency, "BRL");
+});
+
+test("a moeda e normalizada para maiuscula na fila", () => {
+  // A fila e gravada no aparelho e reenviada depois. Um "usd" minusculo passaria
+  // pelo JSON e bateria no CHECK da 022 so na sincronizacao -- horas depois, num
+  // reenvio de fundo que a pessoa nao esta olhando.
+  assert.equal(linhaDe({ ...base, moeda: " usd " }).currency, "USD");
+});

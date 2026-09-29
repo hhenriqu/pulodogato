@@ -40,6 +40,7 @@ import assert from "node:assert/strict";
 
 const {
   agregarTransacoes,
+  agregarTransacoesPorMoeda,
   contemHoje,
   ehDataIso,
   ehPeriodoCorrente,
@@ -733,4 +734,117 @@ test("o rotulo do intervalo nao passa por Date -- 30/09 nao vira 29/09", () => {
     rotuloDoPeriodo({ de: "2026-09-30", ate: "2026-10-01", modo: "intervalo" }),
     "30/09/2026 a 01/10/2026"
   );
+});
+
+// ---------------------------------------------------------------------------
+// O INTERVALO NAO PODE SOMAR MOEDAS DIFERENTES (HMO-171 x HMO-173)
+// ---------------------------------------------------------------------------
+// Este bloco existe por causa do cruzamento de duas issues que passaram no CI
+// separadas e produziam um defeito juntas.
+//
+// A HMO-171 tirou a mistura de moedas dos relatorios: a migration 022 poe a
+// moeda no GRAO das views do 008, e a rota separa a serie mensal por moeda. A
+// HMO-173 abriu um SEGUNDO caminho na mesma rota -- o periodo que nao cai em
+// meses inteiros nao sai de view nenhuma, e a soma passa a ser feita em
+// JavaScript sobre as linhas cruas.
+//
+// Esse segundo caminho nasceu sem moeda. Para 15/09 a 20/10 com gasto em real e
+// em dolar ele devolvia 1000 + 180 = 1180: um numero que nao esta em moeda
+// nenhuma, com cara de total e para MAIS. Sem erro, sem aviso, e com a 022 ja
+// aplicada em producao.
+//
+// Nenhuma das duas suites pegava sozinha, e e por isso que a asercao mora aqui:
+// a da moeda so exercita a serie das views, e esta so exercitava a aritmetica
+// sem moeda.
+
+test("intervalo com duas moedas devolve dois blocos, e nenhum soma o outro", () => {
+  const blocos = agregarTransacoesPorMoeda(
+    [
+      { amount: -1000, transaction_type: "expense", currency: "BRL" },
+      { amount: -180, transaction_type: "expense", currency: "USD" },
+      { amount: 5000, transaction_type: "income", currency: "BRL" },
+    ],
+    "BRL"
+  );
+
+  assert.equal(blocos.length, 2, "as duas moedas tem que virar dois blocos");
+
+  const brl = blocos.find((b) => b.currency === "BRL");
+  const usd = blocos.find((b) => b.currency === "USD");
+
+  assert.equal(brl.summary.total_expense, 1000);
+  assert.equal(brl.summary.total_income, 5000);
+  assert.equal(usd.summary.total_expense, 180);
+
+  // A NEGACAO explicita, que e o que separa este teste de um que passaria com o
+  // defeito de pe: 1180 e o numero errado, e ele nao pode aparecer em bloco
+  // nenhum.
+  for (const bloco of blocos) {
+    assert.notEqual(
+      bloco.summary.total_expense,
+      1180,
+      "o intervalo somou reais com dolares -- o defeito que a 022 existe para impedir"
+    );
+  }
+});
+
+test("a moeda oficial vem primeiro, mesmo movimentando menos", () => {
+  // A ordem tem que ser a MESMA do caminho mensal, senao o painel e o relatorio
+  // elegem blocos principais diferentes para o mesmo dinheiro.
+  const blocos = agregarTransacoesPorMoeda(
+    [
+      { amount: -9000, transaction_type: "expense", currency: "USD" },
+      { amount: -10, transaction_type: "expense", currency: "BRL" },
+    ],
+    "BRL"
+  );
+  assert.equal(blocos[0].currency, "BRL");
+});
+
+test("sem movimento na oficial, o bloco principal e o mais movimentado", () => {
+  // Um mes inteiro no exterior so tem dolar. Fixar reais aqui devolveria uma
+  // serie de zeros para quem gastou -- dinheiro sumindo da tela.
+  const blocos = agregarTransacoesPorMoeda(
+    [{ amount: -9000, transaction_type: "expense", currency: "USD" }],
+    "BRL"
+  );
+  assert.equal(blocos[0].currency, "USD");
+});
+
+test("lancamento sem moeda cai na OFICIAL, e nao em BRL fixo", () => {
+  // Quem tem dolar como moeda principal e um lancamento antigo sem a coluna
+  // veria esse lancamento virar um bloco "BRL" de mentira, separado do resto do
+  // proprio dinheiro.
+  const blocos = agregarTransacoesPorMoeda(
+    [
+      { amount: -50, transaction_type: "expense", currency: null },
+      { amount: -70, transaction_type: "expense", currency: "USD" },
+    ],
+    "USD"
+  );
+  assert.equal(blocos.length, 1, "os dois lancamentos sao da mesma moeda");
+  assert.equal(blocos[0].currency, "USD");
+  assert.equal(blocos[0].summary.total_expense, 120);
+});
+
+test("transferencia continua fora da conta, em qualquer moeda", () => {
+  // As duas pernas de uma transferencia se anulam no saldo e inflariam receita
+  // E despesa. O filtro ja existia em `agregarTransacoes`; agrupar por moeda
+  // nao pode ter aberto um buraco nele.
+  const blocos = agregarTransacoesPorMoeda(
+    [
+      { amount: -300, transaction_type: "transfer", currency: "USD" },
+      { amount: 300, transaction_type: "transfer", currency: "USD" },
+      { amount: -40, transaction_type: "expense", currency: "USD" },
+    ],
+    "USD"
+  );
+  assert.equal(blocos.length, 1);
+  assert.equal(blocos[0].summary.total_expense, 40);
+  assert.equal(blocos[0].summary.total_income, 0);
+  assert.equal(blocos[0].summary.transaction_count, 1);
+});
+
+test("periodo sem movimento nenhum nao produz bloco", () => {
+  assert.deepEqual(agregarTransacoesPorMoeda([], "BRL"), []);
 });

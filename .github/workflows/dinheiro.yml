@@ -80,3 +80,22 @@ jobs:
 
       - name: A verificacao da conta sabe falhar
         run: node scripts/mutantes-calculadora-de-campo.mjs
+
+      # A moeda oficial, a sugestao por lancamento e o periodo separado por
+      # moeda (partes 2 e 3 da HMO-171). Mora neste workflow, e nao no db-verify,
+      # pelo mesmo motivo da suite acima: o db-verify e filtrado por `database/**`
+      # e nao dispararia num PR que so mexe em lib/moeda.ts ou numa tela.
+      #
+      # O ultimo caso da suite `dinheiro` tambem depende de rodar aqui: ele le o
+      # CHECK da migration 022 e compara com `MOEDAS`, porque o catalogo de
+      # moedas passou a ter duas copias (TypeScript e SQL) e elas divergem em
+      # silencio na direcao mais provavel -- moeda nova no seletor que o banco
+      # recusa, e a tela mostra "erro ao salvar".
+      - name: A moeda oficial e o periodo separado por moeda
+        run: npm run test:moeda
+
+      # Controle negativo da suite de cima. As duas regras que mais importam aqui
+      # sao PRECEDENCIAS -- "o lancamento ganha da conta", "a oficial vem
+      # primeiro" -- e precedencia invertida passa pelo tsc e pelo lint sem nada.
+      - name: A verificacao da moeda sabe falhar
+        run: node scripts/mutantes-moeda.mjs

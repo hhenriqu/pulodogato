@@ -10,6 +10,7 @@
 
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
+import { moedaConhecida } from "@/lib/dinheiro";
 
 export async function PATCH(
   request: NextRequest,
@@ -74,6 +75,26 @@ export async function PATCH(
     if (body.last_four_digits !== undefined)
       patch.last_four_digits = String(body.last_four_digits).trim() || null;
     if (body.is_active !== undefined) patch.is_active = Boolean(body.is_active);
+
+    // A moeda da conta (022). Recusa em vez de corrigir: o CHECK do banco
+    // devolveria 23514, que a tela mostra como "Não foi possível atualizar a
+    // conta" sem dizer o motivo.
+    //
+    // E NAO aceita null nem vazio, ao contrario de `bank_name` logo acima: a
+    // coluna e NOT NULL, e "limpar a moeda" nao e uma operacao que exista. Um
+    // cliente que mandasse `currency: ""` tomaria um 23502 com cara de bug do
+    // servidor.
+    //
+    // Trocar a moeda da conta NAO mexe na moeda dos lancamentos que ela ja tem,
+    // e e de proposito -- a coluna deles e independente justamente por isso
+    // (ver lib/moeda.ts). A conta passa a sugerir a moeda nova daqui para a
+    // frente; o historico fica onde esta.
+    if (body.currency !== undefined) {
+      if (!moedaConhecida(body.currency)) {
+        return NextResponse.json({ error: "Moeda inválida" }, { status: 400 });
+      }
+      patch.currency = String(body.currency).trim().toUpperCase();
+    }
 
     if (!Object.keys(patch).length) {
       return NextResponse.json({ error: "Nada para alterar" }, { status: 400 });

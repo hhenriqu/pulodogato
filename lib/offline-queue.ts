@@ -63,6 +63,16 @@ export interface LinhaDeTransacao {
   notes: string | null;
   is_shared: boolean;
   group_id: null;
+  /**
+   * Moeda deste lancamento (ISO 4217, migration 022).
+   *
+   * Obrigatoria na linha, e nao opcional: a coluna tem DEFAULT 'BRL', entao uma
+   * linha SEM o campo entra como real sem erro nenhum. Um lancamento feito
+   * offline numa conta em dolar seria gravado em reais na sincronizacao, e o
+   * relatorio o somaria no balde errado -- o tipo de defeito que so aparece
+   * conferindo lancamento por lancamento.
+   */
+  currency: string;
 }
 
 /** O que a tela coletou do formulario, antes de virar linha. */
@@ -88,6 +98,12 @@ export interface EntradaDeLancamento {
   editando: boolean;
   /** "one_off" | "fixed" | "card" -- despesa fixa nao e lancamento. */
   tipoDeDespesa?: string;
+  /**
+   * Moeda escolhida na tela (ISO 4217). Opcional na ENTRADA porque quem chama
+   * pode nao ter o campo (versao antiga da tela guardada no cache do service
+   * worker); ausente cai em BRL, que e o mesmo DEFAULT da coluna.
+   */
+  moeda?: string;
 }
 
 export type MotivoDeRecusa =
@@ -230,6 +246,9 @@ function montarLinha(
     // gravar uma despesa marcada como dividida e sem nenhum split.
     is_shared: false,
     group_id: null,
+    // Herdada da entrada, ao contrario dos dois de cima: a moeda e escolha da
+    // pessoa, nao consequencia de uma recusa. O fallback e o DEFAULT da coluna.
+    currency: entrada.moeda && entrada.moeda.trim() ? entrada.moeda.trim().toUpperCase() : "BRL",
   };
 }
 

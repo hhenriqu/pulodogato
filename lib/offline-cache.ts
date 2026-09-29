@@ -29,6 +29,16 @@ export interface ContaEmCache {
   id: string;
   name: string;
   account_type: string;
+  /**
+   * Moeda da conta (022). Guardada no cache porque offline o formulario de
+   * lancamento ainda precisa sugerir a moeda certa -- sem ela, toda conta em
+   * dolar voltaria a sugerir real assim que a pessoa perdesse o sinal, e o
+   * lancamento entraria na fila com a moeda errada.
+   *
+   * Opcional: um catalogo guardado por uma versao anterior do app nao tem o
+   * campo, e `moedaSugerida` trata ausente como BRL.
+   */
+  currency?: string;
 }
 
 export interface CatalogoDeLancamento {

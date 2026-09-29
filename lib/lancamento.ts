@@ -84,6 +84,12 @@ export interface ContaDeLancamento {
   id: string;
   name: string;
   account_type?: string | null;
+  /**
+   * Moeda da conta (022). Ela SUGERE a moeda do lancamento -- ver
+   * `moedaSugerida` em lib/moeda.ts, que e quem resolve a precedencia entre a
+   * conta e o proprio lancamento.
+   */
+  currency?: string | null;
 }
 
 /** Quais blocos do formulario existem para este tipo e esta natureza. */
@@ -209,6 +215,28 @@ export interface ValoresDeLancamento {
   /** Como veio do input: string, ainda nao numero. So vale com `contada`. */
   mesesDeRepeticao: string;
 
+  /**
+   * A moeda deste lancamento (ISO 4217, migration 022).
+   *
+   * SEMPRE preenchida, inclusive quando o seletor esta desligado nas
+   * configuracoes -- e nesse caso vale a moeda da conta, ou a oficial. Deixar
+   * vazia "quando nao importa" faria o campo virar `undefined` no corpo do POST
+   * e o valor cair no DEFAULT do banco, o que esta certo para BRL e apaga a
+   * moeda de quem usa outra.
+   */
+  moeda: string;
+  /**
+   * A checkbox "esta em outra moeda", que REVELA o seletor -- e o que a issue
+   * pede literalmente ("uma checkbox ... caso a pessoa ative aparecer um select
+   * pra escolher qual moeda usar naquele lancamento").
+   *
+   * Ela nao e a moeda: e o estado da tela. Desmarcar volta `moeda` para a
+   * sugestao da conta, para que a pessoa nao grave em dolar um lancamento cuja
+   * checkbox ela desmarcou -- o campo sumiria da tela com o valor dele ainda no
+   * estado.
+   */
+  moedaSobreposta: boolean;
+
   // So despesa usa daqui para baixo.
   parcelado: boolean;
   totalDeParcelas: number;
@@ -237,6 +265,18 @@ export function valoresIniciais(): ValoresDeLancamento {
     // escola, salario): ele nao tem fim previsto. Quem tem prazo digita.
     duracao: "indefinida",
     mesesDeRepeticao: "",
+    // A tela sobrescreve com a moeda da conta / a oficial assim que a
+    // preferencia carrega. Este e o fallback de antes disso.
+    //
+    // LITERAL, e nao `MOEDA_PADRAO` de lib/dinheiro.ts, porque este arquivo nao
+    // tem import NENHUM de proposito -- `test:lancamento` o compila sozinho
+    // (`tsc lib/lancamento.ts`), sem o passo que reescreve o alias `@/`, e um
+    // import aqui derrubaria a suite com ERR_MODULE_NOT_FOUND. Quem impede a
+    // terceira copia de divergir e o caso "o padrao daqui e o mesmo de
+    // MOEDA_PADRAO" em scripts/test-moeda.mjs, que compila os dois modulos e
+    // compara.
+    moeda: "BRL",
+    moedaSobreposta: false,
     parcelado: false,
     totalDeParcelas: 1,
     valorDaParcela: "",

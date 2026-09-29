@@ -34,6 +34,8 @@
 // ---------------------------------------------------------------------------
 
 import type { AccountType, FinancialAccount } from "@/types/financial";
+import { MOEDA_PADRAO } from "@/lib/dinheiro";
+import { moedaSugerida } from "@/lib/moeda";
 
 /** As duas telas. */
 export type EscopoDeConta = "conta" | "cartao";
@@ -174,9 +176,22 @@ export interface ValoresDaConta {
   credit_limit: string;
   closing_day: string;
   due_day: string;
+  currency: string;
 }
 
-export function valoresIniciais(escopo: EscopoDeConta): ValoresDaConta {
+/**
+ * Conta nova nasce na moeda principal da pessoa, e nao em BRL fixo: quem
+ * configurou dolar como moeda oficial nao quer digitar "dolar" em cada conta
+ * que cria.
+ *
+ * O parametro e opcional porque a preferencia chega de uma leitura e demora um
+ * tique; ate ela chegar o formulario nasce em `MOEDA_PADRAO`, e a tela
+ * reinicializa quando abre o dialogo.
+ */
+export function valoresIniciais(
+  escopo: EscopoDeConta,
+  moedaOficial: string = MOEDA_PADRAO
+): ValoresDaConta {
   return {
     name: "",
     account_type: tipoPadraoDoEscopo(escopo),
@@ -185,6 +200,7 @@ export function valoresIniciais(escopo: EscopoDeConta): ValoresDaConta {
     credit_limit: "",
     closing_day: "",
     due_day: "",
+    currency: moedaOficial,
   };
 }
 
@@ -199,6 +215,11 @@ export function valoresDaConta(conta: FinancialAccount): ValoresDaConta {
     credit_limit: conta.credit_limit != null ? String(conta.credit_limit) : "",
     closing_day: conta.closing_day != null ? String(conta.closing_day) : "",
     due_day: conta.due_day != null ? String(conta.due_day) : "",
+    // A moeda da PROPRIA conta, nunca a oficial: reabrir uma conta em dolar tem
+    // que mostrar dolar. Cair na oficial aqui faria a edicao de qualquer campo
+    // (trocar o nome, corrigir o dia de vencimento) gravar a moeda principal em
+    // cima da moeda da conta, sem ninguem tocar nesse campo.
+    currency: moedaSugerida({ daConta: conta.currency }),
   };
 }
 
@@ -259,5 +280,12 @@ export function corpoDaConta(
     credit_limit: temFatura ? valores.credit_limit || null : null,
     closing_day: temFatura ? valores.closing_day || null : null,
     due_day: temFatura ? valores.due_day || null : null,
+    // Sempre mandada, inclusive com o seletor escondido. Note que ela NAO segue
+    // a regra dos tres `null` acima: limite e os dois dias sao de cartao, a
+    // moeda e de toda conta. Mandar so quando o campo esta visivel faria a conta
+    // perder a moeda que tinha no dia em que a pessoa desligasse o recurso nas
+    // configuracoes e editasse o nome -- a conta em dolar voltaria a BRL calada,
+    // e o relatorio dela mudaria de balde.
+    currency: valores.currency,
   };
 }

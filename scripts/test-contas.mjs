@@ -35,6 +35,7 @@ import {
   tiposDoEscopo,
   totalDoEscopo,
   validarConta,
+  valoresDaConta,
   valoresIniciais,
 } from "../.tmp-contas/lib/contas.js";
 
@@ -397,4 +398,77 @@ test("o dia digitado antes de trocar de tela nao barra a conta", () => {
     validarConta({ ...preenchido, account_type: "checking", closing_day: "99" }, "conta"),
     null
   );
+});
+
+// ---------------------------------------------------------------------------
+// A MOEDA DA CONTA (HMO-171)
+// ---------------------------------------------------------------------------
+
+test("conta nova nasce na moeda oficial da pessoa, e nao em BRL fixo", () => {
+  // Quem configurou dolar como moeda oficial nao quer digitar "dolar" em cada
+  // conta que cria.
+  assert.equal(valoresIniciais("conta", "USD").currency, "USD");
+  assert.equal(valoresIniciais("cartao", "USD").currency, "USD");
+});
+
+test("sem preferencia carregada ainda, o formulario nasce em BRL", () => {
+  // A preferencia chega de uma leitura e demora um tique. O default segura esse
+  // intervalo; a tela reinicializa o formulario quando o dialogo abre.
+  assert.equal(valoresIniciais("conta").currency, "BRL");
+});
+
+test("reabrir uma conta em dolar mostra dolar, nunca a moeda oficial", () => {
+  // O erro simetrico e o caro: cair na moeda oficial aqui faria a edicao de
+  // QUALQUER campo -- trocar o nome, corrigir o dia de vencimento -- gravar a
+  // moeda principal em cima da moeda da conta, sem ninguem tocar nesse campo.
+  // Quem mudasse a moeda oficial para BRL veria toda conta em dolar voltar a
+  // real no primeiro salvamento, e o relatorio dela mudaria de balde.
+  const conta = {
+    id: "c1",
+    name: "Conta gringa",
+    account_type: "checking",
+    bank_name: "",
+    last_four_digits: null,
+    credit_limit: null,
+    closing_day: null,
+    due_day: null,
+    currency: "USD",
+  };
+  assert.equal(valoresDaConta(conta).currency, "USD");
+});
+
+test("conta antiga, sem moeda gravada, le como BRL", () => {
+  // A 022 poe DEFAULT 'BRL' na coluna, mas uma linha que veio de cache offline
+  // ou de uma leitura parcial pode chegar sem o campo. Cair no padrao e o que
+  // impede o formulario de abrir com o seletor vazio e gravar NULL por cima.
+  const conta = {
+    id: "c2",
+    name: "Conta velha",
+    account_type: "checking",
+    bank_name: "",
+    last_four_digits: null,
+    credit_limit: null,
+    closing_day: null,
+    due_day: null,
+  };
+  assert.equal(valoresDaConta(conta).currency, "BRL");
+});
+
+test("a moeda vai no corpo das DUAS telas, inclusive com o seletor escondido", () => {
+  // Ela NAO segue a regra dos tres `null` de limite/fechamento/vencimento:
+  // aqueles sao de cartao, a moeda e de toda conta. Mandar so quando o campo
+  // esta visivel faria a conta perder a moeda que tinha no dia em que a pessoa
+  // desligasse o recurso nas configuracoes e editasse o nome -- a conta em
+  // dolar voltaria a BRL calada.
+  for (const escopo of ["conta", "cartao"]) {
+    const corpo = corpoDaConta(
+      { ...valoresIniciais(escopo), name: "X", currency: "USD" },
+      escopo
+    );
+    assert.equal(
+      corpo.currency,
+      "USD",
+      `a tela de ${escopo} nao mandou a moeda no corpo`
+    );
+  }
 });

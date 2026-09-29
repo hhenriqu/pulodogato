@@ -21,6 +21,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   MAX_DIGITOS,
@@ -441,4 +442,59 @@ test("teclar um menos nao muda nada, nem em tela nem no valor", () => {
     valor: "30.00",
     exibicao: "R$ 30,00",
   });
+});
+
+// ---------------------------------------------------------------------------
+// O catalogo tem DUAS copias, e esta e a que impede que elas divirjam
+// ---------------------------------------------------------------------------
+// `MOEDAS` decide simbolo e casas, e e o que o `<select>` oferece. A migration
+// 022 repete a mesma lista num CHECK, do lado do banco, para que um INSERT com
+// moeda que o app nao conhece seja RECUSADO -- sem o CHECK, um lancamento em
+// 'CZK' entraria e apareceria na tela com "R$" na frente, porque
+// `moedaPorCodigo` cai no padrao quando nao reconhece o codigo (o que e certo na
+// leitura: um jsonb mexido na mao nao pode deixar a tela branca).
+//
+// Duas copias da mesma lista sao duas listas diferentes no primeiro dia em que
+// alguem acrescentar uma moeda, e a divergencia nao da sintoma nenhum na
+// direcao mais provavel: moeda nova no TypeScript e esquecida no SQL aparece no
+// seletor, a pessoa escolhe, e a gravacao falha com erro de CHECK que a tela
+// mostra como "erro ao salvar". Na direcao oposta (sobra no SQL) nao ha sintoma
+// nenhum.
+//
+// Este teste le o ARQUIVO da migration -- nao o banco -- de proposito: ele roda
+// no workflow `dinheiro`, que nao tem banco e nao e filtrado por path, entao ele
+// pega a mudanca em lib/dinheiro.ts no mesmo PR em que ela acontece. O db-verify
+// e filtrado por `database/**` e nao dispararia.
+test("a lista de moedas do CHECK da 022 e a mesma de MOEDAS", () => {
+  const sql = readFileSync(
+    new URL("../database/migrations/022_currency.sql", import.meta.url),
+    "utf8"
+  );
+
+  const checks = [...sql.matchAll(/CHECK \(currency IN \(([^)]*)\)\)/g)];
+
+  // Tres tabelas ganharam a coluna: financial_accounts, financial_transactions
+  // e scheduled_transactions. Se um CHECK desaparecer da migration, esta
+  // asercao e que denuncia -- as de igualdade abaixo ficariam satisfeitas pelos
+  // que sobraram.
+  assert.equal(
+    checks.length,
+    3,
+    "esperava 3 CHECK de moeda na 022 (conta, lancamento e conta prevista)"
+  );
+
+  const doCatalogo = MOEDAS.map((m) => m.codigo).sort();
+
+  for (const [, lista] of checks) {
+    const doSql = lista
+      .split(",")
+      .map((pedaco) => pedaco.trim().replace(/^'|'$/g, ""))
+      .sort();
+
+    assert.deepEqual(
+      doSql,
+      doCatalogo,
+      "o CHECK da 022 e MOEDAS (lib/dinheiro.ts) divergiram"
+    );
+  }
 });

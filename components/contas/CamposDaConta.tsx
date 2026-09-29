@@ -33,6 +33,7 @@ import {
   type EscopoDeConta,
   type ValoresDaConta,
 } from "@/lib/contas";
+import { opcoesDeMoeda } from "@/lib/moeda";
 import type { AccountType } from "@/types/financial";
 
 interface CamposDaContaProps {
@@ -41,6 +42,13 @@ interface CamposDaContaProps {
   aoMudar: (valores: ValoresDaConta) => void;
   /** Edicao de algo que ja existe: o tipo nao muda mais. */
   editando: boolean;
+  /**
+   * Mostra o seletor de moeda (HMO-171). Vem de fora, e nao de um hook chamado
+   * aqui dentro, para nao quebrar a promessa do cabecalho deste arquivo:
+   * componente sem banco e sem hook de dados, que e o que deixa o teste
+   * renderizar os campos de verdade com `react-dom/server`.
+   */
+  mostrarMoeda?: boolean;
 }
 
 export function CamposDaConta({
@@ -48,6 +56,7 @@ export function CamposDaConta({
   valores,
   aoMudar,
   editando,
+  mostrarMoeda = false,
 }: CamposDaContaProps) {
   const campos = camposDoEscopo(escopo);
   const mudar = (parcial: Partial<ValoresDaConta>) =>
@@ -103,6 +112,42 @@ export function CamposDaConta({
               já feitos são lidos.
             </p>
           )}
+        </div>
+      )}
+
+      {/*
+        A moeda da conta (HMO-171). So aparece com o recurso ligado nas
+        configuracoes -- a issue pede que a escolha de moeda seja condicionada a
+        isso, e quem nunca vai usar outra moeda nao ganha um campo a mais.
+
+        O campo fica OCULTO, nao desabilitado: `valores.currency` continua no
+        estado e continua sendo mandado por `corpoDaConta`. Uma conta em dolar
+        criada com o recurso ligado nao pode voltar para BRL porque a pessoa
+        desligou o recurso e editou o nome depois.
+      */}
+      {mostrarMoeda && (
+        <div className="space-y-2">
+          <Label htmlFor="conta-moeda">Moeda</Label>
+          <Select
+            value={valores.currency}
+            onValueChange={(valor) => mudar({ currency: valor })}
+          >
+            <SelectTrigger id="conta-moeda">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {opcoesDeMoeda().map((o) => (
+                <SelectItem key={o.codigo} value={o.codigo}>
+                  {o.rotulo}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            {editando
+              ? "Vale para os lançamentos novos desta conta. Os que já existem ficam na moeda em que foram registrados."
+              : "Os lançamentos desta conta vão sugerir esta moeda."}
+          </p>
         </div>
       )}
 

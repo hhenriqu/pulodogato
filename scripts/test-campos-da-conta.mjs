@@ -39,13 +39,19 @@ import { valoresIniciais } from "../.tmp-campos-da-conta/lib/contas.js";
 /** Os tres campos que existem por causa da fatura, e so por causa dela. */
 const SO_DE_CARTAO = ["Limite", "Dia do fechamento", "Dia do vencimento"];
 
-function renderizar({ escopo, valores = {}, editando = false } = {}) {
+function renderizar({
+  escopo,
+  valores = {},
+  editando = false,
+  mostrarMoeda = false,
+} = {}) {
   return renderToStaticMarkup(
     h(CamposDaConta, {
       escopo,
       valores: { ...valoresIniciais(escopo), ...valores },
       aoMudar: () => {},
       editando,
+      mostrarMoeda,
     })
   );
 }
@@ -170,4 +176,79 @@ test("o formulario de cartao abre em cartao de credito", () => {
   // Nao ha seletor para escolher, entao o tipo tem que vir certo dos valores
   // iniciais -- senao o POST grava `checking` e o cartao nasce como conta.
   assert.equal(valoresIniciais("cartao").account_type, "credit_card");
+});
+
+// ---------------------------------------------------------------------------
+// A MOEDA DA CONTA (HMO-171)
+// ---------------------------------------------------------------------------
+// Este bloco existe por causa de um acidente real de ordem de merge. O seletor
+// de moeda por conta foi escrito em `app/(dashboard)/dashboard/accounts/page.tsx`,
+// e essa tela foi APAGADA pela HMO-166, que separou Contas de Cartoes. O rebase
+// resolvia o conflito sozinho, `tsc --noEmit` passava limpo, e o campo
+// simplesmente nao existia mais em tela nenhuma -- sem erro, sem aviso, e com a
+// migration 022 ja aplicada em producao esperando por ele.
+//
+// Nenhuma asercao sobre `lib/contas.ts` pega isso: `corpoDaConta` continuaria
+// mandando `currency` certinho a partir de um estado que nenhum campo edita.
+// So renderizar o componente pega.
+//
+// O que NAO da para afirmar aqui, pelo motivo ja explicado no cabecalho: os
+// NOMES das moedas. O radix monta a lista num portal, que so existe com o
+// seletor aberto. O rotulo e o texto de ajuda ficam fora do portal, e sao esses
+// que provam que o campo esta montado.
+
+test("o seletor de moeda aparece nas duas telas quando o recurso esta ligado", () => {
+  for (const escopo of ["conta", "cartao"]) {
+    const html = renderizar({ escopo, mostrarMoeda: true });
+    assert.ok(
+      html.includes("Moeda"),
+      `o seletor de moeda sumiu da tela de ${escopo} -- ele morava na accounts/page.tsx, que a HMO-166 apagou`
+    );
+    assert.ok(
+      html.includes('id="conta-moeda"'),
+      `o rotulo "Moeda" saiu sem o seletor junto em ${escopo}`
+    );
+  }
+});
+
+test("sem o recurso ligado, nenhuma das duas telas mostra moeda", () => {
+  // Este e o controle negativo do teste acima: se o campo fosse incondicional,
+  // os dois passariam verde e nenhum dos dois estaria afirmando nada.
+  for (const escopo of ["conta", "cartao"]) {
+    const html = renderizar({ escopo, mostrarMoeda: false });
+    assert.ok(
+      !html.includes('id="conta-moeda"'),
+      `a tela de ${escopo} ofereceu moeda com o recurso desligado nas configuracoes`
+    );
+  }
+});
+
+// A moeda SELECIONADA nao da para afirmar aqui, e vale registrar por que: o
+// radix so emite um <button role="combobox"> no servidor. O valor escolhido e a
+// lista de opcoes vivem no portal, que exige o seletor aberto. Eu escrevi a
+// asercao achando que havia um <select> oculto espelhando o valor -- nao ha, e
+// ela falhou. A regra "conta em dolar reabre em dolar" e de `valoresDaConta`,
+// que e funcao pura, e esta afirmada em test-contas.mjs.
+
+test("o texto de ajuda distingue conta nova de conta que ja tem historico", () => {
+  const nova = renderizar({ escopo: "conta", mostrarMoeda: true });
+  const existente = renderizar({
+    escopo: "conta",
+    valores: { id: "abc" },
+    editando: true,
+    mostrarMoeda: true,
+  });
+
+  assert.ok(
+    nova.includes("vão sugerir esta moeda"),
+    "a conta nova perdeu o texto que explica para que serve a moeda"
+  );
+  assert.ok(
+    existente.includes("ficam na moeda em que foram registrados"),
+    "a edicao nao avisa que os lancamentos antigos NAO sao convertidos -- e a leitura natural e que sao"
+  );
+  assert.ok(
+    !nova.includes("ficam na moeda em que foram registrados"),
+    "a conta nova prometeu preservar um historico que ela nao tem"
+  );
 });

@@ -20,6 +20,7 @@ import {
   validarContasDaTransferencia,
   NOME_DA_CATEGORIA_DE_TRANSFERENCIA,
 } from "@/lib/transferencia";
+import { moedaSugerida } from "@/lib/moeda";
 
 /**
  * A categoria reservada das pernas, criada sob demanda.
@@ -132,7 +133,7 @@ export async function POST(request: NextRequest) {
     const { data: contas } = ids.length
       ? await supabase
           .from("financial_accounts")
-          .select("id, name, account_type")
+          .select("id, name, account_type, currency")
           .eq("user_id", user.id)
           .in("id", ids)
       : { data: [] };
@@ -196,9 +197,30 @@ export async function POST(request: NextRequest) {
       notes: notas,
     };
 
+    // A MOEDA E DE CADA PERNA, NAO DA TRANSFERENCIA (HMO-171)
+    //
+    // Por isso ela nao entra em `comum`: cada perna fica na moeda da SUA conta.
+    // Uma transferencia de uma conta em real para uma em dolar e um cambio, e as
+    // duas pernas estao em unidades diferentes por definicao.
+    //
+    // A consequencia que vale registrar: o par deixa de se anular. Nas
+    // transferencias de mesma moeda a soma das duas pernas e zero -- e e isso que
+    // mantem o patrimonio total certo enquanto o dinheiro muda de conta. No
+    // cambio, -1000 BRL e +180 USD nao somam zero, e nao DEVEM somar: o saldo de
+    // cada conta na propria moeda continua exato, e e o unico numero que existe
+    // sem cotacao. Quem somar as duas pernas de moedas diferentes esperando zero
+    // esta fazendo a pergunta errada.
+    //
+    // As duas pernas sao `transfer`, e `category_monthly_totals` filtra
+    // `type IN ('expense','income')` -- entao o cambio nao entra como receita nem
+    // como despesa de nenhuma das duas moedas (conferido no Postgres: a moeda que
+    // so recebeu a perna do cambio nao produz linha nenhuma na view).
+    const moedaDaOrigem = moedaSugerida({ daConta: origem!.currency });
+    const moedaDoDestino = moedaSugerida({ daConta: destino!.currency });
+
     const { data: txSaida, error: erroSaida } = await supabase
       .from("financial_transactions")
-      .insert({ ...comum, ...saida })
+      .insert({ ...comum, ...saida, currency: moedaDaOrigem })
       .select()
       .single();
 
@@ -212,7 +234,12 @@ export async function POST(request: NextRequest) {
 
     const { data: txEntrada, error: erroEntrada } = await supabase
       .from("financial_transactions")
-      .insert({ ...comum, ...entrada, counterpart_transaction_id: txSaida.id })
+      .insert({
+        ...comum,
+        ...entrada,
+        currency: moedaDoDestino,
+        counterpart_transaction_id: txSaida.id,
+      })
       .select()
       .single();
 

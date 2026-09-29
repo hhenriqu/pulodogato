@@ -64,6 +64,7 @@ import {
   PainelSemRede,
 } from "@/components/SemRede";
 import { useEstaOnline } from "@/lib/hooks/useEstaOnline";
+import { usePreferenciaDeMoeda } from "@/lib/hooks/usePreferenciaDeMoeda";
 
 export default function CartoesPage() {
   const {
@@ -84,6 +85,9 @@ export default function CartoesPage() {
     valoresIniciais("cartao")
   );
   const online = useEstaOnline();
+  // Decide se o seletor de moeda aparece nesta tela, e qual moeda uma conta
+  // nova ganha por padrao. Ver lib/hooks/usePreferenciaDeMoeda.
+  const { moeda: preferenciaDeMoeda } = usePreferenciaDeMoeda();
 
   // A fatura e apresentada como divida, entao soma em modulo: o valor gravado e
   // negativo (as compras rebaixaram o saldo do cartao) e "Faturas em aberto:
@@ -95,7 +99,7 @@ export default function CartoesPage() {
   );
 
   function abrirNovo() {
-    setForm(valoresIniciais("cartao"));
+    setForm(valoresIniciais("cartao", preferenciaDeMoeda.oficial));
     setAberto(true);
   }
 
@@ -325,6 +329,7 @@ export default function CartoesPage() {
               valores={form}
               aoMudar={setForm}
               editando={Boolean(form.id)}
+              mostrarMoeda={preferenciaDeMoeda.porLancamento}
             />
 
             <div className="flex justify-end gap-2 pt-2">

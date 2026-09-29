@@ -105,7 +105,7 @@ export async function GET(request: NextRequest) {
     if (report === "cash-flow") {
       const q = supabase
         .from("monthly_cash_flow")
-        .select("month, income, expense, net, transaction_count")
+        .select("month, income, expense, net, transaction_count, currency")
         .eq("user_id", user.id)
         .gte("month", janela.inicio)
         .lte("month", janela.fim);
@@ -115,10 +115,16 @@ export async function GET(request: NextRequest) {
         : q.is("group_id", null)
       ).order("month", { ascending: true });
 
+      // A coluna "Moeda" e o que mantem este CSV correto depois da 022. Ele nao
+      // agrega nada -- despeja as linhas da view -- entao um mes com duas moedas
+      // vira DUAS linhas do mesmo mes. Sem a coluna, quem abre a planilha ve o
+      // mes repetido com dois valores diferentes e nada dizendo por que, e a
+      // primeira reacao de qualquer um e somar as duas.
       csv = montarCsv(
-        ["Mês", "Entradas", "Saídas", "Resultado", "Lançamentos"],
+        ["Mês", "Moeda", "Entradas", "Saídas", "Resultado", "Lançamentos"],
         (data ?? []).map((d) => [
           rotuloMes(String(d.month)),
+          String(d.currency ?? "BRL"),
           Number(d.income),
           Number(d.expense),
           Number(d.net),
@@ -129,7 +135,7 @@ export async function GET(request: NextRequest) {
     } else if (report === "categories") {
       const base = supabase
         .from("category_monthly_totals")
-        .select("month, category_id, expense, income, transaction_count")
+        .select("month, category_id, expense, income, transaction_count, currency")
         .gte("month", janela.inicio)
         .lte("month", janela.fim);
 
@@ -148,11 +154,12 @@ export async function GET(request: NextRequest) {
       const porId = new Map((categorias ?? []).map((c) => [c.id, c.name]));
 
       csv = montarCsv(
-        ["Mês", "Categoria", "Saídas", "Entradas", "Lançamentos"],
+        ["Mês", "Moeda", "Categoria", "Saídas", "Entradas", "Lançamentos"],
         linhas
           .sort((a, b) => String(a.month).localeCompare(String(b.month)))
           .map((l) => [
             rotuloMes(String(l.month)),
+            String(l.currency ?? "BRL"),
             porId.get(l.category_id) ?? "Sem categoria",
             Number(l.expense),
             Number(l.income),
@@ -176,6 +183,7 @@ export async function GET(request: NextRequest) {
       csv = montarCsv(
         [
           "Mês",
+          "Moeda",
           "Despesa prevista",
           "Despesa realizada",
           "Diferença",
@@ -186,6 +194,7 @@ export async function GET(request: NextRequest) {
         ],
         (data ?? []).map((d) => [
           rotuloMes(String(d.month)),
+          String(d.currency ?? "BRL"),
           Number(d.planned_expense),
           Number(d.actual_expense),
           Number(d.expense_variance),

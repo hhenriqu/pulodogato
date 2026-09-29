@@ -33,6 +33,8 @@
 // -----------------------------------------------------------------------------
 
 import { addMonthsClamped, today } from "@/lib/recurrence";
+import { MOEDA_PADRAO } from "@/lib/dinheiro";
+import { moedaSugerida, resumirPorMoeda } from "@/lib/moeda";
 
 /** De onde a resposta pode sair: rollup mensal ou agregacao por data. */
 export type ModoDePeriodo = "mes" | "intervalo";
@@ -372,6 +374,8 @@ export const TIPOS_DE_FLUXO = ["expense", "income"] as const;
 export interface LinhaDeTransacao {
   amount: number | string;
   transaction_type: string;
+  /** Opcional: linha de um SELECT que nao pediu a coluna cai na moeda oficial. */
+  currency?: string | null;
 }
 
 export interface ResumoDeFluxo {
@@ -548,4 +552,98 @@ export function janelaParaMaterializar(
   // Começa em hoje mesmo quando o periodo comeca antes: a parte passada da
   // janela nao pode ganhar linha nova.
   return { de: periodo.de > hoje ? periodo.de : hoje, ate: periodo.ate };
+}
+
+/** Um bloco de resultado do modo intervalo, todo numa unica moeda. */
+export interface BlocoDeFluxoPorMoeda {
+  currency: string;
+  symbol: string;
+  summary: ResumoDeFluxo;
+}
+
+/**
+ * O mesmo que `agregarTransacoes`, mas UMA VEZ POR MOEDA.
+ *
+ * POR QUE ISTO EXISTE, E POR QUE O `agregarTransacoes` CRU NAO BASTA
+ * ------------------------------------------------------------------
+ * A HMO-171 tirou a mistura de moedas das views do 008: elas passaram a ter a
+ * moeda no GRAO (migration 022), e a rota de fluxo de caixa separa a serie
+ * mensal com `separarSeriePorMoeda`. So que a HMO-173 abriu um SEGUNDO caminho
+ * na mesma rota -- o periodo `?de=&ate=` que nao cai em meses inteiros nao e
+ * respondido por view nenhuma, e a soma passa a ser feita aqui, no JavaScript,
+ * sobre as linhas cruas de `financial_transactions`.
+ *
+ * Esse caminho nasceu sem moeda: `SELECT amount, transaction_type` e um
+ * `reduce` por cima. Para um periodo com gasto em real e em dolar ele devolvia
+ * 1000 + 180 = 1180, um numero que nao esta em moeda nenhuma, com cara de total
+ * e para MAIS -- exatamente o defeito que a 022 foi aplicada em producao para
+ * eliminar, reintroduzido por uma porta que a 022 nao cobre, porque nao passa
+ * por view.
+ *
+ * Nenhuma das duas suites pegava: a da moeda so exercita a serie das views, e a
+ * do periodo so exercita a aritmetica sem moeda. O defeito so aparece no
+ * cruzamento das duas.
+ *
+ * A ordem dos blocos vem de `resumirPorMoeda`, a mesma do caminho mensal: a
+ * moeda oficial primeiro quando ela tem movimento, depois por volume. Duas
+ * ordens diferentes para a mesma informacao e como uma delas fica errada sem
+ * ninguem notar.
+ */
+export function agregarTransacoesPorMoeda(
+  linhas: LinhaDeTransacao[],
+  moedaOficial: string = MOEDA_PADRAO
+): BlocoDeFluxoPorMoeda[] {
+  const porMoeda = new Map<string, LinhaDeTransacao[]>();
+
+  for (const linha of linhas) {
+    // Linha sem moeda cai na oficial, e nao em BRL fixo: quem tem dolar como
+    // moeda principal e um lancamento antigo sem a coluna veria esse lancamento
+    // virar um bloco "BRL" de mentira, separado do resto do proprio dinheiro.
+    const codigo = moedaSugerida({
+      doLancamento: linha.currency,
+      oficial: moedaOficial,
+    });
+    const grupo = porMoeda.get(codigo);
+    if (grupo) grupo.push(linha);
+    else porMoeda.set(codigo, [linha]);
+  }
+
+  // `resumirPorMoeda` da a ordem e o simbolo; a soma de cada bloco continua
+  // sendo feita por `agregarTransacoes`, que e quem sabe que despesa e gravada
+  // negativa e que `transfer` fica fora da conta.
+  const resumos = new Map<string, ResumoDeFluxo>();
+  porMoeda.forEach((doGrupo, codigo) => {
+    resumos.set(codigo, agregarTransacoes(doGrupo));
+  });
+
+  const linhasPorMoeda: {
+    currency: string;
+    income: number;
+    expense: number;
+    net: number;
+    transaction_count: number;
+  }[] = [];
+  resumos.forEach((resumo, codigo) => {
+    linhasPorMoeda.push({
+      currency: codigo,
+      income: resumo.total_income,
+      expense: resumo.total_expense,
+      net: resumo.net,
+      transaction_count: resumo.transaction_count,
+    });
+  });
+
+  return resumirPorMoeda(linhasPorMoeda, moedaOficial).map((bloco) => ({
+    currency: bloco.moeda,
+    symbol: bloco.simbolo,
+    // O resumo vem do `agregarTransacoes` do grupo, e nao dos campos que
+    // `resumirPorMoeda` resomou: sao os mesmos numeros, e o unico jeito de eles
+    // divergirem seria um bug -- entao a fonte fica sendo uma so.
+    summary: resumos.get(bloco.moeda) ?? {
+      total_income: 0,
+      total_expense: 0,
+      net: 0,
+      transaction_count: 0,
+    },
+  }));
 }
