@@ -1,12 +1,16 @@
 "use client";
 
 // -----------------------------------------------------------------------------
-// CONFIGURACOES (HMO-159)
+// CONFIGURACOES (HMO-159, e a aba Moeda na HMO-171)
 // -----------------------------------------------------------------------------
-// Duas abas, e elas sao deliberadamente desiguais:
+// Tres abas, e elas sao deliberadamente desiguais:
 //
 //   Painel  -> o que aparece na tela inicial e em que ordem. Tudo aqui e
 //              reversivel, entao salva com um clique e pronto.
+//   Moeda   -> a moeda principal e o seletor de moeda por lancamento. Reversivel
+//              tambem, mas em componente e com Save PROPRIOS -- ver o comentario
+//              na aba: as duas rotas leem-e-mesclam o mesmo jsonb, e um botao
+//              unico viraria dois PUT concorrentes sobre a mesma coluna.
 //   Conta   -> apagar tudo e recomecar. Nada aqui e reversivel, entao exige
 //              frase digitada e mostra o que sobrou depois.
 //
@@ -51,6 +55,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { ConfiguracaoDeMoeda } from "@/components/financial/ConfiguracaoDeMoeda";
 import {
   LayoutDashboard,
   GripVertical,
@@ -63,6 +68,7 @@ import {
   Users,
   Eye,
   EyeOff,
+  Coins,
 } from "lucide-react";
 import {
   SECOES_DO_PAINEL,
@@ -224,11 +230,29 @@ export default function ConfiguracoesPage() {
             <LayoutDashboard className="h-4 w-4 mr-2" />
             Painel
           </TabsTrigger>
+          <TabsTrigger value="moeda">
+            <Coins className="h-4 w-4 mr-2" />
+            Moeda
+          </TabsTrigger>
           <TabsTrigger value="conta">
             <AlertTriangle className="h-4 w-4 mr-2" />
             Conta
           </TabsTrigger>
         </TabsList>
+
+        {/* ---------------------------------------------------------------- */}
+        {/* Aba: a moeda (HMO-171)                                            */}
+        {/* ---------------------------------------------------------------- */}
+        {/* Em componente proprio, e com Save proprio. O Save separado nao e
+            detalhe de organizacao: esta aba grava em
+            `profiles.preferences.moeda` e a aba Painel grava em
+            `profiles.preferences.dashboard`. Um botao unico teria de mandar as
+            duas coisas juntas, e as duas rotas leem-e-mesclam o jsonb inteiro --
+            dois PUT concorrentes sobre a mesma coluna, em que o ultimo a gravar
+            apaga o que o outro acabou de escrever. */}
+        <TabsContent value="moeda" className="space-y-4 mt-4">
+          <ConfiguracaoDeMoeda />
+        </TabsContent>
 
         {/* ---------------------------------------------------------------- */}
         {/* Aba: o painel                                                     */}
