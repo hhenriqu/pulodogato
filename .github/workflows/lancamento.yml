@@ -52,6 +52,16 @@ jobs:
       - name: Os campos que cada tela mostra
         run: npm run test:campos-lancamento
 
+      # O que erra o HISTORICO (HMO-170). Editar uma movimentacao que se repete
+      # pergunta se a mudanca vale para uma ocorrencia ou para as seguintes, e a
+      # issue e explicita: "nunca mudar o que ja passou". O defeito que esta
+      # suite pega e a barreira errada -- filtrar por `hoje` em vez de pela
+      # ocorrencia clicada passa em todo teste manual (onde a ancora E o mes
+      # corrente) e reescreve os meses entre hoje e a ancora quando ela esta mais
+      # a frente. A pessoa pede "daqui para frente" e recebe "desde sempre".
+      - name: O alcance de uma edicao, e o que ele nunca toca
+        run: npm run test:recorrencia-edicao
+
       # Controle negativo. As duas suites afirmam sobre AUSENCIA -- "a tela de
       # receita nao tem parcelamento" -- e uma asercao de ausencia passa verde
       # tambem quando ela deixa de achar o que deveria procurar. Uma verificacao
@@ -94,5 +104,39 @@ jobs:
             echo "::error::Verde com o sinal da despesa dependendo do que foi digitado."
             exit 1
           fi
+          cp $REGRAS.orig $REGRAS
 
-          echo "A verificacao fica vermelha nos tres defeitos."
+          # 4) HMO-170: a barreira do alcance vira `hoje` em vez da ocorrencia
+          #    clicada. Este e o defeito que reescreve o que a pessoa nao pediu,
+          #    e ele passa em qualquer teste manual feito no mes corrente.
+          ALCANCE=lib/recorrencia-edicao.ts
+          cp $ALCANCE $ALCANCE.orig
+          sed -i 's|if (irma.due_date < ancora.due_date) {|if (false) {|' $ALCANCE
+          if npm run test:recorrencia-edicao > /dev/null 2>&1; then
+            echo "::error::Verde com a edicao alcancando meses ANTERIORES ao clicado."
+            mv $ALCANCE.orig $ALCANCE
+            exit 1
+          fi
+          cp $ALCANCE.orig $ALCANCE
+
+          # 5) HMO-170: a ocorrencia PAGA volta a ser alteravel em lote. O mes
+          #    pago tem uma transacao real amarrada nele -- mexer no valor
+          #    reescreve um extrato que a pessoa ja conferiu.
+          sed -i 's|if (irma.status !== "pending") {|if (false) {|' $ALCANCE
+          if npm run test:recorrencia-edicao > /dev/null 2>&1; then
+            echo "::error::Verde com a edicao em lote alterando ocorrencia JA PAGA."
+            mv $ALCANCE.orig $ALCANCE
+            exit 1
+          fi
+          mv $ALCANCE.orig $ALCANCE
+
+          # 6) HMO-170: a receita volta a nao ter natureza, e salario deixa de
+          #    poder ser fixo. O caso de cima ("receita nao tem natureza de
+          #    despesa") afirma sobre AUSENCIA e continuaria verde com isto.
+          sed -i '0,/      natureza: true,/s//      natureza: false,/' $REGRAS
+          if npm run test:campos-lancamento > /dev/null 2>&1; then
+            echo "::error::Verde com a tela de receita sem o seletor pontual x fixa."
+            exit 1
+          fi
+
+          echo "A verificacao fica vermelha nos seis defeitos."

@@ -30,6 +30,9 @@ import {
   valorGravado,
   rotaDoTipo,
   tipoDoLancamento,
+  naturezasDoTipo,
+  regraDeRecorrencia,
+  MAX_MESES_DE_REPETICAO,
 } from "../.tmp-lancamento/lib/lancamento.js";
 
 const CATEGORIA_DESPESA = { id: "c1", name: "Mercado", is_expense: true };
@@ -120,9 +123,12 @@ test("sem a categoria em maos, a validacao nao inventa recusa", () => {
 // QUAIS CAMPOS EXISTEM
 // ---------------------------------------------------------------------------
 
-test("receita nao tem natureza, parcelamento nem rateio", () => {
+test("receita nao tem parcelamento nem rateio", () => {
   const campos = camposDoTipo("income", "one_off", false);
-  assert.equal(campos.natureza, false);
+  // `natureza` PASSOU a existir na receita com a HMO-170 (pontual x fixa), e a
+  // asercao mudou junto -- ver "as duas telas oferecem natureza" mais abaixo,
+  // que e quem cobra a lista de opcoes de cada tela. O resto continua sendo da
+  // despesa so: receita nao se parcela nem se rateia.
   assert.equal(campos.parcelamento, false);
   assert.equal(campos.rateio, false);
   assert.equal(campos.diaDeVencimento, false);
@@ -138,11 +144,16 @@ test("despesa tem os tres", () => {
 
 test("receita nao ganha campo de despesa nem passando natureza de cartao", () => {
   // O estado do formulario e um objeto so para os dois tipos, entao `natureza`
-  // existe na tela de receita. Quem decide e o TIPO: se esta funcao olhasse a
-  // natureza antes do tipo, a tela de receita passaria a exigir cartao.
+  // pode chegar como "card" na tela de receita -- pelo link de edicao de uma
+  // entrada apontada para um cartao, por exemplo. Quem decide e o TIPO: se esta
+  // funcao olhasse a natureza antes do tipo, a tela de receita passaria a exigir
+  // cartao, e o Salvar recusaria pedindo um campo que ela nao mostra.
   const campos = camposDoTipo("income", "card", false);
   assert.equal(campos.contaObrigatoria, false);
-  assert.equal(campos.natureza, false);
+  assert.equal(campos.parcelamento, false);
+  assert.equal(campos.rateio, false);
+  // E "card" nao e uma opcao oferecida na receita, mesmo chegando no estado.
+  assert.ok(!naturezasDoTipo("income").includes("card"));
 });
 
 test("gasto no cartao torna a conta obrigatoria", () => {
@@ -355,4 +366,173 @@ test("linha antiga sem a coluna: a categoria sabe mais que o sinal", () => {
 test("a rota de cada tipo", () => {
   assert.equal(rotaDoTipo("income"), "/dashboard/movimentacoes/receita");
   assert.equal(rotaDoTipo("expense"), "/dashboard/movimentacoes/despesa");
+});
+
+// ---------------------------------------------------------------------------
+// RECEITA FIXA E "POR QUANTOS MESES" (HMO-170)
+// ---------------------------------------------------------------------------
+// A issue pede que TODAS as movimentacoes possam ser marcadas como fixas, com
+// repeticao sem fim ou por um numero de meses. Antes disto o seletor de natureza
+// era exclusivo da despesa, e salario -- o exemplo do titulo da issue -- nao
+// tinha como ser cadastrado como entrada recorrente.
+
+test("as duas telas oferecem natureza, e so a despesa oferece cartao", () => {
+  assert.deepEqual(naturezasDoTipo("expense"), ["one_off", "card", "fixed"]);
+  // Receita no cartao entraria na fatura REDUZINDO o que se deve, que e um
+  // estorno e nao uma receita.
+  assert.deepEqual(naturezasDoTipo("income"), ["one_off", "fixed"]);
+});
+
+test("receita fixa mostra o dia do vencimento e a duracao", () => {
+  const campos = camposDoTipo("income", "fixed", false);
+  assert.equal(campos.natureza, true);
+  assert.equal(campos.diaDeVencimento, true);
+  assert.equal(campos.duracao, true);
+  // O que a receita continua NAO tendo.
+  assert.equal(campos.parcelamento, false);
+  assert.equal(campos.rateio, false);
+});
+
+test("receita pontual nao mostra duracao nem vencimento", () => {
+  const campos = camposDoTipo("income", "one_off", false);
+  assert.equal(campos.diaDeVencimento, false);
+  assert.equal(campos.duracao, false);
+});
+
+test("editar nunca mostra a duracao, nos dois tipos", () => {
+  // Uma transacao gravada e um lancamento, nao uma regra: a pergunta "por
+  // quantos meses?" nao tem resposta sobre ela. Quem muda a serie e a tela de
+  // Contas Previstas, com o alcance de `lib/recorrencia-edicao.ts`.
+  for (const tipo of ["income", "expense"]) {
+    const campos = camposDoTipo(tipo, "fixed", true);
+    assert.equal(campos.duracao, false, tipo);
+    assert.equal(campos.diaDeVencimento, false, tipo);
+  }
+});
+
+test("o rotulo da natureza fala do tipo da tela", () => {
+  assert.match(camposDoTipo("income", "fixed", false).rotuloDaNatureza, /Receita/);
+  assert.match(camposDoTipo("expense", "fixed", false).rotuloDaNatureza, /Despesa/);
+});
+
+// ---------------------------------------------------------------------------
+// A VALIDACAO DA CONTAGEM DE MESES
+// ---------------------------------------------------------------------------
+
+/** Um lancamento fixo valido, para cada caso mexer em um campo so. */
+function fixo(tipo, extra = {}) {
+  return {
+    ...valoresIniciais(),
+    descricao: tipo === "income" ? "Salário" : "Aluguel",
+    valor: "2500",
+    categoriaId: tipo === "income" ? "c2" : "c1",
+    data: "2026-09-28",
+    natureza: "fixed",
+    diaDeVencimento: "10",
+    ...extra,
+  };
+}
+
+const CTX = (tipo) => ({
+  categoria: tipo === "income" ? CATEGORIA_RECEITA : CATEGORIA_DESPESA,
+  editando: false,
+});
+
+test("fixa com repeticao indefinida e valida sem numero de meses", () => {
+  for (const tipo of ["income", "expense"]) {
+    const v = validarLancamento(tipo, fixo(tipo), CTX(tipo));
+    assert.equal(v.ok, true, `${tipo}: ${v.ok ? "" : v.mensagem}`);
+  }
+});
+
+test("por N meses exige 2 ou mais", () => {
+  for (const meses of ["", "0", "1", "abc", "2.5", "-3"]) {
+    const v = validarLancamento(
+      "expense",
+      fixo("expense", { duracao: "contada", mesesDeRepeticao: meses }),
+      CTX("expense")
+    );
+    assert.equal(v.ok, false, `aceitou "${meses}" meses`);
+    assert.match(v.mensagem, /meses/i);
+  }
+});
+
+test("por N meses aceita 2 e o teto", () => {
+  for (const meses of ["2", "12", String(MAX_MESES_DE_REPETICAO)]) {
+    const v = validarLancamento(
+      "income",
+      fixo("income", { duracao: "contada", mesesDeRepeticao: meses }),
+      CTX("income")
+    );
+    assert.equal(v.ok, true, `recusou ${meses} meses`);
+  }
+});
+
+test("acima do teto e recusado, e a recusa aponta a outra opcao", () => {
+  const v = validarLancamento(
+    "expense",
+    fixo("expense", {
+      duracao: "contada",
+      mesesDeRepeticao: String(MAX_MESES_DE_REPETICAO + 1),
+    }),
+    CTX("expense")
+  );
+  assert.equal(v.ok, false);
+  assert.match(v.mensagem, /todos os meses/i);
+});
+
+test("a contagem NAO e cobrada quando a tela nao mostra o bloco", () => {
+  // `mesesDeRepeticao` vive no estado das duas telas. Cobrar sem olhar para
+  // `campos.duracao` recusaria um lancamento PONTUAL por causa de um campo que
+  // ele nao tem -- e a mensagem falaria de um campo invisivel.
+  const v = validarLancamento(
+    "expense",
+    fixo("expense", { natureza: "one_off", duracao: "contada", mesesDeRepeticao: "1" }),
+    CTX("expense")
+  );
+  assert.equal(v.ok, true, v.ok ? "" : v.mensagem);
+});
+
+// ---------------------------------------------------------------------------
+// O CORPO QUE VAI PARA /api/recurring-rules
+// ---------------------------------------------------------------------------
+
+test("a regra vai com valor POSITIVO nos dois tipos", () => {
+  // A migration 005 tem CHECK `amount > 0`: a regra nao tem sinal, quem aplica
+  // o sinal de despesa e a baixa da ocorrencia. Um valor negativo aqui seria
+  // recusado pelo banco com um 500 sem explicacao na tela.
+  const despesa = regraDeRecorrencia("expense", fixo("expense", { valor: "-2500" }));
+  assert.equal(despesa.amount, 2500);
+  const receita = regraDeRecorrencia("income", fixo("income", { valor: "7000" }));
+  assert.equal(receita.amount, 7000);
+});
+
+test("transaction_type sai do TIPO DA TELA, nao de um literal", () => {
+  // Enquanto isto era `transaction_type: "expense"` escrito na mao, a receita
+  // fixa nasceria como GASTO: a agenda cobraria a pessoa pelo proprio salario.
+  assert.equal(regraDeRecorrencia("income", fixo("income")).transaction_type, "income");
+  assert.equal(regraDeRecorrencia("expense", fixo("expense")).transaction_type, "expense");
+});
+
+test("indefinida manda max_occurrences NULL, e nao 0", () => {
+  // NULL e "sem fim" na 005. O CHECK e `max_occurrences > 0`, entao um 0 seria
+  // recusado pelo banco.
+  const corpo = regraDeRecorrencia("expense", fixo("expense"));
+  assert.equal(corpo.max_occurrences, null);
+});
+
+test("por N meses vira max_occurrences = N", () => {
+  const corpo = regraDeRecorrencia(
+    "income",
+    fixo("income", { duracao: "contada", mesesDeRepeticao: "18" })
+  );
+  assert.equal(corpo.max_occurrences, 18);
+  // A frequencia e mensal: e o que faz "meses" e "ocorrencias" serem a mesma
+  // contagem. Se a tela oferecer outra frequencia, os dois se separam.
+  assert.equal(corpo.frequency, "monthly");
+});
+
+test("o dia do vencimento vai como numero", () => {
+  const corpo = regraDeRecorrencia("expense", fixo("expense", { diaDeVencimento: "05" }));
+  assert.equal(corpo.due_day, 5);
 });

@@ -256,3 +256,105 @@ test("nenhum grid sem coluna de base", () => {
     }
   }
 });
+
+// ---------------------------------------------------------------------------
+// A RECEITA FIXA E A DURACAO (HMO-170)
+// ---------------------------------------------------------------------------
+// A issue pede que TODA movimentacao possa ser marcada como fixa, repetindo sem
+// fim ou por N meses. A tela de receita nao tinha seletor de natureza nenhum,
+// entao salario -- o exemplo do titulo -- nao tinha como virar entrada mensal.
+//
+// Aqui as asercoes sao POSITIVAS de proposito. O caso de cima
+// ("receita nao tem natureza de despesa...") afirma sobre ausencia, e ausencia
+// continuaria verde com o seletor da receita nunca renderizando: ele procura por
+// "Tipo de Despesa", que a receita nao mostra nem antes nem depois.
+//
+// Nada aqui afirma sobre o TEXTO DAS OPCOES: o radix monta a lista num portal,
+// que no HTML do servidor nao existe. O que da para cobrar e o rotulo, o texto
+// de ajuda e os campos -- que e onde o defeito de arvore aparece.
+
+test("a receita tem seletor de natureza, com o rotulo dela", () => {
+  const html = renderizar({ tipo: "income" });
+  assert.ok(
+    html.includes("Tipo de Receita"),
+    "a tela de receita nao oferece escolher entre pontual e fixa"
+  );
+  assert.ok(
+    html.includes("Uma entrada avulsa"),
+    "o texto de ajuda da receita pontual nao apareceu"
+  );
+});
+
+test("receita fixa diz que vira regra, e pergunta o dia", () => {
+  const html = renderizar({ tipo: "income", valores: { natureza: "fixed" } });
+
+  assert.ok(html.includes("Salário"), "a ajuda da receita fixa nao cita o caso da issue");
+  assert.ok(html.includes("Contas Previstas"), "a ajuda nao diz onde a regra aparece");
+  // "Cai todo dia", nao "Vence todo dia": salario nao vence.
+  assert.ok(html.includes("Cai todo dia"), "o dia da entrada mensal nao apareceu");
+  assert.ok(html.includes('id="due_day"'));
+});
+
+test("os dois tipos mostram a duracao quando a natureza e fixa", () => {
+  for (const tipo of ["income", "expense"]) {
+    const html = renderizar({ tipo, valores: { natureza: "fixed" } });
+    assert.ok(
+      html.includes("Por quanto tempo"),
+      `a tela de ${tipo} fixa nao pergunta por quanto tempo`
+    );
+    // O padrao e sem fim, e a tela diz o que isso significa.
+    assert.ok(
+      html.includes("Continua até você desativar"),
+      `a tela de ${tipo} nao explica a repeticao indefinida`
+    );
+  }
+});
+
+test("a duracao NAO aparece no lancamento pontual", () => {
+  for (const tipo of ["income", "expense"]) {
+    const html = renderizar({ tipo, valores: { natureza: "one_off" } });
+    assert.ok(
+      !html.includes("Por quanto tempo"),
+      `a tela de ${tipo} pontual pergunta por quanto tempo`
+    );
+  }
+});
+
+test("por N meses abre o campo do numero de meses", () => {
+  const html = renderizar({
+    tipo: "expense",
+    valores: { natureza: "fixed", duracao: "contada" },
+  });
+  assert.ok(
+    html.includes('id="meses_de_repeticao"'),
+    "escolher 'por um numero de meses' nao abriu o campo do numero"
+  );
+  assert.ok(html.includes("Quantos meses"));
+  // E o texto de "sem fim" sai da tela: os dois juntos se contradizem.
+  assert.ok(!html.includes("Continua até você desativar"));
+});
+
+test("o campo de meses NAO aparece na repeticao indefinida", () => {
+  const html = renderizar({
+    tipo: "expense",
+    valores: { natureza: "fixed", duracao: "indefinida" },
+  });
+  assert.ok(
+    !html.includes('id="meses_de_repeticao"'),
+    "o campo de meses aparece sem a pessoa ter pedido prazo"
+  );
+});
+
+test("editando, nem o dia nem a duracao aparecem", () => {
+  // Uma transacao gravada e um lancamento, nao uma regra. A pergunta "muda so
+  // este mes ou os proximos?" e da tela de Contas Previstas.
+  for (const tipo of ["income", "expense"]) {
+    const html = renderizar({
+      tipo,
+      valores: { natureza: "fixed" },
+      editando: true,
+    });
+    assert.ok(!html.includes("Por quanto tempo"), `${tipo}: duracao ao editar`);
+    assert.ok(!html.includes('id="due_day"'), `${tipo}: dia de vencimento ao editar`);
+  }
+});
