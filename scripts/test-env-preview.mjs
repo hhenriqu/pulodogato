@@ -14,6 +14,7 @@ import {
   projectRefFromSupabaseUrl,
   previewPointsAtProduction,
   setupHintFor,
+  getSupabaseEnv,
 } from "../.tmp-env-preview/env.js";
 
 // O ref de producao, conferido contra o host de SUPABASE_DB_URL_RO.
@@ -135,4 +136,68 @@ test("so VERCEL_ENV=preview troca a dica", () => {
       `VERCEL_ENV=${JSON.stringify(env)} nao devia dar a dica de preview`
     );
   }
+});
+
+// HMO-132, a ligacao. Os testes acima chamam `setupHintFor` direto, entao todos
+// eles continuariam verdes se `required()` deixasse de chamar `setupHint()`, ou
+// se `setupHint()` passasse o argumento errado -- a dica certa existiria e
+// ninguem a leria. Estes dois vao pelo caminho real, `getSupabaseEnv()`, e
+// olham a mensagem que o build de fato imprime.
+
+/** Roda `fn` com o ambiente trocado, e devolve tudo como estava depois. */
+function comAmbiente(vars, fn) {
+  const antes = { ...process.env };
+  try {
+    for (const [k, v] of Object.entries(vars)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    return fn();
+  } finally {
+    for (const k of Object.keys(process.env)) delete process.env[k];
+    Object.assign(process.env, antes);
+  }
+}
+
+/** A mensagem que `getSupabaseEnv()` joga, ou null se ela nao jogar. */
+function erroDe(vars) {
+  return comAmbiente(vars, () => {
+    try {
+      getSupabaseEnv();
+      return null;
+    } catch (e) {
+      return e.message;
+    }
+  });
+}
+
+test("o build de um preview sem variaveis imprime a dica de preview", () => {
+  const msg = erroDe({
+    VERCEL: "1",
+    VERCEL_ENV: "preview",
+    NEXT_PUBLIC_SUPABASE_URL: undefined,
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: undefined,
+  });
+
+  assert.ok(msg, "getSupabaseEnv() tinha que falhar sem as variaveis");
+  assert.match(msg, /Variável de ambiente ausente/);
+  assert.ok(msg.includes("de proposito"), msg);
+  assert.ok(msg.includes("SEPARADO"), msg);
+  assert.ok(!msg.includes("escopo Production"), msg);
+  assert.ok(!msg.includes("redeploy"), msg);
+});
+
+test("o mesmo build em producao continua imprimindo a dica de producao", () => {
+  // Controle positivo da ligacao: sem ele, `setupHint()` devolvendo sempre a
+  // dica de preview passaria no teste acima.
+  const msg = erroDe({
+    VERCEL: "1",
+    VERCEL_ENV: "production",
+    NEXT_PUBLIC_SUPABASE_URL: undefined,
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: undefined,
+  });
+
+  assert.ok(msg, "getSupabaseEnv() tinha que falhar sem as variaveis");
+  assert.ok(msg.includes("escopo Production") && msg.includes("redeploy"), msg);
+  assert.ok(!msg.includes("de proposito"), msg);
 });
