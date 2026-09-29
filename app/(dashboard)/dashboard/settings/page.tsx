@@ -56,6 +56,7 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { ConfiguracaoDeMoeda } from "@/components/financial/ConfiguracaoDeMoeda";
+import { PainelDeLimites } from "@/components/subscription/PainelDeLimites";
 import {
   LayoutDashboard,
   GripVertical,
@@ -69,6 +70,7 @@ import {
   Eye,
   EyeOff,
   Coins,
+  Gauge,
 } from "lucide-react";
 import {
   SECOES_DO_PAINEL,
@@ -234,11 +236,26 @@ export default function ConfiguracoesPage() {
             <Coins className="h-4 w-4 mr-2" />
             Moeda
           </TabsTrigger>
+          <TabsTrigger value="limites">
+            <Gauge className="h-4 w-4 mr-2" />
+            Plano e limites
+          </TabsTrigger>
           <TabsTrigger value="conta">
             <AlertTriangle className="h-4 w-4 mr-2" />
             Conta
           </TabsTrigger>
         </TabsList>
+
+        {/* ---------------------------------------------------------------- */}
+        {/* Aba: plano e limites (HMO-162)                                    */}
+        {/* ---------------------------------------------------------------- */}
+        {/* Veio de Financas Pessoais, onde ocupava metade da barra de abas de
+            uma tela cujo assunto e dinheiro que entrou e saiu. Quanto do plano
+            ja foi usado e uma pergunta sobre a CONTA, e e aqui que as outras
+            perguntas sobre a conta ja moravam. */}
+        <TabsContent value="limites" className="space-y-4 mt-4">
+          <PainelDeLimites />
+        </TabsContent>
 
         {/* ---------------------------------------------------------------- */}
         {/* Aba: a moeda (HMO-171)                                            */}

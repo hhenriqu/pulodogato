@@ -127,3 +127,83 @@ export function resumoDoPeriodo(
     transferencias,
   };
 }
+
+// ---------------------------------------------------------------------------
+// O FILTRO DA LISTA DE LANCAMENTOS (HMO-162)
+// ---------------------------------------------------------------------------
+// A lista sempre trouxe os tres tipos -- a consulta nunca filtrou por tipo --
+// mas eles chegavam misturados e sem rotulo nenhum que dissesse qual era qual.
+// Uma perna de transferencia, na lista, tem exatamente a mesma cara de uma
+// despesa: valor negativo, pintado de vermelho. Quem procurava "onde foram
+// parar meus R$ 1.000" nao tinha como ver que aquela linha nao era um gasto.
+//
+// O filtro vive aqui, e nao dentro do componente, pelo mesmo motivo que
+// `resumoDoPeriodo` vive aqui: ele TEM que concordar com a soma dos cartoes de
+// cima. Se a tela filtrasse por `amount < 0` e o resumo classificasse por
+// `transaction_type`, a aba "Despesas" mostraria linhas que o card "Despesas"
+// nao contou -- dois numeros certos pela propria regra, discordando na mesma
+// tela. Por isso os dois passam por `classificarMovimentacao`.
+// ---------------------------------------------------------------------------
+
+/** O que a barra de filtros da lista oferece. `todos` nao esconde nada. */
+export type FiltroDeLancamento = "todos" | TipoMovimentacao;
+
+/**
+ * Os filtros na ordem em que aparecem, com o rotulo que o usuario le.
+ *
+ * Existe como dado, e nao como quatro botoes escritos na mao no JSX, porque a
+ * lista e o contador tem que percorrer exatamente o mesmo conjunto: um quinto
+ * filtro escrito so no JSX apareceria sem nunca receber contagem.
+ */
+export const FILTROS_DE_LANCAMENTO: {
+  id: FiltroDeLancamento;
+  rotulo: string;
+}[] = [
+  { id: "todos", rotulo: "Lançamentos" },
+  { id: "income", rotulo: "Receitas" },
+  { id: "expense", rotulo: "Despesas" },
+  { id: "transfer", rotulo: "Transferências" },
+];
+
+/**
+ * As linhas que o filtro escolhido deixa passar.
+ *
+ * O generico preserva o tipo da linha: a tela precisa do registro inteiro
+ * (descricao, categoria, splits) e nao so do que `MovimentacaoBruta` declara.
+ */
+export function filtrarLancamentos<T extends MovimentacaoBruta>(
+  movimentacoes: T[],
+  filtro: FiltroDeLancamento
+): T[] {
+  if (filtro === "todos") return movimentacoes;
+  return movimentacoes.filter((m) => classificarMovimentacao(m) === filtro);
+}
+
+/**
+ * Quantas linhas cada filtro mostraria.
+ *
+ * E o que faz a resposta de "cade minhas transferencias?" caber na propria
+ * barra: um zero em "Transferências" e diferente de uma aba que abre vazia sem
+ * explicar se nao ha linha ou se a tela quebrou.
+ *
+ * `todos` conta o total, e nao a soma dos outros tres, porque sao a mesma
+ * coisa por construcao -- `classificarMovimentacao` sempre devolve um dos tres
+ * e nunca descarta uma linha. Somar os tres aqui esconderia uma eventual
+ * quarta classificacao em vez de deixa-la aparecer como diferenca.
+ */
+export function contarPorFiltro(
+  movimentacoes: MovimentacaoBruta[]
+): Record<FiltroDeLancamento, number> {
+  const contagem: Record<FiltroDeLancamento, number> = {
+    todos: movimentacoes.length,
+    income: 0,
+    expense: 0,
+    transfer: 0,
+  };
+
+  for (const mov of movimentacoes) {
+    contagem[classificarMovimentacao(mov)] += 1;
+  }
+
+  return contagem;
+}
