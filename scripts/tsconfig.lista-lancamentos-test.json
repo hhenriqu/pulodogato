@@ -1,0 +1,14 @@
+{
+  "//": "Build so do teste: lib/lista-de-lancamentos.ts importa @/lib/movimentacoes para nao ter uma segunda lista de rotulos de filtro. O tsc resolve o alias @/ por causa de `paths` mas NAO o reescreve no JS emitido, entao o npm script tem um passo de reescrita depois. Ver scripts/test-lista-de-lancamentos.mjs.",
+  "compilerOptions": {
+    "outDir": "../.tmp-lista-lancamentos",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/lista-de-lancamentos.ts"]
+}

@@ -64,7 +64,8 @@
     "test:env-preview": "rm -rf .tmp-env-preview && tsc utils/supabase/env.ts --outDir .tmp-env-preview --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-env-preview.mjs",
     "test:busca-de-perfil": "rm -rf .tmp-busca-de-perfil && tsc lib/busca-de-perfil.ts --outDir .tmp-busca-de-perfil --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-busca-de-perfil.mjs",
     "check-rota-query-colidente": "node scripts/check-rota-query-colidente.mjs",
-    "test:orcamento-de-grupo": "rm -rf .tmp-orcamento-de-grupo && tsc -p scripts/tsconfig.orcamento-de-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-orcamento-de-grupo lib && node --test scripts/test-orcamento-de-grupo.mjs"
+    "test:orcamento-de-grupo": "rm -rf .tmp-orcamento-de-grupo && tsc -p scripts/tsconfig.orcamento-de-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-orcamento-de-grupo lib && node --test scripts/test-orcamento-de-grupo.mjs",
+    "test:lista-lancamentos": "rm -rf .tmp-lista-lancamentos && tsc -p scripts/tsconfig.lista-lancamentos-test.json && node scripts/resolve-aliases.mjs .tmp-lista-lancamentos lib && node --test scripts/test-lista-de-lancamentos.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

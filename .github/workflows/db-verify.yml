@@ -12,9 +12,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -950,6 +950,17 @@ jobs:
       # Os dois mutantes (classificar por sinal; contar as duas pernas) morrem.
       - name: Separacao contabil das tres movimentacoes
         run: npm run test:movimentacoes
+
+      # A lista de lancamentos trazia 50 linhas com `.limit(50)`, sem recorte de
+      # data e sem paginacao: o lancamento 51 nao existia para o usuario, e os
+      # cartoes do topo somavam essas 50 debaixo do rotulo "Este mes". Nenhum
+      # dos dois defeitos da erro, deixa a tela vazia ou quebra assercao
+      # numerica -- sao numeros certos com o rotulo errado. Por isso a FRASE da
+      # lista e codigo testado, e cada assercao do texto enganoso tem o controle
+      # negativo do lado: sem ele, uma funcao que escrevesse "parcial" ou "ha
+      # mais" em toda resposta passaria verde.
+      - name: Periodo, paginacao e rotulo da lista de lancamentos
+        run: npm run test:lista-lancamentos
 
       # A transferencia em si (HMO-164), que ate aqui era uma opcao dentro do
       # formulario de lancamento e gravava UMA linha: o dinheiro saia de uma

@@ -166,3 +166,7 @@ next-env.d.ts
 # saida do `npm run test:orcamento-de-grupo` (HMO-138; leva settlement.js,
 # services/budget.js e recurrence.js junto)
 /.tmp-orcamento-de-grupo/
+
+# saida do `npm run test:lista-lancamentos` (HMO-118; leva o movimentacoes.js
+# junto, porque lib/lista-de-lancamentos.ts importa os rotulos dos filtros de la)
+/.tmp-lista-lancamentos/

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { Suspense, useCallback, useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
 import { User } from "@supabase/supabase-js";
 import { useSubscription } from "@/lib/hooks/useSubscription";
@@ -24,6 +25,23 @@ import {
   resumoDoPeriodo,
   type FiltroDeLancamento,
 } from "@/lib/movimentacoes";
+import {
+  TAMANHO_DA_PAGINA,
+  descreverLista,
+  faixaDaPagina,
+  notaDoTotal,
+  temMaisParaCarregar,
+} from "@/lib/lista-de-lancamentos";
+import {
+  ehPeriodoCorrente,
+  lerPeriodo,
+  periodoCorrente,
+  periodoParaQuery,
+  rotuloDoPeriodo,
+  type Periodo,
+} from "@/lib/periodo-do-painel";
+import { today } from "@/lib/recurrence";
+import { SeletorDePeriodo } from "@/components/dashboard/SeletorDePeriodo";
 import { rotaDoTipo, tipoDoLancamento } from "@/lib/lancamento";
 import { ROTA_DA_TRANSFERENCIA } from "@/lib/transferencia";
 import {
@@ -53,6 +71,8 @@ import {
   Share2,
   ArrowRightLeft,
   Users,
+  Download,
+  CalendarRange,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -97,10 +117,81 @@ interface ExpenseSplit {
   };
 }
 
+// `useSearchParams` obriga a um limite de Suspense: sem ele o `next build` para
+// com "useSearchParams() should be wrapped in a suspense boundary". O
+// componente de verdade e o `Lancamentos` abaixo -- mesmo desenho da tela
+// inicial (ver app/(dashboard)/dashboard/page.tsx).
 export default function PersonalFinancePage() {
+  return (
+    <Suspense fallback={<Girando />}>
+      <Lancamentos />
+    </Suspense>
+  );
+}
+
+function Girando() {
+  return (
+    <div className="flex items-center justify-center min-h-[400px]">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+    </div>
+  );
+}
+
+function Lancamentos() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // O fuso de Sao Paulo, uma vez so, para a tela inteira concordar sobre que dia
+  // e hoje -- o mesmo `today()` do painel inicial, de bills, budgets e goals.
+  const hoje = today();
+
+  // ---------------------------------------------------------------------
+  // O PERIODO MORA NA URL, COMO NO PAINEL INICIAL
+  // ---------------------------------------------------------------------
+  // Nao e `useState`, pelos mesmos tres motivos da HMO-173: recarregar volta
+  // para o mes corrente, mandar o link manda o mes de quem abrir, e o botao
+  // voltar sai da tela em vez de desfazer a navegacao de periodo.
+  //
+  // E ele existe, antes de tudo, porque a lista nao tinha periodo NENHUM: ela
+  // pedia as 50 linhas mais recentes de toda a historia do usuario, e os
+  // cartoes somavam essas 50 debaixo do subtitulo "o resumo do mes". Ver o
+  // cabecalho de lib/lista-de-lancamentos.ts.
+  const periodo = lerPeriodo(
+    searchParams.get("de"),
+    searchParams.get("ate"),
+    hoje
+  );
+
+  const irPara = useCallback(
+    (novo: Periodo) => {
+      router.push(
+        `/dashboard/personal-finance?${periodoParaQuery(novo)}`
+      );
+    },
+    [router]
+  );
+
   const [user, setUser] = useState<User | null>(null);
   const [transactions, setTransactions] = useState<FinancialTransaction[]>([]);
   const [loading, setLoading] = useState(true);
+  /**
+   * A ultima pagina lida veio cheia -- entao pode haver mais no periodo.
+   *
+   * Comeca `false`: antes da primeira resposta a tela nao pode oferecer
+   * "Carregar mais", porque nao sabe se ha o que carregar.
+   */
+  const [temMais, setTemMais] = useState(false);
+  /** Buscando a pagina seguinte, com a lista atual ainda na tela. */
+  const [carregandoMais, setCarregandoMais] = useState(false);
+  /** Refazendo a consulta do periodo -- a lista fica fora da tela enquanto isso. */
+  const [atualizando, setAtualizando] = useState(false);
+  /**
+   * O `service_id` de `personal_finance`, guardado no primeiro carregamento.
+   *
+   * Sem ele, "Carregar mais" teria que reconsultar `financial_services` a cada
+   * clique para descobrir de novo um id que nunca muda.
+   */
+  const [serviceId, setServiceId] = useState<string | undefined>(undefined);
   /** Qual dos quatro filtros da lista esta selecionado. */
   const [filtro, setFiltro] = useState<FiltroDeLancamento>("todos");
   /** De quando sao os dados na tela, quando eles vieram do aparelho. */
@@ -121,12 +212,24 @@ export default function PersonalFinancePage() {
 
   // Função para deletar transação
   //
-  // Transferencia sai por outro caminho (HMO-164). Ela sao DUAS linhas, e o
-  // delete daqui apaga uma: a FK de `counterpart_transaction_id` e ON DELETE
+  // TODA EXCLUSAO SAI POR UMA ROTA -- NENHUMA POR `supabase.delete()` DAQUI
+  // ------------------------------------------------------------------------
+  // Transferencia sempre saiu por rota (HMO-164), porque ela sao DUAS linhas e
+  // um delete cru apaga uma: a FK de `counterpart_transaction_id` e ON DELETE
   // SET NULL (015), entao a outra perna nao e apagada nem da erro -- ela fica,
   // com o elo zerado, mexendo o saldo de UMA conta. Meia transferencia nao tem
   // sintoma: o extrato parece completo e o patrimonio esta errado pelo valor
-  // inteiro. A rota apaga o par.
+  // inteiro.
+  //
+  // Receita e despesa iam pelo outro caminho: um `.from("financial_transactions")
+  // .delete()` escrito aqui, com `/api/personal-finance/transactions/[id]`
+  // parada do lado fazendo a MESMA coisa mais um passo. Dois caminhos de escrita
+  // para a mesma operacao e o defeito que a HMO-118 pediu para eliminar, e o
+  // motivo nao e estetico: eles nao divergem hoje -- `group_transactions` cai
+  // por CASCADE (001), entao o passo extra da rota e redundante --, mas o
+  // proximo cuidado que a exclusao precisar (um estorno, um aviso de grupo, uma
+  // linha de auditoria) vai ser escrito em UM dos dois. Quem apagar pela tela
+  // nao recebe esse cuidado, e nada nessa situacao parece errado.
   const deleteTransaction = async (transaction: any) => {
     const ehTransferencia = transaction.transaction_type === "transfer";
 
@@ -141,26 +244,33 @@ export default function PersonalFinancePage() {
     }
 
     try {
-      if (ehTransferencia) {
-        const resposta = await fetch(
-          `/api/movimentacoes/transferencia?id=${transaction.id}`,
-          { method: "DELETE" }
+      const resposta = await fetch(
+        ehTransferencia
+          ? `/api/movimentacoes/transferencia?id=${transaction.id}`
+          : `/api/personal-finance/transactions/${transaction.id}`,
+        { method: "DELETE" }
+      );
+      const dados = await resposta.json().catch(() => ({}));
+      if (!resposta.ok) {
+        // A mensagem da rota vem em `error`; sem ela, uma frase que diz o que
+        // aconteceu. Um `throw new Error(undefined)` chegaria no catch como
+        // "Erro ao excluir transação" e esconderia o status.
+        throw new Error(
+          dados.error || `A exclusão foi recusada (HTTP ${resposta.status}).`
         );
-        const dados = await resposta.json();
-        if (!resposta.ok) throw new Error(dados.error);
-        toast.success(dados.message || "Transferência excluída.");
-      } else {
-        const { error } = await supabase
-          .from("financial_transactions")
-          .delete()
-          .eq("id", transaction.id)
-          .eq("user_id", user?.id);
-
-        if (error) throw error;
-        toast.success("Transação excluída com sucesso!");
       }
+      // A frase de sucesso e escrita aqui, e a da rota so vale para a
+      // transferencia -- que e quem tem algo a mais para contar ("as duas
+      // pernas"). `/api/personal-finance/transactions/[id]` responde
+      // "Transaction deleted successfully", em ingles: repassar `dados.message`
+      // sem olhar poria ingles num toast de um app em portugues.
+      toast.success(
+        ehTransferencia
+          ? dados.message || "Transferência excluída."
+          : "Transação excluída com sucesso!"
+      );
 
-      loadData();
+      recarregar();
     } catch (error) {
       console.error("Error deleting transaction:", error);
       toast.error(
@@ -173,9 +283,19 @@ export default function PersonalFinancePage() {
 
   const supabase = createClient();
 
+  // Recarrega a primeira pagina do periodo. E o que a tela faz ao abrir, ao
+  // trocar de periodo e depois de excluir um lancamento.
+  const recarregar = () => {
+    loadData();
+  };
+
+  // Depende do periodo: trocar de mes tem que refazer a consulta, senao a seta
+  // muda o rotulo e os numeros continuam os do mes anterior -- que e
+  // exatamente a classe de defeito que esta issue esta corrigindo.
   useEffect(() => {
     loadData();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [periodo.de, periodo.ate]);
 
   /**
    * Sem rede, esta tela nao tem lista para mostrar -- ela mostra DE QUANDO e o
@@ -235,7 +355,117 @@ export default function PersonalFinancePage() {
     }
   };
 
+  /**
+   * Uma pagina de lancamentos DO PERIODO ESCOLHIDO.
+   *
+   * O `.limit(50)` que estava aqui nao tinha recorte de data nenhum: trazia as
+   * 50 linhas mais recentes de toda a historia do usuario. Agora ha `gte`/`lte`
+   * sobre `transaction_date` -- que e `date` no banco (001), entao os dois
+   * extremos sao inclusivos e exatos, sem a armadilha de fuso que um
+   * `timestamptz` traria.
+   *
+   * POR QUE TRES `order`, E NAO UM
+   * ------------------------------
+   * `transaction_date` e so a data: um dia com quatro lancamentos tem quatro
+   * linhas empatadas, e o Postgres nao promete ordem entre linhas empatadas --
+   * nem que ela seja a mesma em duas consultas. Com `.range()` isso deixa de
+   * ser detalhe: a mesma linha pode voltar na pagina 1 e na pagina 2 (uma
+   * duplicata na lista, indistinguivel de uma despesa lancada duas vezes) ou em
+   * nenhuma das duas (a linha desaparece, que e o defeito que esta issue esta
+   * consertando, agora com paginacao em vez de limite). `created_at` desempata
+   * quase sempre e `id` fecha o resto -- e o par e ESTAVEL, que e o que a
+   * paginacao exige.
+   *
+   * O `error` e lancado, e nao descartado. `const { data } = await ...` era o
+   * que estava aqui: qualquer falha de consulta virava `data: null`, a tela
+   * mostrava zero lancamento e nada dizia que a lista nao carregou. Quem cai no
+   * catch de `loadData` hoje recebe a mensagem de FALTA DE REDE, que para um
+   * erro de banco e o rotulo errado -- mas um rotulo errado que avisa e melhor
+   * do que um zero confiante que nao avisa.
+   */
+  const consultarPagina = async (
+    userId: string,
+    serviceId: string | undefined,
+    pagina: number
+  ): Promise<FinancialTransaction[]> => {
+    const faixa = faixaDaPagina(pagina);
+
+    const { data, error } = await supabase
+      .from("financial_transactions")
+      .select(
+        `
+        *,
+        category:transaction_categories(*),
+        expense_splits(
+          *,
+          participant:profiles!expense_splits_participant_id_fkey(full_name, avatar_url)
+        )
+      `
+      )
+      .eq("user_id", userId)
+      .eq("service_id", serviceId)
+      .gte("transaction_date", periodo.de)
+      .lte("transaction_date", periodo.ate)
+      .order("transaction_date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(faixa.de, faixa.ate);
+
+    if (error) throw error;
+    return (data || []) as FinancialTransaction[];
+  };
+
+  /**
+   * A pagina seguinte, anexada ao fim da lista.
+   *
+   * A pagina e derivada do que ja esta na tela (`transactions.length /
+   * TAMANHO_DA_PAGINA`) em vez de vir de um contador em estado. Um contador
+   * proprio teria que ser zerado em toda troca de periodo, em toda exclusao e
+   * em todo recarregamento -- e o dia em que um desses esquecesse, a lista
+   * pediria a pagina 3 de um periodo que acabou de voltar para a pagina 1 e
+   * apareceria com um buraco no meio.
+   */
+  const carregarMais = async () => {
+    if (!user || carregandoMais) return;
+
+    setCarregandoMais(true);
+    try {
+      const proxima = await consultarPagina(
+        user.id,
+        serviceId,
+        Math.floor(transactions.length / TAMANHO_DA_PAGINA)
+      );
+
+      setTransactions((atuais) => [...atuais, ...proxima]);
+      setTemMais(temMaisParaCarregar(proxima.length));
+    } catch (erro) {
+      console.error("Erro ao carregar mais lançamentos:", erro);
+      // Sem `setTemMais(false)`: o botao continua ali para uma segunda
+      // tentativa. Esconde-lo depois de uma falha deixaria a pessoa com uma
+      // lista cortada e nenhum caminho para o resto dela.
+      toast.error(
+        "Não foi possível carregar mais lançamentos. Tente novamente."
+      );
+    } finally {
+      setCarregandoMais(false);
+    }
+  };
+
   const loadData = async () => {
+    // A LISTA DA TELA E ZERADA ANTES DA CONSULTA, E ISSO E DE PROPOSITO.
+    //
+    // Sem isto, trocar de mes com a seta deixa as linhas do mes ANTERIOR na
+    // tela debaixo do rotulo do mes novo, enquanto a consulta corre -- e se ela
+    // falhar, elas ficam ali. Sao os lancamentos de agosto apresentados como os
+    // de setembro: nenhum erro, nenhuma tela vazia, e o mesmo defeito que este
+    // seletor de periodo existe para eliminar.
+    //
+    // O vazio nao pisca como "nenhum lançamento" porque `atualizando` troca a
+    // lista por um indicador de carga -- ver o JSX.
+    setAtualizando(true);
+    setTransactions([]);
+    setTemMais(false);
+
     try {
       const { data: dadosDeAuth, error: erroDeAuth } =
         await supabase.auth.getUser();
@@ -312,25 +542,17 @@ export default function PersonalFinancePage() {
         categoriasCarregadas = categoriesData || [];
       }
 
-      // Carregar transações
-      const { data: transactionsData } = await supabase
-        .from("financial_transactions")
-        .select(
-          `
-          *,
-          category:transaction_categories(*),
-          expense_splits(
-            *,
-            participant:profiles!expense_splits_participant_id_fkey(full_name, avatar_url)
-          )
-        `
-        )
-        .eq("user_id", user.id)
-        .eq("service_id", serviceData?.id)
-        .order("transaction_date", { ascending: false })
-        .limit(50);
+      // A primeira pagina do periodo escolhido.
+      setServiceId(serviceData?.id);
 
-      setTransactions(transactionsData || []);
+      const primeiraPagina = await consultarPagina(
+        user.id,
+        serviceData?.id,
+        0
+      );
+
+      setTransactions(primeiraPagina);
+      setTemMais(temMaisParaCarregar(primeiraPagina.length));
 
       await carregarGrupos();
 
@@ -389,6 +611,7 @@ export default function PersonalFinancePage() {
       else avisarAparelhoVazio();
     } finally {
       setLoading(false);
+      setAtualizando(false);
     }
   };
 
@@ -435,6 +658,24 @@ export default function PersonalFinancePage() {
   const visiveis = filtrarLancamentos(transactions, filtro);
   const contagem = contarPorFiltro(transactions);
 
+  // O que a lista diz sobre si mesma: quantas linhas, DE QUE PERIODO, e se
+  // falta alguma. A regra esta em lib/lista-de-lancamentos.ts, com teste, e nao
+  // aqui no JSX -- ver o cabecalho daquele arquivo.
+  // A linha debaixo dos tres cartoes. Era a string "Este mês", escrita no JSX --
+  // ver `notaDoTotal`.
+  const notaDosTotais = notaDoTotal({
+    rotuloDoPeriodo: rotuloDoPeriodo(periodo),
+    temMais,
+  });
+
+  const descricaoDaLista = descreverLista({
+    rotuloDoPeriodo: rotuloDoPeriodo(periodo),
+    filtro,
+    visiveis: visiveis.length,
+    carregados: transactions.length,
+    temMais,
+  });
+
   return (
     <div className="container mx-auto py-6 space-y-6">
       {/* Header */}
@@ -450,9 +691,19 @@ export default function PersonalFinancePage() {
             <Wallet className="h-8 w-8" />
             Finanças Pessoais
           </h1>
+          {/*
+            O periodo entra na frase, e nao e enfeite: ela dizia "o resumo do
+            mês" enquanto os cartoes somavam as 50 linhas mais recentes de toda
+            a historia do usuario, sem recorte de data nenhum. Para quem lança
+            vinte vezes por mês, "o resumo do mês" somava dois meses e meio.
+            Ver lib/lista-de-lancamentos.ts.
+          */}
           <p className="text-muted-foreground">
-            Seus lançamentos e o resumo do mês. Receita e despesa se lançam em
-            telas próprias.
+            Seus lançamentos e o resumo de{" "}
+            <span className="font-medium text-foreground">
+              {rotuloDoPeriodo(periodo)}
+            </span>
+            . Receita e despesa se lançam em telas próprias.
           </p>
           {/*
             Sem esta linha, a tela offline mostra as categorias do aparelho e
@@ -513,6 +764,40 @@ export default function PersonalFinancePage() {
         </div>
       </div>
 
+      {/*
+        O SELETOR DE PERIODO, E O EXPORT QUE SEGUE O PERIODO
+        ---------------------------------------------------
+        O mesmo componente da tela inicial, sobre a mesma lib -- e o `Periodo`
+        vive na URL, entao o link que a pessoa manda mostra o mes dela e o botao
+        voltar do navegador anda entre periodos.
+
+        O "Exportar CSV" e um `<a>`, e nao um `onClick` com `fetch` e Blob: a
+        rota ja responde com `Content-Disposition: attachment`, e um link deixa o
+        download nas maos do navegador -- inclusive "salvar como", que um Blob
+        em memoria nao oferece.
+
+        O `de`/`ate` no link e o que mantem o arquivo e a tela falando do MESMO
+        periodo. E a rota e a de /api/personal-finance/, nao a de relatorios:
+        aquela exclui os lançamentos de grupo e nao filtra `service_id`, entao o
+        arquivo sairia com linhas que esta lista nao mostra e SEM linhas que ela
+        mostra. Ver o cabecalho de
+        app/api/personal-finance/transactions/export/route.ts.
+      */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <SeletorDePeriodo periodo={periodo} hoje={hoje} aoMudar={irPara} />
+
+        <Button variant="outline" asChild className="gap-2">
+          <a
+            href={`/api/personal-finance/transactions/export?${periodoParaQuery(
+              periodo
+            )}`}
+          >
+            <Download className="h-4 w-4" />
+            Exportar CSV
+          </a>
+        </Button>
+      </div>
+
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card>
@@ -524,7 +809,7 @@ export default function PersonalFinancePage() {
             <div className="text-2xl font-bold text-success">
               {formatCurrency(income)}
             </div>
-            <p className="text-xs text-muted-foreground">Este mês</p>
+            <p className="text-xs text-muted-foreground">{notaDosTotais}</p>
           </CardContent>
         </Card>
 
@@ -537,7 +822,7 @@ export default function PersonalFinancePage() {
             <div className="text-2xl font-bold text-destructive">
               {formatCurrency(expenses)}
             </div>
-            <p className="text-xs text-muted-foreground">Este mês</p>
+            <p className="text-xs text-muted-foreground">{notaDosTotais}</p>
           </CardContent>
         </Card>
 
@@ -554,7 +839,9 @@ export default function PersonalFinancePage() {
             >
               {formatCurrency(balance)}
             </div>
-            <p className="text-xs text-muted-foreground">Receitas - Despesas</p>
+            <p className="text-xs text-muted-foreground">
+              Receitas - Despesas · {notaDosTotais}
+            </p>
             {/*
               Transferencia entre contas proprias nao e receita nem despesa, e
               por isso saiu das duas somas acima. Sem esta linha ela desapareceria
@@ -716,17 +1003,32 @@ export default function PersonalFinancePage() {
           {/* Transactions List */}
           <Card>
             <CardHeader>
-              <CardTitle>
-                {filtro === "todos" ? "Transações Recentes" : f.rotulo}
-              </CardTitle>
-              <CardDescription>
-                {filtro === "todos"
-                  ? "Últimas movimentações financeiras — receitas, despesas e transferências"
-                  : `Mostrando ${visiveis.length} de ${transactions.length} lançamentos`}
-              </CardDescription>
+              {/*
+                Era "Transações Recentes" + "Últimas movimentações financeiras",
+                e nenhum dos dois dizia RECENTES ATE QUANDO. A lista trazia 50
+                linhas sem recorte de data; agora as duas frases saem de
+                `descreverLista`, que nomeia o periodo e admite quando a lista
+                esta cortada.
+              */}
+              <CardTitle>{descricaoDaLista.titulo}</CardTitle>
+              <CardDescription>{descricaoDaLista.descricao}</CardDescription>
             </CardHeader>
             <CardContent>
-              {visiveis.length > 0 ? (
+              {/*
+                Enquanto a consulta do periodo corre, a lista sai da tela e da
+                lugar a um indicador. Sem isto o vazio de `setTransactions([])`
+                pisca como "Nenhum lançamento em setembro de 2026" -- um zero
+                confiante em cima de um periodo que ainda nao foi lido.
+              */}
+              {atualizando ? (
+                <div
+                  className="flex items-center justify-center py-8"
+                  aria-live="polite"
+                >
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
+                  <span className="sr-only">Carregando lançamentos</span>
+                </div>
+              ) : visiveis.length > 0 ? (
                 <div className="space-y-3">
                   {visiveis.map((transaction) => (
                     <div
@@ -905,8 +1207,9 @@ export default function PersonalFinancePage() {
                       Nenhum lançamento deste tipo
                     </h3>
                     <p className="text-muted-foreground">
-                      Você tem {transactions.length} lançamento(s), mas nenhum
-                      em {f.rotulo.toLowerCase()}.
+                      {rotuloDoPeriodo(periodo)} tem {transactions.length}{" "}
+                      lançamento(s) carregado(s), e nenhum em{" "}
+                      {f.rotulo.toLowerCase()}.
                     </p>
                   </div>
                   <Button variant="outline" onClick={() => setFiltro("todos")}>
@@ -914,17 +1217,42 @@ export default function PersonalFinancePage() {
                   </Button>
                 </div>
               ) : (
+                /*
+                  Periodo vazio. A mensagem antiga era "Nenhum lançamento ainda
+                  / Comece registrando o que entrou ou o que saiu" -- e sem
+                  periodo ela estava certa, porque a consulta varria a historia
+                  inteira. Com periodo ela viraria a mentira mais facil desta
+                  tela: quem navega para agosto e nao lançou nada em agosto leria
+                  "ainda", como se a conta dele estivesse vazia, com trezentos
+                  lançamentos em setembro a uma seta de distancia.
+
+                  Por isso o titulo nomeia o periodo, e o caminho de volta para
+                  o mes corrente aparece ANTES dos botoes de lançar sempre que
+                  nao e nele que a pessoa esta.
+                */
                 <div className="text-center py-8 space-y-4">
                   <Receipt className="h-12 w-12 text-muted-foreground mx-auto" />
                   <div>
                     <h3 className="text-lg font-medium mb-2">
-                      Nenhum lançamento ainda
+                      Nenhum lançamento em {rotuloDoPeriodo(periodo)}
                     </h3>
                     <p className="text-muted-foreground">
-                      Comece registrando o que entrou ou o que saiu.
+                      {ehPeriodoCorrente(periodo, hoje)
+                        ? "Comece registrando o que entrou ou o que saiu."
+                        : "Outros períodos podem ter lançamentos — use as setas acima."}
                     </p>
                   </div>
                   <div className="flex flex-wrap justify-center gap-2">
+                    {!ehPeriodoCorrente(periodo, hoje) && (
+                      <Button
+                        variant="secondary"
+                        className="gap-2"
+                        onClick={() => irPara(periodoCorrente(hoje))}
+                      >
+                        <CalendarRange className="h-4 w-4" />
+                        Ver {rotuloDoPeriodo(periodoCorrente(hoje))}
+                      </Button>
+                    )}
                     <Button variant="outline" asChild className="gap-2">
                       <Link href="/dashboard/movimentacoes/receita">
                         <TrendingUp className="h-4 w-4 text-success" />
@@ -944,6 +1272,48 @@ export default function PersonalFinancePage() {
                       </Link>
                     </Button>
                   </div>
+                </div>
+              )}
+
+              {/*
+                O BOTAO QUE FALTAVA -- E QUE E O CORACAO DESTA ISSUE
+                ---------------------------------------------------
+                Com `.limit(50)` e nenhuma paginacao, o lançamento numero 51
+                simplesmente nao existia para o usuario: sem "carregar mais",
+                sem periodo para navegar, e sem nada na tela dizendo que a
+                lista terminava ali.
+
+                Fica FORA do ramo de `visiveis.length > 0` de proposito. O caso
+                que importa e justamente o contrario: filtro "Transferências"
+                aberto, zero linhas visiveis entre as 50 carregadas, e as
+                transferências mais antigas na pagina seguinte. Se o botao
+                morasse dentro do ramo da lista cheia, a unica tela que precisa
+                dele seria a unica que nao o teria.
+              */}
+              {temMais && !atualizando && (
+                <div className="mt-4 flex flex-col items-center gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={carregarMais}
+                    disabled={carregandoMais}
+                    className="gap-2"
+                  >
+                    {carregandoMais ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current" />
+                        Carregando…
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="h-4 w-4" />
+                        Carregar mais
+                      </>
+                    )}
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    {transactions.length} lançamentos carregados de{" "}
+                    {rotuloDoPeriodo(periodo)}
+                  </p>
                 </div>
               )}
             </CardContent>
