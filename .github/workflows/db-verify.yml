@@ -666,6 +666,65 @@ jobs:
       - name: Cambio do grupo converte saldo e orcamento, e cotacao ausente e recusada
         run: $PSQL -f database/tests/026_cambio_do_grupo_test.sql
 
+      # HISTORICO PLANTADO ANTES DA 027, E POR QUE ELE E UM STEP PROPRIO
+      #
+      # A 027 tem tres UPDATEs de backfill. Este job constroi o banco do ZERO:
+      # quando a 027 roda, as tabelas estao vazias, os tres UPDATEs tocam zero
+      # linhas e nenhuma assercao sobre o estado final consegue distinguir um
+      # backfill correto de um errado ou ausente.
+      #
+      # Medido: sem este step, TRES mutantes da 027 sobreviveram ao arquivo de
+      # teste inteiro -- `launch_date = CURRENT_DATE` (reescreve o historico como
+      # se tudo tivesse sido anotado no dia da migration), o backfill da direcao
+      # removido, e um `expected_date = transaction_date` que inventa previsao
+      # para todo lancamento do passado. Com as linhas plantadas, os tres morrem.
+      #
+      # Este arquivo COMITA, ao contrario dos testes: a 027 roda noutra sessao e
+      # nao veria nada dentro de uma transacao aberta.
+      - name: Historico anterior a 027, para o backfill ter em que morder
+        run: $PSQL -f database/tests/027_historico_antes_da_027.sql
+
+      - name: 027_previsto_e_realizado_no_lancamento
+        run: $PSQL -f database/migrations/027_previsto_e_realizado_no_lancamento.sql
+
+      # Re-executavel: as colunas entram por ADD COLUMN IF NOT EXISTS, o CHECK so
+      # e criado quando `pg_constraint` nao o tem, os backfills tem `IS NULL` no
+      # WHERE, e a view entra por DROP + CREATE.
+      #
+      # A segunda passada tem um agravante proprio: os backfills NAO podem mexer
+      # em nada. Se o da direcao rodasse sem o `transaction_type IS NULL`, ele
+      # reescreveria como 'expense' uma direcao que alguem tivesse corrigido a
+      # mao -- e o teste que roda depois confere justamente isso.
+      - name: 027 e idempotente
+        run: $PSQL -f database/migrations/027_previsto_e_realizado_no_lancamento.sql
+
+      # Previsto x realizado no lancamento (HMO-188). O que so o Postgres pega:
+      #
+      #   - a DIRECAO da previsao. `scheduled_transactions.amount` tem
+      #     `CHECK (amount > 0)`, entao a ocorrencia nao guarda sinal, e antes da
+      #     027 a direcao saia so da REGRA -- uma previsao avulsa caia no
+      #     `?? 'expense'` da rota de baixa. Confirmar o recebimento de um
+      #     salario de R$ 7.000 lancado como previsao avulsa gravaria -7000: o
+      #     dinheiro entrando SAINDO da conta, com valor, descricao e categoria
+      #     certos e nenhum erro. O teste tem o defeito nomeado ao lado da
+      #     assercao (a leitura antiga, reproduzida, responde 'expense');
+      #   - a PRECEDENCIA ocorrencia -> regra -> expense. Um COALESCE na ordem
+      #     inversa passa em todas as outras assercoes do arquivo;
+      #   - o LEFT JOIN. Com INNER, a agenda perde TODO boleto lancado a mao e a
+      #     tela abre com a lista mais curta, sem erro;
+      #   - a view refeita por DROP + CREATE, que joga fora `security_invoker` e
+      #     o ACL. Sem eles a view roda com o privilegio do dono e devolve a
+      #     agenda inteira para qualquer usuario logado -- o furo que o 005
+      #     fechou, reaberto por uma migration que so queria uma coluna. O ACL e
+      #     lido do catalogo e nao por comportamento: um GRANT sobrando para anon
+      #     NAO muda o comportamento (a tabela base ainda recusa) e sobreviveu ao
+      #     arquivo inteiro antes dessa assercao existir;
+      #   - a AUSENCIA de um `CHECK (expected_date >= launch_date)`. Ele parece
+      #     higiene e recusaria o caso comum de anotar hoje uma conta que venceu
+      #     semana passada -- e quebraria a edicao de qualquer linha antiga.
+      - name: Direcao da previsao, dia do lancamento e dia previsto
+        run: $PSQL -f database/tests/027_previsto_e_realizado_test.sql
+
       # As duas suites que guardam as views que a 026 REESCREVEU rodam la atras na
       # cadeia (steps do 006 e do 007), ou seja: contra a definicao ANTIGA de
       # `group_member_balances` e `budget_consumption`. Elas nunca viram a versao
