@@ -182,6 +182,114 @@ try {
     console.log("");
   }
 
+  // ===================================================================
+  // O RECORTE DO TOPO (HMO-185)
+  // ===================================================================
+  // Chromium nao tem notch, entao `env(safe-area-inset-top)` vale 0 aqui e
+  // sempre valeu -- e por isso que o header ficou meses desenhando por cima do
+  // relogio do iPhone sem que medicao nenhuma reclamasse.
+  //
+  // O conserto leu o recorte para dentro de variaveis CSS justamente para
+  // abrir essa porta: variavel pode ser sobrescrita de fora, `env()` nao pode.
+  // Abaixo a sonda injeta os 47px de um iPhone 14 e mede o que acontece. Nao
+  // e um iPhone de verdade, e nao substitui um; e a prova de que o MECANISMO
+  // responde -- que era a peca que faltava.
+  await pagina.setViewportSize({ width: 390, height: 780 });
+  await pagina.goto(`${APP}/dashboard`, { waitUntil: "domcontentloaded" });
+  await pagina.waitForSelector("main h1", { state: "visible", timeout: 20000 });
+  await pagina.waitForTimeout(1000);
+
+  const geometria = () =>
+    pagina.evaluate(() => {
+      const header = document.querySelector(".lg\\:hidden.fixed.top-0");
+      const espacador = document.querySelector(".app-header-offset");
+      const principal = document.querySelector("main");
+      if (!header || !espacador || !principal) {
+        return { faltando: true };
+      }
+      return {
+        faltando: false,
+        // O topo da BARRA visivel, nao o da caixa: a caixa fica em y=0 de
+        // proposito (o fundo dela precisa pintar a area do notch); o que nao
+        // pode ficar debaixo do relogio e o conteudo.
+        barraTopo: Math.round(
+          header.firstElementChild.getBoundingClientRect().top,
+        ),
+        headerAltura: Math.round(header.getBoundingClientRect().height),
+        espacador: Math.round(espacador.getBoundingClientRect().height),
+        mainTopo: Math.round(principal.getBoundingClientRect().top),
+      };
+    });
+
+  const semRecorte = await geometria();
+  await pagina.evaluate(() => {
+    document.documentElement.style.setProperty("--safe-top", "47px");
+    document.documentElement.style.setProperty("--safe-bottom", "34px");
+  });
+  await pagina.waitForTimeout(300);
+  const comRecorte = await geometria();
+
+  const problemasDeRecorte = [];
+  if (semRecorte.faltando || comRecorte.faltando) {
+    problemasDeRecorte.push(
+      "nao achei header/.app-header-offset/main -- ou o deploy e anterior a " +
+        "HMO-185, ou o layout foi reescrito e esta sonda precisa ser reescrita",
+    );
+  } else {
+    console.log("");
+    console.log("recorte do topo:");
+    for (const [rotulo, g] of [
+      ["sem recorte (Android, desktop)", semRecorte],
+      ["com 47px injetados (iPhone 14)", comRecorte],
+    ]) {
+      console.log(
+        `  ${rotulo}: barra em y=${g.barraTopo}, header ${g.headerAltura}px, ` +
+          `espacador ${g.espacador}px, main em y=${g.mainTopo}`,
+      );
+    }
+
+    if (semRecorte.barraTopo !== 0)
+      problemasDeRecorte.push(
+        `sem recorte a barra deveria comecar em y=0 e comeca em y=${semRecorte.barraTopo} ` +
+          "-- o conserto do iPhone nao pode mexer no Android",
+      );
+    if (comRecorte.barraTopo !== 47)
+      problemasDeRecorte.push(
+        `com 47px de recorte a barra deveria descer para y=47 e esta em ` +
+          `y=${comRecorte.barraTopo} -- e o defeito relatado na HMO-185, o ` +
+          "header desenhando por cima do relogio",
+      );
+    for (const [rotulo, g] of [
+      ["sem recorte", semRecorte],
+      ["com recorte", comRecorte],
+    ]) {
+      if (g.espacador !== g.headerAltura)
+        problemasDeRecorte.push(
+          `${rotulo}: o espacador reserva ${g.espacador}px para um header de ` +
+            `${g.headerAltura}px -- a diferenca e conteudo escondido embaixo dele`,
+        );
+      if (g.mainTopo !== g.headerAltura)
+        problemasDeRecorte.push(
+          `${rotulo}: o <main> comeca em y=${g.mainTopo} e o header acaba em ` +
+            `y=${g.headerAltura}`,
+        );
+    }
+  }
+
+  // A meta viewport: ela ja foi reescrita em runtime so no iPhone, apagando o
+  // que app/layout.tsx declara. Como a sonda roda com UA de iPhone, ela e o
+  // unico lugar que enxerga essa reescrita acontecer.
+  const meta = await pagina.evaluate(
+    () => document.querySelector('meta[name="viewport"]')?.content ?? "",
+  );
+  if (/user-scalable=no|maximum-scale=1\b/.test(meta)) {
+    problemasDeRecorte.push(
+      `a meta viewport proibe zoom no iPhone ("${meta}") -- WCAG 1.4.4, e ` +
+        "sinal de que a reescrita em runtime voltou",
+    );
+  }
+
+  console.log("");
   console.log("=".repeat(60));
   if (achados.length === 0) {
     console.log(
@@ -194,7 +302,15 @@ try {
     }
   }
 
-  process.exitCode = achados.length === 0 ? 0 : 1;
+  if (problemasDeRecorte.length === 0) {
+    console.log("O recorte do topo responde, e o espacador acompanha.");
+  } else {
+    console.log(`${problemasDeRecorte.length} problema(s) de area util:`);
+    for (const p of problemasDeRecorte) console.log(`  ${p}`);
+  }
+
+  process.exitCode =
+    achados.length === 0 && problemasDeRecorte.length === 0 ? 0 : 1;
 } finally {
   await navegador.close();
 }

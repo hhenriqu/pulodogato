@@ -97,30 +97,117 @@
   }
 }
 
+/*
+ * Geometria da tela util no celular (HMO-185).
+ *
+ * O app declara `viewport-fit=cover` junto com
+ * `apple-mobile-web-app-status-bar-style: black-translucent`. Esse par e
+ * deliberado -- e o que deixa o app instalado ocupar a tela inteira -- mas ele
+ * tem um preco: a webview passa a comecar em y=0, POR BAIXO do relogio e do
+ * notch. Quem desenhar em `top-0` sem descontar o recorte desenha embaixo do
+ * relogio. Era o "header vazando pra cima" da HMO-185.
+ *
+ * As quatro medidas passam por VARIAVEL em vez de `env()` repetido em cada
+ * regra, por dois motivos:
+ *
+ *   1. o mesmo valor entra em lugares que precisam andar juntos -- o header
+ *      fixo e o espacador que reserva a altura dele. Com `env()` solto, mexer
+ *      em um e esquecer o outro nao da erro nenhum: da sobreposicao;
+ *   2. variavel pode ser sobrescrita de fora (`style.setProperty`), e `env()`
+ *      nao pode. E exatamente por isso que este defeito atravessou meses sem
+ *      medicao: nenhum navegador de teste tem notch, entao `env()` valia 0 e a
+ *      tela passava. Com a variavel, `scripts/probe-mobile-overflow.mjs`
+ *      injeta os 47px de um iPhone e mede o resultado em Chromium comum.
+ */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+
+  /*
+   * Altura do header fixo do painel: 4rem de barra + 1px de `border-b`.
+   *
+   * O numero foi MEDIDO em producao antes de virar constante: o header media
+   * 65px nos dois tamanhos, enquanto o espacador reservava 64px no celular e
+   * 48px no desktop -- 17px de toda pagina ficavam debaixo dele no desktop. A
+   * altura da barra agora e declarada (`h-16` em DashboardHeader), nao
+   * resultado de `py-3` mais o que estiver dentro: com `py-3` o valor mudava
+   * junto com o tamanho dos botoes, e o espacador nao ficava sabendo.
+   */
+  --app-header: calc(4rem + 1px);
+}
+
 @layer base {
   * {
     @apply border-border;
   }
   body {
     @apply bg-background text-foreground;
+
+    /*
+     * Recorte lateral. So aparece no iPhone deitado, onde o notch come uma
+     * faixa de um dos lados; em pe e no Android vale 0 e nada muda. Mora no
+     * body para valer em toda tela de uma vez -- os elementos `fixed`, que nao
+     * respeitam padding do body, tratam disso por conta propria.
+     */
+    padding-left: var(--safe-left);
+    padding-right: var(--safe-right);
   }
 }
 
 /* PWA e Device-specific styles */
 @layer utilities {
-  /* Safe Area para dispositivos com notch */
-  .safe-area-padding {
-    padding-top: env(safe-area-inset-top, 0);
-    padding-bottom: env(safe-area-inset-bottom, 0);
-    padding-left: env(safe-area-inset-left, 0);
-    padding-right: env(safe-area-inset-right, 0);
+  /*
+   * ALTURA UTIL DA TELA (HMO-185)
+   *
+   * `min-h-screen` e `100vh`, e no Safari do iPhone `100vh` e a altura da tela
+   * COM a barra de endereco recolhida -- uma altura que a pagina so tem depois
+   * que o usuario rola. Antes disso o rodape fica atras da barra. `100dvh` e a
+   * altura util de verdade, a que encolhe e cresce junto com a barra.
+   *
+   * As duas declaracoes sao de proposito, nesta ordem: navegador que nao
+   * conhece `dvh` descarta a segunda linha e fica com o comportamento antigo,
+   * em vez de ficar sem `min-height` nenhum.
+   */
+  .min-h-app {
+    min-height: 100vh;
+    min-height: 100dvh;
   }
 
-  .safe-area-margin {
-    margin-top: env(safe-area-inset-top, 0);
-    margin-bottom: env(safe-area-inset-bottom, 0);
-    margin-left: env(safe-area-inset-left, 0);
-    margin-right: env(safe-area-inset-right, 0);
+  /*
+   * O espaco que o header fixo ocupa. Sai da MESMA variavel que a altura do
+   * header, mais o recorte do topo -- e a sincronia entre os dois que impede a
+   * sobreposicao.
+   */
+  .app-header-offset {
+    height: calc(var(--app-header) + var(--safe-top));
+  }
+
+  /*
+   * Recorte puro, para caixa que nao tem espacamento proprio naquele lado.
+   *
+   * Onde ja HA espacamento, o recorte entra somado no proprio call site
+   * (`pb-[calc(1.5rem_+_var(--safe-bottom))]`), nunca por uma classe destas.
+   * O motivo esta no que foi removido daqui: `.safe-area-padding` escrevia
+   * `padding` nos quatro lados e vivia em `@layer utilities`, logo VENCIA o
+   * `p-4` do Tailwind na mesma caixa. Em aparelho sem recorte -- Android,
+   * desktop, iPhone sem notch -- os quatro valores davam zero, e os dois
+   * banners de instalacao do PWA, unicos usuarios da classe, ficavam com o
+   * texto colado na borda. "Sem recorte" e o caso comum: o defeito estava
+   * ligado quase sempre, e a classe tinha cara de estar ajudando.
+   */
+  .pt-safe {
+    padding-top: var(--safe-top);
+  }
+
+  .pl-safe {
+    padding-left: var(--safe-left);
+  }
+
+  .px-safe {
+    padding-left: var(--safe-left);
+    padding-right: var(--safe-right);
   }
 
   /* Estilos específicos para PWA standalone */
@@ -157,14 +244,26 @@
     font-size: 16px !important; /* Prevent zoom on iOS */
   }
 
-  /* iPhone com notch */
-  .device-ios.device-notch {
-    padding-top: env(safe-area-inset-top, 44px);
-  }
-
-  .device-ios.device-notch .header {
-    padding-top: calc(env(safe-area-inset-top, 44px) + 1rem);
-  }
+  /*
+   * AQUI MORAVAM AS DUAS REGRAS DO NOTCH, e as duas erravam (HMO-185):
+   *
+   *   .device-ios.device-notch       { padding-top: env(safe-area-inset-top, 44px) }
+   *   .device-ios.device-notch .header { padding-top: calc(... + 1rem) }
+   *
+   * A primeira caia no `<body>`. Header e menu sao `position: fixed`, e
+   * elemento fixo se posiciona pela viewport, nao pelo pai -- entao ela nao
+   * movia o header um pixel. O que ela movia era o conteudo, que JA estava no
+   * lugar certo por causa do espacador: sobravam 44px de vazio no meio da
+   * tela e o header continuava debaixo do relogio. Custava o dobro e nao
+   * consertava nada.
+   *
+   * A segunda nunca chegou a rodar: nao existe `className="header"` em lugar
+   * nenhum deste repositorio. Duas regras que pareciam cobrir o notch e
+   * escondiam que ninguem cobria.
+   *
+   * O recorte agora e aplicado onde ele importa -- no proprio elemento fixo --
+   * via `--safe-top`, em DashboardHeader e Sidebar.
+   */
 
   /* Android specific */
   .device-android {

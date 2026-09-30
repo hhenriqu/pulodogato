@@ -100,9 +100,16 @@ export function PWAWrapper({ children }: PWAWrapperProps) {
 
       {/* Convite de instalacao. O banner com botao so serve onde o navegador
           entrega o prompt do sistema; no iOS a instalacao e manual, entao la
-          o convite vira instrucao. */}
+          o convite vira instrucao.
+
+          Os dois banners tinham `safe-area-padding` no lugar onde hoje esta o
+          `bottom-[calc(...)]`. Aquela classe zerava o `p-4` deles em todo
+          aparelho sem notch (o porque esta em app/globals.css), e no aparelho
+          COM notch empurrava o texto para dentro em vez de subir o banner --
+          ele continuava por baixo da barra de gesto. O recorte de baixo
+          pertence ao `bottom`, nao ao `padding`. */}
       {convite === "nativo" && (
-        <div className="fixed bottom-4 left-4 right-4 z-40 bg-primary text-primary-foreground p-4 rounded-lg shadow-lg flex items-center justify-between safe-area-padding">
+        <div className="fixed bottom-[calc(1rem_+_var(--safe-bottom))] left-4 right-4 z-40 bg-primary text-primary-foreground p-4 rounded-lg shadow-lg flex items-center justify-between">
           <div className="flex-1">
             <p className="font-medium">Instalar Pulo do Gato</p>
             <p className="text-sm opacity-90">
@@ -127,7 +134,7 @@ export function PWAWrapper({ children }: PWAWrapperProps) {
       )}
 
       {convite === "ios" && (
-        <div className="fixed bottom-4 left-4 right-4 z-40 bg-primary text-primary-foreground p-4 rounded-lg shadow-lg safe-area-padding">
+        <div className="fixed bottom-[calc(1rem_+_var(--safe-bottom))] left-4 right-4 z-40 bg-primary text-primary-foreground p-4 rounded-lg shadow-lg">
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1">
               <p className="font-medium">Instalar Pulo do Gato</p>

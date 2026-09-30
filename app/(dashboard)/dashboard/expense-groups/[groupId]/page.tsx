@@ -1557,12 +1557,24 @@ export default function GroupDetailPage() {
                     </h3>
                     <div className="space-y-2">
                       {settlements.map((s) => (
+                        /*
+                          "Fulano pagou Beltrano em 12/03/2026" numa linha que
+                          nao quebrava: dois avatares mais dois nomes livres
+                          mais a data dao um min-content bem acima de 320px, e
+                          o piso de min-content nao encolhe com a viewport --
+                          a pagina e que anda para o lado (HMO-185).
+
+                          Aqui a saida e `flex-wrap`, nao `truncate` como na
+                          lista de lancamentos: cortar "Fulan... pagou Belt..."
+                          tira justamente a informacao da frase. Quebrar em
+                          duas linhas nao tira nada.
+                        */
                         <div
                           key={s.id}
-                          className="flex items-center justify-between p-3 border rounded-lg"
+                          className="flex items-center justify-between gap-3 p-3 border rounded-lg"
                         >
-                          <div className="flex items-center gap-2 text-sm">
-                            <Avatar className="h-6 w-6">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm min-w-0">
+                            <Avatar className="h-6 w-6 shrink-0">
                               <AvatarImage src={s.from_user?.avatar_url} />
                               <AvatarFallback>
                                 {inicial(s.from_user?.full_name)}
@@ -1572,7 +1584,7 @@ export default function GroupDetailPage() {
                               {s.from_user?.full_name || "Sem nome"}
                             </span>
                             <span className="text-muted-foreground">pagou</span>
-                            <Avatar className="h-6 w-6">
+                            <Avatar className="h-6 w-6 shrink-0">
                               <AvatarImage src={s.to_user?.avatar_url} />
                               <AvatarFallback>
                                 {inicial(s.to_user?.full_name)}
@@ -1585,7 +1597,7 @@ export default function GroupDetailPage() {
                               em {formatDate(s.settled_on)}
                             </span>
                           </div>
-                          <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-3 shrink-0">
                             {/* Um acerto em dolar tem que aparecer em dolar. Com
                                 `formatCurrency` sozinho, US$ 50,00 sairia como
                                 "R$ 50,00" -- o mesmo erro de 80% que o CHECK da

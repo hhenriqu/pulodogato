@@ -24,7 +24,7 @@ export default function DashboardLayout({
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-app flex items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
       </div>
     );
@@ -35,7 +35,10 @@ export default function DashboardLayout({
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    // `min-h-app` e nao `min-h-screen`: no Safari do iPhone `100vh` conta a
+    // tela COM a barra de endereco recolhida, uma altura que a pagina so tem
+    // depois de rolar (ver app/globals.css).
+    <div className="min-h-app bg-background">
       {/*
         IMPRESSAO: o "Salvar em PDF" da tela de relatorios e um window.print(),
         entao o que estiver visivel aqui entra no PDF. A navegacao tem que sair,
@@ -63,8 +66,20 @@ export default function DashboardLayout({
 
       {/* Main content */}
       <div className="lg:pl-64 print:pl-0">
-        {/* Espaço para o header fixo -- no papel nao ha header fixo. */}
-        <div className="h-16 lg:h-12 print:hidden"></div>
+        {/*
+          Espaço para o header fixo -- no papel nao ha header fixo.
+
+          Era `h-16 lg:h-12`: dois numeros escritos a mao, e os dois errados.
+          O header mede 65px nos dois tamanhos (medido em producao), entao o
+          celular reservava 1px a menos e o DESKTOP 17px a menos -- toda
+          pagina do painel comecava debaixo do header. E nenhum dos dois
+          somava o recorte do topo do iPhone, que e o que jogava o header por
+          cima do relogio.
+
+          `app-header-offset` sai de `--app-header + --safe-top`, a mesma
+          variavel que DashboardHeader usa para se medir.
+        */}
+        <div className="app-header-offset print:hidden"></div>
         {/*
           O aviso de "sem conexao / lancamentos esperando" mora aqui, e nao
           dentro de cada tela, por dois motivos: ele vale para o app inteiro, e
@@ -75,7 +90,14 @@ export default function DashboardLayout({
           Ele se esconde sozinho quando ha rede e a fila esta vazia.
         */}
         <OfflineBanner />
-        <main className="py-6 px-4 sm:px-6 lg:px-8 print:p-0">{children}</main>
+        {/*
+          O `pb-` soma o recorte de baixo aos 1.5rem originais: no iPhone sem
+          botao fisico ha uma barra de gesto de 34px sobre o rodape da pagina,
+          e o ultimo botao de cada tela ficava debaixo dela.
+        */}
+        <main className="pt-6 pb-[calc(1.5rem_+_var(--safe-bottom))] px-4 sm:px-6 lg:px-8 print:p-0">
+          {children}
+        </main>
       </div>
     </div>
   );
