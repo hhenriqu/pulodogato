@@ -77,7 +77,9 @@
     "test:aprovacao-de-parte": "rm -rf .tmp-aprovacao-de-parte && tsc lib/aprovacao-de-parte.ts --outDir .tmp-aprovacao-de-parte --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-aprovacao-de-parte.mjs",
     "test:fundamento-cvm": "rm -rf .tmp-fundamento-cvm && tsc -p scripts/tsconfig.fundamento-cvm-test.json && node --test scripts/test-fundamento-cvm.mjs",
     "ingest:cvm": "rm -rf .tmp-ingest-cvm && tsc -p scripts/tsconfig.ingest-cvm.json && node scripts/ingest-cvm-fundamentos.mjs",
-    "test:planos-em-breve": "rm -rf .tmp-planos-em-breve && tsc -p scripts/tsconfig.planos-em-breve-test.json && node scripts/resolve-aliases.mjs .tmp-planos-em-breve components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-planos-em-breve lib --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-planos-em-breve types --espelha-raiz && node scripts/resolve-next-subpaths.mjs .tmp-planos-em-breve && node --test scripts/test-planos-em-breve.mjs"
+    "test:planos-em-breve": "rm -rf .tmp-planos-em-breve && tsc -p scripts/tsconfig.planos-em-breve-test.json && node scripts/resolve-aliases.mjs .tmp-planos-em-breve components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-planos-em-breve lib --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-planos-em-breve types --espelha-raiz && node scripts/resolve-next-subpaths.mjs .tmp-planos-em-breve && node --test scripts/test-planos-em-breve.mjs",
+    "test:chave-pix": "rm -rf .tmp-chave-pix && tsc lib/chave-pix.ts --outDir .tmp-chave-pix --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-chave-pix.mjs",
+    "mutantes:chave-pix": "node scripts/mutantes-chave-pix.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
