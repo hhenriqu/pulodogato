@@ -276,3 +276,29 @@ export function formatarChavePix(chave: string, tipo: TipoDeChavePix): string {
 export function chaveParaCopiar(chave: string): string {
   return chave;
 }
+
+/**
+ * A 032 ainda nao foi aplicada neste banco?
+ *
+ * POR QUE ISTO PRECISA EXISTIR
+ * ----------------------------
+ * Producao nao tem runner de migration: o deploy publica CODIGO, nao schema.
+ * Entre o merge e o momento em que alguem cola a 032 no SQL Editor do Supabase
+ * existe uma janela em que o app novo conversa com o banco velho -- e nessa
+ * janela `user_pix_keys` nao existe.
+ *
+ * Sem este reconhecimento, a tela de Perfil abre com um toast vermelho
+ * ("Nao foi possivel carregar sua chave Pix") para TODA pessoa que entrar
+ * nela, por uma feature que ela nem sabia que ia ganhar. A leitura honesta
+ * desse estado nao e "deu erro", e "ainda nao ha chave" -- que e exatamente o
+ * que a tela ja sabe mostrar.
+ *
+ * `42P01` e o SQLSTATE do Postgres para relacao inexistente; `PGRST205` e o
+ * que o PostgREST devolve quando a tabela nao esta no schema cache dele. Os
+ * dois aparecem neste caminho e significam a mesma coisa.
+ */
+export function tabelaDePixAusente(erro: unknown): boolean {
+  if (!erro || typeof erro !== "object") return false;
+  const codigo = (erro as { code?: unknown }).code;
+  return codigo === "42P01" || codigo === "PGRST205";
+}

@@ -17,6 +17,7 @@ const {
   aleatoriaCanonica,
   formatarChavePix,
   chaveParaCopiar,
+  tabelaDePixAusente,
 } = await import("../.tmp-chave-pix/chave-pix.js");
 
 // ---------------------------------------------------------------------------
@@ -213,4 +214,35 @@ test("formatar nao estraga valor de tamanho inesperado", () => {
   // Formatar tem que devolver o texto intacto em vez de recortar pedacos.
   assert.equal(formatarChavePix("123", "cpf"), "123");
   assert.equal(formatarChavePix("123", "telefone"), "123");
+});
+
+// ---------------------------------------------------------------------------
+// A JANELA EM QUE O CODIGO JA SUBIU E A MIGRATION AINDA NAO
+// ---------------------------------------------------------------------------
+// Producao nao tem runner de migration: o deploy publica codigo, nao schema.
+// Entre o merge e o momento em que alguem cola a 032 no SQL Editor, o app novo
+// conversa com o banco velho. Tratar isso como falha poria um toast vermelho
+// na tela de Perfil de todo mundo, por uma feature que ninguem pediu ainda.
+
+test("tabela ausente e reconhecida pelos dois codigos que a anunciam", () => {
+  // 42P01 e o SQLSTATE do Postgres; PGRST205 e o que o PostgREST devolve
+  // quando a tabela nao esta no schema cache dele. Os dois aparecem neste
+  // caminho e significam a mesma coisa.
+  assert.equal(tabelaDePixAusente({ code: "42P01" }), true);
+  assert.equal(tabelaDePixAusente({ code: "PGRST205" }), true);
+});
+
+test("erro de verdade NAO e confundido com tabela ausente", () => {
+  // O contrapeso: se esta funcao respondesse `true` para qualquer coisa, ela
+  // engoliria uma falha de RLS ou de rede e a tela ficaria eternamente
+  // dizendo "voce nao cadastrou chave" para quem cadastrou.
+  assert.equal(tabelaDePixAusente({ code: "42501" }), false);
+  assert.equal(tabelaDePixAusente({ code: "PGRST116" }), false);
+  assert.equal(tabelaDePixAusente({ message: "Failed to fetch" }), false);
+});
+
+test("entrada estranha nao quebra a checagem", () => {
+  for (const v of [null, undefined, "42P01", 42, {}]) {
+    assert.equal(tabelaDePixAusente(v), false, String(v));
+  }
 });

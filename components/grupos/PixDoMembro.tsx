@@ -32,6 +32,7 @@ import {
   ROTULO_DA_CHAVE_PIX,
   chaveParaCopiar,
   formatarChavePix,
+  tabelaDePixAusente,
   type TipoDeChavePix,
 } from "@/lib/chave-pix";
 
@@ -76,7 +77,13 @@ export function useChavesPixDoGrupo(userIds: string[]): ChavesPixPorMembro {
         // Nao vira toast: o Pix e um extra ao lado do saldo, e o saldo e a
         // informacao principal da tela. Falhar aqui nao pode encher a tela de
         // aviso sobre uma coisa que a pessoa talvez nem estivesse procurando.
-        console.error("Erro ao ler as chaves Pix do grupo:", error);
+        //
+        // Nem vira log quando a causa e a 032 ainda nao aplicada: nessa
+        // janela o estado real e "ninguem cadastrou chave", que e o mesmo
+        // mapa vazio, e nao um defeito para investigar.
+        if (!tabelaDePixAusente(error)) {
+          console.error("Erro ao ler as chaves Pix do grupo:", error);
+        }
         return;
       }
 

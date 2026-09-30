@@ -41,6 +41,7 @@ import {
   ROTULO_DA_CHAVE_PIX,
   TIPOS_DE_CHAVE_PIX,
   formatarChavePix,
+  tabelaDePixAusente,
   validarChavePix,
   type TipoDeChavePix,
 } from "@/lib/chave-pix";
@@ -75,7 +76,13 @@ export function ChavePixDoPerfil({ userId }: { userId: string }) {
       // `maybeSingle` devolve `data: null` sem erro quando nao ha chave -- que
       // e o estado normal de quem nunca cadastrou. So erro de verdade vira
       // aviso; senao a tela abriria reclamando com quem nao fez nada errado.
-      if (error) {
+      //
+      // E a tabela AUSENTE nao e erro de verdade: entre o deploy e o momento
+      // em que a 032 e colada no SQL Editor, o app novo fala com o banco
+      // velho. Tratar isso como falha poria um toast vermelho na tela de
+      // Perfil de todo mundo, por uma feature que ninguem pediu ainda. Ver
+      // `tabelaDePixAusente`.
+      if (error && !tabelaDePixAusente(error)) {
         console.error("Erro ao ler a chave Pix:", error);
         toast.error("Não foi possível carregar sua chave Pix");
       } else if (data) {
