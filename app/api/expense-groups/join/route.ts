@@ -1,106 +1,74 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 
-// Função para lidar com resposta a convites
+// Responder a um convite de grupo -- aceitar ou recusar.
+//
+// Isto era SELECT + upsert + UPDATE soltos, e estava quebrado de duas formas
+// que so aparecem do lado de quem foi convidado (HMO-196):
+//
+//   1. o SELECT embutia `group:expense_groups(id, name, ...)`, e a RLS esconde o
+//      grupo de quem ainda nao e membro. PostgREST devolve `group: null` sem
+//      erro, entao `invitation.group.name` la embaixo era um TypeError -- que o
+//      catch virava 500 "Internal server error". Aceitar um convite valido
+//      respondia erro de servidor;
+//   2. sem transacao, o upsert do membro podia gravar e o UPDATE do convite
+//      falhar: a pessoa entrava no grupo e o convite ficava `pending` para
+//      sempre, com o sino oferecendo Aceitar de novo.
+//
+// Agora e uma chamada a `respond_to_group_invitation` (migration 030): uma
+// transacao, SECURITY DEFINER para poder ler o nome do grupo, e com a
+// autorizacao ("o convite e endereçado a auth.uid()") checada dentro da funcao,
+// nao no argumento que o cliente manda.
 async function handleInvitationResponse(
   supabase: any,
-  user: any,
   invitation_id: string,
   accept: boolean
 ) {
-  try {
-    // Buscar convite
-    const { data: invitation, error: inviteError } = await supabase
-      .from("group_invitations")
-      .select(
-        `
-        *,
-        group:expense_groups(id, name, description, group_type, created_by)
-      `
-      )
-      .eq("id", invitation_id)
-      .eq("invited_user_id", user.id)
-      .eq("status", "pending")
-      .gt("expires_at", new Date().toISOString())
-      .single();
+  const { data, error } = await supabase
+    .rpc("respond_to_group_invitation", {
+      p_invitation_id: invitation_id,
+      p_accept: accept,
+    })
+    .single();
 
-    if (inviteError || !invitation) {
+  if (error) {
+    // no_data_found = nao e seu, ja foi respondido, venceu, ou o grupo foi
+    // arquivado. Sao indistinguiveis de proposito: dizer qual dos quatro
+    // confirmaria a existencia do convite de outra pessoa para quem chutou um id.
+    if (error.code === "P0002" || error.code === "no_data_found") {
       return NextResponse.json(
-        { error: "Invitation not found or expired" },
+        { error: "Convite não encontrado, expirado ou já respondido" },
         { status: 404 }
       );
     }
-
-    if (accept) {
-      // Verificar se já é membro
-      const { data: existingMember } = await supabase
-        .from("group_members")
-        .select("status")
-        .eq("group_id", invitation.group_id)
-        .eq("user_id", user.id)
-        .single();
-
-      if (existingMember && existingMember.status === "active") {
-        return NextResponse.json(
-          { error: "You are already a member of this group" },
-          { status: 400 }
-        );
-      }
-
-      // Adicionar como membro ativo
-      const { error: memberError } = await supabase
-        .from("group_members")
-        .upsert({
-          group_id: invitation.group_id,
-          user_id: user.id,
-          role: "member",
-          status: "active",
-        });
-
-      if (memberError) {
-        console.error("Membership creation error:", memberError);
-        return NextResponse.json(
-          { error: "Failed to join group" },
-          { status: 500 }
-        );
-      }
-
-      // Marcar convite como aceito
-      await supabase
-        .from("group_invitations")
-        .update({ status: "accepted" })
-        .eq("id", invitation_id);
-
-      return NextResponse.json(
-        {
-          message: `Successfully joined "${invitation.group.name}"!`,
-          group: {
-            id: invitation.group.id,
-            name: invitation.group.name,
-            description: invitation.group.description,
-          },
-        },
-        { status: 200 }
-      );
-    } else {
-      // Rejeitar convite
-      await supabase
-        .from("group_invitations")
-        .update({ status: "rejected" })
-        .eq("id", invitation_id);
-
-      return NextResponse.json(
-        { message: "Invitation rejected" },
-        { status: 200 }
-      );
-    }
-  } catch (error) {
     console.error("Invitation response error:", error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: "Não foi possível responder ao convite" },
       { status: 500 }
     );
   }
+
+  const resultado = data as {
+    group_id: string;
+    group_name: string;
+    member_status: string;
+  };
+
+  if (!accept) {
+    return NextResponse.json({ message: "Convite recusado" }, { status: 200 });
+  }
+
+  return NextResponse.json(
+    {
+      message: `Você entrou no grupo "${resultado.group_name}"!`,
+      group: {
+        id: resultado.group_id,
+        name: resultado.group_name,
+        status: resultado.member_status,
+      },
+    },
+    { status: 200 }
+  );
 }
 
 export async function POST(request: NextRequest) {
@@ -120,12 +88,7 @@ export async function POST(request: NextRequest) {
 
     // Se é resposta a convite
     if (invitation_id !== undefined) {
-      return await handleInvitationResponse(
-        supabase,
-        user,
-        invitation_id,
-        accept
-      );
+      return await handleInvitationResponse(supabase, invitation_id, accept);
     }
 
     // Validações básicas para entrada por código

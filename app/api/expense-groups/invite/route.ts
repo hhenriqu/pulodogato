@@ -45,62 +45,135 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const group = membership.group;
+    // `group:expense_groups(*)` chega tipado como array: a FK aponta para UMA
+    // linha, mas o tipo gerado nao sabe disso. Antes ninguem lia `group` (o
+    // codigo usava o embed de outra consulta), e `group.group_code` reprova o tsc
+    // sem esta normalizacao.
+    const group = (
+      Array.isArray(membership.group) ? membership.group[0] : membership.group
+    ) as { name: string; group_code: string } | undefined;
 
-    let invitedUserId = null;
-
-    // Se método for email/phone, tentar encontrar usuário existente
-    if (method === "email" && email_or_phone.includes("@")) {
-      // Buscar usuário pelo email na tabela auth.users via RPC ou query específica
-      const { data: existingUser } = await supabase.rpc("get_user_by_email", {
-        user_email: email_or_phone,
-      });
-
-      if (existingUser && existingUser.length > 0) {
-        invitedUserId = existingUser[0].id;
-      }
+    if (!group) {
+      console.error("Admin sem grupo no embed:", { group_id, user: user.id });
+      return NextResponse.json(
+        { error: "Grupo não encontrado" },
+        { status: 404 }
+      );
     }
 
-    // Verificar se já existe convite pendente
-    const { data: existingInvite } = await supabase
-      .from("group_invitations")
-      .select("id, status")
-      .eq("group_id", group_id)
-      .eq("invite_target", email_or_phone)
-      .eq("status", "pending")
-      .single();
-
-    if (existingInvite) {
+    // O CANAL DE ENTREGA E O PROPRIO APP (HMO-196)
+    // ------------------------------------------------
+    // Decisao do H.: "Nao usaremos email, sera enviando um convite para o
+    // usuario referente daquele email". Ou seja o convite e entregue DENTRO do
+    // app, no sino, para a conta dona daquele endereco -- e quem o encontra la
+    // e `invited_user_id`.
+    //
+    // Daqui sai a regra que esta rota nao tinha: sem `invited_user_id` o convite
+    // e invisivel para TODO MUNDO, para sempre. Nenhuma tela o lista, porque
+    // toda leitura filtra por `invited_user_id = auth.uid()`. Antes a rota
+    // gravava a linha de qualquer jeito e respondia sucesso -- 5 convites assim
+    // foram criados em producao. Agora ela recusa e explica, em vez de deixar
+    // lixo que parece convite enviado.
+    if (method !== "email" || !email_or_phone.includes("@")) {
       return NextResponse.json(
         {
-          error: "Invitation already sent to this contact",
+          error:
+            "O convite é entregue dentro do app, então precisa de um email de " +
+            "conta do PuloDoGato. Para convidar por telefone, passe o código do " +
+            "grupo para a pessoa entrar pelo app.",
         },
         { status: 400 }
       );
     }
 
-    // Se usuário já existe, verificar se já é membro
-    if (invitedUserId) {
-      const { data: existingMember } = await supabase
-        .from("group_members")
-        .select("status")
-        .eq("group_id", group_id)
-        .eq("user_id", invitedUserId)
-        .single();
+    // O erro era descartado aqui. Se a RPC falhar (ela e SECURITY DEFINER e
+    // depende de GRANT para `authenticated`), "nao achei a conta" e "nao pude
+    // procurar" sao a mesma resposta vazia -- e a segunda viraria uma recusa
+    // dizendo que a pessoa nao tem conta, o que manda o admin caçar o problema
+    // errado.
+    const { data: contas, error: erroBusca } = await supabase.rpc(
+      "get_user_by_email",
+      { user_email: email_or_phone }
+    );
 
-      if (existingMember && existingMember.status === "active") {
-        return NextResponse.json(
-          {
-            error: "This user is already a member of the group",
-          },
-          { status: 400 }
-        );
-      }
+    if (erroBusca) {
+      console.error("Falha ao procurar a conta do convidado:", erroBusca);
+      return NextResponse.json(
+        { error: "Não foi possível verificar esse email agora" },
+        { status: 500 }
+      );
+    }
+
+    const invitedUserId: string | null = contas?.[0]?.id ?? null;
+
+    if (!invitedUserId) {
+      // Caso real e comum: a pessoa ainda nao usa o app. O codigo do grupo e a
+      // saida honesta, e vai na resposta para o admin nao ter que ir buscar.
+      return NextResponse.json(
+        {
+          error:
+            `Não existe conta do PuloDoGato com o email ${email_or_phone}. ` +
+            `Peça para a pessoa se cadastrar e entrar com o código ${group.group_code}, ` +
+            `ou convide-a depois que a conta existir.`,
+          group_code: group.group_code,
+        },
+        { status: 404 }
+      );
+    }
+
+    // Convite pendente repetido: a chave e a CONTA, nao o texto digitado.
+    // Casando por `invite_target` o mesmo convidado passava duas vezes so por
+    // escrever "Leticia@..." na segunda -- `get_user_by_email` compara em LOWER,
+    // este filtro comparava byte a byte. Duas linhas pendentes para a mesma
+    // pessoa dao dois cartoes iguais no sino dela.
+    const { data: convitesPendentes, error: erroPendentes } = await supabase
+      .from("group_invitations")
+      .select("id")
+      .eq("group_id", group_id)
+      .eq("invited_user_id", invitedUserId)
+      .eq("status", "pending")
+      .gt("expires_at", new Date().toISOString());
+
+    if (erroPendentes) {
+      console.error("Falha ao conferir convites pendentes:", erroPendentes);
+      return NextResponse.json(
+        { error: "Não foi possível verificar convites anteriores" },
+        { status: 500 }
+      );
+    }
+
+    if (convitesPendentes && convitesPendentes.length > 0) {
+      return NextResponse.json(
+        {
+          error:
+            "Essa pessoa já tem um convite pendente para este grupo, esperando " +
+            "a resposta dela no app.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const { data: existingMember } = await supabase
+      .from("group_members")
+      .select("status")
+      .eq("group_id", group_id)
+      .eq("user_id", invitedUserId)
+      .maybeSingle();
+
+    if (existingMember && existingMember.status === "active") {
+      return NextResponse.json(
+        { error: "Essa pessoa já é membro do grupo" },
+        { status: 400 }
+      );
     }
 
     // Criar convite (expira em 14 dias)
     const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000); // 14 dias
 
+    // Sem embed no `.select()`. O admin aqui CONSEGUE ler o grupo e o proprio
+    // perfil, entao os embeds antigos funcionavam -- mas o nome do grupo e o
+    // codigo ja estao em `group`, vindos da checagem de admin logo acima, e
+    // depender de embed foi justamente o que quebrou o lado do convidado.
     const { data: invitation, error: inviteError } = await supabase
       .from("group_invitations")
       .insert({
@@ -112,13 +185,7 @@ export async function POST(request: NextRequest) {
         message: message || null,
         expires_at: expiresAt.toISOString(),
       })
-      .select(
-        `
-        *,
-        group:expense_groups(name, description, group_code),
-        inviter:profiles!group_invitations_invited_by_fkey(full_name, avatar_url)
-      `
-      )
+      .select("id, invite_method, invite_target, expires_at")
       .single();
 
     if (inviteError) {
@@ -129,25 +196,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // NAO existe envio de email/SMS neste produto: nenhum provedor esta
-    // configurado. Ate o HMO-190 esta rota respondia "Email invitation sent
-    // to X" mesmo assim, entao o admin via "convite enviado" e o convidado
-    // nunca recebia nada -- sem nenhum erro em lugar nenhum. Enquanto o envio
-    // nao existir, a resposta diz a verdade e manda passar o codigo a mao.
-    const responseMessage = `Convite registrado para ${email_or_phone}. O envio automático ainda não está disponível: passe o código ${invitation.group.group_code} para a pessoa entrar pelo app.`;
+    // A resposta agora descreve uma entrega que ACONTECEU. O convite esta na
+    // caixa da pessoa: `invited_user_id` aponta para a conta dela, e
+    // `list_my_group_invitations()` (migration 030) o entrega no sino do app
+    // dela com o nome do grupo e o de quem convidou.
+    const nomeConvidado = contas?.[0]?.full_name || email_or_phone;
+    const responseMessage =
+      `Convite enviado para ${nomeConvidado}. Ele aparece nas notificações do ` +
+      `app dela, com Aceitar e Recusar, e vale por 14 dias.`;
 
     return NextResponse.json(
       {
         message: responseMessage,
-        delivery: "manual",
+        delivery: "in_app",
         invitation: {
           id: invitation.id,
           method: invitation.invite_method,
           target: invitation.invite_target,
           expires_at: invitation.expires_at,
           group: {
-            name: invitation.group.name,
-            code: invitation.group.group_code,
+            name: group.name,
+            code: group.group_code,
           },
         },
       },

@@ -12,25 +12,22 @@ export interface Notification {
   data?: any;
 }
 
+// O que `list_my_group_invitations()` devolve (migration 030). Nao ha
+// `group_code` aqui de proposito: quem recusa o convite nao sai com a chave de
+// entrada do grupo, e os botoes Aceitar/Recusar nao precisam dela.
+//
+// `inviter_name` e anulavel de verdade -- `profiles.full_name` e opcional, e a
+// conta do relato original da HMO-196 tem exatamente esse estado.
 export interface GroupInvitationNotification {
-  id: string;
+  invitation_id: string;
   group_id: string;
-  invited_by: string;
-  invite_method: "email" | "phone" | "code";
-  invite_target: string;
-  message?: string;
-  status: "pending" | "accepted" | "rejected" | "expired";
+  group_name: string;
+  group_description: string | null;
+  inviter_name: string | null;
+  inviter_avatar_url: string | null;
+  invite_message: string | null;
   expires_at: string;
   created_at: string;
-  group: {
-    name: string;
-    description?: string;
-    group_code: string;
-  };
-  inviter: {
-    full_name: string;
-    avatar_url?: string;
-  };
 }
 
 export const useNotifications = (user: User | null) => {
@@ -51,48 +48,50 @@ export const useNotifications = (user: User | null) => {
     try {
       setLoading(true);
 
-      // Buscar convites de grupo pendentes
-      const { data: groupInvites, error: inviteError } = await supabase
-        .from("group_invitations")
-        .select(
-          `
-          *,
-          group:expense_groups(name, description, group_code),
-          inviter:profiles!group_invitations_invited_by_fkey(full_name, avatar_url)
-        `
-        )
-        .eq("invited_user_id", user.id)
-        .eq("status", "pending")
-        .gt("expires_at", new Date().toISOString())
-        .order("created_at", { ascending: false });
+      // Convites de grupo pendentes.
+      //
+      // ISTO ERA UM SELECT COM EMBED, E ERA O BUG DA HMO-196. A consulta lia
+      // `group_invitations` com `group:expense_groups(...)` e
+      // `inviter:profiles!...(...)`, e os dois embeds caem na RLS de quem esta
+      // lendo -- a pessoa convidada. Ela nao e membro do grupo
+      // (`expense_groups_select`) e o perfil de quem convidou nao e publico
+      // (`profiles_select_own_or_public`), entao PostgREST devolvia os dois como
+      // `null`, sem erro nenhum. O filtro logo abaixo -- `if (!invite.group ||
+      // !invite.inviter) return false` -- entao jogava fora TODO convite, com um
+      // console.warn. Em producao havia 5 convites gravados e o sino de quem foi
+      // convidada ficava vazio, o que virou "ela nao recebeu o convite".
+      //
+      // As duas policies estao certas e continuam como estao. A leitura passou a
+      // ser `list_my_group_invitations()`, que monta o cartao dentro do banco
+      // (SECURITY DEFINER) devolvendo so o nome do grupo e o de quem convidou, e
+      // filtra por `invited_user_id = auth.uid()` no proprio corpo.
+      const { data: groupInvites, error: inviteError } = await supabase.rpc(
+        "list_my_group_invitations"
+      );
 
       if (inviteError) {
         console.error("Error fetching group invitations:", inviteError);
       }
 
-      // Transformar convites em notificações
-      const inviteNotifications: Notification[] = (groupInvites || [])
-        .filter((invite: GroupInvitationNotification) => {
-          // Filtrar convites com dados válidos
-          if (!invite.group || !invite.inviter) {
-            console.warn("Convite com dados incompletos:", invite);
-            return false;
-          }
-          return true;
-        })
-        .map((invite: GroupInvitationNotification) => ({
-          id: `group_invite_${invite.id}`,
-          type: "group_invitation" as const,
-          title: `Convite para grupo: ${invite.group.name}`,
-          message: `${
-            invite.inviter.full_name
-          } te convidou para participar do grupo "${invite.group.name}"${
-            invite.message ? `. Mensagem: ${invite.message}` : ""
-          }`,
-          read: false,
-          created_at: invite.created_at,
-          data: invite,
-        }));
+      // Sem `.filter()` descartando linha: a funcao ja devolve exatamente os
+      // convites entregaveis (pendentes, no prazo, de grupo ativo). Se um dia
+      // voltar a faltar dado, o certo e a linha aparecer incompleta e alguem
+      // reclamar -- nao ela desaparecer em silencio, que foi o defeito aqui.
+      const inviteNotifications: Notification[] = (
+        (groupInvites || []) as GroupInvitationNotification[]
+      ).map((invite) => ({
+        id: `group_invite_${invite.invitation_id}`,
+        type: "group_invitation" as const,
+        title: `Convite para grupo: ${invite.group_name}`,
+        message: `${
+          invite.inviter_name ?? "Alguém"
+        } te convidou para participar do grupo "${invite.group_name}"${
+          invite.invite_message ? `. Mensagem: ${invite.invite_message}` : ""
+        }`,
+        read: false,
+        created_at: invite.created_at,
+        data: invite,
+      }));
 
       // TODO: Buscar outros tipos de notificações aqui
       // - Solicitações de conexão pendentes
@@ -126,65 +125,48 @@ export const useNotifications = (user: User | null) => {
     setUnreadCount(0);
   };
 
-  const acceptGroupInvitation = async (
-    invitation: GroupInvitationNotification
+  // Aceitar e recusar diferem em UM booleano, e eram duas funcoes copiadas.
+  // Juntar as duas nao e so estetica aqui: o campo do id mudou de `id` para
+  // `invitation_id` com a 030, e numa edicao de dois blocos iguais um deles sai
+  // com o nome velho. `invitation_id: undefined` no corpo faz a rota cair na
+  // entrada por CODIGO em vez de responder o convite, e a tela mostraria
+  // "Group code must be 6 characters" ao clicar em Aceitar -- nenhum tsc pega
+  // isso, porque `undefined` e um valor legal no JSON.
+  const responderConvite = async (
+    invitation: GroupInvitationNotification,
+    accept: boolean
   ) => {
     try {
       const response = await fetch("/api/expense-groups/join", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          invitation_id: invitation.id,
-          accept: true,
+          invitation_id: invitation.invitation_id,
+          accept,
         }),
       });
 
-      if (response.ok) {
-        // Remover notificação da lista
-        setNotifications((prev) =>
-          prev.filter((n) => n.id !== `group_invite_${invitation.id}`)
-        );
-        setUnreadCount((prev) => Math.max(0, prev - 1));
-        return { success: true };
-      } else {
+      if (!response.ok) {
         const error = await response.json();
         return { success: false, error: error.error };
       }
+
+      setNotifications((prev) =>
+        prev.filter((n) => n.id !== `group_invite_${invitation.invitation_id}`)
+      );
+      setUnreadCount((prev) => Math.max(0, prev - 1));
+      return { success: true };
     } catch (error) {
-      console.error("Error accepting invitation:", error);
+      console.error("Error responding to invitation:", error);
       return { success: false, error: "Erro interno" };
     }
   };
 
-  const rejectGroupInvitation = async (
-    invitation: GroupInvitationNotification
-  ) => {
-    try {
-      const response = await fetch("/api/expense-groups/join", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          invitation_id: invitation.id,
-          accept: false,
-        }),
-      });
+  const acceptGroupInvitation = (invitation: GroupInvitationNotification) =>
+    responderConvite(invitation, true);
 
-      if (response.ok) {
-        // Remover notificação da lista
-        setNotifications((prev) =>
-          prev.filter((n) => n.id !== `group_invite_${invitation.id}`)
-        );
-        setUnreadCount((prev) => Math.max(0, prev - 1));
-        return { success: true };
-      } else {
-        const error = await response.json();
-        return { success: false, error: error.error };
-      }
-    } catch (error) {
-      console.error("Error rejecting invitation:", error);
-      return { success: false, error: "Erro interno" };
-    }
-  };
+  const rejectGroupInvitation = (invitation: GroupInvitationNotification) =>
+    responderConvite(invitation, false);
 
   useEffect(() => {
     fetchNotifications();
