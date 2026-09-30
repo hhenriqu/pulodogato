@@ -134,16 +134,14 @@ export async function GET(request: NextRequest) {
       auth: { persistSession: false, autoRefreshToken: false },
     });
 
-    const { data: ativos, error } = await admin
-      .from("investment_assets")
-      .select("symbol, type, currency, current_price_at");
+    const leitura = await lerCarteiraInteira(admin);
 
-    if (error) {
-      console.error("Cron cotacoes: erro ao ler investment_assets:", error);
+    if (leitura.erro) {
+      console.error("Cron cotacoes: erro ao ler investment_assets:", leitura.erro);
       return { status: 500, body: { error: "Falha ao ler a carteira" } };
     }
 
-    const linhas = (ativos ?? []) as AtivoNoBanco[];
+    const linhas = leitura.linhas;
     const fila = montarFila(linhas, TETO_DE_CHAMADAS_POR_EXECUCAO);
 
     // Quantos simbolos eram elegiveis antes do teto -- sem isso "cotei 300" nao
@@ -236,6 +234,62 @@ export async function GET(request: NextRequest) {
   });
 
   return NextResponse.json(saida.body, { status: saida.status });
+}
+
+/**
+ * Le `investment_assets` INTEIRA, em paginas.
+ *
+ * POR QUE NAO UM `.select()` SO
+ * -----------------------------
+ * O PostgREST do Supabase tem um teto de linhas por resposta (1000 por padrao) e
+ * ele **nao e um erro**: a resposta volta 200, com as primeiras N linhas e nada
+ * dizendo que faltou o resto. Num `.select()` unico, a carteira a partir da
+ * linha 1001 simplesmente nao existiria para este cron -- e como a ordem sem
+ * `ORDER BY` nao e garantida, nao seriam nem sempre as mesmas linhas: alguns
+ * ativos ficariam sem cotacao para sempre, outros de vez em quando, sem nenhum
+ * erro em lugar nenhum.
+ *
+ * Esse e o mesmo formato de defeito que o resto do arquivo evita: silencio que
+ * parece funcionamento. A paginacao com `.range()` e o `order` explicito (para
+ * a janela ser estavel entre as paginas) trocam isso por uma leitura completa.
+ *
+ * O teto de paginas existe para que um erro de paginacao nao vire laco infinito
+ * dentro do `maxDuration`; estourar ele e reportado, nao engolido.
+ */
+async function lerCarteiraInteira(
+  admin: SupabaseClient
+): Promise<{ linhas: AtivoNoBanco[]; erro?: string }> {
+  const TAMANHO_DA_PAGINA = 1000;
+  const MAX_PAGINAS = 50;
+
+  const linhas: AtivoNoBanco[] = [];
+
+  for (let pagina = 0; pagina < MAX_PAGINAS; pagina++) {
+    const de = pagina * TAMANHO_DA_PAGINA;
+
+    const { data, error } = await admin
+      .from("investment_assets")
+      .select("symbol, type, currency, current_price_at")
+      // `id` e a PK: ordem total e estavel, entao nenhuma linha aparece em duas
+      // paginas nem escapa entre elas.
+      .order("id", { ascending: true })
+      .range(de, de + TAMANHO_DA_PAGINA - 1);
+
+    if (error) return { linhas, erro: error.message };
+
+    const lote = (data ?? []) as AtivoNoBanco[];
+    linhas.push(...lote);
+
+    // Pagina incompleta = acabou. (Uma pagina cheia exata faz uma volta a mais,
+    // que devolve zero linhas e encerra -- uma chamada barata a mais, em troca
+    // de nao adivinhar o fim.)
+    if (lote.length < TAMANHO_DA_PAGINA) return { linhas };
+  }
+
+  return {
+    linhas,
+    erro: `carteira maior que ${MAX_PAGINAS * TAMANHO_DA_PAGINA} linhas -- paginacao interrompida`,
+  };
 }
 
 /** Roda a fila com paralelismo limitado, respeitando o prazo da funcao. */
