@@ -198,3 +198,16 @@ next-env.d.ts
 # test:aprovacao-de-parte (a regra pura de quem pode aprovar/recusar a propria
 # parte de despesa de grupo, HMO-178 -- lib sem import, compila sozinha)
 /.tmp-aprovacao-de-parte/
+
+# test:fundamento-cvm (a ponte ticker->CNPJ e a leitura dos CSVs da CVM, HMO-194
+# -- leva lib/cvm-zip.js junto; nenhuma das duas importa nada do projeto)
+/.tmp-fundamento-cvm/
+# o mesmo build, com outDir proprio, para o ingestor (npm run ingest:cvm): rodar
+# o ingestor no meio de uma suite nao pode apagar o build do teste
+/.tmp-ingest-cvm/
+
+# ZIP anual da CVM baixado pelo ingestor (12,8 MB por ano) -- cache local, nao
+# fonte: o pacote e reproduzivel a partir de dados.cvm.gov.br, e sao ~12,8 MB por
+# ano de historico. As FIXTURES do teste (scripts/fixtures/) sao versionadas --
+# essas sim sao fonte, sao pequenas e precisam ficar estaveis.
+/.cache-cvm/

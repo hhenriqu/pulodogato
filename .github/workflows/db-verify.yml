@@ -12,9 +12,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -724,6 +724,59 @@ jobs:
       #     semana passada -- e quebraria a edicao de qualquer linha antiga.
       - name: Direcao da previsao, dia do lancamento e dia previsto
         run: $PSQL -f database/tests/027_previsto_e_realizado_test.sql
+
+      - name: 028_fundamento_cvm
+        run: $PSQL -f database/migrations/028_fundamento_cvm.sql
+
+      # Re-executavel: as tabelas entram por CREATE TABLE IF NOT EXISTS, os
+      # indices por CREATE INDEX IF NOT EXISTS, as policies por DROP + CREATE e a
+      # view por DROP VIEW IF EXISTS + CREATE.
+      - name: 028 e idempotente
+        run: $PSQL -f database/migrations/028_fundamento_cvm.sql
+
+      # Fundamento da CVM (HMO-194). O que so o Postgres pega:
+      #
+      #   - a RLS de tabela de REFERENCIA. `cvm_fundamentos` guarda o balanco da
+      #     Petrobras, que nao e de ninguem: RLS ligada, policy so de SELECT e
+      #     nenhuma de escrita. Uma policy `FOR ALL` no lugar de `FOR SELECT`
+      #     deixaria o usuario logado editar o lucro liquido da empresa, e nada
+      #     no TypeScript nota isso;
+      #   - `cvm_tickers_sem_fundamento` com RLS ligada e ZERO policy, de
+      #     proposito: e diagnostico de ingestao, nao conteudo de tela. "Ligada
+      #     sem policy" e indistinguivel de esquecimento quando lida no arquivo,
+      #     entao o teste afirma que `authenticated` NAO le;
+      #   - o CHECK de que `radical` e o prefixo de `ticker`. E a regra da ponte
+      #     gravada no banco: sem ela um ingestor com defeito penduraria o codigo
+      #     CVM da ACU PETROLEO no ticker PETR4 e o banco aceitaria calado, que e
+      #     o defeito silencioso que a HMO-194 existe para fechar. O teste usa um
+      #     ticker NOVO ('ACPE4') porque com 'PETR4' a chave primaria levantava
+      #     `unique_violation` e o controle negativo passava mesmo com o CHECK
+      #     removido -- medido, o mutante sobrevivia;
+      #   - o CHECK de `data_base` pertencer ao `ano_exercicio`. Balanco de um ano
+      #     na linha de outro e o erro que a propria referencia da issue trazia
+      #     (o dividendo de R$ 101,2 bi e de 2024, citado junto com o lucro de
+      #     2025) -- dois numeros plausiveis, nenhum erro;
+      #   - o ROE com patrimonio NEGATIVO. -50 de prejuizo sobre -100 de
+      #     patrimonio da "ROE 50%" numa divisao ingenua, e um crivo de
+      #     rentabilidade aprovaria a empresa mais quebrada da lista como a
+      #     melhor. A view devolve NULO, e isso so se prova consultando;
+      #   - `divida_liquida` NULA para quem nao publicou divida nenhuma. Com
+      #     `coalesce` sem o CASE, um banco apareceria com "caixa liquido" igual
+      #     ao caixa, parecendo quem so nao reportou.
+      #
+      # `security_invoker` da view nao e conferido aqui: quem cobre e o
+      # view_security_invoker_test.sql, que varre o schema inteiro e pega
+      # qualquer view nova sem a opcao (verificado contra esta view).
+      - name: Fundamento da CVM: referencia sem escrita, ponte coerente e indicador nulo em vez de errado
+        run: $PSQL -f database/tests/hmo194_fundamento_cvm_test.sql
+
+      # A aritmetica da ponte ticker -> CNPJ e da leitura dos CSVs e TypeScript, e
+      # roda aqui junto com o schema que ela enche. PETR4, VALE3 e RANI3 estao na
+      # suite porque sao os tres tickers em que o PRIMEIRO resultado da consulta da
+      # B3 e outra empresa -- um piloto com blue chips acerta 100% por falta de
+      # concorrente no nome e leva o defeito para producao.
+      - name: Ponte ticker->CNPJ por igualdade exata, DMPL sem contar em triplo e escala MIL/UNIDADE
+        run: npm run test:fundamento-cvm
 
       # As duas suites que guardam as views que a 026 REESCREVEU rodam la atras na
       # cadeia (steps do 006 e do 007), ou seja: contra a definicao ANTIGA de

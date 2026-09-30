@@ -1,0 +1,23 @@
+{
+  "//": "Build so do teste da HMO-194. lib/fundamento-cvm.ts e lib/cvm-zip.ts nao usam o alias @/ -- nao importam nada do projeto -- entao este build NAO precisa do passo resolve-aliases.mjs que test:moeda e test:safe-to-spend usam. cvm-zip.ts importa `node:zlib`, que o node resolve sozinho no ESM emitido.",
+  "compilerOptions": {
+    "outDir": "../.tmp-fundamento-cvm",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "baseUrl": "..",
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
+  },
+  "include": [
+    "../lib/fundamento-cvm.ts",
+    "../lib/cvm-zip.ts"
+  ]
+}
