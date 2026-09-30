@@ -59,7 +59,7 @@ import {
 import type { AlcanceDaEdicao } from "@/lib/recorrencia-edicao";
 import { Receipts } from "@/components/Receipts";
 import { ehFatura } from "@/lib/card-invoice";
-import { copiaDaPrevisao } from "@/lib/previsto-x-realizado";
+import { copiaDaPrevisao, direcaoDaAgenda } from "@/lib/previsto-x-realizado";
 import {
   buscarLeitura,
   podeAfirmarVazio,
@@ -246,12 +246,31 @@ export default function BillsPage() {
     return { vencidas, semana, depois };
   }, [scheduled]);
 
+  // Os cabecalhos, separados por direcao (HMO-187).
+  //
+  // A soma crua de `conta.amount` juntava receita prevista e despesa prevista:
+  // `scheduled_transactions.amount` tem CHECK amount > 0, entao o salario
+  // previsto entrava em "Total em aberto" com o mesmo sinal do aluguel. Quem
+  // cadastra o salario como regra recorrente via o numero inflar, e "Em atraso"
+  // pintava de vermelho um salario que so estava esperando confirmacao de
+  // recebimento (HMO-188).
+  //
+  // A direcao sai de `direcaoDaAgenda` sobre `conta.direction`, a coluna que a
+  // view ja resolve (027) -- o mesmo caminho que /api/scheduled-transactions/
+  // summary usa, para os dois numeros da mesma tela nao discordarem.
   const totais = useMemo(() => {
-    const soma = (lista: ScheduledTransaction[]) =>
-      lista.reduce((total, conta) => total + Number(conta.amount), 0);
+    const soma = (lista: ScheduledTransaction[], lado: "income" | "expense") =>
+      lista
+        .filter((conta) => direcaoDaAgenda(conta.direction) === lado)
+        .reduce((total, conta) => total + Math.abs(Number(conta.amount)), 0);
+
+    const emAberto = [...grupos.vencidas, ...grupos.semana, ...grupos.depois];
+
     return {
-      vencido: soma(grupos.vencidas),
-      aberto: soma([...grupos.vencidas, ...grupos.semana, ...grupos.depois]),
+      vencidoAPagar: soma(grupos.vencidas, "expense"),
+      vencidoAReceber: soma(grupos.vencidas, "income"),
+      aPagar: soma(emAberto, "expense"),
+      aReceber: soma(emAberto, "income"),
     };
   }, [grupos]);
 
@@ -950,13 +969,18 @@ export default function BillsPage() {
         />
       ) : (
         <>
-      <div className="grid gap-4 sm:grid-cols-3">
+      {/* grid-cols-1 explicito: sem ele o `grid` estoura a largura no celular
+          e a pagina ganha scroll horizontal. */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>Em atraso</CardDescription>
+            {/* "a pagar" no rotulo, e nao so "Em atraso": o cartao passou a
+                contar apenas a perna de despesa, e sem a palavra a mudanca de
+                numero pareceria dado sumindo. */}
+            <CardDescription>Em atraso a pagar</CardDescription>
             <CardTitle className="text-2xl text-destructive">
               {podeMostrarNumero(estado) ? (
-                moeda(totais.vencido)
+                moeda(totais.vencidoAPagar)
               ) : (
                 <NumeroIndisponivel />
               )}
@@ -965,14 +989,38 @@ export default function BillsPage() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>Total em aberto</CardDescription>
+            <CardDescription>Total a pagar</CardDescription>
             <CardTitle className="text-2xl">
               {podeMostrarNumero(estado) ? (
-                moeda(totais.aberto)
+                moeda(totais.aPagar)
               ) : (
                 <NumeroIndisponivel />
               )}
             </CardTitle>
+          </CardHeader>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            {/* O contrapeso do cartao anterior. Sem ele, separar as direcoes
+                faria a receita prevista sumir da tela -- e quem cadastrou o
+                salario concluiria que o app o perdeu.
+
+                `vencidoAReceber` aparece como nota e nao como cartao proprio:
+                receita atrasada e atraso de QUEM PAGA voce, nao divida sua, e
+                um quinto cartao vermelho diria o contrario. */}
+            <CardDescription>Total a receber</CardDescription>
+            <CardTitle className="text-2xl">
+              {podeMostrarNumero(estado) ? (
+                moeda(totais.aReceber)
+              ) : (
+                <NumeroIndisponivel />
+              )}
+            </CardTitle>
+            {podeMostrarNumero(estado) && totais.vencidoAReceber > 0 && (
+              <p className="text-xs text-muted-foreground">
+                {moeda(totais.vencidoAReceber)} já venceu
+              </p>
+            )}
           </CardHeader>
         </Card>
         <Card>

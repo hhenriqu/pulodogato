@@ -51,7 +51,9 @@ const {
   STATUS_FORA_DO_PREVISTO,
   compararPrevistoRealizado,
   copiaDaPrevisao,
+  direcaoDaAgenda,
   somarAgenda,
+  somarEmAberto,
   somarMesesPrevistos,
 } = await import("../.tmp-previsto-x-realizado/previsto-x-realizado.js");
 
@@ -514,6 +516,149 @@ test("direcao ausente ou desconhecida cai em DESPESA", () => {
     assert.equal(
       copiaDaPrevisao(entrada).confirmar,
       "Marcar como paga",
+      `direcao ${JSON.stringify(entrada)} deveria cair em despesa`
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// O QUE AINDA VAI SAIR x O QUE AINDA VAI ENTRAR (HMO-187)
+// ---------------------------------------------------------------------------
+// O defeito que estes testes cercam nao levanta excecao e nao produz numero
+// estranho: ele produz R$ 9.588,50 num mes que tem R$ 2.588,50 de contas e
+// R$ 7.000 de salario. Num mes cheio, isso nao tem cara de bug.
+
+/** Uma linha em aberto com o minimo preenchido. */
+const emAberto = (amount, direcao, status = "pending", efetivo = status) => ({
+  amount,
+  direcao,
+  status,
+  effective_status: efetivo,
+});
+
+test("A MEDICAO DA HMO-187: o salario sai do 'a vencer'", () => {
+  // Exatamente o cenario medido em producao: regra de receita de R$ 7.000,
+  // regra de despesa de R$ 2.500 e o boleto avulso de R$ 88,50.
+  const resultado = somarEmAberto([
+    emAberto(7000, "income"),
+    emAberto(2500, "expense"),
+    emAberto(88.5, "expense"),
+  ]);
+
+  assert.equal(resultado.aPagar.total, 2588.5);
+  assert.equal(resultado.aPagar.quantidade, 2);
+  assert.equal(resultado.aReceber.total, 7000);
+  assert.equal(resultado.aReceber.quantidade, 1);
+
+  // O numero que o painel mostrava, e a contagem que dizia "3 contas".
+  assert.notEqual(resultado.aPagar.total, 9588.5);
+  assert.notEqual(resultado.aPagar.quantidade, 3);
+});
+
+test("vencido se separa por direcao tambem", () => {
+  // O caso que dói todo mes: o salario vira linha no dia do vencimento e fica
+  // `pending` ate alguem confirmar o recebimento (HMO-188). No dia seguinte
+  // ele e `overdue`, e somado ao vencido a pagar o painel acusava R$ 7.000 de
+  // divida inexistente, em vermelho.
+  const resultado = somarEmAberto([
+    emAberto(7000, "income", "pending", "overdue"),
+    emAberto(300, "expense", "pending", "overdue"),
+  ]);
+
+  assert.equal(resultado.vencidoAPagar.total, 300);
+  assert.equal(resultado.vencidoAPagar.quantidade, 1);
+  assert.equal(resultado.vencidoAReceber.total, 7000);
+  assert.equal(resultado.vencidoAReceber.quantidade, 1);
+
+  // Vencida nao e "a vencer": os baldes sao disjuntos.
+  assert.equal(resultado.aPagar.total, 0);
+  assert.equal(resultado.aReceber.total, 0);
+  assert.notEqual(resultado.vencidoAPagar.total, 7300);
+});
+
+test("vencida e testada ANTES de pendente", () => {
+  // 'overdue' e um `pending` com vencimento no passado: a linha tem os DOIS
+  // status. Testar `status === "pending"` primeiro jogaria toda vencida em
+  // "a vencer" e o cartao de atraso zeraria -- o app deixaria de avisar sobre
+  // divida vencida sem nenhum erro aparecer.
+  const resultado = somarEmAberto([
+    emAberto(500, "expense", "pending", "overdue"),
+  ]);
+
+  assert.equal(resultado.vencidoAPagar.total, 500);
+  assert.equal(resultado.aPagar.total, 0);
+});
+
+test("paga conta em `pago`, e fora das duas pernas em aberto", () => {
+  const resultado = somarEmAberto([
+    emAberto(400, "expense", "paid"),
+    emAberto(1000, "income", "paid"),
+  ]);
+
+  // As duas direcoes entram em `pago`: a pergunta ali e "o que ja foi baixado",
+  // e o numero nao vai para nenhum bloco que separe as pernas.
+  assert.equal(resultado.pago, 1400);
+  assert.equal(resultado.aPagar.total, 0);
+  assert.equal(resultado.aReceber.total, 0);
+});
+
+test("skipped e cancelled nao entram em balde nenhum", () => {
+  // Nao estao em aberto -- a pessoa disse que aquilo nao vai acontecer -- e
+  // nao foram pagos. Contá-los em "a pagar" faria o painel cobrar uma conta
+  // que o usuario pulou de proposito.
+  const resultado = somarEmAberto([
+    emAberto(900, "expense", "skipped"),
+    emAberto(800, "expense", "cancelled"),
+    emAberto(700, "income", "cancelled"),
+  ]);
+
+  assert.deepEqual(resultado, {
+    aPagar: { total: 0, quantidade: 0 },
+    aReceber: { total: 0, quantidade: 0 },
+    vencidoAPagar: { total: 0, quantidade: 0 },
+    vencidoAReceber: { total: 0, quantidade: 0 },
+    pago: 0,
+  });
+});
+
+test("os centavos fecham sem ruido de ponto flutuante", () => {
+  const resultado = somarEmAberto([
+    emAberto(0.1, "expense"),
+    emAberto(0.2, "expense"),
+  ]);
+  assert.equal(resultado.aPagar.total, 0.3);
+});
+
+test("valor negativo nao DIMINUI o a pagar", () => {
+  // O CHECK amount > 0 impede isto no banco, mas a funcao tambem soma linhas
+  // que passaram por outra rota. Um negativo escapando viraria uma despesa que
+  // reduz o "a vencer" -- numero plausivel, conta errada.
+  const resultado = somarEmAberto([
+    emAberto(500, "expense"),
+    emAberto(-200, "expense"),
+  ]);
+  assert.equal(resultado.aPagar.total, 700);
+  assert.notEqual(resultado.aPagar.total, 300);
+});
+
+test("direcaoDaAgenda: so `income` sai do lado de pagar", () => {
+  assert.equal(direcaoDaAgenda("income"), "income");
+
+  // 'transfer' e a fatura de cartao ficam em DESPESA aqui de proposito, ao
+  // contrario de `direcaoNoPainel` (lib/realizado-e-previsao.ts). A pergunta
+  // deste bloco e "quanto vai sair da conta", e a fatura sai mesmo; escondê-la
+  // prometeria uma folga que nao existe.
+  for (const entrada of [
+    "expense",
+    "transfer",
+    undefined,
+    null,
+    "",
+    "qualquer-coisa",
+  ]) {
+    assert.equal(
+      direcaoDaAgenda(entrada),
+      "expense",
       `direcao ${JSON.stringify(entrada)} deveria cair em despesa`
     );
   }

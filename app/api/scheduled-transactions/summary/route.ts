@@ -46,7 +46,13 @@ import {
   parteDoMembro,
 } from "@/lib/parte-do-grupo";
 import { janelaParaMaterializar, periodoDaQuery } from "@/lib/periodo-do-painel";
-import { somarAgenda, type LinhaDaAgenda } from "@/lib/previsto-x-realizado";
+import {
+  direcaoDaAgenda,
+  somarAgenda,
+  somarEmAberto,
+  type LinhaDaAgenda,
+  type LinhaEmAberto,
+} from "@/lib/previsto-x-realizado";
 import type { RecurringRule, ScheduledSummary } from "@/types/financial";
 
 export async function GET(request: NextRequest) {
@@ -106,7 +112,7 @@ export async function GET(request: NextRequest) {
     const { data: linhas, error } = await supabase
       .from("scheduled_transactions_effective")
       .select(
-        "due_date, amount, status, effective_status, group_id, recurring_rule_id"
+        "due_date, amount, status, effective_status, group_id, direction"
       )
       .gte("due_date", de)
       .lte("due_date", ate);
@@ -125,65 +131,38 @@ export async function GET(request: NextRequest) {
       .eq("is_active", true);
 
     // ------------------------------------------------------------------
-    // A DIRECAO DE CADA LINHA DA AGENDA (HMO-186)
+    // A DIRECAO DE CADA LINHA DA AGENDA (HMO-186, refeita na HMO-187)
     // ------------------------------------------------------------------
     // `scheduled_transactions.amount` tem CHECK amount > 0: a ocorrencia nao
-    // guarda direcao nenhuma. Quem diz se aquilo entra ou sai e
-    // `recurring_rules.transaction_type`, e e por isso que o previsto precisa
-    // de uma segunda consulta.
+    // guarda sinal nenhum. Quem diz se aquilo entra ou sai e a coluna
+    // `direction` da view, que o 027 acrescentou com a precedencia JA
+    // RESOLVIDA: ocorrencia -> regra -> 'expense'.
     //
-    // Nao da para reaproveitar `regras` acima: ela filtra `is_active = true`, e
-    // a agenda do periodo pode ter vindo de uma regra que depois foi desligada.
-    // Usando aquela lista, o salario de uma regra arquivada cairia no lado das
-    // DESPESAS -- a convencao de "sem regra e despesa" aplicada a uma regra que
-    // existe. O resultado previsto erraria pelo dobro do salario, e nada na tela
-    // indicaria de onde veio.
+    // ATE A HMO-187 ISTO ERA UMA SEGUNDA CONSULTA a `recurring_rules`, e ela
+    // tinha um furo que a coluna fecha: a precedencia comeca na OCORRENCIA, e
+    // uma previsao avulsa de receita (que /api/scheduled-transactions passou a
+    // aceitar na HMO-188, gravando `transaction_type` na propria linha) nao tem
+    // regra nenhuma. Pela regra antiga ela caia em "sem regra, logo despesa" --
+    // uma receita prevista contada como dinheiro saindo, sem erro em lugar
+    // nenhum. Refazer o COALESCE aqui seria a segunda copia da precedencia, e a
+    // copia esquecida e este defeito.
     //
-    // Nao e embed do PostgREST (`recurring_rule:recurring_rules(...)`) porque a
-    // origem aqui e uma VIEW: o embed depende de o PostgREST inferir a FK
-    // atravessando as colunas da view ate a tabela base, e quando ele nao
-    // infere a resposta nao e erro -- e a coluna vindo `null`, ou seja, tudo
-    // classificado como despesa. Duas consultas e um `Set` nao tem esse modo de
-    // falha.
-    const idsDeRegra = Array.from(
-      new Set(
-        ((linhas ?? []) as { recurring_rule_id?: string | null }[])
-          .map((l) => l.recurring_rule_id)
-          .filter((id): id is string => Boolean(id))
-      )
-    );
+    // A coluna vem `NOT NULL` na pratica (o COALESCE da view termina em
+    // 'expense'), entao a flag abaixo so dispara se a view for trocada por uma
+    // que nao a entregue. Ela custa uma varredura e evita o modo de falha caro:
+    // sem direcao, TODA linha cairia em despesa, o "a vencer" voltaria a somar
+    // o salario e o resultado previsto ficaria negativo no valor dele -- um
+    // numero plausivel, com cara de "o mes fecha no vermelho". Mesmo criterio
+    // do `reserva_indisponivel` em /api/safe-to-spend: a tela escreve
+    // "indisponivel" em vez de mostrar isso.
+    const direcaoIndisponivel = ((linhas ?? []) as { direction?: unknown }[])
+      .some((l) => l.direction == null);
 
-    const { data: regrasDaAgenda, error: erroDirecao } = idsDeRegra.length
-      ? await supabase
-          .from("recurring_rules")
-          .select("id, transaction_type")
-          .in("id", idsDeRegra)
-      : { data: [], error: null };
-
-    // Sem a direcao NAO se chuta. Toda linha cairia em despesa, o previsto de
-    // entradas viria zero e o resultado previsto ficaria negativo no valor do
-    // salario -- um numero plausivel, com cara de "o mes fecha no vermelho",
-    // sobre uma conta que ninguem conseguiu fazer. A flag existe para o bloco
-    // dizer "indisponivel" em vez de mostrar isso; mesmo critério do
-    // `reserva_indisponivel` em /api/safe-to-spend.
-    //
-    // E o resto do resumo segue: `total_pending`, `total_overdue` e o custo
-    // fixo nao dependem desta consulta, e derrubar a rota em 500 apagaria os
-    // blocos "A vencer" e "contas vencidas" do painel por causa de um bloco
-    // novo.
-    const direcaoIndisponivel = Boolean(erroDirecao);
-    if (erroDirecao) {
+    if (direcaoIndisponivel) {
       console.error(
-        "Resumo seguiu SEM a direcao das linhas previstas:",
-        erroDirecao
+        "Resumo seguiu SEM a direcao das linhas previstas: a view scheduled_transactions_effective nao entregou `direction` (migration 027)"
       );
     }
-
-    const regrasDeReceita = new Set(
-      ((regrasDaAgenda ?? []) as { id: string; transaction_type: string }[])
-        .filter((r) => r.transaction_type === "income")
-        .map((r) => r.id)
-    );
 
     // Quantos membros ativos tem cada grupo que aparece nas duas consultas.
     // Sem isto a parte dos outros continua contando como minha - ver o cabecalho
@@ -227,27 +206,18 @@ export async function GET(request: NextRequest) {
       hoje
     );
 
-    const porMes = new Map<string, ScheduledSummary>();
-    // A agenda de cada mes, guardada crua para `somarAgenda` fazer a conta. O
-    // acumulo nao e feito aqui dentro do laco de proposito: a regra de quais
-    // status contam como "previsto" e a que decide se o mes fecha em zero no
-    // dia 30 (ver STATUS_FORA_DO_PREVISTO), e ela mora num modulo com teste
-    // unitario em vez de num `else if` de rota.
+    // A agenda de cada mes, guardada crua para os dois somadores fazerem a
+    // conta. O acumulo NAO e feito aqui dentro do laco de proposito: as duas
+    // regras que ele carregaria -- quais status contam como "previsto" (ver
+    // STATUS_FORA_DO_PREVISTO) e para que perna cada linha vai -- sao a
+    // definicao das features, e num `else if` de rota elas seriam conferidas
+    // por inspecao visual. Foi assim que a mistura de receita e despesa num
+    // acumulador so sobreviveu a HMO-186.
     const agendaPorMes = new Map<string, LinhaDaAgenda[]>();
+    const emAbertoPorMes = new Map<string, LinhaEmAberto[]>();
 
     for (const linha of linhas ?? []) {
       const mes = String(linha.due_date).slice(0, 7);
-      const atual =
-        porMes.get(mes) ??
-        ({
-          month: mes,
-          total_pending: 0,
-          total_overdue: 0,
-          total_paid: 0,
-          fixed_monthly_cost: Number(custoFixoMensal.toFixed(2)),
-          count_pending: 0,
-          count_overdue: 0,
-        } as ScheduledSummary);
 
       // A linha de grupo entra pela MINHA parte. Nao e refinamento do custo
       // fixo: a policy do 005 devolve tambem as previstas de grupo dos OUTROS
@@ -259,53 +229,73 @@ export async function GET(request: NextRequest) {
         membrosAtivosPorGrupo
       );
 
-      if (linha.effective_status === "overdue") {
-        atual.total_overdue += valor;
-        atual.count_overdue += 1;
-      } else if (linha.status === "pending") {
-        atual.total_pending += valor;
-        atual.count_pending += 1;
-      } else if (linha.status === "paid") {
-        atual.total_paid += valor;
-      }
+      const direcao = direcaoDaAgenda(
+        (linha as { direction?: string | null }).direction
+      );
+
+      const emAberto = emAbertoPorMes.get(mes) ?? [];
+      emAberto.push({
+        amount: valor,
+        status: String(linha.status),
+        effective_status: String(linha.effective_status),
+        direcao,
+      });
+      emAbertoPorMes.set(mes, emAberto);
 
       // O previsto usa `valor` -- a MINHA parte --, o mesmo numero das somas
       // acima. Usar `linha.amount` cru aqui faria o previsto de um casal
       // discordar do "a vencer" que aparece tres blocos acima, na mesma tela.
       const daAgenda = agendaPorMes.get(mes) ?? [];
-      const idDaRegra = (linha as { recurring_rule_id?: string | null })
-        .recurring_rule_id;
-      daAgenda.push({
-        amount: valor,
-        status: String(linha.status),
-        // Conta avulsa (sem regra) e despesa, pela mesma convencao da Fase 1 que
-        // /api/projection e lib/safe-to-spend.ts ja aplicam.
-        direcao:
-          idDaRegra && regrasDeReceita.has(idDaRegra) ? "income" : "expense",
-      });
+      daAgenda.push({ amount: valor, status: String(linha.status), direcao });
       agendaPorMes.set(mes, daAgenda);
-
-      porMes.set(mes, atual);
     }
 
     // Array.from em vez de spread: o tsconfig do projeto compila para ES5, onde
     // espalhar um iterador de Map exige --downlevelIteration.
-    const resumo = Array.from(porMes.values())
-      .map((m) => {
+    const resumo: ScheduledSummary[] = Array.from(emAbertoPorMes.keys())
+      .map((month) => {
         // Com a direcao indisponivel, o previsto do mes vem ZERADO e com
         // `expected_count: 0`. Nao e "nao havia nada agendado": e o que faz a
-        // flag abaixo e o `semPrevisao` do bloco calarem a comparacao juntos.
-        // Somar as linhas como despesa aqui produziria o numero errado com cara
-        // de certo, que e exatamente o que a flag existe para impedir.
+        // flag e o `semPrevisao` do bloco calarem a comparacao juntos. Somar as
+        // linhas como despesa aqui produziria o numero errado com cara de
+        // certo, que e exatamente o que a flag existe para impedir.
         const previsto = direcaoIndisponivel
           ? { entradas: 0, despesas: 0, resultado: 0, quantidade: 0 }
-          : somarAgenda(agendaPorMes.get(m.month) ?? []);
+          : somarAgenda(agendaPorMes.get(month) ?? []);
+
+        const emAberto = somarEmAberto(emAbertoPorMes.get(month) ?? []);
+
+        // AS DUAS PERNAS, no lugar do `total_pending` unico que somava as duas
+        // (HMO-187). O nome mudou de proposito: um consumidor que ainda leia o
+        // campo antigo passa a receber `undefined` e a mostrar o estado
+        // "indisponivel", em vez de continuar exibindo em silencio um numero
+        // que mistura o salario com as contas.
+        //
+        // Sem a direcao elas nao saem, e isso NAO e simetria com o previsto
+        // acima: se saissem, `direcaoDaAgenda` teria classificado tudo como
+        // despesa e o bloco "A vencer" -- que nao le
+        // `previsto_indisponivel` -- mostraria de novo o salario somado as
+        // contas, exatamente o defeito desta issue. A ausencia do campo e o
+        // que faz `somarPrevistas` devolver null e a tela dizer
+        // "indisponivel".
+        const pernas = direcaoIndisponivel
+          ? {}
+          : {
+              total_pending_expense: emAberto.aPagar.total,
+              count_pending_expense: emAberto.aPagar.quantidade,
+              total_pending_income: emAberto.aReceber.total,
+              count_pending_income: emAberto.aReceber.quantidade,
+              total_overdue_expense: emAberto.vencidoAPagar.total,
+              count_overdue_expense: emAberto.vencidoAPagar.quantidade,
+              total_overdue_income: emAberto.vencidoAReceber.total,
+              count_overdue_income: emAberto.vencidoAReceber.quantidade,
+            };
 
         return {
-          ...m,
-          total_pending: Number(m.total_pending.toFixed(2)),
-          total_overdue: Number(m.total_overdue.toFixed(2)),
-          total_paid: Number(m.total_paid.toFixed(2)),
+          month,
+          ...pernas,
+          total_paid: emAberto.pago,
+          fixed_monthly_cost: Number(custoFixoMensal.toFixed(2)),
           expected_income: previsto.entradas,
           expected_expense: previsto.despesas,
           expected_result: previsto.resultado,

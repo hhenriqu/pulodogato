@@ -97,6 +97,7 @@ import {
   type Periodo,
 } from "@/lib/periodo-do-painel";
 import { SeletorDePeriodo } from "@/components/dashboard/SeletorDePeriodo";
+import { NumeroIndisponivel } from "@/components/SemRede";
 import { PrevistoXRealizado } from "@/components/dashboard/PrevistoXRealizado";
 import {
   somarMesesPrevistos,
@@ -139,10 +140,16 @@ interface ResumoFluxo {
 
 interface ResumoMesPrevisto {
   month: string;
-  total_pending: number;
-  total_overdue: number;
-  count_pending: number;
-  count_overdue: number;
+  /** A vencer que vai SAIR da conta -- e o que o bloco "A vencer" anuncia. */
+  total_pending_expense: number;
+  count_pending_expense: number;
+  /** A vencer que vai ENTRAR. Mora no mesmo bloco, em outra linha. */
+  total_pending_income: number;
+  count_pending_income: number;
+  total_overdue_expense: number;
+  count_overdue_expense: number;
+  total_overdue_income: number;
+  count_overdue_income: number;
   fixed_monthly_cost: number;
 }
 
@@ -404,11 +411,22 @@ function Painel() {
         // as linhas e o total do periodo; a versao antiga PROCURAVA a linha do
         // mes corrente calculado em UTC, e nas tres ultimas horas do mes
         // achava a do mes seguinte. Ver lib/periodo-do-painel.ts.
-        setPrevistas({
-          ...somarPrevistas(d.summary ?? []),
-          month: periodo.de.slice(0, 7),
-          fixed_monthly_cost: Number(d.fixed_monthly_cost ?? 0),
-        });
+        // `somarPrevistas` devolve `null` quando a resposta nao traz as pernas
+        // separadas -- o caso real e uma resposta de antes da HMO-187 servida
+        // do cache do PWA, que guarda /api/ por ate 24h. Espalhar zeros ali
+        // faria o bloco anunciar "R$ 0,00 a vencer", que e uma afirmacao sobre
+        // o dinheiro do usuario que ninguem conferiu; `null` faz o bloco
+        // escrever "indisponivel".
+        const somadas = somarPrevistas(d.summary ?? []);
+        setPrevistas(
+          somadas
+            ? {
+                ...somadas,
+                month: periodo.de.slice(0, 7),
+                fixed_monthly_cost: Number(d.fixed_monthly_cost ?? 0),
+              }
+            : null
+        );
         // Somar os meses pelo mesmo motivo de `somarPrevistas` acima: a rota
         // devolve uma linha por mes ja recortada pelo periodo, e procurar "o
         // mes" na lista foi o defeito que a HMO-173 corrigiu.
@@ -451,7 +469,15 @@ function Painel() {
 
   if (carregando) return <Girando />;
 
-  const semNada = contas.length === 0 && !previstas?.count_pending;
+  // "Voce ainda nao cadastrou nada." As DUAS pernas entram: quem so cadastrou
+  // o salario tem agenda, e a tela de boas-vindas em cima disso diria que ele
+  // nao cadastrou o que ele acabou de cadastrar.
+  const semNada =
+    contas.length === 0 &&
+    !previstas?.count_pending_expense &&
+    !previstas?.count_pending_income &&
+    !previstas?.count_overdue_expense &&
+    !previstas?.count_overdue_income;
 
   // O periodo em uma palavra, para os rotulos dos tiles. "neste mês" so quando
   // o periodo E um mes; nos outros casos o rotulo nomeia o periodo inteiro,
@@ -890,21 +916,34 @@ function Painel() {
     // ------------------------------------------------------------------
     // O que ja venceu
     // ------------------------------------------------------------------
-    vencidas: !!previstas?.count_overdue && (
+    // So a perna de DESPESA acende este cartao (HMO-187). A receita vencida
+    // nao e divida: a materializacao cria a linha do salario no dia do
+    // vencimento e ela fica `pending` ate alguem confirmar que recebeu
+    // (HMO-188), entao contando as duas juntas o painel pintava R$ 7.000 "em
+    // atraso" em vermelho todo mes, no dia seguinte ao pagamento.
+    vencidas: !!previstas?.count_overdue_expense && (
       <Card className="border-destructive/30 bg-destructive/10">
         <CardContent className="flex items-center justify-between p-4 flex-wrap gap-3">
           <div className="flex items-center gap-3">
             <AlertTriangle className="h-5 w-5 text-destructive shrink-0" />
             <div>
               <p className="font-medium text-destructive">
-                {previstas.count_overdue}{" "}
-                {previstas.count_overdue === 1
+                {previstas.count_overdue_expense}{" "}
+                {previstas.count_overdue_expense === 1
                   ? "conta vencida"
                   : "contas vencidas"}
               </p>
               <p className="text-sm text-destructive">
-                {moeda(previstas.total_overdue)} em atraso
+                {moeda(previstas.total_overdue_expense)} em atraso
               </p>
+              {/* A receita atrasada aparece aqui, sem a cor de alerta: e
+                  dinheiro que devem A VOCE, e some-lo ao vermelho acima foi
+                  justamente o defeito. */}
+              {previstas.count_overdue_income > 0 && (
+                <p className="text-sm text-muted-foreground">
+                  {moeda(previstas.total_overdue_income)} a receber, vencido
+                </p>
+              )}
             </div>
           </div>
           <Button variant="outline" size="sm" asChild>
@@ -929,15 +968,51 @@ function Painel() {
           <CardDescription className="capitalize">{rotulo}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="flex items-baseline justify-between">
-            <span className="text-2xl font-bold">
-              {moeda(previstas?.total_pending ?? 0)}
-            </span>
-            <Badge variant="secondary">
-              {previstas?.count_pending ?? 0}{" "}
-              {previstas?.count_pending === 1 ? "conta" : "contas"}
-            </Badge>
-          </div>
+          {/*
+            O numero grande e so o que vai SAIR (HMO-187). Antes ele somava as
+            duas direcoes: com um salario de R$ 7.000 cadastrado como regra
+            recorrente, o bloco anunciava R$ 9.588,50 a vencer quando o que ia
+            sair eram R$ 2.588,50 -- e o badge dizia "3 contas" havendo 1 conta,
+            1 boleto e 1 salario.
+
+            `previstas` nulo NAO vira zero: seria o app afirmando que nao ha
+            nada a vencer sobre uma resposta que ninguem conseguiu ler.
+          */}
+          {previstas ? (
+            <>
+              <div className="flex items-baseline justify-between">
+                <span className="text-2xl font-bold">
+                  {moeda(previstas.total_pending_expense)}
+                </span>
+                <Badge variant="secondary">
+                  {previstas.count_pending_expense}{" "}
+                  {previstas.count_pending_expense === 1 ? "conta" : "contas"}
+                </Badge>
+              </div>
+              {/*
+                O "a receber" fica junto e menor: some-lo ao numero de cima foi
+                o defeito, e escondê-lo faria o bloco contar so metade do mes.
+                A linha some quando nao ha nada a receber -- "R$ 0,00 a receber"
+                num mes sem receita agendada e ruido, nao informacao.
+              */}
+              {previstas.count_pending_income > 0 && (
+                <p className="text-sm text-muted-foreground">
+                  A receber: {moeda(previstas.total_pending_income)}{" "}
+                  <span className="text-xs">
+                    ({previstas.count_pending_income}{" "}
+                    {previstas.count_pending_income === 1
+                      ? "entrada"
+                      : "entradas"}
+                    )
+                  </span>
+                </p>
+              )}
+            </>
+          ) : (
+            <div className="text-2xl font-bold">
+              <NumeroIndisponivel />
+            </div>
+          )}
           <Button variant="outline" className="w-full" asChild>
             <Link href="/dashboard/bills">Abrir Contas Previstas</Link>
           </Button>
