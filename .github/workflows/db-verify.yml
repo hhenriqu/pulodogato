@@ -12,9 +12,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -739,6 +739,32 @@ jobs:
           $PSQL -f database/tests/group_settlement_test.sql
           $PSQL -f database/tests/budget_invoice_test.sql
 
+      # O que a rota de aprovar/recusar parte de grupo (HMO-178) ASSUME do banco.
+      # Roda AQUI, depois da 027, e nao junto da 002 que escreveu a policy: as
+      # tres coisas que ela precisa que sejam verdade ao mesmo tempo vem de
+      # migrations diferentes -- a policy de UPDATE e do 002, o
+      # `NOT IN ('rejected','expired')` de `total_owed` foi reescrito pela 026, e
+      # a trava PDG01 e da 024. Provar cada uma na posicao dela provaria tres
+      # definicoes que ninguem usa juntas.
+      #
+      # O buraco que ela fecha: ate a HMO-178 nenhum caminho do app escrevia
+      # `approved` nem `rejected` em `group_expense_splits`. O cracha na tela do
+      # grupo era um rotulo morto, e a trava da 024 protegia um estado que so o
+      # PostgREST na mao alcancava.
+      #
+      # A assercao que vale dinheiro e a secao 2 -- um membro NAO mexe na parte
+      # do outro. A RLS nao levanta erro ali: ela some com a linha e o UPDATE
+      # "funciona" escrevendo zero, entao a rota confere o numero de linhas antes
+      # de responder 200. Mutante conferido: trocar a policy por `USING (true)`
+      # reprova exatamente essa secao.
+      #
+      # A secao 5 e um controle honesto, nao um bug: pela RLS o ADMIN tambem
+      # alcanca a parte alheia. A rota se restringe ao dono no TypeScript, e
+      # deixar isso escrito evita que o proximo leitor conclua do silencio que o
+      # banco ja barra.
+      - name: Aprovar e recusar a propria parte, e o saldo que isso move
+        run: $PSQL -f database/tests/aprovacao_de_parte_test.sql
+
       # O livro-razao das execucoes de cron. O que so o Postgres pega:
       #
       #   - o CHECK de `job` tem que bater com os quatro `crons[].path` do
@@ -898,6 +924,26 @@ jobs:
       # 12 de 12 mutantes mortos em scripts/mutantes-parte-do-grupo.mjs.
       - name: A minha parte da despesa fixa de grupo
         run: npm run test:parte-do-grupo
+
+      # Quem pode aprovar ou recusar a propria parte de uma despesa de grupo
+      # (HMO-178). Entra NESTE job, e nao num de front, porque o que ele
+      # protege e dinheiro no SQL logo acima: `group_member_balances` soma em
+      # `total_owed` as partes com `status NOT IN ('rejected','expired')`, e a
+      # 024 levanta PDG01 quando alguma parte esta `approved`. Ate a HMO-178
+      # nenhum caminho do app escrevia esses dois valores -- o cracha na tela
+      # do grupo era um rotulo morto e a trava da 024 protegia um estado
+      # inalcancavel.
+      #
+      # A regra tem DUAS metades (a parte e minha, e o status aceita a
+      # transicao) e a suite exige as duas separadas: uma assercao que so cobre
+      # o status passaria com uma funcao que ignora de quem e a parte -- e
+      # recusar a parte de outra pessoa tira o valor do saldo DELA.
+      #
+      # 3 de 3 mutantes mortos: acoesDaParte sem a checagem de dono, ehParteDe
+      # sem a guarda de id ausente (`undefined === undefined` e `true`), e
+      # `approved` voltando a oferecer `approve`.
+      - name: Aprovar e recusar a propria parte de despesa de grupo
+        run: npm run test:aprovacao-de-parte
 
       # Os numeros dos relatorios sao provados em SQL logo acima. O que resta
       # para o TypeScript sao duas coisas que erram em silencio: a janela de

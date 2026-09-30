@@ -54,6 +54,12 @@ import type { BudgetWithConsumption } from "@/types/financial";
 import { CampoDeCotacao } from "@/components/movimentacoes/CampoDeCotacao";
 import { MOEDA_PADRAO, formatarValor, moedaPorCodigo } from "@/lib/dinheiro";
 import { opcoesDeMoeda } from "@/lib/moeda";
+import {
+  acoesDaParte,
+  ehParteDe,
+  rotuloDaAcao,
+  type AcaoDaParte,
+} from "@/lib/aprovacao-de-parte";
 import { cotacaoDigitada, taxaParaGravar, valorEmReais } from "@/lib/cambio";
 import {
   acertoNaMoedaDaViagem,
@@ -241,6 +247,12 @@ export default function GroupDetailPage() {
   const [balances, setBalances] = useState<BalanceSummary[]>([]);
   const [transfers, setTransfers] = useState<TransferSuggestion[]>([]);
   const [settlements, setSettlements] = useState<Settlement[]>([]);
+  /**
+   * O id da parte cuja resposta esta em voo, para desabilitar os botoes DELA.
+   * Um booleano global desabilitaria a linha de todo mundo; um id mantem o
+   * resto da tela utilizavel enquanto a requisicao vai e volta.
+   */
+  const [parteEmCurso, setParteEmCurso] = useState<string | null>(null);
   // A barra "quanto ja gastamos da viagem" (HMO-180). `null` = este grupo nao
   // tem teto no mes corrente, e o cartao nem aparece -- mesma regra das
   // Previstas: grupo sem teto continua vendo a tela de antes.
@@ -547,6 +559,64 @@ export default function GroupDetailPage() {
     } catch (error) {
       console.error("Erro ao desfazer acerto:", error);
       toast.error("Não foi possível desfazer o acerto");
+    }
+  };
+
+  /**
+   * Responde pela propria parte numa despesa do grupo (HMO-178).
+   *
+   * Recarrega saldos e sugestoes junto com a lista, e nao so a lista: recusar
+   * tira a parte de `total_owed` em `group_member_balances`. Atualizar so o
+   * cracha deixaria a tela mostrando "recusado" ao lado de um saldo que ainda
+   * cobra aquele valor -- duas afirmacoes contraditorias na mesma tela, sem
+   * erro nenhum aparecer.
+   *
+   * `residual` costuma ficar diferente de zero depois de uma recusa, e isso
+   * esta certo: a despesa passa a estar rateada por menos gente do que o total.
+   * O aviso que `loadTransfers` ja traz e quem conta isso.
+   */
+  const handleResponderParte = async (splitId: string, acao: AcaoDaParte) => {
+    // A recusa e a unica que pede motivo, e o motivo e opcional: cancelar o
+    // prompt (`null`) aborta a acao inteira, string vazia segue sem comentario.
+    let comments: string | undefined;
+    if (acao === "reject") {
+      const motivo = window.prompt(
+        "Por que está recusando esta parte? (opcional)"
+      );
+      if (motivo === null) return;
+      comments = motivo.trim() || undefined;
+    }
+
+    setParteEmCurso(splitId);
+    try {
+      const response = await fetch(`/api/expense-groups/${groupId}/splits`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ splitId, action: acao, comments }),
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        toast.error(data.error || "Não foi possível atualizar a parte");
+        // Mesmo no erro a lista e recarregada: o 409 quer dizer que a parte
+        // mudou por baixo, e deixar o cracha velho na tela repetiria o engano.
+        await loadTransactions();
+        return;
+      }
+
+      toast.success(
+        acao === "approve"
+          ? "Parte aprovada"
+          : acao === "reject"
+            ? "Parte recusada"
+            : "Parte reaberta"
+      );
+      await Promise.all([loadTransactions(), loadBalances(), loadTransfers()]);
+    } catch (error) {
+      console.error("Erro ao responder a parte:", error);
+      toast.error("Não foi possível atualizar a parte");
+    } finally {
+      setParteEmCurso(null);
     }
   };
 
@@ -1137,6 +1207,35 @@ export default function GroupDetailPage() {
                                   >
                                     {getStatusIcon(split.status)}
                                   </Badge>
+                                  {/* Ate a HMO-178 o cracha ao lado era um
+                                      rotulo que nunca mudava: nenhum caminho do
+                                      app escrevia `approved`. Os botoes so
+                                      aparecem na propria parte -- ver
+                                      `acoesDaParte`. */}
+                                  {acoesDaParte({
+                                    status: split.status,
+                                    ehMinha: ehParteDe(
+                                      split.member?.id,
+                                      user?.id
+                                    ),
+                                  }).map((acao) => (
+                                    <Button
+                                      key={acao}
+                                      size="sm"
+                                      variant={
+                                        acao === "approve"
+                                          ? "default"
+                                          : "outline"
+                                      }
+                                      className="h-6 px-2 text-xs"
+                                      disabled={parteEmCurso === split.id}
+                                      onClick={() =>
+                                        handleResponderParte(split.id, acao)
+                                      }
+                                    >
+                                      {rotuloDaAcao(acao)}
+                                    </Button>
+                                  ))}
                                 </div>
                               </div>
                             ))}
