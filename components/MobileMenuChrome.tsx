@@ -109,7 +109,11 @@ export function MobileMenuClose({ aberto, onClose }: MobileMenuCloseProps) {
   if (!aberto) return null;
 
   return (
-    <div className="absolute top-0 right-0 pt-3 pr-3">
+    // O recorte do topo entra somado ao pt-3: o painel que ancora este
+    // `absolute` e filho de um `fixed inset-0`, entao `top-0` aqui e o topo da
+    // TELA, nao o topo do conteudo -- sem o `--safe-top` o X cai debaixo do
+    // relogio do iPhone, no mesmo lugar em que caia o header (HMO-185).
+    <div className="absolute top-0 right-0 pt-[calc(0.75rem_+_var(--safe-top))] pr-3">
       <button
         type="button"
         onClick={onClose}

@@ -308,8 +308,8 @@ export default function Sidebar({
   return (
     <>
       {/* Desktop Sidebar */}
-      <div className="hidden lg:flex lg:w-64 lg:flex-col lg:fixed lg:inset-y-0">
-        <div className="flex flex-col flex-grow pt-5 bg-card overflow-y-auto border-r">
+      <div className="hidden lg:flex lg:w-64 lg:flex-col lg:fixed lg:inset-y-0 pl-safe">
+        <div className="flex flex-col flex-grow pt-[calc(1.25rem_+_var(--safe-top))] pb-[var(--safe-bottom)] bg-card overflow-y-auto border-r">
           <div className="flex flex-col flex-shrink-0 px-6 space-y-4">
             <h1 className="text-xl font-bold text-foreground">PulodoGato</h1>
             {planConfig && (
@@ -403,7 +403,7 @@ export default function Sidebar({
         <div
           id={ID_MENU_MOBILE}
           className={cn(
-            "relative flex-1 flex flex-col max-w-xs w-full bg-card transition-transform",
+            "relative flex-1 flex flex-col max-w-xs w-full bg-card transition-transform pl-safe",
             isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"
           )}
         >
@@ -418,7 +418,12 @@ export default function Sidebar({
             onClose={() => setIsMobileMenuOpen(false)}
           />
 
-          <div className="flex-1 h-0 pt-5 pb-4 overflow-y-auto">
+          {/* O recorte do topo entra somado aos 1.25rem: a gaveta e `fixed
+              inset-0`, entao ela tambem comeca em y=0, debaixo do relogio do
+              iPhone -- o "PulodoGato" do menu saia no mesmo lugar em que saia
+              o do header (HMO-185). O de baixo afasta o botao "Sair" da barra
+              de gesto. */}
+          <div className="flex-1 h-0 pt-[calc(1.25rem_+_var(--safe-top))] pb-[calc(1rem_+_var(--safe-bottom))] overflow-y-auto">
             <div className="flex flex-col flex-shrink-0 px-6 space-y-4">
               <h1 className="text-xl font-bold text-foreground">PulodoGato</h1>
               {planConfig && (

@@ -108,6 +108,53 @@ jobs:
 
           echo "A verificacao fica vermelha nos dois mecanismos da HMO-168."
 
+      # Controle negativo da HMO-185, a outra familia que a mesma suite vigia:
+      # a area util da tela no iPhone. Ela precisa de controle proprio porque
+      # e MAIS invisivel que o scroll horizontal -- `env(safe-area-inset-top)`
+      # vale 0 em todo navegador sem notch, inclusive o deste runner, entao
+      # nem uma medicao em pixels aqui veria a regressao. Sobra afirmar sobre
+      # o mecanismo, e mecanismo afirmado por regex sai verde no dia em que a
+      # regex para de achar o alvo.
+      #
+      # Os tres mutantes sao os tres caminhos de volta, e o terceiro foi
+      # medido em navegador antes de entrar aqui (sem o `min-w-0` do bloco da
+      # esquerda a pagina volta a 614px numa viewport de 390).
+      - name: A verificacao de area util sabe falhar
+        run: |
+          set -uo pipefail
+          # Os caminhos vao um a um e entre aspas: `app/(dashboard)/...` tem
+          # parenteses, e desprotegido o shell le isso como subshell -- a
+          # restauracao morreria com erro de sintaxe, deixando o repositorio
+          # mutado para os passos seguintes.
+          trap "git checkout -- app/globals.css 'app/(dashboard)/layout.tsx' 'app/(dashboard)/dashboard/personal-finance/page.tsx'" EXIT
+
+          # 1) O espacador volta a ter altura escrita a mao, e para de
+          #    acompanhar o header.
+          sed -i 's/height: calc(var(--app-header) + var(--safe-top));/height: var(--app-header);/' app/globals.css
+          if npm run test:mobile-overflow --silent > /dev/null 2>&1; then
+            echo "::error::Passou verde com o espacador ignorando o recorte do topo."
+            exit 1
+          fi
+          git checkout -- app/globals.css
+
+          # 2) O painel volta a 100vh -- a altura que o Safari do iPhone so
+          #    entrega depois que a pessoa rola.
+          sed -i 's/className="min-h-app bg-background"/className="min-h-screen bg-background"/' 'app/(dashboard)/layout.tsx'
+          if npm run test:mobile-overflow --silent > /dev/null 2>&1; then
+            echo "::error::Passou verde com o painel de volta em min-h-screen."
+            exit 1
+          fi
+          git checkout -- 'app/(dashboard)/layout.tsx'
+
+          # 3) A linha de lancamento volta a se recusar a encolher.
+          sed -i 's/gap-3 min-w-0 flex-1/gap-3 flex-1/' 'app/(dashboard)/dashboard/personal-finance/page.tsx'
+          if npm run test:mobile-overflow --silent > /dev/null 2>&1; then
+            echo "::error::Passou verde com a linha de lancamento sem min-w-0."
+            exit 1
+          fi
+
+          echo "A verificacao fica vermelha nos tres caminhos de volta da HMO-185."
+
       # Terceiro inquilino sem filtro de path, pelo mesmo motivo dos dois de
       # cima -- e o que ele vigia nao tem dono topico nenhum: as 34 suites deste
       # repositorio compilam para `.tmp-<nome>/` e cada uma comeca com `rm -rf`

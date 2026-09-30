@@ -122,28 +122,29 @@ export function DeviceAdapter({ children }: DeviceAdapterProps) {
     // Adicionar novas classes
     document.body.classList.add(...classes);
 
-    // CSS customizado para iOS
-    if (device.isIOS && device.hasNotch) {
-      document.documentElement.style.setProperty(
-        "--safe-area-inset-top",
-        "env(safe-area-inset-top, 44px)"
-      );
-      document.documentElement.style.setProperty(
-        "--safe-area-inset-bottom",
-        "env(safe-area-inset-bottom, 34px)"
-      );
-    }
-
-    // Prevenir zoom no iOS para inputs
-    if (device.isIOS) {
-      const meta = document.querySelector(
-        'meta[name="viewport"]'
-      ) as HTMLMetaElement;
-      if (meta) {
-        meta.content =
-          "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover";
-      }
-    }
+    // SAIRAM DAQUI DUAS ESCRITAS NO DOM, as duas da HMO-185.
+    //
+    // 1. `--safe-area-inset-top` / `--safe-area-inset-bottom` no <html>.
+    //    Ninguem lia as duas -- nenhuma folha de estilo do repositorio as
+    //    mencionava. E elas eram gravadas so quando a deteccao de notch
+    //    acertava, isto e, o recorte dependia de adivinhar o aparelho por
+    //    User-Agent. Hoje quem declara o recorte e app/globals.css, em
+    //    `--safe-top` e irmas, direto de `env()`: o proprio iOS responde, sem
+    //    palpite e sem esperar o JS montar.
+    //
+    // 2. a reescrita da meta viewport para `maximum-scale=1,
+    //    user-scalable=no`. Ela apagava, so no iPhone, o que
+    //    `export const viewport` de app/layout.tsx declara
+    //    (`maximumScale: 5, userScalable: true`) -- duas fontes para o mesmo
+    //    valor, e quem vencia era esta, a que nao esta no arquivo onde se vai
+    //    procurar. O efeito era proibir o usuario de dar zoom no app
+    //    instalado (falha de acessibilidade WCAG 1.4.4).
+    //
+    //    O objetivo declarado dela, "prevenir zoom no iOS para inputs", ja
+    //    era atendido sem custo nenhum por `.device-ios input { font-size:
+    //    16px }` em globals.css: o Safari so dá o zoom automatico quando a
+    //    fonte do campo e menor que 16px. Proibir o gesto era matar o zoom
+    //    inteiro para resolver um caso que ja estava resolvido.
   }, [device]);
 
   return <>{children}</>;

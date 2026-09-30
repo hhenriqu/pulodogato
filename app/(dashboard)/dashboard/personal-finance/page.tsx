@@ -1031,24 +1031,66 @@ function Lancamentos() {
               ) : visiveis.length > 0 ? (
                 <div className="space-y-3">
                   {visiveis.map((transaction) => (
+                    /*
+                      A LINHA DO LANCAMENTO, E OS 693px (HMO-185)
+                      -------------------------------------------
+                      Medida em producao, esta linha fazia o documento inteiro
+                      ter 693px de largura -- no iPhone de 390px e no de 320px,
+                      o MESMO 693. Largura que nao muda com a viewport nao e
+                      "quase coubesse": e piso de min-content. Um flex container
+                      sem quebra nao encolhe abaixo da soma do que tem dentro, e
+                      aqui dentro havia um `<p>` com a descricao inteira numa
+                      linha so e, embaixo dele, uma fila de selo + categoria +
+                      ponto + data + selo do grupo que tambem nao quebrava.
+
+                      Esta e a tela que o Helio chamou de "lancamentos de
+                      receitas e despesas". As telas de CADASTRO
+                      (/movimentacoes/receita e /despesa) foram medidas junto e
+                      estao limpas nas duas larguras -- o vazamento e da lista.
+
+                      Tres mudancas carregam o conserto, e cada uma foi
+                      medida sozinha em navegador:
+                        - `min-w-0` no bloco da esquerda (o do `flex-1`) E no
+                          embrulho do texto. Sao DOIS, e os dois pesam: tirando
+                          so o do bloco da esquerda a pagina volta a 614px numa
+                          viewport de 390. Sem eles o `truncate` nunca chega a
+                          agir, porque o minimo automatico de um item flex e o
+                          min-content dele;
+                        - `truncate` na descricao, que e o que de fato permite
+                          a linha ficar menor que o texto;
+                        - `flex-wrap` na fila de metadados, com `gap-y` para as
+                          linhas nao se colarem (a licao do `space-x-*` da
+                          HMO-160).
+
+                      O `shrink-0` do circulo e o do bloco do valor NAO estao
+                      nessa conta: removidos dos quatro blocos na pagina
+                      renderizada, a largura fica em 320/320 exatamente igual.
+                      Ficam como defesa -- o dia em que o valor ganhar uma
+                      segunda linha (a conversao de moeda ja faz isso na tela
+                      de grupo) eles passam a importar -- mas quem conserta
+                      hoje sao os tres de cima. Nao ha caso em
+                      test-mobile-overflow.mjs exigindo os `shrink-0`, de
+                      proposito: um teste sobre classe inerte nao sabe falhar
+                      por motivo de verdade.
+                    */
                     <div
                       key={transaction.id}
-                      className="flex items-center justify-between p-3 border rounded-lg transition-colors hover:bg-muted/50"
+                      className="flex items-center justify-between gap-3 p-3 border rounded-lg transition-colors hover:bg-muted/50"
                     >
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
                         <div
-                          className="w-10 h-10 rounded-full flex items-center justify-center text-white"
+                          className="w-10 h-10 shrink-0 rounded-full flex items-center justify-center text-white"
                           style={{
                             backgroundColor: transaction.category?.color_hex,
                           }}
                         >
                           <Receipt className="h-5 w-5" />
                         </div>
-                        <div>
-                          <p className="font-medium">
+                        <div className="min-w-0">
+                          <p className="font-medium truncate">
                             {transaction.description}
                           </p>
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
                             {/*
                               O tipo, escrito, em toda linha. Sem ele a perna de
                               saída de uma transferência é indistinguível de uma
@@ -1115,7 +1157,7 @@ function Lancamentos() {
                           </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-3 shrink-0">
                         <div className="text-right">
                           <p
                             className={`font-semibold ${

@@ -489,19 +489,28 @@ export default function NetWorthPage() {
                     {c.contas.map((conta) => (
                       <div
                         key={conta.id}
-                        className="flex items-center justify-between border-b py-2 text-sm last:border-0"
+                        // `min-w-0` + `truncate` no nome e `shrink-0` no valor:
+                        // esta linha vazava 11px em 320px (medido em producao,
+                        // HMO-185). Onze pixels nao chamam atencao e mexem a
+                        // pagina inteira do mesmo jeito -- o nome da conta e
+                        // livre, entao o piso de min-content da linha cresce
+                        // junto com ele e nao ha largura de celular que baste.
+                        className="flex items-center justify-between gap-2 border-b py-2 text-sm last:border-0"
                       >
-                        <span className="flex items-center gap-2">
+                        <span className="flex items-center gap-2 min-w-0">
                           <span
-                            className="h-3 w-3 rounded-sm"
+                            className="h-3 w-3 shrink-0 rounded-sm"
                             style={{
                               backgroundColor:
                                 conta.color_hex ?? "currentColor",
                             }}
                           />
-                          {conta.name}
+                          <span className="truncate">{conta.name}</span>
                           {!conta.ativa && (
-                            <Badge variant="outline" className="text-xs gap-1">
+                            <Badge
+                              variant="outline"
+                              className="text-xs gap-1 shrink-0"
+                            >
                               <Archive className="h-3 w-3" />
                               arquivada
                             </Badge>
@@ -510,8 +519,8 @@ export default function NetWorthPage() {
                         <span
                           className={
                             conta.saldo < 0
-                              ? "font-medium text-destructive"
-                              : "font-medium"
+                              ? "font-medium text-destructive shrink-0"
+                              : "font-medium shrink-0"
                           }
                         >
                           {brl(conta.saldo)}
