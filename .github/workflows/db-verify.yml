@@ -12,9 +12,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -1119,6 +1119,28 @@ jobs:
       # impossivel de nao encontrar usando o app.
       - name: Puxar para atualizar nao dispara em rolagem comum
         run: npm run test:puxar-para-atualizar
+
+      # HMO-201. O painel do grupo precisa perguntar por um periodo de datas
+      # qualquer, e `category_monthly_totals` so responde por MES. Quando o
+      # periodo corta meses pela metade a soma passa a ser feita no
+      # JavaScript -- e e ai que as regras que a view aplicava calado precisam
+      # ser repetidas na mao:
+      #
+      #   - `transfer` fica fora da conta E da contagem. As duas pernas de uma
+      #     transferencia se anulam, entao o SALDO continua certo mesmo se
+      #     entrarem; o que estraga e "quanto entrou" e "quanto saiu", que
+      #     inflam juntos, e a categoria de transferencia vira a maior fatia
+      #     da pizza;
+      #   - ABS() sobre a despesa, que neste banco e gravada NEGATIVA;
+      #   - a moeda entra na CHAVE. Sem isso 1000 reais + 180 dolares viram
+      #     1180 -- o defeito que a migration 022 foi a producao corrigir nas
+      #     views, voltando por uma porta que a 022 nao cobre.
+      #
+      # Conferido contra a propria view num Postgres local: as mesmas 6
+      # transacoes (duas delas as pernas de uma transferencia, uma em dolar)
+      # produzem linha por linha o mesmo resultado nos dois caminhos.
+      - name: Gasto por categoria num periodo qualquer bate com a view
+        run: npm run test:categorias-do-periodo
 
       # Orcamento de grupo (HMO-138). O budget_invoice_test logo acima ja prova
       # em SQL que budget_consumption soma o gasto do grupo TODO no teto de

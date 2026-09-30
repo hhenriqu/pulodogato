@@ -80,7 +80,8 @@
     "test:planos-em-breve": "rm -rf .tmp-planos-em-breve && tsc -p scripts/tsconfig.planos-em-breve-test.json && node scripts/resolve-aliases.mjs .tmp-planos-em-breve components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-planos-em-breve lib --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-planos-em-breve types --espelha-raiz && node scripts/resolve-next-subpaths.mjs .tmp-planos-em-breve && node --test scripts/test-planos-em-breve.mjs",
     "test:chave-pix": "rm -rf .tmp-chave-pix && tsc lib/chave-pix.ts --outDir .tmp-chave-pix --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-chave-pix.mjs",
     "mutantes:chave-pix": "node scripts/mutantes-chave-pix.mjs",
-    "test:puxar-para-atualizar": "rm -rf .tmp-puxar-para-atualizar && tsc lib/puxar-para-atualizar.ts --outDir .tmp-puxar-para-atualizar --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-puxar-para-atualizar.mjs"
+    "test:puxar-para-atualizar": "rm -rf .tmp-puxar-para-atualizar && tsc lib/puxar-para-atualizar.ts --outDir .tmp-puxar-para-atualizar --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-puxar-para-atualizar.mjs",
+    "test:categorias-do-periodo": "rm -rf .tmp-categorias-do-periodo && tsc lib/categorias-do-periodo.ts --outDir .tmp-categorias-do-periodo --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-categorias-do-periodo.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

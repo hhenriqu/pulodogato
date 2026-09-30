@@ -62,6 +62,7 @@ import {
 } from "@/lib/aprovacao-de-parte";
 import { cotacaoDigitada, taxaParaGravar, valorEmReais } from "@/lib/cambio";
 import { PixDoMembro, useChavesPixDoGrupo } from "@/components/grupos/PixDoMembro";
+import { PainelDoGrupo } from "@/components/grupos/PainelDoGrupo";
 import {
   acertoNaMoedaDaViagem,
   avisoDeSobra,
@@ -1021,11 +1022,24 @@ export default function GroupDetailPage() {
       )}
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-3">
+        {/* `grid-cols-4` acompanha o numero de abas: com 3 colunas para 4
+            gatilhos o ultimo sai da faixa. */}
+        <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="expenses">Despesas</TabsTrigger>
+          <TabsTrigger value="painel">Painel</TabsTrigger>
           <TabsTrigger value="balances">Balanços</TabsTrigger>
           <TabsTrigger value="members">Membros</TabsTrigger>
         </TabsList>
+
+        {/* O painel do grupo (HMO-201): totais e gasto por categoria, no
+            periodo que a pessoa escolher. Montado so quando a aba esta
+            ativa -- ele dispara duas chamadas, e faze-las no carregamento da
+            tela custaria isso a quem so veio olhar a lista de despesas. */}
+        <TabsContent value="painel" className="space-y-4">
+          {activeTab === "painel" && (
+            <PainelDoGrupo groupId={groupId} />
+          )}
+        </TabsContent>
 
         <TabsContent value="expenses" className="space-y-4">
           {/* Expenses by Period */}
