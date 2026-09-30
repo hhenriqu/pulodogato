@@ -143,6 +143,66 @@ const mutantes = [
     '    {\n      chave: "entradas",\n      rotulo: "Entradas",',
     '    {\n      chave: "despesas",\n      rotulo: "Despesas",',
   ],
+
+  // --- HMO-187: as duas pernas do que esta em aberto ---
+  // O defeito da issue, escrito a mao nas suas variacoes. Se algum destes
+  // sobreviver, a suite nao esta cobrindo o motivo pelo qual o painel anunciava
+  // R$ 9.588,50 a vencer num mes com R$ 2.588,50 de contas.
+  [
+    "HMO-187: o salario volta para o 'a vencer' (tudo vira despesa)",
+    '  return direction === "income" ? "income" : "expense";',
+    '  return "expense";',
+  ],
+  [
+    "HMO-187: toda linha da agenda vira receita",
+    '  return direction === "income" ? "income" : "expense";',
+    '  return "income";',
+  ],
+  [
+    "a fatura de cartao some do 'a pagar' (confundida com direcaoNoPainel)",
+    '  return direction === "income" ? "income" : "expense";',
+    '  return direction === "income" || direction === "transfer"\n    ? "income"\n    : "expense";',
+  ],
+  [
+    "a perna de pendente deixa de separar direcao",
+    "      const alvo = receita ? emAberto.aReceber : emAberto.aPagar;",
+    "      const alvo = emAberto.aPagar;",
+  ],
+  [
+    "a perna de vencido deixa de separar direcao",
+    "      const alvo = receita ? emAberto.vencidoAReceber : emAberto.vencidoAPagar;",
+    "      const alvo = emAberto.vencidoAPagar;",
+  ],
+  [
+    "pendente e testado ANTES de vencido (o cartao de atraso zera)",
+    '    if (linha.effective_status === "overdue") {',
+    '    if (linha.status === "pending" && false) {',
+  ],
+  [
+    "a conta ja paga volta a contar como a vencer",
+    '    } else if (linha.status === "paid") {\n      emAberto.pago += valor;',
+    '    } else if (linha.status === "paid") {\n      emAberto.aPagar.total += valor;',
+  ],
+  [
+    "a pulada e a cancelada entram em 'a pagar'",
+    '    } else if (linha.status === "pending") {',
+    "    } else if (true) {",
+  ],
+  [
+    "o valor negativo volta a DIMINUIR o a pagar",
+    "    const valor = Math.abs(numero(linha.amount));\n    const receita =",
+    "    const valor = numero(linha.amount);\n    const receita =",
+  ],
+  [
+    "a contagem para de subir (o badge sempre diz zero contas)",
+    "      alvo.total += valor;\n      alvo.quantidade += 1;\n    } else if (linha.status === \"pending\") {",
+    '      alvo.total += valor;\n    } else if (linha.status === "pending") {',
+  ],
+  [
+    "os centavos deixam de fechar nas pernas",
+    "    emAberto[chave].total = centavos(emAberto[chave].total);",
+    "    emAberto[chave].total = emAberto[chave].total;",
+  ],
 ];
 
 let sobreviventes = 0;

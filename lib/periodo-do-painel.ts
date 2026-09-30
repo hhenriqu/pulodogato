@@ -494,36 +494,101 @@ export function rotuloDoSaldo(opts: {
 // linhas e exatamente o total do periodo -- inclusive em modo intervalo, onde
 // os meses das pontas chegam cortados.
 
+//
+// AS QUATRO PERNAS, E POR QUE UMA SOMA CRUA NAO SERVE (HMO-187)
+// --------------------------------------------------------------
+// A rota deixou de mandar `total_pending`/`total_overdue`: cada um deles somava
+// receita prevista com despesa prevista num unico positivo. Aqui isso importa
+// duas vezes -- uma soma sobre o campo antigo daria `Number(undefined ?? 0)`,
+// que e 0, e o painel mostraria "R$ 0,00 a vencer" com toda a confianca do
+// mundo. Por isso os campos novos sao lidos como `number | undefined` e a
+// AUSENCIA deles vira `null`, nao zero: e o unico jeito de a tela distinguir
+// "nao ha nada a vencer" de "esta resposta veio do cache de antes da mudanca".
+
 export interface LinhaDeMesPrevisto {
   month: string;
-  total_pending: number | string;
-  total_overdue: number | string;
-  count_pending: number | string;
-  count_overdue: number | string;
+  total_pending_expense?: number | string | null;
+  total_pending_income?: number | string | null;
+  count_pending_expense?: number | string | null;
+  count_pending_income?: number | string | null;
+  total_overdue_expense?: number | string | null;
+  total_overdue_income?: number | string | null;
+  count_overdue_expense?: number | string | null;
+  count_overdue_income?: number | string | null;
 }
 
 export interface ResumoPrevisto {
-  total_pending: number;
-  total_overdue: number;
-  count_pending: number;
-  count_overdue: number;
+  /** A vencer que vai sair da conta. */
+  total_pending_expense: number;
+  count_pending_expense: number;
+  /** A vencer que vai entrar. */
+  total_pending_income: number;
+  count_pending_income: number;
+  /** Vencido a pagar: divida. */
+  total_overdue_expense: number;
+  count_overdue_expense: number;
+  /** Vencido a receber: atrasado PARA voce. */
+  total_overdue_income: number;
+  count_overdue_income: number;
 }
 
-export function somarPrevistas(linhas: LinhaDeMesPrevisto[]): ResumoPrevisto {
-  const total = linhas.reduce(
-    (acc, l) => ({
-      total_pending: acc.total_pending + Number(l.total_pending ?? 0),
-      total_overdue: acc.total_overdue + Number(l.total_overdue ?? 0),
-      count_pending: acc.count_pending + Number(l.count_pending ?? 0),
-      count_overdue: acc.count_overdue + Number(l.count_overdue ?? 0),
-    }),
-    { total_pending: 0, total_overdue: 0, count_pending: 0, count_overdue: 0 }
-  );
+const CAMPOS_DA_PREVISTA = [
+  "total_pending_expense",
+  "count_pending_expense",
+  "total_pending_income",
+  "count_pending_income",
+  "total_overdue_expense",
+  "count_overdue_expense",
+  "total_overdue_income",
+  "count_overdue_income",
+] as const;
+
+/**
+ * Soma as linhas de mes do resumo, ou `null` quando a resposta nao traz as
+ * pernas separadas.
+ *
+ * `null` acontece com uma resposta servida do cache do PWA de antes da HMO-187
+ * -- as rotas /api/ ficam ate 24h em cache. Devolver zeros ali seria o painel
+ * afirmando que nao ha nada a vencer; o `null` faz a tela dizer "indisponivel",
+ * que e a verdade.
+ *
+ * Lista VAZIA nao e ausencia: um periodo sem nenhuma linha na agenda soma zero
+ * legitimamente, e esse zero e uma afirmacao correta.
+ */
+export function somarPrevistas(
+  linhas: LinhaDeMesPrevisto[]
+): ResumoPrevisto | null {
+  const total: ResumoPrevisto = {
+    total_pending_expense: 0,
+    count_pending_expense: 0,
+    total_pending_income: 0,
+    count_pending_income: 0,
+    total_overdue_expense: 0,
+    count_overdue_expense: 0,
+    total_overdue_income: 0,
+    count_overdue_income: 0,
+  };
+
+  for (const linha of linhas) {
+    for (const campo of CAMPOS_DA_PREVISTA) {
+      const bruto = linha[campo];
+      // `== null` cobre undefined e null de uma vez. A linha que nao traz UMA
+      // das pernas nao traz nenhuma -- elas saem juntas da rota --, e o teste
+      // por campo e o que impede um mes velho no meio da lista contribuir com
+      // zeros silenciosos para os outros.
+      if (bruto == null) return null;
+      const n = Number(bruto);
+      if (!Number.isFinite(n)) return null;
+      total[campo] += n;
+    }
+  }
 
   return {
     ...total,
-    total_pending: Number(total.total_pending.toFixed(2)),
-    total_overdue: Number(total.total_overdue.toFixed(2)),
+    total_pending_expense: Number(total.total_pending_expense.toFixed(2)),
+    total_pending_income: Number(total.total_pending_income.toFixed(2)),
+    total_overdue_expense: Number(total.total_overdue_expense.toFixed(2)),
+    total_overdue_income: Number(total.total_overdue_income.toFixed(2)),
   };
 }
 

@@ -40,8 +40,8 @@ const mutantes = [
   ],
   [
     "o resumo volta a pegar UM mes em vez de somar",
-    "  const total = linhas.reduce(",
-    "  const total = linhas.slice(0, 1).reduce(",
+    "  for (const linha of linhas) {",
+    "  for (const linha of linhas.slice(0, 1)) {",
   ],
 
   [
@@ -145,6 +145,41 @@ const mutantes = [
     "a janela de varios meses e rotulada como um mes so",
     "  if (periodo.de.slice(0, 7) === periodo.ate.slice(0, 7)) {",
     "  if (true) {",
+  ],
+
+  // --- HMO-187: as pernas do resumo, e a ausencia delas ---
+  [
+    "a resposta antiga do cache volta a virar zeros",
+    "      if (bruto == null) return null;",
+    "      if (bruto == null) continue;",
+    // Este e o mutante que importa. Sem ele, uma resposta de antes da HMO-187
+    // servida do cache do PWA soma `Number(undefined ?? 0)` em todas as pernas
+    // e o painel anuncia "R$ 0,00 a vencer" com toda a confianca.
+  ],
+  [
+    "texto nao numerico volta a virar NaN na tela",
+    "      if (!Number.isFinite(n)) return null;",
+    "      if (false) return null;",
+  ],
+  [
+    "as pernas passam a somar umas nas outras",
+    "      total[campo] += n;",
+    "      total.total_pending_expense += n;",
+  ],
+  [
+    "o resumo para de somar os meses (fica so com o ultimo)",
+    "      total[campo] += n;",
+    "      total[campo] = n;",
+  ],
+  [
+    "uma das quatro pernas some da conta",
+    '  "total_pending_income",\n  "count_pending_income",',
+    '  "count_pending_income",',
+  ],
+  [
+    "o vencido a receber some da conta",
+    '  "total_overdue_income",\n  "count_overdue_income",',
+    '  "count_overdue_income",',
   ],
 ];
 

@@ -104,6 +104,41 @@ export function copiaDaPrevisao(direction?: string | null): CopiaDaPrevisao {
 }
 
 /**
+ * Para que lado uma linha da agenda vai quando a pergunta e CAIXA: quanto ainda
+ * vai sair da conta, quanto ainda vai entrar.
+ *
+ * Existe separado de `direcaoNoPainel` (lib/realizado-e-previsao.ts) porque as
+ * duas perguntas discordam de proposito em dois casos, e confundi-las erra em
+ * silencio nos dois sentidos:
+ *
+ *   * FATURA DE CARTAO entra aqui como "a pagar". La ela fica FORA, porque la a
+ *     pergunta e "quanto vou gastar no periodo" e cada compra do cartao ja
+ *     entrou como despesa no dia em que aconteceu -- somar a fatura por cima
+ *     cobraria as mesmas compras duas vezes. Aqui a pergunta e outra: a fatura
+ *     e dinheiro que vai mesmo sair da conta corrente no dia do vencimento, e
+ *     esconde-la do "a vencer" faria o bloco prometer uma folga que nao existe.
+ *
+ *   * TRANSFERENCIA tambem entra como "a pagar", pelo mesmo motivo pratico: a
+ *     perna agendada e uma saida datada da conta. Tira-la reduziria o numero
+ *     que o bloco existe para dizer.
+ *
+ * Ou seja, so `income` sai do lado de "a pagar". Direcao desconhecida cai em
+ * despesa -- o default historico de /api/projection e do lib/safe-to-spend.ts,
+ * e o lado seguro: ler uma despesa como receita mostraria "vou receber" sobre
+ * uma conta a pagar.
+ *
+ * `direction` chega da coluna homonima de `scheduled_transactions_effective`
+ * (027), que ja resolveu a precedencia ocorrencia -> regra -> 'expense'. Refazer
+ * o COALESCE aqui criaria a segunda copia da precedencia, e a copia esquecida e
+ * exatamente o defeito da HMO-187.
+ */
+export function direcaoDaAgenda(
+  direction?: string | null
+): DirecaoPrevista {
+  return direction === "income" ? "income" : "expense";
+}
+
+/**
  * Uma linha da agenda, pronta para somar.
  *
  * `amount` positivo e ja recortado pela parte do membro quando a linha e de
@@ -197,6 +232,135 @@ export function somarAgenda(linhas: LinhaDaAgenda[]): PrevistoDoPeriodo {
     resultado: centavos(entradas - despesas),
     quantidade,
   };
+}
+
+// -----------------------------------------------------------------------------
+// O QUE AINDA VAI SAIR x O QUE AINDA VAI ENTRAR (HMO-187)
+// -----------------------------------------------------------------------------
+// `somarAgenda` acima responde "o que o periodo PROMETIA" -- inclui a conta ja
+// paga, porque uma promessa cumprida continua tendo sido uma promessa. A
+// pergunta desta secao e outra e o balde e outro: o que ainda esta EM ABERTO.
+//
+// O DEFEITO QUE ISTO CONSERTA, MEDIDO EM PRODUCAO
+// ------------------------------------------------
+// `total_pending` somava receita prevista e despesa prevista no mesmo
+// acumulador positivo, porque `scheduled_transactions.amount` tem CHECK
+// amount > 0 e a ocorrencia nao guardava direcao. Com uma regra de receita de
+// R$ 7.000, uma de despesa de R$ 2.500 e um boleto avulso de R$ 88,50, o bloco
+// "A vencer" anunciava R$ 9.588,50 quando o que ia SAIR eram R$ 2.588,50 -- e o
+// badge dizia "3 contas" havendo 1 conta, 1 boleto e 1 salario. Quem cadastra o
+// salario como regra recorrente, que e o uso esperado, via o numero inflar sem
+// entender por que.
+//
+// O numero errado era PLAUSIVEL, e e por isso que ninguem o pegou por
+// inspecao: R$ 9.588,50 a vencer num mes com salario de R$ 7.000 nao tem cara
+// de bug, tem cara de mes cheio.
+//
+// POR QUE AS DUAS PERNAS, E NAO UM SALDO SO
+// ------------------------------------------
+// Um unico `a pagar - a receber` esconderia o mesmo erro com outro sinal: mes
+// com salario maior que as contas daria "a vencer" NEGATIVO, que se le como
+// "nao devo nada". Sao duas perguntas distintas -- quanto sai, quanto entra --
+// e a tela mostra as duas.
+//
+// VENCIDO TAMBEM SE SEPARA, E ESSE E O CASO QUE MAIS DOI
+// ------------------------------------------------------
+// A mesma mistura vivia em `total_overdue`. E la ela e pior: o salario vira
+// linha da agenda no dia do vencimento e fica `pending` ate alguem confirmar
+// que recebeu (HMO-188), entao todo mes, no dia seguinte ao pagamento, o painel
+// passava a acusar R$ 7.000 "em atraso". Divida que nao existe, todo mes.
+
+/** Um lado de uma das duas perguntas: quanto, em quantas linhas. */
+export interface PernaEmAberto {
+  total: number;
+  quantidade: number;
+}
+
+/**
+ * A agenda de um periodo separada pelas duas perguntas de caixa.
+ *
+ * `vencidoAPagar` e `vencidoAReceber` NAO estao dentro de `aPagar`/`aReceber`:
+ * uma linha esta num balde ou no outro, nunca nos dois. Somar os quatro da o
+ * total em aberto do periodo sem contar nada duas vezes.
+ */
+export interface EmAbertoDoPeriodo {
+  aPagar: PernaEmAberto;
+  aReceber: PernaEmAberto;
+  vencidoAPagar: PernaEmAberto;
+  vencidoAReceber: PernaEmAberto;
+  /** O que ja foi baixado no periodo, nas duas direcoes. Nao e "em aberto". */
+  pago: number;
+}
+
+/**
+ * Uma linha da agenda com os dois status que a view entrega.
+ *
+ * Os dois sao necessarios e nao sao intercambiaveis: `effective_status` e o
+ * unico que sabe dizer 'overdue' (a view o calcula na hora, nunca e gravado), e
+ * `status` e o unico que distingue 'paid' de 'skipped'/'cancelled' -- que
+ * `effective_status` repassa identicos.
+ */
+export interface LinhaEmAberto {
+  amount: number | string;
+  /** O status GRAVADO. */
+  status: string;
+  /** O status da view, o unico que pode valer 'overdue'. */
+  effective_status?: string | null;
+  direcao: DirecaoPrevista;
+}
+
+const perna = (): PernaEmAberto => ({ total: 0, quantidade: 0 });
+
+/**
+ * Separa a agenda de um periodo em a pagar, a receber, e as duas vencidas.
+ *
+ * A ordem dos testes e a mesma da rota antes desta mudanca -- vencida primeiro,
+ * depois pendente, depois paga -- de proposito: 'overdue' e um `pending` com
+ * vencimento no passado, entao testar `pending` antes contaria toda linha
+ * vencida como simplesmente a vencer e o bloco de atraso zeraria.
+ *
+ * 'skipped' e 'cancelled' nao caem em lugar nenhum: nao estao em aberto (a
+ * pessoa disse que aquilo nao vai acontecer) e nao foram pagos.
+ */
+export function somarEmAberto(linhas: LinhaEmAberto[]): EmAbertoDoPeriodo {
+  const emAberto: EmAbertoDoPeriodo = {
+    aPagar: perna(),
+    aReceber: perna(),
+    vencidoAPagar: perna(),
+    vencidoAReceber: perna(),
+    pago: 0,
+  };
+
+  for (const linha of linhas) {
+    // Mesmo `Math.abs` de `somarAgenda`, pela mesma razao: um valor negativo
+    // escapando do CHECK do banco viraria uma despesa que DIMINUI o "a pagar".
+    const valor = Math.abs(numero(linha.amount));
+    const receita = linha.direcao === "income";
+
+    if (linha.effective_status === "overdue") {
+      const alvo = receita ? emAberto.vencidoAReceber : emAberto.vencidoAPagar;
+      alvo.total += valor;
+      alvo.quantidade += 1;
+    } else if (linha.status === "pending") {
+      const alvo = receita ? emAberto.aReceber : emAberto.aPagar;
+      alvo.total += valor;
+      alvo.quantidade += 1;
+    } else if (linha.status === "paid") {
+      emAberto.pago += valor;
+    }
+  }
+
+  for (const chave of [
+    "aPagar",
+    "aReceber",
+    "vencidoAPagar",
+    "vencidoAReceber",
+  ] as const) {
+    emAberto[chave].total = centavos(emAberto[chave].total);
+  }
+  emAberto.pago = centavos(emAberto.pago);
+
+  return emAberto;
 }
 
 /** Uma linha por mes, como a rota de resumo devolve. */

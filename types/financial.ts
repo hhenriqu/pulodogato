@@ -417,25 +417,61 @@ export interface NewScheduledTransactionForm {
   notes?: string;
 }
 
-/** Resumo do mes para a tela de contas previstas e o widget do dashboard. */
+/**
+ * Resumo do mes para a tela de contas previstas e o widget do dashboard.
+ *
+ * O QUE ESTA EM ABERTO VEM EM DUAS PERNAS, NAO NUMA (HMO-187)
+ * ------------------------------------------------------------
+ * Ate a HMO-187 havia `total_pending` e `total_overdue`, um numero cada, e os
+ * dois somavam receita prevista junto com despesa prevista: o CHECK amount > 0
+ * de `scheduled_transactions` faz toda ocorrencia nascer positiva, e a direcao
+ * mora fora dela. Um salario de R$ 7.000 cadastrado como regra recorrente --
+ * que e o uso esperado -- entrava no "a vencer" como se fosse conta a pagar.
+ *
+ * Os campos foram RENOMEADOS em vez de terem o significado trocado no lugar. E
+ * deliberado: uma resposta antiga servida do cache do PWA (as rotas /api/ ficam
+ * ate 24h em cache) nao tem os nomes novos, e o consumidor cai no estado
+ * "indisponivel" em vez de exibir com confianca um numero que mistura as duas
+ * direcoes.
+ */
 export interface ScheduledSummary {
   /** 'YYYY-MM' */
   month: string;
-  total_pending: number;
-  total_overdue: number;
+  // As oito abaixo saem JUNTAS ou nao saem. A rota as omite quando nao
+  // conseguiu a direcao das linhas: emiti-las ali significaria classificar
+  // tudo como despesa, que e o defeito. A ausencia e o sinal de
+  // "indisponivel" -- ver `somarPrevistas` em lib/periodo-do-painel.ts.
+  /** A vencer que vai SAIR da conta. Inclui fatura de cartao e transferencia. */
+  total_pending_expense?: number;
+  count_pending_expense?: number;
+  /** A vencer que vai ENTRAR: salario, aluguel recebido, reembolso. */
+  total_pending_income?: number;
+  count_pending_income?: number;
+  /** Vencido a pagar: divida de verdade. */
+  total_overdue_expense?: number;
+  count_overdue_expense?: number;
+  /**
+   * Vencido a receber -- dinheiro ATRASADO PARA VOCE, nao divida sua.
+   *
+   * Separar isto nao e simetria de enfeite: a materializacao cria a linha do
+   * salario no dia do vencimento e ela fica `pending` ate alguem confirmar o
+   * recebimento (HMO-188). Somado ao vencido a pagar, o painel acusava o
+   * salario inteiro "em atraso" todo mes, no dia seguinte ao pagamento.
+   */
+  total_overdue_income?: number;
+  count_overdue_income?: number;
+  /** O que ja foi baixado no mes, nas duas direcoes. */
   total_paid: number;
   /** Custo mensal normalizado das regras ativas (anual/12, semanal*52/12...). */
   fixed_monthly_cost: number;
-  count_pending: number;
-  count_overdue: number;
   // --------------------------------------------------------------------
   // O PREVISTO DO MES, SEPARADO POR DIRECAO (HMO-186)
   // --------------------------------------------------------------------
-  // Opcionais porque a rota os acrescenta e os consumidores antigos (a tela de
-  // contas) nao os leem. Eles NAO sao a soma de `total_pending` com
-  // `total_paid`: aqueles dois misturam receita prevista e despesa prevista num
-  // unico numero positivo, e a direcao de cada linha sai de
-  // `recurring_rules.transaction_type` -- ver lib/previsto-x-realizado.ts.
+  // Opcionais porque os consumidores antigos (a tela de contas) nao os leem.
+  // Eles respondem outra pergunta que as pernas acima: previsto e o que o mes
+  // PROMETIA, e por isso inclui a conta ja paga -- ver
+  // STATUS_FORA_DO_PREVISTO em lib/previsto-x-realizado.ts. As pernas acima
+  // respondem o que ainda esta em aberto.
   /** Receitas previstas do mes, POSITIVO. */
   expected_income?: number;
   /** Despesas previstas do mes, POSITIVO. */

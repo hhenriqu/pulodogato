@@ -473,53 +473,84 @@ test("intervalo sem nenhuma linha devolve zeros, nao NaN", () => {
 // 7. O resumo de contas previstas, somado em vez de procurado
 // ---------------------------------------------------------------------------
 
+/** Um mes do resumo, com as quatro pernas zeradas por padrao. */
+const mesPrevisto = (month, campos = {}) => ({
+  month,
+  total_pending_expense: 0,
+  count_pending_expense: 0,
+  total_pending_income: 0,
+  count_pending_income: 0,
+  total_overdue_expense: 0,
+  count_overdue_expense: 0,
+  total_overdue_income: 0,
+  count_overdue_income: 0,
+  ...campos,
+});
+
 test("o resumo soma TODOS os meses do periodo", () => {
   const resumo = somarPrevistas([
-    {
-      month: "2026-07",
-      total_pending: 100.1,
-      total_overdue: 0,
-      count_pending: 1,
-      count_overdue: 0,
-    },
-    {
-      month: "2026-08",
-      total_pending: 200.2,
-      total_overdue: 50,
-      count_pending: 2,
-      count_overdue: 1,
-    },
-    {
-      month: "2026-09",
-      total_pending: 300.3,
-      total_overdue: 0,
-      count_pending: 3,
-      count_overdue: 0,
-    },
+    mesPrevisto("2026-07", {
+      total_pending_expense: 100.1,
+      count_pending_expense: 1,
+    }),
+    mesPrevisto("2026-08", {
+      total_pending_expense: 200.2,
+      count_pending_expense: 2,
+      total_overdue_expense: 50,
+      count_overdue_expense: 1,
+    }),
+    mesPrevisto("2026-09", {
+      total_pending_expense: 300.3,
+      count_pending_expense: 3,
+    }),
   ]);
 
-  assert.equal(resumo.total_pending, 600.6);
-  assert.equal(resumo.total_overdue, 50);
-  assert.equal(resumo.count_pending, 6);
-  assert.equal(resumo.count_overdue, 1);
+  assert.equal(resumo.total_pending_expense, 600.6);
+  assert.equal(resumo.total_overdue_expense, 50);
+  assert.equal(resumo.count_pending_expense, 6);
+  assert.equal(resumo.count_overdue_expense, 1);
+});
+
+test("as quatro pernas somam separadas, sem vazar de uma para a outra", () => {
+  // O cenario medido em producao na HMO-186, espalhado por dois meses: se
+  // qualquer perna vazasse para outra, um destes quatro numeros mudaria.
+  const resumo = somarPrevistas([
+    mesPrevisto("2026-10", {
+      total_pending_expense: 2588.5,
+      count_pending_expense: 2,
+      total_pending_income: 7000,
+      count_pending_income: 1,
+    }),
+    mesPrevisto("2026-11", {
+      total_overdue_expense: 120,
+      count_overdue_expense: 1,
+      total_overdue_income: 300,
+      count_overdue_income: 1,
+    }),
+  ]);
+
+  assert.equal(resumo.total_pending_expense, 2588.5);
+  assert.equal(resumo.total_pending_income, 7000);
+  assert.equal(resumo.total_overdue_expense, 120);
+  assert.equal(resumo.total_overdue_income, 300);
+  assert.equal(resumo.count_pending_expense, 2);
+  assert.equal(resumo.count_pending_income, 1);
+
+  // O defeito da HMO-187 em uma linha: o numero unico que o painel mostrava.
+  // Se alguem voltar a somar as duas direcoes, este assert cai.
+  assert.notEqual(resumo.total_pending_expense, 9588.5);
 });
 
 test("CONTROLE: a forma antiga pegaria UM mes -- e, na virada, o errado", () => {
   const linhas = [
-    {
-      month: "2026-09",
-      total_pending: 900,
-      total_overdue: 0,
-      count_pending: 1,
-      count_overdue: 0,
-    },
-    {
-      month: "2026-10",
-      total_pending: 1000,
-      total_overdue: 0,
-      count_pending: 1,
-      count_overdue: 0,
-    },
+    mesPrevisto("2026-09", {
+      total_pending_expense: 900,
+      count_pending_expense: 1,
+    }),
+    mesPrevisto("2026-10", {
+      total_pending_expense: 1000,
+      count_pending_expense: 1,
+    }),
   ];
 
   // O que o painel fazia: procurar o mes corrente calculado em UTC.
@@ -529,32 +560,79 @@ test("CONTROLE: a forma antiga pegaria UM mes -- e, na virada, o errado", () => 
   const antigo = linhas.find((l) => l.month === mesEmUtc);
 
   // As 22:00 de 30/09 em Sao Paulo, o painel exibia 1000: outubro.
-  assert.equal(antigo.total_pending, 1000);
-  assert.notEqual(antigo.total_pending, 900);
+  assert.equal(antigo.total_pending_expense, 1000);
+  assert.notEqual(antigo.total_pending_expense, 900);
 });
 
 test("o resumo de um periodo sem conta prevista e zero, nao indefinido", () => {
+  // Lista VAZIA e uma afirmacao legitima: nao havia nada agendado. E diferente
+  // da resposta que nao TRAZ as pernas -- ver o teste do cache abaixo.
   assert.deepEqual(somarPrevistas([]), {
-    total_pending: 0,
-    total_overdue: 0,
-    count_pending: 0,
-    count_overdue: 0,
+    total_pending_expense: 0,
+    count_pending_expense: 0,
+    total_pending_income: 0,
+    count_pending_income: 0,
+    total_overdue_expense: 0,
+    count_overdue_expense: 0,
+    total_overdue_income: 0,
+    count_overdue_income: 0,
   });
+});
+
+test("resposta de antes da HMO-187 devolve null, nao zeros", () => {
+  // O que o cache do PWA pode servir por ate 24h depois do deploy. Com os
+  // campos antigos, `Number(undefined ?? 0)` daria 0 e o painel anunciaria
+  // "R$ 0,00 a vencer" -- uma afirmacao sobre o dinheiro do usuario feita em
+  // cima de uma resposta que nao tem a informacao.
+  const antiga = [
+    {
+      month: "2026-10",
+      total_pending: 9588.5,
+      total_overdue: 0,
+      count_pending: 3,
+      count_overdue: 0,
+    },
+  ];
+
+  assert.equal(somarPrevistas(antiga), null);
+});
+
+test("um mes incompleto no meio da lista contamina o total inteiro", () => {
+  // O mes bom sozinho somaria 100. Com o mes sem pernas ao lado, o resultado
+  // tem que ser `null` e nao 100: um total parcial apresentado como total e
+  // pior que nenhum total.
+  const resumo = somarPrevistas([
+    mesPrevisto("2026-10", {
+      total_pending_expense: 100,
+      count_pending_expense: 1,
+    }),
+    { month: "2026-11" },
+  ]);
+
+  assert.equal(resumo, null);
 });
 
 test("o resumo aceita numeric em texto", () => {
   const resumo = somarPrevistas([
-    {
-      month: "2026-09",
-      total_pending: "10.50",
-      total_overdue: "5.25",
-      count_pending: "2",
-      count_overdue: "1",
-    },
+    mesPrevisto("2026-09", {
+      total_pending_expense: "10.50",
+      total_overdue_expense: "5.25",
+      count_pending_expense: "2",
+      count_overdue_expense: "1",
+      total_pending_income: "7.75",
+    }),
   ]);
-  assert.equal(resumo.total_pending, 10.5);
-  assert.equal(resumo.total_overdue, 5.25);
-  assert.equal(resumo.count_pending, 2);
+  assert.equal(resumo.total_pending_expense, 10.5);
+  assert.equal(resumo.total_overdue_expense, 5.25);
+  assert.equal(resumo.count_pending_expense, 2);
+  assert.equal(resumo.total_pending_income, 7.75);
+});
+
+test("texto que nao e numero devolve null em vez de NaN na tela", () => {
+  assert.equal(
+    somarPrevistas([mesPrevisto("2026-09", { total_pending_expense: "abc" })]),
+    null
+  );
 });
 
 // ---------------------------------------------------------------------------
