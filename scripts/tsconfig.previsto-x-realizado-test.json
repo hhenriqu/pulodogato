@@ -1,0 +1,15 @@
+{
+  "//": "Build so do teste. lib/previsto-x-realizado.ts nao importa nada -- nem do alias @/, nem de pacote --, e por isso NAO existe passo de resolve-aliases.mjs no npm script. Se um import aparecer ali um dia, o node morre com ERR_MODULE_NOT_FOUND no primeiro require: o tsc resolve o alias e nao o reescreve no JS emitido, e a correcao e acrescentar a reescrita, igual ao test:safe-to-spend.",
+  "compilerOptions": {
+    "outDir": "../.tmp-previsto-x-realizado",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/previsto-x-realizado.ts"]
+}

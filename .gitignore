@@ -115,6 +115,12 @@ next-env.d.ts
 # saida do `npm run test:dashboard-layout`
 /.tmp-dashboard-layout/
 
+# saida do `npm run test:previsto-x-realizado`
+/.tmp-previsto-x-realizado/
+
+# saida do `npm run test:previsto-bloco`
+/.tmp-previsto-bloco/
+
 # saida do `npm run test:account-reset`
 /.tmp-account-reset/
 # saida do `npm run test:offline-session`

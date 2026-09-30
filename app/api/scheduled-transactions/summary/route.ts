@@ -46,6 +46,7 @@ import {
   parteDoMembro,
 } from "@/lib/parte-do-grupo";
 import { janelaParaMaterializar, periodoDaQuery } from "@/lib/periodo-do-painel";
+import { somarAgenda, type LinhaDaAgenda } from "@/lib/previsto-x-realizado";
 import type { RecurringRule, ScheduledSummary } from "@/types/financial";
 
 export async function GET(request: NextRequest) {
@@ -104,7 +105,9 @@ export async function GET(request: NextRequest) {
 
     const { data: linhas, error } = await supabase
       .from("scheduled_transactions_effective")
-      .select("due_date, amount, status, effective_status, group_id")
+      .select(
+        "due_date, amount, status, effective_status, group_id, recurring_rule_id"
+      )
       .gte("due_date", de)
       .lte("due_date", ate);
 
@@ -120,6 +123,67 @@ export async function GET(request: NextRequest) {
       .from("recurring_rules")
       .select("amount, frequency, interval_count, transaction_type, group_id")
       .eq("is_active", true);
+
+    // ------------------------------------------------------------------
+    // A DIRECAO DE CADA LINHA DA AGENDA (HMO-186)
+    // ------------------------------------------------------------------
+    // `scheduled_transactions.amount` tem CHECK amount > 0: a ocorrencia nao
+    // guarda direcao nenhuma. Quem diz se aquilo entra ou sai e
+    // `recurring_rules.transaction_type`, e e por isso que o previsto precisa
+    // de uma segunda consulta.
+    //
+    // Nao da para reaproveitar `regras` acima: ela filtra `is_active = true`, e
+    // a agenda do periodo pode ter vindo de uma regra que depois foi desligada.
+    // Usando aquela lista, o salario de uma regra arquivada cairia no lado das
+    // DESPESAS -- a convencao de "sem regra e despesa" aplicada a uma regra que
+    // existe. O resultado previsto erraria pelo dobro do salario, e nada na tela
+    // indicaria de onde veio.
+    //
+    // Nao e embed do PostgREST (`recurring_rule:recurring_rules(...)`) porque a
+    // origem aqui e uma VIEW: o embed depende de o PostgREST inferir a FK
+    // atravessando as colunas da view ate a tabela base, e quando ele nao
+    // infere a resposta nao e erro -- e a coluna vindo `null`, ou seja, tudo
+    // classificado como despesa. Duas consultas e um `Set` nao tem esse modo de
+    // falha.
+    const idsDeRegra = Array.from(
+      new Set(
+        ((linhas ?? []) as { recurring_rule_id?: string | null }[])
+          .map((l) => l.recurring_rule_id)
+          .filter((id): id is string => Boolean(id))
+      )
+    );
+
+    const { data: regrasDaAgenda, error: erroDirecao } = idsDeRegra.length
+      ? await supabase
+          .from("recurring_rules")
+          .select("id, transaction_type")
+          .in("id", idsDeRegra)
+      : { data: [], error: null };
+
+    // Sem a direcao NAO se chuta. Toda linha cairia em despesa, o previsto de
+    // entradas viria zero e o resultado previsto ficaria negativo no valor do
+    // salario -- um numero plausivel, com cara de "o mes fecha no vermelho",
+    // sobre uma conta que ninguem conseguiu fazer. A flag existe para o bloco
+    // dizer "indisponivel" em vez de mostrar isso; mesmo critério do
+    // `reserva_indisponivel` em /api/safe-to-spend.
+    //
+    // E o resto do resumo segue: `total_pending`, `total_overdue` e o custo
+    // fixo nao dependem desta consulta, e derrubar a rota em 500 apagaria os
+    // blocos "A vencer" e "contas vencidas" do painel por causa de um bloco
+    // novo.
+    const direcaoIndisponivel = Boolean(erroDirecao);
+    if (erroDirecao) {
+      console.error(
+        "Resumo seguiu SEM a direcao das linhas previstas:",
+        erroDirecao
+      );
+    }
+
+    const regrasDeReceita = new Set(
+      ((regrasDaAgenda ?? []) as { id: string; transaction_type: string }[])
+        .filter((r) => r.transaction_type === "income")
+        .map((r) => r.id)
+    );
 
     // Quantos membros ativos tem cada grupo que aparece nas duas consultas.
     // Sem isto a parte dos outros continua contando como minha - ver o cabecalho
@@ -164,6 +228,12 @@ export async function GET(request: NextRequest) {
     );
 
     const porMes = new Map<string, ScheduledSummary>();
+    // A agenda de cada mes, guardada crua para `somarAgenda` fazer a conta. O
+    // acumulo nao e feito aqui dentro do laco de proposito: a regra de quais
+    // status contam como "previsto" e a que decide se o mes fecha em zero no
+    // dia 30 (ver STATUS_FORA_DO_PREVISTO), e ela mora num modulo com teste
+    // unitario em vez de num `else if` de rota.
+    const agendaPorMes = new Map<string, LinhaDaAgenda[]>();
 
     for (const linha of linhas ?? []) {
       const mes = String(linha.due_date).slice(0, 7);
@@ -199,23 +269,57 @@ export async function GET(request: NextRequest) {
         atual.total_paid += valor;
       }
 
+      // O previsto usa `valor` -- a MINHA parte --, o mesmo numero das somas
+      // acima. Usar `linha.amount` cru aqui faria o previsto de um casal
+      // discordar do "a vencer" que aparece tres blocos acima, na mesma tela.
+      const daAgenda = agendaPorMes.get(mes) ?? [];
+      const idDaRegra = (linha as { recurring_rule_id?: string | null })
+        .recurring_rule_id;
+      daAgenda.push({
+        amount: valor,
+        status: String(linha.status),
+        // Conta avulsa (sem regra) e despesa, pela mesma convencao da Fase 1 que
+        // /api/projection e lib/safe-to-spend.ts ja aplicam.
+        direcao:
+          idDaRegra && regrasDeReceita.has(idDaRegra) ? "income" : "expense",
+      });
+      agendaPorMes.set(mes, daAgenda);
+
       porMes.set(mes, atual);
     }
 
     // Array.from em vez de spread: o tsconfig do projeto compila para ES5, onde
     // espalhar um iterador de Map exige --downlevelIteration.
     const resumo = Array.from(porMes.values())
-      .map((m) => ({
-        ...m,
-        total_pending: Number(m.total_pending.toFixed(2)),
-        total_overdue: Number(m.total_overdue.toFixed(2)),
-        total_paid: Number(m.total_paid.toFixed(2)),
-      }))
+      .map((m) => {
+        // Com a direcao indisponivel, o previsto do mes vem ZERADO e com
+        // `expected_count: 0`. Nao e "nao havia nada agendado": e o que faz a
+        // flag abaixo e o `semPrevisao` do bloco calarem a comparacao juntos.
+        // Somar as linhas como despesa aqui produziria o numero errado com cara
+        // de certo, que e exatamente o que a flag existe para impedir.
+        const previsto = direcaoIndisponivel
+          ? { entradas: 0, despesas: 0, resultado: 0, quantidade: 0 }
+          : somarAgenda(agendaPorMes.get(m.month) ?? []);
+
+        return {
+          ...m,
+          total_pending: Number(m.total_pending.toFixed(2)),
+          total_overdue: Number(m.total_overdue.toFixed(2)),
+          total_paid: Number(m.total_paid.toFixed(2)),
+          expected_income: previsto.entradas,
+          expected_expense: previsto.despesas,
+          expected_result: previsto.resultado,
+          expected_count: previsto.quantidade,
+        };
+      })
       .sort((a, b) => a.month.localeCompare(b.month));
 
     return NextResponse.json({
       summary: resumo,
       fixed_monthly_cost: Number(custoFixoMensal.toFixed(2)),
+      // A tela usa isto para escrever "indisponivel" no bloco de previsto x
+      // realizado em vez de mostrar um resultado previsto que ninguem calculou.
+      previsto_indisponivel: direcaoIndisponivel,
       range: { from: de, to: ate },
     });
   } catch (error) {

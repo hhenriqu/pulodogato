@@ -59,6 +59,30 @@ jobs:
       - name: O painel abre no mes certo, e a transferencia fica fora da soma
         run: npm run test:periodo-painel
 
+      # HMO-186. Mora aqui pelo mesmo motivo das duas acima: lib/previsto-x-realizado.ts
+      # nao esta em nenhuma lista de `paths` do db-verify, e a suite ficaria no
+      # package.json sem nunca rodar num PR que mexesse nela.
+      #
+      # O que ela guarda: conta prevista JA PAGA continua dentro do previsto (sem
+      # isso o mes fecha em "previsto R$ 0,00 x realizado R$ 6.000" justamente no
+      # dia 30, quando a comparacao tem todos os dados), a receita prevista nao e
+      # contada como despesa (`amount` tem CHECK > 0 -- a direcao nao esta no
+      # sinal), e a diferenca e `realizado - previsto` nas tres linhas.
+      - name: O previsto conta o que foi pago, e a diferenca nao inverte o sinal
+        run: npm run test:previsto-x-realizado
+
+      # A suite acima e aritmetica pura, e passaria verde com o JSX imprimindo o
+      # previsto na coluna "Realizado" -- os dois numeros certos nos lugares
+      # errados nao quebram build nem teste, e nao deixam a tela vazia. Esta
+      # renderiza o bloco com react-dom/server e afirma sobre o HTML.
+      #
+      # Ela cobre tambem os dois estados que so existem na marcacao: agenda vazia
+      # e direcao ilegivel NAO podem imprimir "previsto R$ 0,00" -- zero contra o
+      # realizado se le como "tudo acima do previsto", e o que houve foi ausencia
+      # de previsao.
+      - name: O bloco imprime cada numero na coluna dele, e cala quando nao ha previsao
+        run: npm run test:previsto-bloco
+
       - name: O plano de reset bate com o schema, e os filhos vem antes dos pais
         run: npm run test:account-reset
 

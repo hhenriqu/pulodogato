@@ -414,6 +414,22 @@ export interface ScheduledSummary {
   fixed_monthly_cost: number;
   count_pending: number;
   count_overdue: number;
+  // --------------------------------------------------------------------
+  // O PREVISTO DO MES, SEPARADO POR DIRECAO (HMO-186)
+  // --------------------------------------------------------------------
+  // Opcionais porque a rota os acrescenta e os consumidores antigos (a tela de
+  // contas) nao os leem. Eles NAO sao a soma de `total_pending` com
+  // `total_paid`: aqueles dois misturam receita prevista e despesa prevista num
+  // unico numero positivo, e a direcao de cada linha sai de
+  // `recurring_rules.transaction_type` -- ver lib/previsto-x-realizado.ts.
+  /** Receitas previstas do mes, POSITIVO. */
+  expected_income?: number;
+  /** Despesas previstas do mes, POSITIVO. */
+  expected_expense?: number;
+  /** `expected_income - expected_expense`. */
+  expected_result?: number;
+  /** Quantas linhas da agenda entraram. Zero = nao havia previsao. */
+  expected_count?: number;
 }
 
 // =====================================================

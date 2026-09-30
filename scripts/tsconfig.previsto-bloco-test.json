@@ -1,0 +1,36 @@
+{
+  "//": [
+    "Compila o BLOCO de previsto x realizado para o teste renderizar o",
+    "componente de verdade, e nao uma copia da marcacao dele. O `jsx: react-jsx`",
+    "e o que permite renderizar com react-dom/server no node, sem runner novo --",
+    "mesmo desenho do tsconfig.campos-da-conta-test.json.",
+    "",
+    "lib/previsto-x-realizado.ts ja tem suite propria (test-previsto-x-realizado),",
+    "e ela passaria verde com o JSX mostrando a coluna errada: a aritmetica",
+    "estaria certa e a tela ignorando ela. Este build existe para o teste afirmar",
+    "sobre o HTML que sai.",
+    "",
+    "O resolve-aliases roda com --espelha-raiz porque card.tsx e button.tsx",
+    "importam lib/utils.ts pelo alias @/."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-previsto-bloco",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../components/dashboard/PrevistoXRealizado.tsx",
+    "../components/ui/card.tsx",
+    "../components/ui/button.tsx",
+    "../lib/previsto-x-realizado.ts",
+    "../lib/utils.ts"
+  ]
+}
