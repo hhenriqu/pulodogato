@@ -21,6 +21,8 @@ import {
   NOME_DA_CATEGORIA_DE_TRANSFERENCIA,
 } from "@/lib/transferencia";
 import { moedaSugerida } from "@/lib/moeda";
+import { taxaParaGravar } from "@/lib/cambio";
+import { cotacaoNaData } from "@/lib/ptax";
 
 /**
  * A categoria reservada das pernas. So leitura -- ela e SEED (migration 023).
@@ -210,9 +212,61 @@ export async function POST(request: NextRequest) {
     const moedaDaOrigem = moedaSugerida({ daConta: origem!.currency });
     const moedaDoDestino = moedaSugerida({ daConta: destino!.currency });
 
+    // A COTACAO DE CADA PERNA (HMO-182)
+    //
+    // A 026 pos um CHECK que cruza as duas colunas:
+    //
+    //     CHECK ((currency = 'BRL') = (exchange_rate = 1))
+    //
+    // `exchange_rate` nasceu com DEFAULT 1. Entao esta rota, que ja mandava
+    // `currency` desde a HMO-171, passou a montar a linha (USD, 1) no momento em
+    // que a 026 entrou em producao -- e (USD, 1) e exatamente o par que o CHECK
+    // proibe. Toda transferencia que toca uma conta em moeda estrangeira morria
+    // em 23514, incluindo a de moeda estrangeira para moeda estrangeira, que
+    // falha na PRIMEIRA perna.
+    //
+    // Cada perna tem a cotacao da SUA moeda, pelo mesmo motivo que tem a moeda
+    // da sua conta: sao duas quantias em unidades diferentes. A cotacao sai do
+    // servidor e nao do corpo do pedido -- a tela de transferencia tem um campo
+    // de valor, nao dois, e portanto nao teria como pedir duas cotacoes a quem
+    // esta preenchendo. Perna em BRL recebe 1 sem ir a lugar nenhum.
+    const [cotacaoDaSaida, cotacaoDaEntrada] = await Promise.all([
+      cotacaoNaData(moedaDaOrigem, data),
+      cotacaoNaData(moedaDoDestino, data),
+    ]);
+
+    const taxaDaSaida = taxaParaGravar(moedaDaOrigem, cotacaoDaSaida.taxa);
+    const taxaDaEntrada = taxaParaGravar(moedaDoDestino, cotacaoDaEntrada.taxa);
+
+    // Sem cotacao nao ha transferencia possivel: o banco recusaria a linha, e
+    // gravar 1 para fingir sucesso poria a quantia estrangeira no total em reais
+    // valendo um por um. 422 e nao 500 porque o problema nao e nosso nem
+    // permanente -- e uma cotacao que falta, e a mensagem diz qual.
+    if (taxaDaSaida === null || taxaDaEntrada === null) {
+      const semCotacao =
+        taxaDaSaida === null ? moedaDaOrigem : moedaDoDestino;
+      const origemDaFalha =
+        taxaDaSaida === null ? cotacaoDaSaida.origem : cotacaoDaEntrada.origem;
+
+      return NextResponse.json(
+        {
+          error:
+            origemDaFalha === "sem_cobertura"
+              ? `O Banco Central não publica cotação de ${semCotacao}. Lance as duas pernas pela tela de lançamento, onde a cotação pode ser informada. Nada foi lançado.`
+              : `Não consegui a cotação de ${semCotacao} para ${data}. Nada foi lançado — tente novamente em instantes.`,
+        },
+        { status: 422 }
+      );
+    }
+
     const { data: txSaida, error: erroSaida } = await supabase
       .from("financial_transactions")
-      .insert({ ...comum, ...saida, currency: moedaDaOrigem })
+      .insert({
+        ...comum,
+        ...saida,
+        currency: moedaDaOrigem,
+        exchange_rate: taxaDaSaida,
+      })
       .select()
       .single();
 
@@ -230,6 +284,7 @@ export async function POST(request: NextRequest) {
         ...comum,
         ...entrada,
         currency: moedaDoDestino,
+        exchange_rate: taxaDaEntrada,
         counterpart_transaction_id: txSaida.id,
       })
       .select()

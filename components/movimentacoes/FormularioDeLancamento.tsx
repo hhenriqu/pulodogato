@@ -53,6 +53,7 @@ import { ArrowLeft, Trash2, TrendingDown, TrendingUp, Users } from "lucide-react
 import { CamposDeLancamento } from "@/components/movimentacoes/CamposDeLancamento";
 import { usePreferenciaDeMoeda } from "@/lib/hooks/usePreferenciaDeMoeda";
 import { moedaSugerida } from "@/lib/moeda";
+import { cotacaoDigitada, taxaParaGravar } from "@/lib/cambio";
 import { avisoDeEdicaoTravada } from "@/lib/grupos";
 import { useOfflineQueue } from "@/lib/hooks/useOfflineQueue";
 import {
@@ -377,6 +378,25 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       moedaSobreposta:
         moedaSugerida({ doLancamento: linha.currency }) !==
         moedaSugerida({ daConta: contaDaLinha?.currency }),
+      // A COTACAO GRAVADA VOLTA PARA O CAMPO (HMO-182)
+      //
+      // Sem esta linha o campo abriria vazio numa edicao, `validarLancamento`
+      // recusaria o Salvar de um lancamento em dolar que esta correto no banco,
+      // e a unica saida da pessoa seria digitar de novo uma cotacao que ela nao
+      // tem mais como saber -- a do dia da compra, nao a de hoje.
+      //
+      // E ela volta como o numero gravado, sem reconsultar a PTAX. Rebuscar aqui
+      // reescreveria a cotacao do passado a cada edicao, que e precisamente o que
+      // a issue existe para impedir: "usar o cambio de hoje faria o valor do
+      // passado mudar sozinho".
+      //
+      // BRL fica com o campo vazio: `taxaParaGravar` devolve 1 para BRL sem ler
+      // este campo, e mostrar "1" num lancamento em reais sugeriria que existe
+      // ali uma decisao a tomar.
+      cotacao:
+        linha.currency && linha.currency !== "BRL" && linha.exchange_rate
+          ? String(linha.exchange_rate)
+          : "",
     });
   };
 
@@ -604,6 +624,22 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       // lancamento de uma conta em dolar ser gravado em reais pelo DEFAULT da
       // coluna, e o relatorio somaria ele no balde errado sem erro nenhum.
       currency: valores.moeda,
+      // A COTACAO VAI SEMPRE, PELO MESMO MOTIVO QUE A MOEDA (HMO-182)
+      //
+      // A 026 pos `CHECK ((currency = 'BRL') = (exchange_rate = 1))` e a coluna
+      // nasceu com DEFAULT 1. Mandar a moeda e NAO mandar a cotacao monta a
+      // linha (USD, 1) -- exatamente o par que o CHECK proibe -- e o INSERT
+      // volta 23514 para TODO lancamento em moeda estrangeira, nao para um caso
+      // de borda.
+      //
+      // `taxaParaGravar` devolve 1 para BRL sem olhar para o campo, e null
+      // quando falta cotacao em moeda estrangeira. O null nao chega aqui:
+      // `validarLancamento` ja recusou antes, com a frase que diz o que falta.
+      // O `?? 1` existe para o tipo -- e se algum dia ele virar o caminho real,
+      // o banco recusa a linha, que e melhor do que gravar a viagem em dolar
+      // valendo um por um.
+      exchange_rate:
+        taxaParaGravar(valores.moeda, cotacaoDigitada(valores.cotacao)) ?? 1,
     };
 
     let transacao: { id: string };

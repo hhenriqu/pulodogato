@@ -237,6 +237,28 @@ export interface ValoresDeLancamento {
    */
   moedaSobreposta: boolean;
 
+  /**
+   * A cotacao do dia da compra, como veio do input: string, ainda nao numero
+   * (HMO-182, migration 026).
+   *
+   * Quantos REAIS vale uma unidade de `moeda`. Vazia quando `moeda` e BRL, e
+   * obrigatoria quando nao e -- nao por preciosismo de formulario, mas porque a
+   * 026 pos um CHECK que cruza as duas colunas no banco:
+   *
+   *     CHECK ((currency = 'BRL') = (exchange_rate = 1))
+   *
+   * A coluna nasceu com DEFAULT 1. Um lancamento em dolar que nao mande cotacao
+   * monta a linha (USD, 1), que e exatamente o par proibido -- e o INSERT volta
+   * 23514, um erro que quem esta preenchendo nao tem como consertar sozinho. Por
+   * isso este campo existe no ESTADO e nao so na tela: o valor tem de chegar ao
+   * payload.
+   *
+   * Quem valida e `validarLancamento` aqui embaixo (a regra tambem esta em
+   * lib/cambio.ts, em `cotacaoCoerente`, para quem precisa dela fora do
+   * formulario).
+   */
+  cotacao: string;
+
   // So despesa usa daqui para baixo.
   parcelado: boolean;
   totalDeParcelas: number;
@@ -277,6 +299,10 @@ export function valoresIniciais(): ValoresDeLancamento {
     // compara.
     moeda: "BRL",
     moedaSobreposta: false,
+    // Vazia, e nao "1": um lancamento em BRL nao tem cotacao para exibir, e o
+    // que vai para o banco sai de `taxaParaGravar` (lib/cambio.ts), que devolve
+    // 1 para BRL sem olhar para este campo.
+    cotacao: "",
     parcelado: false,
     totalDeParcelas: 1,
     valorDaParcela: "",
@@ -410,6 +436,64 @@ export function validarLancamento(
   const valor = Number.parseFloat(valores.valor);
   if (!Number.isFinite(valor) || valor <= 0) {
     return { ok: false, mensagem: "Valor deve ser maior que zero." };
+  }
+
+  // -----------------------------------------------------------------------
+  // A COTACAO DE MOEDA ESTRANGEIRA (HMO-182)
+  // -----------------------------------------------------------------------
+  // POR ULTIMO, depois do valor, e nao junto da data. Os dois campos ficam
+  // vazios num formulario novo, e "informe a cotacao do dolar" antes de "informe
+  // o valor" manda a pessoa preencher o campo derivado antes do principal -- e a
+  // cotacao e o unico dos dois que a tela sabe buscar sozinha.
+  //
+  // Esta recusa e o unico jeito de a pessoa ver uma frase util. Sem ela o INSERT
+  // sai e o banco responde ao CHECK da 026 com
+  //
+  //     violates check constraint "financial_transactions_rate_matches_currency"
+  //
+  // que a tela traduz para "Erro ao gravar o lancamento." -- sem dizer qual
+  // campo, sem dizer o que fazer, e num formulario onde o campo de cotacao pode
+  // estar vazio justamente porque o Banco Central nao respondeu.
+  //
+  // O literal "BRL" (em vez de MOEDA_PADRAO de lib/dinheiro.ts) e deliberado:
+  // este arquivo nao tem import nenhum, porque `test:lancamento` o compila
+  // sozinho sem o passo que reescreve o alias `@/`. O literal repetido e coberto
+  // pelo caso "o padrao daqui e o mesmo de MOEDA_PADRAO" em
+  // scripts/test-moeda.mjs.
+  if (valores.moeda !== "BRL") {
+    // A MESMA LEITURA DE `cotacaoDigitada` EM lib/cambio.ts, REPETIDA AQUI
+    //
+    // Repetida, e nao importada, pelo motivo acima. O risco de repetir e concreto
+    // e vale nomear: se esta leitura fosse mais FROUXA que a de lib/cambio.ts, o
+    // formulario aprovaria um texto que `taxaParaGravar` depois le como null,
+    // cairia no `?? 1` do payload e tomaria o 23514 do banco -- uma recusa em
+    // cima de um valor que a tela disse estar bom.
+    //
+    // O caso que separa as duas leituras e "1.234", um ponto de milhar: ler como
+    // 1,234 aprova um numero que ninguem quis, e ler como 1234 gravaria mil vezes
+    // o valor. As duas recusam. `scripts/test-cambio.mjs` compara as duas funcoes
+    // numa tabela de entradas exatamente para impedir que uma mude sozinha.
+    const cru = String(valores.cotacao).trim();
+    const cotacao = /^\d{1,3}([.,]\d{1,8})?$/.test(cru)
+      ? Number(cru.replace(",", "."))
+      : Number.NaN;
+
+    if (!Number.isFinite(cotacao) || cotacao <= 0) {
+      return {
+        ok: false,
+        mensagem: `Informe quanto vale 1 ${valores.moeda} em reais na data da compra.`,
+      };
+    }
+
+    // Cotacao 1 em moeda estrangeira e o par que o CHECK proibe, e chegar aqui
+    // quase sempre quer dizer "o campo ficou com o valor padrao e ninguem olhou".
+    // Recusar com a razao evita o 23514 sem explicacao.
+    if (cotacao === 1) {
+      return {
+        ok: false,
+        mensagem: `Cotação 1 vale só para reais. Informe quanto vale 1 ${valores.moeda} em reais.`,
+      };
+    }
   }
 
   return { ok: true };
