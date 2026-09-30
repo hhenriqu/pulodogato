@@ -1,0 +1,22 @@
+{
+  "//": "Build so do teste de lib/moeda-do-grupo.ts. Ela importa dinheiro.ts (catalogo e formatacao), cambio.ts (cotacaoCoerente/precisaDeCotacao) e settlement.ts (toCents/toReais) pelo alias @/, e o tsc resolve o alias por `paths` mas NAO o reescreve no JS emitido -- por isso o npm script tem o passo scripts/resolve-aliases.mjs depois. Sem ele o node morre com ERR_MODULE_NOT_FOUND no primeiro import. settlement.ts entra no `include` porque a suite compara a tolerancia de um centavo das duas: se `simplifySettlements` parar de gerar a sugestao de R$ 0,01 e `avisoDeSobra` continuar avisando dela (ou o contrario), a tela avisa de uma sobra que nao existe na lista.",
+  "compilerOptions": {
+    "outDir": "../.tmp-moeda-do-grupo",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
+  },
+  "include": [
+    "../lib/moeda-do-grupo.ts",
+    "../lib/settlement.ts"
+  ]
+}

@@ -1,5 +1,8 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
+import { moedaConhecida } from "@/lib/dinheiro";
+import { taxaParaGravar } from "@/lib/cambio";
+import { moedaDaViagem } from "@/lib/moeda-do-grupo";
 
 export async function GET(
   request: NextRequest,
@@ -46,6 +49,8 @@ export async function GET(
           id,
           description,
           amount,
+          currency,
+          exchange_rate,
           transaction_date,
           created_at,
           user_id,
@@ -101,11 +106,19 @@ export async function GET(
           id: gt.transaction.id,
           description: gt.transaction.description,
           amount: Math.abs(gt.transaction.amount), // Convert to positive for display
+          // `amount` esta NESTA moeda, e nao em real. A lista precisa das duas
+          // colunas para nao escrever "R$ 180,00" sobre um jantar de US$ 180 --
+          // exatamente o erro de 80% que o CHECK da 026 fecha na escrita.
+          currency: gt.transaction.currency || "BRL",
+          exchange_rate: Number(gt.transaction.exchange_rate ?? 1) || 1,
           transaction_date: gt.transaction.transaction_date,
           created_at: gt.transaction.created_at,
           payer: payer,
           splits: (splits || []).map((split: any) => ({
             id: split.id,
+            // A parte de cada um esta na moeda da DESPESA: `group_expense_splits`
+            // nao tem moeda propria de proposito (ver a 026), porque a parte e
+            // uma fracao do todo e a cotacao certa e a da despesa que a originou.
             amount: split.amount,
             status: split.status,
             member: split.member?.user,
@@ -180,6 +193,57 @@ export async function POST(
       );
     }
 
+    // A MOEDA DA DESPESA DE GRUPO (HMO-182, itens 2 e 3)
+    // -------------------------------------------------
+    // Este e o TERCEIRO caminho de escrita de lancamento do app, e ate aqui ele
+    // nao mandava moeda nenhuma -- toda despesa lancada de dentro do grupo caia
+    // no DEFAULT 'BRL' da 022. Numa viagem em dolar isso grava o jantar de
+    // US$ 180 como R$ 180: o CHECK da 026 NAO reclama (BRL com cotacao 1 e
+    // valido), a tela mostra "R$ 180,00", e o saldo do grupo fecha. E o mesmo
+    // erro de 80% que a 026 fechou nos outros dois caminhos, pela porta que
+    // sobrou.
+    //
+    // A moeda ausente no corpo vira a do GRUPO, e nao BRL: e o que "moeda
+    // sugerida a cada despesa da viagem" significa do lado do servidor, e o que
+    // protege um cliente que ainda nao manda o campo.
+    //
+    // Mas a moeda EXPLICITA no corpo ganha da do grupo, sempre. "Sugerida" e a
+    // palavra da decisao: uma diaria cobrada em dolar numa viagem ao Chile e o
+    // caso normal, nao a excecao, e uma regra que sobrepusesse o pedido do
+    // cliente pela moeda do grupo tornaria essa despesa impossivel de lancar
+    // corretamente.
+    const { data: grupo } = await supabase
+      .from("expense_groups")
+      .select("currency")
+      .eq("id", groupId)
+      .maybeSingle();
+
+    if (body.currency !== undefined && !moedaConhecida(body.currency)) {
+      return NextResponse.json(
+        { error: "Moeda desconhecida" },
+        { status: 400 }
+      );
+    }
+
+    const currency = moedaConhecida(body.currency)
+      ? String(body.currency).trim().toUpperCase()
+      : moedaDaViagem(grupo?.currency);
+
+    // A cotacao do dia da COMPRA (`transaction_date`), nao de hoje. `null`
+    // devolvido por `taxaParaGravar` significa "moeda estrangeira sem cotacao
+    // utilizavel": gravar assim e 23514, e a mensagem generica do banco nao diz
+    // a quem lanca o que fazer.
+    const exchangeRate = taxaParaGravar(currency, Number(body.exchange_rate));
+
+    if (exchangeRate === null) {
+      return NextResponse.json(
+        {
+          error: `Informe a cotação de ${currency} no dia da compra para lançar esta despesa.`,
+        },
+        { status: 400 }
+      );
+    }
+
     // Create financial transaction (with negative amount for expenses)
     const { data: transaction, error: transactionError } = await supabase
       .from("financial_transactions")
@@ -189,6 +253,11 @@ export async function POST(
         category_id: body.category_id || category.id,
         description: body.description,
         amount: -Math.abs(body.amount), // Negative for expenses
+        currency,
+        // Congelada: e a cotacao do dia da compra e nunca e recalculada. E o que
+        // faz `group_member_balances` somar `amount * exchange_rate` e chegar ao
+        // valor em real que a despesa teve de verdade.
+        exchange_rate: exchangeRate,
         transaction_date: body.transaction_date,
         notes: body.notes,
         is_shared: true,

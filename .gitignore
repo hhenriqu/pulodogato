@@ -180,3 +180,4 @@ next-env.d.ts
 # leva components/ui/*, lib/orcamento-de-grupo.js, lib/settlement.js e
 # lib/utils.js junto)
 /.tmp-cartao-orcamento-grupo/
+/.tmp-moeda-do-grupo/

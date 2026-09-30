@@ -1,6 +1,7 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { divisaoPendenteDoGrupo } from "@/lib/services/expense-groups";
+import { moedaDoGrupoParaGravar } from "@/lib/moeda-do-grupo";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +36,7 @@ export async function GET(
         group_code,
         group_type,
         default_split_type,
+        currency,
         photo_url,
         created_at,
         creator:profiles!expense_groups_created_by_fkey (
@@ -98,6 +100,180 @@ export async function GET(
     });
   } catch (error) {
     console.error("Error in group detail API:", error);
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * Editar o grupo -- inclusive a MOEDA DA VIAGEM (migration 026, HMO-182).
+ *
+ * ESTE HANDLER NAO EXISTIA, E A TELA JA O CHAMAVA
+ * -----------------------------------------------
+ * "Editar Grupo" na tela de grupos manda `PUT /api/expense-groups/{id}` desde
+ * que o botao existe, e este arquivo exportava apenas GET e DELETE. Em Next.js
+ * um metodo sem export vira **405**, e a tela cai no ramo `!response.ok`
+ * mostrando "Erro ao atualizar grupo" -- a mesma frase de um erro de rede.
+ * Renomear o grupo nunca funcionou, e nao havia como descobrir isso pela
+ * mensagem. O item 3 desta issue ("moeda no grupo: criar e EDITAR") nao tinha
+ * onde entrar antes de o handler existir.
+ *
+ * POR QUE SO ADMIN
+ * ----------------
+ * Mesma regra do DELETE logo abaixo. A moeda da viagem nao e cosmetica: ela e a
+ * moeda sugerida a cada despesa nova e a moeda em que a tela apresenta o saldo
+ * de TODOS os membros. Qualquer um do grupo poder troca-la faria o saldo dos
+ * outros mudar de moeda sem aviso.
+ *
+ * A troca de moeda NAO reescreve despesa nenhuma, e e isso que a torna segura:
+ * cada lancamento carrega a propria moeda e a propria cotacao congelada
+ * (`financial_transactions.currency` / `exchange_rate`), e o saldo continua
+ * saindo em BRL da view. Trocar a moeda do grupo depois de a viagem comecar muda
+ * o que o formulario SUGERE e a moeda em que a tela ESCREVE o saldo -- nao o
+ * valor de nada que ja foi gasto.
+ *
+ * A lista de campos e fechada de proposito: um `...body` deixaria um cliente
+ * mandar `group_code` (a chave de convite), `created_by` ou `is_active` -- o
+ * ultimo desarquivaria o grupo por um caminho que nao passa pela checagem de
+ * `/restore`.
+ */
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: { groupId: string } }
+) {
+  try {
+    const supabase = createClient();
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { groupId } = params;
+    const body = await request.json();
+
+    const { data: membership } = await supabase
+      .from("group_members")
+      .select("role")
+      .eq("group_id", groupId)
+      .eq("user_id", user.id)
+      .eq("status", "active")
+      .maybeSingle();
+
+    if (!membership) {
+      return NextResponse.json(
+        { error: "Grupo não encontrado ou acesso negado" },
+        { status: 404 }
+      );
+    }
+
+    if (membership.role !== "admin") {
+      return NextResponse.json(
+        { error: "Apenas administradores podem editar o grupo" },
+        { status: 403 }
+      );
+    }
+
+    const mudancas: Record<string, unknown> = {};
+
+    if (body.name !== undefined) {
+      const nome = String(body.name).trim();
+      if (nome.length < 3) {
+        return NextResponse.json(
+          { error: "O nome do grupo precisa de pelo menos 3 caracteres" },
+          { status: 400 }
+        );
+      }
+      mudancas.name = nome;
+    }
+
+    if (body.description !== undefined) {
+      const descricao = String(body.description ?? "").trim();
+      mudancas.description = descricao || null;
+    }
+
+    if (body.group_type !== undefined) {
+      if (!["public", "private"].includes(body.group_type)) {
+        return NextResponse.json(
+          { error: "O tipo do grupo tem que ser public ou private" },
+          { status: 400 }
+        );
+      }
+      mudancas.group_type = body.group_type;
+    }
+
+    if (body.default_split_type !== undefined) {
+      if (
+        !["equal", "percentage", "custom", "proportional"].includes(
+          body.default_split_type
+        )
+      ) {
+        return NextResponse.json(
+          { error: "Tipo de divisão inválido" },
+          { status: 400 }
+        );
+      }
+      mudancas.default_split_type = body.default_split_type;
+    }
+
+    // A moeda so entra quando veio no corpo. `moedaDoGrupoParaGravar` devolve
+    // BRL para campo ausente, e usar isso aqui faria toda edicao de NOME zerar a
+    // moeda de uma viagem em dolar -- de longe o pior desfecho possivel desta
+    // rota, porque a tela seguiria mostrando os saldos e so o rotulo mudaria.
+    if (body.currency !== undefined) {
+      const currency = moedaDoGrupoParaGravar(body.currency);
+      if (currency === null) {
+        return NextResponse.json(
+          { error: "Moeda desconhecida para o grupo" },
+          { status: 400 }
+        );
+      }
+      mudancas.currency = currency;
+    }
+
+    if (Object.keys(mudancas).length === 0) {
+      return NextResponse.json(
+        { error: "Nada para atualizar" },
+        { status: 400 }
+      );
+    }
+
+    const { data: group, error: updateError } = await supabase
+      .from("expense_groups")
+      .update(mudancas)
+      .eq("id", groupId)
+      .select(
+        "id, name, description, group_code, group_type, default_split_type, currency, photo_url, created_at"
+      )
+      .single();
+
+    if (updateError) {
+      console.error("Erro ao atualizar grupo:", updateError);
+      return NextResponse.json(
+        { error: `Erro ao atualizar grupo: ${updateError.message}` },
+        { status: 500 }
+      );
+    }
+
+    // `update` sem linha afetada NAO e erro no PostgREST: a RLS pode ter filtrado
+    // a linha e o `.single()` devolve erro de zero linhas. O ramo acima cobre
+    // isso, mas a guarda explicita fica porque "grupo atualizado" com `group`
+    // nulo e o tipo de resposta que a tela comemora sem nada ter mudado.
+    if (!group) {
+      return NextResponse.json(
+        { error: "O grupo não foi atualizado" },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({ success: true, group });
+  } catch (error) {
+    console.error("Erro em PUT group:", error);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }

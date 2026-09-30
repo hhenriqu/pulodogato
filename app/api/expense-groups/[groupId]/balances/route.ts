@@ -1,5 +1,9 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
+import { MOEDA_PADRAO } from "@/lib/dinheiro";
+import { precisaDeCotacao } from "@/lib/cambio";
+import { cotacaoNaData } from "@/lib/ptax";
+import { moedaDaViagem } from "@/lib/moeda-do-grupo";
 
 /**
  * Saldo de cada membro do grupo.
@@ -18,6 +22,28 @@ import { NextRequest, NextResponse } from "next/server";
  * E esta rota e a rota de transfers davam respostas DIFERENTES para "quanto eu
  * devo", porque cada uma implementava a regra do seu jeito. Agora as duas leem
  * a mesma view.
+ *
+ * A MOEDA DA VIAGEM, E A COTACAO DE HOJE (HMO-182, item 4)
+ * --------------------------------------------------------
+ * A 026 acrescentou duas colunas a view, e as duas dizem coisas diferentes:
+ *
+ *   `amount_currency` = 'BRL'  -- a moeda dos numeros. Constante, e existe
+ *                                 porque as sete colunas de dinheiro nao diziam
+ *                                 em que moeda estavam e agora ha duas em jogo.
+ *   `group_currency`           -- a moeda da VIAGEM, para a tela apresentar.
+ *
+ * Esta rota devolve as duas mais `today_rate`: a cotacao de HOJE da moeda da
+ * viagem, que e a unica cotacao com que a apresentacao pode ser feita. Ela nao
+ * toca em `net_balance` -- a conversao e da tela, e o numero que vale continua
+ * sendo o BRL.
+ *
+ * `today_rate` vem `null` sem drama em tres casos (PTAX nao cobre a moeda, o
+ * Banco Central nao respondeu, grupo em real), e a tela mostra so o BRL. Buscar
+ * a cotacao NAO pode derrubar esta rota: o saldo do grupo e a informacao
+ * principal da tela e ela nao depende de cotacao nenhuma. Por isso o `try` em
+ * volta da chamada, e nao um `await` solto -- `lib/ptax.ts` ja trata o timeout,
+ * mas um throw inesperado dali viraria 500 numa tela que tem tudo para
+ * responder.
  */
 export async function GET(
   request: NextRequest,
@@ -59,7 +85,9 @@ export async function GET(
         settlements_received,
         net_balance,
         paid_count,
-        owed_count
+        owed_count,
+        amount_currency,
+        group_currency
       `
       )
       .eq("group_id", groupId);
@@ -102,11 +130,44 @@ export async function GET(
       0
     );
 
+    // A view devolve a mesma moeda de grupo em toda linha (ela vem do JOIN com
+    // expense_groups), entao a primeira linha basta. Grupo sem membro ativo nao
+    // produz linha nenhuma: nesse caso nao ha saldo para apresentar e BRL e o
+    // que a tela usa para formatar o zero.
+    const primeira: any = (linhas || [])[0];
+    const groupCurrency = moedaDaViagem(primeira?.group_currency);
+    const amountCurrency = primeira?.amount_currency || MOEDA_PADRAO;
+
+    const hoje = new Date().toISOString().slice(0, 10);
+    let todayRate: number | null = null;
+    let todayRateDate: string | null = null;
+
+    if (precisaDeCotacao(groupCurrency)) {
+      try {
+        const cotacao = await cotacaoNaData(groupCurrency, hoje);
+        todayRate = cotacao.taxa;
+        todayRateDate = cotacao.dataDoBoletim;
+      } catch (erro) {
+        // Cotacao e enfeite nesta rota; saldo nao e. Ver o cabecalho.
+        console.error("Cotacao de hoje indisponivel para o grupo:", erro);
+      }
+    }
+
     return NextResponse.json({
       success: true,
       balances,
       residual: residualCents / 100,
       is_balanced: Math.abs(residualCents) <= 1,
+      // A moeda em que `balance`, `total_paid` e companhia estao. Constante hoje,
+      // e explicita para a tela nao ter de descobrir lendo a migration.
+      amount_currency: amountCurrency,
+      // A moeda da viagem. Pode ser igual a de cima (grupo em real).
+      group_currency: groupCurrency,
+      // A cotacao de HOJE, so para a tela escrever o saldo na moeda da viagem.
+      // `null` = mostre em real. Nunca 1 numa moeda estrangeira: ver lib/cambio.ts.
+      today_rate: todayRate,
+      today_rate_date: todayRateDate,
+      today: hoje,
     });
   } catch (error) {
     console.error("Erro em GET balances:", error);
