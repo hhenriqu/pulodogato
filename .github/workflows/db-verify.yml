@@ -12,9 +12,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -1066,6 +1066,28 @@ jobs:
       # mutante de verdade, formatar com componentes locais, morre em 7.
       - name: Cambio do dia da compra, e o CHECK cruzado da 026
         run: npm run test:cambio
+
+      # A moeda da VIAGEM na tela do grupo (HMO-182, itens 3/4/5). A 026 separou
+      # duas coisas que esta tela mistura com facilidade: `amount_currency` (BRL,
+      # a moeda dos numeros, porque cada despesa entrou pela cotacao congelada do
+      # dia dela) e `group_currency` (a moeda em que a tela FALA). As duas
+      # conversoes usam cotacoes diferentes -- a da compra, que nunca muda, e a de
+      # hoje, que muda todo dia -- e usar a de hoje para o valor do passado e
+      # literalmente o que a issue proibe.
+      # O que a suite prende: a conversao de apresentacao DIVIDE pela cotacao
+      # (multiplicar da um numero 28x maior num grupo em dolar, e erra para cima --
+      # o lado que faz alguem pagar a mais); o rotulo DIZ que a cotacao e de hoje
+      # e NAO diz que e a da compra (sem eixo de tempo, "US$ 50,00" ao lado de uma
+      # viagem de marco se le como o valor gasto em marco); `null` e nunca 1
+      # quando falta cotacao, porque 1 e o valor que o CHECK proibe e o unico que
+      # faz a conversao sair identica ao BRL sem sintoma; a sobra de centavo do
+      # acerto em moeda estrangeira e DEVOLVIDA e nao escondida numa cotacao
+      # calculada de tras para frente (que fecharia exato mentindo sobre o mundo);
+      # e a tolerancia de um centavo daqui e a MESMA de `simplifySettlements` --
+      # se divergirem, a tela avisa de uma sobra que a lista de sugestoes nao tem.
+      # 28 asercoes, 6 mutantes, 6 mortos.
+      - name: A moeda da viagem, e as duas cotacoes que nao se misturam
+        run: npm run test:moeda-do-grupo
 
       # A carteira de investimentos erra dinheiro sem levantar excecao: ela mostra
       # um preco medio de R$ 31,14 onde o certo e R$ 30,00, e ninguem estranha

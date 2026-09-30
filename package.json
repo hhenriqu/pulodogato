@@ -68,7 +68,8 @@
     "test:lista-lancamentos": "rm -rf .tmp-lista-lancamentos && tsc -p scripts/tsconfig.lista-lancamentos-test.json && node scripts/resolve-aliases.mjs .tmp-lista-lancamentos lib && node --test scripts/test-lista-de-lancamentos.mjs",
     "test:parte-do-grupo": "rm -rf .tmp-parte-do-grupo && tsc -p scripts/tsconfig.parte-do-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-parte-do-grupo lib --espelha-raiz && node --test scripts/test-parte-do-grupo.mjs",
     "test:cambio": "rm -rf .tmp-cambio && tsc -p scripts/tsconfig.cambio-test.json && node scripts/resolve-aliases.mjs .tmp-cambio lib && node --test scripts/test-cambio.mjs",
-    "test:cartao-orcamento-grupo": "rm -rf .tmp-cartao-orcamento-grupo && tsc -p scripts/tsconfig.cartao-orcamento-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-cartao-orcamento-grupo components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-cartao-orcamento-grupo lib --espelha-raiz && node --test scripts/test-cartao-orcamento-grupo.mjs"
+    "test:cartao-orcamento-grupo": "rm -rf .tmp-cartao-orcamento-grupo && tsc -p scripts/tsconfig.cartao-orcamento-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-cartao-orcamento-grupo components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-cartao-orcamento-grupo lib --espelha-raiz && node --test scripts/test-cartao-orcamento-grupo.mjs",
+    "test:moeda-do-grupo": "rm -rf .tmp-moeda-do-grupo && tsc -p scripts/tsconfig.moeda-do-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-moeda-do-grupo lib && node --test scripts/test-moeda-do-grupo.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

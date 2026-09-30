@@ -34,6 +34,9 @@ import {
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
+import { opcoesDeMoeda } from "@/lib/moeda";
+import { MOEDA_PADRAO, moedaPorCodigo } from "@/lib/dinheiro";
+import { moedaDaViagem } from "@/lib/moeda-do-grupo";
 import {
   Archive,
   Users,
@@ -73,6 +76,12 @@ interface ExpenseGroup {
   group_code: string;
   group_type: "public" | "private";
   default_split_type: "equal" | "percentage" | "custom" | "proportional";
+  /**
+   * A moeda da viagem (`expense_groups.currency`, migration 026). Opcional no
+   * tipo porque uma resposta de API mais antiga que esta tela nao a traz, e
+   * `moedaDaViagem` resolve a ausencia em BRL -- que e o DEFAULT da coluna.
+   */
+  currency?: string | null;
   photo_url?: string;
   created_at: string;
   creator?: {
@@ -126,6 +135,7 @@ export default function ExpenseGroupsPage() {
       | "percentage"
       | "custom"
       | "proportional",
+    currency: MOEDA_PADRAO,
   });
 
   // Hook para gerenciar convites
@@ -153,6 +163,9 @@ export default function ExpenseGroupsPage() {
       | "percentage"
       | "custom"
       | "proportional",
+    // A moeda da viagem (026). Nasce em real: e o que 100% dos grupos que ja
+    // existem sao, e o que a maioria dos novos sera.
+    currency: MOEDA_PADRAO,
   });
 
   const [joinForm, setJoinForm] = useState({
@@ -246,6 +259,7 @@ export default function ExpenseGroupsPage() {
           description: "",
           group_type: "private",
           default_split_type: "equal",
+          currency: MOEDA_PADRAO,
         });
         loadData();
       } else {
@@ -433,6 +447,11 @@ export default function ExpenseGroupsPage() {
       description: group.description || "",
       group_type: group.group_type,
       default_split_type: group.default_split_type,
+      // `moedaDaViagem` e nao `group.currency` direto: grupo criado antes da 026
+      // (ou trazido por uma resposta de API sem a coluna) chega `undefined`, e um
+      // Select com `value={undefined}` fica DESCONTROLADO -- ele passa a
+      // ignorar o estado, e a edicao seguinte enviaria a moeda errada.
+      currency: moedaDaViagem(group.currency),
     });
     setSelectedGroup(group);
     setShowEditForm(true);
@@ -712,6 +731,37 @@ export default function ExpenseGroupsPage() {
                 </Select>
               </div>
 
+              {/* A MOEDA DA VIAGEM (HMO-182, item 3)
+                  Ela e a moeda SUGERIDA a cada despesa do grupo -- a palavra e do
+                  COMMENT da coluna na 026 -- e a moeda em que a tela apresenta o
+                  saldo. Nao e o denominador do saldo: a view devolve BRL, com
+                  cada despesa convertida pela cotacao congelada do dia dela. */}
+              <div className="space-y-2">
+                <Label htmlFor="group_currency">Moeda do grupo</Label>
+                <Select
+                  value={createForm.currency}
+                  onValueChange={(value) =>
+                    setCreateForm({ ...createForm, currency: value })
+                  }
+                >
+                  <SelectTrigger id="group_currency">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {opcoesDeMoeda().map((o) => (
+                      <SelectItem key={o.codigo} value={o.codigo}>
+                        {o.rotulo}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Sugerida em cada despesa desta viagem e usada para apresentar o
+                  saldo. Cada despesa guarda a cotação do dia em que foi feita, e
+                  esse valor não muda depois.
+                </p>
+              </div>
+
               <div className="flex gap-2">
                 <Button type="submit">Criar Grupo</Button>
                 <Button
@@ -883,6 +933,17 @@ export default function ExpenseGroupsPage() {
                             {getSplitTypeLabel(group.default_split_type)}
                           </span>
                         </div>
+                        {/* So aparece quando a viagem NAO e em real. Um selo
+                            "BRL" em todos os grupos seria ruido em 100% deles:
+                            o que precisa chamar atencao e a excecao. */}
+                        {moedaDaViagem(group.currency) !== MOEDA_PADRAO && (
+                          <div className="col-span-2">
+                            <Badge variant="outline">
+                              Viagem em{" "}
+                              {moedaPorCodigo(moedaDaViagem(group.currency)).nome}
+                            </Badge>
+                          </div>
+                        )}
                       </div>
 
                       {/* Members */}
@@ -1388,6 +1449,37 @@ export default function ExpenseGroupsPage() {
                       </SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+
+                {/* Trocar a moeda depois de a viagem comecar e seguro, e vale
+                    dizer por que: nenhuma despesa e reescrita. Cada lancamento
+                    carrega a propria moeda e a propria cotacao congelada, e o
+                    saldo continua saindo em real da view -- o que muda e o que o
+                    formulario sugere e a moeda em que a tela escreve o saldo. */}
+                <div className="space-y-2">
+                  <Label htmlFor="edit_group_currency">Moeda do grupo</Label>
+                  <Select
+                    value={editForm.currency}
+                    onValueChange={(value) =>
+                      setEditForm({ ...editForm, currency: value })
+                    }
+                  >
+                    <SelectTrigger id="edit_group_currency">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {opcoesDeMoeda().map((o) => (
+                        <SelectItem key={o.codigo} value={o.codigo}>
+                          {o.rotulo}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Trocar a moeda não altera nenhuma despesa já lançada: cada uma
+                    guarda a cotação do próprio dia. Muda o que é sugerido nas
+                    próximas e a moeda em que o saldo aparece.
+                  </p>
                 </div>
 
                 <div className="flex gap-2">

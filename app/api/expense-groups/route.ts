@@ -1,5 +1,6 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
+import { moedaDoGrupoParaGravar } from "@/lib/moeda-do-grupo";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +32,7 @@ export async function GET(request: NextRequest) {
             group_code,
             group_type,
             default_split_type,
+            currency,
             photo_url,
             created_at,
             created_by,
@@ -173,6 +175,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // A moeda da viagem (migration 026). Campo ausente vira BRL -- o DEFAULT da
+    // coluna e o que sempre foi verdade para todo grupo que ja existia --, mas
+    // um codigo fora do catalogo e 400 e nao BRL: gravar real quando alguem
+    // pediu outra coisa criaria uma viagem na moeda errada em silencio, e o
+    // CHECK do banco devolveria 500 sem apontar o campo.
+    const currency = moedaDoGrupoParaGravar(body.currency);
+
+    if (currency === null) {
+      return NextResponse.json(
+        { error: "Moeda desconhecida para o grupo" },
+        { status: 400 }
+      );
+    }
+
     // Criar grupo
     const { data: group, error: groupError } = await supabase
       .from("expense_groups")
@@ -181,6 +197,7 @@ export async function POST(request: NextRequest) {
         description: description?.trim() || null,
         group_type,
         default_split_type,
+        currency,
         photo_url: photo_url || null,
         created_by: user.id,
       })

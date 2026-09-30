@@ -1,5 +1,7 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
+import { MOEDA_PADRAO, moedaConhecida } from "@/lib/dinheiro";
+import { cotacaoCoerente, precisaDeCotacao, valorEmReais } from "@/lib/cambio";
 
 /**
  * Acertos de contas do grupo: o registro de "Caio pagou R$ 130 para a Ana".
@@ -10,6 +12,26 @@ import { NextRequest, NextResponse } from "next/server";
  * O acerto NAO vira lancamento em financial_transactions -- ver a SECAO "POR
  * QUE UMA TABELA SO PARA ISSO" da migration 007. Quem quiser ver o dinheiro
  * sair da conta corrente lanca a transferencia por fora: sao fatos diferentes.
+ *
+ * ACERTO EM MOEDA ESTRANGEIRA (HMO-182, item 5)
+ * ---------------------------------------------
+ * A 026 deu a `group_settlements` as mesmas duas colunas do lancamento --
+ * `currency` e `exchange_rate`, congelada no dia `settled_on` -- e os mesmos
+ * tres CHECKs. O motivo esta escrito na migration: `group_member_balances` cruza
+ * pago, devido e acertos na MESMA soma, entao um acerto de US$ 50 lido como
+ * R$ 50 abate um quinto da divida e a tela continua pedindo o resto depois de o
+ * dinheiro ter sido pago.
+ *
+ * `amount` esta na moeda do PAGAMENTO, nunca em real. Quem manda 267.50 com
+ * `currency: 'USD'` e `exchange_rate: 5.35` registra um pagamento de US$ 267,50
+ * -- R$ 1.431,13 -- e nao os R$ 267,50 que pretendia. A rota nao tem como
+ * distinguir os dois casos (os dois numeros sao validos), entao quem monta o
+ * payload e `acertoNaMoedaDaViagem` em lib/moeda-do-grupo.ts, que faz a divisao
+ * e tem teste.
+ *
+ * Os dois campos sao OPCIONAIS e caem em (BRL, 1): todo cliente que ja chamava
+ * esta rota continua funcionando sem mudanca, e continua registrando em real --
+ * que e o que ele sempre fez.
  */
 
 export async function GET(
@@ -49,6 +71,8 @@ export async function GET(
         `
         id,
         amount,
+        currency,
+        exchange_rate,
         settled_on,
         note,
         created_by,
@@ -75,14 +99,26 @@ export async function GET(
 
     return NextResponse.json({
       success: true,
-      settlements: (settlements || []).map((s: any) => ({
-        ...s,
-        amount: Number(s.amount),
-        // Quem registrou e quem pode desfazer -- a RLS de DELETE exige
-        // created_by = auth.uid(). A tela usa isto para nao oferecer um botao
-        // que vai falhar.
-        can_delete: s.created_by === user.id,
-      })),
+      settlements: (settlements || []).map((s: any) => {
+        const currency = moedaConhecida(s.currency) ? s.currency : MOEDA_PADRAO;
+        const rate = Number(s.exchange_rate ?? 1) || 1;
+
+        return {
+          ...s,
+          amount: Number(s.amount),
+          currency,
+          exchange_rate: rate,
+          // O que este pagamento abateu de verdade, pela mesma conta da view
+          // (`amount * exchange_rate`). A lista de pagamentos mostra os dois:
+          // "US$ 50,00" e o que saiu do bolso, "R$ 267,50" e o que saiu da
+          // divida. Sem o segundo, um historico misturando moedas nao soma.
+          amount_in_brl: valorEmReais(Number(s.amount), rate),
+          // Quem registrou e quem pode desfazer -- a RLS de DELETE exige
+          // created_by = auth.uid(). A tela usa isto para nao oferecer um botao
+          // que vai falhar.
+          can_delete: s.created_by === user.id,
+        };
+      }),
     });
   } catch (error) {
     console.error("Erro em GET settlements:", error);
@@ -144,6 +180,41 @@ export async function POST(
     // sozinha -- o acerto nao zeraria o saldo e ninguem saberia por que.
     const valor = Math.round(amount * 100) / 100;
 
+    // A moeda e a cotacao do pagamento (026). Ausentes = em real, que e o que
+    // esta rota sempre fez.
+    const currency = String(body.currency ?? MOEDA_PADRAO)
+      .trim()
+      .toUpperCase();
+
+    if (!moedaConhecida(currency)) {
+      return NextResponse.json(
+        { error: "Moeda desconhecida para o acerto" },
+        { status: 400 }
+      );
+    }
+
+    // BRL grava 1 e ignora o que vier, igual a `taxaParaGravar` no lancamento: a
+    // alternativa e deixar sair uma linha (BRL, 1.05) que o CHECK recusa com um
+    // erro que a pessoa nao tem como associar a campo nenhum.
+    const exchangeRate = precisaDeCotacao(currency)
+      ? Number(body.exchange_rate)
+      : 1;
+
+    // `cotacaoCoerente` e a regra do CHECK
+    // `group_settlements_rate_matches_currency` em TypeScript -- inclusive o
+    // caso que parece inofensivo e nao e: moeda estrangeira com cotacao 1. Sem
+    // esta guarda, um acerto de US$ 50 entraria na soma da view valendo R$ 50.
+    if (!cotacaoCoerente(currency, exchangeRate)) {
+      return NextResponse.json(
+        {
+          error: precisaDeCotacao(currency)
+            ? `Informe a cotação do dia do pagamento para registrar um acerto em ${currency}.`
+            : "Um acerto em reais não leva cotação.",
+        },
+        { status: 400 }
+      );
+    }
+
     // Quem registra precisa ser parte no pagamento. A policy de INSERT da 007
     // exige o mesmo; aqui e so para a mensagem ser legivel em vez de 42501.
     if (fromUserId !== user.id && toUserId !== user.id) {
@@ -180,16 +251,37 @@ export async function POST(
         from_user_id: fromUserId,
         to_user_id: toUserId,
         amount: valor,
+        currency,
+        exchange_rate: exchangeRate,
         settled_on: body.settled_on || new Date().toISOString().slice(0, 10),
         note: body.note || null,
         created_by: user.id,
       })
-      .select("id, amount, settled_on, note, created_at")
+      .select("id, amount, currency, exchange_rate, settled_on, note, created_at")
       .single();
 
     if (error) {
       // 42501 = a policy da 007 barrou. Acontece quando o banco ainda nao tem a
       // migration aplicada com a regra que esta rota assume.
+      //
+      // 23514 = um dos CHECKs da 026. As guardas acima cobrem os casos que esta
+      // rota produz, entao chegar aqui significa OUTRA coisa: a 026 nao esta
+      // aplicada neste banco, ou a coluna existe com um CHECK diferente do que
+      // este codigo assume. As duas leituras merecem uma frase propria em vez de
+      // "Nao foi possivel registrar o acerto" -- a diferenca entre "tente de
+      // novo" e "falta aplicar a migration" nao aparece em log nenhum que a
+      // pessoa consiga ler.
+      if (error.code === "23514") {
+        console.error("CHECK da 026 recusou o acerto:", error);
+        return NextResponse.json(
+          {
+            error:
+              "O banco recusou a moeda ou a cotação deste acerto. Se o grupo é em moeda estrangeira, avise: pode faltar aplicar uma migration.",
+          },
+          { status: 400 }
+        );
+      }
+
       const status = error.code === "42501" ? 403 : 500;
       console.error("Erro ao registrar acerto:", error);
       return NextResponse.json(
@@ -200,7 +292,15 @@ export async function POST(
 
     return NextResponse.json({
       success: true,
-      settlement: { ...settlement, amount: Number(settlement.amount) },
+      settlement: {
+        ...settlement,
+        amount: Number(settlement.amount),
+        exchange_rate: Number(settlement.exchange_rate),
+        amount_in_brl: valorEmReais(
+          Number(settlement.amount),
+          Number(settlement.exchange_rate)
+        ),
+      },
     });
   } catch (error) {
     console.error("Erro em POST settlements:", error);

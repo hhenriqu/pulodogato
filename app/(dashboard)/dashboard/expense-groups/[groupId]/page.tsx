@@ -51,6 +51,19 @@ import {
   type GrupoOrcado,
 } from "@/lib/orcamento-de-grupo";
 import type { BudgetWithConsumption } from "@/types/financial";
+import { CampoDeCotacao } from "@/components/movimentacoes/CampoDeCotacao";
+import { MOEDA_PADRAO, formatarValor, moedaPorCodigo } from "@/lib/dinheiro";
+import { opcoesDeMoeda } from "@/lib/moeda";
+import { cotacaoDigitada, taxaParaGravar, valorEmReais } from "@/lib/cambio";
+import {
+  acertoNaMoedaDaViagem,
+  avisoDeSobra,
+  avisoSemConversao,
+  moedaDaViagem,
+  moedaSugeridaDaDespesa,
+  rotuloDaConversao,
+  saldoNaMoedaDaViagem,
+} from "@/lib/moeda-do-grupo";
 
 interface ExpenseGroup {
   id: string;
@@ -59,6 +72,8 @@ interface ExpenseGroup {
   group_code: string;
   group_type: "public" | "private";
   default_split_type: "equal" | "percentage" | "custom" | "proportional";
+  /** A moeda da viagem (`expense_groups.currency`, migration 026). */
+  currency?: string | null;
   photo_url?: string;
   created_at: string;
   creator?: {
@@ -83,7 +98,15 @@ interface GroupMember {
 interface GroupTransaction {
   id: string;
   description: string;
+  /** NESTA moeda (`currency`), nunca em real. Ver `exchange_rate`. */
   amount: number;
+  /** A moeda da despesa (022). Ausente em resposta mais antiga que a tela. */
+  currency?: string | null;
+  /**
+   * A cotacao congelada do dia da compra (026). `amount * exchange_rate` e o
+   * valor em real -- a mesma conta que `group_member_balances` faz.
+   */
+  exchange_rate?: number | null;
   transaction_date: string;
   created_at: string;
   payer: {
@@ -161,10 +184,32 @@ interface TransferSuggestion {
   amount: number;
 }
 
+/**
+ * Como a tela apresenta o saldo do grupo (migration 026, HMO-182).
+ *
+ * `amount_currency` e a moeda dos NUMEROS (BRL) e `group_currency` e a moeda da
+ * VIAGEM. As duas vem da view; `today_rate` e a cotacao de hoje que a rota
+ * buscou, e ela e `null` sem drama (grupo em real, PTAX sem cobertura, Banco
+ * Central fora do ar). `null` significa "mostre em real", nunca "use 1".
+ */
+interface ContextoDeMoeda {
+  amount_currency: string;
+  group_currency: string;
+  today_rate: number | null;
+  today_rate_date: string | null;
+  today: string;
+}
+
 /** Um pagamento de um membro para outro, ja registrado (migration 007). */
 interface Settlement {
   id: string;
   amount: number;
+  /** A moeda em que o pagamento foi feito de verdade (026). */
+  currency?: string | null;
+  /** A cotacao congelada no dia do pagamento (026). */
+  exchange_rate?: number | null;
+  /** `amount * exchange_rate`: o que este pagamento abateu da dívida, em real. */
+  amount_in_brl?: number | null;
   settled_on: string;
   note?: string | null;
   from_user: { id: string; full_name: string; avatar_url?: string };
@@ -206,6 +251,17 @@ export default function GroupDetailPage() {
   const [mesDoOrcamento, setMesDoOrcamento] = useState("");
   // Sobra que nao pertence a ninguem. Zero em grupo saudavel.
   const [residual, setResidual] = useState(0);
+  // Nasce em real nos dois campos e sem cotacao: e o estado correto enquanto a
+  // rota nao respondeu, e e o estado FINAL de todo grupo em real. Um `null`
+  // inicial obrigaria cada leitura da tela a tratar o caso, e a tentacao seria
+  // tratar com `?? 1` -- a cotacao proibida.
+  const [contextoDeMoeda, setContextoDeMoeda] = useState<ContextoDeMoeda>({
+    amount_currency: MOEDA_PADRAO,
+    group_currency: MOEDA_PADRAO,
+    today_rate: null,
+    today_rate_date: null,
+    today: new Date().toISOString().slice(0, 10),
+  });
   // Chave "pagador->recebedor" da linha em que o botao esta rodando, para nao
   // registrar o mesmo acerto duas vezes num clique duplo -- o banco aceita
   // pagamentos repetidos de proposito (duas parcelas de R$ 50 sao um fato
@@ -223,6 +279,13 @@ export default function GroupDetailPage() {
     transaction_date: new Date().toISOString().split("T")[0],
     notes: "",
     split_type: "equal" as "equal" | "percentage" | "custom",
+    // Nasce em real e passa para a moeda do grupo quando o grupo carrega (ver o
+    // efeito abaixo). Nao da para inicializar com a moeda do grupo aqui: neste
+    // ponto `group` ainda e null.
+    currency: MOEDA_PADRAO,
+    // A cotacao do dia da compra, como TEXTO -- e o que `CampoDeCotacao`
+    // manipula, e aceitar virgula depende de a leitura ser de texto.
+    cotacao: "",
   });
   const [selectedSplitSuggestion, setSelectedSplitSuggestion] =
     useState<any>(null);
@@ -314,6 +377,18 @@ export default function GroupDetailPage() {
 
     if (response.ok) {
       setBalances(data.balances || []);
+      // A moeda da viagem e a cotacao de hoje chegam junto com o saldo, na mesma
+      // resposta, de proposito: uma segunda chamada poderia responder depois e a
+      // tela ficaria um instante mostrando o saldo em real sob o rotulo da moeda
+      // da viagem -- que e uma afirmacao falsa, ainda que breve.
+      setContextoDeMoeda({
+        amount_currency: data.amount_currency || MOEDA_PADRAO,
+        group_currency: moedaDaViagem(data.group_currency),
+        today_rate:
+          typeof data.today_rate === "number" ? data.today_rate : null,
+        today_rate_date: data.today_rate_date || null,
+        today: data.today || new Date().toISOString().slice(0, 10),
+      });
     } else {
       console.error("Error loading balances:", data.error);
     }
@@ -383,7 +458,34 @@ export default function GroupDetailPage() {
    * dado, e atualizar so um deixaria a tela mostrando uma divida que a lista de
    * baixo ja diz estar quitada.
    */
-  const handleLiquidar = async (transfer: TransferSuggestion) => {
+  const handleLiquidar = async (
+    transfer: TransferSuggestion,
+    /**
+     * `"brl"` registra a divida como ela e -- exata, sem sobra. `"viagem"`
+     * registra o pagamento na moeda da viagem, ao cambio de hoje, que e o que
+     * acontece de verdade quando se paga o amigo em dolar no fim da viagem.
+     *
+     * O padrao e `"brl"` porque ele nunca deixa centavo em aberto. O caminho da
+     * moeda estrangeira quase sempre deixa (a cotacao nao divide redondo), e por
+     * isso ele so aparece quando ha cotacao e vem com o aviso de sobra.
+     */
+    onde: "brl" | "viagem" = "brl"
+  ) => {
+    const acerto = acertoNaMoedaDaViagem(
+      transfer.amount,
+      onde === "viagem" ? contextoDeMoeda.group_currency : MOEDA_PADRAO,
+      onde === "viagem" ? contextoDeMoeda.today_rate : 1
+    );
+
+    // `null` aqui e o que segura o POST de sair sem cotacao e tomar 23514 na
+    // cara de quem esta registrando um pagamento que ja foi feito.
+    if (!acerto) {
+      toast.error(
+        "Não consegui a cotação de hoje para registrar nesta moeda. Registre em reais."
+      );
+      return;
+    }
+
     setSettling(`${transfer.from.id}->${transfer.to.id}`);
     try {
       const response = await fetch(
@@ -394,7 +496,11 @@ export default function GroupDetailPage() {
           body: JSON.stringify({
             from_user_id: transfer.from.id,
             to_user_id: transfer.to.id,
-            amount: transfer.amount,
+            // `amount` esta na moeda de `currency`, nunca em real -- a view faz
+            // `amount * exchange_rate` para chegar ao que foi abatido.
+            amount: acerto.amount,
+            currency: acerto.currency,
+            exchange_rate: acerto.exchange_rate,
           }),
         }
       );
@@ -405,7 +511,15 @@ export default function GroupDetailPage() {
         return;
       }
 
-      toast.success("Acerto registrado");
+      // A sobra e dita DEPOIS de gravar tambem, e nao so no botao: quem confirmou
+      // rapido precisa saber que ficou (ou sobrou) centavo, senao o saldo
+      // teimoso da proxima tela nao tem explicacao.
+      const sobra = avisoDeSobra(acerto);
+      toast.success(
+        sobra
+          ? `Acerto registrado. ${sobra}`
+          : "Acerto registrado"
+      );
       await Promise.all([loadBalances(), loadTransfers(), loadSettlements()]);
     } catch (error) {
       console.error("Erro ao registrar acerto:", error);
@@ -444,12 +558,33 @@ export default function GroupDetailPage() {
       return;
     }
 
+    // A cotacao do dia da compra. `taxaParaGravar` devolve `null` quando a moeda
+    // e estrangeira e o que esta no campo nao serve -- vazio, NaN, zero, ou o 1
+    // que o CHECK da 026 proibe. Barrar aqui e o que troca um 23514 do banco
+    // ("Erro ao gravar") por uma frase que diz qual campo falta.
+    const taxa = taxaParaGravar(
+      expenseForm.currency,
+      cotacaoDigitada(expenseForm.cotacao)
+    );
+
+    if (taxa === null) {
+      toast.error(
+        `Informe a cotação de ${expenseForm.currency} no dia da compra.`
+      );
+      return;
+    }
+
     try {
       // Preparar dados da despesa
       const expenseData: any = {
         ...expenseForm,
         amount: parseFloat(expenseForm.amount),
+        currency: expenseForm.currency,
+        // O numero, e nao o texto do campo: `cotacao` sai do payload junto com o
+        // resto do spread e seria uma string com virgula no corpo do POST.
+        exchange_rate: taxa,
       };
+      delete expenseData.cotacao;
 
       // Adicionar dados da sugestão selecionada se houver
       if (selectedSplitSuggestion) {
@@ -484,6 +619,10 @@ export default function GroupDetailPage() {
           transaction_date: new Date().toISOString().split("T")[0],
           notes: "",
           split_type: "equal",
+          // Volta para a moeda do grupo, nao para real: a proxima despesa da
+          // viagem tambem e na moeda da viagem.
+          currency: moedaSugeridaDaDespesa(group?.currency, null),
+          cotacao: "",
         });
         setSelectedSplitSuggestion(null);
         await loadTransactions();
@@ -640,7 +779,18 @@ export default function GroupDetailPage() {
 
         <div className="flex gap-2">
           <Button
-            onClick={() => setShowAddExpense(true)}
+            // A moeda do grupo e semeada na ABERTURA, e nao num efeito sobre
+            // `group`: um efeito sobrescreveria a moeda que a pessoa acabou de
+            // escolher no formulario aberto, na primeira vez que qualquer coisa
+            // recarregasse o grupo.
+            onClick={() => {
+              setExpenseForm((atual) => ({
+                ...atual,
+                currency: moedaSugeridaDaDespesa(group?.currency, null),
+                cotacao: "",
+              }));
+              setShowAddExpense(true);
+            }}
             className="flex items-center gap-2"
           >
             <Plus className="h-4 w-4" />
@@ -684,8 +834,18 @@ export default function GroupDetailPage() {
               <div>
                 <p className="text-sm text-muted-foreground">Total Gasto</p>
                 <p className="text-2xl font-bold">
+                  {/* Cada parcela e convertida ANTES de somar, pela cotacao
+                      congelada da propria despesa -- a mesma conta que
+                      `group_member_balances` faz no banco. Somar `t.amount` cru
+                      juntaria 180 dolares com 1.000 reais e daria 1.180 de moeda
+                      nenhuma: um total plausivel, sem erro, e 80% menor do que o
+                      real na parte em dolar. */}
                   {formatCurrency(
-                    transactions.reduce((sum, t) => sum + t.amount, 0)
+                    transactions.reduce(
+                      (sum, t) =>
+                        sum + valorEmReais(t.amount, t.exchange_rate ?? 1),
+                      0
+                    )
                   )}
                 </p>
               </div>
@@ -908,8 +1068,26 @@ export default function GroupDetailPage() {
                           </div>
                           <div className="text-right">
                             <p className="font-bold text-lg">
-                              {formatCurrency(transaction.amount)}
+                              {/* Na moeda da DESPESA. `formatCurrency` forca
+                                  real e escreveria "R$ 180,00" sobre um jantar
+                                  de US$ 180. */}
+                              {formatarValor(
+                                transaction.amount,
+                                moedaDaViagem(transaction.currency)
+                              )}
                             </p>
+                            {moedaDaViagem(transaction.currency) !==
+                              MOEDA_PADRAO && (
+                              <p className="text-xs text-muted-foreground">
+                                {formatCurrency(
+                                  valorEmReais(
+                                    transaction.amount,
+                                    transaction.exchange_rate ?? 1
+                                  )
+                                )}{" "}
+                                na cotação do dia
+                              </p>
+                            )}
                             {transaction.category && (
                               <Badge variant="secondary" className="text-xs">
                                 {transaction.category.name}
@@ -941,8 +1119,15 @@ export default function GroupDetailPage() {
                                   </span>
                                 </div>
                                 <div className="flex items-center gap-2">
+                                  {/* A parte de cada um esta na moeda da
+                                      despesa: ela e uma fracao do todo, e
+                                      `group_expense_splits` nao tem moeda
+                                      propria de proposito (ver a 026). */}
                                   <span className="text-sm font-medium">
-                                    {formatCurrency(split.amount)}
+                                    {formatarValor(
+                                      split.amount,
+                                      moedaDaViagem(transaction.currency)
+                                    )}
                                   </span>
                                   <Badge
                                     variant="outline"
@@ -1031,8 +1216,26 @@ export default function GroupDetailPage() {
                           </div>
                           <div className="text-right">
                             <p className="font-bold text-lg">
-                              {formatCurrency(transaction.amount)}
+                              {/* Na moeda da DESPESA. `formatCurrency` forca
+                                  real e escreveria "R$ 180,00" sobre um jantar
+                                  de US$ 180. */}
+                              {formatarValor(
+                                transaction.amount,
+                                moedaDaViagem(transaction.currency)
+                              )}
                             </p>
+                            {moedaDaViagem(transaction.currency) !==
+                              MOEDA_PADRAO && (
+                              <p className="text-xs text-muted-foreground">
+                                {formatCurrency(
+                                  valorEmReais(
+                                    transaction.amount,
+                                    transaction.exchange_rate ?? 1
+                                  )
+                                )}{" "}
+                                na cotação do dia
+                              </p>
+                            )}
                             {transaction.category && (
                               <Badge variant="secondary" className="text-xs">
                                 {transaction.category.name}
@@ -1061,6 +1264,42 @@ export default function GroupDetailPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
+                {/* A MOEDA DA VIAGEM, E O QUE ELA SIGNIFICA AQUI (HMO-182, item 4)
+                    O saldo e em real porque cada despesa foi convertida pela
+                    cotacao do dia DELA, congelada -- e por isso o valor do
+                    passado nao muda sozinho. A moeda da viagem aparece ao lado,
+                    ao cambio de HOJE, dizendo que e de hoje. */}
+                {contextoDeMoeda.group_currency !== MOEDA_PADRAO && (
+                  <div className="p-3 rounded-lg bg-muted text-sm space-y-1">
+                    <p className="font-medium">
+                      Viagem em{" "}
+                      {moedaPorCodigo(contextoDeMoeda.group_currency).nome}
+                    </p>
+                    {contextoDeMoeda.today_rate !== null ? (
+                      <p className="text-muted-foreground">
+                        Os saldos abaixo estão em reais — cada despesa entrou pela
+                        cotação do dia em que foi feita, e esse valor não muda. Ao
+                        lado, o mesmo saldo em{" "}
+                        {contextoDeMoeda.group_currency} pela cotação de hoje
+                        {contextoDeMoeda.today_rate_date
+                          ? ` (${formatDate(contextoDeMoeda.today_rate_date)})`
+                          : ""}
+                        , que serve para pagar agora.
+                      </p>
+                    ) : (
+                      <p className="text-muted-foreground">
+                        {avisoSemConversao(
+                          saldoNaMoedaDaViagem(
+                            0,
+                            contextoDeMoeda.group_currency,
+                            null
+                          )
+                        )}
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 {/* Individual Balances */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {balances.map((balance) => (
@@ -1105,6 +1344,37 @@ export default function GroupDetailPage() {
                               ? "Deve pagar"
                               : "Quitado"}
                           </p>
+                          {/* O mesmo saldo na moeda da viagem. `Math.abs` no
+                              valor, igual a linha de cima, porque o sentido
+                              ("A receber"/"Deve pagar") ja esta escrito acima --
+                              repetir o sinal aqui daria "-US$ 50,00" embaixo de
+                              "Deve pagar", que se le como dois menos. */}
+                          {(() => {
+                            const apresentado = saldoNaMoedaDaViagem(
+                              balance.balance,
+                              contextoDeMoeda.group_currency,
+                              contextoDeMoeda.today_rate
+                            );
+                            if (apresentado.naMoedaDaViagem === null) return null;
+                            return (
+                              <p
+                                className="text-xs text-muted-foreground"
+                                title={
+                                  rotuloDaConversao(
+                                    apresentado,
+                                    contextoDeMoeda.today
+                                  ) ?? undefined
+                                }
+                              >
+                                ≈{" "}
+                                {formatarValor(
+                                  Math.abs(apresentado.naMoedaDaViagem),
+                                  apresentado.moeda
+                                )}{" "}
+                                hoje
+                              </p>
+                            );
+                          })()}
                         </div>
                       </div>
                     </div>
@@ -1152,6 +1422,23 @@ export default function GroupDetailPage() {
                           user?.id === transfer.from.id ||
                           user?.id === transfer.to.id;
 
+                        // O mesmo pagamento na moeda da viagem, ao cambio de
+                        // hoje -- ou `null` quando nao ha o que oferecer.
+                        //
+                        // O teste de moeda vem ANTES da chamada porque
+                        // `acertoNaMoedaDaViagem(x, 'BRL', 1)` responde um acerto
+                        // valido (em real, cotacao 1): usar o retorno sozinho
+                        // como condicao poria um segundo botao "Paguei em BRL" ao
+                        // lado do primeiro, em todo grupo em real do app.
+                        const naViagem =
+                          contextoDeMoeda.group_currency !== MOEDA_PADRAO
+                            ? acertoNaMoedaDaViagem(
+                                transfer.amount,
+                                contextoDeMoeda.group_currency,
+                                contextoDeMoeda.today_rate
+                              )
+                            : null;
+
                         return (
                           <div
                             key={index}
@@ -1186,18 +1473,64 @@ export default function GroupDetailPage() {
                                 <p className="text-sm text-info">
                                   Pagamento sugerido
                                 </p>
+                                {/* Quanto e isso na moeda da viagem hoje, para
+                                    quem for pagar em dolar no fim da viagem. */}
+                                {naViagem && (
+                                  <p className="text-xs text-info">
+                                    ≈{" "}
+                                    {formatarValor(
+                                      naViagem.amount,
+                                      naViagem.currency
+                                    )}{" "}
+                                    hoje
+                                  </p>
+                                )}
                               </div>
                               {souParte && (
-                                <Button
-                                  size="sm"
-                                  onClick={() => handleLiquidar(transfer)}
-                                  disabled={settling === chave}
-                                >
-                                  <CheckCircle className="h-4 w-4 mr-1" />
-                                  {settling === chave
-                                    ? "Registrando..."
-                                    : "Já paguei"}
-                                </Button>
+                                <div className="flex flex-col gap-1">
+                                  <Button
+                                    size="sm"
+                                    onClick={() => handleLiquidar(transfer)}
+                                    disabled={settling === chave}
+                                  >
+                                    <CheckCircle className="h-4 w-4 mr-1" />
+                                    {settling === chave
+                                      ? "Registrando..."
+                                      : naViagem
+                                      ? // So vira "em reais" quando ha a outra
+                                        // opcao ao lado. Em grupo em real nao ha
+                                        // escolha a explicitar, e "Já paguei" e
+                                        // a frase que a tela sempre usou.
+                                        "Paguei em reais"
+                                      : "Já paguei"}
+                                  </Button>
+                                  {/* O segundo botao so existe quando ha cotacao
+                                      de hoje: sem ela, `acertoNaMoedaDaViagem`
+                                      devolve null e o clique nao teria para onde
+                                      ir. Oferecer e falhar depois e pior do que
+                                      nao oferecer. */}
+                                  {naViagem && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() =>
+                                        handleLiquidar(transfer, "viagem")
+                                      }
+                                      disabled={settling === chave}
+                                      title={
+                                        avisoDeSobra(naViagem) ??
+                                        `Registra ${formatarValor(
+                                          naViagem.amount,
+                                          naViagem.currency
+                                        )} à cotação de hoje (${
+                                          naViagem.exchange_rate
+                                        }).`
+                                      }
+                                    >
+                                      Paguei em {naViagem.currency}
+                                    </Button>
+                                  )}
+                                </div>
                               )}
                             </div>
                           </div>
@@ -1253,8 +1586,27 @@ export default function GroupDetailPage() {
                             </span>
                           </div>
                           <div className="flex items-center gap-3">
-                            <span className="font-semibold">
-                              {formatCurrency(s.amount)}
+                            {/* Um acerto em dolar tem que aparecer em dolar. Com
+                                `formatCurrency` sozinho, US$ 50,00 sairia como
+                                "R$ 50,00" -- o mesmo erro de 80% que o CHECK da
+                                026 fecha no banco, reaberto na leitura. O valor
+                                em real vem embaixo porque e o que a divida
+                                abateu, e e o unico numero que soma com os
+                                outros acertos da lista. */}
+                            <span className="font-semibold text-right">
+                              {formatarValor(
+                                s.amount,
+                                moedaDaViagem(s.currency)
+                              )}
+                              {moedaDaViagem(s.currency) !== MOEDA_PADRAO && (
+                                <span className="block text-xs font-normal text-muted-foreground">
+                                  {formatCurrency(
+                                    s.amount_in_brl ??
+                                      s.amount * (s.exchange_rate ?? 1)
+                                  )}{" "}
+                                  na cotação do dia
+                                </span>
+                              )}
                             </span>
                             {s.can_delete && (
                               <Button
@@ -1382,6 +1734,52 @@ export default function GroupDetailPage() {
                     }
                   />
                 </div>
+
+                {/* A MOEDA DA DESPESA (HMO-182, itens 2 e 3)
+                    Preenchida com a moeda do grupo, e trocavel: "sugerida" e a
+                    palavra da decisao, e uma diaria cobrada em dolar numa viagem
+                    ao Chile e o caso normal. */}
+                <div className="space-y-2">
+                  <Label htmlFor="expense_currency">Moeda</Label>
+                  <Select
+                    value={expenseForm.currency}
+                    // Trocar a moeda LIMPA a cotacao, igual ao formulario de
+                    // lancamento: a cotacao do dolar nao significa nada para o
+                    // euro, e deixa-la ali faria o campo parecer preenchido e
+                    // correto -- `CampoDeCotacao` so busca quando esta vazio.
+                    onValueChange={(value) =>
+                      setExpenseForm({
+                        ...expenseForm,
+                        currency: value,
+                        cotacao: "",
+                      })
+                    }
+                  >
+                    <SelectTrigger id="expense_currency">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {opcoesDeMoeda().map((o) => (
+                        <SelectItem key={o.codigo} value={o.codigo}>
+                          {o.rotulo}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* A cotacao do dia da COMPRA. O componente nao renderiza nada em
+                    real, e busca a PTAX da `data` -- nao a de hoje. Sem ela o
+                    banco recusa a despesa com 23514 (CHECK da 026). */}
+                <CampoDeCotacao
+                  moeda={expenseForm.currency}
+                  data={expenseForm.transaction_date}
+                  cotacao={expenseForm.cotacao}
+                  valor={expenseForm.amount}
+                  aoMudar={(cotacao) =>
+                    setExpenseForm({ ...expenseForm, cotacao })
+                  }
+                />
 
                 <div className="space-y-2">
                   <Label htmlFor="split_type">Tipo de Divisão</Label>
