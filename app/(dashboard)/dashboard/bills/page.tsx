@@ -59,6 +59,7 @@ import {
 import type { AlcanceDaEdicao } from "@/lib/recorrencia-edicao";
 import { Receipts } from "@/components/Receipts";
 import { ehFatura } from "@/lib/card-invoice";
+import { copiaDaPrevisao } from "@/lib/previsto-x-realizado";
 import {
   buscarLeitura,
   podeAfirmarVazio,
@@ -295,7 +296,15 @@ export default function BillsPage() {
             "Transferência: saiu da conta e quitou o cartão. O patrimônio não muda — a despesa já foi contada nas compras.",
         });
       } else {
-        toast.success(`${conta.description} paga`);
+        // `dados.message` vem da rota, que e quem sabe a direcao de verdade (ela
+        // le a precedencia ocorrencia -> regra -> expense). O fallback local usa
+        // `conta.direction` da view, que diz a mesma coisa.
+        toast.success(
+          dados.message ??
+            (conta.direction === "income"
+              ? `${conta.description} recebida`
+              : `${conta.description} paga`)
+        );
       }
 
       setFaturaParaPagar(null);
@@ -510,6 +519,10 @@ export default function BillsPage() {
   const Linha = ({ conta }: { conta: ScheduledTransaction }) => {
     const vencida = conta.effective_status === "overdue";
     const dias = conta.days_until_due ?? 0;
+    // A palavra muda com a DIRECAO (HMO-188). `direction` vem resolvido da view
+    // (027): o cliente nao refaz o COALESCE, senao a copia esquecida aqui
+    // mostraria o salario previsto com um botao de "pagar".
+    const copia = copiaDaPrevisao(conta.direction);
     // O comprovante fica fechado por padrao: a lista existe para responder "o
     // que falta pagar", e um bloco de anexo por conta afogaria essa resposta.
     const [anexosAbertos, setAnexosAbertos] = useState(false);
@@ -530,6 +543,11 @@ export default function BillsPage() {
               {conta.group ? ` · ${conta.group.name}` : ""}
               {conta.recurring_rule_id ? " · fixo" : ""}
               {ehFatura(conta.notes) ? " · fatura de cartão" : ""}
+              {/* Sem este rotulo a receita prevista e INDISTINGUIVEL da conta a
+                  pagar na lista: mesmo formato, mesmo valor positivo, mesmo
+                  badge de vencimento. O botao muda de titulo, mas titulo de
+                  botao so aparece no hover -- e no celular, nunca. */}
+              {conta.direction === "income" ? " · a receber" : ""}
             </p>
           </div>
         </div>
@@ -554,7 +572,7 @@ export default function BillsPage() {
               title={
                 ehFatura(conta.notes)
                   ? "Pagar a fatura (escolher a conta)"
-                  : "Marcar como paga"
+                  : copia.confirmar
               }
             >
               {agindo === conta.id ? (

@@ -727,3 +727,31 @@ test("real sem cotacao continua entrando normalmente", () => {
   assert.equal(r.linha.exchange_rate, 1);
   assert.equal(r.linha.currency, "BRL");
 });
+
+// ---------------------------------------------------------------------------
+// O LANCAMENTO QUE AINDA NAO ACONTECEU NAO CABE NESTA FILA (HMO-188)
+// ---------------------------------------------------------------------------
+
+test("previsto e recusado, e a recusa diz para onde ele deveria ir", () => {
+  // A fila grava `LinhaDeTransacao`, ou seja uma linha de
+  // `financial_transactions` -- e toda linha dessa tabela mexe no saldo da conta
+  // no INSERT (`update_account_balance_trigger`) e entra no realizado de todo
+  // relatorio. Sem esta porta a fila gravaria a previsao como transacao: o
+  // dinheiro sairia do saldo hoje por algo que ainda nao aconteceu, e o aviso na
+  // tela seria "guardei no aparelho, envio quando a rede voltar".
+  const r = avaliarLancamento({ ...base, confirmado: false }, ID);
+  assert.equal(r.ok, false);
+  assert.equal(r.motivo, "previsto");
+  assert.match(r.mensagem, /contas previstas/i);
+});
+
+test("confirmado AUSENTE continua sendo aceito (tela antiga no cache)", () => {
+  // A comparacao dentro de `avaliarLancamento` e `=== false`, e nao
+  // `!entrada.confirmado`. A diferenca importa: uma versao da tela servida do
+  // cache do service worker nao manda o campo, e `!undefined` recusaria TODO
+  // lancamento offline dela -- justamente o modo em que a fila e a unica coisa
+  // que existe. Ausente quer dizer confirmado, que e o que aquela tela fazia.
+  assert.equal(avaliarLancamento({ ...base }, ID).ok, true);
+  assert.equal(avaliarLancamento({ ...base, confirmado: undefined }, ID).ok, true);
+  assert.equal(avaliarLancamento({ ...base, confirmado: true }, ID).ok, true);
+});

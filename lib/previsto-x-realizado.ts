@@ -58,6 +58,52 @@
 export type DirecaoPrevista = "income" | "expense";
 
 /**
+ * Como a tela fala de uma linha da agenda, dada a direcao dela (HMO-188).
+ *
+ * "Marcar como paga" numa receita prevista foi o defeito que a HMO-188 nomeia:
+ * a pessoa confirma que RECEBEU, nao que pagou. E o erro nao e so de palavra --
+ * ele esconde que existem duas coisas diferentes na mesma lista, e quem ve o
+ * salario com um botao de "pagar" conclui que cadastrou errado.
+ *
+ * Sai daqui, e nao de um ternario no JSX, por dois motivos: o ternario e
+ * conferido por inspecao visual (e sao quatro strings por direcao, em tres
+ * lugares da tela), e este modulo ja e o dono da nocao de direcao prevista --
+ * `somarAgenda` le a mesma coisa para decidir em qual balde a linha entra.
+ *
+ * `direction` chega da coluna homonima de `scheduled_transactions_effective`,
+ * que resolveu a precedencia no banco (027). Qualquer valor inesperado cai em
+ * despesa, que e o default historico da rota de baixa -- e o lado seguro: ler
+ * uma despesa como receita mostraria "vou receber" sobre uma conta a pagar.
+ */
+export interface CopiaDaPrevisao {
+  /** O `title` do botao de confirmar. */
+  confirmar: string;
+  /** O verbo no infinitivo, para frases montadas. */
+  verbo: string;
+  /** O rotulo do grupo na lista: "a pagar" x "a receber". */
+  rotulo: string;
+  /** O aviso curto do que a confirmacao faz com o saldo. */
+  efeito: string;
+}
+
+export function copiaDaPrevisao(direction?: string | null): CopiaDaPrevisao {
+  if (direction === "income") {
+    return {
+      confirmar: "Confirmar recebimento",
+      verbo: "receber",
+      rotulo: "a receber",
+      efeito: "O valor entra no saldo da conta.",
+    };
+  }
+  return {
+    confirmar: "Marcar como paga",
+    verbo: "pagar",
+    rotulo: "a pagar",
+    efeito: "O valor sai do saldo da conta.",
+  };
+}
+
+/**
  * Uma linha da agenda, pronta para somar.
  *
  * `amount` positivo e ja recortado pela parte do membro quando a linha e de

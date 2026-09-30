@@ -520,3 +520,90 @@ test("a calculadora acompanha o campo desabilitado", () => {
     }
   }
 });
+
+// ---------------------------------------------------------------------------
+// A CONFIRMACAO, E O CAMPO DE DATA QUE ELA APAGA (HMO-188)
+// ---------------------------------------------------------------------------
+// `camposDoTipo` ja decide isso e tem teste proprio. Aqui o que se prova e que
+// o JSX OBEDECE: uma decisao certa com o campo renderizado do mesmo jeito
+// passaria verde em test-lancamento.mjs e mostraria, na tela de verdade, um
+// campo "Data do pagamento" dentro de um lancamento que a pessoa acabou de
+// dizer que nao pagou.
+
+test("a checkbox de confirmacao aparece nas duas telas, com o verbo certo", () => {
+  const despesa = renderizar({ tipo: "expense" });
+  assert.match(despesa, /id="confirmado"/);
+  assert.match(despesa, /Já paguei/);
+  assert.doesNotMatch(despesa, /Já recebi/);
+
+  const receita = renderizar({ tipo: "income" });
+  assert.match(receita, /id="confirmado"/);
+  assert.match(receita, /Já recebi/);
+  assert.doesNotMatch(receita, /Já paguei/);
+});
+
+test("confirmado mostra as DUAS datas; previsto mostra so a prevista", () => {
+  const confirmado = renderizar({ tipo: "expense" });
+  assert.match(confirmado, /id="date"/);
+  assert.match(confirmado, /id="expected-date"/);
+  assert.match(confirmado, /Data do pagamento/);
+
+  const previsto = renderizar({
+    tipo: "expense",
+    valores: { confirmado: false },
+  });
+  // O campo da data real SAI da tela. Deixa-lo com a data de hoje dentro faria
+  // ele parecer uma resposta ja dada -- e o valor iria para
+  // `transaction_date` de uma transacao que nao existe.
+  assert.doesNotMatch(previsto, /id="date"/);
+  assert.doesNotMatch(previsto, /Data do pagamento/);
+  assert.match(previsto, /id="expected-date"/);
+  // E a obrigatoriedade aparece no rotulo.
+  assert.match(previsto, /Data prevista \*/);
+});
+
+test("o aviso diz o que a confirmacao faz com o saldo, nos dois estados", () => {
+  // E a unica coisa na tela que muda de TABELA. Sem o aviso, desmarcar a
+  // checkbox parece um detalhe de rotulo, e a pessoa nao entende por que o
+  // dinheiro nao saiu da conta.
+  const confirmado = renderizar({ tipo: "expense" });
+  assert.match(confirmado, /sai do saldo da conta agora/);
+
+  const previsto = renderizar({
+    tipo: "expense",
+    valores: { confirmado: false },
+  });
+  assert.match(previsto, /Contas Previstas/);
+  assert.match(previsto, /não mexe no saldo/);
+
+  const receita = renderizar({ tipo: "income" });
+  assert.match(receita, /entra no saldo da conta agora/);
+});
+
+test("fixa nao oferece a confirmacao, e NAO perde o campo de data", () => {
+  // O campo de data de uma despesa fixa e o `start_date` da regra. Um
+  // `confirmado: false` parado no estado nao pode apaga-lo -- e a checkbox nao
+  // pode estar ali, porque regra mensal ja e previsao por definicao.
+  const html = renderizar({
+    tipo: "expense",
+    valores: { natureza: "fixed", confirmado: false },
+  });
+  assert.doesNotMatch(html, /id="confirmado"/);
+  assert.match(html, /id="date"/);
+  // Nem a data prevista: quem diz quando e o dia do vencimento, e dois campos
+  // para a mesma pergunta se contradizem.
+  assert.doesNotMatch(html, /id="expected-date"/);
+});
+
+test("editando nao oferece a confirmacao", () => {
+  // O que esta gravado ja mexeu no saldo. Desmarcar ali significaria apagar a
+  // transacao e criar uma previsao no lugar, e o caminho de volta ja existe e e
+  // outro (o estorno da baixa, em Contas Previstas).
+  const html = renderizar({
+    tipo: "expense",
+    editando: true,
+    valores: { confirmado: false },
+  });
+  assert.doesNotMatch(html, /id="confirmado"/);
+  assert.match(html, /id="date"/);
+});

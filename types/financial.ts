@@ -364,10 +364,24 @@ export interface ScheduledTransaction {
   created_at: string;
   updated_at: string;
 
+  /**
+   * A direcao GRAVADA nesta ocorrencia (migration 027, HMO-188). NULL quer dizer
+   * "pergunte a `recurring_rules.transaction_type` da regra". Quem le para
+   * mostrar na tela usa `direction`, que ja resolveu a precedencia.
+   */
+  transaction_type?: TransactionFinancialType;
+
   /** Vem da view scheduled_transactions_effective, calculado na hora. */
   effective_status?: ScheduledStatus;
   /** Negativo = vencida ha N dias. */
   days_until_due?: number;
+  /**
+   * `COALESCE(transaction_type da ocorrencia, da regra, 'expense')`, resolvido na
+   * view (027). E o que separa "a pagar" de "a receber" na tela -- refazer o
+   * COALESCE no cliente seria uma segunda copia da precedencia, e a copia
+   * esquecida mostraria o salario previsto como conta a pagar.
+   */
+  direction?: TransactionFinancialType;
 
   // Relacionamentos
   category?: TransactionCategory;

@@ -110,6 +110,34 @@ export interface CamposDoTipo {
   rotuloDaConta: string;
   /** O rotulo do seletor de natureza muda com o tipo. */
   rotuloDaNatureza: string;
+
+  /**
+   * A checkbox "ja paguei" / "ja recebi" (HMO-188).
+   *
+   * Nao aparece em natureza FIXA -- uma regra mensal ja e previsao por
+   * definicao, e a confirmacao dela acontece mes a mes em Contas Previstas.
+   * Nao aparece EDITANDO: o que esta gravado e uma transacao, ou seja dinheiro
+   * que ja andou e que ja esta no saldo da conta. Desmarcar a checkbox ali
+   * significaria apagar a transacao e criar uma previsao no lugar -- e o
+   * caminho de volta ja existe e e outro (o estorno da baixa, em Contas
+   * Previstas).
+   */
+  confirmacao: boolean;
+  /**
+   * O campo da data em que o dinheiro ANDOU. Some quando a pessoa desmarca a
+   * confirmacao: um lancamento que ainda nao aconteceu nao tem data de
+   * pagamento, e deixar o campo na tela com a data de hoje faria ela parecer
+   * uma resposta.
+   */
+  dataDeRealizacao: boolean;
+  /** O campo da data PREVISTA. Nao aparece em natureza fixa: la quem diz quando e `diaDeVencimento`. */
+  dataPrevista: boolean;
+  /** O rotulo do campo de data muda com o tipo: pagamento x recebimento. */
+  rotuloDaData: string;
+  /** O rotulo da data prevista diz se ela e obrigatoria. */
+  rotuloDaDataPrevista: string;
+  /** "Ja paguei" x "Ja recebi". */
+  rotuloDaConfirmacao: string;
 }
 
 /**
@@ -124,37 +152,63 @@ export interface CamposDoTipo {
 export function camposDoTipo(
   tipo: TipoLancamento,
   natureza: NaturezaDespesa,
-  editando: boolean
+  editando: boolean,
+  // Default `true` de proposito: todo chamador anterior a HMO-188 passava tres
+  // argumentos, e o comportamento deles era o do lancamento CONFIRMADO -- a
+  // tela gravava a transacao direto. Um default `false` mudaria o que aqueles
+  // chamadores veem sem que nenhum deles tenha mudado de linha.
+  confirmado: boolean = true
 ): CamposDoTipo {
   // Uma regra de repeticao so se CRIA aqui; editar uma que existe e outra
   // tela, porque a pergunta "muda so este mes ou os proximos tambem?" nao tem
   // resposta sobre um lancamento ja gravado. Ver `lib/recorrencia-edicao.ts`.
   const ehFixa = natureza === "fixed" && !editando;
 
+  // A confirmacao so e uma PERGUNTA quando ha duas respostas possiveis. Em
+  // natureza fixa nao ha: a regra e previsao por definicao. Editando tambem
+  // nao: o que esta gravado ja mexeu no saldo.
+  const confirmacao = !ehFixa && !editando && natureza !== "fixed";
+  // Quando a checkbox nao existe, `confirmado` nao pode mandar na tela -- senao
+  // um `confirmado: false` parado no estado apagaria o campo de data de uma
+  // despesa fixa, e `data` e o `start_date` da regra.
+  const ehPrevisao = confirmacao && !confirmado;
+
+  const comum = {
+    natureza: true,
+    diaDeVencimento: ehFixa,
+    duracao: ehFixa,
+    confirmacao,
+    dataDeRealizacao: !ehPrevisao,
+    // Em fixa quem diz quando e `diaDeVencimento`; um segundo campo de data
+    // prevista ali seriam duas respostas para a mesma pergunta.
+    dataPrevista: !ehFixa,
+    rotuloDaDataPrevista: ehPrevisao ? "Data prevista *" : "Data prevista",
+  };
+
   if (tipo === "income") {
     return {
-      natureza: true,
-      diaDeVencimento: ehFixa,
-      duracao: ehFixa,
+      ...comum,
       parcelamento: false,
       rateio: false,
       contaObrigatoria: false,
       rotuloDaConta: "Conta de entrada",
       rotuloDaNatureza: "Tipo de Receita *",
+      rotuloDaData: ehFixa ? "Data" : "Data do recebimento",
+      rotuloDaConfirmacao: "Já recebi",
     };
   }
 
   const ehNoCartao = natureza === "card";
 
   return {
-    natureza: true,
-    diaDeVencimento: ehFixa,
-    duracao: ehFixa,
+    ...comum,
     parcelamento: !editando,
     rateio: true,
     contaObrigatoria: ehNoCartao,
     rotuloDaConta: ehNoCartao ? "Cartão *" : "Conta/Cartão",
     rotuloDaNatureza: "Tipo de Despesa *",
+    rotuloDaData: ehFixa ? "Data" : "Data do pagamento",
+    rotuloDaConfirmacao: "Já paguei",
   };
 }
 
@@ -203,8 +257,38 @@ export interface ValoresDeLancamento {
   valor: string;
   categoriaId: string;
   contaId: string;
-  /** YYYY-MM-DD */
+  /**
+   * Quando o dinheiro ANDOU (YYYY-MM-DD). Vai para
+   * `financial_transactions.transaction_date`, que e a coluna que todo
+   * relatorio soma para dizer em que mes houve entrada ou saida.
+   *
+   * Nao e o dia do lancamento: esse e `launch_date`, que a tela nao pede porque
+   * ela SABE (e hoje) e o banco tem DEFAULT para ele.
+   */
   data: string;
+  /**
+   * Quando se esperava que acontecesse (YYYY-MM-DD, HMO-188).
+   *
+   * Dois destinos, dependendo de `confirmado`:
+   *   confirmado  -> `financial_transactions.expected_date`, ao lado da data
+   *                  real. E o que permite responder "pagou atrasado?".
+   *   previsto    -> `scheduled_transactions.due_date`, o vencimento da conta
+   *                  que ainda vai acontecer.
+   */
+  dataPrevista: string;
+  /**
+   * A pessoa ja pagou (despesa) ou ja recebeu (receita)? (HMO-188)
+   *
+   * `true` grava uma transacao, como sempre foi. `false` grava uma conta
+   * PREVISTA -- e essa e a diferenca que importa, porque toda linha de
+   * `financial_transactions` mexe no saldo da conta no instante do INSERT
+   * (`update_account_balance_trigger`) e entra no realizado de todo relatorio.
+   * Um lancamento nao confirmado gravado ali sairia gastando dinheiro que nao
+   * saiu.
+   *
+   * Nasce `true`: o caso comum e anotar o que acabou de acontecer.
+   */
+  confirmado: boolean;
   notas: string;
 
   /** Pontual, no cartao ou fixa. As duas telas usam (HMO-170). */
@@ -280,6 +364,12 @@ export function valoresIniciais(): ValoresDeLancamento {
     categoriaId: "",
     contaId: "",
     data: hojeISO(),
+    // A previsao nasce igual a data real, e nao vazia: no caso comum (anotar o
+    // que acabou de acontecer) as duas SAO o mesmo dia, e um campo vazio pediria
+    // uma resposta que a pessoa nao precisa dar. Quem pagou atrasado muda uma
+    // das duas.
+    dataPrevista: hojeISO(),
+    confirmado: true,
     notas: "",
     natureza: "one_off",
     diaDeVencimento: "",
@@ -366,11 +456,47 @@ export function validarLancamento(
     }
   }
 
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(valores.data)) {
+  const campos = camposDoTipo(
+    tipo,
+    valores.natureza,
+    contexto.editando,
+    valores.confirmado
+  );
+
+  // A data real so e cobrada quando a tela a MOSTRA. Num lancamento previsto ela
+  // esta escondida, e cobra-la mandaria a pessoa preencher um campo que nao
+  // existe -- o defeito classico de validar o estado em vez da tela.
+  if (campos.dataDeRealizacao && !/^\d{4}-\d{2}-\d{2}$/.test(valores.data)) {
     return { ok: false, mensagem: "Informe a data." };
   }
 
-  const campos = camposDoTipo(tipo, valores.natureza, contexto.editando);
+  // A data prevista e obrigatoria exatamente quando ela e a UNICA data do
+  // lancamento: previsto sem vencimento nao tem onde aparecer na agenda.
+  if (
+    campos.dataPrevista &&
+    !campos.dataDeRealizacao &&
+    !/^\d{4}-\d{2}-\d{2}$/.test(valores.dataPrevista)
+  ) {
+    return {
+      ok: false,
+      mensagem:
+        tipo === "expense"
+          ? "Informe a data prevista para o pagamento."
+          : "Informe a data prevista para o recebimento.",
+    };
+  }
+
+  // Confirmado, ela e opcional -- mas se estiver preenchida tem que ser data.
+  // Uma string pela metade ("2026-1") viraria `expected_date` invalida e o
+  // PostgREST responderia 22007 traduzido para "Erro ao gravar o lancamento".
+  if (
+    campos.dataPrevista &&
+    campos.dataDeRealizacao &&
+    valores.dataPrevista.trim() !== "" &&
+    !/^\d{4}-\d{2}-\d{2}$/.test(valores.dataPrevista)
+  ) {
+    return { ok: false, mensagem: "A data prevista está incompleta." };
+  }
 
   if (campos.contaObrigatoria && !valores.contaId) {
     return { ok: false, mensagem: "Escolha em qual cartão foi o gasto." };
@@ -408,6 +534,22 @@ export function validarLancamento(
         mensagem: `No máximo ${MAX_MESES_DE_REPETICAO} meses. Para algo sem fim, escolha "todos os meses".`,
       };
     }
+  }
+
+  // PARCELAR E DEIXAR PREVISTO SAO A MESMA PERGUNTA, RESPONDIDA DUAS VEZES
+  //
+  // Parcelamento ja cria N cobrancas FUTURAS, cada uma com o seu vencimento,
+  // em `transaction_installments`. Combinar com "ainda nao paguei" nao tem uma
+  // leitura so: e a primeira parcela que fica prevista, ou todas? Recusar com a
+  // razao e melhor do que escolher uma das duas em silencio -- e sem esta porta
+  // o ramo de parcelas venceria o de previsao no `destinoDoLancamento` e a
+  // checkbox desmarcada simplesmente nao faria nada.
+  if (valores.parcelado && campos.parcelamento && !campos.dataDeRealizacao) {
+    return {
+      ok: false,
+      mensagem:
+        "Parcelado já cria as parcelas futuras com os vencimentos delas. Marque \"Já paguei\" ou desligue o parcelamento.",
+    };
   }
 
   // Parcelamento so existe onde `camposDoTipo` o mostra. Sem esta porta, uma
@@ -461,6 +603,26 @@ export function validarLancamento(
   // pelo caso "o padrao daqui e o mesmo de MOEDA_PADRAO" em
   // scripts/test-moeda.mjs.
   if (valores.moeda !== "BRL") {
+    // -----------------------------------------------------------------------
+    // MOEDA ESTRANGEIRA NAO PODE FICAR PREVISTA (HMO-188)
+    // -----------------------------------------------------------------------
+    // A recusa vem ANTES de pedir a cotacao, porque pedir a cotacao seria pedir
+    // um numero que nao existe: a PTAX de uma data futura nao esta publicada. A
+    // 026 recusou dar `exchange_rate` a `scheduled_transactions` por essa razao
+    // exata, e ela continua valendo.
+    //
+    // Sem esta recusa o caminho e silencioso e caro: a previsao gravaria a moeda
+    // sem cotacao, e a BAIXA insere em `financial_transactions` sem mandar as
+    // duas colunas -- o DEFAULT do banco e (BRL, 1). US$ 180 entrariam como
+    // R$ 180, com a descricao certa e o saldo fechando. Um erro de 80% para
+    // menos, sem erro nenhum.
+    if (!campos.dataDeRealizacao) {
+      return {
+        ok: false,
+        mensagem: `Em ${valores.moeda} não dá para deixar previsto: a cotação de uma data futura ainda não existe. Lance no dia em que ${tipo === "expense" ? "pagar" : "receber"}, com a cotação do dia.`,
+      };
+    }
+
     // A MESMA LEITURA DE `cotacaoDigitada` EM lib/cambio.ts, REPETIDA AQUI
     //
     // Repetida, e nao importada, pelo motivo acima. O risco de repetir e concreto
@@ -564,6 +726,123 @@ export function regraDeRecorrencia(
       valores.duracao === "contada" ? Number(valores.mesesDeRepeticao) : null,
     notes: valores.notas || null,
     group_id: valores.grupoId || null,
+  };
+}
+
+/**
+ * Para onde este lancamento vai (HMO-188).
+ *
+ *   regra     -> `recurring_rules` (005). Natureza fixa nao e lancamento.
+ *   parcelas  -> `transaction_installments`, pela rota de parcelas.
+ *   previsao  -> `scheduled_transactions`. Nao confirmado: ainda nao aconteceu.
+ *   transacao -> `financial_transactions`, como sempre foi.
+ *
+ * A ORDEM DOS RAMOS E A PROPRIA REGRA, e ela estava espalhada em tres `if`
+ * dentro do componente. Sai daqui por dois motivos concretos:
+ *
+ *   1. `previsao` tinha de entrar no meio de uma cadeia existente, e o lugar
+ *      errado na cadeia e invisivel -- posta depois de `parcelas`, a checkbox
+ *      desmarcada nao faria nada numa despesa parcelada; posta antes de `regra`,
+ *      ela roubaria a despesa fixa e o aluguel viraria uma conta unica.
+ *   2. da para testar sem navegador, que e como as regras de dinheiro deste app
+ *      sao testadas.
+ *
+ * `previsao` vem DEPOIS de `regra` e de `parcelas` porque as duas ja sao
+ * modelos de futuro, com o seu proprio jeito de gerar as ocorrencias.
+ * `validarLancamento` ja recusou parcelado + nao confirmado antes de chegar
+ * aqui; a ordem e o cinto, a recusa e o suspensorio.
+ */
+export type DestinoDoLancamento = "regra" | "parcelas" | "previsao" | "transacao";
+
+export function destinoDoLancamento(
+  tipo: TipoLancamento,
+  valores: ValoresDeLancamento,
+  editando: boolean
+): DestinoDoLancamento {
+  const campos = camposDoTipo(tipo, valores.natureza, editando, valores.confirmado);
+
+  if (campos.diaDeVencimento && valores.natureza === "fixed") return "regra";
+  if (valores.parcelado && campos.parcelamento) return "parcelas";
+  // `dataDeRealizacao` e a leitura certa, e nao `!valores.confirmado`: quando a
+  // checkbox nao esta na tela (fixa, edicao) um `confirmado: false` parado no
+  // estado nao pode desviar o lancamento. Os dois ramos acima ja cobrem fixa e
+  // parcelas, mas a EDICAO nao -- e editar uma transacao gravada nunca pode
+  // virar uma previsao nova, senao o Salvar criaria uma segunda linha e deixaria
+  // a original no saldo.
+  if (!campos.dataDeRealizacao) return "previsao";
+  return "transacao";
+}
+
+/**
+ * O corpo do POST /api/scheduled-transactions para um lancamento que ainda nao
+ * aconteceu (HMO-188).
+ *
+ * Existe como funcao pura pelo mesmo motivo de `regraDeRecorrencia`, e o motivo
+ * e o mesmo defeito:
+ *
+ *   1. O VALOR vai POSITIVO. `scheduled_transactions.amount` tem
+ *      `CHECK (amount > 0)`, e mandar o valor ja negativo faria o banco recusar
+ *      toda despesa prevista com uma mensagem que a tela nao sabe traduzir.
+ *   2. `transaction_type` sai do TIPO DA TELA, e e a razao pela qual a migration
+ *      027 existe. Sem ele a previsao nao guarda direcao, e a baixa cai no
+ *      `?? "expense"` da rota: confirmar o recebimento de R$ 7.000 gravaria
+ *      -7000, com valor, descricao e categoria certos e nenhum erro. O salario
+ *      entraria tirando dinheiro da conta.
+ *
+ * `due_date` sai de `dataPrevista`, e nao de `data`: `data` e o dia em que o
+ * dinheiro andou, e numa previsao ele ainda nao andou.
+ */
+export function contaPrevista(
+  tipo: TipoLancamento,
+  valores: ValoresDeLancamento
+): {
+  description: string;
+  amount: number;
+  category_id: string;
+  account_id: string | null;
+  group_id: string | null;
+  due_date: string;
+  transaction_type: TipoLancamento;
+  notes: string | null;
+} {
+  return {
+    description: valores.descricao,
+    amount: Math.abs(Number.parseFloat(valores.valor)),
+    category_id: valores.categoriaId,
+    account_id: valores.contaId || null,
+    group_id: valores.grupoId || null,
+    due_date: valores.dataPrevista,
+    transaction_type: tipo,
+    notes: valores.notas || null,
+  };
+}
+
+/**
+ * As duas datas que a transacao leva ao banco, alem de `transaction_date`
+ * (HMO-188, migration 027).
+ *
+ * `launch_date` e SEMPRE hoje: e o dia em que a pessoa anotou, e e isso que a
+ * coluna significa. Mandar `valores.data` aqui seria copiar a data em que o
+ * dinheiro andou e as duas colunas passariam a dizer a mesma coisa -- o dado
+ * novo nasceria inutil, e "anotei hoje o aluguel do dia 5" deixaria de ser
+ * distinguivel de "paguei o aluguel hoje".
+ *
+ * `expected_date` e NULL quando a pessoa nao declarou previsao diferente. NULL e
+ * "nao havia previsao separada", nao "previsto para hoje" -- devolver a data
+ * real aqui faria todo lancamento AFIRMAR que saiu no dia previsto, e um
+ * relatorio de atraso sairia com zero atrasos e cara de verdade.
+ */
+export function datasDaTransacao(valores: ValoresDeLancamento): {
+  launch_date: string;
+  expected_date: string | null;
+} {
+  const prevista = valores.dataPrevista.trim();
+  return {
+    launch_date: hojeISO(),
+    expected_date:
+      /^\d{4}-\d{2}-\d{2}$/.test(prevista) && prevista !== valores.data
+        ? prevista
+        : null,
   };
 }
 
