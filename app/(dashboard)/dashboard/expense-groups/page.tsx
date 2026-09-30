@@ -104,6 +104,21 @@ interface GroupMember {
   };
 }
 
+/**
+ * Um pedido de entrada por código que ainda espera um administrador (migration
+ * 029, via `my_pending_group_requests`).
+ *
+ * Só tem nome e data de propósito: quem está pendente não é membro, e a RLS
+ * não deixa ler nada além disso do grupo. É o bastante para a tela dizer que o
+ * pedido existe -- que era exatamente o que faltava na HMO-190, onde digitar o
+ * código certo não deixava vestígio nenhum no app.
+ */
+interface PendingGroupRequest {
+  group_id: string;
+  group_name: string;
+  requested_at: string;
+}
+
 interface GroupInvitation {
   id: string;
   invite_method: "email" | "phone" | "code";
@@ -116,6 +131,9 @@ interface GroupInvitation {
 export default function ExpenseGroupsPage() {
   const [user, setUser] = useState<User | null>(null);
   const [groups, setGroups] = useState<ExpenseGroup[]>([]);
+  const [pendingRequests, setPendingRequests] = useState<PendingGroupRequest[]>(
+    []
+  );
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("my-groups");
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -223,6 +241,7 @@ export default function ExpenseGroupsPage() {
 
       if (response.ok) {
         setGroups(data.groups || []);
+        setPendingRequests(data.pendingRequests || []);
       } else {
         toast.error(data.error || "Erro ao carregar grupos");
       }
@@ -828,6 +847,43 @@ export default function ExpenseGroupsPage() {
         </TabsList>
 
         <TabsContent value="my-groups" className="space-y-4">
+          {/*
+            Pedidos de entrada esperando aprovação.
+            Fica ACIMA da grade e fora do `groups.length > 0`, porque o caso que
+            abriu a HMO-190 é justamente o de quem não tem grupo nenhum: ela
+            digitou o código certo, virou `pending`, e a tela respondia
+            "Nenhum grupo ainda" -- sem vestígio do pedido, sem dizer que
+            alguém precisa aprovar, sem nada em que clicar. Não há link para o
+            grupo de propósito: enquanto o pedido não for aprovado a RLS não
+            deixa ler nada lá dentro, e um card clicável levaria a um erro.
+          */}
+          {pendingRequests.length > 0 && (
+            <div className="space-y-3">
+              {pendingRequests.map((request) => (
+                <Card key={request.group_id} className="border-warning">
+                  <CardContent className="flex items-start gap-3 py-4">
+                    <Clock className="h-5 w-5 text-warning mt-0.5 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="font-medium truncate">
+                        {request.group_name}
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        Aguardando aprovação de um administrador do grupo. Você
+                        vai ver as despesas assim que alguém aprovar seu pedido.
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Pedido enviado em{" "}
+                        {new Date(request.requested_at).toLocaleDateString(
+                          "pt-BR"
+                        )}
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+
           {/* Groups Grid */}
           {groups.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -1046,9 +1102,21 @@ export default function ExpenseGroupsPage() {
             <Card>
               <CardContent className="text-center py-12">
                 <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                <h3 className="text-lg font-medium mb-2">Nenhum grupo ainda</h3>
+                <h3 className="text-lg font-medium mb-2">
+                  {pendingRequests.length > 0
+                    ? "Nenhum grupo liberado ainda"
+                    : "Nenhum grupo ainda"}
+                </h3>
+                {/*
+                  Com um pedido na fila, "Nenhum grupo ainda" seria uma segunda
+                  meia-verdade logo abaixo do card que acabou de dizer que ela
+                  pediu para entrar em um. O convite aqui também muda: mandá-la
+                  "entrar em um existente" é o conselho que ela já seguiu.
+                */}
                 <p className="text-muted-foreground mb-6">
-                  Crie seu primeiro grupo ou entre em um existente
+                  {pendingRequests.length > 0
+                    ? "Seu pedido acima ainda precisa ser aprovado. Enquanto isso, você pode criar um grupo seu."
+                    : "Crie seu primeiro grupo ou entre em um existente"}
                 </p>
                 <div className="flex gap-2 justify-center">
                   <Button onClick={() => setShowCreateForm(true)}>
