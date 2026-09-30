@@ -74,7 +74,9 @@
     "test:moeda-do-grupo": "rm -rf .tmp-moeda-do-grupo && tsc -p scripts/tsconfig.moeda-do-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-moeda-do-grupo lib && node --test scripts/test-moeda-do-grupo.mjs",
     "test:realizado-e-previsao": "rm -rf .tmp-realizado-e-previsao && tsc -p scripts/tsconfig.realizado-e-previsao-test.json && node scripts/resolve-aliases.mjs .tmp-realizado-e-previsao lib && node --test scripts/test-realizado-e-previsao.mjs",
     "test:tres-numeros": "rm -rf .tmp-tres-numeros && tsc -p scripts/tsconfig.tres-numeros-test.json && node scripts/resolve-aliases.mjs .tmp-tres-numeros components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-tres-numeros lib --espelha-raiz && node --test scripts/test-tres-numeros.mjs",
-    "test:aprovacao-de-parte": "rm -rf .tmp-aprovacao-de-parte && tsc lib/aprovacao-de-parte.ts --outDir .tmp-aprovacao-de-parte --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-aprovacao-de-parte.mjs"
+    "test:aprovacao-de-parte": "rm -rf .tmp-aprovacao-de-parte && tsc lib/aprovacao-de-parte.ts --outDir .tmp-aprovacao-de-parte --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-aprovacao-de-parte.mjs",
+    "test:fundamento-cvm": "rm -rf .tmp-fundamento-cvm && tsc -p scripts/tsconfig.fundamento-cvm-test.json && node --test scripts/test-fundamento-cvm.mjs",
+    "ingest:cvm": "rm -rf .tmp-ingest-cvm && tsc -p scripts/tsconfig.ingest-cvm.json && node scripts/ingest-cvm-fundamentos.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

@@ -1,0 +1,23 @@
+{
+  "//": "Build do ingestor (scripts/ingest-cvm-fundamentos.mjs importa de .tmp-ingest-cvm/). Mesmo conteudo do tsconfig.fundamento-cvm-test.json, com outDir proprio, para que rodar o ingestor nao apague o build do teste no meio de uma suite.",
+  "compilerOptions": {
+    "outDir": "../.tmp-ingest-cvm",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "baseUrl": "..",
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
+  },
+  "include": [
+    "../lib/fundamento-cvm.ts",
+    "../lib/cvm-zip.ts"
+  ]
+}

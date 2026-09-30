@@ -1,0 +1,236 @@
+{
+  "PETR": [
+    {
+      "issuingCompany": "ACPE",
+      "companyName": "AÇU PETROLEO S.A.",
+      "cnpj": "21778678000170",
+      "codeCVM": "916986"
+    },
+    {
+      "issuingCompany": "ATEM",
+      "companyName": "ATEMS DISTRIBUIDORA DE PETROLEO S/A",
+      "cnpj": "3987364000103",
+      "codeCVM": "900399"
+    },
+    {
+      "issuingCompany": "MNTI",
+      "companyName": "BRASOIL MANATI EXPLORACAO PETROLIFERA S.A.",
+      "cnpj": "8845534000120",
+      "codeCVM": "905406"
+    },
+    {
+      "issuingCompany": "RBPL",
+      "companyName": "DISTRIBUIDORA RIO BRANCO DE PETRÓLEO LTDA",
+      "cnpj": "1256137000174",
+      "codeCVM": "900110"
+    },
+    {
+      "issuingCompany": "IPIP",
+      "companyName": "IPIRANGA  PRODUTOS DE PETROLEO S.A.",
+      "cnpj": "33337122000127",
+      "codeCVM": "904417"
+    },
+    {
+      "issuingCompany": "PTRA",
+      "companyName": "PETRA ENERGIA S/A",
+      "cnpj": "7243291000198",
+      "codeCVM": "906917"
+    },
+    {
+      "issuingCompany": "PTGD",
+      "companyName": "PETRA GOLD SERVIÇOS FINANCEIROS S.A.",
+      "cnpj": "25243894000171",
+      "codeCVM": "913533"
+    },
+    {
+      "issuingCompany": "PETR",
+      "companyName": "PETROLEO BRASILEIRO S.A. PETROBRAS",
+      "cnpj": "33000167000101",
+      "codeCVM": "9512"
+    },
+    {
+      "issuingCompany": "PGER",
+      "companyName": "PETROLINA PE 584 LOCACAO DE EQUIPAMENTOS 915 LTDA.",
+      "cnpj": "47983546000173",
+      "codeCVM": "900298"
+    },
+    {
+      "issuingCompany": "RECV",
+      "companyName": "PETRORECÔNCAVO S.A.",
+      "cnpj": "3342704000130",
+      "codeCVM": "25780"
+    },
+    {
+      "issuingCompany": "RIPI",
+      "companyName": "REFINARIA DE PETRÓLEO RIOGRANDENSE S.A.",
+      "cnpj": "94845674000130",
+      "codeCVM": "910018"
+    },
+    {
+      "issuingCompany": "RPTL",
+      "companyName": "RIO PETROLEO SPE S/A COMPANHIA SECURITIZADORA DE C",
+      "cnpj": "20139095000136",
+      "codeCVM": "907451"
+    },
+    {
+      "issuingCompany": "SP3R",
+      "companyName": "SPE 3R PETROLEUM S.A.",
+      "cnpj": "33443860000159",
+      "codeCVM": "913095"
+    },
+    {
+      "issuingCompany": "SPTE",
+      "companyName": "SPE TRANSMISSORA DE ENERGIA LINHA VERDE I S.A.",
+      "cnpj": "29568539000123",
+      "codeCVM": "908283"
+    },
+    {
+      "issuingCompany": "SPLV",
+      "companyName": "SPE TRANSMISSORA DE ENERGIA LINHA VERDE II S.A.",
+      "cnpj": "29532071000117",
+      "codeCVM": "912782"
+    },
+    {
+      "issuingCompany": "TPEN",
+      "companyName": "TPE - TRANSMISSORA PARAISO DE ENERGIA S.A.",
+      "cnpj": "26796739000145",
+      "codeCVM": "910232"
+    },
+    {
+      "issuingCompany": "ZMPT",
+      "companyName": "ZEMA CIA. DE PETROLEO",
+      "cnpj": "647154000170",
+      "codeCVM": "909655"
+    }
+  ],
+  "VALE": [
+    {
+      "issuingCompany": "ADAG",
+      "companyName": "ADECOAGRO VALE DO EVINHEMA S.A.",
+      "cnpj": "7903169000109",
+      "codeCVM": "913574"
+    },
+    {
+      "issuingCompany": "AGVL",
+      "companyName": "AGROINDS DO VALE DO SAO FCO S/A-AGROVALE",
+      "cnpj": "13642699000135",
+      "codeCVM": "909713"
+    },
+    {
+      "issuingCompany": "BION",
+      "companyName": "BIOENERGETICA VALE DO PARACATU S/A.",
+      "cnpj": "8793343000162",
+      "codeCVM": "900902"
+    },
+    {
+      "issuingCompany": "CCOP",
+      "companyName": "C.VALE - COOPERATIVA AGROINDUSTRIAL",
+      "cnpj": "77863223000107",
+      "codeCVM": "900743"
+    },
+    {
+      "issuingCompany": "FLOL",
+      "companyName": "FLORESTAL VALE DO CORISCO S.A. ",
+      "cnpj": "4788536000174",
+      "codeCVM": "900765"
+    },
+    {
+      "issuingCompany": "ITTE",
+      "companyName": "NEOENERGIA VALE DO ITAJAÍ TRANSMISSÃO DE ENERGIA",
+      "cnpj": "28443452000167",
+      "codeCVM": "917490"
+    },
+    {
+      "issuingCompany": "PRAV",
+      "companyName": "PRAVALER S.A.",
+      "cnpj": "4531065000114",
+      "codeCVM": "900358"
+    },
+    {
+      "issuingCompany": "SPEV",
+      "companyName": "SPE VALE DOURADO ADMINISTRACAO S/A",
+      "cnpj": "55579547000185",
+      "codeCVM": "900403"
+    },
+    {
+      "issuingCompany": "VLBN",
+      "companyName": "VALE BONITO AGROPECUÁRIA S.A.",
+      "cnpj": "1794428000116",
+      "codeCVM": "519146"
+    },
+    {
+      "issuingCompany": "VTIJ",
+      "companyName": "VALE DO TIJUCO ACUCAR E ALCOOL S/A",
+      "cnpj": "8493354000127",
+      "codeCVM": "909457"
+    },
+    {
+      "issuingCompany": "VALE",
+      "companyName": "VALE S.A.",
+      "cnpj": "33592510000154",
+      "codeCVM": "4170"
+    },
+    {
+      "issuingCompany": "VLPR",
+      "companyName": "VALEPAR S/A",
+      "cnpj": "1772413000157",
+      "codeCVM": "909127"
+    }
+  ],
+  "RANI": [
+    {
+      "issuingCompany": "BURA",
+      "companyName": "GLOBAL X URANIUM ETF",
+      "cnpj": "0",
+      "codeCVM": "50173"
+    },
+    {
+      "issuingCompany": "GRAI",
+      "companyName": "GRANINVESTIMENTOS S/A",
+      "cnpj": "14191441000122",
+      "codeCVM": "904094"
+    },
+    {
+      "issuingCompany": "GMAI",
+      "companyName": "GUIMARANIA I SOLAR SPE S.A.",
+      "cnpj": "24440015000139",
+      "codeCVM": "913467"
+    },
+    {
+      "issuingCompany": "GMRN",
+      "companyName": "GUIMARANIA II SOLAR SPE S.A.",
+      "cnpj": "24440032000176",
+      "codeCVM": "913475"
+    },
+    {
+      "issuingCompany": "RANI",
+      "companyName": "IRANI PAPEL E EMBALAGEM S.A.",
+      "cnpj": "92791243000103",
+      "codeCVM": "2429"
+    }
+  ],
+  "ITUB": [
+    {
+      "issuingCompany": "ITUB",
+      "companyName": "ITAU UNIBANCO HOLDING S.A.",
+      "cnpj": "60872504000123",
+      "codeCVM": "19348"
+    },
+    {
+      "issuingCompany": "MRTR",
+      "companyName": "MARITUBA TRANSMISSÃO DE ENERGIA S.A.",
+      "cnpj": "31096307000161",
+      "codeCVM": "917506"
+    }
+  ],
+  "HGLG": [],
+  "KNRI": [],
+  "BBAS": [
+    {
+      "issuingCompany": "BBAS",
+      "companyName": "BCO BRASIL S.A.",
+      "cnpj": "191",
+      "codeCVM": "1023"
+    }
+  ]
+}
