@@ -6,6 +6,7 @@ import { useAuth } from "@/lib/hooks/useAuth";
 import Sidebar from "@/components/Sidebar";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { OfflineBanner } from "@/components/OfflineBanner";
+import { PuxarParaAtualizar } from "@/components/PuxarParaAtualizar";
 
 export default function DashboardLayout({
   children,
@@ -90,6 +91,16 @@ export default function DashboardLayout({
           Ele se esconde sozinho quando ha rede e a fila esta vazia.
         */}
         <OfflineBanner />
+        {/*
+          Puxar para atualizar (HMO-201). Mora no layout pela mesma razao do
+          OfflineBanner: e o unico lugar que continua montado entre as telas,
+          e o gesto tem que valer no app inteiro -- nao numa pagina so.
+
+          Instalado como PWA em tela cheia o iOS nao da barra de endereco,
+          botao de recarregar nem gesto nativo: sem isto nao ha NENHUMA forma
+          de pedir dados novos.
+        */}
+        <PuxarParaAtualizar />
         {/*
           O `pb-` soma o recorte de baixo aos 1.5rem originais: no iPhone sem
           botao fisico ha uma barra de gesto de 34px sobre o rodape da pagina,
