@@ -33,6 +33,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { CalendarClock, CreditCard, Receipt, Repeat } from "lucide-react";
+import { CampoDeCotacao } from "@/components/movimentacoes/CampoDeCotacao";
 import {
   camposDoTipo,
   categoriasDoTipo,
@@ -441,7 +442,14 @@ export function CamposDeLancamento({
                 <>
                   <Select
                     value={valores.moeda}
-                    onValueChange={(valor) => aoMudar({ moeda: valor })}
+                    // Trocar a moeda LIMPA a cotacao (HMO-182). A cotacao do
+                    // dolar nao significa nada para o euro, e deixa-la ali faria
+                    // o campo parecer preenchido e correto -- o CampoDeCotacao so
+                    // busca automatico quando esta vazio, entao sem esta limpeza
+                    // a taxa velha seria gravada na moeda nova.
+                    onValueChange={(valor) =>
+                      aoMudar({ moeda: valor, cotacao: "" })
+                    }
                   >
                     <SelectTrigger id="lancamento-moeda">
                       <SelectValue />
@@ -454,17 +462,41 @@ export function CamposDeLancamento({
                       ))}
                     </SelectContent>
                   </Select>
-                  {/* Diz que nao ha conversao. E a expectativa errada mais
-                      provavel: o app nao tem cotacao, e o periodo com mais de uma
-                      moeda aparece SEPARADO em vez de somado. */}
+                  {/* O valor fica gravado NESTA moeda -- o que muda desde a 026 e
+                      que agora existe cotacao, e por isso o grupo consegue
+                      converter. O relatorio pessoal continua separando por moeda
+                      (decisao da HMO-171: "gastei 1.000 reais e 180 dolares" e a
+                      resposta certa para o extrato de uma pessoa). */}
                   <p className="text-xs text-muted-foreground">
-                    O valor é registrado nesta moeda, sem conversão. No período,
-                    os resultados aparecem separados por moeda.
+                    O valor é registrado nesta moeda. Nos seus relatórios os
+                    totais aparecem separados por moeda; no acerto do grupo e na
+                    barra de orçamento eles são convertidos pela cotação abaixo.
                   </p>
                 </>
               )}
             </div>
           )}
+
+          {/* A COTACAO FICA FORA DO `moedaPorLancamento` DE PROPOSITO (HMO-182)
+
+              A checkbox de moeda por lancamento e uma preferencia, e vem
+              DESLIGADA. A moeda do lancamento, nao: ela vem da CONTA. Quem tem
+              uma conta em dolar grava lancamentos em dolar sem nunca ter ligado
+              preferencia nenhuma -- `moedaSugerida({ daConta })`, no seletor de
+              conta logo acima.
+
+              Se este campo morasse dentro do bloco da preferencia, essa pessoa
+              veria "Erro ao gravar o lancamento" para sempre, sem campo na tela
+              para consertar: o CHECK da 026 exige cotacao para moeda estrangeira,
+              e a tela nao teria onde pedi-la. A condicao certa e a moeda do
+              lancamento, e so ela. */}
+          <CampoDeCotacao
+            moeda={valores.moeda}
+            data={valores.data}
+            cotacao={valores.cotacao}
+            valor={valores.valor}
+            aoMudar={(cotacao) => aoMudar({ cotacao })}
+          />
         </div>
 
         <div className="space-y-2">

@@ -66,7 +66,8 @@
     "check-rota-query-colidente": "node scripts/check-rota-query-colidente.mjs",
     "test:orcamento-de-grupo": "rm -rf .tmp-orcamento-de-grupo && tsc -p scripts/tsconfig.orcamento-de-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-orcamento-de-grupo lib && node --test scripts/test-orcamento-de-grupo.mjs",
     "test:lista-lancamentos": "rm -rf .tmp-lista-lancamentos && tsc -p scripts/tsconfig.lista-lancamentos-test.json && node scripts/resolve-aliases.mjs .tmp-lista-lancamentos lib && node --test scripts/test-lista-de-lancamentos.mjs",
-    "test:parte-do-grupo": "rm -rf .tmp-parte-do-grupo && tsc -p scripts/tsconfig.parte-do-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-parte-do-grupo lib --espelha-raiz && node --test scripts/test-parte-do-grupo.mjs"
+    "test:parte-do-grupo": "rm -rf .tmp-parte-do-grupo && tsc -p scripts/tsconfig.parte-do-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-parte-do-grupo lib --espelha-raiz && node --test scripts/test-parte-do-grupo.mjs",
+    "test:cambio": "rm -rf .tmp-cambio && tsc -p scripts/tsconfig.cambio-test.json && node scripts/resolve-aliases.mjs .tmp-cambio lib && node --test scripts/test-cambio.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

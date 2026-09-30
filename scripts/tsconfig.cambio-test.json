@@ -1,0 +1,22 @@
+{
+  "//": "Build so do teste. lib/cambio.ts puxa lib/dinheiro.ts (o catalogo de moedas) pelo alias @/, e o tsc resolve o alias por `paths` mas NAO o reescreve no JS emitido -- por isso o npm script tem o passo scripts/resolve-aliases.mjs depois, igual ao test:moeda. Sem ele o node morre com ERR_MODULE_NOT_FOUND no primeiro import. lib/lancamento.ts entra porque a suite compara a leitura de cotacao das DUAS: `cotacaoDigitada` (cambio) e a copia inline dentro de `validarLancamento` (lancamento), que nao pode importar nada. Se uma ficar mais frouxa que a outra, o formulario aprova um texto que o payload transforma em cotacao 1 e o banco recusa com 23514.",
+  "compilerOptions": {
+    "outDir": "../.tmp-cambio",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
+  },
+  "include": [
+    "../lib/cambio.ts",
+    "../lib/lancamento.ts"
+  ]
+}
