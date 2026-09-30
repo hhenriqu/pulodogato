@@ -9,6 +9,7 @@ import {
   getPlanName,
   getPlanColor,
 } from "@/types/subscription";
+import { comAvisoDeEmBreve } from "@/lib/planos";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -134,7 +135,12 @@ export function UpgradePrompt({
       user_management: "Gerenciamento de Usuários",
       system_monitoring: "Monitoramento do Sistema",
     };
-    return names[feature] || feature;
+    // Este e o SEGUNDO mapa de nomes da interface -- o outro esta em
+    // lib/planos.ts, para a pagina de Planos. Sao textos diferentes de
+    // proposito (aqui sao curtos), mas quem decide o que ainda nao existe e um
+    // so: `comAvisoDeEmBreve`. Sem isso, corrigir a pagina de Planos deixaria
+    // este prompt vendendo "Sinais de Trading" como pronto (HMO-198).
+    return comAvisoDeEmBreve(names[feature] || feature, feature);
   };
 
   const getRecommendedPlan = (feature: PlanFeature): UserPlan => {

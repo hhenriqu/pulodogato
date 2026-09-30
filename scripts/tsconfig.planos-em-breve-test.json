@@ -1,0 +1,43 @@
+{
+  "//": [
+    "Compila a pagina de Planos e a pagina publica inteiras para o teste",
+    "renderizar o que o usuario le, e nao uma copia da marcacao (HMO-198).",
+    "",
+    "Renderizar e o unico jeito de provar o ponto 1 da definicao de pronto. O",
+    "cartao corta a lista em 8 itens (LIMITE_DE_RECURSOS_NO_CARTAO): um teste",
+    "que so olhasse o mapa de nomes ficaria verde com o item de sinais fora do",
+    "corte, invisivel na tela -- exatamente o defeito que a issue mandou",
+    "evitar. So contando os itens do HTML isso aparece.",
+    "",
+    "`jsx: react-jsx` e o que permite renderizar com react-dom/server no node,",
+    "sem runner novo -- mesmo desenho do tsconfig.tres-numeros-test.json.",
+    "",
+    "`--espelha-raiz` no resolve-aliases porque a compilacao junta quatro",
+    "raizes (app/, components/, lib/, types/): o rootDir comum e a raiz do",
+    "repositorio e o prefixo tem que sobreviver na reescrita do alias."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-planos-em-breve",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../app/page.tsx",
+    "../app/(dashboard)/dashboard/plans/page.tsx",
+    "../components/ui/card.tsx",
+    "../components/ui/button.tsx",
+    "../components/ui/badge.tsx",
+    "../components/ui/switch.tsx",
+    "../lib/planos.ts",
+    "../lib/utils.ts",
+    "../types/subscription.ts"
+  ]
+}
