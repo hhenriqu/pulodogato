@@ -606,7 +606,12 @@ test("as quatro decisoes sao alcancaveis, e nenhuma outra existe", () => {
 // se descobre.
 
 test("a moeda escolhida na tela chega na linha da fila", () => {
-  assert.equal(linhaDe({ ...base, moeda: "USD" }).currency, "USD");
+  // A cotacao vai junto desde a 026: sem ela `avaliarLancamento` recusa, porque a
+  // linha seria impossivel de gravar. Ver o bloco do cambio no fim do arquivo.
+  assert.equal(
+    linhaDe({ ...base, moeda: "USD", cotacao: "5,2132" }).currency,
+    "USD"
+  );
 });
 
 test("linha sem moeda cai em BRL, e nao em undefined", () => {
@@ -623,5 +628,102 @@ test("a moeda e normalizada para maiuscula na fila", () => {
   // A fila e gravada no aparelho e reenviada depois. Um "usd" minusculo passaria
   // pelo JSON e bateria no CHECK da 022 so na sincronizacao -- horas depois, num
   // reenvio de fundo que a pessoa nao esta olhando.
-  assert.equal(linhaDe({ ...base, moeda: " usd " }).currency, "USD");
+  assert.equal(
+    linhaDe({ ...base, moeda: " usd ", cotacao: "5,2132" }).currency,
+    "USD"
+  );
+});
+
+// ---------------------------------------------------------------------------
+// A COTACAO ATRAVESSA A FILA, OU A LINHA NAO ENTRA (HMO-182, migration 026)
+// ---------------------------------------------------------------------------
+// A 026 pos um CHECK que cruza as duas colunas de moeda:
+//
+//     CHECK ((currency = 'BRL') = (exchange_rate = 1))
+//
+// e `exchange_rate` nasceu com DEFAULT 1. Aqui isso e pior que na tela online: a
+// linha `(USD, 1)` e recusada com 23514 na SINCRONIZACAO, longe de quem lancou, e
+// o item volta para a fila como `falhou` -- para sempre, porque nenhum reenvio
+// pode inventar uma cotacao que ninguem digitou. A fila reenviaria uma linha
+// impossivel indefinidamente.
+
+test("real grava cotacao 1, o unico valor que o CHECK aceita em BRL", () => {
+  assert.equal(linhaDe().exchange_rate, 1);
+  assert.equal(linhaDe({ ...base, moeda: "BRL" }).exchange_rate, 1);
+  // E ignora cotacao digitada em real: `(BRL, 5.2132)` tambem viola o CHECK.
+  assert.equal(
+    linhaDe({ ...base, moeda: "BRL", cotacao: "5,2132" }).exchange_rate,
+    1
+  );
+});
+
+test("a cotacao digitada chega na linha da fila", () => {
+  assert.equal(
+    linhaDe({ ...base, moeda: "USD", cotacao: "5,2132" }).exchange_rate,
+    5.2132
+  );
+  // Ponto tambem: o campo aceita as duas marcas decimais.
+  assert.equal(
+    linhaDe({ ...base, moeda: "EUR", cotacao: "5.9253" }).exchange_rate,
+    5.9253
+  );
+});
+
+test("moeda estrangeira SEM cotacao e recusada antes de entrar na fila", () => {
+  // O caso que motivou o bloco. Recusar aqui e a diferenca entre um aviso no
+  // formulario e um item eternamente `falhou`.
+  // "5421,00" e "1.234,56" sao as formas em que um VALOR aparece, e sao o unico
+  // caso que a leitura por `Number()` sozinha NAO pega: elas viram um numero
+  // finito e positivo. Sem elas nesta lista, apagar a regex de
+  // `cotacaoDaEntrada` passa verde (medido: o mutante sobrevivia), e a fila
+  // gravaria uma cotacao de 5421 reais por dolar.
+  for (const cotacao of [
+    undefined,
+    "",
+    "   ",
+    "0",
+    "abc",
+    "1",
+    "5421,00",
+    "1.234,56",
+  ]) {
+    const r = avaliarLancamento({ ...base, moeda: "USD", cotacao }, "id-1");
+    assert.equal(
+      r.ok,
+      false,
+      `cotacao ${JSON.stringify(cotacao)} deveria ser recusada`
+    );
+    assert.equal(r.motivo, "sem-cotacao");
+    // A mensagem tem de nomear a moeda e dizer o que fazer: a pessoa esta
+    // offline, e "informe a cotacao" sem contexto manda procurar um campo que
+    // ela talvez nao saiba que existe.
+    assert.match(r.mensagem, /USD/);
+  }
+
+  // Controle positivo: a MESMA entrada com cotacao valida passa. Sem isto o
+  // laco acima passaria verde se `avaliarLancamento` recusasse tudo por outro
+  // motivo qualquer.
+  const bom = avaliarLancamento(
+    { ...base, moeda: "USD", cotacao: "5,2132" },
+    "id-1"
+  );
+  assert.equal(bom.ok, true);
+  assert.equal(bom.linha.exchange_rate, 5.2132);
+});
+
+test("cotacao 1 em moeda estrangeira e recusada, e nao gravada", () => {
+  // 1 e exatamente o valor que o DEFAULT poe e que o CHECK proibe fora do real.
+  // Se esta recusa sair, a fila volta a enfileirar a linha impossivel.
+  const r = avaliarLancamento({ ...base, moeda: "USD", cotacao: "1" }, "id-1");
+  assert.equal(r.ok, false);
+  assert.equal(r.motivo, "sem-cotacao");
+});
+
+test("real sem cotacao continua entrando normalmente", () => {
+  // A recusa nao pode pegar o caso comum: quem lanca em reais offline nunca viu
+  // campo de cotacao nenhum, e tem de continuar funcionando como antes da 026.
+  const r = avaliarLancamento({ ...base }, "id-1");
+  assert.equal(r.ok, true);
+  assert.equal(r.linha.exchange_rate, 1);
+  assert.equal(r.linha.currency, "BRL");
 });

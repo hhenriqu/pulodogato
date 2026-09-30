@@ -489,6 +489,12 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       // Sem isto a fila grava pelo DEFAULT da coluna, e todo lancamento feito
       // offline numa conta em dolar entra como real na sincronizacao.
       moeda: valores.moeda,
+      // E a cotacao junto com ela (026/HMO-182). Mandar a moeda sem a cotacao
+      // monta `(USD, 1)` na sincronizacao -- o par que o CHECK proibe -- e o item
+      // fica `falhou` na fila para sempre, porque nenhum reenvio pode inventar
+      // uma cotacao que nao foi digitada. `avaliarLancamento` recusa esse caso
+      // ANTES de enfileirar, e e isto que da a ele o que avaliar.
+      cotacao: valores.cotacao,
       userId: user?.id ?? "",
       serviceId,
       categoryId: valores.categoriaId,

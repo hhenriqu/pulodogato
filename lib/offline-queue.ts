@@ -73,6 +73,24 @@ export interface LinhaDeTransacao {
    * conferindo lancamento por lancamento.
    */
   currency: string;
+  /**
+   * A cotacao do dia da compra (migration 026, HMO-182).
+   *
+   * Obrigatoria na linha pelo mesmo motivo que `currency`, e com uma
+   * consequencia pior se faltar. A 026 pos um CHECK que cruza as duas:
+   *
+   *     CHECK ((currency = 'BRL') = (exchange_rate = 1))
+   *
+   * e a coluna nasceu com `DEFAULT 1`. Uma linha desta fila com `currency:
+   * 'USD'` e sem cotacao monta o par `(USD, 1)`, que o banco recusa com 23514 --
+   * e aqui isso e muito pior que na tela online, porque a recusa acontece na
+   * SINCRONIZACAO, longe de quem lancou: o item volta para a fila como `falhou`
+   * e fica la para sempre, sem que nenhuma tentativa futura possa dar outro
+   * resultado. O dinheiro nao se perde, mas o lancamento nunca entra.
+   *
+   * 1 para BRL, sempre -- e o unico valor que o CHECK aceita em real.
+   */
+  exchange_rate: number;
 }
 
 /** O que a tela coletou do formulario, antes de virar linha. */
@@ -104,6 +122,15 @@ export interface EntradaDeLancamento {
    * worker); ausente cai em BRL, que e o mesmo DEFAULT da coluna.
    */
   moeda?: string;
+  /**
+   * A cotacao digitada na tela, como texto (migration 026, HMO-182).
+   *
+   * Opcional na ENTRADA pelo mesmo motivo que `moeda`: uma versao antiga da tela,
+   * servida do cache do service worker, nao tem este campo. Ausente em BRL nao e
+   * problema (a cotacao e 1). Ausente em moeda estrangeira e o caso que
+   * `avaliarLancamento` recusa -- ver o motivo `sem-cotacao`.
+   */
+  cotacao?: string;
 }
 
 export type MotivoDeRecusa =
@@ -112,6 +139,7 @@ export type MotivoDeRecusa =
   | "despesa-fixa"
   | "transferencia"
   | "edicao"
+  | "sem-cotacao"
   | "invalido";
 
 export type Avaliacao =
@@ -221,7 +249,59 @@ export function avaliarLancamento(
     };
   }
 
+  // -----------------------------------------------------------------------
+  // MOEDA ESTRANGEIRA SEM COTACAO NAO PODE ENTRAR NA FILA (HMO-182)
+  // -----------------------------------------------------------------------
+  // Esta e a ultima porta, e ela existe porque o CHECK da 026 torna esta linha
+  // IMPOSSIVEL de gravar, nao apenas arriscada:
+  //
+  //     CHECK ((currency = 'BRL') = (exchange_rate = 1))
+  //
+  // A coluna `exchange_rate` tem DEFAULT 1, entao `(USD, sem cotacao)` vira
+  // `(USD, 1)` -- o par proibido -- e volta 23514.
+  //
+  // Recusar AQUI, e nao deixar a sincronizacao descobrir, e a diferenca entre
+  // um aviso no formulario e um item que fica `falhou` na fila para sempre. A
+  // fila reenvia, e o reenvio nao pode dar outro resultado: nao ha rede que
+  // conserte uma cotacao que nunca foi digitada. O comentario de
+  // `LinhaDeTransacao.exchange_rate` tem o resto.
+  //
+  // A cotacao nao e buscavel offline -- a PTAX mora numa API -- entao a unica
+  // saida honesta e pedir conexao, como as outras recusas desta funcao fazem.
+  const moeda = moedaDaEntrada(entrada);
+  if (moeda !== "BRL" && cotacaoDaEntrada(entrada) === null) {
+    return {
+      ok: false,
+      motivo: "sem-cotacao",
+      mensagem: `Lancamento em ${moeda} precisa da cotacao do dia, e ela vem do Banco Central -- o aparelho offline nao tem como busca-la. Lance com conexao, ou informe a cotacao na tela.`,
+    };
+  }
+
   return { ok: true, linha: montarLinha(entrada, id, valor) };
+}
+
+/** A moeda da entrada, normalizada. Ausente cai em BRL, como o DEFAULT da coluna. */
+function moedaDaEntrada(entrada: EntradaDeLancamento): string {
+  return entrada.moeda && entrada.moeda.trim()
+    ? entrada.moeda.trim().toUpperCase()
+    : "BRL";
+}
+
+/**
+ * A cotacao da entrada, como numero -- ou null.
+ *
+ * MESMA leitura de `cotacaoDigitada` em lib/cambio.ts, repetida aqui porque este
+ * modulo e compilado sozinho pela suite offline (sem o passo que reescreve o
+ * alias `@/`). Se as duas divergirem, a fila aceita um texto que a tela recusa,
+ * ou o contrario -- e o desfecho de aceitar errado e um item eternamente
+ * `falhou`. `scripts/test-offline-queue.mjs` compara as duas.
+ */
+function cotacaoDaEntrada(entrada: EntradaDeLancamento): number | null {
+  const cru = String(entrada.cotacao ?? "").trim();
+  if (!/^\d{1,3}([.,]\d{1,8})?$/.test(cru)) return null;
+  const n = Number(cru.replace(",", "."));
+  if (!Number.isFinite(n) || n <= 0 || n === 1) return null;
+  return n;
 }
 
 function montarLinha(
@@ -248,7 +328,17 @@ function montarLinha(
     group_id: null,
     // Herdada da entrada, ao contrario dos dois de cima: a moeda e escolha da
     // pessoa, nao consequencia de uma recusa. O fallback e o DEFAULT da coluna.
-    currency: entrada.moeda && entrada.moeda.trim() ? entrada.moeda.trim().toUpperCase() : "BRL",
+    currency: moedaDaEntrada(entrada),
+    // A cotacao acompanha a moeda, sempre (026). 1 em BRL -- o unico valor que o
+    // CHECK aceita em real -- e a cotacao digitada em qualquer outra moeda.
+    //
+    // O `?? 1` nao e um fallback de verdade: `avaliarLancamento` recusou
+    // `sem-cotacao` antes de chegar aqui, entao moeda estrangeira sempre tem
+    // numero. Ele existe para o tipo, e se algum dia virar o caminho real o banco
+    // recusa a linha -- que e melhor que gravar a viagem em dolar valendo um por
+    // um.
+    exchange_rate:
+      moedaDaEntrada(entrada) === "BRL" ? 1 : cotacaoDaEntrada(entrada) ?? 1,
   };
 }
 
