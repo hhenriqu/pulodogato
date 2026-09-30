@@ -197,6 +197,36 @@ export function separarOrcamentos<T extends OrcamentoLido>(
 }
 
 /**
+ * O agregado de UM grupo, ou `null` quando aquele grupo nao tem teto no mes.
+ *
+ * Serve a tela do grupo (HMO-180), que pergunta por uma viagem so e ja tem o
+ * nome dela no titulo da pagina.
+ *
+ * Existe em vez de um `[0]` na lista porque as duas telas leem a MESMA rota com
+ * filtros diferentes: a de Orcamento pede o mes inteiro, a do grupo pede
+ * `?group_id=`. Se esse filtro deixar de ser aplicado -- uma linha mexida na
+ * rota, um cache que devolve a resposta sem o parametro -- `grupos[0]` e a
+ * viagem de MAIOR consumo, que pode ser outra. O sintoma seria a barra de uma
+ * viagem desenhada sob o nome de outra, sem erro nenhum: dois numeros
+ * plausiveis no lugar errado. Conferir o `group_id` transforma isso em "nenhum
+ * teto neste mes", que e visivelmente diferente de um numero errado.
+ *
+ * `groupId` vazio ou nulo cai no mesmo caminho e devolve `null`, sem guarda
+ * separada: `grupos` so tem entradas com `group_id` preenchido -- o teto pessoal
+ * nao esta la -- entao nao existe grupo com id vazio para o `find` casar. Uma
+ * guarda `if (!groupId)` aqui seria um ramo que nenhum teste consegue
+ * distinguir do resto, o que e pior que nao ter: ela sugere uma protecao que
+ * quem vier depois vai achar que precisa manter.
+ */
+export function orcamentoDoGrupo<T extends OrcamentoLido>(
+  orcamentos: T[],
+  groupId: string | null | undefined,
+): GrupoOrcado<T> | null {
+  const { grupos } = separarOrcamentos(orcamentos);
+  return grupos.find((g) => g.group_id === groupId) ?? null;
+}
+
+/**
  * Frase da barra da viagem.
  *
  * Fica junto da conta, e nao no JSX, porque a frase e a unica coisa que a

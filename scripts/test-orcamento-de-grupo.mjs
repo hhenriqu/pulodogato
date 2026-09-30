@@ -36,9 +36,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-const { separarOrcamentos, fraseDoRestante, GRUPO_SEM_NOME } = await import(
-  "../.tmp-orcamento-de-grupo/orcamento-de-grupo.js"
-);
+const {
+  separarOrcamentos,
+  orcamentoDoGrupo,
+  fraseDoRestante,
+  GRUPO_SEM_NOME,
+} = await import("../.tmp-orcamento-de-grupo/orcamento-de-grupo.js");
 const { linhasParaRepetir } = await import(
   "../.tmp-orcamento-de-grupo/services/budget.js"
 );
@@ -273,6 +276,92 @@ test("restante positivo fala em sobra", () => {
 
   assert.match(frase, /^Restam/);
   assert.match(frase, /70/);
+});
+
+// ---------------------------------------------------------------------------
+// A BARRA DENTRO DA TELA DO GRUPO: a viagem pedida, nao a primeira da lista
+// ---------------------------------------------------------------------------
+// A tela do grupo (HMO-180) pergunta por UMA viagem e ja tem o nome dela no
+// titulo da pagina. Ela le a mesma rota da tela de Orcamento, com
+// `?group_id=`, e o erro que estes casos cobram e a barra de uma viagem
+// desenhada sob o nome de outra: dois numeros plausiveis no lugar errado, sem
+// erro nenhum aparecer.
+test("devolve o grupo pedido, e nao o de maior consumo da lista", () => {
+  // g2 esta mais apertado (90%) que g1 (10%), entao ele e o PRIMEIRO da lista
+  // que `separarOrcamentos` ordena. Pedir g1 tem que devolver g1.
+  const lista = [
+    teto({ limite: 1000, gasto: 100, grupo: "g1", nomeDoGrupo: "Bariloche" }),
+    teto({ limite: 1000, gasto: 900, grupo: "g2", nomeDoGrupo: "Casa" }),
+  ];
+
+  const achado = orcamentoDoGrupo(lista, "g1");
+
+  assert.equal(achado?.group_id, "g1");
+  assert.equal(achado?.group_name, "Bariloche");
+  assert.equal(achado?.gasto, 100, "devolveu o gasto de outra viagem");
+  // A negacao explicita: sem ela, um `grupos[0]` passaria todo assert acima se
+  // as duas viagens tivessem por acaso o mesmo nome ou o mesmo gasto.
+  assert.notEqual(achado?.group_id, "g2");
+});
+
+test("grupo sem teto no mes devolve null, e nao o teto de outro grupo", () => {
+  const lista = [teto({ limite: 1000, gasto: 900, grupo: "g2", nomeDoGrupo: "Casa" })];
+
+  assert.equal(orcamentoDoGrupo(lista, "g1"), null);
+});
+
+test("lista vazia devolve null", () => {
+  assert.equal(orcamentoDoGrupo([], "g1"), null);
+});
+
+test("groupId ausente nao cai no teto pessoal", () => {
+  // O pior caso possivel: `params.groupId` chegando vazio faria a tela do grupo
+  // desenhar o teto de MERCADO DE CASA como se fosse o da viagem.
+  const lista = [
+    teto({ limite: 500, gasto: 400, categoria: "Mercado" }),
+    teto({ limite: 1000, gasto: 100, grupo: "g1", nomeDoGrupo: "Bariloche" }),
+  ];
+
+  assert.equal(orcamentoDoGrupo(lista, ""), null);
+  assert.equal(orcamentoDoGrupo(lista, null), null);
+  assert.equal(orcamentoDoGrupo(lista, undefined), null);
+});
+
+test("soma os varios tetos da viagem numa barra so", () => {
+  // A tela do grupo nao pode refazer esta soma: ela sai da MESMA funcao que a
+  // rota e a tela de Orcamento usam, senao as duas telas divergem no dia em que
+  // uma das duas mudar.
+  const lista = [
+    teto({ limite: 2000, gasto: 500, grupo: "g1", nomeDoGrupo: "Bariloche", categoria: "Hotel" }),
+    teto({ limite: 1000, gasto: 250, grupo: "g1", nomeDoGrupo: "Bariloche", categoria: "Comida" }),
+  ];
+
+  const achado = orcamentoDoGrupo(lista, "g1");
+
+  assert.equal(achado?.limite, 3000);
+  assert.equal(achado?.gasto, 750);
+  assert.equal(achado?.restante, 2250);
+  assert.equal(achado?.ratio, 0.25);
+  assert.equal(achado?.orcamentos.length, 2);
+});
+
+test("um teto estourado dentro da viagem levanta o alerta com o total folgado", () => {
+  // Mesma regra de `separarOrcamentos`, cobrada pelo caminho que a tela do
+  // grupo usa: a barra de la nao pode sair verde onde a de Orcamento sai
+  // amarela.
+  const lista = [
+    teto({ limite: 2000, gasto: 100, grupo: "g1", nomeDoGrupo: "Bariloche", categoria: "Hotel" }),
+    teto({
+      limite: 200,
+      gasto: 400,
+      status: "exceeded",
+      grupo: "g1",
+      nomeDoGrupo: "Bariloche",
+      categoria: "Comida",
+    }),
+  ];
+
+  assert.equal(orcamentoDoGrupo(lista, "g1")?.status, "alert");
 });
 
 // ---------------------------------------------------------------------------
