@@ -806,6 +806,46 @@ jobs:
       #     pendente ve SO o proprio pedido e CONTINUA sem ler `expense_groups`.
       - name: Pedido de entrada pendente e dizivel e visivel sem abrir o grupo
         run: $PSQL -f database/tests/hmo190_pedido_de_entrada_visivel_test.sql
+      - name: 031_renda_fixa_indexada
+        run: $PSQL -f database/migrations/031_renda_fixa_indexada.sql
+
+      # Re-executavel: as colunas entram por ADD COLUMN IF NOT EXISTS e cada
+      # constraint (todas com nome fixo) por DROP CONSTRAINT IF EXISTS + ADD.
+      # Conferido tambem como COLAGEM EM LOTE UNICO (`psql -c "$(cat ...)"`), que
+      # e como uma pessoa aplica em producao -- o `-f` daqui nao prova isso.
+      - name: 031 e idempotente
+        run: $PSQL -f database/migrations/031_renda_fixa_indexada.sql
+
+      # Renda fixa indexada (HMO-192). `ADD COLUMN` nunca falha, entao "as seis
+      # colunas existem" nao e prova de nada -- o que a 031 entrega sao as regras
+      # que impedem a combinacao que rende numero errado sem erro:
+      #
+      #   - acao com indexador. Nenhum CHECK de valor barra uma PETR4 com
+      #     `index_kind = 'cdi'`, e a tela somaria o rendimento do CDI POR CIMA da
+      #     variacao de preco: o mesmo ganho contado duas vezes. O teste cobre o
+      #     INSERT e os dois sentidos do UPDATE (por o campo numa acao, e virar
+      #     acao sem limpar os campos) -- CHECK pega os dois, policy de RLS nao
+      #     pegaria nenhum, porque policy nao ve OLD;
+      #   - prefixado com percentual. `index_percentage = 110` num papel de 13%
+      #     a.a. le-se como "110% de um indice" que a linha nao tem, e projeta 13
+      #     vezes o rendimento real;
+      #   - produto ISENTO fora do dominio ('LCI', 'lci '). LCI, LCA, CRI, CRA e
+      #     poupanca nao pagam IR; um valor que o codigo nao reconhece cai no
+      #     caminho generico e a tela desconta 22,5% de quem nao deve nada --
+      #     errando contra o usuario no unico numero que ele abriu a tela para ver;
+      #   - aplicacao no FUTURO. Ela e o inicio da contagem do IR (tabela
+      #     regressiva por dias corridos): data adiante devolve prazo negativo;
+      #   - as seis colunas continuarem NULAVEIS. Ha renda fixa em producao desde
+      #     a 021 sem nenhuma delas, e um NOT NULL aqui abortaria a colagem no
+      #     SQL Editor e travaria cadastro que hoje funciona.
+      #
+      # Os 15 mutantes rodados antes de confiar nisto (9 derrubando cada
+      # constraint, 6 AFROUXANDO-as: teto do percentual removido, `>=` no
+      # vencimento, tolerancia de 365 dias na aplicacao, 'cdb' aceito como
+      # indexador, comparacao case-insensitive do produto, cross-check olhando so
+      # `index_kind`) morreram todos, e o teste REPROVA um banco sem a 031.
+      - name: Renda fixa indexada -- indexador fora de fixed_income, prefixado com percentual e produto isento desconhecido
+        run: $PSQL -f database/tests/hmo192_renda_fixa_test.sql
 
       # As duas suites que guardam as views que a 026 REESCREVEU rodam la atras na
       # cadeia (steps do 006 e do 007), ou seja: contra a definicao ANTIGA de
