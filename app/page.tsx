@@ -8,6 +8,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { TrendingUp, Shield, Smartphone, BarChart3 } from "lucide-react";
+import { AVISO_EM_BREVE } from "@/lib/planos";
 
 export default function HomePage() {
   return (
@@ -33,9 +34,9 @@ export default function HomePage() {
             <span className="text-success">Investimentos</span>
           </h2>
           <p className="text-xl text-muted-foreground mb-8 max-w-3xl mx-auto">
-            A plataforma completa para gerenciar suas finanças pessoais,
-            investimentos e trading. Do controle de gastos aos sinais de trading
-            profissionais, tudo em um só lugar.
+            A plataforma completa para gerenciar suas finanças pessoais e seus
+            investimentos. Do controle de gastos ao acompanhamento do
+            portfólio, tudo em um só lugar.
           </p>
           <div className="flex flex-col sm:flex-row sm:flex-wrap items-center justify-center gap-4">
             <Link href="/signup" className="w-full sm:w-auto">
@@ -82,11 +83,24 @@ export default function HomePage() {
           <Card>
             <CardHeader className="text-center">
               <Smartphone className="h-12 w-12 text-premium mx-auto mb-4" />
-              <CardTitle className="text-lg">Trading Profissional</CardTitle>
+              {/*
+                Esta e a pagina PUBLICA, e ate a HMO-198 este cartao prometia
+                sinal em tempo real, grafico avancado e API -- os tres sem nada
+                construido por tras. A pagina de Planos era o alvo da issue, mas
+                o mesmo anuncio estava aqui, para quem nem tem conta.
+
+                O texto proibido nao esta escrito nem neste comentario: o teste
+                varre o repositorio inteiro pela frase antiga, e ele nao
+                distingue comentario de texto de tela.
+              */}
+              <CardTitle className="text-lg">
+                Trading Profissional ({AVISO_EM_BREVE})
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <CardDescription className="text-center">
-                Sinais em tempo real, gráficos avançados e API para traders
+                Ainda não disponível: estamos construindo as ferramentas de
+                trading
               </CardDescription>
             </CardContent>
           </Card>

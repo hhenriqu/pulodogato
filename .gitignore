@@ -206,6 +206,11 @@ next-env.d.ts
 # o ingestor no meio de uma suite nao pode apagar o build do teste
 /.tmp-ingest-cvm/
 
+# test:planos-em-breve (a pagina de Planos e a pagina publica renderizadas com
+# react-dom/server, HMO-198 -- leva components/ui/, lib/planos.js,
+# lib/utils.js e types/subscription.js junto)
+/.tmp-planos-em-breve/
+
 # ZIP anual da CVM baixado pelo ingestor (12,8 MB por ano) -- cache local, nao
 # fonte: o pacote e reproduzivel a partir de dados.cvm.gov.br, e sao ~12,8 MB por
 # ano de historico. As FIXTURES do teste (scripts/fixtures/) sao versionadas --

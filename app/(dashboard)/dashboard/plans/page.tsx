@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { PLAN_CONFIGS, UserPlan, PlanConfig } from "@/types/subscription";
+import { listaDeRecursosDoPlano } from "@/lib/planos";
 import {
   Card,
   CardContent,
@@ -12,7 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { Check, Crown, Zap, Settings, Star } from "lucide-react";
+import { Check, Clock, Crown, Zap, Settings, Star } from "lucide-react";
 
 export default function PlansPage() {
   const [isYearly, setIsYearly] = useState(false);
@@ -163,11 +164,32 @@ export default function PlansPage() {
                     Funcionalidades Incluídas
                   </h4>
 
+                  {/*
+                    O item que ainda nao existe NAO leva o sinal de "incluido":
+                    troca o Check pelo relogio e fica apagado, alem de dizer
+                    "(em breve)" no proprio texto. Lista e origem do estado em
+                    lib/planos.ts (HMO-198).
+                  */}
                   <div className="space-y-2">
-                    {getFeatureDisplayList(plan).map((feature, index) => (
-                      <div key={index} className="flex items-start gap-2">
-                        <Check className="h-4 w-4 text-success mt-0.5 flex-shrink-0" />
-                        <span className="text-sm">{feature}</span>
+                    {listaDeRecursosDoPlano(plan).map((recurso) => (
+                      <div
+                        key={recurso.feature}
+                        className="flex items-start gap-2"
+                      >
+                        {recurso.disponivel ? (
+                          <Check className="h-4 w-4 text-success mt-0.5 flex-shrink-0" />
+                        ) : (
+                          <Clock className="h-4 w-4 text-muted-foreground mt-0.5 flex-shrink-0" />
+                        )}
+                        <span
+                          className={
+                            recurso.disponivel
+                              ? "text-sm"
+                              : "text-sm text-muted-foreground"
+                          }
+                        >
+                          {recurso.rotulo}
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -210,36 +232,10 @@ export default function PlansPage() {
   );
 }
 
-function getFeatureDisplayList(plan: PlanConfig): string[] {
-  const featureNames: Partial<Record<string, string>> = {
-    personal_finance: "Controle financeiro pessoal",
-    advanced_reports: "Relatórios avançados",
-    investment_tracking: "Acompanhamento de investimentos",
-    portfolio_analysis: "Análise de portfólio",
-    trading_signals: "Sinais de trading em tempo real",
-    advanced_charts: "Gráficos avançados",
-    api_access: "Acesso à API",
-    priority_support: "Suporte prioritário",
-    unlimited_transactions: "Transações ilimitadas",
-    expense_groups: "Grupos de gastos compartilhados",
-    financial_goals: "Metas financeiras",
-    investment_alerts: "Alertas de investimento",
-    tax_reports: "Relatórios fiscais",
-    custom_categories: "Categorias personalizadas",
-    data_export: "Exportação de dados",
-    multiple_portfolios: "Múltiplos portfólios",
-    real_time_data: "Dados em tempo real",
-    advanced_analytics: "Analytics avançados",
-    white_label: "White Label",
-    user_management: "Gerenciamento de usuários",
-    system_monitoring: "Monitoramento do sistema",
-  };
-
-  return plan.features
-    .filter((feature) => featureNames[feature])
-    .map((feature) => featureNames[feature]!)
-    .slice(0, 8); // Limit to 8 features for display
-}
+// O mapa de nomes e o corte de 8 itens sairam daqui para lib/planos.ts na
+// HMO-198: o rotulo de recurso "em breve" tem que valer tambem no mapa de
+// components/subscription/PlanGuards.tsx, e dois mapas soltos e exatamente como
+// este aqui ficou anunciando sinal de trading que nao existe.
 
 function formatLimit(limit: number | "unlimited"): string {
   if (limit === "unlimited") {

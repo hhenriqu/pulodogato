@@ -149,8 +149,11 @@ export const PLAN_CONFIGS: Record<UserPlan, PlanConfig> = {
   trader: {
     id: "trader",
     name: "Trader",
-    description:
-      "Plano completo para traders profissionais com sinais e dados em tempo real",
+    // Ate a HMO-198 esta linha prometia sinal e dado em tempo real. Ela aparece
+    // dentro do cartao, logo acima do preco de R$ 79,90 -- ou seja, anunciava o
+    // recurso como pronto no mesmo lugar em que a lista de recursos anunciava.
+    // Marcar so a lista teria deixado a promessa de pe duas linhas acima.
+    description: "Plano completo para traders profissionais",
     price: { monthly: 79.9, yearly: 799.0 },
     features: [
       "personal_finance",
