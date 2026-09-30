@@ -194,3 +194,7 @@ next-env.d.ts
 # test:tres-numeros (os tiles renderizados com react-dom/server -- leva
 # components/ui/card.js, lib/realizado-e-previsao.js e lib/utils.js junto)
 /.tmp-tres-numeros/
+
+# test:aprovacao-de-parte (a regra pura de quem pode aprovar/recusar a propria
+# parte de despesa de grupo, HMO-178 -- lib sem import, compila sozinha)
+/.tmp-aprovacao-de-parte/
