@@ -175,3 +175,8 @@ next-env.d.ts
 # lib/settlement.js, lib/recurrence.js e o types/ junto)
 /.tmp-parte-do-grupo/
 /.tmp-cambio/
+
+# saida do `npm run test:cartao-orcamento-grupo` (HMO-180; espelha a raiz, entao
+# leva components/ui/*, lib/orcamento-de-grupo.js, lib/settlement.js e
+# lib/utils.js junto)
+/.tmp-cartao-orcamento-grupo/

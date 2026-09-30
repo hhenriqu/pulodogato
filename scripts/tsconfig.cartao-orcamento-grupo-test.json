@@ -1,0 +1,35 @@
+{
+  "//": [
+    "Compila o cartao da barra da viagem para o teste renderizar o componente",
+    "de verdade, e nao uma copia do JSX dele. O `jsx: react-jsx` e o que permite",
+    "renderizar com react-dom/server no node, sem runner novo.",
+    "",
+    "O include puxa components/ui/* e lib/* juntos porque cada primitivo importa",
+    "lib/utils.ts -- por isso o resolve-aliases roda com --espelha-raiz.",
+    "",
+    "lib/services/budget.ts entra porque lib/orcamento-de-grupo.ts nao o importa,",
+    "mas o alias @/lib/settlement sim: sem ele o tsc reclama do modulo ausente na",
+    "corrente de imports."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-cartao-orcamento-grupo",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../components/financial/CartaoOrcamentoGrupo.tsx",
+    "../components/ui/card.tsx",
+    "../components/ui/progress.tsx",
+    "../lib/orcamento-de-grupo.ts",
+    "../lib/settlement.ts",
+    "../lib/utils.ts"
+  ]
+}

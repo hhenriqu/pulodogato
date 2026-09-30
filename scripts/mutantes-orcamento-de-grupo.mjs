@@ -112,6 +112,29 @@ const mutantes = [
     "  grupos.sort((a, b) => a.ratio - b.ratio || a.group_id.localeCompare(b.group_id));",
   ],
 
+  // --- a viagem PEDIDA, que e o que a tela do grupo mostra (HMO-180) ---
+  // A tela do grupo desenha uma viagem so, com o nome dela no titulo da pagina.
+  // Pegar a viagem errada nao da erro: da dois numeros plausiveis debaixo do
+  // nome de outra.
+  [
+    "grupo",
+    "a tela do grupo passa a mostrar a PRIMEIRA viagem da lista (a mais apertada)",
+    "  return grupos.find((g) => g.group_id === groupId) ?? null;",
+    "  return grupos[0] ?? null;",
+  ],
+  [
+    "grupo",
+    "a busca casa qualquer viagem MENOS a pedida",
+    "  return grupos.find((g) => g.group_id === groupId) ?? null;",
+    "  return grupos.find((g) => g.group_id !== groupId) ?? null;",
+  ],
+  [
+    "grupo",
+    "grupo sem teto no mes cai no teto PESSOAL (o mercado de casa vira gasto da viagem)",
+    "  const { grupos } = separarOrcamentos(orcamentos);\n  return grupos.find((g) => g.group_id === groupId) ?? null;",
+    "  const { grupos, pessoal } = separarOrcamentos(orcamentos);\n  return (\n    grupos.find((g) => g.group_id === groupId) ?? {\n      group_id: groupId ?? \"\",\n      group_name: GRUPO_SEM_NOME,\n      orcamentos: [],\n      ...pessoal,\n    }\n  );",
+  ],
+
   // --- a frase, que e a unica coisa que a pessoa le ---
   [
     "grupo",

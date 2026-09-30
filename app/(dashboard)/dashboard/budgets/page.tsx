@@ -19,7 +19,6 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { CampoDeValor } from "@/components/ui/campo-de-valor";
 import { Label } from "@/components/ui/label";
-import { Progress } from "@/components/ui/progress";
 import {
   Select,
   SelectContent,
@@ -55,11 +54,11 @@ import type {
   TransactionCategory,
   FinancialAccount,
 } from "@/types/financial";
+import { separarOrcamentos } from "@/lib/orcamento-de-grupo";
 import {
-  separarOrcamentos,
-  fraseDoRestante,
-  type GrupoOrcado,
-} from "@/lib/orcamento-de-grupo";
+  CartaoOrcamentoGrupo,
+  LinhaDeTeto,
+} from "@/components/financial/CartaoOrcamentoGrupo";
 
 const moeda = (valor: number) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(valor);
@@ -370,128 +369,29 @@ export default function BudgetsPage() {
     }
   };
 
-  const LinhaOrcamento = ({ budget }: { budget: BudgetWithConsumption }) => {
-    const ratio = Number(budget.consumed_ratio);
-    const pct = Math.round(ratio * 100);
-    const status = budget.consumption_status;
-
-    const cor =
-      status === "exceeded"
-        ? "text-destructive"
-        : status === "alert"
-        ? "text-warning"
-        : "text-success";
-
-    return (
-      <div className="flex flex-col gap-2 rounded-lg border p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="truncate font-medium">
-              {budget.category?.name ?? "Categoria"}
-            </p>
-            <p className="text-sm text-muted-foreground">
-              {moeda(Number(budget.spent))} de {moeda(Number(budget.amount_limit))}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className={`text-sm font-semibold ${cor}`}>{pct}%</span>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => removerOrcamento(budget.id)}
-              disabled={agindo === budget.id}
-              aria-label="Remover orçamento"
-            >
-              {agindo === budget.id ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Trash2 className="h-4 w-4" />
-              )}
-            </Button>
-          </div>
-        </div>
-
-        {/* A barra para em 100 mesmo quando estourou; o numero acima e quem
-            conta o tamanho do estouro. Uma barra de 180% vira ruido. */}
-        <Progress value={Math.min(pct, 100)} />
-
-        <p className="text-sm">
-          {Number(budget.remaining) >= 0 ? (
-            <span className="text-muted-foreground">
-              Restam {moeda(Number(budget.remaining))}
-            </span>
-          ) : (
-            <span className="font-medium text-destructive">
-              Estourou {moeda(Math.abs(Number(budget.remaining)))}
-            </span>
-          )}
-        </p>
-      </div>
-    );
-  };
-
   /**
-   * Uma viagem (ou a casa): a barra do grupo inteiro em cima, os tetos por
-   * categoria embaixo.
+   * O botao de remover, que e a unica parte do teto que SO esta tela tem.
    *
-   * A barra de cima e a resposta que a tela existe para dar -- "quanto já
-   * gastamos da viagem" -- e ela soma o gasto de TODOS os membros, nao só o de
-   * quem esta olhando: quem paga o hotel e quem paga a gasolina consomem o
-   * mesmo teto. Por isso a frase de apoio diz isso com todas as letras; sem
-   * ela, o numero parece alto demais para quem lembra so do que pagou.
+   * Vai como slot para `LinhaDeTeto`/`CartaoOrcamentoGrupo`: o desenho da linha
+   * e da barra mora em components/financial/CartaoOrcamentoGrupo.tsx desde a
+   * HMO-180, porque a tela do grupo desenha a mesma barra e duas copias
+   * divergiriam sem nada ficar vermelho.
    */
-  const CartaoDoGrupo = ({ grupo }: { grupo: GrupoOrcado<BudgetWithConsumption> }) => {
-    const pct = Math.round(grupo.ratio * 100);
-    const cor =
-      grupo.status === "exceeded"
-        ? "text-destructive"
-        : grupo.status === "alert"
-        ? "text-warning"
-        : "text-success";
-
-    return (
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div className="min-w-0">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Users className="h-4 w-4 shrink-0" />
-                <span className="truncate">{grupo.group_name}</span>
-              </CardTitle>
-              <CardDescription>
-                {moeda(grupo.gasto)} de {moeda(grupo.limite)} — soma o gasto de
-                todos os membros
-              </CardDescription>
-            </div>
-            <span className={`text-lg font-semibold ${cor}`}>{pct}%</span>
-          </div>
-        </CardHeader>
-
-        <CardContent className="space-y-4">
-          {/* Mesma regra da linha individual: a barra para em 100 e o
-              percentual acima e quem conta o tamanho do estouro. */}
-          <div className="space-y-1">
-            <Progress value={Math.min(pct, 100)} />
-            <p
-              className={`text-sm ${
-                grupo.restante < 0
-                  ? "font-medium text-destructive"
-                  : "text-muted-foreground"
-              }`}
-            >
-              {fraseDoRestante(grupo)}
-            </p>
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-2">
-            {grupo.orcamentos.map((b) => (
-              <LinhaOrcamento key={b.id} budget={b} />
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-    );
-  };
+  const botaoRemover = (budget: BudgetWithConsumption) => (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={() => removerOrcamento(budget.id)}
+      disabled={agindo === budget.id}
+      aria-label="Remover orçamento"
+    >
+      {agindo === budget.id ? (
+        <Loader2 className="h-4 w-4 animate-spin" />
+      ) : (
+        <Trash2 className="h-4 w-4" />
+      )}
+    </Button>
+  );
 
   if (loading) {
     return (
@@ -765,7 +665,7 @@ export default function BudgetsPage() {
           ) : (
             <div className="grid gap-3 md:grid-cols-2">
               {pessoais.map((b) => (
-                <LinhaOrcamento key={b.id} budget={b} />
+                <LinhaDeTeto key={b.id} budget={b} acao={botaoRemover(b)} />
               ))}
             </div>
           )}
@@ -788,7 +688,13 @@ export default function BudgetsPage() {
                 </CardContent>
               </Card>
             ) : (
-              gruposOrcados.map((g) => <CartaoDoGrupo key={g.group_id} grupo={g} />)
+              gruposOrcados.map((g) => (
+                <CartaoOrcamentoGrupo
+                  key={g.group_id}
+                  grupo={g}
+                  acaoDaLinha={botaoRemover}
+                />
+              ))
             )}
           </TabsContent>
         )}

@@ -45,6 +45,12 @@ import {
   Clock,
 } from "lucide-react";
 import SplitSuggestions from "@/components/financial/SplitSuggestions";
+import { CartaoOrcamentoGrupo } from "@/components/financial/CartaoOrcamentoGrupo";
+import {
+  orcamentoDoGrupo,
+  type GrupoOrcado,
+} from "@/lib/orcamento-de-grupo";
+import type { BudgetWithConsumption } from "@/types/financial";
 
 interface ExpenseGroup {
   id: string;
@@ -190,6 +196,14 @@ export default function GroupDetailPage() {
   const [balances, setBalances] = useState<BalanceSummary[]>([]);
   const [transfers, setTransfers] = useState<TransferSuggestion[]>([]);
   const [settlements, setSettlements] = useState<Settlement[]>([]);
+  // A barra "quanto ja gastamos da viagem" (HMO-180). `null` = este grupo nao
+  // tem teto no mes corrente, e o cartao nem aparece -- mesma regra das
+  // Previstas: grupo sem teto continua vendo a tela de antes.
+  const [orcamento, setOrcamento] =
+    useState<GrupoOrcado<BudgetWithConsumption> | null>(null);
+  // O mes que a RESPOSTA trouxe, nao o que a tela pediu: e ele que rotula a
+  // barra, e a tela nao pede mes nenhum (a rota resolve o corrente).
+  const [mesDoOrcamento, setMesDoOrcamento] = useState("");
   // Sobra que nao pertence a ninguem. Zero em grupo saudavel.
   const [residual, setResidual] = useState(0);
   // Chave "pagador->recebedor" da linha em que o botao esta rodando, para nao
@@ -248,6 +262,7 @@ export default function GroupDetailPage() {
         loadBalances(),
         loadTransfers(),
         loadSettlements(),
+        loadOrcamento(),
       ]);
     } catch (error) {
       console.error("Error loading data:", error);
@@ -317,6 +332,36 @@ export default function GroupDetailPage() {
       setResidual(Number(data.residual) || 0);
     } else {
       console.error("Error loading transfers:", data.error);
+    }
+  };
+
+  /**
+   * O teto da viagem no mes corrente (HMO-180).
+   *
+   * A pergunta "quanto ja gastamos da viagem" e feita AQUI, e ate a HMO-180 a
+   * resposta morava so em Orcamento > Grupo -- a pessoa tinha que sair desta
+   * tela para responder o que estava perguntando nela.
+   *
+   * A soma NAO e refeita aqui. Ela sai de `separarOrcamentos`, a mesma funcao
+   * que a rota e a tela de Orcamento usam, atraves de `orcamentoDoGrupo`. Um
+   * `reduce` sobre `data.budgets` no JSX daria o mesmo numero hoje e divergiria
+   * no dia em que uma das duas mudasse -- e o sintoma seria duas telas com
+   * percentuais diferentes para a mesma viagem, sem erro nenhum aparecer.
+   *
+   * Falha em silencio de proposito: sem teto cadastrado a rota devolve lista
+   * vazia, que e indistinguivel de erro para quem esta olhando a tela -- nos
+   * dois casos nao ha barra a mostrar, e um toast de erro sobre um cartao
+   * opcional so assustaria. O console guarda o motivo.
+   */
+  const loadOrcamento = async () => {
+    const response = await fetch(`/api/budgets?group_id=${groupId}`);
+    const data = await response.json();
+
+    if (response.ok) {
+      setOrcamento(orcamentoDoGrupo(data.budgets ?? [], groupId));
+      setMesDoOrcamento(data.month ?? "");
+    } else {
+      console.error("Error loading orçamento:", data.error);
     }
   };
 
@@ -662,6 +707,27 @@ export default function GroupDetailPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/*
+        A barra do orcamento da viagem (HMO-180).
+
+        Fica ACIMA das abas, e nao dentro de uma delas, porque "quanto ja
+        gastamos da viagem" e a pergunta de quem abre esta tela -- atras de um
+        clique ela repetiria, em menor escala, o problema que a HMO-180
+        resolveu: a resposta existindo num lugar que nao e onde a pergunta e
+        feita.
+
+        Só aparece quando o grupo tem teto no mes: grupo sem teto continua vendo
+        a tela de antes, como as Previstas da HMO-177. Quem quer criar um teto
+        faz isso em Orcamento > Grupo, que e onde o formulario mora.
+      */}
+      {orcamento && (
+        <CartaoOrcamentoGrupo
+          grupo={orcamento}
+          titulo="Orçamento do grupo"
+          mes={mesDoOrcamento}
+        />
+      )}
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="grid w-full grid-cols-3">
