@@ -42,9 +42,14 @@
 --   acima de 720   15,0%
 --
 -- Sem a data de aplicacao gravada, o liquido estimado da tela seria um chute com
--- cara de numero. Com ela, e uma conta. E quando ela for NULA (ativo cadastrado
--- antes desta migration), a tela mostra o BRUTO e diz que nao sabe o liquido --
--- ver lib/renda-fixa.ts. Nao inventa 22,5%.
+-- cara de numero. Com ela, e uma conta.
+--
+-- Quando ela for NULA (ativo cadastrado antes desta migration), a projecao cai
+-- para a data da primeira COMPRA do ativo, em `investment_transactions`, e a tela
+-- avisa que o prazo veio de la -- ver lib/renda-fixa.ts. Sao quase sempre a mesma
+-- data, e a alternativa (nao mostrar rendimento nenhum) puniria justamente quem
+-- cadastrou antes. O que a tela NAO faz e escolher uma aliquota sem ter prazo
+-- nenhum de onde tirar.
 --
 -- ===========================================================================
 -- `fixed_income_product`: O CAMPO QUE EVITA COBRAR IR DE QUEM E ISENTO
@@ -226,7 +231,7 @@ COMMENT ON COLUMN public.investment_assets.index_percentage IS
 COMMENT ON COLUMN public.investment_assets.spread_annual IS
   'Pontos percentuais ao ano SOMADOS ao indice (IPCA + 6 -> 6), ou a taxa inteira quando prefixado (13% a.a. -> 13) - HMO-192.';
 COMMENT ON COLUMN public.investment_assets.applied_date IS
-  'Data da aplicacao. E dela que sai a ALIQUOTA de IR (tabela regressiva 22,5% -> 15% por dias corridos), por isso e guardada e nao inferida. NULA = a tela mostra o bruto e nao estima o liquido - HMO-192.';
+  'Data da aplicacao. E dela que sai a ALIQUOTA de IR (tabela regressiva 22,5% -> 15% por dias corridos), por isso e guardada e nao inferida. NULA = a projecao cai para a data da primeira compra do ativo e a tela avisa - HMO-192.';
 COMMENT ON COLUMN public.investment_assets.maturity_date IS
   'Vencimento do papel. NULA para liquidez diaria (poupanca, CDB com liquidez) - HMO-192.';
 
