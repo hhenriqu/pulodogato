@@ -767,7 +767,7 @@ jobs:
       # `security_invoker` da view nao e conferido aqui: quem cobre e o
       # view_security_invoker_test.sql, que varre o schema inteiro e pega
       # qualquer view nova sem a opcao (verificado contra esta view).
-      - name: Fundamento da CVM: referencia sem escrita, ponte coerente e indicador nulo em vez de errado
+      - name: Fundamento da CVM -- referencia sem escrita, ponte coerente e indicador nulo em vez de errado
         run: $PSQL -f database/tests/hmo194_fundamento_cvm_test.sql
 
       # A aritmetica da ponte ticker -> CNPJ e da leitura dos CSVs e TypeScript, e
