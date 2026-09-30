@@ -98,6 +98,11 @@ import {
   type Periodo,
 } from "@/lib/periodo-do-painel";
 import { SeletorDePeriodo } from "@/components/dashboard/SeletorDePeriodo";
+import { PrevistoXRealizado } from "@/components/dashboard/PrevistoXRealizado";
+import {
+  somarMesesPrevistos,
+  type PrevistoDoPeriodo,
+} from "@/lib/previsto-x-realizado";
 
 const moeda = (valor: number) =>
   new Intl.NumberFormat("pt-BR", {
@@ -221,6 +226,16 @@ function Painel() {
   const [contas, setContas] = useState<Conta[]>([]);
   const [fluxo, setFluxo] = useState<ResumoFluxo | null>(null);
   const [previstas, setPrevistas] = useState<ResumoMesPrevisto | null>(null);
+  // O previsto do periodo, separado em entradas e despesas (HMO-186). Vem da
+  // MESMA resposta que `previstas` -- nao e uma segunda chamada: a direcao de
+  // cada linha da agenda e um campo novo do resumo, e pedir de novo criaria
+  // duas versoes do mesmo numero na mesma tela.
+  const [previsto, setPrevisto] = useState<PrevistoDoPeriodo | null>(null);
+  // A rota nao conseguiu dizer se cada linha da agenda entra ou sai. O bloco
+  // escreve "indisponivel" em vez de mostrar tudo como despesa -- que e o que
+  // um `?? "expense"` calado faria, com o resultado previsto negativo no valor
+  // do salario.
+  const [previstoIndisponivel, setPrevistoIndisponivel] = useState(false);
   const [metas, setMetas] = useState<Meta[]>([]);
   const [possoGastar, setPossoGastar] = useState<PossoGastar | null>(null);
   // O patrimonio no fim de um periodo que ja terminou, de `net_worth_history`.
@@ -324,6 +339,11 @@ function Painel() {
           month: periodo.de.slice(0, 7),
           fixed_monthly_cost: Number(d.fixed_monthly_cost ?? 0),
         });
+        // Somar os meses pelo mesmo motivo de `somarPrevistas` acima: a rota
+        // devolve uma linha por mes ja recortada pelo periodo, e procurar "o
+        // mes" na lista foi o defeito que a HMO-173 corrigiu.
+        setPrevisto(somarMesesPrevistos(d.summary ?? []));
+        setPrevistoIndisponivel(Boolean(d.previsto_indisponivel));
       }
 
       if (rMetas.ok) {
@@ -494,6 +514,39 @@ function Painel() {
           </CardContent>
         </Card>
       </div>
+    ),
+
+    // ------------------------------------------------------------------
+    // Previsto x Realizado (HMO-186)
+    // ------------------------------------------------------------------
+    // Os dois lados honram o periodo, e por isso este bloco nao precisa de
+    // nenhum aviso de "nao e do periodo escolhido": o previsto vem da agenda
+    // recortada por `due_date` dentro da janela, o realizado vem do mesmo
+    // `/api/reports/cash-flow` que alimenta os tiles "Entrou" e "Saiu".
+    //
+    // Em periodo FUTURO o realizado vem zerado, e isso esta certo: nada foi
+    // realizado ainda. O bloco nao esconde nem inventa -- mostra previsto
+    // cheio contra realizado zero, que e exatamente o estado do mundo.
+    //
+    // Nada e recalculado aqui. `previsto` sai de somarMesesPrevistos sobre a
+    // resposta da rota e o realizado sai de `fluxo`, os MESMOS numeros que os
+    // tiles de cima mostram -- se este bloco somasse por conta propria, duas
+    // partes da mesma tela passariam a discordar sobre o mes.
+    "previsto-x-realizado": previsto && (
+      <PrevistoXRealizado
+        previsto={previsto}
+        realizado={{
+          entradas: fluxo?.total_income ?? 0,
+          // Ja POSITIVO da rota, como o tile "Saiu" documenta. Um Math.abs aqui
+          // seria inofensivo hoje e mentiria no dia em que a rota trocasse de
+          // convencao -- o numero viraria positivo do mesmo jeito e ninguem
+          // veria a troca.
+          despesas: fluxo?.total_expense ?? 0,
+          resultado: fluxo?.net ?? 0,
+        }}
+        rotulo={rotulo}
+        indisponivel={previstoIndisponivel}
+      />
     ),
 
     // ------------------------------------------------------------------

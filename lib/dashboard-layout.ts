@@ -80,6 +80,12 @@ export const SECOES_DO_PAINEL: SecaoDoPainel[] = [
       "Saldo das contas, o que entrou e saiu no mês e o custo fixo mensal",
   },
   {
+    id: "previsto-x-realizado",
+    titulo: "Previsto x Realizado",
+    descricao:
+      "O que o período prometia — entradas, despesas e resultado — ao lado do que de fato aconteceu",
+  },
+  {
     id: "posso-gastar",
     titulo: "Quanto ainda posso gastar",
     descricao: "O que sobra até o fim do mês depois de tudo já comprometido",
