@@ -847,6 +847,46 @@ jobs:
       - name: Renda fixa indexada -- indexador fora de fixed_income, prefixado com percentual e produto isento desconhecido
         run: $PSQL -f database/tests/hmo192_renda_fixa_test.sql
 
+      - name: 030_convite_de_grupo_no_app
+        run: $PSQL -f database/migrations/030_convite_de_grupo_no_app.sql
+
+      # Re-executavel: as duas funcoes entram por CREATE OR REPLACE FUNCTION, e
+      # os GRANT/REVOKE sao declarativos. Nao ha DDL de tabela no arquivo.
+      - name: 030 e idempotente
+        run: $PSQL -f database/migrations/030_convite_de_grupo_no_app.sql
+
+      # HMO-196, o convite entregue dentro do app. O que so o Postgres pega:
+      #
+      #   - as duas assercoes de CONTROLE, que sao o defeito em si: a convidada LE
+      #     a propria linha de `group_invitations`, e NAO le `expense_groups` nem
+      #     o `profiles` de quem convidou. Era dai que vinham os dois embeds nulos
+      #     que o sino descartava em silencio. Se alguem "consertar a tela"
+      #     afrouxando `expense_groups_select` ou `profiles_select_own_or_public`,
+      #     estas duas quebram e dizem que o conserto abriu o grupo inteiro;
+      #   - `list_my_group_invitations()` e `respond_to_group_invitation()` sao
+      #     SECURITY DEFINER, ou seja leem por cima da RLS. Quem garante que nao
+      #     viraram vazamento sao as assercoes de que a ESTRANHA nao lista nada e
+      #     nao consegue aceitar nem sabendo o UUID do convite -- a autorizacao
+      #     mora no corpo da funcao, nao no argumento;
+      #   - aceitar entra como `active`, nao `pending`. Convite de admin nao vai
+      #     para a fila de aprovacao da 029: quem chamou foi o proprio admin. Um
+      #     mutante trocando por 'pending' devolve a pessoa ao limbo que a HMO-190
+      #     acabou de fechar, e a tela nao nota;
+      #   - o filtro `g.is_active`. Arquivar o grupo (020) nao apaga os convites
+      #     pendentes dele, entao sem o filtro um convite antigo ressuscita a
+      #     pessoa dentro de um grupo que o admin ja tirou do ar;
+      #   - que a funcao NAO devolve `group_code`. E assercao sobre a ASSINATURA,
+      #     via information_schema: o sino antigo exibia o codigo, e quem recusa um
+      #     convite nao deve sair com a chave de entrada do grupo na mao.
+      #
+      # Medido: 15 mutantes na 030, 14 morreram. O unico sobrevivente e trocar o
+      # `LEFT JOIN public.profiles` por JOIN interno, e nao e furo do teste -- os
+      # dois sao equivalentes enquanto `invited_by` for NOT NULL com FK para
+      # `profiles(id)`. Esta anotado no proprio teste para ninguem "cobrir" isso
+      # com uma fixture impossivel.
+      - name: Convite de grupo chega a quem foi convidado, sem abrir o grupo para quem recusa
+        run: $PSQL -f database/tests/hmo196_convite_no_app_test.sql
+
       # As duas suites que guardam as views que a 026 REESCREVEU rodam la atras na
       # cadeia (steps do 006 e do 007), ou seja: contra a definicao ANTIGA de
       # `group_member_balances` e `budget_consumption`. Elas nunca viram a versao
