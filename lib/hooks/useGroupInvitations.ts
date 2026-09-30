@@ -2,32 +2,40 @@ import { useState, useEffect } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { User } from "@supabase/supabase-js";
 
+// Convite pendente endereçado a quem esta logado, como
+// `list_my_group_invitations()` (migration 030) devolve.
+//
+// ESTA E A SEGUNDA TELA DE CONVITE, E ERA A MAIS DANOSA (HMO-196)
+// ---------------------------------------------------------------
+// O sino (useNotifications) apenas escondia o convite. Aqui era pior: este hook
+// lia `group_invitations`, buscava os grupos em `expense_groups` num segundo
+// SELECT, nao achava nenhum -- porque a RLS esconde o grupo de quem ainda nao e
+// membro -- e concluia que o grupo havia sido DELETADO. Tinha `console.log`
+// dizendo "🚨 PROBLEMA DETECTADO: Convites órfãos (grupos inexistentes)" e, com
+// base nesse diagnostico errado, fazia:
+//
+//     UPDATE group_invitations SET status = 'expired' WHERE id = <orfao>
+//
+// Ou seja: bastava a pessoa convidada ABRIR a aba Convites para que todos os
+// convites legitimos dela fossem marcados como expirados. Nao e que o convite
+// nao chegava -- ele chegava e a propria tela o destruia, e depois mostrava
+// "Nenhum convite pendente" com toda a convicçao. Em producao havia 5 convites
+// inseridos e 2 vivos. Era tambem o que fazia o relato parecer "nao recebeu
+// nada": nao havia o que reenviar, havia o que parar de apagar.
+//
+// O grupo nunca deixou de existir. `is_active` e o unico eixo de "grupo fora do
+// ar" que este produto tem (020), e quem filtra por ele agora e a funcao, no
+// banco, onde a RLS nao cega a leitura.
 export interface GroupInvitation {
-  id: string;
+  invitation_id: string;
   group_id: string;
-  invited_by: string;
-  invite_method: "email" | "phone" | "code";
-  invite_target: string;
-  message?: string;
-  status: "pending" | "accepted" | "rejected" | "expired";
+  group_name: string;
+  group_description: string | null;
+  inviter_name: string | null;
+  inviter_avatar_url: string | null;
+  invite_message: string | null;
   expires_at: string;
   created_at: string;
-  updated_at: string;
-  group: {
-    id: string;
-    name: string;
-    description?: string;
-    group_code: string;
-    group_type: "public" | "private";
-    default_split_type: string;
-    photo_url?: string;
-    is_active: boolean;
-  };
-  inviter: {
-    id: string;
-    full_name: string;
-    avatar_url?: string;
-  };
 }
 
 export const useGroupInvitations = (user: User | null) => {
@@ -35,7 +43,6 @@ export const useGroupInvitations = (user: User | null) => {
   const [loading, setLoading] = useState(true);
   const [acceptLoading, setAcceptLoading] = useState<string | null>(null);
   const [rejectLoading, setRejectLoading] = useState<string | null>(null);
-  const [orphanedCount, setOrphanedCount] = useState(0);
 
   const supabase = createClient();
 
@@ -49,269 +56,64 @@ export const useGroupInvitations = (user: User | null) => {
     try {
       setLoading(true);
 
-      // 1. Buscar apenas os convites primeiro
-      const { data: invites, error: invitesError } = await supabase
-        .from("group_invitations")
-        .select("*")
-        .eq("invited_user_id", user.id)
-        .eq("status", "pending")
-        .gt("expires_at", new Date().toISOString())
-        .order("created_at", { ascending: false });
+      // Uma chamada. Os tres SELECTs (convites, grupos, perfis) e a juncao a mao
+      // em JavaScript viraram isto -- e com eles foi embora o "convite orfao",
+      // que era a RLS sendo lida como grupo apagado.
+      const { data, error } = await supabase.rpc("list_my_group_invitations");
 
-      if (invitesError) {
-        console.error("❌ Error fetching invitations:", invitesError);
+      if (error) {
+        console.error("Erro ao buscar convites de grupo:", error);
         setInvitations([]);
         return;
       }
 
-      if (!invites || invites.length === 0) {
-        console.log("📊 Nenhum convite encontrado");
-        setInvitations([]);
-        return;
-      }
-
-      console.log("📊 Convites encontrados:", invites.length);
-
-      // 2. Buscar grupos separadamente usando os group_ids
-      const groupIds = Array.from(
-        new Set(invites.map((invite) => invite.group_id))
-      );
-
-      console.log("🔍 Group IDs para buscar:", groupIds);
-
-      // Teste: verificar se existem grupos com esses IDs (sem RLS)
-      const { data: allGroups, error: allGroupsError } = await supabase
-        .from("expense_groups")
-        .select("id, name, is_active, created_by");
-
-      console.log("🧪 Todos os grupos na tabela:", {
-        total: allGroups?.length || 0,
-        data: allGroups,
-        error: allGroupsError,
-      });
-
-      // Teste específico: verificar se os grupos dos convites existem na lista completa
-      console.log("🔍 Análise dos grupos necessários:");
-      groupIds.forEach((groupId) => {
-        const existsInAll = allGroups?.some((g) => g.id === groupId);
-        const groupInfo = allGroups?.find((g) => g.id === groupId);
-        console.log(
-          `   - Grupo ${groupId}: ${
-            existsInAll ? "✅ EXISTE" : "❌ NÃO EXISTE"
-          } na tabela`,
-          groupInfo || "sem dados"
-        );
-      });
-
-      // Teste específico para os IDs dos convites
-      for (const groupId of groupIds) {
-        const { data: specificGroup, error: specificError } = await supabase
-          .from("expense_groups")
-          .select("*")
-          .eq("id", groupId)
-          .single();
-
-        console.log(`🔍 Grupo ${groupId}:`, {
-          data: specificGroup,
-          error: specificError,
-        });
-      }
-
-      const { data: groups, error: groupsError } = await supabase
-        .from("expense_groups")
-        .select(
-          "id, name, description, group_code, group_type, default_split_type, photo_url, is_active"
-        )
-        .in("id", groupIds);
-
-      if (groupsError) {
-        console.error("❌ Error fetching groups:", groupsError);
-      }
-
-      console.log("📊 Grupos encontrados:", groups?.length || 0);
-      console.log("📋 Dados dos grupos:", groups);
-
-      // 3. Buscar perfis dos convidadores separadamente
-      const inviterIds = Array.from(
-        new Set(invites.map((invite) => invite.invited_by))
-      );
-      const { data: profiles, error: profilesError } = await supabase
-        .from("profiles")
-        .select("id, full_name, avatar_url")
-        .in("id", inviterIds);
-
-      if (profilesError) {
-        console.error("❌ Error fetching profiles:", profilesError);
-      }
-
-      console.log("📊 Perfis encontrados:", profiles?.length || 0);
-
-      // 4. Combinar os dados manualmente em JavaScript
-      const combinedInvites = invites.map((invite: any) => {
-        const group = groups?.find((g) => g.id === invite.group_id) || null;
-        const inviter =
-          profiles?.find((p) => p.id === invite.invited_by) || null;
-
-        console.log(`🔍 Processando convite ${invite.id}:`, {
-          group_id: invite.group_id,
-          group_found: !!group,
-          group_name: group?.name || "N/A",
-          group_active: group?.is_active || false,
-          inviter_found: !!inviter,
-          inviter_name: inviter?.full_name || "N/A",
-        });
-
-        return {
-          ...invite,
-          group,
-          inviter,
-        };
-      });
-
-      // 5. Identificar e limpar convites órfãos (grupos inexistentes)
-      const orphanedInvites = combinedInvites.filter(
-        (invite: any) => !invite.group
-      );
-
-      if (orphanedInvites.length > 0) {
-        console.log(
-          "🚨 PROBLEMA DETECTADO: Convites órfãos (grupos inexistentes):",
-          {
-            total: orphanedInvites.length,
-            invites: orphanedInvites.map((inv) => ({
-              id: inv.id,
-              group_id: inv.group_id,
-              created_at: inv.created_at,
-            })),
-          }
-        );
-
-        setOrphanedCount(orphanedInvites.length);
-
-        // Marcar convites órfãos como expirados para limpar o banco
-        for (const orphan of orphanedInvites) {
-          try {
-            await supabase
-              .from("group_invitations")
-              .update({
-                status: "expired",
-                updated_at: new Date().toISOString(),
-              })
-              .eq("id", orphan.id);
-
-            console.log(`🧹 Convite órfão ${orphan.id} marcado como expirado`);
-          } catch (error) {
-            console.error(`❌ Erro ao limpar convite ${orphan.id}:`, error);
-          }
-        }
-      } else {
-        setOrphanedCount(0);
-      }
-
-      // 6. Filtrar apenas convites com grupos ativos e dados completos
-      const activeInvites = combinedInvites.filter((invite: any) => {
-        const hasGroup = invite.group !== null;
-        const isActive = invite.group?.is_active === true;
-        const hasInviter = invite.inviter !== null;
-
-        const isValid = hasGroup && isActive && hasInviter;
-
-        if (!isValid) {
-          console.log(`❌ Convite ${invite.id} filtrado:`, {
-            hasGroup,
-            isActive,
-            hasInviter,
-            reason: !hasGroup
-              ? "grupo não existe"
-              : !isActive
-              ? "grupo inativo"
-              : "sem dados do convidador",
-          });
-        }
-
-        return isValid;
-      });
-
-      console.log("✅ Convites válidos após filtro:", activeInvites.length);
-
-      // Se todos os convites foram filtrados por grupos inexistentes, mostrar mensagem explicativa
-      if (activeInvites.length === 0 && combinedInvites.length > 0) {
-        const allOrphaned = combinedInvites.every((inv) => !inv.group);
-        if (allOrphaned) {
-          console.log(
-            "⚠️  TODOS OS CONVITES SÃO ÓRFÃOS - Grupos foram deletados após convites serem enviados"
-          );
-        }
-      }
-
-      setInvitations(activeInvites);
+      // Sem filtro no cliente, de proposito. A funcao ja devolve so o que e
+      // entregavel (pendente, no prazo, grupo ativo), e qualquer filtro extra
+      // aqui seria um novo lugar para um convite desaparecer calado.
+      setInvitations((data || []) as GroupInvitation[]);
     } catch (error) {
-      console.error("❌ Error in fetchInvitations:", error);
+      console.error("Erro ao buscar convites de grupo:", error);
       setInvitations([]);
     } finally {
       setLoading(false);
     }
   };
 
-  const acceptInvitation = async (invitationId: string) => {
-    setAcceptLoading(invitationId);
+  // Aceitar e recusar sao a mesma requisicao com um booleano diferente.
+  const responderConvite = async (invitationId: string, accept: boolean) => {
+    const setLoadingState = accept ? setAcceptLoading : setRejectLoading;
+    setLoadingState(invitationId);
     try {
       const response = await fetch("/api/expense-groups/join", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          invitation_id: invitationId,
-          accept: true,
-        }),
+        body: JSON.stringify({ invitation_id: invitationId, accept }),
       });
 
-      if (response.ok) {
-        const data = await response.json();
+      const data = await response.json();
 
-        // Recarregar lista completa para sincronizar com o banco
-        await fetchInvitations();
-
-        return { success: true, message: data.message };
-      } else {
-        const error = await response.json();
-        return { success: false, error: error.error };
+      if (!response.ok) {
+        return { success: false, error: data.error };
       }
+
+      // Recarrega em vez de mexer no array local: quem decide se o convite ainda
+      // conta e o banco.
+      await fetchInvitations();
+
+      return { success: true, message: data.message };
     } catch (error) {
-      console.error("Error accepting invitation:", error);
+      console.error("Erro ao responder o convite:", error);
       return { success: false, error: "Erro interno" };
     } finally {
-      setAcceptLoading(null);
+      setLoadingState(null);
     }
   };
 
-  const rejectInvitation = async (invitationId: string) => {
-    setRejectLoading(invitationId);
-    try {
-      const response = await fetch("/api/expense-groups/join", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          invitation_id: invitationId,
-          accept: false,
-        }),
-      });
+  const acceptInvitation = (invitationId: string) =>
+    responderConvite(invitationId, true);
 
-      if (response.ok) {
-        // Recarregar lista completa para sincronizar com o banco
-        await fetchInvitations();
-
-        return { success: true };
-      } else {
-        const error = await response.json();
-        return { success: false, error: error.error };
-      }
-    } catch (error) {
-      console.error("Error rejecting invitation:", error);
-      return { success: false, error: "Erro interno" };
-    } finally {
-      setRejectLoading(null);
-    }
-  };
+  const rejectInvitation = (invitationId: string) =>
+    responderConvite(invitationId, false);
 
   const getTimeRemaining = (expiresAt: string) => {
     const now = new Date();
@@ -331,53 +133,6 @@ export const useGroupInvitations = (user: User | null) => {
     return `${diffMins}m`;
   };
 
-  const getSplitTypeLabel = (type: string) => {
-    switch (type) {
-      case "equal":
-        return "Divisão Igual";
-      case "percentage":
-        return "Por Percentual";
-      case "custom":
-        return "Por Despesa";
-      case "proportional":
-        return "Proporcional à Renda";
-      default:
-        return type;
-    }
-  };
-
-  const cleanOrphanedInvitations = async () => {
-    if (!user) return { success: false, error: "Usuário não autenticado" };
-
-    try {
-      // Marcar todos os convites órfãos como expirados
-      const { error } = await supabase
-        .from("group_invitations")
-        .update({
-          status: "expired",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("invited_user_id", user.id)
-        .eq("status", "pending");
-
-      if (error) {
-        console.error("Erro ao limpar convites órfãos:", error);
-        return { success: false, error: error.message };
-      }
-
-      // Recarregar convites após limpeza
-      await fetchInvitations();
-
-      return {
-        success: true,
-        message: "Convites órfãos removidos com sucesso",
-      };
-    } catch (error) {
-      console.error("Erro ao limpar convites:", error);
-      return { success: false, error: "Erro interno" };
-    }
-  };
-
   useEffect(() => {
     fetchInvitations();
 
@@ -392,12 +147,9 @@ export const useGroupInvitations = (user: User | null) => {
     loading,
     acceptLoading,
     rejectLoading,
-    orphanedCount,
     refetch: fetchInvitations,
     acceptInvitation,
     rejectInvitation,
     getTimeRemaining,
-    getSplitTypeLabel,
-    cleanOrphanedInvitations,
   };
 };

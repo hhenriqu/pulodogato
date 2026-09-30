@@ -46,12 +46,10 @@ import {
   Crown,
   UserPlus,
   Copy,
-  QrCode,
   Mail,
   Phone,
   DollarSign,
   Calendar,
-  AlertTriangle,
   MoreVertical,
   LogIn,
   Calculator,
@@ -156,19 +154,21 @@ export default function ExpenseGroupsPage() {
     currency: MOEDA_PADRAO,
   });
 
-  // Hook para gerenciar convites
+  // Hook para gerenciar convites.
+  //
+  // `orphanedCount` e `cleanOrphanedInvitations` sairam na HMO-196: nao existia
+  // convite orfao nenhum. Era a RLS escondendo o grupo de quem ainda nao e
+  // membro, lida como "o grupo foi deletado" -- e o hook marcava os convites
+  // legitimos como expirados por causa disso.
   const {
     invitations,
     loading: invitationsLoading,
     acceptLoading,
     rejectLoading,
-    orphanedCount,
     refetch: refetchInvitations,
     acceptInvitation,
     rejectInvitation,
     getTimeRemaining,
-    getSplitTypeLabel: getInviteSplitTypeLabel,
-    cleanOrphanedInvitations,
   } = useGroupInvitations(user);
 
   // Form states
@@ -1160,24 +1160,31 @@ export default function ExpenseGroupsPage() {
               <div className="grid gap-4">
                 {invitations.map((invitation) => (
                   <Card
-                    key={invitation.id}
+                    key={invitation.invitation_id}
                     className="hover:shadow-md transition-shadow"
                   >
                     <CardHeader className="pb-3">
                       <div className="flex items-start justify-between">
                         <div className="flex items-center gap-3">
                           <Avatar className="h-10 w-10">
-                            <AvatarImage src={invitation.inviter.avatar_url} />
+                            <AvatarImage
+                              src={invitation.inviter_avatar_url ?? undefined}
+                            />
+                            {/* `inviter_name` e anulavel: perfil sem nome
+                                preenchido e o estado real da conta do relato da
+                                HMO-196. Antes isto era
+                                `inviter.full_name.charAt(0)` -- um TypeError que
+                                derrubaria a aba inteira. */}
                             <AvatarFallback>
-                              {invitation.inviter.full_name.charAt(0)}
+                              {invitation.inviter_name?.charAt(0) ?? "?"}
                             </AvatarFallback>
                           </Avatar>
                           <div>
                             <CardTitle className="text-lg">
-                              {invitation.group.name}
+                              {invitation.group_name}
                             </CardTitle>
                             <CardDescription>
-                              Convite de {invitation.inviter.full_name}
+                              Convite de {invitation.inviter_name ?? "alguém"}
                             </CardDescription>
                           </div>
                         </div>
@@ -1192,99 +1199,57 @@ export default function ExpenseGroupsPage() {
                     </CardHeader>
 
                     <CardContent className="space-y-4">
-                      {/* Group Details */}
-                      <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div className="space-y-2">
-                          <div className="flex items-center gap-2">
-                            <Share2 className="h-4 w-4 text-muted-foreground" />
-                            <span>
-                              {invitation.group.group_type === "public"
-                                ? "Público"
-                                : "Privado"}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <DollarSign className="h-4 w-4 text-muted-foreground" />
-                            <span>
-                              {getInviteSplitTypeLabel(
-                                invitation.group.default_split_type
-                              )}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="space-y-2">
-                          <div className="flex items-center gap-2">
-                            <Copy className="h-4 w-4 text-muted-foreground" />
-                            <span className="font-mono text-sm">
-                              {invitation.group.group_code}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Calendar className="h-4 w-4 text-muted-foreground" />
-                            <span>
-                              {new Date(
-                                invitation.created_at
-                              ).toLocaleDateString("pt-BR")}
-                            </span>
-                          </div>
-                        </div>
+                      {/* Quando o convite foi feito. O tipo do grupo, a regra de
+                          divisao e o CODIGO do grupo sairam daqui na HMO-196:
+                          `list_my_group_invitations()` nao devolve nada disso de
+                          proposito. Quem ainda nao aceitou nao le o interior do
+                          grupo, e quem RECUSA nao precisa sair com a chave de
+                          entrada na mao -- os dois botoes abaixo nunca
+                          dependeram do codigo. O selo "Convite via Email/
+                          Telefone/Código" tambem saiu: agora existe um canal so,
+                          o proprio app, e o selo so podia dizer Email. */}
+                      <div className="flex items-center gap-2 text-sm">
+                        <Calendar className="h-4 w-4 text-muted-foreground" />
+                        <span>
+                          Convite feito em{" "}
+                          {new Date(invitation.created_at).toLocaleDateString(
+                            "pt-BR"
+                          )}
+                        </span>
                       </div>
 
                       {/* Description */}
-                      {invitation.group.description && (
+                      {invitation.group_description && (
                         <div className="p-3 bg-muted rounded-md">
                           <p className="text-sm">
-                            {invitation.group.description}
+                            {invitation.group_description}
                           </p>
                         </div>
                       )}
 
                       {/* Personal Message */}
-                      {invitation.message && (
+                      {invitation.invite_message && (
                         <div className="p-3 bg-info/10 rounded-md border-l-4 border-info">
                           <p className="text-sm">
-                            <strong>Mensagem:</strong> {invitation.message}
+                            <strong>Mensagem:</strong>{" "}
+                            {invitation.invite_message}
                           </p>
                         </div>
                       )}
-
-                      {/* Method Badge */}
-                      <div className="flex items-center gap-2">
-                        <Badge
-                          variant="secondary"
-                          className="flex items-center gap-1"
-                        >
-                          {invitation.invite_method === "email" && (
-                            <Mail className="h-3 w-3" />
-                          )}
-                          {invitation.invite_method === "phone" && (
-                            <Phone className="h-3 w-3" />
-                          )}
-                          {invitation.invite_method === "code" && (
-                            <QrCode className="h-3 w-3" />
-                          )}
-                          Convite via{" "}
-                          {invitation.invite_method === "email"
-                            ? "Email"
-                            : invitation.invite_method === "phone"
-                            ? "Telefone"
-                            : "Código"}
-                        </Badge>
-                      </div>
 
                       {/* Actions */}
                       <div className="flex gap-2 pt-2">
                         <Button
                           onClick={() =>
                             handleAcceptInvitation(
-                              invitation.id,
-                              invitation.group.name
+                              invitation.invitation_id,
+                              invitation.group_name
                             )
                           }
-                          disabled={acceptLoading === invitation.id}
+                          disabled={acceptLoading === invitation.invitation_id}
                           className="flex-1"
                         >
-                          {acceptLoading === invitation.id ? (
+                          {acceptLoading === invitation.invitation_id ? (
                             <div className="flex items-center gap-2">
                               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current"></div>
                               Entrando...
@@ -1298,11 +1263,13 @@ export default function ExpenseGroupsPage() {
                         </Button>
                         <Button
                           variant="outline"
-                          onClick={() => handleRejectInvitation(invitation.id)}
-                          disabled={rejectLoading === invitation.id}
+                          onClick={() =>
+                            handleRejectInvitation(invitation.invitation_id)
+                          }
+                          disabled={rejectLoading === invitation.invitation_id}
                           className="flex-1"
                         >
-                          {rejectLoading === invitation.id ? (
+                          {rejectLoading === invitation.invitation_id ? (
                             <div className="flex items-center gap-2">
                               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-border"></div>
                               Rejeitando...
@@ -1363,42 +1330,17 @@ export default function ExpenseGroupsPage() {
             </Card>
           )}
 
-          {/* Notificação de Convites Órfãos */}
-          {orphanedCount > 0 && (
-            <Card className="border-warning/30 bg-warning/10 mt-4">
-              <CardContent className="pt-6">
-                <div className="flex items-start gap-3">
-                  <AlertTriangle className="h-5 w-5 text-warning mt-0.5" />
-                  <div className="flex-1">
-                    <h4 className="text-sm font-medium text-warning mb-1">
-                      Convites Órfãos Detectados
-                    </h4>
-                    <p className="text-sm text-warning mb-3">
-                      Encontramos {orphanedCount} convite
-                      {orphanedCount > 1 ? "s" : ""} para grupos que não existem
-                      mais. Estes convites foram automaticamente marcados como
-                      expirados para evitar confusão.
-                    </p>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={async () => {
-                        const result = await cleanOrphanedInvitations();
-                        if (result.success) {
-                          alert("Convites órfãos removidos com sucesso!");
-                        } else {
-                          alert(`Erro: ${result.error}`);
-                        }
-                      }}
-                      className="border-warning/30 text-warning hover:bg-warning/10"
-                    >
-                      Limpar Convites Órfãos
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
+          {/*
+            O aviso "Convites Órfãos Detectados" ficava aqui, e saiu na HMO-196.
+            Ele anunciava "convites para grupos que não existem mais" com um
+            botão "Limpar Convites Órfãos", e nenhum daqueles grupos havia sido
+            apagado: o grupo era invisível porque a RLS o esconde de quem ainda
+            não é membro. O aviso era a conclusão errada exibida com confiança,
+            e o botão terminava o serviço marcando como expirados os convites
+            legítimos da pessoa. A leitura agora passa por
+            list_my_group_invitations(), que enxerga o grupo -- então não há
+            órfão a detectar nem nada a limpar.
+          */}
         </TabsContent>
       </Tabs>
 

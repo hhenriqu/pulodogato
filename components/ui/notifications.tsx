@@ -44,7 +44,7 @@ export function NotificationBell({ user }: NotificationsProps) {
     const result = await acceptGroupInvitation(invitation);
 
     if (result.success) {
-      toast.success(`Você entrou no grupo "${invitation.group.name}"!`);
+      toast.success(`Você entrou no grupo "${invitation.group_name}"!`);
       refetch();
     } else {
       toast.error(result.error || "Erro ao aceitar convite");
@@ -195,20 +195,27 @@ export function NotificationBell({ user }: NotificationsProps) {
                             Rejeitar
                           </Button>
 
-                          {/* Group Info */}
+                          {/* Quem convidou. O codigo do grupo saiu daqui com a
+                              030: quem recusa o convite nao precisa sair com a
+                              chave de entrada do grupo na mao, e os dois botoes
+                              acima nunca dependeram dele. `inviter_name` pode
+                              ser nulo (perfil sem nome preenchido), entao a
+                              inicial cai para "?" em vez de sumir. */}
                           <div className="flex items-center gap-1 ml-auto">
                             <Avatar className="h-5 w-5">
                               <AvatarImage
-                                src={notification.data?.inviter?.avatar_url}
+                                src={
+                                  notification.data?.inviter_avatar_url ??
+                                  undefined
+                                }
                               />
                               <AvatarFallback className="text-xs">
-                                {notification.data?.inviter?.full_name?.charAt(
-                                  0
-                                )}
+                                {notification.data?.inviter_name?.charAt(0) ??
+                                  "?"}
                               </AvatarFallback>
                             </Avatar>
-                            <span className="text-xs text-muted-foreground font-mono">
-                              {notification.data?.group?.group_code}
+                            <span className="text-xs text-muted-foreground">
+                              {notification.data?.inviter_name ?? "Alguém"}
                             </span>
                           </div>
                         </div>
