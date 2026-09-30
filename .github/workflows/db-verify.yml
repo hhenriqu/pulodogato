@@ -116,6 +116,11 @@ jobs:
       - name: Teste de isolamento de RLS
         run: $PSQL -f database/tests/rls_isolation_test.sql
 
+      # HMO-190: entrada por codigo em grupo privado nasce `pending`, e quem
+      # tira dela e o admin. Roda aqui porque so depende do 001 e do 002.
+      - name: Teste de aprovacao de entrada por codigo (HMO-190)
+        run: $PSQL -f database/tests/hmo190_aprovar_entrada_por_codigo_test.sql
+
       - name: 006_budgets_and_card_invoices
         run: $PSQL -f database/migrations/006_budgets_and_card_invoices.sql
 

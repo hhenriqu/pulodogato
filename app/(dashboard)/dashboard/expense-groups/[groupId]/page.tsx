@@ -87,6 +87,11 @@ interface ExpenseGroup {
     avatar_url?: string;
   };
   members?: GroupMember[];
+  /**
+   * Quem pediu para entrar pelo codigo e ainda aguarda o admin (HMO-190).
+   * Nunca entra em `members`: pendente nao e membro e nao divide despesa.
+   */
+  pendingMembers?: GroupMember[];
 }
 
 interface GroupMember {
@@ -242,6 +247,11 @@ export default function GroupDetailPage() {
 
   const [user, setUser] = useState<User | null>(null);
   const [group, setGroup] = useState<ExpenseGroup | null>(null);
+  // Id do pedido de entrada em processamento, para travar os dois botoes
+  // daquela linha so (HMO-190).
+  const [respondendoPedido, setRespondendoPedido] = useState<string | null>(
+    null
+  );
   const [transactions, setTransactions] = useState<GroupTransaction[]>([]);
   const [scheduled, setScheduled] = useState<GroupScheduled[]>([]);
   const [balances, setBalances] = useState<BalanceSummary[]>([]);
@@ -356,6 +366,42 @@ export default function GroupDetailPage() {
     } else {
       toast.error(data.error || "Erro ao carregar grupo");
       router.push("/dashboard/expense-groups");
+    }
+  };
+
+  /**
+   * Aprova ou recusa quem entrou com o codigo do grupo (HMO-190). Em grupo
+   * privado a entrada por codigo nasce `pending` e so vira membro aqui.
+   */
+  const handleResponderPedido = async (
+    memberId: string,
+    action: "approve" | "reject"
+  ) => {
+    setRespondendoPedido(memberId);
+    try {
+      const response = await fetch(
+        `/api/expense-groups/${groupId}/members/${memberId}/approve`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action }),
+        }
+      );
+      const data = await response.json();
+
+      if (response.ok) {
+        toast.success(data.message);
+        // Recarrega o grupo: o aprovado sai de `pendingMembers` e entra em
+        // `members`, e as duas listas da tela vem da mesma resposta.
+        await loadGroup();
+      } else {
+        toast.error(data.error || "Erro ao responder ao pedido");
+      }
+    } catch (error) {
+      console.error("Error responding to join request:", error);
+      toast.error("Erro ao responder ao pedido");
+    } finally {
+      setRespondendoPedido(null);
     }
   };
 
@@ -821,6 +867,12 @@ export default function GroupDetailPage() {
   }
 
   const transactionGroups = groupTransactionsByPeriod();
+
+  // Só o admin vê e responde os pedidos de entrada pelo código (HMO-190).
+  const souAdmin =
+    group.members?.some(
+      (member) => member.user?.id === user?.id && member.role === "admin"
+    ) ?? false;
 
   return (
     <div className="container mx-auto py-6 space-y-6">
@@ -1740,6 +1792,65 @@ export default function GroupDetailPage() {
         </TabsContent>
 
         <TabsContent value="members" className="space-y-4">
+          {/* Pedidos de entrada pelo codigo, so para o admin (HMO-190). */}
+          {souAdmin && (group.pendingMembers?.length ?? 0) > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Users className="h-5 w-5" />
+                  Pedidos para entrar ({group.pendingMembers!.length})
+                </CardTitle>
+                <CardDescription>
+                  Entraram com o código {group.group_code} e aguardam sua
+                  aprovação.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {group.pendingMembers!.map((pedido) => (
+                    <div
+                      key={pedido.id}
+                      className="flex items-center justify-between gap-3 p-4 border rounded-lg"
+                    >
+                      <div className="flex items-center gap-3">
+                        <Avatar className="h-10 w-10">
+                          <AvatarImage src={pedido.user.avatar_url} />
+                          <AvatarFallback>
+                            {inicial(pedido.user.full_name)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <h4 className="font-medium">
+                          {pedido.user.full_name}
+                        </h4>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={respondendoPedido === pedido.id}
+                          onClick={() =>
+                            handleResponderPedido(pedido.id, "reject")
+                          }
+                        >
+                          Recusar
+                        </Button>
+                        <Button
+                          size="sm"
+                          disabled={respondendoPedido === pedido.id}
+                          onClick={() =>
+                            handleResponderPedido(pedido.id, "approve")
+                          }
+                        >
+                          Aprovar
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Members List */}
           <Card>
             <CardHeader>
