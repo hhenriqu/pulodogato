@@ -783,6 +783,30 @@ jobs:
       - name: Ponte ticker->CNPJ por igualdade exata, DMPL sem contar em triplo e escala MIL/UNIDADE
         run: npm run test:fundamento-cvm
 
+      - name: 029_pedido_de_entrada_visivel
+        run: $PSQL -f database/migrations/029_pedido_de_entrada_visivel.sql
+
+      # Re-executavel: as duas funcoes entram por CREATE OR REPLACE FUNCTION, e
+      # os GRANT/REVOKE sao declarativos.
+      - name: 029 e idempotente
+        run: $PSQL -f database/migrations/029_pedido_de_entrada_visivel.sql
+
+      # HMO-190, segunda volta. O que so o Postgres pega aqui:
+      #   - pedir o mesmo codigo duas vezes devolvia 23505 tanto para quem estava
+      #     `active` quanto para quem estava `pending`, e a rota traduzia os dois
+      #     para "voce ja e membro deste grupo". Para a pendente isso era falso em
+      #     cima de invisivel -- foi a frase que fez a usuaria do relato ir cobrar
+      #     acesso do dono do grupo;
+      #   - o contrario tambem precisa continuar valendo, e e o controle negativo
+      #     da suite: membro ATIVO pedindo de novo AINDA leva 23505. Sem essa
+      #     assercao, apagar o IF inteiro "conserta" o sintoma e transforma a RPC
+      #     num "entra sempre";
+      #   - `my_pending_group_requests()` e SECURITY DEFINER, entao quem garante
+      #     que ela nao vira um vazamento e o par de assercoes que prova que a
+      #     pendente ve SO o proprio pedido e CONTINUA sem ler `expense_groups`.
+      - name: Pedido de entrada pendente e dizivel e visivel sem abrir o grupo
+        run: $PSQL -f database/tests/hmo190_pedido_de_entrada_visivel_test.sql
+
       # As duas suites que guardam as views que a 026 REESCREVEU rodam la atras na
       # cadeia (steps do 006 e do 007), ou seja: contra a definicao ANTIGA de
       # `group_member_balances` e `budget_consumption`. Elas nunca viram a versao

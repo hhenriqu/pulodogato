@@ -110,11 +110,42 @@ export async function GET(request: NextRequest) {
       })),
     });
 
+    // Os pedidos de entrada ainda na fila (migration 029).
+    //
+    // Não dá para tirar isso das queries acima: quem está `pending` não é
+    // membro para a RLS (`is_group_member` exige status = 'active'), então a
+    // linha de `expense_groups` é invisível para ela e o nome do grupo não
+    // existe deste lado. O que ela enxerga é a própria linha de
+    // `group_members` -- um UUID e nada mais.
+    //
+    // Sem esta lista, digitar o código certo num grupo privado não deixa
+    // vestígio nenhum na tela: é o "o grupo não está aparecendo para ela" da
+    // HMO-190. A RPC é SECURITY DEFINER e devolve só id, nome e data dos
+    // pedidos do próprio chamador -- o suficiente para dizer "você está
+    // esperando fulano aprovar", sem abrir o conteúdo do grupo.
+    const { data: pendingRows, error: pendingError } = await supabase.rpc(
+      "my_pending_group_requests"
+    );
+
+    // Um erro aqui não pode derrubar a lista de grupos: os grupos de verdade
+    // são a função principal da tela, e o pedido pendente é um aviso.
+    if (pendingError) {
+      console.error("Erro ao buscar pedidos pendentes:", pendingError);
+    }
+
+    const pendingRequests = (pendingRows || []).map((row: any) => ({
+      group_id: row.group_id,
+      group_name: row.group_name,
+      requested_at: row.requested_at,
+    }));
+
     return NextResponse.json({
       groups: groupsWithMembers,
+      pendingRequests,
       debug: {
         total_groups_found: allGroups?.length || 0,
         user_groups_found: groupsWithMembers.length,
+        pending_requests_found: pendingRequests.length,
         user_id: user.id,
       },
     });

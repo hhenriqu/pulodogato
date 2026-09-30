@@ -149,16 +149,25 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (joinError) {
-      // no_data_found = código inválido; unique_violation = já é membro
+      // no_data_found = código inválido; unique_violation = já é membro ATIVO
       if (joinError.code === "P0002" || joinError.code === "no_data_found") {
         return NextResponse.json(
-          { error: "Group not found or invalid code" },
+          { error: "Grupo não encontrado — confira o código" },
           { status: 404 }
         );
       }
+      // Desde a migration 029 o 23505 significa só uma coisa: a pessoa já é
+      // membro `active`. Pedido pendente repetido não cai mais aqui -- a RPC
+      // devolve `pending` e o caminho de sucesso abaixo cuida dele.
+      //
+      // Essa separação é o conserto da HMO-190: enquanto os dois estados
+      // dividiam o mesmo 23505, quem estava esperando aprovação lia "você já é
+      // membro deste grupo" e ia cobrar o dono do grupo por um acesso que o
+      // app tinha acabado de afirmar que ela tinha. Aqui a frase é verificável:
+      // quem é `active` enxerga o grupo na lista.
       if (joinError.code === "23505") {
         return NextResponse.json(
-          { error: "You are already a member of this group" },
+          { error: "Você já faz parte deste grupo" },
           { status: 400 }
         );
       }
@@ -175,12 +184,16 @@ export async function POST(request: NextRequest) {
       member_status: string;
     };
 
+    // A mensagem do caso pendente descreve o ESTADO, não o ato de pedir: a RPC
+    // é idempotente para quem já tem pedido na fila, então esta resposta serve
+    // tanto para o primeiro pedido quanto para a quinta vez que a pessoa volta
+    // para conferir -- e em nenhuma delas "pedido enviado agora" seria exato.
     return NextResponse.json(
       {
         message:
           result.member_status === "active"
-            ? "Successfully joined the group!"
-            : "Request sent! Waiting for admin approval",
+            ? `Você entrou em "${result.group_name}"!`
+            : "Seu pedido está aguardando aprovação de um administrador do grupo",
         group: {
           id: result.group_id,
           name: result.group_name,
