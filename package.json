@@ -71,7 +71,9 @@
     "test:parte-do-grupo": "rm -rf .tmp-parte-do-grupo && tsc -p scripts/tsconfig.parte-do-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-parte-do-grupo lib --espelha-raiz && node --test scripts/test-parte-do-grupo.mjs",
     "test:cambio": "rm -rf .tmp-cambio && tsc -p scripts/tsconfig.cambio-test.json && node scripts/resolve-aliases.mjs .tmp-cambio lib && node --test scripts/test-cambio.mjs",
     "test:cartao-orcamento-grupo": "rm -rf .tmp-cartao-orcamento-grupo && tsc -p scripts/tsconfig.cartao-orcamento-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-cartao-orcamento-grupo components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-cartao-orcamento-grupo lib --espelha-raiz && node --test scripts/test-cartao-orcamento-grupo.mjs",
-    "test:moeda-do-grupo": "rm -rf .tmp-moeda-do-grupo && tsc -p scripts/tsconfig.moeda-do-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-moeda-do-grupo lib && node --test scripts/test-moeda-do-grupo.mjs"
+    "test:moeda-do-grupo": "rm -rf .tmp-moeda-do-grupo && tsc -p scripts/tsconfig.moeda-do-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-moeda-do-grupo lib && node --test scripts/test-moeda-do-grupo.mjs",
+    "test:realizado-e-previsao": "rm -rf .tmp-realizado-e-previsao && tsc -p scripts/tsconfig.realizado-e-previsao-test.json && node scripts/resolve-aliases.mjs .tmp-realizado-e-previsao lib && node --test scripts/test-realizado-e-previsao.mjs",
+    "test:tres-numeros": "rm -rf .tmp-tres-numeros && tsc -p scripts/tsconfig.tres-numeros-test.json && node scripts/resolve-aliases.mjs .tmp-tres-numeros components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-tres-numeros lib --espelha-raiz && node --test scripts/test-tres-numeros.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

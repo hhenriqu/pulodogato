@@ -68,7 +68,6 @@ import { Progress } from "@/components/ui/progress";
 import {
   Wallet,
   TrendingUp,
-  TrendingDown,
   CalendarClock,
   AlertTriangle,
   Target,
@@ -103,6 +102,17 @@ import {
   somarMesesPrevistos,
   type PrevistoDoPeriodo,
 } from "@/lib/previsto-x-realizado";
+import {
+  estimativaVariavel,
+  janelaDaPrevisao,
+  janelaDoRealizado,
+  montarPainel,
+  type LadosDoPeriodo,
+} from "@/lib/realizado-e-previsao";
+import {
+  LinhaDeGastoVariavel,
+  TileRealizadoEPrevisao,
+} from "@/components/dashboard/RealizadoEPrevisao";
 
 const moeda = (valor: number) =>
   new Intl.NumberFormat("pt-BR", {
@@ -236,6 +246,34 @@ function Painel() {
   // um `?? "expense"` calado faria, com o resultado previsto negativo no valor
   // do salario.
   const [previstoIndisponivel, setPrevistoIndisponivel] = useState(false);
+  // ---------------------------------------------------------------------
+  // A PREVISAO DO PERIODO (HMO-174)
+  // ---------------------------------------------------------------------
+  // "Quanto ainda vou gastar e ainda vou receber ate o fim do periodo." Vem de
+  // /api/dashboard/previsao, que monta a linha do tempo pelo
+  // lib/cash-flow-forecast.ts e soma os dias dentro do periodo -- e por isso a
+  // cobranca que existe como conta prevista E como recorrencia detectada conta
+  // UMA vez. Um `SUM` novo aqui cobraria a Netflix duas vezes.
+  const [previsaoDoPeriodo, setPrevisaoDoPeriodo] =
+    useState<LadosDoPeriodo | null>(null);
+  // A MEDIANA de gasto variavel, com a procedencia dela: quantos meses
+  // fechados a sustentam. Sem base o bloco diz isso em vez de desenhar zero --
+  // zero se le como "voce nao gasta nada", e o que houve foi ausencia de
+  // historico. A multiplicacao pelos dias que faltam e feita na tela, pela
+  // mesma funcao pura que tem teste, porque o valor que vale ali e o que o
+  // usuario digitou no campo.
+  const [baseDoVariavel, setBaseDoVariavel] = useState<{
+    porDia: number;
+    temBase: boolean;
+    mesesBase: number;
+  } | null>(null);
+  // As assinaturas detectadas nao puderam ser lidas: a Previsao fica menor que
+  // a verdade, que e o pior lado do erro aqui. O tile avisa.
+  const [previsaoIncompleta, setPrevisaoIncompleta] = useState(false);
+  // O valor por dia que o usuario digitou. `null` = ninguem mexeu, e vale a
+  // mediana que a rota calculou. Nao e persistido de proposito: e um "e se",
+  // nao uma configuracao -- a mesma escolha que a tela de fluxo de caixa faz.
+  const [gastoDiario, setGastoDiario] = useState<number | null>(null);
   const [metas, setMetas] = useState<Meta[]>([]);
   const [possoGastar, setPossoGastar] = useState<PossoGastar | null>(null);
   // O patrimonio no fim de um periodo que ja terminou, de `net_worth_history`.
@@ -282,6 +320,9 @@ function Painel() {
     // ai o tile mostra o numero de hoje dizendo que e de hoje.
     const temSaldoHistorico =
       periodo.modo === "mes" && terminaNoPassado(periodo, hoje);
+    // A fatia do periodo em que algo pode JA ter acontecido. `null` em periodo
+    // inteiramente futuro -- e ai nao ha realizado nenhum para pedir.
+    const janelaRealizado = janelaDoRealizado(periodo, hoje);
 
     try {
       // Em paralelo de proposito: em serie, a tela inicial esperaria a soma
@@ -291,14 +332,27 @@ function Painel() {
         rContas,
         rFluxo,
         rPrevistas,
+        rPrevisao,
         rMetas,
         rPossoGastar,
         rLayout,
         rPatrimonio,
       ] = await Promise.all([
         fetch("/api/financial-accounts"),
-        fetch(`/api/reports/cash-flow?${query}`),
+        // O REALIZADO PARA EM HOJE, e e por isso que a janela nao e `query`
+        // (HMO-174). `monthly_cash_flow` agrega o mes todo por
+        // `transaction_date` sem comparar com hoje, e a materializacao de
+        // recorrencia cria transacao com data FUTURA dentro do mes corrente --
+        // ela entrava em "ja gastei" antes de acontecer, e saia tambem da
+        // previsao. Periodo inteiramente futuro nao tem realizado, e ai a
+        // chamada nem acontece: com `ate` antes de `de` a rota responde 400.
+        janelaRealizado
+          ? fetch(
+              `/api/reports/cash-flow?de=${janelaRealizado.de}&ate=${janelaRealizado.ate}`
+            )
+          : null,
         fetch(`/api/scheduled-transactions/summary?${query}`),
+        fetch(`/api/dashboard/previsao?${query}`),
         fetch("/api/goals?status=active"),
         periodoTemHoje ? fetch("/api/safe-to-spend") : null,
         fetch("/api/settings/dashboard"),
@@ -310,9 +364,25 @@ function Painel() {
         setContas(d.accounts ?? []);
       }
 
-      if (rFluxo.ok) {
+      if (rFluxo?.ok) {
         const d = await rFluxo.json();
         setFluxo(d.summary ?? null);
+      } else if (!janelaRealizado) {
+        // Periodo inteiramente futuro. Zerar e obrigatorio, nao higiene: sem
+        // isto, quem navega de setembro para novembro continua vendo o
+        // realizado de setembro debaixo de uma tela que diz novembro.
+        setFluxo(null);
+      }
+
+      if (rPrevisao.ok) {
+        const d = await rPrevisao.json();
+        setPrevisaoDoPeriodo(d.previsao ?? null);
+        setBaseDoVariavel(d.variable_spend ?? null);
+        setPrevisaoIncompleta(Boolean(d.recorrencias_indisponiveis));
+        // Trocar de periodo devolve a media: o valor digitado era um "e se"
+        // sobre AQUELE periodo, e arrasta-lo para outro imprimiria uma
+        // estimativa que o usuario nao escolheu debaixo de um rotulo novo.
+        setGastoDiario(null);
       }
 
       // O patrimonio no fim do periodo e a ULTIMA linha da janela, nao a
@@ -401,6 +471,48 @@ function Painel() {
   });
 
   // ------------------------------------------------------------------------
+  // REALIZADO + PREVISAO = TOTAL ESPERADO (HMO-174)
+  // ------------------------------------------------------------------------
+  // Nada e recalculado aqui. O realizado sai de /api/reports/cash-flow -- ja
+  // recortado em hoje pela janela pedida la em cima -- e a previsao sai de
+  // /api/dashboard/previsao, que a deduplica. `montarPainel` so soma as duas
+  // parcelas: o total NUNCA e uma terceira consulta, senao no dia em que as
+  // fontes discordassem (uma conta a conta paga, a outra nao) o tile mostraria
+  // parcelas que nao fecham com o proprio total.
+  //
+  // Enquanto a previsao nao chega, `previsaoDoPeriodo` e null e o painel soma
+  // zero. Isso mostra o realizado como se fosse o total por um instante -- e o
+  // preco de nao esconder os tiles a cada troca de periodo. O `atualizando`
+  // que ja esmaece o painel cobre essa janela.
+  const previsaoParaOTile: LadosDoPeriodo = previsaoDoPeriodo ?? {
+    receita: 0,
+    despesa: 0,
+  };
+
+  const numerosDoPainel = montarPainel(
+    {
+      receita: fluxo?.total_income ?? 0,
+      // Ja POSITIVO da rota: despesa e gravada negativa no banco e o ABS e
+      // aplicado la. Um Math.abs aqui seria inofensivo hoje e mentiria no dia
+      // em que a rota trocasse de convencao.
+      despesa: fluxo?.total_expense ?? 0,
+    },
+    previsaoParaOTile
+  );
+
+  const janelaPrevisao = janelaDaPrevisao(periodo, hoje);
+  const janelaRealizadoDaTela = janelaDoRealizado(periodo, hoje);
+
+  // A estimativa que a LINHA mostra, com o valor do campo quando ele existe.
+  // Mesma funcao pura que o teste exercita -- nao ha uma segunda multiplicacao
+  // no servidor para discordar desta.
+  const variavel = estimativaVariavel(
+    gastoDiario ?? baseDoVariavel?.porDia ?? 0,
+    janelaPrevisao,
+    hoje
+  );
+
+  // ------------------------------------------------------------------------
   // OS BLOCOS CONFIGURAVEIS
   // ------------------------------------------------------------------------
   // A partir da HMO-159 a ordem desta tela nao esta mais escrita no JSX: cada
@@ -416,7 +528,11 @@ function Painel() {
   // mapa, porque nao sao blocos de conteudo: sao a moldura da tela.
   const blocos: Record<string, ReactNode> = {
     resumo: (
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="space-y-4">
+        {/* `grid-cols-1` explicito e obrigatorio: sem ele o grid nasce numa
+            coluna implicita dimensionada pelo conteudo, e no celular a pagina
+            ganha rolagem horizontal (HMO-181). */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* ----------------------------------------------------------------
             O TILE QUE NAO TEM EIXO DE TEMPO
             ----------------------------------------------------------------
@@ -452,44 +568,39 @@ function Painel() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription className="flex items-center gap-2">
-              <TrendingUp className="h-4 w-4" />
-              Entrou
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-success">
-              {moeda(fluxo?.total_income ?? 0)}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1 capitalize">
-              {rotulo}
-            </p>
-          </CardContent>
-        </Card>
+        {/* ----------------------------------------------------------------
+            OS DOIS TILES QUE VIRARAM TRES NUMEROS CADA (HMO-174)
+            ----------------------------------------------------------------
+            Eram "Entrou" e "Saiu": um numero cada, o periodo inteiro agregado
+            sem comparar com hoje. Dois defeitos moravam nisso, e nenhum tinha
+            sintoma:
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription className="flex items-center gap-2">
-              <TrendingDown className="h-4 w-4" />
-              Saiu
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {/* total_expense ja vem POSITIVO da rota: despesa e gravada
-                negativa no banco, e a rota aplica o ABS. Repetir um Math.abs
-                aqui seria inofensivo hoje e mentiria no dia em que a rota
-                mudasse de convencao -- o numero viraria positivo do mesmo
-                jeito e ninguem veria. */}
-            <div className="text-2xl font-bold text-destructive">
-              {moeda(fluxo?.total_expense ?? 0)}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Saldo do período: {moeda(fluxo?.net ?? 0)}
-            </p>
-          </CardContent>
-        </Card>
+              * a transacao lancada com data FUTURA dentro do mes corrente --
+                que a materializacao de recorrencia cria exatamente assim --
+                entrava em "ja gastei" antes de acontecer;
+              * nao havia onde ler o que AINDA vai acontecer, entao o usuario
+                comparava o saldo com um numero que ja estava desatualizado
+                pela propria agenda dele.
+
+            Agora cada lado diz Realizado, Previsao e Total esperado, e as duas
+            parcelas somam o total por construcao. */}
+        <TileRealizadoEPrevisao
+          lado="receita"
+          numeros={numerosDoPainel.receita}
+          rotulo={rotulo}
+          periodoEncerrado={janelaPrevisao === null}
+          periodoFuturo={janelaRealizadoDaTela === null}
+          previsaoIncompleta={previsaoIncompleta}
+        />
+
+        <TileRealizadoEPrevisao
+          lado="despesa"
+          numeros={numerosDoPainel.despesa}
+          rotulo={rotulo}
+          periodoEncerrado={janelaPrevisao === null}
+          periodoFuturo={janelaRealizadoDaTela === null}
+          previsaoIncompleta={previsaoIncompleta}
+        />
 
         {/* Outro tile sem eixo de tempo, e de um tipo diferente do saldo: o
             custo fixo sai das regras recorrentes ATIVAS, que sao uma
@@ -513,6 +624,44 @@ function Painel() {
             </p>
           </CardContent>
         </Card>
+        </div>
+
+        {/* ----------------------------------------------------------------
+            O SALDO DO PERIODO, QUE SAIU DE DENTRO DO TILE DE DESPESA
+            ----------------------------------------------------------------
+            Ele morava na nota de rodape do tile "Saiu". Nao cabe mais la: o
+            tile agora tem tres numeros proprios, e um quarto -- que mistura os
+            DOIS lados -- se leria como parte da mesma conta. `net` continua
+            vindo inteiro de /api/reports/cash-flow, e por isso e o REALIZADO:
+            o esperado do periodo se le subtraindo os dois totais acima. */}
+        <p className="text-xs text-muted-foreground">
+          Saldo realizado do período: {moeda(fluxo?.net ?? 0)}
+        </p>
+
+        {/* ----------------------------------------------------------------
+            A LINHA DO GASTO VARIAVEL, DE FORA DOS SEIS NUMEROS
+            ----------------------------------------------------------------
+            Decisao de produto do Helio (HMO-145, opcao "separado"): a media de
+            mercado, restaurante e posto NAO entra em Previsao nem em Total
+            esperado. Ela mora aqui, editavel, e a leitura pretendida e "ainda
+            vou gastar R$ 800 em contas + R$ 1.500 estimados de gasto
+            variavel".
+
+            So aparece quando ha janela de previsao: em periodo encerrado nao
+            ha dia pela frente, e uma estimativa sobre um mes que ja aconteceu
+            seria um numero sem referente. */}
+        {janelaPrevisao && baseDoVariavel && (
+          <LinhaDeGastoVariavel
+            total={variavel.total}
+            porDia={variavel.porDia}
+            dias={variavel.dias}
+            temBase={baseDoVariavel.temBase}
+            mesesBase={baseDoVariavel.mesesBase}
+            ajustado={gastoDiario !== null}
+            onMudar={setGastoDiario}
+            onRestaurar={() => setGastoDiario(null)}
+          />
+        )}
       </div>
     ),
 
@@ -522,7 +671,7 @@ function Painel() {
     // Os dois lados honram o periodo, e por isso este bloco nao precisa de
     // nenhum aviso de "nao e do periodo escolhido": o previsto vem da agenda
     // recortada por `due_date` dentro da janela, o realizado vem do mesmo
-    // `/api/reports/cash-flow` que alimenta os tiles "Entrou" e "Saiu".
+    // `/api/reports/cash-flow` que alimenta os tiles de cima.
     //
     // Em periodo FUTURO o realizado vem zerado, e isso esta certo: nada foi
     // realizado ainda. O bloco nao esconde nem inventa -- mostra previsto
@@ -532,12 +681,22 @@ function Painel() {
     // resposta da rota e o realizado sai de `fluxo`, os MESMOS numeros que os
     // tiles de cima mostram -- se este bloco somasse por conta propria, duas
     // partes da mesma tela passariam a discordar sobre o mes.
+    //
+    // O QUE A HMO-174 MUDOU AQUI, E POR QUE NAO E REGRESSAO
+    // ------------------------------------------------------
+    // `fluxo` passou a vir recortado em hoje. Este bloco ganhou o recorte de
+    // carona, e ganhou CERTO: o cabecalho do lib/previsto-x-realizado.ts define
+    // o lado direito como "o que saiu", e uma transacao com data futura dentro
+    // do mes corrente nao saiu. Ela inflava o realizado desta comparacao pelo
+    // mesmo motivo que inflava o tile -- a diferenca e que aqui o efeito era
+    // ler como "gastei mais do que o previsto" num dinheiro que ainda nem
+    // tinha se mexido.
     "previsto-x-realizado": previsto && (
       <PrevistoXRealizado
         previsto={previsto}
         realizado={{
           entradas: fluxo?.total_income ?? 0,
-          // Ja POSITIVO da rota, como o tile "Saiu" documenta. Um Math.abs aqui
+          // Ja POSITIVO da rota, como o tile de despesas documenta. Um Math.abs aqui
           // seria inofensivo hoje e mentiria no dia em que a rota trocasse de
           // convencao -- o numero viraria positivo do mesmo jeito e ninguem
           // veria a troca.

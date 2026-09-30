@@ -1,0 +1,15 @@
+{
+  "//": "Build so do teste. lib/realizado-e-previsao.ts importa o alias @/lib/recurrence-detector, e o tsc resolve o alias sem reescreve-lo no JS emitido -- por isso o npm script tem o passo de resolve-aliases.mjs. Sem ele o node morre com ERR_MODULE_NOT_FOUND no primeiro import, nao com numero errado.",
+  "compilerOptions": {
+    "outDir": "../.tmp-realizado-e-previsao",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/realizado-e-previsao.ts"]
+}

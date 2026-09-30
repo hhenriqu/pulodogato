@@ -1,0 +1,36 @@
+{
+  "//": [
+    "Compila os TILES de Realizado/Previsao/Total para o teste renderizar o",
+    "componente de verdade, e nao uma copia da marcacao dele. O `jsx: react-jsx`",
+    "e o que permite renderizar com react-dom/server no node, sem runner novo --",
+    "mesmo desenho do tsconfig.previsto-bloco-test.json.",
+    "",
+    "lib/realizado-e-previsao.ts ja tem suite propria (test-realizado-e-previsao),",
+    "e ela passaria verde com o JSX imprimindo a Previsao debaixo do rotulo",
+    "'Realizado': a aritmetica estaria certa e a tela trocando os dois numeros de",
+    "lugar. Nao quebra build, nao quebra teste puro, nao deixa a tela vazia --",
+    "sao dois numeros certos nas posicoes erradas, e so o HTML denuncia.",
+    "",
+    "O resolve-aliases roda com --espelha-raiz porque card.tsx importa",
+    "lib/utils.ts pelo alias @/."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-tres-numeros",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../components/dashboard/RealizadoEPrevisao.tsx",
+    "../components/ui/card.tsx",
+    "../lib/realizado-e-previsao.ts",
+    "../lib/utils.ts"
+  ]
+}
