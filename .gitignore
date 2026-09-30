@@ -206,6 +206,10 @@ next-env.d.ts
 # o ingestor no meio de uma suite nao pode apagar o build do teste
 /.tmp-ingest-cvm/
 
+# test:cotacao-brapi (a fila de simbolos e a leitura da resposta da brapi,
+# HMO-191 -- lib/cotacao-brapi.ts nao importa nada do projeto)
+/.tmp-cotacao-brapi/
+
 # ZIP anual da CVM baixado pelo ingestor (12,8 MB por ano) -- cache local, nao
 # fonte: o pacote e reproduzivel a partir de dados.cvm.gov.br, e sao ~12,8 MB por
 # ano de historico. As FIXTURES do teste (scripts/fixtures/) sao versionadas --

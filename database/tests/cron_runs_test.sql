@@ -19,10 +19,10 @@
 -- de falha e silencioso nos dois lados, por isso o assert mora aqui.
 --
 -- E os CONTROLES NEGATIVOS, que sao metade do valor do teste:
---   - o dominio de `job` tem que bater com os quatro `crons[].path` do
---     vercel.json. Um job renomeado la e esquecido aqui gravaria sob um nome
---     que a consulta de auditoria nunca procura, e a ausencia seria lida como
---     "nao rodou";
+--   - o dominio de `job` tem que bater com os `crons[].path` do vercel.json --
+--     cinco desde a 031, que abriu a lista para `cotacoes` (HMO-191). Um job
+--     renomeado la e esquecido aqui gravaria sob um nome que a consulta de
+--     auditoria nunca procura, e a ausencia seria lida como "nao rodou";
 --   - `finished_at >= started_at` tem que recusar a linha do relogio para tras
 --     (Date.now() nao e monotonico: um ajuste de NTP entre as duas leituras
 --     produz fim < inicio);
@@ -50,9 +50,15 @@ BEGIN
   END IF;
 END $$;
 
--- Os quatro jobs, com o corpo real do early-return de cada rota. Se o dominio
+-- Os jobs de aviso, com o corpo real do early-return de cada rota. Se o dominio
 -- de `job` sair de sincronia com o vercel.json, isto quebra aqui e nao em
 -- producao as 09:00.
+--
+-- `cotacoes` (o quinto, da 031) nao entra nesta lista: ele tem suite propria em
+-- database/tests/031_cotacao_automatica_test.sql, junto do CHECK do par
+-- preco/data que a rota dele existe para nao violar. O que ESTE arquivo
+-- continua garantindo para ele e o controle negativo la embaixo -- o dominio
+-- segue FECHADO, entao um typo em `cotacoes` e recusado como qualquer outro.
 INSERT INTO public.cron_runs (job, status, http_status, result) VALUES
   ('recurrence-scan',   'ok', 200, '{"ok":true,"usuarios":0,"detectadas":0}'::jsonb),
   ('recurrence-alerts', 'ok', 200, '{"ok":true,"avisos":0,"push":0,"usuarios":0}'::jsonb),

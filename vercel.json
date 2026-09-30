@@ -18,6 +18,10 @@
     {
       "path": "/api/cron/monthly-summary",
       "schedule": "0 12 1 * *"
+    },
+    {
+      "path": "/api/cron/cotacoes",
+      "schedule": "0 23 * * 1-5"
     }
   ]
 }

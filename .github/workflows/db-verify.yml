@@ -12,9 +12,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/cotacao-brapi.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/cotacao-brapi.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -739,6 +739,18 @@ jobs:
       - name: 028 e idempotente
         run: $PSQL -f database/migrations/028_fundamento_cvm.sql
 
+      - name: 031_cotacao_automatica
+        run: $PSQL -f database/migrations/031_cotacao_automatica.sql
+
+      # Re-executavel, e aqui o padrao e outro: a 031 nao cria nada, ela AMPLIA
+      # um CHECK que ja existe. `DROP CONSTRAINT IF EXISTS` + `ADD CONSTRAINT`
+      # e o unico jeito (o `IF NOT EXISTS` da 019 pula quando a constraint ja
+      # esta la, e por isso nunca atualizaria o dominio), e a segunda passada
+      # exercita justamente o caminho em que a constraint EXISTE com a lista
+      # nova -- que e o estado de producao depois da primeira aplicacao.
+      - name: 031 e idempotente
+        run: $PSQL -f database/migrations/031_cotacao_automatica.sql
+
       # Fundamento da CVM (HMO-194). O que so o Postgres pega:
       #
       #   - a RLS de tabela de REFERENCIA. `cvm_fundamentos` guarda o balanco da
@@ -783,6 +795,37 @@ jobs:
       - name: Ponte ticker->CNPJ por igualdade exata, DMPL sem contar em triplo e escala MIL/UNIDADE
         run: npm run test:fundamento-cvm
 
+      # A cotacao automatica (HMO-191). O que so o Postgres pega:
+      #
+      #   - o CHECK `investment_assets_preco_par_check` recusando a METADE do
+      #     par. Um UPDATE que grave so `current_price` levanta 23514 e nao
+      #     escreve NADA -- e o supabase-js devolve isso como `error`, nao como
+      #     excecao, entao um cron que nao olhe o retorno responde 200 dizendo
+      #     que atualizou N precos com a carteira intacta. A suite tem controle
+      #     negativo: derruba a constraint num savepoint e mostra que o MESMO
+      #     UPDATE passa sem ela, senao um verde por outro erro qualquer
+      #     (coluna com nome errado tambem levanta excecao) passaria por
+      #     cobertura;
+      #   - o CHECK ACEITANDO apagar o par inteiro. O requisito "ticker
+      #     desconhecido nao pode zerar o preco que ja estava la" NAO tem
+      #     guarda no schema, e a suite afirma isso de proposito -- para que
+      #     ninguem conclua que o banco protege o que so o codigo protege
+      #     (scripts/test-cotacao-brapi.mjs);
+      #   - o dominio de `cron_runs.job` ampliado pela 031 aceitando o quinto
+      #     job e continuando a recusar typo. Sem a 031 o cron grava preco e
+      #     devolve 200, mas nao deixa registro nenhum -- o silencio que a 019
+      #     existe para acabar.
+      - name: O par preco/data recusa a metade, aceita o apagamento e o livro-razao aceita o quinto job
+        run: $PSQL -f database/tests/031_cotacao_automatica_test.sql
+
+      # A decisao de QUAIS simbolos cotar e de o que conta como resposta boa da
+      # brapi e TypeScript puro, e roda aqui junto com o CHECK que ela existe
+      # para nao violar. O caso que mais importa nao tem cara de bug: a brapi
+      # responde 200, bem formada, com preco valido de OUTRO papel -- e gravar
+      # isso e a carteira mostrando o preco da VALE3 na linha da PETR4.
+      - name: Cotacao monta o par completo, recusa simbolo trocado e nao apaga preco
+        run: npm run test:cotacao-brapi
+
       # As duas suites que guardam as views que a 026 REESCREVEU rodam la atras na
       # cadeia (steps do 006 e do 007), ou seja: contra a definicao ANTIGA de
       # `group_member_balances` e `budget_consumption`. Elas nunca viram a versao
@@ -825,8 +868,9 @@ jobs:
 
       # O livro-razao das execucoes de cron. O que so o Postgres pega:
       #
-      #   - o CHECK de `job` tem que bater com os quatro `crons[].path` do
-      #     vercel.json. Um job renomeado no vercel.json e esquecido aqui grava
+      #   - o CHECK de `job` tem que bater com os `crons[].path` do vercel.json
+      #     (cinco desde a 031, que abriu a lista para `cotacoes`). Um job
+      #     renomeado no vercel.json e esquecido aqui grava
       #     sob nome que a consulta de auditoria nunca procura -- e a ausencia
       #     seria lida como "nao rodou";
       #   - `finished_at >= started_at` recusa a linha que o relogio para tras

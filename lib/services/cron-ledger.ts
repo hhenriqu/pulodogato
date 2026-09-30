@@ -26,12 +26,21 @@
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-/** Os quatro jobs de `crons[]` do vercel.json. Espelha o CHECK da 019. */
+/**
+ * Os jobs de `crons[]` do vercel.json. Espelha o CHECK da 019 -- que a 031
+ * ampliou para aceitar `cotacoes`.
+ *
+ * Acrescentar valor aqui SEM a migration correspondente nao quebra o cron: o
+ * trabalho acontece e a resposta sai, porque `gravarLinha` nao lanca. O que se
+ * perde e a linha do livro-razao, recusada com 23514 -- ou seja, exatamente o
+ * silencio que a 019 existe para acabar. Migration e codigo andam juntos aqui.
+ */
 export type CronJob =
   | "recurrence-scan"
   | "recurrence-alerts"
   | "bill-alerts"
-  | "monthly-summary";
+  | "monthly-summary"
+  | "cotacoes";
 
 export interface LinhaDeExecucao {
   job: CronJob;
