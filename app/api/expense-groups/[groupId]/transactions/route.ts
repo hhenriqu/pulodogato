@@ -253,6 +253,23 @@ export async function POST(
         category_id: body.category_id || category.id,
         description: body.description,
         amount: -Math.abs(body.amount), // Negative for expenses
+        // SEM ISTO A COLUNA FICA NULL, E QUEM PAGOU NAO APARECE COMO TENDO PAGO.
+        //
+        // Medido em producao (grupo e3314097, 30/09): a despesa gravou, apareceu
+        // na lista, e `group_member_balances` devolveu
+        //
+        //     total_paid = 0 | total_owed = 963 | net_balance = -963
+        //
+        // porque a perna do PAGO da view filtra `t.transaction_type = 'expense'`
+        // e NULL nao casa com nada. A perna do DEVIDO nao filtra por isso, entao
+        // ela contou. Resultado: quem pagou o jantar inteiro aparece devendo o
+        // jantar inteiro, e o grupo nao soma zero -- o residual que
+        // lib/settlement.ts descreve, com uma causa que nao estava na lista dele.
+        //
+        // Nao e um defeito desta issue: o INSERT nunca gravou a coluna. Mas e a
+        // unica coisa entre o saldo desta tela e o numero certo, e a HMO-182 se
+        // fecha conferindo exatamente esse numero.
+        transaction_type: "expense",
         currency,
         // Congelada: e a cotacao do dia da compra e nunca e recalculada. E o que
         // faz `group_member_balances` somar `amount * exchange_rate` e chegar ao
