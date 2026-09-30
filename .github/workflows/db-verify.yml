@@ -12,9 +12,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -887,6 +887,41 @@ jobs:
       - name: Convite de grupo chega a quem foi convidado, sem abrir o grupo para quem recusa
         run: $PSQL -f database/tests/hmo196_convite_no_app_test.sql
 
+      - name: 032_chave_pix_do_membro
+        run: $PSQL -f database/migrations/032_chave_pix_do_membro.sql
+
+      # Re-executavel: CREATE TABLE IF NOT EXISTS, CREATE OR REPLACE FUNCTION e
+      # DROP POLICY IF EXISTS antes de cada CREATE POLICY.
+      - name: 032 e idempotente
+        run: $PSQL -f database/migrations/032_chave_pix_do_membro.sql
+
+      # HMO-201. A chave Pix nao pode morar em `profiles`: a policy
+      # `profiles_select_own_or_public` do 002 combinada com o DEFAULT TRUE de
+      # `is_public` entrega o perfil inteiro a toda conta autenticada, e RLS nao
+      # tranca COLUNA. Este teste e o que impede alguem de "simplificar" a 032 de
+      # volta para um ADD COLUMN sem enxergar que isso publica o CPF de cada
+      # usuario para a base inteira.
+      #
+      # As assercoes que so o Postgres pega:
+      #
+      #   - o CONTROLE NEGATIVO em par: a estranha NAO le a chave, mas LE o
+      #     `profiles` da mesma pessoa. Sem a segunda metade, a primeira passaria
+      #     tambem num mundo em que ninguem le nada;
+      #   - as DUAS direcoes de `compartilha_grupo_ativo`. Quem esta `pending`
+      #     nao le a chave dos outros E nao tem a dele exposta ao grupo. A
+      #     primeira versao do teste so cobria a primeira direcao, e o mutante
+      #     que apagava o `status` do OUTRO lado sobrevivia;
+      #   - mover a linha para outro `user_id` nas DUAS formas do comando. Com
+      #     `WHERE`, quem barra e a policy de SELECT (o Postgres exige que a
+      #     linha nova siga visivel para quem escreveu); a policy de UPDATE so e
+      #     load-bearing no `UPDATE` SEM WHERE, que nao le nada antes de
+      #     escrever. Medido: com a policy de UPDATE escancarada, a forma com
+      #     WHERE continua levando 42501.
+      #
+      # Medido: 6 mutantes na 032, 6 mortos (npm run mutantes:chave-pix).
+      - name: A chave Pix e do grupo, nao de toda conta autenticada do app
+        run: $PSQL -f database/tests/hmo201_chave_pix_test.sql
+
       # As duas suites que guardam as views que a 026 REESCREVEU rodam la atras na
       # cadeia (steps do 006 e do 007), ou seja: contra a definicao ANTIGA de
       # `group_member_balances` e `budget_consumption`. Elas nunca viram a versao
@@ -1053,6 +1088,59 @@ jobs:
       # recusa a gerar, e nao ha pagamento capaz de zera-la.
       - name: Acerto dos grupos nas despesas pessoais
         run: npm run test:grupos
+
+      # HMO-201. A chave Pix que o colega copia tem que ser aceita pelo banco
+      # DELE, e o formato em que a pessoa digita quase nunca e o formato
+      # canonico do arranjo: CPF/CNPJ so digitos, telefone em E.164, email em
+      # minusculas, EVP como UUID.
+      #
+      # A assercao que vale o job: a chave FORMATADA (`529.982.247-25`) nunca
+      # pode ser a chave COPIADA (`52998224725`). Trocar uma pela outra e o
+      # defeito natural desta tela, ele compila, a tela fica bonita, o botao
+      # copia -- e o unico lugar onde o erro aparece e o aplicativo bancario de
+      # outra pessoa.
+      #
+      # Cobre tambem o digito verificador de CPF/CNPJ (um numero trocado pode
+      # ser o CPF valido de um estranho) e `11111111111`, que FECHA o modulo 11
+      # e so e recusado pela guarda explicita de digitos repetidos.
+      - name: A chave Pix copiada e a que o banco aceita
+        run: npm run test:chave-pix
+
+      # HMO-201. Puxar para atualizar. O gesto tem dois jeitos de estar errado,
+      # e eles puxam para lados opostos: recarregar quando a pessoa so queria
+      # rolar (ela perde o lugar, e isso aconteceria o tempo todo) e nao
+      # recarregar quando ela puxou de verdade (a feature nao existe).
+      #
+      # A assercao que vale o job e a do gesto que COMECOU com a pagina rolada:
+      # rolar uma lista longa para cima com um movimento amplo leva a pagina ao
+      # topo no meio do caminho, com o dedo ainda subindo. Avaliado pelo
+      # scrollTop de AGORA em vez do scrollTop do INICIO, isso recarrega a
+      # pagina sozinho -- num aparelho e dificil de reproduzir de proposito e
+      # impossivel de nao encontrar usando o app.
+      - name: Puxar para atualizar nao dispara em rolagem comum
+        run: npm run test:puxar-para-atualizar
+
+      # HMO-201. O painel do grupo precisa perguntar por um periodo de datas
+      # qualquer, e `category_monthly_totals` so responde por MES. Quando o
+      # periodo corta meses pela metade a soma passa a ser feita no
+      # JavaScript -- e e ai que as regras que a view aplicava calado precisam
+      # ser repetidas na mao:
+      #
+      #   - `transfer` fica fora da conta E da contagem. As duas pernas de uma
+      #     transferencia se anulam, entao o SALDO continua certo mesmo se
+      #     entrarem; o que estraga e "quanto entrou" e "quanto saiu", que
+      #     inflam juntos, e a categoria de transferencia vira a maior fatia
+      #     da pizza;
+      #   - ABS() sobre a despesa, que neste banco e gravada NEGATIVA;
+      #   - a moeda entra na CHAVE. Sem isso 1000 reais + 180 dolares viram
+      #     1180 -- o defeito que a migration 022 foi a producao corrigir nas
+      #     views, voltando por uma porta que a 022 nao cobre.
+      #
+      # Conferido contra a propria view num Postgres local: as mesmas 6
+      # transacoes (duas delas as pernas de uma transferencia, uma em dolar)
+      # produzem linha por linha o mesmo resultado nos dois caminhos.
+      - name: Gasto por categoria num periodo qualquer bate com a view
+        run: npm run test:categorias-do-periodo
 
       # Orcamento de grupo (HMO-138). O budget_invoice_test logo acima ja prova
       # em SQL que budget_consumption soma o gasto do grupo TODO no teto de

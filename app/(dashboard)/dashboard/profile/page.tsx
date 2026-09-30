@@ -20,6 +20,7 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { toast } from "sonner";
+import { ChavePixDoPerfil } from "@/components/perfil/ChavePixDoPerfil";
 import {
   User as UserIcon,
   Mail,
@@ -368,6 +369,11 @@ export default function ProfilePage() {
                   </div>
                 </CardContent>
               </Card>
+
+              {/* Chave Pix. Card proprio, e Save proprio: ela grava em
+                  `user_pix_keys`, nao em `profiles` -- ver o cabecalho do
+                  componente e o da migration 032. */}
+              <ChavePixDoPerfil userId={user.id} />
 
               {/* Configurações Sociais */}
               <Card>

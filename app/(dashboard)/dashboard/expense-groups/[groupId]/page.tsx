@@ -61,6 +61,8 @@ import {
   type AcaoDaParte,
 } from "@/lib/aprovacao-de-parte";
 import { cotacaoDigitada, taxaParaGravar, valorEmReais } from "@/lib/cambio";
+import { PixDoMembro, useChavesPixDoGrupo } from "@/components/grupos/PixDoMembro";
+import { PainelDoGrupo } from "@/components/grupos/PainelDoGrupo";
 import {
   acertoNaMoedaDaViagem,
   avisoDeSobra,
@@ -257,6 +259,14 @@ export default function GroupDetailPage() {
   const [balances, setBalances] = useState<BalanceSummary[]>([]);
   const [transfers, setTransfers] = useState<TransferSuggestion[]>([]);
   const [settlements, setSettlements] = useState<Settlement[]>([]);
+  /**
+   * As chaves Pix dos membros, para quem esta A RECEBER poder ser pago
+   * (HMO-201). Sai dos `balances` e nao de `group.members` porque e na lista
+   * de saldos que a chave e mostrada, e assim a consulta acompanha exatamente
+   * as linhas que a tela vai desenhar. A RLS da migration 032 decide o que
+   * volta; membro sem chave cadastrada simplesmente nao aparece no mapa.
+   */
+  const chavesPix = useChavesPixDoGrupo(balances.map((b) => b.member.id));
   /**
    * O id da parte cuja resposta esta em voo, para desabilitar os botoes DELA.
    * Um booleano global desabilitaria a linha de todo mundo; um id mantem o
@@ -1012,11 +1022,24 @@ export default function GroupDetailPage() {
       )}
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-3">
+        {/* `grid-cols-4` acompanha o numero de abas: com 3 colunas para 4
+            gatilhos o ultimo sai da faixa. */}
+        <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="expenses">Despesas</TabsTrigger>
+          <TabsTrigger value="painel">Painel</TabsTrigger>
           <TabsTrigger value="balances">Balanços</TabsTrigger>
           <TabsTrigger value="members">Membros</TabsTrigger>
         </TabsList>
+
+        {/* O painel do grupo (HMO-201): totais e gasto por categoria, no
+            periodo que a pessoa escolher. Montado so quando a aba esta
+            ativa -- ele dispara duas chamadas, e faze-las no carregamento da
+            tela custaria isso a quem so veio olhar a lista de despesas. */}
+        <TabsContent value="painel" className="space-y-4">
+          {activeTab === "painel" && (
+            <PainelDoGrupo groupId={groupId} />
+          )}
+        </TabsContent>
 
         <TabsContent value="expenses" className="space-y-4">
           {/* Expenses by Period */}
@@ -1528,6 +1551,24 @@ export default function GroupDetailPage() {
                           })()}
                         </div>
                       </div>
+
+                      {/* O Pix de quem esta A RECEBER (HMO-201). So dele: uma
+                          chave ao lado de quem DEVE pagar nao serve para nada,
+                          e mostrar a de todo mundo transforma a lista de
+                          saldos numa lista de chaves. O `> 0.01` e a mesma
+                          tolerancia de centavo usada acima para decidir quem
+                          esta quitado -- senao apareceria botao de copiar ao
+                          lado de um saldo de R$ 0,00. A propria chave fica de
+                          fora: ninguem precisa se pagar. */}
+                      {balance.balance > 0.01 &&
+                        balance.member.id !== user?.id && (
+                          <div className="mt-3 pt-3 border-t">
+                            <PixDoMembro
+                              pix={chavesPix.get(balance.member.id)}
+                              nome={balance.member.full_name}
+                            />
+                          </div>
+                        )}
                     </div>
                   ))}
                 </div>
