@@ -129,22 +129,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // TODO: Aqui você pode implementar o envio real de email/SMS
-    // Por enquanto, apenas retorna os dados do convite
-
-    let responseMessage = "Invitation created successfully";
-
-    if (method === "email") {
-      responseMessage = `Email invitation sent to ${email_or_phone}`;
-      // TODO: Implementar envio de email
-    } else if (method === "phone") {
-      responseMessage = `SMS invitation sent to ${email_or_phone}`;
-      // TODO: Implementar envio de SMS
-    }
+    // NAO existe envio de email/SMS neste produto: nenhum provedor esta
+    // configurado. Ate o HMO-190 esta rota respondia "Email invitation sent
+    // to X" mesmo assim, entao o admin via "convite enviado" e o convidado
+    // nunca recebia nada -- sem nenhum erro em lugar nenhum. Enquanto o envio
+    // nao existir, a resposta diz a verdade e manda passar o codigo a mao.
+    const responseMessage = `Convite registrado para ${email_or_phone}. O envio automático ainda não está disponível: passe o código ${invitation.group.group_code} para a pessoa entrar pelo app.`;
 
     return NextResponse.json(
       {
         message: responseMessage,
+        delivery: "manual",
         invitation: {
           id: invitation.id,
           method: invitation.invite_method,

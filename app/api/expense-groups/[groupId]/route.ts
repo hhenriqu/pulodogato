@@ -56,8 +56,12 @@ export async function GET(
       );
     }
 
-    // Get group members
-    const { data: members, error: membersError } = await supabase
+    // Busca membros ativos E pendentes na mesma consulta. Quem entra por codigo
+    // em grupo privado nasce `pending` (ver join_group_by_code, no
+    // 002_rls_lockdown.sql); filtrar so por `active` aqui deixava o pedido
+    // invisivel ate para o admin, que entao nao tinha como aprovar - o pedido
+    // ficava presto para sempre (HMO-190).
+    const { data: allMembers, error: membersError } = await supabase
       .from("group_members")
       .select(
         `
@@ -73,14 +77,23 @@ export async function GET(
       `
       )
       .eq("group_id", groupId)
-      .eq("status", "active");
+      .in("status", ["active", "pending"]);
 
     if (membersError) {
       console.error("Members error:", membersError);
     }
 
+    // `members` continua sendo so os ativos: e o que alimenta o controle de
+    // acesso logo abaixo e todo o calculo de divisao. Pendente nao e membro.
+    const members = (allMembers || []).filter(
+      (member: any) => member.status === "active"
+    );
+    const pendingMembers = (allMembers || []).filter(
+      (member: any) => member.status === "pending"
+    );
+
     // Check if user is member of this group
-    const userIsMember = members?.some(
+    const userIsMember = members.some(
       (member: any) => member.user?.id === user.id
     );
     if (!userIsMember) {
@@ -89,7 +102,8 @@ export async function GET(
 
     const groupWithMembers = {
       ...group,
-      members: members || [],
+      members,
+      pendingMembers,
     };
 
     console.log("Group loaded successfully:", groupWithMembers.name);
