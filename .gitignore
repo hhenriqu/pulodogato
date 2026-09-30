@@ -187,3 +187,10 @@ next-env.d.ts
 # lib/utils.js junto)
 /.tmp-cartao-orcamento-grupo/
 /.tmp-moeda-do-grupo/
+
+# test:realizado-e-previsao (a lib pura de Realizado/Previsao/Total, HMO-174 --
+# leva lib/recurrence-detector.js junto, pela aritmetica de data)
+/.tmp-realizado-e-previsao/
+# test:tres-numeros (os tiles renderizados com react-dom/server -- leva
+# components/ui/card.js, lib/realizado-e-previsao.js e lib/utils.js junto)
+/.tmp-tres-numeros/

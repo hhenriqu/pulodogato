@@ -83,6 +83,31 @@ jobs:
       - name: O bloco imprime cada numero na coluna dele, e cala quando nao ha previsao
         run: npm run test:previsto-bloco
 
+      # HMO-174. Mora aqui pelo mesmo motivo de todas as acima: lib/realizado-e-previsao.ts
+      # nao esta em nenhuma lista de `paths` do db-verify.
+      #
+      # O que ela guarda: Realizado + Previsao = Total esperado, com as duas
+      # parcelas DISJUNTAS. A conta prevista paga aparece so em Realizado (a
+      # view `planned_vs_actual` tem o nome exato da feature e conta a paga nos
+      # dois lados -- correto para variancia, falso aqui, e o total sai alto
+      # pelo valor da conta), a transacao de data futura dentro do mes corrente
+      # nao entra em "ja gastei", e transferencia e fatura de cartao ficam fora
+      # dos dois lados.
+      - name: Realizado + Previsao = Total esperado, e a conta paga conta uma vez so
+        run: npm run test:realizado-e-previsao
+
+      # A suite acima e aritmetica pura, e passaria verde com o JSX imprimindo
+      # a Previsao debaixo do rotulo "Realizado": os dois numeros certos nas
+      # posicoes trocadas nao quebram build nem teste, e nao deixam a tela
+      # vazia. Esta renderiza os tiles com react-dom/server.
+      #
+      # Ela cobre tambem a frase que carrega a decisao de produto: o gasto
+      # variavel e linha propria e a tela precisa DIZER que ele nao esta somado
+      # -- sem isso o usuario soma os dois numeros de despesa de cabeca e
+      # conclui que o app se contradiz.
+      - name: Os tres numeros saem na ordem certa, e o gasto variavel diz que fica de fora
+        run: npm run test:tres-numeros
+
       - name: O plano de reset bate com o schema, e os filhos vem antes dos pais
         run: npm run test:account-reset
 
