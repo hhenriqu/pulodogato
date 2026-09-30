@@ -111,7 +111,16 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { description, amount, category_id, account_id, group_id, due_date, notes } = body;
+    const {
+      description,
+      amount,
+      category_id,
+      account_id,
+      group_id,
+      due_date,
+      notes,
+      transaction_type,
+    } = body;
 
     if (!description?.trim()) {
       return NextResponse.json(
@@ -137,6 +146,31 @@ export async function POST(request: NextRequest) {
     if (!isIsoDate(due_date)) {
       return NextResponse.json(
         { error: "Vencimento deve estar no formato AAAA-MM-DD" },
+        { status: 400 }
+      );
+    }
+
+    // A DIRECAO DA PREVISAO (HMO-188, migration 027)
+    //
+    // `scheduled_transactions.amount` tem `CHECK (amount > 0)`: a ocorrencia nao
+    // guarda sinal. Quem diz se aquilo entra ou sai era so
+    // `recurring_rules.transaction_type` -- e uma previsao AVULSA, que e o que
+    // esta rota cria, nao tem regra. A baixa caia no `?? "expense"`, e confirmar
+    // o recebimento de uma receita prevista gravaria o valor NEGATIVO.
+    //
+    // O DEFAULT e 'expense' e nao um erro 400: toda chamada anterior a HMO-188
+    // (a tela /dashboard/bills) cadastra conta a pagar e nao manda este campo.
+    // Exigir o campo quebraria aquela tela, e adivinhar pelo `is_expense` da
+    // categoria seria uma segunda fonte de verdade para a direcao.
+    //
+    // 'transfer' e recusado aqui e no CHECK do banco. Uma previsao de
+    // transferencia nao muda patrimonio nenhum, e o terceiro caso faria toda
+    // soma de agenda ter de trata-lo -- o tratamento esquecido contaria a perna
+    // de saida como despesa prevista.
+    const direcao = transaction_type ?? "expense";
+    if (direcao !== "income" && direcao !== "expense") {
+      return NextResponse.json(
+        { error: "A conta prevista tem que ser income ou expense" },
         { status: 400 }
       );
     }
@@ -169,6 +203,7 @@ export async function POST(request: NextRequest) {
         amount: Math.abs(Number(amount)),
         due_date,
         notes: notes || null,
+        transaction_type: direcao,
       })
       .select(
         `

@@ -140,7 +140,16 @@ export function CamposDeLancamento({
   moedaPorLancamento = false,
   moedaOficial = MOEDA_PADRAO,
 }: CamposDeLancamentoProps) {
-  const campos = camposDoTipo(tipo, valores.natureza, editando);
+  // `valores.confirmado` entra aqui desde a HMO-188: e ele que decide se o campo
+  // da data real existe e se a data prevista e obrigatoria. Esquece-lo deixaria
+  // os dois campos na tela ao mesmo tempo, pedindo uma data de pagamento para um
+  // lancamento que a pessoa acabou de dizer que nao pagou.
+  const campos = camposDoTipo(
+    tipo,
+    valores.natureza,
+    editando,
+    valores.confirmado
+  );
   const categoriasVisiveis = categoriasDoTipo(categorias, tipo);
   const contasVisiveis = contasDoSeletor(contas, tipo, valores.natureza);
   const naturezasVisiveis = naturezasDoTipo(tipo);
@@ -499,16 +508,79 @@ export function CamposDeLancamento({
           />
         </div>
 
-        <div className="space-y-2">
-          <Label htmlFor="date">Data</Label>
-          <Input
-            id="date"
-            type="date"
-            value={valores.data}
-            onChange={(e) => aoMudar({ data: e.target.value })}
-          />
-        </div>
+        {/* A DATA EM QUE O DINHEIRO ANDOU (HMO-188)
+
+            Ela SOME quando a pessoa desmarca a confirmacao: um lancamento que
+            ainda nao aconteceu nao tem data de pagamento, e o campo com a data
+            de hoje dentro pareceria uma resposta ja dada. Quem decide e
+            `campos.dataDeRealizacao`, nao `valores.confirmado` -- numa despesa
+            fixa esta data e o `start_date` da regra e nao pode desaparecer. */}
+        {campos.dataDeRealizacao && (
+          <div className="space-y-2">
+            <Label htmlFor="date">{campos.rotuloDaData}</Label>
+            <Input
+              id="date"
+              type="date"
+              value={valores.data}
+              onChange={(e) => aoMudar({ data: e.target.value })}
+            />
+          </div>
+        )}
+
+        {campos.dataPrevista && (
+          <div className="space-y-2">
+            <Label htmlFor="expected-date">{campos.rotuloDaDataPrevista}</Label>
+            <Input
+              id="expected-date"
+              type="date"
+              value={valores.dataPrevista}
+              onChange={(e) => aoMudar({ dataPrevista: e.target.value })}
+            />
+            <p className="text-xs text-muted-foreground">
+              {campos.dataDeRealizacao
+                ? "Quando era esperado. Deixe igual à data acima se não houve atraso."
+                : `Quando você espera ${
+                    tipo === "expense" ? "pagar" : "receber"
+                  }. Fica em Contas Previstas até você confirmar.`}
+            </p>
+          </div>
+        )}
       </div>
+
+      {/* A CONFIRMACAO: "JA PAGUEI" / "JA RECEBI" (HMO-188)
+
+          Fica DEPOIS das datas de proposito -- ela e quem decide se a data de
+          cima existe, e uma checkbox acima do campo que ela liga se le como
+          filtro, nao como pergunta.
+
+          O que esta em jogo nao e cosmetico: marcada, o lancamento vai para
+          `financial_transactions` e mexe no saldo agora; desmarcada, vai para
+          `scheduled_transactions` e espera a confirmacao. O aviso ao lado existe
+          porque essa e a unica coisa na tela que muda de tabela. */}
+      {campos.confirmacao && (
+        <div className="space-y-2 p-4 border rounded-lg bg-muted/20">
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="confirmado"
+              checked={valores.confirmado}
+              onChange={(e) => aoMudar({ confirmado: e.target.checked })}
+            />
+            <Label htmlFor="confirmado" className="font-medium">
+              {campos.rotuloDaConfirmacao}
+            </Label>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {valores.confirmado
+              ? tipo === "expense"
+                ? "O valor sai do saldo da conta agora."
+                : "O valor entra no saldo da conta agora."
+              : `Ainda não ${
+                  tipo === "expense" ? "pagou" : "recebeu"
+                }: vai para Contas Previstas e não mexe no saldo até você confirmar lá.`}
+          </p>
+        </div>
+      )}
 
       {campos.parcelamento && (
         <div className="space-y-4 p-4 border rounded-lg bg-muted/20">

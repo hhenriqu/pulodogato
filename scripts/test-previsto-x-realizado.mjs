@@ -50,6 +50,7 @@ import assert from "node:assert/strict";
 const {
   STATUS_FORA_DO_PREVISTO,
   compararPrevistoRealizado,
+  copiaDaPrevisao,
   somarAgenda,
   somarMesesPrevistos,
 } = await import("../.tmp-previsto-x-realizado/previsto-x-realizado.js");
@@ -480,5 +481,40 @@ test("previsto igual ao realizado da diferenca zero nas tres linhas", () => {
     assert.equal(l.diferenca, 0, `${l.chave}`);
     assert.equal(l.proporcaoPrevisto, 1, `${l.chave} previsto`);
     assert.equal(l.proporcaoRealizado, 1, `${l.chave} realizado`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// COMO A TELA FALA DE UMA LINHA DA AGENDA (HMO-188)
+// ---------------------------------------------------------------------------
+
+test("receita prevista se confirma RECEBENDO, nao pagando", () => {
+  // Era o defeito que a HMO-188 nomeia: "Marcar como paga" sobre um salario
+  // previsto. E o erro nao e so de palavra -- ele esconde que a lista tem duas
+  // coisas diferentes, e quem ve o salario com um botao de "pagar" conclui que
+  // cadastrou errado.
+  const receita = copiaDaPrevisao("income");
+  assert.equal(receita.confirmar, "Confirmar recebimento");
+  assert.equal(receita.rotulo, "a receber");
+  assert.equal(receita.verbo, "receber");
+  assert.match(receita.efeito, /entra no saldo/);
+
+  const despesa = copiaDaPrevisao("expense");
+  assert.equal(despesa.confirmar, "Marcar como paga");
+  assert.equal(despesa.rotulo, "a pagar");
+  assert.equal(despesa.verbo, "pagar");
+  assert.match(despesa.efeito, /sai do saldo/);
+});
+
+test("direcao ausente ou desconhecida cai em DESPESA", () => {
+  // O lado seguro. Ler uma despesa como receita mostraria "vou receber" sobre
+  // uma conta a pagar; e 'expense' e o default historico da rota de baixa, entao
+  // a tela concorda com o que o banco faria.
+  for (const entrada of [undefined, null, "", "transfer", "qualquer-coisa"]) {
+    assert.equal(
+      copiaDaPrevisao(entrada).confirmar,
+      "Marcar como paga",
+      `direcao ${JSON.stringify(entrada)} deveria cair em despesa`
+    );
   }
 });

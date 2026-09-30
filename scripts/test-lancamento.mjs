@@ -32,6 +32,10 @@ import {
   tipoDoLancamento,
   naturezasDoTipo,
   regraDeRecorrencia,
+  destinoDoLancamento,
+  contaPrevista,
+  datasDaTransacao,
+  hojeISO,
   MAX_MESES_DE_REPETICAO,
 } from "../.tmp-lancamento/lib/lancamento.js";
 
@@ -535,4 +539,285 @@ test("por N meses vira max_occurrences = N", () => {
 test("o dia do vencimento vai como numero", () => {
   const corpo = regraDeRecorrencia("expense", fixo("expense", { diaDeVencimento: "05" }));
   assert.equal(corpo.due_day, 5);
+});
+
+// ---------------------------------------------------------------------------
+// PREVISTO x REALIZADO (HMO-188)
+// ---------------------------------------------------------------------------
+// A pergunta "ja pagou / ja recebeu?" decide em qual TABELA o lancamento cai, e
+// essa decisao e a mais caro de errar no app: toda linha de
+// `financial_transactions` mexe no saldo da conta no instante do INSERT
+// (`update_account_balance_trigger`) e entra no realizado de todo relatorio. Um
+// lancamento nao confirmado gravado ali sai gastando dinheiro que nao saiu.
+
+/** Um formulario de previsao valido: sem confirmacao, com data prevista. */
+function previsto(extra = {}) {
+  return preenchido({
+    confirmado: false,
+    dataPrevista: "2026-10-10",
+    ...extra,
+  });
+}
+
+test("previsto vai para a agenda; confirmado vira transacao", () => {
+  assert.equal(
+    destinoDoLancamento("expense", previsto(), false),
+    "previsao"
+  );
+  assert.equal(
+    destinoDoLancamento("expense", preenchido(), false),
+    "transacao"
+  );
+  assert.equal(
+    destinoDoLancamento("income", previsto(), false),
+    "previsao"
+  );
+});
+
+test("fixa continua virando REGRA, mesmo com a confirmacao desmarcada", () => {
+  // A ordem dos ramos e a regra. Posta antes de `regra`, a previsao roubaria a
+  // despesa fixa: o aluguel de todo mes viraria uma conta unica de outubro, e a
+  // pessoa descobriria em novembro.
+  const fixaSemConfirmar = previsto({
+    natureza: "fixed",
+    diaDeVencimento: "10",
+  });
+  assert.equal(destinoDoLancamento("expense", fixaSemConfirmar, false), "regra");
+  assert.equal(destinoDoLancamento("income", fixaSemConfirmar, false), "regra");
+});
+
+test("editar uma transacao gravada nunca vira previsao nova", () => {
+  // Sem esta porta o Salvar criaria uma linha em `scheduled_transactions` e
+  // DEIXARIA a transacao original no saldo: o gasto contaria duas vezes, uma
+  // como realizado e outra como previsto.
+  assert.equal(destinoDoLancamento("expense", previsto(), true), "transacao");
+});
+
+test("parcelado ganha da previsao, e a validacao recusa o par", () => {
+  const parceladoPrevisto = previsto({
+    parcelado: true,
+    totalDeParcelas: 3,
+    valorDaParcela: "50",
+  });
+  // O ramo de parcelas vem antes: ele ja e um modelo de futuro.
+  assert.equal(
+    destinoDoLancamento("expense", parceladoPrevisto, false),
+    "parcelas"
+  );
+  // E a recusa e o que impede a checkbox desmarcada de nao fazer nada em
+  // silencio. Sem ela a pessoa desmarcaria "ja paguei" e receberia 3 parcelas
+  // lancadas como se tivessem sido pagas.
+  const v = validarLancamento("expense", parceladoPrevisto, {
+    categoria: CATEGORIA_DESPESA,
+    editando: false,
+  });
+  assert.equal(v.ok, false);
+  assert.match(v.mensagem, /parcelas futuras/i);
+});
+
+test("a conta prevista vai com valor POSITIVO nos dois tipos", () => {
+  // `scheduled_transactions.amount` tem CHECK (amount > 0). O valor negativo
+  // seria recusado pelo banco com uma mensagem que a tela nao sabe traduzir.
+  assert.equal(contaPrevista("expense", previsto()).amount, 100);
+  assert.equal(contaPrevista("income", previsto()).amount, 100);
+
+  // COM O MENOS NA FRENTE, que e o caso que prende o `Math.abs`.
+  //
+  // Medido: sem esta metade, tirar o `Math.abs` sobreviveu ao arquivo inteiro --
+  // a fixture so tinha valor positivo, e sobre ela `Math.abs` e no-op. O input
+  // aceita "-100" (`valorGravado` documenta o mesmo risco na outra ponta), e
+  // uma despesa digitada assim bateria no CHECK do banco.
+  assert.equal(contaPrevista("expense", previsto({ valor: "-100" })).amount, 100);
+  assert.equal(contaPrevista("income", previsto({ valor: "-100" })).amount, 100);
+});
+
+test("transaction_type da conta prevista sai do TIPO DA TELA", () => {
+  // A assercao que mais importa deste bloco, e a razao da migration 027. Sem
+  // esta coluna a previsao nao guarda direcao e a baixa cai no `?? "expense"`:
+  // confirmar o recebimento de uma receita gravaria o valor NEGATIVO, com
+  // descricao e categoria certas e nenhum erro.
+  assert.equal(contaPrevista("income", previsto()).transaction_type, "income");
+  assert.equal(contaPrevista("expense", previsto()).transaction_type, "expense");
+});
+
+test("o vencimento da conta prevista sai da data PREVISTA, nao da data real", () => {
+  // `data` e o dia em que o dinheiro andou, e numa previsao ele ainda nao andou.
+  // Copiar `data` aqui faria toda conta prevista vencer hoje.
+  const corpo = contaPrevista("expense", previsto({ data: "2026-09-28" }));
+  assert.equal(corpo.due_date, "2026-10-10");
+  assert.notEqual(corpo.due_date, "2026-09-28");
+});
+
+test("previsto exige a data prevista, e a mensagem fala do tipo", () => {
+  const semPrevisao = previsto({ dataPrevista: "" });
+  const despesa = validarLancamento("expense", semPrevisao, {
+    categoria: CATEGORIA_DESPESA,
+    editando: false,
+  });
+  assert.equal(despesa.ok, false);
+  assert.match(despesa.mensagem, /pagamento/i);
+
+  const receita = validarLancamento(
+    "income",
+    { ...semPrevisao, categoriaId: "c2" },
+    { categoria: CATEGORIA_RECEITA, editando: false }
+  );
+  assert.equal(receita.ok, false);
+  assert.match(receita.mensagem, /recebimento/i);
+});
+
+test("previsto NAO exige a data real, que a tela esconde", () => {
+  // Cobrar `data` num lancamento previsto mandaria a pessoa preencher um campo
+  // que nao esta na tela.
+  const v = validarLancamento("expense", previsto({ data: "" }), {
+    categoria: CATEGORIA_DESPESA,
+    editando: false,
+  });
+  assert.equal(v.ok, true);
+});
+
+test("confirmado continua exigindo a data real", () => {
+  const v = validarLancamento("expense", preenchido({ data: "" }), {
+    categoria: CATEGORIA_DESPESA,
+    editando: false,
+  });
+  assert.equal(v.ok, false);
+  assert.match(v.mensagem, /Informe a data/);
+});
+
+test("confirmado aceita data prevista vazia, e recusa data prevista pela metade", () => {
+  const vazia = validarLancamento("expense", preenchido({ dataPrevista: "" }), {
+    categoria: CATEGORIA_DESPESA,
+    editando: false,
+  });
+  assert.equal(vazia.ok, true);
+
+  const quebrada = validarLancamento(
+    "expense",
+    preenchido({ dataPrevista: "2026-1" }),
+    { categoria: CATEGORIA_DESPESA, editando: false }
+  );
+  assert.equal(quebrada.ok, false);
+  assert.match(quebrada.mensagem, /incompleta/i);
+});
+
+test("moeda estrangeira NAO pode ficar prevista, e a recusa explica por que", () => {
+  // A 026 recusou dar `exchange_rate` a `scheduled_transactions` porque a PTAX
+  // de uma data futura nao existe. A consequencia de nao recusar aqui: a baixa
+  // insere sem moeda nem cotacao, o banco aplica o DEFAULT (BRL, 1), e US$ 180
+  // entram como R$ 180 -- 80% para menos, com o saldo fechando.
+  const v = validarLancamento(
+    "expense",
+    previsto({ moeda: "USD", cotacao: "5.35" }),
+    { categoria: CATEGORIA_DESPESA, editando: false }
+  );
+  assert.equal(v.ok, false);
+  assert.match(v.mensagem, /cotação de uma data futura/i);
+  // E o CONTROLE POSITIVO: em USD confirmado, com cotacao, ela passa. Sem isto a
+  // assercao de cima passaria verde numa versao que recusasse USD sempre.
+  const confirmado = validarLancamento(
+    "expense",
+    preenchido({ moeda: "USD", cotacao: "5.35" }),
+    { categoria: CATEGORIA_DESPESA, editando: false }
+  );
+  assert.equal(confirmado.ok, true);
+});
+
+test("a data prevista igual a data real NAO e gravada", () => {
+  // NULL em `expected_date` quer dizer "nao havia previsao separada". Gravar a
+  // mesma data nas duas colunas faria todo lancamento AFIRMAR que saiu no dia
+  // previsto, e um relatorio de atraso sairia com zero atrasos.
+  const datas = datasDaTransacao(
+    preenchido({ data: "2026-09-28", dataPrevista: "2026-09-28" })
+  );
+  assert.equal(datas.expected_date, null);
+});
+
+test("a data prevista diferente da real e gravada, e launch_date e HOJE", () => {
+  const datas = datasDaTransacao(
+    preenchido({ data: "2026-09-28", dataPrevista: "2026-09-05" })
+  );
+  assert.equal(datas.expected_date, "2026-09-05");
+  // `launch_date` e o dia em que a pessoa anotou, e nunca a data do lancamento:
+  // copiar `data` aqui faria as duas colunas dizerem a mesma coisa e o dado novo
+  // nasceria inutil.
+  assert.equal(datas.launch_date, hojeISO());
+  assert.notEqual(datas.launch_date, "2026-09-28");
+});
+
+test("data prevista incompleta nao vira expected_date", () => {
+  assert.equal(
+    datasDaTransacao(preenchido({ dataPrevista: "2026-1" })).expected_date,
+    null
+  );
+  assert.equal(
+    datasDaTransacao(preenchido({ dataPrevista: "" })).expected_date,
+    null
+  );
+});
+
+// ---------------------------------------------------------------------------
+// OS CAMPOS QUE A CONFIRMACAO LIGA E DESLIGA
+// ---------------------------------------------------------------------------
+
+test("desmarcar a confirmacao esconde a data real e exige a prevista", () => {
+  const confirmado = camposDoTipo("expense", "one_off", false, true);
+  assert.equal(confirmado.dataDeRealizacao, true);
+  assert.equal(confirmado.rotuloDaDataPrevista, "Data prevista");
+
+  const previsto = camposDoTipo("expense", "one_off", false, false);
+  assert.equal(previsto.dataDeRealizacao, false);
+  assert.equal(previsto.rotuloDaDataPrevista, "Data prevista *");
+});
+
+test("o rotulo da confirmacao e do campo de data falam do tipo da tela", () => {
+  // "Marcar como paga" numa receita foi o defeito que a issue nomeia: a pessoa
+  // confirma que RECEBEU, nao que pagou.
+  assert.equal(
+    camposDoTipo("income", "one_off", false).rotuloDaConfirmacao,
+    "Já recebi"
+  );
+  assert.equal(
+    camposDoTipo("expense", "one_off", false).rotuloDaConfirmacao,
+    "Já paguei"
+  );
+  assert.equal(
+    camposDoTipo("income", "one_off", false).rotuloDaData,
+    "Data do recebimento"
+  );
+  assert.equal(
+    camposDoTipo("expense", "one_off", false).rotuloDaData,
+    "Data do pagamento"
+  );
+});
+
+test("fixa e edicao nao oferecem a confirmacao, e nao perdem o campo de data", () => {
+  // O campo de data de uma despesa fixa e o `start_date` da regra. Um
+  // `confirmado: false` parado no estado nao pode apaga-lo.
+  const fixa = camposDoTipo("expense", "fixed", false, false);
+  assert.equal(fixa.confirmacao, false);
+  assert.equal(fixa.dataDeRealizacao, true);
+  // E fixa nao mostra data prevista: quem diz quando e o dia do vencimento, e
+  // dois campos para a mesma pergunta se contradizem.
+  assert.equal(fixa.dataPrevista, false);
+
+  const editando = camposDoTipo("expense", "one_off", true, false);
+  assert.equal(editando.confirmacao, false);
+  assert.equal(editando.dataDeRealizacao, true);
+});
+
+test("camposDoTipo sem o quarto argumento se comporta como confirmado", () => {
+  // Compatibilidade com os chamadores anteriores a HMO-188: um default `false`
+  // apagaria o campo de data deles sem que nenhum tivesse mudado de linha.
+  assert.deepEqual(
+    camposDoTipo("expense", "one_off", false),
+    camposDoTipo("expense", "one_off", false, true)
+  );
+});
+
+test("valoresIniciais nasce CONFIRMADO", () => {
+  // O caso comum e anotar o que acabou de acontecer. Nascer previsto faria toda
+  // despesa lancada sem olhar a checkbox parar na agenda em vez de no saldo.
+  assert.equal(valoresIniciais().confirmado, true);
+  assert.equal(valoresIniciais().dataPrevista, valoresIniciais().data);
 });

@@ -57,7 +57,9 @@ import { cotacaoDigitada, taxaParaGravar } from "@/lib/cambio";
 import { avisoDeEdicaoTravada } from "@/lib/grupos";
 import { useOfflineQueue } from "@/lib/hooks/useOfflineQueue";
 import {
-  camposDoTipo,
+  contaPrevista,
+  datasDaTransacao,
+  destinoDoLancamento,
   regraDeRecorrencia,
   valoresIniciais,
   validarLancamento,
@@ -94,6 +96,9 @@ const COPIA = {
     atualizado: "Receita atualizada.",
     regraCriada: "Receita fixa criada. Ela aparece em Contas Previstas.",
     erroDaRegra: "Erro ao criar a receita fixa",
+    previsaoCriada:
+      "Receita prevista. Confirme o recebimento em Contas Previstas.",
+    erroDaPrevisao: "Erro ao criar a receita prevista",
   },
   expense: {
     titulo: "Nova Despesa",
@@ -104,6 +109,9 @@ const COPIA = {
     atualizado: "Despesa atualizada.",
     regraCriada: "Despesa fixa criada. Ela aparece em Contas Previstas.",
     erroDaRegra: "Erro ao criar a despesa fixa",
+    previsaoCriada:
+      "Despesa prevista. Confirme o pagamento em Contas Previstas.",
+    erroDaPrevisao: "Erro ao criar a despesa prevista",
   },
 } as const;
 
@@ -155,7 +163,6 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
   const { online, enfileirar } = useOfflineQueue();
   const supabase = createClient();
   const copia = COPIA[tipo];
-  const campos = camposDoTipo(tipo, valores.natureza, editando);
 
   const aoMudar = useCallback((mudanca: Partial<ValoresDeLancamento>) => {
     setValores((atual) => ({ ...atual, ...mudanca }));
@@ -346,6 +353,24 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       categoriaId: linha.category_id ?? "",
       contaId: linha.account_id ?? "",
       data: linha.transaction_date ?? valoresIniciais().data,
+      // A DATA PREVISTA GRAVADA VOLTA PARA O CAMPO (HMO-188)
+      //
+      // `expected_date` e NULL na maioria das linhas, e nesse caso o campo abre
+      // igual a data real -- que e o que `datasDaTransacao` volta a gravar como
+      // NULL. Abrir vazio faria o Salvar de uma edicao qualquer parecer estar
+      // perdendo informacao; abrir com a data de HOJE gravaria uma previsao que
+      // ninguem declarou num lancamento de tres meses atras.
+      dataPrevista:
+        linha.expected_date ??
+        linha.transaction_date ??
+        valoresIniciais().dataPrevista,
+      // Editar SEMPRE abre confirmado: o que esta gravado em
+      // `financial_transactions` e dinheiro que ja andou e que ja esta no saldo
+      // da conta. `camposDoTipo` esconde a checkbox na edicao, e
+      // `destinoDoLancamento` nunca manda uma edicao para a previsao -- este
+      // valor e o terceiro cinto, e o que impede a checkbox de aparecer
+      // desmarcada se algum dia ela voltar a ser exibida ali.
+      confirmado: true,
       notas: linha.notes ?? "",
       // Editar nunca cai em "fixa": o que esta gravado e um lancamento, nao uma
       // regra. A regra se edita em Contas Previstas. Aqui so distinguimos se o
@@ -424,6 +449,39 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
     }
 
     toast.success(copia.regraCriada);
+    return true;
+  };
+
+  /**
+   * O lancamento que ainda nao aconteceu vira uma conta PREVISTA (HMO-188).
+   *
+   * Vai para `scheduled_transactions` e nao para `financial_transactions`, e a
+   * razao nao e organizacao: toda linha de `financial_transactions` mexe no
+   * saldo da conta no instante do INSERT (`update_account_balance_trigger`) e
+   * entra no realizado de `monthly_cash_flow`, `budget_consumption`,
+   * `net_worth` e nos relatorios do 008. Um lancamento nao confirmado gravado
+   * ali sairia gastando dinheiro que nao saiu, e cada uma dessas views teria de
+   * aprender a ignora-lo -- a esquecida viraria um numero errado e plausivel.
+   *
+   * O corpo sai de `contaPrevista`, que e quem garante o valor POSITIVO (CHECK
+   * da 005) e o `transaction_type` vindo do tipo da tela. Esse segundo e a razao
+   * pela qual a migration 027 existe: sem ele a rota de baixa cai no
+   * `?? "expense"` e confirmar o recebimento de R$ 7.000 grava -7000.
+   */
+  const criarContaPrevista = async () => {
+    const resposta = await fetch("/api/scheduled-transactions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(contaPrevista(tipo, valores)),
+    });
+
+    const dados = await resposta.json();
+    if (!resposta.ok) {
+      toast.error(dados.error || copia.erroDaPrevisao);
+      return false;
+    }
+
+    toast.success(copia.previsaoCriada);
     return true;
   };
 
@@ -509,6 +567,11 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       compartilhado: valores.compartilhado,
       grupoId: valores.grupoId || null,
       editando,
+      // Sem isto a fila gravaria a previsao como TRANSACAO: o dinheiro sairia
+      // do saldo hoje por algo que ainda nao aconteceu, e nada na tela diria
+      // que o destino mudou -- o aviso seria "guardei no aparelho".
+      // `avaliarLancamento` recusa `confirmado: false` com a razao.
+      confirmado: valores.confirmado,
       // Vai nos DOIS tipos desde a HMO-170. A fila recusa `fixed` porque regra
       // nao e lancamento; enquanto isto era `tipo === "expense" ? ... :
       // undefined`, a receita fixa passava pela peneira como receita PONTUAL --
@@ -565,18 +628,30 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
         }
       }
 
-      if (campos.diaDeVencimento && valores.natureza === "fixed") {
-        if (await criarRegraFixa()) voltarParaLista();
-        return;
+      // A ESCOLHA DO DESTINO SAI DE `lib/lancamento.ts` (HMO-188)
+      //
+      // Aqui havia tres `if` em cadeia, e a ordem entre eles E a regra: a
+      // previsao tinha de entrar no meio da cadeia, e o lugar errado nao da
+      // erro. Antes de `regra`, ela roubaria a despesa fixa e o aluguel de todo
+      // mes viraria uma conta unica de outubro -- a pessoa descobriria em
+      // novembro. Depois de `parcelas`, a checkbox desmarcada nao faria nada.
+      //
+      // `destinoDoLancamento` e uma funcao pura, e a ordem esta presa por teste.
+      switch (destinoDoLancamento(tipo, valores, editando)) {
+        case "regra":
+          if (await criarRegraFixa()) voltarParaLista();
+          return;
+        case "parcelas":
+          if (await criarParcelas()) voltarParaLista();
+          return;
+        case "previsao":
+          if (await criarContaPrevista()) voltarParaLista();
+          return;
+        case "transacao":
+          await gravarTransacao();
+          voltarParaLista();
+          return;
       }
-
-      if (valores.parcelado && campos.parcelamento) {
-        if (await criarParcelas()) voltarParaLista();
-        return;
-      }
-
-      await gravarTransacao();
-      voltarParaLista();
     } catch (erro) {
       console.error("Erro ao gravar lançamento:", erro);
 
@@ -646,6 +721,19 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       // valendo um por um.
       exchange_rate:
         taxaParaGravar(valores.moeda, cotacaoDigitada(valores.cotacao)) ?? 1,
+      // AS DUAS DATAS DA 027 (HMO-188)
+      //
+      // `launch_date` e sempre hoje: e o dia em que a pessoa anotou. A coluna
+      // tem DEFAULT CURRENT_DATE, entao mandar aqui nao muda o resultado de um
+      // lancamento novo -- muda o de uma EDICAO, onde o DEFAULT nao se aplica e
+      // a coluna manteria o valor antigo. Mandar sempre e o que torna as duas
+      // situacoes iguais.
+      //
+      // `expected_date` vem NULL quando a previsao e igual a data real: NULL
+      // quer dizer "nao havia previsao separada", e gravar a mesma data nas duas
+      // colunas faria todo lancamento AFIRMAR que saiu no dia previsto -- um
+      // relatorio de atraso sairia com zero atrasos e cara de verdade.
+      ...datasDaTransacao(valores),
     };
 
     let transacao: { id: string };

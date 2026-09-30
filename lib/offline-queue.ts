@@ -131,6 +131,16 @@ export interface EntradaDeLancamento {
    * `avaliarLancamento` recusa -- ver o motivo `sem-cotacao`.
    */
   cotacao?: string;
+  /**
+   * A pessoa ja pagou / ja recebeu? (HMO-188)
+   *
+   * Opcional na ENTRADA pelo mesmo motivo que `moeda` e `cotacao`: uma versao
+   * antiga da tela, servida do cache do service worker, nao tem este campo.
+   * AUSENTE quer dizer confirmado -- que e exatamente o que aquela tela fazia,
+   * gravar a transacao direto. Tratar ausente como "previsto" mandaria todo
+   * lancamento offline de uma tela em cache para a recusa.
+   */
+  confirmado?: boolean;
 }
 
 export type MotivoDeRecusa =
@@ -140,6 +150,7 @@ export type MotivoDeRecusa =
   | "transferencia"
   | "edicao"
   | "sem-cotacao"
+  | "previsto"
   | "invalido";
 
 export type Avaliacao =
@@ -188,6 +199,31 @@ export function avaliarLancamento(
       ok: false,
       motivo: "despesa-fixa",
       mensagem: "Despesa fixa precisa de conexao para criar a regra mensal.",
+    };
+  }
+
+  if (entrada.confirmado === false) {
+    // O LANCAMENTO QUE AINDA NAO ACONTECEU NAO CABE NESTA FILA (HMO-188)
+    //
+    // A fila grava `LinhaDeTransacao`, ou seja uma linha de
+    // `financial_transactions`. Uma previsao e uma linha de
+    // `scheduled_transactions`, e a diferenca nao e de tabela: toda linha de
+    // `financial_transactions` mexe no saldo da conta no INSERT
+    // (`update_account_balance_trigger`) e entra no realizado de todo relatorio.
+    //
+    // Sem esta porta a fila gravaria a previsao como transacao -- o dinheiro
+    // sairia do saldo hoje, o relatorio do mes contaria um gasto que nao houve,
+    // e a conta continuaria aparecendo como a pagar em Contas Previstas quando a
+    // pessoa a lancasse de novo. E o pior: com a checkbox desmarcada e o aviso
+    // "guardei no aparelho", nada na tela indicaria que o destino mudou.
+    //
+    // A comparacao e `=== false`, e nao `!entrada.confirmado`: ausente quer dizer
+    // confirmado (tela antiga em cache), e `!undefined` recusaria todas elas.
+    return {
+      ok: false,
+      motivo: "previsto",
+      mensagem:
+        "Lancamento previsto precisa de conexao: ele vai para as contas previstas, nao para o saldo.",
     };
   }
 

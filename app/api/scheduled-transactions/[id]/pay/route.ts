@@ -130,7 +130,31 @@ export async function POST(
       });
     }
 
-    const tipo = conta.recurring_rule?.transaction_type ?? "expense";
+    // A DIRECAO: OCORRENCIA, DEPOIS REGRA, DEPOIS 'expense' (HMO-188, 027)
+    //
+    // Antes da 027 esta linha era `conta.recurring_rule?.transaction_type ??
+    // "expense"`, e o `??` era um caminho de perda silenciosa: uma previsao
+    // AVULSA nao tem regra, entao ela caia sempre em 'expense'. Enquanto a unica
+    // tela que criava avulsa era /dashboard/bills (so conta a pagar) isso nao
+    // machucava. Com a tela de receita podendo criar uma receita prevista,
+    // confirmar o recebimento de R$ 7.000 gravaria `-7000`: o salario entrando
+    // TIRANDO dinheiro da conta, com valor, descricao e categoria certos, e a
+    // tela dizendo que deu tudo certo.
+    //
+    // A ocorrencia vem PRIMEIRO porque ela e a excecao deliberada -- um mes em
+    // que a regra de despesa virou estorno, por exemplo. A regra vem depois
+    // porque e ela que manda nas ocorrencias geradas por ela (editar a regra
+    // reaponta as futuras, e uma copia por ocorrencia congelaria a antiga). O
+    // 'expense' final so alcanca linha anterior a 027 cujo backfill nao pegou.
+    //
+    // A MESMA precedencia esta na coluna `direction` de
+    // `scheduled_transactions_effective`, que e o que as telas leem. As duas tem
+    // de concordar: se divergirem, a tela mostra "a receber" e a baixa grava
+    // despesa.
+    const tipo =
+      conta.transaction_type ??
+      conta.recurring_rule?.transaction_type ??
+      "expense";
     const valor = valorComSinal(valorPago ?? Number(conta.amount), tipo);
 
     const { data: transacao, error: erroTransacao } = await supabase
@@ -146,6 +170,22 @@ export async function POST(
         transaction_date: paid_date,
         transaction_type: tipo,
         notes: conta.notes,
+        // AS DUAS DATAS SOBREVIVEM A BAIXA (HMO-188, 027)
+        //
+        // Sem estas linhas a informacao se perderia exatamente no momento em que
+        // ela passa a ter valor: a conta previa o dia 5, foi paga no dia 12, e a
+        // transacao resultante nao teria como dizer que houve atraso -- o
+        // `due_date` fica na linha da agenda e a tela de lancamentos le a
+        // transacao.
+        //
+        // `launch_date` sai do dia em que a PREVISAO foi criada, e nao de hoje:
+        // a pessoa anotou aquela conta quando a cadastrou. Deixar o DEFAULT
+        // CURRENT_DATE agir aqui diria que o aluguel de marco foi anotado no dia
+        // em que ele foi pago.
+        expected_date: conta.due_date,
+        launch_date: conta.created_at
+          ? String(conta.created_at).slice(0, 10)
+          : paid_date,
       })
       .select()
       .single();
@@ -182,9 +222,17 @@ export async function POST(
     }
 
     return NextResponse.json({
-      message: "Baixa registrada",
+      // A palavra muda com a direcao (HMO-188). "Baixa registrada" numa receita
+      // se le como "a conta foi paga", e o que aconteceu foi um recebimento --
+      // era esse o defeito que a issue nomeia ("a receita ele deve confirmar que
+      // recebeu").
+      message:
+        tipo === "income" ? "Recebimento confirmado" : "Pagamento confirmado",
       scheduled: baixada,
       transaction: transacao,
+      // A tela usa isto para o rotulo e para o icone. Sai da rota e nao e
+      // recalculado la: a precedencia da direcao tem UM dono.
+      direction: tipo,
     });
   } catch (error) {
     console.error("Erro ao dar baixa:", error);
