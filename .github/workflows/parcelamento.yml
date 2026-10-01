@@ -1,0 +1,109 @@
+name: parcelamento
+
+# A compra parcelada no cartao (HMO-211), que e a Fase 4 da HMO-208.
+#
+# POR QUE ELA MERECE JOB PROPRIO
+# ------------------------------
+# Sao quatro entradas que se combinam -- o valor, se ele e da parcela ou do
+# total, o N e o M de "parcela N de M" -- e TODO jeito errado de combina-las
+# grava dinheiro plausivel. Ler o valor como total em vez de parcela divide a
+# compra por dez. Trocar N por M cria a serie ao contrario. Um off-by-one no laco
+# poe uma parcela a mais numa fatura de um mes que ainda nao chegou. Nenhum
+# desses da erro, e a tela que os produz nao mostra nenhum deles.
+#
+# A suite pura e os mutantes rodam em segundos e nao precisam de banco. A parte
+# que precisa -- a parcela aparecendo na fatura do mes certo, e as parcelas
+# anteriores NAO existindo -- esta no db-verify, no teste da 035.
+#
+# SEM FILTRO DE `paths`, pelo mesmo motivo do cartoes.yml: o comportamento nasce
+# de lib/lancamento.ts, do componente de campos, da rota de parcelas e da tela da
+# fatura, e um filtro que liste os de hoje perde o dia em que alguem mexer no de
+# amanha.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  parcelamento:
+    name: parcela N de M, com base parcela ou total
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      # O `--include=dev` e explicito porque um ambiente com NODE_ENV=production
+      # poda as devDeps na instalacao e o tsc some sem mensagem que explique.
+      - run: npm ci --include=dev
+
+      # A CONTA. Valor, base, N e M -> valor da parcela, valor total, quais
+      # parcelas e em que datas. Inclui a negacao da opcao (B) -- nenhuma parcela
+      # anterior a N e criada -- e os centavos exatos.
+      - name: As regras da serie de parcelas
+        run: npm run test:parcelamento
+
+      # OS MUTANTES. A suite acima passando nao diz, sozinha, que ela esta
+      # medindo o que a justificativa dela afirma. Cada mutante quebra UMA decisao
+      # e tem de reprovar alguma assercao.
+      #
+      # Medido na HMO-211 ao escrever isto: 16 mutantes, 16 mortos, todos por
+      # assercao e nenhum so pelo compilador. O proprio runner falha se nenhum
+      # mutante morrer por assercao -- uma suite vazia tiraria placar perfeito.
+      - name: Os mutantes da serie
+        run: npm run mutantes:parcelamento
+
+      # A ARVORE. A suite pura passa verde com o bloco inteiro fora da tela: ela
+      # nao sabe se a checkbox existe, se a pergunta "parcela ou total" aparece,
+      # nem se o resumo que avisa sobre as parcelas anteriores esta renderizado.
+      - name: O bloco de parcelamento, renderizado
+        run: npm run test:campos-lancamento
+
+      # O ROTULO NA FATURA. E aqui que a parcela aparece para o usuario -- o
+      # "caminho de volta" sem o qual esta feature grava e desaparece.
+      - name: O rotulo parcela N de M na tela do cartao
+        run: npm run test:tela-do-cartao
+
+      # Controle negativo. As assercoes mais importantes desta feature sao de
+      # AUSENCIA ("as parcelas 1 e 2 NAO foram criadas", "a compra avulsa NAO
+      # ganha rotulo"), e assercao de ausencia passa verde tambem quando ela
+      # deixa de achar o que deveria procurar. Os mutantes acima cobrem
+      # lib/lancamento.ts; estes dois cobrem o que esta fora dele.
+      - name: A verificacao sabe falhar
+        run: |
+          set -uo pipefail
+          TELA=components/cartoes/FaturaDoCartao.tsx
+          CAMPOS=components/movimentacoes/CamposDeLancamento.tsx
+          cp $TELA $TELA.orig
+          cp $CAMPOS $CAMPOS.orig
+          trap 'mv $TELA.orig $TELA; mv $CAMPOS.orig $CAMPOS' EXIT
+
+          # 1) A fatura voltando a imprimir so a data, sem o rotulo da parcela.
+          #    E o estado ANTERIOR a esta issue: as parcelas no banco, a fatura
+          #    somando certo, e nada na tela dizendo que aquilo e uma parcela.
+          sed -i 's#{rotuloDaParcela(#{((#' $TELA
+          if npm run test:tela-do-cartao > /dev/null 2>&1; then
+            echo "::error::Verde com a fatura sem o rotulo de parcela."
+            exit 1
+          fi
+          cp $TELA.orig $TELA
+
+          # 2) O resumo fora da tela. Ele e o UNICO lugar que avisa, antes de
+          #    salvar, que lancar "parcela 3 de 10" grava 8 linhas e nao 10 --
+          #    a decisao (A) da HMO-208. Sem ele a tela anuncia 10x, grava 8, e a
+          #    pessoa so descobre procurando nas faturas passadas uma parcela que
+          #    nunca existiu.
+          sed -i 's#{resumo && (#{false \&\& (#' $CAMPOS
+          if npm run test:campos-lancamento > /dev/null 2>&1; then
+            echo "::error::Verde com o resumo das parcelas fora da tela."
+            exit 1
+          fi
+          cp $CAMPOS.orig $CAMPOS
+
+          echo "os dois controles negativos reprovaram, como deviam"

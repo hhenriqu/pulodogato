@@ -600,6 +600,16 @@ export interface CardInvoiceLine {
   invoice_month: string;
   /** NULL quando o cartao nao tem due_day configurado. */
   invoice_due_date?: string;
+  /**
+   * "parcela N de M" (035). As duas vem NULL juntas numa compra avulsa -- ha
+   * CHECK no banco (`financial_transactions_installment_coerente`) garantindo
+   * que nunca existe uma sem a outra.
+   *
+   * O rotulo da tela sai DESTAS colunas, e nao da `description`. A descricao
+   * gravada e "Notebook (3/10)" e o usuario pode reescreve-la; o rotulo nao.
+   */
+  installment_number?: number | null;
+  installment_total?: number | null;
 }
 
 /** Uma fatura fechada: as linhas de um cartao num mes, com o total. */

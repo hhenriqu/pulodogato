@@ -93,12 +93,28 @@ test("receita nao tem natureza de despesa, parcelamento nem rateio", () => {
   );
 });
 
-test("despesa tem os tres", () => {
+test("despesa tem natureza e rateio; o parcelamento e so do cartao", () => {
   const html = renderizar({ tipo: "expense" });
 
   assert.ok(html.includes("Tipo de Despesa"), "a natureza da despesa sumiu");
-  assert.ok(html.includes("Parcelar esta despesa"), "o parcelamento sumiu");
   assert.ok(html.includes(MARCADOR_DE_RATEIO), "o bloco de rateio sumiu");
+  // HMO-211: a checkbox saiu da despesa pontual. Ela aparecia e nao funcionava
+  // -- a rota gravava em `transaction_installments`, tabela sem leitor nenhum --
+  // e agora a rota recusa 400 fora do cartao. Oferecer na tela um caminho que o
+  // servidor nao atende e pior que nao oferecer.
+  assert.ok(
+    !html.includes("Parcelar esta compra"),
+    "o parcelamento voltou para a despesa pontual, onde a rota recusa"
+  );
+
+  const noCartao = renderizar({
+    tipo: "expense",
+    valores: { natureza: "card", contaId: CARTAO.id },
+  });
+  assert.ok(
+    noCartao.includes("Parcelar esta compra"),
+    "o parcelamento sumiu do cartao"
+  );
 });
 
 test("os campos comuns estao nas duas", () => {
@@ -223,18 +239,110 @@ test("editando, a natureza fica visivel mas travada", () => {
 // ---------------------------------------------------------------------------
 
 test("os campos da parcela so existem com o parcelamento marcado", () => {
-  const desmarcado = renderizar({ tipo: "expense" });
+  // Desmarcada, nem no cartao: a checkbox existe, os campos nao.
+  const desmarcado = renderizar({
+    tipo: "expense",
+    valores: { natureza: "card", contaId: CARTAO.id },
+  });
+  assert.ok(desmarcado.includes('id="is_installment"'));
   assert.ok(!desmarcado.includes('id="total_installments"'));
+  assert.ok(!desmarcado.includes('id="parcela_atual"'));
+  assert.ok(!desmarcado.includes('id="base_parcela"'));
 
   const marcado = renderizar({
     tipo: "expense",
-    valores: { parcelado: true, valorDaParcela: "50", totalDeParcelas: 3 },
+    valores: {
+      natureza: "card",
+      contaId: CARTAO.id,
+      parcelado: true,
+      valor: "50",
+      totalDeParcelas: 3,
+    },
   });
-  assert.ok(marcado.includes('id="total_installments"'));
-  assert.ok(marcado.includes('id="installment_amount"'));
-  assert.ok(marcado.includes('id="first_due_date"'));
-  // 3 x 50 = 150: o total sai na tela para a pessoa conferir antes de salvar.
-  assert.ok(marcado.includes("150,00"), "o total das parcelas nao foi exibido");
+  // OS TRES PEDACOS DO PEDIDO, cada um por id proprio.
+  assert.ok(marcado.includes('id="total_installments"'), "o M sumiu");
+  assert.ok(marcado.includes('id="parcela_atual"'), "o N sumiu");
+  assert.ok(marcado.includes('id="base_parcela"'), "a opcao 'parcela' sumiu");
+  assert.ok(marcado.includes('id="base_total"'), "a opcao 'total' sumiu");
+  assert.ok(marcado.includes("O valor acima é:"), "a pergunta da issue sumiu");
+
+  // O CAMPO DE DINHEIRO DA PARCELA NAO EXISTE MAIS, e isto e o pedido.
+  // "perguntar se o valor que esta no input e o da parcela ou total" pressupoe
+  // UM valor. Enquanto havia dois, o de cima era sobrescrito em silencio.
+  assert.ok(
+    !marcado.includes('id="installment_amount"'),
+    "voltou o segundo campo de dinheiro, que o pedido elimina"
+  );
+  assert.ok(
+    !marcado.includes('id="first_due_date"'),
+    "voltou o campo de data proprio: a data da compra ja esta na tela"
+  );
+
+  // 3 x 50 = 150: a conta feita sai na tela para a pessoa conferir antes de
+  // salvar -- e e ela que protege de responder "parcela ou total" errado.
+  assert.ok(marcado.includes("R$ 150,00"), "o total das parcelas nao foi exibido");
+  assert.ok(marcado.includes("3x de R$ 50,00"), "o resumo da serie nao saiu");
+});
+
+// A POSICAO E PARTE DO PEDIDO, e nenhuma assercao de presenca a cobre.
+//
+// "deve ser um checkbox ABAIXO DO VALOR do cartao". O rebase da HMO-216 trouxe
+// `SeletorDeCategoria` para exatamente o ponto onde este bloco entra, e resolver
+// aquele conflito na ordem errada -- valor, categoria, parcelar -- compila verde
+// e passa em TODAS as assercoes de presenca acima: os quatro ids continuam no
+// HTML, so longe do campo que a checkbox redefine. Esta e a unica assercao do
+// repositorio que falha nesse caso, e por isso ela compara indices e nao
+// `includes`.
+test("a checkbox de parcelar vem depois do valor e antes da categoria", () => {
+  const html = renderizar({
+    tipo: "expense",
+    valores: { natureza: "card", contaId: CARTAO.id },
+  });
+
+  const valor = html.indexOf('id="amount"');
+  const checkbox = html.indexOf('id="is_installment"');
+  const categoria = html.indexOf('id="category"');
+
+  assert.ok(valor >= 0, "o campo de valor sumiu da tela");
+  assert.ok(checkbox >= 0, "a checkbox de parcelar sumiu da tela");
+  assert.ok(categoria >= 0, "o seletor de categoria sumiu da tela");
+
+  assert.ok(
+    valor < checkbox,
+    `a checkbox de parcelar subiu para ANTES do campo de valor (valor=${valor}, checkbox=${checkbox}); o pedido e "abaixo do valor"`
+  );
+  assert.ok(
+    checkbox < categoria,
+    `a categoria entrou ENTRE o valor e a checkbox (checkbox=${checkbox}, categoria=${categoria}); a checkbox tem que encostar no campo cujo significado ela muda`
+  );
+});
+
+test("o resumo diz, na tela, que as parcelas anteriores nao entram", () => {
+  // A decisao (A) da HMO-208 fica VISIVEL antes de salvar. Sem esta frase a tela
+  // anuncia 10x e grava 8, e a pessoa so descobriria procurando nas faturas
+  // passadas uma parcela que nunca existiu.
+  const html = renderizar({
+    tipo: "expense",
+    valores: {
+      natureza: "card",
+      contaId: CARTAO.id,
+      parcelado: true,
+      valor: "100",
+      parcelaAtual: 3,
+      totalDeParcelas: 10,
+    },
+  });
+
+  assert.ok(html.includes("10x de R$ 100,00"), "o resumo nao trouxe a serie");
+  assert.ok(html.includes("R$ 1.000,00"), "o resumo nao trouxe o total");
+  assert.ok(
+    html.includes("8 parcelas"),
+    "o resumo nao disse quantas parcelas vao ser criadas"
+  );
+  assert.ok(
+    html.includes("2 anteriores não entram"),
+    "a tela nao avisou que as parcelas anteriores nao sao criadas"
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -408,20 +516,31 @@ test("o campo de valor deixou de ser numerico e continua com teclado numerico", 
   assert.match(campo, /inputmode="decimal"/i, `o campo de valor perdeu o teclado numerico: ${campo}`);
 });
 
-test("o valor da parcela tambem e mascarado, e o total sai formatado", () => {
+test("parcelado, o UNICO campo de dinheiro continua mascarado e o total sai formatado", () => {
+  // O teste antigo conferia a mascara do campo `installment_amount`, que a
+  // HMO-211 eliminou. O que ele protegia continua valendo, agora sobre o campo
+  // de valor de cima: ele nao pode virar `type="number"` (que aceita o menos) e
+  // o total exibido tem de sair com simbolo e separador de milhar -- era um
+  // `toLocaleString` escrevendo "3.000,00" sem "R$" na frente.
   const html = renderizar({
     tipo: "expense",
-    valores: { parcelado: true, valorDaParcela: "1000.00", totalDeParcelas: 3 },
+    valores: {
+      natureza: "card",
+      contaId: CARTAO.id,
+      parcelado: true,
+      valor: "1000.00",
+      totalDeParcelas: 3,
+    },
   });
 
-  const campo = html.match(/<input[^>]*id="installment_amount"[^>]*>/)?.[0];
-  assert.ok(campo, "o campo de parcela sumiu");
-  assert.ok(!campo.includes('type="number"'), "o campo de parcela ficou numerico");
-  assert.ok(campo.includes("R$ 1.000,00"), `a parcela nao foi mascarada: ${campo}`);
+  const campo = html.match(/<input[^>]*id="amount"[^>]*>/)?.[0];
+  assert.ok(campo, "o campo de valor sumiu");
+  assert.ok(!campo.includes('type="number"'), "o campo de valor ficou numerico");
+  assert.ok(campo.includes("R$ 1.000,00"), `o valor nao foi mascarado: ${campo}`);
 
-  // 3 x 1000 = 3000. Com separador de milhar, que era justamente o que o
-  // `toLocaleString` antigo escrevia sem simbolo nenhum na frente.
+  // 3 x 1000 = 3000, com simbolo e separador de milhar.
   assert.ok(html.includes("R$ 3.000,00"), "o total das parcelas nao saiu formatado");
+  assert.ok(!html.includes("R$3.000"), "o total saiu sem o espaco do padrao pt-BR");
 });
 
 test("o campo de valor nao oferece o menos", () => {
@@ -476,17 +595,29 @@ test("todo campo de valor da tela vem com a calculadora ao lado", () => {
     );
   }
 
-  // ...e DOIS quando o parcelamento abre o campo da parcela. Esta metade e a que
-  // denuncia uma calculadora pendurada numa tela so em vez de no componente
-  // compartilhado: com o botao no lugar errado, o campo da parcela ficaria sem.
+  // ...e CONTINUA UM com o parcelamento aberto, porque a HMO-211 deixou um
+  // campo de dinheiro so. Antes eram dois (o valor e "Valor da Parcela") e esta
+  // metade do teste existia para pegar a calculadora pendurada numa tela so em
+  // vez de no componente compartilhado.
+  //
+  // A assercao e EXATA (`=== 1`) e nao `>= 1` de proposito: ela e o que denuncia
+  // o segundo campo de dinheiro voltando -- que e precisamente o que o pedido da
+  // issue elimina ("perguntar se o valor que esta no input e o da parcela ou
+  // total" pressupoe um input so).
   const parcelado = renderizar({
     tipo: "expense",
-    valores: { parcelado: true, valorDaParcela: "1000.00", totalDeParcelas: 3 },
+    valores: {
+      natureza: "card",
+      contaId: CARTAO.id,
+      parcelado: true,
+      valor: "1000.00",
+      totalDeParcelas: 3,
+    },
   });
   assert.equal(
     botoesDeCalculadora(parcelado).length,
-    2,
-    "o campo da parcela ficou sem calculadora"
+    1,
+    "parcelado mudou o numero de campos de dinheiro da tela"
   );
 });
 

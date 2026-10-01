@@ -625,6 +625,21 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
     }
   };
 
+  /**
+   * A compra parcelada (HMO-211).
+   *
+   * O CORPO MANDA O QUE FOI DIGITADO, NAO O RESULTADO DA CONTA
+   *
+   * Antes isto mandava `total_amount: parseFloat(valorDaParcela) *
+   * totalDeParcelas` -- a aritmetica do dinheiro feita no cliente, e o servidor
+   * gravava qualquer total que chegasse. Agora vao as quatro respostas da tela
+   * (valor, base, N, M) e e a rota que chama `serieDeParcelas`, a MESMA funcao
+   * pura que o resumo na tela usa. Uma conta, um dono.
+   *
+   * `group_split_type` saiu do corpo: quem rateia e o trigger do banco, a partir
+   * do `group_id` da linha de `financial_transactions` -- o mesmo motivo pelo
+   * qual `gravarTransacao` nao cria `group_expense_splits` a mao.
+   */
   const criarParcelas = async () => {
     const resposta = await fetch("/api/financial-installments", {
       method: "POST",
@@ -633,17 +648,22 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
         account_id: valores.contaId || null,
         category_id: valores.categoriaId,
         description: valores.descricao,
-        total_amount:
-          Number.parseFloat(valores.valorDaParcela) * valores.totalDeParcelas,
-        total_installments: valores.totalDeParcelas,
-        first_due_date: valores.primeiroVencimento,
-        transaction_type: "expense",
+        valor: valores.valor,
+        base: valores.baseDoValorParcelado,
+        parcela_atual: valores.parcelaAtual,
+        total_parcelas: valores.totalDeParcelas,
+        // A data da COMPRA, que e a que `card_invoice_month()` usa para dizer em
+        // que fatura a parcela cai. Nao ha campo de data proprio no bloco de
+        // parcelamento: ver o comentario em `validarLancamento`.
+        vencimento: valores.data,
         group_id: valores.grupoId || null,
-        group_split_type: valores.grupoId
-          ? grupos.find((g) => g.id === valores.grupoId)?.default_split_type ||
-            "equal"
-          : null,
         notes: valores.notas,
+        // Moeda e cotacao vao pelo mesmo motivo de `gravarTransacao`: a 026 tem
+        // `CHECK ((currency = 'BRL') = (exchange_rate = 1))`, e mandar uma sem a
+        // outra faz o banco recusar a serie inteira com 23514.
+        currency: valores.moeda,
+        exchange_rate:
+          taxaParaGravar(valores.moeda, cotacaoDigitada(valores.cotacao)) ?? 1,
       }),
     });
 

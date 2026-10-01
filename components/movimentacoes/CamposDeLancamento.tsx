@@ -46,6 +46,8 @@ import {
   camposDoTipo,
   contasDoSeletor,
   naturezasDoTipo,
+  resumoDaSerie,
+  serieDeParcelas,
   MAX_MESES_DE_REPETICAO,
   type CategoriaDeLancamento,
   type ContaDeLancamento,
@@ -212,6 +214,31 @@ export function CamposDeLancamento({
   const naturezasVisiveis = naturezasDoTipo(tipo);
   // A conta escolhida, para saber que moeda ela sugere.
   const contaEscolhida = contas.find((c) => c.id === valores.contaId);
+
+  // O RESUMO DAS PARCELAS SAI DE FUNCAO PURA, E NAO DE UMA CONTA NO JSX
+  //
+  // No bloco antigo a aritmetica do parcelamento estava dentro do `onChange` e
+  // dentro do texto de ajuda (`valorNumerico(valorDaParcela) * totalDeParcelas`,
+  // duas vezes, em dois lugares). Duas copias da mesma multiplicacao divergem na
+  // primeira mudanca, e a que ficaria errada e a que o usuario LE -- a outra e a
+  // que grava. Aqui a tela nao faz conta nenhuma: ela exibe o que
+  // `serieDeParcelas` respondeu, que e a mesma funcao que a rota usa para montar
+  // as linhas.
+  //
+  // Sem `useMemo`: sao quatro inteiros e uma string, e um `useMemo` aqui
+  // esconderia o custo real (zero) atras de uma lista de dependencias que
+  // envelhece.
+  const resumo = valores.parcelado
+    ? resumoDaSerie(
+        serieDeParcelas({
+          valor: valores.valor,
+          base: valores.baseDoValorParcelado,
+          parcelaAtual: valores.parcelaAtual,
+          totalDeParcelas: valores.totalDeParcelas,
+          vencimentoDaParcelaAtual: valores.data,
+        })
+      )
+    : null;
 
   return (
     <div className="space-y-6">
@@ -415,11 +442,161 @@ export function CamposDeLancamento({
           </p>
         </div>
 
+        {/* PARCELAMENTO: ABAIXO DO VALOR, PORQUE A PERGUNTA E SOBRE O VALOR
+            (HMO-211)
+
+            "Sobre parcelar, deve ser um checkbox abaixo do valor do cartao e ao
+            clicar perguntar se o valor que esta no input e o da parcela ou
+            total, e em qual parcela aquela se refere de quantas no total."
+
+            A posicao e parte do pedido, e ela nao e cosmetica: a primeira coisa
+            que a checkbox faz e mudar o SIGNIFICADO do campo logo acima. No
+            bloco antigo ela ficava no fim do formulario, depois das datas e da
+            confirmacao, com dois campos proprios de dinheiro -- "Numero de
+            Parcelas" e "Valor da Parcela" -- e o campo de valor de cima era
+            sobrescrito em silencio por `parcela * N`. Quem digitasse o preco da
+            etiqueta via o proprio numero mudar sem ter tocado nele. */}
+        {campos.parcelamento && (
+          <div className="space-y-4 p-4 border rounded-lg bg-muted/20">
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="is_installment"
+                checked={valores.parcelado}
+                onChange={(e) => aoMudar({ parcelado: e.target.checked })}
+              />
+              <Label htmlFor="is_installment" className="font-medium">
+                Parcelar esta compra
+              </Label>
+            </div>
+
+            {valores.parcelado && (
+              <div className="space-y-4">
+                {/* A PERGUNTA, EM RADIO E NAO EM SELECT
+
+                    Duas opcoes exclusivas das quais NENHUMA e um padrao
+                    inofensivo: ler "1.000" como parcela ou como total da uma
+                    compra dez vezes diferente. Radio mostra as duas respostas ao
+                    mesmo tempo; um select mostra uma e esconde a outra atras de
+                    um clique, e o valor que fica visivel passa por "o normal".
+
+                    `<input type="radio">` nativo, e nao o Select do Radix: o
+                    teste desta tela renderiza com `react-dom/server`, e o Radix
+                    Select nao imprime o valor escolhido no servidor -- a
+                    assercao leria vazio em qualquer caso. */}
+                <fieldset className="space-y-2">
+                  <legend className="text-sm font-medium">
+                    O valor acima é:
+                  </legend>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:gap-6">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        id="base_parcela"
+                        name="base_do_valor"
+                        value="parcela"
+                        checked={valores.baseDoValorParcelado === "parcela"}
+                        onChange={() =>
+                          aoMudar({ baseDoValorParcelado: "parcela" })
+                        }
+                      />
+                      <Label htmlFor="base_parcela">
+                        o valor de cada parcela
+                      </Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        id="base_total"
+                        name="base_do_valor"
+                        value="total"
+                        checked={valores.baseDoValorParcelado === "total"}
+                        onChange={() =>
+                          aoMudar({ baseDoValorParcelado: "total" })
+                        }
+                      />
+                      <Label htmlFor="base_total">o total da compra</Label>
+                    </div>
+                  </div>
+                </fieldset>
+
+                {/* "EM QUAL PARCELA AQUELA SE REFERE DE QUANTAS NO TOTAL"
+
+                    Os dois campos ficam lado a lado e na ordem da frase (N, e
+                    depois M), com o "de" entre eles -- e o unico jeito de a tela
+                    dizer qual e qual sem rotulo longo. Inverter o par e o erro
+                    de digitacao mais provavel daqui, e `validarLancamento` tem
+                    uma frase propria para ele ("A parcela atual tem que estar
+                    entre 1 e M"). */}
+                <div className="flex items-end gap-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="parcela_atual">Parcela</Label>
+                    <Input
+                      id="parcela_atual"
+                      type="number"
+                      min="1"
+                      max={String(valores.totalDeParcelas)}
+                      className="w-20"
+                      value={valores.parcelaAtual}
+                      onChange={(e) =>
+                        aoMudar({
+                          parcelaAtual: parseInt(e.target.value) || 1,
+                        })
+                      }
+                    />
+                  </div>
+                  <span className="pb-2 text-sm text-muted-foreground">de</span>
+                  <div className="space-y-2">
+                    <Label htmlFor="total_installments">Parcelas</Label>
+                    <Input
+                      id="total_installments"
+                      type="number"
+                      min="2"
+                      max="60"
+                      className="w-20"
+                      value={valores.totalDeParcelas}
+                      onChange={(e) =>
+                        aoMudar({
+                          totalDeParcelas: parseInt(e.target.value) || 1,
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+
+                {/* O RESUMO E A DEFESA CONTRA A PERGUNTA RESPONDIDA ERRADO
+
+                    Nenhum padrao de "parcela ou total" protege quem leu rapido,
+                    entao a tela mostra a conta FEITA -- parcela, total, quantas
+                    linhas vao ser criadas -- antes do Salvar. `resumoDaSerie` e
+                    pura e devolve null quando ainda nao da para fazer a conta:
+                    um resumo parcial ("10x de R$ 0,00") se le como resposta.
+
+                    E e aqui que a decisao (A) da HMO-208 fica visivel: lancar
+                    "parcela 3 de 10" grava 8 linhas, e esta frase e o unico
+                    lugar que diz isso antes de gravar. */}
+                {resumo && (
+                  <p
+                    className="text-xs text-muted-foreground"
+                    data-testid="resumo-das-parcelas"
+                  >
+                    {resumo}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* CATEGORIA + SUBCATEGORIA (HMO-216)
             Os dois seletores e o "criar" saem de `SeletorDeCategoria`. O
             filtro por tipo e a ordenacao foram para `categoriasDoSeletor` --
             `categoriasDoTipo` continua existindo em lib/lancamento.ts porque a
-            fila offline e a rota de parcelas tambem a chamam. */}
+            fila offline e a rota de parcelas tambem a chamam.
+
+            Vem DEPOIS do parcelamento no rebase da HMO-211, e nao antes: a
+            checkbox tem que encostar no campo de valor, porque a primeira coisa
+            que ela faz e mudar o significado daquele numero. */}
         <SeletorDeCategoria
           tipo={tipo}
           categorias={categorias}
@@ -664,87 +841,6 @@ export function CamposDeLancamento({
                   tipo === "expense" ? "pagou" : "recebeu"
                 }: vai para Contas Previstas e não mexe no saldo até você confirmar lá.`}
           </p>
-        </div>
-      )}
-
-      {campos.parcelamento && (
-        <div className="space-y-4 p-4 border rounded-lg bg-muted/20">
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="is_installment"
-              checked={valores.parcelado}
-              onChange={(e) => aoMudar({ parcelado: e.target.checked })}
-            />
-            <Label htmlFor="is_installment" className="font-medium">
-              Parcelar esta despesa
-            </Label>
-            <Badge variant="outline" className="text-xs">
-              Apenas para novas despesas
-            </Badge>
-          </div>
-
-          {valores.parcelado && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="total_installments">Número de Parcelas</Label>
-                <Input
-                  id="total_installments"
-                  type="number"
-                  min="2"
-                  max="60"
-                  value={valores.totalDeParcelas}
-                  onChange={(e) =>
-                    aoMudar({
-                      totalDeParcelas: parseInt(e.target.value) || 1,
-                    })
-                  }
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="installment_amount">Valor da Parcela</Label>
-                <CampoDeValor
-                  id="installment_amount"
-                  moeda={valores.moeda}
-                  value={valores.valorDaParcela}
-                  onChange={(valorDaParcela) => {
-                    // `valorNumerico` em vez de `parseFloat` solto: e a mesma
-                    // conversao que o resto do app usa, e ela devolve 0 no lugar
-                    // de NaN -- um NaN aqui contaminaria o valor TOTAL, que e o
-                    // que a rota de parcelas grava.
-                    const parcela = valorNumerico(valorDaParcela);
-                    aoMudar({
-                      valorDaParcela,
-                      // O valor total acompanha a parcela: e ele que a rota de
-                      // parcelas recebe, e deixar os dois independentes ja
-                      // gravou compra de 10x com o total de uma parcela.
-                      valor: (parcela * valores.totalDeParcelas).toFixed(2),
-                    });
-                  }}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Total:{" "}
-                  {formatarValor(
-                    valorNumerico(valores.valorDaParcela) *
-                      valores.totalDeParcelas
-                  )}
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="first_due_date">Primeira Parcela</Label>
-                <Input
-                  id="first_due_date"
-                  type="date"
-                  value={valores.primeiroVencimento}
-                  onChange={(e) =>
-                    aoMudar({ primeiroVencimento: e.target.value })
-                  }
-                />
-              </div>
-            </div>
-          )}
         </div>
       )}
 

@@ -396,3 +396,82 @@ test("cartao sem dias na lista mostra a tarja", () => {
   assert.ok(t.includes("Falta fechamento e vencimento"));
   assert.ok(!t.includes("undefined"));
 });
+
+// ---------------------------------------------------------------------------
+// "PARCELA N DE M" NA FATURA (HMO-211, migration 035)
+// ---------------------------------------------------------------------------
+// O CAMINHO DE VOLTA DO PARCELAMENTO TERMINA AQUI.
+//
+// Antes da 035 as parcelas iam para `transaction_installments`, tabela sem
+// leitor nenhum: a compra em 10x era gravada e desaparecia de Lancamentos, de
+// Contas a Pagar e da fatura. Agora cada parcela e uma compra no cartao, no mes
+// da fatura dela -- e esta tela e onde ela aparece. Um teste que so cobrisse a
+// funcao pura provaria a aritmetica e nao provaria que a parcela chega na tela.
+
+const parcela = (numero, total, valor) => ({
+  ...linha(MEU_CARTAO, `Notebook (${numero}/${total})`, valor, "15"),
+  transaction_id: `parcela-${numero}`,
+  installment_number: numero,
+  installment_total: total,
+});
+
+test("a fatura rotula a parcela com 'parcela N de M'", () => {
+  const html = render({
+    fatura: { ...FATURA, lines: [parcela(3, 10, 100)], line_count: 1, total: 100 },
+  });
+
+  assert.ok(html.includes("parcela 3 de 10"), "o rotulo da parcela nao saiu");
+  // E a descricao continua na tela: as duas coisas aparecem, e e a descricao que
+  // diz O QUE foi comprado.
+  assert.ok(html.includes("Notebook (3/10)"), "a descricao da parcela sumiu");
+});
+
+test("o rotulo sai das COLUNAS, nao da descricao", () => {
+  // Uma descricao reescrita pelo usuario ("Notebook do trabalho") nao pode
+  // apagar o rotulo: ele vem de `installment_number`/`installment_total`. Se a
+  // tela fizesse parsing do texto, o rotulo sumiria aqui.
+  const html = render({
+    fatura: {
+      ...FATURA,
+      lines: [
+        {
+          ...parcela(4, 10, 100),
+          description: "Notebook do trabalho",
+        },
+      ],
+      line_count: 1,
+      total: 100,
+    },
+  });
+
+  assert.ok(html.includes("parcela 4 de 10"), "o rotulo dependia da descricao");
+  assert.ok(html.includes("Notebook do trabalho"));
+});
+
+test("compra avulsa continua mostrando a data, e NAO ganha rotulo de parcela", () => {
+  // A negacao. Sem ela, um rotulo que aparecesse em toda linha passaria verde
+  // nos dois testes acima -- e metade das compras do mes se chamaria "parcela".
+  const html = render();
+
+  assert.ok(!html.includes("parcela "), "a compra avulsa ganhou rotulo de parcela");
+  // A data continua na tela nas compras avulsas: ela e o unico eixo de tempo da
+  // linha, e e um dado que a pessoa digitou.
+  assert.ok(html.includes("03/10"), "a data da compra avulsa sumiu");
+});
+
+test("par meio preenchido nao vira 'parcela 3 de ' na tela", () => {
+  // Ha CHECK no banco impedindo este par (035), e este teste e o cinto do lado
+  // da tela: um rotulo pela metade e pior que rotulo nenhum. Quem recebe o par
+  // ruim cai de volta na data.
+  const html = render({
+    fatura: {
+      ...FATURA,
+      lines: [{ ...parcela(3, 10, 100), installment_total: null }],
+      line_count: 1,
+      total: 100,
+    },
+  });
+
+  assert.ok(!html.includes("parcela 3 de"), "a tela imprimiu um rotulo pela metade");
+  assert.ok(html.includes("15/10"), "sem rotulo, a linha devia mostrar a data");
+});
