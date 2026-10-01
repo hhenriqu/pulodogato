@@ -247,3 +247,9 @@ next-env.d.ts
 # movimentacoes.js junto, porque os dois modulos importam de la a unica
 # definicao de "que tipo e esta linha")
 /.tmp-lancamentos-completos/
+
+# saida do `npm run test:parcelamento` (HMO-211). A entrada entra JA AQUI, na PR
+# da migration, de proposito: o script que cria o diretorio vem na PR do app, e
+# se a entrada chegar junto com ele o artefato passa uma janela sem ignore. Um
+# `.tmp-*` fora do .gitignore chega a ser commitado em cima de arquivo de fonte.
+/.tmp-parcelamento/

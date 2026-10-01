@@ -999,6 +999,56 @@ jobs:
       - name: A conta prevista e em real, e o banco garante
         run: $PSQL -f database/tests/hmo184_moeda_da_conta_prevista_test.sql
 
+      - name: 035_parcela_n_de_m
+        run: $PSQL -f database/migrations/035_parcela_n_de_m.sql
+
+      # Re-executavel: dois ADD COLUMN IF NOT EXISTS, um DO com IF NOT EXISTS
+      # para a constraint (ADD CONSTRAINT nao tem IF NOT EXISTS, e repetir sem o
+      # DO aborta a transacao inteira com 42710), CREATE INDEX IF NOT EXISTS,
+      # CREATE OR REPLACE VIEW e COMMENTs.
+      - name: 035 e idempotente
+        run: $PSQL -f database/migrations/035_parcela_n_de_m.sql
+
+      # HMO-211. O rotulo "parcela 3 de 10" sai de DUAS COLUNAS novas em
+      # `financial_transactions`, e nao do parsing da descricao: a descricao
+      # gravada e "Notebook (3/10)" e o usuario pode reescreve-la -- o sintoma de
+      # uma descricao renomeada seria o rotulo desaparecer de uma parcela e
+      # aparecer na vizinha, na mesma fatura.
+      #
+      # "A coluna existe" nao prova nada aqui. O que o teste afirma e que a
+      # parcela cai NA FATURA DO MES CERTO, e esse numero erra calado de varios
+      # jeitos plausiveis: duas parcelas na mesma fatura (um mes fecha com o
+      # dobro e o ultimo vazio), a serie comecando em 1 quando a pessoa lancou
+      # "3 de 10" (duas linhas de dinheiro que ninguem digitou), o par
+      # meio-preenchido que a tela mostra como "parcela 3 de ", e a fatura
+      # somando com o sinal trocado (a compra ABATENDO em vez de somar).
+      #
+      # O CHECK nao esta escrito da forma obvia por um motivo medido: a forma
+      # intuitiva (`(a IS NULL AND b IS NULL) OR (a >= 1 AND b >= 2 ...)`) resulta
+      # NULL para `(3, NULL)` -- `FALSE OR NULL` e NULL --, e um CHECK que resulta
+      # NULL ACEITA a linha. A versao obvia deixa passar exatamente o que ela
+      # existe para barrar. O mutante `check_intuitivo` e esse.
+      #
+      # A SECAO 6 nao e enfeite: foi MEDIDO que `CREATE OR REPLACE VIEW` APAGA as
+      # reloptions da view (Postgres 17.11). A `card_invoice_lines` sai da 006 com
+      # `{security_invoker=true}`, e o REPLACE da 035 a deixaria sem opcao
+      # nenhuma -- rodando com o privilegio do DONO, a RLS das tabelas base sem se
+      # aplicar, e a fatura de qualquer usuario indo para qualquer usuario logado,
+      # sem erro, so com linhas a mais. O `ALTER VIEW ... SET (security_invoker)`
+      # da 035 e LOAD-BEARING, nao defensivo.
+      #
+      # Medido: 35 assercoes verdes; 11 mutantes na 035, 11 mortos, mais o
+      # controle positivo (npm run mutantes:parcela-n-de-m). O par que importa e
+      # `check_ausente` x `check_largo_demais`: so morrem juntos porque o teste
+      # tem as quatro recusas E o controle de aceitacao da compra avulsa --
+      # `CHECK (false)` tambem recusa o par incoerente, e quebraria TODO
+      # lancamento do app. E `indice_nao_parcial` so morre pela SECAO 4b: quando
+      # o `WHERE` do indice cai, nenhuma consulta muda de resposta (um indice
+      # cheio responde o mesmo) -- muda o tamanho, e tamanho nao aparece em
+      # count(*). Por isso a assercao e sobre `pg_index.indpred`.
+      - name: A parcela N de M cai na fatura do mes certo, e o par incoerente e recusado
+        run: $PSQL -f database/tests/035_parcela_n_de_m_test.sql
+
       # HMO-216. Categoria da PESSOA, personalizacao do catalogo e subcategoria.
       #
       # ENTRA AQUI, no fim da cadeia, e nao colada no 034: a 035 (HMO-211) esta
