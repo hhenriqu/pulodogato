@@ -83,7 +83,8 @@
     "mutantes:chave-pix": "node scripts/mutantes-chave-pix.mjs",
     "mutantes:minha-parte-no-realizado": "node scripts/mutantes-minha-parte-no-realizado.mjs",
     "test:puxar-para-atualizar": "rm -rf .tmp-puxar-para-atualizar && tsc lib/puxar-para-atualizar.ts --outDir .tmp-puxar-para-atualizar --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-puxar-para-atualizar.mjs",
-    "test:categorias-do-periodo": "rm -rf .tmp-categorias-do-periodo && tsc lib/categorias-do-periodo.ts --outDir .tmp-categorias-do-periodo --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-categorias-do-periodo.mjs"
+    "test:categorias-do-periodo": "rm -rf .tmp-categorias-do-periodo && tsc lib/categorias-do-periodo.ts --outDir .tmp-categorias-do-periodo --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-categorias-do-periodo.mjs",
+    "test:divisao-do-grupo": "rm -rf .tmp-divisao-do-grupo && tsc -p scripts/tsconfig.divisao-do-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-divisao-do-grupo lib && node --test scripts/test-divisao-do-grupo.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
