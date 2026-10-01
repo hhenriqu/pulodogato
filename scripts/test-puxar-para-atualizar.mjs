@@ -11,6 +11,9 @@ import assert from "node:assert/strict";
 const {
   lerGesto,
   deveAtualizar,
+  toqueEhNaPagina,
+  propsSemPuxao,
+  ATRIBUTO_SEM_PUXAO,
   LIMIAR_EM_PIXELS,
   DESLOCAMENTO_MAXIMO,
   RESISTENCIA,
@@ -84,6 +87,104 @@ test("com atualizacao em curso, um segundo puxao nao faz nada", () => {
   });
   assert.equal(r.estado, "inerte");
   assert.equal(deveAtualizar(r), false);
+});
+
+// ---------------------------------------------------------------------------
+// DE QUEM E O PUXAO -- HMO-206
+// ---------------------------------------------------------------------------
+// A queixa: rolar a lista do menu mobile recarregava a pagina. A pagina atras
+// da gaveta esta sempre em scroll 0, entao o dedo descendo dentro da lista era
+// indistinguivel de um puxao no topo do app.
+
+/** Um ancestral comum, que nao interfere em nada. */
+const ANCESTRAL_NEUTRO = {
+  rolaOProprioConteudo: false,
+  dispensaOPuxao: false,
+};
+const CAIXA_QUE_ROLA = { rolaOProprioConteudo: true, dispensaOPuxao: false };
+const AREA_SEM_PUXAO = { rolaOProprioConteudo: false, dispensaOPuxao: true };
+
+/** O puxao perfeito: no topo da pagina, bem passado do limiar. */
+const puxaoCompleto = (extra) =>
+  lerGesto({
+    scrollTopNoInicio: 0,
+    deltaY: deltaPara(DESLOCAMENTO_MAXIMO),
+    ...extra,
+  });
+
+test("toque so na pagina: o caminho vazio e o caminho neutro puxam", () => {
+  // CONTROLE POSITIVO. Sem ele, uma trava larga demais -- `toqueEhNaPagina`
+  // devolvendo sempre `false`, ou `lerGesto` sempre inerte -- passaria em
+  // todas as assercoes de bloqueio abaixo e desligaria a feature inteira.
+  assert.equal(toqueEhNaPagina([]), true);
+  assert.equal(toqueEhNaPagina([ANCESTRAL_NEUTRO, ANCESTRAL_NEUTRO]), true);
+
+  const r = puxaoCompleto({ toqueNaPagina: true });
+  assert.equal(r.estado, "solte");
+  assert.equal(deveAtualizar(r), true);
+});
+
+test("rolar a lista do menu NAO recarrega a pagina", () => {
+  // O caminho real do toque: um item dentro da lista que rola, dentro do
+  // painel, dentro da raiz marcada do menu.
+  const caminho = [ANCESTRAL_NEUTRO, CAIXA_QUE_ROLA, AREA_SEM_PUXAO];
+  assert.equal(toqueEhNaPagina(caminho), false);
+
+  const r = puxaoCompleto({ toqueNaPagina: toqueEhNaPagina(caminho) });
+  assert.equal(r.estado, "inerte");
+  assert.equal(r.deslocamento, 0, "o indicador nao pode nem aparecer");
+  assert.equal(deveAtualizar(r), false);
+});
+
+test("caixa que rola sozinha segura o puxao, mesmo fora do menu", () => {
+  // Vale para modal e tabela alta tambem, nao so para o menu.
+  assert.equal(toqueEhNaPagina([CAIXA_QUE_ROLA]), false);
+  assert.equal(puxaoCompleto({ toqueNaPagina: false }).estado, "inerte");
+});
+
+test("area marcada segura o puxao mesmo sem nada rolando", () => {
+  // O X, o veu e o rodape "Sair" da gaveta ficam FORA da lista que rola, e
+  // numa tela alta a lista pode nem transbordar. Se a unica trava fosse
+  // "rola o proprio conteudo", o menu aberto continuaria recarregando.
+  assert.equal(toqueEhNaPagina([AREA_SEM_PUXAO]), false);
+});
+
+test("a trava vale em QUALQUER altura do caminho, nao so no alvo", () => {
+  // O dedo encosta num <span> de rotulo, nao na caixa que rola: se a leitura
+  // olhasse so o elemento tocado, a trava nunca pegaria o caso real.
+  for (const bloqueio of [CAIXA_QUE_ROLA, AREA_SEM_PUXAO]) {
+    assert.equal(
+      toqueEhNaPagina([ANCESTRAL_NEUTRO, ANCESTRAL_NEUTRO, bloqueio]),
+      false
+    );
+  }
+});
+
+test("caixa que declara overflow mas nao transborda deixa puxar", () => {
+  // Varias telas envolvem tabela num `overflow-y-auto` que raramente
+  // transborda. Se a trava ignorasse o "tem conteudo sobrando", o puxao
+  // morreria em metade do app -- e a HMO-206 teria trocado um bug por outro.
+  const caixaFolgada = {
+    rolaOProprioConteudo: false,
+    dispensaOPuxao: false,
+  };
+  assert.equal(toqueEhNaPagina([caixaFolgada]), true);
+  assert.equal(deveAtualizar(puxaoCompleto({ toqueNaPagina: true })), true);
+});
+
+test("sem a pergunta respondida, o puxao continua valendo", () => {
+  // O default de `toqueNaPagina` e `true`. Um default `false` desligaria o
+  // gesto em toda chamada que ainda nao passa o campo.
+  const r = puxaoCompleto({});
+  assert.equal(r.estado, "solte");
+  assert.equal(deveAtualizar(r), true);
+});
+
+test("o marcador do menu e o atributo que a leitura procura", () => {
+  // A ponte entre o Sidebar (que marca) e o componente (que le). Escritos a
+  // mao nos dois lados, um erro de digitacao nao reprovaria nada.
+  assert.equal(ATRIBUTO_SEM_PUXAO, "data-sem-puxar-para-atualizar");
+  assert.deepEqual(propsSemPuxao(), { [ATRIBUTO_SEM_PUXAO]: "" });
 });
 
 // ---------------------------------------------------------------------------

@@ -26,6 +26,11 @@
  * handler precisa poder chamar `preventDefault()`, e isso exige um listener
  * NAO passivo. Ele e registrado assim apenas no `touchmove`; `touchstart` e
  * `touchend` ficam passivos, que e o que mantem a rolagem normal fluida.
+ *
+ * Esse mesmo `preventDefault()` e a metade ruim da HMO-206: dentro do menu
+ * mobile ele travava a rolagem da lista, e o gesto ainda recarregava o app ao
+ * passar do limiar. Quem responde "de quem e este toque" e
+ * `toqueComecouNaPagina`, lido uma vez por gesto no `touchstart`.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -37,6 +42,7 @@ import {
   lerGesto,
   type LeituraDoGesto,
 } from "@/lib/puxar-para-atualizar";
+import { toqueComecouNaPagina } from "@/lib/puxar-para-atualizar-dom";
 
 export function PuxarParaAtualizar() {
   const [leitura, setLeitura] = useState<LeituraDoGesto>(GESTO_INERTE);
@@ -49,6 +55,13 @@ export function PuxarParaAtualizar() {
   const inicioY = useRef<number | null>(null);
   const scrollNoInicio = useRef(0);
   const atualizandoRef = useRef(false);
+
+  // Lido no `touchstart` e nao a cada movimento: e uma pergunta sobre ONDE o
+  // gesto comecou, e `getComputedStyle` em cada ancestral a cada `touchmove`
+  // custaria um reflow por quadro. Medir no inicio tambem e o que faz a
+  // resposta nao mudar no meio do gesto -- a lista do menu que rolou enquanto
+  // o dedo anda deixaria de "rolar sozinha" ao bater no fim dela.
+  const toqueNaPagina = useRef(true);
 
   // O handler de `touchend` e criado UMA vez e nao enxerga o `leitura` atual
   // pelo closure. Este ref e a ponte: sem ele, soltar decidiria sempre com o
@@ -75,6 +88,7 @@ export function PuxarParaAtualizar() {
       }
       inicioY.current = e.touches[0].clientY;
       scrollNoInicio.current = posicaoDaRolagem();
+      toqueNaPagina.current = toqueComecouNaPagina(e.target);
     };
 
     const aoMover = (e: TouchEvent) => {
@@ -84,6 +98,7 @@ export function PuxarParaAtualizar() {
         scrollTopNoInicio: scrollNoInicio.current,
         deltaY: e.touches[0].clientY - inicioY.current,
         atualizando: atualizandoRef.current,
+        toqueNaPagina: toqueNaPagina.current,
       });
 
       // Segurar a rolagem so enquanto o indicador esta de fato aparecendo. Um

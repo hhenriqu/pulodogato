@@ -11,6 +11,7 @@ import {
   ID_MENU_MOBILE,
   MobileMenuClose,
 } from "@/components/MobileMenuChrome";
+import { propsSemPuxao } from "@/lib/puxar-para-atualizar";
 import { cn } from "@/lib/utils";
 import { User as UserType } from "@supabase/supabase-js";
 import {
@@ -385,6 +386,19 @@ export default function Sidebar({
 
       {/* Mobile Sidebar */}
       <div
+        // Puxar para atualizar nao vale aqui dentro (HMO-206). Rolar a lista
+        // de itens abaixo era lido como puxao no topo da pagina -- a pagina
+        // atras da gaveta esta sempre em scroll 0 -- e recarregava o app no
+        // meio da navegacao.
+        //
+        // O marcador vai na raiz que contem o VEU e o painel, e nao so na
+        // lista que rola: o X, o rodape com "Sair" e o proprio veu ficam fora
+        // dela, e numa tela alta a lista pode nem transbordar.
+        //
+        // Com o menu fechado isto nao desliga nada: o `pointer-events-none`
+        // abaixo tira esta subarvore inteira do teste de toque, entao ela nem
+        // aparece no caminho do gesto.
+        {...propsSemPuxao()}
         className={cn(
           "lg:hidden fixed inset-0 flex z-40",
           isMobileMenuOpen ? "pointer-events-auto" : "pointer-events-none"
