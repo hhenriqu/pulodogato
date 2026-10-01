@@ -147,13 +147,32 @@ jobs:
           git checkout -- 'app/(dashboard)/layout.tsx'
 
           # 3) A linha de lancamento volta a se recusar a encolher.
+          #
+          # Este `sed` casa nas DUAS linhas da lista (a comum e a parte de
+          # grupo), porque as duas tem a mesma cadeia -- e por isso ele nao
+          # prova nada sobre a segunda: ficaria vermelho pela primeira. O
+          # mutante 4 existe para essa metade.
           sed -i 's/gap-3 min-w-0 flex-1/gap-3 flex-1/' 'app/(dashboard)/dashboard/personal-finance/page.tsx'
           if npm run test:mobile-overflow --silent > /dev/null 2>&1; then
             echo "::error::Passou verde com a linha de lancamento sem min-w-0."
             exit 1
           fi
+          git checkout -- 'app/(dashboard)/dashboard/personal-finance/page.tsx'
 
-          echo "A verificacao fica vermelha nos tres caminhos de volta da HMO-185."
+          # 4) HMO-215: a fila de metadados da PARTE DE GRUPO para de quebrar.
+          #    A lista tem duas formas de linha desde a HMO-215, e os casos que
+          #    ancoram em `{transaction.description}` nunca olham a segunda --
+          #    ela poderia nascer sem `flex-wrap` e empurrar a pagina inteira
+          #    com a suite verde. Esta linha carrega MAIS selos que a comum
+          #    (tipo + categoria + data + nome do grupo + "a aprovar"), entao e
+          #    a que tem o piso de min-content maior das duas.
+          perl -0pi -e 's|(\{parte\.description\}</p>\s*<div className=")flex flex-wrap items-center gap-x-2 gap-y-1 |${1}flex items-center gap-x-2 |s' 'app/(dashboard)/dashboard/personal-finance/page.tsx'
+          if npm run test:mobile-overflow --silent > /dev/null 2>&1; then
+            echo "::error::Passou verde com a fila da parte de grupo sem flex-wrap."
+            exit 1
+          fi
+
+          echo "A verificacao fica vermelha nos quatro caminhos de volta."
 
       # Terceiro inquilino sem filtro de path, pelo mesmo motivo dos dois de
       # cima -- e o que ele vigia nao tem dono topico nenhum: as 34 suites deste
