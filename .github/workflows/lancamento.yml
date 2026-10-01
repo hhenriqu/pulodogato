@@ -73,9 +73,12 @@ jobs:
           set -uo pipefail
           CAMPOS=components/movimentacoes/CamposDeLancamento.tsx
           REGRAS=lib/lancamento.ts
+          # O filtro por tipo saiu do CAMPOS na HMO-216 -- ver a mutacao 2.
+          CATEGORIAS=lib/categorias.ts
           cp $CAMPOS $CAMPOS.orig
           cp $REGRAS $REGRAS.orig
-          trap 'mv $CAMPOS.orig $CAMPOS; mv $REGRAS.orig $REGRAS' EXIT
+          cp $CATEGORIAS $CATEGORIAS.orig
+          trap 'mv $CAMPOS.orig $CAMPOS; mv $REGRAS.orig $REGRAS; mv $CATEGORIAS.orig $CATEGORIAS' EXIT
 
           # 1) O rateio renderizado nas duas telas, que e o que a tela antiga
           #    fazia: o bloco existia sempre e so era escondido por condicao.
@@ -88,12 +91,24 @@ jobs:
 
           # 2) O seletor de categoria recebendo a lista inteira. Este e o defeito
           #    MUDO: a tela abre igual, e o seletor da despesa oferece "Salario".
-          sed -i 's|const categoriasVisiveis = categoriasDoTipo(categorias, tipo);|const categoriasVisiveis = categorias;|' $CAMPOS
+          #
+          #    A MUTACAO MUDOU DE ARQUIVO NA HMO-216, E ISSO QUASE PASSOU BATIDO.
+          #    Ela era um sed em `const categoriasVisiveis = categoriasDoTipo(...)`
+          #    dentro do CAMPOS. Aquela linha nao existe mais: o filtro foi para
+          #    `categoriasDoSeletor` (lib/categorias.ts), que e quem tambem aplica a
+          #    personalizacao e a ordem.
+          #
+          #    O sintoma de nao ter percebido: o `sed` casa com nada, o arquivo fica
+          #    intacto, a suite passa -- e ESTE bloco reprova dizendo "verde com o
+          #    seletor sem filtro". Ou seja, o erro acusa o filtro (que esta
+          #    correto) em vez da sonda (que envelheceu). Mutante que nao aplica e
+          #    indistinguivel de mutante que sobreviveu.
+          sed -i 's|.filter((c) => c.is_expense === querDespesa)|.filter(() => true)|' $CATEGORIAS
           if npm run test:campos-lancamento > /dev/null 2>&1; then
             echo "::error::Verde com o seletor de categoria sem filtro por tipo."
             exit 1
           fi
-          cp $CAMPOS.orig $CAMPOS
+          cp $CATEGORIAS.orig $CATEGORIAS
 
           # 3) O sinal sem `Math.abs`. O input e `type=number` e aceita "-30":
           #    sem o abs, uma despesa digitada com o menos na frente vira +30 --
