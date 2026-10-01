@@ -6,11 +6,31 @@
 // como o sinal e tratado, para o total do fluxo nunca discordar da soma das
 // categorias.
 //
-// Sem `groupId` o relatorio e PESSOAL: filtra group_id IS NULL. Isso nao e
-// detalhe de implementacao. Sem o filtro, a despesa da viagem que o usuario
-// pagou entraria no fluxo de caixa dele com o valor CHEIO do hotel, e nao com
-// a parte dele -- o mes pessoal fecharia no vermelho por causa de um dinheiro
-// que os outros membros ja devolveram.
+// Sem `groupId` o relatorio e PESSOAL: o que e so do usuario MAIS a parte dele
+// das despesas de grupo.
+//
+// A PARTE DE GRUPO ENTRA AQUI, E NAO PELA REMOCAO DO FILTRO (HMO-202)
+// -------------------------------------------------------------------
+// Ate a 033 este caminho filtrava `group_id IS NULL`, e o efeito era que a
+// despesa de grupo nao aparecia no painel pessoal de NINGUEM -- nem de quem
+// pagou (0,00 medido), nem de quem devia a parte (0,00 medido).
+//
+// Remover o filtro teria sido pior do que o buraco: a despesa da viagem que o
+// usuario pagou entraria no fluxo de caixa dele com o valor CHEIO do hotel, e o
+// mes pessoal fecharia no vermelho por causa de dinheiro que os outros membros
+// ja devolveram -- enquanto quem NAO pagou continuaria sem ver nada.
+//
+// O que entra e A PARTE DE CADA UM, lida de `group_expense_splits` (nunca
+// recalculada), que e o mesmo criterio que o previsto usa desde a HMO-177. Para
+// quem pagou isso substitui o valor cheio pela parte dele; para os outros
+// acrescenta a parte deles; e a soma entre os membros continua sendo a despesa
+// inteira. Quem faz essa conta e a migration 033:
+//
+//   modo mes       -> `personal_monthly_cash_flow` (rollup, sai do banco)
+//   modo intervalo -> `group_share_entries` somada junto com as transacoes
+//
+// Com `groupId` nada disso se aplica: o painel DO GRUPO mostra o valor CHEIO da
+// viagem, de todos os membros, e continua lendo `monthly_cash_flow`.
 //
 // AS DUAS FORMAS DE PERGUNTAR, E POR QUE NAO DA PARA TER SO UMA (HMO-173)
 // -----------------------------------------------------------------------
@@ -38,6 +58,11 @@ import {
   ultimoDiaDoMes,
 } from "@/lib/periodo-do-painel";
 import { lerPreferenciaDeMoeda, separarSeriePorMoeda } from "@/lib/moeda";
+import {
+  COLUNAS_DA_PARTE_DE_GRUPO,
+  partesComoTransacoes,
+  type ParteDeGrupoCrua,
+} from "@/lib/parte-do-grupo-realizada";
 
 interface LinhaFluxo {
   month: string;
@@ -121,9 +146,12 @@ export async function GET(request: NextRequest) {
       // sairia MENOR que o real, com cara de numero certo. Nos caminhos que
       // usam as views do 008 isso nao existe: quem soma e o banco, e a
       // resposta ja vem agregada em poucas linhas.
+      // `transaction_type` nullable porque a coluna e nullable -- e porque a
+      // parte de grupo (abaixo) repassa o campo da view em vez de afirmar
+      // 'expense'. `agregarTransacoes` ja descarta o que nao e income/expense.
       const linhas: {
         amount: number | string;
-        transaction_type: string;
+        transaction_type: string | null;
         currency?: string | null;
       }[] = [];
 
@@ -156,6 +184,51 @@ export async function GET(request: NextRequest) {
         // Pagina incompleta = acabou. Uma pagina cheia pode ser a ultima, e
         // nesse caso a proxima volta vazia e o laco encerra do mesmo jeito.
         if (lote.length < TAMANHO_DA_PAGINA) break;
+      }
+
+      // A MINHA PARTE DAS DESPESAS DE GRUPO, no mesmo intervalo (HMO-202).
+      //
+      // So no relatorio PESSOAL: com `groupId` a tela quer o valor cheio da
+      // viagem, que as linhas de `financial_transactions` acima ja trazem.
+      //
+      // O `eq("user_id")` nao e redundante com a RLS, e esse e o erro facil
+      // aqui: as policies de grupo sao `user_id = auth.uid() OR
+      // is_group_member(group_id)`, entao uma consulta SEM ele devolve tambem a
+      // parte dos OUTROS membros -- medido, 400 em vez de 200 num grupo de dois.
+      // Mesma armadilha que a HMO-177 encontrou no previsto.
+      if (!groupId) {
+        const paginaDeParte = (inicio: number) =>
+          supabase
+            .from("group_share_entries")
+            .select(COLUNAS_DA_PARTE_DE_GRUPO)
+            .eq("user_id", user.id)
+            .gte("transaction_date", periodo.de)
+            .lte("transaction_date", periodo.ate)
+            .order("id", { ascending: true })
+            .range(inicio, inicio + TAMANHO_DA_PAGINA - 1);
+
+        // Paginada pela mesma razao das transacoes: a soma e feita aqui, e uma
+        // resposta truncada pelo teto do PostgREST sairia MENOR que a real, sem
+        // erro nenhum.
+        const partes: ParteDeGrupoCrua[] = [];
+
+        for (let inicio = 0; ; inicio += TAMANHO_DA_PAGINA) {
+          const { data, error } = await paginaDeParte(inicio);
+
+          if (error) {
+            console.error("Erro na parte de grupo do intervalo:", error);
+            return NextResponse.json(
+              { error: "Não foi possível montar o relatório" },
+              { status: 500 }
+            );
+          }
+
+          const lote = data ?? [];
+          for (const linha of lote) partes.push(linha);
+          if (lote.length < TAMANHO_DA_PAGINA) break;
+        }
+
+        for (const linha of partesComoTransacoes(partes)) linhas.push(linha);
       }
 
       const blocosDoIntervalo = agregarTransacoesPorMoeda(
@@ -224,14 +297,33 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    let query = supabase
-      .from("monthly_cash_flow")
-      .select("month, income, expense, net, transaction_count, currency")
-      .eq("user_id", user.id)
-      .gte("month", janela.inicio)
-      .lte("month", janela.fim);
-
-    query = groupId ? query.eq("group_id", groupId) : query.is("group_id", null);
+    // DUAS VIEWS, E NAO UMA COM FILTRO (HMO-202)
+    //
+    // O relatorio de GRUPO le `monthly_cash_flow`, que tem `group_id` no grao:
+    // la o numero certo e o valor CHEIO da viagem, somando todos os membros.
+    //
+    // O relatorio PESSOAL le `personal_monthly_cash_flow` (033), que soma o que
+    // e so do usuario com A PARTE DELE das despesas de grupo. Ela nao tem
+    // `group_id` -- nem poderia: no painel pessoal a Viagem e a Casa somam na
+    // mesma linha do mes, que e o que o usuario ve.
+    //
+    // O `eq("user_id")` vale para as duas, e na pessoal ele e load-bearing: as
+    // policies de grupo tem `OR is_group_member(...)`, e sem o filtro a consulta
+    // devolveria a parte dos OUTROS membros junto (medido: 400 em vez de 200).
+    let query = groupId
+      ? supabase
+          .from("monthly_cash_flow")
+          .select("month, income, expense, net, transaction_count, currency")
+          .eq("user_id", user.id)
+          .eq("group_id", groupId)
+          .gte("month", janela.inicio)
+          .lte("month", janela.fim)
+      : supabase
+          .from("personal_monthly_cash_flow")
+          .select("month, income, expense, net, transaction_count, currency")
+          .eq("user_id", user.id)
+          .gte("month", janela.inicio)
+          .lte("month", janela.fim);
 
     // A moeda oficial decide qual bloco e o PRINCIPAL da resposta. Lida em
     // paralelo com o relatorio, e sem derrubar nada quando falha: ela so ordena

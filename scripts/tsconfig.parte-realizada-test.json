@@ -1,0 +1,18 @@
+{
+  "//": "Build so do teste. Compila lib/parte-do-grupo-realizada.ts JUNTO com lib/periodo-do-painel.ts e lib/categorias-do-periodo.ts, de proposito: o que vale provar nao e o `map` do primeiro, e que a saida dele ATRAVESSA os dois agregadores como despesa. Testar o map sozinho passaria verde com `transaction_type` perdido no caminho, que e justamente o defeito que faz a parte de grupo voltar a valer zero. periodo-do-painel importa @/lib/recurrence, e o tsc resolve o alias @/ por `paths` mas NAO o reescreve no JS emitido -- por isso o npm script tem um passo de reescrita depois. Ver scripts/test-parte-realizada.mjs.",
+  "compilerOptions": {
+    "outDir": "../.tmp-parte-realizada",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../lib/parte-do-grupo-realizada.ts",
+    "../lib/periodo-do-painel.ts",
+    "../lib/categorias-do-periodo.ts"
+  ]
+}

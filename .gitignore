@@ -155,6 +155,8 @@ next-env.d.ts
 /.tmp-campos-da-conta/
 # saida do `npm run test:periodo-painel` (HMO-173)
 /.tmp-periodo-painel/
+# saida do `npm run test:parte-realizada` (HMO-202)
+/.tmp-parte-realizada/
 # saida do `npm run test:recorrencia-edicao` (faltava desde a HMO-170; o .js
 # compilado chegou a ser commitado na main pela HMO-166)
 /.tmp-recorrencia-edicao/

@@ -373,7 +373,18 @@ export const TIPOS_DE_FLUXO = ["expense", "income"] as const;
 
 export interface LinhaDeTransacao {
   amount: number | string;
-  transaction_type: string;
+  /**
+   * `null` e aceito porque a COLUNA e nullable (`financial_transactions.
+   * transaction_type`, 001_baseline), e `TransacaoDeCategoria` em
+   * lib/categorias-do-periodo.ts sempre refletiu isso -- os dois tipos
+   * descrevem a mesma linha e divergiam.
+   *
+   * Nao muda comportamento: `agregarTransacoes` ja trata tudo que nao e
+   * 'income'/'expense' pelo ramo de `transfer`, que fica fora da conta E da
+   * contagem. O que o tipo antigo fazia era obrigar quem le a coluna crua a
+   * mentir sobre ela.
+   */
+  transaction_type: string | null;
   /** Opcional: linha de um SELECT que nao pediu a coluna cai na moeda oficial. */
   currency?: string | null;
 }
