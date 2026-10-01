@@ -12,9 +12,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/parte-do-grupo-realizada.ts', 'lib/periodo-do-painel.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/parte-do-grupo-realizada.ts', 'lib/periodo-do-painel.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/divisao-do-grupo.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/parte-do-grupo-realizada.ts', 'lib/periodo-do-painel.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/parte-do-grupo-realizada.ts', 'lib/periodo-do-painel.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/divisao-do-grupo.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -974,6 +974,32 @@ jobs:
       - name: Lancamento de grupo entra no realizado pessoal, pela MINHA parte
         run: $PSQL -f database/tests/033_minha_parte_no_realizado_test.sql
 
+      # HMO-190. As opcoes de divisao da despesa de grupo. O banco sempre soube
+      # fazer divisao combinada -- a 007 tirou o achatamento para partes iguais
+      # do `calculate_equal_split` --, e a camada do app a descartava em
+      # silencio: toda despesa saia 50/50, com 200 e "sucesso" na tela.
+      #
+      # Entra NESTE job, e nao num de front, porque as duas coisas que o provam
+      # so o Postgres mostra:
+      #
+      #   - a ORDEM de escrita, que a RLS obriga. A policy
+      #     `group_expense_splits_delete` exige is_group_admin, e DELETE barrado
+      #     por RLS nao da erro: apaga zero linhas. A sequencia antiga (deixa o
+      #     trigger ratear igual, apaga, insere o combinado) ACRESCENTAVA as
+      #     partes -- medido: despesa de R$ 200 cobrando R$ 400 do grupo, para
+      #     qualquer membro que nao seja admin. A secao 6 mede o dobro E prova a
+      #     ordem nova (`group_id` por ultimo), que nunca apaga nada;
+      #   - o CHECK da coluna. `split-suggestions` fala `proportional` e
+      #     `historical`, e `group_transactions.split_type` aceita so
+      #     equal/percentage/custom: o UPDATE levava 23514, que a rota nao
+      #     conferia, e a despesa ficava com o rateio igual do trigger.
+      #
+      # O CONTROLE POSITIVO (secao 4) e o que separa "a divisao combinada e
+      # impossivel" de "a rota gravava na ordem errada": na ordem certa, o 70/30
+      # sobrevive.
+      - name: As opcoes de divisao do grupo gravam o que foi combinado
+        run: $PSQL -f database/tests/hmo190_divisao_combinada_test.sql
+
       # As duas suites que guardam as views que a 026 REESCREVEU rodam la atras na
       # cadeia (steps do 006 e do 007), ou seja: contra a definicao ANTIGA de
       # `group_member_balances` e `budget_consumption`. Elas nunca viram a versao
@@ -1243,6 +1269,23 @@ jobs:
       # 12 de 12 mutantes mortos em scripts/mutantes-parte-do-grupo.mjs.
       - name: A minha parte da despesa fixa de grupo
         run: npm run test:parte-do-grupo
+
+      # A aritmetica das opcoes de divisao (HMO-190), o par em TypeScript do
+      # teste SQL mais acima. Ela mora no mesmo job porque divide o MESMO
+      # dinheiro: as partes tem que fechar o total nos mesmos centavos inteiros
+      # que `calculate_equal_split` (007) e `lib/settlement.ts` usam, senao o
+      # acerto de contas do grupo nao chega a zero e a tela cobra um residuo
+      # que pagamento nenhum zera.
+      #
+      # O que ela cobra e invisivel na tela: `proportional` e `historical`
+      # traduzidos para `percentage` (a palavra crua e 23514), tipo
+      # desconhecido virando ERRO em vez de divisao igual -- que era o defeito
+      # --, e a divisao igual NAO sendo reescrita com os valores da tela, que
+      # perdem centavo onde o maior resto do banco nao perde.
+      #
+      # 28 de 28 mutantes mortos em scripts/mutantes-divisao-do-grupo.mjs.
+      - name: As opcoes de divisao da despesa de grupo
+        run: npm run test:divisao-do-grupo
 
       # Quem pode aprovar ou recusar a propria parte de uma despesa de grupo
       # (HMO-178). Entra NESTE job, e nao num de front, porque o que ele
@@ -1769,7 +1812,18 @@ jobs:
             echo "::error::A restauracao aceitou um destino que ja tinha contas."
             exit 1
           fi
-          grep -q 'ja tem 1 conta' "$RUNNER_TEMP/recusa.log" || {
+          # A QUANTIDADE NAO ENTRA NA ASSERCAO, E ISSO NAO E RELAXAMENTO
+          # ---------------------------------------------------------------
+          # O que esta linha protege e a MENSAGEM: recusar sem dizer por que
+          # deixa quem esta restaurando sem saber o que fazer. Quantas contas o
+          # destino tem e circunstancia do banco de CI, nao do comportamento
+          # testado -- e desde que `database/tests/027_historico_antes_da_027.sql`
+          # entrou (ele faz COMMIT de proposito, para a 027 do passo seguinte
+          # enxergar o historico) o `pulodogato_ci` carrega uma conta fixa, mais
+          # a do proprio drill: duas, e o `1` cravado aqui deixou de casar.
+          # Ninguem viu porque este step e dos ultimos do job, e o job vinha
+          # morrendo antes desde o merge da #120.
+          grep -qE 'ja tem [0-9]+ conta' "$RUNNER_TEMP/recusa.log" || {
             echo "::error::Recusou, mas sem explicar que o destino ja tem contas."
             cat "$RUNNER_TEMP/recusa.log"; exit 1; }
 
