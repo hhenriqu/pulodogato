@@ -5,11 +5,16 @@
 // ela que responde "esta vencida?" sem que ninguem precise gravar um status
 // que envelhece sozinho a meia-noite. A view e security_invoker, entao a RLS
 // da tabela base continua valendo.
+//
+// O QUE DE UM CARTAO SAI DAQUI (HMO-209): a compra individual. A fatura fica.
+// A regra, com o porque, esta em lib/agenda-do-cartao.ts -- ela e compartilhada
+// com /summary, que alimenta o cabecalho da mesma pagina.
 
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { materializarAgenda, horizonteAte } from "@/lib/services/scheduled";
 import { isIsoDate, today } from "@/lib/recurrence";
+import { agendaSemCompraNoCartao } from "@/lib/agenda-do-cartao";
 
 export async function GET(request: NextRequest) {
   try {
@@ -87,8 +92,19 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // O FILTRO E DEPOIS DA CONSULTA, EM JAVASCRIPT (HMO-209)
+    //
+    // Nao e preguica: a regra precisa de duas colunas que moram em tabelas
+    // diferentes (`notes` na previsao, `account_type` na conta), e no PostgREST
+    // um filtro sobre coluna de embed (`account.account_type`) transforma o
+    // LEFT JOIN em INNER -- as previsoes SEM conta sairiam da resposta junto.
+    // Conta a pagar sem conta escolhida e o caso mais comum da tela: ela
+    // desapareceria inteira para quem nunca escolheu conta nenhuma.
+    //
+    // O volume e o mesmo que ja vem no corpo da resposta (uma janela de meses),
+    // entao filtrar aqui nao paga nada.
     return NextResponse.json({
-      scheduled: scheduled ?? [],
+      scheduled: agendaSemCompraNoCartao(scheduled ?? []),
       generated: geradas,
       range: { from: de, to: ate },
     });

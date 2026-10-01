@@ -139,4 +139,80 @@ jobs:
             exit 1
           fi
 
-          echo "A verificacao fica vermelha nos seis defeitos."
+          # O mutante 6 nao restaura: o trap faz isso no fim do step. Os casos
+          # abaixo precisam do arquivo limpo.
+          cp $REGRAS.orig $REGRAS
+
+          # ------------------------------------------------------------------
+          # HMO-209: o gasto no cartao, que ja aconteceu
+          # ------------------------------------------------------------------
+
+          # 7) A TRAVA NO LUGAR ERRADO -- o destino voltando a ler o estado da
+          #    checkbox em vez dos campos da tela. E o defeito da issue com a
+          #    roupa nova e pior: a checkbox nao esta mais na tela do cartao, mas
+          #    `confirmado` sobrevive a troca de natureza, entao um `false`
+          #    herdado de "pontual" manda a compra para `scheduled_transactions`
+          #    com o campo FORA da tela. A compra reaparece em Contas a Pagar ao
+          #    lado da fatura cheia, e nao ha nada na tela que explique por que.
+          sed -i 's|if (!campos.dataDeRealizacao) return "previsao";|if (!valores.confirmado) return "previsao";|' $REGRAS
+          if npm run test:lancamento > /dev/null 2>&1; then
+            echo "::error::Verde com o gasto no cartao indo para Contas a Pagar."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 8) A regra do cartao desligada: a checkbox "Ja paguei" volta, e com
+          #    ela o caminho inteiro do defeito.
+          sed -i 's|const ehCompraNoCartao = tipo === "expense" && natureza === "card";|const ehCompraNoCartao = false;|' $REGRAS
+          if npm run test:lancamento > /dev/null 2>&1; then
+            echo "::error::Verde com 'Ja paguei' de volta no gasto do cartao."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 9) A regra do cartao SEM o recorte por tipo. Este erra para o outro
+          #    lado e e silencioso: `natureza: "card"` chega no estado da tela de
+          #    receita pelo link de edicao, e a receita perderia "Ja recebi" e a
+          #    data prevista -- todo salario previsto viraria transacao no ato,
+          #    entrando no saldo antes de o dinheiro cair.
+          sed -i 's|const ehCompraNoCartao = tipo === "expense" && natureza === "card";|const ehCompraNoCartao = natureza === "card";|' $REGRAS
+          if npm run test:lancamento > /dev/null 2>&1; then
+            echo "::error::Verde com a tela de receita perdendo a confirmacao."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 10) A data prevista de volta no cartao. Dois campos de data para uma
+          #     compra que ja aconteceu, e o de baixo pedindo "quando voce espera
+          #     pagar" sobre uma linha que nao espera pagamento nenhum.
+          sed -i 's|dataPrevista: !ehFixa && !ehCompraNoCartao,|dataPrevista: !ehFixa,|' $REGRAS
+          if npm run test:lancamento > /dev/null 2>&1; then
+            echo "::error::Verde com data prevista no gasto do cartao."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 11) O rotulo mentindo. "Data do pagamento" no cartao e a pergunta
+          #     errada: quem paga a fatura e outra tela, e a data daqui decide em
+          #     que fatura a compra cai. O campo funciona igual -- so a frase esta
+          #     errada --, e e exatamente o tipo de defeito que nenhum teste
+          #     manual pega.
+          sed -i 's|"Data da compra"|"Data do pagamento"|' $REGRAS
+          if npm run test:lancamento > /dev/null 2>&1; then
+            echo "::error::Verde com o cartao pedindo a data do PAGAMENTO."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 12) O JSX ignorando a decisao: a checkbox renderizada sempre. A funcao
+          #     pura continua certa, o teste de regra passa, e a tela de verdade
+          #     mostra "Ja paguei" num gasto de cartao -- o campo que esta issue
+          #     tirou de la.
+          sed -i 's|{campos.confirmacao && (|{true && (|' $CAMPOS
+          if npm run test:campos-lancamento > /dev/null 2>&1; then
+            echo "::error::Verde com a checkbox de confirmacao renderizada sempre."
+            exit 1
+          fi
+          cp $CAMPOS.orig $CAMPOS
+
+          echo "A verificacao fica vermelha nos doze defeitos."

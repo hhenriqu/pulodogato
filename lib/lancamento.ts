@@ -164,13 +164,43 @@ export function camposDoTipo(
   // resposta sobre um lancamento ja gravado. Ver `lib/recorrencia-edicao.ts`.
   const ehFixa = natureza === "fixed" && !editando;
 
+  // -------------------------------------------------------------------------
+  // UM GASTO NO CARTAO JA ACONTECEU (HMO-209)
+  // -------------------------------------------------------------------------
+  // "Ja paguei?" nao e uma pergunta que caiba numa compra no cartao, e a
+  // resposta errada custava dinheiro na tela: com a checkbox desmarcada a
+  // compra ia para `scheduled_transactions` com o `account_id` do cartao, e
+  // aparecia em Contas a Pagar AO LADO da fatura cheia daquele cartao -- a
+  // mesma compra cobrada duas vezes, uma individual e outra dentro da fatura.
+  //
+  // A compra aconteceu no ato: ela rebaixa o saldo do cartao (a divida) agora,
+  // e e `transaction_date` que `card_invoice_month()` usa para decidir em que
+  // fatura ela cai. O que ainda nao aconteceu e o PAGAMENTO DA FATURA, que e
+  // outro ato, em outra tela (`lib/card-invoice.ts`), com duas pernas
+  // `transfer` para nao contar a despesa de novo.
+  //
+  // Por isso a data CONTINUA na tela -- so deixa de ser "data do pagamento" e
+  // passa a ser "data da compra" --, e o que sai sao a checkbox e a data
+  // prevista: uma previsao de pagamento para uma linha que nao espera pagamento
+  // nenhum.
+  //
+  // Sem `editando` na condicao de proposito: uma compra no cartao nao tem data
+  // prevista nem quando esta sendo editada, e `ehNoCartao` abaixo (o rotulo e a
+  // obrigatoriedade do cartao) ja era assim.
+  const ehCompraNoCartao = tipo === "expense" && natureza === "card";
+
   // A confirmacao so e uma PERGUNTA quando ha duas respostas possiveis. Em
   // natureza fixa nao ha: a regra e previsao por definicao. Editando tambem
-  // nao: o que esta gravado ja mexeu no saldo.
-  const confirmacao = !ehFixa && !editando && natureza !== "fixed";
+  // nao: o que esta gravado ja mexeu no saldo. E no cartao nao ha: a compra
+  // aconteceu.
+  const confirmacao =
+    !ehFixa && !editando && natureza !== "fixed" && !ehCompraNoCartao;
   // Quando a checkbox nao existe, `confirmado` nao pode mandar na tela -- senao
   // um `confirmado: false` parado no estado apagaria o campo de data de uma
-  // despesa fixa, e `data` e o `start_date` da regra.
+  // despesa fixa, e `data` e o `start_date` da regra. No cartao essa mesma
+  // leitura e a TRAVA da HMO-209: `destinoDoLancamento` decide pelo
+  // `dataDeRealizacao` que sai daqui, entao o estado desmarcado herdado da
+  // natureza anterior nao consegue mandar a compra para a agenda.
   const ehPrevisao = confirmacao && !confirmado;
 
   const comum = {
@@ -180,8 +210,9 @@ export function camposDoTipo(
     confirmacao,
     dataDeRealizacao: !ehPrevisao,
     // Em fixa quem diz quando e `diaDeVencimento`; um segundo campo de data
-    // prevista ali seriam duas respostas para a mesma pergunta.
-    dataPrevista: !ehFixa,
+    // prevista ali seriam duas respostas para a mesma pergunta. No cartao a
+    // compra ja aconteceu: nao ha o que prever.
+    dataPrevista: !ehFixa && !ehCompraNoCartao,
     rotuloDaDataPrevista: ehPrevisao ? "Data prevista *" : "Data prevista",
   };
 
@@ -207,7 +238,15 @@ export function camposDoTipo(
     contaObrigatoria: ehNoCartao,
     rotuloDaConta: ehNoCartao ? "Cartão *" : "Conta/Cartão",
     rotuloDaNatureza: "Tipo de Despesa *",
-    rotuloDaData: ehFixa ? "Data" : "Data do pagamento",
+    // "Data do pagamento" no cartao seria a pergunta errada: o que esta sendo
+    // anotado e a COMPRA, e o rotulo e a unica coisa na tela que diz isso. A
+    // data tambem nao e cosmetica -- e ela que decide em que fatura a compra
+    // cai (`card_invoice_month()`).
+    rotuloDaData: ehFixa
+      ? "Data"
+      : ehNoCartao
+        ? "Data da compra"
+        : "Data do pagamento",
     rotuloDaConfirmacao: "Já paguei",
   };
 }
@@ -544,6 +583,17 @@ export function validarLancamento(
   // razao e melhor do que escolher uma das duas em silencio -- e sem esta porta
   // o ramo de parcelas venceria o de previsao no `destinoDoLancamento` e a
   // checkbox desmarcada simplesmente nao faria nada.
+  //
+  // A LEITURA E `campos.dataDeRealizacao`, E NAO `!valores.confirmado` (HMO-209)
+  //
+  // E a diferenca entre uma mensagem util e uma mensagem impossivel. No cartao
+  // nao existe mais checkbox para marcar: "Marque 'Ja paguei'" mandaria a pessoa
+  // procurar um campo que nao esta na tela, e nao haveria como obedecer. Lido
+  // pelos CAMPOS, este ramo simplesmente nao alcanca o cartao -- `camposDoTipo`
+  // devolve `dataDeRealizacao: true` la sempre --, e isso e o comportamento
+  // certo, nao um furo: comprar em 12x no cartao e o caso normal, e a compra
+  // parcelada ja aconteceu. Ela vai para `transaction_installments` pelo ramo de
+  // `parcelas`, com os vencimentos de cada parcela.
   if (valores.parcelado && campos.parcelamento && !campos.dataDeRealizacao) {
     return {
       ok: false,
@@ -764,11 +814,25 @@ export function destinoDoLancamento(
   if (campos.diaDeVencimento && valores.natureza === "fixed") return "regra";
   if (valores.parcelado && campos.parcelamento) return "parcelas";
   // `dataDeRealizacao` e a leitura certa, e nao `!valores.confirmado`: quando a
-  // checkbox nao esta na tela (fixa, edicao) um `confirmado: false` parado no
-  // estado nao pode desviar o lancamento. Os dois ramos acima ja cobrem fixa e
-  // parcelas, mas a EDICAO nao -- e editar uma transacao gravada nunca pode
-  // virar uma previsao nova, senao o Salvar criaria uma segunda linha e deixaria
-  // a original no saldo.
+  // checkbox nao esta na tela (fixa, edicao, cartao) um `confirmado: false`
+  // parado no estado nao pode desviar o lancamento. Os dois ramos acima ja
+  // cobrem fixa e parcelas, mas a EDICAO nao -- e editar uma transacao gravada
+  // nunca pode virar uma previsao nova, senao o Salvar criaria uma segunda linha
+  // e deixaria a original no saldo.
+  //
+  // E E AQUI QUE A TRAVA DO CARTAO MORA (HMO-209), e nao na UI. Esconder a
+  // checkbox nao bastaria: o estado do formulario e um objeto so, `confirmado`
+  // sobrevive a troca de natureza, e um `false` herdado de "pontual" mandaria a
+  // compra para `scheduled_transactions` com o campo fora da tela -- o defeito
+  // original, agora invisivel. Como `camposDoTipo` devolve
+  // `dataDeRealizacao: true` em todo gasto no cartao, esta linha nao tem como
+  // escolher "previsao" ali.
+  //
+  // NAO HA UM SEGUNDO `if (natureza === "card")` de proposito: duas guardas para
+  // a mesma regra se mascaram uma a outra -- quebre qualquer uma e o teste
+  // continua verde, que e como uma trava morre sem ninguem notar. A regra tem um
+  // dono (`camposDoTipo`) e o teste cobra a NEGACAO aqui: nenhuma entrada com
+  // natureza `card` sai como "previsao".
   if (!campos.dataDeRealizacao) return "previsao";
   return "transacao";
 }

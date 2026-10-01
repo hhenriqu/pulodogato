@@ -60,6 +60,25 @@ jobs:
       - name: As duas telas abrem sem rede
         run: npm run test:pwa-precache
 
+      # O QUE DE UM CARTAO APARECE EM CONTAS A PAGAR (HMO-209). A compra
+      # individual no cartao aparecia na agenda ao lado da fatura cheia daquele
+      # mesmo cartao -- a despesa duas vezes na mesma tela, somada duas vezes no
+      # cabecalho. As quatro maneiras de "consertar" isso errado passam verdes em
+      # qualquer teste manual:
+      #   - filtrar pelo TIPO DA CONTA e mais nada esconde a propria fatura, que
+      #     tambem e uma previsao com o account_id do cartao -- a pessoa deixa de
+      #     ver a unica conta de cartao que ela de fato paga;
+      #   - reconhecer a fatura por texto livre em `notes` faz a descricao escrita
+      #     a mao virar regra de negocio;
+      #   - esconder a linha quando a conta nao e legivel (embed null por RLS, ou
+      #     previsao sem conta) apaga conta a pagar comum em silencio;
+      #   - filtrar so na LISTA deixa o total do cabecalho discordando das linhas
+      #     logo abaixo dele, e o total e o numero errado.
+      # Esta suite roda aqui, e nao no db-verify, porque o db-verify e filtrado
+      # por path e as duas rotas que usam o filtro nao estao nesse filtro.
+      - name: O que de um cartao aparece em Contas a Pagar
+        run: npm run test:agenda-do-cartao
+
       # Controle negativo. As suites afirmam sobre AUSENCIA -- "a tela de Contas
       # nao tem limite" -- e uma asercao de ausencia passa verde tambem quando
       # ela deixa de achar o que deveria procurar. Uma verificacao que nunca viu
@@ -72,10 +91,16 @@ jobs:
           REGRAS=lib/contas.ts
           CAMPOS=components/contas/CamposDaConta.tsx
           PRECACHE=lib/pwa-precache.js
+          AGENDA=lib/agenda-do-cartao.ts
+          LISTA=app/api/scheduled-transactions/route.ts
+          RESUMO=app/api/scheduled-transactions/summary/route.ts
           cp $REGRAS $REGRAS.orig
           cp $CAMPOS $CAMPOS.orig
           cp $PRECACHE $PRECACHE.orig
-          trap 'mv $REGRAS.orig $REGRAS; mv $CAMPOS.orig $CAMPOS; mv $PRECACHE.orig $PRECACHE' EXIT
+          cp $AGENDA $AGENDA.orig
+          cp $LISTA $LISTA.orig
+          cp $RESUMO $RESUMO.orig
+          trap 'mv $REGRAS.orig $REGRAS; mv $CAMPOS.orig $CAMPOS; mv $PRECACHE.orig $PRECACHE; mv $AGENDA.orig $AGENDA; mv $LISTA.orig $LISTA; mv $RESUMO.orig $RESUMO' EXIT
 
           # 1) A tela de Contas volta a pedir os campos de fatura. E a issue ao
           #    contrario, e o caso mais obvio -- esta aqui para provar que o
@@ -177,4 +202,84 @@ jobs:
           fi
           cp $REGRAS.orig $REGRAS
 
-          echo "A verificacao fica vermelha nos oito defeitos."
+          # ------------------------------------------------------------------
+          # HMO-209: as quatro maneiras de esconder a coisa errada
+          # ------------------------------------------------------------------
+
+          # 9) O filtro nao filtra nada. E o estado ANTERIOR a esta issue: a
+          #    compra individual volta para a agenda, ao lado da fatura que ja a
+          #    contem, e o cabecalho soma as duas.
+          sed -i 's#return ehFatura(linha.notes);#return true;#' $AGENDA
+          if npm run test:agenda-do-cartao > /dev/null 2>&1; then
+            echo "::error::Verde com a compra de cartao de volta em Contas a Pagar."
+            exit 1
+          fi
+          cp $AGENDA.orig $AGENDA
+
+          # 10) O filtro olhando SO o tipo da conta. A fatura fechada tambem e uma
+          #     previsao com o account_id do cartao, entao ela desaparece junto --
+          #     e a pessoa deixa de ser cobrada da unica conta de cartao que ela
+          #     paga. Nada na tela diz que faltou uma linha.
+          sed -i 's#return ehFatura(linha.notes);#return false;#' $AGENDA
+          if npm run test:agenda-do-cartao > /dev/null 2>&1; then
+            echo "::error::Verde com a FATURA desaparecendo de Contas a Pagar."
+            exit 1
+          fi
+          cp $AGENDA.orig $AGENDA
+
+          # 11) A chave canonica aplicada a toda linha, e nao so as de cartao.
+          #     Aqui some a agenda INTEIRA: luz, agua, aluguel -- nada disso tem
+          #     `notes` de fatura. A tela abre vazia, sem erro nenhum.
+          sed -i 's#if (linha.account?.account_type !== TIPO_CARTAO) return true;#if (false) return true;#' $AGENDA
+          if npm run test:agenda-do-cartao > /dev/null 2>&1; then
+            echo "::error::Verde com a conta a pagar comum fora da agenda."
+            exit 1
+          fi
+          cp $AGENDA.orig $AGENDA
+
+          # 12) Filtrado na LISTA e nao no RESUMO. O defeito de OMISSAO, e o mais
+          #     caro dos quatro: as linhas e o total ficam lado a lado na mesma
+          #     tela discordando, e quem acredita no total acredita no numero que
+          #     contem a compra duas vezes. Nenhum teste de funcao pura ve isso --
+          #     por isso a suite le as duas rotas.
+          sed -i 's#agendaSemCompraNoCartao(linhasBrutas#(linhasBrutas#' $RESUMO
+          if npm run test:agenda-do-cartao > /dev/null 2>&1; then
+            echo "::error::Verde com o resumo somando o que a lista nao mostra."
+            exit 1
+          fi
+          cp $RESUMO.orig $RESUMO
+
+          # 13) O mesmo esquecimento do outro lado -- a lista sem filtro e o
+          #     resumo com ele. Simetrico, e igualmente invisivel.
+          sed -i 's#agendaSemCompraNoCartao(scheduled#(scheduled#' $LISTA
+          if npm run test:agenda-do-cartao > /dev/null 2>&1; then
+            echo "::error::Verde com a lista sem o filtro do cartao."
+            exit 1
+          fi
+          cp $LISTA.orig $LISTA
+
+          # 14) O `select` do resumo perdendo o embed da conta. Este nao quebra
+          #     nada: o embed vem `undefined`, toda linha cai no "nao sei, logo
+          #     aparece" e o resumo volta a somar as compras de cartao. Verde, com
+          #     o numero antigo -- o filtro continua no codigo, sem dado para ler.
+          sed -i 's#, notes, account:financial_accounts(account_type)##' $RESUMO
+          if npm run test:agenda-do-cartao > /dev/null 2>&1; then
+            echo "::error::Verde com o resumo sem as colunas que o filtro le."
+            exit 1
+          fi
+          cp $RESUMO.orig $RESUMO
+
+          # 15) O embed tratado como objeto so. Sobre uma VIEW o supabase-js tipa
+          #     o embed do PostgREST como ARRAY, e se a resposta vier nessa forma
+          #     `linha.account.account_type` e `undefined` em toda linha: nenhuma
+          #     casa com credit_card, o filtro para de filtrar, e a tela volta ao
+          #     defeito da issue. Sem erro, sem log, sem teste vermelho -- se nao
+          #     fosse por este caso.
+          sed -i 's#if (Array.isArray(account)) return account\[0\] ?? null;#if (false) return account[0] ?? null;#' $AGENDA
+          if npm run test:agenda-do-cartao > /dev/null 2>&1; then
+            echo "::error::Verde com o embed em array passando reto pelo filtro."
+            exit 1
+          fi
+          cp $AGENDA.orig $AGENDA
+
+          echo "A verificacao fica vermelha nos quinze defeitos."

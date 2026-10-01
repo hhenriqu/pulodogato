@@ -46,6 +46,7 @@ import {
   parteDoMembro,
 } from "@/lib/parte-do-grupo";
 import { janelaParaMaterializar, periodoDaQuery } from "@/lib/periodo-do-painel";
+import { agendaSemCompraNoCartao } from "@/lib/agenda-do-cartao";
 import {
   direcaoDaAgenda,
   somarAgenda,
@@ -122,10 +123,17 @@ export async function GET(request: NextRequest) {
     // Se um dia a previsao em moeda estrangeira for destravada, este select e um
     // dos lugares que PRECISAM mudar junto -- e o cabecalho da 034 lista o
     // primeiro deles, que e a baixa.
-    const { data: linhas, error } = await supabase
+    //
+    // `notes` E O EMBED DA CONTA ENTRAM NA HMO-209, e nao para serem exibidos:
+    // sao as duas colunas de que `previsaoApareceNaAgenda` precisa para separar
+    // a fatura (que fica) da compra individual no cartao (que sai). Sem eles
+    // este resumo somaria as compras que a lista nao mostra mais, e o "a vencer"
+    // do cabecalho discordaria das linhas logo abaixo dele, na MESMA tela -- com
+    // o numero maior, que e o que parece certo.
+    const { data: linhasBrutas, error } = await supabase
       .from("scheduled_transactions_effective")
       .select(
-        "due_date, amount, status, effective_status, group_id, direction"
+        "due_date, amount, status, effective_status, group_id, direction, notes, account:financial_accounts(account_type)"
       )
       .gte("due_date", de)
       .lte("due_date", ate);
@@ -137,6 +145,12 @@ export async function GET(request: NextRequest) {
         { status: 500 }
       );
     }
+
+    // ANTES DE QUALQUER SOMA, e antes da varredura de `direction` logo abaixo:
+    // uma linha que a tela nao mostra nao pode influenciar nada do que a tela
+    // mostra. Filtrado depois, um `direction` nulo numa compra de cartao
+    // escondida zeraria o bloco de previsto x realizado inteiro.
+    const linhas = agendaSemCompraNoCartao(linhasBrutas ?? []);
 
     const { data: regras } = await supabase
       .from("recurring_rules")
@@ -168,7 +182,7 @@ export async function GET(request: NextRequest) {
     // numero plausivel, com cara de "o mes fecha no vermelho". Mesmo criterio
     // do `reserva_indisponivel` em /api/safe-to-spend: a tela escreve
     // "indisponivel" em vez de mostrar isso.
-    const direcaoIndisponivel = ((linhas ?? []) as { direction?: unknown }[])
+    const direcaoIndisponivel = (linhas as { direction?: unknown }[])
       .some((l) => l.direction == null);
 
     if (direcaoIndisponivel) {
@@ -184,7 +198,7 @@ export async function GET(request: NextRequest) {
       new Set(
         [
           ...((regras ?? []) as { group_id?: string | null }[]),
-          ...((linhas ?? []) as { group_id?: string | null }[]),
+          ...(linhas as { group_id?: string | null }[]),
         ]
           .map((r) => r.group_id)
           .filter((id): id is string => Boolean(id))
@@ -229,7 +243,7 @@ export async function GET(request: NextRequest) {
     const agendaPorMes = new Map<string, LinhaDaAgenda[]>();
     const emAbertoPorMes = new Map<string, LinhaEmAberto[]>();
 
-    for (const linha of linhas ?? []) {
+    for (const linha of linhas) {
       const mes = String(linha.due_date).slice(0, 7);
 
       // A linha de grupo entra pela MINHA parte. Nao e refinamento do custo
