@@ -25,6 +25,27 @@
  * no meio do gesto, e o caso que estraga tudo -- o gesto que COMECOU no meio
  * da pagina e so por acaso chegou ao topo. Sem isto separado, cada uma dessas
  * respostas so seria conferivel com um aparelho na mao.
+ *
+ * O PUXAO E DA PAGINA, NAO DE QUALQUER AREA QUE ROLA (HMO-206)
+ * ------------------------------------------------------------
+ * `window.scrollY` so descreve a PAGINA. Dentro do app ha caixas que rolam o
+ * proprio conteudo -- a lista do menu mobile e a maior delas, com mais de 20
+ * itens numa gaveta estreita -- e para essas o scroll da pagina fica em 0 o
+ * tempo todo. Resultado: rolar a lista do menu para cima era lido como puxao
+ * no topo da pagina. O `preventDefault()` do indicador travava a rolagem da
+ * propria lista, e passar do limiar RECARREGAVA a pagina no meio da navegacao.
+ *
+ * Por isso o gesto agora pergunta tambem DE QUEM e o toque. Sao dois motivos
+ * para o puxao nao ser da pagina, e um nao cobre o outro:
+ *
+ *   1. O toque comecou dentro de uma caixa que rola o proprio conteudo. Vale
+ *      independente do `scrollTop` dessa caixa: puxar para baixo no topo de
+ *      uma lista interna tem que bater na propria lista, nunca recarregar.
+ *   2. O toque comecou dentro de uma area marcada como "aqui nao se puxa"
+ *      (ver `ATRIBUTO_SEM_PUXAO`). E o que cobre a gaveta do menu INTEIRA --
+ *      o veu, o X e o rodape com "Sair" ficam FORA da lista que rola, e numa
+ *      tela alta a lista pode nem chegar a transbordar. Sem esta, o menu
+ *      aberto continuaria recarregando a pagina por tras dele.
  */
 
 /** Quanto o dedo precisa percorrer, em pixels, para o gesto valer. */
@@ -45,6 +66,62 @@ export const DESLOCAMENTO_MAXIMO = 96;
  * precisar de intencao.
  */
 export const RESISTENCIA = 0.5;
+
+/**
+ * Marcador de DOM para uma area onde o puxao nunca vale, por mais que a pagina
+ * atras dela esteja no topo. Quem abre uma camada sobre o app (a gaveta do
+ * menu) poe este atributo na raiz dela.
+ *
+ * E um atributo, e nao uma lista de seletores aqui dentro, porque a regra
+ * pertence a quem desenha a camada: um seletor guardado neste modulo vira
+ * mentira silenciosa no dia em que a classe do menu mudar.
+ */
+export const ATRIBUTO_SEM_PUXAO = "data-sem-puxar-para-atualizar";
+
+/**
+ * Props para marcar a raiz de uma camada como area sem puxao.
+ *
+ * Existe para que o nome do atributo apareca UMA vez. Escrito a mao no JSX, o
+ * marcador e a leitura dele ficariam em dois arquivos sem nada que os ligue --
+ * e um erro de digitacao ali nao quebra nada, nao reprova teste nenhum, e so
+ * reaparece como a pagina recarregando sozinha no celular de quem usa o app.
+ */
+export function propsSemPuxao(): Record<string, string> {
+  return { [ATRIBUTO_SEM_PUXAO]: "" };
+}
+
+/**
+ * Um elemento no caminho entre o ponto tocado e a raiz do documento, descrito
+ * so pelo que o gesto precisa saber dele.
+ */
+export type AncestralDoToque = {
+  /**
+   * Rola o proprio conteudo: `overflow-y` em `auto`/`scroll` E conteudo
+   * sobrando da caixa.
+   *
+   * As DUAS condicoes, porque so a primeira pegaria caixas que declaram
+   * `overflow-y: auto` e nunca transbordam -- varias telas envolvem tabela
+   * assim -- e o puxao morreria em metade do app sem ninguem entender por que.
+   */
+  readonly rolaOProprioConteudo: boolean;
+  /** Tem o `ATRIBUTO_SEM_PUXAO`. */
+  readonly dispensaOPuxao: boolean;
+};
+
+/**
+ * O puxao e da pagina, ou de alguma area dentro dela?
+ *
+ * Recebe o caminho do toque ja traduzido (o componente faz a leitura de DOM),
+ * para que a regra -- a parte que de fato decide se o app recarrega -- fique
+ * conferivel sem navegador.
+ */
+export function toqueEhNaPagina(
+  caminhoDoToque: readonly AncestralDoToque[]
+): boolean {
+  return !caminhoDoToque.some(
+    (ancestral) => ancestral.rolaOProprioConteudo || ancestral.dispensaOPuxao
+  );
+}
 
 export type EstadoDoGesto =
   /** Nada acontecendo, ou o gesto nao se qualifica. */
@@ -77,6 +154,14 @@ export type EntradaDoGesto = {
   readonly deltaY: number;
   /** Ja ha uma atualizacao em curso? */
   readonly atualizando?: boolean;
+  /**
+   * O toque comecou na pagina (e nao dentro do menu nem de uma area que rola
+   * sozinha)? Saida de `toqueEhNaPagina`.
+   *
+   * Default `true`: o gesto nasceu sem esta pergunta, e um default `false`
+   * desligaria o puxao inteiro em qualquer chamada que ainda nao a responda.
+   */
+  readonly toqueNaPagina?: boolean;
 };
 
 /**
@@ -89,10 +174,15 @@ export function lerGesto({
   scrollTopNoInicio,
   deltaY,
   atualizando = false,
+  toqueNaPagina = true,
 }: EntradaDoGesto): LeituraDoGesto {
   // Ja esta atualizando: um segundo gesto por cima nao faz nada. Sem isto, tres
   // puxadas seguidas disparam tres recargas.
   if (atualizando) return GESTO_INERTE;
+
+  // O TOQUE NAO E DA PAGINA: e de uma area que rola sozinha, ou de dentro do
+  // menu. Rolar a lista do menu nao pode recarregar o app (HMO-206).
+  if (!toqueNaPagina) return GESTO_INERTE;
 
   // O GESTO SO VALE SE COMECOU NO TOPO.
   //

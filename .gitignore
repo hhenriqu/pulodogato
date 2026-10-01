@@ -163,6 +163,8 @@ next-env.d.ts
 /.tmp-chave-pix/
 # saida do `npm run test:puxar-para-atualizar` (HMO-201, parte 2 -- ficou de fora)
 /.tmp-puxar-para-atualizar/
+# saida do `npm run test:puxar-no-menu-dom` (HMO-206)
+/.tmp-puxar-dom/
 /.tmp-parte-realizada/
 # saida do `npm run test:recorrencia-edicao` (faltava desde a HMO-170; o .js
 # compilado chegou a ser commitado na main pela HMO-166)
