@@ -700,6 +700,19 @@ export default function GroupDetailPage() {
       return;
     }
 
+    // "Por Percentual" e "Customizada" precisam de uma divisao escolhida, e
+    // quem fornece os numeros e o painel de sugestoes logo abaixo do seletor.
+    // Sem isso a rota devolve 400 -- o que e certo, mas chega depois de a
+    // pessoa ter preenchido tudo. Antes da HMO-190 nao chegava nem o 400: a
+    // despesa era gravada em partes IGUAIS e a tela dizia "Despesa adicionada
+    // com sucesso!", que e o relato desta issue.
+    if (expenseForm.split_type !== "equal" && !selectedSplitSuggestion) {
+      toast.error(
+        "Escolha uma das divisões sugeridas abaixo, ou use a Divisão Igual."
+      );
+      return;
+    }
+
     try {
       // Preparar dados da despesa
       const expenseData: any = {

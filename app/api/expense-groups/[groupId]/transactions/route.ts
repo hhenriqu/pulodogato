@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { moedaConhecida } from "@/lib/dinheiro";
 import { taxaParaGravar } from "@/lib/cambio";
 import { moedaDaViagem } from "@/lib/moeda-do-grupo";
+import { divisaoParaGravar } from "@/lib/divisao-do-grupo";
 
 export async function GET(
   request: NextRequest,
@@ -244,6 +245,33 @@ export async function POST(
       );
     }
 
+    // A DIVISAO ESCOLHIDA, VALIDADA ANTES DE QUALQUER ESCRITA (HMO-190)
+    // ----------------------------------------------------------------
+    // `custom_splits` e o nome que a tela manda (ver o cabecalho de
+    // lib/divisao-do-grupo.ts: ela montava `custom_splits` e esta rota lia
+    // `body.splits`, entao toda divisao combinada era descartada em silencio e
+    // a despesa saia em partes iguais). Os dois nomes sao aceitos: `splits` e
+    // o que a validacao de lib/validations/financial.ts descreve e o que um
+    // cliente mais antigo pode mandar.
+    //
+    // Validar ANTES do INSERT e o que evita a despesa orfa: uma divisao que nao
+    // fecha (70/20) ou um tipo que a coluna nao aceita precisa virar 400 sem
+    // ter gravado lancamento nenhum.
+    const divisao = divisaoParaGravar({
+      tipo: body.split_type,
+      partes: body.custom_splits ?? body.splits,
+      total: body.amount,
+    });
+
+    if (!divisao.ok) {
+      return NextResponse.json({ error: divisao.erro }, { status: 400 });
+    }
+
+    // `partes === null` e divisao igual: quem rateia e o trigger, em centavos
+    // inteiros pelo maior resto (007). A combinada precisa de uma ordem de
+    // escrita diferente -- ver o bloco depois do INSERT.
+    const partesCombinadas = divisao.partes;
+
     // Create financial transaction (with negative amount for expenses)
     const { data: transaction, error: transactionError } = await supabase
       .from("financial_transactions")
@@ -285,7 +313,23 @@ export async function POST(
         // resultado era cada membro abrindo a mesma viagem e lendo que todos os
         // outros pagaram zero -- sem erro nenhum aparecer. O consumo de
         // orcamento de grupo (006) depende da mesma coluna.
-        group_id: groupId,
+        //
+        // NA DIVISAO COMBINADA A COLUNA ENTRA DEPOIS, E NAO AQUI (HMO-190)
+        // ----------------------------------------------------------------
+        // Com `group_id` preenchido, o trigger ja cria a ligacao e o rateio
+        // IGUAL antes de a rota conseguir dizer qualquer coisa. Para gravar
+        // 70/30 por cima disso seria preciso APAGAR as partes iguais -- e a
+        // policy `group_expense_splits_delete` exige is_group_admin. Para quem
+        // nao e admin do grupo, esse DELETE nao da erro: apaga zero linhas, em
+        // silencio, e o INSERT seguinte ACRESCENTA as partes combinadas as
+        // iguais. Medido no teste hmo190_divisao_combinada_test.sql, secao 6a:
+        // uma despesa de R$ 200 passa a cobrar R$ 400 do grupo.
+        //
+        // Entao a divisao combinada grava o grupo por ultimo (secao 6b): a
+        // despesa nasce sem `group_id`, a rota cria a ligacao com o split_type
+        // certo e as partes, e so entao preenche a coluna. Nessa ordem nao ha
+        // parte nenhuma para apagar, e nada depende de ser admin.
+        group_id: partesCombinadas === null ? groupId : null,
       })
       .select()
       .single();
@@ -298,80 +342,110 @@ export async function POST(
       );
     }
 
-    // A partir da 007 a transacao acima ja nasce com `group_id`, e o trigger
-    // `auto_create_group_transaction` do banco JA criou a ligacao e o rateio
-    // igualitario. Inserir de novo aqui criaria uma SEGUNDA linha em
-    // group_transactions para a mesma despesa -- nao ha indice unico que
-    // impeca -- e um segundo jogo de rateios: cada membro passaria a dever o
-    // dobro, sem erro nenhum aparecer. Entao aqui so lemos o que o banco fez.
-    const { data: existente } = await supabase
-      .from("group_transactions")
-      .select("id, split_type")
-      .eq("group_id", groupId)
-      .eq("transaction_id", transaction.id)
-      .maybeSingle();
+    // Desfaz a despesa quando a divisao nao pode ser gravada. Sem isso sobra um
+    // lancamento sem ligacao de grupo: ele aparece nas despesas pessoais de
+    // quem lancou, nao aparece no grupo, e ninguem entende de onde veio. A
+    // CASCADE de group_transactions.transaction_id leva a ligacao e as partes
+    // junto.
+    const desfazer = async (motivo: string, erro: unknown) => {
+      console.error(motivo, erro);
+      await supabase
+        .from("financial_transactions")
+        .delete()
+        .eq("id", transaction.id);
 
-    let groupTransaction = existente;
+      return NextResponse.json({ error: motivo }, { status: 500 });
+    };
 
-    // Rede de seguranca: se o trigger nao rodou (despesa positiva, banco sem a
-    // 007 aplicada), a ligacao ainda precisa existir.
-    if (!groupTransaction) {
-      const { data: criada, error: groupError } = await supabase
+    if (partesCombinadas !== null) {
+      // DIVISAO COMBINADA: ligacao e partes primeiro, `group_id` por ultimo.
+      // A despesa nasceu sem grupo (ver o INSERT acima), entao nao existe
+      // rateio igual nenhum para competir com este -- nem para apagar.
+      const { data: ligacao, error: erroLigacao } = await supabase
         .from("group_transactions")
         .insert({
           group_id: groupId,
           transaction_id: transaction.id,
-          split_type: body.split_type || "equal",
+          // Ja traduzido para o que o CHECK da coluna aceita: as sugestoes da
+          // tela falam `proportional` e `historical`, que sao 23514 aqui.
+          split_type: divisao.splitType,
+          // A policy de INSERT exige `created_by = auth.uid()`. Sem a coluna
+          // explicita o INSERT e barrado pela RLS.
+          created_by: user.id,
         })
         .select("id, split_type")
         .single();
 
-      if (groupError) {
-        console.error("Error linking to group:", groupError);
-        await supabase
-          .from("financial_transactions")
-          .delete()
-          .eq("id", transaction.id);
-
-        return NextResponse.json(
-          { error: "Failed to link transaction to group" },
-          { status: 500 }
-        );
+      if (erroLigacao || !ligacao) {
+        return desfazer("Erro ao ligar a despesa ao grupo.", erroLigacao);
       }
-      groupTransaction = criada;
-    }
 
-    // O trigger sempre rateia igualmente. Divisao combinada (custom,
-    // percentage, proporcional) substitui o rateio automatico -- e precisa
-    // trocar o split_type ANTES de inserir, porque e ele que faz o trigger
-    // `calculate_equal_split` devolver os valores intactos em vez de achatar
-    // tudo para partes iguais.
-    const splitTypeDesejado = body.split_type || "equal";
-    const temSplitsCustomizados =
-      splitTypeDesejado !== "equal" &&
-      Array.isArray(body.splits) &&
-      body.splits.length > 0;
-
-    if (temSplitsCustomizados) {
-      await supabase
-        .from("group_transactions")
-        .update({ split_type: splitTypeDesejado })
-        .eq("id", groupTransaction.id);
-
-      await supabase
+      // O BEFORE INSERT `calculate_equal_split` devolve estas linhas intactas
+      // porque `split_type <> 'equal'` (007). Os valores ja vem fechando o
+      // total em centavos inteiros de `divisaoParaGravar`.
+      const { error: erroPartes } = await supabase
         .from("group_expense_splits")
-        .delete()
-        .eq("group_transaction_id", groupTransaction.id);
+        .insert(
+          partesCombinadas.map((parte) => ({
+            group_transaction_id: ligacao.id,
+            member_id: parte.member_id,
+            percentage: parte.percentage,
+            amount: parte.amount,
+            status: "pending",
+          }))
+        );
 
-      await supabase.from("group_expense_splits").insert(
-        body.splits.map((s: any) => ({
-          group_transaction_id: groupTransaction!.id,
-          member_id: s.member_id,
-          percentage: s.percentage,
-          amount: Math.abs(s.amount),
-          status: "pending",
-        }))
-      );
+      if (erroPartes) {
+        return desfazer("Erro ao gravar a divisão da despesa.", erroPartes);
+      }
+
+      // Agora sim a coluna. O trigger roda no UPDATE, encontra a ligacao que
+      // acabou de ser criada e nao recria nem recalcula nada (o valor nao
+      // mudou). Sem este passo a despesa fica invisivel para os outros membros
+      // -- e a policy de SELECT de financial_transactions que depende dela.
+      const { error: erroGrupo } = await supabase
+        .from("financial_transactions")
+        .update({ group_id: groupId })
+        .eq("id", transaction.id);
+
+      if (erroGrupo) {
+        return desfazer("Erro ao publicar a despesa no grupo.", erroGrupo);
+      }
+    } else {
+      // DIVISAO IGUAL: a transacao ja nasceu com `group_id`, e o trigger
+      // `auto_create_group_transaction` JA criou a ligacao e o rateio
+      // igualitario. Inserir de novo aqui criaria uma SEGUNDA linha em
+      // group_transactions para a mesma despesa -- nao ha indice unico que
+      // impeca -- e um segundo jogo de rateios: cada membro passaria a dever o
+      // dobro, sem erro nenhum aparecer. Entao aqui so lemos o que o banco fez.
+      const { data: existente } = await supabase
+        .from("group_transactions")
+        .select("id, split_type")
+        .eq("group_id", groupId)
+        .eq("transaction_id", transaction.id)
+        .maybeSingle();
+
+      // Rede de seguranca: se o trigger nao rodou (despesa positiva, banco sem
+      // a 007 aplicada), a ligacao ainda precisa existir.
+      if (!existente) {
+        const { error: groupError } = await supabase
+          .from("group_transactions")
+          .insert({
+            group_id: groupId,
+            transaction_id: transaction.id,
+            split_type: "equal",
+            created_by: user.id,
+          })
+          .select("id, split_type")
+          .single();
+
+        if (groupError) {
+          return desfazer(
+            "Failed to link transaction to group",
+            groupError
+          );
+        }
+      }
     }
 
     return NextResponse.json({

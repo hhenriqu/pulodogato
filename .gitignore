@@ -173,6 +173,9 @@ next-env.d.ts
 # saida do `npm run test:grupos` (HMO-175; leva o settlement.js junto, porque
 # lib/grupos.ts importa a conversao para centavos de la)
 /.tmp-grupos/
+# saida do `npm run test:divisao-do-grupo` (HMO-190; leva o settlement.js
+# junto, porque lib/divisao-do-grupo.ts importa a conversao para centavos de la)
+/.tmp-divisao-do-grupo/
 # saida do `npm run test:env-preview` (HMO-132)
 /.tmp-env-preview/
 

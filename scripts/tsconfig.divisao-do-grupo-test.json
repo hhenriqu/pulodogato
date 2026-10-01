@@ -1,0 +1,16 @@
+{
+  "//": "Build so do teste: lib/divisao-do-grupo.ts importa @/lib/settlement de proposito -- `toCents` e a UNICA conversao reais -> centavos do projeto, e a divisao combinada tem que fechar o total nos MESMOS centavos que o acerto de contas do grupo. O tsc resolve o alias @/ por `paths` mas NAO o reescreve no JS emitido, entao o npm script tem um passo de resolve-aliases depois. Ver scripts/test-divisao-do-grupo.mjs.",
+  "compilerOptions": {
+    "outDir": "../.tmp-divisao-do-grupo",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/divisao-do-grupo.ts", "../lib/settlement.ts"]
+}
