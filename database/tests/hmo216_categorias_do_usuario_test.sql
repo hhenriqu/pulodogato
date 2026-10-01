@@ -39,7 +39,10 @@
 --        NAO mexe no saldo;
 --   (13) a personalizacao do catalogo e privada, e ninguem grava no nome de
 --        outra pessoa;
---   (14) os CHECKs de nome e de cor.
+--   (14) os CHECKs de nome e de cor;
+--   (15) `anon` nao tem privilegio nenhum nas duas tabelas novas -- a chave
+--        `anon` vai embutida no bundle JS publico. Esta e copia do guard do
+--        db-verify, e esta aqui porque a primeira versao da 036 reprovou nele.
 --
 -- Rodar num banco limpo, depois das migrations ate 036:
 --   psql "$DB_URL" -f database/tests/hmo216_categorias_do_usuario_test.sql
@@ -473,6 +476,27 @@ SELECT pg_temp.expect('anon nao escreve na personalizacao de ninguem',
     WHERE grantee = 'anon'
       AND table_schema = 'public'
       AND table_name = 'transaction_category_prefs'), 0);
+
+-- E `anon` NAO TEM PRIVILEGIO NENHUM nas duas tabelas novas.
+--
+-- Esta assercao e uma copia deliberada do guard do db-verify ("anon so pode ler
+-- as tabelas de referencia"), e ela existe porque a primeira versao da 036
+-- REPROVOU nele: eu havia dado `GRANT SELECT` a `anon` em
+-- `transaction_subcategories` por simetria com `transaction_categories`.
+--
+-- A simetria era falsa. `transaction_categories` e referencia de verdade (as
+-- 13 linhas sao de todos, e o cadastro monta seletor antes da sessao); esta
+-- tabela guarda linha de USUARIO na mesma relacao. A chave `anon` vai embutida
+-- no bundle JS publico, entao privilegio dela e dado aberto na internet -- e
+-- que a policy filtre `user_id IS NULL` nao muda o que o GRANT diz.
+--
+-- Medir aqui faz essa familia de erro reprovar PERTO do arquivo que a causa, em
+-- vez de 1700 linhas adiante num step de YAML.
+SELECT pg_temp.expect('anon nao tem privilegio nenhum nas duas tabelas novas',
+  (SELECT count(*) FROM information_schema.role_table_grants
+    WHERE grantee = 'anon'
+      AND table_schema = 'public'
+      AND table_name IN ('transaction_subcategories', 'transaction_category_prefs')), 0);
 
 -- As tres FKs compostas existem e estao VALIDADAS. `convalidated = f` seria
 -- uma FK que nao olhou as linhas que ja existem -- ela aceitaria para sempre o

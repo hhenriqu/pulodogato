@@ -13967,9 +13967,26 @@ ALTER TABLE public.transaction_subcategories FORCE ROW LEVEL SECURITY;
 -- Leitura: o catalogo (que inclui todo "Outros" global) e as minhas. Mesma
 -- forma da categoria, e pelo mesmo motivo -- "Terapia" dentro de Saúde conta
 -- sobre a pessoa tanto quanto uma categoria chamada "Terapia".
+--
+-- `anon` NAO ENTRA AQUI, e isto e diferente de transaction_categories.
+--
+-- A primeira versao desta migration dava `GRANT SELECT` a `anon` por simetria
+-- com a tabela de categorias, e o db-verify reprovou -- com razao. O guard
+-- "anon so pode ler as tabelas de referencia" existe porque a chave `anon` vai
+-- EMBUTIDA no bundle JS publico: privilegio dela e dado aberto na internet.
+--
+-- `transaction_categories` e tabela de REFERENCIA de verdade -- as 13 linhas
+-- sao as mesmas para todo mundo, e o formulario de cadastro monta o seletor
+-- antes de resolver a sessao. Esta tabela nao e: ela guarda linha de usuario na
+-- mesma relacao. Que a policy filtre `user_id IS NULL` nao muda o que o GRANT
+-- diz, e um GRANT a `anon` numa tabela com dado de usuario e exatamente a
+-- forma de erro que aquele guard foi escrito para pegar.
+--
+-- Nao se perde nada: subcategoria so e lida na tela de lancamento, que exige
+-- sessao.
 DROP POLICY IF EXISTS transaction_subcategories_read ON public.transaction_subcategories;
 CREATE POLICY transaction_subcategories_read ON public.transaction_subcategories
-  FOR SELECT TO anon, authenticated
+  FOR SELECT TO authenticated
   USING (is_active = TRUE AND user_id IS NULL);
 
 DROP POLICY IF EXISTS transaction_subcategories_read_own ON public.transaction_subcategories;
@@ -13993,7 +14010,6 @@ CREATE POLICY transaction_subcategories_delete_own ON public.transaction_subcate
   USING (user_id = auth.uid());
 
 REVOKE ALL ON public.transaction_subcategories FROM anon;
-GRANT SELECT ON public.transaction_subcategories TO anon;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.transaction_subcategories TO authenticated;
 
 -- =====================================================
