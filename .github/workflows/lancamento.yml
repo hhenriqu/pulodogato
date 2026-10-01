@@ -133,7 +133,17 @@ jobs:
           # 6) HMO-170: a receita volta a nao ter natureza, e salario deixa de
           #    poder ser fixo. O caso de cima ("receita nao tem natureza de
           #    despesa") afirma sobre AUSENCIA e continuaria verde com isto.
-          sed -i '0,/      natureza: true,/s//      natureza: false,/' $REGRAS
+          #
+          #    A INDENTACAO DO ANCORA E 4 ESPACOS, E ISSO JA CUSTOU O JOB INTEIRO.
+          #    O mutante nasceu na HMO-170 com 6, porque a linha estava dentro de
+          #    um objeto aninhado; a HMO-188 extraiu o `comum` e a dedentou para 4,
+          #    e o ancora ficou para tras. Um `sed` que nao casa sai 0 e deixa o
+          #    arquivo INTACTO: a suite roda sobre o codigo correto, passa, e o
+          #    controle acusa "verde com o defeito plantado" -- apontando para o
+          #    codigo quando o defeito e do proprio ancora. Este job ficou vermelho
+          #    na main de 736fb65 (HMO-188) ate aqui por causa disso, e com ele os
+          #    mutantes 7 a 12 abaixo, que nunca chegavam a rodar.
+          sed -i '0,/    natureza: true,/s//    natureza: false,/' $REGRAS
           if npm run test:campos-lancamento > /dev/null 2>&1; then
             echo "::error::Verde com a tela de receita sem o seletor pontual x fixa."
             exit 1

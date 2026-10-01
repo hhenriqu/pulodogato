@@ -230,7 +230,7 @@ jobs:
           # 11) A chave canonica aplicada a toda linha, e nao so as de cartao.
           #     Aqui some a agenda INTEIRA: luz, agua, aluguel -- nada disso tem
           #     `notes` de fatura. A tela abre vazia, sem erro nenhum.
-          sed -i 's#if (linha.account?.account_type !== TIPO_CARTAO) return true;#if (false) return true;#' $AGENDA
+          sed -i 's#if (contaDaLinha(linha.account)?.account_type !== TIPO_CARTAO) return true;#if (false) return true;#' $AGENDA
           if npm run test:agenda-do-cartao > /dev/null 2>&1; then
             echo "::error::Verde com a conta a pagar comum fora da agenda."
             exit 1
