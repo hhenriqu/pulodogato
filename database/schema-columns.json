@@ -385,6 +385,30 @@
     "to_user_id",
     "updated_at"
   ],
+  "group_share_category_monthly_totals": [
+    "category_id",
+    "currency",
+    "expense",
+    "group_id",
+    "income",
+    "month",
+    "transaction_count",
+    "user_id"
+  ],
+  "group_share_entries": [
+    "amount",
+    "category_id",
+    "currency",
+    "group_id",
+    "id",
+    "month",
+    "paguei_eu",
+    "split_status",
+    "transaction_date",
+    "transaction_id",
+    "transaction_type",
+    "user_id"
+  ],
   "group_transactions": [
     "created_at",
     "created_by",
@@ -481,6 +505,25 @@
     "total_deductions",
     "transaction_id",
     "updated_at",
+    "user_id"
+  ],
+  "personal_category_monthly_totals": [
+    "category_id",
+    "currency",
+    "expense",
+    "income",
+    "month",
+    "net",
+    "transaction_count",
+    "user_id"
+  ],
+  "personal_monthly_cash_flow": [
+    "currency",
+    "expense",
+    "income",
+    "month",
+    "net",
+    "transaction_count",
     "user_id"
   ],
   "planned_vs_actual": [
@@ -702,6 +745,13 @@
     "requester_id",
     "responded_at",
     "status"
+  ],
+  "user_pix_keys": [
+    "created_at",
+    "pix_key",
+    "pix_key_type",
+    "updated_at",
+    "user_id"
   ],
   "user_subscription_details": [
     "cancel_at_period_end",
