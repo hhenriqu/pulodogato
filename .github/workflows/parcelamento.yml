@@ -65,6 +65,24 @@ jobs:
       - name: O bloco de parcelamento, renderizado
         run: npm run test:campos-lancamento
 
+      # O CAMPO DE PARCELAS QUE DEIXA APAGAR O "1" (HMO-226), E POR QUE ELE TEM
+      # RUNNER PROPRIO
+      #
+      # O conserto mora em `onChange`, `onFocus` e `onBlur`, e
+      # `renderToStaticMarkup` nao chama nenhum dos tres -- eles nao saem no
+      # HTML. Toda assercao sobre o markup e, por isso, cega para ele: o `|| 1`
+      # pode voltar ao `onChange` e o `value=""` do teste de render continua
+      # saindo igual, porque o estado exibido e escolhido pelo teste. Sem este
+      # runner, o mutante central da issue sobrevive com a assercao "certa" verde
+      # ao lado dele.
+      #
+      # Medido na HMO-226 ao escrever isto, em 88s: 12 mutantes, 12 mortos, 10
+      # por assercao. Os outros 2 so compilavam com os campos voltando a ser
+      # `number`, e morrer no `tsc` ali e a prova de que a troca de tipo carrega
+      # peso. O runner reprova sozinho se NENHUM morrer por assercao.
+      - name: Os mutantes do campo de parcelas
+        run: npm run mutantes:campo-de-parcelas
+
       # O ROTULO NA FATURA. E aqui que a parcela aparece para o usuario -- o
       # "caminho de volta" sem o qual esta feature grava e desaparece.
       - name: O rotulo parcela N de M na tela do cartao

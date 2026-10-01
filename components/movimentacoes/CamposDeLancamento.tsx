@@ -46,6 +46,7 @@ import {
   camposDoTipo,
   contasDoSeletor,
   naturezasDoTipo,
+  parcelaDigitada,
   resumoDaSerie,
   serieDeParcelas,
   MAX_MESES_DE_REPETICAO,
@@ -233,8 +234,13 @@ export function CamposDeLancamento({
         serieDeParcelas({
           valor: valores.valor,
           base: valores.baseDoValorParcelado,
-          parcelaAtual: valores.parcelaAtual,
-          totalDeParcelas: valores.totalDeParcelas,
+          // `parcelaDigitada` devolve NaN com o campo vazio, e
+          // `serieDeParcelas` devolve `null` para NaN -- entao o resumo
+          // DESAPARECE enquanto a pessoa esta apagando o numero, em vez de
+          // exibir "1x de R$ 300,00". Um resumo parcial se le como resposta, e
+          // seria uma mentira pior que o campo vazio.
+          parcelaAtual: parcelaDigitada(valores.parcelaAtual),
+          totalDeParcelas: parcelaDigitada(valores.totalDeParcelas),
           vencimentoDaParcelaAtual: valores.data,
         })
       )
@@ -527,7 +533,34 @@ export function CamposDeLancamento({
                     dizer qual e qual sem rotulo longo. Inverter o par e o erro
                     de digitacao mais provavel daqui, e `validarLancamento` tem
                     uma frase propria para ele ("A parcela atual tem que estar
-                    entre 1 e M"). */}
+                    entre 1 e M").
+
+                    OS DOIS CAMPOS DEIXAM APAGAR O CONTEUDO (HMO-226)
+
+                    O pedido era literal: "vem preenchido como 1, nao
+                    permitindo apagar". O `onChange` daqui era
+                    `parseInt(e.target.value) || 1`, e como o input e controlado
+                    por `valores`, o Backspace repunha o "1" no MESMO quadro --
+                    nao existia estado em que o campo aparecesse vazio. Quem
+                    queria 6 digitava ao lado do "1" e produzia 16.
+
+                    As tres pecas do conserto, e as tres sao necessarias:
+
+                      1. o estado guarda TEXTO (ver `parcelaAtual` em
+                         lib/lancamento.ts), que e o que permite `""` existir;
+                      2. `onFocus` + `select()`: clicar seleciona o "1" e a
+                         primeira tecla o substitui -- o "quando clicar ele
+                         apague" do pedido, sem deixar o campo vazio para quem
+                         so passou por ele com Tab;
+                      3. `onBlur` vazio repoe o padrao, para a tela nao ficar
+                         guardando um campo em branco depois que a pessoa saiu
+                         dele.
+
+                    O que NAO voltou foi o `|| 1` do `onChange`: enquanto ele
+                    existia, apagar o campo gravava "parcelado em 1 vez" sem
+                    ninguem ter pedido, e era isso que fazia o bug ser invisivel.
+                    Quem recusa o vazio agora e `validarLancamento`, com frase
+                    propria. */}
                 <div className="flex items-end gap-2">
                   <div className="space-y-2">
                     <Label htmlFor="parcela_atual">Parcela</Label>
@@ -535,14 +568,17 @@ export function CamposDeLancamento({
                       id="parcela_atual"
                       type="number"
                       min="1"
-                      max={String(valores.totalDeParcelas)}
+                      max={valores.totalDeParcelas}
                       className="w-20"
                       value={valores.parcelaAtual}
+                      onFocus={(e) => e.target.select()}
                       onChange={(e) =>
-                        aoMudar({
-                          parcelaAtual: parseInt(e.target.value) || 1,
-                        })
+                        aoMudar({ parcelaAtual: e.target.value })
                       }
+                      onBlur={(e) => {
+                        if (!e.target.value.trim())
+                          aoMudar({ parcelaAtual: "1" });
+                      }}
                     />
                   </div>
                   <span className="pb-2 text-sm text-muted-foreground">de</span>
@@ -555,11 +591,14 @@ export function CamposDeLancamento({
                       max="60"
                       className="w-20"
                       value={valores.totalDeParcelas}
+                      onFocus={(e) => e.target.select()}
                       onChange={(e) =>
-                        aoMudar({
-                          totalDeParcelas: parseInt(e.target.value) || 1,
-                        })
+                        aoMudar({ totalDeParcelas: e.target.value })
                       }
+                      onBlur={(e) => {
+                        if (!e.target.value.trim())
+                          aoMudar({ totalDeParcelas: "1" });
+                      }}
                     />
                   </div>
                 </div>

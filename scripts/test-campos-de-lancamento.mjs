@@ -64,6 +64,75 @@ function renderizar({
   );
 }
 
+/** O `<input ... id="x" ...>` inteiro, para afirmar sobre os atributos dele. */
+function inputPorId(html, id) {
+  return html.match(new RegExp(`<input[^>]*id="${id}"[^>]*>`))?.[0] ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// ALCANCAR OS HANDLERS, E POR QUE O HTML NAO BASTA (HMO-226)
+// ---------------------------------------------------------------------------
+// `renderToStaticMarkup` nunca chama `onChange`, `onFocus` nem `onBlur` -- eles
+// nao aparecem no HTML de saida. Entao TODA assercao sobre o markup e cega para
+// o conserto da HMO-226: o `onChange` daqui pode voltar a ser
+// `parseInt(e.target.value) || 1` e o `value=""` do teste de render continua
+// saindo igual, porque o teste e quem escolhe o estado. Um mutante plantado no
+// handler sobreviveria com a assercao "certa" verde ao lado.
+//
+// `CamposDeLancamento` nao usa hook NENHUM (e o comentario do `resumo`, em
+// components/movimentacoes/CamposDeLancamento.tsx, diz isso em voz alta), entao
+// ela e uma funcao pura de props: da para chamá-la e andar na arvore de
+// elementos que ela devolve, sem renderizador e sem DOM. E dali os tres
+// handlers sao chamaveis de verdade.
+//
+// Se um dia esta funcao passar a usar hooks, `camposDoInput` vai estourar na
+// chamada -- e um erro alto, nao um teste que fica verde medindo nada.
+function acharPorId(no, id) {
+  if (no == null || typeof no !== "object") return null;
+  if (Array.isArray(no)) {
+    for (const filho of no) {
+      const achado = acharPorId(filho, id);
+      if (achado) return achado;
+    }
+    return null;
+  }
+  if (no.props?.id === id) return no.props;
+  return acharPorId(no.props?.children, id);
+}
+
+/**
+ * As props do input `id`, mais a lista do que o componente mandou para
+ * `aoMudar`.
+ *
+ * `mudancas` e um array e nao "a ultima mudanca": um handler que chame `aoMudar`
+ * duas vezes (ou nenhuma) tem de ser distinguivel de um que chame uma.
+ */
+function camposDoInput({ id, valores = {} }) {
+  const mudancas = [];
+  const arvore = CamposDeLancamento({
+    tipo: "expense",
+    valores: {
+      ...valoresIniciais(),
+      natureza: "card",
+      contaId: CARTAO.id,
+      parcelado: true,
+      valor: "300",
+      totalDeParcelas: "3",
+      ...valores,
+    },
+    aoMudar: (mudanca) => mudancas.push(mudanca),
+    categorias: [CATEGORIA_DESPESA],
+    contas: [CARTAO],
+    editando: false,
+    cartaoFixado: null,
+    rateio: h("div", null, MARCADOR_DE_RATEIO),
+  });
+
+  const props = acharPorId(arvore, id);
+  assert.ok(props, `o input id="${id}" nao esta na arvore de elementos`);
+  return { props, mudancas };
+}
+
 // ---------------------------------------------------------------------------
 // A SEPARACAO, QUE E O PONTO DA ISSUE
 // ---------------------------------------------------------------------------
@@ -256,7 +325,7 @@ test("os campos da parcela so existem com o parcelamento marcado", () => {
       contaId: CARTAO.id,
       parcelado: true,
       valor: "50",
-      totalDeParcelas: 3,
+      totalDeParcelas: "3",
     },
   });
   // OS TRES PEDACOS DO PEDIDO, cada um por id proprio.
@@ -328,8 +397,8 @@ test("o resumo diz, na tela, que as parcelas anteriores nao entram", () => {
       contaId: CARTAO.id,
       parcelado: true,
       valor: "100",
-      parcelaAtual: 3,
-      totalDeParcelas: 10,
+      parcelaAtual: "3",
+      totalDeParcelas: "10",
     },
   });
 
@@ -343,6 +412,201 @@ test("o resumo diz, na tela, que as parcelas anteriores nao entram", () => {
     html.includes("2 anteriores não entram"),
     "a tela nao avisou que as parcelas anteriores nao sao criadas"
   );
+});
+
+// ---------------------------------------------------------------------------
+// O CAMPO DE PARCELAS DEIXA APAGAR O "1" (HMO-226)
+// ---------------------------------------------------------------------------
+// O pedido: "vem preenchido como 1, nao permitindo apagar [...] quando clicar
+// ele apague para a pessoa digitar outro numero por exemplo, 6, sem ter que
+// digitar 16 e depois apagar o 1".
+//
+// Os dois primeiros testes afirmam sobre o ESTADO VAZIO, que antes da HMO-226
+// era inalcancavel: os campos eram `number`, e `parseInt("") || 1` repunha o 1
+// no mesmo quadro do Backspace. Os tres ultimos chamam os handlers, que e onde
+// o conserto mora -- ver `camposDoInput` acima para o motivo.
+
+test("os dois campos de parcela aparecem vazios quando o estado esta vazio", () => {
+  const semM = renderizar({
+    tipo: "expense",
+    valores: {
+      natureza: "card",
+      contaId: CARTAO.id,
+      parcelado: true,
+      valor: "300",
+      totalDeParcelas: "",
+    },
+  });
+  assert.equal(
+    inputPorId(semM, "total_installments")?.includes('value=""'),
+    true,
+    `o campo de parcelas nao saiu vazio: ${inputPorId(semM, "total_installments")}`
+  );
+
+  const semN = renderizar({
+    tipo: "expense",
+    valores: {
+      natureza: "card",
+      contaId: CARTAO.id,
+      parcelado: true,
+      valor: "300",
+      totalDeParcelas: "3",
+      parcelaAtual: "",
+    },
+  });
+  assert.equal(
+    inputPorId(semN, "parcela_atual")?.includes('value=""'),
+    true,
+    `o campo da parcela atual nao saiu vazio: ${inputPorId(semN, "parcela_atual")}`
+  );
+});
+
+// CONTROLE NEGATIVO, e e ele que torna o teste acima dificil de falsificar.
+//
+// Um campo vazio com o resumo ainda na tela e PIOR que o bug original: "1x de
+// R$ 300,00" se le como resposta -- a tela afirma uma compra em uma parcela
+// enquanto a pessoa esta no meio de digitar "6". Sem esta assercao, repor o
+// `|| 1` sobrevive: o estado vazio e escolhido pelo teste, entao o `value=""`
+// sai igual, e o resumo errado passaria sem ninguem olhar.
+test("com o campo de parcelas vazio o resumo DESAPARECE, e nao vira 1x", () => {
+  const html = renderizar({
+    tipo: "expense",
+    valores: {
+      natureza: "card",
+      contaId: CARTAO.id,
+      parcelado: true,
+      valor: "300",
+      totalDeParcelas: "",
+    },
+  });
+
+  assert.ok(
+    !html.includes('data-testid="resumo-das-parcelas"'),
+    "o resumo continuou na tela com o total de parcelas em branco"
+  );
+  // A NEGACAO EXPLICITA do numero que o fallback produzia. A assercao de cima
+  // cai se o bloco inteiro sumir por outro motivo; esta nomeia o valor errado.
+  assert.ok(
+    !html.includes("1x de"),
+    "a tela anunciou uma serie de 1 parcela a partir de um campo vazio"
+  );
+  assert.ok(
+    !html.includes("R$ 300,00 · total"),
+    "a tela montou um total a partir de um campo vazio"
+  );
+});
+
+// O MESMO CONTROLE PARA O CAMPO N, E ELE NAO E REDUNDANTE COM O DE CIMA
+//
+// Para o M, `|| 1` nao produz resumo nenhum: `serieDeParcelas` recusa M = 1, e a
+// frase desaparece do mesmo jeito. O controle negativo do M e, por isso, cego
+// para o fallback -- medido, nao suposto (ver
+// scripts/mutantes-campo-de-parcelas.mjs).
+//
+// No N o fallback APARECE: com a Parcela em branco e M = 3, cair em N = 1 monta
+// uma serie VALIDA e a tela anuncia "3x de R$ 300,00 · total R$ 900,00" ao lado
+// de um campo vazio. Esse e o resumo parcial que se le como resposta, e este e o
+// unico teste que o pega.
+test("com a parcela atual vazia o resumo tambem DESAPARECE", () => {
+  const html = renderizar({
+    tipo: "expense",
+    valores: {
+      natureza: "card",
+      contaId: CARTAO.id,
+      parcelado: true,
+      valor: "300",
+      totalDeParcelas: "3",
+      parcelaAtual: "",
+    },
+  });
+
+  assert.ok(
+    !html.includes('data-testid="resumo-das-parcelas"'),
+    "o resumo continuou na tela com a parcela atual em branco"
+  );
+  assert.ok(
+    !html.includes("3x de"),
+    'a tela anunciou "3x de R$ 300,00" com o campo da parcela atual vazio'
+  );
+  assert.ok(
+    !html.includes("R$ 900,00"),
+    "a tela montou o total da serie a partir de um campo vazio"
+  );
+});
+
+test("apagar o campo entrega texto VAZIO ao estado, e nao 1", () => {
+  // O MUTANTE QUE ESTE TESTE EXISTE PARA MATAR e `|| 1` de volta no `onChange`.
+  // Enquanto ele existia, este era o bug inteiro: o estado nunca via o vazio.
+  for (const [id, campo] of [
+    ["total_installments", "totalDeParcelas"],
+    ["parcela_atual", "parcelaAtual"],
+  ]) {
+    const { props, mudancas } = camposDoInput({ id });
+    props.onChange({ target: { value: "" } });
+
+    assert.deepEqual(
+      mudancas,
+      [{ [campo]: "" }],
+      `apagar o ${id} nao chegou ao estado como string vazia`
+    );
+    // Nomeia os dois fallbacks que ja estiveram aqui, para a frase do erro dizer
+    // qual deles voltou.
+    assert.notDeepEqual(mudancas, [{ [campo]: 1 }], `${id} caiu no 1 numerico`);
+    assert.notDeepEqual(mudancas, [{ [campo]: "1" }], `${id} caiu no "1"`);
+  }
+});
+
+test("o campo digitado vai cru para o estado, sem conversao no caminho", () => {
+  // "6" e nao 6: a conversao para numero acontece numa borda so
+  // (`parcelaDigitada`), e um `parseInt` reaparecendo aqui e o comeco da volta
+  // do bug -- com ele, "06" e "6x" chegariam ao estado como 6 e a tela passaria
+  // a mostrar algo diferente do que foi digitado.
+  const { props, mudancas } = camposDoInput({ id: "total_installments" });
+  props.onChange({ target: { value: "6" } });
+  assert.deepEqual(mudancas, [{ totalDeParcelas: "6" }]);
+});
+
+test("clicar no campo seleciona o conteudo, para a primeira tecla substituir", () => {
+  // O "quando clicar ele apague" do pedido, sem deixar o campo em branco para
+  // quem so passou por ele com Tab. Nao da para afirmar isto pelo HTML: `select`
+  // e uma chamada no handler, nao um atributo.
+  for (const id of ["total_installments", "parcela_atual"]) {
+    const { props } = camposDoInput({ id });
+    let selecionou = false;
+    assert.ok(props.onFocus, `o ${id} nao tem onFocus`);
+    props.onFocus({ target: { select: () => { selecionou = true; } } });
+    assert.ok(
+      selecionou,
+      `clicar no ${id} nao selecionou o conteudo: a pessoa digita ao lado do "1" e produz 16`
+    );
+  }
+});
+
+test("sair do campo vazio repoe o padrao; sair com numero nao mexe", () => {
+  for (const [id, campo] of [
+    ["total_installments", "totalDeParcelas"],
+    ["parcela_atual", "parcelaAtual"],
+  ]) {
+    const vazio = camposDoInput({ id });
+    vazio.props.onBlur({ target: { value: "" } });
+    assert.deepEqual(
+      vazio.mudancas,
+      [{ [campo]: "1" }],
+      `sair do ${id} em branco nao repos o padrao`
+    );
+
+    // A OUTRA METADE, e sem ela o `onBlur` poderia estar sobrescrevendo SEMPRE.
+    // Um `onBlur` que repoe "1" a cada saida apaga o 6 que a pessoa acabou de
+    // digitar -- o mesmo bug com um gatilho diferente, e a assercao de cima
+    // continuaria verde.
+    const preenchido = camposDoInput({ id });
+    preenchido.props.onBlur({ target: { value: "6" } });
+    assert.deepEqual(
+      preenchido.mudancas,
+      [],
+      `sair do ${id} com um numero digitado mexeu no estado`
+    );
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -529,7 +793,7 @@ test("parcelado, o UNICO campo de dinheiro continua mascarado e o total sai form
       contaId: CARTAO.id,
       parcelado: true,
       valor: "1000.00",
-      totalDeParcelas: 3,
+      totalDeParcelas: "3",
     },
   });
 
@@ -611,7 +875,7 @@ test("todo campo de valor da tela vem com a calculadora ao lado", () => {
       contaId: CARTAO.id,
       parcelado: true,
       valor: "1000.00",
-      totalDeParcelas: 3,
+      totalDeParcelas: "3",
     },
   });
   assert.equal(
