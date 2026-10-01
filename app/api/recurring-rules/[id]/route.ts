@@ -7,7 +7,7 @@
 
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
-import { materializarAgenda } from "@/lib/services/scheduled";
+import { materializarAgenda, encerrarRegra } from "@/lib/services/scheduled";
 import { isIsoDate, today } from "@/lib/recurrence";
 
 const CAMPOS_EDITAVEIS = [
@@ -208,35 +208,25 @@ export async function DELETE(
       return NextResponse.json({ message: "Gasto fixo excluído" });
     }
 
-    const { data: rule, error } = await supabase
-      .from("recurring_rules")
-      .update({ is_active: false })
-      .eq("id", params.id)
-      .eq("user_id", user.id)
-      .select()
-      .single();
+    // Desativa a regra e tira da agenda o que ainda nao venceu; o passado
+    // permanece. O corpo disto mora em `lib/services/scheduled.ts` desde a
+    // HMO-228, porque o alcance "apagar todas as parcelas" do DELETE de
+    // /api/scheduled-transactions/{id} e, palavra por palavra, este mesmo
+    // pedido -- e dois lugares que encerram uma regra divergem no primeiro
+    // conserto que so um dos dois receber.
+    const encerrada = await encerrarRegra(supabase, params.id, user.id);
 
-    if (error || !rule) {
+    if (!encerrada.ok) {
       return NextResponse.json(
         { error: "Gasto fixo não encontrado" },
         { status: 404 }
       );
     }
 
-    // Tira da agenda o que ainda nao venceu; o passado permanece.
-    const { data: canceladas } = await supabase
-      .from("scheduled_transactions")
-      .update({ status: "cancelled" })
-      .eq("recurring_rule_id", params.id)
-      .eq("user_id", user.id)
-      .eq("status", "pending")
-      .gte("due_date", today())
-      .select("id");
-
     return NextResponse.json({
       message: "Gasto fixo desativado",
-      rule,
-      scheduled_cancelled: canceladas?.length ?? 0,
+      rule: encerrada.rule,
+      scheduled_cancelled: encerrada.canceladas,
     });
   } catch (error) {
     console.error("Erro ao desativar gasto fixo:", error);

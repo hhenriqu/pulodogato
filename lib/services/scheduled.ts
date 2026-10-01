@@ -105,6 +105,60 @@ export async function materializarAgenda(
 }
 
 /**
+ * Encerra um gasto fixo: a regra para de gerar e as ocorrencias abertas saem da
+ * agenda.
+ *
+ * POR QUE ISTO E UMA FUNCAO, E NAO CODIGO REPETIDO (HMO-228)
+ * ---------------------------------------------------------
+ * Dois caminhos precisam fazer exatamente isto:
+ *
+ *   DELETE /api/recurring-rules/{id}                  "excluir o gasto fixo"
+ *   DELETE /api/scheduled-transactions/{id}?alcance=todas
+ *                                                     "apagar todas as parcelas"
+ *
+ * Sao duas frases para o mesmo pedido, e o segundo chegou depois. Escrever o
+ * `is_active = false` + `cancelled` de novo no caminho novo criaria dois lugares
+ * que encerram uma regra -- e eles divergem no primeiro conserto que so um dos
+ * dois receber. O defeito resultante seria "apagar pela tela de contas previstas
+ * funciona, apagar pela tela de gastos fixos deixa um mes para tras", sem nada
+ * no codigo indicando que havia duas implementacoes.
+ *
+ * O `gte(hoje)` nas ocorrencias e deliberado e e diferente da barreira das
+ * outras regras de alcance: aqui nao se esta corrigindo um valor, e sim tirando
+ * da agenda o que ainda nao venceu. A conta que venceu e nao foi paga continua
+ * sendo uma divida real -- cancela-la apagaria da tela um atraso que existe.
+ */
+export async function encerrarRegra(
+  supabase: SupabaseClient,
+  ruleId: string,
+  userId: string,
+): Promise<
+  | { ok: true; rule: Record<string, unknown>; canceladas: number }
+  | { ok: false; motivo: "nao_encontrada" | "erro" }
+> {
+  const { data: rule, error } = await supabase
+    .from("recurring_rules")
+    .update({ is_active: false })
+    .eq("id", ruleId)
+    .eq("user_id", userId)
+    .select()
+    .single();
+
+  if (error || !rule) return { ok: false, motivo: "nao_encontrada" };
+
+  const { data: canceladas } = await supabase
+    .from("scheduled_transactions")
+    .update({ status: "cancelled" })
+    .eq("recurring_rule_id", ruleId)
+    .eq("user_id", userId)
+    .eq("status", "pending")
+    .gte("due_date", today())
+    .select("id");
+
+  return { ok: true, rule, canceladas: canceladas?.length ?? 0 };
+}
+
+/**
  * Sinal do valor conforme a convencao ja usada em financial_transactions:
  * despesa entra negativa, receita positiva. `scheduled_transactions.amount` e
  * sempre positivo (CHECK no banco); a direcao vem do tipo.
