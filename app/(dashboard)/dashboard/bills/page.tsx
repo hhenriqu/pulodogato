@@ -15,8 +15,24 @@
 // A leitura agora vem classificada (`lib/offline-leitura.ts`): sem dado, o
 // painel de sem-conexao SUBSTITUI os totais e as tres secoes. As frases de
 // "nada previsto" exigem resposta do servidor de agora.
+//
+// A FATURA DO CARTAO APARECE AQUI SEM TER SIDO FECHADA (HMO-227)
+// --------------------------------------------------------------
+// "Valor total a ser pago no cartao deve aparecer em contas previstas com a
+// data de vencimento do cartao." Ela aparecia -- mas so depois de alguem
+// clicar "Fechar fatura" em /dashboard/budgets, uma tela que a maioria nunca
+// abre. Agora `GET /api/scheduled-transactions` SINTETIZA a fatura aberta a
+// cada leitura (ver lib/agenda-do-cartao.ts) e ela entra nas mesmas secoes,
+// com o mesmo vencimento.
+//
+// Essa linha nao existe no banco: `id` e `null`, e e por isso que o tipo desta
+// tela e uma UNIAO. Alterar, pular e anexar comprovante precisam de um id e
+// portanto nao sao oferecidos nela; "informei que paguei" materializa a fatura
+// (chama o `close`) e paga a linha real em seguida -- duas escritas atras de um
+// botao so.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -59,6 +75,11 @@ import {
 import type { AlcanceDaEdicao } from "@/lib/recorrencia-edicao";
 import { Receipts } from "@/components/Receipts";
 import { ehFatura } from "@/lib/card-invoice";
+import {
+  ehFaturaPrevista,
+  type FaturaPrevista,
+  type FaturaSemVencimento,
+} from "@/lib/agenda-do-cartao";
 import { copiaDaPrevisao, direcaoDaAgenda } from "@/lib/previsto-x-realizado";
 import {
   buscarLeitura,
@@ -124,8 +145,39 @@ interface FormContaAvulsa {
 
 const HOJE = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
 
+/**
+ * Uma linha desta tela: a previsao GRAVADA ou a fatura aberta sintetizada.
+ *
+ * A uniao e declarada aqui e nao em `lib/agenda-do-cartao.ts` porque aquele
+ * arquivo e compilado por suites com `rootDir: lib` e nao pode importar
+ * `@/types/financial` (TS6059). O que importa e que o tipo seja a UNIAO em todo
+ * lugar desta tela: com `ScheduledTransaction[]` o `tsc` deixaria `conta.id`
+ * passar e as acoes montariam `/api/scheduled-transactions/null/pay`.
+ */
+type LinhaDaAgendaOuFatura = ScheduledTransaction | FaturaPrevista;
+
+/**
+ * A chave do estado `agindo` para uma linha da agenda.
+ *
+ * A fatura sintetizada nao tem `id` (HMO-227), e `agindo === conta.id` com os
+ * dois `null` deixaria TODA linha sintetizada girando o spinner ao mesmo tempo.
+ * A chave canonica em `notes` e unica por cartao+mes e nunca colide com um uuid.
+ */
+const chaveDeAcao = (conta: LinhaDaAgendaOuFatura) =>
+  ehFaturaPrevista(conta) ? conta.notes : conta.id;
+
 export default function BillsPage() {
-  const [scheduled, setScheduled] = useState<ScheduledTransaction[]>([]);
+  // A UNIAO, e nao `ScheduledTransaction[]`: a fatura aberta chega aqui junto
+  // das previsoes gravadas, e ela nao tem `id`. Com o tipo largo o `tsc`
+  // deixaria `conta.id` passar em todo lugar e as acoes montariam
+  // `/api/scheduled-transactions/null/pay`.
+  const [scheduled, setScheduled] = useState<LinhaDaAgendaOuFatura[]>([]);
+  // Cartoes com fatura aberta e SEM dia de vencimento: eles nao tem linha na
+  // agenda porque nao ha data para calcular, e a tela avisa em vez de deixar a
+  // fatura desaparecer calada. `null` = a leitura nao trouxe o campo.
+  const [semVencimento, setSemVencimento] = useState<
+    FaturaSemVencimento[] | null
+  >(null);
   const [rules, setRules] = useState<RecurringRule[]>([]);
   const [categories, setCategories] = useState<TransactionCategory[]>([]);
   const [accounts, setAccounts] = useState<FinancialAccount[]>([]);
@@ -144,9 +196,11 @@ export default function BillsPage() {
   const [agindo, setAgindo] = useState<string | null>(null);
   const [dialogFixo, setDialogFixo] = useState(false);
   const [dialogAvulsa, setDialogAvulsa] = useState(false);
-  // Fatura aguardando a escolha da conta pagadora (HMO-149).
+  // Fatura aguardando a escolha da conta pagadora (HMO-149). Pode ser a fatura
+  // fechada (linha real) ou a fatura aberta sintetizada (HMO-227) -- nesta, o
+  // "Confirmar pagamento" materializa antes de dar baixa.
   const [faturaParaPagar, setFaturaParaPagar] =
-    useState<ScheduledTransaction | null>(null);
+    useState<LinhaDaAgendaOuFatura | null>(null);
   const [contaPagadora, setContaPagadora] = useState("");
 
   // A ocorrencia em edicao e o alcance escolhido (HMO-170). O alcance volta para
@@ -185,9 +239,10 @@ export default function BillsPage() {
     // `buscarLeitura` nao rejeita: cada busca volta com o seu proprio estado,
     // e uma nao derruba mais as outras.
     const [agenda, regras, cats, contas, resumo, gruposResp] = await Promise.all([
-      buscarLeitura<{ scheduled?: ScheduledTransaction[] }>(
-        "/api/scheduled-transactions?status=open"
-      ),
+      buscarLeitura<{
+        scheduled?: LinhaDaAgendaOuFatura[];
+        cards_without_due_day?: FaturaSemVencimento[];
+      }>("/api/scheduled-transactions?status=open"),
       buscarLeitura<{ rules?: RecurringRule[] }>("/api/recurring-rules"),
       buscarLeitura<{ categories?: TransactionCategory[] }>(
         "/api/personal-finance/categories"
@@ -205,7 +260,13 @@ export default function BillsPage() {
     // estado dela e o estado da pagina.
     setEstado(agenda.estado);
     setGuardadoEm(agenda.guardadoEm);
-    if (agenda.dados) setScheduled(agenda.dados.scheduled ?? []);
+    if (agenda.dados) {
+      setScheduled(agenda.dados.scheduled ?? []);
+      // `?? null` e nao `?? []`: a resposta guardada no aparelho de antes desta
+      // feature nao tem o campo, e `[]` ali afirmaria "nenhum cartao sem
+      // vencimento" com base num corpo que nunca respondeu isso.
+      setSemVencimento(agenda.dados.cards_without_due_day ?? null);
+    }
 
     if (regras.dados) setRules(regras.dados.rules ?? []);
     if (cats.dados) setCategories(cats.dados.categories ?? []);
@@ -232,9 +293,9 @@ export default function BillsPage() {
   );
 
   const grupos = useMemo(() => {
-    const vencidas: ScheduledTransaction[] = [];
-    const semana: ScheduledTransaction[] = [];
-    const depois: ScheduledTransaction[] = [];
+    const vencidas: LinhaDaAgendaOuFatura[] = [];
+    const semana: LinhaDaAgendaOuFatura[] = [];
+    const depois: LinhaDaAgendaOuFatura[] = [];
 
     for (const conta of scheduled) {
       const dias = conta.days_until_due ?? 0;
@@ -259,7 +320,10 @@ export default function BillsPage() {
   // view ja resolve (027) -- o mesmo caminho que /api/scheduled-transactions/
   // summary usa, para os dois numeros da mesma tela nao discordarem.
   const totais = useMemo(() => {
-    const soma = (lista: ScheduledTransaction[], lado: "income" | "expense") =>
+    const soma = (
+      lista: LinhaDaAgendaOuFatura[],
+      lado: "income" | "expense"
+    ) =>
       lista
         .filter((conta) => direcaoDaAgenda(conta.direction) === lado)
         .reduce((total, conta) => total + Math.abs(Number(conta.amount)), 0);
@@ -283,6 +347,49 @@ export default function BillsPage() {
     () => accounts.filter((conta) => conta.account_type !== "credit_card"),
     [accounts]
   );
+
+  /**
+   * Materializa a fatura ABERTA e devolve o id da linha real (HMO-227).
+   *
+   * E a primeira das duas escritas do botao "informei que paguei". Ela acontece
+   * so no CONFIRMAR, e nao ao abrir o dialogo: materializar na abertura
+   * deixaria uma fatura fechada para tras cada vez que alguem abrisse o dialogo
+   * e desistisse -- e fechar nao e reversivel pela tela.
+   *
+   * O 409 "esta fatura ja foi fechada" NAO e erro aqui: ele vem com
+   * `scheduled_transaction_id`, e e exatamente o que acontece se outra aba (ou
+   * o botao de Orcamentos) fechou a fatura no meio. Seguir com aquele id e o
+   * resultado certo; mostrar o erro mandaria a pessoa recarregar para fazer o
+   * que ja esta feito.
+   */
+  const materializarFatura = async (
+    fatura: FaturaPrevista
+  ): Promise<ScheduledTransaction | null> => {
+    const resposta = await fetch("/api/card-invoices/close", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        account_id: fatura.account_id,
+        // O `close` aceita 'AAAA-MM'; `invoice_month` vem 'AAAA-MM-01'.
+        month: fatura.invoice_month.slice(0, 7),
+      }),
+    });
+    const dados = await resposta.json();
+
+    if (resposta.ok && dados.scheduled_transaction?.id) {
+      return dados.scheduled_transaction as ScheduledTransaction;
+    }
+
+    if (resposta.status === 409 && dados.scheduled_transaction_id) {
+      return {
+        ...(fatura as unknown as ScheduledTransaction),
+        id: dados.scheduled_transaction_id as string,
+      };
+    }
+
+    toast.error(dados.error ?? "Não foi possível registrar a fatura");
+    return null;
+  };
 
   const darBaixa = async (
     conta: ScheduledTransaction,
@@ -337,13 +444,56 @@ export default function BillsPage() {
   };
 
   /** A fatura precisa da conta pagadora antes da baixa; o resto nao. */
-  const pedirBaixa = (conta: ScheduledTransaction) => {
-    if (ehFatura(conta.notes)) {
+  const pedirBaixa = (conta: LinhaDaAgendaOuFatura) => {
+    // A fatura ABERTA entra pelo MESMO caminho da fechada: as duas precisam
+    // saber de onde o dinheiro saiu antes de qualquer escrita. E e por isso que
+    // nada e materializado aqui -- ver `materializarFatura`.
+    if (ehFaturaPrevista(conta) || ehFatura(conta.notes)) {
       setContaPagadora(contasPagadoras[0]?.id ?? "");
       setFaturaParaPagar(conta);
       return;
     }
     void darBaixa(conta);
+  };
+
+  /**
+   * O "Confirmar pagamento" do dialogo, para os dois tipos de fatura.
+   *
+   * Fechada: uma escrita (a baixa), como sempre foi.
+   * Aberta: duas, nesta ordem -- materializa e paga. Um clique, nao dois: a
+   * pessoa nao precisa saber que "fechar a fatura" existe para informar que
+   * pagou o cartao, e era justamente esse passo escondido em outra tela que
+   * fazia a fatura nunca chegar a Contas a Pagar.
+   *
+   * Se a materializacao falhar, a baixa NAO acontece e o toast de erro e o do
+   * `close`. O estado fica inalterado -- nenhuma fatura meio-paga.
+   */
+  const confirmarPagamentoDaFatura = async () => {
+    const fatura = faturaParaPagar;
+    if (!fatura || !contaPagadora) return;
+
+    if (!ehFaturaPrevista(fatura)) {
+      await darBaixa(fatura, contaPagadora);
+      return;
+    }
+
+    // O spinner comeca na chave canonica (a fatura aberta nao tem id) e, se a
+    // materializacao der certo, `darBaixa` assume com o id da linha real.
+    setAgindo(fatura.notes);
+
+    let real: ScheduledTransaction | null = null;
+    try {
+      real = await materializarFatura(fatura);
+    } catch (erro) {
+      console.error(erro);
+      toast.error("Erro ao registrar a fatura");
+    } finally {
+      if (!real) setAgindo(null);
+    }
+
+    if (!real) return;
+
+    await darBaixa(real, contaPagadora);
   };
 
   const pular = async (conta: ScheduledTransaction) => {
@@ -535,9 +685,17 @@ export default function BillsPage() {
     }
   };
 
-  const Linha = ({ conta }: { conta: ScheduledTransaction }) => {
+  const Linha = ({ conta }: { conta: LinhaDaAgendaOuFatura }) => {
     const vencida = conta.effective_status === "overdue";
     const dias = conta.days_until_due ?? 0;
+    // A fatura ABERTA (HMO-227). Ela nao tem `id`, entao as tres acoes que
+    // precisam de um nao sao oferecidas: alterar o valor de uma fatura
+    // sintetizada nao teria onde ser gravado, pular nao tem linha para apagar e
+    // o comprovante se pendura num `scheduled_transaction_id` que ainda nao
+    // existe. Esconder e melhor que desabilitar: botao cinza faz a pessoa
+    // procurar o que esta errado com a linha.
+    const prevista = ehFaturaPrevista(conta);
+    const chave = chaveDeAcao(conta);
     // A palavra muda com a DIRECAO (HMO-188). `direction` vem resolvido da view
     // (027): o cliente nao refaz o COALESCE, senao a copia esquecida aqui
     // mostraria o salario previsto com um botao de "pagar".
@@ -550,18 +708,32 @@ export default function BillsPage() {
       <div className="border-b border-border py-3 last:border-0">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-start gap-3">
+          {/* A fatura sintetizada nao tem categoria -- a fatura INTEIRA nao tem
+              uma (o `close` herda a da compra mais recente so porque a coluna e
+              NOT NULL). Ela fica com a tarja neutra, igual a qualquer previsao
+              sem categoria. */}
           <div
             className="mt-1 h-8 w-1 rounded"
-            style={{ backgroundColor: conta.category?.color_hex ?? "#94a3b8" }}
+            style={{
+              backgroundColor: prevista
+                ? "#94a3b8"
+                : conta.category?.color_hex ?? "#94a3b8",
+            }}
           />
           <div>
             <p className="font-medium text-foreground">{conta.description}</p>
             <p className="text-sm text-muted-foreground">
               {dataCurta(conta.due_date)}
-              {conta.category ? ` · ${conta.category.name}` : ""}
-              {conta.group ? ` · ${conta.group.name}` : ""}
+              {!prevista && conta.category ? ` · ${conta.category.name}` : ""}
+              {!prevista && conta.group ? ` · ${conta.group.name}` : ""}
               {conta.recurring_rule_id ? " · fixo" : ""}
               {ehFatura(conta.notes) ? " · fatura de cartão" : ""}
+              {/* O rotulo que diz que o valor pode ainda mudar. Sem ele a
+                  fatura aberta e INDISTINGUIVEL da fechada nesta lista -- mesmo
+                  formato, mesmo vencimento, mesma palavra "fatura" -- e a
+                  diferenca e real: a fatura aberta continua recebendo compras
+                  ate o fechamento, e o numero de hoje nao e o numero final. */}
+              {prevista ? " · ainda em aberto" : ""}
               {/* Sem este rotulo a receita prevista e INDISTINGUIVEL da conta a
                   pagar na lista: mesmo formato, mesmo valor positivo, mesmo
                   badge de vencimento. O botao muda de titulo, mas titulo de
@@ -587,49 +759,55 @@ export default function BillsPage() {
             <Button
               size="sm"
               onClick={() => pedirBaixa(conta)}
-              disabled={agindo === conta.id || !online}
+              disabled={agindo === chave || !online}
               title={
-                ehFatura(conta.notes)
-                  ? "Pagar a fatura (escolher a conta)"
-                  : copia.confirmar
+                prevista
+                  ? "Informei que paguei o cartão (escolher a conta)"
+                  : ehFatura(conta.notes)
+                    ? "Pagar a fatura (escolher a conta)"
+                    : copia.confirmar
               }
             >
-              {agindo === conta.id ? (
+              {agindo === chave ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Check className="h-4 w-4" />
               )}
             </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => pedirEdicao(conta)}
-              disabled={agindo === conta.id || !online}
-              title={
-                conta.recurring_rule_id
-                  ? "Alterar (só esta ou as próximas)"
-                  : "Alterar esta conta"
-              }
-            >
-              <Pencil className="h-4 w-4" />
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => pular(conta)}
-              disabled={agindo === conta.id || !online}
-              title="Pular este vencimento"
-            >
-              <SkipForward className="h-4 w-4" />
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => setAnexosAbertos((v) => !v)}
-              title="Comprovante"
-            >
-              <Paperclip className="h-4 w-4" />
-            </Button>
+            {!prevista && (
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => pedirEdicao(conta)}
+                  disabled={agindo === chave || !online}
+                  title={
+                    conta.recurring_rule_id
+                      ? "Alterar (só esta ou as próximas)"
+                      : "Alterar esta conta"
+                  }
+                >
+                  <Pencil className="h-4 w-4" />
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => pular(conta)}
+                  disabled={agindo === chave || !online}
+                  title="Pular este vencimento"
+                >
+                  <SkipForward className="h-4 w-4" />
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setAnexosAbertos((v) => !v)}
+                  title="Comprovante"
+                >
+                  <Paperclip className="h-4 w-4" />
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -637,7 +815,7 @@ export default function BillsPage() {
         {/* O componente so e montado quando abre: cada instancia faz uma
             chamada a API, e montar um por conta da lista dispararia dezenas de
             requisicoes para anexos que ninguem pediu para ver. */}
-        {anexosAbertos && (
+        {anexosAbertos && !prevista && (
           <div className="mt-3 rounded-md bg-muted p-3">
             <Receipts alvo={{ scheduled_transaction_id: conta.id }} />
           </div>
@@ -654,7 +832,7 @@ export default function BillsPage() {
   }: {
     titulo: string;
     icone: React.ReactNode;
-    contas: ScheduledTransaction[];
+    contas: LinhaDaAgendaOuFatura[];
     vazio: string;
   }) => (
     <Card>
@@ -669,7 +847,12 @@ export default function BillsPage() {
         {contas.length === 0 ? (
           <p className="py-2 text-sm text-muted-foreground">{vazio}</p>
         ) : (
-          contas.map((conta) => <Linha key={conta.id} conta={conta} />)
+          // `chaveDeAcao` e nao `conta.id`: a fatura sintetizada vem com
+          // `id: null`, e duas delas na mesma secao dariam a MESMA key -- o
+          // React reusaria uma linha no lugar da outra.
+          contas.map((conta) => (
+            <Linha key={chaveDeAcao(conta)} conta={conta} />
+          ))
         )}
       </CardContent>
     </Card>
@@ -1039,6 +1222,77 @@ export default function BillsPage() {
         </Card>
       </div>
 
+      {/* ------------------------------------------------------------------
+          A FATURA QUE NAO TEM VENCIMENTO PARA CALCULAR (HMO-227)
+
+          Sem `due_day` no cadastro do cartao, `card_invoice_due_date()` devolve
+          NULL e nao existe data de vencimento. As duas saidas faceis erram, e
+          cada uma do seu jeito:
+
+            - cair num padrao ("vence dia 10") poria na tela uma data que o
+              banco nao calculou, e a pessoa pagaria no dia errado por causa de
+              um chute do app;
+            - omitir em silencio e o defeito desta issue de volta -- a fatura
+              nao aparece em Contas a Pagar --, agora com o app TENDO os dados
+              para avisar e nao avisando.
+
+          Entao a tela diz o que `POST /api/card-invoices/close` ja responde em
+          400, com o link para o lugar onde se conserta. O VALOR aparece: ele e
+          o que torna o aviso acionavel ("tem R$ 1.240 de fatura sem data"), e
+          vem da mesma leitura que as linhas -- sem rede nao ha bloco nenhum,
+          porque sem rede `semVencimento` fica `null`.
+          ------------------------------------------------------------------ */}
+      {semVencimento !== null && semVencimento.length > 0 && (
+        <Card className="border-warning/40">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <AlertCircle className="h-4 w-4 text-warning" />
+              Fatura de cartão sem data de vencimento
+            </CardTitle>
+            <CardDescription>
+              Configure o dia de vencimento do cartão para a fatura aparecer
+              aqui como conta a pagar. Sem ele não há data para calcular, e o
+              app não inventa uma.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {semVencimento.map((cartao) => (
+              <div
+                key={`${cartao.account_id}|${cartao.invoice_month}`}
+                className="flex items-center justify-between gap-3 border-b border-border py-2 last:border-0"
+              >
+                <div>
+                  <p className="font-medium text-foreground">
+                    {cartao.account_name ?? "Cartão de crédito"}
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    fatura de {cartao.invoice_month.slice(5, 7)}/
+                    {cartao.invoice_month.slice(0, 4)}
+                  </p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <p className="font-semibold text-foreground">
+                    {podeMostrarNumero(estado) ? (
+                      moeda(Number(cartao.total))
+                    ) : (
+                      <NumeroIndisponivel />
+                    )}
+                  </p>
+                  {/* Para a LISTA de cartoes, e nao para /cartoes/<id>: o
+                      formulario que grava `due_day` e o dialogo de edicao da
+                      lista. A tela de um cartao so mostra a fatura -- mandar a
+                      pessoa para lá a deixaria olhando o mesmo aviso de novo,
+                      sem campo nenhum para preencher. */}
+                  <Button size="sm" variant="outline" asChild>
+                    <Link href="/dashboard/cartoes">Configurar</Link>
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
       {/*
         As tres frases de vazio passaram a depender de `podeAfirmarVazio`. A
         primeira delas, "Nada em atraso.", e a razao desta tela ter ficado
@@ -1134,6 +1388,19 @@ export default function BillsPage() {
                   {moeda(Number(faturaParaPagar.amount))} · vence em{" "}
                   {dataCurta(faturaParaPagar.due_date)}
                 </p>
+                {/* A fatura ABERTA ainda pode mudar de valor, e quem confirma
+                    precisa saber que esta congelando o numero de agora. E a
+                    diferenca real entre as duas, e ela decide dinheiro: uma
+                    compra lancada depois, com data dentro deste mes de fatura,
+                    passa a aparecer na fatura e NAO entra no valor que foi
+                    pago. */}
+                {ehFaturaPrevista(faturaParaPagar) && (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Esta fatura ainda está em aberto: confirmar registra o total
+                    de hoje como o valor pago. Se você lançar depois uma compra
+                    com data deste mês, ela não entra neste pagamento.
+                  </p>
+                )}
               </div>
 
               {contasPagadoras.length === 0 ? (
@@ -1170,12 +1437,17 @@ export default function BillsPage() {
                     seu patrimônio fica igual — e é isso que estava errado antes.
                   </p>
 
+                  {/* `agindo !== null` e nao `agindo === <id da fatura>`: na
+                      fatura ABERTA sao DUAS escritas, e a chave do spinner muda
+                      entre elas (a canonica no `close`, o id real na baixa).
+                      Comparar com uma das duas deixaria o botao clicavel no
+                      meio -- e o segundo clique fecharia a fatura de novo. */}
                   <Button
                     className="w-full"
-                    disabled={!contaPagadora || agindo === faturaParaPagar.id}
-                    onClick={() => darBaixa(faturaParaPagar, contaPagadora)}
+                    disabled={!contaPagadora || agindo !== null}
+                    onClick={confirmarPagamentoDaFatura}
                   >
-                    {agindo === faturaParaPagar.id && (
+                    {agindo !== null && (
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     )}
                     Confirmar pagamento

@@ -253,3 +253,8 @@ next-env.d.ts
 # se a entrada chegar junto com ele o artefato passa uma janela sem ignore. Um
 # `.tmp-*` fora do .gitignore chega a ser commitado em cima de arquivo de fonte.
 /.tmp-parcelamento/
+
+# saida do `npm run test:fatura-prevista` (HMO-227, a fatura aberta sintetizada
+# em Contas a Pagar). Um `.tmp-*` fora do .gitignore chega a ser commitado em
+# cima de arquivo de fonte -- ver a entrada do .tmp-parcelamento acima.
+/.tmp-fatura-prevista/

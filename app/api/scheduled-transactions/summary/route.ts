@@ -46,7 +46,11 @@ import {
   parteDoMembro,
 } from "@/lib/parte-do-grupo";
 import { janelaParaMaterializar, periodoDaQuery } from "@/lib/periodo-do-painel";
-import { agendaSemCompraNoCartao } from "@/lib/agenda-do-cartao";
+import {
+  agendaComFaturasAbertas,
+  agendaSemCompraNoCartao,
+} from "@/lib/agenda-do-cartao";
+import { faturasPrevistasDaJanela } from "@/lib/services/fatura-prevista";
 import {
   direcaoDaAgenda,
   somarAgenda,
@@ -150,7 +154,27 @@ export async function GET(request: NextRequest) {
     // uma linha que a tela nao mostra nao pode influenciar nada do que a tela
     // mostra. Filtrado depois, um `direction` nulo numa compra de cartao
     // escondida zeraria o bloco de previsto x realizado inteiro.
-    const linhas = agendaSemCompraNoCartao(linhasBrutas ?? []);
+    const semCompraDeCartao = agendaSemCompraNoCartao(linhasBrutas ?? []);
+
+    // A FATURA ABERTA ENTRA ANTES DAS SOMAS (HMO-227), pela MESMA leitura e a
+    // MESMA funcao pura da lista. Sintetizar so na lista faria o "a vencer" deste
+    // cabecalho ficar MENOR que a soma das linhas logo abaixo dele, na mesma
+    // tela -- e o numero menor e o que parece certo a quem nao somou na mao.
+    //
+    // A linha sintetizada vem com `direction: 'expense'` e `group_id: null`, que
+    // e o que os dois somadores abaixo leem: ela entra em "a pagar", nunca em "a
+    // receber", e nao passa pelo rateio de grupo (o rateio e das COMPRAS, uma a
+    // uma, e elas ja estao dentro do total da fatura).
+    const previsaoDaFatura = await faturasPrevistasDaJanela(
+      supabase,
+      user.id,
+      { de, ate, hoje }
+    );
+
+    const linhas = agendaComFaturasAbertas(
+      semCompraDeCartao,
+      previsaoDaFatura.previstas
+    );
 
     const { data: regras } = await supabase
       .from("recurring_rules")

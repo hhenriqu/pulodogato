@@ -195,9 +195,15 @@ test("a lista E o resumo chamam o filtro", () => {
 
   for (const rota of rotas) {
     const fonte = readFileSync(join(RAIZ, rota), "utf8");
+    // A regex aceita o import de UMA linha e o de varias. Ela comecou exigindo
+    // `import { agendaSemCompraNoCartao } from ...` literal, e a HMO-227 --
+    // que acrescentou um segundo nome ao mesmo import -- reprovou esta suite
+    // sem ter mexido no filtro. Um guard que quebra ao reformatar o import
+    // ensina a afrouxa-lo com pressa, e e nessa hora que ele deixa de guardar
+    // o que importa. `[^}]*` atravessa a quebra de linha.
     assert.match(
       fonte,
-      /import \{ agendaSemCompraNoCartao \} from "@\/lib\/agenda-do-cartao"/,
+      /import \{[^}]*\bagendaSemCompraNoCartao\b[^}]*\} from "@\/lib\/agenda-do-cartao"/,
       `${rota} nao importa o filtro da HMO-209`
     );
     // A chamada, e nao so o import: um import nao usado compila (e o lint deste
