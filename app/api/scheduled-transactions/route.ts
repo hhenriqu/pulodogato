@@ -120,6 +120,7 @@ export async function POST(request: NextRequest) {
       due_date,
       notes,
       transaction_type,
+      currency,
     } = body;
 
     if (!description?.trim()) {
@@ -171,6 +172,44 @@ export async function POST(request: NextRequest) {
     if (direcao !== "income" && direcao !== "expense") {
       return NextResponse.json(
         { error: "A conta prevista tem que ser income ou expense" },
+        { status: 400 }
+      );
+    }
+
+    // -----------------------------------------------------------------------
+    // A PREVISAO E EM REAL (HMO-184, migration 034)
+    // -----------------------------------------------------------------------
+    // `currency` NAO entra no INSERT abaixo, e isso e deliberado: a coluna cai
+    // no DEFAULT 'BRL' e a 034 poe um CHECK garantindo que ela nunca saia dali.
+    // A razao e a mesma que a HMO-188 ja escreve na tela do lancamento -- a
+    // cotacao de uma data futura nao existe --, e o furo concreto esta na
+    // BAIXA: [id]/pay insere em `financial_transactions` sem mandar `currency`
+    // nem `exchange_rate`, entao uma previsao em dolar daria baixa como se
+    // fosse em real, pelo DEFAULT (BRL, 1). O par e consistente consigo mesmo,
+    // entao o CHECK da 026 nao pega. Erro de 80% para menos, sem erro nenhum.
+    //
+    // ESTA RECUSA EXISTE PARA QUE O CAMPO IGNORADO NAO FIQUE SILENCIOSO. Sem
+    // ela, um cliente que mandasse `currency: 'USD'` -- a fila offline, um app
+    // futuro, um script -- receberia 201 e uma linha em BRL com o valor em
+    // dolar dentro. O 201 e a parte cara: ele diz que deu certo. Melhor um 400
+    // que explica o que fazer, igual ao do formulario de lancamento.
+    //
+    // Nao e `!== 'BRL'` sobre o cru. Tres entradas significam "nao informou" e
+    // tem de passar reto: `undefined` (o caso normal -- nenhum cliente de hoje
+    // manda o campo), `null` e a string vazia, que e o que um <select> sem
+    // escolha envia. A mesma leitura de /api/financial-accounts, que ja trata
+    // `""` como ausencia. Sem isso o campo vazio produziria a recusa "Lance em
+    //  no dia em que pagar" -- uma frase com um buraco no meio.
+    const moedaPedida =
+      currency == null ? "" : String(currency).trim().toUpperCase();
+
+    if (moedaPedida !== "" && moedaPedida !== "BRL") {
+      return NextResponse.json(
+        {
+          error: `Conta prevista é sempre em reais: a cotação de uma data futura ainda não existe. Lance em ${moedaPedida} no dia em que ${
+            direcao === "income" ? "receber" : "pagar"
+          }, com a cotação do dia.`,
+        },
         { status: 400 }
       );
     }

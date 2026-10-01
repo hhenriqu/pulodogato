@@ -477,6 +477,14 @@ test("a lista de moedas do CHECK da 022 e a mesma de MOEDAS", () => {
   // e scheduled_transactions. Se um CHECK desaparecer da migration, esta
   // asercao e que denuncia -- as de igualdade abaixo ficariam satisfeitas pelos
   // que sobraram.
+  //
+  // O CHECK de `scheduled_transactions` CONTINUA listando as 13 moedas aqui, e
+  // isso esta certo mesmo depois da HMO-184: a 034 nao mexe neste arquivo, ela
+  // ACRESCENTA um segundo CHECK (`currency = 'BRL'`) ao lado deste. Na pratica
+  // vale a intersecao -- conta prevista e sempre em real --, e o catalogo da 022
+  // fica embaixo como a rede para o dia em que a trava cair. Ou seja: a
+  // contagem 3 aqui nao diz que a conta prevista aceita dolar; diz que o
+  // catalogo da 022 continua inteiro. Ver database/migrations/034, SECAO 1.
   assert.equal(
     checks.length,
     3,
