@@ -1,0 +1,44 @@
+{
+  "//": [
+    "A TELA de gastos do cartao e o cartao da lista (HMO-210), compilados para o",
+    "teste renderizar os componentes de verdade com react-dom/server.",
+    "",
+    "lib/fatura-do-cartao.ts ja tem suite propria (test:fatura-do-cartao), e ela",
+    "passaria verde com o JSX mostrando o total sem o rotulo do mes, ou com o",
+    "botao de Arquivar dentro do link do cartao: a decisao estaria certa e a",
+    "arvore errada. Este build existe para o teste afirmar sobre o HTML.",
+    "",
+    "O resolve-aliases roda com --espelha-raiz porque card.tsx e button.tsx",
+    "importam lib/utils.ts pelo alias @/, e o resolve-next-subpaths porque",
+    "FaturaDoCartao importa next/link -- o pacote `next` nao declara `exports`",
+    "para o subcaminho e o node morre como se ele nao estivesse instalado."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-tela-do-cartao",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../components/cartoes/FaturaDoCartao.tsx",
+    "../components/cartoes/CartaoDaLista.tsx",
+    "../components/SemRede.tsx",
+    "../components/ui/card.tsx",
+    "../components/ui/button.tsx",
+    "../components/ui/badge.tsx",
+    "../components/ui/input.tsx",
+    "../components/ui/label.tsx",
+    "../lib/fatura-do-cartao.ts",
+    "../lib/offline-leitura.ts",
+    "../lib/contas.ts",
+    "../lib/dinheiro.ts",
+    "../lib/utils.ts"
+  ]
+}

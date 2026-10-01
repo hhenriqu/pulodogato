@@ -127,6 +127,23 @@ interface CamposDeLancamentoProps {
    * que ainda nao ha conta escolhida.
    */
   moedaOficial?: string;
+  /**
+   * O cartao que a tela de origem ja escolheu (HMO-210).
+   *
+   * Vem de "Lancar gasto neste cartao", em `/dashboard/cartoes/[id]`. Quando
+   * esta preenchido, natureza e conta deixam de ser SELETOR e passam a ser
+   * texto: a pessoa clicou num cartao especifico, e um seletor livre ali deixa
+   * ela lancar no cartao errado tendo entrado pelo certo -- sem nada acusar,
+   * porque os dois cartoes sao dela.
+   *
+   * Texto, e nao `<Select disabled>`, por dois motivos: o Radix nao imprime o
+   * valor escolhido na renderizacao de servidor (o nome do cartao sairia em
+   * branco no primeiro quadro), e um seletor cinza convida ao clique que nao
+   * funciona.
+   *
+   * O objeto inteiro, e nao um booleano: e dele que sai o NOME na tela.
+   */
+  cartaoFixado?: ContaDeLancamento | null;
 }
 
 export function CamposDeLancamento({
@@ -139,6 +156,7 @@ export function CamposDeLancamento({
   rateio,
   moedaPorLancamento = false,
   moedaOficial = MOEDA_PADRAO,
+  cartaoFixado = null,
 }: CamposDeLancamentoProps) {
   // `valores.confirmado` entra aqui desde a HMO-188: e ele que decide se o campo
   // da data real existe e se a data prevista e obrigatoria. Esquece-lo deixaria
@@ -150,6 +168,11 @@ export function CamposDeLancamento({
     editando,
     valores.confirmado
   );
+  // Nomeada, e nao `cartaoFixado ?` repetido no JSX: a conta usa a MESMA
+  // condicao logo abaixo, e duas ocorrencias identicas da mesma expressao nao
+  // dao para distinguir num controle negativo -- um mutante plantado na
+  // primeira passaria por medir a segunda.
+  const naturezaTravada = Boolean(cartaoFixado);
   const categoriasVisiveis = categoriasDoTipo(categorias, tipo);
   const contasVisiveis = contasDoSeletor(contas, tipo, valores.natureza);
   const naturezasVisiveis = naturezasDoTipo(tipo);
@@ -161,6 +184,23 @@ export function CamposDeLancamento({
       {campos.natureza && (
         <div className="space-y-2">
           <Label>{campos.rotuloDaNatureza}</Label>
+          {naturezaTravada ? (
+            // Com cartao fixado a natureza nao e pergunta: a tela de origem e a
+            // fatura de um cartao, e "Despesa Fixa" ali gravaria uma regra
+            // mensal em `recurring_rules` em vez da compra.
+            <>
+              <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2">
+                <CreditCard className="h-4 w-4 text-info" />
+                <span className="text-sm font-medium text-foreground">
+                  {ROTULO_DA_NATUREZA[tipo].card}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {AJUDA_DA_NATUREZA[tipo].card}
+              </p>
+            </>
+          ) : (
+            <>
           <Select
             value={valores.natureza}
             onValueChange={(value) =>
@@ -174,7 +214,13 @@ export function CamposDeLancamento({
             }
             disabled={editando}
           >
-            <SelectTrigger>
+            {/* O `id` nao e decoracao: o radix renderiza as OPCOES num portal,
+                que so existe com o seletor aberto, entao "a natureza nao se
+                troca" nao da para afirmar pelos nomes das opcoes -- elas nao
+                saem no HTML do servidor nem quando o seletor esta la. O que da
+                para afirmar e a presenca do proprio seletor, e para isso ele
+                precisa de ancora. Mesma razao do `id="account"` abaixo. */}
+            <SelectTrigger id="natureza">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -197,6 +243,8 @@ export function CamposDeLancamento({
           <p className="text-xs text-muted-foreground">
             {AJUDA_DA_NATUREZA[tipo][valores.natureza]}
           </p>
+            </>
+          )}
         </div>
       )}
 
@@ -364,6 +412,19 @@ export function CamposDeLancamento({
 
         <div className="space-y-2">
           <Label htmlFor="account">{campos.rotuloDaConta}</Label>
+          {cartaoFixado ? (
+            // O cartao travado. Nome em texto, nao seletor -- ver `cartaoFixado`
+            // nas props. O link de volta esta no topo da pagina do cartao.
+            <div
+              id="account"
+              className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2"
+            >
+              <CreditCard className="h-4 w-4 text-info" />
+              <span className="text-sm font-medium text-foreground">
+                {cartaoFixado.name}
+              </span>
+            </div>
+          ) : (
           <Select
             value={valores.contaId}
             // Trocar de conta arrasta a moeda -- MENOS quando a pessoa marcou a
@@ -403,9 +464,11 @@ export function CamposDeLancamento({
               ))}
             </SelectContent>
           </Select>
+          )}
           {/* Sem isto, escolher "Gasto no Cartao" sem ter cartao nenhum abre um
-              seletor vazio e sem explicacao. */}
-          {campos.contaObrigatoria && contasVisiveis.length === 0 && (
+              seletor vazio e sem explicacao. Com cartao fixado nao cabe: ha um
+              cartao, e ele e o da tela anterior. */}
+          {!cartaoFixado && campos.contaObrigatoria && contasVisiveis.length === 0 && (
             <p className="text-xs text-warning">
               Você ainda não tem nenhum cartão de crédito cadastrado. Cadastre
               em Cartões.

@@ -153,6 +153,10 @@ next-env.d.ts
 # saida das duas suites da HMO-166 (tsc avulso; a de campos com reescrita de alias)
 /.tmp-contas/
 /.tmp-campos-da-conta/
+# saida do `npm run test:fatura-do-cartao` (HMO-210)
+/.tmp-fatura-do-cartao/
+# saida do `npm run test:tela-do-cartao` (HMO-210)
+/.tmp-tela-do-cartao/
 # saida do `npm run test:periodo-painel` (HMO-173)
 /.tmp-periodo-painel/
 # saida do `npm run test:parte-realizada` (HMO-202)

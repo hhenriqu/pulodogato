@@ -48,6 +48,7 @@ function renderizar({
   categorias = [CATEGORIA_DESPESA, CATEGORIA_RECEITA],
   contas = [CARTAO, CORRENTE],
   editando = false,
+  cartaoFixado = null,
 } = {}) {
   return renderToStaticMarkup(
     h(CamposDeLancamento, {
@@ -57,6 +58,7 @@ function renderizar({
       categorias,
       contas,
       editando,
+      cartaoFixado,
       rateio: h("div", null, MARCADOR_DE_RATEIO),
     })
   );
@@ -651,4 +653,93 @@ test("a despesa pontual continua com a checkbox e as duas datas", () => {
   assert.match(html, /Já paguei/);
   assert.match(html, /id="expected-date"/);
   assert.doesNotMatch(html, /Data da compra/);
+});
+
+// ---------------------------------------------------------------------------
+// O CARTAO QUE A TELA ANTERIOR JA ESCOLHEU (HMO-210)
+// ---------------------------------------------------------------------------
+// "Lancar gasto neste cartao", em `/dashboard/cartoes/[id]`, abre este
+// formulario com `natureza: card` e o cartao travado. A trava e de ARVORE: com
+// o seletor no lugar, a pessoa clica no Nubank, cai aqui, e grava no Visa --
+// dois cartoes dela, valor plausivel, nada acusa. E ela so descobre ao abrir a
+// fatura do cartao em que nao lancou.
+//
+// Texto, e nao `<Select disabled>`: o radix nao imprime o valor escolhido na
+// renderizacao de servidor, entao o nome do cartao sairia em branco no primeiro
+// quadro -- e um seletor cinza convida ao clique que nao funciona.
+
+test("com cartao fixado, o cartao e texto e nao seletor", () => {
+  const html = renderizar({
+    tipo: "expense",
+    valores: { natureza: "card", contaId: CARTAO.id },
+    cartaoFixado: CARTAO,
+  });
+
+  // O nome aparece na tela -- e isso que um seletor do radix nao faz no
+  // servidor.
+  assert.match(html, /Visa/);
+  // E nao ha seletor de conta para trocar de cartao.
+  assert.doesNotMatch(html, /<button[^>]*id="account"/);
+});
+
+test("com cartao fixado, a natureza tambem nao se troca", () => {
+  // "Despesa Fixa" aqui gravaria uma regra mensal em `recurring_rules` em vez
+  // da compra, e a tela de origem e a FATURA de um cartao.
+  const html = renderizar({
+    tipo: "expense",
+    valores: { natureza: "card", contaId: CARTAO.id },
+    cartaoFixado: CARTAO,
+  });
+
+  // A ancora e o SELETOR, nao os nomes das opcoes: o radix renderiza a lista
+  // num portal que so existe com ele aberto, entao "Despesa Fixa" nao sai no
+  // HTML do servidor nem quando o seletor esta na tela. Afirmar pelos nomes
+  // passaria verde com o seletor inteiro de volta no lugar.
+  assert.doesNotMatch(html, /id="natureza"/);
+  // E o que ficou no lugar dele diz qual natureza e.
+  assert.match(html, /Gasto no Cartão/);
+});
+
+test("sem cartao fixado os dois seletores continuam no lugar", () => {
+  // Controle positivo dos dois testes acima: uma tela que perdesse os seletores
+  // em TODA despesa passaria neles e quebraria o lancamento normal por inteiro.
+  const html = renderizar({
+    tipo: "expense",
+    valores: { natureza: "card" },
+  });
+
+  assert.match(html, /<button[^>]*id="account"/);
+  assert.match(html, /<button[^>]*id="natureza"/);
+  assert.match(html, /Tipo de Despesa/);
+});
+
+test("cartao fixado continua mostrando valor, categoria e data da compra", () => {
+  // A trava e so em natureza e conta. Travar o resto deixaria o formulario sem
+  // como lancar nada.
+  const html = renderizar({
+    tipo: "expense",
+    valores: { natureza: "card", contaId: CARTAO.id },
+    cartaoFixado: CARTAO,
+  });
+
+  assert.match(html, /id="description"/);
+  assert.match(html, /id="category"/);
+  assert.match(html, /id="date"/);
+  assert.match(html, /Data da compra/);
+  // E a HMO-209 continua valendo: no cartao nao se pergunta "Ja paguei".
+  assert.doesNotMatch(html, /Já paguei/);
+});
+
+test("cartao fixado nao traz o aviso de 'nao tem cartao cadastrado'", () => {
+  // O aviso existe para o seletor vazio. Com cartao fixado ha um cartao -- e
+  // ele e o da tela anterior; o aviso diria que ela nao tem o cartao que acabou
+  // de abrir.
+  const html = renderizar({
+    tipo: "expense",
+    valores: { natureza: "card", contaId: CARTAO.id },
+    contas: [],
+    cartaoFixado: CARTAO,
+  });
+
+  assert.doesNotMatch(html, /não tem nenhum cartão de crédito cadastrado/);
 });

@@ -88,7 +88,9 @@
     "test:categorias-do-periodo": "rm -rf .tmp-categorias-do-periodo && tsc lib/categorias-do-periodo.ts --outDir .tmp-categorias-do-periodo --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-categorias-do-periodo.mjs",
     "test:painel-do-grupo": "node --test scripts/test-painel-do-grupo.mjs",
     "test:divisao-do-grupo": "rm -rf .tmp-divisao-do-grupo && tsc -p scripts/tsconfig.divisao-do-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-divisao-do-grupo lib && node --test scripts/test-divisao-do-grupo.mjs",
-    "test:agenda-do-cartao": "rm -rf .tmp-agenda-do-cartao && tsc -p scripts/tsconfig.agenda-do-cartao-test.json && node scripts/resolve-aliases.mjs .tmp-agenda-do-cartao lib && node --test scripts/test-agenda-do-cartao.mjs"
+    "test:agenda-do-cartao": "rm -rf .tmp-agenda-do-cartao && tsc -p scripts/tsconfig.agenda-do-cartao-test.json && node scripts/resolve-aliases.mjs .tmp-agenda-do-cartao lib && node --test scripts/test-agenda-do-cartao.mjs",
+    "test:fatura-do-cartao": "rm -rf .tmp-fatura-do-cartao && tsc -p scripts/tsconfig.fatura-do-cartao-test.json && node scripts/resolve-aliases.mjs .tmp-fatura-do-cartao lib --espelha-raiz && TZ=America/Sao_Paulo node --test scripts/test-fatura-do-cartao.mjs",
+    "test:tela-do-cartao": "rm -rf .tmp-tela-do-cartao && tsc -p scripts/tsconfig.tela-do-cartao-test.json && node scripts/resolve-aliases.mjs .tmp-tela-do-cartao components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-tela-do-cartao lib --espelha-raiz && node scripts/resolve-next-subpaths.mjs .tmp-tela-do-cartao && node --test scripts/test-tela-do-cartao.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
