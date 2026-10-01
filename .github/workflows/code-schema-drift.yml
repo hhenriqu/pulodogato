@@ -153,12 +153,26 @@ jobs:
 
           # 2) A forma que produziu o 500 da HMO-145: o nome esta no FILTRO, e a
           #    lista de colunas do .select() esta impecavel.
+          #
+          #    A COLUNA PLANTADA AQUI ERA `user_id`, E A 036 A CRIOU (HMO-216).
+          #    O controle nao reprovou por bug: ele parou de controlar. Com
+          #    `transaction_categories.user_id` existindo, o guard passa a ter
+          #    RAZAO em ficar verde, e este bloco leu isso como "o guard nao
+          #    pega filtro". Foi o unico aviso de que a sonda tinha envelhecido
+          #    -- um controle negativo que aponta para coluna REAL e
+          #    indistinguivel de um guard quebrado.
+          #
+          #    Trocada por um nome que nao pode passar a existir por acidente:
+          #    nenhuma migration vai chamar uma coluna de
+          #    `coluna_que_nao_existe_no_filtro`. Plantar outro nome plausivel
+          #    (`owner_id`, `created_by`) so adiaria o mesmo envelhecimento
+          #    para a proxima migration.
           cat > "$probe" <<'TS'
           export async function GET() {
             await supabase
               .from("transaction_categories")
               .select("id, name")
-              .or("user_id.eq.1,user_id.is.null");
+              .or("coluna_que_nao_existe_no_filtro.eq.1,coluna_que_nao_existe_no_filtro.is.null");
           }
           TS
           if node scripts/check-column-drift.mjs > /dev/null 2>&1; then
