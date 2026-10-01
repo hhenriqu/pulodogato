@@ -41,6 +41,46 @@ import {
   rotuloDoCiclo,
 } from "../.tmp-fatura-do-cartao/lib/fatura-do-cartao.js";
 
+// ---------------------------------------------------------------------------
+// O FUSO E PARTE DESTE TESTE, E ELE TEM QUE SER O DO USUARIO
+// ---------------------------------------------------------------------------
+// O `TZ=America/Sao_Paulo` vem do script no package.json -- o processo precisa
+// nascer com ele, porque reatribuir `process.env.TZ` dentro de um modulo ESM
+// acontece DEPOIS da avaliacao dos imports, e o fuso pode ja estar latchado.
+//
+// Por que isto nao e preciosismo: o defeito de `new Date("2026-10-01")` no
+// rotulo do mes **nao existe em UTC**. A string e lida como meia-noite UTC e
+// `getMonth()` responde no fuso LOCAL -- em UTC devolve outubro (certo, por
+// acidente) e em Sao Paulo devolve setembro (o bug). O runner do GitHub Actions
+// roda em UTC.
+//
+// Descoberto pelo controle negativo deste PR, e vale registrar porque o sinal
+// aponta para o lugar errado: o mutante "o mes passa por new Date()" morreu na
+// maquina de quem escreveu (TZ=America/Sao_Paulo) e SOBREVIVEU em CI. Sem o
+// controle, a suite teria entrado na main afirmando proteger contra um defeito
+// que ela nao ve justamente no ambiente que decide se o PR passa.
+//
+// A verificacao abaixo existe para que rodar `node --test` sem o TZ **falhe**,
+// em vez de passar sem medir nada. Uma suite cuja premissa pode evaporar em
+// silencio nao e suite.
+test("a premissa do fuso esta de pe", () => {
+  const fuso = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  assert.equal(
+    fuso,
+    "America/Sao_Paulo",
+    `esta suite precisa nascer com TZ=America/Sao_Paulo (veio "${fuso}"). ` +
+      "Em UTC o defeito de new Date() no rotulo do mes nao se manifesta, e as " +
+      "assercoes de fuso passam sem medir nada. Use `npm run test:fatura-do-cartao`."
+  );
+  // Controle do controle: em Sao Paulo o offset e positivo (atras de UTC), e e
+  // disso que o defeito depende.
+  assert.ok(
+    new Date("2026-10-01").getTimezoneOffset() > 0,
+    "o fuso do teste tem que estar ATRAS de UTC"
+  );
+});
+
 const MEU_CARTAO = "11111111-1111-1111-1111-111111111111";
 const OUTRO_CARTAO = "22222222-2222-2222-2222-222222222222";
 
