@@ -974,6 +974,31 @@ jobs:
       - name: Lancamento de grupo entra no realizado pessoal, pela MINHA parte
         run: $PSQL -f database/tests/033_minha_parte_no_realizado_test.sql
 
+      - name: 034_moeda_da_conta_prevista
+        run: $PSQL -f database/migrations/034_moeda_da_conta_prevista.sql
+
+      # Re-executavel: um DO com IF NOT EXISTS e um COMMENT.
+      - name: 034 e idempotente
+        run: $PSQL -f database/migrations/034_moeda_da_conta_prevista.sql
+
+      # HMO-184. A 022 deu `currency` a `scheduled_transactions`, o app nunca a
+      # escreveu, e nao existe `exchange_rate` ali. Toda soma de conta prevista
+      # -- summary, safe-to-spend, fluxo de caixa, projecao e a secao "Previstas"
+      # do grupo -- soma `amount` sem converter: certo enquanto tudo for BRL, e
+      # certo POR ACIDENTE. A 034 troca o acidente por um CHECK.
+      #
+      # A trava, e nao a feature, porque a saida "converte na baixa" nao existe:
+      # [id]/pay insere em `financial_transactions` SEM mandar `currency` nem
+      # `exchange_rate`, e o par (BRL, 1) do DEFAULT e consistente consigo
+      # mesmo -- o CHECK da 026 nao pega. US$ 180 viravam R$ 180 calados.
+      #
+      # Medido: 6 mutantes na 034, 6 mortos, mais o controle positivo
+      # (npm run mutantes:moeda-da-conta-prevista). O par que importa e
+      # `sem_trava` x `trava_larga_demais`: so morrem juntos porque o teste tem
+      # assercao de recusa E de aceitacao -- `CHECK (false)` tambem recusa USD.
+      - name: A conta prevista e em real, e o banco garante
+        run: $PSQL -f database/tests/hmo184_moeda_da_conta_prevista_test.sql
+
       # HMO-190. As opcoes de divisao da despesa de grupo. O banco sempre soube
       # fazer divisao combinada -- a 007 tirou o achatamento para partes iguais
       # do `calculate_equal_split` --, e a camada do app a descartava em

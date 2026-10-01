@@ -109,6 +109,19 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // `currency` NAO entra neste select, e nao e esquecimento (HMO-184). Todo
+    // somador daqui para baixo soma `amount` sem converter nada; isso so esta
+    // certo porque a conta prevista e SEMPRE em real, garantido pelo
+    // `CHECK (currency = 'BRL')` que a migration 034 poe em
+    // `scheduled_transactions`. Antes da 034 estava certo por acidente -- a
+    // coluna existia desde a 022, ninguem a escrevia, e a primeira rota que
+    // gravasse 'USD' faria estas somas misturarem dolar com real sem erro e
+    // sempre para MENOS (custo fixo subestimado e insumo do safe-to-spend: o
+    // app passaria a prometer dinheiro que nao sobra).
+    //
+    // Se um dia a previsao em moeda estrangeira for destravada, este select e um
+    // dos lugares que PRECISAM mudar junto -- e o cabecalho da 034 lista o
+    // primeiro deles, que e a baixa.
     const { data: linhas, error } = await supabase
       .from("scheduled_transactions_effective")
       .select(
