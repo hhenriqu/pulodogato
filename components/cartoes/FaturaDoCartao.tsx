@@ -50,6 +50,7 @@ import {
 import {
   caminhoDeNovoGasto,
   gastosDaFatura,
+  previsoesDoCartao,
   rotuloDaFatura,
   rotuloDoCiclo,
 } from "@/lib/fatura-do-cartao";
@@ -79,6 +80,8 @@ export function FaturaDoCartao({
   aoMudarMes,
 }: FaturaDoCartaoProps) {
   const gastos = gastosDaFatura(fatura, conta.id);
+  // `null` = a leitura daquele bloco falhou. Diferente de `[]`, que e "nenhuma".
+  const previsoes = previsoesDoCartao(fatura, conta.id);
   const rotuloDoMes = rotuloDaFatura(mes);
   const ciclo = rotuloDoCiclo(conta);
   // O total so aparece com dado atras dele E com mes para nomear: o rotulo e o
@@ -296,6 +299,85 @@ export function FaturaDoCartao({
                 Não foi possível ler os gastos deste cartão agora.
               </p>
             )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ------------------------------------------------------------------
+          AS PREVISOES PENDENTES DESTE CARTAO (HMO-227)
+
+          Bloco SEPARADO das compras, e nunca somado ao total da fatura. Elas
+          nao sao compras: sao contas a pagar que alguem cadastrou com o cartao
+          como conta (a assinatura mensal e o caso tipico). A HMO-209 as tirou
+          de Contas a Pagar -- corretamente, senao a mesma despesa apareceria
+          solta ao lado da fatura que ja a contem -- prometendo que elas
+          apareceriam AQUI. Ate esta issue elas nao apareciam em lugar nenhum:
+          `card_invoice_lines` so ve lancamento e a tela de contas as filtrava.
+
+          Elas tambem nao tem mes de fatura: o que elas tem e `due_date`.
+          Encaixa-las no ciclo do cartao seria aplicar a uma conta a pagar a
+          regra de uma compra -- por isso cada uma mostra o proprio vencimento,
+          e o bloco nao depende do mes escolhido no seletor acima.
+          ------------------------------------------------------------------ */}
+      {/* `null` NAO VIRA SILENCIO. O campo vem ausente quando aquela consulta
+          falhou, e omitir o bloco seria esta tela afirmando por omissao que o
+          cartao nao tem conta prevista nenhuma -- o mesmo erro do "Nada em
+          atraso." sem rede, que e o modo de falha que a HMO-145 cobra em toda
+          tela deste app.
+
+          Lista VAZIA (`[]`), sim, nao mostra nada: o normal e o cartao nao ter
+          previsao apontada para ele, e um bloco escrito "nenhuma" em todo
+          cartao seria ruido permanente. */}
+      {previsoes === null && (
+        <Card>
+          <CardContent className="py-4">
+            <p className="text-sm text-muted-foreground">
+              Não foi possível conferir as contas previstas deste cartão agora.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {previsoes !== null && previsoes.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">
+              {previsoes.length === 1
+                ? "1 conta prevista neste cartão"
+                : `${previsoes.length} contas previstas neste cartão`}
+            </CardTitle>
+            <CardDescription>
+              Cobranças cadastradas com este cartão como conta. Elas não entram
+              no total da fatura acima — nem em Contas a Pagar, para a mesma
+              despesa não ser cobrada duas vezes.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="divide-y divide-border p-0">
+            {previsoes.map((previsao) => (
+              <div
+                key={previsao.id}
+                className="flex items-center justify-between gap-3 px-6 py-3"
+              >
+                <div className="min-w-0">
+                  <p className="truncate font-medium text-foreground">
+                    {previsao.description}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    vence em {diaEMes(previsao.due_date)}
+                    {previsao.category ? ` · ${previsao.category.name}` : ""}
+                  </p>
+                </div>
+                {/* O mesmo pedagio do total: valor impresso a partir de uma
+                    leitura que falhou mente com a cara de numero certo. */}
+                <p className="shrink-0 font-semibold">
+                  {podeMostrarNumero(estado) ? (
+                    formatarValor(Number(previsao.amount), conta.currency)
+                  ) : (
+                    <NumeroIndisponivel />
+                  )}
+                </p>
+              </div>
+            ))}
           </CardContent>
         </Card>
       )}

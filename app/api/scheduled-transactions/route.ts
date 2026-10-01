@@ -9,12 +9,22 @@
 // O QUE DE UM CARTAO SAI DAQUI (HMO-209): a compra individual. A fatura fica.
 // A regra, com o porque, esta em lib/agenda-do-cartao.ts -- ela e compartilhada
 // com /summary, que alimenta o cabecalho da mesma pagina.
+//
+// E O QUE ENTRA (HMO-227): a fatura ABERTA, sintetizada de card_invoice_lines e
+// nunca gravada. Fechar a fatura e manual e o botao mora em /dashboard/budgets,
+// entao quem nao abre Orcamentos nunca via a fatura do cartao em Contas a
+// Pagar. A sintese sai da MESMA funcao pura que o /summary chama, pela mesma
+// razao de sempre: o cabecalho e as linhas da mesma tela nao podem discordar.
 
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { materializarAgenda, horizonteAte } from "@/lib/services/scheduled";
 import { isIsoDate, today } from "@/lib/recurrence";
-import { agendaSemCompraNoCartao } from "@/lib/agenda-do-cartao";
+import {
+  agendaComFaturasAbertas,
+  agendaSemCompraNoCartao,
+} from "@/lib/agenda-do-cartao";
+import { faturasPrevistasDaJanela } from "@/lib/services/fatura-prevista";
 
 export async function GET(request: NextRequest) {
   try {
@@ -103,8 +113,29 @@ export async function GET(request: NextRequest) {
     //
     // O volume e o mesmo que ja vem no corpo da resposta (uma janela de meses),
     // entao filtrar aqui nao paga nada.
+    const daAgenda = agendaSemCompraNoCartao(scheduled ?? []);
+
+    // -----------------------------------------------------------------------
+    // A FATURA ABERTA ENTRA AQUI (HMO-227)
+    // -----------------------------------------------------------------------
+    // SO QUANDO O FILTRO DE STATUS INCLUI PENDENTE. A fatura sintetizada e, por
+    // construcao, uma previsao em aberto: devolve-la em `?status=paid` poria uma
+    // linha pendente numa lista de pagas -- e em `?status=cancelled` ela
+    // apareceria numa lista que a pessoa abriu para ver o que NAO vai acontecer.
+    const incluiPendente =
+      !status || status === "all" || status === "open" || status === "pending";
+
+    const fatura = incluiPendente
+      ? await faturasPrevistasDaJanela(supabase, user.id, { de, ate, hoje: today() })
+      : { previstas: [], semVencimento: [] };
+
     return NextResponse.json({
-      scheduled: agendaSemCompraNoCartao(scheduled ?? []),
+      scheduled: agendaComFaturasAbertas(daAgenda, fatura.previstas),
+      // Os cartoes com fatura aberta e sem `due_day`: eles NAO tem linha na
+      // agenda porque nao ha vencimento para calcular, e a tela precisa dizer
+      // isso em vez de deixar a fatura desaparecer calada. Ver
+      // `FaturaSemVencimento` em lib/agenda-do-cartao.ts.
+      cards_without_due_day: fatura.semVencimento,
       generated: geradas,
       range: { from: de, to: ate },
     });

@@ -627,6 +627,21 @@ export interface CardInvoice {
   lines: CardInvoiceLine[];
   /** Preenchido quando a fatura ja virou conta prevista (scheduled_transactions). */
   scheduled_transaction_id?: string;
+  /**
+   * As previsoes PENDENTES apontadas para este cartao que NAO sao a fatura
+   * (HMO-227) -- a assinatura que alguem cadastrou com o cartao como conta, por
+   * exemplo.
+   *
+   * Elas nao entram em `lines` nem somam em `total`: nao sao compras e nao tem
+   * `invoice_month`. A HMO-209 as tirou de Contas a Pagar prometendo que
+   * apareceriam na tela do cartao, e ate a HMO-227 elas nao apareciam em lugar
+   * nenhum.
+   *
+   * `undefined` e diferente de `[]`: o primeiro e "a leitura falhou", o segundo
+   * e "nenhuma". A tela nao pode afirmar que o cartao nao tem previsao pendente
+   * apoiada numa consulta que nao voltou.
+   */
+  scheduled_pending?: ScheduledTransaction[];
 }
 
 /**

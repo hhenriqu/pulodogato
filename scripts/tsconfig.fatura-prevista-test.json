@@ -1,0 +1,25 @@
+{
+  "//": "Build so do teste da HMO-227 (a fatura ABERTA sintetizada na agenda). `lib/agenda-do-cartao.ts` importa `@/lib/card-invoice` -- a chave canonica da fatura tem UM leitor neste projeto, e uma segunda copia do regex seria exatamente como os dois lados se separariam; `lib/transferencia.ts` entra porque card-invoice.ts o importa. `lib/previsto-x-realizado.ts` entra porque a suite confere que o CABECALHO (que sai de `somarEmAberto`) bate com a soma das LINHAS depois da sintese -- refazer aquela soma a mao no teste provaria a aritmetica do teste, nao a da tela. O tsc resolve o alias `@/` por `paths` mas NAO o reescreve no JS emitido, entao o npm script tem um passo de resolve-aliases depois.",
+  "compilerOptions": {
+    "outDir": "../.tmp-fatura-prevista",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
+  },
+  "include": [
+    "../lib/agenda-do-cartao.ts",
+    "../lib/card-invoice.ts",
+    "../lib/transferencia.ts",
+    "../lib/previsto-x-realizado.ts"
+  ]
+}

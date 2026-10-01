@@ -475,3 +475,84 @@ test("par meio preenchido nao vira 'parcela 3 de ' na tela", () => {
   assert.ok(!html.includes("parcela 3 de"), "a tela imprimiu um rotulo pela metade");
   assert.ok(html.includes("15/10"), "sem rotulo, a linha devia mostrar a data");
 });
+
+// ---------------------------------------------------------------------------
+// AS PREVISOES PENDENTES DO CARTAO (HMO-227)
+// ---------------------------------------------------------------------------
+// A HMO-209 tirou de Contas a Pagar a previsao apontada para um cartao que nao
+// e a fatura -- a assinatura cadastrada com o cartao como conta --, e o
+// comentario dela promete que aquelas linhas "passam a aparecer na tela do
+// cartao". Elas nao apareciam em lugar nenhum: ficaram gravadas, sem leitor.
+//
+// O teste de funcao pura nao pega isto: `previsoesDoCartao` podia estar certa e
+// o componente nao renderizar nada -- que era exatamente o estado desta tela.
+
+const PREVISAO = {
+  id: "s1",
+  user_id: "u1",
+  account_id: MEU_CARTAO,
+  category_id: "c1",
+  description: "Streaming mensal",
+  amount: 39.9,
+  due_date: "2026-10-20",
+  status: "pending",
+  created_at: "2026-01-01",
+  updated_at: "2026-01-01",
+};
+
+test("a previsao pendente do cartao aparece na tela, fora da fatura", () => {
+  const t = texto(
+    render({ fatura: { ...FATURA, scheduled_pending: [PREVISAO] } })
+  );
+
+  assert.ok(t.includes("Streaming mensal"), `falta a previsao: ${t}`);
+  assert.ok(t.includes("1 conta prevista neste cartão"), `falta o titulo: ${t}`);
+  assert.ok(t.includes("R$ 39,90"), `falta o valor da previsao: ${t}`);
+  // O vencimento DELA, e nao o da fatura: previsao tem `due_date` proprio, e
+  // encaixa-la no ciclo do cartao seria aplicar a uma conta a pagar a regra de
+  // uma compra.
+  assert.ok(t.includes("20/10"), `falta o vencimento da previsao: ${t}`);
+
+  // E o total da fatura NAO a soma: 320 continua 320. Somar aqui contaria a
+  // assinatura duas vezes no dia em que ela fosse paga.
+  assert.ok(t.includes("R$ 320,00"), `o total da fatura mudou: ${t}`);
+});
+
+test("sem previsao nenhuma o bloco nao aparece", () => {
+  // Lista vazia e o caso comum. Um bloco escrito "nenhuma conta prevista" em
+  // todo cartao seria ruido permanente.
+  const t = texto(render({ fatura: { ...FATURA, scheduled_pending: [] } }));
+
+  assert.ok(!t.includes("conta prevista neste cartão"), `bloco a mais: ${t}`);
+  assert.ok(
+    !t.includes("Não foi possível conferir as contas previstas"),
+    `aviso de falha numa leitura que deu certo: ${t}`
+  );
+});
+
+test("campo ausente NAO vira silencio: a tela diz que nao conferiu", () => {
+  // `scheduled_pending` ausente significa que aquela consulta falhou. Omitir o
+  // bloco seria a tela afirmando por omissao que o cartao nao tem conta
+  // prevista -- o "Nada em atraso." sem rede, de novo.
+  const t = texto(render({ fatura: FATURA }));
+
+  assert.ok(
+    t.includes("Não foi possível conferir as contas previstas deste cartão"),
+    `a tela calou sobre uma leitura que falhou: ${t}`
+  );
+  assert.ok(!t.includes("conta prevista neste cartão"), `bloco a mais: ${t}`);
+});
+
+test("o valor da previsao nao e impresso sem leitura boa", () => {
+  // O mesmo pedagio do total da fatura: `sem-rede` nao pode virar "R$ 39,90"
+  // com cara de numero conferido.
+  const t = texto(
+    render({
+      fatura: { ...FATURA, scheduled_pending: [PREVISAO] },
+      estado: "sem-rede",
+    })
+  );
+
+  assert.ok(t.includes("Streaming mensal"), `a linha devia continuar: ${t}`);
+  assert.ok(!t.includes("R$ 39,90"), `valor impresso sem leitura boa: ${t}`);
+});

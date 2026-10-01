@@ -37,6 +37,7 @@ import {
   faturaDoCartao,
   gastosDaFatura,
   mesCorrenteDaFatura,
+  previsoesDoCartao,
   rotuloDaFatura,
   rotuloDoCiclo,
 } from "../.tmp-fatura-do-cartao/lib/fatura-do-cartao.js";
@@ -345,4 +346,89 @@ test("o link de novo gasto leva o cartao, e leva na chave certa", () => {
 
 test("o caminho da tela do cartao", () => {
   assert.equal(caminhoDoCartao(MEU_CARTAO), `/dashboard/cartoes/${MEU_CARTAO}`);
+});
+
+// ---------------------------------------------------------------------------
+// 8. AS PREVISOES PENDENTES DO CARTAO (HMO-227)
+// ---------------------------------------------------------------------------
+// A HMO-209 tirou de Contas a Pagar toda previsao apontada para um cartao que
+// nao e a fatura -- a assinatura cadastrada com o cartao como conta -- e o
+// comentario dela promete que elas "passam a aparecer na tela do cartao". ELAS
+// NAO APARECIAM: `card_invoice_lines` so ve lancamento, e a consulta de
+// previsoes da rota so pegava `notes` de fatura. Ficaram gravadas sem leitor.
+
+const previsao = (accountId, descricao, valor) => ({
+  id: `${accountId}-${descricao}`,
+  user_id: "u1",
+  account_id: accountId,
+  category_id: "c1",
+  description: descricao,
+  amount: valor,
+  due_date: "2026-10-20",
+  status: "pending",
+  created_at: "2026-01-01",
+  updated_at: "2026-01-01",
+});
+
+test("as previsoes pendentes daquele cartao saem na tela", () => {
+  const fatura = {
+    account_id: MEU_CARTAO,
+    account_name: "Nubank",
+    invoice_month: "2026-10-01",
+    total: 320,
+    line_count: 0,
+    lines: [],
+    scheduled_pending: [previsao(MEU_CARTAO, "Streaming", 39.9)],
+  };
+
+  assert.deepEqual(
+    previsoesDoCartao(fatura, MEU_CARTAO).map((p) => p.description),
+    ["Streaming"]
+  );
+});
+
+test("a previsao de OUTRO cartao nao entra", () => {
+  // Mesma razao de `gastosDaFatura`: a RLS de grupo pode trazer linha de outra
+  // pessoa, e a tela afirma "deste cartao". Valor plausivel, zero erro.
+  const fatura = {
+    account_id: MEU_CARTAO,
+    account_name: "Nubank",
+    invoice_month: "2026-10-01",
+    total: 0,
+    line_count: 0,
+    lines: [],
+    scheduled_pending: [
+      previsao(MEU_CARTAO, "Streaming", 39.9),
+      previsao(OUTRO_CARTAO, "Academia", 120),
+    ],
+  };
+
+  assert.deepEqual(
+    previsoesDoCartao(fatura, MEU_CARTAO).map((p) => p.description),
+    ["Streaming"]
+  );
+});
+
+test("campo ausente e `null`, nao lista vazia", () => {
+  // A diferenca decide a FRASE da tela. `[]` autoriza "este cartao nao tem
+  // conta prevista"; `undefined` significa que aquela consulta nao voltou, e
+  // dizer a mesma frase ali e o "Nada em atraso." sem rede de novo.
+  const semCampo = {
+    account_id: MEU_CARTAO,
+    account_name: "Nubank",
+    invoice_month: "2026-10-01",
+    total: 0,
+    line_count: 0,
+    lines: [],
+  };
+
+  assert.equal(previsoesDoCartao(semCampo, MEU_CARTAO), null);
+  assert.equal(previsoesDoCartao(null, MEU_CARTAO), null);
+
+  // E a lista vazia continua sendo lista vazia -- nao pode virar `null`, senao
+  // todo cartao sem previsao ganharia o aviso de leitura falhada.
+  assert.deepEqual(
+    previsoesDoCartao({ ...semCampo, scheduled_pending: [] }, MEU_CARTAO),
+    []
+  );
 });

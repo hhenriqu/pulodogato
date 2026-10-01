@@ -12,7 +12,12 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { primeiroDiaDoMes, mesCorrente } from "@/lib/services/budget";
-import type { CardInvoice, CardInvoiceLine } from "@/types/financial";
+import { ehFatura } from "@/lib/card-invoice";
+import type {
+  CardInvoice,
+  CardInvoiceLine,
+  ScheduledTransaction,
+} from "@/types/financial";
 
 export async function GET(request: NextRequest) {
   try {
@@ -126,6 +131,52 @@ export async function GET(request: NextRequest) {
     for (const fatura of faturas) {
       const casada = (previstas ?? []).find((p) => p.account_id === fatura.account_id);
       if (casada) fatura.scheduled_transaction_id = casada.id;
+    }
+
+    // -----------------------------------------------------------------------
+    // AS PREVISOES PENDENTES DAQUELE CARTAO QUE NAO SAO FATURA (HMO-227)
+    // -----------------------------------------------------------------------
+    // A HMO-209 tirou de Contas a Pagar toda previsao apontada para um cartao
+    // que nao seja a fatura -- a assinatura que alguem cadastrou com o cartao
+    // como conta, por exemplo -- e o comentario dela promete que aquelas linhas
+    // "passam a aparecer na tela do cartao". ELAS NAO APARECIAM.
+    //
+    // Nos DOIS lugares: `card_invoice_lines` e view sobre
+    // `financial_transactions`, e previsao nao e lancamento; e a consulta logo
+    // acima le `scheduled_transactions` so com `notes` de fatura. Uma previsao
+    // pendente apontada para o cartao estava escondida da agenda E da tela do
+    // cartao -- gravada, sem leitor nenhum, que e o pior lugar para um dado
+    // estar.
+    //
+    // ELAS NAO SAO FILTRADAS POR MES DE FATURA, e isso e deliberado: previsao
+    // tem `due_date`, nao `invoice_month`. Encaixa-las pelo `closing_day` seria
+    // aplicar a uma conta a pagar a regra de uma COMPRA, e a assinatura de
+    // dezembro apareceria dentro da fatura de novembro sem nada na tela
+    // explicando por que. Por isso vao em campo PROPRIO, com o vencimento de
+    // cada uma, e nunca somadas a `total`.
+    const idsDosCartoes = faturas.map((f) => f.account_id);
+
+    if (idsDosCartoes.length > 0) {
+      const { data: pendentes, error: erroPendentes } = await supabase
+        .from("scheduled_transactions_effective")
+        .select("*, category:transaction_categories(*)")
+        .eq("user_id", user.id)
+        .eq("status", "pending")
+        .in("account_id", idsDosCartoes)
+        .order("due_date", { ascending: true });
+
+      if (erroPendentes) {
+        // A fatura ainda tem valor sem este bloco, e `undefined` e distinguivel
+        // de "nenhuma previsao" na tela. Derrubar a resposta inteira por causa
+        // dele trocaria um bloco que falta por uma pagina vazia.
+        console.error("Faturas seguiram sem as previsões do cartão:", erroPendentes);
+      } else {
+        for (const fatura of faturas) {
+          fatura.scheduled_pending = ((pendentes ?? []) as ScheduledTransaction[]).filter(
+            (p) => p.account_id === fatura.account_id && !ehFatura(p.notes)
+          );
+        }
+      }
     }
 
     faturas.sort((a, b) => b.total - a.total);

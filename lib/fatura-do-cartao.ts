@@ -42,7 +42,11 @@
 // ---------------------------------------------------------------------------
 
 import type { EstadoDaLeitura } from "@/lib/offline-leitura";
-import type { CardInvoice, CardInvoiceLine } from "@/types/financial";
+import type {
+  CardInvoice,
+  CardInvoiceLine,
+  ScheduledTransaction,
+} from "@/types/financial";
 
 /**
  * O nome do parametro que leva o cartao para `/movimentacoes/despesa`.
@@ -161,6 +165,32 @@ export function gastosDaFatura(
 ): CardInvoiceLine[] {
   if (!fatura) return [];
   return (fatura.lines ?? []).filter((l) => l.account_id === accountId);
+}
+
+/**
+ * As previsoes PENDENTES daquele cartao que nao sao a fatura (HMO-227).
+ *
+ * O bloco existe porque a HMO-209 tirou essas linhas de Contas a Pagar dizendo
+ * que elas "passam a aparecer na tela do cartao" -- e elas nao apareciam nem
+ * aqui nem la: `card_invoice_lines` so ve lancamento, e a consulta de previsoes
+ * de `GET /api/card-invoices` so pegava `notes` de fatura. Ficaram gravadas sem
+ * leitor nenhum, que e o pior lugar para um dado estar.
+ *
+ * `null` E "NAO DEU PARA LER", e nao "nenhuma". `scheduled_pending` vem
+ * `undefined` quando aquela consulta falhou, e a diferenca importa na frase:
+ * "este cartao nao tem nenhuma previsao pendente" dita sobre uma leitura que
+ * falhou e da mesma familia do "Nada em atraso." sem rede. Quem recebe `null`
+ * diz que nao conseguiu conferir.
+ *
+ * O filtro por `account_id` repete o que a rota ja fez, pela mesma razao de
+ * `gastosDaFatura`: e a afirmacao da tela, e nao custa nada.
+ */
+export function previsoesDoCartao(
+  fatura: CardInvoice | null,
+  accountId: string
+): ScheduledTransaction[] | null {
+  if (!fatura?.scheduled_pending) return null;
+  return fatura.scheduled_pending.filter((p) => p.account_id === accountId);
 }
 
 /**
