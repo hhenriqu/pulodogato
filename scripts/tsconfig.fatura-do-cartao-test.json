@@ -1,0 +1,27 @@
+{
+  "//": [
+    "As regras da tela de gastos do cartao (HMO-210).",
+    "",
+    "Compila lib/fatura-do-cartao.ts com lib/offline-leitura.ts porque",
+    "`estadoDaTela` fala do tipo `EstadoDaLeitura` dele, e com o `tsc` em modo",
+    "estrito o import de tipo tem que resolver. offline-leitura ja tem suite",
+    "propria (test:offline-leitura).",
+    "",
+    "O resolve-aliases roda COM --espelha-raiz porque o `rootDir` e a raiz do",
+    "repositorio (types/financial.ts entra no programa pelo import de tipo), e",
+    "a emissao sai em .tmp-fatura-do-cartao/lib/."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-fatura-do-cartao",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/fatura-do-cartao.ts", "../lib/offline-leitura.ts"]
+}

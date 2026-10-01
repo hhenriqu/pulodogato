@@ -24,7 +24,7 @@
 //   - Despesa e gravada NEGATIVA (`valorGravado`).
 // ---------------------------------------------------------------------------
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { User } from "@supabase/supabase-js";
@@ -55,6 +55,7 @@ import { usePreferenciaDeMoeda } from "@/lib/hooks/usePreferenciaDeMoeda";
 import { moedaSugerida } from "@/lib/moeda";
 import { cotacaoDigitada, taxaParaGravar } from "@/lib/cambio";
 import { avisoDeEdicaoTravada } from "@/lib/grupos";
+import { cartaoDaTela, PARAM_DO_CARTAO } from "@/lib/fatura-do-cartao";
 import { useOfflineQueue } from "@/lib/hooks/useOfflineQueue";
 import {
   contaPrevista,
@@ -120,6 +121,17 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
   const parametros = useSearchParams();
   /** `?id=` chega do botao de editar da lista de lancamentos. */
   const idParaEditar = parametros.get("id");
+  /**
+   * `?cartao=` chega de "Lancar gasto neste cartao", em
+   * `/dashboard/cartoes/[id]` (HMO-210).
+   *
+   * O nome NAO e `id`: a tela de origem e uma rota `[id]`, onde o Next consome
+   * a chave de mesmo nome ao montar `params`, e `?id=` ja significa "editar
+   * este lancamento" aqui -- reusar a chave pediria para editar o lancamento
+   * cujo id e o do cartao. A constante mora em `lib/fatura-do-cartao.ts` para o
+   * link e o leitor nao poderem divergir.
+   */
+  const idDoCartaoFixado = parametros.get(PARAM_DO_CARTAO);
 
   const [user, setUser] = useState<User | null>(null);
   const [serviceId, setServiceId] = useState("");
@@ -159,6 +171,48 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
         : { ...atual, moeda: preferenciaDeMoeda.oficial }
     );
   }, [carregandoMoeda, editando, preferenciaDeMoeda.oficial]);
+
+  // ---------------------------------------------------------------------------
+  // O CARTAO QUE A TELA ANTERIOR JA ESCOLHEU (HMO-210)
+  // ---------------------------------------------------------------------------
+  // Derivado, e nao estado: um `useState` aqui precisaria de um efeito para se
+  // sincronizar com a lista de contas que chega depois, e o quadro entre os dois
+  // mostraria o seletor livre de um formulario que e para estar travado.
+  //
+  // `cartaoDaTela` tambem CONFERE: id que nao e cartao de credito, ou que nao
+  // esta na lista da pessoa, nao trava nada -- o formulario abre normal. Travar
+  // num cartao que o seletor nao lista deixaria a tela pedindo um campo
+  // obrigatorio que ela mesma esconde, e a pessoa sem como sair.
+  //
+  // Editando nunca trava: o cartao daquele lancamento veio do banco, e a
+  // natureza nao se troca em edicao (`camposDoTipo`).
+  // `useMemo` para a referencia nao mudar a cada render: ela e dependencia do
+  // efeito abaixo, e `find()` devolve um objeto novo toda vez.
+  const cartaoFixado = useMemo(
+    () => (editando ? null : cartaoDaTela(contas, idDoCartaoFixado)),
+    [editando, contas, idDoCartaoFixado]
+  );
+
+  // O valor inicial que o cartao fixado impoe. Idempotente de proposito: ele
+  // devolve o estado intacto quando ja esta aplicado, senao cada render
+  // reescreveria `moeda` em cima de uma troca explicita da pessoa
+  // (`moedaSobreposta`) com o campo aberto na tela.
+  useEffect(() => {
+    if (!cartaoFixado) return;
+    setValores((atual) =>
+      atual.natureza === "card" && atual.contaId === cartaoFixado.id
+        ? atual
+        : {
+            ...atual,
+            natureza: "card",
+            contaId: cartaoFixado.id,
+            moeda: moedaSugerida({
+              daConta: cartaoFixado.currency,
+              oficial: preferenciaDeMoeda.oficial,
+            }),
+          }
+    );
+  }, [cartaoFixado, preferenciaDeMoeda.oficial]);
 
   const { online, enfileirar } = useOfflineQueue();
   const supabase = createClient();
@@ -898,6 +952,7 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
               editando={editando}
               moedaPorLancamento={preferenciaDeMoeda.porLancamento}
               moedaOficial={preferenciaDeMoeda.oficial}
+              cartaoFixado={cartaoFixado}
               rateio={
                 <SoftFeatureGuard feature="expense_groups" user={user}>
                   <div className="space-y-4 p-4 border rounded-lg bg-muted/20">
