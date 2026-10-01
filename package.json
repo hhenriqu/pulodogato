@@ -87,7 +87,8 @@
     "test:puxar-no-menu-dom": "rm -rf .tmp-puxar-dom && tsc lib/puxar-para-atualizar.ts lib/puxar-para-atualizar-dom.ts --outDir .tmp-puxar-dom --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-puxar-no-menu-dom.mjs",
     "test:categorias-do-periodo": "rm -rf .tmp-categorias-do-periodo && tsc lib/categorias-do-periodo.ts --outDir .tmp-categorias-do-periodo --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-categorias-do-periodo.mjs",
     "test:painel-do-grupo": "node --test scripts/test-painel-do-grupo.mjs",
-    "test:divisao-do-grupo": "rm -rf .tmp-divisao-do-grupo && tsc -p scripts/tsconfig.divisao-do-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-divisao-do-grupo lib && node --test scripts/test-divisao-do-grupo.mjs"
+    "test:divisao-do-grupo": "rm -rf .tmp-divisao-do-grupo && tsc -p scripts/tsconfig.divisao-do-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-divisao-do-grupo lib && node --test scripts/test-divisao-do-grupo.mjs",
+    "test:agenda-do-cartao": "rm -rf .tmp-agenda-do-cartao && tsc -p scripts/tsconfig.agenda-do-cartao-test.json && node scripts/resolve-aliases.mjs .tmp-agenda-do-cartao lib && node --test scripts/test-agenda-do-cartao.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

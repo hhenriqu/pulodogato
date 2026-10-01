@@ -607,3 +607,48 @@ test("editando nao oferece a confirmacao", () => {
   assert.doesNotMatch(html, /id="confirmado"/);
   assert.match(html, /id="date"/);
 });
+
+// ---------------------------------------------------------------------------
+// O GASTO NO CARTAO, NA TELA (HMO-209)
+// ---------------------------------------------------------------------------
+// `camposDoTipo` ja decide isso e tem teste proprio em test-lancamento.mjs. O
+// que se prova aqui e que o JSX OBEDECE -- a decisao certa com a checkbox
+// renderizada de qualquer jeito passaria verde na funcao pura e mostraria, na
+// tela de verdade, "Ja paguei" num gasto de cartao. E a checkbox na tela nao e
+// cosmetica: marcar ou desmarcar o `confirmado` e o que mandava a compra para
+// Contas a Pagar.
+
+test("gasto no cartao nao mostra 'Ja paguei' nem data prevista", () => {
+  const html = renderizar({
+    tipo: "expense",
+    valores: { natureza: "card", contaId: "a", confirmado: false },
+  });
+
+  // `confirmado: false` no estado de proposito: e o valor que sobra quando a
+  // pessoa desmarca a checkbox em "pontual" e depois troca para "cartao". Se a
+  // tela ainda o obedecesse, a compra iria para a agenda com o campo FORA da
+  // tela -- o defeito original, agora sem nada que o explicasse.
+  assert.doesNotMatch(html, /id="confirmado"/);
+  assert.doesNotMatch(html, /Já paguei/);
+  assert.doesNotMatch(html, /id="expected-date"/);
+  assert.doesNotMatch(html, /Data prevista/);
+
+  // A data da compra FICA, e com o rotulo dela: e ela que decide em que fatura a
+  // compra cai.
+  assert.match(html, /id="date"/);
+  assert.match(html, /Data da compra/);
+  assert.doesNotMatch(html, /Data do pagamento/);
+});
+
+test("a despesa pontual continua com a checkbox e as duas datas", () => {
+  // Controle do caso acima: uma tela que perdesse a confirmacao em TODA despesa
+  // passaria no teste anterior e quebraria a feature da HMO-188 por inteiro.
+  const html = renderizar({
+    tipo: "expense",
+    valores: { natureza: "one_off", confirmado: false },
+  });
+  assert.match(html, /id="confirmado"/);
+  assert.match(html, /Já paguei/);
+  assert.match(html, /id="expected-date"/);
+  assert.doesNotMatch(html, /Data da compra/);
+});

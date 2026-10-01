@@ -821,3 +821,177 @@ test("valoresIniciais nasce CONFIRMADO", () => {
   assert.equal(valoresIniciais().confirmado, true);
   assert.equal(valoresIniciais().dataPrevista, valoresIniciais().data);
 });
+
+// ---------------------------------------------------------------------------
+// UM GASTO NO CARTAO JA ACONTECEU (HMO-209)
+// ---------------------------------------------------------------------------
+// A queixa: a compra no cartao oferecia "Ja paguei", e desmarcada ela ia para
+// `scheduled_transactions` com o `account_id` do cartao -- aparecendo em Contas
+// a Pagar AO LADO da fatura cheia daquele cartao. A mesma despesa duas vezes.
+//
+// O que estes casos cobram nao e a checkbox fora da tela: e que NAO EXISTA
+// ENTRADA que mande um gasto no cartao para a agenda. Esconder o campo e deixar
+// a decisao em `valores.confirmado` produziria exatamente o defeito antigo, so
+// que invisivel -- o estado do formulario e um objeto so e `confirmado`
+// sobrevive a troca de natureza, entao um `false` herdado de "pontual" ainda
+// desviaria o lancamento, agora sem nenhum campo na tela que explicasse por que.
+
+test("gasto no cartao nao pergunta 'ja paguei' nem data prevista", () => {
+  const campos = camposDoTipo("expense", "card", false, false);
+
+  assert.equal(campos.confirmacao, false);
+  // A data prevista sai: nao ha pagamento a prever. O que ainda nao aconteceu e
+  // o pagamento da FATURA, que e outro ato, em outra tela.
+  assert.equal(campos.dataPrevista, false);
+  // A data da COMPRA fica, e isso e o ponto. Ela rebaixa a divida do cartao
+  // agora, e e `transaction_date` que decide em que fatura a compra cai.
+  assert.equal(campos.dataDeRealizacao, true);
+  assert.equal(campos.rotuloDaData, "Data da compra");
+
+  // E o estado da checkbox nao muda NADA no cartao. Se mudasse, haveria um
+  // caminho para a tela de cartao se comportar como a de previsao.
+  assert.deepEqual(camposDoTipo("expense", "card", false, true), campos);
+});
+
+test("'Data do pagamento' continua sendo o rotulo fora do cartao", () => {
+  // Controle do caso acima: um `rotuloDaData` cravado em "Data da compra" para
+  // toda despesa passaria no teste anterior e mentiria no aluguel.
+  assert.equal(
+    camposDoTipo("expense", "one_off", false).rotuloDaData,
+    "Data do pagamento"
+  );
+  assert.equal(
+    camposDoTipo("expense", "fixed", false).rotuloDaData,
+    "Data"
+  );
+});
+
+test("a regra do cartao e da DESPESA: a receita nao perde a confirmacao", () => {
+  // `natureza: "card"` chega no estado da tela de receita (pelo link de edicao de
+  // uma entrada apontada para um cartao). Sem o `tipo === "expense"` na condicao,
+  // a tela de receita perderia a checkbox "Ja recebi" e a data prevista: todo
+  // salario previsto viraria transacao no ato, entrando no saldo antes de cair.
+  const receita = camposDoTipo("income", "card", false, false);
+  assert.equal(receita.confirmacao, true);
+  assert.equal(receita.dataPrevista, true);
+  assert.equal(receita.dataDeRealizacao, false);
+});
+
+test("NENHUMA entrada manda um gasto no cartao para a agenda", () => {
+  // A negacao explicita, sobre o produto cartesiano das entradas que existem.
+  // `destinoDoLancamento` e quem decide a tabela de destino, e e aqui que a trava
+  // tem de estar: a UI nao protege o que o estado carrega.
+  const combinacoes = [];
+  for (const editando of [false, true]) {
+    for (const confirmado of [false, true]) {
+      for (const parcelado of [false, true]) {
+        for (const dataPrevista of ["", "2026-10-10"]) {
+          combinacoes.push({ editando, confirmado, parcelado, dataPrevista });
+        }
+      }
+    }
+  }
+  // O proprio laco pode deixar de varrer: 2 x 2 x 2 x 2.
+  assert.equal(combinacoes.length, 16);
+
+  for (const c of combinacoes) {
+    const valores = preenchido({
+      natureza: "card",
+      contaId: "cartao-1",
+      confirmado: c.confirmado,
+      parcelado: c.parcelado,
+      totalDeParcelas: 3,
+      valorDaParcela: "50",
+      dataPrevista: c.dataPrevista,
+    });
+
+    const destino = destinoDoLancamento("expense", valores, c.editando);
+    const caso = JSON.stringify(c);
+
+    assert.notEqual(destino, "previsao", `cartao virou previsao em ${caso}`);
+    assert.ok(
+      destino === "transacao" || destino === "parcelas",
+      `cartao foi para ${destino} em ${caso}`
+    );
+  }
+});
+
+test("e a MESMA varredura fora do cartao ainda produz previsao", () => {
+  // O controle do caso acima. Sem ele, `destinoDoLancamento` podendo devolver
+  // "previsao" para NINGUEM passaria verde -- e a feature inteira (deixar uma
+  // despesa prevista, HMO-188) estaria quebrada sem um unico teste vermelho.
+  const destinos = new Set();
+  for (const confirmado of [false, true]) {
+    for (const dataPrevista of ["", "2026-10-10"]) {
+      destinos.add(
+        destinoDoLancamento(
+          "expense",
+          preenchido({ natureza: "one_off", confirmado, dataPrevista }),
+          false
+        )
+      );
+    }
+  }
+  assert.ok(destinos.has("previsao"));
+  assert.ok(destinos.has("transacao"));
+});
+
+test("parcelado no cartao e aceito, e sem mensagem sobre um campo invisivel", () => {
+  // Comprar em 12x no cartao e o caso NORMAL, e a compra parcelada ja aconteceu.
+  // A recusa "Marque 'Ja paguei' ou desligue o parcelamento" existe para a
+  // despesa pontual; no cartao ela mandaria a pessoa a um campo que nao esta na
+  // tela, e nao haveria como obedecer.
+  const valores = preenchido({
+    natureza: "card",
+    contaId: "cartao-1",
+    confirmado: false,
+    parcelado: true,
+    totalDeParcelas: 3,
+    valorDaParcela: "50",
+  });
+
+  const v = validarLancamento("expense", valores, {
+    categoria: CATEGORIA_DESPESA,
+    editando: false,
+  });
+  assert.equal(v.ok, true);
+  assert.equal(destinoDoLancamento("expense", valores, false), "parcelas");
+
+  // E a recusa continua valendo onde a checkbox EXISTE -- senao desmarcar "Ja
+  // paguei" numa despesa parcelada comum voltaria a nao fazer nada em silencio.
+  const pontual = validarLancamento(
+    "expense",
+    preenchido({
+      natureza: "one_off",
+      confirmado: false,
+      parcelado: true,
+      totalDeParcelas: 3,
+      valorDaParcela: "50",
+    }),
+    { categoria: CATEGORIA_DESPESA, editando: false }
+  );
+  assert.equal(pontual.ok, false);
+  assert.match(pontual.mensagem, /Já paguei/);
+});
+
+test("o cartao nao cobra data prevista, e cobra a data da compra", () => {
+  const base = { categoria: CATEGORIA_DESPESA, editando: false };
+
+  // Sem data prevista nenhuma: valido. Cobra-la seria pedir um campo que a tela
+  // nao mostra -- o defeito que `camposDoTipo` existe para impedir.
+  const semPrevista = validarLancamento(
+    "expense",
+    preenchido({ natureza: "card", contaId: "cartao-1", dataPrevista: "" }),
+    base
+  );
+  assert.equal(semPrevista.ok, true);
+
+  // A data da compra, por outro lado, e obrigatoria: e ela que decide a fatura.
+  const semData = validarLancamento(
+    "expense",
+    preenchido({ natureza: "card", contaId: "cartao-1", data: "" }),
+    base
+  );
+  assert.equal(semData.ok, false);
+  assert.match(semData.mensagem, /data/i);
+});
