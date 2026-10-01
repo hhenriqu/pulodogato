@@ -271,6 +271,7 @@
     "launch_date",
     "notes",
     "service_id",
+    "subcategory_id",
     "transaction_date",
     "transaction_type",
     "updated_at",
@@ -596,6 +597,7 @@
     "notes",
     "reminder_days",
     "start_date",
+    "subcategory_id",
     "transaction_type",
     "updated_at",
     "user_id"
@@ -614,6 +616,7 @@
     "paid_date",
     "recurring_rule_id",
     "status",
+    "subcategory_id",
     "transaction_id",
     "transaction_type",
     "updated_at",
@@ -706,7 +709,18 @@
     "is_active",
     "is_expense",
     "name",
-    "service_id"
+    "service_id",
+    "user_id"
+  ],
+  "transaction_category_prefs": [
+    "category_id",
+    "color_hex",
+    "created_at",
+    "icon",
+    "is_hidden",
+    "name",
+    "updated_at",
+    "user_id"
   ],
   "transaction_installments": [
     "account_id",
@@ -727,6 +741,15 @@
     "total_amount",
     "total_installments",
     "transaction_type",
+    "updated_at",
+    "user_id"
+  ],
+  "transaction_subcategories": [
+    "category_id",
+    "created_at",
+    "id",
+    "is_active",
+    "name",
     "updated_at",
     "user_id"
   ],
