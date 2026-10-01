@@ -52,11 +52,21 @@ import {
   PainelSemRede,
 } from "@/components/SemRede";
 import { FaturaDoCartao } from "@/components/cartoes/FaturaDoCartao";
+import { DialogoDeAlcance } from "@/components/series/DialogoDeAlcance";
+import { frasePreservadas, type Alcance } from "@/lib/alcance-na-tela";
+import { toast } from "sonner";
 
 interface RespostaDeFaturas {
   month?: string;
   invoices?: CardInvoice[];
 }
+
+/** O que o dialogo precisa saber da linha clicada. */
+type LinhaParaApagar = {
+  transaction_id: string;
+  installment_number?: number | null;
+  installment_total?: number | null;
+};
 
 export default function GastosDoCartaoPage() {
   const params = useParams<{ id: string }>();
@@ -78,6 +88,10 @@ export default function GastosDoCartaoPage() {
   const [estadoDaFatura, setEstadoDaFatura] = useState<EstadoDaLeitura | null>(
     null
   );
+  /** A parcela cuja exclusao espera a pergunta do alcance (HMO-228). */
+  const [parcelaParaApagar, setParcelaParaApagar] =
+    useState<LinhaParaApagar | null>(null);
+  const [apagando, setApagando] = useState(false);
 
   const conta = useMemo(
     () => cartaoDaTela([...ativas, ...arquivadas], idDoCartao),
@@ -111,6 +125,59 @@ export default function GastosDoCartaoPage() {
     recarregarContas();
     carregarFatura();
   }, [recarregarContas, carregarFatura]);
+
+  /**
+   * Apagar uma parcela desta fatura, no alcance escolhido (HMO-228).
+   *
+   * A fiacao mora aqui porque `FaturaDoCartao` nao tem rede: ele so chama o
+   * handler. Ver o cabecalho dele.
+   */
+  const apagarParcela = async (alcance: Alcance) => {
+    const parcela = parcelaParaApagar;
+    if (!parcela) return;
+
+    setApagando(true);
+    try {
+      const resposta = await fetch(
+        `/api/financial-installments/serie/${parcela.transaction_id}`,
+        {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          // O alcance no CORPO: um laco de ids aqui ficaria aplicado pela
+          // metade quando a conexao cai, e meia serie apagada nao tem como ser
+          // descoberta depois.
+          body: JSON.stringify({ alcance }),
+        }
+      );
+      const dados = await resposta.json().catch(() => ({}));
+
+      if (!resposta.ok) {
+        toast.error(
+          dados.error || `A exclusão foi recusada (HTTP ${resposta.status}).`
+        );
+        return;
+      }
+
+      const aviso = frasePreservadas({
+        preservadas: Number(dados.preservadas ?? 0),
+        porFaturaPaga: Number(dados.preservadas_por_fatura_paga ?? 0),
+      });
+      toast.success(
+        aviso ? `${dados.message} ${aviso}` : (dados.message ?? "Parcela apagada")
+      );
+
+      setParcelaParaApagar(null);
+      // A fatura DESTE mes e as dos outros mudaram: `todas` apaga parcelas de
+      // meses que nao estao na tela. Recarregar so a atual deixaria o total dos
+      // outros meses errado na memoria ate a pessoa trocar o seletor.
+      recarregar();
+    } catch (erro) {
+      console.error("Erro ao apagar a série de parcelas:", erro);
+      toast.error("Erro ao apagar a parcela");
+    } finally {
+      setApagando(false);
+    }
+  };
 
   if (carregandoContas || estadoDaFatura === null) {
     return (
@@ -165,7 +232,23 @@ export default function GastosDoCartaoPage() {
         mes={mes}
         estado={estado}
         aoMudarMes={setMes}
+        aoApagarParcela={setParcelaParaApagar}
       />
+
+      {/* A PERGUNTA DO ALCANCE, A TERCEIRA TELA (HMO-228). O mesmo componente
+          de Contas a Pagar e da lista de Lancamentos. */}
+      {parcelaParaApagar && (
+        <DialogoDeAlcance
+          aberto
+          aoFechar={() => setParcelaParaApagar(null)}
+          tipo="parcela"
+          acao="apagar"
+          ancora={`parcela ${parcelaParaApagar.installment_number}`}
+          totalDeParcelas={parcelaParaApagar.installment_total}
+          salvando={apagando}
+          aoConfirmar={(escolhido) => apagarParcela(escolhido)}
+        />
+      )}
     </div>
   );
 }

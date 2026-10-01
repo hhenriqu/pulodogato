@@ -66,8 +66,18 @@ const PARCELAS = "lib/parcelas-edicao.ts";
 // BaseDoValorParcelado de la. Sem ele na copia, TODO mutante morre no `tsc` --
 // o placar sairia perfeito e o controle positivo reprovaria. E e o controle
 // positivo que mostra isso, nao o placar.
+// E os quatro arquivos que a suite le com `readFileSync` (a secao 6 do teste,
+// que cobra OMISSAO na rota -- o passo que desaparece num refactor e que nenhuma
+// assercao sobre a regra pura alcanca). Sem eles na copia, aqueles cinco casos
+// estouram em TODO mutante: o placar sairia perfeito e o controle positivo
+// reprovaria. Foi o controle positivo que mostrou isso.
 const ACOMPANHAM = [
   "lib/lancamento.ts",
+  "lib/alcance-na-tela.ts",
+  "lib/services/scheduled.ts",
+  "app/api/scheduled-transactions/[id]/route.ts",
+  "app/api/recurring-rules/[id]/route.ts",
+  "app/api/financial-installments/serie/[id]/route.ts",
   "scripts/tsconfig.alcance-da-serie-test.json",
   "scripts/resolve-aliases.mjs",
   "scripts/test-alcance-da-serie.mjs",

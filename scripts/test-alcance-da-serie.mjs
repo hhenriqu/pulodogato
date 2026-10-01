@@ -43,6 +43,13 @@ import {
   ehAlcanceDeParcelaValido,
 } from "../.tmp-alcance-da-serie/lib/parcelas-edicao.js";
 
+import {
+  opcoesDeAlcance,
+  consequenciaNaTela,
+  precisaPerguntarBase,
+  frasePreservadas,
+} from "../.tmp-alcance-da-serie/lib/alcance-na-tela.js";
+
 // ---------------------------------------------------------------------------
 // A SERIE DO ALUGUEL (conta fixa)
 // ---------------------------------------------------------------------------
@@ -573,4 +580,228 @@ test("'apenas_esta' diz que as outras ficam, e nao fala de total", () => {
   const plano = planejarAlteracaoDeParcelas("apenas_esta", p(3, "2026-10-01"), PARCELAS, []);
   const frase = consequenciaDoAlcance("apenas_esta", plano, { antes: 3000, depois: 2950 });
   assert.match(frase, /Só esta parcela muda/);
+});
+
+// ---------------------------------------------------------------------------
+// 5. O QUE A TELA DIZ
+// ---------------------------------------------------------------------------
+// As palavras moram num modulo puro porque o `SelectValue` do Radix nao
+// renderiza no servidor: um teste de render veria o gatilho VAZIO e passaria a
+// afirmar qualquer coisa sobre a opcao selecionada. Aqui o texto e cobravel.
+
+test("as tres opcoes aparecem na tela, nas duas series e nas duas acoes", () => {
+  for (const tipo of ["conta_fixa", "parcela"]) {
+    for (const acao of ["alterar", "apagar"]) {
+      const opcoes = opcoesDeAlcance({ tipo, acao, ancora: "10/12", totalDeParcelas: 10 });
+      assert.deepEqual(
+        opcoes.map((o) => o.valor),
+        ["apenas_esta", "esta_e_proximas", "todas"],
+        `${tipo}/${acao}`
+      );
+      // Toda opcao declara a consequencia DELA. Uma opcao sem frase deixa a
+      // pessoa escolher no escuro justamente no alcance mais destrutivo.
+      for (const o of opcoes) {
+        assert.ok(o.rotulo.length > 0, `${tipo}/${acao}: rotulo vazio`);
+        assert.ok(o.consequencia.length > 0, `${tipo}/${acao}/${o.valor}: sem consequencia`);
+      }
+    }
+  }
+});
+
+test("APAGAR 'esta e as proximas' declara que o gasto fixo e ENCERRADO", () => {
+  // A consequencia que a pessoa nao tem como adivinhar, e a que a issue chama
+  // de pior resultado possivel se ficar calada: sem encerrar a regra a conta
+  // volta meses depois. A tela tem de dizer que ela vai ser encerrada.
+  const opcoes = opcoesDeAlcance({ tipo: "conta_fixa", acao: "apagar", ancora: "10/12" });
+  const frase = consequenciaNaTela("esta_e_proximas", opcoes);
+
+  assert.match(frase, /encerrado/);
+  assert.match(frase, /voltaria a gerar/);
+});
+
+test("ALTERAR 'todas' declara que alcanca meses ANTERIORES", () => {
+  // `todas` e o unico alcance que olha para tras. Uma frase que nao diga isso
+  // faz a pessoa escolher "todas" achando que e "desta em diante".
+  const opcoes = opcoesDeAlcance({ tipo: "conta_fixa", acao: "alterar", ancora: "10/12" });
+  const frase = consequenciaNaTela("todas", opcoes);
+
+  assert.match(frase, /anteriores/);
+  assert.match(frase, /já foi pago não é alterado/);
+});
+
+test("a parcela declara que o total DEIXA de ser parcela x M", () => {
+  // A consequencia exigida pela issue: em "a partir daquela", as anteriores
+  // ficam com o valor velho. Sem esta frase o resumo afirma um total que o
+  // banco nao tem.
+  const opcoes = opcoesDeAlcance({
+    tipo: "parcela",
+    acao: "alterar",
+    ancora: "parcela 3",
+    totalDeParcelas: 10,
+  });
+  const frase = consequenciaNaTela("esta_e_proximas", opcoes);
+
+  assert.match(frase, /valor antigo/);
+  assert.match(frase, /deixa de ser/);
+});
+
+test("o rotulo de 'todas' diz QUANTAS parcelas, quando se sabe", () => {
+  const com = opcoesDeAlcance({
+    tipo: "parcela",
+    acao: "apagar",
+    ancora: "parcela 3",
+    totalDeParcelas: 10,
+  });
+  assert.equal(com[2].rotulo, "Todas as 10 parcelas");
+
+  // Sem M nao se inventa numero: "Todas as undefined parcelas" na tela e o
+  // rotulo quebrado que faz a pessoa desconfiar do que esta ao lado dele.
+  const sem = opcoesDeAlcance({ tipo: "parcela", acao: "apagar", ancora: "parcela 3" });
+  assert.equal(sem[2].rotulo, "Todas as parcelas");
+});
+
+test("o rotulo de 'apenas esta' identifica a linha clicada", () => {
+  // Sem a ancora no rotulo, "Apenas esta" num dialogo aberto por um menu nao
+  // identifica nada -- e o dialogo e o unico lugar que confirma QUAL linha.
+  const o = opcoesDeAlcance({ tipo: "conta_fixa", acao: "apagar", ancora: "10/12" });
+  assert.equal(o[0].rotulo, "Apenas esta (10/12)");
+});
+
+test("alcance desconhecido devolve string vazia, nao undefined", () => {
+  // Um `undefined` renderizado no JSX desaparece em silencio, e a tela ficaria
+  // sem a declaracao exatamente no caso em que algo esta errado.
+  const o = opcoesDeAlcance({ tipo: "parcela", acao: "alterar", ancora: "parcela 3" });
+  assert.equal(consequenciaNaTela("qualquer_coisa", o), "");
+});
+
+test("a pergunta parcela/total so aparece onde ha ambiguidade", () => {
+  const base = { tipo: "parcela", mudaValor: true };
+
+  // Em "apenas esta" nao ha ambiguidade: uma parcela so, o numero e ela. Fazer
+  // a pergunta ali ensina a pessoa a ignora-la.
+  assert.equal(precisaPerguntarBase({ ...base, alcance: "apenas_esta" }), false);
+  assert.equal(precisaPerguntarBase({ ...base, alcance: "esta_e_proximas" }), true);
+  assert.equal(precisaPerguntarBase({ ...base, alcance: "todas" }), true);
+
+  // Nem na conta fixa: ali nao existe "total da compra" -- a serie nao tem fim.
+  assert.equal(
+    precisaPerguntarBase({ tipo: "conta_fixa", mudaValor: true, alcance: "todas" }),
+    false
+  );
+  // Nem quando o valor nao muda.
+  assert.equal(
+    precisaPerguntarBase({ tipo: "parcela", mudaValor: false, alcance: "todas" }),
+    false
+  );
+});
+
+test("a contagem do que ficou de fora vira frase -- e cala quando e zero", () => {
+  // Um toast que sempre termina com "0 ficaram de fora" treina a pessoa a nao
+  // ler o fim da frase, e e justamente o fim da frase que carrega a garantia.
+  assert.equal(frasePreservadas({ preservadas: 0 }), null);
+  assert.equal(frasePreservadas({ preservadas: 0, porFaturaPaga: 0 }), null);
+
+  assert.equal(frasePreservadas({ preservadas: 3 }), "3 ficaram como estavam.");
+  assert.equal(
+    frasePreservadas({ preservadas: 3, porFaturaPaga: 1 }),
+    "3 ficaram como estavam — 1 em fatura já paga."
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 6. A ROTA LE O PLANO
+// ---------------------------------------------------------------------------
+// As regras puras acima provam que o PLANO pede o `end_date` e que o alcance
+// "todas" DELEGA. Nenhuma delas prova que a rota faz o que o plano pede -- um
+// `if (false)` em volta do bloco que grava o `end_date` passa pelos 23 mutantes
+// sem arranhao, e o sintoma seria a conta apagada voltando meses depois.
+//
+// Entao estes casos leem o CODIGO da rota. E um instrumento pobre comparado a
+// um teste de integracao e esta sendo usado de proposito: o que ele pega e
+// OMISSAO (o passo que desaparece num refactor), e omissao e justamente o que
+// nenhuma assercao sobre a regra pura alcanca. O mesmo padrao ja e usado em
+// scripts/test-fatura-prevista.mjs.
+
+import { readFileSync } from "node:fs";
+
+const ROTA_AGENDA = readFileSync(
+  "app/api/scheduled-transactions/[id]/route.ts",
+  "utf8"
+);
+const ROTA_SERIE = readFileSync(
+  "app/api/financial-installments/serie/[id]/route.ts",
+  "utf8"
+);
+
+test("o DELETE da agenda grava o end_date que o plano pediu", () => {
+  // A SEGUNDA PROVA EXIGIDA PELA ISSUE, do lado da rota.
+  assert.match(
+    ROTA_AGENDA,
+    /plano\.encerrarRegraEm/,
+    "a rota nao le o end_date do plano"
+  );
+  assert.match(
+    ROTA_AGENDA,
+    /\.from\("recurring_rules"\)[\s\S]{0,200}end_date/,
+    "a rota nao escreve end_date em recurring_rules"
+  );
+});
+
+test("o alcance 'todas' da agenda CHAMA encerrarRegra, nao uma copia dela", () => {
+  // Dois lugares que encerram uma regra divergem no primeiro conserto que so um
+  // dos dois receber. A prova de que ha um lugar so: a rota importa e chama a
+  // funcao compartilhada, e nao escreve `is_active: false` por conta propria.
+  assert.match(ROTA_AGENDA, /encerrarRegra\(/, "a rota nao chama encerrarRegra");
+  assert.ok(
+    !/is_active:\s*false/.test(ROTA_AGENDA),
+    "a rota cresceu a propria copia do encerramento da regra"
+  );
+
+  const SERVICO = readFileSync("lib/services/scheduled.ts", "utf8");
+  assert.match(SERVICO, /export async function encerrarRegra/);
+  assert.match(SERVICO, /is_active:\s*false/, "encerrarRegra nao desativa a regra");
+  assert.match(SERVICO, /status:\s*"cancelled"/, "encerrarRegra nao cancela as abertas");
+
+  // E o OUTRO caminho -- o DELETE do gasto fixo -- passou a chamar a mesma
+  // funcao. Sem esta assercao, "um lugar so" valeria para o caminho novo e a
+  // copia velha continuaria de pe no antigo.
+  const ROTA_REGRA = readFileSync("app/api/recurring-rules/[id]/route.ts", "utf8");
+  assert.match(ROTA_REGRA, /encerrarRegra\(/, "o DELETE do gasto fixo nao usa a funcao");
+});
+
+test("as duas rotas aceitam o alcance NO CORPO, nao na query string", () => {
+  // Um laco no cliente aplicando id por id fica aplicado pela metade quando a
+  // conexao cai, e o estado pela metade de uma serie nao tem como ser
+  // descoberto depois. A decisao e de servidor, e chega no corpo.
+  for (const [nome, fonte] of [
+    ["agenda", ROTA_AGENDA],
+    ["serie", ROTA_SERIE],
+  ]) {
+    assert.match(fonte, /request\.json\(\)/, `${nome}: nao le o corpo`);
+    assert.ok(
+      !/searchParams\.get\("alcance"\)/.test(fonte),
+      `${nome}: o alcance esta vindo pela query string`
+    );
+  }
+});
+
+test("a rota da serie devolve a contagem do que ficou de fora", () => {
+  // "A contagem de quantas ficaram de fora tem de aparecer na resposta da rota
+  // E na tela." Os dois numeros, separados.
+  assert.match(ROTA_SERIE, /preservadas:/);
+  assert.match(ROTA_SERIE, /preservadas_por_fatura_paga:/);
+  assert.match(ROTA_SERIE, /total_da_compra:/);
+});
+
+test("o DELETE da serie reamarra as parcelas que sobraram", () => {
+  // `installment_parent_id` nao tem foreign key (conferido): apagar a primeira
+  // parcela deixa as outras apontando para um id que nao existe, sem erro. Sem
+  // este passo a serie se desfaz e a proxima edicao das restantes cai no 400
+  // "nao faz parte de uma compra parcelada", sobre linhas que a tela mostra
+  // como "parcela 4 de 10".
+  assert.match(
+    ROTA_SERIE,
+    /installment_parent_id:\s*novaPrimeira/,
+    "o DELETE nao reamarra a serie"
+  );
 });

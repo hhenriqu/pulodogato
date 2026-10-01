@@ -56,6 +56,8 @@ import { today } from "@/lib/recurrence";
 import { SeletorDePeriodo } from "@/components/dashboard/SeletorDePeriodo";
 import { rotaDoTipo, tipoDoLancamento } from "@/lib/lancamento";
 import { ROTA_DA_TRANSFERENCIA } from "@/lib/transferencia";
+import { frasePreservadas, type Alcance } from "@/lib/alcance-na-tela";
+import { DialogoDeAlcance } from "@/components/series/DialogoDeAlcance";
 import {
   rotuloDoResumo,
   precisaDetalhar,
@@ -124,6 +126,28 @@ interface FinancialTransaction {
   counterpart_transaction_id?: string | null;
   /** A conta do lancamento. `null` quando a linha nao tem conta registrada. */
   account?: ContaDoLancamento | null;
+  /**
+   * "parcela N de M" (HMO-211, migration 035).
+   *
+   * E ESTA INTERFACE E A SEGUNDA `FinancialTransaction` DO REPOSITORIO: a outra
+   * esta em `types/financial.ts`, exportada, e esta aqui a sombreia nesta
+   * pagina. As duas descrevem a MESMA tabela, e as duas estavam sem as colunas
+   * da 035 -- que ja estava em producao.
+   *
+   * O modo de falha nao e o `tsc` reclamando: e o contrario. A consulta desta
+   * lista usa `select("*")`, entao as colunas CHEGAM em runtime e simplesmente
+   * nao existem para o compilador. Toda leitura delas desaparece sem erro, e o
+   * botao de apagar parcela trataria toda parcela como compra avulsa --
+   * apagando uma linha de dez. Foi o `tsc` reprovando o botao que mostrou a
+   * falta, primeiro na interface compartilhada e depois nesta.
+   *
+   * Nao unifiquei as duas neste PR: a interface compartilhada tem campos que
+   * esta pagina nao usa e vice-versa, e fundi-las mexeria em telas que a HMO-228
+   * nao toca. Mas quem for acrescentar a proxima coluna precisa saber que ela
+   * tem de ser escrita em DOIS lugares, senao ela funciona em metade do app.
+   */
+  installment_number?: number | null;
+  installment_total?: number | null;
 }
 
 interface ExpenseSplit {
@@ -259,6 +283,14 @@ function Lancamentos() {
    * te contar". Sem esta bandeira a tela escolheria sempre a primeira.
    */
   const [partesFalharam, setPartesFalharam] = useState(false);
+  /**
+   * A parcela cuja exclusao esta esperando a pergunta do alcance (HMO-228).
+   *
+   * `any` como o resto da lista nesta tela: a linha vem do PostgREST com os
+   * embeds, e tipar so este campo daria a impressao de que o resto esta tipado.
+   */
+  const [parcelaParaApagar, setParcelaParaApagar] = useState<any | null>(null);
+  const [apagandoParcela, setApagandoParcela] = useState(false);
 
   const { canCreateMore, planConfig } = useSubscription(user);
 
@@ -282,6 +314,18 @@ function Lancamentos() {
   // proximo cuidado que a exclusao precisar (um estorno, um aviso de grupo, uma
   // linha de auditoria) vai ser escrito em UM dos dois. Quem apagar pela tela
   // nao recebe esse cuidado, e nada nessa situacao parece errado.
+  //
+  // E A PARCELA NAO SAI POR AQUI (HMO-228)
+  // --------------------------------------
+  // Uma parcela de cartao e uma linha de uma SERIE de N linhas amarradas por
+  // `installment_parent_id`. Apagar a parcela 3 de 10 por esta rota apaga uma
+  // linha e deixa nove -- e a fatura de cada mes restante continua fechando num
+  // valor plausivel e errado, sem erro em lugar nenhum. A unica forma de
+  // descobrir seria reconferir dez faturas a mao.
+  //
+  // Entao a linha que tem `installment_number` abre a pergunta do alcance
+  // (`parcelaParaApagar`) e sai por `/api/financial-installments/serie/{id}`,
+  // que sabe o que e uma serie. Ver `pedirExclusao` abaixo.
   const deleteTransaction = async (transaction: any) => {
     const ehTransferencia = transaction.transaction_type === "transfer";
 
@@ -330,6 +374,69 @@ function Lancamentos() {
           ? error.message
           : "Erro ao excluir transação"
       );
+    }
+  };
+
+  /**
+   * Abre a pergunta do alcance quando a linha e uma parcela; senao segue o
+   * caminho de sempre.
+   *
+   * `installment_number` e a marca de que a linha pertence a uma serie: ela e
+   * NULL em toda compra avulsa (035), e e NOT NULL junto com
+   * `installment_total` por CHECK -- entao nao existe o estado "e parcela mas
+   * nao se sabe de quantas".
+   */
+  const pedirExclusao = (transaction: any) => {
+    if (transaction?.installment_number) {
+      setParcelaParaApagar(transaction);
+      return;
+    }
+    void deleteTransaction(transaction);
+  };
+
+  /** Apaga a serie no alcance escolhido, pela rota que conhece a serie. */
+  const apagarParcela = async (transaction: any, alcance: Alcance) => {
+    setApagandoParcela(true);
+    try {
+      const resposta = await fetch(
+        `/api/financial-installments/serie/${transaction.id}`,
+        {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          // O alcance no CORPO: um laco de ids aqui ficaria aplicado pela
+          // metade quando a conexao cai, e meia serie apagada nao tem como ser
+          // descoberta depois.
+          body: JSON.stringify({ alcance }),
+        }
+      );
+      const dados = await resposta.json().catch(() => ({}));
+
+      if (!resposta.ok) {
+        toast.error(
+          dados.error || `A exclusão foi recusada (HTTP ${resposta.status}).`
+        );
+        return;
+      }
+
+      // A CONTAGEM DO QUE FICOU DE FORA, NA TELA.
+      // Dois numeros: o que ficou por escolha e o que ficou por fatura paga. O
+      // segundo e uma recusa que a pessoa nao pediu, e e ele que explica um
+      // total da compra diferente do esperado.
+      const aviso = frasePreservadas({
+        preservadas: Number(dados.preservadas ?? 0),
+        porFaturaPaga: Number(dados.preservadas_por_fatura_paga ?? 0),
+      });
+      toast.success(
+        aviso ? `${dados.message} ${aviso}` : (dados.message ?? "Parcela apagada")
+      );
+
+      setParcelaParaApagar(null);
+      recarregar();
+    } catch (error) {
+      console.error("Erro ao apagar a série de parcelas:", error);
+      toast.error("Erro ao apagar a parcela");
+    } finally {
+      setApagandoParcela(false);
     }
   };
 
@@ -1505,9 +1612,13 @@ function Lancamentos() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => deleteTransaction(transaction)}
+                            onClick={() => pedirExclusao(transaction)}
                             className="h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
-                            title="Excluir transação"
+                            title={
+                              transaction.installment_number
+                                ? "Apagar parcela (só esta, desta em diante, ou todas)"
+                                : "Excluir transação"
+                            }
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -1647,6 +1758,24 @@ function Lancamentos() {
           </TabsContent>
         ))}
       </Tabs>
+
+      {/* A PERGUNTA DO ALCANCE NA EXCLUSAO DE PARCELA (HMO-228).
+          O mesmo componente de Contas a Pagar e da tela do cartao. A parcela e
+          apagada AQUI -- e era aqui que nao se perguntava nada. */}
+      {parcelaParaApagar && (
+        <DialogoDeAlcance
+          aberto
+          aoFechar={() => setParcelaParaApagar(null)}
+          tipo="parcela"
+          acao="apagar"
+          ancora={`parcela ${parcelaParaApagar.installment_number}`}
+          totalDeParcelas={parcelaParaApagar.installment_total}
+          salvando={apagandoParcela}
+          aoConfirmar={(escolhido) =>
+            apagarParcela(parcelaParaApagar, escolhido)
+          }
+        />
+      )}
     </div>
   );
 }

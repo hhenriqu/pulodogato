@@ -123,6 +123,23 @@ export interface FinancialTransaction {
   notes?: string;
   is_shared: boolean;
   installment_parent_id?: string;
+  /**
+   * "parcela N de M" (HMO-211, migration 035).
+   *
+   * NULL nas duas em toda compra avulsa, e NOT NULL nas duas JUNTAS por CHECK
+   * (`financial_transactions_installment_coerente`) -- entao nao existe o
+   * estado "e parcela mas nao se sabe de quantas", e um `installment_number`
+   * presente e prova suficiente de que a linha pertence a uma serie.
+   *
+   * AS DUAS FALTAVAM AQUI ate a HMO-228, com a 035 ja em producao: as colunas
+   * vinham no `select("*")` da lista de Lancamentos e nao existiam para o
+   * `tsc`. Pelo mesmo motivo escrito em `subcategory_id` acima, isso nao da
+   * erro em lugar nenhum -- o campo desaparece de todo `select` tipado e de
+   * toda leitura. Foi o compilador reprovando o botao de apagar parcela que
+   * mostrou a falta.
+   */
+  installment_number?: number | null;
+  installment_total?: number | null;
   group_id?: string;
   /**
    * A outra perna de uma transferencia entre contas proprias (migration 015).
