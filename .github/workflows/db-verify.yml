@@ -12,9 +12,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/parte-do-grupo-realizada.ts', 'lib/periodo-do-painel.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/parte-do-grupo-realizada.ts', 'lib/periodo-do-painel.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'types/financial.ts', '.github/workflows/db-verify.yml']
   workflow_dispatch:
 
 jobs:
@@ -922,6 +922,58 @@ jobs:
       - name: A chave Pix e do grupo, nao de toda conta autenticada do app
         run: $PSQL -f database/tests/hmo201_chave_pix_test.sql
 
+      - name: 033_minha_parte_no_realizado
+        run: $PSQL -f database/migrations/033_minha_parte_no_realizado.sql
+
+      # Re-executavel: so tem CREATE OR REPLACE VIEW, COMMENT, ALTER VIEW,
+      # REVOKE e GRANT.
+      - name: 033 e idempotente
+        run: $PSQL -f database/migrations/033_minha_parte_no_realizado.sql
+
+      # HMO-202. A quarta parte da HMO-201: lancamento de grupo tem que entrar no
+      # REALIZADO das financas pessoais. O previsto ja contava so a minha parte
+      # desde a HMO-177; o realizado nao contava NADA -- medido 0,00 tanto para
+      # quem pagou quanto para quem devia a parte.
+      #
+      # Este teste existe porque quase todo jeito errado de escrever a 033
+      # devolve um numero plausivel e silencioso, e dois deles ja foram medidos:
+      # 400 (o valor cheio, que e o que acontece ao simplesmente remover o filtro
+      # `group_id IS NULL`) e 0 (o buraco original). As duas assercoes centrais
+      # NEGAM esses dois numeros, alem de exigirem 200 nos dois lados.
+      #
+      # As assercoes que so o Postgres pega:
+      #
+      #   - a SOMA entre os membros ser a despesa inteira. E ela que distingue
+      #     "minha parte" de qualquer divisao que acerte UM lado: valor cheio
+      #     para o pagador e zero para o outro tambem somaria 400, e por isso a
+      #     soma vem acompanhada das duas pernas;
+      #   - o CONTROLE POSITIVO da RLS: sem filtro de `user_id` a consulta
+      #     devolve 400, porque as policies de grupo tem `OR is_group_member(...)`
+      #     e a parte do OUTRO membro entra. E o que prova que o `eq("user_id")`
+      #     das duas rotas e load-bearing, e nao higiene;
+      #   - a parte vir LIDA e nao recalculada: R$ 300 por 3 da 100,00 pelo
+      #     metodo do maior resto (o do banco, 007) e 99,99 pela porcentagem
+      #     arredondada. O teste exige 100,00 e NEGA 99,99 -- e o bug de centavo
+      #     que o 007 foi a producao consertar, e recalcular na view o traria de
+      #     volta so no realizado, fazendo-o discordar do saldo do grupo;
+      #   - parte pendurada em RECEITA nao vira despesa. O trigger so rateia
+      #     `amount < 0`, mas nada no schema impede a linha, e o teste da 024
+      #     insere uma a mao;
+      #   - quem SAIU do grupo mantem a parte das despesas antigas. Um filtro por
+      #     `status = 'active'` reescreveria o passado da pessoa no dia em que ela
+      #     sai, e um mes fechado mudaria de valor;
+      #   - fluxo = soma das categorias, nas duas moedas. Pizza que nao fecha em
+      #     100% e o sintoma de ter acrescentado a parte de grupo em so uma das
+      #     duas views.
+      #
+      # Medido: 24 mutantes na 033, 24 mortos, mais o controle do preflight
+      # (npm run mutantes:minha-parte-no-realizado). NAO ha mutante de `anon`
+      # na lista de proposito: eles sao equivalentes -- `security_invoker` faz
+      # anon bater nas tabelas-base que o 002 ja revogou, entao abrir so a 033
+      # nao abre nada. Esta anotado no proprio harness.
+      - name: Lancamento de grupo entra no realizado pessoal, pela MINHA parte
+        run: $PSQL -f database/tests/033_minha_parte_no_realizado_test.sql
+
       # As duas suites que guardam as views que a 026 REESCREVEU rodam la atras na
       # cadeia (steps do 006 e do 007), ou seja: contra a definicao ANTIGA de
       # `group_member_balances` e `budget_consumption`. Elas nunca viram a versao
@@ -1141,6 +1193,23 @@ jobs:
       # produzem linha por linha o mesmo resultado nos dois caminhos.
       - name: Gasto por categoria num periodo qualquer bate com a view
         run: npm run test:categorias-do-periodo
+
+      # HMO-202, a metade em JavaScript. No modo MES a parte de grupo entra pelas
+      # views da 033 e nada deste teste e exercitado; no modo INTERVALO ("de
+      # 15/09 a 20/10") nenhum rollup mensal responde e a soma e feita aqui.
+      #
+      # O defeito que ele prende nao e um numero errado -- e um numero AUSENTE.
+      # `agregarTransacoes` e `linhasDeCategoria` descartam em silencio tudo que
+      # nao e 'income'/'expense' (o ramo de `transfer`, que fica fora da conta E
+      # da contagem). Entao perder `transaction_type` na conversao faz a parte de
+      # grupo valer zero de novo, SO no modo intervalo, com o modo mes
+      # continuando certo: dois caminhos da mesma rota discordando, sem erro.
+      #
+      # O teste tambem fixa que as duas rotas pedem o MESMO select da view --
+      # cash-flow nao usa `category_id` e categories usa, e a tentacao e cada uma
+      # pedir o seu.
+      - name: A parte de grupo atravessa os agregadores como despesa (modo intervalo)
+        run: npm run test:parte-realizada
 
       # Orcamento de grupo (HMO-138). O budget_invoice_test logo acima ja prova
       # em SQL que budget_consumption soma o gasto do grupo TODO no teto de

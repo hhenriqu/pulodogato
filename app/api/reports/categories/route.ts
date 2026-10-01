@@ -35,6 +35,12 @@ import {
   ultimoDiaDoMes,
 } from "@/lib/periodo-do-painel";
 import { linhasDeCategoria } from "@/lib/categorias-do-periodo";
+import {
+  COLUNAS_DA_PARTE_DE_GRUPO,
+  partesComoTransacoes,
+  viewDaParteAusente,
+  type ParteDeGrupoCrua,
+} from "@/lib/parte-do-grupo-realizada";
 
 /** Quantas linhas por ida ao banco, na agregacao por intervalo. */
 const TAMANHO_DA_PAGINA = 1000;
@@ -131,6 +137,52 @@ export async function GET(request: NextRequest) {
         if (lote.length < TAMANHO_DA_PAGINA) break;
       }
 
+      // A MINHA PARTE DAS DESPESAS DE GRUPO, no mesmo intervalo (HMO-202).
+      //
+      // Le a MESMA view que o modo intervalo de /api/reports/cash-flow le, pelo
+      // mesmo recorte de datas: e isso que mantem o total do fluxo igual a soma
+      // das categorias quando o periodo corta meses pela metade. Duas consultas
+      // diferentes aqui seriam duas definicoes de "minha parte", e a primeira
+      // divergencia apareceria como uma pizza que nao fecha em 100%.
+      if (!groupId) {
+        const paginaDeParte = (inicio: number) =>
+          supabase
+            .from("group_share_entries")
+            .select(COLUNAS_DA_PARTE_DE_GRUPO)
+            .eq("user_id", user.id)
+            .gte("transaction_date", periodo.de)
+            .lte("transaction_date", periodo.ate)
+            .order("id", { ascending: true })
+            .range(inicio, inicio + TAMANHO_DA_PAGINA - 1);
+
+        const partes: ParteDeGrupoCrua[] = [];
+
+        for (let inicio = 0; ; inicio += TAMANHO_DA_PAGINA) {
+          const { data, error } = await paginaDeParte(inicio);
+
+          // A janela entre o deploy e a colagem da 033: segue sem a parte de
+          // grupo, que e o comportamento antigo. Ver viewDaParteAusente.
+          if (error && viewDaParteAusente(error)) {
+            partes.length = 0;
+            break;
+          }
+
+          if (error) {
+            console.error("Erro na parte de grupo do intervalo:", error);
+            return NextResponse.json(
+              { error: "Não foi possível montar o relatório" },
+              { status: 500 }
+            );
+          }
+
+          const lote = data ?? [];
+          for (const linha of lote) partes.push(linha);
+          if (lote.length < TAMANHO_DA_PAGINA) break;
+        }
+
+        for (const linha of partesComoTransacoes(partes)) transacoes.push(linha);
+      }
+
       const { data: perfilDoIntervalo } = await perfilPromessa;
       const moedaDoIntervalo = lerPreferenciaDeMoeda(
         perfilDoIntervalo?.preferences
@@ -166,23 +218,55 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    let query = supabase
-      .from("category_monthly_totals")
-      .select("month, category_id, expense, income, transaction_count, currency")
-      .gte("month", janela.inicio)
-      .lte("month", janela.fim);
+    // DUAS VIEWS (HMO-202), pela mesma razao de /api/reports/cash-flow.
+    //
+    // No relatorio de GRUPO nao se filtra por user_id: o ponto e ver o gasto da
+    // viagem inteira, de todos os membros. A RLS ja garante que so os membros
+    // enxergam essas linhas.
+    //
+    // No PESSOAL a view e `personal_category_monthly_totals` (033), que soma o
+    // que e so do usuario com a PARTE dele das despesas de grupo -- e ai o
+    // `eq("user_id")` passa a ser obrigatorio e nao higiene: as policies de
+    // grupo tem `OR is_group_member(...)` e sem ele viria a parte dos outros
+    // membros tambem.
+    //
+    // Tem que ser a mesma fonte que o cash-flow usa, senao o total do fluxo e a
+    // soma das categorias deixam de bater e a pizza do painel nao fecha em 100%.
+    const query = groupId
+      ? supabase
+          .from("category_monthly_totals")
+          .select("month, category_id, expense, income, transaction_count, currency")
+          .gte("month", janela.inicio)
+          .lte("month", janela.fim)
+          .eq("group_id", groupId)
+      : supabase
+          .from("personal_category_monthly_totals")
+          .select("month, category_id, expense, income, transaction_count, currency")
+          .gte("month", janela.inicio)
+          .lte("month", janela.fim)
+          .eq("user_id", user.id);
 
-    // No relatorio de GRUPO nao se filtra por user_id: o ponto e ver o gasto
-    // da viagem inteira, de todos os membros. A RLS ja garante que so os
-    // membros enxergam essas linhas.
-    query = groupId
-      ? query.eq("group_id", groupId)
-      : query.eq("user_id", user.id).is("group_id", null);
-
-    const [{ data, error }, { data: perfil }] = await Promise.all([
+    const [primeiraTentativa, { data: perfil }] = await Promise.all([
       query,
       perfilPromessa,
     ]);
+
+    let { data, error } = primeiraTentativa;
+
+    // A janela entre o deploy e a colagem da 033: cai para a view antiga em vez
+    // de 500. Ver viewDaParteAusente em lib/parte-do-grupo-realizada.ts.
+    if (error && !groupId && viewDaParteAusente(error)) {
+      const antiga = await supabase
+        .from("category_monthly_totals")
+        .select("month, category_id, expense, income, transaction_count, currency")
+        .gte("month", janela.inicio)
+        .lte("month", janela.fim)
+        .eq("user_id", user.id)
+        .is("group_id", null);
+
+      data = antiga.data;
+      error = antiga.error;
+    }
 
     if (error) {
       console.error("Erro no relatório por categoria:", error);

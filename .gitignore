@@ -155,6 +155,15 @@ next-env.d.ts
 /.tmp-campos-da-conta/
 # saida do `npm run test:periodo-painel` (HMO-173)
 /.tmp-periodo-painel/
+# saida do `npm run test:parte-realizada` (HMO-202)
+/.tmp-parte-realizada/
+# saida do `npm run test:categorias-do-periodo` (HMO-201, parte 3 -- ficou de fora)
+/.tmp-categorias-do-periodo/
+# saida do `npm run test:chave-pix` (HMO-201, parte 1 -- ficou de fora)
+/.tmp-chave-pix/
+# saida do `npm run test:puxar-para-atualizar` (HMO-201, parte 2 -- ficou de fora)
+/.tmp-puxar-para-atualizar/
+/.tmp-parte-realizada/
 # saida do `npm run test:recorrencia-edicao` (faltava desde a HMO-170; o .js
 # compilado chegou a ser commitado na main pela HMO-166)
 /.tmp-recorrencia-edicao/

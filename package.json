@@ -61,6 +61,7 @@
     "test:campos-lancamento": "rm -rf .tmp-campos-lancamento && tsc -p scripts/tsconfig.campos-lancamento-test.json && node scripts/resolve-aliases.mjs .tmp-campos-lancamento components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-campos-lancamento lib --espelha-raiz && node --test scripts/test-campos-de-lancamento.mjs",
     "test:recorrencia-edicao": "rm -rf .tmp-recorrencia-edicao && tsc lib/recorrencia-edicao.ts --outDir .tmp-recorrencia-edicao/lib --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-recorrencia-edicao.mjs",
     "test:periodo-painel": "rm -rf .tmp-periodo-painel && tsc -p scripts/tsconfig.periodo-painel-test.json && node scripts/resolve-aliases.mjs .tmp-periodo-painel lib && node --test scripts/test-periodo-painel.mjs",
+    "test:parte-realizada": "rm -rf .tmp-parte-realizada && tsc -p scripts/tsconfig.parte-realizada-test.json && node scripts/resolve-aliases.mjs .tmp-parte-realizada lib && node --test scripts/test-parte-realizada.mjs",
     "test:moeda": "rm -rf .tmp-moeda && tsc -p scripts/tsconfig.moeda-test.json && node scripts/resolve-aliases.mjs .tmp-moeda lib && node --test scripts/test-moeda.mjs",
     "test:grupos": "rm -rf .tmp-grupos && tsc -p scripts/tsconfig.grupos-test.json && node scripts/resolve-aliases.mjs .tmp-grupos lib && node --test scripts/test-grupos.mjs",
     "test:env-preview": "rm -rf .tmp-env-preview && tsc utils/supabase/env.ts --outDir .tmp-env-preview --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-env-preview.mjs",
@@ -80,6 +81,7 @@
     "test:planos-em-breve": "rm -rf .tmp-planos-em-breve && tsc -p scripts/tsconfig.planos-em-breve-test.json && node scripts/resolve-aliases.mjs .tmp-planos-em-breve components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-planos-em-breve lib --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-planos-em-breve types --espelha-raiz && node scripts/resolve-next-subpaths.mjs .tmp-planos-em-breve && node --test scripts/test-planos-em-breve.mjs",
     "test:chave-pix": "rm -rf .tmp-chave-pix && tsc lib/chave-pix.ts --outDir .tmp-chave-pix --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-chave-pix.mjs",
     "mutantes:chave-pix": "node scripts/mutantes-chave-pix.mjs",
+    "mutantes:minha-parte-no-realizado": "node scripts/mutantes-minha-parte-no-realizado.mjs",
     "test:puxar-para-atualizar": "rm -rf .tmp-puxar-para-atualizar && tsc lib/puxar-para-atualizar.ts --outDir .tmp-puxar-para-atualizar --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-puxar-para-atualizar.mjs",
     "test:categorias-do-periodo": "rm -rf .tmp-categorias-do-periodo && tsc lib/categorias-do-periodo.ts --outDir .tmp-categorias-do-periodo --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-categorias-do-periodo.mjs"
   },
