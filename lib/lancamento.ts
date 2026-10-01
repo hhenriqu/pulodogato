@@ -436,10 +436,28 @@ export interface ValoresDeLancamento {
    * da pergunta sobre ele.
    */
   baseDoValorParcelado: BaseDoValorParcelado;
-  /** O N de "parcela N de M". 1 e a compra que esta comecando agora. */
-  parcelaAtual: number;
-  /** O M de "parcela N de M". */
-  totalDeParcelas: number;
+  /**
+   * O N de "parcela N de M", COMO TEXTO. "1" e a compra que esta comecando
+   * agora.
+   *
+   * TEXTO E NAO NUMERO, E ISSO E O CONSERTO DA HMO-226
+   * ---------------------------------------------------
+   * Enquanto estes dois campos eram `number`, o input controlado por eles nao
+   * tinha estado vazio: apagar o conteudo de um `<input type="number">` entrega
+   * `""`, `parseInt("")` e `NaN`, e o `NaN || 1` do `onChange` repunha o "1" no
+   * mesmo quadro. O Backspace nao funcionava, e quem queria 6 digitava ao lado
+   * do "1" e produzia 16.
+   *
+   * NAO ha um rascunho de texto em paralelo ao numero: dois campos para a mesma
+   * quantidade divergem no primeiro caminho que esqueca de atualizar os dois, e
+   * a divergencia aparece como valor GRAVADO diferente do valor na tela. Com um
+   * campo so, de texto, a conversao para numero acontece numa borda unica --
+   * `parcelaDigitada`, logo abaixo -- e o `tsc` aponta todo ponto que le o
+   * campo.
+   */
+  parcelaAtual: string;
+  /** O M de "parcela N de M", como texto. Ver `parcelaAtual`. */
+  totalDeParcelas: string;
   compartilhado: boolean;
   grupoId: string;
   rateios: { participanteId: string; percentual: number }[];
@@ -491,15 +509,51 @@ export function valoresIniciais(): ValoresDeLancamento {
     // mostra a conta feita (parcela E total) antes de salvar -- ver
     // `resumoDaSerie`.
     baseDoValorParcelado: "parcela",
-    parcelaAtual: 1,
-    // 1 e nao 2: um formulario novo nao esta parcelando, e `validarLancamento` so
-    // cobra `>= 2` quando a checkbox esta marcada. Abrir em 2 faria o campo
-    // sugerir uma resposta para uma pergunta que nao foi feita.
-    totalDeParcelas: 1,
+    parcelaAtual: "1",
+    // "1" e nao "2": um formulario novo nao esta parcelando, e
+    // `validarLancamento` so cobra `>= 2` quando a checkbox esta marcada. Abrir
+    // em 2 faria o campo sugerir uma resposta para uma pergunta que nao foi
+    // feita.
+    //
+    // E "1" e nao "": o padrao TEM de ser visivel. O campo vazio e um estado
+    // que agora existe (ver `parcelaAtual` no tipo), mas ele e o estado de quem
+    // esta no meio de digitar, nao o estado de quem abriu a tela.
+    totalDeParcelas: "1",
     compartilhado: false,
     grupoId: "",
     rateios: [],
   };
+}
+
+/**
+ * A BORDA UNICA entre o texto dos campos de parcela e os numeros N e M.
+ *
+ * Devolve `NaN` para tudo que nao seja um inteiro nao-negativo escrito por
+ * extenso -- e `NaN` e deliberado, porque `Number.isInteger(NaN)` e `false` e
+ * toda guarda que ja existe (aqui, em `serieDeParcelas` e na rota) o recusa sem
+ * precisar de um caso novo.
+ *
+ * POR QUE O REGEX, E NAO `parseInt` NEM `Number`
+ * -----------------------------------------------
+ * As duas conversoes prontas inventam um numero onde nao ha:
+ *
+ *   parseInt("")    -> NaN   (ok)   mas  parseInt("6x")  -> 6
+ *   parseInt("1.5") -> 1            e    Number("")      -> 0
+ *   Number(" ")     -> 0            e    Number("1e3")   -> 1000
+ *
+ * O `0` de `Number("")` e o mais perigoso: ele passa por `Number.isInteger`, e
+ * o campo vazio chegaria ao banco como uma quantidade de parcelas. O `6` de
+ * `parseInt("6x")` e o mesmo problema de outra forma -- a tela mostra uma coisa
+ * e a borda le outra.
+ *
+ * `|| 1` aqui seria o bug da HMO-226 de volta, so que escondido um nivel mais
+ * fundo: cair em 1 e o que faz uma "compra parcelada em 1 vez" ser gravada sem
+ * ninguem ter pedido.
+ */
+export function parcelaDigitada(texto: string): number {
+  const limpo = texto.trim();
+  if (!/^\d+$/.test(limpo)) return Number.NaN;
+  return Number(limpo);
 }
 
 export interface ContextoDaValidacao {
@@ -669,13 +723,33 @@ export function validarLancamento(
       return { ok: false, mensagem: "Valor deve ser maior que zero." };
     }
 
-    if (
-      !Number.isInteger(valores.totalDeParcelas) ||
-      valores.totalDeParcelas < 2
-    ) {
+    // A conversao do texto para numero acontece AQUI e em nenhum outro ponto
+    // desta funcao -- ver `parcelaDigitada`.
+    const totalDeParcelas = parcelaDigitada(valores.totalDeParcelas);
+    const parcelaAtual = parcelaDigitada(valores.parcelaAtual);
+
+    // O CAMPO VAZIO TEM FRASE PROPRIA, E NAO UM FALLBACK PARA 1 (HMO-226)
+    //
+    // Desde que o campo guarda texto, "" e um estado alcancavel: apagar o "1" e
+    // apertar Enter envia o formulario SEM passar pelo `onBlur` que repoe o
+    // padrao (a submissao implicita do HTML nao desfoca o campo antes). Era
+    // tentador deixar o `|| 1` de antes cobrir este caso em silencio -- e e
+    // exatamente isso que tornava o bug invisivel: o vazio virava 1, o 1 era
+    // recusado por "deve ser 2 ou mais", e a frase mandava a pessoa consertar um
+    // numero que ela nao digitou.
+    //
+    // Separado do `< 2` logo abaixo porque as duas situacoes pedem acoes
+    // diferentes: aqui falta responder, lá a resposta esta errada.
+    if (!Number.isInteger(totalDeParcelas)) {
+      return {
+        ok: false,
+        mensagem: "Informe em quantas parcelas a compra foi dividida.",
+      };
+    }
+    if (totalDeParcelas < 2) {
       return { ok: false, mensagem: "O total de parcelas deve ser 2 ou mais." };
     }
-    if (valores.totalDeParcelas > MAX_PARCELAS) {
+    if (totalDeParcelas > MAX_PARCELAS) {
       return {
         ok: false,
         mensagem: `No máximo ${MAX_PARCELAS} parcelas.`,
@@ -689,14 +763,19 @@ export function validarLancamento(
     // recusa, `serieDeParcelas` devolve `null` e o que o usuario veria e a
     // mensagem generica de valor -- mandando ele arrumar o campo certo pelo
     // motivo errado.
-    if (
-      !Number.isInteger(valores.parcelaAtual) ||
-      valores.parcelaAtual < 1 ||
-      valores.parcelaAtual > valores.totalDeParcelas
-    ) {
+    //
+    // O vazio tambem tem frase propria aqui, pelo mesmo motivo do M: "entre 1 e
+    // 10" nao e um pedido acionavel para quem deixou o campo em branco.
+    if (!Number.isInteger(parcelaAtual)) {
       return {
         ok: false,
-        mensagem: `A parcela atual tem que estar entre 1 e ${valores.totalDeParcelas}.`,
+        mensagem: "Informe qual parcela está sendo lançada.",
+      };
+    }
+    if (parcelaAtual < 1 || parcelaAtual > totalDeParcelas) {
+      return {
+        ok: false,
+        mensagem: `A parcela atual tem que estar entre 1 e ${totalDeParcelas}.`,
       };
     }
 
@@ -724,8 +803,8 @@ export function validarLancamento(
       !serieDeParcelas({
         valor: valores.valor,
         base: valores.baseDoValorParcelado,
-        parcelaAtual: valores.parcelaAtual,
-        totalDeParcelas: valores.totalDeParcelas,
+        parcelaAtual,
+        totalDeParcelas,
         vencimentoDaParcelaAtual: valores.data,
       })
     ) {

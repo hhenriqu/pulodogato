@@ -202,7 +202,7 @@ test("editar nunca oferece despesa fixa nem parcelamento", () => {
 test("parcelar um lancamento existente e recusado com a mensagem certa", () => {
   const r = validarLancamento(
     "expense",
-    preenchido({ parcelado: true, valorDaParcela: "50", totalDeParcelas: 3 }),
+    preenchido({ parcelado: true, valorDaParcela: "50", totalDeParcelas: "3" }),
     { categoria: CATEGORIA_DESPESA, editando: true }
   );
   assert.equal(r.ok, false);
@@ -277,7 +277,7 @@ test("parcelamento exige valor positivo e mais de uma parcela", () => {
 
   const semValor = validarLancamento(
     "expense",
-    noCartao({ parcelado: true, valor: "0", totalDeParcelas: 3 }),
+    noCartao({ parcelado: true, valor: "0", totalDeParcelas: "3" }),
     base
   );
   assert.equal(semValor.ok, false);
@@ -285,7 +285,7 @@ test("parcelamento exige valor positivo e mais de uma parcela", () => {
 
   const umaParcela = validarLancamento(
     "expense",
-    noCartao({ parcelado: true, totalDeParcelas: 1 }),
+    noCartao({ parcelado: true, totalDeParcelas: "1" }),
     base
   );
   assert.equal(umaParcela.ok, false);
@@ -294,7 +294,7 @@ test("parcelamento exige valor positivo e mais de uma parcela", () => {
   assert.equal(
     validarLancamento(
       "expense",
-      noCartao({ parcelado: true, totalDeParcelas: 3 }),
+      noCartao({ parcelado: true, totalDeParcelas: "3" }),
       base
     ).ok,
     true
@@ -310,7 +310,7 @@ test("receita com parcelado ligado no estado nao cai nas regras de parcela", () 
     preenchido({
       categoriaId: "c2",
       parcelado: true,
-      totalDeParcelas: 1,
+      totalDeParcelas: "1",
     }),
     { categoria: CATEGORIA_RECEITA, editando: false }
   );
@@ -329,8 +329,8 @@ test("despesa PONTUAL com parcelado herdado no estado nao cai nas regras de parc
     preenchido({
       natureza: "one_off",
       parcelado: true,
-      totalDeParcelas: 1,
-      parcelaAtual: 1,
+      totalDeParcelas: "1",
+      parcelaAtual: "1",
     }),
     { categoria: CATEGORIA_DESPESA, editando: false }
   );
@@ -339,7 +339,7 @@ test("despesa PONTUAL com parcelado herdado no estado nao cai nas regras de parc
   assert.equal(
     destinoDoLancamento(
       "expense",
-      preenchido({ natureza: "one_off", parcelado: true, totalDeParcelas: 3 }),
+      preenchido({ natureza: "one_off", parcelado: true, totalDeParcelas: "3" }),
       false
     ),
     "transacao"
@@ -659,7 +659,7 @@ test("parcelado ganha da previsao, e no cartao nao ha previsao para perder", () 
     contaId: "cartao-1",
     confirmado: false,
     parcelado: true,
-    totalDeParcelas: 3,
+    totalDeParcelas: "3",
   });
 
   assert.equal(
@@ -968,7 +968,7 @@ test("NENHUMA entrada manda um gasto no cartao para a agenda", () => {
       contaId: "cartao-1",
       confirmado: c.confirmado,
       parcelado: c.parcelado,
-      totalDeParcelas: 3,
+      totalDeParcelas: "3",
       valorDaParcela: "50",
       dataPrevista: c.dataPrevista,
     });
@@ -1014,7 +1014,7 @@ test("parcelado no cartao e aceito, e sem mensagem sobre um campo invisivel", ()
     contaId: "cartao-1",
     confirmado: false,
     parcelado: true,
-    totalDeParcelas: 3,
+    totalDeParcelas: "3",
   });
 
   const v = validarLancamento("expense", valores, {

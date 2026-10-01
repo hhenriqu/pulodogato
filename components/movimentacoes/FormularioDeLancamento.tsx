@@ -61,6 +61,7 @@ import {
   contaPrevista,
   datasDaTransacao,
   destinoDoLancamento,
+  parcelaDigitada,
   regraDeRecorrencia,
   valoresIniciais,
   validarLancamento,
@@ -650,8 +651,13 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
         description: valores.descricao,
         valor: valores.valor,
         base: valores.baseDoValorParcelado,
-        parcela_atual: valores.parcelaAtual,
-        total_parcelas: valores.totalDeParcelas,
+        // NUMERO, e nao o texto do campo: a rota declara os dois como `number`
+        // e faz `Number(...)` neles. Mandar `""` daqui chegaria la como
+        // `Number("")`, que e 0 -- um inteiro que passa por `Number.isInteger` e
+        // so e recusado tres guardas depois, com a frase generica. A conversao
+        // sai da mesma borda que `validarLancamento` usa.
+        parcela_atual: parcelaDigitada(valores.parcelaAtual),
+        total_parcelas: parcelaDigitada(valores.totalDeParcelas),
         // A data da COMPRA, que e a que `card_invoice_month()` usa para dizer em
         // que fatura a parcela cai. Nao ha campo de data proprio no bloco de
         // parcelamento: ver o comentario em `validarLancamento`.

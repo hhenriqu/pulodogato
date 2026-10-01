@@ -49,6 +49,7 @@ import {
   descricaoDaParcela,
   rotuloDaParcela,
   resumoDaSerie,
+  parcelaDigitada,
   validarLancamento,
   valoresIniciais,
   destinoDoLancamento,
@@ -532,7 +533,7 @@ test("o resumo formata o real sem depender do locale do Node", () => {
 test("o Salvar nomeia o campo errado quando N e M estao invertidos", () => {
   const r = validarLancamento(
     "expense",
-    noCartao({ parcelaAtual: 12, totalDeParcelas: 10 }),
+    noCartao({ parcelaAtual: "12", totalDeParcelas: "10" }),
     { categoria: CATEGORIA_DESPESA, editando: false }
   );
   assert.equal(r.ok, false);
@@ -549,7 +550,7 @@ test("o Salvar recusa serie sem data, pela recusa generica de data", () => {
   // numa tela sem parcelamento.
   const r = validarLancamento(
     "expense",
-    noCartao({ data: "", totalDeParcelas: 3 }),
+    noCartao({ data: "", totalDeParcelas: "3" }),
     { categoria: CATEGORIA_DESPESA, editando: false }
   );
   assert.equal(r.ok, false);
@@ -557,7 +558,7 @@ test("o Salvar recusa serie sem data, pela recusa generica de data", () => {
 });
 
 test("uma serie valida vai para o destino 'parcelas'", () => {
-  const valores = noCartao({ parcelaAtual: 3, totalDeParcelas: 10 });
+  const valores = noCartao({ parcelaAtual: "3", totalDeParcelas: "10" });
   assert.equal(
     validarLancamento("expense", valores, {
       categoria: CATEGORIA_DESPESA,
@@ -569,7 +570,7 @@ test("uma serie valida vai para o destino 'parcelas'", () => {
 });
 
 test("o limite de 60 parcelas e cobrado com a frase, nao com o null", () => {
-  const r = validarLancamento("expense", noCartao({ totalDeParcelas: 61 }), {
+  const r = validarLancamento("expense", noCartao({ totalDeParcelas: "61" }), {
     categoria: CATEGORIA_DESPESA,
     editando: false,
   });
@@ -577,12 +578,69 @@ test("o limite de 60 parcelas e cobrado com a frase, nao com o null", () => {
   assert.match(r.mensagem, /60 parcelas/);
 });
 
+// ---------------------------------------------------------------------------
+// O CAMPO VAZIO TEM FRASE PROPRIA (HMO-226)
+// ---------------------------------------------------------------------------
+// O fallback `|| 1` que a issue removeu nao so impedia o Backspace: ele
+// TRADUZIA o vazio para 1, e a pessoa recebia "o total de parcelas deve ser 2 ou
+// mais" sobre um 1 que ela nao digitou. E a mentira que estes testes impedem de
+// voltar -- e repor o fallback os deixa vermelhos pela MENSAGEM, nao pelo `ok`.
+
+test("o total de parcelas em branco e recusado com frase propria, nao com '2 ou mais'", () => {
+  const r = validarLancamento("expense", noCartao({ totalDeParcelas: "" }), {
+    categoria: CATEGORIA_DESPESA,
+    editando: false,
+  });
+  assert.equal(r.ok, false);
+  assert.match(r.mensagem, /informe em quantas parcelas/i);
+  assert.doesNotMatch(
+    r.mensagem,
+    /2 ou mais/i,
+    "o campo vazio voltou a ser tratado como 1"
+  );
+});
+
+test("a parcela atual em branco e recusada com frase propria, nao com 'entre 1 e M'", () => {
+  const r = validarLancamento(
+    "expense",
+    noCartao({ parcelaAtual: "", totalDeParcelas: "10" }),
+    { categoria: CATEGORIA_DESPESA, editando: false }
+  );
+  assert.equal(r.ok, false);
+  assert.match(r.mensagem, /informe qual parcela/i);
+  assert.doesNotMatch(
+    r.mensagem,
+    /entre 1 e/i,
+    "o campo vazio voltou a ser tratado como um numero fora do intervalo"
+  );
+});
+
+test("parcelaDigitada nao inventa numero onde nao ha", () => {
+  // A BORDA UNICA entre o texto do campo e o N/M. Cada caso aqui e uma conversao
+  // pronta que ERRA: `Number("")` e `Number(" ")` valem 0 -- um inteiro que
+  // passaria por `Number.isInteger` e chegaria ao banco como uma quantidade de
+  // parcelas --, e `parseInt` le o prefixo e descarta o resto ("6x" -> 6).
+  for (const texto of ["", " ", "6x", "1.5", "1e3", "-2", "abc", "."]) {
+    assert.equal(
+      Number.isNaN(parcelaDigitada(texto)),
+      true,
+      `parcelaDigitada(${JSON.stringify(texto)}) devolveu um numero`
+    );
+  }
+  assert.equal(parcelaDigitada("6"), 6);
+  assert.equal(parcelaDigitada(" 10 "), 10);
+  // "06" vale 6: zero a esquerda e digitacao, nao outra quantidade.
+  assert.equal(parcelaDigitada("06"), 6);
+});
+
 test("valoresIniciais abre sem parcelamento e com a base de parcela", () => {
   const v = valoresIniciais();
   assert.equal(v.parcelado, false);
   assert.equal(v.baseDoValorParcelado, "parcela");
-  assert.equal(v.parcelaAtual, 1);
-  assert.equal(v.totalDeParcelas, 1);
+  // TEXTO, e nao numero (HMO-226): e o que permite o campo ficar vazio
+  // enquanto a pessoa digita. Ver `parcelaAtual` em lib/lancamento.ts.
+  assert.equal(v.parcelaAtual, "1");
+  assert.equal(v.totalDeParcelas, "1");
   // O campo de data proprio do bloco antigo ("Primeira Parcela") NAO existe
   // mais: a data e a da compra, que ja esta na tela desde a HMO-209.
   assert.equal("primeiroVencimento" in v, false);

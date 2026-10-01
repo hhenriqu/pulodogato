@@ -97,7 +97,8 @@
     "test:seletor-de-categoria": "rm -rf .tmp-seletor-de-categoria && tsc -p scripts/tsconfig.seletor-de-categoria-test.json && node scripts/resolve-aliases.mjs .tmp-seletor-de-categoria components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-seletor-de-categoria lib --espelha-raiz && node --test scripts/test-seletor-de-categoria.mjs",
     "mutantes:categorias": "bash scripts/mutantes-categorias.sh",
     "test:parcelamento": "rm -rf .tmp-parcelamento && tsc lib/lancamento.ts --outDir .tmp-parcelamento/lib --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-parcelamento.mjs",
-    "mutantes:parcelamento": "node scripts/mutantes-parcelamento.mjs"
+    "mutantes:parcelamento": "node scripts/mutantes-parcelamento.mjs",
+    "mutantes:campo-de-parcelas": "node scripts/mutantes-campo-de-parcelas.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
