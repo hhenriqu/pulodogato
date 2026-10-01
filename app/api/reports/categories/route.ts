@@ -38,6 +38,7 @@ import { linhasDeCategoria } from "@/lib/categorias-do-periodo";
 import {
   COLUNAS_DA_PARTE_DE_GRUPO,
   partesComoTransacoes,
+  viewDaParteAusente,
   type ParteDeGrupoCrua,
 } from "@/lib/parte-do-grupo-realizada";
 
@@ -159,6 +160,13 @@ export async function GET(request: NextRequest) {
         for (let inicio = 0; ; inicio += TAMANHO_DA_PAGINA) {
           const { data, error } = await paginaDeParte(inicio);
 
+          // A janela entre o deploy e a colagem da 033: segue sem a parte de
+          // grupo, que e o comportamento antigo. Ver viewDaParteAusente.
+          if (error && viewDaParteAusente(error)) {
+            partes.length = 0;
+            break;
+          }
+
           if (error) {
             console.error("Erro na parte de grupo do intervalo:", error);
             return NextResponse.json(
@@ -238,10 +246,27 @@ export async function GET(request: NextRequest) {
           .lte("month", janela.fim)
           .eq("user_id", user.id);
 
-    const [{ data, error }, { data: perfil }] = await Promise.all([
+    const [primeiraTentativa, { data: perfil }] = await Promise.all([
       query,
       perfilPromessa,
     ]);
+
+    let { data, error } = primeiraTentativa;
+
+    // A janela entre o deploy e a colagem da 033: cai para a view antiga em vez
+    // de 500. Ver viewDaParteAusente em lib/parte-do-grupo-realizada.ts.
+    if (error && !groupId && viewDaParteAusente(error)) {
+      const antiga = await supabase
+        .from("category_monthly_totals")
+        .select("month, category_id, expense, income, transaction_count, currency")
+        .gte("month", janela.inicio)
+        .lte("month", janela.fim)
+        .eq("user_id", user.id)
+        .is("group_id", null);
+
+      data = antiga.data;
+      error = antiga.error;
+    }
 
     if (error) {
       console.error("Erro no relatório por categoria:", error);

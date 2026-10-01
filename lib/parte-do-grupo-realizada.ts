@@ -93,3 +93,41 @@ export function partesComoTransacoes(
     category_id: parte.category_id ?? null,
   }));
 }
+
+/**
+ * A 033 ainda nao foi aplicada neste banco?
+ *
+ * POR QUE ISTO PRECISA EXISTIR
+ * ----------------------------
+ * Producao nao tem runner de migration: o deploy publica CODIGO, nao schema.
+ * Entre o merge e o momento em que alguem cola a 033 no SQL Editor do Supabase
+ * existe uma janela em que o app novo conversa com o banco velho -- e nessa
+ * janela as quatro views nao existem.
+ *
+ * Aqui isso e pior do que foi na 032 (`tabelaDePixAusente`, lib/chave-pix.ts).
+ * La a janela estragava a tela de Perfil; aqui ela estragaria o BLOCO DE
+ * REALIZADO DO PAINEL PRINCIPAL -- `/api/reports/cash-flow` devolveria 500 e o
+ * dashboard de todo mundo abriria sem os numeros do mes. Publicar uma correcao
+ * de dinheiro que apaga o painel ate alguem colar um arquivo e pior do que o
+ * defeito que ela conserta.
+ *
+ * Entao, reconhecendo este estado, as rotas CAEM PARA O COMPORTAMENTO ANTIGO:
+ * `monthly_cash_flow` / `category_monthly_totals` com `group_id IS NULL`. O
+ * numero volta a ser o de antes da 033 -- a parte de grupo faltando, que e o
+ * bug conhecido e o estado em que producao ja esta hoje -- em vez de erro.
+ *
+ * `42P01` e o SQLSTATE do Postgres para relacao inexistente; `PGRST205` e o que
+ * o PostgREST devolve quando a relacao nao esta no schema cache dele. Os dois
+ * aparecem neste caminho e significam a mesma coisa.
+ *
+ * O CONTRAPESO: isto NAO pode engolir erro de verdade. Se a funcao respondesse
+ * `true` para qualquer falha, uma quebra de RLS ou de rede viraria "cai para a
+ * view antiga" em silencio, e o painel mostraria numeros velhos para sempre sem
+ * ninguem saber -- trocaria um 500 honesto por uma mentira silenciosa. So os
+ * dois codigos, e nada mais.
+ */
+export function viewDaParteAusente(erro: unknown): boolean {
+  if (!erro || typeof erro !== "object") return false;
+  const codigo = (erro as { code?: unknown }).code;
+  return codigo === "42P01" || codigo === "PGRST205";
+}

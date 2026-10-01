@@ -20,9 +20,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-const { partesComoTransacoes, COLUNAS_DA_PARTE_DE_GRUPO } = await import(
-  "../.tmp-parte-realizada/parte-do-grupo-realizada.js"
-);
+const {
+  partesComoTransacoes,
+  COLUNAS_DA_PARTE_DE_GRUPO,
+  viewDaParteAusente,
+} = await import("../.tmp-parte-realizada/parte-do-grupo-realizada.js");
 const { agregarTransacoes, agregarTransacoesPorMoeda } = await import(
   "../.tmp-parte-realizada/periodo-do-painel.js"
 );
@@ -121,5 +123,41 @@ test("as duas rotas pedem as MESMAS colunas da view", () => {
       COLUNAS_DA_PARTE_DE_GRUPO.includes(coluna),
       `${coluna} saiu do select compartilhado`
     );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// A janela entre o deploy e a colagem da 033
+// ---------------------------------------------------------------------------
+// Producao nao tem runner de migration. Entre o merge e a colagem da 033 no SQL
+// Editor, as quatro views nao existem -- e as rotas tem que cair para o
+// comportamento ANTIGO em vez de devolver 500, porque o que quebraria e o bloco
+// de realizado do PAINEL PRINCIPAL.
+//
+// O par de assercoes e o que importa: reconhecer os dois codigos NAO vale nada
+// sem o controle de que um erro de verdade continua sendo erro.
+
+test("42P01 e PGRST205 sao reconhecidos como 'a 033 ainda nao foi aplicada'", () => {
+  // SQLSTATE do Postgres para relacao inexistente.
+  assert.equal(viewDaParteAusente({ code: "42P01" }), true);
+  // O que o PostgREST devolve quando a relacao nao esta no schema cache dele.
+  assert.equal(viewDaParteAusente({ code: "PGRST205" }), true);
+});
+
+test("CONTROLE: erro de verdade NAO e confundido com view ausente", () => {
+  // Se esta funcao respondesse `true` para qualquer falha, uma quebra de RLS ou
+  // de rede viraria "cai para a view antiga" em silencio, e o painel mostraria
+  // numeros velhos para sempre sem ninguem saber -- um 500 honesto trocado por
+  // uma mentira silenciosa.
+  assert.equal(viewDaParteAusente({ code: "42501" }), false); // insufficient_privilege
+  assert.equal(viewDaParteAusente({ code: "PGRST116" }), false);
+  assert.equal(viewDaParteAusente({ code: "57014" }), false); // query_canceled
+  assert.equal(viewDaParteAusente({ message: "fetch failed" }), false);
+  assert.equal(viewDaParteAusente(new Error("boom")), false);
+});
+
+test("entrada que nao e objeto nao derruba o reconhecimento", () => {
+  for (const nada of [null, undefined, "42P01", 42, true]) {
+    assert.equal(viewDaParteAusente(nada), false);
   }
 });

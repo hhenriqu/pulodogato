@@ -61,6 +61,7 @@ import { lerPreferenciaDeMoeda, separarSeriePorMoeda } from "@/lib/moeda";
 import {
   COLUNAS_DA_PARTE_DE_GRUPO,
   partesComoTransacoes,
+  viewDaParteAusente,
   type ParteDeGrupoCrua,
 } from "@/lib/parte-do-grupo-realizada";
 
@@ -215,6 +216,14 @@ export async function GET(request: NextRequest) {
         for (let inicio = 0; ; inicio += TAMANHO_DA_PAGINA) {
           const { data, error } = await paginaDeParte(inicio);
 
+          // A janela entre o deploy e a colagem da 033: a view nao existe
+          // ainda. Segue sem a parte de grupo, que e o comportamento antigo --
+          // o relatorio do periodo nao pode morrer por causa disso.
+          if (error && viewDaParteAusente(error)) {
+            partes.length = 0;
+            break;
+          }
+
           if (error) {
             console.error("Erro na parte de grupo do intervalo:", error);
             return NextResponse.json(
@@ -335,10 +344,35 @@ export async function GET(request: NextRequest) {
       .eq("id", user.id)
       .maybeSingle();
 
-    const [{ data, error }, { data: perfil }] = await Promise.all([
+    const [primeiraTentativa, { data: perfil }] = await Promise.all([
       query.order("month", { ascending: true }),
       perfilPromessa,
     ]);
+
+    let { data, error } = primeiraTentativa;
+
+    // A JANELA ENTRE O DEPLOY E A COLAGEM DA 033 (ver viewDaParteAusente)
+    //
+    // Producao nao tem runner de migration. Entre o merge e a colagem da 033 no
+    // SQL Editor, `personal_monthly_cash_flow` nao existe -- e sem isto o bloco
+    // de realizado do painel principal devolveria 500 para todo mundo.
+    //
+    // A queda e para o comportamento ANTIGO, nao para um erro: a parte de grupo
+    // volta a faltar (o bug conhecido, que e o estado em que producao ja esta),
+    // e o painel continua mostrando os numeros do mes.
+    if (error && !groupId && viewDaParteAusente(error)) {
+      const antiga = await supabase
+        .from("monthly_cash_flow")
+        .select("month, income, expense, net, transaction_count, currency")
+        .eq("user_id", user.id)
+        .is("group_id", null)
+        .gte("month", janela.inicio)
+        .lte("month", janela.fim)
+        .order("month", { ascending: true });
+
+      data = antiga.data;
+      error = antiga.error;
+    }
 
     if (error) {
       console.error("Erro no relatório de fluxo de caixa:", error);
