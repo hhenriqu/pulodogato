@@ -999,6 +999,44 @@ jobs:
       - name: A conta prevista e em real, e o banco garante
         run: $PSQL -f database/tests/hmo184_moeda_da_conta_prevista_test.sql
 
+      # HMO-216. Categoria da PESSOA, personalizacao do catalogo e subcategoria.
+      #
+      # ENTRA AQUI, no fim da cadeia, e nao colada no 034: a 035 (HMO-211) esta
+      # sendo escrita em paralelo e vai se inserir entre as duas. Nada na 036
+      # depende da 035 nem o contrario -- as duas sao aditivas sobre o 034.
+      - name: 036_categorias_do_usuario
+        run: $PSQL -f database/migrations/036_categorias_do_usuario.sql
+
+      # Re-executavel: ADD COLUMN IF NOT EXISTS, DO com IF NOT EXISTS para cada
+      # constraint, CREATE UNIQUE INDEX IF NOT EXISTS, DROP POLICY IF EXISTS
+      # antes de cada CREATE POLICY, e os dois seeds por INSERT ... WHERE NOT
+      # EXISTS. Nao ha ON CONFLICT em lugar nenhum da 036 de proposito: as
+      # unicidades dela sao indices PARCIAIS, e indice parcial nao serve de
+      # arbitro de ON CONFLICT.
+      - name: 036 e idempotente
+        run: $PSQL -f database/migrations/036_categorias_do_usuario.sql
+
+      # O que esta suite guarda, em uma linha: a policy que estava em producao
+      # desde o 002 e `USING (is_active = TRUE)`, SEM filtro de usuario -- no
+      # instante em que `transaction_categories` ganha `user_id`, ela publica a
+      # lista de categorias de cada pessoa para o app inteiro, e essa lista
+      # conta onde a pessoa gasta. A 036 aperta a policy; a assercao do estranho
+      # e o que impede que o aperto seja desfeito por "simplificacao".
+      #
+      # O par que importa e "o estranho NAO ve Terapia" x "o estranho VE
+      # Alimentação": so morrem juntos, porque `USING (FALSE)` tambem esconde a
+      # categoria da outra pessoa.
+      #
+      # Medido: 8 mutantes na 036, 8 mortos, mais o controle positivo
+      # (bash scripts/mutantes-categorias.sh). O `insert_larga` sobreviveu na
+      # primeira passada -- com a policy de INSERT da categoria TOTALMENTE
+      # ABERTA, criar categoria no nome de outra pessoa continua levando 42501,
+      # mas vindo da SUBCATEGORIA (o trigger do "Outros" tenta gravar com o
+      # user_id da vitima). A sonda do teste passou a devolver QUAL tabela
+      # recusou.
+      - name: A categoria da pessoa e dela, e toda categoria nasce com Outros
+        run: $PSQL -f database/tests/hmo216_categorias_do_usuario_test.sql
+
       # HMO-190. As opcoes de divisao da despesa de grupo. O banco sempre soube
       # fazer divisao combinada -- a 007 tirou o achatamento para partes iguais
       # do `calculate_equal_split` --, e a camada do app a descartava em
