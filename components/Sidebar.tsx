@@ -34,6 +34,7 @@ import {
   Zap,
   Shield,
   Repeat,
+  Tag,
   Tags,
   Calculator,
   LineChart,
@@ -172,6 +173,21 @@ const navigation: NavigationItem[] = [
   // que o usuário já digitou e não consome nada além do banco. Gatear atrás de
   // plano esconderia do menu justamente a tela que explica por que a categoria
   // apareceu preenchida.
+  // "Categorias" entrou na HMO-216, LOGO ACIMA de "Regras" e nao no fim do
+  // menu: as duas telas falam da mesma coisa, e a ordem conta a historia certa
+  // -- primeiro a lista de categorias que existe, depois a regra que preenche
+  // uma delas sozinha. Invertido, "Regras" apareceria antes de haver o que
+  // regrar.
+  //
+  // Sem `requiredFeature`, pelo mesmo motivo de "Contas": escolher categoria e
+  // passo obrigatorio de TODO lancamento (`category_id` e NOT NULL desde o
+  // 001). Gatear atras de plano trancaria a pessoa com as 13 do catalogo e
+  // nenhuma forma de dizer que elas nao servem.
+  {
+    name: "Categorias",
+    href: "/dashboard/categorias",
+    icon: Tag,
+  },
   {
     name: "Regras",
     href: "/dashboard/categorization",

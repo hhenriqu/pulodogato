@@ -74,6 +74,12 @@ export async function materializarAgenda(
       user_id: userId,
       recurring_rule_id: regra.id,
       category_id: regra.category_id,
+      // HMO-216. O ultimo elo: a regra guarda a subcategoria, e e aqui que ela
+      // chega a cada ocorrencia. Sem esta linha a cadeia inteira
+      // (tela -> regra -> agenda -> baixa) carregaria o campo e o soltaria no
+      // penultimo passo, e o sintoma seria "a despesa fixa perde a
+      // subcategoria, a avulsa nao" -- sem erro em lugar nenhum.
+      subcategory_id: regra.subcategory_id ?? null,
       account_id: regra.account_id ?? null,
       group_id: regra.group_id ?? null,
       description: regra.description,

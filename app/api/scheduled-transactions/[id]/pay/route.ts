@@ -163,6 +163,11 @@ export async function POST(
         user_id: user.id,
         service_id: serviceId,
         category_id: conta.category_id,
+        // HMO-216. A subcategoria da conta prevista chega ao lancamento. Sem
+        // esta linha a baixa perderia o detalhe que a pessoa escolheu ao
+        // cadastrar a previsao, e o historico mostraria a despesa so na
+        // categoria -- indistinguivel de nunca ter tido subcategoria.
+        subcategory_id: conta.subcategory_id ?? null,
         account_id: conta.account_id,
         group_id: conta.group_id,
         description: conta.description,

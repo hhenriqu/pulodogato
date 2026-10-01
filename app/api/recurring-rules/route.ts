@@ -83,6 +83,7 @@ export async function POST(request: NextRequest) {
       description,
       amount,
       category_id,
+      subcategory_id,
       account_id,
       group_id,
       transaction_type = "expense",
@@ -170,6 +171,10 @@ export async function POST(request: NextRequest) {
       .insert({
         user_id: user.id,
         category_id,
+        // HMO-216. A regra e a semente de toda ocorrencia futura: perder a
+        // subcategoria aqui a perderia em TODOS os meses que a regra gera, nao
+        // num lancamento. `|| null` porque a coluna e uuid e `""` volta 22P02.
+        subcategory_id: subcategory_id || null,
         account_id: account_id || null,
         group_id: group_id || null,
         description: description.trim(),
