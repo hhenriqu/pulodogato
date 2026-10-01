@@ -83,6 +83,7 @@
     "mutantes:chave-pix": "node scripts/mutantes-chave-pix.mjs",
     "mutantes:minha-parte-no-realizado": "node scripts/mutantes-minha-parte-no-realizado.mjs",
     "mutantes:moeda-da-conta-prevista": "node scripts/mutantes-moeda-da-conta-prevista.mjs",
+    "mutantes:parcela-n-de-m": "node scripts/mutantes-parcela-n-de-m.mjs",
     "test:puxar-para-atualizar": "rm -rf .tmp-puxar-para-atualizar && tsc lib/puxar-para-atualizar.ts --outDir .tmp-puxar-para-atualizar --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-puxar-para-atualizar.mjs",
     "test:puxar-no-menu-dom": "rm -rf .tmp-puxar-dom && tsc lib/puxar-para-atualizar.ts lib/puxar-para-atualizar-dom.ts --outDir .tmp-puxar-dom --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-puxar-no-menu-dom.mjs",
     "test:categorias-do-periodo": "rm -rf .tmp-categorias-do-periodo && tsc lib/categorias-do-periodo.ts --outDir .tmp-categorias-do-periodo --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-categorias-do-periodo.mjs",
