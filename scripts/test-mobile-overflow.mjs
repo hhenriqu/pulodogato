@@ -448,6 +448,73 @@ test("lancamentos: a fila de categoria/data quebra, e com gap vertical", () => {
   );
 });
 
+// A SEGUNDA FORMA DE LINHA DA MESMA LISTA (HMO-215)
+// -------------------------------------------------
+// A HMO-215 pos na lista de lancamentos uma linha que nao vem de
+// `financial_transactions`: a minha parte de uma despesa de grupo que outra
+// pessoa pagou. Ela tem a MESMA forma da linha comum -- `flex items-center
+// justify-between`, descricao livre do usuario de um lado, valor do outro --
+// e portanto o mesmo piso de min-content, e portanto o mesmo vazamento de
+// 693px se nascer sem as tres classes.
+//
+// Os dois casos acima ancoram em `{transaction.description}` e seguiriam verdes
+// com esta linha nova quebrando a pagina inteira: eles nunca a olham. Um teste
+// que cobre uma das duas formas de uma lista de duas formas da a sensacao de
+// cobertura exata onde ela nao existe.
+test("parte de grupo: a linha nova da lista tambem nao empurra a pagina", () => {
+  const fonte = ler("app/(dashboard)/dashboard/personal-finance/page.tsx");
+  const cadeia = linhaDeLista(fonte, "{parte.description}");
+
+  assert.ok(
+    cadeia,
+    "nao achei a linha da parte de grupo em personal-finance -- se ela foi " +
+      "reescrita, este caso precisa ser reescrito com ela em vez de continuar verde",
+  );
+
+  const juntas = cadeia.join(" | ");
+
+  assert.ok(
+    cadeia.some((c) => /\bflex-1\b/.test(c) && /\bmin-w-0\b/.test(c)),
+    "o bloco da esquerda (`flex-1`) precisa do proprio `min-w-0` -- a mesma " +
+      `razao do caso da linha comum. Cadeia encontrada: ${juntas}`,
+  );
+  assert.ok(
+    cadeia.some((c) => c.trim() === "min-w-0"),
+    "falta o `min-w-0` no embrulho do texto, que e quem repassa a permissao " +
+      "de encolher para o `truncate`",
+  );
+  assert.match(
+    juntas,
+    /\btruncate\b/,
+    "a descricao vem da despesa de quem pagou -- texto livre, e sem corte " +
+      "uma linha so define a largura da pagina inteira",
+  );
+});
+
+test("parte de grupo: a fila de categoria/grupo/data quebra, e com gap vertical", () => {
+  const fonte = ler("app/(dashboard)/dashboard/personal-finance/page.tsx");
+  // O marcador e o selo "Minha parte", que abre a fila de metadados desta
+  // linha. Ela carrega MAIS selos que a linha comum (tipo + categoria + data +
+  // grupo + "a aprovar"), entao e a que tem o piso maior das duas.
+  const cadeia = linhaDeLista(fonte, "Minha parte");
+  assert.ok(cadeia, "nao achei a fila de metadados da parte de grupo");
+
+  const fila = cadeia.join(" | ");
+
+  assert.match(
+    fila,
+    /\bflex-wrap\b/,
+    "selo + categoria + data + nome do grupo + 'a aprovar' numa linha que " +
+      "nao quebra passa de 320px com folga, e `truncate` no pai nao ajuda",
+  );
+  assert.match(
+    fila,
+    /\bgap-y-\d/,
+    "quebrou em duas linhas sem `gap-y` elas ficam coladas -- a armadilha do " +
+      "`space-x-*` da HMO-160",
+  );
+});
+
 test("patrimonio: o nome da conta corta e o saldo nao encolhe", () => {
   const fonte = ler("app/(dashboard)/dashboard/net-worth/page.tsx");
   const cadeia = linhaDeLista(fonte, "{conta.name}");

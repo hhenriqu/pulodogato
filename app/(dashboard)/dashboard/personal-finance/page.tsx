@@ -20,11 +20,23 @@ import { toast } from "sonner";
 import {
   FILTROS_DE_LANCAMENTO,
   classificarMovimentacao,
-  contarPorFiltro,
-  filtrarLancamentos,
   resumoDoPeriodo,
   type FiltroDeLancamento,
 } from "@/lib/movimentacoes";
+import {
+  destinoDoLancamento,
+  indiceDeContraparte,
+  type ContaDoLancamento,
+} from "@/lib/destino-do-lancamento";
+import {
+  contarComPartes,
+  linhasDaLista,
+  notaDasPartesDeTerceiros,
+  partesDeTerceirosNaLista,
+  type DespesaDeGrupoLida,
+  type LancamentoDeTerceiro,
+  type ParteDeGrupoBruta,
+} from "@/lib/parte-de-grupo-na-lista";
 import {
   TAMANHO_DA_PAGINA,
   descreverLista,
@@ -91,7 +103,7 @@ interface FinancialTransaction {
   user_id: string;
   service_id: string;
   category_id: string;
-  account_id?: string;
+  account_id?: string | null;
   description: string;
   amount: number;
   transaction_date: string;
@@ -103,6 +115,15 @@ interface FinancialTransaction {
   created_at: string;
   category?: TransactionCategory;
   expense_splits?: ExpenseSplit[];
+  /**
+   * O elo entre as duas pernas de uma transferencia (migration 015).
+   *
+   * Vinha no `*` da consulta desde sempre e nao tinha leitor. E de UMA VIA:
+   * so a perna de entrada o grava -- ver `indiceDeContraparte`.
+   */
+  counterpart_transaction_id?: string | null;
+  /** A conta do lancamento. `null` quando a linha nao tem conta registrada. */
+  account?: ContaDoLancamento | null;
 }
 
 interface ExpenseSplit {
@@ -128,6 +149,15 @@ export default function PersonalFinancePage() {
     </Suspense>
   );
 }
+
+// No escopo do modulo porque `LinhaDaParteDeGrupo` tambem formata dinheiro, e
+// duas funcoes de moeda na mesma tela e uma oportunidade de divergirem no
+// numero de casas.
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  }).format(value);
 
 function Girando() {
   return (
@@ -207,6 +237,28 @@ function Lancamentos() {
   );
   /** id -> nome dos meus grupos ativos, para rotular a linha do lançamento. */
   const [nomeDoGrupo, setNomeDoGrupo] = useState<Record<string, string>>({});
+  /**
+   * A minha parte das despesas de grupo que OUTRA pessoa pagou (HMO-215).
+   *
+   * Estado PROPRIO, e não anexado a `transactions`, por dois motivos que valem
+   * dinheiro e paginação:
+   *
+   * - `carregarMais` deriva a próxima página de `transactions.length`. Misturar
+   *   linhas que não vieram do `.range()` faria a lista pedir a página 3 de um
+   *   conjunto que está na página 1, e aparecer com um buraco no meio;
+   * - elas não são linhas minhas: não dá para editar nem excluir. Ver o
+   *   cabeçalho de lib/parte-de-grupo-na-lista.ts.
+   */
+  const [partesDeGrupo, setPartesDeGrupo] = useState<LancamentoDeTerceiro[]>([]);
+  /**
+   * A consulta das partes falhou neste período.
+   *
+   * Existe porque o estado de erro e o de "não há parte nenhuma" sao o MESMO
+   * array vazio, e os dois têm leituras opostas na tela: um diz "você não deve
+   * nada em grupo este mês" e o outro diz "a lista está incompleta e eu não vou
+   * te contar". Sem esta bandeira a tela escolheria sempre a primeira.
+   */
+  const [partesFalharam, setPartesFalharam] = useState(false);
 
   const { canCreateMore, planConfig } = useSubscription(user);
 
@@ -356,6 +408,97 @@ function Lancamentos() {
   };
 
   /**
+   * A MINHA PARTE DAS DESPESAS DE GRUPO QUE OUTRA PESSOA PAGOU (HMO-215)
+   *
+   * O pedido da issue e "todos os lancamentos, indiferente de onde foi", e este
+   * era o unico buraco de verdade: a consulta de cima filtra `user_id = eu`, e
+   * a despesa que a Ana pagou na viagem e uma linha DELA. A minha parte esta
+   * gravada em `group_expense_splits`, o painel ja a conta como realizado desde
+   * a HMO-202 -- e a LISTA, que e onde a pessoa vai perguntar "o que foi
+   * lancado?", nunca a mostrou. O mes dela parecia mais barato do que foi.
+   *
+   * DUAS CONSULTAS, E A SEGUNDA NAO E PREGUICA
+   * ------------------------------------------
+   * `group_share_entries` (033) e a unica definicao de "minha parte" do lado do
+   * realizado, e ela devolve `category_id` e `transaction_id` -- nao a
+   * DESCRICAO. Uma linha "R$ 200,00 · Lazer · 18/09" sem dizer de que despesa e
+   * so acrescenta um valor que a pessoa nao reconhece.
+   *
+   * A descricao sai de `financial_transactions`, e a RLS permite: a policy de
+   * SELECT do 002 e `user_id = auth.uid() OR (group_id IS NOT NULL AND
+   * is_group_member(group_id))`. Ela e lida pelos ids que a view devolveu, e
+   * nao por um filtro de grupo -- com `.in("id", ...)` nao ha como voltar linha
+   * de grupo nenhum alem das que ja tem parte minha.
+   *
+   * O `.eq("user_id", user.id)` NA VIEW E OBRIGATORIO, e esta no comentario dela
+   * no banco: ela nao filtra por usuario, e a mesma policy com `OR` que torna a
+   * descricao legivel faz a view devolver a parte dos OUTROS membros tambem.
+   * Sem o filtro, a lista somaria o rateio de gente que nao sou eu.
+   *
+   * Try/catch PROPRIO, como `carregarGrupos`: um banco sem a 033 aplicada
+   * responde erro aqui, e dentro do try grande do `loadData` isso cairia no
+   * catch que trata FALTA DE REDE -- a tela apagaria a lista que ja carregou e
+   * anunciaria "sem conexão". Recurso secundario nao derruba o principal.
+   */
+  const carregarPartesDeGrupo = async (userId: string) => {
+    try {
+      const { data: partes, error } = await supabase
+        .from("group_share_entries")
+        .select(
+          "id, transaction_id, group_id, transaction_date, category_id, transaction_type, currency, amount, split_status, paguei_eu"
+        )
+        .eq("user_id", userId)
+        .eq("paguei_eu", false)
+        .gte("transaction_date", periodo.de)
+        .lte("transaction_date", periodo.ate)
+        .order("transaction_date", { ascending: false });
+
+      if (error) throw error;
+      if (!partes || partes.length === 0) {
+        setPartesDeGrupo([]);
+        return;
+      }
+
+      const ids = Array.from(
+        new Set((partes as ParteDeGrupoBruta[]).map((p) => p.transaction_id))
+      );
+
+      const { data: despesas, error: erroDaDescricao } = await supabase
+        .from("financial_transactions")
+        .select("id, description, amount, category:transaction_categories(*)")
+        .in("id", ids);
+
+      if (erroDaDescricao) throw erroDaDescricao;
+
+      const porId = new Map<string, DespesaDeGrupoLida>(
+        (despesas || []).map((d: any) => [d.id as string, d as DespesaDeGrupoLida])
+      );
+
+      const { linhas, semDescricao } = partesDeTerceirosNaLista(
+        partes as ParteDeGrupoBruta[],
+        porId
+      );
+
+      // Uma parte sem a despesa e DESCARTADA, e o descarte aparece. Sem este
+      // aviso a lista ficaria com menos linhas do que existe e nada diria
+      // isso -- o "zero confiante" desta tela, em versão menor.
+      if (semDescricao > 0) {
+        console.error(
+          `${semDescricao} parte(s) de grupo sem a despesa correspondente legível; ficaram fora da lista.`
+        );
+      }
+
+      setPartesDeGrupo(linhas);
+    } catch (erro) {
+      console.error("Erro ao carregar a minha parte das despesas de grupo:", erro);
+      // A bandeira, e nao um array vazio em silencio: vazio aqui se le na tela
+      // como "você não deve nada em grupo este mês", que e uma afirmacao que
+      // esta consulta acabou de nao poder fazer. Ver `partesFalharam`.
+      setPartesFalharam(true);
+    }
+  };
+
+  /**
    * Uma pagina de lancamentos DO PERIODO ESCOLHIDO.
    *
    * O `.limit(50)` que estava aqui nao tinha recorte de data nenhum: trazia as
@@ -396,6 +539,7 @@ function Lancamentos() {
         `
         *,
         category:transaction_categories(*),
+        account:financial_accounts(id, name, account_type),
         expense_splits(
           *,
           participant:profiles!expense_splits_participant_id_fkey(full_name, avatar_url)
@@ -465,6 +609,12 @@ function Lancamentos() {
     setAtualizando(true);
     setTransactions([]);
     setTemMais(false);
+    // As partes de grupo sao do PERIODO tambem (HMO-215): deixa-las na tela ao
+    // trocar de mes poria a minha parte do jantar de setembro debaixo do rotulo
+    // de agosto -- o mesmo defeito que o seletor de periodo existe para
+    // eliminar, agora pela outra fonte.
+    setPartesDeGrupo([]);
+    setPartesFalharam(false);
 
     try {
       const { data: dadosDeAuth, error: erroDeAuth } =
@@ -555,6 +705,7 @@ function Lancamentos() {
       setTemMais(temMaisParaCarregar(primeiraPagina.length));
 
       await carregarGrupos();
+      await carregarPartesDeGrupo(user.id);
 
       // Carregar contas financeiras.
       //
@@ -633,13 +784,6 @@ function Lancamentos() {
     };
   };
 
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat("pt-BR", {
-      style: "currency",
-      currency: "BRL",
-    }).format(value);
-  };
-
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -655,8 +799,39 @@ function Lancamentos() {
   // de proposito: a aba "Despesas" tem que mostrar exatamente as linhas que o
   // cartao "Despesas" somou. Filtrar aqui por sinal do valor daria uma lista
   // que discorda do total logo acima dela, na mesma tela.
-  const visiveis = filtrarLancamentos(transactions, filtro);
-  const contagem = contarPorFiltro(transactions);
+  //
+  // DUAS FONTES, UMA LISTA (HMO-215). `linhasDaLista` junta as minhas linhas com
+  // a minha parte das despesas de grupo que outra pessoa pagou, em ordem de
+  // data -- coladas sem reordenar, as partes de setembro cairiam no fim, abaixo
+  // das minhas de marco. `contarComPartes` conta as duas fontes pelo mesmo
+  // critério: a contagem na barra de abas tem que casar com o que a aba mostra,
+  // senão "Despesas 4" abre com seis linhas.
+  const visiveis = linhasDaLista(transactions, partesDeGrupo, filtro);
+  const contagem = contarComPartes(transactions, partesDeGrupo);
+
+  // O elo entre as duas pernas de cada transferencia, montado uma vez por
+  // render em vez de por linha: `destinoDoLancamento` precisa achar a
+  // contraparte, e uma varredura do array dentro do `.map()` seria O(n²) numa
+  // lista que vai a 50 linhas por pagina e nao tem teto de paginas.
+  const contrapartes = indiceDeContraparte(transactions);
+
+  // Quanto as partes de grupo somam, para a tela poder dizer que elas estao na
+  // lista e FORA dos tres cartoes. Ver o cabecalho de
+  // lib/parte-de-grupo-na-lista.ts.
+  const notaDasPartes = notaDasPartesDeTerceiros(partesDeGrupo);
+
+  // QUANTAS LINHAS A LISTA TEM, SOMANDO AS DUAS FONTES.
+  //
+  // `transactions.length` sozinho mentia de um jeito que da para ver na tela:
+  // quem so tem parte de grupo no mes (nao pagou nada, deve a sua parte do
+  // jantar) teria `carregados = 0`, e `descreverLista` responde a isso com
+  // "Nenhum lançamento em setembro de 2026" -- escrito logo acima da linha do
+  // jantar, que esta ali na lista. A frase e a lista se contradizendo no mesmo
+  // cartao.
+  //
+  // `temMais` continua saindo so da paginacao das MINHAS linhas, e esta certo:
+  // as partes de grupo vem todas de uma vez, nao ha pagina seguinte delas.
+  const carregados = transactions.length + partesDeGrupo.length;
 
   // O que a lista diz sobre si mesma: quantas linhas, DE QUE PERIODO, e se
   // falta alguma. A regra esta em lib/lista-de-lancamentos.ts, com teste, e nao
@@ -672,7 +847,7 @@ function Lancamentos() {
     rotuloDoPeriodo: rotuloDoPeriodo(periodo),
     filtro,
     visiveis: visiveis.length,
-    carregados: transactions.length,
+    carregados,
     temMais,
   });
 
@@ -853,6 +1028,45 @@ function Lancamentos() {
                 fora do saldo
               </p>
             )}
+            {/*
+              A MINHA PARTE DO QUE OUTROS PAGARAM, ESCRITA E FORA DOS CARTOES
+              --------------------------------------------------------------
+              Ela está na LISTA (é o pedido da HMO-215: "todos os lançamentos,
+              indiferente de onde foi") e não entra nos três cartões. O motivo
+              está no cabeçalho de lib/parte-de-grupo-na-lista.ts, e é de
+              significado, não de preguiça: o cartão "Despesas" soma as MINHAS
+              linhas, e numa despesa de grupo que eu paguei ele soma o valor
+              CHEIO -- R$ 400 do hotel, que é o que saiu da minha conta.
+              Acrescentar "a minha parte do que os outros pagaram" misturaria
+              dois critérios dentro de um número só: valor cheio de um lado,
+              fração do outro. O resultado não seria nem "o que saiu de mim" nem
+              "o que me cabe", e nada na tela denunciaria isso.
+
+              É a mesma saída que a transferência recebeu logo acima: a linha
+              aparece na lista, o valor aparece escrito aqui, e o cartão continua
+              significando uma coisa só.
+            */}
+            {notaDasPartes && (
+              <p className="text-xs text-muted-foreground">
+                + {formatCurrency(notaDasPartes.total)} em{" "}
+                {notaDasPartes.quantas === 1
+                  ? "1 despesa de grupo que outra pessoa pagou"
+                  : `${notaDasPartes.quantas} despesas de grupo que outras pessoas pagaram`}
+                , na lista e fora do saldo
+              </p>
+            )}
+            {/*
+              O erro e o vazio sao o MESMO array, e têm leituras opostas: um diz
+              "você não deve nada em grupo este mês" e o outro diz "a lista está
+              incompleta". Sem esta linha a tela escolheria sempre a primeira --
+              o "zero confiante" que esta tela já pagou duas vezes.
+            */}
+            {partesFalharam && (
+              <p className="text-xs text-warning">
+                Sua parte das despesas de grupo não carregou: a lista abaixo pode
+                estar incompleta.
+              </p>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -1030,7 +1244,40 @@ function Lancamentos() {
                 </div>
               ) : visiveis.length > 0 ? (
                 <div className="space-y-3">
-                  {visiveis.map((transaction) => (
+                  {visiveis.map((linha) => {
+                    /*
+                      DUAS FORMAS DE LINHA, E O `kind` OBRIGA A DECIDIR (HMO-215)
+                      ----------------------------------------------------------
+                      A minha parte de uma despesa que outra pessoa pagou nao e
+                      uma linha minha: nao tem conta, nao da para editar e nao da
+                      para excluir -- apagar a parte daqui mexeria na despesa de
+                      quem pagou. Fosse um `FinancialTransaction` com campos
+                      opcionais, os dois botoes de acao apareceriam em cima dela
+                      e o `onClick` chamaria
+                      `/api/personal-finance/transactions/<id de uma parte>`:
+                      um 404 que, para quem clicou, se le como "o app nao
+                      conseguiu apagar".
+
+                      Com a uniao discriminada esquecer um ramo e erro de
+                      compilacao. Ver lib/parte-de-grupo-na-lista.ts.
+                    */
+                    if (linha.kind === "parte") {
+                      return (
+                        <LinhaDaParteDeGrupo
+                          key={linha.parte.id}
+                          parte={linha.parte}
+                          nomeDoGrupo={nomeDoGrupo}
+                        />
+                      );
+                    }
+
+                    const transaction = linha.mov;
+                    const destino = destinoDoLancamento(
+                      transaction,
+                      contrapartes
+                    );
+
+                    return (
                     /*
                       A LINHA DO LANCAMENTO, E OS 693px (HMO-185)
                       -------------------------------------------
@@ -1109,6 +1356,42 @@ function Lancamentos() {
                               }
                             </Badge>
                             <span>{transaction.category?.name}</span>
+                            {/*
+                              O DESTINO (HMO-215)
+                              -------------------
+                              `account_id` esta na linha desde o 001 e nao tinha
+                              leitor nenhum nesta tela. Faltando ele:
+
+                              - uma transferencia nao dizia entre QUAIS contas.
+                                As duas pernas sao duas linhas com a mesma
+                                descricao e o mesmo valor, uma verde e uma
+                                vermelha, as duas com o selo "Transferência" --
+                                e nada na tela dizia qual saiu da corrente;
+                              - duas despesas iguais em contas diferentes
+                                (mesmo mercado, mesmo valor, mesmo dia, uma no
+                                cartao e uma no debito) ficavam IDENTICAS na
+                                lista, e a leitura natural e que a despesa foi
+                                lancada em duplicata. Essa leitura termina em
+                                alguem apagando uma despesa real.
+
+                              A frase inteira sai de `destinoDoLancamento`, com
+                              teste: ela depende do TIPO da linha (em receita a
+                              conta e o destino, em despesa e a origem, em
+                              transferencia sao as duas pontas, que estao em
+                              duas linhas diferentes do banco) e nunca desenha
+                              uma seta com um lado em branco.
+
+                              Linha sem conta nao mostra nada em vez de mostrar
+                              "Sem conta": a maioria das linhas de grupo nao tem
+                              conta, e um selo cinza repetido em toda despesa de
+                              grupo seria ruido no lugar da informacao.
+                            */}
+                            {!destino.faltaConta && (
+                              <>
+                                <span>•</span>
+                                <span className="truncate">{destino.texto}</span>
+                              </>
+                            )}
                             <span>•</span>
                             <span>
                               {new Date(
@@ -1231,9 +1514,10 @@ function Lancamentos() {
                         </div>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
-              ) : transactions.length > 0 ? (
+              ) : carregados > 0 ? (
                 /*
                   Vazio por causa do FILTRO, não por falta de lançamento. Os
                   dois casos são diferentes e a mensagem antiga só sabia um
@@ -1249,7 +1533,7 @@ function Lancamentos() {
                       Nenhum lançamento deste tipo
                     </h3>
                     <p className="text-muted-foreground">
-                      {rotuloDoPeriodo(periodo)} tem {transactions.length}{" "}
+                      {rotuloDoPeriodo(periodo)} tem {carregados}{" "}
                       lançamento(s) carregado(s), e nenhum em{" "}
                       {f.rotulo.toLowerCase()}.
                     </p>
@@ -1364,5 +1648,113 @@ function Lancamentos() {
         ))}
       </Tabs>
     </div>
+  );
+}
+
+/**
+ * UMA LINHA QUE NAO E MINHA: A MINHA PARTE DO QUE OUTRA PESSOA PAGOU (HMO-215)
+ * ---------------------------------------------------------------------------
+ * Componente proprio, e nao um ramo dentro da linha normal, porque o que ela
+ * NAO tem e o que importa:
+ *
+ * - SEM BOTAO DE EXCLUIR. Apagar esta linha mexeria na despesa de quem pagou, e
+ *   o id dela e de `group_expense_splits` -- mandar isso para
+ *   `/api/personal-finance/transactions/[id]` volta 404, que para quem clicou se
+ *   le como "o app nao conseguiu apagar". A conversa sobre o rateio acontece na
+ *   tela do grupo, e e para la que a linha leva.
+ * - SEM BOTAO DE EDITAR, pela mesma razao.
+ * - SEM CONTA. O dinheiro saiu da conta de outra pessoa; nao ha destino meu a
+ *   mostrar, e inventar um seria afirmar que a despesa passou por uma conta
+ *   minha.
+ *
+ * O que ela TEM, e que a linha comum nao precisa: o grupo, o valor CHEIO da
+ * despesa ao lado da minha parte (sem ele, "R$ 200,00" num jantar de R$ 600
+ * nao se reconhece) e o aviso de rateio ainda nao aprovado.
+ */
+function LinhaDaParteDeGrupo({
+  parte,
+  nomeDoGrupo,
+}: {
+  parte: LancamentoDeTerceiro;
+  nomeDoGrupo: Record<string, string>;
+}) {
+  const grupo = nomeDoGrupo[parte.groupId];
+
+  return (
+    <Link
+      href={`/dashboard/expense-groups/${parte.groupId}`}
+      className="flex items-center justify-between gap-3 p-3 border rounded-lg border-dashed transition-colors hover:bg-muted/50"
+    >
+      {/*
+        `min-w-0` nos dois niveis e `truncate` na descricao, como na linha comum:
+        sem eles o minimo de min-content de um item flex estoura a largura do
+        celular e a pagina inteira ganha scroll horizontal (HMO-185).
+      */}
+      <div className="flex items-center gap-3 min-w-0 flex-1">
+        <div
+          className="w-10 h-10 shrink-0 rounded-full flex items-center justify-center text-white"
+          style={{ backgroundColor: parte.categoria?.color_hex ?? undefined }}
+        >
+          <Users className="h-5 w-5" />
+        </div>
+        <div className="min-w-0">
+          <p className="font-medium truncate">{parte.description}</p>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+            {/*
+              "Minha parte" e nao "Despesa": o valor ao lado NAO e o que foi
+              gasto, e a fracao que cabe a mim de uma despesa maior. O selo
+              generico "Despesa" faria a pessoa ler R$ 200,00 como o preco do
+              jantar.
+            */}
+            <Badge variant="outline" className="shrink-0">
+              Minha parte
+            </Badge>
+            {parte.categoria?.name && <span>{parte.categoria.name}</span>}
+            <span>•</span>
+            <span>
+              {new Date(parte.transactionDate).toLocaleDateString("pt-BR")}
+            </span>
+            <span>•</span>
+            <Badge variant="outline" className="flex items-center gap-1">
+              <Users className="h-3 w-3" />
+              {/*
+                O nome do grupo quando ele veio, e "Grupo" quando a chamada de
+                grupos falhou sem derrubar a lista. Ali "Grupo" e menos
+                informacao, nao informacao errada -- a mesma regra do selo da
+                linha comum.
+              */}
+              {grupo || "Grupo"}
+            </Badge>
+            {/*
+              Rateio ainda nao aprovado. A view do 033 ja descarta `rejected` e
+              `expired`; `pending` entra porque o dinheiro e devido de todo
+              jeito -- mas sem este selo a linha afirmaria um acerto fechado que
+              ainda esta em aberto.
+            */}
+            {parte.splitStatus === "pending" && (
+              <>
+                <span>•</span>
+                <Badge variant="outline" className="shrink-0">
+                  a aprovar
+                </Badge>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="text-right shrink-0">
+        <p className="font-semibold text-destructive">
+          {formatCurrency(Math.abs(parte.amount))}
+        </p>
+        {/*
+          O valor cheio embaixo da parte. Sem ele "R$ 200,00 · Hotel em Paraty"
+          se le como o preco do hotel, e a pessoa nao tem como conferir a divisao
+          sem abrir a tela do grupo.
+        */}
+        <p className="text-xs text-muted-foreground">
+          de {formatCurrency(Math.abs(parte.totalDaDespesa))}
+        </p>
+      </div>
+    </Link>
   );
 }

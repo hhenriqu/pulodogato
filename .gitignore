@@ -238,3 +238,8 @@ next-env.d.ts
 # ano de historico. As FIXTURES do teste (scripts/fixtures/) sao versionadas --
 # essas sim sao fonte, sao pequenas e precisam ficar estaveis.
 /.cache-cvm/
+
+# saida do `npm run test:lancamentos-completos` (HMO-215; leva o
+# movimentacoes.js junto, porque os dois modulos importam de la a unica
+# definicao de "que tipo e esta linha")
+/.tmp-lancamentos-completos/
