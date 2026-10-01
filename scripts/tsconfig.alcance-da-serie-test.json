@@ -1,0 +1,21 @@
+{
+  "//": "Build so do teste da HMO-228. As duas regras puras do alcance entram juntas de proposito: elas respondem a MESMA pergunta ('so esta, desta em diante, ou todas') sobre tabelas diferentes, e e a divergencia entre as duas que o teste existe para pegar. lib/lancamento.ts entra porque parcelas-edicao.ts importa o TIPO BaseDoValorParcelado de la -- reusar a mesma pergunta que a HMO-211 ja entregou, em vez de declarar um segundo par de palavras para a mesma duvida. O import e `import type`, entao o JS emitido nao tem require nenhum para ele; o passo de resolve-aliases no npm script esta la pela mesma razao dos outros (o tsc resolve o alias @/ e NAO o reescreve no emit). Ver scripts/test-alcance-da-serie.mjs.",
+  "compilerOptions": {
+    "outDir": "../.tmp-alcance-da-serie",
+    "rootDir": "..",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../lib/recorrencia-edicao.ts",
+    "../lib/parcelas-edicao.ts",
+    "../lib/alcance-na-tela.ts",
+    "../lib/lancamento.ts"
+  ]
+}

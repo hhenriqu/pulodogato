@@ -477,6 +477,61 @@ test("par meio preenchido nao vira 'parcela 3 de ' na tela", () => {
 });
 
 // ---------------------------------------------------------------------------
+// APAGAR A PARCELA, DA TELA DO CARTAO (HMO-228)
+// ---------------------------------------------------------------------------
+// "A pergunta tem de ser feita onde a pessoa clica." Uma parcela e VISTA aqui, e
+// aqui nao havia botao nenhum de apagar -- a exclusao saia pela lista de
+// Lancamentos, por uma rota que nao sabe o que e uma serie.
+//
+// O botao chama um PROP e nao faz fetch: este componente nao tem rede nem hook
+// de dados, e e isso que permite renderiza-lo aqui. O `onClick` nao aparece no
+// HTML de servidor, entao o que se cobra e a presenca do controle e o TEXTO
+// dele -- que e o que avisa a pessoa que apagar vai perguntar o alcance.
+
+const TITULO_APAGAR = "Apagar parcela (só esta, desta em diante, ou todas)";
+
+test("a parcela ganha botao de apagar quando a pagina passa o handler", () => {
+  const html = render({
+    fatura: { ...FATURA, lines: [parcela(3, 10, 100)], line_count: 1, total: 100 },
+    aoApagarParcela: () => {},
+  });
+
+  assert.ok(
+    html.includes(TITULO_APAGAR),
+    "a parcela nao ganhou o botao de apagar"
+  );
+  // Um botao de lixeira sem esse aviso se le como "apaga esta linha", que e
+  // exatamente o defeito que esta issue existe para consertar.
+  assert.ok(html.includes("desta em diante"), "o aviso das tres opcoes sumiu");
+});
+
+test("a compra AVULSA nao ganha botao de apagar parcela", () => {
+  // A negacao explicita. Sem ela, um botao que aparecesse em TODA linha passaria
+  // verde no teste acima -- e apagar uma compra avulsa cairia na rota de serie,
+  // que responde 400 "não faz parte de uma compra parcelada" sobre uma linha que
+  // a pessoa acabou de clicar.
+  const html = render({ aoApagarParcela: () => {} });
+
+  assert.ok(
+    !html.includes(TITULO_APAGAR),
+    "a compra avulsa ganhou o botao de apagar parcela"
+  );
+});
+
+test("sem handler, nem a parcela ganha o botao", () => {
+  // O prop e opcional de proposito: e isso que mantem este componente sem rede.
+  // Um botao que aparecesse sempre apareceria tambem onde nao ha nada ligado
+  // nele -- um controle que nao faz nada ao ser clicado.
+  const html = render({
+    fatura: { ...FATURA, lines: [parcela(3, 10, 100)], line_count: 1, total: 100 },
+  });
+
+  assert.ok(!html.includes(TITULO_APAGAR), "o botao apareceu sem handler");
+  // E o resto da linha continua intacto: o rotulo nao depende do handler.
+  assert.ok(html.includes("parcela 3 de 10"));
+});
+
+// ---------------------------------------------------------------------------
 // AS PREVISOES PENDENTES DO CARTAO (HMO-227)
 // ---------------------------------------------------------------------------
 // A HMO-209 tirou de Contas a Pagar a previsao apontada para um cartao que nao

@@ -258,3 +258,8 @@ next-env.d.ts
 # em Contas a Pagar). Um `.tmp-*` fora do .gitignore chega a ser commitado em
 # cima de arquivo de fonte -- ver a entrada do .tmp-parcelamento acima.
 /.tmp-fatura-prevista/
+
+# HMO-228. A suite das duas regras de alcance (so esta, desta em diante,
+# todas). Um `.tmp-*` fora do .gitignore chega a ser commitado em cima de
+# arquivo de fonte -- ver a entrada do .tmp-parcelamento acima.
+/.tmp-alcance-da-serie/

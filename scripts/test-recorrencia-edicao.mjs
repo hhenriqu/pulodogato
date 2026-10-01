@@ -217,11 +217,27 @@ test("due_date nao esta entre os propagaveis", () => {
 // O ALCANCE QUE CHEGA DA REDE
 // ---------------------------------------------------------------------------
 
-test("so os dois alcances conhecidos sao aceitos", () => {
+test("so os alcances conhecidos sao aceitos", () => {
   assert.equal(ehAlcanceValido("apenas_esta"), true);
   assert.equal(ehAlcanceValido("esta_e_proximas"), true);
-  // "todas" seria o alcance que a issue proibe: ele reescreveria o passado.
-  assert.equal(ehAlcanceValido("todas"), false);
+
+  // ATE A HMO-228 ESTA LINHA DIZIA `false`, COM ESTA JUSTIFICATIVA:
+  //
+  //   "todas" seria o alcance que a issue proibe: ele reescreveria o passado.
+  //
+  // A premissa estava certa e a conclusao, nao. O que a HMO-170 proibiu foi
+  // reescrever o que ja passou -- e "o que ja passou" nunca foi uma data, e sim
+  // `status = 'paid'` (esta escrito no cabecalho de lib/recorrencia-edicao.ts).
+  // `todas` significa "todas as ABERTAS": ele alcanca o mes anterior em aberto
+  // e continua nao encostando no pago, nem no pago ANTECIPADAMENTE.
+  //
+  // Quem cobra isso e scripts/test-alcance-da-serie.mjs, e o mutante
+  // `todas_barreira_por_data` existe para a troca dessa barreira ficar
+  // vermelha. Trocar o `false` por `true` aqui sem aquele arquivo do lado
+  // teria sido, de fato, abrir a reescrita do passado.
+  assert.equal(ehAlcanceValido("todas"), true);
+
+  assert.equal(ehAlcanceValido("todas_as_parcelas"), false);
   assert.equal(ehAlcanceValido(undefined), false);
   assert.equal(ehAlcanceValido(null), false);
 });

@@ -73,6 +73,13 @@ import {
   Wallet,
 } from "lucide-react";
 import type { AlcanceDaEdicao } from "@/lib/recorrencia-edicao";
+import {
+  consequenciaNaTela,
+  frasePreservadas,
+  opcoesDeAlcance,
+  type Alcance,
+} from "@/lib/alcance-na-tela";
+import { DialogoDeAlcance } from "@/components/series/DialogoDeAlcance";
 import { Receipts } from "@/components/Receipts";
 import { ehFatura } from "@/lib/card-invoice";
 import {
@@ -211,6 +218,15 @@ export default function BillsPage() {
     useState<ScheduledTransaction | null>(null);
   const [formEdicao, setFormEdicao] = useState({ description: "", amount: "" });
   const [alcance, setAlcance] = useState<AlcanceDaEdicao>("apenas_esta");
+  /**
+   * A conta cuja EXCLUSAO esta esperando a pergunta do alcance (HMO-228).
+   *
+   * Estado proprio, e nao reaproveitar `contaParaEditar`: os dois dialogos
+   * podem ser abertos a partir da mesma linha, e um estado so faria o dialogo
+   * de apagar herdar o formulario preenchido do de alterar.
+   */
+  const [contaParaApagar, setContaParaApagar] =
+    useState<ScheduledTransaction | null>(null);
 
   const [formFixo, setFormFixo] = useState<FormGastoFixo>({
     description: "",
@@ -496,27 +512,69 @@ export default function BillsPage() {
     await darBaixa(real, contaPagadora);
   };
 
-  const pular = async (conta: ScheduledTransaction) => {
+  /**
+   * Tira a conta da agenda, NO ALCANCE ESCOLHIDO (HMO-228).
+   *
+   * Antes esta funcao mandava um DELETE sem corpo, e a rota marcava aquela
+   * ocorrencia como `skipped` e pronto. Quem queria apagar "a conta fixa"
+   * perdia UM mes e recebia os outros de volta -- e o botao se chamava "Pular
+   * este vencimento", que descrevia certo o que ele fazia e errado o que a
+   * pessoa queria.
+   *
+   * Numa conta avulsa nao ha serie, entao nao ha o que perguntar: o dialogo nem
+   * abre (ver `pedirExclusao`).
+   */
+  const apagarComAlcance = async (
+    conta: ScheduledTransaction,
+    alcanceEscolhido: Alcance
+  ) => {
     setAgindo(conta.id);
     try {
       const resposta = await fetch(`/api/scheduled-transactions/${conta.id}`, {
         method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        // O alcance vai no CORPO, e nao num laco de ids aqui: um laco fica
+        // aplicado pela metade quando a conexao cai, e meia serie alterada nao
+        // tem como ser descoberta depois.
+        body: JSON.stringify({ alcance: alcanceEscolhido }),
       });
       const dados = await resposta.json();
 
       if (!resposta.ok) {
-        toast.error(dados.error ?? "Não foi possível pular");
+        toast.error(dados.error ?? "Não foi possível apagar");
         return;
       }
 
-      toast.success(dados.message ?? "Conta removida da agenda");
+      // A contagem do que ficou na agenda e o que torna a garantia visivel.
+      const aviso = frasePreservadas({ preservadas: Number(dados.preservadas ?? 0) });
+      toast.success(
+        aviso
+          ? `${dados.message ?? "Conta removida da agenda"} ${aviso}`
+          : (dados.message ?? "Conta removida da agenda")
+      );
+
+      setContaParaApagar(null);
       await carregar();
     } catch (erro) {
       console.error(erro);
-      toast.error("Erro ao pular a conta");
+      toast.error("Erro ao apagar a conta");
     } finally {
       setAgindo(null);
     }
+  };
+
+  /**
+   * Abre a pergunta -- ou nao abre, quando nao ha serie.
+   *
+   * Perguntar o alcance de uma conta avulsa faria a pessoa procurar a diferenca
+   * entre tres opcoes que fazem a mesma coisa.
+   */
+  const pedirExclusao = (conta: ScheduledTransaction) => {
+    if (!conta.recurring_rule_id) {
+      void apagarComAlcance(conta, "apenas_esta");
+      return;
+    }
+    setContaParaApagar(conta);
   };
 
   /** Abre o dialogo ja com os valores de hoje, para a pessoa corrigir um so. */
@@ -792,9 +850,13 @@ export default function BillsPage() {
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => pular(conta)}
+                  onClick={() => pedirExclusao(conta)}
                   disabled={agindo === chave || !online}
-                  title="Pular este vencimento"
+                  title={
+                    conta.recurring_rule_id
+                      ? "Apagar (só esta, desta em diante, ou todas)"
+                      : "Tirar esta conta da agenda"
+                  }
                 >
                   <SkipForward className="h-4 w-4" />
                 </Button>
@@ -1497,6 +1559,11 @@ export default function BillsPage() {
               {contaParaEditar.recurring_rule_id ? (
                 <div className="space-y-2 rounded-lg border border-border p-3">
                   <Label>Esta alteração vale para</Label>
+                  {/* As opcoes e o texto saem de `lib/alcance-na-tela.ts`, o
+                      mesmo modulo que o dialogo compartilhado usa: a pergunta e
+                      a MESMA nas tres telas, e duas copias do texto
+                      divergiriam na primeira correcao. Foi assim que o terceiro
+                      alcance (`todas`) chegou aqui sem ser escrito duas vezes. */}
                   <Select
                     value={alcance}
                     onValueChange={(v) => setAlcance(v as AlcanceDaEdicao)}
@@ -1505,18 +1572,26 @@ export default function BillsPage() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="apenas_esta">
-                        Apenas esta ({dataCurta(contaParaEditar.due_date)})
-                      </SelectItem>
-                      <SelectItem value="esta_e_proximas">
-                        Esta e as próximas
-                      </SelectItem>
+                      {opcoesDeAlcance({
+                        tipo: "conta_fixa",
+                        acao: "alterar",
+                        ancora: dataCurta(contaParaEditar.due_date),
+                      }).map((o) => (
+                        <SelectItem key={o.valor} value={o.valor}>
+                          {o.rotulo}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    {alcance === "apenas_esta"
-                      ? "Só este mês muda. O gasto fixo continua com o valor de hoje."
-                      : "Muda este mês, os seguintes ainda em aberto e o próprio gasto fixo. Meses anteriores e já pagos não são alterados."}
+                    {consequenciaNaTela(
+                      alcance,
+                      opcoesDeAlcance({
+                        tipo: "conta_fixa",
+                        acao: "alterar",
+                        ancora: dataCurta(contaParaEditar.due_date),
+                      })
+                    )}
                   </p>
                 </div>
               ) : (
@@ -1539,6 +1614,23 @@ export default function BillsPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* A PERGUNTA DO ALCANCE NA EXCLUSAO (HMO-228).
+          O mesmo componente que a lista de Lancamentos e a tela do cartao usam
+          -- uma pergunta, um texto, tres telas. */}
+      {contaParaApagar && (
+        <DialogoDeAlcance
+          aberto
+          aoFechar={() => setContaParaApagar(null)}
+          tipo="conta_fixa"
+          acao="apagar"
+          ancora={dataCurta(contaParaApagar.due_date)}
+          salvando={agindo === contaParaApagar.id}
+          aoConfirmar={(escolhido) =>
+            apagarComAlcance(contaParaApagar, escolhido)
+          }
+        />
+      )}
     </div>
   );
 }

@@ -38,7 +38,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { ArrowLeft, CreditCard, Plus, Receipt } from "lucide-react";
+import { ArrowLeft, CreditCard, Plus, Receipt, Trash2 } from "lucide-react";
 import type { FinancialAccount } from "@/types/financial";
 import type { CardInvoice } from "@/types/financial";
 import { formatarValor } from "@/lib/dinheiro";
@@ -66,7 +66,30 @@ interface FaturaDoCartaoProps {
   /** A mais pessimista das leituras da pagina. `null` = ainda carregando. */
   estado: EstadoDaLeitura | null;
   aoMudarMes: (mes: string) => void;
+  /**
+   * Pedir para apagar uma parcela (HMO-228).
+   *
+   * OPCIONAL, e por isso este componente continua sem rede: a pagina passa o
+   * handler, abre a pergunta do alcance e fala com
+   * `/api/financial-installments/serie/{id}`. Sem ele, o botao nao aparece --
+   * entao o teste de render de servidor continua montando a tela inteira sem
+   * precisar de nada que mexa em dinheiro.
+   */
+  aoApagarParcela?: (gasto: LinhaDaFatura) => void;
 }
+
+/**
+ * A linha da fatura que o botao de apagar precisa identificar.
+ *
+ * Declarada aqui e nao importada de `CardInvoice` porque o que interessa e o
+ * subconjunto: o id para a rota e o par da 035 para saber se a linha e parcela.
+ */
+type LinhaDaFatura = {
+  transaction_id: string;
+  description: string;
+  installment_number?: number | null;
+  installment_total?: number | null;
+};
 
 /** '2026-10-14' -> '14/10'. Sem `new Date()`: a ISO seria lida como UTC e, no
  *  Brasil, voltaria um dia. */
@@ -78,6 +101,7 @@ export function FaturaDoCartao({
   mes,
   estado,
   aoMudarMes,
+  aoApagarParcela,
 }: FaturaDoCartaoProps) {
   const gastos = gastosDaFatura(fatura, conta.id);
   // `null` = a leitura daquele bloco falhou. Diferente de `[]`, que e "nenhuma".
@@ -260,12 +284,33 @@ export function FaturaDoCartao({
                     ) ?? diaEMes(gasto.transaction_date)}
                   </p>
                 </div>
-                {/* `invoice_amount` ja vem com o sinal invertido pela view: a
-                    compra soma e o estorno abate. Imprimir `amount` cru mostraria
-                    a fatura inteira negativa. */}
-                <p className="shrink-0 font-semibold">
-                  {formatarValor(Number(gasto.invoice_amount), conta.currency)}
-                </p>
+                <div className="flex shrink-0 items-center gap-2">
+                  {/* `invoice_amount` ja vem com o sinal invertido pela view: a
+                      compra soma e o estorno abate. Imprimir `amount` cru
+                      mostraria a fatura inteira negativa. */}
+                  <p className="font-semibold">
+                    {formatarValor(Number(gasto.invoice_amount), conta.currency)}
+                  </p>
+
+                  {/* APAGAR A PARCELA, PERGUNTANDO O ALCANCE (HMO-228)
+                      So aparece quando a linha E uma parcela e quando a pagina
+                      passou o handler. O botao CHAMA UM PROP e nao faz fetch:
+                      este componente nao tem rede nem hook de dados de
+                      proposito -- e isso que permite ao teste renderizar a tela
+                      de verdade com `react-dom/server`. Quem abre o dialogo e
+                      fala com a rota e `cartoes/[id]/page.tsx`. */}
+                  {aoApagarParcela && gasto.installment_number ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      title="Apagar parcela (só esta, desta em diante, ou todas)"
+                      onClick={() => aoApagarParcela(gasto)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  ) : null}
+                </div>
               </div>
             ))}
           </CardContent>
