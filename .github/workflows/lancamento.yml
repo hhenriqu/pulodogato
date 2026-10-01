@@ -124,9 +124,38 @@ jobs:
           # 4) HMO-170: a barreira do alcance vira `hoje` em vez da ocorrencia
           #    clicada. Este e o defeito que reescreve o que a pessoa nao pediu,
           #    e ele passa em qualquer teste manual feito no mes corrente.
+          #
+          #    A SONDA ENVELHECEU NA HMO-228, E DE UM JEITO PIOR QUE O DA
+          #    MUTACAO 2 ACIMA. Ela era
+          #
+          #      sed 's|if (irma.due_date < ancora.due_date) {|if (false) {|'
+          #
+          #    e aquela linha ganhou uma condicao quando o terceiro alcance
+          #    (`todas`) chegou -- `todas` nao tem barreira de data, e e disso
+          #    que ele consiste. O padrao velho deixou de casar em
+          #    `planejarEdicao`... e passou a casar em `planejarExclusao`, que
+          #    nasceu na mesma issue 200 linhas abaixo com a forma antiga.
+          #
+          #    Entao a mutacao ACONTECIA, na funcao errada.
+          #    `test:recorrencia-edicao` nao cobre `planejarExclusao` (quem
+          #    cobre e `test:alcance-da-serie`), a suite ficava verde e ESTE
+          #    bloco reprovava acusando a edicao de alcancar meses anteriores --
+          #    que e justamente o que ela nao faz. CI vermelho sobre codigo
+          #    correto, apontando para o lugar errado.
+          #
+          #    O padrao agora e a linha INTEIRA, com a condicao do alcance: ela
+          #    nao existe em mais nenhum lugar do arquivo. E a contagem abaixo
+          #    transforma "a sonda envelheceu de novo" num erro que se explica,
+          #    em vez de numa acusacao ao codigo.
           ALCANCE=lib/recorrencia-edicao.ts
           cp $ALCANCE $ALCANCE.orig
-          sed -i 's|if (irma.due_date < ancora.due_date) {|if (false) {|' $ALCANCE
+          PADRAO='if (alcance === "esta_e_proximas" && irma.due_date < ancora.due_date) {'
+          CASOU=$(grep -cF "$PADRAO" $ALCANCE)
+          if [ "$CASOU" != "1" ]; then
+            echo "::error::A sonda do alcance casa ${CASOU}x, nao 1x -- a linha mudou de forma em lib/recorrencia-edicao.ts. Conserte a sonda, nao o codigo: mutante que nao aplica e indistinguivel de mutante que sobreviveu."
+            exit 1
+          fi
+          sed -i "s|$PADRAO|if (false) {|" $ALCANCE
           if npm run test:recorrencia-edicao > /dev/null 2>&1; then
             echo "::error::Verde com a edicao alcancando meses ANTERIORES ao clicado."
             mv $ALCANCE.orig $ALCANCE
