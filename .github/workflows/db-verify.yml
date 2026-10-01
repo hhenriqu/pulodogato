@@ -1844,9 +1844,18 @@ jobs:
           saldo=$(psql "$URL_DESTINO" --no-psqlrc -tAc \
             "SELECT current_balance FROM public.financial_accounts
               WHERE id = '22222222-2222-2222-2222-222222222222'")
+          # "sem duplicar nada" se mede contra a ORIGEM, e nao contra um numero
+          # cravado: o que o merge promete e que restaurar por cima de contas que
+          # ja existem deixa cada conta UMA vez. Comparar com a origem e o que
+          # continua pegando a duplicacao (duplicar daria o dobro da origem) sem
+          # quebrar no dia em que o banco de CI passa a ter mais uma conta -- que
+          # e o que aconteceu aqui: o `1` cravado vinha da epoca em que a unica
+          # conta era a do proprio drill, e hoje tem tambem a que o
+          # 027_historico_antes_da_027.sql commita de proposito.
+          contas_origem=$(psql "$URL_ORIGEM" --no-psqlrc -tAc "SELECT count(*) FROM auth.users")
           contas=$(psql "$URL_DESTINO" --no-psqlrc -tAc "SELECT count(*) FROM auth.users")
-          if [ "$saldo" != '1234.56' ] || [ "$contas" != '1' ]; then
-            echo "::error::merge terminou errado (saldo '$saldo', contas '$contas')."
+          if [ "$saldo" != '1234.56' ] || [ "$contas" != "$contas_origem" ]; then
+            echo "::error::merge terminou errado (saldo '$saldo', contas '$contas', origem '$contas_origem')."
             exit 1
           fi
-          echo "merge restaurou por cima das contas existentes sem duplicar nada."
+          echo "merge restaurou por cima das contas existentes sem duplicar nada ($contas conta(s))."
