@@ -58,6 +58,20 @@ export type NaturezaDespesa = "one_off" | "card" | "fixed";
  */
 export type DuracaoDaRepeticao = "indefinida" | "contada";
 
+/**
+ * O valor que esta no campo de valor e o da PARCELA ou o do TOTAL? (HMO-211)
+ *
+ * A pergunta e literalmente a da issue, e ela existe porque as duas leituras do
+ * mesmo numero digitado dao compras dez vezes diferentes: "1.000" em 10x e uma
+ * compra de R$ 1.000 ou de R$ 10.000, e nada na tela antiga perguntava qual.
+ *
+ * O que havia antes eram DOIS campos -- "Numero de Parcelas" e "Valor da
+ * Parcela" -- e o total era derivado em silencio (`valor = parcela * N`). Quem
+ * digitasse no campo de valor de cima o preco da etiqueta e depois marcasse
+ * parcelar via o proprio numero ser sobrescrito pela multiplicacao, sem aviso.
+ */
+export type BaseDoValorParcelado = "parcela" | "total";
+
 /** O maximo de meses que a tela aceita em "por N meses". */
 export const MAX_MESES_DE_REPETICAO = 360;
 
@@ -233,7 +247,22 @@ export function camposDoTipo(
 
   return {
     ...comum,
-    parcelamento: !editando,
+    // PARCELAR E COISA DE CARTAO (HMO-211)
+    //
+    // O pedido e literal: "deve ser um checkbox abaixo do valor DO CARTAO". Ate
+    // aqui a checkbox aparecia em toda despesa, e fora do cartao ela nao
+    // funcionava: a rota gravava em `transaction_installments`, uma tabela sem
+    // leitor nenhum no app, e a compra parcelada desaparecia de Lancamentos, de
+    // Contas a Pagar e da fatura. Nao ha nada de util sendo retirado da tela.
+    //
+    // E nao e um buraco no produto. Uma serie fora do cartao tem a parcela N
+    // paga e as seguintes nao, o que exigiria escrever em DUAS tabelas na mesma
+    // operacao (`financial_transactions` + `scheduled_transactions`) -- e meia
+    // serie gravada e dinheiro errado e plausivel. O caminho que faz isso certo
+    // ja existe: despesa fixa com duracao "por N meses" (`max_occurrences`, 005)
+    // gera as N ocorrencias em Contas a Pagar, cada uma baixada no mes dela. E o
+    // que um financiamento ou um boleto em 10x e de verdade.
+    parcelamento: !editando && ehNoCartao,
     rateio: true,
     contaObrigatoria: ehNoCartao,
     rotuloDaConta: ehNoCartao ? "Cartão *" : "Conta/Cartão",
@@ -401,9 +430,16 @@ export interface ValoresDeLancamento {
 
   // So despesa usa daqui para baixo.
   parcelado: boolean;
+  /**
+   * O que o campo de valor significa quando `parcelado` (HMO-211). Nao ha mais
+   * um segundo campo de dinheiro: `valor` e o unico, e este campo e a resposta
+   * da pergunta sobre ele.
+   */
+  baseDoValorParcelado: BaseDoValorParcelado;
+  /** O N de "parcela N de M". 1 e a compra que esta comecando agora. */
+  parcelaAtual: number;
+  /** O M de "parcela N de M". */
   totalDeParcelas: number;
-  valorDaParcela: string;
-  primeiroVencimento: string;
   compartilhado: boolean;
   grupoId: string;
   rateios: { participanteId: string; percentual: number }[];
@@ -450,9 +486,16 @@ export function valoresIniciais(): ValoresDeLancamento {
     // 1 para BRL sem olhar para este campo.
     cotacao: "",
     parcelado: false,
+    // "parcela" e nao "total" porque e a leitura que a maquininha do cartao da:
+    // "10x de R$ 100". Nenhuma das duas e inofensiva como padrao, entao a tela
+    // mostra a conta feita (parcela E total) antes de salvar -- ver
+    // `resumoDaSerie`.
+    baseDoValorParcelado: "parcela",
+    parcelaAtual: 1,
+    // 1 e nao 2: um formulario novo nao esta parcelando, e `validarLancamento` so
+    // cobra `>= 2` quando a checkbox esta marcada. Abrir em 2 faria o campo
+    // sugerir uma resposta para uma pergunta que nao foi feita.
     totalDeParcelas: 1,
-    valorDaParcela: "",
-    primeiroVencimento: hojeISO(),
     compartilhado: false,
     grupoId: "",
     rateios: [],
@@ -592,45 +635,106 @@ export function validarLancamento(
     }
   }
 
-  // PARCELAR E DEIXAR PREVISTO SAO A MESMA PERGUNTA, RESPONDIDA DUAS VEZES
+  // AQUI HAVIA UMA GUARDA QUE DEIXOU DE SER ALCANCAVEL, E ELA FOI REMOVIDA
   //
-  // Parcelamento ja cria N cobrancas FUTURAS, cada uma com o seu vencimento,
-  // em `transaction_installments`. Combinar com "ainda nao paguei" nao tem uma
-  // leitura so: e a primeira parcela que fica prevista, ou todas? Recusar com a
-  // razao e melhor do que escolher uma das duas em silencio -- e sem esta porta
-  // o ramo de parcelas venceria o de previsao no `destinoDoLancamento` e a
-  // checkbox desmarcada simplesmente nao faria nada.
+  // Era a recusa de "parcelado + ainda nao paguei":
   //
-  // A LEITURA E `campos.dataDeRealizacao`, E NAO `!valores.confirmado` (HMO-209)
+  //   if (valores.parcelado && campos.parcelamento && !campos.dataDeRealizacao)
   //
-  // E a diferenca entre uma mensagem util e uma mensagem impossivel. No cartao
-  // nao existe mais checkbox para marcar: "Marque 'Ja paguei'" mandaria a pessoa
-  // procurar um campo que nao esta na tela, e nao haveria como obedecer. Lido
-  // pelos CAMPOS, este ramo simplesmente nao alcanca o cartao -- `camposDoTipo`
-  // devolve `dataDeRealizacao: true` la sempre --, e isso e o comportamento
-  // certo, nao um furo: comprar em 12x no cartao e o caso normal, e a compra
-  // parcelada ja aconteceu. Ela vai para `transaction_installments` pelo ramo de
-  // `parcelas`, com os vencimentos de cada parcela.
-  if (valores.parcelado && campos.parcelamento && !campos.dataDeRealizacao) {
-    return {
-      ok: false,
-      mensagem:
-        "Parcelado já cria as parcelas futuras com os vencimentos delas. Marque \"Já paguei\" ou desligue o parcelamento.",
-    };
-  }
+  // Com o parcelamento restrito ao cartao (HMO-211), `campos.parcelamento` e
+  // `campos.dataDeRealizacao` passaram a ser verdadeiros no MESMO e unico caso
+  // -- `camposDoTipo` devolve `dataDeRealizacao: true` em todo gasto no cartao
+  // (HMO-209), porque a compra no cartao ja aconteceu. A condicao e
+  // contraditoria: nenhuma entrada a satisfaz.
+  //
+  // Guarda inalcancavel nao e cinto a mais, e uma trava que ninguem consegue
+  // testar: quebre-a e todo teste continua verde, e ela passa a "proteger" um
+  // estado que so existe num teste que forja o estado por fora. Quem garante o
+  // mesmo invariante hoje e a ordem dos ramos em `destinoDoLancamento`, que TEM
+  // teste -- e a negacao explicita de que nenhuma entrada com natureza `card`
+  // sai como "previsao".
 
   // Parcelamento so existe onde `camposDoTipo` o mostra. Sem esta porta, uma
   // receita com `parcelado: true` no estado (ou uma edicao) cairia nas regras
   // de parcela, que a tela nem exibe -- e a mensagem falaria de um campo
   // invisivel.
   if (valores.parcelado && campos.parcelamento) {
-    const parcela = Number.parseFloat(valores.valorDaParcela);
-    if (!Number.isFinite(parcela) || parcela <= 0) {
-      return { ok: false, mensagem: "Valor da parcela deve ser maior que zero." };
+    // A ORDEM DESTAS QUATRO RECUSAS E A ORDEM DOS CAMPOS NA TELA (HMO-211)
+    //
+    // O valor vem primeiro porque ele e o campo de cima, e e dele que a pergunta
+    // "parcela ou total" fala. Depois M, depois N, depois a data. Recusar o N
+    // antes do M faria a frase falar do segundo numero do par antes do primeiro.
+    const valor = Number.parseFloat(valores.valor);
+    if (!Number.isFinite(valor) || valor <= 0) {
+      return { ok: false, mensagem: "Valor deve ser maior que zero." };
     }
-    if (!Number.isInteger(valores.totalDeParcelas) || valores.totalDeParcelas < 2) {
-      return { ok: false, mensagem: "Número de parcelas deve ser maior que 1." };
+
+    if (
+      !Number.isInteger(valores.totalDeParcelas) ||
+      valores.totalDeParcelas < 2
+    ) {
+      return { ok: false, mensagem: "O total de parcelas deve ser 2 ou mais." };
     }
+    if (valores.totalDeParcelas > MAX_PARCELAS) {
+      return {
+        ok: false,
+        mensagem: `No máximo ${MAX_PARCELAS} parcelas.`,
+      };
+    }
+
+    // "PARCELA 12 DE 10" PRECISA DE UMA FRASE PROPRIA
+    //
+    // E o erro de digitacao mais provavel desta tela (os dois campos ficam lado
+    // a lado, e o par esta invertido na metade das maquininhas). Sem esta
+    // recusa, `serieDeParcelas` devolve `null` e o que o usuario veria e a
+    // mensagem generica de valor -- mandando ele arrumar o campo certo pelo
+    // motivo errado.
+    if (
+      !Number.isInteger(valores.parcelaAtual) ||
+      valores.parcelaAtual < 1 ||
+      valores.parcelaAtual > valores.totalDeParcelas
+    ) {
+      return {
+        ok: false,
+        mensagem: `A parcela atual tem que estar entre 1 e ${valores.totalDeParcelas}.`,
+      };
+    }
+
+    // A DATA E A QUE JA ESTA NA TELA, E NAO UM CAMPO NOVO
+    //
+    // O bloco antigo tinha um campo "Primeira Parcela" proprio. O pedido nao
+    // pede data nenhuma -- pede a checkbox, a pergunta "parcela ou total" e o
+    // "N de M" -- e a tela do cartao JA tem a data certa desde a HMO-209: "Data
+    // da compra", que e o que `card_invoice_month()` usa para decidir em que
+    // fatura a parcela cai. Um segundo campo de data seriam duas respostas para
+    // a mesma pergunta, e a errada seria a que o banco ignora.
+    //
+    // E NAO HA GUARDA DE `!valores.data` AQUI de proposito: a recusa generica
+    // ("Informe a data.") ja roda bem antes deste ramo, no bloco de datas. Uma
+    // segunda checagem da mesma coisa seria inalcancavel -- quebre-a e nenhum
+    // teste fica vermelho, que e como uma trava morre sem ninguem notar.
+
+    // O SUSPENSORIO: a propria funcao que vai gravar tem de aceitar as entradas.
+    //
+    // As recusas acima sao as frases uteis; esta e a garantia de que nenhuma
+    // combinacao que elas deixem passar chega ao banco. Sem ela, uma regra nova
+    // dentro de `serieDeParcelas` (um limite de valor, um formato de data)
+    // viraria "Erro ao criar parcelas" sem dizer nada.
+    if (
+      !serieDeParcelas({
+        valor: valores.valor,
+        base: valores.baseDoValorParcelado,
+        parcelaAtual: valores.parcelaAtual,
+        totalDeParcelas: valores.totalDeParcelas,
+        vencimentoDaParcelaAtual: valores.data,
+      })
+    ) {
+      return {
+        ok: false,
+        mensagem: "Não consegui montar as parcelas com esses valores.",
+      };
+    }
+
     return { ok: true };
   }
 
@@ -909,6 +1013,266 @@ export function contaPrevista(
     transaction_type: tipo,
     notes: valores.notas || null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// A SERIE DE PARCELAS (HMO-211)
+// ---------------------------------------------------------------------------
+// "Sobre parcelar, deve ser um checkbox abaixo do valor do cartao e ao clicar
+// perguntar se o valor que esta no input e o da parcela ou total, e em qual
+// parcela aquela se refere de quantas no total."
+//
+// TUDO O QUE DECIDE DINHEIRO AQUI E FUNCAO PURA, e o motivo nao e estilo: sao
+// quatro entradas (valor, base, N, M) que se combinam de um jeito em que o erro
+// nao aparece. Trocar a base multiplica a compra por M. Trocar N por M cria a
+// serie ao contrario. Um off-by-one na contagem cria uma parcela a mais, com
+// valor plausivel, no mes seguinte ao fim -- e a unica tela que mostraria isso e
+// a fatura de um mes que ainda nao chegou.
+//
+// POR QUE A CONTA E EM CENTAVOS
+// -----------------------------
+// `1000 / 3` em ponto flutuante da 333.33333333333331, e tres parcelas assim
+// somam 999.99999999999989: a fatura fecharia com um centavo de diferenca que
+// nenhuma das linhas explica. Em centavos inteiros a soma e exata, e quem
+// absorve a sobra da divisao e a ULTIMA parcela -- a mesma escolha que a RPC
+// `create_installments` (001) ja fazia, para que o total gravado seja sempre o
+// total digitado.
+//
+// NAO HA IMPORT DE lib/dinheiro.ts DE PROPOSITO. `test:lancamento` compila este
+// arquivo sozinho (`tsc lib/lancamento.ts`), sem o passo que reescreve o alias
+// `@/`, e um import aqui derrubaria a suite com ERR_MODULE_NOT_FOUND -- o mesmo
+// motivo pelo qual `moeda: "BRL"` em `valoresIniciais` e literal.
+
+/** Uma parcela da serie, ja com o valor e o vencimento dela. */
+export interface ParcelaDaSerie {
+  /** O numero dela na serie: 3, numa "parcela 3 de 10". */
+  numero: number;
+  /** Em reais, com 2 casas exatas. */
+  valor: number;
+  /** AAAA-MM-DD. */
+  vencimento: string;
+}
+
+export interface SerieDeParcelas {
+  /** O valor de UMA parcela (a ultima pode diferir em centavos; ver abaixo). */
+  valorDaParcela: number;
+  /** O valor da compra inteira, as M parcelas. */
+  valorTotal: number;
+  /**
+   * SO as parcelas que faltam: de `parcelaAtual` ate `totalDeParcelas`.
+   *
+   * Esta e a decisao (A) da HMO-208, e ela e deliberada: lancar "parcela 3 de
+   * 10" nao gera linha nenhuma para as parcelas 1 e 2. A alternativa seria
+   * gravar a serie toda marcando as anteriores como pagas -- e o app passaria a
+   * afirmar pagamentos que ninguem registrou, com `paid_date` sem transacao por
+   * tras (a mesma classe de problema da HMO-149: o numero fecha, o fato nao
+   * aconteceu). Para lancar uma parcela antiga ha a tela do cartao (HMO-210).
+   */
+  parcelas: ParcelaDaSerie[];
+  /**
+   * Quantas parcelas da serie NAO foram criadas por serem anteriores (N-1).
+   *
+   * Existe para a tela poder dizer isso em voz alta. Um "8 parcelas criadas"
+   * numa compra de 10x e, sozinho, indistinguivel de um off-by-one.
+   */
+  parcelasAnteriores: number;
+}
+
+const MAX_PARCELAS = 60;
+
+/**
+ * Soma meses a uma data AAAA-MM-DD, grampeando o dia ao ultimo do mes destino.
+ *
+ * ARITMETICA DE STRING, SEM `Date`, e isto nao e preciosismo. `new Date("2026-
+ * 01-31")` e meia-noite UTC; somar mes com `setMonth` e reimprimir com
+ * `toISOString` devolve o dia anterior em qualquer fuso a oeste de Greenwich.
+ * O sandbox roda em America/Sao_Paulo e o CI em UTC, entao esse bug passaria
+ * verde em exatamente um dos dois -- ver `teste-de-data-passa-em-utc-e-nao-ve-o-
+ * bug`.
+ *
+ * O grampo: a parcela de 31 de janeiro vence em 28 de fevereiro, nao em 3 de
+ * marco. Sem ele a serie "pula" um mes e duas parcelas caem na mesma fatura.
+ */
+export function somaMeses(dataISO: string, meses: number): string | null {
+  const casa = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dataISO);
+  if (!casa) return null;
+
+  const ano = Number(casa[1]);
+  const mes = Number(casa[2]);
+  const dia = Number(casa[3]);
+  if (mes < 1 || mes > 12 || dia < 1 || dia > 31) return null;
+
+  // Meses contados de 0 para o modulo nao tropecar no 12.
+  const indice = (ano * 12 + (mes - 1)) + meses;
+  const anoDestino = Math.floor(indice / 12);
+  const mesDestino = (indice % 12) + 1;
+
+  // Dia 0 do mes seguinte e o ultimo do mes corrente -- em UTC, que e seguro
+  // porque so o NUMERO do dia e lido daqui.
+  const ultimoDia = new Date(Date.UTC(anoDestino, mesDestino, 0)).getUTCDate();
+  const diaDestino = Math.min(dia, ultimoDia);
+
+  const dd = String(diaDestino).padStart(2, "0");
+  const mm = String(mesDestino).padStart(2, "0");
+  return `${String(anoDestino).padStart(4, "0")}-${mm}-${dd}`;
+}
+
+/**
+ * A serie que vai ser gravada, a partir das quatro respostas da tela.
+ *
+ * `null` quando as entradas nao formam uma serie -- quem transforma isso em
+ * frase para o usuario e `validarLancamento`, que roda antes. Devolver `null` em
+ * vez de uma serie vazia e deliberado: uma serie vazia e um sucesso com zero
+ * parcelas, e o chamador gravaria nada e avisaria "parcelas criadas".
+ */
+export function serieDeParcelas(entrada: {
+  /** Como veio do campo de valor: string. */
+  valor: string;
+  base: BaseDoValorParcelado;
+  /** N */
+  parcelaAtual: number;
+  /** M */
+  totalDeParcelas: number;
+  /** O vencimento da parcela N. */
+  vencimentoDaParcelaAtual: string;
+}): SerieDeParcelas | null {
+  const { base, parcelaAtual: n, totalDeParcelas: m } = entrada;
+
+  if (!Number.isInteger(n) || !Number.isInteger(m)) return null;
+  if (m < 2 || m > MAX_PARCELAS) return null;
+  // `n > m` e o jeito como "parcela 10 de 3" chega aqui -- inclusive se alguem
+  // trocar a ordem dos dois argumentos num chamador.
+  if (n < 1 || n > m) return null;
+
+  const valor = Number.parseFloat(entrada.valor);
+  if (!Number.isFinite(valor) || valor <= 0) return null;
+
+  // Centavos inteiros a partir daqui. `Math.round` e nao `Math.trunc`: R$ 0,10
+  // digitado chega como 0.1, que vezes 100 da 10.000000000000002.
+  const digitadoEmCentavos = Math.round(valor * 100);
+
+  // AQUI MORA A PERGUNTA DA ISSUE, E ELA E UM `if` DE DUAS LINHAS
+  //
+  // Com base "parcela" o total e um multiplo exato e nao ha sobra nenhuma: as M
+  // parcelas valem o mesmo. Com base "total" e a divisao que sobra, e a sobra
+  // vai na ultima.
+  const totalEmCentavos =
+    base === "parcela" ? digitadoEmCentavos * m : digitadoEmCentavos;
+  const parcelaEmCentavos =
+    base === "parcela" ? digitadoEmCentavos : Math.round(digitadoEmCentavos / m);
+
+  if (parcelaEmCentavos <= 0) return null;
+
+  // A ULTIMA PARCELA FECHA O TOTAL
+  //
+  // A sobra cai na parcela M, e M esta SEMPRE dentro do intervalo criado
+  // (N <= M), entao ela nunca se perde numa parcela que nao foi gravada.
+  const ultimaEmCentavos =
+    totalEmCentavos - parcelaEmCentavos * (m - 1);
+
+  const parcelas: ParcelaDaSerie[] = [];
+  for (let numero = n; numero <= m; numero++) {
+    const vencimento = somaMeses(entrada.vencimentoDaParcelaAtual, numero - n);
+    if (!vencimento) return null;
+    parcelas.push({
+      numero,
+      valor: (numero === m ? ultimaEmCentavos : parcelaEmCentavos) / 100,
+      vencimento,
+    });
+  }
+
+  return {
+    valorDaParcela: parcelaEmCentavos / 100,
+    valorTotal: totalEmCentavos / 100,
+    parcelas,
+    parcelasAnteriores: n - 1,
+  };
+}
+
+/**
+ * "Notebook (3/10)" -- a descricao de uma parcela.
+ *
+ * Em UM lugar porque ela vai para duas tabelas diferentes (a transacao do
+ * cartao e a conta prevista) e e o texto que o usuario le na lista. Duas copias
+ * divergiriam na primeira mudanca de formato, e a lista mostraria a mesma compra
+ * escrita de dois jeitos.
+ */
+export function descricaoDaParcela(
+  descricao: string,
+  numero: number,
+  total: number
+): string {
+  return `${descricao.trim()} (${numero}/${total})`;
+}
+
+/**
+ * "parcela 3 de 10" -- o rotulo, para quem le a tela.
+ *
+ * Separado de `descricaoDaParcela` de proposito: a descricao e o que foi
+ * GRAVADO (e o usuario pode edita-la), o rotulo sai das colunas
+ * `installment_number` / `installment_total` da migration 035. Quando os dois
+ * discordarem, quem esta certo e o rotulo.
+ */
+export function rotuloDaParcela(
+  numero: number | null | undefined,
+  total: number | null | undefined
+): string | null {
+  if (!numero || !total) return null;
+  if (!Number.isInteger(numero) || !Number.isInteger(total)) return null;
+  if (numero < 1 || numero > total) return null;
+  return `parcela ${numero} de ${total}`;
+}
+
+/**
+ * O resumo que a tela mostra ANTES de salvar.
+ *
+ * Existe porque nenhum default de `baseDoValorParcelado` e inofensivo: seja
+ * "parcela" ou "total", metade dos usuarios vai digitar pensando no outro. A
+ * defesa nao e escolher melhor -- e mostrar a conta feita, com os dois numeros,
+ * ao lado da pergunta. `null` quando ainda nao da para fazer a conta: um resumo
+ * parcial ("10x de R$ 0,00") se le como resposta.
+ */
+export function resumoDaSerie(serie: SerieDeParcelas | null): string | null {
+  if (!serie) return null;
+
+  // A MAO, e nao `toLocaleString("pt-BR")`: este texto entra em assercao de
+  // teste, e depender da base de locale do Node faz o mesmo teste passar numa
+  // maquina e falhar noutra sem nada no codigo ter mudado (ha um Node sem
+  // full-icu que devolve o formato en-US para qualquer locale pedido). Mesma
+  // razao que os nomes de mes em lib/fatura-do-cartao.ts.
+  const emReais = (v: number) => {
+    const centavos = Math.round(v * 100);
+    const inteiros = String(Math.floor(centavos / 100)).replace(
+      /\B(?=(\d{3})+(?!\d))/g,
+      "."
+    );
+    return `R$ ${inteiros},${String(centavos % 100).padStart(2, "0")}`;
+  };
+
+  const quantas = serie.parcelas.length;
+  const primeira = serie.parcelas[0];
+  const total = serie.parcelas.length + serie.parcelasAnteriores;
+
+  const cabeca = `${total}x de ${emReais(serie.valorDaParcela)} · total ${emReais(
+    serie.valorTotal
+  )}`;
+
+  // A FRASE QUE TORNA A DECISAO (A) VISIVEL
+  //
+  // Sem ela, lancar "parcela 3 de 10" grava 8 linhas e a tela diz "10x" -- e a
+  // pessoa so descobriria que as duas primeiras nao existem procurando nas
+  // faturas passadas. O que ela faria com essa informacao esta na tela do
+  // cartao: lancar a mao a parcela antiga, se quiser.
+  if (serie.parcelasAnteriores > 0) {
+    return `${cabeca}. Vou registrar ${quantas} parcela${
+      quantas === 1 ? "" : "s"
+    }, da ${primeira.numero}ª em diante — as ${serie.parcelasAnteriores} anteriores não entram.`;
+  }
+
+  return `${cabeca}. ${quantas} parcelas, a partir de ${primeira.vencimento
+    .split("-")
+    .reverse()
+    .join("/")}.`;
 }
 
 /**

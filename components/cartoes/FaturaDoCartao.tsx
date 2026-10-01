@@ -53,6 +53,7 @@ import {
   rotuloDaFatura,
   rotuloDoCiclo,
 } from "@/lib/fatura-do-cartao";
+import { rotuloDaParcela } from "@/lib/lancamento";
 import { NumeroIndisponivel } from "@/components/SemRede";
 
 interface FaturaDoCartaoProps {
@@ -224,7 +225,36 @@ export function FaturaDoCartao({
                     {gasto.description}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {diaEMes(gasto.transaction_date)}
+                    {/* "parcela 3 de 10" (HMO-211, migration 035)
+
+                        E AQUI QUE O PARCELAMENTO PASSA A EXISTIR NA TELA. Antes
+                        da 035 as parcelas iam para `transaction_installments`,
+                        que nao tem leitor nenhum: a compra em 10x era gravada e
+                        desaparecia de Lancamentos, de Contas a Pagar e da
+                        fatura. Agora cada parcela e uma compra no cartao, no mes
+                        da fatura dela, e esta linha e o rotulo que diz qual.
+
+                        O rotulo sai das COLUNAS, nao da descricao. A descricao
+                        gravada e "Notebook (3/10)" e o usuario pode reescreve-la
+                        -- e o sintoma de depender dela seria o rotulo sumir de
+                        uma parcela e continuar na vizinha, na mesma fatura.
+
+                        O rotulo SUBSTITUI a data em vez de acompanha-la, e isso
+                        e deliberado: a `transaction_date` das parcelas futuras e
+                        o primeiro dia do mes da fatura, nao um dia que a pessoa
+                        digitou (ver `datasDasParcelasNoCartao` na rota).
+                        Imprimir "01/04" ao lado de "parcela 4 de 10" afirmaria
+                        uma data de compra que nao existe. O mes, que e a
+                        informacao real, ja esta no cabecalho da fatura.
+
+                        `rotuloDaParcela` devolve null quando o par nao serve
+                        (uma coluna sem a outra, N > M), e nesse caso a linha
+                        mostra so a data: um "parcela 3 de" sem numero depois do
+                        "de" e pior que rotulo nenhum. */}
+                    {rotuloDaParcela(
+                      gasto.installment_number,
+                      gasto.installment_total
+                    ) ?? diaEMes(gasto.transaction_date)}
                   </p>
                 </div>
                 {/* `invoice_amount` ja vem com o sinal invertido pela view: a

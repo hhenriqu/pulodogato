@@ -139,11 +139,28 @@ test("receita nao tem parcelamento nem rateio", () => {
   assert.equal(campos.contaObrigatoria, false);
 });
 
-test("despesa tem os tres", () => {
+test("despesa pontual tem natureza e rateio, e NAO tem parcelamento", () => {
   const campos = camposDoTipo("expense", "one_off", false);
   assert.equal(campos.natureza, true);
-  assert.equal(campos.parcelamento, true);
   assert.equal(campos.rateio, true);
+  // HMO-211: parcelar passou a ser so do cartao. Ate aqui a checkbox aparecia
+  // em toda despesa e fora do cartao ela nao funcionava -- a rota gravava em
+  // `transaction_installments`, tabela sem leitor nenhum, e a compra parcelada
+  // desaparecia de Lancamentos, de Contas a Pagar e da fatura.
+  assert.equal(campos.parcelamento, false);
+});
+
+test("parcelamento aparece no cartao, e so criando", () => {
+  assert.equal(camposDoTipo("expense", "card", false).parcelamento, true);
+  // Editando, nao: o que esta gravado e uma transacao, e parcelar o que ja
+  // existe exigiria desfazer a linha e criar N no lugar.
+  assert.equal(camposDoTipo("expense", "card", true).parcelamento, false);
+  // Receita nao parcela em nenhuma natureza.
+  assert.equal(camposDoTipo("income", "card", false).parcelamento, false);
+  // E a natureza fixa tambem nao: la o modelo de futuro e a REGRA, com duracao
+  // "por N meses". Duas maneiras de gerar a mesma serie seriam duas fontes para
+  // o mesmo dinheiro.
+  assert.equal(camposDoTipo("expense", "fixed", false).parcelamento, false);
 });
 
 test("receita nao ganha campo de despesa nem passando natureza de cartao", () => {
@@ -253,29 +270,31 @@ test("data fora do formato do banco e recusada", () => {
   }
 });
 
-test("parcelamento exige parcela positiva e mais de uma parcela", () => {
+test("parcelamento exige valor positivo e mais de uma parcela", () => {
   const base = { categoria: CATEGORIA_DESPESA, editando: false };
+  const noCartao = (extra) =>
+    preenchido({ natureza: "card", contaId: "cartao-1", ...extra });
 
   const semValor = validarLancamento(
     "expense",
-    preenchido({ parcelado: true, valorDaParcela: "0", totalDeParcelas: 3 }),
+    noCartao({ parcelado: true, valor: "0", totalDeParcelas: 3 }),
     base
   );
   assert.equal(semValor.ok, false);
-  assert.match(semValor.mensagem, /parcela deve ser maior/i);
+  assert.match(semValor.mensagem, /valor deve ser maior/i);
 
   const umaParcela = validarLancamento(
     "expense",
-    preenchido({ parcelado: true, valorDaParcela: "50", totalDeParcelas: 1 }),
+    noCartao({ parcelado: true, totalDeParcelas: 1 }),
     base
   );
   assert.equal(umaParcela.ok, false);
-  assert.match(umaParcela.mensagem, /maior que 1/i);
+  assert.match(umaParcela.mensagem, /2 ou mais/i);
 
   assert.equal(
     validarLancamento(
       "expense",
-      preenchido({ parcelado: true, valorDaParcela: "50", totalDeParcelas: 3 }),
+      noCartao({ parcelado: true, totalDeParcelas: 3 }),
       base
     ).ok,
     true
@@ -291,12 +310,40 @@ test("receita com parcelado ligado no estado nao cai nas regras de parcela", () 
     preenchido({
       categoriaId: "c2",
       parcelado: true,
-      valorDaParcela: "",
       totalDeParcelas: 1,
     }),
     { categoria: CATEGORIA_RECEITA, editando: false }
   );
   assert.equal(r.ok, true);
+});
+
+test("despesa PONTUAL com parcelado herdado no estado nao cai nas regras de parcela", () => {
+  // HMO-211, e este e o caso novo: `parcelado` sobrevive a troca de natureza.
+  // Marcar a checkbox no cartao e depois voltar para "pontual" deixa
+  // `parcelado: true` num formulario onde o bloco nao esta mais na tela. Sem a
+  // porta `campos.parcelamento`, o Salvar recusaria pedindo "o total de
+  // parcelas deve ser 2 ou mais" -- um campo invisivel -- e nao haveria como
+  // obedecer sem voltar para o cartao.
+  const r = validarLancamento(
+    "expense",
+    preenchido({
+      natureza: "one_off",
+      parcelado: true,
+      totalDeParcelas: 1,
+      parcelaAtual: 1,
+    }),
+    { categoria: CATEGORIA_DESPESA, editando: false }
+  );
+  assert.equal(r.ok, true);
+  // E o destino tambem nao e "parcelas": o ramo le `campos.parcelamento`.
+  assert.equal(
+    destinoDoLancamento(
+      "expense",
+      preenchido({ natureza: "one_off", parcelado: true, totalDeParcelas: 3 }),
+      false
+    ),
+    "transacao"
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -593,26 +640,47 @@ test("editar uma transacao gravada nunca vira previsao nova", () => {
   assert.equal(destinoDoLancamento("expense", previsto(), true), "transacao");
 });
 
-test("parcelado ganha da previsao, e a validacao recusa o par", () => {
-  const parceladoPrevisto = previsto({
+test("parcelado ganha da previsao, e no cartao nao ha previsao para perder", () => {
+  // O ramo de parcelas vem antes do de previsao: ele ja e um modelo de futuro.
+  //
+  // ATE A HMO-211 ESTE TESTE COBRAVA OUTRA COISA, e vale registrar o que mudou.
+  // Ele exercitava "parcelado + nao confirmado" numa despesa PONTUAL e exigia a
+  // recusa "Marque 'Ja paguei' ou desligue o parcelamento". Com o parcelamento
+  // restrito ao cartao, essa combinacao nao existe mais: `camposDoTipo` devolve
+  // `dataDeRealizacao: true` em todo gasto no cartao (HMO-209, a compra ja
+  // aconteceu), entao parcelado e nao-confirmado nunca sao verdadeiros juntos.
+  // A guarda que dava aquela frase foi REMOVIDA de `validarLancamento` por ser
+  // inalcancavel -- uma trava que ninguem pode testar nao e um cinto a mais.
+  //
+  // O que sobra para provar, e o que importa, e que um `confirmado: false`
+  // herdado do estado NAO desvia a compra parcelada para a agenda.
+  const parceladoNaoConfirmado = preenchido({
+    natureza: "card",
+    contaId: "cartao-1",
+    confirmado: false,
     parcelado: true,
     totalDeParcelas: 3,
-    valorDaParcela: "50",
   });
-  // O ramo de parcelas vem antes: ele ja e um modelo de futuro.
+
   assert.equal(
-    destinoDoLancamento("expense", parceladoPrevisto, false),
+    destinoDoLancamento("expense", parceladoNaoConfirmado, false),
     "parcelas"
   );
-  // E a recusa e o que impede a checkbox desmarcada de nao fazer nada em
-  // silencio. Sem ela a pessoa desmarcaria "ja paguei" e receberia 3 parcelas
-  // lancadas como se tivessem sido pagas.
-  const v = validarLancamento("expense", parceladoPrevisto, {
-    categoria: CATEGORIA_DESPESA,
-    editando: false,
-  });
-  assert.equal(v.ok, false);
-  assert.match(v.mensagem, /parcelas futuras/i);
+  // A NEGACAO EXPLICITA: nunca "previsao". Uma compra parcelada que caisse na
+  // agenda apareceria em Contas a Pagar ao lado da fatura cheia do cartao -- a
+  // mesma compra cobrada duas vezes, o defeito da HMO-209 voltando por outra
+  // porta.
+  assert.notEqual(
+    destinoDoLancamento("expense", parceladoNaoConfirmado, false),
+    "previsao"
+  );
+  assert.equal(
+    validarLancamento("expense", parceladoNaoConfirmado, {
+      categoria: CATEGORIA_DESPESA,
+      editando: false,
+    }).ok,
+    true
+  );
 });
 
 test("a conta prevista vai com valor POSITIVO nos dois tipos", () => {
@@ -947,7 +1015,6 @@ test("parcelado no cartao e aceito, e sem mensagem sobre um campo invisivel", ()
     confirmado: false,
     parcelado: true,
     totalDeParcelas: 3,
-    valorDaParcela: "50",
   });
 
   const v = validarLancamento("expense", valores, {
@@ -957,21 +1024,12 @@ test("parcelado no cartao e aceito, e sem mensagem sobre um campo invisivel", ()
   assert.equal(v.ok, true);
   assert.equal(destinoDoLancamento("expense", valores, false), "parcelas");
 
-  // E a recusa continua valendo onde a checkbox EXISTE -- senao desmarcar "Ja
-  // paguei" numa despesa parcelada comum voltaria a nao fazer nada em silencio.
-  const pontual = validarLancamento(
-    "expense",
-    preenchido({
-      natureza: "one_off",
-      confirmado: false,
-      parcelado: true,
-      totalDeParcelas: 3,
-      valorDaParcela: "50",
-    }),
-    { categoria: CATEGORIA_DESPESA, editando: false }
-  );
-  assert.equal(pontual.ok, false);
-  assert.match(pontual.mensagem, /Já paguei/);
+  // E NENHUMA mensagem fala de "Ja paguei": a checkbox nao esta na tela do
+  // cartao desde a HMO-209, e a frase mandaria a pessoa procurar um campo que
+  // nao existe. Com a guarda inalcancavel removida na HMO-211, nao ha mais de
+  // onde essa frase sair -- esta assercao e o que prende isso.
+  assert.equal(v.ok, true);
+  assert.ok(!("mensagem" in v));
 });
 
 test("o cartao nao cobra data prevista, e cobra a data da compra", () => {
