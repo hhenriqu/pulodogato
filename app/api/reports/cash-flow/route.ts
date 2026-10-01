@@ -449,6 +449,19 @@ export async function GET(request: NextRequest) {
           total_income: Number(totalEntrada.toFixed(2)),
           total_expense: Number(totalSaida.toFixed(2)),
           net: Number((totalEntrada - totalSaida).toFixed(2)),
+          // Soma dos meses DESTA moeda, pela mesma razao das medias logo abaixo:
+          // o bloco e por moeda, e o painel do grupo mostra esta contagem ao
+          // lado dos totais desta moeda.
+          //
+          // O grao `intervalo` ja devolvia `transaction_count` e este nao: o
+          // tile "Lancamentos" do painel do grupo lia `undefined` e caia no
+          // `?? 0`, mostrando ZERO em cima de um mes com gasto -- e o periodo
+          // default do painel (o mes corrente) e exatamente um mes fechado,
+          // entao era o caso comum, nao a borda.
+          transaction_count: linhas.reduce(
+            (s, l) => s + l.transaction_count,
+            0
+          ),
           months_with_activity: mesesComMovimento,
           average_expense: mesesComMovimento
             ? Number((totalSaida / mesesComMovimento).toFixed(2))
@@ -483,6 +496,7 @@ export async function GET(request: NextRequest) {
         total_income: 0,
         total_expense: 0,
         net: 0,
+        transaction_count: 0,
         months_with_activity: 0,
         average_expense: 0,
         average_income: 0,
