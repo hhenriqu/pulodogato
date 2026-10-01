@@ -131,6 +131,7 @@ export async function POST(request: NextRequest) {
       description,
       amount,
       category_id,
+      subcategory_id,
       account_id,
       group_id,
       due_date,
@@ -252,6 +253,13 @@ export async function POST(request: NextRequest) {
       .insert({
         user_id: user.id,
         category_id,
+        // HMO-216. A subcategoria atravessa a PREVISAO: a baixa
+        // (`[id]/pay`) copia este campo para o lancamento, e sem ele a tela
+        // aceitaria a subcategoria na conta prevista e a perderia na
+        // confirmacao -- sem erro nenhum, porque a coluna e nulavel.
+        //
+        // `|| null` e nao `""`: a coluna e uuid, e string vazia volta 22P02.
+        subcategory_id: subcategory_id || null,
         account_id: account_id || null,
         group_id: group_id || null,
         description: description.trim(),

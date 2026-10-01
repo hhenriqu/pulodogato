@@ -295,6 +295,23 @@ export interface ValoresDeLancamento {
   /** Como veio do input: string, ainda nao numero. */
   valor: string;
   categoriaId: string;
+  /**
+   * A subcategoria, dentro da categoria escolhida (HMO-216).
+   *
+   * Opcional no tipo, e nao `string` com `""`, porque ela e opcional no banco:
+   * `financial_transactions.subcategory_id` e nulavel, e a FK COMPOSTA da 036
+   * usa `MATCH SIMPLE` -- lancamento sem subcategoria passa, e lancamento COM
+   * subcategoria e obrigado a usar uma daquela categoria.
+   *
+   * Quem mantem as duas coerentes na tela e `subcategoriaCoerente`
+   * (lib/categorias.ts): trocar de categoria sem trocar isto aqui e o caminho
+   * direto para um 23503 na hora de salvar.
+   *
+   * NAO entra em conta nenhuma. Subcategoria nao muda sinal, nao muda natureza
+   * e nao e somada: `valorGravado` e `validarLancamento` a ignoram de
+   * proposito, e quem soma continua somando por categoria.
+   */
+  subcategoriaId?: string;
   contaId: string;
   /**
    * Quando o dinheiro ANDOU (YYYY-MM-DD). Vai para
@@ -752,6 +769,7 @@ export function regraDeRecorrencia(
   description: string;
   amount: number;
   category_id: string;
+  subcategory_id: string | null;
   account_id: string | null;
   transaction_type: TipoLancamento;
   frequency: "monthly";
@@ -765,6 +783,10 @@ export function regraDeRecorrencia(
     description: valores.descricao,
     amount: Math.abs(Number.parseFloat(valores.valor)),
     category_id: valores.categoriaId,
+    // A subcategoria atravessa a DESPESA FIXA (HMO-216). A regra e a semente de
+    // toda ocorrencia futura: perder o campo aqui perderia o detalhe em TODOS os
+    // meses que a regra vai gerar, nao em um lancamento.
+    subcategory_id: valores.subcategoriaId || null,
     account_id: valores.contaId || null,
     transaction_type: tipo,
     frequency: "monthly",
@@ -863,6 +885,7 @@ export function contaPrevista(
   description: string;
   amount: number;
   category_id: string;
+  subcategory_id: string | null;
   account_id: string | null;
   group_id: string | null;
   due_date: string;
@@ -873,6 +896,13 @@ export function contaPrevista(
     description: valores.descricao,
     amount: Math.abs(Number.parseFloat(valores.valor)),
     category_id: valores.categoriaId,
+    // A subcategoria atravessa a PREVISAO (HMO-216). Sem esta linha a tela
+    // aceitaria a subcategoria na despesa prevista e a descartaria em silencio:
+    // a baixa copia `category_id` da agenda para o lancamento, e a subcategoria
+    // simplesmente nao existiria para copiar.
+    //
+    // `|| null` e nao `""`: a coluna e uuid, e string vazia volta 22P02.
+    subcategory_id: valores.subcategoriaId || null,
     account_id: valores.contaId || null,
     group_id: valores.grupoId || null,
     due_date: valores.dataPrevista,

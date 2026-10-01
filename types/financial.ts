@@ -102,6 +102,18 @@ export interface FinancialTransaction {
   user_id: string;
   service_id: string;
   category_id: string;
+  /**
+   * Subcategoria do lancamento (HMO-216, migration 036).
+   *
+   * Opcional porque a coluna e nulavel: a FK COMPOSTA (category_id,
+   * subcategory_id) usa MATCH SIMPLE, entao lancamento sem subcategoria passa e
+   * lancamento COM subcategoria e obrigado a usar uma daquela categoria.
+   *
+   * Declarar aqui nao e burocracia: coluna que existe no banco e falta no tipo
+   * passa pelo `tsc` em todo lugar e desaparece em todo `select` tipado --
+   * o campo some da tela sem um erro em lugar nenhum.
+   */
+  subcategory_id?: string | null;
   account_id?: string;
   description: string;
   amount: number;
@@ -323,6 +335,18 @@ export interface RecurringRule {
   id: string;
   user_id: string;
   category_id: string;
+  /**
+   * Subcategoria do lancamento (HMO-216, migration 036).
+   *
+   * Opcional porque a coluna e nulavel: a FK COMPOSTA (category_id,
+   * subcategory_id) usa MATCH SIMPLE, entao lancamento sem subcategoria passa e
+   * lancamento COM subcategoria e obrigado a usar uma daquela categoria.
+   *
+   * Declarar aqui nao e burocracia: coluna que existe no banco e falta no tipo
+   * passa pelo `tsc` em todo lugar e desaparece em todo `select` tipado --
+   * o campo some da tela sem um erro em lugar nenhum.
+   */
+  subcategory_id?: string | null;
   account_id?: string;
   group_id?: string;
   description: string;
@@ -352,6 +376,18 @@ export interface ScheduledTransaction {
   user_id: string;
   recurring_rule_id?: string;
   category_id: string;
+  /**
+   * Subcategoria do lancamento (HMO-216, migration 036).
+   *
+   * Opcional porque a coluna e nulavel: a FK COMPOSTA (category_id,
+   * subcategory_id) usa MATCH SIMPLE, entao lancamento sem subcategoria passa e
+   * lancamento COM subcategoria e obrigado a usar uma daquela categoria.
+   *
+   * Declarar aqui nao e burocracia: coluna que existe no banco e falta no tipo
+   * passa pelo `tsc` em todo lugar e desaparece em todo `select` tipado --
+   * o campo some da tela sem um erro em lugar nenhum.
+   */
+  subcategory_id?: string | null;
   account_id?: string;
   group_id?: string;
   description: string;

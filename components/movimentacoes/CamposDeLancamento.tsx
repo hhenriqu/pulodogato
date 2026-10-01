@@ -35,8 +35,15 @@ import {
 import { CalendarClock, CreditCard, Receipt, Repeat } from "lucide-react";
 import { CampoDeCotacao } from "@/components/movimentacoes/CampoDeCotacao";
 import {
+  SeletorDeCategoria,
+  type ResultadoDeCriacao,
+} from "@/components/movimentacoes/SeletorDeCategoria";
+import type {
+  PreferenciaDeCategoria,
+  Subcategoria,
+} from "@/lib/categorias";
+import {
   camposDoTipo,
-  categoriasDoTipo,
   contasDoSeletor,
   naturezasDoTipo,
   MAX_MESES_DE_REPETICAO,
@@ -110,6 +117,30 @@ interface CamposDeLancamentoProps {
   categorias: CategoriaDeLancamento[];
   contas: ContaDeLancamento[];
   editando: boolean;
+  /**
+   * A personalizacao de categoria da pessoa (HMO-216). Vazio e o caso normal.
+   *
+   * Vem pronta de `/api/personal-finance/categories` -- este componente nao
+   * busca nada, e por isso o teste consegue renderizar a arvore de verdade.
+   */
+  prefsDeCategoria?: PreferenciaDeCategoria[];
+  /** As subcategorias visiveis, de todas as categorias (HMO-216). */
+  subcategorias?: Subcategoria[];
+  /**
+   * Cria categoria/subcategoria no servidor. OPCIONAIS: quando ausentes, o
+   * item "Criar nova..." nao aparece.
+   *
+   * Isso e o que mantem a tela honesta sem rede. A fila offline sabe gravar um
+   * LANCAMENTO para depois; ela nao sabe criar categoria, porque o id da
+   * categoria e quem o lancamento referencia -- uma categoria "pendente" nao
+   * teria id para o lancamento apontar. Oferecer o botao ali daria um erro
+   * depois de a pessoa digitar o nome.
+   */
+  aoCriarCategoria?: (nome: string) => Promise<ResultadoDeCriacao>;
+  aoCriarSubcategoria?: (
+    categoriaId: string,
+    nome: string
+  ) => Promise<ResultadoDeCriacao>;
   /** O bloco de divisao/grupo, montado pelo container. So despesa o recebe. */
   rateio?: ReactNode;
   /**
@@ -154,6 +185,10 @@ export function CamposDeLancamento({
   contas,
   editando,
   rateio,
+  prefsDeCategoria = [],
+  subcategorias = [],
+  aoCriarCategoria,
+  aoCriarSubcategoria,
   moedaPorLancamento = false,
   moedaOficial = MOEDA_PADRAO,
   cartaoFixado = null,
@@ -173,7 +208,6 @@ export function CamposDeLancamento({
   // dao para distinguir num controle negativo -- um mutante plantado na
   // primeira passaria por medir a segunda.
   const naturezaTravada = Boolean(cartaoFixado);
-  const categoriasVisiveis = categoriasDoTipo(categorias, tipo);
   const contasVisiveis = contasDoSeletor(contas, tipo, valores.natureza);
   const naturezasVisiveis = naturezasDoTipo(tipo);
   // A conta escolhida, para saber que moeda ela sugere.
@@ -381,34 +415,22 @@ export function CamposDeLancamento({
           </p>
         </div>
 
-        <div className="space-y-2">
-          <Label htmlFor="category">
-            {tipo === "expense" ? "Categoria da despesa *" : "Categoria da receita *"}
-          </Label>
-          <Select
-            value={valores.categoriaId}
-            onValueChange={(value: string) => aoMudar({ categoriaId: value })}
-          >
-            <SelectTrigger id="category">
-              <SelectValue placeholder="Selecione uma categoria" />
-            </SelectTrigger>
-            <SelectContent>
-              {categoriasVisiveis.map((categoria) => (
-                <SelectItem key={categoria.id} value={categoria.id}>
-                  {categoria.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {/* Uma lista vazia aqui nao e "escolha uma": e "nao ha o que
-              escolher", e as duas dao a mesma tela sem este aviso. */}
-          {categoriasVisiveis.length === 0 && (
-            <p className="text-xs text-warning">
-              Nenhuma categoria de {tipo === "expense" ? "despesa" : "receita"}{" "}
-              disponível. Abra esta tela uma vez com internet.
-            </p>
-          )}
-        </div>
+        {/* CATEGORIA + SUBCATEGORIA (HMO-216)
+            Os dois seletores e o "criar" saem de `SeletorDeCategoria`. O
+            filtro por tipo e a ordenacao foram para `categoriasDoSeletor` --
+            `categoriasDoTipo` continua existindo em lib/lancamento.ts porque a
+            fila offline e a rota de parcelas tambem a chamam. */}
+        <SeletorDeCategoria
+          tipo={tipo}
+          categorias={categorias}
+          prefs={prefsDeCategoria}
+          subcategorias={subcategorias}
+          categoriaId={valores.categoriaId}
+          subcategoriaId={valores.subcategoriaId ?? ""}
+          aoMudar={aoMudar}
+          aoCriarCategoria={aoCriarCategoria}
+          aoCriarSubcategoria={aoCriarSubcategoria}
+        />
 
         <div className="space-y-2">
           <Label htmlFor="account">{campos.rotuloDaConta}</Label>

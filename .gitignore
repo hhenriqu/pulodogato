@@ -233,6 +233,10 @@ next-env.d.ts
 # leva lib/card-invoice.js e lib/transferencia.js junto, pela chave da fatura)
 /.tmp-agenda-do-cartao/
 
+# HMO-216: as duas saidas de tsc dos testes de categoria.
+/.tmp-categorias/
+/.tmp-seletor-de-categoria/
+
 # ZIP anual da CVM baixado pelo ingestor (12,8 MB por ano) -- cache local, nao
 # fonte: o pacote e reproduzivel a partir de dados.cvm.gov.br, e sao ~12,8 MB por
 # ano de historico. As FIXTURES do teste (scripts/fixtures/) sao versionadas --

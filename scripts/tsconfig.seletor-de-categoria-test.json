@@ -1,0 +1,33 @@
+{
+  "//": [
+    "Compila o seletor de categoria/subcategoria para o teste renderizar o",
+    "componente de verdade, e nao uma copia da logica dele. `jsx: react-jsx` e",
+    "o que permite renderizar com react-dom/server no node, sem runner novo.",
+    "",
+    "O include puxa components/ui/* junto porque cada primitivo importa",
+    "lib/utils.ts -- por isso o resolve-aliases roda com --espelha-raiz."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-seletor-de-categoria",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../components/movimentacoes/SeletorDeCategoria.tsx",
+    "../components/ui/button.tsx",
+    "../components/ui/input.tsx",
+    "../components/ui/label.tsx",
+    "../components/ui/select.tsx",
+    "../lib/categorias.ts",
+    "../lib/lancamento.ts",
+    "../lib/utils.ts"
+  ]
+}

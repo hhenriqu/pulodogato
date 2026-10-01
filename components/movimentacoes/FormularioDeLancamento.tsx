@@ -70,6 +70,11 @@ import {
   type TipoLancamento,
   type ValoresDeLancamento,
 } from "@/lib/lancamento";
+import type {
+  PreferenciaDeCategoria,
+  Subcategoria,
+} from "@/lib/categorias";
+import type { ResultadoDeCriacao } from "@/components/movimentacoes/SeletorDeCategoria";
 import {
   guardarCatalogo,
   lerCatalogo,
@@ -136,6 +141,13 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
   const [user, setUser] = useState<User | null>(null);
   const [serviceId, setServiceId] = useState("");
   const [categorias, setCategorias] = useState<CategoriaDeLancamento[]>([]);
+  // HMO-216. Carregadas junto das categorias, na MESMA resposta: duas
+  // requisicoes deixariam a tela com categoria escolhida e seletor de
+  // subcategoria ainda vazio -- que se le como "nao tem", nao como "carregando".
+  const [subcategorias, setSubcategorias] = useState<Subcategoria[]>([]);
+  const [prefsDeCategoria, setPrefsDeCategoria] = useState<
+    PreferenciaDeCategoria[]
+  >([]);
   const [contas, setContas] = useState<ContaDeLancamento[]>([]);
   const [grupos, setGrupos] = useState<any[]>([]);
   const [conexoes, setConexoes] = useState<Conexao[]>([]);
@@ -300,15 +312,26 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       if (servico) {
         setServiceId(servico.id);
 
-        const { data: dadosDeCategorias } = await supabase
-          .from("transaction_categories")
-          .select("id, name, is_expense")
-          .eq("service_id", servico.id)
-          .eq("is_active", true)
-          .order("name");
-
-        categoriasCarregadas = dadosDeCategorias || [];
-        setCategorias(categoriasCarregadas);
+        // ATE A HMO-216 ISTO ERA UM SELECT DIRETO EM `transaction_categories`.
+        //
+        // Virou rota por uma razao que o select nao tem como atender: o nome
+        // que a pessoa VE pode ser o apelido dela (`transaction_category_prefs`),
+        // e aplicar isso aqui exigiria uma segunda consulta e uma copia da
+        // regra de merge -- a mesma regra que as outras cinco telas que leem
+        // esta rota ja recebem pronta. A rota devolve categoria, subcategoria e
+        // preferencia numa resposta so, para que o seletor nunca desenhe o nome
+        // do catalogo e corrija depois.
+        const respostaDeCategorias = await fetch(
+          "/api/personal-finance/categories"
+        );
+        if (respostaDeCategorias.ok) {
+          const dados = await respostaDeCategorias.json();
+          categoriasCarregadas = (dados.categories ||
+            []) as CategoriaDeLancamento[];
+          setCategorias(categoriasCarregadas);
+          setSubcategorias(dados.subcategories || []);
+          setPrefsDeCategoria(dados.prefs || []);
+        }
       }
 
       const respostaDeContas = await fetch("/api/financial-accounts");
@@ -405,6 +428,11 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       descricao: linha.description ?? "",
       valor: Math.abs(Number(linha.amount)).toString(),
       categoriaId: linha.category_id ?? "",
+      // A subcategoria gravada volta para o campo (HMO-216). Sem esta linha,
+      // EDITAR qualquer lancamento o salvaria com `subcategory_id` nulo: a tela
+      // abriria com o seletor em branco e o PATCH levaria o branco de volta --
+      // perda de dado em cada edicao, sem erro nenhum.
+      subcategoriaId: linha.subcategory_id ?? "",
       contaId: linha.account_id ?? "",
       data: linha.transaction_date ?? valoresIniciais().data,
       // A DATA PREVISTA GRAVADA VOLTA PARA O CAMPO (HMO-188)
@@ -537,6 +565,64 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
 
     toast.success(copia.previsaoCriada);
     return true;
+  };
+
+  /**
+   * Cria a categoria que a pessoa digitou no seletor (HMO-216).
+   *
+   * As DUAS listas sao atualizadas aqui, e a segunda e a que importa: a rota
+   * devolve junto a subcategoria "Outros" que o trigger da 036 acabou de criar.
+   * Sem inseri-la em `subcategorias`, o seletor de subcategoria abriria vazio
+   * exatamente na categoria que a pessoa acabou de criar -- o unico caso em que
+   * ela tem certeza de que acabou de nascer com "Outros".
+   *
+   * Devolve `{ erro }` em vez de lancar, e sem `toast`: quem mostra a mensagem
+   * e o campo de digitar, logo abaixo do nome recusado. Um toast no canto da
+   * tela, sobre um campo que continua aberto com o texto errado dentro, e a
+   * forma de a pessoa clicar "Criar" de novo.
+   */
+  const criarCategoria = async (nome: string): Promise<ResultadoDeCriacao> => {
+    try {
+      const resposta = await fetch("/api/personal-finance/categories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: nome, is_expense: tipo === "expense" }),
+      });
+      const dados = await resposta.json().catch(() => ({}));
+      if (!resposta.ok || !dados.category?.id) {
+        return { erro: dados.error || "Não foi possível criar a categoria." };
+      }
+
+      setCategorias((atuais) => [...atuais, dados.category]);
+      if (Array.isArray(dados.subcategories) && dados.subcategories.length > 0) {
+        setSubcategorias((atuais) => [...atuais, ...dados.subcategories]);
+      }
+      return { id: dados.category.id as string };
+    } catch {
+      return { erro: "Sem conexão para criar a categoria agora." };
+    }
+  };
+
+  const criarSubcategoria = async (
+    categoriaId: string,
+    nome: string
+  ): Promise<ResultadoDeCriacao> => {
+    try {
+      const resposta = await fetch("/api/personal-finance/subcategories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ category_id: categoriaId, name: nome }),
+      });
+      const dados = await resposta.json().catch(() => ({}));
+      if (!resposta.ok || !dados.subcategory?.id) {
+        return { erro: dados.error || "Não foi possível criar a subcategoria." };
+      }
+
+      setSubcategorias((atuais) => [...atuais, dados.subcategory]);
+      return { id: dados.subcategory.id as string };
+    } catch {
+      return { erro: "Sem conexão para criar a subcategoria agora." };
+    }
   };
 
   const criarParcelas = async () => {
@@ -745,6 +831,11 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
 
     const linha = {
       category_id: valores.categoriaId,
+      // `|| null` e nao a string vazia: a coluna e uuid, e `''` nao e um uuid
+      // -- o Postgres responderia 22P02 ("invalid input syntax for type uuid")
+      // num lancamento que so nao tem subcategoria, que e legitimo (a FK
+      // composta da 036 e MATCH SIMPLE justamente para isso).
+      subcategory_id: valores.subcategoriaId || null,
       account_id: valores.contaId || null,
       description: valores.descricao,
       amount: valor,
@@ -950,6 +1041,17 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
               categorias={categorias}
               contas={contas}
               editando={editando}
+              prefsDeCategoria={prefsDeCategoria}
+              subcategorias={subcategorias}
+              // Os dois callbacks sao passados SO quando ha rede. Sem eles o
+              // item "Criar nova..." nao aparece -- ver o porque na prop
+              // `aoCriarCategoria` de `CamposDeLancamento`: a fila offline sabe
+              // guardar um lancamento, nao sabe criar a categoria que ele
+              // referencia.
+              aoCriarCategoria={catalogoDe === null ? criarCategoria : undefined}
+              aoCriarSubcategoria={
+                catalogoDe === null ? criarSubcategoria : undefined
+              }
               moedaPorLancamento={preferenciaDeMoeda.porLancamento}
               moedaOficial={preferenciaDeMoeda.oficial}
               cartaoFixado={cartaoFixado}
