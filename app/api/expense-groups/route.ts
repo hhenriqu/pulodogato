@@ -2,6 +2,29 @@ import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { moedaDoGrupoParaGravar } from "@/lib/moeda-do-grupo";
 
+// Sem o generic `Database` no client, `select()` e `rpc()` voltam `any`. `user`
+// e embed many-to-one (objeto) e pode vir nulo pela RLS de `profiles`.
+type MembroComPerfil = {
+  id: string;
+  group_id: string;
+  user_id: string;
+  role: string;
+  status: string;
+  percentage: number | null;
+  user: {
+    id: string;
+    full_name: string | null;
+    avatar_url: string | null;
+  } | null;
+};
+
+/** O que `my_pending_group_requests` (029) devolve por pedido na fila. */
+type PedidoPendente = {
+  group_id: string;
+  group_name: string;
+  requested_at: string;
+};
+
 export const dynamic = "force-dynamic";
 
 export async function GET(_request: NextRequest) {
@@ -63,7 +86,8 @@ export async function GET(_request: NextRequest) {
             user:profiles!group_members_user_id_fkey(id, full_name, avatar_url)
           `
       )
-      .eq("status", "active");
+      .eq("status", "active")
+      .returns<MembroComPerfil[]>();
 
     if (allMembersError) {
       console.error("Erro ao buscar membros:", allMembersError);
@@ -104,9 +128,7 @@ export async function GET(_request: NextRequest) {
         id: g.id,
         name: g.name,
         membersCount: g.members.length,
-        memberNames: g.members
-          .map((m: any) => m.user?.full_name)
-          .filter(Boolean),
+        memberNames: g.members.map((m) => m.user?.full_name).filter(Boolean),
       })),
     });
 
@@ -133,11 +155,17 @@ export async function GET(_request: NextRequest) {
       console.error("Erro ao buscar pedidos pendentes:", pendingError);
     }
 
-    const pendingRequests = (pendingRows || []).map((row: any) => ({
-      group_id: row.group_id,
-      group_name: row.group_name,
-      requested_at: row.requested_at,
-    }));
+    // O `.returns<T[]>()` nao serve aqui: o builder de `rpc()` tipa o resultado
+    // como objeto unico e recusa o molde em lista. Sem o generic `Database` o
+    // retorno e `any` de qualquer jeito, entao a forma declarada entra por
+    // assercao -- mas entra UMA vez, e nao a cada campo lido.
+    const pendingRequests = ((pendingRows ?? []) as PedidoPendente[]).map(
+      (row) => ({
+        group_id: row.group_id,
+        group_name: row.group_name,
+        requested_at: row.requested_at,
+      })
+    );
 
     return NextResponse.json({
       groups: groupsWithMembers,

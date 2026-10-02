@@ -237,7 +237,7 @@ async function removeUserFromGroup(
         : ["inactive", "removed", "pending"]; // Use only known-valid values
 
     for (const statusValue of statusOptions) {
-      const updateData: any = { status: statusValue };
+      const updateData: Record<string, string> = { status: statusValue };
 
       // Add left_at if field exists
       if ("left_at" in existingMember) {
