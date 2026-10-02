@@ -1127,6 +1127,59 @@ jobs:
       - name: O lancamento sem tipo volta para as tres views, e a transferencia nao
         run: $PSQL -f database/tests/037_tipo_do_lancamento_test.sql
 
+      # HMO-172. A transferencia recorrente: `destination_account_id` nas duas
+      # tabelas da agenda, e o CHECK do 027 alargado para aceitar 'transfer'.
+      #
+      # A 027 tinha excluido 'transfer' DE PROPOSITO, e vale registrar aqui por
+      # que a exclusao caiu: o motivo escrito era "o tratamento esquecido seria
+      # contar a perna de saida como despesa prevista", e as duas perguntas que a
+      # agenda faz hoje tem dono e ja tratam transferencia -- `direcaoDaAgenda`
+      # conta a saida datada no "a vencer", `direcaoNoPainel` devolve NULL para
+      # nao contar como gasto do periodo. O terceiro caso que a 027 temia existe
+      # e esta tratado nos dois sentidos.
+      #
+      # ENTRA DEPOIS DA 037 (HMO-181) por numero, nao por dependencia: a 037 faz
+      # backfill de `financial_transactions.transaction_type` e nao toca em
+      # `scheduled_transactions` nem no CHECK que esta migration alarga. As duas
+      # sao aditivas e independentes.
+      - name: 038_transferencia_recorrente
+        run: $PSQL -f database/migrations/038_transferencia_recorrente.sql
+
+      # Re-executavel: ADD COLUMN IF NOT EXISTS, DO com IF NOT EXISTS para cada FK
+      # e para cada CHECK cruzado, e DROP CONSTRAINT IF EXISTS antes do ADD do
+      # CHECK de `transaction_type`.
+      #
+      # O DROP+ADD daquele CHECK e o unico passo NAO guardado por IF NOT EXISTS, e
+      # tem de ser assim: a constraint JA EXISTE com o texto estreito da 027, e um
+      # bloco que so cria quando falta nao faria nada -- a migration ficaria verde
+      # e a primeira transferencia prevista levaria 23514.
+      - name: 038 e idempotente
+        run: $PSQL -f database/migrations/038_transferencia_recorrente.sql
+
+      # O que esta suite guarda: as tres formas de gravar MEIA transferencia.
+      # Transferencia sao duas pernas que se anulam, entao a regra que gera uma
+      # perna so deixa o saldo das duas contas errado em direcoes OPOSTAS com o
+      # total geral CERTO -- `net_worth_history` fecha em zero, `monthly_cash_flow`
+      # e `category_monthly_totals` filtram income/expense e nem olham. Nenhum
+      # agregado acusa, e por isso a trava e no banco.
+      #
+      # O par que importa e "transfer sem destino e recusado" x "a despesa fixa de
+      # sempre PASSA": so morrem juntos. Um CHECK (false) -- a trava larga demais,
+      # que quebra a criacao de qualquer conta prevista no app -- passaria na
+      # assercao de recusa sozinha.
+      #
+      # Medido: 10 mutantes, 10 mortos, mais o controle positivo
+      # (npm run mutantes:transferencia-recorrente). Dois acharam furo real na
+      # primeira passada. `drop_sem_add` sobreviveu por EQUIVALENCIA -- como
+      # `transaction_type` e o enum de tres valores, apagar o CHECK aceita
+      # exatamente os mesmos valores que a lista nova, e nenhum INSERT distingue;
+      # o teste passou a afirmar que a constraint CONTINUA existindo. E a guarda do
+      # passo 1 nao e alcancavel por este arquivo (ela so dispara num banco que JA
+      # tenha regra 'transfer'), entao tem sonda propria no mutador, que fabrica a
+      # linha ruim.
+      - name: A transferencia prevista tem destino, e ele nao e a conta de origem
+        run: $PSQL -f database/tests/038_transferencia_recorrente_test.sql
+
       # E a metade de ARVORE. `lib/categorias.ts` passaria verde com o JSX
       # inteiro errado; o que esta suite pega e o seletor de subcategoria
       # desenhado antes de haver categoria, e o botao "Criar" sem
