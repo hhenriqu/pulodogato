@@ -264,3 +264,9 @@ next-env.d.ts
 # arquivo de fonte -- ver a entrada do .tmp-parcelamento acima.
 /.tmp-alcance-da-serie/
 .tmp-materializacao/
+
+# Build do `npm run test:convite-de-grupo` (HMO-197), que compila
+# lib/convite-de-grupo.ts solto para o node --test poder importar. Um `.tmp-*`
+# fora do .gitignore chega a ser commitado em cima de arquivo de fonte -- ver a
+# entrada do .tmp-parcelamento acima.
+/.tmp-convite-de-grupo/

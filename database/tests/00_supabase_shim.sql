@@ -57,13 +57,25 @@ END $$;
 -- -----------------------------------------------------
 CREATE SCHEMA IF NOT EXISTS auth;
 
--- Apenas as colunas que 001_baseline.sql e os testes tocam. O auth.users real
--- do Supabase tem dezenas de colunas a mais, todas irrelevantes aqui.
+-- Apenas as colunas que as migrations e os testes tocam. O auth.users real do
+-- Supabase tem dezenas de colunas a mais, todas irrelevantes aqui.
+--
+-- `email_confirmed_at` e a condicao de "esta conta existe de verdade" em dois
+-- lugares que precisam concordar: `get_user_by_email()` (001) e o trigger de
+-- convite da 039. Ela estava FALTANDO aqui, e isso nao aparecia: o corpo do
+-- `get_user_by_email` e LANGUAGE sql e foi criado sem reclamar, entao a coluna
+-- ausente so viraria erro se algum teste chamasse a funcao -- nenhum chamava.
+-- Quem levantou foi o backfill da 039, que roda o SELECT de verdade.
 CREATE TABLE IF NOT EXISTS auth.users (
-  id          UUID PRIMARY KEY,
-  email       TEXT UNIQUE,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  id                 UUID PRIMARY KEY,
+  email              TEXT UNIQUE,
+  email_confirmed_at TIMESTAMPTZ,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Para o caso de o schema vir de um banco onde o shim antigo ja rodou: o
+-- CREATE TABLE acima e IF NOT EXISTS e nao acrescentaria a coluna.
+ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS email_confirmed_at TIMESTAMPTZ;
 
 -- Mesmo contrato do auth.uid() do Supabase: le o claim `sub` do JWT da
 -- requisicao. O PostgREST publica os claims como GUCs; nos testes o mesmo
