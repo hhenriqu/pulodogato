@@ -1,0 +1,81 @@
+name: data digitada
+
+# Prova, a cada PR, a mascara de data dd/mm/aaaa (HMO-238).
+#
+# O pedido da issue era de ergonomia: "digitar dia mes e ano sem ficar pulando
+# pro ano". O risco que a troca cria e de DINHEIRO, e em duas direcoes:
+#
+#   1. O valor emitido tem que continuar AAAA-MM-DD. `validarLancamento` recusa
+#      qualquer outra coisa com "Informe a data.", e o que passar por ela chega no
+#      PostgREST como 22007 -- que a tela mostra como "erro ao salvar", sem campo.
+#   2. Data incompleta tem que emitir VAZIO. Emitir "2026-01-10" para quem digitou
+#      "10/1" grava um dia que ninguem escolheu, e uma gravacao errada e pior que
+#      uma recusa porque ninguem vai olhar.
+#
+# E o defeito que a issue fechou e justamente do tipo que nao reclama: o controle
+# nativo lia "10/03" na ordem do APARELHO (mm/dd) e gravava 3 de outubro em vez de
+# 10 de marco. Data valida, plausivel, sem erro nenhum no caminho.
+#
+# SEM FILTRO DE `paths`, de proposito. A mascara e usada pela tela de lancamento e
+# vai ser usada pelas outras (a issue irma), e um filtro que liste os arquivos de
+# hoje perde o dia em que alguem mexer no de amanha. Foi assim que tres suites
+# deste repositorio ficaram paradas em verde: elas so rodavam no db-verify, que e
+# filtrado por path.
+#
+# Roda em segundos e nao precisa de banco.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  data-digitada:
+    name: a mascara mostra dd/mm/aaaa e emite AAAA-MM-DD
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      # O `--include=dev` e explicito porque um ambiente com NODE_ENV=production
+      # poda as devDeps na instalacao e o tsc some sem mensagem que explique.
+      - run: npm ci --include=dev
+
+      # A suite compila lib/lancamento.ts junto de proposito: ela confere a data
+      # emitida contra o `validarLancamento` DE VERDADE, e nao contra uma copia do
+      # regex. Uma copia passaria verde no dia em que o original mudasse, que e o
+      # unico dia em que este teste precisa falhar.
+      - name: A mascara, a data emitida e a recusa da data incompleta
+        run: npm run test:data-digitada
+
+      # Controle negativo. As asercoes da suite sao quase todas igualdades de
+      # string, e igualdade de string continua verde quando o codigo vira outra
+      # coisa por baixo -- desde que a outra coisa produza o mesmo texto nos
+      # exemplos escolhidos. Uma verificacao que nunca viu vermelho nao e
+      # verificacao.
+      #
+      # A lista de defeitos, o porque de cada um e a exigencia de vermelho moram
+      # em scripts/mutantes-data-digitada.mjs, e nao num bloco de `sed` aqui: `sed`
+      # que nao casa sai 0 sem mudar nada, entao um mutante desatualizado deixava o
+      # CI vermelho pelo motivo errado -- acusando a mascara em vez do mutante.
+      - name: A verificacao sabe falhar
+        run: node scripts/mutantes-data-digitada.mjs
+
+      # A SONDA NAO RODA AQUI, E ISSO E DELIBERADO
+      #
+      # `scripts/probe-campo-de-data.mjs` precisa de Playwright e de um Chromium
+      # baixado -- minutos de instalacao num job que hoje leva segundos -- e o
+      # Playwright nao e dependencia deste projeto. Ela e a medida que justificou a
+      # troca (e a que vai dizer se um Chromium futuro mudou de comportamento), e
+      # roda na mao, com as instrucoes no cabecalho do proprio arquivo.
+      #
+      # O que ela mede de unico e o GESTO: caret, selecao e posicao de clique. A
+      # regra que o gesto exercita -- "digitar sobre uma data completa comeca uma
+      # data nova" -- mora na mascara justamente para caber na suite acima, que
+      # roda em todo PR.

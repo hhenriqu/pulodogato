@@ -33,6 +33,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { CalendarClock, CreditCard, Receipt, Repeat } from "lucide-react";
+import { CampoDeData } from "@/components/ui/campo-de-data";
 import { CampoDeCotacao } from "@/components/movimentacoes/CampoDeCotacao";
 import {
   SeletorDeCategoria,
@@ -819,11 +820,16 @@ export function CamposDeLancamento({
         {campos.dataDeRealizacao && (
           <div className="space-y-2">
             <Label htmlFor="date">{campos.rotuloDaData}</Label>
-            <Input
+            {/* `CampoDeData` e nao `<Input type="date">` (HMO-238): o controle
+                nativo devolvia "32026-10-02" quando o dedo caia no centro do
+                campo preenchido, e "" no campo vazio -- oito teclas e nada
+                gravado. Ele continua emitindo AAAA-MM-DD, que e o que
+                `validarLancamento` exige. */}
+            <CampoDeData
               id="date"
-              type="date"
               value={valores.data}
-              onChange={(e) => aoMudar({ data: e.target.value })}
+              onChange={(data) => aoMudar({ data })}
+              aria-label={campos.rotuloDaData}
             />
           </div>
         )}
@@ -831,11 +837,11 @@ export function CamposDeLancamento({
         {campos.dataPrevista && (
           <div className="space-y-2">
             <Label htmlFor="expected-date">{campos.rotuloDaDataPrevista}</Label>
-            <Input
+            <CampoDeData
               id="expected-date"
-              type="date"
               value={valores.dataPrevista}
-              onChange={(e) => aoMudar({ dataPrevista: e.target.value })}
+              onChange={(dataPrevista) => aoMudar({ dataPrevista })}
+              aria-label={campos.rotuloDaDataPrevista}
             />
             <p className="text-xs text-muted-foreground">
               {campos.dataDeRealizacao

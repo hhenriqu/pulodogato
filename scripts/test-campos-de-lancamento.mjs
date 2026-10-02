@@ -1138,3 +1138,54 @@ test("cartao fixado nao traz o aviso de 'nao tem cartao cadastrado'", () => {
 
   assert.doesNotMatch(html, /não tem nenhum cartão de crédito cadastrado/);
 });
+
+// ---------------------------------------------------------------------------
+// AS DUAS DATAS SAO O CAMPO MASCARADO, E NAO O CONTROLE NATIVO (HMO-238)
+// ---------------------------------------------------------------------------
+// Os casos acima afirmam que os campos de data ESTAO na tela (`id="date"`), e
+// continuariam verdes com o `<input type="date">` de volta -- que e justamente o
+// controle medido como incapaz de receber uma data digitada: na largura desta
+// tela ele gravava "2026-10-03" para quem digitou 10 de marco, porque a ordem dos
+// segmentos sai do APARELHO e nao do nosso codigo.
+//
+// Estes casos afirmam sobre o ATRIBUTO, que e o que distingue os dois.
+
+test("a data do pagamento e o campo mascarado dd/mm/aaaa", () => {
+  const html = renderizar({ tipo: "expense", valores: { data: "2026-10-02" } });
+  const campo = inputPorId(html, "date");
+
+  assert.ok(campo, 'nao achei o <input id="date">');
+  assert.match(campo, /type="text"/);
+  assert.match(campo, /placeholder="dd\/mm\/aaaa"/);
+  // A ordem na tela e a NOSSA: o dia vem primeiro, escrito.
+  assert.match(campo, /value="02\/10\/2026"/);
+  // E o que o campo nativo trazia de volta nao esta mais la.
+  assert.doesNotMatch(campo, /type="date"/);
+  assert.doesNotMatch(campo, /value="2026-10-02"/);
+});
+
+test("a data prevista tambem e o campo mascarado", () => {
+  // O segundo dos dois campos que esta issue troca. Sem este caso, trocar so um
+  // deles passaria verde.
+  const html = renderizar({
+    tipo: "expense",
+    valores: { dataPrevista: "2026-10-02" },
+  });
+  const campo = inputPorId(html, "expected-date");
+
+  assert.ok(campo, 'nao achei o <input id="expected-date">');
+  assert.match(campo, /type="text"/);
+  assert.match(campo, /placeholder="dd\/mm\/aaaa"/);
+  assert.match(campo, /value="02\/10\/2026"/);
+  assert.doesNotMatch(campo, /type="date"/);
+});
+
+test("quem prefere apontar continua tendo calendario", () => {
+  // Trocar o controle nativo para consertar a digitacao nao pode custar o
+  // calendario -- seria trocar uma reclamacao por outra.
+  const html = renderizar({ tipo: "expense", valores: { data: "2026-10-02" } });
+
+  assert.match(html, /aria-label="Escolher Data do pagamento no calendário"/);
+  // O picker nativo continua existindo para isso, escondido atras do botao.
+  assert.match(html, /<input[^>]*type="date"[^>]*aria-hidden="true"/);
+});
