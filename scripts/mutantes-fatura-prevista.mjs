@@ -55,6 +55,16 @@ const FONTE = "lib/agenda-do-cartao.ts";
 const ACOMPANHAM = [
   "lib/card-invoice.ts",
   "lib/transferencia.ts",
+  // HMO-172: `transferencia.ts` passou a importar `@/lib/lancamento` (os tipos da
+  // recorrencia). Na arvore COPIADA o modulo nao existiria, e o tsc para em
+  // TS2307 -- "Cannot find module '@/lib/lancamento'" -- antes de qualquer
+  // assercao, com o placar saindo perfeito e o controle positivo reprovando.
+  //
+  // Quem pegou isso foi o controle positivo, no CI: `test:fatura-prevista` passa
+  // na arvore DE VERDADE, porque la o arquivo esta no disco e o tsc o resolve
+  // pelo `paths`. So a copia expoe a falta. Toda dependencia nova de um arquivo
+  // desta lista precisa entrar aqui tambem.
+  "lib/lancamento.ts",
   "lib/previsto-x-realizado.ts",
   "lib/services/fatura-prevista.ts",
   "app/api/scheduled-transactions/route.ts",
