@@ -249,6 +249,42 @@ const MUTACOES = [
         : {}),
       destination_account_id: regra.destination_account_id ?? null,`,
   },
+
+  // -------------------------------------------------------------------------
+  // OS CAMPOS DE DESTINO NA REGRA (HMO-236)
+  // -------------------------------------------------------------------------
+  // O par do mutante acima, um nivel acima: o de cima estraga a OCORRENCIA, e
+  // estes estragam a REGRA de que a ocorrencia nasce.
+  {
+    nome: "regra manda destino em TODO tipo (a condicao removida)",
+    porque:
+      "e o defeito que a HMO-236 pediu para travar: em banco sem a 038 colada, a coluna no INSERT faz o PostgREST recusar com PGRST204 ANTES de permissao e de RLS -- nenhuma despesa nem receita fixa pode ser criada, para nenhum usuario",
+    alvo: TRANSFERENCIA,
+    suite: "test:transferencia",
+    de: `  if (transaction_type !== "transfer") return {};
+  return {`,
+    para: `  return {`,
+  },
+  {
+    nome: "regra decide o destino por truthy em vez de === 'transfer'",
+    porque:
+      "qualquer tipo nao vazio abriria o ramo que manda a coluna; um tipo desconhecido viraria transferencia disfarcada",
+    alvo: TRANSFERENCIA,
+    suite: "test:transferencia",
+    de: `  if (transaction_type !== "transfer") return {};`,
+    para: `  if (!transaction_type) return {};`,
+  },
+  {
+    nome: "regra manda string vazia no lugar de NULL no destino",
+    porque:
+      "`''` numa coluna uuid volta 22P02, e a tela mostra 'nao foi possivel criar' sem dizer qual campo",
+    alvo: TRANSFERENCIA,
+    suite: "test:transferencia",
+    de: `        ? destination_account_id
+        : null,`,
+    para: `        ? destination_account_id
+        : "",`,
+  },
 ];
 
 let sobreviventes = 0;

@@ -231,11 +231,15 @@ export async function PATCH(
       // entao este caminho continua sendo o mesmo UPDATE de uma linha.
       .in("id", plano.ids)
       .eq("user_id", user.id)
+      // FK qualificada pelo mesmo motivo do POST da agenda: com a segunda FK
+      // da 038 o embed curto devolve PGRST201. E aqui ele cai DEPOIS do
+      // UPDATE, pelo mesmo motivo que o comentario abaixo da para o
+      // `.single()`: a edicao acontece e a tela recebe erro.
       .select(
         `
         *,
         category:transaction_categories(*),
-        account:financial_accounts(id, name, account_type, color_hex),
+        account:financial_accounts!scheduled_transactions_account_id_fkey(id, name, account_type, color_hex),
         group:expense_groups(id, name, group_code)
       `
       );
