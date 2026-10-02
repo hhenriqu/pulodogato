@@ -99,6 +99,59 @@ jobs:
       - name: Embed do PostgREST qualifica a FK quando ha mais de uma
         run: node scripts/check-embed-ambiguo.mjs
 
+      # Mora aqui, e nao num workflow proprio, porque e guard textual sem filtro
+      # de `paths` -- o campo que ele pega nasce numa TELA NOVA, que por
+      # definicao nao esta em nenhuma lista de caminhos escrita hoje.
+      #
+      # O que ele guarda: o controle de data nativo le os tres segmentos na
+      # ordem do APARELHO, e essa ordem nao se forca pelo codigo. Quem digitou
+      # 10 de marco grava 3 de outubro -- data valida, plausivel, sem erro
+      # nenhum no caminho (medido em Chromium na HMO-238). Num app de dinheiro
+      # esse e o pior dos tres modos de errar do controle nativo, porque e o
+      # unico que nada denuncia.
+      - name: Nenhuma tela usa o campo de data nativo
+        run: node scripts/check-campo-de-data.mjs
+
+      # Controle negativo. As duas peneiras do guard acima sao busca textual, e
+      # busca textual sai VERDE quando para de achar o que deveria conferir.
+      #
+      # A segunda peneira (o piso de chamadas) existe exatamente por isso: a
+      # primeira, sozinha, aprova a tela em que o campo foi APAGADO. Os dois
+      # defeitos sao plantados, e os dois tem que ficar vermelhos.
+      - name: A verificacao do campo de data sabe falhar, e sabe nao falhar
+        run: |
+          set -uo pipefail
+          alvo='app/(dashboard)/dashboard/goals/page.tsx'
+          cp "$alvo" /tmp/campo-de-data-alvo.orig
+          trap 'cp /tmp/campo-de-data-alvo.orig "$alvo"' EXIT
+
+          # 1) O campo nativo de volta numa tela. E o defeito da issue.
+          perl -0pi -e 's{<CampoDeData\n                    id="prazo"}{<Input\n                    type="date"\n                    id="prazo"}' "$alvo"
+          if node scripts/check-campo-de-data.mjs > /dev/null 2>&1; then
+            echo "::error::O guard passou verde com um campo de data nativo na tela de metas."
+            exit 1
+          fi
+          cp /tmp/campo-de-data-alvo.orig "$alvo"
+
+          # 2) O campo simplesmente APAGADO. A primeira peneira nao ve: nao ha
+          #    campo nativo nenhum. Quem pega e o piso.
+          perl -0pi -e 's{<CampoDeData\n                    id="prazo"}{<span data-sem-campo="1"\n                    id="prazo"}' "$alvo"
+          if node scripts/check-campo-de-data.mjs > /dev/null 2>&1; then
+            echo "::error::O guard passou verde com um campo de data apagado da tela."
+            exit 1
+          fi
+          cp /tmp/campo-de-data-alvo.orig "$alvo"
+
+          # 3) E SABE NAO FALHAR. Os seis arquivos corrigidos citam o controle
+          #    nativo em PROSA, e um guard que lesse comentario reprovaria
+          #    justamente eles -- o avesso do que ele mede.
+          if ! node scripts/check-campo-de-data.mjs > /dev/null 2>&1; then
+            echo "::error::O guard reprova a arvore correta."
+            exit 1
+          fi
+
+          echo "O guard fica vermelho nos dois defeitos e verde na arvore correta."
+
       # Controles negativos. Uma verificacao que nunca viu vermelho nao e
       # verificacao: se a regex quebrar numa refatoracao, o passo acima passa a
       # sair verde por nao achar NADA, que e indistinguivel de estar tudo certo.

@@ -181,6 +181,43 @@ const mutantes = [
     '  "total_overdue_income",\n  "count_overdue_income",',
     '  "count_overdue_income",',
   ],
+
+  // --- HMO-240: o par personalizado enquanto esta sendo digitado ---
+  //
+  // As quatro decisoes que o par tem, cada uma falhando em silencio: campo que
+  // apaga a digitacao, campo que mostra texto antigo com periodo novo por
+  // baixo, filtro que dispara no meio da digitacao, e filtro que dispara com o
+  // par invertido. Nenhuma delas da erro na tela.
+  [
+    "o rascunho do par deixa de valer (o campo apaga a digitacao)",
+    "  if (rascunho && rascunho.base === chaveDoPeriodo(periodo)) {",
+    "  if (false) {",
+  ],
+  [
+    "o rascunho do par passa a valer para sempre (texto antigo, periodo novo)",
+    "  if (rascunho && rascunho.base === chaveDoPeriodo(periodo)) {",
+    "  if (rascunho) {",
+  ],
+  [
+    "o filtro volta a disparar com data pela metade",
+    "  if (!ehDataIso(de) || !ehDataIso(ate) || de > ate) {\n    return { rascunho: proximo, par: null };\n  }",
+    "  if (de > ate) {\n    return { rascunho: proximo, par: null };\n  }",
+  ],
+  [
+    "o filtro volta a aceitar o par invertido",
+    "  if (!ehDataIso(de) || !ehDataIso(ate) || de > ate) {",
+    "  if (!ehDataIso(de) || !ehDataIso(ate)) {",
+  ],
+  [
+    "o outro extremo passa a ser lido do periodo, nao do que esta na tela",
+    "  const atual = parDoSeletor(rascunho, periodo);\n  const de = qual === \"de\" ? valor : atual.de;\n  const ate = qual === \"ate\" ? valor : atual.ate;",
+    "  const de = qual === \"de\" ? valor : periodo.de;\n  const ate = qual === \"ate\" ? valor : periodo.ate;",
+  ],
+  [
+    "a chave do rascunho passa a incluir o modo derivado",
+    "  return `${periodo.de}|${periodo.ate}`;",
+    "  return `${periodo.de}|${periodo.ate}|${periodo.modo}`;",
+  ],
 ];
 
 let sobreviventes = 0;

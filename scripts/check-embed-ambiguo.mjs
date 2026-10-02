@@ -46,8 +46,13 @@
 // de ler as FKs do schema.
 // =====================================================
 
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+
+// As duas varreduras moram em scripts/varredura-de-fonte.mjs desde a HMO-240,
+// quando o segundo guard textual do repo passou a precisar delas. Ver o
+// cabecalho de la para o motivo de nao serem uma copia em cada guard.
+import { arquivosDeFonte, semComentarios } from "./varredura-de-fonte.mjs";
 
 const MIGRATIONS = "database/migrations";
 const RAIZES = ["app", "lib", "components", "utils", "hooks"];
@@ -96,90 +101,8 @@ function mapaDeFksAmbiguas() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. tirar comentarios sem estragar string nenhuma
+// 2. a varredura
 // ---------------------------------------------------------------------------
-// Troca cada comentario por espacos do MESMO tamanho, para o numero de linha e
-// a coluna continuarem valendo no relatorio.
-function semComentarios(fonte) {
-  let fora = "";
-  let i = 0;
-  let estado = "codigo"; // codigo | "  | '  | `  | //  | /*
-  while (i < fonte.length) {
-    const c = fonte[i];
-    const d = fonte[i + 1];
-    if (estado === "codigo") {
-      if (c === "/" && d === "/") {
-        estado = "//";
-        fora += "  ";
-        i += 2;
-        continue;
-      }
-      if (c === "/" && d === "*") {
-        estado = "/*";
-        fora += "  ";
-        i += 2;
-        continue;
-      }
-      if (c === '"' || c === "'" || c === "`") estado = c;
-      fora += c;
-      i++;
-      continue;
-    }
-    if (estado === "//") {
-      if (c === "\n") {
-        estado = "codigo";
-        fora += c;
-      } else fora += " ";
-      i++;
-      continue;
-    }
-    if (estado === "/*") {
-      if (c === "*" && d === "/") {
-        estado = "codigo";
-        fora += "  ";
-        i += 2;
-        continue;
-      }
-      fora += c === "\n" ? "\n" : " ";
-      i++;
-      continue;
-    }
-    // dentro de string: so a saida interessa, e `\` escapa o proximo
-    if (c === "\\") {
-      fora += c + (d ?? "");
-      i += 2;
-      continue;
-    }
-    if (c === estado) estado = "codigo";
-    fora += c;
-    i++;
-  }
-  return fora;
-}
-
-// ---------------------------------------------------------------------------
-// 3. a varredura
-// ---------------------------------------------------------------------------
-function arquivosDeFonte(raiz) {
-  const achados = [];
-  const andar = (dir) => {
-    let entradas;
-    try {
-      entradas = readdirSync(dir);
-    } catch {
-      return;
-    }
-    for (const e of entradas) {
-      if (e === "node_modules" || e.startsWith(".")) continue;
-      const caminho = join(dir, e);
-      if (statSync(caminho).isDirectory()) andar(caminho);
-      else if (/\.(ts|tsx)$/.test(e)) achados.push(caminho);
-    }
-  };
-  andar(raiz);
-  return achados;
-}
-
 const { ambiguas, paresLidos } = mapaDeFksAmbiguas();
 
 // Controle de nao-vacuidade: se a leitura das migrations der em nada, o guard

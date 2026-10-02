@@ -57,6 +57,16 @@ interface CampoDeDataProps {
   disabled?: boolean;
   className?: string;
   name?: string;
+  /**
+   * O ultimo dia que o CALENDARIO oferece, em `AAAA-MM-DD`. O nome diz
+   * "calendario" porque e so ate onde ele chega: o `max` do input nativo nao
+   * alcanca o campo de texto, entao DIGITAR uma data depois dela continua
+   * possivel e quem chama precisa recusa-la na gravacao.
+   *
+   * Um `max` que parecesse validar os dois caminhos seria pior que nenhum --
+   * a tela ficaria confiando numa trava que metade dos usuarios atravessa.
+   */
+  maxDoCalendario?: string;
   "aria-label"?: string;
   "aria-describedby"?: string;
 }
@@ -69,6 +79,7 @@ export function CampoDeData({
   disabled,
   className,
   name,
+  maxDoCalendario,
   ...aria
 }: CampoDeDataProps) {
   const [rascunho, setRascunho] = useState<RascunhoDeData | null>(null);
@@ -172,6 +183,7 @@ export function CampoDeData({
           tabIndex={-1}
           aria-hidden="true"
           disabled={disabled}
+          max={maxDoCalendario}
           // Uma data invalida no estado nao pode chegar aqui: o input nativo
           // recusa calado e passaria a mostrar o mes corrente, que e a sonda
           // de fatura outra vez. `exibicao` vazia significa valor vazio.

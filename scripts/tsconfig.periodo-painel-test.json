@@ -10,5 +10,6 @@
     "baseUrl": "..",
     "paths": { "@/*": ["./*"] }
   },
-  "include": ["../lib/periodo-do-painel.ts"]
+  "//2": "lib/data-digitada.ts entra junto porque o teste do par personalizado (HMO-240) roda a SEQUENCIA de teclas pela mascara DE VERDADE. O defeito que ele guarda so existe na composicao dos dois rascunhos -- o do campo e o do par -- e um teste que reimplementasse a mascara aqui mediria a si mesmo.",
+  "include": ["../lib/periodo-do-painel.ts", "../lib/data-digitada.ts"]
 }

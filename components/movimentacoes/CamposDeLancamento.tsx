@@ -820,7 +820,7 @@ export function CamposDeLancamento({
         {campos.dataDeRealizacao && (
           <div className="space-y-2">
             <Label htmlFor="date">{campos.rotuloDaData}</Label>
-            {/* `CampoDeData` e nao `<Input type="date">` (HMO-238): o controle
+            {/* `CampoDeData` e nao o controle de data nativo (HMO-238): o controle
                 nativo devolvia "32026-10-02" quando o dedo caia no centro do
                 campo preenchido, e "" no campo vazio -- oito teclas e nada
                 gravado. Ele continua emitindo AAAA-MM-DD, que e o que

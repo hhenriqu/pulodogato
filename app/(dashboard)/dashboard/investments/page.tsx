@@ -38,6 +38,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CampoDeValor } from "@/components/ui/campo-de-valor";
+import { CampoDeData } from "@/components/ui/campo-de-data";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -183,6 +184,28 @@ export default function InvestmentsPage() {
 
   async function lancar(evento: React.FormEvent) {
     evento.preventDefault();
+
+    // AS DUAS TRAVAS QUE O CONTROLE DE DATA NATIVO FAZIA SOZINHO (HMO-240)
+    //
+    // O campo mascarado e um input de TEXTO, e nos dois casos o navegador deixa
+    // o formulario passar:
+    //
+    //   - `required` se satisfaz com o texto parcial na tela ("10/0"), enquanto
+    //     o valor emitido e vazio. A rota recusa o vazio com 400, mas a frase
+    //     que chega na tela e sobre formato e nao sobre o campo.
+    //   - `max` nao existe para texto. Sem esta recusa, uma compra lancada com
+    //     data futura entra: `trade_date` so e conferido contra o formato, e um
+    //     lancamento no futuro distorce preco medio e rentabilidade sem erro
+    //     nenhum no caminho.
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(lancData)) {
+      setErro("Informe a data do lancamento, no formato dd/mm/aaaa.");
+      return;
+    }
+    if (lancData > hojeISO()) {
+      setErro("A data do lancamento nao pode ser no futuro.");
+      return;
+    }
+
     setSalvando(true);
     setErro(null);
     try {
@@ -592,13 +615,18 @@ export default function InvestmentsPage() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="lanc-data">Data</Label>
-                  <Input
+                  {/* `CampoDeData` e nao o controle de data nativo (HMO-240).
+                      O `max={hojeISO()}` de antes valia para os dois caminhos
+                      do controle nativo; num campo de texto ele alcanca so o
+                      calendario, entao a recusa da data futura passou a ser
+                      explicita em `lancar`. */}
+                  <CampoDeData
                     id="lanc-data"
-                    type="date"
                     value={lancData}
-                    max={hojeISO()}
-                    onChange={(e) => setLancData(e.target.value)}
+                    maxDoCalendario={hojeISO()}
+                    onChange={setLancData}
                     required
+                    aria-label="Data do lançamento"
                   />
                 </div>
                 <div className="space-y-2">
