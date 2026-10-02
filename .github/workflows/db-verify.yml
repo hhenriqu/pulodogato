@@ -1093,6 +1093,40 @@ jobs:
       - name: O nome efetivo da categoria, a ordem do seletor e a subcategoria coerente
         run: npm run test:categorias
 
+      # HMO-181. O backfill de `transaction_type`. O POST de
+      # /api/personal-finance/transactions nunca gravou a coluna, e as tres
+      # views da 008 filtram `transaction_type IN ('expense','income')` -- a
+      # linha aparece na lista de lancamentos e desaparece do fluxo de caixa,
+      # dos relatorios e do orcamento, sem erro nenhum.
+      #
+      # ADITIVA E SEM TRAVA, de proposito: a 037 nao poe NOT NULL nem CHECK na
+      # coluna. Ela e colada no SQL Editor ANTES de o codigo novo subir, e o
+      # codigo que esta no ar e justamente o que grava NULL -- uma trava aqui
+      # derrubaria todo lancamento feito pela tela entre a colagem e o deploy.
+      - name: 037_tipo_do_lancamento
+        run: $PSQL -f database/migrations/037_tipo_do_lancamento.sql
+
+      # Re-executavel: CREATE OR REPLACE FUNCTION, e o UPDATE tem
+      # `WHERE transaction_type IS NULL` dentro da funcao. A segunda aplicacao
+      # conserta 0 linhas, e e isso que o NOTICE diz.
+      - name: 037 e idempotente
+        run: $PSQL -f database/migrations/037_tipo_do_lancamento.sql
+
+      # Backfill nao e testavel num banco construido do zero: quando a 037 roda
+      # nao existe linha antiga para ela preencher, e "sobrou linha sem tipo?"
+      # responderia 0 de 0 mesmo se o UPDATE nunca tivesse rodado. Por isso a
+      # regra mora numa FUNCAO: a suite PLANTA as linhas ruins e chama a mesma
+      # funcao que a migration chama.
+      #
+      # O par que importa e a view medida ANTES e DEPOIS: so o depois provaria
+      # que a linha esta na view, nunca que ela podia nao estar -- que e o
+      # defeito. E a NEGACAO que guarda o resto: a perna de transferencia nao
+      # pode virar despesa nem receita. Esse erro nao teria sintoma, porque as
+      # duas pernas se anulam e o SALDO continuaria certo; so Receitas e
+      # Despesas, olhadas em separado, o denunciam.
+      - name: O lancamento sem tipo volta para as tres views, e a transferencia nao
+        run: $PSQL -f database/tests/037_tipo_do_lancamento_test.sql
+
       # E a metade de ARVORE. `lib/categorias.ts` passaria verde com o JSX
       # inteiro errado; o que esta suite pega e o seletor de subcategoria
       # desenhado antes de haver categoria, e o botao "Criar" sem
