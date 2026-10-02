@@ -7,6 +7,19 @@ import {
   type MemberBalance,
 } from "@/lib/settlement";
 
+// Sem o generic `Database` no client, `select()` volta `any` e o `tsc` deixa de
+// conferir nome de coluna. `net_balance` e numeric: chega como string no JSON.
+type LinhaDeSaldo = {
+  user_id: string;
+  net_balance: number | string;
+};
+
+type PerfilDoMembro = {
+  id: string;
+  full_name: string | null;
+  avatar_url: string | null;
+};
+
 /**
  * Acerto simplificado: quem paga quanto para quem, no menor numero de Pix.
  *
@@ -53,7 +66,8 @@ export async function GET(
     const { data: linhas, error } = await supabase
       .from("group_member_balances")
       .select("user_id, net_balance")
-      .eq("group_id", groupId);
+      .eq("group_id", groupId)
+      .returns<LinhaDeSaldo[]>();
 
     if (error) {
       console.error("Erro ao ler saldos para o acerto:", error);
@@ -63,15 +77,16 @@ export async function GET(
       );
     }
 
-    const userIds = (linhas || []).map((l: any) => l.user_id);
+    const userIds = (linhas || []).map((l) => l.user_id);
     const { data: perfis } = await supabase
       .from("profiles")
       .select("id, full_name, avatar_url")
-      .in("id", userIds.length > 0 ? userIds : [user.id]);
+      .in("id", userIds.length > 0 ? userIds : [user.id])
+      .returns<PerfilDoMembro[]>();
 
-    const perfilPor = new Map((perfis || []).map((p: any) => [p.id, p]));
+    const perfilPor = new Map((perfis || []).map((p) => [p.id, p]));
 
-    const balances: MemberBalance[] = (linhas || []).map((l: any) => ({
+    const balances: MemberBalance[] = (linhas || []).map((l) => ({
       user_id: l.user_id,
       net_balance: Number(l.net_balance),
       full_name: perfilPor.get(l.user_id)?.full_name ?? null,

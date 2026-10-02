@@ -5,6 +5,30 @@ import { precisaDeCotacao } from "@/lib/cambio";
 import { cotacaoNaData } from "@/lib/ptax";
 import { moedaDaViagem } from "@/lib/moeda-do-grupo";
 
+// O client nao tem o generic `Database`: sem declarar a linha, todo `select()`
+// volta `any` e o `tsc` para de conferir os nomes de coluna. Os numericos da
+// view chegam como string no JSON do PostgREST -- e o que justifica o `Number()`
+// em cada um deles mais abaixo.
+type LinhaDeSaldoDoGrupo = {
+  user_id: string;
+  member_id: string;
+  total_paid: number | string;
+  total_owed: number | string;
+  settlements_paid: number | string;
+  settlements_received: number | string;
+  net_balance: number | string;
+  paid_count: number | string;
+  owed_count: number | string;
+  amount_currency: string | null;
+  group_currency: string | null;
+};
+
+type PerfilDoMembro = {
+  id: string;
+  full_name: string | null;
+  avatar_url: string | null;
+};
+
 /**
  * Saldo de cada membro do grupo.
  *
@@ -90,7 +114,8 @@ export async function GET(
         group_currency
       `
       )
-      .eq("group_id", groupId);
+      .eq("group_id", groupId)
+      .returns<LinhaDeSaldoDoGrupo[]>();
 
     if (error) {
       console.error("Erro ao ler saldos do grupo:", error);
@@ -102,15 +127,16 @@ export async function GET(
 
     // A view nao carrega nome e foto (ela e sobre dinheiro). Um SELECT em
     // profiles resolve, e e uma consulta so para o grupo inteiro.
-    const userIds = (linhas || []).map((l: any) => l.user_id);
+    const userIds = (linhas || []).map((l) => l.user_id);
     const { data: perfis } = await supabase
       .from("profiles")
       .select("id, full_name, avatar_url")
-      .in("id", userIds.length > 0 ? userIds : [user.id]);
+      .in("id", userIds.length > 0 ? userIds : [user.id])
+      .returns<PerfilDoMembro[]>();
 
-    const perfilPor = new Map((perfis || []).map((p: any) => [p.id, p]));
+    const perfilPor = new Map((perfis || []).map((p) => [p.id, p]));
 
-    const balances = (linhas || []).map((l: any) => ({
+    const balances = (linhas || []).map((l) => ({
       member: perfilPor.get(l.user_id) || { id: l.user_id, full_name: null },
       balance: Number(l.net_balance),
       total_paid: Number(l.total_paid),
@@ -134,7 +160,7 @@ export async function GET(
     // expense_groups), entao a primeira linha basta. Grupo sem membro ativo nao
     // produz linha nenhuma: nesse caso nao ha saldo para apresentar e BRL e o
     // que a tela usa para formatar o zero.
-    const primeira: any = (linhas || [])[0];
+    const primeira = (linhas || [])[0];
     const groupCurrency = moedaDaViagem(primeira?.group_currency);
     const amountCurrency = primeira?.amount_currency || MOEDA_PADRAO;
 

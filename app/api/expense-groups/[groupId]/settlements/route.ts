@@ -3,6 +3,29 @@ import { NextRequest, NextResponse } from "next/server";
 import { MOEDA_PADRAO, moedaConhecida } from "@/lib/dinheiro";
 import { cotacaoCoerente, precisaDeCotacao, valorEmReais } from "@/lib/cambio";
 
+// `from_user`/`to_user` sao embeds de UM perfil (FK many-to-one): objeto, nao
+// lista, e `| null` porque a RLS de `profiles` pode esconder a linha. `amount` e
+// `exchange_rate` sao numeric -- chegam como string no JSON do PostgREST, que e
+// o que justifica o `Number()` em cada leitura.
+type PerfilDoAcerto = {
+  id: string;
+  full_name: string | null;
+  avatar_url: string | null;
+} | null;
+
+type AcertoDoGrupo = {
+  id: string;
+  amount: number | string;
+  currency: string | null;
+  exchange_rate: number | string | null;
+  settled_on: string;
+  note: string | null;
+  created_by: string;
+  created_at: string;
+  from_user: PerfilDoAcerto;
+  to_user: PerfilDoAcerto;
+};
+
 /**
  * Acertos de contas do grupo: o registro de "Caio pagou R$ 130 para a Ana".
  *
@@ -87,7 +110,8 @@ export async function GET(
       )
       .eq("group_id", groupId)
       .order("settled_on", { ascending: false })
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .returns<AcertoDoGrupo[]>();
 
     if (error) {
       console.error("Erro ao listar acertos:", error);
@@ -99,7 +123,7 @@ export async function GET(
 
     return NextResponse.json({
       success: true,
-      settlements: (settlements || []).map((s: any) => {
+      settlements: (settlements || []).map((s) => {
         const currency = moedaConhecida(s.currency) ? s.currency : MOEDA_PADRAO;
         const rate = Number(s.exchange_rate ?? 1) || 1;
 

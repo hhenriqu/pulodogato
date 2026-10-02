@@ -18,6 +18,45 @@ interface SplitSuggestion {
   }[];
 }
 
+// O perfil do membro sai do proprio contrato de resposta, de proposito: o que a
+// consulta promete e o que a sugestao entrega sao o MESMO tipo, entao mexer num
+// sem o outro reprova no `tsc` em vez de sair pela resposta da API.
+type PerfilDoMembro = SplitSuggestion["splits"][number]["user"];
+
+type MembroAtivo = {
+  id: string;
+  user_id: string;
+  percentage: number | null;
+  status: string;
+  user: PerfilDoMembro;
+};
+
+// `transaction` e `member` sao embeds many-to-one (objeto), `splits` e
+// one-to-many (lista). Todos podem vir nulos: a RLS nao devolve erro para linha
+// alheia, ela tira a linha do resultado -- e por isso que cada leitura abaixo
+// passa por `?.` ou por um `if`.
+type DespesaRecente = {
+  id: string;
+  transaction: {
+    id: string;
+    amount: number | null;
+    transaction_date: string;
+    user_id: string;
+  } | null;
+  splits:
+    | {
+        id: string;
+        amount: number | null;
+        percentage: number | null;
+        member: {
+          id: string;
+          user_id: string;
+          user: { id: string; full_name: string } | null;
+        } | null;
+      }[]
+    | null;
+};
+
 export async function GET(
   request: NextRequest,
   { params }: { params: { groupId: string } }
@@ -91,7 +130,8 @@ export async function GET(
       `
       )
       .eq("group_id", groupId)
-      .eq("status", "active");
+      .eq("status", "active")
+      .returns<MembroAtivo[]>();
 
     if (membersError || !members) {
       console.error("❌ MEMBERS ERROR:", membersError);
@@ -103,7 +143,7 @@ export async function GET(
 
     console.log("👥 ACTIVE MEMBERS LOADED:", {
       count: members.length,
-      members: members.map((m: any) => ({
+      members: members.map((m) => ({
         id: m.id,
         user_id: m.user_id,
         name: m.user?.full_name,
@@ -137,7 +177,7 @@ export async function GET(
       description: `Dividir igualmente entre ${
         activeMembers.length
       } membros (${equalPercentage.toFixed(1)}% cada)`,
-      splits: activeMembers.map((member: any) => {
+      splits: activeMembers.map((member) => {
         console.log("👤 PROCESSING MEMBER:", {
           id: member.id,
           user: member.user,
@@ -158,12 +198,12 @@ export async function GET(
     if (group.default_split_type === "proportional") {
       // Usar percentuais já configurados para os membros
       const hasCustomPercentages = activeMembers.some(
-        (m: any) => m.percentage > 0
+        (m) => (m.percentage ?? 0) > 0
       );
 
       if (hasCustomPercentages) {
         const totalConfiguredPercentage = activeMembers.reduce(
-          (sum: number, m: any) => sum + (m.percentage || 0),
+          (sum: number, m) => sum + (m.percentage || 0),
           0
         );
 
@@ -172,11 +212,13 @@ export async function GET(
             type: "proportional",
             name: "Divisão Proporcional",
             description: "Baseada nas proporções configuradas do grupo",
-            splits: activeMembers.map((member: any) => ({
+            splits: activeMembers.map((member) => ({
               member_id: member.id,
               user: member.user,
-              percentage: member.percentage,
-              amount: amount ? (amount * member.percentage) / 100 : undefined,
+              percentage: member.percentage ?? 0,
+              amount: amount
+                ? (amount * (member.percentage ?? 0)) / 100
+                : undefined,
               reason: `${member.percentage}% conforme configuração do grupo`,
             })),
           });
@@ -219,7 +261,8 @@ export async function GET(
       .gte(
         "transaction.transaction_date",
         threeMonthsAgo.toISOString().split("T")[0]
-      );
+      )
+      .returns<DespesaRecente[]>();
 
     if (recentTransactions && recentTransactions.length >= 3) {
       // Calcular média de participação de cada membro
@@ -232,7 +275,7 @@ export async function GET(
         }
       >();
 
-      activeMembers.forEach((member: any) => {
+      activeMembers.forEach((member) => {
         memberStats.set(member.user_id, {
           totalAmount: 0,
           participationCount: 0,
@@ -240,9 +283,9 @@ export async function GET(
         });
       });
 
-      recentTransactions.forEach((gt: any) => {
+      recentTransactions.forEach((gt) => {
         if (gt.splits && gt.splits.length > 0) {
-          gt.splits.forEach((split: any) => {
+          gt.splits.forEach((split) => {
             if (
               split.member?.user_id &&
               memberStats.has(split.member.user_id)
@@ -274,7 +317,7 @@ export async function GET(
         totalHistoricalPercentage > 0 &&
         Object.keys(historicalPercentages).length === activeMembers.length
       ) {
-        const normalizedSplits = activeMembers.map((member: any) => {
+        const normalizedSplits = activeMembers.map((member) => {
           const historicalPercentage =
             historicalPercentages[member.user_id] || 0;
           const normalizedPercentage =
@@ -308,7 +351,7 @@ export async function GET(
         { count: number; totalAmount: number }
       >();
 
-      recentTransactions.forEach((gt: any) => {
+      recentTransactions.forEach((gt) => {
         if (gt.transaction?.user_id) {
           const userId = gt.transaction.user_id;
           const amount = Math.abs(gt.transaction.amount || 0);
@@ -324,15 +367,26 @@ export async function GET(
       });
 
       // Identificar o "pagador principal" (quem mais paga)
-      let mainPayer: any = null;
-      let maxAmount = 0;
+      //
+      // Vem de um `reduce` e nao de um `let` atribuido dentro do `forEach`: com
+      // o tipo no lugar do `any`, o TypeScript nao ve a atribuicao feita dentro
+      // do callback e estreita a variavel de volta para `null` -- os
+      // `mainPayer!` logo abaixo passavam exatamente porque o tipo era `any`.
+      // Empate continua com o primeiro, como no laco anterior.
+      const maiorPagador = Array.from(payerStats.entries()).reduce<
+        { userId: string; totalAmount: number } | null
+      >(
+        (maior, [userId, stats]) =>
+          !maior || stats.totalAmount > maior.totalAmount
+            ? { userId, totalAmount: stats.totalAmount }
+            : maior,
+        null
+      );
 
-      payerStats.forEach((stats, userId) => {
-        if (stats.totalAmount > maxAmount) {
-          maxAmount = stats.totalAmount;
-          mainPayer = activeMembers.find((m: any) => m.user_id === userId);
-        }
-      });
+      const maxAmount = maiorPagador?.totalAmount ?? 0;
+      const mainPayer = maiorPagador
+        ? activeMembers.find((m) => m.user_id === maiorPagador.userId) ?? null
+        : null;
 
       // Se existe um pagador principal que paga mais de 50% dos gastos
       const totalSpent = Array.from(payerStats.values()).reduce(
@@ -341,11 +395,11 @@ export async function GET(
       );
       if (mainPayer && maxAmount > totalSpent * 0.5) {
         // Sugerir que o pagador principal pague um pouco mais
-        const adjustedSplits = activeMembers.map((member: any) => {
+        const adjustedSplits = activeMembers.map((member) => {
           const basePercentage = equalPercentage;
           let adjustedPercentage = basePercentage;
 
-          if (member.user_id === mainPayer!.user_id) {
+          if (member.user_id === mainPayer.user_id) {
             // Pagador principal paga 5% a mais
             adjustedPercentage = basePercentage + 5;
           } else {
@@ -359,7 +413,7 @@ export async function GET(
             percentage: adjustedPercentage,
             amount: amount ? (amount * adjustedPercentage) / 100 : undefined,
             reason:
-              member.user_id === mainPayer!.user_id
+              member.user_id === mainPayer.user_id
                 ? "Pagador principal (+5%)"
                 : "Ajuste por pagador principal",
           };
@@ -369,7 +423,7 @@ export async function GET(
           type: "proportional",
           name: "Ajuste por Pagador Principal",
           description: `${
-            mainPayer!.user.full_name
+            mainPayer.user.full_name
           } tem pago a maioria das despesas recentes`,
           splits: adjustedSplits,
         });
