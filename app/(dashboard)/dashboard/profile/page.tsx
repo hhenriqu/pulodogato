@@ -180,9 +180,12 @@ export default function ProfilePage() {
     setProfile({ ...profile, ...updates });
   };
 
-  const updatePreferences = (
-    section: keyof Profile["preferences"],
-    updates: any
+  // Generico para amarrar os dois argumentos: `updates` tem que ser um pedaco
+  // da secao que `section` nomeia. Com `any` dava para passar o bloco de
+  // notificacoes em `section: "privacy"` sem nada reclamar.
+  const updatePreferences = <S extends keyof Profile["preferences"]>(
+    section: S,
+    updates: Partial<Profile["preferences"][S]>
   ) => {
     if (!profile) return;
     setProfile({

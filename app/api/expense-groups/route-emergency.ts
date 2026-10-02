@@ -1,6 +1,20 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 
+type MembroComPerfil = {
+  id: string;
+  group_id: string;
+  user_id: string;
+  role: string;
+  status: string;
+  percentage: number | null;
+  user: {
+    id: string;
+    full_name: string | null;
+    avatar_url: string | null;
+  } | null;
+};
+
 export async function GET(_request: NextRequest) {
   try {
     const supabase = await createClient();
@@ -72,7 +86,8 @@ export async function GET(_request: NextRequest) {
             user:profiles!group_members_user_id_fkey(id, full_name, avatar_url)
           `
           )
-          .eq("status", "active");
+          .eq("status", "active")
+          .returns<MembroComPerfil[]>();
 
         if (allMembersError) {
           console.error("Erro ao buscar membros:", allMembersError);
@@ -114,7 +129,7 @@ export async function GET(_request: NextRequest) {
             name: g.name,
             membersCount: g.members.length,
             memberNames: g.members
-              .map((m: any) => m.user?.full_name)
+              .map((m) => m.user?.full_name)
               .filter(Boolean),
           })),
         });

@@ -17,6 +17,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import type { PropsDeTooltip } from "@/types/grafico";
 
 interface PerformanceData {
   date: string;
@@ -64,14 +65,18 @@ export function PerformanceChart({
     });
   };
 
-  const CustomTooltip = ({ active, payload, label }: any) => {
+  const CustomTooltip = ({
+    active,
+    payload,
+    label,
+  }: PropsDeTooltip<PerformanceData>) => {
     if (active && payload && payload.length) {
       return (
         <div className="bg-card p-3 shadow-lg rounded-lg border">
-          <p className="font-medium">{formatDate(label)}</p>
-          {payload.map((entry: any, index: number) => (
+          <p className="font-medium">{formatDate(String(label))}</p>
+          {payload.map((entry, index: number) => (
             <p key={index} style={{ color: entry.color }}>
-              {entry.name}: {formatCurrency(entry.value)}
+              {entry.name}: {formatCurrency(Number(entry.value))}
             </p>
           ))}
         </div>

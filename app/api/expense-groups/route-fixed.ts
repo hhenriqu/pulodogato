@@ -1,6 +1,20 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 
+// Sem `user_id` de proposito: o select deste arquivo nao pede essa coluna.
+type MembroComPerfil = {
+  id: string;
+  group_id: string;
+  role: string;
+  status: string;
+  percentage: number | null;
+  user: {
+    id: string;
+    full_name: string | null;
+    avatar_url: string | null;
+  } | null;
+};
+
 export async function GET(_request: NextRequest) {
   try {
     const supabase = await createClient();
@@ -77,7 +91,8 @@ export async function GET(_request: NextRequest) {
       `
       )
       .in("group_id", groupIds)
-      .eq("status", "active");
+      .eq("status", "active")
+      .returns<MembroComPerfil[]>();
 
     if (membersError) {
       console.error("Members lookup error:", membersError);
@@ -101,7 +116,7 @@ export async function GET(_request: NextRequest) {
         id: g.id,
         name: g.name,
         membersCount: g.members.length,
-        members: g.members.map((m: any) => m.user?.full_name),
+        members: g.members.map((m) => m.user?.full_name),
       })),
     });
 

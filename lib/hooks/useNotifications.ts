@@ -9,7 +9,10 @@ export interface Notification {
   message: string;
   read: boolean;
   created_at: string;
-  data?: any;
+  // `unknown` e nao `any`: o conteudo varia por `type`, e quem le tem que
+  // afirmar a forma (`data as GroupInvitationNotification`). Com `any` o acesso
+  // passava direto, sem afirmacao nenhuma e sem conferencia.
+  data?: unknown;
 }
 
 // O que `list_my_group_invitations()` devolve (migration 030). Nao ha

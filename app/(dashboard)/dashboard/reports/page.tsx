@@ -70,6 +70,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
+import type { PropsDeTooltip } from "@/types/grafico";
 import type {
   CashFlowReport,
   CategoryReport,
@@ -118,12 +119,12 @@ const JANELAS = [
   { valor: "24", rotulo: "24 meses" },
 ];
 
-function TooltipMoeda({ active, payload, label }: any) {
+function TooltipMoeda({ active, payload, label }: PropsDeTooltip) {
   if (!active || !payload?.length) return null;
   return (
     <div className="bg-card p-3 shadow-lg rounded-lg border text-sm">
       <p className="font-medium mb-1">{label}</p>
-      {payload.map((p: any) => (
+      {payload.map((p) => (
         <p key={p.dataKey} style={{ color: p.color ?? p.fill }}>
           {p.name}: {moeda(Number(p.value))}
         </p>

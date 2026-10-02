@@ -77,7 +77,7 @@ export async function PATCH(
     // de importar para as linhas antigas, mas nao para a linha que o usuario
     // edita: ela e justamente a que ele acabou de olhar.
     const existingAmount = Number(existingTransaction.amount);
-    const updateData: any = {};
+    const updateData: Record<string, unknown> = {};
 
     if (existingTransaction.transaction_type === "transfer") {
       // PERNA DE TRANSFERENCIA NAO E RECLASSIFICADA AQUI.
