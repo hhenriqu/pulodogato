@@ -420,7 +420,7 @@ export default function ConnectionsPage() {
                           )}
                           {request.message && (
                             <p className="text-sm mt-2 p-2 bg-muted rounded">
-                              "{request.message}"
+                              &quot;{request.message}&quot;
                             </p>
                           )}
                         </div>

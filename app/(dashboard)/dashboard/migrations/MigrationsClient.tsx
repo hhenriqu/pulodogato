@@ -231,7 +231,7 @@ export default function MigrationsClient() {
             <div>
               <h4 className="font-medium mb-2">Passo 2: SQL Editor</h4>
               <p className="text-sm text-muted-foreground">
-                Navegue até "SQL Editor" no menu lateral
+                Navegue até &quot;SQL Editor&quot; no menu lateral
               </p>
             </div>
             <div>
@@ -243,7 +243,7 @@ export default function MigrationsClient() {
             <div>
               <h4 className="font-medium mb-2">Passo 4: Executar</h4>
               <p className="text-sm text-muted-foreground">
-                Cole no editor e clique "Run" para executar
+                Cole no editor e clique &quot;Run&quot; para executar
               </p>
             </div>
           </div>

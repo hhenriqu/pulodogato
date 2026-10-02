@@ -17,17 +17,12 @@ import {
 } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { toast } from "sonner";
 import { ChavePixDoPerfil } from "@/components/perfil/ChavePixDoPerfil";
 import {
   User as UserIcon,
-  Mail,
-  Phone,
   Shield,
-  Eye,
-  EyeOff,
   Users,
   Settings,
   Save,

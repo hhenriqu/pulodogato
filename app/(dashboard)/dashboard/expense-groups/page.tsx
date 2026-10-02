@@ -41,7 +41,6 @@ import {
   Archive,
   Users,
   Plus,
-  Settings,
   Share2,
   Crown,
   UserPlus,
@@ -55,7 +54,6 @@ import {
   Calculator,
   TrendingUp,
   Eye,
-  EyeOff,
   Check,
   X,
   Clock,
@@ -63,7 +61,6 @@ import {
   Edit,
   Trash2,
   UserMinus,
-  Settings2,
 } from "lucide-react";
 import { useGroupInvitations } from "@/lib/hooks/useGroupInvitations";
 
@@ -115,15 +112,6 @@ interface PendingGroupRequest {
   group_id: string;
   group_name: string;
   requested_at: string;
-}
-
-interface GroupInvitation {
-  id: string;
-  invite_method: "email" | "phone" | "code";
-  invite_target: string;
-  status: "pending" | "accepted" | "rejected" | "expired";
-  expires_at: string;
-  created_at: string;
 }
 
 export default function ExpenseGroupsPage() {
@@ -1037,7 +1025,7 @@ export default function ExpenseGroupsPage() {
                         </div>
 
                         <div className="flex -space-x-2">
-                          {group.members?.slice(0, 4).map((member, idx) => (
+                          {group.members?.slice(0, 4).map((member) => (
                             <Avatar
                               key={member.id}
                               className="h-8 w-8 border-2 border-background"
@@ -1351,7 +1339,7 @@ export default function ExpenseGroupsPage() {
             <CardHeader>
               <CardTitle>Editar Grupo</CardTitle>
               <CardDescription>
-                Altere as informações do grupo "{selectedGroup.name}"
+                Altere as informações do grupo &quot;{selectedGroup.name}&quot;
               </CardDescription>
             </CardHeader>
             <CardContent>

@@ -860,12 +860,6 @@ export default function GroupDetailPage() {
     return groups;
   };
 
-  const getUserRole = () => {
-    if (!user || !group) return null;
-    const member = group.members?.find((m) => m.user.id === user.id);
-    return member?.role || null;
-  };
-
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">

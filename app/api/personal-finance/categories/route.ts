@@ -49,7 +49,7 @@ async function servicoDeFinancasPessoais(
   return data?.id as string | undefined;
 }
 
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   try {
     const supabase = await createClient();
     const {

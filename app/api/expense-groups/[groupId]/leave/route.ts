@@ -206,7 +206,7 @@ async function removeUserFromGroup(
       validStatusValues = enumData;
       console.log("🎯 Found valid status values:", validStatusValues);
     }
-  } catch (enumError) {
+  } catch {
     console.log("ℹ️ Could not fetch enum values, will try common values");
   }
 

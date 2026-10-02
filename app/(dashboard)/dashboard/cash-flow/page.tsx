@@ -11,7 +11,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
 import { CampoDeValor } from "@/components/ui/campo-de-valor";
 import { valorNumerico } from "@/lib/dinheiro";
 import {

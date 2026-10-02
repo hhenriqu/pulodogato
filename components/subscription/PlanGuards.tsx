@@ -106,11 +106,7 @@ interface UpgradePromptProps {
   size?: "sm" | "md" | "lg";
 }
 
-export function UpgradePrompt({
-  feature,
-  currentPlan,
-  size = "md",
-}: UpgradePromptProps) {
+export function UpgradePrompt({ feature, size = "md" }: UpgradePromptProps) {
   const getFeatureName = (feature: PlanFeature): string => {
     const names: Record<PlanFeature, string> = {
       personal_finance: "Finanças Pessoais",

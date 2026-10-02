@@ -21,10 +21,8 @@ import { Input } from "@/components/ui/input";
 import { CampoDeValor } from "@/components/ui/campo-de-valor";
 import { MOEDA_PADRAO } from "@/lib/dinheiro";
 import { moedaSugerida, opcoesDeMoeda } from "@/lib/moeda";
-import { formatarValor, valorNumerico } from "@/lib/dinheiro";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,

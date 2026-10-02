@@ -10,7 +10,12 @@
       {
         "argsIgnorePattern": "^_",
         "varsIgnorePattern": "^_",
-        "caughtErrorsIgnorePattern": "^_"
+        "caughtErrorsIgnorePattern": "^_",
+        // `const { cents, ...resto } = linha` usa `cents` para OMITIR a chave:
+        // o nome nao e lixo, e o que sai do objeto. Renomear para `_cents`
+        // (o conserto obvio) faz a chave VOLTAR para o resultado, calado --
+        // `lib/grupos.ts` devolvia `cents` no payload da API desse jeito.
+        "ignoreRestSiblings": true
       }
     ],
     "@typescript-eslint/no-empty-object-type": "warn",
@@ -18,5 +23,17 @@
     "react/no-unescaped-entities": "warn",
     "@next/next/no-img-element": "warn",
     "prefer-const": "warn"
-  }
+  },
+  "overrides": [
+    {
+      // `next.config.js` carrega estes dois com require(): ele e CommonJS e roda
+      // no Node antes de qualquer transpilacao, entao os modulos TEM que ser
+      // CommonJS tambem. Aqui o require() e a interface, nao resto de migracao
+      // -- trocar por import quebra o build. Excecao explicita, nao conserto.
+      "files": ["lib/pwa-precache.js", "lib/pwa-runtime-cache.js"],
+      "rules": {
+        "@typescript-eslint/no-require-imports": "off"
+      }
+    }
+  ]
 }

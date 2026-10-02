@@ -134,7 +134,7 @@ export async function PATCH(
     if (group_id !== undefined) updateData.group_id = group_id || null;
 
     // Atualizar transação
-    const { data: updatedTransaction, error: updateError } = await supabase
+    const { error: updateError } = await supabase
       .from("financial_transactions")
       .update(updateData)
       .eq("id", id)

@@ -20,7 +20,6 @@ import {
   Calculator,
   Check,
   AlertCircle,
-  Crown,
 } from "lucide-react";
 
 interface SplitSuggestion {
