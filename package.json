@@ -106,7 +106,10 @@
     "mutantes:campo-de-parcelas": "node scripts/mutantes-campo-de-parcelas.mjs",
     "test:alcance-da-serie": "rm -rf .tmp-alcance-da-serie && tsc -p scripts/tsconfig.alcance-da-serie-test.json && node scripts/resolve-aliases.mjs .tmp-alcance-da-serie lib && node --test scripts/test-alcance-da-serie.mjs",
     "mutantes:alcance-da-serie": "node scripts/mutantes-alcance-da-serie.mjs",
-    "mutantes:tipo-e-sinal": "node scripts/mutantes-tipo-e-sinal.mjs"
+    "mutantes:tipo-e-sinal": "node scripts/mutantes-tipo-e-sinal.mjs",
+    "mutantes:convite-sem-conta": "bash scripts/mutantes-convite-sem-conta.sh",
+    "test:convite-de-grupo": "rm -rf .tmp-convite-de-grupo && tsc lib/convite-de-grupo.ts --outDir .tmp-convite-de-grupo --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-convite-de-grupo.mjs",
+    "mutantes:convite-de-grupo": "node scripts/mutantes-convite-de-grupo.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
