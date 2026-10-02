@@ -270,3 +270,10 @@ next-env.d.ts
 # fora do .gitignore chega a ser commitado em cima de arquivo de fonte -- ver a
 # entrada do .tmp-parcelamento acima.
 /.tmp-convite-de-grupo/
+
+# Build do `npm run test:data-digitada` (HMO-238, a mascara dd/mm/aaaa). Leva o
+# lancamento.js junto porque a suite confere a data emitida contra o
+# `validarLancamento` de verdade, e nao contra uma copia do regex. Um `.tmp-*`
+# fora do .gitignore chega a ser commitado em cima de arquivo de fonte -- ver a
+# entrada do .tmp-parcelamento acima.
+/.tmp-data-digitada/
