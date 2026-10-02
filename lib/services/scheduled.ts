@@ -86,6 +86,31 @@ export async function materializarAgenda(
       amount: regra.amount,
       due_date,
       status: "pending" as const,
+      // A TRANSFERENCIA RECORRENTE (HMO-172, migration 038)
+      //
+      // Estas duas linhas sao o elo que faltava: sem elas a ocorrencia nasce sem
+      // destino, e a baixa de uma transferencia prevista gravaria UMA perna --
+      // o saldo das duas contas errado em direcoes opostas, com o total geral
+      // certo e nenhum agregado acusando. E o defeito que a HMO-172 nomeia.
+      //
+      // `transaction_type` e gravado EXPLICITAMENTE aqui, e so em transferencia.
+      // Para income/expense ele continua NULL, que na 027 quer dizer "pergunte a
+      // regra" -- e esse NULL e deliberado: editar a regra de despesa para
+      // receita tem de reapontar as ocorrencias futuras, e uma copia gravada em
+      // cada uma congelaria a direcao antiga.
+      //
+      // Transferencia e a excecao porque o CHECK da 038 precisa do tipo na
+      // PROPRIA linha para poder exigir `destination_account_id`: um CHECK nao
+      // consulta outra tabela, entao sem o literal aqui a ocorrencia cairia no
+      // ramo que proibe destino e o INSERT levaria 23514. A exigencia do banco e
+      // o que torna esta assimetria segura em vez de arbitraria -- e o par
+      // (tipo, destino) viaja junto ou nao viaja.
+      ...(regra.transaction_type === "transfer"
+        ? {
+            transaction_type: "transfer" as const,
+            destination_account_id: regra.destination_account_id ?? null,
+          }
+        : {}),
     })),
   );
 

@@ -27,6 +27,15 @@
 // erra dinheiro sem quebrar nada.
 // ---------------------------------------------------------------------------
 
+// Os tipos da recorrencia vem de `lib/lancamento.ts` (HMO-172): a pergunta "isto
+// se repete todo mes?" tem um dono so, e `lancamento.ts` nao importa nada -- e
+// modulo puro de ponta a ponta, entao a dependencia nao arrasta arvore nenhuma.
+import {
+  MAX_MESES_DE_REPETICAO,
+  type DuracaoDaRepeticao,
+  type NaturezaDespesa,
+} from "@/lib/lancamento";
+
 /**
  * A categoria das duas pernas.
  *
@@ -170,9 +179,16 @@ export function mensagemDaTransferencia(
  * O estado do formulario de transferencia.
  *
  * Deliberadamente NAO e `ValoresDeLancamento`: transferencia nao tem categoria,
- * natureza, parcelamento nem rateio, e carregar os campos mortos so para
- * reaproveitar a forma foi como a tela antiga acabou escondendo tres telas
- * dentro de uma.
+ * parcelamento nem rateio, e carregar os campos mortos so para reaproveitar a
+ * forma foi como a tela antiga acabou escondendo tres telas dentro de uma.
+ *
+ * O que ela PASSA a ter em comum com o lancamento (HMO-172) sao os quatro
+ * campos da recorrencia, e eles vem com os TIPOS de `lib/lancamento.ts` em vez
+ * de copias locais. A copia seria indistinguivel hoje e divergiria no primeiro
+ * conserto que so um dos lados recebesse -- e `duracao` e justamente o campo
+ * onde uma divergencia e silenciosa: "indefinida" vira `max_occurrences: null`,
+ * e um valor que o outro lado nao conheca cai no mesmo `null` sem erro,
+ * transformando "por 12 meses" em "para sempre".
  */
 export interface ValoresDeTransferencia {
   descricao: string;
@@ -183,6 +199,22 @@ export interface ValoresDeTransferencia {
   /** YYYY-MM-DD */
   data: string;
   notas: string;
+
+  /**
+   * Pontual ou "todo mes" (HMO-172).
+   *
+   * E `NaturezaDespesa` por reuso de tipo, mas so dois dos tres valores cabem
+   * aqui -- `naturezasDoTipo("transfer")` e quem diz quais, e "card" nao esta
+   * entre eles: mover dinheiro para um cartao e quitar divida, e aquele caminho
+   * e o pagamento de fatura.
+   */
+  natureza: NaturezaDespesa;
+  /** Dia do vencimento da regra mensal. So natureza fixa. */
+  diaDeVencimento: string;
+  /** "Todos os meses" x "por N meses". So natureza fixa. */
+  duracao: DuracaoDaRepeticao;
+  /** Quantos meses, quando a duracao e contada. */
+  mesesDeRepeticao: string;
 }
 
 export function valoresIniciaisDeTransferencia(): ValoresDeTransferencia {
@@ -193,7 +225,61 @@ export function valoresIniciaisDeTransferencia(): ValoresDeTransferencia {
     destinoId: "",
     data: new Date().toISOString().split("T")[0],
     notas: "",
+    // Pontual por padrao. A transferencia recorrente e o caso raro, e um default
+    // "fixed" faria quem transfere uma vez criar uma regra que volta todo mes.
+    natureza: "one_off",
+    diaDeVencimento: "",
+    duracao: "indefinida",
+    mesesDeRepeticao: "",
   };
+}
+
+/** Quais blocos do formulario de transferencia existem agora (HMO-172). */
+export interface CamposDaTransferencia {
+  /** O seletor pontual / todo mes. */
+  natureza: boolean;
+  /** O dia do vencimento da regra. So natureza fixa. */
+  diaDeVencimento: boolean;
+  /** "Todos os meses" x "por N meses". So natureza fixa. */
+  duracao: boolean;
+}
+
+/**
+ * Os campos da tela, a partir da natureza.
+ *
+ * `duracao` anda COLADA em `diaDeVencimento` de proposito, como em
+ * `camposDoTipo`: mostrar "por 12 meses" sem o dia do vencimento deixaria a
+ * pessoa dizer por quanto tempo repetir sem dizer QUANDO, e a regra nasceria com
+ * `due_day` nulo -- uma agenda que nunca gera ocorrencia nenhuma.
+ */
+export function camposDaTransferencia(
+  valores: ValoresDeTransferencia
+): CamposDaTransferencia {
+  const fixa = valores.natureza === "fixed";
+  return { natureza: true, diaDeVencimento: fixa, duracao: fixa };
+}
+
+/**
+ * Para onde esta transferencia vai.
+ *
+ *   regra     -> `recurring_rules`, e a agenda gera as ocorrencias mes a mes.
+ *   transacao -> as duas pernas em `financial_transactions`, agora.
+ *
+ * Existe como funcao pura pelo mesmo motivo de `destinoDoLancamento`: o ramo
+ * errado nao da erro, da uma gravacao no lugar errado. Uma transferencia fixa
+ * que caia em "transacao" move o dinheiro UMA vez e a pessoa acha que agendou;
+ * uma pontual que caia em "regra" nao move dinheiro nenhum hoje e comeca a mover
+ * todo mes.
+ */
+export type DestinoDaTransferencia = "regra" | "transacao";
+
+export function destinoDaTransferencia(
+  valores: ValoresDeTransferencia
+): DestinoDaTransferencia {
+  return camposDaTransferencia(valores).diaDeVencimento &&
+    valores.natureza === "fixed"
+    ? "regra"
+    : "transacao";
 }
 
 export type ValidacaoDaTransferencia =
@@ -242,6 +328,35 @@ export function validarTransferencia(
     return { ok: false, mensagem: "Valor deve ser maior que zero." };
   }
 
+  // A RECORRENCIA (HMO-172). As recusas saem de `camposDaTransferencia`, e nao
+  // de `natureza === "fixed"` repetido: o que esta na TELA e o que pode ser
+  // cobrado. Perguntar pelo dia do vencimento com o campo escondido daria um
+  // erro que a pessoa nao tem como consertar.
+  const campos = camposDaTransferencia(valores);
+
+  if (campos.diaDeVencimento) {
+    const dia = Number(valores.diaDeVencimento);
+    // O CHECK da 005 e `due_day >= 1 AND due_day <= 31`. Recusar aqui e o que
+    // transforma um 23514 sem traducao numa frase que diz o que fazer.
+    if (!Number.isInteger(dia) || dia < 1 || dia > 31) {
+      return { ok: false, mensagem: "Escolha o dia do vencimento, de 1 a 31." };
+    }
+  }
+
+  if (campos.duracao && valores.duracao === "contada") {
+    const meses = Number(valores.mesesDeRepeticao);
+    // `max_occurrences` tem `CHECK (> 0)` na 005, entao 0 nao e "sem fim" -- o
+    // sem fim e NULL, e quem o escolhe e a duracao "indefinida". Um 0 que
+    // chegasse ao banco seria recusado; um 0 aceito aqui viraria uma regra que
+    // nunca gera ocorrencia.
+    if (!Number.isInteger(meses) || meses < 1 || meses > MAX_MESES_DE_REPETICAO) {
+      return {
+        ok: false,
+        mensagem: `Por quantos meses? Informe de 1 a ${MAX_MESES_DE_REPETICAO}.`,
+      };
+    }
+  }
+
   return { ok: true };
 }
 
@@ -256,6 +371,124 @@ export function contasDeOrigem<T extends { account_type?: string | null }>(
   contas: T[]
 ): T[] {
   return contas.filter((c) => c.account_type !== "credit_card");
+}
+
+/**
+ * O corpo do POST /api/recurring-rules para uma transferencia fixa (HMO-172).
+ *
+ * Tres coisas que nao podem sair daqui, e o que cada uma custa se sair:
+ *
+ *   1. `amount` vai POSITIVO. `recurring_rules` tem `CHECK (amount > 0)` (005),
+ *      e a regra nao TEM sinal: quem aplica os dois sinais e a baixa, por
+ *      `pernasDaTransferencia`. Mandar negativo faria o banco recusar com uma
+ *      mensagem que a tela nao sabe traduzir.
+ *   2. `account_id` e a ORIGEM e `destination_account_id` e o DESTINO, nessa
+ *      ordem. Trocar os dois nao da erro em lugar nenhum -- o CHECK da 038 so
+ *      exige que sejam diferentes -- e a transferencia passa a andar para tras
+ *      todo mes. E o unico defeito desta funcao que nenhuma trava pega, e por
+ *      isso ele tem mutante proprio.
+ *   3. `transaction_type: "transfer"` literal, nao um parametro. E ele que faz a
+ *      baixa gravar DUAS pernas; uma regra de transferencia que chegue ao banco
+ *      como 'expense' materializa uma perna negativa e nada acusa.
+ *
+ * `max_occurrences` e o numero de MESES porque a frequencia e mensal -- a mesma
+ * equivalencia de `regraDeRecorrencia`, e ela deixa de valer no dia em que a
+ * tela oferecer outra frequencia.
+ */
+export function regraDeTransferenciaRecorrente(
+  valores: ValoresDeTransferencia,
+  categoriaId: string
+): {
+  description: string;
+  amount: number;
+  category_id: string;
+  account_id: string;
+  destination_account_id: string;
+  transaction_type: "transfer";
+  frequency: "monthly";
+  due_day: number;
+  start_date: string;
+  max_occurrences: number | null;
+  notes: string | null;
+  group_id: null;
+} {
+  return {
+    description: valores.descricao,
+    amount: Math.abs(Number.parseFloat(valores.valor)),
+    // A categoria reservada do 023, a mesma das pernas de uma transferencia
+    // pontual. Ela nao vem da tela porque transferencia nao tem categoria: quem
+    // a resolve e a rota, lendo o seed.
+    category_id: categoriaId,
+    account_id: valores.origemId,
+    destination_account_id: valores.destinoId,
+    transaction_type: "transfer",
+    frequency: "monthly",
+    due_day: Number(valores.diaDeVencimento),
+    start_date: valores.data,
+    max_occurrences:
+      valores.duracao === "contada" ? Number(valores.mesesDeRepeticao) : null,
+    notes: valores.notas || null,
+    // `group_id: null` SEMPRE, como nas pernas da transferencia pontual.
+    // Transferencia entre contas proprias nao e despesa compartilhada, e os
+    // triggers de grupo criariam rateio para ela -- cobrando dos outros membros
+    // um valor que eles ja rateiam nas COMPRAS.
+    group_id: null,
+  };
+}
+
+/** Por que esta ocorrencia prevista nao pode virar transferencia. */
+export type ProblemaDaBaixaDeTransferencia =
+  | "sem_origem"
+  | "sem_destino"
+  | "mesma_conta";
+
+/**
+ * Esta conta prevista esta em condicao de virar as duas pernas? (HMO-172)
+ *
+ * POR QUE ISTO E CONFERIDO DE NOVO, SE A 038 JA TEM O CHECK
+ * ---------------------------------------------------------
+ * Porque a ordem da baixa e "grava a saida, grava a entrada, marca como paga", e
+ * nao existe transacao de banco entre os passos (o supabase-js fala PostgREST,
+ * uma requisicao por vez). Descobrir no segundo passo que nao ha destino deixaria
+ * a perna de SAIDA no saldo da conta -- metade de uma transferencia, que e
+ * exatamente o estado que a issue existe para impedir. O CHECK da 038 protege a
+ * TABELA da agenda; esta funcao protege a SEQUENCIA da baixa.
+ *
+ * O caso que o CHECK da 038 nao alcanca e o banco em que ela ainda NAO foi
+ * colada. O deploy publica codigo, nao schema -- as duas coisas andam separadas
+ * neste projeto --, entao existe uma janela em que a rota nova fala com o banco
+ * velho: ali a coluna nem existe, `conta.destination_account_id` chega
+ * `undefined`, e sem esta guarda a baixa gravaria a perna de saida sozinha e so
+ * falharia no passo seguinte. A recusa com mensagem e o unico comportamento
+ * honesto nessa janela.
+ */
+export function validarBaixaDeTransferencia(conta: {
+  account_id?: string | null;
+  destination_account_id?: string | null;
+}): ProblemaDaBaixaDeTransferencia | null {
+  if (!conta.account_id) return "sem_origem";
+  if (!conta.destination_account_id) return "sem_destino";
+  if (conta.account_id === conta.destination_account_id) return "mesma_conta";
+  return null;
+}
+
+/**
+ * Mensagem da recusa da baixa. Nao reusa `mensagemDaTransferencia` porque a
+ * pessoa aqui nao esta preenchendo um formulario -- ela clicou "confirmar" numa
+ * conta prevista que o banco ja tem --, e "Escolha de qual conta o dinheiro
+ * saiu" mandaria procurar um campo que nao esta na tela.
+ */
+export function mensagemDaBaixaDeTransferencia(
+  problema: ProblemaDaBaixaDeTransferencia
+): string {
+  switch (problema) {
+    case "sem_origem":
+      return "Esta transferência prevista não diz de qual conta o dinheiro sai. Edite-a antes de confirmar.";
+    case "sem_destino":
+      return "Esta transferência prevista não diz para qual conta o dinheiro vai. Edite-a antes de confirmar.";
+    case "mesma_conta":
+      return "A conta de destino desta transferência é igual à de origem. Edite-a antes de confirmar.";
+  }
 }
 
 /** A rota da tela. Existe para que ninguem escreva a string na mao. */

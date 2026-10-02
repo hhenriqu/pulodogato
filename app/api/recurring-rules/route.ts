@@ -9,6 +9,10 @@ import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { materializarAgenda } from "@/lib/services/scheduled";
 import { isIsoDate, today } from "@/lib/recurrence";
+import {
+  validarContasDaTransferencia,
+  mensagemDaTransferencia,
+} from "@/lib/transferencia";
 
 const FREQUENCIAS = [
   "weekly",
@@ -19,6 +23,14 @@ const FREQUENCIAS = [
   "semiannual",
   "annual",
 ];
+
+// Os valores do enum `transaction_financial_type` (001_baseline). A lista existe
+// desde a HMO-172 porque `transfer` passou a ser um valor COM consequencia: ele
+// manda a baixa gravar duas pernas e exige `destination_account_id`. Antes, um
+// `transaction_type` qualquer vindo do corpo so levava 22P02 do banco; agora um
+// valor fora da lista passaria pela validacao de transferencia sem ser
+// transferencia, e o destino iria para o banco num tipo que o CHECK proibe.
+const TIPOS = ["income", "expense", "transfer"];
 
 export async function GET(request: NextRequest) {
   try {
@@ -85,6 +97,7 @@ export async function POST(request: NextRequest) {
       category_id,
       subcategory_id,
       account_id,
+      destination_account_id,
       group_id,
       transaction_type = "expense",
       frequency = "monthly",
@@ -146,6 +159,91 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (!TIPOS.includes(transaction_type)) {
+      return NextResponse.json(
+        { error: `Tipo inválido. Use um de: ${TIPOS.join(", ")}` },
+        { status: 400 }
+      );
+    }
+
+    // ---------------------------------------------------------------
+    // A TRANSFERENCIA RECORRENTE (HMO-172)
+    // ---------------------------------------------------------------
+    // Transferencia e o unico tipo com DUAS contas, e as duas recusas abaixo
+    // acontecem aqui -- antes do INSERT -- porque o CHECK da 038 devolveria 23514,
+    // que a tela nao sabe traduzir: a pessoa veria "não foi possível criar" sem
+    // saber qual campo esta errado.
+    //
+    // As contas sao lidas DO BANCO e nao do corpo. `account_type` vindo do
+    // cliente nao decide regra de dinheiro, e e ele que diz se a origem e um
+    // cartao -- uma saida recorrente num cartao criaria divida sem compra por
+    // tras, todo mes, e cada uma dessas linhas entraria na fatura cobrando algo
+    // que nao foi comprado.
+    if (transaction_type === "transfer") {
+      const ids = [account_id, destination_account_id].filter(
+        (id): id is string => typeof id === "string" && id.length > 0
+      );
+      const { data: contas } = await supabase
+        .from("financial_accounts")
+        .select("id, account_type")
+        .in("id", ids.length ? ids : ["00000000-0000-0000-0000-000000000000"])
+        .eq("user_id", user.id);
+
+      // `?? null` de proposito, nos dois: `null` quer dizer "id informado que a
+      // busca nao achou" (ou que nao e deste usuario) e `undefined` quer dizer
+      // "nao informado". `validarContasDaTransferencia` da mensagens diferentes
+      // para os dois, e confundi-los esconderia uma tentativa de pendurar uma
+      // regra na conta de outra pessoa atras de "preencha o campo".
+      const achar = (id: unknown) =>
+        typeof id === "string" && id
+          ? (contas ?? []).find((c) => c.id === id) ?? null
+          : undefined;
+
+      const problema = validarContasDaTransferencia(
+        achar(account_id),
+        achar(destination_account_id)
+      );
+      if (problema) {
+        return NextResponse.json(
+          { error: mensagemDaTransferencia(problema) },
+          { status: 400 }
+        );
+      }
+
+      // Transferencia entre contas proprias nao e despesa compartilhada. Aceitar
+      // `group_id` aqui faria os triggers de grupo ratearem cada ocorrencia,
+      // cobrando dos outros membros um valor que eles ja rateiam nas COMPRAS --
+      // e a recusa e explicita em vez de um `group_id: null` calado, que
+      // esconderia da pessoa que o campo foi ignorado.
+      if (group_id) {
+        return NextResponse.json(
+          {
+            error:
+              "Transferência entre contas próprias não é despesa de grupo: ela não muda o patrimônio de ninguém.",
+          },
+          { status: 400 }
+        );
+      }
+
+      // `due_day` e obrigatorio: sem ele a regra nasce sem vencimento e
+      // `occurrencesBetween` nao gera ocorrencia nenhuma. A regra existiria no
+      // banco, a tela diria "criado", e a agenda nunca mostraria nada.
+      if (due_day == null) {
+        return NextResponse.json(
+          { error: "Escolha o dia do vencimento da transferência" },
+          { status: 400 }
+        );
+      }
+    } else if (destination_account_id) {
+      // Conta de destino em receita/despesa e o estado que o CHECK da 038 chama
+      // de transferencia disfarcada: a baixa le o TIPO, grava UMA perna, e a
+      // coluna fica na linha dizendo que havia um destino que ninguem honrou.
+      return NextResponse.json(
+        { error: "Conta de destino só existe em transferência" },
+        { status: 400 }
+      );
+    }
+
     // Grupo so vale se o usuario for membro ativo. A RLS ja barraria a LEITURA
     // depois, mas sem esta checagem o INSERT passa e a regra nasce invisivel
     // para o proprio dono na tela do grupo.
@@ -176,6 +274,11 @@ export async function POST(request: NextRequest) {
         // num lancamento. `|| null` porque a coluna e uuid e `""` volta 22P02.
         subcategory_id: subcategory_id || null,
         account_id: account_id || null,
+        // HMO-172. `|| null` pelo mesmo motivo da subcategoria: a coluna e uuid e
+        // `""` volta 22P02. E o `null` em tipo que nao e transferencia e o que o
+        // CHECK da 038 exige -- a validacao acima ja recusou o caso em que ele
+        // veio preenchido.
+        destination_account_id: destination_account_id || null,
         group_id: group_id || null,
         description: description.trim(),
         amount: Math.abs(Number(amount)),

@@ -36,6 +36,11 @@ import {
   mensagemContaPagadora,
   pernasDoPagamentoDeFatura,
 } from "@/lib/card-invoice";
+import {
+  pernasDaTransferencia,
+  validarBaixaDeTransferencia,
+  mensagemDaBaixaDeTransferencia,
+} from "@/lib/transferencia";
 
 export async function POST(
   request: NextRequest,
@@ -155,6 +160,38 @@ export async function POST(
       conta.transaction_type ??
       conta.recurring_rule?.transaction_type ??
       "expense";
+
+    // ---------------------------------------------------------------
+    // Caminho da transferencia recorrente: DUAS pernas (HMO-172)
+    // ---------------------------------------------------------------
+    // Vem DEPOIS da deteccao de fatura e ANTES da baixa comum, e as duas
+    // posicoes importam.
+    //
+    // Depois da fatura: pagar fatura tambem e uma transferencia, mas a chave
+    // canonica em `notes` carrega o cartao e a conta pagadora vem do CORPO do
+    // pedido (a pessoa escolhe na hora com que conta paga). Aqui as duas contas
+    // ja estao na linha. Inverter a ordem faria a fatura cair neste ramo sem
+    // conta pagadora nenhuma.
+    //
+    // Antes da baixa comum: e `valorComSinal` que torna isso obrigatorio. Ele e
+    // `tipo === "income" ? +abs : -abs`, ou seja transferencia cai no `-abs` --
+    // uma perna negativa na conta de origem, sozinha, sem contraparte e sem elo.
+    // O dinheiro sai de uma conta e nao entra em nenhuma, e o patrimonio encolhe
+    // pelo valor transferido. Nenhum agregado acusa: `net_worth_history` soma os
+    // dois tipos, `monthly_cash_flow` e `category_monthly_totals` filtram
+    // income/expense e nem olham a linha.
+    if (tipo === "transfer") {
+      return await pagarTransferencia({
+        supabase,
+        userId: user.id,
+        serviceId,
+        conta,
+        valorPago,
+        paid_date,
+        scheduledId: params.id,
+      });
+    }
+
     const valor = valorComSinal(valorPago ?? Number(conta.amount), tipo);
 
     const { data: transacao, error: erroTransacao } = await supabase
@@ -408,6 +445,167 @@ async function pagarFatura(params: {
     // A tela mostra isso: pagar a fatura nao muda o patrimonio, e quem ve o
     // numero parado depois de pagar R$ 1.000 precisa saber que esta certo.
     is_transfer: true,
+  });
+}
+
+/**
+ * Baixa de uma transferencia prevista: duas pernas (HMO-172).
+ *
+ * Mesma forma de `pagarFatura`, e de proposito -- as duas sao transferencias, e
+ * as pernas das duas saem de `pernasDaTransferencia` (lib/transferencia.ts). A
+ * regra de sinal tem UM dono: escrever `-total` e `+total` aqui criaria a
+ * segunda fonte, e divergencia de sinal e o tipo de defeito que erra dinheiro
+ * sem quebrar nada.
+ *
+ * A diferenca em relacao a fatura e de onde vem as contas: aqui as duas estao na
+ * propria linha da agenda (`account_id` = origem, `destination_account_id` =
+ * destino, migration 038), e nao em `notes` + corpo do pedido.
+ *
+ * A ORDEM segue o mesmo principio do resto da rota -- o pior caso tem de ser
+ * "nao deu baixa", que o usuario ve e refaz, nunca "metade da transferencia no
+ * saldo", que ninguem percebe:
+ *
+ *   1. perna de saida  (-total na origem)
+ *   2. perna de entrada (+total no destino, apontando para a de saida)
+ *      falhou? apaga a saida.
+ *   3. marca a conta prevista como paga, apontando para a perna de SAIDA
+ *      (e onde o dinheiro saiu). falhou? apaga as duas pernas.
+ *
+ * O passo 3 aponta para a SAIDA tambem porque e o que faz o estorno funcionar de
+ * graca: o DELETE desta rota procura a contraparte por
+ * `counterpart_transaction_id = conta.transaction_id`, e o elo mora na perna de
+ * entrada apontando para a de saida. Apontar para a entrada deixaria o estorno
+ * sem achar a outra perna.
+ */
+async function pagarTransferencia(params: {
+  // O tipo do cliente do supabase-js so aparece na assinatura de createClient;
+  // repetir o generico aqui nao acrescenta prova nenhuma.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any;
+  userId: string;
+  serviceId: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  conta: any;
+  valorPago: number | null;
+  paid_date: string;
+  scheduledId: string;
+}): Promise<NextResponse> {
+  const { supabase, userId, serviceId, conta, valorPago, paid_date, scheduledId } =
+    params;
+
+  // RECUSA ANTES DA PRIMEIRA ESCRITA. Descobrir no passo 2 que nao ha destino
+  // deixaria a perna de saida no saldo -- metade de uma transferencia, o estado
+  // que esta issue existe para impedir. Ver `validarBaixaDeTransferencia`.
+  const problema = validarBaixaDeTransferencia(conta);
+  if (problema) {
+    return NextResponse.json(
+      { error: mensagemDaBaixaDeTransferencia(problema) },
+      { status: 400 }
+    );
+  }
+
+  const { saida, entrada } = pernasDaTransferencia({
+    // A baixa aceita valor diferente do previsto, como a comum: o CHECK do banco
+    // e `amount > 0` e `valorPago` ja veio por `Math.abs`.
+    valor: valorPago ?? Number(conta.amount),
+    origemId: conta.account_id,
+    destinoId: conta.destination_account_id,
+    descricao: conta.description,
+  });
+
+  // `group_id: null` e `is_shared: false` nas duas pernas, mesmo que a conta
+  // prevista tenha grupo -- igual a rota da transferencia pontual. Transferencia
+  // entre contas proprias nao e despesa compartilhada, e os triggers de grupo
+  // (sync_transaction_with_group, auto_create_group_transaction) criariam rateio
+  // para ela, cobrando dos outros membros um valor que eles ja rateiam nas
+  // COMPRAS.
+  const comum = {
+    user_id: userId,
+    service_id: serviceId,
+    category_id: conta.category_id,
+    group_id: null,
+    is_shared: false,
+    transaction_date: paid_date,
+    notes: conta.notes,
+    // As duas datas sobrevivem a baixa, como na comum (027): `expected_date`
+    // guarda o dia previsto e `launch_date` o dia em que a previsao foi criada.
+    // Sem elas a transferencia prevista para o dia 5 e feita no dia 12 nao teria
+    // como dizer que atrasou.
+    expected_date: conta.due_date,
+    launch_date: conta.created_at
+      ? String(conta.created_at).slice(0, 10)
+      : paid_date,
+  };
+
+  const { data: txSaida, error: erroSaida } = await supabase
+    .from("financial_transactions")
+    .insert({ ...comum, ...saida })
+    .select()
+    .single();
+
+  if (erroSaida || !txSaida) {
+    console.error("Erro ao lançar a saída da transferência prevista:", erroSaida);
+    return NextResponse.json(
+      { error: "Não foi possível lançar a transferência" },
+      { status: 500 }
+    );
+  }
+
+  const { data: txEntrada, error: erroEntrada } = await supabase
+    .from("financial_transactions")
+    .insert({ ...comum, ...entrada, counterpart_transaction_id: txSaida.id })
+    .select()
+    .single();
+
+  if (erroEntrada || !txEntrada) {
+    await supabase.from("financial_transactions").delete().eq("id", txSaida.id);
+    console.error(
+      "Transferência desfeita: a perna de entrada não entrou",
+      erroEntrada
+    );
+    return NextResponse.json(
+      {
+        error:
+          "Não foi possível completar a transferência. Nada foi lançado — tente novamente.",
+      },
+      { status: 500 }
+    );
+  }
+
+  const { data: baixada, error: erroBaixa } = await supabase
+    .from("scheduled_transactions")
+    .update({ status: "paid", paid_date, transaction_id: txSaida.id })
+    .eq("id", scheduledId)
+    .eq("user_id", userId)
+    .select()
+    .single();
+
+  if (erroBaixa || !baixada) {
+    // A entrada primeiro: ela aponta para a saida, e o FK e ON DELETE SET NULL.
+    // Apagar a saida antes deixaria a entrada sem elo nenhum -- uma perna solta
+    // no saldo do destino, sem nada que diga de onde veio.
+    await supabase.from("financial_transactions").delete().eq("id", txEntrada.id);
+    await supabase.from("financial_transactions").delete().eq("id", txSaida.id);
+    console.error(
+      "Baixa desfeita: não foi possível marcar a transferência como feita",
+      erroBaixa
+    );
+    return NextResponse.json(
+      { error: "Não foi possível dar baixa na transferência prevista" },
+      { status: 500 }
+    );
+  }
+
+  return NextResponse.json({
+    message: "Transferência confirmada",
+    scheduled: baixada,
+    transaction: txSaida,
+    counterpart: txEntrada,
+    // A tela mostra isso: transferir entre contas proprias nao muda o
+    // patrimonio, e quem ve o numero parado depois de mover R$ 1.000 precisa
+    // saber que esta certo.
+    is_transfer: true,
+    direction: "transfer",
   });
 }
 

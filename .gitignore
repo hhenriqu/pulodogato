@@ -263,3 +263,4 @@ next-env.d.ts
 # todas). Um `.tmp-*` fora do .gitignore chega a ser commitado em cima de
 # arquivo de fonte -- ver a entrada do .tmp-parcelamento acima.
 /.tmp-alcance-da-serie/
+.tmp-materializacao/

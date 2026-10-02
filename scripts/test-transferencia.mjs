@@ -48,7 +48,14 @@ const {
   contasDeOrigem,
   NOME_DA_CATEGORIA_DE_TRANSFERENCIA,
   ROTA_DA_TRANSFERENCIA,
+  camposDaTransferencia,
+  destinoDaTransferencia,
+  regraDeTransferenciaRecorrente,
+  validarBaixaDeTransferencia,
+  mensagemDaBaixaDeTransferencia,
 } = await import("../.tmp-transferencia/transferencia.js");
+
+const { naturezasDoTipo } = await import("../.tmp-transferencia/lancamento.js");
 
 const { pernasDoPagamentoDeFatura } = await import(
   "../.tmp-transferencia/card-invoice.js"
@@ -439,4 +446,372 @@ test("o nome da categoria reservada nao e vazio", () => {
   // Ele e a chave de busca da rota (`service_id` + `name`, a UNIQUE do 001).
   // Vazio, o SELECT casaria com qualquer categoria sem nome.
   assert.ok(NOME_DA_CATEGORIA_DE_TRANSFERENCIA.trim().length > 0);
+});
+
+// ---------------------------------------------------------------------------
+// A TRANSFERENCIA RECORRENTE (HMO-172)
+// ---------------------------------------------------------------------------
+// A ASSERCAO E POR CONTA, E ISSO E O TESTE INTEIRO
+// -----------------------------------------------
+// O defeito que esta issue fecha e "a materializacao gera UMA perna". Ele e
+// invisivel em todo agregado que o app tem, e os dois controles abaixo
+// (`agregadoDePatrimonio`, `agregadoDeFluxo`) existem para PROVAR que ele e
+// invisivel la -- nao para medir o conserto.
+//
+//   * `net_worth_history` soma qualquer `transaction_type`. Um par completo da
+//     -1000 + 1000 = 0... e ZERO ocorrencias tambem dao 0. O agregado nao
+//     distingue "transferiu certo" de "nao transferiu nada".
+//   * `monthly_cash_flow` e `category_monthly_totals` filtram
+//     income/expense, entao nenhuma das pernas entra. Tambem 0 nos dois casos.
+//
+// Entao: qualquer assercao sobre o total passa verde com o bug de pe. O que
+// pega e o saldo POR CONTA, e e so o que as assercoes de verdade olham.
+
+/** O efeito de um conjunto de pernas no saldo de CADA conta. */
+const saldoPorConta = (pernas) => {
+  const saldos = {};
+  for (const p of pernas) {
+    saldos[p.account_id] = (saldos[p.account_id] ?? 0) + p.amount;
+  }
+  return saldos;
+};
+
+/** O que `net_worth_history` veria: soma de tudo, sem olhar o tipo. */
+const agregadoDePatrimonio = (pernas) =>
+  pernas.reduce((t, p) => t + p.amount, 0);
+
+/** O que `monthly_cash_flow` veria: so income/expense. */
+const agregadoDeFluxo = (pernas) =>
+  pernas
+    .filter((p) => p.transaction_type !== "transfer")
+    .reduce((t, p) => t + Math.abs(p.amount), 0);
+
+/**
+ * A baixa de uma transferencia prevista, como a rota a monta.
+ *
+ * Reproduz `pagarTransferencia`: as duas pernas saem de
+ * `pernasDaTransferencia`, o elo mora na ENTRADA apontando para a saida, e as
+ * duas levam `group_id: null` / `is_shared: false`.
+ */
+const baixaDaTransferencia = (conta, valorPago = null) => {
+  const { saida, entrada } = pernasDaTransferencia({
+    valor: valorPago ?? conta.amount,
+    origemId: conta.account_id,
+    destinoId: conta.destination_account_id,
+    descricao: conta.description,
+  });
+  const comum = { group_id: null, is_shared: false };
+  return [
+    { ...comum, ...saida, id: "tx-saida", counterpart_transaction_id: null },
+    { ...comum, ...entrada, id: "tx-entrada", counterpart_transaction_id: "tx-saida" },
+  ];
+};
+
+/** A perna UNICA: o defeito que a issue descreve. */
+const baixaDeUmaPernaSo = (conta) => [baixaDaTransferencia(conta)[0]];
+
+const PREVISTA = {
+  account_id: CORRENTE,
+  destination_account_id: POUPANCA,
+  amount: 1000,
+  description: "Reserva mensal",
+};
+
+test("a baixa da transferencia prevista mexe nas DUAS contas, por conta", () => {
+  const saldos = saldoPorConta(baixaDaTransferencia(PREVISTA));
+
+  // A assercao que o bug nao sobrevive: cada conta, separada.
+  assert.equal(saldos[CORRENTE], -1000);
+  assert.equal(saldos[POUPANCA], 1000);
+});
+
+test("com UMA perna so, a conta de destino nao e tocada", () => {
+  const saldos = saldoPorConta(baixaDeUmaPernaSo(PREVISTA));
+
+  assert.equal(saldos[CORRENTE], -1000);
+  // E AQUI que o defeito aparece, e so aqui: o destino nao existe no resultado.
+  // A pessoa ve o dinheiro sair da corrente e nunca chegar na poupanca.
+  assert.equal(saldos[POUPANCA], undefined);
+});
+
+test("CONTROLE: o agregado de patrimonio e CEGO ao defeito", () => {
+  // As duas pernas se anulam, entao o par completo da zero.
+  assert.equal(agregadoDePatrimonio(baixaDaTransferencia(PREVISTA)), 0);
+  // ...e NENHUMA ocorrencia tambem da zero. O agregado nao distingue os dois.
+  assert.equal(agregadoDePatrimonio([]), 0);
+
+  // Este e o motivo de o teste acima afirmar por conta. Sem este controle, um
+  // teste que conferisse so o patrimonio passaria verde com a materializacao
+  // quebrada -- e pior, passaria verde com ela NAO MATERIALIZANDO NADA.
+});
+
+test("CONTROLE: o agregado de fluxo nem ve as pernas", () => {
+  // `monthly_cash_flow` filtra income/expense. Transferencia nao entra, nem
+  // completa nem pela metade -- os tres casos dao o mesmo numero.
+  assert.equal(agregadoDeFluxo(baixaDaTransferencia(PREVISTA)), 0);
+  assert.equal(agregadoDeFluxo(baixaDeUmaPernaSo(PREVISTA)), 0);
+  assert.equal(agregadoDeFluxo([]), 0);
+});
+
+test("as duas pernas da baixa sao transfer, e o elo so na entrada", () => {
+  const [saida, entrada] = baixaDaTransferencia(PREVISTA);
+
+  assert.equal(saida.transaction_type, "transfer");
+  assert.equal(entrada.transaction_type, "transfer");
+  // O elo e de UMA via (migration 015): so a entrada aponta. Gravar nos dois
+  // lados criaria um ciclo que o estorno segue duas vezes.
+  assert.equal(saida.counterpart_transaction_id, null);
+  assert.equal(entrada.counterpart_transaction_id, "tx-saida");
+});
+
+test("as duas pernas da baixa saem sem grupo e sem rateio", () => {
+  for (const perna of baixaDaTransferencia(PREVISTA)) {
+    // Transferencia entre contas proprias nao e despesa compartilhada: com
+    // `group_id` os triggers de grupo ratearam cada ocorrencia, cobrando dos
+    // outros membros um valor que eles ja rateiam nas COMPRAS.
+    assert.equal(perna.group_id, null);
+    assert.equal(perna.is_shared, false);
+  }
+});
+
+test("a baixa com valor diferente do previsto move o MESMO valor nas duas contas", () => {
+  // A conta de luz quase nunca fecha no previsto, e a baixa aceita o valor real.
+  // Numa transferencia o risco e outro: aplicar o valor novo em uma perna e o
+  // previsto na outra deixaria as duas contas erradas por R$ 200.
+  const saldos = saldoPorConta(baixaDaTransferencia(PREVISTA, 1200));
+  assert.equal(saldos[CORRENTE], -1200);
+  assert.equal(saldos[POUPANCA], 1200);
+  assert.equal(agregadoDePatrimonio(baixaDaTransferencia(PREVISTA, 1200)), 0);
+});
+
+// ---------------------------------------------------------------------------
+// A REGRA, OS CAMPOS E O DESTINO (HMO-172)
+// ---------------------------------------------------------------------------
+
+const fixa = (extra = {}) => ({
+  ...valoresIniciaisDeTransferencia(),
+  descricao: "Reserva mensal",
+  valor: "1000",
+  origemId: CORRENTE,
+  destinoId: POUPANCA,
+  data: "2026-03-01",
+  natureza: "fixed",
+  diaDeVencimento: "5",
+  ...extra,
+});
+
+test("a regra leva a ORIGEM em account_id e o DESTINO em destination_account_id", () => {
+  const regra = regraDeTransferenciaRecorrente(fixa(), "cat-023");
+
+  // Trocar os dois nao da erro em lugar nenhum -- o CHECK da 038 so exige que
+  // sejam diferentes -- e a transferencia andaria para tras todo mes.
+  assert.equal(regra.account_id, CORRENTE);
+  assert.equal(regra.destination_account_id, POUPANCA);
+});
+
+test("a regra vai com o valor POSITIVO e o tipo transfer", () => {
+  const regra = regraDeTransferenciaRecorrente(fixa({ valor: "-1000" }), "cat-023");
+
+  // `recurring_rules` tem CHECK (amount > 0): a regra nao tem sinal, quem aplica
+  // os dois sinais e a baixa. O input aceita "-1000" e o abs e o que impede o
+  // 23514 sem traducao.
+  assert.equal(regra.amount, 1000);
+  assert.equal(regra.transaction_type, "transfer");
+});
+
+test("a regra nasce sem grupo", () => {
+  assert.equal(regraDeTransferenciaRecorrente(fixa(), "cat-023").group_id, null);
+});
+
+test("duracao indefinida vira max_occurrences null, contada vira o numero", () => {
+  // NULL e "sem fim" na 005. Mandar 0 esbarraria no CHECK (max_occurrences > 0).
+  assert.equal(
+    regraDeTransferenciaRecorrente(fixa(), "cat-023").max_occurrences,
+    null
+  );
+  assert.equal(
+    regraDeTransferenciaRecorrente(
+      fixa({ duracao: "contada", mesesDeRepeticao: "12" }),
+      "cat-023"
+    ).max_occurrences,
+    12
+  );
+});
+
+test("a data da tela vira start_date, e o dia vira due_day", () => {
+  const regra = regraDeTransferenciaRecorrente(fixa(), "cat-023");
+  assert.equal(regra.start_date, "2026-03-01");
+  assert.equal(regra.due_day, 5);
+  assert.equal(regra.frequency, "monthly");
+});
+
+test("a categoria da regra vem de fora, nao da tela", () => {
+  // Transferencia nao tem categoria: a reservada do 023 e resolvida pela rota.
+  assert.equal(
+    regraDeTransferenciaRecorrente(fixa(), "cat-023").category_id,
+    "cat-023"
+  );
+});
+
+test("pontual vai para transacao, fixa vai para regra", () => {
+  assert.equal(destinoDaTransferencia(valoresIniciaisDeTransferencia()), "transacao");
+  assert.equal(destinoDaTransferencia(fixa()), "regra");
+});
+
+test("os campos da repeticao so existem na natureza fixa", () => {
+  const pontual = camposDaTransferencia(valoresIniciaisDeTransferencia());
+  assert.equal(pontual.diaDeVencimento, false);
+  assert.equal(pontual.duracao, false);
+  // O seletor de natureza existe SEMPRE: e ele que deixa escolher "todo mes".
+  assert.equal(pontual.natureza, true);
+
+  const campos = camposDaTransferencia(fixa());
+  assert.equal(campos.diaDeVencimento, true);
+  assert.equal(campos.duracao, true);
+});
+
+test("duracao anda COLADA no dia do vencimento", () => {
+  // Mostrar "por 12 meses" sem o dia deixaria a pessoa dizer por quanto tempo
+  // repetir sem dizer QUANDO, e a regra nasceria com due_day nulo -- uma agenda
+  // que nunca gera ocorrencia nenhuma.
+  for (const natureza of ["one_off", "fixed"]) {
+    const campos = camposDaTransferencia(fixa({ natureza }));
+    assert.equal(campos.duracao, campos.diaDeVencimento);
+  }
+});
+
+test("transferencia nao tem a natureza 'no cartao'", () => {
+  const naturezas = naturezasDoTipo("transfer");
+  // Mover dinheiro PARA um cartao e quitar divida, e aquele caminho e o
+  // pagamento de fatura. Uma segunda forma de pagar fatura que nao passe por
+  // `pernasDoPagamentoDeFatura` seria a segunda fonte da regra de sinal.
+  assert.ok(!naturezas.includes("card"));
+  assert.deepEqual(naturezas, ["one_off", "fixed"]);
+  // E a despesa CONTINUA tendo -- o controle que mata o mutante que tira "card"
+  // de todo mundo.
+  assert.ok(naturezasDoTipo("expense").includes("card"));
+});
+
+// ---------------------------------------------------------------------------
+// A VALIDACAO DA RECORRENCIA (HMO-172)
+// ---------------------------------------------------------------------------
+
+const contasDeTeste = [conta(CORRENTE, "checking"), conta(POUPANCA, "savings")];
+
+test("transferencia fixa sem dia do vencimento e recusada", () => {
+  const r = validarTransferencia(fixa({ diaDeVencimento: "" }), contasDeTeste);
+  assert.equal(r.ok, false);
+  assert.match(r.mensagem, /dia do vencimento/i);
+});
+
+test("dia do vencimento fora de 1..31 e recusado", () => {
+  for (const dia of ["0", "32", "-1", "5.5"]) {
+    const r = validarTransferencia(fixa({ diaDeVencimento: dia }), contasDeTeste);
+    assert.equal(r.ok, false, `dia ${dia} deveria ser recusado`);
+  }
+});
+
+test("transferencia PONTUAL nao cobra o dia do vencimento", () => {
+  // O campo nao esta na tela: cobrar daria um erro que a pessoa nao tem como
+  // consertar.
+  const r = validarTransferencia(
+    { ...fixa(), natureza: "one_off", diaDeVencimento: "" },
+    contasDeTeste
+  );
+  assert.equal(r.ok, true);
+});
+
+test("duracao contada sem numero de meses e recusada", () => {
+  const r = validarTransferencia(
+    fixa({ duracao: "contada", mesesDeRepeticao: "" }),
+    contasDeTeste
+  );
+  assert.equal(r.ok, false);
+  assert.match(r.mensagem, /quantos meses/i);
+});
+
+test("zero meses e recusado, e 1 passa", () => {
+  // `max_occurrences` tem CHECK (> 0): 0 nao e "sem fim" -- o sem fim e a
+  // duracao indefinida, que grava NULL.
+  assert.equal(
+    validarTransferencia(
+      fixa({ duracao: "contada", mesesDeRepeticao: "0" }),
+      contasDeTeste
+    ).ok,
+    false
+  );
+  assert.equal(
+    validarTransferencia(
+      fixa({ duracao: "contada", mesesDeRepeticao: "1" }),
+      contasDeTeste
+    ).ok,
+    true
+  );
+});
+
+test("a transferencia fixa valida passa inteira", () => {
+  // CONTROLE POSITIVO: sem ele, uma validacao que recusasse TUDO passaria em
+  // todas as assercoes de recusa acima.
+  assert.equal(validarTransferencia(fixa(), contasDeTeste).ok, true);
+  assert.equal(
+    validarTransferencia(
+      fixa({ duracao: "contada", mesesDeRepeticao: "12" }),
+      contasDeTeste
+    ).ok,
+    true
+  );
+});
+
+// ---------------------------------------------------------------------------
+// A BAIXA RECUSA ANTES DE ESCREVER (HMO-172)
+// ---------------------------------------------------------------------------
+
+test("a baixa recusa a transferencia prevista sem destino", () => {
+  // Esta e a guarda da JANELA em que o codigo novo fala com o banco sem a 038:
+  // a coluna nem existe, `destination_account_id` chega undefined, e sem a
+  // recusa a baixa gravaria a perna de saida sozinha.
+  assert.equal(
+    validarBaixaDeTransferencia({ account_id: CORRENTE }),
+    "sem_destino"
+  );
+  assert.equal(
+    validarBaixaDeTransferencia({ account_id: CORRENTE, destination_account_id: null }),
+    "sem_destino"
+  );
+});
+
+test("a baixa recusa sem origem e com destino igual a origem", () => {
+  assert.equal(
+    validarBaixaDeTransferencia({ destination_account_id: POUPANCA }),
+    "sem_origem"
+  );
+  assert.equal(
+    validarBaixaDeTransferencia({
+      account_id: CORRENTE,
+      destination_account_id: CORRENTE,
+    }),
+    "mesma_conta"
+  );
+});
+
+test("a baixa ACEITA a transferencia prevista completa", () => {
+  // CONTROLE POSITIVO: uma guarda que recusasse tudo passaria nas duas acima e
+  // quebraria toda baixa de transferencia no app.
+  assert.equal(validarBaixaDeTransferencia(PREVISTA), null);
+});
+
+test("cada recusa da baixa tem mensagem propria e nao manda procurar campo", () => {
+  const vistas = new Set();
+  for (const problema of ["sem_origem", "sem_destino", "mesma_conta"]) {
+    const msg = mensagemDaBaixaDeTransferencia(problema);
+    assert.ok(msg.trim().length > 0);
+    // A pessoa aqui clicou "confirmar" numa conta prevista, nao esta preenchendo
+    // formulario: "Escolha de qual conta o dinheiro saiu" mandaria procurar um
+    // campo que nao esta na tela.
+    assert.ok(!/^Escolha /.test(msg), `mensagem de ${problema} manda escolher`);
+    vistas.add(msg);
+  }
+  // Tres estados, tres frases: uma mensagem unica para dois estados faz o
+  // usuario repetir a mentira de volta.
+  assert.equal(vistas.size, 3);
 });

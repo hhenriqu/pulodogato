@@ -365,6 +365,21 @@ export interface RecurringRule {
    */
   subcategory_id?: string | null;
   account_id?: string;
+  /**
+   * Para onde a transferencia recorrente manda o dinheiro (HMO-172, migration
+   * 038). `account_id` continua sendo a ORIGEM.
+   *
+   * Preenchida somente quando `transaction_type === "transfer"`, e nesse caso
+   * obrigatoria e diferente de `account_id` -- o CHECK
+   * `recurring_rules_destino_check` recusa os dois desvios.
+   *
+   * Pelo mesmo motivo de `subcategory_id` logo acima, e com um preco maior:
+   * faltando aqui, a coluna desapareceria de `materializarAgenda` (que le a regra
+   * por `select("*")` mas tipado como `RecurringRule`), a ocorrencia nasceria sem
+   * destino, e a baixa gravaria UMA perna -- o saldo das duas contas errado em
+   * direcoes opostas, com o total geral certo e nenhum agregado acusando.
+   */
+  destination_account_id?: string | null;
   group_id?: string;
   description: string;
   amount: number;

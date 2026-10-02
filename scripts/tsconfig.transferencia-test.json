@@ -1,5 +1,5 @@
 {
-  "//": "Build so do teste. `card-invoice.ts` entra junto porque desde a HMO-164 ele IMPORTA `transferencia.ts` -- pagar a fatura e uma transferencia, e as pernas sao montadas num lugar so. Compilar os dois na mesma passada e o que permite a suite afirmar que o pagamento da fatura continua com o mesmo sinal e o mesmo rotulo depois da generalizacao.",
+  "//": "Build so do teste. `card-invoice.ts` entra junto porque desde a HMO-164 ele IMPORTA `transferencia.ts` -- pagar a fatura e uma transferencia, e as pernas sao montadas num lugar so. Compilar os dois na mesma passada e o que permite a suite afirmar que o pagamento da fatura continua com o mesmo sinal e o mesmo rotulo depois da generalizacao. `lancamento.ts` entra desde a HMO-172: `transferencia.ts` importa dele os tipos da recorrencia (DuracaoDaRepeticao, NaturezaDespesa) e a constante MAX_MESES_DE_REPETICAO, e a suite afirma sobre `naturezasDoTipo(\"transfer\")`. Ele nao importa nada, entao nao arrasta arvore nenhuma.",
   "compilerOptions": {
     "outDir": "../.tmp-transferencia",
     "rootDir": "../lib",
@@ -17,6 +17,7 @@
   },
   "include": [
     "../lib/transferencia.ts",
-    "../lib/card-invoice.ts"
+    "../lib/card-invoice.ts",
+    "../lib/lancamento.ts"
   ]
 }
