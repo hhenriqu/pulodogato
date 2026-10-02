@@ -11,13 +11,24 @@
 // rotulo, classificacao em mes x intervalo -- mora em lib/periodo-do-painel.ts,
 // onde o teste alcanca sem precisar montar React. O que sobra aqui e marcacao.
 //
-// A UNICA EXCECAO E O RASCUNHO DO PAR PERSONALIZADO (HMO-240)
-// -----------------------------------------------------------
-// Ele existe porque o par de datas passou a ser campo mascarado, e campo
-// mascarado emite VAZIO enquanto a data esta pela metade -- enquanto o filtro
-// deste seletor nao pode disparar com vazio. A explicacao inteira, e a regra,
-// moram em `extremoDigitado`/`parDoSeletor` (lib/periodo-do-painel.ts): aqui so
-// fica o `useState`, para a regra continuar testavel sem montar React.
+// AS DUAS EXCECOES SAO OS DOIS `useState`, E NENHUM DELES DECIDE NADA
+// --------------------------------------------------------------------
+// 1. O RASCUNHO DO PAR (HMO-240). Existe porque o par de datas passou a ser
+//    campo mascarado, e campo mascarado emite VAZIO enquanto a data esta pela
+//    metade -- enquanto o filtro deste seletor nao pode disparar com vazio. A
+//    explicacao inteira, e a regra, moram em `extremoDigitado`/`parDoSeletor`.
+//
+// 2. O MODO PERSONALIZADO (HMO-243). Existe porque "escrever as datas a mao" e
+//    uma escolha da pessoa, e nao uma propriedade do periodo: no instante do
+//    clique o periodo ainda e o mes corrente. Enquanto isso era DERIVADO de
+//    `presetDoPeriodo`, escolher "Personalizado" nao fazia nada -- o item era
+//    decorativo e o comentario que ficava aqui afirmava o contrario.
+//
+// Os dois guardam estado; quem decide o que fazer com ele sao `escolhaDoSeletor`
+// e `camposAbertos` (lib/periodo-do-painel.ts). Isso nao e preferencia de
+// arquitetura: `react-dom/server` nao enxerga handler nenhum, entao uma decisao
+// escrita dentro de um `onValueChange` e uma decisao que nenhum teste deste
+// repositorio alcanca sem navegador. Foi por essa porta que a 243 entrou.
 //
 // POR QUE AS SETAS NAO TEM LIMITE
 // --------------------------------
@@ -40,23 +51,21 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  camposAbertos,
   ehPeriodoCorrente,
+  escolhaDoSeletor,
   extremoDigitado,
   lerPeriodo,
   parDoSeletor,
-  passoDeMes,
-  periodoCorrente,
-  periodoDoPreset,
   presetDoPeriodo,
   rotuloDoPeriodo,
+  valorDoSeletor,
   PRESETS,
-  type IdDePreset,
+  VALOR_PERSONALIZADO,
+  type GestoDoSeletor,
   type Periodo,
   type RascunhoDoPar,
 } from "@/lib/periodo-do-painel";
-
-/** O valor que o seletor usa quando nenhum preset descreve o periodo. */
-const PERSONALIZADO = "personalizado";
 
 interface Props {
   periodo: Periodo;
@@ -79,11 +88,27 @@ export function SeletorDePeriodo({ periodo, hoje, aoMudar }: Props) {
   const [rascunho, setRascunho] = useState<RascunhoDoPar | null>(null);
   const par = parDoSeletor(rascunho, periodo);
 
+  // "Escrever as datas a mao" e escolha da pessoa, nao propriedade do periodo:
+  // ver o cabecalho deste arquivo e `escolhaDoSeletor`.
+  const [personalizado, setPersonalizado] = useState(false);
+
+  /** O unico caminho por onde um gesto chega ao periodo e ao modo a mao. */
+  const aplicar = (gesto: GestoDoSeletor) => {
+    const escolha = escolhaDoSeletor(gesto, { periodo, personalizado }, hoje);
+    setPersonalizado(escolha.personalizado);
+    // `null` e o gesto que NAO mexe em numero nenhum -- abrir os campos. Chamar
+    // `aoMudar` aqui refiltraria a tela antes de a pessoa escolher data alguma.
+    if (escolha.periodo) aoMudar(escolha.periodo);
+  };
+
   const trocarExtremo = (qual: "de" | "ate", valor: string) => {
     const passo = extremoDigitado(rascunho, periodo, qual, valor);
     setRascunho(passo.rascunho);
     if (!passo.par) return;
-    aoMudar(lerPeriodo(passo.par.de, passo.par.ate, hoje));
+    aplicar({
+      tipo: "par",
+      periodo: lerPeriodo(passo.par.de, passo.par.ate, hoje),
+    });
   };
 
   return (
@@ -93,7 +118,7 @@ export function SeletorDePeriodo({ periodo, hoje, aoMudar }: Props) {
           variant="outline"
           size="icon"
           aria-label="Mês anterior"
-          onClick={() => aoMudar(passoDeMes(periodo, -1))}
+          onClick={() => aplicar({ tipo: "passo", meses: -1 })}
         >
           <ChevronLeft className="h-4 w-4" />
         </Button>
@@ -112,7 +137,7 @@ export function SeletorDePeriodo({ periodo, hoje, aoMudar }: Props) {
           variant="outline"
           size="icon"
           aria-label="Próximo mês"
-          onClick={() => aoMudar(passoDeMes(periodo, 1))}
+          onClick={() => aplicar({ tipo: "passo", meses: 1 })}
         >
           <ChevronRight className="h-4 w-4" />
         </Button>
@@ -125,21 +150,15 @@ export function SeletorDePeriodo({ periodo, hoje, aoMudar }: Props) {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => aoMudar(periodoCorrente(hoje))}
+          onClick={() => aplicar({ tipo: "hoje" })}
         >
           Hoje
         </Button>
       )}
 
       <Select
-        value={preset ?? PERSONALIZADO}
-        onValueChange={(valor) => {
-          // "Personalizado" nao e um periodo: e a decisao de escolher as datas
-          // a mao. Escolher o item nao muda numero nenhum -- so abre os dois
-          // campos, ja preenchidos com o periodo atual.
-          if (valor === PERSONALIZADO) return;
-          aoMudar(periodoDoPreset(valor as IdDePreset, hoje));
-        }}
+        value={valorDoSeletor(preset, personalizado)}
+        onValueChange={(valor) => aplicar({ tipo: "item", valor })}
       >
         <SelectTrigger className="w-[11rem]" aria-label="Período">
           <CalendarRange className="h-4 w-4 mr-2 shrink-0" />
@@ -151,7 +170,7 @@ export function SeletorDePeriodo({ periodo, hoje, aoMudar }: Props) {
               {p.rotulo}
             </SelectItem>
           ))}
-          <SelectItem value={PERSONALIZADO}>Personalizado</SelectItem>
+          <SelectItem value={VALOR_PERSONALIZADO}>Personalizado</SelectItem>
         </SelectContent>
       </Select>
 
@@ -166,8 +185,13 @@ export function SeletorDePeriodo({ periodo, hoje, aoMudar }: Props) {
           `flex-wrap` e largura fixa nos campos, e nao o `w-auto` de antes: cada
           `CampoDeData` e o input MAIS o botao de calendario, e o par passou a
           medir ~300px. Num celular de 343px uteis isso fica no limite, e `flex`
-          sem `flex-wrap` estoura para fora da tela em vez de quebrar a linha. */}
-      {preset === null && (
+          sem `flex-wrap` estoura para fora da tela em vez de quebrar a linha.
+
+          A CONDICAO TEM DUAS RAZOES, E NAO UMA (HMO-243): `preset === null` e
+          "o periodo nao tem nome", e so ela deixava os campos inalcancaveis
+          pelo menu -- escolher "Personalizado" nao muda o periodo, entao o
+          preset continuava sendo `este-mes`. Ver `camposAbertos`. */}
+      {camposAbertos(preset, personalizado) && (
         <div className="flex flex-wrap items-center gap-2">
           <CampoDeData
             className="w-[6.5rem]"

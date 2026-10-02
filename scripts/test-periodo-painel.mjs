@@ -46,10 +46,12 @@ import assert from "node:assert/strict";
 const {
   agregarTransacoes,
   agregarTransacoesPorMoeda,
+  camposAbertos,
   chaveDoPeriodo,
   contemHoje,
   ehDataIso,
   ehPeriodoCorrente,
+  escolhaDoSeletor,
   extremoDigitado,
   janelaParaMaterializar,
   lerPeriodo,
@@ -67,6 +69,8 @@ const {
   somarPrevistas,
   terminaNoPassado,
   ultimoDiaDoMes,
+  valorDoSeletor,
+  VALOR_PERSONALIZADO,
 } = await import("../.tmp-periodo-painel/periodo-do-painel.js");
 
 // ---------------------------------------------------------------------------
@@ -971,17 +975,30 @@ const HOJE = "2026-10-02";
 
 /**
  * O seletor inteiro, simulado: os dois rascunhos de CAMPO (um por extremo), o
- * rascunho do PAR e o periodo do pai, ligados exatamente como
- * SeletorDePeriodo.tsx os liga.
+ * rascunho do PAR, o modo personalizado e o periodo do pai, ligados exatamente
+ * como SeletorDePeriodo.tsx os liga.
  *
  * `digitar` nao seleciona o texto antes da primeira tecla, de proposito: a
  * regra "digitar sobre uma data completa comeca uma data nova" e da mascara, e
  * medir pelo caminho que NAO depende da selecao e o que mantem o teste valido
  * no aparelho em que a selecao nao sobrevive ao toque.
+ *
+ * O QUE ESTE SIMULADO PODE E NAO PODE PROVAR (HMO-243)
+ * ----------------------------------------------------
+ * As tres linhas de `aplicar` abaixo sao as mesmas tres do componente, e isso e
+ * copia: `react-dom/server` nao chama handler, entao nao ha como alcancar o
+ * `onValueChange` de verdade sem navegador. O que torna a copia honesta e que
+ * nenhuma DECISAO vive nela -- `escolhaDoSeletor` e `camposAbertos` respondem
+ * tudo, e os mutantes de scripts/mutantes-periodo-painel.mjs estragam o lib, nao
+ * este arquivo. Se a decisao estivesse aqui, o teste mediria a si mesmo.
+ *
+ * A medicao em producao e o que cobre a fiacao: ver o comentario de fechamento
+ * da HMO-243.
  */
 function seletorSimulado(periodoInicial) {
   let periodo = periodoInicial;
   let rascunhoDoPar = null;
+  let personalizado = false;
   const rascunhoDoCampo = { de: null, ate: null };
   /** Cada `aoMudar` que subiu ao painel, na ordem. */
   const filtrou = [];
@@ -991,6 +1008,16 @@ function seletorSimulado(periodoInicial) {
       rascunhoDoCampo[qual],
       parDoSeletor(rascunhoDoPar, periodo)[qual]
     );
+
+  /** O `aplicar` do componente: a unica porta para o periodo e para o modo. */
+  function aplicar(gesto) {
+    const escolha = escolhaDoSeletor(gesto, { periodo, personalizado }, HOJE);
+    personalizado = escolha.personalizado;
+    if (escolha.periodo) {
+      periodo = escolha.periodo;
+      filtrou.push(periodo);
+    }
+  }
 
   function digitar(qual, teclas) {
     for (const tecla of teclas) {
@@ -1013,15 +1040,32 @@ function seletorSimulado(periodoInicial) {
       const passo = extremoDigitado(rascunhoDoPar, periodo, qual, entrada.valor);
       rascunhoDoPar = passo.rascunho;
       if (passo.par) {
-        periodo = lerPeriodo(passo.par.de, passo.par.ate, HOJE);
-        filtrou.push(periodo);
+        aplicar({
+          tipo: "par",
+          periodo: lerPeriodo(passo.par.de, passo.par.ate, HOJE),
+        });
       }
     }
   }
 
-  /** O que as setas, o botao "Hoje" e os presets fazem: mudam o periodo. */
+  /** Um periodo que chega de fora sem gesto nenhum: link, voltar do navegador. */
   function porFora(novo) {
     periodo = novo;
+  }
+
+  const presetAtual = () => presetDoPeriodo(periodo, HOJE);
+
+  /**
+   * Escolher um item do menu.
+   *
+   * O `return` quando o valor ja e o selecionado nao e regra nossa: o Radix nao
+   * chama `onValueChange` para o item que ja esta marcado. Sem isto o simulado
+   * seria mais permissivo que a tela, e um teste passaria por um caminho que o
+   * usuario nao tem.
+   */
+  function escolher(valor) {
+    if (valor === valorDoSeletor(presetAtual(), personalizado)) return;
+    aplicar({ tipo: "item", valor });
   }
 
   return {
@@ -1029,8 +1073,23 @@ function seletorSimulado(periodoInicial) {
     porFora,
     mostrado,
     filtrou,
+    escolher,
+    seta: (meses) => aplicar({ tipo: "passo", meses }),
+    botaoHoje: () => aplicar({ tipo: "hoje" }),
     get periodo() {
       return periodo;
+    },
+    /** Quantos campos de data a tela tem -- a coluna da tabela do aceite. */
+    get campos() {
+      return camposAbertos(presetAtual(), personalizado) ? 2 : 0;
+    },
+    /** O item que o menu mostra fechado. */
+    get valorDoMenu() {
+      return valorDoSeletor(presetAtual(), personalizado);
+    },
+    /** O rotulo entre as setas: o aceite exige que ele NAO mude. */
+    get rotulo() {
+      return rotuloDoPeriodo(periodo);
     },
   };
 }
@@ -1189,6 +1248,280 @@ test("parDoSeletor devolve o periodo quando nao ha rascunho ou ele venceu", () =
     de: "",
     ate: "2026-09-30",
   });
+});
+
+// =====================================================
+// O ITEM "PERSONALIZADO" ABRE OS CAMPOS (HMO-243)
+// =====================================================
+// O item era DECORATIVO: escolher "Personalizado" nao fazia nada -- nenhum
+// campo aparecia e o rotulo nao mudava. O par de datas so era alcancavel
+// andando DOIS meses para tras com a seta (um mes cai em "Mes passado", que
+// tambem esconde os campos).
+//
+// A medicao em producao que achou isso, com o controle positivo que a faz valer:
+//
+//   painel aberto (rotulo "Este mes") ............. 0 campos
+//   depois de escolher "Personalizado" ............ 0 campos  <- o defeito
+//   controle: "Mes anterior" x1 ................... 0 campos
+//   controle: "Mes anterior" x2 ................... 1 campo   <- existem!
+//
+// Os testes abaixo repetem essa tabela com a coluna de campos saindo de
+// `camposAbertos`, mais as duas coisas que a tabela nao mede: que o periodo NAO
+// se mexe (senao os numeros da tela mudam quando a pessoa so abriu o menu) e que
+// o rotulo continua o mesmo.
+//
+// O ultimo teste da secao e o CONTROLE: ele reescreve a regra antiga e afirma
+// que ela deixa o item decorativo. Sem ele, os testes acima passariam identicos
+// num mundo onde o defeito nunca existiu.
+// =====================================================
+
+/** O mes corrente para `HOJE` = 02/10/2026: o preset `este-mes`. */
+const OUTUBRO = { de: "2026-10-01", ate: "2026-10-31", modo: "mes" };
+
+test("o painel abre no mes corrente, sem campos de data", () => {
+  const seletor = seletorSimulado(OUTUBRO);
+
+  // A primeira linha da tabela do aceite.
+  assert.equal(seletor.campos, 0);
+  assert.equal(seletor.valorDoMenu, "este-mes");
+  assert.equal(seletor.rotulo, "outubro de 2026");
+});
+
+test('escolher "Personalizado" abre os campos SEM mudar o periodo', () => {
+  const seletor = seletorSimulado(OUTUBRO);
+
+  seletor.escolher(VALOR_PERSONALIZADO);
+
+  // A linha do defeito, agora com o numero certo.
+  assert.equal(seletor.campos, 2);
+  assert.equal(seletor.valorDoMenu, VALOR_PERSONALIZADO);
+
+  // E as duas assercoes que a contagem de campos nao cobre: nenhum filtro subiu
+  // ao painel e o rotulo nao mudou. Abrir o menu nao pode mexer nos numeros.
+  assert.deepEqual(seletor.filtrou, []);
+  assert.deepEqual(seletor.periodo, OUTUBRO);
+  assert.equal(seletor.rotulo, "outubro de 2026");
+
+  // Os campos nascem preenchidos com o periodo atual, que e o que o comentario
+  // do componente sempre prometeu -- e agora cumpre.
+  assert.equal(seletor.mostrado("de"), "01/10/2026");
+  assert.equal(seletor.mostrado("ate"), "31/10/2026");
+});
+
+test("digitar o par depois de abrir a mao sobe o filtro", () => {
+  const seletor = seletorSimulado(OUTUBRO);
+  seletor.escolher(VALOR_PERSONALIZADO);
+
+  seletor.digitar("de", "15102026");
+  // `de` 15/10 e depois do `ate` 31/10? nao -- o par fecha na hora.
+  assert.equal(seletor.filtrou.length, 1);
+  assert.deepEqual(seletor.filtrou[0], {
+    de: "2026-10-15",
+    ate: "2026-10-31",
+    modo: "intervalo",
+  });
+  assert.equal(seletor.rotulo, "15/10/2026 a 31/10/2026");
+  assert.equal(seletor.campos, 2);
+});
+
+test('escolher um preset depois de "Personalizado" fecha os campos', () => {
+  const seletor = seletorSimulado(OUTUBRO);
+  seletor.escolher(VALOR_PERSONALIZADO);
+  assert.equal(seletor.campos, 2);
+
+  seletor.escolher("mes-passado");
+
+  assert.equal(seletor.campos, 0);
+  assert.equal(seletor.valorDoMenu, "mes-passado");
+  assert.deepEqual(seletor.filtrou, [
+    { de: "2026-09-01", ate: "2026-09-30", modo: "mes" },
+  ]);
+  assert.equal(seletor.rotulo, "setembro de 2026");
+});
+
+test("a seta de mes LIMPA o modo a mao", () => {
+  // A decisao do item 5 da issue, fixada aqui: a pessoa saiu do modo clicando
+  // noutro controle, e o periodo de destino casa com preset. Deixar os campos
+  // abertos ali os deixaria mostrando um par que ela nao digitou.
+  const seletor = seletorSimulado(OUTUBRO);
+  seletor.escolher(VALOR_PERSONALIZADO);
+
+  seletor.seta(-1);
+
+  assert.equal(seletor.campos, 0);
+  assert.equal(seletor.valorDoMenu, "mes-passado");
+  assert.deepEqual(seletor.periodo, {
+    de: "2026-09-01",
+    ate: "2026-09-30",
+    modo: "mes",
+  });
+});
+
+test('CONTROLE POSITIVO: "Mes anterior" x2 abre os campos, como em producao', () => {
+  // A quarta linha da tabela: os campos EXISTEM e sao alcancaveis pela porta
+  // errada. Se este teste ficasse vermelho, o verde dos outros poderia ser
+  // apenas "nao ha campo nenhum em lugar nenhum".
+  const seletor = seletorSimulado(OUTUBRO);
+
+  seletor.seta(-1);
+  assert.equal(seletor.campos, 0, 'um mes para tras cai em "Mes passado"');
+
+  seletor.seta(-1);
+  assert.equal(seletor.campos, 2, "agosto nao tem preset: os campos aparecem");
+  assert.equal(seletor.valorDoMenu, VALOR_PERSONALIZADO);
+});
+
+test('o botao "Hoje" LIMPA o modo a mao', () => {
+  const seletor = seletorSimulado(OUTUBRO);
+  seletor.seta(-1);
+  seletor.seta(-1);
+  assert.equal(seletor.campos, 2);
+
+  seletor.botaoHoje();
+
+  assert.equal(seletor.campos, 0);
+  assert.equal(seletor.valorDoMenu, "este-mes");
+  assert.deepEqual(seletor.periodo, OUTUBRO);
+});
+
+test("um par digitado que casa com preset NAO fecha os campos na mao da pessoa", () => {
+  // O caso que o ramo `par` de `escolhaDoSeletor` existe para cobrir. Quem esta
+  // em agosto, abre o par e digita 01/10 a 31/10 acaba num periodo que casa com
+  // `este-mes` -- e sem o modo a mao ligado os dois campos desapareceriam no
+  // instante em que a ultima tecla da segunda data entrou.
+  const seletor = seletorSimulado({
+    de: "2026-08-01",
+    ate: "2026-08-31",
+    modo: "mes",
+  });
+  assert.equal(seletor.campos, 2);
+
+  seletor.digitar("de", "01102026");
+  // `de` 01/10 depois do `ate` 31/08: par invertido, nada sobe (HMO-240).
+  assert.deepEqual(seletor.filtrou, []);
+  assert.equal(seletor.campos, 2);
+
+  seletor.digitar("ate", "31102026");
+
+  assert.deepEqual(seletor.filtrou, [OUTUBRO]);
+  assert.equal(presetDoPeriodo(seletor.periodo, HOJE), "este-mes");
+  assert.equal(
+    seletor.campos,
+    2,
+    "o par digitado casa com `este-mes`, e os campos tem de continuar na tela"
+  );
+  assert.equal(seletor.valorDoMenu, VALOR_PERSONALIZADO);
+});
+
+test("CONTROLE: a regra antiga deixa o item decorativo", () => {
+  // A forma ANTERIOR a esta issue, escrita de volta: "personalizado" nao era
+  // estado, o handler do item tinha um `return` seco e os campos sairiam so de
+  // `preset === null`.
+  //
+  // Este teste AFIRMA que aquela forma nao abre campo nenhum. E ele que impede
+  // os sete testes acima de serem verdes vazios.
+  let periodo = OUTUBRO;
+  const camposAntigos = () => (presetDoPeriodo(periodo, HOJE) === null ? 2 : 0);
+
+  const escolherAntigo = (valor) => {
+    if (valor === VALOR_PERSONALIZADO) return; // <- o `return` de 45eb575
+    periodo = periodoDoPreset(valor, HOJE);
+  };
+
+  assert.equal(camposAntigos(), 0);
+  escolherAntigo(VALOR_PERSONALIZADO);
+  assert.equal(
+    camposAntigos(),
+    0,
+    "o controle nao reproduz mais o defeito -- `presetDoPeriodo` ou a regra " +
+      "dos campos mudou de contrato, e os testes acima podem estar vacuos"
+  );
+  assert.deepEqual(periodo, OUTUBRO);
+
+  // E o mesmo gesto, pela regra NOVA, abre.
+  const escolha = escolhaDoSeletor(
+    { tipo: "item", valor: VALOR_PERSONALIZADO },
+    { periodo: OUTUBRO, personalizado: false },
+    HOJE
+  );
+  assert.equal(escolha.periodo, null);
+  assert.equal(camposAbertos(presetDoPeriodo(OUTUBRO, HOJE), true), true);
+});
+
+// ---------------------------------------------------------------------------
+// As tres funcoes puras, uma a uma
+// ---------------------------------------------------------------------------
+
+test("camposAbertos: as duas razoes sao independentes", () => {
+  assert.equal(camposAbertos("este-mes", false), false);
+  assert.equal(camposAbertos("este-mes", true), true, "o defeito da HMO-243");
+  assert.equal(camposAbertos(null, false), true, "chegou por link, sem preset");
+  assert.equal(camposAbertos(null, true), true);
+});
+
+test("valorDoSeletor: o modo a mao vence o preset", () => {
+  assert.equal(valorDoSeletor("este-mes", false), "este-mes");
+  assert.equal(valorDoSeletor("este-mes", true), VALOR_PERSONALIZADO);
+  assert.equal(valorDoSeletor(null, false), VALOR_PERSONALIZADO);
+  assert.equal(valorDoSeletor(null, true), VALOR_PERSONALIZADO);
+});
+
+test("escolhaDoSeletor: cada gesto, com e sem periodo novo", () => {
+  const estado = { periodo: OUTUBRO, personalizado: false };
+
+  // O item "personalizado": liga o modo e NAO devolve periodo.
+  assert.deepEqual(
+    escolhaDoSeletor({ tipo: "item", valor: VALOR_PERSONALIZADO }, estado, HOJE),
+    { personalizado: true, periodo: null }
+  );
+
+  // Um preset: desliga o modo e devolve o periodo do atalho.
+  assert.deepEqual(
+    escolhaDoSeletor({ tipo: "item", valor: "este-ano" }, estado, HOJE),
+    {
+      personalizado: false,
+      periodo: { de: "2026-01-01", ate: "2026-12-31", modo: "mes" },
+    }
+  );
+
+  // A seta: desliga o modo.
+  assert.deepEqual(
+    escolhaDoSeletor({ tipo: "passo", meses: 1 }, { ...estado, personalizado: true }, HOJE),
+    {
+      personalizado: false,
+      periodo: { de: "2026-11-01", ate: "2026-11-30", modo: "mes" },
+    }
+  );
+
+  // "Hoje": desliga o modo e volta ao mes corrente.
+  assert.deepEqual(
+    escolhaDoSeletor({ tipo: "hoje" }, { ...estado, personalizado: true }, HOJE),
+    { personalizado: false, periodo: OUTUBRO }
+  );
+
+  // O par digitado: LIGA o modo, e o periodo vem pronto de `extremoDigitado`.
+  const intervalo = { de: "2026-07-15", ate: "2026-08-20", modo: "intervalo" };
+  assert.deepEqual(
+    escolhaDoSeletor({ tipo: "par", periodo: intervalo }, estado, HOJE),
+    { personalizado: true, periodo: intervalo }
+  );
+});
+
+test("escolhaDoSeletor: valor desconhecido nao refiltra a tela", () => {
+  // Nenhum caminho de tela produz um, mas cair em `periodoDoPreset` com lixo
+  // devolveria o mes corrente -- o seletor trocando o periodo por causa de um
+  // valor que ninguem reconheceu.
+  for (const personalizado of [false, true]) {
+    assert.deepEqual(
+      escolhaDoSeletor(
+        { tipo: "item", valor: "ultimos-7-dias" },
+        { periodo: OUTUBRO, personalizado },
+        HOJE
+      ),
+      { personalizado, periodo: null },
+      "valor desconhecido tem de deixar periodo e modo exatamente como estavam"
+    );
+  }
 });
 
 test("extremoDigitado recusa data que nao existe no calendario", () => {

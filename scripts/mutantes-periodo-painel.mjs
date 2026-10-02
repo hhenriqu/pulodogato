@@ -9,6 +9,18 @@
 // sendo materializada no passado. Se algum deles sobreviver, a suite nao esta
 // cobrindo o motivo da issue.
 //
+// AS DUAS COISAS QUE ESTE RUNNER TEM E UM IMPROVISADO NAO TEM (HMO-243)
+// ---------------------------------------------------------------------
+//   1. CONTROLE NEGATIVO. O ultimo mutante da lista e `vivoEsperado`: uma troca
+//      textual de verdade que NAO muda comportamento nenhum, e que a suite tem
+//      de deixar passar. Sem ele, um runner que reportasse vermelho por qualquer
+//      motivo -- erro de compilacao, caminho errado, `npm run` inexistente --
+//      mostraria "todos mortos" e pareceria uma prova forte.
+//   2. TRECHO UNICO. Se o texto a substituir aparece DUAS vezes no arquivo,
+//      `String.replace` troca a primeira e o mutante passa a estragar outra
+//      funcao, com o rotulo falando da que ele nao tocou. Ele morre do mesmo
+//      jeito, e a linha de saida mente.
+//
 //   node scripts/mutantes-periodo-painel.mjs
 import { readFileSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
@@ -39,9 +51,15 @@ const mutantes = [
     "  return { de: periodo.de, ate: periodo.ate };",
   ],
   [
+    // O `for` nu aparece TRES vezes no arquivo (agregarTransacoes,
+    // somarPrevistas e agregarTransacoesPorMoeda), e e por isso que ele vem
+    // ancorado no `for` de dentro: sem a ancora, `replace` pegava a primeira
+    // ocorrencia -- `agregarTransacoes` -- e este mutante morria com o rotulo
+    // falando de uma funcao que ele nunca tocou. Quem descobriu foi a
+    // verificacao de trecho unico que a HMO-243 acrescentou ao runner.
     "o resumo volta a pegar UM mes em vez de somar",
-    "  for (const linha of linhas) {",
-    "  for (const linha of linhas.slice(0, 1)) {",
+    "  for (const linha of linhas) {\n    for (const campo of CAMPOS_DA_PREVISTA) {",
+    "  for (const linha of linhas.slice(0, 1)) {\n    for (const campo of CAMPOS_DA_PREVISTA) {",
   ],
 
   [
@@ -218,27 +236,134 @@ const mutantes = [
     "  return `${periodo.de}|${periodo.ate}`;",
     "  return `${periodo.de}|${periodo.ate}|${periodo.modo}`;",
   ],
+
+  // --- HMO-243: o item "Personalizado" do seletor ---
+  //
+  // O defeito era o item DECORATIVO: escolher "Personalizado" nao abria campo
+  // nenhum, porque "personalizado" era derivado do periodo e escolher o item
+  // nao mexia no periodo. Os mutantes abaixo recolocam esse ciclo, e tambem a
+  // correcao ERRADA -- a que mexe no periodo e muda os numeros da tela no
+  // instante em que a pessoa abre o menu.
+  [
+    "o item personalizado volta a nao fazer nada (o `return` seco)",
+    "    return { personalizado: true, periodo: null };",
+    "    return { personalizado: estado.personalizado, periodo: null };",
+  ],
+  [
+    "abrir os campos volta a refiltrar a tela (a correcao errada do plano)",
+    "    return { personalizado: true, periodo: null };",
+    "    return { personalizado: true, periodo: periodoCorrente(hoje) };",
+  ],
+  [
+    "os campos voltam a exigir as DUAS razoes juntas",
+    "  return preset === null || personalizado;",
+    "  return preset === null && personalizado;",
+  ],
+  [
+    "os campos voltam a sair so do preset (o estado novo e ignorado)",
+    "  return preset === null || personalizado;",
+    "  return preset === null;",
+  ],
+  [
+    "o menu volta a dizer `Este mes` depois do clique em Personalizado",
+    "  if (personalizado) return VALOR_PERSONALIZADO;\n  return preset ?? VALOR_PERSONALIZADO;",
+    "  return preset ?? VALOR_PERSONALIZADO;",
+  ],
+  [
+    "a seta de mes deixa de limpar o modo a mao",
+    "    return {\n      personalizado: false,\n      periodo: passoDeMes(estado.periodo, gesto.meses),\n    };",
+    "    return {\n      personalizado: estado.personalizado,\n      periodo: passoDeMes(estado.periodo, gesto.meses),\n    };",
+  ],
+  [
+    'o botao "Hoje" deixa de limpar o modo a mao',
+    '    return { personalizado: false, periodo: periodoCorrente(hoje) };',
+    "    return { personalizado: estado.personalizado, periodo: periodoCorrente(hoje) };",
+  ],
+  [
+    "o par digitado deixa de ligar o modo (os campos fecham na mao da pessoa)",
+    "    return { personalizado: true, periodo: gesto.periodo };",
+    "    return { personalizado: false, periodo: gesto.periodo };",
+  ],
+  [
+    "o preset escolhido deixa de fechar os campos",
+    "    return {\n      personalizado: false,\n      periodo: periodoDoPreset(gesto.valor, hoje),\n    };",
+    "    return {\n      personalizado: estado.personalizado,\n      periodo: periodoDoPreset(gesto.valor, hoje),\n    };",
+  ],
+  [
+    "valor desconhecido volta a refiltrar a tela com o mes corrente",
+    "  return { personalizado: estado.personalizado, periodo: null };\n}",
+    "  return { personalizado: false, periodo: periodoCorrente(hoje) };\n}",
+  ],
+  [
+    "a lista de presets deixa de ser consultada (qualquer string vira preset)",
+    "  return PRESETS.some((p) => p.id === valor);",
+    "  return valor !== VALOR_PERSONALIZADO;",
+  ],
+
+  // --- O CONTROLE NEGATIVO ---
+  //
+  // Ele TEM de sobreviver. `a || b` e `b || a` sao a mesma resposta para dois
+  // booleanos (nenhum dos dois lados tem efeito colateral), entao a suite nao
+  // tem como distinguir -- e nao deve. O que este mutante mede e o RUNNER: se
+  // ele aparecer como morto, o vermelho dos outros 40 nao e prova de nada,
+  // porque algo esta falhando por motivo alheio ao mutante.
+  [
+    "CONTROLE NEGATIVO: a ordem do `||` em camposAbertos (mesma resposta)",
+    "  return preset === null || personalizado;",
+    "  return personalizado || preset === null;",
+    { vivoEsperado: true },
+  ],
 ];
 
-let sobreviventes = 0;
+let errados = 0;
 
-for (const [nome, de, para] of mutantes) {
-  if (!original.includes(de)) {
-    console.log(`??  ${nome}: o trecho nao existe mais -- mutante desatualizado`);
-    sobreviventes++;
-    continue;
+try {
+  for (const [nome, de, para, opcoes] of mutantes) {
+    const ocorrencias = original.split(de).length - 1;
+    if (ocorrencias === 0) {
+      console.log(`??  ${nome}: o trecho nao existe mais -- mutante desatualizado`);
+      errados++;
+      continue;
+    }
+    // Trecho repetido: `replace` pegaria a PRIMEIRA ocorrencia, que pode estar
+    // noutra funcao. O mutante morreria com o rotulo falando da funcao errada.
+    if (ocorrencias > 1) {
+      console.log(
+        `??  ${nome}: o trecho aparece ${ocorrencias} vezes -- ancore o mutante ` +
+          "com mais contexto, senao ele estraga a primeira ocorrencia"
+      );
+      errados++;
+      continue;
+    }
+
+    writeFileSync(ALVO, original.replace(de, para));
+    let vermelho = false;
+    try {
+      execSync("npm run test:periodo-painel", { stdio: "pipe" });
+    } catch {
+      vermelho = true;
+    }
+
+    const vivoEsperado = opcoes?.vivoEsperado === true;
+    const certo = vermelho !== vivoEsperado;
+    if (!certo) errados++;
+
+    if (vivoEsperado) {
+      console.log(
+        `${certo ? "OK  " : "XX  "} ${nome}` +
+          (certo ? " [sobreviveu, como tem de ser]" : " [MORREU: o runner mente]")
+      );
+    } else {
+      console.log(`${certo ? "OK  " : "VIVO"} ${nome}`);
+    }
   }
-  writeFileSync(ALVO, original.replace(de, para));
-  let vermelho = false;
-  try {
-    execSync("npm run test:periodo-painel", { stdio: "pipe" });
-  } catch {
-    vermelho = true;
-  }
-  console.log(`${vermelho ? "OK  " : "VIVO"} ${nome}`);
-  if (!vermelho) sobreviventes++;
+} finally {
+  // Sem isto, um Ctrl-C ou uma excecao no meio do laco deixa o lib MUTADO no
+  // disco -- e o proximo comando a rodar mede um arquivo estragado.
+  writeFileSync(ALVO, original);
 }
 
-writeFileSync(ALVO, original);
-console.log(`\n${mutantes.length - sobreviventes}/${mutantes.length} mutantes mortos`);
-process.exit(sobreviventes === 0 ? 0 : 1);
+console.log(
+  `\n${mutantes.length - errados}/${mutantes.length} mutantes com o resultado esperado`
+);
+process.exit(errados === 0 ? 0 : 1);
