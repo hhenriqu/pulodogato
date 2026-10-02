@@ -83,6 +83,64 @@ jobs:
           test ! -f lib/__controle_negativo__.ts
 
   # ---------------------------------------------------------------------------
+  # LINT
+  # ---------------------------------------------------------------------------
+  # HMO-179. O backlog de warnings foi de 142 para zero, e sem este job ele
+  # volta a crescer -- o `lint` so existia no fim da cadeia do `pre-commit`, que
+  # morria antes de chegar nele (a nota do topo deste arquivo conta essa parte),
+  # e nenhum dos dez workflows rodava lint.
+  #
+  # Roda `lint-tudo`, e nao `lint`: `next lint` enxerga apenas `app/`,
+  # `components/`, `lib/`, `pages/` e `src/`. Os 7 avisos que estavam em
+  # `next.config.js`, `tailwind.config.js` e `utils/` eram invisiveis para ele,
+  # inclusive para a contagem de 142 da propria issue.
+  lint:
+    name: zero aviso de lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      # `--include=dev` pelo mesmo motivo do job de tipos: NODE_ENV=production
+      # poda as devDeps e o eslint sumiria sem mensagem que explique.
+      - run: npm ci --include=dev
+
+      - name: eslint, zero tolerancia
+        run: npm run lint-tudo
+
+      # Controle negativo. As regras deste projeto sao `warn`, e `eslint` sai 0
+      # com qualquer numero de warnings -- um job assim pode ficar verde para
+      # sempre sem conferir nada. Aqui um aviso OBVIO tem que reprovar.
+      #
+      # O `git add -N` e necessario: `lint-tudo` monta a lista a partir do
+      # `git ls-files`, entao arquivo nao rastreado nao seria conferido e o
+      # controle passaria vacuo -- exatamente o falso verde que ele existe para
+      # pegar. O arquivo nasce e morre dentro do job.
+      - name: Controle negativo (aviso de lint tem que reprovar)
+        run: |
+          set -u
+          printf 'export const naoDeveriaPassar: any = 1;\n' > lib/__controle_negativo_lint__.ts
+          git add -N lib/__controle_negativo_lint__.ts
+          if npm run lint-tudo > /tmp/lint-controle.log 2>&1; then
+            git rm -q --cached lib/__controle_negativo_lint__.ts || true
+            rm -f lib/__controle_negativo_lint__.ts
+            echo "::error::O lint APROVOU um 'any' plantado. O guard nao esta conferindo o projeto -- confira o --max-warnings 0 e a lista de arquivos em scripts/lint-tudo.mjs."
+            exit 1
+          fi
+          git rm -q --cached lib/__controle_negativo_lint__.ts || true
+          rm -f lib/__controle_negativo_lint__.ts
+          echo "OK: o lint reprovou o aviso plantado, entao ele esta lendo o projeto."
+
+          # E o arquivo plantado tem que ter ido embora, senao um passo
+          # seguinte herdaria um projeto que nao passa no lint.
+          test ! -f lib/__controle_negativo_lint__.ts
+
+  # ---------------------------------------------------------------------------
   # BUILD
   # ---------------------------------------------------------------------------
   build:

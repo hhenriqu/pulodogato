@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -59,11 +59,7 @@ export default function SplitSuggestions({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadSuggestions();
-  }, [groupId, amount]);
-
-  const loadSuggestions = async () => {
+  const loadSuggestions = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -90,7 +86,14 @@ export default function SplitSuggestions({
     } finally {
       setLoading(false);
     }
-  };
+    // As duas dependencias sao as mesmas que o efeito ja tinha: `groupId` e
+    // `amount` sao primitivos, entao o callback so troca de identidade quando o
+    // valor muda de verdade -- e a busca nao entra em laco.
+  }, [groupId, amount]);
+
+  useEffect(() => {
+    loadSuggestions();
+  }, [loadSuggestions]);
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat("pt-BR", {

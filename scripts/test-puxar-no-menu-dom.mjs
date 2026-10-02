@@ -46,7 +46,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
-import { join, extname } from "node:path";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 const SAIDA = ".tmp-puxar-dom";

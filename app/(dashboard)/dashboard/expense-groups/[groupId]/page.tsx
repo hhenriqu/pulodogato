@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
 import { User } from "@supabase/supabase-js";
@@ -332,44 +332,11 @@ export default function GroupDetailPage() {
     "current",
   ]);
 
-  const supabase = createClient();
-
-  useEffect(() => {
-    loadData();
-  }, [groupId]);
-
-  const loadData = async () => {
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        router.push("/login");
-        return;
-      }
-
-      setUser(user);
-
-      // Carregar dados do grupo
-      await Promise.all([
-        loadGroup(),
-        loadTransactions(),
-        loadScheduled(),
-        loadBalances(),
-        loadTransfers(),
-        loadSettlements(),
-        loadOrcamento(),
-      ]);
-    } catch (error) {
-      console.error("Error loading data:", error);
-      toast.error("Erro ao carregar dados do grupo");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadGroup = async () => {
+  // Os sete `load*` abaixo sao `useCallback` porque `loadData` chama todos, e
+  // com funcao recriada a cada render a dependencia dele nunca estabilizaria --
+  // o efeito voltaria a rodar em cada render e recarregaria a tela em laco. As
+  // dependencias sao `groupId` (string) e `router` (estavel no App Router).
+  const loadGroup = useCallback(async () => {
     const response = await fetch(`/api/expense-groups/${groupId}`);
     const data = await response.json();
 
@@ -379,7 +346,7 @@ export default function GroupDetailPage() {
       toast.error(data.error || "Erro ao carregar grupo");
       router.push("/dashboard/expense-groups");
     }
-  };
+  }, [groupId, router]);
 
   /**
    * Aprova ou recusa quem entrou com o codigo do grupo (HMO-190). Em grupo
@@ -417,7 +384,7 @@ export default function GroupDetailPage() {
     }
   };
 
-  const loadTransactions = async () => {
+  const loadTransactions = useCallback(async () => {
     const response = await fetch(`/api/expense-groups/${groupId}/transactions`);
     const data = await response.json();
 
@@ -426,11 +393,11 @@ export default function GroupDetailPage() {
     } else {
       console.error("Error loading transactions:", data.error);
     }
-  };
+  }, [groupId]);
 
   // A despesa "fixa" do grupo nao existe em group_transactions ate a baixa da
   // conta prevista -- ate entao ela era invisivel aqui (HMO-177).
-  const loadScheduled = async () => {
+  const loadScheduled = useCallback(async () => {
     const response = await fetch(`/api/expense-groups/${groupId}/scheduled`);
     const data = await response.json();
 
@@ -439,9 +406,9 @@ export default function GroupDetailPage() {
     } else {
       console.error("Error loading scheduled:", data.error);
     }
-  };
+  }, [groupId]);
 
-  const loadBalances = async () => {
+  const loadBalances = useCallback(async () => {
     const response = await fetch(`/api/expense-groups/${groupId}/balances`);
     const data = await response.json();
 
@@ -462,9 +429,9 @@ export default function GroupDetailPage() {
     } else {
       console.error("Error loading balances:", data.error);
     }
-  };
+  }, [groupId]);
 
-  const loadTransfers = async () => {
+  const loadTransfers = useCallback(async () => {
     const response = await fetch(`/api/expense-groups/${groupId}/transfers`);
     const data = await response.json();
 
@@ -478,7 +445,7 @@ export default function GroupDetailPage() {
     } else {
       console.error("Error loading transfers:", data.error);
     }
-  };
+  }, [groupId]);
 
   /**
    * O teto da viagem no mes corrente (HMO-180).
@@ -498,7 +465,7 @@ export default function GroupDetailPage() {
    * dois casos nao ha barra a mostrar, e um toast de erro sobre um cartao
    * opcional so assustaria. O console guarda o motivo.
    */
-  const loadOrcamento = async () => {
+  const loadOrcamento = useCallback(async () => {
     const response = await fetch(`/api/budgets?group_id=${groupId}`);
     const data = await response.json();
 
@@ -508,9 +475,9 @@ export default function GroupDetailPage() {
     } else {
       console.error("Error loading orçamento:", data.error);
     }
-  };
+  }, [groupId]);
 
-  const loadSettlements = async () => {
+  const loadSettlements = useCallback(async () => {
     const response = await fetch(`/api/expense-groups/${groupId}/settlements`);
     const data = await response.json();
 
@@ -519,7 +486,58 @@ export default function GroupDetailPage() {
     } else {
       console.error("Error loading settlements:", data.error);
     }
-  };
+  }, [groupId]);
+
+  // `loadData` mora DEPOIS dos sete, e nao antes como estava: o array de
+  // dependencias e avaliado durante o render, entao com ele la em cima o
+  // `loadGroup` ainda nao existia -- `ReferenceError`, nao aviso de lint. O
+  // `tsc` acusou (TS2448) na primeira tentativa.
+  const loadData = useCallback(async () => {
+    try {
+      // Dentro do callback para nao virar dependencia dele: o resto da tela
+      // conversa com as rotas, nao com o Supabase direto.
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        router.push("/login");
+        return;
+      }
+
+      setUser(user);
+
+      // Carregar dados do grupo
+      await Promise.all([
+        loadGroup(),
+        loadTransactions(),
+        loadScheduled(),
+        loadBalances(),
+        loadTransfers(),
+        loadSettlements(),
+        loadOrcamento(),
+      ]);
+    } catch (error) {
+      console.error("Error loading data:", error);
+      toast.error("Erro ao carregar dados do grupo");
+    } finally {
+      setLoading(false);
+    }
+  }, [
+    router,
+    loadGroup,
+    loadTransactions,
+    loadScheduled,
+    loadBalances,
+    loadTransfers,
+    loadSettlements,
+    loadOrcamento,
+  ]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   /**
    * Registra a transferencia sugerida como paga.

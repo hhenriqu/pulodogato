@@ -24,7 +24,7 @@ class PRDComplianceChecker {
     try {
       const configPath = path.join(this.projectRoot, "project-config.json");
       return JSON.parse(fs.readFileSync(configPath, "utf8"));
-    } catch (error) {
+    } catch {
       console.error("❌ Erro ao carregar project-config.json");
       process.exit(1);
     }
@@ -148,7 +148,7 @@ class PRDComplianceChecker {
           console.log(`  ❌ ${name}`);
           this.results.architecture.push(`Missing: ${name}`);
         }
-      } catch (error) {
+      } catch {
         console.log(`  ❌ ${name} - Erro na verificação`);
         this.results.architecture.push(`Error checking: ${name}`);
       }

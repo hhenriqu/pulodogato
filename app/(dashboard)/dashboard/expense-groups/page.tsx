@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { User } from "@supabase/supabase-js";
 import { Button } from "@/components/ui/button";
@@ -194,14 +194,11 @@ export default function ExpenseGroupsPage() {
     message: "",
   });
 
-  const supabase = createClient();
-
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
+      // Dentro do callback: fora, o cliente vira dependencia dele, e nada mais
+      // nesta tela usa o Supabase direto -- o resto passa pelas rotas.
+      const supabase = createClient();
       const {
         data: { user },
       } = await supabase.auth.getUser();
@@ -249,7 +246,11 @@ export default function ExpenseGroupsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const handleCreateGroup = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -28,7 +28,6 @@ const {
   parseCsv,
   parseStatement,
   detectarSeparador,
-  dividirLinha,
   normalizarDescricao,
   conciliar,
   tipoPeloSinal,

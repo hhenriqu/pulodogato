@@ -40,7 +40,10 @@ export async function resolveSession(request: NextRequest) {
       setAll(cookiesToSet) {
         // Primeiro no request, para que o resto deste mesmo request ja leia a
         // sessao renovada em vez da que acabou de expirar.
-        cookiesToSet.forEach(({ name, value, options }) =>
+        // Sem `options` aqui: o cookie do REQUEST so carrega nome e valor. As
+        // opcoes (maxAge, path, sameSite) valem para a resposta, e e la embaixo
+        // que elas entram.
+        cookiesToSet.forEach(({ name, value }) =>
           request.cookies.set(name, value)
         );
         response = NextResponse.next({ request });

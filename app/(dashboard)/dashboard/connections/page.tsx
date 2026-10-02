@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useMemo, useState, useEffect } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { PUBLIC_PROFILE_FIELDS } from "@/lib/profile-fields";
 import { montarFiltroDeBusca } from "@/lib/busca-de-perfil";
@@ -100,21 +100,13 @@ export default function ConnectionsPage() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("connections");
 
-  const supabase = createClient();
+  // `useMemo` para o cliente poder ENTRAR nas dependencias abaixo sem fazer os
+  // callbacks trocarem de identidade a cada render. `createClient()` ja
+  // reaproveita um cliente por aba, mas isso e garantia de outro arquivo: aqui
+  // a estabilidade fica declarada no lugar onde os efeitos dependem dela.
+  const supabase = useMemo(() => createClient(), []);
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  useEffect(() => {
-    if (searchQuery.trim().length > 2) {
-      searchUsers();
-    } else {
-      setSearchResults([]);
-    }
-  }, [searchQuery]);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       const {
         data: { user },
@@ -215,9 +207,9 @@ export default function ConnectionsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [supabase]);
 
-  const searchUsers = async () => {
+  const searchUsers = useCallback(async () => {
     if (!user) return;
 
     // Um nome com virgula ("Silva, Joao") quebrava a arvore logica do
@@ -248,7 +240,21 @@ export default function ConnectionsPage() {
     } finally {
       setSearchLoading(false);
     }
-  };
+    // `user` vem do estado e e gravado uma vez por `loadData`, entao a
+    // identidade dele nao oscila entre renders.
+  }, [supabase, user, searchQuery]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  useEffect(() => {
+    if (searchQuery.trim().length > 2) {
+      searchUsers();
+    } else {
+      setSearchResults([]);
+    }
+  }, [searchQuery, searchUsers]);
 
   const sendConnectionRequest = async (
     targetUserId: string,

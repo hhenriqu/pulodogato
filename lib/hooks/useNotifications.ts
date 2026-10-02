@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { User } from "@supabase/supabase-js";
 
@@ -38,10 +38,14 @@ export const useNotifications = (user: User | null) => {
   const [loading, setLoading] = useState(true);
   const [unreadCount, setUnreadCount] = useState(0);
 
-  const supabase = createClient();
+  // O id, e nao o objeto. O efeito abaixo dependia de `user`, que vem de
+  // `getUser()` e e um objeto NOVO a cada leitura: toda vez que o componente
+  // pai renderizava com um `user` novo, o efeito rodava de novo, refazia a
+  // busca e DERRUBAVA o setInterval de 30s para criar outro.
+  const userId = user?.id;
 
-  const fetchNotifications = async () => {
-    if (!user) {
+  const fetchNotifications = useCallback(async () => {
+    if (!userId) {
       setNotifications([]);
       setUnreadCount(0);
       setLoading(false);
@@ -68,6 +72,7 @@ export const useNotifications = (user: User | null) => {
       // ser `list_my_group_invitations()`, que monta o cartao dentro do banco
       // (SECURITY DEFINER) devolvendo so o nome do grupo e o de quem convidou, e
       // filtra por `invited_user_id = auth.uid()` no proprio corpo.
+      const supabase = createClient();
       const { data: groupInvites, error: inviteError } = await supabase.rpc(
         "list_my_group_invitations"
       );
@@ -114,7 +119,7 @@ export const useNotifications = (user: User | null) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [userId]);
 
   const markAsRead = async (notificationId: string) => {
     setNotifications((prev) =>
@@ -178,7 +183,7 @@ export const useNotifications = (user: User | null) => {
     const interval = setInterval(fetchNotifications, 30000);
 
     return () => clearInterval(interval);
-  }, [user]);
+  }, [fetchNotifications]);
 
   return {
     notifications,

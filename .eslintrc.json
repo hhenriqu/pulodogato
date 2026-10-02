@@ -26,11 +26,20 @@
   },
   "overrides": [
     {
-      // `next.config.js` carrega estes dois com require(): ele e CommonJS e roda
-      // no Node antes de qualquer transpilacao, entao os modulos TEM que ser
-      // CommonJS tambem. Aqui o require() e a interface, nao resto de migracao
-      // -- trocar por import quebra o build. Excecao explicita, nao conserto.
-      "files": ["lib/pwa-precache.js", "lib/pwa-runtime-cache.js"],
+      // Arquivo de configuracao e os modulos que ele carrega. Todos rodam no
+      // Node, em CommonJS, ANTES de qualquer transpilacao: aqui o require() e a
+      // interface, nao resto de migracao -- trocar por import quebra o build.
+      // Excecao explicita, que e o que a HMO-179 pedia para estes casos.
+      // Os `.js` de `scripts/` entram pelo mesmo motivo: sao utilitarios de
+      // linha de comando em CommonJS, chamados por `node scripts/...`. Os
+      // `.mjs` de la NAO entram -- aqueles sao ESM e usam import de verdade.
+      "files": [
+        "next.config.js",
+        "tailwind.config.js",
+        "lib/pwa-precache.js",
+        "lib/pwa-runtime-cache.js",
+        "scripts/**/*.js"
+      ],
       "rules": {
         "@typescript-eslint/no-require-imports": "off"
       }
