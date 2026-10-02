@@ -114,6 +114,16 @@ interface PendingGroupRequest {
   requested_at: string;
 }
 
+// O que `/api/expense-groups/proportions` devolve por membro. Os tres valores
+// numericos passam por `Number()` na tela, entao chegam como string: a rota le
+// colunas `numeric`, e o JSON do PostgREST entrega `numeric` como texto.
+interface ProporcaoDeMembro {
+  member_id: string;
+  proportion_percentage: number | string;
+  total_income: number | string | null;
+  calculated_at: string;
+}
+
 export default function ExpenseGroupsPage() {
   const [user, setUser] = useState<User | null>(null);
   const [groups, setGroups] = useState<ExpenseGroup[]>([]);
@@ -127,7 +137,7 @@ export default function ExpenseGroupsPage() {
   const [showInviteForm, setShowInviteForm] = useState(false);
   const [showProportions, setShowProportions] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<ExpenseGroup | null>(null);
-  const [proportions, setProportions] = useState<any[]>([]);
+  const [proportions, setProportions] = useState<ProporcaoDeMembro[]>([]);
   const [loadingProportions, setLoadingProportions] = useState(false);
   const [showEditForm, setShowEditForm] = useState(false);
   const [editForm, setEditForm] = useState({

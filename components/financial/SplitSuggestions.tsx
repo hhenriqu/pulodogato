@@ -22,7 +22,10 @@ import {
   AlertCircle,
 } from "lucide-react";
 
-interface SplitSuggestion {
+// Exportada porque a tela do grupo guarda a sugestao escolhida num estado e a
+// devolve para este componente pelo prop `selectedSuggestion`: com o tipo so
+// aqui, aquele estado era `any` e os dois lados podiam divergir em silencio.
+export interface SplitSuggestion {
   type: "equal" | "proportional" | "historical";
   name: string;
   description: string;

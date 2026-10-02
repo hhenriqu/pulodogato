@@ -44,7 +44,9 @@ import {
   CheckCircle,
   Clock,
 } from "lucide-react";
-import SplitSuggestions from "@/components/financial/SplitSuggestions";
+import SplitSuggestions, {
+  type SplitSuggestion,
+} from "@/components/financial/SplitSuggestions";
 import { CartaoOrcamentoGrupo } from "@/components/financial/CartaoOrcamentoGrupo";
 import {
   orcamentoDoGrupo,
@@ -320,7 +322,7 @@ export default function GroupDetailPage() {
     cotacao: "",
   });
   const [selectedSplitSuggestion, setSelectedSplitSuggestion] =
-    useState<any>(null);
+    useState<SplitSuggestion | null>(null);
 
   // Estados dos accordions
   // "scheduled" comece aberta: a despesa fixa de grupo era invisivel nesta tela
@@ -715,7 +717,7 @@ export default function GroupDetailPage() {
 
     try {
       // Preparar dados da despesa
-      const expenseData: any = {
+      const expenseData: Record<string, unknown> = {
         ...expenseForm,
         amount: parseFloat(expenseForm.amount),
         currency: expenseForm.currency,
@@ -729,7 +731,7 @@ export default function GroupDetailPage() {
       if (selectedSplitSuggestion) {
         expenseData.split_type = selectedSplitSuggestion.type;
         expenseData.custom_splits = selectedSplitSuggestion.splits.map(
-          (split: any) => ({
+          (split) => ({
             member_id: split.member_id,
             percentage: split.percentage,
             amount: split.amount,

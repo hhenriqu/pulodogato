@@ -68,6 +68,27 @@ interface Group {
   user_role?: string;
 }
 
+// A linha de `group_members` com o grupo embutido. `expense_groups` e embed
+// many-to-one (objeto, nao lista) e pode vir nulo pela RLS -- o `?.` do filtro
+// logo abaixo depende disso.
+interface ParticipacaoEmGrupo {
+  role: string;
+  expense_groups: {
+    id: string;
+    name: string;
+    description: string | null;
+    created_by: string;
+    group_type: string;
+    group_code: string | null;
+    is_active: boolean;
+  } | null;
+}
+
+/** A mesma linha, depois de descartar as que vieram sem grupo legivel. */
+type ComGrupo = ParticipacaoEmGrupo & {
+  expense_groups: NonNullable<ParticipacaoEmGrupo["expense_groups"]>;
+};
+
 export default function ConnectionsPage() {
   const [user, setUser] = useState<User | null>(null);
   const [connections, setConnections] = useState<Connection[]>([]);
@@ -149,7 +170,8 @@ export default function ConnectionsPage() {
         `
         )
         .eq("user_id", user.id)
-        .eq("status", "active");
+        .eq("status", "active")
+        .returns<ParticipacaoEmGrupo[]>();
 
       if (groupsData) {
         const groupsWithCounts = await Promise.all(
@@ -158,8 +180,14 @@ export default function ConnectionsPage() {
             // is_active separa o grupo arquivado. Sem os dois filtros, a viagem
             // que acabou e o grupo de que o usuario saiu continuariam nesta
             // lista, e so aqui -- a tela de Grupos ja os esconde.
-            .filter((item: any) => item.expense_groups?.is_active !== false)
-            .map(async (item: any) => {
+            // O `?.` protegia a COMPARACAO e nada mais: com `expense_groups`
+            // nulo, `undefined !== false` e verdadeiro, a linha passava, e o
+            // `group.id` duas linhas abaixo estourava
+            // ("Cannot read properties of null"). Agora o embed nulo e
+            // descartado aqui -- linha sem grupo legivel nao tem o que mostrar.
+            .filter((item): item is ComGrupo => item.expense_groups !== null)
+            .filter((item) => item.expense_groups.is_active !== false)
+            .map(async (item) => {
               const group = item.expense_groups;
               const { count } = await supabase
                 .from("group_members")

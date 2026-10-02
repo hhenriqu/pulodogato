@@ -68,6 +68,7 @@ import {
   lerCatalogo,
   decidirAbertura,
   type CatalogoDeLancamento,
+  type ContaEmCache,
 } from "@/lib/offline-cache";
 import {
   classificarFalhaDeAuth,
@@ -286,10 +287,13 @@ function Lancamentos() {
   /**
    * A parcela cuja exclusao esta esperando a pergunta do alcance (HMO-228).
    *
-   * `any` como o resto da lista nesta tela: a linha vem do PostgREST com os
-   * embeds, e tipar so este campo daria a impressao de que o resto esta tipado.
+   * A linha vem da lista desta tela, que e `FinancialTransaction[]` -- entao e
+   * esse o tipo aqui tambem. Era `any` porque "o resto da lista tambem e", o
+   * que deixou de valer: `installment_number` e `transaction_type`, os dois
+   * campos que o fluxo de exclusao le, estao declarados na interface.
    */
-  const [parcelaParaApagar, setParcelaParaApagar] = useState<any | null>(null);
+  const [parcelaParaApagar, setParcelaParaApagar] =
+    useState<FinancialTransaction | null>(null);
   const [apagandoParcela, setApagandoParcela] = useState(false);
 
   const { canCreateMore, planConfig } = useSubscription(user);
@@ -326,7 +330,7 @@ function Lancamentos() {
   // Entao a linha que tem `installment_number` abre a pergunta do alcance
   // (`parcelaParaApagar`) e sai por `/api/financial-installments/serie/{id}`,
   // que sabe o que e uma serie. Ver `pedirExclusao` abaixo.
-  const deleteTransaction = async (transaction: any) => {
+  const deleteTransaction = async (transaction: FinancialTransaction) => {
     const ehTransferencia = transaction.transaction_type === "transfer";
 
     if (
@@ -386,7 +390,7 @@ function Lancamentos() {
    * `installment_total` por CHECK -- entao nao existe o estado "e parcela mas
    * nao se sabe de quantas".
    */
-  const pedirExclusao = (transaction: any) => {
+  const pedirExclusao = (transaction: FinancialTransaction) => {
     if (transaction?.installment_number) {
       setParcelaParaApagar(transaction);
       return;
@@ -395,7 +399,10 @@ function Lancamentos() {
   };
 
   /** Apaga a serie no alcance escolhido, pela rota que conhece a serie. */
-  const apagarParcela = async (transaction: any, alcance: Alcance) => {
+  const apagarParcela = async (
+    transaction: FinancialTransaction,
+    alcance: Alcance
+  ) => {
     setApagandoParcela(true);
     try {
       const resposta = await fetch(
@@ -573,12 +580,13 @@ function Lancamentos() {
       const { data: despesas, error: erroDaDescricao } = await supabase
         .from("financial_transactions")
         .select("id, description, amount, category:transaction_categories(*)")
-        .in("id", ids);
+        .in("id", ids)
+        .returns<DespesaDeGrupoLida[]>();
 
       if (erroDaDescricao) throw erroDaDescricao;
 
       const porId = new Map<string, DespesaDeGrupoLida>(
-        (despesas || []).map((d: any) => [d.id as string, d as DespesaDeGrupoLida])
+        (despesas || []).map((d) => [d.id, d])
       );
 
       const { linhas, semDescricao } = partesDeTerceirosNaLista(
@@ -786,7 +794,11 @@ function Lancamentos() {
       // salvaria a lista do carregamento ANTERIOR, e na primeira visita
       // salvaria vazio.
       let categoriasCarregadas: TransactionCategory[] = [];
-      let contasCarregadas: any[] = [];
+      // `ContaEmCache` e nao `ContaDoLancamento`: estas contas existem so para
+      // alimentar o catalogo offline, e `account_type` e obrigatorio la --
+      // naquele outro tipo ele e opcional, o que nao vale para esta fonte
+      // (`/api/financial-accounts` le a coluna, que e NOT NULL).
+      let contasCarregadas: ContaEmCache[] = [];
 
       if (serviceData) {
         const { data: categoriesData } = await supabase
@@ -840,7 +852,7 @@ function Lancamentos() {
             name: c.name,
             is_expense: c.is_expense,
           })),
-          contas: contasCarregadas.map((c: any) => ({
+          contas: contasCarregadas.map((c) => ({
             id: c.id,
             name: c.name,
             account_type: c.account_type,
