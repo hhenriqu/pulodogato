@@ -30,6 +30,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { CampoDeValor } from "@/components/ui/campo-de-valor";
+import { CampoDeData } from "@/components/ui/campo-de-data";
 import {
   Card,
   CardContent,
@@ -340,12 +341,20 @@ export function FormularioDeTransferencia() {
                 <Label htmlFor="date">
                   {campos.diaDeVencimento ? "A partir de *" : "Data *"}
                 </Label>
-                <Input
+                {/* `CampoDeData` e nao o controle de data nativo (HMO-240). O
+                    `required` continua aqui pelo campo vazio, mas quem recusa a
+                    data pela metade e `validarTransferencia` ("Informe a
+                    data."): o campo mascarado emite VAZIO enquanto a data esta
+                    incompleta, e o `required` de um input de texto se satisfaz
+                    com o texto parcial na tela. */}
+                <CampoDeData
                   id="date"
-                  type="date"
                   value={valores.data}
-                  onChange={(e) => aoMudar({ data: e.target.value })}
+                  onChange={(data) => aoMudar({ data })}
                   required
+                  aria-label={
+                    campos.diaDeVencimento ? "A partir de" : "Data"
+                  }
                 />
                 {/* O MESMO campo muda de significado com a natureza, e a tela
                     diz qual: numa transferencia fixa ele e o `start_date` da

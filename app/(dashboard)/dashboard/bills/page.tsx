@@ -44,6 +44,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { CampoDeValor } from "@/components/ui/campo-de-valor";
+import { CampoDeData } from "@/components/ui/campo-de-data";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -976,12 +977,12 @@ export default function BillsPage() {
                   </div>
                   <div>
                     <Label>Vencimento *</Label>
-                    <Input
-                      type="date"
+                    <CampoDeData
                       value={formAvulsa.due_date}
-                      onChange={(evento) =>
-                        setFormAvulsa((atual) => ({ ...atual, due_date: evento.target.value }))
+                      onChange={(due_date) =>
+                        setFormAvulsa((atual) => ({ ...atual, due_date }))
                       }
+                      aria-label="Vencimento da conta avulsa"
                     />
                   </div>
                 </div>

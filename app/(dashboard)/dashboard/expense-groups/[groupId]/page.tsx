@@ -7,6 +7,7 @@ import { User } from "@supabase/supabase-js";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CampoDeValor } from "@/components/ui/campo-de-valor";
+import { CampoDeData } from "@/components/ui/campo-de-data";
 import {
   Card,
   CardContent,
@@ -1998,16 +1999,18 @@ export default function GroupDetailPage() {
 
                 <div className="space-y-2">
                   <Label htmlFor="transaction_date">Data</Label>
-                  <Input
+                  {/* `CampoDeData` e nao o controle de data nativo (HMO-240). Aqui
+                      a data nao e so rotulo: `exchange_rate` e congelada pela
+                      cotacao DO DIA DA COMPRA, entao uma data lida na ordem do
+                      aparelho (mm/dd) traria a cotacao do dia errado para o
+                      rateio de uma despesa em moeda estrangeira. */}
+                  <CampoDeData
                     id="transaction_date"
-                    type="date"
                     value={expenseForm.transaction_date}
-                    onChange={(e) =>
-                      setExpenseForm({
-                        ...expenseForm,
-                        transaction_date: e.target.value,
-                      })
+                    onChange={(transaction_date) =>
+                      setExpenseForm({ ...expenseForm, transaction_date })
                     }
+                    aria-label="Data"
                   />
                 </div>
 

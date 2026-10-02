@@ -23,6 +23,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { CampoDeValor } from "@/components/ui/campo-de-valor";
+import { CampoDeData } from "@/components/ui/campo-de-data";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
@@ -226,6 +227,19 @@ export default function GoalsPage() {
       return;
     }
 
+    // A DATA PELA METADE NAO PODE PASSAR DAQUI (HMO-240)
+    //
+    // `CampoDeData` emite vazio enquanto a data esta incompleta -- de proposito,
+    // para nunca inventar um dia que ninguem digitou. Mas a rota trata o vazio
+    // como "nao informou" e grava `contributed_at: contributed_at || today()`.
+    // Sem esta recusa, quem digitou "10/0" e clicou em Registrar ve a data na
+    // tela, o aporte entra com a data de HOJE, e nada avisa: a diferenca so
+    // aparece meses depois, na lista de aportes anteriores.
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dataAporte)) {
+      toast.error("Informe a data do aporte, no formato dd/mm/aaaa");
+      return;
+    }
+
     setSalvando(true);
     try {
       const res = await fetch(`/api/goals/${metaDoAporte.id}/contributions`, {
@@ -396,13 +410,11 @@ export default function GoalsPage() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="prazo">Até quando</Label>
-                  <Input
+                  <CampoDeData
                     id="prazo"
-                    type="date"
                     value={form.target_date}
-                    onChange={(e) =>
-                      setForm({ ...form, target_date: e.target.value })
-                    }
+                    onChange={(target_date) => setForm({ ...form, target_date })}
+                    aria-label="Até quando"
                   />
                   <p className="text-xs text-muted-foreground">
                     Opcional. Com prazo, o app calcula o valor por mês.
@@ -706,11 +718,11 @@ export default function GoalsPage() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="data-aporte">Quando</Label>
-                <Input
+                <CampoDeData
                   id="data-aporte"
-                  type="date"
                   value={dataAporte}
-                  onChange={(e) => setDataAporte(e.target.value)}
+                  onChange={setDataAporte}
+                  aria-label="Quando"
                 />
               </div>
             </div>

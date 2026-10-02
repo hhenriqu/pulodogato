@@ -4,7 +4,7 @@
 // =====================================================
 //   npm run test:periodo-painel
 //
-// Exercita lib/periodo-do-painel.ts. Quatro familias de erro, todas do mesmo
+// Exercita lib/periodo-do-painel.ts. Cinco familias de erro, todas do mesmo
 // tipo -- numero errado sem sintoma:
 //
 //   1. O MES CORRENTE EM UTC. `new Date().toISOString().slice(0, 7)` no dia
@@ -31,6 +31,11 @@
 //      numa janela que ja passou criaria contas com vencimento retroativo, que
 //      nascem vencidas -- o app acusaria atraso em divida que nunca existiu.
 //
+//   5. O PAR PERSONALIZADO QUE APAGA A PROPRIA DIGITACAO (HMO-240). Tres
+//      regras certas que, juntas, deixam o campo impossivel de digitar sem
+//      erro nenhum na tela. A familia inteira esta explicada no bloco do fim
+//      deste arquivo, que e onde os testes dela moram.
+//
 // Mesmo desenho do test-reports.mjs: .mjs rodando o JS que o tsc ja compila,
 // sem runner de teste novo no package.json.
 // =====================================================
@@ -41,13 +46,16 @@ import assert from "node:assert/strict";
 const {
   agregarTransacoes,
   agregarTransacoesPorMoeda,
+  chaveDoPeriodo,
   contemHoje,
   ehDataIso,
   ehPeriodoCorrente,
+  extremoDigitado,
   janelaParaMaterializar,
   lerPeriodo,
   mesesDoPeriodo,
   modoDoPeriodo,
+  parDoSeletor,
   passoDeMes,
   periodoCorrente,
   periodoDaQuery,
@@ -925,4 +933,269 @@ test("transferencia continua fora da conta, em qualquer moeda", () => {
 
 test("periodo sem movimento nenhum nao produz bloco", () => {
   assert.deepEqual(agregarTransacoesPorMoeda([], "BRL"), []);
+});
+
+// =====================================================
+// O PAR PERSONALIZADO ENQUANTO ESTA SENDO DIGITADO (HMO-240)
+// =====================================================
+// A HMO-240 trocou os dois `<input type="date">` do seletor pelo campo
+// mascarado da HMO-238, e esse par e o unico dos oito campos migrados que NAO
+// alimenta formulario: ele alimenta o filtro do painel.
+//
+// Isso cria uma interacao que nenhuma das outras cinco telas tem, e que fica
+// VERDE em qualquer teste de funcao isolada:
+//
+//   * o campo emite vazio enquanto a data esta pela metade (contrato da 238);
+//   * o filtro ignora o vazio, porque `lerPeriodo` devolveria o mes corrente e
+//     a tela pularia de mes no meio da digitacao;
+//   * e o rascunho do campo so vale enquanto o valor do pai for o que aquele
+//     texto emitiu.
+//
+// As tres regras estao certas e juntas se cancelam: o pai nunca aceita o vazio,
+// entao o rascunho nunca vale, e a exibicao volta para a data antiga A CADA
+// TECLA -- campo impossivel de digitar, sem erro em lugar nenhum. O teste que
+// pega isso tem que rodar a SEQUENCIA de teclas pelas funcoes de verdade (a
+// mascara e o rascunho do par), e nao cada uma no seu canto.
+//
+// O controle positivo esta no ultimo teste: ele AFIRMA que a forma sem rascunho
+// de par apaga a digitacao. Sem ele, os testes acima passariam verde tambem no
+// mundo em que o bug nunca existiu, e nao seria possivel saber se eles medem
+// algo.
+// =====================================================
+
+const { aplicarMascaraNoCampo, exibicaoDoCampo } = await import(
+  "../.tmp-periodo-painel/data-digitada.js"
+);
+
+const HOJE = "2026-10-02";
+
+/**
+ * O seletor inteiro, simulado: os dois rascunhos de CAMPO (um por extremo), o
+ * rascunho do PAR e o periodo do pai, ligados exatamente como
+ * SeletorDePeriodo.tsx os liga.
+ *
+ * `digitar` nao seleciona o texto antes da primeira tecla, de proposito: a
+ * regra "digitar sobre uma data completa comeca uma data nova" e da mascara, e
+ * medir pelo caminho que NAO depende da selecao e o que mantem o teste valido
+ * no aparelho em que a selecao nao sobrevive ao toque.
+ */
+function seletorSimulado(periodoInicial) {
+  let periodo = periodoInicial;
+  let rascunhoDoPar = null;
+  const rascunhoDoCampo = { de: null, ate: null };
+  /** Cada `aoMudar` que subiu ao painel, na ordem. */
+  const filtrou = [];
+
+  const mostrado = (qual) =>
+    exibicaoDoCampo(
+      rascunhoDoCampo[qual],
+      parDoSeletor(rascunhoDoPar, periodo)[qual]
+    );
+
+  function digitar(qual, teclas) {
+    for (const tecla of teclas) {
+      // O valor que o PAI entrega ao campo nesta volta de render.
+      const valorDoPai = parDoSeletor(rascunhoDoPar, periodo)[qual];
+      const anterior = exibicaoDoCampo(rascunhoDoCampo[qual], valorDoPai);
+
+      // O `<input>` depois da tecla: a mascara deixou o caret no fim, entao a
+      // tecla nova entra no fim do texto.
+      const campo = {
+        value: anterior + tecla,
+        setSelectionRange() {},
+      };
+      const entrada = aplicarMascaraNoCampo(campo, anterior);
+      rascunhoDoCampo[qual] = { texto: entrada.exibicao, valor: entrada.valor };
+
+      // `CampoDeData` so avisa o pai quando o valor muda de fato.
+      if (entrada.valor === valorDoPai) continue;
+
+      const passo = extremoDigitado(rascunhoDoPar, periodo, qual, entrada.valor);
+      rascunhoDoPar = passo.rascunho;
+      if (passo.par) {
+        periodo = lerPeriodo(passo.par.de, passo.par.ate, HOJE);
+        filtrou.push(periodo);
+      }
+    }
+  }
+
+  /** O que as setas, o botao "Hoje" e os presets fazem: mudam o periodo. */
+  function porFora(novo) {
+    periodo = novo;
+  }
+
+  return {
+    digitar,
+    porFora,
+    mostrado,
+    filtrou,
+    get periodo() {
+      return periodo;
+    },
+  };
+}
+
+const SETEMBRO = { de: "2026-09-01", ate: "2026-09-30", modo: "mes" };
+
+test("digitar a data inicial inteira nao apaga nenhuma tecla", () => {
+  const seletor = seletorSimulado(SETEMBRO);
+
+  // Tecla por tecla, e com a exibicao conferida em CADA uma: o defeito que isto
+  // guarda nao e "a data final saiu errada", e "a tecla desaparece e a data
+  // antiga volta". Uma asercao so no fim passaria verde com o campo piscando.
+  const esperado = [
+    "1",
+    "10",
+    "10/0",
+    "10/03",
+    "10/03/2",
+    "10/03/20",
+    "10/03/202",
+    "10/03/2026",
+  ];
+  const teclas = "10032026";
+
+  for (let i = 0; i < teclas.length; i++) {
+    seletor.digitar("de", teclas[i]);
+    assert.equal(
+      seletor.mostrado("de"),
+      esperado[i],
+      `tecla ${i + 1} (${teclas[i]}): a exibicao voltou para a data antiga`
+    );
+  }
+
+  // 10 de MARCO, e nao 3 de outubro. Era este o erro do controle nativo: a
+  // ordem dos segmentos saia do aparelho, e num filtro ela nao da erro -- da um
+  // painel com os numeros de outro periodo.
+  assert.deepEqual(seletor.periodo, {
+    de: "2026-03-10",
+    ate: "2026-09-30",
+    modo: "intervalo",
+  });
+});
+
+test("o filtro sobe UMA vez, na oitava tecla, e nunca com data pela metade", () => {
+  const seletor = seletorSimulado(SETEMBRO);
+
+  seletor.digitar("de", "1003202");
+  assert.deepEqual(
+    seletor.filtrou,
+    [],
+    "o painel foi refiltrado no meio da digitacao"
+  );
+  // E o periodo do pai nao se mexeu: uma unica chamada com `de` vazio teria
+  // caido no mes corrente (outubro) por `lerPeriodo`.
+  assert.deepEqual(seletor.periodo, SETEMBRO);
+
+  seletor.digitar("de", "6");
+  assert.equal(seletor.filtrou.length, 1);
+  assert.equal(seletor.filtrou[0].de, "2026-03-10");
+});
+
+test("o par invertido fica na tela sem subir ao filtro", () => {
+  const seletor = seletorSimulado(SETEMBRO);
+
+  // `ate` em 10/03/2026, antes do `de` que e 01/09/2026. E o caso normal de
+  // quem vai mudar os dois extremos e comeca pelo segundo.
+  seletor.digitar("ate", "10032026");
+
+  assert.equal(seletor.mostrado("ate"), "10/03/2026");
+  assert.deepEqual(seletor.filtrou, []);
+  assert.deepEqual(seletor.periodo, SETEMBRO);
+
+  // Arrumar o outro lado fecha o par e ai sim o painel refiltra.
+  seletor.digitar("de", "01012026");
+  assert.equal(seletor.filtrou.length, 1);
+  assert.deepEqual(seletor.filtrou[0], {
+    de: "2026-01-01",
+    ate: "2026-03-10",
+    modo: "intervalo",
+  });
+});
+
+test("periodo mudado por fora no meio da digitacao apaga o rascunho", () => {
+  const seletor = seletorSimulado(SETEMBRO);
+
+  seletor.digitar("de", "1003");
+  assert.equal(seletor.mostrado("de"), "10/03");
+
+  // A seta de mes. Sem a subordinacao do rascunho ao periodo, os campos
+  // continuariam mostrando "10/03" e "30/09" com agosto por baixo -- o campo
+  // mostrando texto antigo com valor novo por baixo, que e o bug que
+  // `exibicaoDoCampo` existe para impedir e que o par tem de herdar.
+  seletor.porFora(passoDeMes(SETEMBRO, -1));
+
+  assert.equal(seletor.mostrado("de"), "01/08/2026");
+  assert.equal(seletor.mostrado("ate"), "31/08/2026");
+});
+
+test("CONTROLE: sem o rascunho do par, a primeira tecla e apagada", () => {
+  // A forma ANTERIOR a esta issue, com o campo mascarado no lugar do nativo: o
+  // `value` do campo sai direto de `periodo`, e o periodo ignora o vazio.
+  //
+  // Este teste afirma que aquela forma PERDE a digitacao. Sem ele, os quatro
+  // testes acima passariam verde num mundo onde o rascunho do par nao fosse
+  // necessario, e nao haveria como saber que eles medem alguma coisa.
+  let rascunhoDoCampo = null;
+  const valorDoPai = SETEMBRO.de; // o pai nunca aceita o vazio e nao se move
+
+  const anterior = exibicaoDoCampo(rascunhoDoCampo, valorDoPai);
+  assert.equal(anterior, "01/09/2026");
+
+  const campo = { value: anterior + "1", setSelectionRange() {} };
+  const entrada = aplicarMascaraNoCampo(campo, anterior);
+  rascunhoDoCampo = { texto: entrada.exibicao, valor: entrada.valor };
+
+  // A mascara fez a parte dela: "1" e data nova, e data incompleta emite vazio.
+  assert.equal(entrada.exibicao, "1");
+  assert.equal(entrada.valor, "");
+
+  // E a exibicao da volta seguinte joga fora o "1", porque o pai continua em
+  // 2026-09-01. Com o rascunho do par o valor do pai teria virado "".
+  assert.equal(
+    exibicaoDoCampo(rascunhoDoCampo, valorDoPai),
+    "01/09/2026",
+    "o controle nao reproduz mais o defeito -- o rascunho do par pode ter " +
+      "virado desnecessario, ou `exibicaoDoCampo` mudou de contrato"
+  );
+  assert.equal(exibicaoDoCampo(rascunhoDoCampo, ""), "1");
+});
+
+test("chaveDoPeriodo distingue os extremos e ignora o modo derivado", () => {
+  assert.equal(chaveDoPeriodo(SETEMBRO), "2026-09-01|2026-09-30");
+  // `modo` sai de `de` e `ate` (ver `modoDoPeriodo`): incluir campo derivado na
+  // chave nao distinguiria nada a mais, e faria o rascunho morrer sozinho se
+  // algum dia a classificacao mudasse de regra.
+  assert.equal(
+    chaveDoPeriodo({ ...SETEMBRO, modo: "intervalo" }),
+    chaveDoPeriodo(SETEMBRO)
+  );
+});
+
+test("parDoSeletor devolve o periodo quando nao ha rascunho ou ele venceu", () => {
+  assert.deepEqual(parDoSeletor(null, SETEMBRO), {
+    de: "2026-09-01",
+    ate: "2026-09-30",
+  });
+
+  const vencido = { de: "", ate: "2026-09-30", base: "2026-08-01|2026-08-31" };
+  assert.deepEqual(parDoSeletor(vencido, SETEMBRO), {
+    de: "2026-09-01",
+    ate: "2026-09-30",
+  });
+
+  const vale = { de: "", ate: "2026-09-30", base: chaveDoPeriodo(SETEMBRO) };
+  assert.deepEqual(parDoSeletor(vale, SETEMBRO), {
+    de: "",
+    ate: "2026-09-30",
+  });
+});
+
+test("extremoDigitado recusa data que nao existe no calendario", () => {
+  // 31/02 passa pelo formato e nao existe. Quem o recusa primeiro e a mascara
+  // (emite vazio), mas `extremoDigitado` tem de recusar tambem: ele e chamado
+  // tambem pelo botao de calendario, e um dia por uma tela nova.
+  const passo = extremoDigitado(null, SETEMBRO, "de", "2026-02-31");
+  assert.equal(passo.par, null);
+  assert.equal(passo.rascunho.de, "2026-02-31");
 });
