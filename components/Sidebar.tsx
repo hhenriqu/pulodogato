@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import type { Route } from "next";
 import { usePathname } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
 import { useSubscription } from "@/lib/hooks/useSubscription";
@@ -343,7 +344,7 @@ export default function Sidebar({
               return (
                 <Link
                   key={item.name}
-                  href={item.href as any}
+                  href={item.href as Route}
                   className={cn(
                     isActive
                       ? "bg-primary/10 text-primary border-r-2 border-primary"
@@ -471,7 +472,7 @@ export default function Sidebar({
                 return (
                   <Link
                     key={item.name}
-                    href={item.href as any}
+                    href={item.href as Route}
                     onClick={() => setIsMobileMenuOpen(false)}
                     className={cn(
                       isActive

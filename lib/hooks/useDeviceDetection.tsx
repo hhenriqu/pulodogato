@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { NavegadorIOS } from "@/lib/pwa-install";
 
 interface DeviceInfo {
   isIOS: boolean;
@@ -42,13 +43,13 @@ export function useDeviceDetection(): DeviceInfo {
     // Detectar PWA
     const isPWA =
       window.matchMedia("(display-mode: standalone)").matches ||
-      (window.navigator as any).standalone === true ||
+      (window.navigator as NavegadorIOS).standalone === true ||
       document.referrer.includes("android-app://");
 
     // Detectar standalone mode
     const isStandalone =
       window.matchMedia("(display-mode: standalone)").matches ||
-      (window.navigator as any).standalone === true;
+      (window.navigator as NavegadorIOS).standalone === true;
 
     // Detectar notch (iPhone X e superior)
     const hasNotch =

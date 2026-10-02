@@ -2,15 +2,21 @@ import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { normalizarLancamento } from "@/lib/movimentacoes";
 
+type ClienteSupabase = Awaited<ReturnType<typeof createClient>>;
+
 // Helper function to get user group IDs
-async function getUserGroupIds(supabase: any, userId: string): Promise<string> {
+async function getUserGroupIds(
+  supabase: ClienteSupabase,
+  userId: string
+): Promise<string> {
   const { data: groups } = await supabase
     .from("group_members")
     .select("group_id")
     .eq("user_id", userId)
-    .eq("status", "active");
+    .eq("status", "active")
+    .returns<{ group_id: string }[]>();
 
-  return groups?.map((g: any) => g.group_id).join(",") || "";
+  return groups?.map((g) => g.group_id).join(",") || "";
 }
 
 export async function GET(request: NextRequest) {

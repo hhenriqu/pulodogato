@@ -11,6 +11,8 @@ import {
   detectarIOS,
   lerDispensa,
   type ConviteDeInstalacao,
+  type EventoDeInstalacao,
+  type NavegadorIOS,
 } from "@/lib/pwa-install";
 
 interface PWAWrapperProps {
@@ -24,16 +26,17 @@ export function PWAWrapper({ children }: PWAWrapperProps) {
   });
 
   const [convite, setConvite] = useState<ConviteDeInstalacao>("nenhum");
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [deferredPrompt, setDeferredPrompt] =
+    useState<EventoDeInstalacao | null>(null);
 
   useEffect(() => {
     // Recalcula do zero a cada mudanca. Manter dois booleanos separados
     // ("e instalavel" e "e iOS") deixaria os dois banners aparecerem juntos no
     // dia em que um navegador no iOS passar a emitir o evento.
-    const recalcular = (prompt: any) => {
+    const recalcular = (prompt: EventoDeInstalacao | null) => {
       const standalone =
         window.matchMedia("(display-mode: standalone)").matches ||
-        (window.navigator as any).standalone === true;
+        (window.navigator as NavegadorIOS).standalone === true;
 
       setConvite(
         decidirConvite({
@@ -50,8 +53,9 @@ export function PWAWrapper({ children }: PWAWrapperProps) {
       // O preventDefault impede a barra de instalacao propria do Chrome, para
       // ela nao competir com este banner.
       e.preventDefault();
-      setDeferredPrompt(e);
-      recalcular(e);
+      const evento = e as EventoDeInstalacao;
+      setDeferredPrompt(evento);
+      recalcular(evento);
     };
 
     const aoInstalar = () => {

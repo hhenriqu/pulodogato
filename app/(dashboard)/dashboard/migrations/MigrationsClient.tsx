@@ -46,8 +46,8 @@ export default function MigrationsClient() {
       } else {
         setError(result.error || "Erro ao verificar migrações");
       }
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }

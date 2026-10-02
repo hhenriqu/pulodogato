@@ -2,6 +2,8 @@ import { createClient } from "@/utils/supabase/server";
 import { requireAdmin } from "@/utils/supabase/admin";
 import { NextResponse } from "next/server";
 
+type ClienteSupabase = Awaited<ReturnType<typeof createClient>>;
+
 // Este endpoint NAO executa migracoes - nunca executou, apesar do nome e da
 // mensagem antiga dizerem que sim. Ele so reporta se o schema ja esta aplicado.
 // Migracao continua sendo manual, via SQL Editor do Supabase.
@@ -35,7 +37,7 @@ const MIGRATIONS = [
   },
 ];
 
-async function checkMigrationStatus(supabase: any) {
+async function checkMigrationStatus(supabase: ClienteSupabase) {
   const checks = [];
 
   for (const m of MIGRATIONS) {
@@ -87,9 +89,12 @@ export async function GET() {
       ],
       note: "Este endpoint é somente leitura. Ver database/README.md.",
     });
-  } catch (error: any) {
+  } catch (error) {
     return NextResponse.json(
-      { error: "Erro ao verificar migrações", details: error.message },
+      {
+        error: "Erro ao verificar migrações",
+        details: error instanceof Error ? error.message : String(error),
+      },
       { status: 500 }
     );
   }
