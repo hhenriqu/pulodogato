@@ -29,13 +29,19 @@
 // editor completa sozinho, e um campo novo escrito assim nao quebra build, nao
 // quebra teste e nao deixa a tela vazia.
 //
-// AS DUAS PENEIRAS
+// AS TRES PENEIRAS
 // ----------------
 //   1. nenhum `type="date"` fora do allow-list -- um so, o picker escondido que
 //      vive DENTRO de `CampoDeData` e onde ninguem digita;
 //   2. um PISO de chamadas de `<CampoDeData`, porque a peneira 1 sozinha passa
 //      verde quando o campo e simplesmente APAGADO da tela. Campo que sumiu nao
-//      e campo nativo, e tambem nao e a feature.
+//      e campo nativo, e tambem nao e a feature;
+//   3. o par do seletor de periodo tem de ser ALCANCAVEL pelo menu (HMO-243).
+//      Esta e a peneira 2 levada a serio: lá o campo desaparecia do fonte, aqui
+//      ele esta no fonte e nao ha gesto na tela que o mostre. Para a peneira 2 a
+//      contagem fecha, para a 1 nao ha nada a acusar, e para o usuario o campo
+//      nao existe -- foi exatamente o estado em que a 243 foi medida em
+//      producao.
 //
 // Os comentarios do fonte sao removidos antes da varredura (ver
 // scripts/varredura-de-fonte.mjs): sem isso o guard acusaria justamente os seis
@@ -74,6 +80,57 @@ const PERMITIDO = "components/ui/campo-de-data.tsx";
 const PISO_DE_CHAMADAS = 10;
 
 const ATRIBUTO_DE_DATA = /type\s*=\s*(?:["']date["']|\{\s*["']date["']\s*\})/gi;
+
+/**
+ * O seletor de periodo, cujo par de datas e o unico do app que NAO alimenta
+ * formulario: ele alimenta o filtro do painel, por tras de um item de menu.
+ */
+const SELETOR = "components/dashboard/SeletorDePeriodo.tsx";
+
+/**
+ * A peneira 3: o par do seletor tem de ser alcancavel pelo menu (HMO-243).
+ *
+ * Cada regra abaixo e uma forma do MESMO defeito -- campo que existe no fonte e
+ * que gesto nenhum na tela mostra. As duas primeiras sao o defeito literal como
+ * ele foi escrito em `45eb575`; as duas ultimas exigem que a decisao continue
+ * nas funcoes puras, que e o que torna a coisa testavel sem navegador.
+ *
+ * Tudo isto roda sobre o fonte SEM COMENTARIO (ver semComentarios). Nao e
+ * refinamento: o comentario que estava neste arquivo AFIRMAVA que escolher o
+ * item "so abre os dois campos", que era o oposto do que o codigo fazia, e e
+ * exatamente a frase que uma assercao textual ingenua teria casado -- passando
+ * verde sobre o defeito, pelo texto que o descreve ao contrario.
+ */
+const REGRAS_DO_SELETOR = [
+  {
+    proibido: /===\s*(?:VALOR_)?PERSONALIZADO\s*\)\s*return\s*;/,
+    erro:
+      "o handler do item volta a ter o `return` seco. Escolher " +
+      '"Personalizado" nao muda o periodo, entao o preset continua sendo\n' +
+      "   `este-mes` e os campos nunca aparecem: o item fica decorativo.",
+  },
+  {
+    proibido: /\{\s*preset\s*===\s*null\s*&&\s*\(/,
+    erro:
+      "os campos voltaram a sair SO de `preset === null`. Essa condicao\n" +
+      "   nunca e verdadeira depois de escolher o item, porque escolher o item\n" +
+      "   nao mexe no periodo. Use `camposAbertos(preset, personalizado)`.",
+  },
+  {
+    exigido: /camposAbertos\s*\(/,
+    erro:
+      "`camposAbertos` saiu do seletor. A condicao dos campos tem duas\n" +
+      "   razoes independentes, e ela e a unica forma testavel delas.",
+  },
+  {
+    exigido: /escolhaDoSeletor\s*\(/,
+    erro:
+      "`escolhaDoSeletor` saiu do seletor. Decisao escrita dentro de um\n" +
+      "   `onValueChange` nao tem teste possivel neste repositorio:\n" +
+      "   `react-dom/server` nao chama handler nenhum. Foi por essa porta que\n" +
+      "   a HMO-243 atravessou revisao.",
+  },
+];
 
 if (!existsSync(PERMITIDO)) {
   console.error(
@@ -131,6 +188,39 @@ if (achados.length > 0) {
   falhou = true;
 }
 
+// Peneira 3: o par do seletor de periodo e alcancavel pelo menu (HMO-243).
+if (!existsSync(SELETOR)) {
+  console.error(
+    `XX ${SELETOR} nao existe.\n` +
+      "   A peneira 3 nao mede mais nada. Se o seletor mudou de lugar, aponte\n" +
+      "   o caminho novo NESTE arquivo."
+  );
+  falhou = true;
+} else {
+  const doSeletor = semComentarios(readFileSync(SELETOR, "utf8"));
+
+  // Nao-vacuidade: sem o par de campos no fonte nao ha o que a peneira 3
+  // defenda, e as regras de baixo passariam todas por falta de assunto.
+  if (!/<CampoDeData/.test(doSeletor)) {
+    console.error(
+      `XX ${SELETOR} nao tem mais nenhum <CampoDeData.\n` +
+        "   O par de datas do modo personalizado saiu da tela -- a peneira 3\n" +
+        "   nao tem mais nada para medir."
+    );
+    falhou = true;
+  }
+
+  for (const regra of REGRAS_DO_SELETOR) {
+    const quebrou = regra.proibido
+      ? regra.proibido.test(doSeletor)
+      : !regra.exigido.test(doSeletor);
+    if (quebrou) {
+      console.error(`XX ${SELETOR}: ${regra.erro}`);
+      falhou = true;
+    }
+  }
+}
+
 if (chamadas < PISO_DE_CHAMADAS) {
   console.error(
     `XX so ${chamadas} chamada(s) de <CampoDeData, e o piso e ${PISO_DE_CHAMADAS}.\n` +
@@ -145,5 +235,6 @@ if (falhou) process.exit(1);
 
 console.log(
   `OK: nenhum campo de data nativo na tela (${arquivosVistos} arquivos .tsx), ` +
-    `e ${chamadas} chamadas de <CampoDeData (piso ${PISO_DE_CHAMADAS}).`
+    `${chamadas} chamadas de <CampoDeData (piso ${PISO_DE_CHAMADAS}), ` +
+    `e o par do seletor alcancavel pelo menu (${REGRAS_DO_SELETOR.length} regras).`
 );
