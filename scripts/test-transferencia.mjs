@@ -603,7 +603,7 @@ const fixa = (extra = {}) => ({
 test("a regra leva a ORIGEM em account_id e o DESTINO em destination_account_id", () => {
   const regra = regraDeTransferenciaRecorrente(fixa(), "cat-023");
 
-  // Trocar os dois nao da erro em lugar nenhum -- o CHECK da 037 so exige que
+  // Trocar os dois nao da erro em lugar nenhum -- o CHECK da 038 so exige que
   // sejam diferentes -- e a transferencia andaria para tras todo mes.
   assert.equal(regra.account_id, CORRENTE);
   assert.equal(regra.destination_account_id, POUPANCA);
@@ -767,7 +767,7 @@ test("a transferencia fixa valida passa inteira", () => {
 // ---------------------------------------------------------------------------
 
 test("a baixa recusa a transferencia prevista sem destino", () => {
-  // Esta e a guarda da JANELA em que o codigo novo fala com o banco sem a 037:
+  // Esta e a guarda da JANELA em que o codigo novo fala com o banco sem a 038:
   // a coluna nem existe, `destination_account_id` chega undefined, e sem a
   // recusa a baixa gravaria a perna de saida sozinha.
   assert.equal(

@@ -367,7 +367,7 @@ export interface RecurringRule {
   account_id?: string;
   /**
    * Para onde a transferencia recorrente manda o dinheiro (HMO-172, migration
-   * 037). `account_id` continua sendo a ORIGEM.
+   * 038). `account_id` continua sendo a ORIGEM.
    *
    * Preenchida somente quando `transaction_type === "transfer"`, e nesse caso
    * obrigatoria e diferente de `account_id` -- o CHECK

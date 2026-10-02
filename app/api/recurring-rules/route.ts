@@ -170,7 +170,7 @@ export async function POST(request: NextRequest) {
     // A TRANSFERENCIA RECORRENTE (HMO-172)
     // ---------------------------------------------------------------
     // Transferencia e o unico tipo com DUAS contas, e as duas recusas abaixo
-    // acontecem aqui -- antes do INSERT -- porque o CHECK da 037 devolveria 23514,
+    // acontecem aqui -- antes do INSERT -- porque o CHECK da 038 devolveria 23514,
     // que a tela nao sabe traduzir: a pessoa veria "não foi possível criar" sem
     // saber qual campo esta errado.
     //
@@ -235,7 +235,7 @@ export async function POST(request: NextRequest) {
         );
       }
     } else if (destination_account_id) {
-      // Conta de destino em receita/despesa e o estado que o CHECK da 037 chama
+      // Conta de destino em receita/despesa e o estado que o CHECK da 038 chama
       // de transferencia disfarcada: a baixa le o TIPO, grava UMA perna, e a
       // coluna fica na linha dizendo que havia um destino que ninguem honrou.
       return NextResponse.json(
@@ -276,7 +276,7 @@ export async function POST(request: NextRequest) {
         account_id: account_id || null,
         // HMO-172. `|| null` pelo mesmo motivo da subcategoria: a coluna e uuid e
         // `""` volta 22P02. E o `null` em tipo que nao e transferencia e o que o
-        // CHECK da 037 exige -- a validacao acima ja recusou o caso em que ele
+        // CHECK da 038 exige -- a validacao acima ja recusou o caso em que ele
         // veio preenchido.
         destination_account_id: destination_account_id || null,
         group_id: group_id || null,

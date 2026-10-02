@@ -86,7 +86,7 @@ export async function materializarAgenda(
       amount: regra.amount,
       due_date,
       status: "pending" as const,
-      // A TRANSFERENCIA RECORRENTE (HMO-172, migration 037)
+      // A TRANSFERENCIA RECORRENTE (HMO-172, migration 038)
       //
       // Estas duas linhas sao o elo que faltava: sem elas a ocorrencia nasce sem
       // destino, e a baixa de uma transferencia prevista gravaria UMA perna --
@@ -99,7 +99,7 @@ export async function materializarAgenda(
       // receita tem de reapontar as ocorrencias futuras, e uma copia gravada em
       // cada uma congelaria a direcao antiga.
       //
-      // Transferencia e a excecao porque o CHECK da 037 precisa do tipo na
+      // Transferencia e a excecao porque o CHECK da 038 precisa do tipo na
       // PROPRIA linha para poder exigir `destination_account_id`: um CHECK nao
       // consulta outra tabela, entao sem o literal aqui a ocorrencia cairia no
       // ramo que proibe destino e o INSERT levaria 23514. A exigencia do banco e

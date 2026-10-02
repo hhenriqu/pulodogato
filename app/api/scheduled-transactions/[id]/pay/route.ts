@@ -459,7 +459,7 @@ async function pagarFatura(params: {
  *
  * A diferenca em relacao a fatura e de onde vem as contas: aqui as duas estao na
  * propria linha da agenda (`account_id` = origem, `destination_account_id` =
- * destino, migration 037), e nao em `notes` + corpo do pedido.
+ * destino, migration 038), e nao em `notes` + corpo do pedido.
  *
  * A ORDEM segue o mesmo principio do resto da rota -- o pior caso tem de ser
  * "nao deu baixa", que o usuario ve e refaz, nunca "metade da transferencia no

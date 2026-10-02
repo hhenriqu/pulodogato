@@ -383,7 +383,7 @@ export function contasDeOrigem<T extends { account_type?: string | null }>(
  *      `pernasDaTransferencia`. Mandar negativo faria o banco recusar com uma
  *      mensagem que a tela nao sabe traduzir.
  *   2. `account_id` e a ORIGEM e `destination_account_id` e o DESTINO, nessa
- *      ordem. Trocar os dois nao da erro em lugar nenhum -- o CHECK da 037 so
+ *      ordem. Trocar os dois nao da erro em lugar nenhum -- o CHECK da 038 so
  *      exige que sejam diferentes -- e a transferencia passa a andar para tras
  *      todo mes. E o unico defeito desta funcao que nenhuma trava pega, e por
  *      isso ele tem mutante proprio.
@@ -445,16 +445,16 @@ export type ProblemaDaBaixaDeTransferencia =
 /**
  * Esta conta prevista esta em condicao de virar as duas pernas? (HMO-172)
  *
- * POR QUE ISTO E CONFERIDO DE NOVO, SE A 037 JA TEM O CHECK
+ * POR QUE ISTO E CONFERIDO DE NOVO, SE A 038 JA TEM O CHECK
  * ---------------------------------------------------------
  * Porque a ordem da baixa e "grava a saida, grava a entrada, marca como paga", e
  * nao existe transacao de banco entre os passos (o supabase-js fala PostgREST,
  * uma requisicao por vez). Descobrir no segundo passo que nao ha destino deixaria
  * a perna de SAIDA no saldo da conta -- metade de uma transferencia, que e
- * exatamente o estado que a issue existe para impedir. O CHECK da 037 protege a
+ * exatamente o estado que a issue existe para impedir. O CHECK da 038 protege a
  * TABELA da agenda; esta funcao protege a SEQUENCIA da baixa.
  *
- * O caso que o CHECK da 037 nao alcanca e o banco em que ela ainda NAO foi
+ * O caso que o CHECK da 038 nao alcanca e o banco em que ela ainda NAO foi
  * colada. O deploy publica codigo, nao schema -- as duas coisas andam separadas
  * neste projeto --, entao existe uma janela em que a rota nova fala com o banco
  * velho: ali a coluna nem existe, `conta.destination_account_id` chega

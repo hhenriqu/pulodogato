@@ -20,7 +20,7 @@
 //     seguinte que nao tem para onde mandar o dinheiro. Metade de uma
 //     transferencia, que e o defeito que a issue nomeia.
 //   * sem o tipo, a ocorrencia herda a direcao da regra pelo COALESCE da 027 --
-//     o que daria certo por acidente na leitura -- mas o CHECK da 037 recusa a
+//     o que daria certo por acidente na leitura -- mas o CHECK da 038 recusa a
 //     linha, porque um CHECK nao consulta outra tabela para saber se aquele
 //     destino e legitimo. O INSERT leva 23514 e a agenda fica vazia.
 //
@@ -131,7 +131,7 @@ test("a ocorrencia de transferencia grava transaction_type EXPLICITO", async () 
   const linhas = await materializar([transferencia]);
 
   for (const linha of linhas) {
-    // Explicito, e nao NULL: o CHECK da 037 precisa do tipo na PROPRIA linha
+    // Explicito, e nao NULL: o CHECK da 038 precisa do tipo na PROPRIA linha
     // para poder exigir o destino. Com NULL a linha cai no ramo que PROIBE
     // destino e o INSERT leva 23514.
     assert.equal(linha.transaction_type, "transfer");
@@ -149,14 +149,14 @@ test("a ocorrencia de DESPESA continua sem transaction_type e sem destino", asyn
     // em cada uma congelaria a direcao antiga.
     assert.equal(linha.transaction_type, undefined);
     // E destino preenchido num tipo que nao e transferencia e justamente o que o
-    // CHECK da 037 chama de transferencia disfarcada.
+    // CHECK da 038 chama de transferencia disfarcada.
     assert.equal(linha.destination_account_id, undefined);
   }
 });
 
 test("transferencia sem destino na regra materializa destino NULL, nao undefined", async () => {
-  // Uma regra assim nao deveria existir (o CHECK da 037 a recusa), mas se ela
-  // existir -- banco sem a 037, importacao, SQL Editor -- o que importa e que a
+  // Uma regra assim nao deveria existir (o CHECK da 038 a recusa), mas se ela
+  // existir -- banco sem a 038, importacao, SQL Editor -- o que importa e que a
   // ocorrencia NAO nasca com o destino faltando em silencio. `null` explicito e
   // o que faz o CHECK recusar o INSERT na hora, em vez de a baixa descobrir
   // depois de ja ter gravado a perna de saida.

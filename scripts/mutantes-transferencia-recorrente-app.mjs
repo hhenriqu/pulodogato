@@ -47,7 +47,7 @@ const MUTACOES = [
   {
     nome: "origem e destino TROCADOS na regra",
     porque:
-      "a transferencia anda para tras todo mes. Nenhuma trava pega: o CHECK da 037 so exige que sejam diferentes",
+      "a transferencia anda para tras todo mes. Nenhuma trava pega: o CHECK da 038 so exige que sejam diferentes",
     alvo: TRANSFERENCIA,
     suite: "test:transferencia",
     de: `    account_id: valores.origemId,
@@ -216,7 +216,7 @@ const MUTACOES = [
   {
     nome: "materializacao sem o transaction_type explicito",
     porque:
-      "a ocorrencia cai no ramo do CHECK da 037 que PROIBE destino, e o INSERT leva 23514 -- a agenda fica vazia sem erro na tela",
+      "a ocorrencia cai no ramo do CHECK da 038 que PROIBE destino, e o INSERT leva 23514 -- a agenda fica vazia sem erro na tela",
     alvo: SCHEDULED,
     suite: "test:materializacao",
     de: `            transaction_type: "transfer" as const,
@@ -235,7 +235,7 @@ const MUTACOES = [
   {
     nome: "materializacao manda destino em toda ocorrencia",
     porque:
-      "destino em despesa/receita e a transferencia disfarcada que o CHECK da 037 recusa",
+      "destino em despesa/receita e a transferencia disfarcada que o CHECK da 038 recusa",
     alvo: SCHEDULED,
     suite: "test:materializacao",
     de: `      ...(regra.transaction_type === "transfer"

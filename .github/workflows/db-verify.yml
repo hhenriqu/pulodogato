@@ -1789,7 +1789,7 @@ jobs:
       # `destination_account_id` atravessam a materializacao JUNTOS. Perder o
       # destino faz a baixa gravar a perna de saida e descobrir depois que nao tem
       # para onde mandar o dinheiro; perder o tipo faz a ocorrencia cair no ramo
-      # do CHECK da 037 que PROIBE destino, e o INSERT leva 23514 -- a agenda fica
+      # do CHECK da 038 que PROIBE destino, e o INSERT leva 23514 -- a agenda fica
       # vazia sem erro na tela. E a assimetria tem controle proprio: em
       # income/expense `transaction_type` continua NULL ("pergunte a regra", 027),
       # porque editar a regra tem de reapontar as ocorrencias futuras.
