@@ -299,11 +299,18 @@ export async function POST(request: NextRequest) {
         notes: notes || null,
         transaction_type: direcao,
       })
+      // FK qualificada: a 038 deu a `scheduled_transactions` uma segunda FK
+      // para `financial_accounts` e o embed curto passou a ser ambiguo
+      // (PGRST201). Aqui o estrago era pior que na leitura -- a linha era
+      // INSERIDA e o `.select()` do retorno falhava, entao a rota respondia
+      // 500 depois de gravar: a conta prevista aparecia na agenda no F5
+      // seguinte, com a tela dizendo que nao deu. Ver a nota do GET da lista
+      // em app/api/recurring-rules/route.ts.
       .select(
         `
         *,
         category:transaction_categories(*),
-        account:financial_accounts(id, name, account_type, color_hex),
+        account:financial_accounts!scheduled_transactions_account_id_fkey(id, name, account_type, color_hex),
         group:expense_groups(id, name, group_code)
       `
       )

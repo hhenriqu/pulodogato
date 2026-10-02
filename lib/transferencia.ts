@@ -155,6 +155,46 @@ export function validarContasDaTransferencia(
   return null;
 }
 
+/**
+ * Os campos de DESTINO que o INSERT da regra recorrente deve carregar.
+ *
+ * Devolve `{}` para income/expense e `{ destination_account_id }` para
+ * transferencia -- ou seja, a coluna que so a transferencia usa so viaja
+ * quando ha transferencia. E a mesma assimetria que `materializarAgenda`
+ * (lib/services/scheduled.ts) ja aplicava na ocorrencia; aqui ela passa a
+ * valer tambem na REGRA, que e quem a ocorrencia copia.
+ *
+ * Por que isto e uma funcao, e nao um `...(tipo === "transfer" ? ... : {})`
+ * solto dentro da rota: a decisao e testavel sozinha, sem subir Next nem
+ * fingir um cliente do Supabase. O `in` sobre o objeto devolvido separa os
+ * tres estados que um `?? null` no leitor confundiria -- chave ausente, chave
+ * presente com `null`, e chave presente com id.
+ *
+ * O ganho concreto e desacoplar a criacao de despesa/receita fixa do schema:
+ * mandar `destination_account_id` sempre faz o PostgREST recusar o INSERT
+ * INTEIRO com PGRST204 ("column not found in schema cache") em qualquer banco
+ * onde a 038 nao esteja colada -- e PGRST204 vem antes de permissao e de RLS,
+ * entao falharia para os tres tipos, nao so para transferencia.
+ *
+ * Nao esconde dado: a rota recusa com 400 ("Conta de destino so existe em
+ * transferencia") um income/expense que venha com destino preenchido, entao o
+ * ramo sem a chave so e alcancado quando o valor seria `null` de qualquer
+ * forma. O `|| null` continua no ramo de transferencia porque a coluna e uuid
+ * e `""` volta 22P02.
+ */
+export function camposDeDestinoDaRegra(
+  transaction_type: string,
+  destination_account_id: unknown
+): { destination_account_id?: string | null } {
+  if (transaction_type !== "transfer") return {};
+  return {
+    destination_account_id:
+      typeof destination_account_id === "string" && destination_account_id
+        ? destination_account_id
+        : null,
+  };
+}
+
 /** Mensagem para o usuario. Nem a rota nem a tela inventam texto proprio. */
 export function mensagemDaTransferencia(
   problema: ProblemaDaTransferencia

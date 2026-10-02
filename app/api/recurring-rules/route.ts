@@ -12,6 +12,7 @@ import { isIsoDate, today } from "@/lib/recurrence";
 import {
   validarContasDaTransferencia,
   mensagemDaTransferencia,
+  camposDeDestinoDaRegra,
 } from "@/lib/transferencia";
 
 const FREQUENCIAS = [
@@ -47,13 +48,24 @@ export async function GET(request: NextRequest) {
     const url = new URL(request.url);
     const incluirInativas = url.searchParams.get("include_inactive") === "true";
 
+    // A FK vai QUALIFICADA de proposito. A 038 deu a `recurring_rules` uma
+    // SEGUNDA chave estrangeira para `financial_accounts`
+    // (`destination_account_id`), e a partir dali `financial_accounts(...)` sem
+    // qualificar deixou de ter resposta unica: o PostgREST devolve PGRST201
+    // ("more than one relationship was found") e esta rota virava 500 para
+    // todo mundo -- a tela de gastos fixos nao listava nada. Medido em
+    // producao: o SELECT de antes dava HTTP 300/PGRST201, este da 200.
+    //
+    // O nome da constraint, e nao `!account_id`: os dois desambiguam, mas o
+    // nome da FK quebra alto se a constraint for renomeada, enquanto a forma
+    // por coluna continuaria resolvendo silenciosamente para outra relacao.
     let query = supabase
       .from("recurring_rules")
       .select(
         `
         *,
         category:transaction_categories(*),
-        account:financial_accounts(id, name, account_type, color_hex),
+        account:financial_accounts!recurring_rules_account_id_fkey(id, name, account_type, color_hex),
         group:expense_groups(id, name, group_code)
       `
       )
@@ -274,11 +286,12 @@ export async function POST(request: NextRequest) {
         // num lancamento. `|| null` porque a coluna e uuid e `""` volta 22P02.
         subcategory_id: subcategory_id || null,
         account_id: account_id || null,
-        // HMO-172. `|| null` pelo mesmo motivo da subcategoria: a coluna e uuid e
-        // `""` volta 22P02. E o `null` em tipo que nao e transferencia e o que o
-        // CHECK da 038 exige -- a validacao acima ja recusou o caso em que ele
-        // veio preenchido.
-        destination_account_id: destination_account_id || null,
+        // HMO-172/HMO-236. A coluna de destino so viaja quando o tipo e
+        // `transfer`. A decisao mora em `camposDeDestinoDaRegra`, com o porque
+        // inteiro escrito la -- resumo: mandar a coluna sempre acopla a criacao
+        // de despesa/receita fixa a migration 038, e sem ela o PostgREST recusa
+        // o INSERT inteiro com PGRST204, para os tres tipos.
+        ...camposDeDestinoDaRegra(transaction_type, destination_account_id),
         group_id: group_id || null,
         description: description.trim(),
         amount: Math.abs(Number(amount)),
