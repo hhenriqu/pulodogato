@@ -1,5 +1,6 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
+import { normalizarLancamento } from "@/lib/movimentacoes";
 
 // Helper function to get user group IDs
 async function getUserGroupIds(supabase: any, userId: string): Promise<string> {
@@ -112,6 +113,7 @@ export async function POST(request: NextRequest) {
       is_shared,
       splits,
       group_id,
+      transaction_type,
     } = body;
 
     // Validações básicas
@@ -145,8 +147,31 @@ export async function POST(request: NextRequest) {
       .eq("id", category_id)
       .single();
 
-    const isExpense = category?.is_expense && amount > 0;
-    const finalAmount = isExpense ? -Math.abs(amount) : Math.abs(amount);
+    // TIPO E SINAL SAEM DE `normalizarLancamento` (HMO-181)
+    //
+    // Isto era uma linha so, e nela o SINAL RECEBIDO decidia o tipo: uma
+    // comparacao do valor contra zero, combinada com `category.is_expense`. O
+    // tipo nem chegava a ser gravado -- ver o bloco de comentario em
+    // lib/movimentacoes.ts. O booleano resultante tambem servia de guarda para
+    // o vinculo de grupo e para os splits, entao o sinal errado desligava os
+    // dois em silencio.
+    //
+    // A suite cobra a ausencia desses dois trechos no arquivo INTEIRO, entao
+    // nao os cite aqui de novo: um comentario que os repete reprova o teste
+    // (e, pior, um comentario que os repete e tudo o que faria o teste passar
+    // se eles voltassem ao codigo).
+    const normalizado = normalizarLancamento({
+      amount,
+      transaction_type,
+      categoriaEhDespesa: category?.is_expense ?? null,
+    });
+
+    if (!normalizado.ok) {
+      return NextResponse.json({ error: normalizado.erro }, { status: 400 });
+    }
+
+    const { tipo, amount: finalAmount } = normalizado;
+    const isExpense = tipo === "expense";
 
     // Validar divisões se fornecidas
     if (is_shared && splits && splits.length > 0) {
@@ -191,6 +216,10 @@ export async function POST(request: NextRequest) {
         category_id,
         description,
         amount: finalAmount,
+        // Sem esta linha a transacao nasce com `transaction_type` NULO e as
+        // tres views da 008 a descartam -- ela aparece na lista e some do
+        // fluxo de caixa, dos relatorios e do orcamento (HMO-181).
+        transaction_type: tipo,
         transaction_date:
           transaction_date || new Date().toISOString().split("T")[0],
         notes,

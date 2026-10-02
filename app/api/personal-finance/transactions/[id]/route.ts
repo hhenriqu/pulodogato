@@ -1,5 +1,6 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
+import { normalizarLancamento } from "@/lib/movimentacoes";
 
 export async function PATCH(
   request: NextRequest,
@@ -42,6 +43,7 @@ export async function PATCH(
       transaction_date,
       notes,
       group_id,
+      transaction_type,
     } = body;
 
     // Validar group_id se fornecido
@@ -62,27 +64,69 @@ export async function PATCH(
       }
     }
 
-    // Verificar se é despesa para lógica de grupos
-    let isExpense = false;
-    if (category_id) {
-      const { data: category } = await supabase
-        .from("transaction_categories")
-        .select("is_expense")
-        .eq("id", category_id)
-        .single();
-      isExpense =
-        category?.is_expense &&
-        (amount ? amount > 0 : existingTransaction.amount < 0);
+    // -----------------------------------------------------------------------
+    // TIPO E SINAL NA EDICAO: A MESMA REGRA DO POST (HMO-181)
+    // -----------------------------------------------------------------------
+    // Este bloco tinha o defeito do POST, inteiro, e ele DESFAZIA o conserto de
+    // la na primeira edicao: mandar o valor com o sinal certo junto com um
+    // `category_id` fazia a comparacao contra zero dar falso, e a despesa era
+    // regravada positiva. A linha nascia certa pelo POST novo e virava receita
+    // ao ser editada -- um estrago que aparece depois, longe da causa.
+    //
+    // O tipo tambem nunca era escrito aqui. Com o backfill da 037 isso deixaria
+    // de importar para as linhas antigas, mas nao para a linha que o usuario
+    // edita: ela e justamente a que ele acabou de olhar.
+    const existingAmount = Number(existingTransaction.amount);
+    const updateData: any = {};
+
+    if (existingTransaction.transaction_type === "transfer") {
+      // PERNA DE TRANSFERENCIA NAO E RECLASSIFICADA AQUI.
+      //
+      // As duas pernas sao gravadas por /api/movimentacoes/transferencia e se
+      // anulam (015). Trocar o tipo de UMA desfaz o par, e inverter o sinal
+      // transforma a saida em entrada: os mesmos R$ 1.000 passariam a existir
+      // duas vezes, e o saldo geral subiria sem ninguem ter recebido nada.
+      // A direcao vem da linha, nao do que chegou no corpo.
+      if (amount !== undefined) {
+        const direcao = existingAmount < 0 ? -1 : 1;
+        updateData.amount = direcao * Math.abs(amount);
+      }
     } else {
-      isExpense = existingTransaction.amount < 0;
+      const categoriaId = category_id ?? existingTransaction.category_id;
+      const { data: category } = categoriaId
+        ? await supabase
+            .from("transaction_categories")
+            .select("is_expense")
+            .eq("id", categoriaId)
+            .single()
+        : { data: null };
+
+      // Trocar a CATEGORIA re-deriva o tipo. Sem isto, mover um lancamento de
+      // "Salario" para "Alimentacao" manteria `income` gravado, e a despesa
+      // entraria no mes como receita com a categoria certa do lado.
+      const declarado =
+        transaction_type ??
+        (category_id !== undefined && category_id !== existingTransaction.category_id
+          ? null
+          : existingTransaction.transaction_type);
+
+      const normalizado = normalizarLancamento({
+        amount: amount !== undefined ? amount : existingAmount,
+        transaction_type: declarado,
+        categoriaEhDespesa: category?.is_expense ?? null,
+      });
+
+      if (!normalizado.ok) {
+        return NextResponse.json({ error: normalizado.erro }, { status: 400 });
+      }
+
+      // O tipo e regravado sempre: e o que tira da invisibilidade a linha
+      // antiga, criada sem a coluna, no momento em que o usuario mexe nela.
+      updateData.transaction_type = normalizado.tipo;
+      if (amount !== undefined) updateData.amount = normalizado.amount;
     }
 
-    // Preparar dados para atualização
-    const updateData: any = {};
     if (description !== undefined) updateData.description = description;
-    if (amount !== undefined) {
-      updateData.amount = isExpense ? -Math.abs(amount) : Math.abs(amount);
-    }
     if (category_id !== undefined) updateData.category_id = category_id;
     if (transaction_date !== undefined)
       updateData.transaction_date = transaction_date;

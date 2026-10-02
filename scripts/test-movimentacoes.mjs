@@ -18,6 +18,7 @@ import {
   contarPorFiltro,
   filtrarLancamentos,
   resumoDoPeriodo,
+  normalizarLancamento,
   FILTROS_DE_LANCAMENTO,
 } from "../.tmp-movimentacoes/movimentacoes.js";
 
@@ -235,4 +236,269 @@ test("os quatro filtros da barra existem, e nenhum fica sem contagem", () => {
   for (const { id } of FILTROS_DE_LANCAMENTO) {
     assert.equal(contagem[id], 0, `filtro "${id}" ficou sem contagem`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// TIPO E SINAL NA ESCRITA (HMO-181)
+// ---------------------------------------------------------------------------
+// Os casos acima leem linhas que ja existem. Estes decidem o que gravar, e o
+// defeito que eles prendem foi achado em producao: um POST de `-12.34` --- o
+// sinal CERTO pela convencao do banco --- virava `+12.34` no banco, e sem
+// `transaction_type` nenhum.
+//
+// Os dois lados do estrago precisam de assercoes diferentes:
+//
+//   * o SINAL e regra pura, e esta em `normalizarLancamento`;
+//   * a COLUNA no INSERT nao e regra nenhuma --- e uma linha que pode
+//     simplesmente sumir num refactor. Nenhuma assercao sobre a funcao pura
+//     alcanca essa omissao, entao a ultima secao le o codigo da rota. E um
+//     instrumento pobre, usado de proposito e pelo mesmo motivo que
+//     scripts/test-alcance-da-serie.mjs o usa: o que ele pega e OMISSAO.
+// ---------------------------------------------------------------------------
+
+import { readFileSync } from "node:fs";
+
+const DESPESA = { categoriaEhDespesa: true };
+const RECEITA = { categoriaEhDespesa: false };
+
+test("despesa mandada com o sinal CERTO continua negativa", () => {
+  // O CONTROLE NEGATIVO DA ISSUE. `const isExpense = category?.is_expense &&
+  // amount > 0` fazia este caso cair no ramo do `Math.abs` e gravar +12.34:
+  // a rota so funcionava para quem mandava o valor com o sinal errado.
+  const r = normalizarLancamento({ amount: -12.34, ...DESPESA });
+
+  assert.equal(r.ok, true);
+  assert.equal(r.amount, -12.34, "a despesa foi gravada POSITIVA");
+  assert.equal(r.tipo, "expense");
+});
+
+test("despesa mandada positiva tambem e normalizada para negativa", () => {
+  // O caminho que ja funcionava, preso aqui para que o conserto do caso acima
+  // nao quebre o cliente que manda o valor sem sinal (a tela faz isso).
+  const r = normalizarLancamento({ amount: 12.34, ...DESPESA });
+
+  assert.equal(r.ok, true);
+  assert.equal(r.amount, -12.34);
+  assert.equal(r.tipo, "expense");
+});
+
+test("receita e sempre positiva, venha com o sinal que vier", () => {
+  for (const enviado of [7000, -7000]) {
+    const r = normalizarLancamento({ amount: enviado, ...RECEITA });
+    assert.equal(r.ok, true);
+    assert.equal(r.amount, 7000, `receita enviada como ${enviado}`);
+    assert.equal(r.tipo, "income");
+  }
+});
+
+test("o tipo DECLARADO vence a categoria", () => {
+  // Um estorno lancado numa categoria de despesa: o cliente diz "income" e e
+  // isso que tem de ser gravado, com o sinal que o tipo manda. Sem esta
+  // precedencia o corpo seria decoracao -- o cliente diria uma coisa e o banco
+  // gravaria outra, que e a familia inteira de defeitos desta issue.
+  const r = normalizarLancamento({
+    amount: -300,
+    transaction_type: "income",
+    ...DESPESA,
+  });
+
+  assert.equal(r.ok, true);
+  assert.equal(r.tipo, "income");
+  assert.equal(r.amount, 300);
+});
+
+test("sem tipo e sem categoria, o sinal decide -- e nunca sai NULO", () => {
+  // Categoria que a consulta nao achou (`.single()` devolve null em silencio).
+  // O palpite por sinal e o pior dos tres criterios e continua sendo melhor que
+  // gravar a linha sem tipo: sem tipo ela sai das tres views da 008.
+  const gasto = normalizarLancamento({ amount: -50, categoriaEhDespesa: null });
+  const entrada = normalizarLancamento({ amount: 50, categoriaEhDespesa: null });
+
+  assert.equal(gasto.ok, true);
+  assert.equal(gasto.tipo, "expense");
+  assert.equal(entrada.ok, true);
+  assert.equal(entrada.tipo, "income");
+});
+
+test("a escrita e a leitura concordam sobre a mesma linha", () => {
+  // Se `normalizarLancamento` decidisse de um jeito e `classificarMovimentacao`
+  // de outro, a linha sairia da lista com um rotulo e entraria nas views com o
+  // outro -- dois numeros certos pela propria regra, discordando na mesma tela.
+  const casos = [
+    { amount: -12.34, categoriaEhDespesa: true },
+    { amount: 12.34, categoriaEhDespesa: true },
+    { amount: -7000, categoriaEhDespesa: false },
+    { amount: -50, categoriaEhDespesa: null },
+    { amount: 50, categoriaEhDespesa: null },
+    { amount: -300, transaction_type: "income", categoriaEhDespesa: true },
+  ];
+
+  for (const caso of casos) {
+    const r = normalizarLancamento(caso);
+    assert.equal(r.ok, true);
+
+    const comoFicouGravada = {
+      amount: r.amount,
+      transaction_type: r.tipo,
+      category:
+        typeof caso.categoriaEhDespesa === "boolean"
+          ? { is_expense: caso.categoriaEhDespesa }
+          : null,
+    };
+
+    assert.equal(
+      classificarMovimentacao(comoFicouGravada),
+      r.tipo,
+      `a leitura discorda da escrita em ${JSON.stringify(caso)}`
+    );
+  }
+});
+
+test("transferencia e RECUSADA: esta rota cria uma perna so", () => {
+  // Transferencia e gravada em DUAS pernas que se anulam (015). Aceitar aqui
+  // produziria meia transferencia: dinheiro saindo de uma conta sem entrar em
+  // nenhuma. E o erro nao apareceria no saldo errado de um lado so -- ele
+  // apareceria como dinheiro sumido.
+  const r = normalizarLancamento({
+    amount: -1000,
+    transaction_type: "transfer",
+    ...DESPESA,
+  });
+
+  assert.equal(r.ok, false, "a rota aceitou criar meia transferencia");
+  assert.match(r.erro, /transferencia|transferência/i);
+});
+
+test("tipo fora do ENUM e 400, nao palpite", () => {
+  // Ignorar em silencio o que o cliente declarou e exatamente o defeito que
+  // esta funcao fecha. `despesa` em portugues e o erro provavel.
+  for (const invalido of ["despesa", "EXPENSE", "gasto", 1, true]) {
+    const r = normalizarLancamento({
+      amount: -10,
+      transaction_type: invalido,
+      ...DESPESA,
+    });
+    assert.equal(r.ok, false, `aceitou transaction_type = ${String(invalido)}`);
+  }
+
+  // E o contrario: string vazia e null sao "nao declarou", nao "declarou
+  // errado". A tela manda campo vazio o tempo todo.
+  for (const ausente of ["", null, undefined]) {
+    const r = normalizarLancamento({
+      amount: -10,
+      transaction_type: ausente,
+      ...DESPESA,
+    });
+    assert.equal(r.ok, true, `recusou o campo ausente ${String(ausente)}`);
+    assert.equal(r.tipo, "expense");
+  }
+});
+
+// ---------------------------------------------------------------------------
+// A ROTA USA A REGRA, E GRAVA A COLUNA
+// ---------------------------------------------------------------------------
+
+const ROTA = readFileSync(
+  "app/api/personal-finance/transactions/route.ts",
+  "utf8"
+);
+
+test("o INSERT da rota grava transaction_type", () => {
+  // O PRIMEIRO MUTANTE EXIGIDO PELA ISSUE. Sem esta coluna a linha fica fora de
+  // `monthly_cash_flow`, `category_monthly_totals` e `planned_vs_actual` -- ela
+  // aparece na lista de lancamentos e desaparece do fluxo de caixa, dos
+  // relatorios e do orcamento, sem erro e sem aviso.
+  assert.match(
+    ROTA,
+    /\.from\("financial_transactions"\)\s*\n\s*\.insert\(\{[\s\S]{0,600}?transaction_type:/,
+    "o insert de financial_transactions nao lista transaction_type"
+  );
+});
+
+test("a rota nao decide tipo nem sinal por conta propria", () => {
+  // Uma segunda copia da regra diverge no primeiro conserto que so uma das duas
+  // receber. A prova de que ha um lugar so: a rota chama a funcao compartilhada
+  // e nao sobrou nenhum `amount > 0` decidindo direcao.
+  assert.match(ROTA, /normalizarLancamento\(/, "a rota nao chama a regra");
+  assert.ok(
+    !/amount\s*>\s*0/.test(ROTA),
+    "a rota voltou a deixar o sinal recebido decidir o tipo"
+  );
+  assert.ok(
+    !/Math\.abs\(amount\)/.test(ROTA),
+    "a rota voltou a aplicar o sinal por conta propria"
+  );
+});
+
+test("a rota recusa com 400 o que a regra recusou", () => {
+  // Sem este repasse, `normalizarLancamento` devolveria `ok: false` e a rota
+  // seguiria em frente com `tipo` indefinido -- a recusa viraria enfeite.
+  assert.match(
+    ROTA,
+    /if\s*\(!normalizado\.ok\)[\s\S]{0,200}status:\s*400/,
+    "a rota nao devolve 400 quando a regra recusa"
+  );
+});
+
+test("o vinculo de grupo nao depende mais do sinal recebido", () => {
+  // O TERCEIRO DEFEITO. `if (group_id && isExpense)` com `isExpense` calculado
+  // a partir de `amount > 0`: a despesa de grupo mandada negativa nascia com
+  // `group_id` preenchido e SEM linha em `group_transactions` -- sem rateio,
+  // sem ninguem devendo nada, e a tela do grupo mostrando a despesa.
+  assert.match(
+    ROTA,
+    /const isExpense = tipo === "expense";/,
+    "isExpense voltou a ser calculado a partir do valor recebido"
+  );
+  assert.match(
+    ROTA,
+    /if \(group_id && isExpense\)/,
+    "a guarda do vinculo de grupo mudou de forma"
+  );
+});
+
+// ---------------------------------------------------------------------------
+// A EDICAO NAO PODE DESFAZER O CONSERTO
+// ---------------------------------------------------------------------------
+// O PATCH de /api/personal-finance/transactions/[id] carregava o MESMO defeito
+// do POST. Consertar so o POST entregaria uma linha que nasce certa e vira
+// receita na primeira edicao -- um estrago que aparece depois, longe da causa,
+// e que faria a issue parecer resolvida.
+
+const ROTA_EDICAO = readFileSync(
+  "app/api/personal-finance/transactions/[id]/route.ts",
+  "utf8"
+);
+
+test("a edicao usa a mesma regra de tipo e sinal, e grava a coluna", () => {
+  assert.match(
+    ROTA_EDICAO,
+    /normalizarLancamento\(/,
+    "o PATCH nao usa a regra compartilhada"
+  );
+  assert.match(
+    ROTA_EDICAO,
+    /updateData\.transaction_type = normalizado\.tipo;/,
+    "o PATCH nao grava transaction_type"
+  );
+  assert.ok(
+    !/amount\s*>\s*0/.test(ROTA_EDICAO),
+    "o PATCH voltou a deixar o sinal recebido decidir o tipo"
+  );
+});
+
+test("a edicao nao reclassifica uma perna de transferencia", () => {
+  // Trocar o tipo de UMA perna desfaz o par das duas (015) e inverter o sinal
+  // transforma a saida em entrada: os mesmos R$ 1.000 passam a existir duas
+  // vezes. A direcao tem de sair da LINHA, nao do corpo da requisicao.
+  assert.match(
+    ROTA_EDICAO,
+    /existingTransaction\.transaction_type === "transfer"/,
+    "o PATCH nao separa a perna de transferencia"
+  );
+  assert.match(
+    ROTA_EDICAO,
+    /const direcao = existingAmount < 0 \? -1 : 1;/,
+    "o PATCH nao preserva a direcao da perna"
+  );
 });
