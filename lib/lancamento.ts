@@ -76,13 +76,41 @@ export type BaseDoValorParcelado = "parcela" | "total";
 export const MAX_MESES_DE_REPETICAO = 360;
 
 /**
+ * Os tipos que podem virar REGRA mensal (HMO-172).
+ *
+ * `TipoLancamento` continua sendo "os tipos que tem tela com categoria,
+ * natureza e rateio" -- transferencia nao e um deles e nao deve passar a ser,
+ * porque ela nao tem categoria nem natureza de gasto. O que ela PASSA a
+ * compartilhar e so a pergunta "isto se repete todo mes?", e e esse o recorte
+ * deste tipo.
+ *
+ * Alargar `TipoLancamento` em vez de criar este alias teria sido o erro barato:
+ * ele e o parametro de `camposDoTipo`, `validarLancamento`, `valorGravado` e
+ * `rotaDoTipo`, e nenhuma dessas funcoes sabe o que fazer com transferencia --
+ * o compilador deixaria passar `valorGravado("transfer", 500)`, que devolveria
+ * `-500` (o ramo `else`) e gravaria a transferencia como receita.
+ */
+export type TipoDeRegra = TipoLancamento | "transfer";
+
+/**
  * Quais naturezas cabem nesta tela.
  *
- * Receita nao tem "no cartao": cartao de credito e instrumento de PAGAMENTO, e
- * uma entrada apontada para ele entraria na fatura reduzindo o que se deve --
- * que e um estorno, nao uma receita.
+ * Nem receita nem transferencia tem "no cartao", e por motivos diferentes que
+ * dao no mesmo lugar:
+ *
+ *   * RECEITA: cartao de credito e instrumento de PAGAMENTO, e uma entrada
+ *     apontada para ele entraria na fatura reduzindo o que se deve -- que e um
+ *     estorno, nao uma receita.
+ *   * TRANSFERENCIA (HMO-172): mover dinheiro PARA um cartao e quitar divida, e
+ *     esse caminho ja existe e e outro (o pagamento da fatura, em Contas
+ *     Previstas). Oferecer "no cartao" aqui criaria uma segunda forma de pagar
+ *     fatura que nao passa por `pernasDoPagamentoDeFatura` -- duas fontes para a
+ *     mesma regra de sinal, que e exatamente o que a HMO-149 custou.
+ *
+ * O cartao continua valendo como DESTINO de uma transferencia pontual; quem
+ * decide isso e `validarContasDaTransferencia`, nao esta funcao.
  */
-export function naturezasDoTipo(tipo: TipoLancamento): NaturezaDespesa[] {
+export function naturezasDoTipo(tipo: TipoDeRegra): NaturezaDespesa[] {
   return tipo === "expense"
     ? ["one_off", "card", "fixed"]
     : ["one_off", "fixed"];

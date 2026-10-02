@@ -47,12 +47,32 @@ import {
 import { ArrowLeft, ArrowRight, ArrowRightLeft, WifiOff } from "lucide-react";
 import { useOfflineQueue } from "@/lib/hooks/useOfflineQueue";
 import {
+  camposDaTransferencia,
   contasDeOrigem,
+  destinoDaTransferencia,
   validarTransferencia,
   valoresIniciaisDeTransferencia,
   type ContaDaTransferencia,
   type ValoresDeTransferencia,
 } from "@/lib/transferencia";
+import {
+  MAX_MESES_DE_REPETICAO,
+  naturezasDoTipo,
+  type DuracaoDaRepeticao,
+  type NaturezaDespesa,
+} from "@/lib/lancamento";
+
+/**
+ * O rotulo de cada natureza nesta tela.
+ *
+ * Nao reusa o de `CamposDeLancamento` porque lá os textos falam de gasto ("Gasto
+ * pontual", "Gasto fixo") e aqui nada e gasto. "Uma vez" x "Todo mes" e a mesma
+ * pergunta com as palavras do que esta acontecendo.
+ */
+const ROTULO_DA_NATUREZA: Record<string, string> = {
+  one_off: "Uma vez",
+  fixed: "Todo mês",
+};
 
 interface ContaNaTela extends ContaDaTransferencia {
   id: string;
@@ -107,6 +127,11 @@ export function FormularioDeTransferencia() {
 
   const origens = contasDeOrigem(contas);
   const destinos = contas;
+  // Os campos da recorrencia e as opcoes de natureza saem de lib/, nunca de um
+  // `natureza === "fixed"` escrito no JSX: duas copias da mesma condicao se
+  // mascaram, e quebrar uma delas nao deixa teste nenhum vermelho.
+  const campos = camposDaTransferencia(valores);
+  const naturezasVisiveis = naturezasDoTipo("transfer");
 
   const enviar = async (evento: React.FormEvent) => {
     evento.preventDefault();
@@ -119,18 +144,52 @@ export function FormularioDeTransferencia() {
 
     setSalvando(true);
     try {
-      const resposta = await fetch("/api/movimentacoes/transferencia", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          descricao: valores.descricao,
-          valor: Number.parseFloat(valores.valor),
-          origem_id: valores.origemId,
-          destino_id: valores.destinoId,
-          data: valores.data,
-          notas: valores.notas || null,
-        }),
-      });
+      // PARA ONDE VAI, DECIDIDO EM lib/ (HMO-172). O ramo nao e um `if
+      // (natureza === "fixed")` aqui: `destinoDaTransferencia` e funcao pura e
+      // testada, e o erro deste ramo nao da erro -- da uma gravacao no lugar
+      // errado. Uma transferencia fixa que caia na rota pontual move o dinheiro
+      // UMA vez e a pessoa acha que agendou.
+      const paraRegra = destinoDaTransferencia(valores) === "regra";
+
+      const resposta = paraRegra
+        ? await fetch("/api/recurring-rules", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              description: valores.descricao,
+              // POSITIVO, sempre: `recurring_rules` tem CHECK (amount > 0) e a
+              // regra nao tem sinal -- quem aplica os dois sinais e a baixa.
+              amount: Math.abs(Number.parseFloat(valores.valor)),
+              account_id: valores.origemId,
+              destination_account_id: valores.destinoId,
+              transaction_type: "transfer",
+              frequency: "monthly",
+              due_day: Number(valores.diaDeVencimento),
+              start_date: valores.data,
+              max_occurrences:
+                valores.duracao === "contada"
+                  ? Number(valores.mesesDeRepeticao)
+                  : null,
+              notes: valores.notas || null,
+              // `category_id` NAO vai daqui. Transferencia nao tem categoria: a
+              // rota resolve a reservada do 023, do mesmo jeito que a rota da
+              // transferencia pontual faz. Mandar uma categoria da tela seria
+              // deixar o usuario escolher onde o gasto "aparece" numa operacao
+              // que nao e gasto.
+            }),
+          })
+        : await fetch("/api/movimentacoes/transferencia", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              descricao: valores.descricao,
+              valor: Number.parseFloat(valores.valor),
+              origem_id: valores.origemId,
+              destino_id: valores.destinoId,
+              data: valores.data,
+              notas: valores.notas || null,
+            }),
+          });
 
       const dados = await resposta.json();
       if (!resposta.ok) {
@@ -138,8 +197,14 @@ export function FormularioDeTransferencia() {
         return;
       }
 
-      toast.success(dados.message || "Transferência lançada.");
-      router.push("/dashboard/personal-finance");
+      toast.success(
+        paraRegra
+          ? "Transferência mensal criada. Confirme cada mês em Contas Previstas."
+          : dados.message || "Transferência lançada."
+      );
+      router.push(
+        paraRegra ? "/dashboard/bills" : "/dashboard/personal-finance"
+      );
     } catch (erro) {
       console.error("Erro ao lançar transferência:", erro);
       // Sem ramo de fila aqui, e isso e a decisao: a fila recusa transferencia
@@ -272,7 +337,9 @@ export function FormularioDeTransferencia() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="date">Data *</Label>
+                <Label htmlFor="date">
+                  {campos.diaDeVencimento ? "A partir de *" : "Data *"}
+                </Label>
                 <Input
                   id="date"
                   type="date"
@@ -280,7 +347,132 @@ export function FormularioDeTransferencia() {
                   onChange={(e) => aoMudar({ data: e.target.value })}
                   required
                 />
+                {/* O MESMO campo muda de significado com a natureza, e a tela
+                    diz qual: numa transferencia fixa ele e o `start_date` da
+                    regra, nao o dia em que o dinheiro andou. Sem esta frase,
+                    quem escolhe "todo mes" le "Data" como "hoje" e nao entende
+                    por que nada apareceu no extrato. */}
+                {campos.diaDeVencimento && (
+                  <p className="text-xs text-muted-foreground">
+                    Quando a repetição começa. O dinheiro só anda quando você
+                    confirmar cada mês em Contas Previstas.
+                  </p>
+                )}
               </div>
+
+              {/* O BLOCO DA RECORRENCIA (HMO-172)
+                  ================================
+                  Ele e REPETIDO aqui em vez de reusar `CamposDeLancamento`, e a
+                  escolha e deliberada. Aquele componente recebe
+                  `ValoresDeLancamento` e desenha natureza + categoria +
+                  subcategoria + parcelamento + rateio + confirmacao no mesmo
+                  bloco; para reusar so a recorrencia seria preciso passar um
+                  objeto com sete campos mortos, ou quebra-lo em dois componentes
+                  -- e ele e justamente o arquivo que a HMO-164 acabou de limpar
+                  de ter tres telas escondidas dentro de uma.
+
+                  O que NAO e repetido e o que importa: as opcoes saem de
+                  `naturezasDoTipo("transfer")` e quais campos aparecem sai de
+                  `camposDaTransferencia`, as duas em lib/ e as duas testadas. A
+                  duplicacao aqui e de JSX, nao de decisao. */}
+              <div className="space-y-2">
+                <Label htmlFor="natureza">Com que frequência</Label>
+                <Select
+                  value={valores.natureza}
+                  onValueChange={(value: string) =>
+                    aoMudar({
+                      natureza: value as NaturezaDespesa,
+                      // Sair de "todo mes" limpa os campos da repeticao. Um
+                      // `diaDeVencimento` parado no estado nao desviaria a
+                      // gravacao (quem decide e a natureza), mas voltaria
+                      // preenchido se a pessoa trocasse de novo -- um "dia 5"
+                      // que ela nao escolheu nesta volta.
+                      ...(value === "fixed"
+                        ? {}
+                        : { diaDeVencimento: "", mesesDeRepeticao: "" }),
+                    })
+                  }
+                >
+                  <SelectTrigger id="natureza">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {naturezasVisiveis.map((opcao) => (
+                      <SelectItem key={opcao} value={opcao}>
+                        {ROTULO_DA_NATUREZA[opcao]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {valores.natureza === "fixed"
+                    ? "Cria uma transferência prevista por mês. Cada uma grava as duas pernas quando você confirmar."
+                    : "Grava as duas pernas agora, uma vez."}
+                </p>
+              </div>
+
+              {campos.diaDeVencimento && (
+                <div className="space-y-2">
+                  <Label htmlFor="diaDeVencimento">Dia do mês *</Label>
+                  <Input
+                    id="diaDeVencimento"
+                    type="number"
+                    min={1}
+                    max={31}
+                    value={valores.diaDeVencimento}
+                    onChange={(e) =>
+                      aoMudar({ diaDeVencimento: e.target.value })
+                    }
+                    placeholder="5"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Em mês curto, cai no último dia: 31 vira 28 ou 29 em
+                    fevereiro.
+                  </p>
+                </div>
+              )}
+
+              {/* `campos.duracao` anda colado em `campos.diaDeVencimento`, e
+                  `camposDaTransferencia` e quem garante isso: "por 12 meses" sem
+                  o dia do vencimento deixaria a pessoa dizer por quanto tempo
+                  repetir sem dizer QUANDO, e a regra nasceria com `due_day`
+                  nulo -- uma agenda que nunca gera ocorrencia nenhuma. */}
+              {campos.duracao && (
+                <div className="space-y-2">
+                  <Label htmlFor="duracao">Por quanto tempo</Label>
+                  <Select
+                    value={valores.duracao}
+                    onValueChange={(value: string) =>
+                      aoMudar({
+                        duracao: value as DuracaoDaRepeticao,
+                        mesesDeRepeticao:
+                          value === "contada" ? valores.mesesDeRepeticao : "",
+                      })
+                    }
+                  >
+                    <SelectTrigger id="duracao">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="indefinida">Todos os meses</SelectItem>
+                      <SelectItem value="contada">Por N meses</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {valores.duracao === "contada" && (
+                    <Input
+                      id="mesesDeRepeticao"
+                      type="number"
+                      min={1}
+                      max={MAX_MESES_DE_REPETICAO}
+                      value={valores.mesesDeRepeticao}
+                      onChange={(e) =>
+                        aoMudar({ mesesDeRepeticao: e.target.value })
+                      }
+                      placeholder="12"
+                    />
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="space-y-2">

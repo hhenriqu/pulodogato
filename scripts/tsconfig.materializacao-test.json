@@ -1,0 +1,33 @@
+{
+  "//": [
+    "A materializacao da agenda, e o destino da transferencia recorrente (HMO-172).",
+    "",
+    "`rootDir` e a raiz do projeto, e nao `lib`, porque lib/services/scheduled.ts",
+    "importa `@/types/financial` para tipar a regra com `RecurringRule` -- com",
+    "`rootDir: lib` o tsc reprova com TS6059. O import e de TIPO, entao o tsc o",
+    "elimina no emit; o que sobra para reescrever e o import de @/lib/recurrence,",
+    "que o passo do resolve-aliases resolve com --espelha-raiz.",
+    "",
+    "Por que suite PROPRIA e nao mais um arquivo no test:transferencia: aquela",
+    "suite usa `rootDir: lib`, e trocar isso moveria todo o emit dela de",
+    ".tmp-transferencia/x.js para .tmp-transferencia/lib/x.js -- reescrevendo os",
+    "imports de 58 testes que nao tem nada a ver com esta mudanca."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-materializacao",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../lib/services/scheduled.ts",
+    "../lib/recurrence.ts",
+    "../types/financial.ts"
+  ]
+}
