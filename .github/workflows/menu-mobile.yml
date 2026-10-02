@@ -48,20 +48,43 @@ jobs:
       #
       # Plantamos aqui os dois defeitos que a HMO-161 corrigiu, nas formas
       # exatas em que eles existiam, e exigimos vermelho nos dois.
+      #
+      # Cada defeito passa por `planta`, que CONFERE que o sed mexeu no arquivo
+      # antes de rodar a suite. Sem essa conferencia, um padrao que para de
+      # casar -- porque alguem editou a linha por um motivo legitimo -- deixa o
+      # arquivo intacto, a suite sai verde como deve e o controle acusa
+      # "passou verde com o defeito", apontando o dedo para a suite. Foi o que
+      # aconteceu entre a HMO-185 (que trocou `pt-3` pelo calculo do recorte do
+      # iPhone) e a HMO-199: 57 runs vermelhos seguidos, na main inclusive, por
+      # um defeito que nunca foi plantado. Vermelho mentiroso e pior que check
+      # ausente, porque ensina a mergear por cima do vermelho.
       - name: A verificacao do menu sabe falhar
         run: |
           set -uo pipefail
           cp components/MobileMenuChrome.tsx components/MobileMenuChrome.tsx.orig
           trap 'mv components/MobileMenuChrome.tsx.orig components/MobileMenuChrome.tsx' EXIT
 
+          # planta <rotulo> <expressao sed>: restaura o arquivo, aplica o sed,
+          # exige que ele tenha mudado algo e exige que a suite fique VERMELHA.
+          planta() {
+            local rotulo="$1" expressao="$2"
+            cp components/MobileMenuChrome.tsx.orig components/MobileMenuChrome.tsx
+            sed -i "$expressao" components/MobileMenuChrome.tsx
+            if cmp -s components/MobileMenuChrome.tsx components/MobileMenuChrome.tsx.orig; then
+              echo "::error::O defeito \"$rotulo\" nao foi plantado: o padrao do sed nao casa mais com components/MobileMenuChrome.tsx. Corrija o padrao neste workflow -- a suite do menu nao esta em causa."
+              exit 1
+            fi
+            if npm run test:menu-mobile > /dev/null 2>&1; then
+              echo "::error::A verificacao passou verde com o defeito \"$rotulo\" plantado."
+              exit 1
+            fi
+            echo "  defeito \"$rotulo\": plantado, e a suite ficou vermelha."
+          }
+
           # 1) O X renderizado sempre, sem depender do estado. Era assim antes:
           #    a gaveta ficava montada o tempo todo e o botao junto com ela.
-          sed -i 's|  if (!aberto) return null;|  // defeito plantado|' components/MobileMenuChrome.tsx
-          if npm run test:menu-mobile > /dev/null 2>&1; then
-            echo "::error::A verificacao passou verde com o X renderizado tambem com o menu fechado."
-            exit 1
-          fi
-          cp components/MobileMenuChrome.tsx.orig components/MobileMenuChrome.tsx
+          planta "X tambem com o menu fechado" \
+            's|  if (!aberto) return null;|  // defeito plantado|'
 
           # 2) O X de volta para fora do painel, por margem negativa. Este e o
           #    defeito mudo: com o gate acima intacto, o X so aparece com o menu
@@ -69,10 +92,13 @@ jobs:
           #    painel ocupa a largura inteira e empurra o botao para fora da area
           #    visivel. Sem X alcancavel e com o veu todo coberto, a gaveta nao
           #    fecha mais.
-          sed -i 's|className="absolute top-0 right-0 pt-3 pr-3"|className="absolute top-0 right-0 -mr-12 pt-2"|' components/MobileMenuChrome.tsx
-          if npm run test:menu-mobile > /dev/null 2>&1; then
-            echo "::error::A verificacao passou verde com o X posicionado fora do painel."
-            exit 1
-          fi
+          #
+          #    O padrao ancora no que e estrutural (`absolute top-0 right-0`, a
+          #    ancoragem do botao no canto do painel) e troca so o afastamento
+          #    `pr-3` por margem negativa. O valor do `pt-` fica de fora de
+          #    proposito: ele muda por motivo legitimo -- ja mudou na HMO-185 --
+          #    e nao tem nada a ver com o defeito que estamos plantando.
+          planta "X fora do painel, por margem negativa" \
+            '/absolute top-0 right-0/ s|pr-3"|-mr-12"|'
 
           echo "A verificacao fica vermelha nos dois defeitos."
