@@ -284,3 +284,19 @@ next-env.d.ts
 # grupo, e nao uma copia. Mesmo motivo das entradas acima para estar aqui: um
 # `.tmp-*` fora do .gitignore chega a ser commitado em cima de arquivo de fonte.
 /.tmp-fechamento-do-grupo/
+
+# Build do `npm run test:telas-de-movimentacao` (HMO-246, as tres telas de
+# movimentacao). Leva movimentacoes.js e destino-do-lancamento.js junto porque a
+# lib importa a classificacao por tipo e a frase da conta de la -- as tres telas
+# usam a MESMA `classificarMovimentacao` dos cartoes de Financas Pessoais, e nao
+# uma copia. Mesmo motivo das entradas acima para estar aqui: um `.tmp-*` fora
+# do .gitignore chega a ser commitado em cima de arquivo de fonte.
+/.tmp-telas-de-movimentacao/
+
+# Build do `npm run test:cartoes-da-tela` (HMO-246, os tres cartoes Total /
+# Previsto / Realizado). Leva components/ui/card.tsx e components/SemRede.tsx
+# junto porque o teste renderiza a marcacao DE VERDADE com react-dom/server, e
+# nao uma copia dela -- e um dublê de <Card> passaria verde no dia em que o
+# componente real mudasse. Mesmo motivo das entradas acima para estar aqui: um
+# `.tmp-*` fora do .gitignore chega a ser commitado em cima de arquivo de fonte.
+/.tmp-cartoes-da-tela/

@@ -15,7 +15,9 @@ import { propsSemPuxao } from "@/lib/puxar-para-atualizar";
 import { cn } from "@/lib/utils";
 import { User as UserType } from "@supabase/supabase-js";
 import {
+  ArrowRightLeft,
   LayoutDashboard,
+  TrendingDown,
   TrendingUp,
   BarChart3,
   User,
@@ -66,6 +68,41 @@ const navigation: NavigationItem[] = [
     href: "/dashboard/personal-finance",
     icon: Wallet,
     requiredFeature: "personal_finance",
+  },
+  // AS TRES TELAS DE UMA MOVIMENTACAO SO (HMO-246), logo abaixo de "Finanças
+  // Pessoais" e nessa ordem de proposito: ali esta a lista inteira,
+  // "indiferente do que for"; aqui estao os tres recortes dela, cada um com
+  // Total, Previsto e Realizado do periodo.
+  //
+  // Elas NAO duplicam o item acima, e a fronteira e esta: "Finanças Pessoais" e
+  // a lista (o que foi lançado, tudo junto, com editar e excluir); estas tres
+  // sao a CONTA de um tipo num periodo, e juntam o previsto ao realizado --
+  // coisa que o cartão de lá não faz. A legenda de cada uma diz isso, porque
+  // dois números certos por critérios diferentes se leem como um bug.
+  //
+  // Até a HMO-246 este recorte existia como quatro abas DENTRO de Finanças
+  // Pessoais, e elas filtravam a lista sem mexer nos totais: a aba
+  // "Transferências" abria com as linhas certas e os três cartões do topo
+  // continuavam somando o mês inteiro. As abas saíram.
+  //
+  // Sem `requiredFeature`, ao contrário do item acima: elas só leem o que o
+  // usuário já lançou e não consomem nada além do banco. E a pergunta que
+  // respondem -- "quanto eu gastei e quanto ainda vai sair neste mês" -- é
+  // justamente a que não pode depender de plano para ser respondida.
+  {
+    name: "Receitas",
+    href: "/dashboard/receitas",
+    icon: TrendingUp,
+  },
+  {
+    name: "Despesas",
+    href: "/dashboard/despesas",
+    icon: TrendingDown,
+  },
+  {
+    name: "Transferências",
+    href: "/dashboard/transferencias",
+    icon: ArrowRightLeft,
   },
   {
     // Sem `requiredFeature` de proposito: cadastrar a conta e o passo ZERO.

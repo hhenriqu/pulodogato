@@ -114,7 +114,11 @@
     "test:convite-de-grupo": "rm -rf .tmp-convite-de-grupo && tsc lib/convite-de-grupo.ts --outDir .tmp-convite-de-grupo --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-convite-de-grupo.mjs",
     "mutantes:convite-de-grupo": "node scripts/mutantes-convite-de-grupo.mjs",
     "test:fechamento-do-grupo": "rm -rf .tmp-fechamento-do-grupo && tsc -p scripts/tsconfig.fechamento-do-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-fechamento-do-grupo lib && TZ=America/Sao_Paulo node --test scripts/test-fechamento-do-grupo.mjs",
+    "test:telas-de-movimentacao": "rm -rf .tmp-telas-de-movimentacao && tsc -p scripts/tsconfig.telas-de-movimentacao-test.json && node scripts/resolve-aliases.mjs .tmp-telas-de-movimentacao lib && TZ=America/Sao_Paulo node --test scripts/test-telas-de-movimentacao.mjs",
+    "test:contrato-das-telas-de-movimentacao": "node --test scripts/test-contrato-das-telas-de-movimentacao.mjs",
+    "test:cartoes-da-tela": "rm -rf .tmp-cartoes-da-tela && tsc -p scripts/tsconfig.cartoes-da-tela-test.json && node scripts/resolve-aliases.mjs .tmp-cartoes-da-tela components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-cartoes-da-tela lib --espelha-raiz && node --test scripts/test-cartoes-da-tela.mjs",
     "mutantes:fechamento-do-grupo": "node scripts/mutantes-fechamento-do-grupo.mjs",
+    "mutantes:telas-de-movimentacao": "node scripts/mutantes-telas-de-movimentacao.mjs",
     "test:contrato-do-fechamento": "node --test scripts/test-contrato-do-fechamento.mjs"
   },
   "dependencies": {
