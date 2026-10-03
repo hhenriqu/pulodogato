@@ -64,6 +64,7 @@ import {
 import { cotacaoDigitada, taxaParaGravar, valorEmReais } from "@/lib/cambio";
 import { PixDoMembro, useChavesPixDoGrupo } from "@/components/grupos/PixDoMembro";
 import { PainelDoGrupo } from "@/components/grupos/PainelDoGrupo";
+import { FechamentoDoMes } from "@/components/grupos/FechamentoDoMes";
 import {
   acertoNaMoedaDaViagem,
   avisoDeSobra,
@@ -1056,6 +1057,17 @@ export default function GroupDetailPage() {
         </TabsContent>
 
         <TabsContent value="expenses" className="space-y-4">
+          {/*
+            O fechamento do mes (HMO-245), ACIMA das listas.
+
+            As secoes abaixo separam "ja aconteceu" de "vai acontecer", e essa
+            separacao esta certa para a lista -- parte aprovavel so existe no
+            realizado. Mas ela faz a conta de internet vencendo dia 15 nao
+            entrar em total nenhum do mes. Este cartao e o total que junta os
+            dois e diz quanto cada um paga.
+          */}
+          <FechamentoDoMes groupId={groupId} />
+
           {/* Expenses by Period */}
           <div className="space-y-4">
             {/*

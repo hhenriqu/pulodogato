@@ -112,7 +112,10 @@
     "mutantes:tipo-e-sinal": "node scripts/mutantes-tipo-e-sinal.mjs",
     "mutantes:convite-sem-conta": "bash scripts/mutantes-convite-sem-conta.sh",
     "test:convite-de-grupo": "rm -rf .tmp-convite-de-grupo && tsc lib/convite-de-grupo.ts --outDir .tmp-convite-de-grupo --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-convite-de-grupo.mjs",
-    "mutantes:convite-de-grupo": "node scripts/mutantes-convite-de-grupo.mjs"
+    "mutantes:convite-de-grupo": "node scripts/mutantes-convite-de-grupo.mjs",
+    "test:fechamento-do-grupo": "rm -rf .tmp-fechamento-do-grupo && tsc -p scripts/tsconfig.fechamento-do-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-fechamento-do-grupo lib && TZ=America/Sao_Paulo node --test scripts/test-fechamento-do-grupo.mjs",
+    "mutantes:fechamento-do-grupo": "node scripts/mutantes-fechamento-do-grupo.mjs",
+    "test:contrato-do-fechamento": "node --test scripts/test-contrato-do-fechamento.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
