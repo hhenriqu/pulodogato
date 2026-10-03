@@ -1,0 +1,42 @@
+{
+  "//": [
+    "Compila os TRES CARTOES das telas de movimentacao para o teste renderizar o",
+    "componente de verdade, e nao uma copia da marcacao dele. O `jsx: react-jsx`",
+    "e o que permite renderizar com react-dom/server no node, sem runner novo --",
+    "mesmo desenho do tsconfig.previsto-bloco-test.json.",
+    "",
+    "lib/telas-de-movimentacao.ts ja tem suite propria (test-telas-de-movimentacao)",
+    "com 26 mutantes, e TODA ela passaria verde com o JSX imprimindo `previsto`",
+    "no cartao 'Realizado': a aritmetica estaria exata e a tela ignorando ela.",
+    "Este build existe para o teste afirmar sobre o HTML que sai.",
+    "",
+    "CartoesDaTela.tsx mora em arquivo separado de TelaDeMovimentacao.tsx por",
+    "causa deste build: o container importa `next/navigation`, que nao roda no",
+    "node, e o import derrubaria o teste antes da primeira assercao.",
+    "",
+    "O resolve-aliases roda com --espelha-raiz porque card.tsx importa",
+    "lib/utils.ts pelo alias @/."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-cartoes-da-tela",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../components/movimentacoes/CartoesDaTela.tsx",
+    "../components/SemRede.tsx",
+    "../components/ui/card.tsx",
+    "../components/ui/button.tsx",
+    "../lib/offline-leitura.ts",
+    "../lib/telas-de-movimentacao.ts",
+    "../lib/utils.ts"
+  ]
+}

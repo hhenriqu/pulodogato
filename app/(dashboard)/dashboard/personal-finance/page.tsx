@@ -15,21 +15,14 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import {
-  FILTROS_DE_LANCAMENTO,
-  classificarMovimentacao,
-  resumoDoPeriodo,
-  type FiltroDeLancamento,
-} from "@/lib/movimentacoes";
+import { classificarMovimentacao, resumoDoPeriodo } from "@/lib/movimentacoes";
 import {
   destinoDoLancamento,
   indiceDeContraparte,
   type ContaDoLancamento,
 } from "@/lib/destino-do-lancamento";
 import {
-  contarComPartes,
   linhasDaLista,
   notaDasPartesDeTerceiros,
   partesDeTerceirosNaLista,
@@ -246,8 +239,6 @@ function Lancamentos() {
    * clique para descobrir de novo um id que nunca muda.
    */
   const [serviceId, setServiceId] = useState<string | undefined>(undefined);
-  /** Qual dos quatro filtros da lista esta selecionado. */
-  const [filtro, setFiltro] = useState<FiltroDeLancamento>("todos");
   /** De quando sao os dados na tela, quando eles vieram do aparelho. */
   const [catalogoDe, setCatalogoDe] = useState<number | null>(null);
   /**
@@ -902,19 +893,28 @@ function Lancamentos() {
   const { income, expenses, balance, transferido, transferencias } =
     calculateBalance();
 
-  // As duas saem da mesma fonte que os cartoes do topo (`classificarMovimentacao`),
-  // de proposito: a aba "Despesas" tem que mostrar exatamente as linhas que o
-  // cartao "Despesas" somou. Filtrar aqui por sinal do valor daria uma lista
-  // que discorda do total logo acima dela, na mesma tela.
+  // A LISTA INTEIRA, SEM RECORTE DE TIPO (HMO-246)
+  // ----------------------------------------------
+  // "Finanças pessoais deve ser uma grande lista de transações e lançamentos
+  // indiferente do que for." Era aqui que o recorte entrava: a tela tinha
+  // quatro abas (Lançamentos / Receitas / Despesas / Transferências) e
+  // `linhasDaLista` recebia a escolhida.
+  //
+  // As abas saíram, e o motivo não é só o pedido da issue -- elas filtravam
+  // SÓ a lista. Os três cartões acima continuavam somando o mês inteiro, então
+  // abrir "Transferências" dava uma lista de transferências com "Despesas
+  // R$ 4.200" logo em cima dela. Quem quer o recorte de um tipo agora tem uma
+  // tela própria, e lá os totais são DAQUELE tipo -- com o previsto dentro.
+  //
+  // `"todos"` fica escrito aqui, e não some junto com a barra: `linhasDaLista`
+  // é compartilhada e o parâmetro continua sendo o que decide o que entra.
+  // Quem lê esta linha vê qual é a resposta desta tela.
   //
   // DUAS FONTES, UMA LISTA (HMO-215). `linhasDaLista` junta as minhas linhas com
   // a minha parte das despesas de grupo que outra pessoa pagou, em ordem de
   // data -- coladas sem reordenar, as partes de setembro cairiam no fim, abaixo
-  // das minhas de marco. `contarComPartes` conta as duas fontes pelo mesmo
-  // critério: a contagem na barra de abas tem que casar com o que a aba mostra,
-  // senão "Despesas 4" abre com seis linhas.
-  const visiveis = linhasDaLista(transactions, partesDeGrupo, filtro);
-  const contagem = contarComPartes(transactions, partesDeGrupo);
+  // das minhas de marco.
+  const visiveis = linhasDaLista(transactions, partesDeGrupo, "todos");
 
   // O elo entre as duas pernas de cada transferencia, montado uma vez por
   // render em vez de por linha: `destinoDoLancamento` precisa achar a
@@ -952,7 +952,11 @@ function Lancamentos() {
 
   const descricaoDaLista = descreverLista({
     rotuloDoPeriodo: rotuloDoPeriodo(periodo),
-    filtro,
+    // `"todos"` pelo mesmo motivo de `linhasDaLista` acima: a tela nao tem mais
+    // recorte de tipo (HMO-246). `descreverLista` continua aceitando o filtro
+    // porque e ele quem decide a FRASE -- e as tres telas novas tambem contam
+    // quantas linhas mostram.
+    filtro: "todos",
     visiveis: visiveis.length,
     carregados,
     temMais,
@@ -980,12 +984,45 @@ function Lancamentos() {
             vinte vezes por mês, "o resumo do mês" somava dois meses e meio.
             Ver lib/lista-de-lancamentos.ts.
           */}
+          {/*
+            A FRASE DIZ O QUE ESTA TELA É, e desde a HMO-246 ela também diz o
+            que ela NÃO é. Esta é a lista inteira, "indiferente do que for"; o
+            recorte de um tipo -- com Previsto e Realizado -- tem tela própria,
+            e os links estão aqui porque era nas abas que a pessoa procurava
+            aquilo. Um recorte que muda de lugar sem deixar rastro se lê como
+            feature removida.
+          */}
           <p className="text-muted-foreground">
             Seus lançamentos e o resumo de{" "}
             <span className="font-medium text-foreground">
               {rotuloDoPeriodo(periodo)}
             </span>
-            . Receita e despesa se lançam em telas próprias.
+            . Todos os tipos, numa lista só — receita, despesa e transferência
+            se lançam em telas próprias.
+          </p>
+          <p className="text-sm text-muted-foreground">
+            O total de um tipo só, com o previsto dentro, está em{" "}
+            <Link
+              href="/dashboard/receitas"
+              className="underline hover:text-foreground"
+            >
+              Receitas
+            </Link>
+            ,{" "}
+            <Link
+              href="/dashboard/despesas"
+              className="underline hover:text-foreground"
+            >
+              Despesas
+            </Link>{" "}
+            e{" "}
+            <Link
+              href="/dashboard/transferencias"
+              className="underline hover:text-foreground"
+            >
+              Transferências
+            </Link>
+            .
           </p>
           {/*
             Sem esta linha, a tela offline mostra as categorias do aparelho e
@@ -1276,51 +1313,30 @@ function Lancamentos() {
       )}
 
       {/*
-        A barra agora filtra a lista por TIPO -- ela não troca de assunto.
+        A BARRA DE ABAS SAIU (HMO-246)
+        ------------------------------
+        Aqui havia quatro abas -- Lançamentos / Receitas / Despesas /
+        Transferências -- e elas filtravam a lista por tipo. Duas coisas as
+        tiraram, e a segunda é a que custava:
 
-        Antes eram "Lançamentos" e "Limites", e a segunda não falava de dinheiro
-        nenhum: era quanto do plano já foi usado. Ela mudou de tela (está em
-        Configurações › Plano e limites), e o lugar ficou para o que esta tela
-        de fato precisava. Os três tipos sempre estiveram na lista -- a consulta
-        nunca filtrou por tipo --, só que misturados e sem rótulo: uma perna de
-        transferência tem a mesma cara de uma despesa, valor negativo e tudo.
+          1. "Finanças pessoais deve ser uma grande lista de transações e
+             lançamentos indiferente do que for." O recorte por tipo agora é
+             tela própria: /dashboard/receitas, /dashboard/despesas e
+             /dashboard/transferencias.
 
-        Sem `grid w-full`: o `TabsList` deste projeto já resolve o estouro no
-        celular com `overflow-x-auto`, e o trilho de grid não escapa disso --
-        ele cresce até o conteúdo mínimo, e "Transferências" sem quebra tem um
-        mínimo largo. Foi assim que a barra de abas empurrou a página inteira
-        para o lado na HMO-168.
+          2. ELAS FILTRAVAM SÓ A LISTA. Os três cartões acima nunca souberam do
+             filtro: somavam o período inteiro, sempre. Abrir "Transferências"
+             dava uma lista com três linhas de transferência e, parado logo
+             acima dela, "Despesas R$ 4.200" -- um número certo que, naquela
+             posição, se lê como o total da lista embaixo. As telas novas não
+             têm esse problema por construção: os totais de lá são do tipo da
+             tela, e trazem o PREVISTO junto, que é o que as abas nunca tiveram.
+
+        O que fica para quem procurava um tipo sem sair daqui: a lista continua
+        rotulando cada linha (tipo, conta, categoria, grupo), que é o que a
+        HMO-162 e a HMO-215 puseram nela.
       */}
-      <Tabs
-        value={filtro}
-        onValueChange={(v) => setFiltro(v as FiltroDeLancamento)}
-        className="w-full"
-      >
-        <TabsList>
-          {FILTROS_DE_LANCAMENTO.map((f) => (
-            <TabsTrigger key={f.id} value={f.id} className="gap-1.5">
-              {f.rotulo}
-              {/*
-                A contagem é o que responde "cadê minhas transferências?" sem
-                exigir um clique: um zero aqui distingue "não há linha desse
-                tipo" de "a aba abriu vazia porque quebrou".
-              */}
-              <span className="text-xs text-muted-foreground">
-                {contagem[f.id]}
-              </span>
-            </TabsTrigger>
-          ))}
-        </TabsList>
-
-        {/*
-          Um `TabsContent` por filtro, todos com o MESMO conteúdo: o Radix só
-          monta o painel do valor ativo, e `visiveis` já está filtrado por
-          `filtro`. Um painel só, fora do `Tabs`, deixaria os outros três
-          gatilhos sem painel nenhum -- que é exatamente o bug das abas vazias
-          que esta tela já teve.
-        */}
-        {FILTROS_DE_LANCAMENTO.map((f) => (
-          <TabsContent key={f.id} value={f.id} className="space-y-4">
+      <div className="space-y-4">
           {/* Transactions List */}
           <Card>
             <CardHeader>
@@ -1628,32 +1644,21 @@ function Lancamentos() {
                     );
                   })}
                 </div>
-              ) : carregados > 0 ? (
-                /*
-                  Vazio por causa do FILTRO, não por falta de lançamento. Os
-                  dois casos são diferentes e a mensagem antiga só sabia um
-                  deles: "Nenhum lançamento ainda" numa conta com 40 despesas,
-                  só porque a aba "Transferências" está aberta, é a tela
-                  afirmando com confiança algo falso -- e o botão "Nova Receita"
-                  logo abaixo manda resolver o problema errado.
-                */
-                <div className="text-center py-8 space-y-4">
-                  <Receipt className="h-12 w-12 text-muted-foreground mx-auto" />
-                  <div>
-                    <h3 className="text-lg font-medium mb-2">
-                      Nenhum lançamento deste tipo
-                    </h3>
-                    <p className="text-muted-foreground">
-                      {rotuloDoPeriodo(periodo)} tem {carregados}{" "}
-                      lançamento(s) carregado(s), e nenhum em{" "}
-                      {f.rotulo.toLowerCase()}.
-                    </p>
-                  </div>
-                  <Button variant="outline" onClick={() => setFiltro("todos")}>
-                    Ver todos os lançamentos
-                  </Button>
-                </div>
               ) : (
+                /*
+                  Aqui havia um TERCEIRO ramo, para "vazio por causa do filtro":
+                  `carregados > 0` com `visiveis` em zero, que acontecia quando
+                  a aba "Transferências" estava aberta num mês sem nenhuma. Ele
+                  saiu com as abas (HMO-246), e não por economia -- ele ficou
+                  INALCANÇÁVEL: com `filtro = "todos"`, `linhasDaLista` não
+                  descarta linha nenhuma, então `visiveis.length` é exatamente
+                  `carregados` e os dois só são zero juntos. Um ramo morto que
+                  parece vivo é pior que ramo nenhum: ele convida a próxima
+                  pessoa a mantê-lo funcionando.
+
+                  O recorte por tipo que aquele ramo explicava agora tem tela
+                  própria, e lá a frase de vazio nomeia o tipo E o período.
+                */
                 /*
                   Periodo vazio. A mensagem antiga era "Nenhum lançamento ainda
                   / Comece registrando o que entrou ou o que saiu" -- e sem
@@ -1720,12 +1725,13 @@ function Lancamentos() {
                 sem periodo para navegar, e sem nada na tela dizendo que a
                 lista terminava ali.
 
-                Fica FORA do ramo de `visiveis.length > 0` de proposito. O caso
-                que importa e justamente o contrario: filtro "Transferências"
-                aberto, zero linhas visiveis entre as 50 carregadas, e as
-                transferências mais antigas na pagina seguinte. Se o botao
-                morasse dentro do ramo da lista cheia, a unica tela que precisa
-                dele seria a unica que nao o teria.
+                Fica FORA do ramo de `visiveis.length > 0`, e isso CONTINUA
+                valendo depois de as abas saírem (HMO-246). O caso que importa
+                mudou de forma mas não desapareceu: um período em que as 50
+                primeiras linhas são todas de grupo e descartadas por
+                `partesDeTerceirosNaLista` abre a lista vazia com mais páginas
+                atrás. Se o botão morasse dentro do ramo da lista cheia, a única
+                tela que precisa dele seria a única que não o teria.
               */}
               {temMais && !atualizando && (
                 <div className="mt-4 flex flex-col items-center gap-2">
@@ -1755,9 +1761,7 @@ function Lancamentos() {
               )}
             </CardContent>
           </Card>
-          </TabsContent>
-        ))}
-      </Tabs>
+      </div>
 
       {/* A PERGUNTA DO ALCANCE NA EXCLUSAO DE PARCELA (HMO-228).
           O mesmo componente de Contas a Pagar e da tela do cartao. A parcela e
