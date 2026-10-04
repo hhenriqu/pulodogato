@@ -311,6 +311,95 @@ export function dePercentual(percentual: unknown): number {
   return centesimos;
 }
 
+/** Por que uma configuracao recebida de fora foi recusada. */
+export type RecusaDaConfiguracao =
+  | { motivo: "repetido" }
+  | { motivo: "conjunto"; faltando: string[]; sobrando: string[] }
+  | { motivo: "soma"; centesimos: number };
+
+export type ConferenciaDaConfiguracao =
+  | { ok: true; porMembro: ParteConfigurada[] }
+  | { ok: false; recusa: RecusaDaConfiguracao };
+
+/**
+ * A configuracao que chegou de FORA (o corpo do PUT /split-config, HMO-269),
+ * conferida contra os membros ativos e convertida no que vai para a coluna.
+ *
+ * Mora aqui, e nao dentro da rota, pelo mesmo motivo que a aritmetica do
+ * fechamento mora em `lib/fechamento-do-grupo.ts`: quem decide dinheiro precisa
+ * ser chamavel por um teste sem subir servidor nem forjar sessao. Uma rota que
+ * tivesse estas tres regras no corpo do handler so poderia ser verificada por
+ * um 200 -- e todo defeito aqui produz exatamente um 200.
+ *
+ * AS TRES RECUSAS, E POR QUE CADA UMA EXISTE
+ * -------------------------------------------
+ *   * `repetido` -- o mesmo `member_id` duas vezes. Sem esta guarda o corpo
+ *     `[A: 100, A: 0]` num grupo de dois membros passaria: o Map colapsa as
+ *     duas entradas numa so, a ultima vence, e o conjunto pareceria completo
+ *     com B nunca tendo sido mencionado;
+ *   * `conjunto` -- falta alguem ativo, ou sobra alguem que nao e. A invariante
+ *     e a SOMA DO CONJUNTO, entao gravar 70/30 entre dois de tres membros
+ *     deixaria o terceiro no valor velho e a soma GRAVADA em 70+30+x. Recusar e
+ *     a unica saida que nao envolve adivinhar o que o cliente quis dizer sobre
+ *     o membro ausente;
+ *   * `soma` -- o total nao fecha 10000. A conferencia e sobre o INTEIRO em
+ *     centesimos, depois da conversao, e nunca sobre o float do corpo: `33.333`
+ *     tres vezes soma 99,999 (que qualquer tolerancia de float aceita como 100)
+ *     e grava 99,99, porque `numeric(5,2)` arredonda calado.
+ *
+ * MEMBRO EM 0% FICA, AO CONTRARIO DE `divisaoDaDespesa`
+ * -----------------------------------------------------
+ * Ali o membro em zero e OMITIDO, porque `expense_splits.percentage` exige
+ * `> 0`. Aqui ele FICA, com 0,00, porque `group_members.percentage` aceita zero
+ * e a linha dele existe de qualquer jeito -- omiti-la deixaria na coluna o
+ * valor ANTIGO daquele membro, que e precisamente o estado "a soma gravada nao
+ * e a soma conferida". As duas funcoes tratam o zero de forma oposta de
+ * proposito: uma descreve uma despesa, a outra descreve o grupo.
+ *
+ * A saida vem na ordem de `idsAtivos` -- a ordem do banco, nao a do corpo --
+ * para o chamador poder casar posicao a posicao com as linhas que ele leu.
+ */
+export function conferirConfiguracao(
+  idsAtivos: string[],
+  pedidos: { member_id: string; percentage: number }[]
+): ConferenciaDaConfiguracao {
+  const pedidoPorId = new Map<string, number>();
+  for (const p of pedidos) {
+    if (pedidoPorId.has(p.member_id)) {
+      return { ok: false, recusa: { motivo: "repetido" } };
+    }
+    pedidoPorId.set(p.member_id, p.percentage);
+  }
+
+  const faltando = idsAtivos.filter((id) => !pedidoPorId.has(id));
+  const sobrando = pedidos
+    .map((p) => p.member_id)
+    .filter((id) => !idsAtivos.includes(id));
+
+  if (faltando.length > 0 || sobrando.length > 0) {
+    return { ok: false, recusa: { motivo: "conjunto", faltando, sobrando } };
+  }
+
+  // Grupo sem membro ativo nenhum cai na recusa de SOMA logo abaixo (0 nao e
+  // 10000), e nao numa guarda propria: a mensagem "somam 0,00%" ja descreve o
+  // estado, e uma segunda trava aqui seria um caminho que nenhum teste
+  // conseguiria distinguir do primeiro.
+  const centesimos = idsAtivos.map((id) => dePercentual(pedidoPorId.get(id)));
+  const soma = centesimos.reduce((acc, c) => acc + c, 0);
+
+  if (soma !== CENTESIMOS_TOTAIS) {
+    return { ok: false, recusa: { motivo: "soma", centesimos: soma } };
+  }
+
+  return {
+    ok: true,
+    porMembro: idsAtivos.map((member_id, i) => ({
+      member_id,
+      percentage: paraPercentual(centesimos[i]),
+    })),
+  };
+}
+
 /**
  * A configuracao virando as partes gravaveis de UMA despesa.
  *

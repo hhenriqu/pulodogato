@@ -63,6 +63,7 @@ import {
   paraPercentual,
   dePercentual,
   divisaoDaDespesa,
+  conferirConfiguracao,
 } from "../.tmp-divisao-configurada/divisao-configurada.js";
 
 /**
@@ -533,4 +534,217 @@ test("a ida e volta pelo banco nao quebra a divisao da despesa", () => {
   somaFecha(recarregado, "recarregado do banco");
   assert.deepEqual(porMembro(recarregado), porMembro(naTela));
   assert.equal(divisaoDaDespesa(recarregado).ok, true);
+});
+
+// ---------------------------------------------------------------------------
+// conferirConfiguracao -- o corpo do PUT /split-config (HMO-269, fase 3)
+// ---------------------------------------------------------------------------
+// Esta e a porta de entrada da PRIMEIRA escrita que o app tem em
+// `group_members.percentage`. As tres recusas dela sao a unica coisa entre um
+// corpo de requisicao e o peso com que o fechamento rateia a conta da casa, e
+// todas as tres falham do mesmo jeito quando quebram: um 200 com o numero
+// errado gravado. Por isso elas sao testadas aqui, na funcao pura, e nao por
+// uma sonda que so saberia ler o status.
+
+/** `{ member_id: percentage }` -> o formato que a rota recebe no corpo. */
+function corpo(pares) {
+  return Object.entries(pares).map(([member_id, percentage]) => ({
+    member_id,
+    percentage,
+  }));
+}
+
+/** A saida aprovada como `{ id: percentage }`. */
+function aprovado(r) {
+  assert.equal(r.ok, true, `esperava aprovacao, veio ${JSON.stringify(r)}`);
+  return Object.fromEntries(r.porMembro.map((m) => [m.member_id, m.percentage]));
+}
+
+test("70/30 passa e sai na ordem do BANCO, nao na do corpo", () => {
+  const r = conferirConfiguracao(
+    ["ana", "bia"],
+    corpo({ bia: 30, ana: 70 }) // o corpo veio ao contrario de proposito
+  );
+  assert.deepEqual(aprovado(r), { ana: 70, bia: 30 });
+  // A ordem importa: a rota casa esta lista com as linhas que leu do banco.
+  assert.deepEqual(
+    r.porMembro.map((m) => m.member_id),
+    ["ana", "bia"]
+  );
+});
+
+test("soma 99,99 e RECUSADA -- o caso que a issue pede por nome", () => {
+  const r = conferirConfiguracao(["ana", "bia"], corpo({ ana: 69.99, bia: 30 }));
+  assert.equal(r.ok, false);
+  assert.equal(r.recusa.motivo, "soma");
+  // O numero da mensagem e o que foi CONFERIDO, em centesimos: 9999.
+  assert.equal(r.recusa.centesimos, 9999);
+  assert.equal(paraPercentual(r.recusa.centesimos), 99.99);
+});
+
+test("soma 100,01 tambem e recusada -- a trava e dos DOIS lados", () => {
+  // Sem esta, um `>= 10000` no lugar do `===` passaria em todo teste de 99,99 e
+  // gravaria uma configuracao que rateia 100,01% da conta.
+  const r = conferirConfiguracao(["ana", "bia"], corpo({ ana: 70.01, bia: 30 }));
+  assert.equal(r.ok, false);
+  assert.equal(r.recusa.motivo, "soma");
+  assert.equal(r.recusa.centesimos, 10001);
+});
+
+test("33,333 x3 e recusado: o que soma 100 em float grava 99,99", () => {
+  // O caso que separa "conferiu o corpo" de "conferiu o que vai ser gravado".
+  // 33.333 * 3 = 99.999, que qualquer tolerancia de float aceita como 100 --
+  // e `numeric(5,2)` guardaria 33.33 tres vezes, somando 99,99.
+  const r = conferirConfiguracao(
+    ["ana", "bia", "cid"],
+    corpo({ ana: 33.333, bia: 33.333, cid: 33.333 })
+  );
+  assert.equal(r.ok, false);
+  assert.equal(r.recusa.motivo, "soma");
+  assert.equal(r.recusa.centesimos, 9999);
+});
+
+test("33,33 / 33,33 / 33,34 passa, e e exatamente o que vai para a coluna", () => {
+  const r = conferirConfiguracao(
+    ["ana", "bia", "cid"],
+    corpo({ ana: 33.33, bia: 33.33, cid: 33.34 })
+  );
+  const p = aprovado(r);
+  assert.deepEqual(p, { ana: 33.33, bia: 33.33, cid: 33.34 });
+  // Duas casas decimais, porque `numeric(5,2)` nao guarda mais que isso sem
+  // arredondar calado.
+  for (const v of Object.values(p)) {
+    assert.ok(
+      Number.isInteger(Math.round(v * 100)) && Math.abs(v * 100 - Math.round(v * 100)) < 1e-9,
+      `${v} nao cabe em numeric(5,2)`
+    );
+  }
+});
+
+test("membro em 0% FICA na configuracao, ao contrario da divisao da despesa", () => {
+  // Uma pessoa banca o mes. A linha do outro membro existe no banco de
+  // qualquer jeito: omiti-la deixaria nela o valor ANTIGO, e a soma GRAVADA
+  // deixaria de ser a soma conferida.
+  const r = conferirConfiguracao(["ana", "bia"], corpo({ ana: 100, bia: 0 }));
+  assert.deepEqual(aprovado(r), { ana: 100, bia: 0 });
+
+  // E o contraste com `divisaoDaDespesa`, que OMITE o zero porque
+  // `expense_splits.percentage` exige `> 0`:
+  const despesa = divisaoDaDespesa([
+    { member_id: "ana", centesimos: CENTESIMOS_TOTAIS },
+    { member_id: "bia", centesimos: 0 },
+  ]);
+  assert.equal(despesa.ok, true);
+  assert.deepEqual(
+    despesa.partes.map((p) => p.member_id),
+    ["ana"]
+  );
+});
+
+test("membro ativo que o corpo esqueceu e recusado, e a recusa DIZ quem", () => {
+  // Gravar 70/30 entre dois de tres deixaria o terceiro no valor velho: a soma
+  // gravada viraria 70+30+x. Este e o caso que um teste de soma sozinho nao
+  // pega, porque 70+30 fecha 100 perfeitamente.
+  const r = conferirConfiguracao(
+    ["ana", "bia", "cid"],
+    corpo({ ana: 70, bia: 30 })
+  );
+  assert.equal(r.ok, false);
+  assert.equal(r.recusa.motivo, "conjunto");
+  assert.deepEqual(r.recusa.faltando, ["cid"]);
+  assert.deepEqual(r.recusa.sobrando, []);
+});
+
+test("membro inativo ou inventado no corpo e recusado como SOBRANDO", () => {
+  const r = conferirConfiguracao(
+    ["ana", "bia"],
+    corpo({ ana: 50, bia: 30, fantasma: 20 })
+  );
+  assert.equal(r.ok, false);
+  assert.equal(r.recusa.motivo, "conjunto");
+  assert.deepEqual(r.recusa.sobrando, ["fantasma"]);
+});
+
+test("o conjunto e conferido ANTES da soma", () => {
+  // Um corpo que soma 100 mas fala de outro grupo nao pode ser aprovado por
+  // acidente. Se a ordem das duas conferencias se invertesse, este caso
+  // continuaria sendo recusado -- mas o de cima ("esqueceu o cid"), que soma
+  // 100 cravado, passaria.
+  const r = conferirConfiguracao(["ana", "bia"], corpo({ zed: 60, mel: 40 }));
+  assert.equal(r.ok, false);
+  assert.equal(r.recusa.motivo, "conjunto");
+  assert.deepEqual(r.recusa.faltando, ["ana", "bia"]);
+  assert.deepEqual(r.recusa.sobrando, ["zed", "mel"]);
+});
+
+test("o mesmo membro duas vezes e recusado", () => {
+  // Sem esta guarda o Map colapsa as duas entradas, a ultima vence, e o
+  // conjunto parece completo com `bia` nunca tendo sido mencionada.
+  const r = conferirConfiguracao(
+    ["ana", "bia"],
+    corpo([]).concat(
+      { member_id: "ana", percentage: 100 },
+      { member_id: "ana", percentage: 0 }
+    )
+  );
+  assert.equal(r.ok, false);
+  assert.equal(r.recusa.motivo, "repetido");
+});
+
+test("grupo sem membro ativo cai na recusa de soma, nao em NaN", () => {
+  const r = conferirConfiguracao([], []);
+  assert.equal(r.ok, false);
+  assert.equal(r.recusa.motivo, "soma");
+  assert.equal(r.recusa.centesimos, 0);
+});
+
+test("o que `rebalancear` produz e sempre aceito por `conferirConfiguracao`", () => {
+  // O contrato entre a tela (fase 5) e a rota (fase 3). Se ele quebrar, o
+  // slider passa a montar corpos que a rota recusa -- e o sintoma seria
+  // "salvar nao funciona", sem nada vermelho em lugar nenhum.
+  const ids = ["ana", "bia", "cid"];
+  for (const pedido of [0, 1, 3333, 5000, 6667, 9999, 10000]) {
+    const naTela = rebalancear(config({ ana: 0, bia: 0, cid: 0 }), "ana", pedido);
+    const r = conferirConfiguracao(
+      ids,
+      naTela.map((m) => ({
+        member_id: m.member_id,
+        percentage: paraPercentual(m.centesimos),
+      }))
+    );
+    assert.equal(
+      r.ok,
+      true,
+      `pedido ${pedido}: a rota recusaria o que o slider montou (${JSON.stringify(r)})`
+    );
+    const soma = r.porMembro.reduce((acc, m) => acc + dePercentual(m.percentage), 0);
+    assert.equal(soma, CENTESIMOS_TOTAIS, `pedido ${pedido}: a soma gravada nao fecha`);
+  }
+});
+
+test("o que `igualitario` produz tambem e aceito", () => {
+  for (const n of [1, 2, 3, 4, 7]) {
+    const ids = Array.from({ length: n }, (_, i) => `m${i}`);
+    const r = conferirConfiguracao(
+      ids,
+      igualitario(ids).map((m) => ({
+        member_id: m.member_id,
+        percentage: paraPercentual(m.centesimos),
+      }))
+    );
+    assert.equal(r.ok, true, `${n} membros: ${JSON.stringify(r)}`);
+  }
+});
+
+test("o que sai e o NORMALIZADO, nao o numero que entrou no corpo", () => {
+  // O caso que separa "conferiu em centesimos" de "gravou em centesimos".
+  // 70,004 + 29,996 vira 7000 + 3000 = 10000 cravado, entao a conferencia
+  // APROVA -- e os dois numeros do corpo nao cabem em `numeric(5,2)`. Devolver
+  // o que entrou deixaria o Postgres arredondar calado na hora do INSERT, e o
+  // que a conferencia aprovou nao seria o que ficou na coluna.
+  const r = conferirConfiguracao(
+    ["ana", "bia"],
+    corpo({ ana: 70.004, bia: 29.996 })
+  );
+  assert.deepEqual(aprovado(r), { ana: 70, bia: 30 });
 });

@@ -202,6 +202,44 @@ export const expenseGroupSchema = z.object({
     .default("equal"),
 });
 
+/**
+ * O corpo do `PUT /api/expense-groups/{groupId}/split-config` (HMO-245, fase 3).
+ *
+ * POR QUE `percentage` E CONFERIDO AQUI, E NAO SO POR `dePercentual`
+ * ------------------------------------------------------------------
+ * `dePercentual` (lib/divisao-configurada.ts) CLAMPA: `-50` vira 0 e `150` vira
+ * 10000. Isso e o certo para um numero lido do banco, e e exatamente o errado
+ * para um numero que chegou de fora -- um corpo com `[-50, 150]` passaria pelo
+ * clamp e sairia somando 100% cravado, gravando uma divisao que ninguem pediu.
+ * O `min(0).max(100)` daqui roda ANTES da conversao, entao o clamp nunca e o
+ * que decide o resultado.
+ *
+ * `finite()` nao e decorativo: `Infinity` e `NaN` sao `number` para o
+ * TypeScript, viram `null` no JSON de saida e `dePercentual` os devolve como 0
+ * -- a mesma classe de pedido que vira uma divisao inventada.
+ *
+ * A soma NAO e conferida aqui. Ela e uma invariante de CONJUNTO em centesimos
+ * inteiros, e um `refine` sobre os floats do corpo responderia sobre numeros
+ * diferentes dos que seriam gravados: `33.333` soma 99,999 aqui e grava
+ * `33.33`. A rota converte primeiro e confere depois, sobre o inteiro.
+ */
+export const groupSplitConfigSchema = z.object({
+  default_split_type: z.enum(["equal", "percentage", "custom", "proportional"]),
+
+  members: z
+    .array(
+      z.object({
+        member_id: z.string().uuid("member_id precisa ser um UUID"),
+        percentage: z
+          .number()
+          .finite("Percentual inválido")
+          .min(0, "Percentual não pode ser negativo")
+          .max(100, "Percentual não pode passar de 100"),
+      })
+    )
+    .min(1, "Informe ao menos um membro"),
+});
+
 // Schema para filtros de transação
 export const transactionFiltersSchema = z
   .object({
