@@ -54,46 +54,29 @@ import {
   type PernaDeTransferencia,
 } from "@/lib/transferencia";
 
-/**
- * Prefixo da chave canonica que `POST /api/card-invoices/close` grava em
- * `scheduled_transactions.notes`.
- */
-export const PREFIXO_CHAVE_FATURA = "fatura:";
-
-/**
- * A chave canonica da fatura daquele mes naquele cartao.
- *
- * E ela que torna o fechamento idempotente (clicar duas vezes nao cria duas
- * contas a pagar), que permite ao GET reconhecer a fatura ja fechada sem uma
- * coluna nova, e -- desde o conserto do HMO-149 -- que diz a rota de baixa que
- * aquela conta prevista e uma fatura, nao uma despesa.
- *
- * @param mes 'YYYY-MM-01' (primeiro dia do mes da fatura)
- */
-export function chaveFatura(mes: string, accountId: string): string {
-  return `${PREFIXO_CHAVE_FATURA}${mes}:${accountId}`;
-}
-
-// Ancorada nas duas pontas de proposito. Sem o `$`, uma nota escrita a mao
-// como "fatura:2026-09-01:xxx paguei no debito" passaria por chave canonica e
-// a descricao livre do usuario viraria regra de negocio.
-const RE_CHAVE_FATURA =
-  /^fatura:(\d{4}-\d{2}-\d{2}):([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/;
-
-/** O mes e o cartao de uma chave de fatura, ou null se `notes` nao for uma. */
-export function faturaDaChave(
-  notes: string | null | undefined,
-): { mes: string; accountId: string } | null {
-  if (!notes) return null;
-  const m = RE_CHAVE_FATURA.exec(notes);
-  if (!m) return null;
-  return { mes: m[1], accountId: m[2] };
-}
-
-/** Esta conta prevista e a fatura de um cartao? */
-export function ehFatura(notes: string | null | undefined): boolean {
-  return faturaDaChave(notes) !== null;
-}
+// A CHAVE CANONICA MUDOU DE ARQUIVO, E E RE-EXPORTADA DAQUI (HMO-285)
+// -------------------------------------------------------------------
+// `PREFIXO_CHAVE_FATURA`, `chaveFatura`, `RE_CHAVE_FATURA`, `faturaDaChave` e
+// `ehFatura` moravam neste arquivo. Foram para `lib/chave-da-fatura.ts`, que e
+// um arquivo-FOLHA (nenhum import, nem de `@/`), porque
+// `lib/telas-de-movimentacao.ts` precisa de `faturaDaChave` e NAO pode importar
+// ESTE arquivo: ele arrasta `transferencia` -> `lancamento` atras dele, e o
+// mutador daquele modulo copia para a arvore temporaria so as dependencias
+// listadas -- um mutante que nao COMPILA "morre" por motivo errado e o placar
+// mente a favor. O porque esta inteiro no cabecalho do arquivo novo.
+//
+// A re-exportacao NAO e compatibilidade para remover depois: os nove chamadores
+// de hoje pedem a chave da fatura a `@/lib/card-invoice` porque e aqui que mora
+// o resto do vocabulario da fatura (as duas pernas, a conta pagadora).
+// Obriga-los a trocar o import nao consertaria nada e espalharia por nove
+// arquivos o conhecimento de onde a chave mora.
+export {
+  PREFIXO_CHAVE_FATURA,
+  chaveFatura,
+  RE_CHAVE_FATURA,
+  faturaDaChave,
+  ehFatura,
+} from "@/lib/chave-da-fatura";
 
 /** Por que a conta escolhida para pagar a fatura nao serve. */
 export type ProblemaContaPagadora =

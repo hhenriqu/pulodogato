@@ -75,6 +75,14 @@ import {
   type IndiceDeContraparte,
   type LancamentoComConta,
 } from "@/lib/destino-do-lancamento";
+// `lib/chave-da-fatura.ts` e um arquivo-FOLHA, e e por isso que ESTE import e
+// permitido onde o de `lib/card-invoice.ts` nao seria (ver `TIPO_CARTAO` mais
+// abaixo, e o cabecalho do proprio chave-da-fatura): ele nao tem import nenhum,
+// entao copia-lo para a arvore do mutador e um arquivo, nao uma arvore.
+// Acrescentar dependencia aqui obriga a acrescentar em `DEPENDENCIAS` de
+// scripts/mutantes-telas-de-movimentacao.mjs -- sem isso TODO mutante deixa de
+// compilar e "morre", e o placar vira 100% sem medir nada.
+import { faturaDaChave } from "@/lib/chave-da-fatura";
 
 /** Qual das tres telas. Sao os mesmos tres valores do ENUM do banco. */
 export type TipoDaTela = "income" | "expense" | "transfer";
@@ -211,6 +219,26 @@ export const STATUS_QUE_SAI_DO_PREVISTO: ReadonlySet<string> = new Set([
   "cancelled",
 ]);
 
+/**
+ * O que a linha E, por tras do valor (HMO-285).
+ *
+ * CAMPO SEPARADO DE `tipo`, E NAO UM QUARTO VALOR DE `TipoDaTela`. Esticar
+ * aquela uniao teria dois efeitos, os dois ruins: `telaDoTipo("fatura")` teria
+ * de responder alguma tela (nao existe), e um valor novo chegando em
+ * `linhaPrevista` sai pela peneira do `direction` -- a linha DESAPARECERIA da
+ * tela, em silencio. `tipo` e o que filtra a tela e o que a rota valida em
+ * `?tipo=`; `natureza` e o que a linha diz de si mesma dentro da tela que ja a
+ * aceitou.
+ *
+ * `"despesa"` e o nome do caso COMUM, e nao uma afirmacao de que a linha e um
+ * gasto: ela e o valor de `natureza` tambem na tela de Receitas e na de
+ * Transferencias, porque o criterio ("nao e fatura e nao vem de regra fixa") e o
+ * mesmo nas tres. Quem imprimir isto na tela tem de escolher a palavra pela
+ * tela, nao pelo valor -- "Despesa" escrito embaixo de um salario previsto
+ * seria um rotulo errado sobre um numero certo.
+ */
+export type NaturezaDaLinha = "despesa" | "fatura" | "fixa";
+
 /** Uma linha pronta para a lista da tela. */
 export interface LinhaDaTela {
   /**
@@ -248,6 +276,26 @@ export interface LinhaDaTela {
   conta: string | null;
   /** A moeda da linha, quando nao e BRL. `null` cala o rotulo. */
   moeda: string | null;
+  /**
+   * Fatura de cartao, conta que nasceu de regra fixa, ou linha comum.
+   *
+   * A ORDEM DE AVALIACAO E FATURA PRIMEIRO, FIXA DEPOIS, e isso nao e empate
+   * arbitrario. A fatura fechada tem `recurring_rule_id` nulo hoje, mas se um
+   * dia ela passasse a nascer de uma regra os dois criterios casariam na mesma
+   * linha -- e chama-la de "fixa" tiraria dela a unica coisa que `fatura` existe
+   * para dar: o caminho de volta para o cartao e o mes. Uma conta fixa nao tem
+   * para onde apontar; uma fatura tem.
+   */
+  natureza: NaturezaDaLinha;
+  /**
+   * O cartao e o mes desta linha, so quando ela e fatura. `null` nas outras.
+   *
+   * UM OBJETO, E NAO DOIS CAMPOS SOLTOS: `accountId` sem `mes` monta um link
+   * para o mes errado da fatura certa -- um destino plausivel e errado, que e o
+   * tipo de defeito que ninguem reporta. Com o objeto, "tem cartao e nao tem
+   * mes" e um estado que o tipo nao deixa existir.
+   */
+  fatura: { accountId: string; mes: string } | null;
 }
 
 /** Uma linha de `financial_transactions`, como a consulta a devolve. */
@@ -299,8 +347,21 @@ export interface PrevistaCrua {
   account?: { name?: string | null } | { name?: string | null }[] | null;
   /** O nome do cartao, na fatura sintetizada (ela nao tem embed). */
   account_name?: string | null;
-  /** A chave canonica da fatura sintetizada, que vira a chave da lista. */
+  /**
+   * A chave canonica da fatura sintetizada, que vira a chave da lista -- e,
+   * desde a HMO-285, tambem o criterio de `natureza: "fatura"`. A fatura
+   * FECHADA e uma `scheduled_transaction` com esta mesma chave em `notes`,
+   * entao o criterio pega as duas de uma vez.
+   */
   notes?: string | null;
+  /**
+   * A regra recorrente que gerou esta ocorrencia, quando ela veio de uma
+   * (coluna `recurring_rule_id` da view, 005/027). `null` na previsao avulsa.
+   *
+   * A fatura sintetizada nao tem este campo, e esta certo: ela nao nasce de
+   * regra nenhuma -- e calculada de `card_invoice_lines` a cada leitura.
+   */
+  recurring_rule_id?: string | null;
 }
 
 /**
@@ -487,10 +548,25 @@ export function ehGastoNoCartao(crua: RealizadaCrua): boolean {
  * OUTRA perna, que esta em outra linha do banco. Ver
  * lib/destino-do-lancamento.ts -- e em particular por que ali sao dois mapas e
  * nao um.
+ *
+ * `idsDeFixa` E PARAMETRO, E NAO UMA LEITURA DE `crua` (HMO-285), porque o elo
+ * nao esta na linha: `financial_transactions` nao tem `recurring_rule_id` nem
+ * `scheduled_transaction_id` (001), so o caminho inverso
+ * (`scheduled_transactions.transaction_id`) existe. Quem sabe quais realizadas
+ * vieram de regra fixa e uma TERCEIRA consulta, na rota -- e e por isso que o
+ * conjunto chega por argumento. Vazio significa "nenhuma", nao "nao sei": ver
+ * a direcao do erro em `linhasDaTela`.
+ *
+ * `fatura` E SEMPRE `null` NO REALIZADO, e nao e esquecimento. O pagamento da
+ * fatura e uma TRANSFERENCIA de duas pernas (`pernasDoPagamentoDeFatura`), as
+ * duas `transfer`, entao nenhuma delas chega na tela de Despesas -- o mesmo
+ * paragrafo que `ehGastoNoCartao` ja escreve. Nao ha linha realizada que seja
+ * uma fatura nesta tela.
  */
 export function linhaRealizada(
   crua: RealizadaCrua,
-  indice: IndiceDeContraparte
+  indice: IndiceDeContraparte,
+  idsDeFixa: ReadonlySet<string>
 ): LinhaDaTela {
   const destino = destinoDoLancamento(crua, indice);
 
@@ -509,6 +585,8 @@ export function linhaRealizada(
     // nome de conta inventado. `null` cala a frase na tela.
     conta: destino.faltaConta ? null : destino.texto,
     moeda: moedaDaLinha(crua.currency),
+    natureza: idsDeFixa.has(crua.id) ? "fixa" : "despesa",
+    fatura: null,
   };
 }
 
@@ -561,6 +639,19 @@ export function linhaPrevista(crua: PrevistaCrua): LinhaDaTela | null {
   const nomeDaConta =
     texto(umDoEmbed(crua.account)?.name) ?? texto(crua.account_name);
 
+  // A FATURA E RECONHECIDA PELA CHAVE EM `notes`, E ISSO PEGA AS DUAS DE UMA VEZ
+  // (HMO-285): a ABERTA, que `faturasPrevistasDaJanela` sintetiza com `id: null`
+  // e a chave em `notes`, e a FECHADA, que e uma `scheduled_transaction` de
+  // verdade com a MESMA chave. Um criterio por `gravada` daria duas respostas
+  // para a mesma pergunta e a fatura fechada perderia o clique -- que e
+  // justamente o mes em que ela e a linha que a pessoa vai pagar.
+  //
+  // O criterio NAO e o tipo da conta: a assinatura cobrada no cartao e cadastrada
+  // com o `account_id` do cartao e NAO e fatura (ver o cabecalho de
+  // lib/card-invoice.ts). Pelo tipo da conta ela viraria "Fatura" e ganharia um
+  // link para um mes de fatura que nao e dela.
+  const daFatura = faturaDaChave(crua.notes);
+
   return {
     id: chave,
     gravada: idGravado !== null,
@@ -576,6 +667,18 @@ export function linhaPrevista(crua: PrevistaCrua): LinhaDaTela | null {
     categoria: texto(umDoEmbed(crua.category)?.name),
     conta: nomeDaConta,
     moeda: moedaDaLinha(crua.currency),
+    // FATURA PRIMEIRO, FIXA DEPOIS. Ver `natureza` em `LinhaDaTela`.
+    natureza: daFatura
+      ? "fatura"
+      : texto(crua.recurring_rule_id)
+        ? "fixa"
+        : "despesa",
+    // `texto()` e nao um `!!`: `recurring_rule_id: ""` -- que o PostgREST pode
+    // devolver se a coluna virar texto, e que um mock de teste produz sem
+    // esforco -- nao e um elo para regra nenhuma.
+    fatura: daFatura
+      ? { accountId: daFatura.accountId, mes: daFatura.mes }
+      : null,
   };
 }
 
@@ -598,11 +701,25 @@ export function linhaPrevista(crua: PrevistaCrua): LinhaDaTela | null {
  *
  * Invertida a 1 com a 4, o filtro de tipo teria de decidir sobre um valor ja
  * absoluto -- e nao ha como. Invertida a 2 com a 4, o mesmo.
+ *
+ * `idsDeFixa` E OBRIGATORIO DE PROPOSITO (HMO-285). Ele e o unico jeito de uma
+ * linha realizada saber que veio de regra fixa -- o elo em
+ * `financial_transactions` nao existe (001) --, e um parametro OPCIONAL teria
+ * exatamente o modo de falha que `account_type` no `select` da rota tem: a rota
+ * deixa de passar numa refatoracao, `tsc` fica verde, nenhum teste de unidade
+ * reprova, e TODA conta fixa volta a se chamar comum na tela. Obrigatorio, o
+ * compilador cobra a fiacao.
+ *
+ * VAZIO SIGNIFICA "NENHUMA", e e a direcao barata do erro: quando a consulta da
+ * rota falha o conjunto chega vazio, as linhas caem em `"despesa"` (o estado de
+ * antes desta issue) e a leitura inteira continua de pe. A mesma decisao que
+ * `faturasPrevistasDaJanela` ja toma.
  */
 export function linhasDaTela(
   realizadas: readonly RealizadaCrua[],
   previstas: readonly PrevistaCrua[],
-  tipo: TipoDaTela
+  tipo: TipoDaTela,
+  idsDeFixa: ReadonlySet<string>
 ): LinhaDaTela[] {
   // O indice vai sobre TODAS as realizadas, e nao sobre as filtradas: a
   // contraparte de uma transferencia e uma transferencia tambem, mas o indice
@@ -618,7 +735,7 @@ export function linhasDaTela(
     // O gasto no cartao esta DENTRO da fatura, e a fatura inteira ja esta no
     // lado previsto desta mesma tela. Ver armadilha 5 do cabecalho.
     if (tipo === "expense" && ehGastoNoCartao(crua)) continue;
-    linhas.push(linhaRealizada(crua, indice));
+    linhas.push(linhaRealizada(crua, indice, idsDeFixa));
   }
 
   for (const crua of previstas) {
