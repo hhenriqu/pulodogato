@@ -13,6 +13,7 @@ import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { primeiroDiaDoMes, mesCorrente } from "@/lib/services/budget";
 import { ehFatura } from "@/lib/card-invoice";
+import { NOME_DA_CATEGORIA_DE_AJUSTE } from "@/lib/ajuste-de-fatura";
 import type {
   CardInvoice,
   CardInvoiceLine,
@@ -181,10 +182,53 @@ export async function GET(request: NextRequest) {
 
     faturas.sort((a, b) => b.total - a.total);
 
+    // -----------------------------------------------------------------------
+    // A CATEGORIA RESERVADA DO AJUSTE DE SALDO (HMO-253)
+    // -----------------------------------------------------------------------
+    // O ajuste de saldo e um lancamento comum na conta do cartao -- e por isso
+    // ele ja esta em `lines` e ja somou em `total`, sem nada nesta rota mudar.
+    // O que a TELA nao tem e como distinguir aquela linha de uma compra, e a
+    // diferenca importa: um ajuste de R$ 50 no meio das compras e lido como uma
+    // compra de R$ 50 tres meses depois, e nao da para oferecer "alterar" ou
+    // "remover" uma linha que nao se sabe qual e.
+    //
+    // O reconhecimento e pela CATEGORIA, e nao por `notes`: a chave canonica
+    // mora em `notes` (ver `chaveAjuste`), mas `card_invoice_lines` nao publica
+    // essa coluna -- publica `category_id`. Acrescentar `notes` a view exigiria
+    // `CREATE OR REPLACE VIEW`, que APAGA as reloptions e levaria embora o
+    // `security_invoker = true` (medido na 035): a fatura de todo mundo, para
+    // qualquer usuario logado, por causa de um rotulo de tela.
+    //
+    // UM CAMPO NO TOPO, e nao um booleano por linha: a categoria e do USUARIO,
+    // nao da linha, e repeti-la em cada uma criaria duas respostas para a mesma
+    // pergunta dentro do mesmo JSON.
+    //
+    // AUSENTE E DIFERENTE DE `null`, e a distincao e o ponto desta parte:
+    //   ausente -> a consulta falhou. A tela nao sabe se ha ajuste.
+    //   `null`  -> foi bem, e este usuario nunca ajustou fatura nenhuma.
+    // Sem ela, uma consulta que falhou faria a tela oferecer "Ajustar saldo"
+    // sobre uma fatura que JA tem ajuste, afirmando por omissao que ela nao tem.
+    const { data: categoriaDeAjuste, error: erroCategoria } = await supabase
+      .from("transaction_categories")
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("name", NOME_DA_CATEGORIA_DE_AJUSTE)
+      .maybeSingle();
+
+    if (erroCategoria) {
+      console.error(
+        "Faturas seguiram sem a categoria do ajuste de saldo:",
+        erroCategoria
+      );
+    }
+
     return NextResponse.json({
       month: mes,
       invoices: faturas,
       total: faturas.reduce((soma, f) => soma + f.total, 0),
+      ...(erroCategoria
+        ? {}
+        : { adjustment_category_id: categoriaDeAjuste?.id ?? null }),
     });
   } catch (error) {
     console.error("Erro na API de faturas:", error);

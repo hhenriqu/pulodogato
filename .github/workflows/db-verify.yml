@@ -1448,6 +1448,35 @@ jobs:
       - name: Nenhuma view escapa da RLS
         run: $PSQL -f database/tests/view_security_invoker_test.sql
 
+      # O AJUSTE DE SALDO DA FATURA (HMO-253). A feature NAO tem migration -- o
+      # ajuste e um lancamento comum e a categoria reservada e criada pela rota
+      # com o `user_id` da 036 -- e e exatamente por isso que ela precisa de
+      # teste aqui: tudo o que a sustenta e comportamento de coisas que ja estao
+      # no banco, e nada disso esta escrito no codigo da feature.
+      #
+      #   - `card_invoice_month()` mapeando o DIA 1 para a fatura do proprio mes,
+      #     para closing_day NULL, 1, 15, 28 e 31. A feature escolhe o dia 1
+      #     apoiada nesse mapeamento e nao o reimplementa (fonte unica da regra);
+      #     se ele mudar, o ajuste de outubro passa a somar em novembro, com as
+      #     duas faturas plausiveis e nada vermelho em TypeScript;
+      #   - `(-t.amount) AS invoice_amount`, que e a unica coisa que faz um
+      #     `amount` negativo AUMENTAR a fatura. `ABS` ali faria o abatimento
+      #     aumentar o que se deve;
+      #   - as policies da 036, sem as quais o INSERT da categoria reservada
+      #     volta 42501 e NENHUM ajuste e gravado. Foi isso que aconteceu com a
+      #     transferencia (HMO-162): 500 em producao por semanas, CI verde,
+      #     porque os testes de la eram sobre funcao pura;
+      #   - `update_account_balance` no UPDATE: a rota TROCA o ajuste, e sem o
+      #     estorno de OLD.amount cada alteracao cobraria o valor de novo no
+      #     saldo do cartao -- a fatura certa e o patrimonio errado.
+      #
+      # Tem controle positivo embutido: a compra DEPOIS do fechamento cai no mes
+      # seguinte. Sem ele, a afirmacao sobre o dia 1 passaria verde com
+      # `card_invoice_month` reduzida a `date_trunc('month', $1)` -- uma funcao
+      # que ignora o fechamento acerta todo dia 1 e erra todo o resto.
+      - name: O ajuste de saldo cai na fatura certa e com o sinal certo
+        run: $PSQL -f database/tests/ajuste_de_fatura_test.sql
+
       - name: Aritmetica de recorrencia
         run: npm run test:recurrence
 

@@ -317,3 +317,9 @@ next-env.d.ts
 # arquivo. Mesmo motivo das entradas acima para estar aqui: um `.tmp-*` fora do
 # .gitignore chega a ser commitado em cima de arquivo de fonte.
 /.tmp-retorno-lancamento/
+
+# saida do `npm run test:ajuste-de-fatura` (HMO-253)
+/.tmp-ajuste-de-fatura/
+
+# saida do `npm run test:ajuste-na-tela` (HMO-253)
+/.tmp-ajuste-na-tela/
