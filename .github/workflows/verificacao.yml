@@ -3875,3 +3875,115 @@ jobs:
             diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
             exit 1
           fi
+
+      # =======================================================================
+      # A DIVISAO CONFIGURADA DO GRUPO SOMA 100% CRAVADO
+      # origem: nova (HMO-245, fase 1 -- HMO-267)
+      # =======================================================================
+      # `lib/divisao-configurada.ts` e a regra por tras do slider de porcentagem
+      # do grupo: "o total deve ser 100% entao se eu mexer em um, automaticamente
+      # o outro de ajustar". A porcentagem que ela produz e o PESO com que o
+      # fechamento do mes rateia a conta da casa, entao os defeitos dela sao
+      # defeitos de dinheiro -- e nenhum deles aparece na tela:
+      #
+      #   * uma configuracao que soma 99,99% divide 99,99% do aluguel. O
+      #     residual de um centesimo nao tem onde aparecer; ele vira saldo que
+      #     pagamento nenhum zera, semanas depois;
+      #   * com todos os membros em zero -- que e o estado de TODO grupo que
+      #     existe hoje, porque `group_members.percentage` nasce `DEFAULT 0.00`
+      #     e ninguem nunca escreveu nessa coluna -- a proporcao e `0/0`. `NaN`
+      #     nao estoura em JavaScript: atravessa a aritmetica calado e chega na
+      #     tela como "NaN%";
+      #   * membro em 0% entrando na despesa com parte zerada derruba o INSERT
+      #     INTEIRO em 23514, porque `group_members.percentage` aceita 0 e
+      #     `expense_splits.percentage` exige `> 0`.
+      #
+      # SEM `paths:`, como todo o resto deste workflow: a suite e pura, roda em
+      # dois segundos, e o dia em que o slider mudar de arquivo um filtro escrito
+      # hoje estaria errado.
+      #
+      # A suite roda o node DUAS VEZES, em America/Sao_Paulo e em UTC. O modulo
+      # nao tem data nenhuma, e e por isso que o fuso e verificado: a sandbox de
+      # quem escreve e Sao Paulo e o CI e UTC, entao um `new Date()` que aparecesse
+      # aqui amanha (uma semeadura por mes, um "vigente desde") passaria verde na
+      # maquina de quem escreveu e viraria porcentagem diferente no CI.
+      - name: O rebalanceamento da divisao do grupo fecha 100% em centesimos inteiros
+        run: npm run test:divisao-configurada
+
+      # Controle negativo. A suite afirma sobre uma SOMA e sobre uma AUSENCIA
+      # ("a config soma 10000", "o membro em 0% nao tem parte"), e as duas passam
+      # verde tambem quando deixam de medir o que deveriam.
+      #
+      # Os quatro mutantes abaixo sao os que `scripts/mutantes-divisao-configurada.mjs`
+      # mede inteiro (32 deles, todos mortos); estes quatro estao aqui porque sao
+      # os que viram dinheiro. O primeiro e o controle negativo que a issue pede
+      # por nome.
+      - name: 'A verificacao sabe falhar (divisao configurada do grupo)'
+        run: |
+          set -uo pipefail
+          REGRAS=lib/divisao-configurada.ts
+
+          # O `cmp` existe porque um `sed -i` que nao casa SAI 0: sem ele, uma
+          # ancora reescrita por outra issue faria este passo medir a arvore
+          # INTACTA e ficar verde para sempre, com o rotulo mentindo sobre o que
+          # foi provado.
+          estragar() {
+            local de="$1" para="$2" rotulo="$3"
+            cp "$REGRAS" "$REGRAS.orig267"
+            sed -i "s@$de@$para@" "$REGRAS"
+            if cmp -s "$REGRAS" "$REGRAS.orig267"; then
+              mv "$REGRAS.orig267" "$REGRAS"
+              echo "::error::o sed de '$rotulo' nao casou nada -- a ancora mudou e este controle mediria a arvore intacta"
+              exit 1
+            fi
+            if npm run test:divisao-configurada > /dev/null 2>&1; then
+              mv "$REGRAS.orig267" "$REGRAS"
+              echo "::error::Verde com a regra estragada: $rotulo"
+              exit 1
+            fi
+            mv "$REGRAS.orig267" "$REGRAS"
+            echo "  vermelho em: $rotulo"
+          }
+
+          # 1) MAIOR RESTO -> ARREDONDAMENTO. O controle que a issue nomeia.
+          #    `70/3` NAO distingue os dois (23,33 arredonda e trunca para o
+          #    mesmo 2333); o que distingue e uma sobra com parte fracionaria
+          #    >= 0,5 em mais de um membro -- 3500 centesimos entre tres da
+          #    1166,67 cada, e tres arredondamentos para cima somam 3501. A
+          #    config passa a somar 100,01%.
+          estragar 'const base = efetivos\.map((p) => Math\.floor((total \* p) / soma));' \
+                   'const base = efetivos.map((p) => Math.round((total * p) / soma));' \
+                   'o maior resto vira arredondamento -- a config soma 100,01%'
+
+          # 2) O DEGRAU DO 0/0. Sem ele, o grupo que ninguem configurou (todos em
+          #    0,00) sai com a lista inteira em `NaN`, e a tela mostra "NaN%".
+          estragar 'const soma = somaPesos > 0 ? somaPesos : pesos\.length;' \
+                   'const soma = somaPesos;' \
+                   'o degrau da divisao igual some -- todos em zero viram NaN%'
+
+          # 3) O MEMBRO EM 0% VOLTANDO PARA A DESPESA. `expense_splits.percentage`
+          #    exige `> 0`: uma linha com 0,00 derruba o INSERT inteiro, e a
+          #    mensagem do CHECK nao diz nada a quem lancou a despesa.
+          estragar '\.filter((m) => m\.peso > 0)' \
+                   '.filter((m) => m.peso >= 0)' \
+                   'membro em 0% volta a entrar na despesa com parte zerada'
+
+          # 4) A CONFERENCIA DA SOMA NA LEITURA. O que chega em `divisaoDaDespesa`
+          #    vem do banco, uma linha por membro, e a RLS `group_members_update`
+          #    deixa qualquer membro escrever a PROPRIA `percentage` pelo
+          #    PostgREST. Nao ha CHECK que veja a soma: um "eu pago 1%" feito por
+          #    fora faria a despesa fechar 96% do valor, em silencio.
+          estragar 'if (soma !== CENTESIMOS_TOTAIS) {' \
+                   'if (false) {' \
+                   'a conferencia da soma some -- a despesa fecha 96% do valor'
+
+          echo "A verificacao fica vermelha nos quatro pontos."
+
+      - name: 'A arvore voltou ao lugar depois de "A verificacao sabe falhar (divisao configurada do grupo)"'
+        run: |
+          git status --porcelain > "$RUNNER_TEMP/arvore-agora.txt"
+          if ! diff -q "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" > /dev/null; then
+            echo "::error::O controle negativo acima nao restaurou a arvore -- procure por um .orig267 esquecido."
+            diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
+            exit 1
+          fi

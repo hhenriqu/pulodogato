@@ -96,6 +96,8 @@
     "test:categorias-do-periodo": "rm -rf .tmp-categorias-do-periodo && tsc lib/categorias-do-periodo.ts --outDir .tmp-categorias-do-periodo --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-categorias-do-periodo.mjs",
     "test:painel-do-grupo": "node --test scripts/test-painel-do-grupo.mjs",
     "test:divisao-do-grupo": "rm -rf .tmp-divisao-do-grupo && tsc -p scripts/tsconfig.divisao-do-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-divisao-do-grupo lib && node --test scripts/test-divisao-do-grupo.mjs",
+    "test:divisao-configurada": "rm -rf .tmp-divisao-configurada && tsc -p scripts/tsconfig.divisao-configurada-test.json && TZ=America/Sao_Paulo node --test scripts/test-divisao-configurada.mjs && TZ=UTC node --test scripts/test-divisao-configurada.mjs",
+    "mutantes:divisao-configurada": "node scripts/mutantes-divisao-configurada.mjs",
     "test:fatura-prevista": "rm -rf .tmp-fatura-prevista && tsc -p scripts/tsconfig.fatura-prevista-test.json && node scripts/resolve-aliases.mjs .tmp-fatura-prevista lib && node --test scripts/test-fatura-prevista.mjs",
     "mutantes:fatura-prevista": "node scripts/mutantes-fatura-prevista.mjs",
     "test:agenda-do-cartao": "rm -rf .tmp-agenda-do-cartao && tsc -p scripts/tsconfig.agenda-do-cartao-test.json && node scripts/resolve-aliases.mjs .tmp-agenda-do-cartao lib && node --test scripts/test-agenda-do-cartao.mjs",

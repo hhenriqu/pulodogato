@@ -323,3 +323,12 @@ next-env.d.ts
 
 # saida do `npm run test:ajuste-na-tela` (HMO-253)
 /.tmp-ajuste-na-tela/
+
+# saida do `npm run test:divisao-configurada` (HMO-267)
+/.tmp-divisao-configurada/
+
+# saida do `npm run test:realizado-do-caixa`. Faltava desde que a suite entrou:
+# o check-artefatos-de-build.mjs ja acusava isto na main, e sem a entrada o
+# `rm -rf` do npm script apaga arquivo RASTREADO se a pasta compilada chegar a
+# ser commitada por engano.
+/.tmp-realizado-do-caixa/
