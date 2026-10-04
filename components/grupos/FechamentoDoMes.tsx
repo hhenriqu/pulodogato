@@ -49,7 +49,7 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { formatarValor } from "@/lib/dinheiro";
 import { today } from "@/lib/recurrence";
-import { mesDaData } from "@/lib/fechamento-do-grupo";
+import { mesDaData, rotuloDoMes } from "@/lib/periodo-do-grupo";
 import { ArrowRight, CalendarCheck, Clock, Wallet } from "lucide-react";
 
 interface PosicaoNoMes {
@@ -83,34 +83,6 @@ interface RespostaDoFechamento {
   viewer_user_id: string;
 }
 
-const MESES_PT = [
-  "janeiro",
-  "fevereiro",
-  "março",
-  "abril",
-  "maio",
-  "junho",
-  "julho",
-  "agosto",
-  "setembro",
-  "outubro",
-  "novembro",
-  "dezembro",
-];
-
-/**
- * `2026-10` -> `outubro de 2026`.
- *
- * Formatado a partir da STRING, e nao de `new Date("2026-10")`: a data sem dia
- * e interpretada como meia-noite UTC, que em America/Sao_Paulo e o mes
- * anterior, e o rotulo diria "setembro" sobre o fechamento de outubro.
- */
-export function rotuloDoMes(mes: string): string {
-  const [ano, m] = mes.split("-");
-  const nome = MESES_PT[Number(m) - 1];
-  return nome ? `${nome} de ${ano}` : mes;
-}
-
 const inicial = (nome?: string | null) =>
   (nome ?? "?").trim().charAt(0).toUpperCase() || "?";
 
@@ -118,11 +90,28 @@ export function FechamentoDoMes({
   groupId,
   /** Hoje em America/Sao_Paulo -- ver PainelDoGrupo para o porque. */
   hoje = today(),
+  /**
+   * O mes, quando quem manda e a TELA (HMO-248).
+   *
+   * O seletor deste cartao passou a ser o seletor da aba inteira: as listas
+   * "Previstas" e "Despesas" abaixo mostram o mesmo mes que este fechamento.
+   * Dois seletores para o mesmo recorte na mesma tela -- ou um fechamento de
+   * novembro acima de uma lista de outubro -- e pior do que um seletor so.
+   *
+   * Sem estas duas props o cartao continua funcionando sozinho, com o estado
+   * dele: nao ha chamador obrigado a controlar o mes.
+   */
+  mes: mesControlado,
+  onMesChange,
 }: {
   groupId: string;
   hoje?: string;
+  mes?: string;
+  onMesChange?: (mes: string) => void;
 }) {
-  const [mes, setMes] = useState(() => mesDaData(hoje));
+  const [mesLocal, setMesLocal] = useState(() => mesDaData(hoje));
+  const mes = mesControlado ?? mesLocal;
+  const trocarMes = onMesChange ?? setMesLocal;
   const [dados, setDados] = useState<RespostaDoFechamento | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
@@ -212,7 +201,7 @@ export function FechamentoDoMes({
               Tudo que o grupo paga no mês, previsto e realizado juntos.
             </CardDescription>
           </div>
-          <Select value={mes} onValueChange={setMes}>
+          <Select value={mes} onValueChange={trocarMes}>
             <SelectTrigger className="w-[180px]">
               <SelectValue />
             </SelectTrigger>

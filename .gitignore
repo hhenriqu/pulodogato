@@ -300,3 +300,12 @@ next-env.d.ts
 # componente real mudasse. Mesmo motivo das entradas acima para estar aqui: um
 # `.tmp-*` fora do .gitignore chega a ser commitado em cima de arquivo de fonte.
 /.tmp-cartoes-da-tela/
+
+# Build do `npm run test:periodo-do-grupo` (HMO-248, o recorte de mes da aba de
+# Despesas do grupo). Leva settlement.js e fechamento-do-grupo.js junto porque a
+# lib importa `toCents`/`toReais` e `mesDaData` de la -- o recorte usa a MESMA
+# regra de "que mes e esta data" do fechamento que fica logo acima na tela, e
+# nao uma copia dela: duas regras divergentes dariam dois totais diferentes para
+# o mesmo mes na mesma tela. Mesmo motivo das entradas acima para estar aqui: um
+# `.tmp-*` fora do .gitignore chega a ser commitado em cima de arquivo de fonte.
+/.tmp-periodo-do-grupo/

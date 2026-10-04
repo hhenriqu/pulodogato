@@ -65,6 +65,13 @@ import { cotacaoDigitada, taxaParaGravar, valorEmReais } from "@/lib/cambio";
 import { PixDoMembro, useChavesPixDoGrupo } from "@/components/grupos/PixDoMembro";
 import { PainelDoGrupo } from "@/components/grupos/PainelDoGrupo";
 import { FechamentoDoMes } from "@/components/grupos/FechamentoDoMes";
+import { today } from "@/lib/recurrence";
+import {
+  mesDaData,
+  recortarPrevistas,
+  recortarRealizado,
+  rotuloDoMes,
+} from "@/lib/periodo-do-grupo";
 import {
   acertoNaMoedaDaViagem,
   avisoDeSobra,
@@ -283,6 +290,19 @@ export default function GroupDetailPage() {
   // O mes que a RESPOSTA trouxe, nao o que a tela pediu: e ele que rotula a
   // barra, e a tela nao pede mes nenhum (a rota resolve o corrente).
   const [mesDoOrcamento, setMesDoOrcamento] = useState("");
+  /**
+   * O mes da aba de Despesas (HMO-248). UM seletor para a aba inteira.
+   *
+   * Vive aqui, e nao dentro do cartao de fechamento, porque e ele que recorta
+   * tambem as listas "Previstas" e "Despesas" abaixo. Antes nada recortava: o
+   * cartao Previstas somava TODAS as parcelas materializadas da despesa fixa --
+   * o aluguel de outubro, de novembro e de dezembro no mesmo total -- e a lista
+   * de realizadas era presa no mes de hoje.
+   *
+   * `today()` e nao `new Date()`: a Vercel roda em UTC, e das 21:00 do dia 31
+   * em diante o mes do servidor ja virou enquanto o do usuario nao.
+   */
+  const [mesDoGrupo, setMesDoGrupo] = useState(() => mesDaData(today()));
   // Sobra que nao pertence a ninguem. Zero em grupo saudavel.
   const [residual, setResidual] = useState(0);
   // Nasce em real nos dois campos e sem cotacao: e o estado correto enquanto a
@@ -830,38 +850,6 @@ export default function GroupDetailPage() {
     );
   };
 
-  const groupTransactionsByPeriod = () => {
-    const now = new Date();
-    const currentMonth = now.getMonth();
-    const currentYear = now.getFullYear();
-
-    const groups = {
-      current: transactions.filter((t) => {
-        const date = new Date(t.transaction_date);
-        return (
-          date.getMonth() === currentMonth && date.getFullYear() === currentYear
-        );
-      }),
-      previous: transactions.filter((t) => {
-        const date = new Date(t.transaction_date);
-        const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
-        const prevYear = currentMonth === 0 ? currentYear - 1 : currentYear;
-        return date.getMonth() === prevMonth && date.getFullYear() === prevYear;
-      }),
-      older: transactions.filter((t) => {
-        const date = new Date(t.transaction_date);
-        const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
-        const prevYear = currentMonth === 0 ? currentYear - 1 : currentYear;
-        return (
-          date.getFullYear() < prevYear ||
-          (date.getFullYear() === prevYear && date.getMonth() < prevMonth)
-        );
-      }),
-    };
-
-    return groups;
-  };
-
   const getUserRole = () => {
     if (!user || !group) return null;
     const member = group.members?.find((m) => m.user.id === user.id);
@@ -891,7 +879,13 @@ export default function GroupDetailPage() {
     );
   }
 
-  const transactionGroups = groupTransactionsByPeriod();
+  // As duas listas da aba de Despesas, as duas no mes do seletor (HMO-248).
+  // O recorte e por prefixo de string, nao por `new Date(...).getMonth()`: a
+  // despesa do dia 1 caia no mes ANTERIOR em todo fuso negativo, o que inclui
+  // o celular de quem usa o app e exclui o CI. Ver lib/periodo-do-grupo.ts.
+  const despesasDoMes = recortarRealizado(transactions, mesDoGrupo);
+  const previstasDoMes = recortarPrevistas(scheduled, mesDoGrupo);
+  const rotuloDoMesDoGrupo = rotuloDoMes(mesDoGrupo);
 
   // Só o admin vê e responde os pedidos de entrada pelo código (HMO-190).
   const souAdmin =
@@ -1066,12 +1060,17 @@ export default function GroupDetailPage() {
             entrar em total nenhum do mes. Este cartao e o total que junta os
             dois e diz quanto cada um paga.
           */}
-          <FechamentoDoMes groupId={groupId} />
+          <FechamentoDoMes
+            groupId={groupId}
+            mes={mesDoGrupo}
+            onMesChange={setMesDoGrupo}
+          />
 
           {/* Expenses by Period */}
           <div className="space-y-4">
             {/*
-              Previstas: o que o grupo AINDA VAI pagar (HMO-177).
+              Previstas: o que o grupo AINDA VAI pagar (HMO-177), no mes do
+              seletor (HMO-248).
 
               Fica separada das outras secoes de proposito. As demais listam
               despesa que ja aconteceu e tem divisao gravada, que alguem pode
@@ -1079,10 +1078,16 @@ export default function GroupDetailPage() {
               na baixa da conta prevista. Misturar as duas na mesma lista faria
               o total do grupo somar dinheiro que ninguem gastou.
 
-              So aparece quando existe alguma: grupo sem despesa fixa continua
-              vendo a tela de antes.
+              O RECORTE DE MES E O QUE A HMO-248 CONSERTOU. Uma despesa fixa
+              nao grava uma linha: grava uma regra e MATERIALIZA uma parcela por
+              mes do horizonte. Sem recorte, o aluguel de R$ 1.800 aparecia tres
+              vezes e a legenda dizia "Total: R$ 5.400" -- o aluguel de tres
+              meses somado num cartao que nao diz de qual mes fala.
+
+              So aparece quando existe alguma NO MES: mes sem conta prevista
+              continua vendo a tela de antes.
             */}
-            {scheduled.length > 0 && (
+            {previstasDoMes.doMes.length > 0 && (
               <Card>
                 <CardHeader
                   className="cursor-pointer hover:bg-muted/50 transition-colors"
@@ -1092,20 +1097,15 @@ export default function GroupDetailPage() {
                     <div>
                       <CardTitle className="flex items-center gap-2">
                         <Clock className="h-5 w-5" />
-                        Previstas
+                        Previstas de {rotuloDoMesDoGrupo}
                         <Badge variant="outline">
-                          {scheduled.length} a vencer
+                          {previstasDoMes.doMes.length} a vencer
                         </Badge>
                       </CardTitle>
                       <CardDescription>
                         Ainda não aconteceram • Total:{" "}
-                        {formatCurrency(
-                          scheduled.reduce((sum, s) => sum + s.amount, 0)
-                        )}{" "}
-                        • Sua parte:{" "}
-                        {formatCurrency(
-                          scheduled.reduce((sum, s) => sum + s.share_amount, 0)
-                        )}
+                        {formatCurrency(previstasDoMes.total)} • Sua parte:{" "}
+                        {formatCurrency(previstasDoMes.parte)}
                       </CardDescription>
                     </div>
                     {openSections.includes("scheduled") ? (
@@ -1117,7 +1117,7 @@ export default function GroupDetailPage() {
                 </CardHeader>
                 {openSections.includes("scheduled") && (
                   <CardContent className="space-y-3">
-                    {scheduled.map((item) => (
+                    {previstasDoMes.doMes.map((item) => (
                       <div key={item.id} className="border rounded-lg p-4">
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex items-center gap-3">
@@ -1176,7 +1176,40 @@ export default function GroupDetailPage() {
               </Card>
             )}
 
-            {/* Current Month */}
+            {/*
+              O que o recorte do mes DEIXOU DE FORA, dito em texto (HMO-248).
+
+              Recortar no mes escondia duas coisas uteis: a parcela VENCIDA de
+              um mes passado -- que e justamente a que pede acao -- e o aluguel
+              do mes que vem. Sumir da tela sem rotulo e indistinguivel de "nao
+              existe", e a pessoa que acabou de cadastrar a despesa fixa
+              concluiria que ela nao foi gravada.
+
+              Fica FORA do cartao de propósito: aparece tambem quando o mes nao
+              tem nenhuma prevista e o cartao acima nem e montado, que e
+              exatamente o caso de quem esta olhando o mes errado.
+            */}
+            {(previstasDoMes.antes.quantidade > 0 ||
+              previstasDoMes.depois.quantidade > 0) && (
+              <p className="text-xs text-muted-foreground">
+                Fora de {rotuloDoMesDoGrupo}:{" "}
+                {[
+                  previstasDoMes.antes.quantidade > 0 &&
+                    `${previstasDoMes.antes.quantidade} vencida${
+                      previstasDoMes.antes.quantidade !== 1 ? "s" : ""
+                    } antes (${formatCurrency(previstasDoMes.antes.total)})`,
+                  previstasDoMes.depois.quantidade > 0 &&
+                    `${previstasDoMes.depois.quantidade} a vencer depois (${formatCurrency(
+                      previstasDoMes.depois.total
+                    )})`,
+                ]
+                  .filter(Boolean)
+                  .join(" • ")}
+                . Troque o mês no seletor acima para ver.
+              </p>
+            )}
+
+            {/* As despesas JA REALIZADAS do mes do seletor (HMO-248). */}
             <Card>
               <CardHeader
                 className="cursor-pointer hover:bg-muted/50 transition-colors"
@@ -1186,19 +1219,19 @@ export default function GroupDetailPage() {
                   <div>
                     <CardTitle className="flex items-center gap-2">
                       <Calendar className="h-5 w-5" />
-                      Mês Atual
+                      {/* O mes no TITULO, e nao "Mes Atual": com o seletor
+                          mandando, um titulo fixo mentiria sobre a lista em
+                          todo mes que nao e o de hoje. */}
+                      Despesas de {rotuloDoMesDoGrupo}
                       <Badge variant="outline">
-                        {transactionGroups.current.length} despesa
-                        {transactionGroups.current.length !== 1 ? "s" : ""}
+                        {despesasDoMes.length} despesa
+                        {despesasDoMes.length !== 1 ? "s" : ""}
                       </Badge>
                     </CardTitle>
                     <CardDescription>
                       Total:{" "}
                       {formatCurrency(
-                        transactionGroups.current.reduce(
-                          (sum, t) => sum + t.amount,
-                          0
-                        )
+                        despesasDoMes.reduce((sum, t) => sum + t.amount, 0)
                       )}
                     </CardDescription>
                   </div>
@@ -1211,8 +1244,8 @@ export default function GroupDetailPage() {
               </CardHeader>
               {openSections.includes("current") && (
                 <CardContent className="space-y-3">
-                  {transactionGroups.current.length > 0 ? (
-                    transactionGroups.current.map((transaction) => (
+                  {despesasDoMes.length > 0 ? (
+                    despesasDoMes.map((transaction) => (
                       <div
                         key={transaction.id}
                         className="border rounded-lg p-4"
@@ -1353,102 +1386,20 @@ export default function GroupDetailPage() {
               )}
             </Card>
 
-            {/* Previous Month */}
-            {transactionGroups.previous.length > 0 && (
-              <Card>
-                <CardHeader
-                  className="cursor-pointer hover:bg-muted/50 transition-colors"
-                  onClick={() => toggleSection("previous")}
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <CardTitle className="flex items-center gap-2">
-                        <Calendar className="h-5 w-5" />
-                        Mês Anterior
-                        <Badge variant="outline">
-                          {transactionGroups.previous.length} despesa
-                          {transactionGroups.previous.length !== 1 ? "s" : ""}
-                        </Badge>
-                      </CardTitle>
-                      <CardDescription>
-                        Total:{" "}
-                        {formatCurrency(
-                          transactionGroups.previous.reduce(
-                            (sum, t) => sum + t.amount,
-                            0
-                          )
-                        )}
-                      </CardDescription>
-                    </div>
-                    {openSections.includes("previous") ? (
-                      <ChevronDown className="h-5 w-5" />
-                    ) : (
-                      <ChevronRight className="h-5 w-5" />
-                    )}
-                  </div>
-                </CardHeader>
-                {openSections.includes("previous") && (
-                  <CardContent className="space-y-3">
-                    {transactionGroups.previous.map((transaction) => (
-                      <div
-                        key={transaction.id}
-                        className="border rounded-lg p-4"
-                      >
-                        <div className="flex items-start justify-between mb-3">
-                          <div className="flex items-center gap-3">
-                            <Avatar className="h-8 w-8">
-                              <AvatarImage src={transaction.payer.avatar_url} />
-                              <AvatarFallback>
-                                {inicial(transaction.payer.full_name)}
-                              </AvatarFallback>
-                            </Avatar>
-                            <div>
-                              <h4 className="font-medium">
-                                {transaction.description}
-                              </h4>
-                              <p className="text-sm text-muted-foreground">
-                                Pago por {transaction.payer.full_name} •{" "}
-                                {new Date(
-                                  transaction.transaction_date
-                                ).toLocaleDateString("pt-BR")}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <p className="font-bold text-lg">
-                              {/* Na moeda da DESPESA. `formatCurrency` forca
-                                  real e escreveria "R$ 180,00" sobre um jantar
-                                  de US$ 180. */}
-                              {formatarValor(
-                                transaction.amount,
-                                moedaDaViagem(transaction.currency)
-                              )}
-                            </p>
-                            {moedaDaViagem(transaction.currency) !==
-                              MOEDA_PADRAO && (
-                              <p className="text-xs text-muted-foreground">
-                                {formatCurrency(
-                                  valorEmReais(
-                                    transaction.amount,
-                                    transaction.exchange_rate ?? 1
-                                  )
-                                )}{" "}
-                                na cotação do dia
-                              </p>
-                            )}
-                            {transaction.category && (
-                              <Badge variant="secondary" className="text-xs">
-                                {transaction.category.name}
-                              </Badge>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </CardContent>
-                )}
-              </Card>
-            )}
+            {/*
+              A SECAO "Mes Anterior" SAIU AQUI (HMO-248).
+
+              Ela existia porque a aba nao tinha seletor: a unica forma de ver
+              o mes passado era um segundo cartao, fixo, com o mes anterior ao
+              de HOJE. Agora o seletor do fechamento manda na aba inteira, e
+              escolher setembro mostra setembro no cartao de cima -- com o
+              fechamento e o rateio de setembro ao lado, que o cartao fixo nao
+              tinha. Mantê-la daria DOIS recortes de mes na mesma lista, e o de
+              baixo ignorando o seletor.
+
+              Nenhuma despesa ficou sem leitor: o seletor oferece todo mes que
+              tem conta (`mesesComConta`, lib/fechamento-do-grupo.ts).
+            */}
           </div>
         </TabsContent>
 
