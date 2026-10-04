@@ -33,6 +33,11 @@ import {
   type ParteDeGrupoBruta,
   type PerfilDePagador,
 } from "@/lib/parte-de-grupo-na-lista";
+import {
+  devedorNaLinha,
+  notaDoCreditoAReceber,
+  type CreditoAReceber,
+} from "@/lib/credito-de-grupo";
 import { LinhaDaParteDeGrupo } from "@/components/movimentacoes/LinhaDaParteDeGrupo";
 import {
   TAMANHO_DA_PAGINA,
@@ -86,6 +91,7 @@ import {
   Users,
   Download,
   CalendarRange,
+  HandCoins,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -289,6 +295,31 @@ function Lancamentos() {
    * te contar". Sem esta bandeira a tela escolheria sempre a primeira.
    */
   const [partesFalharam, setPartesFalharam] = useState(false);
+  /**
+   * O QUE OS OUTROS ME DEVEM NOS GRUPOS, NO PERIODO DA TELA (HMO-245 F10).
+   *
+   * `null` enquanto nao respondeu e tambem quando a chamada falhou, pelo mesmo
+   * motivo de `resumoDeGrupos`: um R$ 0,00 aqui e indistinguivel de "ninguem te
+   * deve nada" e mandaria a pessoa concluir que nao tem nada a receber quando
+   * so a consulta caiu.
+   *
+   * Estado SEPARADO de `resumoDeGrupos` de proposito -- as duas respostas vem
+   * de fontes diferentes e DIVERGEM: aquela le `group_member_balances` (so o
+   * realizado, acumulado, sem mes) e esta fecha o mes com `fecharMes` (previsto
+   * junto com realizado). Juntar as duas num estado so e convidar a tela a
+   * exibir uma com o rotulo da outra.
+   */
+  const [creditoDeGrupo, setCreditoDeGrupo] = useState<CreditoAReceber | null>(
+    null
+  );
+  /**
+   * A consulta do credito falhou neste periodo.
+   *
+   * Mesma razao de `partesFalharam`, com o sinal invertido: aqui a falha deixa
+   * o valor a receber INVISIVEL, e invisivel se le como inexistente. A bandeira
+   * e o que separa "ninguem te deve nada" de "nao foi possivel conferir".
+   */
+  const [creditoFalhou, setCreditoFalhou] = useState(false);
   /**
    * A parcela cuja exclusao esta esperando a pergunta do alcance (HMO-228).
    *
@@ -517,6 +548,50 @@ function Lancamentos() {
       );
     } catch (erro) {
       console.error("Erro ao carregar o acerto dos grupos:", erro);
+    }
+  };
+
+  /**
+   * O CREDITO DE GRUPO DO PERIODO, COMO A RECEBER (HMO-245 F10).
+   *
+   * Try/catch PROPRIO, como `carregarGrupos`: qualquer falha aqui -- grupo
+   * nenhum, rota fora do ar, 500 -- cairia no catch que trata FALTA DE REDE se
+   * ficasse dentro do `try` grande do `loadData`, e a tela reagiria repondo o
+   * catalogo do aparelho e avisando "sem conexão" com a lista ja carregada. Um
+   * recurso secundario nao pode apagar o principal.
+   *
+   * A BANDEIRA SOBE NO `catch` E NO `!ok`, E DESCE NO SUCESSO. O `!resposta.ok`
+   * nao pode sair calado como em `carregarGrupos`: lá o silencio esconde um
+   * cartão, aqui esconderia DINHEIRO A RECEBER, e a tela sem o valor se le como
+   * "ninguem te deve nada". Ver `creditoFalhou`.
+   *
+   * O periodo vai na querystring e a rota o repassa a `lerPeriodo`, o mesmo
+   * `de`/`ate` dos tres cartoes -- sem isso o credito seria de um recorte de
+   * tempo diferente do resto da tela, que e o defeito de rotulo que o painel
+   * desta casa ja teve.
+   */
+  const carregarCreditoDeGrupo = async () => {
+    try {
+      const resposta = await fetch(
+        `/api/expense-groups/my-credit?${periodoParaQuery(periodo)}`
+      );
+
+      if (!resposta.ok) {
+        setCreditoFalhou(true);
+        return;
+      }
+
+      const dados = await resposta.json();
+      if (!dados?.credito) {
+        setCreditoFalhou(true);
+        return;
+      }
+
+      setCreditoDeGrupo(dados.credito);
+      setCreditoFalhou(false);
+    } catch (erro) {
+      console.error("Erro ao carregar o credito de grupo:", erro);
+      setCreditoFalhou(true);
     }
   };
 
@@ -884,6 +959,7 @@ function Lancamentos() {
 
       await carregarGrupos();
       await carregarPartesDeGrupo(user.id);
+      await carregarCreditoDeGrupo();
 
       // Carregar contas financeiras.
       //
@@ -1015,6 +1091,19 @@ function Lancamentos() {
   // lista e FORA dos tres cartoes. Ver o cabecalho de
   // lib/parte-de-grupo-na-lista.ts.
   const notaDasPartes = notaDasPartesDeTerceiros(partesDeGrupo);
+
+  // O QUE OS OUTROS ME DEVEM, PARA O CARTAO DE RECEITAS DIZER QUE ESTA FORA
+  // DELE (HMO-245 F10).
+  //
+  // `null` quando nao ha credito E quando a consulta nao respondeu -- os dois
+  // apagam a frase, e e `creditoFalhou` quem distingue os dois na tela. A conta
+  // de `quantos`/`grupos` vive em `notaDoCreditoAReceber`, e nao num `.length`
+  // no meio do JSX: a frase concorda em numero com eles, e concordancia
+  // calculada no JSX e o que divergiu do numero no cartao de Despesas antes da
+  // HMO-275.
+  const notaDoCredito = creditoDeGrupo
+    ? notaDoCreditoAReceber(creditoDeGrupo)
+    : null;
 
   // QUANTAS LINHAS A LISTA TEM, SOMANDO AS DUAS FONTES.
   //
@@ -1218,6 +1307,50 @@ function Lancamentos() {
               {formatCurrency(income)}
             </div>
             <p className="text-xs text-muted-foreground">{notaDosTotais}</p>
+            {/*
+              O QUE OS OUTROS ME DEVEM ESTÁ FORA DESTE NÚMERO (HMO-245 F10)
+              ------------------------------------------------------------
+              Esta frase é o OPOSTO da que a HMO-275 pôs no cartão de Despesas:
+              lá ela ABRE o total ("inclui X"); aqui ela diz que existe um
+              valor FORA dele, e que estar fora é a decisão, não um esquecimento.
+
+              O crédito sai de `fecharMes`, que soma PREVISTO JUNTO COM
+              REALIZADO por desenho -- é o pedido da HMO-245. Então os R$ 106,60
+              do exemplo são crédito sobre uma conta de internet que ninguém
+              pagou ainda. Somá-los aqui publicaria receita inexistente, e o
+              saldo continuaria fechando: é a família de defeito do "a vencer"
+              que este app já pagou uma vez. Mesma régua da HMO-265 -- conta
+              quando a fatura é paga, não na compra.
+
+              O "a receber" e o "previsto" são os dois rótulos que impedem a
+              leitura errada: sem eles, um valor em verde ao lado de "Receitas"
+              se lê como dinheiro que entrou.
+            */}
+            {notaDoCredito && (
+              <p className="text-xs text-muted-foreground">
+                + {formatCurrency(notaDoCredito.total)} a receber de{" "}
+                {notaDoCredito.quantos === 1
+                  ? "1 pessoa"
+                  : `${notaDoCredito.quantos} pessoas`}{" "}
+                em{" "}
+                {notaDoCredito.grupos === 1
+                  ? "1 grupo"
+                  : `${notaDoCredito.grupos} grupos`}{" "}
+                — previsto, fora deste total
+              </p>
+            )}
+            {/*
+              O erro e o vazio são o MESMO estado para quem olha: nenhum valor
+              a receber escrito na tela. As leituras são opostas -- "ninguém te
+              deve nada" e "não foi possível conferir" --, e sem esta linha a
+              tela escolheria sempre a primeira.
+            */}
+            {creditoFalhou && (
+              <p className="text-xs text-warning">
+                Não foi possível conferir o que os grupos têm a te pagar neste
+                período.
+              </p>
+            )}
           </CardContent>
         </Card>
 
@@ -1320,6 +1453,127 @@ function Lancamentos() {
           </CardContent>
         </Card>
       </div>
+
+      {/*
+        QUEM ME DEVE, POR GRUPO E POR PESSOA (HMO-245, fase 10)
+        -------------------------------------------------------
+        Até esta fase o lado da receita NÃO EXISTIA: zero ocorrências de crédito
+        de grupo em qualquer cartão ou lista de receita. No mês da internet do
+        C6 o Hélio tem R$ 106,60 a receber da Lais e da Bia, e nada na tela
+        dele dizia isso.
+
+        A RECEBER, E NÃO RECEBIDO -- A DECISÃO QUE ESTE BLOCO CARREGA
+        O valor sai de `fecharMes`, que soma PREVISTO JUNTO COM REALIZADO por
+        desenho (é o pedido da HMO-245: para dividir o mês, "já aconteceu" e
+        "vence dia 15" saem do mesmo bolso dentro do mesmo mês). Logo o crédito
+        pode ser inteiramente sobre conta que ninguém pagou -- e a Lais pode não
+        pagar. Então ele é previsto, rotulado, e FORA do cartão de Receitas. A
+        receita realizada do grupo é a quitação, e só ela (HMO-276 e a fase 12).
+
+        Fora do grid de cima de propósito, como o cartão da HMO-175: um quarto
+        cartão ali dentro herdaria a altura e a legenda dos vizinhos, e este
+        bloco é uma LISTA de pessoas, não um número.
+
+        O rótulo de período é o mesmo `notaDosTotais` dos três cartões, e ele
+        está aqui porque o recorte de tempo é o mesmo `de`/`ate` -- um bloco de
+        dinheiro sem eixo de tempo escrito mente no rótulo.
+
+        Ele some quando não há crédito nenhum: "R$ 0,00 a receber de grupos" na
+        tela de quem não participa de grupo nenhum é ruído que parece recurso
+        quebrado. O caminho de FALHA não some -- ele está escrito no cartão de
+        Receitas acima, ao lado do número que ficaria incompleto.
+      */}
+      {creditoDeGrupo && creditoDeGrupo.linhas.length > 0 && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <div className="space-y-1">
+              <CardTitle className="text-sm font-medium">
+                A receber dos grupos
+              </CardTitle>
+              <CardDescription>
+                Previsto: o que cabe a cada um nas despesas do período e ainda
+                não foi quitado
+              </CardDescription>
+            </div>
+            <HandCoins className="h-4 w-4 shrink-0" />
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <div className="text-2xl font-bold text-success">
+                {formatCurrency(creditoDeGrupo.total)}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                A receber · {notaDosTotais}
+              </p>
+              {/*
+                O total é a SOMA DAS LINHAS abaixo, e não o meu saldo no
+                fechamento. Os dois concordam em todo mês que fecha, e é por
+                isso que escolher o errado seria barato e invisível: o critério
+                é o que a HMO-275 fixou -- o número grande tem de bater com a
+                soma das linhas que a pessoa consegue apontar na tela.
+
+                Quando sobra crédito meu sem devedor nomeado (o centavo de
+                tolerância de `simplifySettlements` descarta saldo de até R$
+                0,01), a diferença aparece escrita em vez de desaparecer.
+              */}
+              {creditoDeGrupo.sem_devedor > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  mais {formatCurrency(creditoDeGrupo.sem_devedor)} sem devedor
+                  identificado no acerto
+                </p>
+              )}
+            </div>
+
+            {/* `grid-cols-1` explícito: sem ele o trilho automático usa o
+                conteúdo mínimo como piso e a linha estoura a largura do
+                celular (HMO-168). */}
+            <div className="grid grid-cols-1 gap-2">
+              {creditoDeGrupo.linhas.map((linha) => {
+                // O nome pode simplesmente não vir, sem erro: nenhuma policy de
+                // SELECT de `profiles` olha `group_members`, então dividir a
+                // conta com alguém não dá acesso ao perfil dele. O rótulo de
+                // fallback mora em `devedorNaLinha`, com teste -- uma linha de
+                // crédito sem menção a outra pessoa se lê como receita própria.
+                const devedor = devedorNaLinha(linha);
+
+                return (
+                  <Link
+                    key={`${linha.group_id} ${linha.devedor_user_id}`}
+                    href={`/dashboard/expense-groups/${linha.group_id}`}
+                    className="flex items-center justify-between gap-3 p-3 border rounded-lg transition-colors hover:bg-muted/50"
+                  >
+                    <div className="min-w-0">
+                      <p
+                        className={`font-medium truncate ${
+                          devedor.temNome ? "" : "text-muted-foreground"
+                        }`}
+                      >
+                        {devedor.texto}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {linha.grupo}
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="font-semibold text-success">
+                        {formatCurrency(linha.valor)}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        te deve
+                      </p>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              Entra em Receitas quando a quitação for registrada, na tela do
+              grupo.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {/*
         O ACERTO COM OS GRUPOS (HMO-175)
