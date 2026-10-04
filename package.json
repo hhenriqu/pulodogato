@@ -119,7 +119,7 @@
     "mutantes:convite-sem-conta": "bash scripts/mutantes-convite-sem-conta.sh",
     "test:convite-de-grupo": "rm -rf .tmp-convite-de-grupo && tsc lib/convite-de-grupo.ts --outDir .tmp-convite-de-grupo --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-convite-de-grupo.mjs",
     "mutantes:convite-de-grupo": "node scripts/mutantes-convite-de-grupo.mjs",
-    "test:fechamento-do-grupo": "rm -rf .tmp-fechamento-do-grupo && tsc -p scripts/tsconfig.fechamento-do-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-fechamento-do-grupo lib && TZ=America/Sao_Paulo node --test scripts/test-fechamento-do-grupo.mjs",
+    "test:fechamento-do-grupo": "rm -rf .tmp-fechamento-do-grupo && tsc -p scripts/tsconfig.fechamento-do-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-fechamento-do-grupo lib && TZ=America/Sao_Paulo node --test scripts/test-fechamento-do-grupo.mjs && TZ=UTC node --test scripts/test-fechamento-do-grupo.mjs",
     "test:telas-de-movimentacao": "rm -rf .tmp-telas-de-movimentacao && tsc -p scripts/tsconfig.telas-de-movimentacao-test.json && node scripts/resolve-aliases.mjs .tmp-telas-de-movimentacao lib && TZ=America/Sao_Paulo node --test scripts/test-telas-de-movimentacao.mjs",
     "test:realizado-do-caixa": "rm -rf .tmp-realizado-do-caixa && tsc -p scripts/tsconfig.realizado-do-caixa-test.json && node scripts/resolve-aliases.mjs .tmp-realizado-do-caixa lib && TZ=America/Sao_Paulo node --test scripts/test-realizado-do-caixa.mjs",
     "mutantes:realizado-do-caixa": "node scripts/mutantes-realizado-do-caixa.mjs",

@@ -77,10 +77,12 @@
  * O QUE ESTE ARQUIVO NAO FAZ
  * --------------------------
  * Nao calcula VALOR em reais. Quanto cada um deve sai de uma aritmetica que ja
- * existe e ja esta em producao -- `ratearCentavos` de `lib/fechamento-do-grupo.ts`
+ * existe e ja esta em producao -- `ratearPorPeso` de `lib/fechamento-do-grupo.ts`
  * para o fechamento do mes, `divisaoParaGravar` de `lib/divisao-do-grupo.ts`
  * para a despesa avulsa. Duplicar a conversao reais -> centavos aqui e como as
- * duas telas passam a discordar sobre dinheiro.
+ * duas telas passam a discordar sobre dinheiro. `divisaoDoPeriodo`, no fim deste
+ * arquivo, para exatamente na fronteira: ela entrega o PESO, em centesimo de
+ * ponto, e quem o transforma em real e o fechamento.
  */
 
 /**
@@ -439,5 +441,119 @@ export function divisaoDaDespesa(membros: PesoDoMembro[]): DivisaoDaDespesa {
         member_id,
         percentage: paraPercentual(peso),
       })),
+  };
+}
+
+/** O modo de divisao que o fechamento do mes sabe aplicar. */
+export type ModoAplicado = "equal" | "percentage";
+
+/** Uma linha de `group_members` como o fechamento a le. */
+export interface MembroComPercentual {
+  user_id: string;
+  /** `group_members.percentage`, o `numeric(5,2)` cru do banco. */
+  percentage?: unknown;
+}
+
+export interface DivisaoDoPeriodo {
+  /** O `default_split_type` do grupo, como veio. */
+  configurado: string;
+  /**
+   * O modo que o fechamento REALMENTE usou. Diferente de `configurado` quando a
+   * configuracao gravada nao da para aplicar -- ver abaixo.
+   */
+  aplicado: ModoAplicado;
+  /** A soma dos percentuais GRAVADOS, em centesimos de ponto. */
+  soma_centesimos: number;
+  /**
+   * O peso de cada membro, na ordem recebida, pronto para
+   * `MembroDoFechamento.peso`. Em `equal` todos vem 1.
+   */
+  pesos: { user_id: string; peso: number }[];
+}
+
+/**
+ * A configuracao de divisao do grupo virando o PESO com que o fechamento do mes
+ * rateia a conta (HMO-245, fase 4).
+ *
+ * Esta e a unica funcao que le `expense_groups.default_split_type` junto com
+ * `group_members.percentage` e decide o que vale. Mora aqui, e nao na rota do
+ * fechamento, pelo mesmo motivo que `conferirConfiguracao` nao mora na rota do
+ * PUT: todo defeito aqui sai da rota como um 200 com o numero errado, e um
+ * handler so e verificavel por um 200.
+ *
+ * O QUE A CONFIGURACAO *NAO* ALCANCA
+ * ----------------------------------
+ * O peso daqui vale para o FECHAMENTO DO PERIODO e para despesa NOVA. Ele nao
+ * reescreve a divisao de despesa ja lancada, e muito menos parte ja aprovada:
+ * a 025 trancou repontamento de divisao justamente por isso. Mudar de 50/50
+ * para 70/30 muda o fechamento do mes; nao muda uma linha de
+ * `group_expense_splits` que o trigger ja gravou. A tela (fase 5) tem de dizer
+ * isso em uma linha, ou o primeiro uso real vai ser "mudei para 70/30 e a
+ * conta do mes passado nao mudou".
+ *
+ * SO `percentage` TEM PESO -- OS OUTROS TRES MODOS CAEM EM `equal`
+ * ---------------------------------------------------------------
+ * `default_split_type` aceita quatro valores (001_baseline:1069). `equal` e
+ * divisao igual por definicao. `custom` e por despesa, nao por grupo: nao
+ * existe numero de grupo para ler. `proportional` le `group_member_proportions`,
+ * o SEGUNDO armazem de porcentagem do schema, que a fase 7 aposenta -- ler os
+ * dois aqui e exatamente como se chega a duas telas discordando sobre dinheiro,
+ * com nenhuma das duas sabendo qual esta certa. Os tres viram `equal`, e a
+ * resposta devolve `configurado` ao lado de `aplicado` para a tela poder dizer
+ * qual e qual em vez de mostrar "igual" sobre um grupo configurado de outro
+ * jeito.
+ *
+ * E SOMA != 100% TAMBEM CAI EM `equal`, EM VEZ DE RATEAR A PROPORCAO ERRADA
+ * -------------------------------------------------------------------------
+ * `ratearPorPeso` divide pela SOMA dos pesos, entao uma configuracao gravada
+ * somando 97% nao divide 97% da conta: ela divide 100% numa proporcao que
+ * ninguem configurou (70 e 27 viram 72,2% e 27,8%). Isso e PIOR que um residual
+ * visivel, porque o total fecha e nada na tela denuncia o numero errado.
+ *
+ * Esse estado nao e hipotetico, e e por isso que a conferencia existe na
+ * LEITURA: a RLS `group_members_update` (002_rls_lockdown.sql:526) permite
+ * `user_id = auth.uid()`, policy nao compara OLD com NEW nem restringe coluna,
+ * entao qualquer membro pode escrever a PROPRIA `percentage` direto no
+ * PostgREST (a trava de linha e a migration da fase 2). E todo grupo que existe
+ * hoje tem os quatro zeros do `DEFAULT 0.00`, que somam 0.
+ *
+ * `equal` e a saida certa aqui, e nao um erro: ela e o comportamento que o
+ * fechamento tinha antes desta fase, e e legivel na tela. Um 500 deixaria o
+ * grupo sem fechamento nenhum por causa de uma coluna, e um rateio na proporcao
+ * errada mentiria. `soma_centesimos` vai na resposta para a tela poder cobrar o
+ * ajuste pelo numero.
+ */
+export function divisaoDoPeriodo(
+  modo: unknown,
+  membros: readonly MembroComPercentual[]
+): DivisaoDoPeriodo {
+  const configurado = typeof modo === "string" ? modo : "equal";
+
+  // `numeric(5,2)` chega como number pelo PostgREST, mas a conversao de string
+  // esta aqui porque a falha dela e MUDA: `dePercentual("70.00")` e 0, e quatro
+  // zeros somam 0, que cai em `equal` -- ou seja a divisao configurada
+  // simplesmente nunca valeria, sem erro, sem log e com um fechamento que
+  // parece certo. Um `Number` custa nada e tira essa classe de falha do
+  // caminho. Ver [[nome-de-campo-errado-esconde-bug-de-dinheiro]].
+  const centesimos = membros.map((m) =>
+    dePercentual(
+      typeof m.percentage === "string" ? Number(m.percentage) : m.percentage
+    )
+  );
+  const soma = centesimos.reduce((acc, c) => acc + c, 0);
+
+  const aplicado: ModoAplicado =
+    configurado === "percentage" && soma === CENTESIMOS_TOTAIS
+      ? "percentage"
+      : "equal";
+
+  return {
+    configurado,
+    aplicado,
+    soma_centesimos: soma,
+    pesos: membros.map((m, i) => ({
+      user_id: m.user_id,
+      peso: aplicado === "percentage" ? centesimos[i] : 1,
+    })),
   };
 }

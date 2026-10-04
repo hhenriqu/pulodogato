@@ -18,6 +18,7 @@ const {
   mesDaData,
   valorDoFechamento,
   ratearCentavos,
+  ratearPorPeso,
   fecharMes,
   mesesComConta,
   linhaDoRealizado,
@@ -28,8 +29,22 @@ const HELIO = "11111111-1111-1111-1111-111111111111";
 const LAIS = "22222222-2222-2222-2222-222222222222";
 const BIA = "33333333-3333-3333-3333-333333333333";
 
+/**
+ * Membros SEM peso -- a divisao igual, que e o que as 20 assercoes anteriores a
+ * fase 4 medem. Nao receber peso e o que as mantem medindo a mesma coisa.
+ */
 const membros = (...ids) =>
   ids.map((id) => ({ user_id: id, full_name: `nome ${id.slice(0, 2)}` }));
+
+/** Membros COM peso: `comPeso([HELIO, 7000], [LAIS, 3000])`. */
+const comPeso = (...pares) =>
+  pares.map(([id, peso]) => ({
+    user_id: id,
+    full_name: `nome ${id.slice(0, 2)}`,
+    peso,
+  }));
+
+const devidoDe = (f, id) => f.por_membro.find((p) => p.user_id === id).devido;
 
 // -----------------------------------------------------
 // O caso da issue, numero por numero
@@ -331,6 +346,248 @@ test("ratearCentavos distribui o resto e sempre soma o total", () => {
       assert.ok(Math.max(...partes) - Math.min(...partes) <= 1);
     }
   }
+});
+
+// -----------------------------------------------------
+// O rateio COM PESO (HMO-245, fase 4)
+// -----------------------------------------------------
+test("70/30 de R$ 2.000 fecha em R$ 2.000 cravado", () => {
+  // O caso obrigatorio da issue. Antes desta fase o fechamento rateava SEMPRE
+  // igual, e este mes sairia 666,67 / 666,67 / 666,66 para tres, ou 1.000 /
+  // 1.000 para dois -- a conta da casa dividida por uma regra que o grupo nao
+  // configurou.
+  const contas = [
+    { id: "a", valor: 1200, data: "2026-10-03", pagador_user_id: HELIO, origem: "realizado" },
+    { id: "b", valor: 500, data: "2026-10-15", pagador_user_id: LAIS, origem: "previsto" },
+    { id: "c", valor: 300, data: "2026-10-28", pagador_user_id: HELIO, origem: "previsto" },
+  ];
+
+  const f = fecharMes(contas, comPeso([HELIO, 7000], [LAIS, 3000]), "2026-10");
+
+  assert.equal(f.total, 2000);
+  assert.equal(devidoDe(f, HELIO), 1400);
+  assert.equal(devidoDe(f, LAIS), 600);
+
+  // O controle: a divisao IGUAL dos mesmos R$ 2.000 daria 1.000 para cada --
+  // o numero que esta assercao teria se o peso fosse ignorado.
+  const igual = fecharMes(contas, membros(HELIO, LAIS), "2026-10");
+  assert.equal(devidoDe(igual, HELIO), 1000);
+  assert.notEqual(devidoDe(f, HELIO), devidoDe(igual, HELIO));
+
+  // "fecha em R$ 2.000 cravado": a soma das partes E o total, e os saldos
+  // somam zero -- senao o grupo exibe um residuo que Pix nenhum zera.
+  assert.equal(
+    Number(f.por_membro.reduce((s, p) => s + p.devido, 0).toFixed(2)),
+    2000
+  );
+  assert.equal(
+    Number(f.por_membro.reduce((s, p) => s + p.saldo, 0).toFixed(2)),
+    0
+  );
+  assert.equal(f.fecha, true);
+
+  // E o acerto sai do saldo novo, nao do antigo: Lais pagou 500 e deve 600.
+  assert.deepEqual(
+    f.transferencias.map((t) => [t.from_user_id, t.to_user_id, t.amount]),
+    [[LAIS, HELIO, 100]]
+  );
+});
+
+test("o peso e RAZAO: 7/3 divide igual a 7000/3000", () => {
+  // `ratearPorPeso` divide pela SOMA dos pesos, entao a unidade nao importa --
+  // so a proporcao. E isso que faz a conferencia de soma != 100% ser um degrau
+  // de VERDADE (quem recusa e `divisaoDoPeriodo`): aqui 70 e 27 nao rateariam
+  // 97% da conta, eles rateariam 100% numa proporcao que ninguem configurou.
+  const contas = [
+    { id: "a", valor: 2000, data: "2026-10-03", pagador_user_id: HELIO, origem: "realizado" },
+  ];
+  const grosso = fecharMes(contas, comPeso([HELIO, 7], [LAIS, 3]), "2026-10");
+  const fino = fecharMes(contas, comPeso([HELIO, 7000], [LAIS, 3000]), "2026-10");
+  assert.deepEqual(
+    grosso.por_membro.map((p) => p.devido),
+    fino.por_membro.map((p) => p.devido)
+  );
+  assert.equal(devidoDe(grosso, HELIO), 1400);
+});
+
+test("membro em 0% nao aparece com parte zerada por arredondamento", () => {
+  // O degrau que vira dinheiro: `group_members.percentage` aceita 0 (uma pessoa
+  // nao divide a conta). A parte dela tem de ser ZERO -- nao um centavo de
+  // sobra, que e o que um maior-resto escrito ao contrario produz.
+  //
+  // R$ 2.000,01 e escolhido de proposito: ele TEM sobra de um centavo para
+  // distribuir. Com R$ 2.000 nao haveria sobra e a assercao passaria por
+  // vacuidade, medindo um caso em que nenhuma implementacao erra.
+  const contas = [
+    { id: "a", valor: 2000.01, data: "2026-10-03", pagador_user_id: HELIO, origem: "realizado" },
+  ];
+  const f = fecharMes(
+    contas,
+    comPeso([HELIO, 7000], [LAIS, 3000], [BIA, 0]),
+    "2026-10"
+  );
+
+  assert.equal(devidoDe(f, BIA), 0);
+  // O centavo de sobra foi para quem tem o MAIOR resto, e sobrou um so.
+  assert.equal(devidoDe(f, HELIO), 1400.01);
+  assert.equal(devidoDe(f, LAIS), 600);
+  assert.equal(
+    Number(f.por_membro.reduce((s, p) => s + p.devido, 0).toFixed(2)),
+    2000.01
+  );
+
+  // Bia CONTINUA na lista: ela nao divide a conta, mas se tiver pagado algo
+  // tem a receber. Tira-la de `por_membro` apagaria esse credito.
+  assert.equal(f.por_membro.length, 3);
+});
+
+test("quem esta em 0% e pagou a conta tem a receber tudo que pagou", () => {
+  const f = fecharMes(
+    [{ id: "a", valor: 300, data: "2026-10-05", pagador_user_id: BIA, origem: "realizado" }],
+    comPeso([HELIO, 7000], [LAIS, 3000], [BIA, 0]),
+    "2026-10"
+  );
+  const bia = f.por_membro.find((p) => p.user_id === BIA);
+  assert.equal(bia.pago, 300);
+  assert.equal(bia.devido, 0);
+  assert.equal(bia.saldo, 300);
+  // O dinheiro TEM dono: nao e `pago_por_nao_membro`, e o fechamento fecha.
+  assert.equal(f.pago_por_nao_membro, 0);
+  assert.equal(f.fecha, true);
+  assert.equal(f.transferencias.length, 2);
+});
+
+test("sobra nunca alcanca peso zero, varrendo totais e combinacoes", () => {
+  // A propriedade, e nao a guarda: com peso 0 o resto e 0, que e o MENOR
+  // possivel, e a sobra e sempre menor que o numero de restos positivos. Esta
+  // varredura e o que torna isso medido em vez de argumentado.
+  for (let total = 0; total <= 400; total++) {
+    for (const pesos of [
+      [7000, 3000, 0],
+      [0, 7000, 3000],
+      [3333, 3333, 3334, 0, 0],
+      [1, 0],
+      [0, 1, 0, 1],
+    ]) {
+      const ids = pesos.map((_, i) => `u${i}`);
+      const partes = ratearPorPeso(
+        total,
+        ids.map((user_id, i) => ({ user_id, peso: pesos[i] }))
+      );
+      const valores = ids.map((id) => partes.get(id));
+      assert.equal(
+        valores.reduce((a, b) => a + b, 0),
+        total,
+        `total ${total} com pesos ${pesos}`
+      );
+      pesos.forEach((p, i) => {
+        if (p === 0) {
+          assert.equal(
+            valores[i],
+            0,
+            `total ${total} pesos ${pesos}: peso zero levou ${valores[i]}`
+          );
+        }
+      });
+    }
+  }
+});
+
+test("todos os pesos em zero divide IGUAL, e nao NaN", () => {
+  // O estado de todo grupo que existe hoje: `group_members.percentage` nasce
+  // `DEFAULT 0.00` e ninguem nunca escreveu nela. Sem o degrau a conta e
+  // `total * 0 / 0` = NaN, que nao estoura -- atravessa calado e chega na tela
+  // como "R$ NaN".
+  const zeros = ratearPorPeso(200000, [
+    { user_id: HELIO, peso: 0 },
+    { user_id: LAIS, peso: 0 },
+    { user_id: BIA, peso: 0 },
+  ]);
+  assert.deepEqual([...zeros.values()], [66667, 66667, 66666]);
+  // E e exatamente a divisao igual, pela MESMA aritmetica -- nao um segundo
+  // caminho de codigo que possa divergir dela.
+  assert.deepEqual(
+    [...zeros.values()],
+    [...ratearCentavos(200000, [HELIO, LAIS, BIA]).values()]
+  );
+  assert.equal([...zeros.values()].every(Number.isInteger), true);
+});
+
+test("peso negativo, NaN e Infinity viram zero em vez de contaminar a divisao", () => {
+  // Nenhum dos tres vem de slider: vem de `Number("")`, `Number("abc")` e de
+  // leitura de banco. `NaN` contaminaria a soma e TODO MUNDO sairia NaN;
+  // negativo encolheria a soma e inverteria a proporcao de quem sobrou.
+  for (const ruim of [-5000, NaN, Infinity, -Infinity, "7000", null, undefined]) {
+    const partes = ratearPorPeso(100000, [
+      { user_id: HELIO, peso: 7000 },
+      { user_id: LAIS, peso: ruim },
+    ]);
+    assert.deepEqual(
+      [...partes.values()],
+      [100000, 0],
+      `peso ${String(ruim)} nao foi normalizado para zero`
+    );
+  }
+});
+
+test("o peso nao muda o que `fecharMes` faz com quem saiu do grupo", () => {
+  const ausente = "99999999-9999-9999-9999-999999999999";
+  const f = fecharMes(
+    [
+      { id: "a", valor: 300, data: "2026-10-02", pagador_user_id: ausente, origem: "realizado" },
+      { id: "b", valor: 700, data: "2026-10-15", pagador_user_id: HELIO, origem: "previsto" },
+    ],
+    comPeso([HELIO, 7000], [LAIS, 3000]),
+    "2026-10"
+  );
+  assert.equal(f.total, 1000);
+  assert.equal(devidoDe(f, HELIO), 700);
+  assert.equal(devidoDe(f, LAIS), 300);
+  assert.equal(f.pago_por_nao_membro, 300);
+  assert.equal(f.fecha, false);
+});
+
+test("ratearPorPeso aceita total negativo mantendo a soma exata", () => {
+  // O fechamento nunca produz um (`valorDoFechamento` normalizou o sinal), mas
+  // a funcao e exportada: um total negativo tratado pela metade devolveria
+  // partes positivas somando o oposto do total.
+  const partes = ratearPorPeso(-200001, [
+    { user_id: HELIO, peso: 7000 },
+    { user_id: LAIS, peso: 3000 },
+  ]);
+  assert.deepEqual([...partes.values()], [-140001, -60000]);
+  assert.equal([...partes.values()].reduce((a, b) => a + b, 0), -200001);
+});
+
+test("ratearPorPeso com lista vazia devolve mapa vazio, sem dividir por zero", () => {
+  assert.deepEqual([...ratearPorPeso(100000, []).entries()], []);
+});
+
+test("membro sem peso numa lista que TEM pesos nao divide a conta", () => {
+  // `peso ?? 0`, e nao `?? 1`. As duas sao indistinguiveis quando NINGUEM tem
+  // peso (zeros caem no degrau, uns sao uniformes: a mesma divisao igual), e e
+  // por isso que esta assercao precisa de uma lista MISTA -- sem ela o `?? 1`
+  // passaria verde nas 20 assercoes de divisao igual.
+  //
+  // Com `?? 1` Bia dividiria 1 contra os 7000 de Helio: uma parte de quase
+  // zero, com o total ainda fechando, onde a leitura certa e "Bia nao tem peso
+  // configurado, logo nao esta nesta divisao".
+  const f = fecharMes(
+    [{ id: "a", valor: 1000, data: "2026-10-05", pagador_user_id: HELIO, origem: "realizado" }],
+    [
+      { user_id: HELIO, peso: 7000 },
+      { user_id: LAIS, peso: 3000 },
+      { user_id: BIA },
+    ],
+    "2026-10"
+  );
+  assert.equal(devidoDe(f, HELIO), 700);
+  assert.equal(devidoDe(f, LAIS), 300);
+  assert.equal(devidoDe(f, BIA), 0);
+  assert.equal(
+    Number(f.por_membro.reduce((s, p) => s + p.devido, 0).toFixed(2)),
+    1000
+  );
 });
 
 test("grupo sem membro ativo nao divide por zero", () => {

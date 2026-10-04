@@ -1266,14 +1266,101 @@ jobs:
       #      propria da 666,67 x 3 = 2.000,01, e todo grupo de tres passa a
       #      exibir "as contas nao fecham por R$ 0,01".
       #
-      # Roda em TZ=America/Sao_Paulo (esta no npm script): o controle do dia 1
-      # do mes so e capaz de falhar em fuso negativo, e este job roda em UTC.
+      # Roda nos DOIS fusos (o npm script chama o node duas vezes, em
+      # America/Sao_Paulo e em UTC): o controle do dia 1 do mes so e capaz de
+      # falhar em fuso negativo, e este job roda em UTC -- sem a passada em Sao
+      # Paulo aquela assercao nao mede nada aqui.
       #
-      # Medido: 15 mutantes, 15 mortos (npm run mutantes:fechamento-do-grupo).
-      # Um 16o sobreviveu com razao -- a guarda `data.length < 7` era codigo
+      # A QUARTA assercao, da fase 4 (HMO-270): o rateio deixou de ser SEMPRE
+      # igual. 70/30 de R$ 2.000 fecha em 1.400,00 / 600,00, somando 2.000,00
+      # cravado, e membro em 0% fica com ZERO -- nao com o centavo de sobra,
+      # que e o que um maior-resto escrito ao contrario lhe daria.
+      #
+      # Medido: 21 mutantes, 21 mortos (npm run mutantes:fechamento-do-grupo).
+      # Um 22o sobreviveu com razao -- a guarda `data.length < 7` era codigo
       # morto diante da regex, e a conclusao foi apagar a guarda do modulo.
       - name: O fechamento do mes soma previsto com realizado e rateia exato
         run: npm run test:fechamento-do-grupo
+
+      # Controle negativo do rateio COM PESO (HMO-270).
+      #
+      # As assercoes da fase 4 sao sobre uma SOMA ("fecha em 2.000 cravado") e
+      # sobre um ZERO ("membro em 0% nao tem parte"), e as duas passam verde
+      # tambem quando deixam de medir o que deveriam: um modulo que ignorasse o
+      # peso continuaria somando 2.000, e um membro que recebesse zero por nao
+      # existir na lista tambem "nao tem parte". Os tres mutantes abaixo sao os
+      # que viram dinheiro; o conjunto inteiro esta em
+      # `scripts/mutantes-fechamento-do-grupo.mjs`.
+      #
+      # Nao abre job novo -- o custo de CI deste projeto e o NUMERO de jobs
+      # (cada um arredonda para cima), nao o minuto a mais num job que ja existe.
+      - name: 'A verificacao sabe falhar (o rateio por peso)'
+        run: |
+          set -uo pipefail
+          RATEIO=lib/fechamento-do-grupo.ts
+
+          # A impressao digital do arquivo ANTES do primeiro mutante. A
+          # conferencia no fim e contra ELA, e nao contra o git: o `git diff`
+          # aqui enxergaria tambem o trabalho nao commitado de quem roda este
+          # script na propria maquina, e passaria a reprovar por um motivo que
+          # nao tem nada a ver com o controle negativo.
+          ANTES=$(md5sum "$RATEIO" | cut -d' ' -f1)
+
+          # O `cmp` existe porque um `sed` que nao casa SAI 0: sem ele, uma
+          # ancora reescrita por outra issue faria este passo medir a arvore
+          # INTACTA e ficar verde para sempre, com o rotulo mentindo sobre o que
+          # foi provado.
+          estragar() {
+            local de="$1" para="$2" rotulo="$3"
+            cp "$RATEIO" "$RATEIO.orig270"
+            sed -i "s@$de@$para@" "$RATEIO"
+            if cmp -s "$RATEIO" "$RATEIO.orig270"; then
+              mv "$RATEIO.orig270" "$RATEIO"
+              echo "::error::o sed de '$rotulo' nao casou nada -- a ancora mudou e este controle mediria a arvore intacta"
+              exit 1
+            fi
+            if npm run test:fechamento-do-grupo > /dev/null 2>&1; then
+              mv "$RATEIO.orig270" "$RATEIO"
+              echo "::error::Verde com o rateio estragado: $rotulo"
+              exit 1
+            fi
+            mv "$RATEIO.orig270" "$RATEIO"
+            echo "  vermelho em: $rotulo"
+          }
+
+          # 1) O PESO E IGNORADO. O defeito que a fase 4 existe para nao ter: o
+          #    grupo configurado em 70/30 fecha 1.000/1.000 de um mes de
+          #    R$ 2.000. O total fecha, a tela de configuracao mostra 70/30 ao
+          #    lado, e nada denuncia o numero errado.
+          estragar 'const efetivos = somaPesos > 0 ? limpos : limpos\.map(() => 1);' \
+                   'const efetivos = limpos.map(() => 1);' \
+                   'o peso e ignorado -- 70/30 volta a fechar 1.000/1.000'
+
+          # 2) MAIOR RESTO -> ARREDONDAMENTO. O controle que a issue nomeia.
+          #    2.000 entre tres da 666,67 x 3 = 2.000,01, e todo grupo de tres
+          #    passa a exibir "as contas nao fecham por R$ 0,01".
+          estragar 'const base = efetivos\.map((p) => Math\.floor((absoluto \* p) / soma));' \
+                   'const base = efetivos.map((p) => Math.round((absoluto * p) / soma));' \
+                   'o maior resto vira arredondamento -- o mes fecha em 2.000,01'
+
+          # 3) O CENTAVO VAI PARA O MENOR RESTO. Num grupo 70/30/0% ele cai
+          #    justamente no membro que configurou NAO dividir a conta, e o
+          #    fechamento cobra R$ 0,01 de quem esta em zero.
+          estragar '.sort((a, b) => (b\.resto !== a\.resto ? b\.resto - a\.resto : a\.i - b\.i));' \
+                   '.sort((a, b) => (b.resto !== a.resto ? a.resto - b.resto : a.i - b.i));' \
+                   'o centavo de sobra vai para o menor resto -- cai no membro em 0%'
+
+          # A arvore tem de voltar intacta: um `.orig270` esquecido viajaria no
+          # commit, e o arquivo mutado e indistinguivel do certo a olho nu.
+          if [ -e "$RATEIO.orig270" ]; then
+            echo "::error::sobrou um $RATEIO.orig270 -- a arvore nao foi restaurada"
+            exit 1
+          fi
+          if [ "$(md5sum "$RATEIO" | cut -d' ' -f1)" != "$ANTES" ]; then
+            echo "::error::$RATEIO nao voltou ao conteudo que tinha antes do controle negativo"
+            exit 1
+          fi
+          echo "  a arvore voltou intacta"
 
       # A outra metade da HMO-245: o CAMINHO entre a rota e o cartao. O calculo
       # acima pode estar perfeito e a tela mostrar zero, porque
