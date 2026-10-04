@@ -31,6 +31,11 @@ import {
   rotaDoTipo,
   tipoDoLancamento,
   naturezasDoTipo,
+  lugaresDoTipo,
+  lugarDaNatureza,
+  naturezaDoLugar,
+  ehNaturezaFixa,
+  ehNaturezaNoCartao,
   regraDeRecorrencia,
   destinoDoLancamento,
   contaPrevista,
@@ -367,9 +372,118 @@ test("gasto no cartao lista apenas cartao de credito", () => {
     contasDoSeletor(contas, "expense", "card").map((c) => c.id),
     ["b"]
   );
-  // Pontual e fixa listam todas: pagar do saldo e legitimo.
-  assert.equal(contasDoSeletor(contas, "expense", "one_off").length, 2);
+  // A REGRA MENSAL NO CARTAO USA O MESMO SELETOR (HMO-254). Com a comparacao
+  // crua `=== "card"` aqui, `card_fixed` cairia no ramo de baixo e listaria
+  // tudo MENOS cartoes: um "Gasto Fixo no Cartao" sem nenhum cartao para
+  // escolher, com `contaObrigatoria` cobrando o campo.
+  assert.deepEqual(
+    contasDoSeletor(contas, "expense", "card_fixed").map((c) => c.id),
+    ["b"]
+  );
+  // A RECEITA FICA COMO ESTAVA: o estorno lancado como entrada no cartao e um
+  // caso real, e esta tela e a unica que o cobre.
   assert.equal(contasDoSeletor(contas, "income", "card").length, 2);
+  assert.equal(contasDoSeletor(contas, "income", "one_off").length, 2);
+});
+
+test("despesa de conta NAO lista cartao: so contas correntes (HMO-254)", () => {
+  // "so poder ser lancada em contas correntes".
+  //
+  // O recorte era de uma via: o cartao filtrava para cartoes, e todo o resto
+  // mostrava a lista INTEIRA. "Despesa Pontual" apontada para o cartao gravava
+  // uma `financial_transactions` com o `account_id` do cartao -- a linha que a
+  // view `card_invoice_lines` recolhe --, entrando na fatura sem passar por
+  // nenhuma trava do caminho do cartao. E aquele caminho ainda oferecia a
+  // checkbox "Ja paguei" (porque `ehCompraNoCartao` olhava `=== "card"`), que
+  // desmarcada e a HMO-209 inteira de volta pela porta ao lado.
+  const contas = [
+    { id: "a", name: "Corrente", account_type: "checking" },
+    { id: "b", name: "Visa", account_type: "credit_card" },
+    { id: "c", name: "Dinheiro", account_type: "cash" },
+    { id: "d", name: "PicPay", account_type: "digital" },
+    { id: "e", name: "Debito", account_type: "debit_card" },
+  ];
+
+  for (const natureza of ["one_off", "fixed"]) {
+    const ids = contasDoSeletor(contas, "expense", natureza).map((c) => c.id);
+    assert.ok(
+      !ids.includes("b"),
+      `o cartao voltou para o seletor da despesa "${natureza}"`
+    );
+    // "CONTA CORRENTE" E "NAO E CARTAO", e nao `account_type = 'checking'`:
+    // dinheiro, carteira digital e cartao de debito sao onde as despesas do dia
+    // a dia acontecem, e todas tres moram na tela "Contas". Recortar pelo
+    // literal `checking` deixaria quem paga o almoco em dinheiro sem onde
+    // lancar -- e esta assercao e a que impede esse "conserto".
+    assert.deepEqual(
+      ids,
+      ["a", "c", "d", "e"],
+      `o seletor da despesa "${natureza}" perdeu conta que nao e cartao`
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// OS DOIS EIXOS DE `natureza` (HMO-254)
+// ---------------------------------------------------------------------------
+
+test("os dois eixos compoem e decompoem sem perder nada", () => {
+  // A ida e a volta em TODAS as quatro casas da tabela. E o teste que pega a
+  // troca de um `fixa ? "card_fixed" : "card"` por `fixa ? "fixed" : "card"`,
+  // que compila e manda a assinatura do cartao para a conta corrente.
+  const casas = [
+    ["conta", false, "one_off"],
+    ["conta", true, "fixed"],
+    ["cartao", false, "card"],
+    ["cartao", true, "card_fixed"],
+  ];
+
+  for (const [lugar, fixa, natureza] of casas) {
+    assert.equal(
+      naturezaDoLugar(lugar, fixa),
+      natureza,
+      `naturezaDoLugar(${lugar}, ${fixa}) devia ser ${natureza}`
+    );
+    assert.equal(
+      lugarDaNatureza(natureza),
+      lugar,
+      `lugarDaNatureza(${natureza}) devia ser ${lugar}`
+    );
+    assert.equal(
+      ehNaturezaFixa(natureza),
+      fixa,
+      `ehNaturezaFixa(${natureza}) devia ser ${fixa}`
+    );
+    assert.equal(
+      ehNaturezaNoCartao(natureza),
+      lugar === "cartao",
+      `ehNaturezaNoCartao(${natureza}) discordou do lugar`
+    );
+  }
+});
+
+test("TODA natureza fixa e reconhecida por ehNaturezaFixa", () => {
+  // A NEGACAO EXPLICITA, e nao a lista positiva: o modo de falha desta issue e
+  // alguem adicionar um quinto valor ao enum e esquecer `ehNaturezaFixa`. Este
+  // caso varre `naturezasDoTipo("expense")` -- a lista de tudo que a tela
+  // consegue produzir -- e cobra que o nome e a resposta concordem. Um
+  // `"assinatura_fixa"` novo que nao case aqui quebra o teste.
+  for (const natureza of naturezasDoTipo("expense")) {
+    assert.equal(
+      ehNaturezaFixa(natureza),
+      natureza.includes("fixed"),
+      `ehNaturezaFixa discorda do nome de "${natureza}"`
+    );
+  }
+});
+
+test("o seletor da tela oferece LUGARES, e so a despesa tem os dois", () => {
+  assert.deepEqual(lugaresDoTipo("expense"), ["conta", "cartao"]);
+  // Receita no cartao entraria na fatura REDUZINDO o que se deve, que e um
+  // estorno e nao uma receita. Com um lugar so, a tela dela nao desenha seletor
+  // nenhum -- ver `camposDoTipo(...).natureza`.
+  assert.deepEqual(lugaresDoTipo("income"), ["conta"]);
+  assert.deepEqual(lugaresDoTipo("transfer"), ["conta"]);
 });
 
 // ---------------------------------------------------------------------------
@@ -428,8 +542,17 @@ test("a rota de cada tipo", () => {
 // era exclusivo da despesa, e salario -- o exemplo do titulo da issue -- nao
 // tinha como ser cadastrado como entrada recorrente.
 
-test("as duas telas oferecem natureza, e so a despesa oferece cartao", () => {
-  assert.deepEqual(naturezasDoTipo("expense"), ["one_off", "card", "fixed"]);
+test("as naturezas que cada tela consegue produzir", () => {
+  // `naturezasDoTipo` deixou de alimentar o seletor da despesa na HMO-254 (quem
+  // faz isso e `lugaresDoTipo` + a checkbox "Fixa"), e passou a ser "o que esta
+  // tela consegue GRAVAR" -- as quatro casas da tabela de dois eixos. A
+  // transferencia continua usando como seletor de frequencia.
+  assert.deepEqual(naturezasDoTipo("expense"), [
+    "one_off",
+    "card",
+    "fixed",
+    "card_fixed",
+  ]);
   // Receita no cartao entraria na fatura REDUZINDO o que se deve, que e um
   // estorno e nao uma receita.
   assert.deepEqual(naturezasDoTipo("income"), ["one_off", "fixed"]);
@@ -437,12 +560,180 @@ test("as duas telas oferecem natureza, e so a despesa oferece cartao", () => {
 
 test("receita fixa mostra o dia do vencimento e a duracao", () => {
   const campos = camposDoTipo("income", "fixed", false);
-  assert.equal(campos.natureza, true);
+  // O SELETOR SAIU DA RECEITA (HMO-254) e a CHECKBOX ficou. Era `natureza:
+  // true` aqui: o seletor tinha duas opcoes ("Receita Pontual" / "Receita
+  // Fixa"), e com o eixo "fixa" virando checkbox sobrou uma -- uma pergunta sem
+  // alternativa na linha mais alta do formulario.
+  //
+  // O QUE NAO PODE SUMIR E A CHECKBOX: a receita fixa e a HMO-170 inteira
+  // (salario), e ela nao tem outro caminho de cadastro. Esta assercao e a que
+  // segura isso.
+  assert.equal(campos.natureza, false);
+  assert.equal(campos.fixa, true);
   assert.equal(campos.diaDeVencimento, true);
   assert.equal(campos.duracao, true);
   // O que a receita continua NAO tendo.
   assert.equal(campos.parcelamento, false);
   assert.equal(campos.rateio, false);
+});
+
+// ---------------------------------------------------------------------------
+// O GASTO FIXO NO CARTAO -- A CASA QUE NAO EXISTIA (HMO-254)
+// ---------------------------------------------------------------------------
+
+test("gasto fixo no cartao: regra mensal, cartao obrigatorio, sem parcelamento", () => {
+  const campos = camposDoTipo("expense", "card_fixed", false);
+
+  // E FIXA: dia do vencimento e duracao na tela, e NENHUM campo de data (a
+  // HMO-247 tirou "Data" da fixa, e `ehNaturezaFixa` e quem estende aquela
+  // decisao para o cartao).
+  assert.equal(campos.diaDeVencimento, true);
+  assert.equal(campos.duracao, true);
+  assert.equal(campos.dataDeRealizacao, false);
+  assert.equal(campos.dataPrevista, false);
+  // E a confirmacao nao e pergunta numa regra: ela e previsao por definicao, e
+  // a baixa acontece mes a mes em Contas Previstas.
+  assert.equal(campos.confirmacao, false);
+
+  // E NO CARTAO: "so pode ser aplicado no cartao" vale para a assinatura tanto
+  // quanto para a compra avulsa.
+  assert.equal(campos.contaObrigatoria, true);
+  assert.equal(campos.rotuloDaConta, "Cartão *");
+
+  // "voce escolhe, fixo ou parcelado" -- as duas sao EXCLUSIVAS, e e
+  // `campos.parcelamento` quem faz a exclusao. Nao um `&&` no JSX: com o bloco
+  // fora da tela, `validarLancamento` para de cobrar os campos de parcela e
+  // `destinoDoLancamento` fica incapaz de escolher "parcelas".
+  assert.equal(campos.parcelamento, false);
+
+  // A checkbox CONTINUA na tela depois de marcada -- senao nao ha como
+  // desmarcar. `campos.fixa` e a existencia do controle, `ehNaturezaFixa` e a
+  // resposta dele; confundir os dois tranca a pessoa na escolha.
+  assert.equal(campos.fixa, true);
+});
+
+test("gasto fixo no cartao vai para `regra`, nunca para parcelas nem previsao", () => {
+  const valores = {
+    ...valoresIniciais(),
+    natureza: "card_fixed",
+    descricao: "Netflix",
+    valor: "55.90",
+    categoriaId: "cat",
+    contaId: "visa",
+    diaDeVencimento: "10",
+  };
+
+  assert.equal(destinoDoLancamento("expense", valores, false), "regra");
+
+  // A NEGACAO, que e o que a comparacao crua quebrava em silencio: com
+  // `=== "fixed"` no primeiro ramo, `card_fixed` escapava e caia em "previsao"
+  // (porque `dataDeRealizacao` e falso em toda fixa). A assinatura do cartao
+  // viraria UMA conta avulsa em Contas Previstas, o dia do vencimento digitado
+  // nao seria usado por nada, e a regra mensal nunca existiria.
+  assert.notEqual(destinoDoLancamento("expense", valores, false), "previsao");
+
+  // E `parcelado` esquecido no estado nao cria serie: o ramo de parcelas exige
+  // `campos.parcelamento`, que e falso aqui. Este caso e a trava, nao a linha
+  // do `onChange` da checkbox na tela.
+  assert.equal(
+    destinoDoLancamento("expense", { ...valores, parcelado: true }, false),
+    "regra"
+  );
+});
+
+test("nenhuma natureza fixa sai de destinoDoLancamento como lancamento", () => {
+  // A varredura, em vez de um caso por natureza: o defeito que esta issue
+  // introduziria e "mais uma casa no enum que ninguem roteou", e so a varredura
+  // pega a proxima.
+  for (const natureza of naturezasDoTipo("expense")) {
+    if (!ehNaturezaFixa(natureza)) continue;
+    const destino = destinoDoLancamento(
+      "expense",
+      {
+        ...valoresIniciais(),
+        natureza,
+        descricao: "x",
+        valor: "10",
+        categoriaId: "cat",
+        contaId: "conta",
+        diaDeVencimento: "5",
+      },
+      false
+    );
+    assert.equal(
+      destino,
+      "regra",
+      `a natureza fixa "${natureza}" saiu como "${destino}" em vez de regra`
+    );
+  }
+});
+
+test("a despesa de conta nao fixa continua indo para transacao", () => {
+  // O CONTROLE NEGATIVO dos dois casos acima: sem ele, um `return "regra"` no
+  // topo de `destinoDoLancamento` passaria os dois e reprovaria nada -- toda
+  // despesa viraria regra mensal.
+  const valores = {
+    ...valoresIniciais(),
+    natureza: "one_off",
+    descricao: "Mercado",
+    valor: "80",
+    categoriaId: "cat",
+    contaId: "corrente",
+  };
+  assert.equal(destinoDoLancamento("expense", valores, false), "transacao");
+  assert.equal(
+    destinoDoLancamento("expense", { ...valores, natureza: "card" }, false),
+    "transacao"
+  );
+});
+
+test("a regra do gasto fixo no cartao leva o cartao como account_id", () => {
+  // Sem esta linha a regra nasceria sem conta e a ocorrencia mensal cairia em
+  // Contas a Pagar como uma conta qualquer -- em vez de ser recolhida pela tela
+  // do cartao (`scheduled_pending`, em GET /api/card-invoices), que e quem
+  // mostra a assinatura junto da fatura dela.
+  const regra = regraDeRecorrencia(
+    "expense",
+    {
+      ...valoresIniciais(),
+      natureza: "card_fixed",
+      descricao: "Netflix",
+      valor: "55.90",
+      categoriaId: "cat",
+      contaId: "visa",
+      diaDeVencimento: "10",
+    },
+    "2026-10-04"
+  );
+
+  assert.equal(regra.account_id, "visa");
+  assert.equal(regra.due_day, 10);
+  assert.equal(regra.frequency, "monthly");
+  // POSITIVO: `recurring_rules.amount` tem CHECK (amount > 0).
+  assert.equal(regra.amount, 55.9);
+  assert.equal(regra.transaction_type, "expense");
+});
+
+test("o gasto fixo no cartao cobra o cartao com a frase da REGRA", () => {
+  // "Em qual cartao FOI o gasto" pergunta pelo passado, e numa regra mensal
+  // nada foi ainda: a pessoa procuraria na tela por uma compra que ela nao esta
+  // lancando.
+  const base = {
+    ...valoresIniciais(),
+    descricao: "Netflix",
+    valor: "55.90",
+    categoriaId: "cat",
+    contaId: "",
+    diaDeVencimento: "10",
+  };
+
+  const fixa = validarLancamento("expense", { ...base, natureza: "card_fixed" }, {});
+  assert.equal(fixa.ok, false);
+  assert.match(fixa.mensagem, /cobrada todo mês/);
+
+  const compra = validarLancamento("expense", { ...base, natureza: "card" }, {});
+  assert.equal(compra.ok, false);
+  assert.match(compra.mensagem, /foi o gasto/);
 });
 
 test("receita pontual nao mostra duracao nem vencimento", () => {

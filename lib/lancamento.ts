@@ -31,10 +31,11 @@ export type TipoLancamento = "income" | "expense";
  * Natureza do lancamento. Nao e coluna nova no banco: cada valor ROTEIA para um
  * modelo que ja existe.
  *
- *   one_off -> `financial_transactions`, como sempre foi
- *   card    -> a mesma transacao, mas numa conta `credit_card`, que e o que faz
- *              a compra entrar na fatura (migration 006)
- *   fixed   -> `recurring_rules` (005), que gera a agenda mes a mes
+ *   one_off    -> `financial_transactions`, como sempre foi
+ *   card       -> a mesma transacao, mas numa conta `credit_card`, que e o que
+ *                 faz a compra entrar na fatura (migration 006)
+ *   fixed      -> `recurring_rules` (005), que gera a agenda mes a mes
+ *   card_fixed -> a MESMA `recurring_rules`, com o `account_id` de um cartao
  *
  * Guardar um quarto rotulo solto em `financial_transactions` criaria uma
  * segunda fonte de verdade para "e fixa?", competindo com a regra.
@@ -42,8 +43,101 @@ export type TipoLancamento = "income" | "expense";
  * O nome fala de despesa por heranca: ate a HMO-170 so a despesa tinha este
  * seletor. Hoje a RECEITA tambem tem -- salario e o caso que motivou a issue --
  * e quem diz quais valores cabem em cada tela e `naturezasDoTipo`.
+ *
+ * ---------------------------------------------------------------------------
+ * ESTE ENUM SAO DUAS PERGUNTAS, E DESDE A HMO-254 A TELA FAZ AS DUAS SEPARADAS
+ * ---------------------------------------------------------------------------
+ * "Despesas pontuais devem se chamar apenas despesa, e so poder ser lancada em
+ * contas correntes e ter um checkbox de Fixa. (...) Gastos no cartao, so pode
+ * ser aplicado no cartao e tem o check box ao lado do parcelamento, voce
+ * escolhe, fixo ou parcelado ou caso nenhum nem outro ambos desmarcados ai e
+ * gasto normal."
+ *
+ * Sao dois eixos independentes, e o seletor de tres itens os misturava:
+ *
+ *               | nao fixa   | fixa
+ *   ------------+------------+-------------
+ *   na conta    | one_off    | fixed
+ *   no cartao   | card       | card_fixed
+ *
+ * `card_fixed` e a casa que NAO EXISTIA. Escolher "Despesa Fixa" no seletor
+ * antigo abria a lista de contas inteira -- cartao incluso --, entao a
+ * assinatura cobrada no cartao era cadastravel; mas a tela chamava aquilo de
+ * "Despesa Fixa" e `camposDoTipo` respondia `ehNoCartao: false`, ou seja o
+ * rotulo dizia "Conta/Cartao" e nada obrigava a escolher o cartao. A coluna
+ * `recurring_rules.account_id` sempre aceitou um cartao; o que faltava era a
+ * tela saber que aquele caso existe.
+ *
+ * O EIXO NAO VIROU DOIS CAMPOS NO ESTADO de proposito. `ValoresDeLancamento` e
+ * um objeto so que atravessa as tres telas (despesa, receita, transferencia), e
+ * `natureza` ja e lido por `lib/transferencia.ts` e pela fila offline. Um
+ * segundo campo `fixa: boolean` ao lado dele seriam duas fontes para a mesma
+ * pergunta, e a divergencia entre elas e invisivel: `natureza: "card"` com
+ * `fixa: true` nao da erro em lugar nenhum -- grava a compra e perde a regra.
+ * Aqui a composicao e uma funcao (`naturezaDoLugar`) e a decomposicao sao duas
+ * (`lugarDaNatureza`, `ehNaturezaFixa`), e o estado continua com um campo.
+ *
+ * NAO COMPARE `natureza === "fixed"` EM LUGAR NENHUM. Use `ehNaturezaFixa`. A
+ * comparacao crua compila, responde `false` para `card_fixed` e manda a
+ * assinatura do cartao para `financial_transactions` como uma compra avulsa --
+ * sem erro, sem log, e a regra mensal que a pessoa pediu nunca existe. Os
+ * `Record<NaturezaDespesa, ...>` da tela pegam a omissao no `tsc`; uma
+ * comparacao com string nao.
  */
-export type NaturezaDespesa = "one_off" | "card" | "fixed";
+export type NaturezaDespesa = "one_off" | "card" | "fixed" | "card_fixed";
+
+/**
+ * O eixo "onde o dinheiro sai", que e o que o seletor da tela pergunta desde a
+ * HMO-254. Duas opcoes, e nao tres: "fixa" saiu daqui e virou checkbox.
+ */
+export type LugarDoLancamento = "conta" | "cartao";
+
+/**
+ * Esta natureza vira uma REGRA (`recurring_rules`) em vez de um lancamento?
+ *
+ * A UNICA leitura autorizada do eixo "fixa". Ver o aviso em `NaturezaDespesa`.
+ */
+export function ehNaturezaFixa(natureza: NaturezaDespesa): boolean {
+  return natureza === "fixed" || natureza === "card_fixed";
+}
+
+/**
+ * Esta natureza aponta para um cartao de credito?
+ *
+ * Vale para a compra (`card`) e para a regra mensal cobrada no cartao
+ * (`card_fixed`): as duas precisam que o seletor de conta liste SO cartoes e
+ * que a escolha seja obrigatoria. O que as separa nao e isto, e
+ * `ehCompraNoCartao` em `camposDoTipo` -- a compra ja aconteceu, a regra nunca
+ * acontece.
+ */
+export function ehNaturezaNoCartao(natureza: NaturezaDespesa): boolean {
+  return natureza === "card" || natureza === "card_fixed";
+}
+
+/** A decomposicao do eixo "onde". Par de `naturezaDoLugar`. */
+export function lugarDaNatureza(natureza: NaturezaDespesa): LugarDoLancamento {
+  return ehNaturezaNoCartao(natureza) ? "cartao" : "conta";
+}
+
+/**
+ * A composicao: o seletor diz o lugar, a checkbox diz se e fixa, e as duas
+ * respostas viram UM valor de `natureza`.
+ *
+ * Existe como funcao pura, e nao como ternario no `onChange` da tela, porque os
+ * dois controles escrevem no MESMO campo: a checkbox precisa do lugar atual
+ * para saber se produz `fixed` ou `card_fixed`, e o seletor precisa do estado
+ * atual da checkbox para nao desligar a regra ao trocar de conta para cartao.
+ * Escrito duas vezes no JSX, um dos dois esquece o outro eixo -- e o que se
+ * perde e sempre o mesmo: marcar "Fixa" e depois trocar para cartao gravaria a
+ * compra, com a checkbox ainda marcada na tela.
+ */
+export function naturezaDoLugar(
+  lugar: LugarDoLancamento,
+  fixa: boolean
+): NaturezaDespesa {
+  if (lugar === "cartao") return fixa ? "card_fixed" : "card";
+  return fixa ? "fixed" : "one_off";
+}
 
 /**
  * Por quanto tempo a regra se repete (HMO-170).
@@ -112,8 +206,25 @@ export type TipoDeRegra = TipoLancamento | "transfer";
  */
 export function naturezasDoTipo(tipo: TipoDeRegra): NaturezaDespesa[] {
   return tipo === "expense"
-    ? ["one_off", "card", "fixed"]
+    ? ["one_off", "card", "fixed", "card_fixed"]
     : ["one_off", "fixed"];
+}
+
+/**
+ * Quais LUGARES o seletor desta tela oferece (HMO-254).
+ *
+ * E esta a funcao que alimenta o seletor da despesa hoje, e nao
+ * `naturezasDoTipo` -- que passou a ser "quais naturezas esta tela consegue
+ * PRODUZIR", usada pela transferencia (que mantem o seletor de frequencia de
+ * tres... de dois itens) e pelos testes de cobertura dos rotulos.
+ *
+ * Receita tem um lugar so, e por isso a tela dela nao mostra seletor nenhum
+ * desde a HMO-254: um `<Select>` com uma opcao e uma pergunta sem alternativa.
+ * O eixo "fixa" dela continua na tela, como checkbox -- salario e o caso que
+ * motivou a HMO-170 e ele nao pode sumir.
+ */
+export function lugaresDoTipo(tipo: TipoDeRegra): LugarDoLancamento[] {
+  return tipo === "expense" ? ["conta", "cartao"] : ["conta"];
 }
 
 export interface CategoriaDeLancamento {
@@ -136,8 +247,27 @@ export interface ContaDeLancamento {
 
 /** Quais blocos do formulario existem para este tipo e esta natureza. */
 export interface CamposDoTipo {
-  /** O seletor pontual / cartao / fixa. As duas telas tem (HMO-170). */
+  /**
+   * O seletor "Despesa" x "Gasto no Cartao" (HMO-254).
+   *
+   * So a DESPESA tem: `lugaresDoTipo("income")` devolve um lugar so, e um
+   * seletor de uma opcao e enfeite que ocupa a linha mais alta do formulario.
+   * Era `true` nas duas telas quando ele tinha tres itens (HMO-170).
+   */
   natureza: boolean;
+  /**
+   * A checkbox "Fixa" -- o eixo que saiu do seletor (HMO-254).
+   *
+   * Existe nas DUAS telas, porque a receita fixa (salario) e o caso da HMO-170
+   * e ele nao tem outro caminho. Nao existe EDITANDO, pela razao de sempre: o
+   * que esta gravado e um lancamento, e uma regra se edita em Contas Previstas
+   * (`lib/recorrencia-edicao.ts`).
+   */
+  fixa: boolean;
+  /** "Fixa" x "Fixa (todo mes)" -- o rotulo muda com o lugar. */
+  rotuloDaFixa: string;
+  /** A frase sob a checkbox "Fixa": ela diz o que marcar vai GRAVAR. */
+  ajudaDaFixa: string;
   /** O dia do vencimento da regra mensal. So natureza fixa. */
   diaDeVencimento: boolean;
   /** "Todos os meses" x "por N meses". So natureza fixa (HMO-170). */
@@ -206,7 +336,11 @@ export function camposDoTipo(
   // Uma regra de repeticao so se CRIA aqui; editar uma que existe e outra
   // tela, porque a pergunta "muda so este mes ou os proximos tambem?" nao tem
   // resposta sobre um lancamento ja gravado. Ver `lib/recorrencia-edicao.ts`.
-  const ehFixa = natureza === "fixed" && !editando;
+  // `ehNaturezaFixa` e nao `natureza === "fixed"` (HMO-254): a regra cobrada no
+  // cartao e fixa do mesmo jeito, e a comparacao crua a deixaria com campo de
+  // data, checkbox de "ja paguei" e destino `transacao` -- a assinatura viraria
+  // uma compra avulsa. Ver o aviso no tipo `NaturezaDespesa`.
+  const ehFixa = ehNaturezaFixa(natureza) && !editando;
 
   // -------------------------------------------------------------------------
   // UM GASTO NO CARTAO JA ACONTECEU (HMO-209)
@@ -238,7 +372,7 @@ export function camposDoTipo(
   // nao: o que esta gravado ja mexeu no saldo. E no cartao nao ha: a compra
   // aconteceu.
   const confirmacao =
-    !ehFixa && !editando && natureza !== "fixed" && !ehCompraNoCartao;
+    !ehFixa && !editando && !ehNaturezaFixa(natureza) && !ehCompraNoCartao;
   // Quando a checkbox nao existe, `confirmado` nao pode mandar na tela. No
   // cartao essa leitura e a TRAVA da HMO-209: `destinoDoLancamento` decide pelo
   // `dataDeRealizacao` que sai daqui, entao o estado desmarcado herdado da
@@ -271,8 +405,17 @@ export function camposDoTipo(
   // um objeto so, e uma data digitada em "pontual" sobrevive a troca para
   // "fixa" -- ela viraria um `start_date` no futuro, atrasando a primeira
   // cobranca por meses, com o campo invisivel e nenhum erro na tela.
+  // O eixo "fixa" como PERGUNTA. Fora da edicao ele e sempre uma pergunta --
+  // inclusive no cartao, que e a metade nova da HMO-254 ("voce escolhe, fixo ou
+  // parcelado"). `ehFixa` acima e a RESPOSTA; esta e a existencia da checkbox, e
+  // confundir as duas tiraria a checkbox da tela assim que ela fosse marcada,
+  // deixando a pessoa sem como desmarcar.
+  const fixa = !editando;
+
   const comum = {
-    natureza: true,
+    // So a despesa escolhe o lugar (HMO-254). Ver `lugaresDoTipo`.
+    natureza: tipo === "expense",
+    fixa,
     diaDeVencimento: ehFixa,
     duracao: ehFixa,
     confirmacao,
@@ -291,6 +434,13 @@ export function camposDoTipo(
       rateio: false,
       contaObrigatoria: false,
       rotuloDaConta: "Conta de entrada",
+      rotuloDaFixa: "Receita fixa (todo mês)",
+      ajudaDaFixa:
+        "Salário, aluguel recebido, mensalidade: vira uma regra mensal em Contas Previstas, que passa a prever essa entrada todo mês.",
+      // O seletor nao existe mais na receita (`natureza: tipo === "expense"`),
+      // mas o rotulo FICA preenchido: um `""` aqui seria um campo que a tela
+      // ainda pode ler, e o dia em que a receita voltar a ter seletor ele
+      // apareceria sem titulo. Ver `rotuloDaData` logo abaixo, pela mesma razao.
       rotuloDaNatureza: "Tipo de Receita *",
       // SEM UM RAMO PARA FIXA (HMO-247): o campo nao existe mais ali. Um
       // `ehFixa ? "Data"` sobrevivendo aqui seria rotulo de campo inexistente --
@@ -300,7 +450,10 @@ export function camposDoTipo(
     };
   }
 
-  const ehNoCartao = natureza === "card";
+  // Inclui `card_fixed` (HMO-254): o seletor de conta e a obrigatoriedade dele
+  // sao os mesmos da compra -- "so pode ser aplicado no cartao" vale para a
+  // assinatura tanto quanto para a compra avulsa.
+  const ehNoCartao = ehNaturezaNoCartao(natureza);
 
   return {
     ...comum,
@@ -319,10 +472,29 @@ export function camposDoTipo(
     // ja existe: despesa fixa com duracao "por N meses" (`max_occurrences`, 005)
     // gera as N ocorrencias em Contas a Pagar, cada uma baixada no mes dela. E o
     // que um financiamento ou um boleto em 10x e de verdade.
-    parcelamento: !editando && ehNoCartao,
+    // `natureza === "card"` E NAO `ehNoCartao` (HMO-254)
+    //
+    // "voce escolhe, fixo ou parcelado" -- as duas sao exclusivas, e e esta
+    // linha que faz a exclusao. Marcar "Fixa" no cartao produz `card_fixed`, o
+    // bloco de parcelamento sai da tela, e `validarLancamento` para de cobrar os
+    // campos de parcela (ele so os cobra quando `campos.parcelamento`).
+    //
+    // A exclusao TEM de morar aqui e nao so no `onChange` da checkbox: o estado
+    // do formulario e um objeto so, e `parcelado: true` sobrevive a marcacao da
+    // checkbox. Com o bloco fora da tela e `campos.parcelamento` falso,
+    // `destinoDoLancamento` nao consegue escolher "parcelas" -- o ramo dele exige
+    // as duas coisas. Um `parcelado` esquecido no estado nao cria serie nenhuma.
+    parcelamento: !editando && natureza === "card",
     rateio: true,
     contaObrigatoria: ehNoCartao,
-    rotuloDaConta: ehNoCartao ? "Cartão *" : "Conta/Cartão",
+    // "Conta/Cartao" SAIU (HMO-254): o cartao nao esta mais nesta lista. Ver
+    // `contasDoSeletor` -- o rotulo e a lista tem de dizer a mesma coisa, senao
+    // o titulo oferece um cartao que o seletor nao tem.
+    rotuloDaConta: ehNoCartao ? "Cartão *" : "Conta",
+    rotuloDaFixa: ehNoCartao ? "Fixa (todo mês)" : "Fixa",
+    ajudaDaFixa: ehNoCartao
+      ? "Assinatura ou mensalidade cobrada no cartão todo mês: vira uma regra mensal, e não uma compra única."
+      : "Vira uma regra mensal em Contas Previstas, que passa a cobrar você todo mês.",
     rotuloDaNatureza: "Tipo de Despesa *",
     // "Data do pagamento" no cartao seria a pergunta errada: o que esta sendo
     // anotado e a COMPRA, e o rotulo e a unica coisa na tela que diz isso. A
@@ -356,16 +528,54 @@ export function categoriasDoTipo<T extends { is_expense: boolean }>(
  * "Gasto no cartao" so lista cartao de credito. E o `account_type` que faz a
  * compra entrar na fatura -- apontar para a conta corrente gravaria um gasto
  * que sai do saldo hoje, que e o oposto do que a pessoa pediu.
+ *
+ * ---------------------------------------------------------------------------
+ * E A DESPESA NAO LISTA CARTAO NENHUM (HMO-254)
+ * ---------------------------------------------------------------------------
+ * "so poder ser lancada em contas correntes". O recorte era de UMA via: o
+ * cartao filtrava a lista para cartoes, e todo o resto mostrava a lista inteira
+ * -- cartoes inclusos. Escolher "Despesa Pontual" e apontar para o cartao
+ * gravava uma `financial_transactions` com o `account_id` do cartao, que e
+ * exatamente a linha que a view `card_invoice_lines` (006/035) recolhe: a
+ * despesa entrava na fatura do mes, sem ter passado por nenhuma das travas do
+ * caminho do cartao. O rotulo "Conta/Cartao" convidava para isso.
+ *
+ * O que se perdia nao era so arrumacao. O caminho "Despesa Pontual + cartao"
+ * oferece a checkbox "Ja paguei" (`ehCompraNoCartao` e falso ali, porque ele
+ * olhava `natureza === "card"`), e desmarcada ela manda a compra para
+ * `scheduled_transactions` com o `account_id` do cartao -- o defeito da HMO-209
+ * inteiro, pela porta ao lado da que foi fechada. Com o cartao fora desta lista
+ * a porta nao existe mais: nao ha como apontar uma despesa de conta para um
+ * cartao.
+ *
+ * "CONTA CORRENTE" AQUI E "NAO E CARTAO", E NAO `account_type = 'checking'`.
+ * Dinheiro, carteira digital e cartao de debito sao onde as despesas do dia a
+ * dia acontecem, e todos tres moram na tela "Contas" (`escopoDoTipo`, em
+ * lib/contas.ts). Recortar pelo literal `checking` tiraria do seletor as contas
+ * que mais recebem lancamento, e a pessoa nao teria onde lancar o almoco pago
+ * em dinheiro. O recorte e o mesmo que `contasDeOrigem` (lib/transferencia.ts)
+ * ja usa, pelo mesmo motivo e com o mesmo literal.
+ *
+ * A RECEITA FICA COMO ESTAVA, de proposito: a HMO-254 fala de despesa, e um
+ * estorno lancado como entrada no cartao e um caso real que esta tela e a unica
+ * a cobrir hoje. Tirar o cartao daqui tambem apagaria aquele caminho sem que
+ * nenhuma issue tenha pedido -- e sem aviso na tela de quem usa.
  */
 export function contasDoSeletor<T extends { account_type?: string | null }>(
   contas: T[],
   tipo: TipoLancamento,
   natureza: NaturezaDespesa
 ): T[] {
-  if (tipo === "expense" && natureza === "card") {
+  if (tipo !== "expense") return contas;
+  // `ehNaturezaNoCartao` e nao `=== "card"`: a regra mensal cobrada no cartao
+  // (`card_fixed`) precisa do MESMO seletor de cartoes. Com a comparacao crua
+  // ela cairia no ramo de baixo e listaria tudo MENOS cartoes -- um "Gasto Fixo
+  // no Cartao" sem nenhum cartao para escolher, e `contaObrigatoria` cobrando um
+  // campo que a tela nao consegue preencher.
+  if (ehNaturezaNoCartao(natureza)) {
     return contas.filter((c) => c.account_type === "credit_card");
   }
-  return contas;
+  return contas.filter((c) => c.account_type !== "credit_card");
 }
 
 /**
@@ -431,7 +641,13 @@ export interface ValoresDeLancamento {
   confirmado: boolean;
   notas: string;
 
-  /** Pontual, no cartao ou fixa. As duas telas usam (HMO-170). */
+  /**
+   * Onde o lancamento acontece E se ele e fixo, num campo so. As duas telas
+   * usam (HMO-170).
+   *
+   * NAO LEIA ESTE CAMPO COM `===` nos dois eixos: use `ehNaturezaFixa` e
+   * `ehNaturezaNoCartao`, e escreva por `naturezaDoLugar` (HMO-254).
+   */
   natureza: NaturezaDespesa;
   diaDeVencimento: string;
   /** Se repete sem fim ou por um numero de meses (HMO-170). */
@@ -724,7 +940,15 @@ export function validarLancamento(
   }
 
   if (campos.contaObrigatoria && !valores.contaId) {
-    return { ok: false, mensagem: "Escolha em qual cartão foi o gasto." };
+    // Duas frases porque sao duas perguntas (HMO-254). "Em qual cartao FOI o
+    // gasto" pergunta pelo passado, e numa regra mensal nada foi ainda -- a
+    // pessoa procuraria na tela por uma compra que ela nao esta lancando.
+    return {
+      ok: false,
+      mensagem: ehNaturezaFixa(valores.natureza)
+        ? "Escolha em qual cartão essa despesa é cobrada todo mês."
+        : "Escolha em qual cartão foi o gasto.",
+    };
   }
 
   // A MESMA funcao que a tela usa para decidir se mostra a frase "a primeira
@@ -1105,7 +1329,14 @@ export function destinoDoLancamento(
 ): DestinoDoLancamento {
   const campos = camposDoTipo(tipo, valores.natureza, editando, valores.confirmado);
 
-  if (campos.diaDeVencimento && valores.natureza === "fixed") return "regra";
+  // `ehNaturezaFixa` E NAO `=== "fixed"` (HMO-254). Com a comparacao crua, um
+  // "Gasto Fixo no Cartao" (`card_fixed`) escapa deste ramo: `diaDeVencimento` e
+  // `true`, a tela pede o dia do vencimento, a pessoa responde -- e o destino
+  // cai em `previsao` logo abaixo (porque `dataDeRealizacao` e falso em toda
+  // fixa). A assinatura do cartao viraria UMA conta avulsa em Contas Previstas,
+  // nao uma regra mensal, e o dia do vencimento que ela digitou nao seria usado
+  // por nada. Zero erro na tela.
+  if (campos.diaDeVencimento && ehNaturezaFixa(valores.natureza)) return "regra";
   if (valores.parcelado && campos.parcelamento) return "parcelas";
   // `dataDeRealizacao` e a leitura certa, e nao `!valores.confirmado`: quando a
   // checkbox nao esta na tela (fixa, edicao, cartao) um `confirmado: false`

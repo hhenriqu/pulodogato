@@ -114,7 +114,15 @@ export interface EntradaDeLancamento {
   grupoId: string | null;
   /** Esta editando um lancamento que ja existe, em vez de criar. */
   editando: boolean;
-  /** "one_off" | "fixed" | "card" -- despesa fixa nao e lancamento. */
+  /**
+   * `NaturezaDespesa` de lib/lancamento.ts, como texto -- despesa fixa nao e
+   * lancamento. Quais valores sao fixos: `NATUREZAS_FIXAS`, logo abaixo.
+   *
+   * `string` E NAO O TIPO, de proposito: a entrada pode vir de uma versao
+   * ANTIGA da tela, servida do cache do service worker, e um valor que aquela
+   * versao conhecia e esta nao e um dado real que precisa ser avaliado -- nao um
+   * erro de compilacao. E a razao pela qual a lista abaixo e por extenso.
+   */
   tipoDeDespesa?: string;
   /**
    * Moeda escolhida na tela (ISO 4217). Opcional na ENTRADA porque quem chama
@@ -142,6 +150,30 @@ export interface EntradaDeLancamento {
    */
   confirmado?: boolean;
 }
+
+/**
+ * Os valores de `tipoDeDespesa` que significam "isto e uma REGRA, nao um
+ * lancamento" (HMO-254).
+ *
+ * POR EXTENSO E NAO IMPORTADO DE lib/lancamento.ts, e isto e a mesma decisao
+ * que `moeda: "BRL"` em `valoresIniciais`: este modulo compila sozinho em
+ * `test:offline-queue`, e o campo que ele le e `string` (ver `tipoDeDespesa`)
+ * porque a entrada pode vir de uma tela em cache. O que impede a copia de
+ * divergir NAO e o import, e o caso "a lista daqui e `ehNaturezaFixa` concordam
+ * em toda natureza" em scripts/test-offline-queue.mjs, que compila os dois
+ * modulos e compara -- o mesmo arranjo que scripts/test-moeda.mjs usa para
+ * `MOEDA_PADRAO`.
+ *
+ * ERA A COMPARACAO `=== "fixed"`, E ELA FUROU NA HMO-254. Com `card_fixed`
+ * nascendo na tela, a assinatura do cartao lancada sem rede passava por esta
+ * peneira como despesa PONTUAL: a fila gravava uma `financial_transactions`, o
+ * aviso dizia "guardei no aparelho", e quando a conexao voltasse a regra mensal
+ * que a pessoa pediu nao existiria -- mas a compra daquele mes existiria duas
+ * vezes, uma da fila e outra da ocorrencia que ela ia cadastrar de novo ao
+ * perceber. A lista fecha o modo de falha para todo valor novo do enum: quem
+ * adicionar um "fixo" e esquecer daqui quebra o teste de concordancia.
+ */
+export const NATUREZAS_FIXAS: string[] = ["fixed", "card_fixed"];
 
 export type MotivoDeRecusa =
   | "parcelado"
@@ -191,7 +223,7 @@ export function avaliarLancamento(
     };
   }
 
-  if (entrada.tipoDeDespesa === "fixed") {
+  if (NATUREZAS_FIXAS.includes(entrada.tipoDeDespesa ?? "")) {
     // Despesa fixa nao e lancamento: e uma regra em `recurring_rules`, e quem
     // a materializa e a rota. Gravar uma transacao aqui cobraria o valor duas
     // vezes -- agora e de novo quando a ocorrencia do mes for baixada.

@@ -1,8 +1,9 @@
 "use client";
 
-// A tela de despesa: a unica que mostra natureza (pontual / cartao / fixa),
-// parcelamento e rateio. O mesmo container da receita, com outra prop -- duas
-// copias dele divergiriam, e divergir na contabilizacao custa dinheiro.
+// A tela de despesa: a unica que mostra o seletor de LUGAR (conta ou cartao,
+// HMO-254), o parcelamento e o rateio. A checkbox "Fixa" a receita tambem tem.
+// O mesmo container da receita, com outra prop -- duas copias dele divergiriam,
+// e divergir na contabilizacao custa dinheiro.
 //
 // Desde a HMO-249 ela e exibida como MODAL. A rota continua existindo, e e ela
 // que carrega `?id=` (editar), `?cartao=` (lancar gasto num cartao) e `?origem=`
