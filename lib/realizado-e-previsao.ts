@@ -96,10 +96,14 @@
 //   * `DiaDoFluxo.entra` / `.sai` do lib/cash-flow-forecast.ts -> os dois
 //     POSITIVOS, ja separados por lado.
 //
-// Transferencia e pagamento de fatura ficam fora dos DOIS lados -- ver
-// `direcaoNoPainel`. Mover dinheiro entre contas proprias nao e receita nem
-// despesa, e contar a fatura como despesa prevista cobraria de novo as compras
-// que ja entraram como despesa quando aconteceram.
+// Transferencia fica fora dos DOIS lados -- ver `direcaoNoPainel`. Mover
+// dinheiro entre contas proprias nao e receita nem despesa.
+//
+// A FATURA DO CARTAO ficava fora dos dois e passou a entrar nos dois (HMO-265):
+// como despesa prevista no lado da Previsao, e como despesa realizada no lado do
+// Realizado -- la pelo PAGAMENTO dela, nunca pelas compras, que saem. Quem a tira
+// de um lado tem de a por no outro no mesmo movimento; nos dois ao mesmo tempo e
+// o cartao em dobro, em nenhum e o cartao desaparecido.
 //
 // Tudo aqui e funcao pura: nao le banco, nao pede login, nao grava. Mesmo
 // desenho do lib/previsto-x-realizado.ts e do lib/safe-to-spend.ts.
@@ -184,28 +188,40 @@ export function janelaDaPrevisao(
  *     transferencia que o lado do Realizado ignora, e a identidade continuaria
  *     fechando: seriam os DOIS numeros errados de um jeito coerente.
  *
- *   * FATURA DE CARTAO fica FORA pela mesma razao, e essa e a parte
- *     contraintuitiva. A fatura e dinheiro que vai mesmo sair da conta
- *     corrente, e o lib/cash-flow-forecast.ts a projeta de proposito (armadilha
- *     2 de la: naquela tela a pergunta E a data). Aqui a pergunta e "quanto vou
- *     gastar no periodo", e cada compra do cartao JA entrou como despesa no dia
- *     em que aconteceu. Somar a fatura por cima cobraria as mesmas compras duas
- *     vezes -- uma vez em Realizado, outra em Previsao -- e o total esperado
- *     sairia inflado exatamente pelo valor da fatura.
+ *   * FATURA DE CARTAO ENTRA, e ate a HMO-265 ela ficava fora.
  *
- * `ehFatura` chega pronto, de `lib/card-invoice.ts`: repetir aqui a leitura da
- * chave `fatura:<mes>:<cartao>` criaria a segunda copia da regra, e a segunda
- * copia e a que erra. Direcao desconhecida cai em despesa, o default historico
- * de /api/projection e do lib/safe-to-spend.ts -- ler uma despesa como receita
- * mostraria "vou receber" sobre uma conta a pagar.
+ * A FATURA TROCOU DE LADO, E O PARAMETRO `ehFatura` SAIU DAQUI (HMO-265)
+ * ----------------------------------------------------------------------
+ * O argumento antigo era coerente e a premissa dele morreu: "cada compra do
+ * cartao JA entrou como despesa no dia em que aconteceu, somar a fatura por
+ * cima cobraria as mesmas compras duas vezes". Depois da HMO-265 a compra no
+ * cartao NAO entra mais no Realizado do painel -- quem conta e a fatura, pelo
+ * valor total do cartao, no periodo em que ela foi paga
+ * (lib/realizado-do-caixa.ts). Com a compra fora do Realizado, manter a fatura
+ * fora da Previsao faria o cartao desaparecer dos DOIS lados: um mes com
+ * R$ 1.290 de fatura a vencer sairia R$ 1.290 mais barato no "Total esperado",
+ * e um total menor nao parece erro -- parece um mes barato.
+ *
+ * A contrapartida obrigatoria mora na rota, nao aqui: ela tem de tirar da agenda
+ * as COMPRAS no cartao (`agendaSemCompraNoCartao`) antes de chamar esta funcao.
+ * Sem isso a parcela da compra e a fatura que a contem entram as duas, e o
+ * cartao volta a contar duas vezes -- agora do lado da Previsao. Ver o cabecalho
+ * de app/api/dashboard/previsao/route.ts.
+ *
+ * O parametro foi REMOVIDO em vez de passar a receber `false`: um booleano que
+ * so pode ter um valor e uma guarda inalcancavel, e uma guarda inalcancavel
+ * passa em qualquer teste. Quem tentar reviver a exclusao vai ter de mudar a
+ * assinatura, e ai o chamador aparece no diff.
+ *
+ * Direcao desconhecida cai em despesa, o default historico de /api/projection e
+ * do lib/safe-to-spend.ts -- ler uma despesa como receita mostraria "vou
+ * receber" sobre uma conta a pagar.
  */
 export type DirecaoNoPainel = "income" | "expense" | null;
 
 export function direcaoNoPainel(
-  direction: string | null | undefined,
-  ehFatura: boolean
+  direction: string | null | undefined
 ): DirecaoNoPainel {
-  if (ehFatura) return null;
   if (direction === "transfer") return null;
   if (direction === "income") return "income";
   return "expense";

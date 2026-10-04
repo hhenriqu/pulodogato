@@ -644,10 +644,16 @@ test("valor negativo nao DIMINUI o a pagar", () => {
 test("direcaoDaAgenda: so `income` sai do lado de pagar", () => {
   assert.equal(direcaoDaAgenda("income"), "income");
 
-  // 'transfer' e a fatura de cartao ficam em DESPESA aqui de proposito, ao
-  // contrario de `direcaoNoPainel` (lib/realizado-e-previsao.ts). A pergunta
-  // deste bloco e "quanto vai sair da conta", e a fatura sai mesmo; escondê-la
-  // prometeria uma folga que nao existe.
+  // 'transfer' fica em DESPESA aqui de proposito, ao contrario de
+  // `direcaoNoPainel` (lib/realizado-e-previsao.ts), que o deixa fora dos dois
+  // lados. A pergunta deste bloco e "quanto vai sair da conta", e a perna
+  // agendada de uma transferencia sai mesmo.
+  //
+  // A fatura de cartao tambem cai em despesa aqui -- e agora la tambem, desde a
+  // HMO-265. Ela nao aparece nesta lista porque nao se reconhece pela
+  // `direction` (o `close` grava `transaction_type` NULO, e a view do 027 a
+  // resolve como 'expense'): quem a distingue de uma conta a pagar comum e a
+  // chave canonica em `notes`.
   for (const entrada of [
     "expense",
     "transfer",

@@ -353,9 +353,23 @@ function Painel() {
         // ela entrava em "ja gastei" antes de acontecer, e saia tambem da
         // previsao. Periodo inteiramente futuro nao tem realizado, e ai a
         // chamada nem acontece: com `ate` antes de `de` a rota responde 400.
+        //
+        // `cartao=fatura` E O QUE FAZ O CARTAO CONTAR NO PAGAMENTO (HMO-265)
+        //
+        // Sem ele o painel somava a compra no cartao no dia da COMPRA -- e a
+        // fatura aberta inteira ja entra no Previsto por
+        // `/api/scheduled-transactions/summary` (HMO-227), entao o cartao
+        // aparecia nos dois lados do "Realizado + Previsao = Total esperado".
+        // Com ele a compra sai do Realizado e o que entra e a fatura PAGA, pelo
+        // valor que de fato saiu da conta. A regra esta em
+        // lib/realizado-do-caixa.ts; as tres consequencias de desenho, no
+        // cabecalho de app/api/reports/cash-flow/route.ts.
+        //
+        // O parametro NAO e opcional para esta tela: a rota sem ele responde
+        // 200 com o numero da regra antiga, que e indistinguivel aqui.
         janelaRealizado
           ? fetch(
-              `/api/reports/cash-flow?de=${janelaRealizado.de}&ate=${janelaRealizado.ate}`
+              `/api/reports/cash-flow?de=${janelaRealizado.de}&ate=${janelaRealizado.ate}&cartao=fatura`
             )
           : null,
         fetch(`/api/scheduled-transactions/summary?${query}`),

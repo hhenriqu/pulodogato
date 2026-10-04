@@ -3701,3 +3701,177 @@ jobs:
             diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
             exit 1
           fi
+
+      # =======================================================================
+      # O CARTAO CONTA PELA FATURA PAGA, NAO PELA COMPRA
+      # origem: HMO-265 (nasceu aqui -- ver o item 1 do cabecalho deste arquivo)
+      # =======================================================================
+      # "Despesa do cartao so e realizada quando fatura do cartao e paga, usar o
+      # valor total do cartao como parametro pra saber se ja foi realizada ou
+      # nao."
+      #
+      # A tela de Despesas ja seguia essa regra (HMO-260). O painel nao: o
+      # Realizado dele soma `financial_transactions`, e ali a compra no cartao
+      # era uma despesa como qualquer outra, contada no dia da COMPRA.
+      #
+      # AS DUAS METADES SAO UMA SO MUDANCA, e e por isso que um passo so nao
+      # bastaria: tirar a compra sem por a fatura faz o mes em que a fatura foi
+      # paga sair R$ 1.290 MAIS BARATO (um total menor nao parece erro, parece um
+      # mes barato -- HMO-264), e por a fatura sem tirar a compra faz o cartao
+      # contar DUAS vezes (a HMO-149 de volta). Os dois numeros errados sao
+      # plausiveis e nenhum levanta excecao.
+      #
+      # SEM FILTRO DE `paths`, como todo bloco deste arquivo: a suite roda em
+      # milissegundos, nao precisa de banco, e um filtro escrito hoje perde o dia
+      # em que alguem mexer no arquivo de amanha.
+      - name: O cartao no Realizado do painel
+        run: npm run test:realizado-do-caixa
+
+      # Controle negativo. A suite afirma sobre TOTAL -- nao sobre a lista --
+      # porque todos os erros desta regra produzem a lista "certa" e o numero
+      # errado. Uma verificacao que nunca viu vermelho nao e verificacao.
+      #
+      # A prova de mutacao completa e `npm run mutantes:realizado-do-caixa`
+      # (12 mutantes, ferramenta de quem escreve o teste). Aqui ficam os quatro
+      # que mais custam, plantados um por vez.
+      #
+      # O `cmp` DEPOIS DE CADA `sed` NAO E ZELO. Um `sed -i` cujo padrao nao casa
+      # SAI 0 e nao muda nada: o `npm run` seguinte roda a fonte INTACTA, passa,
+      # e o `if` o declara... morto. O mutante seria dado por morto medindo nada,
+      # e o passo ficaria verde para sempre -- foi assim que um mutante deste
+      # repositorio parou de aplicar quando uma issue renomeou a ancora dele.
+      - name: 'A verificacao sabe falhar (realizado-do-caixa)'
+        run: |
+          set -uo pipefail
+          LIB=lib/realizado-do-caixa.ts
+          cp $LIB $LIB.orig
+          trap 'mv $LIB.orig $LIB' EXIT
+
+          mutou() {
+            if cmp -s $LIB $LIB.orig; then
+              echo "::error::o sed de '$1' nao casou nada -- o mutante nao foi aplicado e o passo mediria a fonte intacta"
+              exit 1
+            fi
+          }
+
+          # 1) O DEFEITO DESTA ISSUE, INTACTO. A compra no cartao conta no dia
+          #    da compra E a fatura conta de novo no dia do pagamento.
+          sed -i 's|if (ehCompraNoCartao(linha)) continue;|if (false) continue;|' $LIB
+          mutou "compra no cartao fica"
+          if npm run test:realizado-do-caixa > /dev/null 2>&1; then
+            echo "::error::Verde com a compra no cartao contada no dia da COMPRA, junto da fatura que ja a contem."
+            exit 1
+          fi
+          cp $LIB.orig $LIB
+
+          # 2) O CARTAO DESAPARECIDO (HMO-264). A fatura paga nao entra em lugar
+          #    nenhum: o mes em que se pagou R$ 1.290 fica R$ 1.290 mais barato.
+          sed -i 's|if (ehSaidaDePagamentoDeFatura(linha)) {|if (false) {|' $LIB
+          mutou "fatura paga nao entra"
+          if npm run test:realizado-do-caixa > /dev/null 2>&1; then
+            echo "::error::Verde com a fatura PAGA fora do Realizado: o cartao sumiu dos dois lados."
+            exit 1
+          fi
+          cp $LIB.orig $LIB
+
+          # 3) A FATURA EM DOBRO. As duas pernas do pagamento tem a mesma data,
+          #    a mesma chave e o mesmo tipo, e `agregarTransacoes` aplica
+          #    Math.abs antes de somar -- entao elas NAO se anulam.
+          sed -i 's|  return Number(linha.amount) < 0;|  return true;|' $LIB
+          mutou "as duas pernas entram"
+          if npm run test:realizado-do-caixa > /dev/null 2>&1; then
+            echo "::error::Verde com as DUAS pernas do pagamento somando: a fatura em dobro no total de despesas."
+            exit 1
+          fi
+          cp $LIB.orig $LIB
+
+          # 4) A COLUNA QUE NINGUEM VE. `account_type` nao aparece na tela, e
+          #    tirar do `select` nao quebra tsc nem assercao de unidade: a regra
+          #    recebe `undefined`, deixa de casar com credit_card, para de
+          #    filtrar, e o painel volta ao defeito. Foi este o modo de falha da
+          #    HMO-260.
+          sed -i 's|, account:financial_accounts(account_type)";|";|' $LIB
+          mutou "select sem o embed da conta"
+          if npm run test:realizado-do-caixa > /dev/null 2>&1; then
+            echo "::error::Verde com a consulta SEM account_type: a regra nao tem como saber que a linha esta na fatura."
+            exit 1
+          fi
+
+          echo "A verificacao fica vermelha nas quatro armadilhas."
+
+      - name: 'A arvore voltou ao lugar depois de "A verificacao sabe falhar (realizado-do-caixa)"'
+        run: |
+          # O .tmp-* compilado guarda o mutante mesmo depois de o .ts voltar, e
+          # os passos seguintes rodariam contra ele.
+          rm -rf .tmp-*
+          git status --porcelain > "$RUNNER_TEMP/arvore-agora.txt"
+          if ! diff -q "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" > /dev/null; then
+            echo "::error::O controle negativo acima nao restaurou a arvore. Os passos seguintes rodariam sobre codigo mutado."
+            diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
+            exit 1
+          fi
+
+      # A REGRA PODE ESTAR PERFEITA E NAO ESTAR LIGADA.
+      #
+      # As 15 assercoes e os 12 mutantes acima provam `lib/realizado-do-caixa.ts`
+      # e nao olham quem o chama. O defeito que sobra e de fiacao, e e mudo: o
+      # painel para de mandar `&cartao=fatura`, ou a rota para de aplicar a regra,
+      # e /api/reports/cash-flow responde 200 com o total de ANTES desta issue --
+      # sem erro, sem campo faltando, sem log, e com a suite inteira verde.
+      #
+      # O guard varre o fonte SEM comentario e SEM a lista de imports. As duas
+      # remocoes foram medidas: sem a primeira ele le a prosa que descreve o
+      # defeito, e sem a segunda tres das mutacoes do controle negativo abaixo
+      # SOBREVIVIAM -- matar a chamada deixa o `import` intacto e o nome continua
+      # "aparecendo" no arquivo.
+      - name: A regra do cartao pela fatura esta ligada de ponta a ponta
+        run: node scripts/check-cartao-pela-fatura.mjs
+
+      - name: 'A verificacao sabe falhar (fiacao do cartao pela fatura)'
+        run: |
+          set -uo pipefail
+          GUARD=scripts/check-cartao-pela-fatura.mjs
+
+          # Cada mutacao desliga UM ponto da fiacao e restaura em seguida. O
+          # `cmp` existe porque um `sed -i` que nao casa SAI 0: sem ele, uma
+          # ancora renomeada por outra issue faria este passo medir a arvore
+          # intacta e ficar verde para sempre.
+          desligar() {
+            local arquivo="$1" de="$2" para="$3" rotulo="$4"
+            cp "$arquivo" "$arquivo.orig265"
+            sed -i "s@$de@$para@" "$arquivo"
+            if cmp -s "$arquivo" "$arquivo.orig265"; then
+              mv "$arquivo.orig265" "$arquivo"
+              echo "::error::o sed de '$rotulo' nao casou nada -- a ancora mudou e este controle mediria a arvore intacta"
+              exit 1
+            fi
+            if node "$GUARD" > /dev/null 2>&1; then
+              mv "$arquivo.orig265" "$arquivo"
+              echo "::error::Verde com a fiacao desligada: $rotulo"
+              exit 1
+            fi
+            mv "$arquivo.orig265" "$arquivo"
+            echo "  vermelho em: $rotulo"
+          }
+
+          desligar 'app/(dashboard)/dashboard/page.tsx' '\&cartao=fatura' '' \
+            'o painel para de PEDIR a regra -- a rota responde o total antigo'
+          desligar 'app/api/reports/cash-flow/route.ts' 'realizadoComCartaoPelaFatura(linhas)' 'linhas.slice()' \
+            'a rota importa a regra e NAO a chama'
+          desligar 'app/api/dashboard/previsao/route.ts' 'agendaSemCompraNoCartao(' 'Array.from(' \
+            'a Previsao para de tirar a compra no cartao -- o cartao em dobro'
+          desligar 'app/api/dashboard/previsao/route.ts' 'faturasPrevistasDaJanela(supabase' 'naoChama(supabase' \
+            'a Previsao para de sintetizar a fatura ABERTA -- o cartao desaparece'
+          desligar 'lib/realizado-e-previsao.ts' '  direction: string | null | undefined' '  direction: string | null | undefined, ehFatura: boolean' \
+            'direcaoNoPainel volta a receber o segundo argumento que a HMO-265 tirou'
+
+          echo "A verificacao fica vermelha nos cinco pontos de fiacao."
+
+      - name: 'A arvore voltou ao lugar depois de "A verificacao sabe falhar (fiacao do cartao pela fatura)"'
+        run: |
+          git status --porcelain > "$RUNNER_TEMP/arvore-agora.txt"
+          if ! diff -q "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" > /dev/null; then
+            echo "::error::O controle negativo acima nao restaurou a arvore -- procure por um .orig265 esquecido."
+            diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
+            exit 1
+          fi

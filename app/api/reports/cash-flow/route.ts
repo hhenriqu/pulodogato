@@ -1,5 +1,6 @@
 // GET /api/reports/cash-flow?months=12&groupId=<uuid>
 // GET /api/reports/cash-flow?de=AAAA-MM-DD&ate=AAAA-MM-DD&groupId=<uuid>
+// GET /api/reports/cash-flow?de=&ate=&cartao=fatura      <- o painel (HMO-265)
 //
 // Entrada, saida e resultado por mes. Sai de `monthly_cash_flow` (008), que
 // por sua vez e um rollup de category_monthly_totals -- uma unica definicao de
@@ -47,6 +48,38 @@
 // Nesse segundo caminho, `months` volta VAZIO em vez de aproximado: um grafico
 // mensal desenhado a partir de um intervalo que corta meses pela metade seria
 // um grafico de meses que nao existiram. Quem consome olha `grao`.
+//
+// `?cartao=fatura`: O CARTAO CONTA NO PAGAMENTO DA FATURA, NAO NA COMPRA (HMO-265)
+// --------------------------------------------------------------------------------
+// "Despesa do cartao so e realizada quando fatura do cartao e paga, usar o valor
+// total do cartao como parametro pra saber se ja foi realizada ou nao."
+//
+// A regra -- as duas metades dela, e por que separa-las erra dinheiro -- esta em
+// lib/realizado-do-caixa.ts. Aqui ficam as tres consequencias de desenho:
+//
+//   1. SO NO CAMINHO PESSOAL. Com `groupId` o painel do grupo quer o valor CHEIO
+//      da despesa no mes em que ela aconteceu, e quem divide a conta nao paga a
+//      fatura do cartao de ninguem. O parametro e recusado junto com `groupId`
+//      em vez de ignorado: ignorar responderia 200 com o numero da regra ANTIGA
+//      debaixo de uma URL que pediu a nova, e quem chamou nao teria como saber.
+//
+//   2. SO COM `de`/`ate`. A regra mistura dois eixos de data -- a compra sai pela
+//      data dela e a fatura entra pela data do PAGAMENTO -- e isso exige somar as
+//      linhas cruas. `?months=N` responde pelos rollups mensais do 008, que nao
+//      sabem nada disto; aceitar o par ausente seria o mesmo 200 silencioso do
+//      item 1. Entao e 400.
+//
+//   3. A RESPOSTA E UM BALDE, `grao: "intervalo"` e `months: []`, mesmo quando o
+//      periodo pedido e um mes inteiro. Nao e preguica: uma serie mensal sob esta
+//      regra precisaria decidir em que mes cai a compra de setembro cuja fatura
+//      venceu em outubro, e nenhuma resposta a isso serve para um grafico de
+//      "quanto gastei em setembro". O painel le `summary` -- ele e quem pede este
+//      parametro, e so ele.
+//
+// A tela de relatorios NAO passa o parametro, e a divergencia e deliberada: la o
+// grafico por mes e a quebra por categoria tem de continuar fechando entre si, e
+// a quebra por categoria e sobre o que foi CONSUMIDO (a compra, com a categoria
+// dela), nao sobre quando o dinheiro saiu. Ver a issue-filha aberta na HMO-265.
 
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
@@ -64,6 +97,11 @@ import {
   viewDaParteAusente,
   type ParteDeGrupoCrua,
 } from "@/lib/parte-do-grupo-realizada";
+import {
+  COLUNAS_DO_REALIZADO_DE_CAIXA,
+  realizadoComCartaoPelaFatura,
+  type LinhaDoRealizado,
+} from "@/lib/realizado-do-caixa";
 
 interface LinhaFluxo {
   month: string;
@@ -107,10 +145,44 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // O CARTAO CONTA PELA FATURA PAGA (HMO-265). Ver o cabecalho deste arquivo
+    // para as tres consequencias de desenho; aqui ficam as duas recusas.
+    //
+    // As duas sao 400 e nao um `&& !groupId` calado na condicao: uma URL que
+    // pediu a regra nova e recebeu 200 com o numero da regra ANTIGA e
+    // indistinguivel, para quem chamou, de a regra nao existir.
+    const cartaoPelaFatura = url.searchParams.get("cartao") === "fatura";
+
+    if (cartaoPelaFatura && groupId) {
+      return NextResponse.json(
+        {
+          error:
+            "cartao=fatura vale só no relatório pessoal: o painel do grupo conta a despesa dividida no mês em que ela aconteceu",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (cartaoPelaFatura && !periodo) {
+      return NextResponse.json(
+        {
+          error:
+            "cartao=fatura exige de e ate: a regra soma os lançamentos por data, e ?months=N responde pelos totais mensais, que não a conhecem",
+        },
+        { status: 400 }
+      );
+    }
+
     // ---------------------------------------------------------------------
     // Modo intervalo: nenhuma view responde, a soma vem das transacoes
     // ---------------------------------------------------------------------
-    if (periodo && periodo.modo === "intervalo") {
+    // `cartaoPelaFatura` entra nesta MESMA condicao, e nao num terceiro ramo
+    // proprio: a regra do cartao precisa das linhas cruas (ela cruza o tipo da
+    // conta com a chave em `notes`, e o rollup mensal do 008 nao tem nenhuma das
+    // duas), e este ramo e o unico que as le. Um ramo paralelo seria uma segunda
+    // implementacao da paginacao, da parte de grupo e da separacao por moeda --
+    // tres coisas cujo modo de falha e devolver um total MENOR sem erro nenhum.
+    if (periodo && (periodo.modo === "intervalo" || cartaoPelaFatura)) {
       // A consulta e remontada a cada pagina: o builder do supabase-js e de uso
       // unico, e reaproveitar o mesmo objeto acumularia os `.range()`.
       const pagina = (inicio: number) => {
@@ -124,7 +196,17 @@ export async function GET(request: NextRequest) {
           // `currency` e o que impede este caminho de refazer, no JavaScript, a
           // mistura que a 022 tirou das views: sem ela, um periodo com gasto em
           // real e em dolar volta 1000 + 180 = 1180.
-          .select("amount, transaction_type, currency")
+          //
+          // Com `cartao=fatura` sao quatro colunas a mais, e as quatro sao
+          // load-bearing e invisiveis na tela -- ver
+          // COLUNAS_DO_REALIZADO_DE_CAIXA. Elas NAO sao pedidas sempre porque o
+          // embed da conta custa um join em toda linha do periodo, e o caminho
+          // sem o parametro nao tem o que fazer com ele.
+          .select(
+            cartaoPelaFatura
+              ? COLUNAS_DO_REALIZADO_DE_CAIXA
+              : "amount, transaction_type, currency"
+          )
           .gte("transaction_date", periodo.de)
           // `lte` e nao `lt`: o periodo e fechado nos dois extremos, e o ultimo
           // dia escolhido pelo usuario tem que entrar.
@@ -150,11 +232,12 @@ export async function GET(request: NextRequest) {
       // `transaction_type` nullable porque a coluna e nullable -- e porque a
       // parte de grupo (abaixo) repassa o campo da view em vez de afirmar
       // 'expense'. `agregarTransacoes` ja descarta o que nao e income/expense.
-      const linhas: {
-        amount: number | string;
-        transaction_type: string | null;
-        currency?: string | null;
-      }[] = [];
+      //
+      // `LinhaDoRealizado` tem os campos de `cartao=fatura` TODOS opcionais, e e
+      // por isso que ele serve para os dois caminhos deste ramo: sem o parametro
+      // a consulta nao pede `notes`, `account` nem o elo, e a regra nao e
+      // aplicada.
+      const linhas: LinhaDoRealizado[] = [];
 
       // A moeda oficial decide qual bloco e o PRINCIPAL, igual ao caminho
       // mensal. Erro aqui cai no padrao de `lerPreferenciaDeMoeda` e nao custa
@@ -181,7 +264,13 @@ export async function GET(request: NextRequest) {
         }
 
         const lote = data ?? [];
-        for (const linha of lote) linhas.push(linha);
+        // O `as` existe porque o `select` deste ramo e escolhido em tempo de
+        // execucao (duas listas de colunas), e com isso o supabase-js nao
+        // consegue inferir a forma da linha. A fronteira NAO e verificada pelo
+        // tsc, e e por isso que `contaDaLinha` em lib/realizado-do-caixa.ts
+        // trata o embed vindo objeto OU array em vez de confiar no tipo.
+        for (const linha of lote)
+          linhas.push(linha as unknown as LinhaDoRealizado);
         // Pagina incompleta = acabou. Uma pagina cheia pode ser a ultima, e
         // nesse caso a proxima volta vazia e o laco encerra do mesmo jeito.
         if (lote.length < TAMANHO_DA_PAGINA) break;
@@ -240,8 +329,23 @@ export async function GET(request: NextRequest) {
         for (const linha of partesComoTransacoes(partes)) linhas.push(linha);
       }
 
+      // O CARTAO PASSA A CONTAR PELA FATURA (HMO-265).
+      //
+      // Depois da parte de grupo e ANTES da agregacao, e as duas posicoes sao
+      // deliberadas:
+      //
+      //   * depois da parte de grupo, porque as linhas de `group_share_entries`
+      //     atravessam a regra intactas (nao tem conta nem `notes`) e separa-las
+      //     em duas listas criaria um segundo caminho para somar;
+      //   * antes da agregacao, porque `agregarTransacoesPorMoeda` continua
+      //     sendo a UNICA funcao que soma. A regra so tira linha e reescreve
+      //     `transaction_type`; nenhuma aritmetica e refeita aqui.
+      const paraAgregar = cartaoPelaFatura
+        ? realizadoComCartaoPelaFatura(linhas)
+        : linhas;
+
       const blocosDoIntervalo = agregarTransacoesPorMoeda(
-        linhas,
+        paraAgregar,
         moedaDoIntervalo
       );
 
@@ -272,7 +376,22 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({
         // Vazio de proposito -- ver o cabecalho do arquivo.
         months: [],
+        // `intervalo` TAMBEM quando o periodo pedido e um mes inteiro e
+        // `cartao=fatura` esta ligado: a resposta e um balde, e dizer "mes" com
+        // `months: []` seria a unica combinacao que o cabecalho deste arquivo
+        // proibe -- quem consome olha `grao` justamente para saber se pode
+        // desenhar a serie.
         grao: "intervalo",
+        /**
+         * Qual regra do cartao produziu estes numeros (HMO-265).
+         *
+         * Vai na resposta porque as duas sao defensaveis e dao totais
+         * DIFERENTES para o mesmo periodo: `compra` conta o gasto no dia da
+         * compra, `fatura` conta no dia em que a fatura foi paga. Sem este
+         * campo, duas telas do app mostrando numeros distintos para outubro
+         * seriam indistinguiveis de um bug -- e foi assim que a HMO-258 nasceu.
+         */
+        cartao: cartaoPelaFatura ? "fatura" : "compra",
         currency: principalDoIntervalo.currency,
         by_currency: blocosDoIntervalo.map((bloco) => ({
           currency: bloco.currency,
