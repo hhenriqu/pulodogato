@@ -1956,6 +1956,30 @@ jobs:
       # conclui que o app se contradiz.
       - name: Os tres numeros saem na ordem certa, e o gasto variavel diz que fica de fora
         run: npm run test:tres-numeros
+
+      # Os crivos de fundamento (HMO-195). Tres defeitos desta lista saem verdes
+      # em build, lint e type-check, e os tres mudam o veredito na tela:
+      #
+      # 1) UNIDADE. A view devolve razao (`roe` da PETR4 = 0.2649), e o limite do
+      #    usuario e percentual (15). Comparar os dois crus APROVA toda empresa;
+      #    converter duas vezes REPROVA quase todas. A suite fixa a PETR4 no ROE
+      #    real de 26,49% -- o unico numero em que as duas versoes discordam.
+      # 2) "ULTIMO BALANCO" e MAX(ano_exercicio) POR EMPRESA. Ano fixo faz a
+      #    empresa que ainda nao entregou a DFP deste ano DESAPARECER da lista;
+      #    nao agrupar repete o mesmo ticker uma vez por ano importado.
+      # 3) NULL NAO E REPROVADO. `null > 15` e false em JavaScript, entao a
+      #    ausencia de dado se disfarca de criterio nao atingido -- e num crivo
+      #    de divida o zero APROVA. A suite exige o terceiro estado e NEGA o
+      #    outro: "sem dado" tem de aparecer e "nao atingido" tem de nao.
+      #
+      # Cobre tambem a fronteira regulatoria, que e decisao de produto e nao
+      # detalhe: nenhuma nota unica sai do codigo (o resultado e por criterio),
+      # nenhuma migration declara coluna de score, e o vocabulario de
+      # recomendacao ("comprar", "vender", "recomendado") nao aparece na tela.
+      # A trava de vocabulario tem controle negativo proprio na suite.
+      - name: Os crivos leem a unidade certa, e ausencia de dado nao vira reprovacao
+        run: npm run test:crivos
+
       - name: O plano de reset bate com o schema, e os filhos vem antes dos pais
         run: npm run test:account-reset
 
