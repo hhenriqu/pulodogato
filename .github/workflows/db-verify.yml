@@ -1505,6 +1505,26 @@ jobs:
       - name: O acerto de grupo vira lancamento, com sinal e conta certos
         run: $PSQL -f database/tests/hmo245_acerto_vira_lancamento_test.sql
 
+      # HMO-269 (F3 da HMO-245): a rota /split-config faz a PRIMEIRA escrita que
+      # este app tem em `group_members.percentage` -- a coluna que a fase 4 passa
+      # a usar como peso do rateio do mes. A fase nao tem migration, entao este
+      # step nao prova uma migration: ele prova as quatro premissas que a rota
+      # tem sobre o banco e que nao aparecem em TypeScript nenhum.
+      #
+      # Em particular a ATOMICIDADE do lote. A rota manda um `upsert` unico em
+      # vez de um UPDATE por membro justamente porque uma falha no meio deixaria
+      # a configuracao somando 70% -- e nao ha CHECK que pegue isso depois
+      # (`group_members_percentage_check` confere LINHA, nao conjunto). Sem este
+      # teste, trocar o upsert por um laco passa em type-check, em lint e em
+      # qualquer sonda que so olhe o status 200.
+      #
+      # Controle negativo medido: removido o `SET LOCAL ROLE authenticated` do
+      # caso 2, o arquivo sai 3 com "membro comum conseguiu reescrever a linha do
+      # admin". Sem o SET ROLE tudo rodaria como superusuario, que ignora RLS, e
+      # os casos de recusa passariam sem recusar nada.
+      - name: A configuracao de divisao so o admin grava, e o lote e atomico
+        run: $PSQL -f database/tests/hmo269_split_config_test.sql
+
       - name: Aritmetica de recorrencia
         run: npm run test:recurrence
 

@@ -210,13 +210,13 @@ const mutantes = [
   ],
   [
     "a conferencia da soma na leitura some (a despesa fecha 96% do valor)",
-    "  if (soma !== CENTESIMOS_TOTAIS) {",
-    "  if (false) {",
+    "  if (soma !== CENTESIMOS_TOTAIS) {\n    return {\n      ok: false,\n      erro:",
+    "  if (false) {\n    return {\n      ok: false,\n      erro:",
   ],
   [
     "a conferencia da soma aceita um centesimo de diferenca",
-    "  if (soma !== CENTESIMOS_TOTAIS) {",
-    "  if (Math.abs(soma - CENTESIMOS_TOTAIS) > 1) {",
+    "  if (soma !== CENTESIMOS_TOTAIS) {\n    return {\n      ok: false,\n      erro:",
+    "  if (Math.abs(soma - CENTESIMOS_TOTAIS) > 1) {\n    return {\n      ok: false,\n      erro:",
   ],
   [
     "a despesa grava centesimos crus no lugar da porcentagem (7000 em vez de 70)",
@@ -255,6 +255,58 @@ const mutantes = [
     "igualitario deixa de somar 100% (divide 100 em vez de 10000)",
     "  return distribuir(\n    ids,\n    ids.map(() => 1),\n    CENTESIMOS_TOTAIS\n  );",
     "  return distribuir(\n    ids,\n    ids.map(() => 1),\n    100\n  );",
+  ],
+
+  // =======================================================================
+  // A PORTA DE ENTRADA DA ROTA: conferirConfiguracao (HMO-269, fase 3)
+  // =======================================================================
+  // Cada uma destas estraga uma recusa do PUT /split-config. Todas produzem o
+  // MESMO sintoma em producao -- um 200, com um numero errado gravado na
+  // coluna que a fase 4 passa a usar como peso do rateio do mes.
+  [
+    "a soma deixa de ser conferida por baixo (99,99% passa)",
+    "  if (soma !== CENTESIMOS_TOTAIS) {\n    return { ok: false, recusa: { motivo: \"soma\", centesimos: soma } };",
+    "  if (soma > CENTESIMOS_TOTAIS) {\n    return { ok: false, recusa: { motivo: \"soma\", centesimos: soma } };",
+  ],
+  [
+    "a soma deixa de ser conferida por cima (100,01% passa)",
+    "  if (soma !== CENTESIMOS_TOTAIS) {\n    return { ok: false, recusa: { motivo: \"soma\", centesimos: soma } };",
+    "  if (soma < CENTESIMOS_TOTAIS) {\n    return { ok: false, recusa: { motivo: \"soma\", centesimos: soma } };",
+  ],
+  [
+    "a soma e conferida em FLOAT (33,333 x3 passa e grava 99,99)",
+    "  const centesimos = idsAtivos.map((id) => dePercentual(pedidoPorId.get(id)));\n  const soma = centesimos.reduce((acc, c) => acc + c, 0);",
+    "  const centesimos = idsAtivos.map((id) => (pedidoPorId.get(id) ?? 0) * 100);\n  const soma = Math.round(centesimos.reduce((acc, c) => acc + c, 0));",
+  ],
+  [
+    "grava o numero do CORPO em vez do normalizado",
+    "      percentage: paraPercentual(centesimos[i]),",
+    "      percentage: pedidoPorId.get(member_id),",
+  ],
+  [
+    "membro repetido deixa de ser recusado (o ultimo vence, o outro some)",
+    '    if (pedidoPorId.has(p.member_id)) {\n      return { ok: false, recusa: { motivo: "repetido" } };\n    }',
+    '    if (false) {\n      return { ok: false, recusa: { motivo: "repetido" } };\n    }',
+  ],
+  [
+    "membro ativo esquecido pelo corpo deixa de ser recusado",
+    "  if (faltando.length > 0 || sobrando.length > 0) {",
+    "  if (sobrando.length > 0) {",
+  ],
+  [
+    "membro inventado no corpo deixa de ser recusado",
+    "  if (faltando.length > 0 || sobrando.length > 0) {",
+    "  if (faltando.length > 0) {",
+  ],
+  [
+    "membro em 0% some da configuracao (a linha dele fica com o valor VELHO)",
+    "    porMembro: idsAtivos.map((member_id, i) => ({\n      member_id,\n      percentage: paraPercentual(centesimos[i]),\n    })),",
+    "    porMembro: idsAtivos\n      .map((member_id, i) => ({\n        member_id,\n        percentage: paraPercentual(centesimos[i]),\n      }))\n      .filter((m) => m.percentage > 0),",
+  ],
+  [
+    "a saida sai na ordem do CORPO, nao na do banco",
+    "    porMembro: idsAtivos.map((member_id, i) => ({\n      member_id,\n      percentage: paraPercentual(centesimos[i]),\n    })),",
+    "    porMembro: pedidos.map((p) => ({\n      member_id: p.member_id,\n      percentage: paraPercentual(dePercentual(p.percentage)),\n    })),",
   ],
 ];
 
