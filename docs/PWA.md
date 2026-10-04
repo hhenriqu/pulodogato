@@ -13,8 +13,11 @@ passou meses sem poder ser instalado sem ninguém notar:
 
 Dois documentos sobre o mesmo assunto, discordando, e o que afirmava conclusão
 venceu o que listava pendência. Por isso agora é **um** arquivo, e o que
-garante que ele continua verdadeiro não é o texto: é o
-`.github/workflows/pwa-assets.yml`, que roda em todo PR.
+garante que ele continua verdadeiro não é o texto: são os passos de PWA do
+`.github/workflows/verificacao.yml`, que roda em todo PR. (Eles moravam em
+`pwa-assets.yml` até a HMO-261, que juntou 19 workflows num job só para parar de
+pagar 21 instalações de `node_modules` por push. Os passos e os nomes deles não
+mudaram — procure por "todo asset declarado existe e e o que diz ser".)
 
 ## O que estava quebrado (HMO-145, 25/09/2026)
 

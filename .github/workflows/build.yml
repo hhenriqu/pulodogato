@@ -31,58 +31,6 @@ on:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # TIPOS
-  # ---------------------------------------------------------------------------
-  # Separado do build de proposito. O `next build` tambem checa tipos, mas ele
-  # gasta minutos antes de chegar la e a mensagem sai no meio de centenas de
-  # linhas de webpack. Este job sai em segundos e diz "arquivo X, linha Y".
-  tipos:
-    name: os tipos fecham
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-
-      # O `--include=dev` e explicito porque um ambiente com NODE_ENV=production
-      # poda as devDeps na instalacao e o tsc some sem mensagem que explique.
-      - run: npm ci --include=dev
-
-      - name: tsc --noEmit
-        run: npm run type-check
-
-      # Controle negativo. Uma verificacao que nunca viu vermelho nao e
-      # verificacao: se o tsconfig passar a excluir o projeto (um `include`
-      # errado, um `exclude` novo), o passo acima continua saindo 0 e o job fica
-      # verde sem checar uma linha. Aqui um erro de tipo OBVIO tem que reprovar.
-      #
-      # O arquivo nasce e morre dentro do job. Fica em `lib/` porque o `include`
-      # de hoje e `**/*.ts` e pegaria qualquer lugar, mas um `include` futuro que
-      # liste diretorios tende a citar `lib` e nao a raiz -- entao `lib/` e onde
-      # o controle tem mais chance de continuar valendo.
-      - name: Controle negativo (erro de tipo tem que reprovar)
-        run: |
-          set -u
-          cat > lib/__controle_negativo__.ts <<'EOF'
-          export const quantosCentavos: number = "isto nao e um numero";
-          EOF
-          if npm run type-check > /tmp/controle.log 2>&1; then
-            rm -f lib/__controle_negativo__.ts
-            echo "::error::O tsc APROVOU um erro de tipo obvio. A checagem de tipos nao esta olhando o projeto -- confira o include/exclude do tsconfig.json."
-            exit 1
-          fi
-          rm -f lib/__controle_negativo__.ts
-          echo "OK: o tsc reprovou o erro plantado, entao ele esta lendo o projeto."
-
-          # E o arquivo plantado tem que ter ido embora, senao o proximo passo
-          # herdaria um projeto que nao compila.
-          test ! -f lib/__controle_negativo__.ts
-
-  # ---------------------------------------------------------------------------
   # BUILD
   # ---------------------------------------------------------------------------
   build:
