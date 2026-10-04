@@ -2992,6 +2992,100 @@ jobs:
           fi
 
       # =======================================================================
+      # A LINHA DA PARTE DE GRUPO DIZ QUEM PAGOU
+      # origem: HMO-274
+      # =======================================================================
+      # Prova, a cada PR, que a linha da minha parte de uma despesa que OUTRA
+      # pessoa pagou mostra o nome dessa pessoa -- e que, quando o perfil nao e
+      # legivel, ela mostra um ROTULO escrito no lugar do nome.
+      #
+      # O caminho sem nome nao e excepcional: as policies de SELECT de `profiles`
+      # sao `id = auth.uid()`, `is_public = TRUE` (002) e "conexao aceita" (010),
+      # e NENHUMA olha `group_members`. Dividir a conta com alguem nao da acesso
+      # ao perfil dele, e o PostgREST nao levanta erro nesse caso -- devolve
+      # menos linhas. Entao o fallback roda em producao, e o defeito a evitar e
+      # ele sair em branco: uma linha de parte sem nenhuma mencao a outra pessoa
+      # se le como despesa PROPRIA.
+      #
+      # SEM FILTRO DE `paths`, pelo mesmo motivo do `lancamentos-completos`: a
+      # suite roda em milissegundos, nao precisa de banco, e um filtro que liste
+      # os arquivos de hoje perde o dia em que alguem mexer no de amanha.
+      - name: Quem pagou aparece na linha, e o perfil invisivel vira rotulo
+        run: npm run test:pagador-da-parte
+
+      # Controle negativo. A suite afirma sobre o CONTEUDO de um elemento -- e
+      # uma assercao por presenca de palavra passaria com o selo inexistente,
+      # porque o nome do grupo tambem sai no HTML. Tres mutantes plantados um por
+      # vez, cada um com a trava do `cmp`: um `sed` que nao casa sai com status 0
+      # e o mutante seria dado por morto sem nunca ter existido.
+      - name: 'A verificacao sabe falhar (pagador-da-parte)'
+        run: |
+          set -uo pipefail
+          LIB=lib/parte-de-grupo-na-lista.ts
+          LINHA=components/movimentacoes/LinhaDaParteDeGrupo.tsx
+
+          # 1) O NOME NUNCA CHEGA. A fiacao cortada no fim: o mapa de perfis e
+          #    lido, o `user_id` vem na consulta, e o campo sai nulo de todo
+          #    jeito. A tela mostra o rotulo de fallback em TODA linha, inclusive
+          #    nas de perfil publico -- e o rotulo e plausivel, entao ninguem
+          #    procura o defeito.
+          cp $LIB $LIB.orig
+          sed -i 's@pagador: nomes.get(despesa.user_id) ?? null,@pagador: null,@' $LIB
+          if cmp -s $LIB $LIB.orig; then
+            echo "::error::O sed do mutante 1 nao casou. A ancora mudou de forma -- o mutante nao mediu nada."
+            exit 1
+          fi
+          if npm run test:pagador-da-parte > /dev/null 2>&1; then
+            echo "::error::Verde com o nome de quem pagou nunca chegando na linha."
+            exit 1
+          fi
+          mv $LIB.orig $LIB
+
+          # 2) O ROTULO DE FALLBACK VIRA VAZIO. Sai "Pago por " e um espaco. O
+          #    selo existe, o HTML tem o elemento, e a informacao sumiu -- este e
+          #    exatamente o "espaco em branco em silencio" que a HMO-274 nomeia.
+          cp $LIB $LIB.orig
+          sed -i 's@texto: `Pago por ${limpo || PAGADOR_SEM_NOME}`,@texto: `Pago por ${limpo}`,@' $LIB
+          if cmp -s $LIB $LIB.orig; then
+            echo "::error::O sed do mutante 2 nao casou. A ancora mudou de forma -- o mutante nao mediu nada."
+            exit 1
+          fi
+          if npm run test:pagador-da-parte > /dev/null 2>&1; then
+            echo "::error::Verde com o rotulo de fallback saindo em branco."
+            exit 1
+          fi
+          mv $LIB.orig $LIB
+
+          # 3) O SELO DESAPARECE QUANDO NAO HA NOME. A linha volta a ser
+          #    "R$ 200,00 · Minha parte · Praia", que e como ela era antes desta
+          #    issue -- e que se le como despesa propria.
+          cp $LINHA $LINHA.orig
+          sed -i 's@{pagador.texto}@{pagador.temNome ? pagador.texto : null}@' $LINHA
+          if cmp -s $LINHA $LINHA.orig; then
+            echo "::error::O sed do mutante 3 nao casou. A ancora mudou de forma -- o mutante nao mediu nada."
+            exit 1
+          fi
+          if npm run test:pagador-da-parte > /dev/null 2>&1; then
+            echo "::error::Verde com o selo de pagador sumindo quando o perfil nao e legivel."
+            exit 1
+          fi
+          mv $LINHA.orig $LINHA
+
+          echo "A verificacao fica vermelha nos tres defeitos."
+
+      - name: 'A arvore voltou ao lugar depois de "A verificacao sabe falhar (pagador-da-parte)"'
+        run: |
+          # O `.tmp-*` compilado guarda o mutante mesmo depois do restore do
+          # fonte, e o dump do proximo passo leria o compilado velho.
+          rm -rf .tmp-*
+          git status --porcelain > "$RUNNER_TEMP/arvore-agora.txt"
+          if ! diff -q "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" > /dev/null; then
+            echo "::error::O controle negativo acima nao restaurou a arvore. Os passos seguintes rodariam sobre codigo mutado."
+            diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
+            exit 1
+          fi
+
+      # =======================================================================
       # O X APARECE SO COM O MENU ABERTO
       # origem: menu-mobile.yml
       # =======================================================================

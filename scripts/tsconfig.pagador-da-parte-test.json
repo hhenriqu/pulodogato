@@ -1,0 +1,35 @@
+{
+  "//": [
+    "Compila a LINHA DA PARTE DE GRUPO para o teste da HMO-274 renderizar o",
+    "componente de verdade -- o mesmo arquivo que a pagina importa -- e afirmar",
+    "sobre o HTML que sai. O `jsx: react-jsx` e o que permite renderizar com",
+    "react-dom/server no node, sem runner de teste novo.",
+    "",
+    "O include puxa components/ e lib/ juntos (o selo usa components/ui/badge,",
+    "que importa lib/utils; e parte-de-grupo-na-lista importa lib/movimentacoes),",
+    "entao o rootDir comum e a raiz do repo e o resolve-aliases roda com",
+    "--espelha-raiz nas DUAS raizes. O componente importa next/link, que precisa",
+    "do passo resolve-next-subpaths depois -- `next` nao tem campo `exports` e no",
+    "ESM a extensao .js nao e opcional."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-pagador-da-parte",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../components/movimentacoes/LinhaDaParteDeGrupo.tsx",
+    "../components/ui/badge.tsx",
+    "../lib/parte-de-grupo-na-lista.ts",
+    "../lib/movimentacoes.ts",
+    "../lib/utils.ts"
+  ]
+}

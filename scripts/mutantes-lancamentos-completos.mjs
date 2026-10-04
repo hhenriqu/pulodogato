@@ -120,7 +120,7 @@ const mutantes = [
     PARTE,
     "a parte sem despesa passa a entrar na lista sem descricao",
     "    const despesa = despesas.get(parte.transaction_id);\n    if (!despesa) {\n      semDescricao += 1;\n      continue;\n    }",
-    '    const despesa = despesas.get(parte.transaction_id) ?? {\n      id: parte.transaction_id,\n      description: "",\n      amount: 0,\n      category: null,\n    };',
+    '    const despesa = despesas.get(parte.transaction_id) ?? {\n      id: parte.transaction_id,\n      user_id: "",\n      description: "",\n      amount: 0,\n      category: null,\n    };',
   ],
   [
     PARTE,

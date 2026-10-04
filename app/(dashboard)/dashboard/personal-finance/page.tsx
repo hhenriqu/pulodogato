@@ -24,13 +24,16 @@ import {
 } from "@/lib/destino-do-lancamento";
 import {
   linhasDaLista,
+  nomesDosPagadores,
   notaDasPartesDeTerceiros,
   partesDeTerceirosNaLista,
   resumoComPartesDeGrupo,
   type DespesaDeGrupoLida,
   type LancamentoDeTerceiro,
   type ParteDeGrupoBruta,
+  type PerfilDePagador,
 } from "@/lib/parte-de-grupo-na-lista";
+import { LinhaDaParteDeGrupo } from "@/components/movimentacoes/LinhaDaParteDeGrupo";
 import {
   TAMANHO_DA_PAGINA,
   descreverLista,
@@ -518,6 +521,65 @@ function Lancamentos() {
   };
 
   /**
+   * O NOME DE QUEM PAGOU, PARA A LINHA DA PARTE DE GRUPO (HMO-274)
+   *
+   * Terceira consulta, e CONSULTA e nao embed. Um
+   * `pagador:profiles(full_name)` pendurado na consulta das despesas seria mais
+   * curto. Hoje ele funcionaria: `financial_transactions` tem UMA FK para
+   * `profiles` (`scripts/check-embed-ambiguo.mjs` confirma). O problema e o
+   * amanha -- a segunda FK para `profiles` faz o PostgREST responder PGRST201
+   * ("could not embed because more than one relationship was found") e derruba
+   * uma consulta que ninguem tocou, com o apagao aparecendo longe da migration
+   * que o causou. Nomear a FK no embed resolveria, ao custo de carregar um nome
+   * de constraint aqui dentro; a consulta separada nao tem nem um nem outro.
+   *
+   * O ERRO AQUI NAO PROPAGA, DE PROPOSITO
+   * -------------------------------------
+   * Esta funcao devolve um mapa VAZIO quando a leitura falha, em vez de lancar.
+   * Lancar cairia no catch de `carregarPartesDeGrupo`, que levanta
+   * `partesFalharam` e substitui a lista de partes por um aviso -- ou seja, o
+   * nome faltando apagaria as linhas inteiras. Mapa vazio deixa cada linha no
+   * lugar com o rotulo de fallback, que e menos informacao e nao informacao
+   * errada. Ver `pagadorNaLinha` em lib/parte-de-grupo-na-lista.ts.
+   *
+   * O PERFIL PODE SIMPLESMENTE NAO VIR, SEM ERRO
+   * --------------------------------------------
+   * As policies de SELECT de `profiles` sao `id = auth.uid()`, `is_public =
+   * TRUE` (002) e "conexao aceita" (010). NENHUMA delas olha `group_members`:
+   * dividir a conta com alguem nao me da o perfil dele. Para o membro de perfil
+   * fechado que nao e minha conexao a linha nao vem, e o PostgREST nao reclama
+   * -- devolve menos linhas. E esse o caminho do fallback, e ele e normal.
+   */
+  const nomesDeQuemPagou = async (
+    despesas: Map<string, DespesaDeGrupoLida>
+  ): Promise<Map<string, string>> => {
+    const pagadores = Array.from(
+      new Set(
+        Array.from(despesas.values())
+          .map((d) => d.user_id)
+          .filter(Boolean)
+      )
+    );
+
+    // `.in()` com lista vazia devolve TUDO em algumas versoes do PostgREST (o
+    // mesmo cuidado esta em app/api/expense-groups/my-balance/route.ts). Aqui
+    // "tudo" seria todo perfil publico do banco para montar zero nomes.
+    if (pagadores.length === 0) return new Map();
+
+    const { data: perfis, error } = await supabase
+      .from("profiles")
+      .select("id, full_name, nickname")
+      .in("id", pagadores);
+
+    if (error) {
+      console.error("Nao foi possivel ler o nome de quem pagou:", error);
+      return new Map();
+    }
+
+    return nomesDosPagadores((perfis || []) as PerfilDePagador[]);
+  };
+
+  /**
    * A MINHA PARTE DAS DESPESAS DE GRUPO QUE OUTRA PESSOA PAGOU (HMO-215)
    *
    * O pedido da issue e "todos os lancamentos, indiferente de onde foi", e este
@@ -573,9 +635,14 @@ function Lancamentos() {
         new Set((partes as ParteDeGrupoBruta[]).map((p) => p.transaction_id))
       );
 
+      // `user_id` entrou aqui na HMO-274: e quem PAGOU. A view do 033 nao tem
+      // esse id -- ela expoe o booleano `paguei_eu` --, e esta linha de
+      // `financial_transactions` e justamente a de quem desembolsou.
       const { data: despesas, error: erroDaDescricao } = await supabase
         .from("financial_transactions")
-        .select("id, description, amount, category:transaction_categories(*)")
+        .select(
+          "id, user_id, description, amount, category:transaction_categories(*)"
+        )
         .in("id", ids);
 
       if (erroDaDescricao) throw erroDaDescricao;
@@ -586,7 +653,8 @@ function Lancamentos() {
 
       const { linhas, semDescricao } = partesDeTerceirosNaLista(
         partes as ParteDeGrupoBruta[],
-        porId
+        porId,
+        await nomesDeQuemPagou(porId)
       );
 
       // Uma parte sem a despesa e DESCARTADA, e o descarte aparece. Sem este
@@ -1825,113 +1893,5 @@ function Lancamentos() {
         />
       )}
     </div>
-  );
-}
-
-/**
- * UMA LINHA QUE NAO E MINHA: A MINHA PARTE DO QUE OUTRA PESSOA PAGOU (HMO-215)
- * ---------------------------------------------------------------------------
- * Componente proprio, e nao um ramo dentro da linha normal, porque o que ela
- * NAO tem e o que importa:
- *
- * - SEM BOTAO DE EXCLUIR. Apagar esta linha mexeria na despesa de quem pagou, e
- *   o id dela e de `group_expense_splits` -- mandar isso para
- *   `/api/personal-finance/transactions/[id]` volta 404, que para quem clicou se
- *   le como "o app nao conseguiu apagar". A conversa sobre o rateio acontece na
- *   tela do grupo, e e para la que a linha leva.
- * - SEM BOTAO DE EDITAR, pela mesma razao.
- * - SEM CONTA. O dinheiro saiu da conta de outra pessoa; nao ha destino meu a
- *   mostrar, e inventar um seria afirmar que a despesa passou por uma conta
- *   minha.
- *
- * O que ela TEM, e que a linha comum nao precisa: o grupo, o valor CHEIO da
- * despesa ao lado da minha parte (sem ele, "R$ 200,00" num jantar de R$ 600
- * nao se reconhece) e o aviso de rateio ainda nao aprovado.
- */
-function LinhaDaParteDeGrupo({
-  parte,
-  nomeDoGrupo,
-}: {
-  parte: LancamentoDeTerceiro;
-  nomeDoGrupo: Record<string, string>;
-}) {
-  const grupo = nomeDoGrupo[parte.groupId];
-
-  return (
-    <Link
-      href={`/dashboard/expense-groups/${parte.groupId}`}
-      className="flex items-center justify-between gap-3 p-3 border rounded-lg border-dashed transition-colors hover:bg-muted/50"
-    >
-      {/*
-        `min-w-0` nos dois niveis e `truncate` na descricao, como na linha comum:
-        sem eles o minimo de min-content de um item flex estoura a largura do
-        celular e a pagina inteira ganha scroll horizontal (HMO-185).
-      */}
-      <div className="flex items-center gap-3 min-w-0 flex-1">
-        <div
-          className="w-10 h-10 shrink-0 rounded-full flex items-center justify-center text-white"
-          style={{ backgroundColor: parte.categoria?.color_hex ?? undefined }}
-        >
-          <Users className="h-5 w-5" />
-        </div>
-        <div className="min-w-0">
-          <p className="font-medium truncate">{parte.description}</p>
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
-            {/*
-              "Minha parte" e nao "Despesa": o valor ao lado NAO e o que foi
-              gasto, e a fracao que cabe a mim de uma despesa maior. O selo
-              generico "Despesa" faria a pessoa ler R$ 200,00 como o preco do
-              jantar.
-            */}
-            <Badge variant="outline" className="shrink-0">
-              Minha parte
-            </Badge>
-            {parte.categoria?.name && <span>{parte.categoria.name}</span>}
-            <span>•</span>
-            <span>
-              {new Date(parte.transactionDate).toLocaleDateString("pt-BR")}
-            </span>
-            <span>•</span>
-            <Badge variant="outline" className="flex items-center gap-1">
-              <Users className="h-3 w-3" />
-              {/*
-                O nome do grupo quando ele veio, e "Grupo" quando a chamada de
-                grupos falhou sem derrubar a lista. Ali "Grupo" e menos
-                informacao, nao informacao errada -- a mesma regra do selo da
-                linha comum.
-              */}
-              {grupo || "Grupo"}
-            </Badge>
-            {/*
-              Rateio ainda nao aprovado. A view do 033 ja descarta `rejected` e
-              `expired`; `pending` entra porque o dinheiro e devido de todo
-              jeito -- mas sem este selo a linha afirmaria um acerto fechado que
-              ainda esta em aberto.
-            */}
-            {parte.splitStatus === "pending" && (
-              <>
-                <span>•</span>
-                <Badge variant="outline" className="shrink-0">
-                  a aprovar
-                </Badge>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-      <div className="text-right shrink-0">
-        <p className="font-semibold text-destructive">
-          {formatCurrency(Math.abs(parte.amount))}
-        </p>
-        {/*
-          O valor cheio embaixo da parte. Sem ele "R$ 200,00 · Hotel em Paraty"
-          se le como o preco do hotel, e a pessoa nao tem como conferir a divisao
-          sem abrir a tela do grupo.
-        */}
-        <p className="text-xs text-muted-foreground">
-          de {formatCurrency(Math.abs(parte.totalDaDespesa))}
-        </p>
-      </div>
-    </Link>
   );
 }

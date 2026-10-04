@@ -247,9 +247,13 @@ test("indiceVazio nao quebra: a linha solta ainda tem frase", () => {
 // 2. A PARTE DE GRUPO QUE OUTRO PAGOU
 // =================================================================
 
+/** A Ana, que pagou o hotel. */
+const ANA = "u-ana";
+
 /** O hotel de R$ 400 que a Ana pagou, rateado 200/200 com a Bia. */
 const HOTEL = {
   id: "tx-hotel",
+  user_id: ANA,
   description: "Hotel em Paraty",
   amount: -400,
   category: { id: "cat-lazer", name: "Lazer", color_hex: "#06B6D4" },
@@ -271,10 +275,21 @@ const parteDaBia = (over = {}) => ({
 
 const despesasLidas = () => new Map([[HOTEL.id, HOTEL]]);
 
+/**
+ * `user_id -> nome`, o terceiro argumento que a HMO-274 acrescentou.
+ *
+ * Quem desenha a linha ja tem teste proprio para o nome e para o rotulo de
+ * fallback (scripts/test-pagador-da-parte.mjs). Aqui ele entra preenchido para
+ * que os casos deste arquivo -- sinal, contagem dupla, descarte -- sejam medidos
+ * no caminho NORMAL, com o nome legivel.
+ */
+const nomesLidos = () => new Map([[ANA, "Ana Souza"]]);
+
 test("a parte de quem NAO pagou entra na lista, com a descricao da despesa", () => {
   const { linhas, semDescricao } = partesDeTerceirosNaLista(
     [parteDaBia()],
-    despesasLidas()
+    despesasLidas(),
+    nomesLidos()
   );
 
   assert.equal(semDescricao, 0);
@@ -286,7 +301,7 @@ test("a parte de quem NAO pagou entra na lista, com a descricao da despesa", () 
 });
 
 test("a parte entra NEGATIVA -- a view devolve positivo e a lista pinta pelo sinal", () => {
-  const { linhas } = partesDeTerceirosNaLista([parteDaBia()], despesasLidas());
+  const { linhas } = partesDeTerceirosNaLista([parteDaBia()], despesasLidas(), nomesLidos());
   assert.equal(linhas[0].amount, -200);
   assert.ok(linhas[0].amount < 0, "parte positiva apareceria em verde, como receita");
   assert.equal(linhas[0].totalDaDespesa, -400);
@@ -295,7 +310,8 @@ test("a parte entra NEGATIVA -- a view devolve positivo e a lista pinta pelo sin
 test("a view mudando de sinal nao transforma a parte em receita", () => {
   const { linhas } = partesDeTerceirosNaLista(
     [parteDaBia({ amount: -200 })],
-    despesasLidas()
+    despesasLidas(),
+    nomesLidos()
   );
   assert.equal(linhas[0].amount, -200);
 });
@@ -306,7 +322,8 @@ test("a parte da despesa que EU paguei nao entra: a linha cheia ja esta na lista
   // mostraria o hotel duas vezes, totalizando R$ 600 de um gasto de R$ 400.
   const { linhas } = partesDeTerceirosNaLista(
     [parteDaBia({ id: "split-ana", paguei_eu: true }), parteDaBia()],
-    despesasLidas()
+    despesasLidas(),
+    nomesLidos()
   );
 
   assert.equal(linhas.length, 1);
@@ -315,7 +332,7 @@ test("a parte da despesa que EU paguei nao entra: a linha cheia ja esta na lista
 });
 
 test("o id da linha e prefixado: ele nao pode cair numa rota de transacao", () => {
-  const { linhas } = partesDeTerceirosNaLista([parteDaBia()], despesasLidas());
+  const { linhas } = partesDeTerceirosNaLista([parteDaBia()], despesasLidas(), nomesLidos());
   assert.equal(linhas[0].id, "parte:split-bia");
   assert.notEqual(linhas[0].id, "split-bia");
   assert.notEqual(linhas[0].id, HOTEL.id);
@@ -324,7 +341,8 @@ test("o id da linha e prefixado: ele nao pode cair numa rota de transacao", () =
 test("parte sem a despesa correspondente e descartada e CONTADA", () => {
   const { linhas, semDescricao } = partesDeTerceirosNaLista(
     [parteDaBia(), parteDaBia({ id: "split-x", transaction_id: "tx-sumida" })],
-    despesasLidas()
+    despesasLidas(),
+    nomesLidos()
   );
 
   assert.equal(linhas.length, 1);
@@ -334,7 +352,8 @@ test("parte sem a despesa correspondente e descartada e CONTADA", () => {
 test("o rateio pendente aparece, com o status para a tela rotular", () => {
   const { linhas } = partesDeTerceirosNaLista(
     [parteDaBia({ split_status: "pending" })],
-    despesasLidas()
+    despesasLidas(),
+    nomesLidos()
   );
   assert.equal(linhas.length, 1);
   assert.equal(linhas[0].splitStatus, "pending");
@@ -343,7 +362,7 @@ test("o rateio pendente aparece, com o status para a tela rotular", () => {
 test("sem parte nenhuma a nota e null, e nao uma frase com zero", () => {
   assert.equal(notaDasPartesDeTerceiros([]), null);
 
-  const { linhas } = partesDeTerceirosNaLista([parteDaBia()], despesasLidas());
+  const { linhas } = partesDeTerceirosNaLista([parteDaBia()], despesasLidas(), nomesLidos());
   assert.deepEqual(notaDasPartesDeTerceiros(linhas), { quantas: 1, total: 200 });
 });
 
@@ -354,7 +373,8 @@ test("sem parte nenhuma a nota e null, e nao uma frase com zero", () => {
 test("as partes aparecem em Lançamentos e em Despesas, e em mais nenhuma aba", () => {
   const { linhas: partes } = partesDeTerceirosNaLista(
     [parteDaBia()],
-    despesasLidas()
+    despesasLidas(),
+    nomesLidos()
   );
   const minhas = [receita(), despesa()];
 
@@ -379,7 +399,8 @@ test("a lista sai em ordem de data decrescente, misturando as duas fontes", () =
   // minhas de marco, como se fossem de outro periodo.
   const { linhas: partes } = partesDeTerceirosNaLista(
     [parteDaBia({ transaction_date: "2026-09-18" })],
-    despesasLidas()
+    despesasLidas(),
+    nomesLidos()
   );
   const minhas = [
     { ...despesa(), id: "t-nova", transaction_date: "2026-09-25" },
@@ -406,7 +427,8 @@ test("no mesmo dia a ordem das minhas linhas e preservada", () => {
 test("a contagem da barra casa com a lista, nas quatro abas", () => {
   const { linhas: partes } = partesDeTerceirosNaLista(
     [parteDaBia()],
-    despesasLidas()
+    despesasLidas(),
+    nomesLidos()
   );
   const { saida, entrada } = pernas();
   const minhas = [receita(), despesa(), saida, entrada];
@@ -450,7 +472,8 @@ test("sem partes, a contagem e a mesma de antes desta issue", () => {
 function mesDaBia() {
   const { linhas: partes } = partesDeTerceirosNaLista(
     [parteDaBia()],
-    despesasLidas()
+    despesasLidas(),
+    nomesLidos()
   );
   return { minhas: [receita(), despesa()], partes };
 }
@@ -519,7 +542,8 @@ test("a parte de quem EU paguei nao infla o cartao: R$ 400 continuam R$ 400", ()
   const hotelDaAna = { ...despesa(), id: "tx-hotel", amount: -400 };
   const { linhas: partes } = partesDeTerceirosNaLista(
     [parteDaBia({ id: "split-ana", paguei_eu: true })],
-    despesasLidas()
+    despesasLidas(),
+    nomesLidos()
   );
 
   assert.equal(partes.length, 0);
@@ -534,7 +558,8 @@ test("a parte PENDENTE soma: o dinheiro e devido antes de eu aprovar o rateio", 
   // "a aprovar" continua na linha -- ele nao muda o total.
   const { linhas: partes } = partesDeTerceirosNaLista(
     [parteDaBia({ split_status: "pending" })],
-    despesasLidas()
+    despesasLidas(),
+    nomesLidos()
   );
   const r = resumoComPartesDeGrupo([despesa()], partes);
 
@@ -545,6 +570,7 @@ test("a parte PENDENTE soma: o dinheiro e devido antes de eu aprovar o rateio", 
 test("duas partes de grupos diferentes somam as duas", () => {
   const JANTAR = {
     id: "tx-jantar",
+    user_id: ANA,
     description: "Jantar",
     amount: -90,
     category: null,
@@ -562,7 +588,8 @@ test("duas partes de grupos diferentes somam as duas", () => {
     new Map([
       [HOTEL.id, HOTEL],
       [JANTAR.id, JANTAR],
-    ])
+    ]),
+    nomesLidos()
   );
 
   const r = resumoComPartesDeGrupo([], partes);
@@ -576,7 +603,8 @@ test("a parte descartada por falta de descricao nao entra no cartao", () => {
   // somar uma linha que a lista nao mostra deixaria a pessoa sem como conferir.
   const { linhas: partes, semDescricao } = partesDeTerceirosNaLista(
     [parteDaBia(), parteDaBia({ id: "split-x", transaction_id: "tx-sumida" })],
-    despesasLidas()
+    despesasLidas(),
+    nomesLidos()
   );
 
   assert.equal(semDescricao, 1);

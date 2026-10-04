@@ -41,11 +41,16 @@ const ALLOWED = [
     // components/MobileMenuChrome.tsx, que nao esta em nenhuma excecao: se
     // alguem reintroduzir a cor fixa junto com a posicao antiga, esta guarda
     // reprova.
+    // `LinhaDaParteDeGrupo.tsx` entrou na HMO-274 por MUDANCA DE ENDERECO, e
+    // nao por excecao nova: a linha era uma funcao no fim do `page.tsx` acima, e
+    // o `text-white` dela e o icone dentro do circulo da categoria, cujo fundo
+    // vem de `categoria.color_hex` -- nao do tema. A excecao segue o arquivo.
     test: (cls, file) =>
       ["text-white", "ring-white", "border-white", "bg-black"].includes(cls) &&
       [
         "components/ui/LoadingScreen.tsx",
         "app/(dashboard)/dashboard/personal-finance/page.tsx",
+        "components/movimentacoes/LinhaDaParteDeGrupo.tsx",
       ].includes(file),
     reason: "texto sobre fundo que nao e do tema",
   },
