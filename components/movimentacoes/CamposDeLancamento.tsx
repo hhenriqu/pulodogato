@@ -47,7 +47,10 @@ import {
   camposDoTipo,
   contasDoSeletor,
   diaDeVencimentoValido,
-  naturezasDoTipo,
+  ehNaturezaFixa,
+  lugarDaNatureza,
+  lugaresDoTipo,
+  naturezaDoLugar,
   parcelaDigitada,
   resumoDaSerie,
   serieDeParcelas,
@@ -55,63 +58,63 @@ import {
   type CategoriaDeLancamento,
   type ContaDeLancamento,
   type DuracaoDaRepeticao,
-  type NaturezaDespesa,
+  type LugarDoLancamento,
   type TipoLancamento,
   type ValoresDeLancamento,
 } from "@/lib/lancamento";
 
 // ---------------------------------------------------------------------------
-// OS ROTULOS DE CADA NATUREZA, POR TELA
+// OS ROTULOS DE CADA LUGAR, POR TELA (HMO-254)
 // ---------------------------------------------------------------------------
-// Tabela em vez de `tipo === "expense" ? ... : ...` espalhado pelo JSX: com duas
-// telas e tres naturezas sao seis textos, e o ternario aninhado e onde a receita
-// herdou "Despesa Fixa" escrito na tela dela.
-const ROTULO_DA_NATUREZA: Record<
+// Tabela em vez de `tipo === "expense" ? ... : ...` espalhado pelo JSX: o
+// ternario aninhado e onde a receita herdou "Despesa Fixa" escrito na tela dela.
+//
+// O SELETOR PERGUNTA O LUGAR, NAO A NATUREZA. "Despesa Pontual" virou "Despesa"
+// -- o pedido e literal ("devem se chamar apenas despesa") --, e o motivo nao e
+// so o nome: com a checkbox "Fixa" ao lado, "Pontual" passou a CONTRADIZER a
+// tela. Uma "Despesa Pontual" com Fixa marcada e uma frase que se nega, e quem
+// lesse o seletor acreditaria nele.
+const ROTULO_DO_LUGAR: Record<
   TipoLancamento,
-  Record<NaturezaDespesa, string>
+  Record<LugarDoLancamento, string>
 > = {
   expense: {
-    one_off: "Despesa Pontual",
-    card: "Gasto no Cartão",
-    fixed: "Despesa Fixa",
+    conta: "Despesa",
+    cartao: "Gasto no Cartão",
   },
   income: {
-    one_off: "Receita Pontual",
-    // O caso que deu nome a issue: salario. "Receita Fixa" e o rotulo generico,
-    // e o texto de ajuda abaixo cita o salario para quem procura por ele.
-    card: "Gasto no Cartão",
-    fixed: "Receita Fixa",
+    conta: "Receita",
+    // A receita nao tem seletor de lugar (`campos.natureza` e falso nela), mas a
+    // tabela e um `Record` COMPLETO de proposito: o `tsc` cobra a chave, e um
+    // mapa pela metade so falharia em runtime no dia em que a receita ganhasse o
+    // seletor -- com o gatilho do radix VAZIO, que parece tela nao carregada.
+    cartao: "Gasto no Cartão",
   },
 };
 
-const AJUDA_DA_NATUREZA: Record<
+const AJUDA_DO_LUGAR: Record<
   TipoLancamento,
-  Record<NaturezaDespesa, string>
+  Record<LugarDoLancamento, string>
 > = {
   expense: {
-    one_off: "Um gasto avulso, lançado só nesta data.",
-    card: "Entra na fatura do cartão escolhido, no mês certo conforme o dia do fechamento.",
-    fixed:
-      "Vira uma regra mensal em Contas Previstas, que passa a cobrar você todo mês.",
+    conta: "Sai do saldo da conta escolhida. Cartão de crédito não entra aqui.",
+    cartao:
+      "Entra na fatura do cartão escolhido, no mês certo conforme o dia do fechamento.",
   },
   income: {
-    one_off: "Uma entrada avulsa, lançada só nesta data.",
-    card: "",
-    fixed:
-      "Salário, aluguel recebido, mensalidade: vira uma regra mensal em Contas Previstas, que passa a prever essa entrada todo mês.",
+    conta: "Entra no saldo da conta escolhida.",
+    cartao: "",
   },
 };
 
-const ICONE_DA_NATUREZA: Record<NaturezaDespesa, typeof Receipt> = {
-  one_off: Receipt,
-  card: CreditCard,
-  fixed: Repeat,
+const ICONE_DO_LUGAR: Record<LugarDoLancamento, typeof Receipt> = {
+  conta: Receipt,
+  cartao: CreditCard,
 };
 
-const COR_DA_NATUREZA: Record<NaturezaDespesa, string> = {
-  one_off: "text-muted-foreground",
-  card: "text-info",
-  fixed: "text-warning",
+const COR_DO_LUGAR: Record<LugarDoLancamento, string> = {
+  conta: "text-muted-foreground",
+  cartao: "text-info",
 };
 
 interface CamposDeLancamentoProps {
@@ -214,7 +217,16 @@ export function CamposDeLancamento({
   // primeira passaria por medir a segunda.
   const naturezaTravada = Boolean(cartaoFixado);
   const contasVisiveis = contasDoSeletor(contas, tipo, valores.natureza);
-  const naturezasVisiveis = naturezasDoTipo(tipo);
+  const lugaresVisiveis = lugaresDoTipo(tipo);
+  // OS DOIS EIXOS DE `natureza`, LIDOS POR FUNCAO E NAO POR `===` (HMO-254)
+  //
+  // O seletor escreve um deles e a checkbox o outro, no MESMO campo do estado.
+  // Decompor aqui, num lugar so, e o que faz os dois controles concordarem com o
+  // que esta gravado: um `valores.natureza === "card"` no JSX do seletor leria
+  // `false` em `card_fixed` e mostraria "Despesa" selecionado numa tela que esta
+  // gravando no cartao.
+  const lugarAtual = lugarDaNatureza(valores.natureza);
+  const fixaMarcada = ehNaturezaFixa(valores.natureza);
   // A conta escolhida, para saber que moeda ela sugere.
   const contaEscolhida = contas.find((c) => c.id === valores.contaId);
 
@@ -261,24 +273,34 @@ export function CamposDeLancamento({
               <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2">
                 <CreditCard className="h-4 w-4 text-info" />
                 <span className="text-sm font-medium text-foreground">
-                  {ROTULO_DA_NATUREZA[tipo].card}
+                  {ROTULO_DO_LUGAR[tipo].cartao}
                 </span>
               </div>
               <p className="text-xs text-muted-foreground">
-                {AJUDA_DA_NATUREZA[tipo].card}
+                {AJUDA_DO_LUGAR[tipo].cartao}
               </p>
             </>
           ) : (
             <>
           <Select
-            value={valores.natureza}
+            value={lugarAtual}
             onValueChange={(value) =>
               aoMudar({
-                natureza: value as NaturezaDespesa,
-                // Trocar de natureza invalida a conta escolhida: a lista muda
-                // (cartao x todas), e manter o id antigo deixaria selecionada
-                // uma conta que nao esta mais no seletor.
-                contaId: value === "card" ? "" : valores.contaId,
+                // A natureza sai da COMPOSICAO dos dois eixos, e nao do valor do
+                // seletor: trocar de lugar nao pode desligar a checkbox "Fixa"
+                // que esta marcada na tela (HMO-254). Quem marcou "Fixa" e
+                // depois trocou para cartao quer uma assinatura no cartao, e um
+                // `natureza: value` cru aqui gravaria a compra.
+                natureza: naturezaDoLugar(
+                  value as LugarDoLancamento,
+                  fixaMarcada
+                ),
+                // Trocar de lugar invalida a conta escolhida: as duas listas sao
+                // DISJUNTAS desde a HMO-254 (cartoes x nao-cartoes), e manter o
+                // id antigo deixaria selecionada uma conta que nao esta mais no
+                // seletor -- com o radix mostrando o nome dela, porque ele le de
+                // `contas` e nao de `contasVisiveis`.
+                contaId: "",
               })
             }
             disabled={editando}
@@ -293,16 +315,16 @@ export function CamposDeLancamento({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {/* As opcoes saem de `naturezasDoTipo`, nao de tres itens fixos:
+              {/* As opcoes saem de `lugaresDoTipo`, nao de dois itens fixos:
                   receita nao tem "no cartao", e um item a mais aqui deixaria a
                   tela oferecer um caminho que a validacao recusa depois. */}
-              {naturezasVisiveis.map((opcao) => {
-                const Icone = ICONE_DA_NATUREZA[opcao];
+              {lugaresVisiveis.map((opcao) => {
+                const Icone = ICONE_DO_LUGAR[opcao];
                 return (
                   <SelectItem key={opcao} value={opcao}>
                     <div className="flex items-center gap-2">
-                      <Icone className={`h-4 w-4 ${COR_DA_NATUREZA[opcao]}`} />
-                      <span>{ROTULO_DA_NATUREZA[tipo][opcao]}</span>
+                      <Icone className={`h-4 w-4 ${COR_DO_LUGAR[opcao]}`} />
+                      <span>{ROTULO_DO_LUGAR[tipo][opcao]}</span>
                     </div>
                   </SelectItem>
                 );
@@ -310,119 +332,9 @@ export function CamposDeLancamento({
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">
-            {AJUDA_DA_NATUREZA[tipo][valores.natureza]}
+            {AJUDA_DO_LUGAR[tipo][lugarAtual]}
           </p>
             </>
-          )}
-        </div>
-      )}
-
-      {campos.diaDeVencimento && (
-        <div className="space-y-2">
-          <Label htmlFor="due_day">
-            {tipo === "expense" ? "Vence todo dia *" : "Cai todo dia *"}
-          </Label>
-          <Input
-            id="due_day"
-            type="number"
-            min={1}
-            max={31}
-            value={valores.diaDeVencimento}
-            onChange={(e) => aoMudar({ diaDeVencimento: e.target.value })}
-            placeholder="Ex: 10"
-          />
-          {/* QUANDO COMECA (HMO-247)
-
-              Com o campo "Data" fora da tela, este dia passou a ser a UNICA
-              resposta para "quando isso cai?" -- e a pergunta que vem depois
-              ("entao ja cai este mes?") nao tinha onde ser respondida. A frase
-              diz a regra que `firstOccurrence` (lib/recurrence.ts) ja aplica.
-
-              TEXTO, E NAO A DATA CALCULADA: calcular a primeira ocorrencia aqui
-              seria uma SEGUNDA copia da aritmetica de `firstOccurrence`, e
-              lib/lancamento.ts nao pode importa-la (o modulo e compilado sozinho
-              pelo `test:lancamento`, sem reescrita do alias `@/`). Duas copias da
-              mesma conta divergem, e a divergencia apareceria como uma tela
-              prometendo um dia e a agenda mostrando outro. */}
-          {diaDeVencimentoValido(valores.diaDeVencimento) && (
-            <p className="text-xs text-muted-foreground">
-              {tipo === "expense" ? "A primeira cobrança" : "A primeira entrada"}{" "}
-              é no próximo dia {Number(valores.diaDeVencimento)}: neste mês, se
-              ele ainda não passou; no mês que vem, se já passou.
-            </p>
-          )}
-          <p className="text-xs text-muted-foreground">
-            Dia 29, 30 ou 31 cai no último dia do mês quando o mês for mais
-            curto.
-          </p>
-        </div>
-      )}
-
-      {/* POR QUANTOS MESES (HMO-170)
-          O bloco so existe junto com o dia do vencimento -- `campos.duracao` tem
-          a mesma condicao -- porque as duas perguntas descrevem a MESMA regra.
-          Mostrar a duracao sem o dia deixaria a pessoa dizer "por 12 meses" sem
-          dizer quando vence. */}
-      {campos.duracao && (
-        <div className="space-y-3 p-4 border rounded-lg bg-muted/20">
-          <Label>Por quanto tempo *</Label>
-          <Select
-            value={valores.duracao}
-            onValueChange={(value) =>
-              aoMudar({
-                duracao: value as DuracaoDaRepeticao,
-                // Voltar para "todos os meses" limpa a contagem: deixar o numero
-                // no estado faria ele voltar a valer se a pessoa trocasse de
-                // novo, cadastrando um prazo que ela ja tinha desistido de por.
-                mesesDeRepeticao:
-                  value === "contada" ? valores.mesesDeRepeticao : "",
-              })
-            }
-          >
-            <SelectTrigger id="duracao">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="indefinida">
-                <div className="flex items-center gap-2">
-                  <Repeat className="h-4 w-4 text-warning" />
-                  <span>Todos os meses, sem data de fim</span>
-                </div>
-              </SelectItem>
-              <SelectItem value="contada">
-                <div className="flex items-center gap-2">
-                  <CalendarClock className="h-4 w-4 text-info" />
-                  <span>Por um número de meses</span>
-                </div>
-              </SelectItem>
-            </SelectContent>
-          </Select>
-
-          {valores.duracao === "contada" && (
-            <div className="space-y-2">
-              <Label htmlFor="meses_de_repeticao">Quantos meses *</Label>
-              <Input
-                id="meses_de_repeticao"
-                type="number"
-                min={2}
-                max={MAX_MESES_DE_REPETICAO}
-                value={valores.mesesDeRepeticao}
-                onChange={(e) =>
-                  aoMudar({ mesesDeRepeticao: e.target.value })
-                }
-                placeholder="Ex: 12"
-              />
-              <p className="text-xs text-muted-foreground">
-                Conta a partir deste mês. Depois do último, a cobrança para
-                sozinha.
-              </p>
-            </div>
-          )}
-
-          {valores.duracao === "indefinida" && (
-            <p className="text-xs text-muted-foreground">
-              Continua até você desativar em Contas Previstas.
-            </p>
           )}
         </div>
       )}
@@ -484,21 +396,211 @@ export function CamposDeLancamento({
             Parcelas" e "Valor da Parcela" -- e o campo de valor de cima era
             sobrescrito em silencio por `parcela * N`. Quem digitasse o preco da
             etiqueta via o proprio numero mudar sem ter tocado nele. */}
-        {campos.parcelamento && (
+        {/* AS DUAS CHECKBOXES NA MESMA CAIXA, LADO A LADO (HMO-254)
+
+            "tem o check box ao lado do parcelamento, voce escolhe, fixo ou
+            parcelado ou caso nenhum nem outro ambos desmarcados ai e gasto
+            normal."
+
+            A posicao e o pedido, e ela carrega a regra: as duas sao os UNICOS
+            modificadores de um gasto no cartao, e sao exclusivas. Lado a lado as
+            duas respostas aparecem juntas e o "nenhuma das duas" fica visivel
+            como estado -- e ele e o caso comum, o gasto normal. Em dois blocos
+            separados do formulario, a pessoa que marcou "Fixa" no topo encontra
+            "Parcelar" trinta linhas abaixo e nao tem como saber que uma desliga a
+            outra.
+
+            UMA CAIXA SO, E NAO UMA PARA CADA: a caixa e o que diz "estas duas
+            perguntas sao sobre o valor acima". Era o que o bloco do parcelamento
+            ja fazia desde a HMO-211 ("abaixo do valor, porque a pergunta e sobre
+            o valor"), e a Fixa tem a mesma relacao com o campo -- ela decide se
+            aquele numero e uma saida unica ou a parcela mensal de uma regra.
+
+            NA RECEITA E NA DESPESA DE CONTA so existe a Fixa, e a caixa fica com
+            uma checkbox: `campos.parcelamento` e falso fora do cartao desde a
+            HMO-211. O `||` na condicao e o que mantem a caixa viva nesses casos
+            -- com `&&` a receita fixa (HMO-170) perderia o unico controle que
+            cria a regra do salario. */}
+        {(campos.fixa || campos.parcelamento) && (
           <div className="space-y-4 p-4 border rounded-lg bg-muted/20">
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="is_installment"
-                checked={valores.parcelado}
-                onChange={(e) => aoMudar({ parcelado: e.target.checked })}
-              />
-              <Label htmlFor="is_installment" className="font-medium">
-                Parcelar esta compra
-              </Label>
+            <div className="flex flex-col gap-3 sm:flex-row sm:gap-6">
+              {/* A CHECKBOX "FIXA" (HMO-254)
+
+                  "ter um checkbox de Fixa. Se tornando uma despesa fixa."
+
+                  A marcacao escreve `parcelado: false` junto. Nao e zelo:
+                  `parcelado` sobrevive a marcacao desta checkbox (o estado e um
+                  objeto so), e com ele `true` no estado a volta para "nao fixa"
+                  reabriria o bloco de parcelamento JA MARCADO, com o N e o M que
+                  a pessoa tinha preenchido antes -- uma serie de 10x pronta para
+                  gravar que ela nao pediu de novo.
+
+                  A TRAVA DE DINHEIRO NAO E ESTA LINHA, e `campos.parcelamento`:
+                  ele e falso em `card_fixed`, entao `destinoDoLancamento` nao
+                  consegue escolher "parcelas" nem com `parcelado: true` parado no
+                  estado (o ramo exige as duas coisas). Esta linha e para a TELA
+                  nao mentir; a de lib/lancamento.ts e para o banco nao errar. */}
+              {campos.fixa && (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="is_fixed"
+                    checked={fixaMarcada}
+                    onChange={(e) =>
+                      aoMudar({
+                        natureza: naturezaDoLugar(lugarAtual, e.target.checked),
+                        parcelado: false,
+                      })
+                    }
+                  />
+                  <Label htmlFor="is_fixed" className="font-medium">
+                    {campos.rotuloDaFixa}
+                  </Label>
+                </div>
+              )}
+
+              {campos.parcelamento && (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="is_installment"
+                    checked={valores.parcelado}
+                    onChange={(e) => aoMudar({ parcelado: e.target.checked })}
+                  />
+                  <Label htmlFor="is_installment" className="font-medium">
+                    Parcelar esta compra
+                  </Label>
+                </div>
+              )}
             </div>
 
-            {valores.parcelado && (
+            {campos.fixa && (
+              <p className="text-xs text-muted-foreground">
+                {campos.ajudaDaFixa}
+              </p>
+            )}
+
+            {campos.diaDeVencimento && (
+              <div className="space-y-2">
+                <Label htmlFor="due_day">
+                  {tipo === "expense" ? "Vence todo dia *" : "Cai todo dia *"}
+                </Label>
+                <Input
+                  id="due_day"
+                  type="number"
+                  min={1}
+                  max={31}
+                  value={valores.diaDeVencimento}
+                  onChange={(e) => aoMudar({ diaDeVencimento: e.target.value })}
+                  placeholder="Ex: 10"
+                />
+                {/* QUANDO COMECA (HMO-247)
+
+                    Com o campo "Data" fora da tela, este dia passou a ser a
+                    UNICA resposta para "quando isso cai?" -- e a pergunta que vem
+                    depois ("entao ja cai este mes?") nao tinha onde ser
+                    respondida. A frase diz a regra que `firstOccurrence`
+                    (lib/recurrence.ts) ja aplica.
+
+                    TEXTO, E NAO A DATA CALCULADA: calcular a primeira ocorrencia
+                    aqui seria uma SEGUNDA copia da aritmetica de
+                    `firstOccurrence`, e lib/lancamento.ts nao pode importa-la (o
+                    modulo e compilado sozinho pelo `test:lancamento`, sem
+                    reescrita do alias `@/`). Duas copias da mesma conta divergem,
+                    e a divergencia apareceria como uma tela prometendo um dia e a
+                    agenda mostrando outro. */}
+                {diaDeVencimentoValido(valores.diaDeVencimento) && (
+                  <p className="text-xs text-muted-foreground">
+                    {tipo === "expense"
+                      ? "A primeira cobrança"
+                      : "A primeira entrada"}{" "}
+                    é no próximo dia {Number(valores.diaDeVencimento)}: neste
+                    mês, se ele ainda não passou; no mês que vem, se já passou.
+                  </p>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Dia 29, 30 ou 31 cai no último dia do mês quando o mês for
+                  mais curto.
+                </p>
+              </div>
+            )}
+
+            {/* POR QUANTOS MESES (HMO-170)
+                O bloco so existe junto com o dia do vencimento --
+                `campos.duracao` tem a mesma condicao -- porque as duas perguntas
+                descrevem a MESMA regra. Mostrar a duracao sem o dia deixaria a
+                pessoa dizer "por 12 meses" sem dizer quando vence.
+
+                SEM A MOLDURA PROPRIA desde a HMO-254: ele ja esta DENTRO da caixa
+                das checkboxes, e uma segunda borda aqui desenharia uma caixa
+                dentro da outra -- a tela sugeriria que a duracao e uma terceira
+                pergunta independente, e nao parte da regra que a Fixa criou. */}
+            {campos.duracao && (
+              <div className="space-y-3">
+                <Label>Por quanto tempo *</Label>
+                <Select
+                  value={valores.duracao}
+                  onValueChange={(value) =>
+                    aoMudar({
+                      duracao: value as DuracaoDaRepeticao,
+                      // Voltar para "todos os meses" limpa a contagem: deixar o
+                      // numero no estado faria ele voltar a valer se a pessoa
+                      // trocasse de novo, cadastrando um prazo que ela ja tinha
+                      // desistido de por.
+                      mesesDeRepeticao:
+                        value === "contada" ? valores.mesesDeRepeticao : "",
+                    })
+                  }
+                >
+                  <SelectTrigger id="duracao">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="indefinida">
+                      <div className="flex items-center gap-2">
+                        <Repeat className="h-4 w-4 text-warning" />
+                        <span>Todos os meses, sem data de fim</span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="contada">
+                      <div className="flex items-center gap-2">
+                        <CalendarClock className="h-4 w-4 text-info" />
+                        <span>Por um número de meses</span>
+                      </div>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {valores.duracao === "contada" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="meses_de_repeticao">Quantos meses *</Label>
+                    <Input
+                      id="meses_de_repeticao"
+                      type="number"
+                      min={2}
+                      max={MAX_MESES_DE_REPETICAO}
+                      value={valores.mesesDeRepeticao}
+                      onChange={(e) =>
+                        aoMudar({ mesesDeRepeticao: e.target.value })
+                      }
+                      placeholder="Ex: 12"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Conta a partir deste mês. Depois do último, a cobrança para
+                      sozinha.
+                    </p>
+                  </div>
+                )}
+
+                {valores.duracao === "indefinida" && (
+                  <p className="text-xs text-muted-foreground">
+                    Continua até você desativar em Contas Previstas.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {valores.parcelado && campos.parcelamento && (
               <div className="space-y-4">
                 {/* A PERGUNTA, EM RADIO E NAO EM SELECT
 

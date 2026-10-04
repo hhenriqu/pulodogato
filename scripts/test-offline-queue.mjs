@@ -20,7 +20,19 @@ import {
   resumirFila,
   novoId,
   MAX_TENTATIVAS,
+  NATUREZAS_FIXAS,
 } from "../.tmp-offline-queue/offline-queue.js";
+// O SEGUNDO MODULO E O ORACULO DA LISTA (HMO-254)
+//
+// `lib/offline-queue.ts` nao importa `lib/lancamento.ts` -- ele compila sozinho
+// e o campo que ele le e `string`, porque a entrada pode vir de uma tela antiga
+// servida do cache do service worker. O que impede a copia de divergir e este
+// import AQUI, no teste, que compila os dois e compara. Mesmo arranjo que
+// scripts/test-moeda.mjs usa para `MOEDA_PADRAO`.
+import {
+  ehNaturezaFixa,
+  naturezasDoTipo,
+} from "../.tmp-offline-queue/lancamento.js";
 import {
   guardarCatalogo,
   lerCatalogo,
@@ -110,6 +122,54 @@ test("despesa fixa e recusada: ela e regra, nao lancamento", () => {
   const r = avaliarLancamento({ ...base, tipoDeDespesa: "fixed" }, ID);
   assert.equal(r.ok, false);
   assert.equal(r.motivo, "despesa-fixa");
+});
+
+test("o gasto FIXO NO CARTAO tambem e recusado (HMO-254)", () => {
+  // ERA A COMPARACAO `=== "fixed"`, E ELA FUROU QUANDO `card_fixed` NASCEU.
+  //
+  // A assinatura do cartao lancada sem rede passava por esta peneira como
+  // despesa PONTUAL: a fila gravava uma `financial_transactions`, o aviso dizia
+  // "guardei no aparelho", e quando a conexao voltasse a regra mensal que a
+  // pessoa pediu nao existiria. Mas a cobranca daquele mes existiria -- duas
+  // vezes, depois que ela cadastrasse a regra de novo ao perceber.
+  const r = avaliarLancamento({ ...base, tipoDeDespesa: "card_fixed" }, ID);
+  assert.equal(r.ok, false);
+  assert.equal(r.motivo, "despesa-fixa");
+});
+
+test("a lista da fila e `ehNaturezaFixa` concordam em TODA natureza", () => {
+  // A CONCORDANCIA ENTRE OS DOIS MODULOS, que e o que substitui o import que a
+  // fila nao pode ter. Quem adicionar uma quinta natureza fixa ao enum e
+  // esquecer `NATUREZAS_FIXAS` quebra aqui -- e nao em producao, com a regra
+  // virando transacao em silencio.
+  const naturezas = naturezasDoTipo("expense");
+  assert.ok(naturezas.length >= 4, "a lista de naturezas encolheu sem aviso");
+
+  for (const natureza of naturezas) {
+    assert.equal(
+      NATUREZAS_FIXAS.includes(natureza),
+      ehNaturezaFixa(natureza),
+      `a fila e lib/lancamento.ts discordam sobre "${natureza}"`
+    );
+    // E a recusa tem de SEGUIR a lista, nao so coincidir com ela: sem esta
+    // segunda assercao, `NATUREZAS_FIXAS` poderia estar certa e o `if` do
+    // `avaliarLancamento` continuar lendo `=== "fixed"`.
+    const r = avaliarLancamento({ ...base, tipoDeDespesa: natureza }, ID);
+    assert.equal(
+      r.ok === false && r.motivo === "despesa-fixa",
+      ehNaturezaFixa(natureza),
+      `a fila recusou/aceitou "${natureza}" ao contrario do esperado`
+    );
+  }
+
+  // NAO HA NATUREZA FIXA FORA DO ENUM: a lista nao pode carregar um valor que a
+  // tela nao produz mais, senao ela vira documentacao de um estado morto.
+  for (const fixa of NATUREZAS_FIXAS) {
+    assert.ok(
+      naturezas.includes(fixa),
+      `"${fixa}" esta na lista da fila mas nao e natureza nenhuma`
+    );
+  }
 });
 
 test("dividida e recusada: o rateio depende de quem esta no grupo AGORA", () => {

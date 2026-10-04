@@ -61,6 +61,9 @@ import {
   contaPrevista,
   datasDaTransacao,
   destinoDoLancamento,
+  ehNaturezaFixa,
+  ehNaturezaNoCartao,
+  naturezaDoLugar,
   parcelaDigitada,
   regraDeRecorrencia,
   valoresIniciais,
@@ -103,7 +106,10 @@ const COPIA = {
   income: {
     titulo: "Nova Receita",
     descricao:
-      "Dinheiro que entrou: salário, venda, rendimento, reembolso. Pode ser pontual ou fixa mensal.",
+      // "pontual" SAIU do vocabulario da tela (HMO-254): o seletor nao tem mais
+      // essa palavra, e uma descricao que a usa manda a pessoa procurar por uma
+      // opcao que nao existe. Hoje quem decide e a checkbox "Fixa".
+      "Dinheiro que entrou: salário, venda, rendimento, reembolso. Marque \"Fixa\" se ela se repete todo mês.",
     salvar: "Salvar receita",
     salvo: "Receita lançada.",
     atualizado: "Receita atualizada.",
@@ -116,7 +122,9 @@ const COPIA = {
   expense: {
     titulo: "Nova Despesa",
     descricao:
-      "Dinheiro que saiu. Pode ser pontual, no cartão, fixa mensal ou parcelada.",
+      // Ver o comentario gemeo na receita: o seletor pergunta ONDE (conta ou
+      // cartao), e "Fixa" / "Parcelar" sao as checkboxes.
+      "Dinheiro que saiu. Escolha se foi da conta ou no cartão, e marque \"Fixa\" ou \"Parcelar\" se for o caso.",
     salvar: "Salvar despesa",
     salvo: "Despesa lançada.",
     atualizado: "Despesa atualizada.",
@@ -234,14 +242,25 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
   // devolve o estado intacto quando ja esta aplicado, senao cada render
   // reescreveria `moeda` em cima de uma troca explicita da pessoa
   // (`moedaSobreposta`) com o campo aberto na tela.
+  //
+  // `ehNaturezaNoCartao` E NAO `=== "card"` (HMO-254). Com a comparacao crua
+  // este efeito DESFAZIA a checkbox "Fixa": marca-la produz `card_fixed`, a
+  // condicao de idempotencia passava a ler `false`, e o `else` reescrevia
+  // `natureza: "card"` no render seguinte. A checkbox voltava sozinha para
+  // desmarcada -- e quem tentasse cadastrar a assinatura do cartao entrando pela
+  // tela daquele cartao gravava a compra do mes, sem nada na tela explicando por
+  // que o clique nao pegou. O cartao fixado trava o CARTAO, nao a frequencia.
   useEffect(() => {
     if (!cartaoFixado) return;
     setValores((atual) =>
-      atual.natureza === "card" && atual.contaId === cartaoFixado.id
+      ehNaturezaNoCartao(atual.natureza) && atual.contaId === cartaoFixado.id
         ? atual
         : {
             ...atual,
-            natureza: "card",
+            // `naturezaDoLugar` preserva o eixo "fixa" que ja esta no estado: um
+            // `natureza: "card"` literal aqui e o mesmo defeito, so que uma
+            // linha abaixo.
+            natureza: naturezaDoLugar("cartao", ehNaturezaFixa(atual.natureza)),
             contaId: cartaoFixado.id,
             moeda: moedaSugerida({
               daConta: cartaoFixado.currency,
