@@ -12,8 +12,8 @@
 //
 // POR QUE A ARITMETICA NAO MORA NA ROTA NEM NO JSX
 // -----------------------------------------------
-// Porque ela tem quatro armadilhas, e as quatro produzem um numero PLAUSIVEL.
-// Nenhuma delas levanta excecao, nenhuma aparece em tsc, e tres delas deixam a
+// Porque ela tem cinco armadilhas, e as cinco produzem um numero PLAUSIVEL.
+// Nenhuma delas levanta excecao, nenhuma aparece em tsc, e quatro delas deixam a
 // lista ao lado do total visivelmente correta -- o que faz a leitura natural ser
 // "o total esta certo, eu e que nao entendi".
 //
@@ -45,6 +45,18 @@
 //      lado realizado e de `direction` da view no lado previsto -- nunca do
 //      sinal, que o `Math.abs` da armadilha 1 apagou.
 //
+//   5. O GASTO NO CARTAO JA ESTA NA FATURA (HMO-260). O lado PREVISTO desta tela
+//      tira a compra no cartao da agenda (`agendaSemCompraNoCartao`) e poe no
+//      lugar a FATURA ABERTA inteira (`faturasPrevistasDaJanela`, HMO-227) -- a
+//      compra esta DENTRO dela. O lado REALIZADO lia `financial_transactions`
+//      sem olhar o tipo da conta, entao a mesma compra de R$ 400 entrava duas
+//      vezes no mesmo total: uma solta no Realizado, outra dentro do Previsto.
+//      `Total` e `previsto + realizado`, e o mes fechava em R$ 800 de uma compra
+//      de R$ 400. Nada disso levanta erro, e as DUAS linhas aparecem na lista
+//      logo abaixo -- a soma "fecha" com o que esta na tela, o que faz o defeito
+//      se ler como "o cartao conta duas vezes porque eu nao entendi a tela".
+//      `ehGastoNoCartao` tira a compra do lado realizado, e so na de Despesas.
+//
 // O "TOTAL" E PREVISTO + REALIZADO, E ISSO E O PEDIDO
 // ---------------------------------------------------
 // E a mesma definicao do fechamento do mes do grupo (HMO-245): o que o periodo
@@ -59,6 +71,7 @@ import {
   contraparteDe,
   destinoDoLancamento,
   indiceDeContraparte,
+  type ContaDoLancamento,
   type IndiceDeContraparte,
   type LancamentoComConta,
 } from "@/lib/destino-do-lancamento";
@@ -100,8 +113,17 @@ export const TELAS_DE_MOVIMENTACAO: readonly TelaDeMovimentacao[] = [
     tipo: "expense",
     rota: "/dashboard/despesas",
     titulo: "Despesas",
-    oQueOPrevistoE: "o que ainda vence no período e não foi pago",
-    oQueORealizadoE: "o que já saiu da sua conta",
+    // AS DUAS FRASES DIZEM ONDE O CARTAO ESTA (HMO-260).
+    // O cartao entra nesta tela UMA vez, pelo lado previsto, como a fatura
+    // inteira; a compra solta nao entra. Sem estas duas frases o Realizado de
+    // quem gasta no cartao fica muito menor que a lista de Finanças Pessoais do
+    // mesmo mes -- e um valor que falta sem rotulo e indistinguivel de um bug.
+    oQueOPrevistoE:
+      "o que ainda vence no período e não foi pago, incluindo a fatura do cartão",
+    // Sem "acima": este rotulo e impresso no cartao do topo (onde Previsto fica
+    // ao LADO, nao em cima) e tambem no cabecalho da secao da lista (onde ele
+    // fica em cima). Uma palavra de posicao fica errada em um dos dois lugares.
+    oQueORealizadoE: "o que já saiu da sua conta — gasto no cartão vai na fatura",
   },
   {
     tipo: "transfer",
@@ -351,6 +373,108 @@ export function ehPernaDeEntrada(crua: RealizadaCrua): boolean {
 }
 
 /**
+ * O valor de `financial_accounts.account_type` que significa cartao de credito.
+ *
+ * Declarado aqui, e NAO importado de `TIPO_CARTAO` (lib/agenda-do-cartao.ts),
+ * porque este modulo e compilado por um tsconfig com `rootDir: lib` e com
+ * apenas duas dependencias copiadas para a arvore do mutador: importar
+ * `agenda-do-cartao` arrastaria `card-invoice` -> `transferencia` ->
+ * `lancamento` atras dele, e um mutante que nao COMPILA "morre" por motivo
+ * errado -- o placar mentiria a favor.
+ *
+ * Duas constantes com o mesmo valor em dois arquivos e uma fonte de verdade
+ * duplicada, e o modo de falha dela e exatamente o que o cabecalho de
+ * `agenda-do-cartao` descreve: um typo (`credit-card`) nao da erro nenhum, so
+ * para de casar, o filtro passa a nao filtrar nada e a tela volta ao defeito da
+ * HMO-260 sem uma mensagem em lugar algum. Quem tranca isso e
+ * `test-contrato-das-telas-de-movimentacao.mjs`, que afirma que as duas
+ * declaracoes dizem a mesma string.
+ */
+export const TIPO_CARTAO = "credit_card";
+
+/**
+ * A conta da linha realizada, venha o embed objeto ou array de um.
+ *
+ * `RealizadaCrua.account` e tipado objeto (`financial_transactions` e TABELA, e
+ * ali o supabase-js resolve muitos-para-um), mas a rota entrega a resposta com
+ * `as unknown as RealizadaCrua[]` -- o `tsc` nao verifica nada nessa fronteira.
+ * Se o embed chegasse array, `crua.account.account_type` seria `undefined` em
+ * TODA linha, nenhuma casaria com `credit_card`, o filtro de `ehGastoNoCartao`
+ * passaria a nao filtrar nada e a tela voltaria ao defeito desta issue -- sem
+ * erro, sem log, sem teste vermelho. Ver `umDoEmbed`, que faz o mesmo do lado
+ * previsto, e HMO-209.
+ */
+function contaDaRealizada(crua: RealizadaCrua): ContaDoLancamento | null {
+  const bruto = crua.account as
+    | ContaDoLancamento
+    | ContaDoLancamento[]
+    | null
+    | undefined;
+  if (!bruto) return null;
+  if (Array.isArray(bruto)) return bruto[0] ?? null;
+  return bruto;
+}
+
+/**
+ * Os `transaction_type` que a view `card_invoice_lines` deixa entrar na fatura.
+ *
+ * ESTA LISTA E A COPIA DO `WHERE` DA VIEW (006/035), e nao uma escolha deste
+ * arquivo:
+ *
+ *     WHERE a.account_type = 'credit_card'
+ *       AND t.transaction_type IN ('expense', 'income')
+ *
+ * Ela existe porque `ehGastoNoCartao` so pode esconder a linha que a fatura de
+ * fato CONTEM. Ver o paragrafo do `transaction_type` NULO em `ehGastoNoCartao`.
+ */
+const TIPOS_QUE_ENTRAM_NA_FATURA: ReadonlySet<string> = new Set([
+  "expense",
+  "income",
+]);
+
+/**
+ * Esta linha realizada e um gasto NO CARTAO (e por isso ja esta na fatura)?
+ *
+ * Armadilha 5 do cabecalho. "Realizado no periodo nunca deve considerar
+ * despesas no cartao. Pois ja considera a fatura do cartao pro periodo."
+ *
+ * SAO DOIS CRITERIOS, e o segundo nao e zelo -- ele e o que impede este conserto
+ * de APAGAR dinheiro:
+ *
+ *   * a conta e um cartao de credito. Nao ha excecao de fatura aqui, ao
+ *     contrario de `previsaoApareceNaAgenda`: la a fatura FECHADA e uma
+ *     `scheduled_transaction` com o `account_id` do cartao e precisa ficar,
+ *     porque e ela que a pessoa paga. Aqui nao existe linha equivalente -- o
+ *     pagamento da fatura e uma TRANSFERENCIA de duas pernas
+ *     (`pernasDoPagamentoDeFatura`), e as duas pernas sao `transfer`, entao
+ *     nenhuma delas chega na tela de Despesas de qualquer forma.
+ *
+ *   * e o `transaction_type` GRAVADO esta em `TIPOS_QUE_ENTRAM_NA_FATURA`.
+ *
+ * O SEGUNDO CRITERIO, E POR QUE ELE E SOBRE A COLUNA CRUA E NAO SOBRE
+ * `classificarMovimentacao`: a view `card_invoice_lines` filtra
+ * `t.transaction_type IN ('expense','income')` pela COLUNA, e ha linha com a
+ * coluna NULA em producao (o POST de /api/personal-finance/transactions nao a
+ * gravava). Uma compra no cartao com `transaction_type` NULO portanto NAO esta
+ * na fatura -- e `classificarMovimentacao` a chama de despesa pela categoria ou
+ * pelo sinal. Esconde-la daqui pelo tipo da conta a tiraria da tela de Despesas
+ * sem que nada a somasse no lugar: o valor sairia do app, que e pior que
+ * conta-lo duas vezes. Com os dois criterios ela FICA no realizado, exatamente
+ * como antes desta issue.
+ *
+ * SEM CONTA (ou sem conseguir ler a conta) A LINHA FICA, pela mesma direcao de
+ * erro barato de `previsaoApareceNaAgenda`: a despesa de grupo e gravada SEM
+ * `account_id` (ver lib/destino-do-lancamento.ts) e um embed `null` por RLS
+ * significa "nao sei", nao "e cartao". Esconder no "nao sei" apagaria despesa
+ * legitima do unico total que a pessoa abre para saber quanto gastou no mes --
+ * e um total MENOR nao parece um erro, parece um mes barato.
+ */
+export function ehGastoNoCartao(crua: RealizadaCrua): boolean {
+  if (contaDaRealizada(crua)?.account_type !== TIPO_CARTAO) return false;
+  return TIPOS_QUE_ENTRAM_NA_FATURA.has(String(crua.transaction_type));
+}
+
+/**
  * Converte a linha realizada para a lista.
  *
  * O `indice` existe so pela transferencia: a frase "Itaú → Nubank" precisa da
@@ -453,16 +577,21 @@ export function linhaPrevista(crua: PrevistaCrua): LinhaDaTela | null {
  * As linhas de UMA tela, previsto e realizado juntos, da mais recente para a
  * mais antiga.
  *
- * A ordem das tres decisoes importa:
+ * A ordem das quatro decisoes importa:
  *
  *   1. o TIPO filtra (`classificarMovimentacao` no realizado, `direction` no
  *      previsto). E o que mantem a perna de saida de uma transferencia fora da
  *      tela de Despesas -- pelo sinal e pela categoria ela e um gasto.
  *   2. a perna de ENTRADA sai, so na tela de transferencia.
- *   3. so entao a linha e convertida, porque a conversao apaga o sinal.
+ *   3. o GASTO NO CARTAO sai, so na tela de Despesas (armadilha 5). Depois do
+ *      filtro de tipo e nao antes: a perna de ENTRADA do pagamento da fatura
+ *      mora no cartao, e tirar as linhas de cartao antes de classificar
+ *      esconderia dela a tela de Transferencias, que e onde o pagamento da
+ *      fatura tem de aparecer.
+ *   4. so entao a linha e convertida, porque a conversao apaga o sinal.
  *
- * Invertida a 1 com a 3, o filtro de tipo teria de decidir sobre um valor ja
- * absoluto -- e nao ha como. Invertida a 2 com a 3, o mesmo.
+ * Invertida a 1 com a 4, o filtro de tipo teria de decidir sobre um valor ja
+ * absoluto -- e nao ha como. Invertida a 2 com a 4, o mesmo.
  */
 export function linhasDaTela(
   realizadas: readonly RealizadaCrua[],
@@ -480,6 +609,9 @@ export function linhasDaTela(
   for (const crua of realizadas) {
     if (classificarMovimentacao(crua) !== tipo) continue;
     if (tipo === "transfer" && ehPernaDeEntrada(crua)) continue;
+    // O gasto no cartao esta DENTRO da fatura, e a fatura inteira ja esta no
+    // lado previsto desta mesma tela. Ver armadilha 5 do cabecalho.
+    if (tipo === "expense" && ehGastoNoCartao(crua)) continue;
     linhas.push(linhaRealizada(crua, indice));
   }
 
