@@ -977,19 +977,76 @@ test("o aviso diz o que a confirmacao faz com o saldo, nos dois estados", () => 
   assert.match(receita, /entra no saldo da conta agora/);
 });
 
-test("fixa nao oferece a confirmacao, e NAO perde o campo de data", () => {
-  // O campo de data de uma despesa fixa e o `start_date` da regra. Um
-  // `confirmado: false` parado no estado nao pode apaga-lo -- e a checkbox nao
-  // pode estar ali, porque regra mensal ja e previsao por definicao.
+test("fixa nao oferece a confirmacao", () => {
+  // A checkbox nao pode estar ali: regra mensal ja e previsao por definicao, e a
+  // confirmacao dela acontece mes a mes em Contas Previstas.
   const html = renderizar({
     tipo: "expense",
     valores: { natureza: "fixed", confirmado: false },
   });
   assert.doesNotMatch(html, /id="confirmado"/);
-  assert.match(html, /id="date"/);
-  // Nem a data prevista: quem diz quando e o dia do vencimento, e dois campos
-  // para a mesma pergunta se contradizem.
-  assert.doesNotMatch(html, /id="expected-date"/);
+});
+
+// ---------------------------------------------------------------------------
+// A FIXA NAO TEM CAMPO DE DATA, NA TELA (HMO-247)
+// ---------------------------------------------------------------------------
+// `camposDoTipo` ja decide isso e tem teste proprio, mas a decisao certa com o
+// JSX ignorando ela e exatamente o defeito que este arquivo existe para pegar: o
+// bloco da data esta a 500 linhas do seletor de natureza, e um `{true && ...}`
+// ali deixaria os dois campos na tela com a funcao pura verde do outro lado.
+
+test("fixa nao tem NENHUM campo de data na tela, nos dois tipos", () => {
+  for (const tipo of ["expense", "income"]) {
+    for (const confirmado of [false, true]) {
+      const html = renderizar({
+        tipo,
+        valores: { natureza: "fixed", confirmado, diaDeVencimento: "10" },
+      });
+      assert.doesNotMatch(html, /id="date"/, `${tipo}: o campo "Data" ficou na tela`);
+      assert.doesNotMatch(html, /id="expected-date"/, `${tipo}: data prevista na tela`);
+      // E os rotulos tambem nao: um `<Label>` orfao continuaria pedindo uma data.
+      assert.doesNotMatch(html, /Data do pagamento/, `${tipo}: rotulo de data na tela`);
+      assert.doesNotMatch(html, /Data do recebimento/, `${tipo}: rotulo de data na tela`);
+      assert.doesNotMatch(html, /Data prevista/, `${tipo}: rotulo de prevista na tela`);
+      // A resposta que FICA e o dia do vencimento.
+      assert.match(html, /id="due_day"/, `${tipo}: perdeu o dia do vencimento`);
+    }
+  }
+});
+
+test("a tela diz quando a primeira cobranca cai, e so com o dia preenchido", () => {
+  // Tirando "Data", este dia virou a unica resposta para "quando isso cai?" -- e
+  // "ja cai este mes?" nao tinha onde ser respondida.
+  const despesa = renderizar({
+    tipo: "expense",
+    valores: { natureza: "fixed", diaDeVencimento: "10" },
+  });
+  assert.match(despesa, /A primeira cobrança é no próximo dia 10/);
+  assert.match(despesa, /neste mês, se ele ainda não passou/);
+
+  // A receita fala de ENTRADA: "cobrança" no salario e a frase errada, e e o
+  // mesmo defeito que deu nome a HMO-170.
+  const receita = renderizar({
+    tipo: "income",
+    valores: { natureza: "fixed", diaDeVencimento: "5" },
+  });
+  assert.match(receita, /A primeira entrada é no próximo dia 5/);
+  assert.doesNotMatch(receita, /cobrança/);
+
+  // Com o campo vazio a frase NAO aparece: "no próximo dia " sem numero e pior
+  // que silencio. Mesma coisa para um dia que a validacao recusa -- a tela nao
+  // pode prometer a cobranca de um dia 45.
+  for (const diaDeVencimento of ["", "0", "45"]) {
+    const html = renderizar({
+      tipo: "expense",
+      valores: { natureza: "fixed", diaDeVencimento },
+    });
+    assert.doesNotMatch(
+      html,
+      /primeira cobrança/,
+      `prometeu a primeira cobranca com diaDeVencimento "${diaDeVencimento}"`
+    );
+  }
 });
 
 test("editando nao oferece a confirmacao", () => {

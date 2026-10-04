@@ -269,4 +269,85 @@ jobs:
           fi
           cp $CAMPOS.orig $CAMPOS
 
-          echo "A verificacao fica vermelha nos doze defeitos."
+          # ------------------------------------------------------------------
+          # HMO-247: a despesa fixa nao tem campo de data
+          # ------------------------------------------------------------------
+          # A queixa e literal: "se escolhemos qual o dia do vencimento da
+          # despesa fixa, nao precisamos ter o campo Data, isso tem confundido o
+          # usuario". Os tres defeitos abaixo sao as tres formas de o campo
+          # voltar, e so uma delas e visivel na tela.
+          #
+          # Cada um checa o ancora ANTES de aplicar, pelo motivo que a mutacao 4
+          # documenta: um `sed` que nao casa sai 0 e deixa o arquivo intacto, a
+          # suite roda sobre codigo correto, passa, e o controle reprova acusando
+          # o codigo em vez da sonda.
+
+          # 13) O campo de data de volta na fixa, na funcao pura. O "Data" voltaria
+          #     para a tela logo abaixo de "Vence todo dia 10" -- duas datas para
+          #     uma pergunta, que e a confusao que a issue nomeia.
+          PADRAO_FIXA='dataDeRealizacao: !ehPrevisao && !ehFixa,'
+          CASOU=$(grep -cF "$PADRAO_FIXA" $REGRAS)
+          if [ "$CASOU" != "1" ]; then
+            echo "::error::A sonda do campo de data da fixa casa ${CASOU}x, nao 1x, em lib/lancamento.ts. Conserte a sonda, nao o codigo."
+            exit 1
+          fi
+          sed -i "s|$PADRAO_FIXA|dataDeRealizacao: !ehPrevisao,|" $REGRAS
+          if npm run test:campos-lancamento > /dev/null 2>&1; then
+            echo "::error::Verde com o campo 'Data' de volta na despesa fixa."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 14) O DEFEITO DE DINHEIRO DESTA ISSUE, e o unico invisivel na tela.
+          #     `start_date` voltando a sair de `valores.data`: o estado do
+          #     formulario e um objeto so, e a data digitada em "pontual"
+          #     sobrevive a troca para "fixa". Ela viraria o inicio da regra --
+          #     primeira cobranca meses no futuro, sem campo na tela e sem erro.
+          PADRAO_START='start_date: hoje,'
+          CASOU=$(grep -cF "$PADRAO_START" $REGRAS)
+          if [ "$CASOU" != "1" ]; then
+            echo "::error::A sonda do start_date casa ${CASOU}x, nao 1x, em lib/lancamento.ts. Conserte a sonda, nao o codigo."
+            exit 1
+          fi
+          sed -i "s|$PADRAO_START|start_date: valores.data,|" $REGRAS
+          if npm run test:lancamento > /dev/null 2>&1; then
+            echo "::error::Verde com o start_date da regra saindo de um campo que a tela nao mostra."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 15) O JSX ignorando a decisao. Gemeo do mutante 12, e necessario pelo
+          #     mesmo motivo: o bloco da data esta a 500 linhas do seletor de
+          #     natureza, e `camposDoTipo` pode estar certa com o JSX renderizando
+          #     o campo sempre -- test:lancamento ficaria verde.
+          PADRAO_JSX='{campos.dataDeRealizacao && ('
+          CASOU=$(grep -cF "$PADRAO_JSX" $CAMPOS)
+          if [ "$CASOU" != "1" ]; then
+            echo "::error::A sonda do bloco de data casa ${CASOU}x, nao 1x, em $CAMPOS. Conserte a sonda, nao o codigo."
+            exit 1
+          fi
+          sed -i "s|{campos.dataDeRealizacao && (|{true \&\& (|" $CAMPOS
+          if npm run test:campos-lancamento > /dev/null 2>&1; then
+            echo "::error::Verde com o bloco de data renderizado sempre, inclusive na fixa."
+            exit 1
+          fi
+          cp $CAMPOS.orig $CAMPOS
+
+          # 16) A frase "a primeira cobranca e no proximo dia N" falando de
+          #     COBRANCA na tela de receita. Com o campo "Data" fora da tela essa
+          #     frase e a unica resposta para "quando isso cai?", e chamar o
+          #     salario de cobranca e o defeito que deu nome a HMO-170.
+          PADRAO_FRASE='"A primeira cobrança" : "A primeira entrada"'
+          CASOU=$(grep -cF "$PADRAO_FRASE" $CAMPOS)
+          if [ "$CASOU" != "1" ]; then
+            echo "::error::A sonda da frase da primeira cobranca casa ${CASOU}x, nao 1x, em $CAMPOS. Conserte a sonda, nao o codigo."
+            exit 1
+          fi
+          sed -i "s|$PADRAO_FRASE|\"A primeira cobrança\" : \"A primeira cobrança\"|" $CAMPOS
+          if npm run test:campos-lancamento > /dev/null 2>&1; then
+            echo "::error::Verde com a tela de receita anunciando uma COBRANCA."
+            exit 1
+          fi
+          cp $CAMPOS.orig $CAMPOS
+
+          echo "A verificacao fica vermelha nos dezesseis defeitos."

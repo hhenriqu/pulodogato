@@ -35,6 +35,7 @@ import {
   destinoDoLancamento,
   contaPrevista,
   datasDaTransacao,
+  diaDeVencimentoValido,
   hojeISO,
   MAX_MESES_DE_REPETICAO,
 } from "../.tmp-lancamento/lib/lancamento.js";
@@ -589,6 +590,45 @@ test("o dia do vencimento vai como numero", () => {
 });
 
 // ---------------------------------------------------------------------------
+// O start_date DA REGRA E HOJE, E NAO `valores.data` (HMO-247)
+// ---------------------------------------------------------------------------
+
+test("start_date NAO sai do campo de data escondido", () => {
+  // O defeito que isto compra: o campo "Data" saiu da tela na fixa, mas o estado
+  // do formulario e um objeto so. Quem digita 25/12 em "Despesa Pontual" e
+  // depois troca para "Despesa Fixa" leva aquela data no estado -- e com
+  // `start_date: valores.data` ela viraria o inicio da regra, empurrando a
+  // primeira cobranca para dezembro. Sem campo na tela, e sem erro.
+  const corpo = regraDeRecorrencia(
+    "expense",
+    fixo("expense", { data: "2026-12-25" }),
+    "2026-10-04"
+  );
+  assert.equal(corpo.start_date, "2026-10-04");
+
+  // E nao e so o caso "no futuro": uma data no PASSADO parada no estado criaria
+  // ocorrencias ja vencidas na agenda no instante do cadastro.
+  assert.equal(
+    regraDeRecorrencia("income", fixo("income", { data: "2024-01-01" }), "2026-10-04")
+      .start_date,
+    "2026-10-04"
+  );
+
+  // O controle de que o parametro e lido de verdade, e nao ignorado junto com o
+  // campo: outro `hoje` tem de produzir outro `start_date`.
+  assert.equal(
+    regraDeRecorrencia("expense", fixo("expense"), "2027-03-09").start_date,
+    "2027-03-09"
+  );
+});
+
+test("sem o terceiro argumento, start_date e hoje", () => {
+  // A tela chama com dois argumentos. Um default errado aqui nao apareceria em
+  // nenhum caso acima -- todos passam `hoje` na mao.
+  assert.equal(regraDeRecorrencia("expense", fixo("expense")).start_date, hojeISO());
+});
+
+// ---------------------------------------------------------------------------
 // PREVISTO x REALIZADO (HMO-188)
 // ---------------------------------------------------------------------------
 // A pergunta "ja pagou / ja recebeu?" decide em qual TABELA o lancamento cai, e
@@ -859,19 +899,105 @@ test("o rotulo da confirmacao e do campo de data falam do tipo da tela", () => {
   );
 });
 
-test("fixa e edicao nao oferecem a confirmacao, e nao perdem o campo de data", () => {
-  // O campo de data de uma despesa fixa e o `start_date` da regra. Um
-  // `confirmado: false` parado no estado nao pode apaga-lo.
+test("fixa nao oferece a confirmacao; a edicao nao perde o campo de data", () => {
   const fixa = camposDoTipo("expense", "fixed", false, false);
   assert.equal(fixa.confirmacao, false);
-  assert.equal(fixa.dataDeRealizacao, true);
   // E fixa nao mostra data prevista: quem diz quando e o dia do vencimento, e
   // dois campos para a mesma pergunta se contradizem.
   assert.equal(fixa.dataPrevista, false);
 
+  // A edicao continua com o campo: o que esta gravado e uma transacao, e a data
+  // dela e o dia em que o dinheiro andou. Um `confirmado: false` parado no
+  // estado nao pode apaga-lo.
   const editando = camposDoTipo("expense", "one_off", true, false);
   assert.equal(editando.confirmacao, false);
   assert.equal(editando.dataDeRealizacao, true);
+});
+
+// ---------------------------------------------------------------------------
+// A FIXA NAO TEM CAMPO DE DATA (HMO-247)
+// ---------------------------------------------------------------------------
+// A queixa: "se escolhemos qual o dia do vencimento da despesa fixa, nao
+// precisamos ter o campo Data, isso tem confundido o usuario". O campo era o
+// `start_date` da regra, mas na tela ele aparecia so como "Data", logo abaixo de
+// "Vence todo dia 10" -- duas datas para uma pergunta, e a que mandava era a
+// outra.
+
+test("natureza fixa nao tem campo de data NENHUM, nos dois tipos", () => {
+  for (const tipo of ["expense", "income"]) {
+    for (const confirmado of [false, true]) {
+      const campos = camposDoTipo(tipo, "fixed", false, confirmado);
+      assert.equal(
+        campos.dataDeRealizacao,
+        false,
+        `${tipo} fixa (confirmado: ${confirmado}) ainda mostra o campo de data`
+      );
+      assert.equal(campos.dataPrevista, false, `${tipo} fixa mostra data prevista`);
+      // E o dia do vencimento, que e a resposta que fica, continua la.
+      assert.equal(campos.diaDeVencimento, true, `${tipo} fixa perdeu o dia`);
+    }
+  }
+});
+
+test("tirar a data da fixa nao tira a data de QUEM a tem", () => {
+  // O controle. Um `dataDeRealizacao: false` cravado passaria no caso acima e
+  // apagaria o campo de toda despesa pontual confirmada -- que e a tela mais
+  // usada do app.
+  assert.equal(camposDoTipo("expense", "one_off", false, true).dataDeRealizacao, true);
+  assert.equal(camposDoTipo("income", "one_off", false, true).dataDeRealizacao, true);
+  // No cartao a compra ja aconteceu: a data da compra decide a fatura.
+  assert.equal(camposDoTipo("expense", "card", false, false).dataDeRealizacao, true);
+  // E editando uma transacao gravada, inclusive uma apontada como "fixed" no
+  // estado: `ehFixa` exige `!editando`, e o que esta no banco e um lancamento.
+  assert.equal(camposDoTipo("expense", "fixed", true, false).dataDeRealizacao, true);
+  assert.equal(camposDoTipo("expense", "fixed", true, false).rotuloDaData, "Data do pagamento");
+});
+
+test("fixa continua indo para a REGRA, e nao para a agenda", () => {
+  // A trava que a HMO-247 mexeu sem querer: `destinoDoLancamento` tem o ramo
+  // `regra` ANTES da leitura de `dataDeRealizacao`. Com a fixa passando a ter
+  // `dataDeRealizacao: false`, uma fixa que escapasse do primeiro ramo cairia em
+  // `previsao` -- o aluguel viraria UMA conta avulsa em vez de uma regra mensal.
+  for (const tipo of ["expense", "income"]) {
+    for (const confirmado of [false, true]) {
+      assert.equal(
+        destinoDoLancamento(tipo, fixo(tipo, { confirmado }), false),
+        "regra",
+        `${tipo} fixa (confirmado: ${confirmado}) deixou de virar regra`
+      );
+    }
+  }
+});
+
+test("a fixa e valida sem data nenhuma no estado", () => {
+  // A recusa "Informe a data." e gateada por `campos.dataDeRealizacao`. Sem
+  // isso, a tela cobraria um campo que ela nao mostra -- o formulario travaria no
+  // Salvar sem ter onde ser consertado.
+  for (const tipo of ["expense", "income"]) {
+    const v = validarLancamento(
+      tipo,
+      fixo(tipo, { data: "", dataPrevista: "" }),
+      CTX(tipo)
+    );
+    assert.equal(v.ok, true, `${tipo}: ${v.ok ? "" : v.mensagem}`);
+  }
+});
+
+test("o dia do vencimento ainda e cobrado, e a frase da tela usa a MESMA regra", () => {
+  // `diaDeVencimentoValido` e exportada porque a tela decide com ela se mostra
+  // "a primeira cobranca e no proximo dia N". Se as duas respostas divergissem, a
+  // tela prometeria a cobranca de um dia que a validacao recusa.
+  for (const bruto of ["", "  ", "0", "32", "10.5", "abc", "-1"]) {
+    assert.equal(diaDeVencimentoValido(bruto), false, `aceitou "${bruto}"`);
+    const v = validarLancamento("expense", fixo("expense", { diaDeVencimento: bruto }), CTX("expense"));
+    assert.equal(v.ok, false, `a validacao aceitou "${bruto}"`);
+    assert.match(v.mensagem, /dia do vencimento/);
+  }
+  for (const bruto of ["1", "05", "28", "31"]) {
+    assert.equal(diaDeVencimentoValido(bruto), true, `recusou "${bruto}"`);
+    const v = validarLancamento("expense", fixo("expense", { diaDeVencimento: bruto }), CTX("expense"));
+    assert.equal(v.ok, true, `a validacao recusou "${bruto}": ${v.ok ? "" : v.mensagem}`);
+  }
 });
 
 test("camposDoTipo sem o quarto argumento se comporta como confirmado", () => {
@@ -927,10 +1053,6 @@ test("'Data do pagamento' continua sendo o rotulo fora do cartao", () => {
   assert.equal(
     camposDoTipo("expense", "one_off", false).rotuloDaData,
     "Data do pagamento"
-  );
-  assert.equal(
-    camposDoTipo("expense", "fixed", false).rotuloDaData,
-    "Data"
   );
 });
 

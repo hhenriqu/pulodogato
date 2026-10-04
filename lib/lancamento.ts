@@ -170,6 +170,8 @@ export interface CamposDoTipo {
    * confirmacao: um lancamento que ainda nao aconteceu nao tem data de
    * pagamento, e deixar o campo na tela com a data de hoje faria ela parecer
    * uma resposta.
+   *
+   * Some tambem em natureza FIXA (HMO-247) -- ver `camposDoTipo`.
    */
   dataDeRealizacao: boolean;
   /** O campo da data PREVISTA. Nao aparece em natureza fixa: la quem diz quando e `diaDeVencimento`. */
@@ -237,20 +239,44 @@ export function camposDoTipo(
   // aconteceu.
   const confirmacao =
     !ehFixa && !editando && natureza !== "fixed" && !ehCompraNoCartao;
-  // Quando a checkbox nao existe, `confirmado` nao pode mandar na tela -- senao
-  // um `confirmado: false` parado no estado apagaria o campo de data de uma
-  // despesa fixa, e `data` e o `start_date` da regra. No cartao essa mesma
-  // leitura e a TRAVA da HMO-209: `destinoDoLancamento` decide pelo
+  // Quando a checkbox nao existe, `confirmado` nao pode mandar na tela. No
+  // cartao essa leitura e a TRAVA da HMO-209: `destinoDoLancamento` decide pelo
   // `dataDeRealizacao` que sai daqui, entao o estado desmarcado herdado da
-  // natureza anterior nao consegue mandar a compra para a agenda.
+  // natureza anterior nao consegue mandar a compra para a agenda. Na edicao ela
+  // e o que impede o Salvar de uma transacao gravada de virar previsao nova.
   const ehPrevisao = confirmacao && !confirmado;
 
+  // -------------------------------------------------------------------------
+  // A DESPESA FIXA NAO TEM CAMPO DE DATA (HMO-247)
+  // -------------------------------------------------------------------------
+  // A queixa e literal: "se escolhemos qual o dia do vencimento da despesa
+  // fixa, nao precisamos ter o campo Data, isso tem confundido o usuario".
+  //
+  // E a confusao nao e estetica. O campo era o `start_date` da regra, nao um
+  // vencimento -- mas na tela ele aparecia como "Data", logo abaixo de "Vence
+  // todo dia 10", e nao havia nada que dissesse a diferenca. Duas datas, uma
+  // pergunta: quem lia "Data" como "a data da primeira cobranca" preenchia 10
+  // ali tambem, ou mudava o campo e nao via efeito nenhum -- porque `due_day` e
+  // quem manda.
+  //
+  // Nao se perde resposta nenhuma ao tirar o campo: `firstOccurrence`
+  // (lib/recurrence.ts) ja deriva a primeira ocorrencia do `due_day` a partir do
+  // `start_date`, e a rota POST /api/recurring-rules ja defaulta `start_date`
+  // para hoje. Uma regra que comeca hoje com vencimento no dia 10 cobra dia 10
+  // deste mes se ele ainda nao passou, e do mes que vem se passou -- que e
+  // exatamente o que a pessoa quer dizer ao escolher o dia.
+  //
+  // O par disto esta em `regraDeRecorrencia`: com o campo fora da tela,
+  // `start_date` NAO pode mais sair de `valores.data`. O estado do formulario e
+  // um objeto so, e uma data digitada em "pontual" sobrevive a troca para
+  // "fixa" -- ela viraria um `start_date` no futuro, atrasando a primeira
+  // cobranca por meses, com o campo invisivel e nenhum erro na tela.
   const comum = {
     natureza: true,
     diaDeVencimento: ehFixa,
     duracao: ehFixa,
     confirmacao,
-    dataDeRealizacao: !ehPrevisao,
+    dataDeRealizacao: !ehPrevisao && !ehFixa,
     // Em fixa quem diz quando e `diaDeVencimento`; um segundo campo de data
     // prevista ali seriam duas respostas para a mesma pergunta. No cartao a
     // compra ja aconteceu: nao ha o que prever.
@@ -266,7 +292,10 @@ export function camposDoTipo(
       contaObrigatoria: false,
       rotuloDaConta: "Conta de entrada",
       rotuloDaNatureza: "Tipo de Receita *",
-      rotuloDaData: ehFixa ? "Data" : "Data do recebimento",
+      // SEM UM RAMO PARA FIXA (HMO-247): o campo nao existe mais ali. Um
+      // `ehFixa ? "Data"` sobrevivendo aqui seria rotulo de campo inexistente --
+      // e o lugar exato onde o campo volta sem ninguem decidir que ele voltou.
+      rotuloDaData: "Data do recebimento",
       rotuloDaConfirmacao: "Já recebi",
     };
   }
@@ -299,11 +328,9 @@ export function camposDoTipo(
     // anotado e a COMPRA, e o rotulo e a unica coisa na tela que diz isso. A
     // data tambem nao e cosmetica -- e ela que decide em que fatura a compra
     // cai (`card_invoice_month()`).
-    rotuloDaData: ehFixa
-      ? "Data"
-      : ehNoCartao
-        ? "Data da compra"
-        : "Data do pagamento",
+    //
+    // Sem ramo para fixa (HMO-247) -- ver o comentario gemeo no ramo da receita.
+    rotuloDaData: ehNoCartao ? "Data da compra" : "Data do pagamento",
     rotuloDaConfirmacao: "Já paguei",
   };
 }
@@ -495,6 +522,23 @@ export function hojeISO(): string {
   return new Date().toISOString().split("T")[0];
 }
 
+/**
+ * O dia do vencimento digitado cabe no mes? (1 a 31, inteiro.)
+ *
+ * Existe exportado porque DOIS lugares precisam da mesma resposta: a recusa em
+ * `validarLancamento` e a frase "a primeira cobranca e no proximo dia N" que a
+ * tela mostra ao lado do campo (HMO-247). Com a regra escrita duas vezes, a tela
+ * acabaria prometendo a primeira cobranca de um dia 0 ou 45 que a validacao
+ * recusa -- texto afirmando um vencimento que nunca vai existir.
+ *
+ * `Number("")` e 0 e `Number("  ")` tambem: o campo vazio reprova por aqui, sem
+ * precisar de um teste de string separado.
+ */
+export function diaDeVencimentoValido(bruto: string): boolean {
+  const dia = Number(bruto);
+  return Number.isInteger(dia) && dia >= 1 && dia <= 31;
+}
+
 export function valoresIniciais(): ValoresDeLancamento {
   return {
     descricao: "",
@@ -683,14 +727,13 @@ export function validarLancamento(
     return { ok: false, mensagem: "Escolha em qual cartão foi o gasto." };
   }
 
-  if (campos.diaDeVencimento) {
-    const dia = Number(valores.diaDeVencimento);
-    if (!Number.isInteger(dia) || dia < 1 || dia > 31) {
-      return {
-        ok: false,
-        mensagem: "Informe o dia do vencimento, entre 1 e 31.",
-      };
-    }
+  // A MESMA funcao que a tela usa para decidir se mostra a frase "a primeira
+  // cobranca e no proximo dia N" -- ver `diaDeVencimentoValido`.
+  if (campos.diaDeVencimento && !diaDeVencimentoValido(valores.diaDeVencimento)) {
+    return {
+      ok: false,
+      mensagem: "Informe o dia do vencimento, entre 1 e 31.",
+    };
   }
 
   // Por quantos meses (HMO-170). So cobrado quando a tela MOSTRA o bloco: o
@@ -972,10 +1015,27 @@ export function valorGravado(tipo: TipoLancamento, valor: number): number {
  *
  * `max_occurrences` e o numero de MESES porque a frequencia e mensal. Se algum
  * dia a tela oferecer outra frequencia, os dois deixam de ser a mesma coisa.
+ *
+ * `hoje` E PARAMETRO, E E ISSO QUE TORNA O `start_date` TESTAVEL (HMO-247)
+ * ----------------------------------------------------------------------
+ * Ate a HMO-247 o `start_date` saia de `valores.data`, o campo "Data" que a tela
+ * mostrava na despesa fixa. O campo saiu (ver `camposDoTipo`), e ler
+ * `valores.data` daqui passou a ser um defeito silencioso: o estado do
+ * formulario e um objeto so, a data digitada em "pontual" sobrevive a troca para
+ * "fixa", e ela viraria o `start_date` de uma regra -- primeira cobranca meses
+ * no futuro, sem campo na tela que explicasse por que.
+ *
+ * A regra comeca HOJE. Quem decide o primeiro vencimento e `due_day`, via
+ * `firstOccurrence` (lib/recurrence.ts): dia 10 com a regra comecando hoje cobra
+ * dia 10 deste mes se ele nao passou, do mes que vem se passou.
+ *
+ * O default `hojeISO()` existe para o chamador da tela nao ter de saber disso; o
+ * parametro existe para o teste nao depender do relogio da maquina que o roda.
  */
 export function regraDeRecorrencia(
   tipo: TipoLancamento,
-  valores: ValoresDeLancamento
+  valores: ValoresDeLancamento,
+  hoje: string = hojeISO()
 ): {
   description: string;
   amount: number;
@@ -1002,7 +1062,8 @@ export function regraDeRecorrencia(
     transaction_type: tipo,
     frequency: "monthly",
     due_day: Number(valores.diaDeVencimento),
-    start_date: valores.data,
+    // NAO `valores.data` (HMO-247): aquele campo saiu da tela. Ver o cabecalho.
+    start_date: hoje,
     // NULL e "sem fim": e assim que a migration 005 le a coluna. Mandar 0
     // esbarraria no CHECK `max_occurrences > 0`.
     max_occurrences:
@@ -1052,6 +1113,13 @@ export function destinoDoLancamento(
   // cobrem fixa e parcelas, mas a EDICAO nao -- e editar uma transacao gravada
   // nunca pode virar uma previsao nova, senao o Salvar criaria uma segunda linha
   // e deixaria a original no saldo.
+  //
+  // DESDE A HMO-247 O RAMO `regra` ACIMA E A UNICA COISA QUE SEGURA A FIXA AQUI.
+  // Antes, a fixa tinha `dataDeRealizacao: true` (o campo "Data" existia) e esta
+  // linha a deixava passar para `transacao`; hoje ela tem `false`, e uma fixa que
+  // escapasse do primeiro ramo cairia em `previsao` -- o aluguel viraria UMA
+  // conta avulsa em vez de uma regra mensal, que e o defeito que o comentario do
+  // cabecalho descreve. O teste cobra os dois tipos no ramo `regra`.
   //
   // E E AQUI QUE A TRAVA DO CARTAO MORA (HMO-209), e nao na UI. Esconder a
   // checkbox nao bastaria: o estado do formulario e um objeto so, `confirmado`

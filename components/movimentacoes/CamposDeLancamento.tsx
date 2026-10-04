@@ -46,6 +46,7 @@ import type {
 import {
   camposDoTipo,
   contasDoSeletor,
+  diaDeVencimentoValido,
   naturezasDoTipo,
   parcelaDigitada,
   resumoDaSerie,
@@ -330,6 +331,26 @@ export function CamposDeLancamento({
             onChange={(e) => aoMudar({ diaDeVencimento: e.target.value })}
             placeholder="Ex: 10"
           />
+          {/* QUANDO COMECA (HMO-247)
+
+              Com o campo "Data" fora da tela, este dia passou a ser a UNICA
+              resposta para "quando isso cai?" -- e a pergunta que vem depois
+              ("entao ja cai este mes?") nao tinha onde ser respondida. A frase
+              diz a regra que `firstOccurrence` (lib/recurrence.ts) ja aplica.
+
+              TEXTO, E NAO A DATA CALCULADA: calcular a primeira ocorrencia aqui
+              seria uma SEGUNDA copia da aritmetica de `firstOccurrence`, e
+              lib/lancamento.ts nao pode importa-la (o modulo e compilado sozinho
+              pelo `test:lancamento`, sem reescrita do alias `@/`). Duas copias da
+              mesma conta divergem, e a divergencia apareceria como uma tela
+              prometendo um dia e a agenda mostrando outro. */}
+          {diaDeVencimentoValido(valores.diaDeVencimento) && (
+            <p className="text-xs text-muted-foreground">
+              {tipo === "expense" ? "A primeira cobrança" : "A primeira entrada"}{" "}
+              é no próximo dia {Number(valores.diaDeVencimento)}: neste mês, se
+              ele ainda não passou; no mês que vem, se já passou.
+            </p>
+          )}
           <p className="text-xs text-muted-foreground">
             Dia 29, 30 ou 31 cai no último dia do mês quando o mês for mais
             curto.
@@ -815,8 +836,15 @@ export function CamposDeLancamento({
             Ela SOME quando a pessoa desmarca a confirmacao: um lancamento que
             ainda nao aconteceu nao tem data de pagamento, e o campo com a data
             de hoje dentro pareceria uma resposta ja dada. Quem decide e
-            `campos.dataDeRealizacao`, nao `valores.confirmado` -- numa despesa
-            fixa esta data e o `start_date` da regra e nao pode desaparecer. */}
+            `campos.dataDeRealizacao`, nao `valores.confirmado` -- um `false`
+            parado no estado nao pode apagar o campo de um gasto no cartao nem de
+            uma edicao.
+
+            E SOME NA DESPESA/RECEITA FIXA (HMO-247), por decisao da issue: la
+            quem diz quando a conta cai e "Vence todo dia N", logo acima. Este
+            campo era o `start_date` da regra, que `due_day` manda embora de todo
+            jeito -- duas datas na tela para uma pergunta so. A regra passa a
+            comecar hoje; ver `regraDeRecorrencia`. */}
         {campos.dataDeRealizacao && (
           <div className="space-y-2">
             <Label htmlFor="date">{campos.rotuloDaData}</Label>
