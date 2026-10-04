@@ -197,34 +197,75 @@ export type DirecaoDoAjuste = "aumenta" | "abate";
  */
 export const TETO_DO_AJUSTE = 1_000_000_000;
 
-export type ValidacaoDoAjuste =
-  | { ok: true; valorNaFatura: number }
-  | { ok: false; erro: string };
+// A `validarAjuste({ valor, direcao })` QUE MORAVA AQUI FOI APAGADA na 2a volta
+// da HMO-253, e nao aposentada. Ela validava "o valor digitado + o lado
+// escolhido" -- os dois controles que sairam da tela quando o ajuste passou a
+// ser automatico. Depois disso ela nao tinha mais chamador nenhum em producao:
+// so os proprios testes.
+//
+// Mante-la exportada custaria mais que o espaco. Uma funcao sem chamador com
+// suite verde atras dela e um placar que mede codigo que nao embarca -- e os
+// limites (zero, teto, centavos) ficariam escritos DUAS vezes, uma no caminho
+// vivo e outra no morto, livres para divergir sem nada ficar vermelho. Quem
+// concentra os limites agora e `ajusteParaFecharEm`, que e por onde o ajuste
+// passa de fato; e a conversao de reais para centavos e `centavosDe`, uma so.
+//
+// ===========================================================================
+// O AJUSTE AUTOMATICO: O USUARIO DIZ QUANTO O CARTAO DIZ (HMO-253, 2a volta)
+// ===========================================================================
+// "Sobre o ajuste de saldo, deve ser automatico. Eu lanco o valor real que esta
+// hoje meu cartao e um metodo verifica se e menor ou maior que a fatura, e
+// lanca a diferenca somando ou subtraindo."
+//
+// O que o usuario tem em maos e o numero do aplicativo do banco -- R$ 1.290.
+// Pedir a DIFERENCA (R$ 50) e pedir uma subtracao que ele nao precisa fazer, e
+// que ele pode fazer errada: digitar 50 olhando para um total que mudou desde
+// que a tela carregou deixa a fatura em 1.330 sem nenhum erro aparecer.
+//
+// ENTAO A DIFERENCA E DERIVADA, E A DIRECAO TAMBEM:
+//
+//     valorNaFatura = saldoReal - totalSemAjuste
+//
+// positivo acrescenta, negativo abate, zero nao lanca nada.
+//
+// AS QUATRO COISAS QUE ESTA CONTA NAO PODE FAZER
+// ----------------------------------------------
+//   1. SUBTRAIR EM PONTO FLUTUANTE. `1290 - 1240.10` em `number` da
+//      `49.899999999999995`, e `numeric(15,2)` arredonda isso para 49.90 -- a
+//      fatura fecharia em 1.290,00 por sorte, e um centavo fora no caso
+//      seguinte. Pior: `0.1 + 0.2 - 0.3` nao e zero, entao "o cartao bate
+//      exato" viraria um ajuste de R$ 0,00 gravado na fatura. TODA a aritmetica
+//      aqui e em CENTAVOS INTEIROS, e so o resultado volta para reais.
+//
+//   2. LER CAMPO VAZIO COMO ZERO. `Number("")` e `0` em JavaScript, e um saldo
+//      real de R$ 0,00 e uma afirmacao legitima ("meu cartao esta zerado"), que
+//      gera um ajuste de -1.240. Confundir "nao digitou" com "digitou zero"
+//      portanto nao da um ajuste vazio: da um estorno do valor da fatura
+//      INTEIRA, com a tela mostrando a conta certa para o numero errado.
+//
+//   3. INVENTAR O TOTAL DA FATURA. `totalSemAjuste` e o outro operando, e se ele
+//      nao deu para ler (offline, RLS, erro da view) nao existe diferenca
+//      nenhuma a calcular. Um `?? 0` ali transformaria "nao sei quanto e a
+//      fatura" em "a fatura e zero", e o ajuste gravado seria o saldo real
+//      inteiro -- dobrando a fatura na hora em que a leitura voltasse.
+//
+//   4. CONFUNDIR "A FATURA JA BATE" COM "NAO DA PARA AJUSTAR". Sao duas
+//      respostas boas e diferentes: a primeira e `fecha: true`, e o que ela
+//      pede e que o ajuste que estiver gravado seja REMOVIDO (um ajuste velho
+//      de +50 que agora sobra e exatamente o que faz a fatura parar de bater).
+//      A segunda e `ok: false`. Uma so palavra para as duas deixaria o usuario
+//      que digitou o numero certo procurando o que ele errou.
+// ===========================================================================
 
 /**
- * O valor digitado + a direcao escolhida -> o valor assinado NA FATURA.
+ * Reais -> centavos INTEIROS. `null` para o que nao e numero utilizavel.
  *
- * POR QUE A DIRECAO E UM CAMPO SEPARADO, e nao o sinal digitado: o campo de
- * dinheiro deste app (`CampoDeValor`) e uma mascara de DIGITOS -- ela nao tem
- * como aceitar "-" e nunca aceitou. Pedir um numero com sinal no unico campo
- * que recusa sinal daria um formulario que engole a digitacao (o defeito que a
- * HMO-247 mediu em outro campo). Duas escolhas explicitas tambem imprimem na
- * tela o que vai acontecer, o que um "-50" no meio de uma mascara nao faz.
- *
- * Zero e RECUSADO. Um ajuste de R$ 0,00 e uma linha que nao muda nada e ainda
- * aparece na fatura como se fosse compra -- e, pior, quem queria tirar o ajuste
- * digitaria zero e acharia que tirou. Para tirar existe o DELETE.
+ * `""` e `null` dao `null`, e nao `0`: ver a armadilha 2 do bloco acima. E o
+ * `Math.round` e obrigatorio -- `12.9 * 100` e `1290.0000000000002`, e um
+ * `Math.trunc` ali devolveria 1289, perdendo um centavo em um valor que o
+ * usuario digitou exato.
  */
-export function validarAjuste(params: {
-  valor: unknown;
-  direcao: unknown;
-}): ValidacaoDoAjuste {
-  const { valor, direcao } = params;
-
-  if (direcao !== "aumenta" && direcao !== "abate") {
-    return { ok: false, erro: "Escolha se o ajuste aumenta ou abate a fatura" };
-  }
-
+export function centavosDe(valor: unknown): number | null {
   const numero =
     typeof valor === "number"
       ? valor
@@ -232,36 +273,125 @@ export function validarAjuste(params: {
         ? Number(valor)
         : Number.NaN;
 
-  if (!Number.isFinite(numero)) {
-    return { ok: false, erro: "Informe o valor do ajuste" };
-  }
-  // O campo de dinheiro nunca emite negativo; um negativo aqui veio de outro
-  // cliente. Aceitar seria deixar "abate -50" significar "aumenta 50", com a
-  // tela dizendo o contrario do que o banco guarda.
-  if (numero < 0) {
-    return {
-      ok: false,
-      erro: "O valor do ajuste não pode ser negativo — use o lado do ajuste",
-    };
-  }
-  // Centavos: `numeric(15,2)` arredondaria em silencio, e o ajuste pararia de
-  // fechar a fatura exatamente no caso que ele existe para fechar.
-  const centavos = Math.round(numero * 100);
-  if (centavos === 0) {
-    return {
-      ok: false,
-      erro: "O ajuste não pode ser R$ 0,00 — para tirá-lo, use Remover ajuste",
-    };
-  }
-  if (Math.abs(numero) >= TETO_DO_AJUSTE) {
-    return { ok: false, erro: "O valor do ajuste é alto demais" };
+  if (!Number.isFinite(numero)) return null;
+  return Math.round(numero * 100);
+}
+
+export type AjusteAutomatico =
+  /** A fatura ja fecha no valor informado. Nao ha diferenca a lancar. */
+  | { ok: true; fecha: true; valorNaFatura: 0 }
+  /** Ha diferenca: `valorNaFatura` positivo acrescenta, negativo abate. */
+  | { ok: true; fecha: false; valorNaFatura: number }
+  | { ok: false; erro: string };
+
+/**
+ * O saldo real informado + o total da fatura -> o ajuste que faz os dois baterem.
+ *
+ * O `totalSemAjuste` E O TOTAL SEM AJUSTE NENHUM, e nao o total que esta na
+ * tela. A diferenca aparece no segundo ajuste do mesmo mes: a fatura mostra
+ * R$ 1.290 porque ja tem um ajuste de +50 em cima de R$ 1.240 de compras. Se o
+ * banco agora diz R$ 1.300, o ajuste correto e +60 (ele SUBSTITUI o de 50, pela
+ * chave canonica em `notes`), e nao +10. Calcular sobre o total da tela
+ * acumularia os dois e a fatura fecharia em 1.350 -- com a previa da tela
+ * concordando com a conta errada, porque seria a mesma conta.
+ */
+export function ajusteParaFecharEm(params: {
+  saldoReal: unknown;
+  totalSemAjuste: unknown;
+}): AjusteAutomatico {
+  const centavosDoSaldo = centavosDe(params.saldoReal);
+  if (centavosDoSaldo === null) {
+    return { ok: false, erro: "Informe quanto o cartão diz hoje" };
   }
 
-  const absoluto = centavos / 100;
-  return {
-    ok: true,
-    valorNaFatura: direcao === "aumenta" ? absoluto : -absoluto,
-  };
+  // Armadilha 3: sem o total da fatura nao ha subtracao possivel, e a recusa
+  // aqui e o que impede o ajuste de virar "o saldo real inteiro".
+  const centavosDaFatura = centavosDe(params.totalSemAjuste);
+  if (centavosDaFatura === null) {
+    return {
+      ok: false,
+      erro: "Não foi possível ler o total desta fatura para comparar",
+    };
+  }
+
+  // O teto vale para o que foi DIGITADO e tambem para a diferenca: um saldo real
+  // dentro do limite subtraido de uma fatura negativa pode estourar a coluna.
+  if (Math.abs(centavosDoSaldo) >= TETO_DO_AJUSTE * 100) {
+    return { ok: false, erro: "O valor informado é alto demais" };
+  }
+
+  const diferenca = centavosDoSaldo - centavosDaFatura;
+
+  // Armadilha 4: zero e uma resposta BOA, com nome proprio.
+  if (diferenca === 0) return { ok: true, fecha: true, valorNaFatura: 0 };
+
+  if (Math.abs(diferenca) >= TETO_DO_AJUSTE * 100) {
+    return { ok: false, erro: "A diferença é alta demais para um ajuste" };
+  }
+
+  return { ok: true, fecha: false, valorNaFatura: diferenca / 100 };
+}
+
+/**
+ * O total da fatura SEM ajuste nenhum, em centavos, a partir das linhas da view.
+ *
+ * E a base de `ajusteParaFecharEm` do lado do SERVIDOR -- a rota nao aceita o
+ * total que a tela mostra, porque a tela pode estar velha (ver o cabecalho de
+ * `/api/card-invoices/ajuste`). Mora aqui, e nao na rota, porque as duas
+ * armadilhas dela sao aritmetica pura e nenhuma levanta erro:
+ *
+ *   O SINAL. `amountDoAjuste` e a COLUNA CRUA de `financial_transactions`, e a
+ *   view publica `(-t.amount) AS invoice_amount`. A contribuicao do ajuste para
+ *   o total e portanto `-amount`, e tira-la do total e `total - (-amount)`, isto
+ *   e, SOMAR o amount. Subtrair aqui erraria a base pelo DOBRO do ajuste
+ *   existente, e o sintoma seria o segundo ajuste do mes sempre vir com o dobro
+ *   da diferenca -- plausivel, e so no segundo ajuste.
+ *
+ *   O RESIDUO. Trinta linhas de `numeric(15,2)` somadas em ponto flutuante
+ *   acumulam residuo, e o residuo cai exatamente no teste de "a fatura ja bate".
+ *   A soma e em centavos inteiros.
+ *
+ * `null` quando QUALQUER linha veio ilegivel: pula-la deixaria a fatura menor do
+ * que ela e, e o ajuste calculado em cima disso acrescentaria o valor da linha
+ * pulada -- a fatura fechando no numero do banco por um lancamento duplicado,
+ * que e a doenca que esta feature trata. `null` tambem e diferente de ZERO:
+ * fatura sem linha nenhuma soma 0 e ajustar isso e legitimo.
+ *
+ * @param amountDoAjuste `null`/`undefined` significa "nao ha ajuste gravado".
+ */
+export function centavosDaFaturaSemAjuste(params: {
+  invoiceAmounts: readonly unknown[];
+  amountDoAjuste: unknown;
+}): number | null {
+  let centavos = 0;
+  for (const bruto of params.invoiceAmounts) {
+    const daLinha = centavosDe(bruto);
+    if (daLinha === null) return null;
+    centavos += daLinha;
+  }
+
+  if (params.amountDoAjuste === null || params.amountDoAjuste === undefined) {
+    return centavos;
+  }
+
+  const doAjuste = centavosDe(params.amountDoAjuste);
+  if (doAjuste === null) return null;
+
+  // SOMA, e nao subtrai. Ver "O SINAL" acima.
+  return centavos + doAjuste;
+}
+
+/**
+ * Para que lado uma diferenca ja calculada empurra a fatura.
+ *
+ * Zero cai em "abate" e isso nunca acontece de proposito -- `ajusteParaFecharEm`
+ * devolve `fecha: true` nesse caso e nao chega aqui. O par
+ * `>= 0 ? "aumenta" : "abate"` de `direcaoDoAjuste` nao serve: ali o zero vem de
+ * um ajuste GRAVADO (que nunca e zero, `lancamentoDoAjuste` recusa) e aqui viria de
+ * uma diferenca nula, que e o caso em que nao ha direcao nenhuma a nomear.
+ */
+export function direcaoDaDiferenca(valorNaFatura: number): DirecaoDoAjuste {
+  return valorNaFatura > 0 ? "aumenta" : "abate";
 }
 
 // ---------------------------------------------------------------------------

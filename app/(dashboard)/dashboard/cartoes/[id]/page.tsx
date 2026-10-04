@@ -57,13 +57,12 @@ import { DialogoDeAlcance } from "@/components/series/DialogoDeAlcance";
 import { frasePreservadas, type Alcance } from "@/lib/alcance-na-tela";
 import {
   ajusteDaFatura,
-  direcaoDoAjuste,
   totalSemOAjuste,
   valorDoAjusteNaFatura,
   type CategoriaDeAjuste,
-  type DirecaoDoAjuste,
 } from "@/lib/ajuste-de-fatura";
 import { rotuloDaFatura } from "@/lib/fatura-do-cartao";
+import { formatarValor } from "@/lib/dinheiro";
 import { toast } from "sonner";
 
 interface RespostaDeFaturas {
@@ -121,9 +120,11 @@ export default function GastosDoCartaoPage() {
   const [categoriaDeAjuste, setCategoriaDeAjuste] =
     useState<CategoriaDeAjuste>(undefined);
   const [ajusteAberto, setAjusteAberto] = useState(false);
-  /** Notacao plana ("50.00"), como `CampoDeValor` emite. */
-  const [valorDoAjuste, setValorDoAjuste] = useState("");
-  const [direcao, setDirecao] = useState<DirecaoDoAjuste>("aumenta");
+  /**
+   * QUANTO O CARTAO DIZ HOJE, em notacao plana ("1290.00"), como `CampoDeValor`
+   * emite. Nao e o valor do ajuste: a diferenca e derivada no servidor.
+   */
+  const [saldoRealDoCartao, setSaldoRealDoCartao] = useState("");
   const [descricaoDoAjuste, setDescricaoDoAjuste] = useState("");
   const [salvandoAjuste, setSalvandoAjuste] = useState(false);
 
@@ -228,20 +229,21 @@ export default function GastosDoCartaoPage() {
   const fatura = faturaDoCartao(faturas, idDoCartao);
   const ajuste = ajusteDaFatura(fatura, idDoCartao, categoriaDeAjuste);
 
-  /** Abre o formulario JA com o ajuste que esta valendo, quando ha um. */
+  /**
+   * Abre o formulario com o campo de saldo real VAZIO.
+   *
+   * Preencher com o total da fatura (que seria o "estado atual" por analogia com
+   * a versao anterior desta tela) seria um default que colapsa a feature: o
+   * campo ja viria com o numero que faz a diferenca ser zero, e quem clicasse
+   * Salvar sem digitar REMOVERIA o ajuste que estava valendo. O campo e o unico
+   * dado que so o usuario tem -- ele nasce vazio.
+   *
+   * A DESCRICAO, sim, reabre com a que esta gravada: ela e texto do usuario e
+   * perde-la a cada alteracao obrigaria a redigitar o motivo do ajuste.
+   */
   const abrirAjuste = () => {
-    if (ajuste) {
-      const valorNaFatura = valorDoAjusteNaFatura(ajuste);
-      // `Math.abs` porque a direcao viaja no botao, nao no sinal do campo: o
-      // campo de dinheiro e uma mascara de digitos e nao tem como mostrar "-".
-      setValorDoAjuste(Math.abs(valorNaFatura).toFixed(2));
-      setDirecao(direcaoDoAjuste(ajuste));
-      setDescricaoDoAjuste(ajuste.description);
-    } else {
-      setValorDoAjuste("");
-      setDirecao("aumenta");
-      setDescricaoDoAjuste("");
-    }
+    setSaldoRealDoCartao("");
+    setDescricaoDoAjuste(ajuste ? ajuste.description : "");
     setAjusteAberto(true);
   };
 
@@ -258,8 +260,11 @@ export default function GastosDoCartaoPage() {
           // o ajuste na fatura de outro mes, com o valor certo -- as duas
           // faturas ficariam plausiveis e ninguem acharia o erro.
           month: mes,
-          valor: valorDoAjuste,
-          direcao,
+          // O UNICO DADO QUE A TELA MANDA: quanto o cartao diz hoje. A diferenca
+          // e a direcao sao calculadas no servidor, sobre o total lido na hora --
+          // mandar a diferenca daqui a calcularia sobre o total que esta na tela,
+          // que pode ter ficado velho (ver o cabecalho da rota).
+          saldo_real: saldoRealDoCartao,
           descricao: descricaoDoAjuste,
         }),
       });
@@ -272,7 +277,28 @@ export default function GastosDoCartaoPage() {
         return;
       }
 
-      toast.success("Ajuste de saldo gravado");
+      // TRES DESFECHOS, TRES FRASES. A rota distingue "lancou a diferenca",
+      // "a fatura ja batia e o ajuste saiu" e "a fatura ja batia e nao havia
+      // ajuste"; um unico "Ajuste gravado" diria que gravou dinheiro nos dois
+      // casos em que ela nao gravou nada -- inclusive no que ela APAGOU uma
+      // linha. O numero da fatura vai no texto porque e ele que o usuario
+      // acabou de informar e quer ver confirmado.
+      if (dados.fecha) {
+        toast.success(
+          dados.removido
+            ? "A fatura já fecha nesse valor — o ajuste anterior foi removido"
+            : "A fatura já fecha nesse valor — nada a ajustar"
+        );
+      } else {
+        const diferenca = Number(dados.valor_na_fatura);
+        toast.success(
+          Number.isFinite(diferenca)
+            ? `Ajuste de ${formatarValor(Math.abs(diferenca), conta?.currency)} ${
+                diferenca > 0 ? "acrescentado à" : "abatido da"
+              } fatura`
+            : "Ajuste de saldo gravado"
+        );
+      }
       setAjusteAberto(false);
       // Recarrega a fatura INTEIRA em vez de remendar o total na memoria: o
       // total vem da view, e um remendo aqui seria uma segunda conta do mesmo
@@ -378,21 +404,25 @@ export default function GastosDoCartaoPage() {
             estado={estado}
             categoriaDeAjuste={categoriaDeAjuste}
             valorAtual={ajuste ? valorDoAjusteNaFatura(ajuste) : null}
-            // A base da previa e o total SEM ajuste nenhum. Passar
-            // `fatura.total` (que ja inclui o ajuste atual) faria a previa somar
-            // o ajuste novo em cima do velho, e ela discordaria do que o POST
-            // grava -- a conta mostrada antes de confirmar errando justamente no
-            // caso em que o usuario esta ALTERANDO um ajuste.
-            totalSemAjuste={totalSemOAjuste(fatura, ajuste)}
+            // A base da conta e o total SEM ajuste nenhum. Passar `fatura.total`
+            // (que ja inclui o ajuste atual) faria a diferenca ser calculada em
+            // cima do ajuste velho, e a previa discordaria do que o POST grava --
+            // a conta mostrada antes de confirmar errando justamente no caso em
+            // que o usuario esta ALTERANDO um ajuste.
+            //
+            // `null` QUANDO NAO HA FATURA LIDA, e nao `totalSemOAjuste(...)`:
+            // sem a fatura aquela funcao devolve 0, e uma base 0 faria a previa
+            // anunciar "a fatura passa de R$ 0,00 para R$ 1.290,00" -- a tela
+            // prometendo lancar como ajuste a fatura INTEIRA. Ver a armadilha 3
+            // de `ajusteParaFecharEm`.
+            totalSemAjuste={fatura ? totalSemOAjuste(fatura, ajuste) : null}
             aberto={ajusteAberto}
-            valor={valorDoAjuste}
-            direcao={direcao}
+            saldoReal={saldoRealDoCartao}
             descricao={descricaoDoAjuste}
             salvando={salvandoAjuste}
             aoAbrir={abrirAjuste}
             aoFechar={() => setAjusteAberto(false)}
-            aoMudarValor={setValorDoAjuste}
-            aoMudarDirecao={setDirecao}
+            aoMudarSaldoReal={setSaldoRealDoCartao}
             aoMudarDescricao={setDescricaoDoAjuste}
             aoSalvar={salvarAjuste}
             aoRemover={removerAjuste}
