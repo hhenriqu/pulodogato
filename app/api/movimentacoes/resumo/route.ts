@@ -39,6 +39,22 @@
 // diferentes para a mesma pergunta dao dois numeros certos que discordam na
 // mesma sessao do usuario.
 //
+// E O LADO REALIZADO TAMBEM NAO CONTA O CARTAO (HMO-260)
+// ------------------------------------------------------
+// Pela MESMA razao do item 2 acima, do outro lado da conta: a compra no cartao
+// esta dentro da fatura que o item 3 sintetiza inteira. `Total` e
+// `previsto + realizado`, entao a compra solta no realizado fazia uma compra de
+// R$ 400 fechar o mes em R$ 800.
+//
+// A exclusao mora em `ehGastoNoCartao` (lib/telas-de-movimentacao.ts), e NAO num
+// filtro desta consulta -- pelo motivo do cabecalho e por um a mais, que e o do
+// HMO-209: no PostgREST um filtro sobre coluna de EMBED vira INNER JOIN, e a
+// despesa de grupo, que e gravada sem `account_id`, sairia da resposta junto.
+// O que esta consulta tem de fazer e so uma coisa: TRAZER `account_type` no
+// embed da conta. Sem ele a regra pura recebe `undefined` em toda linha, nenhuma
+// casa com `credit_card`, o filtro passa a nao filtrar nada e a tela volta ao
+// defeito desta issue -- sem erro, sem log e com o tsc verde.
+//
 // O QUE FICA DE FORA, E A TELA DIZ
 // --------------------------------
 // A MINHA PARTE das despesas de grupo que outra pessoa pagou
@@ -165,6 +181,14 @@ export async function GET(request: NextRequest) {
     // `counterpart_transaction_id` existe para a frase "Itaú → Nubank": o elo do
     // 015 e de uma via, e sem a coluna a metade das transferencias perderia o
     // destino na tela que existe para mostra-lo.
+    //
+    // `account(... account_type)` E LOAD-BEARING, e nao enfeite da frase da
+    // conta (HMO-260): e o unico campo pelo qual `ehGastoNoCartao` consegue
+    // saber que a linha esta dentro da fatura. Tirar `account_type` deste
+    // `select` -- numa limpeza de campos "nao usados na tela", por exemplo --
+    // nao quebra tsc nem teste de unidade nenhum: a regra pura passa a receber
+    // `undefined`, deixa de casar com `credit_card`, para de filtrar, e o Total
+    // da tela de Despesas volta a somar o cartao duas vezes.
     const { data: realizadasCruas, error: erroRealizadas } = await supabase
       .from("financial_transactions")
       .select(

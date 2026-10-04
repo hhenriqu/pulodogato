@@ -3,7 +3,7 @@
 //
 // POR QUE ISTO EXISTE
 // -------------------
-// `npm run test:telas-de-movimentacao` passa com 33 blocos verdes. Num modulo
+// `npm run test:telas-de-movimentacao` passa com 40 blocos verdes. Num modulo
 // que soma errado, varias dessas assercoes continuam verdes por acaso: o
 // exemplo da issue tem UMA conta no mes, e contas erradas devolvem o numero
 // certo para uma linha so. Cada mutante abaixo desfaz UMA decisao do modulo; o
@@ -23,6 +23,9 @@
 //                            ser gasto do mes.
 //   `previsto_sem_direction` -- receita prevista vira conta a pagar (a familia
 //                            da 027).
+//   `cartao_entra_no_realizado` -- a compra no cartao conta no Realizado E
+//                            dentro da fatura que o Previsto soma: R$ 800 de
+//                            uma compra de R$ 400 (HMO-260).
 //
 // A FONTE NUNCA E MUTADA NO DISCO
 // -------------------------------
@@ -142,6 +145,62 @@ const MUTANTES = [
       "(amount positivo) desaparece da tela de Receitas",
     de: '    if (tipo === "transfer" && ehPernaDeEntrada(crua)) continue;',
     para: "    if (ehPernaDeEntrada(crua)) continue;",
+  },
+
+  // --- armadilha 5: o gasto no cartao ja esta na fatura (HMO-260) ----------
+  {
+    nome: "cartao_entra_no_realizado",
+    porque:
+      "o defeito da HMO-260 inteiro de volta: a compra de R$ 400 no cartao " +
+      "conta no Realizado E dentro da fatura que o Previsto soma, e o mes " +
+      "fecha em R$ 800 com as duas linhas visiveis na lista ao lado",
+    de: '    if (tipo === "expense" && ehGastoNoCartao(crua)) continue;',
+    para: "    if (false) continue;",
+  },
+  {
+    nome: "cartao_sai_de_toda_tela",
+    porque:
+      "a regra aplicada as tres telas: o estorno no cartao desaparece de " +
+      "Receitas e a perna que quita a fatura desaparece de Transferencias -- " +
+      "o cartao sai do app, e nao so da tela de Despesas",
+    de: '    if (tipo === "expense" && ehGastoNoCartao(crua)) continue;',
+    para: "    if (ehGastoNoCartao(crua)) continue;",
+  },
+  {
+    nome: "sem_conta_e_cartao",
+    porque:
+      "a linha SEM conta passa a contar como cartao: a despesa de grupo (que " +
+      "e gravada sem account_id) e toda linha cujo embed a RLS nao devolveu " +
+      "saem do total, e um mes mais barato nao parece um erro",
+    de: "  if (contaDaRealizada(crua)?.account_type !== TIPO_CARTAO) return false;",
+    para: '  if (contaDaRealizada(crua)?.account_type === "checking") return false;',
+  },
+  {
+    nome: "cartao_ignora_o_tipo_gravado",
+    porque:
+      "a compra no cartao com `transaction_type` NULO (que existe em producao) " +
+      "sai da tela de Despesas sem estar na fatura, porque a view " +
+      "`card_invoice_lines` filtra IN ('expense','income') pela coluna crua: o " +
+      "valor sai do app, que e pior que conta-lo duas vezes",
+    de: "  return TIPOS_QUE_ENTRAM_NA_FATURA.has(String(crua.transaction_type));",
+    para: "  return true;",
+  },
+  {
+    nome: "cartao_so_embed_objeto",
+    porque:
+      "o embed em ARRAY deixa de ser lido: `account_type` chega undefined em " +
+      "TODA linha, nada casa com credit_card, o filtro para de filtrar e a " +
+      "tela volta ao defeito desta issue -- sem erro, sem log, tsc verde",
+    de: "  if (Array.isArray(bruto)) return bruto[0] ?? null;",
+    para: "  if (false) return bruto[0] ?? null;",
+  },
+  {
+    nome: "cartao_por_nome_do_tipo",
+    porque:
+      "`debit_card` passa a contar como cartao de credito: o gasto no debito " +
+      "sai do Realizado sem ter fatura nenhuma que o contenha",
+    de: 'export const TIPO_CARTAO = "credit_card";',
+    para: 'export const TIPO_CARTAO = "debit_card";',
   },
 
   // --- armadilha 4: o sinal nao pode ser o criterio de tipo ----------------

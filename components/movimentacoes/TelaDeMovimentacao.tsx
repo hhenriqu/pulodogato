@@ -428,17 +428,69 @@ export function TelaDeMovimentacao({ tipo }: { tipo: TipoDaTela }) {
             Um valor que falta sem rotulo e indistinguivel de um bug.
           */}
           {tipo === "expense" && (
-            <p className="text-xs text-muted-foreground">
-              Sua parte das despesas de grupo que outra pessoa pagou não entra
-              nestes totais — ela aparece em{" "}
-              <Link
-                href="/dashboard/personal-finance"
-                className="underline hover:text-foreground"
-              >
-                Finanças Pessoais
-              </Link>
-              , onde a lista junta as duas origens.
-            </p>
+            <div className="space-y-1 text-xs text-muted-foreground">
+              {/*
+                O GASTO NO CARTAO, DITO ONDE ELE FALTA (HMO-260).
+                "Realizado no periodo nunca deve considerar despesas no cartao.
+                Pois ja considera a fatura do cartao pro periodo, entao gastos
+                do cartao devem aparecer apenas no financas pessoais que lista o
+                que voce lancou, e dentro do cartao de credito."
+
+                A compra sai do Realizado porque ela esta DENTRO da fatura, que
+                o Previsto acima ja soma inteira. Esta frase existe porque sem
+                ela a conta nao fecha aos olhos de quem gasta no cartao: a lista
+                de Financas Pessoais do mesmo mes mostra as compras uma a uma, e
+                o Realizado daqui nao -- e o caminho dessa estranheza termina em
+                alguem lancando a compra outra vez no debito para "consertar".
+
+                A SEGUNDA ORACAO NAO E ENFEITE. "Esta no Previsto acima" so e
+                verdade enquanto a fatura NAO foi paga: a baixa marca a previsao
+                como `paid` (que sai do previsto pela armadilha 2) e grava uma
+                TRANSFERENCIA de duas pernas (`pernasDoPagamentoDeFatura`), que
+                nao e despesa em tela nenhuma. No mes em que a pessoa paga a
+                fatura, esta tela mostra R$ 0,00 de cartao -- medido. Sem dizer
+                para onde o valor foi, a frase apontaria para um Previsto vazio,
+                que e pior que nao ter frase.
+              */}
+              <p>
+                Compra no cartão não entra no Realizado: ela está dentro da{" "}
+                <strong>fatura</strong>. Enquanto a fatura está aberta, o
+                Previsto acima já a soma inteira; depois de paga, ela aparece em{" "}
+                <Link
+                  href="/dashboard/transferencias"
+                  className="underline hover:text-foreground"
+                >
+                  Transferências
+                </Link>
+                , porque o dinheiro foi da sua conta para o cartão. Para ver as
+                compras uma a uma, abra{" "}
+                <Link
+                  href="/dashboard/cartoes"
+                  className="underline hover:text-foreground"
+                >
+                  Cartões
+                </Link>{" "}
+                ou{" "}
+                <Link
+                  href="/dashboard/personal-finance"
+                  className="underline hover:text-foreground"
+                >
+                  Finanças Pessoais
+                </Link>
+                .
+              </p>
+              <p>
+                Sua parte das despesas de grupo que outra pessoa pagou também
+                não entra nestes totais — ela aparece em{" "}
+                <Link
+                  href="/dashboard/personal-finance"
+                  className="underline hover:text-foreground"
+                >
+                  Finanças Pessoais
+                </Link>
+                , onde a lista junta as duas origens.
+              </p>
+            </div>
           )}
         </>
       )}

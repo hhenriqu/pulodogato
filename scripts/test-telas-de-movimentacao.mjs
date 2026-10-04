@@ -24,6 +24,8 @@ const {
   TELAS_DE_MOVIMENTACAO,
   STATUS_QUE_SAI_DO_PREVISTO,
   ehPernaDeEntrada,
+  ehGastoNoCartao,
+  TIPO_CARTAO,
   linhaRealizada,
   linhaPrevista,
   linhasDaTela,
@@ -368,6 +370,222 @@ test("a perna de saida de uma transferencia NAO entra na tela de Despesas", () =
   // E ela aparece na tela de Transferencias, que e onde ela pertence -- "fora
   // de Despesas" nao pode querer dizer "fora do app".
   assert.equal(linhasDaTela([pernaDeSaida, gasto], [], "transfer").length, 1);
+});
+
+// -----------------------------------------------------
+// ARMADILHA 5: o gasto no cartao JA ESTA na fatura (HMO-260)
+// -----------------------------------------------------
+// "Realizado no periodo nunca deve considerar despesas no cartao. Pois ja
+// considera a fatura do cartao pro periodo."
+
+/** A fatura ABERTA como `sintetizarFaturasAbertas` a monta (HMO-227). */
+const faturaAberta = (over = {}) => ({
+  id: null,
+  notes: "fatura:2026-10-01:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+  description: "Fatura C6 10/2026",
+  amount: 400,
+  due_date: "2026-10-10",
+  status: "pending",
+  effective_status: "pending",
+  direction: "expense",
+  account_name: "C6",
+  ...over,
+});
+
+test("uma compra de R$ 400 no cartao fecha o mes em R$ 400, e nao em R$ 800", () => {
+  // O cenario exato da issue: a compra esta em `financial_transactions` (ela
+  // aparece em Financas Pessoais, que e onde a pessoa a lancou) E dentro da
+  // fatura aberta que o lado previsto sintetiza inteira.
+  const compraNoCartao = realizada({
+    id: "compra",
+    description: "Mercado",
+    amount: -400,
+    transaction_date: "2026-10-03",
+    transaction_type: "expense",
+    category: { name: "Alimentação", is_expense: true },
+    account: { id: "cartao", name: "C6", account_type: "credit_card" },
+  });
+
+  const linhas = linhasDaTela([compraNoCartao], [faturaAberta()], "expense");
+  const r = resumoDaTela(linhas);
+
+  // CONTROLE: e o numero que a conta ERRADA produzia. Sem o filtro, a compra
+  // entra no realizado, a fatura que a contem entra no previsto, e `total` --
+  // que e `previsto + realizado` -- dobra a mesma compra. R$ 800 nao parece um
+  // erro: ele "fecha" com as duas linhas que a lista mostrava logo abaixo.
+  assert.equal(400 + 400, 800, "o controle precisa dobrar para valer");
+
+  assert.equal(r.realizado, 0);
+  assert.equal(r.previsto, 400);
+  assert.equal(r.total, 400);
+  assert.notEqual(r.total, 800);
+
+  // E a lista tem UMA linha: a fatura. A compra solta sairia ao lado dela com o
+  // mesmo valor, que e o que faz a duplicata se ler como lancamento duplicado.
+  assert.equal(linhas.length, 1);
+  assert.equal(linhas[0].origem, "previsto");
+  assert.equal(linhas[0].descricao, "Fatura C6 10/2026");
+});
+
+test("o gasto no cartao sai SO da tela de Despesas -- ele nao sai do app", () => {
+  // "Fora de Despesas" nao pode querer dizer "fora do app": a issue pede o
+  // gasto do cartao em Financas Pessoais e dentro do cartao, e o estorno no
+  // cartao continua sendo uma entrada. `ehGastoNoCartao` so e consultado na
+  // tela de Despesas, e este bloco e o que prova isso -- sem ele, mover o
+  // filtro para antes do `classificarMovimentacao` passaria verde e apagaria o
+  // pagamento da fatura da tela de Transferencias.
+  const noCartao = { id: "cartao", name: "C6", account_type: "credit_card" };
+
+  const estorno = realizada({
+    id: "estorno",
+    amount: 90,
+    transaction_type: "income",
+    category: { name: "Reembolso", is_expense: false },
+    account: noCartao,
+  });
+
+  // A perna de ENTRADA do pagamento da fatura mora NO CARTAO (ela quita a
+  // divida): `pernasDoPagamentoDeFatura` manda o dinheiro da conta corrente
+  // para o cartao.
+  const quitacaoDaFatura = realizada({
+    id: "quitacao",
+    amount: 400,
+    transaction_type: "transfer",
+    counterpart_transaction_id: "saida",
+    account: noCartao,
+  });
+  const saidaDaCorrente = realizada({
+    id: "saida",
+    amount: -400,
+    transaction_type: "transfer",
+    account: { id: "corrente", name: "Itaú", account_type: "checking" },
+  });
+
+  const todas = [estorno, quitacaoDaFatura, saidaDaCorrente];
+
+  // Em Receitas o estorno no cartao continua la.
+  const receitas = linhasDaTela(todas, [], "income");
+  assert.equal(receitas.length, 1);
+  assert.equal(receitas[0].id, "estorno");
+  assert.equal(resumoDaTela(receitas).realizado, 90);
+
+  // Em Transferencias o pagamento da fatura continua la, uma vez so (a perna de
+  // entrada e a que sai, pela armadilha 3 -- e nao pelo tipo da conta).
+  const transferencias = linhasDaTela(todas, [], "transfer");
+  assert.equal(transferencias.length, 1);
+  assert.equal(transferencias[0].id, "saida");
+  assert.equal(resumoDaTela(transferencias).realizado, 400);
+
+  // E em Despesas nenhuma das tres aparece: duas sao transferencia, uma e
+  // receita.
+  assert.equal(linhasDaTela(todas, [], "expense").length, 0);
+});
+
+test("SEM conta a despesa FICA -- `nao sei` nao pode virar `e cartao`", () => {
+  // A despesa de grupo e gravada sem `account_id` (lib/destino-do-lancamento),
+  // e um embed `null` por RLS significa "nao sei". Esconder no "nao sei"
+  // apagaria despesa legitima do unico total que a pessoa abre para saber
+  // quanto gastou -- e um total MENOR nao parece um erro, parece um mes barato.
+  const semConta = realizada({ id: "grupo", amount: -250, account: null });
+  const semCampo = realizada({ id: "antiga", amount: -60 });
+  const embedVazio = realizada({ id: "rls", amount: -40, account: [] });
+
+  const linhas = linhasDaTela([semConta, semCampo, embedVazio], [], "expense");
+
+  assert.equal(linhas.length, 3);
+  assert.equal(resumoDaTela(linhas).realizado, 350);
+
+  assert.equal(ehGastoNoCartao(semConta), false);
+  assert.equal(ehGastoNoCartao(semCampo), false);
+  assert.equal(ehGastoNoCartao(embedVazio), false);
+});
+
+test("compra no cartao com transaction_type NULO FICA -- a fatura nao a contem", () => {
+  // O conserto desta issue so pode esconder a linha que a fatura de fato
+  // CONTEM, e quem decide isso e a view `card_invoice_lines` (006/035):
+  //
+  //     WHERE a.account_type = 'credit_card'
+  //       AND t.transaction_type IN ('expense', 'income')
+  //
+  // Ha linha com `transaction_type` NULO em producao (o POST de
+  // /api/personal-finance/transactions nao a gravava), e ela NAO entra na
+  // fatura. Escondida daqui pelo tipo da conta, ela sairia da tela de Despesas
+  // sem que nada a somasse no lugar -- o valor sairia do app, que e pior do que
+  // conta-lo duas vezes.
+  const semTipo = realizada({
+    id: "antiga",
+    amount: -150,
+    transaction_type: null,
+    category: { name: "Alimentação", is_expense: true },
+    account: { id: "cartao", name: "C6", account_type: "credit_card" },
+  });
+
+  assert.equal(ehGastoNoCartao(semTipo), false);
+
+  const linhas = linhasDaTela([semTipo], [], "expense");
+  assert.equal(linhas.length, 1, "a linha antiga sumiu da tela de Despesas");
+  assert.equal(resumoDaTela(linhas).realizado, 150);
+
+  // E a linha COM o tipo gravado continua saindo -- senao este bloco teria
+  // desfeito a issue inteira em vez de proteger um caso de borda.
+  const comTipo = realizada({
+    ...semTipo,
+    id: "nova",
+    transaction_type: "expense",
+  });
+  assert.equal(ehGastoNoCartao(comTipo), true);
+  assert.equal(linhasDaTela([comTipo], [], "expense").length, 0);
+});
+
+test("o embed da conta em ARRAY tambem e lido -- senao o filtro para de filtrar", () => {
+  // A rota entrega a resposta com `as unknown as RealizadaCrua[]`, e o tsc nao
+  // verifica nada nessa fronteira. Se o PostgREST/supabase-js devolvesse o
+  // embed em array, ler so a forma objeto daria `undefined` em TODA linha,
+  // nenhuma casaria com `credit_card`, o filtro passaria a nao filtrar NADA e a
+  // tela voltaria ao defeito desta issue -- sem erro, sem log, tsc verde.
+  const emArray = realizada({
+    id: "compra",
+    amount: -400,
+    account: [{ id: "cartao", name: "C6", account_type: "credit_card" }],
+  });
+
+  assert.equal(ehGastoNoCartao(emArray), true);
+  assert.equal(linhasDaTela([emArray], [], "expense").length, 0);
+});
+
+test("so `credit_card` e cartao: debito, corrente e poupanca continuam contando", () => {
+  // `debit_card` e o caso que nao se resolve pelo nome: a pessoa chama aquilo
+  // de "cartao", mas o dinheiro sai da conta na hora e nao existe fatura
+  // nenhuma para conter o gasto. Ele tem de ficar no realizado.
+  //
+  // E um typo na constante (`credit-card`) nao daria erro nenhum: nenhuma linha
+  // casaria e o filtro passaria a nao filtrar nada.
+  assert.equal(TIPO_CARTAO, "credit_card");
+
+  const linhas = linhasDaTela(
+    [
+      realizada({
+        id: "debito",
+        amount: -70,
+        account: { id: "d", name: "Visa Débito", account_type: "debit_card" },
+      }),
+      realizada({
+        id: "corrente",
+        amount: -30,
+        account: { id: "c", name: "Itaú", account_type: "checking" },
+      }),
+      realizada({
+        id: "poupanca",
+        amount: -10,
+        account: { id: "p", name: "Poupança", account_type: "savings" },
+      }),
+    ],
+    [],
+    "expense"
+  );
+
+  assert.equal(linhas.length, 3);
+  assert.equal(resumoDaTela(linhas).realizado, 110);
 });
 
 test("linha antiga com transaction_type NULL e classificada pela CATEGORIA", () => {
