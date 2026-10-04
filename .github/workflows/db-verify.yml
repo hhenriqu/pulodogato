@@ -9,12 +9,22 @@ name: db-verify
 # agenda de contas previstas e metade SQL, metade aritmetica de data: o indice
 # unico do 005 so garante que a MESMA data nao duplica -- quem decide QUAL data
 # e o TypeScript. Testar os dois lados no mesmo job e o que fecha o buraco.
+#
+# NENHUM PADRAO DAQUI PODE CONTER `]`
+# -----------------------------------
+# A tela de grupo mora em `app/(dashboard)/.../[groupId]/page.tsx`, e esse
+# caminho literal NAO entra nesta lista: o scripts/check-tests-in-ci.mjs le o
+# `paths:` com `/paths:\s*\[([^\]]*)\]/`, entao o primeiro `]` de um nome de
+# rota dinamica TERMINA a lista para ele. O Actions continuaria funcionando, e o
+# checker passaria a acusar uma duzia de suites NAO cobertas -- um alarme falso
+# que aponta para os arquivos errados. Por isso a entrada e o glob
+# `app/**/expense-groups/**`, que cobre a mesma tela sem colchete.
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/parte-do-grupo-realizada.ts', 'lib/periodo-do-painel.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/divisao-do-grupo.ts', 'lib/convite-de-grupo.ts', 'lib/fechamento-do-grupo.ts', 'components/grupos/FechamentoDoMes.tsx', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'lib/services/scheduled.ts', 'components/movimentacoes/FormularioDeTransferencia.tsx', 'app/api/reports/cash-flow/route.ts', 'app/api/personal-finance/transactions/route.ts', 'components/grupos/PainelDoGrupo.tsx', 'types/financial.ts', '.github/workflows/db-verify.yml', 'lib/puxar-para-atualizar-dom.ts', 'components/Sidebar.tsx', 'components/PuxarParaAtualizar.tsx', 'lib/categorias.ts', 'components/movimentacoes/SeletorDeCategoria.tsx', 'components/movimentacoes/CamposDeLancamento.tsx', 'components/ui/button.tsx', 'components/ui/input.tsx', 'components/ui/label.tsx', 'components/ui/select.tsx', 'lib/utils.ts']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/parte-do-grupo-realizada.ts', 'lib/periodo-do-painel.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/divisao-do-grupo.ts', 'lib/convite-de-grupo.ts', 'lib/fechamento-do-grupo.ts', 'lib/periodo-do-grupo.ts', 'components/grupos/FechamentoDoMes.tsx', 'app/**/expense-groups/**', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'lib/services/scheduled.ts', 'components/movimentacoes/FormularioDeTransferencia.tsx', 'app/api/reports/cash-flow/route.ts', 'app/api/personal-finance/transactions/route.ts', 'components/grupos/PainelDoGrupo.tsx', 'types/financial.ts', '.github/workflows/db-verify.yml', 'lib/puxar-para-atualizar-dom.ts', 'components/Sidebar.tsx', 'components/PuxarParaAtualizar.tsx', 'lib/categorias.ts', 'components/movimentacoes/SeletorDeCategoria.tsx', 'components/movimentacoes/CamposDeLancamento.tsx', 'components/ui/button.tsx', 'components/ui/input.tsx', 'components/ui/label.tsx', 'components/ui/select.tsx', 'lib/utils.ts']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/parte-do-grupo-realizada.ts', 'lib/periodo-do-painel.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/divisao-do-grupo.ts', 'lib/convite-de-grupo.ts', 'lib/fechamento-do-grupo.ts', 'components/grupos/FechamentoDoMes.tsx', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'lib/services/scheduled.ts', 'components/movimentacoes/FormularioDeTransferencia.tsx', 'app/api/reports/cash-flow/route.ts', 'app/api/personal-finance/transactions/route.ts', 'components/grupos/PainelDoGrupo.tsx', 'types/financial.ts', '.github/workflows/db-verify.yml', 'lib/puxar-para-atualizar-dom.ts', 'components/Sidebar.tsx', 'components/PuxarParaAtualizar.tsx', 'lib/categorias.ts', 'components/movimentacoes/SeletorDeCategoria.tsx', 'components/movimentacoes/CamposDeLancamento.tsx', 'components/ui/button.tsx', 'components/ui/input.tsx', 'components/ui/label.tsx', 'components/ui/select.tsx', 'lib/utils.ts']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/parte-do-grupo-realizada.ts', 'lib/periodo-do-painel.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/divisao-do-grupo.ts', 'lib/convite-de-grupo.ts', 'lib/fechamento-do-grupo.ts', 'lib/periodo-do-grupo.ts', 'components/grupos/FechamentoDoMes.tsx', 'app/**/expense-groups/**', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'lib/services/scheduled.ts', 'components/movimentacoes/FormularioDeTransferencia.tsx', 'app/api/reports/cash-flow/route.ts', 'app/api/personal-finance/transactions/route.ts', 'components/grupos/PainelDoGrupo.tsx', 'types/financial.ts', '.github/workflows/db-verify.yml', 'lib/puxar-para-atualizar-dom.ts', 'components/Sidebar.tsx', 'components/PuxarParaAtualizar.tsx', 'lib/categorias.ts', 'components/movimentacoes/SeletorDeCategoria.tsx', 'components/movimentacoes/CamposDeLancamento.tsx', 'components/ui/button.tsx', 'components/ui/input.tsx', 'components/ui/label.tsx', 'components/ui/select.tsx', 'lib/utils.ts']
   workflow_dispatch:
 
 jobs:
@@ -1276,6 +1286,51 @@ jobs:
       # que a pessoa usa para fazer o Pix do acerto.
       - name: O cartao de fechamento e a rota dele falam dos mesmos campos
         run: npm run test:contrato-do-fechamento
+
+      # HMO-248, o recorte de mes da aba de Despesas do grupo. Uma despesa fixa
+      # nao grava uma linha: grava uma regra e MATERIALIZA uma parcela por mes
+      # do horizonte. O cartao "Previstas" somava todas elas, sem recorte de
+      # data nenhum: um aluguel de R$ 1.800 com tres parcelas materializadas
+      # aparecia tres vezes e a legenda dizia "Total: R$ 5.400" -- o aluguel de
+      # tres meses num cartao que nao diz de qual mes fala.
+      #
+      # As assercoes que valem o job, todas com o numero do ANTES junto:
+      #
+      #   1. o aluguel de tres meses vira UMA conta de 1.800 no mes escolhido.
+      #      O controle e o 5.400 que a tela mostrava.
+      #   2. a conta que vence no DIA 1 pertence ao mes dela. O recorte antigo
+      #      era `new Date(data).getMonth()`, e `new Date("2026-10-01")` e
+      #      meia-noite UTC -- em America/Sao_Paulo isso e 30/09 e a despesa do
+      #      dia 1 caia no mes ANTERIOR. O bug so aparece em fuso negativo, que
+      #      e o do celular de quem usa o app e NAO o deste job: por isso o npm
+      #      script fixa TZ=America/Sao_Paulo, e o controle do dia 1 so afirma
+      #      quando o fuso e capaz de mostrar o defeito.
+      #   3. o que o recorte deixou de fora e CONTADO. Recortar no mes escondia
+      #      a parcela vencida de um mes passado -- a que pede acao -- e sumir
+      #      sem rotulo e indistinguivel de "nao foi gravada".
+      #
+      # Medido: 14 mutantes, 14 mortos (npm run mutantes:periodo-do-grupo). O
+      # mutante `mes_invalido_devolve_tudo` sobreviveu na primeira rodada: a
+      # guarda parecia redundante com o filtro, e so NAO e por causa da linha
+      # sem data (`mesDaData(null) === ""` casa com um mes invalido, que tambem
+      # e ""). A conclusao foi escrever o caso, nao apagar a guarda.
+      - name: As previstas do grupo sao do mes escolhido, e o dia 1 e desse mes
+        run: npm run test:periodo-do-grupo
+
+      # A metade de TELA da HMO-248. O recorte acima pode estar perfeito e a aba
+      # continuar somando a lista inteira: `scheduled.reduce(...)` compila, e o
+      # total errado de R$ 5.400 e plausivel o bastante para ninguem desconfiar.
+      #
+      # O que esta suite tranca e o par de fatos que separa a tela consertada da
+      # tela com o defeito: a soma crua nao existe mais, e o seletor do cartao
+      # de fechamento e o MESMO estado que recorta as duas listas -- sem isso o
+      # pior resultado possivel e um fechamento de novembro em cima de uma lista
+      # de outubro, cada metade certa em separado e a tela inteira mentindo.
+      #
+      # As assercoes negativas foram medidas contra a versao ANTERIOR do
+      # arquivo (git HEAD): as 11 reprovam, ou seja nenhuma delas e vacua.
+      - name: A aba de Despesas do grupo nao soma mais a lista inteira
+        run: npm run test:contrato-do-periodo-do-grupo
 
       # E a metade de ARVORE. `lib/categorias.ts` passaria verde com o JSX
       # inteiro errado; o que esta suite pega e o seletor de subcategoria
