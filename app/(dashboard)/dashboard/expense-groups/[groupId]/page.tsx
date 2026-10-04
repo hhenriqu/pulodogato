@@ -64,6 +64,10 @@ import {
 import { cotacaoDigitada, taxaParaGravar, valorEmReais } from "@/lib/cambio";
 import { PixDoMembro, useChavesPixDoGrupo } from "@/components/grupos/PixDoMembro";
 import { PainelDoGrupo } from "@/components/grupos/PainelDoGrupo";
+import {
+  DivisaoDoGrupo,
+  type MembroDaDivisao,
+} from "@/components/grupos/DivisaoDoGrupo";
 import { FechamentoDoMes } from "@/components/grupos/FechamentoDoMes";
 import { today } from "@/lib/recurrence";
 import {
@@ -998,6 +1002,26 @@ export default function GroupDetailPage() {
     group.members?.some(
       (member) => member.user?.id === user?.id && member.role === "admin"
     ) ?? false;
+
+  /**
+   * Os membros que DIVIDEM a conta (HMO-245, fase 5).
+   *
+   * `status === "active"` e obrigatorio, nao higiene: o PUT de `split-config`
+   * confere o conjunto contra os membros ativos e recusa um que tenha alguem a
+   * mais. Quem saiu do grupo continua na lista acima (com o badge do status),
+   * entao passar `group.members` cru faria o botao Salvar devolver 400 sempre,
+   * num grupo de onde uma pessoa qualquer ja saiu.
+   *
+   * `percentage` vai cru: quem decide se o numero gravado da para aplicar e
+   * `divisaoDoPeriodo`, a mesma funcao do fechamento do mes.
+   */
+  const membrosDaDivisao: MembroDaDivisao[] = (group.members ?? [])
+    .filter((member) => member.status === "active")
+    .map((member) => ({
+      member_id: member.id,
+      nome: member.user?.full_name,
+      percentage: member.percentage,
+    }));
 
   return (
     <div className="container mx-auto py-6 space-y-6">
@@ -2036,6 +2060,46 @@ export default function GroupDetailPage() {
               </div>
             </CardContent>
           </Card>
+
+          {/*
+            A configuracao da divisao (HMO-245, fase 5).
+
+            Fica na aba de Membros, e nao numa quinta aba, por dois motivos: os
+            rotulos de cinco abas nao cabem em 375px (esta tela ja teve estouro
+            horizontal), e a pergunta "quanto cada um paga" nasce olhando a
+            lista de quem esta no grupo -- logo acima.
+
+            Montada so com a aba ativa: ela busca o fechamento do mes para ter o
+            R$ de cada um, e quem veio ver a lista de despesas nao deve pagar
+            essa chamada.
+
+            `membrosDaDivisao` filtra por `status === "active"` porque a lista
+            acima mostra TODO mundo, inclusive quem saiu -- e o PUT da fase 3
+            recusa um conjunto que nao seja exatamente o dos ativos. O mes e o
+            `mesDoGrupo`, o mesmo do seletor do fechamento: dois meses na mesma
+            tela dariam dois R$ diferentes para a mesma divisao.
+          */}
+          {activeTab === "members" && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Calculator className="h-5 w-5" />
+                  Divisão da conta
+                </CardTitle>
+                <CardDescription>{rotuloDoMesDoGrupo}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <DivisaoDoGrupo
+                  groupId={groupId}
+                  membros={membrosDaDivisao}
+                  modoGravado={group.default_split_type}
+                  mes={mesDoGrupo}
+                  ehAdmin={souAdmin}
+                  aoGravar={loadGroup}
+                />
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
       </Tabs>
 
