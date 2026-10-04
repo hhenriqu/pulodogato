@@ -49,8 +49,10 @@
 
 import {
   classificarMovimentacao,
+  resumoDoPeriodo,
   type FiltroDeLancamento,
   type MovimentacaoBruta,
+  type ResumoDoPeriodo,
 } from "@/lib/movimentacoes";
 
 /**
@@ -163,20 +165,18 @@ export function partesDeTerceirosNaLista(
 /**
  * Quanto as partes de terceiros somam, positivo.
  *
- * ELAS NAO ENTRAM NOS TRES CARTOES DO TOPO, e este total existe para a tela
- * poder dizer isso com um numero em vez de omitir.
+ * ELAS ENTRAM NO CARTAO "Despesas" (HMO-275). Este total e a parcela delas
+ * dentro daquele numero -- ver `resumoComPartesDeGrupo` logo abaixo, que e
+ * quem soma, e o cabecalho dele, que e onde o criterio esta escrito.
  *
- * O motivo de ficarem fora: o cartao "Despesas" soma as MINHAS linhas, e para
- * uma despesa de grupo que eu paguei ele soma o valor CHEIO (R$ 400 do hotel --
- * foi o que saiu da minha conta, e e o criterio que a HMO-175 fixou). Somar
- * tambem "a minha parte do que os outros pagaram" misturaria dois criterios
- * dentro de um numero so: valor cheio de um lado, parte do outro. O resultado
- * nao seria nem "o que saiu de mim" nem "o que me cabe" -- seria um terceiro
- * numero que nao responde a pergunta nenhuma, e que nada na tela denunciaria.
- *
- * A saida e a mesma que a transferencia recebeu nesta tela: a linha aparece na
- * lista, o valor aparece ESCRITO em separado, e o cartao continua significando
- * uma coisa so.
+ * Ate a HMO-275 este total existia para a tela poder dizer que as partes
+ * ficavam de FORA dos tres cartoes, e o motivo alegado era que "Despesas"
+ * somava o valor CHEIO de uma despesa de grupo que eu paguei (R$ 400 do hotel)
+ * e somar a parte dos outros misturaria dois criterios num numero so. A decisao
+ * do Helio de 04/10/2026 responde a isso com um criterio UNICO, que o argumento
+ * antigo nao tinha enxergado: o cartao significa **o que me custou** -- inteiro
+ * quando eu paguei, minha parte quando outro pagou. Os dois casos passam a ser
+ * a mesma pergunta, e nao duas.
  */
 export function totalDasPartesDeTerceiros(
   linhas: LancamentoDeTerceiro[]
@@ -185,7 +185,13 @@ export function totalDasPartesDeTerceiros(
 }
 
 /**
- * O que a lista diz sobre as partes de terceiros, ou `null` quando nao ha.
+ * O que a tela diz sobre as partes de terceiros, ou `null` quando nao ha.
+ *
+ * Desde a HMO-275 a frase nao e mais um aviso de valor omitido: ela ABRE o
+ * cartao "Despesas", dizendo quanto daquele total e parte de despesa que outra
+ * pessoa pagou. Sem ela, a soma do cartao deixaria de bater com a soma das
+ * linhas que a pessoa consegue apontar como suas -- e o unico jeito de
+ * descobrir a diferenca seria somar a lista a mao.
  *
  * `null` -- e nao uma frase com zero -- porque "R$ 0,00 em partes de grupo" na
  * tela de quem nao participa de grupo nenhum e ruido que parece um recurso
@@ -198,6 +204,76 @@ export function notaDasPartesDeTerceiros(
   return {
     quantas: linhas.length,
     total: totalDasPartesDeTerceiros(linhas),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// OS TRES CARTOES, COM A PARTE DE GRUPO DENTRO (HMO-275)
+// ---------------------------------------------------------------------------
+// A decisao do Helio em 04/10/2026: **bruto + reembolso**. O cartao "Despesas"
+// significa *o que me custou* -- INTEIRO quando eu paguei, MINHA PARTE quando
+// outro pagou. Os R$ 159,90 da internet no C6 continuam inteiros no mes dele; os
+// R$ 53,30 da Ana passam a contar no mes dela, onde antes ficavam escritos
+// embaixo do cartao de saldo com a frase "na lista e fora do saldo".
+//
+// AS QUATRO COISAS QUE ESTA FUNCAO EXISTE PARA NAO ERRAR
+// ------------------------------------------------------
+// 1. O SALDO E RECALCULADO, NAO HERDADO. `resumoDoPeriodo` devolve
+//    `saldo = receitas - despesas` das MINHAS linhas. Somar a parte em
+//    `despesas` e repassar aquele `saldo` deixaria os tres cartoes se
+//    contradizendo na mesma tela: "Receitas 5.000", "Despesas 1.053,30",
+//    "Saldo 4.000" -- e a legenda do terceiro cartao diz, por escrito,
+//    "Receitas - Despesas". O erro e visivel a olho nu e ainda assim e o mais
+//    facil de cometer, porque a mudanca de uma linha (`despesas: ... + total`)
+//    nao obriga a mexer no `saldo`. Aqui nao ha o que repassar: o `saldo` sai
+//    da subtracao dos dois numeros desta funcao.
+//
+// 2. RECEITAS NAO SE MEXE. O outro lado do "bruto + reembolso" -- o que os
+//    outros me devem -- e a F10, e la ele entra como A RECEBER, previsto, com
+//    rotulo. Nao e receita realizada: a Ana pode nao pagar. Se esta funcao
+//    tocasse `receitas`, o saldo do mes voltaria a fechar certo com os dois
+//    lados inchados, que e exatamente a armadilha numero 1 deste bloco
+//    (`duas-pernas-mantem-o-total-certo`). Por isso ela devolve `receitas`
+//    inalterado -- e o teste afirma sobre os dois numeros EM SEPARADO.
+//
+// 3. SO A PARTE DO QUE OUTRO PAGOU CHEGA AQUI. `partesDeTerceirosNaLista` ja
+//    descartou `paguei_eu` (item 2 do cabecalho do arquivo). Somar a lista
+//    crua da view do 033 contaria o hotel da Ana duas vezes: R$ 400 da linha
+//    inteira dela mais R$ 200 da parte dela, R$ 600 de um gasto de R$ 400. O
+//    tipo do parametro e `LancamentoDeTerceiro[]`, e nao `ParteDeGrupoBruta[]`,
+//    para que esse caminho nao compile.
+//
+// 4. `transferido` E `transferencias` PASSAM INTEIROS. Uma parte de grupo nao e
+//    transferencia entre as minhas contas; a view do 033 filtra
+//    `transaction_type = 'expense'` na origem. Mexer neles aqui mudaria a outra
+//    frase do cartao de saldo, que fala de um assunto que nada tem a ver.
+
+/**
+ * Os tres cartoes do topo da tela, com a minha parte do que outros pagaram
+ * somada em "Despesas".
+ *
+ * `minhas` sao as linhas de `financial_transactions`; `partes` e a saida de
+ * `partesDeTerceirosNaLista`. A funcao recebe as duas fontes -- em vez de um
+ * `ResumoDoPeriodo` ja somado mais o total das partes -- justamente para que o
+ * `saldo` nao possa chegar pronto de fora: ver o item 1 do cabecalho acima.
+ *
+ * `partes` vazio devolve exatamente o que `resumoDoPeriodo` devolveria, e isso
+ * e o controle de que a soma nova nao vaza para quem nao tem grupo.
+ */
+export function resumoComPartesDeGrupo(
+  minhas: MovimentacaoBruta[],
+  partes: LancamentoDeTerceiro[]
+): ResumoDoPeriodo {
+  const meu = resumoDoPeriodo(minhas);
+  const despesas = meu.despesas + totalDasPartesDeTerceiros(partes);
+
+  return {
+    receitas: meu.receitas,
+    despesas,
+    // Item 1: recalculado, e nao `meu.saldo`.
+    saldo: meu.receitas - despesas,
+    transferido: meu.transferido,
+    transferencias: meu.transferencias,
   };
 }
 
