@@ -26,7 +26,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import Link from "next/link";
 import { User } from "@supabase/supabase-js";
 import { createClient } from "@/utils/supabase/client";
 import { toast } from "sonner";
@@ -38,7 +37,6 @@ import {
   CardContent,
   CardDescription,
   CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import {
   Select,
@@ -49,8 +47,10 @@ import {
 } from "@/components/ui/select";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { SoftFeatureGuard } from "@/components/subscription/SoftFeatureGuard";
-import { ArrowLeft, Trash2, TrendingDown, TrendingUp, Users } from "lucide-react";
+import { Trash2, Users } from "lucide-react";
 import { CamposDeLancamento } from "@/components/movimentacoes/CamposDeLancamento";
+import { ModalDeLancamento } from "@/components/movimentacoes/ModalDeLancamento";
+import { SalvarEContinuar } from "@/components/movimentacoes/SalvarEContinuar";
 import { usePreferenciaDeMoeda } from "@/lib/hooks/usePreferenciaDeMoeda";
 import { moedaSugerida } from "@/lib/moeda";
 import { cotacaoDigitada, taxaParaGravar } from "@/lib/cambio";
@@ -75,6 +75,12 @@ import type {
   PreferenciaDeCategoria,
   Subcategoria,
 } from "@/lib/categorias";
+import {
+  PARAM_DE_ORIGEM,
+  destinoDepoisDeSalvar,
+  origemSegura,
+  proximoLancamento,
+} from "@/lib/retorno-do-lancamento";
 import type { ResultadoDeCriacao } from "@/components/movimentacoes/SeletorDeCategoria";
 import {
   guardarCatalogo,
@@ -138,6 +144,15 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
    * link e o leitor nao poderem divergir.
    */
   const idDoCartaoFixado = parametros.get(PARAM_DO_CARTAO);
+  /**
+   * `?origem=` chega de quem abriu este modal (HMO-249), e e para onde o X, o
+   * Cancelar e o Salvar voltam.
+   *
+   * Passa por `origemSegura` AQUI, uma vez, e nao em cada uso: `router.push`
+   * com o que vier da URL e um redirecionamento aberto, e a peneira num ramo so
+   * dos tres deixaria os outros dois abertos.
+   */
+  const origem = origemSegura(parametros.get(PARAM_DE_ORIGEM));
 
   const [user, setUser] = useState<User | null>(null);
   const [serviceId, setServiceId] = useState("");
@@ -158,6 +173,15 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
   const [catalogoDe, setCatalogoDe] = useState<number | null>(null);
   const [valores, setValores] = useState<ValoresDeLancamento>(valoresIniciais);
   const [editando, setEditando] = useState(false);
+  /**
+   * "Salvar e continuar" (HMO-249): o modal nao fecha depois de gravar.
+   *
+   * Nasce DESLIGADO, e isso e a decisao conservadora. Ligado por padrao, o
+   * comportamento de sempre (salvar fecha a tela) mudaria para todo mundo sem
+   * aviso, e quem lanca uma conta so ficaria olhando um formulario aberto sem
+   * saber se gravou.
+   */
+  const [continuar, setContinuar] = useState(false);
   // Decide se a checkbox de moeda aparece, e qual moeda um lancamento novo ganha.
   const { moeda: preferenciaDeMoeda, carregando: carregandoMoeda } =
     usePreferenciaDeMoeda();
@@ -757,8 +781,51 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
     return true;
   };
 
-  const voltarParaLista = () => {
-    router.push("/dashboard/personal-finance");
+  /**
+   * Leva para uma tela interna ja aprovada por `origemSegura`.
+   *
+   * O `as` existe porque `typedRoutes` tipa o argumento de `router.push` como
+   * rota conhecida, e aqui o destino e uma string decidida em tempo de execucao.
+   * E o UNICO lugar do arquivo que escapa da tipagem, e ele so recebe o que a
+   * peneira aprovou -- por isso ela mora no topo do componente e nao aqui.
+   */
+  const irPara = (destino: string) => {
+    router.push(destino as Parameters<typeof router.push>[0]);
+  };
+
+  /**
+   * O fim de uma gravacao que deu certo (HMO-249).
+   *
+   * Dois caminhos, e `destinoDepoisDeSalvar` e quem escolhe:
+   *
+   *   fechar    volta para a tela de ORIGEM -- de onde a pessoa clicou em "Nova
+   *             Despesa" --, com a query dela intacta (o `?de=&ate=` das telas
+   *             de movimentacao e o periodo escolhido). Sem origem, cai na lista
+   *             de lancamentos, que e o destino fixo que as tres telas usavam
+   *             antes desta issue.
+   *   continuar fica aqui, com o formulario pronto para a proxima conta.
+   *
+   * O ramo "continuar" NAO limpa so a tela: ele tambem zera `valor` e
+   * `descricao` via `proximoLancamento`, e e isso que impede o segundo clique em
+   * Salvar de gravar o mesmo gasto de novo. Ver o cabecalho daquela funcao.
+   */
+  const terminar = () => {
+    const destino = destinoDepoisDeSalvar({
+      origem,
+      continuar: continuar && !editando,
+    });
+
+    if (destino === null) {
+      setValores((atual) => proximoLancamento(atual, valoresIniciais()));
+      return;
+    }
+
+    irPara(destino);
+  };
+
+  /** O X, o Esc, o clique fora e o Cancelar: sai sem gravar nada. */
+  const fecharSemSalvar = () => {
+    irPara(destinoDepoisDeSalvar({ origem, continuar: false })!);
   };
 
   const enviar = async (evento: React.FormEvent) => {
@@ -789,7 +856,7 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
           "Sem conexão. Guardei no aparelho e envio quando a rede voltar."
         );
         if (guardou) {
-          voltarParaLista();
+          terminar();
           return;
         }
       }
@@ -805,17 +872,17 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       // `destinoDoLancamento` e uma funcao pura, e a ordem esta presa por teste.
       switch (destinoDoLancamento(tipo, valores, editando)) {
         case "regra":
-          if (await criarRegraFixa()) voltarParaLista();
+          if (await criarRegraFixa()) terminar();
           return;
         case "parcelas":
-          if (await criarParcelas()) voltarParaLista();
+          if (await criarParcelas()) terminar();
           return;
         case "previsao":
-          if (await criarContaPrevista()) voltarParaLista();
+          if (await criarContaPrevista()) terminar();
           return;
         case "transacao":
           await gravarTransacao();
-          voltarParaLista();
+          terminar();
           return;
       }
     } catch (erro) {
@@ -839,7 +906,7 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
           "Sem conexão no meio do envio. Guardei no aparelho."
         );
         if (guardou) {
-          voltarParaLista();
+          terminar();
           return;
         }
       }
@@ -1011,54 +1078,56 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
     });
   };
 
+  // O titulo e a descricao do modal. Montados antes do `if (carregando)` porque
+  // o modal tambem envolve o estado de carregamento: sem isto, abrir "Nova
+  // Despesa" mostraria um disco girando sobre a tela de origem, sem moldura e
+  // sem X -- e quem abriu por engano nao teria como sair enquanto o catalogo
+  // carrega.
+  const tituloDoModal = editando
+    ? tipo === "expense"
+      ? "Editar despesa"
+      : "Editar receita"
+    : copia.titulo;
+
   if (carregando) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-      </div>
+      <ModalDeLancamento
+        titulo={tituloDoModal}
+        descricao={copia.descricao}
+        aoFechar={fecharSemSalvar}
+      >
+        <div className="flex items-center justify-center min-h-[200px]">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+        </div>
+      </ModalDeLancamento>
     );
   }
 
-  const Icone = tipo === "expense" ? TrendingDown : TrendingUp;
-
   return (
-    <div className="container mx-auto py-6 space-y-6 max-w-3xl">
-      <div className="space-y-2">
-        <Button variant="ghost" size="sm" asChild className="-ml-2">
-          <Link href="/dashboard/personal-finance">
-            <ArrowLeft className="h-4 w-4 mr-1" />
-            Voltar para os lançamentos
-          </Link>
-        </Button>
-        <h1 className="text-3xl font-bold flex items-center gap-2">
-          <Icone
-            className={`h-7 w-7 ${
-              tipo === "expense" ? "text-destructive" : "text-success"
-            }`}
-          />
-          {editando
-            ? tipo === "expense"
-              ? "Editar despesa"
-              : "Editar receita"
-            : copia.titulo}
-        </h1>
-        <p className="text-muted-foreground">{copia.descricao}</p>
-        {catalogoDe !== null && (
+    <ModalDeLancamento
+      titulo={tituloDoModal}
+      descricao={copia.descricao}
+      aoFechar={fecharSemSalvar}
+      aviso={
+        catalogoDe !== null ? (
           <p className="text-sm text-warning">
             Sem conexão. As categorias e contas são as de{" "}
             {new Date(catalogoDe).toLocaleString("pt-BR")}.
           </p>
-        )}
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>{editando ? "Dados do lançamento" : copia.titulo}</CardTitle>
-          <CardDescription>
-            Campos com * são obrigatórios.
-          </CardDescription>
+        ) : undefined
+      }
+    >
+      {/*
+        O Card perde borda e sombra dentro do modal -- a moldura ja e a do
+        `DialogContent`, e duas molduras concentricas com o mesmo raio leem como
+        um erro de render. O que ele ainda carrega e o "Campos com * sao
+        obrigatorios", que e a unica pista de obrigatoriedade na tela.
+      */}
+      <Card className="border-0 shadow-none">
+        <CardHeader className="px-0 pt-0">
+          <CardDescription>Campos com * são obrigatórios.</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="px-0 pb-0">
           <form onSubmit={enviar} className="space-y-6">
             <CamposDeLancamento
               tipo={tipo}
@@ -1243,17 +1312,43 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
               }
             />
 
+            {/*
+              O interruptor vem ANTES dos botoes, e nao depois: ele muda o que o
+              botao de Salvar faz, e um controle que modifica a acao tem de estar
+              visivel no momento em que se le o botao. Depois dele, a pessoa so o
+              descobre quando a tela nao fecha.
+            */}
+            {!editando && (
+              <SalvarEContinuar
+                ligado={continuar}
+                aoMudar={setContinuar}
+                disabled={salvando}
+              />
+            )}
+
             <div className="flex flex-wrap gap-2">
               <Button type="submit" disabled={salvando}>
                 {editando ? "Atualizar" : copia.salvar}
               </Button>
-              <Button type="button" variant="outline" asChild>
-                <Link href="/dashboard/personal-finance">Cancelar</Link>
+              {/*
+                `button` com `onClick`, e nao `Link`: o destino e o `?origem=`
+                lido em tempo de execucao, e `typedRoutes` nao aceita `string`
+                em `href`. O caminho de saida e o MESMO do X e do Esc -- um
+                Cancelar que fosse para outro lugar que o X seria duas respostas
+                para a mesma pergunta.
+              */}
+              <Button
+                type="button"
+                variant="outline"
+                onClick={fecharSemSalvar}
+                disabled={salvando}
+              >
+                Cancelar
               </Button>
             </div>
           </form>
         </CardContent>
       </Card>
-    </div>
+    </ModalDeLancamento>
   );
 }

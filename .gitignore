@@ -309,3 +309,11 @@ next-env.d.ts
 # o mesmo mes na mesma tela. Mesmo motivo das entradas acima para estar aqui: um
 # `.tmp-*` fora do .gitignore chega a ser commitado em cima de arquivo de fonte.
 /.tmp-periodo-do-grupo/
+
+# Build do `npm run test:retorno-lancamento` (HMO-249: para onde o modal de
+# lancamento volta, e o que o "Salvar e continuar" deixa na tela). O tsc emite
+# AQUI tambem uma copia de lib/lancamento.js, porque o modulo importa o TIPO
+# `ValoresDeLancamento` de la -- o emit apaga a linha, mas o compilador entra no
+# arquivo. Mesmo motivo das entradas acima para estar aqui: um `.tmp-*` fora do
+# .gitignore chega a ser commitado em cima de arquivo de fonte.
+/.tmp-retorno-lancamento/
