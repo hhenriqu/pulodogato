@@ -59,7 +59,20 @@ import { join, resolve, basename } from "node:path";
 import { tmpdir } from "node:os";
 
 const FONTE = "lib/telas-de-movimentacao.ts";
-const DEPENDENCIAS = ["lib/movimentacoes.ts", "lib/destino-do-lancamento.ts"];
+// TODA dependencia `@/` da FONTE tem de estar aqui. A que falta nao produz um
+// mutante sobrevivente: ela faz o CONTROLE POSITIVO abortar com erro de
+// compilacao -- e se o controle positivo nao existisse, faria TODOS os mutantes
+// "morrerem" e o placar sair 100% sem medir nada.
+//
+// `lib/chave-da-fatura.ts` entrou na HMO-285. Ele e um arquivo-FOLHA (nenhum
+// import), e e exatamente por isso que a fonte pode importa-lo: `card-invoice`,
+// onde aquela chave morava, arrastaria `transferencia` -> `lancamento` para
+// dentro desta arvore.
+const DEPENDENCIAS = [
+  "lib/movimentacoes.ts",
+  "lib/destino-do-lancamento.ts",
+  "lib/chave-da-fatura.ts",
+];
 const SAIDA = ".tmp-telas-de-movimentacao";
 const TESTE = "scripts/test-telas-de-movimentacao.mjs";
 
@@ -336,6 +349,107 @@ const MUTANTES = [
       "e o id vira `/api/scheduled-transactions/fatura:.../pay`",
     de: "    gravada: idGravado !== null,",
     para: "    gravada: true,",
+  },
+
+  // --- a natureza da linha: fatura, fixa ou comum (HMO-285) ---------------
+  //
+  // ESTES MUTANTES SAO OS MAIS FACEIS DE SOBREVIVER DE TODO O ARQUIVO, e a
+  // razao e que `natureza` e `fatura` NAO ENTRAM EM SOMA NENHUMA. Os 40 blocos
+  // de aritmetica da suite continuam verdes com a classificacao inteira
+  // invertida: Total, Previsto e Realizado fecham no centavo, a lista tem as
+  // mesmas linhas na mesma ordem, e so o rotulo de cada uma esta errado. Um
+  // rotulo errado e pior que um rotulo ausente -- "Despesa" embaixo da fatura
+  // tira dela o clique que leva ao cartao, e quem ve isso conclui que a fatura
+  // nao esta na tela.
+  {
+    nome: "ordem_fixa_antes_de_fatura",
+    porque:
+      "a fatura que tambem tiver `recurring_rule_id` vira 'Fixa' e PERDE o " +
+      "campo `fatura` -- o unico que leva de volta ao cartao e ao mes, que e o " +
+      "ponto da issue. Nenhum total se mexe",
+    de:
+      "    natureza: daFatura\n" +
+      '      ? "fatura"\n' +
+      "      : texto(crua.recurring_rule_id)\n" +
+      '        ? "fixa"\n' +
+      '        : "despesa",',
+    para:
+      "    natureza: texto(crua.recurring_rule_id)\n" +
+      '      ? "fixa"\n' +
+      "      : daFatura\n" +
+      '        ? "fatura"\n' +
+      '        : "despesa",',
+  },
+  {
+    nome: "previsto_sempre_comum",
+    porque:
+      "a fatura e a conta fixa deixam de ser reconhecidas: a tela volta a " +
+      "chamar tudo de linha comum, que e o estado de antes da issue -- e o " +
+      "Total continua fechando no centavo",
+    de:
+      "    natureza: daFatura\n" +
+      '      ? "fatura"\n' +
+      "      : texto(crua.recurring_rule_id)\n" +
+      '        ? "fixa"\n' +
+      '        : "despesa",',
+    para: '    natureza: "despesa",',
+  },
+  {
+    nome: "fatura_so_a_sintetizada",
+    porque:
+      "so a fatura ABERTA e reconhecida: a FECHADA (que e uma " +
+      "scheduled_transaction com a mesma chave em `notes`) perde o rotulo e o " +
+      "link justamente no mes em que ela e a linha que a pessoa vai pagar",
+    de: "  const daFatura = faturaDaChave(crua.notes);",
+    para: "  const daFatura = idGravado ? null : faturaDaChave(crua.notes);",
+  },
+  {
+    nome: "fixa_por_presenca_do_campo",
+    porque:
+      "`recurring_rule_id` NULO lido como elo: o PostgREST devolve a coluna " +
+      "como `null` em vez de omiti-la, entao TODA linha da view vira 'Fixa' -- " +
+      "inclusive a previsao avulsa, que e a maioria",
+    de: "      : texto(crua.recurring_rule_id)",
+    para: "      : crua.recurring_rule_id !== undefined",
+  },
+  {
+    nome: "fatura_sem_mes",
+    porque:
+      "o cartao certo e o mes vazio: o link da fatura passa a apontar para o " +
+      "mes errado do cartao certo, que e um destino PLAUSIVEL -- o tipo " +
+      "`{ accountId, mes }` existe para que esse estado nao seja alcancavel",
+    de:
+      "    fatura: daFatura\n" +
+      "      ? { accountId: daFatura.accountId, mes: daFatura.mes }\n" +
+      "      : null,",
+    para:
+      '    fatura: daFatura ? { accountId: daFatura.accountId, mes: "" } : null,',
+  },
+  {
+    nome: "realizada_nunca_e_fixa",
+    porque:
+      "o conjunto da terceira consulta deixa de ser lido: a conta fixa que ja " +
+      "foi paga aparece como lancamento comum, e a consulta extra fica paga " +
+      "sem ninguem usar",
+    de: '    natureza: idsDeFixa.has(crua.id) ? "fixa" : "despesa",',
+    para: '    natureza: "despesa",',
+  },
+  {
+    nome: "realizada_sempre_fixa",
+    porque:
+      "TODA linha realizada vira 'Fixa', inclusive o mercado lancado a mao -- " +
+      "um rotulo que nao distingue nada se le como 'o app acha que tudo e fixo'",
+    de: '    natureza: idsDeFixa.has(crua.id) ? "fixa" : "despesa",',
+    para: '    natureza: "fixa",',
+  },
+  {
+    nome: "realizada_virou_fatura",
+    porque:
+      "a linha realizada passa a oferecer link de fatura: o pagamento da fatura " +
+      "e transferencia de duas pernas e nao chega nesta tela, entao o link " +
+      "levaria a um cartao que aquela linha nao tem",
+    de: "    fatura: null,",
+    para: '    fatura: { accountId: crua.id, mes: "" },',
   },
 
   // --- rotulos que mudam o significado do numero --------------------------

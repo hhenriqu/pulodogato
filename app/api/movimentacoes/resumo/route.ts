@@ -33,11 +33,17 @@
 //      que ignora o cartao -- um numero menor, plausivel, e exatamente o que
 //      Contas Previstas NAO faz. A issue pede aquela tela como referencia.
 //
-// O lado realizado tem UMA fonte: `financial_transactions`, com os mesmos
-// filtros da lista de Financas Pessoais (`user_id`, `service_id` de
+// O lado realizado tem UMA fonte DE DINHEIRO: `financial_transactions`, com os
+// mesmos filtros da lista de Financas Pessoais (`user_id`, `service_id` de
 // personal_finance, o periodo). Os mesmos e nao parecidos: dois recortes
 // diferentes para a mesma pergunta dao dois numeros certos que discordam na
 // mesma sessao do usuario.
+//
+// A terceira consulta (3b, HMO-285) le `scheduled_transactions` e NAO soma nada:
+// ela responde quais das linhas realizadas vieram de uma regra fixa, que e um
+// ROTULO. Ela existe porque o elo e de uma via -- `financial_transactions` nao
+// tem `recurring_rule_id` --, e falhar nela nao derruba a leitura nem mexe em
+// centavo nenhum. Ver o comentario dela.
 //
 // E O LADO REALIZADO TAMBEM NAO CONTA O CARTAO (HMO-260)
 // ------------------------------------------------------
@@ -225,12 +231,27 @@ export async function GET(request: NextRequest) {
     // `direction` vem da view e e repassada crua: a precedencia entre o tipo da
     // ocorrencia e o da regra recorrente e da 027, e refazer esse COALESCE aqui
     // e o defeito que ela fechou.
+    //
+    // `recurring_rule_id` E LOAD-BEARING, pelo mesmo motivo e com o mesmo modo
+    // de falha de `account_type` acima (HMO-285): ele e o unico campo pelo qual
+    // a linha prevista sabe que nasceu de uma regra fixa. Tira-lo deste `select`
+    // -- numa limpeza de campos "nao usados na tela", por exemplo -- NAO quebra
+    // `tsc` nem teste de unidade nenhum, porque o campo e opcional em
+    // `PrevistaCrua` e a ausencia dele e um estado legitimo (a previsao avulsa).
+    // O que acontece e TODA conta fixa do periodo passar a se chamar comum na
+    // tela, sem erro, sem log e com a lista e os totais inalterados. A sonda
+    // textual de scripts/test-contrato-das-telas-de-movimentacao.mjs e o que
+    // impede isso.
+    //
+    // A view o expoe desde a 005 (`scheduled_transactions.recurring_rule_id`) e
+    // a 027 o manteve na coluna de saida (`027_...sql:248`) -- nenhuma migration
+    // e necessaria aqui.
     const { data: agendaCrua, error: erroAgenda } = await supabase
       .from("scheduled_transactions_effective")
       .select(
         `
         id, description, amount, due_date, status, effective_status, currency,
-        direction, notes,
+        direction, notes, recurring_rule_id,
         category:transaction_categories(name),
         account:financial_accounts(id, name, account_type)
       `
@@ -269,6 +290,58 @@ export async function GET(request: NextRequest) {
         : { previstas: [], semVencimento: [] };
 
     // ----------------------------------------------------------------
+    // 3b. QUAIS DAS REALIZADAS VIERAM DE UMA REGRA FIXA
+    // ----------------------------------------------------------------
+    // Uma terceira consulta, e ela existe porque O ELO E DE UMA VIA:
+    // `financial_transactions` nao tem `recurring_rule_id` nem
+    // `scheduled_transaction_id` (001_...sql:1131-1148). Quem guarda a ponte e
+    // `scheduled_transactions.transaction_id`, do lado da agenda, apontando para
+    // a transacao que a baixa criou. Entao nao da para responder "esta linha
+    // realizada e de uma conta fixa?" lendo a linha realizada -- a pergunta tem
+    // de ser feita do outro lado, e por isso a resposta chega em `linhasDaTela`
+    // como um conjunto de `transaction_id`.
+    //
+    // `.not("recurring_rule_id", "is", null)` no SERVIDOR e nao no cliente: sem
+    // ele a consulta traria tambem as previsoes AVULSAS que receberam baixa, que
+    // sao a maioria das linhas de quem lanca conta a conta -- payload maior para
+    // depois descartar.
+    //
+    // DIRECAO DO ERRO: falhar aqui NAO derruba a leitura. O conjunto fica vazio,
+    // as linhas caem em `natureza: "despesa"` -- que e exatamente o estado de
+    // antes desta issue -- e os tres numeros nao se mexem um centavo. Trocar os
+    // totais do mes por uma tela de erro por causa de um ROTULO seria o pior dos
+    // dois. O `console.error` fica, porque "sem rotulo nenhum" e um sintoma que
+    // ninguem reporta. Mesma decisao que `faturasPrevistasDaJanela` e a
+    // materializacao da agenda ja tomam neste arquivo.
+    const idsRealizados = (realizadasCruas ?? [])
+      .map((linha) => linha.id)
+      .filter((id): id is string => typeof id === "string" && id.length > 0);
+
+    const idsDeFixa = new Set<string>();
+
+    // Sem id nenhum no periodo nao ha o que perguntar, e um `.in()` com lista
+    // vazia e uma ida ao banco para receber zero linhas de volta.
+    if (idsRealizados.length > 0) {
+      const { data: comRegra, error: erroRegra } = await supabase
+        .from("scheduled_transactions")
+        .select("transaction_id, recurring_rule_id")
+        .eq("user_id", user.id)
+        .in("transaction_id", idsRealizados)
+        .not("recurring_rule_id", "is", null);
+
+      if (erroRegra) {
+        console.error(
+          "A tela de movimentação seguiu sem saber quais realizadas são fixas:",
+          erroRegra
+        );
+      } else {
+        for (const linha of comRegra ?? []) {
+          if (linha.transaction_id) idsDeFixa.add(linha.transaction_id);
+        }
+      }
+    }
+
+    // ----------------------------------------------------------------
     // 4. Os tres numeros e a lista
     // ----------------------------------------------------------------
     const previstas: PrevistaCrua[] = [
@@ -279,7 +352,8 @@ export async function GET(request: NextRequest) {
     const linhas = linhasDaTela(
       (realizadasCruas ?? []) as unknown as RealizadaCrua[],
       previstas,
-      tela.tipo
+      tela.tipo,
+      idsDeFixa
     );
 
     const resumo = resumoDaTela(linhas);

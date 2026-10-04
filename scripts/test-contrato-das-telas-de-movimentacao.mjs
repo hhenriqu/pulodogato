@@ -368,6 +368,202 @@ test("a rota TRAZ `account_type` no embed -- sem ele o filtro do cartao é vácu
   assert.match(lib, /"expense",\s*\n\s*"income",/);
 });
 
+test("a rota TRAZ `recurring_rule_id` da view -- sem ele toda conta fixa vira comum", () => {
+  // HMO-285, e a MESMA familia de `account_type` acima. A diferenca e que aqui o
+  // campo e OPCIONAL em `PrevistaCrua`, porque a ausencia dele e um estado
+  // legitimo (a previsao avulsa nao tem regra). Isso fecha a ultima porta que o
+  // tsc poderia ter fechado: tirar `recurring_rule_id` do `select` nao quebra
+  // compilacao, nao quebra teste de unidade, nao muda um centavo em Total,
+  // Previsto ou Realizado -- e faz TODA conta fixa do periodo se chamar comum.
+  //
+  // A SONDA E ANCORADA NO `select` DA VIEW, e nao no arquivo. Desde esta issue
+  // `recurring_rule_id` aparece em DOIS lugares da rota (a view e a terceira
+  // consulta), e uma sonda solta sobre o arquivo passaria verde lendo a outra --
+  // exatamente o tipo de sonda que escorrega para a funcao vizinha.
+  const daView = rota.match(
+    /\.from\("scheduled_transactions_effective"\)\s*\.select\(\s*`([^`]*)`/
+  );
+  assert.ok(
+    daView,
+    `nao achei o \`select\` de scheduled_transactions_effective em ${ROTA}`
+  );
+  assert.match(
+    daView[1],
+    /recurring_rule_id/,
+    "o `select` da view nao pede `recurring_rule_id`: a tela para de distinguir " +
+      "conta fixa de despesa comum, sem erro e sem mudar nenhum total"
+  );
+  // Controle da extracao: o campo que a sonda irma protege tem de estar no
+  // MESMO bloco. Sem isto, um `match` que capturasse o pedaco errado do arquivo
+  // ainda poderia casar com `recurring_rule_id` por acaso.
+  assert.match(daView[1], /direction/, "a sonda capturou o bloco errado");
+
+  // E a terceira consulta, que e a unica fonte do lado REALIZADO: o elo e de uma
+  // via (`financial_transactions` nao tem a coluna, 001), entao a pergunta tem
+  // de ser feita do lado da agenda.
+  assert.match(
+    rota,
+    /\.from\("scheduled_transactions"\)\s*\.select\("transaction_id, recurring_rule_id"\)/,
+    "a terceira consulta saiu: nenhuma linha REALIZADA consegue mais saber que " +
+      "veio de regra fixa, porque financial_transactions nao tem o elo"
+  );
+  assert.match(
+    rota,
+    /\.not\("recurring_rule_id", "is", null\)/,
+    "a terceira consulta deixou de filtrar no servidor: ela passa a trazer toda " +
+      "previsao avulsa com baixa para descartar no cliente"
+  );
+
+  // E o conjunto CHEGA na regra pura. O parametro e obrigatorio, entao o tsc
+  // cobra a fiacao -- esta assercao existe para o caso de alguem reinventar o
+  // parametro como opcional, que e quando o tsc para de cobrar.
+  const chamada = rota.match(/const linhas = linhasDaTela\(([\s\S]*?)\);/);
+  assert.ok(chamada, `nao achei a chamada de linhasDaTela em ${ROTA}`);
+  assert.match(
+    chamada[1],
+    /idsDeFixa/,
+    "a rota nao passa o conjunto de fixas para `linhasDaTela`"
+  );
+
+  // A falha da terceira consulta NAO derruba a leitura: o conjunto fica vazio,
+  // as linhas caem em "despesa" e os tres numeros nao se mexem. Um `return` com
+  // 500 ali trocaria os totais do mes por uma tela de erro por causa de um
+  // rotulo.
+  const terceira = rota.slice(rota.indexOf('.from("scheduled_transactions")'));
+  const ateOFim = terceira.slice(0, terceira.indexOf("const previstas"));
+  assert.match(ateOFim, /console\.error\(/, "a falha da terceira consulta fica muda");
+  assert.ok(
+    !/NextResponse\.json\(/.test(ateOFim),
+    "a falha da terceira consulta derruba a leitura: um ROTULO ausente passa a " +
+      "custar os tres numeros do periodo"
+  );
+});
+
+test("`natureza` e `fatura` existem e sao produzidos nos DOIS lados", () => {
+  // HMO-285 e a primeira das duas PRs: esta PR faz o dado existir e chegar ao
+  // componente, e a PR irma desenha o icone, o rotulo e o link. Por isso estes
+  // dois campos sao, HOJE, os unicos de `LinhaDaTela` sem leitor na tela -- e
+  // e exatamente por isso que eles precisam desta assercao. Um campo sem leitor
+  // e o que este repositorio ja perdeu por meses (`account_id` selecionado pelo
+  // `*`, HMO-215): sem nada cobrando, uma limpeza o apaga antes da PR irma
+  // chegar, e o que se perde e a feature inteira, nao um campo.
+  const naLib = camposDaInterface(lib, "LinhaDaTela", LIB);
+
+  for (const campo of ["natureza", "fatura"]) {
+    assert.ok(naLib.includes(campo), `${campo} saiu de LinhaDaTela`);
+  }
+
+  // E os DOIS construtores os preenchem. `linhaRealizada` grava `fatura: null`
+  // sempre -- o pagamento da fatura e transferencia de duas pernas e nao chega
+  // nesta tela --, mas `natureza` ele decide.
+  assert.match(
+    lib,
+    /natureza: idsDeFixa\.has\(crua\.id\)/,
+    "`linhaRealizada` nao classifica mais a linha pelo conjunto da rota"
+  );
+  assert.match(
+    lib,
+    /natureza: daFatura\s*\n\s*\? "fatura"/,
+    "`linhaPrevista` nao avalia mais FATURA ANTES de fixa -- invertida a ordem, " +
+      "a fatura perde o campo `fatura`, que e o caminho de volta ao cartao"
+  );
+
+  // `natureza` NAO e um quarto valor de `TipoDaTela`: esticar aquela uniao faria
+  // `telaDoTipo("fatura")` ter de responder uma tela, e um valor novo chegando
+  // em `linhaPrevista` sairia pela peneira do `direction` -- a linha
+  // desapareceria da tela em silencio.
+  const uniao = lib.match(/export type TipoDaTela = ([^;]+);/);
+  assert.ok(uniao, "nao achei TipoDaTela");
+  for (const palavra of ["fatura", "fixa", "despesa"]) {
+    assert.ok(
+      !uniao[1].includes(`"${palavra}"`),
+      `"${palavra}" entrou em TipoDaTela: a rota valida \`?tipo=\` contra ela`
+    );
+  }
+});
+
+test("a chave da fatura mora num arquivo-FOLHA, e `card-invoice` a re-exporta", () => {
+  // HMO-285, fase 0. `lib/telas-de-movimentacao.ts` precisa de `faturaDaChave` e
+  // nao pode importar `lib/card-invoice.ts`: ele arrasta `transferencia` ->
+  // `lancamento` atras dele, e o mutador daquele modulo copia para a arvore
+  // temporaria so as dependencias listadas -- um mutante que nao COMPILA
+  // "morre" por motivo errado e o placar mente a favor.
+  //
+  // A FOLHA E A TRAVA: no dia em que `chave-da-fatura.ts` ganhar um import, o
+  // problema volta inteiro, e volta como "todos os mutantes morreram".
+  const FOLHA = "lib/chave-da-fatura.ts";
+  const folha = semComentarios(readFileSync(FOLHA, "utf8"));
+  const imports = folha.match(/^\s*import\s/gm) ?? [];
+  assert.deepEqual(
+    imports,
+    [],
+    `${FOLHA} ganhou import. Ele e copiado para a arvore do mutador de ` +
+      `telas-de-movimentacao, onde a dependencia nova NAO existe: o controle ` +
+      `positivo aborta, e sem ele TODO mutante "morreria" por erro de compilacao.`
+  );
+
+  // Os cinco nomes continuam chegando por `@/lib/card-invoice`, que e de onde os
+  // nove chamadores de hoje os pedem.
+  const cardInvoice = semComentarios(readFileSync("lib/card-invoice.ts", "utf8"));
+  const reexport = cardInvoice.match(
+    /export \{([^}]*)\} from "@\/lib\/chave-da-fatura";/
+  );
+  assert.ok(
+    reexport,
+    "lib/card-invoice.ts nao re-exporta mais a chave da fatura: os nove " +
+      "chamadores que a pedem de la param de compilar"
+  );
+  for (const nome of [
+    "PREFIXO_CHAVE_FATURA",
+    "chaveFatura",
+    "RE_CHAVE_FATURA",
+    "faturaDaChave",
+    "ehFatura",
+  ]) {
+    assert.match(reexport[1], new RegExp(`\\b${nome}\\b`), `${nome} nao e re-exportado`);
+  }
+
+  // E a regex da chave tem UMA definicao. Duas ancoradas que divergissem nao
+  // dariam erro nenhum: uma das duas so pararia de casar, e a tela deixaria de
+  // reconhecer a fatura em silencio.
+  assert.ok(
+    !/RE_CHAVE_FATURA\s*=/.test(cardInvoice),
+    "a regex da chave voltou a ser declarada em card-invoice: duas copias " +
+      "ancoradas divergem sem erro, e o lado errado so para de casar"
+  );
+});
+
+test("TODA dependencia `@/` da lib esta em DEPENDENCIAS do mutador", () => {
+  // O modo de falha e o pior possivel: a dependencia que falta faz o arquivo
+  // mutado nao COMPILAR, e um mutante que nao compila conta como morto. Sem o
+  // controle positivo do runner, o placar sairia "todos os N mutantes morreram"
+  // tendo medido zero.
+  const MUTADOR = "scripts/mutantes-telas-de-movimentacao.mjs";
+  const mutador = semComentarios(readFileSync(MUTADOR, "utf8"));
+
+  const bloco = mutador.match(/const DEPENDENCIAS = \[([\s\S]*?)\];/);
+  assert.ok(bloco, `nao achei DEPENDENCIAS em ${MUTADOR}`);
+
+  const importados = [...lib.matchAll(/from "@\/(lib\/[a-z0-9-]+)"/g)].map(
+    (m) => m[1]
+  );
+  // Controle da extracao: a lib tem pelo menos tres imports `@/lib/`, e um
+  // `matchAll` que nao casasse nada faria o laco abaixo passar por vacuidade.
+  assert.ok(
+    importados.length >= 3,
+    `extrai poucos imports de ${LIB}: ${importados}`
+  );
+
+  for (const dep of importados) {
+    assert.match(
+      bloco[1],
+      new RegExp(`"${dep}\\.ts"`),
+      `${dep}.ts e importado por ${LIB} e nao esta em DEPENDENCIAS de ` +
+        `${MUTADOR}: o arquivo mutado para de compilar e TODO mutante "morre"`
+    );
+  }
+});
+
 test("a tela DIZ que a compra no cartão está na fatura, e não no Realizado", () => {
   // HMO-260. "Gastos do cartao devem aparecer apenas no financas pessoais que
   // lista o que voce lancou, e dentro do cartao de credito."

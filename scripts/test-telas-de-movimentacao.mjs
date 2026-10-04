@@ -35,6 +35,27 @@ const {
   indiceDeContraparte,
 } = await import("../.tmp-telas-de-movimentacao/telas-de-movimentacao.js");
 
+/**
+ * Nenhuma das realizadas veio de regra fixa.
+ *
+ * `linhasDaTela` e `linhaRealizada` exigem este conjunto como argumento, e a
+ * obrigatoriedade e deliberada (HMO-285): a rota e a unica que sabe responder
+ * "esta linha realizada e de uma conta fixa?", porque o elo em
+ * `financial_transactions` nao existe e a resposta vem de uma terceira consulta.
+ * Opcional, a rota pararia de passar o conjunto numa refatoracao sem que `tsc`
+ * ou teste nenhum reclamasse, e TODA conta fixa voltaria a se chamar comum.
+ *
+ * Os blocos que medem OUTRA COISA (soma, ordem, tipo, a frase da conta) passam
+ * por `daTela`, que preenche o vazio: `natureza` nao e o que eles afirmam, e
+ * repetir `new Set()` em 37 chamadas esconderia os dois blocos em que o
+ * conjunto e o assunto.
+ */
+const SEM_FIXAS = new Set();
+
+/** `linhasDaTela` com "nenhuma realizada e fixa". Ver `SEM_FIXAS`. */
+const daTela = (realizadas, previstas, tipo, idsDeFixa = SEM_FIXAS) =>
+  linhasDaTela(realizadas, previstas, tipo, idsDeFixa);
+
 /** Uma linha de financial_transactions, com o minimo que o modulo le. */
 const realizada = (over = {}) => ({
   id: "t1",
@@ -61,7 +82,7 @@ const prevista = (over = {}) => ({
 // ARMADILHA 1: os dois lados tem sinal OPOSTO
 // -----------------------------------------------------
 test("a despesa realizada (-159,90) e a prevista (+159,90) SOMAM, nao se cancelam", () => {
-  const linhas = linhasDaTela(
+  const linhas = daTela(
     [realizada({ id: "t1", description: "Internet set", amount: -159.9 })],
     [prevista({ id: "s1", description: "Internet out", amount: "159.90" })],
     "expense"
@@ -110,7 +131,7 @@ test("cotacao ausente, zero ou negativa vale 1 -- nunca apaga a linha", () => {
 test("a conta prevista com baixa fica FORA do previsto -- ela ja esta no realizado", () => {
   // O que o banco tem depois de a pessoa confirmar o pagamento: a previsao com
   // status 'paid' E a transacao que a baixa criou.
-  const linhas = linhasDaTela(
+  const linhas = daTela(
     [realizada({ id: "t1", description: "Internet", amount: -159.9 })],
     [prevista({ id: "s1", description: "Internet", status: "paid", amount: "159.90" })],
     "expense"
@@ -151,7 +172,7 @@ test("skipped e cancelled saem do previsto; pending e overdue ficam", () => {
 });
 
 test("o vencido e um RECORTE do previsto, nao uma soma a parte", () => {
-  const linhas = linhasDaTela(
+  const linhas = daTela(
     [],
     [
       prevista({ id: "a", amount: "400.00", effective_status: "overdue" }),
@@ -177,7 +198,7 @@ test("o realizado nasce sem `situacao` -- e e por isso que ele nunca vira atraso
   // `null` aqui em toda linha. Se este campo passasse a vir preenchido, o
   // cartao "Previsto" anunciaria atraso de algo que ja foi pago -- entao a
   // assercao e sobre o campo, que e o que de fato segura a regra.
-  const linhas = linhasDaTela(
+  const linhas = daTela(
     [realizada({ amount: -50, transaction_date: "2026-01-01" })],
     [],
     "expense"
@@ -210,7 +231,7 @@ test("um Pix de R$ 1.000 entre contas proprias soma R$ 1.000, nao R$ 2.000", () 
     account: { id: "c2", name: "Nubank" },
   });
 
-  const linhas = linhasDaTela([saida, entrada], [], "transfer");
+  const linhas = daTela([saida, entrada], [], "transfer");
   const r = resumoDaTela(linhas);
 
   // CONTROLE: as duas pernas somam 2.000 em valor absoluto. A assercao abaixo
@@ -230,7 +251,7 @@ test("transferencia antiga, SEM o elo, tambem conta uma vez so (pelo sinal)", ()
   // O elo do 015 e `ON DELETE SET NULL`, e ha linha de antes dele. Sem o
   // segundo criterio de `ehPernaDeEntrada` o par voltaria a ser contado duas
   // vezes, e R$ 500 virariam R$ 1.000.
-  const linhas = linhasDaTela(
+  const linhas = daTela(
     [
       realizada({ id: "a", amount: -500, transaction_type: "transfer" }),
       realizada({ id: "b", amount: 500, transaction_type: "transfer" }),
@@ -265,7 +286,7 @@ test("transferencia de valor ZERO sem elo fica com as duas linhas, e isso e deli
   // Nao ha criterio que distinga as duas (o elo nao existe, o sinal e igual), e
   // somar duas linhas de zero continua dando zero. Esconder uma delas seria a
   // tela apagando um lancamento que a pessoa criou.
-  const linhas = linhasDaTela(
+  const linhas = daTela(
     [
       realizada({ id: "a", amount: 0, transaction_type: "transfer" }),
       realizada({ id: "b", amount: 0, transaction_type: "transfer" }),
@@ -283,7 +304,7 @@ test("cambio: a perna de SAIDA e a que diz quanto saiu em reais", () => {
   // anulam: -1.000 BRL e +180 USD. Ficar com a de saida responde "quanto
   // andou" em reais; ficar com a de entrada daria R$ 990 de uma transferencia
   // de R$ 1.000.
-  const linhas = linhasDaTela(
+  const linhas = daTela(
     [
       realizada({
         id: "saida",
@@ -313,7 +334,7 @@ test("cambio: a perna de SAIDA e a que diz quanto saiu em reais", () => {
 });
 
 test("a moeda estrangeira VIRA rotulo -- sem ele US$ 180 se le como R$ 180", () => {
-  const linhas = linhasDaTela(
+  const linhas = daTela(
     [realizada({ amount: -180, exchange_rate: 5.5, currency: "usd" })],
     [],
     "expense"
@@ -326,7 +347,7 @@ test("transferencia PREVISTA (038) conta uma vez: a previsao e UMA linha", () =>
   // As duas pernas so nascem na baixa, entao do lado previsto nao ha o que
   // de-duplicar -- e aplicar `ehPernaDeEntrada` ao previsto apagaria a
   // transferencia recorrente inteira, porque `amount > 0` por CHECK.
-  const linhas = linhasDaTela(
+  const linhas = daTela(
     [],
     [prevista({ id: "s1", amount: "1000.00", direction: "transfer" })],
     "transfer"
@@ -356,7 +377,7 @@ test("a perna de saida de uma transferencia NAO entra na tela de Despesas", () =
     category: { name: "Alimentação", is_expense: true },
   });
 
-  const despesas = linhasDaTela([pernaDeSaida, gasto], [], "expense");
+  const despesas = daTela([pernaDeSaida, gasto], [], "expense");
   const r = resumoDaTela(despesas);
 
   // CONTROLE: pelo sinal, as duas linhas sao despesa e o total seria R$ 280.
@@ -369,7 +390,7 @@ test("a perna de saida de uma transferencia NAO entra na tela de Despesas", () =
 
   // E ela aparece na tela de Transferencias, que e onde ela pertence -- "fora
   // de Despesas" nao pode querer dizer "fora do app".
-  assert.equal(linhasDaTela([pernaDeSaida, gasto], [], "transfer").length, 1);
+  assert.equal(daTela([pernaDeSaida, gasto], [], "transfer").length, 1);
 });
 
 // -----------------------------------------------------
@@ -406,7 +427,7 @@ test("uma compra de R$ 400 no cartao fecha o mes em R$ 400, e nao em R$ 800", ()
     account: { id: "cartao", name: "C6", account_type: "credit_card" },
   });
 
-  const linhas = linhasDaTela([compraNoCartao], [faturaAberta()], "expense");
+  const linhas = daTela([compraNoCartao], [faturaAberta()], "expense");
   const r = resumoDaTela(linhas);
 
   // CONTROLE: e o numero que a conta ERRADA produzia. Sem o filtro, a compra
@@ -464,21 +485,21 @@ test("o gasto no cartao sai SO da tela de Despesas -- ele nao sai do app", () =>
   const todas = [estorno, quitacaoDaFatura, saidaDaCorrente];
 
   // Em Receitas o estorno no cartao continua la.
-  const receitas = linhasDaTela(todas, [], "income");
+  const receitas = daTela(todas, [], "income");
   assert.equal(receitas.length, 1);
   assert.equal(receitas[0].id, "estorno");
   assert.equal(resumoDaTela(receitas).realizado, 90);
 
   // Em Transferencias o pagamento da fatura continua la, uma vez so (a perna de
   // entrada e a que sai, pela armadilha 3 -- e nao pelo tipo da conta).
-  const transferencias = linhasDaTela(todas, [], "transfer");
+  const transferencias = daTela(todas, [], "transfer");
   assert.equal(transferencias.length, 1);
   assert.equal(transferencias[0].id, "saida");
   assert.equal(resumoDaTela(transferencias).realizado, 400);
 
   // E em Despesas nenhuma das tres aparece: duas sao transferencia, uma e
   // receita.
-  assert.equal(linhasDaTela(todas, [], "expense").length, 0);
+  assert.equal(daTela(todas, [], "expense").length, 0);
 });
 
 test("SEM conta a despesa FICA -- `nao sei` nao pode virar `e cartao`", () => {
@@ -490,7 +511,7 @@ test("SEM conta a despesa FICA -- `nao sei` nao pode virar `e cartao`", () => {
   const semCampo = realizada({ id: "antiga", amount: -60 });
   const embedVazio = realizada({ id: "rls", amount: -40, account: [] });
 
-  const linhas = linhasDaTela([semConta, semCampo, embedVazio], [], "expense");
+  const linhas = daTela([semConta, semCampo, embedVazio], [], "expense");
 
   assert.equal(linhas.length, 3);
   assert.equal(resumoDaTela(linhas).realizado, 350);
@@ -522,7 +543,7 @@ test("compra no cartao com transaction_type NULO FICA -- a fatura nao a contem",
 
   assert.equal(ehGastoNoCartao(semTipo), false);
 
-  const linhas = linhasDaTela([semTipo], [], "expense");
+  const linhas = daTela([semTipo], [], "expense");
   assert.equal(linhas.length, 1, "a linha antiga sumiu da tela de Despesas");
   assert.equal(resumoDaTela(linhas).realizado, 150);
 
@@ -534,7 +555,7 @@ test("compra no cartao com transaction_type NULO FICA -- a fatura nao a contem",
     transaction_type: "expense",
   });
   assert.equal(ehGastoNoCartao(comTipo), true);
-  assert.equal(linhasDaTela([comTipo], [], "expense").length, 0);
+  assert.equal(daTela([comTipo], [], "expense").length, 0);
 });
 
 test("o embed da conta em ARRAY tambem e lido -- senao o filtro para de filtrar", () => {
@@ -550,7 +571,7 @@ test("o embed da conta em ARRAY tambem e lido -- senao o filtro para de filtrar"
   });
 
   assert.equal(ehGastoNoCartao(emArray), true);
-  assert.equal(linhasDaTela([emArray], [], "expense").length, 0);
+  assert.equal(daTela([emArray], [], "expense").length, 0);
 });
 
 test("so `credit_card` e cartao: debito, corrente e poupanca continuam contando", () => {
@@ -562,7 +583,7 @@ test("so `credit_card` e cartao: debito, corrente e poupanca continuam contando"
   // casaria e o filtro passaria a nao filtrar nada.
   assert.equal(TIPO_CARTAO, "credit_card");
 
-  const linhas = linhasDaTela(
+  const linhas = daTela(
     [
       realizada({
         id: "debito",
@@ -605,13 +626,13 @@ test("linha antiga com transaction_type NULL e classificada pela CATEGORIA", () 
     category: { name: "Salário", is_expense: false },
   });
 
-  assert.equal(linhasDaTela([estorno, salario], [], "expense").length, 1);
-  assert.equal(linhasDaTela([estorno, salario], [], "expense")[0].id, "estorno");
-  assert.equal(linhasDaTela([estorno, salario], [], "income")[0].id, "salario");
+  assert.equal(daTela([estorno, salario], [], "expense").length, 1);
+  assert.equal(daTela([estorno, salario], [], "expense")[0].id, "estorno");
+  assert.equal(daTela([estorno, salario], [], "income")[0].id, "salario");
 });
 
 test("sem tipo e sem categoria, sobra o sinal -- e ele e melhor que descartar", () => {
-  const linhas = linhasDaTela(
+  const linhas = daTela(
     [
       realizada({ id: "neg", amount: -30, transaction_type: null, category: null }),
       realizada({ id: "pos", amount: 30, transaction_type: null, category: null }),
@@ -634,8 +655,8 @@ test("o previsto le `direction` da view, e NAO refaz o COALESCE da 027", () => {
     direction: "income",
   });
 
-  assert.equal(linhasDaTela([], [salarioPrevisto], "expense").length, 0);
-  const receitas = linhasDaTela([], [salarioPrevisto], "income");
+  assert.equal(daTela([], [salarioPrevisto], "expense").length, 0);
+  const receitas = daTela([], [salarioPrevisto], "income");
   assert.equal(receitas.length, 1);
   assert.equal(resumoDaTela(receitas).previsto, 7000);
 });
@@ -706,7 +727,220 @@ test("a fatura aberta entra no previsto com chave de fatura e `gravada: false`",
   // A linha gravada e o contrario: id do banco e `gravada: true`.
   assert.equal(linhaPrevista(prevista({ id: "s1" })).gravada, true);
   assert.equal(linhaPrevista(prevista({ id: "s1" })).id, "s1");
-  assert.equal(linhaRealizada(realizada(), indiceDeContraparte([])).gravada, true);
+  assert.equal(linhaRealizada(realizada(), indiceDeContraparte([]), SEM_FIXAS).gravada, true);
+});
+
+// -----------------------------------------------------
+// A NATUREZA DA LINHA: fatura, fixa ou comum (HMO-285)
+// -----------------------------------------------------
+// `natureza` e `fatura` nao entram em soma nenhuma -- e e por isso que eles
+// precisam de bloco proprio. Um campo de ROTULO errado nao muda um centavo em
+// nenhum dos tres cartoes, entao os 40 blocos acima continuariam verdes com a
+// classificacao inteira invertida.
+
+/** A chave canonica de uma fatura, como `chaveFatura` a monta. */
+const CARTAO = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+const CHAVE_DE_FATURA = `fatura:2026-10-01:${CARTAO}`;
+
+test("o previsto comum e `despesa`, e nao aponta para fatura nenhuma", () => {
+  const linha = linhaPrevista(prevista({ id: "s1" }));
+
+  assert.equal(linha.natureza, "despesa");
+  // `null` e nao `{}`: um objeto vazio passaria por um `if (linha.fatura)` e a
+  // tela montaria link para `/dashboard/cartoes?mes=undefined`.
+  assert.equal(linha.fatura, null);
+});
+
+test("o previsto com `recurring_rule_id` e `fixa`", () => {
+  const fixa = linhaPrevista(
+    prevista({ id: "s1", recurring_rule_id: "11111111-2222-3333-4444-555555555555" })
+  );
+
+  assert.equal(fixa.natureza, "fixa");
+  assert.equal(fixa.fatura, null, "conta fixa nao tem para onde apontar");
+
+  // CONTROLE, e e ele que da sentido ao de cima: a MESMA linha sem o elo e
+  // comum. Sem este par, uma classificacao que respondesse "fixa" para tudo
+  // passaria verde.
+  assert.equal(linhaPrevista(prevista({ id: "s1" })).natureza, "despesa");
+});
+
+test("`recurring_rule_id` ausente, null ou vazio NAO e regra fixa", () => {
+  // A previsao AVULSA tem a coluna nula (027), e e o caso mais comum de quem
+  // lanca conta a conta. Uma leitura por presenca do campo (`!== undefined`)
+  // chamaria TODA linha vinda da view de fixa, porque o PostgREST devolve a
+  // coluna como `null` e nao a omite.
+  for (const elo of [undefined, null, "", "   "]) {
+    assert.equal(
+      linhaPrevista(prevista({ id: "s1", recurring_rule_id: elo })).natureza,
+      "despesa",
+      `recurring_rule_id ${JSON.stringify(elo)} nao e elo para regra nenhuma`
+    );
+  }
+});
+
+test("a fatura ABERTA (sintetizada) e `fatura`, e carrega cartao E mes", () => {
+  // Como `sintetizarFaturasAbertas` a monta (HMO-227): `id: null`, a chave
+  // canonica em `notes`.
+  const linha = linhaPrevista({
+    id: null,
+    notes: CHAVE_DE_FATURA,
+    description: "Fatura C6 · out/2026",
+    amount: 1240.55,
+    due_date: "2026-10-10",
+    status: "pending",
+    effective_status: "pending",
+    direction: "expense",
+    account_name: "C6",
+  });
+
+  assert.equal(linha.natureza, "fatura");
+  assert.deepEqual(linha.fatura, { accountId: CARTAO, mes: "2026-10-01" });
+  // E o valor nao se mexeu: `natureza` e rotulo, nao aritmetica.
+  assert.equal(linha.valor, 1240.55);
+});
+
+test("a fatura FECHADA (gravada) e `fatura` tambem -- um criterio para as duas", () => {
+  // O fechamento grava uma `scheduled_transaction` de verdade com a MESMA chave
+  // em `notes` (POST /api/card-invoices/close). Um criterio por `gravada` daria
+  // duas respostas para a mesma pergunta, e seria a fatura FECHADA a perder o
+  // caminho de volta -- justamente a que a pessoa vai pagar.
+  const linha = linhaPrevista(
+    prevista({ id: "s-fatura", notes: CHAVE_DE_FATURA, amount: "1240.55" })
+  );
+
+  assert.equal(linha.gravada, true, "a fatura fechada existe no banco");
+  assert.equal(linha.natureza, "fatura");
+  assert.deepEqual(linha.fatura, { accountId: CARTAO, mes: "2026-10-01" });
+});
+
+test("fatura E regra fixa na mesma linha: ela e FATURA, nao fixa", () => {
+  // ESTE BLOCO E A ORDEM DE AVALIACAO, e o estado nao e forjado: `notes` e um
+  // campo de texto livre que o usuario preenche, e a regex da chave e ancorada
+  // nas duas pontas exatamente porque uma nota escrita a mao pode casar com ela
+  // (ver lib/chave-da-fatura.ts). Uma ocorrencia de regra recorrente com esta
+  // nota existe pelo caminho normal do app.
+  //
+  // Invertida a ordem, a linha vira "fixa" e PERDE `fatura` -- o unico campo que
+  // leva de volta ao cartao e ao mes, que e o ponto desta issue. O erro nao
+  // aparece em soma nenhuma.
+  const linha = linhaPrevista(
+    prevista({
+      id: "s1",
+      notes: CHAVE_DE_FATURA,
+      recurring_rule_id: "11111111-2222-3333-4444-555555555555",
+    })
+  );
+
+  assert.equal(linha.natureza, "fatura");
+  assert.deepEqual(linha.fatura, { accountId: CARTAO, mes: "2026-10-01" });
+});
+
+test("`notes` que NAO e a chave canonica nao vira fatura", () => {
+  // A regex e ancorada nas duas pontas. Sem isso, a descricao livre do usuario
+  // viraria regra de negocio -- e a linha ganharia um link para um cartao que
+  // nao e dela.
+  for (const nota of [
+    "paguei no debito",
+    `${CHAVE_DE_FATURA} paguei no debito`,
+    `prefixo ${CHAVE_DE_FATURA}`,
+    "fatura:2026-10-01:nao-e-uuid",
+    "fatura:",
+  ]) {
+    const linha = linhaPrevista(prevista({ id: "s1", notes: nota }));
+    assert.equal(linha.natureza, "despesa", `"${nota}" nao e chave de fatura`);
+    assert.equal(linha.fatura, null, `"${nota}" nao aponta para cartao nenhum`);
+  }
+});
+
+test("a realizada e `fixa` quando o id esta no conjunto, e `despesa` quando nao", () => {
+  // O elo e de UMA VIA: `financial_transactions` nao tem `recurring_rule_id`
+  // (001). O conjunto vem da terceira consulta da rota, com os
+  // `scheduled_transactions.transaction_id` que tem regra.
+  const indice = indiceDeContraparte([]);
+
+  const fixa = linhaRealizada(
+    realizada({ id: "t-fixa" }),
+    indice,
+    new Set(["t-fixa"])
+  );
+  assert.equal(fixa.natureza, "fixa");
+
+  // CONTROLE: a MESMA linha, com o conjunto nao a contendo, e comum.
+  const comum = linhaRealizada(
+    realizada({ id: "t-fixa" }),
+    indice,
+    new Set(["outro-id"])
+  );
+  assert.equal(comum.natureza, "despesa");
+
+  // E o conjunto VAZIO -- que e o que a rota entrega quando a consulta falha --
+  // deixa tudo comum, que e o estado de antes desta issue.
+  assert.equal(
+    linhaRealizada(realizada({ id: "t-fixa" }), indice, SEM_FIXAS).natureza,
+    "despesa"
+  );
+});
+
+test("a realizada NUNCA e fatura -- o pagamento dela e transferencia de duas pernas", () => {
+  // `pernasDoPagamentoDeFatura` grava as duas pernas como `transfer`, entao
+  // nenhuma delas chega na tela de Despesas. Nao existe linha realizada que
+  // seja uma fatura aqui, e `fatura: null` em toda realizada e o que impede a
+  // tela de oferecer um link a partir de um lado da conta que nao o tem.
+  const indice = indiceDeContraparte([]);
+
+  for (const ids of [SEM_FIXAS, new Set(["t1"])]) {
+    assert.equal(linhaRealizada(realizada(), indice, ids).fatura, null);
+  }
+});
+
+test("as tres naturezas convivem na MESMA tela, e nenhuma delas move um centavo", () => {
+  const realizadas = [
+    realizada({ id: "t-fixa", amount: -159.9 }),
+    realizada({ id: "t-comum", amount: -40.1 }),
+  ];
+  const previstas = [
+    prevista({ id: "s-fixa", amount: "200.00", recurring_rule_id: "r1" }),
+    prevista({ id: "s-comum", amount: "50.00" }),
+    prevista({ id: "s-fatura", amount: "1240.55", notes: CHAVE_DE_FATURA }),
+  ];
+
+  const comFixas = linhasDaTela(
+    realizadas,
+    previstas,
+    "expense",
+    new Set(["t-fixa"])
+  );
+
+  const porId = new Map(comFixas.map((l) => [l.id, l]));
+  assert.deepEqual(
+    [...porId].map(([id, l]) => [id, l.natureza]).sort(),
+    [
+      ["s-comum", "despesa"],
+      ["s-fatura", "fatura"],
+      ["s-fixa", "fixa"],
+      ["t-comum", "despesa"],
+      ["t-fixa", "fixa"],
+    ]
+  );
+
+  // A TRAVA DA ISSUE: Total, Previsto e Realizado tem de fechar EXATAMENTE
+  // iguais com e sem o conjunto. O rotulo nao pode ter tocado a aritmetica, e a
+  // forma de provar isso e rodar as duas e comparar -- um numero escrito a mao
+  // aqui so afirmaria que a soma de hoje e a soma de hoje.
+  const semFixas = linhasDaTela(realizadas, previstas, "expense", SEM_FIXAS);
+
+  assert.deepEqual(resumoDaTela(comFixas), resumoDaTela(semFixas));
+  assert.deepEqual(previstoVencido(comFixas), previstoVencido(semFixas));
+  assert.equal(resumoDaTela(comFixas).total, 1690.55);
+  assert.equal(resumoDaTela(comFixas).previsto, 1490.55);
+  assert.equal(resumoDaTela(comFixas).realizado, 200);
+
+  // E a unica diferenca entre as duas leituras e o rotulo de UMA linha.
+  assert.deepEqual(
+    semFixas.map((l) => l.natureza).sort(),
+    ["despesa", "despesa", "despesa", "fatura", "fixa"]
+  );
 });
 
 test("sem id E sem notes a linha fica fora -- nao ha chave estavel", () => {
@@ -726,21 +960,23 @@ test("a conta diz o SENTIDO: 'de' na despesa, 'para' na receita, seta na transfe
   assert.equal(
     linhaRealizada(
       realizada({ amount: -80, transaction_type: "expense", account: { id: "c", name: "Itaú" } }),
-      indice
+      indice,
+      SEM_FIXAS
     ).conta,
     "de Itaú"
   );
   assert.equal(
     linhaRealizada(
       realizada({ amount: 7000, transaction_type: "income", account: { id: "c", name: "Itaú" } }),
-      indice
+      indice,
+      SEM_FIXAS
     ).conta,
     "para Itaú"
   );
   // Sem conta a frase e APAGADA, nao preenchida com "Sem conta": um "Sem conta"
   // escrito igual a "Itaú" e um nome de conta inventado.
   assert.equal(
-    linhaRealizada(realizada({ account: null }), indice).conta,
+    linhaRealizada(realizada({ account: null }), indice, SEM_FIXAS).conta,
     null
   );
 });
@@ -749,7 +985,7 @@ test("a conta diz o SENTIDO: 'de' na despesa, 'para' na receita, seta na transfe
 // As duas secoes, e a ordem de cada uma
 // -----------------------------------------------------
 test("previstas em ordem crescente de vencimento; realizadas, decrescente", () => {
-  const linhas = linhasDaTela(
+  const linhas = daTela(
     [
       realizada({ id: "r1", amount: -10, transaction_date: "2026-10-02" }),
       realizada({ id: "r2", amount: -20, transaction_date: "2026-10-20" }),
@@ -775,7 +1011,7 @@ test("secoesDaTela devolve arrays PROPRIOS -- `filter` ja copia", () => {
   // sentidos OPOSTOS: se elas compartilhassem o array de `linhasDaTela`, a
   // segunda desfaria a primeira. `filter` devolve array novo, e e isso que faz
   // as duas ordens coexistirem -- a assercao e que as referencias sao outras.
-  const linhas = linhasDaTela(
+  const linhas = daTela(
     [realizada({ id: "r1", amount: -10, transaction_date: "2026-10-02" })],
     [
       prevista({ id: "p1", due_date: "2026-10-28" }),
@@ -793,7 +1029,7 @@ test("secoesDaTela devolve arrays PROPRIOS -- `filter` ja copia", () => {
 });
 
 test("a lista vem em ordem de data decrescente, por STRING e nao por Date", () => {
-  const linhas = linhasDaTela(
+  const linhas = daTela(
     [
       realizada({ id: "set30", amount: -10, transaction_date: "2026-09-30" }),
       realizada({ id: "out01", amount: -20, transaction_date: "2026-10-01" }),
@@ -813,7 +1049,7 @@ test("UMA linha sem data nao pode embaralhar a ordem das outras", () => {
   // NaN. Um NaN no comparador nao poe uma linha no lugar errado -- ele
   // EMBARALHA a lista. Medido com estas mesmas quatro linhas: por Date a ordem
   // sai ["a", "vazia", "b", "c"], com a de 20/10 ABAIXO da de 05/10.
-  const linhas = linhasDaTela(
+  const linhas = daTela(
     [
       realizada({ id: "a", amount: -10, transaction_date: "2026-10-05" }),
       realizada({ id: "vazia", amount: -40, transaction_date: null }),
@@ -831,7 +1067,7 @@ test("UMA linha sem data nao pode embaralhar a ordem das outras", () => {
 });
 
 test("data ausente nao derruba a lista -- a linha fica, com a data vazia", () => {
-  const linhas = linhasDaTela(
+  const linhas = daTela(
     [realizada({ id: "x", amount: -10, transaction_date: null })],
     [prevista({ id: "y", due_date: null })],
     "expense"
@@ -845,7 +1081,7 @@ test("data ausente nao derruba a lista -- a linha fica, com a data vazia", () =>
 // Os tres numeros
 // -----------------------------------------------------
 test("total e previsto + realizado, e as contagens batem com a lista", () => {
-  const linhas = linhasDaTela(
+  const linhas = daTela(
     [
       realizada({ id: "r1", amount: -100.01 }),
       realizada({ id: "r2", amount: -200.02 }),
@@ -885,7 +1121,7 @@ test("periodo vazio da zero em tudo, sem NaN", () => {
 test("centavos nao acumulam ruido de ponto flutuante", () => {
   // 0,1 + 0,2 e 0,30000000000000004 em IEEE 754, e "R$ 0,30" formatado
   // esconderia isso ate alguem comparar dois totais.
-  const linhas = linhasDaTela(
+  const linhas = daTela(
     [realizada({ id: "a", amount: -0.1 }), realizada({ id: "b", amount: -0.2 })],
     [],
     "expense"
@@ -948,9 +1184,9 @@ test("um mes inteiro: as tres telas somam cada uma o seu, sem sobreposicao", () 
     prevista({ id: "ja-paga", amount: "80.00", direction: "expense", status: "paid" }),
   ];
 
-  const receitas = resumoDaTela(linhasDaTela(todasAsRealizadas, todasAsPrevistas, "income"));
-  const despesas = resumoDaTela(linhasDaTela(todasAsRealizadas, todasAsPrevistas, "expense"));
-  const transf = resumoDaTela(linhasDaTela(todasAsRealizadas, todasAsPrevistas, "transfer"));
+  const receitas = resumoDaTela(daTela(todasAsRealizadas, todasAsPrevistas, "income"));
+  const despesas = resumoDaTela(daTela(todasAsRealizadas, todasAsPrevistas, "expense"));
+  const transf = resumoDaTela(daTela(todasAsRealizadas, todasAsPrevistas, "transfer"));
 
   assert.deepEqual(
     { total: receitas.total, previsto: receitas.previsto, realizado: receitas.realizado },
