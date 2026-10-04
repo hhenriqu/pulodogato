@@ -1247,6 +1247,54 @@ jobs:
       - name: O convite guardado nao se anuncia como enviado
         run: npm run test:convite-de-grupo
 
+      - name: 041_fatura_escolhida_no_lancamento
+        run: $PSQL -f database/migrations/041_fatura_escolhida_no_lancamento.sql
+
+      # Re-executavel: a coluna entra por ADD COLUMN IF NOT EXISTS, o CHECK so e
+      # criado quando `pg_constraint` nao o tem, e a view entra por
+      # CREATE OR REPLACE. O risco proprio deste passo e o REPLACE: a segunda
+      # passada nao pode quebrar por a coluna ja estar no fim do SELECT nem
+      # derrubar o `security_invoker` da view.
+      - name: 041 e idempotente
+        run: $PSQL -f database/migrations/041_fatura_escolhida_no_lancamento.sql
+
+      # A fatura ESCOLHIDA no lancamento (HMO-281, PR 1 de 3). Esta migration so
+      # mexe em schema -- o formulario e a validacao vem na PR 2, e por isso ela
+      # entra sozinha: `FormularioDeLancamento.tsx` escreve em
+      # `financial_transactions` direto pelo supabase-js, do navegador, e codigo
+      # novo rodando contra um banco sem a coluna responde PGRST204 em TODA
+      # despesa no cartao, nao so na de quem usa o campo.
+      #
+      # O que so o Postgres pega aqui:
+      #
+      #   - o COALESCE tem de entrar nas DUAS ocorrencias da view. Com ele so no
+      #     `invoice_month`, a compra aparece na fatura escolhida COM O
+      #     VENCIMENTO DA FATURA DA DATA: a tela fica certa e o "fechar fatura"
+      #     do 015 gera a conta a pagar com data de outro mes. O cartao do
+      #     fixture fecha dia 20 e vence dia 5 de proposito -- e o caso em que
+      #     `card_invoice_due_date` empurra para o mes seguinte, e sem essa
+      #     escolha os dois vencimentos coincidiriam e o defeito nao mediria;
+      #   - o CHECK do dia 1. A coluna e um MES e `date` nao sabe disso:
+      #     '2026-12-15' sobrevive ao COALESCE e a tela passa a listar duas
+      #     "faturas de dezembro", cada uma com parte das compras, as duas com
+      #     total plausivel;
+      #   - a AUSENCIA de DEFAULT. `ADD COLUMN ... DEFAULT` PREENCHE as linhas
+      #     que ja existem -- todo o historico de cartao do banco mudaria de
+      #     fatura de uma vez. A assercao e pelo catalogo (`atthasdef`) E pelo
+      #     comportamento, porque um default de `date_trunc(CURRENT_DATE)` cai no
+      #     mes em que o teste roda e pode coincidir com a fatura esperada;
+      #   - e o `security_invoker`, que o `CREATE OR REPLACE VIEW` APAGA (medido
+      #     no Postgres 17.11, registrado na 035). A 041 tem cara de aditiva e
+      #     nao fala de permissao em lugar nenhum; sem reafirmar a opcao ela
+      #     entrega a fatura de qualquer usuario a qualquer usuario logado.
+      #
+      # Medido: 10 mutantes, 10 mortos, com controle positivo (a 041 intacta
+      # passa) e controle NEGATIVO (sem a 041 o teste reprova -- e o que detecta
+      # um template montado com a migration dentro, que faria todo mutante virar
+      # no-op). PG_TEMPLATE=<cadeia ate a 040> npm run mutantes:fatura-escolhida
+      - name: A fatura escolhida manda no mes e no vencimento, e a view nao vaza
+        run: $PSQL -f database/tests/041_fatura_escolhida_no_lancamento_test.sql
+
       # HMO-245, o fechamento do mes do grupo. A conta de grupo que ainda nao
       # aconteceu (a internet no cartao, vencendo dia 15) vive em
       # `scheduled_transactions` e nao em `group_transactions`, entao ela nao
