@@ -49,6 +49,8 @@ import { today } from "@/lib/recurrence";
 import { SeletorDePeriodo } from "@/components/dashboard/SeletorDePeriodo";
 import { rotaDoTipo, tipoDoLancamento } from "@/lib/lancamento";
 import { ROTA_DA_TRANSFERENCIA } from "@/lib/transferencia";
+import { PARAM_DE_ORIGEM, comOrigem } from "@/lib/retorno-do-lancamento";
+import { useOrigemDaTela } from "@/lib/hooks/useOrigemDaTela";
 import { frasePreservadas, type Alcance } from "@/lib/alcance-na-tela";
 import { DialogoDeAlcance } from "@/components/series/DialogoDeAlcance";
 import {
@@ -187,6 +189,15 @@ function Girando() {
 function Lancamentos() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  /**
+   * Esta tela, com os filtros que estao na URL, para os modais de lancamento
+   * saberem para onde voltar (HMO-249).
+   *
+   * Sem isto o modal cairia no fallback -- que e esta MESMA rota, mas sem a
+   * query: quem estava filtrando por categoria perderia o filtro ao salvar, e
+   * concluiria que o lancamento foi para o lugar errado.
+   */
+  const origem = useOrigemDaTela();
 
   // O fuso de Sao Paulo, uma vez so, para a tela inteira concordar sobre que dia
   // e hoje -- o mesmo `today()` do painel inicial, de bills, budgets e goals.
@@ -1053,13 +1064,13 @@ function Lancamentos() {
           {canCreateMore("maxTransactions") ? (
             <>
               <Button variant="outline" asChild className="gap-2">
-                <Link href="/dashboard/movimentacoes/receita">
+                <Link href={comOrigem("/dashboard/movimentacoes/receita", origem)}>
                   <TrendingUp className="h-4 w-4 text-success" />
                   Nova Receita
                 </Link>
               </Button>
               <Button asChild className="gap-2">
-                <Link href="/dashboard/movimentacoes/despesa">
+                <Link href={comOrigem("/dashboard/movimentacoes/despesa", origem)}>
                   <TrendingDown className="h-4 w-4" />
                   Nova Despesa
                 </Link>
@@ -1068,7 +1079,7 @@ function Lancamentos() {
                   opcao DENTRO do formulario de lancamento, e por isso gravava
                   uma linha so, com categoria de despesa. */}
               <Button variant="outline" asChild className="gap-2">
-                <Link href={ROTA_DA_TRANSFERENCIA}>
+                <Link href={comOrigem(ROTA_DA_TRANSFERENCIA, origem)}>
                   <ArrowRightLeft className="h-4 w-4 text-info" />
                   Transferência
                 </Link>
@@ -1608,7 +1619,13 @@ function Lancamentos() {
                                   pathname: rotaDoTipo(
                                     tipoDoLancamento(transaction)!
                                   ),
-                                  query: { id: transaction.id },
+                                  query: {
+                                    id: transaction.id,
+                                    // HMO-249: fechar a edicao volta para ESTA
+                                    // lista, com o filtro e o periodo que ela
+                                    // tem agora -- nao para a lista zerada.
+                                    [PARAM_DE_ORIGEM]: origem,
+                                  },
                                 }}
                               >
                                 <Pencil className="h-4 w-4" />
@@ -1696,19 +1713,19 @@ function Lancamentos() {
                       </Button>
                     )}
                     <Button variant="outline" asChild className="gap-2">
-                      <Link href="/dashboard/movimentacoes/receita">
+                      <Link href={comOrigem("/dashboard/movimentacoes/receita", origem)}>
                         <TrendingUp className="h-4 w-4 text-success" />
                         Nova Receita
                       </Link>
                     </Button>
                     <Button asChild className="gap-2">
-                      <Link href="/dashboard/movimentacoes/despesa">
+                      <Link href={comOrigem("/dashboard/movimentacoes/despesa", origem)}>
                         <TrendingDown className="h-4 w-4" />
                         Nova Despesa
                       </Link>
                     </Button>
                     <Button variant="outline" asChild className="gap-2">
-                      <Link href={ROTA_DA_TRANSFERENCIA}>
+                      <Link href={comOrigem(ROTA_DA_TRANSFERENCIA, origem)}>
                         <ArrowRightLeft className="h-4 w-4 text-info" />
                         Transferência
                       </Link>

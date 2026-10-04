@@ -49,11 +49,13 @@ import {
 } from "@/lib/offline-leitura";
 import {
   caminhoDeNovoGasto,
+  caminhoDoCartao,
   gastosDaFatura,
   previsoesDoCartao,
   rotuloDaFatura,
   rotuloDoCiclo,
 } from "@/lib/fatura-do-cartao";
+import { comOrigem } from "@/lib/retorno-do-lancamento";
 import { rotuloDaParcela } from "@/lib/lancamento";
 import { NumeroIndisponivel } from "@/components/SemRede";
 
@@ -103,6 +105,18 @@ export function FaturaDoCartao({
   aoMudarMes,
   aoApagarParcela,
 }: FaturaDoCartaoProps) {
+  /**
+   * A tela do cartao, para o modal de lancamento voltar para a fatura (HMO-249).
+   *
+   * Montada por `caminhoDoCartao`, e NAO por `useOrigemDaTela`: esta rota nao
+   * tem query que importe (o mes da fatura vive em estado, nao na URL), e
+   * `useSearchParams` dentro dela exigiria um `<Suspense>` novo em
+   * `cartoes/[id]` -- um limite de suspensao a mais para carregar uma query
+   * vazia. O mes NAO entra de proposito: quem lanca um gasto quer ver a fatura
+   * em que ele caiu, que `card_invoice_month()` decide, e nao necessariamente o
+   * mes que estava na tela.
+   */
+  const origem = caminhoDoCartao(conta.id);
   const gastos = gastosDaFatura(fatura, conta.id);
   // `null` = a leitura daquele bloco falhou. Diferente de `[]`, que e "nenhuma".
   const previsoes = previsoesDoCartao(fatura, conta.id);
@@ -210,7 +224,7 @@ export function FaturaDoCartao({
                 continuaria navegando. */}
             {conta.is_active && (
               <Button asChild>
-                <Link href={caminhoDeNovoGasto(conta.id)}>
+                <Link href={comOrigem(caminhoDeNovoGasto(conta.id), origem)}>
                   <Plus className="mr-2 h-4 w-4" />
                   Lançar gasto neste cartão
                 </Link>
@@ -332,7 +346,7 @@ export function FaturaDoCartao({
                 </p>
                 {conta.is_active && (
                   <Button asChild>
-                    <Link href={caminhoDeNovoGasto(conta.id)}>
+                    <Link href={comOrigem(caminhoDeNovoGasto(conta.id), origem)}>
                       <Plus className="mr-2 h-4 w-4" />
                       Lançar gasto neste cartão
                     </Link>

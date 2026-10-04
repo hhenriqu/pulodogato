@@ -76,6 +76,8 @@ import {
 } from "@/lib/periodo-do-painel";
 import { today } from "@/lib/recurrence";
 import { ROTA_DA_TRANSFERENCIA } from "@/lib/transferencia";
+import { comOrigem } from "@/lib/retorno-do-lancamento";
+import { useOrigemDaTela } from "@/lib/hooks/useOrigemDaTela";
 import {
   secoesDaTela,
   telaDoTipo,
@@ -150,6 +152,8 @@ export function TelaDeMovimentacao({ tipo }: { tipo: TipoDaTela }) {
   // "undefined" num rotulo no dia em que o catalogo e o tipo se separassem.
   const tela = telaDoTipo(tipo) ?? TELAS_DE_MOVIMENTACAO[0];
   const aparencia = APARENCIA[tipo];
+  /** Esta tela, com o periodo, para o modal de lancamento saber para onde voltar. */
+  const origem = useOrigemDaTela();
 
   const [resumo, setResumo] = useState<ResumoDaTela | null>(null);
   const [vencido, setVencido] = useState<{ total: number; quantidade: number }>({
@@ -272,9 +276,13 @@ export function TelaDeMovimentacao({ tipo }: { tipo: TipoDaTela }) {
           {/* A porta de lançar DESTA tela -- e so dela. Finanças Pessoais
               oferece as tres de uma vez porque e a lista de tudo; aqui um
               segundo botao levaria a pessoa a lançar o tipo que ela nao veio
-              lançar. O `as any` e o do `irPara` acima, pela mesma razao. */}
+              lançar. O `as any` e o do `irPara` acima, pela mesma razao.
+
+              `comOrigem` leva o endereco DESTA tela, com o `?de=&ate=` dentro
+              (HMO-249): sem ele, salvar uma despesa de janeiro devolveria a
+              pessoa ao mes corrente, onde ela nao esta. */}
           <Button asChild className="gap-2">
-            <Link href={aparencia.rotaDeLancar as any}>
+            <Link href={comOrigem(aparencia.rotaDeLancar, origem) as any}>
               <aparencia.Icone className="h-4 w-4" />
               {aparencia.textoDeLancar}
             </Link>
