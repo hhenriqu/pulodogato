@@ -1028,6 +1028,128 @@ jobs:
       - name: As regras do ajuste de saldo
         run: npm run test:ajuste-de-fatura
 
+      # =======================================================================
+      # O ACERTO DE GRUPO VIRA LANCAMENTO (HMO-245, fase 11)
+      # =======================================================================
+      # `group_settlements` existia desde a 007 sem gerar lancamento nenhum: o
+      # Pix de uma pessoa para a outra era invisivel nos dois lados e o saldo da
+      # conta corrente nao se mexia. Era o defeito relatado.
+      #
+      # POR QUE AQUI, E NAO SO NO DB-VERIFY
+      # -----------------------------------
+      # A metade de banco (saldo antes/depois, o rateio que o trigger inventa se
+      # a perna levar `group_id`, a RLS que recusa a perna da contraparte) esta
+      # em database/tests/hmo245_acerto_vira_lancamento_test.sql, no db-verify,
+      # porque e aritmetica de Postgres. Mas o db-verify e filtrado por `paths`,
+      # e ESTE workflow nao e: `components/grupos/DialogoDeAcerto.tsx` nao esta
+      # na lista de paths de ninguem, e foi exatamente assim que tres suites
+      # deste repositorio ficaram paradas em verde.
+      #
+      # O que a suite pura prende -- cada item e dinheiro errado sem excecao
+      # nenhuma:
+      #   - o SINAL por direcao. Quem recebe soma, quem paga subtrai;
+      #     `update_account_balance` faz `current_balance + NEW.amount` sem
+      #     olhar o tipo, entao um sinal invertido afunda a conta de quem acabou
+      #     de RECEBER, com todos os numeros plausiveis na tela;
+      #   - o TIPO `transfer` NOS DOIS LADOS. `income` em quem recebe apaga a
+      #     parte dela no painel pessoal: medido em Postgres, income 200 /
+      #     expense 200 / net 0,00 onde o certo e -200,00, porque
+      #     `personal_category_monthly_totals` (033) ja conta "a minha parte"
+      #     das despesas de grupo e ignora `transfer`;
+      #   - `group_id: null` e `is_shared: false` literais;
+      #   - a moeda da perna saindo da CONTA pela taxa GRAVADA na quitacao, e a
+      #     recusa (em vez da conversao) numa terceira moeda;
+      #   - cartao de credito recusado: a perna cairia DENTRO da fatura;
+      #   - a chave em `notes` carregando o id do acerto -- uma chave constante
+      #     faria o desfazer de um acerto apagar a perna de todos os outros.
+      - name: A perna do acerto de grupo (sinal, tipo, moeda e conta)
+        run: npm run test:acerto-em-lancamento
+
+      # Controle negativo. A suite afirma sobre coisas que "parecem certas" nas
+      # duas direcoes -- um tipo plausivel, um sinal plausivel --, e assercao
+      # desse tipo passa verde tambem quando deixa de achar o que vigiava.
+      # Os quatro mutantes foram medidos antes de este bloco existir: os quatro
+      # ficam vermelhos, e a arvore limpa fica verde.
+      - name: 'A verificacao sabe falhar (acerto de grupo)'
+        run: |
+          set -uo pipefail
+          REGRAS=lib/acerto-em-lancamento.ts
+          cp $REGRAS $REGRAS.orig
+          trap 'mv $REGRAS.orig $REGRAS; rm -rf .tmp-acerto-em-lancamento' EXIT
+
+          # `sed` que nao casa SAI 0 e deixa o arquivo intacto: a suite roda
+          # sobre o codigo correto, passa verde, e o mutante e dado por morto
+          # medindo nada. `cmp` contra a copia e o que fecha essa porta.
+          mutou() {
+            if cmp -s "$1" "$1.orig"; then
+              echo "::error::o mutante $2 nao se aplicou a $1 -- a ancora do sed mudou de forma"
+              exit 1
+            fi
+          }
+
+          # 1) O SINAL. As duas pernas positivas: registrar que PAGUEI passa a
+          #    somar na minha conta. O valor e a tela ficam plausiveis.
+          sed -i 's/params.direcao === "recebi" ? total : -total/total/' $REGRAS
+          mutou $REGRAS 1
+          if npm run test:acerto-em-lancamento > /dev/null 2>&1; then
+            echo "::error::Verde com as duas pernas somando no saldo."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 2) O TIPO de volta para `income`. E a decisao com medicao atras: o
+          #    painel pessoal de quem recebe passa a fechar o mes melhor do que
+          #    foi, apagando a parte que ela mesma consumiu.
+          sed -i 's/export const TIPO_DA_PERNA = "transfer" as const;/export const TIPO_DA_PERNA = "income" as const;/' $REGRAS
+          mutou $REGRAS 2
+          if npm run test:acerto-em-lancamento > /dev/null 2>&1; then
+            echo "::error::Verde com a perna gravada como income."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 3) A COTACAO ESQUECIDA na conversao para real. US$ 50 entram valendo
+          #    R$ 50 no saldo -- errado por um fator de 5, e sem erro nenhum: os
+          #    dois numeros sao validos para a coluna.
+          sed -i 's/valor = valorEmReais(bruto, taxa);/valor = bruto;/' $REGRAS
+          mutou $REGRAS 3
+          if npm run test:acerto-em-lancamento > /dev/null 2>&1; then
+            echo "::error::Verde com a conversao para real ignorando a cotacao."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 4) O CARTAO ACEITO. A perna cai dentro de `card_invoice_lines` e
+          #    inventa uma compra que ninguem fez -- ou, de quem recebe, uma
+          #    entrada que abate a fatura.
+          sed -i 's/if (params.conta.account_type === "credit_card") {/if (false) {/' $REGRAS
+          mutou $REGRAS 4
+          if npm run test:acerto-em-lancamento > /dev/null 2>&1; then
+            echo "::error::Verde com o acerto lancado em cartao de credito."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 5) E SABE NAO FALHAR, sobre a arvore correta.
+          if ! npm run test:acerto-em-lancamento > /dev/null 2>&1; then
+            echo "::error::A suite reprova a arvore correta."
+            exit 1
+          fi
+
+          echo "Quatro mutantes mortos, e verde na arvore correta."
+
+      - name: 'A arvore voltou ao lugar depois de "A verificacao sabe falhar (acerto de grupo)"'
+        run: |
+          # O .tmp-* compilado guarda o mutante mesmo depois do restore do .ts:
+          # a suite seguinte leria o JS velho.
+          rm -rf .tmp-*
+          git status --porcelain > "$RUNNER_TEMP/arvore-agora.txt"
+          if ! diff -q "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" > /dev/null; then
+            echo "::error::O controle negativo acima nao restaurou a arvore. Os passos seguintes rodariam sobre codigo mutado."
+            diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
+            exit 1
+          fi
+
       # A ARVORE. O teste puro acima passa verde com o bloco inteiro faltando na
       # tela, com a linha do ajuste sem rotulo, e com "Ajustar saldo" oferecido
       # sobre uma leitura que falhou.

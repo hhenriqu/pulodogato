@@ -4309,9 +4309,47 @@ COMMIT;
 --      categoria -- inclusive no consumo de orcamento que o 006 acabou de
 --      criar.
 --
--- Entao o acerto e um livro proprio, que so a view de saldo le. Quem quiser
--- ver o dinheiro sair da conta corrente lanca a transferencia normalmente:
--- sao fatos diferentes e continuam separados.
+-- Entao o acerto e um livro proprio, e esta tabela continua sendo a fonte da
+-- verdade do saldo do grupo.
+--
+-- O QUE MUDOU EM 04/10/2026 (HMO-245, fase 11) -- E O QUE NAO MUDOU
+-- -----------------------------------------------------------------
+-- A frase que ficava aqui -- "quem quiser ver o dinheiro sair da conta corrente
+-- lanca a transferencia normalmente" -- descrevia um habito que nunca
+-- aconteceu. Ninguem lancava. O Pix de uma pessoa para a outra ficava invisivel
+-- nos dois lados e o saldo da conta corrente nao se mexia, e foi esse o defeito
+-- relatado.
+--
+-- Desde a fase 11, POST /api/expense-groups/[groupId]/settlements grava
+-- tambem UMA perna em financial_transactions: a de quem REGISTRA o acerto.
+-- As duas objecoes acima continuam valendo, e cada uma e respondida de um jeito
+-- diferente:
+--
+--   a objecao 2 e respondida pelo TIPO. A perna e `transfer` nos dois lados --
+--   quem paga e quem recebe --, e `category_monthly_totals`,
+--   `monthly_cash_flow` e `personal_category_monthly_totals` (033) ignoram
+--   `transfer`. O hotel nao e contado duas vezes em relatorio nenhum nem no
+--   consumo de orcamento: um acerto nao muda a Receita nem a Despesa de
+--   ninguem, ele so move dinheiro de lugar. (Medido num Postgres 17 local com a
+--   cadeia 001->039: gravar a perna de quem RECEBE como `income` fecha o mes
+--   pessoal dela empatado -- income 200 / expense 200 -- apagando a parte que
+--   ela mesma consumiu. Com `transfer`, o realizado continua sendo "a minha
+--   parte" nos dois lados, que e a invariante da 033.)
+--
+--   a objecao 1 NAO foi revogada, e e ela que limita a fase a UMA perna.
+--   `financial_transactions_write` e
+--   `FOR INSERT WITH CHECK (user_id = auth.uid())` (002_rls_lockdown.sql:472) e
+--   a rota roda na sessao de quem clicou: nao ha como escrever na conta da
+--   outra pessoa, e nao se tentou. Cada lado grava a propria perna quando
+--   registra. A perna da contraparte e outra fase (F12) e vai precisar de outro
+--   mecanismo -- nao de um relaxamento desta policy.
+--
+-- Nenhum trigger desta tabela mudou: `update_account_balance` soma
+-- `current_balance + NEW.amount` (001_baseline.sql:833) sem olhar o tipo, entao
+-- quem carrega o saldo e o SINAL da perna. E a perna vai com `group_id = NULL`
+-- de proposito: `auto_create_group_transaction` dispara em
+-- `group_id IS NOT NULL AND amount < 0` e rateiaria o proprio Pix entre os
+-- membros (medido: 2 linhas de rateio somando R$ 400 viram 4 somando R$ 600).
 --
 -- COMO RODAR
 -- ----------
