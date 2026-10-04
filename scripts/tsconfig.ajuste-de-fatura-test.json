@@ -1,0 +1,25 @@
+{
+  "//": [
+    "As regras do ajuste de saldo da fatura (HMO-253).",
+    "",
+    "Compila lib/ajuste-de-fatura.ts sozinha: ela so importa TIPOS",
+    "(types/financial.ts), que entram no programa e saem sem emissao.",
+    "",
+    "O resolve-aliases roda COM --espelha-raiz porque o `rootDir` e a raiz do",
+    "repositorio (o import de tipo de @/types puxa a arvore toda para dentro do",
+    "programa), e a emissao sai em .tmp-ajuste-de-fatura/lib/."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-ajuste-de-fatura",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/ajuste-de-fatura.ts"]
+}

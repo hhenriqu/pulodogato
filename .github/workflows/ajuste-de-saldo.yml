@@ -1,0 +1,258 @@
+name: ajuste-de-saldo
+
+# O ajuste de saldo da fatura do cartao (HMO-253).
+#
+# POR QUE ELE MERECE JOB PROPRIO
+# ------------------------------
+# Este e o unico lugar do app onde o usuario escreve um numero com SINAL no
+# dinheiro de uma fatura. A fatura e `SUM(invoice_amount)` de uma view que
+# inverte o sinal de `amount`, entao existem duas convencoes opostas sobre o
+# mesmo valor -- e um ajuste gravado com o sinal trocado faz a fatura andar para
+# o lado contrario ao que a pessoa pediu, com o numero certo, a tela coerente
+# consigo mesma, e nada vermelho.
+#
+# O resto dos modos de falha e da mesma familia: o ajuste de outubro caindo na
+# fatura de novembro; "Salvar" duas vezes somando o valor duas vezes; a previa
+# "a fatura passa para R$ 1.290" discordando do que o POST grava. Nenhum deles
+# da erro, e todos valem dinheiro.
+#
+# SEM FILTRO DE `paths`, pelo mesmo motivo do cartoes.yml: o comportamento nasce
+# de quatro lugares em tres diretorios (lib/ajuste-de-fatura.ts,
+# components/cartoes/*.tsx, a rota e os primitivos de components/ui), e um filtro
+# que liste os de hoje perde o dia em que alguem mexer no de amanha.
+#
+# O QUE ESTE JOB NAO COBRE: o banco. Que o dia 1 caia na fatura do mes certo e
+# que a view inverta o sinal e aritmetica do Postgres, e esta no db-verify
+# (database/tests/ajuste_de_fatura_test.sql). Uma afirmacao de TypeScript sobre
+# `card_invoice_month` provaria so que a conta foi repetida duas vezes.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  ajuste-de-saldo:
+    name: o ajuste faz a fatura fechar igual a real
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      # O `--include=dev` e explicito porque um ambiente com NODE_ENV=production
+      # poda as devDeps na instalacao e o tsc some sem mensagem que explique.
+      - run: npm ci --include=dev
+
+      # AS REGRAS. O sinal, a data, a chave canonica que impede o acumulo, e a
+      # previa que tem de concordar com o que o POST grava.
+      - name: As regras do ajuste de saldo
+        run: npm run test:ajuste-de-fatura
+
+      # A ARVORE. O teste puro acima passa verde com o bloco inteiro faltando na
+      # tela, com a linha do ajuste sem rotulo, e com "Ajustar saldo" oferecido
+      # sobre uma leitura que falhou.
+      - name: O bloco de ajuste, renderizado na tela do cartao
+        run: npm run test:ajuste-na-tela
+
+      # Controle negativo. As suites afirmam sobre AUSENCIA -- "a previa NAO
+      # aparece sem mes", "nenhuma linha recebe o rotulo sem categoria" -- e
+      # assercao de ausencia passa verde tambem quando ela deixa de achar o que
+      # deveria procurar. Uma verificacao que nunca viu vermelho nao e
+      # verificacao.
+      #
+      # Cada mutante abaixo e um defeito que alguem escreveria de boa-fe.
+      - name: A verificacao sabe falhar
+        run: |
+          set -uo pipefail
+          REGRAS=lib/ajuste-de-fatura.ts
+          BLOCO=components/cartoes/AjusteDeSaldo.tsx
+          TELA=components/cartoes/FaturaDoCartao.tsx
+          cp $REGRAS $REGRAS.orig
+          cp $BLOCO $BLOCO.orig
+          cp $TELA $TELA.orig
+          trap 'mv $REGRAS.orig $REGRAS; mv $BLOCO.orig $BLOCO; mv $TELA.orig $TELA' EXIT
+
+          # 1) O SINAL NAO INVERTIDO. O defeito central desta issue: a view
+          #    publica `(-t.amount) AS invoice_amount`, entao gravar o valor cru
+          #    faz o acrescimo ABATER da fatura e o abatimento somar. O numero
+          #    aparece certo na lista de lancamentos e a fatura anda para o lado
+          #    errado.
+          sed -i 's#    amount: -params.valorNaFatura,#    amount: params.valorNaFatura,#' $REGRAS
+          if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
+            echo "::error::Verde com o ajuste gravado sem inverter o sinal."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 2) O TIPO TROCADO. 'income' no acrescimo deixa a fatura certa (a view
+          #    soma invoice_amount) e inverte o lancamento no fluxo de caixa: a
+          #    despesa nao detalhada entra como RECEITA do mes.
+          sed -i 's#    transaction_type: params.valorNaFatura > 0 ? "expense" : "income",#    transaction_type: params.valorNaFatura > 0 ? "income" : "expense",#' $REGRAS
+          if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
+            echo "::error::Verde com o tipo do lancamento trocado."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 3) O MES PASSANDO POR new Date(). '2026-01-01' e lido como UTC e, em
+          #    Sao Paulo, volta para 31/12/2025: o ajuste de janeiro gravado em
+          #    dezembro, somando na fatura do ANO anterior. O runner do GitHub
+          #    roda em UTC, e por isso a suite exige TZ=America/Sao_Paulo -- sem
+          #    isso este mutante sobrevive no CI e morre na maquina de quem
+          #    escreveu.
+          sed -i 's#  return `${mes.slice(0, 7)}-01`;#  const d = new Date(mes); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;#' $REGRAS
+          if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
+            echo "::error::Verde com o mes do ajuste passando por new Date()."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 4) MES ILEGIVEL CAINDO NUM PADRAO em vez de recusar. Gravar dinheiro
+          #    num mes que o usuario nao escolheu: o valor esta certo, a fatura
+          #    do mes errado fecha, e as duas parecem plausiveis.
+          sed -i 's#  if (!mes || !/\^\\d{4}-\\d{2}(-\\d{2})?$/.test(mes)) return null;#  if (!mes) return "2026-01-01";#' $REGRAS
+          if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
+            echo "::error::Verde com mes ilegivel virando um mes qualquer."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 5) A CHAVE SEM O PRIMEIRO DIA. Gravar `ajuste-de-fatura:2026-10:<id>`
+          #    enquanto o DELETE procura `2026-10-01`: remover responde 404 sobre
+          #    um ajuste que esta na tela, e alterar cria um SEGUNDO -- o acumulo
+          #    que a chave existe para impedir.
+          sed -i 's#    notes: chaveAjuste(primeiroDia, params.accountId),#    notes: chaveAjuste(params.mes, params.accountId),#' $REGRAS
+          if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
+            echo "::error::Verde com a chave do ajuste sem o primeiro dia do mes."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 6) A CHAVE SEM ANCORA NO FIM. Sem o `$`, uma nota escrita a mao como
+          #    "ajuste-de-fatura:2026-10-01:<id> conferi no app" passa por chave
+          #    canonica, e a descricao livre do usuario vira regra de negocio.
+          #
+          #    O `\$` do padrao e obrigatorio: em BRE o `$` no meio da expressao
+          #    e literal em GNU sed, mas escrever a intencao evita depender
+          #    disso. E o `grep -c` antes existe porque um sed que nao casa sai 0
+          #    e deixa o arquivo INTACTO -- a suite passaria verde sobre codigo
+          #    correto e o controle acusaria o codigo em vez do mutante.
+          #    Aconteceu ao escrever este job.
+          test "$(grep -c ']{12})\$/;' $REGRAS)" = "1" || { echo "::error::ancora do mutante 6 mudou de forma"; exit 1; }
+          sed -i 's#]{12})\$/;#]{12})/;#' $REGRAS
+          if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
+            echo "::error::Verde com a chave canonica sem ancora no fim."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 7) ZERO ACEITO. Quem quer TIRAR o ajuste digita zero; se isso gravar
+          #    uma linha de R$ 0,00, a pessoa sai achando que tirou e o ajuste
+          #    velho continua valendo. Uma linha zerada na fatura tambem aparece
+          #    como se fosse compra.
+          sed -i 's#  if (centavos === 0) {#  if (false) {#' $REGRAS
+          if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
+            echo "::error::Verde com ajuste de R\$ 0,00 aceito."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 8) O ROTULO DA LINHA CARIMBADO SEM CATEGORIA CONHECIDA. Com
+          #    `undefined` (a consulta falhou) toda linha viraria "Ajuste":
+          #    chamaria de ajuste a compra de alguem.
+          sed -i 's#  return Boolean(categoria) \&\& linha.category_id === categoria;#  return linha.category_id === categoria || categoria === undefined;#' $REGRAS
+          if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
+            echo "::error::Verde com o rotulo 'Ajuste' carimbado por adivinhacao."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 9) A PREVIA PARTINDO DO TOTAL DA TELA. `totalSemOAjuste` devolvendo
+          #    `total` cru soma o ajuste novo em cima do velho: alterar de R$ 50
+          #    para R$ 70 mostraria R$ 220 numa fatura que vai fechar em R$ 170.
+          #    A conta que o usuario le antes de confirmar, errada.
+          sed -i 's#  return total - Number(ajuste.invoice_amount);#  return total;#' $REGRAS
+          if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
+            echo "::error::Verde com a previa somando o ajuste novo em cima do velho."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 10) O VALOR DO AJUSTE LIDO DE `amount` EM VEZ DE `invoice_amount`. A
+          #     tela mostraria "-R$ 50,00" para um ajuste que ACRESCENTA 50, e o
+          #     formulario reabriria no lado errado -- salvar de novo inverteria
+          #     o ajuste sem a pessoa ter mexido no valor.
+          sed -i 's#  return Number(ajuste.invoice_amount);#  return Number(ajuste.amount);#' $REGRAS
+          if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
+            echo "::error::Verde com o valor do ajuste lido de amount."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 11) `undefined` TRATADO COMO "NAO TEM". A consulta da categoria
+          #     falhou e a tela afirma, por omissao, que a fatura nao tem ajuste
+          #     -- e oferece lancar um sobre uma fatura ja ajustada.
+          sed -i 's#  return categoria !== undefined;#  return true;#' $REGRAS
+          if npm run test:ajuste-na-tela > /dev/null 2>&1; then
+            echo "::error::Verde afirmando que nao ha ajuste sem ter conseguido conferir."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 12) O BLOCO FORA DA TELA. O slot removido: a feature existe no
+          #     repositorio e nao no cartao, e a issue inteira deixa de existir.
+          #     "essa opcao fica no cartao" sao as palavras dela.
+          sed -i 's#^      {blocoDeAjuste}$##' $TELA
+          if npm run test:ajuste-na-tela > /dev/null 2>&1; then
+            echo "::error::Verde com o bloco de ajuste fora da tela do cartao."
+            exit 1
+          fi
+          cp $TELA.orig $TELA
+
+          # 13) O ROTULO "Ajuste" FORA DA LINHA. A linha fica na lista (para a
+          #     soma fechar com o total) e sem rotulo: um ajuste de R$ 50
+          #     indistinguivel de uma compra de R$ 50 tres meses depois.
+          sed -i 's#                    {ehLinhaDeAjuste(gasto, categoriaDeAjuste) ? (#                    {false ? (#' $TELA
+          if npm run test:ajuste-na-tela > /dev/null 2>&1; then
+            echo "::error::Verde com a linha do ajuste sem rotulo nenhum."
+            exit 1
+          fi
+          cp $TELA.orig $TELA
+
+          # 14) O VALOR DO AJUSTE IMPRESSO SEM LEITURA BOA. O zero confiante de
+          #     lib/offline-leitura.ts com outra roupa: numero vindo de uma
+          #     leitura que falhou mente com a cara de numero certo.
+          sed -i 's#  const mostraNumero = podeMostrarNumero(estado);#  const mostraNumero = true;#' $BLOCO
+          if npm run test:ajuste-na-tela > /dev/null 2>&1; then
+            echo "::error::Verde com o valor do ajuste impresso sem dado atras dele."
+            exit 1
+          fi
+          cp $BLOCO.orig $BLOCO
+
+          # 15) A PREVIA SEM O MES. "A fatura passa de X para Y" sem dizer de
+          #     QUAL fatura: o numero certo respondendo uma pergunta que o leitor
+          #     nao sabe qual e, com o seletor de mes dois blocos acima.
+          sed -i 's#            {validado.ok \&\& previa !== null \&\& mostraNumero \&\& rotuloDoMes ? (#            {validado.ok \&\& previa !== null ? (#' $BLOCO
+          if npm run test:ajuste-na-tela > /dev/null 2>&1; then
+            echo "::error::Verde com a previa impressa sem o mes que a nomeie."
+            exit 1
+          fi
+          cp $BLOCO.orig $BLOCO
+
+          # 16) O LADO DO AJUSTE SEM `aria-pressed`. Qual dos dois botoes esta
+          #     valendo passa a existir so no pixel -- e o lado errado inverte o
+          #     ajuste.
+          sed -i 's#                  aria-pressed={direcao === "aumenta"}##' $BLOCO
+          if npm run test:ajuste-na-tela > /dev/null 2>&1; then
+            echo "::error::Verde com o lado do ajuste marcado so pela cor."
+            exit 1
+          fi
+          cp $BLOCO.orig $BLOCO
+
+          echo "A verificacao fica vermelha nos dezesseis defeitos."
