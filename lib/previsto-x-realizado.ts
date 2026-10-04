@@ -108,19 +108,22 @@ export function copiaDaPrevisao(direction?: string | null): CopiaDaPrevisao {
  * vai sair da conta, quanto ainda vai entrar.
  *
  * Existe separado de `direcaoNoPainel` (lib/realizado-e-previsao.ts) porque as
- * duas perguntas discordam de proposito em dois casos, e confundi-las erra em
- * silencio nos dois sentidos:
+ * duas perguntas discordam de proposito, e confundi-las erra em silencio nos
+ * dois sentidos:
  *
- *   * FATURA DE CARTAO entra aqui como "a pagar". La ela fica FORA, porque la a
- *     pergunta e "quanto vou gastar no periodo" e cada compra do cartao ja
- *     entrou como despesa no dia em que aconteceu -- somar a fatura por cima
- *     cobraria as mesmas compras duas vezes. Aqui a pergunta e outra: a fatura
- *     e dinheiro que vai mesmo sair da conta corrente no dia do vencimento, e
- *     esconde-la do "a vencer" faria o bloco prometer uma folga que nao existe.
+ *   * FATURA DE CARTAO entra aqui como "a pagar", e desde a HMO-265 ela entra
+ *     tambem no outro lado -- as duas funcoes passaram a concordar NESTE caso.
+ *     O argumento que as separava era o Realizado contar a COMPRA no cartao; ele
+ *     caiu quando o Realizado passou a contar a FATURA PAGA. A razao de a fatura
+ *     entrar AQUI nunca dependeu disso: ela e dinheiro que vai mesmo sair da
+ *     conta corrente no dia do vencimento, e esconde-la do "a vencer" faria o
+ *     bloco prometer uma folga que nao existe.
  *
- *   * TRANSFERENCIA tambem entra como "a pagar", pelo mesmo motivo pratico: a
- *     perna agendada e uma saida datada da conta. Tira-la reduziria o numero
- *     que o bloco existe para dizer.
+ *   * TRANSFERENCIA entra como "a pagar", e ai as duas CONTINUAM discordando: a
+ *     perna agendada e uma saida datada da conta, e e isso que este bloco
+ *     pergunta. La ela fica fora dos dois lados, porque mover dinheiro entre
+ *     contas proprias nao gasta nada. Tira-la daqui reduziria o numero que o
+ *     bloco existe para dizer.
  *
  * Ou seja, so `income` sai do lado de "a pagar". Direcao desconhecida cai em
  * despesa -- o default historico de /api/projection e do lib/safe-to-spend.ts,

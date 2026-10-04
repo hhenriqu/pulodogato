@@ -426,8 +426,14 @@ function contaDaRealizada(crua: RealizadaCrua): ContaDoLancamento | null {
  *
  * Ela existe porque `ehGastoNoCartao` so pode esconder a linha que a fatura de
  * fato CONTEM. Ver o paragrafo do `transaction_type` NULO em `ehGastoNoCartao`.
+ *
+ * EXPORTADA desde a HMO-265, e e por isso que ela nao pode voltar a ser privada:
+ * `lib/realizado-do-caixa.ts` aplica a MESMA regra no Realizado do painel e
+ * importa esta constante em vez de declarar a sua. Uma segunda copia do `WHERE`
+ * da view nao daria erro nenhum -- so deixaria as duas telas discordarem sobre
+ * quais linhas a fatura contem, que e o tipo de divergencia que a HMO-258 abriu.
  */
-const TIPOS_QUE_ENTRAM_NA_FATURA: ReadonlySet<string> = new Set([
+export const TIPOS_QUE_ENTRAM_NA_FATURA: ReadonlySet<string> = new Set([
   "expense",
   "income",
 ]);

@@ -33,11 +33,8 @@
 // A selecao das linhas diverge de propósito da que /api/cash-flow faz, em tres
 // pontos -- as duas telas perguntam coisas diferentes:
 //
-//   1. TRANSFERENCIA e FATURA DE CARTAO ficam FORA (`direcaoNoPainel`). La a
-//      pergunta e uma DATA e a fatura precisa aparecer no dia em que o dinheiro
-//      sai da conta corrente. Aqui a pergunta e "quanto vou gastar no periodo",
-//      e cada compra do cartao ja entrou como despesa no dia em que aconteceu:
-//      somar a fatura por cima cobraria as mesmas compras duas vezes.
+//   1. TRANSFERENCIA fica FORA (`direcaoNoPainel`). Mover dinheiro entre contas
+//      proprias nao e receita nem despesa.
 //
 //   2. A DIRECAO VEM DA VIEW DO 027 (`scheduled_transactions_effective.
 //      direction`), nao do `transaction_type` da regra. A ocorrencia pode ter
@@ -48,6 +45,31 @@
 //      do 005 liberam as previstas de grupo dos OUTROS membros, e sem a divisao
 //      o aluguel de R$ 3.000 do grupo Casa entraria inteiro na previsao das duas
 //      pessoas -- e discordaria do "A vencer" do mesmo painel, que ja divide.
+//
+// O CARTAO ENTRA PELA FATURA, E NUNCA PELAS COMPRAS (HMO-265)
+// ------------------------------------------------------------
+// Ate a HMO-265 a fatura ficava FORA desta conta, e o argumento era que cada
+// compra do cartao ja tinha entrado como despesa no dia em que aconteceu -- do
+// lado do Realizado. Essa premissa morreu: o Realizado do painel passou a contar
+// o cartao pela fatura PAGA (`?cartao=fatura` em /api/reports/cash-flow). Manter
+// a fatura fora daqui faria o cartao sumir dos dois lados do "Total esperado".
+//
+// Entao a Previsao faz, do lado do que ainda vai acontecer, as mesmas tres
+// coisas que a tela de Despesas (/api/movimentacoes/resumo) ja fazia:
+//
+//   a. a agenda MENOS as compras no cartao (`agendaSemCompraNoCartao`): a
+//      parcela de uma compra no cartao nao e conta a pagar propria, ela esta
+//      DENTRO da fatura. Sem este filtro a parcela e a fatura que a contem
+//      entram as duas e o cartao conta em dobro;
+//   b. mais a FATURA FECHADA, que e uma linha gravada da agenda e passa pelo
+//      filtro acima de proposito (`previsaoApareceNaAgenda`);
+//   c. mais a FATURA ABERTA sintetizada (`faturasPrevistasDaJanela`), que nao
+//      existe em tabela nenhuma. Sem ela, o cartao de quem nunca abriu
+//      Orcamentos para clicar em "Fechar fatura" nao entraria em lado nenhum --
+//      e esse e o caso comum, nao a borda (HMO-227).
+//
+// Os tres passos sao um so: qualquer um deles sozinho erra dinheiro, e sempre
+// num numero plausivel.
 //
 // O GASTO VARIAVEL VEM JUNTO, MAS FORA DOS DOIS LADOS
 // ----------------------------------------------------
@@ -85,7 +107,8 @@ import {
   type TransacaoParaGastoVariavel,
 } from "@/lib/variable-spend";
 import { diasEntre, normalizeMerchant } from "@/lib/recurrence-detector";
-import { ehFatura } from "@/lib/card-invoice";
+import { agendaSemCompraNoCartao } from "@/lib/agenda-do-cartao";
+import { faturasPrevistasDaJanela } from "@/lib/services/fatura-prevista";
 import { contarMembrosAtivos, parteDoMembro } from "@/lib/parte-do-grupo";
 import {
   COLUNAS_DA_TRANSACAO,
@@ -101,6 +124,25 @@ interface LinhaPrevistaEfetiva {
   due_date: string;
   direction: string | null;
   group_id: string | null;
+  /**
+   * O embed da conta, SO para `agendaSemCompraNoCartao` (HMO-265).
+   *
+   * Nao aparece na resposta e nao e lido em mais nenhum lugar desta rota -- e e
+   * exatamente por isso que esta anotado: uma limpeza de "campo nao usado" que
+   * tire `account_type` do `select` nao quebra tsc nem teste de unidade. A regra
+   * passa a receber `undefined`, deixa de casar com `credit_card`, para de
+   * filtrar, e a parcela da compra volta a somar junto da fatura que a contem --
+   * o cartao em dobro na Previsao, num numero plausivel. Foi esse o modo de
+   * falha da HMO-260.
+   *
+   * ARRAY OU OBJETO: `scheduled_transactions_effective` e VIEW, e sobre view o
+   * supabase-js nao prova a relacao muitos-para-um. `PrevisaoComConta` aceita as
+   * duas formas por isso.
+   */
+  account?:
+    | { account_type?: string | null }
+    | { account_type?: string | null }[]
+    | null;
 }
 
 export async function GET(request: NextRequest) {
@@ -170,12 +212,21 @@ export async function GET(request: NextRequest) {
     // construcao. O teto e `janela.ate`.
     //
     // A view, e nao a tabela: `direction` so existe la (027), e `notes` e o que
-    // `ehFatura` le. Sem filtro de `user_id` porque a RLS filtra -- e porque as
-    // linhas de grupo dos outros membros precisam chegar para entrar pela minha
-    // parte, exatamente como em /api/scheduled-transactions/summary.
+    // `previsaoApareceNaAgenda` le. Sem filtro de `user_id` porque a RLS filtra
+    // -- e porque as linhas de grupo dos outros membros precisam chegar para
+    // entrar pela minha parte, exatamente como em
+    // /api/scheduled-transactions/summary.
+    //
+    // `account(account_type)` E LOAD-BEARING (HMO-265) -- ver a nota no campo
+    // `account` de `LinhaPrevistaEfetiva`. Ele vem no embed e NAO num
+    // `.eq("account.account_type", ...)`: no PostgREST um filtro sobre coluna de
+    // embed vira INNER JOIN, e a previsao SEM conta escolhida -- que e o caso
+    // mais comum -- sairia da resposta junto. Ver HMO-209.
     const { data: previstas, error: erroPrevistas } = await supabase
       .from("scheduled_transactions_effective")
-      .select("id, description, notes, amount, due_date, direction, group_id")
+      .select(
+        "id, description, notes, amount, due_date, direction, group_id, account:financial_accounts(account_type)"
+      )
       .eq("status", "pending")
       .lte("due_date", janela.ate);
 
@@ -187,7 +238,15 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const linhas = (previstas ?? []) as unknown as LinhaPrevistaEfetiva[];
+    // A AGENDA MENOS AS COMPRAS NO CARTAO (HMO-265, passo `a` do cabecalho).
+    //
+    // A MESMA linha de codigo que a agenda e a tela de Despesas usam, e nao um
+    // `.filter()` escrito aqui: a regra cruza `notes` com `account_type`, e o
+    // segundo lugar a implementa-la e o que ninguem atualiza. A fatura FECHADA
+    // passa por este filtro de proposito -- e ela que a pessoa paga.
+    const linhas = agendaSemCompraNoCartao(
+      (previstas ?? []) as unknown as LinhaPrevistaEfetiva[]
+    );
 
     const gruposEnvolvidos = Array.from(
       new Set(linhas.map((l) => l.group_id).filter((id): id is string => Boolean(id)))
@@ -214,7 +273,7 @@ export async function GET(request: NextRequest) {
     const paraCalculo: PrevistaParaFluxo[] = [];
 
     for (const p of linhas) {
-      const lado = direcaoNoPainel(p.direction, ehFatura(p.notes));
+      const lado = direcaoNoPainel(p.direction);
       if (lado === null) continue;
 
       paraCalculo.push({
@@ -223,6 +282,48 @@ export async function GET(request: NextRequest) {
         amount: parteDoMembro(p.amount, p.group_id, membrosAtivosPorGrupo),
         due_date: p.due_date,
         tipo: lado,
+      });
+    }
+
+    // A FATURA ABERTA, que nao existe em tabela nenhuma (HMO-265, passo `c`).
+    //
+    // A janela e a da PREVISAO (`[max(de, hoje), ate]`), e nao o periodo inteiro:
+    // uma fatura que venceu antes de hoje e foi paga ja esta do lado do
+    // Realizado, e uma que venceu antes de hoje e NAO foi paga nao e
+    // sintetizada -- ela existe como `scheduled_transaction` fechada e entrou
+    // pelo laco acima. Pedir o periodo inteiro aqui somaria a fatura de um mes
+    // que o Realizado tambem conta.
+    //
+    // `faturasPrevistasDaJanela` nao lanca: erro de leitura devolve listas
+    // vazias e registra no log. A Previsao fica MENOR que a verdade nesse caso,
+    // que e o lado caro do erro -- mas trocar o painel inteiro por um 500 por
+    // causa de uma parcela e pior, e e a mesma escolha que a agenda faz.
+    //
+    // A de-duplicacao contra a fatura FECHADA e feita lá dentro, pela chave
+    // canonica em `notes`: sem ela a mesma fatura entraria duas vezes, uma
+    // sintetizada e uma gravada, com o mesmo valor e o mesmo vencimento.
+    const faturaAberta = await faturasPrevistasDaJanela(supabase, user.id, {
+      de: janela.de,
+      ate: janela.ate,
+      hoje,
+    });
+
+    for (const f of faturaAberta.previstas) {
+      paraCalculo.push({
+        // `notes` como id, e nao um indice: a fatura sintetizada tem `id: null`
+        // por construcao, e `projetarFluxoDeCaixa` usa o id para deduplicar
+        // contra as assinaturas detectadas. A chave canonica
+        // `fatura:<mes>:<cartao>` e unica por cartao+mes e tem prefixo, entao
+        // nao colide com o uuid de nenhuma linha gravada.
+        id: f.notes,
+        description: f.description,
+        // Sem `parteDoMembro`: fatura de cartao nao e de grupo (`group_id: null`
+        // em `FaturaPrevista`). O rateio e das COMPRAS, uma a uma.
+        amount: f.amount,
+        due_date: f.due_date,
+        // `direction: "expense"` por construcao -- nao passa por
+        // `direcaoNoPainel` porque nao ha direcao a resolver.
+        tipo: "expense",
       });
     }
 
