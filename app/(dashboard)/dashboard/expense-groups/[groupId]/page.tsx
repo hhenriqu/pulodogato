@@ -80,7 +80,13 @@ import {
   moedaSugeridaDaDespesa,
   rotuloDaConversao,
   saldoNaMoedaDaViagem,
+  type AcertoParaGravar,
 } from "@/lib/moeda-do-grupo";
+import {
+  DialogoDeAcerto,
+  type ContaParaEscolher,
+} from "@/components/grupos/DialogoDeAcerto";
+import { direcaoDoAcerto, type DirecaoDoAcerto } from "@/lib/acerto-em-lancamento";
 
 interface ExpenseGroup {
   id: string;
@@ -321,6 +327,31 @@ export default function GroupDetailPage() {
   // pagamentos repetidos de proposito (duas parcelas de R$ 50 sao um fato
   // possivel), entao a protecao contra o clique acidental e aqui.
   const [settling, setSettling] = useState<string | null>(null);
+  /**
+   * O acerto que o dialogo esta pedindo a conta (HMO-245, fase 11).
+   *
+   * `null` = dialogo fechado. Guarda o acerto JA MONTADO por
+   * `acertoNaMoedaDaViagem` -- valor, moeda e cotacao -- porque e a escolha
+   * "em reais" ou "na moeda da viagem" do botao clicado que o define, e ela nao
+   * pode ser recalculada na hora de confirmar: a cotacao de hoje pode ter sido
+   * recarregada no meio, e o valor confirmado seria outro que o mostrado.
+   */
+  const [acertoEmCurso, setAcertoEmCurso] = useState<{
+    chave: string;
+    direcao: DirecaoDoAcerto;
+    fromUserId: string;
+    toUserId: string;
+    nomeDaContraparte: string | null;
+    acerto: AcertoParaGravar;
+  } | null>(null);
+  /**
+   * As contas do usuario, para o campo do dialogo.
+   *
+   * Carregadas uma vez com o resto da tela, e nao ao abrir o dialogo: abrir e o
+   * momento em que a pessoa quer escolher, e um seletor que chega vazio e
+   * preenche depois e indistinguivel de "voce nao tem conta".
+   */
+  const [contas, setContas] = useState<ContaParaEscolher[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("expenses");
 
@@ -380,6 +411,7 @@ export default function GroupDetailPage() {
         loadTransfers(),
         loadSettlements(),
         loadOrcamento(),
+        loadContas(),
       ]);
     } catch (error) {
       console.error("Error loading data:", error);
@@ -530,6 +562,28 @@ export default function GroupDetailPage() {
     }
   };
 
+  /**
+   * As contas do usuario, para o campo de conta do dialogo de acerto.
+   *
+   * Falha em silencio no console, como `loadOrcamento`: a lista so e usada
+   * dentro do dialogo, e um toast de erro no carregamento da tela apontaria
+   * para um campo que a pessoa nem abriu. O dialogo diz o que fazer quando nao
+   * ha conta elegivel.
+   */
+  const loadContas = async () => {
+    try {
+      const response = await fetch("/api/financial-accounts");
+      const data = await response.json();
+      if (response.ok) {
+        setContas(data.accounts || data || []);
+      } else {
+        console.error("Error loading contas:", data.error);
+      }
+    } catch (error) {
+      console.error("Error loading contas:", error);
+    }
+  };
+
   const loadSettlements = async () => {
     const response = await fetch(`/api/expense-groups/${groupId}/settlements`);
     const data = await response.json();
@@ -576,7 +630,53 @@ export default function GroupDetailPage() {
       return;
     }
 
-    setSettling(`${transfer.from.id}->${transfer.to.id}`);
+    // O CLIQUE NAO GRAVA MAIS NADA -- ele abre o dialogo (HMO-245, fase 11).
+    //
+    // Falta UM dado que ninguem pode adivinhar: a conta por onde o Pix passou.
+    // Enquanto o acerto nao gerava lancamento, nao faltava nada e o clique
+    // bastava; era por isso que o botao registrava a quitacao e o dinheiro nao
+    // se mexia em lugar nenhum.
+    const direcao = direcaoDoAcerto({
+      fromUserId: transfer.from.id,
+      toUserId: transfer.to.id,
+      userId: user?.id || "",
+    });
+
+    // Nao alcancavel pela tela: o botao so aparece para quem e parte (`souParte`
+    // no JSX). Tratado porque a alternativa e um dialogo sem direcao, que diria
+    // "saiu da conta" para quem esta recebendo.
+    if (!direcao) {
+      toast.error(
+        "Você só pode registrar um acerto em que paga ou recebe. Peça a quem participou."
+      );
+      return;
+    }
+
+    const contraparte = direcao === "recebi" ? transfer.from : transfer.to;
+
+    setAcertoEmCurso({
+      chave: `${transfer.from.id}->${transfer.to.id}`,
+      direcao,
+      fromUserId: transfer.from.id,
+      toUserId: transfer.to.id,
+      nomeDaContraparte: contraparte.full_name || null,
+      acerto,
+    });
+  };
+
+  /**
+   * Grava a quitacao E a perna de quem registra, com a conta escolhida.
+   *
+   * O `account_id` e o campo novo e e obrigatorio na rota: sem ele o POST volta
+   * 400. Esse acoplamento e deliberado -- um cliente que esquecesse a conta
+   * voltaria a registrar quitacao sem lancamento nenhum, que e o defeito que
+   * esta fase conserta, e ele nao tem sintoma na tela.
+   */
+  const registrarAcerto = async (contaId: string) => {
+    if (!acertoEmCurso) return;
+    const { acerto, chave, fromUserId, toUserId } = acertoEmCurso;
+
+    setSettling(chave);
     try {
       const response = await fetch(
         `/api/expense-groups/${groupId}/settlements`,
@@ -584,13 +684,14 @@ export default function GroupDetailPage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            from_user_id: transfer.from.id,
-            to_user_id: transfer.to.id,
+            from_user_id: fromUserId,
+            to_user_id: toUserId,
             // `amount` esta na moeda de `currency`, nunca em real -- a view faz
             // `amount * exchange_rate` para chegar ao que foi abatido.
             amount: acerto.amount,
             currency: acerto.currency,
             exchange_rate: acerto.exchange_rate,
+            account_id: contaId,
           }),
         }
       );
@@ -605,11 +706,16 @@ export default function GroupDetailPage() {
       // rapido precisa saber que ficou (ou sobrou) centavo, senao o saldo
       // teimoso da proxima tela nao tem explicacao.
       const sobra = avisoDeSobra(acerto);
+      // O nome da conta vem da RESPOSTA e nao do estado da tela: e a conta em
+      // que o lancamento caiu de verdade. Dizer "Acerto registrado" sozinho nao
+      // distingue o comportamento novo do antigo.
+      const onde = data.lancamento?.account_name
+        ? ` Lançado em ${data.lancamento.account_name}.`
+        : "";
       toast.success(
-        sobra
-          ? `Acerto registrado. ${sobra}`
-          : "Acerto registrado"
+        sobra ? `Acerto registrado.${onde} ${sobra}` : `Acerto registrado.${onde}`
       );
+      setAcertoEmCurso(null);
       await Promise.all([loadBalances(), loadTransfers(), loadSettlements()]);
     } catch (error) {
       console.error("Erro ao registrar acerto:", error);
@@ -1591,6 +1697,14 @@ export default function GroupDetailPage() {
                           user?.id === transfer.from.id ||
                           user?.id === transfer.to.id;
 
+                        // QUEM RECEBE NAO PAGOU. O rotulo dizia "Já paguei"
+                        // para os dois lados, entao quem estava recebendo
+                        // clicava num botao que afirmava o contrario do que ia
+                        // registrar. A direcao passou a ser calculada de
+                        // qualquer forma (o dialogo precisa dela para o sinal
+                        // da perna), entao o rotulo pode dize-la.
+                        const souQuemRecebe = user?.id === transfer.to.id;
+
                         // O mesmo pagamento na moeda da viagem, ao cambio de
                         // hoje -- ou `null` quando nao ha o que oferecer.
                         //
@@ -1670,7 +1784,11 @@ export default function GroupDetailPage() {
                                         // opcao ao lado. Em grupo em real nao ha
                                         // escolha a explicitar, e "Já paguei" e
                                         // a frase que a tela sempre usou.
-                                        "Paguei em reais"
+                                        souQuemRecebe
+                                        ? "Recebi em reais"
+                                        : "Paguei em reais"
+                                      : souQuemRecebe
+                                      ? "Já recebi"
                                       : "Já paguei"}
                                   </Button>
                                   {/* O segundo botao so existe quando ha cotacao
@@ -1696,7 +1814,8 @@ export default function GroupDetailPage() {
                                         }).`
                                       }
                                     >
-                                      Paguei em {naViagem.currency}
+                                      {souQuemRecebe ? "Recebi" : "Paguei"} em{" "}
+                                      {naViagem.currency}
                                     </Button>
                                   )}
                                 </div>
@@ -2081,6 +2200,25 @@ export default function GroupDetailPage() {
             </CardContent>
           </Card>
         </div>
+      )}
+
+      {/* O campo de conta do acerto (HMO-245, fase 11). Fica fora das abas: a
+          sugestao de pagamento mora na aba de saldos, mas o dialogo e modal e
+          nao deve depender de qual aba esta aberta quando a resposta chega. */}
+      {acertoEmCurso && (
+        <DialogoDeAcerto
+          aberto={true}
+          aoFechar={() => setAcertoEmCurso(null)}
+          direcao={acertoEmCurso.direcao}
+          nomeDaContraparte={acertoEmCurso.nomeDaContraparte}
+          valor={acertoEmCurso.acerto.amount}
+          moeda={acertoEmCurso.acerto.currency}
+          cotacao={acertoEmCurso.acerto.exchange_rate}
+          contas={contas}
+          aviso={avisoDeSobra(acertoEmCurso.acerto)}
+          aoConfirmar={registrarAcerto}
+          salvando={settling === acertoEmCurso.chave}
+        />
       )}
     </div>
   );

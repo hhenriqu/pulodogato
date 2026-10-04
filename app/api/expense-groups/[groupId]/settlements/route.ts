@@ -2,16 +2,53 @@ import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { MOEDA_PADRAO, moedaConhecida } from "@/lib/dinheiro";
 import { cotacaoCoerente, precisaDeCotacao, valorEmReais } from "@/lib/cambio";
+import {
+  DESCRICAO_DA_CATEGORIA_DE_ACERTO,
+  NOME_DA_CATEGORIA_DE_ACERTO,
+  direcaoDoAcerto,
+  mensagemDaContaDoAcerto,
+  pernaDoAcerto,
+} from "@/lib/acerto-em-lancamento";
 
 /**
  * Acertos de contas do grupo: o registro de "Caio pagou R$ 130 para a Ana".
  *
  * GET  lista os acertos ja registrados, mais recentes primeiro.
- * POST registra um novo.
+ * POST registra um novo E GRAVA A PERNA DE QUEM REGISTRA em
+ *      `financial_transactions`.
  *
- * O acerto NAO vira lancamento em financial_transactions -- ver a SECAO "POR
- * QUE UMA TABELA SO PARA ISSO" da migration 007. Quem quiser ver o dinheiro
- * sair da conta corrente lanca a transferencia por fora: sao fatos diferentes.
+ * O ACERTO PASSOU A VIRAR LANCAMENTO (HMO-245, fase 11)
+ * -----------------------------------------------------
+ * Ate aqui esta frase dizia o contrario -- "o acerto NAO vira lancamento" --
+ * apontando para a SECAO "POR QUE UMA TABELA SO PARA ISSO" da 007, e mandando
+ * quem quisesse ver o dinheiro sair da conta lancar a transferencia por fora.
+ * Na pratica ninguem lancava: o Pix ficava invisivel nos dois lados e o saldo da
+ * conta corrente nao se mexia. Era o defeito relatado.
+ *
+ * A decisao nova NAO reabre as duas objecoes da 007 -- a 007 foi reescrita no
+ * mesmo commit e as duas continuam de pe:
+ *
+ *   objecao 2 (lancar como despesa contaria o hotel duas vezes por categoria)
+ *     -> respondida pelo tipo `transfer`. As duas pernas sao `transfer`, que
+ *        `category_monthly_totals`, `monthly_cash_flow` e
+ *        `personal_category_monthly_totals` ignoram: o acerto nao muda a
+ *        Receita nem a Despesa de ninguem, so move dinheiro de lugar. O POR QUE
+ *        de `transfer` tambem do lado de QUEM RECEBE esta medido em
+ *        `lib/acerto-em-lancamento.ts` (com `income`, o painel pessoal de quem
+ *        recebe fecha o mes empatado e apaga a propria parte dela).
+ *
+ *   objecao 1 (um acerto nunca deve mexer na conta de OUTRA pessoa)
+ *     -> continua respeitada, e e o que limita esta fase a UMA perna:
+ *        `financial_transactions_write` e
+ *        `FOR INSERT WITH CHECK (user_id = auth.uid())`
+ *        (`002_rls_lockdown.sql:472`), e esta rota roda na sessao de quem
+ *        clicou. A perna da contraparte e a fase 12 e vai precisar de outro
+ *        mecanismo. Qualquer um dos dois lados pode registrar -- `from_user_id`
+ *        ou `to_user_id` igual a quem chama --, e cada um grava a PROPRIA.
+ *
+ * `account_id` passou a ser obrigatorio no POST, e isso e o resto do conserto:
+ * sem conta nao ha onde a perna cair, e um POST sem conta "funcionaria" como
+ * antes -- registrando a quitacao e nenhum dinheiro.
  *
  * ACERTO EM MOEDA ESTRANGEIRA (HMO-182, item 5)
  * ---------------------------------------------
@@ -33,6 +70,82 @@ import { cotacaoCoerente, precisaDeCotacao, valorEmReais } from "@/lib/cambio";
  * esta rota continua funcionando sem mudanca, e continua registrando em real --
  * que e o que ele sempre fez.
  */
+
+/**
+ * A categoria reservada do acerto DAQUELE usuario, criando-a na primeira vez.
+ *
+ * Mesma receita do ajuste de fatura (HMO-253,
+ * `app/api/card-invoices/ajuste/route.ts`): `category_id` e NOT NULL, acerto nao
+ * tem categoria, e a 036 deu `user_id` + `transaction_categories_insert_own`
+ * (`WITH CHECK (user_id = auth.uid())`) a `transaction_categories` -- entao a
+ * linha nasce aqui, por usuario, sem migration.
+ *
+ * O caminho da 023 (seed global, colado a mao no SQL Editor) nao se repete: ele
+ * foi necessario porque a tabela era global e o INSERT batia em 42501 em toda
+ * chamada, de todo usuario.
+ *
+ * SELECT-depois-INSERT e nao `ON CONFLICT`: a UNIQUE das categorias de usuario e
+ * indice PARCIAL (`WHERE user_id IS NOT NULL`), e indice parcial nao arbitra
+ * `ON CONFLICT`. O ramo de 23505 cobre dois pedidos simultaneos do mesmo
+ * usuario.
+ */
+async function categoriaDoAcerto(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  serviceId: string
+): Promise<{ id: string } | { erro: string }> {
+  const { data: existente, error: erroBusca } = await supabase
+    .from("transaction_categories")
+    .select("id")
+    .eq("service_id", serviceId)
+    .eq("user_id", userId)
+    .eq("name", NOME_DA_CATEGORIA_DE_ACERTO)
+    .maybeSingle();
+
+  if (erroBusca) {
+    console.error("Erro ao buscar a categoria do acerto:", erroBusca);
+    return { erro: "Nao foi possivel preparar o lancamento do acerto" };
+  }
+  if (existente) return { id: existente.id };
+
+  const { data: criada, error: erroCriacao } = await supabase
+    .from("transaction_categories")
+    .insert({
+      service_id: serviceId,
+      // Do servidor, nunca do corpo do pedido.
+      user_id: userId,
+      name: NOME_DA_CATEGORIA_DE_ACERTO,
+      description: DESCRICAO_DA_CATEGORIA_DE_ACERTO,
+      icon: "handshake",
+      color_hex: "#6B7280",
+      // `is_expense` e NOT NULL e e lido so como ultimo recurso: as telas
+      // classificam por `transaction_type`, e a perna do acerto sempre grava o
+      // tipo. FALSE porque a perna NAO e despesa em nenhum dos dois lados --
+      // ela e `transfer` --, e um fallback que dissesse "despesa" seria a
+      // afirmacao errada justamente para quem recebeu.
+      is_expense: false,
+      is_active: false,
+    })
+    .select("id")
+    .single();
+
+  if (erroCriacao) {
+    if (erroCriacao.code === "23505") {
+      const { data: recem } = await supabase
+        .from("transaction_categories")
+        .select("id")
+        .eq("service_id", serviceId)
+        .eq("user_id", userId)
+        .eq("name", NOME_DA_CATEGORIA_DE_ACERTO)
+        .maybeSingle();
+      if (recem) return { id: recem.id };
+    }
+    console.error("Erro ao criar a categoria do acerto:", erroCriacao);
+    return { erro: "Nao foi possivel preparar o lancamento do acerto" };
+  }
+
+  return { id: criada.id };
+}
 
 export async function GET(
   request: NextRequest,
@@ -244,6 +357,122 @@ export async function POST(
       );
     }
 
+    // ------------------------------------------------------------------
+    // A PERNA DE QUEM REGISTRA (HMO-245, fase 11)
+    // ------------------------------------------------------------------
+    // Tudo que pode recusar a perna e conferido ANTES de gravar a quitacao. A
+    // ordem nao e estetica: `supabase-js` fala PostgREST, uma requisicao por
+    // vez, e nao ha transacao entre os dois inserts. Descobrir depois que a
+    // conta e um cartao deixaria a quitacao gravada sem lancamento -- que e
+    // exatamente o estado que esta fase existe para acabar, e que ninguem veria.
+    const direcao = direcaoDoAcerto({
+      fromUserId,
+      toUserId,
+      userId: user.id,
+    });
+
+    // `null` nao e alcancavel aqui: a guarda de "so quem paga ou recebe" acima
+    // ja respondeu 403. Tratar de novo e o que mantem o tipo honesto -- e se a
+    // guarda de cima mudar, a recusa continua sendo a mesma.
+    if (!direcao) {
+      return NextResponse.json(
+        {
+          error:
+            "Voce so pode registrar um acerto em que paga ou recebe. Peca a quem participou.",
+        },
+        { status: 403 }
+      );
+    }
+
+    const accountId =
+      typeof body.account_id === "string" && body.account_id
+        ? body.account_id
+        : null;
+
+    if (!accountId) {
+      return NextResponse.json(
+        { error: mensagemDaContaDoAcerto("sem_conta") },
+        { status: 400 }
+      );
+    }
+
+    // `user_id` no filtro: a conta de outra pessoa volta como "nao encontrada",
+    // que e a resposta certa -- dizer "essa conta nao e sua" confirmaria que o
+    // id existe. A RLS recusaria o insert de qualquer forma, com 42501.
+    const { data: conta } = await supabase
+      .from("financial_accounts")
+      .select("id, name, account_type, currency")
+      .eq("user_id", user.id)
+      .eq("id", accountId)
+      .maybeSingle();
+
+    if (!conta) {
+      return NextResponse.json(
+        { error: mensagemDaContaDoAcerto("conta_nao_encontrada") },
+        { status: 400 }
+      );
+    }
+
+    const { data: servico } = await supabase
+      .from("financial_services")
+      .select("id")
+      .eq("name", "personal_finance")
+      .single();
+
+    if (!servico) {
+      return NextResponse.json(
+        { error: "Serviço de finanças pessoais não encontrado" },
+        { status: 404 }
+      );
+    }
+
+    const categoria = await categoriaDoAcerto(supabase, user.id, servico.id);
+    if ("erro" in categoria) {
+      return NextResponse.json({ error: categoria.erro }, { status: 500 });
+    }
+
+    // Os nomes sao so para a descricao do extrato, e e por isso que a falha
+    // deles nao derruba nada: `descricaoDoAcerto` tem frase para o caso sem
+    // nome. Duas consultas diretas em vez de embed -- `group_members` tem mais
+    // de uma FK para `profiles` e o embed sairia PGRST201.
+    const contraparteId = direcao === "recebi" ? fromUserId : toUserId;
+    const [{ data: contraparte }, { data: grupo }] = await Promise.all([
+      supabase
+        .from("profiles")
+        .select("full_name")
+        .eq("id", contraparteId)
+        .maybeSingle(),
+      supabase
+        .from("expense_groups")
+        .select("name")
+        .eq("id", groupId)
+        .maybeSingle(),
+    ]);
+
+    const settledOn =
+      body.settled_on || new Date().toISOString().slice(0, 10);
+
+    // A perna e montada ANTES do insert da quitacao, com um id de mentira, so
+    // para saber se a conta escolhida serve. A de verdade e montada depois, com
+    // o id real -- `notes` carrega esse id, e e por ele que o desfazer acha a
+    // linha.
+    const ensaio = pernaDoAcerto({
+      direcao,
+      conta,
+      amount: valor,
+      currency,
+      exchange_rate: exchangeRate,
+      settledOn,
+      settlementId: "00000000-0000-0000-0000-000000000000",
+    });
+
+    if (ensaio.problema) {
+      return NextResponse.json(
+        { error: mensagemDaContaDoAcerto(ensaio.problema, currency) },
+        { status: 400 }
+      );
+    }
+
     const { data: settlement, error } = await supabase
       .from("group_settlements")
       .insert({
@@ -253,7 +482,7 @@ export async function POST(
         amount: valor,
         currency,
         exchange_rate: exchangeRate,
-        settled_on: body.settled_on || new Date().toISOString().slice(0, 10),
+        settled_on: settledOn,
         note: body.note || null,
         created_by: user.id,
       })
@@ -290,8 +519,65 @@ export async function POST(
       );
     }
 
+    // Agora com o id real: `notes` carrega `acerto:<id>`, e e por essa chave que
+    // o DELETE apaga a perna junto com a quitacao.
+    const { perna } = pernaDoAcerto({
+      direcao,
+      conta,
+      amount: valor,
+      currency,
+      exchange_rate: exchangeRate,
+      settledOn,
+      settlementId: settlement.id,
+      nomeDaContraparte: contraparte?.full_name,
+      nomeDoGrupo: grupo?.name,
+    });
+
+    const { data: lancamento, error: erroDoLancamento } = await supabase
+      .from("financial_transactions")
+      .insert({
+        ...perna!,
+        user_id: user.id,
+        service_id: servico.id,
+        category_id: categoria.id,
+      })
+      .select("id, amount, transaction_type, transaction_date, account_id")
+      .single();
+
+    if (erroDoLancamento || !lancamento) {
+      // A QUITACAO OU NENHUMA DAS DUAS. Deixar a quitacao sem perna reporia o
+      // defeito desta issue -- a divida sai da sugestao, o Pix nao aparece em
+      // lugar nenhum -- e com uma tela dizendo "Acerto registrado" por cima.
+      // Tudo que podia recusar a perna foi conferido antes do insert da
+      // quitacao, entao chegar aqui e falha de banco, nao de preenchimento.
+      await supabase
+        .from("group_settlements")
+        .delete()
+        .eq("id", settlement.id);
+
+      console.error(
+        "Acerto desfeito: a perna em financial_transactions falhou",
+        erroDoLancamento
+      );
+      return NextResponse.json(
+        {
+          error:
+            "Não foi possível lançar o acerto na sua conta. Nada foi registrado — tente novamente.",
+        },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json({
       success: true,
+      // O que entrou em `financial_transactions`. A tela usa para dizer em QUAL
+      // conta o dinheiro mexeu: "Acerto registrado" sozinho nao distingue o
+      // comportamento novo do antigo, que era registrar e nao lancar nada.
+      lancamento: {
+        ...lancamento,
+        amount: Number(lancamento.amount),
+        account_name: conta.name,
+      },
       settlement: {
         ...settlement,
         amount: Number(settlement.amount),
