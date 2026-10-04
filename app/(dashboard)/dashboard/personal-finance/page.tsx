@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { classificarMovimentacao, resumoDoPeriodo } from "@/lib/movimentacoes";
+import { classificarMovimentacao } from "@/lib/movimentacoes";
 import {
   destinoDoLancamento,
   indiceDeContraparte,
@@ -26,6 +26,7 @@ import {
   linhasDaLista,
   notaDasPartesDeTerceiros,
   partesDeTerceirosNaLista,
+  resumoComPartesDeGrupo,
   type DespesaDeGrupoLida,
   type LancamentoDeTerceiro,
   type ParteDeGrupoBruta,
@@ -881,8 +882,17 @@ function Lancamentos() {
   // pagar uma fatura de R$ 1.000 somava R$ 1.000 em Receitas e R$ 1.000 em
   // Despesas. O saldo continuava certo, porque as pernas se anulam, e por isso o
   // erro nao aparecia em lugar nenhum.
+  //
+  // A PARTE DE GRUPO ENTRA EM "Despesas" (HMO-275). Decisao do Helio em
+  // 04/10/2026: o cartao significa O QUE ME CUSTOU -- inteiro quando eu paguei,
+  // minha parte quando outro pagou. Antes desta issue a parte ficava
+  // deliberadamente de fora dos tres cartoes, escrita embaixo do saldo.
+  // `resumoComPartesDeGrupo` e quem soma, e e ele que RECALCULA o saldo: somar
+  // em `despesas` e repassar o `saldo` de `resumoDoPeriodo` poria os tres
+  // cartoes se contradizendo sob a legenda "Receitas - Despesas". Ver o
+  // cabecalho daquela funcao.
   const calculateBalance = () => {
-    const resumo = resumoDoPeriodo(transactions);
+    const resumo = resumoComPartesDeGrupo(transactions, partesDeGrupo);
 
     return {
       income: resumo.receitas,
@@ -1153,6 +1163,56 @@ function Lancamentos() {
               {formatCurrency(expenses)}
             </div>
             <p className="text-xs text-muted-foreground">{notaDosTotais}</p>
+            {/*
+              A MINHA PARTE DO QUE OUTROS PAGARAM, DENTRO DESTE NÚMERO (HMO-275)
+              -----------------------------------------------------------------
+              Até a HMO-275 esta frase ficava embaixo do cartão de Saldo e
+              terminava ressalvando que a parte estava na lista e FORA do saldo:
+              ela aparecia na lista (pedido da HMO-215) e de propósito não
+              entrava em cartão nenhum. (A ressalva está parafraseada de
+              propósito -- a string exata não vive mais neste arquivo, e um grep
+              por ela tem que dar zero.)
+              A decisão do Hélio em 04/10/2026 fechou o critério -- o cartão
+              significa O QUE ME CUSTOU, inteiro quando eu paguei e minha parte
+              quando outro pagou --, então a parte entrou aqui e a frase mudou de
+              lugar e de função: ela não avisa mais de um valor omitido, ela ABRE
+              este total.
+
+              Ela não é enfeite. Sem ela, quem somasse à mão as linhas que
+              reconhece como suas chegaria a um número MENOR que o do cartão, e
+              não teria como descobrir de onde vem a diferença -- é o mesmo
+              motivo da linha de transferências no cartão de Saldo.
+
+              O "(sua parte)" é o que impede a leitura errada mais provável
+              aqui: o valor escrito é a fração que me cabe, não o valor cheio da
+              despesa de quem pagou.
+            */}
+            {notaDasPartes && (
+              <p className="text-xs text-muted-foreground">
+                inclui {formatCurrency(notaDasPartes.total)} de{" "}
+                {notaDasPartes.quantas === 1
+                  ? "1 despesa de grupo que outra pessoa pagou"
+                  : `${notaDasPartes.quantas} despesas de grupo que outras pessoas pagaram`}{" "}
+                (sua parte)
+              </p>
+            )}
+            {/*
+              O erro e o vazio são o MESMO array, e têm leituras opostas: um diz
+              "você não deve nada em grupo este mês" e o outro diz "este total
+              está incompleto". Sem esta linha a tela escolheria sempre a
+              primeira -- o "zero confiante" que esta tela já pagou duas vezes.
+
+              E desde a HMO-275 o aviso subiu de gravidade, e por isso mudou de
+              cartão: antes a falha deixava só a LISTA curta; agora ela deixa
+              este NÚMERO baixo, e um gasto subestimado é o que faz a pessoa
+              decidir gastar o que não tem.
+            */}
+            {partesFalharam && (
+              <p className="text-xs text-warning">
+                Sua parte das despesas de grupo não carregou: este total e a
+                lista abaixo podem estar incompletos.
+              </p>
+            )}
           </CardContent>
         </Card>
 
@@ -1184,44 +1244,11 @@ function Lancamentos() {
               </p>
             )}
             {/*
-              A MINHA PARTE DO QUE OUTROS PAGARAM, ESCRITA E FORA DOS CARTOES
-              --------------------------------------------------------------
-              Ela está na LISTA (é o pedido da HMO-215: "todos os lançamentos,
-              indiferente de onde foi") e não entra nos três cartões. O motivo
-              está no cabeçalho de lib/parte-de-grupo-na-lista.ts, e é de
-              significado, não de preguiça: o cartão "Despesas" soma as MINHAS
-              linhas, e numa despesa de grupo que eu paguei ele soma o valor
-              CHEIO -- R$ 400 do hotel, que é o que saiu da minha conta.
-              Acrescentar "a minha parte do que os outros pagaram" misturaria
-              dois critérios dentro de um número só: valor cheio de um lado,
-              fração do outro. O resultado não seria nem "o que saiu de mim" nem
-              "o que me cabe", e nada na tela denunciaria isso.
-
-              É a mesma saída que a transferência recebeu logo acima: a linha
-              aparece na lista, o valor aparece escrito aqui, e o cartão continua
-              significando uma coisa só.
+              A minha parte do que outros pagaram está DENTRO de "Despesas"
+              desde a HMO-275, e portanto dentro deste saldo. A frase que a
+              detalhava (e o aviso de falha de carregamento) mora no cartão de
+              Despesas, ao lado do número que ela abre.
             */}
-            {notaDasPartes && (
-              <p className="text-xs text-muted-foreground">
-                + {formatCurrency(notaDasPartes.total)} em{" "}
-                {notaDasPartes.quantas === 1
-                  ? "1 despesa de grupo que outra pessoa pagou"
-                  : `${notaDasPartes.quantas} despesas de grupo que outras pessoas pagaram`}
-                , na lista e fora do saldo
-              </p>
-            )}
-            {/*
-              O erro e o vazio sao o MESMO array, e têm leituras opostas: um diz
-              "você não deve nada em grupo este mês" e o outro diz "a lista está
-              incompleta". Sem esta linha a tela escolheria sempre a primeira --
-              o "zero confiante" que esta tela já pagou duas vezes.
-            */}
-            {partesFalharam && (
-              <p className="text-xs text-warning">
-                Sua parte das despesas de grupo não carregou: a lista abaixo pode
-                estar incompleta.
-              </p>
-            )}
           </CardContent>
         </Card>
       </div>
