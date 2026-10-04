@@ -120,16 +120,77 @@ const MUTANTES = [
     porque:
       "cada parte arredondada por conta propria: 2.000 entre tres da 666,67 x 3 " +
       "= 2.000,01, e todo grupo de tres passa a exibir residuo de um centavo",
-    de: "    const parte = piso + (i < resto ? 1 : 0);",
-    para: "    const parte = Math.round(absoluto / n);",
+    de: "  const base = efetivos.map((p) => Math.floor((absoluto * p) / soma));",
+    para: "  const base = efetivos.map((p) => Math.round((absoluto * p) / soma));",
   },
   {
     nome: "rateio_descarta_resto",
     porque:
       "o resto da divisao e jogado fora: as partes somam MENOS que o total e o " +
       "grupo divide 1.999,98 de uma conta de 2.000",
-    de: "    const parte = piso + (i < resto ? 1 : 0);",
-    para: "    const parte = piso;",
+    de: "  let sobra = absoluto - base.reduce((acc, b) => acc + b, 0);",
+    para: "  let sobra = 0;",
+  },
+  {
+    nome: "peso_ignorado",
+    porque:
+      "a divisao volta a ser SEMPRE igual: o grupo configurado em 70/30 fecha " +
+      "1.000/1.000 de um mes de R$ 2.000, e nada na tela denuncia",
+    de:
+      "  const efetivos = somaPesos > 0 ? limpos : limpos.map(() => 1);\n" +
+      "  const soma = somaPesos > 0 ? somaPesos : n;",
+    para:
+      "  const efetivos = limpos.map(() => 1);\n" + "  const soma = n;",
+  },
+  {
+    nome: "degrau_zero_zero",
+    porque:
+      "todos os pesos em zero -- que e o estado de TODO grupo criado antes da " +
+      "fase 3, pelo DEFAULT 0.00 da coluna -- divide por zero e a tela mostra " +
+      "'R$ NaN' para todo mundo, sem erro nenhum no caminho",
+    de: "  const soma = somaPesos > 0 ? somaPesos : n;",
+    para: "  const soma = somaPesos;",
+  },
+  {
+    nome: "peso_zero_vira_um",
+    porque:
+      "membro em 0% volta a entrar na divisao com uma parte minuscula em vez " +
+      "de ficar fora dela -- o degrau que separa `group_members.percentage` " +
+      "(aceita 0) de `expense_splits.percentage` (exige > 0)",
+    de:
+      "    typeof p.peso === \"number\" && Number.isFinite(p.peso) && p.peso > 0\n" +
+      "      ? p.peso\n" +
+      "      : 0",
+    para:
+      "    typeof p.peso === \"number\" && Number.isFinite(p.peso) && p.peso > 0\n" +
+      "      ? p.peso\n" +
+      "      : 1",
+  },
+  {
+    nome: "resto_invertido",
+    porque:
+      "o centavo que sobra vai para quem tem o MENOR resto: num grupo 70/30/0% " +
+      "ele cai justamente no membro que nao divide a conta, e o fechamento " +
+      "cobra R$ 0,01 de quem configurou 0%",
+    de: "    .sort((a, b) => (b.resto !== a.resto ? b.resto - a.resto : a.i - b.i));",
+    para: "    .sort((a, b) => (b.resto !== a.resto ? a.resto - b.resto : a.i - b.i));",
+  },
+  {
+    nome: "desempate_sem_indice",
+    porque:
+      "em divisao igual TODOS os restos empatam, entao sem o desempate por " +
+      "indice o centavo de um mes de R$ 2.000 entre tres nao tem dono fixo",
+    de: "    .sort((a, b) => (b.resto !== a.resto ? b.resto - a.resto : a.i - b.i));",
+    para: "    .sort((a, b) => b.resto - a.resto).reverse();",
+  },
+  {
+    nome: "membro_sem_peso_vira_um",
+    porque:
+      "`m.peso ?? 1` em vez de `?? 0`: num grupo onde um membro nao tem peso " +
+      "configurado ele divide 1 contra os 7000 dos outros -- uma parte de quase " +
+      "zero onde devia haver parte igual",
+    de: "    membros.map((m) => ({ user_id: m.user_id, peso: m.peso ?? 0 }))",
+    para: "    membros.map((m) => ({ user_id: m.user_id, peso: m.peso ?? 1 }))",
   },
   {
     nome: "mes_por_new_date",

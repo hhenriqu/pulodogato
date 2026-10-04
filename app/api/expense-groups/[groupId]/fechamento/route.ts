@@ -9,6 +9,7 @@ import {
   linhaDoPrevisto,
   type LinhaCrua,
 } from "@/lib/fechamento-do-grupo";
+import { divisaoDoPeriodo, paraPercentual } from "@/lib/divisao-configurada";
 
 /**
  * O FECHAMENTO DO MES DO GRUPO (HMO-245).
@@ -29,6 +30,19 @@ import {
  * -- mora em `linhaDoPrevisto`, e nao num `.neq("status", "paid")` aqui: um
  * filtro de consulta trocado numa refatoracao nao quebra assercao nenhuma, e o
  * defeito que ele cria e um total dobrado que parece plausivel.
+ *
+ * A DIVISAO NAO E MAIS SEMPRE IGUAL (HMO-245, fase 4)
+ * ---------------------------------------------------
+ * A rota le `expense_groups.default_split_type` + `group_members.percentage` e
+ * passa o PESO de cada membro para `fecharMes`. Quem decide se aquele peso vale
+ * -- modo `percentage` com a soma fechando 100% -- e `divisaoDoPeriodo` em
+ * lib/divisao-configurada.ts, que tem teste e mutante. Esta rota faz as
+ * consultas e repassa; ela nao tem regra propria sobre porcentagem.
+ *
+ * O limite da configuracao, que a tela precisa dizer: ela vale para o
+ * FECHAMENTO DO PERIODO e para despesa NOVA. Mudar de 50/50 para 70/30 nao
+ * reescreve divisao de despesa ja lancada nem parte ja aprovada -- a 025
+ * trancou repontamento de divisao justamente por isso.
  *
  * O MES PADRAO E O DE SAO PAULO, NAO O DO SERVIDOR
  * ------------------------------------------------
@@ -67,16 +81,22 @@ export async function GET(
     }
 
     // ----------------------------------------------------------------
-    // 1. Os membros ativos, em ordem ESTAVEL
+    // 1. Os membros ativos, em ordem ESTAVEL, com o peso da divisao
     // ----------------------------------------------------------------
-    // `ratearCentavos` da o centavo que sobra aos primeiros da lista. Sem
-    // ordem fixa, o centavo de um mes de R$ 2.000 entre tres trocaria de pessoa
-    // a cada carregamento da tela. `joined_at` resolve quase sempre; o
-    // desempate por `user_id` cobre dois membros entrando no mesmo instante
-    // (o que acontece quando o grupo e criado com os dois).
+    // `ratearPorPeso` da o centavo que sobra a quem tem o maior resto, e em
+    // divisao IGUAL todos os restos empatam -- entao o desempate e a ordem
+    // desta lista. Sem ordem fixa, o centavo de um mes de R$ 2.000 entre tres
+    // trocaria de pessoa a cada carregamento da tela. `joined_at` resolve quase
+    // sempre; o desempate por `user_id` cobre dois membros entrando no mesmo
+    // instante (o que acontece quando o grupo e criado com os dois).
+    //
+    // `percentage` entra na MESMA consulta dos membros, de proposito: ela e um
+    // atributo da linha do membro, e uma segunda consulta teria de ser casada
+    // por id com esta -- uma ordem a mais para sair de sincronia, cujo defeito
+    // e a parte de A no nome de B.
     const { data: membrosCrus, error: erroMembros } = await supabase
       .from("group_members")
-      .select("user_id, joined_at")
+      .select("user_id, joined_at, percentage")
       .eq("group_id", groupId)
       .eq("status", "active")
       .order("joined_at", { ascending: true })
@@ -90,7 +110,8 @@ export async function GET(
       );
     }
 
-    const userIds = (membrosCrus ?? []).map((m) => m.user_id).filter(Boolean);
+    const ativos = (membrosCrus ?? []).filter((m) => m.user_id);
+    const userIds = ativos.map((m) => m.user_id);
 
     const { data: perfis } = userIds.length
       ? await supabase
@@ -101,10 +122,32 @@ export async function GET(
 
     const perfilPorId = new Map((perfis ?? []).map((p) => [p.id, p] as const));
 
-    const membros = userIds.map((id) => ({
-      user_id: id,
-      full_name: perfilPorId.get(id)?.full_name ?? null,
-      avatar_url: perfilPorId.get(id)?.avatar_url ?? null,
+    // ----------------------------------------------------------------
+    // 1b. O MODO DE DIVISAO, que e quem decide se o peso vale
+    // ----------------------------------------------------------------
+    // `default_split_type` sai do GRUPO e os percentuais saem dos MEMBROS: sem
+    // ler os dois, um grupo em modo `percentage` com a coluna nunca escrita
+    // (que e todo grupo criado antes da fase 3) rateia 0% da conta.
+    //
+    // Quem decide o que vale e `divisaoDoPeriodo`, em lib/divisao-configurada.ts
+    // -- esta rota nao tem regra propria sobre isso. Erro ao ler o grupo nao
+    // derruba o fechamento: `grupo` vem `null`, `configurado` cai em `equal`, e
+    // o mes fecha na divisao igual em vez de a tela ficar em branco.
+    const { data: grupo } = await supabase
+      .from("expense_groups")
+      .select("default_split_type")
+      .eq("id", groupId)
+      .maybeSingle();
+
+    const divisao = divisaoDoPeriodo(grupo?.default_split_type, ativos);
+
+    // O peso vai DENTRO do membro -- `divisaoDoPeriodo` devolve na ordem que
+    // recebeu, que e a ordem estavel da consulta acima.
+    const membros = ativos.map((m, i) => ({
+      user_id: m.user_id,
+      full_name: perfilPorId.get(m.user_id)?.full_name ?? null,
+      avatar_url: perfilPorId.get(m.user_id)?.avatar_url ?? null,
+      peso: divisao.pesos[i].peso,
     }));
 
     // ----------------------------------------------------------------
@@ -204,6 +247,26 @@ export async function GET(
       active_members: membros.length,
       /** Quem este fechamento e, para a tela destacar "voce paga/recebe". */
       viewer_user_id: user.id,
+      /**
+       * Com que divisao este mes foi rateado.
+       *
+       * `configurado` e o que o grupo pediu; `aplicado` e o que valeu. Os dois
+       * vem porque eles DIVERGEM em dois casos reais -- modo `custom`/
+       * `proportional`, que o fechamento nao sabe aplicar, e config gravada que
+       * nao fecha 100% -- e a tela precisa dizer qual, nao mostrar "igual" sobre
+       * um grupo configurado de outro jeito. `soma_percentual` e o numero pelo
+       * qual a tela cobra o ajuste.
+       *
+       * `pesos[].peso` e RAZAO, nao porcentagem: em `percentage` ele e o
+       * centesimo de ponto gravado (7000 = 70%); em `equal` e 1 para todos. O
+       * VALOR em real de cada um nao esta aqui e nao deve ser recalculado a
+       * partir daqui -- ele e `por_membro[].devido`, uma aritmetica so, para as
+       * duas telas nao terem como discordar.
+       */
+      divisao: {
+        ...divisao,
+        soma_percentual: paraPercentual(divisao.soma_centesimos),
+      },
     });
   } catch (error) {
     console.error("Erro no fechamento do grupo:", error);

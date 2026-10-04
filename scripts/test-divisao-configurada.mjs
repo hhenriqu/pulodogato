@@ -64,6 +64,7 @@ import {
   dePercentual,
   divisaoDaDespesa,
   conferirConfiguracao,
+  divisaoDoPeriodo,
 } from "../.tmp-divisao-configurada/divisao-configurada.js";
 
 /**
@@ -747,4 +748,176 @@ test("o que sai e o NORMALIZADO, nao o numero que entrou no corpo", () => {
     corpo({ ana: 70.004, bia: 29.996 })
   );
   assert.deepEqual(aprovado(r), { ana: 70, bia: 30 });
+});
+
+// =====================================================
+// `divisaoDoPeriodo`: a config virando PESO (HMO-245, fase 4)
+// =====================================================
+// Esta e a unica funcao que le `expense_groups.default_split_type` junto com
+// `group_members.percentage` e decide o que vale no fechamento do mes. Tudo o
+// que ela errar sai da rota do fechamento como um 200 com o numero errado.
+//
+// O caso que mais importa e o que ela RECUSA: `ratearPorPeso` divide pela SOMA
+// dos pesos, entao uma config gravada somando 97% nao divide 97% da conta --
+// divide 100% numa proporcao que ninguem configurou, com o total fechando e
+// nada na tela denunciando. `equal` e a saida certa, e `soma_centesimos` e o
+// numero pelo qual a tela cobra o ajuste.
+
+const membrosCom = (...pares) =>
+  pares.map(([user_id, percentage]) => ({ user_id, percentage }));
+
+const pesosDe = (d) => d.pesos.map((p) => p.peso);
+
+test("modo percentage com soma 100% aplica o peso gravado", () => {
+  const d = divisaoDoPeriodo("percentage", membrosCom(["ana", 70], ["bia", 30]));
+  assert.equal(d.aplicado, "percentage");
+  assert.equal(d.configurado, "percentage");
+  assert.equal(d.soma_centesimos, CENTESIMOS_TOTAIS);
+  // Centesimo de ponto: 70,00% e 7000, nao 70.
+  assert.deepEqual(pesosDe(d), [7000, 3000]);
+  // A ordem recebida e preservada -- a rota casa `pesos[i]` com `membros[i]`.
+  assert.deepEqual(
+    d.pesos.map((p) => p.user_id),
+    ["ana", "bia"]
+  );
+});
+
+test("as duas casas decimais chegam inteiras no peso", () => {
+  // 33,33 + 33,33 + 33,34 = 100,00. Em float `33.33 * 100` da
+  // 3332.9999999999995, e sem o arredondamento de `dePercentual` a soma nao
+  // fecharia 10000 e o grupo cairia em `equal` por um erro de binario.
+  const d = divisaoDoPeriodo(
+    "percentage",
+    membrosCom(["ana", 33.33], ["bia", 33.33], ["cau", 33.34])
+  );
+  assert.equal(d.soma_centesimos, CENTESIMOS_TOTAIS);
+  assert.equal(d.aplicado, "percentage");
+  assert.deepEqual(pesosDe(d), [3333, 3333, 3334]);
+  assert.equal(pesosDe(d).every(Number.isInteger), true);
+});
+
+test("soma != 100% NAO rateia a proporcao errada: cai em equal", () => {
+  // Como a RLS `group_members_update` permite `user_id = auth.uid()` e policy
+  // nao compara OLD com NEW, qualquer membro pode baixar a PROPRIA percentage
+  // direto no PostgREST. 70 + 27 continuaria dividindo 100% da conta, em
+  // 72,2/27,8 -- numeros que ninguem configurou, com o total fechando.
+  const d = divisaoDoPeriodo("percentage", membrosCom(["ana", 70], ["bia", 27]));
+  assert.equal(d.configurado, "percentage");
+  assert.equal(d.aplicado, "equal");
+  assert.equal(d.soma_centesimos, 9700);
+  assert.deepEqual(pesosDe(d), [1, 1]);
+
+  // E passa de 100% tambem: 70 + 40 e config invalida, nao "70/40 normalizado".
+  const demais = divisaoDoPeriodo(
+    "percentage",
+    membrosCom(["ana", 70], ["bia", 40])
+  );
+  assert.equal(demais.aplicado, "equal");
+  assert.equal(demais.soma_centesimos, 11000);
+});
+
+test("os quatro zeros do DEFAULT 0.00 caem em equal, e dizem a soma", () => {
+  // O estado de TODO grupo criado antes da fase 3: a coluna existe desde a 001
+  // e nunca foi escrita. Sem este degrau o grupo em modo percentage rateia 0%
+  // da conta da casa.
+  const d = divisaoDoPeriodo(
+    "percentage",
+    membrosCom(["ana", 0], ["bia", 0], ["cau", 0])
+  );
+  assert.equal(d.aplicado, "equal");
+  assert.equal(d.soma_centesimos, 0);
+  assert.deepEqual(pesosDe(d), [1, 1, 1]);
+});
+
+test("equal, custom e proportional nao usam peso -- e `configurado` diz qual era", () => {
+  // Os quatro valores do `expense_groups_default_split_type_check`. Só
+  // `percentage` tem numero de GRUPO para ler: `custom` e por despesa e
+  // `proportional` le `group_member_proportions`, o segundo armazem de
+  // porcentagem que a fase 7 aposenta. Ler os dois aqui e como se chega a duas
+  // telas discordando sobre dinheiro.
+  for (const modo of ["equal", "custom", "proportional"]) {
+    const d = divisaoDoPeriodo(modo, membrosCom(["ana", 70], ["bia", 30]));
+    assert.equal(d.aplicado, "equal", modo);
+    // O que a tela usa para nao mostrar "igual" sobre um grupo configurado de
+    // outro jeito.
+    assert.equal(d.configurado, modo);
+    assert.deepEqual(pesosDe(d), [1, 1], modo);
+    // A soma e informada mesmo quando nao foi usada: 70/30 gravado continua
+    // sendo o que a tela de configuracao vai mostrar.
+    assert.equal(d.soma_centesimos, CENTESIMOS_TOTAIS, modo);
+  }
+});
+
+test("modo ausente ou nao-string cai em equal sem lancar", () => {
+  // Erro ao ler o grupo deixa `grupo` nulo na rota, e `grupo?.default_split_type`
+  // chega `undefined`. O fechamento tem de sair na divisao igual, e nao a tela
+  // ficar em branco por causa de uma coluna.
+  //
+  // String vazia NAO esta nesta lista de proposito: `default_split_type` e
+  // `NOT NULL` com CHECK nos quatro valores (001_baseline:1064 e :1069), entao
+  // "" nao e um estado que o banco produz -- e afirmar o que a funcao faz com
+  // ele seria trancar uma escolha arbitraria em vez de um comportamento.
+  for (const modo of [undefined, null, 42, {}]) {
+    const d = divisaoDoPeriodo(modo, membrosCom(["ana", 70], ["bia", 30]));
+    assert.equal(d.aplicado, "equal", String(modo));
+    assert.equal(d.configurado, "equal", String(modo));
+  }
+});
+
+test("percentage que chega como STRING nao apaga a configuracao", () => {
+  // A falha desta conversao e MUDA: `dePercentual("70.00")` e 0, quatro zeros
+  // somam 0, e isso cai em `equal` -- a divisao configurada simplesmente nunca
+  // valeria, sem erro, sem log, com um fechamento que parece certo.
+  const d = divisaoDoPeriodo(
+    "percentage",
+    membrosCom(["ana", "70.00"], ["bia", "30.00"])
+  );
+  assert.equal(d.aplicado, "percentage");
+  assert.deepEqual(pesosDe(d), [7000, 3000]);
+});
+
+test("percentage nulo ou lixo vale zero, e nao derruba o fechamento", () => {
+  const d = divisaoDoPeriodo(
+    "percentage",
+    membrosCom(["ana", 100], ["bia", null], ["cau", "nao-numero"])
+  );
+  // Bia e Cau em zero: Ana banca o mes, que e config legitima.
+  assert.equal(d.aplicado, "percentage");
+  assert.equal(d.soma_centesimos, CENTESIMOS_TOTAIS);
+  assert.deepEqual(pesosDe(d), [10000, 0, 0]);
+});
+
+test("grupo sem membro ativo nao vira config aplicada", () => {
+  // Soma 0 != 10000: cai em `equal` com lista vazia. Nao ha guarda propria para
+  // isso, e a conferencia da soma ja descreve o estado.
+  const d = divisaoDoPeriodo("percentage", []);
+  assert.equal(d.aplicado, "equal");
+  assert.equal(d.soma_centesimos, 0);
+  assert.deepEqual(d.pesos, []);
+});
+
+test("o que `conferirConfiguracao` aprova e o que `divisaoDoPeriodo` aplica", () => {
+  // As duas pontas da mesma config: o PUT da fase 3 grava o que a primeira
+  // aprovou, e o fechamento da fase 4 le com a segunda. Se elas discordarem
+  // sobre o que soma 100%, o admin grava 200 e o fechamento rateia igual --
+  // sem erro em lugar nenhum.
+  for (const pedido of [0, 1, 33, 50, 70, 99, 100]) {
+    const corpoDoPut = [
+      { member_id: "ana", percentage: pedido },
+      { member_id: "bia", percentage: 100 - pedido },
+    ];
+    const aprovou = conferirConfiguracao(["ana", "bia"], corpoDoPut).ok;
+
+    const d = divisaoDoPeriodo(
+      "percentage",
+      corpoDoPut.map((m) => ({ user_id: m.member_id, percentage: m.percentage }))
+    );
+    assert.equal(
+      d.aplicado === "percentage",
+      aprovou,
+      `pedido ${pedido}: o PUT ${aprovou ? "aprova" : "recusa"} e o fechamento ${
+        d.aplicado === "percentage" ? "aplica" : "ignora"
+      }`
+    );
+  }
 });

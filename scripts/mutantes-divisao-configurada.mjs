@@ -308,6 +308,50 @@ const mutantes = [
     "    porMembro: idsAtivos.map((member_id, i) => ({\n      member_id,\n      percentage: paraPercentual(centesimos[i]),\n    })),",
     "    porMembro: pedidos.map((p) => ({\n      member_id: p.member_id,\n      percentage: paraPercentual(dePercentual(p.percentage)),\n    })),",
   ],
+
+  // -------------------------------------------------------------------------
+  // `divisaoDoPeriodo` -- a config virando peso do fechamento (fase 4)
+  // -------------------------------------------------------------------------
+  [
+    "config que NAO soma 100% passa a valer, e o mes e rateado numa proporcao que ninguem configurou",
+    '    configurado === "percentage" && soma === CENTESIMOS_TOTAIS',
+    '    configurado === "percentage"',
+  ],
+  [
+    "o modo e ignorado: grupo em `equal` passa a ser rateado pela coluna `percentage` que ninguem pediu para usar",
+    '    configurado === "percentage" && soma === CENTESIMOS_TOTAIS',
+    "    soma === CENTESIMOS_TOTAIS",
+  ],
+  [
+    "divisao igual passa a mandar peso ZERO em vez de 1 -- o fechamento so acerta se o degrau do 0/0 dele estiver intacto",
+    '      peso: aplicado === "percentage" ? centesimos[i] : 1,',
+    '      peso: aplicado === "percentage" ? centesimos[i] : 0,',
+  ],
+  [
+    "o peso sai sempre do percentual gravado, inclusive em `equal`: grupo nao configurado manda os quatro zeros do DEFAULT para o fechamento",
+    '      peso: aplicado === "percentage" ? centesimos[i] : 1,',
+    "      peso: centesimos[i],",
+  ],
+  [
+    "`percentage` que chega como string vale ZERO, e a divisao configurada nunca vale -- sem erro e sem log",
+    '      typeof m.percentage === "string" ? Number(m.percentage) : m.percentage',
+    "      m.percentage",
+  ],
+  [
+    "`configurado` passa a repetir `aplicado`, e a tela mostra 'igual' sobre um grupo configurado de outro jeito",
+    "    configurado,\n    aplicado,",
+    "    configurado: aplicado,\n    aplicado,",
+  ],
+  [
+    "`soma_centesimos` vira a soma ESPERADA em vez da gravada, e a tela perde o numero pelo qual cobra o ajuste",
+    "    soma_centesimos: soma,",
+    "    soma_centesimos: CENTESIMOS_TOTAIS,",
+  ],
+  [
+    "a ordem dos pesos deixa de ser a dos membros recebidos: a parte de um sai no nome do outro",
+    '    pesos: membros.map((m, i) => ({\n      user_id: m.user_id,\n      peso: aplicado === "percentage" ? centesimos[i] : 1,\n    })),',
+    '    pesos: [...membros].reverse().map((m, i) => ({\n      user_id: m.user_id,\n      peso: aplicado === "percentage" ? centesimos[i] : 1,\n    })),',
+  ],
 ];
 
 // ---------------------------------------------------------------------------

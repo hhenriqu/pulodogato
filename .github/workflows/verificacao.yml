@@ -4037,9 +4037,10 @@ jobs:
       # verde tambem quando deixam de medir o que deveriam.
       #
       # Os quatro mutantes abaixo sao os que `scripts/mutantes-divisao-configurada.mjs`
-      # mede inteiro (32 deles, todos mortos); estes quatro estao aqui porque sao
-      # os que viram dinheiro. O primeiro e o controle negativo que a issue pede
-      # por nome.
+      # mede inteiro (49 deles, todos mortos -- os 8 ultimos sao de
+      # `divisaoDoPeriodo`, a fase 4); estes quatro estao aqui porque sao os que
+      # viram dinheiro. O primeiro e o controle negativo que a issue pede por
+      # nome.
       - name: 'A verificacao sabe falhar (divisao configurada do grupo)'
         run: |
           set -uo pipefail

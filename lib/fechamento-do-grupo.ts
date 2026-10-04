@@ -33,9 +33,9 @@
  * 2. **O RATEIO TEM DE FECHAR EXATO.** R$ 2.000 entre 3 pessoas nao da tres
  *    partes iguais. Arredondar cada parte por conta propria (666,67 x 3 =
  *    2.000,01) deixa um residuo de um centavo que aparece como "as contas deste
- *    grupo nao fecham" em TODO grupo de tres. `ratearCentavos` distribui o
+ *    grupo nao fecham" em TODO grupo de tres. `ratearPorPeso` distribui o
  *    resto por maior-resto, entao a soma das partes e o total, sempre e
- *    exatamente.
+ *    exatamente -- e isso vale IGUAL na divisao 70/30, que tem a mesma sobra.
  *
  *    Isso DIVERGE de propósito de `parteDoMembro` (lib/parte-do-grupo.ts), que
  *    copia o arredondamento do trigger (`ABS(amount) / member_count` por
@@ -87,6 +87,25 @@ export interface MembroDoFechamento {
   user_id: string;
   full_name?: string | null;
   avatar_url?: string | null;
+  /**
+   * O peso deste membro na divisao do mes.
+   *
+   * Ausente em TODOS os membros = divisao igual, que e o caso de todo chamador
+   * anterior a fase 4. Ausente em ALGUNS = aquele membro nao divide a conta
+   * (peso zero), e nao "aquele membro divide igual aos outros": misturar as
+   * duas leituras numa lista so e que produz parte plausivel na pessoa errada.
+   *
+   * A unidade e livre porque so a RAZAO entre os pesos conta: 7000/3000
+   * (centesimos de ponto, como `group_members.percentage` guarda) e 7/3 dao a
+   * mesma divisao. Quem produz o numero e `divisaoDoPeriodo`
+   * (lib/divisao-configurada.ts), que le `default_split_type` + a coluna.
+   *
+   * O peso vem no MEMBRO, e nao num array paralelo de pesos, de proposito: um
+   * segundo array e uma ordem a mais para sair de sincronia, e o defeito que
+   * ela produz e a parte de A no nome de B -- um numero plausivel, atribuido a
+   * pessoa errada, sem erro nenhum no caminho.
+   */
+  peso?: number;
 }
 
 /** A posicao de um membro no mes. */
@@ -165,26 +184,66 @@ export function valorDoFechamento(
   return toReais(Math.round(toCents(bruto) * taxa));
 }
 
+/** Um participante do rateio e o peso dele. Ver `MembroDoFechamento.peso`. */
+export interface ParticipanteComPeso {
+  user_id: string;
+  peso: number;
+}
+
 /**
- * Divide um total em centavos entre N pessoas de modo que as partes somem
- * EXATAMENTE o total.
+ * Divide um total em centavos entre participantes COM PESO, de modo que as
+ * partes somem EXATAMENTE o total.
  *
- * Maior-resto: todos recebem o piso da divisao, e os primeiros `resto`
- * participantes (na ordem recebida) ganham um centavo a mais. R$ 2.000 entre
- * tres da 666,67 / 666,67 / 666,66 -- e a soma e 2.000,00, nao 2.000,01.
+ * Maior-resto: cada um recebe o piso da parte proporcional ao seu peso, e os
+ * centavos que sobram vao para quem tem o maior resto. R$ 2.000 entre tres
+ * pesos iguais da 666,67 / 666,67 / 666,66 -- e a soma e 2.000,00, nao
+ * 2.000,01. R$ 2.000 em 70/30 da 1.400,00 / 600,00.
  *
- * A ordem recebida decide quem fica com o centavo extra, e por isso a rota
- * ordena os membros de forma estavel: sem isso, o centavo pularia de pessoa a
- * cada refresh da tela sem nada ter mudado (a mesma razao do desempate por
- * `user_id` em `simplifySettlements`).
+ * O PESO E RAZAO, NAO PORCENTAGEM
+ * -------------------------------
+ * A conta divide por `somaPesos`, entao 7000/3000, 70/30 e 7/3 sao a MESMA
+ * divisao. Isso e deliberado e tem consequencia: uma configuracao gravada que
+ * somasse 97% nao rateia 97% da conta aqui -- ela rateia 100% numa proporcao
+ * que ninguem configurou, que e um defeito pior porque o total fecha. Quem
+ * recusa esse estado e `divisaoDoPeriodo`, ANTES de o peso chegar aqui.
+ *
+ * O DESEMPATE DO CENTAVO E A ORDEM RECEBIDA, E ISSO E O CASO IGUAL
+ * ----------------------------------------------------------------
+ * Com pesos iguais TODOS os restos empatam -- o empate e a regra, nao a
+ * excecao. Entao o desempate decide quem leva o centavo em todo grupo de tres,
+ * e ele e o indice: a ordem em que o chamador entregou a lista. A rota ordena
+ * os membros por `joined_at` + `user_id` justamente por isso; sem ordem fixa o
+ * centavo pularia de pessoa a cada refresh da tela sem nada ter mudado (a
+ * mesma razao do desempate por `user_id` em `simplifySettlements`).
+ *
+ * PESO ZERO RECEBE ZERO, E ISSO SAI DA ARITMETICA -- NAO DE UMA GUARDA
+ * --------------------------------------------------------------------
+ * Membro em 0% nao pode aparecer com uma parte de um centavo. Nao ha `if` para
+ * isso, e nao por esquecimento: com peso 0 o piso e 0 e o resto e 0, que e o
+ * MENOR resto possivel. E a sobra nunca alcanca os restos zerados -- como
+ * `soma(restos) = sobra * somaPesos` e cada resto e no maximo `somaPesos - 1`,
+ * existem estritamente MAIS de `sobra` participantes com resto positivo.
+ * Qualquer guarda aqui seria codigo que nenhum teste consegue distinguir de
+ * nada ([[trava-pode-proteger-estado-inalcancavel]]) -- o que o teste cobra e
+ * a propriedade, nao a guarda.
+ *
+ * O DEGRAU DO 0/0
+ * ---------------
+ * Todos os pesos em zero (que e o estado de quem nao configurou nada, e o que
+ * `fecharMes` produz para quem nao manda peso) nao tem proporcao a respeitar:
+ * `sobra * 0 / 0` e `NaN`, e `NaN` nao estoura -- atravessa a aritmetica calado
+ * e chega na tela como "R$ NaN". Sem proporcao, a divisao e IGUAL, dita na
+ * mesma aritmetica com pesos uniformes em vez de num segundo caminho de codigo
+ * que possa divergir do primeiro. E a mesma escolha de `distribuir` em
+ * lib/divisao-configurada.ts.
  *
  * Total negativo e tratado pelo mesmo caminho (piso para o lado do zero e resto
  * distribuido), mas o fechamento nunca produz um: `valorDoFechamento` ja
  * normalizou o sinal.
  */
-export function ratearCentavos(
+export function ratearPorPeso(
   totalCents: number,
-  participantes: readonly string[]
+  participantes: readonly ParticipanteComPeso[]
 ): Map<string, number> {
   const partes = new Map<string, number>();
   const n = participantes.length;
@@ -193,15 +252,68 @@ export function ratearCentavos(
   const total = Math.round(totalCents);
   const sinal = total < 0 ? -1 : 1;
   const absoluto = Math.abs(total);
-  const piso = Math.floor(absoluto / n);
-  const resto = absoluto - piso * n;
 
-  participantes.forEach((user_id, i) => {
-    const parte = piso + (i < resto ? 1 : 0);
-    partes.set(user_id, sinal * parte);
-  });
+  // Peso negativo, `NaN` e `Infinity` nao vem de slider -- vem de leitura de
+  // banco e de `Number("")`/`Number("abc")`. Os dois atravessariam a proporcao
+  // calados: `NaN` contamina a soma e TODO MUNDO sai `NaN`; negativo encolhe a
+  // soma e inverte a proporcao de quem sobrou. Virar 0 joga o caso em "este
+  // membro nao divide", que e definido.
+  const limpos = participantes.map((p) =>
+    typeof p.peso === "number" && Number.isFinite(p.peso) && p.peso > 0
+      ? p.peso
+      : 0
+  );
+
+  const somaPesos = limpos.reduce((acc, p) => acc + p, 0);
+  const efetivos = somaPesos > 0 ? limpos : limpos.map(() => 1);
+  const soma = somaPesos > 0 ? somaPesos : n;
+
+  // `absoluto * p` antes da divisao, e o resto como `absoluto * p - base * soma`
+  // em vez de `(absoluto * p) / soma - base`: as duas ordenam igual, mas com
+  // peso inteiro -- o caso de todo chamador -- a primeira e exata por
+  // construcao, sem precisar de argumento sobre precisao de double. A mesma
+  // forma de `distribuir` em lib/divisao-configurada.ts.
+  const base = efetivos.map((p) => Math.floor((absoluto * p) / soma));
+  const restos = efetivos.map((p, i) => absoluto * p - base[i] * soma);
+
+  let sobra = absoluto - base.reduce((acc, b) => acc + b, 0);
+
+  const ordem = restos
+    .map((resto, i) => ({ i, resto }))
+    .sort((a, b) => (b.resto !== a.resto ? b.resto - a.resto : a.i - b.i));
+
+  const centavos = [...base];
+  for (const { i } of ordem) {
+    if (sobra <= 0) break;
+    centavos[i] += 1;
+    sobra -= 1;
+  }
+
+  participantes.forEach((p, i) => partes.set(p.user_id, sinal * centavos[i]));
 
   return partes;
+}
+
+/**
+ * Divide um total em centavos IGUAL entre N pessoas, somando exatamente o total.
+ *
+ * Continua existindo, e delegando, porque ela e a aritmetica que esta em
+ * producao desde o PR #150 e tem teste e mutante proprios: trocar os chamadores
+ * por `ratearPorPeso` reescreveria assercoes que provam que o caso igual nao
+ * regrediu, que e justamente o que elas servem para provar.
+ *
+ * Peso 1 e peso 0 dariam o MESMO resultado aqui (zero em todos cai no degrau do
+ * 0/0, que e a divisao igual). Esta escrito 1 porque e o que a funcao significa
+ * -- "todo mundo pesa o mesmo" --, e nao porque o numero mude a saida.
+ */
+export function ratearCentavos(
+  totalCents: number,
+  participantes: readonly string[]
+): Map<string, number> {
+  return ratearPorPeso(
+    totalCents,
+    participantes.map((user_id) => ({ user_id, peso: 1 }))
+  );
 }
 
 /** O que o fechamento aceita como linha crua, antes do recorte do mes. */
@@ -318,8 +430,16 @@ export function fecharMes(
     .filter((l) => l.origem === "realizado")
     .reduce((soma, l) => soma + toCents(l.valor), 0);
 
-  const ids = membros.map((m) => m.user_id);
-  const devidoPor = ratearCentavos(totalCents, ids);
+  // `?? 0` e nao `?? 1`: membro sem peso nao entra na proporcao. Quando NENHUM
+  // membro tem peso -- o chamador que nao configurou divisao, e toda assercao
+  // de divisao igual desta suite -- todos ficam em zero e o degrau do 0/0 de
+  // `ratearPorPeso` divide IGUAL. Com `?? 1` o membro sem peso dividiria 1
+  // contra os 7000 de quem tem, ou seja receberia uma parte de quase zero em
+  // vez de uma parte igual: o mesmo numero plausivel, pela razao errada.
+  const devidoPor = ratearPorPeso(
+    totalCents,
+    membros.map((m) => ({ user_id: m.user_id, peso: m.peso ?? 0 }))
+  );
 
   const pagoPor = new Map<string, number>();
   let naoMembroCents = 0;

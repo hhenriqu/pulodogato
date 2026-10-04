@@ -144,6 +144,116 @@ test("a transferencia que o cartao le tem os campos que simplifySettlements prod
   assert.ok(noCartao.includes("amount"));
 });
 
+// ---------------------------------------------------------------------------
+// A FIACAO DA DIVISAO CONFIGURADA (HMO-245, fase 4)
+// ---------------------------------------------------------------------------
+// A aritmetica do peso tem teste e 21 mutantes em
+// test-fechamento-do-grupo.mjs, e a decisao "esta config vale?" tem 8 mutantes
+// em mutantes-divisao-configurada.mjs. O que NENHUM dos dois alcanca e a rota:
+// ela pode ler a config certa, chamar a funcao certa e nao PASSAR o peso para
+// `fecharMes` -- e o fechamento sairia na divisao igual, com a tela de
+// configuracao mostrando 70/30 ao lado. Dois numeros certos e um defeito.
+//
+// O tsc nao pega isso: `peso` e opcional em `MembroDoFechamento` (tem de ser,
+// para os chamadores anteriores a esta fase continuarem compilando), entao
+// esquecer o campo compila. Estas assercoes sao sobre a fonte SEM COMENTARIO --
+// ver o cabecalho: a prosa desta rota cita `default_split_type` e `percentage`
+// varias vezes, e uma assercao textual que nao tirasse os comentarios passaria
+// verde casando com a explicacao em vez de com a consulta.
+
+test("a rota le as DUAS metades da configuracao: o modo e os percentuais", () => {
+  // Uma so nao serve. So o modo deixa o peso de fora; so os percentuais fazem
+  // um grupo em `equal` ser rateado por uma coluna que ninguem pediu para usar.
+  assert.match(
+    rota,
+    /\.select\([^)]*\bpercentage\b/,
+    "a rota nao le `percentage` dos membros -- o fechamento rateia sempre igual"
+  );
+  assert.match(
+    rota,
+    /\.select\([^)]*\bdefault_split_type\b/,
+    "a rota nao le `default_split_type` do grupo -- o peso valeria sem o grupo " +
+      "ter pedido modo porcentagem"
+  );
+  // E `percentage` sai da MESMA consulta dos membros, nao de uma segunda que
+  // teria de ser casada por id com esta.
+  assert.match(
+    rota,
+    /from\("group_members"\)\s*\n?\s*\.select\("[^"]*percentage[^"]*"\)/,
+    "`percentage` nao vem da consulta de group_members"
+  );
+});
+
+test("a decisao sobre a config nao e refeita na rota", () => {
+  // A regra ("percentage com soma 100%") mora em lib/divisao-configurada.ts,
+  // onde tem teste e mutante. Reescrita aqui, todo defeito dela sai como um
+  // 200 com o numero errado.
+  assert.match(
+    rota,
+    /divisaoDoPeriodo\(/,
+    "a rota nao chama `divisaoDoPeriodo`"
+  );
+  assert.ok(
+    !/default_split_type\s*===\s*["']percentage["']/.test(rota),
+    "a rota compara `default_split_type` por conta propria -- essa regra tem de " +
+      "ficar em lib/divisao-configurada.ts, que e onde ela tem mutante"
+  );
+});
+
+test("o peso CHEGA em fecharMes, e nao morre numa variavel", () => {
+  // O defeito que esta assercao existe para pegar: ler a config, montar
+  // `divisao` e esquecer o `peso:` no objeto do membro. Compila, responde 200,
+  // devolve a config na resposta -- e rateia igual.
+  const montagemDoMembro = rota.match(
+    /const membros = ativos\.map\(([\s\S]*?)\n    \}\);/
+  );
+  assert.ok(
+    montagemDoMembro,
+    "nao achei a montagem de `membros` na rota. Se ela mudou de forma, " +
+      "atualize este teste -- nao o apague: ele e o unico lugar que prova que o " +
+      "peso sai da config e entra no rateio."
+  );
+  assert.match(
+    montagemDoMembro[1],
+    /peso:\s*divisao\.pesos\[/,
+    "`membros` nao recebe o peso de `divisao.pesos` -- o fechamento vai ratear " +
+      "igual mesmo com 70/30 configurado"
+  );
+  assert.match(rota, /fecharMes\(linhas, membros, mes\)/);
+});
+
+test("a resposta diz com que divisao o mes foi rateado", () => {
+  // `configurado` e `aplicado` DIVERGEM em dois casos reais -- modo custom/
+  // proportional e config que nao fecha 100% -- e sem os dois na resposta a
+  // tela mostra "igual" sobre um grupo configurado de outro jeito.
+  const devolvidos = camposQueARotaDevolve();
+  assert.ok(
+    devolvidos.includes("divisao"),
+    "a resposta nao traz `divisao`: " + devolvidos.join(", ")
+  );
+  const bloco = rota.match(/divisao: \{([\s\S]*?)\n      \},/);
+  assert.ok(bloco, "nao achei o bloco `divisao` da resposta");
+  assert.match(
+    bloco[1],
+    /\.\.\.divisao/,
+    "`divisao` nao repassa o que `divisaoDoPeriodo` decidiu"
+  );
+  assert.match(
+    bloco[1],
+    /soma_percentual/,
+    "a resposta nao traz a soma gravada -- a tela nao tem numero para cobrar o ajuste"
+  );
+});
+
+// NAO HA ASSERCAO SOBRE O AVISO "a config nao reescreve despesa ja lancada"
+// --------------------------------------------------------------------------
+// Ele e um limite REAL (a 025 trancou repontamento de divisao, e mudar de 50/50
+// para 70/30 nao toca uma parte ja gravada), e esta escrito no cabecalho desta
+// rota. Mas uma assercao de que a FRASE existe na fonte nao mede nada: ela casa
+// com a prosa que descreve o limite e sobreviveria a qualquer mudanca de
+// comportamento. O lugar onde esse aviso precisa ser verificado e a TELA da
+// fase 5, onde a pessoa o le -- e la ele e texto renderizado, nao comentario.
+
 test("o cartao chama a rota com o parametro `mes`, que e o que a rota le", () => {
   // Se um lado escrever `month` e o outro `mes`, a rota cai no mes corrente
   // em silencio: o seletor parece nao funcionar, sem erro nenhum.
