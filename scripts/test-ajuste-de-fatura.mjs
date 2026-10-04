@@ -45,8 +45,12 @@ import {
   TETO_DO_AJUSTE,
   ajusteDaChave,
   ajusteDaFatura,
+  ajusteParaFecharEm,
+  centavosDaFaturaSemAjuste,
+  centavosDe,
   chaveAjuste,
   descricaoPadraoDoAjuste,
+  direcaoDaDiferenca,
   direcaoDoAjuste,
   ehAjusteDeFatura,
   ehLinhaDeAjuste,
@@ -55,7 +59,6 @@ import {
   primeiroDiaDoMesDaFatura,
   totalComOAjuste,
   totalSemOAjuste,
-  validarAjuste,
   valorDoAjusteNaFatura,
 } from "../.tmp-ajuste-de-fatura/lib/ajuste-de-fatura.js";
 
@@ -276,65 +279,47 @@ test("nota escrita a mao NAO passa por chave canonica", () => {
 // 4. O QUE O USUARIO DIGITOU
 // ---------------------------------------------------------------------------
 
-test("valor + direcao viram o valor assinado na fatura", () => {
-  assert.deepEqual(validarAjuste({ valor: "50.00", direcao: "aumenta" }), {
-    ok: true,
-    valorNaFatura: 50,
-  });
-  assert.deepEqual(validarAjuste({ valor: "50.00", direcao: "abate" }), {
-    ok: true,
-    valorNaFatura: -50,
-  });
-  assert.deepEqual(validarAjuste({ valor: 12.34, direcao: "aumenta" }), {
-    ok: true,
-    valorNaFatura: 12.34,
-  });
-});
+// A SUITE DE `validarAjuste({ valor, direcao })` SAIU DAQUI na 2a volta da
+// HMO-253, junto com a funcao. Ela cobria "o valor digitado + o lado escolhido",
+// e os dois controles sairam da tela quando o ajuste passou a ser automatico:
+// depois disso a funcao nao tinha chamador nenhum em producao, e oito testes
+// verdes atras dela mediam codigo que nao embarca.
+//
+// O QUE ELA COBRIA DE VERDADE e o que a secao 6b cobre agora, sobre o caminho
+// vivo: o zero que nao pode virar lancamento, os centavos que nao podem
+// escorregar, o teto antes do `numeric(15,2)`, e o sinal que a view inverte.
 
-test("zero e recusado, e com a mensagem que ensina o caminho", () => {
-  const r = validarAjuste({ valor: "0", direcao: "aumenta" });
-  assert.equal(r.ok, false);
-  // Quem queria TIRAR o ajuste digitaria zero; se isso gravasse uma linha de
-  // R$ 0,00, a pessoa sairia achando que tirou e o ajuste velho continuaria
-  // valendo. A mensagem tem de apontar o Remover.
-  assert.match(r.erro, /Remover ajuste/);
-});
-
-test("centavos de zero tambem sao zero", () => {
-  // "0.004" arredonda para R$ 0,00 em `numeric(15,2)`: aceitar aqui gravaria uma
-  // linha que nao muda nada e ainda aparece na fatura com cara de compra.
-  assert.equal(validarAjuste({ valor: "0.004", direcao: "aumenta" }).ok, false);
-  assert.equal(validarAjuste({ valor: "0.005", direcao: "aumenta" }).ok, true);
-});
-
-test("valor ausente, vazio ou nao numerico e recusado", () => {
-  for (const ruim of [null, undefined, "", "   ", "abc", "R$ 50", Number.NaN, Infinity]) {
-    assert.equal(
-      validarAjuste({ valor: ruim, direcao: "aumenta" }).ok,
-      false,
-      `${String(ruim)} nao e valor`
-    );
-  }
-});
-
-test("negativo e recusado -- a direcao e que diz o lado", () => {
-  // `CampoDeValor` e mascara de digitos e nunca emite negativo. Um negativo aqui
-  // veio de outro cliente, e aceitar faria "abate -50" significar "aumenta 50":
-  // a tela dizendo o contrario do que o banco guarda.
-  const r = validarAjuste({ valor: "-50", direcao: "abate" });
-  assert.equal(r.ok, false);
-});
-
-test("direcao ausente ou inventada e recusada", () => {
-  for (const ruim of [null, undefined, "", "soma", "positivo", true, 1]) {
-    assert.equal(validarAjuste({ valor: "50", direcao: ruim }).ok, false);
-  }
+test("zero nao se transforma em lancamento, venha de onde vier", () => {
+  // Quem queria TIRAR o ajuste nao digita mais zero (o campo pede o saldo real),
+  // mas uma diferenca nula continua existindo -- e ela nao pode virar linha.
+  // `lancamentoDoAjuste` e a ultima porta antes do banco.
+  assert.equal(
+    lancamentoDoAjuste({ valorNaFatura: 0, mes: "2026-10", accountId: CARTAO }),
+    null
+  );
+  // "0.004" arredonda para R$ 0,00 em `numeric(15,2)`. Em centavos ele e 0, e
+  // `ajusteParaFecharEm` o chama de "a fatura ja bate" -- que e a resposta certa:
+  // nao ha nada a lancar.
+  assert.equal(
+    ajusteParaFecharEm({ saldoReal: "1240.004", totalSemAjuste: 1240 }).fecha,
+    true
+  );
+  assert.equal(
+    ajusteParaFecharEm({ saldoReal: "1240.005", totalSemAjuste: 1240 }).fecha,
+    false
+  );
 });
 
 test("valor alto demais e recusado antes do banco", () => {
   // `numeric(15,2)` estoura e o 22003 chega na tela como "Erro interno".
-  assert.equal(validarAjuste({ valor: TETO_DO_AJUSTE, direcao: "aumenta" }).ok, false);
-  assert.equal(validarAjuste({ valor: TETO_DO_AJUSTE - 1, direcao: "aumenta" }).ok, true);
+  assert.equal(
+    ajusteParaFecharEm({ saldoReal: TETO_DO_AJUSTE, totalSemAjuste: 0 }).ok,
+    false
+  );
+  assert.equal(
+    ajusteParaFecharEm({ saldoReal: TETO_DO_AJUSTE - 1, totalSemAjuste: 0 }).ok,
+    true
+  );
 });
 
 test("a descricao padrao diz de que lado o ajuste e", () => {
@@ -466,34 +451,309 @@ test("ALTERAR um ajuste nao empilha: a previa troca o valor, nao soma", () => {
 });
 
 test("a previa fecha com o que o POST grava, nos dois lados", () => {
-  // A ponte entre a conta da tela e a do banco: `totalComOAjuste` tem de dar o
-  // mesmo que somar `invoice_amount` (= -amount) do lancamento gravado.
-  for (const [valor, direcao] of [
-    ["50.00", "aumenta"],
-    ["50.00", "abate"],
-    ["0.01", "abate"],
-    ["1234.56", "aumenta"],
-  ]) {
-    const validado = validarAjuste({ valor, direcao });
-    assert.equal(validado.ok, true);
+  // A ponte entre a conta da tela e a do banco, PELO CAMINHO VIVO: a tela calcula
+  // a diferenca com `ajusteParaFecharEm` e o POST grava com `lancamentoDoAjuste`.
+  // `totalComOAjuste` tem de dar o mesmo que somar `invoice_amount` (= -amount)
+  // da linha gravada -- senao a conta que o usuario le antes de confirmar
+  // discorda do que a fatura vai mostrar depois.
+  //
+  // A base e 100 de compras; cada saldo real abaixo cobre um lado e um centavo.
+  for (const saldoReal of ["150.00", "50.00", "99.99", "1334.56"]) {
+    const calculado = ajusteParaFecharEm({ saldoReal, totalSemAjuste: 100 });
+    assert.equal(calculado.ok, true, `${saldoReal} tem de ser aceito`);
+    assert.equal(calculado.fecha, false);
 
     const gravado = lancamentoDoAjuste({
-      valorNaFatura: validado.valorNaFatura,
+      valorNaFatura: calculado.valorNaFatura,
       mes: "2026-10",
       accountId: CARTAO,
     });
 
     assert.equal(
-      totalComOAjuste(100, validado.valorNaFatura),
+      totalComOAjuste(100, calculado.valorNaFatura),
       100 + -gravado.amount,
-      `previa e gravacao discordam em ${valor} ${direcao}`
+      `previa e gravacao discordam em ${saldoReal}`
     );
+    // E a fatura fecha EXATAMENTE no que o usuario informou -- que e o pedido
+    // inteiro da issue, em uma assercao.
+    assert.equal(100 + -gravado.amount, Number(saldoReal));
   }
 });
 
 test("fatura ausente nao quebra a conta da previa", () => {
   assert.equal(totalSemOAjuste(null, null), 0);
   assert.equal(totalSemOAjuste(undefined, null), 0);
+});
+
+// ---------------------------------------------------------------------------
+// 6b. O AJUSTE AUTOMATICO: O SALDO REAL -> A DIFERENCA (HMO-253, 2a volta)
+// ---------------------------------------------------------------------------
+// "Deve ser automatico. Eu lanco o valor real que esta hoje meu cartao e um
+// metodo verifica se e menor ou maior que a fatura, e lanca a diferenca somando
+// ou subtraindo."
+
+test("saldo real MAIOR que a fatura acrescenta a diferenca", () => {
+  const r = ajusteParaFecharEm({ saldoReal: "1290.00", totalSemAjuste: 1240 });
+  assert.equal(r.ok, true);
+  assert.equal(r.fecha, false);
+  assert.equal(r.valorNaFatura, 50);
+  assert.equal(direcaoDaDiferenca(r.valorNaFatura), "aumenta");
+});
+
+test("saldo real MENOR que a fatura abate a diferenca", () => {
+  const r = ajusteParaFecharEm({ saldoReal: "1190.00", totalSemAjuste: 1240 });
+  assert.equal(r.ok, true);
+  assert.equal(r.fecha, false);
+  assert.equal(r.valorNaFatura, -50);
+  assert.equal(direcaoDaDiferenca(r.valorNaFatura), "abate");
+});
+
+test("a diferenca derivada atravessa a inversao de sinal sem se perder", () => {
+  // A ponta a ponta do pedido: o banco diz R$ 1.290 sobre uma fatura de R$ 1.240,
+  // e o que tem de chegar na coluna `amount` e -50 (despesa e NEGATIVA neste
+  // app, e a view publica `-amount`). Um sinal trocado em qualquer um dos dois
+  // passos daria o numero certo andando para o lado errado.
+  const acrescimo = ajusteParaFecharEm({ saldoReal: 1290, totalSemAjuste: 1240 });
+  const aMais = lancamentoDoAjuste({
+    valorNaFatura: acrescimo.valorNaFatura,
+    mes: "2026-10",
+    accountId: CARTAO,
+  });
+  assert.equal(aMais.amount, -50);
+  assert.equal(aMais.transaction_type, "expense");
+  assert.equal(1240 + -aMais.amount, 1290, "a fatura tem de fechar em 1290");
+
+  // O outro lado: o banco diz R$ 1.190 e o ajuste e um estorno.
+  const abatido = ajusteParaFecharEm({ saldoReal: 1190, totalSemAjuste: 1240 });
+  const aMenos = lancamentoDoAjuste({
+    valorNaFatura: abatido.valorNaFatura,
+    mes: "2026-10",
+    accountId: CARTAO,
+  });
+  assert.equal(aMenos.amount, 50);
+  assert.equal(aMenos.transaction_type, "income");
+  assert.equal(1240 + -aMenos.amount, 1190);
+});
+
+test("fatura que JA BATE devolve fecha:true, e nao um ajuste de zero", () => {
+  // Armadilha 4: sao duas respostas boas e diferentes. Quem le isso como erro
+  // manda o usuario que digitou o numero certo procurar o que ele errou; quem
+  // grava zero poe uma linha na fatura que nao muda nada e parece compra.
+  const r = ajusteParaFecharEm({ saldoReal: "1240.00", totalSemAjuste: 1240 });
+  assert.equal(r.ok, true);
+  assert.equal(r.fecha, true);
+  assert.equal(r.valorNaFatura, 0);
+  // E `lancamentoDoAjuste` recusaria esse zero de qualquer forma -- a rota nao
+  // pode cair nesse ramo, e por isso ela trata `fecha` ANTES de montar a linha.
+  assert.equal(
+    lancamentoDoAjuste({ valorNaFatura: 0, mes: "2026-10", accountId: CARTAO }),
+    null
+  );
+});
+
+test("CAMPO VAZIO nao e zero: nao vira estorno da fatura inteira", () => {
+  // `Number("")` e `0` em JavaScript. Com o campo vazio lido como zero, a
+  // resposta seria um ajuste de -1.240 -- o estorno da fatura INTEIRA, com a
+  // aritmetica visivelmente correta.
+  for (const vazio of ["", "   ", null, undefined, "abc", {}, []]) {
+    const r = ajusteParaFecharEm({ saldoReal: vazio, totalSemAjuste: 1240 });
+    assert.equal(r.ok, false, `${JSON.stringify(vazio)} nao pode virar 0`);
+    assert.match(r.erro, /Informe quanto o cartão diz hoje/);
+  }
+});
+
+test("saldo real ZERO e uma afirmacao legitima, e abate a fatura inteira", () => {
+  // O outro lado do teste de cima: "meu cartao esta zerado hoje" e um dado
+  // valido, e recusa-lo junto com o campo vazio deixaria sem jeito de zerar uma
+  // fatura que o banco diz estar zerada.
+  const r = ajusteParaFecharEm({ saldoReal: "0", totalSemAjuste: 1240 });
+  assert.equal(r.ok, true);
+  assert.equal(r.fecha, false);
+  assert.equal(r.valorNaFatura, -1240);
+
+  // E com a fatura TAMBEM em zero, fecha -- nao ha diferenca.
+  const zerado = ajusteParaFecharEm({ saldoReal: "0.00", totalSemAjuste: 0 });
+  assert.equal(zerado.fecha, true);
+});
+
+test("sem o total da fatura NAO se calcula diferenca nenhuma", () => {
+  // Armadilha 3: um `?? 0` aqui transformaria "nao sei quanto e a fatura" em "a
+  // fatura e zero", e o ajuste gravado seria o saldo real INTEIRO -- dobrando a
+  // fatura no instante em que a leitura voltasse.
+  for (const ilegivel of [null, undefined, "", Number.NaN, "x"]) {
+    const r = ajusteParaFecharEm({ saldoReal: "1290", totalSemAjuste: ilegivel });
+    assert.equal(r.ok, false, `total ${String(ilegivel)} nao pode virar 0`);
+    assert.match(r.erro, /Não foi possível ler o total desta fatura/);
+  }
+});
+
+test("A CONTA E EM CENTAVOS: a diferenca nao escorrega em ponto flutuante", () => {
+  // 1290 - 1240.10 em `number` da 49.899999999999995, e `numeric(15,2)`
+  // arredondaria isso -- fechando a fatura por sorte neste caso e errando um
+  // centavo no seguinte.
+  const r = ajusteParaFecharEm({ saldoReal: 1290, totalSemAjuste: 1240.1 });
+  assert.equal(r.valorNaFatura, 49.9);
+  assert.equal(Math.round(r.valorNaFatura * 100), 4990);
+
+  // E o caso em que o residuo de ponto flutuante INVENTA uma diferenca:
+  // `0.1 + 0.2` e `0.30000000000000004`, e `0.3 - (0.1 + 0.2)` nao e zero.
+  const residuo = ajusteParaFecharEm({
+    saldoReal: "0.30",
+    totalSemAjuste: 0.1 + 0.2,
+  });
+  assert.equal(residuo.fecha, true, "residuo de float nao pode virar ajuste");
+
+  // Trinta e tres centavos somados trinta vezes: a soma em reais daria
+  // 9.899999999999999 e a fatura nao fecharia em 9,90.
+  let emReais = 0;
+  for (let i = 0; i < 30; i += 1) emReais += 0.33;
+  assert.equal(
+    ajusteParaFecharEm({ saldoReal: "9.90", totalSemAjuste: emReais }).fecha,
+    true
+  );
+});
+
+test("centavosDe distingue 'nao da para ler' de zero", () => {
+  assert.equal(centavosDe("12.90"), 1290);
+  assert.equal(centavosDe(12.9), 1290);
+  assert.equal(centavosDe("0"), 0);
+  assert.equal(centavosDe(0), 0);
+  assert.equal(centavosDe(-12.9), -1290);
+  for (const nulo of ["", "  ", null, undefined, "abc", Number.NaN, Infinity]) {
+    assert.equal(centavosDe(nulo), null, `${String(nulo)} tem de dar null`);
+  }
+  // `Math.trunc` perderia um centavo aqui: 12.9 * 100 e 1290.0000000000002.
+  assert.equal(centavosDe(12.9), 1290);
+  assert.equal(centavosDe(8.29), 829);
+});
+
+test("o teto vale para o digitado E para a diferenca", () => {
+  const alto = ajusteParaFecharEm({
+    saldoReal: TETO_DO_AJUSTE,
+    totalSemAjuste: 0,
+  });
+  assert.equal(alto.ok, false);
+
+  // Dentro do teto digitado, mas a diferenca estoura -- `numeric(15,2)` volta
+  // 500 sem explicacao, e a recusa aqui tem mensagem.
+  const diferencaAlta = ajusteParaFecharEm({
+    saldoReal: TETO_DO_AJUSTE - 1,
+    totalSemAjuste: -(TETO_DO_AJUSTE - 1),
+  });
+  assert.equal(diferencaAlta.ok, false);
+  assert.match(diferencaAlta.erro, /diferença/i);
+});
+
+// A BASE DO LADO DO SERVIDOR. A rota nao aceita o total da tela (ela pode estar
+// velha): ela soma as linhas da view e tira o ajuste que ja esta gravado.
+
+test("o servidor soma as linhas da fatura em CENTAVOS", () => {
+  // Em reais, 0.1 + 0.2 + ... acumula residuo e o residuo cai no teste de
+  // "a fatura ja bate". Trinta e tres centavos trinta vezes:
+  const trinta = Array.from({ length: 30 }, () => 0.33);
+  assert.equal(
+    centavosDaFaturaSemAjuste({ invoiceAmounts: trinta, amountDoAjuste: null }),
+    990
+  );
+  assert.equal(
+    centavosDaFaturaSemAjuste({
+      invoiceAmounts: [1240.1, 49.9],
+      amountDoAjuste: null,
+    }),
+    129000
+  );
+});
+
+test("o ajuste gravado SAI da base, e sai pelo sinal certo", () => {
+  // O DEFEITO QUE ESTA ASSERCAO TRANCA: `amount` e a coluna crua e a view
+  // publica `-amount`. Subtrair em vez de somar erraria a base pelo DOBRO do
+  // ajuste existente -- e so no SEGUNDO ajuste do mes, com tudo plausivel.
+  //
+  // Compras de 1.240 + ajuste de +50 na fatura. A view mostra 1.290, e a linha
+  // do ajuste tem amount = -50.
+  const base = centavosDaFaturaSemAjuste({
+    invoiceAmounts: [1240, 50],
+    amountDoAjuste: -50,
+  });
+  assert.equal(base, 124000, "a base tem de voltar para as compras");
+
+  // E o abatimento: ajuste de -50 na fatura tem amount = +50.
+  const comAbatimento = centavosDaFaturaSemAjuste({
+    invoiceAmounts: [1240, -50],
+    amountDoAjuste: 50,
+  });
+  assert.equal(comAbatimento, 124000);
+
+  // A conta fecha de ponta a ponta: o banco diz 1.300 e o ajuste tem de ser +60.
+  const r = ajusteParaFecharEm({ saldoReal: "1300", totalSemAjuste: base / 100 });
+  assert.equal(r.valorNaFatura, 60);
+});
+
+test("fatura SEM ajuste gravado nao mexe na base", () => {
+  for (const semAjuste of [null, undefined]) {
+    assert.equal(
+      centavosDaFaturaSemAjuste({
+        invoiceAmounts: [1240],
+        amountDoAjuste: semAjuste,
+      }),
+      124000
+    );
+  }
+});
+
+test("fatura VAZIA soma zero, e isso nao e 'nao sei'", () => {
+  // Cartao novo ou mes sem compra: ajustar essa fatura e legitimo.
+  assert.equal(
+    centavosDaFaturaSemAjuste({ invoiceAmounts: [], amountDoAjuste: null }),
+    0
+  );
+});
+
+test("UMA linha ilegivel invalida o total inteiro", () => {
+  // Pula-la deixaria a fatura menor do que ela e, e o ajuste calculado em cima
+  // disso ACRESCENTARIA o valor da linha pulada: a fatura fecharia no numero do
+  // banco por um lancamento duplicado -- a doenca que esta feature trata.
+  for (const ilegivel of [null, undefined, "", "abc", Number.NaN]) {
+    assert.equal(
+      centavosDaFaturaSemAjuste({
+        invoiceAmounts: [1240, ilegivel, 50],
+        amountDoAjuste: null,
+      }),
+      null,
+      `linha ${String(ilegivel)} nao pode ser pulada`
+    );
+  }
+  // E o `amount` do ajuste ilegivel tambem invalida: trata-lo como "nao ha
+  // ajuste" faria a diferenca ser calculada em cima dele.
+  assert.equal(
+    centavosDaFaturaSemAjuste({ invoiceAmounts: [1240], amountDoAjuste: "x" }),
+    null
+  );
+});
+
+test("ALTERAR um ajuste: a base e a fatura SEM ajuste, nao a da tela", () => {
+  // O caso que acumula se a base estiver errada. Compras de 1.240, ajuste de
+  // +50 valendo, tela mostrando 1.290. O banco agora diz 1.300.
+  const fatura = {
+    total: 1290,
+    lines: [
+      { account_id: CARTAO, category_id: "c", invoice_amount: 1240 },
+      { account_id: CARTAO, category_id: CATEGORIA, invoice_amount: 50 },
+    ],
+  };
+  const ajuste = ajusteDaFatura(fatura, CARTAO, CATEGORIA);
+  const base = totalSemOAjuste(fatura, ajuste);
+  assert.equal(base, 1240);
+
+  const r = ajusteParaFecharEm({ saldoReal: "1300", totalSemAjuste: base });
+  // +60, e nao +10: o ajuste SUBSTITUI o de 50 pela chave canonica.
+  assert.equal(r.valorNaFatura, 60);
+  assert.equal(totalComOAjuste(base, r.valorNaFatura), 1300);
+
+  // Sobre o total da TELA daria +10, e a fatura fecharia em 1.350.
+  const errado = ajusteParaFecharEm({ saldoReal: "1300", totalSemAjuste: 1290 });
+  assert.equal(errado.valorNaFatura, 10);
+  assert.notEqual(totalComOAjuste(base, errado.valorNaFatura), 1300);
 });
 
 // ---------------------------------------------------------------------------

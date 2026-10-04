@@ -78,12 +78,33 @@ jobs:
           cp $TELA $TELA.orig
           trap 'mv $REGRAS.orig $REGRAS; mv $BLOCO.orig $BLOCO; mv $TELA.orig $TELA' EXIT
 
+          # ------------------------------------------------------------------
+          # O GUARDA DE TODO MUTANTE: ELE TEM DE TER SIDO APLICADO
+          # ------------------------------------------------------------------
+          # `sed` que nao casa SAI 0 e deixa o arquivo INTACTO. A suite entao
+          # roda sobre o codigo correto, passa verde, e este job acusa o codigo
+          # em vez do mutante -- ou, pior, o mutante e dado por morto e a linha
+          # que ele deveria vigiar deixou de existir. Aconteceu duas vezes: ao
+          # escrever este job (mutante 6) e na 2a volta da HMO-253, quando os dois
+          # botoes de direcao sairam da tela e os mutantes que os citavam
+          # continuaram "passando".
+          #
+          # `cmp` compara com a copia intacta: se nada mudou, o mutante nao
+          # existe mais e e ESTE job que esta quebrado.
+          mutou() {
+            if cmp -s "$1" "$1.orig"; then
+              echo "::error::o mutante $2 nao se aplicou a $1 -- a ancora do sed mudou de forma"
+              exit 1
+            fi
+          }
+
           # 1) O SINAL NAO INVERTIDO. O defeito central desta issue: a view
           #    publica `(-t.amount) AS invoice_amount`, entao gravar o valor cru
           #    faz o acrescimo ABATER da fatura e o abatimento somar. O numero
           #    aparece certo na lista de lancamentos e a fatura anda para o lado
           #    errado.
           sed -i 's#    amount: -params.valorNaFatura,#    amount: params.valorNaFatura,#' $REGRAS
+          mutou $REGRAS 1
           if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
             echo "::error::Verde com o ajuste gravado sem inverter o sinal."
             exit 1
@@ -94,6 +115,7 @@ jobs:
           #    soma invoice_amount) e inverte o lancamento no fluxo de caixa: a
           #    despesa nao detalhada entra como RECEITA do mes.
           sed -i 's#    transaction_type: params.valorNaFatura > 0 ? "expense" : "income",#    transaction_type: params.valorNaFatura > 0 ? "income" : "expense",#' $REGRAS
+          mutou $REGRAS 2
           if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
             echo "::error::Verde com o tipo do lancamento trocado."
             exit 1
@@ -107,6 +129,7 @@ jobs:
           #    isso este mutante sobrevive no CI e morre na maquina de quem
           #    escreveu.
           sed -i 's#  return `${mes.slice(0, 7)}-01`;#  const d = new Date(mes); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;#' $REGRAS
+          mutou $REGRAS 3
           if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
             echo "::error::Verde com o mes do ajuste passando por new Date()."
             exit 1
@@ -117,6 +140,7 @@ jobs:
           #    num mes que o usuario nao escolheu: o valor esta certo, a fatura
           #    do mes errado fecha, e as duas parecem plausiveis.
           sed -i 's#  if (!mes || !/\^\\d{4}-\\d{2}(-\\d{2})?$/.test(mes)) return null;#  if (!mes) return "2026-01-01";#' $REGRAS
+          mutou $REGRAS 4
           if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
             echo "::error::Verde com mes ilegivel virando um mes qualquer."
             exit 1
@@ -128,6 +152,7 @@ jobs:
           #    um ajuste que esta na tela, e alterar cria um SEGUNDO -- o acumulo
           #    que a chave existe para impedir.
           sed -i 's#    notes: chaveAjuste(primeiroDia, params.accountId),#    notes: chaveAjuste(params.mes, params.accountId),#' $REGRAS
+          mutou $REGRAS 5
           if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
             echo "::error::Verde com a chave do ajuste sem o primeiro dia do mes."
             exit 1
@@ -146,17 +171,20 @@ jobs:
           #    Aconteceu ao escrever este job.
           test "$(grep -c ']{12})\$/;' $REGRAS)" = "1" || { echo "::error::ancora do mutante 6 mudou de forma"; exit 1; }
           sed -i 's#]{12})\$/;#]{12})/;#' $REGRAS
+          mutou $REGRAS 6
           if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
             echo "::error::Verde com a chave canonica sem ancora no fim."
             exit 1
           fi
           cp $REGRAS.orig $REGRAS
 
-          # 7) ZERO ACEITO. Quem quer TIRAR o ajuste digita zero; se isso gravar
-          #    uma linha de R$ 0,00, a pessoa sai achando que tirou e o ajuste
-          #    velho continua valendo. Uma linha zerada na fatura tambem aparece
-          #    como se fosse compra.
-          sed -i 's#  if (centavos === 0) {#  if (false) {#' $REGRAS
+          # 7) ZERO ACEITO. Uma linha de R$ 0,00 na fatura nao muda nada e ainda
+          #    aparece como se fosse compra -- e, com o ajuste automatico, ela
+          #    seria o que a rota grava quando o cartao JA BATE, em vez de tirar o
+          #    ajuste velho que sobrou. `lancamentoDoAjuste` e a ultima porta
+          #    antes do banco, e e por isso que a guarda e aqui e nao so na rota.
+          sed -i 's#  if (!Number.isFinite(params.valorNaFatura) || params.valorNaFatura === 0) {#  if (!Number.isFinite(params.valorNaFatura)) {#' $REGRAS
+          mutou $REGRAS 7
           if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
             echo "::error::Verde com ajuste de R\$ 0,00 aceito."
             exit 1
@@ -167,6 +195,7 @@ jobs:
           #    `undefined` (a consulta falhou) toda linha viraria "Ajuste":
           #    chamaria de ajuste a compra de alguem.
           sed -i 's#  return Boolean(categoria) \&\& linha.category_id === categoria;#  return linha.category_id === categoria || categoria === undefined;#' $REGRAS
+          mutou $REGRAS 8
           if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
             echo "::error::Verde com o rotulo 'Ajuste' carimbado por adivinhacao."
             exit 1
@@ -178,6 +207,7 @@ jobs:
           #    para R$ 70 mostraria R$ 220 numa fatura que vai fechar em R$ 170.
           #    A conta que o usuario le antes de confirmar, errada.
           sed -i 's#  return total - Number(ajuste.invoice_amount);#  return total;#' $REGRAS
+          mutou $REGRAS 9
           if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
             echo "::error::Verde com a previa somando o ajuste novo em cima do velho."
             exit 1
@@ -189,6 +219,7 @@ jobs:
           #     formulario reabriria no lado errado -- salvar de novo inverteria
           #     o ajuste sem a pessoa ter mexido no valor.
           sed -i 's#  return Number(ajuste.invoice_amount);#  return Number(ajuste.amount);#' $REGRAS
+          mutou $REGRAS 10
           if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
             echo "::error::Verde com o valor do ajuste lido de amount."
             exit 1
@@ -199,6 +230,7 @@ jobs:
           #     falhou e a tela afirma, por omissao, que a fatura nao tem ajuste
           #     -- e oferece lancar um sobre uma fatura ja ajustada.
           sed -i 's#  return categoria !== undefined;#  return true;#' $REGRAS
+          mutou $REGRAS 11
           if npm run test:ajuste-na-tela > /dev/null 2>&1; then
             echo "::error::Verde afirmando que nao ha ajuste sem ter conseguido conferir."
             exit 1
@@ -209,6 +241,7 @@ jobs:
           #     repositorio e nao no cartao, e a issue inteira deixa de existir.
           #     "essa opcao fica no cartao" sao as palavras dela.
           sed -i 's#^      {blocoDeAjuste}$##' $TELA
+          mutou $TELA 12
           if npm run test:ajuste-na-tela > /dev/null 2>&1; then
             echo "::error::Verde com o bloco de ajuste fora da tela do cartao."
             exit 1
@@ -219,6 +252,7 @@ jobs:
           #     soma fechar com o total) e sem rotulo: um ajuste de R$ 50
           #     indistinguivel de uma compra de R$ 50 tres meses depois.
           sed -i 's#                    {ehLinhaDeAjuste(gasto, categoriaDeAjuste) ? (#                    {false ? (#' $TELA
+          mutou $TELA 13
           if npm run test:ajuste-na-tela > /dev/null 2>&1; then
             echo "::error::Verde com a linha do ajuste sem rotulo nenhum."
             exit 1
@@ -229,6 +263,7 @@ jobs:
           #     lib/offline-leitura.ts com outra roupa: numero vindo de uma
           #     leitura que falhou mente com a cara de numero certo.
           sed -i 's#  const mostraNumero = podeMostrarNumero(estado);#  const mostraNumero = true;#' $BLOCO
+          mutou $BLOCO 14
           if npm run test:ajuste-na-tela > /dev/null 2>&1; then
             echo "::error::Verde com o valor do ajuste impresso sem dado atras dele."
             exit 1
@@ -238,21 +273,144 @@ jobs:
           # 15) A PREVIA SEM O MES. "A fatura passa de X para Y" sem dizer de
           #     QUAL fatura: o numero certo respondendo uma pergunta que o leitor
           #     nao sabe qual e, com o seletor de mes dois blocos acima.
-          sed -i 's#            {validado.ok \&\& previa !== null \&\& mostraNumero \&\& rotuloDoMes ? (#            {validado.ok \&\& previa !== null ? (#' $BLOCO
+          sed -i 's#            rotuloDoMes ? (#            true ? (#' $BLOCO
+          mutou $BLOCO 15
           if npm run test:ajuste-na-tela > /dev/null 2>&1; then
             echo "::error::Verde com a previa impressa sem o mes que a nomeie."
             exit 1
           fi
           cp $BLOCO.orig $BLOCO
 
-          # 16) O LADO DO AJUSTE SEM `aria-pressed`. Qual dos dois botoes esta
-          #     valendo passa a existir so no pixel -- e o lado errado inverte o
-          #     ajuste.
-          sed -i 's#                  aria-pressed={direcao === "aumenta"}##' $BLOCO
+          # ==================================================================
+          # 2a VOLTA DA HMO-253: O AJUSTE E AUTOMATICO
+          # ==================================================================
+          # "Eu lanco o valor real que esta hoje meu cartao e um metodo verifica
+          # se e menor ou maior que a fatura, e lanca a diferenca somando ou
+          # subtraindo." Agora quem decide o SINAL e uma subtracao, e nao um
+          # clique -- entao os defeitos mudaram de lugar.
+
+          # 16) A DIFERENCA INVERTIDA. `fatura - saldo` em vez de
+          #     `saldo - fatura`: o cartao que diz R$ 1.290 sobre uma fatura de
+          #     R$ 1.240 recebe um ABATIMENTO de R$ 50 e fecha em R$ 1.190 --
+          #     R$ 100 longe do banco, pelo numero que a pessoa digitou certo.
+          #     E o defeito central desta volta da issue, do mesmo jeito que o
+          #     mutante 1 era o da primeira.
+          sed -i 's#  const diferenca = centavosDoSaldo - centavosDaFatura;#  const diferenca = centavosDaFatura - centavosDoSaldo;#' $REGRAS
+          mutou $REGRAS 16
+          if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
+            echo "::error::Verde com a diferenca do ajuste calculada ao contrario."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 17) CAMPO VAZIO LIDO COMO ZERO. `Number("")` e 0 em JavaScript, e um
+          #     saldo real de R$ 0,00 e uma afirmacao legitima. Confundir os dois
+          #     nao da um ajuste vazio: da um ESTORNO DA FATURA INTEIRA, com a
+          #     aritmetica visivelmente correta, oferecido a quem ainda nao
+          #     digitou nada.
+          sed -i 's#      : typeof valor === "string" \&\& valor.trim() !== ""#      : typeof valor === "string"#' $REGRAS
+          mutou $REGRAS 17
+          if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
+            echo "::error::Verde com campo vazio lido como R\$ 0,00."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 18) O TOTAL DA FATURA ILEGIVEL VIRANDO ZERO. "Nao sei quanto e a
+          #     fatura" tratado como "a fatura e zero": o ajuste gravado passa a
+          #     ser o saldo real INTEIRO, e a fatura dobra no instante em que a
+          #     leitura voltar.
+          sed -i 's#  if (centavosDaFatura === null) {#  if (false) {#' $REGRAS
+          mutou $REGRAS 18
+          if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
+            echo "::error::Verde calculando a diferenca sem saber o total da fatura."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 19) "A FATURA JA BATE" VIRANDO UM AJUSTE DE R$ 0,00. Sem o ramo de
+          #     `fecha`, a diferenca nula segue como ajuste -- uma linha na
+          #     fatura que nao muda nada e parece compra -- e o ajuste VELHO que
+          #     sobra deixa de ser removido, que e justamente o que faz a fatura
+          #     parar de bater.
+          sed -i 's#  if (diferenca === 0) return { ok: true, fecha: true, valorNaFatura: 0 };#  if (false) return { ok: true, fecha: true, valorNaFatura: 0 };#' $REGRAS
+          mutou $REGRAS 19
+          if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
+            echo "::error::Verde com a fatura que ja bate gerando ajuste em vez de fecha:true."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 20) CENTAVO TRUNCADO EM VEZ DE ARREDONDADO. `12.9 * 100` e
+          #     1290.0000000000002 e `Math.trunc` devolve 1289: um centavo a
+          #     menos num valor que o usuario digitou exato, e a fatura deixa de
+          #     fechar exatamente no caso que o ajuste existe para fechar.
+          sed -i 's#  return Math.round(numero \* 100);#  return Math.trunc(numero * 100);#' $REGRAS
+          mutou $REGRAS 20
+          if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
+            echo "::error::Verde com os centavos truncados em vez de arredondados."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 21) O AJUSTE EXISTENTE SUBTRAIDO EM VEZ DE SOMADO. `amount` e a
+          #     coluna CRUA e a view publica `-amount`: tirar o ajuste do total e
+          #     SOMAR o amount. Subtrair erra a base pelo DOBRO do ajuste que ja
+          #     existe -- e so no SEGUNDO ajuste do mes, com tudo plausivel.
+          sed -i 's#  return centavos + doAjuste;#  return centavos - doAjuste;#' $REGRAS
+          mutou $REGRAS 21
+          if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
+            echo "::error::Verde com o ajuste existente saindo da base pelo sinal errado."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 22) LINHA ILEGIVEL PULADA EM VEZ DE INVALIDAR O TOTAL. A fatura fica
+          #     menor do que ela e, e o ajuste calculado em cima disso
+          #     ACRESCENTA o valor da linha pulada: a fatura fecha no numero do
+          #     banco por um lancamento DUPLICADO -- a doenca que esta feature
+          #     trata, com o sintoma invertido.
+          sed -i 's#    if (daLinha === null) return null;#    if (daLinha === null) continue;#' $REGRAS
+          mutou $REGRAS 22
+          if npm run test:ajuste-de-fatura > /dev/null 2>&1; then
+            echo "::error::Verde pulando linha ilegivel da fatura."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 23) O CAMPO COM O ROTULO DA VERSAO ANTERIOR. "Valor do ajuste" devolve
+          #     a subtracao para as maos do usuario, que e exatamente o que esta
+          #     volta da issue tirou dele -- e quem digitar a DIFERENCA num campo
+          #     que espera o SALDO REAL grava a diferenca da diferenca.
+          sed -i 's#                  Quanto o cartão diz hoje#                  Valor do ajuste#' $BLOCO
+          mutou $BLOCO 23
           if npm run test:ajuste-na-tela > /dev/null 2>&1; then
-            echo "::error::Verde com o lado do ajuste marcado so pela cor."
+            echo "::error::Verde com o campo pedindo o valor do ajuste em vez do saldo real."
             exit 1
           fi
           cp $BLOCO.orig $BLOCO
 
-          echo "A verificacao fica vermelha nos dezesseis defeitos."
+          # 24) "A FATURA JA BATE" SEM TEXTO NENHUM NA TELA. O melhor desfecho
+          #     possivel fica indistinguivel de nada ter acontecido: o usuario
+          #     digita o numero do banco, a tela nao diz nada, e ele procura o
+          #     que errou. Pior: o aviso de que o ajuste velho VAI SAIR desaparece
+          #     junto, e "Salvar" passa a remover dinheiro da fatura calado.
+          sed -i 's#  const fecha = calculado.ok \&\& calculado.fecha;#  const fecha = false;#' $BLOCO
+          mutou $BLOCO 24
+          if npm run test:ajuste-na-tela > /dev/null 2>&1; then
+            echo "::error::Verde sem dizer na tela que a fatura ja fecha nesse valor."
+            exit 1
+          fi
+          cp $BLOCO.orig $BLOCO
+
+          # 25) O BOTAO DIZENDO "SALVAR" QUANDO ELE VAI REMOVER. O clique apaga o
+          #     ajuste que estava valendo, e o rotulo prometeu gravar um.
+          sed -i 's#                    ? "Remover ajuste"#                    ? "Salvar ajuste"#' $BLOCO
+          mutou $BLOCO 25
+          if npm run test:ajuste-na-tela > /dev/null 2>&1; then
+            echo "::error::Verde com o botao prometendo salvar o que ele vai remover."
+            exit 1
+          fi
+          cp $BLOCO.orig $BLOCO
+
+          echo "A verificacao fica vermelha nos vinte e cinco defeitos."

@@ -1,4 +1,4 @@
-// POST   /api/card-invoices/ajuste   grava (ou troca) o ajuste de saldo
+// POST   /api/card-invoices/ajuste   { account_id, month, saldo_real, descricao? }
 // DELETE /api/card-invoices/ajuste?account_id=&month=   tira o ajuste
 //
 // ===========================================================================
@@ -6,6 +6,16 @@
 // ===========================================================================
 // "Possibilidade de lancar um ajuste de saldo para que a fatura fique igual a
 // real sem ter que discriminar o que foi o gasto."
+//
+// O CORPO DO POST E `saldo_real` -- QUANTO O CARTAO DIZ HOJE -- e nao o valor do
+// ajuste (2a volta da HMO-253: "deve ser automatico, eu lanco o valor real que
+// esta hoje meu cartao e um metodo verifica se e menor ou maior que a fatura, e
+// lanca a diferenca somando ou subtraindo"). A diferenca e a direcao sao
+// DERIVADAS aqui dentro, sobre um total lido agora -- ver
+// `centavosDaFaturaSemAjuste` para por que o cliente nao manda a diferenca.
+//
+// E uma resposta com `fecha: true` nao e erro: e "o cartao ja bate", e nesse
+// caso a rota REMOVE o ajuste que estiver valendo em vez de gravar R$ 0,00.
 //
 // O QUE ESTA ROTA GRAVA e um lancamento comum em `financial_transactions`, na
 // conta do cartao, no primeiro dia do mes da fatura. Nao ha tabela nova nem
@@ -35,10 +45,11 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   DESCRICAO_DA_CATEGORIA_DE_AJUSTE,
   NOME_DA_CATEGORIA_DE_AJUSTE,
+  ajusteParaFecharEm,
+  centavosDaFaturaSemAjuste,
   chaveAjuste,
   lancamentoDoAjuste,
   primeiroDiaDoMesDaFatura,
-  validarAjuste,
 } from "@/lib/ajuste-de-fatura";
 
 /** O cartao existe, e do usuario e e cartao? Devolve a mensagem do problema. */
@@ -159,6 +170,83 @@ async function categoriaDoAjuste(
   return { id: criada.id };
 }
 
+/**
+ * O total da fatura SEM ajuste nenhum, em CENTAVOS INTEIROS. `null` = nao sei.
+ *
+ * A ARITMETICA mora em `centavosDaFaturaSemAjuste` (lib/ajuste-de-fatura.ts),
+ * que tem teste e mutantes -- o sinal do ajuste existente e a soma em centavos
+ * sao o que pode errar aqui, e as duas erram calado. Esta funcao e a CONSULTA.
+ *
+ * ===========================================================================
+ * POR QUE O SERVIDOR RECALCULA, EM VEZ DE ACEITAR O TOTAL DA TELA (HMO-253, 2a)
+ * ===========================================================================
+ * O desenho obvio seria o cliente mandar a diferenca ja calculada -- ele tem o
+ * total na tela e o saldo real no campo. Esse desenho tem um modo de falha que
+ * nao levanta erro em lugar nenhum:
+ *
+ *   A tela carregou com a fatura em R$ 1.240. No celular, uma compra de R$ 40
+ *   entrou. O usuario olha o app do banco (R$ 1.290), digita 1.290 na tela
+ *   velha, e o cliente calcula 1.290 - 1.240 = +50. O ajuste certo era +10.
+ *   A fatura passa a 1.330, e a proxima conferencia vai dizer que o cartao
+ *   esta R$ 40 acima -- de novo, pela mesma causa, para sempre.
+ *
+ * O numero que o usuario digitou e o UNICO dado que so ele tem. O total da
+ * fatura o servidor sabe melhor que a tela, por definicao. Entao a rota aceita
+ * `saldo_real` e NAO aceita diferenca: nao ha como o cliente errar uma conta que
+ * ele nao faz.
+ *
+ * A CONSULTA REPETE A FORMA DA DO `GET /api/card-invoices`, e isso e deliberado
+ * ate no que ela NAO filtra. A rota de leitura nao poe `.eq("user_id", ...)` --
+ * ela confia na RLS -- e com isso o total que a tela do cartao imprime inclui a
+ * linha de despesa de grupo que um membro pendurou neste cartao. Acrescentar o
+ * filtro aqui faria o servidor calcular sobre um total MENOR que o impresso:
+ * o usuario digitaria o numero que ele ve e receberia um ajuste maior que a
+ * diferenca real, sem nada na tela sugerindo que as duas contas usam bases
+ * diferentes. Duas fontes que nao fecham sao piores que uma base discutivel --
+ * e a base discutivel ja e a que a tela mostra. (`faturasPrevistasDaJanela`
+ * escolheu o contrario, por um motivo que vale LA: ela AGREGA varios cartoes
+ * para a agenda, onde a linha alheia inflaria a previsao de quem nem tem o
+ * cartao. Aqui o cartao e um e e o da tela que o usuario esta conferindo.)
+ *
+ * Devolve `null` quando a leitura falhou ou quando alguma linha veio com valor
+ * ilegivel. `null` E DIFERENTE DE ZERO: uma fatura sem linha nenhuma soma 0
+ * (cartao novo, mes sem compra -- e ajustar isso e legitimo), enquanto `null`
+ * significa que nao se sabe o total, e ai nao ha diferenca a calcular.
+ *
+ * @param amountDoAjuste `financial_transactions.amount` do ajuste que ja existe
+ *   -- a COLUNA CRUA, nao o valor na fatura -- ou `null` quando nao ha ajuste.
+ */
+async function lerCentavosDaFaturaSemAjuste(
+  supabase: ReturnType<typeof createClient>,
+  accountId: string,
+  mes: string,
+  amountDoAjuste: unknown
+): Promise<number | null> {
+  const { data: linhas, error } = await supabase
+    .from("card_invoice_lines")
+    .select("invoice_amount")
+    .eq("invoice_month", mes)
+    .eq("account_id", accountId);
+
+  if (error) {
+    console.error("Erro ao ler a fatura para o ajuste automático:", error);
+    return null;
+  }
+
+  const centavos = centavosDaFaturaSemAjuste({
+    invoiceAmounts: (linhas ?? []).map((linha) => linha.invoice_amount),
+    amountDoAjuste,
+  });
+
+  if (centavos === null) {
+    console.error(
+      "Fatura com valor ilegível; ajuste automático recusado:",
+      { accountId, mes, linhas: linhas?.length ?? 0 }
+    );
+  }
+  return centavos;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = createClient();
@@ -185,14 +273,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const validado = validarAjuste({
-      valor: corpo?.valor,
-      direcao: corpo?.direcao,
-    });
-    if (!validado.ok) {
-      return NextResponse.json({ error: validado.erro }, { status: 400 });
-    }
-
+    // O CARTAO E CONFERIDO ANTES DA LEITURA DA FATURA, e nao depois. A consulta
+    // de `card_invoice_lines` filtra por `account_id` e confia na RLS; sobre uma
+    // conta que nao e do usuario ela devolveria zero linhas, ou seja total 0 --
+    // e a rota responderia uma diferenca calculada sobre uma fatura inventada
+    // antes de chegar ao 404. Numero plausivel em resposta a um id alheio.
     const problema = await conferirCartao(supabase, user.id, accountId);
     if (problema) {
       return NextResponse.json(
@@ -201,8 +286,111 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // A CHAVE CANONICA e o que torna esta rota uma TROCA, e nao um acumulo.
+    // Salvar duas vezes deixa UM ajuste no mes, nao dois -- porque o segundo
+    // pedido encontra a linha do primeiro aqui e a reescreve.
+    const chave = chaveAjuste(mes, accountId);
+
+    const { data: existente, error: erroBusca } = await supabase
+      .from("financial_transactions")
+      .select("id, amount")
+      .eq("user_id", user.id)
+      .eq("account_id", accountId)
+      .eq("notes", chave)
+      .maybeSingle();
+
+    if (erroBusca) {
+      console.error("Erro ao procurar o ajuste existente:", erroBusca);
+      return NextResponse.json(
+        { error: "Não foi possível gravar o ajuste" },
+        { status: 500 }
+      );
+    }
+
+    // `null` AQUI SIGNIFICA "nao ha ajuste gravado", e e por isso que ele vem de
+    // `existente` e nao de um `?? 0`: um ajuste gravado cujo `amount` voltasse
+    // ilegivel sairia da base como se nao existisse, e a diferenca seria
+    // calculada em cima dele -- o acumulo que a chave canonica existe para
+    // impedir. `centavosDaFaturaSemAjuste` devolve `null` nesse caso, e a rota
+    // recusa logo abaixo.
+    const centavosSemAjuste = await lerCentavosDaFaturaSemAjuste(
+      supabase,
+      accountId,
+      mes,
+      existente ? existente.amount : null
+    );
+    if (centavosSemAjuste === null) {
+      return NextResponse.json(
+        { error: "Não foi possível ler o total desta fatura para comparar" },
+        { status: 500 }
+      );
+    }
+
+    const totalSemAjuste = centavosSemAjuste / 100;
+
+    // O UNICO DADO QUE VEM DO CLIENTE: quanto o cartao diz hoje. A diferenca e a
+    // direcao saem daqui -- ver o cabecalho de `ajusteParaFecharEm`.
+    const calculado = ajusteParaFecharEm({
+      saldoReal: corpo?.saldo_real,
+      totalSemAjuste,
+    });
+    if (!calculado.ok) {
+      return NextResponse.json({ error: calculado.erro }, { status: 400 });
+    }
+
+    // ------------------------------------------------------------------
+    // A FATURA JA BATE: O CERTO E REMOVER O AJUSTE, NAO GRAVAR R$ 0,00
+    // ------------------------------------------------------------------
+    // Armadilha 4 de `ajusteParaFecharEm`. Quem informa o saldo real e ve que
+    // ele bate com as compras esta dizendo "nao falta nada nesta fatura" -- e um
+    // ajuste de meses atras que ainda esteja valendo e justamente o que faria a
+    // fatura parar de bater no instante seguinte. Gravar R$ 0,00 no lugar seria
+    // uma linha na fatura que nao muda nada e parece compra, e `lancamentoDoAjuste`
+    // recusa zero de qualquer forma.
+    if (calculado.fecha) {
+      if (!existente) {
+        return NextResponse.json({
+          fecha: true,
+          removido: false,
+          total_da_fatura: totalSemAjuste,
+          valor_na_fatura: 0,
+        });
+      }
+
+      const { data: apagados, error: erroDelete } = await supabase
+        .from("financial_transactions")
+        .delete()
+        .eq("id", existente.id)
+        .eq("user_id", user.id)
+        .select("id");
+
+      if (erroDelete) {
+        console.error("Erro ao tirar o ajuste de uma fatura que já bate:", erroDelete);
+        return NextResponse.json(
+          { error: "Não foi possível tirar o ajuste desta fatura" },
+          { status: 500 }
+        );
+      }
+      // Um DELETE filtrado pela RLS volta 200 com zero linhas e sem erro (ver o
+      // DELETE desta rota). Dizer "pronto, a fatura bate" sobre um ajuste que
+      // continua somando seria a tela afirmando o contrario do banco.
+      if (!apagados?.length) {
+        return NextResponse.json(
+          { error: "Não foi possível tirar o ajuste desta fatura" },
+          { status: 500 }
+        );
+      }
+
+      return NextResponse.json({
+        fecha: true,
+        removido: true,
+        total_da_fatura: totalSemAjuste,
+        valor_na_fatura: 0,
+      });
+    }
+
     const lancamento = lancamentoDoAjuste({
-      valorNaFatura: validado.valorNaFatura,
+      valorNaFatura: calculado.valorNaFatura,
       mes,
       accountId,
       descricao: typeof corpo?.descricao === "string" ? corpo.descricao : null,
@@ -234,27 +422,6 @@ export async function POST(request: NextRequest) {
     const categoria = await categoriaDoAjuste(supabase, user.id, servico.id);
     if ("erro" in categoria) {
       return NextResponse.json({ error: categoria.erro }, { status: 500 });
-    }
-
-    // A CHAVE CANONICA e o que torna esta rota uma TROCA, e nao um acumulo.
-    // Clicar Salvar duas vezes com R$ 50 deixa a fatura 50 maior, nao 100 --
-    // porque o segundo pedido encontra a linha do primeiro aqui e a reescreve.
-    const chave = chaveAjuste(mes, accountId);
-
-    const { data: existente, error: erroBusca } = await supabase
-      .from("financial_transactions")
-      .select("id")
-      .eq("user_id", user.id)
-      .eq("account_id", accountId)
-      .eq("notes", chave)
-      .maybeSingle();
-
-    if (erroBusca) {
-      console.error("Erro ao procurar o ajuste existente:", erroBusca);
-      return NextResponse.json(
-        { error: "Não foi possível gravar o ajuste" },
-        { status: 500 }
-      );
     }
 
     if (existente) {
@@ -292,7 +459,12 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({
         ajuste: atualizado,
-        valor_na_fatura: validado.valorNaFatura,
+        fecha: false,
+        valor_na_fatura: calculado.valorNaFatura,
+        // O total que a fatura passa a ter. A tela o usa para confirmar com o
+        // numero, e nao so com "gravado": o usuario acabou de informar quanto o
+        // cartao diz, e a confirmacao util e ver a fatura nesse valor.
+        total_da_fatura: totalSemAjuste + calculado.valorNaFatura,
         criado: false,
       });
     }
@@ -330,7 +502,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         ajuste: criado,
-        valor_na_fatura: validado.valorNaFatura,
+        fecha: false,
+        valor_na_fatura: calculado.valorNaFatura,
+        total_da_fatura: totalSemAjuste + calculado.valorNaFatura,
         criado: true,
       },
       { status: 201 }

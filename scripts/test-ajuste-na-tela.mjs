@@ -106,8 +106,7 @@ const faturaCom = (linhas) => ({
 const SEM_HANDLER = {
   aoAbrir: () => {},
   aoFechar: () => {},
-  aoMudarValor: () => {},
-  aoMudarDirecao: () => {},
+  aoMudarSaldoReal: () => {},
   aoMudarDescricao: () => {},
   aoSalvar: () => {},
   aoRemover: () => {},
@@ -123,8 +122,7 @@ const renderBloco = (props) =>
       valorAtual: null,
       totalSemAjuste: 320,
       aberto: false,
-      valor: "",
-      direcao: "aumenta",
+      saldoReal: "",
       descricao: "",
       ...SEM_HANDLER,
       ...props,
@@ -256,84 +254,193 @@ test("durante o carregamento tambem nao ha numero", () => {
 // 4. O FORMULARIO
 // ---------------------------------------------------------------------------
 
-test("o formulario aberto tem os dois lados do ajuste", () => {
-  // "negativo ou positivo", nas palavras da issue. Sem os dois lados na tela, o
-  // campo de dinheiro (mascara de digitos) so permitiria aumentar a fatura.
+test("o formulario pede QUANTO O CARTAO DIZ, e nao o valor do ajuste", () => {
+  // O PEDIDO DA 2a VOLTA DA ISSUE: "deve ser automatico, eu lanco o valor real
+  // que esta hoje meu cartao". Um campo rotulado "Valor do ajuste" devolveria a
+  // subtracao para as maos do usuario -- que e exatamente o que ele pediu para
+  // nao fazer. E os dois botoes de lado nao podem sobrar na tela: com a direcao
+  // derivada do sinal da diferenca, um botao "Abate da fatura" seria um controle
+  // que nao controla nada.
   const t = texto(renderBloco({ aberto: true }));
-  assert.match(t, /Aumenta a fatura/);
-  assert.match(t, /Abate da fatura/);
-  assert.match(t, /Valor do ajuste/);
+  assert.match(t, /Quanto o cartão diz hoje/);
+  assert.match(t, /A diferença é calculada e lançada sozinha/);
   assert.match(t, /Salvar ajuste/);
+  assert.doesNotMatch(t, /Valor do ajuste/);
+  assert.doesNotMatch(t, /Aumenta a fatura/);
+  assert.doesNotMatch(t, /Abate da fatura/);
 });
 
-test("o lado escolhido fica marcado para quem nao ve cor", () => {
-  // `aria-pressed` e o unico sinal que chega em leitor de tela: sem ele, qual
-  // dos dois botoes esta valendo e uma informacao que existe so no pixel -- e o
-  // lado errado inverte o ajuste.
-  const comAumento = renderBloco({ aberto: true, direcao: "aumenta" });
-  const comAbatimento = renderBloco({ aberto: true, direcao: "abate" });
-
-  assert.match(comAumento, /aria-pressed="true"[^>]*>Aumenta a fatura/);
-  assert.match(comAbatimento, /aria-pressed="true"[^>]*>Abate da fatura/);
-  // E exatamente UM marcado: dois marcados nao dizem nada.
-  assert.equal((comAumento.match(/aria-pressed="true"/g) ?? []).length, 1);
-});
-
-test("o campo de valor e o campo de dinheiro do app, nao um type=number", () => {
-  // `<input type="number">` aceitaria "1.000,00" e `parseFloat` daria 1: mil
-  // reais de ajuste gravados como um real, sem erro no caminho (lib/dinheiro.ts).
-  const html = renderBloco({ aberto: true, valor: "1000.00" });
-  assert.doesNotMatch(html, /id="valor-do-ajuste"[^>]*type="number"/);
+test("o campo do saldo real e o campo de dinheiro do app, nao um type=number", () => {
+  // `<input type="number">` aceitaria "1.290,00" e `parseFloat` daria 1: a
+  // fatura inteira virando um real de saldo real, sem erro no caminho
+  // (lib/dinheiro.ts) -- e o ajuste lancado seria de -R$ 319,00.
+  const html = renderBloco({ aberto: true, saldoReal: "1290.00" });
+  assert.doesNotMatch(html, /id="saldo-real-do-cartao"[^>]*type="number"/);
   // A assercao e sobre o ATRIBUTO, e nao sobre o texto da pagina: o valor de um
   // `<input>` mora dentro da tag, e `texto()` apaga tudo o que esta dentro de
   // tag. Procura-lo no texto normalizado daria verde com o campo vazio -- a
-  // previa abaixo imprime "R$ 1.320,00" e casaria o padrao sozinha.
-  assert.match(html, /id="valor-do-ajuste"[^>]*value="R\$ 1\.000,00"/);
+  // previa abaixo imprime "R$ 1.290,00" e casaria o padrao sozinha.
+  assert.match(html, /id="saldo-real-do-cartao"[^>]*value="R\$ 1\.290,00"/);
 });
 
 test("a previa diz de que fatura ela fala, e para onde o total vai", () => {
   const t = texto(
-    renderBloco({ aberto: true, valor: "50.00", direcao: "aumenta", totalSemAjuste: 320 })
+    renderBloco({ aberto: true, saldoReal: "370.00", totalSemAjuste: 320 })
   );
   assert.match(t, /A fatura de outubro de 2026 passa de R\$ 320,00 para R\$ 370,00/);
 });
 
-test("a previa do abatimento desce o total", () => {
-  const t = texto(
-    renderBloco({ aberto: true, valor: "50.00", direcao: "abate", totalSemAjuste: 320 })
+test("a previa nomeia a DIFERENCA, e nao so o total final", () => {
+  // Era a subtracao que esta volta da issue tirou das maos do usuario: imprimir
+  // so "passa de 320 para 370" a devolve para ele na hora de conferir.
+  const acrescimo = texto(
+    renderBloco({ aberto: true, saldoReal: "370.00", totalSemAjuste: 320 })
   );
-  assert.match(t, /passa de R\$ 320,00 para R\$ 270,00/);
+  assert.match(acrescimo, /acréscimo de R\$ 50,00/);
+
+  const abatimento = texto(
+    renderBloco({ aberto: true, saldoReal: "270.00", totalSemAjuste: 320 })
+  );
+  assert.match(abatimento, /passa de R\$ 320,00 para R\$ 270,00/);
+  assert.match(abatimento, /abatimento de R\$ 50,00/);
+  // O lado nao pode vir trocado: a palavra errada com o numero certo e pior que
+  // numero nenhum, porque o usuario confirma lendo a palavra.
+  assert.doesNotMatch(abatimento, /acréscimo/);
+});
+
+test("saldo real MENOR que a fatura abate -- o sinal sai da conta, nao de um botao", () => {
+  // O caso que a versao anterior desta tela exigia um clique para expressar.
+  // Aqui ele e consequencia de 270 < 320, e nada na tela precisa ser escolhido.
+  const t = texto(
+    renderBloco({ aberto: true, saldoReal: "270.00", totalSemAjuste: 320 })
+  );
+  assert.match(t, /para R\$ 270,00/);
+  assert.doesNotMatch(t, /para R\$ 370,00/);
 });
 
 test("a previa NAO aparece sem mes que a nomeie", () => {
   // Numero certo respondendo uma pergunta que o leitor nao sabe qual e: o
   // seletor de mes fica dois blocos acima.
   const t = texto(
-    renderBloco({ aberto: true, valor: "50.00", rotuloDoMes: null })
+    renderBloco({ aberto: true, saldoReal: "370.00", rotuloDoMes: null })
   );
   assert.doesNotMatch(t, /passa de/);
 });
 
 test("a previa NAO aparece sobre uma fatura que nao carregou", () => {
   // A base da conta e o total da fatura. Sem leitura boa, "passa de R$ 0,00 para
-  // R$ 50,00" seria um numero inventado com cara de numero certo.
+  // R$ 370,00" seria um numero inventado com cara de numero certo.
   const t = texto(
-    renderBloco({ aberto: true, valor: "50.00", estado: "sem-rede" })
+    renderBloco({ aberto: true, saldoReal: "370.00", estado: "sem-rede" })
   );
   assert.doesNotMatch(t, /passa de/);
 });
 
-test("valor invalido mostra o erro, e e o MESMO texto da rota", () => {
-  // `validarAjuste` e a funcao que a rota chama: o que a tela recusa e o que o
-  // servidor recusaria, com a mesma frase. Duas validacoes separadas divergem, e
-  // a tela aceitaria o que o POST devolve 400.
-  const t = texto(renderBloco({ aberto: true, valor: "0" }));
-  assert.match(t, /Remover ajuste/);
+test("sem o total da fatura NAO se promete ajuste, e o Salvar fica apagado", () => {
+  // `totalSemAjuste: null` e "a tela nao leu a fatura". O defeito que esta
+  // assercao tranca e o `?? 0`: com a base em zero, a previa anunciaria
+  // "passa de R$ 0,00 para R$ 370,00" -- a tela prometendo lancar como ajuste a
+  // FATURA INTEIRA, com a conta visivelmente fechando.
+  const html = renderBloco({
+    aberto: true,
+    saldoReal: "370.00",
+    totalSemAjuste: null,
+  });
+  const t = texto(html);
+  assert.doesNotMatch(t, /passa de/);
+  assert.match(t, /Não foi possível ler o total desta fatura/);
+  assert.match(html, /disabled[^>]*>Salvar ajuste|>Salvar ajuste/);
+  // O botao de gravar tem de estar DESABILITADO: habilitado, ele manda um POST
+  // que o servidor recusa, e o usuario descobre pelo toast o que a tela sabia.
+  const antesDoSalvar = html.slice(0, html.indexOf("Salvar ajuste"));
+  assert.match(
+    antesDoSalvar.slice(-200),
+    /disabled/,
+    "o Salvar precisa estar desabilitado sem o total da fatura"
+  );
 });
 
-test("campo vazio nao grita erro antes de o usuario digitar", () => {
-  const t = texto(renderBloco({ aberto: true, valor: "" }));
-  assert.doesNotMatch(t, /Informe o valor do ajuste/);
+test("A FATURA JA BATE nao e erro, e avisa que o ajuste velho vai sair", () => {
+  // Armadilha 4: `fecha: true` e o melhor desfecho possivel, e tem texto
+  // proprio. O aviso do ajuste que SAI e obrigatorio -- sem ele, "Salvar" sobre
+  // uma fatura que bate remove R$ 50 da fatura sem nada ter dito isso.
+  const t = texto(
+    renderBloco({
+      aberto: true,
+      saldoReal: "320.00",
+      totalSemAjuste: 320,
+      categoriaDeAjuste: CATEGORIA_DE_AJUSTE,
+      valorAtual: 50,
+    })
+  );
+  assert.match(t, /A fatura de outubro de 2026 já fecha nesse valor/);
+  assert.match(t, /R\$ 50,00 que está valendo vai ser removido/);
+  // Nao e previa, e nao e erro.
+  assert.doesNotMatch(t, /passa de/);
+  assert.doesNotMatch(t, /Informe quanto o cartão diz hoje/);
+  // E o botao diz o que ele FAZ: ele vai remover, nao gravar.
+  assert.match(t, /Remover ajuste/);
+  assert.doesNotMatch(t, /Salvar ajuste/);
+});
+
+test("fatura que bate SEM ajuste gravado nao promete remover nada", () => {
+  // Aqui nao ha nada a gravar nem a remover: dizer "o ajuste vai ser removido"
+  // inventaria um ajuste, e um Salvar ativo prometeria gravar um no-op.
+  const html = renderBloco({
+    aberto: true,
+    saldoReal: "320.00",
+    totalSemAjuste: 320,
+    categoriaDeAjuste: null,
+    valorAtual: null,
+  });
+  const t = texto(html);
+  assert.match(t, /já fecha nesse valor: não há diferença a lançar/);
+  assert.doesNotMatch(t, /vai ser removido/);
+  const antesDoSalvar = html.slice(0, html.indexOf("Salvar ajuste"));
+  assert.match(antesDoSalvar.slice(-200), /disabled/);
+});
+
+test("a fatura que bate em ZERO tambem e um caso bom", () => {
+  // Cartao sem compra no mes e saldo real R$ 0,00. `Number("")` e 0 em
+  // JavaScript, entao o caminho que trata campo vazio como zero daria ESTE
+  // mesmo resultado -- e e por isso que ele e um teste separado do de baixo.
+  const t = texto(
+    renderBloco({ aberto: true, saldoReal: "0.00", totalSemAjuste: 0 })
+  );
+  assert.match(t, /já fecha nesse valor/);
+});
+
+test("campo vazio nao grita erro antes de o usuario digitar, e nao vira zero", () => {
+  // As duas assercoes sao a mesma armadilha (`Number("") === 0`) vista pelos
+  // dois lados: com o campo vazio lido como zero, a tela anunciaria "a fatura
+  // passa de R$ 320,00 para R$ 0,00" -- um estorno da fatura inteira oferecido a
+  // quem ainda nao digitou nada.
+  const t = texto(renderBloco({ aberto: true, saldoReal: "", totalSemAjuste: 320 }));
+  assert.doesNotMatch(t, /Informe quanto o cartão diz hoje/);
+  assert.doesNotMatch(t, /passa de/);
+  assert.doesNotMatch(t, /já fecha nesse valor/);
+});
+
+test("centavos: a diferenca nao escorrega em ponto flutuante", () => {
+  // 1290 - 1240.10 em `number` da 49.899999999999995. A previa imprimiria
+  // "R$ 49,90" por arredondamento de exibicao, e o que vai para o banco e o que
+  // esta assertado aqui -- a conta e em centavos inteiros.
+  const t = texto(
+    renderBloco({ aberto: true, saldoReal: "1290.00", totalSemAjuste: 1240.1 })
+  );
+  assert.match(t, /passa de R\$ 1\.240,10 para R\$ 1\.290,00/);
+  assert.match(t, /acréscimo de R\$ 49,90/);
+});
+
+test("fatura e saldo real iguais em centavos fecham, e nao geram ajuste de R$ 0,00", () => {
+  // `0.1 + 0.2 - 0.3` nao e zero em ponto flutuante. Se a subtracao fosse em
+  // reais, esta fatura daria uma diferenca minuscula e a tela ofereceria gravar
+  // um ajuste -- de R$ 0,00 depois do arredondamento da coluna.
+  const t = texto(
+    renderBloco({ aberto: true, saldoReal: "0.30", totalSemAjuste: 0.1 + 0.2 })
+  );
+  assert.match(t, /já fecha nesse valor/);
+  assert.doesNotMatch(t, /passa de/);
 });
 
 // ---------------------------------------------------------------------------
@@ -401,8 +508,7 @@ function renderAjusteComoElemento(props) {
     valorAtual: null,
     totalSemAjuste: 320,
     aberto: false,
-    valor: "",
-    direcao: "aumenta",
+    saldoReal: "",
     descricao: "",
     ...SEM_HANDLER,
     ...props,
