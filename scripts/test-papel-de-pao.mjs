@@ -35,10 +35,19 @@ import { fileURLToPath } from "node:url";
 const {
   painelDePapel,
   janelaDoMesCorrente,
+  janelaDoMes,
+  mesPedido,
   NOME_DA_CATEGORIA_DE_SALARIO,
   FRASE_SEM_SALARIO,
   FRASE_SEM_CONTAS,
 } = await import("../.tmp-papel-de-pao/lib/papel-de-pao.js");
+
+// A funcao que a ROTA usa para decidir se materializa, e de onde a rota a pega
+// (nao uma copia): e dela que depende o criterio 3 da HMO-295 -- abrir novembro
+// tem de CRIAR as linhas das regras recorrentes de novembro.
+const { janelaParaMaterializar } = await import(
+  "../.tmp-papel-de-pao/lib/periodo-do-painel.js"
+);
 
 // ---------------------------------------------------------------------------
 // O FIXTURE
@@ -311,6 +320,161 @@ test("O recorte do mes nasce do fuso de Sao Paulo, nao de UTC", () => {
   // E o ultimo dia e o do mes de verdade, inclusive em fevereiro bissexto.
   assert.equal(janelaDoMesCorrente("2026-02-10").ate, "2026-02-28");
   assert.equal(janelaDoMesCorrente("2024-02-10").ate, "2024-02-29");
+});
+
+// ---------------------------------------------------------------------------
+// 2b. O MES PEDIDO -- `?month=AAAA-MM` (HMO-295)
+// ---------------------------------------------------------------------------
+// O MUTANTE QUE DECIDE ESTA SECAO: ignorar o `?month=` e usar sempre o mes
+// corrente. Ele SO MORRE porque o `hoje` destes casos (marco de 2026) e de um
+// mes diferente do mes pedido em cada um deles. Um caso que pedisse o mes
+// corrente seria sonda VACUA: passaria verde com o parametro inteiramente
+// desligado, porque as duas respostas coincidem.
+//
+// `hoje` continua string literal, e as duas voltas do script (Sao Paulo e UTC)
+// continuam valendo: a janela do mes pedido nao passa por `new Date` nenhum, e
+// esta secao e onde isso seria facil de quebrar -- `new Date("2026-11-01")` e
+// meia-noite UTC e em Sao Paulo ja e 31 de outubro.
+
+test("o mes pedido manda: `2026-11` devolve NOVEMBRO, com hoje em marco", () => {
+  assert.deepEqual(janelaDoMes("2026-11", HOJE), {
+    de: "2026-11-01",
+    ate: "2026-11-30",
+  });
+
+  // O mes corrente do fixture, que e a resposta do mutante. Se este `notEqual`
+  // ficasse verde junto com o de cima, os dois meses seriam o mesmo e a secao
+  // nao mediria nada.
+  assert.notDeepEqual(janelaDoMes("2026-11", HOJE), JANELA);
+  assert.notEqual(HOJE.slice(0, 7), "2026-11");
+});
+
+test("o mes pedido anda para TRAS tambem, e nao so para frente", () => {
+  // Um `Math.max(mes, hoje)` escondido no caminho deixaria o passado preso no
+  // mes corrente -- e "quanto eu tinha de contas no mes passado" e metade do
+  // pedido da issue.
+  assert.deepEqual(janelaDoMes("2026-01", HOJE), {
+    de: "2026-01-01",
+    ate: "2026-01-31",
+  });
+  assert.deepEqual(janelaDoMes("2025-12", HOJE), {
+    de: "2025-12-01",
+    ate: "2025-12-31",
+  });
+});
+
+test("o ultimo dia e o do mes PEDIDO -- inclusive fevereiro bissexto", () => {
+  // O erro classico: somar um mes ao dia 31 e ficar preso no dia 28 (ver
+  // `passoDeMes` em lib/periodo-do-painel.ts). Aqui a janela e recalculada, e
+  // um fevereiro de 30 dias viraria uma conta de 1o de marco contada em
+  // fevereiro.
+  assert.equal(janelaDoMes("2026-02", HOJE).ate, "2026-02-28");
+  assert.equal(janelaDoMes("2024-02", HOJE).ate, "2024-02-29");
+  assert.equal(janelaDoMes("2026-04", HOJE).ate, "2026-04-30");
+  assert.equal(janelaDoMes("2026-12", HOJE).ate, "2026-12-31");
+});
+
+test("o `month` da resposta sai da janela, e ecoa o mes pedido", () => {
+  // A rota responde `janela.de.slice(0, 7)`, e e com esse campo que a tela
+  // descarta a resposta de outro mes. Se ele nao ecoasse o pedido, a tela
+  // descartaria TODA resposta e o painel ficaria indisponivel para sempre.
+  for (const mes of ["2026-01", "2026-11", "2027-02"]) {
+    assert.equal(janelaDoMes(mes, HOJE).de.slice(0, 7), mes);
+  }
+});
+
+test("mes ausente ou estragado cai no mes CORRENTE -- nao em erro, nao em vazio", () => {
+  // Criterio 4 da issue: `?month=` ausente, `?month=abacaxi` e `?month=2026-13`
+  // todos respondem o mes corrente com status 200. Querystring estragada (link
+  // antigo, parametro cortado pelo aplicativo de mensagem) nao pode apagar o
+  // modulo inteiro.
+  const invalidos = [
+    undefined,
+    null,
+    "",
+    "abacaxi",
+    "2026-13", // mes 13 NAO existe -- e `Date.UTC(2026, 13, 0)` e um janeiro
+    "2026-00", //   de 2027 perfeitamente valido, entao so a regex nao basta
+    "2026-1", // sem o zero a esquerda
+    "202611",
+    "2026/11",
+    "26-11",
+    "2026-11-05", // data inteira nao e mes
+    "2026-11 ", // com espaco: a querystring entrega o que vier
+    123,
+    {},
+    ["2026-11"],
+  ];
+
+  for (const entrada of invalidos) {
+    assert.deepEqual(
+      janelaDoMes(entrada, HOJE),
+      JANELA,
+      `${JSON.stringify(entrada)} deveria cair no mes corrente`
+    );
+    assert.equal(mesPedido(entrada), null, `${JSON.stringify(entrada)}`);
+  }
+});
+
+test("mes valido NAO cai na rede do mes corrente (o par positivo do caso acima)", () => {
+  // Sem este par, o caso de cima ficaria verde numa funcao que devolvesse o
+  // mes corrente para TUDO -- que e o mutante desta issue.
+  for (const mes of ["2025-12", "2026-01", "2026-11", "2027-06"]) {
+    assert.equal(mesPedido(mes), mes);
+    assert.notDeepEqual(janelaDoMes(mes, HOJE), JANELA);
+  }
+});
+
+test("sem `hoje`, a rede e o mes do relogio em Sao Paulo", () => {
+  // O unico caso da suite que toca o relogio, e de proposito: a rota chama
+  // `janelaDoMes(month, today())`, e um default em UTC aqui devolveria o mes
+  // seguinte nas tres ultimas horas do ultimo dia do mes. A comparacao e com
+  // `janelaDoMesCorrente()` (que delega para `periodoCorrente`), e nao com um
+  // mes escrito a mao -- escrever o mes a mao faria o caso vencer de validade.
+  assert.deepEqual(janelaDoMes(undefined), janelaDoMesCorrente());
+  assert.deepEqual(janelaDoMes("abacaxi"), janelaDoMesCorrente());
+});
+
+test("o mes SEGUINTE materializa; o mes passado nao -- conferido, nao suposto", () => {
+  // Criterio 3 da issue, e o elo que faz o pedido dela responder algo. A rota
+  // chama `janelaParaMaterializar(janela, hoje)`, e o que esta sendo conferido
+  // aqui e que a janela do mes seguinte ATRAVESSA essa funcao -- sem isso,
+  // novembro diria "nenhuma conta prevista" num mes cheio de contas e o resto da
+  // rota estaria correto.
+  const seguinte = janelaDoMes("2026-04", HOJE);
+  assert.deepEqual(janelaParaMaterializar(seguinte, HOJE), {
+    de: "2026-04-01",
+    ate: "2026-04-30",
+  });
+
+  // E o mes INTEIRAMENTE PASSADO devolve `null`: materializar para tras
+  // fabricaria conta vencida retroativa -- o app inventando divida que a pessoa
+  // nunca teve, e ainda marcada em atraso. Mes velho mostra so o que ja esta
+  // gravado, e esta certo.
+  assert.equal(janelaParaMaterializar(janelaDoMes("2026-01", HOJE), HOJE), null);
+
+  // O mes corrente materializa de HOJE para frente, e nao do dia 1: a parte
+  // passada da janela nao pode ganhar linha nova.
+  assert.deepEqual(janelaParaMaterializar(JANELA, HOJE), {
+    de: HOJE,
+    ate: "2026-03-31",
+  });
+});
+
+test("os dois numeros seguem a janela do mes PEDIDO, e nao a do corrente", () => {
+  // O elo que fecha a secao: a janela entra em `painelDePapel` por `ctx`, e e
+  // ela que decide quais linhas contam. O fixture tem o salario de ABRIL
+  // (R$ 7.000, dia 05) e nenhuma conta de abril.
+  const abril = painelDePapel(LINHAS, { ...ctx, janela: janelaDoMes("2026-04", HOJE) });
+
+  assert.deepEqual(abril.salario_previsto, { total: 7000, quantidade: 1 });
+  assert.deepEqual(abril.total_de_contas, { total: null, quantidade: 0 });
+
+  // E o mes de marco continua respondendo o que respondia -- a janela nova nao
+  // mexeu na conta, so em QUAL mes ela responde.
+  const marco = painelDePapel(LINHAS, { ...ctx, janela: janelaDoMes("2026-03", HOJE) });
+  assert.equal(marco.total_de_contas.total, CONTAS_DE_MARCO);
+  assert.notEqual(abril.total_de_contas.total, marco.total_de_contas.total);
 });
 
 // ---------------------------------------------------------------------------
@@ -632,6 +796,110 @@ test("o portao espera o `mounted` ANTES de escolher um dos dois", () => {
   assert.ok(
     ondeMounted < ondePapel,
     "o `!mounted` aparece DEPOIS da escolha do painel: ali ele nao protege nada"
+  );
+});
+
+// ---------------------------------------------------------------------------
+// A FIACAO DA ROTA: ela tem de LER o `?month=` e passa-lo adiante (HMO-295)
+// ---------------------------------------------------------------------------
+// Os casos funcionais acima provam `janelaDoMes`. O que eles NAO alcancam e a
+// rota, e e la que vive o mutante da issue: uma `GET()` que nunca le a
+// querystring responde o mes corrente para todo pedido, e isso compila, nao da
+// erro de lint e passa por todos os casos de cima -- a funcao esta certa, so
+// nao e chamada com o parametro.
+//
+// Nenhuma suite deste repositorio importa um `route.ts` (ele arrasta
+// `next/server` e o cliente do Supabase), entao a prova aqui e TEXTUAL, e os
+// limites dela sao os conhecidos:
+//
+//   * a ancora e o CALL SITE com os argumentos, e nao o nome da funcao. Um
+//     `exigido("janelaDoMes")` passaria verde com `import { janelaDoMes }`
+//     intacto e a chamada apagada -- e tambem com `janelaDoMes(null, hoje)`,
+//     que e o mutante escrito de outro jeito;
+//   * o comentario e arrancado ANTES. O cabecalho da rota MENCIONA `month` e
+//     `janelaDoMes` em prosa: sobre o texto cru, um `proibido` reprovaria
+//     sempre e um `exigido` passaria com o codigo apagado. O controle do
+//     proprio strip e o primeiro caso abaixo.
+const ROTA = fileURLToPath(
+  new URL("../app/api/papel-de-pao/painel/route.ts", import.meta.url)
+);
+const FONTE_DA_ROTA = readFileSync(ROTA, "utf8");
+const CODIGO_DA_ROTA = semComentario(FONTE_DA_ROTA);
+
+test("o strip de comentario funciona na rota -- senao os casos dela sao vacuos", () => {
+  // Uma frase que SO existe em comentario no route.ts. Se ela sobrevive ao
+  // strip, o strip nao rodou e os casos seguintes estao lendo prosa.
+  assert.ok(
+    /ECOA o mes que saiu da querystring/.test(FONTE_DA_ROTA),
+    "a ancora do controle saiu do route.ts: reescreva este caso"
+  );
+  assert.ok(
+    !/ECOA o mes que saiu da querystring/.test(CODIGO_DA_ROTA),
+    "o strip de comentario nao removeu um comentario conhecido do route.ts"
+  );
+});
+
+test("a GET recebe o request -- sem ele nao ha querystring para ler", () => {
+  // A `GET()` de antes desta issue nao recebia parametro nenhum. Esta e a forma
+  // mais crua do mutante, e a unica que o tsc tambem pegaria (o `request.url`
+  // abaixo nao compilaria) -- as outras duas, nao.
+  assert.match(
+    CODIGO_DA_ROTA,
+    /export\s+async\s+function\s+GET\s*\(\s*request\s*:/,
+    "a GET do painel voltou a nao receber o request"
+  );
+});
+
+test("a rota LE o `month` da querystring", () => {
+  assert.match(
+    CODIGO_DA_ROTA,
+    /request\.nextUrl\.searchParams\.get\s*\(\s*"month"\s*\)/,
+    "a rota nao le `month` dos searchParams do request"
+  );
+});
+
+test("a rota passa o `month` para `janelaDoMes`, e nao fixa o mes corrente", () => {
+  // O call site COM os argumentos. `janelaDoMes(null, hoje)` e
+  // `janelaDoMesCorrente(hoje)` sao as duas formas do mutante que compilam
+  // igual, e as duas falham aqui.
+  assert.match(
+    CODIGO_DA_ROTA,
+    /janelaDoMes\s*\(\s*month\s*,\s*hoje\s*\)/,
+    "a rota nao chama janelaDoMes(month, hoje)"
+  );
+
+  // E a porta do mes corrente NAO esta aberta em paralelo. `janelaDoMesCorrente`
+  // continua existindo em lib/ (e `janelaDoMes` o chama como rede), mas na rota
+  // ele e o mutante: chamado ali, o `?month=` nao chega a lugar nenhum.
+  assert.ok(
+    !/janelaDoMesCorrente/.test(CODIGO_DA_ROTA),
+    "a rota voltou a calcular o mes corrente por conta propria"
+  );
+});
+
+test("a rota materializa a janela do mes PEDIDO, e nao outra", () => {
+  // O elo do "mes seguinte ja materializa": abrir novembro cria as linhas das
+  // regras recorrentes de novembro, que e literalmente o que o comentario da
+  // issue pede. Materializar a janela do mes corrente aqui deixaria novembro
+  // dizendo "nenhuma conta prevista" com o resto da rota correto.
+  assert.match(
+    CODIGO_DA_ROTA,
+    /janelaParaMaterializar\s*\(\s*janela\s*,\s*hoje\s*\)/,
+    "a rota nao materializa a janela pedida"
+  );
+
+  // E a leitura das linhas usa os extremos DESSA janela, nos dois lados.
+  assert.match(CODIGO_DA_ROTA, /\.gte\s*\(\s*"due_date"\s*,\s*janela\.de\s*\)/);
+  assert.match(CODIGO_DA_ROTA, /\.lte\s*\(\s*"due_date"\s*,\s*janela\.ate\s*\)/);
+});
+
+test("o `month` da resposta sai da janela, e nao do relogio", () => {
+  // Se ele saisse de `hoje`, a tela descartaria toda resposta de outro mes --
+  // o painel ficaria "indisponivel" em novembro com a conta certa por baixo.
+  assert.match(
+    CODIGO_DA_ROTA,
+    /month:\s*janela\.de\.slice\(0,\s*7\)/,
+    "o campo `month` da resposta nao sai de janela.de"
   );
 });
 

@@ -62,7 +62,7 @@ import {
   direcaoDaAgenda,
 } from "@/lib/previsto-x-realizado";
 import { parteDoMembro, type MembrosAtivosPorGrupo } from "@/lib/parte-do-grupo";
-import { periodoCorrente } from "@/lib/periodo-do-painel";
+import { ehDataIso, periodoCorrente, periodoDoMes } from "@/lib/periodo-do-painel";
 
 /**
  * O nome da categoria reservada de salario -- 'Salário', descrita como "Renda do
@@ -180,6 +180,67 @@ function dentroDaJanela(due_date: unknown, janela: JanelaDoMes): boolean {
  */
 export function janelaDoMesCorrente(hoje?: string): JanelaDoMes {
   const { de, ate } = periodoCorrente(hoje);
+  return { de, ate };
+}
+
+/**
+ * O MES PEDIDO, de `?month=AAAA-MM` -- HMO-295 (5/6 do plano da HMO-279).
+ *
+ * `null` e "ninguem pediu mes nenhum, ou pediu errado", e quem chama cai no mes
+ * corrente. As duas respostas ficam juntas de proposito: para esta rota elas
+ * TERMINAM no mesmo lugar, e separa-las convidaria um `400` a aparecer ali.
+ *
+ * POR QUE NAO 400, QUE E O QUE `periodoDaQuery` FAZ NA OUTRA ROTA
+ * ---------------------------------------------------------------
+ * A distincao de `lib/periodo-do-painel.ts` entre ausente e invalido existe
+ * porque aquela rota e chamada por varias telas e responder setembro a quem
+ * pediu julho seria um numero errado silencioso. Aqui a rota tem UMA tela, e a
+ * tela ja descarta resposta cujo `month` nao e o que ela pediu -- entao o
+ * silencio nao chega a virar numero errado. O que um `400` viraria e o modulo
+ * INTEIRO em branco por causa de uma querystring estragada (link antigo,
+ * parametro cortado no meio pelo aplicativo de mensagem), e o modo simples e
+ * justamente o que menos pode mostrar tela de erro.
+ *
+ * SAO DUAS GUARDAS, E CADA UMA PEGA UMA COISA QUE A OUTRA NAO PEGA
+ * ----------------------------------------------------------------
+ * 1. `typeof month !== "string"`. A querystring entrega string, mas esta funcao
+ *    e exportada e tipada com `unknown`, e o caso que importa e o ARRAY:
+ *    `["2026-11"]` virou `"2026-11"` na interpolacao abaixo e passaria pela
+ *    segunda guarda inteirinho. (`?month=a&month=b` e exatamente como um
+ *    cliente produz isso.)
+ *
+ * 2. `ehDataIso` sobre o DIA 1 -- e nao uma regra de formato nova. Repare que
+ *    ela cobre o formato TAMBEM, e e por isso que nao ha um
+ *    `/^\d{4}-\d{2}$/` aqui: `${month}-01` casa com `AAAA-MM-DD` se e somente
+ *    se `month` casa com `AAAA-MM`, entao a expressao regular a mais seria uma
+ *    guarda REDUNDANTE -- e duas guardas redundantes fazem os DOIS mutantes
+ *    delas sobreviverem, com o placar fechando 100% sem medir nenhuma das duas.
+ *
+ * O que so `ehDataIso` pega e o mes que NAO EXISTE: `2026-13` tem o formato
+ * certo, e `2026-13-01` atravessaria `primeiroDiaDoMes`/`ultimoDiaDoMes` sem
+ * reclamar, porque `Date.UTC(2026, 13, 0)` e um janeiro de 2027 perfeitamente
+ * valido. A janela sairia de um mes inexistente, e o rotulo de `MESES_PT[12]`,
+ * que e `undefined`.
+ */
+export function mesPedido(month: unknown): string | null {
+  if (typeof month !== "string") return null;
+  // O dia 1 e o representante do mes: se ele e data valida, o mes existe.
+  return ehDataIso(`${month}-01`) ? month : null;
+}
+
+/**
+ * A janela do mes pedido, com o mes corrente como rede.
+ *
+ * DELEGA para `periodoDoMes` -- a mesma funcao que o painel completo usa para
+ * andar de mes. "O mes de novembro" tem uma definicao neste app e a segunda
+ * copia dela e o defeito: `new Date("2026-11-01")` e meia-noite UTC e em
+ * America/Sao_Paulo ja e 31 de OUTUBRO, que foi o que custou a HMO-173. Aqui
+ * nao ha `new Date` nenhum -- a janela nasce dos componentes da string.
+ */
+export function janelaDoMes(month: unknown, hoje?: string): JanelaDoMes {
+  const mes = mesPedido(month);
+  if (mes === null) return janelaDoMesCorrente(hoje);
+  const { de, ate } = periodoDoMes(`${mes}-01`);
   return { de, ate };
 }
 

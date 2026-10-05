@@ -916,8 +916,37 @@ jobs:
       # "Salario", e quem le isso e a sonda de DOM do `test:papel-na-tela`
       # acima. Esta suite continua medindo so a conta, e o campo da resposta
       # continua `salario_previsto` -- ele e fio, nao tela.
+      #
+      # A HMO-295 (5/6) acrescentou o PASSO DE MES: a rota passou a receber
+      # `?month=AAAA-MM` e a suite ganhou a secao do mes pedido. O `hoje` de
+      # todos os casos dela e marco de 2026, e os meses pedidos sao outros --
+      # esse desencontro NAO e detalhe de fixture: o mutante da issue e "ignorar
+      # o `?month=` e usar sempre o corrente", e um caso que pedisse o mes
+      # corrente passaria verde com o parametro inteiramente desligado.
+      #
+      # Os SEIS ultimos casos falam do TEXTO-FONTE do `route.ts`, e nao de valor
+      # calculado: nenhuma suite deste repositorio importa um `route.ts` (ele
+      # arrasta `next/server` e o cliente do Supabase), e a rota pode chamar a
+      # funcao certa com o argumento errado -- `janelaDoMes(null, hoje)` compila,
+      # passa no lint e desliga a feature. Por isso a ancora e o CALL SITE com os
+      # argumentos, e nao o nome da funcao: um `exigido("janelaDoMes")` passaria
+      # verde com o `import` intacto e a chamada apagada. O comentario e
+      # arrancado antes (o cabecalho da rota menciona `month` em prosa), e um dos
+      # casos e o controle desse strip.
       - name: Os dois numeros do papel de pao (salario previsto e total de contas)
         run: npm run test:papel-de-pao
+
+      # Os mutantes do passo de mes, do lado da ROTA e da funcao pura. Doze, e o
+      # primeiro e o que justifica o bloco: a rota ignorando o `?month=` responde
+      # 200, com dois numeros CERTOS (os do mes corrente) debaixo do rotulo de
+      # outro mes -- e tsc, lint e `next build` passam todos, porque as duas
+      # pontas compilam e sao do mesmo tipo. E a familia de defeito da HMO-173.
+      #
+      # Runner puro: ~1,5s por volta, contra os ~5s do de navegador acima. Nao e
+      # job novo -- e um passo deste mesmo job, que o custo aqui e o NUMERO DE
+      # JOBS.
+      - name: Os mutantes do mes pedido pelo painel de papel
+        run: node scripts/mutantes-mes-do-painel.mjs
 
       - name: Os botoes da home empilham alinhados e com espaco no celular
         run: npm run test:home-cta
