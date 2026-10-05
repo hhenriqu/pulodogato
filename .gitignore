@@ -366,3 +366,9 @@ next-env.d.ts
 /.tmp-credito-de-grupo/
 # saida do `npm run test:secao-da-tela` (HMO-287)
 /.tmp-secao-da-tela/
+
+# saida de `bash scripts/medicao-hmo298.sh` (HMO-298). A medicao das tres
+# leituras do "Total de contas" compila lib/ para ca antes de medir; o script
+# ja comeca com `rm -rf` no diretorio, entao fora do .gitignore ele apareceria
+# e desapareceria do `git status` a cada execucao.
+/.tmp-medicao-hmo298/
