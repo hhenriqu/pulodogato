@@ -869,6 +869,15 @@ jobs:
       # aqui passa em UTC e nao ve o bug, porque a sandbox e America/Sao_Paulo e
       # o CI e UTC. Se qualquer caso passar a depender do relogio da maquina,
       # uma das duas reprova.
+      #
+      # OS QUATRO ULTIMOS CASOS falam do PORTAO de `/dashboard`, e sobre o
+      # TEXTO-FONTE: invertido, o portao entrega o painel de 8 requisicoes a
+      # quem ligou o modo e dois numeros a quem nao ligou -- e as duas pontas
+      # existem, compilam e sao do mesmo tipo, entao tsc, lint e `next build`
+      # passam todos. O cabecalho do portao menciona os dois nomes em prosa, e
+      # por isso a assercao roda sobre o codigo SEM comentario; o primeiro dos
+      # quatro casos e o controle desse strip -- sem ele os outros tres seriam
+      # vacuos, lendo o comentario em vez do `return`.
       - name: Os dois numeros do papel de pao (salario previsto e total de contas)
         run: npm run test:papel-de-pao
 

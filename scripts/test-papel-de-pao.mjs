@@ -29,6 +29,8 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const {
   painelDePapel,
@@ -546,4 +548,100 @@ test("amount em string (como o PostgREST entrega numeric) soma igual", () => {
 
   assert.equal(painel.salario_previsto.total, 7000);
   assert.equal(painel.total_de_contas.total, CONTAS_DE_MARCO);
+});
+
+// ---------------------------------------------------------------------------
+// O PORTAO DA ROTA /dashboard
+// ---------------------------------------------------------------------------
+// As quatro linhas que escolhem qual painel aparece. INVERTIDAS, o app fica
+// exatamente ao contrario -- quem liga o modo recebe o painel de 8 requisicoes
+// e quem nao liga recebe dois numeros -- e nada nesta suite, no tsc, no lint ou
+// no `next build` nota: as duas pontas existem, compilam e sao do mesmo tipo.
+// E a familia de defeito de "campo de rotulo passa pela suite de aritmetica".
+//
+// POR QUE ESTA ASSERCAO E TEXTUAL, e qual e o limite dela
+// -------------------------------------------------------
+// O portao vive em `page.tsx`, que importa o `PainelCompleto` inteiro -- as 8
+// chamadas de rede, o seletor de periodo, 40 modulos. Monta-lo num `file://`
+// com o React UMD (o desenho de `test:papel-na-tela`) significaria esbocar
+// aquilo todo, e cada esboco e um lugar onde a sonda deixa de falar do codigo
+// de producao. O preco aceito e este: a assercao prova a DECISAO escrita, nao a
+// tela pintada. O que ela NAO cobre e um `useModoPapel` que devolvesse `papel`
+// errado -- e isso `npm run test:modo-papel` e `npm run test:papel-na-tela` ja
+// cobrem, cada um de um lado.
+//
+// O COMENTARIO E ARRANCADO ANTES, e essa e a parte que erra calado: o cabecalho
+// do portao MENCIONA os dois nomes em prosa. Sobre o texto cru, um `exigido`
+// passaria verde com o `return` apagado (o comentario basta) e um `proibido`
+// reprovaria sempre. O controle do proprio strip esta no caso seguinte.
+const PAGINA = fileURLToPath(new URL("../app/(dashboard)/dashboard/page.tsx", import.meta.url));
+const FONTE_DA_PAGINA = readFileSync(PAGINA, "utf8");
+
+/** O codigo sem comentario -- bloco `/* *\/` e linha `//`, nessa ordem. */
+const semComentario = (texto) =>
+  texto.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
+
+const CODIGO_DA_PAGINA = semComentario(FONTE_DA_PAGINA);
+
+test("o strip de comentario funciona -- senao todo caso abaixo e vacuo", () => {
+  // Uma frase que SO existe em comentario no arquivo. Se ela sobrevive ao
+  // strip, o strip nao rodou e os casos seguintes estao lendo prosa.
+  assert.ok(
+    /NAO E HIGIENE/.test(FONTE_DA_PAGINA),
+    "a ancora do controle saiu do arquivo: reescreva este caso"
+  );
+  assert.ok(
+    !/NAO E HIGIENE/.test(CODIGO_DA_PAGINA),
+    "o strip de comentario nao removeu um comentario conhecido"
+  );
+});
+
+test("o portao manda o modo papel para o PainelDePapel, e nao o contrario", () => {
+  assert.match(
+    CODIGO_DA_PAGINA,
+    /if\s*\(\s*papel\s*\)\s*return\s*<PainelDePapel\s*\/>\s*;/,
+    "o ramo do modo papel nao devolve <PainelDePapel />"
+  );
+  assert.match(
+    CODIGO_DA_PAGINA,
+    /<PainelCompleto\s*\/>/,
+    "o outro ramo nao devolve <PainelCompleto />"
+  );
+
+  // E o inverso NAO esta escrito em lugar nenhum: `if (papel)` devolvendo o
+  // painel completo e a unica forma do defeito que compila igual.
+  assert.ok(
+    !/if\s*\(\s*papel\s*\)\s*return\s*<PainelCompleto/.test(CODIGO_DA_PAGINA),
+    "o portao esta invertido: com o modo ligado ele devolve o painel completo"
+  );
+});
+
+test("o portao espera o `mounted` ANTES de escolher um dos dois", () => {
+  // Sem isto o servidor renderiza um dos dois no chute e a hidratacao quebra --
+  // a tela INTEIRA troca, nao um icone.
+  assert.match(
+    CODIGO_DA_PAGINA,
+    /if\s*\(\s*!mounted\s*\)\s*return\s*<Girando\s*\/>\s*;/,
+    "o portao nao espera o mounted"
+  );
+
+  // E a espera vem PRIMEIRO. Depois do `if (papel)` ela nao protege nada.
+  const ondeMounted = CODIGO_DA_PAGINA.indexOf("!mounted");
+  const ondePapel = CODIGO_DA_PAGINA.indexOf("if (papel)");
+  assert.ok(ondeMounted >= 0 && ondePapel >= 0);
+  assert.ok(
+    ondeMounted < ondePapel,
+    "o `!mounted` aparece DEPOIS da escolha do painel: ali ele nao protege nada"
+  );
+});
+
+test("o portao le a preferencia pelo hook, e nao pelo localStorage na mao", () => {
+  // `useModoPapel` e o unico lugar com o estado em memoria e o `mounted`. Ler o
+  // storage direto aqui criaria a segunda fonte da verdade, e as duas
+  // divergiriam no primeiro clique no papelzinho.
+  assert.match(CODIGO_DA_PAGINA, /useModoPapel\s*\(\s*\)/);
+  assert.ok(
+    !/localStorage/.test(CODIGO_DA_PAGINA),
+    "a pagina le o localStorage direto em vez de usar o useModoPapel"
+  );
 });
