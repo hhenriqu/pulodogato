@@ -40,6 +40,16 @@ const COMPONENTE = "components/movimentacoes/TelaDeMovimentacao.tsx";
  * ignorar a suite inteira.
  */
 const CARTOES = "components/movimentacoes/CartoesDaTela.tsx";
+/**
+ * A SECAO e a LINHA sairam para arquivo proprio na HMO-287, pelo mesmo motivo
+ * que os cartoes sairam na HMO-246 -- e isso move os leitores de `LinhaDaTela`.
+ *
+ * Quem procura `linha.categoria` tem de olhar os DOIS arquivos: o container
+ * continua sendo quem busca e separa as linhas, e este e quem as desenha.
+ * Apontar a busca so para um dos dois daria um verde vazio no dia em que o
+ * outro perdesse o leitor.
+ */
+const SECAO = "components/movimentacoes/SecaoDaTela.tsx";
 const ROTA = "app/api/movimentacoes/resumo/route.ts";
 const LIB = "lib/telas-de-movimentacao.ts";
 /** Onde a constante do tipo de conta de cartao mora de verdade. */
@@ -52,6 +62,9 @@ function semComentarios(fonte) {
 
 const componente = semComentarios(readFileSync(COMPONENTE, "utf8"));
 const cartoes = semComentarios(readFileSync(CARTOES, "utf8"));
+const secao = semComentarios(readFileSync(SECAO, "utf8"));
+/** O container e a secao juntos: e onde os leitores de `LinhaDaTela` moram. */
+const telaInteira = `${componente}\n${secao}`;
 const rota = semComentarios(readFileSync(ROTA, "utf8"));
 const lib = semComentarios(readFileSync(LIB, "utf8"));
 
@@ -161,9 +174,23 @@ test("todo campo de LinhaDaTela tem leitor -- na tela ou na propria lib", () => 
   ]) {
     assert.ok(naLib.includes(campo), `${campo} saiu de LinhaDaTela`);
     assert.match(
-      componente,
+      telaInteira,
       new RegExp(`linha\\.${campo}`),
       `a tela nao le linha.${campo} -- a lib produz e a lista nao mostra`
+    );
+  }
+
+  // 1b. OS DOIS QUE A HMO-285 CRIOU E A HMO-287 DESENHA. Eles estavam neste
+  // teste como "produzidos nos dois lados" enquanto nada os lia; agora o
+  // leitor existe, e e a SECAO que tem de ter. Sem esta exigencia, apagar o
+  // icone e o rotulo nao reprovaria nada aqui -- os campos continuariam
+  // chegando na resposta e sendo calculados certo.
+  for (const campo of ["natureza", "fatura"]) {
+    assert.ok(naLib.includes(campo), `${campo} saiu de LinhaDaTela`);
+    assert.match(
+      secao,
+      new RegExp(`linha\\.${campo}`),
+      `${SECAO} nao le linha.${campo} -- a lib produz e a linha nao mostra`
     );
   }
 
@@ -238,6 +265,38 @@ test("as tres rotas do catalogo tem pagina, e as tres paginas usam o container",
       `o catalogo nao aponta para ${rotaDoCatalogo}`
     );
   }
+});
+
+test("a tela do cartao recebe o `?mes=` que a linha de fatura manda (HMO-287)", () => {
+  // AS DUAS PONTAS DO LINK, NO MESMO TESTE. Cada lado tem suite propria -- o
+  // `href` em test-secao-da-tela, o mes inicial em test-fatura-do-cartao -- e
+  // as duas ficariam verdes com as pontas DESLIGADAS: a linha mandando `?mes=`
+  // para uma pagina que o ignora abre no mes corrente, que e um destino
+  // plausivel, com o valor certo e o mes errado.
+  const paginaDoCartao = readFileSync(
+    "app/(dashboard)/dashboard/cartoes/[id]/page.tsx",
+    "utf8"
+  );
+
+  // A ponta que manda.
+  assert.match(
+    secao,
+    /caminhoDoCartaoNoMes\(linha\.fatura\.accountId, linha\.fatura\.mes\)/,
+    `${SECAO} nao monta o href da fatura por caminhoDoCartaoNoMes`
+  );
+
+  // A ponta que recebe -- pela CONSTANTE, nao pela string "mes" escrita a mao
+  // nos dois lugares: duas literais iguais divergem na primeira renomeacao, e o
+  // sintoma e a tela abrindo no mes corrente sem erro nenhum.
+  assert.match(
+    semComentarios(paginaDoCartao),
+    /mesInicialDaFatura\(searchParams\.get\(PARAM_DO_MES\)\)/,
+    "a tela do cartao nao le o mes da URL por PARAM_DO_MES"
+  );
+
+  // E `useSearchParams` exige o limite de suspensao: sem ele o `next build`
+  // reprova a rota inteira, e `next lint` NAO pega.
+  assert.match(paginaDoCartao, /<Suspense/, "a tela do cartao sem Suspense");
 });
 
 test("o menu lateral leva para as tres telas", () => {

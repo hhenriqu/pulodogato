@@ -80,6 +80,40 @@ export function caminhoDoCartao(
   return `/dashboard/cartoes/${accountId}`;
 }
 
+/**
+ * O nome do parametro que leva o MES para a tela do cartao (HMO-287).
+ *
+ * Ele NAO e `id`, pela mesma razao que `PARAM_DO_CARTAO` nao e: sob o segmento
+ * dinamico `[id]` o Next consome a chave de mesmo nome e `searchParams.get`
+ * volta `null` com o valor chegando inteiro (HMO-142, decisao 4 acima).
+ */
+export const PARAM_DO_MES = "mes";
+
+/**
+ * A tela daquele cartao, aberta no mes DAQUELA fatura (HMO-287).
+ *
+ * POR QUE O MES VIAJA NA URL. A tela do cartao abre sempre em
+ * `mesCorrenteDaFatura()`. Sem o parametro, clicar na fatura de agosto estando
+ * a lista de Despesas em agosto abriria OUTUBRO: o valor certo, o mes errado, e
+ * nada na tela de destino dizendo que o mes trocou. Esse e o defeito que
+ * ninguem reporta, porque a tela de destino parece perfeitamente correta.
+ *
+ * O `mes` entra em qualquer um dos dois formatos que o app usa -- a chave da
+ * fatura e `invoice_month` sao 'AAAA-MM-01'; o estado da tela do cartao e o
+ * `&month=` da API sao 'AAAA-MM' -- e sai SEMPRE no de 7 chars, que e o unico
+ * que a rota reconhece. Mes que nao da para ler nao vira querystring: o link
+ * cai no caminho sem parametro, que abre no mes corrente. Um `?mes=undefined`
+ * na barra de endereco seria pior que parametro nenhum.
+ */
+export function caminhoDoCartaoNoMes(
+  accountId: string,
+  mes: string | null | undefined
+): `/dashboard/cartoes/${string}` {
+  const curto = mesDeSeteChars(mes);
+  if (!curto) return caminhoDoCartao(accountId);
+  return `/dashboard/cartoes/${accountId}?${PARAM_DO_MES}=${curto}`;
+}
+
 // ---------------------------------------------------------------------------
 // O MES DA FATURA
 // ---------------------------------------------------------------------------
@@ -132,6 +166,46 @@ export function mesCorrenteDaFatura(agora: Date = new Date()): string {
   })
     .format(agora)
     .slice(0, 7);
+}
+
+/**
+ * 'AAAA-MM' a partir de 'AAAA-MM' ou 'AAAA-MM-DD'; `null` para o resto.
+ *
+ * A VALIDACAO DO NUMERO DO MES NAO E ENFEITE. '2026-13' casa com `\d{4}-\d{2}`
+ * e e um mes que nao existe: a API devolveria uma fatura vazia e a tela diria
+ * "R$ 0,00" com o rotulo de mes em branco (`rotuloDaFatura` ja recusa 13) --
+ * um mes sem compra e um mes impossivel ficariam indistinguiveis.
+ */
+function mesDeSeteChars(mes: string | null | undefined): string | null {
+  if (!mes || !/^\d{4}-\d{2}(-\d{2})?$/.test(mes)) return null;
+  const numeroDoMes = Number(mes.slice(5, 7));
+  if (numeroDoMes < 1 || numeroDoMes > 12) return null;
+  return mes.slice(0, 7);
+}
+
+/**
+ * Em que mes a tela do cartao abre: o do `?mes=` da URL, ou o corrente
+ * (HMO-287).
+ *
+ * FUNCAO PURA, E NAO UM `useState` COM UM `??` DENTRO. Esta e a unica regra
+ * nova da tela do cartao nesta issue, e o modo de falha dela e mudo: um mes que
+ * a tela nao aceita nao da erro -- ela abre no mes corrente, que e exatamente o
+ * que ela faria se o link estivesse certo e o parametro nao existisse. Um
+ * handler em navegador nao distingue os dois casos; esta funcao distingue.
+ *
+ * ELA ACEITA OS DOIS FORMATOS, e isso NAO e uma segunda guarda redundante: a
+ * conversao acontece em UM lugar so (`mesDeSeteChars`), que o link e esta
+ * funcao chamam. Duas conversoes separadas e que seriam o problema -- elas
+ * divergiriam sem dar erro, e o sintoma seria o mes errado embaixo do total
+ * certo. Aceitar os 10 chars aqui cobre a URL colada a mao e a compartilhada,
+ * que e a forma que o resto do app escreve ('AAAA-MM-01' e o que esta em
+ * `invoice_month` e na chave da fatura).
+ */
+export function mesInicialDaFatura(
+  mesDaUrl: string | null | undefined,
+  agora: Date = new Date()
+): string {
+  return mesDeSeteChars(mesDaUrl) ?? mesCorrenteDaFatura(agora);
 }
 
 // ---------------------------------------------------------------------------

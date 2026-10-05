@@ -32,11 +32,14 @@ import {
   PARAM_DO_CARTAO,
   caminhoDeNovoGasto,
   caminhoDoCartao,
+  caminhoDoCartaoNoMes,
   cartaoDaTela,
   estadoDaTela,
   faturaDoCartao,
   gastosDaFatura,
   mesCorrenteDaFatura,
+  mesInicialDaFatura,
+  PARAM_DO_MES,
   previsoesDoCartao,
   rotuloDaFatura,
   rotuloDoCiclo,
@@ -431,4 +434,85 @@ test("campo ausente e `null`, nao lista vazia", () => {
     previsoesDoCartao({ ...semCampo, scheduled_pending: [] }, MEU_CARTAO),
     []
   );
+});
+
+// ---------------------------------------------------------------------------
+// O MES QUE CHEGA NA URL (HMO-287)
+// ---------------------------------------------------------------------------
+// A linha de fatura da tela de Despesas aponta para ca com `?mes=AAAA-MM`.
+// Duas pecas, e as duas tem o mesmo modo de falha mudo: a tela abre no mes
+// CORRENTE, que e exatamente o que ela faria se o link estivesse certo e o
+// parametro nao existisse. Valor certo, mes errado, nada vermelho.
+//
+// Os dois formatos convivem no app de proposito e nao da para unificar: a chave
+// da fatura e `invoice_month` sao 'AAAA-MM-01' (10 chars, e o banco); o estado
+// desta tela e o `&month=` da rota sao 'AAAA-MM' (7). E por isso que a
+// conversao precisa de teste em vez de inspecao.
+// ---------------------------------------------------------------------------
+
+test("o link da fatura leva o mes em 7 chars, e NAO os 10 da chave", () => {
+  // Com os 10 a rota recebe um mes que ela nao reconhece.
+  assert.equal(
+    caminhoDoCartaoNoMes(MEU_CARTAO, "2026-08-01"),
+    `/dashboard/cartoes/${MEU_CARTAO}?mes=2026-08`
+  );
+
+  // E o que ja vem em 7 passa inteiro.
+  assert.equal(
+    caminhoDoCartaoNoMes(MEU_CARTAO, "2026-08"),
+    `/dashboard/cartoes/${MEU_CARTAO}?mes=2026-08`
+  );
+});
+
+test("o parametro do mes NAO se chama `id`", () => {
+  // Sob o segmento dinamico `[id]` o Next consome a chave de mesmo nome e
+  // `searchParams.get("id")` volta null com o valor chegando inteiro (HMO-142).
+  assert.equal(PARAM_DO_MES, "mes");
+  assert.ok(!caminhoDoCartaoNoMes(MEU_CARTAO, "2026-08").includes("?id="));
+});
+
+test("mes que nao da para ler nao vira querystring nenhuma", () => {
+  // `?mes=undefined` na barra de endereco e pior que parametro nenhum: ele
+  // aparece no link compartilhado e sugere que a tela entende alguma coisa que
+  // ela nao entende.
+  for (const ruim of [null, undefined, "", "outubro", "2026", "2026-13", "2026-00"]) {
+    assert.equal(
+      caminhoDoCartaoNoMes(MEU_CARTAO, ruim),
+      `/dashboard/cartoes/${MEU_CARTAO}`,
+      `mes ${JSON.stringify(ruim)} virou querystring`
+    );
+  }
+});
+
+test("a tela do cartao abre no mes do `?mes=`, e nao no corrente", () => {
+  // O defeito que esta funcao existe para impedir: clicar na fatura de agosto
+  // abrindo outubro.
+  const emOutubro = new Date("2026-10-15T12:00:00Z");
+
+  assert.equal(mesInicialDaFatura("2026-08", emOutubro), "2026-08");
+  // E ela aceita os 10 chars tambem: a URL e colada a mao e compartilhada, e
+  // 'AAAA-MM-01' e a forma que o resto do app escreve.
+  assert.equal(mesInicialDaFatura("2026-08-01", emOutubro), "2026-08");
+});
+
+test("sem `?mes=` -- ou com um que nao da para ler -- cai no mes corrente", () => {
+  const emOutubro = new Date("2026-10-15T12:00:00Z");
+
+  for (const ruim of [null, undefined, "", "outubro", "2026", "2026-13", "2026-1"]) {
+    assert.equal(
+      mesInicialDaFatura(ruim, emOutubro),
+      "2026-10",
+      `mes ${JSON.stringify(ruim)} nao caiu no corrente`
+    );
+  }
+});
+
+test("o mes corrente do fallback e o de SAO PAULO, nao o de UTC", () => {
+  // 1 de novembro as 00:30 UTC e 31 de OUTUBRO em Sao Paulo. Sem o fuso, quem
+  // abrisse a tela nessa janela veria a fatura do mes seguinte -- e a do mes
+  // que ele esta vivendo estaria a um clique de distancia, sem nada dizendo.
+  const viradaEmUtc = new Date("2026-11-01T00:30:00Z");
+
+  assert.equal(mesInicialDaFatura(null, viradaEmUtc), "2026-10");
+  assert.equal(mesInicialDaFatura(null, viradaEmUtc), mesCorrenteDaFatura(viradaEmUtc));
 });
