@@ -284,7 +284,12 @@ function leituraDaTelaDeDespesas() {
     [],
     [...semCompraDeCartao, ...previstas],
     "expense",
-    new Set()
+    new Set(),
+    // Quem esta olhando (HMO-301). Esta medicao le o banco pelo psql e nao
+    // tem sessao nenhuma: o `null` faz `posso_editar` cair para `false` em
+    // toda linha, que e a direcao barata -- e nenhum dos tres numeros desta
+    // medicao depende do campo.
+    null
   );
 
   return { resumo: resumoDaTela(linhas), linhas };

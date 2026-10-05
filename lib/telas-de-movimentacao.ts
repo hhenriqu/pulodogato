@@ -288,6 +288,26 @@ export interface LinhaDaTela {
    */
   natureza: NaturezaDaLinha;
   /**
+   * Quem pode editar / excluir / dar baixa nesta linha -- HMO-301.
+   *
+   * O MESMO campo, com o MESMO nome e a MESMA regra, de
+   * `LinhaDoDetalhe.posso_editar` (lib/papel-de-pao.ts, HMO-300): os dois modos
+   * leem listas diferentes e precisam da mesma resposta, e dois nomes para a
+   * mesma pergunta divergiriam na primeira mudanca.
+   *
+   * Ele existe porque a lista pode conter linha de OUTRO membro do grupo -- a
+   * policy do 005 libera `group_id IS NOT NULL AND is_group_member(group_id)`
+   * --, e a escrita ali e recusada pela RLS. O modo de falha pior ja esta
+   * medido neste repositorio: `UPDATE` filtrado pela RLS volta **200 sem
+   * alterar nada**, ou seja o app diz "pronto" e a linha fica.
+   *
+   * FALHA FECHADO: sem `user_id` na leitura, ou sem `meuUserId` em
+   * `linhasDaTela`, ele e `false` e nenhum botao aparece. Botao ausente e ruim;
+   * botao que aparece e nao funciona e pior. Quem o consome e
+   * `lib/acoes-da-linha.ts`.
+   */
+  posso_editar: boolean;
+  /**
    * O cartao e o mes desta linha, so quando ela e fatura. `null` nas outras.
    *
    * UM OBJETO, E NAO DOIS CAMPOS SOLTOS: `accountId` sem `mes` monta um link
@@ -301,6 +321,17 @@ export interface LinhaDaTela {
 /** Uma linha de `financial_transactions`, como a consulta a devolve. */
 export interface RealizadaCrua extends LancamentoComConta {
   id: string;
+  /**
+   * De quem e a linha -- o que decide `posso_editar` (HMO-301).
+   *
+   * OPCIONAL, e a ausencia dele nao e um estado neutro: ela derruba
+   * `posso_editar` para `false` e a linha sai sem botao nenhum. E a direcao
+   * barata, e e deliberado que o `tsc` nao cobre a rota -- cobrar aqui tornaria
+   * obrigatorio um campo que a fatura sintetizada nao tem. Quem cobra a fiacao
+   * e a sonda textual de
+   * scripts/test-contrato-das-telas-de-movimentacao.mjs.
+   */
+  user_id?: string | null;
   description?: string | null;
   amount: number;
   exchange_rate?: number | string | null;
@@ -323,6 +354,14 @@ export interface RealizadaCrua extends LancamentoComConta {
  */
 export interface PrevistaCrua {
   id: string | null;
+  /**
+   * De quem e a conta prevista -- o que decide `posso_editar` (HMO-301).
+   *
+   * `undefined` na fatura aberta sintetizada, e esta certo: ela ja sai sem
+   * botao por `gravada: false`. Ver `RealizadaCrua.user_id` para a direcao do
+   * erro.
+   */
+  user_id?: string | null;
   description?: string | null;
   amount: number | string | null;
   due_date?: string | null;
@@ -566,13 +605,15 @@ export function ehGastoNoCartao(crua: RealizadaCrua): boolean {
 export function linhaRealizada(
   crua: RealizadaCrua,
   indice: IndiceDeContraparte,
-  idsDeFixa: ReadonlySet<string>
+  idsDeFixa: ReadonlySet<string>,
+  meuUserId: string | null | undefined
 ): LinhaDaTela {
   const destino = destinoDoLancamento(crua, indice);
 
   return {
     id: crua.id,
     gravada: true,
+    posso_editar: ehMinha(crua.user_id, meuUserId),
     descricao: texto(crua.description),
     valor: valorEmReais(crua.amount, crua.exchange_rate),
     data: texto(crua.transaction_date) ?? "",
@@ -615,7 +656,36 @@ export function linhaRealizada(
  *     reaproveitar a linha errada quando o periodo mudasse. Uma linha a menos e
  *     melhor que uma linha com o valor de outra.
  */
-export function linhaPrevista(crua: PrevistaCrua): LinhaDaTela | null {
+/**
+ * A linha e de quem esta olhando? -- o unico lugar que decide `posso_editar`.
+ *
+ * FUNCAO E NAO UMA EXPRESSAO REPETIDA nas duas chamadas, porque ela tem tres
+ * jeitos de ficar ERRADA PARA MAIS, e os tres sao plausiveis escritos a mao:
+ *
+ *   * `==` em vez de `===` faria `undefined == null` ser VERDADE -- a linha sem
+ *     `user_id` lida por um visitante sem id viraria editavel;
+ *   * `linha.user_id === meuUserId` sem as duas guardas de nulo faz
+ *     `undefined === undefined` ser verdade, que e exatamente o caso da rota
+ *     que esqueceu o campo no `select`: TODA linha ganharia botao;
+ *   * `!!meuUserId` sozinho (sem comparar) aprovaria qualquer linha de qualquer
+ *     membro do grupo para qualquer pessoa logada.
+ *
+ * Os tres erram na direcao CARA: botao que aparece, a RLS recusa, e o `UPDATE`
+ * recusado volta 200 sem alterar nada.
+ */
+function ehMinha(
+  daLinha: string | null | undefined,
+  meuUserId: string | null | undefined
+): boolean {
+  if (typeof daLinha !== "string" || daLinha === "") return false;
+  if (typeof meuUserId !== "string" || meuUserId === "") return false;
+  return daLinha === meuUserId;
+}
+
+export function linhaPrevista(
+  crua: PrevistaCrua,
+  meuUserId: string | null | undefined
+): LinhaDaTela | null {
   if (STATUS_QUE_SAI_DO_PREVISTO.has(String(crua.status))) return null;
 
   const tela = telaDoTipo(crua.direction);
@@ -655,6 +725,7 @@ export function linhaPrevista(crua: PrevistaCrua): LinhaDaTela | null {
   return {
     id: chave,
     gravada: idGravado !== null,
+    posso_editar: ehMinha(crua.user_id, meuUserId),
     descricao: texto(crua.description),
     // Sem cotacao: `scheduled_transactions` nao tem a coluna. Ver
     // `valorEmReais`.
@@ -719,7 +790,15 @@ export function linhasDaTela(
   realizadas: readonly RealizadaCrua[],
   previstas: readonly PrevistaCrua[],
   tipo: TipoDaTela,
-  idsDeFixa: ReadonlySet<string>
+  idsDeFixa: ReadonlySet<string>,
+  /**
+   * QUEM ESTA OLHANDO -- HMO-301. Obrigatorio pelo mesmo motivo de
+   * `idsDeFixa`: a rota e quem autentica, entao e dela que o valor sai, e um
+   * parametro opcional deixaria o `tsc` verde com a rota tendo parado de
+   * passa-lo. Aqui, no entanto, o erro silencioso vai na direcao BARATA --
+   * `posso_editar` cai para `false` em toda linha e nenhum botao aparece.
+   */
+  meuUserId: string | null | undefined
 ): LinhaDaTela[] {
   // O indice vai sobre TODAS as realizadas, e nao sobre as filtradas: a
   // contraparte de uma transferencia e uma transferencia tambem, mas o indice
@@ -735,11 +814,11 @@ export function linhasDaTela(
     // O gasto no cartao esta DENTRO da fatura, e a fatura inteira ja esta no
     // lado previsto desta mesma tela. Ver armadilha 5 do cabecalho.
     if (tipo === "expense" && ehGastoNoCartao(crua)) continue;
-    linhas.push(linhaRealizada(crua, indice, idsDeFixa));
+    linhas.push(linhaRealizada(crua, indice, idsDeFixa, meuUserId));
   }
 
   for (const crua of previstas) {
-    const linha = linhaPrevista(crua);
+    const linha = linhaPrevista(crua, meuUserId);
     if (linha && linha.tipo === tipo) linhas.push(linha);
   }
 

@@ -14,16 +14,27 @@
 // deste arquivo divergiriam na primeira mudanca -- e o que divergiria primeiro
 // e o que menos pode: a conta de Total, Previsto e Realizado.
 //
-// OS CARTOES E AS SECOES MORAM EM OUTROS ARQUIVOS, DE PROPOSITO
-// -------------------------------------------------------------
-// `components/movimentacoes/CartoesDaTela.tsx` e
-// `components/movimentacoes/SecaoDaTela.tsx`. Este arquivo importa
-// `next/navigation`, que NAO roda no node -- com aquela marcacao aqui dentro, o
-// teste que a renderiza morreria no import. La elas sao funcao pura de props, e
-// scripts/test-cartoes-da-tela.mjs / scripts/test-secao-da-tela.mjs leem o HTML
-// que sai: e a unica coisa capaz de pegar o `previsto` impresso no cartao
-// "Realizado" (um defeito que a aritmetica inteira aprova) e o `?mes=` que o
-// link da fatura leva.
+// ESTE ARQUIVO E A URL E O CROMO; O CORPO DA TELA MORA EM OUTRO (HMO-301)
+// ----------------------------------------------------------------------
+// Aqui ficam o titulo, o seletor de periodo, a porta de lancar e o caminho de
+// volta ao mes corrente -- tudo que depende de `next/navigation`, porque o
+// periodo vive na querystring. A LEITURA, a lista e as tres acoes
+// (Editar/Excluir/Confirmar) ficam em
+// `components/movimentacoes/ListaDeMovimentacao.tsx`.
+//
+// A fronteira e exatamente `next/navigation`, que NAO roda no node: com a
+// leitura aqui dentro, nada neste repositorio conseguia montar a lista num
+// navegador e medir a coisa que a HMO-301 pede -- que confirmar uma linha a
+// MOVA de "Previsto no período" para "Realizado no período". Um teste que
+// importasse este arquivo morreria no import, antes da primeira assercao.
+// `scripts/test-lista-na-tela.mjs` monta o outro em Chromium de verdade.
+//
+// `CartoesDaTela.tsx` e `SecaoDaTela.tsx` continuam separados pela mesma razao,
+// e com as suites que ja tinham (test-cartoes-da-tela.mjs e
+// test-secao-da-tela.mjs, por `react-dom/server`): elas pegam o `previsto`
+// impresso no cartao "Realizado" -- um defeito que a aritmetica inteira aprova
+// --, o `?mes=` que o link da fatura leva, e agora QUAIS botoes cada estado de
+// linha ganha.
 //
 // O ZERO CONFIANTE NAO PODE APARECER
 // ----------------------------------
@@ -34,43 +45,20 @@
 // pergunta -- ela nao parece um erro, parece um mes barato.
 // -----------------------------------------------------------------------------
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowRightLeft,
-  CalendarClock,
   CalendarRange,
-  CheckCircle2,
-  CreditCard,
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { SeletorDePeriodo } from "@/components/dashboard/SeletorDePeriodo";
-import { CartoesDaTela } from "@/components/movimentacoes/CartoesDaTela";
-import {
-  SecaoDaTela,
-  type AparenciaDaTela,
-} from "@/components/movimentacoes/SecaoDaTela";
-import {
-  FaixaDadoDoAparelho,
-  PainelErroDoServidor,
-  PainelSemRede,
-} from "@/components/SemRede";
-import {
-  buscarLeitura,
-  podeAfirmarVazio,
-  type EstadoDaLeitura,
-} from "@/lib/offline-leitura";
+import { ListaDeMovimentacao } from "@/components/movimentacoes/ListaDeMovimentacao";
+import type { AparenciaDaTela } from "@/components/movimentacoes/SecaoDaTela";
 import {
   ehPeriodoCorrente,
   lerPeriodo,
@@ -84,27 +72,10 @@ import { ROTA_DA_TRANSFERENCIA } from "@/lib/transferencia";
 import { comOrigem } from "@/lib/retorno-do-lancamento";
 import { useOrigemDaTela } from "@/lib/hooks/useOrigemDaTela";
 import {
-  secoesDaTela,
   telaDoTipo,
   TELAS_DE_MOVIMENTACAO,
-  type LinhaDaTela,
-  type ResumoDaTela,
   type TipoDaTela,
 } from "@/lib/telas-de-movimentacao";
-
-/** O que a rota responde. */
-interface RespostaDaTela {
-  resumo?: ResumoDaTela;
-  vencido?: { total: number; quantidade: number };
-  linhas?: LinhaDaTela[];
-  fatura_sem_vencimento?: { account_name: string | null; total: number }[];
-}
-
-const moeda = (valor: number) =>
-  new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  }).format(valor);
 
 /**
  * O icone, a cor e as palavras de cada tela. Em token, nunca em hex
@@ -165,76 +136,30 @@ export function TelaDeMovimentacao({ tipo }: { tipo: TipoDaTela }) {
   /** Esta tela, com o periodo, para o modal de lancamento saber para onde voltar. */
   const origem = useOrigemDaTela();
 
-  const [resumo, setResumo] = useState<ResumoDaTela | null>(null);
-  const [vencido, setVencido] = useState<{ total: number; quantidade: number }>({
-    total: 0,
-    quantidade: 0,
-  });
-  const [linhas, setLinhas] = useState<LinhaDaTela[]>([]);
-  const [semVencimento, setSemVencimento] = useState<
-    { account_name: string | null; total: number }[] | null
-  >(null);
-  const [estado, setEstado] = useState<EstadoDaLeitura | null>(null);
-  const [guardadoEm, setGuardadoEm] = useState<Date | null>(null);
-  const [carregando, setCarregando] = useState(true);
-
   /**
-   * O periodo como querystring, calculado FORA do `carregar`.
+   * O periodo como querystring, calculado FORA da leitura.
    *
    * `periodo` e um objeto novo a cada render (`lerPeriodo` constroi um), entao
-   * po-lo na lista de dependencias do `useCallback` abaixo faria a busca
-   * repetir para sempre -- o `useEffect` depende de `carregar`, que mudaria em
-   * cada render. E uma lista com `periodo.de, periodo.ate` e desonesta: o lint
+   * passa-lo adiante faria a busca repetir para sempre -- o `useEffect` de
+   * `ListaDeMovimentacao` depende do `carregar`, que mudaria em cada render. E
+   * uma lista de dependencias com `periodo.de, periodo.ate` e desonesta: o lint
    * cobra `periodo` e tem razao, porque e `periodo` que o corpo le.
    *
    * Uma STRING resolve as duas coisas: ela e comparada por VALOR, entao e
-   * estavel enquanto o periodo nao muda, e a dependencia declarada e exatamente
-   * o que o corpo usa. E `periodoParaQuery` continua sendo quem escolhe os
-   * nomes `de`/`ate` -- montar a querystring a mao aqui os separaria dos que
-   * `periodoDaQuery` le na rota, e um `?from=` contra um `get("de")` cai no mes
-   * corrente em silencio: o seletor pareceria nao funcionar, sem erro nenhum.
+   * estavel enquanto o periodo nao muda. E `periodoParaQuery` continua sendo
+   * quem escolhe os nomes `de`/`ate` -- montar a querystring a mao aqui os
+   * separaria dos que `periodoDaQuery` le na rota, e um `?from=` contra um
+   * `get("de")` cai no mes corrente em silencio: o seletor pareceria nao
+   * funcionar, sem erro nenhum.
    */
   const queryDoPeriodo = periodoParaQuery(periodo);
-
-  const carregar = useCallback(async () => {
-    setCarregando(true);
-
-    const leitura = await buscarLeitura<RespostaDaTela>(
-      `/api/movimentacoes/resumo?tipo=${tipo}&${queryDoPeriodo}`
-    );
-
-    setEstado(leitura.estado);
-    setGuardadoEm(leitura.guardadoEm);
-
-    if (leitura.dados) {
-      setResumo(leitura.dados.resumo ?? null);
-      setVencido(leitura.dados.vencido ?? { total: 0, quantidade: 0 });
-      setLinhas(leitura.dados.linhas ?? []);
-      // `?? null` e nao `?? []`: uma resposta guardada no aparelho de antes
-      // desta feature nao tem o campo, e `[]` ali afirmaria "nenhum cartao sem
-      // vencimento" com base num corpo que nunca respondeu isso.
-      setSemVencimento(leitura.dados.fatura_sem_vencimento ?? null);
-    } else {
-      // A leitura falhou: a lista SAI da tela. Deixar a do periodo anterior
-      // seria a tela mostrando setembro com o titulo de outubro.
-      setResumo(null);
-      setLinhas([]);
-    }
-
-    setCarregando(false);
-  }, [tipo, queryDoPeriodo]);
-
-  useEffect(() => {
-    carregar();
-  }, [carregar]);
 
   /**
    * Trocar de periodo troca a URL -- e e a URL que manda.
    *
    * `router.push` e nao `setState`: o periodo vive na querystring, entao o link
    * que a pessoa manda mostra o mes dela e o botao voltar do navegador anda
-   * entre periodos. O efeito acima refaz a leitura porque `queryDoPeriodo`
-   * muda.
+   * entre periodos. A leitura refaz sozinha porque `queryDoPeriodo` muda.
    *
    * O `as any` e o mesmo do menu lateral (components/Sidebar.tsx), pela mesma
    * razao: `experimental.typedRoutes` tipa o destino como uma UNIAO LITERAL das
@@ -249,11 +174,6 @@ export function TelaDeMovimentacao({ tipo }: { tipo: TipoDaTela }) {
       router.push(`${tela.rota}?${periodoParaQuery(novo)}` as any);
     },
     [router, tela.rota]
-  );
-
-  const { previstas, realizadas } = useMemo(
-    () => secoesDaTela(linhas),
-    [linhas]
   );
 
   return (
@@ -310,200 +230,117 @@ export function TelaDeMovimentacao({ tipo }: { tipo: TipoDaTela }) {
         </Button>
       </div>
 
-      {estado === "do-aparelho" && (
-        <FaixaDadoDoAparelho
-          guardadoEm={guardadoEm}
-          soLeitura
-          aoTentarDeNovo={carregar}
-        />
-      )}
+      <ListaDeMovimentacao
+        tipo={tipo}
+        tela={tela}
+        aparencia={aparencia}
+        queryDoPeriodo={queryDoPeriodo}
+        rotuloDoPeriodo={rotuloDoPeriodo(periodo)}
+        origem={origem}
+        rodape={
+          <>
+            {/*
+              O CAMINHO DE VOLTA PARA O MES CORRENTE.
+              Quem navegou para agosto e nao encontrou nada precisa saber que
+              outros periodos existem -- sem isto, "Nenhum lançamento" se le como
+              "a minha conta esta vazia", com trezentos lançamentos a uma seta de
+              distancia.
 
-      {estado === "sem-rede" ? (
-        <PainelSemRede
-          oQue={`as ${tela.titulo.toLowerCase()} do período`}
-          aoTentarDeNovo={carregar}
-        />
-      ) : estado === "erro-do-servidor" ? (
-        <PainelErroDoServidor
-          oQue={`as ${tela.titulo.toLowerCase()} do período`}
-          aoTentarDeNovo={carregar}
-        />
-      ) : (
-        <>
-          <CartoesDaTela
-            tela={tela}
-            cor={aparencia.cor}
-            resumo={resumo}
-            vencido={vencido}
-            estado={estado}
-          />
-
-          {/*
-            A FATURA SEM DATA DE VENCIMENTO (HMO-227)
-            Sem `due_day` no cartao o banco nao calcula vencimento, e a fatura
-            NAO pode virar linha prevista. Omitir isso deixaria o "Previsto"
-            desta tela ignorando um cartao inteiro, sem nada dizendo que ele foi
-            ignorado -- um numero menor e plausivel.
-          */}
-          {tipo === "expense" &&
-            semVencimento !== null &&
-            semVencimento.length > 0 && (
-              <Card className="border-warning/40">
-                <CardHeader className="pb-2">
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <CreditCard className="h-4 w-4 text-warning" />
-                    Fatura de cartão fora do previsto
-                  </CardTitle>
-                  <CardDescription>
-                    Estes cartões têm fatura aberta e nenhum dia de vencimento
-                    configurado. Sem ele não há data para calcular, e o app não
-                    inventa uma — então o valor abaixo está FORA do Previsto.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {semVencimento.map((cartao, i) => (
-                    <div
-                      key={`${cartao.account_name ?? "cartao"}|${i}`}
-                      className="flex items-center justify-between gap-3 border-b border-border py-2 last:border-0"
-                    >
-                      <p className="font-medium text-foreground">
-                        {cartao.account_name ?? "Cartão de crédito"}
-                      </p>
-                      <div className="flex items-center gap-3">
-                        <p className="font-semibold">{moeda(cartao.total)}</p>
-                        <Button size="sm" variant="outline" asChild>
-                          <Link href="/dashboard/cartoes">Configurar</Link>
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
+              ELE VEM POR `rodape` E NAO MORA NA LISTA porque depende do
+              `router`, e `next/navigation` dentro de `ListaDeMovimentacao`
+              derrubaria a sonda de navegador no import. O LUGAR continua o
+              mesmo de antes da HMO-301: dentro do ramo em que a leitura deu
+              certo.
+            */}
+            {!ehPeriodoCorrente(periodo, hoje) && (
+              <div className="flex justify-center">
+                <Button
+                  variant="secondary"
+                  className="gap-2"
+                  onClick={() => irPara(periodoCorrente(hoje))}
+                >
+                  <CalendarRange className="h-4 w-4" />
+                  Ver {rotuloDoPeriodo(periodoCorrente(hoje))}
+                </Button>
+              </div>
             )}
 
-          <SecaoDaTela
-            titulo="Previsto no período"
-            icone={<CalendarClock className="h-4 w-4 text-warning" />}
-            subtitulo={tela.oQueOPrevistoE}
-            linhas={previstas}
-            carregando={carregando}
-            vazio={
-              podeAfirmarVazio(estado)
-                ? "Nada previsto neste período."
-                : "Não dá para conferir o previsto agora."
-            }
-            aparencia={aparencia}
-          />
+            {/*
+              O QUE NAO ESTA NESTES NUMEROS, DITO EM UMA LINHA.
+              A minha parte das despesas de grupo que outra pessoa pagou esta na
+              lista de Financas Pessoais (HMO-215) e nao entra aqui: o realizado
+              soma o valor CHEIO do que saiu da minha conta, e somar uma FRACAO do
+              que saiu da conta de outro misturaria dois criterios num numero so.
+              Um valor que falta sem rotulo e indistinguivel de um bug.
+            */}
+            {tipo === "expense" && (
+              <div className="space-y-1 text-xs text-muted-foreground">
+                {/*
+                  O GASTO NO CARTAO, DITO ONDE ELE FALTA (HMO-260).
+                  "Realizado no periodo nunca deve considerar despesas no cartao.
+                  Pois ja considera a fatura do cartao pro periodo, entao gastos
+                  do cartao devem aparecer apenas no financas pessoais que lista o
+                  que voce lancou, e dentro do cartao de credito."
 
-          <SecaoDaTela
-            titulo="Realizado no período"
-            icone={<CheckCircle2 className="h-4 w-4 text-success" />}
-            subtitulo={tela.oQueORealizadoE}
-            linhas={realizadas}
-            carregando={carregando}
-            vazio={
-              podeAfirmarVazio(estado)
-                ? `Nenhum lançamento em ${rotuloDoPeriodo(periodo)}.`
-                : "Não dá para conferir o realizado agora."
-            }
-            aparencia={aparencia}
-          />
+                  A compra sai do Realizado porque ela esta DENTRO da fatura, que
+                  o Previsto acima ja soma inteira. Esta frase existe porque sem
+                  ela a conta nao fecha aos olhos de quem gasta no cartao: a lista
+                  de Financas Pessoais do mesmo mes mostra as compras uma a uma, e
+                  o Realizado daqui nao -- e o caminho dessa estranheza termina em
+                  alguem lancando a compra outra vez no debito para "consertar".
 
-          {/*
-            O CAMINHO DE VOLTA PARA O MES CORRENTE.
-            Quem navegou para agosto e nao encontrou nada precisa saber que
-            outros periodos existem -- sem isto, "Nenhum lançamento" se le como
-            "a minha conta esta vazia", com trezentos lançamentos a uma seta de
-            distancia.
-          */}
-          {!ehPeriodoCorrente(periodo, hoje) && (
-            <div className="flex justify-center">
-              <Button
-                variant="secondary"
-                className="gap-2"
-                onClick={() => irPara(periodoCorrente(hoje))}
-              >
-                <CalendarRange className="h-4 w-4" />
-                Ver {rotuloDoPeriodo(periodoCorrente(hoje))}
-              </Button>
-            </div>
-          )}
-
-          {/*
-            O QUE NAO ESTA NESTES NUMEROS, DITO EM UMA LINHA.
-            A minha parte das despesas de grupo que outra pessoa pagou esta na
-            lista de Financas Pessoais (HMO-215) e nao entra aqui: o realizado
-            soma o valor CHEIO do que saiu da minha conta, e somar uma FRACAO do
-            que saiu da conta de outro misturaria dois criterios num numero so.
-            Um valor que falta sem rotulo e indistinguivel de um bug.
-          */}
-          {tipo === "expense" && (
-            <div className="space-y-1 text-xs text-muted-foreground">
-              {/*
-                O GASTO NO CARTAO, DITO ONDE ELE FALTA (HMO-260).
-                "Realizado no periodo nunca deve considerar despesas no cartao.
-                Pois ja considera a fatura do cartao pro periodo, entao gastos
-                do cartao devem aparecer apenas no financas pessoais que lista o
-                que voce lancou, e dentro do cartao de credito."
-
-                A compra sai do Realizado porque ela esta DENTRO da fatura, que
-                o Previsto acima ja soma inteira. Esta frase existe porque sem
-                ela a conta nao fecha aos olhos de quem gasta no cartao: a lista
-                de Financas Pessoais do mesmo mes mostra as compras uma a uma, e
-                o Realizado daqui nao -- e o caminho dessa estranheza termina em
-                alguem lancando a compra outra vez no debito para "consertar".
-
-                A SEGUNDA ORACAO NAO E ENFEITE. "Esta no Previsto acima" so e
-                verdade enquanto a fatura NAO foi paga: a baixa marca a previsao
-                como `paid` (que sai do previsto pela armadilha 2) e grava uma
-                TRANSFERENCIA de duas pernas (`pernasDoPagamentoDeFatura`), que
-                nao e despesa em tela nenhuma. No mes em que a pessoa paga a
-                fatura, esta tela mostra R$ 0,00 de cartao -- medido. Sem dizer
-                para onde o valor foi, a frase apontaria para um Previsto vazio,
-                que e pior que nao ter frase.
-              */}
-              <p>
-                Compra no cartão não entra no Realizado: ela está dentro da{" "}
-                <strong>fatura</strong>. Enquanto a fatura está aberta, o
-                Previsto acima já a soma inteira; depois de paga, ela aparece em{" "}
-                <Link
-                  href="/dashboard/transferencias"
-                  className="underline hover:text-foreground"
-                >
-                  Transferências
-                </Link>
-                , porque o dinheiro foi da sua conta para o cartão. Para ver as
-                compras uma a uma, abra{" "}
-                <Link
-                  href="/dashboard/cartoes"
-                  className="underline hover:text-foreground"
-                >
-                  Cartões
-                </Link>{" "}
-                ou{" "}
-                <Link
-                  href="/dashboard/personal-finance"
-                  className="underline hover:text-foreground"
-                >
-                  Finanças Pessoais
-                </Link>
-                .
-              </p>
-              <p>
-                Sua parte das despesas de grupo que outra pessoa pagou também
-                não entra nestes totais — ela aparece em{" "}
-                <Link
-                  href="/dashboard/personal-finance"
-                  className="underline hover:text-foreground"
-                >
-                  Finanças Pessoais
-                </Link>
-                , onde a lista junta as duas origens.
-              </p>
-            </div>
-          )}
-        </>
-      )}
+                  A SEGUNDA ORACAO NAO E ENFEITE. "Esta no Previsto acima" so e
+                  verdade enquanto a fatura NAO foi paga: a baixa marca a previsao
+                  como `paid` (que sai do previsto pela armadilha 2) e grava uma
+                  TRANSFERENCIA de duas pernas (`pernasDoPagamentoDeFatura`), que
+                  nao e despesa em tela nenhuma. No mes em que a pessoa paga a
+                  fatura, esta tela mostra R$ 0,00 de cartao -- medido. Sem dizer
+                  para onde o valor foi, a frase apontaria para um Previsto vazio,
+                  que e pior que nao ter frase.
+                */}
+                <p>
+                  Compra no cartão não entra no Realizado: ela está dentro da{" "}
+                  <strong>fatura</strong>. Enquanto a fatura está aberta, o
+                  Previsto acima já a soma inteira; depois de paga, ela aparece em{" "}
+                  <Link
+                    href="/dashboard/transferencias"
+                    className="underline hover:text-foreground"
+                  >
+                    Transferências
+                  </Link>
+                  , porque o dinheiro foi da sua conta para o cartão. Para ver as
+                  compras uma a uma, abra{" "}
+                  <Link
+                    href="/dashboard/cartoes"
+                    className="underline hover:text-foreground"
+                  >
+                    Cartões
+                  </Link>{" "}
+                  ou{" "}
+                  <Link
+                    href="/dashboard/personal-finance"
+                    className="underline hover:text-foreground"
+                  >
+                    Finanças Pessoais
+                  </Link>
+                  .
+                </p>
+                <p>
+                  Sua parte das despesas de grupo que outra pessoa pagou também
+                  não entra nestes totais — ela aparece em{" "}
+                  <Link
+                    href="/dashboard/personal-finance"
+                    className="underline hover:text-foreground"
+                  >
+                    Finanças Pessoais
+                  </Link>
+                  , onde a lista junta as duas origens.
+                </p>
+              </div>
+            )}
+          </>
+        }
+      />
     </div>
   );
 }

@@ -4550,6 +4550,212 @@ jobs:
           fi
 
       # =======================================================================
+      # EDITAR, EXCLUIR E CONFIRMAR EM TODO LANCAMENTO (HMO-301)
+      # =======================================================================
+      # "E em ambos os modos verificar pois todos lancamentos devem ter botoes
+      # de editar, excluir ou confirmar pra validar que foi pago ou recebido."
+      #
+      # Tres passos, e os tres medem coisas que os outros dois nao alcancam:
+      #
+      #   test:acoes-da-linha  -- a REGRA (quais botoes, para onde cada um vai,
+      #                           e o texto de cada pergunta). Os cinco modos de
+      #                           falha dela produzem o MESMO resultado na tela
+      #                           (um botao que aparece) e se separam so depois
+      #                           do clique: 404 da chave sintetica da fatura
+      #                           aberta, 409 da fatura sem conta pagadora, a
+      #                           segunda perna do mesmo dinheiro, a perna de
+      #                           transferencia orfa, e o caro -- a linha de
+      #                           outro membro do grupo, onde o UPDATE recusado
+      #                           pela RLS volta 200 SEM ALTERAR NADA;
+      #   test:secao-da-tela   -- a MARCACAO, que o passo acima ja roda;
+      #   test:lista-na-tela   -- o GESTO, em navegador. Ver abaixo.
+      - name: Quais acoes cada estado de linha ganha
+        run: npm run test:acoes-da-linha
+
+      # Controle negativo. Cada mutante abaixo e uma das cinco regras removida,
+      # e as cinco falham do mesmo jeito: a tela continua inteira.
+      - name: A verificacao das acoes sabe falhar
+        run: |
+          set -uo pipefail
+          ACOES=lib/acoes-da-linha.ts
+          cp $ACOES $ACOES.orig
+          trap 'mv $ACOES.orig $ACOES' EXIT
+
+          mutou() {
+            if diff -q "$1.orig" "$1" > /dev/null; then
+              echo "::error::O mutante $2 nao alterou $1 -- a ancora do sed mudou."
+              exit 1
+            fi
+          }
+
+          # 1) CONFIRMAR TAMBEM NO REALIZADO. Confirmar o que ja aconteceu grava
+          #    a segunda perna do mesmo dinheiro -- que e como este app ja
+          #    contou despesa duas vezes.
+          sed -i 's|return podeAgirNaLinha(linha) \&\& linha.origem === "previsto";|return podeAgirNaLinha(linha);|' $ACOES
+          mutou $ACOES 1
+          if npm run test:acoes-da-linha > /dev/null 2>&1; then
+            echo "::error::Verde com Confirmar aparecendo em linha realizada."
+            exit 1
+          fi
+          if npm run test:secao-da-tela > /dev/null 2>&1; then
+            echo "::error::A marcacao ficou verde com Confirmar em linha realizada."
+            exit 1
+          fi
+          cp $ACOES.orig $ACOES
+
+          # 2) A LINHA DE OUTRO MEMBRO GANHA BOTAO. O modo de falha caro: a RLS
+          #    recusa, e o UPDATE recusado volta 200 sem alterar nada.
+          sed -i '/if (!linha.posso_editar) return false;/d' $ACOES
+          mutou $ACOES 2
+          if npm run test:acoes-da-linha > /dev/null 2>&1; then
+            echo "::error::Verde com botao sobre linha que a RLS recusaria."
+            exit 1
+          fi
+          if npm run test:secao-da-tela > /dev/null 2>&1; then
+            echo "::error::A marcacao ficou verde com botao sobre linha alheia."
+            exit 1
+          fi
+          cp $ACOES.orig $ACOES
+
+          # 3) A LINHA NAO GRAVADA GANHA BOTAO. A fatura aberta sintetizada nao
+          #    tem id de banco: a baixa com a chave sintetica responde 404, que
+          #    para quem clicou se le como "o app nao conseguiu".
+          sed -i '/if (!linha.gravada) return false;/d' $ACOES
+          mutou $ACOES 3
+          if npm run test:acoes-da-linha > /dev/null 2>&1; then
+            echo "::error::Verde com botao sobre linha que nao existe no banco."
+            exit 1
+          fi
+          cp $ACOES.orig $ACOES
+
+          # 4) A FATURA GANHA BOTAO. A baixa dela exige a conta pagadora, entao
+          #    o botao erraria em TODO clique -- e ela e um <a>, onde botao e
+          #    aninhamento interativo invalido.
+          sed -i '/if (linha.natureza === "fatura") return false;/d' $ACOES
+          mutou $ACOES 4
+          if npm run test:acoes-da-linha > /dev/null 2>&1; then
+            echo "::error::Verde com acao sobre a linha de fatura."
+            exit 1
+          fi
+          cp $ACOES.orig $ACOES
+
+          # 5) UM ROTULO SO PARA AS TRES TELAS. "Confirmar pagamento" embaixo de
+          #    um salario previsto e um verbo errado sobre um numero certo.
+          sed -i '/if (tipo === "income") return "Confirmar recebimento";/d' $ACOES
+          mutou $ACOES 5
+          if npm run test:acoes-da-linha > /dev/null 2>&1; then
+            echo "::error::Verde com o mesmo verbo de baixa nas tres telas."
+            exit 1
+          fi
+          if npm run test:secao-da-tela > /dev/null 2>&1; then
+            echo "::error::A marcacao ficou verde com um rotulo so de baixa."
+            exit 1
+          fi
+          cp $ACOES.orig $ACOES
+
+          # 6) A EDICAO VAI PARA A ROTA DA TELA, E NAO PARA A DO FORMULARIO.
+          #    As duas existem e so uma le `?id=`: com a da lista, o Editar
+          #    recarrega a propria tela e o clique nao faz NADA VISIVEL. Este
+          #    defeito estava no codigo intacto desta issue, e quem o pegou foi
+          #    a sonda de navegador -- nenhuma assercao de unidade o alcanca,
+          #    porque ela passa a string que ela mesma escolheu.
+          LISTA=components/movimentacoes/ListaDeMovimentacao.tsx
+          cp $LISTA $LISTA.orig
+          sed -i 's|caminhoDeEdicao(linha, aparencia.rotaDeLancar, origem)|caminhoDeEdicao(linha, tela.rota, origem)|' $LISTA
+          mutou $LISTA 6
+          if npm run test:lista-na-tela > /dev/null 2>&1; then
+            echo "::error::Verde com o Editar apontando para a propria lista."
+            exit 1
+          fi
+          mv $LISTA.orig $LISTA
+
+          echo "A verificacao das acoes fica vermelha nos seis defeitos."
+
+      - name: 'A arvore voltou ao lugar depois de "A verificacao das acoes sabe falhar"'
+        run: |
+          # O .tmp-* compilado guarda o mutante mesmo depois do restore do .ts.
+          rm -rf .tmp-*
+          git status --porcelain > "$RUNNER_TEMP/arvore-agora.txt"
+          if ! diff -q "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" > /dev/null; then
+            echo "::error::O controle negativo acima nao restaurou a arvore. Os passos seguintes rodariam sobre codigo mutado."
+            diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
+            exit 1
+          fi
+
+      # O GESTO, em navegador de verdade. As duas suites acima passam verde com o
+      # `onClick` VAZIO -- `onClick` nao sai no HTML e nunca e chamado por um
+      # render de servidor, e a tela sai identica.
+      #
+      # E o que se mede aqui NAO e "a rota foi chamada": e que A LINHA SAIU de
+      # "Previsto no periodo" e APARECEU em "Realizado no periodo". Essa e a
+      # unica assercao que distingue "chamou a rota" de "o app refletiu o
+      # resultado" -- um aoConfirmar que chamasse a baixa e esquecesse a
+      # releitura responde 200, move o dinheiro no banco, e deixa a linha onde
+      # estava ate alguem trocar de mes e voltar. A pessoa clica de novo, e a
+      # segunda baixa volta 409 em cima de uma operacao que deu certo.
+      #
+      # A sonda tambem substitui `window.confirm` e LE a frase que o app passou:
+      # e assim que "o dialogo diz qual das duas coisas vai acontecer" (tirar a
+      # ocorrencia de um gasto fixo da agenda NAO e encerrar a serie) deixa de
+      # ser uma promessa de comentario. As duas respondem 200 e as duas tiram a
+      # linha da tela.
+      #
+      # Sem navegador a suite FALHA, e nao pula: suite que se desliga sozinha e
+      # indistinguivel de suite que passou.
+      - name: Confirmar move a linha de Previsto para Realizado
+        run: npm run test:lista-na-tela
+
+      # Controle negativo da sonda de navegador. Os dois defeitos abaixo sao os
+      # que SO ela ve.
+      - name: A sonda do gesto sabe falhar
+        run: |
+          set -uo pipefail
+          LISTA=components/movimentacoes/ListaDeMovimentacao.tsx
+          cp $LISTA $LISTA.orig
+          trap 'mv $LISTA.orig $LISTA' EXIT
+
+          mutou() {
+            if diff -q "$1.orig" "$1" > /dev/null; then
+              echo "::error::O mutante $2 nao alterou $1 -- a ancora do sed mudou."
+              exit 1
+            fi
+          }
+
+          # 1) A ACAO CHAMA A ROTA E NAO RELE. O caso que a issue chama de "a
+          #    assercao que importa": a rota responde 200, o dinheiro anda, e a
+          #    linha fica em Previsto.
+          sed -i '/await carregar();/d' $LISTA
+          mutou $LISTA 1
+          if npm run test:lista-na-tela > /dev/null 2>&1; then
+            echo "::error::Verde com a acao chamando a rota e nao relendo a lista."
+            exit 1
+          fi
+          cp $LISTA.orig $LISTA
+
+          # 2) A PERGUNTA APARECE E O "NAO" E IGNORADO. O unico sintoma seria a
+          #    linha sumindo depois de alguem clicar em Cancelar.
+          sed -i 's|if (!confirm(aviso)) return;|confirm(aviso);|' $LISTA
+          mutou $LISTA 2
+          if npm run test:lista-na-tela > /dev/null 2>&1; then
+            echo "::error::Verde com a exclusao acontecendo apesar do Cancelar."
+            exit 1
+          fi
+          cp $LISTA.orig $LISTA
+
+          echo "A sonda do gesto fica vermelha nos dois defeitos."
+
+      - name: 'A arvore voltou ao lugar depois de "A sonda do gesto sabe falhar"'
+        run: |
+          # O .tmp-* compilado guarda o mutante mesmo depois do restore do .tsx.
+          rm -rf .tmp-*
+          git status --porcelain > "$RUNNER_TEMP/arvore-agora.txt"
+          if ! diff -q "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" > /dev/null; then
+            echo "::error::O controle negativo acima nao restaurou a arvore. Os passos seguintes rodariam sobre codigo mutado."
+            diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
+            exit 1
+          fi
+
+      # =======================================================================
       # O CARTAO CONTA PELA FATURA PAGA, NAO PELA COMPRA
       # origem: HMO-265 (nasceu aqui -- ver o item 1 do cabecalho deste arquivo)
       # =======================================================================

@@ -52,13 +52,30 @@ const {
  */
 const SEM_FIXAS = new Set();
 
-/** `linhasDaTela` com "nenhuma realizada e fixa". Ver `SEM_FIXAS`. */
-const daTela = (realizadas, previstas, tipo, idsDeFixa = SEM_FIXAS) =>
-  linhasDaTela(realizadas, previstas, tipo, idsDeFixa);
+/**
+ * Quem esta olhando, nos blocos que medem OUTRA COISA.
+ *
+ * `linhasDaTela` tambem exige este argumento (HMO-301), pela mesma razao do
+ * conjunto acima: a rota e a unica que sabe quem esta autenticado. A diferenca
+ * e a DIRECAO do erro -- sem ele, `posso_editar` cai para `false` em toda
+ * linha e nenhum botao aparece, que e o lado barato. Com ele errado, apareceria
+ * um Excluir sobre linha alheia, e `UPDATE` recusado pela RLS volta 200 sem
+ * alterar nada.
+ *
+ * As fabricas `realizada`/`prevista` gravam este mesmo id em `user_id`, entao
+ * o caso comum desta suite e "a linha e minha". Os blocos de `posso_editar`
+ * trocam um dos dois de proposito.
+ */
+const EU = "a1b2c3d4-e5f6-4789-abcd-ef0123456789";
+
+/** `linhasDaTela` com "nenhuma realizada e fixa", e sou eu olhando. */
+const daTela = (realizadas, previstas, tipo, idsDeFixa = SEM_FIXAS, eu = EU) =>
+  linhasDaTela(realizadas, previstas, tipo, idsDeFixa, eu);
 
 /** Uma linha de financial_transactions, com o minimo que o modulo le. */
 const realizada = (over = {}) => ({
   id: "t1",
+  user_id: EU,
   description: "linha",
   amount: -100,
   transaction_date: "2026-10-10",
@@ -69,6 +86,7 @@ const realizada = (over = {}) => ({
 /** Uma linha de scheduled_transactions_effective. `amount` POSITIVO por CHECK. */
 const prevista = (over = {}) => ({
   id: "s1",
+  user_id: EU,
   description: "conta",
   amount: "100.00",
   due_date: "2026-10-15",
@@ -1206,4 +1224,218 @@ test("um mes inteiro: as tres telas somam cada uma o seu, sem sobreposicao", () 
   // exatamente as duas que ficam fora.
   const contadas = receitas.quantidade + despesas.quantidade + transf.quantidade;
   assert.equal(contadas, todasAsRealizadas.length + todasAsPrevistas.length - 2);
+});
+
+// -----------------------------------------------------
+// `posso_editar`: QUEM PODE MEXER NA LINHA (HMO-301)
+// -----------------------------------------------------
+// O campo e o que decide se os botoes de Editar / Excluir / Confirmar aparecem
+// (`lib/acoes-da-linha.ts`). Ele FALHA FECHADO em todos os caminhos de duvida, e
+// cada bloco abaixo mede um deles -- porque os tres erros do lado oposto erram
+// na direcao CARA: o botao aparece, a RLS recusa a escrita, e `UPDATE` recusado
+// pela RLS volta **200 sem alterar nada**. O app diz "pronto" e a linha fica.
+
+test("a linha com o MEU user_id e editavel, nos dois lados", () => {
+  const linhas = daTela(
+    [realizada({ id: "t1" })],
+    [prevista({ id: "s1" })],
+    "expense"
+  );
+
+  assert.equal(linhas.length, 2, "o caso base precisa das duas linhas");
+  for (const linha of linhas) {
+    assert.equal(linha.posso_editar, true, `${linha.origem} nao ficou editavel`);
+  }
+});
+
+test("a linha de OUTRO user_id NAO e editavel -- nem prevista nem realizada", () => {
+  // Este e o caso que o campo existe para cobrir: a policy do 005 traz as
+  // linhas de grupo dos outros membros junto com as minhas.
+  const OUTRO = "99999999-8888-4777-b666-555544443333";
+
+  const linhas = daTela(
+    [realizada({ id: "t1", user_id: OUTRO })],
+    [prevista({ id: "s1", user_id: OUTRO })],
+    "expense"
+  );
+
+  assert.equal(linhas.length, 2, "a linha alheia tem de CONTINUAR na lista");
+  for (const linha of linhas) {
+    assert.equal(
+      linha.posso_editar,
+      false,
+      `${linha.origem} de outro membro ficou editavel`
+    );
+  }
+});
+
+test("a linha alheia continua SOMANDO -- `posso_editar` nao e um filtro", () => {
+  // A distincao importa: tirar a linha da lista mudaria os tres numeros da tela,
+  // e o total menor e plausivel. O campo decide BOTAO, nao soma.
+  const OUTRO = "99999999-8888-4777-b666-555544443333";
+
+  const minhas = resumoDaTela(
+    daTela([realizada({ amount: -100 })], [prevista({ amount: "50.00" })], "expense")
+  );
+  const alheias = resumoDaTela(
+    daTela(
+      [realizada({ amount: -100, user_id: OUTRO })],
+      [prevista({ amount: "50.00", user_id: OUTRO })],
+      "expense"
+    )
+  );
+
+  assert.equal(minhas.total, 150);
+  assert.deepEqual(alheias, minhas);
+});
+
+test("`user_id` ausente no dado NAO e editavel -- a rota que esqueceu o select", () => {
+  // O caminho exato do `select` sem a coluna. Um `===` entre dois `undefined`
+  // seria VERDADE e liberaria TODA linha de TODO mundo.
+  for (const vazio of [undefined, null, ""]) {
+    const linhas = daTela(
+      [realizada({ user_id: vazio })],
+      [prevista({ user_id: vazio })],
+      "expense"
+    );
+    assert.equal(linhas.length, 2);
+    for (const linha of linhas) {
+      assert.equal(
+        linha.posso_editar,
+        false,
+        `user_id ${JSON.stringify(vazio)} em ${linha.origem} ficou editavel`
+      );
+    }
+  }
+});
+
+test("SEM saber quem esta olhando, nada e editavel", () => {
+  // A rota que parou de passar `user.id`. `undefined === undefined` seria
+  // verdade contra uma linha que tambem perdeu o campo; as duas guardas de tipo
+  // em `ehMinha` e que impedem isso.
+  for (const ninguem of [undefined, null, ""]) {
+    // `linhasDaTela` CRU e nao `daTela`: o parametro com default daquele
+    // atalho dispara com `undefined` (e so com ele), devolveria `EU` de volta,
+    // e este bloco mediria exatamente o caso oposto do que afirma medir --
+    // verde, e sem nunca ter chamado a lib sem o id.
+    const linhas = linhasDaTela(
+      [realizada()],
+      [prevista()],
+      "expense",
+      SEM_FIXAS,
+      ninguem
+    );
+    assert.equal(linhas.length, 2);
+    for (const linha of linhas) {
+      assert.equal(
+        linha.posso_editar,
+        false,
+        `sem meuUserId (${JSON.stringify(ninguem)}), ${linha.origem} ficou editavel`
+      );
+    }
+  }
+});
+
+test("a comparacao e por VALOR e sensivel a caixa -- nao e `==` nem prefixo", () => {
+  // Tres vizinhos do id certo, os tres recusados. `==` aprovaria o caso de
+  // `undefined`/`null` acima; um `startsWith` aprovaria o prefixo.
+  for (const parecido of [EU.toUpperCase(), EU.slice(0, -1), `${EU}0`, ` ${EU}`]) {
+    const [linha] = daTela([realizada({ user_id: parecido })], [], "expense");
+    assert.equal(
+      linha.posso_editar,
+      false,
+      `user_id "${parecido}" passou por igual a "${EU}"`
+    );
+  }
+});
+
+test("a fatura aberta sintetizada nao e editavel -- ela nao tem user_id nenhum", () => {
+  // Ela e calculada de `card_invoice_lines` a cada leitura (HMO-227): nao existe
+  // em tabela, nao tem `user_id` e nao tem `scheduled_transactions.id`. Os DOIS
+  // campos a recusam, e nenhum dos dois e redundante -- a fatura FECHADA e uma
+  // `scheduled_transaction` de verdade, com os dois preenchidos.
+  const [aberta] = daTela(
+    [],
+    [
+      {
+        ...prevista(),
+        id: null,
+        user_id: undefined,
+        notes: "fatura:2026-10-01:33333333-3333-3333-3333-333333333333",
+      },
+    ],
+    "expense"
+  );
+
+  assert.ok(aberta, "a fatura aberta tem de continuar na lista");
+  assert.equal(aberta.gravada, false);
+  assert.equal(aberta.posso_editar, false);
+
+  const [fechada] = daTela(
+    [],
+    [
+      prevista({
+        id: "s-fatura",
+        notes: "fatura:2026-10-01:33333333-3333-3333-3333-333333333333",
+      }),
+    ],
+    "expense"
+  );
+
+  assert.equal(fechada.gravada, true);
+  assert.equal(fechada.posso_editar, true, "a fatura FECHADA e minha e gravada");
+});
+
+test("`posso_editar` nao depende do TIPO da tela -- as tres o produzem", () => {
+  // A tela de Transferencias le as MESMAS linhas previstas (a transferencia
+  // recorrente da 038 chega com `direction: "transfer"`). Um campo calculado so
+  // no caminho da despesa deixaria duas telas sem botao nenhum.
+  for (const tipo of ["income", "expense", "transfer"]) {
+    const linhas = daTela(
+      [],
+      [prevista({ id: `s-${tipo}`, direction: tipo })],
+      tipo
+    );
+    assert.equal(linhas.length, 1, `nenhuma linha na tela ${tipo}`);
+    assert.equal(linhas[0].posso_editar, true, `tela ${tipo} sem posso_editar`);
+  }
+});
+
+test("os DOIS lados ausentes nao se igualam -- o caso que as guardas existem para pegar", () => {
+  // ESTE e o bloco que mede as guardas de tipo de `ehMinha`, e nenhum dos
+  // anteriores o alcanca: eles variam UM dos dois lados e deixam o outro
+  // valido, e aí `daLinha === meuUserId` ja devolve `false` sozinho. Medido: com
+  // as duas guardas removidas, os sete blocos acima continuam VERDES.
+  //
+  // O estado perigoso e a COINCIDENCIA de duas ausencias -- a rota que esqueceu
+  // `user_id` no `select` E parou de passar `user.id` (uma refatoracao faz as
+  // duas de uma vez). `undefined === undefined` e `"" === ""` sao os dois
+  // VERDADE, e aí TODA linha de TODO mundo ganharia os tres botoes.
+  for (const ausencia of [undefined, null, ""]) {
+    const linhas = linhasDaTela(
+      [realizada({ user_id: ausencia })],
+      [prevista({ user_id: ausencia })],
+      "expense",
+      SEM_FIXAS,
+      ausencia
+    );
+
+    assert.equal(linhas.length, 2, "as duas linhas tem de continuar na lista");
+    for (const linha of linhas) {
+      assert.equal(
+        linha.posso_editar,
+        false,
+        `com os dois lados ${JSON.stringify(ausencia)}, ${linha.origem} ficou editavel`
+      );
+    }
+  }
+
+  // E o cruzado: linha vazia contra id valido, e vice-versa, nas duas ordens.
+  // `"" === ""` e o unico par de strings que `typeof` sozinho nao recusaria.
+  assert.equal(
+    linhasDaTela([realizada({ user_id: "" })], [], "expense", SEM_FIXAS, "")[0]
+      .posso_editar,
+    false,
+    'user_id "" contra meuUserId "" ficou editavel'
+  );
 });

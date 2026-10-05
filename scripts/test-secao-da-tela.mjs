@@ -50,9 +50,22 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { CreditCard, Repeat, TrendingDown, TrendingUp } from "lucide-react";
+import {
+  ArrowRightLeft,
+  CreditCard,
+  Repeat,
+  TrendingDown,
+  TrendingUp,
+} from "lucide-react";
 
 import { SecaoDaTela } from "../.tmp-secao-da-tela/components/movimentacoes/SecaoDaTela.js";
+// A FUNCAO DE PRODUCAO, e nao um esboco de `hrefDeEdicao` escrito aqui: e ela
+// que decide que a linha realizada vira link e a prevista nao, e um esboco faria
+// as assercoes do `href` medirem a propria sonda.
+import {
+  caminhoDeEdicao,
+  rotuloDeConfirmar,
+} from "../.tmp-secao-da-tela/lib/acoes-da-linha.js";
 
 const CARTAO = "11111111-2222-3333-4444-555555555555";
 
@@ -78,6 +91,10 @@ const RECEITAS = {
 const linha = (extra) => ({
   id: "l1",
   gravada: true,
+  // A linha e MINHA no caso base (HMO-301). Sem isto, a secao desenharia sem
+  // botao nenhum em toda assercao desta suite -- que e o estado de antes da
+  // issue, e deixaria os blocos novos passando por vacuidade.
+  posso_editar: true,
   descricao: "Mercado",
   valor: 159.9,
   data: "2026-08-14",
@@ -97,6 +114,7 @@ const linha = (extra) => ({
 const FATURA = linha({
   id: "fatura:2026-08-01:" + CARTAO,
   gravada: false,
+  posso_editar: false,
   descricao: "Fatura Nubank",
   valor: 1234.56,
   categoria: null,
@@ -112,6 +130,33 @@ const FIXA = linha({
   natureza: "fixa",
 });
 
+/**
+ * As acoes, com as FUNCOES de producao onde elas decidem algo.
+ *
+ * `hrefDeEdicao` chama `caminhoDeEdicao` de verdade; os tres `on*` sao vazios
+ * porque `react-dom/server` nunca os chama -- o clique e medido em Chromium
+ * (`npm run test:lista-na-tela`). O que ESTA suite mede e QUAIS botoes saem no
+ * HTML, e para onde o unico que tem destino aponta.
+ */
+const ACOES = (extra = {}) => ({
+  hrefDeEdicao: (l) => caminhoDeEdicao(l, "/dashboard/movimentacoes/despesa", null),
+  aoEditar: () => {},
+  aoExcluir: () => {},
+  aoConfirmar: () => {},
+  agindo: null,
+  online: true,
+  ...extra,
+});
+
+/** A de Transferencias -- o TERCEIRO verbo da baixa (HMO-301). */
+const TRANSFERENCIAS = {
+  Icone: ArrowRightLeft,
+  cor: "text-info",
+  rotaDeLancar: "/dashboard/movimentacoes/transferencia",
+  textoDeLancar: "Nova Transferência",
+  palavraDaLinha: "Transferência",
+};
+
 const render = (props) =>
   renderToStaticMarkup(
     h(SecaoDaTela, {
@@ -122,6 +167,7 @@ const render = (props) =>
       carregando: false,
       vazio: "Nada previsto neste período.",
       aparencia: DESPESAS,
+      acoes: ACOES(),
       ...props,
     })
   );
@@ -395,4 +441,266 @@ test("secao vazia diz a frase que recebeu, e nao R$ 0,00", () => {
 
   assert.ok(t.includes("Nada previsto neste período."), t);
   assert.ok(!t.includes("R$ 0,00"), t);
+});
+
+// ---------------------------------------------------------------------------
+// 5. OS TRES BOTOES, POR ESTADO DE LINHA (HMO-301)
+// ---------------------------------------------------------------------------
+// "E em ambos os modos verificar pois todos lancamentos devem ter botoes de
+// editar, excluir ou confirmar pra validar que foi pago ou recebido."
+//
+// A regra de QUAIS botoes mora em `lib/acoes-da-linha.ts`, e tem suite propria
+// (`npm run test:acoes-da-linha`) com 34 blocos. O que NAO esta provado la e que
+// a marcacao LEIA a regra: `podeConfirmar` pode devolver `true` para toda conta
+// prevista e a linha sair sem botao nenhum -- sem erro, sem build vermelho e sem
+// mexer um centavo. E a mesma familia da HMO-287: dado certo chegando num JSX
+// que nao o le.
+//
+// O que se afirma aqui e o `aria-label` de cada botao, e ele NAO e uma
+// concessao: os tres botoes sao de icone so (como em Contas a Pagar e na lista
+// de Financas Pessoais), entao o `aria-label` E o rotulo -- e o unico texto que
+// existe deles na tela.
+
+/** Os `aria-label` de todos os `<button>`/`<a>` de acao do HTML, na ordem. */
+const rotulosDeAcao = (html) =>
+  [...html.matchAll(/<(?:button|a)\b[^>]*\baria-label="([^"]*)"/g)].map(
+    (m) => m[1]
+  );
+
+/**
+ * Os `aria-label` dos botoes DESABILITADOS.
+ *
+ * O FILTRO E PELO ATRIBUTO `disabled=""`, e nao por `tag.includes("disabled")`.
+ * Medido: a classe que `components/ui/button.tsx` emite em TODO botao contem
+ * `disabled:pointer-events-none disabled:opacity-50` -- entao o `includes`
+ * casava com o nome da variante do Tailwind e devolvia TODOS os botoes como
+ * desabilitados. Duas assercoes desta suite passaram verde por isso, inclusive
+ * uma que afirmava o CONTRARIO do que media.
+ *
+ * E o mesmo defeito que a funcao `texto` acima existe para evitar, do outro
+ * lado: uma assercao que casa com o enfeite em volta do que ela diz medir.
+ */
+const desabilitados = (html) =>
+  [...html.matchAll(/<button\b[^>]*>/g)]
+    .map((m) => m[0])
+    .filter((tag) => / disabled=""/.test(tag))
+    .map((tag) => /aria-label="([^"]*)"/.exec(tag)?.[1] ?? "(sem rotulo)");
+
+test("CONTROLE da sonda: botao habilitado nao conta como desabilitado", () => {
+  // A classe de TODO botao deste app contem `disabled:pointer-events-none` --
+  // uma peneira por `includes("disabled")` devolveria a lista inteira, e as duas
+  // assercoes de travamento abaixo passariam verde medindo o nome de uma
+  // variante do Tailwind. Este bloco e o que mantem `desabilitados` honesta.
+  const html = render({ linhas: [linha({})] });
+
+  assert.ok(html.includes("disabled:"), "a classe do Button mudou -- rever a sonda");
+  assert.deepEqual(desabilitados(html), []);
+  assert.equal(rotulosDeAcao(html).length, 3, "o caso base precisa dos tres botoes");
+});
+
+test("a conta prevista minha ganha os TRES botoes", () => {
+  // O CONTROLE POSITIVO de todo bloco negativo abaixo. Sem ele, uma secao que
+  // nunca desenhasse botao nenhum passaria em cada `deepEqual([])` seguinte.
+  const html = render({ linhas: [linha({})] });
+
+  assert.deepEqual(rotulosDeAcao(html), [
+    "Confirmar pagamento",
+    "Editar",
+    "Excluir",
+  ]);
+});
+
+test("'pago ou recebido' sao DOIS rotulos, e cada tela usa o seu", () => {
+  // A rota da baixa e a mesma; o texto segue a direcao da linha. Um rotulo so
+  // faria metade das telas mentir -- "Confirmar pagamento" embaixo de um
+  // salario previsto e um verbo errado sobre um numero certo.
+  const daDespesa = rotulosDeAcao(render({ linhas: [linha({})] }));
+  const daReceita = rotulosDeAcao(
+    render({
+      linhas: [linha({ tipo: "income", descricao: "Salário" })],
+      aparencia: RECEITAS,
+    })
+  );
+
+  assert.ok(daDespesa.includes("Confirmar pagamento"), daDespesa.join(" | "));
+  assert.ok(daReceita.includes("Confirmar recebimento"), daReceita.join(" | "));
+
+  // AS DUAS METADES: o texto certo PRESENTE e o da outra tela AUSENTE. So a
+  // primeira passaria verde com um rotulo unico escrito nos dois lugares.
+  assert.ok(!daDespesa.includes("Confirmar recebimento"));
+  assert.ok(!daReceita.includes("Confirmar pagamento"));
+
+  // E o texto vem da LIB, nao de uma string escrita neste teste: igual aos dois
+  // lados, a assercao sobreviveria a um rotulo trocado nos dois de uma vez.
+  assert.ok(daDespesa.includes(rotuloDeConfirmar("expense")));
+  assert.ok(daReceita.includes(rotuloDeConfirmar("income")));
+});
+
+test("a tela de Transferencias tambem tem o seu verbo", () => {
+  const rotulos = rotulosDeAcao(
+    render({
+      linhas: [linha({ tipo: "transfer", descricao: "Itaú → Nubank" })],
+      aparencia: TRANSFERENCIAS,
+    })
+  );
+
+  assert.ok(rotulos.includes("Confirmar transferência"), rotulos.join(" | "));
+  assert.ok(!rotulos.includes("Confirmar pagamento"));
+});
+
+test("a linha REALIZADA nao tem Confirmar -- e continua com os outros dois", () => {
+  // Confirmar o que ja aconteceu gravaria a SEGUNDA PERNA do mesmo dinheiro.
+  // A segunda metade importa igual: tirar os tres botoes da realizada deixaria
+  // metade da tela sem acao, e passaria no `!includes("Confirmar")`.
+  const rotulos = rotulosDeAcao(
+    render({ linhas: [linha({ origem: "realizado", status: null })] })
+  );
+
+  assert.deepEqual(rotulos, ["Editar", "Excluir"]);
+});
+
+test("a linha NAO GRAVADA (a fatura aberta) nao tem botao NENHUM", () => {
+  // Ela nao tem `scheduled_transactions.id`, e a baixa com id inventado
+  // responde 404 -- que, para quem clicou, se le como "o app nao conseguiu".
+  const html = render({ linhas: [FATURA] });
+
+  assert.deepEqual(rotulosDeAcao(html), []);
+  assert.ok(!html.includes("<button"), "a fatura aberta desenhou botao");
+  // E ela CONTINUA sendo o link para o cartao -- a acao dela e abrir o cartao.
+  assert.ok(href(html), "a fatura perdeu o link para o cartao");
+});
+
+test("a linha de OUTRO membro do grupo nao tem Excluir -- nem os outros dois", () => {
+  // A RLS recusaria a escrita, e `UPDATE` recusado pela RLS volta **200 sem
+  // alterar nada**: o app diria "pronto" e a linha ficaria. Botao que aparece e
+  // nao funciona e pior que botao ausente.
+  const html = render({ linhas: [linha({ posso_editar: false })] });
+
+  assert.deepEqual(rotulosDeAcao(html), []);
+  assert.ok(!html.includes("Excluir"), html);
+  // A LINHA FICA, com o valor: `posso_editar` decide botao, nao soma.
+  assert.ok(texto(html).includes("Mercado"), texto(html));
+  assert.ok(texto(html).includes("R$ 159,90"), texto(html));
+});
+
+test("a fatura FECHADA tambem nao tem botao -- e ela e gravada e minha", () => {
+  // Dois motivos independentes (ver `podeAgirNaLinha`): a baixa dela exige a
+  // conta pagadora, e a linha e um `<a>` -- botao dentro de ancora e
+  // aninhamento interativo invalido, e o clique navegaria junto.
+  const html = render({
+    linhas: [{ ...FATURA, gravada: true, posso_editar: true, id: "s-fatura" }],
+  });
+
+  assert.deepEqual(rotulosDeAcao(html).filter((r) => r !== ""), []);
+  assert.ok(!html.includes("<button"), html);
+});
+
+test("a transferencia REALIZADA tem o Editar APAGADO, com o motivo no title", () => {
+  // Abrir uma perna na tela de despesa deixaria a outra ORFA: o saldo passaria a
+  // somar sozinho pelo valor inteiro, sem nada parecendo errado. Botao cinza sem
+  // explicacao e indistinguivel de tela quebrada, e a pessoa tenta de novo.
+  const html = render({
+    linhas: [
+      linha({ origem: "realizado", tipo: "transfer", descricao: "Itaú → Nubank" }),
+    ],
+    aparencia: TRANSFERENCIAS,
+  });
+
+  assert.deepEqual(rotulosDeAcao(html), ["Editar", "Excluir"]);
+  assert.deepEqual(desabilitados(html), ["Editar"]);
+  assert.match(html, /title="[^"]*duas pernas[^"]*"/);
+
+  // E a PREVISTA da mesma tela NAO fica apagada: ela e UMA linha com as duas
+  // contas dentro, e o PATCH mexe nessa linha so.
+  const prevista = render({
+    linhas: [linha({ tipo: "transfer" })],
+    aparencia: TRANSFERENCIAS,
+  });
+  assert.deepEqual(desabilitados(prevista), []);
+});
+
+test("o Editar da linha realizada e um <a> com o `?id=` dela", () => {
+  // `caminhoDeEdicao` de producao monta o destino; a secao so tem de usa-lo.
+  // Um `<button>` ali nao navegaria para lugar nenhum.
+  const html = render({
+    linhas: [linha({ id: "t7", origem: "realizado", status: null })],
+  });
+
+  const destino = href(html);
+  assert.ok(destino, "o Editar da realizada nao virou link");
+  assert.equal(destino, "/dashboard/movimentacoes/despesa?id=t7");
+});
+
+test("o Editar da conta PREVISTA e botao, nao link -- ela nao tem tela de edicao", () => {
+  // `?id=` do formulario completo le `financial_transactions`; uma conta
+  // prevista nao esta la, e o link abriria um formulario VAZIO cujo Salvar
+  // criaria um lancamento novo.
+  const html = render({ linhas: [linha({})] });
+
+  assert.equal(href(html), null, "o Editar da prevista virou link");
+  assert.ok(rotulosDeAcao(html).includes("Editar"));
+});
+
+test("durante uma acao os tres botoes DAQUELA secao travam, e o da linha gira", () => {
+  // Dois cliques em Confirmar seriam duas baixas, e a segunda volta 409 DEPOIS
+  // de a primeira ter dado certo: a tela mostraria um erro em cima de uma
+  // operacao que funcionou.
+  const html = render({
+    linhas: [linha({ id: "l1" }), linha({ id: "l2", descricao: "Luz" })],
+    acoes: ACOES({ agindo: "l1" }),
+  });
+
+  // Seis botoes (tres por linha), todos travados: a segunda linha tambem, porque
+  // uma segunda acao em paralelo chegaria no meio da releitura da primeira.
+  assert.equal(desabilitados(html).length, 6, desabilitados(html).join(" | "));
+
+  // E a linha que esta agindo mostra o giro. `animate-spin` e a unica marca do
+  // Loader2 que sobrevive ao HTML (a forma do `<path>` do lucide muda num
+  // upgrade do pacote sem nada estar errado).
+  assert.match(html, /animate-spin/);
+});
+
+test("sem rede os botoes travam -- escrita offline FALHA, nao fica pendente", () => {
+  const html = render({ linhas: [linha({})], acoes: ACOES({ online: false }) });
+
+  assert.deepEqual(desabilitados(html), [
+    "Confirmar pagamento",
+    "Editar",
+    "Excluir",
+  ]);
+  // O giro NAO aparece: nada esta em curso. Um spinner aqui prometeria que o
+  // app esta tentando.
+  assert.ok(!html.includes("animate-spin"), html);
+});
+
+test("a secao carregando nao desenha botao nenhum", () => {
+  const html = render({ linhas: [linha({})], carregando: true });
+
+  assert.deepEqual(rotulosDeAcao(html), []);
+  assert.ok(!html.includes("<button"), html);
+});
+
+test("cada linha ganha os botoes DELA -- nao os da primeira", () => {
+  // Tres estados na MESMA secao. Um `podeConfirmar` avaliado uma vez para a
+  // secao inteira (ou sobre a primeira linha) passaria em cada bloco de uma
+  // linha so acima.
+  const html = render({
+    linhas: [
+      linha({ id: "a", descricao: "Prevista" }),
+      linha({ id: "b", descricao: "Realizada", origem: "realizado", status: null }),
+      linha({ id: "c", descricao: "Alheia", posso_editar: false }),
+      FATURA,
+    ],
+  });
+
+  assert.deepEqual(rotulosDeAcao(html), [
+    // a: prevista minha -- os tres
+    "Confirmar pagamento",
+    "Editar",
+    "Excluir",
+    // b: realizada minha -- dois
+    "Editar",
+    "Excluir",
+    // c e a fatura -- nenhum
+  ]);
 });

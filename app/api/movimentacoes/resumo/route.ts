@@ -199,7 +199,7 @@ export async function GET(request: NextRequest) {
       .from("financial_transactions")
       .select(
         `
-        id, description, amount, exchange_rate, currency, transaction_date,
+        id, user_id, description, amount, exchange_rate, currency, transaction_date,
         transaction_type, counterpart_transaction_id,
         category:transaction_categories(name, is_expense),
         account:financial_accounts(id, name, account_type)
@@ -250,7 +250,7 @@ export async function GET(request: NextRequest) {
       .from("scheduled_transactions_effective")
       .select(
         `
-        id, description, amount, due_date, status, effective_status, currency,
+        id, user_id, description, amount, due_date, status, effective_status, currency,
         direction, notes, recurring_rule_id,
         category:transaction_categories(name),
         account:financial_accounts(id, name, account_type)
@@ -353,7 +353,26 @@ export async function GET(request: NextRequest) {
       (realizadasCruas ?? []) as unknown as RealizadaCrua[],
       previstas,
       tela.tipo,
-      idsDeFixa
+      idsDeFixa,
+      // QUEM ESTA OLHANDO (HMO-301). A rota e quem autentica, entao e dela que a
+      // resposta sai; a REGRA ("a linha e minha?") fica na lib, onde
+      // `npm run test:telas-de-movimentacao` e os mutantes a alcancam. E a mesma
+      // fiacao que /api/papel-de-pao/painel ja faz (HMO-300).
+      //
+      // `user_id` ENTROU NOS DOIS `select` ACIMA POR ISTO, e e uma coluna em
+      // consulta que ja existia -- nao uma consulta nova. Tira-la nao quebra
+      // `tsc` nem teste de unidade nenhum (o campo e opcional nas duas
+      // interfaces cruas, porque a fatura sintetizada nao o tem): o que
+      // acontece e `posso_editar: false` em TODA linha e a lista voltar a ser
+      // so leitura, sem erro e sem log. Quem tranca isso e a sonda textual de
+      // scripts/test-contrato-das-telas-de-movimentacao.mjs.
+      //
+      // Hoje as duas consultas ja filtram `.eq("user_id", user.id)`, entao a
+      // comparacao e verdadeira em quase toda linha. Ela nao e redundante:
+      // qualquer alargamento futuro da leitura (a parte de grupo de outro
+      // membro, que a policy do 005 ja libera) passa a chegar aqui, e a tela
+      // nasce FECHADA para ela em vez de ganhar botao que a RLS recusa.
+      user.id
     );
 
     const resumo = resumoDaTela(linhas);
