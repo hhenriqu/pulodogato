@@ -1292,6 +1292,12 @@ jobs:
       # passa) e controle NEGATIVO (sem a 041 o teste reprova -- e o que detecta
       # um template montado com a migration dentro, que faria todo mutante virar
       # no-op). PG_TEMPLATE=<cadeia ate a 040> npm run mutantes:fatura-escolhida
+      #
+      # RE-MEDIDO na HMO-289, e a primeira medida NAO valia: o runner lia `dir`
+      # fora de escopo, entao toda aplicacao de SQL estourava `ReferenceError`, o
+      # `catch` a contava como "o teste reprovou" e os 10 mutantes "morriam" pelo
+      # erro de script. O 10/10 acima e o de depois do conserto -- com o controle
+      # positivo verde, que e justamente o unico caso que o bug derrubava.
       - name: A fatura escolhida manda no mes e no vencimento, e a view nao vaza
         run: $PSQL -f database/tests/041_fatura_escolhida_no_lancamento_test.sql
 

@@ -55,9 +55,14 @@ import { usePreferenciaDeMoeda } from "@/lib/hooks/usePreferenciaDeMoeda";
 import { moedaSugerida } from "@/lib/moeda";
 import { cotacaoDigitada, taxaParaGravar } from "@/lib/cambio";
 import { avisoDeEdicaoTravada } from "@/lib/grupos";
-import { cartaoDaTela, PARAM_DO_CARTAO } from "@/lib/fatura-do-cartao";
+import {
+  cartaoDaTela,
+  faturaPadraoDoLancamento,
+  PARAM_DO_CARTAO,
+} from "@/lib/fatura-do-cartao";
 import { useOfflineQueue } from "@/lib/hooks/useOfflineQueue";
 import {
+  camposDoTipo,
   contaPrevista,
   datasDaTransacao,
   destinoDoLancamento,
@@ -216,6 +221,41 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
         : { ...atual, moeda: preferenciaDeMoeda.oficial }
     );
   }, [carregandoMoeda, editando, preferenciaDeMoeda.oficial]);
+
+  // ---------------------------------------------------------------------------
+  // A FATURA QUE O SELETOR ABRE MARCADA (HMO-281 / HMO-289)
+  // ---------------------------------------------------------------------------
+  // `useMemo` com `[origem]` e NAO uma chamada solta no corpo: a funcao le o
+  // relogio quando nao ha periodo na origem, e recalcular a cada render daria um
+  // padrao que muda debaixo do dedo da pessoa a meia-noite -- e, antes disso,
+  // uma dependencia instavel no efeito abaixo, que passaria a rodar em todo
+  // render.
+  const faturaPadrao = useMemo(() => faturaPadraoDoLancamento(origem), [origem]);
+
+  // O PADRAO E ESCRITO NO ESTADO, E NAO SO EXIBIDO
+  //
+  // `valoresIniciais()` nao pode conhecer este valor (aquele modulo nao importa
+  // nada, e o padrao depende da tela de origem) -- a mesma situacao da moeda
+  // oficial logo acima. Se o padrao vivesse so no `<select>` como valor
+  // exibido, `gravarTransacao` leria `mesDaFatura: ""` e gravaria override NULO:
+  // a tela mostraria "novembro de 2026" e a compra cairia na fatura de outubro.
+  //
+  // AS TRES GUARDAS:
+  //   - `natureza !== "card"`: fora da compra no cartao nao ha o que preencher, e
+  //     `validarLancamento` RECUSA um mes preenchido ali;
+  //   - `editando`: o que esta gravado manda. Sem esta guarda, abrir para editar
+  //     uma compra SEM override escreveria o padrao no estado, e o Salvar -- sem
+  //     a pessoa tocar em nada -- moveria a compra de fatura;
+  //   - `mesDaFatura === ""`: so preenche o vazio. Reescrever o campo apagaria a
+  //     escolha de quem ja mexeu nele toda vez que o efeito rodasse de novo.
+  useEffect(() => {
+    if (editando) return;
+    setValores((atual) =>
+      atual.natureza === "card" && atual.mesDaFatura === ""
+        ? { ...atual, mesDaFatura: faturaPadrao }
+        : atual
+    );
+  }, [editando, faturaPadrao, valores.natureza]);
 
   // ---------------------------------------------------------------------------
   // O CARTAO QUE A TELA ANTERIOR JA ESCOLHEU (HMO-210)
@@ -511,6 +551,21 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
         tipo === "expense" && contaDaLinha?.account_type === "credit_card"
           ? "card"
           : "one_off",
+      // A FATURA ESCOLHIDA VOLTA PARA O CAMPO, E O NULO VOLTA COMO VAZIO
+      //
+      // `invoice_month_override` e NULL na maioria das linhas, e vazio aqui e a
+      // leitura certa: quer dizer "esta compra cai pela DATA", que e a primeira
+      // opcao do seletor. Preencher com o mes corrente -- ou com `invoice_month`,
+      // que vem do COALESCE da 041 e por isso NUNCA e nulo -- faria a tela
+      // afirmar uma escolha que ninguem fez, e o Salvar de uma edicao qualquer
+      // gravaria um override novo numa compra que nao tinha nenhum, movendo-a de
+      // fatura sem ninguem pedir.
+      //
+      // `slice(0, 7)` porque a coluna e `date` e volta 'AAAA-MM-01'; o seletor
+      // fala 'AAAA-MM'.
+      mesDaFatura: linha.invoice_month_override
+        ? String(linha.invoice_month_override).slice(0, 7)
+        : "",
       compartilhado: Boolean(linha.is_shared),
       grupoId: linha.group_id ?? "",
       // A moeda GRAVADA ganha da moeda atual da conta -- e por isso
@@ -705,6 +760,16 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
         // que fatura a parcela cai. Nao ha campo de data proprio no bloco de
         // parcelamento: ver o comentario em `validarLancamento`.
         vencimento: valores.data,
+        // A FATURA ESCOLHIDA, QUE NA SERIE VALE POR DEZ (HMO-289)
+        //
+        // Aqui ela nao e "o mes de uma linha": a rota a usa como a fatura ANCORA
+        // de onde as parcelas 2..M sao contadas. Nao mandar o campo nao erraria
+        // so a parcela 1 -- a serie inteira seria contada da fatura da data, com
+        // a primeira numa fatura e as nove seguintes a partir de outra.
+        //
+        // Sempre presente no corpo (vazio vira `null` na rota): um campo que so
+        // aparece as vezes e um campo que da para esquecer de mandar.
+        mes_da_fatura: valores.mesDaFatura || null,
         group_id: valores.grupoId || null,
         notes: valores.notas,
         // Moeda e cotacao vao pelo mesmo motivo de `gravarTransacao`: a 026 tem
@@ -787,6 +852,12 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       // a fila gravaria uma entrada avulsa, e o salario seria contado de novo
       // quando a ocorrencia do mes fosse baixada. Dinheiro em dobro, sem erro.
       tipoDeDespesa: valores.natureza,
+      // Sem isto o lancamento sem rede PERDE A FATURA EM SILENCIO: a fila aceita
+      // compra no cartao, o item sincroniza, a linha e aceita, e a compra cai na
+      // fatura da DATA. Nenhum erro, nenhum item `falhou`, nada na tela -- o
+      // unico dos quatro escritores desta feature cujo defeito nao tem sintoma.
+      // Ver `invoice_month_override` em lib/offline-queue.ts.
+      mesDaFatura: valores.mesDaFatura,
     });
 
     if (resultado.estado === "recusado") {
@@ -938,6 +1009,11 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
 
   const gravarTransacao = async () => {
     const valor = valorGravado(tipo, Number.parseFloat(valores.valor));
+    // A MESMA funcao que decide o que esta na tela decide o que vai no corpo --
+    // ver `invoice_month_override` abaixo. Ler a natureza crua aqui criaria uma
+    // segunda regra para "isto tem fatura?", e as duas divergiriam na primeira
+    // natureza nova do enum.
+    const campos = camposDoTipo(tipo, valores.natureza, editando, valores.confirmado);
     const temGrupo = Boolean(valores.grupoId);
     const temRateio = valores.compartilhado && valores.rateios.length > 0;
 
@@ -991,6 +1067,35 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       // colunas faria todo lancamento AFIRMAR que saiu no dia previsto -- um
       // relatorio de atraso sairia com zero atrasos e cara de verdade.
       ...datasDaTransacao(valores),
+      // -------------------------------------------------------------------
+      // EM QUAL FATURA ISSO CAI (041, HMO-281 / HMO-289)
+      // -------------------------------------------------------------------
+      // DENTRO DE `linha`, e nao no ramo do insert, porque `linha` e usada nos
+      // DOIS -- `insert({...linha, ...})` e `update(linha)`. E a edicao e metade
+      // da feature: trocar a fatura de uma compra ja gravada e o conserto de quem
+      // lancou no mes errado. Posto so no insert, o campo gravaria na criacao e
+      // seria impossivel de corrigir depois.
+      //
+      // `null` E NAO `undefined`, e aqui esta a diferenca que importa: o
+      // supabase-js OMITE a chave `undefined` do corpo, e coluna omitida num
+      // UPDATE fica como esta. Quem tirasse a escolha de uma compra (voltando o
+      // seletor para "pela data da compra") veria o toast de sucesso e a compra
+      // continuaria na fatura antiga. `null` e o que APAGA o override.
+      //
+      // `campos.faturaDoLancamento` e o portao, e nao `valores.mesDaFatura`
+      // sozinho: o estado e um objeto so, e um 'AAAA-MM' sobrevive a troca de
+      // natureza. Sem o portao, a despesa que a pessoa moveu de "Gasto no
+      // Cartao" para "Despesa" levaria override para uma linha de conta corrente
+      // -- onde `card_invoice_lines` nem olha a coluna, mas o dado fica gravado
+      // mentindo para quem o ler depois. (`validarLancamento` ja recusa esse
+      // caso antes; este e o cinto.)
+      //
+      // `-01` porque a 041 tem
+      // `CHECK (invoice_month_override = date_trunc('month', ...))`.
+      invoice_month_override:
+        campos.faturaDoLancamento && valores.mesDaFatura
+          ? `${valores.mesDaFatura}-01`
+          : null,
     };
 
     let transacao: { id: string };
@@ -1169,6 +1274,11 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
               moedaPorLancamento={preferenciaDeMoeda.porLancamento}
               moedaOficial={preferenciaDeMoeda.oficial}
               cartaoFixado={cartaoFixado}
+              // O CENTRO da janela de meses do seletor de fatura. Vem de cá
+              // porque quem conhece a tela de origem é este componente (ele lê
+              // `?origem=`), e `CamposDeLancamento` é de propósito sem URL e sem
+              // banco -- é o que permite testá-lo renderizando de verdade.
+              mesPadraoDaFatura={faturaPadrao}
               rateio={
                 <SoftFeatureGuard feature="expense_groups" user={user}>
                   <div className="space-y-4 p-4 border rounded-lg bg-muted/20">

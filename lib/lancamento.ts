@@ -278,6 +278,21 @@ export interface CamposDoTipo {
   rateio: boolean;
   /** O seletor de conta e obrigatorio (gasto no cartao). */
   contaObrigatoria: boolean;
+  /**
+   * O seletor "em qual fatura isso cai" (HMO-281 / HMO-289).
+   *
+   * So na COMPRA no cartao (`natureza === "card"`). Fora do cartao a pergunta
+   * nao tem resposta -- uma despesa em conta corrente nao cai em fatura nenhuma
+   * --, e na assinatura cobrada no cartao (`card_fixed`) ela tem resposta mas
+   * nao tem onde ser gravada: aquele lancamento vira regra em `recurring_rules`,
+   * que nao tem a coluna. O porque longo esta em `camposDoTipo`.
+   *
+   * Vale EDITANDO, ao contrario de `parcelamento`: a escolha da fatura e um
+   * campo da propria linha, e nao a criacao de N linhas novas. Trocar a fatura
+   * de uma compra ja gravada e justamente o conserto de quem lancou errado --
+   * e e o motivo de `gravarTransacao` mandar o campo tambem no `update`.
+   */
+  faturaDoLancamento: boolean;
   /** O rotulo do seletor de conta muda com a natureza. */
   rotuloDaConta: string;
   /** O rotulo do seletor de natureza muda com o tipo. */
@@ -433,6 +448,10 @@ export function camposDoTipo(
       parcelamento: false,
       rateio: false,
       contaObrigatoria: false,
+      // Receita nao tem cartao: `lugaresDoTipo("income")` devolve um lugar so, e
+      // `contaObrigatoria` acima e `false` pela mesma razao. Um seletor de fatura
+      // na tela de receita perguntaria em que fatura um salario cai.
+      faturaDoLancamento: false,
       rotuloDaConta: "Conta de entrada",
       rotuloDaFixa: "Receita fixa (todo mês)",
       ajudaDaFixa:
@@ -487,6 +506,31 @@ export function camposDoTipo(
     parcelamento: !editando && natureza === "card",
     rateio: true,
     contaObrigatoria: ehNoCartao,
+    // `natureza === "card"` E NAO `ehNaturezaNoCartao` -- E A ISSUE PEDIA O
+    // SEGUNDO
+    //
+    // A HMO-289 especificou `tipo === "expense" && ehNaturezaNoCartao(natureza)`,
+    // "o mesmo eixo que ja governa `contaObrigatoria` e `parcelamento`". Mas
+    // aquele eixo nao e um: `contaObrigatoria` usa `ehNoCartao` e `parcelamento`
+    // usa `natureza === "card"`, e esta pergunta fica do lado do `parcelamento`.
+    //
+    // O motivo e o DESTINO, nao a tela. Em `card_fixed` o
+    // `destinoDoLancamento` devolve "regra": o lancamento vira linha de
+    // `recurring_rules`, e `recurring_rules` NAO TEM `invoice_month_override`
+    // (a 041 pos a coluna em `financial_transactions`). Com `ehNoCartao` aqui, a
+    // assinatura do cartao mostraria o seletor de faturas, a pessoa escolheria
+    // marco, e a escolha seria descartada em silencio -- nenhum erro, nenhum
+    // campo faltando, e a cobranca caindo na fatura da data de cada ocorrencia.
+    // Oferecer a escolha e joga-la fora e pior que nao oferecer: a tela afirma
+    // uma coisa que o banco nao guarda.
+    //
+    // E nao ha resposta a dar ali: quem decide a fatura de cada ocorrencia de
+    // uma regra mensal e a data em que ela for materializada, doze faturas
+    // diferentes ao longo do ano. "Em qual fatura isso cai" nao e uma pergunta
+    // com uma resposta quando o lancamento e uma regra.
+    //
+    // `editando` NAO entra: ver `faturaDoLancamento` no tipo.
+    faturaDoLancamento: natureza === "card",
     // "Conta/Cartao" SAIU (HMO-254): o cartao nao esta mais nesta lista. Ver
     // `contasDoSeletor` -- o rotulo e a lista tem de dizer a mesma coisa, senao
     // o titulo oferece um cartao que o seletor nao tem.
@@ -699,6 +743,31 @@ export interface ValoresDeLancamento {
    */
   cotacao: string;
 
+  /**
+   * Em qual FATURA esta compra cai, em 'AAAA-MM' (HMO-281 / HMO-289).
+   *
+   * Vai para `financial_transactions.invoice_month_override` como
+   * '<mes>-01' -- a 041 pos um CHECK que exige o dia 1, e `card_invoice_lines`
+   * faz `COALESCE(override, card_invoice_month(transaction_date, closing_day))`.
+   *
+   * VAZIA QUER DIZER "NAO ESCOLHI", E NAO "mes zero". O override fica NULO e a
+   * fatura volta a sair da data, que e a regra da 006 e o comportamento de antes
+   * desta feature. E por isso que o vazio nao e recusado por
+   * `validarLancamento`: a falha, se algum dia a tela deixar de preencher o
+   * campo, e o app de ontem -- nao dinheiro na fatura errada.
+   *
+   * A DATA DA COMPRA NAO MUDA. `data` (`transaction_date`) continua sendo o dia
+   * em que a compra aconteceu. Gravar dia 1 do mes escolhido ali apagaria um
+   * fato: quebraria `expected_date` / "pagou atrasado?" (027), moveria a despesa
+   * de mes em todo relatorio que agrupa por `transaction_date`, e mostraria a
+   * compra num dia em que ela nao aconteceu.
+   *
+   * 'AAAA-MM' e nao 'AAAA-MM-01': o que a tela pergunta e um MES, o `<select>`
+   * carrega meses, e o `-01` e detalhe da coluna. Quem o acrescenta e o unico
+   * lugar que escreve na coluna.
+   */
+  mesDaFatura: string;
+
   // So despesa usa daqui para baixo.
   parcelado: boolean;
   /**
@@ -755,6 +824,32 @@ export function diaDeVencimentoValido(bruto: string): boolean {
   return Number.isInteger(dia) && dia >= 1 && dia <= 31;
 }
 
+/**
+ * O mes da fatura digitado da para ler? ('AAAA-MM', mes de 01 a 12.)
+ *
+ * SEGUNDA COPIA DA MESMA REGRA, DE PROPOSITO -- e a primeira e
+ * `rotuloDaFatura` em lib/fatura-do-cartao.ts, que devolve `null` para o
+ * ilegivel. A copia existe porque este modulo nao tem import nenhum (ver
+ * `valoresIniciais`), e um import aqui derruba `test:lancamento` com
+ * ERR_MODULE_NOT_FOUND -- o mesmo motivo de `moeda: "BRL"` nao ser
+ * `MOEDA_PADRAO`.
+ *
+ * E quem impede as duas de divergir NAO e este comentario: e o caso "a recusa
+ * daqui e o `null` de `rotuloDaFatura` concordam" em
+ * scripts/test-fatura-do-cartao.mjs, que compila os DOIS modulos e compara
+ * entrada por entrada. Sem ele, afrouxar um lado deixaria a tela imprimindo
+ * "undefined de 2026" sobre um mes que a validacao aceitou.
+ *
+ * `-01` opcional como em `rotuloDaFatura`: a coluna e `date` e um valor que
+ * volta do banco chega como 'AAAA-MM-01'. Aceitar as duas formas e o que
+ * permite a EDICAO carregar o que esta gravado sem normalizar antes de validar.
+ */
+export function mesDaFaturaValido(bruto: string): boolean {
+  if (!/^\d{4}-\d{2}(-\d{2})?$/.test(bruto)) return false;
+  const mes = Number(bruto.slice(5, 7));
+  return mes >= 1 && mes <= 12;
+}
+
 export function valoresIniciais(): ValoresDeLancamento {
   return {
     descricao: "",
@@ -791,6 +886,21 @@ export function valoresIniciais(): ValoresDeLancamento {
     // que vai para o banco sai de `taxaParaGravar` (lib/cambio.ts), que devolve
     // 1 para BRL sem olhar para este campo.
     cotacao: "",
+    // VAZIA, e nao o mes corrente. Dois motivos, e o segundo e o que importa:
+    //
+    //   1. este modulo nao tem import NENHUM (ver `moeda` acima), entao
+    //      `faturaPadraoDoLancamento` -- que mora em lib/fatura-do-cartao.ts
+    //      porque precisa de `periodoDaQuery` -- nao pode ser chamada daqui.
+    //   2. o padrao depende da TELA DE ORIGEM (`?de=&ate=`), que `valoresIniciais`
+    //      nao conhece. Um mes corrente fixo aqui seria a resposta errada para
+    //      quem abriu o formulario de dentro de outubro em novembro -- e, pior,
+    //      ele viria do fuso do servidor na renderizacao do Next, nao do fuso de
+    //      Sao Paulo onde o cartao fecha.
+    //
+    // Quem preenche e o formulario, no mesmo `useEffect` que ja sobrescreve a
+    // moeda. Enquanto estiver vazia a compra cai na fatura da data, que e a
+    // regra da 006.
+    mesDaFatura: "",
     parcelado: false,
     // "parcela" e nao "total" porque e a leitura que a maquininha do cartao da:
     // "10x de R$ 100". Nenhuma das duas e inofensiva como padrao, entao a tela
@@ -948,6 +1058,50 @@ export function validarLancamento(
       mensagem: ehNaturezaFixa(valores.natureza)
         ? "Escolha em qual cartão essa despesa é cobrada todo mês."
         : "Escolha em qual cartão foi o gasto.",
+    };
+  }
+
+  // -----------------------------------------------------------------------
+  // A FATURA ESCOLHIDA (HMO-281 / HMO-289)
+  // -----------------------------------------------------------------------
+  // Duas recusas, e elas NAO sao a mesma com o sinal trocado.
+  const mesDaFaturaEscrito = valores.mesDaFatura.trim();
+
+  if (campos.faturaDoLancamento) {
+    // ILEGIVEL E RECUSADO; VAZIO NAO.
+    //
+    // Vazio quer dizer "nao escolhi", e o efeito dele e o app de antes desta
+    // feature: o override fica NULO e a fatura sai da data (006). Cobrar o campo
+    // aqui transformaria uma tela que ainda nao terminou de carregar -- o
+    // `useEffect` que preenche o padrao roda DEPOIS do primeiro render -- numa
+    // recusa que a pessoa nao tem como entender.
+    //
+    // Ilegivel e outra coisa: '2026-13' e '2026-1' chegariam a coluna `date` e o
+    // PostgREST responderia 22007/22008 traduzido para "Erro ao gravar o
+    // lancamento", sem dizer qual campo. Pior, '2026-13' NAO e recusado pelo
+    // CHECK da 041 por ser mes 13 -- ele e recusado por nao ser uma data, e a
+    // mensagem fala de sintaxe.
+    if (mesDaFaturaEscrito !== "" && !mesDaFaturaValido(mesDaFaturaEscrito)) {
+      return { ok: false, mensagem: "Escolha em qual fatura essa compra cai." };
+    }
+  } else if (mesDaFaturaEscrito !== "") {
+    // FORA DA COMPRA NO CARTAO, UM MES ESCOLHIDO E ESTADO VELHO -- e ele e
+    // ALCANCAVEL: o estado do formulario e um objeto so, entao escolher o cartao,
+    // escolher a fatura de dezembro e depois voltar o seletor para "Despesa"
+    // deixa 'AAAA-MM' parado no estado com o campo fora da tela.
+    //
+    // Recusar e nao ignorar, porque as duas saidas nao contam a mesma historia.
+    // `gravarTransacao` manda `null` fora do cartao, entao ignorar daria dinheiro
+    // CERTO -- e descartaria em silencio uma escolha que a pessoa fez de
+    // proprio punho. Ela sairia da tela achando que a despesa foi para dezembro.
+    //
+    // E a frase diz o que aconteceu, nao "preencha os campos": o campo que ela
+    // precisa olhar nao esta mais na tela.
+    return {
+      ok: false,
+      mensagem: ehNaturezaFixa(valores.natureza)
+        ? "Escolher a fatura só vale para uma compra no cartão. Numa despesa fixa, cada cobrança cai na fatura do mês dela."
+        : "Escolher a fatura só vale para uma compra no cartão. Volte o tipo para “Gasto no Cartão” ou refaça a escolha.",
     };
   }
 
@@ -1521,6 +1675,81 @@ export function somaMeses(dataISO: string, meses: number): string | null {
   const dd = String(diaDestino).padStart(2, "0");
   const mm = String(mesDestino).padStart(2, "0");
   return `${String(anoDestino).padStart(4, "0")}-${mm}-${dd}`;
+}
+
+/**
+ * Em que data cada parcela do CARTAO tem de ser gravada para cair na fatura
+ * certa.
+ *
+ * MUDOU DE CASA NA HMO-289, e o motivo e medicao e nao arrumacao: ela era uma
+ * funcao privada de `app/api/financial-installments/route.ts`, onde NAO HA COMO
+ * TESTA-LA sem subir a rota. O caso que distingue esta funcao da versao
+ * quase-certa (abaixo) e o caso mais caro desta feature, e enquanto ela morava
+ * la a unica prova possivel era um mutante. Aqui ela cai em `test:lancamento`,
+ * ao lado de `somaMeses`, que e a unica coisa de que ela precisa -- este modulo
+ * continua sem import nenhum.
+ *
+ * O PROBLEMA, QUE NAO PARECE UM
+ * -----------------------------
+ * A tentacao e `transaction_date = dataDaCompra + k meses` e deixar
+ * `card_invoice_month()` fazer o resto. Isso erra, e erra calado, porque somar
+ * um mes a uma data NAO soma um mes a fatura quando o dia e grampeado pelo fim
+ * do mes. Medido com a funcao do banco:
+ *
+ *   compra 31/01, cartao fecha dia 30
+ *     31/01 -> dia 31 > 30            -> fatura de FEVEREIRO
+ *     28/02 (31/01 + 1 mes, grampeado) -> dia 28 <= 28 -> fatura de FEVEREIRO
+ *
+ * Duas parcelas na MESMA fatura, e a serie termina um mes antes do que devia.
+ * A fatura de fevereiro fecharia com o dobro, a ultima ficaria vazia, e nada
+ * disso aparece como erro -- aparece como um mes caro.
+ *
+ * A SOLUCAO
+ * ---------
+ * A primeira parcela (a que a pessoa esta lancando) fica com a data REAL da
+ * compra: e o fato, e e ela que define a fatura ancora. As seguintes ficam com
+ * o **primeiro dia** do mes da fatura delas, porque dia 1 e o unico dia que
+ * `card_invoice_month()` nunca empurra para o mes seguinte -- `1 <= closing_day`
+ * vale para todo `closing_day >= 1`, e com `closing_day` NULL a funcao trunca no
+ * mes de qualquer jeito. A colocacao passa a ser exata por construcao em vez de
+ * depender do calendario.
+ *
+ * DE ONDE VEM `mesDaFaturaAncora`, E O QUE A HMO-289 MUDOU NISSO
+ * -------------------------------------------------------------
+ * Sem fatura escolhida, ela e perguntada AO BANCO (`card_invoice_month`) e nao
+ * recalculada em TypeScript: essa regra existe num lugar so (006), e uma segunda
+ * copia faria a tela e o relatorio discordarem sobre o mesmo cartao no mes em que
+ * uma das duas mudasse.
+ *
+ * COM fatura escolhida (041), a ancora e a ESCOLHA -- e e por isso que ela e
+ * parametro desta funcao e nao uma consulta feita aqui dentro. Ignorar a escolha
+ * na ancora nao erraria uma linha: erraria a serie. A parcela 1 iria para a
+ * fatura escolhida (ela leva o override na linha dela) e as demais seriam
+ * contadas da fatura da DATA -- a 2a cairia junto da 1a, e a serie terminaria um
+ * mes antes. O mesmo estrago do grampeamento, por outra porta.
+ */
+export function datasDasParcelasNoCartao(
+  serie: SerieDeParcelas,
+  dataDaCompra: string,
+  mesDaFaturaAncora: string
+): string[] | null {
+  const datas: string[] = [];
+
+  for (let k = 0; k < serie.parcelas.length; k++) {
+    if (k === 0) {
+      datas.push(dataDaCompra);
+      continue;
+    }
+    // A CONTAGEM PARTE SEMPRE DA ANCORA, e nao da data anterior. `somaMeses` e
+    // quem grampeia o dia, e grampear em cadeia (`somaMeses(datas[k-1], 1)`)
+    // arrastaria o erro para frente: de 31/01 sairiam 28/02, 28/03, 28/04 -- e
+    // marco apareceria com a parcela no dia 28 de um mes que tem 31.
+    const mes = somaMeses(mesDaFaturaAncora, k);
+    if (!mes) return null;
+    datas.push(mes);
+  }
+
+  return datas;
 }
 
 /**

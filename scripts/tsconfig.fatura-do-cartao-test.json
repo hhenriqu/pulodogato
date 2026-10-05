@@ -9,7 +9,18 @@
     "",
     "O resolve-aliases roda COM --espelha-raiz porque o `rootDir` e a raiz do",
     "repositorio (types/financial.ts entra no programa pelo import de tipo), e",
-    "a emissao sai em .tmp-fatura-do-cartao/lib/."
+    "a emissao sai em .tmp-fatura-do-cartao/lib/.",
+    "",
+    "lib/lancamento.ts entra na lista por UM caso (HMO-289): a concordancia",
+    "entre `mesDaFaturaValido` (lancamento) e o `null` de `rotuloDaFatura`",
+    "(aqui). As duas sao a MESMA regra escrita duas vezes, porque",
+    "lib/lancamento.ts nao pode ter import nenhum -- e sem o caso que compila os",
+    "dois modulos e compara, afrouxar um lado deixaria a tela imprimindo",
+    "'undefined de 2026' sobre um mes que a validacao aceitou. Mesmo arranjo que",
+    "scripts/test-moeda.mjs usa para MOEDA_PADRAO.",
+    "",
+    "lib/periodo-do-painel.ts nao precisa de entrada propria: ele chega pelo",
+    "import de `faturaPadraoDoLancamento` e o resolve-aliases reescreve o `@/`."
   ],
   "compilerOptions": {
     "target": "es2020",
@@ -23,5 +34,9 @@
     "baseUrl": "..",
     "paths": { "@/*": ["./*"] }
   },
-  "include": ["../lib/fatura-do-cartao.ts", "../lib/offline-leitura.ts"]
+  "include": [
+    "../lib/fatura-do-cartao.ts",
+    "../lib/offline-leitura.ts",
+    "../lib/lancamento.ts"
+  ]
 }
