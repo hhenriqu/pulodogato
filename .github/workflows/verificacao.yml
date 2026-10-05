@@ -842,6 +842,45 @@ jobs:
       - name: Os mutantes do menu do papel de pao
         run: node scripts/mutantes-menu-papel.mjs
 
+      # OS DOIS NUMEROS do modo (HMO-286) -- "Salario Previsto" e "Total de
+      # contas". E o unico dos tres PRs do modulo que fala de DINHEIRO, e as
+      # duas frases sao rotulos NOVOS: nenhuma delas existia no app. Rotulo novo
+      # em cima de numero velho ja custou caro aqui duas vezes ("Fatura atual"
+      # mostrando a divida inteira do cartao, "a vencer" somando o salario com
+      # as contas), e nas duas o numero exibido era plausivel -- e o modo de
+      # falha que nenhuma inspecao visual pega.
+      #
+      # A suite mede `lib/papel-de-pao.ts` com as dependencias de verdade
+      # (STATUS_FORA_DO_PREVISTO, direcaoDaAgenda, parteDoMembro,
+      # periodoCorrente entram pelo tsc), e cobre os quatro casos da issue: o
+      # SINAL (despesa e negativa neste banco; somada crua ela DIMINUI o total
+      # de contas), o RECORTE DO MES (leitura sem recorte soma o horizonte
+      # inteiro), o FILTRO DE CATEGORIA e o CASO VAZIO.
+      #
+      # O caso da categoria e o que sustenta a suite inteira: o fixture tem uma
+      # receita prevista FORA da categoria Salario (aluguel recebido, R$ 2.500).
+      # Sem aquela linha, a suite ficaria verde mesmo com o codigo lendo o
+      # `expected_income` AGREGADO de /api/scheduled-transactions/summary -- que
+      # e exatamente o numero que os significados aprovados descartam, porque
+      # ele chama aluguel e reembolso de salario.
+      #
+      # DUAS VOLTAS, uma em cada fuso. Nao ha `new Date()` na suite (todo `hoje`
+      # e string literal), e e isso que as duas voltas protegem: teste de data
+      # aqui passa em UTC e nao ve o bug, porque a sandbox e America/Sao_Paulo e
+      # o CI e UTC. Se qualquer caso passar a depender do relogio da maquina,
+      # uma das duas reprova.
+      #
+      # OS QUATRO ULTIMOS CASOS falam do PORTAO de `/dashboard`, e sobre o
+      # TEXTO-FONTE: invertido, o portao entrega o painel de 8 requisicoes a
+      # quem ligou o modo e dois numeros a quem nao ligou -- e as duas pontas
+      # existem, compilam e sao do mesmo tipo, entao tsc, lint e `next build`
+      # passam todos. O cabecalho do portao menciona os dois nomes em prosa, e
+      # por isso a assercao roda sobre o codigo SEM comentario; o primeiro dos
+      # quatro casos e o controle desse strip -- sem ele os outros tres seriam
+      # vacuos, lendo o comentario em vez do `return`.
+      - name: Os dois numeros do papel de pao (salario previsto e total de contas)
+        run: npm run test:papel-de-pao
+
       - name: Os botoes da home empilham alinhados e com espaco no celular
         run: npm run test:home-cta
 
