@@ -1,0 +1,49 @@
+{
+  "//": [
+    "Compila o interruptor do modo papel de pao (HMO-283) para a sonda de",
+    "navegador rodar os COMPONENTES de producao, e nao copias deles.",
+    "",
+    "`jsx: react` e nao `react-jsx`, como na suite test:divisao-ui-dom e pelo",
+    "mesmo motivo: `react-jsx` emite `import ... from \"react/jsx-runtime\"`, e a",
+    "pagina da sonda e um SCRIPT CLASSICO (`import` e erro de sintaxe la, e",
+    "`<script type=module>` e diferido -- o --dump-dom fotografa o DOM antes de",
+    "ele rodar). `jsx: react` emite `React.createElement`, que acha o React UMD",
+    "no global.",
+    "",
+    "`allowUmdGlobalAccess` acompanha: um `React.createElement` emitido num",
+    "arquivo que NAO importa React e, para o tsc, acesso a global UMD de dentro",
+    "de um modulo -- TS2686, uma vez por elemento JSX. A alternativa seria por um",
+    "import de React nos componentes, ou seja mudar producao por causa do teste.",
+    "",
+    "O include lista os tres componentes e as duas bibliotecas que a pagina",
+    "concatena. `components/ui/button.tsx` NAO esta aqui e ainda assim e",
+    "compilado -- o tsc segue o import de PapelToggle -- e a pagina usa o .js",
+    "dele de verdade: so `cn`, `cva` e `Slot` entram como esboco. Ver o cabecalho",
+    "de test-papel-na-tela.mjs para a lista completa do que e esboco e por que.",
+    "",
+    "Comentario SO nesta chave, nunca com // no meio do objeto: o tsc aceita",
+    "JSONC, mas o check-tests-in-ci.mjs le este arquivo com JSON.parse e",
+    "estoura com 'Expected double-quoted property name'."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "jsx": "react",
+    "allowUmdGlobalAccess": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-papel-na-tela",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../components/ModoPapelProvider.tsx",
+    "../components/PapelToggle.tsx",
+    "../components/papel-de-pao/ConfiguracaoDePapel.tsx",
+    "../lib/modo-papel.ts",
+    "../lib/theme.ts"
+  ]
+}

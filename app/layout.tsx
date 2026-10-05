@@ -1,12 +1,40 @@
 import type { Metadata, Viewport } from "next";
-import { Inter } from "next/font/google";
+import { Inter, Patrick_Hand } from "next/font/google";
 import { PWAWrapper } from "@/components/PWAWrapper";
+import { ModoPapelProvider } from "@/components/ModoPapelProvider";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { ThemedToaster } from "@/components/ThemedToaster";
+import { PAPEL_INIT_SCRIPT } from "@/lib/modo-papel";
 import { THEME_COLOR, THEME_INIT_SCRIPT } from "@/lib/theme";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"] });
+
+/*
+ * A letra manuscrita do modo papel de pao (HMO-283).
+ *
+ * Entra como VARIAVEL CSS (`.variable`), nao como `className`: a classe poria a
+ * letra manuscrita em TODO MUNDO. A variavel so declara `--font-papel` no
+ * `<body>`; quem a pede e a regra `.papel body` de app/globals.css -- ver o
+ * comentario dela, que explica por que a regra mira o `body`.
+ *
+ * `preload: false` e DELIBERADO, e e o que torna o modo barato para quem nao o
+ * usa: o `<link rel=preload>` que o next/font gera por padrao baixaria o
+ * arquivo da fonte em toda visita, inclusive das pessoas que nunca ligaram o
+ * papel de pao. Sem ele a variavel fica declarada para todos e o arquivo so
+ * desce quando alguma regra de CSS casa -- ou seja, quando a classe `papel`
+ * esta no <html>.
+ *
+ * `weight: "400"` porque a Patrick Hand tem um peso so. Sem ele o next/font
+ * recusa a fonte no build.
+ */
+const patrickHand = Patrick_Hand({
+  subsets: ["latin"],
+  weight: "400",
+  variable: "--font-papel",
+  display: "swap",
+  preload: false,
+});
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -140,6 +168,16 @@ export default function RootLayout({
             ja pode ter pintado a tela branca para quem usa o modo escuro. */}
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
 
+        {/* Liga a pele de papel de pao antes da primeira pintura, pelo mesmo
+            motivo do script acima -- sem ele quem usa o modo leva um flash da
+            tela azul-e-branca em tela cheia a cada navegacao.
+
+            DEPOIS daquele, e nao antes: este le a classe `dark` que aquele
+            acabou de escrever para escolher entre as duas cores de barra de
+            status, e sobrescreve a meta que aquele preencheu. Invertidos, o app
+            instalado abre com a faixa do tema normal sobre a tela bege. */}
+        <script dangerouslySetInnerHTML={{ __html: PAPEL_INIT_SCRIPT }} />
+
         {/* PWA Meta Tags */}
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta
@@ -211,10 +249,18 @@ export default function RootLayout({
         {/* Preload critical resources */}
         <link rel="dns-prefetch" href="//fonts.googleapis.com" />
       </head>
-      <body className={inter.className}>
+      {/* A variavel da manuscrita acompanha a classe do Inter: o `.className`
+          da a fonte do app, o `.variable` apenas DECLARA `--font-papel` para o
+          bloco `.papel` poder pedi-la. */}
+      <body className={`${inter.className} ${patrickHand.variable}`}>
+        {/* O ModoPapelProvider por DENTRO do ThemeProvider: `aplicarModoPapel`
+            le a classe `dark` do <html> para escolher a cor da barra de status,
+            e quem a escreve e o de fora. */}
         <ThemeProvider>
-          <PWAWrapper>{children}</PWAWrapper>
-          <ThemedToaster />
+          <ModoPapelProvider>
+            <PWAWrapper>{children}</PWAWrapper>
+            <ThemedToaster />
+          </ModoPapelProvider>
         </ThemeProvider>
       </body>
     </html>
