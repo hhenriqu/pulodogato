@@ -11,6 +11,16 @@
 // duas pernas. Uma segunda soma de despesa feita fora desta sequencia erraria
 // nos quatro elos abaixo ao mesmo tempo e pareceria certa na tela.
 //
+// A HMO-300 (9/10) TAMBEM NAO, E PELO MESMO CRITERIO -- o chevron que abre a
+// lista de detalhes dentro dos dois cartoes de cima. As linhas da lista sao as
+// que `somarPerna` JA aceitou: ela devolve, junto com o total, o `detalhe` do
+// que entrou. O que mudou aqui foram TRES COLUNAS no `select` que ja existia
+// (`id`, `description`, `user_id`) e o `meuUserId` no contexto -- nenhuma
+// consulta nova, e a razao e aritmetica: a soma das linhas abertas tem de ser
+// exatamente o total do cartao fechado, e uma segunda leitura para montar a
+// lista erraria nos mesmos quatro elos, so que agora EXPLICANDO o numero errado
+// linha a linha.
+//
 // O `month` da resposta ECOA o mes que saiu da querystring, e nao e enfeite: e
 // com ele que a tela evita pintar a resposta de um mes na moldura de outro
 // quando alguem clica duas vezes na seta, ou quando o cache do PWA (24h nas
@@ -135,10 +145,24 @@ export async function GET(request: NextRequest) {
     // embed da conta e `notes` sao as duas colunas de que
     // `agendaSemCompraNoCartao` precisa para separar a fatura (que fica) da
     // compra individual no cartao (que sai).
+    //
+    // `id`, `description` e `user_id` ENTRARAM NA HMO-300, e sao TRES COLUNAS
+    // NA CONSULTA QUE JA EXISTE -- nao uma consulta nova, que e o criterio da
+    // issue. Elas alimentam a lista que o chevron abre, e nenhuma delas entra
+    // em soma nenhuma:
+    //
+    //   * `description` e o NOME da linha. Sem ela a lista sai sem nome;
+    //   * `id` e o que diz se a linha existe no banco (`gravada`), e e o que
+    //     separa a conta gravada da fatura aberta sintetizada, que tem `id`
+    //     nulo de proposito;
+    //   * `user_id` e o que decide `posso_editar`. A policy do 005 traz as
+    //     linhas de grupo dos OUTROS membros junto com as minhas, e um botao
+    //     de Excluir sobre a linha alheia e recusado pela RLS -- com `UPDATE`
+    //     voltando 200 sem alterar nada, que e o modo de falha caro.
     const { data: linhasBrutas, error } = await supabase
       .from("scheduled_transactions_effective")
       .select(
-        "due_date, amount, status, direction, category_id, group_id, notes, account:financial_accounts(account_type)"
+        "id, due_date, description, amount, status, direction, category_id, group_id, user_id, notes, account:financial_accounts(account_type)"
       )
       .gte("due_date", janela.de)
       .lte("due_date", janela.ate);
@@ -203,6 +227,12 @@ export async function GET(request: NextRequest) {
       janela,
       membrosAtivosPorGrupo,
       categoriasDeSalario,
+      // QUEM ESTA OLHANDO (HMO-300). A rota e quem autentica, entao e dela que
+      // sai a resposta; a REGRA ("a linha e minha?") fica na lib, onde
+      // `npm run test:papel-de-pao` a alcanca. Sem este campo `posso_editar`
+      // cai para `false` em toda linha -- nenhum botao aparece, que e a
+      // direcao barata.
+      meuUserId: user.id,
     });
 
     return NextResponse.json({

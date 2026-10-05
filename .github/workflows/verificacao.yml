@@ -1006,6 +1006,34 @@ jobs:
       - name: Os mutantes do cartao Quanto Sobra ou Quanto Falta
         run: node scripts/mutantes-sobra-ou-falta.mjs
 
+      # Os mutantes do DETALHE que o chevron abre (HMO-300, 9/10). Vinte e um,
+      # e o primeiro e a issue inteira: listar as linhas ANTES da divisao da
+      # parte do grupo.
+      #
+      # Ele poe R$ 3.000 numa lista debaixo de um total que tem R$ 1.500 dela, e
+      # nao quebra nada -- 200, numero grande certo, chevron abrindo, linhas com
+      # nome e data. O que a tela passa a fazer e pior do que mostrar um numero
+      # errado: ela EXPLICA o numero certo com valores que nao somam nele. E ele
+      # passa por QUALQUER assercao que so conte linhas: so a soma
+      # (`soma(detalhe) === total`, em todo fixture) o mata -- e so num fixture
+      # que TENHA linha de grupo, porque sem grupo `parteDoMembro` devolve o
+      # valor cheio e o mutante fica indistinguivel do codigo correto.
+      #
+      # Os outros vinte cobrem as demais familias: a lista que perde a fatura
+      # aberta sintetizada (soma MENOS que o total, com o total certo),
+      # `posso_editar` falhando ABERTO (botao na linha do outro membro, que a
+      # RLS recusa com um `UPDATE` que volta 200 sem alterar nada), e a rota
+      # ganhando uma QUARTA consulta -- que e o criterio "nenhuma consulta nova"
+      # medido em vez de prometido.
+      #
+      # Este runner roda as DUAS suites por mutante (`test:papel-de-pao` e
+      # `test:papel-na-tela`), e nao e desperdicio: um mutante de
+      # `PainelDePapel.tsx` nao muda nada na pura, e um da lib nao muda nada na
+      # de navegador. Rodar so uma faria metade dos mutantes sobreviver por
+      # estar medindo o arquivo errado. Continua sendo um passo deste mesmo job.
+      - name: Os mutantes da lista de detalhes do painel de papel
+        run: node scripts/mutantes-detalhe-do-painel.mjs
+
       - name: Os botoes da home empilham alinhados e com espaco no celular
         run: npm run test:home-cta
 

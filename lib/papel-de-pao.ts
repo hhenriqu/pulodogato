@@ -124,6 +124,86 @@ export interface LinhaPrevistaDoPapel {
   direction?: string | null;
   category_id?: string | null;
   group_id?: string | null;
+
+  // -------------------------------------------------------------------------
+  // OS CAMPOS QUE SO O DETALHE USA -- HMO-300 (9/10 do plano da HMO-279)
+  // -------------------------------------------------------------------------
+  // Nenhum deles entra na SOMA. Eles existem para a lista que o chevron abre
+  // poder dizer o nome, a data e de quem e cada linha que ja foi aceita. Todos
+  // OPCIONAIS, e isso nao e frouxura: a fatura sintetizada nao tem `id` nem
+  // `user_id`, e uma leitura que esqueca uma coluna tem de produzir um detalhe
+  // mais POBRE -- nunca um total diferente.
+  /**
+   * `scheduled_transactions.id`. `null`/ausente e a fatura ABERTA sintetizada,
+   * que nao existe em tabela nenhuma -- e e por isso que ela e tambem o
+   * criterio de `gravada` abaixo.
+   */
+  id?: string | null;
+  description?: string | null;
+  /** O dono da linha. A policy do 005 traz tambem as de grupo dos OUTROS. */
+  user_id?: string | null;
+  /** Da fatura sintetizada: o cartao. Para o caminho de volta na lista. */
+  account_id?: string | null;
+  /** Da fatura sintetizada: 'AAAA-MM-01'. Nenhuma linha gravada tem esta. */
+  invoice_month?: string | null;
+}
+
+/**
+ * UMA LINHA DA LISTA QUE O CHEVRON ABRE -- HMO-300 (9/10 do plano da HMO-279).
+ *
+ * A REGRA QUE DECIDE ESTE TIPO INTEIRO: a soma dos `valor` desta lista tem de
+ * ser EXATAMENTE o `total` do numero que a contem. Um chevron que abre uma
+ * lista que nao fecha com o numero de cima e pior que cartao nenhum -- ele
+ * transforma um numero conferivel num numero desmentido pela propria tela.
+ *
+ * Daqui sai a unica decisao nao obvia do tipo: `valor` e a MINHA PARTE, ja
+ * dividida, e nao o valor cheio do grupo. Mostrar tres linhas de R$ 3.000
+ * debaixo de um total de R$ 1.500 e a mesma mentira com mais passos. E e por
+ * isso que `de_grupo` existe: sem o rotulo, o aluguel pela metade se le como
+ * erro de digitacao.
+ */
+export interface LinhaDoDetalhe {
+  /**
+   * O id de banco, ou `null` na fatura sintetizada.
+   *
+   * `null` e load-bearing pela mesma razao de `FaturaPrevista.id`
+   * (lib/agenda-do-cartao.ts): toda URL de acao e montada com ele, e um id
+   * inventado produziria um 404 que, para quem clicou, se le como "o app nao
+   * conseguiu".
+   */
+  id: string | null;
+  /** `false` quando a linha nao existe em tabela nenhuma. */
+  gravada: boolean;
+  descricao: string | null;
+  /** A MINHA parte, JA DIVIDIDA, sempre positiva, em reais. */
+  valor: number;
+  /** O `due_date` da linha. */
+  data: string;
+  /** Linha de grupo: o `valor` acima e uma fracao do que o grupo cobra. */
+  de_grupo: boolean;
+  /**
+   * Quem pode editar/excluir/dar baixa nesta linha -- HMO-300, consumido pela
+   * 10/10.
+   *
+   * Ele nasce aqui porque a lista do chevron pode conter linha de OUTRO membro
+   * do grupo (a policy do 005 libera `group_id IS NOT NULL AND
+   * is_group_member(group_id)`), e um Excluir ali e recusado pela RLS. O modo
+   * de falha pior ja esta medido neste repositorio: `UPDATE` filtrado pela RLS
+   * volta 200 sem alterar nada -- o app diz "pronto" e a linha fica.
+   *
+   * FALHA FECHADO: sem `user_id` na leitura, ou sem `meuUserId` no contexto,
+   * ele e `false` e nenhum botao aparece. Botao ausente e ruim; botao que
+   * aparece e nao funciona e pior.
+   */
+  posso_editar: boolean;
+  /**
+   * O cartao e o mes, SO na fatura aberta sintetizada -- o caminho de volta
+   * que `caminhoDoCartaoNoMes` monta. `null` em toda linha gravada.
+   *
+   * UM OBJETO E NAO DOIS CAMPOS SOLTOS, pela mesma razao de `LinhaDaTela`:
+   * `accountId` sem `mes` monta um link para o mes errado da fatura certa.
+   */
+  fatura: { accountId: string; mes: string } | null;
 }
 
 /**
@@ -136,6 +216,18 @@ export interface LinhaPrevistaDoPapel {
 export interface NumeroDoPapel {
   total: number | null;
   quantidade: number;
+  /**
+   * AS LINHAS QUE ENTRARAM NESTE TOTAL -- HMO-300 (9/10).
+   *
+   * Nao e uma segunda leitura: e a MESMA peneira de `somarPerna` devolvendo o
+   * que ela aceitou. Uma segunda consulta erraria nos quatro elos da rota ao
+   * mesmo tempo (`agendaSemCompraNoCartao`, `faturasPrevistasDaJanela`,
+   * `parteDoMembro`, `skipped`/`cancelled`) e pareceria certa na tela.
+   *
+   * A invariante, e ela e a entrega inteira: `soma(detalhe) === total`, e
+   * `detalhe.length === quantidade`. Lista VAZIA quando `total` e `null`.
+   */
+  detalhe: LinhaDoDetalhe[];
 }
 
 /**
@@ -190,6 +282,18 @@ export interface ContextoDoPapel {
    * valor cheio, que erra para cima -- ver lib/parte-do-grupo.ts.
    */
   membrosAtivosPorGrupo: MembrosAtivosPorGrupo;
+  /**
+   * QUEM ESTA OLHANDO -- o `user.id` que a rota autenticou (HMO-300).
+   *
+   * Entra no contexto, e nao num calculo solto dentro da rota, pelo motivo de
+   * sempre neste arquivo: a regra ("a linha e minha?") fica onde a suite a
+   * alcanca. A rota continua sendo quem SABE a resposta -- ela e quem
+   * autentica --, e so passa o valor adiante.
+   *
+   * Ausente derruba `posso_editar` para `false` em TODA linha. E a direcao
+   * barata: nenhum botao aparece. Ver `LinhaDoDetalhe.posso_editar`.
+   */
+  meuUserId?: string | null;
 }
 
 /** Centavos, sem o ruido de ponto flutuante acumulado na soma. */
@@ -203,8 +307,18 @@ const centavos = (valor: number) => Number(valor.toFixed(2));
  * cadastrou o salario do mes essa afirmacao e FALSA. A tela escreve "nenhum
  * salario previsto para este mes". Mesma escolha que `somarPrevistas` ja tomou
  * em lib/periodo-do-painel.ts quando a resposta nao traz as pernas separadas.
+ *
+ * E UMA FUNCAO, e nao uma constante, desde a HMO-300: o `detalhe` e um array,
+ * e uma constante compartilhada daria a MESMA lista para os tres numeros do
+ * painel. Hoje ninguem escreve nela; no dia em que alguem o fizesse, um `push`
+ * num cartao apareceria nos outros dois, e o sintoma seria uma lista que nao
+ * fecha com nenhum dos totais.
  */
-const semLinha: NumeroDoPapel = { total: null, quantidade: 0 };
+const semLinha = (): NumeroDoPapel => ({
+  total: null,
+  quantidade: 0,
+  detalhe: [],
+});
 
 /** A linha cai dentro da janela? Comparacao de string ISO, que ordena sozinha. */
 function dentroDaJanela(due_date: unknown, janela: JanelaDoMes): boolean {
@@ -297,12 +411,25 @@ export function janelaDoMes(month: unknown, hoje?: string): JanelaDoMes {
 }
 
 /**
- * Soma uma perna do painel.
+ * Soma uma perna do painel -- E DEVOLVE A LISTA DO QUE ELA ACEITOU.
  *
  * `aceita` escolhe a perna; o resto -- a janela, o status, o sinal e a parte do
  * grupo -- e identico nas duas, e e por isso que esta funcao e uma so. Duas
  * copias desta peneira divergiriam no primeiro ajuste, e a copia esquecida
  * seria exatamente o defeito.
+ *
+ * O DETALHE NASCE DENTRO DO MESMO LACO (HMO-300), E NAO DE UM SEGUNDO FILTRO.
+ * A invariante que a issue cobra -- `soma(detalhe) === total` -- nao e uma
+ * afirmacao sobre duas coisas que por acaso batem: e a mesma variavel somada
+ * uma vez. Um segundo `linhas.filter(aceita)` fora daqui teria de repetir a
+ * janela, o status, o `Math.abs` e `parteDoMembro`, e a copia esquecida seria
+ * o defeito -- com o agravante de que ela ficaria DEBAIXO do numero certo,
+ * explicando-o linha a linha com os valores errados.
+ *
+ * E a linha do detalhe leva o `valor` DEPOIS de `parteDoMembro`, pela mesma
+ * razao: tres linhas de R$ 3.000 debaixo de um total de R$ 1.500 e a mesma
+ * mentira com mais passos. Este e o mutante que a suite tem de matar, e so a
+ * SOMA o mata -- qualquer assercao que apenas conte linhas passa por ele.
  */
 function somarPerna(
   linhas: readonly LinhaPrevistaDoPapel[],
@@ -311,6 +438,7 @@ function somarPerna(
 ): NumeroDoPapel {
   let total = 0;
   let quantidade = 0;
+  const detalhe: LinhaDoDetalhe[] = [];
 
   for (const linha of linhas) {
     // A JANELA PRIMEIRO. Leitura sem recorte de data soma o horizonte inteiro,
@@ -338,9 +466,75 @@ function somarPerna(
     const valor = Math.abs(Number(minhaParte) || 0);
     total += valor;
     quantidade += 1;
+    detalhe.push(linhaDoDetalhe(linha, valor, ctx.meuUserId));
   }
 
-  return quantidade === 0 ? semLinha : { total: centavos(total), quantidade };
+  if (quantidade === 0) return semLinha();
+
+  // A ORDEM E CRONOLOGICA, e a lista chega aqui na ordem em que o banco
+  // devolveu com as faturas sintetizadas GRUDADAS NO FIM (`agendaComFaturasAbertas`
+  // concatena). Sem ordenar, a maior conta de muita gente apareceria depois da
+  // conta de luz do dia 5 por acidente de montagem. Ordenar nao mexe no total.
+  detalhe.sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : 0));
+
+  return { total: centavos(total), quantidade, detalhe };
+}
+
+/**
+ * A linha da lista, montada a partir da linha que a peneira JA aceitou.
+ *
+ * `valor` chega pronto de proposito: ele e a MESMA variavel que entrou na
+ * soma, e nao um segundo `parteDoMembro(...)` escrito aqui. E isso que faz
+ * `soma(detalhe) === total` ser verdadeiro por construcao em vez de por
+ * coincidencia.
+ *
+ * COMO A FATURA SINTETIZADA E RECONHECIDA, E POR QUE NAO PELO `fatura_prevista`
+ * ----------------------------------------------------------------------------
+ * Por dois campos que so ela tem, e nao pelo discriminante de
+ * `lib/agenda-do-cartao.ts`. Nao e preferencia de estilo: importar
+ * `ehFaturaPrevista` traria `agenda-do-cartao` -> `card-invoice` ->
+ * `transferencia` para dentro do grafo que o tsconfig desta suite compila, por
+ * uma unica comparacao de booleano.
+ *
+ * Os dois criterios falham FECHADO, que e o que torna a troca aceitavel:
+ *
+ *   * `gravada` sai de `id`, que e exatamente como `LinhaDaTela.gravada` ja o
+ *     define ("quem precisa saber se a linha existe no banco le `gravada`, nao
+ *     o formato do id"). Se a rota esquecer `id` no `select`, TODA linha vira
+ *     nao-gravada: a lista continua somando certo e nenhum botao aparece;
+ *   * `fatura` exige `invoice_month`, que nenhuma linha de
+ *     `scheduled_transactions_effective` tem -- so a `FaturaPrevista`. Sem ele
+ *     nao se monta link nenhum, que e melhor do que montar um para o mes
+ *     errado da fatura certa.
+ */
+function linhaDoDetalhe(
+  linha: LinhaPrevistaDoPapel,
+  valor: number,
+  meuUserId: string | null | undefined
+): LinhaDoDetalhe {
+  const id = typeof linha.id === "string" && linha.id !== "" ? linha.id : null;
+  const gravada = id !== null;
+
+  const mesDaFatura = linha.invoice_month ?? null;
+  const contaDaFatura = linha.account_id ?? null;
+
+  return {
+    id,
+    gravada,
+    descricao: linha.description ?? null,
+    valor,
+    data: String(linha.due_date),
+    de_grupo: linha.group_id != null,
+    // A linha de OUTRO membro do grupo entra na lista (ela entra no total), e
+    // sai sem acao: a RLS recusaria, e `UPDATE` recusado pela RLS volta 200
+    // sem alterar nada.
+    posso_editar:
+      gravada && meuUserId != null && linha.user_id === meuUserId,
+    fatura:
+      !gravada && contaDaFatura != null && mesDaFatura != null
+        ? { accountId: contaDaFatura, mes: mesDaFatura }
+        : null,
+  };
 }
 
 /**
@@ -368,11 +562,15 @@ export function painelDePapel(
   const naJanela = linhas.filter((l) => dentroDaJanela(l.due_date, ctx.janela));
 
   if (naJanela.some((l) => l.direction == null)) {
+    // E o detalhe fica VAZIO junto, e nao com as linhas que a leitura trouxe:
+    // o chevron abre o que o total explica, e aqui nao ha total. Uma lista
+    // debaixo de "indisponivel" seria a explicacao de um numero que a tela
+    // acabou de dizer que nao sabe.
     return {
-      salario_previsto: semLinha,
-      receitas: semLinha,
-      total_de_contas: semLinha,
-      sobra_ou_falta: sobraOuFalta(semLinha, semLinha),
+      salario_previsto: semLinha(),
+      receitas: semLinha(),
+      total_de_contas: semLinha(),
+      sobra_ou_falta: sobraOuFalta(semLinha(), semLinha()),
     };
   }
 

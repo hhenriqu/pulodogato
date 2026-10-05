@@ -1,16 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import Link from "next/link";
+import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatCurrency } from "@/lib/utils";
+import { caminhoDoCartaoNoMes } from "@/lib/fatura-do-cartao";
 import {
   FRASE_SEM_CONTAS,
   FRASE_SEM_SALARIO,
   ROTULO_DAS_DESPESAS,
   ROTULO_DAS_RECEITAS,
   TITULO_SEM_RESPOSTA,
+  type LinhaDoDetalhe,
   type NumeroDoPapel,
   type SobraOuFalta,
 } from "@/lib/papel-de-pao";
@@ -117,6 +120,26 @@ import {
  * grande": ela e pequena de proposito, porque e CONFERENCIA e nao resposta. O
  * que ela responde esta no numero grande logo acima dela.
  *
+ * ===========================================================================
+ * O CHEVRON DOS DOIS CARTOES DE CIMA (HMO-300, 9/10)
+ * ===========================================================================
+ * "No Dashboard nos cards de salario e contas ter um chevron na direita que
+ * voce pode expandir uma lista com detalhes das contas" -- o pedido e literal,
+ * e o desenho inteiro sai de uma regra so: A SOMA DAS LINHAS ABERTAS E
+ * EXATAMENTE O TOTAL DO CARTAO FECHADO. Uma lista que nao fecha com o numero de
+ * cima e pior que cartao nenhum: ela transforma um numero conferivel num numero
+ * desmentido pela propria tela.
+ *
+ * Por isso a lista NAO e montada aqui. Ela chega pronta no `detalhe` de cada
+ * numero, construida por `somarPerna` na MESMA passada que produziu o total --
+ * mesma peneira, mesma janela, mesmo status, mesma divisao da parte do grupo.
+ * Ver `NumeroGrande` para o que isso proibe nesta tela.
+ *
+ * SO OS DOIS DE CIMA TEM SETA. O terceiro cartao ja mostra as duas parcelas
+ * dele, e a "lista" dele seria a uniao das outras duas -- um terceiro lugar
+ * para a mesma soma divergir. Padrao aprovado na revisao 3 do plano (item 4 de
+ * 9.5).
+ *
  * NAO HA BOTAO DE ACAO AQUI, e e deliberado: a navegacao do modo ja existe -- o
  * menu reduzido da HMO-284 tem as sete telas, e o papelzinho desliga o modo. Um
  * atalho a mais nesta tela seria o primeiro cartao de uma tela que a issue pediu
@@ -126,12 +149,28 @@ import {
  * tela nao deixava mudar.
  */
 
+/**
+ * UM DOS DOIS NUMEROS, COMO ELE CHEGA PELO FIO.
+ *
+ * `detalhe` e OPCIONAL aqui e OBRIGATORIO em `NumeroDoPapel`, e a diferenca nao
+ * e descuido: este tipo descreve o CORPO QUE CHEGA, e o cache do PWA guarda as
+ * rotas /api/ por 24h. No dia do deploy da HMO-300 existe um corpo valido, do
+ * mes certo, SEM este campo -- lido como obrigatorio ele viraria um
+ * `undefined.length` e levaria a tela inteira, nao a seta. Ausente, o cartao
+ * fica exatamente como era antes desta issue: o numero, e nenhum chevron.
+ *
+ * E a mesma razao, e o mesmo desenho, do `sobra_ou_falta?` logo abaixo.
+ */
+type NumeroNoFio = Omit<NumeroDoPapel, "detalhe"> & {
+  detalhe?: LinhaDoDetalhe[];
+};
+
 /** A resposta de GET /api/papel-de-pao/painel. */
 interface RespostaDoPainel {
   month: string;
   range: { from: string; to: string };
-  salario_previsto: NumeroDoPapel;
-  total_de_contas: NumeroDoPapel;
+  salario_previsto: NumeroNoFio;
+  total_de_contas: NumeroNoFio;
   /**
    * OPCIONAL de proposito, e isto nao e frouxura de tipo: este campo descreve o
    * que CHEGA PELO FIO, e o cache do PWA guarda as rotas /api/ por 24h. No dia
@@ -249,12 +288,14 @@ export function PainelDePapel() {
       </div>
 
       <NumeroGrande
+        id="papel-salario"
         rotulo="Salário"
         numero={estado.fase === "pronto" ? estado.dados.salario_previsto : null}
         fase={estado.fase}
         fraseVazia={FRASE_SEM_SALARIO}
       />
       <NumeroGrande
+        id="papel-contas"
         rotulo="Total de contas"
         numero={estado.fase === "pronto" ? estado.dados.total_de_contas : null}
         fase={estado.fase}
@@ -339,29 +380,185 @@ function CartaoDeSobra({
   );
 }
 
+/**
+ * UM DOS DOIS CARTOES DE CIMA, COM O CHEVRON QUE ABRE A LISTA (HMO-300, 9/10).
+ *
+ * A REGRA QUE DECIDE ESTE COMPONENTE, E E UMA SO: a soma das linhas abertas e
+ * exatamente o total impresso acima delas. Ela nao e garantida aqui -- e
+ * garantida por construcao em `somarPerna` (lib/papel-de-pao.ts), que devolve o
+ * `detalhe` da MESMA passada que produziu o total. Esta tela nao soma, nao
+ * filtra e nao divide nada: ela imprime a lista que chegou. Um `filter` ou um
+ * `/ membros` escrito aqui seria a segunda definicao do numero, e seria ela a
+ * aparecer debaixo dele.
+ *
+ * SEM SETA QUANDO NAO HA O QUE ABRIR. Tres estados caem no mesmo lugar --
+ * carregando, total indisponivel (`null`, que NAO e zero) e lista vazia --, e
+ * nos tres o cartao fica como era antes desta issue: o numero ou a frase, e
+ * nenhum controle. Seta que abre vazio se le como app quebrado.
+ *
+ * O `detalhe` AUSENTE cai no mesmo lugar, e e o caso do corpo de 24h atras no
+ * cache do PWA (ver `NumeroNoFio`): sem o campo, sem seta.
+ *
+ * FECHADO POR PADRAO, UM ESTADO POR CARTAO, FORA DA URL. Por cartao porque os
+ * dois sao independentes -- abrir as contas nao e pedir para abrir o salario.
+ * Fora da URL pela mesma razao do passo de mes: o modo simples nao tem link
+ * para compartilhar, e por o par na URL traria `useSearchParams`/`router` para
+ * dentro da tela que a issue pediu minima.
+ *
+ * O ESTADO SOBREVIVE AO PASSO DE MES, de proposito: o cartao nao e remontado
+ * pela seta, so os dados trocam. Quem abriu as contas de outubro para conferir
+ * quer ver as de novembro abertas tambem. Enquanto a resposta nova nao chega a
+ * fase e `carregando`, a seta some e a lista velha sai junto -- ela nao fica na
+ * tela debaixo do rotulo do mes novo, que e a mesma regra do `setEstado({ fase:
+ * "carregando" })` do efeito.
+ *
+ * `aria-expanded` NO BOTAO porque a seta e um controle, e nao um enfeite -- e
+ * `aria-controls` aponta para o `<ul>`, que so existe quando esta aberto. A
+ * alternativa (renderizar sempre e esconder com `hidden`) foi descartada por
+ * um motivo medido neste repositorio: `hidden` nao tira o texto do
+ * `textContent`, e a sonda que mede "abrir mostra as linhas" ficaria verde com
+ * a seta inteiramente desligada.
+ */
 function NumeroGrande({
+  id,
   rotulo,
   numero,
   fase,
   fraseVazia,
 }: {
+  id: string;
   rotulo: string;
-  numero: NumeroDoPapel | null;
+  numero: NumeroNoFio | null;
   fase: Estado["fase"];
   fraseVazia: string;
 }) {
+  const [aberto, setAberto] = useState(false);
+
+  const linhas = numero?.detalhe ?? [];
+  const podeAbrir =
+    fase === "pronto" && numero != null && numero.total !== null && linhas.length > 0;
+
   return (
     <Card>
       <CardContent className="pt-6 pb-6">
-        <p className="text-sm text-muted-foreground mb-1">{rotulo}</p>
-        <p
-          className="font-papel text-4xl sm:text-5xl leading-tight break-words"
-          data-rotulo={rotulo}
-        >
-          <Valor fase={fase} numero={numero} fraseVazia={fraseVazia} />
-        </p>
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm text-muted-foreground mb-1">{rotulo}</p>
+            <p
+              className="font-papel text-4xl sm:text-5xl leading-tight break-words"
+              data-rotulo={rotulo}
+            >
+              <Valor fase={fase} numero={numero} fraseVazia={fraseVazia} />
+            </p>
+          </div>
+
+          {podeAbrir && (
+            <Button
+              id={`${id}-chevron`}
+              variant="ghost"
+              size="icon"
+              className="shrink-0"
+              aria-expanded={aberto}
+              aria-controls={`${id}-detalhe`}
+              // O rotulo diz o que o clique VAI fazer, e troca com o estado:
+              // "Ver os detalhes" num botao ja aberto manda o leitor de tela
+              // para o lado errado.
+              aria-label={`${aberto ? "Esconder" : "Ver"} os detalhes de ${rotulo}`}
+              onClick={() => setAberto((estava) => !estava)}
+            >
+              <ChevronDown
+                className={`h-5 w-5 transition-transform ${aberto ? "rotate-180" : ""}`}
+              />
+            </Button>
+          )}
+        </div>
+
+        {podeAbrir && aberto && (
+          <ul
+            id={`${id}-detalhe`}
+            data-detalhe={rotulo}
+            className="mt-4 space-y-2 border-t pt-3"
+          >
+            {linhas.map((linha, indice) => (
+              <LinhaDeDetalhe
+                // `id` e `null` na fatura sintetizada, e duas faturas abertas
+                // no mesmo mes dariam a mesma chave; o indice desempata. A
+                // lista nao e reordenavel nem editavel aqui, entao o indice
+                // nao carrega o problema que ele carrega noutras listas.
+                key={linha.id ?? `${linha.data}:${indice}`}
+                linha={linha}
+              />
+            ))}
+          </ul>
+        )}
       </CardContent>
     </Card>
+  );
+}
+
+/** "28/03" -- dia e mes, dos COMPONENTES da string ISO. */
+function diaEMes(data: string): string {
+  // Sem `new Date`: `new Date("2026-03-01")` e meia-noite UTC e em
+  // America/Sao_Paulo imprime 28 de FEVEREIRO. E o defeito que custou a
+  // HMO-173, e aqui ele apareceria como uma lista de datas um dia atrasadas
+  // debaixo de um total certo.
+  return `${data.slice(8, 10)}/${data.slice(5, 7)}`;
+}
+
+/** O rotulo que impede o valor pela metade de parecer erro de digitacao. */
+const ROTULO_DE_GRUPO = "minha parte do grupo";
+
+/**
+ * UMA LINHA DA LISTA.
+ *
+ * O `valor` ja vem como a MINHA parte, dividida pela rota -- esta tela nao
+ * divide nada. E e por isso que `de_grupo` tem rotulo: sem ele, metade do
+ * aluguel debaixo do nome do aluguel inteiro se le como erro de digitacao, e a
+ * pessoa vai procurar um defeito que nao existe.
+ *
+ * A FATURA ABERTA SINTETIZADA (`gravada: false`) SAI SEM ACAO E COM O CAMINHO
+ * DE VOLTA. Ela nao tem `scheduled_transactions.id` -- e calculada de
+ * `card_invoice_lines` a cada leitura --, entao nao ha o que editar; o que ela
+ * tem e um cartao e um mes, e `caminhoDoCartaoNoMes` monta o link que leva
+ * aquela fatura naquele mes (sem o mes, o link abriria o mes corrente do
+ * cartao certo -- o destino plausivel e errado que ninguem reporta).
+ *
+ * `posso_editar` CHEGA E NAO E USADO AQUI. Ele nasce na rota nesta issue
+ * (HMO-300) e e a 10/10 quem o consome, em `SecaoDaTela`. Os dois campos estao
+ * em corrente de proposito: duas PRs definindo um campo de mesmo nome em
+ * paralelo colidem na adicao, e neste repositorio esse conflito ja apareceu
+ * exatamente assim.
+ */
+function LinhaDeDetalhe({ linha }: { linha: LinhaDoDetalhe }) {
+  const nome = linha.descricao?.trim() || "sem descrição";
+
+  return (
+    <li
+      className="flex items-baseline justify-between gap-3 text-sm"
+      data-linha-do-detalhe={linha.id ?? ""}
+      data-de-grupo={linha.de_grupo ? "sim" : "nao"}
+      data-gravada={linha.gravada ? "sim" : "nao"}
+    >
+      <span className="min-w-0 flex-1 break-words">
+        <span className="text-muted-foreground mr-2">{diaEMes(linha.data)}</span>
+        {linha.fatura ? (
+          <Link
+            href={caminhoDoCartaoNoMes(linha.fatura.accountId, linha.fatura.mes)}
+            className="underline underline-offset-2"
+          >
+            {nome}
+          </Link>
+        ) : (
+          nome
+        )}
+        {linha.de_grupo && (
+          <span className="text-muted-foreground"> ({ROTULO_DE_GRUPO})</span>
+        )}
+      </span>
+      <span className="font-papel shrink-0" data-valor-do-detalhe={linha.valor}>
+        {formatCurrency(linha.valor)}
+      </span>
+    </li>
   );
 }
 
@@ -380,7 +577,7 @@ function Valor({
   fraseVazia,
 }: {
   fase: Estado["fase"];
-  numero: NumeroDoPapel | null;
+  numero: NumeroNoFio | null;
   fraseVazia: string;
 }) {
   if (fase === "carregando") {

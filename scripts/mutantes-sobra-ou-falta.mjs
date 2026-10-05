@@ -166,8 +166,17 @@ const mutantes = [
     // O painel mostraria duas frases honestas e um "Quanto Sobra: R$ 0,00".
     nome: "direcao ausente cala os numeros, mas o cartao vira zero",
     arquivo: LIB,
-    de: "      sobra_ou_falta: sobraOuFalta(semLinha, semLinha),",
-    para: "      sobra_ou_falta: sobraOuFalta({ total: 0, quantidade: 0 }, { total: 0, quantidade: 0 }),",
+    // A ANCORA GANHOU PARENTESES NA HMO-300: `semLinha` virou FUNCAO quando o
+    // `detalhe` entrou em `NumeroDoPapel` (uma constante com array dentro
+    // daria a MESMA lista para os tres numeros). Sem este ajuste o replace nao
+    // casa, o arquivo nao muda, a suite passa -- e o relatorio diz
+    // "SOBREVIVEU" sobre um mutante que nunca existiu.
+    de: "      sobra_ou_falta: sobraOuFalta(semLinha(), semLinha()),",
+    para:
+      "      sobra_ou_falta: sobraOuFalta(\n" +
+      "        { total: 0, quantidade: 0, detalhe: [] },\n" +
+      "        { total: 0, quantidade: 0, detalhe: [] }\n" +
+      "      ),",
   },
   {
     // AS DUAS PARCELAS TROCADAS. O valor e o titulo continuam certos, e o que
