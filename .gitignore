@@ -354,3 +354,15 @@ next-env.d.ts
 
 # saida do `npm run test:papel-de-pao` (HMO-286)
 /.tmp-papel-de-pao/
+
+# HMO-297. As tres abaixo faltavam desde que as suites entraram, e o
+# check-artefatos-de-build.mjs ja reprovava na main por causa delas. Cada uma
+# das tres comeca com `rm -rf` no proprio diretorio: fora do .gitignore, o
+# compilado chega a ser commitado por engano, e dai rodar a suite APAGA um
+# arquivo rastreado -- sem erro nenhum, so um arquivo que desaparece da arvore.
+# saida do `npm run test:pagador-da-parte` (HMO-274)
+/.tmp-pagador-da-parte/
+# saida do `npm run test:credito-de-grupo` (HMO-277)
+/.tmp-credito-de-grupo/
+# saida do `npm run test:secao-da-tela` (HMO-287)
+/.tmp-secao-da-tela/
