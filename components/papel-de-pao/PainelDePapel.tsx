@@ -10,11 +10,27 @@ import {
 } from "@/lib/papel-de-pao";
 
 /**
- * A TELA DOS DOIS NUMEROS -- HMO-286 (3/3 do plano da HMO-279).
+ * A TELA DOS DOIS NUMEROS -- HMO-286 (3/3 do plano da HMO-279), com o rotulo
+ * encurtado pela HMO-294 (4/6).
  *
- * "Salario Previsto" e "Total de contas", do mes corrente, e mais nada. Nenhum
- * outro cartao do painel aparece aqui: dois numeros e so, e e por isso que esta
- * e uma TELA IRMA do painel completo e nao um `if` dentro dele.
+ * "Salario" e "Total de contas", do mes corrente, e mais nada. Nenhum outro
+ * cartao do painel aparece aqui: dois numeros e so, e e por isso que esta e uma
+ * TELA IRMA do painel completo e nao um `if` dentro dele.
+ *
+ * O ROTULO E "Salario", E O CAMPO CONTINUA `salario_previsto`
+ * ----------------------------------------------------------
+ * O rotulo da tela encurtou; o campo da resposta de
+ * `GET /api/papel-de-pao/painel` NAO. Ele e fio, nao tela: renomea-lo mexeria
+ * na rota e na suite para comprar nada. `NOME_DA_CATEGORIA_DE_SALARIO` tambem
+ * fica como esta -- ele e o nome da categoria no banco, semeado pelo `001`, que
+ * agora por coincidencia tem o mesmo texto do rotulo. Sao duas constantes
+ * diferentes com o mesmo valor, e juntar as duas faria o rotulo da tela mudar
+ * junto com o seed.
+ *
+ * `FRASE_SEM_SALARIO` ("nenhum salario previsto para este mes") segue inteira,
+ * em minuscula e dentro do cartao -- ela diz o que o numero nao tem, e le bem
+ * debaixo do titulo curto. Nao confunda as duas: um `grep` por "salario
+ * previsto" que ignore caixa acha a frase, nao o rotulo.
  *
  * POR QUE TELA IRMA, E NAO "esconder os cartoes"
  * ----------------------------------------------
@@ -36,7 +52,7 @@ import {
  *
  * NAO HA BOTAO DE ACAO AQUI, e e deliberado: "dois numeros e so" esta escrito
  * no escopo da issue, e a navegacao do modo ja existe -- o menu reduzido da
- * HMO-284 tem as cinco telas, e o papelzinho desliga o modo. Um atalho a mais
+ * HMO-284 tem as sete telas, e o papelzinho desliga o modo. Um atalho a mais
  * nesta tela seria o primeiro cartao de uma tela que a issue pediu vazia.
  */
 
@@ -80,7 +96,7 @@ export function PainelDePapel() {
   return (
     <div className="p-4 sm:p-6 max-w-2xl mx-auto space-y-4">
       <NumeroGrande
-        rotulo="Salário Previsto"
+        rotulo="Salário"
         numero={estado.fase === "pronto" ? estado.dados.salario_previsto : null}
         fase={estado.fase}
         fraseVazia={FRASE_SEM_SALARIO}

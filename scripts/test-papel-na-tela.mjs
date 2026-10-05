@@ -1,4 +1,5 @@
-// O INTERRUPTOR do modo papel de pao, em navegador de verdade -- HMO-283.
+// O INTERRUPTOR do modo papel de pao, em navegador de verdade -- HMO-283,
+// mais o ROTULO do primeiro cartao do painel -- HMO-294.
 //
 // O QUE SO ESTA SUITE PROVA
 // -------------------------
@@ -26,6 +27,36 @@
 // dividem um `ModoPapelProvider`, entao ligar pelo cabecalho tem que acender o
 // Switch de Configuracoes. "Espelho" e essa frase, e ela precisa de medida.
 //
+// O ROTULO DO PAINEL (HMO-294), E POR QUE ELE MORA AQUI
+// -----------------------------------------------------
+// A HMO-294 encurtou "Salario Previsto" para "Salario" no primeiro cartao do
+// `PainelDePapel`. Rotulo e `string` literal passada como prop: o tsc, o lint e
+// `npm run test:papel-de-pao` (que mede a ARITMETICA do painel) ficam todos
+// verdes com o texto velho intacto -- e e a mesma familia de defeito que
+// "campo de rotulo passa pela suite de aritmetica". Entao a prova tem de vir
+// do DOM, e esta pagina ja e o lugar onde este repositorio le DOM de verdade.
+//
+// A ancora e o `data-rotulo` que o `NumeroGrande` ja emitia antes desta issue
+// -- nao um atributo inventado para o teste --, e sao DUAS metades:
+//
+//   "Salario" PRESENTE e "Salario Previsto" AUSENTE.
+//
+// So a primeira passaria verde com o texto velho no lugar, porque "Salário" e
+// substring de "Salário Previsto". Uma assercao so aqui nao mede nada.
+//
+// E a segunda metade e SENSIVEL A CAIXA, de proposito: `FRASE_SEM_SALARIO`
+// ("nenhum salário previsto para este mês") continua na tela e continua certa.
+// Um `includes` que ignorasse caixa reprovaria a frase que a issue manda
+// manter -- e e por isso que a assercao compara os VALORES de `data-rotulo`,
+// que e onde o titulo mora, e so depois procura a string exata no texto.
+//
+// O LIMITE: a arvore do painel e medida na fase `carregando`. O rotulo e o
+// mesmo nas tres fases (ele e prop do cartao, nao do valor), e travar o `fetch`
+// num Promise que nunca resolve e o que torna a fase DETERMINADA -- sem isso a
+// leitura cairia em `carregando` ou em `erro` conforme o `file://` recusasse a
+// chamada mais rapido ou mais devagar que o `flushSync`. O que esta fase NAO
+// cobre e o texto do valor, e nada aqui afirma coisa alguma sobre ele.
+//
 // DOIS DETALHES DO AMBIENTE QUE DECIDIRAM O DESENHO (os dois medidos aqui)
 // -----------------------------------------------------------------------
 // 1. `ReactDOM.render` (legado) NAO roda o efeito de montagem de forma
@@ -50,9 +81,10 @@
 // Vao para a pagina, compilados e INTACTOS no corpo:
 //
 //   lib/theme.js, lib/modo-papel.js, components/ui/button.js,
-//   ModoPapelProvider.js, PapelToggle.js, ConfiguracaoDePapel.js
+//   components/ui/card.js, ModoPapelProvider.js, PapelToggle.js,
+//   ConfiguracaoDePapel.js, PainelDePapel.js
 //
-// E QUATRO esbocos, cada um com um motivo e um limite declarado:
+// E SETE esbocos, cada um com um motivo e um limite declarado:
 //
 //   - `cn`, `cva`, `Slot`: a fiacao de CLASSE do Button. Sao calculo de string
 //     (clsx + tailwind-merge + class-variance-authority), nao comportamento, e
@@ -69,10 +101,28 @@
 //     `<html>`. Que o Radix dispare `onCheckedChange` no clique nao esta
 //     provado aqui; e o mesmo Switch que a aba Painel ja usa em oito linhas.
 //   - `StickyNote`: um icone. Vira um `<svg>` vazio.
+//   - `formatCurrency`, `FRASE_SEM_SALARIO`, `FRASE_SEM_CONTAS`: os tres do
+//     painel, e os tres vao para a pagina como MARCADORES ("ESBOCO-...") em vez
+//     de valores plausiveis. O motivo e o mesmo nos tres: trazer os valores de
+//     verdade exigiria `lib/papel-de-pao.js` inteiro na pagina, e com ele oito
+//     modulos (`previsto-x-realizado`, `parte-do-grupo`, `periodo-do-painel`,
+//     `settlement`, `recurrence`, `dinheiro`, `moeda`, `types/financial`) que
+//     nao tem nada a ver com rotulo nenhum.
+//
+//     O marcador e o que torna o esboco AUDITAVEL em vez de uma concessao
+//     silenciosa: na fase que esta sonda mede, nenhum dos tres chega a
+//     renderizar, e ha uma assercao que exige que a palavra "ESBOCO" NAO
+//     apareca no painel. No dia em que alguem mover esta medida para a fase do
+//     valor ou da frase vazia, ela reprova com o nome do esboco na mensagem --
+//     e nao passa verde medindo um texto de mentira.
 //
 // Qualquer sobra de `import`/`export` nos .js estoura ANTES de a pagina rodar --
 // sem isso o sintoma seria "a pagina nao reportou nada", indistinguivel de
-// codigo quebrado.
+// codigo quebrado. E nao basta procurar a PALAVRA `export`: o `card.js` termina
+// num `export { Card, CardHeader, ... };`, e tirar so a palavra deixa
+// `{ Card, CardHeader, ..., };` -- um bloco com virgula sobrando, que e
+// SyntaxError. Por isso `paraScriptClassico` apaga essa forma inteira, e por
+// isso cada parte passa por um `new Function` antes de entrar na pagina.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -141,6 +191,13 @@ const paraScriptClassico = (fonte) =>
     // `import` ate o `;` -- e nao de uma linha so, que deixaria metade da lista
     // de nomes solta no meio do script.
     .replace(/^import\s[\s\S]*?;$/gm, "")
+    // O `export { A, B, ... };` do fim do card.js: apagado INTEIRO, e antes da
+    // regra de baixo. Tirar so a palavra `export` deixaria um bloco com virgula
+    // sobrando (`{ A, B, };`), que e SyntaxError -- e um que a peneira de
+    // "sobrou `export`" nao pega, porque a palavra sumiu. `[^}]*` nao atravessa
+    // chave, entao a forma `export { ... } from "..."` (que nao existe nestes
+    // arquivos) e o corpo de qualquer funcao ficam fora do alcance.
+    .replace(/^export\s*\{[^}]*\}\s*;$/gm, "")
     .replace(/^export /gm, "");
 
 const PARTES = [
@@ -150,9 +207,11 @@ const PARTES = [
   "lib/theme.js",
   "lib/modo-papel.js",
   "components/ui/button.js",
+  "components/ui/card.js",
   "components/ModoPapelProvider.js",
   "components/PapelToggle.js",
   "components/papel-de-pao/ConfiguracaoDePapel.js",
+  "components/papel-de-pao/PainelDePapel.js",
 ];
 
 const producao = PARTES.map((parte) => {
@@ -164,6 +223,19 @@ const producao = PARTES.map((parte) => {
   if (sobra) {
     throw new Error(
       `sobrou fiacao de modulo em ${parte}: ${sobra[0].trim()}\n` +
+        "ajuste paraScriptClassico()"
+    );
+  }
+
+  // E a peneira que a de cima nao substitui: o strip pode produzir codigo sem
+  // nenhum `import`/`export` sobrando e ainda assim invalido (foi o caso do
+  // `{ Card, CardHeader, };`). Aqui o erro aparece com o NOME DO ARQUIVO, em
+  // vez de virar "a pagina nao reportou resultado" vinte linhas depois.
+  try {
+    new Function(fonte);
+  } catch (e) {
+    throw new Error(
+      `${parte} nao parseia depois do strip: ${e.message}\n` +
         "ajuste paraScriptClassico()"
     );
   }
@@ -184,6 +256,7 @@ const PAGINA = `<!doctype html>
 <meta name="theme-color" content="#ffffff">
 </head><body>
 <div id="raiz-a"></div><div id="raiz-b"></div><div id="raiz-c"></div>
+<div id="raiz-d"></div>
 <div id="resultado">a pagina nao rodou</div>
 <script>${umd("react", "react.development.js")}</script>
 <script>${umd("react-dom", "react-dom.development.js")}</script>
@@ -209,6 +282,31 @@ const Slot = "span";
 /** Um icone. */
 const StickyNote = (props) =>
   React.createElement("svg", { ...props, "data-icone": "sticky-note" });
+
+/**
+ * Os tres esbocos do painel, como MARCADORES e nao como valores plausiveis.
+ *
+ * Nenhum dos tres renderiza na fase que a sonda mede (\`carregando\`), e ha uma
+ * assercao exigindo que "ESBOCO" nao apareca no painel -- entao se alguem mover
+ * a medida para a fase do valor ou da frase vazia, ela reprova com o nome do
+ * esboco na mensagem em vez de medir um texto de mentira. O motivo de serem
+ * esbocos esta no cabecalho do .mjs: os valores de verdade arrastariam
+ * \`lib/papel-de-pao.js\` e outros oito modulos para dentro desta pagina.
+ */
+const formatCurrency = () => "ESBOCO-VALOR";
+const FRASE_SEM_SALARIO = "ESBOCO-FRASE-SALARIO";
+const FRASE_SEM_CONTAS = "ESBOCO-FRASE-CONTAS";
+
+/**
+ * O \`fetch\` do painel, TRAVADO: um Promise que nunca resolve nem rejeita.
+ *
+ * Nao e para "evitar rede" -- e para a FASE ser determinada. Sem isto, o
+ * \`file://\` recusa a chamada e o componente cai em \`erro\` em algum momento
+ * entre o render e a leitura, conforme a recusa chegue antes ou depois do
+ * \`flushSync\`; a leitura do rotulo ficaria certa nos dois casos, mas a do
+ * TEXTO (que e o controle do esboco) oscilaria entre duas telas diferentes.
+ */
+window.fetch = () => new Promise(() => {});
 
 /**
  * Esboco do Switch com o CONTRATO do Radix: \`button role="switch"\`,
@@ -401,6 +499,37 @@ c.clicarNoPapelzinho();
 r.c_sem_papel = c.ler();
 
 c.desmontar();
+
+// =============================================================================
+// CASO D -- O PAINEL: os rotulos dos dois cartoes, lidos do DOM
+// =============================================================================
+// O \`PainelDePapel\` nao depende do provider nem do modo: ele e a tela que o
+// portao de /dashboard devolve QUANDO o modo esta ligado, e por dentro nao
+// consulta o modo para nada. Entao aqui ele e montado solto, e o que se mede e
+// so o que ele escreve.
+//
+// A leitura e o \`data-rotulo\` de cada cartao -- o atributo que o
+// \`NumeroGrande\` ja emitia antes da HMO-294 -- e o texto do container inteiro.
+
+limpar();
+const caixaD = document.getElementById("raiz-d");
+ReactDOM.render(React.createElement(PainelDePapel), caixaD);
+assentar();
+
+r.d = {
+  rotulos: Array.from(caixaD.querySelectorAll("[data-rotulo]")).map((el) =>
+    el.getAttribute("data-rotulo")
+  ),
+  // CONTROLE POSITIVO da montagem: o cartao de producao, e nao um esboco.
+  // \`font-papel\` sai do \`className\` do \`NumeroGrande\`, e \`rounded-lg\` do
+  // \`Card\`. Sem este par, "nenhum data-rotulo diz Salario Previsto" ficaria
+  // verde num container VAZIO -- que e a aparencia de um render que estourou.
+  cartoes: caixaD.querySelectorAll("[data-rotulo].font-papel").length,
+  comCard: caixaD.querySelectorAll(".rounded-lg").length,
+  texto: caixaD.textContent,
+};
+
+ReactDOM.unmountComponentAtNode(caixaD);
 
 alvoResultado();
 function alvoResultado() {
@@ -697,6 +826,54 @@ test("C: papel de pao e modo escuro convivem no <html>", () => {
   // Desligar o papel devolve o escuro inteiro, e nao a tela clara.
   assert.deepEqual(resultado.c_sem_papel.classesDoHtml, ["dark"]);
   assert.equal(resultado.c_sem_papel.barraDeStatus, "#020817");
+});
+
+// -----------------------------------------------------------------------------
+// O PAINEL: o rotulo do primeiro cartao (HMO-294)
+// -----------------------------------------------------------------------------
+
+test("D: o painel montou de verdade -- dois cartoes de producao", () => {
+  // O controle que da sentido aos dois de baixo. "Salario Previsto nao aparece"
+  // e verdade tambem num container vazio, que e a aparencia de um render que
+  // estourou, de um esboco faltando ou de um seletor escrito errado.
+  assert.equal(resultado.d.cartoes, 2, "os dois <p> do NumeroGrande nao chegaram no DOM");
+  assert.equal(resultado.d.comCard, 2, "os dois Card de producao nao chegaram no DOM");
+  assert.equal(resultado.d.rotulos.length, 2);
+});
+
+test("D: o primeiro cartao diz Salário, e nao Salário Previsto", () => {
+  // AS DUAS METADES. So a primeira passaria verde com o texto velho intacto,
+  // porque "Salário" e substring de "Salário Previsto" -- e a assercao de
+  // presenca sozinha e exatamente o teste que a HMO-294 nao pode ter.
+  assert.deepEqual(
+    resultado.d.rotulos,
+    ["Salário", "Total de contas"],
+    "o rotulo do painel nao e o que a HMO-294 pediu"
+  );
+
+  // A segunda metade, sobre o TEXTO da tela e nao so sobre o atributo: o
+  // rotulo e renderizado duas vezes pelo `NumeroGrande` (no `<p>` de cima e no
+  // `data-rotulo`), e um conserto feito so num dos dois deixaria o titulo
+  // velho visivel com o atributo certo.
+  assert.ok(
+    !resultado.d.texto.includes("Salário Previsto"),
+    `"Salário Previsto" ainda esta na tela do modulo: ${resultado.d.texto}`
+  );
+  assert.ok(resultado.d.texto.includes("Salário"));
+});
+
+test("D: a leitura e da fase `carregando` -- nenhum esboco na tela", () => {
+  // O controle dos tres esbocos do painel (`formatCurrency`,
+  // `FRASE_SEM_SALARIO`, `FRASE_SEM_CONTAS`). Eles vao para a pagina como
+  // marcadores justamente para que isto seja mensuravel: se alguem mover esta
+  // medida para a fase do valor ou da frase vazia, o texto de mentira aparece
+  // aqui com o nome do esboco, em vez de passar por tela de verdade.
+  assert.ok(
+    !resultado.d.texto.includes("ESBOCO"),
+    `um esboco do painel renderizou: ${resultado.d.texto}`
+  );
+  // E a fase e a que se diz: o `Valor` de `carregando` e um `…` e so.
+  assert.match(resultado.d.texto, /…/);
 });
 
 // -----------------------------------------------------------------------------

@@ -809,21 +809,54 @@ jobs:
       #
       # Sem navegador a suite FALHA, e nao pula: suite que se desliga sozinha e
       # indistinguivel de suite que passou.
+      # A mesma pagina ganhou, na HMO-294, a leitura do PAINEL: os `data-rotulo`
+      # dos dois cartoes. O primeiro passou de "Salario Previsto" para
+      # "Salario", e a troca e de uma `string` literal -- invisivel para o tsc,
+      # para o lint, para o `next build` e para `test:papel-de-pao`, que mede a
+      # aritmetica do painel e nao mudou. Campo de ROTULO atravessando suite de
+      # NUMERO ja deu 40 blocos verdes com a classificacao invertida aqui.
+      #
+      # A assercao tem as DUAS metades -- "Salario" presente e "Salario
+      # Previsto" ausente -- porque so a primeira passa verde com o texto velho
+      # intacto ("Salario" e substring de "Salario Previsto"). E ela e sensivel
+      # a CAIXA de proposito: `FRASE_SEM_SALARIO` ("nenhum salario previsto
+      # para este mes") continua na tela e continua certa.
       - name: O papelzinho e o espelho dele em Configuracoes trocam a pele do app
         run: npm run test:papel-na-tela
 
-      # O MENU REDUZIDO do modo (HMO-284). Com o modo ligado o menu encolhe de
-      # 27 itens para 5, por um segundo filtro sobre o MESMO array de navegacao.
+      # Os mutantes da metade do painel. Tres, e o terceiro e o que justifica o
+      # bloco: renomear o `data-rotulo` faz a sonda ler uma lista VAZIA de
+      # rotulos, e "Salario Previsto nao aparece" e verdade numa lista vazia.
+      # Quem o mata e o controle positivo da montagem (dois cartoes de producao
+      # no DOM), e sem este runner ninguem saberia que ele existe.
       #
-      # A suite exige EXATAMENTE 5 e EXATAMENTE 27, e nao "contem": com
+      # Runner separado do `mutantes-menu-papel.mjs` porque esta suite abre
+      # navegador: ~7s por volta contra menos de 1s das puras. Nao e job novo --
+      # e um passo deste mesmo job, que o custo aqui e o NUMERO DE JOBS.
+      - name: Os mutantes do rotulo do painel de papel
+        run: node scripts/mutantes-painel-na-tela.mjs
+
+      # O MENU REDUZIDO do modo (HMO-284, ampliado pela HMO-294). Com o modo
+      # ligado o menu encolhe de 27 itens para 7, por um segundo filtro sobre o
+      # MESMO array de navegacao.
+      #
+      # Eram 5 na HMO-284. A HMO-294 acrescentou `/dashboard/profile` e
+      # `/dashboard/settings`, e a segunda conserta um defeito de navegacao: o
+      # espelho do interruptor do modo vive em Configuracoes, e com o modo
+      # ligado aquela tela era INALCANCAVEL pelo menu -- a unica saida do modo
+      # era o papelzinho do cabecalho.
+      #
+      # A suite exige EXATAMENTE 7 e EXATAMENTE 27, e nao "contem": com
       # `contem`, ela ficaria verde enquanto o menu voltasse a crescer -- o
       # proximo item acrescentado ao array entraria no modo sem ninguem decidir.
       # Por isso um item novo REPROVA aqui; a mensagem do teste diz o que fazer.
+      # (Foi o que aconteceu na HMO-294: as quatro contagens tiveram de ser
+      # reescritas uma por uma, de proposito.)
       #
       # Ela tambem fixa o plano em todo caso. `podeVerItem` e o primeiro filtro
       # e ja existia; sem fixar, a contagem de 27 cai para 25 e a suite passaria
       # a medir o PLANO em vez do MODO.
-      - name: O menu do papel de pao tem 5 itens, e o menu normal tem 27
+      - name: O menu do papel de pao tem 7 itens, e o menu normal tem 27
         run: npm run test:menu-papel
 
       # Dois dos dez casos da suite acima afirmam sobre o TEXTO-FONTE do
@@ -878,6 +911,11 @@ jobs:
       # por isso a assercao roda sobre o codigo SEM comentario; o primeiro dos
       # quatro casos e o controle desse strip -- sem ele os outros tres seriam
       # vacuos, lendo o comentario em vez do `return`.
+      #
+      # O ROTULO do primeiro cartao nao e medido aqui: a HMO-294 o encurtou para
+      # "Salario", e quem le isso e a sonda de DOM do `test:papel-na-tela`
+      # acima. Esta suite continua medindo so a conta, e o campo da resposta
+      # continua `salario_previsto` -- ele e fio, nao tela.
       - name: Os dois numeros do papel de pao (salario previsto e total de contas)
         run: npm run test:papel-de-pao
 
