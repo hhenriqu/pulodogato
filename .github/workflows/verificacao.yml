@@ -3919,6 +3919,120 @@ jobs:
           fi
 
       # =======================================================================
+      # O ICONE, O ROTULO E O CLIQUE DA LINHA (HMO-287)
+      # =======================================================================
+      # "Nas despesas, deveria ter um icone ou algo do genero mostrando a
+      # categoria da despesa."
+      #
+      # A HMO-285 fez `natureza` e `fatura` existirem, com 50 blocos de unidade
+      # e 40 mutantes. Toda aquela suite passa verde com a MARCACAO ignorando os
+      # dois campos: a linha de fatura desenhada igual a uma despesa comum nao
+      # quebra build, nao fica vazia e nao muda numero nenhum.
+      - name: O icone, o rotulo e o href da linha
+        run: npm run test:secao-da-tela
+
+      # Controle negativo. Os cinco defeitos abaixo tem o mesmo formato: a tela
+      # continua inteira, o valor ao lado continua certo, e nada fica vermelho.
+      - name: A verificacao da linha sabe falhar
+        run: |
+          set -uo pipefail
+          SECAO=components/movimentacoes/SecaoDaTela.tsx
+          FATURA=lib/fatura-do-cartao.ts
+          cp $SECAO $SECAO.orig
+          cp $FATURA $FATURA.orig
+          trap 'mv $SECAO.orig $SECAO; mv $FATURA.orig $FATURA' EXIT
+
+          # `cmp` depois de cada `sed`: uma ancora que a feature renomeou faz o
+          # `sed` sair 0 sem trocar nada, e o bloco inteiro passaria por verde
+          # tendo medido ZERO mutantes.
+          mutou() {
+            if cmp -s "$1" "$1.orig"; then
+              echo "::error::A ancora do mutante $2 nao casou -- nada foi mutado."
+              exit 1
+            fi
+          }
+
+          # 1) O ROTULO TROCADO. "fixo" numa fatura e "fatura de cartão" numa
+          #    conta fixa sao os dois plausiveis: as duas linhas existem, as
+          #    duas tem vencimento, e o valor ao lado esta certo nas duas.
+          sed -i 's|rotulo: "fatura de cartão",|rotulo: "fixo",|' $SECAO
+          mutou $SECAO 1
+          if npm run test:secao-da-tela > /dev/null 2>&1; then
+            echo "::error::Verde com a FATURA rotulada como conta fixa."
+            exit 1
+          fi
+          cp $SECAO.orig $SECAO
+
+          # 2) SO O ICONE, SEM O ROTULO. E a feature pela metade: tres icones
+          #    cinzentos de 12px numa linha de celular sao indistinguiveis, e
+          #    quem olha ve que HA um icone, nao QUAL.
+          sed -i 's|{rotulo \&\& <span>{rotulo}</span>}|{false \&\& <span>{rotulo}</span>}|' $SECAO
+          mutou $SECAO 2
+          if npm run test:secao-da-tela > /dev/null 2>&1; then
+            echo "::error::Verde com o rotulo de texto apagado da linha."
+            exit 1
+          fi
+          cp $SECAO.orig $SECAO
+
+          # 3) TODA LINHA VIRA LINK. Linha que PARECE clicavel e nao e custa
+          #    mais que linha que nao parece: a pessoa toca, nada acontece, e a
+          #    conclusao natural e que o app travou.
+          sed -i 's|  if (linha.fatura) {|  if (true) {|' $SECAO
+          mutou $SECAO 3
+          if npm run test:secao-da-tela > /dev/null 2>&1; then
+            echo "::error::Verde com TODA linha virando <a>."
+            exit 1
+          fi
+          cp $SECAO.orig $SECAO
+
+          # 4) O ICONE DA FATURA VIRA O DA TELA. Todas as assercoes de TEXTO
+          #    desta suite continuam verdes: o rotulo escrito nao muda.
+          sed -i 's|      Icone: CreditCard,|      Icone: aparencia.Icone,|' $SECAO
+          mutou $SECAO 4
+          if npm run test:secao-da-tela > /dev/null 2>&1; then
+            echo "::error::Verde com as tres naturezas desenhando o MESMO icone."
+            exit 1
+          fi
+          cp $SECAO.orig $SECAO
+
+          # 5) O MES DO `href` SAI EM 10 CHARS. O destino EXISTE e abre no mes
+          #    corrente: o valor certo, o mes errado, e nada dizendo que o mes
+          #    trocou. E o unico defeito desta issue que nenhum texto denuncia.
+          sed -i 's|  return mes.slice(0, 7);|  return mes;|' $FATURA
+          mutou $FATURA 5
+          if npm run test:secao-da-tela > /dev/null 2>&1; then
+            echo "::error::Verde com o href levando AAAA-MM-01 em vez de AAAA-MM."
+            exit 1
+          fi
+          if npm run test:fatura-do-cartao > /dev/null 2>&1; then
+            echo "::error::Verde com o mes inicial da tela do cartao sem normalizar."
+            exit 1
+          fi
+          cp $FATURA.orig $FATURA
+
+          # 6) A TELA DO CARTAO IGNORA O `?mes=`. A ponta que recebe desligada
+          #    da a tela de destino perfeitamente correta -- no mes errado.
+          sed -i 's|return mesDeSeteChars(mesDaUrl) ?? mesCorrenteDaFatura(agora);|return mesCorrenteDaFatura(agora);|' $FATURA
+          mutou $FATURA 6
+          if npm run test:fatura-do-cartao > /dev/null 2>&1; then
+            echo "::error::Verde com a tela do cartao ignorando o ?mes= da URL."
+            exit 1
+          fi
+
+          echo "A verificacao da linha fica vermelha nos seis defeitos."
+
+      - name: 'A arvore voltou ao lugar depois de "A verificacao da linha sabe falhar"'
+        run: |
+          # O .tmp-* compilado guarda o mutante mesmo depois do restore do .ts.
+          rm -rf .tmp-*
+          git status --porcelain > "$RUNNER_TEMP/arvore-agora.txt"
+          if ! diff -q "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" > /dev/null; then
+            echo "::error::O controle negativo acima nao restaurou a arvore. Os passos seguintes rodariam sobre codigo mutado."
+            diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
+            exit 1
+          fi
+
+      # =======================================================================
       # O CARTAO CONTA PELA FATURA PAGA, NAO PELA COMPRA
       # origem: HMO-265 (nasceu aqui -- ver o item 1 do cabecalho deste arquivo)
       # =======================================================================

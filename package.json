@@ -130,6 +130,7 @@
     "mutantes:realizado-do-caixa": "node scripts/mutantes-realizado-do-caixa.mjs",
     "test:contrato-das-telas-de-movimentacao": "node --test scripts/test-contrato-das-telas-de-movimentacao.mjs",
     "test:cartoes-da-tela": "rm -rf .tmp-cartoes-da-tela && tsc -p scripts/tsconfig.cartoes-da-tela-test.json && node scripts/resolve-aliases.mjs .tmp-cartoes-da-tela components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-cartoes-da-tela lib --espelha-raiz && node --test scripts/test-cartoes-da-tela.mjs",
+    "test:secao-da-tela": "rm -rf .tmp-secao-da-tela && tsc -p scripts/tsconfig.secao-da-tela-test.json && node scripts/resolve-aliases.mjs .tmp-secao-da-tela components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-secao-da-tela lib --espelha-raiz && node scripts/resolve-next-subpaths.mjs .tmp-secao-da-tela && node --test scripts/test-secao-da-tela.mjs",
     "test:periodo-do-grupo": "rm -rf .tmp-periodo-do-grupo && tsc -p scripts/tsconfig.periodo-do-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-periodo-do-grupo lib && TZ=America/Sao_Paulo node --test scripts/test-periodo-do-grupo.mjs",
     "mutantes:fechamento-do-grupo": "node scripts/mutantes-fechamento-do-grupo.mjs",
     "mutantes:credito-de-grupo": "node scripts/mutantes-credito-de-grupo.mjs",

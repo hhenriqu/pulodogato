@@ -14,14 +14,16 @@
 // deste arquivo divergiriam na primeira mudanca -- e o que divergiria primeiro
 // e o que menos pode: a conta de Total, Previsto e Realizado.
 //
-// OS TRES CARTOES MORAM EM OUTRO ARQUIVO, DE PROPOSITO
-// ----------------------------------------------------
-// `components/movimentacoes/CartoesDaTela.tsx`. Este arquivo importa
-// `next/navigation`, que NAO roda no node -- com os cartoes aqui dentro, o
-// teste que renderiza a marcacao deles morreria no import. La eles sao funcao
-// pura de props, e scripts/test-cartoes-da-tela.mjs le o HTML que sai: e a
-// unica coisa capaz de pegar o `previsto` impresso no cartao "Realizado", que e
-// um defeito que a aritmetica inteira aprova.
+// OS CARTOES E AS SECOES MORAM EM OUTROS ARQUIVOS, DE PROPOSITO
+// -------------------------------------------------------------
+// `components/movimentacoes/CartoesDaTela.tsx` e
+// `components/movimentacoes/SecaoDaTela.tsx`. Este arquivo importa
+// `next/navigation`, que NAO roda no node -- com aquela marcacao aqui dentro, o
+// teste que a renderiza morreria no import. La elas sao funcao pura de props, e
+// scripts/test-cartoes-da-tela.mjs / scripts/test-secao-da-tela.mjs leem o HTML
+// que sai: e a unica coisa capaz de pegar o `previsto` impresso no cartao
+// "Realizado" (um defeito que a aritmetica inteira aprova) e o `?mes=` que o
+// link da fatura leva.
 //
 // O ZERO CONFIANTE NAO PODE APARECER
 // ----------------------------------
@@ -36,7 +38,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
-  AlertCircle,
   ArrowRightLeft,
   CalendarClock,
   CalendarRange,
@@ -56,6 +57,10 @@ import {
 } from "@/components/ui/card";
 import { SeletorDePeriodo } from "@/components/dashboard/SeletorDePeriodo";
 import { CartoesDaTela } from "@/components/movimentacoes/CartoesDaTela";
+import {
+  SecaoDaTela,
+  type AparenciaDaTela,
+} from "@/components/movimentacoes/SecaoDaTela";
 import {
   FaixaDadoDoAparelho,
   PainelErroDoServidor,
@@ -101,32 +106,37 @@ const moeda = (valor: number) =>
     currency: "BRL",
   }).format(valor);
 
-/** 'AAAA-MM-DD' -> 'DD/MM'. Fatiado, nao `new Date`: ver `linhasDaTela`. */
-const dataCurta = (iso: string) =>
-  iso && iso.length >= 10 ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}` : "—";
-
-/** O icone e a cor de cada tela. Em token, nunca em hex (check-color-tokens). */
-const APARENCIA: Record<
-  TipoDaTela,
-  { Icone: typeof TrendingUp; cor: string; rotaDeLancar: string; textoDeLancar: string }
-> = {
+/**
+ * O icone, a cor e as palavras de cada tela. Em token, nunca em hex
+ * (check-color-tokens).
+ *
+ * `palavraDaLinha` e o nome, no singular, do que a linha COMUM e nesta tela --
+ * ele so vai para o `aria-label` do icone da linha (`SecaoDaTela`), nunca para
+ * a tela. Ele e por TELA e nao por `natureza` porque `natureza: "despesa"` e o
+ * nome do caso comum nas tres (ver `NaturezaDaLinha`): "Despesa" dito embaixo
+ * de um salario previsto seria um rotulo errado sobre um numero certo.
+ */
+const APARENCIA: Record<TipoDaTela, AparenciaDaTela> = {
   income: {
     Icone: TrendingUp,
     cor: "text-success",
     rotaDeLancar: "/dashboard/movimentacoes/receita",
     textoDeLancar: "Nova Receita",
+    palavraDaLinha: "Receita",
   },
   expense: {
     Icone: TrendingDown,
     cor: "text-destructive",
     rotaDeLancar: "/dashboard/movimentacoes/despesa",
     textoDeLancar: "Nova Despesa",
+    palavraDaLinha: "Despesa",
   },
   transfer: {
     Icone: ArrowRightLeft,
     cor: "text-info",
     rotaDeLancar: ROTA_DA_TRANSFERENCIA,
     textoDeLancar: "Nova Transferência",
+    palavraDaLinha: "Transferência",
   },
 };
 
@@ -371,7 +381,7 @@ export function TelaDeMovimentacao({ tipo }: { tipo: TipoDaTela }) {
               </Card>
             )}
 
-          <Secao
+          <SecaoDaTela
             titulo="Previsto no período"
             icone={<CalendarClock className="h-4 w-4 text-warning" />}
             subtitulo={tela.oQueOPrevistoE}
@@ -385,7 +395,7 @@ export function TelaDeMovimentacao({ tipo }: { tipo: TipoDaTela }) {
             aparencia={aparencia}
           />
 
-          <Secao
+          <SecaoDaTela
             titulo="Realizado no período"
             icone={<CheckCircle2 className="h-4 w-4 text-success" />}
             subtitulo={tela.oQueORealizadoE}
@@ -495,110 +505,5 @@ export function TelaDeMovimentacao({ tipo }: { tipo: TipoDaTela }) {
         </>
       )}
     </div>
-  );
-}
-
-/**
- * Uma secao da lista, com o subtotal que o cartao de cima prometeu.
- *
- * O subtotal e recalculado AQUI a partir das linhas que a secao desenha, e nao
- * recebido do resumo. E a unica forma de a tela denunciar uma divergencia entre
- * o numero e a lista: iguais, confirmam-se; diferentes, aparecem diferentes na
- * mesma tela. Receber o numero de cima esconderia exatamente o defeito que
- * importa.
- */
-function Secao({
-  titulo,
-  subtitulo,
-  icone,
-  linhas,
-  carregando,
-  vazio,
-  aparencia,
-}: {
-  titulo: string;
-  subtitulo: string;
-  icone: React.ReactNode;
-  linhas: LinhaDaTela[];
-  carregando: boolean;
-  vazio: string;
-  aparencia: (typeof APARENCIA)[TipoDaTela];
-}) {
-  const subtotal = linhas.reduce((soma, l) => soma + l.valor, 0);
-
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="flex items-center justify-between gap-2 text-base">
-          <span className="flex items-center gap-2">
-            {icone}
-            {titulo}
-            <span className="text-sm font-normal text-muted-foreground">
-              ({linhas.length})
-            </span>
-          </span>
-          {linhas.length > 0 && (
-            <span className={`text-base font-semibold ${aparencia.cor}`}>
-              {moeda(subtotal)}
-            </span>
-          )}
-        </CardTitle>
-        <CardDescription>{subtitulo}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        {/*
-          Enquanto a consulta corre, a lista sai da tela e da lugar a um
-          indicador. Sem isto o vazio pisca como "Nenhum lançamento em outubro
-          de 2026" -- um zero confiante em cima de um periodo que ainda nao foi
-          lido.
-        */}
-        {carregando ? (
-          <div className="flex items-center justify-center py-6" aria-live="polite">
-            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
-            <span className="sr-only">Carregando {titulo.toLowerCase()}</span>
-          </div>
-        ) : linhas.length === 0 ? (
-          <p className="py-4 text-sm text-muted-foreground">{vazio}</p>
-        ) : (
-          <div className="space-y-1">
-            {linhas.map((linha) => (
-              <div
-                key={linha.id}
-                className="flex items-start justify-between gap-3 border-b border-border py-2 last:border-0"
-              >
-                <div className="min-w-0 space-y-0.5">
-                  <p className="truncate font-medium text-foreground">
-                    {linha.descricao ?? "Sem descrição"}
-                  </p>
-                  <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
-                    <span>{dataCurta(linha.data)}</span>
-                    {linha.categoria && <span>· {linha.categoria}</span>}
-                    {linha.conta && <span>· {linha.conta}</span>}
-                    {linha.moeda && <span>· {linha.moeda}</span>}
-                    {/*
-                      "Vencida" sai de `effective_status`, que a view calcula na
-                      hora -- nunca de uma comparacao de data feita aqui. Duas
-                      implementacoes da mesma regra divergem, e esta divergiria
-                      no fuso do servidor (UTC na Vercel).
-                    */}
-                    {linha.situacao === "overdue" && (
-                      <span className="inline-flex items-center gap-1 text-destructive">
-                        <AlertCircle className="h-3 w-3" />
-                        vencida
-                      </span>
-                    )}
-                    {/* A fatura aberta nao existe em tabela nenhuma: sem rotulo
-                        ela se le como uma conta que a pessoa cadastrou e nao
-                        encontra em Contas Previstas. */}
-                    {!linha.gravada && <span>· fatura aberta do cartão</span>}
-                  </p>
-                </div>
-                <p className="shrink-0 font-semibold">{moeda(linha.valor)}</p>
-              </div>
-            ))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
   );
 }

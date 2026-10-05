@@ -25,15 +25,25 @@
 // antes de qualquer numero aparecer, senao o cadastro fresco libera o total de
 // uma fatura que nao carregou -- "R$ 0,00" indistinguivel de um mes sem compra.
 //
-// NAO ha `useSearchParams` nesta rota. Sob `[id]` o Next consome a chave de
-// mesmo nome ao montar `params`, e `searchParams.get("id")` volta `null`
-// (HMO-142). O cartao escolhido viaja para o formulario de despesa por
-// `PARAM_DO_CARTAO`, que vale `cartao`.
+// O MES CHEGA NA URL, E A CHAVE NAO PODE SE CHAMAR `id` (HMO-287)
+// ----------------------------------------------------------------
+// Ate a HMO-287 esta tela abria SEMPRE no mes corrente, e nao havia
+// `useSearchParams` aqui. Agora a linha de fatura da tela de Despesas aponta
+// para ca com `?mes=AAAA-MM` -- sem isso, clicar na fatura de agosto abriria
+// outubro: o valor certo, o mes errado, e nada dizendo que o mes trocou.
+//
+// A chave e `mes` e nao `id` pela mesma razao que `PARAM_DO_CARTAO` e `cartao`:
+// sob `[id]` o Next consome a chave de mesmo nome ao montar `params`, e
+// `searchParams.get("id")` volta `null` com o valor chegando inteiro (HMO-142).
+//
+// E `useSearchParams` exige limite de `Suspense`: sem o par
+// wrapper/interno abaixo o `next build` reprova a rota inteira, e `next lint`
+// NAO pega isso.
 // ---------------------------------------------------------------------------
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -44,7 +54,8 @@ import {
   cartaoDaTela,
   estadoDaTela,
   faturaDoCartao,
-  mesCorrenteDaFatura,
+  mesInicialDaFatura,
+  PARAM_DO_MES,
 } from "@/lib/fatura-do-cartao";
 import {
   FaixaDadoDoAparelho,
@@ -87,9 +98,34 @@ type LinhaParaApagar = {
   installment_total?: number | null;
 };
 
+/**
+ * O limite de `Suspense` que `useSearchParams` exige.
+ *
+ * Nao e enfeite de carregamento: sem ele o `next build` reprova a rota, e
+ * `next lint` nao avisa -- o erro so aparece no build. Mesmo par que
+ * `app/(dashboard)/dashboard/despesas/page.tsx` usa.
+ */
 export default function GastosDoCartaoPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center min-h-[400px]">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      }
+    >
+      <GastosDoCartao />
+    </Suspense>
+  );
+}
+
+function GastosDoCartao() {
   const params = useParams<{ id: string }>();
   const idDoCartao = typeof params?.id === "string" ? params.id : "";
+
+  // O `?mes=` que a linha de fatura manda. Lido aqui, consumido no `useState`
+  // do mes mais abaixo.
+  const searchParams = useSearchParams();
 
   // O cadastro. `include_inactive=1` ja vem de dentro do hook, entao abrir o
   // link de um cartao arquivado mostra a fatura dele em vez de "nao e seu".
@@ -102,7 +138,17 @@ export default function GastosDoCartaoPage() {
     carregar: recarregarContas,
   } = useContas("cartao");
 
-  const [mes, setMes] = useState(() => mesCorrenteDaFatura());
+  // O INICIALIZADOR DO `useState` RODA UMA VEZ, e e isso que esta rota quer: o
+  // `?mes=` escolhe o mes de ABERTURA; depois disso quem manda e o seletor de
+  // mes da propria tela. Reagir ao parametro num `useEffect` desfaria a troca
+  // de mes feita na tela toda vez que o componente re-renderizasse.
+  //
+  // `mesInicialDaFatura` aceita 'AAAA-MM' e 'AAAA-MM-01' e devolve sempre o de
+  // 7 chars, que e o unico que o `&month=` da rota reconhece; mes que nao da
+  // para ler cai no corrente, que e o comportamento de antes desta issue.
+  const [mes, setMes] = useState(() =>
+    mesInicialDaFatura(searchParams.get(PARAM_DO_MES))
+  );
   const [faturas, setFaturas] = useState<CardInvoice[] | null>(null);
   const [estadoDaFatura, setEstadoDaFatura] = useState<EstadoDaLeitura | null>(
     null
