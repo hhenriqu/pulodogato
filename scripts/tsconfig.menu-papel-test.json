@@ -1,0 +1,44 @@
+{
+  "//": [
+    "Compila o menu reduzido do modo papel de pao (HMO-284) para a suite pura.",
+    "",
+    "Sao DOIS arquivos e os dois precisam estar aqui: `lib/menu-do-papel.ts` tem",
+    "o filtro, e `components/navegacao-do-menu.ts` tem o array de 27 itens.",
+    "Compilar so o primeiro deixaria a suite sem o que filtrar, e a unica saida",
+    "seria reescrever a lista no teste -- a segunda lista que a issue proibe, que",
+    "ficaria verde para sempre medindo a si mesma.",
+    "",
+    "O `jsx` nao entra: nenhum dos dois tem JSX. O `navegacao-do-menu` menciona",
+    "`React.ElementType` no tipo do icone, e por isso o `types: [react]` abaixo",
+    "-- o namespace React global vem de la. Sem ele o tsc estoura com",
+    "'Cannot find namespace React', que se le como erro do arquivo e e do",
+    "include.",
+    "",
+    "`types/subscription.ts` entra porque o array tipa `requiredFeature` e",
+    "`requiredPlans` com ele. O import e so de TIPO, entao o tsc o elimina no",
+    "emit e nao sobra `@/` nenhum para o resolve-aliases reescrever -- ele roda",
+    "igual, porque a elisao e detalhe do compilador e nao contrato.",
+    "",
+    "Comentario SO nesta chave, nunca com // no meio do objeto: o tsc aceita",
+    "JSONC, mas o check-tests-in-ci.mjs le este arquivo com JSON.parse e",
+    "estoura com 'Expected double-quoted property name'."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "types": ["react"],
+    "outDir": "../.tmp-menu-papel",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../lib/menu-do-papel.ts",
+    "../components/navegacao-do-menu.ts",
+    "../types/subscription.ts"
+  ]
+}

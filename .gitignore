@@ -348,3 +348,6 @@ next-env.d.ts
 # artefato, nao fonte. Um `.tmp-*` fora do .gitignore chega a ser commitado em
 # cima de arquivo de fonte, e dai o `rm -rf` do proprio npm script o apaga.
 /.tmp-papel-na-tela/
+
+# saida do `npm run test:menu-papel` (HMO-284)
+/.tmp-menu-papel/

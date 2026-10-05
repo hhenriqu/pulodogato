@@ -144,7 +144,8 @@
     "mutantes:fatura-do-periodo": "node scripts/mutantes-fatura-do-periodo.mjs",
     "check-fatura-escolhida": "node scripts/check-fatura-escolhida.mjs",
     "test:modo-papel": "rm -rf .tmp-modo-papel && tsc -p scripts/tsconfig.modo-papel-test.json && node scripts/resolve-aliases.mjs .tmp-modo-papel lib --espelha-raiz && node --test scripts/test-modo-papel.mjs",
-    "test:papel-na-tela": "rm -rf .tmp-papel-na-tela && tsc -p scripts/tsconfig.papel-na-tela-test.json && node --test scripts/test-papel-na-tela.mjs"
+    "test:papel-na-tela": "rm -rf .tmp-papel-na-tela && tsc -p scripts/tsconfig.papel-na-tela-test.json && node --test scripts/test-papel-na-tela.mjs",
+    "test:menu-papel": "rm -rf .tmp-menu-papel && tsc -p scripts/tsconfig.menu-papel-test.json && node scripts/resolve-aliases.mjs .tmp-menu-papel components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-menu-papel lib --espelha-raiz && node --test scripts/test-menu-papel.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
