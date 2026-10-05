@@ -103,6 +103,7 @@
     "test:divisao-configurada": "rm -rf .tmp-divisao-configurada && tsc -p scripts/tsconfig.divisao-configurada-test.json && TZ=America/Sao_Paulo node --test scripts/test-divisao-configurada.mjs && TZ=UTC node --test scripts/test-divisao-configurada.mjs",
     "mutantes:divisao-configurada": "node scripts/mutantes-divisao-configurada.mjs",
     "test:fatura-prevista": "rm -rf .tmp-fatura-prevista && tsc -p scripts/tsconfig.fatura-prevista-test.json && node scripts/resolve-aliases.mjs .tmp-fatura-prevista lib && node --test scripts/test-fatura-prevista.mjs",
+    "test:elo-da-fatura": "rm -rf .tmp-elo-da-fatura && tsc -p scripts/tsconfig.elo-da-fatura-test.json && node scripts/resolve-aliases.mjs .tmp-elo-da-fatura lib && node --test scripts/test-elo-da-fatura.mjs",
     "mutantes:fatura-prevista": "node scripts/mutantes-fatura-prevista.mjs",
     "test:agenda-do-cartao": "rm -rf .tmp-agenda-do-cartao && tsc -p scripts/tsconfig.agenda-do-cartao-test.json && node scripts/resolve-aliases.mjs .tmp-agenda-do-cartao lib && node --test scripts/test-agenda-do-cartao.mjs",
     "test:fatura-do-cartao": "rm -rf .tmp-fatura-do-cartao && tsc -p scripts/tsconfig.fatura-do-cartao-test.json && node scripts/resolve-aliases.mjs .tmp-fatura-do-cartao lib --espelha-raiz && TZ=America/Sao_Paulo node --test scripts/test-fatura-do-cartao.mjs",

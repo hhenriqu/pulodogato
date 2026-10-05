@@ -59,6 +59,7 @@
     "../components/PapelToggle.tsx",
     "../components/papel-de-pao/ConfiguracaoDePapel.tsx",
     "../components/papel-de-pao/PainelDePapel.tsx",
+    "../components/fatura/EloDaFatura.tsx",
     "../lib/modo-papel.ts",
     "../lib/theme.ts"
   ]
