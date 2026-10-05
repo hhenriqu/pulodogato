@@ -303,7 +303,13 @@ test("o menu lateral leva para as tres telas", () => {
   // A HMO-145 deste repositorio achou tres features em producao sem nenhum item
   // de menu apontando para elas: as rotas respondiam 200 e nao havia como
   // chegar la clicando, entao a feature existia e nao existia ao mesmo tempo.
-  const sidebar = semComentarios(readFileSync("components/Sidebar.tsx", "utf8"));
+  //
+  // O array de navegacao morava em `components/Sidebar.tsx` e saiu de la na
+  // HMO-284 (o modo papel de pao precisava filtra-lo numa suite de Node, sem
+  // arrastar o componente). O arquivo mudou; o contrato, nao.
+  const menu = semComentarios(
+    readFileSync("components/navegacao-do-menu.ts", "utf8")
+  );
 
   for (const rotaDaTela of [
     "/dashboard/receitas",
@@ -311,7 +317,7 @@ test("o menu lateral leva para as tres telas", () => {
     "/dashboard/transferencias",
   ]) {
     assert.ok(
-      sidebar.includes(`href: "${rotaDaTela}"`),
+      menu.includes(`href: "${rotaDaTela}"`),
       `o menu nao tem item para ${rotaDaTela}`
     );
   }

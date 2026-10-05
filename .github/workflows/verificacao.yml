@@ -812,6 +812,36 @@ jobs:
       - name: O papelzinho e o espelho dele em Configuracoes trocam a pele do app
         run: npm run test:papel-na-tela
 
+      # O MENU REDUZIDO do modo (HMO-284). Com o modo ligado o menu encolhe de
+      # 27 itens para 5, por um segundo filtro sobre o MESMO array de navegacao.
+      #
+      # A suite exige EXATAMENTE 5 e EXATAMENTE 27, e nao "contem": com
+      # `contem`, ela ficaria verde enquanto o menu voltasse a crescer -- o
+      # proximo item acrescentado ao array entraria no modo sem ninguem decidir.
+      # Por isso um item novo REPROVA aqui; a mensagem do teste diz o que fazer.
+      #
+      # Ela tambem fixa o plano em todo caso. `podeVerItem` e o primeiro filtro
+      # e ja existia; sem fixar, a contagem de 27 cai para 25 e a suite passaria
+      # a medir o PLANO em vez do MODO.
+      - name: O menu do papel de pao tem 5 itens, e o menu normal tem 27
+        run: npm run test:menu-papel
+
+      # Dois dos dez casos da suite acima afirmam sobre o TEXTO-FONTE do
+      # Sidebar, e nao sobre valor calculado: que ele CHAMA o filtro (nao basta
+      # importar -- `noUnusedLocals` esta desligado, entao apagar a chamada e
+      # deixar o import nao e erro de tsc nem de lint) e que nenhuma pagina
+      # importa o menu reduzido, porque esconder do menu nao e bloquear rota.
+      #
+      # Assercao sobre texto e o tipo que mais passa verde sem medir nada, e a
+      # contagem sobre array e o segundo. Por isso os dois tipos levam mutante:
+      # cada um estraga uma coisa e exige que a suite reprove. O runner tem
+      # controle positivo (codigo intacto tem de PASSAR) e confere que cada
+      # ancora casou -- um replace que nao casa com nada nao muda arquivo
+      # nenhum, e isso se le como "mutante sobreviveu" quando o mutante nunca
+      # existiu.
+      - name: Os mutantes do menu do papel de pao
+        run: node scripts/mutantes-menu-papel.mjs
+
       - name: Os botoes da home empilham alinhados e com espaco no celular
         run: npm run test:home-cta
 
