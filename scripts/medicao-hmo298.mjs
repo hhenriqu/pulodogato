@@ -1,9 +1,23 @@
 #!/usr/bin/env node
 // =============================================================================
-// HMO-298/303 -- AS TRES LEITURAS DO "TOTAL DE CONTAS", E A PROVA DE QUE ELAS
-// CONCORDAM
+// HMO-298/303/306 -- AS QUATRO LEITURAS DO "TOTAL DE CONTAS", E A PROVA DE QUE
+// ELAS CONCORDAM
 // =============================================================================
 //   node scripts/medicao-hmo298.mjs
+//
+// A QUARTA LEITURA ENTROU NA HMO-306, E ELA ERA O CONTROLE NEGATIVO DA HMO-303.
+// /api/safe-to-spend nao chamava `parteConfiguradaDoMembro` e nem trazia
+// `group_id` no `select`: enquanto isso valia, o numero dela tinha de ficar
+// PARADO, e era essa imobilidade que provava que o conserto das cinco rotas nao
+// havia escapado do escopo. A HMO-306 e a issue que o move -- a MINHA conta de
+// grupo deixou de ser descontada cheia (R$ 1.000,00) e passou a entrar pela
+// parte configurada (R$ 300,00), o mesmo numero das outras tres leituras.
+//
+// Ela tem coluna de ESPERADO PROPRIA (`safeEsperado`), e isso e requisito e nao
+// estilo: ela responde "quanto posso gastar", filtra por `user_id` e nao chama
+// `classeDaAgenda`. Entao em duas das quatro faces ela DIVERGE do «Total de
+// contas» de proposito, e cobrar dela o mesmo `esperado` reprovaria o
+// comportamento certo. Ver o comentario de `LINHAS`.
 //
 // O NOME DO ARQUIVO FICA, E O CONTROLE INVERTEU DE SINAL.
 // Na HMO-298 (7/10 do plano da HMO-279) este script media os tres numeros lado a
@@ -35,12 +49,15 @@
 //      fechamento do grupo vai COBRAR de verdade, pelo `percentage` gravado
 //      desde a HMO-269/270/271, e que a migration 042 (HMO-304) tornou tambem o
 //      numero da BAIXA.
+//   4. `/api/safe-to-spend` -- "quanto ainda posso gastar este mes" (HMO-306),
+//      a quarta e a mais perigosa de errar: subestimar custo fixo aqui e o app
+//      PROMETENDO dinheiro que nao existe.
 //
-// Depois da HMO-303 as tres sao a MESMA funcao rodando tres vezes: as leituras
-// 1 e 2 chamam `parteConfiguradaDoMembro`, que delega para o `ratearPorPeso` da
-// leitura 3. "As tres concordam" deixou de ser uma coincidencia que esta tabela
-// confere e passou a ser uma propriedade do grafo de chamadas -- o que esta
-// tabela ainda confere e que a FIACAO nao se desfez.
+// Depois da HMO-303/306 as quatro sao a MESMA funcao rodando quatro vezes: as
+// leituras 1, 2 e 4 chamam `parteConfiguradaDoMembro`, que delega para o
+// `ratearPorPeso` da leitura 3. "As quatro concordam" deixou de ser uma
+// coincidencia que esta tabela confere e passou a ser uma propriedade do grafo
+// de chamadas -- o que esta tabela ainda confere e que a FIACAO nao se desfez.
 //
 // AS FUNCOES SAO IMPORTADAS, NAO REESCRITAS
 // -----------------------------------------
@@ -94,6 +111,7 @@ const { painelDePapel } = await import(join(COMPILADO, "papel-de-pao.js"));
 const {
   montarParticipantesPorGrupo,
   previstasComAMinhaParte,
+  parteConfiguradaDoMembro,
   custoFixoMensalDaMinhaParte,
 } = await import(join(COMPILADO, "parte-do-grupo.js"));
 const { agendaSemCompraNoCartao, sintetizarFaturasAbertas } = await import(
@@ -116,6 +134,35 @@ const GRUPO = "a0000000-0000-0000-0000-00000000ca5a";
 const HOJE = "2026-03-10";
 /** A janela do mes medido, fechada nas duas pontas. */
 const JANELA = { de: "2026-03-01", ate: "2026-03-31" };
+
+// -----------------------------------------------------------------------------
+// OS TRES NUMEROS DA QUARTA LEITURA (HMO-306)
+// -----------------------------------------------------------------------------
+// Eles moram AQUI, e nao junto do controle la embaixo, porque a secao "ITEM 7"
+// imprime o "antes" e `const` em TDZ nao se le antes da declaracao -- o valor
+// repetido a mao na linha do console seria uma segunda fonte de verdade para um
+// numero de dinheiro, que e exatamente o que este arquivo existe para evitar.
+//
+// R$ 8.500,00 ERA O NUMERO DO CONTROLE NEGATIVO DA HMO-303, e ele estava
+// MEDIDO: a MINHA conta de grupo entrava cheia (R$ 1.000,00) porque a rota nao
+// trazia `group_id` no `select`. Com a parte configurada ela entra por
+// R$ 300,00, e o total cai exatamente os R$ 700,00 da diferenca:
+//
+//   8.500,00 - (1.000,00 - 300,00) = 7.800,00
+//
+// A SUBTRACAO ESTA ESCRITA, e nao so o resultado, porque e ela que torna este
+// numero conferivel: "7.800" sozinho seria indistinguivel de um valor copiado
+// da saida do codigo novo -- o que o cabecalho deste arquivo proibe. Os
+// R$ 700,00 sao a contrapartida do controle negativo da irma (HMO-303): la ele
+// nao se move, aqui ele se move e por quanto. A identidade e COBRADA no bloco
+// do controle, para que mexer num dos tres sem mexer nos outros reprove.
+//
+// E O NUMERO SOBE EM VEZ DE CAIR, do ponto de vista do usuario: menos custo
+// fixo descontado e MAIS dinheiro livre. A rota antiga errava para o lado
+// seguro, mas por acidente -- ela nao sabia que havia o que dividir.
+const SAFE_TO_SPEND_ANTES_DA_306 = 8500;
+const SAFE_TO_SPEND_ESPERADO = 7800;
+const DIFERENCA_DA_PARTE_DO_GRUPO = 700;
 
 // -----------------------------------------------------------------------------
 // A ponte com o banco
@@ -419,24 +466,45 @@ function leituraDoSummary(pesos) {
 }
 
 /**
- * O CONTROLE NEGATIVO -- /api/safe-to-spend.
+ * LEITURA 4 -- /api/safe-to-spend, o "quanto ainda posso gastar" (HMO-306).
  *
- * Ela nao chama `parteConfiguradaDoMembro` nem `classeDaAgenda`: le
- * `scheduled_transactions` direto, com `.eq("user_id", ...)`, sem `group_id` no
- * `select` e sem divisao nenhuma. Entao o numero dela TEM de sair igual antes e
- * depois da HMO-303 -- e se ele se mover, o conserto escapou do escopo.
+ * ELA ERA O CONTROLE NEGATIVO DA HMO-303, E DEIXOU DE SER.
+ * Ate a HMO-306 esta rota nao chamava `parteConfiguradaDoMembro` e nem trazia
+ * `group_id` no `select`: a MINHA conta de grupo era descontada CHEIA
+ * (R$ 1.000,00 de um grupo que me cobra R$ 300,00). Enquanto isso valia, o
+ * numero dela tinha de ficar PARADO -- era a prova de que o conserto das cinco
+ * rotas nao tinha escapado do escopo. A HMO-306 e justamente a issue que o faz
+ * se mover, e o quanto ele se move esta digitado em `SAFE_TO_SPEND_ESPERADO`.
+ *
+ * O QUE CONTINUA DIFERENTE DAS OUTRAS TRES, E DE PROPOSITO
+ * -------------------------------------------------------
+ *   1. O FILTRO DE `user_id` FICA. A tela de Despesas passou a listar a linha
+ *      do outro membro (o `OR` da HMO-303) porque LISTAR era informacao que
+ *      faltava. Aqui a pergunta e "quanto EU posso gastar", e a parte do outro
+ *      ja e contada pela carteira DELE: trazer a linha dele para dentro desta
+ *      soma descontaria o mesmo dinheiro duas vezes. E isso que faz
+ *      `safeEsperado` da face (d) do outro membro ser R$ 0,00 -- e nao uma
+ *      omissao da medicao.
+ *   2. `classeDaAgenda` CONTINUA FORA. A transferencia de (a) segue sendo
+ *      descontada aqui, pela mesma razao do bloco «A vencer»: a pergunta e
+ *      caixa, e R$ 500,00 que vao para a poupanca saem da conta de verdade.
+ *      Por isso a face (a) tem `esperado` R$ 0,00 e `safeEsperado` R$ 500,00.
  *
  * A consulta e a da rota (user_id, `status = 'pending'`, `due_date <= ate`) e a
  * direcao sai do tipo da REGRA, nao da ocorrencia -- conta avulsa nao tem regra
- * e e despesa, que e a leitura de la. O defeito proprio dela esta medido e
- * continua: a MINHA linha de grupo entra CHEIA (R$ 1.000 onde o grupo cobra
- * R$ 300). E a HMO-306, e ela nao e desta issue.
+ * e e despesa, que e a leitura de la.
+ *
+ * `parteConfiguradaDoMembro` E IMPORTADO, como o resto deste arquivo: uma
+ * divisao reescrita aqui mediria a reescrita. E o que prova que a ROTA chama a
+ * funcao e `npm run check-fatura-escolhida`, que exige a chamada no fonte dela
+ * -- esta medicao prova a conta, nao a fiacao.
  */
-function controleNegativoDoSafeToSpend() {
+function leituraDoSafeToSpend(pesos) {
   const previstas = consultar(`
     SELECT COALESCE(json_agg(t), '[]')
       FROM (
-        SELECT s.amount, r.transaction_type::text AS tipo_da_regra
+        SELECT s.description, s.amount, s.group_id::text,
+               r.transaction_type::text AS tipo_da_regra
           FROM scheduled_transactions s
           LEFT JOIN recurring_rules r ON r.id = s.recurring_rule_id
          WHERE s.user_id = '${EU}' AND s.status = 'pending'
@@ -445,11 +513,21 @@ function controleNegativoDoSafeToSpend() {
   `);
 
   let total = 0;
+  const porDescricao = new Map();
+
   for (const p of previstas) {
+    // A MESMA sequencia da rota: a parte do membro primeiro, a direcao depois.
+    const minha = parteConfiguradaDoMembro(p.amount, p.group_id, pesos, EU);
+    porDescricao.set(p.description, (porDescricao.get(p.description) ?? 0) + minha);
     if (p.tipo_da_regra === "income") continue;
-    total += Number(p.amount);
+    total += minha;
   }
-  return { total: Number(total.toFixed(2)), quantidade: previstas.length };
+
+  return {
+    total: Number(total.toFixed(2)),
+    quantidade: previstas.length,
+    porDescricao,
+  };
 }
 
 // =============================================================================
@@ -460,7 +538,7 @@ const { painel, previstas } = leituraDoPainel(pesos);
 const { resumo, linhas: linhasDaDespesa } = leituraDaTelaDeDespesas(pesos);
 const fechamento = leituraDoFechamento(pesos);
 const summary = leituraDoSummary(pesos);
-const safeToSpend = controleNegativoDoSafeToSpend();
+const safeToSpend = leituraDoSafeToSpend(pesos);
 
 /**
  * O que uma descricao contribuiu para o painel -- LIDO DO DETALHE.
@@ -485,6 +563,15 @@ const naTelaDeDespesas = (descricao) =>
     .filter((l) => l.descricao === descricao)
     .reduce((s, l) => s + Math.abs(l.valor), 0);
 
+/**
+ * O que uma descricao vale DENTRO do safe-to-spend (HMO-306).
+ *
+ * Descricao ausente vale R$ 0,00, e esse zero e uma AFIRMACAO e nao um buraco:
+ * ele e como a medicao cobra que a conta de grupo do OUTRO membro continue fora
+ * desta leitura. O filtro de `user_id` da rota e o que o produz.
+ */
+const noSafeToSpend = (descricao) => safeToSpend.porDescricao.get(descricao) ?? 0;
+
 /** O que a fatura sintetizada somou -- a segunda metade de (b). */
 const faturaAberta = previstas.reduce((s, f) => s + f.amount, 0);
 
@@ -494,6 +581,20 @@ const faturaAberta = previstas.reduce((s, f) => s + f.amount, 0);
 // Eles nao sao derivados de nada. Se alguem mexer no fixture e os numeros
 // mudarem, este arquivo REPROVA e o conserto e decidir qual dos dois esta certo
 // -- nunca copiar o que o codigo imprimiu.
+//
+// `safe` E `safeEsperado` SAO A QUARTA LEITURA (HMO-306), E ELA NAO ENTRA NO
+// `par`. O `par` compara as duas leituras do «Total de contas», e o
+// safe-to-spend nao e uma delas: ele responde "quanto posso gastar", filtra por
+// `user_id` e nao chama `classeDaAgenda`. Entao ele tem uma coluna de esperado
+// PROPRIA, e e justamente onde os dois numeros DIVERGEM do «Total de contas»
+// que a divergencia fica anotada em vez de ser escondida numa media:
+//
+//   (a) R$ 500,00 de transferencia -- o safe-to-spend desconta, as duas telas
+//       nao. A pergunta dele e caixa;
+//   (d) do outro membro: R$ 0,00 -- o filtro de `user_id` fica, e a parte dele
+//       e contada pela carteira dele;
+//   (d) a minha: R$ 300,00 -- o numero do «Pronto quando» desta issue, e o
+//       MESMO que as outras tres leituras dao.
 const LINHAS = [
   {
     mecanismo: "(a)",
@@ -503,6 +604,8 @@ const LINHAS = [
     tela: naTelaDeDespesas("Reserva na poupanca"),
     cobrado: null,
     esperado: 0,
+    safe: noSafeToSpend("Reserva na poupanca"),
+    safeEsperado: 500,
     nota:
       "guardar na poupança não é conta a pagar, e saiu do «Total de contas» " +
       "(`classeDaAgenda`). O bloco «A vencer» CONTINUA somando, porque a " +
@@ -516,9 +619,16 @@ const LINHAS = [
     tela: naTelaDeDespesas("Aluguel da casa") + naTelaDeDespesas("Internet da casa"),
     cobrado: fechamento.meusCentavos / 100,
     esperado: 1200,
+    // O safe-to-spend ve SO a minha metade de (c): a linha do outro membro nao
+    // passa pelo filtro de `user_id`, que esta issue manteve de proposito.
+    safe:
+      noSafeToSpend("Aluguel da casa") + noSafeToSpend("Internet da casa"),
+    safeEsperado: 300,
     nota:
       "30% de R$ 4.000,00. As três leituras chamam `ratearPorPeso`, então o " +
-      "número é o mesmo por construção -- e (c) = (d) + (d): 900 + 300 = 1.200",
+      "número é o mesmo por construção -- e (c) = (d) + (d): 900 + 300 = 1.200. " +
+      "O safe-to-spend desconta só a minha metade (R$ 300,00): a conta do outro " +
+      "membro já sai da carteira dele",
   },
   {
     mecanismo: "(d)",
@@ -530,10 +640,16 @@ const LINHAS = [
       (fechamento.porDespesa.find((d) => d.descricao === "Aluguel da casa")
         ?.minha ?? 0) / 100,
     esperado: 900,
+    // R$ 0,00 E A AFIRMACAO desta issue: a linha do outro membro continua FORA
+    // do safe-to-spend. Se o filtro de `user_id` da rota caisse, este numero
+    // viraria R$ 900,00 e a medicao REPROVA.
+    safe: noSafeToSpend("Aluguel da casa"),
+    safeEsperado: 0,
     nota:
       "a tela de Despesas passou a LISTAR a linha do outro membro (o `OR` da " +
       "consulta, que é o ramo que a policy do 005 já liberava), com rótulo e " +
-      "sem botão",
+      "sem botão. No safe-to-spend ela continua FORA: a pergunta é quanto EU " +
+      "posso gastar, e os R$ 900,00 dele já saem da carteira dele",
   },
   {
     mecanismo: "(d)",
@@ -545,9 +661,15 @@ const LINHAS = [
       (fechamento.porDespesa.find((d) => d.descricao === "Internet da casa")
         ?.minha ?? 0) / 100,
     esperado: 300,
+    // O NUMERO DO «PRONTO QUANDO» DA HMO-306. Era R$ 1.000,00 (valor cheio) e
+    // passou a ser R$ 300,00 -- o mesmo que as outras tres leituras.
+    safe: noSafeToSpend("Internet da casa"),
+    safeEsperado: 300,
     nota:
       "a tela de Despesas somava CHEIO porque o `select` nem trazia `group_id`. " +
-      "Agora as duas telas tomam 30%",
+      "Agora as duas telas tomam 30% -- e o safe-to-spend também (HMO-306): " +
+      "era R$ 1.000,00 cheios ali, e a quarta leitura passou a dar o mesmo " +
+      "R$ 300,00 que as três primeiras",
   },
 ];
 
@@ -576,13 +698,15 @@ const DISCORDANCIA_CONHECIDA = {
   esperadoCobrado: 800,
 };
 
+const LARGURA = 136;
+
 console.log("");
-console.log("=".repeat(114));
-console.log('HMO-298/303 -- AS TRES LEITURAS DO "TOTAL DE CONTAS", MEDIDAS');
+console.log("=".repeat(LARGURA));
+console.log('HMO-298/303/306 -- AS QUATRO LEITURAS DO "TOTAL DE CONTAS", MEDIDAS');
 console.log(
   `Postgres local, migrations 001->042, RLS ligada. Mês ${JANELA.de} a ${JANELA.ate}, hoje congelado em ${HOJE}.`
 );
-console.log("=".repeat(114));
+console.log("=".repeat(LARGURA));
 console.log("");
 
 const col = (s, n) => String(s).padEnd(n).slice(0, n);
@@ -592,9 +716,11 @@ console.log(
     col("painel", 14) +
     col("tela Despesas", 15) +
     col("cobrado", 14) +
-    "esperado"
+    col("esperado", 14) +
+    col("safe-to-spend", 15) +
+    "esp. s2s"
 );
-console.log("-".repeat(114));
+console.log("-".repeat(LARGURA));
 
 const divergentes = [];
 for (const l of LINHAS) {
@@ -605,8 +731,12 @@ for (const l of LINHAS) {
   // absoluto deixaria passar uma leitura certa ao lado de uma errada que a
   // tabela nao olha.
   const bateOEsperado = bate(l[a], l.esperado) && bate(l[b], l.esperado);
-  if (!parConcorda || !bateOEsperado) {
-    divergentes.push({ ...l, parConcorda, bateOEsperado });
+  // A QUARTA LEITURA tem esperado PROPRIO (ver o comentario de `LINHAS`): ela
+  // nao responde a mesma pergunta das outras tres, e exigir que ela batesse com
+  // `esperado` reprovaria o comportamento CERTO de (a) e de (d)-do-outro.
+  const bateOSafe = bate(l.safe, l.safeEsperado);
+  if (!parConcorda || !bateOEsperado || !bateOSafe) {
+    divergentes.push({ ...l, parConcorda, bateOEsperado, bateOSafe });
   }
   console.log(
     col(l.mecanismo, 5) +
@@ -614,17 +744,21 @@ for (const l of LINHAS) {
       col(brl(l.painel), 14) +
       col(brl(l.tela), 15) +
       col(brl(l.cobrado), 14) +
-      `${brl(l.esperado)}  ${parConcorda && bateOEsperado ? "ok" : "REPROVA"}`
+      col(brl(l.esperado), 14) +
+      col(brl(l.safe), 15) +
+      `${brl(l.safeEsperado)}  ${
+        parConcorda && bateOEsperado && bateOSafe ? "ok" : "REPROVA"
+      }`
   );
 }
 
-console.log("-".repeat(114));
+console.log("-".repeat(LARGURA));
 console.log("");
 for (const l of LINHAS) console.log(`  ${l.mecanismo} ${l.caso}\n      ${l.nota}\n`);
 
-console.log("=".repeat(114));
+console.log("=".repeat(LARGURA));
 console.log("A DISCORDANCIA CONHECIDA E ANOTADA -- (b), que a HMO-305 conserta");
-console.log("=".repeat(114));
+console.log("=".repeat(LARGURA));
 console.log(
   `  painel ${brl(DISCORDANCIA_CONHECIDA.painel)} × tela ${brl(
     DISCORDANCIA_CONHECIDA.tela
@@ -641,9 +775,9 @@ console.log(
 );
 console.log("");
 
-console.log("=".repeat(114));
+console.log("=".repeat(LARGURA));
 console.log("OS TOTAIS DO MÊS");
-console.log("=".repeat(114));
+console.log("=".repeat(LARGURA));
 console.log(
   `  Salário Previsto (painel)        ${brl(painel.salario_previsto.total)}  (${painel.salario_previsto.quantidade} linha(s))`
 );
@@ -673,9 +807,9 @@ console.log(
 );
 console.log("");
 
-console.log("=".repeat(114));
+console.log("=".repeat(LARGURA));
 console.log("O ITEM 7 -- O QUE MUDA FORA DO PAINEL, E O QUE NAO PODE MUDAR");
-console.log("=".repeat(114));
+console.log("=".repeat(LARGURA));
 console.log(
   `  /api/scheduled-transactions/summary  previsto de despesa  ${brl(summary.previstoDespesas)}`
 );
@@ -683,7 +817,12 @@ console.log(
   `                                       custo fixo mensal    ${brl(summary.custoFixoMensal)}`
 );
 console.log(
-  `  /api/safe-to-spend (CONTROLE NEGATIVO)                    ${brl(safeToSpend.total)}  (${safeToSpend.quantidade} linha(s))`
+  `  /api/safe-to-spend (QUARTA LEITURA)                       ${brl(safeToSpend.total)}  (${safeToSpend.quantidade} linha(s))`
+);
+console.log(
+  `                                       antes da HMO-306     ${brl(
+    SAFE_TO_SPEND_ANTES_DA_306
+  )}  (a MINHA conta de grupo entrava CHEIA)`
 );
 console.log("");
 
@@ -720,7 +859,12 @@ for (const d of divergentes) {
     `  ${d.mecanismo} ${d.caso}\n` +
       `      ${a} ${brl(d[a])} × ${b} ${brl(d[b])}, esperado ${brl(d.esperado)}` +
       (d.parConcorda ? "" : "  [o PAR discorda]") +
-      (d.bateOEsperado ? "" : "  [nao bate com o valor digitado]")
+      (d.bateOEsperado ? "" : "  [nao bate com o valor digitado]") +
+      (d.bateOSafe
+        ? ""
+        : `\n      safe-to-spend ${brl(d.safe)}, esperado ${brl(
+            d.safeEsperado
+          )}  [a QUARTA leitura nao bate -- HMO-306]`)
   );
 }
 
@@ -783,17 +927,32 @@ if (!bate(somaDasDuasFaces, deC)) {
   );
 }
 
-// O CONTROLE NEGATIVO. Ele e o unico numero desta medicao que tem de ficar
-// PARADO, e por isso ele e o mais valioso: se o safe-to-spend se mexeu, o
-// conserto da HMO-303 escapou do escopo declarado.
-const SAFE_TO_SPEND_ESPERADO = 8500;
+// A QUARTA LEITURA, NO TOTAL (HMO-306). Os tres numeros estao declarados no
+// topo do arquivo, com a aritmetica deles escrita; aqui eles sao COBRADOS.
+//
+// A identidade primeiro: os tres valem mais juntos do que separados. Sem ela,
+// alguem que mudasse o fixture e ajustasse `SAFE_TO_SPEND_ESPERADO` para o que
+// o codigo imprimiu deixaria o "antes" e a diferenca contando outra historia,
+// e o controle ficaria verde sobre uma conta que nao fecha.
+if (
+  SAFE_TO_SPEND_ANTES_DA_306 - DIFERENCA_DA_PARTE_DO_GRUPO !==
+  SAFE_TO_SPEND_ESPERADO
+) {
+  falhas.push(
+    `  Os tres numeros da HMO-306 nao fecham entre si: ${brl(
+      SAFE_TO_SPEND_ANTES_DA_306
+    )} - ${brl(DIFERENCA_DA_PARTE_DO_GRUPO)} ≠ ${brl(SAFE_TO_SPEND_ESPERADO)}.`
+  );
+}
+
 if (!bate(safeToSpend.total, SAFE_TO_SPEND_ESPERADO)) {
   falhas.push(
-    `  CONTROLE NEGATIVO: /api/safe-to-spend saiu ${brl(safeToSpend.total)}, esperado ${brl(
+    `  QUARTA LEITURA: /api/safe-to-spend saiu ${brl(safeToSpend.total)}, esperado ${brl(
       SAFE_TO_SPEND_ESPERADO
     )}.\n` +
-      `      Ela nao chama nenhuma das funcoes que a HMO-303 mexeu. Se este numero mudou,\n` +
-      `      o conserto saiu do escopo -- ou a HMO-306 entrou e este valor precisa ser revisto.`
+      `      Antes da HMO-306 ela saia ${brl(SAFE_TO_SPEND_ANTES_DA_306)}, descontando a MINHA conta\n` +
+      `      de grupo CHEIA. Se ela voltou a ${brl(SAFE_TO_SPEND_ANTES_DA_306)}, a rota parou de chamar\n` +
+      `      \`parteConfiguradaDoMembro\` ou perdeu o \`group_id\` do \`select\`.`
   );
 }
 
@@ -814,6 +973,10 @@ console.log(
       TRANSFERENCIA_FORA_ESPERADA.total
     )} saiu do\n` +
     `«Total de contas» COM rotulo; (b) continua discordando no valor esperado (HMO-305);\n` +
-    `e o controle negativo do safe-to-spend nao se mexeu (${brl(SAFE_TO_SPEND_ESPERADO)}).`
+    `e a QUARTA leitura (/api/safe-to-spend) bateu em ${brl(SAFE_TO_SPEND_ESPERADO)} -- a MINHA conta de\n` +
+    `grupo entrou por ${brl(300)} e nao pelos ${brl(1000)} cheios, a do outro membro ficou FORA,\n` +
+    `e o total caiu os ${brl(DIFERENCA_DA_PARTE_DO_GRUPO)} da diferenca (era ${brl(
+      SAFE_TO_SPEND_ANTES_DA_306
+    )} antes da HMO-306).`
 );
 console.log("");

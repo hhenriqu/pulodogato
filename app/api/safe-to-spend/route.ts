@@ -15,11 +15,38 @@
 // app diria que ha mais dinheiro livre do que ha -- o pior sentido para errar.
 // E best-effort de proposito: se a materializacao falhar, e melhor devolver o
 // numero com as linhas que existem do que devolver 500.
+//
+// A LINHA DE GRUPO ENTRA PELA MINHA PARTE (HMO-306)
+// -------------------------------------------------
+// Esta foi a QUARTA leitura do «Total de contas», e a ultima a ser consertada.
+// Ate a HMO-306 ela nao chamava `parteConfiguradaDoMembro` nem trazia
+// `group_id` no `select`: a minha conta de grupo de R$ 1.000,00 era descontada
+// CHEIA de um grupo que me cobra R$ 300,00. Ela subestimava o quanto se pode
+// gastar em R$ 700,00 -- errando para o lado seguro, mas por acidente: ela
+// simplesmente nao sabia que havia o que dividir.
+//
+// O FILTRO DE `user_id` NAO MUDOU, e a diferenca para a tela de Despesas e
+// deliberada. La a HMO-303 trocou `user_id = eu` por
+// `user_id = eu OR group_id IS NOT NULL`, porque LISTAR a conta que o outro
+// membro lancou e informacao que faltava. Aqui a pergunta e "quanto EU posso
+// gastar", e a parte do outro ja e contada pela parte DELE: trazer a linha
+// dele para dentro desta soma descontaria o mesmo dinheiro duas vezes, uma em
+// cada carteira.
+//
+// E O DESCONHECIDO VALE O VALOR CHEIO. Grupo cujos membros a RLS nao entregou
+// => nenhum peso => `parteConfiguradaDoMembro` devolve o valor inteiro. Aqui
+// essa regra importa mais do que em qualquer outra leitura do app: custo fixo
+// subestimado e o app PROMETENDO dinheiro que nao existe.
 
 import { createClient } from "@/utils/supabase/server";
 import { NextResponse } from "next/server";
 import { today } from "@/lib/recurrence";
 import { materializarAgenda } from "@/lib/services/scheduled";
+import {
+  montarParticipantesPorGrupo,
+  parteConfiguradaDoMembro,
+  type ParticipantesPorGrupo,
+} from "@/lib/parte-do-grupo";
 import {
   calcularQuantoPossoGastar,
   fimDoMes,
@@ -33,6 +60,12 @@ interface LinhaPrevista {
   amount: number | string;
   due_date: string;
   notes: string | null;
+  /**
+   * LOAD-BEARING (HMO-306). Sem ele nada depois daqui sabe que havia o que
+   * dividir, e a linha de grupo volta a ser descontada cheia -- sem erro, sem
+   * log e com um numero menor e plausivel na tela.
+   */
+  group_id: string | null;
   recurring_rule:
     | { transaction_type: string }
     | { transaction_type: string }[]
@@ -100,7 +133,7 @@ export async function GET() {
     const { data: previstas, error: erroPrevistas } = await supabase
       .from("scheduled_transactions")
       .select(
-        "id, amount, due_date, notes, recurring_rule:recurring_rules(transaction_type)"
+        "id, amount, due_date, notes, group_id, recurring_rule:recurring_rules(transaction_type)"
       )
       .eq("user_id", user.id)
       .eq("status", "pending")
@@ -114,6 +147,57 @@ export async function GET() {
       );
     }
 
+    // ------------------------------------------------------------------
+    // OS PESOS DO GRUPO (HMO-306)
+    // ------------------------------------------------------------------
+    // `id, user_id, percentage` SAO LOAD-BEARING, pelas mesmas tres razoes das
+    // cinco rotas da HMO-303:
+    //
+    //   * sem `percentage`, o grupo 70/30 volta a dividir IGUAL -- sem erro e
+    //     sem log, so com o numero errado;
+    //   * sem `user_id` a linha nao e participante de nada, porque
+    //     `ratearPorPeso` indexa o resultado por ele;
+    //   * sem `id` o desempate do centavo da sobra cai no fallback de
+    //     `user_id`, e duas leituras ordenadas por chaves diferentes discordam
+    //     em R$ 0,01 -- acima da tolerancia de R$ 0,004 do controle da HMO-298.
+    //
+    // `ORDER BY` NAO aparece aqui de proposito: quem fixa a ordem e
+    // `montarParticipantesPorGrupo`, uma vez e num lugar que a suite alcanca.
+    // Seis `ORDER BY` espalhados pelas consultas seriam seis lugares para
+    // esquecer, e o esquecido nao da erro nenhum -- da um centavo.
+    const gruposEnvolvidos = Array.from(
+      new Set(
+        ((previstas ?? []) as LinhaPrevista[])
+          .map((p) => p.group_id)
+          .filter((id): id is string => Boolean(id))
+      )
+    );
+
+    let pesosPorGrupo: ParticipantesPorGrupo = new Map();
+
+    if (gruposEnvolvidos.length > 0) {
+      const { data: membros, error: erroMembros } = await supabase
+        .from("group_members")
+        .select("id, group_id, user_id, percentage, status")
+        .in("group_id", gruposEnvolvidos)
+        .eq("status", "active");
+
+      if (erroMembros) {
+        // Sem os pesos, `parteConfiguradaDoMembro` mantem o valor CHEIO -- o
+        // comportamento de antes da HMO-306, que erra para CIMA. E a direcao
+        // certa do erro justamente nesta rota: um custo fixo subestimado aqui
+        // faz o app prometer dinheiro que nao sobra. Por isso tambem nao ha
+        // flag de "indisponivel" como a das metas e a das faturas: o modo de
+        // falha ja e o conservador, e nao ha afirmacao falsa a esconder.
+        console.error(
+          "Posso gastar seguiu descontando a parte do grupo CHEIA:",
+          erroMembros
+        );
+      } else {
+        pesosPorGrupo = montarParticipantesPorGrupo(membros ?? []);
+      }
+    }
+
     // A direcao (sai ou entra) vem do tipo da REGRA, nao da ocorrencia --
     // `scheduled_transactions.amount` e sempre positivo por CHECK. Mesma
     // leitura da /api/projection; conta avulsa nao tem regra e e despesa.
@@ -125,7 +209,15 @@ export async function GET() {
 
       return {
         id: p.id,
-        amount: p.amount,
+        // A MINHA PARTE, e nao o valor cheio (HMO-306). Linha fora de grupo
+        // atravessa sem mudanca: `parteConfiguradaDoMembro` devolve o valor
+        // inteiro quando `group_id` e nulo.
+        amount: parteConfiguradaDoMembro(
+          p.amount,
+          p.group_id,
+          pesosPorGrupo,
+          user.id
+        ),
         due_date: p.due_date,
         notes: p.notes,
         tipo: regra?.transaction_type === "income" ? "income" : "expense",

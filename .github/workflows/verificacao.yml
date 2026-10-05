@@ -2149,7 +2149,91 @@ jobs:
           fi
           cp "$ROTA.orig" "$ROTA"
 
-          echo "a verificacao de fatura escolhida sabe falhar nos quatro casos"
+          # ---------------------------------------------------------------
+          # 5 a 9) A FIACAO DA PARTE DO GRUPO NO "POSSO GASTAR" (HMO-306)
+          # ---------------------------------------------------------------
+          # A medicao de scripts/medicao-hmo298.mjs prova a CONTA: ela importa
+          # `parteConfiguradaDoMembro` de lib/ e monta os insumos como esta rota
+          # monta. O que ela NAO alcanca e a fiacao -- se a rota parar de chamar
+          # a funcao, a medicao continua verde, porque quem chamou foi o script.
+          # Os cinco mutantes abaixo sao as cinco formas de desligar essa fiacao,
+          # e as cinco produzem um numero plausivel sem erro de tipo e sem log.
+          #
+          # O MUTANTE 9 JA COBROU, e e a razao de os dois ultimos existirem: a
+          # primeira versao do guard exigia `.eq("user_id", user.id)` no arquivo
+          # INTEIRO e ficou VERDE depois de trocar justamente aquele filtro por
+          # um `.or(...)` -- a rota tem mais tres consultas, e duas delas filtram
+          # por dono. A assercao parecia cobrar o recorte das previstas e cobrava
+          # o das contas. Por isso o guard passou a recortar a CONSULTA
+          # (`exigidoNaConsulta`), e por isso este mutante fica.
+          # `perl -0p` E NAO `sed`, e o mutante 9 e a razao: ele troca DUAS
+          # linhas contiguas, e `sed 's###'` nao casa atravessando `\n`. Com sed
+          # aquele mutante nao casaria nada -- e um sed que nao casa SAI 0, ou
+          # seja o controle mediria a arvore intacta e ficaria verde para
+          # sempre. O `cmp` abaixo pega isso, mas o jeito de nao depender dele e
+          # usar um motor que leia o arquivo inteiro.
+          #
+          # O argumento e a expressao perl JA PRONTA, com os metacaracteres
+          # escapados na chamada. Montar a regex aqui dentro a partir de "de" e
+          # "para" exigiria escapar duas vezes, e o segundo nivel e exatamente
+          # onde uma ancora silenciosamente para de casar.
+          estragar_rota() {
+            local expr="$1" rotulo="$2"
+            perl -0pi -e "$expr" "$ROTA"
+            if cmp -s "$ROTA" "$ROTA.orig"; then
+              cp "$ROTA.orig" "$ROTA"
+              echo "::error::O sed de '$rotulo' nao casou -- o controle mediria a arvore intacta."
+              exit 1
+            fi
+            if npm run check-fatura-escolhida > /dev/null 2>&1; then
+              cp "$ROTA.orig" "$ROTA"
+              echo "::error::Verde com a fiacao desligada: $rotulo"
+              exit 1
+            fi
+            cp "$ROTA.orig" "$ROTA"
+            echo "  vermelho em: $rotulo"
+          }
+
+          # 5) A CHAMADA MORRE E O IMPORT FICA. O caso que derrubou a primeira
+          #    versao do check-cartao-pela-fatura: o nome continua "aparecendo"
+          #    no arquivo, e um guard que lesse a lista de imports aprovaria.
+          estragar_rota \
+            's/amount: parteConfiguradaDoMembro\(/amount: Number(/' \
+            'a rota para de dividir -- R$ 1.000,00 descontados de um grupo que cobra R$ 300,00'
+
+          # 6) O `group_id` SAI DO `select`. O mais silencioso dos cinco: a
+          #    chamada fica no lugar, recebe `undefined` e devolve o valor
+          #    CHEIO. Nada no `tsc` acusa, porque o campo e opcional na
+          #    assinatura da funcao.
+          estragar_rota \
+            's/notes, group_id, recurring_rule/notes, recurring_rule/' \
+            'o select perde o group_id -- a chamada fica e nao divide nada'
+
+          # 7) A CONSULTA DOS PESOS DESAPARECE. Mapa vazio e o "desconhecido" de
+          #    `parteConfiguradaDoMembro`, que devolve o valor cheio de
+          #    proposito -- a porta certa para a RLS, e a porta errada para um
+          #    bug.
+          estragar_rota \
+            's/\.from\("group_members"\)/.from("expense_groups")/' \
+            'os pesos nao sao lidos -- o mapa vazio devolve o valor cheio'
+
+          # 8) `percentage` SAI DO `select` DOS MEMBROS. Este nao da valor cheio,
+          #    e por isso e o que menos salta aos olhos: todos os pesos em zero
+          #    fazem `ratearPorPeso` cair no degrau da divisao IGUAL, e o grupo
+          #    70/30 passa a descontar R$ 500,00 onde cobra R$ 300,00.
+          estragar_rota \
+            's/"id, group_id, user_id, percentage, status"/"id, group_id, user_id, status"/' \
+            'o percentual sai do select -- o grupo 70/30 volta a dividir igual'
+
+          # 9) O RECORTE POR DONO CAI. A forma da tela de Despesas aplicada
+          #    aqui: a conta do outro membro entra na MINHA conta de "quanto
+          #    posso gastar", e os R$ 900,00 dele sao descontados duas vezes --
+          #    uma em cada carteira.
+          estragar_rota \
+            's/\.eq\("user_id", user\.id\)\n(\s+\.eq\("status", "pending"\))/.or("user_id.eq." + user.id + ",group_id.not.is.null")\n$1/' \
+            'o filtro de user_id cai -- a conta do outro membro entra na minha'
+
+          echo "a verificacao de fatura escolhida sabe falhar nos nove casos"
 
       - name: 'A arvore voltou ao lugar depois de "A verificacao sabe falhar (fatura escolhida)"'
         run: |
