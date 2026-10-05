@@ -368,6 +368,63 @@ const TEXTOS_DO_CARTAO = {
   ROTULO_DAS_DESPESAS: constanteDaLib("ROTULO_DAS_DESPESAS"),
 };
 
+/**
+ * `fraseDasTransferenciasFora` (HMO-303) -- A FUNCAO, lida da lib compilada.
+ *
+ * NAO E ESBOCO, pela regra que vale para as tres constantes acima: a frase e
+ * TEXTO QUE A TELA MOSTRA, e e ela que as assercoes do caso I leem. Marcada, cada
+ * uma delas mediria a mentira escrita nesta sonda -- e a frase e justamente o que
+ * torna «Total de contas» menor que o «A vencer» um conserto em vez de um segundo
+ * defeito.
+ *
+ * E ela CABE aqui, ao contrario de `formatCurrency`: nao importa nada e nao chama
+ * nada da lib, entao nao arrasta os oito modulos de aritmetica para dentro da
+ * pagina. Funcao auto-contida e o unico caso em que extrair sai mais barato que
+ * esbocar.
+ *
+ * A extracao casa `export function <nome>(` e vai ate o `}` na COLUNA ZERO -- o
+ * formato que o `tsc` deste projeto emite. Se parar de casar, ela ESTOURA aqui em
+ * vez de deixar um `undefined` na pagina: `undefined` ali derruba o render inteiro
+ * do painel, e TODOS os casos reprovam com "achar(...) e null" -- o que nao se le
+ * como "a extracao quebrou". Foi exatamente esse o sintoma quando o
+ * `PainelDePapel` passou a importar esta funcao e a sonda ainda nao a injetava.
+ */
+const funcaoDaLib = (nome) => {
+  const inicio = FONTE_DA_LIB.indexOf(`export function ${nome}(`);
+  if (inicio < 0) {
+    throw new Error(
+      `a funcao ${nome} nao esta em lib/papel-de-pao.js como \`export function\`.\n` +
+        "A sonda injeta o corpo dela na pagina; ajuste a extracao ou o nome."
+    );
+  }
+  const fim = FONTE_DA_LIB.indexOf("\n}", inicio);
+  if (fim < 0) {
+    throw new Error(`a funcao ${nome} nao termina com um \`}\` na coluna zero.`);
+  }
+  return FONTE_DA_LIB.slice(inicio, fim + 2).replace(/^export /, "");
+};
+
+const FONTE_DA_FRASE = funcaoDaLib("fraseDasTransferenciasFora");
+
+/**
+ * A MESMA fonte, tambem chamavel daqui -- e o oraculo do caso I.
+ *
+ * O texto esperado nao e um literal copiado para as assercoes: um literal passa
+ * verde no dia em que a frase muda na lib e a TELA deixa de mostrar a nova. Com
+ * o oraculo saindo da mesma fonte que a pagina recebeu, o que a assercao mede e
+ * o caminho inteiro -- o componente chamar a funcao, com o campo certo, e o
+ * resultado chegar no DOM.
+ *
+ * `new Function` e nao `import`: a lib compilada por este tsconfig ainda tem os
+ * `@/...` nos imports (esta suite nao roda o resolve-aliases.mjs), entao
+ * importa-la daqui estouraria em "module not found". A funcao e auto-contida --
+ * e por isso ela cabe nos dois lados.
+ */
+const FRASE_DE_FORA = new Function(
+  "fora",
+  `${FONTE_DA_FRASE}\nreturn fraseDasTransferenciasFora(fora);`
+);
+
 /** O React UMD, inline: `<script src>` entre arquivos file:// e outra briga. */
 const umd = (pacote, arquivo) =>
   readFileSync(join("node_modules", pacote, "umd", arquivo), "utf8");
@@ -464,6 +521,10 @@ const TITULO_SEM_RESPOSTA = ${JSON.stringify(TEXTOS_DO_CARTAO.TITULO_SEM_RESPOST
 const ROTULO_DAS_RECEITAS = ${JSON.stringify(TEXTOS_DO_CARTAO.ROTULO_DAS_RECEITAS)};
 const ROTULO_DAS_DESPESAS = ${JSON.stringify(TEXTOS_DO_CARTAO.ROTULO_DAS_DESPESAS)};
 
+// --- a frase da HMO-303, o CORPO da funcao lido da lib compilada -------------
+// Ver \`funcaoDaLib\` no .mjs: nao e esboco porque o caso I le o texto dela.
+${FONTE_DA_FRASE}
+
 /**
  * O \`fetch\` do painel: por padrao TRAVADO, e trocavel por caso.
  *
@@ -500,7 +561,7 @@ const mesDoPedido = (url) => {
  * sonda fabrica o caso "a resposta chegou de outro mes" (cache do PWA, rota que
  * nao reconheceu o parametro) e mede que a tela NAO a pinta.
  */
-const respostaDaRota = (month, salario, contas, cartao, detalhe) => ({
+const respostaDaRota = (month, salario, contas, cartao, detalhe, fora) => ({
   ok: true,
   status: 200,
   json: () =>
@@ -521,6 +582,12 @@ const respostaDaRota = (month, salario, contas, cartao, detalhe) => ({
         total: contas,
         quantidade: 1,
         detalhe: detalhe && detalhe.contas,
+        // A contagem lateral da HMO-303. \`undefined\` nao vira campo nenhum
+        // depois do \`JSON\`, e e assim que o corpo de 24h atras -- a rota de
+        // ANTES desta issue, guardada pelo cache do PWA -- e fabricado: sem o
+        // campo, o cartao tem de ficar sem frase. Frase de R$ 0,00 ali seria o
+        // app afirmando que nao deixou nada de fora, que e falso.
+        transferencias_fora: fora,
       },
       // \`undefined\` nao vira campo nenhum depois do \`JSON\`, e e assim que o
       // caso do corpo VELHO (cache do PWA, 24h nas rotas /api/) e fabricado.
@@ -922,6 +989,14 @@ const montarPainel = async (raiz) => {
           controla: el.getAttribute("aria-controls"),
         })
       ),
+      // AS NOTAS -- a linha pequena DEBAIXO do numero (HMO-303). Lista VAZIA e
+      // uma leitura legitima e e o que o caso I exige do mes sem transferencia:
+      // a frase nao existe no DOM, em vez de existir vazia.
+      notas: Array.from(caixa.querySelectorAll("[data-nota]")).map((el) => ({
+        id: el.getAttribute("id"),
+        cartao: el.getAttribute("data-nota"),
+        texto: el.textContent,
+      })),
       // E as LISTAS abertas. A lista fechada nao existe no DOM de proposito
       // (ver o comentario de \`NumeroGrande\`): com \`hidden\` ela continuaria no
       // \`textContent\`, e "abrir mostra as linhas" ficaria verde com a seta
@@ -1115,6 +1190,50 @@ semCampo.desmontar();
 const soContas = await comDetalhe("raiz-h", { contas: DETALHE_DAS_CONTAS });
 r.h_so_contas = soContas.ler();
 soContas.desmontar();
+
+// =============================================================================
+// CASO I -- A FRASE DO QUE FICOU DE FORA (HMO-303)
+// =============================================================================
+// «Total de contas» deixou de somar a transferencia agendada, e o bloco «A
+// vencer» CONTINUA somando: as duas telas passam a discordar em R$ 500,00, de
+// proposito. A frase e o que torna isso um conserto em vez de um segundo
+// defeito -- sem ela quem conferir na mao acha R$ 500 faltando e conclui que o
+// app perdeu uma conta.
+//
+// Isto mora aqui, e nao numa suite de render, porque o que se mede e o DOM: a
+// frase existir ou NAO EXISTIR no documento, e debaixo de QUAL cartao. O texto
+// dela vem de \`fraseDasTransferenciasFora\` lida da lib compilada (ver
+// \`funcaoDaLib\`), entao nenhuma assercao daqui pode passar verde por um texto
+// escrito nesta sonda.
+//
+//   I1  uma transferencia  -> a frase, no singular, SO no cartao das contas
+//   I2  duas               -> o plural e a quantidade
+//   I3  campo AUSENTE      -> NENHUMA nota no DOM (o corpo de 24h atras)
+//   I4  quantidade ZERO    -> idem: o mes sem transferencia cala
+
+const comFora = async (raiz, fora) => {
+  pedidos.length = 0;
+  respondeFetch = (url) =>
+    Promise.resolve(
+      respostaDaRota(
+        mesDoPedido(url),
+        7000,
+        2500.9,
+        CARTAO_QUE_SOBRA,
+        { salario: DETALHE_DO_SALARIO, contas: DETALHE_DAS_CONTAS },
+        fora
+      )
+    );
+  const painel = await montarPainel(raiz);
+  const lido = painel.ler();
+  painel.desmontar();
+  return lido;
+};
+
+r.i_uma = await comFora("raiz-h", { total: 500, quantidade: 1 });
+r.i_duas = await comFora("raiz-h", { total: 1300.5, quantidade: 2 });
+r.i_sem_campo = await comFora("raiz-h", undefined);
+r.i_zero = await comFora("raiz-h", { total: 0, quantidade: 0 });
 
 alvoResultado();
 } catch (e) {
@@ -1969,6 +2088,67 @@ test("H5: o TERCEIRO cartao nunca tem seta -- nem com a lista cheia", () => {
   assert.equal(resultado.h_fechado.chevrons.length, 2);
   assert.equal(resultado.h_contas_aberto.chevrons.length, 2);
   assert.equal(resultado.h_fechado.parcelas.length, 1);
+});
+
+// -----------------------------------------------------------------------------
+// CASO I -- A FRASE DO QUE FICOU DE FORA (HMO-303)
+// -----------------------------------------------------------------------------
+// O texto esperado NAO esta escrito aqui como literal solto: ele sai da MESMA
+// funcao que a tela chama, lida da lib compilada (`funcaoDaLib` no cabecalho da
+// pagina). Um literal copiado passaria verde no dia em que a frase mudasse na lib
+// e a tela deixasse de mostrar a nova.
+
+test("I1: uma transferencia -- a frase aparece, e SO no cartao das contas", () => {
+  const notas = resultado.i_uma.notas;
+  assert.equal(notas.length, 1, "a frase tem de existir uma vez, e so uma");
+  assert.equal(notas[0].id, "papel-contas-nota");
+  assert.equal(notas[0].cartao, "Total de contas");
+  assert.equal(
+    notas[0].texto,
+    FRASE_DE_FORA({ total: 500, quantidade: 1 }),
+    "o texto na tela tem de ser o que a lib produz"
+  );
+  // E ela diz o VALOR: sem o numero, "algo ficou de fora" nao deixa ninguem
+  // fechar a conta na mao, que e o unico uso que esta linha tem.
+  assert.ok(
+    notas[0].texto.includes("500,00"),
+    `a frase nao diz o valor: ${notas[0].texto}`
+  );
+  // CONTROLE: o cartao do salario NAO ganhou nota. Sem isto, "existe uma nota"
+  // ficaria verde com a frase debaixo do numero errado.
+  assert.ok(!notas.some((n) => n.id === "papel-salario-nota"));
+});
+
+test("I2: duas transferencias -- o plural e a quantidade chegam na tela", () => {
+  const notas = resultado.i_duas.notas;
+  assert.equal(notas.length, 1);
+  assert.equal(notas[0].texto, FRASE_DE_FORA({ total: 1300.5, quantidade: 2 }));
+  assert.ok(
+    notas[0].texto.includes("2 transferências"),
+    `a frase nao diz a quantidade: ${notas[0].texto}`
+  );
+  // E a NEGACAO do singular: "1 transferências" num painel que existe para ser
+  // simples e o detalhe que faz a pessoa desconfiar do numero ao lado.
+  assert.notEqual(notas[0].texto, resultado.i_uma.notas[0].texto);
+});
+
+test("I3/I4: FALHA FECHADO -- campo ausente e zero nao poem nota no DOM", () => {
+  // O corpo de 24h atras (o cache do PWA no dia do deploy) nao tem o campo. A
+  // tela tem de ficar como era, e nao afirmar "fora: R$ 0,00" -- que seria o app
+  // dizendo que nao deixou nada de fora.
+  assert.deepEqual(resultado.i_sem_campo.notas, []);
+  // E o mes sem transferencia nenhuma: linha nova em todo mes vazio e ruido, e
+  // ruido num painel treina a pessoa a nao ler o painel.
+  assert.deepEqual(resultado.i_zero.notas, []);
+  // O CONTROLE de que os quatro casos mediram a MESMA tela: os tres cartoes
+  // continuam lá nos quatro, com e sem frase.
+  for (const caso of ["i_uma", "i_duas", "i_sem_campo", "i_zero"]) {
+    assert.equal(
+      resultado[caso].textoDosCartoes.length,
+      3,
+      `${caso} nao montou os tres cartoes`
+    );
+  }
 });
 
 // -----------------------------------------------------------------------------

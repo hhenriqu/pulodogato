@@ -60,6 +60,7 @@ const {
   TITULO_SEM_RESPOSTA,
   ROTULO_DAS_RECEITAS,
   ROTULO_DAS_DESPESAS,
+  fraseDasTransferenciasFora,
 } = await import("../.tmp-papel-de-pao/lib/papel-de-pao.js");
 
 // A funcao que a ROTA usa para decidir se materializa, e de onde a rota a pega
@@ -82,8 +83,6 @@ const MORADIA = "22222222-2222-2222-2222-222222222222";
 const SERVICOS = "33333333-3333-3333-3333-333333333333";
 
 const GRUPO_CASA = "99999999-9999-9999-9999-999999999999";
-/** O grupo Casa tem duas pessoas: metade de cada conta e minha. */
-const MEMBROS = new Map([[GRUPO_CASA, 2]]);
 
 // AS DUAS PESSOAS DO GRUPO CASA (HMO-300). A policy do 005 libera
 // `group_id IS NOT NULL AND is_group_member(group_id)`, entao a leitura da rota
@@ -92,6 +91,34 @@ const MEMBROS = new Map([[GRUPO_CASA, 2]]);
 // campo nao mediria nada.
 const EU = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const OUTRO = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+
+// O INSUMO DEIXOU DE SER UMA CONTAGEM (HMO-303).
+//
+// `ContextoDoPapel.pesosPorGrupo` leva QUEM participa e com que peso, porque a
+// soma dos pesos e o denominador de `ratearPorPeso`: uma contagem nao sabe dizer
+// qual fracao e a minha num grupo 70/30. A troca aconteceu nestas tres linhas, e
+// nao nas assercoes -- os casos abaixo que diziam "metade" continuam dizendo
+// metade, agora por peso 50/50 em vez de "duas pessoas".
+/** O grupo Casa dividido IGUAL: metade de cada conta e minha. */
+const PESOS = new Map([
+  [
+    GRUPO_CASA,
+    [
+      { user_id: EU, peso: 50 },
+      { user_id: OUTRO, peso: 50 },
+    ],
+  ],
+]);
+/** O MESMO grupo configurado 70/30, com os 30% meus -- o caso da HMO-303. */
+const PESOS_70_30 = new Map([
+  [
+    GRUPO_CASA,
+    [
+      { user_id: OUTRO, peso: 70 },
+      { user_id: EU, peso: 30 },
+    ],
+  ],
+]);
 
 /** A conta previsivel: so o salario e so uma conta. Serve de controle. */
 const LINHAS_DO_PAR = [
@@ -288,7 +315,7 @@ const FATURA_ABERTA = {
 
 const ctx = {
   janela: JANELA,
-  membrosAtivosPorGrupo: MEMBROS,
+  pesosPorGrupo: PESOS,
   categoriasDeSalario: [SALARIO],
   // QUEM ESTA OLHANDO. Sem ele `posso_editar` cai para `false` em toda linha,
   // e e esse o caso negativo mais abaixo.
@@ -388,12 +415,12 @@ const FIXTURES_DO_DETALHE = [
   [
     "a mesma linha de grupo, com TRES membros (a parte muda, a soma segue)",
     LINHAS.filter((l) => l.group_id != null),
-    { ...ctx, membrosAtivosPorGrupo: new Map([[GRUPO_CASA, 3]]) },
+    { ...ctx, pesosPorGrupo: new Map([[GRUPO_CASA, [{ user_id: EU, peso: 1 }, { user_id: OUTRO, peso: 1 }, { user_id: "cccccccc-cccc-cccc-cccc-cccccccccccc", peso: 1 }]]]) },
   ],
   [
     "grupo sem contagem de membros -- o valor cheio, que erra para cima",
     LINHAS.filter((l) => l.group_id != null),
-    { ...ctx, membrosAtivosPorGrupo: new Map() },
+    { ...ctx, pesosPorGrupo: new Map() },
   ],
   ["o mes vazio", [], ctx],
   [
@@ -1092,9 +1119,64 @@ test("a linha de grupo entra pela MINHA parte, nao pelo valor cheio", () => {
   // total de contas de quem nao cadastrou nada.
   const semMapa = painelDePapel(doGrupo, {
     ...ctx,
-    membrosAtivosPorGrupo: new Map(),
+    pesosPorGrupo: new Map(),
   });
   assert.equal(semMapa.total_de_contas.total, 3000);
+});
+
+test("o painel cobra o PERCENTUAL configurado, e nao a divisao igual (HMO-303)", () => {
+  const doGrupo = [
+    {
+      due_date: "2026-03-28",
+      amount: 3000,
+      status: "pending",
+      direction: "expense",
+      category_id: MORADIA,
+      group_id: GRUPO_CASA,
+    },
+  ];
+
+  // O MESMO grupo, as MESMAS duas pessoas, a MESMA conta de R$ 3.000. A unica
+  // diferenca e o peso configurado -- e e por isso que este caso mede o
+  // mecanismo e nao a aritmetica: 1.500 era o numero que a divisao igual dava, e
+  // e exatamente o numero errado que a pessoa de 30% via na tela.
+  const setentaTrinta = painelDePapel(doGrupo, {
+    ...ctx,
+    pesosPorGrupo: PESOS_70_30,
+  });
+  assert.deepEqual(soNumero(setentaTrinta.total_de_contas), {
+    total: 900,
+    quantidade: 1,
+  });
+
+  // E CONTROLE: a ordem da lista nao pode mudar o numero. `ratearPorPeso` manda
+  // o centavo que sobra para o maior resto e desempata pelo MENOR INDICE, entao
+  // duas leituras que montassem a lista em ordens diferentes discordariam em
+  // R$ 0,01 -- e a tolerancia da medicao da HMO-298 e R$ 0,004. Aqui a conta
+  // fecha redonda, mas a assercao existe para o dia em que nao fechar.
+  const ordemTrocada = painelDePapel(doGrupo, {
+    ...ctx,
+    pesosPorGrupo: new Map([
+      [
+        GRUPO_CASA,
+        [
+          { user_id: EU, peso: 30 },
+          { user_id: OUTRO, peso: 70 },
+        ],
+      ],
+    ]),
+  });
+  assert.equal(
+    ordemTrocada.total_de_contas.total,
+    setentaTrinta.total_de_contas.total
+  );
+
+  // A LINHA CONTINUA ROTULADA. O rotulo e o que torna a conta de R$ 900 que a
+  // pessoa nao lancou distinguivel de um bug -- e so depois desta issue ele diz
+  // a verdade: antes ele dizia "minha parte" sobre 50% de um grupo 70/30.
+  const [linha] = setentaTrinta.total_de_contas.detalhe;
+  assert.equal(linha.valor, 900);
+  assert.ok(linha.de_grupo, "a linha de grupo tem de vir rotulada");
 });
 
 // ---------------------------------------------------------------------------
@@ -1845,5 +1927,113 @@ test("a fatura da lista aponta para o cartao NAQUELE MES", () => {
     CODIGO_DO_PAINEL,
     /caminhoDoCartaoNoMes\(linha\.fatura\.accountId,\s*linha\.fatura\.mes\)/,
     "o painel nao monta o link da fatura por caminhoDoCartaoNoMes(accountId, mes)"
+  );
+});
+
+// ---------------------------------------------------------------------------
+// A FRASE DO QUE FICOU DE FORA -- HMO-303
+// ---------------------------------------------------------------------------
+// «Total de contas» deixou de somar a transferencia agendada, e as duas telas
+// (o painel do modo e o bloco «A vencer») passam a discordar em R$ 500,00 no
+// fixture da medicao, DE PROPOSITO. A frase e o que torna isso um conserto em
+// vez de um segundo defeito: um valor que some sem rotulo e indistinguivel de um
+// bug, e quem conferir na mao acha R$ 500 faltando.
+
+test("a frase diz o valor e a quantidade, e o plural e CALCULADO", () => {
+  assert.equal(
+    fraseDasTransferenciasFora({ total: 500, quantidade: 1 }),
+    "fora: R$ 500,00 de transferência entre suas contas"
+  );
+  // "1 transferências" num painel que existe para ser simples e o tipo de detalhe
+  // que faz a pessoa desconfiar do numero ao lado.
+  assert.equal(
+    fraseDasTransferenciasFora({ total: 1300.5, quantidade: 2 }),
+    "fora: R$ 1.300,50 em 2 transferências entre suas contas"
+  );
+});
+
+test("FALHA FECHADO: ausente e zero terminam no mesmo `null`, nunca em R$ 0,00", () => {
+  // O campo vem da rota, e e facil de perder numa refatoracao. A direcao e a
+  // barata: sem a frase a pessoa ve um total que nao bate com o «A vencer» e nao
+  // sabe por que; com uma frase de R$ 0,00 ela ve o app AFIRMANDO que nao deixou
+  // nada de fora -- que e uma afirmacao falsa.
+  assert.equal(fraseDasTransferenciasFora(undefined), null);
+  assert.equal(fraseDasTransferenciasFora(null), null);
+  assert.equal(fraseDasTransferenciasFora({ total: 0, quantidade: 0 }), null);
+  // E o mes sem transferencia nenhuma: linha nova em todo mes vazio e ruido, e
+  // ruido num painel treina a pessoa a nao ler o painel.
+  assert.equal(fraseDasTransferenciasFora({ total: 500, quantidade: 0 }), null);
+});
+
+test("a transferencia sai do «Total de contas» E e CONTADA a parte", () => {
+  const janela = janelaDoMesCorrente("2026-03-15");
+  const linhas = [
+    {
+      due_date: "2026-03-10",
+      amount: 500,
+      status: "pending",
+      direction: "transfer",
+      category_id: null,
+      group_id: null,
+      description: "Reserva na poupança",
+    },
+    {
+      due_date: "2026-03-20",
+      amount: 200,
+      status: "pending",
+      direction: "expense",
+      category_id: SERVICOS,
+      group_id: null,
+      description: "Internet",
+    },
+  ];
+  const painel = painelDePapel(linhas, { ...ctx, janela });
+
+  // So a conta a pagar entra no total -- e a quantidade tambem, senao o chevron
+  // abriria uma lista com mais linhas do que o numero explica.
+  assert.deepEqual(soNumero(painel.total_de_contas), { total: 200, quantidade: 1 });
+  // E a contagem lateral: as linhas que a peneira recusou POR SEREM
+  // transferencia, nao por data nem por status.
+  assert.deepEqual(painel.total_de_contas.transferencias_fora, {
+    total: 500,
+    quantidade: 1,
+  });
+  // A transferencia NAO entra na lista do chevron: `soma(detalhe) === total` e a
+  // razao de o detalhe nascer dentro do laco.
+  assert.equal(painel.total_de_contas.detalhe.length, 1);
+  assert.equal(
+    painel.total_de_contas.detalhe.reduce((s, l) => s + l.valor, 0),
+    painel.total_de_contas.total
+  );
+  // E a frase que a tela escreve a partir dai.
+  assert.equal(
+    fraseDasTransferenciasFora(painel.total_de_contas.transferencias_fora),
+    "fora: R$ 500,00 de transferência entre suas contas"
+  );
+});
+
+test("mes SEM transferencia tem a contagem zerada -- e por isso a tela cala", () => {
+  const janela = janelaDoMesCorrente("2026-03-15");
+  const painel = painelDePapel(
+    [
+      {
+        due_date: "2026-03-20",
+        amount: 200,
+        status: "pending",
+        direction: "expense",
+        category_id: SERVICOS,
+        group_id: null,
+        description: "Internet",
+      },
+    ],
+    { ...ctx, janela }
+  );
+  assert.deepEqual(painel.total_de_contas.transferencias_fora, {
+    total: 0,
+    quantidade: 0,
+  });
+  assert.equal(
+    fraseDasTransferenciasFora(painel.total_de_contas.transferencias_fora),
+    null
   );
 });
