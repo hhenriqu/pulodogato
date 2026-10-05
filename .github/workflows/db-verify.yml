@@ -22,9 +22,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/parte-do-grupo-realizada.ts', 'lib/periodo-do-painel.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/acerto-em-lancamento.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/divisao-do-grupo.ts', 'lib/convite-de-grupo.ts', 'lib/fechamento-do-grupo.ts', 'lib/credito-de-grupo.ts', 'lib/parte-de-grupo-na-lista.ts', 'lib/periodo-do-grupo.ts', 'lib/divisao-configurada.ts', 'lib/dinheiro.ts', 'components/grupos/DivisaoDoGrupo.tsx', 'components/grupos/FechamentoDoMes.tsx', 'app/**/expense-groups/**', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'lib/services/scheduled.ts', 'components/movimentacoes/FormularioDeTransferencia.tsx', 'app/api/reports/cash-flow/route.ts', 'app/api/personal-finance/transactions/route.ts', 'components/grupos/PainelDoGrupo.tsx', 'types/financial.ts', '.github/workflows/db-verify.yml', 'lib/puxar-para-atualizar-dom.ts', 'components/Sidebar.tsx', 'components/PuxarParaAtualizar.tsx', 'lib/categorias.ts', 'components/movimentacoes/SeletorDeCategoria.tsx', 'components/movimentacoes/CamposDeLancamento.tsx', 'components/ui/button.tsx', 'components/ui/input.tsx', 'components/ui/label.tsx', 'components/ui/select.tsx', 'lib/utils.ts']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/parte-do-grupo-realizada.ts', 'lib/periodo-do-painel.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/acerto-em-lancamento.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/divisao-do-grupo.ts', 'lib/convite-de-grupo.ts', 'lib/papel-de-pao.ts', 'lib/telas-de-movimentacao.ts', 'lib/agenda-do-cartao.ts', 'lib/previsto-x-realizado.ts', 'scripts/medicao-*.mjs', 'scripts/medicao-*.sh', 'lib/fechamento-do-grupo.ts', 'lib/credito-de-grupo.ts', 'lib/parte-de-grupo-na-lista.ts', 'lib/periodo-do-grupo.ts', 'lib/divisao-configurada.ts', 'lib/dinheiro.ts', 'components/grupos/DivisaoDoGrupo.tsx', 'components/grupos/FechamentoDoMes.tsx', 'app/**/expense-groups/**', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'lib/services/scheduled.ts', 'components/movimentacoes/FormularioDeTransferencia.tsx', 'app/api/reports/cash-flow/route.ts', 'app/api/personal-finance/transactions/route.ts', 'components/grupos/PainelDoGrupo.tsx', 'types/financial.ts', '.github/workflows/db-verify.yml', 'lib/puxar-para-atualizar-dom.ts', 'components/Sidebar.tsx', 'components/PuxarParaAtualizar.tsx', 'lib/categorias.ts', 'components/movimentacoes/SeletorDeCategoria.tsx', 'components/movimentacoes/CamposDeLancamento.tsx', 'components/ui/button.tsx', 'components/ui/input.tsx', 'components/ui/label.tsx', 'components/ui/select.tsx', 'lib/utils.ts']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/parte-do-grupo-realizada.ts', 'lib/periodo-do-painel.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/acerto-em-lancamento.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/divisao-do-grupo.ts', 'lib/convite-de-grupo.ts', 'lib/fechamento-do-grupo.ts', 'lib/credito-de-grupo.ts', 'lib/parte-de-grupo-na-lista.ts', 'lib/periodo-do-grupo.ts', 'lib/divisao-configurada.ts', 'lib/dinheiro.ts', 'components/grupos/DivisaoDoGrupo.tsx', 'components/grupos/FechamentoDoMes.tsx', 'app/**/expense-groups/**', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'lib/services/scheduled.ts', 'components/movimentacoes/FormularioDeTransferencia.tsx', 'app/api/reports/cash-flow/route.ts', 'app/api/personal-finance/transactions/route.ts', 'components/grupos/PainelDoGrupo.tsx', 'types/financial.ts', '.github/workflows/db-verify.yml', 'lib/puxar-para-atualizar-dom.ts', 'components/Sidebar.tsx', 'components/PuxarParaAtualizar.tsx', 'lib/categorias.ts', 'components/movimentacoes/SeletorDeCategoria.tsx', 'components/movimentacoes/CamposDeLancamento.tsx', 'components/ui/button.tsx', 'components/ui/input.tsx', 'components/ui/label.tsx', 'components/ui/select.tsx', 'lib/utils.ts']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/parte-do-grupo-realizada.ts', 'lib/periodo-do-painel.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/acerto-em-lancamento.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/divisao-do-grupo.ts', 'lib/convite-de-grupo.ts', 'lib/papel-de-pao.ts', 'lib/telas-de-movimentacao.ts', 'lib/agenda-do-cartao.ts', 'lib/previsto-x-realizado.ts', 'scripts/medicao-*.mjs', 'scripts/medicao-*.sh', 'lib/fechamento-do-grupo.ts', 'lib/credito-de-grupo.ts', 'lib/parte-de-grupo-na-lista.ts', 'lib/periodo-do-grupo.ts', 'lib/divisao-configurada.ts', 'lib/dinheiro.ts', 'components/grupos/DivisaoDoGrupo.tsx', 'components/grupos/FechamentoDoMes.tsx', 'app/**/expense-groups/**', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'lib/services/scheduled.ts', 'components/movimentacoes/FormularioDeTransferencia.tsx', 'app/api/reports/cash-flow/route.ts', 'app/api/personal-finance/transactions/route.ts', 'components/grupos/PainelDoGrupo.tsx', 'types/financial.ts', '.github/workflows/db-verify.yml', 'lib/puxar-para-atualizar-dom.ts', 'components/Sidebar.tsx', 'components/PuxarParaAtualizar.tsx', 'lib/categorias.ts', 'components/movimentacoes/SeletorDeCategoria.tsx', 'components/movimentacoes/CamposDeLancamento.tsx', 'components/ui/button.tsx', 'components/ui/input.tsx', 'components/ui/label.tsx', 'components/ui/select.tsx', 'lib/utils.ts']
   workflow_dispatch:
 
 jobs:
@@ -1389,6 +1389,118 @@ jobs:
       # morto diante da regex, e a conclusao foi apagar a guarda do modulo.
       - name: O fechamento do mes soma previsto com realizado e rateia exato
         run: npm run test:fechamento-do-grupo
+
+      # HMO-298/303 -- A MEDICAO DAS TRES LEITURAS DO «TOTAL DE CONTAS».
+      #
+      # Ela constroi um Postgres PROPRIO (dropdb/createdb do banco `hmo298`),
+      # aplica as migrations reais, carrega o fixture e IMPORTA as tres leituras
+      # de lib/ -- `painelDePapel`, `linhasDaTela`/`resumoDaTela` e
+      # `ratearPorPeso`. Nao reescreve conta nenhuma: uma tabela construida
+      # sobre uma reimplementacao mediria a reimplementacao.
+      #
+      # Na HMO-298 este script existia para provar que as tres DISCORDAVAM
+      # (painel R$ 4.100 x tela R$ 2.600, R$ 1.500 de diferenca). Depois do
+      # conserto da HMO-303 ele cobra o contrario, e cobra DUAS coisas por
+      # linha, porque igualdade sozinha nao e controle -- um bug que zerasse as
+      # tres leituras passaria verde:
+      #
+      #   1. as colunas do par concordam (tolerancia R$ 0,004); e
+      #   2. batem com um valor ABSOLUTO digitado no script -- R$ 0,00 na
+      #      transferencia, R$ 900,00 / R$ 300,00 nas duas contas de grupo,
+      #      R$ 1.200,00 na parte do mes e R$ 2.800,00 nos dois totais.
+      #
+      # E (c) = (d) + (d): 900 + 300 = 1.200. Essa identidade e o que torna a
+      # medicao mais do que um teste de igualdade.
+      #
+      # Ele tambem cobra o que NAO pode mudar: o /api/safe-to-spend sai
+      # R$ 8.500,00 antes e depois, porque nao chama nenhuma das duas funcoes
+      # trocadas. Se esse numero se mexer, o conserto escapou do escopo.
+      #
+      # Nao abre job novo -- o custo de CI deste projeto e o NUMERO de jobs.
+      - name: As tres leituras do «Total de contas» concordam em R$ 2.800,00
+        run: npm run test:medicao-hmo298
+
+      # Controle negativo da medicao acima.
+      #
+      # "As tres leituras concordam" e uma afirmacao que fica verde tambem
+      # quando o script deixa de medir: um erro no caminho da mutacao, uma
+      # ancora que outra issue reescreveu, um `bate()` que compara um numero com
+      # ele mesmo. Os dois mutantes abaixo sao os que viram dinheiro, e cada um
+      # desfaz UM dos mecanismos da HMO-303.
+      #
+      # Aqui a medicao roda SEM reconstruir o banco (o `npm run` acima ja o
+      # deixou pronto): recompila lib/ e chama o .mjs direto. Reconstruir o
+      # Postgres duas vezes mais nao mediria nada a mais.
+      - name: 'A medicao sabe falhar (o percentual e a transferencia)'
+        run: |
+          set -uo pipefail
+
+          # A impressao digital ANTES do primeiro mutante. A conferencia no fim
+          # e contra ELA, e nao contra o `git diff`: na maquina de quem roda
+          # isto na mao o git enxergaria tambem o trabalho nao commitado e
+          # reprovaria por um motivo que nao tem nada a ver com o controle.
+          PARTE=lib/parte-do-grupo.ts
+          PAINEL=lib/papel-de-pao.ts
+          ANTES_PARTE=$(md5sum "$PARTE" | cut -d' ' -f1)
+          ANTES_PAINEL=$(md5sum "$PAINEL" | cut -d' ' -f1)
+
+          # O `cmp` existe porque um `sed` que nao casa SAI 0: sem ele, uma
+          # ancora reescrita por outra issue faria este passo medir a arvore
+          # INTACTA e ficar verde para sempre, com o rotulo mentindo.
+          estragar() {
+            local arquivo="$1" de="$2" para="$3" rotulo="$4"
+            cp "$arquivo" "$arquivo.orig303"
+            sed -i "s@$de@$para@" "$arquivo"
+            if cmp -s "$arquivo" "$arquivo.orig303"; then
+              mv "$arquivo.orig303" "$arquivo"
+              echo "::error::o sed de '$rotulo' nao casou nada -- a ancora mudou e este controle mediria a arvore intacta"
+              exit 1
+            fi
+            rm -rf .tmp-medicao-hmo298
+            if npx tsc -p scripts/tsconfig.medicao-hmo298-test.json > /dev/null 2>&1 \
+               && node scripts/resolve-aliases.mjs .tmp-medicao-hmo298 lib --espelha-raiz > /dev/null 2>&1 \
+               && node scripts/medicao-hmo298.mjs > /dev/null 2>&1; then
+              mv "$arquivo.orig303" "$arquivo"
+              echo "::error::Verde com a leitura estragada: $rotulo"
+              exit 1
+            fi
+            mv "$arquivo.orig303" "$arquivo"
+            echo "  vermelho em: $rotulo"
+          }
+
+          # 1) O PERCENTUAL VOLTA A SER DIVISAO IGUAL. E o defeito que a issue
+          #    existe para tirar: um grupo 70/30 cobrando 50/50 nas telas. As
+          #    tres leituras continuariam CONCORDANDO entre si (todas erradas
+          #    pelo mesmo motivo) -- quem pega isso e o valor absoluto digitado,
+          #    e esta linha e o que prova que ele esta sendo cobrado.
+          estragar "$PARTE" \
+                   'const partes = ratearPorPeso(toCents(cheio), participantes);' \
+                   'const partes = ratearPorPeso(toCents(cheio), participantes.map((p) => ({ ...p, peso: 1 })));' \
+                   'o percentual e ignorado -- o grupo 70/30 volta a dividir igual'
+
+          # 2) A TRANSFERENCIA VOLTA PARA O «TOTAL DE CONTAS». Trocar a peneira
+          #    de `classeDaAgenda` por `direcaoDaAgenda` e exatamente o estado
+          #    anterior a esta issue: R$ 500,00 guardados na poupanca contados
+          #    como conta a pagar, e o total saindo R$ 3.300 em vez de R$ 2.800.
+          estragar "$PAINEL" \
+                   'classeDaAgenda(linha.direction) === "expense"' \
+                   'direcaoDaAgenda(linha.direction) === "expense"' \
+                   'a transferencia volta para o «Total de contas» -- o total vai a R$ 3.300'
+
+          # A arvore tem de voltar intacta: um `.orig303` esquecido viajaria no
+          # commit, e arquivo mutado e indistinguivel do certo a olho nu.
+          for f in "$PARTE" "$PAINEL"; do
+            if [ -e "$f.orig303" ]; then
+              echo "::error::sobrou um $f.orig303 -- a arvore nao foi restaurada"
+              exit 1
+            fi
+          done
+          if [ "$(md5sum "$PARTE" | cut -d' ' -f1)" != "$ANTES_PARTE" ] \
+             || [ "$(md5sum "$PAINEL" | cut -d' ' -f1)" != "$ANTES_PAINEL" ]; then
+            echo "::error::lib/ nao voltou ao conteudo que tinha antes do controle negativo"
+            exit 1
+          fi
+          echo "  a arvore voltou intacta"
 
       # Controle negativo do rateio COM PESO (HMO-270).
       #

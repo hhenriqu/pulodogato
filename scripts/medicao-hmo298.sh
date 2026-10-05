@@ -46,7 +46,13 @@ $PSQL -f database/tests/hmo298_fixture_tres_leituras.sql > /dev/null
 
 echo "==> Compilando as tres leituras de lib/"
 rm -rf .tmp-medicao-hmo298
-npx tsc -p scripts/tsconfig.medicao-hmo298-test.json
+# O tsconfig vem de variavel, e nao cravado aqui, para que o NOME dele apareca
+# no comando do `test:medicao-hmo298` no package.json. O
+# scripts/check-tests-in-ci.mjs le o `include` do tsconfig que o comando cita e
+# cobra cada arquivo de lib/ contra o `paths:` do workflow -- sem a variavel ele
+# nao encontra tsconfig nenhum, a segunda peneira dele fica VACUA, e mexer em
+# lib/papel-de-pao.ts voltaria a nao disparar esta medicao.
+npx tsc -p "${MEDICAO_TSCONFIG:-scripts/tsconfig.medicao-hmo298-test.json}"
 node scripts/resolve-aliases.mjs .tmp-medicao-hmo298 lib --espelha-raiz > /dev/null
 
 echo "==> Medindo"

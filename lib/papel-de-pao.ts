@@ -49,7 +49,7 @@
  *     esta, e o painel esta "certo").
  *   * NAO e uma terceira consulta. Uma segunda soma de despesa feita em
  *     qualquer outro lugar erraria nos quatro elos da rota ao mesmo tempo
- *     (`agendaSemCompraNoCartao`, `faturasPrevistasDaJanela`, `parteDoMembro`,
+ *     (`agendaSemCompraNoCartao`, `faturasPrevistasDaJanela`, `parteConfiguradaDoMembro`,
  *     `skipped`/`cancelled`) e pareceria certa na tela. `receitas` e uma perna
  *     de `somarPerna` -- um `aceita` novo, e nada mais.
  *
@@ -76,9 +76,13 @@
  */
 import {
   STATUS_FORA_DO_PREVISTO,
+  classeDaAgenda,
   direcaoDaAgenda,
 } from "@/lib/previsto-x-realizado";
-import { parteDoMembro, type MembrosAtivosPorGrupo } from "@/lib/parte-do-grupo";
+import {
+  parteConfiguradaDoMembro,
+  type ParticipantesPorGrupo,
+} from "@/lib/parte-do-grupo";
 import { ehDataIso, periodoCorrente, periodoDoMes } from "@/lib/periodo-do-painel";
 
 /**
@@ -222,7 +226,7 @@ export interface NumeroDoPapel {
    * Nao e uma segunda leitura: e a MESMA peneira de `somarPerna` devolvendo o
    * que ela aceitou. Uma segunda consulta erraria nos quatro elos da rota ao
    * mesmo tempo (`agendaSemCompraNoCartao`, `faturasPrevistasDaJanela`,
-   * `parteDoMembro`, `skipped`/`cancelled`) e pareceria certa na tela.
+   * `parteConfiguradaDoMembro`, `skipped`/`cancelled`) e pareceria certa na tela.
    *
    * A invariante, e ela e a entrega inteira: `soma(detalhe) === total`, e
    * `detalhe.length === quantidade`. Lista VAZIA quando `total` e `null`.
@@ -259,6 +263,38 @@ export interface SobraOuFalta {
   despesas: number | null;
 }
 
+/**
+ * O que a peneira do «Total de contas» recusou POR SER TRANSFERENCIA -- HMO-303.
+ *
+ * NAO E UM TERCEIRO TOTAL, e nao entra em soma nenhuma: e a contagem lateral que
+ * paga o preco de (a). Guardar R$ 500 na poupanca deixou de ser conta a pagar, e
+ * um valor que SOME da tela sem rotulo e indistinguivel de um bug -- quem for
+ * conferir na mao vai achar R$ 500 faltando e concluir que o app perdeu uma
+ * conta.
+ *
+ * Sao as linhas que passaram pela janela E pelo status E foram recusadas por
+ * `classeDaAgenda(...) === "transfer"`. Nao as recusadas por data, nem por
+ * 'skipped'/'cancelled': essas nao sao o preco de nada, e contar junto faria a
+ * frase da tela falar de um numero que ela nao explica.
+ */
+export interface TransferenciasFora {
+  total: number;
+  quantidade: number;
+}
+
+/**
+ * O «Total de contas» -- `NumeroDoPapel` mais a contagem lateral de (a).
+ *
+ * O CAMPO E OBRIGATORIO NO TIPO, e isso e a fiacao: a frase da tela se perde
+ * numa refatoracao com uma facilidade que nenhum teste de unidade pega, e aqui o
+ * `tsc` cobra. Na TRAVESSIA pela rota (JSON) ele volta a ser opcional, e o
+ * componente falha FECHADO -- ausente significa sem frase, nunca frase com
+ * R$ 0,00. Ver `PainelDePapel`.
+ */
+export interface NumeroDeContas extends NumeroDoPapel {
+  transferencias_fora: TransferenciasFora;
+}
+
 export interface PainelDoModoPapel {
   salario_previsto: NumeroDoPapel;
   /**
@@ -266,22 +302,27 @@ export interface PainelDoModoPapel {
    * cartao da HMO-296. O salario e um SUBCONJUNTO deste numero.
    */
   receitas: NumeroDoPapel;
-  total_de_contas: NumeroDoPapel;
+  total_de_contas: NumeroDeContas;
   sobra_ou_falta: SobraOuFalta;
 }
 
 export interface ContextoDoPapel {
   janela: JanelaDoMes;
   /**
-   * Quantos membros ativos tem cada grupo que aparece nas linhas.
+   * QUEM participa de cada grupo que aparece nas linhas, e com que peso.
    *
    * NAO e refinamento: as policies do 005 liberam `group_id IS NOT NULL AND
    * is_group_member(group_id)`, entao a leitura traz tambem as previstas de
    * GRUPO dos outros membros. Sem dividir, um aluguel de R$ 3.000 do grupo Casa
    * entra inteiro no "Total de contas" das duas pessoas. Mapa vazio mantem o
    * valor cheio, que erra para cima -- ver lib/parte-do-grupo.ts.
+   *
+   * DEIXOU DE SER UMA CONTAGEM NA HMO-303. `ratearPorPeso` precisa de todos os
+   * participantes porque a soma dos pesos e o denominador: uma contagem nao sabe
+   * dizer qual fracao e a minha num grupo 70/30. Era por isso que quem tem 30%
+   * via 50%.
    */
-  membrosAtivosPorGrupo: MembrosAtivosPorGrupo;
+  pesosPorGrupo: ParticipantesPorGrupo;
   /**
    * QUEM ESTA OLHANDO -- o `user.id` que a rota autenticou (HMO-300).
    *
@@ -422,11 +463,11 @@ export function janelaDoMes(month: unknown, hoje?: string): JanelaDoMes {
  * A invariante que a issue cobra -- `soma(detalhe) === total` -- nao e uma
  * afirmacao sobre duas coisas que por acaso batem: e a mesma variavel somada
  * uma vez. Um segundo `linhas.filter(aceita)` fora daqui teria de repetir a
- * janela, o status, o `Math.abs` e `parteDoMembro`, e a copia esquecida seria
+ * janela, o status, o `Math.abs` e `parteConfiguradaDoMembro`, e a copia esquecida seria
  * o defeito -- com o agravante de que ela ficaria DEBAIXO do numero certo,
  * explicando-o linha a linha com os valores errados.
  *
- * E a linha do detalhe leva o `valor` DEPOIS de `parteDoMembro`, pela mesma
+ * E a linha do detalhe leva o `valor` DEPOIS de `parteConfiguradaDoMembro`, pela mesma
  * razao: tres linhas de R$ 3.000 debaixo de um total de R$ 1.500 e a mesma
  * mentira com mais passos. Este e o mutante que a suite tem de matar, e so a
  * SOMA o mata -- qualquer assercao que apenas conte linhas passa por ele.
@@ -434,11 +475,27 @@ export function janelaDoMes(month: unknown, hoje?: string): JanelaDoMes {
 function somarPerna(
   linhas: readonly LinhaPrevistaDoPapel[],
   ctx: ContextoDoPapel,
-  aceita: (linha: LinhaPrevistaDoPapel) => boolean
-): NumeroDoPapel {
+  aceita: (linha: LinhaPrevistaDoPapel) => boolean,
+  /**
+   * A CONTAGEM LATERAL -- HMO-303. As linhas que passaram pela janela e pelo
+   * status, foram RECUSADAS por `aceita`, e casam com este predicado.
+   *
+   * Ela nasce no MESMO laco pela razao de `detalhe`: a frase da tela diz "o
+   * «Total de contas» deixou isto de fora", e so e verdade se o "isto" sair da
+   * mesma peneira que produziu o total. Um segundo `linhas.filter(...)` fora
+   * daqui repetiria a janela e o status, e a copia esquecida diria "deixou de
+   * fora R$ 500" sobre uma linha que a janela ja tinha descartado.
+   *
+   * Ela NAO entra em `total` nem em `detalhe`: a invariante
+   * `soma(detalhe) === total` e a entrega da HMO-300, e uma linha na lista que
+   * nao esta no total a quebraria na primeira conferencia.
+   */
+  contaDeFora?: (linha: LinhaPrevistaDoPapel) => boolean
+): { numero: NumeroDoPapel; fora: TransferenciasFora } {
   let total = 0;
   let quantidade = 0;
   const detalhe: LinhaDoDetalhe[] = [];
+  const fora: TransferenciasFora = { total: 0, quantidade: 0 };
 
   for (const linha of linhas) {
     // A JANELA PRIMEIRO. Leitura sem recorte de data soma o horizonte inteiro,
@@ -451,13 +508,33 @@ function somarPerna(
     // 'skipped' e 'cancelled' deixaram de fazer parte da promessa do mes.
     if (STATUS_FORA_DO_PREVISTO.has(String(linha.status ?? "pending"))) continue;
 
-    if (!aceita(linha)) continue;
+    if (!aceita(linha)) {
+      // A LINHA RECUSADA QUE AINDA TEM DE SER DITA. O valor e a MINHA parte,
+      // como no total: a frase da tela fala em reais e tem de falar nos mesmos
+      // reais que o numero ao lado dela.
+      if (contaDeFora?.(linha)) {
+        fora.total += Math.abs(
+          Number(
+            parteConfiguradaDoMembro(
+              linha.amount,
+              linha.group_id,
+              ctx.pesosPorGrupo,
+              ctx.meuUserId
+            )
+          ) || 0
+        );
+        fora.quantidade += 1;
+      }
+      continue;
+    }
 
-    // A MINHA parte da linha de grupo, nao o valor cheio do grupo.
-    const minhaParte = parteDoMembro(
+    // A MINHA parte da linha de grupo, nao o valor cheio do grupo -- e pelo
+    // PERCENTUAL CONFIGURADO desde a HMO-303, que e o que o fechamento cobra.
+    const minhaParte = parteConfiguradaDoMembro(
       linha.amount,
       linha.group_id,
-      ctx.membrosAtivosPorGrupo
+      ctx.pesosPorGrupo,
+      ctx.meuUserId
     );
 
     // `Math.abs` porque as duas convencoes de sinal do app convivem (ver o
@@ -469,7 +546,11 @@ function somarPerna(
     detalhe.push(linhaDoDetalhe(linha, valor, ctx.meuUserId));
   }
 
-  if (quantidade === 0) return semLinha();
+  // A CONTAGEM LATERAL SOBREVIVE A PERNA VAZIA, e esse e o caso que importa: um
+  // mes cuja UNICA linha e a transferencia tem «Total de contas» indisponivel E
+  // R$ 500,00 de transferencia deixada de fora. Devolver `semLinha()` sem ela
+  // apagaria a frase exatamente no mes em que ela e a unica explicacao na tela.
+  if (quantidade === 0) return { numero: semLinha(), fora };
 
   // A ORDEM E CRONOLOGICA, e a lista chega aqui na ordem em que o banco
   // devolveu com as faturas sintetizadas GRUDADAS NO FIM (`agendaComFaturasAbertas`
@@ -477,14 +558,17 @@ function somarPerna(
   // conta de luz do dia 5 por acidente de montagem. Ordenar nao mexe no total.
   detalhe.sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : 0));
 
-  return { total: centavos(total), quantidade, detalhe };
+  return {
+    numero: { total: centavos(total), quantidade, detalhe },
+    fora: { total: centavos(fora.total), quantidade: fora.quantidade },
+  };
 }
 
 /**
  * A linha da lista, montada a partir da linha que a peneira JA aceitou.
  *
  * `valor` chega pronto de proposito: ele e a MESMA variavel que entrou na
- * soma, e nao um segundo `parteDoMembro(...)` escrito aqui. E isso que faz
+ * soma, e nao um segundo `parteConfiguradaDoMembro(...)` escrito aqui. E isso que faz
  * `soma(detalhe) === total` ser verdadeiro por construcao em vez de por
  * coincidencia.
  *
@@ -569,7 +653,15 @@ export function painelDePapel(
     return {
       salario_previsto: semLinha(),
       receitas: semLinha(),
-      total_de_contas: semLinha(),
+      total_de_contas: {
+        ...semLinha(),
+        // ZERO E NAO "INDISPONIVEL" aqui, e e o unico lugar deste arquivo em que
+        // isso esta certo: `quantidade: 0` cala a frase na tela, e uma frase
+        // calada nao afirma nada. O `null` dos totais existe porque "R$ 0,00" e
+        // uma afirmacao sobre o dinheiro da pessoa; a contagem lateral nao e um
+        // numero que a tela mostra sozinho.
+        transferencias_fora: { total: 0, quantidade: 0 },
+      },
       sobra_ou_falta: sobraOuFalta(semLinha(), semLinha()),
     };
   }
@@ -583,36 +675,63 @@ export function painelDePapel(
       direcaoDaAgenda(linha.direction) === "income" &&
       linha.category_id != null &&
       deSalario.has(linha.category_id)
-  );
+  ).numero;
 
   // TODA receita prevista do mes, e nao so a da categoria Salario -- a perna
-  // nova da HMO-296. Ela e o espelho exato da de baixo: `direcaoDaAgenda` so
-  // responde 'income' ou 'expense', entao as duas juntas cobrem a lista inteira
-  // sem sobreposicao, e `salario_previsto` e um recorte DENTRO desta.
+  // nova da HMO-296. `direcaoDaAgenda` so responde 'income' ou 'expense', e
+  // `salario_previsto` e um recorte DENTRO desta.
   const receitas = somarPerna(
     linhas,
     ctx,
     (linha) => direcaoDaAgenda(linha.direction) === "income"
-  );
+  ).numero;
 
   // TUDO que sai, e nao so o que nao e salario: uma conta a pagar lancada na
   // categoria Salário (um desconto, uma devolucao) continua sendo uma conta.
-  // A peneira do salario e sobre RECEITA; esta e sobre DESPESA, e as duas
-  // juntas nao precisam cobrir a lista inteira -- transferencia, por exemplo,
-  // cai aqui porque `direcaoDaAgenda` so tira 'income' do lado de "a pagar",
-  // que e a mesma leitura do bloco "A vencer".
-  const total_de_contas = somarPerna(
+  //
+  // A PENEIRA E `classeDaAgenda`, E NAO `direcaoDaAgenda` -- HMO-303, E AS DUAS
+  // LEITURAS DISCORDAM DE PROPOSITO.
+  // Antes desta issue a transferencia caia aqui, "pela mesma leitura do bloco «A
+  // vencer»". Deixou de ser a mesma leitura, porque as duas perguntas nao sao a
+  // mesma:
+  //
+  //   * «A vencer» e a tela de Contas perguntam CAIXA -- quanto ainda vai sair
+  //     da conta corrente. A perna agendada de uma transferencia e uma saida
+  //     datada de verdade, entao ela CONTINUA la (`direcaoDaAgenda`, e o
+  //     comentario dela argumenta o caso);
+  //   * «Total de contas» pergunta quais sao as CONTAS A PAGAR do mes. Guardar
+  //     R$ 500 na poupanca nao e conta a pagar.
+  //
+  // O preco esta medido e e aceito: no fixture da HMO-298 o painel do modo e o
+  // bloco «A vencer» passam a discordar em R$ 500,00. O que torna isso conserto
+  // e nao defeito novo e a CONTAGEM LATERAL abaixo -- dois numeros que diferem
+  // sem rotulo sao exatamente o defeito que esta issue consertou, e repeti-lo do
+  // outro lado da tela nao seria conserto.
+  const contas = somarPerna(
     linhas,
     ctx,
-    (linha) => direcaoDaAgenda(linha.direction) === "expense"
+    (linha) => classeDaAgenda(linha.direction) === "expense",
+    // O PREDICADO E `=== "transfer"`, E NAO `!aceita(...)`. Ele diz POR QUE a
+    // linha ficou de fora, e a frase da tela nomeia a razao. Com a negacao do
+    // `aceita` a receita cairia na contagem junto, e a tela diria que o «Total
+    // de contas» deixou o salario de fora.
+    (linha) => classeDaAgenda(linha.direction) === "transfer"
   );
+
+  const total_de_contas: NumeroDeContas = {
+    ...contas.numero,
+    transferencias_fora: contas.fora,
+  };
 
   return {
     salario_previsto,
     receitas,
     total_de_contas,
     // O TERCEIRO NUMERO SAI DOS DOIS QUE A TELA JA MOSTRA, e nao de uma soma
-    // nova: e isso que impede o cartao de discordar do cartao colado nele.
+    // nova: e isso que impede o cartao de discordar do cartao colado nele. A
+    // transferencia esta fora dos dois lados, que e a leitura de
+    // `direcaoNoPainel` -- mover dinheiro entre contas proprias nao gasta nada
+    // nem ganha nada.
     sobra_ou_falta: sobraOuFalta(receitas, total_de_contas),
   };
 }
@@ -682,3 +801,40 @@ export function sobraOuFalta(
 /** A frase de cada numero quando nao ha linha nenhuma. A tela nao escreve R$ 0,00. */
 export const FRASE_SEM_SALARIO = "nenhum salário previsto para este mês";
 export const FRASE_SEM_CONTAS = "nenhuma conta prevista para este mês";
+
+/**
+ * A frase que diz o que o «Total de contas» deixou de fora -- HMO-303.
+ *
+ * MORA AQUI E NAO NO COMPONENTE por duas razoes, e a segunda e a que importa:
+ *
+ *   1. a decisao de CALAR e uma regra, nao formatacao. Linha nova em todo mes sem
+ *      transferencia e ruido, e ruido num painel treina a pessoa a nao ler o
+ *      painel;
+ *   2. `null` e o estado que o `tsx` consegue renderizar por acidente. Com a
+ *      regra aqui, "frase com R$ 0,00" nao e um estado que exista -- e um teste
+ *      de unidade a alcanca sem navegador.
+ *
+ * FALHA FECHADO: `undefined` (o campo que a rota deixou de mandar numa
+ * refatoracao) e `quantidade: 0` terminam no mesmo `null`. A direcao e a barata:
+ * sem a frase a pessoa ve um total que nao bate com o «A vencer» e nao sabe por
+ * que; com uma frase de R$ 0,00 ela ve o app afirmando que deixou nada de fora,
+ * que e uma afirmacao falsa.
+ *
+ * O PLURAL E CALCULADO, e nao e enfeite: "1 transferências" num painel que
+ * existe para ser simples e o tipo de detalhe que faz a pessoa desconfiar do
+ * numero ao lado.
+ */
+export function fraseDasTransferenciasFora(
+  fora: TransferenciasFora | null | undefined
+): string | null {
+  if (!fora || fora.quantidade <= 0) return null;
+
+  const valor = fora.total.toLocaleString("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+
+  return fora.quantidade === 1
+    ? `fora: R$ ${valor} de transferência entre suas contas`
+    : `fora: R$ ${valor} em ${fora.quantidade} transferências entre suas contas`;
+}

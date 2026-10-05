@@ -52,9 +52,10 @@
 //     pagar E a fatura tambem conta -- a mesma despesa duas vezes;
 //   * sem `faturasPrevistasDaJanela`, a fatura aberta do mes simplesmente nao
 //     aparece, e ela e a maior conta de muita gente;
-//   * sem `parteDoMembro`, a policy do 005 (que libera `group_id IS NOT NULL
-//     AND is_group_member(group_id)`) poe o aluguel de R$ 3.000 do grupo Casa
-//     inteiro no total das DUAS pessoas.
+//   * sem `parteConfiguradaDoMembro`, a policy do 005 (que libera `group_id IS
+//     NOT NULL AND is_group_member(group_id)`) poe o aluguel de R$ 3.000 do
+//     grupo Casa inteiro no total das DUAS pessoas -- e com a divisao IGUAL que
+//     ela substituiu (HMO-303), quem tem 30% do grupo via 50% da conta.
 //
 // Em todos os quatro elos a chamada e para a MESMA funcao que a outra rota usa.
 // Reescrever qualquer um deles aqui criaria a segunda copia -- e a copia
@@ -64,7 +65,10 @@ import { createClient } from "@/utils/supabase/server";
 import { NextResponse, type NextRequest } from "next/server";
 import { materializarAgenda } from "@/lib/services/scheduled";
 import { today } from "@/lib/recurrence";
-import { contarMembrosAtivos } from "@/lib/parte-do-grupo";
+import {
+  montarParticipantesPorGrupo,
+  type ParticipantesPorGrupo,
+} from "@/lib/parte-do-grupo";
 import { janelaParaMaterializar } from "@/lib/periodo-do-painel";
 import {
   agendaComFaturasAbertas,
@@ -200,32 +204,41 @@ export async function GET(request: NextRequest) {
       )
     );
 
-    let membrosAtivosPorGrupo = new Map<string, number>();
+    let pesosPorGrupo: ParticipantesPorGrupo = new Map();
 
     if (gruposEnvolvidos.length > 0) {
+      // `id, user_id, percentage` SAO LOAD-BEARING, e o modo de falha de tirar um dos
+      // dois e silencioso (HMO-303): sem `percentage` todo peso vira 0, o
+      // `ratearPorPeso` cai no degrau do 0/0 e o grupo 70/30 volta a dividir
+      // IGUAL -- o defeito que esta issue consertou, de volta, sem erro, sem log
+      // e com o `tsc` verde. Sem `user_id` a lista sai vazia e a linha de grupo
+      // volta ao valor CHEIO. Quem tranca isso e a sonda textual de
+      // scripts/test-contrato-do-papel-de-pao.mjs.
       const { data: membros, error: erroMembros } = await supabase
         .from("group_members")
-        .select("group_id, status")
+        .select("id, group_id, user_id, percentage, status")
         .in("group_id", gruposEnvolvidos)
         .eq("status", "active");
 
       if (erroMembros) {
-        // Sem a contagem, `parteDoMembro` mantem o valor CHEIO: erra para cima,
-        // que e a direcao barata. Subestimar a conta a pagar e o modo caro.
+        // Sem os pesos, `parteConfiguradaDoMembro` mantem o valor CHEIO: erra
+        // para cima, que e a direcao barata. Subestimar a conta a pagar e o modo
+        // caro.
         console.error(
           "Painel de papel seguiu sem dividir a parte do grupo:",
           erroMembros
         );
       } else {
-        membrosAtivosPorGrupo = contarMembrosAtivos(membros ?? []);
+        pesosPorGrupo = montarParticipantesPorGrupo(membros ?? []);
       }
     }
 
-    // A CONTA, inteira, numa chamada. `parteDoMembro` roda dentro dela -- e por
-    // isso a divisao do grupo tambem esta sob a suite, e nao so aqui.
+    // A CONTA, inteira, numa chamada. `parteConfiguradaDoMembro` roda dentro
+    // dela -- e por isso a divisao do grupo tambem esta sob a suite, e nao so
+    // aqui.
     const painel = painelDePapel(linhas, {
       janela,
-      membrosAtivosPorGrupo,
+      pesosPorGrupo,
       categoriasDeSalario,
       // QUEM ESTA OLHANDO (HMO-300). A rota e quem autentica, entao e dela que
       // sai a resposta; a REGRA ("a linha e minha?") fica na lib, onde

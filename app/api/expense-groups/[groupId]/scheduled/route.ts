@@ -1,6 +1,9 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
-import { contarMembrosAtivos, parteDoMembro } from "@/lib/parte-do-grupo";
+import {
+  montarParticipantesPorGrupo,
+  parteConfiguradaDoMembro,
+} from "@/lib/parte-do-grupo";
 
 /**
  * As despesas de grupo que ainda NAO aconteceram (HMO-177).
@@ -80,13 +83,15 @@ export async function GET(
       );
     }
 
+    // `id, user_id, percentage` SAO LOAD-BEARING -- ver o comentario identico em
+    // app/api/papel-de-pao/painel/route.ts.
     const { data: membros } = await supabase
       .from("group_members")
-      .select("group_id, status")
+      .select("id, group_id, user_id, percentage, status")
       .eq("group_id", groupId)
       .eq("status", "active");
 
-    const membrosAtivosPorGrupo = contarMembrosAtivos(membros ?? []);
+    const pesosPorGrupo = montarParticipantesPorGrupo(membros ?? []);
 
     // Quem vai pagar a conta. Sao poucos donos distintos (uma regra por
     // despesa fixa), entao uma consulta resolve todos.
@@ -122,8 +127,25 @@ export async function GET(
       id: l.id,
       description: l.description,
       amount: Number(l.amount),
-      /** A parte de cada membro, pela mesma regra que o trigger da baixa usa. */
-      share_amount: parteDoMembro(l.amount, groupId, membrosAtivosPorGrupo),
+      /**
+       * A MINHA parte -- a de quem esta olhando, pelo percentual configurado.
+       *
+       * ERA "a parte de cada membro" ATE A HMO-303, e isso parava de ser uma
+       * frase possivel: com a divisao igual a parte era a mesma para todos e um
+       * numero so servia; com `group_members.percentage` ela e 70% para um e 30%
+       * para outro. A tela escreve "sua parte {share_amount}" (page.tsx:1288),
+       * entao a resposta certa e a de quem pediu -- `user.id`, e nao `l.user_id`,
+       * que e o dono da conta.
+       *
+       * E e o MESMO numero que o fechamento vai cobrar: as duas leituras chamam
+       * `ratearPorPeso` sobre a mesma lista de pesos.
+       */
+      share_amount: parteConfiguradaDoMembro(
+        l.amount,
+        groupId,
+        pesosPorGrupo,
+        user.id
+      ),
       due_date: l.due_date,
       status: l.effective_status,
       is_overdue: l.effective_status === "overdue",
@@ -137,7 +159,12 @@ export async function GET(
     return NextResponse.json({
       success: true,
       scheduled: previstas,
-      active_members: membrosAtivosPorGrupo.get(groupId) ?? 1,
+      // A CONTAGEM SAI DA MESMA LISTA DE PESOS, e nao de uma segunda consulta:
+      // "(2 pessoas)" na tela de fechamento tem de contar exatamente as pessoas
+      // entre quem a conta foi rateada. `?? 1` por tras do `length` seria
+      // impossivel -- a lista vazia e um grupo sem membro ativo, que a checagem
+      // de `membership` acima ja recusou.
+      active_members: (pesosPorGrupo.get(groupId) ?? []).length,
     });
   } catch (error) {
     console.error("Erro nas previstas do grupo:", error);

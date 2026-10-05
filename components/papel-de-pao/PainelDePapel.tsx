@@ -13,9 +13,11 @@ import {
   ROTULO_DAS_DESPESAS,
   ROTULO_DAS_RECEITAS,
   TITULO_SEM_RESPOSTA,
+  fraseDasTransferenciasFora,
   type LinhaDoDetalhe,
   type NumeroDoPapel,
   type SobraOuFalta,
+  type TransferenciasFora,
 } from "@/lib/papel-de-pao";
 import {
   ehPeriodoCorrente,
@@ -170,7 +172,20 @@ interface RespostaDoPainel {
   month: string;
   range: { from: string; to: string };
   salario_previsto: NumeroNoFio;
-  total_de_contas: NumeroNoFio;
+  /**
+   * `transferencias_fora` e OPCIONAL aqui e OBRIGATORIO em `NumeroDeContas`, pela
+   * mesma razao de `detalhe` logo acima -- e com uma consequencia a mais: ela
+   * decide uma FRASE, e nao um chevron.
+   *
+   * Ausente ⇒ SEM frase. Nunca frase com R$ 0,00. `fraseDasTransferenciasFora`
+   * trata `undefined` e `quantidade: 0` no mesmo ramo justamente para que a falha
+   * seja esta: no dia do deploy, um corpo de 24h atras no cache do PWA mostra o
+   * cartao como ele era antes da HMO-303, em vez de afirmar que o app nao deixou
+   * nada de fora.
+   */
+  total_de_contas: NumeroNoFio & {
+    transferencias_fora?: TransferenciasFora;
+  };
   /**
    * OPCIONAL de proposito, e isto nao e frouxura de tipo: este campo descreve o
    * que CHEGA PELO FIO, e o cache do PWA guarda as rotas /api/ por 24h. No dia
@@ -300,6 +315,25 @@ export function PainelDePapel() {
         numero={estado.fase === "pronto" ? estado.dados.total_de_contas : null}
         fase={estado.fase}
         fraseVazia={FRASE_SEM_CONTAS}
+        // O QUE ESTE NUMERO DEIXOU DE FORA -- HMO-303.
+        //
+        // «Total de contas» deixou de somar a transferencia agendada: guardar
+        // R$ 500 na poupanca nao e conta a pagar. O bloco «A vencer» e a tela de
+        // Contas CONTINUAM somando, porque a pergunta deles e caixa. Os dois
+        // numeros discordam de proposito, e esta frase e o que torna isso conserto
+        // em vez de um segundo defeito: sem ela, quem conferir na mao acha R$ 500
+        // faltando e conclui que o app perdeu uma conta.
+        //
+        // A frase e NULA quando nao ha transferencia no mes -- ver
+        // `fraseDasTransferenciasFora`. Linha nova em todo mes vazio e ruido, e
+        // ruido num painel treina a pessoa a nao ler o painel.
+        nota={
+          estado.fase === "pronto"
+            ? fraseDasTransferenciasFora(
+                estado.dados.total_de_contas.transferencias_fora
+              )
+            : null
+        }
       />
       <CartaoDeSobra
         cartao={estado.fase === "pronto" ? estado.dados.sobra_ou_falta : undefined}
@@ -425,12 +459,26 @@ function NumeroGrande({
   numero,
   fase,
   fraseVazia,
+  nota = null,
 }: {
   id: string;
   rotulo: string;
   numero: NumeroNoFio | null;
   fase: Estado["fase"];
   fraseVazia: string;
+  /**
+   * Uma linha em corpo pequeno DEBAIXO do numero, dizendo o que ele deixou de
+   * fora -- HMO-303.
+   *
+   * `null` nao escreve nada, e o default e `null`: dos tres cartoes do painel so
+   * «Total de contas» tem o que dizer, e um `?? ""` renderizaria um `<p>` vazio
+   * nos outros dois, mexendo no espacamento de uma tela que a issue pediu minima.
+   *
+   * Ela fica FORA do chevron de proposito. A lista do chevron obedece
+   * `soma(detalhe) === total` (HMO-300), e a transferencia NAO esta no total --
+   * poe-la na lista quebraria a invariante na primeira conferencia.
+   */
+  nota?: string | null;
 }) {
   const [aberto, setAberto] = useState(false);
 
@@ -450,6 +498,15 @@ function NumeroGrande({
             >
               <Valor fase={fase} numero={numero} fraseVazia={fraseVazia} />
             </p>
+            {nota !== null && (
+              <p
+                id={`${id}-nota`}
+                data-nota={rotulo}
+                className="mt-1 text-xs text-muted-foreground"
+              >
+                {nota}
+              </p>
+            )}
           </div>
 
           {podeAbrir && (
