@@ -144,7 +144,15 @@ function LinhaDaSecao({
             <Icone className="h-3 w-3" aria-label={descricao} />
             {rotulo && <span>{rotulo}</span>}
           </span>
-          <span>· {dataCurta(linha.data)}</span>
+          {/*
+            O `·` so entra quando ha rotulo ANTES dele. Na linha comum o icone
+            e o unico vizinho a esquerda, e "↘ · 14/08" deixa um separador
+            pendurado que se le como um campo que faltou carregar.
+          */}
+          <span>
+            {rotulo ? "· " : ""}
+            {dataCurta(linha.data)}
+          </span>
           {linha.categoria && <span>· {linha.categoria}</span>}
           {linha.conta && <span>· {linha.conta}</span>}
           {linha.moeda && <span>· {linha.moeda}</span>}

@@ -365,11 +365,21 @@ test("os outros rotulos da linha continuam la", () => {
   );
 
   assert.ok(t.includes("Assinatura"), t);
-  assert.ok(t.includes("· 14/08"), t);
-  assert.ok(t.includes("· Alimentação"), t);
-  assert.ok(t.includes("· de Itaú"), t);
-  assert.ok(t.includes("· USD"), t);
+  // A sequencia inteira, e nao quatro `includes` soltos: na linha comum o
+  // icone e o unico vizinho a esquerda da data, e por isso a data NAO leva o
+  // `·` ali -- um separador pendurado se le como campo que faltou carregar.
+  assert.ok(t.includes("14/08 · Alimentação · de Itaú · USD"), t);
+  assert.ok(!t.includes("· 14/08"), t);
   assert.ok(t.includes("vencida"), t);
+});
+
+test("com rotulo, a data leva o separador; sem rotulo, nao", () => {
+  const comRotulo = texto(render({ linhas: [FIXA] }));
+  assert.ok(comRotulo.includes("fixo · 14/08"), comRotulo);
+
+  const semRotulo = texto(render({ linhas: [linha({})] }));
+  assert.ok(semRotulo.includes("14/08 · Alimentação"), semRotulo);
+  assert.ok(!semRotulo.includes("· 14/08"), semRotulo);
 });
 
 test("carregando, a lista sai da tela -- e nenhum rotulo de natureza fica", () => {
