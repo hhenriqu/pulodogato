@@ -1301,6 +1301,60 @@ jobs:
       - name: A fatura escolhida manda no mes e no vencimento, e a view nao vaza
         run: $PSQL -f database/tests/041_fatura_escolhida_no_lancamento_test.sql
 
+      - name: 042_rateio_do_trigger_honra_o_percentual
+        run: $PSQL -f database/migrations/042_rateio_do_trigger_honra_o_percentual.sql
+
+      # Re-executavel: a 042 e so CREATE OR REPLACE FUNCTION mais REVOKE. Nao
+      # ha ALTER, CHECK novo nem backfill -- despesa que ja existe fica com a
+      # divisao com que nasceu, de proposito (reescrever o historico mudaria o
+      # valor de partes que alguem JA APROVOU, que e o que as travas PDG01 da
+      # 024 existem para impedir).
+      - name: 042 e idempotente
+        run: $PSQL -f database/migrations/042_rateio_do_trigger_honra_o_percentual.sql
+
+      # HMO-304. O trigger passa a honrar `group_members.percentage`: num grupo
+      # 70/30 a mesma conta valia R$ 300 PREVISTA (o fechamento do mes rateia
+      # por `ratearPorPeso` desde a HMO-270) e R$ 500 depois de PAGA, porque a
+      # SECAO 2c de `refazer_rateio_do_grupo` gravava `split_type = 'equal'`
+      # fixo e o `calculate_equal_split` (007) achatava tudo para partes iguais.
+      # Medido na cadeia 001..041 antes do conserto: 500/500 com 70/30
+      # configurado.
+      #
+      # O que so o Postgres pega aqui:
+      #
+      #   - o DEGRAU DO 0/0. `group_members.percentage` e `numeric(5,2)
+      #     DEFAULT 0.00` e NULLABLE: grupo que nunca passou pela tela de
+      #     divisao tem soma de pesos ZERO e PRECISA continuar dividindo igual.
+      #     Sao dois casos de teste e nao um, porque 0.00 e NULL chegam ao `IF`
+      #     por caminhos diferentes (`SUM` de tudo NULL e NULL, nao zero). Sem
+      #     esse ramo, esta migration mudaria o dinheiro de TODO grupo que
+      #     existe hoje;
+      #   - a soma que NAO fecha 100. `percentage` e PESO e o rateio divide pela
+      #     SOMA -- 70/27 em R$ 1.000 da 721,65/278,35 e fecha EXATO. Tratar 70
+      #     como "70 de 100" deixaria R$ 30 sem dono e o saldo do grupo pararia
+      #     de fechar em zero. A escolha e a de `ratearPorPeso`, que e quem
+      #     decide o lado PREVISTO: qualquer outra manteria a discordancia que
+      #     esta issue existe para fechar;
+      #   - o membro de peso ZERO. `group_expense_splits_percentage_check`
+      #     (001:1165) exige `percentage > 0`, entao gravar 0,00 na coluna de
+      #     DISPLAY derrubaria o INSERT -- e com ele o lancamento inteiro. Sai
+      #     com piso de 0,01 e `amount` 0,00, a mesma escolha que o 007 ja fez
+      #     na propria funcao ("quem manda e o valor");
+      #   - as travas PDG01 da 024. A 042 faz `CREATE OR REPLACE` do corpo
+      #     INTEIRO de `refazer_rateio_do_grupo`, e o teste da 024 roda ANTES
+      #     dela nesta cadeia -- daqui em diante quem prova que apagar uma trava
+      #     nao passa verde e a SECAO 8 deste arquivo.
+      #
+      # Medido: 13 mutantes, 11 mortos, com controle positivo (a 042 intacta
+      # passa) e controle NEGATIVO (sem a 042 o teste reprova na PRIMEIRA
+      # assercao -- e o que detecta este arquivo rodando fora da posicao dele).
+      # Os DOIS sobreviventes sao equivalentes, nao furos de assercao, e estao
+      # nomeados no cabecalho da migration: o cast numeric->bigint ja arredonda
+      # (o `ROUND` e redundante com `numeric(15,2)`), e `SUM` de tudo NULL cai no
+      # mesmo ramo que zero (o `COALESCE` faz do zero uma decisao explicita).
+      - name: O rateio da baixa honra o percentual, e o grupo legado divide igual
+        run: $PSQL -f database/tests/042_rateio_do_trigger_honra_o_percentual_test.sql
+
       # HMO-245, o fechamento do mes do grupo. A conta de grupo que ainda nao
       # aconteceu (a internet no cartao, vencendo dia 15) vive em
       # `scheduled_transactions` e nao em `group_transactions`, entao ela nao
