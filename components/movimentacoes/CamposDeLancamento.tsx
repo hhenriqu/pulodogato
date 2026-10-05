@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/select";
 import { CalendarClock, CreditCard, Receipt, Repeat } from "lucide-react";
 import { CampoDeData } from "@/components/ui/campo-de-data";
+import { janelaDeFaturas, rotuloDaFatura } from "@/lib/fatura-do-cartao";
 import { CampoDeCotacao } from "@/components/movimentacoes/CampoDeCotacao";
 import {
   SeletorDeCategoria,
@@ -183,6 +184,22 @@ interface CamposDeLancamentoProps {
    * O objeto inteiro, e nao um booleano: e dele que sai o NOME na tela.
    */
   cartaoFixado?: ContaDeLancamento | null;
+  /**
+   * O centro da janela de meses do seletor de fatura, 'AAAA-MM' (HMO-289).
+   *
+   * PROP e nao calculado aqui, porque o padrao depende da TELA DE ORIGEM
+   * (`?de=&ate=`) e do RELOGIO -- e este componente e de proposito sem URL, sem
+   * banco e sem relogio: e o que permite ao teste renderiza-lo de verdade e
+   * afirmar sobre a arvore que sai. Quem calcula e
+   * `faturaPadraoDoLancamento`, em lib/fatura-do-cartao.ts, chamada pelo
+   * formulario.
+   *
+   * O default vazio nao e um padrao util -- e o que mantem a prop opcional para
+   * os chamadores que nao mostram o bloco do cartao. Com ele, `janelaDeFaturas`
+   * recebe '' e a janela sai sem mes nenhum: o seletor fica so com a opcao
+   * "pela data da compra", que e honesto, em vez de oferecer o ano 0.
+   */
+  mesPadraoDaFatura?: string;
 }
 
 export function CamposDeLancamento({
@@ -200,6 +217,7 @@ export function CamposDeLancamento({
   moedaPorLancamento = false,
   moedaOficial = MOEDA_PADRAO,
   cartaoFixado = null,
+  mesPadraoDaFatura = "",
 }: CamposDeLancamentoProps) {
   // `valores.confirmado` entra aqui desde a HMO-188: e ele que decide se o campo
   // da data real existe e se a data prevista e obrigatoria. Esquece-lo deixaria
@@ -835,6 +853,72 @@ export function CamposDeLancamento({
               Você ainda não tem nenhum cartão de crédito cadastrado. Cadastre
               em Cartões.
             </p>
+          )}
+
+          {/* EM QUAL FATURA ESSA COMPRA CAI (HMO-281 / HMO-289)
+
+              "compro hoje e vai para a fatura que fecha semana que vem,
+              indiferente da data que estou lancando."
+
+              AO LADO DO SELETOR DE CARTAO, e nao perto do campo de data, embora
+              a pergunta pareca de data: ela e sobre o CARTAO. Encostada na data
+              da compra, as duas se leriam como a mesma resposta em dois campos --
+              e a coisa mais importante desta tela e que elas NAO sao: a data da
+              compra continua sendo o dia em que a compra aconteceu.
+
+              UM `<select>`, E NAO `<input type="month">` NEM CAMPO DE DATA
+              -----------------------------------------------------------
+              A pergunta e FECHADA: e uma lista de faturas, nao uma data livre.
+              `<input type="month">` aceita qualquer mes do calendario (inclusive
+              2031) e, como todo campo de data nativo neste app, engole a
+              digitacao -- e por isso que `components/ui/campo-de-data.tsx`
+              existe e que `check-campo-de-data.mjs` esta no pre-commit.
+
+              `<select>` NATIVO e nao o `Select` do Radix usado acima, e isto e
+              deliberado: o Radix nao imprime o valor escolhido na renderizacao de
+              servidor (o mesmo motivo pelo qual `cartaoFixado` e texto), entao o
+              teste de tela nao conseguiria afirmar QUAL fatura esta marcada --
+              que e exatamente o que esta issue precisa provar.
+
+              O ROTULO SAI DE `rotuloDaFatura`, que ja devolve "outubro de 2026" e
+              ja devolve `null` para o ilegivel. Nenhuma tabela de meses nova: uma
+              segunda lista de nomes de mes divergiria da primeira em acento ou em
+              ordem, e o seletor passaria a discordar do cabecalho da fatura. */}
+          {campos.faturaDoLancamento && (
+            <div className="space-y-2 pt-1">
+              <Label htmlFor="invoice-month">Fatura</Label>
+              <select
+                id="invoice-month"
+                aria-label="Fatura"
+                value={valores.mesDaFatura}
+                onChange={(e) => aoMudar({ mesDaFatura: e.target.value })}
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {/* O VAZIO E UMA OPCAO DE VERDADE, e nao um placeholder.
+
+                    Ele grava `invoice_month_override` NULO, que e a regra da 006
+                    (a fatura sai da data) e o estado de toda compra lancada antes
+                    desta feature. Sem esta opcao, quem abrisse uma compra ANTIGA
+                    para editar veria um `value=""` que nao casa com nenhuma
+                    `<option>` -- e um `<select>` nessa situacao nao mostra vazio,
+                    mostra a PRIMEIRA opcao como se fosse a escolhida. Salvar sem
+                    tocar no campo moveria a compra de fatura sozinho.
+
+                    E ela e o unico caminho de VOLTA: sem o vazio, uma escolha
+                    feita por engano nao teria como ser desfeita. */}
+                <option value="">Pela data da compra</option>
+                {janelaDeFaturas(mesPadraoDaFatura, valores.mesDaFatura).map(
+                  (mes) => (
+                    <option key={mes} value={mes}>
+                      {rotuloDaFatura(mes) ?? mes}
+                    </option>
+                  )
+                )}
+              </select>
+              <p className="text-xs text-muted-foreground">
+                A data da compra não muda — só a fatura em que ela entra.
+              </p>
+            </div>
           )}
 
           {/* A MOEDA DESTE LANCAMENTO (HMO-171)

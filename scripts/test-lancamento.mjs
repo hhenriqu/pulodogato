@@ -41,6 +41,9 @@ import {
   contaPrevista,
   datasDaTransacao,
   diaDeVencimentoValido,
+  mesDaFaturaValido,
+  datasDasParcelasNoCartao,
+  serieDeParcelas,
   hojeISO,
   MAX_MESES_DE_REPETICAO,
 } from "../.tmp-lancamento/lib/lancamento.js";
@@ -1465,4 +1468,254 @@ test("o cartao nao cobra data prevista, e cobra a data da compra", () => {
   );
   assert.equal(semData.ok, false);
   assert.match(semData.mensagem, /data/i);
+});
+
+// =====================================================
+// EM QUAL FATURA A COMPRA CAI (HMO-281 / HMO-289)
+// =====================================================
+// "compro hoje e vai para a fatura que fecha semana que vem, indiferente da
+// data que estou lancando."
+//
+// Tres coisas sao cobradas aqui, e cada uma falha de um jeito diferente:
+//   1. `camposDoTipo` -- o campo aparece SO na compra no cartao. Em `card_fixed`
+//      o lancamento vira regra em `recurring_rules`, que nao tem a coluna: o
+//      seletor ali ofereceria uma escolha descartada em silencio;
+//   2. `validarLancamento` -- mes ilegivel recusado, e mes preenchido FORA do
+//      cartao recusado (estado velho sobrevivendo a troca de natureza);
+//   3. `datasDasParcelasNoCartao` -- a ancora da serie. E aqui que mora o caso
+//      que distingue o certo do quase-certo.
+
+test("o seletor de fatura existe SO na compra no cartao", () => {
+  assert.equal(
+    camposDoTipo("expense", "card", false).faturaDoLancamento,
+    true,
+    "a compra no cartao e o caso da issue"
+  );
+
+  // EDITANDO CONTINUA VERDADEIRO, ao contrario de `parcelamento`. Trocar a
+  // fatura de uma compra ja gravada e o conserto de quem lancou no mes errado --
+  // e e por isso que `gravarTransacao` manda o campo no `update` tambem.
+  assert.equal(
+    camposDoTipo("expense", "card", true).faturaDoLancamento,
+    true,
+    "sem isto a escolha grava na criacao e fica impossivel de corrigir"
+  );
+  assert.equal(
+    camposDoTipo("expense", "card", false).parcelamento,
+    true
+  );
+  assert.equal(
+    camposDoTipo("expense", "card", true).parcelamento,
+    false,
+    "o contraste: parcelamento SAI na edicao, fatura NAO -- se os dois fossem iguais este par nao mediria nada"
+  );
+
+  // O CASO QUE A ISSUE PEDIA AO CONTRARIO, e que e o defeito que ela evitaria
+  // criar: `card_fixed` tambem aponta para um cartao (`ehNaturezaNoCartao` e
+  // verdadeiro nele), mas `destinoDoLancamento` o manda para "regra" --
+  // `recurring_rules` nao tem `invoice_month_override`. Com o seletor ali, a
+  // pessoa escolheria marco e a escolha seria jogada fora sem nenhum sintoma.
+  assert.equal(
+    ehNaturezaNoCartao("card_fixed"),
+    true,
+    "controle: card_fixed E uma natureza de cartao -- nao e por isso que ele fica de fora"
+  );
+  assert.equal(
+    destinoDoLancamento("expense", preenchido({ natureza: "card_fixed", diaDeVencimento: "10" }), false),
+    "regra",
+    "e por ISTO que ele fica de fora: o destino dele nao e financial_transactions"
+  );
+  assert.equal(
+    camposDoTipo("expense", "card_fixed", false).faturaDoLancamento,
+    false
+  );
+  // E o seletor de conta CONTINUA la em card_fixed: o eixo nao e o mesmo, e este
+  // par e o que mostra isso.
+  assert.equal(
+    camposDoTipo("expense", "card_fixed", false).contaObrigatoria,
+    true
+  );
+
+  // Fora do cartao, e na receita, nao existe fatura nenhuma.
+  assert.equal(camposDoTipo("expense", "one_off", false).faturaDoLancamento, false);
+  assert.equal(camposDoTipo("expense", "fixed", false).faturaDoLancamento, false);
+  assert.equal(camposDoTipo("income", "one_off", false).faturaDoLancamento, false);
+  assert.equal(camposDoTipo("income", "fixed", false).faturaDoLancamento, false);
+});
+
+test("um lancamento novo nasce SEM fatura escolhida", () => {
+  // Vazia, e nao o mes corrente: `valoresIniciais` nao tem como saber o fuso nem
+  // a tela de origem, e um mes fixo aqui seria a resposta errada vinda do
+  // relogio do servidor. Quem preenche e o formulario.
+  assert.equal(valoresIniciais().mesDaFatura, "");
+
+  // E o vazio E VALIDO no cartao: ele grava override NULO, e a fatura sai da
+  // data (regra da 006). Cobrar o campo transformaria o quadro anterior ao
+  // `useEffect` que preenche o padrao numa recusa inexplicavel.
+  assert.deepEqual(
+    validarLancamento(
+      "expense",
+      preenchido({ natureza: "card", contaId: "cartao-1", mesDaFatura: "" }),
+      { categoria: CATEGORIA_DESPESA, editando: false }
+    ),
+    { ok: true }
+  );
+});
+
+test("mes de fatura ilegivel e recusado, e o legivel passa", () => {
+  const noCartao = (mesDaFatura) =>
+    validarLancamento(
+      "expense",
+      preenchido({ natureza: "card", contaId: "cartao-1", mesDaFatura }),
+      { categoria: CATEGORIA_DESPESA, editando: false }
+    );
+
+  assert.equal(noCartao("2026-11").ok, true);
+  // 'AAAA-MM-01' tambem passa: e a forma que volta do banco na EDICAO.
+  assert.equal(noCartao("2026-11-01").ok, true);
+
+  for (const ruim of ["2026-13", "2026-00", "2026-1", "202611", "novembro", "2026-11-", "-2026-11"]) {
+    const r = noCartao(ruim);
+    assert.equal(r.ok, false, `'${ruim}' tinha de ser recusado`);
+    assert.match(r.mensagem, /fatura/i, `'${ruim}': a frase tem de falar de fatura`);
+  }
+
+  // `mesDaFaturaValido` e a borda, e ela nao pode discordar da recusa acima.
+  assert.equal(mesDaFaturaValido("2026-11"), true);
+  assert.equal(mesDaFaturaValido("2026-13"), false);
+  assert.equal(mesDaFaturaValido("2026-00"), false);
+  assert.equal(mesDaFaturaValido(""), false);
+});
+
+test("fatura preenchida FORA da compra no cartao e recusada", () => {
+  // O CAMINHO E REAL, e nao forjado: o estado do formulario e um objeto so.
+  // Escolher o cartao, escolher dezembro e voltar o seletor para "Despesa" deixa
+  // 'AAAA-MM' parado no estado com o campo fora da tela.
+  //
+  // Recusar e nao ignorar porque as duas saidas contam historias diferentes:
+  // `gravarTransacao` manda `null` fora do cartao, entao ignorar daria dinheiro
+  // certo e descartaria em silencio uma escolha que a pessoa fez -- ela sairia da
+  // tela achando que a despesa foi para dezembro.
+  const foraDoCartao = validarLancamento(
+    "expense",
+    preenchido({ natureza: "one_off", mesDaFatura: "2026-12" }),
+    { categoria: CATEGORIA_DESPESA, editando: false }
+  );
+  assert.equal(foraDoCartao.ok, false);
+  assert.match(foraDoCartao.mensagem, /compra no cartão/i);
+
+  // Em despesa fixa a frase e OUTRA, porque o motivo e outro: ali cada cobranca
+  // cai na fatura do mes dela, e nao ha uma fatura para escolher.
+  const naFixa = validarLancamento(
+    "expense",
+    preenchido({
+      natureza: "card_fixed",
+      contaId: "cartao-1",
+      diaDeVencimento: "10",
+      mesDaFatura: "2026-12",
+    }),
+    { categoria: CATEGORIA_DESPESA, editando: false }
+  );
+  assert.equal(naFixa.ok, false);
+  assert.match(naFixa.mensagem, /cada cobrança/i);
+
+  // CONTROLE: a MESMA entrada sem o mes preenchido passa. Sem este par, a recusa
+  // acima poderia estar vindo de qualquer outro campo do formulario.
+  assert.deepEqual(
+    validarLancamento(
+      "expense",
+      preenchido({ natureza: "one_off", mesDaFatura: "" }),
+      { categoria: CATEGORIA_DESPESA, editando: false }
+    ),
+    { ok: true }
+  );
+});
+
+test("a fatura escolhida vira a ancora da serie inteira", () => {
+  // O CASO QUE DISTINGUE O CERTO DO QUASE-CERTO
+  //
+  // Compra em 31/01, cartao fechando dia 30: `card_invoice_month` manda a compra
+  // para a fatura de FEVEREIRO (dia 31 > 30). A pessoa escolhe fevereiro -- o
+  // mesmo mes, de proposito: e o caso em que a versao quase-certa parece
+  // funcionar.
+  //
+  // O que separa as duas e a parcela 2. Somando um mes a DATA, 31/01 vira 28/02,
+  // que com fechamento no dia 30 cai na fatura de FEVEREIRO outra vez: duas
+  // parcelas na mesma fatura e a serie terminando um mes antes. Contando da
+  // FATURA ancora, a parcela 2 sai no dia 1 de marco.
+  const serie = serieDeParcelas({
+    valor: "100",
+    base: "parcela",
+    parcelaAtual: 1,
+    totalDeParcelas: 3,
+    vencimentoDaParcelaAtual: "2026-01-31",
+  });
+  assert.ok(serie, "controle: a serie tem de existir, senao o caso abaixo e vacuo");
+
+  const datas = datasDasParcelasNoCartao(serie, "2026-01-31", "2026-02-01");
+
+  assert.equal(
+    datas[0],
+    "2026-01-31",
+    "a parcela 1 fica com a data REAL da compra -- a data da compra nao muda"
+  );
+  assert.deepEqual(
+    datas,
+    ["2026-01-31", "2026-03-01", "2026-04-01"],
+    "as seguintes saem no dia 1 do mes da fatura delas, contadas da ANCORA"
+  );
+
+  // E a negacao explicita do defeito: nenhum mes de fatura aparece duas vezes.
+  const mesesDasFaturas = datas.slice(1).map((d) => d.slice(0, 7));
+  assert.equal(
+    new Set(mesesDasFaturas).size,
+    mesesDasFaturas.length,
+    "duas parcelas na mesma fatura e o estrago que esta funcao existe para evitar"
+  );
+
+  // A VERSAO QUASE-CERTA, IMPORTADA E NAO REESCRITA: a ancora saindo da DATA da
+  // compra em vez da fatura. Com fechamento no dia 30 ela devolve fevereiro para
+  // a parcela 2 -- a mesma fatura da parcela 1.
+  const comAncoraDaData = datasDasParcelasNoCartao(serie, "2026-01-31", "2026-01-31");
+  assert.equal(
+    comAncoraDaData[1].slice(0, 7),
+    "2026-02",
+    "controle do criterio errado: ancorado na data, a parcela 2 volta para fevereiro"
+  );
+  assert.notDeepEqual(
+    comAncoraDaData,
+    datas,
+    "se os dois caminhos dessem o mesmo resultado, este teste nao mediria nada"
+  );
+});
+
+test("a ancora escolhida leva a serie para OUTRA fatura, nao so a parcela 1", () => {
+  // O caso do produto: compra hoje (04/10), override para novembro. As dez
+  // parcelas tem de sair de novembro em diante -- nao a primeira em novembro e
+  // as nove seguintes a partir de outubro.
+  const serie = serieDeParcelas({
+    valor: "1000",
+    base: "total",
+    parcelaAtual: 1,
+    totalDeParcelas: 10,
+    vencimentoDaParcelaAtual: "2026-10-04",
+  });
+  assert.ok(serie);
+
+  const datas = datasDasParcelasNoCartao(serie, "2026-10-04", "2026-11-01");
+
+  assert.equal(datas.length, 10);
+  assert.equal(datas[0], "2026-10-04", "a data da compra e um fato e nao muda");
+  assert.equal(datas[1], "2026-12-01");
+  // A ultima atravessa o ano -- a aritmetica de mes nao pode tropecar no 12.
+  assert.equal(datas[9], "2027-08-01");
+
+  // Sem override a serie e contada de outubro, e e por isso que a ancora importa.
+  const semEscolha = datasDasParcelasNoCartao(serie, "2026-10-04", "2026-10-01");
+  assert.equal(semEscolha[1], "2026-11-01");
+  assert.notEqual(
+    semEscolha[1],
+    datas[1],
+    "a escolha tem de mover a serie inteira, e nao so a linha que leva o override"
+  );
 });

@@ -1937,6 +1937,38 @@ jobs:
             echo "::error::O controle negativo deixou arquivo mutado na arvore."
             exit 1
           fi
+      # A FATURA ESCOLHIDA NO LANCAMENTO (HMO-281 / HMO-289)
+      #
+      # As suites puras acima provam as FUNCOES -- qual fatura e o padrao, que
+      # meses entram na janela, e que a serie de parcelas conta a partir da
+      # ancora. Nenhuma delas olha se o formulario MANDA o campo para o banco, e
+      # esse defeito nao aparece no `tsc`: `invoice_month_override` e uma chave
+      # opcional, entao esquece-la compila. A pessoa escolheria a fatura, a tela
+      # diria "salvo", e a compra cairia na fatura da data.
+      - name: A fatura escolhida esta ligada nos quatro escritores
+        run: node scripts/check-fatura-no-lancamento.mjs
+
+      # Controle negativo do guard acima -- e dos dois oraculos que ele nao
+      # alcanca (a fila offline e a aritmetica da ancora).
+      #
+      # Em vez do `sed`+`cmp` dos outros passos deste arquivo, aqui o proprio
+      # runner de mutantes faz o trabalho: ele confere que cada trecho procurado
+      # aparece EXATAMENTE uma vez antes de mutar, roda um controle positivo por
+      # oraculo, e confere o restauro byte a byte depois de cada mutante.
+      #
+      # `--so-typescript` porque a outra metade do arquivo muta a migration 041 e
+      # exige um banco-template montado a mao (a cadeia ATE a 040, sem a 041) --
+      # o que nenhum runner de CI tem. Ela e medida A MAO, e o placar dela esta
+      # registrado no db-verify.yml, ao lado do teste da 041; o db-verify roda a
+      # MIGRATION e o TESTE dela, nao os mutantes. Os modos sao explicitos
+      # justamente para que nada seja PULADO em silencio e o placar nao saia
+      # pela metade com cara de inteiro.
+      #
+      # Dois destes mutantes ja cobraram: `invoice_month_override` sem os dois
+      # pontos casava com a LEITURA da edicao e ficava verde com a escrita
+      # apagada, e a regex do `undefined` parava no `}` da interpolacao.
+      - name: 'A verificacao sabe falhar (fatura escolhida no lancamento)'
+        run: npm run mutantes:fatura-escolhida -- --so-typescript
 
       # Controle negativo. As suites afirmam sobre AUSENCIA -- "a lista NAO traz
       # a compra do outro cartao", "a tela NAO afirma o vazio sem ter lido" -- e
