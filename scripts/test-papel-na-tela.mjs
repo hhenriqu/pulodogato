@@ -206,6 +206,21 @@ const PARTES = [
   // varios.
   "lib/theme.js",
   "lib/modo-papel.js",
+  // AS QUATRO DA HMO-295, e elas sao codigo de producao e nao esboco.
+  // `periodo-do-painel.js` e de onde saem `passoDeMes`, `periodoCorrente`,
+  // `ehPeriodoCorrente` e `rotuloDoPeriodo` -- as quatro funcoes que o passo de
+  // mes usa, e as mesmas que o painel completo usa. Esbocar qualquer uma delas
+  // faria a sonda medir a propria aritmetica de mes em vez da do app, que e
+  // justamente o defeito que a issue existe para nao criar.
+  //
+  // Elas trazem `recurrence` (o `today()` em America/Sao_Paulo e o
+  // `addMonthsClamped`), `dinheiro` e `moeda` atras de si. Sao quatro arquivos,
+  // todos folha ou quase, e a ordem abaixo e a de dependencia:
+  // moeda -> dinheiro, periodo-do-painel -> as tres.
+  "lib/recurrence.js",
+  "lib/dinheiro.js",
+  "lib/moeda.js",
+  "lib/periodo-do-painel.js",
   "components/ui/button.js",
   "components/ui/card.js",
   "components/ModoPapelProvider.js",
@@ -243,6 +258,20 @@ const producao = PARTES.map((parte) => {
   return fonte;
 }).join("\n");
 
+// E a TERCEIRA peneira, que as duas de cima nao substituem: cada parte pode
+// parsear sozinha e o CONCATENADO ainda ser invalido -- duas partes declarando
+// o mesmo `const` de modulo e um SyntaxError do script inteiro, e o sintoma
+// disso e "a pagina nao reportou nada". Com oito modulos de producao na pagina
+// (eram quatro antes da HMO-295) isso deixou de ser hipotetico.
+try {
+  new Function(producao);
+} catch (e) {
+  throw new Error(
+    `as partes juntas nao parseiam: ${e.message}\n` +
+      "provavelmente duas delas declaram o mesmo nome no topo"
+  );
+}
+
 /** O React UMD, inline: `<script src>` entre arquivos file:// e outra briga. */
 const umd = (pacote, arquivo) =>
   readFileSync(join("node_modules", pacote, "umd", arquivo), "utf8");
@@ -256,7 +285,7 @@ const PAGINA = `<!doctype html>
 <meta name="theme-color" content="#ffffff">
 </head><body>
 <div id="raiz-a"></div><div id="raiz-b"></div><div id="raiz-c"></div>
-<div id="raiz-d"></div>
+<div id="raiz-d"></div><div id="raiz-e"></div><div id="raiz-f"></div>
 <div id="resultado">a pagina nao rodou</div>
 <script>${umd("react", "react.development.js")}</script>
 <script>${umd("react-dom", "react-dom.development.js")}</script>
@@ -279,9 +308,13 @@ const cva = (base) => () => base;
 /** Nao usado: o PapelToggle nao passa \`asChild\`. Existe para o import sumir. */
 const Slot = "span";
 
-/** Um icone. */
+/** Icones. Viram \`<svg>\` vazios -- nenhuma assercao fala de desenho. */
 const StickyNote = (props) =>
   React.createElement("svg", { ...props, "data-icone": "sticky-note" });
+const ChevronLeft = (props) =>
+  React.createElement("svg", { ...props, "data-icone": "chevron-left" });
+const ChevronRight = (props) =>
+  React.createElement("svg", { ...props, "data-icone": "chevron-right" });
 
 /**
  * Os tres esbocos do painel, como MARCADORES e nao como valores plausiveis.
@@ -293,20 +326,57 @@ const StickyNote = (props) =>
  * esbocos esta no cabecalho do .mjs: os valores de verdade arrastariam
  * \`lib/papel-de-pao.js\` e outros oito modulos para dentro desta pagina.
  */
-const formatCurrency = () => "ESBOCO-VALOR";
+const formatCurrency = (valor) => "ESBOCO-VALOR:" + valor;
 const FRASE_SEM_SALARIO = "ESBOCO-FRASE-SALARIO";
 const FRASE_SEM_CONTAS = "ESBOCO-FRASE-CONTAS";
 
 /**
- * O \`fetch\` do painel, TRAVADO: um Promise que nunca resolve nem rejeita.
+ * O \`fetch\` do painel: por padrao TRAVADO, e trocavel por caso.
  *
- * Nao e para "evitar rede" -- e para a FASE ser determinada. Sem isto, o
- * \`file://\` recusa a chamada e o componente cai em \`erro\` em algum momento
- * entre o render e a leitura, conforme a recusa chegue antes ou depois do
- * \`flushSync\`; a leitura do rotulo ficaria certa nos dois casos, mas a do
- * TEXTO (que e o controle do esboco) oscilaria entre duas telas diferentes.
+ * O travado e um Promise que nunca resolve nem rejeita, e nao e para "evitar
+ * rede" -- e para a FASE ser determinada. Sem isto, o \`file://\` recusa a
+ * chamada e o componente cai em \`erro\` em algum momento entre o render e a
+ * leitura, conforme a recusa chegue antes ou depois do \`flushSync\`; a leitura
+ * do rotulo ficaria certa nos dois casos, mas a do TEXTO (que e o controle do
+ * esboco) oscilaria entre duas telas diferentes.
+ *
+ * \`pedidos\` guarda as URLs, e e a MEDIDA do passo de mes da HMO-295: o que a
+ * seta tem de trocar e o \`?month=\` que vai para a rota, e isso nao aparece em
+ * nenhum pixel da tela. Uma sonda que lesse so o rotulo passaria verde com um
+ * \`fetch\` que ignorasse o mes -- a tela diria "novembro de 2026" sobre os
+ * numeros de outubro, que e o defeito inteiro desta issue de cabeca para baixo.
  */
-window.fetch = () => new Promise(() => {});
+const pedidos = [];
+let respondeFetch = () => new Promise(() => {});
+window.fetch = (url) => {
+  pedidos.push(String(url));
+  return respondeFetch(String(url));
+};
+
+/** O mes que a URL pediu, ou null -- o oraculo e a propria querystring. */
+const mesDoPedido = (url) => {
+  const achado = String(url).match(/[?&]month=([^&]*)/);
+  return achado ? decodeURIComponent(achado[1]) : null;
+};
+
+/**
+ * Uma resposta de verdade da rota, com o \`month\` ESCOLHIVEL.
+ *
+ * O \`month\` e parametro e nao copia do pedido de proposito: e com ele que a
+ * sonda fabrica o caso "a resposta chegou de outro mes" (cache do PWA, rota que
+ * nao reconheceu o parametro) e mede que a tela NAO a pinta.
+ */
+const respostaDaRota = (month, salario, contas) => ({
+  ok: true,
+  status: 200,
+  json: () =>
+    Promise.resolve({
+      month,
+      range: { from: month + "-01", to: month + "-28" },
+      salario_previsto: { total: salario, quantidade: 1 },
+      total_de_contas: { total: contas, quantidade: 1 },
+    }),
+});
 
 /**
  * Esboco do Switch com o CONTRATO do Radix: \`button role="switch"\`,
@@ -527,11 +597,134 @@ r.d = {
   cartoes: caixaD.querySelectorAll("[data-rotulo].font-papel").length,
   comCard: caixaD.querySelectorAll(".rounded-lg").length,
   texto: caixaD.textContent,
+  // O pedido que a montagem disparou: ele JA tem de trazer o parametro do mes,
+  // senao a rota responde o corrente e a moldura da tela nunca e verificavel.
+  pedido: pedidos[pedidos.length - 1] || null,
 };
 
 ReactDOM.unmountComponentAtNode(caixaD);
 
+// =============================================================================
+// CASOS E e F -- O PASSO DE MES (HMO-295). ASSINCRONOS, e esse e o ponto.
+// =============================================================================
+// Os casos acima medem a fase \`carregando\`, que e sincrona. Daqui para baixo a
+// resposta da rota RESOLVE, e a continuacao dela e um microtask: com
+// \`ReactDOM.flushSync\` sozinho -- que e sincrono -- a sonda fotografaria sempre
+// o estado anterior a resposta, e "a tela nao pintou o mes errado" ficaria verde
+// porque a tela nao pintou nada.
+//
+// So microtask, nunca \`setTimeout\`: a fila de microtasks drena no fim da tarefa
+// atual, muito antes de o \`--dump-dom\` fotografar; um temporizador seria uma
+// corrida contra o momento da foto.
+(async () => {
+try {
+
+/** Drena os microtasks E as camadas de efeito, intercalados. */
+const assentarAsync = async () => {
+  for (let volta = 0; volta < 8; volta++) {
+    await Promise.resolve();
+    ReactDOM.flushSync(() => {});
+  }
+};
+
+/** Monta o painel solto e devolve as leituras do passo de mes. */
+const montarPainel = async (raiz) => {
+  const caixa = document.getElementById(raiz);
+  ReactDOM.render(React.createElement(PainelDePapel), caixa);
+  await assentarAsync();
+
+  const achar = (id) => caixa.querySelector("[id='" + id + "']");
+
+  return {
+    desmontar: () => ReactDOM.unmountComponentAtNode(caixa),
+    ler: () => ({
+      // O rotulo entre as setas -- o unico lugar da tela que diz QUAL mes os
+      // numeros abaixo respondem.
+      rotulo: achar("papel-mes-rotulo").textContent,
+      // O mes que a tela acha que esta mostrando.
+      mesNaTela: achar("papel-mes-rotulo").getAttribute("data-mes"),
+      // O mes que ela PEDIU. Os dois podem divergir, e e disso que o caso F
+      // trata.
+      mesPedido: mesDoPedido(pedidos[pedidos.length - 1]),
+      pedidos: pedidos.length,
+      // O "Hoje" existe? (criterio 2: so fora do mes corrente)
+      temHoje: Boolean(achar("papel-mes-hoje")),
+      texto: caixa.textContent,
+    }),
+    clicar: async (id) => {
+      achar(id).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await assentarAsync();
+    },
+  };
+};
+
+// --- CASO E: as setas, o rotulo e o "Hoje" -----------------------------------
+// A rota de mentira ECOA o mes pedido, que e o que a de verdade faz. Assim
+// todas as leituras caem na fase \`pronto\` e o que varia e so o mes.
+
+pedidos.length = 0;
+respondeFetch = (url) =>
+  Promise.resolve(respostaDaRota(mesDoPedido(url), 7000, 2000));
+
+const e = await montarPainel("raiz-e");
+r.e_inicio = e.ler();
+
+await e.clicar("papel-mes-seguinte");
+r.e_mais_um = e.ler();
+
+await e.clicar("papel-mes-seguinte");
+r.e_mais_dois = e.ler();
+
+// O "Hoje" volta para o mes corrente de qualquer distancia -- nao um passo
+// para tras.
+await e.clicar("papel-mes-hoje");
+r.e_hoje = e.ler();
+
+// E a seta da esquerda anda para TRAS, que e a outra metade do pedido ("quanto
+// eu tinha de contas no mes passado").
+await e.clicar("papel-mes-anterior");
+r.e_menos_um = e.ler();
+
+e.desmontar();
+
+// --- CASO F: a tela nao pinta resposta de OUTRO mes --------------------------
+// Criterio 5. A rota de mentira responde sempre o mes ANTERIOR ao pedido: e o
+// que acontece quando o cache do PWA (24h nas rotas /api/) devolve a resposta de
+// outro mes, e tambem o que aconteceria se a rota ignorasse o \`?month=\`.
+//
+// O par e o que torna isto mensuravel. Sem o controle positivo logo abaixo,
+// "nao pintou o valor" ficaria verde num painel que nao pinta valor nenhum --
+// um \`fetch\` quebrado, um esboco faltando, um \`json()\` que estourou.
+
+pedidos.length = 0;
+respondeFetch = (url) => {
+  const pedido = mesDoPedido(url);
+  const ano = Number(pedido.slice(0, 4));
+  const mes = Number(pedido.slice(5, 7));
+  const anterior = mes === 1 ? (ano - 1) + "-12" : ano + "-" + String(mes - 1).padStart(2, "0");
+  return Promise.resolve(respostaDaRota(anterior, 7000, 2000));
+};
+
+const f = await montarPainel("raiz-f");
+r.f_descartado = f.ler();
+f.desmontar();
+
+// O CONTROLE POSITIVO: a MESMA resposta, com o mes certo, PINTA.
+pedidos.length = 0;
+respondeFetch = (url) =>
+  Promise.resolve(respostaDaRota(mesDoPedido(url), 7000, 2000));
+
+const f2 = await montarPainel("raiz-f");
+r.f_pintado = f2.ler();
+f2.desmontar();
+
 alvoResultado();
+} catch (e) {
+  document.getElementById("resultado").textContent =
+    "ERRO NA PAGINA: " + (e && (e.stack || e.message));
+}
+})();
+
 function alvoResultado() {
   document.getElementById("resultado").textContent =
     "RESULTADO" + JSON.stringify(r) + "FIM";
@@ -874,6 +1067,190 @@ test("D: a leitura e da fase `carregando` -- nenhum esboco na tela", () => {
   );
   // E a fase e a que se diz: o `Valor` de `carregando` e um `…` e so.
   assert.match(resultado.d.texto, /…/);
+});
+
+// -----------------------------------------------------------------------------
+// O PASSO DE MES (HMO-295)
+// -----------------------------------------------------------------------------
+// OS ORACULOS DESTA SECAO SAO ESCRITOS AQUI, A MAO, e isso e deliberado: eles
+// tem de ser INDEPENDENTES de `lib/periodo-do-painel.ts`, que e o codigo medido.
+// Importar `passoDeMes` para conferir o resultado de `passoDeMes` seria a sonda
+// se medindo a si mesma -- a aritmetica de mes daquela biblioteca ja tem a
+// propria suite (`npm run test:periodo-painel`), e o que falta provar aqui e que
+// a SETA chega nela e que o mes resultante vai para a rota.
+
+/** Soma meses a 'AAAA-MM'. Aritmetica inteira, sem `Date`, sem a lib. */
+const somaMes = (mes, n) => {
+  const total = Number(mes.slice(0, 4)) * 12 + Number(mes.slice(5, 7)) - 1 + n;
+  const ano = Math.floor(total / 12);
+  const m = total - ano * 12 + 1;
+  return `${String(ano).padStart(4, "0")}-${String(m).padStart(2, "0")}`;
+};
+
+/** Os nomes dos meses, para conferir o rotulo. Copia de oraculo, de proposito. */
+const NOMES = [
+  "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+  "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+];
+const rotuloEsperado = (mes) =>
+  `${NOMES[Number(mes.slice(5, 7)) - 1]} de ${mes.slice(0, 4)}`;
+
+/**
+ * O mes corrente em America/Sao_Paulo -- a mesma conta de `today()`, escrita
+ * aqui pela razao acima.
+ *
+ * E a UNICA assercao desta secao que depende do relogio, e ela e a que importa:
+ * o painel tem de ABRIR no mes corrente, e no fuso certo. `new Date()
+ * .toISOString().slice(0, 7)` e UTC, e nas tres ultimas horas do ultimo dia do
+ * mes em Sao Paulo ele ja aponta para o mes SEGUINTE -- foi assim que o painel
+ * mostrou as contas de outubro no dia 30 de setembro (HMO-173).
+ */
+const MES_DE_HOJE = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Sao_Paulo",
+})
+  .format(new Date())
+  .slice(0, 7);
+
+test("o oraculo de mes desta secao esta certo (controle do proprio teste)", () => {
+  // Sem este caso, um `somaMes` quebrado faria TODA assercao abaixo comparar
+  // dois valores errados -- e a virada de ano e exatamente onde ele quebraria.
+  assert.equal(somaMes("2026-10", 1), "2026-11");
+  assert.equal(somaMes("2026-12", 1), "2027-01");
+  assert.equal(somaMes("2026-01", -1), "2025-12");
+  assert.equal(somaMes("2026-10", 0), "2026-10");
+  assert.equal(rotuloEsperado("2026-10"), "outubro de 2026");
+  assert.equal(rotuloEsperado("2027-01"), "janeiro de 2027");
+  assert.match(MES_DE_HOJE, /^\d{4}-\d{2}$/);
+});
+
+test("E: o painel abre no mes corrente de Sao Paulo, e JA pede esse mes", () => {
+  // Criterio 1 e 3: o rotulo e `outubro de 2026`, e a rota recebe
+  // `?month=2026-10` desde a montagem. Sem o parametro no primeiro pedido, a
+  // rota responde o mes corrente por conta propria e a moldura da tela nunca
+  // passa a ser verificavel.
+  assert.equal(resultado.e_inicio.mesNaTela, MES_DE_HOJE);
+  assert.equal(resultado.e_inicio.mesPedido, MES_DE_HOJE);
+  assert.equal(resultado.e_inicio.rotulo, rotuloEsperado(MES_DE_HOJE));
+
+  // E o painel na fase `carregando` do caso D tambem ja pedia o mes -- a mesma
+  // montagem, antes de qualquer clique.
+  assert.match(
+    String(resultado.d.pedido),
+    /\/api\/papel-de-pao\/painel\?month=\d{4}-\d{2}$/,
+    `a montagem do painel nao pediu um mes: ${resultado.d.pedido}`
+  );
+});
+
+test("E: o Hoje aparece SO fora do mes corrente", () => {
+  // Criterio 2, nos dois sentidos -- e o par e o que mede: "o botao existe"
+  // sozinho passaria verde com ele sempre na tela, e "nao existe" sozinho
+  // passaria verde com ele nunca.
+  assert.equal(
+    resultado.e_inicio.temHoje,
+    false,
+    "o `Hoje` esta na tela no mes corrente, onde ele nao teria para onde levar"
+  );
+  assert.equal(resultado.e_mais_um.temHoje, true);
+  assert.equal(resultado.e_mais_dois.temHoje, true);
+  assert.equal(
+    resultado.e_hoje.temHoje,
+    false,
+    "o `Hoje` continuou na tela depois de voltar para o mes corrente"
+  );
+  assert.equal(resultado.e_menos_um.temHoje, true);
+});
+
+test("E: cada clique na seta anda UM mes -- no rotulo e no `?month=`", () => {
+  // O criterio 1 e o 6 juntos. As duas leituras importam e por razoes
+  // diferentes: `mesNaTela` e a moldura que a pessoa ve, e `mesPedido` e o que
+  // de fato foi perguntado a rota. Um `fetch` que ignorasse o mes passaria na
+  // primeira e falharia na segunda -- a tela diria "novembro" sobre os numeros
+  // de outubro, que e esta issue de cabeca para baixo.
+  const mais1 = somaMes(MES_DE_HOJE, 1);
+  const mais2 = somaMes(MES_DE_HOJE, 2);
+
+  assert.equal(resultado.e_mais_um.mesNaTela, mais1);
+  assert.equal(resultado.e_mais_um.mesPedido, mais1);
+  assert.equal(resultado.e_mais_um.rotulo, rotuloEsperado(mais1));
+
+  // DOIS cliques andam DOIS meses. Sem este, um handler que trocasse o mes por
+  // um valor fixo ("o mes seguinte ao de hoje") passaria no caso de cima.
+  assert.equal(resultado.e_mais_dois.mesNaTela, mais2);
+  assert.equal(resultado.e_mais_dois.mesPedido, mais2);
+  assert.equal(resultado.e_mais_dois.rotulo, rotuloEsperado(mais2));
+
+  // E a seta da esquerda anda para TRAS, a partir do mes corrente.
+  const menos1 = somaMes(MES_DE_HOJE, -1);
+  assert.equal(resultado.e_menos_um.mesNaTela, menos1);
+  assert.equal(resultado.e_menos_um.mesPedido, menos1);
+});
+
+test("E: o `Hoje` volta ao mes corrente de qualquer distancia", () => {
+  // Ele e clicado a DOIS meses de distancia de proposito: um "Hoje" implementado
+  // como um passo de -1 mes passaria verde se a sonda o clicasse a um mes so.
+  assert.equal(resultado.e_hoje.mesNaTela, MES_DE_HOJE);
+  assert.equal(resultado.e_hoje.mesPedido, MES_DE_HOJE);
+  assert.equal(resultado.e_hoje.rotulo, rotuloEsperado(MES_DE_HOJE));
+});
+
+test("E: cada mes novo e UM pedido novo -- a tela nao reusa a resposta velha", () => {
+  // Cinco leituras, cinco pedidos: montagem + 2 setas + Hoje + 1 seta. Se o
+  // efeito nao dependesse do mes, a contagem ficaria em 1 e os numeros do mes
+  // corrente apareceriam debaixo do rotulo de novembro.
+  assert.equal(resultado.e_inicio.pedidos, 1);
+  assert.equal(resultado.e_mais_um.pedidos, 2);
+  assert.equal(resultado.e_mais_dois.pedidos, 3);
+  assert.equal(resultado.e_hoje.pedidos, 4);
+  assert.equal(resultado.e_menos_um.pedidos, 5);
+});
+
+test("E: a fase `pronto` pinta o valor -- a resposta de mentira chegou", () => {
+  // O controle positivo de toda a secao E: sem ele, as assercoes de rotulo
+  // acima estariam medindo uma tela que nunca saiu de `carregando`, e "o mes
+  // mudou" seria verdade sobre um painel que nao mostra numero nenhum.
+  assert.match(
+    resultado.e_inicio.texto,
+    /ESBOCO-VALOR:7000/,
+    `o painel nao chegou na fase pronto: ${resultado.e_inicio.texto}`
+  );
+  assert.match(resultado.e_mais_dois.texto, /ESBOCO-VALOR:7000/);
+});
+
+test("F: a tela NAO pinta resposta cujo `month` nao e o pedido", () => {
+  // Criterio 5. A resposta vem com o mes ANTERIOR ao pedido -- o que o cache do
+  // PWA (24h nas rotas /api/) devolve, e tambem o que a rota devolveria se
+  // ignorasse o `?month=`. Os numeros seriam plausiveis e estariam debaixo do
+  // rotulo errado, que e a familia de defeito que custou a HMO-173.
+  assert.notEqual(
+    resultado.f_descartado.mesPedido,
+    null,
+    "o caso F nao chegou a pedir mes nenhum"
+  );
+  assert.ok(
+    !/ESBOCO-VALOR/.test(resultado.f_descartado.texto),
+    `a tela pintou o valor de outro mes: ${resultado.f_descartado.texto}`
+  );
+  assert.match(resultado.f_descartado.texto, /indispon/);
+
+  // E a moldura continua dizendo o mes PEDIDO, e nao o que veio na resposta: o
+  // rotulo nao pode ser puxado pela resposta errada.
+  assert.equal(
+    resultado.f_descartado.mesNaTela,
+    resultado.f_descartado.mesPedido
+  );
+});
+
+test("F: o CONTROLE POSITIVO -- a mesma resposta, com o mes certo, pinta", () => {
+  // Sem este, "nao pintou o valor" ficaria verde num painel que nao pinta valor
+  // nenhum: um `fetch` quebrado, um esboco faltando, um `json()` que estourou.
+  // As duas respostas do caso F sao identicas menos no campo `month`.
+  assert.match(
+    resultado.f_pintado.texto,
+    /ESBOCO-VALOR:7000/,
+    `a resposta do mes certo tambem nao pintou: ${resultado.f_pintado.texto}`
+  );
+  assert.ok(!/indispon/.test(resultado.f_pintado.texto));
+  assert.equal(resultado.f_pintado.mesNaTela, resultado.f_pintado.mesPedido);
 });
 
 // -----------------------------------------------------------------------------

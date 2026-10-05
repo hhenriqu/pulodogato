@@ -1,7 +1,14 @@
-// GET /api/papel-de-pao/painel
+// GET /api/papel-de-pao/painel?month=AAAA-MM
 //
 // Os DOIS numeros do modo papel de pao (HMO-286, 3/3 do plano da HMO-279):
-// "Salario Previsto" e "Total de contas", do mes corrente.
+// "Salario Previsto" e "Total de contas", do mes PEDIDO -- o mes corrente
+// quando ninguem pede (HMO-295, 5/6).
+//
+// O `month` da resposta ECOA o mes que saiu da querystring, e nao e enfeite: e
+// com ele que a tela evita pintar a resposta de um mes na moldura de outro
+// quando alguem clica duas vezes na seta, ou quando o cache do PWA (24h nas
+// rotas /api/) devolve a resposta de outro mes. Ele sai de `janela.de`, que e a
+// unica fonte da janela -- um campo calculado a parte poderia discordar dela.
 //
 // A ROTA NAO FAZ CONTA. Ela autentica, le e delega para `lib/papel-de-pao.ts`,
 // que e onde as duas contas moram como funcoes puras e onde
@@ -37,7 +44,7 @@
 // esquecida e o defeito.
 
 import { createClient } from "@/utils/supabase/server";
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { materializarAgenda } from "@/lib/services/scheduled";
 import { today } from "@/lib/recurrence";
 import { contarMembrosAtivos } from "@/lib/parte-do-grupo";
@@ -49,12 +56,12 @@ import {
 import { faturasPrevistasDaJanela } from "@/lib/services/fatura-prevista";
 import {
   NOME_DA_CATEGORIA_DE_SALARIO,
-  janelaDoMesCorrente,
+  janelaDoMes,
   painelDePapel,
   type LinhaPrevistaDoPapel,
 } from "@/lib/papel-de-pao";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const supabase = createClient();
     const {
@@ -67,11 +74,20 @@ export async function GET() {
     }
 
     const hoje = today();
-    const janela = janelaDoMesCorrente(hoje);
 
-    // A agenda do mes corrente pode ainda nao existir como linha: ela nasce das
+    // O MES PEDIDO (HMO-295). Ausente ou estragado cai no mes corrente, e nao
+    // em 400: ver `mesPedido` em lib/papel-de-pao.ts para o porque -- uma
+    // querystring cortada no meio nao pode apagar o modulo inteiro.
+    const month = request.nextUrl.searchParams.get("month");
+    const janela = janelaDoMes(month, hoje);
+
+    // A agenda do mes pedido pode ainda nao existir como linha: ela nasce das
     // regras recorrentes. `janelaParaMaterializar` nunca comeca antes de hoje --
-    // materializar para tras fabricaria contas vencidas retroativas.
+    // materializar para tras fabricaria contas vencidas retroativas -- e devolve
+    // `null` para mes inteiramente passado, que e por isso que abrir setembro
+    // mostra so o que ja esta gravado e abrir NOVEMBRO cria as linhas das
+    // regras recorrentes de novembro. E este elo que faz o "ver o mes seguinte"
+    // da issue responder algo em vez de "nenhuma conta prevista".
     const aMaterializar = janelaParaMaterializar(janela, hoje);
 
     if (aMaterializar) {
