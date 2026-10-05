@@ -241,13 +241,23 @@ function Girando() {
 
 /**
  * O painel de sempre -- os blocos todos, as oito requisicoes, o seletor de
- * periodo.
+ * periodo. Antes da HMO-286 isto se chamava `Painel`; nenhuma linha do corpo
+ * mudou, so o nome, que agora diz de que ele e o oposto.
  *
- * `export` por causa do portao acima: ele e o unico chamador, e o nome
- * `PainelCompleto` existe para dizer de que ele e o oposto. Antes da HMO-286
- * isto se chamava `Painel` e era interno; nenhuma linha do corpo mudou.
+ * NAO LEVA `export`, e isso nao e escolha de estilo: arquivo de pagina do App
+ * Router so pode exportar `default` e as chaves que o Next conhece
+ * (`metadata`, `generateMetadata`, `dynamic`...). Um `export function` a mais
+ * aqui REPROVA o `next build` com
+ *
+ *     Type error: Page "app/(dashboard)/dashboard/page.tsx" does not match the
+ *     required types of a Next.js Page. "PainelCompleto" is not a valid Page
+ *     export field.
+ *
+ * e esse erro NAO aparece no `npm run type-check` -- a validacao mora nos tipos
+ * que o `next build` gera em `.next/types`. O portao acima e o unico chamador e
+ * vive neste mesmo modulo, entao exportar nao serviria para nada.
  */
-export function PainelCompleto() {
+function PainelCompleto() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
