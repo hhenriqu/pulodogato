@@ -1,6 +1,7 @@
 // O INTERRUPTOR do modo papel de pao, em navegador de verdade -- HMO-283,
-// o ROTULO do primeiro cartao do painel -- HMO-294 -- e o TERCEIRO CARTAO,
-// "Quanto Sobra ou Quanto Falta" -- HMO-296.
+// o ROTULO do primeiro cartao do painel -- HMO-294 --, o TERCEIRO CARTAO,
+// "Quanto Sobra ou Quanto Falta" -- HMO-296 -- e o CHEVRON que abre a lista de
+// detalhes nos dois cartoes de cima -- HMO-300.
 //
 // O QUE SO ESTA SUITE PROVA
 // -------------------------
@@ -85,7 +86,7 @@
 //   components/ui/card.js, ModoPapelProvider.js, PapelToggle.js,
 //   ConfiguracaoDePapel.js, PainelDePapel.js
 //
-// E SETE esbocos, cada um com um motivo e um limite declarado:
+// E NOVE esbocos, cada um com um motivo e um limite declarado:
 //
 //   - `cn`, `cva`, `Slot`: a fiacao de CLASSE do Button. Sao calculo de string
 //     (clsx + tailwind-merge + class-variance-authority), nao comportamento, e
@@ -102,6 +103,16 @@
 //     `<html>`. Que o Radix dispare `onCheckedChange` no clique nao esta
 //     provado aqui; e o mesmo Switch que a aba Painel ja usa em oito linhas.
 //   - `StickyNote`: um icone. Vira um `<svg>` vazio.
+//   - `Link` e `caminhoDoCartaoNoMes` (HMO-300): o par da linha de FATURA na
+//     lista que o chevron abre. O `Link` respeita o contrato do next/link (um
+//     `<a href>` que envolve os filhos), entao o que fica provado e o MEU lado
+//     do fio -- que o href montado pelo painel chega no DOM; que o Next
+//     intercepte o clique nao esta provado aqui. O caminho e MARCADOR
+//     ("ESBOCO-CAMINHO:<cartao>:<mes>") e nao um caminho plausivel, porque a
+//     assercao do caso H le os dois campos de dentro dele: um caminho de
+//     mentira faria o teste medir a propria sonda. Que a funcao certa seja
+//     chamada com os DOIS argumentos (e nao `caminhoDoCartao(id)`, que compila
+//     igual) e assercao textual em `npm run test:papel-de-pao`.
 //   - `formatCurrency`, `FRASE_SEM_SALARIO`, `FRASE_SEM_CONTAS`: os tres do
 //     painel, e os tres vao para a pagina como MARCADORES ("ESBOCO-...") em vez
 //     de valores plausiveis. O motivo e o mesmo nos tres: trazer os valores de
@@ -126,6 +137,28 @@
 // `constanteDaLib`. A razao e a de sempre, na direcao oposta: as assercoes do
 // caso G leem esses tres textos, e marcados eles fariam cada caso medir a
 // mentira escrita na propria sonda.
+//
+// O CASO H -- O CHEVRON DA HMO-300 (9/10)
+// ---------------------------------------
+// A seta que abre a lista de detalhes nos DOIS cartoes de cima. Ela e handler,
+// e por isso mora aqui: `react-dom/server` nao ve `onClick` nem o
+// `aria-expanded` que o clique troca, e a tela sairia identica com a seta
+// inteiramente desligada.
+//
+// O que H mede: clicar abre (`aria-expanded` vira "true" e as linhas entram no
+// DOM), clicar de novo fecha, o estado e POR CARTAO, e o cartao sem linha NAO
+// TEM SETA PARA CLICAR -- nos tres corpos que produzem isso (lista vazia,
+// campo ausente do cache de 24h, e so um dos dois cartoes com linha).
+//
+// O que H NAO mede, de proposito: a aritmetica. A invariante que decide a
+// issue -- `soma(detalhe) === total` -- vive em `npm run test:papel-de-pao`,
+// sobre `somarPerna`. O esboco da rota entrega as linhas LITERAIS, com o valor
+// ja dividido, exatamente para que nenhuma assercao de H possa passar verde
+// por uma conta feita dentro da sonda.
+//
+// E a lista fechada NAO ESTA NO DOM, em vez de estar escondida com `hidden`:
+// `hidden` nao tira o texto do `textContent`, e "abrir mostra as linhas"
+// ficaria verde com a seta desligada. H1 e H4 medem a ausencia.
 //
 // O QUE O CASO G PROVA, E O QUE ELE NAO PROVA
 // -------------------------------------------
@@ -349,7 +382,7 @@ const PAGINA = `<!doctype html>
 </head><body>
 <div id="raiz-a"></div><div id="raiz-b"></div><div id="raiz-c"></div>
 <div id="raiz-d"></div><div id="raiz-e"></div><div id="raiz-f"></div>
-<div id="raiz-g"></div>
+<div id="raiz-g"></div><div id="raiz-h"></div>
 <div id="resultado">a pagina nao rodou</div>
 <script>${umd("react", "react.development.js")}</script>
 <script>${umd("react-dom", "react-dom.development.js")}</script>
@@ -361,7 +394,7 @@ const {
   createContext, useCallback, useContext, useEffect, useMemo, useState,
 } = React;
 
-// --- os quatro esbocos (ver o cabecalho do .mjs) -----------------------------
+// --- os esbocos (ver o cabecalho do .mjs) ------------------------------------
 
 /** clsx + tailwind-merge: junta o que nao e falso. Calculo de string. */
 const cn = (...partes) => partes.filter(Boolean).join(" ");
@@ -379,6 +412,36 @@ const ChevronLeft = (props) =>
   React.createElement("svg", { ...props, "data-icone": "chevron-left" });
 const ChevronRight = (props) =>
   React.createElement("svg", { ...props, "data-icone": "chevron-right" });
+const ChevronDown = (props) =>
+  React.createElement("svg", { ...props, "data-icone": "chevron-down" });
+
+/**
+ * \`next/link\`, com o CONTRATO dele: um \`<a href>\` que envolve os filhos.
+ *
+ * E a mesma concessao declarada do esboco do Switch, e do mesmo tamanho: o que
+ * fica provado e o MEU lado do fio -- que o \`href\` montado pelo painel chega no
+ * DOM. Que o Next intercepte o clique e navegue sem recarregar nao esta
+ * provado aqui, e nenhuma assercao desta sonda afirma isso.
+ */
+const Link = ({ href, children, ...resto }) =>
+  React.createElement("a", { ...resto, href }, children);
+
+/**
+ * \`caminhoDoCartaoNoMes\`, como MARCADOR -- e nao como caminho plausivel.
+ *
+ * O caminho de verdade arrastaria \`lib/fatura-do-cartao.js\` (e mais aritmetica
+ * de mes atras dele) para dentro de um script classico sem empacotador, por
+ * uma concatenacao de string. E um caminho plausivel escrito aqui seria PIOR
+ * que o marcador: a assercao "o link leva ao cartao naquele mes" passaria a
+ * medir esta linha.
+ *
+ * O que a sonda mede com ele e o que so ela ve: que os DOIS campos da linha
+ * (\`accountId\` e \`mes\`) chegam no \`href\`. Que a funcao certa seja chamada com
+ * os dois -- e nao \`caminhoDoCartao(id)\`, que compila igual -- e assercao
+ * textual em \`npm run test:papel-de-pao\`.
+ */
+const caminhoDoCartaoNoMes = (accountId, mes) =>
+  "ESBOCO-CAMINHO:" + accountId + ":" + mes;
 
 /**
  * Os tres esbocos do painel, como MARCADORES e nao como valores plausiveis.
@@ -437,21 +500,93 @@ const mesDoPedido = (url) => {
  * sonda fabrica o caso "a resposta chegou de outro mes" (cache do PWA, rota que
  * nao reconheceu o parametro) e mede que a tela NAO a pinta.
  */
-const respostaDaRota = (month, salario, contas, cartao) => ({
+const respostaDaRota = (month, salario, contas, cartao, detalhe) => ({
   ok: true,
   status: 200,
   json: () =>
     Promise.resolve({
       month,
       range: { from: month + "-01", to: month + "-28" },
-      salario_previsto: { total: salario, quantidade: 1 },
+      // O \`detalhe\` da HMO-300. \`undefined\` aqui tambem nao vira campo nenhum
+      // depois do \`JSON\`, e e assim que o caso do corpo de 24h ATRAS -- a rota
+      // de antes do chevron, guardada pelo cache do PWA -- e fabricado: sem o
+      // campo, o cartao tem de ficar exatamente como era, SEM seta.
+      salario_previsto: {
+        total: salario,
+        quantidade: 1,
+        detalhe: detalhe && detalhe.salario,
+      },
       receitas: { total: salario, quantidade: 1 },
-      total_de_contas: { total: contas, quantidade: 1 },
+      total_de_contas: {
+        total: contas,
+        quantidade: 1,
+        detalhe: detalhe && detalhe.contas,
+      },
       // \`undefined\` nao vira campo nenhum depois do \`JSON\`, e e assim que o
       // caso do corpo VELHO (cache do PWA, 24h nas rotas /api/) e fabricado.
       sobra_ou_falta: cartao,
     }),
 });
+
+/**
+ * AS LINHAS DA LISTA, como a rota as entrega -- e aqui elas sao LITERAIS.
+ *
+ * Nenhum valor daqui e calculado: a aritmetica (e a invariante \`soma(detalhe)
+ * === total\`, que e a entrega inteira da HMO-300) vive em
+ * \`npm run test:papel-de-pao\`, sobre \`somarPerna\`. Se este esboco dividisse a
+ * parte do grupo, a assercao "a lista mostra a minha parte" estaria medindo
+ * esta linha em vez do codigo de producao.
+ *
+ * As tres linhas cobrem os tres estados que a TELA distingue, e so eles:
+ * comum, fatura NAO GRAVADA (com o caminho de volta) e linha DE GRUPO (que
+ * ganha rotulo, senao o valor pela metade se le como erro de digitacao).
+ */
+const CARTAO_DA_FATURA = "cartao-nubank";
+const DETALHE_DAS_CONTAS = [
+  {
+    id: "linha-da-luz",
+    gravada: true,
+    descricao: "Conta de luz",
+    valor: 180.5,
+    data: "2026-03-20",
+    de_grupo: false,
+    posso_editar: true,
+    fatura: null,
+  },
+  {
+    id: null,
+    gravada: false,
+    descricao: "Fatura Nubank 03/2026",
+    valor: 820.4,
+    data: "2026-03-25",
+    de_grupo: false,
+    posso_editar: false,
+    fatura: { accountId: CARTAO_DA_FATURA, mes: "2026-03-01" },
+  },
+  {
+    id: "linha-do-aluguel",
+    gravada: true,
+    descricao: "Aluguel do grupo Casa",
+    valor: 1500,
+    data: "2026-03-28",
+    de_grupo: true,
+    posso_editar: false,
+    fatura: null,
+  },
+];
+
+const DETALHE_DO_SALARIO = [
+  {
+    id: "linha-do-salario",
+    gravada: true,
+    descricao: "Salário de março",
+    valor: 7000,
+    data: "2026-03-05",
+    de_grupo: false,
+    posso_editar: true,
+    fatura: null,
+  },
+];
 
 /**
  * O cartao da HMO-296 como a rota o entrega -- e aqui ele e LITERAL, nunca
@@ -775,6 +910,37 @@ const montarPainel = async (raiz) => {
       parcelas: Array.from(caixa.querySelectorAll("[data-parcelas]")).map(
         (el) => el.textContent
       ),
+      // --- O CHEVRON DA HMO-300 ------------------------------------------
+      // As SETAS que existem na arvore, com o estado de cada uma. A lista
+      // VAZIA e uma leitura legitima e e o que o caso do cartao sem linha
+      // exige -- por isso ela e um array e nao um booleano.
+      chevrons: Array.from(caixa.querySelectorAll("[aria-expanded]")).map(
+        (el) => ({
+          id: el.getAttribute("id"),
+          expandido: el.getAttribute("aria-expanded"),
+          rotulo: el.getAttribute("aria-label"),
+          controla: el.getAttribute("aria-controls"),
+        })
+      ),
+      // E as LISTAS abertas. A lista fechada nao existe no DOM de proposito
+      // (ver o comentario de \`NumeroGrande\`): com \`hidden\` ela continuaria no
+      // \`textContent\`, e "abrir mostra as linhas" ficaria verde com a seta
+      // inteiramente desligada.
+      listas: Array.from(caixa.querySelectorAll("[data-detalhe]")).map((el) => ({
+        rotulo: el.getAttribute("data-detalhe"),
+        id: el.getAttribute("id"),
+        linhas: Array.from(el.querySelectorAll("li")).map((li) => ({
+          texto: li.textContent,
+          valor: li
+            .querySelector("[data-valor-do-detalhe]")
+            .getAttribute("data-valor-do-detalhe"),
+          deGrupo: li.getAttribute("data-de-grupo"),
+          gravada: li.getAttribute("data-gravada"),
+          href: li.querySelector("a")
+            ? li.querySelector("a").getAttribute("href")
+            : null,
+        })),
+      })),
     }),
     clicar: async (id) => {
       achar(id).dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -879,6 +1045,76 @@ r.g_indisponivel = await porCartao("raiz-g", CARTAO_INDISPONIVEL);
 // O corpo VELHO: a rota de antes da HMO-296, que e o que o cache do PWA guarda
 // por 24h depois do deploy. O campo nao existe, e o mes esta certo.
 r.g_sem_campo = await porCartao("raiz-g", undefined);
+
+// =============================================================================
+// CASO H -- O CHEVRON E A LISTA DE DETALHES (HMO-300, 9/10)
+// =============================================================================
+// Isto e HANDLER, e por isso mora aqui e nao numa suite de render: \`onClick\` e
+// \`aria-expanded\` nao saem do \`react-dom/server\`, e a tela sairia identica com
+// a seta inteiramente desligada.
+//
+// O que se mede, e so isto:
+//
+//   H1  fechado por padrao -- as duas setas existem, nenhuma lista no DOM
+//   H2  clicar na seta das contas ABRE: \`aria-expanded\` vira "true" e as tres
+//       linhas aparecem, com o valor que CHEGOU (nao um recalculado), o rotulo
+//       de grupo e o caminho de volta da fatura
+//   H3  o estado e POR CARTAO: abrir as contas nao abriu o salario
+//   H4  clicar de novo FECHA, e a lista sai do DOM
+//   H5  cartao sem linha nao tem seta para clicar -- e o terceiro cartao nunca
+//       tem seta, com lista ou sem
+//
+// A ARITMETICA NAO ESTA AQUI, e isso e deliberado: a invariante que decide a
+// issue -- \`soma(detalhe) === total\` -- vive em \`npm run test:papel-de-pao\`,
+// sobre \`somarPerna\`. O esboco da rota entrega as linhas LITERAIS, entao
+// nenhuma assercao deste caso pode passar verde por uma conta feita na sonda.
+
+const comDetalhe = async (raiz, detalhe) => {
+  pedidos.length = 0;
+  respondeFetch = (url) =>
+    Promise.resolve(
+      respostaDaRota(mesDoPedido(url), 7000, 2500.9, CARTAO_QUE_SOBRA, detalhe)
+    );
+  return montarPainel(raiz);
+};
+
+const h = await comDetalhe("raiz-h", {
+  salario: DETALHE_DO_SALARIO,
+  contas: DETALHE_DAS_CONTAS,
+});
+
+r.h_fechado = h.ler();
+
+await h.clicar("papel-contas-chevron");
+r.h_contas_aberto = h.ler();
+
+await h.clicar("papel-contas-chevron");
+r.h_contas_fechado_de_novo = h.ler();
+
+// E pelo OUTRO cartao, para a seta do salario nao ficar sem medida: um
+// \`onClick\` esquecido num dos dois passaria verde com o outro.
+await h.clicar("papel-salario-chevron");
+r.h_salario_aberto = h.ler();
+
+h.desmontar();
+
+// --- H5: SEM O QUE ABRIR, SEM SETA -------------------------------------------
+// Tres corpos, e os tres tem de produzir a MESMA tela: lista vazia, campo
+// ausente (o corpo de 24h atras no cache do PWA) e so um dos dois cartoes com
+// linha. Sem os tres, "nao ha seta" ficaria verde por um motivo diferente do
+// medido.
+
+const vazio = await comDetalhe("raiz-h", { salario: [], contas: [] });
+r.h_lista_vazia = vazio.ler();
+vazio.desmontar();
+
+const semCampo = await comDetalhe("raiz-h", undefined);
+r.h_sem_campo = semCampo.ler();
+semCampo.desmontar();
+
+const soContas = await comDetalhe("raiz-h", { contas: DETALHE_DAS_CONTAS });
+r.h_so_contas = soContas.ler();
+soContas.desmontar();
 
 alvoResultado();
 } catch (e) {
@@ -1549,6 +1785,190 @@ test("G4: resposta SEM o campo (o corpo de 24h atras) nao leva a tela", () => {
   // cartao disse indisponivel" de "a arvore estourou".
   assert.match(resultado.g_sem_campo.textoDosCartoes[0], /ESBOCO-VALOR:7000/);
   assert.match(resultado.g_sem_campo.textoDosCartoes[1], /ESBOCO-VALOR:2000/);
+});
+
+// =============================================================================
+// H -- O CHEVRON E A LISTA DE DETALHES (HMO-300, 9/10 do plano da HMO-279)
+// =============================================================================
+
+test("H1: fechado por padrao -- as duas setas existem, e nenhuma lista no DOM", () => {
+  const { chevrons, listas } = resultado.h_fechado;
+
+  // SO DUAS, e sao os dois cartoes de CIMA. O terceiro nao tem seta: a "lista"
+  // dele seria a uniao das outras duas -- um terceiro lugar para a mesma soma
+  // divergir. Padrao aprovado na revisao 3 do plano (item 4 de 9.5).
+  assert.deepEqual(
+    chevrons.map((c) => c.id),
+    ["papel-salario-chevron", "papel-contas-chevron"]
+  );
+
+  // FECHADO por padrao, e dito no proprio controle.
+  assert.deepEqual(
+    chevrons.map((c) => c.expandido),
+    ["false", "false"]
+  );
+
+  // E a lista nao esta no DOM -- nao esta escondida. A diferenca e medida:
+  // com `hidden` o texto continuaria no `textContent`, e o caso H2 ficaria
+  // verde com a seta inteiramente desligada.
+  assert.deepEqual(listas, []);
+  assert.ok(
+    !resultado.h_fechado.texto.includes("Conta de luz"),
+    "a lista fechada deixou o texto das linhas na tela"
+  );
+});
+
+test("H2: clicar na seta ABRE -- aria-expanded vira true e as linhas aparecem", () => {
+  const antes = resultado.h_fechado.chevrons.find(
+    (c) => c.id === "papel-contas-chevron"
+  );
+  const depois = resultado.h_contas_aberto.chevrons.find(
+    (c) => c.id === "papel-contas-chevron"
+  );
+
+  assert.equal(antes.expandido, "false");
+  assert.equal(depois.expandido, "true", "o clique nao mudou o aria-expanded");
+
+  // O rotulo acompanha o estado: "Ver os detalhes" num botao ja aberto manda
+  // quem usa leitor de tela para o lado errado.
+  assert.match(antes.rotulo, /^Ver os detalhes de Total de contas$/);
+  assert.match(depois.rotulo, /^Esconder os detalhes de Total de contas$/);
+
+  // E a seta aponta para a lista que agora existe.
+  const { listas } = resultado.h_contas_aberto;
+  assert.equal(listas.length, 1, "abriu mais de uma lista, ou nenhuma");
+  assert.equal(listas[0].rotulo, "Total de contas");
+  assert.equal(listas[0].id, depois.controla, "o aria-controls aponta para outro lugar");
+
+  // AS TRES LINHAS QUE CHEGARAM, com o valor que CHEGOU. O `formatCurrency`
+  // desta pagina e marcado ("ESBOCO-VALOR:"), entao o numero lido aqui e o que
+  // a tela mandou formatar -- nao um numero recalculado por ela.
+  assert.deepEqual(
+    listas[0].linhas.map((l) => l.valor),
+    ["180.5", "820.4", "1500"]
+  );
+  assert.match(listas[0].linhas[0].texto, /20\/03/);
+  assert.match(listas[0].linhas[0].texto, /Conta de luz/);
+  assert.match(listas[0].linhas[0].texto, /ESBOCO-VALOR:180\.5/);
+});
+
+test("H2: a linha DE GRUPO vem rotulada, e so ela", () => {
+  // Sem o rotulo, metade do aluguel debaixo do nome do aluguel inteiro se le
+  // como erro de digitacao -- e a pessoa vai procurar um defeito que nao
+  // existe. O par negativo (as outras duas linhas) e o que impede o rotulo
+  // fixo de passar.
+  const linhas = resultado.h_contas_aberto.listas[0].linhas;
+
+  assert.deepEqual(
+    linhas.map((l) => l.deGrupo),
+    ["nao", "nao", "sim"]
+  );
+  assert.match(linhas[2].texto, /Aluguel do grupo Casa/);
+  assert.match(linhas[2].texto, /minha parte do grupo/);
+  assert.ok(
+    !linhas[0].texto.includes("minha parte do grupo"),
+    "a conta pessoal veio rotulada como de grupo"
+  );
+});
+
+test("H2: a FATURA aberta sai sem id e COM o caminho de volta para o cartao", () => {
+  const linhas = resultado.h_contas_aberto.listas[0].linhas;
+
+  assert.deepEqual(
+    linhas.map((l) => l.gravada),
+    ["sim", "nao", "sim"]
+  );
+
+  // Os DOIS campos da linha chegam no href -- e e isso que o esboco marcado
+  // de `caminhoDoCartaoNoMes` existe para tornar legivel. Sem o mes, o link
+  // abriria o mes corrente do cartao certo: o destino plausivel e errado que
+  // ninguem reporta.
+  assert.equal(linhas[1].href, "ESBOCO-CAMINHO:cartao-nubank:2026-03-01");
+
+  // E o par negativo: linha gravada nao vira link. Um `<a>` em todas elas
+  // faria a assercao de cima passar sem distinguir nada.
+  assert.equal(linhas[0].href, null);
+  assert.equal(linhas[2].href, null);
+});
+
+test("H3: o estado e POR CARTAO -- abrir as contas nao abriu o salario", () => {
+  const porId = (leitura) =>
+    Object.fromEntries(leitura.chevrons.map((c) => [c.id, c.expandido]));
+
+  assert.deepEqual(porId(resultado.h_contas_aberto), {
+    "papel-salario-chevron": "false",
+    "papel-contas-chevron": "true",
+  });
+
+  // E a lista aberta e so a das contas: uma lista unica compartilhada
+  // apareceria nos dois cartoes.
+  assert.deepEqual(
+    resultado.h_contas_aberto.listas.map((l) => l.rotulo),
+    ["Total de contas"]
+  );
+
+  // Pelo outro lado: a seta do salario tambem funciona, e abre a lista DELE.
+  // Sem este gesto, um `onClick` esquecido num dos dois passaria verde com o
+  // outro.
+  assert.deepEqual(porId(resultado.h_salario_aberto), {
+    "papel-salario-chevron": "true",
+    "papel-contas-chevron": "false",
+  });
+  assert.deepEqual(
+    resultado.h_salario_aberto.listas.map((l) => l.rotulo),
+    ["Salário"]
+  );
+  assert.deepEqual(
+    resultado.h_salario_aberto.listas[0].linhas.map((l) => l.valor),
+    ["7000"]
+  );
+});
+
+test("H4: clicar de novo FECHA, e a lista sai do DOM", () => {
+  // A seta e um INTERRUPTOR, nao um botao de so abrir. Sem este caso, um
+  // handler que escrevesse `setAberto(true)` fixo passaria no H2.
+  const chevron = resultado.h_contas_fechado_de_novo.chevrons.find(
+    (c) => c.id === "papel-contas-chevron"
+  );
+
+  assert.equal(chevron.expandido, "false");
+  assert.deepEqual(resultado.h_contas_fechado_de_novo.listas, []);
+  assert.ok(
+    !resultado.h_contas_fechado_de_novo.texto.includes("Conta de luz"),
+    "fechar deixou o texto das linhas na tela"
+  );
+});
+
+test("H5: cartao sem o que abrir nao tem seta para clicar", () => {
+  // Tres corpos diferentes, a mesma tela: seta que abre vazio se le como app
+  // quebrado.
+  for (const [nome, leitura] of [
+    ["lista vazia", resultado.h_lista_vazia],
+    ["campo ausente (o corpo de 24h atras)", resultado.h_sem_campo],
+  ]) {
+    assert.deepEqual(leitura.chevrons, [], `${nome}: apareceu seta`);
+    assert.deepEqual(leitura.listas, [], `${nome}: apareceu lista`);
+
+    // E O CONTROLE: o painel esta MONTADO e com os numeros na tela. Sem ele,
+    // "nao ha seta" ficaria verde numa arvore que estourou.
+    assert.equal(leitura.textoDosCartoes.length, 3, `${nome}: os tres cartoes`);
+    assert.match(leitura.textoDosCartoes[1], /ESBOCO-VALOR:2500\.9/, nome);
+  }
+
+  // E o caso misto: so um dos dois cartoes tem linha, e so ele tem seta.
+  assert.deepEqual(
+    resultado.h_so_contas.chevrons.map((c) => c.id),
+    ["papel-contas-chevron"]
+  );
+});
+
+test("H5: o TERCEIRO cartao nunca tem seta -- nem com a lista cheia", () => {
+  // Ele ja mostra as duas parcelas dele, e a lista dele seria a uniao das
+  // outras duas. Com a lista cheia (h_fechado) ha exatamente DUAS setas, e as
+  // parcelas do terceiro continuam onde estavam.
+  assert.equal(resultado.h_fechado.chevrons.length, 2);
+  assert.equal(resultado.h_contas_aberto.chevrons.length, 2);
+  assert.equal(resultado.h_fechado.parcelas.length, 1);
 });
 
 // -----------------------------------------------------------------------------

@@ -85,9 +85,20 @@ const GRUPO_CASA = "99999999-9999-9999-9999-999999999999";
 /** O grupo Casa tem duas pessoas: metade de cada conta e minha. */
 const MEMBROS = new Map([[GRUPO_CASA, 2]]);
 
+// AS DUAS PESSOAS DO GRUPO CASA (HMO-300). A policy do 005 libera
+// `group_id IS NOT NULL AND is_group_member(group_id)`, entao a leitura da rota
+// traz tambem a linha de grupo do OUTRO membro -- e e por isso que o fixture
+// tem dono por linha: sem isso, `posso_editar` seria sempre verdadeiro e o
+// campo nao mediria nada.
+const EU = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+const OUTRO = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+
 /** A conta previsivel: so o salario e so uma conta. Serve de controle. */
 const LINHAS_DO_PAR = [
   {
+    id: "cccccccc-0000-0000-0000-000000000001",
+    description: "Salário de março",
+    user_id: EU,
     due_date: "2026-03-05",
     amount: 7000,
     status: "pending",
@@ -96,6 +107,9 @@ const LINHAS_DO_PAR = [
     group_id: null,
   },
   {
+    id: "cccccccc-0000-0000-0000-000000000002",
+    description: "Internet",
+    user_id: EU,
     due_date: "2026-03-20",
     amount: 2000,
     status: "pending",
@@ -114,6 +128,9 @@ const LINHAS = [
   //    `expected_income` AGREGADO de /api/scheduled-transactions/summary
   //    passaria verde aqui. Ela nao entra em nenhum dos dois numeros.
   {
+    id: "cccccccc-0000-0000-0000-000000000003",
+    description: "Aluguel recebido",
+    user_id: EU,
     due_date: "2026-03-10",
     amount: 2500,
     status: "pending",
@@ -124,6 +141,9 @@ const LINHAS = [
 
   // 3) Conta de luz pendente: entra no total de contas.
   {
+    id: "cccccccc-0000-0000-0000-000000000004",
+    description: "Conta de luz",
+    user_id: EU,
     due_date: "2026-03-20",
     amount: 180.5,
     status: "pending",
@@ -135,6 +155,9 @@ const LINHAS = [
   // 4) Conta JA PAGA: continua sendo uma conta do mes. Sem ela, no dia 30 o
   //    total de contas iria para zero debaixo do mesmo rotulo.
   {
+    id: "cccccccc-0000-0000-0000-000000000005",
+    description: "Condomínio",
+    user_id: EU,
     due_date: "2026-03-08",
     amount: 2000,
     status: "paid",
@@ -145,6 +168,9 @@ const LINHAS = [
 
   // 5) Assinatura CANCELADA e mensalidade PULADA: sairam da promessa do mes.
   {
+    id: "cccccccc-0000-0000-0000-000000000006",
+    description: "Assinatura cancelada",
+    user_id: EU,
     due_date: "2026-03-12",
     amount: 99,
     status: "cancelled",
@@ -153,6 +179,9 @@ const LINHAS = [
     group_id: null,
   },
   {
+    id: "cccccccc-0000-0000-0000-000000000007",
+    description: "Mensalidade pulada",
+    user_id: EU,
     due_date: "2026-03-13",
     amount: 49,
     status: "skipped",
@@ -164,6 +193,9 @@ const LINHAS = [
   // 6) Despesa gravada NEGATIVA. A outra convencao de sinal do app chegando
   //    aqui: sem `Math.abs` ela DIMINUIRIA o total de contas.
   {
+    id: "cccccccc-0000-0000-0000-000000000008",
+    description: "Taxa lançada negativa",
+    user_id: EU,
     due_date: "2026-03-22",
     amount: -300,
     status: "pending",
@@ -174,6 +206,9 @@ const LINHAS = [
 
   // 7) Aluguel do grupo Casa, R$ 3.000 para duas pessoas. Entra por 1.500.
   {
+    id: "cccccccc-0000-0000-0000-000000000009",
+    description: "Aluguel do grupo Casa",
+    user_id: OUTRO,
     due_date: "2026-03-28",
     amount: 3000,
     status: "pending",
@@ -186,6 +221,9 @@ const LINHAS = [
   //    e deste mes, e a rota pode trazer meses vizinhos de proposito (a
   //    consulta da fatura do cartao olha um mes antes).
   {
+    id: "cccccccc-0000-0000-0000-000000000010",
+    description: "Salário de abril",
+    user_id: EU,
     due_date: "2026-04-05",
     amount: 7000,
     status: "pending",
@@ -194,6 +232,9 @@ const LINHAS = [
     group_id: null,
   },
   {
+    id: "cccccccc-0000-0000-0000-000000000011",
+    description: "Salário de fevereiro",
+    user_id: EU,
     due_date: "2026-02-05",
     amount: 7000,
     status: "pending",
@@ -204,6 +245,9 @@ const LINHAS = [
   // Uma conta de fevereiro, para o recorte ter o que descartar dos DOIS lados
   // no segundo numero tambem.
   {
+    id: "cccccccc-0000-0000-0000-000000000012",
+    description: "Conta de fevereiro",
+    user_id: EU,
     due_date: "2026-02-20",
     amount: 1234.56,
     status: "pending",
@@ -213,11 +257,57 @@ const LINHAS = [
   },
 ];
 
+/**
+ * A FATURA ABERTA SINTETIZADA, na forma que `sintetizarFaturasAbertas` monta
+ * e que `agendaComFaturasAbertas` concatena no FIM da lista (HMO-300).
+ *
+ * Ela nao existe em tabela nenhuma: `id: null` e deliberado em
+ * `FaturaPrevista`, e e dele que sai `gravada: false` no detalhe. Os campos que
+ * so ela tem -- `account_id` e `invoice_month` -- sao o que vira o caminho de
+ * volta para o cartao naquele mes.
+ *
+ * O `due_date` dela e 25/03, no MEIO do mes, para a ordenacao da lista ter o
+ * que provar: concatenada no fim, ela so aparece no lugar certo se alguem
+ * ordenar.
+ */
+const CARTAO_NUBANK = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+const FATURA_ABERTA = {
+  id: null,
+  fatura_prevista: true,
+  account_id: CARTAO_NUBANK,
+  account_name: "Nubank",
+  invoice_month: "2026-03-01",
+  description: "Fatura Nubank 03/2026",
+  amount: 820.4,
+  due_date: "2026-03-25",
+  status: "pending",
+  direction: "expense",
+  group_id: null,
+  category_id: null,
+};
+
 const ctx = {
   janela: JANELA,
   membrosAtivosPorGrupo: MEMBROS,
   categoriasDeSalario: [SALARIO],
+  // QUEM ESTA OLHANDO. Sem ele `posso_editar` cai para `false` em toda linha,
+  // e e esse o caso negativo mais abaixo.
+  meuUserId: EU,
 };
+
+/**
+ * O PAR (total, quantidade) DE UM NUMERO, SEM O `detalhe` -- HMO-300.
+ *
+ * Os casos de aritmetica desta suite comparam o numero inteiro com
+ * `deepEqual`, e `deepEqual` exige as MESMAS chaves: com o `detalhe` no tipo,
+ * cada um deles teria de carregar a lista inteira escrita a mao, e um caso de
+ * SOMA passaria a reprovar quando alguem mudasse uma DESCRICAO.
+ *
+ * Isto nao afrouxa nada: o `detalhe` de todo fixture e medido logo abaixo, e
+ * contra a invariante que importa (a soma), que e mais forte do que uma lista
+ * copiada.
+ */
+const soNumero = ({ total, quantidade }) => ({ total, quantidade });
 
 /** 180,50 + 2.000 (paga) + 300 (negativa) + 1.500 (minha metade do grupo). */
 const CONTAS_DE_MARCO = 3980.5;
@@ -243,11 +333,323 @@ test("a janela e o mes de hoje, e nao o horizonte", () => {
 test("os dois numeros do mes, sobre o fixture inteiro", () => {
   const painel = painelDePapel(LINHAS, ctx);
 
-  assert.deepEqual(painel.salario_previsto, { total: 7000, quantidade: 1 });
-  assert.deepEqual(painel.total_de_contas, {
+  assert.deepEqual(soNumero(painel.salario_previsto), { total: 7000, quantidade: 1 });
+  assert.deepEqual(soNumero(painel.total_de_contas), {
     total: CONTAS_DE_MARCO,
     quantidade: 4,
   });
+});
+
+// ===========================================================================
+// O DETALHE DO CHEVRON -- HMO-300 (9/10 do plano da HMO-279)
+// ===========================================================================
+// A REGRA QUE DECIDE A ENTREGA INTEIRA, E E UMA SO:
+//
+//     soma(detalhe) === total, em TODO fixture e nas TRES pernas.
+//
+// Um chevron que abre uma lista que nao fecha com o numero de cima e pior que
+// cartao nenhum: ele transforma um numero conferivel num numero DESMENTIDO
+// pela propria tela.
+//
+// E ela e aritmetica de proposito. "O detalhe tem N linhas" nao serve, e o
+// motivo tem nome: o mutante desta issue e listar as linhas ANTES da divisao
+// da parte do grupo -- tres linhas de R$ 3.000 debaixo de um total de
+// R$ 1.500. Ele passa por QUALQUER assercao que so conte linhas, e so morre
+// contra a soma. E um fixture sem linha de grupo o deixa vivo: por isso o caso
+// com grupo e obrigatorio, nao opcional.
+//
+// A segunda metade da mesma ideia e a FATURA ABERTA sintetizada. Ela entra na
+// mesma lista por um caminho completamente diferente (`agendaComFaturasAbertas`
+// a concatena depois da leitura do banco), e um detalhe montado de um segundo
+// `filter` sobre `linhasBrutas` a perderia -- a lista somaria MENOS que o
+// total, com o total certo.
+
+/** A soma das linhas abertas, em centavos fechados. */
+const somaDoDetalhe = (numero) =>
+  Number(numero.detalhe.reduce((soma, l) => soma + l.valor, 0).toFixed(2));
+
+/**
+ * TODO FIXTURE DA SUITE, nomeado -- e os quatro que esta issue acrescenta.
+ *
+ * A lista e explicita e nao derivada: um laco sobre fixtures gerados nao teria
+ * como nomear o que falhou, e o que importa aqui e justamente saber QUAL
+ * forma de lista quebrou a invariante.
+ */
+const FIXTURES_DO_DETALHE = [
+  ["o fixture inteiro de marco", LINHAS, ctx],
+  ["o par de controle (um salario, uma conta)", LINHAS_DO_PAR, ctx],
+  ["o mes com a FATURA aberta sintetizada", [...LINHAS, FATURA_ABERTA], ctx],
+  ["so a fatura aberta, sem linha gravada nenhuma", [FATURA_ABERTA], ctx],
+  [
+    "a linha de GRUPO sozinha -- o mutante da divisao mora aqui",
+    LINHAS.filter((l) => l.group_id != null),
+    ctx,
+  ],
+  [
+    "a mesma linha de grupo, com TRES membros (a parte muda, a soma segue)",
+    LINHAS.filter((l) => l.group_id != null),
+    { ...ctx, membrosAtivosPorGrupo: new Map([[GRUPO_CASA, 3]]) },
+  ],
+  [
+    "grupo sem contagem de membros -- o valor cheio, que erra para cima",
+    LINHAS.filter((l) => l.group_id != null),
+    { ...ctx, membrosAtivosPorGrupo: new Map() },
+  ],
+  ["o mes vazio", [], ctx],
+  [
+    "um mes inteiro fora da janela (so os vizinhos)",
+    LINHAS.filter((l) => !l.due_date.startsWith("2026-03")),
+    ctx,
+  ],
+  [
+    "linha sem `direction` -- o painel cala os tres numeros",
+    LINHAS.map(({ direction, ...resto }) => resto),
+    ctx,
+  ],
+  [
+    "sem `meuUserId` -- nenhuma linha ganha acao",
+    [...LINHAS, FATURA_ABERTA],
+    { ...ctx, meuUserId: undefined },
+  ],
+];
+
+for (const [nome, linhas, contexto] of FIXTURES_DO_DETALHE) {
+  test(`o detalhe FECHA com o total -- ${nome}`, () => {
+    const painel = painelDePapel(linhas, contexto);
+
+    for (const perna of ["salario_previsto", "receitas", "total_de_contas"]) {
+      const numero = painel[perna];
+
+      assert.ok(
+        Array.isArray(numero.detalhe),
+        `${perna}: o detalhe nao e uma lista`
+      );
+
+      // INDISPONIVEL NAO ABRE NADA. `total: null` nao e zero, e uma lista
+      // debaixo de "indisponivel" explicaria um numero que a tela acabou de
+      // dizer que nao sabe.
+      if (numero.total === null) {
+        assert.deepEqual(
+          numero.detalhe,
+          [],
+          `${perna}: total indisponivel, mas o chevron teria o que abrir`
+        );
+        assert.equal(numero.quantidade, 0, `${perna}`);
+        continue;
+      }
+
+      // A INVARIANTE. E uma igualdade exata, nao uma tolerancia: as duas saem
+      // do mesmo `toFixed(2)`.
+      assert.equal(
+        somaDoDetalhe(numero),
+        numero.total,
+        `${perna}: a soma das linhas abertas nao e o total do cartao`
+      );
+
+      // E a contagem e a MESMA lista. Sem isto, um detalhe que somasse certo
+      // com linhas fundidas (duas de R$ 100 viradas uma de R$ 200) passaria.
+      assert.equal(
+        numero.detalhe.length,
+        numero.quantidade,
+        `${perna}: o detalhe tem outra contagem que a do cartao`
+      );
+
+      // Nenhuma linha negativa: o cartao soma em modulo, e uma linha negativa
+      // na lista fecharia a soma mentindo no sinal.
+      for (const l of numero.detalhe) {
+        assert.ok(l.valor >= 0, `${perna}: linha com valor negativo na lista`);
+        assert.equal(typeof l.data, "string", `${perna}: linha sem data`);
+      }
+
+      // CRONOLOGICA. A fatura sintetizada e concatenada no FIM da lista crua;
+      // sem ordenar, ela apareceria depois da conta do dia 28 por acidente de
+      // montagem.
+      const datas = numero.detalhe.map((l) => l.data);
+      assert.deepEqual(
+        datas,
+        [...datas].sort(),
+        `${perna}: a lista nao esta em ordem de vencimento`
+      );
+    }
+  });
+}
+
+test("O MUTANTE DA ISSUE: a linha de grupo entra pela MINHA parte, e rotulada", () => {
+  // O aluguel do grupo Casa e de R$ 3.000, e o grupo tem duas pessoas. Listar
+  // a linha ANTES de `parteDoMembro` poria R$ 3.000 debaixo de um total que
+  // tem R$ 1.500 dela -- e passaria por qualquer assercao que so contasse
+  // linhas. A soma acima ja mata o mutante; este caso diz em quanto.
+  const doGrupo = LINHAS.filter((l) => l.group_id != null);
+  const painel = painelDePapel(doGrupo, ctx);
+
+  assert.equal(painel.total_de_contas.total, 1500);
+  assert.equal(painel.total_de_contas.detalhe.length, 1);
+
+  const linha = painel.total_de_contas.detalhe[0];
+  assert.equal(linha.valor, 1500, "a lista mostra o valor CHEIO do grupo");
+  assert.equal(linha.de_grupo, true, "a linha de grupo nao vem rotulada");
+  assert.equal(linha.descricao, "Aluguel do grupo Casa");
+
+  // E O CONTROLE: a linha PESSOAL nao vem rotulada como de grupo. Sem ele,
+  // `de_grupo: true` fixo passaria no caso de cima.
+  const pessoal = painelDePapel(LINHAS_DO_PAR, ctx);
+  assert.deepEqual(
+    pessoal.total_de_contas.detalhe.map((l) => l.de_grupo),
+    [false]
+  );
+});
+
+test("a FATURA aberta aparece na lista: nao gravada, com o caminho de volta", () => {
+  const painel = painelDePapel([...LINHAS, FATURA_ABERTA], ctx);
+  const contas = painel.total_de_contas;
+
+  // Ela ENTRA no total -- e a maior conta de muita gente.
+  assert.equal(contas.total, Number((CONTAS_DE_MARCO + 820.4).toFixed(2)));
+  assert.equal(contas.quantidade, 5);
+
+  const fatura = contas.detalhe.find((l) => l.descricao === FATURA_ABERTA.description);
+  assert.ok(fatura, "a fatura aberta nao aparece na lista que o chevron abre");
+  assert.equal(fatura.gravada, false, "a fatura sintetizada veio como gravada");
+  assert.equal(fatura.id, null);
+  assert.equal(fatura.valor, 820.4);
+  assert.deepEqual(fatura.fatura, {
+    accountId: CARTAO_NUBANK,
+    mes: "2026-03-01",
+  });
+
+  // SEM ACAO: ela nao tem `scheduled_transactions.id`, e uma baixa com id
+  // inventado responde 404 -- que para quem clicou se le como "o app nao
+  // conseguiu".
+  assert.equal(fatura.posso_editar, false);
+
+  // E O CONTROLE: toda linha GRAVADA sai sem `fatura`, senao o campo nao
+  // distingue nada.
+  for (const l of contas.detalhe.filter((l) => l.gravada)) {
+    assert.equal(l.fatura, null, `${l.descricao} ganhou caminho de fatura`);
+  }
+
+  // E a ordem poe a fatura (25/03) ANTES do aluguel do grupo (28/03), mesmo
+  // tendo sido concatenada DEPOIS dele na lista crua.
+  assert.deepEqual(
+    contas.detalhe.map((l) => l.data),
+    ["2026-03-08", "2026-03-20", "2026-03-22", "2026-03-25", "2026-03-28"]
+  );
+});
+
+test("`posso_editar`: a minha linha sim, a do outro membro do grupo nao", () => {
+  const painel = painelDePapel(LINHAS, ctx);
+
+  // O salario e meu: ele ganha acao.
+  assert.deepEqual(
+    painel.salario_previsto.detalhe.map((l) => ({
+      descricao: l.descricao,
+      gravada: l.gravada,
+      posso_editar: l.posso_editar,
+    })),
+    [{ descricao: "Salário de março", gravada: true, posso_editar: true }]
+  );
+
+  // O aluguel do grupo e do OUTRO membro: ele entra no total (e a minha
+  // metade do que vou pagar) e sai SEM acao. A RLS recusaria o `DELETE`, e o
+  // modo de falha pior ja esta medido aqui: `UPDATE` filtrado pela RLS volta
+  // 200 sem alterar nada -- o app diz "pronto" e a linha fica.
+  const doOutro = painel.total_de_contas.detalhe.find((l) => l.de_grupo);
+  assert.equal(doOutro.gravada, true, "a linha do outro membro existe no banco");
+  assert.equal(doOutro.posso_editar, false);
+
+  // E AS MINHAS CONTAS, no mesmo cartao, continuam editaveis -- sem este par o
+  // caso de cima passaria com `posso_editar: false` fixo.
+  assert.deepEqual(
+    painel.total_de_contas.detalhe
+      .filter((l) => !l.de_grupo)
+      .map((l) => l.posso_editar),
+    [true, true, true]
+  );
+});
+
+test("`posso_editar` FALHA FECHADO: sem `meuUserId`, nenhuma linha ganha acao", () => {
+  // O caso do campo que a rota esqueceu de passar. Botao ausente e ruim;
+  // botao que aparece e nao funciona e pior -- e esta e a direcao barata.
+  const painel = painelDePapel(LINHAS, { ...ctx, meuUserId: undefined });
+
+  assert.deepEqual(
+    painel.total_de_contas.detalhe.map((l) => l.posso_editar),
+    [false, false, false, false]
+  );
+
+  // E o controle positivo: com o campo, as mesmas linhas respondem outra
+  // coisa. Sem ele, este caso ficaria verde com `posso_editar` apagado de vez.
+  assert.ok(
+    painelDePapel(LINHAS, ctx).total_de_contas.detalhe.some(
+      (l) => l.posso_editar
+    ),
+    "nenhuma linha e editavel nem com o meuUserId -- o caso acima e vacuo"
+  );
+});
+
+test("sem `user_id` na leitura, a linha entra na soma e sai sem acao", () => {
+  // A rota que esquecesse a coluna no `select`. O total continua certo -- o
+  // campo nao entra em soma nenhuma --, e a lista perde os botoes.
+  const semDono = LINHAS.map(({ user_id, ...resto }) => resto);
+  const painel = painelDePapel(semDono, ctx);
+
+  assert.equal(painel.total_de_contas.total, CONTAS_DE_MARCO);
+  assert.deepEqual(
+    painel.total_de_contas.detalhe.map((l) => l.posso_editar),
+    [false, false, false, false]
+  );
+});
+
+test("sem `id` na leitura, a linha vira NAO GRAVADA -- e o total nao muda", () => {
+  // A outra coluna nova. `gravada` sai do `id`, como em `LinhaDaTela`: sem
+  // ele, nenhuma linha oferece acao, e isso e melhor do que oferecer uma acao
+  // que monta a URL com `undefined`.
+  const semId = LINHAS.map(({ id, ...resto }) => resto);
+  const painel = painelDePapel(semId, ctx);
+
+  assert.equal(painel.total_de_contas.total, CONTAS_DE_MARCO);
+  assert.deepEqual(
+    painel.total_de_contas.detalhe.map((l) => [l.gravada, l.posso_editar]),
+    [
+      [false, false],
+      [false, false],
+      [false, false],
+      [false, false],
+    ]
+  );
+});
+
+test("sem `description`, a lista sai sem nome -- e nao com um nome inventado", () => {
+  const semNome = LINHAS_DO_PAR.map(({ description, ...resto }) => resto);
+  const painel = painelDePapel(semNome, ctx);
+
+  assert.deepEqual(
+    painel.total_de_contas.detalhe.map((l) => l.descricao),
+    [null]
+  );
+  // E o total nao se mexe: nenhum destes campos entra na soma.
+  assert.equal(painel.total_de_contas.total, 2000);
+});
+
+test("os TRES detalhes sao listas distintas -- um nao e o outro", () => {
+  // `semLinha` era uma constante compartilhada ate a HMO-300. Com um array
+  // dentro, a constante daria a MESMA lista para os tres numeros, e um `push`
+  // num cartao apareceria nos outros dois.
+  const vazio = painelDePapel([], ctx);
+  assert.notEqual(vazio.salario_previsto.detalhe, vazio.total_de_contas.detalhe);
+  assert.notEqual(vazio.receitas.detalhe, vazio.total_de_contas.detalhe);
+
+  // E no mes cheio o salario e um SUBCONJUNTO das receitas, nao o mesmo array.
+  const painel = painelDePapel(LINHAS, ctx);
+  assert.notEqual(painel.salario_previsto.detalhe, painel.receitas.detalhe);
+  assert.deepEqual(
+    painel.receitas.detalhe.map((l) => l.descricao),
+    ["Salário de março", "Aluguel recebido"]
+  );
+  assert.deepEqual(
+    painel.salario_previsto.detalhe.map((l) => l.descricao),
+    ["Salário de março"]
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -313,8 +715,8 @@ test("O recorte do mes: so vizinho, nenhuma linha do mes -> indisponivel nos doi
   );
 
   const painel = painelDePapel(soVizinhos, ctx);
-  assert.deepEqual(painel.salario_previsto, { total: null, quantidade: 0 });
-  assert.deepEqual(painel.total_de_contas, { total: null, quantidade: 0 });
+  assert.deepEqual(soNumero(painel.salario_previsto), { total: null, quantidade: 0 });
+  assert.deepEqual(soNumero(painel.total_de_contas), { total: null, quantidade: 0 });
 });
 
 test("O recorte do mes: os dois extremos da janela ENTRAM", () => {
@@ -340,7 +742,7 @@ test("O recorte do mes: os dois extremos da janela ENTRAM", () => {
   // Janela FECHADA dos dois lados. Um `<` no lugar do `<=` tiraria a conta que
   // vence no ultimo dia do mes -- a mais comum que existe.
   const painel = painelDePapel(nasPontas, ctx);
-  assert.deepEqual(painel.total_de_contas, { total: 15, quantidade: 2 });
+  assert.deepEqual(soNumero(painel.total_de_contas), { total: 15, quantidade: 2 });
 });
 
 test("O recorte do mes nasce do fuso de Sao Paulo, nao de UTC", () => {
@@ -501,8 +903,8 @@ test("os dois numeros seguem a janela do mes PEDIDO, e nao a do corrente", () =>
   // (R$ 7.000, dia 05) e nenhuma conta de abril.
   const abril = painelDePapel(LINHAS, { ...ctx, janela: janelaDoMes("2026-04", HOJE) });
 
-  assert.deepEqual(abril.salario_previsto, { total: 7000, quantidade: 1 });
-  assert.deepEqual(abril.total_de_contas, { total: null, quantidade: 0 });
+  assert.deepEqual(soNumero(abril.salario_previsto), { total: 7000, quantidade: 1 });
+  assert.deepEqual(soNumero(abril.total_de_contas), { total: null, quantidade: 0 });
 
   // E o mes de marco continua respondendo o que respondia -- a janela nova nao
   // mexeu na conta, so em QUAL mes ela responde.
@@ -551,13 +953,13 @@ test("O filtro de categoria: mais de um id de salario conta (catalogo + a propri
   ];
 
   const um = painelDePapel(linhas, ctx);
-  assert.deepEqual(um.salario_previsto, { total: 7000, quantidade: 1 });
+  assert.deepEqual(soNumero(um.salario_previsto), { total: 7000, quantidade: 1 });
 
   const dois = painelDePapel(linhas, {
     ...ctx,
     categoriasDeSalario: [SALARIO, MEU_SALARIO],
   });
-  assert.deepEqual(dois.salario_previsto, { total: 8200, quantidade: 2 });
+  assert.deepEqual(soNumero(dois.salario_previsto), { total: 8200, quantidade: 2 });
 });
 
 test("O filtro de categoria: linha sem category_id nunca cai no salario", () => {
@@ -574,8 +976,8 @@ test("O filtro de categoria: linha sem category_id nunca cai no salario", () => 
   ];
 
   const painel = painelDePapel(comFatura, ctx);
-  assert.deepEqual(painel.salario_previsto, { total: null, quantidade: 0 });
-  assert.deepEqual(painel.total_de_contas, { total: 450, quantidade: 1 });
+  assert.deepEqual(soNumero(painel.salario_previsto), { total: null, quantidade: 0 });
+  assert.deepEqual(soNumero(painel.total_de_contas), { total: 450, quantidade: 1 });
 });
 
 test("o nome da categoria e o do seed do 001, com acento", () => {
@@ -590,8 +992,8 @@ test("o nome da categoria e o do seed do 001, com acento", () => {
 test("O caso vazio: lista vazia -> indisponivel nos dois, e nao R$ 0,00", () => {
   const painel = painelDePapel([], ctx);
 
-  assert.deepEqual(painel.salario_previsto, { total: null, quantidade: 0 });
-  assert.deepEqual(painel.total_de_contas, { total: null, quantidade: 0 });
+  assert.deepEqual(soNumero(painel.salario_previsto), { total: null, quantidade: 0 });
+  assert.deepEqual(soNumero(painel.total_de_contas), { total: null, quantidade: 0 });
 
   // Zero e uma afirmacao sobre o dinheiro da pessoa, e nesta conta ela e falsa.
   assert.notEqual(painel.salario_previsto.total, 0);
@@ -609,7 +1011,7 @@ test("O caso vazio: tem contas mas nao tem salario -> um numero e uma frase", ()
 test("O caso vazio: catalogo sem a categoria Salario -> indisponivel, nao zero", () => {
   const painel = painelDePapel(LINHAS, { ...ctx, categoriasDeSalario: [] });
 
-  assert.deepEqual(painel.salario_previsto, { total: null, quantidade: 0 });
+  assert.deepEqual(soNumero(painel.salario_previsto), { total: null, quantidade: 0 });
   // O outro numero nao e afetado.
   assert.equal(painel.total_de_contas.total, CONTAS_DE_MARCO);
 });
@@ -620,8 +1022,8 @@ test("O caso vazio: todas as linhas do mes canceladas -> indisponivel", () => {
   );
 
   const painel = painelDePapel(canceladas, ctx);
-  assert.deepEqual(painel.salario_previsto, { total: null, quantidade: 0 });
-  assert.deepEqual(painel.total_de_contas, { total: null, quantidade: 0 });
+  assert.deepEqual(soNumero(painel.salario_previsto), { total: null, quantidade: 0 });
+  assert.deepEqual(soNumero(painel.total_de_contas), { total: null, quantidade: 0 });
 });
 
 test("as duas frases do caso vazio existem e nao dizem zero", () => {
@@ -645,12 +1047,12 @@ test("'paid' fica DENTRO do previsto; 'skipped' e 'cancelled' saem", () => {
   };
 
   const paga = painelDePapel([{ ...base, amount: 100, status: "paid" }], ctx);
-  assert.deepEqual(paga.total_de_contas, { total: 100, quantidade: 1 });
+  assert.deepEqual(soNumero(paga.total_de_contas), { total: 100, quantidade: 1 });
 
   for (const status of ["skipped", "cancelled"]) {
     const fora = painelDePapel([{ ...base, amount: 100, status }], ctx);
     assert.deepEqual(
-      fora.total_de_contas,
+      soNumero(fora.total_de_contas),
       { total: null, quantidade: 0 },
       `status ${status} deveria sair do previsto`
     );
@@ -682,7 +1084,7 @@ test("a linha de grupo entra pela MINHA parte, nao pelo valor cheio", () => {
 
   // Duas pessoas no grupo: metade.
   const comMetade = painelDePapel(doGrupo, ctx);
-  assert.deepEqual(comMetade.total_de_contas, { total: 1500, quantidade: 1 });
+  assert.deepEqual(soNumero(comMetade.total_de_contas), { total: 1500, quantidade: 1 });
 
   // Sem a contagem de membros o valor fica CHEIO -- erra para cima, que e a
   // direcao barata (ver lib/parte-do-grupo.ts). O que nao pode e a policy do
@@ -706,8 +1108,8 @@ test("direcao ausente deixa os DOIS numeros indisponiveis", () => {
   const semDirecao = LINHAS.map(({ direction, ...resto }) => resto);
 
   const painel = painelDePapel(semDirecao, ctx);
-  assert.deepEqual(painel.salario_previsto, { total: null, quantidade: 0 });
-  assert.deepEqual(painel.total_de_contas, { total: null, quantidade: 0 });
+  assert.deepEqual(soNumero(painel.salario_previsto), { total: null, quantidade: 0 });
+  assert.deepEqual(soNumero(painel.total_de_contas), { total: null, quantidade: 0 });
 });
 
 test("direcao ausente FORA da janela nao cala nada", () => {
@@ -762,7 +1164,7 @@ test("as receitas sao TODA receita prevista do mes, e nao so o salario", () => {
 
   // 7.000 de salario + 2.500 de aluguel recebido. As duas sao receita; so uma
   // e salario.
-  assert.deepEqual(painel.receitas, {
+  assert.deepEqual(soNumero(painel.receitas), {
     total: RECEITAS_DE_MARCO,
     quantidade: 2,
   });
@@ -801,7 +1203,7 @@ test("a perna das receitas obedece ao STATUS: 'paid' entra, 'skipped' sai", () =
   for (const status of ["skipped", "cancelled"]) {
     const fora = painelDePapel([{ ...base, status }], ctx);
     assert.deepEqual(
-      fora.receitas,
+      soNumero(fora.receitas),
       { total: null, quantidade: 0 },
       `a receita '${status}' continua contando como prevista`
     );
@@ -1025,7 +1427,7 @@ test("direcao ausente cala o cartao TAMBEM, e nao so os dois numeros", () => {
   const semDirecao = LINHAS.map(({ direction, ...resto }) => resto);
   const painel = painelDePapel(semDirecao, ctx);
 
-  assert.deepEqual(painel.receitas, { total: null, quantidade: 0 });
+  assert.deepEqual(soNumero(painel.receitas), { total: null, quantidade: 0 });
   assert.equal(painel.sobra_ou_falta.titulo, TITULO_SEM_RESPOSTA);
   assert.equal(painel.sobra_ou_falta.valor, null);
 });
@@ -1273,5 +1675,175 @@ test("o portao le a preferencia pelo hook, e nao pelo localStorage na mao", () =
   assert.ok(
     !/localStorage/.test(CODIGO_DA_PAGINA),
     "a pagina le o localStorage direto em vez de usar o useModoPapel"
+  );
+});
+
+// ---------------------------------------------------------------------------
+// A FIACAO DO DETALHE: as tres colunas novas, e NENHUMA consulta nova (HMO-300)
+// ---------------------------------------------------------------------------
+// Os casos funcionais acima provam `somarPerna`. O que eles nao alcancam e a
+// rota -- e o criterio desta issue vive la: "nenhuma consulta nova foi
+// acrescentada". Uma segunda leitura para montar a lista erraria nos quatro
+// elos (`agendaSemCompraNoCartao`, `faturasPrevistasDaJanela`, `parteDoMembro`,
+// `skipped`/`cancelled`) e pareceria certa -- so que agora EXPLICANDO o numero
+// errado linha a linha, que e mais convincente que o numero errado sozinho.
+//
+// A prova e TEXTUAL pelo motivo de sempre (nenhuma suite daqui importa um
+// `route.ts`: ele arrasta `next/server` e o cliente do Supabase), com os
+// limites conhecidos -- a ancora e o CALL SITE, e o comentario e arrancado
+// antes pelo `semComentario` cujo controle ja roda acima.
+
+test("o `select` da rota traz as tres colunas que a lista precisa", () => {
+  // Sem `description` a lista sai sem nome; sem `id` nenhuma linha e
+  // `gravada`; sem `user_id` nenhuma e editavel. As tres estao na consulta que
+  // JA existia -- o caso seguinte e que prova que ela continua sendo uma so.
+  // ANCORADO NA TABELA, e nao no primeiro `.select(` do arquivo: a consulta
+  // da categoria de salario tambem e um `.select("id")`, e sobre ela esta
+  // assercao reprovaria por `description` faltando -- apontando para a linha
+  // errada e mandando consertar a consulta errada.
+  const select = CODIGO_DA_ROTA.match(
+    /\.from\(\s*"scheduled_transactions_effective"\s*\)\s*\n?\s*\.select\(\s*\n?\s*"([^"]*)"/
+  );
+  assert.ok(
+    select,
+    'a leitura da agenda nao tem mais um `.from("scheduled_transactions_effective").select("...")` legivel'
+  );
+
+  const colunas = select[1].split(",").map((c) => c.trim());
+  for (const coluna of ["id", "description", "user_id"]) {
+    assert.ok(
+      colunas.includes(coluna),
+      `a coluna \`${coluna}\` saiu do select -- a lista do chevron perde ${coluna}`
+    );
+  }
+
+  // E as que ja la estavam continuam: tirar uma delas mudaria a SOMA, nao a
+  // lista. `notes` e o embed da conta sao de `agendaSemCompraNoCartao`.
+  for (const coluna of ["due_date", "amount", "status", "direction", "category_id", "group_id", "notes"]) {
+    assert.ok(colunas.includes(coluna), `a coluna \`${coluna}\` saiu do select`);
+  }
+  assert.match(select[1], /account:financial_accounts\(account_type\)/);
+});
+
+test("NENHUMA CONSULTA NOVA: a rota continua com as tres leituras de sempre", () => {
+  // O criterio da issue, medido. As tres sao: a categoria de salario, a agenda
+  // do mes e os membros ativos dos grupos envolvidos. Uma quarta aqui e, por
+  // construcao, a segunda leitura da mesma coisa.
+  const tabelas = [...CODIGO_DA_ROTA.matchAll(/\.from\(\s*"([^"]+)"\s*\)/g)].map(
+    (m) => m[1]
+  );
+  assert.deepEqual(tabelas, [
+    "transaction_categories",
+    "scheduled_transactions_effective",
+    "group_members",
+  ]);
+});
+
+test("a rota passa o `user.id` adiante -- senao nenhuma linha ganha acao", () => {
+  // O call site COM o argumento: `meuUserId: user.id`. Sem ele `posso_editar`
+  // cai para `false` em toda linha e a 10/10 nasce sem botao nenhum, com a
+  // lib intacta e a suite de aritmetica verde.
+  assert.match(
+    CODIGO_DA_ROTA,
+    /meuUserId:\s*user\.id/,
+    "a rota nao passa o `meuUserId` para `painelDePapel`"
+  );
+});
+
+// ---------------------------------------------------------------------------
+// A FIACAO DA TELA: o chevron sai do `detalhe`, e a tela nao refaz a conta
+// ---------------------------------------------------------------------------
+// O COMPORTAMENTO do chevron (clicar abre, `aria-expanded` vira `true`, cartao
+// sem linha nao tem seta) e medido em navegador, por `npm run test:papel-na-tela`
+// -- `react-dom/server` nao ve handler. O que cabe aqui e o que aquela sonda
+// NAO alcanca: que a tela nao refaca a conta por conta propria.
+//
+// A distincao importa porque os dois defeitos sao diferentes. Um chevron que
+// nao abre e visivel no primeiro clique; uma lista que a TELA filtrou ou
+// dividiu abre certinho e mostra outros numeros -- e e esse que transforma o
+// numero conferivel no numero desmentido.
+const PAINEL = fileURLToPath(
+  new URL("../components/papel-de-pao/PainelDePapel.tsx", import.meta.url)
+);
+const FONTE_DO_PAINEL = readFileSync(PAINEL, "utf8");
+const CODIGO_DO_PAINEL = semComentario(FONTE_DO_PAINEL);
+
+test("o strip de comentario funciona no painel -- senao os casos dele sao vacuos", () => {
+  assert.ok(
+    /A SOMA DAS LINHAS ABERTAS E/.test(FONTE_DO_PAINEL),
+    "a ancora do controle saiu do PainelDePapel.tsx: reescreva este caso"
+  );
+  assert.ok(
+    !/A SOMA DAS LINHAS ABERTAS E/.test(CODIGO_DO_PAINEL),
+    "o strip de comentario nao removeu um comentario conhecido do painel"
+  );
+});
+
+test("a tela LE o `detalhe` que chegou, e nao monta lista nenhuma", () => {
+  // A lista vem do campo da resposta...
+  assert.match(
+    CODIGO_DO_PAINEL,
+    /numero\?\.detalhe\s*\?\?\s*\[\]/,
+    "a tela nao le o `detalhe` da resposta"
+  );
+
+  // ...e NAO de uma segunda peneira escrita aqui. `parteDoMembro`,
+  // `direcaoDaAgenda` ou um `.filter(` sobre as linhas nesta tela seriam a
+  // segunda definicao do numero -- e seria ela a aparecer debaixo dele.
+  for (const proibido of ["parteDoMembro", "direcaoDaAgenda", "STATUS_FORA_DO_PREVISTO"]) {
+    assert.ok(
+      !CODIGO_DO_PAINEL.includes(proibido),
+      `a tela chama \`${proibido}\`: ela voltou a calcular o que a rota ja calculou`
+    );
+  }
+  assert.ok(
+    !/\.reduce\(/.test(CODIGO_DO_PAINEL),
+    "a tela soma alguma coisa -- o total e o do cartao, nao o da lista"
+  );
+});
+
+test("o chevron e um CONTROLE: `aria-expanded` e o estado do proprio botao", () => {
+  // Nao um `<div onClick>` com uma seta desenhada. A seta e o unico jeito de
+  // chegar na lista, e sem `aria-expanded` quem usa leitor de tela nao sabe
+  // que ela existe.
+  assert.match(
+    CODIGO_DO_PAINEL,
+    /aria-expanded=\{aberto\}/,
+    "o botao do chevron nao declara `aria-expanded`"
+  );
+  assert.match(
+    CODIGO_DO_PAINEL,
+    /useState\(false\)/,
+    "o chevron nao nasce FECHADO"
+  );
+});
+
+test("so os DOIS cartoes de cima tem chevron -- o terceiro nao", () => {
+  // Padrao aprovado na revisao 3 do plano (item 4 de 9.5): a "lista" do
+  // terceiro cartao seria a uniao das outras duas -- um terceiro lugar para a
+  // mesma soma divergir. Ele ja mostra as duas parcelas dele.
+  const cartaoDeSobra = CODIGO_DO_PAINEL.slice(
+    CODIGO_DO_PAINEL.indexOf("function CartaoDeSobra"),
+    CODIGO_DO_PAINEL.indexOf("function NumeroGrande")
+  );
+  assert.ok(cartaoDeSobra.length > 0, "o recorte do CartaoDeSobra nao casou");
+  assert.ok(
+    !/aria-expanded/.test(cartaoDeSobra),
+    "o terceiro cartao ganhou chevron"
+  );
+  // O par positivo: o recorte acima nao e vazio por acidente -- ele contem o
+  // que o terceiro cartao de fato tem.
+  assert.match(cartaoDeSobra, /data-parcelas/);
+});
+
+test("a fatura da lista aponta para o cartao NAQUELE MES", () => {
+  // `caminhoDoCartaoNoMes(accountId, mes)`, e nao `caminhoDoCartao(accountId)`:
+  // sem o mes o link abre o mes corrente do cartao certo -- o destino
+  // plausivel e errado que ninguem reporta. A ancora e o CALL SITE com os dois
+  // argumentos, porque `caminhoDoCartaoNoMes(id, null)` compila igual.
+  assert.match(
+    CODIGO_DO_PAINEL,
+    /caminhoDoCartaoNoMes\(linha\.fatura\.accountId,\s*linha\.fatura\.mes\)/,
+    "o painel nao monta o link da fatura por caminhoDoCartaoNoMes(accountId, mes)"
   );
 });
