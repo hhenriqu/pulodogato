@@ -1,4 +1,5 @@
-// CONTROLE NEGATIVO de `npm run test:menu-papel` -- HMO-284.
+// CONTROLE NEGATIVO de `npm run test:menu-papel` -- HMO-284, ampliado pela
+// HMO-294 (as duas rotas que entraram no modo).
 //
 // A suite do menu reduzido e quase toda feita de contagens e de assercoes sobre
 // texto-fonte, e esses dois tipos sao justamente os que passam verde sem medir
@@ -35,22 +36,48 @@ const mutantes = [
     para: "  return !ROTAS_DO_MENU_DE_PAPEL.includes(href);",
   },
   {
-    nome: "uma 6a rota entra no modo sem ninguem pedir",
+    nome: "uma 8a rota entra no modo sem ninguem pedir",
     arquivo: FILTRO,
     de: '  "/dashboard/cartoes",',
     para: '  "/dashboard/cartoes",\n  "/dashboard/investments",',
   },
   {
-    nome: "uma das 5 rotas sai do modo",
+    nome: "uma das 7 rotas sai do modo",
     arquivo: FILTRO,
     de: '  "/dashboard/contas",\n',
     para: "",
   },
   {
-    nome: "uma das 5 rotas vira outra tela (so o `href` muda)",
+    nome: "uma das 7 rotas vira outra tela (so o `href` muda)",
     arquivo: FILTRO,
     de: '  "/dashboard/contas",',
     para: '  "/dashboard/transferencias",',
+  },
+  {
+    // AS DUAS ROTAS DA HMO-294, uma por uma. Tira-las juntas seria um mutante
+    // so, e o mais provavel dos dois defeitos e esquecer UMA -- `settings` e a
+    // que importa mais, porque e a tela do espelho do interruptor: sem ela, a
+    // unica saida do modo volta a ser o papelzinho do cabecalho.
+    nome: "Configuracoes sai do modo (o espelho do interruptor fica inalcancavel)",
+    arquivo: FILTRO,
+    de: '  "/dashboard/settings",\n',
+    para: "",
+  },
+  {
+    nome: "Perfil sai do modo",
+    arquivo: FILTRO,
+    de: '  "/dashboard/profile",\n',
+    para: "",
+  },
+  {
+    // A VIZINHA DE ARRAY. `/dashboard/connections` ("Conexões") esta a dois
+    // itens de `/dashboard/settings` no array de navegacao, e trocar uma pela
+    // outra mantem a CONTAGEM em 7 -- este mutante morre no caso que confere
+    // pelo NOME, e so nele. E a razao de aquele caso existir.
+    nome: "Conexoes entra no lugar de Configuracoes (a contagem continua 7)",
+    arquivo: FILTRO,
+    de: '"/dashboard/settings"',
+    para: '"/dashboard/connections"',
   },
   {
     nome: "um 28o item entra no menu sem passar pelo modo",
@@ -86,8 +113,29 @@ const mutantes = [
   },
 ];
 
+/**
+ * SOBREVIVENTES ESPERADOS: mutantes que a suite tem de deixar PASSAR.
+ *
+ * Um runner que so cobra vermelho mede metade. A lista de rotas afirma, no
+ * comentario dela, que a ordem escrita ali NAO e a ordem do menu -- quem ordena
+ * e o array de navegacao, que continua sendo percorrido na ordem dele. Se um
+ * dia alguem "consertar" o filtro para ordenar pela lista de rotas, a suite
+ * passaria a prender a coisa errada e NADA reclamaria; e este bloco que
+ * reclama.
+ */
+const sobreviventesEsperados = [
+  {
+    nome: "a ordem DENTRO de ROTAS_DO_MENU_DE_PAPEL nao e a ordem do menu",
+    arquivo: FILTRO,
+    de: '  "/dashboard",\n  "/dashboard/receitas",',
+    para: '  "/dashboard/receitas",\n  "/dashboard",',
+  },
+];
+
 const original = new Map();
-for (const arquivo of new Set(mutantes.map((m) => m.arquivo))) {
+for (const arquivo of new Set(
+  [...mutantes, ...sobreviventesEsperados].map((m) => m.arquivo)
+)) {
   original.set(arquivo, readFileSync(arquivo, "utf8"));
 }
 const restaurar = () => {
@@ -141,5 +189,30 @@ for (const m of mutantes) {
   }
 }
 
+let esperadosQueMorreram = 0;
+if (sobreviventesEsperados.length > 0) {
+  console.log("\nsobreviventes ESPERADOS (a suite deve deixar passar)");
+  for (const m of sobreviventesEsperados) {
+    const antes = original.get(m.arquivo);
+    if (!antes.includes(m.de)) {
+      console.error(`  ANCORA NAO CASOU :: ${m.nome}`);
+      console.error(`    o texto buscado nao existe em ${m.arquivo}`);
+      esperadosQueMorreram++;
+      continue;
+    }
+    writeFileSync(m.arquivo, antes.replace(m.de, m.para));
+    const passou = roda();
+    restaurar();
+    if (passou) {
+      console.log(`  ok, sobreviveu :: ${m.nome}`);
+    } else {
+      console.error(`  REPROVOU :: ${m.nome}`);
+      console.error("    a suite esta prendendo a ordem da LISTA DE ROTAS, e");
+      console.error("    quem ordena o menu e o array de navegacao.");
+      esperadosQueMorreram++;
+    }
+  }
+}
+
 console.log(`\n${mutantes.length - sobreviventes}/${mutantes.length} mortos`);
-process.exit(sobreviventes === 0 ? 0 : 1);
+process.exit(sobreviventes === 0 && esperadosQueMorreram === 0 ? 0 : 1);

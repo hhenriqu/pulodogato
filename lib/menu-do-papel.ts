@@ -1,21 +1,22 @@
 /**
- * O MENU REDUZIDO DO MODO "PAPEL DE PAO" -- HMO-284 (plano da HMO-279).
+ * O MENU REDUZIDO DO MODO "PAPEL DE PAO" -- HMO-284, ampliado pela HMO-294
+ * (plano da HMO-279).
  *
- * Com o modo ligado o menu encolhe de 27 itens para 5. Este arquivo e a lista
- * daquelas 5 ROTAS e o filtro que as seleciona -- nada mais.
+ * Com o modo ligado o menu encolhe de 27 itens para 7. Este arquivo e a lista
+ * daquelas 7 ROTAS e o filtro que as seleciona -- nada mais.
  *
  * POR QUE E UM FILTRO POR `href`, E NAO UMA SEGUNDA LISTA DE NAVEGACAO
  * --------------------------------------------------------------------
- * A tentacao e declarar aqui os 5 itens completos (nome, icone, rota) e o
+ * A tentacao e declarar aqui os 7 itens completos (nome, icone, rota) e o
  * `Sidebar` escolher entre duas listas. As duas divergiriam na primeira vez que
  * alguem renomeasse "Cartoes" ou mexesse num icone: o menu normal mudaria e o
  * do papel nao, sem nada falhar. Entao aqui so moram as ROTAS, e o item
  * renderizado continua sendo o MESMO objeto de `components/navegacao-do-menu`.
  *
  * O preco dessa escolha e conhecido e e o certo: se alguem mudar o `href` de
- * uma das cinco telas sem mexer aqui, o item desaparece do menu reduzido em vez
+ * uma das sete telas sem mexer aqui, o item desaparece do menu reduzido em vez
  * de aparecer duplicado ou desatualizado. E `npm run test:menu-papel` reprova,
- * porque ele exige que a lista filtrada tenha EXATAMENTE estas cinco rotas.
+ * porque ele exige que a lista filtrada tenha EXATAMENTE estas sete rotas.
  *
  * O MODO NAO BLOQUEIA ROTA NENHUMA
  * --------------------------------
@@ -29,16 +30,31 @@
  */
 
 /**
- * As cinco telas do modo. Todas ja existiam antes da HMO-284; o modo nao
+ * As sete telas do modo. Todas ja existiam antes da HMO-284; o modo nao
  * inventa tela nenhuma.
  *
- * Sao 5 e nao 3: a frase da issue-mae ("Dashboard, Receitas e Despesas e Contas
- * e Cartoes") se lia tambem como tres itens agrupados, mas as cinco telas ja
- * existem separadas e agrupar exigiria inventar duas telas novas.
+ * AS CINCO PRIMEIRAS sao as telas de dinheiro. Sao 5 e nao 3: a frase da
+ * issue-mae ("Dashboard, Receitas e Despesas e Contas e Cartoes") se lia
+ * tambem como tres itens agrupados, mas as cinco telas ja existem separadas e
+ * agrupar exigiria inventar duas telas novas.
+ *
+ * AS DUAS ULTIMAS entraram na HMO-294, e `/dashboard/settings` conserta um
+ * defeito de navegacao: o espelho do interruptor do modo vive em
+ * Configuracoes, e com o modo ligado aquela tela era INALCANCAVEL pelo menu --
+ * a unica saida do modo era o papelzinho do cabecalho. "E tambem em
+ * configuracoes", que e o que a issue-mae pede, so e verdade se der para
+ * chegar la de dentro do proprio modo. `/dashboard/profile` vem junto porque e
+ * a outra tela de conta: quem usa o modo simples precisa dos proprios dados
+ * tanto quanto qualquer outra pessoa, e perfil nao e "tela avancada".
+ *
+ * Nenhuma das duas tem `requiredPlans` no array de navegacao, entao o OUTRO
+ * filtro do `Sidebar` (o do plano) nao as toca -- elas aparecem para todo
+ * mundo, como as cinco de cima.
  *
  * A ORDEM aqui nao e a ordem do menu -- quem ordena e o array de navegacao, que
  * continua sendo percorrido na ordem dele. Esta lista e um conjunto; esta
- * escrita na ordem de exibicao so para quem le conferir de olho.
+ * escrita na ordem de exibicao so para quem le conferir de olho. (No array,
+ * "Perfil" vem antes de "Configuracoes".)
  */
 export const ROTAS_DO_MENU_DE_PAPEL: readonly string[] = [
   "/dashboard",
@@ -46,6 +62,8 @@ export const ROTAS_DO_MENU_DE_PAPEL: readonly string[] = [
   "/dashboard/despesas",
   "/dashboard/contas",
   "/dashboard/cartoes",
+  "/dashboard/profile",
+  "/dashboard/settings",
 ] as const;
 
 /** Esta rota sobrevive ao modo papel? */
