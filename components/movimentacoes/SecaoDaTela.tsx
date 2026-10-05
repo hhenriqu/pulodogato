@@ -16,6 +16,15 @@
 // nenhum. Props entram, marcacao sai, e scripts/test-secao-da-tela.mjs le o
 // HTML.
 //
+// A UNICA RESSALVA, DESDE A HMO-305: o `EloDaFatura` -- o rotulo e a acao da
+// fatura em dois lugares -- tem estado proprio (o cartao de confirmacao abre e
+// fecha) e fala com a rota ele mesmo. Ele continua renderizavel por
+// `react-dom/server`, entao a suite desta secao segue valendo; o que ela nao
+// alcanca sao os CLIQUES dele, e por isso eles sao medidos no caso J da sonda
+// de navegador do painel do modo papel de pao. Ele so e MONTADO quando o
+// container passa `acoes.aoConcluirElo`: sem recarga, o clique mudaria o banco e
+// a tela continuaria mostrando o numero antigo.
+//
 // O ICONE NAO VEM SOZINHO, E ISSO E A FEATURE
 // -------------------------------------------
 // "Nas despesas, deveria ter um icone ou algo do genero mostrando a categoria
@@ -69,6 +78,7 @@ import {
   rotuloDeConfirmar,
 } from "@/lib/acoes-da-linha";
 import { caminhoDoCartaoNoMes } from "@/lib/fatura-do-cartao";
+import { EloDaFatura } from "@/components/fatura/EloDaFatura";
 import type { LinhaDaTela } from "@/lib/telas-de-movimentacao";
 
 const moeda = (valor: number) =>
@@ -165,6 +175,20 @@ export interface AcoesDaLinha {
   agindo: string | null;
   /** Sem rede nenhuma acao sai: as tres sao escrita. */
   online: boolean;
+  /**
+   * RECARREGAR A TELA DEPOIS DO ELO DA FATURA -- HMO-305.
+   *
+   * O elo nao passa por `aoEditar`/`aoExcluir`: ele e uma escrita propria
+   * (`POST .../elo-de-fatura`) que o `EloDaFatura` faz, e o que esta tela
+   * precisa saber e so que o numero mudou -- a de-duplicacao acontece na
+   * proxima LEITURA, em `sintetizarFaturasAbertas`.
+   *
+   * OPCIONAL, e ausente DESLIGA a acao: sem recarga, o clique mudaria o banco e
+   * a tela continuaria mostrando o «Previsto» antigo. "Funcionou e a tela nao
+   * mudou" se le como "nao funcionou", e a pessoa clica de novo num botao que
+   * mexe em dinheiro.
+   */
+  aoConcluirElo?: () => void;
 }
 
 /**
@@ -313,10 +337,18 @@ function LinhaDaSecao({
   linha,
   aparencia,
   acoes,
+  valorDaFatura = null,
 }: {
   linha: LinhaDaTela;
   aparencia: AparenciaDaTela;
   acoes: AcoesDaLinha;
+  /**
+   * O valor da FATURA ABERTA do cartao desta suspeita -- HMO-305, so para a
+   * frase do cartao de confirmacao. Ele sai da propria lista desta secao, e nao
+   * de uma conta feita aqui; `null` quando a lista nao a tem, e a frase sai sem
+   * numero em vez de sair com um numero inventado.
+   */
+  valorDaFatura?: number | null;
 }) {
   const { Icone, rotulo, descricao } = marcaDaLinha(linha, aparencia);
 
@@ -380,6 +412,30 @@ function LinhaDaSecao({
             textos para ela divergiriam na primeira revisao de copy.
           */}
           {linha.de_grupo && <span>· minha parte do grupo</span>}
+          {/*
+            O ELO DA FATURA -- HMO-305, o rotulo e a acao.
+
+            Ele e o unico elemento desta linha que ESCREVE, e por isso vive num
+            componente proprio (components/fatura/EloDaFatura.tsx) com o cartao
+            de confirmacao dentro: a mesma marcacao serve o painel do modo Papel
+            de Pao, e as duas telas tem de dizer a mesma coisa sobre a mesma
+            linha.
+
+            `null` em quase toda linha -- sem suspeita e sem elo ele nao desenha
+            nada, e a linha fica como era.
+          */}
+          {linha.id && acoes.aoConcluirElo && (
+            <EloDaFatura
+              previsaoId={linha.id}
+              suspeita={linha.fatura_suspeita}
+              elo={linha.elo_da_fatura}
+              valorDaFaturaFormatado={
+                valorDaFatura !== null ? moeda(valorDaFatura) : null
+              }
+              valorDaPrevisaoFormatado={moeda(linha.valor)}
+              aoConcluir={acoes.aoConcluirElo}
+            />
+          )}
         </p>
       </div>
       <p className="shrink-0 font-semibold">{moeda(linha.valor)}</p>
@@ -389,7 +445,19 @@ function LinhaDaSecao({
   const classe =
     "flex items-start justify-between gap-3 border-b border-border py-2 last:border-0";
 
-  if (linha.fatura) {
+  // A FATURA VIRA `<a>` -- MENOS A PREVISAO QUE ALGUEM LIGOU A ELA (HMO-305).
+  //
+  // `linha.fatura` esta preenchido em toda linha que carrega a chave canonica,
+  // e desde a HMO-305 isso inclui a previsao digitada a mao que a PESSOA ligou.
+  // Essa linha tem o botao de DESFAZER dentro dela, e botao dentro de ancora e
+  // aninhamento interativo invalido: o clique navegaria junto com a acao, e o
+  // caminho de volta do elo -- o unico jeito de desfazer uma escrita que esconde
+  // dinheiro -- seria inalcancavel.
+  //
+  // O preco e nomeado e aceito: aquela linha deixa de levar para a tela do
+  // cartao. Ela e uma previsao na conta corrente, e nao a fatura em si; o link
+  // continua na linha DA fatura, que esta na mesma lista.
+  if (linha.fatura && !linha.elo_da_fatura) {
     return (
       <Link
         href={caminhoDoCartaoNoMes(linha.fatura.accountId, linha.fatura.mes)}
@@ -446,6 +514,19 @@ export function SecaoDaTela({
 }) {
   const subtotal = linhas.reduce((soma, l) => soma + l.valor, 0);
 
+  /**
+   * O VALOR DA FATURA ABERTA DE CADA CARTAO/MES, LIDO DA PROPRIA LISTA -- HMO-305.
+   *
+   * O cartao de confirmacao do elo diz quanto o «Previsto» vai cair, e este mapa
+   * e de onde o numero sai: a linha da fatura sintetizada esta NESTA lista (ela
+   * entra no subtotal), e `linha.fatura` da o cartao e o mes dela. Nenhuma conta
+   * nova -- e o `valor` que a secao ja soma.
+   */
+  const faturaPorChave = new Map<string, number>();
+  for (const l of linhas) {
+    if (l.fatura) faturaPorChave.set(`${l.fatura.accountId}:${l.fatura.mes}`, l.valor);
+  }
+
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -487,6 +568,11 @@ export function SecaoDaTela({
                 linha={linha}
                 aparencia={aparencia}
                 acoes={acoes}
+                valorDaFatura={(() => {
+                  const alvo = linha.fatura_suspeita ?? linha.elo_da_fatura;
+                  if (!alvo) return null;
+                  return faturaPorChave.get(`${alvo.accountId}:${alvo.mes}`) ?? null;
+                })()}
               />
             ))}
           </div>

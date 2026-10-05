@@ -362,8 +362,23 @@ export function ListaDeMovimentacao({
       aoConfirmar,
       agindo,
       online,
+      // O ELO DA FATURA RECARREGA A LISTA INTEIRA -- HMO-305, e e `carregar` e
+      // nao um `setX` local de proposito: quem de-duplica a fatura e a LEITURA
+      // (`sintetizarFaturasAbertas`, na rota), entao o numero novo so existe
+      // depois de reler. Mexer na lista do lado do cliente seria a segunda
+      // aritmetica da de-duplicacao -- exatamente o que esta issue nao escreve.
+      aoConcluirElo: carregar,
     }),
-    [aparencia.rotaDeLancar, origem, aoEditar, aoExcluir, aoConfirmar, agindo, online]
+    [
+      aparencia.rotaDeLancar,
+      origem,
+      aoEditar,
+      aoExcluir,
+      aoConfirmar,
+      agindo,
+      online,
+      carregar,
+    ]
   );
 
   return (

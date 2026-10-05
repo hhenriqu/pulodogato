@@ -280,6 +280,17 @@ const PARTES = [
   "components/ModoPapelProvider.js",
   "components/PapelToggle.js",
   "components/papel-de-pao/ConfiguracaoDePapel.js",
+  // O ELO DA FATURA -- HMO-305, e os dois sao CODIGO DE PRODUCAO na pagina.
+  //
+  // `chave-da-fatura` e folha (nenhum import) e `elo-da-fatura` importa so ela,
+  // entao os dois cabem num script classico sem arrastar arvore nenhuma -- a
+  // mesma razao pela qual eles sao folha no app (ver o cabecalho de
+  // lib/elo-da-fatura.ts). Esboca-los faria a sonda medir o proprio texto nas
+  // assercoes do caso J, que leem o rotulo e as tres frases do cartao de
+  // confirmacao.
+  "lib/chave-da-fatura.js",
+  "lib/elo-da-fatura.js",
+  "components/fatura/EloDaFatura.js",
   "components/papel-de-pao/PainelDePapel.js",
 ];
 
@@ -467,6 +478,14 @@ const StickyNote = (props) =>
   React.createElement("svg", { ...props, "data-icone": "sticky-note" });
 const ChevronLeft = (props) =>
   React.createElement("svg", { ...props, "data-icone": "chevron-left" });
+const Link2 = (props) =>
+  React.createElement("svg", { ...props, "data-icone": "link-2" });
+const Link2Off = (props) =>
+  React.createElement("svg", { ...props, "data-icone": "link-2-off" });
+const Loader2 = (props) =>
+  React.createElement("svg", { ...props, "data-icone": "loader-2" });
+const AlertCircle = (props) =>
+  React.createElement("svg", { ...props, "data-icone": "alert-circle" });
 const ChevronRight = (props) =>
   React.createElement("svg", { ...props, "data-icone": "chevron-right" });
 const ChevronDown = (props) =>
@@ -499,6 +518,21 @@ const Link = ({ href, children, ...resto }) =>
  */
 const caminhoDoCartaoNoMes = (accountId, mes) =>
   "ESBOCO-CAMINHO:" + accountId + ":" + mes;
+
+/**
+ * \`rotuloDaFatura\`, tambem como MARCADOR -- HMO-305.
+ *
+ * Ele mora no MESMO \`lib/fatura-do-cartao.js\` que o esboco acima recusa, e pelo
+ * mesmo motivo: ele depende da tabela \`MESES\` no topo daquele modulo, e trazer
+ * o modulo inteiro para um script classico por causa de doze strings seria o
+ * preco errado.
+ *
+ * E o marcador mede o que importa aqui: QUAL MES chegou no rotulo do elo. "a
+ * tela diz março" e assercao de \`npm run test:fatura-do-cartao\`, que testa
+ * aquela funcao; o que so esta sonda ve e o componente passando para ela o mes
+ * da SUSPEITA -- e nao o do vencimento da previsao, que no caso geral e outro.
+ */
+const rotuloDaFatura = (mes) => (mes ? "ESBOCO-MES:" + mes : null);
 
 /**
  * Os tres esbocos do painel, como MARCADORES e nao como valores plausiveis.
@@ -542,10 +576,28 @@ ${FONTE_DA_FRASE}
  * numeros de outubro, que e o defeito inteiro desta issue de cabeca para baixo.
  */
 const pedidos = [];
+/**
+ * AS ESCRITAS, separadas das leituras -- HMO-305.
+ *
+ * \`pedidos\` continua sendo so os GET, e isso nao e arrumacao: as assercoes do
+ * caso E contam PEDIDOS por mes ("cada mes novo e um pedido novo"), e um POST do
+ * elo caindo naquela lista as faria contar uma escrita como se fosse leitura --
+ * a sonda passaria a medir numero diferente do que a frase dela diz.
+ */
+const escritas = [];
 let respondeFetch = () => new Promise(() => {});
-window.fetch = (url) => {
-  pedidos.push(String(url));
-  return respondeFetch(String(url));
+window.fetch = (url, init) => {
+  const metodo = (init && init.method) || "GET";
+  if (metodo === "GET") {
+    pedidos.push(String(url));
+  } else {
+    escritas.push({
+      url: String(url),
+      metodo: metodo,
+      corpo: init && init.body ? String(init.body) : null,
+    });
+  }
+  return respondeFetch(String(url), init);
 };
 
 /** O mes que a URL pediu, ou null -- o oraculo e a propria querystring. */
@@ -639,6 +691,107 @@ const DETALHE_DAS_CONTAS = [
     de_grupo: true,
     posso_editar: false,
     fatura: null,
+  },
+];
+
+/**
+ * O DETALHE DO CASO J -- A FATURA EM DOIS LUGARES (HMO-305).
+ *
+ * Tres linhas, e as tres sao necessarias:
+ *
+ *   * a previsao DIGITADA A MAO ("Pagar fatura Nubank"), com \`fatura_suspeita\`
+ *     apontando o cartao e o mes da fatura ABERTA. Ela e o alvo da acao;
+ *   * a FATURA ABERTA sintetizada do mesmo cartao e mes. E dela que sai o valor
+ *     que o cartao de confirmacao promete -- e por isso ela esta na lista: sem
+ *     ela a frase sairia sem numero, e a assercao mediria esse caso em vez do
+ *     caso de uso;
+ *   * a conta de luz comum, que e o CONTROLE: a linha sem suspeita nao pode
+ *     ganhar rotulo nem acao. Sem ela, "o rotulo aparece" passaria verde com um
+ *     rotulo em TODA linha da lista.
+ *
+ * Os valores sao diferentes de proposito (820,40 na fatura e 800,00 na
+ * previsao): o cartao de confirmacao fala do valor DA FATURA, e com os dois
+ * iguais a assercao nao distinguiria um do outro.
+ */
+const DETALHE_COM_SUSPEITA = [
+  {
+    id: "linha-da-luz",
+    gravada: true,
+    descricao: "Conta de luz",
+    valor: 180.5,
+    data: "2026-03-20",
+    de_grupo: false,
+    posso_editar: true,
+    fatura: null,
+    fatura_suspeita: null,
+    elo_da_fatura: null,
+  },
+  {
+    id: "linha-da-previsao",
+    gravada: true,
+    descricao: "Pagar fatura Nubank",
+    valor: 800,
+    data: "2026-03-10",
+    de_grupo: false,
+    posso_editar: true,
+    fatura: null,
+    fatura_suspeita: {
+      accountId: CARTAO_DA_FATURA,
+      mes: "2026-03-01",
+      nomeDoCartao: "Nubank",
+      aviso:
+        "A anotação «anotei pra nao esquecer» será substituída pelo elo, e " +
+        "desfazer não a traz de volta. A descrição da linha não muda.",
+    },
+    elo_da_fatura: null,
+  },
+  {
+    id: null,
+    gravada: false,
+    descricao: "Fatura Nubank 03/2026",
+    valor: 820.4,
+    data: "2026-03-25",
+    de_grupo: false,
+    posso_editar: false,
+    fatura: { accountId: CARTAO_DA_FATURA, mes: "2026-03-01" },
+    fatura_suspeita: null,
+    elo_da_fatura: null,
+  },
+];
+
+/**
+ * O MESMO MES, DEPOIS DE A PESSOA LIGAR O ELO.
+ *
+ * Duas coisas mudam juntas, e e esse PAR que a assercao de J cobra: o rotulo de
+ * suspeita saiu e no lugar dele entrou o elo (com o caminho de volta), e a
+ * linha da fatura sintetizada NAO ESTA MAIS NA LISTA -- quem a tirou foi a
+ * de-duplicacao da rota (\`sintetizarFaturasAbertas\` nao sintetiza a fatura cuja
+ * chave ja existe na agenda), e nao nada que a tela tenha escondido.
+ */
+const DETALHE_COM_ELO = [
+  {
+    id: "linha-da-luz",
+    gravada: true,
+    descricao: "Conta de luz",
+    valor: 180.5,
+    data: "2026-03-20",
+    de_grupo: false,
+    posso_editar: true,
+    fatura: null,
+    fatura_suspeita: null,
+    elo_da_fatura: null,
+  },
+  {
+    id: "linha-da-previsao",
+    gravada: true,
+    descricao: "Pagar fatura Nubank",
+    valor: 800,
+    data: "2026-03-10",
+    de_grupo: false,
+    posso_editar: true,
+    fatura: null,
+    fatura_suspeita: null,
+    elo_da_fatura: { accountId: CARTAO_DA_FATURA, mes: "2026-03-01" },
   },
 ];
 
@@ -1014,11 +1167,52 @@ const montarPainel = async (raiz) => {
           href: li.querySelector("a")
             ? li.querySelector("a").getAttribute("href")
             : null,
+          // O ELO DA FATURA -- HMO-305. Os quatro saem de \`data-\` proprios e nao
+          // do texto da linha: "o rotulo apareceu" e "a acao apareceu" sao duas
+          // afirmacoes diferentes, e so separadas uma delas pode reprovar
+          // sozinha. \`null\` e a resposta da linha comum, que e a maioria.
+          elo: (() => {
+            const marca = li.querySelector("[data-rotulo-do-elo]");
+            return marca ? marca.getAttribute("data-rotulo-do-elo") : null;
+          })(),
+          acaoDoElo: (() => {
+            const b = li.querySelector("[data-acao-do-elo]");
+            return b ? b.getAttribute("data-acao-do-elo") : null;
+          })(),
+          confirmacao: (() => {
+            const c = li.querySelector("[data-confirmacao-do-elo]");
+            return c
+              ? {
+                  qual: c.getAttribute("data-confirmacao-do-elo"),
+                  texto: c.textContent,
+                  // O aviso da anotacao e OPCIONAL: ele so existe quando havia
+                  // texto para perder. Medido a parte para que "o cartao
+                  // apareceu" nao passe por "o aviso apareceu".
+                  aviso: c.querySelector("[data-aviso-do-elo]")
+                    ? c.querySelector("[data-aviso-do-elo]").textContent
+                    : null,
+                }
+              : null;
+          })(),
         })),
       })),
     }),
     clicar: async (id) => {
       achar(id).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await assentarAsync();
+    },
+    /**
+     * Clica no PRIMEIRO elemento que casa o seletor dentro desta caixa --
+     * HMO-305, para os botoes do elo, que nao tem \`id\`.
+     *
+     * Estoura quando nao acha, em vez de nao fazer nada: um seletor que deixou
+     * de casar e indistinguivel de um handler desligado, e o segundo e o que
+     * esta sonda existe para pegar.
+     */
+    clicarEm: async (seletor) => {
+      const alvo = caixa.querySelector(seletor);
+      if (!alvo) throw new Error("nao achei " + seletor + " para clicar");
+      alvo.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await assentarAsync();
     },
   };
@@ -1234,6 +1428,82 @@ r.i_uma = await comFora("raiz-h", { total: 500, quantidade: 1 });
 r.i_duas = await comFora("raiz-h", { total: 1300.5, quantidade: 2 });
 r.i_sem_campo = await comFora("raiz-h", undefined);
 r.i_zero = await comFora("raiz-h", { total: 0, quantidade: 0 });
+
+// =============================================================================
+// CASO J -- O ELO DA FATURA (HMO-305)
+// =============================================================================
+// A mesma divida em dois lugares: a previsao digitada a mao e a fatura aberta
+// que o app sintetiza das compras reais. O painel soma as duas.
+//
+// O QUE SO ESTA SONDA MEDE. A deteccao e as frases tem suite pura
+// (\`npm run test:elo-da-fatura\`), e o efeito no DINHEIRO tem a medicao com
+// banco (\`node scripts/medicao-hmo298.mjs\`, R$ 1.600 -> R$ 800). O que falta e
+// o que vive so no DOM:
+//
+//   J1  a linha SUSPEITA sai com rotulo e com acao -- e a linha comum NAO
+//   J2  clicar na acao abre o cartao de confirmacao, com as TRES frases: qual
+//       fatura, o que acontece com o numero, e o que acontece com a anotacao
+//   J3  o clique de confirmar manda POST para a rota, com o cartao e o mes da
+//       SUSPEITA no corpo -- e nao com o mes do vencimento da previsao
+//   J4  depois da escrita a tela RELE: o rotulo de suspeita da lugar ao elo, e a
+//       fatura sintetizada sai da lista
+//   J5  o Cancelar fecha o cartao e NAO escreve nada
+//   J6  a linha JA LIGADA oferece o DESFAZER, e ele manda DELETE
+//
+// A rota de mentira troca a resposta DEPOIS da escrita, que e o que a de
+// verdade faz: quem de-duplica e a leitura seguinte.
+
+const comElo = async (raiz, detalheAntes, detalheDepois) => {
+  pedidos.length = 0;
+  escritas.length = 0;
+  let escreveu = false;
+  respondeFetch = (url, init) => {
+    const metodo = (init && init.method) || "GET";
+    if (metodo !== "GET") {
+      escreveu = true;
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    }
+    return Promise.resolve(
+      respostaDaRota(
+        mesDoPedido(url),
+        7000,
+        2500.9,
+        CARTAO_QUE_SOBRA,
+        {
+          salario: DETALHE_DO_SALARIO,
+          contas: escreveu && detalheDepois ? detalheDepois : detalheAntes,
+        }
+      )
+    );
+  };
+  const painel = await montarPainel(raiz);
+  await painel.clicar("papel-contas-chevron");
+  return painel;
+};
+
+const j = await comElo("raiz-h", DETALHE_COM_SUSPEITA, DETALHE_COM_ELO);
+r.j_suspeita = j.ler();
+
+await j.clicarEm("[data-acao-do-elo='ligar']");
+r.j_confirmando = j.ler();
+
+// J5 -- o Cancelar primeiro, para que o caso de escrita comece do mesmo estado.
+await j.clicarEm("[data-confirmacao-do-elo='ligar'] button:last-of-type");
+r.j_cancelado = j.ler();
+r.j_escritas_do_cancelar = escritas.slice();
+
+await j.clicarEm("[data-acao-do-elo='ligar']");
+await j.clicarEm("[data-confirmar-elo='ligar']");
+r.j_depois = j.ler();
+r.j_escritas = escritas.slice();
+
+// J6 -- o caminho de volta, na linha que ja tem o elo.
+await j.clicarEm("[data-acao-do-elo='desfazer']");
+r.j_desfazendo = j.ler();
+await j.clicarEm("[data-confirmar-elo='desfazer']");
+r.j_escritas_do_desfazer = escritas.slice();
+
+j.desmontar();
 
 alvoResultado();
 } catch (e) {
@@ -2213,4 +2483,164 @@ test("a pele: a letra manuscrita vence o next/font no <body>", () => {
   assert.match(pele.papelEscuro.fonte, /PatrickHand/);
   // E sair do modo devolve a fonte do app.
   assert.match(pele.escuro.fonte, /Inter/);
+});
+
+// =============================================================================
+// CASO J -- O ELO DA FATURA, NO DOM (HMO-305)
+// =============================================================================
+// A deteccao e as frases sao medidas por `npm run test:elo-da-fatura`, e o
+// efeito em DINHEIRO por `node scripts/medicao-hmo298.mjs` (R$ 1.600 ->
+// R$ 800, com banco e RLS). O que so aparece aqui e a FIACAO: o rotulo chegando
+// na linha certa, o cartao de confirmacao dizendo as tres coisas antes do
+// clique, o POST saindo com o cartao e o mes da SUSPEITA, e a tela relendo
+// depois.
+
+/** As linhas da lista de «Total de contas», por descricao. */
+const linhaDoDetalhe = (lido, descricao) => {
+  const lista = lido.listas.find((l) => l.rotulo === "Total de contas");
+  if (!lista) throw new Error("a lista de «Total de contas» nao esta aberta");
+  const achada = lista.linhas.find((l) => l.texto.includes(descricao));
+  if (!achada) {
+    throw new Error(
+      `nao achei a linha "${descricao}" na lista: ` +
+        lista.linhas.map((l) => l.texto).join(" | ")
+    );
+  }
+  return achada;
+};
+
+test("J1: a linha SUSPEITA sai com rotulo e com acao -- e a comum nao", () => {
+  const suspeita = linhaDoDetalhe(resultado.j_suspeita, "Pagar fatura Nubank");
+  assert.equal(
+    suspeita.elo,
+    "suspeita",
+    "a previsao digitada a mao nao recebeu o rotulo de suspeita"
+  );
+  assert.equal(
+    suspeita.acaoDoElo,
+    "ligar",
+    "o rotulo apareceu sem a acao -- rotulo que aponta um problema e nao deixa resolver"
+  );
+
+  // O CONTROLE, e ele e o que impede o caso de passar verde com um rotulo em
+  // toda linha: a conta de luz nao tem suspeita nenhuma.
+  const luz = linhaDoDetalhe(resultado.j_suspeita, "Conta de luz");
+  assert.equal(luz.elo, null);
+  assert.equal(luz.acaoDoElo, null);
+
+  // E a FATURA sintetizada tambem nao: ela nao e suspeita de ser ela mesma, e
+  // nao tem `id` para a acao usar.
+  const fatura = linhaDoDetalhe(resultado.j_suspeita, "Fatura Nubank 03/2026");
+  assert.equal(fatura.acaoDoElo, null);
+
+  // Nenhum cartao de confirmacao antes do clique: a acao e um convite, nao um
+  // dialogo aberto em cima da lista.
+  assert.equal(suspeita.confirmacao, null);
+});
+
+test("J2: o cartao de confirmacao diz QUAL fatura, o NUMERO e a ANOTACAO", () => {
+  const linha = linhaDoDetalhe(resultado.j_confirmando, "Pagar fatura Nubank");
+  assert.ok(linha.confirmacao, "clicar na acao nao abriu o cartao de confirmacao");
+  assert.equal(linha.confirmacao.qual, "ligar");
+
+  // 1. QUAL FATURA -- o nome do cartao e o mes. O mes passa pelo esboco
+  //    `rotuloDaFatura`, entao o que esta assercao prova e que o componente
+  //    passou para ele o mes da SUSPEITA ('2026-03-01', o `invoice_month`) e
+  //    nao o do vencimento da previsao ('2026-03-10').
+  assert.match(linha.confirmacao.texto, /Nubank/);
+  assert.match(
+    linha.confirmacao.texto,
+    /ESBOCO-MES:2026-03-01/,
+    "o cartao de confirmacao nao esta dizendo o mes da fatura"
+  );
+
+  // 2. O NUMERO -- e o valor DA FATURA ABERTA (820,40), nao o da previsao
+  //    (800,00). Os dois sao diferentes no fixture exatamente para esta
+  //    assercao poder distingui-los.
+  assert.match(
+    linha.confirmacao.texto,
+    /ESBOCO-VALOR:820\.4/,
+    "o cartao promete o numero errado: ele tem de falar do valor da FATURA"
+  );
+
+  // 3. A ANOTACAO que vai embora, com o texto a vista. E a unica parte
+  //    irreversivel do clique, e por isso ela e dita ANTES.
+  assert.ok(linha.confirmacao.aviso, "o aviso da anotacao nao chegou na tela");
+  assert.match(linha.confirmacao.aviso, /anotei pra nao esquecer/);
+});
+
+test("J3: confirmar manda POST com o cartao e o mes da SUSPEITA", () => {
+  assert.equal(
+    resultado.j_escritas.length,
+    1,
+    "era uma escrita so: " + JSON.stringify(resultado.j_escritas)
+  );
+  const escrita = resultado.j_escritas[0];
+  assert.equal(escrita.metodo, "POST");
+  assert.match(
+    escrita.url,
+    /\/api\/scheduled-transactions\/linha-da-previsao\/elo-de-fatura$/,
+    "o POST foi para outro lugar: " + escrita.url
+  );
+
+  // O CORPO E O QUE DECIDE SE O ELO FUNCIONA. A chave canonica e
+  // `fatura:<invoice_month>:<cartao>`, e um corpo com o mes do VENCIMENTO
+  // produziria uma chave que nenhuma fatura casa -- o elo seria gravado e nao
+  // faria nada, com a tela dizendo "pronto".
+  const corpo = JSON.parse(escrita.corpo);
+  // O id literal, e nao a constante: `CARTAO_DA_FATURA` vive DENTRO da pagina
+  // (ela e um script classico, com escopo proprio), e o lado node so recebe o
+  // JSON do resultado. Um literal aqui e exatamente o que o caso quer afirmar --
+  // que o id que a sonda pos na suspeita e o id que saiu no corpo do POST.
+  assert.deepEqual(corpo, {
+    account_id: "cartao-nubank",
+    mes: "2026-03-01",
+  });
+});
+
+test("J4: depois da escrita a tela RELE -- o elo entra e a fatura sai", () => {
+  const linha = linhaDoDetalhe(resultado.j_depois, "Pagar fatura Nubank");
+
+  // O PAR QUE A ISSUE PEDE: o rotulo de suspeita some, e o elo aparece no lugar
+  // dele com o caminho de volta.
+  assert.equal(linha.elo, "ligada");
+  assert.equal(linha.acaoDoElo, "desfazer");
+
+  // E a fatura sintetizada nao esta mais na lista. Quem a tirou foi a
+  // de-duplicacao da ROTA -- esta tela nao esconde linha nenhuma.
+  const lista = resultado.j_depois.listas.find((l) => l.rotulo === "Total de contas");
+  assert.ok(
+    !lista.linhas.some((l) => l.texto.includes("Fatura Nubank 03/2026")),
+    "a fatura sintetizada continua na lista depois do elo"
+  );
+});
+
+test("J5: Cancelar fecha o cartao e NAO escreve nada", () => {
+  const linha = linhaDoDetalhe(resultado.j_cancelado, "Pagar fatura Nubank");
+  assert.equal(linha.confirmacao, null, "o Cancelar nao fechou o cartao");
+  // A acao volta: cancelar nao e desistir para sempre.
+  assert.equal(linha.acaoDoElo, "ligar");
+  assert.deepEqual(
+    resultado.j_escritas_do_cancelar,
+    [],
+    "o Cancelar escreveu: " + JSON.stringify(resultado.j_escritas_do_cancelar)
+  );
+});
+
+test("J6: o caminho de volta existe e manda DELETE", () => {
+  // O cartao do desfazer diz o que vai acontecer com o numero -- para CIMA, que
+  // e a direcao oposta e igualmente caro: a mesma divida volta a dois lugares.
+  const linha = linhaDoDetalhe(resultado.j_desfazendo, "Pagar fatura Nubank");
+  assert.ok(linha.confirmacao, "o desfazer nao abriu cartao de confirmacao");
+  assert.equal(linha.confirmacao.qual, "desfazer");
+  assert.match(linha.confirmacao.texto, /ESBOCO-MES:2026-03-01/);
+
+  // E o DELETE sai para a mesma rota. (A primeira escrita e o POST de J3.)
+  assert.equal(resultado.j_escritas_do_desfazer.length, 2);
+  const ultima = resultado.j_escritas_do_desfazer[1];
+  assert.equal(ultima.metodo, "DELETE");
+  assert.match(
+    ultima.url,
+    /\/api\/scheduled-transactions\/linha-da-previsao\/elo-de-fatura$/
+  );
 });

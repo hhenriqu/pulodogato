@@ -163,10 +163,19 @@ export async function GET(request: NextRequest) {
     //     linhas de grupo dos OUTROS membros junto com as minhas, e um botao
     //     de Excluir sobre a linha alheia e recusado pela RLS -- com `UPDATE`
     //     voltando 200 sem alterar nada, que e o modo de falha caro.
+    //
+    // `account_id` ENTROU NA HMO-305, e e UMA COLUNA A MAIS na mesma consulta.
+    // Ela nao entra em soma nenhuma: e o que distingue a previsao DIGITADA que
+    // alguem ligou a uma fatura (a conta de onde o dinheiro sai) da fatura
+    // FECHADA que o `close` criou (o proprio cartao). As duas carregam a mesma
+    // chave em `notes`, e so a primeira pode ser desfeita na tela -- ver
+    // `eloDesfazivel` em lib/elo-da-fatura.ts. Sem esta coluna, `elo_da_fatura`
+    // sai `null` em toda linha: o rotulo de "ligada à fatura" desaparece e o
+    // caminho de volta sai da tela, sem que numero nenhum mude.
     const { data: linhasBrutas, error } = await supabase
       .from("scheduled_transactions_effective")
       .select(
-        "id, due_date, description, amount, status, direction, category_id, group_id, user_id, notes, account:financial_accounts(account_type)"
+        "id, due_date, description, amount, status, direction, category_id, group_id, user_id, notes, account_id, account:financial_accounts(account_type)"
       )
       .gte("due_date", janela.de)
       .lte("due_date", janela.ate);

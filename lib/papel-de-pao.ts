@@ -84,6 +84,11 @@ import {
   type ParticipantesPorGrupo,
 } from "@/lib/parte-do-grupo";
 import { ehDataIso, periodoCorrente, periodoDoMes } from "@/lib/periodo-do-painel";
+import {
+  eloDesfazivel,
+  suspeitasDeFaturaRepetida,
+  type SuspeitaDeFatura,
+} from "@/lib/elo-da-fatura";
 
 /**
  * O nome da categoria reservada de salario -- 'Salário', descrita como "Renda do
@@ -150,6 +155,26 @@ export interface LinhaPrevistaDoPapel {
   account_id?: string | null;
   /** Da fatura sintetizada: 'AAAA-MM-01'. Nenhuma linha gravada tem esta. */
   invoice_month?: string | null;
+  /**
+   * `scheduled_transactions.notes` -- HMO-305.
+   *
+   * A rota JA o traz no `select` (`agendaSemCompraNoCartao` precisa dele para
+   * separar a fatura da compra individual no cartao), e a fatura sintetizada
+   * nasce com a chave canonica aqui dentro. Quem o le e
+   * `suspeitasDeFaturaRepetida`, para as duas pontas do elo da fatura: a chave
+   * que identifica a fatura aberta, e a chave que -- quando ja esta na previsao
+   * digitada -- APAGA o rotulo de suspeita, porque o elo existe.
+   */
+  notes?: string | null;
+  /**
+   * Da fatura sintetizada: o nome do cartao ("Nubank") -- HMO-305.
+   *
+   * E o unico elo possivel entre a fatura e a previsao digitada a mao, e ele e
+   * textual: a previsao e lancada na conta corrente e nao guarda referencia
+   * nenhuma ao cartao. Ausente, nenhuma suspeita acende -- a direcao barata
+   * (o mes continua somando a divida duas vezes, a vista).
+   */
+  account_name?: string | null;
 }
 
 /**
@@ -208,6 +233,42 @@ export interface LinhaDoDetalhe {
    * `accountId` sem `mes` monta um link para o mes errado da fatura certa.
    */
   fatura: { accountId: string; mes: string } | null;
+  /**
+   * ESTA PREVISAO PODE SER A FATURA DE UM CARTAO -- HMO-305, e e aqui que o
+   * rotulo e a acao da linha nascem.
+   *
+   * `null` em quase toda linha, e e o que se espera: ele so e preenchido na
+   * previsao DIGITADA A MAO que cita o nome de um cartao com fatura ABERTA no
+   * mesmo mes -- "Pagar fatura Nubank" ao lado da fatura do Nubank que o app
+   * sintetizou das compras reais. A mesma divida, em dois lugares, somada duas
+   * vezes.
+   *
+   * ELE NAO MUDA NUMERO NENHUM. O `valor` desta linha continua inteiro e o
+   * `total` continua somando as duas -- a de-duplicacao so acontece depois que a
+   * PESSOA liga o elo (`POST .../elo-de-fatura`), que grava a chave canonica em
+   * `notes` e faz `sintetizarFaturasAbertas` reconhecer a fatura como "ja esta
+   * na agenda". Enquanto nao liga, a tela diz que a suspeita existe e o numero
+   * fica como esta: errar para cima e a direcao barata, porque a conta a vista
+   * e conferivel.
+   *
+   * SOME SOZINHO quando o elo existe: a linha com a chave em `notes` deixa de
+   * ser "previsao digitada" e passa a ser a fatura, para este campo e para o
+   * resto do app. Nao ha segundo criterio para manter em sincronia.
+   */
+  fatura_suspeita: SuspeitaDeFatura | null;
+  /**
+   * O ELO JA LIGADO, e por isso desfazivel -- HMO-305.
+   *
+   * O PAR de `fatura_suspeita`, e os dois nunca estao preenchidos na mesma
+   * linha: `suspeitasDeFaturaRepetida` recusa a linha que ja tem a chave. E
+   * assim que a tela diz que funcionou -- o rotulo de suspeita sai, e no lugar
+   * dele entra "ligada à fatura de março" com o caminho de volta.
+   *
+   * `null` na FATURA FECHADA, que carrega a mesma chave e nao se desfaz por aqui
+   * -- ver `eloDesfazivel` em lib/elo-da-fatura.ts, que e quem decide, e cujo
+   * criterio e o mesmo do `DELETE` da rota.
+   */
+  elo_da_fatura: { accountId: string; mes: string } | null;
 }
 
 /**
@@ -490,7 +551,20 @@ function somarPerna(
    * `soma(detalhe) === total` e a entrega da HMO-300, e uma linha na lista que
    * nao esta no total a quebraria na primeira conferencia.
    */
-  contaDeFora?: (linha: LinhaPrevistaDoPapel) => boolean
+  contaDeFora?: (linha: LinhaPrevistaDoPapel) => boolean,
+  /**
+   * AS SUSPEITAS DE FATURA REPETIDA -- HMO-305, calculadas UMA VEZ sobre a
+   * lista inteira e passadas para ca.
+   *
+   * Nao se calculam aqui dentro, e nao e economia: o criterio olha as linhas
+   * que ESTA perna recusou (a fatura sintetizada e despesa, e ela nao entra na
+   * perna do salario), entao um calculo por perna veria listas diferentes e as
+   * duas respostas discordariam sobre a mesma linha na mesma tela.
+   *
+   * Ausente e "nenhuma suspeita": a lista continua certa e a linha sai sem
+   * rotulo e sem acao, que e o estado de antes desta issue.
+   */
+  suspeitas?: ReadonlyMap<string, SuspeitaDeFatura>
 ): { numero: NumeroDoPapel; fora: TransferenciasFora } {
   let total = 0;
   let quantidade = 0;
@@ -543,7 +617,7 @@ function somarPerna(
     const valor = Math.abs(Number(minhaParte) || 0);
     total += valor;
     quantidade += 1;
-    detalhe.push(linhaDoDetalhe(linha, valor, ctx.meuUserId));
+    detalhe.push(linhaDoDetalhe(linha, valor, ctx.meuUserId, suspeitas));
   }
 
   // A CONTAGEM LATERAL SOBREVIVE A PERNA VAZIA, e esse e o caso que importa: um
@@ -594,13 +668,21 @@ function somarPerna(
 function linhaDoDetalhe(
   linha: LinhaPrevistaDoPapel,
   valor: number,
-  meuUserId: string | null | undefined
+  meuUserId: string | null | undefined,
+  suspeitas?: ReadonlyMap<string, SuspeitaDeFatura>
 ): LinhaDoDetalhe {
   const id = typeof linha.id === "string" && linha.id !== "" ? linha.id : null;
   const gravada = id !== null;
 
   const mesDaFatura = linha.invoice_month ?? null;
   const contaDaFatura = linha.account_id ?? null;
+
+  // A linha de OUTRO membro do grupo entra na lista (ela entra no total), e sai
+  // sem acao: a RLS recusaria, e `UPDATE` recusado pela RLS volta 200 sem
+  // alterar nada. VARIAVEL e nao expressao repetida porque desde a HMO-305 ela
+  // decide DUAS coisas -- os botoes e o elo da fatura --, e duas copias dela
+  // divergiriam deixando um dos dois caminhos aberto.
+  const posso = gravada && meuUserId != null && linha.user_id === meuUserId;
 
   return {
     id,
@@ -609,15 +691,24 @@ function linhaDoDetalhe(
     valor,
     data: String(linha.due_date),
     de_grupo: linha.group_id != null,
-    // A linha de OUTRO membro do grupo entra na lista (ela entra no total), e
-    // sai sem acao: a RLS recusaria, e `UPDATE` recusado pela RLS volta 200
-    // sem alterar nada.
-    posso_editar:
-      gravada && meuUserId != null && linha.user_id === meuUserId,
+    posso_editar: posso,
     fatura:
       !gravada && contaDaFatura != null && mesDaFatura != null
         ? { accountId: contaDaFatura, mes: mesDaFatura }
         : null,
+    // SO NA LINHA GRAVADA E SO QUANDO EU PODERIA LIGAR O ELO. A chave e o `id`
+    // porque e ele que a acao vai usar na URL, e `posso_editar` entra na
+    // condicao porque ligar o elo e um `UPDATE` em `scheduled_transactions`: na
+    // linha de outro membro do grupo a RLS recusaria, e `UPDATE` recusado pela
+    // RLS volta 200 sem alterar nada -- o app diria "pronto" e o numero nao
+    // mudaria. Rotulo sem acao possivel e pior que rotulo nenhum: ele aponta um
+    // problema e nao deixa resolver.
+    fatura_suspeita:
+      posso && id !== null && suspeitas ? suspeitas.get(id) ?? null : null,
+    // O MESMO `posso` dos outros dois campos: desfazer tambem e um `UPDATE`.
+    elo_da_fatura: posso
+      ? eloDesfazivel(linha.notes, linha.account_id, gravada)
+      : null,
   };
 }
 
@@ -668,13 +759,33 @@ export function painelDePapel(
 
   const deSalario = new Set(ctx.categoriasDeSalario);
 
+  // AS SUSPEITAS DE FATURA REPETIDA -- HMO-305, UMA VEZ, SOBRE A LISTA INTEIRA.
+  //
+  // Sobre `linhas` e nao sobre `naJanela`: o criterio compara o MES do
+  // vencimento da previsao com o mes do vencimento da fatura, e a janela ja
+  // garante que as duas estao no mesmo mes quando ambas entram. Passar a lista
+  // inteira so pode ACHAR mais faturas abertas -- nunca rotular uma linha que o
+  // painel nao mostra, porque `somarPerna` so consulta o mapa para as linhas que
+  // ele JA aceitou.
+  //
+  // Nenhum numero depende disto. Se `suspeitasDeFaturaRepetida` devolvesse o
+  // mapa vazio para tudo, os tres totais sairiam identicos -- o que mudaria e a
+  // tela parar de dizer que a mesma divida esta contada duas vezes.
+  const suspeitas = suspeitasDeFaturaRepetida(linhas);
+
   const salario_previsto = somarPerna(
     linhas,
     ctx,
     (linha) =>
       direcaoDaAgenda(linha.direction) === "income" &&
       linha.category_id != null &&
-      deSalario.has(linha.category_id)
+      deSalario.has(linha.category_id),
+    // SEM `contaDeFora` e SEM `suspeitas`: nenhuma linha de salario pode ser a
+    // fatura de um cartao (`suspeitasDeFaturaRepetida` recusa `income`), e
+    // passar o mapa aqui so poderia introduzir o rotulo numa lista onde ele nao
+    // tem sentido.
+    undefined,
+    undefined
   ).numero;
 
   // TODA receita prevista do mes, e nao so a da categoria Salario -- a perna
@@ -715,7 +826,11 @@ export function painelDePapel(
     // linha ficou de fora, e a frase da tela nomeia a razao. Com a negacao do
     // `aceita` a receita cairia na contagem junto, e a tela diria que o «Total
     // de contas» deixou o salario de fora.
-    (linha) => classeDaAgenda(linha.direction) === "transfer"
+    (linha) => classeDaAgenda(linha.direction) === "transfer",
+    // E E SO AQUI QUE O ROTULO DO ELO APARECE (HMO-305): o «Total de contas» e
+    // o numero que a fatura repetida incha, e e nele que a pessoa tem como
+    // resolver. A mesma lista, nas pernas de receita, nao tem o que rotular.
+    suspeitas
   );
 
   const total_de_contas: NumeroDeContas = {
