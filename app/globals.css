@@ -95,6 +95,148 @@
     --input: 215 27.9% 23%;
     --ring: 217.2 91.2% 59.8%;
   }
+
+  /*
+   * MODO "PAPEL DE PAO" (HMO-283) -- marrom e bege, como o papel em que se
+   * anota a conta da feira.
+   *
+   * ESTES DOIS BLOCOS TEM QUE FICAR DEPOIS DO `:root` ACIMA, e nao e estetica.
+   * `:root` e `.papel` casam o MESMO elemento (o `<html>`) com a MESMA
+   * especificidade (0,1,0), e no empate vence quem vem depois -- medido em
+   * Chromium: com o bloco `.papel` escrito acima do `:root`, um `<html
+   * class="papel">` sai BRANCO. O modo ficaria sem pele nenhuma.
+   *
+   * `.dark.papel` (0,2,0) vence dos dois por especificidade, e e isso que mantem
+   * o botao de Claro/Escuro com efeito DENTRO do papel de pao -- a posicao dele
+   * em relacao ao `.dark` nao muda nada (tambem medido).
+   *
+   * O que ele exige em troca: `.dark.papel` tem de declarar a paleta INTEIRA.
+   * Um token que exista so no `.dark` continua valendo no papel escuro (medido:
+   * ele vaza), e o resultado seria um azul do tema escuro no meio do marrom. A
+   * guarda cobre isso de outro jeito -- `scripts/check-color-tokens.mjs` reclama
+   * de "token faltando" ao medir os pares desta paleta.
+   *
+   * (A outra razao da ordem foi removida na HMO-283, consertando a causa em vez
+   * de documentar a armadilha: `scripts/check-color-tokens.mjs` achava cada
+   * bloco por `css.indexOf(seletor)`, e ".papel" e ".dark" sao substring de
+   * ".dark.papel" -- a ordem decidia qual paleta cada nome lia, e esta prosa
+   * aqui, que cita os tres nomes antes dos blocos, casava primeiro. A guarda
+   * passaria VERDE medindo a paleta errada. Ela agora mascara comentario e exige
+   * que o seletor comece um seletor, entao nao depende mais da ordem.)
+   *
+   * SAO DUAS PALETAS, E NAO UMA, de proposito. Com uma so, ligar papel de pao
+   * faria o botao de Claro/Escuro parar de ter efeito sem dizer por que -- e
+   * interruptor que nao faz nada e pior que interruptor nenhum.
+   *
+   * Os valores de `--background` dos dois blocos estao espelhados em hex em
+   * `PAPEL_THEME_COLOR` (lib/modo-papel.ts), que e a cor da barra de status do
+   * app instalado. Mexer aqui sem mexer la deixa a faixa de uma cor e a tela de
+   * outra.
+   */
+  .papel {
+    --background: 38 44% 88%;
+    --foreground: 25 45% 15%;
+    /* O cartao e o papel mais limpo sobre a mesa bege -- mais CLARO que o
+     * fundo, ao contrario do tema escuro, onde ele e mais claro para aparecer. */
+    --card: 40 50% 94%;
+    --card-foreground: 25 45% 15%;
+    --popover: 40 50% 96%;
+    --popover-foreground: 25 45% 15%;
+    --primary: 25 62% 30%;
+    --primary-foreground: 40 60% 96%;
+    --secondary: 35 35% 82%;
+    --secondary-foreground: 25 45% 18%;
+    --muted: 35 30% 84%;
+    --muted-foreground: 28 28% 30%;
+    --accent: 35 40% 80%;
+    --accent-foreground: 25 45% 18%;
+
+    /* As cores de dinheiro continuam existindo, puxadas para a terra: o
+     * vermelho vira vinho, o verde vira oliva. Trocar as duas por marrom
+     * apagaria a diferenca entre entrar e sair dinheiro, que e a informacao
+     * mais importante da tela. A luminosidade sai do contraste, nao da paleta
+     * -- scripts/check-color-tokens.mjs trava se isso regredir. */
+    --destructive: 0 62% 36%;
+    --destructive-foreground: 40 60% 96%;
+    --success: 95 48% 25%;
+    --success-foreground: 40 60% 96%;
+    --warning: 32 72% 28%;
+    --warning-foreground: 40 60% 96%;
+    --info: 215 38% 33%;
+    --info-foreground: 40 60% 96%;
+    --premium: 280 38% 34%;
+    --premium-foreground: 40 60% 96%;
+
+    --border: 32 32% 68%;
+    --input: 32 32% 68%;
+    --ring: 25 62% 30%;
+
+  }
+
+  /*
+   * A LETRA MANUSCRITA -- e por que ela mira o `body`, e nao o proprio `.papel`.
+   *
+   * A variavel `--font-papel` e declarada no `<html>` por `next/font/google`
+   * para todo mundo (ver app/layout.tsx), mas e PEDIDA so aqui: com
+   * `preload: false` do outro lado, o arquivo da fonte desce apenas para quem
+   * liga o modo.
+   *
+   * `font-family` dentro do bloco `.papel` acima NAO funcionaria, e o motivo nao
+   * e especificidade: `.papel` vive no `<html>`, e o `inter.className` do
+   * next/font vive no `<body>`. Uma declaracao feita DIRETAMENTE num elemento
+   * vence sempre um valor HERDADO do pai -- por mais especifico que o pai seja.
+   * O modo ficaria bege com a letra de sempre, que e metade do que a issue pede,
+   * e nem a guarda de cores nem um teste de classe veriam isso: a classe estaria
+   * no lugar certo, o token tambem, e so a fonte na tela estaria errada.
+   *
+   * `.papel body` declara no MESMO elemento que o next/font e ganha dele por
+   * especificidade (0,1,1 contra 0,1,0). Dali a letra desce para a tela inteira,
+   * inclusive campos e botoes -- o preflight do Tailwind ja poe
+   * `font-family: inherit` neles.
+   *
+   * `cursive` no fim nao e enfeite: se a fonte nao carregar, cair na fonte do
+   * resto do app faria o modo parecer apenas "bege", sem dizer por que.
+   *
+   * Medido em Chromium contra o CSS e a classe do next/font do build de
+   * verdade, em `npm run test:papel-na-tela`.
+   */
+  .papel body {
+    font-family: var(--font-papel), cursive;
+  }
+
+  .dark.papel {
+    --background: 25 36% 10%;
+    --foreground: 40 55% 90%;
+    --card: 25 32% 15%;
+    --card-foreground: 40 55% 90%;
+    --popover: 25 32% 15%;
+    --popover-foreground: 40 55% 90%;
+    --primary: 33 70% 66%;
+    --primary-foreground: 25 36% 12%;
+    --secondary: 25 25% 22%;
+    --secondary-foreground: 40 55% 90%;
+    --muted: 25 25% 22%;
+    --muted-foreground: 38 32% 70%;
+    --accent: 25 25% 25%;
+    --accent-foreground: 40 55% 90%;
+
+    /* Versoes mais claras e menos saturadas, pelo mesmo motivo do `.dark`: as
+     * do papel claro sao escuras demais para texto sobre marrom profundo. */
+    --destructive: 0 72% 72%;
+    --destructive-foreground: 25 36% 12%;
+    --success: 95 48% 64%;
+    --success-foreground: 25 36% 12%;
+    --warning: 40 88% 64%;
+    --warning-foreground: 25 36% 12%;
+    --info: 205 62% 70%;
+    --info-foreground: 25 36% 12%;
+    --premium: 285 58% 74%;
+    --premium-foreground: 25 36% 12%;
+
+    --border: 25 20% 32%;
+    --input: 25 20% 32%;
+    --ring: 33 70% 66%;
+  }
 }
 
 /*

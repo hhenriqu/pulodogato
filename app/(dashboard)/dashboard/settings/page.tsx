@@ -57,6 +57,7 @@ import {
 import { toast } from "sonner";
 import { ConfiguracaoDeMoeda } from "@/components/financial/ConfiguracaoDeMoeda";
 import { PainelDeLimites } from "@/components/subscription/PainelDeLimites";
+import { ConfiguracaoDePapel } from "@/components/papel-de-pao/ConfiguracaoDePapel";
 import {
   LayoutDashboard,
   GripVertical,
@@ -71,6 +72,7 @@ import {
   EyeOff,
   Coins,
   Gauge,
+  StickyNote,
 } from "lucide-react";
 import {
   SECOES_DO_PAINEL,
@@ -413,6 +415,34 @@ export default function ConfiguracoesPage() {
               </Button>
             </div>
           </div>
+
+          {/* ---------------------------------------------------------------- */}
+          {/* O espelho do papelzinho do cabecalho (HMO-283)                   */}
+          {/* ---------------------------------------------------------------- */}
+          {/* Mora nesta aba porque e "como o app se comporta", que e a fronteira
+              que o comentario do topo deste arquivo ja define para a aba Painel.
+
+              DEPOIS do Salvar de proposito, e fora do Card dos blocos: este
+              interruptor NAO tem Save. Ele vale no clique e grava no aparelho,
+              como o tema -- e nao em `profiles.preferences`, onde as outras duas
+              abas gravam. Dentro daquele Card, acima do botao, ele pareceria
+              fazer parte do que o botao salva, e quem clicasse em "Voltar ao
+              padrao" esperaria o papel de pao voltar junto. */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <StickyNote className="h-5 w-5" aria-hidden="true" />
+                Papel de pão
+              </CardTitle>
+              <CardDescription>
+                Deixa o app marrom e bege, com letra manuscrita. O mesmo
+                interruptor está no papelzinho do cabeçalho.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ConfiguracaoDePapel />
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* ---------------------------------------------------------------- */}

@@ -723,8 +723,41 @@ jobs:
             echo "::error::A verificacao passou verde com --success em 2.3:1."
             exit 1
           fi
+          git checkout -- app/globals.css
 
-          echo "A verificacao fica vermelha nas duas formas de regressao."
+          # 3) A MESMA regressao, mas na paleta do modo papel de pao (HMO-283).
+          #
+          # Este caso existe separado do (2) de proposito. A guarda le QUATRO
+          # blocos de globals.css, e ".papel" e ".dark" sao substring de
+          # ".dark.papel": um erro de leitura faria dois nomes apontarem para a
+          # mesma paleta, e as duas de papel ficariam SEM cobranca nenhuma
+          # enquanto o passo acima continuava verde. Os casos (2) e (3) juntos
+          # sao o que distingue "a guarda sabe falhar" de "a guarda sabe falhar
+          # nas quatro paletas".
+          #
+          # A ancora e o --muted-foreground de `.dark.papel` (creme sobre marrom
+          # profundo): levado a 35% de luminosidade ele cai para ~2.9:1. Se o
+          # valor mudar em globals.css e o sed parar de casar, o `grep` abaixo
+          # reprova -- um sed que nao casa SAI ZERO e passaria por "a guarda
+          # pegou", que e o modo de falha classico deste tipo de bloco.
+          sed -i 's/--muted-foreground: 38 32% 70%/--muted-foreground: 38 32% 35%/' app/globals.css
+          if ! grep -q -- '--muted-foreground: 38 32% 35%' app/globals.css; then
+            echo "::error::O mutante da paleta de papel nao foi aplicado -- a ancora mudou em globals.css. Este bloco estava medindo nada."
+            exit 1
+          fi
+          saida="$(node scripts/check-color-tokens.mjs 2>&1)" && {
+            echo "::error::A verificacao passou verde com a paleta de papel escuro em 2.9:1."
+            exit 1
+          }
+          # E tem que reprovar DIZENDO qual paleta -- uma mensagem que culpa o
+          # tema escuro normal manda consertar o bloco errado.
+          if ! printf '%s' "$saida" | grep -q 'papel escuro'; then
+            echo "::error::A verificacao reprovou, mas sem nomear a paleta de papel escuro:"
+            printf '%s\n' "$saida"
+            exit 1
+          fi
+
+          echo "A verificacao fica vermelha nas tres formas de regressao, e nomeia a paleta certa."
 
       # Mora aqui, e nao no db-verify, de proposito. O db-verify e filtrado por
       # `paths: ['database/**', 'lib/...']` -- mexer em app/page.tsx nao casa
@@ -748,6 +781,37 @@ jobs:
             diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
             exit 1
           fi
+      # =======================================================================
+      # MODO "PAPEL DE PAO": A PREFERENCIA E O INTERRUPTOR
+      # origem: nasceu aqui (HMO-283, do plano da HMO-279)
+      # =======================================================================
+      # Passos neste job, e nao num job novo: o custo de CI aqui e o NUMERO DE
+      # JOBS (ver o cabecalho deste arquivo), e as duas suites juntas levam
+      # ~5 segundos.
+      #
+      # A preferencia. O pedaco que nao teria rede de outra forma e o
+      # PAPEL_INIT_SCRIPT: ele e TEXTO, nao compila, e roda no <head> dentro de
+      # um try/catch que engole qualquer erro dele -- um parentese errado ali
+      # apareceria apenas como o flash da pele normal voltando para quem usa o
+      # modo, e ninguem abre bug para isso. A suite EXECUTA o script contra um
+      # DOM de mentira e compara o resultado com o do modulo.
+      - name: A preferencia do papel de pao cai no padrao, e o script do <head> funciona
+        run: npm run test:modo-papel
+
+      # O interruptor, em navegador. Clicar no papelzinho tem que trocar a
+      # classe do <html> E o clique em Configuracoes tem que fazer o mesmo --
+      # medir so um dos dois deixaria metade do que a issue pede sem prova.
+      #
+      # Precisa de navegador pela mesma razao do test:divisao-ui-dom abaixo:
+      # `react-dom/server`, que e como as outras suites de componente deste
+      # repo rodam, NAO ve handler. `onClick` nao sai no HTML e nunca e chamado
+      # pelo render, entao a tela renderizaria identica com o handler vazio.
+      #
+      # Sem navegador a suite FALHA, e nao pula: suite que se desliga sozinha e
+      # indistinguivel de suite que passou.
+      - name: O papelzinho e o espelho dele em Configuracoes trocam a pele do app
+        run: npm run test:papel-na-tela
+
       - name: Os botoes da home empilham alinhados e com espaco no celular
         run: npm run test:home-cta
 

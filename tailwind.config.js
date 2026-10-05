@@ -64,6 +64,22 @@ module.exports = {
         md: `calc(var(--radius) - 2px)`,
         sm: "calc(var(--radius) - 4px)",
       },
+      fontFamily: {
+        /*
+         * A letra manuscrita do modo papel de pao (HMO-283).
+         *
+         * A COR nao entra aqui: as duas paletas de papel reusam os MESMOS nomes
+         * de token (--background, --card, --foreground...) que o mapeamento de
+         * cores acima ja serve, entao o modo nao precisa de uma linha nova de
+         * cor. O que ele acrescenta de verdade e a familia.
+         *
+         * `.papel body` em app/globals.css ja aplica a familia na arvore inteira. A
+         * utilitaria `font-papel` existe para o caso oposto -- pedir a letra a
+         * mao num valor em corpo maior, que e o que o painel do PR 3 faz com os
+         * dois numeros em reais. A variavel e declarada em app/layout.tsx.
+         */
+        papel: ["var(--font-papel)", "cursive"],
+      },
     },
   },
   plugins: [require("@tailwindcss/forms")],

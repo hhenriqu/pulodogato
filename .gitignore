@@ -339,3 +339,12 @@ next-env.d.ts
 # `rm -rf` do npm script apaga arquivo RASTREADO se a pasta compilada chegar a
 # ser commitada por engano.
 /.tmp-realizado-do-caixa/
+
+# saida do `npm run test:modo-papel` (HMO-283)
+/.tmp-modo-papel/
+
+# saida do `npm run test:papel-na-tela` (HMO-283). Guarda tambem o `pele.css`
+# que a suite compila com o Tailwind para medir a paleta no navegador -- e um
+# artefato, nao fonte. Um `.tmp-*` fora do .gitignore chega a ser commitado em
+# cima de arquivo de fonte, e dai o `rm -rf` do proprio npm script o apaga.
+/.tmp-papel-na-tela/
