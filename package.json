@@ -148,7 +148,8 @@
     "test:modo-papel": "rm -rf .tmp-modo-papel && tsc -p scripts/tsconfig.modo-papel-test.json && node scripts/resolve-aliases.mjs .tmp-modo-papel lib --espelha-raiz && node --test scripts/test-modo-papel.mjs",
     "test:papel-na-tela": "rm -rf .tmp-papel-na-tela && tsc -p scripts/tsconfig.papel-na-tela-test.json && node --test scripts/test-papel-na-tela.mjs",
     "test:papel-de-pao": "rm -rf .tmp-papel-de-pao && tsc -p scripts/tsconfig.papel-de-pao-test.json && node scripts/resolve-aliases.mjs .tmp-papel-de-pao lib --espelha-raiz && TZ=America/Sao_Paulo node --test scripts/test-papel-de-pao.mjs && TZ=UTC node --test scripts/test-papel-de-pao.mjs",
-    "test:menu-papel": "rm -rf .tmp-menu-papel && tsc -p scripts/tsconfig.menu-papel-test.json && node scripts/resolve-aliases.mjs .tmp-menu-papel components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-menu-papel lib --espelha-raiz && node --test scripts/test-menu-papel.mjs"
+    "test:menu-papel": "rm -rf .tmp-menu-papel && tsc -p scripts/tsconfig.menu-papel-test.json && node scripts/resolve-aliases.mjs .tmp-menu-papel components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-menu-papel lib --espelha-raiz && node --test scripts/test-menu-papel.mjs",
+    "test:medicao-hmo298": "MEDICAO_TSCONFIG=scripts/tsconfig.medicao-hmo298-test.json bash scripts/medicao-hmo298.sh"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
