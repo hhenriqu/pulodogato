@@ -1675,6 +1675,205 @@ jobs:
       - name: O cartao travado no formulario
         run: npm run test:campos-lancamento
 
+      # A FATURA DO PERIODO (HMO-290). O rotulo "Fatura atual" imprimia
+      # `current_balance` -- a divida INTEIRA do cartao, com as parcelas que o
+      # trigger somou no INSERT. Uma compra de R$ 3.000 em 10x aparecia como
+      # "Fatura atual: R$ 3.000" no mes da compra, que cobra R$ 300 dela.
+      #
+      # A suite guarda o que nenhum tipo alcanca: `null` nao e zero (o cartao
+      # ausente da resposta nao e um mes sem compra), soma parcial nao vale como
+      # total, e parcela futura nao e cobranca de hoje.
+      - name: A fatura do periodo, e o que ainda vai ser cobrado
+        run: npm run test:fatura-do-periodo
+
+      # O NUMERO DO "POSSO GASTAR" (decisao 4.1 do plano da HMO-281).
+      # O desconto deixou de ser a divida inteira do cartao e passou a ser o que
+      # vence ate o fim do mes. E o ponto de maior risco de dinheiro da issue:
+      # trocar a fonte da divida reabre a porta do desconto duplo que
+      # `current_balance` mantinha fechada.
+      - name: Quanto este mes cobra do cartao, e quanto fica para depois
+        run: npm run test:safe-to-spend
+
+      # Controle negativo das duas decisoes de dinheiro, plantado um por vez.
+      #
+      # A prova de mutacao completa e `npm run mutantes:fatura-do-periodo`
+      # (15 mutantes, 15 mortos, com controle positivo nos dois alvos --
+      # ferramenta de quem escreve o teste). Aqui ficam os tres que mais custam.
+      #
+      # O `cmp` DEPOIS DE CADA `sed` NAO E ZELO. Um `sed -i` cujo padrao nao casa
+      # SAI 0 e nao muda nada: o `npm run` seguinte roda a fonte INTACTA, passa,
+      # e o `if` o declara... morto. O mutante seria dado por morto medindo nada.
+      - name: 'A verificacao sabe falhar (fatura do periodo)'
+        run: |
+          set -uo pipefail
+          GASTAR=lib/safe-to-spend.ts
+          PERIODO=lib/fatura-do-periodo.ts
+          cp $GASTAR $GASTAR.orig
+          cp $PERIODO $PERIODO.orig
+          trap 'mv $GASTAR.orig $GASTAR; mv $PERIODO.orig $PERIODO' EXIT
+
+          # 1) O DEFEITO DESTA ISSUE, INTACTO: a divida do cartao volta a ser
+          #    descontada por inteiro. Uma compra de R$ 3.000 em 10x derruba o
+          #    "posso gastar" em R$ 3.000 no mes da compra, quando aquele mes
+          #    cobra R$ 300.
+          sed -i 's#        divida: dividaTotal - diferida,#        divida: dividaTotal,#' $GASTAR
+          if cmp -s $GASTAR $GASTAR.orig; then
+            echo "::error::O sed 1 nao casou -- o mutante mediria a fonte intacta."
+            exit 1
+          fi
+          if npm run test:safe-to-spend > /dev/null 2>&1; then
+            echo "::error::Verde descontando a divida inteira do cartao."
+            exit 1
+          fi
+          cp $GASTAR.orig $GASTAR
+
+          # 2) O DESCONTO DUPLO DA FATURA FECHADA -- o caso que a issue manda
+          #    provar por nome. A conta prevista da fatura volta para
+          #    `compromissos`, por cima da mesma fatura que ja esta dentro do
+          #    saldo do cartao: a armadilha 1 de volta, e o app diz que a pessoa
+          #    pode gastar metade do que pode.
+          sed -i 's#    if (ehFatura(p.notes)) continue;#    if (false) continue;#' $GASTAR
+          if cmp -s $GASTAR $GASTAR.orig; then
+            echo "::error::O sed 2 nao casou -- o mutante mediria a fonte intacta."
+            exit 1
+          fi
+          if npm run test:safe-to-spend > /dev/null 2>&1; then
+            echo "::error::Verde com a fatura fechada descontada duas vezes."
+            exit 1
+          fi
+          cp $GASTAR.orig $GASTAR
+
+          # 3) A SOMA PARCIAL publicada como total. Com um cartao fora da
+          #    resposta, "Faturas em aberto" mostraria a soma dos outros -- um
+          #    numero menor que o certo, plausivel, sem nada dizendo que falta
+          #    uma parcela dele.
+          sed -i 's#    if (parcial === null) return null;#    if (parcial === null) continue;#' $PERIODO
+          if cmp -s $PERIODO $PERIODO.orig; then
+            echo "::error::O sed 3 nao casou -- o mutante mediria a fonte intacta."
+            exit 1
+          fi
+          if npm run test:fatura-do-periodo > /dev/null 2>&1; then
+            echo "::error::Verde publicando soma parcial de faturas."
+            exit 1
+          fi
+          cp $PERIODO.orig $PERIODO
+
+          echo "os tres mutantes de dinheiro da HMO-290 morrem"
+
+      - name: 'A arvore voltou ao lugar depois de "A verificacao sabe falhar (fatura do periodo)"'
+        run: |
+          set -euo pipefail
+          git status --porcelain > "$RUNNER_TEMP/arvore-agora.txt"
+          if ! diff -u "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt"; then
+            echo "::error::O controle negativo deixou arquivo mutado na arvore."
+            exit 1
+          fi
+
+      # A FIACAO. `current_balance` e `number | string | null` e a fatura e
+      # `number`: as duas atribuicoes compilam, e a fronteira da rota e `any`.
+      # Nada disto aparece no tsc nem na tela -- o numero continua plausivel.
+      - name: O rotulo de fatura le fatura, e nao o saldo do cartao
+        run: npm run check-fatura-escolhida
+
+      # Controle negativo da fiacao, nas DUAS direcoes que ela erra.
+      #
+      # A verificacao remove comentario antes de procurar, e isso nao e detalhe:
+      # todos os arquivos citados EXPLICAM por escrito o que ela procura. No
+      # texto cru as buscas proibidas reprovariam sempre (os cabecalhos citam
+      # `current_balance` uma duzia de vezes) e as exigidas aprovariam por
+      # prosa -- a metade perigosa, que nao avisa, so para de verificar.
+      - name: 'A verificacao sabe falhar (fatura escolhida)'
+        run: |
+          set -uo pipefail
+          LISTA=components/cartoes/CartaoDaLista.tsx
+          TELA='app/(dashboard)/dashboard/cartoes/page.tsx'
+          GASTAR=lib/safe-to-spend.ts
+          ROTA=app/api/safe-to-spend/route.ts
+          for f in "$LISTA" "$TELA" "$GASTAR" "$ROTA"; do cp "$f" "$f.orig"; done
+          trap 'for f in "$LISTA" "$TELA" "$GASTAR" "$ROTA"; do mv "$f.orig" "$f"; done' EXIT
+
+          # Antes de tudo: com a arvore intacta ela tem de APROVAR. Sem este
+          # controle positivo, um "reprovou" abaixo poderia ser a verificacao
+          # reprovando sempre -- por um caminho de arquivo errado, por exemplo.
+          if ! npm run check-fatura-escolhida > /dev/null 2>&1; then
+            echo "::error::A verificacao reprova a arvore INTACTA."
+            exit 1
+          fi
+
+          # 1) O defeito desta issue, reintroduzido: o card volta a imprimir a
+          #    divida inteira do cartao sob o rotulo de fatura.
+          sed -i 's#const total = totalDaFatura(fatura);#const total = Math.abs(Number(conta.current_balance ?? 0));#' "$LISTA"
+          if ! cmp -s "$LISTA" "$LISTA.orig"; then
+            if npm run check-fatura-escolhida > /dev/null 2>&1; then
+              echo "::error::Verde com current_balance de volta sob o rotulo de fatura."
+              exit 1
+            fi
+          else
+            echo "::error::O sed 1 nao casou -- o controle mediria a arvore intacta."
+            exit 1
+          fi
+          cp "$LISTA.orig" "$LISTA"
+
+          # 2) A SEGUNDA LEITURA removida "para simplificar". Duas chamadas onde
+          #    havia uma parecem desperdicio, e o total volta a sair do saldo.
+          sed -i 's#somaDasFaturas(faturas, idsAtivos)#totalDoEscopo(ativas, "cartao")#' "$TELA"
+          if ! cmp -s "$TELA" "$TELA.orig"; then
+            if npm run check-fatura-escolhida > /dev/null 2>&1; then
+              echo "::error::Verde com a tela somando current_balance de novo."
+              exit 1
+            fi
+          else
+            echo "::error::O sed 2 nao casou -- o controle mediria a arvore intacta."
+            exit 1
+          fi
+          cp "$TELA.orig" "$TELA"
+
+          # 3) O desconto duplo da armadilha 1 de volta: a conta prevista da
+          #    fatura fechada somando por cima da mesma fatura que ja esta no
+          #    saldo do cartao. Este e o caso que a issue manda provar por nome.
+          #
+          #    A assercao e sobre a CHAMADA, e nao sobre o nome: `ehFatura`
+          #    sozinho casaria com a linha do `import`, e a verificacao
+          #    aprovaria um arquivo que importa a funcao e nunca a chama. Foi
+          #    exatamente assim que este controle falhou ao ser escrito.
+          sed -i 's#    if (ehFatura(p.notes)) continue;#    if (false) continue;#' "$GASTAR"
+          if ! cmp -s "$GASTAR" "$GASTAR.orig"; then
+            if npm run check-fatura-escolhida > /dev/null 2>&1; then
+              echo "::error::Verde com a fatura fechada descontada duas vezes."
+              exit 1
+            fi
+          else
+            echo "::error::O sed 3 nao casou -- o controle mediria a arvore intacta."
+            exit 1
+          fi
+          cp "$GASTAR.orig" "$GASTAR"
+
+          # 4) A rota parando de passar as faturas. O campo e obrigatorio no
+          #    tipo, mas o `?? []` dentro do calculo faz a omissao virar um
+          #    numero menor e plausivel em vez de um erro de compilacao.
+          sed -i 's#        faturas: Array.from(porFatura.values()),##' "$ROTA"
+          if ! cmp -s "$ROTA" "$ROTA.orig"; then
+            if npm run check-fatura-escolhida > /dev/null 2>&1; then
+              echo "::error::Verde com a rota sem passar as faturas."
+              exit 1
+            fi
+          else
+            echo "::error::O sed 4 nao casou -- o controle mediria a arvore intacta."
+            exit 1
+          fi
+          cp "$ROTA.orig" "$ROTA"
+
+          echo "a verificacao de fatura escolhida sabe falhar nos quatro casos"
+
+      - name: 'A arvore voltou ao lugar depois de "A verificacao sabe falhar (fatura escolhida)"'
+        run: |
+          set -euo pipefail
+          git status --porcelain > "$RUNNER_TEMP/arvore-agora.txt"
+          if ! diff -u "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt"; then
+            echo "::error::O controle negativo deixou arquivo mutado na arvore."
+            exit 1
+          fi
+
       # Controle negativo. As suites afirmam sobre AUSENCIA -- "a lista NAO traz
       # a compra do outro cartao", "a tela NAO afirma o vazio sem ter lido" -- e
       # assercao de ausencia passa verde tambem quando ela deixa de achar o que

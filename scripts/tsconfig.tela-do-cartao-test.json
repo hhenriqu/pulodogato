@@ -36,6 +36,7 @@
     "../components/ui/input.tsx",
     "../components/ui/label.tsx",
     "../lib/fatura-do-cartao.ts",
+    "../lib/fatura-do-periodo.ts",
     "../lib/offline-leitura.ts",
     "../lib/contas.ts",
     "../lib/dinheiro.ts",

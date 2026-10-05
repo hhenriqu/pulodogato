@@ -105,6 +105,7 @@
     "mutantes:fatura-prevista": "node scripts/mutantes-fatura-prevista.mjs",
     "test:agenda-do-cartao": "rm -rf .tmp-agenda-do-cartao && tsc -p scripts/tsconfig.agenda-do-cartao-test.json && node scripts/resolve-aliases.mjs .tmp-agenda-do-cartao lib && node --test scripts/test-agenda-do-cartao.mjs",
     "test:fatura-do-cartao": "rm -rf .tmp-fatura-do-cartao && tsc -p scripts/tsconfig.fatura-do-cartao-test.json && node scripts/resolve-aliases.mjs .tmp-fatura-do-cartao lib --espelha-raiz && TZ=America/Sao_Paulo node --test scripts/test-fatura-do-cartao.mjs",
+    "test:fatura-do-periodo": "rm -rf .tmp-fatura-do-periodo && tsc -p scripts/tsconfig.fatura-do-periodo-test.json && node scripts/resolve-aliases.mjs .tmp-fatura-do-periodo lib --espelha-raiz && node --test scripts/test-fatura-do-periodo.mjs",
     "test:ajuste-de-fatura": "rm -rf .tmp-ajuste-de-fatura && tsc -p scripts/tsconfig.ajuste-de-fatura-test.json && node scripts/resolve-aliases.mjs .tmp-ajuste-de-fatura lib --espelha-raiz && TZ=America/Sao_Paulo node --test scripts/test-ajuste-de-fatura.mjs",
     "test:ajuste-na-tela": "rm -rf .tmp-ajuste-na-tela && tsc -p scripts/tsconfig.ajuste-na-tela-test.json && node scripts/resolve-aliases.mjs .tmp-ajuste-na-tela components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-ajuste-na-tela lib --espelha-raiz && node scripts/resolve-next-subpaths.mjs .tmp-ajuste-na-tela && node --test scripts/test-ajuste-na-tela.mjs",
     "test:tela-do-cartao": "rm -rf .tmp-tela-do-cartao && tsc -p scripts/tsconfig.tela-do-cartao-test.json && node scripts/resolve-aliases.mjs .tmp-tela-do-cartao components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-tela-do-cartao lib --espelha-raiz && node scripts/resolve-next-subpaths.mjs .tmp-tela-do-cartao && node --test scripts/test-tela-do-cartao.mjs",
@@ -137,7 +138,9 @@
     "test:contrato-do-fechamento": "node --test scripts/test-contrato-do-fechamento.mjs",
     "test:contrato-do-credito": "node --test scripts/test-contrato-do-credito.mjs",
     "test:contrato-do-periodo-do-grupo": "node --test scripts/test-contrato-do-periodo-do-grupo.mjs",
-    "mutantes:retorno-lancamento": "node scripts/mutantes-retorno-do-lancamento.mjs"
+    "mutantes:retorno-lancamento": "node scripts/mutantes-retorno-do-lancamento.mjs",
+    "mutantes:fatura-do-periodo": "node scripts/mutantes-fatura-do-periodo.mjs",
+    "check-fatura-escolhida": "node scripts/check-fatura-escolhida.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

@@ -1,0 +1,35 @@
+{
+  "//": [
+    "A fatura do periodo e as parcelas futuras (HMO-290).",
+    "",
+    "Compila lib/fatura-do-periodo.ts junto com lib/fatura-do-cartao.ts porque",
+    "`somaDasFaturas` IMPORTA o `faturaDoCartao` dele em vez de repetir o `find`",
+    "por account_id -- nao existe uma segunda escolha de fatura no repositorio, e",
+    "tirar aquele import derruba este build. lib/offline-leitura.ts entra porque",
+    "fatura-do-cartao fala do tipo `EstadoDaLeitura` dele e o `tsc` estrito exige",
+    "que o import de tipo resolva; as duas ja tem suite propria",
+    "(test:fatura-do-cartao, test:offline-leitura).",
+    "",
+    "O resolve-aliases roda COM --espelha-raiz porque o `rootDir` e a raiz do",
+    "repositorio (types/financial.ts entra no programa pelo import de tipo), e a",
+    "emissao sai em .tmp-fatura-do-periodo/lib/ -- mesmo desenho do",
+    "tsconfig.fatura-do-cartao-test.json."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-fatura-do-periodo",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../lib/fatura-do-periodo.ts",
+    "../lib/fatura-do-cartao.ts",
+    "../lib/offline-leitura.ts"
+  ]
+}

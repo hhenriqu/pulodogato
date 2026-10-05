@@ -206,6 +206,336 @@ test("cada cartao aparece no detalhe, do que mais deve para o que menos deve", (
 });
 
 // ---------------------------------------------------------------------------
+// 2b. A PARCELA FUTURA NAO E COBRANCA DESTE MES (HMO-290, armadilha 10)
+// ---------------------------------------------------------------------------
+// A decisao 4.1 do plano da HMO-281, e o ponto de maior risco de dinheiro dele.
+// O desconto deixou de ser a divida inteira do cartao e passou a ser
+// `max(0, divida - faturas que vencem depois do fim do mes)`.
+//
+// O caso da issue: R$ 3.000 em 10x. O trigger `update_account_balance` soma
+// `NEW.amount` no INSERT e a rota de parcelas grava as 10 de uma vez, entao o
+// saldo do cartao e -3.000 no mes da compra. Aquele mes cobra R$ 300.
+//
+// AS DUAS DIRECOES IMPORTAM: descontar demais faz o app dizer que a pessoa pode
+// gastar menos do que pode (o defeito que a HMO-290 conserta), e descontar de
+// menos faz o app prometer dinheiro que vai embora na fatura. Cada teste aqui
+// fecha uma das duas.
+
+/** Uma fatura agregada, do jeito que a rota entrega para o calculo. */
+const fatura = (mes, total, due_date) => ({
+  account_id: CARTAO_ID,
+  invoice_month: `${mes}-01`,
+  due_date,
+  total,
+});
+
+/** Os 10 meses de uma compra de 3.000 em 10x, R$ 300 cada, vencendo dia 15. */
+const DEZ_PARCELAS = [
+  fatura("2026-09", 300, "2026-09-15"),
+  fatura("2026-10", 300, "2026-10-15"),
+  fatura("2026-11", 300, "2026-11-15"),
+  fatura("2026-12", 300, "2026-12-15"),
+  fatura("2027-01", 300, "2027-01-15"),
+  fatura("2027-02", 300, "2027-02-15"),
+  fatura("2027-03", 300, "2027-03-15"),
+  fatura("2027-04", 300, "2027-04-15"),
+  fatura("2027-05", 300, "2027-05-15"),
+  fatura("2027-06", 300, "2027-06-15"),
+];
+
+test("compra de 3.000 em 10x desconta a parcela do mes, nao a compra inteira", () => {
+  const r = calcularQuantoPossoGastar({
+    contas: [corrente(3000), cartao(-3000)],
+    previstas: [],
+    faturas: DEZ_PARCELAS,
+    hoje: HOJE,
+  });
+
+  // O defeito que esta issue conserta daria 3000 aqui, e `livre` 0.
+  assert.equal(r.dividaDeCartao, 300);
+  assert.equal(r.dividaDiferida, 2700);
+  assert.equal(r.livre, 2700);
+  // A soma das duas partes nunca passa da divida do cartao -- e aqui ela fecha
+  // exatamente, que e o que prova que nenhum centavo se perdeu na separacao.
+  assert.equal(r.dividaDeCartao + r.dividaDiferida, 3000);
+});
+
+test("sem as faturas, a divida INTEIRA volta a ser descontada", () => {
+  // O caminho de falha da rota: a leitura das faturas quebrou e ela passa
+  // `faturas: []`. O numero fica conservador -- igual ao de antes da HMO-290 --
+  // e e por isso que a rota manda `diferido_indisponivel` junto, para a tela
+  // nao escrever "R$ 0,00 depois" por cima de um desconto que nao separou nada.
+  const r = calcularQuantoPossoGastar({
+    contas: [corrente(3000), cartao(-3000)],
+    previstas: [],
+    faturas: [],
+    hoje: HOJE,
+  });
+
+  assert.equal(r.dividaDeCartao, 3000);
+  assert.equal(r.dividaDiferida, 0);
+});
+
+test("A FATURA FECHADA CONTINUA DESCONTANDO UMA VEZ, nao duas nem zero", () => {
+  // O caso que a issue manda provar com teste e mutante dedicados.
+  //
+  // Estado: fatura de agosto fechada (800), conta prevista com a chave canonica
+  // vencendo em 20/09, e o saldo do cartao NAO mudou com o fechamento. A fatura
+  // de agosto vence dentro do horizonte, entao ela e cobranca DESTE mes.
+  //
+  // A armadilha 1 continua valendo pela razao original: a fatura fechada esta
+  // dentro do saldo do cartao, que segue sendo a ancora do desconto. Por isso a
+  // conta prevista fica de fora pelo `ehFatura` -- somar as duas desconta 1600.
+  const r = calcularQuantoPossoGastar({
+    contas: [corrente(3000), cartao(-800)],
+    previstas: [
+      prevista(800, "2026-09-20", { notes: chaveFatura("2026-08-01", CARTAO_ID) }),
+    ],
+    faturas: [fatura("2026-08", 800, "2026-09-20")],
+    hoje: HOJE,
+  });
+
+  assert.equal(r.dividaDeCartao, 800); // uma vez
+  assert.equal(r.compromissos, 0); // e nao duas
+  assert.equal(r.dividaDiferida, 0); // nem adiada para o mes que vem
+  assert.equal(r.livre, 2200);
+});
+
+test("fatura fechada E PAGA pelo app nao e cobrada de novo", () => {
+  // O desconto duplo que a troca de fonte reabriria, e o motivo de a ancora
+  // continuar sendo `current_balance`.
+  //
+  // A baixa da fatura grava duas pernas `transfer` (HMO-149 / migration 015):
+  // -800 na corrente e +800 no cartao. A `card_invoice_lines` filtra
+  // ('expense','income') de proposito, entao a perna de pagamento NAO abate o
+  // total da fatura na view -- a fatura de agosto continua valendo 800 lá.
+  //
+  // Ler o total da view e descontar direto cobraria agosto duas vezes: uma na
+  // corrente, que ja pagou, e outra como "fatura do mes". Ancorado no saldo do
+  // cartao (agora 0), o desconto e zero.
+  const r = calcularQuantoPossoGastar({
+    contas: [corrente(2200), cartao(0)],
+    previstas: [], // a prevista saiu de `pending`: a rota nem a traz
+    faturas: [fatura("2026-08", 800, "2026-09-20")],
+    hoje: HOJE,
+  });
+
+  assert.equal(r.dividaDeCartao, 0);
+  assert.equal(r.livre, 2200); // e nao 1400
+});
+
+test("fatura paga POR FORA do app tambem nao e cobrada de novo", () => {
+  // A limitacao que o cabecalho do lib ja registrava. Nao ha baixa na agenda e
+  // a view nao se mexe -- mas o pagamento creditou o cartao, e e dai que o
+  // desconto sai.
+  const r = calcularQuantoPossoGastar({
+    contas: [corrente(2200), cartao(0)],
+    previstas: [
+      // Continua `pending` na agenda, e continua excluida pelo `ehFatura`.
+      prevista(800, "2026-09-20", { notes: chaveFatura("2026-08-01", CARTAO_ID) }),
+    ],
+    faturas: [fatura("2026-08", 800, "2026-09-20")],
+    hoje: HOJE,
+  });
+
+  assert.equal(r.dividaDeCartao, 0);
+  assert.equal(r.livre, 2200);
+});
+
+test("parcela que vence DENTRO do mes conta; a do primeiro dia do mes seguinte, nao", () => {
+  // A borda do horizonte, nos dois lados. Setembro termina no dia 30.
+  const r = calcularQuantoPossoGastar({
+    contas: [corrente(3000), cartao(-600)],
+    previstas: [],
+    faturas: [
+      fatura("2026-09", 300, "2026-09-30"), // ultimo dia: entra
+      fatura("2026-10", 300, "2026-10-01"), // dia seguinte: diferida
+    ],
+    hoje: HOJE,
+  });
+
+  assert.equal(r.dividaDeCartao, 300);
+  assert.equal(r.dividaDiferida, 300);
+});
+
+test("fatura do mes que vence no mes SEGUINTE e diferida (fecha dia 28, vence dia 5)", () => {
+  // `card_invoice_due_date` empurra o vencimento um mes quando o dia de
+  // vencimento vem antes do fechamento. A fatura e "de setembro" e cobra em
+  // outubro -- quem decide e o VENCIMENTO, nao o nome do mes. Agrupar por
+  // `invoice_month` em vez de por vencimento descontaria isto hoje.
+  const r = calcularQuantoPossoGastar({
+    contas: [corrente(3000), cartao(-500)],
+    previstas: [],
+    faturas: [fatura("2026-09", 500, "2026-10-05")],
+    hoje: HOJE,
+  });
+
+  assert.equal(r.dividaDeCartao, 0);
+  assert.equal(r.dividaDiferida, 500);
+});
+
+test("cartao sem dia de vencimento: a fatura do mes dele conta como deste mes", () => {
+  // Sem `due_day` o `card_invoice_due_date` devolve NULL, e o cartao nao fecha
+  // fatura (a tela de cartoes ja avisa isso numa tarja). O recuo e o ULTIMO dia
+  // do mes da fatura: a fatura de setembro e cobranca de setembro.
+  //
+  // Recuar para o mes seguinte empurraria para "diferida" uma fatura que o mes
+  // cobra -- e esse lado tira dinheiro do desconto, que e o lado errado.
+  const r = calcularQuantoPossoGastar({
+    contas: [corrente(3000), cartao(-500)],
+    previstas: [],
+    faturas: [
+      { account_id: CARTAO_ID, invoice_month: "2026-09-01", due_date: null, total: 300 },
+      { account_id: CARTAO_ID, invoice_month: "2026-10-01", due_date: null, total: 200 },
+    ],
+    hoje: HOJE,
+  });
+
+  assert.equal(r.dividaDeCartao, 300);
+  assert.equal(r.dividaDiferida, 200);
+});
+
+test("estorno numa fatura futura nao abate OUTRA fatura futura", () => {
+  // Este e o caso que distingue o recorte por fatura do recorte por soma: duas
+  // faturas futuras, uma positiva e uma negativa. Somar as duas antes de
+  // clampar daria 100 de diferido, e os outros 200 passariam a ser cobrados
+  // DESTE mes -- antecipando um credito que so chega em novembro.
+  const r = calcularQuantoPossoGastar({
+    contas: [corrente(3000), cartao(-800)],
+    previstas: [],
+    faturas: [
+      fatura("2026-10", 300, "2026-10-15"),
+      fatura("2026-11", -200, "2026-11-15"),
+    ],
+    hoje: HOJE,
+  });
+
+  assert.equal(r.dividaDiferida, 300); // e nao 100
+  assert.equal(r.dividaDeCartao, 500); // e nao 700
+});
+
+test("vencimento ilegivel cai no mes da fatura, e nao em 'futura'", () => {
+  // A comparacao e de string: "amanha" sai MAIOR que qualquer data ISO, e a
+  // fatura viraria futura -- deixando de ser descontada por causa de um campo
+  // que ninguem conseguiu ler. O recuo e o mes da fatura.
+  const r = calcularQuantoPossoGastar({
+    contas: [corrente(3000), cartao(-500)],
+    previstas: [],
+    faturas: [
+      { account_id: CARTAO_ID, invoice_month: "2026-09-01", due_date: "amanha", total: 500 },
+    ],
+    hoje: HOJE,
+  });
+
+  assert.equal(r.dividaDeCartao, 500);
+  assert.equal(r.dividaDiferida, 0);
+});
+
+test("fatura sem mes legivel nao vira diferida (nem desaparece do desconto)", () => {
+  // Sem saber quando ela e cobrada, trata-la como futura reduziria o desconto
+  // por causa de um dado que nao deu para ler.
+  const r = calcularQuantoPossoGastar({
+    contas: [corrente(3000), cartao(-500)],
+    previstas: [],
+    faturas: [
+      { account_id: CARTAO_ID, invoice_month: "", due_date: null, total: 500 },
+    ],
+    hoje: HOJE,
+  });
+
+  assert.equal(r.dividaDeCartao, 500);
+  assert.equal(r.dividaDiferida, 0);
+});
+
+test("estorno em fatura FUTURA nao antecipa credito para este mes", () => {
+  // Fatura futura negativa (o estorno chegou depois da compra). Deixa-la abater
+  // o diferido AUMENTARIA o que este mes cobra -- descontar hoje um credito que
+  // so chega depois. Fatura futura so adia dinheiro, nunca o traz para ca.
+  const r = calcularQuantoPossoGastar({
+    contas: [corrente(3000), cartao(-800)],
+    previstas: [],
+    faturas: [
+      fatura("2026-09", 1000, "2026-09-15"),
+      fatura("2026-10", -200, "2026-10-15"),
+    ],
+    hoje: HOJE,
+  });
+
+  // A divida real e 800, e e ela o teto: o diferido e 0 e tudo e deste mes.
+  assert.equal(r.dividaDiferida, 0);
+  assert.equal(r.dividaDeCartao, 800);
+});
+
+test("faturas futuras maiores que a divida nao viram desconto negativo", () => {
+  // Pagou parte das parcelas adiantado: a divida encolheu e as faturas futuras
+  // da view continuam inteiras. Sem o teto, `divida - futuras` daria -1200 e o
+  // "posso gastar" SUBIRIA de degrau por causa de um pagamento ja feito.
+  const r = calcularQuantoPossoGastar({
+    contas: [corrente(3000), cartao(-1500)],
+    previstas: [],
+    faturas: DEZ_PARCELAS,
+    hoje: HOJE,
+  });
+
+  assert.equal(r.dividaDiferida, 1500);
+  assert.equal(r.dividaDeCartao, 0);
+  assert.equal(r.livre, 3000);
+});
+
+test("a fatura de OUTRO cartao nao abate a divida deste", () => {
+  const outro = {
+    id: "99999999-8888-7777-6666-555555555555",
+    name: "Cartao Itau",
+    account_type: "credit_card",
+    current_balance: -400,
+  };
+
+  const r = calcularQuantoPossoGastar({
+    contas: [corrente(3000), cartao(-3000), outro],
+    previstas: [],
+    // So o Nubank tem parcelas futuras. Se a chave do mapa fosse ignorada, as
+    // 2.700 do Nubank zerariam a divida do Itau tambem.
+    faturas: DEZ_PARCELAS,
+    hoje: HOJE,
+  });
+
+  const porNome = new Map(r.cartoes.map((c) => [c.name, c]));
+  assert.equal(porNome.get("Cartao Nubank").divida, 300);
+  assert.equal(porNome.get("Cartao Nubank").diferida, 2700);
+  assert.equal(porNome.get("Cartao Itau").divida, 400);
+  assert.equal(porNome.get("Cartao Itau").diferida, 0);
+  assert.equal(r.dividaDeCartao, 700);
+});
+
+test("cartao arquivado com parcelas futuras tambem separa (a divida nao e perdoada)", () => {
+  // O cartao arquivado continua descontando -- divida de cartao cancelado tem
+  // que ser paga. A separacao da armadilha 10 vale igual para ele.
+  const r = calcularQuantoPossoGastar({
+    contas: [corrente(3000), cartao(-3000, { is_active: false })],
+    previstas: [],
+    faturas: DEZ_PARCELAS,
+    hoje: HOJE,
+  });
+
+  assert.equal(r.dividaDeCartao, 300);
+  assert.equal(r.dividaDiferida, 2700);
+});
+
+test("a parte diferida NAO entra no livre, nem com sinal trocado", () => {
+  // O jeito mais facil de estragar isto e somar `dividaDiferida` no `livre`
+  // "para nao perder o numero". O livre e `disponivel - o que este mes cobra`.
+  const r = calcularQuantoPossoGastar({
+    contas: [corrente(1000), cartao(-3000)],
+    previstas: [],
+    faturas: DEZ_PARCELAS,
+    hoje: HOJE,
+  });
+
+  assert.equal(r.livre, 700); // 1000 - 300
+  assert.equal(r.dividaDiferida, 2700);
+});
+
+// ---------------------------------------------------------------------------
 // 3. O que NAO e dinheiro para gastar
 // ---------------------------------------------------------------------------
 
