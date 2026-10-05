@@ -1,20 +1,21 @@
-// O MENU REDUZIDO do modo papel de pao -- HMO-284, ampliado pela HMO-294
-// (plano da HMO-279).
+// O MENU REDUZIDO do modo papel de pao -- HMO-284, ampliado pela HMO-294 e pela
+// HMO-299 (plano da HMO-279).
 //
 // O QUE ESTA SUITE PROVA
 // ----------------------
-// Com o modo ligado o menu tem EXATAMENTE 7 rotas; desligado, EXATAMENTE 27.
+// Com o modo ligado o menu tem EXATAMENTE 8 rotas; desligado, EXATAMENTE 27.
 //
 // O "exatamente" (e nao "contem") e o ponto. Com `contem`, a suite fica verde
 // enquanto o menu volta a crescer: o proximo item acrescentado ao array nao
-// quebraria nada, e o modo reduzido voltaria a ter 8, 9, 10 itens sem ninguem
+// quebraria nada, e o modo reduzido voltaria a ter 9, 10, 11 itens sem ninguem
 // notar. Aqui um item novo REPROVA, e quem o acrescentou tem de decidir de
 // proposito se ele entra ou nao no modo.
 //
-// E foi assim que o 5 virou 7: a HMO-294 pos `/dashboard/profile` e
-// `/dashboard/settings` na lista, e as contagens abaixo tiveram de ser
-// reescritas uma por uma -- de proposito, que e o preco de prender numero
-// exato e tambem o que ele compra.
+// E foi assim que o 5 virou 7 e o 7 virou 8: a HMO-294 pos
+// `/dashboard/profile` e `/dashboard/settings` na lista, a HMO-299 pos
+// `/dashboard/expense-groups`, e as contagens abaixo tiveram de ser reescritas
+// uma por uma -- de proposito, que e o preco de prender numero exato e tambem o
+// que ele compra.
 //
 // POR QUE A SUITE FIXA O PLANO
 // ----------------------------
@@ -29,7 +30,7 @@
 // -------------------------------
 // Comparar a saida do filtro com o `ROTAS_DO_MENU_DE_PAPEL` que o alimenta
 // provaria pouco: a lista estaria conferindo consigo mesma. O que torna a
-// assercao real e que ela so fecha se cada uma das 7 rotas EXISTIR no array de
+// assercao real e que ela so fecha se cada uma das 8 rotas EXISTIR no array de
 // 27 -- uma rota renomeada la derruba a contagem -- e que os NOMES conferidos
 // (`Dashboard`, `Receitas`, ...) vem do array de navegacao, nao da lista de
 // rotas. Esses nomes sao dado independente.
@@ -94,29 +95,32 @@ test("desligado, o filtro do modo devolve o MESMO array -- sem copia", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Ligado: as sete telas
+// Ligado: as oito telas
 // ---------------------------------------------------------------------------
 
-test("ligado, o menu tem EXATAMENTE as 7 rotas, na ordem do menu", () => {
+test("ligado, o menu tem EXATAMENTE as 8 rotas, na ordem do menu", () => {
   const itens = menu({ plano: "admin", papel: true });
 
-  assert.equal(itens.length, 7);
+  assert.equal(itens.length, 8);
   // A ORDEM e a do array de navegacao, nao a de `ROTAS_DO_MENU_DE_PAPEL`: la
   // "Perfil" esta escrito depois de "Configuracoes" na prosa da issue, e aqui
-  // ele vem ANTES, porque e onde ele mora no array. Se um dia o filtro passar a
-  // ordenar pela lista de rotas, este caso reprova.
+  // ele vem ANTES, porque e onde ele mora no array. "Grupos" entra entre os
+  // cinco de dinheiro e os dois de conta pelo mesmo motivo -- no array,
+  // `expense-groups` esta depois de `cartoes` e antes de `profile`. Se um dia o
+  // filtro passar a ordenar pela lista de rotas, este caso reprova.
   assert.deepEqual(hrefs(itens), [
     "/dashboard",
     "/dashboard/receitas",
     "/dashboard/despesas",
     "/dashboard/contas",
     "/dashboard/cartoes",
+    "/dashboard/expense-groups",
     "/dashboard/profile",
     "/dashboard/settings",
   ]);
 });
 
-test("ligado, os 7 itens sao as telas certas -- conferido pelo NOME", () => {
+test("ligado, os 8 itens sao as telas certas -- conferido pelo NOME", () => {
   // Os nomes vem do array de navegacao, nao de `ROTAS_DO_MENU_DE_PAPEL`. E o
   // que impede este caso de ser a lista conferindo consigo mesma: uma rota
   // trocada por outra (digamos `/dashboard/transferencias` no lugar de
@@ -133,18 +137,19 @@ test("ligado, os 7 itens sao as telas certas -- conferido pelo NOME", () => {
     "Despesas",
     "Contas",
     "Cartões",
+    "Grupos",
     "Perfil",
     "Configurações",
   ]);
 });
 
-test("ligado, as 20 telas restantes saem do menu -- nenhuma sobra", () => {
+test("ligado, as 19 telas restantes saem do menu -- nenhuma sobra", () => {
   const dentro = new Set(hrefs(menu({ plano: "admin", papel: true })));
   const fora = hrefs(menu({ plano: "admin", papel: false })).filter(
     (href) => !dentro.has(href)
   );
 
-  assert.equal(fora.length, 20);
+  assert.equal(fora.length, 19);
   // E um controle do `noMenuDoPapel`, nao so aritmetica: cada rota escondida
   // tem de ser reprovada pelo predicado, uma por uma. Uma rota que saisse da
   // lista por outro motivo (um `href` duplicado comendo o Set, por exemplo)
@@ -154,10 +159,10 @@ test("ligado, as 20 telas restantes saem do menu -- nenhuma sobra", () => {
   }
 });
 
-test("as 7 rotas do modo existem todas no array de navegacao", () => {
-  // Redundante com a contagem de 7 acima, e proposital: quando alguem muda o
-  // `href` de uma das sete telas, esta e a mensagem de erro que diz QUAL rota
-  // sumiu, em vez de "esperava 7, recebeu 6".
+test("as 8 rotas do modo existem todas no array de navegacao", () => {
+  // Redundante com a contagem de 8 acima, e proposital: quando alguem muda o
+  // `href` de uma das oito telas, esta e a mensagem de erro que diz QUAL rota
+  // sumiu, em vez de "esperava 8, recebeu 7".
   const todas = new Set(hrefs(navigation));
   for (const rota of ROTAS_DO_MENU_DE_PAPEL) {
     assert.ok(todas.has(rota), `${rota} nao existe no menu`);
@@ -201,13 +206,45 @@ test("o plano e o OUTRO filtro: sem admin, o menu inteiro tem 25", () => {
 });
 
 test("ligado, o menu reduzido e o MESMO para qualquer plano", () => {
-  // O modo nao e um plano. Nenhuma das 7 telas e restrita -- nem Perfil nem
-  // Configuracoes declaram `requiredPlans` --, entao ligar o modo
-  // tem de dar a mesma lista para `admin`, `free` e para quem ainda nao
-  // carregou a assinatura -- que e o estado dos primeiros quadros.
+  // O modo nao e um plano: ligar o modo tem de dar a mesma lista para `admin`,
+  // `free` e para quem ainda nao carregou a assinatura -- que e o estado dos
+  // primeiros quadros.
+  //
+  // E NAO E POR ACIDENTE, e por `podeVerItem`. Ate a HMO-299 dava no mesmo
+  // dizer que "nenhuma das telas do modo e restrita": nenhuma das 7 tinha
+  // campo de acesso nenhum. "Grupos" tem -- ele declara
+  // `requiredFeature: "expense_groups"` no array de navegacao --, e a leitura
+  // de que o menu passou a depender do plano esta errada: `requiredFeature`
+  // NAO E FILTRO DE VISIBILIDADE. Ele alimenta o `isPremiumButNoAccess` do
+  // `Sidebar`, que pinta o selo premium no item; quem decide se o item APARECE
+  // e so o `podeVerItem`, e ele esconde unicamente item cujo `requiredPlans`
+  // contenha `admin`. "Grupos" nao tem `requiredPlans`, entao sai igual para
+  // todo plano -- com selo para quem nao tem a feature, sem selo para quem tem.
+  //
+  // O que esta invariante trava, portanto: se alguem fizer `podeVerItem` olhar
+  // `requiredFeature` (ou puser `requiredPlans` numa das oito telas), este caso
+  // reprova aqui, antes de o menu do modo virar oito itens para uns e sete para
+  // outros.
   const esperado = hrefs(menu({ plano: "admin", papel: true }));
   for (const plano of ["free", "invest", "trader", undefined]) {
     assert.deepEqual(hrefs(menu({ plano, papel: true })), esperado);
+  }
+
+  // E a premissa disso tudo, explicita em vez de so na prosa: a tela que
+  // DECLARA `requiredFeature` esta mesmo nas oito, e nenhuma das oito declara
+  // `requiredPlans`. Sem este par, o laco acima ficaria verde tambem no dia em
+  // que "Grupos" saisse do menu reduzido por outro motivo -- oito listas
+  // iguais de sete itens passam igual.
+  const noModo = menu({ plano: "admin", papel: true });
+  const grupos = noModo.find((item) => item.href === "/dashboard/expense-groups");
+  assert.ok(grupos, "Grupos deveria estar no menu do modo");
+  assert.equal(grupos.requiredFeature, "expense_groups");
+  for (const item of noModo) {
+    assert.equal(
+      item.requiredPlans,
+      undefined,
+      `${item.name} declara requiredPlans e o menu do modo passaria a variar com o plano`
+    );
   }
 });
 

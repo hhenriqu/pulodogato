@@ -78,8 +78,10 @@ export default function Sidebar({
   // OS DOIS FILTROS, sobre o MESMO array, nesta ordem.
   //
   // O primeiro e o plano, que ja existia. O segundo e o modo papel de pao
-  // (HMO-284): com ele ligado sobram 5 itens dos 27. A ordem entre os dois nao
-  // muda o resultado -- os dois so removem -- e esta assim porque le melhor:
+  // (HMO-284): com ele ligado sobram 8 itens dos 27 -- eram 5 na HMO-284, 7 com
+  // a HMO-294 e 8 com a HMO-299, e quem manda e `ROTAS_DO_MENU_DE_PAPEL`, nao
+  // este numero. A ordem entre os dois filtros nao muda o resultado -- os dois
+  // so removem -- e esta assim porque le melhor:
   // "do que o plano permite, o que o modo mantem".
   //
   // `papel` e falso enquanto `mounted` for falso, porque e o padrao do
