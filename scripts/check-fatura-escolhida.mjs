@@ -1,8 +1,16 @@
 #!/usr/bin/env node
 // =====================================================
 // PULODOGATO - O ROTULO DE FATURA LE FATURA, E NAO `current_balance` (HMO-290)
+//              E O "POSSO GASTAR" DESCONTA A MINHA PARTE DO GRUPO (HMO-306)
 // =====================================================
 //   npm run check-fatura-escolhida
+//
+// DUAS ISSUES NO MESMO ARQUIVO, E E DE PROPOSITO: as duas sao fiacao da MESMA
+// rota (`app/api/safe-to-spend/route.ts`) e do mesmo modulo
+// (`lib/safe-to-spend.ts`), e as duas falham do mesmo jeito -- com um numero
+// menor e plausivel, sem erro de tipo e sem log. Um guard novo so para a
+// HMO-306 seria um segundo lugar para esquecer de rodar; a secao 5 abaixo e a
+// parte dela.
 //
 // POR QUE ESTA VERIFICACAO EXISTE
 // -------------------------------
@@ -100,6 +108,47 @@ function proibido(caminho, trecho, porque) {
 function exigido(caminho, trecho, porque) {
   if (!codigo(caminho).includes(trecho)) {
     problemas.push(`${caminho}: ${porque}\n    faltando: ${trecho}`);
+  }
+}
+
+/**
+ * UMA consulta do arquivo, do `.from("tabela")` ate o `;` que fecha a cadeia.
+ *
+ * ELA EXISTE PORQUE UMA ASSERCAO DE ARQUIVO INTEIRO ESCORREGA PARA OUTRA
+ * CONSULTA, e isso foi MEDIDO ao escrever a secao 5: `exigido(ROTA,
+ * '.eq("user_id", user.id)')` passou VERDE depois de trocar justamente aquele
+ * filtro por um `.or(...)`, porque a rota tem mais tres consultas e duas delas
+ * filtram por dono. A assercao parecia cobrar o recorte das previstas e cobrava
+ * o das contas -- vacua, e do jeito que nao avisa.
+ *
+ * O recorte pelo `;` e simples de proposito: nenhuma das cadeias do PostgREST
+ * neste arquivo tem `;` no meio. Se alguma vier a ter, o trecho sai curto e a
+ * assercao REPROVA -- o lado seguro, que pede uma olhada em vez de aprovar
+ * calado.
+ */
+function consultaDe(caminho, tabela) {
+  const fonte = codigo(caminho);
+  const inicio = fonte.indexOf(`.from("${tabela}")`);
+  if (inicio < 0) return "";
+  const fim = fonte.indexOf(";", inicio);
+  return fim < 0 ? fonte.slice(inicio) : fonte.slice(inicio, fim);
+}
+
+/** O trecho PRECISA aparecer dentro daquela consulta -- nao em qualquer lugar. */
+function exigidoNaConsulta(caminho, tabela, trecho, porque) {
+  if (!consultaDe(caminho, tabela).includes(trecho)) {
+    problemas.push(
+      `${caminho}: ${porque}\n    faltando na consulta a \`${tabela}\`: ${trecho}`
+    );
+  }
+}
+
+/** O trecho NAO pode aparecer dentro daquela consulta. */
+function proibidoNaConsulta(caminho, tabela, trecho, porque) {
+  if (consultaDe(caminho, tabela).includes(trecho)) {
+    problemas.push(
+      `${caminho}: ${porque}\n    encontrado na consulta a \`${tabela}\`: ${trecho}`
+    );
   }
 }
 
@@ -228,20 +277,97 @@ exigido(
 );
 
 // ---------------------------------------------------------------------------
+// 5. O "posso gastar" desconta a MINHA PARTE da conta de grupo (HMO-306)
+// ---------------------------------------------------------------------------
+// A quarta leitura do «Total de contas», e a ultima a ser ligada. A medicao de
+// scripts/medicao-hmo298.mjs prova a CONTA -- ela importa
+// `parteConfiguradaDoMembro` de lib/ e monta os insumos como a rota monta. O que
+// ela nao alcanca e a FIACAO: se esta rota parar de chamar a funcao, a medicao
+// continua verde, porque quem chamou foi o script.
+//
+// E a fiacao aqui tem TRES pecas, e cada uma falha em silencio:
+//
+//   * sem `group_id` no `select`, `p.group_id` e `undefined` e
+//     `parteConfiguradaDoMembro` devolve o valor CHEIO -- a chamada fica no
+//     lugar, sem erro de tipo (o campo e opcional na assinatura) e sem log;
+//   * sem a consulta a `group_members` o mapa de pesos sai vazio, e o
+//     "desconhecido" da funcao devolve o valor CHEIO pela mesma porta;
+//   * sem a CHAMADA, nada divide.
+//
+// As tres reintroduzem o defeito da HMO-306 com o numero menor e plausivel --
+// R$ 1.000,00 descontados de um grupo que cobra R$ 300,00 -- e nenhuma delas
+// aparece no `tsc`.
+//
+// `percentage` ESTA NA EXIGENCIA DO `select` de proposito: sem a coluna, o grupo
+// 70/30 volta a dividir IGUAL (`montarParticipantesPorGrupo` le `?? 0`, e com
+// todos os pesos em zero `ratearPorPeso` cai no degrau da divisao igual). Esse e
+// o caso que NAO da valor cheio e por isso nao salta aos olhos: ele da
+// R$ 500,00 onde o grupo cobra R$ 300,00.
+exigido(
+  ROTA_DO_POSSO_GASTAR,
+  "parteConfiguradaDoMembro(",
+  "a conta de grupo tem que entrar pela MINHA parte. Sem a chamada, a linha " +
+    "de R$ 1.000,00 de um grupo que me cobra R$ 300,00 e descontada cheia e o " +
+    "app subestima em R$ 700,00 quanto se pode gastar (HMO-306)"
+);
+exigidoNaConsulta(
+  ROTA_DO_POSSO_GASTAR,
+  "scheduled_transactions",
+  "group_id",
+  "o `select` das previstas tem que trazer `group_id`. Sem ele a chamada acima " +
+    "recebe `undefined` e devolve o valor CHEIO -- a fiacao parece intacta e " +
+    "nao divide nada"
+);
+exigidoNaConsulta(
+  ROTA_DO_POSSO_GASTAR,
+  "group_members",
+  "percentage",
+  "sem a coluna, `montarParticipantesPorGrupo` le peso 0 para todo mundo e " +
+    "`ratearPorPeso` divide IGUAL: R$ 500,00 onde o grupo 70/30 cobra " +
+    "R$ 300,00 -- errado sem parecer errado. E sem a consulta inteira o mapa " +
+    "sai vazio e o `desconhecido` devolve o valor cheio pela mesma porta"
+);
+// AS DUAS METADES DO RECORTE POR DONO, e as duas sao necessarias: exigir o
+// `.eq` sem proibir o `.or` deixaria passar uma consulta que filtra por dono E
+// traz a linha de grupo de todo mundo, que e a forma da tela de Despesas.
+exigidoNaConsulta(
+  ROTA_DO_POSSO_GASTAR,
+  "scheduled_transactions",
+  '.eq("user_id", user.id)',
+  "o recorte por dono e o que mantem a conta do outro membro fora desta " +
+    "leitura -- a face (d) do outro membro vale R$ 0,00 aqui, e isso e " +
+    "afirmacao e nao omissao"
+);
+proibidoNaConsulta(
+  ROTA_DO_POSSO_GASTAR,
+  "scheduled_transactions",
+  ".or(",
+  "o filtro de `user_id` NAO muda aqui, e esta e a diferenca deliberada para a " +
+    "tela de Despesas (HMO-303): a pergunta e quanto EU posso gastar, e a parte " +
+    "do outro membro ja e descontada da carteira DELE. Um `.or(...)` que " +
+    "trouxesse `group_id.not.is.null` descontaria o mesmo dinheiro duas vezes, " +
+    "uma em cada carteira"
+);
+
+// ---------------------------------------------------------------------------
 if (problemas.length > 0) {
   console.error(
-    "O rotulo de fatura voltou a ler a coluna errada (HMO-290):\n"
+    "A fiacao do numero de cartao ou da parte do grupo esta desligada " +
+      "(HMO-290 / HMO-306):\n"
   );
   for (const p of problemas) console.error(`  - ${p}\n`);
   console.error(
-    "Ver o cabecalho de lib/fatura-do-periodo.ts e a armadilha 10 de\n" +
-      "lib/safe-to-spend.ts. Se a mudanca for deliberada, a verificacao e que\n" +
-      "tem que mudar -- junto com o rotulo que a tela mostra."
+    "Ver o cabecalho de lib/fatura-do-periodo.ts, a armadilha 10 de\n" +
+      "lib/safe-to-spend.ts e `parteConfiguradaDoMembro` em\n" +
+      "lib/parte-do-grupo.ts. Se a mudanca for deliberada, a verificacao e que\n" +
+      "tem que mudar -- junto com o rotulo que a tela mostra e com o numero\n" +
+      "digitado em scripts/medicao-hmo298.mjs."
   );
   process.exit(1);
 }
 
 console.log(
-  "ok: o rotulo de fatura le fatura, as duas telas fazem a segunda leitura e o " +
-    '"posso gastar" separa o que este mes cobra.'
+  "ok: o rotulo de fatura le fatura, as duas telas fazem a segunda leitura, o " +
+    '"posso gastar" separa o que este mes cobra e desconta a MINHA parte da ' +
+    "conta de grupo."
 );

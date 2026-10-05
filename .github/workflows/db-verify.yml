@@ -1390,13 +1390,19 @@ jobs:
       - name: O fechamento do mes soma previsto com realizado e rateia exato
         run: npm run test:fechamento-do-grupo
 
-      # HMO-298/303 -- A MEDICAO DAS TRES LEITURAS DO «TOTAL DE CONTAS».
+      # HMO-298/303/305/306 -- A MEDICAO DAS QUATRO LEITURAS DO «TOTAL DE CONTAS».
       #
       # Ela constroi um Postgres PROPRIO (dropdb/createdb do banco `hmo298`),
-      # aplica as migrations reais, carrega o fixture e IMPORTA as tres leituras
-      # de lib/ -- `painelDePapel`, `linhasDaTela`/`resumoDaTela` e
-      # `ratearPorPeso`. Nao reescreve conta nenhuma: uma tabela construida
+      # aplica as migrations reais, carrega o fixture e IMPORTA as leituras de
+      # lib/ -- `painelDePapel`, `linhasDaTela`/`resumoDaTela`, `ratearPorPeso`
+      # e, desde a HMO-306, `parteConfiguradaDoMembro` para a conta do
+      # /api/safe-to-spend. Nao reescreve conta nenhuma: uma tabela construida
       # sobre uma reimplementacao mediria a reimplementacao.
+      #
+      # O QUE ESTA MEDICAO NAO ALCANCA e a FIACAO das rotas -- ela importa de
+      # lib/, entao uma rota que parasse de chamar a funcao a deixaria verde.
+      # Quem cobra isso e `npm run check-fatura-escolhida`, no verificacao.yml,
+      # com os nove mutantes do controle negativo dele.
       #
       # Na HMO-298 este script existia para provar que as tres DISCORDAVAM
       # (painel R$ 4.100 x tela R$ 2.600, R$ 1.500 de diferenca). Depois do
@@ -1409,12 +1415,30 @@ jobs:
       #      transferencia, R$ 900,00 / R$ 300,00 nas duas contas de grupo,
       #      R$ 1.200,00 na parte do mes e R$ 2.800,00 nos dois totais.
       #
+      # A quarta leitura tem uma TERCEIRA cobranca, com esperado PROPRIO
+      # (`safeEsperado`), porque ela nao responde a mesma pergunta das outras
+      # tres: ela filtra por `user_id` e nao chama `classeDaAgenda`. Cobrar
+      # dela o mesmo `esperado` reprovaria o comportamento certo em duas das
+      # quatro faces.
+      #
       # E (c) = (d) + (d): 900 + 300 = 1.200. Essa identidade e o que torna a
       # medicao mais do que um teste de igualdade.
       #
-      # Ele tambem cobra o que NAO pode mudar: o /api/safe-to-spend sai
-      # R$ 8.500,00 antes e depois, porque nao chama nenhuma das duas funcoes
-      # trocadas. Se esse numero se mexer, o conserto escapou do escopo.
+      # A QUARTA LEITURA ENTROU NA HMO-306, E ELA ERA O CONTROLE NEGATIVO AQUI.
+      # Enquanto /api/safe-to-spend nao chamava `parteConfiguradaDoMembro`, o
+      # numero dela tinha de sair R$ 8.500,00 antes e depois do conserto da
+      # HMO-303, e era essa imobilidade que provava que nada havia escapado do
+      # escopo. A HMO-306 e a issue que o move: a MINHA conta de grupo deixou de
+      # ser descontada cheia (R$ 1.000,00) e passou a entrar pela parte
+      # configurada (R$ 300,00), entao o total caiu para R$ 7.800,00 -- os
+      # R$ 700,00 da diferenca, e nada mais.
+      #
+      # O script cobra os TRES numeros e a identidade entre eles
+      # (8.500 - 700 = 7.800), para que ajustar um deles ao que o codigo
+      # imprimiu nao passe verde. E cobra duas faces em que a quarta leitura
+      # DIVERGE do «Total de contas» de proposito: ela desconta a transferencia
+      # de R$ 500,00 (a pergunta dela e caixa) e NAO conta a conta de grupo do
+      # outro membro (R$ 0,00 -- a parte dele sai da carteira dele).
       #
       # O ELO EXPLICITO DA FATURA -- HMO-305, o mecanismo (b).
       #
@@ -1437,7 +1461,7 @@ jobs:
         run: npm run test:elo-da-fatura
 
       # Nao abre job novo -- o custo de CI deste projeto e o NUMERO de jobs.
-      - name: As tres leituras do «Total de contas» concordam em R$ 2.800,00
+      - name: As quatro leituras do «Total de contas» concordam em R$ 2.800,00
         run: npm run test:medicao-hmo298
 
       # Controle negativo da medicao acima.
