@@ -351,3 +351,6 @@ next-env.d.ts
 
 # saida do `npm run test:menu-papel` (HMO-284)
 /.tmp-menu-papel/
+
+# saida do `npm run test:papel-de-pao` (HMO-286)
+/.tmp-papel-de-pao/
