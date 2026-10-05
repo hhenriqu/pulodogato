@@ -372,3 +372,14 @@ next-env.d.ts
 # ja comeca com `rm -rf` no diretorio, entao fora do .gitignore ele apareceria
 # e desapareceria do `git status` a cada execucao.
 /.tmp-medicao-hmo298/
+
+# Saida de `npm run test:acoes-da-linha` (HMO-301): lib/acoes-da-linha.ts
+# compilado para o `node --test` chamar a peneira de producao, e nao uma copia
+# dela. Artefato, nao fonte. Um `.tmp-*` fora do .gitignore chega a ser
+# commitado em cima de arquivo de fonte -- ver a entrada do .tmp-parcelamento.
+/.tmp-acoes-da-linha/
+
+# Saida de `npm run test:lista-na-tela` (HMO-301): ListaDeMovimentacao.tsx e os
+# dez modulos que a sonda de Chromium concatena na pagina, compilados. Mesmo
+# motivo das entradas acima para estar aqui.
+/.tmp-lista-na-tela/

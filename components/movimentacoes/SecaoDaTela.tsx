@@ -170,6 +170,13 @@ export interface AcoesDaLinha {
 /**
  * Os botoes de UMA linha, ou nada.
  *
+ * `aparencia` NAO ENTRA: o verbo da baixa sai de `linha.tipo`, e nao da tela.
+ * Os dois concordam (a lista e filtrada por tipo em `linhasDaTela`), e a escolha
+ * e a mesma de `palavraDaLinha` ao contrario -- ali o rotulo e da TELA porque
+ * `natureza: "despesa"` e o nome do caso comum nas tres; aqui o verbo e da
+ * LINHA porque "Confirmar pagamento" sobre uma receita prevista seria um verbo
+ * errado sobre um numero certo.
+ *
  * Quem decide QUAIS botoes e `lib/acoes-da-linha.ts`, e nao um `&&` escrito
  * aqui. Ver o cabecalho dele: as cinco regras falham de forma plausivel (404,
  * 409, e o caro -- `UPDATE` recusado pela RLS voltando 200 sem alterar nada), e
@@ -177,11 +184,9 @@ export interface AcoesDaLinha {
  */
 function BotoesDaLinha({
   linha,
-  aparencia,
   acoes,
 }: {
   linha: LinhaDaTela;
-  aparencia: AparenciaDaTela;
   acoes: AcoesDaLinha;
 }) {
   const emCurso = acoes.agindo === linha.id;
@@ -383,7 +388,7 @@ function LinhaDaSecao({
   return (
     <div className={classe}>
       {conteudo}
-      <BotoesDaLinha linha={linha} aparencia={aparencia} acoes={acoes} />
+      <BotoesDaLinha linha={linha} acoes={acoes} />
     </div>
   );
 }

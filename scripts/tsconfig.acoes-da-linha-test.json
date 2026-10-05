@@ -1,0 +1,40 @@
+{
+  "//": [
+    "QUAIS ACOES UMA LINHA DA LISTA GANHA (HMO-301).",
+    "",
+    "Compila lib/acoes-da-linha.ts para o `node --test` chamar as funcoes de",
+    "producao, e nao copias delas.",
+    "",
+    "`rootDir: ..` e nao `lib`, e o `include` lista TRES arquivos: o modulo e as",
+    "duas pontas de que ele depende. `lib/retorno-do-lancamento.ts` e import de",
+    "RUNTIME (`comOrigem`, que monta o `?origem=` do caminho de edicao);",
+    "`lib/telas-de-movimentacao.ts` entra so pelo TIPO (`LinhaDaTela`), e o emit",
+    "o apaga -- mas o tsc precisa dele para checar o `Pick<>` de `LinhaAcionavel`,",
+    "que e justamente o que faz um campo renomeado la reprovar aqui em vez de",
+    "passar em silencio.",
+    "",
+    "O resolve-aliases roda depois porque os dois imports sao pelo alias `@/`, e",
+    "o `tsc` NAO reescreve especificador no emit (ver o cabecalho dele).",
+    "",
+    "Comentario SO nesta chave, nunca com // no meio do objeto: o tsc aceita",
+    "JSONC, mas o check-tests-in-ci.mjs le este arquivo com JSON.parse e estoura",
+    "com 'Expected double-quoted property name'."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-acoes-da-linha",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../lib/acoes-da-linha.ts",
+    "../lib/retorno-do-lancamento.ts",
+    "../lib/telas-de-movimentacao.ts"
+  ]
+}

@@ -59,6 +59,14 @@ import { CalendarClock, CheckCircle2, CreditCard, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+// `formatCurrency` E NAO UM `moeda` PROPRIO, e a razao nao e so DRY: este
+// arquivo e `SecaoDaTela.tsx` sao CONCATENADOS num script classico pela sonda de
+// scripts/test-lista-na-tela.mjs, e dois `const moeda` de modulo com o mesmo
+// nome em partes diferentes sao SyntaxError do script inteiro -- cujo sintoma e
+// "a pagina nao reportou nada", vinte linhas depois e sem o nome do arquivo.
+// Ter UM formatador de moeda tambem e simplesmente melhor: e o mesmo que
+// `PainelDePapel` usa.
+import { formatCurrency } from "@/lib/utils";
 import {
   Card,
   CardContent,
@@ -107,12 +115,6 @@ interface RespostaDaTela {
   linhas?: LinhaDaTela[];
   fatura_sem_vencimento?: { account_name: string | null; total: number }[];
 }
-
-const moeda = (valor: number) =>
-  new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  }).format(valor);
 
 /** 'AAAA-MM-DD' -> 'DD/MM/AAAA', por fatia. Nunca `new Date`. */
 const dataLonga = (iso: string) =>
@@ -348,14 +350,20 @@ export function ListaDeMovimentacao({
    */
   const acoes: AcoesDaLinha = useMemo(
     () => ({
-      hrefDeEdicao: (linha) => caminhoDeEdicao(linha, tela.rota, origem),
+      // `aparencia.rotaDeLancar` E NAO `tela.rota`: a primeira e o FORMULARIO
+      // (/dashboard/movimentacoes/despesa), que sabe ler `?id=`; a segunda e
+      // esta propria lista (/dashboard/despesas), que ignora o parametro. Com a
+      // segunda o Editar recarregaria a tela e o clique nao faria nada visivel
+      // -- medido por `npm run test:lista-na-tela`, no codigo intacto.
+      hrefDeEdicao: (linha) =>
+        caminhoDeEdicao(linha, aparencia.rotaDeLancar, origem),
       aoEditar,
       aoExcluir,
       aoConfirmar,
       agindo,
       online,
     }),
-    [tela.rota, origem, aoEditar, aoExcluir, aoConfirmar, agindo, online]
+    [aparencia.rotaDeLancar, origem, aoEditar, aoExcluir, aoConfirmar, agindo, online]
   );
 
   return (
@@ -420,7 +428,7 @@ export function ListaDeMovimentacao({
                         {cartao.account_name ?? "Cartão de crédito"}
                       </p>
                       <div className="flex items-center gap-3">
-                        <p className="font-semibold">{moeda(cartao.total)}</p>
+                        <p className="font-semibold">{formatCurrency(cartao.total)}</p>
                         <Button size="sm" variant="outline" asChild>
                           <Link href="/dashboard/cartoes">Configurar</Link>
                         </Button>

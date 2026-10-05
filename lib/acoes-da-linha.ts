@@ -232,7 +232,16 @@ export function pedidoDeExclusao(linha: LinhaAcionavel): PedidoDaAcao | null {
 /**
  * O caminho de edicao de uma linha REALIZADA, ou `null`.
  *
- * `rotaDaTela` entra por PARAMETRO (vem de `TELAS_DE_MOVIMENTACAO`) para este
+ * `rotaDoFormulario` e a rota do FORMULARIO DE LANCAMENTO
+ * (`/dashboard/movimentacoes/despesa`), e NAO a da tela
+ * (`/dashboard/despesas`). As duas existem, as duas comecam com
+ * `/dashboard/` e so uma sabe ler `?id=`: com a da tela, o Editar recarregaria
+ * a propria lista com um parametro que ela ignora -- o clique nao faria
+ * NADA VISIVEL. Foi exatamente o defeito que a sonda de navegador pegou no
+ * codigo intacto desta issue, e nenhuma assercao de unidade o alcancava,
+ * porque ela passa a string que ela mesma escolheu.
+ *
+ * Ela entra por PARAMETRO (vem de `AparenciaDaTela.rotaDeLancar`) para este
  * arquivo continuar folha -- importar `telaDoTipo` arrastaria
  * `telas-de-movimentacao` -> `movimentacoes`, `destino-do-lancamento`,
  * `chave-da-fatura` para dentro do grafo da sonda de navegador, por uma string.
@@ -248,12 +257,15 @@ export function pedidoDeExclusao(linha: LinhaAcionavel): PedidoDaAcao | null {
  */
 export function caminhoDeEdicao(
   linha: LinhaAcionavel,
-  rotaDaTela: string,
+  rotaDoFormulario: string,
   origem: string | null | undefined
 ): string | null {
   if (!podeEditar(linha)) return null;
   if (linha.origem !== "realizado") return null;
-  return comOrigem(`${rotaDaTela}?id=${encodeURIComponent(linha.id)}`, origem);
+  return comOrigem(
+    `${rotaDoFormulario}?id=${encodeURIComponent(linha.id)}`,
+    origem
+  );
 }
 
 /** Os campos que o formulario em linha de uma conta prevista edita. */

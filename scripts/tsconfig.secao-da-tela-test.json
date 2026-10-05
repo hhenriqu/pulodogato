@@ -17,7 +17,11 @@
     "",
     "O resolve-aliases roda com --espelha-raiz porque card.tsx importa",
     "lib/utils.ts pelo alias @/, e o resolve-next-subpaths porque a linha de",
-    "fatura e um `next/link` -- no node o especificador precisa da extensao."
+    "fatura e um `next/link` -- no node o especificador precisa da extensao.",
+    "",
+    "lib/acoes-da-linha.ts e lib/retorno-do-lancamento.ts entraram na HMO-301: a",
+    "secao tira os botoes das funcoes de la, e o TESTE importa `caminhoDeEdicao`",
+    "de la tambem -- um esboco de href faria a assercao medir a propria sonda."
   ],
   "compilerOptions": {
     "target": "es2020",
@@ -30,13 +34,19 @@
     "outDir": "../.tmp-secao-da-tela",
     "rootDir": "..",
     "baseUrl": "..",
-    "paths": { "@/*": ["./*"] }
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
   },
   "include": [
     "../components/movimentacoes/SecaoDaTela.tsx",
     "../components/ui/card.tsx",
+    "../lib/acoes-da-linha.ts",
     "../lib/fatura-do-cartao.ts",
     "../lib/offline-leitura.ts",
+    "../lib/retorno-do-lancamento.ts",
     "../lib/telas-de-movimentacao.ts",
     "../lib/utils.ts"
   ]
