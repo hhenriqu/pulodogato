@@ -40,12 +40,30 @@
  * ----------------------------------------------------------
  * `expense_groups.default_split_type` aceita equal/percentage/custom/
  * proportional, mas quem cria a divisao de verdade e o trigger
- * `auto_create_group_transaction` (001_baseline.sql:143), e ele grava
- * `split_type = 'equal'` fixo e `ABS(NEW.amount) / member_count` para cada
- * membro com `status = 'active'`. Dividir por membros ativos nao e uma
- * simplificacao: e exatamente o que o banco vai cobrar quando a conta prevista
- * receber baixa. Se algum dia o trigger passar a honrar os outros tipos, e
- * aqui que a conta tem que mudar junto.
+ * `auto_create_group_transaction`, e desde a 042 (HMO-304) ele honra
+ * `group_members.percentage`: a ligacao nasce `split_type = 'percentage'` e
+ * cada parte sai pelo PESO do membro, dividido pela SOMA dos pesos, em
+ * centavos inteiros pelo maior resto.
+ *
+ * O "dia em que o trigger passar a honrar os outros tipos" que este comentario
+ * antecipava CHEGOU, e a conta daqui mudou junto -- so nao do jeito que ele
+ * esperava: continua sendo "divida por membros ativos", porque o caso que esta
+ * funcao atende e o do grupo cuja soma de pesos e ZERO. `percentage` e
+ * `numeric(5,2) DEFAULT 0.00` e NULLABLE, e grupo que nunca passou pela tela
+ * de divisao (HMO-271) tem soma zero -- a 042 manda esse caso para o
+ * `calculate_equal_split`, que divide IGUAL entre os ativos. Que e esta conta.
+ *
+ * O QUE AINDA FALTA AQUI, E QUE NAO E ESTE MODULO
+ * ----------------------------------------------
+ * Para o grupo que JA configurou 70/30, esta funcao ainda devolve a parte
+ * igual: ela recebe uma contagem de membros (`MembrosAtivosPorGrupo`), nao os
+ * pesos, entao nao tem como saber que a parte do Helio e 70%. O lado PREVISTO
+ * que le pesos e `ratearPorPeso` (lib/fechamento-do-grupo.ts), usado pelo
+ * fechamento do mes; trocar a contagem pelos pesos AQUI e o conserto do
+ * previsto nas telas -- a issue irma desta no plano da HMO-302, que mexe em
+ * cinco rotas e por isso nao veio junto com a migration.
+ * Enquanto isso nao entrar, o grupo 70/30 ve 50/50 nestas leituras e 70/30 na
+ * baixa -- a discordancia agora esta num lugar so, e e aqui.
  *
  * TUDO EM CENTAVOS INTEIROS
  * -------------------------
