@@ -821,14 +821,30 @@ jobs:
       # intacto ("Salario" e substring de "Salario Previsto"). E ela e sensivel
       # a CAIXA de proposito: `FRASE_SEM_SALARIO` ("nenhum salario previsto
       # para este mes") continua na tela e continua certa.
+      #
+      # A HMO-296 poe o TERCEIRO CARTAO na mesma pagina (o caso G), e o que ela
+      # mede aqui e so a FIACAO: titulo, valor e as duas parcelas que chegam na
+      # resposta aparecem no terceiro cartao, e a tela nao inventa nenhum dos
+      # quatro. O esboco da rota entrega titulo e valor LITERAIS -- nunca
+      # calculados --, justamente para que nenhuma assercao de G possa passar
+      # verde por uma conta feita dentro da sonda; a aritmetica e medida no passo
+      # de `test:papel-de-pao` abaixo. E as tres constantes de texto do cartao
+      # sao LIDAS do `lib/papel-de-pao.js` compilado em vez de copiadas: as
+      # assercoes de G leem esses textos, e um marcador faria cada caso medir a
+      # mentira escrita na propria sonda.
       - name: O papelzinho e o espelho dele em Configuracoes trocam a pele do app
         run: npm run test:papel-na-tela
 
-      # Os mutantes da metade do painel. Tres, e o terceiro e o que justifica o
-      # bloco: renomear o `data-rotulo` faz a sonda ler uma lista VAZIA de
-      # rotulos, e "Salario Previsto nao aparece" e verdade numa lista vazia.
-      # Quem o mata e o controle positivo da montagem (dois cartoes de producao
-      # no DOM), e sem este runner ninguem saberia que ele existe.
+      # Os mutantes da metade do painel. Dezesseis, e o terceiro deles e o que
+      # justifica o bloco: renomear o `data-rotulo` faz a sonda ler uma lista
+      # VAZIA de rotulos, e "Salario Previsto nao aparece" e verdade numa lista
+      # vazia. Quem o mata e o controle positivo da montagem (os TRES cartoes de
+      # producao no DOM), e sem este runner ninguem saberia que ele existe.
+      #
+      # Os cinco ultimos sao do cartao da HMO-296, e o criterio para morarem
+      # aqui e o de sempre: so a tela os ve. Um cartao que sai da arvore, a linha
+      # de conferencia que nao renderiza, as duas parcelas trocadas entre si --
+      # os tres compilam, passam no lint e deixam a aritmetica da lib intacta.
       #
       # Runner separado do `mutantes-menu-papel.mjs` porque esta suite abre
       # navegador: ~7s por volta contra menos de 1s das puras. Nao e job novo --
@@ -933,7 +949,21 @@ jobs:
       # verde com o `import` intacto e a chamada apagada. O comentario e
       # arrancado antes (o cabecalho da rota menciona `month` em prosa), e um dos
       # casos e o controle desse strip.
-      - name: Os dois numeros do papel de pao (salario previsto e total de contas)
+      #
+      # A HMO-296 (6/6) acrescentou a TERCEIRA PERNA (`receitas`) e o cartao que
+      # sai dela. Duas coisas dessa parte sao criterio e nao detalhe:
+      #
+      #   * a perna nova e um `aceita` novo dentro do MESMO `somarPerna` --
+      #     nenhuma consulta nova, nenhuma segunda soma de despesa. Os casos da
+      #     secao "A perna das receitas" medem isso elo por elo (janela, status,
+      #     parte do grupo, modulo do sinal): se alguem a reescrever como um
+      #     `reduce` local, cada um deles quebra num elo diferente;
+      #   * "Receitas" e TODA receita prevista do mes, e nao o salario. O fixture
+      #     tem o aluguel recebido de R$ 2.500, entao as receitas (9.500) e o
+      #     salario (7.000) NAO coincidem -- e um fixture em que coincidissem
+      #     passaria verde com o salario no lugar das receitas, que e a
+      #     alternativa que a issue descartou.
+      - name: Os numeros do papel de pao (salario, total de contas, sobra ou falta)
         run: npm run test:papel-de-pao
 
       # Os mutantes do passo de mes, do lado da ROTA e da funcao pura. Doze, e o
@@ -947,6 +977,34 @@ jobs:
       # JOBS.
       - name: Os mutantes do mes pedido pelo painel de papel
         run: node scripts/mutantes-mes-do-painel.mjs
+
+      # Os mutantes do TERCEIRO CARTAO -- "Quanto Sobra ou Quanto Falta"
+      # (HMO-296, 6/6). Onze, e tres deles sao a issue inteira:
+      #
+      #   1. o SINAL DO TITULO (`>= 0` virando `<= 0`). O cartao exibe o valor em
+      #      MODULO, entao +300 e -300 imprimem o MESMO numero: uma suite que
+      #      medisse so o valor deixaria este mutante atravessar dezenas de
+      #      assercoes verdes com o rotulo INVERTIDO -- "Quanto Falta" num mes
+      #      que sobrou. E a familia de "campo de rotulo passa pela suite de
+      #      aritmetica", e quem o mata sao as assercoes que leem o TITULO, com
+      #      um mes positivo e um negativo no fixture;
+      #   2. a ORDEM (`receitas - despesas` virando `despesas - receitas`). Pelo
+      #      mesmo motivo do modulo, fixture simetrico nao o mata: ele morre no
+      #      mes em que as duas magnitudes DIFEREM e o sinal vira;
+      #   3. a PROPAGACAO DO `null`, trocada por `?? 0`. Exige fixture com UMA
+      #      perna vazia e a outra cheia -- mes vazio dos dois lados nao
+      #      distingue `null` de zero. O que o mutante imprimiria e "Quanto
+      #      Sobra: R$ 9.500,00" num mes em que as contas nao foram lidas.
+      #
+      # Os outros oito sao as demais formas do mesmo defeito, e uma delas e a
+      # ALTERNATIVA QUE A ISSUE DESCARTOU escrita como mutante: `receitas`
+      # recortado pela categoria Salario. Ela FECHA a aritmetica na tela
+      # (7.000 - 3.980,50) e mente no rotulo -- quem recebe aluguel veria uma
+      # sobra MENOR do que a real, o erro na direcao cara.
+      #
+      # Runner puro, como o de cima, e no mesmo job pela mesma razao.
+      - name: Os mutantes do cartao Quanto Sobra ou Quanto Falta
+        run: node scripts/mutantes-sobra-ou-falta.mjs
 
       - name: Os botoes da home empilham alinhados e com espaco no celular
         run: npm run test:home-cta

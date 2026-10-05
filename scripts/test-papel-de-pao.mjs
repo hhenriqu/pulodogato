@@ -25,6 +25,20 @@
 //   2. o RECORTE DO MES     -> "O recorte do mes"
 //   3. o FILTRO DE CATEGORIA-> "O filtro de categoria"
 //   4. o CASO VAZIO         -> "O caso vazio"
+//
+// A HMO-296 (6/6) ACRESCENTOU O TERCEIRO CARTAO -- "Quanto Sobra ou Quanto
+// Falta" -- e com ele a secao "Sobra ou Falta" mais abaixo. Tres coisas daquela
+// secao sao desenho de fixture e nao detalhe:
+//
+//   * o TITULO e lido em toda assercao de sinal, e nao so o valor. O valor sai
+//     em MODULO, entao +300 e -300 imprimem o mesmo numero: uma suite que
+//     medisse so o numero deixaria o mutante do sinal (`>= 0` virando `<= 0`)
+//     passar por dezenas de assercoes verdes com o rotulo invertido;
+//   * o mes de FALTA tem as duas magnitudes DIFERENTES (receitas 1.200,
+//     despesas 1.500). Um fixture simetrico nao distingue `receitas - despesas`
+//     de `despesas - receitas`, porque o modulo e o mesmo nas duas ordens;
+//   * os casos de INDISPONIVEL tem UMA perna vazia e a outra cheia. Mes vazio
+//     dos dois lados nao distingue a propagacao do `null` de um `?? 0`.
 // =====================================================
 
 import test from "node:test";
@@ -34,12 +48,18 @@ import { fileURLToPath } from "node:url";
 
 const {
   painelDePapel,
+  sobraOuFalta,
   janelaDoMesCorrente,
   janelaDoMes,
   mesPedido,
   NOME_DA_CATEGORIA_DE_SALARIO,
   FRASE_SEM_SALARIO,
   FRASE_SEM_CONTAS,
+  TITULO_SOBRA,
+  TITULO_FALTA,
+  TITULO_SEM_RESPOSTA,
+  ROTULO_DAS_RECEITAS,
+  ROTULO_DAS_DESPESAS,
 } = await import("../.tmp-papel-de-pao/lib/papel-de-pao.js");
 
 // A funcao que a ROTA usa para decidir se materializa, e de onde a rota a pega
@@ -201,6 +221,20 @@ const ctx = {
 
 /** 180,50 + 2.000 (paga) + 300 (negativa) + 1.500 (minha metade do grupo). */
 const CONTAS_DE_MARCO = 3980.5;
+
+/**
+ * 7.000 (salario) + 2.500 (aluguel RECEBIDO) -- a parcela de cima do cartao.
+ *
+ * REPARE QUE ELA NAO E O SALARIO, e esse desencontro e o ponto: o cartao da
+ * HMO-296 mostra 9.500 - 3.980,50 e nao 7.000 - 3.980,50. Um fixture em que
+ * "Receitas" e "Salario" coincidissem passaria verde com o salario no lugar das
+ * receitas -- que e a alternativa descartada pela issue, a que fecha a conta na
+ * tela e mente no rotulo.
+ */
+const RECEITAS_DE_MARCO = 9500;
+
+/** 9.500 - 3.980,50. Positivo: marco de 2026 SOBRA. */
+const SOBRA_DE_MARCO = 5519.5;
 
 test("a janela e o mes de hoje, e nao o horizonte", () => {
   assert.deepEqual(JANELA, { de: "2026-03-01", ate: "2026-03-31" });
@@ -712,6 +746,334 @@ test("amount em string (como o PostgREST entrega numeric) soma igual", () => {
 
   assert.equal(painel.salario_previsto.total, 7000);
   assert.equal(painel.total_de_contas.total, CONTAS_DE_MARCO);
+});
+
+// ---------------------------------------------------------------------------
+// A PERNA DAS RECEITAS -- HMO-296 (6/6)
+// ---------------------------------------------------------------------------
+// Ela e um `aceita` novo dentro do MESMO `somarPerna`, e nao uma segunda soma:
+// a janela, o status, o sinal e a parte do grupo saem da mesma peneira que o
+// "Total de contas" usa. Os casos abaixo medem exatamente isso -- se alguem
+// reescrever a perna como um `reduce` local, cada um deles quebra num elo
+// diferente.
+
+test("as receitas sao TODA receita prevista do mes, e nao so o salario", () => {
+  const painel = painelDePapel(LINHAS, ctx);
+
+  // 7.000 de salario + 2.500 de aluguel recebido. As duas sao receita; so uma
+  // e salario.
+  assert.deepEqual(painel.receitas, {
+    total: RECEITAS_DE_MARCO,
+    quantidade: 2,
+  });
+
+  // E o par que da sentido ao numero: o salario e um SUBCONJUNTO das receitas,
+  // e as duas nao sao a mesma coisa. Um codigo que usasse o salario como
+  // "Receitas" passaria por qualquer assercao que so olhasse um dos dois.
+  assert.equal(painel.salario_previsto.total, 7000);
+  assert.ok(painel.receitas.total > painel.salario_previsto.total);
+});
+
+test("a perna das receitas obedece a JANELA, como a de despesa", () => {
+  // O salario de fevereiro e o de abril estao no fixture. Somados, dariam
+  // 23.500 -- e uma leitura sem recorte de data soma o horizonte inteiro, que e
+  // defeito que este app ja mostrou na tela.
+  const painel = painelDePapel(LINHAS, ctx);
+  assert.equal(painel.receitas.total, RECEITAS_DE_MARCO);
+  assert.notEqual(painel.receitas.total, 23500);
+});
+
+test("a perna das receitas obedece ao STATUS: 'paid' entra, 'skipped' sai", () => {
+  const base = {
+    due_date: "2026-03-09",
+    amount: 500,
+    direction: "income",
+    category_id: MORADIA,
+    group_id: null,
+  };
+
+  assert.equal(
+    painelDePapel([{ ...base, status: "paid" }], ctx).receitas.total,
+    500,
+    "a receita JA RECEBIDA saiu do previsto do mes"
+  );
+
+  for (const status of ["skipped", "cancelled"]) {
+    const fora = painelDePapel([{ ...base, status }], ctx);
+    assert.deepEqual(
+      fora.receitas,
+      { total: null, quantidade: 0 },
+      `a receita '${status}' continua contando como prevista`
+    );
+  }
+});
+
+test("a perna das receitas divide a linha de GRUPO pela minha parte", () => {
+  // Uma receita de grupo (um reembolso previsto, um aluguel que o grupo
+  // recebe): a policy do 005 devolve a linha para os dois membros, e sem
+  // dividir o cartao de cada um mostraria uma sobra inflada.
+  const receitaDoGrupo = [
+    {
+      due_date: "2026-03-11",
+      amount: 1000,
+      status: "pending",
+      direction: "income",
+      category_id: MORADIA,
+      group_id: GRUPO_CASA,
+    },
+  ];
+
+  assert.equal(painelDePapel(receitaDoGrupo, ctx).receitas.total, 500);
+});
+
+test("a perna das receitas soma o `amount` em MODULO", () => {
+  // A outra convencao de sinal do app chegando aqui. Uma receita gravada
+  // negativa DIMINUIRIA as receitas do mes -- e a sobra com ela.
+  const negativa = [
+    {
+      due_date: "2026-03-07",
+      amount: -1000,
+      status: "pending",
+      direction: "income",
+      category_id: MORADIA,
+      group_id: null,
+    },
+  ];
+
+  assert.equal(painelDePapel(negativa, ctx).receitas.total, 1000);
+});
+
+// ---------------------------------------------------------------------------
+// SOBRA OU FALTA -- o terceiro cartao (HMO-296)
+// ---------------------------------------------------------------------------
+
+test("o cartao sai da MESMA leitura: as parcelas sao os numeros da propria tela", () => {
+  // O criterio 3 da issue, medido: nao ha terceira consulta nem segunda soma de
+  // despesa. As duas parcelas do cartao sao, identicas, as duas pernas do
+  // painel -- e e isso que impede o cartao de discordar do cartao colado nele.
+  const painel = painelDePapel(LINHAS, ctx);
+
+  assert.equal(painel.sobra_ou_falta.receitas, painel.receitas.total);
+  assert.equal(painel.sobra_ou_falta.despesas, painel.total_de_contas.total);
+  assert.equal(painel.sobra_ou_falta.receitas, RECEITAS_DE_MARCO);
+  assert.equal(painel.sobra_ou_falta.despesas, CONTAS_DE_MARCO);
+});
+
+test("mes que SOBRA: o titulo e `Quanto Sobra` e o valor e Receitas - Despesas", () => {
+  const painel = painelDePapel(LINHAS, ctx);
+
+  assert.equal(painel.sobra_ou_falta.titulo, TITULO_SOBRA);
+  assert.equal(painel.sobra_ou_falta.valor, SOBRA_DE_MARCO);
+
+  // E NAO `Salario - Total de contas`, que daria 3.019,50 -- a alternativa
+  // descartada pela issue. Ela fecharia a aritmetica na tela (os dois numeros
+  // de cima) e mentiria no rotulo: quem recebe aluguel veria uma sobra MENOR do
+  // que a real, que e o erro na direcao cara.
+  assert.notEqual(painel.sobra_ou_falta.valor, 3019.5);
+});
+
+/**
+ * Um mes APERTADO, com as duas magnitudes DIFERENTES.
+ *
+ * 1.200 de receita contra 1.500 de despesa. A diferenca de magnitude e o que
+ * mata o mutante da ORDEM: com `despesas - receitas` o valor seria o MESMO 300
+ * (o cartao exibe modulo) e so o titulo mudaria -- de "Quanto Falta" para
+ * "Quanto Sobra". Um fixture simetrico (1.000 contra 1.000) deixaria esse
+ * mutante vivo com o placar fechando.
+ */
+const MES_APERTADO = [
+  {
+    due_date: "2026-03-05",
+    amount: 1200,
+    status: "pending",
+    direction: "income",
+    category_id: SALARIO,
+    group_id: null,
+  },
+  {
+    due_date: "2026-03-18",
+    amount: 1500,
+    status: "pending",
+    direction: "expense",
+    category_id: SERVICOS,
+    group_id: null,
+  },
+];
+
+test("mes que FALTA: o titulo vira `Quanto Falta`, e o valor sai em MODULO", () => {
+  const painel = painelDePapel(MES_APERTADO, ctx);
+
+  // O TITULO primeiro: e a unica coisa que distingue sobrar de faltar, porque o
+  // numero e o mesmo nas duas direcoes.
+  assert.equal(painel.sobra_ou_falta.titulo, TITULO_FALTA);
+
+  // "Quanto Falta: R$ 300,00", nunca "Quanto Falta: -R$ 300,00" -- que diria a
+  // mesma coisa duas vezes e com dois sinais.
+  assert.equal(painel.sobra_ou_falta.valor, 300);
+  assert.notEqual(painel.sobra_ou_falta.valor, -300);
+
+  // E as parcelas continuam sendo as duas pernas, na ordem certa.
+  assert.equal(painel.sobra_ou_falta.receitas, 1200);
+  assert.equal(painel.sobra_ou_falta.despesas, 1500);
+});
+
+test("o titulo distingue os DOIS meses -- o mesmo numero, respostas opostas", () => {
+  // O par que mata o mutante do sinal sem depender do valor. Dois meses
+  // espelhados: 1.500 de receita contra 1.200 de despesa SOBRA 300, e o
+  // contrario FALTA 300. Os dois imprimem "R$ 300,00".
+  const folgado = MES_APERTADO.map((l) => ({
+    ...l,
+    amount: l.direction === "income" ? 1500 : 1200,
+  }));
+
+  const comFolga = painelDePapel(folgado, ctx).sobra_ou_falta;
+  const apertado = painelDePapel(MES_APERTADO, ctx).sobra_ou_falta;
+
+  assert.equal(comFolga.valor, apertado.valor, "o fixture nao e espelhado");
+  assert.equal(comFolga.titulo, TITULO_SOBRA);
+  assert.equal(apertado.titulo, TITULO_FALTA);
+  assert.notEqual(comFolga.titulo, apertado.titulo);
+});
+
+test("ZERO CRAVADO e Sobra: o mes fechou, nao faltou nada", () => {
+  // A fronteira do `>= 0`. Aqui o mutante do sinal produz o MESMO valor
+  // (R$ 0,00) com o titulo trocado, e e so o titulo que o pega.
+  const empatado = MES_APERTADO.map((l) => ({ ...l, amount: 1300 }));
+  const cartao = painelDePapel(empatado, ctx).sobra_ou_falta;
+
+  assert.equal(cartao.valor, 0);
+  assert.equal(cartao.titulo, TITULO_SOBRA);
+  assert.notEqual(cartao.titulo, TITULO_FALTA);
+});
+
+test("os tres titulos existem, sao distintos, e nenhum deles traz sinal", () => {
+  assert.equal(TITULO_SOBRA, "Quanto Sobra");
+  assert.equal(TITULO_FALTA, "Quanto Falta");
+  // O nome INTEIRO do cartao e a pergunta em aberto: e o titulo de quando nao
+  // ha resposta, e nao um terceiro estado inventado aqui.
+  assert.equal(TITULO_SEM_RESPOSTA, "Quanto Sobra ou Quanto Falta");
+  assert.equal(new Set([TITULO_SOBRA, TITULO_FALTA, TITULO_SEM_RESPOSTA]).size, 3);
+
+  // E os rotulos das duas parcelas, que sao os nomes dos dois itens do menu do
+  // modo. Eles vao para a tela debaixo do resultado.
+  assert.equal(ROTULO_DAS_RECEITAS, "Receitas");
+  assert.equal(ROTULO_DAS_DESPESAS, "Despesas");
+});
+
+// ---------------------------------------------------------------------------
+// INDISPONIVEL NAO E ZERO -- e no cartao ele CONTAMINA
+// ---------------------------------------------------------------------------
+// Os casos abaixo tem UMA perna vazia e a outra CHEIA, de proposito. Com as
+// duas vazias, `null` e `0` dariam o mesmo titulo ("Quanto Sobra", valor zero) e
+// o mutante do `?? 0` sobreviveria -- a assercao tem de poder ver o numero que o
+// `?? 0` imprimiria.
+
+test("mes com receita e SEM conta nenhuma -> indisponivel, nao `sobra tudo`", () => {
+  const soReceita = LINHAS.filter(
+    (l) => l.direction === "income" && l.due_date.startsWith("2026-03")
+  );
+  const painel = painelDePapel(soReceita, ctx);
+
+  // O controle: a perna de cima esta CHEIA. Sem ele este caso passaria verde
+  // num painel vazio dos dois lados, onde nada distingue `null` de zero.
+  assert.equal(painel.receitas.total, RECEITAS_DE_MARCO);
+  assert.equal(painel.total_de_contas.total, null);
+
+  assert.deepEqual(painel.sobra_ou_falta, {
+    titulo: TITULO_SEM_RESPOSTA,
+    valor: null,
+    receitas: RECEITAS_DE_MARCO,
+    despesas: null,
+  });
+
+  // O NUMERO QUE O `?? 0` IMPRIMIRIA: "Quanto Sobra: R$ 9.500,00" num mes em
+  // que as contas simplesmente nao foram lidas. E a afirmacao mais cara que
+  // esta tela consegue fazer, e por isso ela esta escrita aqui.
+  assert.notEqual(painel.sobra_ou_falta.valor, RECEITAS_DE_MARCO);
+  assert.notEqual(painel.sobra_ou_falta.titulo, TITULO_SOBRA);
+});
+
+test("mes com conta e SEM receita nenhuma -> indisponivel, nao `falta tudo`", () => {
+  const soConta = LINHAS.filter(
+    (l) => l.direction === "expense" && l.due_date.startsWith("2026-03")
+  );
+  const painel = painelDePapel(soConta, ctx);
+
+  assert.equal(painel.receitas.total, null);
+  assert.equal(painel.total_de_contas.total, CONTAS_DE_MARCO);
+
+  assert.equal(painel.sobra_ou_falta.titulo, TITULO_SEM_RESPOSTA);
+  assert.equal(painel.sobra_ou_falta.valor, null);
+  // O que o `?? 0` imprimiria do outro lado: "Quanto Falta: R$ 3.980,50" para
+  // quem simplesmente nao cadastrou receita nenhuma.
+  assert.notEqual(painel.sobra_ou_falta.valor, CONTAS_DE_MARCO);
+  assert.notEqual(painel.sobra_ou_falta.titulo, TITULO_FALTA);
+});
+
+test("mes inteiramente vazio -> indisponivel, e nao `sobra R$ 0,00`", () => {
+  const cartao = painelDePapel([], ctx).sobra_ou_falta;
+
+  assert.equal(cartao.titulo, TITULO_SEM_RESPOSTA);
+  assert.equal(cartao.valor, null);
+  assert.equal(cartao.receitas, null);
+  assert.equal(cartao.despesas, null);
+});
+
+test("direcao ausente cala o cartao TAMBEM, e nao so os dois numeros", () => {
+  // Sem `direction`, `direcaoDaAgenda` classificaria toda linha como despesa: o
+  // cartao diria "Quanto Falta: R$ 16.500,00" com cara de mes catastrofico.
+  const semDirecao = LINHAS.map(({ direction, ...resto }) => resto);
+  const painel = painelDePapel(semDirecao, ctx);
+
+  assert.deepEqual(painel.receitas, { total: null, quantidade: 0 });
+  assert.equal(painel.sobra_ou_falta.titulo, TITULO_SEM_RESPOSTA);
+  assert.equal(painel.sobra_ou_falta.valor, null);
+});
+
+test("`sobraOuFalta` e exportada e pura -- as duas pernas entram, nada mais", () => {
+  // A funcao e medida direto, sem passar pelo painel: e dela que a tela recebe
+  // o titulo, e e o nivel em que os tres mutantes da issue vivem.
+  const cheio = { quantidade: 1 };
+
+  assert.equal(sobraOuFalta({ ...cheio, total: 10 }, { ...cheio, total: 4 }).titulo, TITULO_SOBRA);
+  assert.equal(sobraOuFalta({ ...cheio, total: 10 }, { ...cheio, total: 4 }).valor, 6);
+  assert.equal(sobraOuFalta({ ...cheio, total: 4 }, { ...cheio, total: 10 }).titulo, TITULO_FALTA);
+  assert.equal(sobraOuFalta({ ...cheio, total: 4 }, { ...cheio, total: 10 }).valor, 6);
+
+  // Os centavos fecham: 0,1 + 0,2 contra 0,3 nao deixa residuo de ponto
+  // flutuante virar "falta R$ 0,00" com o titulo de falta.
+  const quaseZero = sobraOuFalta(
+    { total: 0.3, quantidade: 1 },
+    { total: 0.30000000000000004, quantidade: 2 }
+  );
+  assert.equal(quaseZero.valor, 0);
+  assert.equal(quaseZero.titulo, TITULO_SOBRA);
+});
+
+// ---------------------------------------------------------------------------
+// O CARTAO EM QUALQUER MES -- criterio 5, com a janela da 5/6
+// ---------------------------------------------------------------------------
+test("o cartao responde o mes PEDIDO, e nao o corrente", () => {
+  // O `hoje` do fixture e marco; abril tem, no fixture, so o salario de
+  // R$ 7.000 e nenhuma conta -- entao abril e indisponivel e marco sobra. Se o
+  // cartao fosse calculado sobre a janela do mes corrente, os dois meses
+  // responderiam igual.
+  const abril = painelDePapel(LINHAS, {
+    ...ctx,
+    janela: janelaDoMes("2026-04", HOJE),
+  });
+  const marco = painelDePapel(LINHAS, {
+    ...ctx,
+    janela: janelaDoMes("2026-03", HOJE),
+  });
+
+  assert.equal(abril.receitas.total, 7000);
+  assert.equal(abril.total_de_contas.total, null);
+  assert.equal(abril.sobra_ou_falta.titulo, TITULO_SEM_RESPOSTA);
+
+  assert.equal(marco.sobra_ou_falta.titulo, TITULO_SOBRA);
+  assert.equal(marco.sobra_ou_falta.valor, SOBRA_DE_MARCO);
+  assert.notEqual(abril.sobra_ou_falta.valor, marco.sobra_ou_falta.valor);
 });
 
 // ---------------------------------------------------------------------------
