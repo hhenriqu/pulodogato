@@ -72,6 +72,10 @@ const DEPENDENCIAS = [
   "lib/movimentacoes.ts",
   "lib/destino-do-lancamento.ts",
   "lib/chave-da-fatura.ts",
+  // HMO-305: o elo da fatura. Ele importa SO o chave-da-fatura, que ja esta
+  // acima -- se um dia ele deixar de ser folha, esta lista cresce junto ou
+  // TODO mutante deixa de compilar e o placar vira 100% sem medir nada.
+  "lib/elo-da-fatura.ts",
 ];
 const SAIDA = ".tmp-telas-de-movimentacao";
 const TESTE = "scripts/test-telas-de-movimentacao.mjs";

@@ -83,6 +83,11 @@ import {
 // scripts/mutantes-telas-de-movimentacao.mjs -- sem isso TODO mutante deixa de
 // compilar e "morre", e o placar vira 100% sem medir nada.
 import { faturaDaChave } from "@/lib/chave-da-fatura";
+import {
+  eloDesfazivel,
+  suspeitasDeFaturaRepetida,
+  type SuspeitaDeFatura,
+} from "@/lib/elo-da-fatura";
 
 /** Qual das tres telas. Sao os mesmos tres valores do ENUM do banco. */
 export type TipoDaTela = "income" | "expense" | "transfer";
@@ -336,6 +341,40 @@ export interface LinhaDaTela {
    * mes" e um estado que o tipo nao deixa existir.
    */
   fatura: { accountId: string; mes: string } | null;
+  /**
+   * ESTA PREVISAO PODE SER A FATURA DE UM CARTAO -- HMO-305.
+   *
+   * O MESMO campo, com o MESMO nome e o MESMO tipo, de
+   * `LinhaDoDetalhe.fatura_suspeita` (lib/papel-de-pao.ts): as duas telas
+   * mostram a mesma suspeita sobre a mesma linha, e quem decide e a MESMA funcao
+   * (`suspeitasDeFaturaRepetida`, lib/elo-da-fatura.ts). Dois criterios para a
+   * pergunta "esta previsao e a fatura?" dariam duas respostas na mesma sessao.
+   *
+   * `null` em toda linha realizada e em quase toda prevista. Ele so e preenchido
+   * na previsao DIGITADA A MAO que cita o nome de um cartao com fatura ABERTA no
+   * mesmo mes -- a mesma divida somada duas vezes, que e o mecanismo (b) da
+   * HMO-298.
+   *
+   * NENHUM NUMERO DESTA TELA DEPENDE DELE. `resumoDaTela` nao o le; o
+   * «Previsto» continua somando as duas linhas ate a PESSOA ligar o elo. A
+   * de-duplicacao acontece depois, em `sintetizarFaturasAbertas`, pela chave
+   * canonica que a rota gravou -- nao aqui.
+   */
+  fatura_suspeita: SuspeitaDeFatura | null;
+  /**
+   * O ELO JA LIGADO, e por isso desfazivel -- HMO-305.
+   *
+   * O MESMO campo de `LinhaDoDetalhe.elo_da_fatura` (lib/papel-de-pao.ts), pelo
+   * MESMO criterio (`eloDesfazivel`), que e tambem o do `DELETE` da rota.
+   *
+   * Ele NAO e o mesmo que `fatura` logo acima, e a diferenca e a que importa:
+   * `fatura` esta preenchido em TODA linha que e fatura -- inclusive a aberta
+   * sintetizada e a fechada pelo `close` --, e serve para montar o link para a
+   * tela do cartao. Este aqui so existe na previsao que uma PESSOA ligou, e e o
+   * que poe na tela o caminho de volta. Oferecer o desfazer pelo `fatura` daria
+   * um botao que a rota recusa com 409 em cima da fatura fechada.
+   */
+  elo_da_fatura: { accountId: string; mes: string } | null;
 }
 
 /** Uma linha de `financial_transactions`, como a consulta a devolve. */
@@ -402,8 +441,19 @@ export interface PrevistaCrua {
    * parar de filtrar.
    */
   category?: { name?: string | null } | { name?: string | null }[] | null;
-  /** O embed da conta, na linha gravada. Mesmas duas formas. */
-  account?: { name?: string | null } | { name?: string | null }[] | null;
+  /**
+   * O embed da conta, na linha gravada. Mesmas duas formas.
+   *
+   * `id` ENTROU NA HMO-305, e e o que distingue a previsao DIGITADA que alguem
+   * ligou a uma fatura (a conta de onde o dinheiro sai) da fatura FECHADA que o
+   * `close` criou (o proprio cartao) -- as duas tem a mesma chave em `notes`.
+   * OPCIONAL: sem ele no `select` da rota, `elo_da_fatura` sai `null` e a linha
+   * perde o caminho de volta, sem que numero nenhum mude.
+   */
+  account?:
+    | { id?: string | null; name?: string | null }
+    | { id?: string | null; name?: string | null }[]
+    | null;
   /** O nome do cartao, na fatura sintetizada (ela nao tem embed). */
   account_name?: string | null;
   /**
@@ -672,6 +722,17 @@ export function linhaRealizada(
     // o valor e o que saiu CHEIO da minha conta.
     de_grupo: false,
     fatura: null,
+    // SEMPRE `null` NO REALIZADO (HMO-305), e pela mesma razao que `fatura`: o
+    // elo da fatura e uma decisao sobre uma conta A PAGAR -- "esta previsao e a
+    // fatura do mes". Uma linha realizada e dinheiro que JA saiu, e nao ha o que
+    // de-duplicar contra a fatura ABERTA. A compra no cartao, que seria a
+    // candidata obvia, nem chega aqui: `ehGastoNoCartao` a tira da tela de
+    // Despesas porque ela esta dentro da fatura.
+    fatura_suspeita: null,
+    // E `null` pelo mesmo motivo: o elo e sobre uma conta A PAGAR. A chave em
+    // `notes` nem existe deste lado -- `financial_transactions` nao tem a
+    // coluna.
+    elo_da_fatura: null,
   };
 }
 
@@ -728,7 +789,22 @@ function ehMinha(
 
 export function linhaPrevista(
   crua: PrevistaCrua,
-  meuUserId: string | null | undefined
+  meuUserId: string | null | undefined,
+  /**
+   * AS SUSPEITAS DE FATURA REPETIDA -- HMO-305, calculadas por `linhasDaTela`
+   * sobre a lista INTEIRA e repassadas aqui.
+   *
+   * Nao sai de `crua`, e nao poderia: a pergunta "esta previsao e a fatura?" so
+   * tem resposta olhando as OUTRAS linhas -- ha uma fatura aberta neste mes
+   * neste cartao? --, e esta funcao ve uma linha so.
+   *
+   * OPCIONAL, ao contrario de `idsDeFixa` em `linhasDaTela`, e a diferenca e a
+   * direcao do erro: `idsDeFixa` ausente faz toda conta fixa se chamar comum (um
+   * rotulo ERRADO), enquanto este mapa ausente faz a linha sair sem rotulo e sem
+   * acao -- o estado de antes desta issue, com a divida a vista e o numero
+   * inchado. Errar para cima e conferivel; errar para baixo esconde conta.
+   */
+  suspeitas?: ReadonlyMap<string, SuspeitaDeFatura>
 ): LinhaDaTela | null {
   if (STATUS_QUE_SAI_DO_PREVISTO.has(String(crua.status))) return null;
 
@@ -798,6 +874,31 @@ export function linhaPrevista(
     fatura: daFatura
       ? { accountId: daFatura.accountId, mes: daFatura.mes }
       : null,
+    // A CHAVE E `idGravado` E NAO `chave`, e a diferenca importa: `chave` cai na
+    // chave canonica da fatura quando a linha nao e gravada, e o mapa das
+    // suspeitas e indexado pelo `scheduled_transactions.id` -- o mesmo id que a
+    // URL da acao usa. Com `chave`, uma fatura sintetizada poderia casar com uma
+    // entrada do mapa e a tela mostraria a acao numa linha que nao existe em
+    // tabela nenhuma, onde o `PATCH` nao tem o que atualizar.
+    //
+    // `posso_editar` entra na condicao porque ligar o elo e um `UPDATE`: na
+    // linha de outro membro do grupo a RLS recusa e volta 200 sem alterar nada.
+    // Rotulo com acao impossivel aponta um problema e nao deixa resolver.
+    fatura_suspeita:
+      idGravado !== null && ehMinha(crua.user_id, meuUserId) && suspeitas
+        ? suspeitas.get(idGravado) ?? null
+        : null,
+    // O `account_id` sai do EMBED (`account.id`), que e de onde esta tela le a
+    // conta -- a `PrevistaCrua` nao tem a coluna solta. Sem `id` no embed do
+    // `select` da rota ele chega `undefined`, `eloDesfazivel` responde `null` e a
+    // linha perde o caminho de volta sem mudar numero nenhum.
+    elo_da_fatura: ehMinha(crua.user_id, meuUserId)
+      ? eloDesfazivel(
+          crua.notes,
+          umDoEmbed(crua.account)?.id,
+          idGravado !== null
+        )
+      : null,
   };
 }
 
@@ -865,8 +966,22 @@ export function linhasDaTela(
     linhas.push(linhaRealizada(crua, indice, idsDeFixa, meuUserId));
   }
 
+  // AS SUSPEITAS DE FATURA REPETIDA -- HMO-305, UMA VEZ, SOBRE AS PREVISTAS
+  // INTEIRAS.
+  //
+  // Antes do laco e sobre a lista inteira porque o criterio e RELACIONAL: a
+  // previsao digitada a mao so e suspeita se houver uma fatura ABERTA no mesmo
+  // mes, e a fatura aberta e outra linha desta mesma lista
+  // (`faturasPrevistasDaJanela` a concatena na rota). Calcular dentro do laco
+  // custaria a lista toda por linha; calcular DEPOIS do filtro de tipo veria uma
+  // lista sem a fatura nos meses em que a tela e a de Receitas.
+  //
+  // So as PREVISTAS: a lista de realizadas nao tem fatura aberta nenhuma para
+  // comparar, e `linhaRealizada` ja devolve `fatura_suspeita: null` sempre.
+  const suspeitas = suspeitasDeFaturaRepetida(previstas);
+
   for (const crua of previstas) {
-    const linha = linhaPrevista(crua, meuUserId);
+    const linha = linhaPrevista(crua, meuUserId, suspeitas);
     if (linha && linha.tipo === tipo) linhas.push(linha);
   }
 

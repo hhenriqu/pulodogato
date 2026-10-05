@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // =============================================================================
-// HMO-298/303/306 -- AS QUATRO LEITURAS DO "TOTAL DE CONTAS", E A PROVA DE QUE
-// ELAS CONCORDAM
+// HMO-298/303/305/306 -- AS QUATRO LEITURAS DO "TOTAL DE CONTAS", E A PROVA DE
+// QUE ELAS CONCORDAM
 // =============================================================================
 //   node scripts/medicao-hmo298.mjs
 //
@@ -34,6 +34,20 @@
 // que se mede a si mesma. Por isso cada linha cobra DUAS coisas: que o par
 // concorde, e que os dois batam com o numero digitado.
 //
+
+// E O MECANISMO (b) DEIXOU DE SER DISCORDANCIA ANOTADA -- HMO-305.
+// Ate a HMO-303 a fatura em dois lugares ficava FORA da tabela, anotada em voz
+// alta (painel R$ 1.600 x divida R$ 800) justamente para que o controle nao
+// ficasse verde por engano no dia em que ela fosse consertada. Este e o dia: a
+// HMO-305 nao adivinha nada -- ela da a ACAO ("esta previsao e a fatura do
+// Nubank de marco"), que grava a chave canonica em `notes`, e a de-duplicacao
+// acontece pelo mecanismo que ja existia (`chavesPersistidas` em
+// `sintetizarFaturasAbertas`).
+//
+// Agora (b) e medido nos TRES estados do mesmo banco -- sem elo, com o elo,
+// desfeito --, e esta e a UNICA parte desta medicao que ESCREVE: um `UPDATE`
+// como `authenticated`, pela RLS, com a chave que a funcao de producao monta. O
+// banco volta ao estado do fixture no fim.
 // O nome do `.sh` tambem fica: `bash scripts/medicao-hmo298.sh` e a reproducao
 // citada na HMO-298 e no documento dela, e renomear quebraria a referencia.
 //
@@ -122,6 +136,12 @@ const { linhasDaTela, resumoDaTela } = await import(
 );
 const { ratearPorPeso } = await import(join(COMPILADO, "fechamento-do-grupo.js"));
 const { somarAgenda } = await import(join(COMPILADO, "previsto-x-realizado.js"));
+// O ELO DA FATURA -- HMO-305. A chave canonica vem da FUNCAO de producao, e nao
+// de uma string montada aqui: montar a chave a mao nesta medicao faria o UPDATE
+// abaixo gravar a chave que ESTA MEDICAO considera certa, e nao a que o app
+// grava. As duas poderiam divergir e a tabela sairia verde sobre uma
+// de-duplicacao que nao acontece em producao.
+const { notesDoElo } = await import(join(COMPILADO, "elo-da-fatura.js"));
 
 // -----------------------------------------------------------------------------
 // As constantes do fixture. Mudaram la, mudam aqui.
@@ -129,6 +149,30 @@ const { somarAgenda } = await import(join(COMPILADO, "previsto-x-realizado.js"))
 const DB = process.env.HMO298_DB ?? "hmo298";
 const EU = "e0000000-0000-0000-0000-0000000000e1";
 const GRUPO = "a0000000-0000-0000-0000-00000000ca5a";
+/** A previsao "Pagar fatura Nubank", digitada a mao na CONTA CORRENTE. */
+const PREVISAO_DA_FATURA = "5c000000-0000-0000-0000-0000000000fa";
+/** O cartao Nubank do fixture. */
+const CARTAO_DA_FATURA = "c0000000-0000-0000-0000-0000000000ca";
+/**
+ * O MES DA FATURA -- FEVEREIRO, e nao marco. Este valor e uma ARMADILHA MEDIDA.
+ *
+ * A fatura vence em 2026-03-10 e cai no mes medido por isso, mas o
+ * `invoice_month` dela e 2026-02-01: com `closing_day = 28`, as compras de
+ * fevereiro fecham na fatura de FEVEREIRO, que vence em marco. Conferido no
+ * banco desta medicao:
+ *
+ *   SELECT invoice_month, invoice_due_date FROM card_invoice_lines;
+ *   -> 2026-02-01 | 2026-03-10
+ *
+ * A chave canonica leva o mes da FATURA (`fatura:2026-02-01:<cartao>`), e nao o
+ * do vencimento. Com "2026-03-01" aqui o UPDATE grava uma chave que
+ * `chavesPersistidas` nao casa com nada: a escrita acontece, a de-duplicacao nao,
+ * e a tela diria "pronto" com o mes ainda somando a divida duas vezes. Foi
+ * exatamente esse o primeiro resultado desta medicao, e e por isso que
+ * `suspeitasDeFaturaRepetida` carrega o `invoice_month` da fatura em vez de
+ * derivar o mes do vencimento da previsao (ver `SuspeitaDeFatura.mes`).
+ */
+const MES_DA_FATURA = "2026-02-01";
 
 /** Relogio congelado -- ver o cabecalho. */
 const HOJE = "2026-03-10";
@@ -212,6 +256,34 @@ function consultar(sql, comoUsuario = EU) {
   return json ? JSON.parse(json) : [];
 }
 
+/**
+ * UMA ESCRITA, pela MESMA ponte da leitura -- HMO-305.
+ *
+ * `SET ROLE authenticated` + o claim `sub`, igual a `consultar`: o UPDATE do elo
+ * passa pela RLS de verdade, como o da rota. Escrever como `postgres` aqui seria
+ * furar a RLS (o SQL Editor do Supabase faz isso, e este repositorio ja pagou por
+ * confundir as duas coisas) e a medicao provaria um caminho que o app nao tem.
+ *
+ * Ela CONFERE que uma linha mudou. `UPDATE` filtrado que a RLS recusa volta
+ * SUCESSO com zero linhas -- sem esta contagem, a medicao seguiria medindo o
+ * estado ANTERIOR e atribuindo a ele o nome do estado novo.
+ */
+function escrever(sql, quantasLinhas = 1) {
+  // CTE e nao subconsulta: Postgres nao aceita DML num `FROM (...)`, e aceita
+  // num `WITH`. E o `json_agg` por cima e o que faz a resposta voltar pela
+  // mesma ponte com sentinel que as leituras usam.
+  const linhas = consultar(
+    `WITH mexidas AS (${sql} RETURNING id)
+     SELECT COALESCE(json_agg(id::text), '[]') FROM mexidas;`
+  );
+  if (linhas.length !== quantasLinhas) {
+    throw new Error(
+      `a escrita mexeu em ${linhas.length} linha(s), esperado ${quantasLinhas}: ${sql}`
+    );
+  }
+  return linhas;
+}
+
 const brl = (valor) =>
   valor === null || valor === undefined
     ? "--"
@@ -292,6 +364,10 @@ function leituraDoPainel(pesos) {
     meuUserId: EU,
   });
 
+  // `previstas` FICA NO RETORNO, e quem o le e `faturaNasDuasTelas` pelo
+  // `.length` -- a contagem de faturas ABERTAS sintetizadas, que e a medida
+  // direta da de-duplicacao do elo (HMO-305). O que saiu daqui foi so o
+  // `faturaAberta` do bloco antigo; o campo tem leitor.
   return { painel, previstas };
 }
 
@@ -534,7 +610,7 @@ function leituraDoSafeToSpend(pesos) {
 // A TABELA
 // =============================================================================
 const pesos = pesosDoBanco();
-const { painel, previstas } = leituraDoPainel(pesos);
+const { painel } = leituraDoPainel(pesos);
 const { resumo, linhas: linhasDaDespesa } = leituraDaTelaDeDespesas(pesos);
 const fechamento = leituraDoFechamento(pesos);
 const summary = leituraDoSummary(pesos);
@@ -572,8 +648,12 @@ const naTelaDeDespesas = (descricao) =>
  */
 const noSafeToSpend = (descricao) => safeToSpend.porDescricao.get(descricao) ?? 0;
 
-/** O que a fatura sintetizada somou -- a segunda metade de (b). */
-const faturaAberta = previstas.reduce((s, f) => s + f.amount, 0);
+// `faturaAberta` MORREU AQUI, e nao e desta issue: ela somava a fatura
+// sintetizada para o bloco `DISCORDANCIA_CONHECIDA`, que a HMO-305 substituiu
+// pela tabela dos tres estados do elo. Ficou declarada e sem leitor, e o eslint
+// acusa. Removida de passagem porque este arquivo ja esta aberto -- uma
+// variavel morta num arquivo cuja funcao e ser lido com desconfianca convida a
+// pergunta errada ("onde isto entra na conta?").
 
 // -----------------------------------------------------------------------------
 // OS VALORES ESPERADOS, DIGITADOS -- a tabela aprovada na HMO-302, §1
@@ -674,29 +754,89 @@ const LINHAS = [
 ];
 
 /**
- * (b) NAO ENTRA NA TABELA ACIMA, E E ISSO QUE A TORNA EVIDENCIA.
+ * (b) A FATURA EM DOIS LUGARES -- MEDIDA NOS TRES ESTADOS (HMO-305).
  *
- * Ele e o unico dos quatro mecanismos que a HMO-303 nao consertou: a decisao
- * aprovada foi ROTULAR a suspeita agora e dar o elo explicito depois (HMO-305).
- * As duas telas continuam somando R$ 1.600,00 -- a mesma divida de R$ 800,00 em
- * dois lugares, porque a previsao digitada a mao nao carrega a chave
- * `fatura:AAAA-MM-01:<uuid>` e por isso nao de-duplica contra a fatura
- * sintetizada.
+ * Ate a HMO-303 este bloco era uma DISCORDANCIA ANOTADA: as duas telas somavam
+ * R$ 1.600,00 de uma divida de R$ 800,00, de proposito, porque os dois caminhos
+ * automaticos foram recusados no plano (os dois erram para BAIXO, que e esconder
+ * uma conta real). A anotacao existia para que o controle nao ficasse verde por
+ * engano no dia em que (b) fosse consertado.
  *
- * Discordancia ANOTADA e diferente de discordancia que ninguem mediu, e a
- * diferenca e pratica: no dia em que (b) for consertado de verdade, este bloco
- * REPROVA -- em vez de o controle ficar verde sem ninguem perceber que um
- * mecanismo mudou.
+ * Este e o dia. A HMO-305 nao adivinha nada: ela da a ACAO ("esta previsao e a
+ * fatura do Nubank de marco"), que grava a chave canonica em `notes`, e a
+ * de-duplicacao acontece pelo mecanismo que ja existia -- `chavesPersistidas` em
+ * `sintetizarFaturasAbertas`. Entao o que esta medicao cobra agora sao TRES
+ * estados do MESMO banco, nesta ordem:
+ *
+ *   1. ANTES: nenhum elo. As duas telas somam R$ 1.600,00 -- e e isso que torna
+ *      o conserto mensuravel. Sem este estado, "a tela mostra R$ 800" nao
+ *      distinguiria o elo funcionando de um fixture que nunca teve a previsao;
+ *   2. COM O ELO: R$ 800,00 nas duas. A fatura sintetizada sai da lista (ela ja
+ *      esta na agenda, pela chave), e o «Total de contas» cai exatamente o valor
+ *      dela;
+ *   3. DESFEITO: R$ 1.600,00 de volta. O caminho de volta nao e cortesia -- um
+ *      elo errado esconde uma divida verdadeira, e sem ele a unica saida seria
+ *      editar a mao uma string que ninguem explicou.
+ *
+ * A ESCRITA E A DA PESSOA, E NAO UMA SIMULACAO: o `UPDATE` abaixo grava o que a
+ * rota grava (`notesDoElo`, importado de lib/), passando pela RLS como
+ * `authenticated`. O que esta medicao NAO cobre e o clique -- isso e o caso J de
+ * `npm run test:papel-na-tela`, que roda os componentes num Chromium.
  */
-const DISCORDANCIA_CONHECIDA = {
-  mecanismo: "(b)",
-  caso: "Fatura do Nubank — R$ 800,00 de compras reais",
-  painel: noPainel("Pagar fatura Nubank") + faturaAberta,
-  tela: naTelaDeDespesas("Pagar fatura Nubank") + faturaAberta,
-  cobrado: faturaAberta,
-  esperadoNasTelas: 1600,
-  esperadoCobrado: 800,
-};
+const eloDaFatura = (notes) =>
+  escrever(
+    `UPDATE scheduled_transactions
+        SET notes = ${notes === null ? "NULL" : `'${notes}'`}
+      WHERE id = '${PREVISAO_DA_FATURA}'`
+  );
+
+/** As duas telas, relidas do banco no estado em que ele esta agora. */
+function faturaNasDuasTelas() {
+  const doPainel = leituraDoPainel(pesos);
+  const daTela = leituraDaTelaDeDespesas(pesos);
+
+  const soma = (linhas) =>
+    linhas
+      .filter(
+        (l) =>
+          l.descricao === "Pagar fatura Nubank" ||
+          String(l.descricao ?? "").startsWith("Fatura Nubank")
+      )
+      .reduce((t, l) => t + Math.abs(l.valor), 0);
+
+  return {
+    painel: soma(doPainel.painel.total_de_contas.detalhe),
+    tela: soma(daTela.linhas),
+    totalDoPainel: doPainel.painel.total_de_contas.total,
+    previstoDaTela: daTela.resumo.previsto,
+    // Quantas linhas de fatura ABERTA a leitura sintetizou. E a medida direta
+    // da de-duplicacao: 1 antes, 0 com o elo, 1 de novo depois. O valor em
+    // reais sozinho nao distinguiria "a fatura saiu" de "a fatura virou zero".
+    faturasSintetizadas: doPainel.previstas.length,
+  };
+}
+
+/**
+ * A DIVIDA DE VERDADE: as compras do mes no Nubank, no fixture (R$ 500 de
+ * mercado + R$ 300 de farmacia).
+ *
+ * DIGITADA, e e ela o oraculo deste mecanismo: as duas telas somavam o DOBRO
+ * disto, e o conserto e as duas passarem a somar ISTO. Deriva-la da leitura
+ * faria a medicao comparar o codigo consigo mesmo.
+ */
+const DIVIDA_REAL_DA_FATURA = 800;
+
+const B_ANTES = faturaNasDuasTelas();
+
+eloDaFatura(notesDoElo(MES_DA_FATURA, CARTAO_DA_FATURA));
+const B_COM_ELO = faturaNasDuasTelas();
+
+eloDaFatura(null);
+const B_DESFEITO = faturaNasDuasTelas();
+
+// E O BANCO VOLTA AO ESTADO DO FIXTURE, que e onde ele comecou: uma medicao que
+// deixa o banco diferente do arquivo faz a execucao seguinte medir outra coisa.
+// (O `.sh` recria o banco, mas quem roda a medicao a mao duas vezes nao.)
 
 const LARGURA = 136;
 
@@ -757,21 +897,46 @@ console.log("");
 for (const l of LINHAS) console.log(`  ${l.mecanismo} ${l.caso}\n      ${l.nota}\n`);
 
 console.log("=".repeat(LARGURA));
-console.log("A DISCORDANCIA CONHECIDA E ANOTADA -- (b), que a HMO-305 conserta");
+console.log("(b) A FATURA EM DOIS LUGARES -- O ELO, LIGADO E DESFEITO (HMO-305)");
 console.log("=".repeat(LARGURA));
 console.log(
-  `  painel ${brl(DISCORDANCIA_CONHECIDA.painel)} × tela ${brl(
-    DISCORDANCIA_CONHECIDA.tela
-  )} × a dívida REAL ${brl(DISCORDANCIA_CONHECIDA.cobrado)}`
+  "  " + col("estado", 24) + col("painel", 16) + col("tela Despesas", 16) +
+    col("sintetizada?", 24) + "o total do mes"
+);
+console.log("  " + "-".repeat(110));
+console.log(
+  "  " +
+    col("1. sem elo", 24) +
+    col(brl(B_ANTES.painel), 16) +
+    col(brl(B_ANTES.tela), 16) +
+    col(B_ANTES.faturasSintetizadas + " fatura(s) aberta(s)", 24) +
+    "«Total de contas» " + brl(B_ANTES.totalDoPainel)
 );
 console.log(
-  `  esperado: R$ 1.600,00 nas duas telas e R$ 800,00 de dívida -- a mesma fatura em dois lugares.`
+  "  " +
+    col("2. com o elo", 24) +
+    col(brl(B_COM_ELO.painel), 16) +
+    col(brl(B_COM_ELO.tela), 16) +
+    col(B_COM_ELO.faturasSintetizadas + " fatura(s) aberta(s)", 24) +
+    "«Total de contas» " + brl(B_COM_ELO.totalDoPainel)
 );
 console.log(
-  `  A previsão digitada à mão é lançada na CONTA CORRENTE, não no cartão, então não há elo para achar.`
+  "  " +
+    col("3. desfeito", 24) +
+    col(brl(B_DESFEITO.painel), 16) +
+    col(brl(B_DESFEITO.tela), 16) +
+    col(B_DESFEITO.faturasSintetizadas + " fatura(s) aberta(s)", 24) +
+    "«Total de contas» " + brl(B_DESFEITO.totalDoPainel)
+);
+console.log("");
+console.log(
+  "  A divida REAL do cartao e " + brl(DIVIDA_REAL_DA_FATURA) + " -- as compras do mes no Nubank."
 );
 console.log(
-  `  De-duplicar por heurística erraria para BAIXO, que é esconder uma conta real.`
+  "  Ligar o elo grava a chave canonica em `notes`; quem de-duplica e `chavesPersistidas`,"
+);
+console.log(
+  "  em `sintetizarFaturasAbertas` -- nenhuma aritmetica nova, e nada acontece sem a pessoa."
 );
 console.log("");
 
@@ -893,23 +1058,94 @@ if (
   );
 }
 
-// (b) TEM de continuar discordando. Verde aqui com (b) concordando significa
-// que alguem mexeu no mecanismo da fatura sem atualizar esta medicao.
+// (b) O ELO DA FATURA -- OS TRES ESTADOS, COBRADOS UM A UM (HMO-305)
+//
+// Ate a HMO-303 este bloco exigia que (b) CONTINUASSE discordando, com um aviso
+// explicito: "se (b) foi consertado, ATUALIZE esta medicao em vez de relaxar o
+// numero". E o que esta sendo feito aqui -- e os numeros novos continuam
+// DIGITADOS, nao derivados de uma rodada do codigo.
+//
+// SAO QUATRO COBRANCAS POR ESTADO, e cada uma pega o que as outras nao pegam:
+//
+//   * as duas telas CONCORDAM entre si (o par);
+//   * e batem com o valor absoluto digitado (R$ 1.600 / R$ 800 / R$ 1.600);
+//   * a CONTAGEM de faturas sintetizadas (1 / 0 / 1) -- sem ela, "o valor caiu"
+//     nao distinguiria a fatura SAINDO da lista de a fatura virando zero;
+//   * e o «Total de contas» do mes inteiro (R$ 2.800 / R$ 2.000 / R$ 2.800), que
+//     e o numero que a pessoa le. Um conserto que tirasse a fatura da lista e
+//     esquecesse de mexer no total passaria pelas tres primeiras.
+const ESTADOS_DE_B = [
+  {
+    nome: "antes do elo",
+    medido: B_ANTES,
+     esperadoNasTelas: 1600,
+    esperadoSintetizadas: 1,
+    esperadoTotal: 2800,
+  },
+  {
+    nome: "com o elo",
+    medido: B_COM_ELO,
+    esperadoNasTelas: 800,
+    esperadoSintetizadas: 0,
+    esperadoTotal: 2000,
+  },
+  {
+    nome: "depois de desfazer",
+    medido: B_DESFEITO,
+    esperadoNasTelas: 1600,
+    esperadoSintetizadas: 1,
+    esperadoTotal: 2800,
+  },
+];
+
+for (const e of ESTADOS_DE_B) {
+  const m = e.medido;
+  if (
+    !bate(m.painel, m.tela) ||
+    !bate(m.painel, e.esperadoNasTelas) ||
+    !bate(m.tela, e.esperadoNasTelas)
+  ) {
+    falhas.push(
+      `  (b) ${e.nome}: painel ${brl(m.painel)} × tela ${brl(m.tela)}, esperado ` +
+        `${brl(e.esperadoNasTelas)} nas duas.`
+    );
+  }
+  if (m.faturasSintetizadas !== e.esperadoSintetizadas) {
+    falhas.push(
+      `  (b) ${e.nome}: ${m.faturasSintetizadas} fatura(s) sintetizada(s), esperado ` +
+        `${e.esperadoSintetizadas}.\n` +
+        `      A de-duplicacao e a fatura SAIR da lista (chavesPersistidas), e nao ela valer zero.`
+    );
+  }
+  if (!bate(m.totalDoPainel, e.esperadoTotal) || !bate(m.previstoDaTela, e.esperadoTotal)) {
+    falhas.push(
+      `  (b) ${e.nome}: «Total de contas» ${brl(m.totalDoPainel)} / «Previsto» ` +
+        `${brl(m.previstoDaTela)}, esperado ${brl(e.esperadoTotal)} nos dois.`
+    );
+  }
+}
+
+// A IDENTIDADE DO CONSERTO: o que o elo tira do mes e EXATAMENTE a divida real do
+// cartao, nem um centavo mais. Ela e o que impede os tres numeros digitados acima
+// de passarem verdes sendo arbitrarios -- e o que denunciaria um elo que
+// escondesse a previsao da pessoa em vez da fatura sintetizada.
 if (
-  !bate(DISCORDANCIA_CONHECIDA.painel, DISCORDANCIA_CONHECIDA.esperadoNasTelas) ||
-  !bate(DISCORDANCIA_CONHECIDA.tela, DISCORDANCIA_CONHECIDA.esperadoNasTelas) ||
-  !bate(DISCORDANCIA_CONHECIDA.cobrado, DISCORDANCIA_CONHECIDA.esperadoCobrado)
+  !bate(B_ANTES.totalDoPainel - B_COM_ELO.totalDoPainel, DIVIDA_REAL_DA_FATURA)
 ) {
   falhas.push(
-    `  (b) a fatura em dois lugares MUDOU de valor: painel ${brl(
-      DISCORDANCIA_CONHECIDA.painel
-    )} / tela ${brl(DISCORDANCIA_CONHECIDA.tela)} / dívida ${brl(
-      DISCORDANCIA_CONHECIDA.cobrado
-    )},\n` +
-      `      esperado ${brl(DISCORDANCIA_CONHECIDA.esperadoNasTelas)} / ${brl(
-        DISCORDANCIA_CONHECIDA.esperadoNasTelas
-      )} / ${brl(DISCORDANCIA_CONHECIDA.esperadoCobrado)}.\n` +
-      `      Se (b) foi consertado (HMO-305), ATUALIZE esta medicao em vez de relaxar o numero.`
+    `  (b) o elo mudou o total em ${brl(
+      B_ANTES.totalDoPainel - B_COM_ELO.totalDoPainel
+    )}, e a divida real e ${brl(DIVIDA_REAL_DA_FATURA)}.`
+  );
+}
+
+// E DESFAZER DEVOLVE O MESMO TANTO. Sem esta, um desfazer que esquecesse de
+// apagar a chave deixaria a conta escondida para sempre -- o erro na direcao
+// cara, e invisivel: a tela mostraria um mes mais folgado do que ele e.
+if (!bate(B_DESFEITO.totalDoPainel, B_ANTES.totalDoPainel)) {
+  falhas.push(
+    `  (b) desfazer nao devolveu o total: ${brl(B_DESFEITO.totalDoPainel)} × ` +
+      `${brl(B_ANTES.totalDoPainel)} de antes.`
   );
 }
 
@@ -972,7 +1208,9 @@ console.log(
     `digitado; os dois totais sairam ${brl(TOTAL_ESPERADO)}; a transferencia de ${brl(
       TRANSFERENCIA_FORA_ESPERADA.total
     )} saiu do\n` +
-    `«Total de contas» COM rotulo; (b) continua discordando no valor esperado (HMO-305);\n` +
+    `«Total de contas» COM rotulo; o elo da fatura (HMO-305) levou (b) de ${brl(
+    1600
+  )} para ${brl(800)} e o desfazer devolveu;\n` +
     `e a QUARTA leitura (/api/safe-to-spend) bateu em ${brl(SAFE_TO_SPEND_ESPERADO)} -- a MINHA conta de\n` +
     `grupo entrou por ${brl(300)} e nao pelos ${brl(1000)} cheios, a do outro membro ficou FORA,\n` +
     `e o total caiu os ${brl(DIFERENCA_DA_PARTE_DO_GRUPO)} da diferenca (era ${brl(

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatCurrency } from "@/lib/utils";
 import { caminhoDoCartaoNoMes } from "@/lib/fatura-do-cartao";
+import { EloDaFatura } from "@/components/fatura/EloDaFatura";
 import {
   FRASE_SEM_CONTAS,
   FRASE_SEM_SALARIO,
@@ -205,6 +206,21 @@ type Estado =
 export function PainelDePapel() {
   const [periodo, setPeriodo] = useState<Periodo>(() => periodoCorrente());
   const [estado, setEstado] = useState<Estado>({ fase: "carregando" });
+  /**
+   * O CONTADOR DE RECARGA -- HMO-305.
+   *
+   * O elo da fatura e a unica acao deste painel que muda um numero dele (a
+   * fatura para de ser contada duas vezes), e o numero novo so existe na
+   * PROXIMA leitura: quem de-duplica e `sintetizarFaturasAbertas`, na rota.
+   * Entao a tela tem de ler de novo -- e nao recalcular nada do lado dela, que
+   * seria a segunda aritmetica que esta issue existe para nao escrever.
+   *
+   * Um contador e nao um `recarregar()` que repete o `fetch`: assim ha UM lugar
+   * que le a rota (o efeito abaixo), com o mesmo descarte de resposta de outro
+   * mes e a mesma guarda de `vivo`. Uma segunda copia do fetch perderia as duas
+   * na primeira mudanca.
+   */
+  const [recarga, setRecarga] = useState(0);
 
   // O MES PEDIDO, na forma que a rota recebe e ecoa de volta. Derivado do
   // periodo, e nao um segundo estado: dois estados para a mesma coisa
@@ -254,7 +270,10 @@ export function PainelDePapel() {
     return () => {
       vivo = false;
     };
-  }, [mesPedido]);
+    // `recarga` na lista de dependencias e o que faz o elo da fatura (HMO-305)
+    // aparecer na tela: mudar o contador re-executa ESTE efeito, com todas as
+    // guardas dele.
+  }, [mesPedido, recarga]);
 
   return (
     <div className="p-4 sm:p-6 max-w-2xl mx-auto space-y-4">
@@ -334,6 +353,11 @@ export function PainelDePapel() {
               )
             : null
         }
+        // SO NESTE CARTAO (HMO-305): «Total de contas» e o numero que a fatura
+        // repetida incha, e e nele que a pessoa tem como resolver. O cartao do
+        // salario nao tem o que ligar -- `suspeitasDeFaturaRepetida` recusa
+        // receita.
+        aoConcluirElo={() => setRecarga((n) => n + 1)}
       />
       <CartaoDeSobra
         cartao={estado.fase === "pronto" ? estado.dados.sobra_ou_falta : undefined}
@@ -460,6 +484,7 @@ function NumeroGrande({
   fase,
   fraseVazia,
   nota = null,
+  aoConcluirElo,
 }: {
   id: string;
   rotulo: string;
@@ -479,10 +504,41 @@ function NumeroGrande({
    * poe-la na lista quebraria a invariante na primeira conferencia.
    */
   nota?: string | null;
+  /**
+   * Recarregar o painel depois de a pessoa ligar ou desfazer o elo da fatura
+   * -- HMO-305.
+   *
+   * AUSENTE DESLIGA A ACAO INTEIRA, e isso e deliberado: sem recarga, o clique
+   * mudaria o banco e a tela continuaria mostrando o total antigo. "Funcionou e
+   * a tela nao mudou" e indistinguivel de "nao funcionou", e a pessoa clica de
+   * novo -- num botao que mexe em dinheiro.
+   */
+  aoConcluirElo?: () => void;
 }) {
   const [aberto, setAberto] = useState(false);
 
   const linhas = numero?.detalhe ?? [];
+
+  /**
+   * O VALOR DA FATURA ABERTA DE CADA CARTAO/MES, LIDO DA PROPRIA LISTA.
+   *
+   * O cartao de confirmacao do elo diz quanto o total vai cair, e este mapa e de
+   * onde esse numero sai: a linha da fatura sintetizada esta NESTA lista (ela
+   * entra no total), e `linha.fatura` da o cartao e o mes dela. Nenhuma conta
+   * nova -- e o `valor` que o painel ja somou.
+   *
+   * Sem a linha da fatura o mapa nao tem a chave, a frase sai sem numero e o
+   * elo continua funcionando: ver `efeitoDoElo`.
+   */
+  const faturaPorChave = new Map<string, number>();
+  for (const linha of linhas) {
+    if (linha.fatura) {
+      faturaPorChave.set(
+        `${linha.fatura.accountId}:${linha.fatura.mes}`,
+        linha.valor
+      );
+    }
+  }
   const podeAbrir =
     fase === "pronto" && numero != null && numero.total !== null && linhas.length > 0;
 
@@ -544,6 +600,14 @@ function NumeroGrande({
                 // nao carrega o problema que ele carrega noutras listas.
                 key={linha.id ?? `${linha.data}:${indice}`}
                 linha={linha}
+                valorDaFatura={(() => {
+                  const alvo = linha.fatura_suspeita ?? linha.elo_da_fatura;
+                  if (!alvo) return null;
+                  return (
+                    faturaPorChave.get(`${alvo.accountId}:${alvo.mes}`) ?? null
+                  );
+                })()}
+                aoConcluirElo={aoConcluirElo}
               />
             ))}
           </ul>
@@ -586,7 +650,19 @@ const ROTULO_DE_GRUPO = "minha parte do grupo";
  * paralelo colidem na adicao, e neste repositorio esse conflito ja apareceu
  * exatamente assim.
  */
-function LinhaDeDetalhe({ linha }: { linha: LinhaDoDetalhe }) {
+function LinhaDeDetalhe({
+  linha,
+  valorDaFatura = null,
+  aoConcluirElo,
+}: {
+  linha: LinhaDoDetalhe;
+  /**
+   * O valor da fatura ABERTA do cartao desta suspeita -- so para a frase do
+   * cartao de confirmacao. `null` quando a lista nao a tem.
+   */
+  valorDaFatura?: number | null;
+  aoConcluirElo?: () => void;
+}) {
   const nome = linha.descricao?.trim() || "sem descrição";
 
   return (
@@ -610,6 +686,22 @@ function LinhaDeDetalhe({ linha }: { linha: LinhaDoDetalhe }) {
         )}
         {linha.de_grupo && (
           <span className="text-muted-foreground"> ({ROTULO_DE_GRUPO})</span>
+        )}
+        {/* O ELO DA FATURA -- HMO-305. Ele desenha o rotulo e a acao, e devolve
+            `null` nas linhas que nao tem nem suspeita nem elo (a grande
+            maioria), deixando o espacamento da linha como era. Sem
+            `aoConcluirElo` ele nem e montado: ver a prop. */}
+        {linha.id && aoConcluirElo && (
+          <EloDaFatura
+            previsaoId={linha.id}
+            suspeita={linha.fatura_suspeita}
+            elo={linha.elo_da_fatura}
+            valorDaFaturaFormatado={
+              valorDaFatura !== null ? formatCurrency(valorDaFatura) : null
+            }
+            valorDaPrevisaoFormatado={formatCurrency(linha.valor)}
+            aoConcluir={aoConcluirElo}
+          />
         )}
       </span>
       <span className="font-papel shrink-0" data-valor-do-detalhe={linha.valor}>

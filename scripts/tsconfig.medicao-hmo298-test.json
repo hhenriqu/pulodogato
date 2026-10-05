@@ -41,6 +41,7 @@
     "../lib/fechamento-do-grupo.ts",
     "../lib/parte-do-grupo.ts",
     "../lib/agenda-do-cartao.ts",
-    "../types/financial.ts"
+    "../types/financial.ts",
+    "../lib/elo-da-fatura.ts"
   ]
 }

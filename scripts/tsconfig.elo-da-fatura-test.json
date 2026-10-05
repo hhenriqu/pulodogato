@@ -1,0 +1,32 @@
+{
+  "//": [
+    "Compila o elo da fatura (HMO-305) para a suite pura.",
+    "",
+    "O include tem UM arquivo e isso basta: `lib/elo-da-fatura.ts` e folha e so",
+    "importa `lib/chave-da-fatura.ts`, que tambem e folha -- o tsc segue o import",
+    "e emite os dois. E isso e requisito do arquivo, nao sorte: a mesma funcao e",
+    "chamada de `lib/telas-de-movimentacao.ts`, que e compilado com",
+    "`rootDir: lib`, e um import para fora de lib/ reprova com TS6059.",
+    "",
+    "`rootDir` e `../lib` e o npm script roda o resolve-aliases.mjs depois: o tsc",
+    "resolve `@/lib/chave-da-fatura` por `paths` mas NAO reescreve o alias no JS",
+    "emitido, e `node --test` nao sabe o que e `@/`.",
+    "",
+    "Comentario SO nesta chave, nunca com // no meio do objeto: o tsc aceita",
+    "JSONC, mas o check-tests-in-ci.mjs le este arquivo com JSON.parse e estoura",
+    "com 'Expected double-quoted property name'."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-elo-da-fatura",
+    "rootDir": "../lib",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/elo-da-fatura.ts"]
+}
