@@ -41,8 +41,17 @@
 // -----------------------------------------------------------------------------
 
 import Link from "next/link";
-import { AlertCircle, CreditCard, Repeat } from "lucide-react";
+import {
+  AlertCircle,
+  Check,
+  CreditCard,
+  Loader2,
+  Pencil,
+  Repeat,
+  Trash2,
+} from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -50,6 +59,15 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  ROTULO_DE_EDITAR,
+  ROTULO_DE_EXCLUIR,
+  motivoSemEditar,
+  podeConfirmar,
+  podeEditar,
+  podeExcluir,
+  rotuloDeConfirmar,
+} from "@/lib/acoes-da-linha";
 import { caminhoDoCartaoNoMes } from "@/lib/fatura-do-cartao";
 import type { LinhaDaTela } from "@/lib/telas-de-movimentacao";
 
@@ -116,6 +134,164 @@ function marcaDaLinha(
 }
 
 /**
+ * Os tres gestos da linha -- HMO-301.
+ *
+ * O COMPONENTE NAO SABE DE REDE, de proposito: ele chama de volta e quem fala
+ * com a rota e `ListaDeMovimentacao`, que e tambem quem relê a lista depois.
+ * Isso e o que mantem este arquivo renderizavel por `react-dom/server` (sem
+ * `next/navigation`, sem `fetch`) e o que faz a sonda de navegador poder medir
+ * a coisa que importa: a linha MUDANDO DE SECAO depois da releitura.
+ *
+ * `agindo` e o id da linha cuja acao esta em curso. Ele desabilita os tres
+ * botoes DAQUELA linha e troca o icone por um giro -- dois cliques em
+ * "Confirmar" seriam duas baixas, e a segunda volta 409 depois de a primeira ter
+ * dado certo: a tela mostraria um erro em cima de uma operacao que funcionou.
+ */
+export interface AcoesDaLinha {
+  /**
+   * O caminho de edicao, quando a edicao e uma NAVEGACAO (linha realizada).
+   * `null` quando nao e -- e aí o Editar e um botao que chama `aoEditar`.
+   *
+   * DUAS FORMAS PARA O MESMO BOTAO porque sao duas edicoes diferentes: a linha
+   * realizada abre o formulario completo da tela do tipo (que sabe ler `?id=`
+   * de `financial_transactions`), e a conta prevista nao tem tela assim -- ela
+   * se edita no formulario em linha desta lista.
+   */
+  hrefDeEdicao: (linha: LinhaDaTela) => string | null;
+  aoEditar: (linha: LinhaDaTela) => void;
+  aoExcluir: (linha: LinhaDaTela) => void;
+  aoConfirmar: (linha: LinhaDaTela) => void;
+  /** O id da linha cuja acao esta em curso, ou `null`. */
+  agindo: string | null;
+  /** Sem rede nenhuma acao sai: as tres sao escrita. */
+  online: boolean;
+}
+
+/**
+ * Os botoes de UMA linha, ou nada.
+ *
+ * Quem decide QUAIS botoes e `lib/acoes-da-linha.ts`, e nao um `&&` escrito
+ * aqui. Ver o cabecalho dele: as cinco regras falham de forma plausivel (404,
+ * 409, e o caro -- `UPDATE` recusado pela RLS voltando 200 sem alterar nada), e
+ * dentro do JSX elas nao teriam assercao nenhuma por cima.
+ */
+function BotoesDaLinha({
+  linha,
+  aparencia,
+  acoes,
+}: {
+  linha: LinhaDaTela;
+  aparencia: AparenciaDaTela;
+  acoes: AcoesDaLinha;
+}) {
+  const emCurso = acoes.agindo === linha.id;
+  const travado = acoes.agindo !== null || !acoes.online;
+
+  const editar = podeEditar(linha);
+  const excluir = podeExcluir(linha);
+  const confirmar = podeConfirmar(linha);
+  const motivo = motivoSemEditar(linha);
+
+  // Sem nenhum dos tres nao sai `<div>` nenhum: uma caixa de 0px com gap muda o
+  // espacamento da linha, e a linha sem acao tem de desenhar IGUAL a de antes
+  // desta issue.
+  if (!editar && !excluir && !confirmar && !motivo) return null;
+
+  const rotuloConfirmar = rotuloDeConfirmar(linha.tipo);
+
+  return (
+    <div className="flex shrink-0 items-center gap-1">
+      {confirmar && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8 w-8 p-0"
+          disabled={travado}
+          onClick={() => acoes.aoConfirmar(linha)}
+          aria-label={rotuloConfirmar}
+          title={rotuloConfirmar}
+        >
+          {emCurso ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Check className="h-4 w-4" />
+          )}
+        </Button>
+      )}
+
+      {/*
+        EDITAR TEM DUAS FORMAS E UMA TERCEIRA APAGADA, e as tres sao
+        deliberadas. O `href` leva para o formulario da tela do tipo (realizada);
+        o botao abre o formulario em linha (prevista); e o apagado e a perna de
+        transferencia ja gravada, que NAO se edita por aqui -- abrir uma perna na
+        tela de despesa deixaria a outra orfa, e o saldo passaria a somar sozinho
+        pelo valor inteiro. O `title` carrega o motivo: botao cinza sem
+        explicacao e indistinguivel de tela quebrada, e a pessoa tenta de novo.
+      */}
+      {editar ? (
+        acoes.hrefDeEdicao(linha) ? (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 w-8 p-0"
+            asChild
+            aria-label={ROTULO_DE_EDITAR}
+            title={ROTULO_DE_EDITAR}
+          >
+            {/* `as any`: `experimental.typedRoutes` tipa o destino como uma
+                uniao literal, e este caminho e montado por `caminhoDeEdicao`
+                numa lib pura -- a mesma concessao de `irPara` em
+                TelaDeMovimentacao.tsx, pelo mesmo motivo. */}
+            <Link href={acoes.hrefDeEdicao(linha) as any}>
+              <Pencil className="h-4 w-4" />
+            </Link>
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 w-8 p-0"
+            disabled={travado}
+            onClick={() => acoes.aoEditar(linha)}
+            aria-label={ROTULO_DE_EDITAR}
+            title={ROTULO_DE_EDITAR}
+          >
+            <Pencil className="h-4 w-4" />
+          </Button>
+        )
+      ) : (
+        motivo && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 w-8 p-0"
+            disabled
+            aria-label={ROTULO_DE_EDITAR}
+            title={motivo}
+          >
+            <Pencil className="h-4 w-4" />
+          </Button>
+        )
+      )}
+
+      {excluir && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8 w-8 p-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+          disabled={travado}
+          onClick={() => acoes.aoExcluir(linha)}
+          aria-label={ROTULO_DE_EXCLUIR}
+          title={ROTULO_DE_EXCLUIR}
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/**
  * Uma linha da lista.
  *
  * A FATURA E A UNICA QUE VIRA `<a>`. Linha que PARECE clicavel e nao e custa
@@ -123,13 +299,19 @@ function marcaDaLinha(
  * natural e que o app travou. As outras naturezas nao tem destino decidido --
  * uma despesa comum nao tem tela propria para abrir -- entao elas continuam
  * `<div>`.
+ *
+ * E E POR ISSO QUE A FATURA NAO GANHA BOTAO (HMO-301), alem da razao de
+ * produto que esta em `podeAgirNaLinha`: botao dentro de ancora e aninhamento
+ * interativo invalido, e o clique navegaria junto com a acao.
  */
 function LinhaDaSecao({
   linha,
   aparencia,
+  acoes,
 }: {
   linha: LinhaDaTela;
   aparencia: AparenciaDaTela;
+  acoes: AcoesDaLinha;
 }) {
   const { Icone, rotulo, descricao } = marcaDaLinha(linha, aparencia);
 
@@ -198,7 +380,12 @@ function LinhaDaSecao({
     );
   }
 
-  return <div className={classe}>{conteudo}</div>;
+  return (
+    <div className={classe}>
+      {conteudo}
+      <BotoesDaLinha linha={linha} aparencia={aparencia} acoes={acoes} />
+    </div>
+  );
 }
 
 /**
@@ -218,6 +405,7 @@ export function SecaoDaTela({
   carregando,
   vazio,
   aparencia,
+  acoes,
 }: {
   titulo: string;
   subtitulo: string;
@@ -226,6 +414,15 @@ export function SecaoDaTela({
   carregando: boolean;
   vazio: string;
   aparencia: AparenciaDaTela;
+  /**
+   * OBRIGATORIO de proposito (HMO-301).
+   *
+   * Opcional, a secao renderizaria sem botao nenhum no dia em que o container
+   * parasse de passar o objeto -- e isso e precisamente o estado de antes desta
+   * issue: a lista inteira volta a ser so leitura, sem erro, sem log e com o
+   * `tsc` verde. Obrigatorio, o compilador cobra a fiacao.
+   */
+  acoes: AcoesDaLinha;
 }) {
   const subtotal = linhas.reduce((soma, l) => soma + l.valor, 0);
 
@@ -265,7 +462,12 @@ export function SecaoDaTela({
         ) : (
           <div className="space-y-1">
             {linhas.map((linha) => (
-              <LinhaDaSecao key={linha.id} linha={linha} aparencia={aparencia} />
+              <LinhaDaSecao
+                key={linha.id}
+                linha={linha}
+                aparencia={aparencia}
+                acoes={acoes}
+              />
             ))}
           </div>
         )}

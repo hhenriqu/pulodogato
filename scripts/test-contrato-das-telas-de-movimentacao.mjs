@@ -50,6 +50,21 @@ const CARTOES = "components/movimentacoes/CartoesDaTela.tsx";
  * outro perdesse o leitor.
  */
 const SECAO = "components/movimentacoes/SecaoDaTela.tsx";
+/**
+ * A LEITURA, a lista e as tres acoes sairam do container na HMO-301, pelo
+ * MESMO motivo que os cartoes sairam na HMO-246 e a secao na HMO-287: o
+ * container importa `next/navigation`, que nao roda no node, e com o `fetch`
+ * la dentro nada neste repositorio conseguia montar a lista num navegador e
+ * medir o gesto -- que confirmar uma linha a MOVE de "Previsto no período"
+ * para "Realizado no período".
+ *
+ * Isso move de arquivo tres coisas que este teste afirma: a interface
+ * `RespostaDaTela` (o contrato com a rota), a chamada com `?tipo=`, e o
+ * `secoesDaTela`. Apontadas para o container elas falhariam sem nada estar
+ * errado no app -- a pior especie de teste, porque treina quem a ve vermelha a
+ * ignorar a suite inteira.
+ */
+const LISTA = "components/movimentacoes/ListaDeMovimentacao.tsx";
 const ROTA = "app/api/movimentacoes/resumo/route.ts";
 const LIB = "lib/telas-de-movimentacao.ts";
 /** Onde a constante do tipo de conta de cartao mora de verdade. */
@@ -63,8 +78,15 @@ function semComentarios(fonte) {
 const componente = semComentarios(readFileSync(COMPONENTE, "utf8"));
 const cartoes = semComentarios(readFileSync(CARTOES, "utf8"));
 const secao = semComentarios(readFileSync(SECAO, "utf8"));
-/** O container e a secao juntos: e onde os leitores de `LinhaDaTela` moram. */
-const telaInteira = `${componente}\n${secao}`;
+const lista = semComentarios(readFileSync(LISTA, "utf8"));
+/**
+ * Os TRES arquivos juntos: e onde os leitores de `LinhaDaTela` moram.
+ *
+ * Tres e nao dois desde a HMO-301. Buscar em so um daria um verde vazio no dia
+ * em que outro perdesse o leitor -- e o container deixou de ser quem busca as
+ * linhas, entao `componente` sozinho hoje nao tem leitor NENHUM.
+ */
+const telaInteira = `${componente}\n${lista}\n${secao}`;
 const rota = semComentarios(readFileSync(ROTA, "utf8"));
 const lib = semComentarios(readFileSync(LIB, "utf8"));
 
@@ -107,12 +129,12 @@ function camposQueARotaDevolve() {
 }
 
 test("a rota devolve todo campo que a tela le", () => {
-  const lidos = camposDaInterface(componente, "RespostaDaTela", COMPONENTE);
+  const lidos = camposDaInterface(lista, "RespostaDaTela", LISTA);
   const devolvidos = camposQueARotaDevolve();
 
   // Controle da propria extracao: se um dos lados vier vazio, o `filter` abaixo
   // passa por vacuidade e o teste nao mede nada.
-  assert.ok(lidos.length >= 4, `extrai poucos campos do componente: ${lidos}`);
+  assert.ok(lidos.length >= 4, `extrai poucos campos da lista: ${lidos}`);
   assert.ok(devolvidos.length >= 4, `extrai poucos campos da rota: ${devolvidos}`);
 
   const faltando = lidos.filter((c) => !devolvidos.includes(c));
@@ -211,8 +233,8 @@ test("todo campo de LinhaDaTela tem leitor -- na tela ou na propria lib", () => 
 
   // E a tela consome a separacao por `origem` pelo caminho certo: as duas
   // secoes saem de `secoesDaTela`, nao de um filtro escrito no JSX.
-  assert.match(componente, /secoesDaTela\(linhas\)/);
-  assert.match(componente, /const \{ previstas, realizadas \}/);
+  assert.match(lista, /secoesDaTela\(linhas\)/);
+  assert.match(lista, /const \{ previstas, realizadas \}/);
 });
 
 test("a tela chama a rota com `tipo` e `de`/`ate`, que e o que a rota le", () => {
@@ -220,9 +242,18 @@ test("a tela chama a rota com `tipo` e `de`/`ate`, que e o que a rota le", () =>
   // telas abrem no painel de erro -- ou, pior, se houvesse padrao, as tres
   // mostrariam despesa.
   assert.match(
-    componente,
+    lista,
     /\/api\/movimentacoes\/resumo\?tipo=\$\{tipo\}&\$\{queryDoPeriodo\}/,
-    "a tela nao chama a rota com ?tipo= e o periodo na querystring"
+    "a lista nao chama a rota com ?tipo= e o periodo na querystring"
+  );
+  // E o container e quem PASSA `queryDoPeriodo` para a lista: sem a prop, a
+  // lista leria `undefined` na querystring e a rota responderia o mes
+  // corrente para qualquer periodo escolhido -- o seletor pareceria nao
+  // funcionar, com 200 e sem erro nenhum.
+  assert.match(
+    componente,
+    /queryDoPeriodo=\{queryDoPeriodo\}/,
+    "o container nao passa `queryDoPeriodo` para ListaDeMovimentacao"
   );
   // E `queryDoPeriodo` SAI de `periodoParaQuery`, nao de uma string montada a
   // mao: e ela quem escolhe os nomes `de`/`ate` que `periodoDaQuery` le na
@@ -350,10 +381,10 @@ test("as tres telas abrem sem rede -- elas sao alcancaveis de rota precacheada",
   // O pedagio, afirmado onde ele mora. `podeMostrarNumero` tem de ser a porta
   // de TODO numero -- `numero()` e a unica funcao que formata os cartoes, e e
   // ela que decide entre o valor e o travessao. Os tres numeros estao em
-  // CartoesDaTela.tsx; as frases de secao vazia, no container.
+  // CartoesDaTela.tsx; as frases de secao vazia, na lista (HMO-301).
   assert.match(cartoes, /podeMostrarNumero\(estado\) && resumo/);
   assert.match(cartoes, /<NumeroIndisponivel \/>/);
-  assert.match(componente, /podeAfirmarVazio\(estado\)/);
+  assert.match(lista, /podeAfirmarVazio\(estado\)/);
 });
 
 test("o `credit_card` da lib e o MESMO de agenda-do-cartao", () => {
@@ -704,4 +735,152 @@ test("a barra de abas por tipo saiu de Finanças Pessoais", () => {
     /linhasDaLista\(transactions, partesDeGrupo, "todos"\)/,
     'a lista de Finanças Pessoais nao esta mais chamada com "todos"'
   );
+});
+
+test("`posso_editar` atravessa os QUATRO elos -- rota, lib, container e botao (HMO-301)", () => {
+  // A MESMA familia de `account_type` e `recurring_rule_id` acima, e com o modo
+  // de falha mais caro dos tres: a direcao do erro aqui NAO e so "o rotulo
+  // sumiu". `posso_editar` e o que impede um Excluir de aparecer sobre a linha
+  // de outro membro do grupo -- e `UPDATE` recusado pela RLS volta **200 sem
+  // alterar nada**: o app diz "pronto" e a linha fica.
+  //
+  // Os quatro elos, e o que cada um faz em silencio quando se rompe:
+  //
+  //   1. `user_id` no `select` do realizado  -> `posso_editar: false` em toda
+  //   2. `user_id` no `select` da view          linha realizada / prevista: a
+  //                                             lista volta a ser so leitura;
+  //   3. `user.id` em `linhasDaTela`         -> IDEM, nas duas de uma vez;
+  //   4. `acoes` em `<SecaoDaTela>`          -> o tsc PEGA este (a prop e
+  //                                             obrigatoria), e esta assercao
+  //                                             existe para as DUAS secoes --
+  //                                             passar so para uma compila.
+  //
+  // Nenhum dos tres primeiros quebra `tsc` (os campos sao opcionais nas
+  // interfaces cruas, porque a fatura sintetizada nao os tem) nem teste de
+  // unidade nenhum.
+
+  // 1. O `select` do realizado. ANCORADO NO BLOCO da consulta e nao no arquivo:
+  // `user_id` aparece em varios `.eq()` desta rota, e um `match` solto passaria
+  // verde com a coluna fora do `select`.
+  const doRealizado = rota.match(
+    /\.from\("financial_transactions"\)\s*\.select\(\s*`([^`]*)`/
+  );
+  assert.ok(doRealizado, `nao achei o \`select\` de financial_transactions em ${ROTA}`);
+  assert.match(
+    doRealizado[1],
+    /\buser_id\b/,
+    "o `select` do realizado nao pede `user_id` -- `posso_editar` cai para false em toda linha"
+  );
+
+  // 2. O `select` da view. Mesmo ancoramento, mesmo motivo.
+  const daView = rota.match(
+    /\.from\("scheduled_transactions_effective"\)\s*\.select\(\s*`([^`]*)`/
+  );
+  assert.ok(daView, `nao achei o \`select\` da view em ${ROTA}`);
+  assert.match(
+    daView[1],
+    /\buser_id\b/,
+    "o `select` do previsto nao pede `user_id` -- `posso_editar` cai para false em toda linha"
+  );
+
+  // 3. A ROTA PASSA QUEM ESTA OLHANDO. Ancorado na CHAMADA e nao no arquivo: a
+  // rota le `user.id` em meia duzia de `.eq()`, e `assert.match(rota, /user\.id/)`
+  // passaria verde com o argumento ausente.
+  const chamada = rota.match(/const linhas = linhasDaTela\(([\s\S]*?)\n    \);/);
+  assert.ok(chamada, `nao achei a chamada de linhasDaTela em ${ROTA}`);
+  assert.match(
+    chamada[1],
+    /\buser\.id\b/,
+    "a rota nao passa `user.id` para `linhasDaTela` -- nenhum botao aparece em lugar nenhum"
+  );
+
+  // 4. A lib produz o campo, e o produz nos DOIS construtores. `ehMinha` e a
+  // funcao unica que decide; os dois a chamam com o `user_id` da sua linha.
+  assert.match(
+    lib,
+    /posso_editar: ehMinha\(crua\.user_id, meuUserId\)/,
+    "a lib nao calcula `posso_editar` a partir de `user_id` e de quem esta olhando"
+  );
+  assert.equal(
+    lib.split("posso_editar: ehMinha(crua.user_id, meuUserId)").length - 1,
+    2,
+    "`posso_editar` nao e calculado nos DOIS construtores (realizada e prevista)"
+  );
+
+  // 5. Quem DECIDE o botao le o campo, e decide na lib pura -- nao num `&&` do
+  // JSX, que nao teria assercao nenhuma por cima.
+  const acoes = semComentarios(readFileSync("lib/acoes-da-linha.ts", "utf8"));
+  assert.match(
+    acoes,
+    /if \(!linha\.posso_editar\) return false;/,
+    "lib/acoes-da-linha.ts nao recusa a linha por `posso_editar`"
+  );
+  assert.match(
+    acoes,
+    /if \(!linha\.gravada\) return false;/,
+    "lib/acoes-da-linha.ts nao recusa a linha NAO GRAVADA (a fatura aberta sintetizada)"
+  );
+
+  // 6. AS DUAS SECOES recebem as acoes. A prop e obrigatoria, entao o tsc cobra
+  // que ELA exista -- e nao que as duas a recebam: uma secao com `acoes` e a
+  // outra comentada compila, e o sintoma seria metade da tela sem botao.
+  assert.equal(
+    lista.split("acoes={acoes}").length - 1,
+    2,
+    "as duas secoes (Previsto e Realizado) tem de receber `acoes`"
+  );
+
+  // 7. E a SECAO tira os botoes das tres funcoes da lib, uma por botao. Sem
+  // isto, um `linha.posso_editar &&` escrito no JSX passaria por todo o resto
+  // desta assercao.
+  for (const fn of ["podeConfirmar", "podeEditar", "podeExcluir"]) {
+    assert.match(
+      secao,
+      new RegExp(`${fn}\\(linha\\)`),
+      `${SECAO} nao chama \`${fn}(linha)\` -- a regra do botao voltou para o JSX`
+    );
+  }
+});
+
+test("a baixa, a exclusao e a edicao vao para as rotas que EXISTEM (HMO-301)", () => {
+  // Nenhuma rota foi escrita nesta issue, e e isso que esta assercao tranca:
+  // cada caminho montado por `lib/acoes-da-linha.ts` tem de ter arquivo. Um
+  // caminho plausivel e inexistente responde 404 do Next -- que, para quem
+  // clicou em "Confirmar pagamento", se le como "o app nao conseguiu".
+  const acoes = semComentarios(readFileSync("lib/acoes-da-linha.ts", "utf8"));
+
+  const pares = [
+    ["/api/scheduled-transactions/${encodeURIComponent(linha.id)}/pay", "app/api/scheduled-transactions/[id]/pay/route.ts"],
+    ["/api/scheduled-transactions/${id}", "app/api/scheduled-transactions/[id]/route.ts"],
+    ["/api/movimentacoes/transferencia?id=${id}", "app/api/movimentacoes/transferencia/route.ts"],
+    ["/api/personal-finance/transactions/${id}", "app/api/personal-finance/transactions/[id]/route.ts"],
+  ];
+
+  for (const [caminho, arquivo] of pares) {
+    assert.ok(
+      acoes.includes(caminho),
+      `lib/acoes-da-linha.ts nao monta mais \`${caminho}\``
+    );
+    // `readFileSync` e o teste: arquivo ausente lanca com o nome dele.
+    const fonte = readFileSync(arquivo, "utf8");
+    assert.ok(fonte.length > 0, `${arquivo} esta vazio`);
+  }
+
+  // E os METODOS que cada rota de fato exporta. `DELETE` pedido a uma rota que
+  // so tem `PATCH` responde 405, e o 405 chega na tela pelo mesmo toast do 404.
+  const metodos = [
+    ["app/api/scheduled-transactions/[id]/pay/route.ts", "POST"],
+    ["app/api/scheduled-transactions/[id]/route.ts", "PATCH"],
+    ["app/api/scheduled-transactions/[id]/route.ts", "DELETE"],
+    ["app/api/movimentacoes/transferencia/route.ts", "DELETE"],
+    ["app/api/personal-finance/transactions/[id]/route.ts", "DELETE"],
+  ];
+
+  for (const [arquivo, metodo] of metodos) {
+    assert.match(
+      readFileSync(arquivo, "utf8"),
+      new RegExp(`export async function ${metodo}\\b`),
+      `${arquivo} nao exporta ${metodo} -- a acao da linha receberia 405`
+    );
+  }
 });
