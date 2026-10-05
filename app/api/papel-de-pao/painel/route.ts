@@ -1,8 +1,15 @@
 // GET /api/papel-de-pao/painel?month=AAAA-MM
 //
-// Os DOIS numeros do modo papel de pao (HMO-286, 3/3 do plano da HMO-279):
+// Os numeros do modo papel de pao (HMO-286, 3/3 do plano da HMO-279):
 // "Salario Previsto" e "Total de contas", do mes PEDIDO -- o mes corrente
-// quando ninguem pede (HMO-295, 5/6).
+// quando ninguem pede (HMO-295, 5/6) --, mais as "Receitas" do mes e o cartao
+// "Quanto Sobra ou Quanto Falta" (HMO-296, 6/6).
+//
+// A HMO-296 NAO ACRESCENTOU CONSULTA NENHUMA, e isso e o criterio dela e nao
+// uma economia: `receitas` e uma perna a mais de `somarPerna` sobre o MESMO
+// array de linhas que ja estava peneirado aqui, e o cartao e a diferenca das
+// duas pernas. Uma segunda soma de despesa feita fora desta sequencia erraria
+// nos quatro elos abaixo ao mesmo tempo e pareceria certa na tela.
 //
 // O `month` da resposta ECOA o mes que saiu da querystring, e nao e enfeite: e
 // com ele que a tela evita pintar a resposta de um mes na moldura de outro

@@ -22,11 +22,18 @@
 //      O caso que mata este mutante e o controle positivo da montagem, nao a
 //      assercao do rotulo.
 //
-// A SUITE E DE NAVEGADOR, e cada volta custa ~5s. Sao doze voltas (uma de
-// controle positivo e onze de mutante), e por isso o runner e separado do
+// A SUITE E DE NAVEGADOR, e cada volta custa ~5s. Sao dezessete voltas (uma de
+// controle positivo e dezesseis de mutante), e por isso o runner e separado do
 // `mutantes-menu-papel.mjs`: o do menu e puro e roda em menos de 1s por volta.
-// Pela mesma razao os mutantes da ROTA e da funcao pura do mes nao estao aqui --
-// eles vivem em `scripts/mutantes-mes-do-painel.mjs`, que mede a suite pura.
+// Pela mesma razao as funcoes PURAS nao sao medidas aqui -- os mutantes da rota
+// e da janela do mes vivem em `scripts/mutantes-mes-do-painel.mjs`, e os da
+// aritmetica do terceiro cartao em `scripts/mutantes-sobra-ou-falta.mjs`. Os
+// dois medem a suite pura, que roda em segundos.
+//
+// A HMO-296 acrescentou o TERCEIRO CARTAO, e com ele cinco mutantes de tela no
+// fim da lista. O criterio para um mutante morar aqui e o mesmo de sempre: ele
+// tem de ser invisivel sem navegador -- um cartao que sai da arvore, uma linha
+// de conferencia que nao renderiza, duas parcelas trocadas entre si.
 //
 // Nao usa `git checkout` para restaurar: ele restauraria a partir do INDICE, e
 // num worktree compartilhado isso ja apagou trabalho nao commitado aqui. A
@@ -60,8 +67,8 @@ const mutantes = [
   {
     // A ANCORA DA SONDA. Sem `data-rotulo` no DOM, a lista de rotulos vem
     // vazia -- e uma lista vazia satisfaz "Salário Previsto nao aparece". Quem
-    // mata este mutante e o caso "o painel montou de verdade", que exige DOIS
-    // cartoes de producao antes de qualquer assercao sobre texto.
+    // mata este mutante e o caso "o painel montou de verdade", que exige os
+    // TRES cartoes de producao antes de qualquer assercao sobre texto.
     nome: "o `data-rotulo` muda de nome (a sonda passa a ler o vazio)",
     arquivo: PAINEL,
     de: "data-rotulo={rotulo}",
@@ -152,6 +159,86 @@ const mutantes = [
     de: "data-mes={mesPedido}",
     para: "data-mes-do-painel={mesPedido}",
   },
+
+  // ===========================================================================
+  // O TERCEIRO CARTAO -- HMO-296 (6/6)
+  // ===========================================================================
+  // A ARITMETICA do cartao nao esta aqui: ela e pura, mora em `sobraOuFalta`
+  // (lib/papel-de-pao.ts) e tem runner proprio em
+  // `scripts/mutantes-sobra-ou-falta.mjs`, com os tres mutantes que a issue
+  // nomeia. Os de baixo sao os que SO A TELA ve -- os quatro jeitos de o cartao
+  // certo chegar errado na tela, todos compilando e todos com a mesma aparencia
+  // estatica.
+  {
+    // O CARTAO QUE NAO EXISTE. A forma mais crua: a feature inteira desligada,
+    // com a rota continuando a calcular e a responder o cartao. Quem o mata e a
+    // contagem EXATA de tres cartoes do caso D -- com um `>=`, este mutante
+    // sobreviveria.
+    nome: "o terceiro cartao sai da tela",
+    arquivo: PAINEL,
+    de: `      <CartaoDeSobra
+        cartao={estado.fase === "pronto" ? estado.dados.sobra_ou_falta : undefined}
+        fase={estado.fase}
+      />
+`,
+    para: "",
+  },
+  {
+    // A LINHA DAS PARCELAS SOME. O criterio 2 da issue e literalmente ela: sem
+    // a conferencia, tres numeros no painel que nao fecham de olho sao
+    // exatamente a forma como este app ja enganou alguem antes. O cartao
+    // continua certo, e e por isso que nenhuma assercao sobre valor o pega.
+    nome: "a linha das duas parcelas nao e renderizada",
+    arquivo: PAINEL,
+    de: "        {parcelas && (",
+    para: "        {false && (",
+  },
+  {
+    // AS PARCELAS TROCADAS NA TELA. "Receitas R$ 3.980,50 - Despesas
+    // R$ 9.500,00" debaixo de "Quanto Sobra: R$ 5.519,50": a linha que existe
+    // para ser conferida passa a nao fechar com o numero em cima dela. Os dois
+    // campos sao `number` e os dois rotulos sao `string`, entao nada alem da
+    // sonda ve a troca.
+    nome: "as duas parcelas aparecem trocadas na tela",
+    arquivo: PAINEL,
+    de: "{ROTULO_DAS_RECEITAS} {formatCurrency(parcelas.receitas)}",
+    para: "{ROTULO_DAS_RECEITAS} {formatCurrency(parcelas.despesas)}",
+  },
+  {
+    // O TITULO AFIRMATIVO NO ESTADO SEM RESPOSTA. Em vez do nome inteiro do
+    // cartao -- a pergunta em aberto --, a tela escolhe um dos dois lados dela
+    // antes de ler o banco: "Quanto Sobra" sobre um cartao indisponivel, que e
+    // uma afirmacao sobre o dinheiro de alguem feita sem dado nenhum.
+    nome: "o cartao sem resposta ja diz `Quanto Sobra`",
+    arquivo: PAINEL,
+    de: "const titulo = cartao?.titulo ?? TITULO_SEM_RESPOSTA;",
+    para: 'const titulo = cartao?.titulo ?? "Quanto Sobra";',
+  },
+  {
+    // O `?? 0` DA TELA, que e o mutante do `null` um nivel acima do da lib:
+    // `valor === null` deixa de virar *indisponivel* e vira "R$ 0,00" --
+    // "Quanto Sobra ou Quanto Falta: R$ 0,00" num mes que nao foi lido.
+    // O mutante e escrito nas DUAS pontas de proposito -- a guarda e a
+    // formatacao --, porque so a guarda nao compila: `formatCurrency` recebe
+    // `number` e `cartao.valor` e `number | null`. E assim ele e o defeito que
+    // alguem de fato escreveria para "fazer o tsc parar de reclamar".
+    nome: "a tela pinta zero onde o cartao esta indisponivel",
+    arquivo: PAINEL,
+    de: `          ) : cartao == null || cartao.valor === null ? (
+            <span className="text-muted-foreground text-xl">
+              indisponível agora
+            </span>
+          ) : (
+            formatCurrency(cartao.valor)
+          )}`,
+    para: `          ) : cartao == null ? (
+            <span className="text-muted-foreground text-xl">
+              indisponível agora
+            </span>
+          ) : (
+            formatCurrency(cartao.valor ?? 0)
+          )}`,
+  },
 ];
 
 const original = new Map();
@@ -163,6 +250,10 @@ const restaurar = () => {
 };
 process.on("exit", restaurar);
 process.on("SIGINT", () => process.exit(130));
+// E SIGTERM, que e o que um `timeout` ou um cancelamento de job manda: sem
+// este handler o gancho de `exit` acima NAO roda, e a arvore fica MUTADA para
+// quem vier depois -- um defeito introduzido pelo proprio controle negativo.
+process.on("SIGTERM", () => process.exit(143));
 
 const roda = () => {
   try {

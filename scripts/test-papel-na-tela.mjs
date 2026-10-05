@@ -1,5 +1,6 @@
 // O INTERRUPTOR do modo papel de pao, em navegador de verdade -- HMO-283,
-// mais o ROTULO do primeiro cartao do painel -- HMO-294.
+// o ROTULO do primeiro cartao do painel -- HMO-294 -- e o TERCEIRO CARTAO,
+// "Quanto Sobra ou Quanto Falta" -- HMO-296.
 //
 // O QUE SO ESTA SUITE PROVA
 // -------------------------
@@ -110,11 +111,31 @@
 //     nao tem nada a ver com rotulo nenhum.
 //
 //     O marcador e o que torna o esboco AUDITAVEL em vez de uma concessao
-//     silenciosa: na fase que esta sonda mede, nenhum dos tres chega a
+//     silenciosa: na fase que o caso D mede, nenhum dos tres chega a
 //     renderizar, e ha uma assercao que exige que a palavra "ESBOCO" NAO
-//     apareca no painel. No dia em que alguem mover esta medida para a fase do
-//     valor ou da frase vazia, ela reprova com o nome do esboco na mensagem --
-//     e nao passa verde medindo um texto de mentira.
+//     apareca no painel. No dia em que alguem mover aquela medida para a fase da
+//     frase vazia, ela reprova com o nome do esboco na mensagem -- e nao passa
+//     verde medindo um texto de mentira. (Nos casos E, F e G o
+//     `formatCurrency` marcado e o CONTRARIO de uma concessao: "ESBOCO-VALOR:300"
+//     e o que torna o valor pintado legivel sem formatar moeda na sonda.)
+//
+// AS TRES CONSTANTES DO TERCEIRO CARTAO NAO SAO ESBOCO (HMO-296)
+// --------------------------------------------------------------
+// `TITULO_SEM_RESPOSTA`, `ROTULO_DAS_RECEITAS` e `ROTULO_DAS_DESPESAS` sao LIDAS
+// do `lib/papel-de-pao.js` compilado e injetadas na pagina -- ver
+// `constanteDaLib`. A razao e a de sempre, na direcao oposta: as assercoes do
+// caso G leem esses tres textos, e marcados eles fariam cada caso medir a
+// mentira escrita na propria sonda.
+//
+// O QUE O CASO G PROVA, E O QUE ELE NAO PROVA
+// -------------------------------------------
+// Prova a FIACAO do cartao: titulo, valor e as duas parcelas que chegam na
+// resposta aparecem no TERCEIRO cartao, e a tela nao inventa nenhum dos quatro.
+// O esboco da rota entrega titulo e valor LITERAIS, nunca calculados, justamente
+// para que nada daqui possa passar verde por uma conta feita na sonda.
+// A aritmetica -- e os tres mutantes dela (o sinal do titulo, a ordem da
+// subtracao, a propagacao do `null`) -- vive em `npm run test:papel-de-pao`,
+// sobre `sobraOuFalta`.
 //
 // Qualquer sobra de `import`/`export` nos .js estoura ANTES de a pagina rodar --
 // sem isso o sintoma seria "a pagina nao reportou nada", indistinguivel de
@@ -272,6 +293,48 @@ try {
   );
 }
 
+/**
+ * As TRES CONSTANTES DE TEXTO do terceiro cartao (HMO-296), lidas do
+ * `lib/papel-de-pao.js` COMPILADO -- e nao copiadas a mao para esta sonda.
+ *
+ * POR QUE NAO ESBOCO, COMO AS OUTRAS TRES
+ * ---------------------------------------
+ * `formatCurrency`, `FRASE_SEM_SALARIO` e `FRASE_SEM_CONTAS` entram como
+ * MARCADORES porque nenhuma assercao fala do valor delas: o que a sonda mede
+ * naqueles casos e a fase da tela. Aqui e o contrario -- o titulo do cartao sem
+ * resposta e os dois rotulos das parcelas SAO o que as assercoes de G leem.
+ * Marcados, cada caso de G mediria o texto de mentira escrito logo acima.
+ *
+ * E tambem nao sao copias a mao: uma copia nao acusa a divergencia. Trocado o
+ * texto na lib, o valor LIDO muda com ele e a assercao de G -- que compara com o
+ * literal escrito no caso -- reprova nomeando o cartao. E se a extracao parar de
+ * casar, isto ESTOURA aqui em vez de injetar `undefined` na pagina e virar uma
+ * sonda vacua ("o titulo e undefined" satisfaz "o titulo nao e Quanto Sobra").
+ *
+ * O resto de `lib/papel-de-pao.js` continua FORA da pagina: sao oito modulos de
+ * aritmetica atras dele, e o que a sonda precisa dali sao tres strings.
+ */
+const FONTE_DA_LIB = readFileSync(join(SAIDA, "lib", "papel-de-pao.js"), "utf8");
+
+const constanteDaLib = (nome) => {
+  const achado = FONTE_DA_LIB.match(
+    new RegExp(`export const ${nome} = "([^"]*)";`)
+  );
+  if (!achado) {
+    throw new Error(
+      `a constante ${nome} nao esta em lib/papel-de-pao.js como string literal.\n` +
+        "A sonda do terceiro cartao le o texto dali; ajuste a extracao ou o nome."
+    );
+  }
+  return achado[1];
+};
+
+const TEXTOS_DO_CARTAO = {
+  TITULO_SEM_RESPOSTA: constanteDaLib("TITULO_SEM_RESPOSTA"),
+  ROTULO_DAS_RECEITAS: constanteDaLib("ROTULO_DAS_RECEITAS"),
+  ROTULO_DAS_DESPESAS: constanteDaLib("ROTULO_DAS_DESPESAS"),
+};
+
 /** O React UMD, inline: `<script src>` entre arquivos file:// e outra briga. */
 const umd = (pacote, arquivo) =>
   readFileSync(join("node_modules", pacote, "umd", arquivo), "utf8");
@@ -286,6 +349,7 @@ const PAGINA = `<!doctype html>
 </head><body>
 <div id="raiz-a"></div><div id="raiz-b"></div><div id="raiz-c"></div>
 <div id="raiz-d"></div><div id="raiz-e"></div><div id="raiz-f"></div>
+<div id="raiz-g"></div>
 <div id="resultado">a pagina nao rodou</div>
 <script>${umd("react", "react.development.js")}</script>
 <script>${umd("react-dom", "react-dom.development.js")}</script>
@@ -330,6 +394,13 @@ const formatCurrency = (valor) => "ESBOCO-VALOR:" + valor;
 const FRASE_SEM_SALARIO = "ESBOCO-FRASE-SALARIO";
 const FRASE_SEM_CONTAS = "ESBOCO-FRASE-CONTAS";
 
+// --- as tres constantes do terceiro cartao, LIDAS da lib compilada -----------
+// Nao sao esboco e nao sao copia: ver \`constanteDaLib\` no .mjs. As assercoes de
+// G leem estes textos, entao um marcador aqui as faria medir a mentira.
+const TITULO_SEM_RESPOSTA = ${JSON.stringify(TEXTOS_DO_CARTAO.TITULO_SEM_RESPOSTA)};
+const ROTULO_DAS_RECEITAS = ${JSON.stringify(TEXTOS_DO_CARTAO.ROTULO_DAS_RECEITAS)};
+const ROTULO_DAS_DESPESAS = ${JSON.stringify(TEXTOS_DO_CARTAO.ROTULO_DAS_DESPESAS)};
+
 /**
  * O \`fetch\` do painel: por padrao TRAVADO, e trocavel por caso.
  *
@@ -366,7 +437,7 @@ const mesDoPedido = (url) => {
  * sonda fabrica o caso "a resposta chegou de outro mes" (cache do PWA, rota que
  * nao reconheceu o parametro) e mede que a tela NAO a pinta.
  */
-const respostaDaRota = (month, salario, contas) => ({
+const respostaDaRota = (month, salario, contas, cartao) => ({
   ok: true,
   status: 200,
   json: () =>
@@ -374,9 +445,45 @@ const respostaDaRota = (month, salario, contas) => ({
       month,
       range: { from: month + "-01", to: month + "-28" },
       salario_previsto: { total: salario, quantidade: 1 },
+      receitas: { total: salario, quantidade: 1 },
       total_de_contas: { total: contas, quantidade: 1 },
+      // \`undefined\` nao vira campo nenhum depois do \`JSON\`, e e assim que o
+      // caso do corpo VELHO (cache do PWA, 24h nas rotas /api/) e fabricado.
+      sobra_ou_falta: cartao,
     }),
 });
+
+/**
+ * O cartao da HMO-296 como a rota o entrega -- e aqui ele e LITERAL, nunca
+ * calculado.
+ *
+ * A razao e a mesma dos oraculos de mes escritos a mao mais abaixo, mas ao
+ * contrario: quem esta sendo medido aqui e a TELA. Se este esboco escrevesse
+ * \`saldo >= 0 ? "Quanto Sobra" : "Quanto Falta"\`, a assercao "a tela diz Quanto
+ * Falta" estaria medindo esta linha, e nao \`sobraOuFalta\` de
+ * lib/papel-de-pao.ts -- que e medido, com os tres mutantes dele, em
+ * \`npm run test:papel-de-pao\`. O que falta provar aqui e so que o titulo, o
+ * valor e as duas parcelas que CHEGAM aparecem na tela, e que a tela nao
+ * refaz a conta por conta propria.
+ */
+const CARTAO_QUE_SOBRA = {
+  titulo: "Quanto Sobra",
+  valor: 5519.5,
+  receitas: 9500,
+  despesas: 3980.5,
+};
+const CARTAO_QUE_FALTA = {
+  titulo: "Quanto Falta",
+  valor: 300,
+  receitas: 1200,
+  despesas: 1500,
+};
+const CARTAO_INDISPONIVEL = {
+  titulo: "Quanto Sobra ou Quanto Falta",
+  valor: null,
+  receitas: null,
+  despesas: null,
+};
 
 /**
  * Esboco do Switch com o CONTRATO do Radix: \`button role="switch"\`,
@@ -591,11 +698,15 @@ r.d = {
     el.getAttribute("data-rotulo")
   ),
   // CONTROLE POSITIVO da montagem: o cartao de producao, e nao um esboco.
-  // \`font-papel\` sai do \`className\` do \`NumeroGrande\`, e \`rounded-lg\` do
-  // \`Card\`. Sem este par, "nenhum data-rotulo diz Salario Previsto" ficaria
-  // verde num container VAZIO -- que e a aparencia de um render que estourou.
+  // \`font-papel\` sai do \`className\` do \`NumeroGrande\` e do \`CartaoDeSobra\`, e
+  // \`rounded-lg\` do \`Card\`. Sem este par, "nenhum data-rotulo diz Salario
+  // Previsto" ficaria verde num container VAZIO -- que e a aparencia de um
+  // render que estourou. Eram DOIS antes da HMO-296; sao TRES.
   cartoes: caixaD.querySelectorAll("[data-rotulo].font-papel").length,
   comCard: caixaD.querySelectorAll(".rounded-lg").length,
+  // A linha das parcelas NAO existe na fase \`carregando\`: nao ha parcela
+  // nenhuma para conferir, e meia linha seria pior que linha nenhuma.
+  parcelas: caixaD.querySelectorAll("[data-parcelas]").length,
   texto: caixaD.textContent,
   // O pedido que a montagem disparou: ele JA tem de trazer o parametro do mes,
   // senao a rota responde o corrente e a moldura da tela nunca e verificavel.
@@ -650,6 +761,20 @@ const montarPainel = async (raiz) => {
       // O "Hoje" existe? (criterio 2: so fora do mes corrente)
       temHoje: Boolean(achar("papel-mes-hoje")),
       texto: caixa.textContent,
+      // OS TRES CARTOES, NA ORDEM, cada um com o proprio texto (HMO-296).
+      // Escopar importa: "a tela nao diz Quanto Sobra" seria verdade sobre o
+      // container inteiro mesmo com o titulo errado no cartao certo, e os dois
+      // cartoes de cima tambem tem valor pintado. \`rounded-lg\` sai do \`Card\` de
+      // producao, e e a mesma ancora que o caso D ja usava.
+      textoDosCartoes: Array.from(caixa.querySelectorAll(".rounded-lg")).map(
+        (el) => el.textContent
+      ),
+      // A linha das duas parcelas -- a conferencia que a issue pede DENTRO do
+      // cartao. Lista vazia e "nao ha linha", e e o que o caso do indisponivel
+      // exige.
+      parcelas: Array.from(caixa.querySelectorAll("[data-parcelas]")).map(
+        (el) => el.textContent
+      ),
     }),
     clicar: async (id) => {
       achar(id).dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -664,7 +789,9 @@ const montarPainel = async (raiz) => {
 
 pedidos.length = 0;
 respondeFetch = (url) =>
-  Promise.resolve(respostaDaRota(mesDoPedido(url), 7000, 2000));
+  Promise.resolve(
+    respostaDaRota(mesDoPedido(url), 7000, 2000, CARTAO_QUE_SOBRA)
+  );
 
 const e = await montarPainel("raiz-e");
 r.e_inicio = e.ler();
@@ -702,7 +829,7 @@ respondeFetch = (url) => {
   const ano = Number(pedido.slice(0, 4));
   const mes = Number(pedido.slice(5, 7));
   const anterior = mes === 1 ? (ano - 1) + "-12" : ano + "-" + String(mes - 1).padStart(2, "0");
-  return Promise.resolve(respostaDaRota(anterior, 7000, 2000));
+  return Promise.resolve(respostaDaRota(anterior, 7000, 2000, CARTAO_QUE_SOBRA));
 };
 
 const f = await montarPainel("raiz-f");
@@ -712,11 +839,46 @@ f.desmontar();
 // O CONTROLE POSITIVO: a MESMA resposta, com o mes certo, PINTA.
 pedidos.length = 0;
 respondeFetch = (url) =>
-  Promise.resolve(respostaDaRota(mesDoPedido(url), 7000, 2000));
+  Promise.resolve(
+    respostaDaRota(mesDoPedido(url), 7000, 2000, CARTAO_QUE_SOBRA)
+  );
 
 const f2 = await montarPainel("raiz-f");
 r.f_pintado = f2.ler();
 f2.desmontar();
+
+// =============================================================================
+// CASO G -- O TERCEIRO CARTAO: "Quanto Sobra ou Quanto Falta" (HMO-296, 6/6)
+// =============================================================================
+// Quatro montagens, uma por resposta, e todas na fase \`pronto\`. O que se mede e
+// so o que a TELA faz com o cartao que chegou:
+//
+//   G1 um mes que SOBRA    -> o titulo "Quanto Sobra", o valor, as duas parcelas
+//   G2 um mes que FALTA    -> o titulo "Quanto Falta", o valor EM MODULO
+//   G3 cartao indisponivel -> *indisponivel*, e NENHUMA linha de parcela
+//   G4 resposta SEM o campo-> idem, e sem levar a tela (o corpo de 24h atras)
+//
+// A aritmetica nao esta aqui, e isso e deliberado: ela mora em \`sobraOuFalta\`
+// (lib/papel-de-pao.ts), onde \`npm run test:papel-de-pao\` a mede com os tres
+// mutantes da issue. O esboco da rota entrega titulo e valor LITERAIS, entao
+// nenhuma assercao desta secao pode passar verde por uma conta feita no esboco.
+
+const porCartao = async (raiz, cartao) => {
+  pedidos.length = 0;
+  respondeFetch = (url) =>
+    Promise.resolve(respostaDaRota(mesDoPedido(url), 7000, 2000, cartao));
+  const painel = await montarPainel(raiz);
+  const lido = painel.ler();
+  painel.desmontar();
+  return lido;
+};
+
+r.g_sobra = await porCartao("raiz-g", CARTAO_QUE_SOBRA);
+r.g_falta = await porCartao("raiz-g", CARTAO_QUE_FALTA);
+r.g_indisponivel = await porCartao("raiz-g", CARTAO_INDISPONIVEL);
+// O corpo VELHO: a rota de antes da HMO-296, que e o que o cache do PWA guarda
+// por 24h depois do deploy. O campo nao existe, e o mes esta certo.
+r.g_sem_campo = await porCartao("raiz-g", undefined);
 
 alvoResultado();
 } catch (e) {
@@ -1025,13 +1187,32 @@ test("C: papel de pao e modo escuro convivem no <html>", () => {
 // O PAINEL: o rotulo do primeiro cartao (HMO-294)
 // -----------------------------------------------------------------------------
 
-test("D: o painel montou de verdade -- dois cartoes de producao", () => {
+test("D: o painel montou de verdade -- tres cartoes de producao", () => {
   // O controle que da sentido aos dois de baixo. "Salario Previsto nao aparece"
   // e verdade tambem num container vazio, que e a aparencia de um render que
   // estourou, de um esboco faltando ou de um seletor escrito errado.
-  assert.equal(resultado.d.cartoes, 2, "os dois <p> do NumeroGrande nao chegaram no DOM");
-  assert.equal(resultado.d.comCard, 2, "os dois Card de producao nao chegaram no DOM");
-  assert.equal(resultado.d.rotulos.length, 2);
+  //
+  // TRES desde a HMO-296, e a contagem e EXATA de proposito: com um `>=` ela
+  // ficaria verde enquanto o modulo que a issue pediu minimo voltasse a crescer.
+  assert.equal(resultado.d.cartoes, 3, "os tres <p> de valor nao chegaram no DOM");
+  assert.equal(resultado.d.comCard, 3, "os tres Card de producao nao chegaram no DOM");
+  assert.equal(resultado.d.rotulos.length, 3);
+
+  // E a linha das parcelas nao existe aqui: na fase `carregando` nao ha parcela
+  // nenhuma para conferir.
+  assert.equal(
+    resultado.d.parcelas,
+    0,
+    "a linha das parcelas apareceu antes de haver numero"
+  );
+});
+
+test("D: o terceiro cartao e o da HMO-296, com a pergunta inteira por titulo", () => {
+  // Enquanto nao ha resposta, o titulo e o NOME do cartao -- a pergunta em
+  // aberto --, e nao um dos dois lados dela. "Quanto Sobra" na fase
+  // `carregando` seria uma afirmacao sobre o dinheiro de alguem feita antes de
+  // ler o banco.
+  assert.equal(resultado.d.rotulos[2], "Quanto Sobra ou Quanto Falta");
 });
 
 test("D: o primeiro cartao diz Salário, e nao Salário Previsto", () => {
@@ -1040,7 +1221,7 @@ test("D: o primeiro cartao diz Salário, e nao Salário Previsto", () => {
   // presenca sozinha e exatamente o teste que a HMO-294 nao pode ter.
   assert.deepEqual(
     resultado.d.rotulos,
-    ["Salário", "Total de contas"],
+    ["Salário", "Total de contas", "Quanto Sobra ou Quanto Falta"],
     "o rotulo do painel nao e o que a HMO-294 pediu"
   );
 
@@ -1251,6 +1432,123 @@ test("F: o CONTROLE POSITIVO -- a mesma resposta, com o mes certo, pinta", () =>
   );
   assert.ok(!/indispon/.test(resultado.f_pintado.texto));
   assert.equal(resultado.f_pintado.mesNaTela, resultado.f_pintado.mesPedido);
+});
+
+// -----------------------------------------------------------------------------
+// O TERCEIRO CARTAO (HMO-296)
+// -----------------------------------------------------------------------------
+// O que esta secao prova e a FIACAO, e so ela: que o titulo, o valor e as duas
+// parcelas que chegam na resposta aparecem no TERCEIRO cartao da tela, e que a
+// tela nao inventa nenhum dos quatro. A aritmetica e os tres mutantes dela
+// (sinal do titulo, ordem da subtracao, propagacao do `null`) vivem em
+// `npm run test:papel-de-pao`, sobre `sobraOuFalta`.
+
+/** O terceiro cartao, escopado. Os dois de cima tambem pintam valor. */
+const terceiro = (leitura) => leitura.textoDosCartoes[2];
+
+test("G: o controle da secao -- tres cartoes pintados, na ordem", () => {
+  // Sem isto, toda assercao de ausencia abaixo ("nao diz Quanto Sobra") ficaria
+  // verde sobre um `undefined`: um seletor errado, um render que estourou, um
+  // cartao que nem foi montado.
+  for (const leitura of [
+    resultado.g_sobra,
+    resultado.g_falta,
+    resultado.g_indisponivel,
+    resultado.g_sem_campo,
+  ]) {
+    assert.equal(leitura.textoDosCartoes.length, 3);
+    assert.match(leitura.textoDosCartoes[0], /Salário/);
+    assert.match(leitura.textoDosCartoes[1], /Total de contas/);
+    assert.equal(typeof terceiro(leitura), "string");
+  }
+});
+
+test("G1: mes que SOBRA -- o titulo, o valor e as duas parcelas na tela", () => {
+  const cartao = terceiro(resultado.g_sobra);
+
+  assert.match(cartao, /Quanto Sobra/);
+  // A metade que o titulo sozinho nao da: "Quanto Sobra" e substring de "Quanto
+  // Sobra ou Quanto Falta", entao o cartao que nao recebeu resposta nenhuma
+  // passaria pela assercao de cima. A ausencia de "Falta" e o que distingue.
+  assert.ok(
+    !/Falta/.test(cartao),
+    `o cartao do mes que sobra fala de falta: ${cartao}`
+  );
+  assert.match(cartao, /ESBOCO-VALOR:5519\.5/);
+
+  // AS DUAS PARCELAS -- criterio 2. Elas sao o que torna o terceiro numero
+  // conferivel sem abrir o banco, e o que explica na tela por que ele difere do
+  // "Salario" logo acima (9.500 de receitas contra 7.000 de salario).
+  assert.equal(resultado.g_sobra.parcelas.length, 1);
+  assert.match(
+    resultado.g_sobra.parcelas[0],
+    /Receitas ESBOCO-VALOR:9500/,
+    `a parcela das receitas nao esta na tela: ${resultado.g_sobra.parcelas[0]}`
+  );
+  assert.match(resultado.g_sobra.parcelas[0], /Despesas ESBOCO-VALOR:3980\.5/);
+
+  // E a linha mora DENTRO do cartao, e nao solta embaixo dele.
+  assert.match(cartao, /Receitas ESBOCO-VALOR:9500/);
+});
+
+test("G2: mes que FALTA -- o titulo troca, e o valor sai em MODULO", () => {
+  const cartao = terceiro(resultado.g_falta);
+
+  assert.match(cartao, /Quanto Falta/);
+  // O par do caso acima, e a metade que mede: "Quanto Sobra" nao pode estar na
+  // tela -- nem como titulo trocado, nem pela queda no nome inteiro do cartao.
+  assert.ok(
+    !/Quanto Sobra/.test(cartao),
+    `o cartao do mes que falta ainda fala de sobra: ${cartao}`
+  );
+
+  // "Quanto Falta: R$ 300,00", e nunca "-R$ 300,00" -- o sinal ja foi dito pelo
+  // titulo, e repeti-lo no numero diria a mesma coisa duas vezes.
+  assert.match(cartao, /ESBOCO-VALOR:300/);
+  assert.ok(
+    !/ESBOCO-VALOR:-300/.test(cartao),
+    `o valor do cartao foi para a tela com sinal: ${cartao}`
+  );
+
+  assert.match(resultado.g_falta.parcelas[0], /Receitas ESBOCO-VALOR:1200/);
+  assert.match(resultado.g_falta.parcelas[0], /Despesas ESBOCO-VALOR:1500/);
+});
+
+test("G3: cartao indisponivel -- *indisponivel*, e NENHUMA parcela", () => {
+  const cartao = terceiro(resultado.g_indisponivel);
+
+  assert.match(cartao, /indispon/);
+  // O que um `?? 0` na tela imprimiria: "Quanto Sobra: R$ 0,00" num mes que nao
+  // foi lido. Nenhum valor formatado pode aparecer neste cartao.
+  assert.ok(
+    !/ESBOCO-VALOR/.test(cartao),
+    `o cartao indisponivel pintou um valor: ${cartao}`
+  );
+  assert.equal(
+    resultado.g_indisponivel.parcelas.length,
+    0,
+    "a linha das parcelas apareceu com as parcelas em null"
+  );
+
+  // E o controle: os dois cartoes de cima continuam pintando. Sem ele, este
+  // caso ficaria verde num painel que caiu inteiro em "indisponivel agora".
+  assert.match(resultado.g_indisponivel.textoDosCartoes[0], /ESBOCO-VALOR:7000/);
+});
+
+test("G4: resposta SEM o campo (o corpo de 24h atras) nao leva a tela", () => {
+  // O cache do PWA guarda as rotas /api/ por 24h: no dia do deploy existe um
+  // corpo valido, do mes certo, sem `sobra_ou_falta`. Lido como obrigatorio, ele
+  // seria um `undefined.titulo` -- e o que cairia nao e o cartao, e a tela.
+  const cartao = terceiro(resultado.g_sem_campo);
+
+  assert.match(cartao, /Quanto Sobra ou Quanto Falta/);
+  assert.match(cartao, /indispon/);
+  assert.equal(resultado.g_sem_campo.parcelas.length, 0);
+
+  // E o resto da tela segue de pe -- e esta e a assercao que distingue "o
+  // cartao disse indisponivel" de "a arvore estourou".
+  assert.match(resultado.g_sem_campo.textoDosCartoes[0], /ESBOCO-VALOR:7000/);
+  assert.match(resultado.g_sem_campo.textoDosCartoes[1], /ESBOCO-VALOR:2000/);
 });
 
 // -----------------------------------------------------------------------------

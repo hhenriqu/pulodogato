@@ -1,16 +1,17 @@
 /**
- * OS DOIS NUMEROS DO MODO "PAPEL DE PAO" -- HMO-286 (3/3 do plano da HMO-279).
+ * OS NUMEROS DO MODO "PAPEL DE PAO" -- HMO-286 (3/3 do plano da HMO-279), com o
+ * cartao "Quanto Sobra ou Quanto Falta" da HMO-296 (6/6).
  *
- * "Salario Previsto" e "Total de contas". Nenhuma das duas frases existia no
- * app antes desta issue, e e justamente isso que torna este arquivo o lugar
- * mais perigoso dos tres PRs do modulo: ROTULO NOVO EM CIMA DE NUMERO VELHO e
- * como este repositorio ja errou antes -- "Fatura atual" mostrando a divida
- * inteira do cartao (HMO-290), "a vencer" somando o salario junto com as contas
- * (HMO-187). Nos dois casos o numero era plausivel, a tela nao dava erro, e so
- * quem somasse na mao descobria.
+ * "Salario Previsto", "Total de contas" e, desde a HMO-296, a diferenca entre
+ * RECEITAS e DESPESAS do mes. Nenhuma dessas frases existia no app antes deste
+ * modulo, e e justamente isso que torna este arquivo o lugar mais perigoso dele:
+ * ROTULO NOVO EM CIMA DE NUMERO VELHO e como este repositorio ja errou antes --
+ * "Fatura atual" mostrando a divida inteira do cartao (HMO-290), "a vencer"
+ * somando o salario junto com as contas (HMO-187). Nos dois casos o numero era
+ * plausivel, a tela nao dava erro, e so quem somasse na mao descobria.
  *
- * Por isso as duas contas moram aqui, como funcoes PURAS sobre linhas, e nao
- * dentro da rota: e isto que `npm run test:papel-de-pao` mede. A rota
+ * Por isso as contas moram aqui, como funcoes PURAS sobre linhas, e nao dentro
+ * da rota: e isto que `npm run test:papel-de-pao` mede. A rota
  * (`app/api/papel-de-pao/painel/route.ts`) autentica, le e delega.
  *
  * ===========================================================================
@@ -35,6 +36,22 @@
  *   * NAO e a soma de `financial_accounts.current_balance`. Aquilo e o saldo de
  *     hoje -- quanto a pessoa TEM, nao quanto ela DEVE. Faz par com o salario:
  *     entra isso, sai aquilo.
+ *
+ * "Quanto Sobra ou Quanto Falta" (HMO-296) = `receitas - total_de_contas`, com
+ * as DUAS parcelas saindo da MESMA leitura e da MESMA peneira que os numeros
+ * acima.
+ *
+ *   * NAO e `Salario - Total de contas`, e a diferenca fica VISIVEL na tela de
+ *     quem recebe aluguel ou reembolso. A leitura aprovada e literal --
+ *     "(Receitas e Despesas)" --, e usar o salario fecharia a aritmetica na tela
+ *     mentindo no rotulo: quem recebe por fora veria uma sobra MENOR que a real,
+ *     que e o erro na direcao caríssima (a pessoa se acha mais apertada do que
+ *     esta, e o painel esta "certo").
+ *   * NAO e uma terceira consulta. Uma segunda soma de despesa feita em
+ *     qualquer outro lugar erraria nos quatro elos da rota ao mesmo tempo
+ *     (`agendaSemCompraNoCartao`, `faturasPrevistasDaJanela`, `parteDoMembro`,
+ *     `skipped`/`cancelled`) e pareceria certa na tela. `receitas` e uma perna
+ *     de `somarPerna` -- um `aceita` novo, e nada mais.
  *
  * ===========================================================================
  * POR QUE "PREVISTO" INCLUI A CONTA JA PAGA
@@ -121,9 +138,44 @@ export interface NumeroDoPapel {
   quantidade: number;
 }
 
-export interface PainelDeDoisNumeros {
+/**
+ * O CARTAO "Quanto Sobra ou Quanto Falta" -- HMO-296 (6/6).
+ *
+ * O TITULO E UM SO, MAS TEM DUAS CARAS. "Sobra ou Falta" nao e o nome do
+ * cartao: e a pergunta que o proprio sinal responde. Por isso o titulo e campo
+ * CALCULADO aqui, e nao um `boolean` que a tela traduziria -- duas fontes para o
+ * mesmo sinal discordariam, e o mutante de uma delas sobreviveria a suite da
+ * outra.
+ *
+ * `valor` sai sempre EM MODULO: "Quanto Falta: R$ 300,00", nunca "Quanto Falta:
+ * -R$ 300,00", que diz a mesma coisa duas vezes e com dois sinais. E e por isso
+ * que o titulo e a unica coisa que distingue +300 de -300 -- uma suite que
+ * medisse so `valor` deixaria o mutante do sinal passar por dezenas de
+ * assercoes verdes com o rotulo INVERTIDO.
+ *
+ * `receitas` e `despesas` sao as DUAS PARCELAS, e vao para a tela em corpo
+ * pequeno debaixo do resultado. Nao e enfeite: sao elas que tornam o terceiro
+ * numero conferivel sem abrir o banco, e que explicam, na propria tela, por que
+ * ele difere do "Salario" logo acima. `null` nas duas e no `valor` e
+ * INDISPONIVEL -- ver `sobraOuFalta`.
+ */
+export interface SobraOuFalta {
+  titulo: string;
+  /** EM MODULO. `null` e indisponivel, e nao zero. */
+  valor: number | null;
+  receitas: number | null;
+  despesas: number | null;
+}
+
+export interface PainelDoModoPapel {
   salario_previsto: NumeroDoPapel;
+  /**
+   * TODA receita prevista do mes, e nao so o salario -- a parcela de cima do
+   * cartao da HMO-296. O salario e um SUBCONJUNTO deste numero.
+   */
+  receitas: NumeroDoPapel;
   total_de_contas: NumeroDoPapel;
+  sobra_ou_falta: SobraOuFalta;
 }
 
 export interface ContextoDoPapel {
@@ -312,35 +364,120 @@ function somarPerna(
 export function painelDePapel(
   linhas: readonly LinhaPrevistaDoPapel[],
   ctx: ContextoDoPapel & { categoriasDeSalario: readonly string[] }
-): PainelDeDoisNumeros {
+): PainelDoModoPapel {
   const naJanela = linhas.filter((l) => dentroDaJanela(l.due_date, ctx.janela));
 
   if (naJanela.some((l) => l.direction == null)) {
-    return { salario_previsto: semLinha, total_de_contas: semLinha };
+    return {
+      salario_previsto: semLinha,
+      receitas: semLinha,
+      total_de_contas: semLinha,
+      sobra_ou_falta: sobraOuFalta(semLinha, semLinha),
+    };
   }
 
   const deSalario = new Set(ctx.categoriasDeSalario);
 
+  const salario_previsto = somarPerna(
+    linhas,
+    ctx,
+    (linha) =>
+      direcaoDaAgenda(linha.direction) === "income" &&
+      linha.category_id != null &&
+      deSalario.has(linha.category_id)
+  );
+
+  // TODA receita prevista do mes, e nao so a da categoria Salario -- a perna
+  // nova da HMO-296. Ela e o espelho exato da de baixo: `direcaoDaAgenda` so
+  // responde 'income' ou 'expense', entao as duas juntas cobrem a lista inteira
+  // sem sobreposicao, e `salario_previsto` e um recorte DENTRO desta.
+  const receitas = somarPerna(
+    linhas,
+    ctx,
+    (linha) => direcaoDaAgenda(linha.direction) === "income"
+  );
+
+  // TUDO que sai, e nao so o que nao e salario: uma conta a pagar lancada na
+  // categoria Salário (um desconto, uma devolucao) continua sendo uma conta.
+  // A peneira do salario e sobre RECEITA; esta e sobre DESPESA, e as duas
+  // juntas nao precisam cobrir a lista inteira -- transferencia, por exemplo,
+  // cai aqui porque `direcaoDaAgenda` so tira 'income' do lado de "a pagar",
+  // que e a mesma leitura do bloco "A vencer".
+  const total_de_contas = somarPerna(
+    linhas,
+    ctx,
+    (linha) => direcaoDaAgenda(linha.direction) === "expense"
+  );
+
   return {
-    salario_previsto: somarPerna(
-      linhas,
-      ctx,
-      (linha) =>
-        direcaoDaAgenda(linha.direction) === "income" &&
-        linha.category_id != null &&
-        deSalario.has(linha.category_id)
-    ),
-    // TUDO que sai, e nao so o que nao e salario: uma conta a pagar lancada na
-    // categoria Salário (um desconto, uma devolucao) continua sendo uma conta.
-    // A peneira do salario e sobre RECEITA; esta e sobre DESPESA, e as duas
-    // juntas nao precisam cobrir a lista inteira -- transferencia, por exemplo,
-    // cai aqui porque `direcaoDaAgenda` so tira 'income' do lado de "a pagar",
-    // que e a mesma leitura do bloco "A vencer".
-    total_de_contas: somarPerna(
-      linhas,
-      ctx,
-      (linha) => direcaoDaAgenda(linha.direction) === "expense"
-    ),
+    salario_previsto,
+    receitas,
+    total_de_contas,
+    // O TERCEIRO NUMERO SAI DOS DOIS QUE A TELA JA MOSTRA, e nao de uma soma
+    // nova: e isso que impede o cartao de discordar do cartao colado nele.
+    sobra_ou_falta: sobraOuFalta(receitas, total_de_contas),
+  };
+}
+
+/** O titulo quando o mes fechou no azul -- ou cravado em zero. */
+export const TITULO_SOBRA = "Quanto Sobra";
+/** O titulo quando as contas passaram das receitas. */
+export const TITULO_FALTA = "Quanto Falta";
+/**
+ * O titulo quando NAO HA RESPOSTA -- e o nome inteiro do cartao, que e a
+ * pergunta ainda em aberto. Sem ele o cartao ficaria sem cabeca na tela, ou
+ * (pior) afirmaria "Quanto Sobra" sobre um mes que nao foi lido.
+ */
+export const TITULO_SEM_RESPOSTA = "Quanto Sobra ou Quanto Falta";
+
+/** Os rotulos das duas parcelas. Sao os nomes dos dois itens do menu do modo. */
+export const ROTULO_DAS_RECEITAS = "Receitas";
+export const ROTULO_DAS_DESPESAS = "Despesas";
+
+/**
+ * `Receitas - Despesas`, com o titulo que o sinal escolhe.
+ *
+ * A ORDEM E `receitas - despesas`, E ELA DECIDE O CARTAO. Invertida, o mes que
+ * sobra passa a faltar e o que falta passa a sobrar -- e como o valor sai em
+ * MODULO, os dois imprimem o mesmo numero. Um fixture simetrico (receitas 1.000,
+ * despesas 1.000) nao distingue as duas ordens: so um mes com as magnitudes
+ * DIFERENTES o faz, e a assercao tem de ler o TITULO.
+ *
+ * ZERO CRAVADO E SOBRA (`>= 0`): o mes fechou, nao faltou nada. E a fronteira
+ * onde o mutante do sinal (`<= 0`) ainda produziria o mesmo numero.
+ *
+ * INDISPONIVEL NAO E ZERO, E AQUI ELE CONTAMINA. Se qualquer uma das duas
+ * parcelas vier `total: null` -- mes sem linha, direcao ausente, leitura que
+ * falhou --, o cartao NAO CALCULA. Tratar `null` como `0` imprimiria "Quanto
+ * Sobra: R$ 8.000,00" num mes em que as contas simplesmente nao foram lidas, que
+ * e a afirmacao mais cara que esta tela consegue fazer. Mes sem receita E sem
+ * conta tambem e indisponivel, e nao "sobra R$ 0,00".
+ */
+export function sobraOuFalta(
+  receitas: NumeroDoPapel,
+  despesas: NumeroDoPapel
+): SobraOuFalta {
+  const entra = receitas.total;
+  const sai = despesas.total;
+
+  if (entra === null || sai === null) {
+    return {
+      titulo: TITULO_SEM_RESPOSTA,
+      valor: null,
+      receitas: entra,
+      despesas: sai,
+    };
+  }
+
+  const saldo = centavos(entra - sai);
+
+  return {
+    titulo: saldo >= 0 ? TITULO_SOBRA : TITULO_FALTA,
+    // O MODULO. O sinal ja foi dito pelo titulo, e repeti-lo no numero diria a
+    // mesma coisa duas vezes -- "Quanto Falta: -R$ 300,00".
+    valor: Math.abs(saldo),
+    receitas: entra,
+    despesas: sai,
   };
 }
 
