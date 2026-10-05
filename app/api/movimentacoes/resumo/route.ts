@@ -80,6 +80,11 @@ import { materializarAgenda } from "@/lib/services/scheduled";
 import { faturasPrevistasDaJanela } from "@/lib/services/fatura-prevista";
 import { agendaSemCompraNoCartao } from "@/lib/agenda-do-cartao";
 import {
+  montarParticipantesPorGrupo,
+  previstasComAMinhaParte,
+  type ParticipantesPorGrupo,
+} from "@/lib/parte-do-grupo";
+import {
   linhasDaTela,
   previstoVencido,
   resumoDaTela,
@@ -246,17 +251,43 @@ export async function GET(request: NextRequest) {
     // A view o expoe desde a 005 (`scheduled_transactions.recurring_rule_id`) e
     // a 027 o manteve na coluna de saida (`027_...sql:248`) -- nenhuma migration
     // e necessaria aqui.
+    //
+    // `group_id` ENTROU NA HMO-303, E ELE E O QUE FALTAVA. Sem ele nada depois
+    // desta consulta sabia que havia o que dividir, e a MINHA linha de grupo de
+    // R$ 1.000 entrava CHEIA num mes em que o grupo cobra R$ 300. Ele alimenta
+    // duas coisas: a divisao (`previstasComAMinhaParte`) e o ROTULO
+    // (`LinhaDaTela.de_grupo`).
     const { data: agendaCrua, error: erroAgenda } = await supabase
       .from("scheduled_transactions_effective")
       .select(
         `
         id, user_id, description, amount, due_date, status, effective_status, currency,
-        direction, notes, recurring_rule_id,
+        direction, notes, recurring_rule_id, group_id,
         category:transaction_categories(name),
         account:financial_accounts(id, name, account_type)
       `
       )
-      .eq("user_id", user.id)
+      // O `OR` É DELIBERADO -- HMO-303, E ELE É A DIFERENÇA ENTRE AS DUAS TELAS
+      // DO MÓDULO.
+      //
+      // Até esta issue o filtro era `user_id = eu` e nada mais, e por isso a tela
+      // de Despesas nao listava NADA da conta de grupo que outro membro lancou --
+      // enquanto o painel do modo Papel de Pao (que nao filtra por `user_id`)
+      // somava a minha parte dela. Duas telas do mesmo modulo, dois numeros, e
+      // nada na tela dizendo por que. A diferenca sempre foi este filtro, e nao
+      // uma regra de produto.
+      //
+      // ELE NAO ALARGA O QUE A PESSOA PODE VER: a policy `scheduled_transactions_select`
+      // (005:310) libera `user_id = auth.uid() OR (group_id IS NOT NULL AND
+      // is_group_member(group_id))`. O `OR` daqui pede exatamente o segundo ramo,
+      // e a RLS continua sendo quem recusa grupo de que eu nao sou membro -- e o
+      // MESMO mecanismo pelo qual o painel ja ve essas linhas.
+      //
+      // A LINHA DO OUTRO MEMBRO NAO GANHA BOTAO: `posso_editar` e
+      // `ehMinha(crua.user_id, meuUserId)` desde a HMO-301, e `UPDATE` recusado
+      // pela RLS volta 200 SEM ALTERAR NADA -- o app diria "pronto" e a linha
+      // ficaria.
+      .or(`user_id.eq.${user.id},group_id.not.is.null`)
       .gte("due_date", periodo.de)
       .lte("due_date", periodo.ate)
       .order("due_date", { ascending: false });
@@ -276,6 +307,54 @@ export async function GET(request: NextRequest) {
     // JOIN -- a previsao SEM conta escolhida, que e o caso mais comum, sairia
     // da resposta junto. Ver HMO-209.
     const agenda = agendaSemCompraNoCartao(agendaCrua ?? []);
+
+    // ----------------------------------------------------------------
+    // 3a. A MINHA PARTE DAS LINHAS DE GRUPO -- HMO-303
+    // ----------------------------------------------------------------
+    // A pergunta "qual e a minha parte desta despesa de grupo?" tem UMA resposta
+    // certa, e e a que o fechamento do grupo vai cobrar. Esta tela passa a dar a
+    // mesma resposta que o painel do modo Papel de Pao e que `ratearPorPeso` --
+    // nao porque tres lugares calculam igual, mas porque e a mesma funcao.
+    //
+    // `id, user_id, percentage` SAO LOAD-BEARING -- ver o comentario identico em
+    // app/api/papel-de-pao/painel/route.ts. E `ORDER BY` nao aparece aqui de
+    // proposito: quem fixa a ordem (que vale um centavo) e
+    // `montarParticipantesPorGrupo`, uma vez, e nao cinco consultas.
+    const gruposEnvolvidos = Array.from(
+      new Set(
+        (agenda as { group_id?: string | null }[])
+          .map((l) => l.group_id)
+          .filter((id): id is string => Boolean(id))
+      )
+    );
+
+    let pesosPorGrupo: ParticipantesPorGrupo = new Map();
+
+    if (gruposEnvolvidos.length > 0) {
+      const { data: membros, error: erroMembros } = await supabase
+        .from("group_members")
+        .select("id, group_id, user_id, percentage, status")
+        .in("group_id", gruposEnvolvidos)
+        .eq("status", "active");
+
+      if (erroMembros) {
+        // Sem os pesos, `parteConfiguradaDoMembro` mantem o valor CHEIO. Erra
+        // para cima, que e o comportamento desta tela antes da HMO-303, em vez de
+        // subestimar a conta a pagar.
+        console.error(
+          "A tela de movimentação seguiu sem dividir a parte do grupo:",
+          erroMembros
+        );
+      } else {
+        pesosPorGrupo = montarParticipantesPorGrupo(membros ?? []);
+      }
+    }
+
+    const agendaComAMinhaParte = previstasComAMinhaParte(
+      agenda as (PrevistaCrua & { group_id?: string | null })[],
+      pesosPorGrupo,
+      user.id
+    );
 
     // A fatura aberta do cartao, so na tela de Despesas: ela e `direction:
     // "expense"` por construcao, e chamar a leitura nas outras duas gastaria
@@ -345,7 +424,10 @@ export async function GET(request: NextRequest) {
     // 4. Os tres numeros e a lista
     // ----------------------------------------------------------------
     const previstas: PrevistaCrua[] = [
-      ...(agenda as PrevistaCrua[]),
+      ...(agendaComAMinhaParte as PrevistaCrua[]),
+      // A fatura sintetizada NAO passa por `previstasComAMinhaParte`: ela nasce
+      // com `group_id` ausente (fatura de cartao nao e de grupo) e a funcao a
+      // devolveria intacta. Deixa-la fora do `map` diz isso no codigo.
       ...(fatura.previstas as PrevistaCrua[]),
     ];
 

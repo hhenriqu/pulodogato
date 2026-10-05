@@ -41,9 +41,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { materializarAgenda } from "@/lib/services/scheduled";
 import { addMonthsClamped, today } from "@/lib/recurrence";
 import {
-  contarMembrosAtivos,
   custoFixoMensalDaMinhaParte,
-  parteDoMembro,
+  montarParticipantesPorGrupo,
+  parteConfiguradaDoMembro,
+  type ParticipantesPorGrupo,
 } from "@/lib/parte-do-grupo";
 import { janelaParaMaterializar, periodoDaQuery } from "@/lib/periodo-do-painel";
 import {
@@ -229,31 +230,35 @@ export async function GET(request: NextRequest) {
       )
     );
 
-    let membrosAtivosPorGrupo: Map<string, number> = new Map();
+    let pesosPorGrupo: ParticipantesPorGrupo = new Map();
 
     if (gruposEnvolvidos.length > 0) {
+      // `id, user_id, percentage` SAO LOAD-BEARING -- ver o comentario identico em
+      // app/api/papel-de-pao/painel/route.ts. Sem `percentage` o grupo 70/30
+      // volta a dividir igual, sem erro e sem log.
       const { data: membros, error: erroMembros } = await supabase
         .from("group_members")
-        .select("group_id, status")
+        .select("id, group_id, user_id, percentage, status")
         .in("group_id", gruposEnvolvidos)
         .eq("status", "active");
 
       if (erroMembros) {
-        // Sem a contagem, `parteDoMembro` mantem o valor CHEIO. Erra para cima,
-        // que e o comportamento antigo, em vez de subestimar o custo fixo e
-        // fazer o safe-to-spend prometer dinheiro que nao sobra.
+        // Sem os pesos, `parteConfiguradaDoMembro` mantem o valor CHEIO. Erra
+        // para cima, que e o comportamento antigo, em vez de subestimar o custo
+        // fixo e fazer o safe-to-spend prometer dinheiro que nao sobra.
         console.error(
           "Resumo seguiu sem dividir a parte do grupo:",
           erroMembros
         );
       } else {
-        membrosAtivosPorGrupo = contarMembrosAtivos(membros ?? []);
+        pesosPorGrupo = montarParticipantesPorGrupo(membros ?? []);
       }
     }
 
     const custoFixoMensal = custoFixoMensalDaMinhaParte(
       (regras ?? []) as RecurringRule[],
-      membrosAtivosPorGrupo,
+      pesosPorGrupo,
+      user.id,
       hoje
     );
 
@@ -274,10 +279,11 @@ export async function GET(request: NextRequest) {
       // fixo: a policy do 005 devolve tambem as previstas de grupo dos OUTROS
       // membros, entao sem esta divisao a Lais via uma conta de R$ 3.000 no nome
       // do Helio somada ao "quanto ainda vai sair" dela.
-      const valor = parteDoMembro(
+      const valor = parteConfiguradaDoMembro(
         linha.amount,
         (linha as { group_id?: string | null }).group_id,
-        membrosAtivosPorGrupo
+        pesosPorGrupo,
+        user.id
       );
 
       const direcao = direcaoDaAgenda(

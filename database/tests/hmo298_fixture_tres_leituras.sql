@@ -23,6 +23,8 @@
 --   (d) as duas telas discordam  -> uma conta de grupo do OUTRO membro e uma
 --                                   MINHA, as duas com group_id
 --   (6) controle da HMO-286      -> uma receita prevista FORA de 'Salário'
+--   (7) custo fixo de grupo      -> uma REGRA RECORRENTE de grupo (HMO-303), o
+--                                   unico caminho que nao passa por ocorrencia
 --
 -- A DATA E EXPLICITA, E ISSO NAO E ESTILO
 -- ---------------------------------------
@@ -178,6 +180,35 @@ VALUES
   ('5c000000-0000-0000-0000-0000000000a2', 'e0000000-0000-0000-0000-0000000000e1',
    'bdb788d6-f1fa-48d0-94ee-b97beca29064', 'c0000000-0000-0000-0000-0000000000c1',
    'Aluguel recebido', 1200.00, '2026-03-20', 'pending', 'income');
+
+-- =====================================================
+-- A REGRA RECORRENTE DE GRUPO -- HMO-303
+-- =====================================================
+-- Ela nao gera linha nenhuma na agenda deste fixture, e por isso NAO mexe em
+-- nenhum numero da tabela da medicao. Ela existe para acender a UNICA leitura
+-- que nao passa por ocorrencia: `custoFixoMensalDaMinhaParte` roda sobre
+-- `recurring_rules`, e sem uma regra de grupo aqui a mudanca do `summary` na
+-- HMO-303 passaria sem medicao nenhuma -- a tabela ficaria verde sobre um
+-- caminho de codigo que o fixture nao exercita.
+--
+-- O DONO E O OUTRO MEMBRO, E ISSO E O PONTO. A consulta de
+-- /api/scheduled-transactions/summary nao filtra por `user_id` (so a RLS
+-- filtra), e a policy do 005 me entrega a regra de grupo dele. Sem dividir, EU
+-- via R$ 600,00 de custo fixo mensal saido de uma regra que nao e minha
+-- (HMO-177); com a divisao IGUAL eu via R$ 300,00; com o percentual configurado
+-- eu vejo R$ 180,00 -- 30% de R$ 600,00, que e o que o grupo cobra.
+--
+-- `frequency` fica no default ('monthly') de proposito: `monthlyCost` nao
+-- normaliza nada no caso mensal, entao o numero medido e o da DIVISAO e nao o da
+-- normalizacao. Uma regra anual aqui misturaria os dois mecanismos num numero so.
+INSERT INTO public.recurring_rules
+  (id, user_id, group_id, category_id, description, amount, transaction_type,
+   due_day, start_date)
+VALUES
+  ('7e000000-0000-0000-0000-00000000f1ca', 'b0000000-0000-0000-0000-0000000000b1',
+   'a0000000-0000-0000-0000-00000000ca5a',
+   'b61d7949-2abc-430d-9bd0-02a146c1d9d8', 'Condominio da casa', 600.00,
+   'expense', 15, '2026-01-15');
 
 -- =====================================================
 -- (b), a outra metade: as COMPRAS REAIS no cartao

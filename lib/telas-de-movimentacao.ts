@@ -308,6 +308,26 @@ export interface LinhaDaTela {
    */
   posso_editar: boolean;
   /**
+   * A linha e a MINHA PARTE de uma despesa de grupo -- HMO-303.
+   *
+   * O MESMO campo, com o MESMO nome, de `LinhaDoDetalhe.de_grupo`
+   * (lib/papel-de-pao.ts, HMO-300). Os dois modos leem listas diferentes e
+   * precisam do mesmo rotulo.
+   *
+   * ELE NAO E ENFEITE. Desde a HMO-303 esta lista inclui conta de grupo que
+   * OUTRO membro lancou (o `OR` na consulta da rota), e `valor` e a minha fracao
+   * dela -- nao o valor cheio. Uma conta de R$ 900,00 que a pessoa nunca
+   * cadastrou, com um valor que nao bate com nada que ela digitou, e
+   * indistinguivel de um bug. O painel do modo ja diz "minha parte do grupo"
+   * (`ROTULO_DE_GRUPO`); esta tela precisava do equivalente.
+   *
+   * FALHA FECHADO: sem `group_id` no `select` da rota ele e `false` em toda
+   * linha -- a lista perde o rotulo, e nao ganha um errado. O mesmo `select` e o
+   * que alimenta a DIVISAO, entao a perda do rotulo nunca acontece sozinha: ela
+   * vem junto com o valor cheio, que e o estado de antes desta issue.
+   */
+  de_grupo: boolean;
+  /**
    * O cartao e o mes desta linha, so quando ela e fatura. `null` nas outras.
    *
    * UM OBJETO, E NAO DOIS CAMPOS SOLTOS: `accountId` sem `mes` monta um link
@@ -401,6 +421,23 @@ export interface PrevistaCrua {
    * regra nenhuma -- e calculada de `card_invoice_lines` a cada leitura.
    */
   recurring_rule_id?: string | null;
+  /**
+   * O grupo da despesa, quando ela e de grupo -- HMO-303.
+   *
+   * De onde sai `LinhaDaTela.de_grupo`, o ROTULO. O `amount` que chega aqui JA e
+   * a minha parte: quem divide e `previstasComAMinhaParte`
+   * (lib/parte-do-grupo.ts), na rota, antes de `linhasDaTela`.
+   *
+   * POR QUE A DIVISAO NAO MORA NESTE ARQUIVO: importar `parte-do-grupo` aqui
+   * traria `fechamento-do-grupo` + `recurrence` para dentro do grafo que o
+   * tsconfig desta suite compila -- e seis outras suites o incluem. A divisao e
+   * uma funcao pura com teste proprio do outro lado da fronteira; o que atravessa
+   * e um numero.
+   *
+   * `undefined` na fatura sintetizada, e esta certo: fatura de cartao nao e de
+   * grupo.
+   */
+  group_id?: string | null;
 }
 
 /**
@@ -627,6 +664,13 @@ export function linhaRealizada(
     conta: destino.faltaConta ? null : destino.texto,
     moeda: moedaDaLinha(crua.currency),
     natureza: idsDeFixa.has(crua.id) ? "fixa" : "despesa",
+    // SEMPRE `false` NO REALIZADO, e nao e esquecimento: a minha parte de uma
+    // despesa de grupo que outra pessoa PAGOU nao esta em
+    // `financial_transactions` -- ela vive em `group_share_entries` (033), que
+    // esta tela nao le de proposito (ver o cabecalho da rota). Marcar a linha
+    // realizada como "de grupo" com base em `group_id` prometeria uma fracao onde
+    // o valor e o que saiu CHEIO da minha conta.
+    de_grupo: false,
     fatura: null,
   };
 }
@@ -744,6 +788,10 @@ export function linhaPrevista(
       : texto(crua.recurring_rule_id)
         ? "fixa"
         : "despesa",
+    // `!= null` e nao `texto(...) !== null`: `group_id` e uuid ou nulo, e o que
+    // interessa aqui e a PRESENCA do elo, nao o conteudo dele. Ver `de_grupo` em
+    // `LinhaDaTela` -- e o mesmo criterio de `LinhaDoDetalhe.de_grupo`.
+    de_grupo: crua.group_id != null,
     // `texto()` e nao um `!!`: `recurring_rule_id: ""` -- que o PostgREST pode
     // devolver se a coluna virar texto, e que um mock de teste produz sem
     // esforco -- nao e um elo para regra nenhuma.

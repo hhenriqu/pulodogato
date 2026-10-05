@@ -41,7 +41,8 @@
 //      direcao propria e ela tem precedencia; refazer o COALESCE aqui e
 //      exatamente a copia esquecida que a 027 existe para evitar.
 //
-//   3. A LINHA DE GRUPO ENTRA PELA MINHA PARTE (`parteDoMembro`). As policies
+//   3. A LINHA DE GRUPO ENTRA PELA MINHA PARTE (`parteConfiguradaDoMembro`,
+//      que honra `group_members.percentage` desde a HMO-303). As policies
 //      do 005 liberam as previstas de grupo dos OUTROS membros, e sem a divisao
 //      o aluguel de R$ 3.000 do grupo Casa entraria inteiro na previsao das duas
 //      pessoas -- e discordaria do "A vencer" do mesmo painel, que ja divide.
@@ -109,7 +110,11 @@ import {
 import { diasEntre, normalizeMerchant } from "@/lib/recurrence-detector";
 import { agendaSemCompraNoCartao } from "@/lib/agenda-do-cartao";
 import { faturasPrevistasDaJanela } from "@/lib/services/fatura-prevista";
-import { contarMembrosAtivos, parteDoMembro } from "@/lib/parte-do-grupo";
+import {
+  montarParticipantesPorGrupo,
+  parteConfiguradaDoMembro,
+  type ParticipantesPorGrupo,
+} from "@/lib/parte-do-grupo";
 import {
   COLUNAS_DA_TRANSACAO,
   MAX_TRANSACOES,
@@ -252,21 +257,23 @@ export async function GET(request: NextRequest) {
       new Set(linhas.map((l) => l.group_id).filter((id): id is string => Boolean(id)))
     );
 
-    let membrosAtivosPorGrupo = new Map<string, number>();
+    let pesosPorGrupo: ParticipantesPorGrupo = new Map();
 
     if (gruposEnvolvidos.length > 0) {
+      // `id, user_id, percentage` SAO LOAD-BEARING -- ver o comentario identico em
+      // app/api/papel-de-pao/painel/route.ts.
       const { data: membros, error: erroMembros } = await supabase
         .from("group_members")
-        .select("group_id, status")
+        .select("id, group_id, user_id, percentage, status")
         .in("group_id", gruposEnvolvidos)
         .eq("status", "active");
 
       if (erroMembros) {
-        // Sem a contagem, `parteDoMembro` mantem o valor CHEIO. Erra para cima,
-        // que e o lado que nao promete dinheiro que nao sobra.
+        // Sem os pesos, `parteConfiguradaDoMembro` mantem o valor CHEIO. Erra
+        // para cima, que e o lado que nao promete dinheiro que nao sobra.
         console.error("Previsao seguiu sem dividir a parte do grupo:", erroMembros);
       } else {
-        membrosAtivosPorGrupo = contarMembrosAtivos(membros ?? []);
+        pesosPorGrupo = montarParticipantesPorGrupo(membros ?? []);
       }
     }
 
@@ -279,7 +286,12 @@ export async function GET(request: NextRequest) {
       paraCalculo.push({
         id: p.id,
         description: p.description,
-        amount: parteDoMembro(p.amount, p.group_id, membrosAtivosPorGrupo),
+        amount: parteConfiguradaDoMembro(
+          p.amount,
+          p.group_id,
+          pesosPorGrupo,
+          user.id
+        ),
         due_date: p.due_date,
         tipo: lado,
       });
@@ -317,7 +329,7 @@ export async function GET(request: NextRequest) {
         // nao colide com o uuid de nenhuma linha gravada.
         id: f.notes,
         description: f.description,
-        // Sem `parteDoMembro`: fatura de cartao nao e de grupo (`group_id: null`
+        // Sem `parteConfiguradaDoMembro`: fatura de cartao nao e de grupo (`group_id: null`
         // em `FaturaPrevista`). O rateio e das COMPRAS, uma a uma.
         amount: f.amount,
         due_date: f.due_date,

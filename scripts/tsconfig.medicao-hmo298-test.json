@@ -39,6 +39,7 @@
     "../lib/papel-de-pao.ts",
     "../lib/telas-de-movimentacao.ts",
     "../lib/fechamento-do-grupo.ts",
+    "../lib/parte-do-grupo.ts",
     "../lib/agenda-do-cartao.ts",
     "../types/financial.ts"
   ]

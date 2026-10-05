@@ -58,6 +58,15 @@
 export type DirecaoPrevista = "income" | "expense";
 
 /**
+ * A ESPECIE da linha da agenda, com `transfer` visivel -- HMO-303.
+ *
+ * `DirecaoPrevista` e o recorte de CAIXA (duas respostas, transferencia dentro
+ * da despesa). Esta e o recorte de CONTA A PAGAR (tres respostas). Ver
+ * `classeDaAgenda` para o argumento inteiro.
+ */
+export type ClasseDaAgenda = "income" | "expense" | "transfer";
+
+/**
  * Como a tela fala de uma linha da agenda, dada a direcao dela (HMO-188).
  *
  * "Marcar como paga" numa receita prevista foi o defeito que a HMO-188 nomeia:
@@ -125,6 +134,12 @@ export function copiaDaPrevisao(direction?: string | null): CopiaDaPrevisao {
  *     contas proprias nao gasta nada. Tira-la daqui reduziria o numero que o
  *     bloco existe para dizer.
  *
+ *     E ha uma TERCEIRA leitura desde a HMO-303 -- `classeDaAgenda`, logo
+ *     abaixo --, que e a de CONTA A PAGAR. O «Total de contas» do modo Papel de
+ *     Pao usa ela e por isso NAO soma a transferencia, enquanto o «A vencer»
+ *     continua somando. Os dois numeros discordam de proposito, e cada tela diz
+ *     que discorda.
+ *
  * Ou seja, so `income` sai do lado de "a pagar". Direcao desconhecida cai em
  * despesa -- o default historico de /api/projection e do lib/safe-to-spend.ts,
  * e o lado seguro: ler uma despesa como receita mostraria "vou receber" sobre
@@ -138,7 +153,49 @@ export function copiaDaPrevisao(direction?: string | null): CopiaDaPrevisao {
 export function direcaoDaAgenda(
   direction?: string | null
 ): DirecaoPrevista {
-  return direction === "income" ? "income" : "expense";
+  // DELEGA, e isso e o conserto da HMO-303. Ver `classeDaAgenda`: a precedencia
+  // passa a ter UMA copia, e quem a cobra e o `tsc` e o mutante -- nao a
+  // inspecao visual de quem revisa dois `if` iguais em arquivos diferentes.
+  return classeDaAgenda(direction) === "income" ? "income" : "expense";
+}
+
+/**
+ * As TRES classes de uma linha da agenda -- HMO-303.
+ *
+ * `direcaoDaAgenda` responde a pergunta de CAIXA e por isso tem duas respostas:
+ * transferencia e saida da conta corrente, ponto. Esta funcao responde outra
+ * pergunta -- "que ESPECIE de linha e esta?" -- e por isso tem tres, com
+ * `transfer` visivel.
+ *
+ * POR QUE DUAS FUNCOES E NAO UMA, E POR QUE UMA DELEGA PARA A OUTRA
+ * -----------------------------------------------------------------
+ * Quem precisa do caixa (o bloco «A vencer», a tela de Contas) continua lendo
+ * `direcaoDaAgenda`: tirar a transferencia dali reduziria o numero que o bloco
+ * existe para dizer, e o comentario dela argumenta esse caso -- o argumento
+ * segue valendo.
+ *
+ * Quem precisa saber se a linha e uma CONTA A PAGAR le esta. Guardar R$ 500 na
+ * poupanca nao e conta a pagar, e era por isso que o «Total de contas» do modo
+ * Papel de Pao somava a transferencia como se fosse boleto (medido em R$ 500,00
+ * no fixture da HMO-298).
+ *
+ * A delegacao e o ponto da issue: com ela a precedencia ("so `income` sai do
+ * lado de pagar", desconhecido cai em despesa) existe em UM lugar. Duas copias
+ * discordariam na primeira mudanca, e a copia esquecida e exatamente o defeito
+ * da HMO-187. O preco esta declarado: o painel do modo e o «A vencer» passam a
+ * discordar em R$ 500,00 no fixture, DE PROPOSITO, com rotulo nos dois lados --
+ * ver `transferencias_fora` em lib/papel-de-pao.ts.
+ *
+ * DESCONHECIDO CAI EM `expense`, e nao em `transfer`. E a mesma direcao segura
+ * de `direcaoDaAgenda`, e ela importa mais aqui: uma direcao nova no ENUM lida
+ * como `transfer` sairia do «Total de contas» EM SILENCIO -- uma conta a pagar
+ * que desaparece da tela. Lida como despesa ela aparece, e aparecer no lugar
+ * certo com o rotulo errado e barato ao lado de nao aparecer.
+ */
+export function classeDaAgenda(direction?: string | null): ClasseDaAgenda {
+  if (direction === "income") return "income";
+  if (direction === "transfer") return "transfer";
+  return "expense";
 }
 
 /**

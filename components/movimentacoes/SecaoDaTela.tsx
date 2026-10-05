@@ -365,6 +365,21 @@ function LinhaDaSecao({
             frase que Contas a Pagar usa (bills/page.tsx), pelo mesmo motivo.
           */}
           {!linha.gravada && <span>· ainda em aberto</span>}
+          {/*
+            O ROTULO QUE IMPEDE O VALOR PELA METADE DE PARECER ERRO -- HMO-303.
+
+            Desde esta issue a tela de Despesas lista a conta de grupo que OUTRO
+            membro lancou (a RLS do 005 ja a liberava; o que faltava era o filtro
+            da consulta), e `valor` e a MINHA fracao dela -- R$ 900,00 de um
+            aluguel de R$ 3.000. Sem este rotulo a pessoa ve uma conta que nunca
+            cadastrou, com um valor que nao bate com nada, e isso e
+            indistinguivel de um bug.
+
+            A frase e a MESMA do painel do modo (`ROTULO_DE_GRUPO` em
+            PainelDePapel.tsx): as duas listas respondem a mesma pergunta, e dois
+            textos para ela divergiriam na primeira revisao de copy.
+          */}
+          {linha.de_grupo && <span>· minha parte do grupo</span>}
         </p>
       </div>
       <p className="shrink-0 font-semibold">{moeda(linha.valor)}</p>
