@@ -161,10 +161,18 @@ interface PossoGastar {
   compromissos: number;
   compromissosVencidos: number;
   dividaDeCartao: number;
+  /**
+   * O que os cartoes so cobram DEPOIS do fim do mes (HMO-290).
+   *
+   * Nao entra no `livre` -- esta aqui para ficar ao lado dele. Ver a armadilha
+   * 10 em lib/safe-to-spend.ts: trocar a regua sem mostrar o resto transforma
+   * um numero conservador num numero otimista sem a pessoa saber.
+   */
+  dividaDiferida: number;
   reservaDeMetas: number;
   livre: number;
   porDia: number;
-  cartoes: { id: string; name: string; divida: number }[];
+  cartoes: { id: string; name: string; divida: number; diferida: number }[];
   metas: {
     id: string;
     title: string;
@@ -292,6 +300,11 @@ function Painel() {
   // escreve "indisponivel" em vez de R$ 0,00: zero seria uma afirmacao sobre o
   // dinheiro do usuario que ninguem conferiu.
   const [reservaIndisponivel, setReservaIndisponivel] = useState(false);
+  // A rota nao conseguiu ler as faturas, e portanto voltou a descontar a divida
+  // INTEIRA dos cartoes (HMO-290). O numero fica conservador, mas `dividaDiferida`
+  // vem 0 -- e "R$ 0,00 em parcelas futuras" ao lado de um desconto que
+  // justamente tira as parcelas futuras sao duas afirmacoes que se contradizem.
+  const [diferidoIndisponivel, setDiferidoIndisponivel] = useState(false);
   // A ordem e a visibilidade dos blocos, escolhidas em /dashboard/settings.
   // Comeca no padrao -- TUDO visivel -- e so muda se a rota responder. Um
   // erro de rede aqui nao pode esconder bloco nenhum: a tela inicial mostrando
@@ -457,6 +470,7 @@ function Painel() {
         const d = await rPossoGastar.json();
         setPossoGastar(d.safe_to_spend ?? null);
         setReservaIndisponivel(Boolean(d.reserva_indisponivel));
+        setDiferidoIndisponivel(Boolean(d.diferido_indisponivel));
       } else if (!periodoTemHoje) {
         // Limpar e obrigatorio, nao higiene. Sem isto, quem navega de setembro
         // para julho continua vendo o cartao "quanto ainda posso gastar" com o
@@ -855,8 +869,24 @@ function Painel() {
               <p className="font-semibold text-destructive">
                 − {moeda(possoGastar.dividaDeCartao)}
               </p>
+              {/* A REGUA MUDOU NA HMO-290, e esta linha e o que diz isso.
+                  O desconto era a divida INTEIRA do cartao; agora e so o que
+                  vence ate o fim do mes. Sem o que sobrou escrito aqui, uma
+                  compra de R$ 3.000 em 10x derruba o desconto de R$ 3.000 para
+                  R$ 300 e a tela nao da nenhuma pista de que os R$ 2.700
+                  continuam existindo -- um numero otimista com cara do mesmo
+                  numero conservador de antes.
+
+                  "Não foi possível separar" quando a leitura das faturas
+                  falhou: ali o desconto voltou a ser a divida inteira, e dizer
+                  "nada depois deste mês" seria afirmar o contrario do que
+                  aconteceu. */}
               <p className="text-xs text-muted-foreground mt-1">
-                Fatura e período aberto
+                {diferidoIndisponivel
+                  ? "Dívida inteira: não foi possível separar as faturas"
+                  : possoGastar.dividaDiferida > 0
+                    ? `Vence até ${possoGastar.ate.slice(8, 10)}/${possoGastar.ate.slice(5, 7)} · ${moeda(possoGastar.dividaDiferida)} depois`
+                    : "Fatura e período aberto"}
               </p>
             </div>
             {/* A quinta parcela. Aparece SEMPRE, inclusive zerada: um tile

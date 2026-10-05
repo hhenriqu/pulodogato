@@ -23,6 +23,7 @@ import { materializarAgenda } from "@/lib/services/scheduled";
 import {
   calcularQuantoPossoGastar,
   fimDoMes,
+  type FaturaParaGastar,
   type PrevistaParaGastar,
   type MetaParaGastar,
 } from "@/lib/safe-to-spend";
@@ -36,6 +37,14 @@ interface LinhaPrevista {
     | { transaction_type: string }
     | { transaction_type: string }[]
     | null;
+}
+
+/** Uma linha de `card_invoice_lines`, do jeito que o select acima a pede. */
+interface LinhaDeFatura {
+  account_id: string;
+  invoice_month: string;
+  invoice_due_date: string | null;
+  invoice_amount: number | string | null;
 }
 
 interface LinhaMeta {
@@ -202,6 +211,76 @@ export async function GET() {
 
     const semReserva = metasIndisponiveis || aportesIndisponiveis;
 
+    // ------------------------------------------------------------------
+    // AS FATURAS, PARA SEPARAR O QUE ESTE MES COBRA (HMO-290)
+    // ------------------------------------------------------------------
+    // A armadilha 10 do calculo. O que ele precisa daqui e so a parte DIFERIDA
+    // da divida: quanto de cada cartao vence depois do fim do mes.
+    //
+    // `invoice_month >= o mes corrente` basta, e nao e chute: o vencimento de
+    // uma fatura e, no maximo, no mes seguinte ao dela
+    // (`card_invoice_due_date` empurra um mes quando o vencimento vem antes do
+    // fechamento), entao fatura de mes passado nunca vence depois do fim deste
+    // mes. Sem esse teto a consulta traria a vida inteira do cartao.
+    //
+    // O recorte e `account_id IN (os cartoes do usuario)`, e NAO
+    // `user_id = user.id`: `current_balance` e mantido pelo trigger
+    // `update_account_balance`, que soma por CONTA e ignora quem lancou. A
+    // divida de onde se subtrai inclui a compra de grupo que outra pessoa
+    // lancou no meu cartao, e filtrar por `user_id` deixaria a parte diferida
+    // dela de fora -- o mesmo recorte dos dois lados, ou a subtracao nao fecha.
+    const idsDosCartoes = (contas ?? [])
+      .filter((c) => c.account_type === "credit_card")
+      .map((c) => c.id);
+
+    const { data: linhasDeFatura, error: erroFaturas } = idsDosCartoes.length
+      ? await supabase
+          .from("card_invoice_lines")
+          .select("account_id, invoice_month, invoice_due_date, invoice_amount")
+          .in("account_id", idsDosCartoes)
+          .gte("invoice_month", inicioDoMes)
+      : { data: [], error: null };
+
+    // Falhar aqui NAO derruba o card, pelo mesmo critério das metas -- mas o
+    // efeito e o oposto, e vale ser explicito: sem as faturas, `faturas: []`
+    // faz `diferida` ser 0 e a divida INTEIRA voltar a ser descontada, que e o
+    // comportamento de antes da HMO-290 e o lado conservador do erro.
+    //
+    // O que nao se pode fazer e calar: a tela mostraria "R$ 0,00 em parcelas
+    // futuras" ao lado de um numero que desconta justamente as parcelas
+    // futuras -- duas afirmacoes que se contradizem, e a errada e a que parece
+    // tranquilizadora. A flag existe para a tela dizer que nao deu para
+    // separar.
+    const semDiferido = Boolean(erroFaturas);
+    if (erroFaturas) {
+      console.error(
+        "Posso gastar seguiu descontando a divida INTEIRA dos cartoes:",
+        erroFaturas
+      );
+    }
+
+    // Agrega por (cartao, mes da fatura) -- a mesma agregacao que
+    // `GET /api/card-invoices` faz, e pela mesma razao: em que fatura a compra
+    // cai e decidido pela view, nunca recalculado aqui.
+    const porFatura = new Map<string, FaturaParaGastar>();
+
+    for (const linha of (linhasDeFatura ?? []) as LinhaDeFatura[]) {
+      const chave = `${linha.account_id}:${linha.invoice_month}`;
+      const atual = porFatura.get(chave);
+
+      if (atual) {
+        atual.total = Number(atual.total) + Number(linha.invoice_amount ?? 0);
+        continue;
+      }
+
+      porFatura.set(chave, {
+        account_id: linha.account_id,
+        invoice_month: linha.invoice_month,
+        due_date: linha.invoice_due_date ?? null,
+        total: Number(linha.invoice_amount ?? 0),
+      });
+    }
+
     const metas: MetaParaGastar[] = (
       semReserva ? [] : ((metasBrutas ?? []) as LinhaMeta[])
     ).map(
@@ -223,10 +302,15 @@ export async function GET() {
       // "R$ 0,00" -- zero seria uma afirmacao sobre o dinheiro do usuario que
       // a rota nao tem como sustentar.
       reserva_indisponivel: semReserva,
+      // Idem para a parte diferida da divida de cartao (HMO-290): sem as
+      // faturas, `dividaDiferida` vem 0 porque a divida inteira voltou a ser
+      // descontada -- e nao porque nao ha parcela futura.
+      diferido_indisponivel: semDiferido,
       safe_to_spend: calcularQuantoPossoGastar({
         contas: contas ?? [],
         previstas: paraCalculo,
         metas,
+        faturas: Array.from(porFatura.values()),
         hoje,
       }),
     });
