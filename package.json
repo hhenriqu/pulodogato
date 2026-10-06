@@ -145,6 +145,7 @@
     "test:contrato-do-periodo-do-grupo": "node --test scripts/test-contrato-do-periodo-do-grupo.mjs",
     "mutantes:retorno-lancamento": "node scripts/mutantes-retorno-do-lancamento.mjs",
     "mutantes:fatura-do-periodo": "node scripts/mutantes-fatura-do-periodo.mjs",
+    "mutantes:trava-de-membro": "node scripts/mutantes-trava-de-membro.mjs",
     "check-fatura-escolhida": "node scripts/check-fatura-escolhida.mjs",
     "test:modo-papel": "rm -rf .tmp-modo-papel && tsc -p scripts/tsconfig.modo-papel-test.json && node scripts/resolve-aliases.mjs .tmp-modo-papel lib --espelha-raiz && node --test scripts/test-modo-papel.mjs",
     "test:papel-na-tela": "rm -rf .tmp-papel-na-tela && tsc -p scripts/tsconfig.papel-na-tela-test.json && node --test scripts/test-papel-na-tela.mjs",
