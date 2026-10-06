@@ -383,3 +383,9 @@ next-env.d.ts
 # dez modulos que a sonda de Chromium concatena na pagina, compilados. Mesmo
 # motivo das entradas acima para estar aqui.
 /.tmp-lista-na-tela/
+
+# JS compilado de lib/pagamento-da-fatura.ts (HMO-312) para `node --test` rodar
+# a decisao de pagar a fatura contra o modulo de PRODUCAO, e nao uma copia.
+# Artefato, nao fonte. Um `.tmp-*` fora do .gitignore chega a ser commitado em
+# cima de arquivo de fonte -- ver a entrada do .tmp-parcelamento acima.
+/.tmp-pagamento-da-fatura/

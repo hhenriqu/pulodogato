@@ -1,0 +1,44 @@
+{
+  "//": [
+    "PAGAR A FATURA DO CARTAO: A DECISAO E OS DOIS PEDIDOS (HMO-312).",
+    "",
+    "Compila lib/pagamento-da-fatura.ts para o `node --test` chamar as funcoes",
+    "de PRODUCAO, e nao copias delas. `rootDir: ../lib` (e nao a raiz) porque",
+    "este modulo nao importa nada de fora de lib/ -- um import para fora faria o",
+    "tsc parar com TS6059, e e por isso que o mapeamento de Contas a Pagar e",
+    "tipado por uma forma ESTRUTURAL em vez de por `@/types/financial`.",
+    "",
+    "O `include` lista as duas pontas de runtime: `lib/agenda-do-cartao.ts`",
+    "(`ehFaturaPrevista` e `TIPO_CARTAO`) e `lib/card-invoice.ts`",
+    "(`chaveFatura` e `faturaDaChave`, re-exportados de lib/chave-da-fatura.ts).",
+    "O tsc segue sozinho o que elas puxam (chave-da-fatura, transferencia,",
+    "lancamento) e emite tudo junto.",
+    "",
+    "A chave canonica tem UM leitor neste projeto, e uma segunda copia do regex",
+    "seria exatamente como os dois lados se separariam: e por isso que o teste",
+    "compila o modulo de verdade em vez de reimplementar `ehFatura`.",
+    "",
+    "O resolve-aliases roda depois porque os imports sao pelo alias `@/`, e o",
+    "tsc NAO reescreve especificador no emit.",
+    "",
+    "Comentario SO nesta chave, nunca com // no meio do objeto: o tsc aceita",
+    "JSONC, mas o check-tests-in-ci.mjs le este arquivo com JSON.parse."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-pagamento-da-fatura",
+    "rootDir": "../lib",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../lib/pagamento-da-fatura.ts",
+    "../lib/agenda-do-cartao.ts",
+    "../lib/card-invoice.ts"
+  ]
+}

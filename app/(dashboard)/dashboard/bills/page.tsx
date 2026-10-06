@@ -88,6 +88,15 @@ import {
   type FaturaPrevista,
   type FaturaSemVencimento,
 } from "@/lib/agenda-do-cartao";
+import { DialogoDePagamentoDaFatura } from "@/components/fatura/DialogoDePagamentoDaFatura";
+import {
+  ERRO_DA_BAIXA,
+  ERRO_DE_REDE_NA_BAIXA,
+  FRASE_DO_PATRIMONIO_DEPOIS,
+  contasQuePodemPagar,
+  faturaPagavelDaAgenda,
+  type FaturaPagavel,
+} from "@/lib/pagamento-da-fatura";
 import { copiaDaPrevisao, direcaoDaAgenda } from "@/lib/previsto-x-realizado";
 import {
   buscarLeitura,
@@ -207,9 +216,17 @@ export default function BillsPage() {
   // Fatura aguardando a escolha da conta pagadora (HMO-149). Pode ser a fatura
   // fechada (linha real) ou a fatura aberta sintetizada (HMO-227) -- nesta, o
   // "Confirmar pagamento" materializa antes de dar baixa.
-  const [faturaParaPagar, setFaturaParaPagar] =
-    useState<LinhaDaAgendaOuFatura | null>(null);
-  const [contaPagadora, setContaPagadora] = useState("");
+  //
+  // O DESCRITOR NEUTRO E NAO A LINHA DA AGENDA (HMO-312): o dialogo serve as
+  // duas telas, e elas nao tem a mesma forma de linha. Quem guarda `FaturaPagavel`
+  // aqui e o que impede a conversao de acontecer dentro do JSX -- e e na conversao
+  // que `gravada` vira `natureza` por descuido, fechando a fatura do cartao quando
+  // a pessoa pagou a previsao da conta corrente.
+  const [faturaParaPagar, setFaturaParaPagar] = useState<FaturaPagavel | null>(
+    null
+  );
+  // `contaPagadora` nao mora mais aqui: a escolha e estado do dialogo, e ela
+  // nunca foi lida por nada fora dele.
 
   // A ocorrencia em edicao e o alcance escolhido (HMO-170). O alcance volta para
   // "apenas_esta" a cada abertura: ele e a escolha mais conservadora, e herdar a
@@ -355,77 +372,46 @@ export default function BillsPage() {
     };
   }, [grupos]);
 
-  // Contas que podem pagar uma fatura: tudo que nao e cartao de credito.
-  // Cartao pagando cartao nao existe neste app, e o proprio cartao pagando a
-  // propria fatura faria as duas pernas se anularem -- a fatura ficaria paga
-  // sem dinheiro nenhum ter saido. A API recusa os dois casos; o seletor nem
-  // os oferece.
+  // Contas que podem pagar uma fatura. A peneira mora em
+  // `lib/pagamento-da-fatura.ts` e nao aqui porque a tela de Despesas vai
+  // precisar da MESMA (F14 da HMO-309): `!== "credit_card"` escrito duas vezes
+  // e um typo silencioso -- `"credit-card"` nao casaria com nada, o filtro
+  // pararia de filtrar, e o cartao apareceria no seletor de quem paga a propria
+  // fatura.
   const contasPagadoras = useMemo(
-    () => accounts.filter((conta) => conta.account_type !== "credit_card"),
+    () => contasQuePodemPagar(accounts),
     [accounts]
   );
 
   /**
-   * Materializa a fatura ABERTA e devolve o id da linha real (HMO-227).
+   * A baixa das contas que NAO sao fatura. Uma escrita, sem pergunta nenhuma.
    *
-   * E a primeira das duas escritas do botao "informei que paguei". Ela acontece
-   * so no CONFIRMAR, e nao ao abrir o dialogo: materializar na abertura
-   * deixaria uma fatura fechada para tras cada vez que alguem abrisse o dialogo
-   * e desistisse -- e fechar nao e reversivel pela tela.
+   * A DA FATURA NAO ESTA MAIS AQUI (HMO-312). Ela precisa da conta pagadora e,
+   * na fatura ABERTA, de um `close` antes; essas duas escritas, o galho do 409
+   * e as duas frases de patrimonio sao hoje
+   * `components/fatura/DialogoDePagamentoDaFatura`, sobre a decisao pura de
+   * `lib/pagamento-da-fatura.ts`. Sairam daqui para que a tela de Despesas as
+   * CONSUMA em vez de reimplementar a de-duplicacao de fatura pela segunda vez
+   * -- duas copias divergem na primeira correcao, e o sintoma da que ficou para
+   * tras e uma fatura fechada duas vezes, sem erro em lugar nenhum.
    *
-   * O 409 "esta fatura ja foi fechada" NAO e erro aqui: ele vem com
-   * `scheduled_transaction_id`, e e exatamente o que acontece se outra aba (ou
-   * o botao de Orcamentos) fechou a fatura no meio. Seguir com aquele id e o
-   * resultado certo; mostrar o erro mandaria a pessoa recarregar para fazer o
-   * que ja esta feito.
+   * O galho `is_transfer` CONTINUA aqui, e nao e sobra: a rota tambem responde
+   * `is_transfer` na baixa de uma transferencia PREVISTA (a recorrente da 038),
+   * que nao passa pelo dialogo da fatura. A frase e a mesma, e por isso ela vem
+   * da lib em vez de existir em duas copias de texto.
    */
-  const materializarFatura = async (
-    fatura: FaturaPrevista
-  ): Promise<ScheduledTransaction | null> => {
-    const resposta = await fetch("/api/card-invoices/close", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        account_id: fatura.account_id,
-        // O `close` aceita 'AAAA-MM'; `invoice_month` vem 'AAAA-MM-01'.
-        month: fatura.invoice_month.slice(0, 7),
-      }),
-    });
-    const dados = await resposta.json();
-
-    if (resposta.ok && dados.scheduled_transaction?.id) {
-      return dados.scheduled_transaction as ScheduledTransaction;
-    }
-
-    if (resposta.status === 409 && dados.scheduled_transaction_id) {
-      return {
-        ...(fatura as unknown as ScheduledTransaction),
-        id: dados.scheduled_transaction_id as string,
-      };
-    }
-
-    toast.error(dados.error ?? "Não foi possível registrar a fatura");
-    return null;
-  };
-
-  const darBaixa = async (
-    conta: ScheduledTransaction,
-    contaPagadoraId?: string
-  ) => {
+  const darBaixa = async (conta: ScheduledTransaction) => {
     setAgindo(conta.id);
     try {
       const resposta = await fetch(`/api/scheduled-transactions/${conta.id}/pay`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          paid_date: HOJE,
-          ...(contaPagadoraId ? { payment_account_id: contaPagadoraId } : {}),
-        }),
+        body: JSON.stringify({ paid_date: HOJE }),
       });
       const dados = await resposta.json();
 
       if (!resposta.ok) {
-        toast.error(dados.error ?? "Não foi possível dar baixa");
+        toast.error(dados.error ?? ERRO_DA_BAIXA);
         return;
       }
 
@@ -435,8 +421,7 @@ export default function BillsPage() {
       // conclui que a tela nao registrou.
       if (dados.is_transfer) {
         toast.success(dados.message ?? `${conta.description} paga`, {
-          description:
-            "Transferência: saiu da conta e quitou o cartão. O patrimônio não muda — a despesa já foi contada nas compras.",
+          description: FRASE_DO_PATRIMONIO_DEPOIS,
         });
       } else {
         // `dados.message` vem da rota, que e quem sabe a direcao de verdade (ela
@@ -450,11 +435,10 @@ export default function BillsPage() {
         );
       }
 
-      setFaturaParaPagar(null);
       await carregar();
     } catch (erro) {
       console.error(erro);
-      toast.error("Erro ao dar baixa");
+      toast.error(ERRO_DE_REDE_NA_BAIXA);
     } finally {
       setAgindo(null);
     }
@@ -462,55 +446,29 @@ export default function BillsPage() {
 
   /** A fatura precisa da conta pagadora antes da baixa; o resto nao. */
   const pedirBaixa = (conta: LinhaDaAgendaOuFatura) => {
+    // `faturaPagavelDaAgenda` responde exatamente o que esta tela perguntava a
+    // mao (`ehFaturaPrevista(conta) || ehFatura(conta.notes)`) e, de quebra,
+    // devolve o descritor neutro que o dialogo consome -- entao a conversao
+    // acontece num lugar so, testado, em vez de dentro do JSX.
+    //
     // A fatura ABERTA entra pelo MESMO caminho da fechada: as duas precisam
-    // saber de onde o dinheiro saiu antes de qualquer escrita. E e por isso que
-    // nada e materializado aqui -- ver `materializarFatura`.
-    if (ehFaturaPrevista(conta) || ehFatura(conta.notes)) {
-      setContaPagadora(contasPagadoras[0]?.id ?? "");
-      setFaturaParaPagar(conta);
+    // saber de onde o dinheiro saiu antes de qualquer escrita, e e por isso que
+    // NADA e materializado aqui. Materializar na abertura deixaria uma fatura
+    // fechada para tras cada vez que alguem abrisse o dialogo e desistisse, e
+    // fechar nao e reversivel pela tela.
+    const fatura = faturaPagavelDaAgenda(conta);
+    if (fatura) {
+      setFaturaParaPagar(fatura);
       return;
     }
+
+    // Sem descritor, a linha nao e fatura. O `id === null` abaixo e
+    // INALCANCAVEL em runtime -- a unica linha sem id desta tela e a fatura
+    // aberta, e ela sempre produz descritor. Ele esta aqui para o `tsc`: o
+    // `null` acima nao estreita a uniao, e sem ele `darBaixa` aceitaria uma
+    // linha sem id e montaria `/api/scheduled-transactions/null/pay`.
+    if (conta.id === null) return;
     void darBaixa(conta);
-  };
-
-  /**
-   * O "Confirmar pagamento" do dialogo, para os dois tipos de fatura.
-   *
-   * Fechada: uma escrita (a baixa), como sempre foi.
-   * Aberta: duas, nesta ordem -- materializa e paga. Um clique, nao dois: a
-   * pessoa nao precisa saber que "fechar a fatura" existe para informar que
-   * pagou o cartao, e era justamente esse passo escondido em outra tela que
-   * fazia a fatura nunca chegar a Contas a Pagar.
-   *
-   * Se a materializacao falhar, a baixa NAO acontece e o toast de erro e o do
-   * `close`. O estado fica inalterado -- nenhuma fatura meio-paga.
-   */
-  const confirmarPagamentoDaFatura = async () => {
-    const fatura = faturaParaPagar;
-    if (!fatura || !contaPagadora) return;
-
-    if (!ehFaturaPrevista(fatura)) {
-      await darBaixa(fatura, contaPagadora);
-      return;
-    }
-
-    // O spinner comeca na chave canonica (a fatura aberta nao tem id) e, se a
-    // materializacao der certo, `darBaixa` assume com o id da linha real.
-    setAgindo(fatura.notes);
-
-    let real: ScheduledTransaction | null = null;
-    try {
-      real = await materializarFatura(fatura);
-    } catch (erro) {
-      console.error(erro);
-      toast.error("Erro ao registrar a fatura");
-    } finally {
-      if (!real) setAgindo(null);
-    }
-
-    if (!real) return;
-
-    await darBaixa(real, contaPagadora);
   };
 
   /**
@@ -1429,98 +1387,19 @@ export default function BillsPage() {
           A fatura nao e um gasto novo -- a compra ja foi o gasto. O que falta
           saber e DE ONDE o dinheiro saiu, e nao havia como adivinhar: e por
           isso que a baixa antiga lancava tudo no proprio cartao e contava a
-          despesa duas vezes. */}
-      <Dialog
-        open={faturaParaPagar !== null}
-        onOpenChange={(aberto) => {
-          if (!aberto) setFaturaParaPagar(null);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Pagar a fatura</DialogTitle>
-          </DialogHeader>
+          despesa duas vezes.
 
-          {faturaParaPagar && (
-            <div className="space-y-4">
-              <div className="rounded-lg border border-border p-3">
-                <p className="font-medium text-foreground">
-                  {faturaParaPagar.description}
-                </p>
-                <p className="text-sm text-muted-foreground">
-                  {moeda(Number(faturaParaPagar.amount))} · vence em{" "}
-                  {dataCurta(faturaParaPagar.due_date)}
-                </p>
-                {/* A fatura ABERTA ainda pode mudar de valor, e quem confirma
-                    precisa saber que esta congelando o numero de agora. E a
-                    diferenca real entre as duas, e ela decide dinheiro: uma
-                    compra lancada depois, com data dentro deste mes de fatura,
-                    passa a aparecer na fatura e NAO entra no valor que foi
-                    pago. */}
-                {ehFaturaPrevista(faturaParaPagar) && (
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    Esta fatura ainda está em aberto: confirmar registra o total
-                    de hoje como o valor pago. Se você lançar depois uma compra
-                    com data deste mês, ela não entra neste pagamento.
-                  </p>
-                )}
-              </div>
-
-              {contasPagadoras.length === 0 ? (
-                <p className="text-sm text-destructive">
-                  Você não tem nenhuma conta que possa pagar a fatura. Cadastre
-                  uma conta corrente, poupança ou carteira em Contas — cartão de
-                  crédito não paga cartão de crédito.
-                </p>
-              ) : (
-                <>
-                  <div>
-                    <Label>De qual conta o dinheiro saiu? *</Label>
-                    <Select
-                      value={contaPagadora}
-                      onValueChange={setContaPagadora}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Selecione" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {contasPagadoras.map((conta) => (
-                          <SelectItem key={conta.id} value={conta.id}>
-                            {conta.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <p className="text-xs text-muted-foreground">
-                    Pagar a fatura não é um gasto novo: as compras já foram
-                    contadas no mês em que você fez cada uma. Esta baixa tira o
-                    dinheiro da conta escolhida e quita a dívida do cartão, então
-                    seu patrimônio fica igual — e é isso que estava errado antes.
-                  </p>
-
-                  {/* `agindo !== null` e nao `agindo === <id da fatura>`: na
-                      fatura ABERTA sao DUAS escritas, e a chave do spinner muda
-                      entre elas (a canonica no `close`, o id real na baixa).
-                      Comparar com uma das duas deixaria o botao clicavel no
-                      meio -- e o segundo clique fecharia a fatura de novo. */}
-                  <Button
-                    className="w-full"
-                    disabled={!contaPagadora || agindo !== null}
-                    onClick={confirmarPagamentoDaFatura}
-                  >
-                    {agindo !== null && (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    )}
-                    Confirmar pagamento
-                  </Button>
-                </>
-              )}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+          O dialogo, a sequencia das duas escritas, o galho do 409 e as duas
+          frases de patrimonio sairam desta pagina na HMO-312. Nada mudou na
+          tela: o que mudou e que a tela de Despesas pode consumir o MESMO
+          caminho (F14) em vez de ter o proprio. */}
+      <DialogoDePagamentoDaFatura
+        fatura={faturaParaPagar}
+        contasPagadoras={contasPagadoras}
+        aoFechar={() => setFaturaParaPagar(null)}
+        aoPagar={carregar}
+        aoMudarEscrita={setAgindo}
+      />
 
       {/* ALTERAR UMA OCORRENCIA, E ATE ONDE (HMO-170) */}
       <Dialog

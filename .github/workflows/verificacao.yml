@@ -4840,6 +4840,106 @@ jobs:
           fi
 
       # =======================================================================
+      # PAGAR A FATURA SAIU DE DENTRO DE CONTAS A PAGAR (HMO-312)
+      # =======================================================================
+      # F13 da HMO-309. O caminho de "informei que paguei a fatura" -- duas
+      # escritas sem transacao de banco, o galho do 409 e as duas frases de
+      # patrimonio -- morava inteiro dentro de
+      # `app/(dashboard)/dashboard/bills/page.tsx`. Ele saiu para
+      # `lib/pagamento-da-fatura.ts` (a decisao, pura) e
+      # `components/fatura/DialogoDePagamentoDaFatura.tsx` (a sequencia) para que
+      # a tela de Despesas CONSUMA em vez de copiar: duas implementacoes da
+      # de-duplicacao de fatura divergem na primeira correcao, e o sintoma da que
+      # ficou para tras e uma fatura fechada duas vezes, sem erro em lugar nenhum.
+      #
+      # O QUE A SUITE MEDE, E QUE NENHUM OUTRO PASSO ALCANCA: os TRES sabores de
+      # fatura chegam pelo mesmo critério e so UM precisa de `close` -- a aberta
+      # sintetizada (HMO-227). A fatura fechada e a previsao que a pessoa LIGOU a
+      # fatura (HMO-305) nao. Trocar `gravada` por `natureza` naquele galho fecha
+      # a fatura do CARTAO quando a pessoa pagou a previsao da CONTA CORRENTE: o
+      # `close` responde 200, a fatura do mes vira uma conta a pagar de verdade, e
+      # o mes passa a cobrar a divida duas vezes. Nada levanta excecao.
+      - name: Os tres sabores de fatura, e qual deles precisa de close
+        run: npm run test:pagamento-da-fatura
+
+      # OS DOIS FUSOS. A sandbox e America/Sao_Paulo e o CI e UTC, e tudo que
+      # toca `mes`/`invoice_month` aqui e manipulacao de STRING de proposito:
+      # 'AAAA-MM-01' lido como UTC e formatado no Brasil volta para o dia 30 do
+      # mes anterior, e a fatura de marco seria fechada como a de fevereiro. Um
+      # teste que roda num fuso so nao ve essa troca.
+      - name: A fatura responde o mesmo em Sao Paulo e em UTC
+        run: |
+          set -euo pipefail
+          TZ=America/Sao_Paulo npm run test:pagamento-da-fatura
+          TZ=UTC npm run test:pagamento-da-fatura
+
+      # Controle negativo. 12 mutantes, e os dois primeiros sao os obrigatorios
+      # da issue: o galho do `close` pela natureza, e o 409 tratado como erro.
+      - name: A verificacao do pagamento da fatura sabe falhar
+        run: npm run mutantes:pagamento-da-fatura
+
+      # A PROVA DE QUE E EXTRACAO, E NAO REESCRITA.
+      #
+      # Asserção textual sobre `bills/page.tsx` ("o arquivo cita
+      # pagamento-da-fatura") casa com o COMENTARIO, nao com a fiacao -- e este
+      # repositorio ja mediu esse falso verde nos dois sentidos. Em SUBSTITUICAO
+      # quem prova e o `tsc`: tirar o import tem de derrubar a compilacao, porque
+      # isso so acontece se a pagina estiver USANDO o modulo novo. Se ela tivesse
+      # ficado com uma copia propria do caminho antigo, o build passaria sem o
+      # import -- e e exatamente esse o estado que este passo recusa.
+      - name: Contas a Pagar realmente CONSOME o modulo extraido
+        run: |
+          set -uo pipefail
+          BILLS='app/(dashboard)/dashboard/bills/page.tsx'
+          cp "$BILLS" "$RUNNER_TEMP/bills-page.orig"
+          trap 'cp "$RUNNER_TEMP/bills-page.orig" "$BILLS"' EXIT
+
+          # 1) SEM A LIB. `faturaPagavelDaAgenda`, `contasQuePodemPagar` e as
+          #    duas frases deixam de existir -- a pagina nao tem copia delas.
+          node -e '
+            const fs = require("fs");
+            const p = process.argv[1];
+            const s = fs.readFileSync(p, "utf8");
+            const i = s.indexOf("} from \"@/lib/pagamento-da-fatura\";\n");
+            if (i < 0) throw new Error("ancora do import da lib mudou");
+            const j = s.lastIndexOf("import {", i);
+            fs.writeFileSync(p, s.slice(0, j) + s.slice(i + "} from \"@/lib/pagamento-da-fatura\";\n".length));
+          ' "$BILLS"
+          if npx tsc --noEmit -p tsconfig.json > /dev/null 2>&1; then
+            echo "::error::O tsc passou SEM o import de lib/pagamento-da-fatura -- a pagina nao esta consumindo o modulo extraido."
+            exit 1
+          fi
+          cp "$RUNNER_TEMP/bills-page.orig" "$BILLS"
+
+          # 2) SEM O COMPONENTE. O dialogo e a sequencia das escritas tambem
+          #    sairam da pagina; se ela ainda os tivesse, isto compilaria.
+          node -e '
+            const fs = require("fs");
+            const p = process.argv[1];
+            const alvo = "import { DialogoDePagamentoDaFatura } from \"@/components/fatura/DialogoDePagamentoDaFatura\";\n";
+            const s = fs.readFileSync(p, "utf8");
+            if (!s.includes(alvo)) throw new Error("ancora do import do componente mudou");
+            fs.writeFileSync(p, s.replace(alvo, ""));
+          ' "$BILLS"
+          if npx tsc --noEmit -p tsconfig.json > /dev/null 2>&1; then
+            echo "::error::O tsc passou SEM o import de DialogoDePagamentoDaFatura -- o dialogo nao esta vindo do componente."
+            exit 1
+          fi
+          cp "$RUNNER_TEMP/bills-page.orig" "$BILLS"
+
+          echo "As duas pontas da extracao sao load-bearing: sem elas o tsc reprova."
+
+      - name: 'A arvore voltou ao lugar depois de "Contas a Pagar realmente CONSOME o modulo extraido"'
+        run: |
+          rm -rf .tmp-*
+          git status --porcelain > "$RUNNER_TEMP/arvore-agora.txt"
+          if ! diff -q "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" > /dev/null; then
+            echo "::error::O controle negativo acima nao restaurou a arvore. Os passos seguintes rodariam sobre codigo mutado."
+            diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
+            exit 1
+          fi
+
+      # =======================================================================
       # O CARTAO CONTA PELA FATURA PAGA, NAO PELA COMPRA
       # origem: HMO-265 (nasceu aqui -- ver o item 1 do cabecalho deste arquivo)
       # =======================================================================
