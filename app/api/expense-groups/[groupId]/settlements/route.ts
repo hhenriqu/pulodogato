@@ -112,6 +112,26 @@ export async function GET(
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
 
+    // SEM EMBED DE `profiles`, E NAO POR GOSTO: O EMBED NAO EXISTE
+    // ------------------------------------------------------------
+    // Esta consulta pedia `from_user:profiles!group_settlements_from_user_id_fkey`
+    // e devolvia **500 em producao, para todo mundo**, desde que a rota foi
+    // escrita. As FKs da 007 apontam para `auth.users(id)`, nao para
+    // `public.profiles(id)` (`007_group_settlements.sql:199-202`), e o PostgREST
+    // so embeda pela FK que chega NA TABELA pedida -- entao o hint nomeia uma
+    // constraint que existe e ainda assim nao relaciona nada:
+    //
+    //   PGRST200: Searched for a foreign key relationship between
+    //   'group_settlements' and 'profiles' using the hint
+    //   'group_settlements_from_user_id_fkey' ... but no matches were found.
+    //
+    // O sintoma nao parecia com erro de schema: a tela de grupo mostrava a aba
+    // de acertos VAZIA, que e indistinguivel de "nenhum acerto registrado".
+    // Medido em producao em 06/10/2026 pelas duas contas do fixture HMO-255.
+    //
+    // Consertar pelo lado do codigo e nao por migration e o que faz esta linha
+    // subir hoje: migration e passo manual no SQL Editor. Duas consultas, como
+    // `settlements/[id]/perna/route.ts` ja faz pelo mesmo motivo.
     const { data: settlements, error } = await supabase
       .from("group_settlements")
       .select(
@@ -125,13 +145,7 @@ export async function GET(
         created_by,
         created_at,
         from_user_id,
-        to_user_id,
-        from_user:profiles!group_settlements_from_user_id_fkey (
-          id, full_name, avatar_url
-        ),
-        to_user:profiles!group_settlements_to_user_id_fkey (
-          id, full_name, avatar_url
-        )
+        to_user_id
       `
       )
       .eq("group_id", groupId)
@@ -144,6 +158,28 @@ export async function GET(
         { error: "Failed to load settlements" },
         { status: 500 }
       );
+    }
+
+    // Os nomes e avatares, numa consulta para a lista toda. Um perfil que a RLS
+    // nao deixe ler simplesmente NAO entra no mapa, e a linha sai com
+    // `from_user: null` -- a tela ja trata isso ("Sem nome"). Antes, o mesmo caso
+    // derrubava a resposta inteira.
+    const idsDasPessoas = Array.from(
+      new Set(
+        (settlements || []).flatMap((s: any) =>
+          [s.from_user_id, s.to_user_id].filter(Boolean)
+        )
+      )
+    );
+
+    const perfilPorId = new Map<string, any>();
+    if (idsDasPessoas.length > 0) {
+      const { data: perfis } = await supabase
+        .from("profiles")
+        .select("id, full_name, avatar_url")
+        .in("id", idsDasPessoas);
+
+      for (const p of perfis || []) perfilPorId.set(p.id, p);
     }
 
     // AS PERNAS DE QUEM ESTA LENDO (HMO-245, fase 12)
@@ -183,6 +219,10 @@ export async function GET(
 
         return {
           ...s,
+          // O que o embed quebrado devolvia -- mesma FORMA, para a tela nao
+          // mudar: `{ id, full_name, avatar_url }` ou `null`.
+          from_user: perfilPorId.get(s.from_user_id) ?? null,
+          to_user: perfilPorId.get(s.to_user_id) ?? null,
           // `null` = eu ainda nao lancei este acerto na minha conta. E a
           // diferenca entre "ainda nao lancado" e "nao aconteceu".
           minha_perna: minhaPerna
