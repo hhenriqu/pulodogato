@@ -1,0 +1,37 @@
+{
+  "//": [
+    "A semeadura da divisao pela renda do mes (HMO-245 fase 6 / HMO-272).",
+    "",
+    "Compila TRES coisas: lib/semear-pela-renda.ts (as regras), o route handler",
+    "app/api/expense-groups/[groupId]/semear-divisao/route.ts (o recorte da",
+    "privacidade, que e o que a fase promete e o que so se mede chamando a rota)",
+    "e app/api/expense-groups/proportions/route.ts -- a rota ANTIGA, que vazava",
+    "`total_income` de todo mundo e passou a recortar pela mesma regra. Esta fase",
+    "e mudanca, e nao so codigo novo: o vazamento tem de ficar vermelho se voltar.",
+    "",
+    "`rootDir` e a raiz do projeto: a rota importa @/lib, @/utils e @/types, e com",
+    "rootDir em lib/ o tsc reprova com TS6059. O emit fica espelhando a raiz,",
+    "entao o passo do resolve-aliases roda com --espelha-raiz.",
+    "",
+    "utils/supabase/server.ts e compilado junto e DEPOIS sobrescrito pelo",
+    "scripts/monta-duble-de-rota.mjs -- o modulo real importa `next/headers`, que",
+    "nao roda fora do runtime do Next. Ver scripts/test-semeadura-pela-renda.mjs."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-semeadura",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../lib/semear-pela-renda.ts",
+    "../app/api/expense-groups/[groupId]/semear-divisao/route.ts",
+    "../app/api/expense-groups/proportions/route.ts"
+  ]
+}

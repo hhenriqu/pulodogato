@@ -83,10 +83,50 @@
  *
  * Os dois chamam o MESMO `mexer()`. Dois caminhos de codigo para o mesmo gesto
  * seria um deles rebalanceando e o outro nao, dependendo de onde se tocou.
+ *
+ * O BOTAO QUE SEMEIA PELA RENDA (fase 6): ELE ESCREVE NOS SLIDERS, E PARA AI
+ * --------------------------------------------------------------------------
+ * "Clica, os sliders vao para os percentuais da renda, e da para ajustar antes de
+ * salvar. A config fica parada depois." Entao o botao NAO grava: ele chama
+ * `GET .../semear-divisao`, escreve os pesos no estado e muda o modo para
+ * Proporcional. Quem grava continua sendo o "Salvar divisão".
+ *
+ * Isso tem duas consequencias visiveis aqui:
+ *
+ *   * ele e so do ADMIN, como os sliders. Dar o botao a quem nao pode salvar
+ *     seria mexer numa tela que nao tem como ser gravada -- e o 403 viria no fim,
+ *     depois do trabalho;
+ *   * os percentuais vem do SERVIDOR somando 10000 (`proporcional`, o mesmo
+ *     maior-resto de `igualitario`), entao nao passam por `rebalancear`: nao ha
+ *     um membro "arrastado" em torno do qual rebalancear, e rebalancear em torno
+ *     de um deles mudaria os outros dois, desfazendo a proporcao que a renda
+ *     pediu. O que a tela confere e a INVARIANTE -- conjunto igual ao dela e soma
+ *     10000 -- e recusa a resposta que nao fecha, em vez de consertar.
+ *
+ * E DOIS ROTULOS QUE NAO SAO ENFEITE, PORQUE 0% TIRA A PESSOA DA DIVISAO
+ * ----------------------------------------------------------------------
+ * `divisaoDaDespesa` OMITE o membro em 0% (`expense_splits.percentage` exige
+ * `> 0`). Entao quem nao tem receita lancada no mes e semeado em 0% sai da conta
+ * -- e sem rotulo isso e indistinguivel de um acordo de que ele nao paga:
+ *
+ *   * "sem receita lançada em <mês>" na linha do membro, que e um fato do mes e
+ *     sobrevive a qualquer ajuste manual depois;
+ *   * "em 0% fica fora da divisão" na linha de quem esta em zero AGORA, semeado
+ *     ou arrastado a mao. Este segundo nao depende da semeadura de proposito: o
+ *     zero sempre teve essa consequencia, e a tela nunca a dizia.
+ *
+ * O R$ DA RENDA APARECE SO PARA O PROPRIO DONO -- E QUEM RECORTA E A ROTA
+ * -----------------------------------------------------------------------
+ * "Percentual para todos; o R$ da renda so para o proprio dono." A tela mostra
+ * `renda_centavos` quando ele vem, e ele so vem na linha do `auth.uid()` de quem
+ * pediu. O recorte NAO esta aqui: se estivesse, o salario de todo mundo viajaria
+ * no JSON e um `view-source` o leria. Ver o cabecalho de
+ * app/api/expense-groups/[groupId]/semear-divisao/route.ts.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  CENTESIMOS_TOTAIS,
   dePercentual,
   divisaoDoPeriodo,
   igualitario,
@@ -95,6 +135,7 @@ import {
   type PesoDoMembro,
 } from "@/lib/divisao-configurada";
 import { ratearPorPeso } from "@/lib/fechamento-do-grupo";
+import { rotuloDoMes } from "@/lib/periodo-do-grupo";
 import { toCents, toReais } from "@/lib/settlement";
 import { formatarValor } from "@/lib/dinheiro";
 
@@ -267,8 +308,32 @@ export function DivisaoDoGrupo({
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [salvo, setSalvo] = useState(false);
+  const [semeando, setSemeando] = useState(false);
+
+  /**
+   * O que a ultima semeadura DISSE -- separado dos pesos, que ela so escreveu.
+   *
+   * Guarda o `mes` junto porque o mes e PROP: trocar de mes no seletor nao
+   * remonta este componente, e um rotulo "sem receita lançada" de outubro
+   * pendurado na tela de novembro seria uma afirmacao falsa sobre um mes que
+   * ninguem leu. Ver `semeado`, logo abaixo.
+   */
+  const [semeadura, setSemeadura] = useState<{
+    mes: string;
+    /** `member_id` de quem saiu em 0% por nao ter receita no mes. */
+    semRenda: string[];
+    /** NINGUEM lancou receita: a semeadura caiu na divisao igual. */
+    semRendaNenhuma: boolean;
+    /** A renda de QUEM PEDIU, em centavos. `null` = a rota nao mandou. */
+    rendaPropria: number | null;
+  } | null>(null);
 
   const total = totalDoMes !== undefined ? totalDoMes : totalBuscado;
+
+  // A semeadura so fala do mes dela. Guarda em vez de `useEffect` que limpa:
+  // um efeito por mudanca de prop teria de rodar DEPOIS do render, e o render
+  // do meio mostraria o rotulo do mes velho.
+  const semeado = semeadura && semeadura.mes === mes ? semeadura : null;
 
   useEffect(() => {
     if (totalDoMes !== undefined) return;
@@ -343,6 +408,94 @@ export function DivisaoDoGrupo({
     },
     [membros]
   );
+
+  /**
+   * O botao da fase 6: os sliders vao para a proporcao da receita do mes.
+   *
+   * Nao grava. Ver o cabecalho: a decisao e "semear, nao viver" -- e a diferenca
+   * entre as duas e exatamente este botao existir em vez de o fechamento reler a
+   * renda todo mes.
+   */
+  async function semear() {
+    setSemeando(true);
+    setErro(null);
+    setSalvo(false);
+
+    try {
+      const r = await fetch(
+        `/api/expense-groups/${groupId}/semear-divisao?mes=${mes}`
+      );
+      const d = await r.json().catch(() => null);
+
+      if (!r.ok) {
+        setErro(
+          typeof d?.error === "string"
+            ? d.error
+            : "Não foi possível semear a divisão pela receita do mês."
+        );
+        return;
+      }
+
+      const linhas: unknown[] = Array.isArray(d?.membros) ? d.membros : [];
+      const porMembro = new Map<string, Record<string, unknown>>();
+      for (const l of linhas) {
+        const linha = l as Record<string, unknown>;
+        if (typeof linha?.member_id === "string") {
+          porMembro.set(linha.member_id, linha);
+        }
+      }
+
+      // A lista que vale e a DESTA tela, na ordem dela: o render casa
+      // `pesos[i]` com `membros[i]`, entao aceitar a ordem do servidor poria o
+      // percentual de um no slider do outro no dia em que as duas ordens
+      // divergissem.
+      const novos: PesoDoMembro[] = membros.map((m) => ({
+        member_id: m.member_id,
+        centesimos: Number(porMembro.get(m.member_id)?.centesimos),
+      }));
+
+      // A invariante, conferida em vez de consertada. Um membro que entrou (ou
+      // saiu) do grupo entre o render e o clique faz o conjunto divergir, e
+      // normalizar aqui gravaria uma divisao que a renda nao pediu -- com a tela
+      // somando 100% e nada denunciando.
+      const soma = novos.reduce((acc, p) => acc + p.centesimos, 0);
+      const completo = novos.every((p) => Number.isFinite(p.centesimos));
+
+      if (!completo || soma !== CENTESIMOS_TOTAIS) {
+        setErro(
+          "A lista de membros do grupo mudou enquanto esta tela estava aberta. " +
+            "Recarregue antes de semear pela receita."
+        );
+        return;
+      }
+
+      // Proporcional, e nao Igual: o que a renda produziu e uma lista de
+      // percentuais, e em modo `equal` o fechamento IGNORA a coluna -- os
+      // sliders mostrariam 70/30 sobre um mes que fecharia metade a metade.
+      setModo("percentage");
+      setPesos(novos);
+
+      const propria = linhas
+        .map((l) => l as Record<string, unknown>)
+        .find((l) => typeof l?.renda_centavos === "number");
+
+      setSemeadura({
+        mes,
+        semRenda: membros
+          .map((m) => m.member_id)
+          .filter((id) => porMembro.get(id)?.tem_renda === false),
+        semRendaNenhuma: d?.sem_renda_nenhuma === true,
+        rendaPropria:
+          typeof propria?.renda_centavos === "number"
+            ? propria.renda_centavos
+            : null,
+      });
+    } catch {
+      setErro("Não foi possível semear a divisão pela receita do mês.");
+    } finally {
+      setSemeando(false);
+    }
+  }
 
   async function gravar() {
     setSalvando(true);
@@ -442,6 +595,54 @@ export function DivisaoDoGrupo({
           </button>
         ))}
       </div>
+
+      {/*
+        O botao da fase 6. So para o admin: ele escreve nos sliders, e quem nao
+        pode salvar nao tem o que fazer com eles.
+      */}
+      {ehAdmin && (
+        <div className="space-y-2 rounded-md border p-3">
+          <button
+            type="button"
+            id="divisao-semear"
+            disabled={semeando}
+            onClick={semear}
+            className="rounded-md border border-primary px-3 py-2 text-sm font-medium text-primary hover:bg-muted disabled:opacity-60"
+          >
+            {semeando
+              ? "Lendo a receita..."
+              : "Semear pela receita do mês"}
+          </button>
+          {/*
+            A legenda diz as DUAS coisas que a pessoa precisa saber antes de
+            clicar, e as duas sao decisoes do Helio: o periodo (recebida +
+            prevista, a mesma regua da despesa do mes) e que a divisao fica
+            PARADA depois. Sem a segunda frase o botao se le como "passar a
+            dividir pela renda", que e outra feature.
+          */}
+          <p className="text-sm text-muted-foreground" id="divisao-semear-legenda">
+            Leva os sliders para a proporção da receita de cada um em{" "}
+            {rotuloDoMes(mes)} — recebida e prevista, a mesma régua das despesas
+            do mês. Você ajusta antes de salvar, e a divisão não muda sozinha
+            depois.
+          </p>
+          {semeado?.semRendaNenhuma && (
+            <p className="text-sm text-warning" id="divisao-semear-sem-renda-nenhuma">
+              Ninguém do grupo lançou receita em {rotuloDoMes(mes)}. Não há
+              proporção para aplicar, então os sliders foram para a divisão
+              igual.
+            </p>
+          )}
+          {semeado?.rendaPropria !== null &&
+            semeado?.rendaPropria !== undefined && (
+              <p className="text-sm text-muted-foreground" id="divisao-semear-renda-propria">
+                A sua receita em {rotuloDoMes(mes)}:{" "}
+                {formatarValor(toReais(semeado.rendaPropria))}. Só você vê este
+                valor — os outros membros veem apenas as porcentagens.
+              </p>
+            )}
+        </div>
+      )}
 
       <div className="space-y-4">
         {pesos.map((p, i) => {
@@ -550,6 +751,34 @@ export function DivisaoDoGrupo({
                   <span className="text-sm text-muted-foreground">%</span>
                 </div>
               </div>
+
+              {/*
+                Os dois rotulos do zero. Ver o cabecalho: membro em 0% e OMITIDO
+                por `divisaoDaDespesa`, e sem dizer isso a tela a semeadura tira
+                a pessoa da conta em silencio.
+
+                Eles sao separados de proposito. O primeiro e um fato do MES (e
+                continua verdadeiro depois de o admin arrastar o slider dele para
+                30%); o segundo descreve o estado ATUAL do slider, e aparece
+                tambem para quem foi posto em zero a mao, sem semeadura nenhuma.
+              */}
+              {semeado?.semRenda.includes(p.member_id) && (
+                <p
+                  id={`divisao-sem-renda-${p.member_id}`}
+                  className="text-sm text-muted-foreground"
+                >
+                  Sem receita lançada em {rotuloDoMes(mes)}.
+                </p>
+              )}
+              {p.centesimos === 0 && (
+                <p
+                  id={`divisao-fora-${p.member_id}`}
+                  className="text-sm text-warning"
+                >
+                  Em 0% fica fora da divisão: as despesas novas do grupo não
+                  terão parte para {nomeDe(membro)}.
+                </p>
+              )}
             </div>
           );
         })}
