@@ -1,0 +1,21 @@
+{
+  "//": "Build so do teste de lib/perna-da-contraparte.ts. Ela importa acerto-em-lancamento.ts pelo alias @/, que por sua vez importa dinheiro.ts, cambio.ts e settlement.ts -- o tsc resolve o alias por `paths` mas NAO o reescreve no JS emitido, por isso o npm script roda scripts/resolve-aliases.mjs depois. O teste importa pernaDoAcerto do MESMO .tmp: a assercao do tipo da perna tem de atravessar as duas funcoes, que e o que a rota faz.",
+  "compilerOptions": {
+    "outDir": "../.tmp-perna-da-contraparte",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
+  },
+  "include": [
+    "../lib/perna-da-contraparte.ts"
+  ]
+}

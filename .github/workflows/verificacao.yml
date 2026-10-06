@@ -1436,6 +1436,44 @@ jobs:
             exit 1
           fi
 
+      # ==================================================================
+      # O OUTRO LADO DO ACERTO (HMO-278, fase 12)
+      # ==================================================================
+      # A fase 11, acima, grava a perna de QUEM CLICOU. A fase 12 entrega o
+      # outro lado -- e ele precisa da sessao dele, porque
+      # `financial_transactions_write` e `FOR INSERT WITH CHECK (user_id =
+      # auth.uid())` (`002_rls_lockdown.sql:472`).
+      #
+      # Esta suite fixa o que a de cima nao consegue ver, porque a de cima olha
+      # UMA perna:
+      #   - as DUAS sessoes do mesmo acerto dando direcoes OPOSTAS. Com um
+      #     userId so, qualquer direcao "funciona" -- e e por isso que o mutante
+      #     da perna de quem deve (`transfer` -> `expense`) precisa do par para
+      #     ser medido de verdade;
+      #   - o ROTULO do estado intermediario, que e entrega da issue e nao
+      #     enfeite: sem ele, "nao lancado" fica indistinguivel de "nao
+      #     aconteceu" e o Pix nunca entra no extrato de quem nao confirmou;
+      #   - a ASSIMETRIA dos dois desfazeres. Quem registrou desfaz o acerto (a
+      #     perna vai junto); a contraparte remove SO a perna dela. Os dois
+      #     booleanos nunca sao verdadeiros na mesma sessao -- oferecer "desfazer
+      #     so o meu lancamento" a quem registrou reproduz o defeito que a fase
+      #     11 consertou: quitacao gravada com dinheiro nenhum.
+      - name: A perna da contraparte, o rotulo do estado intermediario e os dois desfazeres
+        run: npm run test:perna-da-contraparte
+
+      # Controle negativo. Quase todo enunciado desta fase e um BOOLEANO, e
+      # booleano e o que uma suite confirma por acidente: basta olhar o lado que
+      # calhou de estar certo.
+      #
+      # Aqui o controle e um RUNNER e nao `sed` inline, porque ele precisa de
+      # tres peneiras que o `sed` nao tem: o controle positivo (a arvore intacta
+      # passa), a conferencia de que cada trecho mutado e UNICO no arquivo, e a
+      # recusa de contar como morto o mutante que nem compilou. O runner muta uma
+      # COPIA de lib/ em diretorio temporario -- a fonte do repo nao e tocada em
+      # momento nenhum, entao nao ha arvore para restaurar depois.
+      - name: 'A verificacao sabe falhar (a perna da contraparte)'
+        run: npm run mutantes:perna-da-contraparte
+
       # A ARVORE. O teste puro acima passa verde com o bloco inteiro faltando na
       # tela, com a linha do ajuste sem rotulo, e com "Ajustar saldo" oferecido
       # sobre uma leitura que falhou.
