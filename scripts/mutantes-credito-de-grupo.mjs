@@ -31,38 +31,47 @@
 //
 // A FONTE NUNCA E MUTADA NO DISCO
 // -------------------------------
-// Mesma escolha do mutantes-fechamento-do-grupo.mjs: a mutacao e compilada de
-// uma arvore TEMPORARIA. Mutar, rodar e restaurar no `finally` deixa a fonte
-// mutada no disco quando o processo morre no meio.
+// A mutacao e compilada de uma arvore que nao e a do repositorio. Mutar, rodar e
+// restaurar no `finally` deixa a fonte mutada no disco quando o processo morre no
+// meio -- e `finally` nao roda em SIGTERM, o sinal que o `timeout` do shell e o
+// cancelamento de job mandam.
 //
-// A ARVORE TEMPORARIA E O lib/ INTEIRO, DE PROPOSITO
-// --------------------------------------------------
-// O teste importa TRES modulos compilados (o credito, o fechamento que o
-// alimenta e `parte-de-grupo-na-lista`, de onde sai o numero de verdade do
-// cartao "Receitas"), e esses tres arrastam `settlement` e `movimentacoes`.
-// Copiar so as dependencias de hoje deixa o runner quebrado no dia em que
-// alguem adiciona um import -- e um mutante que nao COMPILA "morre" por motivo
-// errado, o que faz o placar mentir A FAVOR. Copiar lib/ inteiro custa 1,4 MB e
-// nao tem esse modo de falha.
+// A COPIA DO lib/ INTEIRO DEIXOU DE EXISTIR (HMO-320)
+// ---------------------------------------------------
+// Este runner montava, A CADA MUTANTE, uma arvore nova em diretorio temporario
+// com `lib/` INTEIRO copiado dentro, um `tsconfig.json` sintetizado com a lista
+// dos tres modulos que o teste importa, e tres processos por cima (`npx tsc`,
+// `resolve-aliases`, `node --test`). O `lib/` inteiro estava ali pelo motivo
+// certo: o teste importa TRES modulos compilados (o credito, o fechamento que o
+// alimenta e `parte-de-grupo-na-lista`, de onde sai o numero de verdade do cartao
+// "Receitas"), e esses tres arrastam `settlement` e `movimentacoes` -- copiar so
+// as dependencias de hoje quebra no dia em que alguem adiciona um import, e um
+// mutante que nao COMPILA "morre" por motivo errado, o que faz o placar mentir A
+// FAVOR.
+//
+// Mas copiar `lib/` nao fechava o buraco inteiro: a lista de `include` do
+// tsconfig sintetizado continuava a mao, e um import novo para FORA de `lib/`
+// (foi `@/types/financial` que pegou tres blocos deste repositorio) nao entrava
+// na copia. `criarBlocoDeMutantes` nao recebe recorte nenhum -- espelha a arvore
+// inteira por symlink e troca EM MEMORIA so o arquivo mutado. Quem delimita o
+// que este bloco prova volta a ser o `scripts/tsconfig.credito-de-grupo-test.json`,
+// o mesmo que o CI usa.
+//
+// E O PIPELINE PASSOU A SER O DO ALVO `test:credito-de-grupo`, que roda a suite
+// em DOIS fusos. Este runner rodava em UM (`America/Sao_Paulo`, o negativo, com a
+// nota de que um fuso basta para matar mutante). A nota estava certa sobre matar
+// mutante e errada sobre o que o bloco mede: quem repete a receita a mao mede um
+// pipeline que nao e mais o da suite, e nada reclama.
 //
 // COMO RODAR
 //   npm run mutantes:credito-de-grupo
 
-import {
-  readFileSync,
-  writeFileSync,
-  mkdtempSync,
-  mkdirSync,
-  cpSync,
-  rmSync,
-} from "node:fs";
-import { execFileSync } from "node:child_process";
-import { join, resolve } from "node:path";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
+
+import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
 
 const FONTE = "lib/credito-de-grupo.ts";
-const SAIDA = ".tmp-credito-de-grupo";
-const TESTE = "scripts/test-credito-de-grupo.mjs";
+const SUITE = "test:credito-de-grupo";
 
 const original = readFileSync(FONTE, "utf8");
 
@@ -215,144 +224,98 @@ const MUTANTES = [
 // no modulo -- redundancia barata em codigo de dinheiro --, mas o placar nao
 // finge que ha duas decisoes onde ha uma.
 
-const dir = mkdtempSync(join(tmpdir(), "mut277-"));
-const dirLib = join(dir, "lib");
-mkdirSync(dirLib, { recursive: true });
-// lib/ inteiro: ver o cabecalho. `.ts` apenas -- nao ha outro tipo de arquivo
-// em lib/, e copiar so o que o tsc le mantem a arvore pequena.
-cpSync("lib", dirLib, { recursive: true });
-
-// O tsconfig temporario e a copia do scripts/tsconfig.credito-de-grupo-test
-// .json apontada para a arvore mutada. `baseUrl` no dir temporario e o que faz
-// `@/lib/...` achar a COPIA, e nao o arquivo do repo.
-const tsconfig = join(dir, "tsconfig.json");
-writeFileSync(
-  tsconfig,
-  JSON.stringify({
-    compilerOptions: {
-      outDir: resolve(SAIDA),
-      rootDir: dirLib,
-      module: "es2020",
-      target: "es2020",
-      moduleResolution: "node",
-      skipLibCheck: true,
-      baseUrl: dir,
-      paths: { "@/*": ["./*"] },
-    },
-    include: [
-      join(dirLib, "credito-de-grupo.ts"),
-      join(dirLib, "fechamento-do-grupo.ts"),
-      join(dirLib, "parte-de-grupo-na-lista.ts"),
-    ],
-  })
-);
+const bloco = criarBlocoDeMutantes({ rotulo: "credito-de-grupo", suites: [SUITE] });
+// A sombra vive em diretorio temporario e sai junto com o processo -- inclusive
+// na saida antecipada do controle. No pior caso (SIGTERM) sobra um diretorio
+// orfao em /tmp, e nao mutante em `lib/`.
+process.on("exit", () => bloco.fechar());
 
 let falhas = 0;
 
-function compilaERoda(fonteTs) {
-  writeFileSync(join(dirLib, "credito-de-grupo.ts"), fonteTs);
-  rmSync(SAIDA, { recursive: true, force: true });
-  execFileSync("npx", ["tsc", "-p", tsconfig], { stdio: "pipe" });
-  // O tsc resolve `@/` mas nao o reescreve no JS emitido -- o mesmo passo do
-  // npm script, sem o qual o node morre em ERR_MODULE_NOT_FOUND e TODO mutante
-  // "morre" por erro de import.
-  execFileSync("node", ["scripts/resolve-aliases.mjs", SAIDA, "lib"], {
-    stdio: "pipe",
-  });
-  // Um fuso basta para matar mutante: o que o segundo fuso prova e que o
-  // recorte do mes nao passa por `Date`, e isso e assercao do npm script, que
-  // roda os dois. America/Sao_Paulo e o fuso negativo -- o que e capaz de
-  // falhar.
-  execFileSync("node", ["--test", TESTE], {
-    stdio: "pipe",
-    env: { ...process.env, TZ: "America/Sao_Paulo" },
-  });
+/** Uma volta do bloco com estas sobrescritas (`{}` = arvore intacta). */
+const compilaERoda = (sobrescritas = {}) =>
+  bloco.rodar("credito-de-grupo", sobrescritas, SUITE);
+
+// CONTROLE POSITIVO: com a fonte intacta o teste tem de PASSAR. Sem isto, um
+// "todos morreram" poderia significar apenas que o build esta quebrado e o
+// teste reprova sempre.
+const controle = compilaERoda();
+if (controle.verde) {
+  console.log("controle positivo: o teste passa com a fonte intacta\n");
+} else {
+  console.error("ABORTADO: o teste reprova com a fonte INTACTA.");
+  console.error(`  (${controle.como}) ${controle.saida}`);
+  process.exit(1);
 }
 
-try {
-  // CONTROLE POSITIVO: com a fonte intacta o teste tem de PASSAR. Sem isto, um
-  // "todos morreram" poderia significar apenas que o build esta quebrado e o
-  // teste reprova sempre.
-  try {
-    compilaERoda(original);
-    console.log("controle positivo: o teste passa com a fonte intacta\n");
-  } catch (e) {
-    console.error("ABORTADO: o teste reprova com a fonte INTACTA.");
-    console.error((e.stdout ?? e.stderr ?? "").toString().slice(-1500));
-    process.exit(1);
+for (const m of MUTANTES) {
+  // `String.replace` troca a PRIMEIRA ocorrencia. Um trecho que aparece duas
+  // vezes produz um mutante que muta o lugar errado e morre verde com o
+  // rotulo mentindo sobre o que foi medido -- por isso o trecho tem de ser
+  // unico, e nao apenas existir.
+  //
+  // `credito_por_valor` e `lado_invertido` mutam o MESMO filtro, e o `.map(`
+  // da linha de baixo e o que torna o trecho unico: o outro
+  // `to_user_id === viewerUserId` do modulo e seguido de `.reduce(`.
+  // `tambem` existe para o mutante que desfaz UMA decisao escrita em DOIS
+  // lugares (ver `residuo_sem_piso`). Os dois trechos passam pela mesma
+  // conferencia de unicidade -- um deles ficar sem casar transformaria o
+  // mutante num mutante diferente do que o rotulo diz.
+  const trechos = [
+    { de: m.de, para: m.para },
+    ...(m.tambem ? [m.tambem] : []),
+  ];
+
+  let mutado = original;
+  let invalido = null;
+
+  for (const t of trechos) {
+    const ocorrencias = mutado.split(t.de).length - 1;
+    if (ocorrencias === 0) {
+      invalido = `o trecho a mutar NAO EXISTE MAIS (${t.de.trim().slice(0, 50)})`;
+      break;
+    }
+    if (ocorrencias > 1) {
+      invalido = `o trecho aparece ${ocorrencias}x -- ambiguo (${t.de
+        .trim()
+        .slice(0, 50)})`;
+      break;
+    }
+    mutado = mutado.replace(t.de, t.para);
   }
 
-  for (const m of MUTANTES) {
-    // `String.replace` troca a PRIMEIRA ocorrencia. Um trecho que aparece duas
-    // vezes produz um mutante que muta o lugar errado e morre verde com o
-    // rotulo mentindo sobre o que foi medido -- por isso o trecho tem de ser
-    // unico, e nao apenas existir.
-    //
-    // `credito_por_valor` e `lado_invertido` mutam o MESMO filtro, e o `.map(`
-    // da linha de baixo e o que torna o trecho unico: o outro
-    // `to_user_id === viewerUserId` do modulo e seguido de `.reduce(`.
-    // `tambem` existe para o mutante que desfaz UMA decisao escrita em DOIS
-    // lugares (ver `residuo_sem_piso`). Os dois trechos passam pela mesma
-    // conferencia de unicidade -- um deles ficar sem casar transformaria o
-    // mutante num mutante diferente do que o rotulo diz.
-    const trechos = [
-      { de: m.de, para: m.para },
-      ...(m.tambem ? [m.tambem] : []),
-    ];
-
-    let mutado = original;
-    let invalido = null;
-
-    for (const t of trechos) {
-      const ocorrencias = mutado.split(t.de).length - 1;
-      if (ocorrencias === 0) {
-        invalido = `o trecho a mutar NAO EXISTE MAIS (${t.de.trim().slice(0, 50)})`;
-        break;
-      }
-      if (ocorrencias > 1) {
-        invalido = `o trecho aparece ${ocorrencias}x -- ambiguo (${t.de
-          .trim()
-          .slice(0, 50)})`;
-        break;
-      }
-      mutado = mutado.replace(t.de, t.para);
-    }
-
-    if (invalido) {
-      console.log(`  !! ${m.nome}: ${invalido} -- mutante invalido`);
-      falhas++;
-      continue;
-    }
-    // A mutacao tem de MUDAR o arquivo. `de === para` por descuido numa
-    // refatoracao produz um "mutante" identico a fonte, que sobrevive sempre e
-    // se le como furo de cobertura.
-    if (mutado === original) {
-      console.log(`  !! ${m.nome}: a mutacao nao alterou nada -- invalido`);
-      falhas++;
-      continue;
-    }
-
-    let sobreviveu = false;
-    try {
-      compilaERoda(mutado);
-      sobreviveu = true;
-    } catch {
-      // reprovou (ou nem compilou): e o esperado.
-    }
-
-    if (sobreviveu) {
-      console.log(`  SOBREVIVEU  ${m.nome}  <-- nenhuma assercao protege isto`);
-      console.log(`              (${m.porque})`);
-      falhas++;
-    } else {
-      console.log(`  morreu      ${m.nome}`);
-    }
+  if (invalido) {
+    console.log(`  !! ${m.nome}: ${invalido} -- mutante invalido`);
+    falhas++;
+    continue;
   }
-} finally {
-  rmSync(dir, { recursive: true, force: true });
-  // Deixa o build em dia com a fonte de verdade, para o proximo
-  // `npm run test:credito-de-grupo` nao rodar contra um artefato mutado.
-  rmSync(SAIDA, { recursive: true, force: true });
+  // A mutacao tem de MUDAR o arquivo. `de === para` por descuido numa
+  // refatoracao produz um "mutante" identico a fonte, que sobrevive sempre e
+  // se le como furo de cobertura.
+  if (mutado === original) {
+    console.log(`  !! ${m.nome}: a mutacao nao alterou nada -- invalido`);
+    falhas++;
+    continue;
+  }
+
+  const r = compilaERoda({ [FONTE]: mutado });
+
+  if (r.verde) {
+    console.log(`  SOBREVIVEU  ${m.nome}  <-- nenhuma assercao protege isto`);
+    console.log(`              (${m.porque})`);
+    // Sobreviver emitindo byte IDENTICO ao da arvore limpa nao e furo de
+    // assercao: e mutante equivalente, e nenhuma assercao o mataria.
+    if (r.mudouASaida === false) {
+      console.log(
+        "              (saida compilada identica a da arvore limpa: EQUIVALENTE, nao furo)"
+      );
+    }
+    falhas++;
+  } else {
+    // Nem compilar continua contando como morto aqui, como antes -- mas agora
+    // isso aparece na linha, e nao se esconde atras de um `catch` vazio.
+    console.log(`  morreu      ${m.nome}  (${r.como})`);
+  }
 }
 
 console.log();

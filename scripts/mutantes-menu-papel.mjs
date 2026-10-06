@@ -6,21 +6,40 @@
 // nada. Este runner estraga o codigo de proposito, uma mudanca por vez, e exige
 // que a suite REPROVE em todas. Um mutante SOBREVIVENTE e um buraco na suite.
 //
-// Nao usa `git checkout` para restaurar: ele restauraria a partir do INDICE, e
-// num worktree compartilhado isso ja apagou trabalho nao commitado aqui. A
-// copia original vai para a memoria e volta de la, sempre, inclusive se o
-// processo levar um erro.
+// NAO RESTAURA NADA, PORQUE NAO MUTA NADA (HMO-320)
+// -------------------------------------------------
+// Este runner nao usava `git checkout` para restaurar -- ele restauraria a
+// partir do INDICE, e num worktree compartilhado isso ja apagou trabalho nao
+// commitado aqui -- e guardava o original em memoria para reescrever o arquivo
+// no fim de cada volta. Restaurar em memoria e melhor que `git checkout`, mas
+// continua sendo restaurar: `process.on("exit")` NAO roda em SIGTERM, o sinal
+// que o `timeout` do shell e o cancelamento de job mandam, e o processo morto no
+// meio deixava o mutante gravado em `components/Sidebar.tsx`.
 //
-// Cada mutante e conferido com `cmp`: um `replace` que nao casa com nada nao
-// muda o arquivo e a suite passaria -- o que se le como "mutante sobreviveu",
-// quando na verdade o mutante nunca existiu.
+// Com `criarBlocoDeMutantes` nao ha o que restaurar: a mutacao e escrita numa
+// SOMBRA em diretorio temporario e os tres arquivos do repositorio nunca sao
+// tocados. Os tres mutam em arquivos diferentes, e a sombra aceita os tres pelo
+// mesmo caminho relativo que eles tem aqui.
+//
+// E A COMPILACAO E UMA SO para todas as voltas, em vez de um `npm run
+// test:menu-papel` inteiro por mutante: a sombra e montada uma vez e o AST de
+// tudo que nao e o arquivo mutado e reaproveitado. O pipeline vem do proprio
+// alvo `test:menu-papel` no package.json -- que tem DOIS passos de
+// `resolve-aliases`, um para `components` e um para `lib`, e nenhum runner
+// repetindo a receita a mao fica em pe com isso por muito tempo.
+//
+// Cada mutante continua sendo conferido antes de rodar: um `replace` que nao
+// casa com nada nao muda o texto e a suite passaria -- o que se le como "mutante
+// sobreviveu", quando na verdade o mutante nunca existiu.
 
-import { readFileSync, writeFileSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+
+import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
 
 const SIDEBAR = "components/Sidebar.tsx";
 const FILTRO = "lib/menu-do-papel.ts";
 const NAVEGACAO = "components/navegacao-do-menu.ts";
+const SUITE = "test:menu-papel";
 
 const mutantes = [
   {
@@ -138,26 +157,23 @@ for (const arquivo of new Set(
 )) {
   original.set(arquivo, readFileSync(arquivo, "utf8"));
 }
-const restaurar = () => {
-  for (const [arquivo, texto] of original) writeFileSync(arquivo, texto);
-};
-process.on("exit", restaurar);
-process.on("SIGINT", () => process.exit(130));
+
+const bloco = criarBlocoDeMutantes({ rotulo: "menu-papel", suites: [SUITE] });
+// A sombra vive em diretorio temporario e sai junto com o processo -- inclusive
+// nas saidas antecipadas abaixo. No pior caso (SIGTERM) sobra um diretorio orfao
+// em /tmp; o que NAO sobra, e era o problema, e mutante nos tres arquivos.
+process.on("exit", () => bloco.fechar());
+
+/** `true` se a suite PASSA com estas sobrescritas (`{}` = arvore intacta). */
+const roda = (nome, sobrescritas = {}) => bloco.rodar(nome, sobrescritas, SUITE).verde;
 
 // CONTROLE POSITIVO: sem mutante, a suite tem de PASSAR. Se ela estiver
 // vermelha por outro motivo, todo mutante "morre" e o placar fecha 100% sem
-// medir nada.
-const roda = () => {
-  try {
-    execSync("npm run test:menu-papel", { stdio: "pipe" });
-    return true;
-  } catch {
-    return false;
-  }
-};
-
+// medir nada. Ele roda pelo MESMO aparelho que os mutantes (a mesma sombra, a
+// mesma compilacao, o mesmo `node --test`) -- e por isso ele pega erro no
+// aparelho, e nao so na suite.
 console.log("controle positivo (codigo intacto): a suite deve PASSAR");
-if (!roda()) {
+if (!roda("controle")) {
   console.error("  REPROVOU -- conserte a suite antes de medir mutante");
   process.exit(1);
 }
@@ -178,9 +194,7 @@ for (const m of mutantes) {
     sobreviventes++;
     continue;
   }
-  writeFileSync(m.arquivo, depois);
-  const passou = roda();
-  restaurar();
+  const passou = roda(m.nome, { [m.arquivo]: depois });
   if (passou) {
     console.error(`SOBREVIVEU :: ${m.nome}`);
     sobreviventes++;
@@ -200,9 +214,7 @@ if (sobreviventesEsperados.length > 0) {
       esperadosQueMorreram++;
       continue;
     }
-    writeFileSync(m.arquivo, antes.replace(m.de, m.para));
-    const passou = roda();
-    restaurar();
+    const passou = roda(m.nome, { [m.arquivo]: antes.replace(m.de, m.para) });
     if (passou) {
       console.log(`  ok, sobreviveu :: ${m.nome}`);
     } else {

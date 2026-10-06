@@ -14,16 +14,40 @@
 // `sed` que nao casa sai 0 sem mudar nada, e o relatorio acusaria o contrario do
 // que aconteceu.
 //
+// O BLOCO: UMA COMPILACAO PARA TODOS OS MUTANTES (HMO-320)
+// --------------------------------------------------------
+// Antes, cada mutante era escrito em `lib/calculadora-de-campo.ts` -- o arquivo
+// que o git rastreia -- e um `npm run test:calculadora-campo` inteiro era
+// disparado por cima: uma partida de npm e de tsc por mutante, o programa
+// reparseado do zero para trocar um arquivo. E restaurar no fim do laco nao e
+// restaurar: um SIGTERM (o `timeout` do shell, o cancelamento de job) matava o
+// processo com o mutante GRAVADO na fonte, e dali em diante quem rodasse a suite
+// media o mutante.
+//
+// `criarBlocoDeMutantes` fecha as duas coisas. A mutacao vai para uma SOMBRA em
+// diretorio temporario -- `lib/calculadora-de-campo.ts` nunca e tocado -- e a
+// compilacao e em processo, dividindo o AST de tudo que nao e o arquivo mutado.
+//
+// O PIPELINE VEM DO `test:calculadora-campo` no package.json em vez de repetido
+// aqui: a copia da receita divergia do alvo de verdade sem nada reclamar.
+//
+// A LINHA DE BASE abaixo era o unico controle positivo deste runner, e continua
+// sendo -- agora medida pelo mesmo aparelho que mede os mutantes, que e o que a
+// torna capaz de pegar erro no aparelho.
+//
 // Rodar na mao:  node scripts/mutantes-calculadora-de-campo.mjs
 // =====================================================
 
-import { execSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
+import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
+
 const RAIZ = fileURLToPath(new URL("..", import.meta.url));
-const ALVO = join(RAIZ, "lib/calculadora-de-campo.ts");
+const FONTE = "lib/calculadora-de-campo.ts";
+const ALVO = join(RAIZ, FONTE);
+const SUITE = "test:calculadora-campo";
 
 const MUTANTES = [
   {
@@ -171,20 +195,26 @@ const original = readFileSync(ALVO, "utf8");
 //
 // "A suite falha com o defeito" so quer dizer algo quando ela PASSA sem ele. E
 // o controle positivo que faltava ao controle negativo.
-try {
-  execSync("npm run test:calculadora-campo", { cwd: RAIZ, stdio: "pipe" });
-} catch (erro) {
-  const saida = [erro.stdout, erro.stderr]
-    .filter(Boolean)
-    .map((b) => b.toString())
-    .join("\n");
+//
+// `rodar` com `{}` compila e roda a sombra sem sobrescrita nenhuma: a mesma
+// compilacao, o mesmo diretorio e o mesmo `node --test` que cada mutante vai
+// usar. Era por isso que ele tinha de mudar de aparelho junto com os mutantes --
+// um controle que roda por outro caminho nao prova nada sobre este.
+const bloco = criarBlocoDeMutantes({ rotulo: "calculadora-de-campo", suites: [SUITE] });
+// A sombra vive em diretorio temporario e sai junto com o processo -- inclusive
+// nas saidas antecipadas abaixo. No pior caso (SIGTERM) sobra um diretorio orfao
+// em /tmp; o que NAO sobra, e era o problema, e mutante em `lib/`.
+process.on("exit", () => bloco.fechar());
+
+const controle = bloco.rodar("controle", {}, SUITE);
+if (!controle.verde) {
   console.error(
     "\n  LINHA DE BASE VERMELHA\n" +
-      "    A suite JA falha com lib/calculadora-de-campo.ts intacto, entao nenhum\n" +
-      "    mutante abaixo provaria nada: todos ficariam 'vermelhos' por um defeito\n" +
-      "    que nao e o plantado.\n" +
+      `    A suite JA falha com lib/calculadora-de-campo.ts intacto (${controle.como}),\n` +
+      "    entao nenhum mutante abaixo provaria nada: todos ficariam 'vermelhos'\n" +
+      "    por um defeito que nao e o plantado.\n" +
       "    Conserte a suite (ou o codigo) antes de rodar este script.\n\n" +
-      saida
+      `    ${controle.saida}`
   );
   process.exit(1);
 }
@@ -206,34 +236,32 @@ for (const m of MUTANTES) {
     continue;
   }
 
-  writeFileSync(ALVO, original.replace(m.de, m.para));
+  const r = bloco.rodar(m.nome, { [FONTE]: original.replace(m.de, m.para) }, SUITE);
 
-  let passou;
-  try {
-    execSync("npm run test:calculadora-campo", { cwd: RAIZ, stdio: "pipe" });
-    passou = true;
-  } catch {
-    passou = false;
-  }
-
-  if (passou) {
+  if (r.verde) {
     console.error(
       `\n  SOBREVIVEU    ${m.nome}\n` +
         `    A suite ficou VERDE com este defeito de pe.\n` +
-        `    Por que ele importa: ${m.porque}`
+        `    Por que ele importa: ${m.porque}` +
+        // Sobreviver emitindo byte IDENTICO ao da arvore limpa nao e furo de
+        // assercao: e mutante equivalente, e nenhuma assercao o mataria. A
+        // resposta certa para os dois casos e oposta (escrever assercao x tirar
+        // o mutante da lista).
+        (r.mudouASaida === false
+          ? "\n    (a saida compilada e identica a da arvore limpa: mutante" +
+            " EQUIVALENTE, nao furo de teste)"
+          : "")
     );
     falhas++;
   } else {
-    console.log(`  vermelho em:  ${m.nome}`);
+    console.log(`  vermelho em:  ${m.nome}  (${r.como})`);
   }
 }
-
-writeFileSync(ALVO, original);
 
 if (falhas > 0) {
   console.error(
     `\n${falhas} de ${MUTANTES.length} mutantes nao produziram vermelho. ` +
-      `lib/calculadora-de-campo.ts foi restaurado.\n`
+      `lib/calculadora-de-campo.ts nunca foi tocado: a mutacao mora na sombra.\n`
   );
   process.exit(1);
 }
