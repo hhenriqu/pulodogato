@@ -43,9 +43,17 @@ export async function GET() {
 
     const { data: ativos, error: erroAtivos } = await supabase
       .from("investment_assets")
-      .select(
-        "id, symbol, name, type, currency, current_price, current_price_at"
-      )
+      // Os seis campos da 031 vem junto para a TELA PODER EDITA-LOS. A conta de
+      // rendimento nao sai daqui -- ela e de /api/investments/renda-fixa, que e
+      // a unica que fala com o Banco Central (HMO-192).
+      //
+      // Uma linha so, sem concatenacao: o supabase-js LE esta string em tempo de
+      // tipo para montar o tipo da resposta, e `"a, b" + "c, d"` nao e um
+      // literal -- ele cai para `GenericStringError[]` e o `as AtivoBruto[]`
+      // abaixo passa a ser um erro de compilacao ("neither type sufficiently
+      // overlaps"). Quebrar esta linha para caber na margem reprova o tsc.
+      // prettier-ignore
+      .select("id, symbol, name, type, currency, current_price, current_price_at, fixed_income_product, index_kind, index_percentage, spread_annual, applied_date, maturity_date")
       .eq("user_id", user.id)
       .order("symbol", { ascending: true });
 

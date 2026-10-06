@@ -80,6 +80,8 @@
     "test:orcamento-de-grupo": "node scripts/compila.mjs -p scripts/tsconfig.orcamento-de-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-orcamento-de-grupo lib && node --test scripts/test-orcamento-de-grupo.mjs",
     "test:lista-lancamentos": "node scripts/compila.mjs -p scripts/tsconfig.lista-lancamentos-test.json && node scripts/resolve-aliases.mjs .tmp-lista-lancamentos lib && node --test scripts/test-lista-de-lancamentos.mjs",
     "test:parte-do-grupo": "node scripts/compila.mjs -p scripts/tsconfig.parte-do-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-parte-do-grupo lib --espelha-raiz && node --test scripts/test-parte-do-grupo.mjs",
+    "test:renda-fixa": "node scripts/compila.mjs -p scripts/tsconfig.renda-fixa-test.json && node scripts/resolve-aliases.mjs .tmp-renda-fixa lib && node --test scripts/test-renda-fixa.mjs",
+    "mutantes:renda-fixa": "node scripts/mutantes-renda-fixa.mjs",
     "test:cambio": "node scripts/compila.mjs -p scripts/tsconfig.cambio-test.json && node scripts/resolve-aliases.mjs .tmp-cambio lib && node --test scripts/test-cambio.mjs",
     "test:cartao-orcamento-grupo": "node scripts/compila.mjs -p scripts/tsconfig.cartao-orcamento-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-cartao-orcamento-grupo components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-cartao-orcamento-grupo lib --espelha-raiz && node --test scripts/test-cartao-orcamento-grupo.mjs",
     "test:moeda-do-grupo": "node scripts/compila.mjs -p scripts/tsconfig.moeda-do-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-moeda-do-grupo lib && node --test scripts/test-moeda-do-grupo.mjs",

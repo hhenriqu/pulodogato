@@ -25,7 +25,9 @@ const {
   STATUS_QUE_SAI_DO_PREVISTO,
   ehPernaDeEntrada,
   ehGastoNoCartao,
+  ehPagamentoDaFatura,
   TIPO_CARTAO,
+  TIPO_DA_PERNA_DE_PAGAMENTO,
   linhaRealizada,
   linhaPrevista,
   linhasDaTela,
@@ -900,15 +902,22 @@ test("a realizada e `fixa` quando o id esta no conjunto, e `despesa` quando nao"
   );
 });
 
-test("a realizada NUNCA e fatura -- o pagamento dela e transferencia de duas pernas", () => {
-  // `pernasDoPagamentoDeFatura` grava as duas pernas como `transfer`, entao
-  // nenhuma delas chega na tela de Despesas. Nao existe linha realizada que
-  // seja uma fatura aqui, e `fatura: null` em toda realizada e o que impede a
-  // tela de oferecer um link a partir de um lado da conta que nao o tem.
+test("a realizada COMUM nao e fatura, com ou sem o conjunto de fixas", () => {
+  // Este bloco afirmava "a realizada NUNCA e fatura" ate a HMO-264, e o nome
+  // dele era a razao pela qual `fatura: null` era literal em `linhaRealizada`.
+  // A fatura PAGA derrubou aquela afirmacao -- mas nao esta: a linha que NAO e o
+  // pagamento da fatura continua sem cartao e sem mes, e e isso que impede a
+  // tela de montar um link a partir de uma linha que nao tem para onde apontar.
+  //
+  // O caso que agora E fatura esta no bloco da armadilha 6, mais abaixo.
   const indice = indiceDeContraparte([]);
 
   for (const ids of [SEM_FIXAS, new Set(["t1"])]) {
-    assert.equal(linhaRealizada(realizada(), indice, ids).fatura, null);
+    for (const tela of ["expense", "transfer", "income"]) {
+      const linha = linhaRealizada(realizada(), indice, ids, EU, tela);
+      assert.equal(linha.fatura, null);
+      assert.notEqual(linha.natureza, "fatura");
+    }
   }
 });
 
@@ -959,6 +968,331 @@ test("as tres naturezas convivem na MESMA tela, e nenhuma delas move um centavo"
     semFixas.map((l) => l.natureza).sort(),
     ["despesa", "despesa", "despesa", "fatura", "fixa"]
   );
+});
+
+// -----------------------------------------------------
+// ARMADILHA 6: a fatura PAGA nao estava em lado nenhum (HMO-264)
+// -----------------------------------------------------
+// "Despesas do cartao sao todas previstas e se tornam realizadas para todos os
+// fins apos cartao ser pago, o total de cartao que deve ser e considerado nos
+// totais para calcular previsto e realizado."
+//
+// A armadilha 5 tirou a compra do Realizado contando que a FATURA estivesse no
+// Previsto -- e no mes em que ela e PAGA os dois lados a perdiam juntos.
+
+/** A conta de onde o dinheiro da fatura sai. Nao e cartao. */
+const CONTA_CORRENTE = "11111111-2222-3333-4444-555555555555";
+
+/**
+ * A perna de SAIDA do pagamento da fatura, como `pagarFatura` a grava.
+ *
+ * `notes` e a chave canonica porque a rota copia
+ * `scheduled_transactions.notes` para as DUAS pernas -- e e so por isso que a
+ * tela consegue saber que esta `transfer` e uma fatura.
+ */
+const pernaDeSaidaDaFatura = (over = {}) =>
+  realizada({
+    id: "pg-saida",
+    description: "Fatura C6 10/2026",
+    amount: -1290,
+    transaction_type: "transfer",
+    transaction_date: "2026-10-10",
+    notes: CHAVE_DE_FATURA,
+    account: { id: CONTA_CORRENTE, name: "Itaú", account_type: "checking" },
+    ...over,
+  });
+
+/** A perna de ENTRADA: +total no cartao, com o elo do 015 para a de saida. */
+const pernaDeEntradaDaFatura = (over = {}) =>
+  realizada({
+    id: "pg-entrada",
+    description: "Pagamento — Fatura C6 10/2026",
+    amount: 1290,
+    transaction_type: "transfer",
+    transaction_date: "2026-10-10",
+    notes: CHAVE_DE_FATURA,
+    counterpart_transaction_id: "pg-saida",
+    account: { id: CARTAO, name: "C6", account_type: "credit_card" },
+    ...over,
+  });
+
+/** A conta prevista da fatura depois da baixa: `paid`, e fora do previsto. */
+const faturaPaga = (over = {}) =>
+  prevista({
+    id: "s-fatura",
+    description: "Fatura C6 10/2026",
+    amount: "1290.00",
+    due_date: "2026-10-10",
+    notes: CHAVE_DE_FATURA,
+    status: "paid",
+    effective_status: "paid",
+    ...over,
+  });
+
+test("o mes da fatura PAGA fecha no MESMO Total do mes da fatura ABERTA", () => {
+  // A VERIFICACAO QUE A ISSUE PEDE, e ela e um oraculo e nao um numero escrito
+  // a mao: dois meses IDENTICOS -- a mesma compra de R$ 1.290 no mesmo cartao --
+  // em que a unica diferenca e a fatura ter sido paga ou nao. Os dois tem de
+  // fechar no mesmo Total, porque o mes nao ficou mais barato por ela ter sido
+  // paga.
+  const compra = realizada({
+    id: "compra",
+    amount: -1290,
+    transaction_type: "expense",
+    account: { id: CARTAO, name: "C6", account_type: "credit_card" },
+  });
+
+  // MES A: fatura ABERTA. A compra esta escondida (armadilha 5) e a fatura
+  // inteira esta no Previsto, sintetizada de `card_invoice_lines` (HMO-227).
+  const aberta = daTela([compra], [faturaAberta({ amount: 1290 })], "expense");
+
+  // MES B: a MESMA compra, e a fatura foi PAGA. Ela saiu do Previsto por
+  // `status: 'paid'` (armadilha 2) e o pagamento entrou em duas pernas.
+  const paga = daTela(
+    [compra, pernaDeSaidaDaFatura(), pernaDeEntradaDaFatura()],
+    [faturaPaga()],
+    "expense"
+  );
+
+  assert.equal(resumoDaTela(aberta).total, 1290);
+  assert.equal(resumoDaTela(paga).total, 1290);
+
+  // E OS DOIS LADOS TROCARAM DE LUGAR. Afirmar so o Total passaria verde com a
+  // fatura em qualquer um dos dois -- inclusive nos DOIS, que e o jeito de ela
+  // contar duas vezes (o Total e previsto + realizado).
+  assert.deepEqual(
+    [resumoDaTela(aberta).previsto, resumoDaTela(aberta).realizado],
+    [1290, 0]
+  );
+  assert.deepEqual(
+    [resumoDaTela(paga).previsto, resumoDaTela(paga).realizado],
+    [0, 1290]
+  );
+
+  // UMA linha em cada mes, e nao duas: a compra continua escondida no mes da
+  // fatura paga, que e o que impede o cartao de contar duas vezes (HMO-260).
+  assert.equal(aberta.length, 1);
+  assert.equal(paga.length, 1);
+  assert.equal(paga[0].id, "pg-saida");
+});
+
+test("a fatura paga e a PERNA DE SAIDA -- a de entrada daria R$ 2.580", () => {
+  // As duas pernas carregam a MESMA chave, a mesma data e o mesmo valor com
+  // sinais opostos. `valorEmReais` passa `Math.abs`, entao contar as duas nao
+  // daria zero: daria o DOBRO.
+  const despesas = daTela(
+    [pernaDeSaidaDaFatura(), pernaDeEntradaDaFatura()],
+    [],
+    "expense"
+  );
+
+  assert.equal(despesas.length, 1);
+  assert.equal(despesas[0].id, "pg-saida");
+  assert.equal(resumoDaTela(despesas).realizado, 1290);
+  // CONTROLE: sem o criterio da perna, as duas entrariam e o mes fecharia no
+  // dobro da fatura.
+  assert.notEqual(resumoDaTela(despesas).realizado, 2580);
+
+  assert.equal(ehPagamentoDaFatura(pernaDeSaidaDaFatura()), true);
+  assert.equal(ehPagamentoDaFatura(pernaDeEntradaDaFatura()), false);
+});
+
+test("a perna de entrada SEM o elo tambem fica fora -- o sinal e a rede", () => {
+  // O FK `counterpart_transaction_id` e `ON DELETE SET NULL`: a perna de entrada
+  // pode perder o elo e continuar no saldo do cartao. E o SEGUNDO criterio de
+  // `ehPernaDeEntrada` (o sinal) que a pega -- sem ele ela entraria como uma
+  // segunda fatura paga, no mesmo mes e pelo mesmo valor.
+  const semElo = pernaDeEntradaDaFatura({ counterpart_transaction_id: null });
+  assert.equal(ehPagamentoDaFatura(semElo), false);
+
+  const despesas = daTela([pernaDeSaidaDaFatura(), semElo], [], "expense");
+  assert.equal(despesas.length, 1);
+  assert.equal(resumoDaTela(despesas).realizado, 1290);
+});
+
+test("a fatura paga se apresenta como FATURA, com o cartao e o mes", () => {
+  // "Precisa ser a FATURA reconhecida como fatura, nao a transferencia
+  // reclassificada": e `natureza` + `fatura` que dao a ela o rotulo e o caminho
+  // de volta para a tela do cartao. Pelo mesmo criterio do lado previsto.
+  const [linha] = daTela([pernaDeSaidaDaFatura()], [], "expense");
+
+  assert.equal(linha.natureza, "fatura");
+  assert.deepEqual(linha.fatura, { accountId: CARTAO, mes: "2026-10-01" });
+  assert.equal(linha.origem, "realizado");
+  // E ela NAO e o elo da HMO-305: aquele e sobre uma conta A PAGAR, e oferecer o
+  // desfazer aqui daria um botao que a rota recusa.
+  assert.equal(linha.elo_da_fatura, null);
+  assert.equal(linha.fatura_suspeita, null);
+
+  // FATURA VENCE FIXA, a mesma ordem do lado previsto: chama-la de "fixa"
+  // tiraria dela o cartao e o mes, que e a unica coisa que `fatura` da.
+  const comoFixa = daTela(
+    [pernaDeSaidaDaFatura()],
+    [],
+    "expense",
+    new Set(["pg-saida"])
+  );
+  assert.equal(comoFixa[0].natureza, "fatura");
+});
+
+test("a MESMA perna e `expense` em Despesas e `transfer` em Transferencias", () => {
+  // Pagar a fatura E um movimento entre duas contas minhas (e e so isso que a
+  // tela de Transferencias afirma) E o momento em que a despesa do cartao se
+  // realiza (e e so isso que a de Despesas afirma). Nenhum total soma as tres
+  // telas, entao estar nas duas nao e contar duas vezes.
+  const pernas = [pernaDeSaidaDaFatura(), pernaDeEntradaDaFatura()];
+
+  const [emDespesas] = daTela(pernas, [], "expense");
+  const [emTransferencias] = daTela(pernas, [], "transfer");
+
+  // A MESMA linha do banco nas duas.
+  assert.equal(emDespesas.id, "pg-saida");
+  assert.equal(emTransferencias.id, "pg-saida");
+
+  // E `tipo` diz A QUE TELA ela pertence, nao o que a coluna do banco diz.
+  assert.equal(emDespesas.tipo, "expense");
+  assert.equal(emTransferencias.tipo, "transfer");
+
+  // A de Transferencias continua mostrando UMA perna, e nao duas.
+  assert.equal(daTela(pernas, [], "transfer").length, 1);
+});
+
+test("a fatura paga NAO aparece na tela de Receitas", () => {
+  // A excecao da decisao 1 e so em Despesas. Sem a guarda de `tipo`, a chave
+  // canonica poria o pagamento da fatura no total de Receitas do mes.
+  assert.equal(daTela([pernaDeSaidaDaFatura()], [], "income").length, 0);
+  assert.equal(
+    resumoDaTela(daTela([pernaDeSaidaDaFatura()], [], "income")).realizado,
+    0
+  );
+});
+
+test("o valor sai da PERNA, e nunca de `scheduled_transactions.amount`", () => {
+  // A baixa aceita valor diferente do previsto e NAO reescreve a agenda: a
+  // fatura previa R$ 1.290 e a pessoa pagou R$ 1.200. O Realizado tem de dizer
+  // o que SAIU da conta -- ler o `amount` da agenda mostraria um pagamento que
+  // nao aconteceu.
+  const paga = daTela(
+    [pernaDeSaidaDaFatura({ amount: -1200 })],
+    [faturaPaga({ amount: "1290.00" })],
+    "expense"
+  );
+
+  assert.equal(resumoDaTela(paga).realizado, 1200);
+  assert.notEqual(resumoDaTela(paga).realizado, 1290);
+});
+
+test("a fatura paga entra pela data do PAGAMENTO, nao pela do vencimento", () => {
+  // `pagarFatura` grava `transaction_date = paid_date` nas duas pernas, e e por
+  // `transaction_date` que a rota recorta a janela -- entao a fatura que vencia
+  // em 10/10 e foi paga em 03/11 cai em NOVEMBRO. Pelo `due_date` ela contaria
+  // no mes errado.
+  const [linha] = daTela(
+    [pernaDeSaidaDaFatura({ transaction_date: "2026-11-03" })],
+    [],
+    "expense"
+  );
+
+  assert.equal(linha.data, "2026-11-03");
+  // E A CHAVE CONTINUA APONTANDO PARA A FATURA DE OUTUBRO. O mes da fatura e o
+  // mes do vencimento nao sao o mesmo numero (`card_invoice_due_date` empurra o
+  // vencimento quando o dia de vencer vem antes do fechamento), e e a chave que
+  // carrega o primeiro.
+  assert.deepEqual(linha.fatura, { accountId: CARTAO, mes: "2026-10-01" });
+});
+
+test("a despesa do elo da fatura (HMO-305) continua DESPESA, e editavel", () => {
+  // Ligar o elo grava a chave canonica em `scheduled_transactions.notes`, e a
+  // baixa COMUM copia `notes` para a linha que cria: uma `expense`, negativa,
+  // com a chave e sem contraparte -- indistinguivel da perna de saida por tudo
+  // menos o `transaction_type`. E ela e uma despesa de VERDADE, paga da conta
+  // corrente.
+  //
+  // O QUE O CRITERIO DO TIPO PROTEGE AQUI NAO E A SOMA. Sem ele a linha nao
+  // seria contada duas vezes -- o ramo da fatura faz `continue`, entao ela
+  // entraria uma vez pelo ramo novo em vez do filtro de tipo. O que ela perderia
+  // e o resto: `natureza: "fatura"` tira o Editar e o Excluir
+  // (`podeAgirNaLinha`) e da a ela um link para um cartao que nao e onde aquela
+  // despesa aconteceu.
+  const doElo = realizada({
+    id: "elo",
+    amount: -1290,
+    transaction_type: "expense",
+    notes: CHAVE_DE_FATURA,
+    account: { id: CONTA_CORRENTE, name: "Itaú", account_type: "checking" },
+  });
+
+  assert.equal(ehPagamentoDaFatura(doElo), false);
+
+  const despesas = daTela([doElo], [], "expense");
+  assert.equal(despesas.length, 1);
+  assert.equal(resumoDaTela(despesas).realizado, 1290);
+
+  // O ROTULO E O QUE ESTE BLOCO MEDE.
+  assert.equal(despesas[0].natureza, "despesa");
+  assert.equal(despesas[0].fatura, null);
+  assert.equal(despesas[0].tipo, "expense");
+});
+
+test("o ramo da fatura nao serve de desvio para o gasto NO cartao", () => {
+  // O segundo efeito do criterio do tipo, e o caro: o ramo da fatura em
+  // `linhasDaTela` passa POR CIMA de `ehGastoNoCartao` (armadilha 5). Uma linha
+  // `expense` na conta de um CARTAO que carregue a chave canonica entraria no
+  // Realizado sem aquela peneira -- somada solta ali E dentro da fatura que o
+  // Previsto soma, que e o defeito da HMO-260 de volta.
+  const noCartaoComAChave = realizada({
+    id: "no-cartao",
+    amount: -400,
+    transaction_type: "expense",
+    notes: CHAVE_DE_FATURA,
+    account: { id: CARTAO, name: "C6", account_type: "credit_card" },
+  });
+
+  assert.equal(ehPagamentoDaFatura(noCartaoComAChave), false);
+  assert.equal(ehGastoNoCartao(noCartaoComAChave), true);
+
+  // Ela continua ESCONDIDA do Realizado, e a fatura aberta sozinha responde
+  // pelos R$ 400.
+  const despesas = daTela(
+    [noCartaoComAChave],
+    [faturaAberta({ amount: 400 })],
+    "expense"
+  );
+  assert.equal(despesas.length, 1);
+  assert.equal(resumoDaTela(despesas).realizado, 0);
+  assert.equal(resumoDaTela(despesas).total, 400);
+  // CONTROLE: pelo desvio, o mes fecharia no dobro da compra.
+  assert.notEqual(resumoDaTela(despesas).total, 800);
+});
+
+test("`notes` que nao e a chave canonica nao vira fatura paga", () => {
+  // A regex e ancorada nas duas pontas de proposito: sem o `$`, a nota escrita
+  // a mao viraria regra de negocio.
+  for (const notes of [
+    null,
+    "",
+    "pagamento da fatura",
+    `fatura:2026-10-01:${CARTAO} paguei no debito`,
+    "fatura:2026-10-01:nao-e-uuid",
+  ]) {
+    assert.equal(
+      ehPagamentoDaFatura(pernaDeSaidaDaFatura({ notes })),
+      false,
+      `notes ${JSON.stringify(notes)} passou por chave canonica`
+    );
+  }
+
+  // E uma transferencia COMUM entre contas proprias -- sem nota nenhuma --
+  // continua fora da tela de Despesas, que e a armadilha 4.
+  const pix = pernaDeSaidaDaFatura({ id: "pix", notes: null });
+  assert.equal(daTela([pix], [], "expense").length, 0);
+  assert.equal(daTela([pix], [], "transfer").length, 1);
+});
+
+test("a constante do tipo da perna e o `transfer` do ENUM", () => {
+  // Um typo aqui nao da erro: so para de casar, e a fatura paga volta a
+  // desaparecer dos dois lados da tela -- o defeito desta issue, em silencio.
+  assert.equal(TIPO_DA_PERNA_DE_PAGAMENTO, "transfer");
 });
 
 test("sem id E sem notes a linha fica fora -- nao ha chave estavel", () => {
