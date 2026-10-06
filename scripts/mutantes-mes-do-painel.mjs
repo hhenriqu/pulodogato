@@ -26,15 +26,36 @@
 // certa com o argumento errado) sao mutantes separados de proposito: eles sao
 // consertos diferentes, e um `exigido` generico passaria por dois deles.
 //
-// Nao usa `git checkout` para restaurar: ele restauraria a partir do INDICE, e
-// num worktree compartilhado isso ja apagou trabalho nao commitado aqui. A
-// copia original vai para a memoria e volta de la, sempre.
+// NAO RESTAURA NADA, PORQUE NAO MUTA NADA (HMO-320)
+// -------------------------------------------------
+// Este runner nao usava `git checkout` para restaurar -- ele restauraria a
+// partir do INDICE, e num worktree compartilhado isso ja apagou trabalho nao
+// commitado aqui -- e guardava o original em memoria para reescrever o arquivo
+// no fim de cada volta. Restaurar em memoria e melhor que `git checkout`, mas
+// continua sendo restaurar: `process.on("exit")` NAO roda em SIGTERM, o sinal
+// que o `timeout` do shell e o cancelamento de job mandam, e o processo morto no
+// meio deixava o mutante gravado no `route.ts`.
+//
+// Com `criarBlocoDeMutantes` nao ha o que restaurar: a mutacao e escrita numa
+// SOMBRA em diretorio temporario e os dois arquivos do repositorio nunca sao
+// tocados. Isto importa em dobro para a METADE DOS MUTANTES QUE VIVE NO
+// `route.ts`: as assercoes que os matam leem o TEXTO da fonte, e a sombra
+// materializa o arquivo mutado em disco justamente para elas -- numa arvore de
+// symlinks elas leriam o original e todos sobreviveriam sem motivo visivel.
+//
+// E A COMPILACAO E UMA SO para todas as voltas, em vez de um `npm run
+// test:papel-de-pao` inteiro por mutante. O pipeline vem do proprio alvo no
+// package.json, e nao repetido aqui -- o que importa porque aquele alvo roda a
+// suite em DOIS fusos (`America/Sao_Paulo` e `UTC`), e um runner com a receita
+// copiada a mao e exatamente o lugar onde o segundo fuso se perde.
 
-import { readFileSync, writeFileSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+
+import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
 
 const LIB = "lib/papel-de-pao.ts";
 const ROTA = "app/api/papel-de-pao/painel/route.ts";
+const SUITE = "test:papel-de-pao";
 
 const mutantes = [
   // ---------------------------------------------------------------------------
@@ -161,28 +182,25 @@ const original = new Map();
 for (const arquivo of new Set(mutantes.map((m) => m.arquivo))) {
   original.set(arquivo, readFileSync(arquivo, "utf8"));
 }
-const restaurar = () => {
-  for (const [arquivo, texto] of original) writeFileSync(arquivo, texto);
-};
-process.on("exit", restaurar);
-process.on("SIGINT", () => process.exit(130));
+const bloco = criarBlocoDeMutantes({ rotulo: "mes-do-painel", suites: [SUITE] });
+// A sombra vive em diretorio temporario e sai junto com o processo -- inclusive
+// nas saidas antecipadas abaixo. No pior caso (SIGTERM) sobra um diretorio orfao
+// em /tmp; o que NAO sobra, e era o problema, e mutante na `lib/` ou na rota.
+process.on("exit", () => bloco.fechar());
 
-const roda = () => {
-  try {
-    execSync("npm run test:papel-de-pao", { stdio: "pipe" });
-    return true;
-  } catch {
-    return false;
-  }
-};
+/** `true` se a suite PASSA com estas sobrescritas (`{}` = arvore intacta). */
+const roda = (nome, sobrescritas = {}) => bloco.rodar(nome, sobrescritas, SUITE).verde;
 
 // CONTROLE POSITIVO, primeiro e obrigatorio: sem mutante a suite tem de PASSAR.
 // Se ela estiver vermelha por outro motivo -- um erro no proprio caminho da
 // mutacao, um `.tmp` sujo, uma dependencia que nao compila -- todo mutante
 // "morre" e o placar fecha 100% sem medir nada. O controle NEGATIVO nao pega
 // isso: ele passa por outro caminho.
+//
+// Ele roda pela MESMA sombra e pela MESMA compilacao que os mutantes, o que o
+// torna capaz de reprovar por defeito no aparelho e nao so na suite.
 console.log("controle positivo (codigo intacto): a suite deve PASSAR");
-if (!roda()) {
+if (!roda("controle")) {
   console.error("  REPROVOU -- conserte a suite antes de medir mutante");
   process.exit(1);
 }
@@ -205,9 +223,7 @@ for (const m of mutantes) {
     sobreviventes++;
     continue;
   }
-  writeFileSync(m.arquivo, depois);
-  const passou = roda();
-  restaurar();
+  const passou = roda(m.nome, { [m.arquivo]: depois });
   if (passou) {
     console.error(`SOBREVIVEU :: ${m.nome}`);
     sobreviventes++;
