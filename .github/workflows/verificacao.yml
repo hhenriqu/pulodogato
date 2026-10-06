@@ -5125,3 +5125,132 @@ jobs:
             diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
             exit 1
           fi
+
+      # =======================================================================
+      # PAGAR A FATURA: A DECISAO E A SEQUENCIA, FORA DA TELA
+      # origem: nova (HMO-245, fase 13 -- HMO-310)
+      # =======================================================================
+      # Pagar fatura escolhendo a conta pagadora ja funcionava inteiro -- e so
+      # funcionava DENTRO de app/(dashboard)/dashboard/bills/page.tsx. A fase 13
+      # tirou de la a decisao (lib/pagamento-da-fatura.ts) e o dialogo
+      # (components/fatura/DialogoDePagamentoDaFatura.tsx) para que a tela de
+      # Despesas os use sem copiar uma linha.
+      #
+      # O DEFEITO QUE A SUITE EXISTE PARA PEGAR e um galho trocado. Os TRES
+      # sabores de fatura casam em `natureza === "fatura"`; o que separa UMA
+      # escrita de DUAS e `gravada`:
+      #
+      #   aberta sintetizada   gravada: false  ->  close + pay
+      #   fechada na agenda    gravada: true   ->  so pay
+      #   previsao ligada      gravada: true   ->  so pay   (o elo, HMO-305)
+      #
+      # Com o galho por `natureza`, a previsao DIGITADA que alguem ligou a fatura
+      # passa pelo POST /api/card-invoices/close: a fatura do CARTAO e fechada
+      # porque a pessoa pagou a previsao da CONTA CORRENTE. O `close` responde
+      # 201 -- nenhum erro, nenhum log --, e o unico sintoma e uma conta a pagar
+      # que ninguem pediu no mes seguinte.
+      #
+      # E ELE SO MORRE POR UM CASO SOBRE A PREVISAO LIGADA. Na fatura ABERTA as
+      # duas expressoes dao a mesma resposta, entao uma suite que so olhe aquele
+      # sabor passa VERDE com a troca feita. O mutante `galho_por_natureza` e a
+      # medicao disso.
+      #
+      # DOIS FUSOS, porque a suite toca `mes` / `invoice_month`: a sandbox e
+      # America/Sao_Paulo e o CI e UTC. `mesDoClose` e fatia de string e nao
+      # deveria depender do relogio; rodar nos dois e o que prova que nao passou
+      # a depender.
+      #
+      # SEM `paths:`, como o resto deste workflow: a suite e pura e roda em dois
+      # segundos, e um filtro escrito hoje estaria errado no dia em que a decisao
+      # mudar de arquivo.
+      - name: A decisao e a sequencia do pagamento de fatura (dois fusos)
+        run: npm run test:pagamento-da-fatura
+
+      - name: Mutantes da decisao e da sequencia do pagamento de fatura
+        run: npm run mutantes:pagamento-da-fatura
+
+      # A OUTRA METADE: a decisao pode estar perfeita e nao estar LIGADA.
+      #
+      # Quatro defeitos de fiacao, nenhum deles visivel ao `tsc`: o dialogo sem a
+      # frase do patrimonio no toast (quem pagou R$ 1.000 ve o patrimonio parado,
+      # conclui que a baixa nao registrou e paga de novo), o botao desabilitado
+      # sem motivo escrito, a tela sem o dialogo, e -- a exigencia NEGATIVA -- a
+      # tela montando a sequencia das escritas de novo, que e a segunda
+      # implementacao da de-duplicacao de fatura.
+      - name: A fiacao do pagamento da fatura esta ligada
+        run: npm run check-pagamento-da-fatura
+
+      - name: 'A verificacao sabe falhar (fiacao do pagamento da fatura)'
+        run: |
+          set -uo pipefail
+          GUARD=scripts/check-pagamento-da-fatura.mjs
+
+          # Cada mutacao desliga UM ponto da fiacao e restaura em seguida. O
+          # `cmp` existe porque um `sed -i` que nao casa SAI 0: sem ele, uma
+          # ancora renomeada por outra issue faria este passo medir a arvore
+          # intacta e ficar verde para sempre.
+          desligar() {
+            local arquivo="$1" de="$2" para="$3" rotulo="$4"
+            cp "$arquivo" "$arquivo.orig310"
+            sed -i "s@$de@$para@" "$arquivo"
+            if cmp -s "$arquivo" "$arquivo.orig310"; then
+              mv "$arquivo.orig310" "$arquivo"
+              echo "::error::o sed de '$rotulo' nao casou nada -- a ancora mudou e este controle mediria a arvore intacta"
+              exit 1
+            fi
+            if node "$GUARD" > /dev/null 2>&1; then
+              mv "$arquivo.orig310" "$arquivo"
+              echo "::error::Verde com a fiacao desligada: $rotulo"
+              exit 1
+            fi
+            mv "$arquivo.orig310" "$arquivo"
+            echo "  vermelho em: $rotulo"
+          }
+
+          DIALOGO='components/fatura/DialogoDePagamentoDaFatura.tsx'
+          TELA='app/(dashboard)/dashboard/bills/page.tsx'
+
+          desligar "$DIALOGO" 'description: FRASE_DO_PATRIMONIO' 'description: undefined' \
+            'o toast de sucesso perde a frase do patrimonio -- e o pagamento em dobro volta'
+          desligar "$DIALOGO" 'MOTIVO_SEM_CONTA_PAGADORA}' 'null}' \
+            'o botao desabilitado perde o motivo escrito'
+          desligar "$DIALOGO" 'pagarAFatura({' 'naoChama({' \
+            'o dialogo importa a sequencia e NAO a chama'
+          desligar "$DIALOGO" 'decisaoDePagamentoDaFatura(linha)' 'naoDecide(linha)' \
+            'o dialogo redecide por conta propria em vez de perguntar a lib'
+          desligar "$TELA" '<DialogoDePagamentoDaFatura' '<DialogoDeAlcance' \
+            'a tela para de renderizar o dialogo -- a fatura fica sem onde ser paga'
+          # OS DOIS CALL SITES DA TELA, SEPARADOS, e isso foi medido: a primeira
+          # versao do guard exigia `linhaParaPagarDaAgenda(` solto, e matar o
+          # galho de `pedirBaixa` deixava a prop do dialogo satisfazendo a
+          # exigencia -- verde com a tela de volta ao proprio criterio de "isto e
+          # fatura?", que e o segundo dono da pergunta.
+          desligar "$TELA" 'decisaoDePagamentoDaFatura(linhaParaPagarDaAgenda(conta))' 'ehFatura(conta.notes)' \
+            'pedirBaixa volta a ter o proprio criterio de "isto e fatura?"'
+          desligar "$TELA" 'linhaParaPagarDaAgenda(faturaParaPagar)' 'faturaParaPagar' \
+            'a prop do dialogo deixa de ser normalizada -- a decisao le campos que nao existem'
+
+          # A EXIGENCIA NEGATIVA, medida ao contrario: o guard tem de ficar
+          # VERMELHO quando a sequencia das escritas VOLTA para dentro da tela.
+          # Sem este caso, a parte do guard que impede a segunda implementacao
+          # nunca foi exercitada.
+          cp "$TELA" "$TELA.orig310"
+          printf '\nconst voltou = () => fetch("/api/card-invoices/close");\n' >> "$TELA"
+          if node "$GUARD" > /dev/null 2>&1; then
+            mv "$TELA.orig310" "$TELA"
+            echo "::error::Verde com a sequencia das escritas de volta dentro da tela"
+            exit 1
+          fi
+          mv "$TELA.orig310" "$TELA"
+          echo "  vermelho em: a sequencia das escritas volta para dentro da tela"
+
+          echo "A verificacao fica vermelha nos oito pontos."
+
+      - name: 'A arvore voltou ao lugar depois de "A verificacao sabe falhar (fiacao do pagamento da fatura)"'
+        run: |
+          git status --porcelain > "$RUNNER_TEMP/arvore-agora.txt"
+          if ! diff -q "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" > /dev/null; then
+            echo "::error::O controle negativo acima nao restaurou a arvore -- procure por um .orig310 esquecido."
+            diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
+            exit 1
+          fi

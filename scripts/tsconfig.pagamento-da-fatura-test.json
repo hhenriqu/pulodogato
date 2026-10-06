@@ -1,0 +1,42 @@
+{
+  "//": [
+    "Compila a decisao e a sequencia do pagamento de fatura (HMO-310) para a",
+    "suite pura.",
+    "",
+    "O include lista o fechamento INTEIRO de proposito, e nao so o arquivo da",
+    "fase: `lib/pagamento-da-fatura.ts` importa `@/lib/agenda-do-cartao`",
+    "(TIPO_CARTAO) e `@/lib/card-invoice` (faturaDaChave, mensagemContaPagadora),",
+    "e aquele arrasta `transferencia` -> `lancamento`. O tsc seguiria os imports",
+    "sozinho, mas o mutador copia para a arvore temporaria SO o que esta",
+    "listado -- e um mutante que nao compila 'morre' por motivo errado, com o",
+    "placar mentindo a favor.",
+    "",
+    "`rootDir` e `../lib` e o npm script roda o resolve-aliases.mjs depois: o tsc",
+    "resolve `@/lib/...` por `paths` mas NAO reescreve o alias no JS emitido, e",
+    "`node --test` nao sabe o que e `@/`.",
+    "",
+    "Comentario SO nesta chave, nunca com // no meio do objeto: o tsc aceita",
+    "JSONC, mas o check-tests-in-ci.mjs le este arquivo com JSON.parse e estoura",
+    "com 'Expected double-quoted property name'."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-pagamento-da-fatura",
+    "rootDir": "../lib",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../lib/pagamento-da-fatura.ts",
+    "../lib/agenda-do-cartao.ts",
+    "../lib/card-invoice.ts",
+    "../lib/chave-da-fatura.ts",
+    "../lib/transferencia.ts",
+    "../lib/lancamento.ts"
+  ]
+}
