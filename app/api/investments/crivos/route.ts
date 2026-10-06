@@ -141,11 +141,15 @@ export async function GET() {
         // Uma linha por ticker, a do maior `ano_exercicio`. A view tem uma linha
         // por exercicio importado, e repassar todas faria o mesmo ticker
         // aparecer varias vezes na tela de quem chamasse esta rota sem agrupar.
-        indicadores = [
-          ...ultimoExercicioPorTicker(
+        // `Array.from` e nao spread: o `tsconfig.json` do app nao declara
+        // `target`, entao o tsc assume ES5 e espalhar o iterador do Map vira
+        // erro TS2802 e quebra o `next build`. A suite de crivos nao pega isso,
+        // porque ela compila com `target: es2020` proprio.
+        indicadores = Array.from(
+          ultimoExercicioPorTicker(
             (linhas || []) as unknown as LinhaDeIndicadores[]
-          ).values(),
-        ];
+          ).values()
+        );
       }
     }
 
