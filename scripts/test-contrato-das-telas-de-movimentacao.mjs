@@ -464,6 +464,72 @@ test("a rota TRAZ `account_type` no embed -- sem ele o filtro do cartao é vácu
   assert.match(lib, /"expense",\s*\n\s*"income",/);
 });
 
+test("a rota TRAZ `notes` do realizado -- sem ele a fatura PAGA desaparece", () => {
+  // HMO-264, e a MESMA familia de `account_type` e `recurring_rule_id`: o campo
+  // e OPCIONAL em `RealizadaCrua` (a ausencia e o estado da maioria das linhas),
+  // entao o `tsc` nao pode cobrar. Tirar `notes` deste `select` numa limpeza de
+  // "campos nao usados na tela" nao quebra compilacao nem teste de unidade:
+  // `ehPagamentoDaFatura` recebe `undefined` em toda linha, para de casar, e o
+  // mes em que a fatura foi paga volta a fechar mais barato pelo valor dela
+  // inteiro -- no Previsto, no Realizado e no Total.
+  //
+  // A SONDA E ANCORADA NO `select` DE `financial_transactions`, e nao no
+  // arquivo: `notes` aparece tambem no `select` da view do lado previsto, e uma
+  // sonda solta sobre a rota passaria verde lendo a outra consulta.
+  const doRealizado = rota.match(
+    /\.from\("financial_transactions"\)\s*\.select\(\s*`([^`]*)`/
+  );
+  assert.ok(
+    doRealizado,
+    `nao achei o \`select\` de financial_transactions em ${ROTA}`
+  );
+  assert.match(
+    doRealizado[1],
+    /\bnotes\b/,
+    "o `select` do realizado nao pede `notes`: a tela de Despesas perde a " +
+      "fatura PAGA inteira, sem erro e sem log"
+  );
+  // Controle da extracao: o campo que a sonda irma protege tem de estar no
+  // MESMO bloco. Sem isto um `match` que capturasse o pedaco errado do arquivo
+  // ainda poderia casar com `notes` por acaso.
+  assert.match(
+    doRealizado[1],
+    /counterpart_transaction_id/,
+    "a sonda capturou o bloco errado"
+  );
+
+  // E A LIB DE FATO DECIDE POR ELE. Os tres criterios, cada um ancorado no que
+  // ele separa -- `ehPagamentoDaFatura` com um deles a menos continua compilando
+  // e continua devolvendo `true` na perna de saida.
+  assert.match(
+    lib,
+    /if \(!faturaDaChave\(crua\.notes\)\) return false;/,
+    "`ehPagamentoDaFatura` nao confere mais a chave canonica: toda perna de " +
+      "saida de transferencia passa a entrar na tela de Despesas"
+  );
+  assert.match(
+    lib,
+    /crua\.transaction_type\) !== TIPO_DA_PERNA_DE_PAGAMENTO/,
+    "`ehPagamentoDaFatura` nao confere mais o `transaction_type` GRAVADO: a " +
+      "despesa nascida do elo da fatura (HMO-305) entra pelo ramo da fatura, " +
+      "perde o Editar/Excluir e passa POR CIMA de `ehGastoNoCartao`"
+  );
+  assert.match(
+    lib,
+    /return !ehPernaDeEntrada\(crua\);/,
+    "`ehPagamentoDaFatura` nao distingue mais as duas pernas: as duas tem a " +
+      "mesma chave e `valorEmReais` passa `Math.abs`, entao o mes fecha no DOBRO"
+  );
+
+  // E O RAMO EXISTE, e so na tela de Despesas. Sem a guarda de `tipo`, a chave
+  // canonica poe o pagamento da fatura no total de Receitas.
+  assert.match(
+    lib,
+    /tipo === "expense" && ehPagamentoDaFatura\(crua\)/,
+    "a fatura paga nao esta mais entrando no realizado da tela de Despesas"
+  );
+});
+
 test("a rota TRAZ `recurring_rule_id` da view -- sem ele toda conta fixa vira comum", () => {
   // HMO-285, e a MESMA familia de `account_type` acima. A diferenca e que aqui o
   // campo e OPCIONAL em `PrevistaCrua`, porque a ausencia dele e um estado
@@ -549,12 +615,21 @@ test("`natureza` e `fatura` existem e sao produzidos nos DOIS lados", () => {
     assert.ok(naLib.includes(campo), `${campo} saiu de LinhaDaTela`);
   }
 
-  // E os DOIS construtores os preenchem. `linhaRealizada` grava `fatura: null`
-  // sempre -- o pagamento da fatura e transferencia de duas pernas e nao chega
-  // nesta tela --, mas `natureza` ele decide.
+  // E os DOIS construtores os preenchem, E OS DOIS DECIDEM OS DOIS CAMPOS.
+  //
+  // Ate a HMO-264 `linhaRealizada` gravava `fatura: null` literal, e esta
+  // assercao afirmava isso. A fatura PAGA derrubou aquilo: a perna de SAIDA do
+  // pagamento e a unica linha realizada que e uma fatura, e ela carrega o cartao
+  // e o mes como a prevista carrega.
   assert.match(
     lib,
-    /natureza: idsDeFixa\.has\(crua\.id\)/,
+    /natureza: faturaPaga\s*\n\s*\? "fatura"/,
+    "`linhaRealizada` nao avalia mais FATURA ANTES de fixa -- invertida a ordem, " +
+      "a fatura paga se chama 'fixa' e perde o caminho de volta ao cartao"
+  );
+  assert.match(
+    lib,
+    /idsDeFixa\.has\(crua\.id\)/,
     "`linhaRealizada` nao classifica mais a linha pelo conjunto da rota"
   );
   assert.match(
@@ -562,6 +637,26 @@ test("`natureza` e `fatura` existem e sao produzidos nos DOIS lados", () => {
     /natureza: daFatura\s*\n\s*\? "fatura"/,
     "`linhaPrevista` nao avalia mais FATURA ANTES de fixa -- invertida a ordem, " +
       "a fatura perde o campo `fatura`, que e o caminho de volta ao cartao"
+  );
+
+  // E OS DOIS CONSTRUTORES SAO TEXTUALMENTE DISTINTOS -- `faturaPaga` no
+  // realizado, `daFatura` no previsto --, e isso NAO e estilo.
+  //
+  // Enquanto os dois blocos `fatura: ...` eram identicos letra por letra, o
+  // mutante `fatura_sem_mes` (que existe para medir `linhaPrevista`) casava com
+  // a PRIMEIRA ocorrencia do arquivo, que e a do realizado. O runner reprova
+  // trecho ambiguo, entao isso aparece -- mas quem "consertasse" o mutante
+  // ancorando no texto duplicado passaria a medir o construtor errado com o
+  // rotulo mentindo sobre o que foi medido.
+  assert.equal(
+    lib.split("mes: faturaPaga.mes").length - 1,
+    1,
+    "o construtor de `fatura` do REALIZADO nao e mais unico no arquivo"
+  );
+  assert.equal(
+    lib.split("mes: daFatura.mes").length - 1,
+    1,
+    "o construtor de `fatura` do PREVISTO nao e mais unico no arquivo"
   );
 
   // `natureza` NAO e um quarto valor de `TipoDaTela`: esticar aquela uniao faria

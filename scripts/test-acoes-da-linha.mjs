@@ -363,11 +363,13 @@ test("`posso_editar: false` TIRA o Pagar -- a fatura de outro membro do grupo", 
 });
 
 test("a fatura do lado REALIZADO nao ganha Pagar -- ela ja foi paga", () => {
-  // Hoje `natureza: "fatura"` nao existe no realizado (`linhaRealizada` escreve
-  // "fixa" ou "despesa"), entao este criterio e sobre um amanha com nome e
-  // numero: a HMO-264 ("A fatura PAGA vira Realizado"). Sem ele, no dia em que
-  // ela chegar, a tela ofereceria "Pagar" numa fatura ja paga -- e o `/pay`
-  // grava a SEGUNDA perna do mesmo dinheiro.
+  // ESTE BLOCO DEIXOU DE MEDIR UM AMANHA NA HMO-264. Ate ela,
+  // `natureza: "fatura"` nao existia no realizado (`linhaRealizada` escrevia
+  // "fixa" ou "despesa") e o caso aqui era hipotetico. A fatura PAGA chega agora
+  // ao lado realizado de verdade -- a perna de SAIDA do pagamento, reconhecida
+  // pela chave canonica em `notes` --, e `origem === "previsto"` e o que impede
+  // a tela de oferecer "Pagar" numa fatura JA paga: aquele `/pay` gravaria a
+  // SEGUNDA perna do mesmo dinheiro.
   const paga = { ...faturaFechada(), origem: "realizado" };
 
   assert.equal(podePagarAFatura(paga), false);

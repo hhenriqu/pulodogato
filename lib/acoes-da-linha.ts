@@ -172,14 +172,15 @@ export function podeAgirNaLinha(linha: LinhaAcionavel): boolean {
  *     que `pagarAFatura` sabe pagar. E e ele que impede o botao de brotar em
  *     Receitas: nenhuma linha de receita carrega a chave canonica da fatura;
  *
- *   * `origem === "previsto"` -- a regra 1 vale para esta baixa tambem. Hoje
- *     `natureza: "fatura"` NAO EXISTE no realizado (`linhaRealizada` escreve
- *     "fixa" ou "despesa", e `fatura` sai sempre `null`), entao este criterio e
- *     sobre o amanha com nome e numero: a HMO-264 ("A fatura PAGA vira
- *     Realizado") faz a fatura chegar ao lado realizado. Sem ele, no dia em que
- *     ela chegar, a tela ofereceria "Pagar" numa fatura JA PAGA -- e o `/pay`
- *     dela grava a SEGUNDA perna do mesmo dinheiro, que e como este app ja
- *     contou despesa duas vezes;
+ *   * `origem === "previsto"` -- a regra 1 vale para esta baixa tambem. ELE
+ *     DEIXOU DE SER SOBRE O AMANHA NA HMO-264. Quando este criterio foi escrito,
+ *     `natureza: "fatura"` nao existia no realizado (`linhaRealizada` escrevia
+ *     "fixa" ou "despesa", e `fatura` saia sempre `null`); a HMO-264 ("A fatura
+ *     PAGA vira Realizado") a faz chegar de verdade -- a perna de SAIDA do
+ *     pagamento, reconhecida pela chave canonica em `notes`. Sem este criterio a
+ *     tela ofereceria "Pagar" numa fatura JA PAGA, e aquele `/pay` grava a
+ *     SEGUNDA perna do mesmo dinheiro, que e como este app ja contou despesa
+ *     duas vezes;
  *
  *   * `posso_editar` -- a regra 4, inteira e sem desconto. A lista de Despesas
  *     inclui linha de OUTRO membro do grupo desde a HMO-303, e **UPDATE filtrado
