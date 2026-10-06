@@ -393,6 +393,24 @@ next-env.d.ts
 /.tmp-elo-da-fatura/
 /.tmp-pagamento-da-fatura/
 
+# A perna da contraparte do acerto de grupo (HMO-312). Faltava desde que a
+# suite entrou: o step `Nenhum artefato de build rastreado` reprovava na main
+# e ninguem viu, porque a franquia de Actions estourou em 02/10. Um `.tmp-*`
+# fora do .gitignore chega a ser commitado em cima de arquivo de fonte -- ver
+# a entrada do .tmp-parcelamento acima.
+/.tmp-perna-da-contraparte/
+
+# A renda fixa que rende sozinha (HMO-192). Mesmo caso da perna acima: a suite
+# entrou na main sem a entrada aqui, e o step `Nenhum artefato de build
+# rastreado` ja reprova na main sem ninguem ver, porque todo job de Actions
+# volta recusado em 3s desde que a franquia estourou em 02/10.
+/.tmp-renda-fixa/
+
+# A fixture da suite do proprio compila.mjs (HMO-263). Ela monta modulos de
+# mentira dentro do repositorio porque o reaproveitamento so hasheia entradas
+# abaixo da raiz -- fixture em /tmp nao exercitaria nada.
+/.tmp-compila-fixture/
+
 # saida do `npm run test:semeadura` (HMO-272). Ela guarda tambem um
 # node_modules/@supabase/supabase-js plantado pelo monta-duble-de-rota.mjs --
 # sem esta entrada o `git status` passaria a mostrar um pacote inteiro.

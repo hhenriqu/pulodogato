@@ -83,6 +83,40 @@ jobs:
       # Esta e a UNICA instalacao do pipeline de verificacao; eram 16.
       - run: npm ci --include=dev
 
+      # A COMPILACAO DAS SUITES, UMA VEZ SO (HMO-263).
+      #
+      # Os alvos test:* disparavam uma invocacao de tsc por suite -- 98 hoje,
+      # 209s medidos. O custo era a partida do compilador e o reparse dos
+      # MESMOS arquivos de lib/: 573 arquivos distintos lidos 18.368 vezes.
+      #
+      # Aqui os 98 saem de um processo unico que reaproveita o AST ja parseado:
+      # ~28s. Cada alvo continua sendo seu proprio programa, com o seu tsconfig
+      # e o seu outDir -- nao ha uniao de include, porque varios tsconfig sao
+      # estreitos de proposito (provam que um modulo compila SEM um import).
+      # A saida foi comparada byte a byte com a dos 98 tsc separados: 98
+      # diretorios, 470 arquivos, zero diferencas.
+      #
+      # Depois daqui, cada `npm run test:*` encontra a saida dele pronta e so
+      # roda as assercoes. O reaproveitamento e por sha256 das ENTRADAS, entao
+      # um mutante de controle negativo muda o hash e FORCA recompilacao: ele
+      # nao pode morrer verde sobre o artefato de antes.
+      #
+      # O que este passo NAO acelera: os blocos de controle negativo. Eles
+      # rodam a suite numa COPIA da arvore, uma vez por mutante -- um alvo, um
+      # processo, nada a compartilhar. La o alvo e delegado ao tsc, para ficar
+      # exatamente na velocidade de antes em vez de pagar travessia sem lote.
+      - name: Compilar a saida de todas as suites de uma vez, num processo so
+        run: npm run compila-suites
+
+      # A decisao "esta saida ainda vale?" e o que o lote acima introduziu, e
+      # errar para o lado do "vale" faria um controle negativo ficar verde
+      # sobre o artefato de antes -- o rotulo dizendo que o mutante morreu sem
+      # ele ter sido compilado. Esta suite fixa que a decisao e por sha256 do
+      # CONTEUDO: mutar recompila, restaurar recompila, e mexer so na data do
+      # arquivo NAO recompila (uma implementacao por mtime devolveria os 285s).
+      - name: O reaproveitamento da compilacao decide por conteudo, nao por data
+        run: npm run test:compila
+
       # A FOTOGRAFIA DA ARVORE, para os passos-guarda dos controles negativos.
       #
       # O guarda compara com ESTA foto, e nao com `git diff --quiet`, por dois
