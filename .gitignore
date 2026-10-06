@@ -393,6 +393,13 @@ next-env.d.ts
 /.tmp-elo-da-fatura/
 /.tmp-pagamento-da-fatura/
 
+# A perna da contraparte do acerto de grupo (HMO-312). Faltava desde que a
+# suite entrou: o step `Nenhum artefato de build rastreado` reprovava na main
+# e ninguem viu, porque a franquia de Actions estourou em 02/10. Um `.tmp-*`
+# fora do .gitignore chega a ser commitado em cima de arquivo de fonte -- ver
+# a entrada do .tmp-parcelamento acima.
+/.tmp-perna-da-contraparte/
+
 # saida do `npm run test:semeadura` (HMO-272). Ela guarda tambem um
 # node_modules/@supabase/supabase-js plantado pelo monta-duble-de-rota.mjs --
 # sem esta entrada o `git status` passaria a mostrar um pacote inteiro.

@@ -20,7 +20,7 @@
 // pega a lacuna ANTES de alguem rodar a suite e commitar o resultado.
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 
 const git = (args) =>
   execFileSync("git", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
@@ -55,7 +55,39 @@ if (rastreados.length > 0) {
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url)));
 const scripts = Object.values(pkg.scripts ?? {}).join("\n");
 
-const diretorios = [...new Set(scripts.match(/\.tmp-[A-Za-z0-9_-]+/g) ?? [])].sort();
+const citadosNoComando = scripts.match(/\.tmp-[A-Za-z0-9_-]+/g) ?? [];
+
+// Alem dos nomes citados no comando, os `outDir` dos tsconfig de teste.
+//
+// Por que as duas fontes (HMO-263): o comando de um alvo nem sempre nomeia o
+// proprio diretorio de saida. Quando ele e `compila.mjs -p tsconfig.x-test.json`
+// e a suite nao chama o resolve-aliases, o `.tmp-x` aparece SO dentro do
+// tsconfig -- e o alvo ficava invisivel aqui. Seis diretorios sumiram desta
+// verificacao desse jeito ao tirar o `rm -rf` dos comandos, e o sintoma seria o
+// de sempre: verde por nao ter mais o que conferir.
+//
+// O `outDir` do tsconfig e a fonte autoritativa de para onde a suite compila;
+// o comando e so onde o nome costuma aparecer de novo.
+const dosTsconfigs = [];
+const dirScripts = new URL("../scripts/", import.meta.url);
+for (const nome of readdirSync(dirScripts)) {
+  if (!/^tsconfig\..*-test\.json$/.test(nome)) continue;
+  let cfg;
+  try {
+    // Sem dependencia de parser de JSONC: estes arquivos sao JSON puro, e um
+    // que nao for cai no catch e e reportado em vez de ignorado.
+    cfg = JSON.parse(readFileSync(new URL(nome, dirScripts), "utf8"));
+  } catch (erro) {
+    erros.push(`scripts/${nome} nao e JSON legivel (${erro.message}): o outDir dele nao foi conferido.`);
+    continue;
+  }
+  const outDir = cfg.compilerOptions?.outDir;
+  if (!outDir) continue;
+  const limpo = outDir.replace(/^\.\.\//, "").replace(/\/$/, "");
+  if (limpo.startsWith(".tmp-")) dosTsconfigs.push(limpo);
+}
+
+const diretorios = [...new Set([...citadosNoComando, ...dosTsconfigs])].sort();
 
 if (diretorios.length === 0) {
   // Controle interno: se a regex parar de casar, os dois lacos abaixo passam
@@ -80,7 +112,8 @@ if (naoIgnorados.length > 0) {
   erros.push(
     `Estas suites compilam para um diretorio que NAO esta no .gitignore:\n` +
       naoIgnorados.map((d) => `    ${d}/`).join("\n") +
-      `\n  Cada uma comeca com \`rm -rf\` nesse caminho. Enquanto ele estiver fora\n` +
+      `\n  A compilacao das suites apaga e reescreve esse caminho. Enquanto ele\n` +
+      `  estiver fora\n` +
       `  do .gitignore, o resultado da compilacao pode ser commitado por engano --\n` +
       `  e a partir dai rodar a suite apaga um arquivo rastreado.`
   );
