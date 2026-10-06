@@ -140,6 +140,20 @@ export interface FinancialTransaction {
    */
   installment_number?: number | null;
   installment_total?: number | null;
+  /**
+   * Em qual fatura esta compra cai, quando a pessoa escolheu (041, HMO-281).
+   *
+   * Primeiro dia do mes, ou NULL. NULL e o caso comum e nao quer dizer "sem
+   * fatura": quer dizer que a fatura sai de `transaction_date` pela regra da 006.
+   * Quem le a fatura de uma compra le `invoice_month` em `CardInvoiceLine`, que
+   * ja e o COALESCE dos dois -- esta coluna crua serve para o formulario reabrir
+   * o seletor na EDICAO.
+   *
+   * `transaction_date` NAO acompanha: a data da compra e um fato, e move-la para
+   * o mes da fatura escolhida apagaria o "pagou atrasado?" da 027 e mudaria o mes
+   * da despesa em todo relatorio que agrupa por data.
+   */
+  invoice_month_override?: string | null;
   group_id?: string;
   /**
    * A outra perna de uma transferencia entre contas proprias (migration 015).
@@ -628,8 +642,29 @@ export interface CardInvoiceLine {
   transaction_date: string;
   transaction_type: TransactionFinancialType;
   group_id?: string;
-  /** Primeiro dia do mes da fatura em que a compra caiu. */
+  /**
+   * Primeiro dia do mes da fatura em que a compra caiu.
+   *
+   * Desde a 041 ele e
+   * `COALESCE(invoice_month_override, card_invoice_month(transaction_date, closing_day))`:
+   * a fatura ESCOLHIDA vence a fatura da data. Quem le este campo nao precisa
+   * saber qual das duas respondeu -- e nao deve decidir por conta propria, senao
+   * passa a existir uma segunda regra de "em que fatura isso cai".
+   */
   invoice_month: string;
+  /**
+   * A fatura escolhida no lancamento, ou NULL (041, HMO-281).
+   *
+   * NULL e o caso comum e quer dizer "a fatura sai da data". Esta coluna esta
+   * aqui para a EDICAO: o formulario precisa reabrir o seletor no mes que foi
+   * gravado, e `invoice_month` nao serve para isso -- ele vem preenchido sempre,
+   * entao uma compra sem escolha nenhuma abriria o seletor afirmando uma escolha
+   * que ninguem fez, e Salvar sem tocar no campo gravaria um override novo.
+   *
+   * Sempre dia 1: ha CHECK no banco
+   * (`financial_transactions_invoice_month_override_dia_1`).
+   */
+  invoice_month_override?: string | null;
   /** NULL quando o cartao nao tem due_day configurado. */
   invoice_due_date?: string;
   /**
@@ -811,6 +846,19 @@ export interface CashFlowReport {
     average_expense: number;
     average_income: number;
   };
+  /**
+   * Em que eixo de data o cartao de credito entrou (HMO-265 / HMO-266).
+   *
+   * `compra` conta o gasto no dia da compra, `fatura` no dia em que a fatura foi
+   * paga -- os dois defensaveis, e com totais DIFERENTES para o mesmo periodo.
+   * A tela de relatorios le este campo para escrever a legenda que explica a
+   * divergencia com o painel; sem ele, a legenda estaria supondo o criterio.
+   *
+   * Opcional porque a resposta vem de `fetch`: uma versao antiga servida de
+   * cache nao tem o campo, e `legendaDoCartao` trata isso omitindo a legenda em
+   * vez de afirmar um criterio que ninguem leu.
+   */
+  cartao?: "compra" | "fatura";
   window: { from: string; to: string; months: number };
 }
 

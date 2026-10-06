@@ -1,0 +1,14 @@
+{
+  "//": "Build so do teste: lib/fechamento-do-grupo.ts importa @/lib/settlement, porque `toCents` e a UNICA conversao para centavos do projeto e o acerto do mes tem que usar o MESMO guloso do acerto do grupo. O tsc resolve o alias @/ por `paths` mas NAO o reescreve no JS emitido, entao o npm script tem um passo de reescrita depois. Ver scripts/test-fechamento-do-grupo.mjs.",
+  "compilerOptions": {
+    "outDir": "../.tmp-fechamento-do-grupo",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/fechamento-do-grupo.ts"]
+}

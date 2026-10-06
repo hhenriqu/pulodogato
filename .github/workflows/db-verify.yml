@@ -9,12 +9,22 @@ name: db-verify
 # agenda de contas previstas e metade SQL, metade aritmetica de data: o indice
 # unico do 005 so garante que a MESMA data nao duplica -- quem decide QUAL data
 # e o TypeScript. Testar os dois lados no mesmo job e o que fecha o buraco.
+#
+# NENHUM PADRAO DAQUI PODE CONTER `]`
+# -----------------------------------
+# A tela de grupo mora em `app/(dashboard)/.../[groupId]/page.tsx`, e esse
+# caminho literal NAO entra nesta lista: o scripts/check-tests-in-ci.mjs le o
+# `paths:` com `/paths:\s*\[([^\]]*)\]/`, entao o primeiro `]` de um nome de
+# rota dinamica TERMINA a lista para ele. O Actions continuaria funcionando, e o
+# checker passaria a acusar uma duzia de suites NAO cobertas -- um alarme falso
+# que aponta para os arquivos errados. Por isso a entrada e o glob
+# `app/**/expense-groups/**`, que cobre a mesma tela sem colchete.
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/parte-do-grupo-realizada.ts', 'lib/periodo-do-painel.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/divisao-do-grupo.ts', 'lib/convite-de-grupo.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'lib/services/scheduled.ts', 'components/movimentacoes/FormularioDeTransferencia.tsx', 'app/api/reports/cash-flow/route.ts', 'app/api/personal-finance/transactions/route.ts', 'components/grupos/PainelDoGrupo.tsx', 'types/financial.ts', '.github/workflows/db-verify.yml', 'lib/puxar-para-atualizar-dom.ts', 'components/Sidebar.tsx', 'components/PuxarParaAtualizar.tsx', 'lib/categorias.ts', 'components/movimentacoes/SeletorDeCategoria.tsx', 'components/movimentacoes/CamposDeLancamento.tsx', 'components/ui/button.tsx', 'components/ui/input.tsx', 'components/ui/label.tsx', 'components/ui/select.tsx', 'lib/utils.ts']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'scripts/compila.mjs', 'scripts/mutantes-em-bloco.mjs', 'scripts/duble-de-supabase.mjs', 'scripts/monta-duble-de-rota.mjs', 'scripts/resolve-next-subpaths.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/parte-do-grupo-realizada.ts', 'lib/periodo-do-painel.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/acerto-em-lancamento.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/renda-fixa.ts', 'lib/cdi.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/divisao-do-grupo.ts', 'lib/convite-de-grupo.ts', 'lib/papel-de-pao.ts', 'lib/telas-de-movimentacao.ts', 'lib/agenda-do-cartao.ts', 'lib/previsto-x-realizado.ts', 'lib/elo-da-fatura.ts', 'lib/chave-da-fatura.ts', 'scripts/medicao-*.mjs', 'scripts/medicao-*.sh', 'lib/fechamento-do-grupo.ts', 'lib/credito-de-grupo.ts', 'lib/parte-de-grupo-na-lista.ts', 'lib/periodo-do-grupo.ts', 'lib/divisao-configurada.ts', 'lib/semear-pela-renda.ts', 'lib/sugestao-de-divisao.ts', 'components/financial/SplitSuggestions.tsx', 'lib/dinheiro.ts', 'components/grupos/DivisaoDoGrupo.tsx', 'components/grupos/FechamentoDoMes.tsx', 'app/**/expense-groups/**', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'lib/services/scheduled.ts', 'components/movimentacoes/FormularioDeTransferencia.tsx', 'app/api/reports/cash-flow/route.ts', 'app/api/personal-finance/transactions/route.ts', 'components/grupos/PainelDoGrupo.tsx', 'types/financial.ts', '.github/workflows/db-verify.yml', 'lib/puxar-para-atualizar-dom.ts', 'components/Sidebar.tsx', 'components/PuxarParaAtualizar.tsx', 'lib/categorias.ts', 'components/movimentacoes/SeletorDeCategoria.tsx', 'components/movimentacoes/CamposDeLancamento.tsx', 'components/ui/button.tsx', 'components/ui/input.tsx', 'components/ui/label.tsx', 'components/ui/select.tsx', 'lib/utils.ts']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/parte-do-grupo-realizada.ts', 'lib/periodo-do-painel.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/divisao-do-grupo.ts', 'lib/convite-de-grupo.ts', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'lib/services/scheduled.ts', 'components/movimentacoes/FormularioDeTransferencia.tsx', 'app/api/reports/cash-flow/route.ts', 'app/api/personal-finance/transactions/route.ts', 'components/grupos/PainelDoGrupo.tsx', 'types/financial.ts', '.github/workflows/db-verify.yml', 'lib/puxar-para-atualizar-dom.ts', 'components/Sidebar.tsx', 'components/PuxarParaAtualizar.tsx', 'lib/categorias.ts', 'components/movimentacoes/SeletorDeCategoria.tsx', 'components/movimentacoes/CamposDeLancamento.tsx', 'components/ui/button.tsx', 'components/ui/input.tsx', 'components/ui/label.tsx', 'components/ui/select.tsx', 'lib/utils.ts']
+    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'scripts/compila.mjs', 'scripts/mutantes-em-bloco.mjs', 'scripts/duble-de-supabase.mjs', 'scripts/monta-duble-de-rota.mjs', 'scripts/resolve-next-subpaths.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/parte-do-grupo-realizada.ts', 'lib/periodo-do-painel.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/acerto-em-lancamento.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/renda-fixa.ts', 'lib/cdi.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/divisao-do-grupo.ts', 'lib/convite-de-grupo.ts', 'lib/papel-de-pao.ts', 'lib/telas-de-movimentacao.ts', 'lib/agenda-do-cartao.ts', 'lib/previsto-x-realizado.ts', 'lib/elo-da-fatura.ts', 'lib/chave-da-fatura.ts', 'scripts/medicao-*.mjs', 'scripts/medicao-*.sh', 'lib/fechamento-do-grupo.ts', 'lib/credito-de-grupo.ts', 'lib/parte-de-grupo-na-lista.ts', 'lib/periodo-do-grupo.ts', 'lib/divisao-configurada.ts', 'lib/semear-pela-renda.ts', 'lib/sugestao-de-divisao.ts', 'components/financial/SplitSuggestions.tsx', 'lib/dinheiro.ts', 'components/grupos/DivisaoDoGrupo.tsx', 'components/grupos/FechamentoDoMes.tsx', 'app/**/expense-groups/**', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'lib/services/scheduled.ts', 'components/movimentacoes/FormularioDeTransferencia.tsx', 'app/api/reports/cash-flow/route.ts', 'app/api/personal-finance/transactions/route.ts', 'components/grupos/PainelDoGrupo.tsx', 'types/financial.ts', '.github/workflows/db-verify.yml', 'lib/puxar-para-atualizar-dom.ts', 'components/Sidebar.tsx', 'components/PuxarParaAtualizar.tsx', 'lib/categorias.ts', 'components/movimentacoes/SeletorDeCategoria.tsx', 'components/movimentacoes/CamposDeLancamento.tsx', 'components/ui/button.tsx', 'components/ui/input.tsx', 'components/ui/label.tsx', 'components/ui/select.tsx', 'lib/utils.ts']
   workflow_dispatch:
 
 jobs:
@@ -57,6 +67,31 @@ jobs:
 
       - name: Instalar dependencias
         run: npm ci
+
+      # A COMPILACAO DAS SUITES, UMA VEZ SO (HMO-263).
+      #
+      # Os alvos test:* disparavam uma invocacao de tsc por suite -- 98 hoje,
+      # 209s medidos. O custo era a partida do compilador e o reparse dos
+      # MESMOS arquivos de lib/: 573 arquivos distintos lidos 18.368 vezes.
+      #
+      # Aqui os 98 saem de um processo unico que reaproveita o AST ja parseado:
+      # ~28s. Cada alvo continua sendo seu proprio programa, com o seu tsconfig
+      # e o seu outDir -- nao ha uniao de include, porque varios tsconfig sao
+      # estreitos de proposito (provam que um modulo compila SEM um import).
+      # A saida foi comparada byte a byte com a dos 98 tsc separados: 98
+      # diretorios, 470 arquivos, zero diferencas.
+      #
+      # Depois daqui, cada `npm run test:*` encontra a saida dele pronta e so
+      # roda as assercoes. O reaproveitamento e por sha256 das ENTRADAS, entao
+      # um mutante de controle negativo muda o hash e FORCA recompilacao: ele
+      # nao pode morrer verde sobre o artefato de antes.
+      #
+      # O que este passo NAO acelera: os blocos de controle negativo. Eles
+      # rodam a suite numa COPIA da arvore, uma vez por mutante -- um alvo, um
+      # processo, nada a compartilhar. La o alvo e delegado ao tsc, para ficar
+      # exatamente na velocidade de antes em vez de pagar travessia sem lote.
+      - name: Compilar a saida de todas as suites de uma vez, num processo so
+        run: npm run compila-suites
 
       # Tem que ser o 17: o ubuntu-latest traz o cliente 16, e o pg_dump se
       # recusa a falar com um servidor mais novo que ele.
@@ -1237,6 +1272,553 @@ jobs:
       - name: O convite guardado nao se anuncia como enviado
         run: npm run test:convite-de-grupo
 
+      - name: 040_trava_de_percentual_e_papel_do_membro
+        run: $PSQL -f database/migrations/040_trava_de_percentual_e_papel_do_membro.sql
+
+      # Re-executavel: a funcao e CREATE OR REPLACE e o trigger tem
+      # DROP TRIGGER IF EXISTS antes do CREATE. Nao ha ALTER, CHECK novo nem
+      # backfill -- recolar nao duplica trigger nem mexe em linha nenhuma.
+      - name: 040 e idempotente
+        run: $PSQL -f database/migrations/040_trava_de_percentual_e_papel_do_membro.sql
+
+      # A trava de percentual e papel do membro (HMO-268, fase 2 de 7 da
+      # HMO-245). `group_members_update` (002:526) e
+      # `USING (user_id = auth.uid() OR is_group_admin(group_id))` dos dois
+      # lados -- policy de RLS diz quais LINHAS alguem alcanca, nunca quais
+      # COLUNAS, e nao compara OLD com NEW. O ramo `user_id = auth.uid()`
+      # entrega ao membro comum a propria linha INTEIRA, pelo PostgREST, com a
+      # chave anon que sai do bundle. Por isso e trigger, e nao policy.
+      #
+      # O que so o Postgres pega aqui:
+      #
+      #   - a diferenca entre "barrado pelo trigger" e "0 linhas pela RLS".
+      #     UPDATE filtrado pela RLS volta SUCESSO com zero linhas, sem erro --
+      #     um teste que so conferisse "o percentual nao mudou" ficaria verde
+      #     com trigger nenhum instalado. O helper `pg_temp.recusa` do teste
+      #     exige o SQLSTATE 42501 E a mensagem do trigger, e a SECAO 3 mostra
+      #     esse falso verde de corpo presente;
+      #   - `IS DISTINCT FROM` e nao `<>` na guarda de `percentage`, que e a
+      #     UNICA das quatro colunas que aceita nulo (001:1215). Com `<>`,
+      #     comparar 50.00 com NULL da NULL, o IF nao entra, e o membro comum
+      #     zera o proprio peso mandando `{"percentage": null}` em vez do 0.01
+      #     que as outras tentativas mandam. MEDIDO: esse mutante sobreviveu ao
+      #     teste com 31 assercoes verdes, e a assercao 'B anulando o proprio
+      #     percentual' da SECAO 2 entrou por causa dele;
+      #   - o par BEFORE / FOR EACH ROW. Um trigger de STATEMENT nao tem
+      #     OLD/NEW, que e a unica coisa que esta migration tem para olhar, e
+      #     BEFORE INSERT aparece em `pg_trigger` igual sem olhar UPDATE
+      #     nenhum -- e por isso que o bloco de prova da 040 confere `tgtype`,
+      #     e nao so a presenca do nome;
+      #   - a dependencia do GRANT do 002 em `is_group_admin(uuid)`. Sem ele o
+      #     trigger falha FECHADO com um 42501 que se le como recusa legitima,
+      #     e o que quebra e o caminho do ADMIN. A SECAO 7 revoga o GRANT de
+      #     proposito e exige que a mensagem seja a outra.
+      #
+      # Medido: 13 mutantes, 13 mortos, com controle positivo (a 040 intacta
+      # passa) e controle NEGATIVO (sem a 040 o teste reprova -- e o que detecta
+      # um template montado com a migration dentro).
+      # PG_TEMPLATE=<cadeia ate a 039> npm run mutantes:trava-de-membro
+      - name: Nao-admin nao muda o proprio percentual nem o proprio papel no grupo
+        run: $PSQL -f database/tests/040_trava_de_percentual_e_papel_do_membro_test.sql
+
+      - name: 041_fatura_escolhida_no_lancamento
+        run: $PSQL -f database/migrations/041_fatura_escolhida_no_lancamento.sql
+
+      # Re-executavel: a coluna entra por ADD COLUMN IF NOT EXISTS, o CHECK so e
+      # criado quando `pg_constraint` nao o tem, e a view entra por
+      # CREATE OR REPLACE. O risco proprio deste passo e o REPLACE: a segunda
+      # passada nao pode quebrar por a coluna ja estar no fim do SELECT nem
+      # derrubar o `security_invoker` da view.
+      - name: 041 e idempotente
+        run: $PSQL -f database/migrations/041_fatura_escolhida_no_lancamento.sql
+
+      # A fatura ESCOLHIDA no lancamento (HMO-281, PR 1 de 3). Esta migration so
+      # mexe em schema -- o formulario e a validacao vem na PR 2, e por isso ela
+      # entra sozinha: `FormularioDeLancamento.tsx` escreve em
+      # `financial_transactions` direto pelo supabase-js, do navegador, e codigo
+      # novo rodando contra um banco sem a coluna responde PGRST204 em TODA
+      # despesa no cartao, nao so na de quem usa o campo.
+      #
+      # O que so o Postgres pega aqui:
+      #
+      #   - o COALESCE tem de entrar nas DUAS ocorrencias da view. Com ele so no
+      #     `invoice_month`, a compra aparece na fatura escolhida COM O
+      #     VENCIMENTO DA FATURA DA DATA: a tela fica certa e o "fechar fatura"
+      #     do 015 gera a conta a pagar com data de outro mes. O cartao do
+      #     fixture fecha dia 20 e vence dia 5 de proposito -- e o caso em que
+      #     `card_invoice_due_date` empurra para o mes seguinte, e sem essa
+      #     escolha os dois vencimentos coincidiriam e o defeito nao mediria;
+      #   - o CHECK do dia 1. A coluna e um MES e `date` nao sabe disso:
+      #     '2026-12-15' sobrevive ao COALESCE e a tela passa a listar duas
+      #     "faturas de dezembro", cada uma com parte das compras, as duas com
+      #     total plausivel;
+      #   - a AUSENCIA de DEFAULT. `ADD COLUMN ... DEFAULT` PREENCHE as linhas
+      #     que ja existem -- todo o historico de cartao do banco mudaria de
+      #     fatura de uma vez. A assercao e pelo catalogo (`atthasdef`) E pelo
+      #     comportamento, porque um default de `date_trunc(CURRENT_DATE)` cai no
+      #     mes em que o teste roda e pode coincidir com a fatura esperada;
+      #   - e o `security_invoker`, que o `CREATE OR REPLACE VIEW` APAGA (medido
+      #     no Postgres 17.11, registrado na 035). A 041 tem cara de aditiva e
+      #     nao fala de permissao em lugar nenhum; sem reafirmar a opcao ela
+      #     entrega a fatura de qualquer usuario a qualquer usuario logado.
+      #
+      # Medido: 10 mutantes, 10 mortos, com controle positivo (a 041 intacta
+      # passa) e controle NEGATIVO (sem a 041 o teste reprova -- e o que detecta
+      # um template montado com a migration dentro, que faria todo mutante virar
+      # no-op). PG_TEMPLATE=<cadeia ate a 040> npm run mutantes:fatura-escolhida
+      #
+      # RE-MEDIDO na HMO-289, e a primeira medida NAO valia: o runner lia `dir`
+      # fora de escopo, entao toda aplicacao de SQL estourava `ReferenceError`, o
+      # `catch` a contava como "o teste reprovou" e os 10 mutantes "morriam" pelo
+      # erro de script. O 10/10 acima e o de depois do conserto -- com o controle
+      # positivo verde, que e justamente o unico caso que o bug derrubava.
+      - name: A fatura escolhida manda no mes e no vencimento, e a view nao vaza
+        run: $PSQL -f database/tests/041_fatura_escolhida_no_lancamento_test.sql
+
+      - name: 042_rateio_do_trigger_honra_o_percentual
+        run: $PSQL -f database/migrations/042_rateio_do_trigger_honra_o_percentual.sql
+
+      # Re-executavel: a 042 e so CREATE OR REPLACE FUNCTION mais REVOKE. Nao
+      # ha ALTER, CHECK novo nem backfill -- despesa que ja existe fica com a
+      # divisao com que nasceu, de proposito (reescrever o historico mudaria o
+      # valor de partes que alguem JA APROVOU, que e o que as travas PDG01 da
+      # 024 existem para impedir).
+      - name: 042 e idempotente
+        run: $PSQL -f database/migrations/042_rateio_do_trigger_honra_o_percentual.sql
+
+      # HMO-304. O trigger passa a honrar `group_members.percentage`: num grupo
+      # 70/30 a mesma conta valia R$ 300 PREVISTA (o fechamento do mes rateia
+      # por `ratearPorPeso` desde a HMO-270) e R$ 500 depois de PAGA, porque a
+      # SECAO 2c de `refazer_rateio_do_grupo` gravava `split_type = 'equal'`
+      # fixo e o `calculate_equal_split` (007) achatava tudo para partes iguais.
+      # Medido na cadeia 001..041 antes do conserto: 500/500 com 70/30
+      # configurado.
+      #
+      # O que so o Postgres pega aqui:
+      #
+      #   - o DEGRAU DO 0/0. `group_members.percentage` e `numeric(5,2)
+      #     DEFAULT 0.00` e NULLABLE: grupo que nunca passou pela tela de
+      #     divisao tem soma de pesos ZERO e PRECISA continuar dividindo igual.
+      #     Sao dois casos de teste e nao um, porque 0.00 e NULL chegam ao `IF`
+      #     por caminhos diferentes (`SUM` de tudo NULL e NULL, nao zero). Sem
+      #     esse ramo, esta migration mudaria o dinheiro de TODO grupo que
+      #     existe hoje;
+      #   - a soma que NAO fecha 100. `percentage` e PESO e o rateio divide pela
+      #     SOMA -- 70/27 em R$ 1.000 da 721,65/278,35 e fecha EXATO. Tratar 70
+      #     como "70 de 100" deixaria R$ 30 sem dono e o saldo do grupo pararia
+      #     de fechar em zero. A escolha e a de `ratearPorPeso`, que e quem
+      #     decide o lado PREVISTO: qualquer outra manteria a discordancia que
+      #     esta issue existe para fechar;
+      #   - o membro de peso ZERO. `group_expense_splits_percentage_check`
+      #     (001:1165) exige `percentage > 0`, entao gravar 0,00 na coluna de
+      #     DISPLAY derrubaria o INSERT -- e com ele o lancamento inteiro. Sai
+      #     com piso de 0,01 e `amount` 0,00, a mesma escolha que o 007 ja fez
+      #     na propria funcao ("quem manda e o valor");
+      #   - as travas PDG01 da 024. A 042 faz `CREATE OR REPLACE` do corpo
+      #     INTEIRO de `refazer_rateio_do_grupo`, e o teste da 024 roda ANTES
+      #     dela nesta cadeia -- daqui em diante quem prova que apagar uma trava
+      #     nao passa verde e a SECAO 8 deste arquivo.
+      #
+      # Medido: 13 mutantes, 11 mortos, com controle positivo (a 042 intacta
+      # passa) e controle NEGATIVO (sem a 042 o teste reprova na PRIMEIRA
+      # assercao -- e o que detecta este arquivo rodando fora da posicao dele).
+      # Os DOIS sobreviventes sao equivalentes, nao furos de assercao, e estao
+      # nomeados no cabecalho da migration: o cast numeric->bigint ja arredonda
+      # (o `ROUND` e redundante com `numeric(15,2)`), e `SUM` de tudo NULL cai no
+      # mesmo ramo que zero (o `COALESCE` faz do zero uma decisao explicita).
+      - name: O rateio da baixa honra o percentual, e o grupo legado divide igual
+        run: $PSQL -f database/tests/042_rateio_do_trigger_honra_o_percentual_test.sql
+
+      # HMO-245, o fechamento do mes do grupo. A conta de grupo que ainda nao
+      # aconteceu (a internet no cartao, vencendo dia 15) vive em
+      # `scheduled_transactions` e nao em `group_transactions`, entao ela nao
+      # entrava em total nenhum do mes -- e o rateio dela nao existia em lugar
+      # algum, porque `group_expense_splits` so nasce na baixa.
+      #
+      # As tres assercoes que valem o job sao numericas e TODAS tem controle:
+      #
+      #   1. previsto (+159,90) e realizado (-159,90) SOMAM 319,80. Os dois
+      #      lados do app guardam sinal oposto (`financial_transactions.amount`
+      #      e negativo; `scheduled_transactions.amount` tem CHECK > 0), entao a
+      #      soma crua da ZERO -- com as duas despesas na lista ao lado.
+      #   2. a conta prevista com baixa NAO entra junto com a transacao que ela
+      #      gerou. Sem isso a internet aparece duas vezes no mes em que foi
+      #      paga: 319,80 de uma conta de 159,90.
+      #   3. 2.000 entre tres SOMA 2.000. Arredondar cada parte por conta
+      #      propria da 666,67 x 3 = 2.000,01, e todo grupo de tres passa a
+      #      exibir "as contas nao fecham por R$ 0,01".
+      #
+      # Roda nos DOIS fusos (o npm script chama o node duas vezes, em
+      # America/Sao_Paulo e em UTC): o controle do dia 1 do mes so e capaz de
+      # falhar em fuso negativo, e este job roda em UTC -- sem a passada em Sao
+      # Paulo aquela assercao nao mede nada aqui.
+      #
+      # A QUARTA assercao, da fase 4 (HMO-270): o rateio deixou de ser SEMPRE
+      # igual. 70/30 de R$ 2.000 fecha em 1.400,00 / 600,00, somando 2.000,00
+      # cravado, e membro em 0% fica com ZERO -- nao com o centavo de sobra,
+      # que e o que um maior-resto escrito ao contrario lhe daria.
+      #
+      # Medido: 21 mutantes, 21 mortos (npm run mutantes:fechamento-do-grupo).
+      # Um 22o sobreviveu com razao -- a guarda `data.length < 7` era codigo
+      # morto diante da regex, e a conclusao foi apagar a guarda do modulo.
+      - name: O fechamento do mes soma previsto com realizado e rateia exato
+        run: npm run test:fechamento-do-grupo
+
+      # HMO-298/303/305/306 -- A MEDICAO DAS QUATRO LEITURAS DO «TOTAL DE CONTAS».
+      #
+      # Ela constroi um Postgres PROPRIO (dropdb/createdb do banco `hmo298`),
+      # aplica as migrations reais, carrega o fixture e IMPORTA as leituras de
+      # lib/ -- `painelDePapel`, `linhasDaTela`/`resumoDaTela`, `ratearPorPeso`
+      # e, desde a HMO-306, `parteConfiguradaDoMembro` para a conta do
+      # /api/safe-to-spend. Nao reescreve conta nenhuma: uma tabela construida
+      # sobre uma reimplementacao mediria a reimplementacao.
+      #
+      # O QUE ESTA MEDICAO NAO ALCANCA e a FIACAO das rotas -- ela importa de
+      # lib/, entao uma rota que parasse de chamar a funcao a deixaria verde.
+      # Quem cobra isso e `npm run check-fatura-escolhida`, no verificacao.yml,
+      # com os nove mutantes do controle negativo dele.
+      #
+      # Na HMO-298 este script existia para provar que as tres DISCORDAVAM
+      # (painel R$ 4.100 x tela R$ 2.600, R$ 1.500 de diferenca). Depois do
+      # conserto da HMO-303 ele cobra o contrario, e cobra DUAS coisas por
+      # linha, porque igualdade sozinha nao e controle -- um bug que zerasse as
+      # tres leituras passaria verde:
+      #
+      #   1. as colunas do par concordam (tolerancia R$ 0,004); e
+      #   2. batem com um valor ABSOLUTO digitado no script -- R$ 0,00 na
+      #      transferencia, R$ 900,00 / R$ 300,00 nas duas contas de grupo,
+      #      R$ 1.200,00 na parte do mes e R$ 2.800,00 nos dois totais.
+      #
+      # A quarta leitura tem uma TERCEIRA cobranca, com esperado PROPRIO
+      # (`safeEsperado`), porque ela nao responde a mesma pergunta das outras
+      # tres: ela filtra por `user_id` e nao chama `classeDaAgenda`. Cobrar
+      # dela o mesmo `esperado` reprovaria o comportamento certo em duas das
+      # quatro faces.
+      #
+      # E (c) = (d) + (d): 900 + 300 = 1.200. Essa identidade e o que torna a
+      # medicao mais do que um teste de igualdade.
+      #
+      # A QUARTA LEITURA ENTROU NA HMO-306, E ELA ERA O CONTROLE NEGATIVO AQUI.
+      # Enquanto /api/safe-to-spend nao chamava `parteConfiguradaDoMembro`, o
+      # numero dela tinha de sair R$ 8.500,00 antes e depois do conserto da
+      # HMO-303, e era essa imobilidade que provava que nada havia escapado do
+      # escopo. A HMO-306 e a issue que o move: a MINHA conta de grupo deixou de
+      # ser descontada cheia (R$ 1.000,00) e passou a entrar pela parte
+      # configurada (R$ 300,00), entao o total caiu para R$ 7.800,00 -- os
+      # R$ 700,00 da diferenca, e nada mais.
+      #
+      # O script cobra os TRES numeros e a identidade entre eles
+      # (8.500 - 700 = 7.800), para que ajustar um deles ao que o codigo
+      # imprimiu nao passe verde. E cobra duas faces em que a quarta leitura
+      # DIVERGE do «Total de contas» de proposito: ela desconta a transferencia
+      # de R$ 500,00 (a pergunta dela e caixa) e NAO conta a conta de grupo do
+      # outro membro (R$ 0,00 -- a parte dele sai da carteira dele).
+      #
+      # O ELO EXPLICITO DA FATURA -- HMO-305, o mecanismo (b).
+      #
+      # A mesma divida em dois lugares: a previsao digitada a mao na conta
+      # corrente e a fatura aberta que o app sintetiza das compras do cartao. O
+      # conserto aprovado nao adivinha -- ele rotula a suspeita e da a acao, e a
+      # de-duplicacao acontece pela chave canonica que `chavesPersistidas` ja le.
+      #
+      # Esta suite mede a DETECCAO (cinco casos em que o rotulo NAO pode acender,
+      # porque rotulo na linha errada vira um botao que esconde divida real) e as
+      # FRASES que a pessoa le antes de mexer no numero. O efeito em dinheiro --
+      # R$ 1.600,00 -> R$ 800,00 -> R$ 1.600,00 -- esta na medicao logo abaixo, e
+      # a fiacao da tela no caso J da sonda de navegador do painel do modo, que
+      # roda em verificacao.yml (o nome do script nao e citado aqui de proposito:
+      # o check-tests-in-ci.mjs procura `npm run test:...` no texto do workflow,
+      # inclusive em comentario, e passaria a cobrar o `paths:` deste arquivo).
+      #
+      # Nao abre job novo -- o custo de CI deste projeto e o NUMERO de jobs.
+      - name: O elo da fatura nao acende rotulo sem citar o cartao, e grava a chave exata
+        run: npm run test:elo-da-fatura
+
+      # Nao abre job novo -- o custo de CI deste projeto e o NUMERO de jobs.
+      - name: As quatro leituras do «Total de contas» concordam em R$ 2.800,00
+        run: npm run test:medicao-hmo298
+
+      # Controle negativo da medicao acima.
+      #
+      # "As tres leituras concordam" e uma afirmacao que fica verde tambem
+      # quando o script deixa de medir: um erro no caminho da mutacao, uma
+      # ancora que outra issue reescreveu, um `bate()` que compara um numero com
+      # ele mesmo. Os dois mutantes abaixo sao os que viram dinheiro, e cada um
+      # desfaz UM dos mecanismos da HMO-303.
+      #
+      # Aqui a medicao roda SEM reconstruir o banco (o `npm run` acima ja o
+      # deixou pronto): recompila lib/ e chama o .mjs direto. Reconstruir o
+      # Postgres duas vezes mais nao mediria nada a mais.
+      - name: 'A medicao sabe falhar (o percentual e a transferencia)'
+        run: |
+          set -uo pipefail
+
+          # A impressao digital ANTES do primeiro mutante. A conferencia no fim
+          # e contra ELA, e nao contra o `git diff`: na maquina de quem roda
+          # isto na mao o git enxergaria tambem o trabalho nao commitado e
+          # reprovaria por um motivo que nao tem nada a ver com o controle.
+          PARTE=lib/parte-do-grupo.ts
+          PAINEL=lib/papel-de-pao.ts
+          ANTES_PARTE=$(md5sum "$PARTE" | cut -d' ' -f1)
+          ANTES_PAINEL=$(md5sum "$PAINEL" | cut -d' ' -f1)
+
+          # O `cmp` existe porque um `sed` que nao casa SAI 0: sem ele, uma
+          # ancora reescrita por outra issue faria este passo medir a arvore
+          # INTACTA e ficar verde para sempre, com o rotulo mentindo.
+          estragar() {
+            local arquivo="$1" de="$2" para="$3" rotulo="$4"
+            cp "$arquivo" "$arquivo.orig303"
+            sed -i "s@$de@$para@" "$arquivo"
+            if cmp -s "$arquivo" "$arquivo.orig303"; then
+              mv "$arquivo.orig303" "$arquivo"
+              echo "::error::o sed de '$rotulo' nao casou nada -- a ancora mudou e este controle mediria a arvore intacta"
+              exit 1
+            fi
+            rm -rf .tmp-medicao-hmo298
+            if npx tsc -p scripts/tsconfig.medicao-hmo298-test.json > /dev/null 2>&1 \
+               && node scripts/resolve-aliases.mjs .tmp-medicao-hmo298 lib --espelha-raiz > /dev/null 2>&1 \
+               && node scripts/medicao-hmo298.mjs > /dev/null 2>&1; then
+              mv "$arquivo.orig303" "$arquivo"
+              echo "::error::Verde com a leitura estragada: $rotulo"
+              exit 1
+            fi
+            mv "$arquivo.orig303" "$arquivo"
+            echo "  vermelho em: $rotulo"
+          }
+
+          # 1) O PERCENTUAL VOLTA A SER DIVISAO IGUAL. E o defeito que a issue
+          #    existe para tirar: um grupo 70/30 cobrando 50/50 nas telas. As
+          #    tres leituras continuariam CONCORDANDO entre si (todas erradas
+          #    pelo mesmo motivo) -- quem pega isso e o valor absoluto digitado,
+          #    e esta linha e o que prova que ele esta sendo cobrado.
+          estragar "$PARTE" \
+                   'const partes = ratearPorPeso(toCents(cheio), participantes);' \
+                   'const partes = ratearPorPeso(toCents(cheio), participantes.map((p) => ({ ...p, peso: 1 })));' \
+                   'o percentual e ignorado -- o grupo 70/30 volta a dividir igual'
+
+          # 2) A TRANSFERENCIA VOLTA PARA O «TOTAL DE CONTAS». Trocar a peneira
+          #    de `classeDaAgenda` por `direcaoDaAgenda` e exatamente o estado
+          #    anterior a esta issue: R$ 500,00 guardados na poupanca contados
+          #    como conta a pagar, e o total saindo R$ 3.300 em vez de R$ 2.800.
+          estragar "$PAINEL" \
+                   'classeDaAgenda(linha.direction) === "expense"' \
+                   'direcaoDaAgenda(linha.direction) === "expense"' \
+                   'a transferencia volta para o «Total de contas» -- o total vai a R$ 3.300'
+
+          # A arvore tem de voltar intacta: um `.orig303` esquecido viajaria no
+          # commit, e arquivo mutado e indistinguivel do certo a olho nu.
+          for f in "$PARTE" "$PAINEL"; do
+            if [ -e "$f.orig303" ]; then
+              echo "::error::sobrou um $f.orig303 -- a arvore nao foi restaurada"
+              exit 1
+            fi
+          done
+          if [ "$(md5sum "$PARTE" | cut -d' ' -f1)" != "$ANTES_PARTE" ] \
+             || [ "$(md5sum "$PAINEL" | cut -d' ' -f1)" != "$ANTES_PAINEL" ]; then
+            echo "::error::lib/ nao voltou ao conteudo que tinha antes do controle negativo"
+            exit 1
+          fi
+          echo "  a arvore voltou intacta"
+
+      # Controle negativo do rateio COM PESO (HMO-270).
+      #
+      # As assercoes da fase 4 sao sobre uma SOMA ("fecha em 2.000 cravado") e
+      # sobre um ZERO ("membro em 0% nao tem parte"), e as duas passam verde
+      # tambem quando deixam de medir o que deveriam: um modulo que ignorasse o
+      # peso continuaria somando 2.000, e um membro que recebesse zero por nao
+      # existir na lista tambem "nao tem parte". Os tres mutantes abaixo sao os
+      # que viram dinheiro; o conjunto inteiro esta em
+      # `scripts/mutantes-fechamento-do-grupo.mjs`.
+      #
+      # Nao abre job novo -- o custo de CI deste projeto e o NUMERO de jobs
+      # (cada um arredonda para cima), nao o minuto a mais num job que ja existe.
+      - name: 'A verificacao sabe falhar (o rateio por peso)'
+        run: |
+          set -uo pipefail
+          RATEIO=lib/fechamento-do-grupo.ts
+
+          # A impressao digital do arquivo ANTES do primeiro mutante. A
+          # conferencia no fim e contra ELA, e nao contra o git: o `git diff`
+          # aqui enxergaria tambem o trabalho nao commitado de quem roda este
+          # script na propria maquina, e passaria a reprovar por um motivo que
+          # nao tem nada a ver com o controle negativo.
+          ANTES=$(md5sum "$RATEIO" | cut -d' ' -f1)
+
+          # O `cmp` existe porque um `sed` que nao casa SAI 0: sem ele, uma
+          # ancora reescrita por outra issue faria este passo medir a arvore
+          # INTACTA e ficar verde para sempre, com o rotulo mentindo sobre o que
+          # foi provado.
+          estragar() {
+            local de="$1" para="$2" rotulo="$3"
+            cp "$RATEIO" "$RATEIO.orig270"
+            sed -i "s@$de@$para@" "$RATEIO"
+            if cmp -s "$RATEIO" "$RATEIO.orig270"; then
+              mv "$RATEIO.orig270" "$RATEIO"
+              echo "::error::o sed de '$rotulo' nao casou nada -- a ancora mudou e este controle mediria a arvore intacta"
+              exit 1
+            fi
+            if npm run test:fechamento-do-grupo > /dev/null 2>&1; then
+              mv "$RATEIO.orig270" "$RATEIO"
+              echo "::error::Verde com o rateio estragado: $rotulo"
+              exit 1
+            fi
+            mv "$RATEIO.orig270" "$RATEIO"
+            echo "  vermelho em: $rotulo"
+          }
+
+          # 1) O PESO E IGNORADO. O defeito que a fase 4 existe para nao ter: o
+          #    grupo configurado em 70/30 fecha 1.000/1.000 de um mes de
+          #    R$ 2.000. O total fecha, a tela de configuracao mostra 70/30 ao
+          #    lado, e nada denuncia o numero errado.
+          estragar 'const efetivos = somaPesos > 0 ? limpos : limpos\.map(() => 1);' \
+                   'const efetivos = limpos.map(() => 1);' \
+                   'o peso e ignorado -- 70/30 volta a fechar 1.000/1.000'
+
+          # 2) MAIOR RESTO -> ARREDONDAMENTO. O controle que a issue nomeia.
+          #    2.000 entre tres da 666,67 x 3 = 2.000,01, e todo grupo de tres
+          #    passa a exibir "as contas nao fecham por R$ 0,01".
+          estragar 'const base = efetivos\.map((p) => Math\.floor((absoluto \* p) / soma));' \
+                   'const base = efetivos.map((p) => Math.round((absoluto * p) / soma));' \
+                   'o maior resto vira arredondamento -- o mes fecha em 2.000,01'
+
+          # 3) O CENTAVO VAI PARA O MENOR RESTO. Num grupo 70/30/0% ele cai
+          #    justamente no membro que configurou NAO dividir a conta, e o
+          #    fechamento cobra R$ 0,01 de quem esta em zero.
+          estragar '.sort((a, b) => (b\.resto !== a\.resto ? b\.resto - a\.resto : a\.i - b\.i));' \
+                   '.sort((a, b) => (b.resto !== a.resto ? a.resto - b.resto : a.i - b.i));' \
+                   'o centavo de sobra vai para o menor resto -- cai no membro em 0%'
+
+          # A arvore tem de voltar intacta: um `.orig270` esquecido viajaria no
+          # commit, e o arquivo mutado e indistinguivel do certo a olho nu.
+          if [ -e "$RATEIO.orig270" ]; then
+            echo "::error::sobrou um $RATEIO.orig270 -- a arvore nao foi restaurada"
+            exit 1
+          fi
+          if [ "$(md5sum "$RATEIO" | cut -d' ' -f1)" != "$ANTES" ]; then
+            echo "::error::$RATEIO nao voltou ao conteudo que tinha antes do controle negativo"
+            exit 1
+          fi
+          echo "  a arvore voltou intacta"
+
+      # A fase 10 (HMO-277): o lado da RECEITA, que ate aqui nao existia -- zero
+      # ocorrencias de credito de grupo em qualquer cartao ou lista de receita.
+      # No mes da internet do C6 o Helio tem R$ 106,60 a receber da Lais e da
+      # Bia, e nada na tela dele dizia isso.
+      #
+      # O QUE AS ASSERCOES PROVAM, E POR QUE SAO SEPARADAS POR CARTAO
+      # -------------------------------------------------------------
+      # O risco desta fase e somar o credito em "Receitas". `fecharMes` soma
+      # PREVISTO JUNTO COM REALIZADO por desenho, entao os R$ 106,60 do exemplo
+      # sao credito sobre uma conta que NINGUEM PAGOU: publicar isso como
+      # receita realizada e a familia de defeito do "a vencer", que este app ja
+      # pagou uma vez.
+      #
+      # E um defeito que o SALDO NAO DENUNCIA -- inflar receita e despesa pelo
+      # mesmo valor deixa `receitas - despesas` exato. Por isso cada bloco
+      # afirma sobre "Receitas" e sobre o credito EM SEPARADO, com o numero que
+      # a conta errada produziria escrito ao lado, mais o controle "mesmo mes
+      # sem despesa de grupo".
+      #
+      # Nos DOIS fusos (America/Sao_Paulo e UTC, no proprio npm script): o
+      # recorte do mes e por prefixo de string, e um `new Date()` que voltasse
+      # ao modulo erraria o mes da conta do dia 1 so em fuso negativo -- este
+      # job roda em UTC e nao veria.
+      - name: O credito de grupo entra como A RECEBER, e nao em Receitas
+        run: npm run test:credito-de-grupo
+
+      # Controle negativo da fase 10.
+      #
+      # O total de R$ 106,60 do exemplo sai CERTO por caminhos errados: o mes
+      # tem UMA conta e DOIS devedores com a mesma parte, entao somar o saldo em
+      # vez das linhas, ou trocar o lado da transferencia, devolve 106,60 do
+      # mesmo jeito. Os dois mutantes que mais importam sao `total_do_saldo` (o
+      # numero grande deixa de bater com a soma dos nomes listados) e
+      # `credito_por_valor` (`amount` e positivo nos DOIS sentidos, entao o mes
+      # em que eu DEVO R$ 300 apareceria como R$ 300 a receber).
+      #
+      # Medido: 12 mutantes, 12 mortos. Dois outros foram RETIRADOS por
+      # sobreviverem com razao -- os dois `Math.max` do residuo cobrem um ao
+      # outro, e viraram um mutante unico; a nota esta no runner.
+      #
+      # O runner traz o controle POSITIVO e a conferencia de ancora dentro: um
+      # trecho que outra issue reescreveu e reprovado como mutante invalido, em
+      # vez de sair verde medindo a arvore intacta.
+      #
+      # Nao abre job novo -- o custo de CI deste projeto e o NUMERO de jobs
+      # (cada um arredonda para cima), nao o minuto a mais num job que ja existe.
+      - name: A verificacao sabe falhar (o credito a receber)
+        run: npm run mutantes:credito-de-grupo
+
+      # A outra metade da HMO-245: o CAMINHO entre a rota e o cartao. O calculo
+      # acima pode estar perfeito e a tela mostrar zero, porque
+      # `await res.json()` e `any` -- um campo renomeado em um dos dois lados
+      # chega `undefined`, o componente o pinta como R$ 0,00 e nada reclama. Foi
+      # exatamente isso na HMO-201 (`transaction_count` ausente do grao `mes`:
+      # tile exibindo 0 sobre um mes com 180 USD de despesa).
+      #
+      # Aqui os campos em risco sao `total`, `devido` e `amount` -- os numeros
+      # que a pessoa usa para fazer o Pix do acerto.
+      - name: O cartao de fechamento e a rota dele falam dos mesmos campos
+        run: npm run test:contrato-do-fechamento
+
+      # O mesmo risco, do lado da RECEITA (HMO-277). Aqui ele tem uma volta a
+      # mais: se o campo renomear, o bloco "A receber dos grupos" nao aparece --
+      # e INVISIVEL se le como "ninguem te deve nada", que e uma frase errada
+      # dita com confianca, nao um espaco em branco.
+      #
+      # Este teste tambem e o unico lugar que tranca a decisao da fase: o
+      # credito e previsto e fica FORA de `calculateBalance`. Somar os R$ 106,60
+      # em "Receitas" seria uma linha, publicaria dinheiro que ninguem pagou, e
+      # o saldo continuaria fechando -- a familia do "a vencer". A funcao pura
+      # nao pode pegar isso, porque nao e nela que o defeito acontece.
+      - name: O credito a receber nao entra nos tres cartoes
+        run: npm run test:contrato-do-credito
+
+      # HMO-248, o recorte de mes da aba de Despesas do grupo. Uma despesa fixa
+      # nao grava uma linha: grava uma regra e MATERIALIZA uma parcela por mes
+      # do horizonte. O cartao "Previstas" somava todas elas, sem recorte de
+      # data nenhum: um aluguel de R$ 1.800 com tres parcelas materializadas
+      # aparecia tres vezes e a legenda dizia "Total: R$ 5.400" -- o aluguel de
+      # tres meses num cartao que nao diz de qual mes fala.
+      #
+      # As assercoes que valem o job, todas com o numero do ANTES junto:
+      #
+      #   1. o aluguel de tres meses vira UMA conta de 1.800 no mes escolhido.
+      #      O controle e o 5.400 que a tela mostrava.
+      #   2. a conta que vence no DIA 1 pertence ao mes dela. O recorte antigo
+      #      era `new Date(data).getMonth()`, e `new Date("2026-10-01")` e
+      #      meia-noite UTC -- em America/Sao_Paulo isso e 30/09 e a despesa do
+      #      dia 1 caia no mes ANTERIOR. O bug so aparece em fuso negativo, que
+      #      e o do celular de quem usa o app e NAO o deste job: por isso o npm
+      #      script fixa TZ=America/Sao_Paulo, e o controle do dia 1 so afirma
+      #      quando o fuso e capaz de mostrar o defeito.
+      #   3. o que o recorte deixou de fora e CONTADO. Recortar no mes escondia
+      #      a parcela vencida de um mes passado -- a que pede acao -- e sumir
+      #      sem rotulo e indistinguivel de "nao foi gravada".
+      #
+      # Medido: 14 mutantes, 14 mortos (npm run mutantes:periodo-do-grupo). O
+      # mutante `mes_invalido_devolve_tudo` sobreviveu na primeira rodada: a
+      # guarda parecia redundante com o filtro, e so NAO e por causa da linha
+      # sem data (`mesDaData(null) === ""` casa com um mes invalido, que tambem
+      # e ""). A conclusao foi escrever o caso, nao apagar a guarda.
+      - name: As previstas do grupo sao do mes escolhido, e o dia 1 e desse mes
+        run: npm run test:periodo-do-grupo
+
+      # A metade de TELA da HMO-248. O recorte acima pode estar perfeito e a aba
+      # continuar somando a lista inteira: `scheduled.reduce(...)` compila, e o
+      # total errado de R$ 5.400 e plausivel o bastante para ninguem desconfiar.
+      #
+      # O que esta suite tranca e o par de fatos que separa a tela consertada da
+      # tela com o defeito: a soma crua nao existe mais, e o seletor do cartao
+      # de fechamento e o MESMO estado que recorta as duas listas -- sem isso o
+      # pior resultado possivel e um fechamento de novembro em cima de uma lista
+      # de outubro, cada metade certa em separado e a tela inteira mentindo.
+      #
+      # As assercoes negativas foram medidas contra a versao ANTERIOR do
+      # arquivo (git HEAD): as 11 reprovam, ou seja nenhuma delas e vacua.
+      - name: A aba de Despesas do grupo nao soma mais a lista inteira
+        run: npm run test:contrato-do-periodo-do-grupo
+
       # E a metade de ARVORE. `lib/categorias.ts` passaria verde com o JSX
       # inteiro errado; o que esta suite pega e o seletor de subcategoria
       # desenhado antes de haver categoria, e o botao "Criar" sem
@@ -1352,6 +1934,83 @@ jobs:
       # devolvendo 2 linhas onde deveria devolver 1.
       - name: Nenhuma view escapa da RLS
         run: $PSQL -f database/tests/view_security_invoker_test.sql
+
+      # O AJUSTE DE SALDO DA FATURA (HMO-253). A feature NAO tem migration -- o
+      # ajuste e um lancamento comum e a categoria reservada e criada pela rota
+      # com o `user_id` da 036 -- e e exatamente por isso que ela precisa de
+      # teste aqui: tudo o que a sustenta e comportamento de coisas que ja estao
+      # no banco, e nada disso esta escrito no codigo da feature.
+      #
+      #   - `card_invoice_month()` mapeando o DIA 1 para a fatura do proprio mes,
+      #     para closing_day NULL, 1, 15, 28 e 31. A feature escolhe o dia 1
+      #     apoiada nesse mapeamento e nao o reimplementa (fonte unica da regra);
+      #     se ele mudar, o ajuste de outubro passa a somar em novembro, com as
+      #     duas faturas plausiveis e nada vermelho em TypeScript;
+      #   - `(-t.amount) AS invoice_amount`, que e a unica coisa que faz um
+      #     `amount` negativo AUMENTAR a fatura. `ABS` ali faria o abatimento
+      #     aumentar o que se deve;
+      #   - as policies da 036, sem as quais o INSERT da categoria reservada
+      #     volta 42501 e NENHUM ajuste e gravado. Foi isso que aconteceu com a
+      #     transferencia (HMO-162): 500 em producao por semanas, CI verde,
+      #     porque os testes de la eram sobre funcao pura;
+      #   - `update_account_balance` no UPDATE: a rota TROCA o ajuste, e sem o
+      #     estorno de OLD.amount cada alteracao cobraria o valor de novo no
+      #     saldo do cartao -- a fatura certa e o patrimonio errado.
+      #
+      # Tem controle positivo embutido: a compra DEPOIS do fechamento cai no mes
+      # seguinte. Sem ele, a afirmacao sobre o dia 1 passaria verde com
+      # `card_invoice_month` reduzida a `date_trunc('month', $1)` -- uma funcao
+      # que ignora o fechamento acerta todo dia 1 e erra todo o resto.
+      - name: O ajuste de saldo cai na fatura certa e com o sinal certo
+        run: $PSQL -f database/tests/ajuste_de_fatura_test.sql
+
+      # O acerto de grupo passou a gravar lancamento (HMO-245, fase 11). Esta
+      # suite faz O QUE A ROTA FAZ, na sessao `authenticated` de cada pessoa, e
+      # mede `current_balance` antes e depois -- componente renderizado nao
+      # serve: o botao antigo continuaria "funcionando" sem conta nenhuma e
+      # passaria verde sem lancar nada.
+      #
+      # Precisa rodar depois da 033: duas assercoes leem
+      # `personal_monthly_cash_flow`, e e nela que esta a medicao que decidiu o
+      # TIPO da perna.
+      #
+      # As quatro coisas que so aparecem com banco de verdade:
+      #
+      #   - o SINAL move `current_balance` nos dois sentidos. `transfer` nao
+      #     entra em Receitas nem Despesas, mas CONTA no saldo -- o trigger soma
+      #     NEW.amount sem olhar o tipo;
+      #   - `group_id` NULO na perna. Com ele preenchido,
+      #     `auto_create_group_transaction` rateia o proprio Pix: as 2 partes do
+      #     hotel (R$ 400) viram 4 somando R$ 600, e pagar a divida cria divida
+      #     nova para todo mundo. Nada em TypeScript ve isso;
+      #   - a RLS de `financial_transactions` recusa a perna da CONTRAPARTE
+      #     (42501). E o que limita esta fase a uma perna, e esta afirmado como
+      #     teste para que a F12 nao "conserte" relaxando a policy;
+      #   - o painel pessoal de quem recebe continua mostrando A PARTE DELA. Tem
+      #     controle embutido: trocando SO o tipo para `income`, a assercao
+      #     mostra o mes dela fechando melhor do que foi.
+      - name: O acerto de grupo vira lancamento, com sinal e conta certos
+        run: $PSQL -f database/tests/hmo245_acerto_vira_lancamento_test.sql
+
+      # HMO-269 (F3 da HMO-245): a rota /split-config faz a PRIMEIRA escrita que
+      # este app tem em `group_members.percentage` -- a coluna que a fase 4 passa
+      # a usar como peso do rateio do mes. A fase nao tem migration, entao este
+      # step nao prova uma migration: ele prova as quatro premissas que a rota
+      # tem sobre o banco e que nao aparecem em TypeScript nenhum.
+      #
+      # Em particular a ATOMICIDADE do lote. A rota manda um `upsert` unico em
+      # vez de um UPDATE por membro justamente porque uma falha no meio deixaria
+      # a configuracao somando 70% -- e nao ha CHECK que pegue isso depois
+      # (`group_members_percentage_check` confere LINHA, nao conjunto). Sem este
+      # teste, trocar o upsert por um laco passa em type-check, em lint e em
+      # qualquer sonda que so olhe o status 200.
+      #
+      # Controle negativo medido: removido o `SET LOCAL ROLE authenticated` do
+      # caso 2, o arquivo sai 3 com "membro comum conseguiu reescrever a linha do
+      # admin". Sem o SET ROLE tudo rodaria como superusuario, que ignora RLS, e
+      # os casos de recusa passariam sem recusar nada.
+      - name: A configuracao de divisao so o admin grava, e o lote e atomico
+        run: $PSQL -f database/tests/hmo269_split_config_test.sql
 
       - name: Aritmetica de recorrencia
         run: npm run test:recurrence
@@ -1484,6 +2143,85 @@ jobs:
       # e indistinguivel de suite que passou.
       - name: Puxar para atualizar nao vale dentro do menu (em navegador)
         run: npm run test:puxar-no-menu-dom
+
+      # HMO-271 (HMO-245 fase 5). A tela onde o Helio configura a divisao:
+      # seletor de modo, um slider por membro, e a direita o % e o R$ de cada
+      # um. A ARITMETICA dela ja e coberta pelas suites de divisao e de
+      # fechamento; o que so esta prova e a FIACAO -- mexer no numero de um
+      # membro muda o do outro, e o R$ ao lado acompanha.
+      #
+      # Precisa de navegador porque `react-dom/server`, que e como as outras
+      # suites de componente deste repo rodam, NAO ve handler: `onChange` nao
+      # sai no HTML e nunca e chamado pelo render. A tela renderizaria
+      # identica com o handler vazio, e foi isso que deixou esta classe de
+      # defeito sem rede ate aqui.
+      #
+      # Dois defeitos reais sairam desta sonda, nenhum deles de mutante:
+      #
+      #   - o campo era `input type="number"`, e nele texto com virgula e
+      #     INVALIDO: o navegador devolve `value === ""`. Digitar "70,5" num
+      #     teclado pt-BR punha o membro em 0,00% e o OUTRO em 100% -- a conta
+      #     da casa inteira no nome de uma pessoa, por causa de uma tecla;
+      #   - a previa em reais rateava pelos PERCENTUAIS tambem em modo `equal`,
+      #     onde o fechamento usa peso 1. Num grupo de tres eram treze centavos
+      #     de diferenca entre esta tela e o extrato, todo mes.
+      #
+      # Sem navegador a suite FALHA, e nao pula -- mesma razao da de cima.
+      - name: A divisao do grupo rebalanceia na tela, com o R$ do fechamento
+        run: npm run test:divisao-ui-dom
+
+      # HMO-272 (HMO-245 fase 6). O botao que leva os sliders da divisao para a
+      # proporcao da receita de cada membro no mes -- recebida E prevista, a
+      # mesma regua da despesa --, e a decisao de privacidade que vem com ele:
+      # "percentual para todos; o R$ da renda so para o proprio dono".
+      #
+      # O QUE ESTA SUITE PROVA E QUE AS OUTRAS NAO PODEM
+      # ------------------------------------------------
+      # Ela CHAMA os route handlers, com um duble de client que filtra de
+      # verdade (scripts/duble-de-supabase.mjs). E a unica forma de medir um
+      # recorte de RESPOSTA: a rota antiga /api/expense-groups/proportions ja
+      # "escondia" o salario -- no JSX --, e mandava `total_income` de todo
+      # mundo no JSON para qualquer membro. Uma assercao de tela passa verde
+      # com o salario na resposta, que e exatamente o defeito.
+      #
+      # Por isso os mutantes que sao o controle negativo da entrega
+      # (`RECORTE DA PRIVACIDADE SOLTO`, `RECORTE POR member_id`) so morrem
+      # aqui. Ver scripts/mutantes-semeadura.mjs.
+      #
+      # A HMO-273 (fase 7) REMOVEU a /api/expense-groups/proportions, e com ela
+      # os casos e os mutantes que mediam o recorte daquela rota: rota que nao
+      # existe nao vaza. O que ficou no lugar e o guard de aposentadoria do step
+      # seguinte, que e mais forte -- ele cobre tambem um `fetch` ou um `.from`
+      # reintroduzido em QUALQUER arquivo, e nao so naquele route.ts.
+      #
+      # Roda nos DOIS fusos: o recorte do mes e por prefixo de string, e um
+      # `new Date("2026-10-01")` em qualquer ponto da cadeia poria o salario do
+      # dia 1 no mes anterior -- so em maquina com fuso negativo. A sandbox e
+      # America/Sao_Paulo e este runner e UTC.
+      - name: A semeadura da divisao pela renda, e o R$ que so o dono ve
+        run: npm run test:semeadura
+
+      # HMO-273 (HMO-245 fase 7). A sugestao "Divisao Proporcional" de
+      # `GET /split-suggestions` era CODIGO MORTO que parecia feature: ela so
+      # montava com `default_split_type === 'proportional'` E algum membro com
+      # `percentage > 0`, e as duas condicoes nunca se encontravam -- ninguem
+      # escrevia a coluna, e o PUT /split-config grava `percentage`, nunca
+      # `proportional`.
+      #
+      # A suite CHAMA o route handler (dubles da HMO-272), e e por isso que ela
+      # mede a promessa da fase: "com 70/30 gravado, a sugestao de uma despesa
+      # nova vem 70/30, e o total fecha ao centavo". Um teste so da funcao
+      # provaria que a FUNCAO divide 70/30 -- nao que a rota le a coluna certa,
+      # nem que a sugestao chega no corpo da resposta. Cada um desses defeitos
+      # sai da rota como um 200 com o numero errado.
+      #
+      # Ela carrega tambem o guard da ENTREGA 2: zero leitor, zero escritor e
+      # zero `fetch` do caminho `group_member_proportions` em `app/`, `lib/`,
+      # `components/` e `utils/`. Dois armazens de porcentagem vivos e como se
+      # chega a duas telas discordando sobre dinheiro, com cada uma fechando
+      # sozinha. 15 de 15 em scripts/mutantes-sugestao-de-divisao.mjs.
+      - name: A sugestao de divisao viva, e o segundo armazem de % aposentado
+        run: npm run test:sugestao-de-divisao
 
       # HMO-201. O painel do grupo precisa perguntar por um periodo de datas
       # qualquer, e `category_monthly_totals` so responde por MES. Quando o
@@ -1915,6 +2653,61 @@ jobs:
       # explicados no cabecalho de scripts/mutantes-investments.mjs.
       - name: Custo medio, alocacao e evolucao da carteira
         run: npm run test:investments
+
+      # Renda fixa que rende sozinha (HMO-192, entrega 2 da HMO-141). A migration
+      # 031 deu onde guardar "110% do CDI"; lib/renda-fixa.ts e a conta que
+      # transforma aquilo em dois numeros na tela e lib/cdi.ts a unica conversa
+      # com o SGS do Banco Central. Como em investments, nenhum erro aqui levanta
+      # excecao -- todos desenham um rendimento errado com cara de certo. Os
+      # casos que valem:
+      #
+      #   - o FIM DE SEMANA. MEDIDO em api.bcb.gov.br: pedir a serie 12 para
+      #     sabado 26/09/2026 devolve HTTP 404 com corpo de erro, e NAO lista
+      #     vazia com 200 como o Olinda da PTAX. Um cliente copiado de
+      #     lib/ptax.ts leria todo fim de semana como falha de rede; por isso
+      #     toda consulta aqui e por FAIXA, nunca por um dia. E a ausencia do
+      #     sabado nao e "rendeu zero": preencher com zero multiplica por 1 (o
+      #     bruto do CDI sobrevive, e e por isso que o defeito passa) mas INVENTA
+      #     dia util -- e num prefixado de 13% a.a. os 8 dias de fim de semana da
+      #     janela de setembro viram R$ 39 de rendimento falso em R$ 10.000;
+      #
+      #   - LCI, LCA e poupanca ISENTAS. Liquido igual ao bruto, aliquota zero. E
+      #     o caso que o codigo generico erra, e erra CONTRA o usuario. A isencao
+      #     nao se deriva do indexador: uma LCI e um CDB de 95% do CDI so diferem
+      #     em `fixed_income_product`, e a suite tem o par lado a lado;
+      #
+      #   - a aliquota de IR pelos dias CORRIDOS, nunca pelos uteis. 190 corridos
+      #     sao 20%; os 131 uteis do mesmo periodo seriam 22,5% -- 2,5 pontos
+      #     sempre contra o usuario, sem nada na tela denunciando. As tres bordas
+      #     (180/181, 360/361, 720/721) estao na suite;
+      #
+      #   - a ORDEM da resposta do SGS. MEDIDO: `/bcdata.sgs.12/dados/ultimos/4`
+      #     volta crescente e `/bcdata.sgs.4389/dados/ultimos/3` volta
+      #     DECRESCENTE. Quem le posicao em vez de data acerta numa serie e erra
+      #     na outra, com um numero plausivel de outro dia;
+      #
+      #   - o percentual multiplica a TAXA do dia e nao o fator, e o vencimento
+      #     PARA a conta (sem isso um CDB vencido em 2024 acumula CDI para
+      #     sempre).
+      #
+      # Os numeros sao os da issue, conferidos contra o endpoint de verdade:
+      # R$ 10.000 a 100% do CDI em 21 dias uteis -> R$ 107,20 brutos, R$ 83,08
+      # liquidos; por dia R$ 5,08 a 100% e R$ 5,59 a 110%; e a conferencia
+      # cruzada 1,00050788 ^ 252 = 1,13650 entre as series 12 e 4389.
+      #
+      # 41 de 41 mutantes mortos, com CONTROLE POSITIVO (a arvore intacta passa
+      # antes de qualquer mutacao -- sem ele um erro no proprio runner sai como
+      # "todos mortos") e ancora unica exigida por mutante. Dois mutantes vivos
+      # na primeira rodada apontaram defeito na SUITE e nao no codigo, e as duas
+      # assercoes que faltavam estao marcadas com MEDIDO em
+      # scripts/test-renda-fixa.mjs: `(1+taxa)^1,10` e `1+taxa*1,10` dao o MESMO
+      # centavo em 21 dias (a assercao passou a ser sobre o fator, com 12 casas),
+      # e as series 11 e 12 tem hoje o mesmo valor, entao trocar Selic por CDI
+      # nao muda numero nenhum ate o dia em que as duas se separarem.
+      # Um terceiro mutante vivo era no-op -- mutante mal escrito, nao teste
+      # fraco. Ver o cabecalho de scripts/mutantes-renda-fixa.mjs.
+      - name: Renda fixa rende sozinha, e LCI nao paga IR
+        run: npm run test:renda-fixa
 
       # A busca de pessoas da aba Conexoes. O termo digitado ia colado na arvore
       # logica do PostgREST, e a virgula e separador ali: quem se chama

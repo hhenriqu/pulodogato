@@ -20,7 +20,19 @@ import {
   resumirFila,
   novoId,
   MAX_TENTATIVAS,
+  NATUREZAS_FIXAS,
 } from "../.tmp-offline-queue/offline-queue.js";
+// O SEGUNDO MODULO E O ORACULO DA LISTA (HMO-254)
+//
+// `lib/offline-queue.ts` nao importa `lib/lancamento.ts` -- ele compila sozinho
+// e o campo que ele le e `string`, porque a entrada pode vir de uma tela antiga
+// servida do cache do service worker. O que impede a copia de divergir e este
+// import AQUI, no teste, que compila os dois e compara. Mesmo arranjo que
+// scripts/test-moeda.mjs usa para `MOEDA_PADRAO`.
+import {
+  ehNaturezaFixa,
+  naturezasDoTipo,
+} from "../.tmp-offline-queue/lancamento.js";
 import {
   guardarCatalogo,
   lerCatalogo,
@@ -110,6 +122,54 @@ test("despesa fixa e recusada: ela e regra, nao lancamento", () => {
   const r = avaliarLancamento({ ...base, tipoDeDespesa: "fixed" }, ID);
   assert.equal(r.ok, false);
   assert.equal(r.motivo, "despesa-fixa");
+});
+
+test("o gasto FIXO NO CARTAO tambem e recusado (HMO-254)", () => {
+  // ERA A COMPARACAO `=== "fixed"`, E ELA FUROU QUANDO `card_fixed` NASCEU.
+  //
+  // A assinatura do cartao lancada sem rede passava por esta peneira como
+  // despesa PONTUAL: a fila gravava uma `financial_transactions`, o aviso dizia
+  // "guardei no aparelho", e quando a conexao voltasse a regra mensal que a
+  // pessoa pediu nao existiria. Mas a cobranca daquele mes existiria -- duas
+  // vezes, depois que ela cadastrasse a regra de novo ao perceber.
+  const r = avaliarLancamento({ ...base, tipoDeDespesa: "card_fixed" }, ID);
+  assert.equal(r.ok, false);
+  assert.equal(r.motivo, "despesa-fixa");
+});
+
+test("a lista da fila e `ehNaturezaFixa` concordam em TODA natureza", () => {
+  // A CONCORDANCIA ENTRE OS DOIS MODULOS, que e o que substitui o import que a
+  // fila nao pode ter. Quem adicionar uma quinta natureza fixa ao enum e
+  // esquecer `NATUREZAS_FIXAS` quebra aqui -- e nao em producao, com a regra
+  // virando transacao em silencio.
+  const naturezas = naturezasDoTipo("expense");
+  assert.ok(naturezas.length >= 4, "a lista de naturezas encolheu sem aviso");
+
+  for (const natureza of naturezas) {
+    assert.equal(
+      NATUREZAS_FIXAS.includes(natureza),
+      ehNaturezaFixa(natureza),
+      `a fila e lib/lancamento.ts discordam sobre "${natureza}"`
+    );
+    // E a recusa tem de SEGUIR a lista, nao so coincidir com ela: sem esta
+    // segunda assercao, `NATUREZAS_FIXAS` poderia estar certa e o `if` do
+    // `avaliarLancamento` continuar lendo `=== "fixed"`.
+    const r = avaliarLancamento({ ...base, tipoDeDespesa: natureza }, ID);
+    assert.equal(
+      r.ok === false && r.motivo === "despesa-fixa",
+      ehNaturezaFixa(natureza),
+      `a fila recusou/aceitou "${natureza}" ao contrario do esperado`
+    );
+  }
+
+  // NAO HA NATUREZA FIXA FORA DO ENUM: a lista nao pode carregar um valor que a
+  // tela nao produz mais, senao ela vira documentacao de um estado morto.
+  for (const fixa of NATUREZAS_FIXAS) {
+    assert.ok(
+      naturezas.includes(fixa),
+      `"${fixa}" esta na lista da fila mas nao e natureza nenhuma`
+    );
+  }
 });
 
 test("dividida e recusada: o rateio depende de quem esta no grupo AGORA", () => {
@@ -754,4 +814,111 @@ test("confirmado AUSENTE continua sendo aceito (tela antiga no cache)", () => {
   assert.equal(avaliarLancamento({ ...base }, ID).ok, true);
   assert.equal(avaliarLancamento({ ...base, confirmado: undefined }, ID).ok, true);
   assert.equal(avaliarLancamento({ ...base, confirmado: true }, ID).ok, true);
+});
+
+// =====================================================
+// A FATURA ESCOLHIDA ATRAVESSA A FILA (041, HMO-281 / HMO-289)
+// =====================================================
+// ESTE E O ESCRITOR CUJO DEFEITO NAO TEM SINTOMA.
+//
+// A fila ACEITA compra no cartao: `avaliarLancamento` recusa edicao, parcelado,
+// despesa fixa, previsto e transferencia, e `card` nao esta em nenhuma dessas
+// listas. Sem o campo na linha, a pessoa escolhe a fatura de dezembro no metro,
+// o item entra na fila, a rede volta, e a linha e gravada e ACEITA -- caindo na
+// fatura da DATA. Nenhum erro, nenhum item `falhou`, nada na tela.
+
+const noCartao = (over = {}) => ({
+  ...base,
+  tipoDeDespesa: "card",
+  accountId: "cartao-1",
+  ...over,
+});
+
+test("a compra no cartao continua ENTRANDO na fila (senao o resto e vacuo)", () => {
+  // CONTROLE OBRIGATORIO: se `card` passasse a ser recusado, todos os casos
+  // abaixo ficariam verdes por nunca chegarem a montar linha nenhuma.
+  const r = avaliarLancamento(noCartao({ mesDaFatura: "2026-12" }), ID);
+  assert.equal(r.ok, true, "a fila tem de aceitar compra no cartao");
+  assert.ok(!NATUREZAS_FIXAS.includes("card"));
+});
+
+test("a fatura escolhida chega na linha, no dia 1 que a coluna exige", () => {
+  const linha = linhaDe(noCartao({ mesDaFatura: "2026-12" }));
+  assert.equal(
+    linha.invoice_month_override,
+    "2026-12-01",
+    "sem isto o lancamento sem rede perde a fatura em SILENCIO"
+  );
+
+  // DIA 1, e nao o mes cru: a 041 tem
+  // `CHECK (invoice_month_override = date_trunc('month', ...))`, e 'AAAA-MM'
+  // numa coluna `date` volta 22008 na SINCRONIZACAO -- o item ficaria `falhou`
+  // para sempre, longe de quem lancou.
+  assert.match(linha.invoice_month_override, /^\d{4}-\d{2}-01$/);
+});
+
+test("sem escolha a linha vai com `null`, e o campo EXISTE", () => {
+  // `null` e nao campo ausente: so com a chave na linha o `tsc` cobra
+  // `montarLinha`, e `null` e o que a coluna guarda quando ninguem escolheu --
+  // a fatura volta a sair da data (regra da 006).
+  const semEscolha = linhaDe(noCartao());
+  assert.equal(semEscolha.invoice_month_override, null);
+  assert.ok(
+    "invoice_month_override" in semEscolha,
+    "a chave tem de existir na linha mesmo nula"
+  );
+
+  assert.equal(linhaDe(noCartao({ mesDaFatura: "" })).invoice_month_override, null);
+  assert.equal(linhaDe(noCartao({ mesDaFatura: "   " })).invoice_month_override, null);
+});
+
+test("mes ilegivel na fila cai em `null`, e NAO derruba o lancamento", () => {
+  // A ENTRADA PODE TER SIDO GRAVADA NO INDEXEDDB POR UMA TELA ANTIGA, que nao
+  // validava o campo. Recusar aqui deixaria o item `falhou` na sincronizacao,
+  // longe de quem lancou, e nenhuma tentativa futura poderia dar outro
+  // resultado -- o lancamento nunca entraria. Cair em `null` grava a compra na
+  // fatura da data: e o app de ontem, e nao a perda do lancamento.
+  for (const ruim of ["2026-13", "2026-00", "2026-1", "202612", "dezembro", "2026-12-15"]) {
+    const r = avaliarLancamento(noCartao({ mesDaFatura: ruim }), ID);
+    assert.equal(r.ok, true, `'${ruim}' nao pode derrubar o lancamento`);
+    assert.equal(
+      r.linha.invoice_month_override,
+      null,
+      `'${ruim}' tinha de cair em null`
+    );
+  }
+
+  // '2026-12-15' acima merece nota: ele E uma data legivel, e e exatamente o que
+  // o CHECK da 041 recusa (dia diferente de 1). Passar adiante produziria 23514
+  // na sincronizacao.
+});
+
+test("fora da compra no cartao a fila NAO carrega fatura", () => {
+  // A MESMA PORTA QUE `camposDoTipo` tem na tela: o seletor so existe em
+  // `natureza === "card"`. Um 'AAAA-MM' parado no estado nao pode virar override
+  // numa despesa de conta corrente, onde `card_invoice_lines` nem olha a coluna
+  // -- mas o dado ficaria gravado mentindo para quem o lesse depois.
+  assert.equal(
+    linhaDe({ ...base, tipoDeDespesa: "one_off", mesDaFatura: "2026-12" })
+      .invoice_month_override,
+    null
+  );
+  assert.equal(
+    linhaDe({ ...base, tipo: "income", tipoDeDespesa: "one_off", mesDaFatura: "2026-12" })
+      .invoice_month_override,
+    null
+  );
+  // `tipoDeDespesa` AUSENTE (tela antiga no cache) tambem nao carrega.
+  assert.equal(
+    linhaDe({ ...base, tipoDeDespesa: undefined, mesDaFatura: "2026-12" })
+      .invoice_month_override,
+    null
+  );
+
+  // CONTRASTE: a MESMA entrada com `card` carrega. Sem este par, os casos acima
+  // passariam com a funcao devolvendo `null` para tudo.
+  assert.equal(
+    linhaDe(noCartao({ mesDaFatura: "2026-12" })).invoice_month_override,
+    "2026-12-01"
+  );
 });

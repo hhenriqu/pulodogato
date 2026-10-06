@@ -56,6 +56,12 @@ const TABS = "components/ui/tabs.tsx";
 const GUARD_PREMIUM = "components/subscription/SoftFeatureGuard.tsx";
 const FINANCAS = "app/(dashboard)/dashboard/personal-finance/page.tsx";
 const GRUPOS = "app/(dashboard)/dashboard/expense-groups/page.tsx";
+// A linha da parte de grupo nasceu DENTRO de FINANCAS e a HMO-274 a extraiu
+// para componente proprio. Ela mora aqui como constante, e nao em literal
+// dentro dos dois casos, para que a mensagem de "nao achei" nomeie sempre o
+// arquivo que foi mesmo lido -- foi a divergencia entre os dois que fez a
+// HMO-282 custar um diagnostico.
+const PARTE_DE_GRUPO = "components/movimentacoes/LinhaDaParteDeGrupo.tsx";
 
 /**
  * Le o arquivo SEM comentarios.
@@ -461,14 +467,24 @@ test("lancamentos: a fila de categoria/data quebra, e com gap vertical", () => {
 // com esta linha nova quebrando a pagina inteira: eles nunca a olham. Um teste
 // que cobre uma das duas formas de uma lista de duas formas da a sensacao de
 // cobertura exata onde ela nao existe.
+//
+// ELA MUDOU DE ARQUIVO (HMO-274, repontado na HMO-282)
+// ----------------------------------------------------
+// A linha era uma funcao no fim de FINANCAS e virou
+// `components/movimentacoes/LinhaDaParteDeGrupo.tsx`. Os dois casos abaixo
+// continuaram lendo FINANCAS, onde o JSX nao estava mais, e reprovaram alto na
+// propria guarda de ancora -- que e exatamente o que a guarda existe para
+// fazer. Sem ela os dois ficariam VERDES medindo um arquivo que nao contem o
+// alvo, que e o modo de falha caro: cobertura aparente sobre nada.
 test("parte de grupo: a linha nova da lista tambem nao empurra a pagina", () => {
-  const fonte = ler("app/(dashboard)/dashboard/personal-finance/page.tsx");
+  const fonte = ler(PARTE_DE_GRUPO);
   const cadeia = linhaDeLista(fonte, "{parte.description}");
 
   assert.ok(
     cadeia,
-    "nao achei a linha da parte de grupo em personal-finance -- se ela foi " +
-      "reescrita, este caso precisa ser reescrito com ela em vez de continuar verde",
+    `nao achei a linha da parte de grupo em ${PARTE_DE_GRUPO} -- se ela foi ` +
+      "reescrita ou mudou de arquivo de novo, este caso precisa ser reescrito " +
+      "com ela em vez de continuar verde",
   );
 
   const juntas = cadeia.join(" | ");
@@ -492,12 +508,15 @@ test("parte de grupo: a linha nova da lista tambem nao empurra a pagina", () => 
 });
 
 test("parte de grupo: a fila de categoria/grupo/data quebra, e com gap vertical", () => {
-  const fonte = ler("app/(dashboard)/dashboard/personal-finance/page.tsx");
+  const fonte = ler(PARTE_DE_GRUPO);
   // O marcador e o selo "Minha parte", que abre a fila de metadados desta
   // linha. Ela carrega MAIS selos que a linha comum (tipo + categoria + data +
-  // grupo + "a aprovar"), entao e a que tem o piso maior das duas.
+  // grupo + quem pagou + "a aprovar"), entao e a que tem o piso maior das duas.
   const cadeia = linhaDeLista(fonte, "Minha parte");
-  assert.ok(cadeia, "nao achei a fila de metadados da parte de grupo");
+  assert.ok(
+    cadeia,
+    `nao achei a fila de metadados da parte de grupo em ${PARTE_DE_GRUPO}`,
+  );
 
   const fila = cadeia.join(" | ");
 

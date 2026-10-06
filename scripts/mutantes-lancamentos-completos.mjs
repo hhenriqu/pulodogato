@@ -120,7 +120,7 @@ const mutantes = [
     PARTE,
     "a parte sem despesa passa a entrar na lista sem descricao",
     "    const despesa = despesas.get(parte.transaction_id);\n    if (!despesa) {\n      semDescricao += 1;\n      continue;\n    }",
-    '    const despesa = despesas.get(parte.transaction_id) ?? {\n      id: parte.transaction_id,\n      description: "",\n      amount: 0,\n      category: null,\n    };',
+    '    const despesa = despesas.get(parte.transaction_id) ?? {\n      id: parte.transaction_id,\n      user_id: "",\n      description: "",\n      amount: 0,\n      category: null,\n    };',
   ],
   [
     PARTE,
@@ -203,6 +203,61 @@ const mutantes = [
     "a nota passa a aparecer com zero parte (R$ 0,00 em grupo para quem nao tem grupo)",
     "  if (linhas.length === 0) return null;",
     "  if (false) return null;",
+  ],
+
+  // --- a parte DENTRO do cartao Despesas (HMO-275) ---
+  //
+  // Os tres primeiros sao os que erram dinheiro sem quebrar nada: um deles --
+  // o `meu.saldo` herdado -- e um erro de UMA PALAVRA que deixa os tres cartoes
+  // se contradizendo embaixo da legenda "Receitas - Despesas". Um teste que
+  // afirmasse so sobre o saldo sobreviveria a dois deles.
+  [
+    PARTE,
+    "a parte volta a ficar fora do cartao Despesas",
+    "  const despesas = meu.despesas + totalDasPartesDeTerceiros(partes);",
+    "  const despesas = meu.despesas;",
+  ],
+  [
+    PARTE,
+    "o saldo e HERDADO em vez de recalculado (os tres cartoes se contradizem)",
+    "    saldo: meu.receitas - despesas,",
+    "    saldo: meu.saldo,",
+  ],
+  [
+    PARTE,
+    "a parte entra em RECEITAS (o reembolso da F10 publicado como recebido)",
+    "  const despesas = meu.despesas + totalDasPartesDeTerceiros(partes);\n\n  return {\n    receitas: meu.receitas,",
+    "  const despesas = meu.despesas;\n\n  return {\n    receitas: meu.receitas + totalDasPartesDeTerceiros(partes),",
+  ],
+  [
+    PARTE,
+    "a parte entra nos DOIS lados (o saldo fecha certo e os dois cartoes incham)",
+    "    receitas: meu.receitas,",
+    "    receitas: meu.receitas + totalDasPartesDeTerceiros(partes),",
+  ],
+  [
+    PARTE,
+    "a parte SUBTRAI de Despesas (gasto do mes cai quando outro paga)",
+    "  const despesas = meu.despesas + totalDasPartesDeTerceiros(partes);",
+    "  const despesas = meu.despesas - totalDasPartesDeTerceiros(partes);",
+  ],
+  [
+    PARTE,
+    "a parte conta em dobro no cartao",
+    "  const despesas = meu.despesas + totalDasPartesDeTerceiros(partes);",
+    "  const despesas = meu.despesas + 2 * totalDasPartesDeTerceiros(partes);",
+  ],
+  [
+    PARTE,
+    "a parte passa a contar como transferencia (muda a outra frase do saldo)",
+    "    transferido: meu.transferido,\n    transferencias: meu.transferencias,",
+    "    transferido: meu.transferido + totalDasPartesDeTerceiros(partes),\n    transferencias: meu.transferencias + partes.length,",
+  ],
+  [
+    PARTE,
+    "o cartao passa a contar a parte CONTADA PELA QUANTIDADE, nao pelo valor",
+    "  const despesas = meu.despesas + totalDasPartesDeTerceiros(partes);",
+    "  const despesas = meu.despesas + partes.length;",
   ],
 ];
 

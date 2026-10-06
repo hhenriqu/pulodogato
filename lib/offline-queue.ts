@@ -91,6 +91,25 @@ export interface LinhaDeTransacao {
    * 1 para BRL, sempre -- e o unico valor que o CHECK aceita em real.
    */
   exchange_rate: number;
+  /**
+   * A fatura escolhida, dia 1 do mes ('AAAA-MM-01'), ou `null` (041, HMO-281).
+   *
+   * OBRIGATORIA NA LINHA, E NAO OPCIONAL, pelo mesmo motivo de `currency` -- e
+   * com um modo de falha pior, porque aqui ele e MUDO dos dois lados.
+   *
+   * A fila ACEITA compra no cartao: `avaliarLancamento` recusa edicao,
+   * parcelado, despesa fixa, previsto e transferencia, e natureza `card` nao
+   * esta em nenhuma dessas listas. Sem este campo, a pessoa escolhe a fatura de
+   * dezembro no metro, o item entra na fila, a rede volta, a linha e gravada e
+   * ACEITA -- e a compra cai na fatura da DATA. Nao ha erro, nao ha item
+   * `falhou`, nao ha nada na tela dizendo que a escolha se perdeu: o lancamento
+   * sincroniza com sucesso na fatura errada. E o unico dos quatro escritores da
+   * HMO-289 cujo defeito nao tem sintoma nenhum.
+   *
+   * `null` explicito e nao campo ausente: so com o campo na linha o `tsc` cobra
+   * `montarLinha`, e `null` e o que a coluna guarda quando ninguem escolheu.
+   */
+  invoice_month_override: string | null;
 }
 
 /** O que a tela coletou do formulario, antes de virar linha. */
@@ -114,7 +133,15 @@ export interface EntradaDeLancamento {
   grupoId: string | null;
   /** Esta editando um lancamento que ja existe, em vez de criar. */
   editando: boolean;
-  /** "one_off" | "fixed" | "card" -- despesa fixa nao e lancamento. */
+  /**
+   * `NaturezaDespesa` de lib/lancamento.ts, como texto -- despesa fixa nao e
+   * lancamento. Quais valores sao fixos: `NATUREZAS_FIXAS`, logo abaixo.
+   *
+   * `string` E NAO O TIPO, de proposito: a entrada pode vir de uma versao
+   * ANTIGA da tela, servida do cache do service worker, e um valor que aquela
+   * versao conhecia e esta nao e um dado real que precisa ser avaliado -- nao um
+   * erro de compilacao. E a razao pela qual a lista abaixo e por extenso.
+   */
   tipoDeDespesa?: string;
   /**
    * Moeda escolhida na tela (ISO 4217). Opcional na ENTRADA porque quem chama
@@ -141,7 +168,44 @@ export interface EntradaDeLancamento {
    * lancamento offline de uma tela em cache para a recusa.
    */
   confirmado?: boolean;
+  /**
+   * A fatura escolhida na tela, em 'AAAA-MM' (HMO-281 / HMO-289).
+   *
+   * Opcional na ENTRADA pelo mesmo motivo que `moeda`, `cotacao` e `confirmado`:
+   * uma versao antiga da tela, servida do cache do service worker, nao tem este
+   * campo. Ausente quer dizer "nao escolhi" -- override nulo, e a fatura sai da
+   * data, que e exatamente o que aquela tela fazia. NAO ha recusa para o ausente:
+   * ele e o app de antes desta feature, e nao dinheiro errado.
+   *
+   * 'AAAA-MM' como na tela; quem acrescenta o `-01` que a coluna exige e
+   * `montarLinha`. Ver `mesDaFatura` em lib/lancamento.ts.
+   */
+  mesDaFatura?: string;
 }
+
+/**
+ * Os valores de `tipoDeDespesa` que significam "isto e uma REGRA, nao um
+ * lancamento" (HMO-254).
+ *
+ * POR EXTENSO E NAO IMPORTADO DE lib/lancamento.ts, e isto e a mesma decisao
+ * que `moeda: "BRL"` em `valoresIniciais`: este modulo compila sozinho em
+ * `test:offline-queue`, e o campo que ele le e `string` (ver `tipoDeDespesa`)
+ * porque a entrada pode vir de uma tela em cache. O que impede a copia de
+ * divergir NAO e o import, e o caso "a lista daqui e `ehNaturezaFixa` concordam
+ * em toda natureza" em scripts/test-offline-queue.mjs, que compila os dois
+ * modulos e compara -- o mesmo arranjo que scripts/test-moeda.mjs usa para
+ * `MOEDA_PADRAO`.
+ *
+ * ERA A COMPARACAO `=== "fixed"`, E ELA FUROU NA HMO-254. Com `card_fixed`
+ * nascendo na tela, a assinatura do cartao lancada sem rede passava por esta
+ * peneira como despesa PONTUAL: a fila gravava uma `financial_transactions`, o
+ * aviso dizia "guardei no aparelho", e quando a conexao voltasse a regra mensal
+ * que a pessoa pediu nao existiria -- mas a compra daquele mes existiria duas
+ * vezes, uma da fila e outra da ocorrencia que ela ia cadastrar de novo ao
+ * perceber. A lista fecha o modo de falha para todo valor novo do enum: quem
+ * adicionar um "fixo" e esquecer daqui quebra o teste de concordancia.
+ */
+export const NATUREZAS_FIXAS: string[] = ["fixed", "card_fixed"];
 
 export type MotivoDeRecusa =
   | "parcelado"
@@ -191,7 +255,7 @@ export function avaliarLancamento(
     };
   }
 
-  if (entrada.tipoDeDespesa === "fixed") {
+  if (NATUREZAS_FIXAS.includes(entrada.tipoDeDespesa ?? "")) {
     // Despesa fixa nao e lancamento: e uma regra em `recurring_rules`, e quem
     // a materializa e a rota. Gravar uma transacao aqui cobraria o valor duas
     // vezes -- agora e de novo quando a ocorrencia do mes for baixada.
@@ -340,6 +404,36 @@ function cotacaoDaEntrada(entrada: EntradaDeLancamento): number | null {
   return n;
 }
 
+/**
+ * O que vai para `invoice_month_override`: dia 1 do mes escolhido, ou `null`.
+ *
+ * TRES RECUSAS, E AS TRES CAEM EM `null` (a fatura sai da data, regra da 006):
+ *
+ *   1. campo ausente ou vazio -- a pessoa nao escolheu, ou a tela em cache nao
+ *      tem o campo.
+ *   2. mes ilegivel -- a entrada pode ter sido gravada no IndexedDB por uma
+ *      versao da tela que nao validava, e um '2026-13' aqui viraria 22008 na
+ *      SINCRONIZACAO: o item ficaria `falhou` para sempre, longe de quem lancou,
+ *      e nenhuma tentativa futura poderia dar outro resultado. Cair em `null`
+ *      grava a compra na fatura da data -- que e o app de ontem, e nao a perda
+ *      do lancamento.
+ *   3. natureza que nao e compra no cartao. `camposDoTipo` so mostra o seletor
+ *      em `natureza === "card"`, e esta e a mesma porta do lado da fila: um
+ *      'AAAA-MM' parado no estado nao pode virar override numa despesa de conta
+ *      corrente, onde `card_invoice_lines` nem olha a coluna. Escrito aqui, e
+ *      nao herdado, pela razao de `is_shared` acima.
+ */
+function faturaDaEntrada(entrada: EntradaDeLancamento): string | null {
+  if (entrada.tipoDeDespesa !== "card") return null;
+
+  const mes = String(entrada.mesDaFatura ?? "").trim();
+  if (!/^\d{4}-\d{2}$/.test(mes)) return null;
+  const numeroDoMes = Number(mes.slice(5, 7));
+  if (numeroDoMes < 1 || numeroDoMes > 12) return null;
+
+  return `${mes}-01`;
+}
+
 function montarLinha(
   entrada: EntradaDeLancamento,
   id: string,
@@ -375,6 +469,12 @@ function montarLinha(
     // um.
     exchange_rate:
       moedaDaEntrada(entrada) === "BRL" ? 1 : cotacaoDaEntrada(entrada) ?? 1,
+    // A FATURA ESCOLHIDA ATRAVESSA A FILA (041, HMO-289)
+    //
+    // Sem esta linha a escolha morre aqui, em silencio: a linha sincroniza, e
+    // ACEITA, e a compra cai na fatura da data. Ver `invoice_month_override` em
+    // `LinhaDeTransacao` e as tres recusas de `faturaDaEntrada`.
+    invoice_month_override: faturaDaEntrada(entrada),
   };
 }
 

@@ -40,7 +40,26 @@ const {
   notaDasPartesDeTerceiros,
   linhasDaLista,
   contarComPartes,
+  resumoComPartesDeGrupo,
 } = await import("../.tmp-lancamentos-completos/parte-de-grupo-na-lista.js");
+
+// O CRITERIO ANTIGO, DE PROPOSITO DUPLICADO AQUI (controle negativo da HMO-275).
+//
+// Ate a HMO-275 os tres cartoes somavam `resumoDoPeriodo(transactions)` -- so as
+// MINHAS linhas. Se a assercao nova passar e esta soma antiga passar TAMBEM com
+// o mesmo numero, a janela do teste esta cega: a parte de grupo nao chegou a
+// entrar em lugar nenhum.
+//
+// O controle e a propria `resumoDoPeriodo`, e nao uma soma escrita a mao aqui,
+// por dois motivos: (a) ela E o criterio antigo, literalmente o codigo que esta
+// tela chamava antes desta issue; (b) uma soma por sinal escrita a mao contaria
+// as DUAS pernas de uma transferencia, que e o defeito que
+// `resumoDoPeriodo` existe para nao ter -- o controle sairia errado e acusaria o
+// fonte certo. Ela mora em lib/movimentacoes.ts, que esta issue nao toca, entao
+// ela nao se move junto com o que audita.
+const { resumoDoPeriodo } = await import(
+  "../.tmp-lancamentos-completos/movimentacoes.js"
+);
 
 // -----------------------------------------------------------------
 // Fixtures
@@ -228,9 +247,13 @@ test("indiceVazio nao quebra: a linha solta ainda tem frase", () => {
 // 2. A PARTE DE GRUPO QUE OUTRO PAGOU
 // =================================================================
 
+/** A Ana, que pagou o hotel. */
+const ANA = "u-ana";
+
 /** O hotel de R$ 400 que a Ana pagou, rateado 200/200 com a Bia. */
 const HOTEL = {
   id: "tx-hotel",
+  user_id: ANA,
   description: "Hotel em Paraty",
   amount: -400,
   category: { id: "cat-lazer", name: "Lazer", color_hex: "#06B6D4" },
@@ -252,10 +275,21 @@ const parteDaBia = (over = {}) => ({
 
 const despesasLidas = () => new Map([[HOTEL.id, HOTEL]]);
 
+/**
+ * `user_id -> nome`, o terceiro argumento que a HMO-274 acrescentou.
+ *
+ * Quem desenha a linha ja tem teste proprio para o nome e para o rotulo de
+ * fallback (scripts/test-pagador-da-parte.mjs). Aqui ele entra preenchido para
+ * que os casos deste arquivo -- sinal, contagem dupla, descarte -- sejam medidos
+ * no caminho NORMAL, com o nome legivel.
+ */
+const nomesLidos = () => new Map([[ANA, "Ana Souza"]]);
+
 test("a parte de quem NAO pagou entra na lista, com a descricao da despesa", () => {
   const { linhas, semDescricao } = partesDeTerceirosNaLista(
     [parteDaBia()],
-    despesasLidas()
+    despesasLidas(),
+    nomesLidos()
   );
 
   assert.equal(semDescricao, 0);
@@ -267,7 +301,7 @@ test("a parte de quem NAO pagou entra na lista, com a descricao da despesa", () 
 });
 
 test("a parte entra NEGATIVA -- a view devolve positivo e a lista pinta pelo sinal", () => {
-  const { linhas } = partesDeTerceirosNaLista([parteDaBia()], despesasLidas());
+  const { linhas } = partesDeTerceirosNaLista([parteDaBia()], despesasLidas(), nomesLidos());
   assert.equal(linhas[0].amount, -200);
   assert.ok(linhas[0].amount < 0, "parte positiva apareceria em verde, como receita");
   assert.equal(linhas[0].totalDaDespesa, -400);
@@ -276,7 +310,8 @@ test("a parte entra NEGATIVA -- a view devolve positivo e a lista pinta pelo sin
 test("a view mudando de sinal nao transforma a parte em receita", () => {
   const { linhas } = partesDeTerceirosNaLista(
     [parteDaBia({ amount: -200 })],
-    despesasLidas()
+    despesasLidas(),
+    nomesLidos()
   );
   assert.equal(linhas[0].amount, -200);
 });
@@ -287,7 +322,8 @@ test("a parte da despesa que EU paguei nao entra: a linha cheia ja esta na lista
   // mostraria o hotel duas vezes, totalizando R$ 600 de um gasto de R$ 400.
   const { linhas } = partesDeTerceirosNaLista(
     [parteDaBia({ id: "split-ana", paguei_eu: true }), parteDaBia()],
-    despesasLidas()
+    despesasLidas(),
+    nomesLidos()
   );
 
   assert.equal(linhas.length, 1);
@@ -296,7 +332,7 @@ test("a parte da despesa que EU paguei nao entra: a linha cheia ja esta na lista
 });
 
 test("o id da linha e prefixado: ele nao pode cair numa rota de transacao", () => {
-  const { linhas } = partesDeTerceirosNaLista([parteDaBia()], despesasLidas());
+  const { linhas } = partesDeTerceirosNaLista([parteDaBia()], despesasLidas(), nomesLidos());
   assert.equal(linhas[0].id, "parte:split-bia");
   assert.notEqual(linhas[0].id, "split-bia");
   assert.notEqual(linhas[0].id, HOTEL.id);
@@ -305,7 +341,8 @@ test("o id da linha e prefixado: ele nao pode cair numa rota de transacao", () =
 test("parte sem a despesa correspondente e descartada e CONTADA", () => {
   const { linhas, semDescricao } = partesDeTerceirosNaLista(
     [parteDaBia(), parteDaBia({ id: "split-x", transaction_id: "tx-sumida" })],
-    despesasLidas()
+    despesasLidas(),
+    nomesLidos()
   );
 
   assert.equal(linhas.length, 1);
@@ -315,7 +352,8 @@ test("parte sem a despesa correspondente e descartada e CONTADA", () => {
 test("o rateio pendente aparece, com o status para a tela rotular", () => {
   const { linhas } = partesDeTerceirosNaLista(
     [parteDaBia({ split_status: "pending" })],
-    despesasLidas()
+    despesasLidas(),
+    nomesLidos()
   );
   assert.equal(linhas.length, 1);
   assert.equal(linhas[0].splitStatus, "pending");
@@ -324,7 +362,7 @@ test("o rateio pendente aparece, com o status para a tela rotular", () => {
 test("sem parte nenhuma a nota e null, e nao uma frase com zero", () => {
   assert.equal(notaDasPartesDeTerceiros([]), null);
 
-  const { linhas } = partesDeTerceirosNaLista([parteDaBia()], despesasLidas());
+  const { linhas } = partesDeTerceirosNaLista([parteDaBia()], despesasLidas(), nomesLidos());
   assert.deepEqual(notaDasPartesDeTerceiros(linhas), { quantas: 1, total: 200 });
 });
 
@@ -335,7 +373,8 @@ test("sem parte nenhuma a nota e null, e nao uma frase com zero", () => {
 test("as partes aparecem em Lançamentos e em Despesas, e em mais nenhuma aba", () => {
   const { linhas: partes } = partesDeTerceirosNaLista(
     [parteDaBia()],
-    despesasLidas()
+    despesasLidas(),
+    nomesLidos()
   );
   const minhas = [receita(), despesa()];
 
@@ -360,7 +399,8 @@ test("a lista sai em ordem de data decrescente, misturando as duas fontes", () =
   // minhas de marco, como se fossem de outro periodo.
   const { linhas: partes } = partesDeTerceirosNaLista(
     [parteDaBia({ transaction_date: "2026-09-18" })],
-    despesasLidas()
+    despesasLidas(),
+    nomesLidos()
   );
   const minhas = [
     { ...despesa(), id: "t-nova", transaction_date: "2026-09-25" },
@@ -387,7 +427,8 @@ test("no mesmo dia a ordem das minhas linhas e preservada", () => {
 test("a contagem da barra casa com a lista, nas quatro abas", () => {
   const { linhas: partes } = partesDeTerceirosNaLista(
     [parteDaBia()],
-    despesasLidas()
+    despesasLidas(),
+    nomesLidos()
   );
   const { saida, entrada } = pernas();
   const minhas = [receita(), despesa(), saida, entrada];
@@ -412,4 +453,187 @@ test("sem partes, a contagem e a mesma de antes desta issue", () => {
   const { saida, entrada } = pernas();
   const contagem = contarComPartes([receita(), despesa(), saida, entrada], []);
   assert.deepEqual(contagem, { todos: 4, income: 1, expense: 1, transfer: 2 });
+});
+
+// =================================================================
+// 4. OS TRES CARTOES, COM A PARTE DE GRUPO DENTRO (HMO-275)
+// =================================================================
+// A armadilha numero 1 do bloco 2 da HMO-245: **o saldo fica certo enquanto os
+// dois cartoes incham**. Uma assercao sobre `saldo` passa verde com Receitas e
+// Despesas completamente errados, porque os erros se anulam -- e e o defeito de
+// `duas-pernas-mantem-o-total-certo`, que durou meses em producao.
+//
+// Por isso nenhum teste desta secao afirma sobre o saldo sozinho. Receitas e
+// Despesas sao afirmados EM SEPARADO, e o saldo so aparece como consequencia
+// verificada dos dois (que e a legenda escrita no cartao: "Receitas -
+// Despesas").
+
+/** O mes da Bia: um salario, uma despesa dela, e a parte dela do hotel da Ana. */
+function mesDaBia() {
+  const { linhas: partes } = partesDeTerceirosNaLista(
+    [parteDaBia()],
+    despesasLidas(),
+    nomesLidos()
+  );
+  return { minhas: [receita(), despesa()], partes };
+}
+
+test("a parte de grupo SOMA em Despesas, e Receitas nao se mexe", () => {
+  const { minhas, partes } = mesDaBia();
+  const r = resumoComPartesDeGrupo(minhas, partes);
+
+  // Duas assercoes separadas, nunca uma sobre o saldo. 180 da despesa dela +
+  // 200 da parte do hotel.
+  assert.equal(r.despesas, 380, "a parte de grupo nao entrou no cartao Despesas");
+  assert.equal(r.receitas, 5000, "Receitas mudou -- o lado do reembolso e a F10");
+});
+
+test("CONTROLE NEGATIVO: o criterio ANTIGO nao ve a parte -- a janela enxerga", () => {
+  // Se este numero fosse igual ao de cima, o teste acima estaria passando sem
+  // que nada tivesse mudado. A diferenca E a entrega desta issue.
+  const { minhas, partes } = mesDaBia();
+
+  const antigo = resumoDoPeriodo(minhas);
+  const novo = resumoComPartesDeGrupo(minhas, partes);
+
+  assert.equal(antigo.despesas, 180);
+  assert.notEqual(
+    novo.despesas,
+    antigo.despesas,
+    "o criterio novo e o antigo deram o MESMO total de despesas: a parte de grupo nao entrou"
+  );
+  assert.equal(novo.despesas - antigo.despesas, 200);
+
+  // E o lado que NAO devia andar: aqui os dois criterios tem que concordar.
+  assert.equal(novo.receitas, antigo.receitas);
+});
+
+test("CONTROLE: o mesmo mes SEM despesa de grupo da o numero de antes desta issue", () => {
+  // Prova que a soma nova nao vaza para quem nao participa de grupo, e que a
+  // assercao de cima podia falhar.
+  const { minhas } = mesDaBia();
+  const r = resumoComPartesDeGrupo(minhas, []);
+
+  assert.equal(r.despesas, 180);
+  assert.equal(r.receitas, 5000);
+  assert.deepEqual(r, resumoDoPeriodo(minhas));
+});
+
+test("o saldo e RECALCULADO: ele nao pode ser o saldo de antes da parte entrar", () => {
+  // O erro de uma linha: somar em `despesas` e repassar o `saldo` que
+  // `resumoDoPeriodo` devolveu. Os tres cartoes ficariam se contradizendo na
+  // mesma tela, embaixo da legenda "Receitas - Despesas".
+  const { minhas, partes } = mesDaBia();
+  const r = resumoComPartesDeGrupo(minhas, partes);
+
+  assert.equal(r.saldo, r.receitas - r.despesas, "o saldo nao fecha com os dois cartoes");
+  assert.equal(r.saldo, 4620);
+  assert.notEqual(
+    r.saldo,
+    resumoDoPeriodo(minhas).saldo,
+    "o saldo ficou no valor de antes da parte entrar"
+  );
+});
+
+test("a parte de quem EU paguei nao infla o cartao: R$ 400 continuam R$ 400", () => {
+  // O mes da Ana: ela lancou o hotel inteiro (-400) e a view do 033 devolve
+  // tambem a parte DELA (paguei_eu). Se aquela parte chegasse ao cartao, os
+  // R$ 400 virariam R$ 600 -- e o numero continuaria plausivel.
+  const hotelDaAna = { ...despesa(), id: "tx-hotel", amount: -400 };
+  const { linhas: partes } = partesDeTerceirosNaLista(
+    [parteDaBia({ id: "split-ana", paguei_eu: true })],
+    despesasLidas(),
+    nomesLidos()
+  );
+
+  assert.equal(partes.length, 0);
+  const r = resumoComPartesDeGrupo([hotelDaAna], partes);
+  assert.equal(r.despesas, 400);
+  assert.equal(r.receitas, 0);
+});
+
+test("a parte PENDENTE soma: o dinheiro e devido antes de eu aprovar o rateio", () => {
+  // Regra decidida no plano: `group_share_entries` ja descarta `rejected` e
+  // `expired`, e `pending` e o criterio que a 033 usa no painel. O selo
+  // "a aprovar" continua na linha -- ele nao muda o total.
+  const { linhas: partes } = partesDeTerceirosNaLista(
+    [parteDaBia({ split_status: "pending" })],
+    despesasLidas(),
+    nomesLidos()
+  );
+  const r = resumoComPartesDeGrupo([despesa()], partes);
+
+  assert.equal(r.despesas, 380);
+  assert.equal(partes[0].splitStatus, "pending");
+});
+
+test("duas partes de grupos diferentes somam as duas", () => {
+  const JANTAR = {
+    id: "tx-jantar",
+    user_id: ANA,
+    description: "Jantar",
+    amount: -90,
+    category: null,
+  };
+  const { linhas: partes } = partesDeTerceirosNaLista(
+    [
+      parteDaBia(),
+      parteDaBia({
+        id: "split-jantar",
+        transaction_id: JANTAR.id,
+        group_id: "g-casa",
+        amount: 30,
+      }),
+    ],
+    new Map([
+      [HOTEL.id, HOTEL],
+      [JANTAR.id, JANTAR],
+    ]),
+    nomesLidos()
+  );
+
+  const r = resumoComPartesDeGrupo([], partes);
+  assert.equal(r.despesas, 230);
+  assert.equal(r.receitas, 0);
+});
+
+test("a parte descartada por falta de descricao nao entra no cartao", () => {
+  // `partesDeTerceirosNaLista` descarta a parte sem a despesa correspondente e
+  // CONTA o descarte (a tela avisa). O cartao tem que concordar com a lista:
+  // somar uma linha que a lista nao mostra deixaria a pessoa sem como conferir.
+  const { linhas: partes, semDescricao } = partesDeTerceirosNaLista(
+    [parteDaBia(), parteDaBia({ id: "split-x", transaction_id: "tx-sumida" })],
+    despesasLidas(),
+    nomesLidos()
+  );
+
+  assert.equal(semDescricao, 1);
+  assert.equal(resumoComPartesDeGrupo([], partes).despesas, 200);
+});
+
+test("transferido e transferencias passam inteiros: a parte nao e transferencia", () => {
+  const { saida, entrada } = pernas();
+  const { partes } = mesDaBia();
+  const minhas = [receita(), despesa(), saida, entrada];
+
+  const r = resumoComPartesDeGrupo(minhas, partes);
+
+  assert.equal(r.transferido, 1000, "contou as duas pernas, ou perdeu a frase do saldo");
+  assert.equal(r.transferencias, 2);
+  // E a transferencia continua fora dos dois cartoes, com ou sem parte.
+  assert.equal(r.despesas, 380);
+  assert.equal(r.receitas, 5000);
+});
+
+test("a nota do cartao de Despesas casa com o que foi somado nele", () => {
+  // A frase embaixo do cartao ("inclui R$ X de N despesas de grupo...") e o
+  // unico jeito de a pessoa conferir a diferenca entre o cartao e a soma das
+  // linhas que ela reconhece como suas. Se ela discordar do que entrou, a
+  // conferencia aponta para o lugar errado.
+  const { minhas, partes } = mesDaBia();
+  const nota = notaDasPartesDeTerceiros(partes);
+  const r = resumoComPartesDeGrupo(minhas, partes);
+
+  assert.equal(nota.total, r.despesas - resumoDoPeriodo(minhas).despesas);
+  assert.equal(nota.quantas, partes.length);
 });

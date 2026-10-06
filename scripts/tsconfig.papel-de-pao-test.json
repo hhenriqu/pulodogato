@@ -1,0 +1,40 @@
+{
+  "//": [
+    "Compila as duas contas do painel do modo papel de pao (HMO-286) para a",
+    "suite pura.",
+    "",
+    "O `include` tem UM arquivo e isso basta: o tsc segue os imports e emite",
+    "`previsto-x-realizado`, `parte-do-grupo`, `periodo-do-painel` e o que elas",
+    "puxam junto. E o que a suite quer -- ela mede a conta REAL, com os mesmos",
+    "`STATUS_FORA_DO_PREVISTO`, `direcaoDaAgenda` e `parteDoMembro` que a rota",
+    "usa, e nao copias escritas no teste.",
+    "",
+    "`rootDir` e `..` e NAO `../lib`, e o `types/financial.ts` do include e o",
+    "motivo: `lib/parte-do-grupo.ts` tipa a frequencia com ele, e um rootDir em",
+    "lib/ reprova com TS6059 ('not under rootDir'), que se le como erro do",
+    "arquivo e e do include. Por isso o resolve-aliases.mjs roda COM",
+    "`--espelha-raiz`: a arvore emitida fica com o prefixo `lib/`, igual a do",
+    "test:parte-do-grupo.",
+    "",
+    "`jsx` nao entra: nenhum destes arquivos tem JSX. O componente",
+    "`PainelDePapel.tsx` e medido em outro lugar, pela mesma razao que o resto",
+    "do repo separa conta de tela.",
+    "",
+    "Comentario SO nesta chave, nunca com // no meio do objeto: o tsc aceita",
+    "JSONC, mas o check-tests-in-ci.mjs le este arquivo com JSON.parse e",
+    "estoura com 'Expected double-quoted property name'."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-papel-de-pao",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/papel-de-pao.ts", "../types/financial.ts"]
+}

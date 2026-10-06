@@ -6,8 +6,10 @@
  *      `bg-white` ou `text-gray-900` nao muda no tema escuro -- ela nao
  *      quebra o build, nao quebra teste nenhum, e so aparece como um bloco
  *      branco na tela de quem usa o app a noite.
- *   2. Os pares de token continuam legiveis nos dois temas? E facil trocar um
+ *   2. Os pares de token continuam legiveis em CADA PALETA? E facil trocar um
  *      valor em globals.css e deixar texto com contraste de 2:1 sem perceber.
+ *      Sao quatro paletas desde a HMO-283 -- claro, escuro, e as duas do modo
+ *      papel de pao (`.papel` e `.dark.papel`).
  *
  * Roda no pre-commit e no CI. Se precisar mesmo de uma cor fixa, adicione o
  * caso em ALLOWED com o motivo -- a excecao fica registrada em vez de virar
@@ -41,11 +43,16 @@ const ALLOWED = [
     // components/MobileMenuChrome.tsx, que nao esta em nenhuma excecao: se
     // alguem reintroduzir a cor fixa junto com a posicao antiga, esta guarda
     // reprova.
+    // `LinhaDaParteDeGrupo.tsx` entrou na HMO-274 por MUDANCA DE ENDERECO, e
+    // nao por excecao nova: a linha era uma funcao no fim do `page.tsx` acima, e
+    // o `text-white` dela e o icone dentro do circulo da categoria, cujo fundo
+    // vem de `categoria.color_hex` -- nao do tema. A excecao segue o arquivo.
     test: (cls, file) =>
       ["text-white", "ring-white", "border-white", "bg-black"].includes(cls) &&
       [
         "components/ui/LoadingScreen.tsx",
         "app/(dashboard)/dashboard/personal-finance/page.tsx",
+        "components/movimentacoes/LinhaDaParteDeGrupo.tsx",
       ].includes(file),
     reason: "texto sobre fundo que nao e do tema",
   },
@@ -127,23 +134,81 @@ function contrast(a, b) {
   return (x + 0.05) / (y + 0.05);
 }
 
-/** Le os blocos :root e .dark de globals.css em dois mapas de token -> HSL. */
+/**
+ * Le as paletas de globals.css em mapas de token -> RGB.
+ *
+ * COMO ESTA LEITURA IA MENTIR, E O QUE A IMPEDE
+ * ---------------------------------------------
+ * A versao original achava cada bloco com `css.indexOf(seletor)` e abria no
+ * primeiro `{` seguinte. Isso bastava com dois blocos, e virou armadilha
+ * silenciosa quando o modo papel de pao (HMO-283) acrescentou `.papel` e
+ * `.dark.papel`:
+ *
+ *   - `.dark` e substring de `.dark.papel`, e `.papel` tambem e. A ORDEM dos
+ *     blocos no arquivo passava a decidir qual paleta cada nome lia, e um
+ *     reordenamento inocente faria `.dark` apontar para a paleta de papel. A
+ *     verificacao seguiria VERDE validando a paleta errada -- o pior resultado
+ *     possivel para uma guarda;
+ *   - e o proprio COMENTARIO que explica a ordem, em globals.css, cita
+ *     `.dark.papel` e vem ANTES dos blocos. `indexOf` casava com a prosa e abria
+ *     no `{` do bloco seguinte: de novo verde sobre a paleta errada. E a mesma
+ *     familia de defeito que `checkHardcodedClasses` abaixo ainda tem com
+ *     comentario, so que aqui ela nao reprova por engano -- ela APROVA por
+ *     engano.
+ *
+ * Duas precaucoes, entao:
+ *
+ *   1. comentario MASCARADO antes de procurar seletor (trocado por espaco em vez
+ *      de removido, como o check-table-drift.mjs faz, para offset e linha nao
+ *      andarem);
+ *   2. o seletor tem que comecar um seletor (lookbehind) e ser seguido de `{`, e
+ *      entre os blocos que casam vale o que de fato declara `--background`.
+ *      Assim `.dark` nao casa dentro de `.dark.papel`, e o `:root` da geometria
+ *      do celular -- que existe mais abaixo no arquivo e nao tem token de cor --
+ *      nao e confundido com o `:root` das cores.
+ *
+ * Com isso a leitura deixa de depender da ordem do arquivo. A ordem AINDA
+ * importa no CSS, por especificidade, e e por isso que o comentario dela
+ * continua em globals.css.
+ */
 function readTokens() {
-  const css = readFileSync(CSS_FILE, "utf8");
+  const bruto = readFileSync(CSS_FILE, "utf8");
+  // Mascara o comentario preservando o tamanho do arquivo.
+  const css = bruto.replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, " "));
+
   const block = (selector) => {
-    const start = css.indexOf(selector);
-    if (start === -1) throw new Error(`bloco ${selector} nao encontrado`);
-    const open = css.indexOf("{", start);
-    const end = css.indexOf("}", open);
-    const tokens = {};
-    for (const [, name, h, s, l] of css
-      .slice(open, end)
-      .matchAll(/--([\w-]+):\s*([\d.]+)\s+([\d.]+)%\s+([\d.]+)%/g)) {
-      tokens[name] = hslToRgb(Number(h), Number(s), Number(l));
+    const escapado = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const padrao = new RegExp(`(?<![\\w.#:[-])${escapado}\\s*\\{`, "g");
+
+    const candidatos = [];
+    for (const achado of css.matchAll(padrao)) {
+      const open = achado.index + achado[0].length - 1;
+      const end = css.indexOf("}", open);
+      if (end === -1) continue;
+      const tokens = {};
+      for (const [, name, h, s, l] of css
+        .slice(open, end)
+        .matchAll(/--([\w-]+):\s*([\d.]+)\s+([\d.]+)%\s+([\d.]+)%/g)) {
+        tokens[name] = hslToRgb(Number(h), Number(s), Number(l));
+      }
+      candidatos.push(tokens);
     }
-    return tokens;
+
+    const paleta = candidatos.find((t) => t.background);
+    if (!paleta) {
+      throw new Error(
+        `bloco ${selector} nao encontrado (ou sem --background) em ${CSS_FILE}`
+      );
+    }
+    return paleta;
   };
-  return { light: block(":root"), dark: block(".dark") };
+
+  return {
+    light: block(":root"),
+    dark: block(".dark"),
+    papel: block(".papel"),
+    papelEscuro: block(".dark.papel"),
+  };
 }
 
 // Texto normal precisa de 4.5:1 (WCAG AA). Icone/borda/preenchimento so
@@ -181,11 +246,17 @@ const NON_TEXT_PAIRS = [
 ];
 
 function checkContrast() {
-  const { light, dark } = readTokens();
+  const { light, dark, papel, papelEscuro } = readTokens();
   const failures = [];
+  // As QUATRO paletas, e nao duas. O modo papel de pao (HMO-283) tem uma pele
+  // clara e uma escura proprias -- se so as duas de cima fossem medidas, a
+  // paleta que a issue acrescentou seria exatamente a unica sem rede, e um
+  // marrom sobre bege com 2,5:1 entraria sem nada reclamar.
   for (const [themeName, tokens] of [
     ["claro", light],
     ["escuro", dark],
+    ["papel claro", papel],
+    ["papel escuro", papelEscuro],
   ]) {
     const check = (fg, bg, min) => {
       if (!tokens[fg] || !tokens[bg]) {
@@ -230,4 +301,7 @@ if (contrastFailures.length) {
 
 if (offenders.length || contrastFailures.length) process.exit(1);
 
-console.log("✓ cores: todas nos tokens, contraste AA nos dois temas");
+console.log(
+  "✓ cores: todas nos tokens, contraste AA nas quatro paletas " +
+    "(claro, escuro, papel claro, papel escuro)"
+);

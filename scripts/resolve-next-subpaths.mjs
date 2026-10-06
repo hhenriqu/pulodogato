@@ -41,7 +41,14 @@ if (!destino) {
 // pelo runtime do Next e nao rodam no node de jeito nenhum -- reescrever a
 // extensao deles trocaria um ERR_MODULE_NOT_FOUND claro por um erro de runtime
 // dentro do pacote, muito mais dificil de ler.
-const SUBCAMINHOS = ["next/link", "next/image"];
+//
+// `next/server` entrou na HMO-272, para a sonda que roda um route handler no
+// node (scripts/test-semeadura-pela-renda.mjs). Ele e caso de `next/link`, e nao
+// de `next/navigation`: `node_modules/next/server.js` carrega no node limpo e o
+// `NextResponse.json` que ele exporta devolve um Response de verdade, com
+// `status` e `json()` -- conferido antes de a sonda ser escrita. O que faltava
+// era so a extensao.
+const SUBCAMINHOS = ["next/link", "next/image", "next/server"];
 
 /** Todo .js debaixo de um diretorio, recursivamente. */
 function arquivos(dir) {

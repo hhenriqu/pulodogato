@@ -1,0 +1,22 @@
+{
+  "//": "Build so do teste da HMO-192. lib/renda-fixa.ts e puro e compilaria sozinho, mas lib/cdi.ts entra porque a suite confere o que SO vive nele: o mapa de indexador -> serie do SGS (12 para CDI, 11 para Selic, nenhuma para IPCA) e `deslocarISO`, que e a aritmetica de calendario que monta a faixa da consulta. lib/cdi.ts importa lib/renda-fixa.ts pelo alias @/, e o tsc resolve o alias por `paths` mas NAO o reescreve no JS emitido -- por isso o npm script tem o passo scripts/resolve-aliases.mjs depois, igual ao test:cambio. Sem ele o node morre com ERR_MODULE_NOT_FOUND no primeiro import.",
+  "compilerOptions": {
+    "outDir": "../.tmp-renda-fixa",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
+  },
+  "include": [
+    "../lib/renda-fixa.ts",
+    "../lib/cdi.ts"
+  ]
+}

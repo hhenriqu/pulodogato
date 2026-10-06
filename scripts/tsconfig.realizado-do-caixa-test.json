@@ -1,0 +1,33 @@
+{
+  "//": "Build so do teste. `lib/realizado-do-caixa.ts` importa `ehFatura` de @/lib/card-invoice (a chave canonica da fatura, ancorada nas duas pontas) e TIPO_CARTAO/TIPOS_QUE_ENTRAM_NA_FATURA de @/lib/telas-de-movimentacao (a copia do WHERE de card_invoice_lines, que e UMA so no projeto). Dai a lista: card-invoice arrasta transferencia -> lancamento, e telas-de-movimentacao arrasta movimentacoes + destino-do-lancamento. Nenhum deles e importado por gosto -- cada um e o lugar onde a regra correspondente JA mora, e declarar uma copia local seria o segundo lugar para ela ficar desatualizada. @/lib/periodo-do-painel (e as tres folhas dele: recurrence, dinheiro, moeda) entra porque o TESTE precisa dele: a regra deste modulo so tira linha e reescreve `transaction_type`, e quem transforma isso em dinheiro e `agregarTransacoes` de la. Somar no proprio teste provaria a soma do teste, nao a da rota -- e o defeito que esta issue conserta e um TOTAL. O tsc resolve o alias @/ por `paths` mas NAO o reescreve no JS emitido, entao o npm script tem o passo de resolve-aliases depois. @/lib/chave-da-fatura e @/lib/elo-da-fatura entraram na HMO-264: telas-de-movimentacao importa as duas (desde a HMO-285 e a HMO-305) e card-invoice RE-EXPORTA a primeira. Listadas ou nao, ESTA suite compila -- o `paths` as resolve para o arquivo de verdade e o tsc as puxa transitivamente. Quem quebra sem elas e scripts/mutantes-realizado-do-caixa.mjs, que monta uma arvore ISOLADA com apenas as copias desta lista: la o import nao resolve e o controle positivo aborta em TS2307. Por isso esta lista e a DEPENDENCIAS de la tem de andar juntas, e e o mutador -- nao esta suite -- que denuncia a divergencia.",
+  "compilerOptions": {
+    "outDir": "../.tmp-realizado-do-caixa",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
+  },
+  "include": [
+    "../lib/realizado-do-caixa.ts",
+    "../lib/card-invoice.ts",
+    "../lib/transferencia.ts",
+    "../lib/lancamento.ts",
+    "../lib/telas-de-movimentacao.ts",
+    "../lib/chave-da-fatura.ts",
+    "../lib/elo-da-fatura.ts",
+    "../lib/movimentacoes.ts",
+    "../lib/destino-do-lancamento.ts",
+    "../lib/periodo-do-painel.ts",
+    "../lib/recurrence.ts",
+    "../lib/dinheiro.ts",
+    "../lib/moeda.ts"
+  ]
+}

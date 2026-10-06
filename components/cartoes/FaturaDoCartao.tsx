@@ -26,6 +26,7 @@
 // qual e. Quando o rotulo nao da para montar, o total tambem nao aparece.
 // ---------------------------------------------------------------------------
 
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -49,12 +50,18 @@ import {
 } from "@/lib/offline-leitura";
 import {
   caminhoDeNovoGasto,
+  caminhoDoCartao,
   gastosDaFatura,
   previsoesDoCartao,
   rotuloDaFatura,
   rotuloDoCiclo,
 } from "@/lib/fatura-do-cartao";
+import { comOrigem } from "@/lib/retorno-do-lancamento";
 import { rotuloDaParcela } from "@/lib/lancamento";
+import {
+  ehLinhaDeAjuste,
+  type CategoriaDeAjuste,
+} from "@/lib/ajuste-de-fatura";
 import { NumeroIndisponivel } from "@/components/SemRede";
 
 interface FaturaDoCartaoProps {
@@ -76,6 +83,27 @@ interface FaturaDoCartaoProps {
    * precisar de nada que mexa em dinheiro.
    */
   aoApagarParcela?: (gasto: LinhaDaFatura) => void;
+  /**
+   * A categoria reservada do ajuste de saldo (HMO-253), como
+   * `GET /api/card-invoices` a devolve em `adjustment_category_id`.
+   *
+   * `undefined` = nao deu para conferir. A linha do ajuste fica sem o rotulo
+   * "Ajuste" nesse caso, que e o melhor que a tela pode fazer sem saber qual
+   * linha e -- carimbar o rotulo por adivinhacao chamaria de ajuste a compra de
+   * alguem.
+   */
+  categoriaDeAjuste?: CategoriaDeAjuste;
+  /**
+   * O bloco de ajuste de saldo, como SLOT.
+   *
+   * Nao sao props de formulario repassadas uma a uma de proposito: o ajuste tem
+   * oito pedacos de estado (aberto, valor, direcao, descricao, salvando...) e
+   * atravessa-los por aqui faria desta tela um intermediario que nao usa nada do
+   * que recebe -- e cada campo novo mexeria em tres arquivos. Quem monta o bloco
+   * e a pagina, que e quem tem a rede; este componente so o posiciona, logo
+   * abaixo do total que o ajuste explica.
+   */
+  blocoDeAjuste?: ReactNode;
 }
 
 /**
@@ -102,7 +130,21 @@ export function FaturaDoCartao({
   estado,
   aoMudarMes,
   aoApagarParcela,
+  categoriaDeAjuste,
+  blocoDeAjuste,
 }: FaturaDoCartaoProps) {
+  /**
+   * A tela do cartao, para o modal de lancamento voltar para a fatura (HMO-249).
+   *
+   * Montada por `caminhoDoCartao`, e NAO por `useOrigemDaTela`: esta rota nao
+   * tem query que importe (o mes da fatura vive em estado, nao na URL), e
+   * `useSearchParams` dentro dela exigiria um `<Suspense>` novo em
+   * `cartoes/[id]` -- um limite de suspensao a mais para carregar uma query
+   * vazia. O mes NAO entra de proposito: quem lanca um gasto quer ver a fatura
+   * em que ele caiu, que `card_invoice_month()` decide, e nao necessariamente o
+   * mes que estava na tela.
+   */
+  const origem = caminhoDoCartao(conta.id);
   const gastos = gastosDaFatura(fatura, conta.id);
   // `null` = a leitura daquele bloco falhou. Diferente de `[]`, que e "nenhuma".
   const previsoes = previsoesDoCartao(fatura, conta.id);
@@ -210,7 +252,7 @@ export function FaturaDoCartao({
                 continuaria navegando. */}
             {conta.is_active && (
               <Button asChild>
-                <Link href={caminhoDeNovoGasto(conta.id)}>
+                <Link href={comOrigem(caminhoDeNovoGasto(conta.id), origem)}>
                   <Plus className="mr-2 h-4 w-4" />
                   Lançar gasto neste cartão
                 </Link>
@@ -228,6 +270,16 @@ export function FaturaDoCartao({
           )}
         </CardContent>
       </Card>
+
+      {/* ------------------------------------------------------------------
+          O AJUSTE DE SALDO (HMO-253), logo abaixo do total.
+
+          Aqui e nao no fim da tela porque e o total acima que ele explica: "a
+          fatura do app fecha em R$ 1.240 e a do banco diz R$ 1.290" e uma
+          pergunta que se faz olhando o numero, e a resposta tem de estar ao
+          lado dele.
+          ------------------------------------------------------------------ */}
+      {blocoDeAjuste}
 
       {/* ------------------------------------------------------------------
           A lista.
@@ -248,8 +300,28 @@ export function FaturaDoCartao({
                 className="flex items-center justify-between gap-3 px-6 py-3"
               >
                 <div className="min-w-0">
-                  <p className="truncate font-medium text-foreground">
+                  <p className="flex items-center gap-2 truncate font-medium text-foreground">
                     {gasto.description}
+                    {/* O ROTULO DO AJUSTE (HMO-253). A linha fica na lista para
+                        a soma das linhas fechar com o total impresso em cima
+                        delas -- tira-la deixaria as compras somando R$ 1.240
+                        embaixo de um total de R$ 1.290, as duas corretas, e
+                        nada explicando a diferenca.
+
+                        Mas sem rotulo ela e indistinguivel de uma compra: um
+                        "Ajuste de saldo da fatura" de R$ 50 que o usuario pode
+                        reescrever (a descricao e editavel) vira, tres meses
+                        depois, uma compra de R$ 50 que ninguem reconhece. O
+                        rotulo sai da CATEGORIA reservada, nao da descricao --
+                        mesma razao de `rotuloDaParcela` sair das colunas. */}
+                    {ehLinhaDeAjuste(gasto, categoriaDeAjuste) ? (
+                      <Badge
+                        variant="outline"
+                        className="shrink-0 border-info/30 text-info"
+                      >
+                        Ajuste
+                      </Badge>
+                    ) : null}
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {/* "parcela 3 de 10" (HMO-211, migration 035)
@@ -332,7 +404,7 @@ export function FaturaDoCartao({
                 </p>
                 {conta.is_active && (
                   <Button asChild>
-                    <Link href={caminhoDeNovoGasto(conta.id)}>
+                    <Link href={comOrigem(caminhoDeNovoGasto(conta.id), origem)}>
                       <Plus className="mr-2 h-4 w-4" />
                       Lançar gasto neste cartão
                     </Link>

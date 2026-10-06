@@ -150,6 +150,105 @@ export function periodoParaQuery(periodo: Periodo): string {
   return `de=${periodo.de}&ate=${periodo.ate}`;
 }
 
+// -----------------------------------------------------------------------------
+// O PAR PERSONALIZADO ENQUANTO ESTA SENDO DIGITADO (HMO-240)
+// -----------------------------------------------------------------------------
+// O seletor trocou os dois `<input type="date">` pelo campo mascarado da
+// HMO-238, e a troca abre um problema que nenhuma das outras cinco telas tem.
+//
+// Nas outras, o `onChange` do campo cai direto num `setState`: o formulario
+// aceita o vazio que a data pela metade emite, guarda, e o campo continua
+// mostrando o que foi digitado. Aqui o par NAO alimenta formulario -- ele
+// alimenta o filtro do painel, e o filtro nao pode disparar com data
+// incompleta: um `de` vazio faria `lerPeriodo` cair no mes corrente e a tela
+// pularia para outubro no meio da digitacao.
+//
+// Entao o periodo do pai IGNORA o vazio. E as duas coisas, cada uma correta
+// sozinha, se cancelam: o rascunho do campo (ver `exibicaoDoCampo` em
+// lib/data-digitada.ts) so vale enquanto o valor do pai for exatamente o que
+// aquele texto emitiu, e aqui o pai nunca aceita o vazio -- a exibicao voltaria
+// para a data antiga A CADA TECLA e o campo ficaria impossivel de digitar.
+//
+// O rascunho do PAR e o que fecha esse buraco: ele guarda o que os dois campos
+// emitiram, inclusive vazio, e sobe para o filtro so quando os dois lados
+// formam periodo valido.
+//
+// POR QUE ELE TEM UMA `base`, E NAO E SO UM PAR DE STRINGS
+// --------------------------------------------------------
+// Pela mesma razao que o rascunho do campo e subordinado ao valor: senao a tela
+// passa a ter duas fontes de verdade e o campo mostra o texto antigo com o
+// periodo novo por baixo. As setas, o botao "Hoje" e os presets mudam o periodo
+// SEM ninguem digitar, e e o `base` -- o periodo sobre o qual a digitacao
+// comecou -- que faz o rascunho deixar de valer sozinho nesse instante, sem
+// `useEffect` de sincronizacao.
+//
+// Quando a data completa sobe, o periodo muda, o `base` discorda e a exibicao
+// volta a sair do periodo: que e exatamente o par que acabou de ser digitado.
+// -----------------------------------------------------------------------------
+
+/** O par de datas que os campos do modo personalizado estao mostrando. */
+export interface RascunhoDoPar {
+  /** O que o campo inicial emitiu. Vazio enquanto a data esta pela metade. */
+  de: string;
+  /** O que o campo final emitiu. Vazio enquanto a data esta pela metade. */
+  ate: string;
+  /** O periodo sobre o qual a digitacao comecou, por `chaveDoPeriodo`. */
+  base: string;
+}
+
+/**
+ * A identidade do periodo para efeito de subordinacao do rascunho.
+ *
+ * So `de` e `ate` entram: `modo` e derivado dos dois (ver `modoDoPeriodo`) e
+ * incluir um campo derivado na chave nao distingue nada que os dois extremos ja
+ * nao distingam.
+ */
+export function chaveDoPeriodo(periodo: Periodo): string {
+  return `${periodo.de}|${periodo.ate}`;
+}
+
+/** O par que os dois campos devem MOSTRAR: o rascunho, se ainda vale. */
+export function parDoSeletor(
+  rascunho: RascunhoDoPar | null,
+  periodo: Periodo
+): { de: string; ate: string } {
+  if (rascunho && rascunho.base === chaveDoPeriodo(periodo)) {
+    return { de: rascunho.de, ate: rascunho.ate };
+  }
+  return { de: periodo.de, ate: periodo.ate };
+}
+
+/**
+ * O que digitar num dos extremos produz: o rascunho novo e, so quando o par
+ * fecha, o periodo para subir ao filtro.
+ *
+ * `par: null` e a resposta normal no meio da digitacao -- data incompleta, e
+ * tambem o par INVERTIDO, que acontece toda vez que alguem move o `de` para
+ * depois do `ate` antes de arrumar o outro lado. Nos dois casos quem chamou nao
+ * pode avisar o painel: `lerPeriodo` devolveria o mes corrente e a tela pularia
+ * de mes sozinha enquanto a pessoa ainda estava digitando.
+ */
+export function extremoDigitado(
+  rascunho: RascunhoDoPar | null,
+  periodo: Periodo,
+  qual: "de" | "ate",
+  valor: string
+): { rascunho: RascunhoDoPar; par: { de: string; ate: string } | null } {
+  // O par que esta na tela ANTES desta tecla. Sai de `parDoSeletor` e nao de
+  // `periodo` porque o outro extremo pode estar no meio de uma edicao propria:
+  // ler do periodo apagaria o que ja foi digitado nele.
+  const atual = parDoSeletor(rascunho, periodo);
+  const de = qual === "de" ? valor : atual.de;
+  const ate = qual === "ate" ? valor : atual.ate;
+
+  const proximo: RascunhoDoPar = { de, ate, base: chaveDoPeriodo(periodo) };
+
+  if (!ehDataIso(de) || !ehDataIso(ate) || de > ate) {
+    return { rascunho: proximo, par: null };
+  }
+  return { rascunho: proximo, par: { de, ate } };
+}
+
 /**
  * A versao para as ROTAS, que distingue ausente de invalido.
  *
@@ -287,6 +386,165 @@ export function presetDoPeriodo(
     if (candidato.de === periodo.de && candidato.ate === periodo.ate) return id;
   }
   return null;
+}
+
+// -----------------------------------------------------------------------------
+// O ITEM "PERSONALIZADO" DO SELETOR (HMO-243)
+// -----------------------------------------------------------------------------
+// ATE ESTA ISSUE O ITEM ERA DECORATIVO. Escolher "Personalizado" no menu nao
+// fazia nada: nenhum campo de data aparecia e o rotulo nao mudava. O par de
+// datas so era alcancavel andando DOIS meses para tras com a seta -- um mes cai
+// no preset "Mes passado", que tambem esconde os campos.
+//
+// A causa nao era o campo: era o fato de "personalizado" nao ser estado nenhum.
+// O seletor DERIVAVA tudo do periodo (`presetDoPeriodo`), o handler do item
+// tinha um `return` seco, e os campos renderizavam so quando `preset === null`.
+// Escolher o item nao mudava o periodo; o periodo continuava casando com
+// `este-mes`; `preset === null` nunca virava verdade. O ciclo fechava em si
+// mesmo e nada na tela dizia isso.
+//
+// POR QUE NAO "MANDAR UM PERIODO QUE NAO CASA COM PRESET NENHUM"
+// --------------------------------------------------------------
+// Essa e a correcao de uma linha, e ela esta errada: mexer no periodo no
+// instante em que a pessoa ABRE o menu muda os numeros da tela antes de ela ter
+// escolhido data nenhuma. Escolher "escrever as datas a mao" e uma declaracao de
+// intencao, nao um filtro -- e um filtro que dispara sozinho e exatamente o
+// defeito que `extremoDigitado` (HMO-240) existe para impedir, pela outra porta.
+//
+// Entao "personalizado" passa a ser estado EXPLICITO, e o periodo nao se mexe.
+//
+// POR QUE A DECISAO MORA AQUI E NAO NO JSX
+// ----------------------------------------
+// `react-dom/server` nao enxerga handler nenhum: logica que viva so dentro de um
+// `onValueChange` nao tem teste possivel neste repositorio sem navegador. Foi
+// assim que o `return` seco atravessou revisao -- e com o comentario ao lado
+// AFIRMANDO o contrario do que o codigo fazia ("so abre os dois campos"), que e
+// o que quem leu o arquivo leu. Com a decisao em funcao pura, o teste de
+// scripts/test-periodo-painel.mjs alcanca os quatro gestos.
+// -----------------------------------------------------------------------------
+
+/**
+ * O valor do seletor que NAO descreve periodo nenhum.
+ *
+ * Ele e irmao dos `IdDePreset` na lista do menu e de propositalmente outro tipo:
+ * os presets respondem "qual recorte", este responde "eu escolho as datas".
+ */
+export const VALOR_PERSONALIZADO = "personalizado";
+
+/** O que o seletor sabe de si: o periodo (que mora na URL) e o modo a mao. */
+export interface EstadoDoSeletor {
+  periodo: Periodo;
+  /** A pessoa pediu os campos, mesmo que o periodo ainda case com um preset. */
+  personalizado: boolean;
+}
+
+/**
+ * Os quatro gestos que podem mexer no periodo ou no modo a mao.
+ *
+ * `par` e o unico que chega com o periodo ja pronto: ele sai de
+ * `extremoDigitado` + `lerPeriodo`, que e quem sabe recusar data pela metade e
+ * par invertido. O que este ramo decide e so o MODO.
+ */
+export type GestoDoSeletor =
+  | { tipo: "item"; valor: string }
+  | { tipo: "passo"; meses: number }
+  | { tipo: "hoje" }
+  | { tipo: "par"; periodo: Periodo };
+
+export interface EscolhaDoSeletor {
+  /** O modo a mao DEPOIS do gesto. */
+  personalizado: boolean;
+  /** O periodo novo, ou `null` quando o gesto nao mexe em numero nenhum. */
+  periodo: Periodo | null;
+}
+
+/** O valor e um dos presets de verdade? (e nao "personalizado", nem lixo) */
+function ehIdDePreset(valor: string): valor is IdDePreset {
+  return PRESETS.some((p) => p.id === valor);
+}
+
+/**
+ * O que cada gesto do seletor faz com o periodo e com o modo a mao.
+ *
+ * AS SETAS E O "HOJE" LIMPAM O MODO. Os dois voltam para um periodo que casa com
+ * preset, e insistir no modo a mao ali deixaria os campos abertos mostrando um
+ * par que a pessoa nao digitou -- ela saiu do modo de proposito, clicando noutro
+ * controle. Esta escolha e deliberada e esta fixada em teste; se um dia virar o
+ * contrario, e aqui e no teste que a troca aparece, e nao num `useState` perdido
+ * no meio do JSX.
+ *
+ * VALOR DESCONHECIDO NAO MEXE EM NADA. Nao ha caminho de tela que produza um,
+ * mas cair em `periodoDoPreset` com lixo devolveria o mes corrente -- o seletor
+ * REFILTRANDO a tela por causa de um valor que ninguem reconheceu.
+ */
+export function escolhaDoSeletor(
+  gesto: GestoDoSeletor,
+  estado: EstadoDoSeletor,
+  hoje: string = today()
+): EscolhaDoSeletor {
+  if (gesto.tipo === "passo") {
+    return {
+      personalizado: false,
+      periodo: passoDeMes(estado.periodo, gesto.meses),
+    };
+  }
+
+  if (gesto.tipo === "hoje") {
+    return { personalizado: false, periodo: periodoCorrente(hoje) };
+  }
+
+  // Digitar um par a mao E estar no modo a mao. Sem isto, um par digitado que
+  // por acaso casa com um preset (01 a 31 do mes corrente) fecharia os campos
+  // embaixo da propria pessoa que acabou de escrever as datas.
+  if (gesto.tipo === "par") {
+    return { personalizado: true, periodo: gesto.periodo };
+  }
+
+  // O item do menu. `periodo: null` e o ponto desta issue: abrir os campos NAO
+  // e refiltrar a tela.
+  if (gesto.valor === VALOR_PERSONALIZADO) {
+    return { personalizado: true, periodo: null };
+  }
+
+  if (ehIdDePreset(gesto.valor)) {
+    return {
+      personalizado: false,
+      periodo: periodoDoPreset(gesto.valor, hoje),
+    };
+  }
+
+  return { personalizado: estado.personalizado, periodo: null };
+}
+
+/**
+ * O item que o seletor mostra fechado.
+ *
+ * O modo a mao vence o preset de proposito: no instante seguinte a escolher
+ * "Personalizado" o periodo AINDA casa com `este-mes` -- e era justamente o
+ * `preset ?? PERSONALIZADO` sozinho que fazia o menu voltar a dizer "Este mes"
+ * depois do clique, como se nada tivesse acontecido.
+ */
+export function valorDoSeletor(
+  preset: IdDePreset | null,
+  personalizado: boolean
+): string {
+  if (personalizado) return VALOR_PERSONALIZADO;
+  return preset ?? VALOR_PERSONALIZADO;
+}
+
+/**
+ * Os dois campos de data estao na tela?
+ *
+ * As duas razoes sao independentes: `preset === null` e "o periodo nao tem nome"
+ * (chegou por link, ou por duas setas para tras), e `personalizado` e "a pessoa
+ * pediu". Exigir as duas juntas e o defeito da HMO-243; exigir so a primeira
+ * tambem.
+ */
+export function camposAbertos(
+  preset: IdDePreset | null,
+  personalizado: boolean
+): boolean {
+  return preset === null || personalizado;
 }
 
 // -----------------------------------------------------------------------------

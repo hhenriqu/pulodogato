@@ -38,6 +38,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CampoDeValor } from "@/components/ui/campo-de-valor";
+import { CampoDeData } from "@/components/ui/campo-de-data";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -51,6 +52,11 @@ import { Badge } from "@/components/ui/badge";
 import { TrendingUp, Plus, AlertTriangle, Trash2, Tag } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import {
+  CrivosDeFundamento,
+  type DadosDosCrivos,
+} from "@/components/investments/CrivosDeFundamento";
+import type { LimitesDosCrivos } from "@/lib/crivos";
+import {
   ROTULO_TIPO,
   TIPOS_DE_ATIVO,
   type AssetType,
@@ -60,6 +66,14 @@ import {
   type FatiaAlocacao,
   type PontoEvolucao,
 } from "@/lib/investments";
+import {
+  CamposDeRendaFixa,
+  RendaFixaDaCarteira,
+  corpoDeRendaFixa,
+  valoresDeRendaFixaVazios,
+  type RendaFixaDaRota,
+  type ValoresDeRendaFixa,
+} from "@/components/RendaFixaDaCarteira";
 
 interface AtivoDaTela {
   id: string;
@@ -69,6 +83,14 @@ interface AtivoDaTela {
   currency: string | null;
   current_price: number | string | null;
   current_price_at: string | null;
+  // Os seis campos da migration 031 (HMO-192). Nulos em todo ativo cadastrado
+  // antes dela, e e por isso que a edicao existe: o preenchimento e progressivo.
+  fixed_income_product?: string | null;
+  index_kind?: string | null;
+  index_percentage?: number | string | null;
+  spread_annual?: number | string | null;
+  applied_date?: string | null;
+  maturity_date?: string | null;
 }
 
 interface LancamentoDaTela {
@@ -104,6 +126,8 @@ function hojeISO(): string {
 export default function InvestmentsPage() {
   const [user, setUser] = useState<User | null>(null);
   const [carteira, setCarteira] = useState<Carteira | null>(null);
+  const [crivos, setCrivos] = useState<DadosDosCrivos | null>(null);
+  const [erroCrivos, setErroCrivos] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
@@ -113,6 +137,19 @@ export default function InvestmentsPage() {
   const [novoNome, setNovoNome] = useState("");
   const [novoTipo, setNovoTipo] = useState<AssetType>("stock");
   const [novoPreco, setNovoPreco] = useState("");
+  const [novaRendaFixa, setNovaRendaFixa] = useState<ValoresDeRendaFixa>(
+    valoresDeRendaFixaVazios()
+  );
+
+  // Renda fixa (HMO-192). `null` cobre dois estados de proposito: ainda nao
+  // carregou e nao foi possivel carregar. Nos dois o card nao aparece, e o resto
+  // da tela abre igual -- o Banco Central estar fora do ar nao e motivo para a
+  // carteira inteira ficar em branco.
+  const [rendaFixa, setRendaFixa] = useState<RendaFixaDaRota | null>(null);
+  /** Os seis campos em edicao, por asset_id. */
+  const [edicaoRf, setEdicaoRf] = useState<Record<string, ValoresDeRendaFixa>>(
+    {}
+  );
 
   // Formulario de lancamento
   const [lancAtivo, setLancAtivo] = useState("");
@@ -137,7 +174,59 @@ export default function InvestmentsPage() {
     } catch {
       setErro("Nao foi possivel carregar a carteira");
     }
+
+    // Segunda ida, de proposito separada: esta rota fala com o Banco Central e
+    // pode demorar ou falhar, e nenhuma das duas coisas pode atrasar ou derrubar
+    // a carteira acima. Por isso ela nao esta no mesmo `try` nem usa `setErro`:
+    // falha aqui some com o card de renda fixa, nao com a tela.
+    try {
+      const resposta = await fetch("/api/investments/renda-fixa");
+      if (resposta.ok) {
+        setRendaFixa((await resposta.json()) as RendaFixaDaRota);
+      }
+    } catch {
+      // Silencio deliberado -- ver acima.
+    }
   }, []);
+
+  // Os criterios vem de rota propria, e a falha dela nao derruba a carteira: o
+  // fundamento da CVM depende da migration 028 estar aplicada, e a pagina de
+  // investimentos precisa abrir do mesmo jeito sem ele. Ver o cabecalho de
+  // app/api/investments/crivos/route.ts.
+  const carregarCrivos = useCallback(async () => {
+    setErroCrivos(null);
+    try {
+      const resposta = await fetch("/api/investments/crivos");
+      const corpo = await resposta.json();
+      if (!resposta.ok) {
+        setErroCrivos(corpo?.error || "Nao foi possivel carregar os criterios");
+        return;
+      }
+      setCrivos(corpo as DadosDosCrivos);
+    } catch {
+      setErroCrivos("Nao foi possivel carregar os criterios");
+    }
+  }, []);
+
+  async function salvarLimites(limites: LimitesDosCrivos) {
+    try {
+      const resposta = await fetch("/api/investments/crivos", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ limites }),
+      });
+      const corpo = await resposta.json();
+      if (!resposta.ok) {
+        return { ok: false, erro: corpo?.error as string | undefined };
+      }
+      // Recarrega para que o "valendo agora" passe a ser o que o BANCO tem, e
+      // nao o que a tela acha que gravou.
+      await carregarCrivos();
+      return { ok: true };
+    } catch {
+      return { ok: false, erro: "Nao foi possivel salvar os criterios" };
+    }
+  }
 
   useEffect(() => {
     const iniciar = async () => {
@@ -145,7 +234,7 @@ export default function InvestmentsPage() {
         data: { user },
       } = await supabase.auth.getUser();
       setUser(user);
-      if (user) await carregar();
+      if (user) await Promise.all([carregar(), carregarCrivos()]);
       setCarregando(false);
     };
     iniciar();
@@ -165,6 +254,13 @@ export default function InvestmentsPage() {
           name: novoNome,
           type: novoTipo,
           currentPrice: novoPreco === "" ? null : novoPreco,
+          // So renda fixa carrega os seis campos: o CHECK
+          // `renda_fixa_so_em_fixed_income` da 031 recusa uma PETR4 com
+          // indexador, porque ela apareceria na tela rendendo CDI POR CIMA da
+          // variacao de preco -- o rendimento contado duas vezes.
+          ...(novoTipo === "fixed_income"
+            ? corpoDeRendaFixa(novaRendaFixa)
+            : {}),
         }),
       });
       const corpo = await resposta.json();
@@ -175,7 +271,10 @@ export default function InvestmentsPage() {
       setNovoSymbol("");
       setNovoNome("");
       setNovoPreco("");
-      await carregar();
+      setNovaRendaFixa(valoresDeRendaFixaVazios());
+      // Ativo novo muda a lista de criterios tambem -- sem isto o ativo aparece
+      // na carteira e nao aparece nos criterios ate a pessoa recarregar a pagina.
+      await Promise.all([carregar(), carregarCrivos()]);
     } finally {
       setSalvando(false);
     }
@@ -183,6 +282,28 @@ export default function InvestmentsPage() {
 
   async function lancar(evento: React.FormEvent) {
     evento.preventDefault();
+
+    // AS DUAS TRAVAS QUE O CONTROLE DE DATA NATIVO FAZIA SOZINHO (HMO-240)
+    //
+    // O campo mascarado e um input de TEXTO, e nos dois casos o navegador deixa
+    // o formulario passar:
+    //
+    //   - `required` se satisfaz com o texto parcial na tela ("10/0"), enquanto
+    //     o valor emitido e vazio. A rota recusa o vazio com 400, mas a frase
+    //     que chega na tela e sobre formato e nao sobre o campo.
+    //   - `max` nao existe para texto. Sem esta recusa, uma compra lancada com
+    //     data futura entra: `trade_date` so e conferido contra o formato, e um
+    //     lancamento no futuro distorce preco medio e rentabilidade sem erro
+    //     nenhum no caminho.
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(lancData)) {
+      setErro("Informe a data do lancamento, no formato dd/mm/aaaa.");
+      return;
+    }
+    if (lancData > hojeISO()) {
+      setErro("A data do lancamento nao pode ser no futuro.");
+      return;
+    }
+
     setSalvando(true);
     setErro(null);
     try {
@@ -232,6 +353,66 @@ export default function InvestmentsPage() {
     }
   }
 
+  /**
+   * Os valores de renda fixa de um ativo: o que esta sendo editado, ou o que
+   * veio do banco.
+   *
+   * `numeric` chega do PostgREST como STRING, e `String(null)` e "null" -- um
+   * literal que o input mostraria como texto e a rota recusaria. Daí o `?? ""`.
+   */
+  function valoresRfDoAtivo(ativo: AtivoDaTela): ValoresDeRendaFixa {
+    const emEdicao = edicaoRf[ativo.id];
+    if (emEdicao) return emEdicao;
+    return {
+      fixedIncomeProduct: ativo.fixed_income_product ?? "",
+      indexKind: ativo.index_kind ?? "",
+      indexPercentage:
+        ativo.index_percentage === null || ativo.index_percentage === undefined
+          ? ""
+          : String(Number(ativo.index_percentage)),
+      spreadAnnual:
+        ativo.spread_annual === null || ativo.spread_annual === undefined
+          ? ""
+          : String(Number(ativo.spread_annual)),
+      appliedDate: ativo.applied_date ?? "",
+      maturityDate: ativo.maturity_date ?? "",
+    };
+  }
+
+  /**
+   * Grava os seis campos da 031 de um ativo.
+   *
+   * Vao todos juntos porque os CHECK da migration cruzam uns com os outros --
+   * ver o PATCH em /api/investments/assets/[assetId].
+   */
+  async function salvarRendaFixa(ativo: AtivoDaTela) {
+    setSalvando(true);
+    setErro(null);
+    try {
+      const resposta = await fetch(`/api/investments/assets/${ativo.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(corpoDeRendaFixa(valoresRfDoAtivo(ativo))),
+      });
+      const corpo = await resposta.json();
+      if (!resposta.ok) {
+        setErro(corpo?.error || "Nao foi possivel salvar a renda fixa");
+        return;
+      }
+      // Limpa o rascunho DESTE ativo para a tela voltar a mostrar o que o banco
+      // gravou. Sem isso, um campo recusado e corrigido pelo servidor (ou um
+      // valor normalizado) continuaria na tela com o texto antigo.
+      setEdicaoRf((atual) => {
+        const proximo = { ...atual };
+        delete proximo[ativo.id];
+        return proximo;
+      });
+      await carregar();
+    } finally {
+      setSalvando(false);
+    }
+  }
+
   async function removerAtivo(assetId: string, symbol: string) {
     if (
       !window.confirm(
@@ -252,7 +433,7 @@ export default function InvestmentsPage() {
         return;
       }
       if (lancAtivo === assetId) setLancAtivo("");
-      await carregar();
+      await Promise.all([carregar(), carregarCrivos()]);
     } finally {
       setSalvando(false);
     }
@@ -378,6 +559,23 @@ export default function InvestmentsPage() {
           }}
         />
 
+        {/* Renda fixa que rende sozinha (HMO-192): bruto em destaque, liquido
+            estimado ao lado. Devolve `null` quando nao ha renda fixa na
+            carteira -- ver o componente. */}
+        <RendaFixaDaCarteira dados={rendaFixa} />
+        {/* --- Os critérios de fundamento (HMO-195) ------------------------- */}
+        {erroCrivos && (
+          <Alert>
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              {erroCrivos}. A carteira acima não depende disso.
+            </AlertDescription>
+          </Alert>
+        )}
+        {crivos && (
+          <CrivosDeFundamento dados={crivos} onSalvar={salvarLimites} />
+        )}
+
         {/* --- Ativos cadastrados, com o preço atual editável ---------------- */}
         <Card>
           <CardHeader>
@@ -456,6 +654,33 @@ export default function InvestmentsPage() {
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>
+
+                {/* Os seis campos da 031 so para renda fixa (HMO-192). Este e o
+                    caminho que cumpre o "preenchimento progressivo" prometido
+                    pela migration: os ativos cadastrados desde a 021 estao
+                    todos com os campos nulos, e sem edicao eles nunca ganhariam
+                    rendimento automatico -- so quem cadastrasse de novo. */}
+                {ativo.type === "fixed_income" && (
+                  <div className="space-y-3 sm:col-span-2">
+                    <CamposDeRendaFixa
+                      idPrefixo={`rf-${ativo.id}`}
+                      valores={valoresRfDoAtivo(ativo)}
+                      onChange={(v) =>
+                        setEdicaoRf((atual) => ({ ...atual, [ativo.id]: v }))
+                      }
+                      desabilitado={salvando}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={salvando}
+                      onClick={() => salvarRendaFixa(ativo)}
+                    >
+                      Salvar renda fixa de {ativo.symbol}
+                    </Button>
+                  </div>
+                )}
               </div>
             ))}
           </CardContent>
@@ -528,6 +753,18 @@ export default function InvestmentsPage() {
                   placeholder="31,50"
                 />
               </div>
+              {/* Renda fixa pede o que nao existe em acao nenhuma: indexador,
+                  percentual do indice, data de aplicacao e vencimento
+                  (HMO-192). Sem estes campos o tipo `fixed_income` funcionava
+                  so se a pessoa reescrevesse o preco na mao todo mes. */}
+              {novoTipo === "fixed_income" && (
+                <CamposDeRendaFixa
+                  idPrefixo="novo-rf"
+                  valores={novaRendaFixa}
+                  onChange={setNovaRendaFixa}
+                  desabilitado={salvando}
+                />
+              )}
               <div className="sm:col-span-2 lg:col-span-4">
                 <Button type="submit" disabled={salvando}>
                   <Plus className="h-4 w-4 mr-2" />
@@ -592,13 +829,18 @@ export default function InvestmentsPage() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="lanc-data">Data</Label>
-                  <Input
+                  {/* `CampoDeData` e nao o controle de data nativo (HMO-240).
+                      O `max={hojeISO()}` de antes valia para os dois caminhos
+                      do controle nativo; num campo de texto ele alcanca so o
+                      calendario, entao a recusa da data futura passou a ser
+                      explicita em `lancar`. */}
+                  <CampoDeData
                     id="lanc-data"
-                    type="date"
                     value={lancData}
-                    max={hojeISO()}
-                    onChange={(e) => setLancData(e.target.value)}
+                    maxDoCalendario={hojeISO()}
+                    onChange={setLancData}
                     required
+                    aria-label="Data do lançamento"
                   />
                 </div>
                 <div className="space-y-2">

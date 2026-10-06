@@ -47,66 +47,35 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import {
+  datasDasParcelasNoCartao,
   descricaoDaParcela,
   serieDeParcelas,
-  somaMeses,
   valorGravado,
   type BaseDoValorParcelado,
   type SerieDeParcelas,
 } from "@/lib/lancamento";
 
 /**
- * Em que data cada parcela do CARTAO tem de ser gravada para cair na fatura
- * certa.
+ * A fatura escolhida, normalizada para 'AAAA-MM-01', ou `null` se nao da para
+ * ler (ou se nao veio nenhuma).
  *
- * O PROBLEMA, QUE NAO PARECE UM
- * -----------------------------
- * A tentacao e `transaction_date = dataDaCompra + k meses` e deixar
- * `card_invoice_month()` fazer o resto. Isso erra, e erra calado, porque somar
- * um mes a uma data NAO soma um mes a fatura quando o dia e grampeado pelo fim
- * do mes. Medido com a funcao do banco:
+ * Dia 1 porque e o que a coluna aceita: a 041 pos
+ * `CHECK (invoice_month_override = date_trunc('month', invoice_month_override))`.
+ * Mandar 'AAAA-MM' cru chegaria a coluna `date` como erro de sintaxe, e mandar
+ * um dia qualquer bateria no CHECK -- as duas falhas derrubam a serie INTEIRA
+ * com 22008 ou 23514, numa mensagem que nao nomeia o campo.
  *
- *   compra 31/01, cartao fecha dia 30
- *     31/01 -> dia 31 > 30            -> fatura de FEVEREIRO
- *     28/02 (31/01 + 1 mes, grampeado) -> dia 28 <= 28 -> fatura de FEVEREIRO
- *
- * Duas parcelas na MESMA fatura, e a serie termina um mes antes do que devia.
- * A fatura de fevereiro fecharia com o dobro, a ultima ficaria vazia, e nada
- * disso aparece como erro -- aparece como um mes caro.
- *
- * A SOLUCAO
- * ---------
- * A primeira parcela (a que a pessoa esta lancando) fica com a data REAL da
- * compra: e o fato, e e ela que define a fatura ancora. As seguintes ficam com
- * o **primeiro dia** do mes da fatura delas, porque dia 1 e o unico dia que
- * `card_invoice_month()` nunca empurra para o mes seguinte -- `1 <= closing_day`
- * vale para todo `closing_day >= 1`, e com `closing_day` NULL a funcao trunca no
- * mes de qualquer jeito. A colocacao passa a ser exata por construcao em vez de
- * depender do calendario.
- *
- * E a fatura ancora e perguntada AO BANCO (`card_invoice_month`), nao
- * recalculada aqui: essa regra existe num lugar so (006), e uma segunda copia em
- * TypeScript faria a tela e o relatorio discordarem sobre o mesmo cartao no mes
- * em que uma das duas mudasse.
+ * Tambem e o formato que `datasDasParcelasNoCartao` espera na ancora: ela passa
+ * o valor por `somaMeses`, que exige 'AAAA-MM-DD'.
  */
-function datasDasParcelasNoCartao(
-  serie: SerieDeParcelas,
-  dataDaCompra: string,
-  mesDaFaturaAncora: string
-): string[] | null {
-  const datas: string[] = [];
+function mesDaFaturaDoPedido(bruto?: string | null): string | null {
+  const mes = String(bruto ?? "").trim();
+  if (!/^\d{4}-\d{2}$/.test(mes)) return null;
 
-  for (let k = 0; k < serie.parcelas.length; k++) {
-    if (k === 0) {
-      datas.push(dataDaCompra);
-      continue;
-    }
-    const mes = somaMeses(mesDaFaturaAncora, k);
-    if (!mes) return null;
-    datas.push(mes);
-  }
+  const numeroDoMes = Number(mes.slice(5, 7));
+  if (numeroDoMes < 1 || numeroDoMes > 12) return null;
 
-  return datas;
+  return `${mes}-01`;
 }
 
 export async function POST(request: NextRequest) {
@@ -144,6 +113,7 @@ export async function POST(request: NextRequest) {
       vencimento,
       currency,
       exchange_rate,
+      mes_da_fatura,
     } = body as {
       account_id?: string | null;
       category_id?: string;
@@ -157,6 +127,8 @@ export async function POST(request: NextRequest) {
       vencimento?: string;
       currency?: string | null;
       exchange_rate?: number | null;
+      /** A fatura escolhida para a PARCELA 1, em 'AAAA-MM' (HMO-289). */
+      mes_da_fatura?: string | null;
     };
 
     if (!description?.trim()) {
@@ -267,26 +239,75 @@ export async function POST(request: NextRequest) {
     // -----------------------------------------------------------------------
     // NO CARTAO: AS PARCELAS VIRAM COMPRAS, UMA POR FATURA
     // -----------------------------------------------------------------------
-    const { data: mesAncora, error: erroDoMes } = await supabase.rpc(
-      "card_invoice_month",
-      {
-        p_transaction_date: serie.parcelas[0].vencimento,
-        p_closing_day: conta.closing_day ?? null,
-      }
-    );
+    // A FATURA ESCOLHIDA VIRA A ANCORA DA SERIE INTEIRA (HMO-281 / HMO-289)
+    //
+    // `datasDasParcelasNoCartao` conta os meses das parcelas 2..M a partir de UMA
+    // fatura ancora. Ate aqui essa ancora saia sempre da RPC `card_invoice_month`
+    // sobre a data da compra -- e era a resposta certa quando a fatura so podia
+    // vir da data.
+    //
+    // Com o override, ignorar a escolha aqui NAO erra uma parcela: erra a serie.
+    // Compra em 04/10 em 10x, cartao fechando dia 30, override para novembro:
+    // a parcela 1 iria para novembro (ela leva o override na linha) e as nove
+    // seguintes seriam contadas de OUTUBRO -- a 2a cairia em novembro junto da
+    // 1a, duas parcelas na mesma fatura, e a serie terminaria um mes antes. E o
+    // mesmo defeito que o cabecalho deste arquivo descreve para o grampeamento
+    // do dia, por outra porta.
+    //
+    // POR QUE AS PARCELAS 2..M NAO PRECISAM DE OVERRIDE PROPRIO
+    // ---------------------------------------------------------
+    // Elas sao gravadas com `transaction_date` no DIA 1 do mes da fatura delas, e
+    // dia 1 e o unico dia que `card_invoice_month()` nunca empurra para o mes
+    // seguinte (`1 <= closing_day` vale para todo `closing_day >= 1`, e com
+    // `closing_day` NULL a funcao trunca no mes). A colocacao delas ja e exata
+    // por construcao -- ver o cabecalho. Carimbar override nelas tambem seria uma
+    // segunda fonte de verdade para a mesma coisa, e as duas poderiam divergir.
+    //
+    // A ancora escolhida NAO passa pela RPC. Ela ja e um mes de fatura, e manda-la
+    // para `card_invoice_month` a trataria como data de COMPRA: dia 1 de novembro
+    // e uma compra que cai na fatura de novembro, o que por acaso devolve o mesmo
+    // valor hoje -- e passaria a mentir no dia em que a regra do fechamento
+    // mudasse. O que a RPC responde e "em que fatura cai esta DATA", e aqui nao ha
+    // pergunta a fazer.
+    const faturaEscolhida = mesDaFaturaDoPedido(mes_da_fatura);
 
-    if (erroDoMes || !mesAncora) {
-      console.error("Erro ao resolver o mês da fatura:", erroDoMes);
+    if (mes_da_fatura != null && String(mes_da_fatura).trim() !== "" && !faturaEscolhida) {
+      // 400 e nao silencio: quem chamou mandou um mes que nao da para ler, e
+      // seguir em frente gravaria a serie na fatura da data sem avisar ninguem --
+      // o pedido teria "funcionado" na fatura errada.
       return NextResponse.json(
-        { error: "Não foi possível descobrir em que fatura a compra cai" },
-        { status: 500 }
+        { error: "O mês da fatura escolhida não é um mês ('AAAA-MM')" },
+        { status: 400 }
       );
+    }
+
+    let mesAncora: string;
+
+    if (faturaEscolhida) {
+      mesAncora = faturaEscolhida;
+    } else {
+      const { data: mesDaRpc, error: erroDoMes } = await supabase.rpc(
+        "card_invoice_month",
+        {
+          p_transaction_date: serie.parcelas[0].vencimento,
+          p_closing_day: conta.closing_day ?? null,
+        }
+      );
+
+      if (erroDoMes || !mesDaRpc) {
+        console.error("Erro ao resolver o mês da fatura:", erroDoMes);
+        return NextResponse.json(
+          { error: "Não foi possível descobrir em que fatura a compra cai" },
+          { status: 500 }
+        );
+      }
+      mesAncora = String(mesDaRpc);
     }
 
     const datas = datasDasParcelasNoCartao(
       serie,
       serie.parcelas[0].vencimento,
-      String(mesAncora)
+      mesAncora
     );
 
     if (!datas) {
@@ -339,6 +360,19 @@ export async function POST(request: NextRequest) {
       // faria o rotulo sumir de uma parcela e ficar na vizinha, na mesma fatura.
       installment_number: p.numero,
       installment_total: total,
+      // SO A PARCELA 1 LEVA O OVERRIDE (041, HMO-289)
+      //
+      // Ela e a unica cuja `transaction_date` e a data REAL da compra -- a que
+      // pode cair numa fatura diferente da escolhida. As parcelas 2..M ja estao
+      // no dia 1 do mes da fatura delas, contado a partir desta ancora, e um
+      // override nelas seria uma segunda fonte para a mesma colocacao.
+      //
+      // `null` nas outras e nao campo ausente: a lista vai num `insert` unico, e
+      // o PostgREST monta as colunas a partir da PRIMEIRA linha do array. Uma
+      // linha com a chave e as seguintes sem ela produziria um objeto de formas
+      // diferentes no mesmo lote -- e, dependendo da ordem, a coluna sairia do
+      // comando e o override da parcela 1 seria descartado em silencio.
+      invoice_month_override: i === 0 ? faturaEscolhida : null,
     }));
 
     const { data: criadas, error } = await supabase

@@ -15,28 +15,30 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import {
-  FILTROS_DE_LANCAMENTO,
-  classificarMovimentacao,
-  resumoDoPeriodo,
-  type FiltroDeLancamento,
-} from "@/lib/movimentacoes";
+import { classificarMovimentacao } from "@/lib/movimentacoes";
 import {
   destinoDoLancamento,
   indiceDeContraparte,
   type ContaDoLancamento,
 } from "@/lib/destino-do-lancamento";
 import {
-  contarComPartes,
   linhasDaLista,
+  nomesDosPagadores,
   notaDasPartesDeTerceiros,
   partesDeTerceirosNaLista,
+  resumoComPartesDeGrupo,
   type DespesaDeGrupoLida,
   type LancamentoDeTerceiro,
   type ParteDeGrupoBruta,
+  type PerfilDePagador,
 } from "@/lib/parte-de-grupo-na-lista";
+import {
+  devedorNaLinha,
+  notaDoCreditoAReceber,
+  type CreditoAReceber,
+} from "@/lib/credito-de-grupo";
+import { LinhaDaParteDeGrupo } from "@/components/movimentacoes/LinhaDaParteDeGrupo";
 import {
   TAMANHO_DA_PAGINA,
   descreverLista,
@@ -56,6 +58,8 @@ import { today } from "@/lib/recurrence";
 import { SeletorDePeriodo } from "@/components/dashboard/SeletorDePeriodo";
 import { rotaDoTipo, tipoDoLancamento } from "@/lib/lancamento";
 import { ROTA_DA_TRANSFERENCIA } from "@/lib/transferencia";
+import { PARAM_DE_ORIGEM, comOrigem } from "@/lib/retorno-do-lancamento";
+import { useOrigemDaTela } from "@/lib/hooks/useOrigemDaTela";
 import { frasePreservadas, type Alcance } from "@/lib/alcance-na-tela";
 import { DialogoDeAlcance } from "@/components/series/DialogoDeAlcance";
 import {
@@ -68,7 +72,6 @@ import {
   lerCatalogo,
   decidirAbertura,
   type CatalogoDeLancamento,
-  type ContaEmCache,
 } from "@/lib/offline-cache";
 import {
   classificarFalhaDeAuth,
@@ -88,6 +91,7 @@ import {
   Users,
   Download,
   CalendarRange,
+  HandCoins,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -195,6 +199,15 @@ function Girando() {
 function Lancamentos() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  /**
+   * Esta tela, com os filtros que estao na URL, para os modais de lancamento
+   * saberem para onde voltar (HMO-249).
+   *
+   * Sem isto o modal cairia no fallback -- que e esta MESMA rota, mas sem a
+   * query: quem estava filtrando por categoria perderia o filtro ao salvar, e
+   * concluiria que o lancamento foi para o lugar errado.
+   */
+  const origem = useOrigemDaTela();
 
   // O fuso de Sao Paulo, uma vez so, para a tela inteira concordar sobre que dia
   // e hoje -- o mesmo `today()` do painel inicial, de bills, budgets e goals.
@@ -247,8 +260,6 @@ function Lancamentos() {
    * clique para descobrir de novo um id que nunca muda.
    */
   const [serviceId, setServiceId] = useState<string | undefined>(undefined);
-  /** Qual dos quatro filtros da lista esta selecionado. */
-  const [filtro, setFiltro] = useState<FiltroDeLancamento>("todos");
   /** De quando sao os dados na tela, quando eles vieram do aparelho. */
   const [catalogoDe, setCatalogoDe] = useState<number | null>(null);
   /**
@@ -285,15 +296,37 @@ function Lancamentos() {
    */
   const [partesFalharam, setPartesFalharam] = useState(false);
   /**
+   * O QUE OS OUTROS ME DEVEM NOS GRUPOS, NO PERIODO DA TELA (HMO-245 F10).
+   *
+   * `null` enquanto nao respondeu e tambem quando a chamada falhou, pelo mesmo
+   * motivo de `resumoDeGrupos`: um R$ 0,00 aqui e indistinguivel de "ninguem te
+   * deve nada" e mandaria a pessoa concluir que nao tem nada a receber quando
+   * so a consulta caiu.
+   *
+   * Estado SEPARADO de `resumoDeGrupos` de proposito -- as duas respostas vem
+   * de fontes diferentes e DIVERGEM: aquela le `group_member_balances` (so o
+   * realizado, acumulado, sem mes) e esta fecha o mes com `fecharMes` (previsto
+   * junto com realizado). Juntar as duas num estado so e convidar a tela a
+   * exibir uma com o rotulo da outra.
+   */
+  const [creditoDeGrupo, setCreditoDeGrupo] = useState<CreditoAReceber | null>(
+    null
+  );
+  /**
+   * A consulta do credito falhou neste periodo.
+   *
+   * Mesma razao de `partesFalharam`, com o sinal invertido: aqui a falha deixa
+   * o valor a receber INVISIVEL, e invisivel se le como inexistente. A bandeira
+   * e o que separa "ninguem te deve nada" de "nao foi possivel conferir".
+   */
+  const [creditoFalhou, setCreditoFalhou] = useState(false);
+  /**
    * A parcela cuja exclusao esta esperando a pergunta do alcance (HMO-228).
    *
-   * A linha vem da lista desta tela, que e `FinancialTransaction[]` -- entao e
-   * esse o tipo aqui tambem. Era `any` porque "o resto da lista tambem e", o
-   * que deixou de valer: `installment_number` e `transaction_type`, os dois
-   * campos que o fluxo de exclusao le, estao declarados na interface.
+   * `any` como o resto da lista nesta tela: a linha vem do PostgREST com os
+   * embeds, e tipar so este campo daria a impressao de que o resto esta tipado.
    */
-  const [parcelaParaApagar, setParcelaParaApagar] =
-    useState<FinancialTransaction | null>(null);
+  const [parcelaParaApagar, setParcelaParaApagar] = useState<any | null>(null);
   const [apagandoParcela, setApagandoParcela] = useState(false);
 
   const { canCreateMore, planConfig } = useSubscription(user);
@@ -330,7 +363,7 @@ function Lancamentos() {
   // Entao a linha que tem `installment_number` abre a pergunta do alcance
   // (`parcelaParaApagar`) e sai por `/api/financial-installments/serie/{id}`,
   // que sabe o que e uma serie. Ver `pedirExclusao` abaixo.
-  const deleteTransaction = async (transaction: FinancialTransaction) => {
+  const deleteTransaction = async (transaction: any) => {
     const ehTransferencia = transaction.transaction_type === "transfer";
 
     if (
@@ -390,7 +423,7 @@ function Lancamentos() {
    * `installment_total` por CHECK -- entao nao existe o estado "e parcela mas
    * nao se sabe de quantas".
    */
-  const pedirExclusao = (transaction: FinancialTransaction) => {
+  const pedirExclusao = (transaction: any) => {
     if (transaction?.installment_number) {
       setParcelaParaApagar(transaction);
       return;
@@ -399,10 +432,7 @@ function Lancamentos() {
   };
 
   /** Apaga a serie no alcance escolhido, pela rota que conhece a serie. */
-  const apagarParcela = async (
-    transaction: FinancialTransaction,
-    alcance: Alcance
-  ) => {
+  const apagarParcela = async (transaction: any, alcance: Alcance) => {
     setApagandoParcela(true);
     try {
       const resposta = await fetch(
@@ -522,6 +552,109 @@ function Lancamentos() {
   };
 
   /**
+   * O CREDITO DE GRUPO DO PERIODO, COMO A RECEBER (HMO-245 F10).
+   *
+   * Try/catch PROPRIO, como `carregarGrupos`: qualquer falha aqui -- grupo
+   * nenhum, rota fora do ar, 500 -- cairia no catch que trata FALTA DE REDE se
+   * ficasse dentro do `try` grande do `loadData`, e a tela reagiria repondo o
+   * catalogo do aparelho e avisando "sem conexão" com a lista ja carregada. Um
+   * recurso secundario nao pode apagar o principal.
+   *
+   * A BANDEIRA SOBE NO `catch` E NO `!ok`, E DESCE NO SUCESSO. O `!resposta.ok`
+   * nao pode sair calado como em `carregarGrupos`: lá o silencio esconde um
+   * cartão, aqui esconderia DINHEIRO A RECEBER, e a tela sem o valor se le como
+   * "ninguem te deve nada". Ver `creditoFalhou`.
+   *
+   * O periodo vai na querystring e a rota o repassa a `lerPeriodo`, o mesmo
+   * `de`/`ate` dos tres cartoes -- sem isso o credito seria de um recorte de
+   * tempo diferente do resto da tela, que e o defeito de rotulo que o painel
+   * desta casa ja teve.
+   */
+  const carregarCreditoDeGrupo = async () => {
+    try {
+      const resposta = await fetch(
+        `/api/expense-groups/my-credit?${periodoParaQuery(periodo)}`
+      );
+
+      if (!resposta.ok) {
+        setCreditoFalhou(true);
+        return;
+      }
+
+      const dados = await resposta.json();
+      if (!dados?.credito) {
+        setCreditoFalhou(true);
+        return;
+      }
+
+      setCreditoDeGrupo(dados.credito);
+      setCreditoFalhou(false);
+    } catch (erro) {
+      console.error("Erro ao carregar o credito de grupo:", erro);
+      setCreditoFalhou(true);
+    }
+  };
+
+  /**
+   * O NOME DE QUEM PAGOU, PARA A LINHA DA PARTE DE GRUPO (HMO-274)
+   *
+   * Terceira consulta, e CONSULTA e nao embed. Um
+   * `pagador:profiles(full_name)` pendurado na consulta das despesas seria mais
+   * curto. Hoje ele funcionaria: `financial_transactions` tem UMA FK para
+   * `profiles` (`scripts/check-embed-ambiguo.mjs` confirma). O problema e o
+   * amanha -- a segunda FK para `profiles` faz o PostgREST responder PGRST201
+   * ("could not embed because more than one relationship was found") e derruba
+   * uma consulta que ninguem tocou, com o apagao aparecendo longe da migration
+   * que o causou. Nomear a FK no embed resolveria, ao custo de carregar um nome
+   * de constraint aqui dentro; a consulta separada nao tem nem um nem outro.
+   *
+   * O ERRO AQUI NAO PROPAGA, DE PROPOSITO
+   * -------------------------------------
+   * Esta funcao devolve um mapa VAZIO quando a leitura falha, em vez de lancar.
+   * Lancar cairia no catch de `carregarPartesDeGrupo`, que levanta
+   * `partesFalharam` e substitui a lista de partes por um aviso -- ou seja, o
+   * nome faltando apagaria as linhas inteiras. Mapa vazio deixa cada linha no
+   * lugar com o rotulo de fallback, que e menos informacao e nao informacao
+   * errada. Ver `pagadorNaLinha` em lib/parte-de-grupo-na-lista.ts.
+   *
+   * O PERFIL PODE SIMPLESMENTE NAO VIR, SEM ERRO
+   * --------------------------------------------
+   * As policies de SELECT de `profiles` sao `id = auth.uid()`, `is_public =
+   * TRUE` (002) e "conexao aceita" (010). NENHUMA delas olha `group_members`:
+   * dividir a conta com alguem nao me da o perfil dele. Para o membro de perfil
+   * fechado que nao e minha conexao a linha nao vem, e o PostgREST nao reclama
+   * -- devolve menos linhas. E esse o caminho do fallback, e ele e normal.
+   */
+  const nomesDeQuemPagou = async (
+    despesas: Map<string, DespesaDeGrupoLida>
+  ): Promise<Map<string, string>> => {
+    const pagadores = Array.from(
+      new Set(
+        Array.from(despesas.values())
+          .map((d) => d.user_id)
+          .filter(Boolean)
+      )
+    );
+
+    // `.in()` com lista vazia devolve TUDO em algumas versoes do PostgREST (o
+    // mesmo cuidado esta em app/api/expense-groups/my-balance/route.ts). Aqui
+    // "tudo" seria todo perfil publico do banco para montar zero nomes.
+    if (pagadores.length === 0) return new Map();
+
+    const { data: perfis, error } = await supabase
+      .from("profiles")
+      .select("id, full_name, nickname")
+      .in("id", pagadores);
+
+    if (error) {
+      console.error("Nao foi possivel ler o nome de quem pagou:", error);
+      return new Map();
+    }
+
+    return nomesDosPagadores((perfis || []) as PerfilDePagador[]);
+  };
+
+  /**
    * A MINHA PARTE DAS DESPESAS DE GRUPO QUE OUTRA PESSOA PAGOU (HMO-215)
    *
    * O pedido da issue e "todos os lancamentos, indiferente de onde foi", e este
@@ -577,21 +710,26 @@ function Lancamentos() {
         new Set((partes as ParteDeGrupoBruta[]).map((p) => p.transaction_id))
       );
 
+      // `user_id` entrou aqui na HMO-274: e quem PAGOU. A view do 033 nao tem
+      // esse id -- ela expoe o booleano `paguei_eu` --, e esta linha de
+      // `financial_transactions` e justamente a de quem desembolsou.
       const { data: despesas, error: erroDaDescricao } = await supabase
         .from("financial_transactions")
-        .select("id, description, amount, category:transaction_categories(*)")
-        .in("id", ids)
-        .returns<DespesaDeGrupoLida[]>();
+        .select(
+          "id, user_id, description, amount, category:transaction_categories(*)"
+        )
+        .in("id", ids);
 
       if (erroDaDescricao) throw erroDaDescricao;
 
       const porId = new Map<string, DespesaDeGrupoLida>(
-        (despesas || []).map((d) => [d.id, d])
+        (despesas || []).map((d: any) => [d.id as string, d as DespesaDeGrupoLida])
       );
 
       const { linhas, semDescricao } = partesDeTerceirosNaLista(
         partes as ParteDeGrupoBruta[],
-        porId
+        porId,
+        await nomesDeQuemPagou(porId)
       );
 
       // Uma parte sem a despesa e DESCARTADA, e o descarte aparece. Sem este
@@ -794,11 +932,7 @@ function Lancamentos() {
       // salvaria a lista do carregamento ANTERIOR, e na primeira visita
       // salvaria vazio.
       let categoriasCarregadas: TransactionCategory[] = [];
-      // `ContaEmCache` e nao `ContaDoLancamento`: estas contas existem so para
-      // alimentar o catalogo offline, e `account_type` e obrigatorio la --
-      // naquele outro tipo ele e opcional, o que nao vale para esta fonte
-      // (`/api/financial-accounts` le a coluna, que e NOT NULL).
-      let contasCarregadas: ContaEmCache[] = [];
+      let contasCarregadas: any[] = [];
 
       if (serviceData) {
         const { data: categoriesData } = await supabase
@@ -825,6 +959,7 @@ function Lancamentos() {
 
       await carregarGrupos();
       await carregarPartesDeGrupo(user.id);
+      await carregarCreditoDeGrupo();
 
       // Carregar contas financeiras.
       //
@@ -852,7 +987,7 @@ function Lancamentos() {
             name: c.name,
             is_expense: c.is_expense,
           })),
-          contas: contasCarregadas.map((c) => ({
+          contas: contasCarregadas.map((c: any) => ({
             id: c.id,
             name: c.name,
             account_type: c.account_type,
@@ -891,8 +1026,17 @@ function Lancamentos() {
   // pagar uma fatura de R$ 1.000 somava R$ 1.000 em Receitas e R$ 1.000 em
   // Despesas. O saldo continuava certo, porque as pernas se anulam, e por isso o
   // erro nao aparecia em lugar nenhum.
+  //
+  // A PARTE DE GRUPO ENTRA EM "Despesas" (HMO-275). Decisao do Helio em
+  // 04/10/2026: o cartao significa O QUE ME CUSTOU -- inteiro quando eu paguei,
+  // minha parte quando outro pagou. Antes desta issue a parte ficava
+  // deliberadamente de fora dos tres cartoes, escrita embaixo do saldo.
+  // `resumoComPartesDeGrupo` e quem soma, e e ele que RECALCULA o saldo: somar
+  // em `despesas` e repassar o `saldo` de `resumoDoPeriodo` poria os tres
+  // cartoes se contradizendo sob a legenda "Receitas - Despesas". Ver o
+  // cabecalho daquela funcao.
   const calculateBalance = () => {
-    const resumo = resumoDoPeriodo(transactions);
+    const resumo = resumoComPartesDeGrupo(transactions, partesDeGrupo);
 
     return {
       income: resumo.receitas,
@@ -914,19 +1058,28 @@ function Lancamentos() {
   const { income, expenses, balance, transferido, transferencias } =
     calculateBalance();
 
-  // As duas saem da mesma fonte que os cartoes do topo (`classificarMovimentacao`),
-  // de proposito: a aba "Despesas" tem que mostrar exatamente as linhas que o
-  // cartao "Despesas" somou. Filtrar aqui por sinal do valor daria uma lista
-  // que discorda do total logo acima dela, na mesma tela.
+  // A LISTA INTEIRA, SEM RECORTE DE TIPO (HMO-246)
+  // ----------------------------------------------
+  // "Finanças pessoais deve ser uma grande lista de transações e lançamentos
+  // indiferente do que for." Era aqui que o recorte entrava: a tela tinha
+  // quatro abas (Lançamentos / Receitas / Despesas / Transferências) e
+  // `linhasDaLista` recebia a escolhida.
+  //
+  // As abas saíram, e o motivo não é só o pedido da issue -- elas filtravam
+  // SÓ a lista. Os três cartões acima continuavam somando o mês inteiro, então
+  // abrir "Transferências" dava uma lista de transferências com "Despesas
+  // R$ 4.200" logo em cima dela. Quem quer o recorte de um tipo agora tem uma
+  // tela própria, e lá os totais são DAQUELE tipo -- com o previsto dentro.
+  //
+  // `"todos"` fica escrito aqui, e não some junto com a barra: `linhasDaLista`
+  // é compartilhada e o parâmetro continua sendo o que decide o que entra.
+  // Quem lê esta linha vê qual é a resposta desta tela.
   //
   // DUAS FONTES, UMA LISTA (HMO-215). `linhasDaLista` junta as minhas linhas com
   // a minha parte das despesas de grupo que outra pessoa pagou, em ordem de
   // data -- coladas sem reordenar, as partes de setembro cairiam no fim, abaixo
-  // das minhas de marco. `contarComPartes` conta as duas fontes pelo mesmo
-  // critério: a contagem na barra de abas tem que casar com o que a aba mostra,
-  // senão "Despesas 4" abre com seis linhas.
-  const visiveis = linhasDaLista(transactions, partesDeGrupo, filtro);
-  const contagem = contarComPartes(transactions, partesDeGrupo);
+  // das minhas de marco.
+  const visiveis = linhasDaLista(transactions, partesDeGrupo, "todos");
 
   // O elo entre as duas pernas de cada transferencia, montado uma vez por
   // render em vez de por linha: `destinoDoLancamento` precisa achar a
@@ -938,6 +1091,19 @@ function Lancamentos() {
   // lista e FORA dos tres cartoes. Ver o cabecalho de
   // lib/parte-de-grupo-na-lista.ts.
   const notaDasPartes = notaDasPartesDeTerceiros(partesDeGrupo);
+
+  // O QUE OS OUTROS ME DEVEM, PARA O CARTAO DE RECEITAS DIZER QUE ESTA FORA
+  // DELE (HMO-245 F10).
+  //
+  // `null` quando nao ha credito E quando a consulta nao respondeu -- os dois
+  // apagam a frase, e e `creditoFalhou` quem distingue os dois na tela. A conta
+  // de `quantos`/`grupos` vive em `notaDoCreditoAReceber`, e nao num `.length`
+  // no meio do JSX: a frase concorda em numero com eles, e concordancia
+  // calculada no JSX e o que divergiu do numero no cartao de Despesas antes da
+  // HMO-275.
+  const notaDoCredito = creditoDeGrupo
+    ? notaDoCreditoAReceber(creditoDeGrupo)
+    : null;
 
   // QUANTAS LINHAS A LISTA TEM, SOMANDO AS DUAS FONTES.
   //
@@ -964,7 +1130,11 @@ function Lancamentos() {
 
   const descricaoDaLista = descreverLista({
     rotuloDoPeriodo: rotuloDoPeriodo(periodo),
-    filtro,
+    // `"todos"` pelo mesmo motivo de `linhasDaLista` acima: a tela nao tem mais
+    // recorte de tipo (HMO-246). `descreverLista` continua aceitando o filtro
+    // porque e ele quem decide a FRASE -- e as tres telas novas tambem contam
+    // quantas linhas mostram.
+    filtro: "todos",
     visiveis: visiveis.length,
     carregados,
     temMais,
@@ -992,12 +1162,45 @@ function Lancamentos() {
             vinte vezes por mês, "o resumo do mês" somava dois meses e meio.
             Ver lib/lista-de-lancamentos.ts.
           */}
+          {/*
+            A FRASE DIZ O QUE ESTA TELA É, e desde a HMO-246 ela também diz o
+            que ela NÃO é. Esta é a lista inteira, "indiferente do que for"; o
+            recorte de um tipo -- com Previsto e Realizado -- tem tela própria,
+            e os links estão aqui porque era nas abas que a pessoa procurava
+            aquilo. Um recorte que muda de lugar sem deixar rastro se lê como
+            feature removida.
+          */}
           <p className="text-muted-foreground">
             Seus lançamentos e o resumo de{" "}
             <span className="font-medium text-foreground">
               {rotuloDoPeriodo(periodo)}
             </span>
-            . Receita e despesa se lançam em telas próprias.
+            . Todos os tipos, numa lista só — receita, despesa e transferência
+            se lançam em telas próprias.
+          </p>
+          <p className="text-sm text-muted-foreground">
+            O total de um tipo só, com o previsto dentro, está em{" "}
+            <Link
+              href="/dashboard/receitas"
+              className="underline hover:text-foreground"
+            >
+              Receitas
+            </Link>
+            ,{" "}
+            <Link
+              href="/dashboard/despesas"
+              className="underline hover:text-foreground"
+            >
+              Despesas
+            </Link>{" "}
+            e{" "}
+            <Link
+              href="/dashboard/transferencias"
+              className="underline hover:text-foreground"
+            >
+              Transferências
+            </Link>
+            .
           </p>
           {/*
             Sem esta linha, a tela offline mostra as categorias do aparelho e
@@ -1028,13 +1231,13 @@ function Lancamentos() {
           {canCreateMore("maxTransactions") ? (
             <>
               <Button variant="outline" asChild className="gap-2">
-                <Link href="/dashboard/movimentacoes/receita">
+                <Link href={comOrigem("/dashboard/movimentacoes/receita", origem)}>
                   <TrendingUp className="h-4 w-4 text-success" />
                   Nova Receita
                 </Link>
               </Button>
               <Button asChild className="gap-2">
-                <Link href="/dashboard/movimentacoes/despesa">
+                <Link href={comOrigem("/dashboard/movimentacoes/despesa", origem)}>
                   <TrendingDown className="h-4 w-4" />
                   Nova Despesa
                 </Link>
@@ -1043,7 +1246,7 @@ function Lancamentos() {
                   opcao DENTRO do formulario de lancamento, e por isso gravava
                   uma linha so, com categoria de despesa. */}
               <Button variant="outline" asChild className="gap-2">
-                <Link href={ROTA_DA_TRANSFERENCIA}>
+                <Link href={comOrigem(ROTA_DA_TRANSFERENCIA, origem)}>
                   <ArrowRightLeft className="h-4 w-4 text-info" />
                   Transferência
                 </Link>
@@ -1104,6 +1307,50 @@ function Lancamentos() {
               {formatCurrency(income)}
             </div>
             <p className="text-xs text-muted-foreground">{notaDosTotais}</p>
+            {/*
+              O QUE OS OUTROS ME DEVEM ESTÁ FORA DESTE NÚMERO (HMO-245 F10)
+              ------------------------------------------------------------
+              Esta frase é o OPOSTO da que a HMO-275 pôs no cartão de Despesas:
+              lá ela ABRE o total ("inclui X"); aqui ela diz que existe um
+              valor FORA dele, e que estar fora é a decisão, não um esquecimento.
+
+              O crédito sai de `fecharMes`, que soma PREVISTO JUNTO COM
+              REALIZADO por desenho -- é o pedido da HMO-245. Então os R$ 106,60
+              do exemplo são crédito sobre uma conta de internet que ninguém
+              pagou ainda. Somá-los aqui publicaria receita inexistente, e o
+              saldo continuaria fechando: é a família de defeito do "a vencer"
+              que este app já pagou uma vez. Mesma régua da HMO-265 -- conta
+              quando a fatura é paga, não na compra.
+
+              O "a receber" e o "previsto" são os dois rótulos que impedem a
+              leitura errada: sem eles, um valor em verde ao lado de "Receitas"
+              se lê como dinheiro que entrou.
+            */}
+            {notaDoCredito && (
+              <p className="text-xs text-muted-foreground">
+                + {formatCurrency(notaDoCredito.total)} a receber de{" "}
+                {notaDoCredito.quantos === 1
+                  ? "1 pessoa"
+                  : `${notaDoCredito.quantos} pessoas`}{" "}
+                em{" "}
+                {notaDoCredito.grupos === 1
+                  ? "1 grupo"
+                  : `${notaDoCredito.grupos} grupos`}{" "}
+                — previsto, fora deste total
+              </p>
+            )}
+            {/*
+              O erro e o vazio são o MESMO estado para quem olha: nenhum valor
+              a receber escrito na tela. As leituras são opostas -- "ninguém te
+              deve nada" e "não foi possível conferir" --, e sem esta linha a
+              tela escolheria sempre a primeira.
+            */}
+            {creditoFalhou && (
+              <p className="text-xs text-warning">
+                Não foi possível conferir o que os grupos têm a te pagar neste
+                período.
+              </p>
+            )}
           </CardContent>
         </Card>
 
@@ -1117,6 +1364,56 @@ function Lancamentos() {
               {formatCurrency(expenses)}
             </div>
             <p className="text-xs text-muted-foreground">{notaDosTotais}</p>
+            {/*
+              A MINHA PARTE DO QUE OUTROS PAGARAM, DENTRO DESTE NÚMERO (HMO-275)
+              -----------------------------------------------------------------
+              Até a HMO-275 esta frase ficava embaixo do cartão de Saldo e
+              terminava ressalvando que a parte estava na lista e FORA do saldo:
+              ela aparecia na lista (pedido da HMO-215) e de propósito não
+              entrava em cartão nenhum. (A ressalva está parafraseada de
+              propósito -- a string exata não vive mais neste arquivo, e um grep
+              por ela tem que dar zero.)
+              A decisão do Hélio em 04/10/2026 fechou o critério -- o cartão
+              significa O QUE ME CUSTOU, inteiro quando eu paguei e minha parte
+              quando outro pagou --, então a parte entrou aqui e a frase mudou de
+              lugar e de função: ela não avisa mais de um valor omitido, ela ABRE
+              este total.
+
+              Ela não é enfeite. Sem ela, quem somasse à mão as linhas que
+              reconhece como suas chegaria a um número MENOR que o do cartão, e
+              não teria como descobrir de onde vem a diferença -- é o mesmo
+              motivo da linha de transferências no cartão de Saldo.
+
+              O "(sua parte)" é o que impede a leitura errada mais provável
+              aqui: o valor escrito é a fração que me cabe, não o valor cheio da
+              despesa de quem pagou.
+            */}
+            {notaDasPartes && (
+              <p className="text-xs text-muted-foreground">
+                inclui {formatCurrency(notaDasPartes.total)} de{" "}
+                {notaDasPartes.quantas === 1
+                  ? "1 despesa de grupo que outra pessoa pagou"
+                  : `${notaDasPartes.quantas} despesas de grupo que outras pessoas pagaram`}{" "}
+                (sua parte)
+              </p>
+            )}
+            {/*
+              O erro e o vazio são o MESMO array, e têm leituras opostas: um diz
+              "você não deve nada em grupo este mês" e o outro diz "este total
+              está incompleto". Sem esta linha a tela escolheria sempre a
+              primeira -- o "zero confiante" que esta tela já pagou duas vezes.
+
+              E desde a HMO-275 o aviso subiu de gravidade, e por isso mudou de
+              cartão: antes a falha deixava só a LISTA curta; agora ela deixa
+              este NÚMERO baixo, e um gasto subestimado é o que faz a pessoa
+              decidir gastar o que não tem.
+            */}
+            {partesFalharam && (
+              <p className="text-xs text-warning">
+                Sua parte das despesas de grupo não carregou: este total e a
+                lista abaixo podem estar incompletos.
+              </p>
+            )}
           </CardContent>
         </Card>
 
@@ -1148,47 +1445,135 @@ function Lancamentos() {
               </p>
             )}
             {/*
-              A MINHA PARTE DO QUE OUTROS PAGARAM, ESCRITA E FORA DOS CARTOES
-              --------------------------------------------------------------
-              Ela está na LISTA (é o pedido da HMO-215: "todos os lançamentos,
-              indiferente de onde foi") e não entra nos três cartões. O motivo
-              está no cabeçalho de lib/parte-de-grupo-na-lista.ts, e é de
-              significado, não de preguiça: o cartão "Despesas" soma as MINHAS
-              linhas, e numa despesa de grupo que eu paguei ele soma o valor
-              CHEIO -- R$ 400 do hotel, que é o que saiu da minha conta.
-              Acrescentar "a minha parte do que os outros pagaram" misturaria
-              dois critérios dentro de um número só: valor cheio de um lado,
-              fração do outro. O resultado não seria nem "o que saiu de mim" nem
-              "o que me cabe", e nada na tela denunciaria isso.
-
-              É a mesma saída que a transferência recebeu logo acima: a linha
-              aparece na lista, o valor aparece escrito aqui, e o cartão continua
-              significando uma coisa só.
+              A minha parte do que outros pagaram está DENTRO de "Despesas"
+              desde a HMO-275, e portanto dentro deste saldo. A frase que a
+              detalhava (e o aviso de falha de carregamento) mora no cartão de
+              Despesas, ao lado do número que ela abre.
             */}
-            {notaDasPartes && (
-              <p className="text-xs text-muted-foreground">
-                + {formatCurrency(notaDasPartes.total)} em{" "}
-                {notaDasPartes.quantas === 1
-                  ? "1 despesa de grupo que outra pessoa pagou"
-                  : `${notaDasPartes.quantas} despesas de grupo que outras pessoas pagaram`}
-                , na lista e fora do saldo
-              </p>
-            )}
-            {/*
-              O erro e o vazio sao o MESMO array, e têm leituras opostas: um diz
-              "você não deve nada em grupo este mês" e o outro diz "a lista está
-              incompleta". Sem esta linha a tela escolheria sempre a primeira --
-              o "zero confiante" que esta tela já pagou duas vezes.
-            */}
-            {partesFalharam && (
-              <p className="text-xs text-warning">
-                Sua parte das despesas de grupo não carregou: a lista abaixo pode
-                estar incompleta.
-              </p>
-            )}
           </CardContent>
         </Card>
       </div>
+
+      {/*
+        QUEM ME DEVE, POR GRUPO E POR PESSOA (HMO-245, fase 10)
+        -------------------------------------------------------
+        Até esta fase o lado da receita NÃO EXISTIA: zero ocorrências de crédito
+        de grupo em qualquer cartão ou lista de receita. No mês da internet do
+        C6 o Hélio tem R$ 106,60 a receber da Lais e da Bia, e nada na tela
+        dele dizia isso.
+
+        A RECEBER, E NÃO RECEBIDO -- A DECISÃO QUE ESTE BLOCO CARREGA
+        O valor sai de `fecharMes`, que soma PREVISTO JUNTO COM REALIZADO por
+        desenho (é o pedido da HMO-245: para dividir o mês, "já aconteceu" e
+        "vence dia 15" saem do mesmo bolso dentro do mesmo mês). Logo o crédito
+        pode ser inteiramente sobre conta que ninguém pagou -- e a Lais pode não
+        pagar. Então ele é previsto, rotulado, e FORA do cartão de Receitas. A
+        receita realizada do grupo é a quitação, e só ela (HMO-276 e a fase 12).
+
+        Fora do grid de cima de propósito, como o cartão da HMO-175: um quarto
+        cartão ali dentro herdaria a altura e a legenda dos vizinhos, e este
+        bloco é uma LISTA de pessoas, não um número.
+
+        O rótulo de período é o mesmo `notaDosTotais` dos três cartões, e ele
+        está aqui porque o recorte de tempo é o mesmo `de`/`ate` -- um bloco de
+        dinheiro sem eixo de tempo escrito mente no rótulo.
+
+        Ele some quando não há crédito nenhum: "R$ 0,00 a receber de grupos" na
+        tela de quem não participa de grupo nenhum é ruído que parece recurso
+        quebrado. O caminho de FALHA não some -- ele está escrito no cartão de
+        Receitas acima, ao lado do número que ficaria incompleto.
+      */}
+      {creditoDeGrupo && creditoDeGrupo.linhas.length > 0 && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <div className="space-y-1">
+              <CardTitle className="text-sm font-medium">
+                A receber dos grupos
+              </CardTitle>
+              <CardDescription>
+                Previsto: o que cabe a cada um nas despesas do período e ainda
+                não foi quitado
+              </CardDescription>
+            </div>
+            <HandCoins className="h-4 w-4 shrink-0" />
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <div className="text-2xl font-bold text-success">
+                {formatCurrency(creditoDeGrupo.total)}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                A receber · {notaDosTotais}
+              </p>
+              {/*
+                O total é a SOMA DAS LINHAS abaixo, e não o meu saldo no
+                fechamento. Os dois concordam em todo mês que fecha, e é por
+                isso que escolher o errado seria barato e invisível: o critério
+                é o que a HMO-275 fixou -- o número grande tem de bater com a
+                soma das linhas que a pessoa consegue apontar na tela.
+
+                Quando sobra crédito meu sem devedor nomeado (o centavo de
+                tolerância de `simplifySettlements` descarta saldo de até R$
+                0,01), a diferença aparece escrita em vez de desaparecer.
+              */}
+              {creditoDeGrupo.sem_devedor > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  mais {formatCurrency(creditoDeGrupo.sem_devedor)} sem devedor
+                  identificado no acerto
+                </p>
+              )}
+            </div>
+
+            {/* `grid-cols-1` explícito: sem ele o trilho automático usa o
+                conteúdo mínimo como piso e a linha estoura a largura do
+                celular (HMO-168). */}
+            <div className="grid grid-cols-1 gap-2">
+              {creditoDeGrupo.linhas.map((linha) => {
+                // O nome pode simplesmente não vir, sem erro: nenhuma policy de
+                // SELECT de `profiles` olha `group_members`, então dividir a
+                // conta com alguém não dá acesso ao perfil dele. O rótulo de
+                // fallback mora em `devedorNaLinha`, com teste -- uma linha de
+                // crédito sem menção a outra pessoa se lê como receita própria.
+                const devedor = devedorNaLinha(linha);
+
+                return (
+                  <Link
+                    key={`${linha.group_id} ${linha.devedor_user_id}`}
+                    href={`/dashboard/expense-groups/${linha.group_id}`}
+                    className="flex items-center justify-between gap-3 p-3 border rounded-lg transition-colors hover:bg-muted/50"
+                  >
+                    <div className="min-w-0">
+                      <p
+                        className={`font-medium truncate ${
+                          devedor.temNome ? "" : "text-muted-foreground"
+                        }`}
+                      >
+                        {devedor.texto}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {linha.grupo}
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="font-semibold text-success">
+                        {formatCurrency(linha.valor)}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        te deve
+                      </p>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              Entra em Receitas quando a quitação for registrada, na tela do
+              grupo.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {/*
         O ACERTO COM OS GRUPOS (HMO-175)
@@ -1288,51 +1673,30 @@ function Lancamentos() {
       )}
 
       {/*
-        A barra agora filtra a lista por TIPO -- ela não troca de assunto.
+        A BARRA DE ABAS SAIU (HMO-246)
+        ------------------------------
+        Aqui havia quatro abas -- Lançamentos / Receitas / Despesas /
+        Transferências -- e elas filtravam a lista por tipo. Duas coisas as
+        tiraram, e a segunda é a que custava:
 
-        Antes eram "Lançamentos" e "Limites", e a segunda não falava de dinheiro
-        nenhum: era quanto do plano já foi usado. Ela mudou de tela (está em
-        Configurações › Plano e limites), e o lugar ficou para o que esta tela
-        de fato precisava. Os três tipos sempre estiveram na lista -- a consulta
-        nunca filtrou por tipo --, só que misturados e sem rótulo: uma perna de
-        transferência tem a mesma cara de uma despesa, valor negativo e tudo.
+          1. "Finanças pessoais deve ser uma grande lista de transações e
+             lançamentos indiferente do que for." O recorte por tipo agora é
+             tela própria: /dashboard/receitas, /dashboard/despesas e
+             /dashboard/transferencias.
 
-        Sem `grid w-full`: o `TabsList` deste projeto já resolve o estouro no
-        celular com `overflow-x-auto`, e o trilho de grid não escapa disso --
-        ele cresce até o conteúdo mínimo, e "Transferências" sem quebra tem um
-        mínimo largo. Foi assim que a barra de abas empurrou a página inteira
-        para o lado na HMO-168.
+          2. ELAS FILTRAVAM SÓ A LISTA. Os três cartões acima nunca souberam do
+             filtro: somavam o período inteiro, sempre. Abrir "Transferências"
+             dava uma lista com três linhas de transferência e, parado logo
+             acima dela, "Despesas R$ 4.200" -- um número certo que, naquela
+             posição, se lê como o total da lista embaixo. As telas novas não
+             têm esse problema por construção: os totais de lá são do tipo da
+             tela, e trazem o PREVISTO junto, que é o que as abas nunca tiveram.
+
+        O que fica para quem procurava um tipo sem sair daqui: a lista continua
+        rotulando cada linha (tipo, conta, categoria, grupo), que é o que a
+        HMO-162 e a HMO-215 puseram nela.
       */}
-      <Tabs
-        value={filtro}
-        onValueChange={(v) => setFiltro(v as FiltroDeLancamento)}
-        className="w-full"
-      >
-        <TabsList>
-          {FILTROS_DE_LANCAMENTO.map((f) => (
-            <TabsTrigger key={f.id} value={f.id} className="gap-1.5">
-              {f.rotulo}
-              {/*
-                A contagem é o que responde "cadê minhas transferências?" sem
-                exigir um clique: um zero aqui distingue "não há linha desse
-                tipo" de "a aba abriu vazia porque quebrou".
-              */}
-              <span className="text-xs text-muted-foreground">
-                {contagem[f.id]}
-              </span>
-            </TabsTrigger>
-          ))}
-        </TabsList>
-
-        {/*
-          Um `TabsContent` por filtro, todos com o MESMO conteúdo: o Radix só
-          monta o painel do valor ativo, e `visiveis` já está filtrado por
-          `filtro`. Um painel só, fora do `Tabs`, deixaria os outros três
-          gatilhos sem painel nenhum -- que é exatamente o bug das abas vazias
-          que esta tela já teve.
-        */}
-        {FILTROS_DE_LANCAMENTO.map((f) => (
-          <TabsContent key={f.id} value={f.id} className="space-y-4">
+      <div className="space-y-4">
           {/* Transactions List */}
           <Card>
             <CardHeader>
@@ -1604,7 +1968,13 @@ function Lancamentos() {
                                   pathname: rotaDoTipo(
                                     tipoDoLancamento(transaction)!
                                   ),
-                                  query: { id: transaction.id },
+                                  query: {
+                                    id: transaction.id,
+                                    // HMO-249: fechar a edicao volta para ESTA
+                                    // lista, com o filtro e o periodo que ela
+                                    // tem agora -- nao para a lista zerada.
+                                    [PARAM_DE_ORIGEM]: origem,
+                                  },
                                 }}
                               >
                                 <Pencil className="h-4 w-4" />
@@ -1640,32 +2010,21 @@ function Lancamentos() {
                     );
                   })}
                 </div>
-              ) : carregados > 0 ? (
-                /*
-                  Vazio por causa do FILTRO, não por falta de lançamento. Os
-                  dois casos são diferentes e a mensagem antiga só sabia um
-                  deles: "Nenhum lançamento ainda" numa conta com 40 despesas,
-                  só porque a aba "Transferências" está aberta, é a tela
-                  afirmando com confiança algo falso -- e o botão "Nova Receita"
-                  logo abaixo manda resolver o problema errado.
-                */
-                <div className="text-center py-8 space-y-4">
-                  <Receipt className="h-12 w-12 text-muted-foreground mx-auto" />
-                  <div>
-                    <h3 className="text-lg font-medium mb-2">
-                      Nenhum lançamento deste tipo
-                    </h3>
-                    <p className="text-muted-foreground">
-                      {rotuloDoPeriodo(periodo)} tem {carregados}{" "}
-                      lançamento(s) carregado(s), e nenhum em{" "}
-                      {f.rotulo.toLowerCase()}.
-                    </p>
-                  </div>
-                  <Button variant="outline" onClick={() => setFiltro("todos")}>
-                    Ver todos os lançamentos
-                  </Button>
-                </div>
               ) : (
+                /*
+                  Aqui havia um TERCEIRO ramo, para "vazio por causa do filtro":
+                  `carregados > 0` com `visiveis` em zero, que acontecia quando
+                  a aba "Transferências" estava aberta num mês sem nenhuma. Ele
+                  saiu com as abas (HMO-246), e não por economia -- ele ficou
+                  INALCANÇÁVEL: com `filtro = "todos"`, `linhasDaLista` não
+                  descarta linha nenhuma, então `visiveis.length` é exatamente
+                  `carregados` e os dois só são zero juntos. Um ramo morto que
+                  parece vivo é pior que ramo nenhum: ele convida a próxima
+                  pessoa a mantê-lo funcionando.
+
+                  O recorte por tipo que aquele ramo explicava agora tem tela
+                  própria, e lá a frase de vazio nomeia o tipo E o período.
+                */
                 /*
                   Periodo vazio. A mensagem antiga era "Nenhum lançamento ainda
                   / Comece registrando o que entrou ou o que saiu" -- e sem
@@ -1703,19 +2062,19 @@ function Lancamentos() {
                       </Button>
                     )}
                     <Button variant="outline" asChild className="gap-2">
-                      <Link href="/dashboard/movimentacoes/receita">
+                      <Link href={comOrigem("/dashboard/movimentacoes/receita", origem)}>
                         <TrendingUp className="h-4 w-4 text-success" />
                         Nova Receita
                       </Link>
                     </Button>
                     <Button asChild className="gap-2">
-                      <Link href="/dashboard/movimentacoes/despesa">
+                      <Link href={comOrigem("/dashboard/movimentacoes/despesa", origem)}>
                         <TrendingDown className="h-4 w-4" />
                         Nova Despesa
                       </Link>
                     </Button>
                     <Button variant="outline" asChild className="gap-2">
-                      <Link href={ROTA_DA_TRANSFERENCIA}>
+                      <Link href={comOrigem(ROTA_DA_TRANSFERENCIA, origem)}>
                         <ArrowRightLeft className="h-4 w-4 text-info" />
                         Transferência
                       </Link>
@@ -1732,12 +2091,13 @@ function Lancamentos() {
                 sem periodo para navegar, e sem nada na tela dizendo que a
                 lista terminava ali.
 
-                Fica FORA do ramo de `visiveis.length > 0` de proposito. O caso
-                que importa e justamente o contrario: filtro "Transferências"
-                aberto, zero linhas visiveis entre as 50 carregadas, e as
-                transferências mais antigas na pagina seguinte. Se o botao
-                morasse dentro do ramo da lista cheia, a unica tela que precisa
-                dele seria a unica que nao o teria.
+                Fica FORA do ramo de `visiveis.length > 0`, e isso CONTINUA
+                valendo depois de as abas saírem (HMO-246). O caso que importa
+                mudou de forma mas não desapareceu: um período em que as 50
+                primeiras linhas são todas de grupo e descartadas por
+                `partesDeTerceirosNaLista` abre a lista vazia com mais páginas
+                atrás. Se o botão morasse dentro do ramo da lista cheia, a única
+                tela que precisa dele seria a única que não o teria.
               */}
               {temMais && !atualizando && (
                 <div className="mt-4 flex flex-col items-center gap-2">
@@ -1767,9 +2127,7 @@ function Lancamentos() {
               )}
             </CardContent>
           </Card>
-          </TabsContent>
-        ))}
-      </Tabs>
+      </div>
 
       {/* A PERGUNTA DO ALCANCE NA EXCLUSAO DE PARCELA (HMO-228).
           O mesmo componente de Contas a Pagar e da tela do cartao. A parcela e
@@ -1789,113 +2147,5 @@ function Lancamentos() {
         />
       )}
     </div>
-  );
-}
-
-/**
- * UMA LINHA QUE NAO E MINHA: A MINHA PARTE DO QUE OUTRA PESSOA PAGOU (HMO-215)
- * ---------------------------------------------------------------------------
- * Componente proprio, e nao um ramo dentro da linha normal, porque o que ela
- * NAO tem e o que importa:
- *
- * - SEM BOTAO DE EXCLUIR. Apagar esta linha mexeria na despesa de quem pagou, e
- *   o id dela e de `group_expense_splits` -- mandar isso para
- *   `/api/personal-finance/transactions/[id]` volta 404, que para quem clicou se
- *   le como "o app nao conseguiu apagar". A conversa sobre o rateio acontece na
- *   tela do grupo, e e para la que a linha leva.
- * - SEM BOTAO DE EDITAR, pela mesma razao.
- * - SEM CONTA. O dinheiro saiu da conta de outra pessoa; nao ha destino meu a
- *   mostrar, e inventar um seria afirmar que a despesa passou por uma conta
- *   minha.
- *
- * O que ela TEM, e que a linha comum nao precisa: o grupo, o valor CHEIO da
- * despesa ao lado da minha parte (sem ele, "R$ 200,00" num jantar de R$ 600
- * nao se reconhece) e o aviso de rateio ainda nao aprovado.
- */
-function LinhaDaParteDeGrupo({
-  parte,
-  nomeDoGrupo,
-}: {
-  parte: LancamentoDeTerceiro;
-  nomeDoGrupo: Record<string, string>;
-}) {
-  const grupo = nomeDoGrupo[parte.groupId];
-
-  return (
-    <Link
-      href={`/dashboard/expense-groups/${parte.groupId}`}
-      className="flex items-center justify-between gap-3 p-3 border rounded-lg border-dashed transition-colors hover:bg-muted/50"
-    >
-      {/*
-        `min-w-0` nos dois niveis e `truncate` na descricao, como na linha comum:
-        sem eles o minimo de min-content de um item flex estoura a largura do
-        celular e a pagina inteira ganha scroll horizontal (HMO-185).
-      */}
-      <div className="flex items-center gap-3 min-w-0 flex-1">
-        <div
-          className="w-10 h-10 shrink-0 rounded-full flex items-center justify-center text-white"
-          style={{ backgroundColor: parte.categoria?.color_hex ?? undefined }}
-        >
-          <Users className="h-5 w-5" />
-        </div>
-        <div className="min-w-0">
-          <p className="font-medium truncate">{parte.description}</p>
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
-            {/*
-              "Minha parte" e nao "Despesa": o valor ao lado NAO e o que foi
-              gasto, e a fracao que cabe a mim de uma despesa maior. O selo
-              generico "Despesa" faria a pessoa ler R$ 200,00 como o preco do
-              jantar.
-            */}
-            <Badge variant="outline" className="shrink-0">
-              Minha parte
-            </Badge>
-            {parte.categoria?.name && <span>{parte.categoria.name}</span>}
-            <span>•</span>
-            <span>
-              {new Date(parte.transactionDate).toLocaleDateString("pt-BR")}
-            </span>
-            <span>•</span>
-            <Badge variant="outline" className="flex items-center gap-1">
-              <Users className="h-3 w-3" />
-              {/*
-                O nome do grupo quando ele veio, e "Grupo" quando a chamada de
-                grupos falhou sem derrubar a lista. Ali "Grupo" e menos
-                informacao, nao informacao errada -- a mesma regra do selo da
-                linha comum.
-              */}
-              {grupo || "Grupo"}
-            </Badge>
-            {/*
-              Rateio ainda nao aprovado. A view do 033 ja descarta `rejected` e
-              `expired`; `pending` entra porque o dinheiro e devido de todo
-              jeito -- mas sem este selo a linha afirmaria um acerto fechado que
-              ainda esta em aberto.
-            */}
-            {parte.splitStatus === "pending" && (
-              <>
-                <span>•</span>
-                <Badge variant="outline" className="shrink-0">
-                  a aprovar
-                </Badge>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-      <div className="text-right shrink-0">
-        <p className="font-semibold text-destructive">
-          {formatCurrency(Math.abs(parte.amount))}
-        </p>
-        {/*
-          O valor cheio embaixo da parte. Sem ele "R$ 200,00 · Hotel em Paraty"
-          se le como o preco do hotel, e a pessoa nao tem como conferir a divisao
-          sem abrir a tela do grupo.
-        */}
-        <p className="text-xs text-muted-foreground">
-          de {formatCurrency(Math.abs(parte.totalDaDespesa))}
-        </p>
-      </div>
-    </Link>
   );
 }

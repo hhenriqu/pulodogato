@@ -49,6 +49,7 @@ import assert from "node:assert/strict";
 
 const {
   STATUS_FORA_DO_PREVISTO,
+  classeDaAgenda,
   compararPrevistoRealizado,
   copiaDaPrevisao,
   direcaoDaAgenda,
@@ -644,10 +645,16 @@ test("valor negativo nao DIMINUI o a pagar", () => {
 test("direcaoDaAgenda: so `income` sai do lado de pagar", () => {
   assert.equal(direcaoDaAgenda("income"), "income");
 
-  // 'transfer' e a fatura de cartao ficam em DESPESA aqui de proposito, ao
-  // contrario de `direcaoNoPainel` (lib/realizado-e-previsao.ts). A pergunta
-  // deste bloco e "quanto vai sair da conta", e a fatura sai mesmo; escondê-la
-  // prometeria uma folga que nao existe.
+  // 'transfer' fica em DESPESA aqui de proposito, ao contrario de
+  // `direcaoNoPainel` (lib/realizado-e-previsao.ts), que o deixa fora dos dois
+  // lados. A pergunta deste bloco e "quanto vai sair da conta", e a perna
+  // agendada de uma transferencia sai mesmo.
+  //
+  // A fatura de cartao tambem cai em despesa aqui -- e agora la tambem, desde a
+  // HMO-265. Ela nao aparece nesta lista porque nao se reconhece pela
+  // `direction` (o `close` grava `transaction_type` NULO, e a view do 027 a
+  // resolve como 'expense'): quem a distingue de uma conta a pagar comum e a
+  // chave canonica em `notes`.
   for (const entrada of [
     "expense",
     "transfer",
@@ -662,4 +669,68 @@ test("direcaoDaAgenda: so `income` sai do lado de pagar", () => {
       `direcao ${JSON.stringify(entrada)} deveria cair em despesa`
     );
   }
+});
+
+// ---------------------------------------------------------------------------
+// classeDaAgenda -- A TERCEIRA CLASSE (HMO-303)
+// ---------------------------------------------------------------------------
+// `direcaoDaAgenda` responde "para que perna vai o dinheiro" e tem DUAS
+// respostas, porque quem pergunta -- o «A vencer» e a tela de Contas -- quer
+// caixa: a perna agendada de uma transferencia sai da conta corrente de verdade.
+//
+// «Total de contas» pergunta outra coisa: quais sao as contas A PAGAR. Guardar
+// R$ 500 na poupanca nao e conta a pagar. Entao nasceu uma leitura com TRES
+// respostas, e `direcaoDaAgenda` passou a DELEGAR para ela -- e e a delegacao, e
+// nao uma tabela de valores conferida a olho, que impede as duas de divergirem.
+
+test("classeDaAgenda: transferencia e uma classe PROPRIA, nem receita nem despesa", () => {
+  assert.equal(classeDaAgenda("income"), "income");
+  assert.equal(classeDaAgenda("transfer"), "transfer");
+  assert.equal(classeDaAgenda("expense"), "expense");
+
+  // O desconhecido cai em DESPESA, e nao em transferencia: classificar o que nao
+  // se reconhece como transferencia o esconderia do «Total de contas», e esconder
+  // conta e o erro CARO -- o painel passaria a prometer dinheiro que nao sobra.
+  for (const entrada of [undefined, null, "", "qualquer-coisa", "Transfer"]) {
+    assert.equal(
+      classeDaAgenda(entrada),
+      "expense",
+      `classe ${JSON.stringify(entrada)} deveria cair em despesa`
+    );
+  }
+});
+
+test("`direcaoDaAgenda` DELEGA para `classeDaAgenda` -- uma copia so da precedencia", () => {
+  // A assercao e sobre o DOMINIO, e nao sobre tres valores escolhidos: o que se
+  // quer provar e que nao existe entrada para a qual as duas discordem. Dois `if`
+  // copiados em arquivos diferentes passariam numa lista escolhida hoje e
+  // divergiriam no dia em que alguem acrescentasse uma `direction` nova -- e o
+  // sintoma seria o `summary` discordando da tela de Contas, nao um erro.
+  for (const entrada of [
+    "income",
+    "expense",
+    "transfer",
+    "refund",
+    "investment",
+    "",
+    " ",
+    "0",
+    undefined,
+    null,
+    "qualquer-coisa",
+  ]) {
+    const esperado = classeDaAgenda(entrada) === "income" ? "income" : "expense";
+    assert.equal(
+      direcaoDaAgenda(entrada),
+      esperado,
+      `as duas leituras discordam em ${JSON.stringify(entrada)}`
+    );
+  }
+
+  // E o CONTROLE da assercao acima: ela so mede algo porque existe uma entrada em
+  // que as duas respostas sao DIFERENTES. Sem isto, "as duas concordam" seria
+  // verdade tambem sobre duas funcoes que devolvessem sempre a mesma coisa.
+  assert.equal(classeDaAgenda("transfer"), "transfer");
+  assert.equal(direcaoDaAgenda("transfer"), "expense");
+  assert.notEqual(classeDaAgenda("transfer"), direcaoDaAgenda("transfer"));
 });

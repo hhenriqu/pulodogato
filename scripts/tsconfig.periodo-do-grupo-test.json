@@ -1,0 +1,14 @@
+{
+  "//": "Build so do teste: lib/periodo-do-grupo.ts importa @/lib/settlement (toCents/toReais, a UNICA conversao para centavos do projeto) e @/lib/fechamento-do-grupo (mesDaData, a UNICA regra de 'que mes e esta data' do grupo). O tsc resolve o alias @/ por `paths` mas NAO o reescreve no JS emitido, entao o npm script tem um passo de reescrita depois. Ver scripts/test-periodo-do-grupo.mjs.",
+  "compilerOptions": {
+    "outDir": "../.tmp-periodo-do-grupo",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/periodo-do-grupo.ts"]
+}

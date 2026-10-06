@@ -17,6 +17,7 @@
   },
   "include": [
     "../lib/offline-queue.ts",
-    "../lib/offline-cache.ts"
+    "../lib/offline-cache.ts",
+    "../lib/lancamento.ts"
   ]
 }

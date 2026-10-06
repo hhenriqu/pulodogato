@@ -1,0 +1,16 @@
+{
+  "//": "Build so do teste de lib/divisao-configurada.ts (HMO-245 fase 1). Ao contrario do tsconfig.divisao-do-grupo-test.json, aqui o `include` tem UM arquivo: este modulo nao importa nada -- nem `@/lib/settlement`, porque a configuracao de divisao e porcentagem pura e nao converte reais em centavos (quem faz isso e o fechamento e a despesa). Sem alias no fonte, o npm script nao precisa do passo de resolve-aliases. Se um import aparecer aqui depois, o passo tem que vir com ele, ou o node morre com ERR_MODULE_NOT_FOUND.",
+  "compilerOptions": {
+    "outDir": "../.tmp-divisao-configurada",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/divisao-configurada.ts"]
+}

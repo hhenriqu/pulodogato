@@ -49,8 +49,10 @@
 
 import {
   classificarMovimentacao,
+  resumoDoPeriodo,
   type FiltroDeLancamento,
   type MovimentacaoBruta,
+  type ResumoDoPeriodo,
 } from "@/lib/movimentacoes";
 
 /**
@@ -77,9 +79,114 @@ export interface ParteDeGrupoBruta {
 export interface DespesaDeGrupoLida {
   id: string;
   description: string;
+  /**
+   * QUEM PAGOU (HMO-274).
+   *
+   * Vem da mesma segunda consulta da descricao, e nao da view do 033: a
+   * `group_share_entries` expoe o booleano `paguei_eu`, nao o id de quem pagou.
+   * A linha de `financial_transactions` e de quem desembolsou -- e para uma
+   * despesa de grupo a policy de SELECT do 002 (`user_id = auth.uid() OR
+   * (group_id IS NOT NULL AND is_group_member(group_id))`) me deixa ler a linha
+   * inteira, inclusive este campo.
+   */
+  user_id: string;
   /** O valor CHEIO da despesa, como quem pagou lancou (negativo). */
   amount: number;
   category?: { id: string; name: string; color_hex?: string | null } | null;
+}
+
+// ---------------------------------------------------------------------------
+// O NOME DE QUEM PAGOU (HMO-274)
+// ---------------------------------------------------------------------------
+// A linha ja dizia o grupo e o valor; faltava a pessoa. "R$ 200,00 · Minha
+// parte · Praia" nao responde "quem pagou o hotel?", que e justamente a
+// pergunta de quem precisa transferir o dinheiro para alguem.
+//
+// O NOME PODE NAO ESTAR LEGIVEL, E ISSO NAO E ERRO
+// ------------------------------------------------
+// Participar do mesmo grupo NAO da acesso ao perfil do outro. As tres policies
+// de SELECT de `profiles` sao `id = auth.uid()`, `is_public = TRUE` (002) e
+// "conexao aceita" (010) -- nenhuma olha `group_members`. Entao o membro que
+// desligou o perfil publico e nao e minha conexao tem a linha de `profiles`
+// INVISIVEL para mim, e o PostgREST nao levanta erro nesse caso: a linha
+// simplesmente nao vem (e o mesmo mecanismo que deixava o sino de convites
+// vazio, documentado no cabecalho do 030).
+//
+// Por isso o campo e `string | null` e nao `string`, e por isso o nulo tem
+// ROTULO. Sem o rotulo a linha ficaria com um selo em branco -- ou sem selo
+// nenhum --, e um selo ausente aqui se le como "esta despesa e minha", que e o
+// contrario do que a linha existe para dizer.
+
+/** O que a consulta de perfis devolve para cada pagador. */
+export interface PerfilDePagador {
+  id: string;
+  full_name?: string | null;
+  nickname?: string | null;
+}
+
+/**
+ * O que a linha escreve quando o perfil de quem pagou nao e legivel.
+ *
+ * Exportado para o teste afirmar sobre ESTE texto, e nao sobre uma copia dele.
+ */
+export const PAGADOR_SEM_NOME = "outro membro do grupo";
+
+/**
+ * `userId -> nome exibivel`, so com os perfis que vieram e tem nome.
+ *
+ * Nome em branco e tratado como AUSENTE, e nao como nome vazio: `full_name` nao
+ * tem NOT NULL nem CHECK de tamanho em `profiles` (001), entao `""` e `"   "`
+ * sao valores que o banco aceita. Guardar um deles no mapa faria o rotulo sair
+ * "Pago por " -- com o espaco e nada depois --, que e exatamente o selo em
+ * branco que o fallback existe para nao ter. O perfil legivel e sem nome cai no
+ * mesmo caminho do perfil invisivel, de proposito: os dois sabem a mesma coisa.
+ *
+ * `nickname` entra depois de `full_name` porque e o outro campo de nome que a
+ * busca de perfil ja usa (lib/busca-de-perfil.ts) -- quem preencheu so o apelido
+ * tem nome a mostrar.
+ */
+export function nomesDosPagadores(
+  perfis: PerfilDePagador[]
+): Map<string, string> {
+  const nomes = new Map<string, string>();
+
+  for (const perfil of perfis) {
+    if (!perfil?.id) continue;
+    const nome = (perfil.full_name ?? "").trim() || (perfil.nickname ?? "").trim();
+    if (nome) nomes.set(perfil.id, nome);
+  }
+
+  return nomes;
+}
+
+/**
+ * O selo de quem pagou: o texto E se ele esta nomeando alguem.
+ *
+ * Uma funcao, e nao um `||` no JSX, porque o fallback e a parte que erra: um
+ * `{parte.pagador}` solto renderiza NADA quando o perfil nao veio, e nada no
+ * meio de uma fileira de selos nao se distingue de "nao ha o que dizer".
+ *
+ * OS DOIS CAMPOS SAEM DA MESMA DECISAO, E E POR ISSO QUE ELA E UMA SO
+ * -------------------------------------------------------------------
+ * `temNome` e o que a tela marca no HTML para o teste poder separar "o nome
+ * veio" de "o nome nao veio" -- sem ele, uma assercao sobre o texto do selo nao
+ * distingue o rotulo de fallback de um nome que por acaso seja igual a ele.
+ *
+ * Calcular os dois em lugares diferentes (`nome ? "nome" : "sem-nome"` no JSX e
+ * o texto aqui) e a receita do rotulo que mente: um `full_name` de espacos em
+ * branco e verdadeiro em JavaScript, entao a marca diria "nome" enquanto o
+ * texto saisse "Pago por " -- e o teste leria a marca, acreditaria, e passaria
+ * verde sobre o selo em branco. Com uma funcao so isso nao e representavel.
+ */
+export function pagadorNaLinha(nome: string | null): {
+  texto: string;
+  temNome: boolean;
+} {
+  const limpo = (nome ?? "").trim();
+  return {
+    texto: `Pago por ${limpo || PAGADOR_SEM_NOME}`,
+    temNome: limpo.length > 0,
+  };
 }
 
 /** Uma linha da lista que nao e minha: a minha parte do que outro pagou. */
@@ -107,6 +214,16 @@ export interface LancamentoDeTerceiro {
   /** `pending` ate eu aprovar o rateio. A linha diz isso. */
   splitStatus: string;
   currency: string | null;
+  /** O id de quem pagou. Sempre presente -- a despesa tem dono. */
+  pagadorId: string;
+  /**
+   * O nome de quem pagou, ou `null` quando o perfil nao e legivel para mim.
+   *
+   * `null` NAO quer dizer "ninguem pagou": quer dizer "nao sei o nome". Quem
+   * desenha a linha passa isto por `pagadorNaLinha`, que troca o nulo por um
+   * rotulo escrito. Ver o cabecalho acima.
+   */
+  pagador: string | null;
 }
 
 /**
@@ -122,10 +239,17 @@ export interface LancamentoDeTerceiro {
  * cortada, e uma linha "R$ 200,00 · Viagem · 12/09" sem dizer DO QUE e nao
  * responde a pergunta que trouxe a pessoa para esta tela -- ela so acrescenta
  * um valor que a pessoa nao reconhece. A tela conta quantas ficaram de fora.
+ *
+ * `nomes` e o mapa `user_id -> nome`, da terceira consulta (`profiles`). Faltar
+ * o nome NAO descarta a linha -- ao contrario da descricao: "R$ 200,00 · Hotel
+ * em Paraty · Praia" sem o nome de quem pagou ainda responde a pergunta que
+ * trouxe a pessoa aqui. O que falta e um pedaco, e o pedaco que falta e DITO
+ * (ver `pagadorNaLinha`), nao escondido.
  */
 export function partesDeTerceirosNaLista(
   partes: ParteDeGrupoBruta[],
-  despesas: Map<string, DespesaDeGrupoLida>
+  despesas: Map<string, DespesaDeGrupoLida>,
+  nomes: Map<string, string>
 ): { linhas: LancamentoDeTerceiro[]; semDescricao: number } {
   const linhas: LancamentoDeTerceiro[] = [];
   let semDescricao = 0;
@@ -154,6 +278,13 @@ export function partesDeTerceirosNaLista(
       categoria: despesa.category ?? null,
       splitStatus: parte.split_status,
       currency: parte.currency ?? null,
+      pagadorId: despesa.user_id,
+      // O tipo e `string | null` e nao `string | undefined` para que o `??` seja
+      // obrigatorio aqui: `Map.get` devolve `undefined`, e deixar o `undefined`
+      // vazar seria um valor que o tsc aceita em todo lugar que le o campo com
+      // `||` -- "ausente" e "nao sei" passariam a ser a mesma coisa, sem nada
+      // pedindo o rotulo. Com `null`, quem le tem um valor para tratar.
+      pagador: nomes.get(despesa.user_id) ?? null,
     });
   }
 
@@ -163,20 +294,18 @@ export function partesDeTerceirosNaLista(
 /**
  * Quanto as partes de terceiros somam, positivo.
  *
- * ELAS NAO ENTRAM NOS TRES CARTOES DO TOPO, e este total existe para a tela
- * poder dizer isso com um numero em vez de omitir.
+ * ELAS ENTRAM NO CARTAO "Despesas" (HMO-275). Este total e a parcela delas
+ * dentro daquele numero -- ver `resumoComPartesDeGrupo` logo abaixo, que e
+ * quem soma, e o cabecalho dele, que e onde o criterio esta escrito.
  *
- * O motivo de ficarem fora: o cartao "Despesas" soma as MINHAS linhas, e para
- * uma despesa de grupo que eu paguei ele soma o valor CHEIO (R$ 400 do hotel --
- * foi o que saiu da minha conta, e e o criterio que a HMO-175 fixou). Somar
- * tambem "a minha parte do que os outros pagaram" misturaria dois criterios
- * dentro de um numero so: valor cheio de um lado, parte do outro. O resultado
- * nao seria nem "o que saiu de mim" nem "o que me cabe" -- seria um terceiro
- * numero que nao responde a pergunta nenhuma, e que nada na tela denunciaria.
- *
- * A saida e a mesma que a transferencia recebeu nesta tela: a linha aparece na
- * lista, o valor aparece ESCRITO em separado, e o cartao continua significando
- * uma coisa so.
+ * Ate a HMO-275 este total existia para a tela poder dizer que as partes
+ * ficavam de FORA dos tres cartoes, e o motivo alegado era que "Despesas"
+ * somava o valor CHEIO de uma despesa de grupo que eu paguei (R$ 400 do hotel)
+ * e somar a parte dos outros misturaria dois criterios num numero so. A decisao
+ * do Helio de 04/10/2026 responde a isso com um criterio UNICO, que o argumento
+ * antigo nao tinha enxergado: o cartao significa **o que me custou** -- inteiro
+ * quando eu paguei, minha parte quando outro pagou. Os dois casos passam a ser
+ * a mesma pergunta, e nao duas.
  */
 export function totalDasPartesDeTerceiros(
   linhas: LancamentoDeTerceiro[]
@@ -185,7 +314,13 @@ export function totalDasPartesDeTerceiros(
 }
 
 /**
- * O que a lista diz sobre as partes de terceiros, ou `null` quando nao ha.
+ * O que a tela diz sobre as partes de terceiros, ou `null` quando nao ha.
+ *
+ * Desde a HMO-275 a frase nao e mais um aviso de valor omitido: ela ABRE o
+ * cartao "Despesas", dizendo quanto daquele total e parte de despesa que outra
+ * pessoa pagou. Sem ela, a soma do cartao deixaria de bater com a soma das
+ * linhas que a pessoa consegue apontar como suas -- e o unico jeito de
+ * descobrir a diferenca seria somar a lista a mao.
  *
  * `null` -- e nao uma frase com zero -- porque "R$ 0,00 em partes de grupo" na
  * tela de quem nao participa de grupo nenhum e ruido que parece um recurso
@@ -198,6 +333,76 @@ export function notaDasPartesDeTerceiros(
   return {
     quantas: linhas.length,
     total: totalDasPartesDeTerceiros(linhas),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// OS TRES CARTOES, COM A PARTE DE GRUPO DENTRO (HMO-275)
+// ---------------------------------------------------------------------------
+// A decisao do Helio em 04/10/2026: **bruto + reembolso**. O cartao "Despesas"
+// significa *o que me custou* -- INTEIRO quando eu paguei, MINHA PARTE quando
+// outro pagou. Os R$ 159,90 da internet no C6 continuam inteiros no mes dele; os
+// R$ 53,30 da Ana passam a contar no mes dela, onde antes ficavam escritos
+// embaixo do cartao de saldo com a frase "na lista e fora do saldo".
+//
+// AS QUATRO COISAS QUE ESTA FUNCAO EXISTE PARA NAO ERRAR
+// ------------------------------------------------------
+// 1. O SALDO E RECALCULADO, NAO HERDADO. `resumoDoPeriodo` devolve
+//    `saldo = receitas - despesas` das MINHAS linhas. Somar a parte em
+//    `despesas` e repassar aquele `saldo` deixaria os tres cartoes se
+//    contradizendo na mesma tela: "Receitas 5.000", "Despesas 1.053,30",
+//    "Saldo 4.000" -- e a legenda do terceiro cartao diz, por escrito,
+//    "Receitas - Despesas". O erro e visivel a olho nu e ainda assim e o mais
+//    facil de cometer, porque a mudanca de uma linha (`despesas: ... + total`)
+//    nao obriga a mexer no `saldo`. Aqui nao ha o que repassar: o `saldo` sai
+//    da subtracao dos dois numeros desta funcao.
+//
+// 2. RECEITAS NAO SE MEXE. O outro lado do "bruto + reembolso" -- o que os
+//    outros me devem -- e a F10, e la ele entra como A RECEBER, previsto, com
+//    rotulo. Nao e receita realizada: a Ana pode nao pagar. Se esta funcao
+//    tocasse `receitas`, o saldo do mes voltaria a fechar certo com os dois
+//    lados inchados, que e exatamente a armadilha numero 1 deste bloco
+//    (`duas-pernas-mantem-o-total-certo`). Por isso ela devolve `receitas`
+//    inalterado -- e o teste afirma sobre os dois numeros EM SEPARADO.
+//
+// 3. SO A PARTE DO QUE OUTRO PAGOU CHEGA AQUI. `partesDeTerceirosNaLista` ja
+//    descartou `paguei_eu` (item 2 do cabecalho do arquivo). Somar a lista
+//    crua da view do 033 contaria o hotel da Ana duas vezes: R$ 400 da linha
+//    inteira dela mais R$ 200 da parte dela, R$ 600 de um gasto de R$ 400. O
+//    tipo do parametro e `LancamentoDeTerceiro[]`, e nao `ParteDeGrupoBruta[]`,
+//    para que esse caminho nao compile.
+//
+// 4. `transferido` E `transferencias` PASSAM INTEIROS. Uma parte de grupo nao e
+//    transferencia entre as minhas contas; a view do 033 filtra
+//    `transaction_type = 'expense'` na origem. Mexer neles aqui mudaria a outra
+//    frase do cartao de saldo, que fala de um assunto que nada tem a ver.
+
+/**
+ * Os tres cartoes do topo da tela, com a minha parte do que outros pagaram
+ * somada em "Despesas".
+ *
+ * `minhas` sao as linhas de `financial_transactions`; `partes` e a saida de
+ * `partesDeTerceirosNaLista`. A funcao recebe as duas fontes -- em vez de um
+ * `ResumoDoPeriodo` ja somado mais o total das partes -- justamente para que o
+ * `saldo` nao possa chegar pronto de fora: ver o item 1 do cabecalho acima.
+ *
+ * `partes` vazio devolve exatamente o que `resumoDoPeriodo` devolveria, e isso
+ * e o controle de que a soma nova nao vaza para quem nao tem grupo.
+ */
+export function resumoComPartesDeGrupo(
+  minhas: MovimentacaoBruta[],
+  partes: LancamentoDeTerceiro[]
+): ResumoDoPeriodo {
+  const meu = resumoDoPeriodo(minhas);
+  const despesas = meu.despesas + totalDasPartesDeTerceiros(partes);
+
+  return {
+    receitas: meu.receitas,
+    despesas,
+    // Item 1: recalculado, e nao `meu.saldo`.
+    saldo: meu.receitas - despesas,
+    transferido: meu.transferido,
+    transferencias: meu.transferencias,
   };
 }
 

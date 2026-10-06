@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 
-import { useCallback, useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { User } from "@supabase/supabase-js";
 import { Button } from "@/components/ui/button";
@@ -41,6 +41,7 @@ import {
   Archive,
   Users,
   Plus,
+  Settings,
   Share2,
   Crown,
   UserPlus,
@@ -51,9 +52,9 @@ import {
   Calendar,
   MoreVertical,
   LogIn,
-  Calculator,
   TrendingUp,
   Eye,
+  EyeOff,
   Check,
   X,
   Clock,
@@ -61,6 +62,7 @@ import {
   Edit,
   Trash2,
   UserMinus,
+  Settings2,
 } from "lucide-react";
 import { useGroupInvitations } from "@/lib/hooks/useGroupInvitations";
 
@@ -114,14 +116,13 @@ interface PendingGroupRequest {
   requested_at: string;
 }
 
-// O que `/api/expense-groups/proportions` devolve por membro. Os tres valores
-// numericos passam por `Number()` na tela, entao chegam como string: a rota le
-// colunas `numeric`, e o JSON do PostgREST entrega `numeric` como texto.
-interface ProporcaoDeMembro {
-  member_id: string;
-  proportion_percentage: number | string;
-  total_income: number | string | null;
-  calculated_at: string;
+interface GroupInvitation {
+  id: string;
+  invite_method: "email" | "phone" | "code";
+  invite_target: string;
+  status: "pending" | "accepted" | "rejected" | "expired";
+  expires_at: string;
+  created_at: string;
 }
 
 export default function ExpenseGroupsPage() {
@@ -135,10 +136,7 @@ export default function ExpenseGroupsPage() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showJoinForm, setShowJoinForm] = useState(false);
   const [showInviteForm, setShowInviteForm] = useState(false);
-  const [showProportions, setShowProportions] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<ExpenseGroup | null>(null);
-  const [proportions, setProportions] = useState<ProporcaoDeMembro[]>([]);
-  const [loadingProportions, setLoadingProportions] = useState(false);
   const [showEditForm, setShowEditForm] = useState(false);
   const [editForm, setEditForm] = useState({
     name: "",
@@ -194,11 +192,14 @@ export default function ExpenseGroupsPage() {
     message: "",
   });
 
-  const loadData = useCallback(async () => {
+  const supabase = createClient();
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
     try {
-      // Dentro do callback: fora, o cliente vira dependencia dele, e nada mais
-      // nesta tela usa o Supabase direto -- o resto passa pelas rotas.
-      const supabase = createClient();
       const {
         data: { user },
       } = await supabase.auth.getUser();
@@ -246,11 +247,7 @@ export default function ExpenseGroupsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  };
 
   const handleCreateGroup = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -366,8 +363,14 @@ export default function ExpenseGroupsPage() {
         return "Por Percentual";
       case "custom":
         return "Por Despesa";
+      // `proportional` lia `group_member_proportions`, o segundo armazem de
+      // porcentagem do schema, aposentado na fase 7 da HMO-245. Um grupo que
+      // ficou nesse modo fecha o mes IGUAL -- `divisaoDoPeriodo` nao sabe
+      // aplicar aquele armazem. O rotulo diz o que ACONTECE primeiro, e o modo
+      // parado na coluna depois: "Proporcional à Renda" prometia uma divisao
+      // que nunca foi cobrada de ninguém.
       case "proportional":
-        return "Proporcional à Renda";
+        return "Divisão Igual (modo antigo)";
       default:
         return type;
     }
@@ -381,60 +384,6 @@ export default function ExpenseGroupsPage() {
     if (!user) return null;
     const member = group.members?.find((m) => m.user.id === user.id);
     return member?.role || null;
-  };
-
-  const handleCalculateProportions = async (group: ExpenseGroup) => {
-    setLoadingProportions(true);
-    try {
-      const response = await fetch("/api/expense-groups/proportions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ group_id: group.id }),
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        toast.success("Proporções calculadas com sucesso!");
-        setProportions(data.proportions || []);
-        setSelectedGroup(group);
-        setShowProportions(true);
-      } else {
-        toast.error(data.error || "Erro ao calcular proporções");
-      }
-    } catch (error) {
-      console.error("Calculate proportions error:", error);
-      toast.error("Erro ao calcular proporções");
-    } finally {
-      setLoadingProportions(false);
-    }
-  };
-
-  const handleViewProportions = async (group: ExpenseGroup) => {
-    setLoadingProportions(true);
-    try {
-      const response = await fetch(
-        `/api/expense-groups/proportions?group_id=${group.id}`
-      );
-      const data = await response.json();
-
-      if (response.ok) {
-        setProportions(data.proportions || []);
-        setSelectedGroup(group);
-        setShowProportions(true);
-
-        if (data.needs_recalculation) {
-          toast.info("Proporções desatualizadas. Recomendamos recalcular.");
-        }
-      } else {
-        toast.error(data.error || "Erro ao buscar proporções");
-      }
-    } catch (error) {
-      console.error("View proportions error:", error);
-      toast.error("Erro ao buscar proporções");
-    } finally {
-      setLoadingProportions(false);
-    }
   };
 
   const handleAcceptInvitation = async (
@@ -737,14 +686,6 @@ export default function ExpenseGroupsPage() {
                         </div>
                       </div>
                     </SelectItem>
-                    <SelectItem value="proportional">
-                      <div>
-                        <div className="font-medium">Proporcional à Renda</div>
-                        <div className="text-sm text-muted-foreground">
-                          Automático baseado nas receitas
-                        </div>
-                      </div>
-                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -932,15 +873,20 @@ export default function ExpenseGroupsPage() {
                                   <UserPlus className="h-4 w-4 mr-2" />
                                   Convidar Membros
                                 </DropdownMenuItem>
-                                {group.default_split_type ===
-                                  "proportional" && (
-                                  <DropdownMenuItem
-                                    onClick={() => handleViewProportions(group)}
+                                {/* A divisao do grupo mora na aba Membros do
+                                    grupo (HMO-271). Sem gate por
+                                    `default_split_type`: TODO grupo divide de
+                                    algum jeito, e o antigo "Ver Proporções" so
+                                    aparecia no modo `proportional`, que esta
+                                    aposentado. */}
+                                <DropdownMenuItem asChild>
+                                  <Link
+                                    href={`/dashboard/expense-groups/${group.id}`}
                                   >
                                     <TrendingUp className="h-4 w-4 mr-2" />
-                                    Ver Proporções
-                                  </DropdownMenuItem>
-                                )}
+                                    Divisão do Grupo
+                                  </Link>
+                                </DropdownMenuItem>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem
                                   onClick={() => handleDeleteGroup(group)}
@@ -952,15 +898,14 @@ export default function ExpenseGroupsPage() {
                               </>
                             ) : (
                               <>
-                                {group.default_split_type ===
-                                  "proportional" && (
-                                  <DropdownMenuItem
-                                    onClick={() => handleViewProportions(group)}
+                                <DropdownMenuItem asChild>
+                                  <Link
+                                    href={`/dashboard/expense-groups/${group.id}`}
                                   >
                                     <TrendingUp className="h-4 w-4 mr-2" />
-                                    Ver Proporções
-                                  </DropdownMenuItem>
-                                )}
+                                    Divisão do Grupo
+                                  </Link>
+                                </DropdownMenuItem>
                                 <DropdownMenuItem
                                   onClick={() => handleLeaveGroup(group)}
                                   className="text-destructive"
@@ -1008,18 +953,19 @@ export default function ExpenseGroupsPage() {
                             Membros ({group.members?.length || 0})
                           </span>
                           <div className="flex gap-1">
-                            {group.default_split_type === "proportional" && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleViewProportions(group)}
-                                disabled={loadingProportions}
-                                className="flex items-center gap-1"
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              asChild
+                              className="flex items-center gap-1"
+                            >
+                              <Link
+                                href={`/dashboard/expense-groups/${group.id}`}
+                                aria-label="Divisão do grupo"
                               >
-                                <TrendingUp className="h-3 w-3" />
-                                {loadingProportions ? "..." : "%"}
-                              </Button>
-                            )}
+                                <TrendingUp className="h-3 w-3" />%
+                              </Link>
+                            </Button>
                             {isAdmin && (
                               <Button
                                 size="sm"
@@ -1036,7 +982,7 @@ export default function ExpenseGroupsPage() {
                         </div>
 
                         <div className="flex -space-x-2">
-                          {group.members?.slice(0, 4).map((member) => (
+                          {group.members?.slice(0, 4).map((member, idx) => (
                             <Avatar
                               key={member.id}
                               className="h-8 w-8 border-2 border-background"
@@ -1350,7 +1296,7 @@ export default function ExpenseGroupsPage() {
             <CardHeader>
               <CardTitle>Editar Grupo</CardTitle>
               <CardDescription>
-                Altere as informações do grupo &quot;{selectedGroup.name}&quot;
+                Altere as informações do grupo "{selectedGroup.name}"
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -1443,16 +1389,6 @@ export default function ExpenseGroupsPage() {
                           <div className="font-medium">Por Despesa</div>
                           <div className="text-sm text-muted-foreground">
                             Definir para cada gasto
-                          </div>
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="proportional">
-                        <div>
-                          <div className="font-medium">
-                            Proporcional à Renda
-                          </div>
-                          <div className="text-sm text-muted-foreground">
-                            Automático baseado nas receitas
                           </div>
                         </div>
                       </SelectItem>
@@ -1605,147 +1541,6 @@ export default function ExpenseGroupsPage() {
         </div>
       )}
 
-      {/* Proportions Modal */}
-      {showProportions && selectedGroup && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <Card className="w-full max-w-2xl max-h-[80vh] overflow-y-auto">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <TrendingUp className="h-5 w-5" />
-                Divisão Proporcional - {selectedGroup.name}
-              </CardTitle>
-              <CardDescription>
-                Baseado nas receitas do mês atual (realizadas + previstas)
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {proportions.length > 0 ? (
-                  <div className="space-y-3">
-                    {proportions.map((prop, index) => {
-                      // Buscar dados do membro nos dados do grupo
-                      const member = selectedGroup.members?.find(
-                        (m) => m.id === prop.member_id
-                      );
-                      return (
-                        <div
-                          key={prop.member_id || index}
-                          className="flex items-center justify-between p-3 bg-muted rounded-lg"
-                        >
-                          <div className="flex items-center gap-3">
-                            <Avatar className="h-8 w-8">
-                              <AvatarImage src={member?.user?.avatar_url} />
-                              <AvatarFallback className="text-xs">
-                                {member?.user?.full_name?.charAt(0) || "?"}
-                              </AvatarFallback>
-                            </Avatar>
-                            <div>
-                              <div className="font-medium">
-                                {member?.user?.full_name ||
-                                  "Membro desconhecido"}
-                                {member?.role === "admin" && (
-                                  <Crown className="h-3 w-3 text-warning inline ml-1" />
-                                )}
-                              </div>
-                              {prop.total_income && (
-                                <div className="text-sm text-muted-foreground">
-                                  Renda: R${" "}
-                                  {Number(prop.total_income).toLocaleString(
-                                    "pt-BR",
-                                    { minimumFractionDigits: 2 }
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <div className="font-bold text-lg">
-                              {Number(prop.proportion_percentage).toFixed(1)}%
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              {new Date(prop.calculated_at).toLocaleDateString(
-                                "pt-BR"
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-
-                    <div className="mt-6 pt-4 border-t">
-                      <div className="flex items-center justify-between text-sm text-muted-foreground">
-                        <span>Total de membros ativos:</span>
-                        <span>{proportions.length}</span>
-                      </div>
-                      <div className="flex items-center justify-between text-sm text-muted-foreground">
-                        <span>Soma dos percentuais:</span>
-                        <span>
-                          {proportions
-                            .reduce(
-                              (sum, p) => sum + Number(p.proportion_percentage),
-                              0
-                            )
-                            .toFixed(1)}
-                          %
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="flex gap-2 pt-4">
-                      <Button
-                        onClick={() =>
-                          handleCalculateProportions(selectedGroup)
-                        }
-                        disabled={loadingProportions}
-                        className="flex items-center gap-2"
-                      >
-                        <Calculator className="h-4 w-4" />
-                        {loadingProportions ? "Calculando..." : "Recalcular"}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => setShowProportions(false)}
-                      >
-                        Fechar
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-center py-8">
-                    <Calculator className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                    <h3 className="text-lg font-medium mb-2">
-                      Nenhuma proporção calculada
-                    </h3>
-                    <p className="text-muted-foreground mb-6">
-                      Calcule as proporções baseadas nas receitas dos membros
-                    </p>
-                    <div className="flex gap-2 justify-center">
-                      <Button
-                        onClick={() =>
-                          handleCalculateProportions(selectedGroup)
-                        }
-                        disabled={loadingProportions}
-                        className="flex items-center gap-2"
-                      >
-                        <Calculator className="h-4 w-4" />
-                        {loadingProportions
-                          ? "Calculando..."
-                          : "Calcular Proporções"}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => setShowProportions(false)}
-                      >
-                        Fechar
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
     </div>
   );
 }

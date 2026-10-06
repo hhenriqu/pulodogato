@@ -1,0 +1,53 @@
+{
+  "//": [
+    "A SECAO e a LINHA da lista das telas de movimentacao (HMO-287).",
+    "",
+    "Compila components/movimentacoes/SecaoDaTela.tsx para o teste renderizar o",
+    "componente de verdade, e nao uma copia da marcacao dele. Mesmo desenho do",
+    "tsconfig.cartoes-da-tela-test.json.",
+    "",
+    "SecaoDaTela.tsx mora em arquivo separado de TelaDeMovimentacao.tsx por causa",
+    "deste build: o container importa `next/navigation`, que nao roda no node, e",
+    "o import derrubaria o teste antes da primeira assercao.",
+    "",
+    "lib/fatura-do-cartao.ts entra porque `caminhoDoCartaoNoMes` e quem monta o",
+    "`href` da linha de fatura -- e o `?mes=AAAA-MM` e uma das coisas que este",
+    "teste existe para afirmar. Ele arrasta lib/offline-leitura.ts (tipo de",
+    "`estadoDaTela`) e types/financial.ts.",
+    "",
+    "O resolve-aliases roda com --espelha-raiz porque card.tsx importa",
+    "lib/utils.ts pelo alias @/, e o resolve-next-subpaths porque a linha de",
+    "fatura e um `next/link` -- no node o especificador precisa da extensao.",
+    "",
+    "lib/acoes-da-linha.ts e lib/retorno-do-lancamento.ts entraram na HMO-301: a",
+    "secao tira os botoes das funcoes de la, e o TESTE importa `caminhoDeEdicao`",
+    "de la tambem -- um esboco de href faria a assercao medir a propria sonda."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-secao-da-tela",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
+  },
+  "include": [
+    "../components/movimentacoes/SecaoDaTela.tsx",
+    "../components/ui/card.tsx",
+    "../lib/acoes-da-linha.ts",
+    "../lib/fatura-do-cartao.ts",
+    "../lib/offline-leitura.ts",
+    "../lib/retorno-do-lancamento.ts",
+    "../lib/telas-de-movimentacao.ts",
+    "../lib/utils.ts"
+  ]
+}

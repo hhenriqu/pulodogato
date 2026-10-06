@@ -1,0 +1,21 @@
+{
+  "//": "Build so do teste de lib/acerto-em-lancamento.ts. Ela importa dinheiro.ts (catalogo de moeda), cambio.ts (valorEmReais) e settlement.ts (toCents/toReais) pelo alias @/, e o tsc resolve o alias por `paths` mas NAO o reescreve no JS emitido -- por isso o npm script roda scripts/resolve-aliases.mjs depois. Sem ele o node morre com ERR_MODULE_NOT_FOUND no primeiro import.",
+  "compilerOptions": {
+    "outDir": "../.tmp-acerto-em-lancamento",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
+  },
+  "include": [
+    "../lib/acerto-em-lancamento.ts"
+  ]
+}

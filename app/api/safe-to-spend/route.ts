@@ -15,14 +15,42 @@
 // app diria que ha mais dinheiro livre do que ha -- o pior sentido para errar.
 // E best-effort de proposito: se a materializacao falhar, e melhor devolver o
 // numero com as linhas que existem do que devolver 500.
+//
+// A LINHA DE GRUPO ENTRA PELA MINHA PARTE (HMO-306)
+// -------------------------------------------------
+// Esta foi a QUARTA leitura do «Total de contas», e a ultima a ser consertada.
+// Ate a HMO-306 ela nao chamava `parteConfiguradaDoMembro` nem trazia
+// `group_id` no `select`: a minha conta de grupo de R$ 1.000,00 era descontada
+// CHEIA de um grupo que me cobra R$ 300,00. Ela subestimava o quanto se pode
+// gastar em R$ 700,00 -- errando para o lado seguro, mas por acidente: ela
+// simplesmente nao sabia que havia o que dividir.
+//
+// O FILTRO DE `user_id` NAO MUDOU, e a diferenca para a tela de Despesas e
+// deliberada. La a HMO-303 trocou `user_id = eu` por
+// `user_id = eu OR group_id IS NOT NULL`, porque LISTAR a conta que o outro
+// membro lancou e informacao que faltava. Aqui a pergunta e "quanto EU posso
+// gastar", e a parte do outro ja e contada pela parte DELE: trazer a linha
+// dele para dentro desta soma descontaria o mesmo dinheiro duas vezes, uma em
+// cada carteira.
+//
+// E O DESCONHECIDO VALE O VALOR CHEIO. Grupo cujos membros a RLS nao entregou
+// => nenhum peso => `parteConfiguradaDoMembro` devolve o valor inteiro. Aqui
+// essa regra importa mais do que em qualquer outra leitura do app: custo fixo
+// subestimado e o app PROMETENDO dinheiro que nao existe.
 
 import { createClient } from "@/utils/supabase/server";
 import { NextResponse } from "next/server";
 import { today } from "@/lib/recurrence";
 import { materializarAgenda } from "@/lib/services/scheduled";
 import {
+  montarParticipantesPorGrupo,
+  parteConfiguradaDoMembro,
+  type ParticipantesPorGrupo,
+} from "@/lib/parte-do-grupo";
+import {
   calcularQuantoPossoGastar,
   fimDoMes,
+  type FaturaParaGastar,
   type PrevistaParaGastar,
   type MetaParaGastar,
 } from "@/lib/safe-to-spend";
@@ -32,10 +60,24 @@ interface LinhaPrevista {
   amount: number | string;
   due_date: string;
   notes: string | null;
+  /**
+   * LOAD-BEARING (HMO-306). Sem ele nada depois daqui sabe que havia o que
+   * dividir, e a linha de grupo volta a ser descontada cheia -- sem erro, sem
+   * log e com um numero menor e plausivel na tela.
+   */
+  group_id: string | null;
   recurring_rule:
     | { transaction_type: string }
     | { transaction_type: string }[]
     | null;
+}
+
+/** Uma linha de `card_invoice_lines`, do jeito que o select acima a pede. */
+interface LinhaDeFatura {
+  account_id: string;
+  invoice_month: string;
+  invoice_due_date: string | null;
+  invoice_amount: number | string | null;
 }
 
 interface LinhaMeta {
@@ -91,7 +133,7 @@ export async function GET() {
     const { data: previstas, error: erroPrevistas } = await supabase
       .from("scheduled_transactions")
       .select(
-        "id, amount, due_date, notes, recurring_rule:recurring_rules(transaction_type)"
+        "id, amount, due_date, notes, group_id, recurring_rule:recurring_rules(transaction_type)"
       )
       .eq("user_id", user.id)
       .eq("status", "pending")
@@ -105,6 +147,57 @@ export async function GET() {
       );
     }
 
+    // ------------------------------------------------------------------
+    // OS PESOS DO GRUPO (HMO-306)
+    // ------------------------------------------------------------------
+    // `id, user_id, percentage` SAO LOAD-BEARING, pelas mesmas tres razoes das
+    // cinco rotas da HMO-303:
+    //
+    //   * sem `percentage`, o grupo 70/30 volta a dividir IGUAL -- sem erro e
+    //     sem log, so com o numero errado;
+    //   * sem `user_id` a linha nao e participante de nada, porque
+    //     `ratearPorPeso` indexa o resultado por ele;
+    //   * sem `id` o desempate do centavo da sobra cai no fallback de
+    //     `user_id`, e duas leituras ordenadas por chaves diferentes discordam
+    //     em R$ 0,01 -- acima da tolerancia de R$ 0,004 do controle da HMO-298.
+    //
+    // `ORDER BY` NAO aparece aqui de proposito: quem fixa a ordem e
+    // `montarParticipantesPorGrupo`, uma vez e num lugar que a suite alcanca.
+    // Seis `ORDER BY` espalhados pelas consultas seriam seis lugares para
+    // esquecer, e o esquecido nao da erro nenhum -- da um centavo.
+    const gruposEnvolvidos = Array.from(
+      new Set(
+        ((previstas ?? []) as LinhaPrevista[])
+          .map((p) => p.group_id)
+          .filter((id): id is string => Boolean(id))
+      )
+    );
+
+    let pesosPorGrupo: ParticipantesPorGrupo = new Map();
+
+    if (gruposEnvolvidos.length > 0) {
+      const { data: membros, error: erroMembros } = await supabase
+        .from("group_members")
+        .select("id, group_id, user_id, percentage, status")
+        .in("group_id", gruposEnvolvidos)
+        .eq("status", "active");
+
+      if (erroMembros) {
+        // Sem os pesos, `parteConfiguradaDoMembro` mantem o valor CHEIO -- o
+        // comportamento de antes da HMO-306, que erra para CIMA. E a direcao
+        // certa do erro justamente nesta rota: um custo fixo subestimado aqui
+        // faz o app prometer dinheiro que nao sobra. Por isso tambem nao ha
+        // flag de "indisponivel" como a das metas e a das faturas: o modo de
+        // falha ja e o conservador, e nao ha afirmacao falsa a esconder.
+        console.error(
+          "Posso gastar seguiu descontando a parte do grupo CHEIA:",
+          erroMembros
+        );
+      } else {
+        pesosPorGrupo = montarParticipantesPorGrupo(membros ?? []);
+      }
+    }
+
     // A direcao (sai ou entra) vem do tipo da REGRA, nao da ocorrencia --
     // `scheduled_transactions.amount` e sempre positivo por CHECK. Mesma
     // leitura da /api/projection; conta avulsa nao tem regra e e despesa.
@@ -116,7 +209,15 @@ export async function GET() {
 
       return {
         id: p.id,
-        amount: p.amount,
+        // A MINHA PARTE, e nao o valor cheio (HMO-306). Linha fora de grupo
+        // atravessa sem mudanca: `parteConfiguradaDoMembro` devolve o valor
+        // inteiro quando `group_id` e nulo.
+        amount: parteConfiguradaDoMembro(
+          p.amount,
+          p.group_id,
+          pesosPorGrupo,
+          user.id
+        ),
         due_date: p.due_date,
         notes: p.notes,
         tipo: regra?.transaction_type === "income" ? "income" : "expense",
@@ -202,6 +303,76 @@ export async function GET() {
 
     const semReserva = metasIndisponiveis || aportesIndisponiveis;
 
+    // ------------------------------------------------------------------
+    // AS FATURAS, PARA SEPARAR O QUE ESTE MES COBRA (HMO-290)
+    // ------------------------------------------------------------------
+    // A armadilha 10 do calculo. O que ele precisa daqui e so a parte DIFERIDA
+    // da divida: quanto de cada cartao vence depois do fim do mes.
+    //
+    // `invoice_month >= o mes corrente` basta, e nao e chute: o vencimento de
+    // uma fatura e, no maximo, no mes seguinte ao dela
+    // (`card_invoice_due_date` empurra um mes quando o vencimento vem antes do
+    // fechamento), entao fatura de mes passado nunca vence depois do fim deste
+    // mes. Sem esse teto a consulta traria a vida inteira do cartao.
+    //
+    // O recorte e `account_id IN (os cartoes do usuario)`, e NAO
+    // `user_id = user.id`: `current_balance` e mantido pelo trigger
+    // `update_account_balance`, que soma por CONTA e ignora quem lancou. A
+    // divida de onde se subtrai inclui a compra de grupo que outra pessoa
+    // lancou no meu cartao, e filtrar por `user_id` deixaria a parte diferida
+    // dela de fora -- o mesmo recorte dos dois lados, ou a subtracao nao fecha.
+    const idsDosCartoes = (contas ?? [])
+      .filter((c) => c.account_type === "credit_card")
+      .map((c) => c.id);
+
+    const { data: linhasDeFatura, error: erroFaturas } = idsDosCartoes.length
+      ? await supabase
+          .from("card_invoice_lines")
+          .select("account_id, invoice_month, invoice_due_date, invoice_amount")
+          .in("account_id", idsDosCartoes)
+          .gte("invoice_month", inicioDoMes)
+      : { data: [], error: null };
+
+    // Falhar aqui NAO derruba o card, pelo mesmo critério das metas -- mas o
+    // efeito e o oposto, e vale ser explicito: sem as faturas, `faturas: []`
+    // faz `diferida` ser 0 e a divida INTEIRA voltar a ser descontada, que e o
+    // comportamento de antes da HMO-290 e o lado conservador do erro.
+    //
+    // O que nao se pode fazer e calar: a tela mostraria "R$ 0,00 em parcelas
+    // futuras" ao lado de um numero que desconta justamente as parcelas
+    // futuras -- duas afirmacoes que se contradizem, e a errada e a que parece
+    // tranquilizadora. A flag existe para a tela dizer que nao deu para
+    // separar.
+    const semDiferido = Boolean(erroFaturas);
+    if (erroFaturas) {
+      console.error(
+        "Posso gastar seguiu descontando a divida INTEIRA dos cartoes:",
+        erroFaturas
+      );
+    }
+
+    // Agrega por (cartao, mes da fatura) -- a mesma agregacao que
+    // `GET /api/card-invoices` faz, e pela mesma razao: em que fatura a compra
+    // cai e decidido pela view, nunca recalculado aqui.
+    const porFatura = new Map<string, FaturaParaGastar>();
+
+    for (const linha of (linhasDeFatura ?? []) as LinhaDeFatura[]) {
+      const chave = `${linha.account_id}:${linha.invoice_month}`;
+      const atual = porFatura.get(chave);
+
+      if (atual) {
+        atual.total = Number(atual.total) + Number(linha.invoice_amount ?? 0);
+        continue;
+      }
+
+      porFatura.set(chave, {
+        account_id: linha.account_id,
+        invoice_month: linha.invoice_month,
+        due_date: linha.invoice_due_date ?? null,
+        total: Number(linha.invoice_amount ?? 0),
+      });
+    }
+
     const metas: MetaParaGastar[] = (
       semReserva ? [] : ((metasBrutas ?? []) as LinhaMeta[])
     ).map(
@@ -223,10 +394,15 @@ export async function GET() {
       // "R$ 0,00" -- zero seria uma afirmacao sobre o dinheiro do usuario que
       // a rota nao tem como sustentar.
       reserva_indisponivel: semReserva,
+      // Idem para a parte diferida da divida de cartao (HMO-290): sem as
+      // faturas, `dividaDiferida` vem 0 porque a divida inteira voltou a ser
+      // descontada -- e nao porque nao ha parcela futura.
+      diferido_indisponivel: semDiferido,
       safe_to_spend: calcularQuantoPossoGastar({
         contas: contas ?? [],
         previstas: paraCalculo,
         metas,
+        faturas: Array.from(porFatura.values()),
         hoje,
       }),
     });

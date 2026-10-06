@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
 import { User } from "@supabase/supabase-js";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CampoDeValor } from "@/components/ui/campo-de-valor";
+import { CampoDeData } from "@/components/ui/campo-de-data";
 import {
   Card,
   CardContent,
@@ -44,9 +45,8 @@ import {
   CheckCircle,
   Clock,
 } from "lucide-react";
-import SplitSuggestions, {
-  type SplitSuggestion,
-} from "@/components/financial/SplitSuggestions";
+import SplitSuggestions from "@/components/financial/SplitSuggestions";
+import { partesParaGravar } from "@/lib/sugestao-de-divisao";
 import { CartaoOrcamentoGrupo } from "@/components/financial/CartaoOrcamentoGrupo";
 import {
   orcamentoDoGrupo,
@@ -66,6 +66,18 @@ import { cotacaoDigitada, taxaParaGravar, valorEmReais } from "@/lib/cambio";
 import { PixDoMembro, useChavesPixDoGrupo } from "@/components/grupos/PixDoMembro";
 import { PainelDoGrupo } from "@/components/grupos/PainelDoGrupo";
 import {
+  DivisaoDoGrupo,
+  type MembroDaDivisao,
+} from "@/components/grupos/DivisaoDoGrupo";
+import { FechamentoDoMes } from "@/components/grupos/FechamentoDoMes";
+import { today } from "@/lib/recurrence";
+import {
+  mesDaData,
+  recortarPrevistas,
+  recortarRealizado,
+  rotuloDoMes,
+} from "@/lib/periodo-do-grupo";
+import {
   acertoNaMoedaDaViagem,
   avisoDeSobra,
   avisoSemConversao,
@@ -73,7 +85,17 @@ import {
   moedaSugeridaDaDespesa,
   rotuloDaConversao,
   saldoNaMoedaDaViagem,
+  type AcertoParaGravar,
 } from "@/lib/moeda-do-grupo";
+import {
+  DialogoDeAcerto,
+  type ContaParaEscolher,
+} from "@/components/grupos/DialogoDeAcerto";
+import { direcaoDoAcerto, type DirecaoDoAcerto } from "@/lib/acerto-em-lancamento";
+import {
+  comoEuVejoOAcerto,
+  type AcertoVistoPorMim,
+} from "@/lib/perna-da-contraparte";
 
 interface ExpenseGroup {
   id: string;
@@ -231,6 +253,30 @@ interface Settlement {
   to_user: { id: string; full_name: string; avatar_url?: string };
   /** A RLS so deixa desfazer quem registrou; a API ja resolve isto. */
   can_delete: boolean;
+  /**
+   * Os ids CRUS, ao lado dos embeds (HMO-245, fase 12).
+   *
+   * E por eles que `comoEuVejoOAcerto` decide a direcao. `from_user.id` nao
+   * serve: a RLS de `profiles` descarta o embed de quem nao tem o perfil
+   * visivel -- ser do mesmo grupo nao da acesso ao perfil do outro --, e a
+   * direcao sairia como "nao sou parte" para quem e parte.
+   */
+  from_user_id: string;
+  to_user_id: string;
+  created_by: string;
+  /**
+   * A MINHA perna deste acerto, ou `null` se eu ainda nao lancei (fase 12).
+   *
+   * Ela e o unico dado que distingue "ainda nao lancado na sua conta" de "nao
+   * aconteceu", e e por isso que ela vem do servidor e nao se deduz da tela: o
+   * acerto aparece igual nas duas situacoes.
+   */
+  minha_perna: {
+    id: string;
+    amount: number;
+    account_id: string | null;
+    transaction_type: string | null;
+  } | null;
 }
 
 /**
@@ -283,6 +329,19 @@ export default function GroupDetailPage() {
   // O mes que a RESPOSTA trouxe, nao o que a tela pediu: e ele que rotula a
   // barra, e a tela nao pede mes nenhum (a rota resolve o corrente).
   const [mesDoOrcamento, setMesDoOrcamento] = useState("");
+  /**
+   * O mes da aba de Despesas (HMO-248). UM seletor para a aba inteira.
+   *
+   * Vive aqui, e nao dentro do cartao de fechamento, porque e ele que recorta
+   * tambem as listas "Previstas" e "Despesas" abaixo. Antes nada recortava: o
+   * cartao Previstas somava TODAS as parcelas materializadas da despesa fixa --
+   * o aluguel de outubro, de novembro e de dezembro no mesmo total -- e a lista
+   * de realizadas era presa no mes de hoje.
+   *
+   * `today()` e nao `new Date()`: a Vercel roda em UTC, e das 21:00 do dia 31
+   * em diante o mes do servidor ja virou enquanto o do usuario nao.
+   */
+  const [mesDoGrupo, setMesDoGrupo] = useState(() => mesDaData(today()));
   // Sobra que nao pertence a ninguem. Zero em grupo saudavel.
   const [residual, setResidual] = useState(0);
   // Nasce em real nos dois campos e sem cotacao: e o estado correto enquanto a
@@ -301,6 +360,55 @@ export default function GroupDetailPage() {
   // pagamentos repetidos de proposito (duas parcelas de R$ 50 sao um fato
   // possivel), entao a protecao contra o clique acidental e aqui.
   const [settling, setSettling] = useState<string | null>(null);
+  /**
+   * O acerto que o dialogo esta pedindo a conta (HMO-245, fase 11).
+   *
+   * `null` = dialogo fechado. Guarda o acerto JA MONTADO por
+   * `acertoNaMoedaDaViagem` -- valor, moeda e cotacao -- porque e a escolha
+   * "em reais" ou "na moeda da viagem" do botao clicado que o define, e ela nao
+   * pode ser recalculada na hora de confirmar: a cotacao de hoje pode ter sido
+   * recarregada no meio, e o valor confirmado seria outro que o mostrado.
+   */
+  const [acertoEmCurso, setAcertoEmCurso] = useState<{
+    chave: string;
+    direcao: DirecaoDoAcerto;
+    fromUserId: string;
+    toUserId: string;
+    nomeDaContraparte: string | null;
+    acerto: AcertoParaGravar;
+  } | null>(null);
+  /**
+   * O acerto JA REGISTRADO que estou lancando na minha conta (fase 12).
+   *
+   * Estado separado de `acertoEmCurso` de proposito: ali o acerto ainda nao
+   * existe e o POST vai criar a quitacao; aqui ele existe, tem id, e o pedido
+   * so grava a perna. Um estado so, com um booleano "ja existe?", e o desenho
+   * em que um defeito de fluxo registra um acerto DUPLICADO em vez de lancar o
+   * que estava na tela.
+   *
+   * O valor, a moeda e a cotacao vem da QUITACAO -- a 026 congelou as duas
+   * ultimas em `settled_on` --, e nunca da cotacao de hoje: a contraparte
+   * confirma dias depois, e pela taxa de hoje a perna dela nao fecharia com a
+   * do outro lado.
+   */
+  const [pernaEmCurso, setPernaEmCurso] = useState<{
+    settlementId: string;
+    direcao: DirecaoDoAcerto;
+    nomeDaContraparte: string | null;
+    valor: number;
+    moeda: string;
+    cotacao: number;
+  } | null>(null);
+  /** O id do acerto cuja perna esta em voo, para travar a linha DELE so. */
+  const [pernaSalvando, setPernaSalvando] = useState<string | null>(null);
+  /**
+   * As contas do usuario, para o campo do dialogo.
+   *
+   * Carregadas uma vez com o resto da tela, e nao ao abrir o dialogo: abrir e o
+   * momento em que a pessoa quer escolher, e um seletor que chega vazio e
+   * preenche depois e indistinguivel de "voce nao tem conta".
+   */
+  const [contas, setContas] = useState<ContaParaEscolher[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("expenses");
 
@@ -322,7 +430,7 @@ export default function GroupDetailPage() {
     cotacao: "",
   });
   const [selectedSplitSuggestion, setSelectedSplitSuggestion] =
-    useState<SplitSuggestion | null>(null);
+    useState<any>(null);
 
   // Estados dos accordions
   // "scheduled" comece aberta: a despesa fixa de grupo era invisivel nesta tela
@@ -332,11 +440,45 @@ export default function GroupDetailPage() {
     "current",
   ]);
 
-  // Os sete `load*` abaixo sao `useCallback` porque `loadData` chama todos, e
-  // com funcao recriada a cada render a dependencia dele nunca estabilizaria --
-  // o efeito voltaria a rodar em cada render e recarregaria a tela em laco. As
-  // dependencias sao `groupId` (string) e `router` (estavel no App Router).
-  const loadGroup = useCallback(async () => {
+  const supabase = createClient();
+
+  useEffect(() => {
+    loadData();
+  }, [groupId]);
+
+  const loadData = async () => {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        router.push("/login");
+        return;
+      }
+
+      setUser(user);
+
+      // Carregar dados do grupo
+      await Promise.all([
+        loadGroup(),
+        loadTransactions(),
+        loadScheduled(),
+        loadBalances(),
+        loadTransfers(),
+        loadSettlements(),
+        loadOrcamento(),
+        loadContas(),
+      ]);
+    } catch (error) {
+      console.error("Error loading data:", error);
+      toast.error("Erro ao carregar dados do grupo");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadGroup = async () => {
     const response = await fetch(`/api/expense-groups/${groupId}`);
     const data = await response.json();
 
@@ -346,7 +488,7 @@ export default function GroupDetailPage() {
       toast.error(data.error || "Erro ao carregar grupo");
       router.push("/dashboard/expense-groups");
     }
-  }, [groupId, router]);
+  };
 
   /**
    * Aprova ou recusa quem entrou com o codigo do grupo (HMO-190). Em grupo
@@ -384,7 +526,7 @@ export default function GroupDetailPage() {
     }
   };
 
-  const loadTransactions = useCallback(async () => {
+  const loadTransactions = async () => {
     const response = await fetch(`/api/expense-groups/${groupId}/transactions`);
     const data = await response.json();
 
@@ -393,11 +535,11 @@ export default function GroupDetailPage() {
     } else {
       console.error("Error loading transactions:", data.error);
     }
-  }, [groupId]);
+  };
 
   // A despesa "fixa" do grupo nao existe em group_transactions ate a baixa da
   // conta prevista -- ate entao ela era invisivel aqui (HMO-177).
-  const loadScheduled = useCallback(async () => {
+  const loadScheduled = async () => {
     const response = await fetch(`/api/expense-groups/${groupId}/scheduled`);
     const data = await response.json();
 
@@ -406,9 +548,9 @@ export default function GroupDetailPage() {
     } else {
       console.error("Error loading scheduled:", data.error);
     }
-  }, [groupId]);
+  };
 
-  const loadBalances = useCallback(async () => {
+  const loadBalances = async () => {
     const response = await fetch(`/api/expense-groups/${groupId}/balances`);
     const data = await response.json();
 
@@ -429,9 +571,9 @@ export default function GroupDetailPage() {
     } else {
       console.error("Error loading balances:", data.error);
     }
-  }, [groupId]);
+  };
 
-  const loadTransfers = useCallback(async () => {
+  const loadTransfers = async () => {
     const response = await fetch(`/api/expense-groups/${groupId}/transfers`);
     const data = await response.json();
 
@@ -445,7 +587,7 @@ export default function GroupDetailPage() {
     } else {
       console.error("Error loading transfers:", data.error);
     }
-  }, [groupId]);
+  };
 
   /**
    * O teto da viagem no mes corrente (HMO-180).
@@ -465,7 +607,7 @@ export default function GroupDetailPage() {
    * dois casos nao ha barra a mostrar, e um toast de erro sobre um cartao
    * opcional so assustaria. O console guarda o motivo.
    */
-  const loadOrcamento = useCallback(async () => {
+  const loadOrcamento = async () => {
     const response = await fetch(`/api/budgets?group_id=${groupId}`);
     const data = await response.json();
 
@@ -475,9 +617,31 @@ export default function GroupDetailPage() {
     } else {
       console.error("Error loading orçamento:", data.error);
     }
-  }, [groupId]);
+  };
 
-  const loadSettlements = useCallback(async () => {
+  /**
+   * As contas do usuario, para o campo de conta do dialogo de acerto.
+   *
+   * Falha em silencio no console, como `loadOrcamento`: a lista so e usada
+   * dentro do dialogo, e um toast de erro no carregamento da tela apontaria
+   * para um campo que a pessoa nem abriu. O dialogo diz o que fazer quando nao
+   * ha conta elegivel.
+   */
+  const loadContas = async () => {
+    try {
+      const response = await fetch("/api/financial-accounts");
+      const data = await response.json();
+      if (response.ok) {
+        setContas(data.accounts || data || []);
+      } else {
+        console.error("Error loading contas:", data.error);
+      }
+    } catch (error) {
+      console.error("Error loading contas:", error);
+    }
+  };
+
+  const loadSettlements = async () => {
     const response = await fetch(`/api/expense-groups/${groupId}/settlements`);
     const data = await response.json();
 
@@ -486,58 +650,7 @@ export default function GroupDetailPage() {
     } else {
       console.error("Error loading settlements:", data.error);
     }
-  }, [groupId]);
-
-  // `loadData` mora DEPOIS dos sete, e nao antes como estava: o array de
-  // dependencias e avaliado durante o render, entao com ele la em cima o
-  // `loadGroup` ainda nao existia -- `ReferenceError`, nao aviso de lint. O
-  // `tsc` acusou (TS2448) na primeira tentativa.
-  const loadData = useCallback(async () => {
-    try {
-      // Dentro do callback para nao virar dependencia dele: o resto da tela
-      // conversa com as rotas, nao com o Supabase direto.
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        router.push("/login");
-        return;
-      }
-
-      setUser(user);
-
-      // Carregar dados do grupo
-      await Promise.all([
-        loadGroup(),
-        loadTransactions(),
-        loadScheduled(),
-        loadBalances(),
-        loadTransfers(),
-        loadSettlements(),
-        loadOrcamento(),
-      ]);
-    } catch (error) {
-      console.error("Error loading data:", error);
-      toast.error("Erro ao carregar dados do grupo");
-    } finally {
-      setLoading(false);
-    }
-  }, [
-    router,
-    loadGroup,
-    loadTransactions,
-    loadScheduled,
-    loadBalances,
-    loadTransfers,
-    loadSettlements,
-    loadOrcamento,
-  ]);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  };
 
   /**
    * Registra a transferencia sugerida como paga.
@@ -574,7 +687,53 @@ export default function GroupDetailPage() {
       return;
     }
 
-    setSettling(`${transfer.from.id}->${transfer.to.id}`);
+    // O CLIQUE NAO GRAVA MAIS NADA -- ele abre o dialogo (HMO-245, fase 11).
+    //
+    // Falta UM dado que ninguem pode adivinhar: a conta por onde o Pix passou.
+    // Enquanto o acerto nao gerava lancamento, nao faltava nada e o clique
+    // bastava; era por isso que o botao registrava a quitacao e o dinheiro nao
+    // se mexia em lugar nenhum.
+    const direcao = direcaoDoAcerto({
+      fromUserId: transfer.from.id,
+      toUserId: transfer.to.id,
+      userId: user?.id || "",
+    });
+
+    // Nao alcancavel pela tela: o botao so aparece para quem e parte (`souParte`
+    // no JSX). Tratado porque a alternativa e um dialogo sem direcao, que diria
+    // "saiu da conta" para quem esta recebendo.
+    if (!direcao) {
+      toast.error(
+        "Você só pode registrar um acerto em que paga ou recebe. Peça a quem participou."
+      );
+      return;
+    }
+
+    const contraparte = direcao === "recebi" ? transfer.from : transfer.to;
+
+    setAcertoEmCurso({
+      chave: `${transfer.from.id}->${transfer.to.id}`,
+      direcao,
+      fromUserId: transfer.from.id,
+      toUserId: transfer.to.id,
+      nomeDaContraparte: contraparte.full_name || null,
+      acerto,
+    });
+  };
+
+  /**
+   * Grava a quitacao E a perna de quem registra, com a conta escolhida.
+   *
+   * O `account_id` e o campo novo e e obrigatorio na rota: sem ele o POST volta
+   * 400. Esse acoplamento e deliberado -- um cliente que esquecesse a conta
+   * voltaria a registrar quitacao sem lancamento nenhum, que e o defeito que
+   * esta fase conserta, e ele nao tem sintoma na tela.
+   */
+  const registrarAcerto = async (contaId: string) => {
+    if (!acertoEmCurso) return;
+    const { acerto, chave, fromUserId, toUserId } = acertoEmCurso;
+
+    setSettling(chave);
     try {
       const response = await fetch(
         `/api/expense-groups/${groupId}/settlements`,
@@ -582,13 +741,14 @@ export default function GroupDetailPage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            from_user_id: transfer.from.id,
-            to_user_id: transfer.to.id,
+            from_user_id: fromUserId,
+            to_user_id: toUserId,
             // `amount` esta na moeda de `currency`, nunca em real -- a view faz
             // `amount * exchange_rate` para chegar ao que foi abatido.
             amount: acerto.amount,
             currency: acerto.currency,
             exchange_rate: acerto.exchange_rate,
+            account_id: contaId,
           }),
         }
       );
@@ -603,11 +763,16 @@ export default function GroupDetailPage() {
       // rapido precisa saber que ficou (ou sobrou) centavo, senao o saldo
       // teimoso da proxima tela nao tem explicacao.
       const sobra = avisoDeSobra(acerto);
+      // O nome da conta vem da RESPOSTA e nao do estado da tela: e a conta em
+      // que o lancamento caiu de verdade. Dizer "Acerto registrado" sozinho nao
+      // distingue o comportamento novo do antigo.
+      const onde = data.lancamento?.account_name
+        ? ` Lançado em ${data.lancamento.account_name}.`
+        : "";
       toast.success(
-        sobra
-          ? `Acerto registrado. ${sobra}`
-          : "Acerto registrado"
+        sobra ? `Acerto registrado.${onde} ${sobra}` : `Acerto registrado.${onde}`
       );
+      setAcertoEmCurso(null);
       await Promise.all([loadBalances(), loadTransfers(), loadSettlements()]);
     } catch (error) {
       console.error("Erro ao registrar acerto:", error);
@@ -630,11 +795,120 @@ export default function GroupDetailPage() {
         return;
       }
 
-      toast.success("Acerto desfeito");
+      // O AVISO VEM DA RESPOSTA (fase 12). A perna da contraparte sobrevive a
+      // este DELETE -- a RLS impede que ele a alcance, e isso e o certo: o
+      // dinheiro saiu da conta DELA. Sem dizer isso aqui, o lancamento dela
+      // fica nos livros para sempre, e quem desfaz e a unica pessoa que sabe,
+      // neste instante, que o acerto deixou de valer.
+      if (data.aviso) {
+        toast.success(`Acerto desfeito. ${data.aviso}`);
+      } else {
+        toast.success("Acerto desfeito");
+      }
       await Promise.all([loadBalances(), loadTransfers(), loadSettlements()]);
     } catch (error) {
       console.error("Erro ao desfazer acerto:", error);
       toast.error("Não foi possível desfazer o acerto");
+    }
+  };
+
+  /**
+   * Abre o dialogo da conta para um acerto JA REGISTRADO (HMO-245, fase 12).
+   *
+   * O passo que faltava: a RLS so deixa cada um lancar na propria conta, entao
+   * a perna da contraparte precisa da sessao DELA -- e da conta dela, que
+   * ninguem tem como adivinhar. Entre o registro e este clique, os dois lados
+   * veem estados diferentes do mesmo acerto, e e o rotulo da linha que diz qual.
+   */
+  const abrirLancamentoDaMinhaPerna = (s: Settlement, direcao: DirecaoDoAcerto) => {
+    const contraparte = direcao === "recebi" ? s.from_user : s.to_user;
+
+    setPernaEmCurso({
+      settlementId: s.id,
+      direcao,
+      nomeDaContraparte: contraparte?.full_name || null,
+      // Da QUITACAO, nao da tela: `amount` esta na moeda do pagamento e a
+      // cotacao e a congelada em `settled_on` (026).
+      valor: s.amount,
+      moeda: moedaDaViagem(s.currency),
+      cotacao: Number(s.exchange_rate ?? 1) || 1,
+    });
+  };
+
+  /** Grava a MINHA perna do acerto, com a conta escolhida. */
+  const lancarMinhaPerna = async (contaId: string) => {
+    if (!pernaEmCurso) return;
+    const { settlementId } = pernaEmCurso;
+
+    setPernaSalvando(settlementId);
+    try {
+      const response = await fetch(
+        `/api/expense-groups/${groupId}/settlements/${settlementId}/perna`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ account_id: contaId }),
+        }
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        toast.error(data.error || "Não foi possível lançar o acerto na sua conta");
+        return;
+      }
+
+      // O nome da conta vem da RESPOSTA: e a conta em que o lancamento caiu de
+      // verdade. "Lancado" sozinho nao distingue o caminho novo do antigo, que
+      // era a quitacao existir sem perna nenhuma deste lado.
+      const onde = data.lancamento?.account_name
+        ? ` Lançado em ${data.lancamento.account_name}.`
+        : "";
+      toast.success(`Acerto lançado na sua conta.${onde}`);
+      setPernaEmCurso(null);
+      // A lista TEM de recarregar: e `minha_perna` que muda o rotulo da linha,
+      // e sem isso a tela continuaria dizendo "ainda nao lancado na sua conta"
+      // em cima de um lancamento que acabou de cair.
+      await Promise.all([loadBalances(), loadTransfers(), loadSettlements()]);
+    } catch (error) {
+      console.error("Erro ao lancar a perna do acerto:", error);
+      toast.error("Não foi possível lançar o acerto na sua conta");
+    } finally {
+      setPernaSalvando(null);
+    }
+  };
+
+  /**
+   * Remove a MINHA perna, deixando a quitacao de pe (fase 12).
+   *
+   * O simetrico do lancamento, e o unico desfazer de quem nao registrou: a
+   * quitacao nao e dela para apagar. Quem registrou usa Desfazer, que leva a
+   * perna junto -- a rota recusa este caminho para ele, e diz por que.
+   */
+  const removerMinhaPerna = async (settlementId: string) => {
+    setPernaSalvando(settlementId);
+    try {
+      const response = await fetch(
+        `/api/expense-groups/${groupId}/settlements/${settlementId}/perna`,
+        { method: "DELETE" }
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        toast.error(data.error || "Não foi possível remover o lançamento");
+        return;
+      }
+
+      // Diz o que NAO aconteceu: "lancamento removido" sozinho e lido como
+      // "acerto desfeito", e a divida continua quitada no grupo.
+      toast.success(
+        "Lançamento removido da sua conta. O acerto continua registrado no grupo."
+      );
+      await Promise.all([loadBalances(), loadTransfers(), loadSettlements()]);
+    } catch (error) {
+      console.error("Erro ao remover a perna do acerto:", error);
+      toast.error("Não foi possível remover o lançamento");
+    } finally {
+      setPernaSalvando(null);
     }
   };
 
@@ -735,7 +1009,7 @@ export default function GroupDetailPage() {
 
     try {
       // Preparar dados da despesa
-      const expenseData: Record<string, unknown> = {
+      const expenseData: any = {
         ...expenseForm,
         amount: parseFloat(expenseForm.amount),
         currency: expenseForm.currency,
@@ -745,16 +1019,23 @@ export default function GroupDetailPage() {
       };
       delete expenseData.cotacao;
 
-      // Adicionar dados da sugestão selecionada se houver
+      // Adicionar dados da sugestão selecionada se houver.
+      //
+      // `partesParaGravar` tira a parte de 0%, e o filtro e OBRIGATORIO desde
+      // que a fase 7 ligou a sugestao configurada: `divisaoPorPorcentagem`
+      // recusa `percentage <= 0` ("Percentual inválido na divisão: 0,00%"),
+      // entao um grupo 100/0 ofereceria uma sugestao que a tela mostra certa e
+      // o POST recusa sempre. A tela continua listando o grupo inteiro; so o
+      // corpo do POST e recortado. Ver lib/sugestao-de-divisao.ts.
       if (selectedSplitSuggestion) {
         expenseData.split_type = selectedSplitSuggestion.type;
-        expenseData.custom_splits = selectedSplitSuggestion.splits.map(
-          (split) => ({
-            member_id: split.member_id,
-            percentage: split.percentage,
-            amount: split.amount,
-          })
-        );
+        expenseData.custom_splits = partesParaGravar(
+          selectedSplitSuggestion.splits
+        ).map((split: any) => ({
+          member_id: split.member_id,
+          percentage: split.percentage,
+          amount: split.amount,
+        }));
       }
 
       const response = await fetch(
@@ -848,36 +1129,10 @@ export default function GroupDetailPage() {
     );
   };
 
-  const groupTransactionsByPeriod = () => {
-    const now = new Date();
-    const currentMonth = now.getMonth();
-    const currentYear = now.getFullYear();
-
-    const groups = {
-      current: transactions.filter((t) => {
-        const date = new Date(t.transaction_date);
-        return (
-          date.getMonth() === currentMonth && date.getFullYear() === currentYear
-        );
-      }),
-      previous: transactions.filter((t) => {
-        const date = new Date(t.transaction_date);
-        const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
-        const prevYear = currentMonth === 0 ? currentYear - 1 : currentYear;
-        return date.getMonth() === prevMonth && date.getFullYear() === prevYear;
-      }),
-      older: transactions.filter((t) => {
-        const date = new Date(t.transaction_date);
-        const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
-        const prevYear = currentMonth === 0 ? currentYear - 1 : currentYear;
-        return (
-          date.getFullYear() < prevYear ||
-          (date.getFullYear() === prevYear && date.getMonth() < prevMonth)
-        );
-      }),
-    };
-
-    return groups;
+  const getUserRole = () => {
+    if (!user || !group) return null;
+    const member = group.members?.find((m) => m.user.id === user.id);
+    return member?.role || null;
   };
 
   if (loading) {
@@ -903,13 +1158,39 @@ export default function GroupDetailPage() {
     );
   }
 
-  const transactionGroups = groupTransactionsByPeriod();
+  // As duas listas da aba de Despesas, as duas no mes do seletor (HMO-248).
+  // O recorte e por prefixo de string, nao por `new Date(...).getMonth()`: a
+  // despesa do dia 1 caia no mes ANTERIOR em todo fuso negativo, o que inclui
+  // o celular de quem usa o app e exclui o CI. Ver lib/periodo-do-grupo.ts.
+  const despesasDoMes = recortarRealizado(transactions, mesDoGrupo);
+  const previstasDoMes = recortarPrevistas(scheduled, mesDoGrupo);
+  const rotuloDoMesDoGrupo = rotuloDoMes(mesDoGrupo);
 
   // Só o admin vê e responde os pedidos de entrada pelo código (HMO-190).
   const souAdmin =
     group.members?.some(
       (member) => member.user?.id === user?.id && member.role === "admin"
     ) ?? false;
+
+  /**
+   * Os membros que DIVIDEM a conta (HMO-245, fase 5).
+   *
+   * `status === "active"` e obrigatorio, nao higiene: o PUT de `split-config`
+   * confere o conjunto contra os membros ativos e recusa um que tenha alguem a
+   * mais. Quem saiu do grupo continua na lista acima (com o badge do status),
+   * entao passar `group.members` cru faria o botao Salvar devolver 400 sempre,
+   * num grupo de onde uma pessoa qualquer ja saiu.
+   *
+   * `percentage` vai cru: quem decide se o numero gravado da para aplicar e
+   * `divisaoDoPeriodo`, a mesma funcao do fechamento do mes.
+   */
+  const membrosDaDivisao: MembroDaDivisao[] = (group.members ?? [])
+    .filter((member) => member.status === "active")
+    .map((member) => ({
+      member_id: member.id,
+      nome: member.user?.full_name,
+      percentage: member.percentage,
+    }));
 
   return (
     <div className="container mx-auto py-6 space-y-6">
@@ -1069,10 +1350,26 @@ export default function GroupDetailPage() {
         </TabsContent>
 
         <TabsContent value="expenses" className="space-y-4">
+          {/*
+            O fechamento do mes (HMO-245), ACIMA das listas.
+
+            As secoes abaixo separam "ja aconteceu" de "vai acontecer", e essa
+            separacao esta certa para a lista -- parte aprovavel so existe no
+            realizado. Mas ela faz a conta de internet vencendo dia 15 nao
+            entrar em total nenhum do mes. Este cartao e o total que junta os
+            dois e diz quanto cada um paga.
+          */}
+          <FechamentoDoMes
+            groupId={groupId}
+            mes={mesDoGrupo}
+            onMesChange={setMesDoGrupo}
+          />
+
           {/* Expenses by Period */}
           <div className="space-y-4">
             {/*
-              Previstas: o que o grupo AINDA VAI pagar (HMO-177).
+              Previstas: o que o grupo AINDA VAI pagar (HMO-177), no mes do
+              seletor (HMO-248).
 
               Fica separada das outras secoes de proposito. As demais listam
               despesa que ja aconteceu e tem divisao gravada, que alguem pode
@@ -1080,10 +1377,16 @@ export default function GroupDetailPage() {
               na baixa da conta prevista. Misturar as duas na mesma lista faria
               o total do grupo somar dinheiro que ninguem gastou.
 
-              So aparece quando existe alguma: grupo sem despesa fixa continua
-              vendo a tela de antes.
+              O RECORTE DE MES E O QUE A HMO-248 CONSERTOU. Uma despesa fixa
+              nao grava uma linha: grava uma regra e MATERIALIZA uma parcela por
+              mes do horizonte. Sem recorte, o aluguel de R$ 1.800 aparecia tres
+              vezes e a legenda dizia "Total: R$ 5.400" -- o aluguel de tres
+              meses somado num cartao que nao diz de qual mes fala.
+
+              So aparece quando existe alguma NO MES: mes sem conta prevista
+              continua vendo a tela de antes.
             */}
-            {scheduled.length > 0 && (
+            {previstasDoMes.doMes.length > 0 && (
               <Card>
                 <CardHeader
                   className="cursor-pointer hover:bg-muted/50 transition-colors"
@@ -1093,20 +1396,15 @@ export default function GroupDetailPage() {
                     <div>
                       <CardTitle className="flex items-center gap-2">
                         <Clock className="h-5 w-5" />
-                        Previstas
+                        Previstas de {rotuloDoMesDoGrupo}
                         <Badge variant="outline">
-                          {scheduled.length} a vencer
+                          {previstasDoMes.doMes.length} a vencer
                         </Badge>
                       </CardTitle>
                       <CardDescription>
                         Ainda não aconteceram • Total:{" "}
-                        {formatCurrency(
-                          scheduled.reduce((sum, s) => sum + s.amount, 0)
-                        )}{" "}
-                        • Sua parte:{" "}
-                        {formatCurrency(
-                          scheduled.reduce((sum, s) => sum + s.share_amount, 0)
-                        )}
+                        {formatCurrency(previstasDoMes.total)} • Sua parte:{" "}
+                        {formatCurrency(previstasDoMes.parte)}
                       </CardDescription>
                     </div>
                     {openSections.includes("scheduled") ? (
@@ -1118,7 +1416,7 @@ export default function GroupDetailPage() {
                 </CardHeader>
                 {openSections.includes("scheduled") && (
                   <CardContent className="space-y-3">
-                    {scheduled.map((item) => (
+                    {previstasDoMes.doMes.map((item) => (
                       <div key={item.id} className="border rounded-lg p-4">
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex items-center gap-3">
@@ -1177,7 +1475,40 @@ export default function GroupDetailPage() {
               </Card>
             )}
 
-            {/* Current Month */}
+            {/*
+              O que o recorte do mes DEIXOU DE FORA, dito em texto (HMO-248).
+
+              Recortar no mes escondia duas coisas uteis: a parcela VENCIDA de
+              um mes passado -- que e justamente a que pede acao -- e o aluguel
+              do mes que vem. Sumir da tela sem rotulo e indistinguivel de "nao
+              existe", e a pessoa que acabou de cadastrar a despesa fixa
+              concluiria que ela nao foi gravada.
+
+              Fica FORA do cartao de propósito: aparece tambem quando o mes nao
+              tem nenhuma prevista e o cartao acima nem e montado, que e
+              exatamente o caso de quem esta olhando o mes errado.
+            */}
+            {(previstasDoMes.antes.quantidade > 0 ||
+              previstasDoMes.depois.quantidade > 0) && (
+              <p className="text-xs text-muted-foreground">
+                Fora de {rotuloDoMesDoGrupo}:{" "}
+                {[
+                  previstasDoMes.antes.quantidade > 0 &&
+                    `${previstasDoMes.antes.quantidade} vencida${
+                      previstasDoMes.antes.quantidade !== 1 ? "s" : ""
+                    } antes (${formatCurrency(previstasDoMes.antes.total)})`,
+                  previstasDoMes.depois.quantidade > 0 &&
+                    `${previstasDoMes.depois.quantidade} a vencer depois (${formatCurrency(
+                      previstasDoMes.depois.total
+                    )})`,
+                ]
+                  .filter(Boolean)
+                  .join(" • ")}
+                . Troque o mês no seletor acima para ver.
+              </p>
+            )}
+
+            {/* As despesas JA REALIZADAS do mes do seletor (HMO-248). */}
             <Card>
               <CardHeader
                 className="cursor-pointer hover:bg-muted/50 transition-colors"
@@ -1187,19 +1518,19 @@ export default function GroupDetailPage() {
                   <div>
                     <CardTitle className="flex items-center gap-2">
                       <Calendar className="h-5 w-5" />
-                      Mês Atual
+                      {/* O mes no TITULO, e nao "Mes Atual": com o seletor
+                          mandando, um titulo fixo mentiria sobre a lista em
+                          todo mes que nao e o de hoje. */}
+                      Despesas de {rotuloDoMesDoGrupo}
                       <Badge variant="outline">
-                        {transactionGroups.current.length} despesa
-                        {transactionGroups.current.length !== 1 ? "s" : ""}
+                        {despesasDoMes.length} despesa
+                        {despesasDoMes.length !== 1 ? "s" : ""}
                       </Badge>
                     </CardTitle>
                     <CardDescription>
                       Total:{" "}
                       {formatCurrency(
-                        transactionGroups.current.reduce(
-                          (sum, t) => sum + t.amount,
-                          0
-                        )
+                        despesasDoMes.reduce((sum, t) => sum + t.amount, 0)
                       )}
                     </CardDescription>
                   </div>
@@ -1212,8 +1543,8 @@ export default function GroupDetailPage() {
               </CardHeader>
               {openSections.includes("current") && (
                 <CardContent className="space-y-3">
-                  {transactionGroups.current.length > 0 ? (
-                    transactionGroups.current.map((transaction) => (
+                  {despesasDoMes.length > 0 ? (
+                    despesasDoMes.map((transaction) => (
                       <div
                         key={transaction.id}
                         className="border rounded-lg p-4"
@@ -1354,102 +1685,20 @@ export default function GroupDetailPage() {
               )}
             </Card>
 
-            {/* Previous Month */}
-            {transactionGroups.previous.length > 0 && (
-              <Card>
-                <CardHeader
-                  className="cursor-pointer hover:bg-muted/50 transition-colors"
-                  onClick={() => toggleSection("previous")}
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <CardTitle className="flex items-center gap-2">
-                        <Calendar className="h-5 w-5" />
-                        Mês Anterior
-                        <Badge variant="outline">
-                          {transactionGroups.previous.length} despesa
-                          {transactionGroups.previous.length !== 1 ? "s" : ""}
-                        </Badge>
-                      </CardTitle>
-                      <CardDescription>
-                        Total:{" "}
-                        {formatCurrency(
-                          transactionGroups.previous.reduce(
-                            (sum, t) => sum + t.amount,
-                            0
-                          )
-                        )}
-                      </CardDescription>
-                    </div>
-                    {openSections.includes("previous") ? (
-                      <ChevronDown className="h-5 w-5" />
-                    ) : (
-                      <ChevronRight className="h-5 w-5" />
-                    )}
-                  </div>
-                </CardHeader>
-                {openSections.includes("previous") && (
-                  <CardContent className="space-y-3">
-                    {transactionGroups.previous.map((transaction) => (
-                      <div
-                        key={transaction.id}
-                        className="border rounded-lg p-4"
-                      >
-                        <div className="flex items-start justify-between mb-3">
-                          <div className="flex items-center gap-3">
-                            <Avatar className="h-8 w-8">
-                              <AvatarImage src={transaction.payer.avatar_url} />
-                              <AvatarFallback>
-                                {inicial(transaction.payer.full_name)}
-                              </AvatarFallback>
-                            </Avatar>
-                            <div>
-                              <h4 className="font-medium">
-                                {transaction.description}
-                              </h4>
-                              <p className="text-sm text-muted-foreground">
-                                Pago por {transaction.payer.full_name} •{" "}
-                                {new Date(
-                                  transaction.transaction_date
-                                ).toLocaleDateString("pt-BR")}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <p className="font-bold text-lg">
-                              {/* Na moeda da DESPESA. `formatCurrency` forca
-                                  real e escreveria "R$ 180,00" sobre um jantar
-                                  de US$ 180. */}
-                              {formatarValor(
-                                transaction.amount,
-                                moedaDaViagem(transaction.currency)
-                              )}
-                            </p>
-                            {moedaDaViagem(transaction.currency) !==
-                              MOEDA_PADRAO && (
-                              <p className="text-xs text-muted-foreground">
-                                {formatCurrency(
-                                  valorEmReais(
-                                    transaction.amount,
-                                    transaction.exchange_rate ?? 1
-                                  )
-                                )}{" "}
-                                na cotação do dia
-                              </p>
-                            )}
-                            {transaction.category && (
-                              <Badge variant="secondary" className="text-xs">
-                                {transaction.category.name}
-                              </Badge>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </CardContent>
-                )}
-              </Card>
-            )}
+            {/*
+              A SECAO "Mes Anterior" SAIU AQUI (HMO-248).
+
+              Ela existia porque a aba nao tinha seletor: a unica forma de ver
+              o mes passado era um segundo cartao, fixo, com o mes anterior ao
+              de HOJE. Agora o seletor do fechamento manda na aba inteira, e
+              escolher setembro mostra setembro no cartao de cima -- com o
+              fechamento e o rateio de setembro ao lado, que o cartao fixo nao
+              tinha. Mantê-la daria DOIS recortes de mes na mesma lista, e o de
+              baixo ignorando o seletor.
+
+              Nenhuma despesa ficou sem leitor: o seletor oferece todo mes que
+              tem conta (`mesesComConta`, lib/fechamento-do-grupo.ts).
+            */}
           </div>
         </TabsContent>
 
@@ -1641,6 +1890,14 @@ export default function GroupDetailPage() {
                           user?.id === transfer.from.id ||
                           user?.id === transfer.to.id;
 
+                        // QUEM RECEBE NAO PAGOU. O rotulo dizia "Já paguei"
+                        // para os dois lados, entao quem estava recebendo
+                        // clicava num botao que afirmava o contrario do que ia
+                        // registrar. A direcao passou a ser calculada de
+                        // qualquer forma (o dialogo precisa dela para o sinal
+                        // da perna), entao o rotulo pode dize-la.
+                        const souQuemRecebe = user?.id === transfer.to.id;
+
                         // O mesmo pagamento na moeda da viagem, ao cambio de
                         // hoje -- ou `null` quando nao ha o que oferecer.
                         //
@@ -1720,7 +1977,11 @@ export default function GroupDetailPage() {
                                         // opcao ao lado. Em grupo em real nao ha
                                         // escolha a explicitar, e "Já paguei" e
                                         // a frase que a tela sempre usou.
-                                        "Paguei em reais"
+                                        souQuemRecebe
+                                        ? "Recebi em reais"
+                                        : "Paguei em reais"
+                                      : souQuemRecebe
+                                      ? "Já recebi"
                                       : "Já paguei"}
                                   </Button>
                                   {/* O segundo botao so existe quando ha cotacao
@@ -1746,7 +2007,8 @@ export default function GroupDetailPage() {
                                         }).`
                                       }
                                     >
-                                      Paguei em {naViagem.currency}
+                                      {souQuemRecebe ? "Recebi" : "Paguei"} em{" "}
+                                      {naViagem.currency}
                                     </Button>
                                   )}
                                 </div>
@@ -1775,7 +2037,36 @@ export default function GroupDetailPage() {
                       Pagamentos registrados
                     </h3>
                     <div className="space-y-2">
-                      {settlements.map((s) => (
+                      {settlements.map((s) => {
+                        /*
+                          O ESTADO DESTE ACERTO PARA MIM (HMO-245, fase 12).
+
+                          A MESMA funcao que a rota usa para decidir se aceita o
+                          pedido. Duas copias da regra -- uma no JSX, outra no
+                          servidor -- divergem no caso que importa, e a tela
+                          passa a oferecer uma acao que a rota recusa.
+
+                          `minha_perna` e o dado que nao se deduz da tela: o
+                          acerto aparece IGUAL lancado e nao lancado, e e por
+                          isso que "nao lancado" seria indistinguivel de "nao
+                          aconteceu" sem o rotulo.
+                        */
+                        const visao: AcertoVistoPorMim = comoEuVejoOAcerto({
+                          acerto: {
+                            from_user_id: s.from_user_id,
+                            to_user_id: s.to_user_id,
+                            created_by: s.created_by,
+                          },
+                          userId: user?.id || "",
+                          temPerna: Boolean(s.minha_perna),
+                          nomeDaConta: contas.find(
+                            (c) => c.id === s.minha_perna?.account_id
+                          )?.name,
+                        });
+
+                        const estaEmVoo = pernaSalvando === s.id;
+
+                        return (
                         /*
                           "Fulano pagou Beltrano em 12/03/2026" numa linha que
                           nao quebrava: dois avatares mais dois nomes livres
@@ -1790,8 +2081,9 @@ export default function GroupDetailPage() {
                         */
                         <div
                           key={s.id}
-                          className="flex items-center justify-between gap-3 p-3 border rounded-lg"
+                          className="p-3 border rounded-lg space-y-2"
                         >
+                        <div className="flex items-center justify-between gap-3">
                           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm min-w-0">
                             <Avatar className="h-6 w-6 shrink-0">
                               <AvatarImage src={s.from_user?.avatar_url} />
@@ -1839,7 +2131,7 @@ export default function GroupDetailPage() {
                                 </span>
                               )}
                             </span>
-                            {s.can_delete && (
+                            {visao.podeDesfazerOAcerto && (
                               <Button
                                 size="sm"
                                 variant="ghost"
@@ -1850,7 +2142,61 @@ export default function GroupDetailPage() {
                             )}
                           </div>
                         </div>
-                      ))}
+
+                        {/*
+                          O ESTADO DESTE ACERTO NA MINHA CONTA (fase 12).
+
+                          Sem esta linha, a tela de quem nao confirmou mostra o
+                          acerto com valor, data e os dois nomes -- e nenhum
+                          sinal de que o dinheiro nao passou pela conta dela.
+                          "Nao lancado" fica indistinguivel de "nao aconteceu",
+                          e o Pix nunca entra no extrato dela.
+
+                          `visao.rotulo` e `null` para o acerto entre outras
+                          duas pessoas: ali a frase seria mentira.
+                        */}
+                        {visao.rotulo && (
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span
+                              className={
+                                visao.estado === "a_lancar"
+                                  ? "text-xs text-warning"
+                                  : "text-xs text-muted-foreground"
+                              }
+                            >
+                              {visao.rotulo}
+                            </span>
+
+                            {visao.podeLancar && visao.direcao && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={estaEmVoo}
+                                onClick={() =>
+                                  abrirLancamentoDaMinhaPerna(s, visao.direcao!)
+                                }
+                              >
+                                {visao.direcao === "recebi"
+                                  ? "Lançar o que recebi"
+                                  : "Lançar o que paguei"}
+                              </Button>
+                            )}
+
+                            {visao.podeDesfazerSoAMinhaPerna && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled={estaEmVoo}
+                                onClick={() => removerMinhaPerna(s.id)}
+                              >
+                                Desfazer o meu lançamento
+                              </Button>
+                            )}
+                          </div>
+                        )}
+                        </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -1967,6 +2313,46 @@ export default function GroupDetailPage() {
               </div>
             </CardContent>
           </Card>
+
+          {/*
+            A configuracao da divisao (HMO-245, fase 5).
+
+            Fica na aba de Membros, e nao numa quinta aba, por dois motivos: os
+            rotulos de cinco abas nao cabem em 375px (esta tela ja teve estouro
+            horizontal), e a pergunta "quanto cada um paga" nasce olhando a
+            lista de quem esta no grupo -- logo acima.
+
+            Montada so com a aba ativa: ela busca o fechamento do mes para ter o
+            R$ de cada um, e quem veio ver a lista de despesas nao deve pagar
+            essa chamada.
+
+            `membrosDaDivisao` filtra por `status === "active"` porque a lista
+            acima mostra TODO mundo, inclusive quem saiu -- e o PUT da fase 3
+            recusa um conjunto que nao seja exatamente o dos ativos. O mes e o
+            `mesDoGrupo`, o mesmo do seletor do fechamento: dois meses na mesma
+            tela dariam dois R$ diferentes para a mesma divisao.
+          */}
+          {activeTab === "members" && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Calculator className="h-5 w-5" />
+                  Divisão da conta
+                </CardTitle>
+                <CardDescription>{rotuloDoMesDoGrupo}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <DivisaoDoGrupo
+                  groupId={groupId}
+                  membros={membrosDaDivisao}
+                  modoGravado={group.default_split_type}
+                  mes={mesDoGrupo}
+                  ehAdmin={souAdmin}
+                  aoGravar={loadGroup}
+                />
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
       </Tabs>
 
@@ -2012,16 +2398,18 @@ export default function GroupDetailPage() {
 
                 <div className="space-y-2">
                   <Label htmlFor="transaction_date">Data</Label>
-                  <Input
+                  {/* `CampoDeData` e nao o controle de data nativo (HMO-240). Aqui
+                      a data nao e so rotulo: `exchange_rate` e congelada pela
+                      cotacao DO DIA DA COMPRA, entao uma data lida na ordem do
+                      aparelho (mm/dd) traria a cotacao do dia errado para o
+                      rateio de uma despesa em moeda estrangeira. */}
+                  <CampoDeData
                     id="transaction_date"
-                    type="date"
                     value={expenseForm.transaction_date}
-                    onChange={(e) =>
-                      setExpenseForm({
-                        ...expenseForm,
-                        transaction_date: e.target.value,
-                      })
+                    onChange={(transaction_date) =>
+                      setExpenseForm({ ...expenseForm, transaction_date })
                     }
+                    aria-label="Data"
                   />
                 </div>
 
@@ -2129,6 +2517,57 @@ export default function GroupDetailPage() {
             </CardContent>
           </Card>
         </div>
+      )}
+
+      {/* O campo de conta do acerto (HMO-245, fase 11). Fica fora das abas: a
+          sugestao de pagamento mora na aba de saldos, mas o dialogo e modal e
+          nao deve depender de qual aba esta aberta quando a resposta chega. */}
+      {acertoEmCurso && (
+        <DialogoDeAcerto
+          aberto={true}
+          aoFechar={() => setAcertoEmCurso(null)}
+          direcao={acertoEmCurso.direcao}
+          nomeDaContraparte={acertoEmCurso.nomeDaContraparte}
+          valor={acertoEmCurso.acerto.amount}
+          moeda={acertoEmCurso.acerto.currency}
+          cotacao={acertoEmCurso.acerto.exchange_rate}
+          contas={contas}
+          aviso={avisoDeSobra(acertoEmCurso.acerto)}
+          aoConfirmar={registrarAcerto}
+          salvando={settling === acertoEmCurso.chave}
+        />
+      )}
+
+      {/* A conta da MINHA perna, para um acerto que JA existe (fase 12).
+          O mesmo dialogo, porque o dado que falta e o mesmo -- a conta --, com
+          titulo e botao proprios: aqui nao se registra acerto nenhum, ele ja
+          esta registrado. Sem a troca de texto, "Registrar acerto" sugeriria
+          que clicar de novo registra um segundo pagamento.
+
+          `aviso` nao vem: a sobra de centavo e da DIVISAO do valor na moeda da
+          viagem, decidida quando o acerto foi registrado. Aqui o valor ja esta
+          gravado, e repetir o aviso diria que ha uma escolha a fazer onde nao
+          ha. */}
+      {pernaEmCurso && (
+        <DialogoDeAcerto
+          aberto={true}
+          aoFechar={() => setPernaEmCurso(null)}
+          direcao={pernaEmCurso.direcao}
+          nomeDaContraparte={pernaEmCurso.nomeDaContraparte}
+          valor={pernaEmCurso.valor}
+          moeda={pernaEmCurso.moeda}
+          cotacao={pernaEmCurso.cotacao}
+          contas={contas}
+          titulo={
+            pernaEmCurso.direcao === "recebi"
+              ? "Lançar o que recebi"
+              : "Lançar o que paguei"
+          }
+          rotuloDoBotao="Lançar na minha conta"
+          rotuloSalvando="Lançando..."
+          aoConfirmar={lancarMinhaPerna}
+          salvando={pernaSalvando === pernaEmCurso.settlementId}
+        />
       )}
     </div>
   );

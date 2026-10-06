@@ -24,9 +24,32 @@
 //
 // ESTA TELA ABRE SEM REDE, com o mesmo pedagio da de Contas: todo total passa
 // por `podeMostrarNumero()` e a frase de vazio por `podeAfirmarVazio()`.
+//
+// DUAS LEITURAS, UM ESTADO (HMO-290)
+// ----------------------------------
+// "Faturas em aberto" somava `totalDoEscopo(ativas, "cartao")`, que e
+// `Σ abs(current_balance)` -- a divida INTEIRA de cada cartao. Uma compra de
+// R$ 3.000 em 10x inflava este total em R$ 2.700 no mes da compra. O total
+// agora e a soma das FATURAS do mes escolhido, e isso custou duas coisas:
+//
+//   1. a tela passou a fazer DUAS chamadas (o cadastro, por `useContas`, e as
+//      faturas, por `GET /api/card-invoices?month=`). `estadoDaTela` reduz as
+//      duas a mais pessimista ANTES de qualquer numero aparecer -- senao o
+//      cadastro fresco libera o total de faturas que nao carregaram, e a tela
+//      imprime "R$ 0,00" embaixo do nome de cada cartao certo;
+//   2. a tela ganhou um SELETOR DE MES. "A fatura do periodo" exige dizer qual
+//      periodo, e aqui nao havia periodo nenhum. E o mesmo `<input type=month>`
+//      da tela de um cartao, de proposito: duas telas que respondem sobre a
+//      mesma fatura escolhem o mes do mesmo jeito.
+//
+// `lib/contas.ts:totalDoEscopo` NAO foi tocada, e isso e deliberado: quem
+// mudou foi o chamador. O teste dela afirma que separar as telas de Contas e
+// Cartoes nao move um centavo, e aquela afirmacao continua valendo -- a tela de
+// Contas segue somando saldo com sinal, que e o que o rotulo DELA promete.
+// Saldo e saldo; so o rotulo que promete fatura trocou de fonte.
 // ---------------------------------------------------------------------------
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
@@ -43,10 +66,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { CreditCard, Loader2, Plus, Wallet } from "lucide-react";
-import type { FinancialAccount } from "@/types/financial";
+import type { CardInvoice, FinancialAccount } from "@/types/financial";
 import {
   faltaFatura,
-  totalDoEscopo,
   valoresDaConta,
   valoresIniciais,
   type ValoresDaConta,
@@ -56,7 +78,23 @@ import { CartaoDaLista } from "@/components/cartoes/CartaoDaLista";
 import { ContasArquivadas } from "@/components/contas/ContasArquivadas";
 import { useContas } from "@/lib/hooks/useContas";
 import { formatarValor } from "@/lib/dinheiro";
-import { podeAfirmarVazio, podeMostrarNumero } from "@/lib/offline-leitura";
+import { Label } from "@/components/ui/label";
+import {
+  estadoDaTela,
+  faturaDoCartao,
+  mesCorrenteDaFatura,
+  rotuloDaFatura,
+} from "@/lib/fatura-do-cartao";
+import {
+  somaDasFaturas,
+  somaDasParcelasFuturas,
+} from "@/lib/fatura-do-periodo";
+import {
+  buscarLeitura,
+  podeAfirmarVazio,
+  podeMostrarNumero,
+  type EstadoDaLeitura,
+} from "@/lib/offline-leitura";
 import {
   FaixaDadoDoAparelho,
   NumeroIndisponivel,
@@ -72,9 +110,9 @@ export default function CartoesPage() {
     arquivadas,
     carregando,
     salvando,
-    estado,
+    estado: estadoDasContas,
     guardadoEm,
-    carregar,
+    carregar: recarregarContas,
     salvar,
     arquivar,
     reativar,
@@ -89,14 +127,68 @@ export default function CartoesPage() {
   // nova ganha por padrao. Ver lib/hooks/usePreferenciaDeMoeda.
   const { moeda: preferenciaDeMoeda } = usePreferenciaDeMoeda();
 
-  // A fatura e apresentada como divida, entao soma em modulo: o valor gravado e
-  // negativo (as compras rebaixaram o saldo do cartao) e "Faturas em aberto:
-  // -R$ 1.200" seria um sinal a mais na leitura.
-  const fatura = useMemo(() => totalDoEscopo(ativas, "cartao"), [ativas]);
+  // ---------------------------------------------------------------------
+  // A SEGUNDA LEITURA: AS FATURAS DO MES (HMO-290)
+  // ---------------------------------------------------------------------
+  const [mes, setMes] = useState(() => mesCorrenteDaFatura());
+  const [faturas, setFaturas] = useState<CardInvoice[] | null>(null);
+  const [estadoDasFaturas, setEstadoDasFaturas] =
+    useState<EstadoDaLeitura | null>(null);
+
+  const carregarFaturas = useCallback(async () => {
+    setEstadoDasFaturas(null);
+
+    // SEM `account_id`: aqui se quer a fatura de TODOS os cartoes do mes. A
+    // rota devolve uma entrada por cartao ativo, zerada quando o mes nao teve
+    // compra -- e por isso um cartao AUSENTE da resposta nao e zero, e um
+    // numero que esta tela nao obteve. Ver `lib/fatura-do-periodo`.
+    const leitura = await buscarLeitura<{ invoices?: CardInvoice[] }>(
+      `/api/card-invoices?month=${mes}`
+    );
+
+    setEstadoDasFaturas(leitura.estado);
+    // So sobrescreve quando houve corpo: zerar no caminho de falha apagaria da
+    // tela a fatura que uma busca anterior ja trouxe -- mesma regra do
+    // `useContas` e da tela de um cartao.
+    if (leitura.dados) setFaturas(leitura.dados.invoices ?? []);
+  }, [mes]);
+
+  useEffect(() => {
+    carregarFaturas();
+  }, [carregarFaturas]);
+
+  // A mais PESSIMISTA das duas. Sem isto o cadastro fresco libera o total de
+  // uma leitura de faturas que falhou.
+  const estado = estadoDaTela([estadoDasContas, estadoDasFaturas]);
+
+  const recarregar = useCallback(() => {
+    recarregarContas();
+    carregarFaturas();
+  }, [recarregarContas, carregarFaturas]);
+
+  const rotuloDoMes = rotuloDaFatura(mes);
+  const idsAtivos = useMemo(() => ativas.map((c) => c.id), [ativas]);
+
+  // `null` quando falta a fatura de qualquer cartao da lista: uma soma parcial
+  // sob o rotulo "Faturas em aberto" e um numero menor que o certo, plausivel,
+  // e sem nada na tela dizendo que falta uma parcela dela.
+  const fatura = useMemo(
+    () => somaDasFaturas(faturas, idsAtivos),
+    [faturas, idsAtivos]
+  );
+  const parcelasFuturas = useMemo(
+    () => somaDasParcelasFuturas(faturas, idsAtivos),
+    [faturas, idsAtivos]
+  );
+
   const semDiasDeFatura = useMemo(
     () => ativas.filter((c) => faltaFatura(c)).length,
     [ativas]
   );
+
+  // As TRES condicoes do numero -- ver o mesmo trio em `CartaoDaLista`.
+  const mostraTotal =
+    podeMostrarNumero(estado) && rotuloDoMes !== null && fatura !== null;
 
   function abrirNovo() {
     setForm(valoresIniciais("cartao", preferenciaDeMoeda.oficial));
@@ -146,42 +238,94 @@ export default function CartoesPage() {
         </Button>
       </div>
 
-      {estado === "do-aparelho" && (
+      {/* OS PAINEIS DE FALHA OLHAM O CADASTRO, E NAO AS DUAS LEITURAS.
+          A distincao e o que mantem a promessa do cabecalho ("esta tela abre
+          sem rede"): a LISTA de cartoes vem do cadastro, que o service worker
+          guarda. Trocar isto pelo estado combinado derruba a tela inteira para
+          "sem conexao" quando so a fatura faltou -- e a fatura de um mes que a
+          pessoa nunca abriu online nao esta guardada em lugar nenhum, entao
+          mexer no seletor offline apagaria a lista de cartoes da tela.
+
+          Os NUMEROS, esses sim, passam pelo estado combinado (`mostraTotal`):
+          quem nao pode afirmar o total e quem nao leu a fatura. */}
+      {estadoDasContas === "do-aparelho" && (
         <FaixaDadoDoAparelho
           guardadoEm={guardadoEm}
           soLeitura
-          aoTentarDeNovo={carregar}
+          aoTentarDeNovo={recarregar}
         />
       )}
 
-      {estado === "sem-rede" ? (
-        <PainelSemRede oQue="seus cartões" aoTentarDeNovo={carregar} />
-      ) : estado === "erro-do-servidor" ? (
-        <PainelErroDoServidor oQue="seus cartões" aoTentarDeNovo={carregar} />
+      {estadoDasContas === "sem-rede" ? (
+        <PainelSemRede oQue="seus cartões" aoTentarDeNovo={recarregar} />
+      ) : estadoDasContas === "erro-do-servidor" ? (
+        <PainelErroDoServidor oQue="seus cartões" aoTentarDeNovo={recarregar} />
       ) : (
         <>
           <Card>
             <CardHeader className="pb-2">
-              <CardDescription>Faturas em aberto</CardDescription>
-              <CardTitle className="text-2xl text-warning">
-                {podeMostrarNumero(estado) ? (
-                  formatarValor(fatura)
-                ) : (
-                  <NumeroIndisponivel />
-                )}
-              </CardTitle>
+              {/* O SELETOR E O TOTAL NO MESMO BLOCO: e o seletor que diz a que
+                  mes o total responde. Mesma disposicao de `FaturaDoCartao`. */}
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <CardDescription>
+                    {rotuloDoMes
+                      ? `Faturas de ${rotuloDoMes}`
+                      : "Faturas do mês"}
+                  </CardDescription>
+                  <CardTitle className="text-2xl text-warning">
+                    {mostraTotal ? (
+                      formatarValor(fatura)
+                    ) : (
+                      <NumeroIndisponivel />
+                    )}
+                  </CardTitle>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="mes-das-faturas" className="text-xs">
+                    Mês da fatura
+                  </Label>
+                  {/* `type="month"` e nao o campo de data nativo: o que se
+                      escolhe aqui e o MES da fatura, e ele e o mesmo controle
+                      que a tela de um cartao usa. */}
+                  <input
+                    id="mes-das-faturas"
+                    type="month"
+                    value={mes}
+                    onChange={(evento) => setMes(evento.target.value)}
+                    className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                  />
+                </div>
+              </div>
             </CardHeader>
             <CardContent className="space-y-2">
               <p className="text-xs text-muted-foreground">
-                Soma do que já foi gasto nos cartões ativos. Não entra no saldo:
-                é dívida, não dinheiro que você tem.
+                O que os cartões ativos cobram no mês escolhido. Não entra no
+                saldo: é dívida, não dinheiro que você tem.
               </p>
+
+              {/* O QUE AS PARCELAS AINDA VAO COBRAR (HMO-290).
+                  Antes desta troca o total exagerava a fatura somando a divida
+                  inteira; sem esta linha ele passaria a esconder o que ja esta
+                  comprometido. Ela e secundaria e NAO soma com o total acima. */}
+              {mostraTotal &&
+                parcelasFuturas !== null &&
+                parcelasFuturas > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    + {formatarValor(parcelasFuturas)} em parcelas que vencem
+                    nos meses seguintes.
+                  </p>
+                )}
               {/*
                 O contador so aparece quando ha numero para mostrar. Sem dado
                 confiavel, "1 cartão sem fechamento" seria uma afirmacao sobre
                 uma lista que a tela nao conseguiu ler.
               */}
-              {podeMostrarNumero(estado) && semDiasDeFatura > 0 && (
+              {/* O contador fala da LISTA de cartoes, nao da fatura: quem o
+                  libera e o cadastro. Amarra-lo ao estado combinado esconderia
+                  "1 cartão ainda não fecha fatura" -- um aviso de CADASTRO --
+                  porque a fatura de outro mes nao carregou. */}
+              {podeMostrarNumero(estadoDasContas) && semDiasDeFatura > 0 && (
                 <p className="text-xs text-warning">
                   {semDiasDeFatura === 1
                     ? "1 cartão ainda não fecha fatura: falta o fechamento ou o vencimento."
@@ -191,7 +335,11 @@ export default function CartoesPage() {
             </CardContent>
           </Card>
 
-          {ativas.length === 0 && podeAfirmarVazio(estado) ? (
+          {/* "Voce ainda nao tem cartoes" e uma afirmacao sobre o CADASTRO.
+              Pedi-la ao estado combinado faria a tela esconder o convite de
+              cadastrar porque a leitura de faturas falhou -- e quem nao tem
+              cartao nenhum tambem nao tem fatura para ler. */}
+          {ativas.length === 0 && podeAfirmarVazio(estadoDasContas) ? (
             <Card>
               <CardContent className="py-10 text-center">
                 <CreditCard className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
@@ -218,6 +366,13 @@ export default function CartoesPage() {
                 <CartaoDaLista
                   key={conta.id}
                   conta={conta}
+                  // `faturaDoCartao` casa por `account_id`, nunca `[0]`: ver a
+                  // decisao 1 de `lib/fatura-do-cartao.ts`. Com `[0]` a lista
+                  // mostraria o total do primeiro cartao embaixo do nome de
+                  // todos eles -- valores plausiveis, sem erro nenhum.
+                  fatura={faturaDoCartao(faturas, conta.id)}
+                  estado={estado}
+                  rotuloDoMes={rotuloDoMes}
                   aoEditar={abrirEdicao}
                   aoArquivar={arquivar}
                 />

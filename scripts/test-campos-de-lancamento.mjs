@@ -101,13 +101,45 @@ function acharPorId(no, id) {
 }
 
 /**
+ * As props do `<Select>` que CONTEM o gatilho de id `id`.
+ *
+ * Existe porque o `id` do radix mora no `SelectTrigger`, e `value` /
+ * `onValueChange` moram no `Select` que o envolve -- `acharPorId` devolve o
+ * gatilho, cujas props nao tem nenhum dos dois. A primeira versao deste teste
+ * afirmou `props.value === "conta"` sobre o gatilho e leu `undefined`: o
+ * assert.equal reprovou, mas um `assert.ok(!props.value)` teria passado por
+ * medir o elemento errado.
+ *
+ * O criterio e "tem `onValueChange` e o gatilho esta na subarvore", e nao "e o
+ * pai do gatilho": o `Select` tem o `SelectTrigger` e o `SelectContent` como
+ * filhos, e a profundidade entre eles e detalhe do componente.
+ */
+function selectDoGatilho(no, id) {
+  if (no == null || typeof no !== "object") return null;
+  if (Array.isArray(no)) {
+    for (const filho of no) {
+      const achado = selectDoGatilho(filho, id);
+      if (achado) return achado;
+    }
+    return null;
+  }
+  if (
+    typeof no.props?.onValueChange === "function" &&
+    acharPorId(no.props?.children, id)
+  ) {
+    return no.props;
+  }
+  return selectDoGatilho(no.props?.children, id);
+}
+
+/**
  * As props do input `id`, mais a lista do que o componente mandou para
  * `aoMudar`.
  *
  * `mudancas` e um array e nao "a ultima mudanca": um handler que chame `aoMudar`
  * duas vezes (ou nenhuma) tem de ser distinguivel de um que chame uma.
  */
-function camposDoInput({ id, valores = {} }) {
+function arvoreDeCampos({ valores = {}, contas = [CARTAO] } = {}) {
   const mudancas = [];
   const arvore = CamposDeLancamento({
     tipo: "expense",
@@ -122,14 +154,26 @@ function camposDoInput({ id, valores = {} }) {
     },
     aoMudar: (mudanca) => mudancas.push(mudanca),
     categorias: [CATEGORIA_DESPESA],
-    contas: [CARTAO],
+    contas,
     editando: false,
     cartaoFixado: null,
     rateio: h("div", null, MARCADOR_DE_RATEIO),
   });
+  return { arvore, mudancas };
+}
 
+function camposDoInput({ id, valores = {}, contas }) {
+  const { arvore, mudancas } = arvoreDeCampos({ valores, contas });
   const props = acharPorId(arvore, id);
   assert.ok(props, `o input id="${id}" nao esta na arvore de elementos`);
+  return { props, mudancas };
+}
+
+/** O mesmo, para um `<Select>` -- ver `selectDoGatilho`. */
+function seletorDoGatilho({ id, valores = {}, contas }) {
+  const { arvore, mudancas } = arvoreDeCampos({ valores, contas });
+  const props = selectDoGatilho(arvore, id);
+  assert.ok(props, `o <Select> do gatilho id="${id}" nao esta na arvore`);
   return { props, mudancas };
 }
 
@@ -215,7 +259,125 @@ test("a categoria e a conta trocam de nome conforme a tela", () => {
 
   const despesa = renderizar({ tipo: "expense" });
   assert.ok(despesa.includes("Categoria da despesa"));
-  assert.ok(despesa.includes("Conta/Cartão"));
+  // "Conta/Cartao" SAIU DA TELA (HMO-254): o cartao nao esta mais na lista
+  // ("so poder ser lancada em contas correntes"), e um rotulo que ainda oferece
+  // cartao sobre um seletor que nao tem nenhum e a tela convidando para um
+  // caminho que ela mesma fechou. O rotulo e a lista tem de dizer a mesma coisa.
+  assert.ok(
+    despesa.includes(">Conta<"),
+    "o rotulo do seletor de conta da despesa nao e mais 'Conta'"
+  );
+  assert.ok(
+    !despesa.includes("Conta/Cartão"),
+    "o rotulo voltou a oferecer cartao numa lista que nao tem cartao"
+  );
+});
+
+// A LISTA DE CONTAS NAO SE MEDE AQUI, E ISSO FOI MEDIDO
+//
+// A tentativa obvia -- renderizar com um cartao em `contas` e afirmar que o nome
+// dele nao sai no HTML -- e VACUA, e o controle positivo provou: o radix nao
+// imprime no servidor nem o valor ESCOLHIDO (as opcoes moram num portal que so
+// existe com o seletor aberto, e `SelectValue` sai vazio). O nome do cartao nao
+// aparece em caso nenhum, entao a assercao passaria com o filtro quebrado.
+//
+// Quem cobra o recorte e `contasDoSeletor` em scripts/test-lancamento.mjs ("a
+// despesa de conta NAO lista cartao"), que e funcao pura e tem as cinco contas
+// de verdade. O que SE mede aqui e o que sai no HTML: o rotulo do seletor (logo
+// acima) e as duas checkboxes (logo abaixo).
+
+test("as duas checkboxes do cartao ficam na MESMA caixa, lado a lado (HMO-254)", () => {
+  // "tem o check box ao lado do parcelamento, voce escolhe, fixo ou parcelado
+  // ou caso nenhum nem outro ambos desmarcados ai e gasto normal."
+  const html = renderizar({ tipo: "expense", valores: { natureza: "card" } });
+
+  const fixa = inputPorId(html, "is_fixed");
+  const parcelar = inputPorId(html, "is_installment");
+  assert.ok(fixa, "a checkbox Fixa nao apareceu no gasto no cartao");
+  assert.ok(parcelar, "a checkbox de parcelar desapareceu do gasto no cartao");
+
+  // AMBAS DESMARCADAS E O GASTO NORMAL, e e o estado inicial: o pedido diz isso
+  // com todas as letras, e um `defaultChecked` em qualquer das duas mudaria o
+  // que um formulario novo grava.
+  assert.ok(!fixa.includes("checked"), "a checkbox Fixa nasce marcada");
+  assert.ok(!parcelar.includes("checked"), "a checkbox de parcelar nasce marcada");
+
+  // LADO A LADO, e nao em dois blocos separados do formulario. A medida e a
+  // distancia entre as duas no HTML: elas tem de estar dentro do MESMO
+  // container de linha, sem nenhum campo de formulario no meio. Em blocos
+  // separados, quem marca "Fixa" no topo encontra "Parcelar" trinta linhas
+  // abaixo e nao tem como saber que uma desliga a outra.
+  const entre = html.slice(
+    html.indexOf(fixa) + fixa.length,
+    html.indexOf(parcelar)
+  );
+  assert.ok(
+    html.indexOf(fixa) < html.indexOf(parcelar),
+    "a checkbox de parcelar vem ANTES da Fixa"
+  );
+  assert.ok(
+    !entre.includes("<input") && !entre.includes("<select"),
+    `ha campo de formulario entre as duas checkboxes: ${entre.slice(0, 200)}`
+  );
+});
+
+test("marcar Fixa no cartao troca o parcelamento pela regra mensal", () => {
+  // O estado `card_fixed` e o que a checkbox marcada produz. As duas sao
+  // exclusivas: o bloco de parcelamento SAI e os campos da regra entram.
+  const html = renderizar({
+    tipo: "expense",
+    valores: { natureza: "card_fixed" },
+  });
+
+  const fixa = inputPorId(html, "is_fixed");
+  assert.ok(fixa, "a checkbox Fixa desapareceu depois de marcada");
+  // Ela CONTINUA na tela e marcada -- senao nao ha como desmarcar, e a pessoa
+  // fica trancada na escolha sem nada na tela explicando.
+  assert.ok(fixa.includes("checked"), "a checkbox Fixa nao reflete `card_fixed`");
+
+  assert.ok(
+    !inputPorId(html, "is_installment"),
+    "parcelamento e Fixa aparecem juntos: elas sao exclusivas"
+  );
+
+  // Os campos da regra entraram, e sao os mesmos da despesa fixa de conta.
+  assert.ok(inputPorId(html, "due_day"), "o dia do vencimento nao apareceu");
+  assert.ok(
+    html.includes("Assinatura ou mensalidade cobrada no cartão"),
+    "a ajuda nao diz o que a Fixa no cartao vira"
+  );
+  // E O CARTAO CONTINUA OBRIGATORIO: "so pode ser aplicado no cartao" vale para
+  // a assinatura tanto quanto para a compra.
+  assert.ok(html.includes("Cartão *"), "o cartao deixou de ser obrigatorio");
+
+  // E NENHUM CAMPO DE DATA (HMO-247, estendida pela HMO-254): quem diz quando e
+  // o dia do vencimento. Dois campos de data seriam duas respostas para a mesma
+  // pergunta, e a errada seria a que o banco ignora.
+  assert.ok(
+    !inputPorId(html, "transaction_date"),
+    "a fixa no cartao voltou a ter campo de data"
+  );
+});
+
+test("o cartao FIXADO nao tira a checkbox Fixa da tela (HMO-254)", () => {
+  // A tela aberta pela fatura de um cartao trava o CARTAO, nao a frequencia:
+  // cadastrar a assinatura entrando por ali e justamente o caso comum. A
+  // checkbox mora FORA do bloco do seletor por isto -- dentro dele,
+  // `campos.natureza` a teria apagado junto com o seletor travado.
+  const html = renderizar({
+    tipo: "expense",
+    valores: { natureza: "card", contaId: "cartao-1" },
+    cartaoFixado: { id: "cartao-1", name: "Visa", account_type: "credit_card" },
+  });
+
+  assert.ok(
+    !html.includes('id="natureza"'),
+    "o seletor de lugar deveria estar travado com o cartao fixado"
+  );
+  assert.ok(
+    inputPorId(html, "is_fixed"),
+    "o cartao fixado apagou a checkbox Fixa: a assinatura fica sem cadastro"
+  );
 });
 
 test("gasto no cartao pede cartao, e diz que e obrigatorio", () => {
@@ -647,15 +809,38 @@ test("nenhum grid sem coluna de base", () => {
 // que no HTML do servidor nao existe. O que da para cobrar e o rotulo, o texto
 // de ajuda e os campos -- que e onde o defeito de arvore aparece.
 
-test("a receita tem seletor de natureza, com o rotulo dela", () => {
+test("a receita troca o seletor pela checkbox Fixa (HMO-254)", () => {
   const html = renderizar({ tipo: "income" });
+
+  // O SELETOR SAIU. Ele tinha duas opcoes ("Receita Pontual" / "Receita
+  // Fixa"); com o eixo "fixa" virando checkbox sobrou uma, e um `<Select>` de
+  // uma opcao e uma pergunta sem alternativa na linha mais alta do formulario.
   assert.ok(
-    html.includes("Tipo de Receita"),
-    "a tela de receita nao oferece escolher entre pontual e fixa"
+    !html.includes("Tipo de Receita"),
+    "o seletor de uma opcao continua na tela da receita"
   );
   assert.ok(
-    html.includes("Uma entrada avulsa"),
-    "o texto de ajuda da receita pontual nao apareceu"
+    !html.includes('id="natureza"'),
+    "o gatilho do seletor de natureza continua na receita"
+  );
+
+  // E A CHECKBOX FICOU -- esta e a assercao que importa. A receita fixa e a
+  // HMO-170 inteira (salario) e ela nao tem outro caminho de cadastro: sem a
+  // checkbox, tirar o seletor teria APAGADO a feature, e o sintoma seria so uma
+  // tela com um campo a menos.
+  assert.ok(
+    html.includes('id="is_fixed"'),
+    "a receita perdeu a checkbox Fixa: nao ha mais como cadastrar o salario"
+  );
+  assert.ok(
+    html.includes("Receita fixa (todo mês)"),
+    "o rotulo da checkbox da receita nao apareceu"
+  );
+  // Desmarcada, a ajuda diz o que marcar vai fazer -- e cita o salario, que e o
+  // caso que as pessoas procuram.
+  assert.ok(
+    html.includes("Salário"),
+    "a ajuda da checkbox nao cita o caso que motivou a HMO-170"
   );
 });
 
@@ -977,19 +1162,76 @@ test("o aviso diz o que a confirmacao faz com o saldo, nos dois estados", () => 
   assert.match(receita, /entra no saldo da conta agora/);
 });
 
-test("fixa nao oferece a confirmacao, e NAO perde o campo de data", () => {
-  // O campo de data de uma despesa fixa e o `start_date` da regra. Um
-  // `confirmado: false` parado no estado nao pode apaga-lo -- e a checkbox nao
-  // pode estar ali, porque regra mensal ja e previsao por definicao.
+test("fixa nao oferece a confirmacao", () => {
+  // A checkbox nao pode estar ali: regra mensal ja e previsao por definicao, e a
+  // confirmacao dela acontece mes a mes em Contas Previstas.
   const html = renderizar({
     tipo: "expense",
     valores: { natureza: "fixed", confirmado: false },
   });
   assert.doesNotMatch(html, /id="confirmado"/);
-  assert.match(html, /id="date"/);
-  // Nem a data prevista: quem diz quando e o dia do vencimento, e dois campos
-  // para a mesma pergunta se contradizem.
-  assert.doesNotMatch(html, /id="expected-date"/);
+});
+
+// ---------------------------------------------------------------------------
+// A FIXA NAO TEM CAMPO DE DATA, NA TELA (HMO-247)
+// ---------------------------------------------------------------------------
+// `camposDoTipo` ja decide isso e tem teste proprio, mas a decisao certa com o
+// JSX ignorando ela e exatamente o defeito que este arquivo existe para pegar: o
+// bloco da data esta a 500 linhas do seletor de natureza, e um `{true && ...}`
+// ali deixaria os dois campos na tela com a funcao pura verde do outro lado.
+
+test("fixa nao tem NENHUM campo de data na tela, nos dois tipos", () => {
+  for (const tipo of ["expense", "income"]) {
+    for (const confirmado of [false, true]) {
+      const html = renderizar({
+        tipo,
+        valores: { natureza: "fixed", confirmado, diaDeVencimento: "10" },
+      });
+      assert.doesNotMatch(html, /id="date"/, `${tipo}: o campo "Data" ficou na tela`);
+      assert.doesNotMatch(html, /id="expected-date"/, `${tipo}: data prevista na tela`);
+      // E os rotulos tambem nao: um `<Label>` orfao continuaria pedindo uma data.
+      assert.doesNotMatch(html, /Data do pagamento/, `${tipo}: rotulo de data na tela`);
+      assert.doesNotMatch(html, /Data do recebimento/, `${tipo}: rotulo de data na tela`);
+      assert.doesNotMatch(html, /Data prevista/, `${tipo}: rotulo de prevista na tela`);
+      // A resposta que FICA e o dia do vencimento.
+      assert.match(html, /id="due_day"/, `${tipo}: perdeu o dia do vencimento`);
+    }
+  }
+});
+
+test("a tela diz quando a primeira cobranca cai, e so com o dia preenchido", () => {
+  // Tirando "Data", este dia virou a unica resposta para "quando isso cai?" -- e
+  // "ja cai este mes?" nao tinha onde ser respondida.
+  const despesa = renderizar({
+    tipo: "expense",
+    valores: { natureza: "fixed", diaDeVencimento: "10" },
+  });
+  assert.match(despesa, /A primeira cobrança é no próximo dia 10/);
+  assert.match(despesa, /neste mês, se ele ainda não passou/);
+
+  // A receita fala de ENTRADA: "cobrança" no salario e a frase errada, e e o
+  // mesmo defeito que deu nome a HMO-170.
+  const receita = renderizar({
+    tipo: "income",
+    valores: { natureza: "fixed", diaDeVencimento: "5" },
+  });
+  assert.match(receita, /A primeira entrada é no próximo dia 5/);
+  assert.doesNotMatch(receita, /cobrança/);
+
+  // Com o campo vazio a frase NAO aparece: "no próximo dia " sem numero e pior
+  // que silencio. Mesma coisa para um dia que a validacao recusa -- a tela nao
+  // pode prometer a cobranca de um dia 45.
+  for (const diaDeVencimento of ["", "0", "45"]) {
+    const html = renderizar({
+      tipo: "expense",
+      valores: { natureza: "fixed", diaDeVencimento },
+    });
+    assert.doesNotMatch(
+      html,
+      /primeira cobrança/,
+      `prometeu a primeira cobranca com diaDeVencimento "${diaDeVencimento}"`
+    );
+  }
 });
 
 test("editando nao oferece a confirmacao", () => {
@@ -1137,4 +1379,158 @@ test("cartao fixado nao traz o aviso de 'nao tem cartao cadastrado'", () => {
   });
 
   assert.doesNotMatch(html, /não tem nenhum cartão de crédito cadastrado/);
+});
+
+// ---------------------------------------------------------------------------
+// AS DUAS DATAS SAO O CAMPO MASCARADO, E NAO O CONTROLE NATIVO (HMO-238)
+// ---------------------------------------------------------------------------
+// Os casos acima afirmam que os campos de data ESTAO na tela (`id="date"`), e
+// continuariam verdes com o `<input type="date">` de volta -- que e justamente o
+// controle medido como incapaz de receber uma data digitada: na largura desta
+// tela ele gravava "2026-10-03" para quem digitou 10 de marco, porque a ordem dos
+// segmentos sai do APARELHO e nao do nosso codigo.
+//
+// Estes casos afirmam sobre o ATRIBUTO, que e o que distingue os dois.
+
+test("a data do pagamento e o campo mascarado dd/mm/aaaa", () => {
+  const html = renderizar({ tipo: "expense", valores: { data: "2026-10-02" } });
+  const campo = inputPorId(html, "date");
+
+  assert.ok(campo, 'nao achei o <input id="date">');
+  assert.match(campo, /type="text"/);
+  assert.match(campo, /placeholder="dd\/mm\/aaaa"/);
+  // A ordem na tela e a NOSSA: o dia vem primeiro, escrito.
+  assert.match(campo, /value="02\/10\/2026"/);
+  // E o que o campo nativo trazia de volta nao esta mais la.
+  assert.doesNotMatch(campo, /type="date"/);
+  assert.doesNotMatch(campo, /value="2026-10-02"/);
+});
+
+test("a data prevista tambem e o campo mascarado", () => {
+  // O segundo dos dois campos que esta issue troca. Sem este caso, trocar so um
+  // deles passaria verde.
+  const html = renderizar({
+    tipo: "expense",
+    valores: { dataPrevista: "2026-10-02" },
+  });
+  const campo = inputPorId(html, "expected-date");
+
+  assert.ok(campo, 'nao achei o <input id="expected-date">');
+  assert.match(campo, /type="text"/);
+  assert.match(campo, /placeholder="dd\/mm\/aaaa"/);
+  assert.match(campo, /value="02\/10\/2026"/);
+  assert.doesNotMatch(campo, /type="date"/);
+});
+
+test("quem prefere apontar continua tendo calendario", () => {
+  // Trocar o controle nativo para consertar a digitacao nao pode custar o
+  // calendario -- seria trocar uma reclamacao por outra.
+  const html = renderizar({ tipo: "expense", valores: { data: "2026-10-02" } });
+
+  assert.match(html, /aria-label="Escolher Data do pagamento no calendário"/);
+  // O picker nativo continua existindo para isso, escondido atras do botao.
+  assert.match(html, /<input[^>]*type="date"[^>]*aria-hidden="true"/);
+});
+
+// ---------------------------------------------------------------------------
+// O CLIQUE NA CHECKBOX "FIXA" (HMO-254)
+// ---------------------------------------------------------------------------
+// As assercoes de markup acima sao CEGAS para o `onChange` daqui -- ver
+// `camposDoInput`. E e nele que mora o unico trecho desta issue que nao e
+// funcao pura: a composicao dos dois eixos num campo so. Um `natureza: "fixed"`
+// literal no handler (em vez de `naturezaDoLugar(lugarAtual, ...)`) produz
+// markup IDENTICO em todo teste de render -- porque o teste e quem escolhe o
+// estado -- e manda a assinatura do cartao para a conta corrente.
+
+test("marcar Fixa no CARTAO produz card_fixed, e nao fixed", () => {
+  const { props, mudancas } = camposDoInput({
+    id: "is_fixed",
+    valores: { natureza: "card", contaId: CARTAO.id, parcelado: false },
+  });
+
+  assert.equal(props.checked, false, "a checkbox devia estar desmarcada aqui");
+  props.onChange({ target: { checked: true } });
+
+  assert.equal(mudancas.length, 1, "o handler chamou `aoMudar` zero ou duas vezes");
+  // O EIXO "ONDE" TEM DE SOBREVIVER AO CLIQUE. `fixed` aqui seria uma regra
+  // mensal apontada para a conta corrente: a pessoa pediu a assinatura do
+  // cartao, e o dinheiro passaria a sair do saldo todo mes em vez de entrar na
+  // fatura. Nada na tela diria isso -- o rotulo continuaria "Cartao *".
+  assert.equal(mudancas[0].natureza, "card_fixed");
+  // E o parcelamento e desligado junto: senao a volta para "nao fixa" reabriria
+  // o bloco JA MARCADO, com o N e o M de antes.
+  assert.equal(mudancas[0].parcelado, false);
+});
+
+test("marcar Fixa na CONTA produz fixed, e nao card_fixed", () => {
+  // O controle negativo do caso acima: sem ele, um `naturezaDoLugar("cartao",
+  // ...)` com o lugar FIXO no handler passaria o primeiro teste e mandaria toda
+  // despesa fixa para o cartao.
+  const { props, mudancas } = camposDoInput({
+    id: "is_fixed",
+    valores: { natureza: "one_off", contaId: "", parcelado: false },
+  });
+
+  assert.equal(props.checked, false);
+  props.onChange({ target: { checked: true } });
+  assert.equal(mudancas[0].natureza, "fixed");
+});
+
+test("desmarcar Fixa volta para o gasto normal do MESMO lugar", () => {
+  // "caso nenhum nem outro ambos desmarcados ai e gasto normal."
+  const noCartao = camposDoInput({
+    id: "is_fixed",
+    valores: { natureza: "card_fixed", contaId: CARTAO.id },
+  });
+  assert.equal(noCartao.props.checked, true, "a checkbox nao reflete card_fixed");
+  noCartao.props.onChange({ target: { checked: false } });
+  assert.equal(noCartao.mudancas[0].natureza, "card");
+
+  const naConta = camposDoInput({
+    id: "is_fixed",
+    valores: { natureza: "fixed", contaId: "" },
+  });
+  assert.equal(naConta.props.checked, true, "a checkbox nao reflete fixed");
+  naConta.props.onChange({ target: { checked: false } });
+  assert.equal(naConta.mudancas[0].natureza, "one_off");
+});
+
+test("trocar de lugar no seletor PRESERVA a checkbox Fixa marcada", () => {
+  // O par do teste acima, no outro controle. Os dois escrevem no MESMO campo, e
+  // um `natureza: value` cru no seletor desligaria a regra que a checkbox ainda
+  // mostra marcada: a pessoa veria "Fixa" com visto e gravaria uma compra.
+  const { props, mudancas } = seletorDoGatilho({
+    id: "natureza",
+    valores: { natureza: "fixed", contaId: "" },
+  });
+
+  // O seletor mostra o LUGAR, nao a natureza -- senao o radix abriria com um
+  // valor que nao e nenhuma das opcoes e o gatilho sairia vazio.
+  assert.equal(props.value, "conta");
+
+  // `onValueChange` e a API do Select do radix, nao `onChange`.
+  props.onValueChange("cartao");
+  assert.equal(mudancas.length, 1);
+  assert.equal(
+    mudancas[0].natureza,
+    "card_fixed",
+    "trocar para cartao desligou a Fixa que esta marcada na tela"
+  );
+  // A conta e limpa: as duas listas sao DISJUNTAS desde a HMO-254, e o id antigo
+  // ficaria selecionado fora do seletor.
+  assert.equal(mudancas[0].contaId, "");
+});
+
+test("trocar de lugar com a Fixa DESMARCADA nao liga a regra", () => {
+  // O controle negativo do teste acima: um `naturezaDoLugar(value, true)` com o
+  // segundo eixo fixo em `true` passaria lá e transformaria toda troca de lugar
+  // numa regra mensal.
+  const { props, mudancas } = seletorDoGatilho({
+    id: "natureza",
+    valores: { natureza: "one_off", contaId: "cc" },
+  });
+
+  assert.equal(props.value, "conta");
+  props.onValueChange("cartao");
+  assert.equal(mudancas[0].natureza, "card");
 });

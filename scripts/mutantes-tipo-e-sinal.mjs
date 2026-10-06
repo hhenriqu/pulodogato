@@ -36,47 +36,12 @@
 // COMO RODAR
 //   npm run mutantes:tipo-e-sinal
 
-import {
-  readFileSync,
-  writeFileSync,
-  mkdtempSync,
-  rmSync,
-  mkdirSync,
-  cpSync,
-} from "node:fs";
-import { execFileSync } from "node:child_process";
-import { join, dirname } from "node:path";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
+import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
 
 const REGRA = "lib/movimentacoes.ts";
 const ROTA = "app/api/personal-finance/transactions/route.ts";
 const EDICAO = "app/api/personal-finance/transactions/[id]/route.ts";
-
-// A suite roda com o cwd na raiz temporaria, entao o arquivo de teste precisa
-// estar la. A ROTA nao entra aqui porque ela ja e uma das duas fontes mutaveis
-// e e escrita na copia em toda rodada -- se nao fosse, os quatro casos que leem
-// o codigo da rota estourariam em TODO mutante, o placar sairia perfeito, e
-// quem denunciaria isso seria o controle positivo, nao o placar.
-const ACOMPANHAM = ["scripts/test-movimentacoes.mjs"];
-
-// O `tsc` DO PROJETO, POR CAMINHO ABSOLUTO. `npx tsc` cairia no pacote Debian
-// `node-typescript` (a arvore mutada nao tem node_modules), que responde "This
-// is not the tsc command you are looking for" -- e ai TODO mutante "morreria no
-// tsc" com o placar perfeito e zero assercao executada.
-const TSC = join(process.cwd(), "node_modules/.bin/tsc");
-
-const ARGS_TSC = [
-  "lib/movimentacoes.ts",
-  "--outDir",
-  ".tmp-movimentacoes",
-  "--module",
-  "es2020",
-  "--target",
-  "es2020",
-  "--moduleResolution",
-  "node",
-  "--skipLibCheck",
-];
 
 const originais = {
   [REGRA]: readFileSync(REGRA, "utf8"),
@@ -202,64 +167,28 @@ const MUTANTES = [
   },
 ];
 
-const dir = mkdtempSync(join(tmpdir(), "mutantes-tipo-e-sinal-"));
+// O BLOCO: um diretorio, um processo, a fonte e 13 mutantes dentro (HMO-319).
+//
+// Antes cada volta montava uma arvore nova em diretorio temporario -- a fonte
+// mutada mais a lista de arquivos que a acompanham -- e chamava o `tsc`. Era o
+// programa INTEIRO reparseado por mutante, para trocar um arquivo.
+//
+// Agora a compilacao e em processo e todas as voltas dividem o AST ja parseado
+// de tudo que nao e o arquivo mutado. E as etapas vem do proprio alvo
+// `test:movimentacoes` no package.json, em vez de repetidas a mao aqui: a copia da
+// receita divergia do alvo de verdade sem nada reclamar.
+//
+// A LISTA DE ARQUIVOS QUE ACOMPANHAM DEIXOU DE EXISTIR, e e por isso que cinco
+// blocos deste repositorio pararam de reprovar na main: a compilacao le a arvore
+// de verdade e troca em memoria so o arquivo mutado, entao nao ha mais uma
+// segunda copia do grafo de modulos para envelhecer em silencio. Quem delimita o
+// que este bloco prova continua sendo o tsconfig da suite.
+const SUITE_DO_BLOCO = "test:movimentacoes";
+const bloco = criarBlocoDeMutantes({ rotulo: "tipo-e-sinal", suites: [SUITE_DO_BLOCO] });
 
-/** Compila as fontes numa copia da arvore e roda a suite contra ela. */
-function rodar(nome, fontes) {
-  const raiz = join(dir, nome);
+/** Adapta a chamada antiga `rodar(nome, fontes)` ao bloco. */
+const voltaDoBloco = (nome, fontes) => bloco.rodar(nome, fontes ?? {}, SUITE_DO_BLOCO);
 
-  for (const [caminho, conteudo] of Object.entries(fontes)) {
-    mkdirSync(join(raiz, dirname(caminho)), { recursive: true });
-    writeFileSync(join(raiz, caminho), conteudo);
-  }
-
-  for (const arquivo of ACOMPANHAM) {
-    mkdirSync(join(raiz, dirname(arquivo)), { recursive: true });
-    cpSync(arquivo, join(raiz, arquivo));
-  }
-
-  try {
-    execFileSync(TSC, ARGS_TSC, {
-      cwd: raiz,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-  } catch (e) {
-    // O `tsc` reprovando TAMBEM mata o mutante, mas tem de ser DISTINGUIVEL do
-    // teste reprovando: um mutante que nunca rodou nao prova nada sobre as
-    // assercoes. Vale em dobro aqui, porque a rota NAO passa pelo tsc nesta
-    // copia -- um mutante de rota que morresse "no tsc" seria sinal de que a
-    // copia esta errada, nao de que a suite o pegou.
-    return {
-      verde: false,
-      como: "tsc",
-      saida: String(e.stdout ?? e.message)
-        .trim()
-        .split("\n")
-        .slice(0, 2)
-        .join(" | "),
-    };
-  }
-
-  try {
-    execFileSync("node", ["--test", "scripts/test-movimentacoes.mjs"], {
-      cwd: raiz,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    return { verde: true };
-  } catch (e) {
-    const saida = String(e.stdout ?? "") + String(e.stderr ?? "");
-    const quais = [...saida.matchAll(/✖ (.+?) \(/g)]
-      .map((m) => m[1])
-      .filter((n) => n !== "failing tests:");
-    return {
-      verde: false,
-      como: "teste",
-      saida: [...new Set(quais)].slice(0, 3).join("; ") || "reprovou",
-    };
-  }
-}
 
 let falhou = false;
 
@@ -267,13 +196,13 @@ try {
   // CONTROLE POSITIVO. Sem ele, uma copia de arvore incompleta faria TODO
   // mutante "morrer" e o placar sairia cheio sem que uma assercao tivesse
   // medido nada.
-  const controle = rodar("controle", originais);
+  const controle = voltaDoBloco("controle", originais);
   if (!controle.verde) {
     console.error(
       `CONTROLE FALHOU: as fontes intactas nao passam na suite (${controle.como}) -> ${controle.saida}`
     );
     console.error("A copia da arvore esta errada. O placar abaixo nao vale.");
-    rmSync(dir, { recursive: true, force: true });
+    bloco.fechar();
     process.exit(1);
   }
   console.log("controle: as fontes intactas passam na suite  OK\n");
@@ -302,7 +231,7 @@ try {
       continue;
     }
 
-    const r = rodar(m.nome, {
+    const r = voltaDoBloco(m.nome, {
       ...originais,
       [m.fonte]: original.replace(m.de, m.para),
     });
@@ -310,6 +239,13 @@ try {
     if (r.verde) {
       console.error(`SOBREVIVEU: ${m.nome}`);
       console.error(`            ${m.porque}`);
+      // Sobreviver emitindo o MESMO byte nao e furo de assercao: e mutante
+      // equivalente, e nenhuma assercao o mataria.
+      if (r.mudouASaida === false) {
+        console.error(
+          "            (a saida compilada e identica a da arvore limpa: mutante EQUIVALENTE, nao furo de teste)",
+        );
+      }
       falhou = true;
     } else {
       mortos++;
@@ -322,7 +258,7 @@ try {
     `\n${mortos}/${MUTANTES.length} mutantes mortos (${porTeste} por assercao)`
   );
 } finally {
-  rmSync(dir, { recursive: true, force: true });
+  bloco.fechar();
 }
 
 process.exit(falhou ? 1 : 0);

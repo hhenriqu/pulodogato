@@ -126,23 +126,40 @@ test("periodo que termina hoje ainda tem previsao do proprio dia", () => {
 // ---------------------------------------------------------------------------
 
 test("receita prevista vai para receita, e o resto para despesa", () => {
-  assert.equal(direcaoNoPainel("income", false), "income");
-  assert.equal(direcaoNoPainel("expense", false), "expense");
+  assert.equal(direcaoNoPainel("income"), "income");
+  assert.equal(direcaoNoPainel("expense"), "expense");
   // Direcao ilegivel cai em despesa: o default historico da rota de baixa. Ler
   // uma despesa como receita mostraria "vou receber" sobre uma conta a pagar.
-  assert.equal(direcaoNoPainel(null, false), "expense");
-  assert.equal(direcaoNoPainel("coisa-nova", false), "expense");
+  assert.equal(direcaoNoPainel(null), "expense");
+  assert.equal(direcaoNoPainel("coisa-nova"), "expense");
 });
 
 test("transferencia fica fora dos dois lados", () => {
-  assert.equal(direcaoNoPainel("transfer", false), null);
+  assert.equal(direcaoNoPainel("transfer"), null);
 });
 
-test("fatura de cartao fica fora dos dois lados, mesmo marcada como despesa", () => {
-  // Cada compra do cartao ja entrou como despesa no dia em que aconteceu.
-  // Contar a fatura por cima cobraria as mesmas compras uma segunda vez.
-  assert.equal(direcaoNoPainel("expense", true), null);
-  assert.equal(direcaoNoPainel("income", true), null);
+test("a fatura de cartao ENTRA na previsao, como despesa (HMO-265)", () => {
+  // Ate a HMO-265 esta funcao recebia um segundo argumento `ehFatura` e
+  // devolvia `null` para ele. O argumento era coerente com um Realizado que
+  // contava a COMPRA no cartao; depois que o Realizado passou a contar a FATURA
+  // PAGA (lib/realizado-do-caixa.ts), devolver `null` aqui faria o cartao
+  // desaparecer dos DOIS lados do "Total esperado".
+  //
+  // A fatura e uma linha da agenda como qualquer outra: `transaction_type` NULO
+  // no `close`, entao `direction` sai 'expense' da view do 027.
+  assert.equal(direcaoNoPainel("expense"), "expense");
+
+  // A ASSERCAO QUE IMPEDE O PARAMETRO DE VOLTAR EM SILENCIO. Um chamador antigo
+  // -- ou uma reversao parcial -- passaria `true` numa segunda posicao que nao
+  // existe mais. Em JavaScript isso nao da erro: o argumento extra e ignorado.
+  // Afirmar sobre `length` e o unico jeito de a aridade ser parte do contrato;
+  // sem isto, reviver a exclusao passaria verde aqui.
+  assert.equal(
+    direcaoNoPainel.length,
+    1,
+    "direcaoNoPainel voltou a receber um segundo argumento: a exclusao da fatura saiu na HMO-265"
+  );
+  assert.equal(direcaoNoPainel("expense", true), "expense");
 });
 
 // ---------------------------------------------------------------------------

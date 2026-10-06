@@ -1,8 +1,9 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
+import { lerCamposDeRendaFixa } from "@/lib/renda-fixa";
 
 // =====================================================
-// PATCH /api/investments/assets/:assetId  -- atualiza o preco atual
+// PATCH /api/investments/assets/:assetId  -- preco atual e renda fixa
 // DELETE /api/investments/assets/:assetId -- remove o ativo e o historico dele
 // =====================================================
 // Enquanto nao houver fonte de cotacao contratada (HMO-141 item 2), o PATCH e o
@@ -69,6 +70,57 @@ export async function PATCH(
         );
       }
       patch.name = name;
+    }
+
+    // Os seis campos da 031 (HMO-192). Eles vao SEMPRE JUNTOS, e nao um a um,
+    // porque os CHECK da migration cruzam uns com os outros: gravar
+    // `index_percentage` sozinho num ativo cujo `index_kind` ja esta nulo quebra
+    // `percentual_exige_indexador`, e um PATCH parcial tornaria a validacao
+    // desta rota uma mentira (ela aprovaria um conjunto que ela nao viu
+    // inteiro). O formulario manda a secao completa; `null` em qualquer um
+    // limpa aquele campo.
+    //
+    // E este caminho que cumpre o "preenchimento progressivo" prometido pela
+    // 031: os ativos de renda fixa cadastrados desde a 021 estao todos com os
+    // seis campos nulos, e sem um PATCH eles nunca ganhariam rendimento
+    // automatico -- so quem cadastrasse de novo.
+    if ("indexKind" in body) {
+      const { data: atual, error: erroLeitura } = await supabase
+        .from("investment_assets")
+        .select("type")
+        .eq("id", params.assetId)
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (erroLeitura) {
+        return NextResponse.json(
+          { error: `Erro ao ler o ativo: ${erroLeitura.message}` },
+          { status: 500 }
+        );
+      }
+      if (!atual) {
+        return NextResponse.json(
+          { error: "Ativo nao encontrado" },
+          { status: 404 }
+        );
+      }
+      // O CHECK `renda_fixa_so_em_fixed_income` recusaria isso de todo jeito; a
+      // checagem aqui existe pela mensagem. Ver o cabecalho de /assets.
+      if (atual.type !== "fixed_income") {
+        return NextResponse.json(
+          {
+            error:
+              "Indexador e vencimento sao campos de renda fixa, e este ativo nao e",
+          },
+          { status: 400 }
+        );
+      }
+
+      const leitura = lerCamposDeRendaFixa(body);
+      if (!leitura.ok) {
+        return NextResponse.json({ error: leitura.erro }, { status: 400 });
+      }
+      Object.assign(patch, leitura.campos);
     }
 
     if (Object.keys(patch).length === 0) {

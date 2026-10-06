@@ -26,7 +26,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import Link from "next/link";
 import { User } from "@supabase/supabase-js";
 import { createClient } from "@/utils/supabase/client";
 import { toast } from "sonner";
@@ -38,7 +37,6 @@ import {
   CardContent,
   CardDescription,
   CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import {
   Select,
@@ -49,18 +47,28 @@ import {
 } from "@/components/ui/select";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { SoftFeatureGuard } from "@/components/subscription/SoftFeatureGuard";
-import { ArrowLeft, Trash2, TrendingDown, TrendingUp, Users } from "lucide-react";
+import { Trash2, Users } from "lucide-react";
 import { CamposDeLancamento } from "@/components/movimentacoes/CamposDeLancamento";
+import { ModalDeLancamento } from "@/components/movimentacoes/ModalDeLancamento";
+import { SalvarEContinuar } from "@/components/movimentacoes/SalvarEContinuar";
 import { usePreferenciaDeMoeda } from "@/lib/hooks/usePreferenciaDeMoeda";
 import { moedaSugerida } from "@/lib/moeda";
 import { cotacaoDigitada, taxaParaGravar } from "@/lib/cambio";
 import { avisoDeEdicaoTravada } from "@/lib/grupos";
-import { cartaoDaTela, PARAM_DO_CARTAO } from "@/lib/fatura-do-cartao";
+import {
+  cartaoDaTela,
+  faturaPadraoDoLancamento,
+  PARAM_DO_CARTAO,
+} from "@/lib/fatura-do-cartao";
 import { useOfflineQueue } from "@/lib/hooks/useOfflineQueue";
 import {
+  camposDoTipo,
   contaPrevista,
   datasDaTransacao,
   destinoDoLancamento,
+  ehNaturezaFixa,
+  ehNaturezaNoCartao,
+  naturezaDoLugar,
   parcelaDigitada,
   regraDeRecorrencia,
   valoresIniciais,
@@ -75,6 +83,12 @@ import type {
   PreferenciaDeCategoria,
   Subcategoria,
 } from "@/lib/categorias";
+import {
+  PARAM_DE_ORIGEM,
+  destinoDepoisDeSalvar,
+  origemSegura,
+  proximoLancamento,
+} from "@/lib/retorno-do-lancamento";
 import type { ResultadoDeCriacao } from "@/components/movimentacoes/SeletorDeCategoria";
 import {
   guardarCatalogo,
@@ -97,7 +111,10 @@ const COPIA = {
   income: {
     titulo: "Nova Receita",
     descricao:
-      "Dinheiro que entrou: salário, venda, rendimento, reembolso. Pode ser pontual ou fixa mensal.",
+      // "pontual" SAIU do vocabulario da tela (HMO-254): o seletor nao tem mais
+      // essa palavra, e uma descricao que a usa manda a pessoa procurar por uma
+      // opcao que nao existe. Hoje quem decide e a checkbox "Fixa".
+      "Dinheiro que entrou: salário, venda, rendimento, reembolso. Marque \"Fixa\" se ela se repete todo mês.",
     salvar: "Salvar receita",
     salvo: "Receita lançada.",
     atualizado: "Receita atualizada.",
@@ -110,7 +127,9 @@ const COPIA = {
   expense: {
     titulo: "Nova Despesa",
     descricao:
-      "Dinheiro que saiu. Pode ser pontual, no cartão, fixa mensal ou parcelada.",
+      // Ver o comentario gemeo na receita: o seletor pergunta ONDE (conta ou
+      // cartao), e "Fixa" / "Parcelar" sao as checkboxes.
+      "Dinheiro que saiu. Escolha se foi da conta ou no cartão, e marque \"Fixa\" ou \"Parcelar\" se for o caso.",
     salvar: "Salvar despesa",
     salvo: "Despesa lançada.",
     atualizado: "Despesa atualizada.",
@@ -138,6 +157,15 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
    * link e o leitor nao poderem divergir.
    */
   const idDoCartaoFixado = parametros.get(PARAM_DO_CARTAO);
+  /**
+   * `?origem=` chega de quem abriu este modal (HMO-249), e e para onde o X, o
+   * Cancelar e o Salvar voltam.
+   *
+   * Passa por `origemSegura` AQUI, uma vez, e nao em cada uso: `router.push`
+   * com o que vier da URL e um redirecionamento aberto, e a peneira num ramo so
+   * dos tres deixaria os outros dois abertos.
+   */
+  const origem = origemSegura(parametros.get(PARAM_DE_ORIGEM));
 
   const [user, setUser] = useState<User | null>(null);
   const [serviceId, setServiceId] = useState("");
@@ -161,6 +189,15 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
   const [catalogoDe, setCatalogoDe] = useState<number | null>(null);
   const [valores, setValores] = useState<ValoresDeLancamento>(valoresIniciais);
   const [editando, setEditando] = useState(false);
+  /**
+   * "Salvar e continuar" (HMO-249): o modal nao fecha depois de gravar.
+   *
+   * Nasce DESLIGADO, e isso e a decisao conservadora. Ligado por padrao, o
+   * comportamento de sempre (salvar fecha a tela) mudaria para todo mundo sem
+   * aviso, e quem lanca uma conta so ficaria olhando um formulario aberto sem
+   * saber se gravou.
+   */
+  const [continuar, setContinuar] = useState(false);
   // Decide se a checkbox de moeda aparece, e qual moeda um lancamento novo ganha.
   const { moeda: preferenciaDeMoeda, carregando: carregandoMoeda } =
     usePreferenciaDeMoeda();
@@ -189,6 +226,41 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
   }, [carregandoMoeda, editando, preferenciaDeMoeda.oficial]);
 
   // ---------------------------------------------------------------------------
+  // A FATURA QUE O SELETOR ABRE MARCADA (HMO-281 / HMO-289)
+  // ---------------------------------------------------------------------------
+  // `useMemo` com `[origem]` e NAO uma chamada solta no corpo: a funcao le o
+  // relogio quando nao ha periodo na origem, e recalcular a cada render daria um
+  // padrao que muda debaixo do dedo da pessoa a meia-noite -- e, antes disso,
+  // uma dependencia instavel no efeito abaixo, que passaria a rodar em todo
+  // render.
+  const faturaPadrao = useMemo(() => faturaPadraoDoLancamento(origem), [origem]);
+
+  // O PADRAO E ESCRITO NO ESTADO, E NAO SO EXIBIDO
+  //
+  // `valoresIniciais()` nao pode conhecer este valor (aquele modulo nao importa
+  // nada, e o padrao depende da tela de origem) -- a mesma situacao da moeda
+  // oficial logo acima. Se o padrao vivesse so no `<select>` como valor
+  // exibido, `gravarTransacao` leria `mesDaFatura: ""` e gravaria override NULO:
+  // a tela mostraria "novembro de 2026" e a compra cairia na fatura de outubro.
+  //
+  // AS TRES GUARDAS:
+  //   - `natureza !== "card"`: fora da compra no cartao nao ha o que preencher, e
+  //     `validarLancamento` RECUSA um mes preenchido ali;
+  //   - `editando`: o que esta gravado manda. Sem esta guarda, abrir para editar
+  //     uma compra SEM override escreveria o padrao no estado, e o Salvar -- sem
+  //     a pessoa tocar em nada -- moveria a compra de fatura;
+  //   - `mesDaFatura === ""`: so preenche o vazio. Reescrever o campo apagaria a
+  //     escolha de quem ja mexeu nele toda vez que o efeito rodasse de novo.
+  useEffect(() => {
+    if (editando) return;
+    setValores((atual) =>
+      atual.natureza === "card" && atual.mesDaFatura === ""
+        ? { ...atual, mesDaFatura: faturaPadrao }
+        : atual
+    );
+  }, [editando, faturaPadrao, valores.natureza]);
+
+  // ---------------------------------------------------------------------------
   // O CARTAO QUE A TELA ANTERIOR JA ESCOLHEU (HMO-210)
   // ---------------------------------------------------------------------------
   // Derivado, e nao estado: um `useState` aqui precisaria de um efeito para se
@@ -213,14 +285,25 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
   // devolve o estado intacto quando ja esta aplicado, senao cada render
   // reescreveria `moeda` em cima de uma troca explicita da pessoa
   // (`moedaSobreposta`) com o campo aberto na tela.
+  //
+  // `ehNaturezaNoCartao` E NAO `=== "card"` (HMO-254). Com a comparacao crua
+  // este efeito DESFAZIA a checkbox "Fixa": marca-la produz `card_fixed`, a
+  // condicao de idempotencia passava a ler `false`, e o `else` reescrevia
+  // `natureza: "card"` no render seguinte. A checkbox voltava sozinha para
+  // desmarcada -- e quem tentasse cadastrar a assinatura do cartao entrando pela
+  // tela daquele cartao gravava a compra do mes, sem nada na tela explicando por
+  // que o clique nao pegou. O cartao fixado trava o CARTAO, nao a frequencia.
   useEffect(() => {
     if (!cartaoFixado) return;
     setValores((atual) =>
-      atual.natureza === "card" && atual.contaId === cartaoFixado.id
+      ehNaturezaNoCartao(atual.natureza) && atual.contaId === cartaoFixado.id
         ? atual
         : {
             ...atual,
-            natureza: "card",
+            // `naturezaDoLugar` preserva o eixo "fixa" que ja esta no estado: um
+            // `natureza: "card"` literal aqui e o mesmo defeito, so que uma
+            // linha abaixo.
+            natureza: naturezaDoLugar("cartao", ehNaturezaFixa(atual.natureza)),
             contaId: cartaoFixado.id,
             moeda: moedaSugerida({
               daConta: cartaoFixado.currency,
@@ -471,6 +554,21 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
         tipo === "expense" && contaDaLinha?.account_type === "credit_card"
           ? "card"
           : "one_off",
+      // A FATURA ESCOLHIDA VOLTA PARA O CAMPO, E O NULO VOLTA COMO VAZIO
+      //
+      // `invoice_month_override` e NULL na maioria das linhas, e vazio aqui e a
+      // leitura certa: quer dizer "esta compra cai pela DATA", que e a primeira
+      // opcao do seletor. Preencher com o mes corrente -- ou com `invoice_month`,
+      // que vem do COALESCE da 041 e por isso NUNCA e nulo -- faria a tela
+      // afirmar uma escolha que ninguem fez, e o Salvar de uma edicao qualquer
+      // gravaria um override novo numa compra que nao tinha nenhum, movendo-a de
+      // fatura sem ninguem pedir.
+      //
+      // `slice(0, 7)` porque a coluna e `date` e volta 'AAAA-MM-01'; o seletor
+      // fala 'AAAA-MM'.
+      mesDaFatura: linha.invoice_month_override
+        ? String(linha.invoice_month_override).slice(0, 7)
+        : "",
       compartilhado: Boolean(linha.is_shared),
       grupoId: linha.group_id ?? "",
       // A moeda GRAVADA ganha da moeda atual da conta -- e por isso
@@ -665,6 +763,16 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
         // que fatura a parcela cai. Nao ha campo de data proprio no bloco de
         // parcelamento: ver o comentario em `validarLancamento`.
         vencimento: valores.data,
+        // A FATURA ESCOLHIDA, QUE NA SERIE VALE POR DEZ (HMO-289)
+        //
+        // Aqui ela nao e "o mes de uma linha": a rota a usa como a fatura ANCORA
+        // de onde as parcelas 2..M sao contadas. Nao mandar o campo nao erraria
+        // so a parcela 1 -- a serie inteira seria contada da fatura da data, com
+        // a primeira numa fatura e as nove seguintes a partir de outra.
+        //
+        // Sempre presente no corpo (vazio vira `null` na rota): um campo que so
+        // aparece as vezes e um campo que da para esquecer de mandar.
+        mes_da_fatura: valores.mesDaFatura || null,
         group_id: valores.grupoId || null,
         notes: valores.notas,
         // Moeda e cotacao vao pelo mesmo motivo de `gravarTransacao`: a 026 tem
@@ -747,6 +855,12 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       // a fila gravaria uma entrada avulsa, e o salario seria contado de novo
       // quando a ocorrencia do mes fosse baixada. Dinheiro em dobro, sem erro.
       tipoDeDespesa: valores.natureza,
+      // Sem isto o lancamento sem rede PERDE A FATURA EM SILENCIO: a fila aceita
+      // compra no cartao, o item sincroniza, a linha e aceita, e a compra cai na
+      // fatura da DATA. Nenhum erro, nenhum item `falhou`, nada na tela -- o
+      // unico dos quatro escritores desta feature cujo defeito nao tem sintoma.
+      // Ver `invoice_month_override` em lib/offline-queue.ts.
+      mesDaFatura: valores.mesDaFatura,
     });
 
     if (resultado.estado === "recusado") {
@@ -760,8 +874,51 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
     return true;
   };
 
-  const voltarParaLista = () => {
-    router.push("/dashboard/personal-finance");
+  /**
+   * Leva para uma tela interna ja aprovada por `origemSegura`.
+   *
+   * O `as` existe porque `typedRoutes` tipa o argumento de `router.push` como
+   * rota conhecida, e aqui o destino e uma string decidida em tempo de execucao.
+   * E o UNICO lugar do arquivo que escapa da tipagem, e ele so recebe o que a
+   * peneira aprovou -- por isso ela mora no topo do componente e nao aqui.
+   */
+  const irPara = (destino: string) => {
+    router.push(destino as Parameters<typeof router.push>[0]);
+  };
+
+  /**
+   * O fim de uma gravacao que deu certo (HMO-249).
+   *
+   * Dois caminhos, e `destinoDepoisDeSalvar` e quem escolhe:
+   *
+   *   fechar    volta para a tela de ORIGEM -- de onde a pessoa clicou em "Nova
+   *             Despesa" --, com a query dela intacta (o `?de=&ate=` das telas
+   *             de movimentacao e o periodo escolhido). Sem origem, cai na lista
+   *             de lancamentos, que e o destino fixo que as tres telas usavam
+   *             antes desta issue.
+   *   continuar fica aqui, com o formulario pronto para a proxima conta.
+   *
+   * O ramo "continuar" NAO limpa so a tela: ele tambem zera `valor` e
+   * `descricao` via `proximoLancamento`, e e isso que impede o segundo clique em
+   * Salvar de gravar o mesmo gasto de novo. Ver o cabecalho daquela funcao.
+   */
+  const terminar = () => {
+    const destino = destinoDepoisDeSalvar({
+      origem,
+      continuar: continuar && !editando,
+    });
+
+    if (destino === null) {
+      setValores((atual) => proximoLancamento(atual, valoresIniciais()));
+      return;
+    }
+
+    irPara(destino);
+  };
+
+  /** O X, o Esc, o clique fora e o Cancelar: sai sem gravar nada. */
+  const fecharSemSalvar = () => {
+    irPara(destinoDepoisDeSalvar({ origem, continuar: false })!);
   };
 
   const enviar = async (evento: React.FormEvent) => {
@@ -792,7 +949,7 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
           "Sem conexão. Guardei no aparelho e envio quando a rede voltar."
         );
         if (guardou) {
-          voltarParaLista();
+          terminar();
           return;
         }
       }
@@ -808,17 +965,17 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       // `destinoDoLancamento` e uma funcao pura, e a ordem esta presa por teste.
       switch (destinoDoLancamento(tipo, valores, editando)) {
         case "regra":
-          if (await criarRegraFixa()) voltarParaLista();
+          if (await criarRegraFixa()) terminar();
           return;
         case "parcelas":
-          if (await criarParcelas()) voltarParaLista();
+          if (await criarParcelas()) terminar();
           return;
         case "previsao":
-          if (await criarContaPrevista()) voltarParaLista();
+          if (await criarContaPrevista()) terminar();
           return;
         case "transacao":
           await gravarTransacao();
-          voltarParaLista();
+          terminar();
           return;
       }
     } catch (erro) {
@@ -842,7 +999,7 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
           "Sem conexão no meio do envio. Guardei no aparelho."
         );
         if (guardou) {
-          voltarParaLista();
+          terminar();
           return;
         }
       }
@@ -855,6 +1012,11 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
 
   const gravarTransacao = async () => {
     const valor = valorGravado(tipo, Number.parseFloat(valores.valor));
+    // A MESMA funcao que decide o que esta na tela decide o que vai no corpo --
+    // ver `invoice_month_override` abaixo. Ler a natureza crua aqui criaria uma
+    // segunda regra para "isto tem fatura?", e as duas divergiriam na primeira
+    // natureza nova do enum.
+    const campos = camposDoTipo(tipo, valores.natureza, editando, valores.confirmado);
     const temGrupo = Boolean(valores.grupoId);
     const temRateio = valores.compartilhado && valores.rateios.length > 0;
 
@@ -908,6 +1070,35 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       // colunas faria todo lancamento AFIRMAR que saiu no dia previsto -- um
       // relatorio de atraso sairia com zero atrasos e cara de verdade.
       ...datasDaTransacao(valores),
+      // -------------------------------------------------------------------
+      // EM QUAL FATURA ISSO CAI (041, HMO-281 / HMO-289)
+      // -------------------------------------------------------------------
+      // DENTRO DE `linha`, e nao no ramo do insert, porque `linha` e usada nos
+      // DOIS -- `insert({...linha, ...})` e `update(linha)`. E a edicao e metade
+      // da feature: trocar a fatura de uma compra ja gravada e o conserto de quem
+      // lancou no mes errado. Posto so no insert, o campo gravaria na criacao e
+      // seria impossivel de corrigir depois.
+      //
+      // `null` E NAO `undefined`, e aqui esta a diferenca que importa: o
+      // supabase-js OMITE a chave `undefined` do corpo, e coluna omitida num
+      // UPDATE fica como esta. Quem tirasse a escolha de uma compra (voltando o
+      // seletor para "pela data da compra") veria o toast de sucesso e a compra
+      // continuaria na fatura antiga. `null` e o que APAGA o override.
+      //
+      // `campos.faturaDoLancamento` e o portao, e nao `valores.mesDaFatura`
+      // sozinho: o estado e um objeto so, e um 'AAAA-MM' sobrevive a troca de
+      // natureza. Sem o portao, a despesa que a pessoa moveu de "Gasto no
+      // Cartao" para "Despesa" levaria override para uma linha de conta corrente
+      // -- onde `card_invoice_lines` nem olha a coluna, mas o dado fica gravado
+      // mentindo para quem o ler depois. (`validarLancamento` ja recusa esse
+      // caso antes; este e o cinto.)
+      //
+      // `-01` porque a 041 tem
+      // `CHECK (invoice_month_override = date_trunc('month', ...))`.
+      invoice_month_override:
+        campos.faturaDoLancamento && valores.mesDaFatura
+          ? `${valores.mesDaFatura}-01`
+          : null,
     };
 
     let transacao: { id: string };
@@ -1014,54 +1205,56 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
     });
   };
 
+  // O titulo e a descricao do modal. Montados antes do `if (carregando)` porque
+  // o modal tambem envolve o estado de carregamento: sem isto, abrir "Nova
+  // Despesa" mostraria um disco girando sobre a tela de origem, sem moldura e
+  // sem X -- e quem abriu por engano nao teria como sair enquanto o catalogo
+  // carrega.
+  const tituloDoModal = editando
+    ? tipo === "expense"
+      ? "Editar despesa"
+      : "Editar receita"
+    : copia.titulo;
+
   if (carregando) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-      </div>
+      <ModalDeLancamento
+        titulo={tituloDoModal}
+        descricao={copia.descricao}
+        aoFechar={fecharSemSalvar}
+      >
+        <div className="flex items-center justify-center min-h-[200px]">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+        </div>
+      </ModalDeLancamento>
     );
   }
 
-  const Icone = tipo === "expense" ? TrendingDown : TrendingUp;
-
   return (
-    <div className="container mx-auto py-6 space-y-6 max-w-3xl">
-      <div className="space-y-2">
-        <Button variant="ghost" size="sm" asChild className="-ml-2">
-          <Link href="/dashboard/personal-finance">
-            <ArrowLeft className="h-4 w-4 mr-1" />
-            Voltar para os lançamentos
-          </Link>
-        </Button>
-        <h1 className="text-3xl font-bold flex items-center gap-2">
-          <Icone
-            className={`h-7 w-7 ${
-              tipo === "expense" ? "text-destructive" : "text-success"
-            }`}
-          />
-          {editando
-            ? tipo === "expense"
-              ? "Editar despesa"
-              : "Editar receita"
-            : copia.titulo}
-        </h1>
-        <p className="text-muted-foreground">{copia.descricao}</p>
-        {catalogoDe !== null && (
+    <ModalDeLancamento
+      titulo={tituloDoModal}
+      descricao={copia.descricao}
+      aoFechar={fecharSemSalvar}
+      aviso={
+        catalogoDe !== null ? (
           <p className="text-sm text-warning">
             Sem conexão. As categorias e contas são as de{" "}
             {new Date(catalogoDe).toLocaleString("pt-BR")}.
           </p>
-        )}
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>{editando ? "Dados do lançamento" : copia.titulo}</CardTitle>
-          <CardDescription>
-            Campos com * são obrigatórios.
-          </CardDescription>
+        ) : undefined
+      }
+    >
+      {/*
+        O Card perde borda e sombra dentro do modal -- a moldura ja e a do
+        `DialogContent`, e duas molduras concentricas com o mesmo raio leem como
+        um erro de render. O que ele ainda carrega e o "Campos com * sao
+        obrigatorios", que e a unica pista de obrigatoriedade na tela.
+      */}
+      <Card className="border-0 shadow-none">
+        <CardHeader className="px-0 pt-0">
+          <CardDescription>Campos com * são obrigatórios.</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="px-0 pb-0">
           <form onSubmit={enviar} className="space-y-6">
             <CamposDeLancamento
               tipo={tipo}
@@ -1084,6 +1277,11 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
               moedaPorLancamento={preferenciaDeMoeda.porLancamento}
               moedaOficial={preferenciaDeMoeda.oficial}
               cartaoFixado={cartaoFixado}
+              // O CENTRO da janela de meses do seletor de fatura. Vem de cá
+              // porque quem conhece a tela de origem é este componente (ele lê
+              // `?origem=`), e `CamposDeLancamento` é de propósito sem URL e sem
+              // banco -- é o que permite testá-lo renderizando de verdade.
+              mesPadraoDaFatura={faturaPadrao}
               rateio={
                 <SoftFeatureGuard feature="expense_groups" user={user}>
                   <div className="space-y-4 p-4 border rounded-lg bg-muted/20">
@@ -1246,17 +1444,43 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
               }
             />
 
+            {/*
+              O interruptor vem ANTES dos botoes, e nao depois: ele muda o que o
+              botao de Salvar faz, e um controle que modifica a acao tem de estar
+              visivel no momento em que se le o botao. Depois dele, a pessoa so o
+              descobre quando a tela nao fecha.
+            */}
+            {!editando && (
+              <SalvarEContinuar
+                ligado={continuar}
+                aoMudar={setContinuar}
+                disabled={salvando}
+              />
+            )}
+
             <div className="flex flex-wrap gap-2">
               <Button type="submit" disabled={salvando}>
                 {editando ? "Atualizar" : copia.salvar}
               </Button>
-              <Button type="button" variant="outline" asChild>
-                <Link href="/dashboard/personal-finance">Cancelar</Link>
+              {/*
+                `button` com `onClick`, e nao `Link`: o destino e o `?origem=`
+                lido em tempo de execucao, e `typedRoutes` nao aceita `string`
+                em `href`. O caminho de saida e o MESMO do X e do Esc -- um
+                Cancelar que fosse para outro lugar que o X seria duas respostas
+                para a mesma pergunta.
+              */}
+              <Button
+                type="button"
+                variant="outline"
+                onClick={fecharSemSalvar}
+                disabled={salvando}
+              >
+                Cancelar
               </Button>
             </div>
           </form>
         </CardContent>
       </Card>
-    </div>
+    </ModalDeLancamento>
   );
 }

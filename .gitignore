@@ -77,6 +77,7 @@ next-env.d.ts
 /.tmp-recurrence-scan/
 # saida do `npm run test:recurrence` (tsc avulso, so para o node --test)
 /.tmp-recurrence/
+/.tmp-divisao-ui/
 /.tmp-settlement/
 /.tmp-reports/
 /.tmp-statement/
@@ -102,6 +103,7 @@ next-env.d.ts
 /.tmp-anomalies/
 /.tmp-variable-spend/
 /.tmp-cron-ledger/
+/.tmp-criterio-do-cartao/
 
 # saida do `npm run test:pwa-install`
 /.tmp-pwa-install/
@@ -155,6 +157,8 @@ next-env.d.ts
 /.tmp-campos-da-conta/
 # saida do `npm run test:fatura-do-cartao` (HMO-210)
 /.tmp-fatura-do-cartao/
+# saida do `npm run test:fatura-do-periodo` (HMO-290)
+/.tmp-fatura-do-periodo/
 # saida do `npm run test:tela-do-cartao` (HMO-210)
 /.tmp-tela-do-cartao/
 # saida do `npm run test:periodo-painel` (HMO-173)
@@ -179,6 +183,10 @@ next-env.d.ts
 # saida do `npm run test:grupos` (HMO-175; leva o settlement.js junto, porque
 # lib/grupos.ts importa a conversao para centavos de la)
 /.tmp-grupos/
+# O compilado da suite do acerto de grupo (HMO-245, fase 11). Commitado, ele
+# serviria JS velho ao `node --test` depois de um restore de mutante -- o
+# mutante continuaria vivo com a arvore limpa.
+/.tmp-acerto-em-lancamento/
 # saida do `npm run test:divisao-do-grupo` (HMO-190; leva o settlement.js
 # junto, porque lib/divisao-do-grupo.ts importa a conversao para centavos de la)
 /.tmp-divisao-do-grupo/
@@ -223,6 +231,10 @@ next-env.d.ts
 # o mesmo build, com outDir proprio, para o ingestor (npm run ingest:cvm): rodar
 # o ingestor no meio de uma suite nao pode apagar o build do teste
 /.tmp-ingest-cvm/
+
+# test:crivos (a lista de criterios de fundamento, HMO-195 -- leva o componente
+# e os cinco arquivos de components/ui que ele importa)
+/.tmp-crivos/
 
 # test:planos-em-breve (a pagina de Planos e a pagina publica renderizadas com
 # react-dom/server, HMO-198 -- leva components/ui/, lib/planos.js,
@@ -270,3 +282,144 @@ next-env.d.ts
 # fora do .gitignore chega a ser commitado em cima de arquivo de fonte -- ver a
 # entrada do .tmp-parcelamento acima.
 /.tmp-convite-de-grupo/
+
+# Build do `npm run test:data-digitada` (HMO-238, a mascara dd/mm/aaaa). Leva o
+# lancamento.js junto porque a suite confere a data emitida contra o
+# `validarLancamento` de verdade, e nao contra uma copia do regex. Um `.tmp-*`
+# fora do .gitignore chega a ser commitado em cima de arquivo de fonte -- ver a
+# entrada do .tmp-parcelamento acima.
+/.tmp-data-digitada/
+
+# Build do `npm run test:fechamento-do-grupo` (HMO-245, o fechamento do mes do
+# grupo). Leva o settlement.js junto porque a lib importa `toCents` e
+# `simplifySettlements` de la -- o acerto do mes usa o MESMO guloso do acerto do
+# grupo, e nao uma copia. Mesmo motivo das entradas acima para estar aqui: um
+# `.tmp-*` fora do .gitignore chega a ser commitado em cima de arquivo de fonte.
+/.tmp-fechamento-do-grupo/
+
+# Build do `npm run test:telas-de-movimentacao` (HMO-246, as tres telas de
+# movimentacao). Leva movimentacoes.js e destino-do-lancamento.js junto porque a
+# lib importa a classificacao por tipo e a frase da conta de la -- as tres telas
+# usam a MESMA `classificarMovimentacao` dos cartoes de Financas Pessoais, e nao
+# uma copia. Mesmo motivo das entradas acima para estar aqui: um `.tmp-*` fora
+# do .gitignore chega a ser commitado em cima de arquivo de fonte.
+/.tmp-telas-de-movimentacao/
+
+# Build do `npm run test:cartoes-da-tela` (HMO-246, os tres cartoes Total /
+# Previsto / Realizado). Leva components/ui/card.tsx e components/SemRede.tsx
+# junto porque o teste renderiza a marcacao DE VERDADE com react-dom/server, e
+# nao uma copia dela -- e um dublê de <Card> passaria verde no dia em que o
+# componente real mudasse. Mesmo motivo das entradas acima para estar aqui: um
+# `.tmp-*` fora do .gitignore chega a ser commitado em cima de arquivo de fonte.
+/.tmp-cartoes-da-tela/
+
+# Build do `npm run test:periodo-do-grupo` (HMO-248, o recorte de mes da aba de
+# Despesas do grupo). Leva settlement.js e fechamento-do-grupo.js junto porque a
+# lib importa `toCents`/`toReais` e `mesDaData` de la -- o recorte usa a MESMA
+# regra de "que mes e esta data" do fechamento que fica logo acima na tela, e
+# nao uma copia dela: duas regras divergentes dariam dois totais diferentes para
+# o mesmo mes na mesma tela. Mesmo motivo das entradas acima para estar aqui: um
+# `.tmp-*` fora do .gitignore chega a ser commitado em cima de arquivo de fonte.
+/.tmp-periodo-do-grupo/
+
+# Build do `npm run test:retorno-lancamento` (HMO-249: para onde o modal de
+# lancamento volta, e o que o "Salvar e continuar" deixa na tela). O tsc emite
+# AQUI tambem uma copia de lib/lancamento.js, porque o modulo importa o TIPO
+# `ValoresDeLancamento` de la -- o emit apaga a linha, mas o compilador entra no
+# arquivo. Mesmo motivo das entradas acima para estar aqui: um `.tmp-*` fora do
+# .gitignore chega a ser commitado em cima de arquivo de fonte.
+/.tmp-retorno-lancamento/
+
+# saida do `npm run test:ajuste-de-fatura` (HMO-253)
+/.tmp-ajuste-de-fatura/
+
+# saida do `npm run test:ajuste-na-tela` (HMO-253)
+/.tmp-ajuste-na-tela/
+
+# saida do `npm run test:divisao-configurada` (HMO-267)
+/.tmp-divisao-configurada/
+
+# saida do `npm run test:realizado-do-caixa`. Faltava desde que a suite entrou:
+# o check-artefatos-de-build.mjs ja acusava isto na main, e sem a entrada o
+# `rm -rf` do npm script apaga arquivo RASTREADO se a pasta compilada chegar a
+# ser commitada por engano.
+/.tmp-realizado-do-caixa/
+
+# saida do `npm run test:modo-papel` (HMO-283)
+/.tmp-modo-papel/
+
+# saida do `npm run test:papel-na-tela` (HMO-283). Guarda tambem o `pele.css`
+# que a suite compila com o Tailwind para medir a paleta no navegador -- e um
+# artefato, nao fonte. Um `.tmp-*` fora do .gitignore chega a ser commitado em
+# cima de arquivo de fonte, e dai o `rm -rf` do proprio npm script o apaga.
+/.tmp-papel-na-tela/
+
+# saida do `npm run test:menu-papel` (HMO-284)
+/.tmp-menu-papel/
+
+# saida do `npm run test:papel-de-pao` (HMO-286)
+/.tmp-papel-de-pao/
+
+# HMO-297. As tres abaixo faltavam desde que as suites entraram, e o
+# check-artefatos-de-build.mjs ja reprovava na main por causa delas. Cada uma
+# das tres comeca com `rm -rf` no proprio diretorio: fora do .gitignore, o
+# compilado chega a ser commitado por engano, e dai rodar a suite APAGA um
+# arquivo rastreado -- sem erro nenhum, so um arquivo que desaparece da arvore.
+# saida do `npm run test:pagador-da-parte` (HMO-274)
+/.tmp-pagador-da-parte/
+# saida do `npm run test:credito-de-grupo` (HMO-277)
+/.tmp-credito-de-grupo/
+# saida do `npm run test:secao-da-tela` (HMO-287)
+/.tmp-secao-da-tela/
+
+# saida de `bash scripts/medicao-hmo298.sh` (HMO-298). A medicao das tres
+# leituras do "Total de contas" compila lib/ para ca antes de medir; o script
+# ja comeca com `rm -rf` no diretorio, entao fora do .gitignore ele apareceria
+# e desapareceria do `git status` a cada execucao.
+/.tmp-medicao-hmo298/
+
+# Saida de `npm run test:acoes-da-linha` (HMO-301): lib/acoes-da-linha.ts
+# compilado para o `node --test` chamar a peneira de producao, e nao uma copia
+# dela. Artefato, nao fonte. Um `.tmp-*` fora do .gitignore chega a ser
+# commitado em cima de arquivo de fonte -- ver a entrada do .tmp-parcelamento.
+/.tmp-acoes-da-linha/
+
+# Saida de `npm run test:lista-na-tela` (HMO-301): ListaDeMovimentacao.tsx e os
+# dez modulos que a sonda de Chromium concatena na pagina, compilados. Mesmo
+# motivo das entradas acima para estar aqui.
+/.tmp-lista-na-tela/
+
+# Saida de `npm run test:elo-da-fatura` (HMO-305) e de
+# `npm run test:pagamento-da-fatura` (HMO-310). As duas FALTAVAM, e por isso
+# `check-artefatos-de-build` ja reprovava na main antes da HMO-311 (ver
+# HMO-291): as suites comecam com `rm -rf` nesses caminhos, e enquanto eles
+# estiverem fora daqui o resultado da compilacao pode ser commitado em cima de
+# arquivo de fonte -- e a partir dai rodar a suite APAGA o arquivo rastreado.
+/.tmp-elo-da-fatura/
+/.tmp-pagamento-da-fatura/
+
+# A perna da contraparte do acerto de grupo (HMO-312). Faltava desde que a
+# suite entrou: o step `Nenhum artefato de build rastreado` reprovava na main
+# e ninguem viu, porque a franquia de Actions estourou em 02/10. Um `.tmp-*`
+# fora do .gitignore chega a ser commitado em cima de arquivo de fonte -- ver
+# a entrada do .tmp-parcelamento acima.
+/.tmp-perna-da-contraparte/
+
+# A renda fixa que rende sozinha (HMO-192). Mesmo caso da perna acima: a suite
+# entrou na main sem a entrada aqui, e o step `Nenhum artefato de build
+# rastreado` ja reprova na main sem ninguem ver, porque todo job de Actions
+# volta recusado em 3s desde que a franquia estourou em 02/10.
+/.tmp-renda-fixa/
+
+# A fixture da suite do proprio compila.mjs (HMO-263). Ela monta modulos de
+# mentira dentro do repositorio porque o reaproveitamento so hasheia entradas
+# abaixo da raiz -- fixture em /tmp nao exercitaria nada.
+/.tmp-compila-fixture/
+
+# saida do `npm run test:semeadura` (HMO-272). Ela guarda tambem um
+# node_modules/@supabase/supabase-js plantado pelo monta-duble-de-rota.mjs --
+# sem esta entrada o `git status` passaria a mostrar um pacote inteiro.
+/.tmp-semeadura/
+
+# A sugestao de divisao viva (HMO-273): arvore compilada da suite de rota.
+/.tmp-sugestao-de-divisao/

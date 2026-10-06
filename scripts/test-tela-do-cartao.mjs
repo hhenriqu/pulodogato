@@ -318,14 +318,34 @@ test("a tela tem volta para a lista de cartoes", () => {
 // 6. O CARTAO DA LISTA: O LINK NOVO, E OS BOTOES FORA DELE
 // ---------------------------------------------------------------------------
 
-const listaHtml = (conta = CONTA) =>
+const listaHtml = (conta = CONTA, props = {}) =>
   renderToStaticMarkup(
     h(CartaoDaLista, {
       conta,
+      // HMO-290: o numero deste card vem da FATURA, e nao mais de
+      // `current_balance`. As tres props novas sao o que a troca exigiu.
+      fatura: FATURA,
+      estado: "fresco",
+      rotuloDoMes: "outubro de 2026",
       aoEditar: () => {},
       aoArquivar: () => {},
+      ...props,
     })
   );
+
+/** Uma fatura com UMA compra parcelada, para a linha das parcelas futuras. */
+const FATURA_PARCELADA = {
+  ...FATURA,
+  total: 300,
+  line_count: 1,
+  lines: [
+    {
+      ...linha(MEU_CARTAO, "Notebook (1/10)", 300, "03"),
+      installment_number: 1,
+      installment_total: 10,
+    },
+  ],
+};
 
 test("o card da lista e link para a tela do cartao", () => {
   const html = listaHtml();
@@ -377,14 +397,15 @@ test("nao ha botao dentro do link (nem outro que apareca depois)", () => {
 test("o card da lista mostra fatura, limite e ciclo", () => {
   const t = texto(listaHtml());
 
-  assert.ok(t.includes("R$ 320,00"), `falta a fatura atual: ${t}`);
+  assert.ok(t.includes("R$ 320,00"), `falta a fatura: ${t}`);
   assert.ok(t.includes("Limite R$ 5.000,00"), "falta o limite");
   assert.ok(t.includes("Fecha dia 5 · vence dia 15"), "falta o ciclo");
 });
 
-test("o card da lista mostra a fatura em modulo", () => {
-  // `current_balance` e negativo (as compras rebaixaram o saldo do cartao).
-  // "-R$ 320,00" embaixo de "Fatura atual" e um sinal a mais na leitura.
+test("o card da lista mostra a fatura sem sinal invertido", () => {
+  // A fatura vem de `total`, que ja tem o sinal certo da view (a compra soma, o
+  // estorno abate). "-R$ 320,00" embaixo do rotulo de fatura seria um sinal a
+  // mais na leitura.
   const t = texto(listaHtml());
 
   assert.ok(!t.includes("-R$ 320,00"), `saiu com sinal: ${t}`);
@@ -395,6 +416,144 @@ test("cartao sem dias na lista mostra a tarja", () => {
 
   assert.ok(t.includes("Falta fechamento e vencimento"));
   assert.ok(!t.includes("undefined"));
+});
+
+// ---------------------------------------------------------------------------
+// 6b. O CARD DA LISTA DIZ A FATURA DO PERIODO, E NAO A DIVIDA INTEIRA (HMO-290)
+// ---------------------------------------------------------------------------
+// O defeito: o card imprimia `Math.abs(current_balance)` sob o rotulo "Fatura
+// atual". Aquilo e a divida INTEIRA do cartao -- o trigger
+// `update_account_balance` soma `NEW.amount` no INSERT sem olhar
+// `transaction_date`, e as 10 parcelas sao gravadas de uma vez.
+//
+// Nenhuma assercao daqui cabe no teste puro: o que se afirma e QUAL numero
+// aparece no HTML, e qual NAO aparece. `lib/fatura-do-periodo.ts` tem suite
+// propria (25 blocos) e toda ela passaria verde com o JSX voltando a imprimir
+// `current_balance`: a aritmetica estaria exata e a tela ignorando ela.
+
+test("o CASO DA ISSUE: 3.000 em 10x mostra a parcela do mes, nao a compra inteira", () => {
+  // O cartao deve 3.000 (as 10 parcelas ja estao no saldo) e a fatura de
+  // outubro tem 300 dela.
+  const t = texto(
+    listaHtml(
+      { ...CONTA, current_balance: -3000 },
+      { fatura: FATURA_PARCELADA }
+    )
+  );
+
+  assert.ok(t.includes("R$ 300,00"), `falta a fatura do mes: ${t}`);
+  assert.ok(
+    !t.includes("R$ 3.000,00"),
+    `a divida inteira voltou para a tela: ${t}`
+  );
+});
+
+test("a linha das parcelas futuras diz o que ainda vai ser cobrado", () => {
+  // Sem esta linha a troca seria so um numero menor, e os R$ 2.700 das nove
+  // parcelas seguintes nao apareceriam em tela de cartao nenhuma.
+  const t = texto(
+    listaHtml(
+      { ...CONTA, current_balance: -3000 },
+      { fatura: FATURA_PARCELADA }
+    )
+  );
+
+  assert.ok(
+    t.includes("R$ 2.700,00 em parcelas futuras"),
+    `falta o que ainda vai vir: ${t}`
+  );
+});
+
+test("fatura sem parcelamento nao imprime 'R$ 0,00 em parcelas futuras'", () => {
+  // Ruido em todo cartao de todo mes. A linha so existe quando ha numero.
+  const t = texto(listaHtml());
+
+  assert.ok(!t.includes("em parcelas futuras"), `saiu a linha vazia: ${t}`);
+});
+
+test("o rotulo diz de QUE MES e a fatura", () => {
+  // "Fatura atual" sobre um numero de fatura nao diz a qual fatura o numero
+  // responde -- e esta tela mostra o mes que o seletor escolheu, que nem sempre
+  // e o corrente. Painel sem eixo de tempo mente no rotulo.
+  const t = texto(listaHtml());
+
+  assert.ok(t.includes("Fatura de outubro de 2026"), `falta o mes: ${t}`);
+});
+
+test("sem mes para nomear, o numero do card NAO sai", () => {
+  // `rotuloDaFatura` devolve `null` para o que nao da para ler, em vez de
+  // "undefined de 2026". Quem recebe `null` esconde o numero junto: um total
+  // sem o mes ao lado e um numero sobre um periodo que ninguem declarou.
+  const t = texto(listaHtml(CONTA, { rotuloDoMes: null }));
+
+  assert.ok(!t.includes("R$ 320,00"), `o total saiu sem eixo de tempo: ${t}`);
+  assert.ok(!t.includes("undefined"), `vazou undefined: ${t}`);
+});
+
+test("A LEITURA DE FATURAS FALHANDO DIZ QUE FALHOU, e nao R$ 0,00", () => {
+  // A consequencia que esta PR trata em vez de contornar. A tela passou a fazer
+  // DUAS leituras onde fazia uma, e este card abre sem rede: com o cadastro
+  // fresco e a fatura falhando, "Fatura de outubro: R$ 0,00" embaixo do nome do
+  // cartao certo e indistinguivel de um mes sem compra nenhuma.
+  //
+  // `estado` chega aqui ja reduzido pelo `estadoDaTela`, que leva as duas
+  // leituras a mais pessimista.
+  const t = texto(listaHtml(CONTA, { estado: "sem-rede" }));
+
+  assert.ok(!t.includes("R$ 0,00"), `imprimiu zero confiante: ${t}`);
+  assert.ok(!t.includes("R$ 320,00"), `imprimiu numero sem leitura boa: ${t}`);
+  // Controle: o card continua na tela, com o nome do cartao -- o que sumiu e o
+  // numero, nao o cartao.
+  assert.ok(t.includes("Nubank"), `o card inteiro desapareceu: ${t}`);
+  assert.ok(t.includes("—"), `nada marcou o numero como indisponivel: ${t}`);
+});
+
+test("cartao ausente da resposta tambem nao imprime R$ 0,00", () => {
+  // A rota devolve uma entrada para TODO cartao ativo, zerada quando o mes nao
+  // teve compra -- entao a AUSENCIA e "nao deu para ler", e nao fatura vazia.
+  // Este caminho nao passa pelo `estado`: a leitura foi bem, o cartao e que nao
+  // veio nela.
+  const t = texto(listaHtml(CONTA, { fatura: null }));
+
+  assert.ok(!t.includes("R$ 0,00"), `imprimiu zero confiante: ${t}`);
+  assert.ok(t.includes("Nubank"), `o card inteiro desapareceu: ${t}`);
+});
+
+test("a fatura de OUTRO cartao nao e impressa embaixo deste nome", () => {
+  // A pagina casa a fatura por `account_id` com `faturaDoCartao`; o componente
+  // nao escolhe fatura. O que ele garante e a linha de parcelas: ela filtra por
+  // `account_id` de novo, porque a RLS pode trazer a compra de outro cartao.
+  const comIntruso = {
+    ...FATURA_PARCELADA,
+    lines: [
+      ...FATURA_PARCELADA.lines,
+      {
+        ...linha(OUTRO_CARTAO, "TV do outro cartao (1/10)", 900, "04"),
+        installment_number: 1,
+        installment_total: 10,
+      },
+    ],
+  };
+
+  const t = texto(
+    listaHtml({ ...CONTA, current_balance: -3000 }, { fatura: comIntruso })
+  );
+
+  // 300 * 9, e nao (300 + 900) * 9 = R$ 10.800,00.
+  assert.ok(
+    t.includes("R$ 2.700,00 em parcelas futuras"),
+    `a parcela do outro cartao entrou: ${t}`
+  );
+});
+
+test("fatura zerada de verdade MOSTRA R$ 0,00 (o mes sem compra tem numero)", () => {
+  // O outro lado: devolver travessao aqui esconderia um numero que a rota
+  // respondeu, e a pessoa nao saberia que o mes nao teve compra.
+  const t = texto(
+    listaHtml(CONTA, { fatura: { ...FATURA, total: 0, line_count: 0, lines: [] } })
+  );
+
+  assert.ok(t.includes("R$ 0,00"), `faltou o zero legitimo: ${t}`);
 });
 
 // ---------------------------------------------------------------------------

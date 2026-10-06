@@ -29,18 +29,27 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  PARAM_DO_CARTAO,
   caminhoDeNovoGasto,
   caminhoDoCartao,
+  caminhoDoCartaoNoMes,
   cartaoDaTela,
   estadoDaTela,
   faturaDoCartao,
+  faturaPadraoDoLancamento,
   gastosDaFatura,
+  janelaDeFaturas,
   mesCorrenteDaFatura,
+  mesInicialDaFatura,
+  PARAM_DO_CARTAO,
+  PARAM_DO_MES,
   previsoesDoCartao,
   rotuloDaFatura,
   rotuloDoCiclo,
 } from "../.tmp-fatura-do-cartao/lib/fatura-do-cartao.js";
+// A OUTRA COPIA DA REGRA DO MES, importada e nao reescrita -- ver o caso "a
+// recusa de `mesDaFaturaValido` e o `null` de `rotuloDaFatura` concordam" no fim
+// deste arquivo, e o porque em scripts/tsconfig.fatura-do-cartao-test.json.
+import { mesDaFaturaValido } from "../.tmp-fatura-do-cartao/lib/lancamento.js";
 
 // ---------------------------------------------------------------------------
 // O FUSO E PARTE DESTE TESTE, E ELE TEM QUE SER O DO USUARIO
@@ -431,4 +440,353 @@ test("campo ausente e `null`, nao lista vazia", () => {
     previsoesDoCartao({ ...semCampo, scheduled_pending: [] }, MEU_CARTAO),
     []
   );
+});
+
+// ---------------------------------------------------------------------------
+// O MES QUE CHEGA NA URL (HMO-287)
+// ---------------------------------------------------------------------------
+// A linha de fatura da tela de Despesas aponta para ca com `?mes=AAAA-MM`.
+// Duas pecas, e as duas tem o mesmo modo de falha mudo: a tela abre no mes
+// CORRENTE, que e exatamente o que ela faria se o link estivesse certo e o
+// parametro nao existisse. Valor certo, mes errado, nada vermelho.
+//
+// Os dois formatos convivem no app de proposito e nao da para unificar: a chave
+// da fatura e `invoice_month` sao 'AAAA-MM-01' (10 chars, e o banco); o estado
+// desta tela e o `&month=` da rota sao 'AAAA-MM' (7). E por isso que a
+// conversao precisa de teste em vez de inspecao.
+// ---------------------------------------------------------------------------
+
+test("o link da fatura leva o mes em 7 chars, e NAO os 10 da chave", () => {
+  // Com os 10 a rota recebe um mes que ela nao reconhece.
+  assert.equal(
+    caminhoDoCartaoNoMes(MEU_CARTAO, "2026-08-01"),
+    `/dashboard/cartoes/${MEU_CARTAO}?mes=2026-08`
+  );
+
+  // E o que ja vem em 7 passa inteiro.
+  assert.equal(
+    caminhoDoCartaoNoMes(MEU_CARTAO, "2026-08"),
+    `/dashboard/cartoes/${MEU_CARTAO}?mes=2026-08`
+  );
+});
+
+test("o parametro do mes NAO se chama `id`", () => {
+  // Sob o segmento dinamico `[id]` o Next consome a chave de mesmo nome e
+  // `searchParams.get("id")` volta null com o valor chegando inteiro (HMO-142).
+  assert.equal(PARAM_DO_MES, "mes");
+  assert.ok(!caminhoDoCartaoNoMes(MEU_CARTAO, "2026-08").includes("?id="));
+});
+
+test("mes que nao da para ler nao vira querystring nenhuma", () => {
+  // `?mes=undefined` na barra de endereco e pior que parametro nenhum: ele
+  // aparece no link compartilhado e sugere que a tela entende alguma coisa que
+  // ela nao entende.
+  for (const ruim of [null, undefined, "", "outubro", "2026", "2026-13", "2026-00"]) {
+    assert.equal(
+      caminhoDoCartaoNoMes(MEU_CARTAO, ruim),
+      `/dashboard/cartoes/${MEU_CARTAO}`,
+      `mes ${JSON.stringify(ruim)} virou querystring`
+    );
+  }
+});
+
+test("a tela do cartao abre no mes do `?mes=`, e nao no corrente", () => {
+  // O defeito que esta funcao existe para impedir: clicar na fatura de agosto
+  // abrindo outubro.
+  const emOutubro = new Date("2026-10-15T12:00:00Z");
+
+  assert.equal(mesInicialDaFatura("2026-08", emOutubro), "2026-08");
+  // E ela aceita os 10 chars tambem: a URL e colada a mao e compartilhada, e
+  // 'AAAA-MM-01' e a forma que o resto do app escreve.
+  assert.equal(mesInicialDaFatura("2026-08-01", emOutubro), "2026-08");
+});
+
+test("sem `?mes=` -- ou com um que nao da para ler -- cai no mes corrente", () => {
+  const emOutubro = new Date("2026-10-15T12:00:00Z");
+
+  for (const ruim of [null, undefined, "", "outubro", "2026", "2026-13", "2026-1"]) {
+    assert.equal(
+      mesInicialDaFatura(ruim, emOutubro),
+      "2026-10",
+      `mes ${JSON.stringify(ruim)} nao caiu no corrente`
+    );
+  }
+});
+
+test("o mes corrente do fallback e o de SAO PAULO, nao o de UTC", () => {
+  // 1 de novembro as 00:30 UTC e 31 de OUTUBRO em Sao Paulo. Sem o fuso, quem
+  // abrisse a tela nessa janela veria a fatura do mes seguinte -- e a do mes
+  // que ele esta vivendo estaria a um clique de distancia, sem nada dizendo.
+  const viradaEmUtc = new Date("2026-11-01T00:30:00Z");
+
+  assert.equal(mesInicialDaFatura(null, viradaEmUtc), "2026-10");
+  assert.equal(mesInicialDaFatura(null, viradaEmUtc), mesCorrenteDaFatura(viradaEmUtc));
+});
+
+// =====================================================
+// A FATURA QUE O SELETOR DE LANCAMENTO ABRE MARCADA (HMO-281 / HMO-289)
+// =====================================================
+// "compro hoje e vai para a fatura que fecha semana que vem, indiferente da
+// data que estou lancando."
+//
+// As duas funcoes aqui sao PURAS e moram fora do componente justamente para
+// serem medidas sem navegador -- e o que ha para medir e o que nao da para ver
+// olhando a tela: o FUSO e a TELA DE ORIGEM.
+
+test("o padrao sai do periodo da tela de origem", () => {
+  // Quem esta olhando outubro e clica em "Nova Despesa" esta lancando em
+  // outubro. Perguntar de novo seria ignorar a resposta que ela acabou de dar.
+  assert.equal(
+    faturaPadraoDoLancamento(
+      "/dashboard/movimentacoes?de=2026-10-01&ate=2026-10-31"
+    ),
+    "2026-10"
+  );
+
+  // E NAO e o mes do relogio: este caso passaria por acaso se o periodo fosse o
+  // mes corrente, entao o periodo e de um ano que nao e o de hoje.
+  assert.equal(
+    faturaPadraoDoLancamento(
+      "/dashboard/movimentacoes?de=2024-03-01&ate=2024-03-31",
+      new Date("2026-10-04T12:00:00Z")
+    ),
+    "2024-03",
+    "o relogio congelado diz outubro de 2026; a origem tem de vencer"
+  );
+});
+
+test("periodo de VARIOS meses: a regra e o PRIMEIRO mes, e esta escrita", () => {
+  // "a fatura do periodo" nao existe quando o periodo tem tres meses -- sao
+  // tres. A regra e o primeiro, e ela esta no codigo E aqui: com a regra
+  // implicita, cada caminho que precisasse dela escolheria um, e a mesma tela
+  // lancaria em faturas diferentes.
+  assert.equal(
+    faturaPadraoDoLancamento(
+      "/dashboard/movimentacoes?de=2026-08-01&ate=2026-10-31",
+      new Date("2026-10-04T12:00:00Z")
+    ),
+    "2026-08"
+  );
+
+  // AS DUAS ALTERNATIVAS PLAUSIVEIS SAO NOMEADAS, para que o teste reprove quem
+  // trocar `[0]` por uma delas -- as duas se defendem em prosa.
+  assert.notEqual(
+    faturaPadraoDoLancamento(
+      "/dashboard/movimentacoes?de=2026-08-01&ate=2026-10-31",
+      new Date("2026-10-04T12:00:00Z")
+    ),
+    "2026-10",
+    "nao e o ULTIMO mes do intervalo"
+  );
+  assert.notEqual(
+    faturaPadraoDoLancamento(
+      "/dashboard/movimentacoes?de=2026-08-01&ate=2026-10-31",
+      new Date("2026-09-15T12:00:00Z")
+    ),
+    "2026-09",
+    "nem o mes que contem HOJE dentro do intervalo"
+  );
+
+  // Intervalo que atravessa o ano: o primeiro continua sendo o primeiro.
+  assert.equal(
+    faturaPadraoDoLancamento(
+      "/dashboard/movimentacoes?de=2025-11-15&ate=2026-02-10"
+    ),
+    "2025-11"
+  );
+});
+
+test("sem origem legivel o padrao e o mes de SAO PAULO, com o relogio congelado", () => {
+  // ESTE E O CASO QUE PASSA AQUI E FALHA NO CI SEM O CODIGO MUDAR, se o padrao
+  // vier de `new Date().getMonth()`: as 22h de 31/10 em Sao Paulo ja e dia 1 de
+  // NOVEMBRO em UTC. O cartao fecha em Sao Paulo, entao a fatura e a de outubro.
+  //
+  // O relogio e congelado por parametro -- sem isso o caso muda de resposta todo
+  // dia 1 -- e a afirmacao vale nos dois fusos, porque `mesCorrenteDaFatura` pede
+  // ao `Intl` o fuso EXPLICITO e nao o do ambiente.
+  assert.equal(
+    faturaPadraoDoLancamento(null, new Date("2026-11-01T01:00:00Z")),
+    "2026-10",
+    "01/11 01:00 UTC e 31/10 22:00 em Sao Paulo: a fatura e de OUTUBRO"
+  );
+
+  // E o outro lado da meia-noite, para o caso nao passar por um off-by-one que
+  // simplesmente subtrai um mes de tudo.
+  assert.equal(
+    faturaPadraoDoLancamento(null, new Date("2026-11-01T04:00:00Z")),
+    "2026-11",
+    "01/11 04:00 UTC ja e 01/11 em Sao Paulo"
+  );
+
+  // Origem sem query, origem vazia e periodo ILEGIVEL caem todos no relogio --
+  // e nao num mes qualquer. `periodoDaQuery` e quem recusa, e por isso o par
+  // pela metade e o par invertido entram aqui.
+  const congelado = new Date("2026-10-04T12:00:00Z");
+  for (const origem of [
+    null,
+    undefined,
+    "",
+    "/dashboard/movimentacoes",
+    "/dashboard/movimentacoes?de=2026-10-01",
+    "/dashboard/movimentacoes?ate=2026-10-31",
+    "/dashboard/movimentacoes?de=2026-10-31&ate=2026-10-01",
+    "/dashboard/movimentacoes?de=outubro&ate=2026-10-31",
+  ]) {
+    assert.equal(
+      faturaPadraoDoLancamento(origem, congelado),
+      "2026-10",
+      `origem ${JSON.stringify(origem)} tinha de cair no mes corrente`
+    );
+  }
+});
+
+test("a origem chega PERCENT-ENCODED, e o padrao a le assim", () => {
+  // `comOrigem` faz `encodeURIComponent` no caminho inteiro, entao o `?` e o `&`
+  // chegam como %3F e %26 quando a origem vem de outra origem. Quem lesse a
+  // string crua acharia `de=` so no caso facil.
+  const cru = "/dashboard/movimentacoes?de=2026-07-01&ate=2026-07-31";
+  assert.equal(faturaPadraoDoLancamento(cru), "2026-07");
+
+  // O caso que o `URLSearchParams` resolve: valor do parametro codificado.
+  assert.equal(
+    faturaPadraoDoLancamento(
+      `/dashboard/movimentacoes?de=${encodeURIComponent("2026-07-01")}&ate=${encodeURIComponent("2026-07-31")}`
+    ),
+    "2026-07"
+  );
+});
+
+test("a janela do seletor e 3 para tras e 3 para frente, sem tropecar no ano", () => {
+  assert.deepEqual(janelaDeFaturas("2026-10"), [
+    "2026-07",
+    "2026-08",
+    "2026-09",
+    "2026-10",
+    "2026-11",
+    "2026-12",
+    "2027-01",
+  ]);
+
+  // A IDA e o caso da issue ("compro hoje e vai para a fatura que fecha semana
+  // que vem"); a VOLTA e o lancamento atrasado. As duas tem de existir.
+  const janela = janelaDeFaturas("2026-10");
+  assert.ok(janela.includes("2026-11"), "sem a ida, a issue nao e atendida");
+  assert.ok(janela.includes("2026-09"), "sem a volta, o lancamento atrasado nao tem opcao");
+  assert.equal(janela.length, 7);
+
+  // ATRAVESSANDO O ANO PARA OS DOIS LADOS -- e onde a aritmetica `mes - 3` crua
+  // produz mes 0 e mes -1.
+  assert.deepEqual(janelaDeFaturas("2026-01"), [
+    "2025-10",
+    "2025-11",
+    "2025-12",
+    "2026-01",
+    "2026-02",
+    "2026-03",
+    "2026-04",
+  ]);
+  assert.deepEqual(janelaDeFaturas("2026-12"), [
+    "2026-09",
+    "2026-10",
+    "2026-11",
+    "2026-12",
+    "2027-01",
+    "2027-02",
+    "2027-03",
+  ]);
+
+  // ORDENADA, porque a lista e a ordem das opcoes na tela.
+  const fora = janelaDeFaturas("2026-10");
+  assert.deepEqual(fora, [...fora].sort(), "o seletor nao pode listar meses fora de ordem");
+});
+
+test("o mes GRAVADO entra na janela mesmo caindo fora dela", () => {
+  // O CASO DA EDICAO, e ele nao e zelo. Um `<select>` cujo `value` nao casa com
+  // nenhuma `<option>` NAO mostra vazio: mostra a PRIMEIRA opcao como se fosse a
+  // escolhida. Abrir uma compra de um ano atras afirmaria uma fatura que nao e a
+  // gravada, e Salvar sem tocar no campo a moveria sozinho.
+  const janela = janelaDeFaturas("2026-10", "2025-02");
+  assert.ok(janela.includes("2025-02"), "o mes gravado tem de estar na lista");
+  assert.equal(janela.length, 8, "ele ENTRA, e nao substitui nenhum da janela");
+  assert.deepEqual(janela, [...janela].sort());
+
+  // Dentro da janela ele nao duplica.
+  assert.equal(janelaDeFaturas("2026-10", "2026-11").length, 7);
+
+  // 'AAAA-MM-01' (a forma que volta do banco) e normalizado -- senao ele entraria
+  // numa forma que nunca casa com o `value` da opcao, que e o mesmo defeito.
+  const comDia = janelaDeFaturas("2026-10", "2025-02-01");
+  assert.ok(comDia.includes("2025-02"));
+  assert.ok(!comDia.includes("2025-02-01"));
+
+  // Vazio e ilegivel nao entram: o vazio ja e a opcao "pela data da compra", e
+  // um ilegivel seria uma opcao com rotulo `null`.
+  assert.equal(janelaDeFaturas("2026-10", "").length, 7);
+  assert.equal(janelaDeFaturas("2026-10", null).length, 7);
+  assert.equal(janelaDeFaturas("2026-10", "nao-e-mes").length, 7);
+});
+
+test("padrao ilegivel nao vira sete opcoes de lixo", () => {
+  // `andarMeses("")` faria aritmetica com NaN e devolveria "NaN-NaN" sete vezes
+  // -- opcoes clicaveis com `rotuloDaFatura` nulo em todas. Lista vazia e a
+  // resposta honesta: sobra a opcao "pela data da compra".
+  assert.deepEqual(janelaDeFaturas(""), []);
+  assert.deepEqual(janelaDeFaturas("2026"), []);
+  assert.deepEqual(janelaDeFaturas("outubro"), []);
+
+  // E o mes gravado ainda aparece, para a edicao nao perder o que esta no banco.
+  assert.deepEqual(janelaDeFaturas("", "2025-02"), ["2025-02"]);
+});
+
+test("todo mes da janela tem rotulo -- nenhuma opcao sai 'undefined de 2026'", () => {
+  // O seletor imprime `rotuloDaFatura(mes)`. Se a janela produzisse um mes que
+  // aquela funcao nao sabe ler, a opcao sairia com o fallback cru no lugar do
+  // nome do mes -- e a pessoa escolheria "2027-01" numa lista de nomes.
+  for (const padrao of ["2026-01", "2026-10", "2026-12", "2030-06"]) {
+    for (const mes of janelaDeFaturas(padrao)) {
+      assert.ok(
+        rotuloDaFatura(mes),
+        `a janela de ${padrao} produziu ${mes}, que rotuloDaFatura nao sabe ler`
+      );
+    }
+  }
+});
+
+test("a recusa de `mesDaFaturaValido` e o `null` de `rotuloDaFatura` concordam", () => {
+  // DUAS COPIAS DA MESMA REGRA, E E ESTE CASO QUE AS SEGURA JUNTAS.
+  //
+  // `mesDaFaturaValido` mora em lib/lancamento.ts, que nao pode ter import
+  // nenhum (`test:lancamento` o compila sozinho); `rotuloDaFatura` mora aqui.
+  // Sem comparar os dois, afrouxar a validacao deixaria a tela aceitar um mes
+  // que o rotulo nao sabe escrever -- "undefined de 2026" sobre o total de uma
+  // fatura, que e pior que rotulo nenhum.
+  //
+  // Os DOIS modulos sao compilados e importados; nenhum criterio e reescrito aqui.
+  const entradas = [
+    "2026-01",
+    "2026-10",
+    "2026-12",
+    "2026-10-01",
+    "2026-13",
+    "2026-00",
+    "2026-1",
+    "202610",
+    "",
+    "outubro",
+    "2026-10-",
+    "0000-01",
+  ];
+
+  for (const entrada of entradas) {
+    assert.equal(
+      mesDaFaturaValido(entrada),
+      rotuloDaFatura(entrada) !== null,
+      `as duas copias discordam sobre ${JSON.stringify(entrada)}`
+    );
+  }
+
+  // CONTROLE: a lista nao pode ser toda de um lado, senao a comparacao acima
+  // passaria com as duas funcoes devolvendo sempre a mesma coisa.
+  assert.ok(entradas.some((e) => mesDaFaturaValido(e)));
+  assert.ok(entradas.some((e) => !mesDaFaturaValido(e)));
 });

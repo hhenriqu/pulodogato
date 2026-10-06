@@ -114,6 +114,11 @@ import {
   LinhaDeGastoVariavel,
   TileRealizadoEPrevisao,
 } from "@/components/dashboard/RealizadoEPrevisao";
+import { LEGENDA_DO_CARTAO } from "@/lib/criterio-do-cartao";
+// Os dois lados do portao do modo papel de pao (HMO-286). O `useModoPapel` ja
+// esta montado em `app/layout.tsx` pelo `ModoPapelProvider` da HMO-283.
+import { useModoPapel } from "@/components/ModoPapelProvider";
+import { PainelDePapel } from "@/components/papel-de-pao/PainelDePapel";
 
 const moeda = (valor: number) =>
   new Intl.NumberFormat("pt-BR", {
@@ -161,10 +166,18 @@ interface PossoGastar {
   compromissos: number;
   compromissosVencidos: number;
   dividaDeCartao: number;
+  /**
+   * O que os cartoes so cobram DEPOIS do fim do mes (HMO-290).
+   *
+   * Nao entra no `livre` -- esta aqui para ficar ao lado dele. Ver a armadilha
+   * 10 em lib/safe-to-spend.ts: trocar a regua sem mostrar o resto transforma
+   * um numero conservador num numero otimista sem a pessoa saber.
+   */
+  dividaDiferida: number;
   reservaDeMetas: number;
   livre: number;
   porDia: number;
-  cartoes: { id: string; name: string; divida: number }[];
+  cartoes: { id: string; name: string; divida: number; diferida: number }[];
   metas: {
     id: string;
     title: string;
@@ -184,13 +197,37 @@ interface Meta {
   status: string;
 }
 
+// -----------------------------------------------------------------------------
+// O PORTAO DOS DOIS PAINEIS (HMO-286, 3/3 do plano da HMO-279)
+// -----------------------------------------------------------------------------
+// Com o modo papel de pao ligado, esta rota mostra DOIS numeros em vez do painel
+// inteiro. Isso e um portao de dez linhas, e nao um `if` dentro do
+// `PainelCompleto` abaixo, por um motivo mecanico: os hooks daquele componente
+// rodam ANTES de qualquer `if` de renderizacao, entao "esconder os cartoes"
+// faria o modo simples disparar as mesmas OITO requisicoes para mostrar dois
+// numeros -- no aparelho de quem escolheu o modo justamente por querer menos.
+// O corpo de hoje nao foi reescrito: so renomeado de `Painel` para
+// `PainelCompleto`.
+//
+// `mounted` NAO E HIGIENE. A preferencia mora no `localStorage`, que o servidor
+// nao le: sem esperar o primeiro efeito do cliente, o HTML do servidor
+// escolheria um dos dois paineis no chute e a hidratacao quebraria. E o mesmo
+// cuidado que o papelzinho e o ThemeToggle ja tomam, e aqui o custo de errar e
+// maior -- a tela INTEIRA trocaria, nao um icone.
+//
 // `useSearchParams` obriga a um limite de Suspense: sem ele o `next build`
 // para com "useSearchParams() should be wrapped in a suspense boundary". O
-// componente de verdade e o `Painel` abaixo.
+// limite fica DENTRO do ramo do painel completo -- o painel de papel nao le a
+// URL, e o componente de verdade daquele ramo e o `PainelCompleto` abaixo.
 export default function DashboardPage() {
+  const { papel, mounted } = useModoPapel();
+
+  if (!mounted) return <Girando />;
+  if (papel) return <PainelDePapel />;
+
   return (
     <Suspense fallback={<Girando />}>
-      <Painel />
+      <PainelCompleto />
     </Suspense>
   );
 }
@@ -203,7 +240,25 @@ function Girando() {
   );
 }
 
-function Painel() {
+/**
+ * O painel de sempre -- os blocos todos, as oito requisicoes, o seletor de
+ * periodo. Antes da HMO-286 isto se chamava `Painel`; nenhuma linha do corpo
+ * mudou, so o nome, que agora diz de que ele e o oposto.
+ *
+ * NAO LEVA `export`, e isso nao e escolha de estilo: arquivo de pagina do App
+ * Router so pode exportar `default` e as chaves que o Next conhece
+ * (`metadata`, `generateMetadata`, `dynamic`...). Um `export function` a mais
+ * aqui REPROVA o `next build` com
+ *
+ *     Type error: Page "app/(dashboard)/dashboard/page.tsx" does not match the
+ *     required types of a Next.js Page. "PainelCompleto" is not a valid Page
+ *     export field.
+ *
+ * e esse erro NAO aparece no `npm run type-check` -- a validacao mora nos tipos
+ * que o `next build` gera em `.next/types`. O portao acima e o unico chamador e
+ * vive neste mesmo modulo, entao exportar nao serviria para nada.
+ */
+function PainelCompleto() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -292,6 +347,11 @@ function Painel() {
   // escreve "indisponivel" em vez de R$ 0,00: zero seria uma afirmacao sobre o
   // dinheiro do usuario que ninguem conferiu.
   const [reservaIndisponivel, setReservaIndisponivel] = useState(false);
+  // A rota nao conseguiu ler as faturas, e portanto voltou a descontar a divida
+  // INTEIRA dos cartoes (HMO-290). O numero fica conservador, mas `dividaDiferida`
+  // vem 0 -- e "R$ 0,00 em parcelas futuras" ao lado de um desconto que
+  // justamente tira as parcelas futuras sao duas afirmacoes que se contradizem.
+  const [diferidoIndisponivel, setDiferidoIndisponivel] = useState(false);
   // A ordem e a visibilidade dos blocos, escolhidas em /dashboard/settings.
   // Comeca no padrao -- TUDO visivel -- e so muda se a rota responder. Um
   // erro de rede aqui nao pode esconder bloco nenhum: a tela inicial mostrando
@@ -353,9 +413,23 @@ function Painel() {
         // ela entrava em "ja gastei" antes de acontecer, e saia tambem da
         // previsao. Periodo inteiramente futuro nao tem realizado, e ai a
         // chamada nem acontece: com `ate` antes de `de` a rota responde 400.
+        //
+        // `cartao=fatura` E O QUE FAZ O CARTAO CONTAR NO PAGAMENTO (HMO-265)
+        //
+        // Sem ele o painel somava a compra no cartao no dia da COMPRA -- e a
+        // fatura aberta inteira ja entra no Previsto por
+        // `/api/scheduled-transactions/summary` (HMO-227), entao o cartao
+        // aparecia nos dois lados do "Realizado + Previsao = Total esperado".
+        // Com ele a compra sai do Realizado e o que entra e a fatura PAGA, pelo
+        // valor que de fato saiu da conta. A regra esta em
+        // lib/realizado-do-caixa.ts; as tres consequencias de desenho, no
+        // cabecalho de app/api/reports/cash-flow/route.ts.
+        //
+        // O parametro NAO e opcional para esta tela: a rota sem ele responde
+        // 200 com o numero da regra antiga, que e indistinguivel aqui.
         janelaRealizado
           ? fetch(
-              `/api/reports/cash-flow?de=${janelaRealizado.de}&ate=${janelaRealizado.ate}`
+              `/api/reports/cash-flow?de=${janelaRealizado.de}&ate=${janelaRealizado.ate}&cartao=fatura`
             )
           : null,
         fetch(`/api/scheduled-transactions/summary?${query}`),
@@ -443,6 +517,7 @@ function Painel() {
         const d = await rPossoGastar.json();
         setPossoGastar(d.safe_to_spend ?? null);
         setReservaIndisponivel(Boolean(d.reserva_indisponivel));
+        setDiferidoIndisponivel(Boolean(d.diferido_indisponivel));
       } else if (!periodoTemHoje) {
         // Limpar e obrigatorio, nao higiene. Sem isto, quem navega de setembro
         // para julho continua vendo o cartao "quanto ainda posso gastar" com o
@@ -665,6 +740,29 @@ function Painel() {
         </p>
 
         {/* ----------------------------------------------------------------
+            A LEGENDA DO CRITERIO DO CARTAO (HMO-266)
+            ----------------------------------------------------------------
+            A outra metade do par que comeca na tela de Relatorios. O Realizado
+            acima conta o cartao na FATURA PAGA (`&cartao=fatura` na URL la
+            atras); o grafico por mes dos Relatorios conta na COMPRA, e isso foi
+            DECIDIDO, nao esquecido -- as duas telas respondem perguntas
+            diferentes, e a HMO-266 tem o racional.
+
+            O que esta linha evita e barato de descrever: sem ela, quem abre as
+            duas telas no mesmo periodo ve R$ 3.345 aqui e R$ 7.545 la (medido na
+            fixture de 6 meses) e nao tem como saber qual delas esta com defeito.
+            Nenhuma esta.
+
+            Constante e nao `fluxo.cartao` porque esta tela nao guarda o campo --
+            ela guarda so `d.summary`. O que garante que o criterio e `fatura` e
+            o `&cartao=fatura` da URL, e isso ja tem guard proprio em
+            scripts/check-cartao-pela-fatura.mjs (primeira exigencia). O texto em
+            si mora em lib/criterio-do-cartao.ts, junto do par dele. */}
+        <p className="text-xs text-muted-foreground max-w-prose">
+          {LEGENDA_DO_CARTAO.fatura}
+        </p>
+
+        {/* ----------------------------------------------------------------
             A LINHA DO GASTO VARIAVEL, DE FORA DOS SEIS NUMEROS
             ----------------------------------------------------------------
             Decisao de produto do Helio (HMO-145, opcao "separado"): a media de
@@ -841,8 +939,24 @@ function Painel() {
               <p className="font-semibold text-destructive">
                 − {moeda(possoGastar.dividaDeCartao)}
               </p>
+              {/* A REGUA MUDOU NA HMO-290, e esta linha e o que diz isso.
+                  O desconto era a divida INTEIRA do cartao; agora e so o que
+                  vence ate o fim do mes. Sem o que sobrou escrito aqui, uma
+                  compra de R$ 3.000 em 10x derruba o desconto de R$ 3.000 para
+                  R$ 300 e a tela nao da nenhuma pista de que os R$ 2.700
+                  continuam existindo -- um numero otimista com cara do mesmo
+                  numero conservador de antes.
+
+                  "Não foi possível separar" quando a leitura das faturas
+                  falhou: ali o desconto voltou a ser a divida inteira, e dizer
+                  "nada depois deste mês" seria afirmar o contrario do que
+                  aconteceu. */}
               <p className="text-xs text-muted-foreground mt-1">
-                Fatura e período aberto
+                {diferidoIndisponivel
+                  ? "Dívida inteira: não foi possível separar as faturas"
+                  : possoGastar.dividaDiferida > 0
+                    ? `Vence até ${possoGastar.ate.slice(8, 10)}/${possoGastar.ate.slice(5, 7)} · ${moeda(possoGastar.dividaDiferida)} depois`
+                    : "Fatura e período aberto"}
               </p>
             </div>
             {/* A quinta parcela. Aparece SEMPRE, inclusive zerada: um tile

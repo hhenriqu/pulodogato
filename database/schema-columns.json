@@ -271,6 +271,7 @@
     "installment_number",
     "installment_parent_id",
     "installment_total",
+    "invoice_month_override",
     "is_shared",
     "launch_date",
     "notes",

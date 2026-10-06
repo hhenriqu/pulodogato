@@ -1,0 +1,51 @@
+{
+  "//": [
+    "O BLOCO de ajuste de saldo e a tela do cartao que o hospeda (HMO-253),",
+    "compilados para o teste renderizar os componentes de verdade com",
+    "react-dom/server.",
+    "",
+    "lib/ajuste-de-fatura.ts ja tem suite propria (test:ajuste-de-fatura), e ela",
+    "passaria verde com o bloco inteiro faltando na tela, com a linha do ajuste",
+    "sem rotulo, e com 'Ajustar saldo' oferecido sobre uma leitura que falhou.",
+    "Este build existe para o teste afirmar sobre o HTML.",
+    "",
+    "`FaturaDoCartao` entra junto porque o slot e o que liga o bloco a tela: sem",
+    "render dos dois, o bloco existiria no repositorio e nao na tela do cartao.",
+    "",
+    "O resolve-aliases roda com --espelha-raiz porque os primitivos de ui/",
+    "importam lib/utils.ts pelo alias @/, e o resolve-next-subpaths porque",
+    "FaturaDoCartao importa next/link -- o pacote `next` nao declara `exports`",
+    "para o subcaminho e o node morre como se ele nao estivesse instalado."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-ajuste-na-tela",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../components/cartoes/AjusteDeSaldo.tsx",
+    "../components/cartoes/FaturaDoCartao.tsx",
+    "../components/SemRede.tsx",
+    "../components/ui/card.tsx",
+    "../components/ui/button.tsx",
+    "../components/ui/badge.tsx",
+    "../components/ui/input.tsx",
+    "../components/ui/label.tsx",
+    "../components/ui/campo-de-valor.tsx",
+    "../components/ui/calculadora-de-valor.tsx",
+    "../lib/ajuste-de-fatura.ts",
+    "../lib/fatura-do-cartao.ts",
+    "../lib/offline-leitura.ts",
+    "../lib/contas.ts",
+    "../lib/dinheiro.ts",
+    "../lib/utils.ts"
+  ]
+}

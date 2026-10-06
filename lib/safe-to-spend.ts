@@ -35,10 +35,60 @@
 //   2. COMPRA NO CARTAO QUE NAO MEXE NO NUMERO. O inverso do item 1, e pior:
 //      se a divida do cartao nao entrasse na conta, gastar 500 no cartao nao
 //      mudaria em nada o "posso gastar" -- e o numero viraria um incentivo a
-//      usar o cartao. Por isso entra a divida TODA, inclusive a do periodo
-//      aberto, que so vence no mes que vem. O numero fica conservador de
-//      proposito: dinheiro que ja foi gasto no cartao nao esta disponivel para
-//      ser gasto de novo.
+//      usar o cartao. Por isso entra a divida do cartao, e nao so a fatura
+//      fechada. O que NAO entra, desde a HMO-290, e a parte dela que so vai ser
+//      cobrada depois do fim do mes -- ver a armadilha 10.
+//
+//  10. PARCELA FUTURA DESCONTADA HOJE (HMO-290, decisao 4.1 do plano da
+//      HMO-281). Ate aqui a divida de cartao entrava INTEIRA, e o fim deste
+//      cabecalho registrava isso como limitacao conhecida: uma compra de
+//      R$ 3.000 em 10x derrubava o "posso gastar" em R$ 3.000 no mes da compra,
+//      quando aquele mes cobra R$ 300. O trigger `update_account_balance` soma
+//      `NEW.amount` no INSERT sem olhar `transaction_date`, e as 10 parcelas
+//      sao gravadas de uma vez.
+//
+//      A pergunta desta tela e "quanto este mes cobra", entao o que se desconta
+//      e a divida MENOS as faturas que so vencem depois do fim do mes:
+//
+//        divida deste mes = max(0, divida do cartao - faturas futuras)
+//
+//      POR QUE SUBTRAIR O FUTURO, E NAO SOMAR A FATURA DO MES. Ler o total da
+//      fatura do mes na view e usa-lo direto parece mais simples, e reabre duas
+//      portas de desconto duplo que `current_balance` mantinha fechadas:
+//
+//        a. a fatura FECHADA E PAGA pelo fluxo do app. A baixa grava duas
+//           pernas `transfer` (HMO-149, migration 015) e `card_invoice_lines`
+//           filtra ('expense','income') -- a perna de pagamento NAO abate o
+//           total da fatura na view, de proposito. O dinheiro ja saiu do
+//           `disponivel` e a fatura continuaria inteira na view: este mes seria
+//           cobrado duas vezes.
+//        b. a fatura paga POR FORA do app -- a limitacao que o fim deste
+//           cabecalho ja registrava. Nao ha conta prevista para dar baixa, e
+//           tambem aqui a view nao se mexe.
+//
+//      Nos dois casos o pagamento credita o CARTAO, e portanto encolhe a divida
+//      em `current_balance`. Ancorar no saldo e usar a view SO para a parte
+//      diferida faz os dois se resolverem sozinhos, sem o app ter de descobrir
+//      qual pagamento pagou qual fatura -- informacao que, no caso (b), nao
+//      existe em lugar nenhum.
+//
+//      E POR ISSO A CONTA PREVISTA DA FATURA FECHADA CONTINUA FORA (`ehFatura`).
+//      A exclusao da armadilha 1 segue valendo pela razao original, intacta: a
+//      fatura fechada ainda esta dentro do saldo do cartao, que continua sendo a
+//      ancora. Reintroduzi-la aqui seria trazer de volta o desconto duplo da
+//      armadilha 1. Ha teste e mutante dedicados a este caso exato.
+//
+//      O PRECO, e ele e real: a compra feita depois do fechamento cai na fatura
+//      do mes que vem e deixa de mexer neste numero -- a armadilha 2 ao
+//      contrario. A defesa nao e aritmetica, e a tela: `dividaDiferida` sai na
+//      resposta para ficar ao lado do numero. Trocar a regua sem mostrar o
+//      resto transforma um numero conservador num numero otimista sem a pessoa
+//      saber que a regua mudou.
+//
+//      `lib/net-worth.ts` NAO muda, e a assimetria e proposital (decisao 4.2):
+//      dever R$ 3.000 em 10 parcelas e dever R$ 3.000 hoje, e mostrar R$ 300
+//      inflaria o patrimonio em R$ 2.700. Patrimonio pergunta "quanto eu devo";
+//      o posso-gastar pergunta "quanto este mes cobra".
 //
 //   3. INVESTIMENTO NAO E DINHEIRO DISPONIVEL. A classe vem do
 //      `classificarConta` do lib/net-worth.ts, para nao existirem duas
@@ -91,9 +141,10 @@
 //      goal_progress: sem ele a divisao produz Infinity (ou um valor negativo),
 //      e Infinity subtraido do `livre` imprime "-R$ Infinity" na tela.
 //
-// O que esta conta NAO sabe: fatura paga por fora do app (o saldo do cartao
-// zera mas a conta prevista fica `pending`) e parcelamento futuro do cartao
-// (entra por inteiro no mes em que a compra foi feita).
+// O que esta conta NAO sabe: fatura paga por fora do app continua `pending` na
+// agenda (o saldo do cartao, sim, se corrige -- e e nele que a armadilha 10 se
+// ancora justamente por isso). O parcelamento futuro SAIU desta lista na
+// HMO-290: ele agora e a armadilha 10, nao uma limitacao.
 //
 // -----------------------------------------------------------------------
 // De onde sai o alvo mensal da meta
@@ -141,11 +192,46 @@ export interface PrevistaParaGastar {
   notes?: string | null;
 }
 
+/**
+ * Uma fatura daquele cartao, do jeito que a view `card_invoice_lines` agrega.
+ *
+ * So as faturas que podem ser FUTURAS importam aqui -- a rota filtra por
+ * `invoice_month >= mes corrente`, e o filtro e suficiente: o vencimento de uma
+ * fatura e, no maximo, no mes seguinte ao dela (`card_invoice_due_date` empurra
+ * um mes quando o vencimento vem antes do fechamento), entao fatura de mes
+ * passado nunca vence depois do fim deste mes.
+ */
+export interface FaturaParaGastar {
+  /** O cartao. */
+  account_id: string;
+  /** Primeiro dia do mes da fatura, 'AAAA-MM-01'. */
+  invoice_month: string;
+  /**
+   * Vencimento da fatura, 'AAAA-MM-DD'. `null` quando o cartao nao tem
+   * `due_day` -- e `card_invoice_due_date` devolve NULL nesse caso.
+   */
+  due_date?: string | null;
+  /** Soma de `invoice_amount` daquela fatura: compras menos estornos. */
+  total: number | string;
+}
+
 export interface CartaoNoCalculo {
   id: string;
   name: string;
-  /** Quanto se deve neste cartao, sempre >= 0. */
+  /**
+   * Quanto ESTE MES cobra deste cartao, sempre >= 0 (armadilha 10).
+   *
+   * Nao e mais a divida inteira: e `max(0, divida - faturas futuras)`.
+   */
   divida: number;
+  /**
+   * A parte da divida que so sera cobrada depois do fim do mes, sempre >= 0.
+   *
+   * Existe para a tela poder mostra-la ao lado do numero. Sem ela a troca da
+   * armadilha 10 seria so um numero maior, sem a pessoa saber que a regua
+   * mudou. `divida + diferida` nunca passa da divida do cartao.
+   */
+  diferida: number;
 }
 
 /**
@@ -202,8 +288,17 @@ export interface QuantoPossoGastar {
   compromissos: number;
   /** Parte de `compromissos` que ja venceu e nao foi paga. */
   compromissosVencidos: number;
-  /** Divida somada dos cartoes: faturas fechadas + periodo aberto. */
+  /**
+   * Quanto os cartoes cobram NESTE MES: fatura fechada + periodo aberto que
+   * vence ate o fim do mes. Nao inclui parcela futura (armadilha 10).
+   */
   dividaDeCartao: number;
+  /**
+   * A divida de cartao que so vai ser cobrada depois do fim do mes.
+   *
+   * NAO entra no `livre` -- esta aqui para a tela mostrar ao lado dele.
+   */
+  dividaDiferida: number;
   /** O que ainda falta separar para as metas ativas neste mes. */
   reservaDeMetas: number;
   /** O numero da tela. Pode ser negativo. */
@@ -224,6 +319,14 @@ export interface EntradaDoCalculo {
    * maior do que o real, sem erro de compilacao e sem sintoma na tela.
    */
   metas: MetaParaGastar[];
+  /**
+   * As faturas dos cartoes, para separar o que este mes cobra do que so vence
+   * depois (armadilha 10). OBRIGATORIO, mesmo que vazio, pela mesma razao de
+   * `metas`: opcional, uma rota que esquecesse de passa-las voltaria a
+   * descontar a divida inteira -- sem erro de compilacao e sem sintoma na tela,
+   * porque o numero menor tambem e plausivel.
+   */
+  faturas: FaturaParaGastar[];
   /** 'YYYY-MM-DD'. Injetado para o teste nao depender do calendario. */
   hoje: string;
 }
@@ -272,6 +375,70 @@ export function mesesAteOAlvo(hoje: string, alvo: string): number {
   const [anoAlvo, mesAlvo] = alvo.split("-").map(Number);
   const cheios = (anoAlvo - anoHoje) * 12 + (mesAlvo - mesHoje);
   return Math.max(1, cheios);
+}
+
+/**
+ * O dia em que a fatura e cobrada (armadilha 10).
+ *
+ * `due_date` e a resposta quando ela existe: e a data que o
+ * `card_invoice_due_date` (006) calculou, e e a MESMA data que
+ * `POST /api/card-invoices/close` grava na conta prevista da fatura. Usar a
+ * mesma data dos dois lados e o que mantem a exclusao do `ehFatura` exata.
+ *
+ * Sem `due_date` o cartao nao tem `due_day` -- ele nao fecha fatura, e a tela
+ * de cartoes ja avisa isso numa tarja. O recuo e o ULTIMO dia do mes da fatura.
+ * O que importa na escolha e so o MES: quem le isto compara com o fim do mes
+ * corrente, e qualquer dia dentro do mes da fatura responde igual. O ultimo dia
+ * e o mais tarde que aquela fatura poderia ser cobrada dentro do mes dela, e
+ * nenhum teste distingue esse dia do primeiro -- nao ha mutante para essa
+ * escolha porque ela nao tem consequencia aqui. O que TERIA consequencia e
+ * recuar para o mes seguinte: isso empurraria para "futura" uma fatura que o
+ * mes cobra, e esse lado tira dinheiro do desconto.
+ *
+ * `due_date` ilegivel cai no mesmo recuo, e nao na comparacao direta: a
+ * comparacao e de string, entao um texto qualquer ("amanha") sai MAIOR que
+ * qualquer data ISO e a fatura viraria "futura" -- deixando de ser descontada
+ * por causa de um campo que ninguem conseguiu ler.
+ */
+export function cobrancaDaFatura(fatura: FaturaParaGastar): string | null {
+  if (fatura.due_date && /^\d{4}-\d{2}-\d{2}$/.test(fatura.due_date)) {
+    return fatura.due_date;
+  }
+  if (!/^\d{4}-\d{2}/.test(fatura.invoice_month ?? "")) return null;
+  return fimDoMes(`${fatura.invoice_month.slice(0, 7)}-01`);
+}
+
+/**
+ * Quanto de cada cartao so e cobrado DEPOIS de `ate`, por `account_id`.
+ *
+ * O estorno de um mes futuro nao abate nada aqui (`total <= 0` sai): uma fatura
+ * futura NEGATIVA diminuiria o valor diferido e, por consequencia, aumentaria o
+ * que este mes cobra -- descontando hoje um credito que so chega depois. Uma
+ * fatura futura so pode ADIAR dinheiro, nunca trazer dinheiro para ca.
+ *
+ * Fatura sem mes legivel fica de fora: sem saber quando ela e cobrada, trata-la
+ * como futura reduziria o desconto por causa de um dado que nao deu para ler.
+ */
+export function faturasFuturasPorCartao(
+  faturas: FaturaParaGastar[],
+  ate: string
+): Map<string, number> {
+  const porCartao = new Map<string, number>();
+
+  for (const fatura of faturas ?? []) {
+    if (!fatura?.account_id) continue;
+
+    const cobranca = cobrancaDaFatura(fatura);
+    if (!cobranca) continue;
+    if (cobranca <= ate) continue;
+
+    const total = numero(fatura.total);
+    if (total <= 0) continue;
+
+    porCartao.set(fatura.account_id, (porCartao.get(fatura.account_id) ?? 0) + total);
+  }
+
+  return porCartao;
 }
 
 /**
@@ -351,6 +518,9 @@ export function calcularQuantoPossoGastar(
   const ate = fimDoMes(hoje);
   const diasRestantes = diasRestantesNoMes(hoje);
 
+  // Armadilha 10: o que cada cartao so cobra depois do fim do mes.
+  const futurasPorCartao = faturasFuturasPorCartao(entrada.faturas ?? [], ate);
+
   let disponivel = 0;
   const cartoes: CartaoNoCalculo[] = [];
 
@@ -362,8 +532,22 @@ export function calcularQuantoPossoGastar(
       // Saldo positivo num cartao (estorno maior que as compras) nao e divida
       // negativa: e zero de divida. Somar o positivo aqui aumentaria o "posso
       // gastar" por causa de um credito que so existe dentro do cartao.
-      const divida = saldo < 0 ? -saldo : 0;
-      cartoes.push({ id: conta.id, name: conta.name, divida });
+      const dividaTotal = saldo < 0 ? -saldo : 0;
+
+      // Armadilha 10. O teto da divida total e o que faz o pagamento da fatura
+      // -- pelo app ou por fora dele -- se resolver sozinho: ele credita o
+      // cartao, a divida encolhe, e o diferido nao pode comer mais do que ha.
+      const diferida = Math.min(
+        Math.max(0, futurasPorCartao.get(conta.id) ?? 0),
+        dividaTotal
+      );
+
+      cartoes.push({
+        id: conta.id,
+        name: conta.name,
+        divida: dividaTotal - diferida,
+        diferida,
+      });
       continue;
     }
 
@@ -377,6 +561,7 @@ export function calcularQuantoPossoGastar(
   }
 
   const dividaDeCartao = cartoes.reduce((s, c) => s + c.divida, 0);
+  const dividaDiferida = cartoes.reduce((s, c) => s + c.diferida, 0);
 
   let receitasPrevistas = 0;
   let compromissos = 0;
@@ -423,6 +608,7 @@ export function calcularQuantoPossoGastar(
     compromissos,
     compromissosVencidos,
     dividaDeCartao,
+    dividaDiferida,
     reservaDeMetas,
     livre,
     porDia: livre > 0 ? livre / diasRestantes : 0,

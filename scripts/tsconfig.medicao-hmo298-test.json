@@ -1,0 +1,47 @@
+{
+  "//": [
+    "HMO-298 -- compila as TRES leituras que a medicao compara.",
+    "",
+    "O `include` lista as quatro portas de entrada e o tsc puxa o resto pelos",
+    "imports. Sao elas, e nao copias escritas na medicao:",
+    "",
+    "  * lib/papel-de-pao.ts        -> painelDePapel (leitura 1)",
+    "  * lib/telas-de-movimentacao.ts -> linhasDaTela/resumoDaTela (leitura 2)",
+    "  * lib/fechamento-do-grupo.ts -> ratearPorPeso (leitura 3)",
+    "  * lib/agenda-do-cartao.ts    -> agendaSemCompraNoCartao e",
+    "    sintetizarFaturasAbertas, que sao o mecanismo (b)",
+    "",
+    "IMPORTAR E O PONTO INTEIRO DESTA MEDICAO. Uma tabela construida sobre uma",
+    "reimplementacao da conta mediria a reimplementacao -- ela sairia bonita e",
+    "nao diria nada sobre o codigo que esta no ar.",
+    "",
+    "`rootDir` e `..` e nao `../lib` porque `types/financial.ts` entra no",
+    "include (lib/parte-do-grupo.ts tipa a frequencia com ele) e um rootDir em",
+    "lib/ reprova com TS6059. Por isso o resolve-aliases.mjs roda com",
+    "`--espelha-raiz`, como no test:papel-de-pao.",
+    "",
+    "Comentario SO nesta chave: o check-tests-in-ci.mjs le este arquivo com",
+    "JSON.parse, e um // no meio do objeto o faz estourar."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-medicao-hmo298",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../lib/papel-de-pao.ts",
+    "../lib/telas-de-movimentacao.ts",
+    "../lib/fechamento-do-grupo.ts",
+    "../lib/parte-do-grupo.ts",
+    "../lib/agenda-do-cartao.ts",
+    "../types/financial.ts",
+    "../lib/elo-da-fatura.ts"
+  ]
+}

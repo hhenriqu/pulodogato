@@ -22,20 +22,19 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { CampoDeValor } from "@/components/ui/campo-de-valor";
+import { CampoDeData } from "@/components/ui/campo-de-data";
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import {
   Select,
@@ -44,7 +43,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ArrowLeft, ArrowRight, ArrowRightLeft, WifiOff } from "lucide-react";
+import { ArrowRight, WifiOff } from "lucide-react";
+import { ModalDeLancamento } from "@/components/movimentacoes/ModalDeLancamento";
+import { SalvarEContinuar } from "@/components/movimentacoes/SalvarEContinuar";
+import {
+  PARAM_DE_ORIGEM,
+  destinoDepoisDeSalvar,
+  origemSegura,
+  proximaTransferencia,
+} from "@/lib/retorno-do-lancamento";
 import { useOfflineQueue } from "@/lib/hooks/useOfflineQueue";
 import {
   camposDaTransferencia,
@@ -82,6 +89,11 @@ interface ContaNaTela extends ContaDaTransferencia {
 
 export function FormularioDeTransferencia() {
   const router = useRouter();
+  /**
+   * `?origem=` chega de quem abriu este modal (HMO-249). Peneirado uma vez, no
+   * topo: `router.push` com o que vier da URL e redirecionamento aberto.
+   */
+  const origem = origemSegura(useSearchParams().get(PARAM_DE_ORIGEM));
   const { online } = useOfflineQueue();
 
   const [contas, setContas] = useState<ContaNaTela[]>([]);
@@ -100,9 +112,25 @@ export function FormularioDeTransferencia() {
   const [valores, setValores] = useState<ValoresDeTransferencia>(
     valoresIniciaisDeTransferencia()
   );
+  /** "Salvar e continuar" (HMO-249). Nasce desligado, como no lancamento. */
+  const [continuar, setContinuar] = useState(false);
 
   const aoMudar = (mudanca: Partial<ValoresDeTransferencia>) =>
     setValores((atual) => ({ ...atual, ...mudanca }));
+
+  /**
+   * Leva para uma tela interna ja aprovada por `origemSegura`. O `as` existe
+   * porque `typedRoutes` tipa o argumento de `router.push` como rota conhecida,
+   * e o destino aqui e decidido em tempo de execucao.
+   */
+  const irPara = (destino: string) => {
+    router.push(destino as Parameters<typeof router.push>[0]);
+  };
+
+  /** O X, o Esc, o clique fora e o Cancelar: sai sem gravar nada. */
+  const fecharSemSalvar = () => {
+    irPara(destinoDepoisDeSalvar({ origem, continuar: false })!);
+  };
 
   useEffect(() => {
     const carregar = async () => {
@@ -202,9 +230,27 @@ export function FormularioDeTransferencia() {
           ? "Transferência mensal criada. Confirme cada mês em Contas Previstas."
           : dados.message || "Transferência lançada."
       );
-      router.push(
-        paraRegra ? "/dashboard/bills" : "/dashboard/personal-finance"
-      );
+
+      // HMO-249. O `fallback` guarda o que esta aqui desde a HMO-164: a regra
+      // mensal termina em Contas Previstas, porque e LA que ela aparece -- cair
+      // na lista de lancamentos, onde a regra que acabou de ser criada nao
+      // existe, se le como "nao salvou". A origem explicita vence o fallback:
+      // quem clicou em "Nova Transferência" dentro de uma tela pediu para
+      // voltar para ela.
+      const destino = destinoDepoisDeSalvar({
+        origem,
+        fallback: paraRegra ? "/dashboard/bills" : undefined,
+        continuar,
+      });
+
+      if (destino === null) {
+        setValores((atual) =>
+          proximaTransferencia(atual, valoresIniciaisDeTransferencia())
+        );
+        return;
+      }
+
+      irPara(destino);
     } catch (erro) {
       console.error("Erro ao lançar transferência:", erro);
       // Sem ramo de fila aqui, e isso e a decisao: a fila recusa transferencia
@@ -218,46 +264,48 @@ export function FormularioDeTransferencia() {
     }
   };
 
+  // HMO-249: a tela virou modal. A descricao que era o `<p>` abaixo do titulo
+  // passa a ser a `DialogDescription` -- ela explica o que uma transferencia NAO
+  // e ("nao e receita nem despesa"), e e a unica frase que impede alguem de
+  // lancar aqui um gasto que vai desaparecer do total do mes.
+  const DESCRICAO =
+    "Dinheiro que andou entre contas suas. Não é receita nem despesa: o total do mês não muda, só o saldo das duas contas.";
+
   if (carregando) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-      </div>
+      <ModalDeLancamento
+        titulo="Nova Transferência"
+        descricao={DESCRICAO}
+        aoFechar={fecharSemSalvar}
+      >
+        <div className="flex items-center justify-center min-h-[200px]">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+        </div>
+      </ModalDeLancamento>
     );
   }
 
   return (
-    <div className="container mx-auto py-6 space-y-6 max-w-3xl">
-      <div className="space-y-2">
-        <Button variant="ghost" size="sm" asChild className="-ml-2">
-          <Link href="/dashboard/personal-finance">
-            <ArrowLeft className="h-4 w-4 mr-1" />
-            Voltar para os lançamentos
-          </Link>
-        </Button>
-        <h1 className="text-3xl font-bold flex items-center gap-2">
-          <ArrowRightLeft className="h-7 w-7 text-info" />
-          Nova Transferência
-        </h1>
-        <p className="text-muted-foreground">
-          Dinheiro que andou entre contas suas. Não é receita nem despesa: o
-          total do mês não muda, só o saldo das duas contas.
-        </p>
-        {!online && (
+    <ModalDeLancamento
+      titulo="Nova Transferência"
+      descricao={DESCRICAO}
+      aoFechar={fecharSemSalvar}
+      aviso={
+        !online ? (
           <p className="text-sm text-warning flex items-center gap-2">
             <WifiOff className="h-4 w-4" />
             Sem conexão. A transferência grava duas linhas e precisa de rede —
             sem ela, metade ficaria gravada e o saldo das duas contas erraria.
           </p>
-        )}
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Dados da transferência</CardTitle>
+        ) : undefined
+      }
+    >
+      {/* Sem borda nem sombra: a moldura e a do modal. Ver ModalDeLancamento. */}
+      <Card className="border-0 shadow-none">
+        <CardHeader className="px-0 pt-0">
           <CardDescription>Campos com * são obrigatórios.</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="px-0 pb-0">
           <form onSubmit={enviar} className="space-y-6">
             {/* `grid-cols-1` explicito: sem a coluna de base, o trilho `auto`
                 tem o min-content como PISO e estoura o container no celular
@@ -340,12 +388,20 @@ export function FormularioDeTransferencia() {
                 <Label htmlFor="date">
                   {campos.diaDeVencimento ? "A partir de *" : "Data *"}
                 </Label>
-                <Input
+                {/* `CampoDeData` e nao o controle de data nativo (HMO-240). O
+                    `required` continua aqui pelo campo vazio, mas quem recusa a
+                    data pela metade e `validarTransferencia` ("Informe a
+                    data."): o campo mascarado emite VAZIO enquanto a data esta
+                    incompleta, e o `required` de um input de texto se satisfaz
+                    com o texto parcial na tela. */}
+                <CampoDeData
                   id="date"
-                  type="date"
                   value={valores.data}
-                  onChange={(e) => aoMudar({ data: e.target.value })}
+                  onChange={(data) => aoMudar({ data })}
                   required
+                  aria-label={
+                    campos.diaDeVencimento ? "A partir de" : "Data"
+                  }
                 />
                 {/* O MESMO campo muda de significado com a natureza, e a tela
                     diz qual: numa transferencia fixa ele e o `start_date` da
@@ -501,18 +557,32 @@ export function FormularioDeTransferencia() {
               </p>
             )}
 
+            {/* Antes dos botoes: ele muda o que o botao de Lancar faz. */}
+            <SalvarEContinuar
+              ligado={continuar}
+              aoMudar={setContinuar}
+              disabled={salvando}
+            />
+
             <div className="flex flex-wrap gap-2">
               <Button type="submit" disabled={salvando || !online}>
                 <ArrowRight className="h-4 w-4 mr-1" />
                 {salvando ? "Lançando..." : "Lançar transferência"}
               </Button>
-              <Button variant="outline" asChild>
-                <Link href="/dashboard/personal-finance">Cancelar</Link>
+              {/* Mesmo caminho de saida do X e do Esc. Ver o Cancelar de
+                  FormularioDeLancamento para o porque de nao ser um `Link`. */}
+              <Button
+                type="button"
+                variant="outline"
+                onClick={fecharSemSalvar}
+                disabled={salvando}
+              >
+                Cancelar
               </Button>
             </div>
           </form>
         </CardContent>
       </Card>
-    </div>
+    </ModalDeLancamento>
   );
 }

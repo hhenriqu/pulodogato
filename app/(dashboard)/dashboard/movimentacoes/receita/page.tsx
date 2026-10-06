@@ -3,8 +3,12 @@
 // A tela de receita. Ela nao tem natureza de despesa, nem parcelamento, nem
 // rateio -- quem decide isso e `camposDoTipo("income", ...)`, nao este arquivo.
 //
-// O `Suspense` existe porque o formulario le `?id=` com `useSearchParams`, e o
-// Next exige o limite de suspensao para renderizar a rota no servidor.
+// Desde a HMO-249 ela e exibida como MODAL -- ver o comentario da tela de
+// despesa, que vale igual aqui.
+//
+// O `Suspense` existe porque o formulario le `?id=` e `?origem=` com
+// `useSearchParams`, e o Next exige o limite de suspensao para renderizar a rota
+// no servidor.
 
 import { Suspense } from "react";
 import { FormularioDeLancamento } from "@/components/movimentacoes/FormularioDeLancamento";

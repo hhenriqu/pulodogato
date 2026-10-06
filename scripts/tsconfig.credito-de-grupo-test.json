@@ -1,0 +1,18 @@
+{
+  "//": "Build so do teste do credito de grupo (HMO-245 F10). Compila TRES modulos de proposito: lib/credito-de-grupo.ts (o que a fase entrega), lib/fechamento-do-grupo.ts (a fonte -- o teste alimenta o credito com a saida REAL de `fecharMes`, e nao com um fechamento escrito a mao, porque e justamente a mistura de previsto com realizado que ele existe para medir) e lib/parte-de-grupo-na-lista.ts (os tres cartoes do topo: a assercao de que 'Receitas' NAO se mexe precisa do numero de verdade daquele cartao). Os imports de @/ sao resolvidos pelo tsc via `paths` mas NAO reescritos no JS emitido, entao o npm script tem um passo de reescrita depois. Ver scripts/test-credito-de-grupo.mjs.",
+  "compilerOptions": {
+    "outDir": "../.tmp-credito-de-grupo",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../lib/credito-de-grupo.ts",
+    "../lib/fechamento-do-grupo.ts",
+    "../lib/parte-de-grupo-na-lista.ts"
+  ]
+}

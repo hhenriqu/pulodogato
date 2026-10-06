@@ -159,7 +159,7 @@ const mutantes = [
     '  return "income";',
   ],
   [
-    "a fatura de cartao some do 'a pagar' (confundida com direcaoNoPainel)",
+    "a transferencia agendada some do 'a pagar' (confundida com direcaoNoPainel)",
     '  return direction === "income" ? "income" : "expense";',
     '  return direction === "income" || direction === "transfer"\n    ? "income"\n    : "expense";',
   ],

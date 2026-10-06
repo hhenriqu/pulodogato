@@ -53,6 +53,7 @@ const {
   regraDeTransferenciaRecorrente,
   validarBaixaDeTransferencia,
   mensagemDaBaixaDeTransferencia,
+  camposDeDestinoDaRegra,
 } = await import("../.tmp-transferencia/transferencia.js");
 
 const { naturezasDoTipo } = await import("../.tmp-transferencia/lancamento.js");
@@ -814,4 +815,62 @@ test("cada recusa da baixa tem mensagem propria e nao manda procurar campo", () 
   // Tres estados, tres frases: uma mensagem unica para dois estados faz o
   // usuario repetir a mentira de volta.
   assert.equal(vistas.size, 3);
+});
+
+// ---------------------------------------------------------------------------
+// OS CAMPOS DE DESTINO NO INSERT DA REGRA (HMO-236)
+// ---------------------------------------------------------------------------
+// A pergunta aqui nao e "qual o valor da coluna", e sim "a CHAVE vai no objeto".
+// Por isso todo assert usa `in` em vez de comparar com `null`: PGRST204 e
+// disparado pela chave existir, nao pelo valor dela -- um teste que so olhasse
+// `=== null` passaria igual com a chave presente, que e exatamente o defeito.
+
+test("despesa fixa nao leva a chave destination_account_id", () => {
+  const campos = camposDeDestinoDaRegra("expense", null);
+  assert.equal(
+    "destination_account_id" in campos,
+    false,
+    "a chave viajou num expense: em banco sem a 038 isso e PGRST204 e o INSERT inteiro falha"
+  );
+  assert.deepEqual(campos, {});
+});
+
+test("receita fixa tambem nao leva a chave", () => {
+  assert.equal(
+    "destination_account_id" in camposDeDestinoDaRegra("income", null),
+    false
+  );
+});
+
+test("transferencia LEVA a chave com o id do destino", () => {
+  // CONTROLE POSITIVO: uma funcao que devolvesse `{}` sempre passaria nos dois
+  // testes acima e regrediria a HMO-172 -- a regra nasceria sem destino e a
+  // baixa gravaria UMA perna.
+  const campos = camposDeDestinoDaRegra("transfer", POUPANCA);
+  assert.equal("destination_account_id" in campos, true);
+  assert.equal(campos.destination_account_id, POUPANCA);
+});
+
+test("transferencia sem destino manda a chave como NULL, nao string vazia", () => {
+  // `""` numa coluna uuid volta 22P02. E a chave PRECISA ir: e ela que faz o
+  // CHECK da 038 recusar a transferencia sem destino, em vez de deixar nascer a
+  // regra que materializa meia transferencia.
+  for (const vazio of ["", null, undefined]) {
+    const campos = camposDeDestinoDaRegra("transfer", vazio);
+    assert.equal("destination_account_id" in campos, true);
+    assert.equal(campos.destination_account_id, null);
+  }
+});
+
+test("o tipo e comparado com 'transfer' exato, nao por prefixo nem truthy", () => {
+  // Mata o mutante que troca a comparacao por algo permissivo (`!!tipo`,
+  // `tipo.includes("transfer")`): um tipo desconhecido nao pode abrir o ramo
+  // que manda a coluna.
+  for (const tipo of ["expense", "income", "transferencia", "TRANSFER", ""]) {
+    assert.equal(
+      "destination_account_id" in camposDeDestinoDaRegra(tipo, POUPANCA),
+      false,
+      `o tipo ${JSON.stringify(tipo)} abriu o ramo de transferencia`
+    );
+  }
 });

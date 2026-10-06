@@ -1,0 +1,28 @@
+{
+  "//": [
+    "Compila a preferencia do modo papel de pao (HMO-283) para a suite pura.",
+    "",
+    "`lib/theme.ts` entra no include porque `lib/modo-papel.ts` importa dele o",
+    "THEME_COLOR -- a cor da barra de status quando o modo esta DESLIGADO. Sem",
+    "ele o import vira caminho morto no .js compilado e a suite estoura em",
+    "ERR_MODULE_NOT_FOUND, o que se le como erro do runner e nao como include",
+    "faltando.",
+    "",
+    "Comentario SO nesta chave, nunca com // no meio do objeto: o tsc aceita",
+    "JSONC, mas o check-tests-in-ci.mjs le este arquivo com JSON.parse e",
+    "estoura com 'Expected double-quoted property name'."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-modo-papel",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/modo-papel.ts", "../lib/theme.ts"]
+}
