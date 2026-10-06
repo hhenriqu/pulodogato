@@ -10,15 +10,15 @@
 //
 // OS MUTANTES QUE SAO O CONTROLE NEGATIVO DA ENTREGA
 // --------------------------------------------------
-// Tres, e todos de privacidade: `RECORTE DA PRIVACIDADE SOLTO`,
-// `RECORTE POR member_id` e `/proportions VOLTA A VAZAR`. Esta fase promete "o R$
+// Dois, e os dois de privacidade: `RECORTE DA PRIVACIDADE SOLTO` e
+// `RECORTE POR member_id`. Esta fase promete "o R$
 // da renda so para o proprio dono", e a maneira classica de "provar" isso e uma
 // assercao de tela -- que passa verde com o salario no JSON. Se esses tres
 // sobreviverem, a suite nao mede a promessa, e nenhum outro mutante compensa.
 //
-// QUATRO ARQUIVOS, DUAS SUITES
-// ----------------------------
-// As regras e as duas rotas sao `npm run test:semeadura`; o componente e
+// TRES ARQUIVOS, DUAS SUITES
+// ---------------------------
+// As regras e a rota sao `npm run test:semeadura`; o componente e
 // `npm run test:divisao-ui-dom`, que precisa de navegador. Cada mutante diz a
 // sua, e o controle positivo roda uma vez por suite usada -- uma suite que nao
 // esteja verde ANTES faz todo mutante dela "morrer", e o relatorio sai cheio
@@ -32,14 +32,13 @@ import { execSync } from "node:child_process";
 
 const REGRAS = "lib/semear-pela-renda.ts";
 const ROTA = "app/api/expense-groups/[groupId]/semear-divisao/route.ts";
-const ANTIGA = "app/api/expense-groups/proportions/route.ts";
 const TELA = "components/grupos/DivisaoDoGrupo.tsx";
 
 const SUITE_REGRAS = "npm run test:semeadura";
 const SUITE_TELA = "npm run test:divisao-ui-dom";
 
 const original = new Map(
-  [REGRAS, ROTA, ANTIGA, TELA].map((a) => [a, readFileSync(a, "utf8")])
+  [REGRAS, ROTA, TELA].map((a) => [a, readFileSync(a, "utf8")])
 );
 
 /** Roda uma suite. `true` = vermelha. */
@@ -73,44 +72,13 @@ const mutantes = [
     "viewerUserId !== null && m.user_id === viewerUserId",
     "viewerUserId !== null && m.member_id === viewerUserId",
   ],
-  [
-    "/proportions VOLTA A VAZAR: o retorno cru da funcao SQL no JSON",
-    ANTIGA,
-    SUITE_REGRAS,
-    `    const recortadas = semRendaAlheia(
-      (proportions || []) as ProporcaoCrua[],
-      membership.id
-    );`,
-    "    const recortadas = (proportions || []) as ProporcaoCrua[];",
-  ],
-  [
-    "/proportions volta a recortar por PAPEL: admin ve o salario dos outros",
-    ANTIGA,
-    SUITE_REGRAS,
-    `    const processedProportions = semRendaAlheia(
-      existingProportions?.map((prop) => ({
-        member_id: prop.member_id,
-        proportion_percentage: prop.proportion_percentage,
-        total_income: prop.total_income,
-        calculated_at: prop.calculated_at,
-      })) || [],
-      membership.id
-    );`,
-    `    const processedProportions =
-      existingProportions?.map((prop) => ({
-        member_id: prop.member_id,
-        proportion_percentage: prop.proportion_percentage,
-        total_income: prop.total_income,
-        calculated_at: prop.calculated_at,
-      })) || [];`,
-  ],
-  [
-    "o recorte troca a chave por `null` em vez de TIRA-LA: o valor sai do JSON mas a forma mente",
-    ANTIGA,
-    SUITE_REGRAS,
-    "    const { total_income: _soDoDono, ...resto } = linha;\n    return resto;",
-    "    return { ...linha, total_income: null };",
-  ],
+  // As TRES mutacoes de /api/expense-groups/proportions sairam na fase 7
+  // (HMO-273), com o arquivo: `/proportions VOLTA A VAZAR`, `volta a recortar
+  // por PAPEL` e `troca a chave por null`. Nao foram reescritas em outro lugar
+  // porque nao ha onde: rota que nao existe nao vaza, e a mutacao precisa de uma
+  // ancora de codigo. O que ficou no lugar e um guard, na secao 3 de
+  // scripts/test-sugestao-de-divisao.mjs -- e o controle negativo DELE esta na
+  // propria suite (o caso de `semComentarios`, nos dois sentidos).
   [
     "a rota passa um id qualquer como viewer em vez do auth.uid()",
     ROTA,

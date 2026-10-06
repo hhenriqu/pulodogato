@@ -388,3 +388,6 @@ next-env.d.ts
 # node_modules/@supabase/supabase-js plantado pelo monta-duble-de-rota.mjs --
 # sem esta entrada o `git status` passaria a mostrar um pacote inteiro.
 /.tmp-semeadura/
+
+# A sugestao de divisao viva (HMO-273): arvore compilada da suite de rota.
+/.tmp-sugestao-de-divisao/

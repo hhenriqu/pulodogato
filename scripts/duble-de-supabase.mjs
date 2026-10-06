@@ -37,12 +37,61 @@
 // que a RLS nao cobre quando a leitura usa a service role.
 // =====================================================
 
-/** As colunas de um `select("a, b, c")`. `*` (ou vazio) = a linha inteira. */
+/**
+ * As colunas de um `select("a, b, c")`. `*` (ou vazio) = a linha inteira.
+ *
+ * EMBED CONTA COMO UMA COLUNA SO (HMO-273)
+ * ----------------------------------------
+ * `split-suggestions` pede embed de perfil e de partes:
+ *
+ *     select("id, user_id, percentage, user:profiles!fk ( id, full_name )")
+ *
+ * Um `split(",")` cru picaria isso em `user:profiles!fk ( id` e `full_name )` --
+ * nomes de coluna que linha nenhuma tem. A projecao devolveria `undefined` em
+ * TUDO, a rota cairia no caminho de "membro sem dado" e a sonda mediria um
+ * fixture vazio passando verde por vacuidade. Por isso a virgula e contada no
+ * NIVEL ZERO de parenteses, e o embed vira a coluna com o nome do ALIAS (`user`
+ * em `user:profiles!fk(...)`, `profiles` quando nao ha alias) -- que e a chave
+ * em que o PostgREST entrega o objeto aninhado, e a chave em que a sonda monta a
+ * linha do fixture.
+ *
+ * As colunas DE DENTRO do embed nao sao projetadas: o fixture ja entrega o
+ * objeto aninhado pronto. Projetar dentro exigiria reimplementar o join, e a
+ * sonda nao mede join -- mede o recorte que a rota faz em cima do que leu.
+ */
 function colunasDe(selecao) {
   if (!selecao || selecao.includes("*")) return null;
-  return selecao
-    .split(",")
+
+  const topo = [];
+  let atual = "";
+  let profundidade = 0;
+
+  for (const ch of selecao) {
+    if (ch === "(") profundidade += 1;
+    else if (ch === ")") profundidade -= 1;
+
+    if (ch === "," && profundidade === 0) {
+      topo.push(atual);
+      atual = "";
+      continue;
+    }
+    atual += ch;
+  }
+  topo.push(atual);
+
+  return topo
     .map((c) => c.trim())
+    .filter(Boolean)
+    .map((c) => {
+      const abre = c.indexOf("(");
+      if (abre === -1) return c;
+      // `alias:tabela!fk ( ... )` -> `alias`; `tabela ( ... )` -> `tabela`.
+      const cabeca = c.slice(0, abre).trim();
+      const alias = cabeca.includes(":")
+        ? cabeca.slice(0, cabeca.indexOf(":"))
+        : cabeca.split("!")[0];
+      return alias.trim();
+    })
     .filter(Boolean);
 }
 

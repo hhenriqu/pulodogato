@@ -29,11 +29,16 @@ interface SplitSuggestion {
   description: string;
   splits: {
     member_id: string;
+    /**
+     * `null` quando a RLS nao deixa este usuario ler o perfil do outro membro --
+     * ver o rotulo de fallback no render. Ser do mesmo grupo nao da acesso a
+     * `profiles`.
+     */
     user: {
       id: string;
       full_name: string;
       avatar_url?: string;
-    };
+    } | null;
     percentage: number;
     amount?: number;
     reason?: string;
@@ -241,14 +246,19 @@ export default function SplitSuggestions({
                   >
                     <div className="flex items-center gap-2">
                       <Avatar className="h-6 w-6">
-                        <AvatarImage src={split.user.avatar_url} />
+                        <AvatarImage src={split.user?.avatar_url} />
                         <AvatarFallback className="text-xs">
-                          {split.user.full_name.charAt(0)}
+                          {split.user?.full_name?.charAt(0) || "?"}
                         </AvatarFallback>
                       </Avatar>
                       <div>
                         <p className="text-xs font-medium">
-                          {split.user.full_name}
+                          {/* Nome ausente e caminho NORMAL, e nao erro: nenhuma
+                              policy de `profiles` olha `group_members`, entao o
+                              embed do perfil de outro membro volta nulo pela
+                              RLS. Sem rotulo, a linha apareceria so com o
+                              percentual -- uma parte de dinheiro sem dono. */}
+                          {split.user?.full_name || "Membro do grupo"}
                         </p>
                         {split.reason && (
                           <p className="text-xs text-muted-foreground">
@@ -260,9 +270,18 @@ export default function SplitSuggestions({
 
                     <div className="text-right">
                       <p className="text-xs font-semibold">
-                        {split.percentage.toFixed(1)}%
+                        {/* Duas casas, e em pt-BR. Com `toFixed(1)` a divisao
+                            igual de tres membros mostrava "33.3%" nas tres
+                            linhas: o 33,34 que fecha a soma e o 33,33 ficavam
+                            indistinguiveis, e a coluna de percentuais parecia
+                            somar 99,9%. */}
+                        {split.percentage.toFixed(2).replace(".", ",")}%
                       </p>
-                      {split.amount && (
+                      {/* `!== undefined`, e nao `&&`: a parte de um membro em 0%
+                          e R$ 0,00, que e falsy. Com `&&` a unica linha sem
+                          valor na previa era justamente a de quem nao paga --
+                          que se le como "o valor dele ainda nao carregou". */}
+                      {split.amount !== undefined && (
                         <p className="text-xs text-muted-foreground">
                           {formatCurrency(split.amount)}
                         </p>
@@ -308,7 +327,7 @@ export default function SplitSuggestions({
             {suggestions.some((s) => s.type === "proportional") && (
               <div className="flex items-center gap-1">
                 <TrendingUp className="h-3 w-3 text-success" />
-                <span>Proporcional configurada</span>
+                <span>Divisão configurada do grupo</span>
               </div>
             )}
             {suggestions.some((s) => s.type === "historical") && (

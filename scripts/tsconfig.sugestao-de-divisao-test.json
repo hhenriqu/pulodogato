@@ -1,0 +1,50 @@
+{
+  "//": [
+    "A sugestao de divisao viva (HMO-245 fase 7 / HMO-273).",
+    "",
+    "Compila DUAS coisas, e as duas sao necessarias:",
+    "",
+    "  1. lib/sugestao-de-divisao.ts -- a aritmetica das quatro sugestoes. O tsc",
+    "     puxa `divisao-configurada`, `fechamento-do-grupo` e `settlement` pelos",
+    "     imports, e e disso que a suite depende: ela mede o MESMO",
+    "     `divisaoDoPeriodo` que o fechamento do mes usa e o MESMO",
+    "     `ratearPorPeso` que distribui o centavo. Uma copia escrita no teste",
+    "     faria a suite medir a si mesma;",
+    "",
+    "  2. o route handler app/api/expense-groups/[groupId]/split-suggestions/",
+    "     route.ts. O que a fase 7 promete e que a sugestao configurada VOLTE A",
+    "     APARECER na resposta, e isso nao se mede na funcao: a rota pode ler a",
+    "     coluna errada, passar o `default_split_type` errado, ou montar a",
+    "     sugestao e nao devolver. A unica medida que corresponde a promessa e",
+    "     chamar o handler e olhar o corpo.",
+    "",
+    "`rootDir` e a raiz do projeto, e nao lib/: a rota importa @/lib e @/utils, e",
+    "com rootDir em lib/ o tsc reprova com TS6059 ('not under rootDir'), que se le",
+    "como erro do arquivo e e do include. O emit espelha a raiz, entao o passo do",
+    "resolve-aliases roda com --espelha-raiz.",
+    "",
+    "utils/supabase/server.ts entra pelo import da rota e e DEPOIS sobrescrito",
+    "pelo scripts/monta-duble-de-rota.mjs -- o modulo real importa `next/headers`,",
+    "que nao roda fora do runtime do Next.",
+    "",
+    "Comentario SO nesta chave, nunca com // no meio do objeto: o tsc aceita",
+    "JSONC, mas o check-tests-in-ci.mjs le este arquivo com JSON.parse e estoura",
+    "com 'Expected double-quoted property name'."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-sugestao-de-divisao",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../lib/sugestao-de-divisao.ts",
+    "../app/api/expense-groups/[groupId]/split-suggestions/route.ts"
+  ]
+}
