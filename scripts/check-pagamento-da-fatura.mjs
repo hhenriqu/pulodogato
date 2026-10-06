@@ -25,6 +25,22 @@
 //      a nao ter dialogo nenhum, e `pedirBaixa` guardaria um estado que ninguem
 //      le.
 //
+// A HMO-311 (fase 14) ACRESCENTOU A SEGUNDA TELA, e com ela tres fios novos que
+// tambem sao mudos:
+//
+//   5. `SecaoDaTela` desenha o botao sem `onClick`, ou lê a regra errada. O
+//      botao aparece e o clique nao faz nada -- o pior dos tres estados que o
+//      cabecalho de lib/acoes-da-linha.ts enumera;
+//   6. a lista passa a linha CRUA ao dialogo, sem `linhaParaPagarDaTela`. A
+//      chave sintetica da fatura ABERTA vira id de banco, e o `/pay` responde
+//      404 -- que para quem clicou se le como "o app nao conseguiu";
+//   7. `aoPagar` deixa de ser `carregar`. A baixa acontece, o banco muda, e a
+//      linha fica no «Previsto» -- "funcionou e a tela nao mudou" se le como
+//      "nao funcionou", e a pessoa clica de novo num botao que mexe em dinheiro.
+//
+// E a exigencia NEGATIVA passou a valer para AS DUAS telas: a fase 14 nasceu
+// depois da 13 exatamente para nao ser a segunda implementacao.
+//
 // OS COMENTARIOS SAO REMOVIDOS ANTES DA VARREDURA, E ISSO E LOAD-BEARING. Os
 // tres arquivos abaixo EXPLICAM esta fase em prosa, e a prosa cita
 // `/api/card-invoices/close`, `scheduled_transaction_id` e os nomes das
@@ -55,6 +71,9 @@ function semComentariosNemImports(fonte) {
 const DIALOGO = "components/fatura/DialogoDePagamentoDaFatura.tsx";
 const TELA = "app/(dashboard)/dashboard/bills/page.tsx";
 const LIB = "lib/pagamento-da-fatura.ts";
+// A SEGUNDA TELA, desde a HMO-311 (fase 14): a lista das telas de movimentacao.
+const LISTA = "components/movimentacoes/ListaDeMovimentacao.tsx";
+const SECAO = "components/movimentacoes/SecaoDaTela.tsx";
 
 const EXIGE = [
   {
@@ -106,6 +125,40 @@ const EXIGE = [
     porque:
       "a lib tem de decidir por `gravada` (o galho do close) e por `natureza` (a conta pagadora), e tirar o motivo da recusa da PROPRIA rota -- um texto escrito a mao aqui divergiria da mensagem que o /pay devolve.",
   },
+  {
+    // A FIACAO DA FASE 14. Os tres trechos sao CALL SITES, e nao nomes soltos:
+    // um `includes("linhaParaPagarDaTela")` ficaria verde com a funcao
+    // importada e nao chamada -- e o `tsc` nao reclama de prop que some.
+    arquivo: LISTA,
+    trechos: [
+      "<DialogoDePagamentoDaFatura",
+      // A CONVERSAO, no argumento. Sem ela a chave sintetica da fatura ABERTA
+      // (`fatura:2026-10-01:<uuid>`) vai como id de banco, e o `/pay` responde
+      // 404 em todo ramo onde o `close` nao sobrescrever o id.
+      "linhaParaPagarDaTela(faturaParaPagar)",
+      // A RECARGA. `aoPagar` com um `setX` local seria a SEGUNDA aritmetica da
+      // de-duplicacao de fatura: quem de-duplica e a LEITURA
+      // (`sintetizarFaturasAbertas`, na rota), entao a linha so sai do
+      // «Previsto» depois de reler.
+      "aoPagar={carregar}",
+      // A frase obrigatoria da fatura SEM dia de vencimento. Sem ela, "a do
+      // Nubank tem botão e a do C6 não" se lê como tela quebrada.
+      "FATURA_SEM_VENCIMENTO_NAO_TEM_PAGAR",
+    ],
+    porque:
+      "a tela de Despesas tem de CONSUMIR o dialogo extraido, converter a linha (a chave sintetica nao e id de banco) e recarregar pela LEITURA. E a fatura sem vencimento tem de dizer por que nao tem botao.",
+  },
+  {
+    arquivo: SECAO,
+    trechos: [
+      // A REGRA LIDA PELA MARCACAO, e o `onClick` que leva ao container. Dado
+      // certo chegando num JSX que nao o le nao quebra build nem muda pixel.
+      "podePagarAFatura(linha)",
+      "acoes.aoPagarFatura(linha)",
+    ],
+    porque:
+      "o botao Pagar tem de sair da regra de lib/acoes-da-linha.ts e chamar de volta o container. Sem o `onClick`, o botao aparece e o clique nao faz nada -- o pior dos tres estados.",
+  },
 ];
 
 // A EXIGENCIA NEGATIVA: a tela nao pode ter a sequencia das escritas de volta.
@@ -154,13 +207,19 @@ for (const { arquivo, trechos, porque } of EXIGE) {
   }
 }
 
-const daTela = semComentariosNemImports(readFileSync(TELA, "utf8"));
-for (const { padrao, como, porque } of PROIBIDO_NA_TELA) {
-  if (!padrao.test(daTela)) continue;
-  console.error(`SOBRA  ${TELA}`);
-  console.error(`       cita ${como} fora de comentário`);
-  console.error(`       ${porque}`);
-  falhas++;
+// A EXIGENCIA NEGATIVA VALE PARA AS DUAS TELAS (HMO-311). A fase 14 nasceu
+// DEPOIS da fase 13 exatamente para nao ser a segunda implementacao: se a tela
+// de Despesas montar o `close`, o 409 ou o `payment_account_id` por conta
+// propria, a extracao virou decoracao.
+for (const arquivo of [TELA, LISTA]) {
+  const fonte = semComentariosNemImports(readFileSync(arquivo, "utf8"));
+  for (const { padrao, como, porque } of PROIBIDO_NA_TELA) {
+    if (!padrao.test(fonte)) continue;
+    console.error(`SOBRA  ${arquivo}`);
+    console.error(`       cita ${como} fora de comentário`);
+    console.error(`       ${porque}`);
+    falhas++;
+  }
 }
 
 // CONTRAPESO DA EXIGENCIA 1: `description: FRASE_DO_PATRIMONIO` poderia estar
@@ -180,11 +239,11 @@ for (const arquivo of [DIALOGO, TELA]) {
 
 if (falhas > 0) {
   console.error(
-    `\n${falhas} ponto(s) da fiação do pagamento da fatura está desligado (HMO-310).`
+    `\n${falhas} ponto(s) da fiação do pagamento da fatura está desligado (HMO-310/HMO-311).`
   );
   process.exit(1);
 }
 
 console.log(
-  "OK: o diálogo diz a frase do patrimônio e o motivo do botão, a tela consome o extraído, e a sequência das escritas não voltou para dentro dela."
+  "OK: o diálogo diz a frase do patrimônio e o motivo do botão; AS DUAS telas (Contas a Pagar e Despesas) consomem o extraído; e a sequência das escritas não voltou para dentro de nenhuma delas."
 );

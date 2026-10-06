@@ -210,6 +210,60 @@ export function linhaParaPagarDaAgenda(
   };
 }
 
+/**
+ * O que `linhaParaPagarDaTela` le de uma linha das telas de movimentacao.
+ *
+ * ESTRUTURAL, e nao `LinhaDaTela`: importar o tipo de
+ * `lib/telas-de-movimentacao` arrastaria o grafo das duas telas para dentro
+ * deste arquivo (e das suites e sondas que o compilam), por quatro campos.
+ * `LinhaDaTela` satisfaz esta forma por construcao, e o `tsc` do call site
+ * reprova se algum dos quatro mudar de nome.
+ */
+export interface LinhaCruaDaTela {
+  /**
+   * SEMPRE string na tela -- e e por isso que esta funcao existe.
+   *
+   * Na fatura ABERTA sintetizada ele e a chave canonica
+   * (`fatura:2026-10-01:<uuid>`), e NAO um id de banco: `linhasDaTela` precisa
+   * de uma chave estavel para o React, e a fatura aberta nao tem id nenhum.
+   */
+  id: string;
+  gravada: boolean;
+  natureza: NaturezaParaPagar;
+  fatura: { accountId: string; mes: string } | null;
+  descricao?: string | null;
+}
+
+/**
+ * A linha da tela de Despesas na forma que a decisao e a sequencia leem -- a
+ * irma de `linhaParaPagarDaAgenda`, para a OUTRA tela (HMO-311, fase 14).
+ *
+ * ELA EXISTE POR UMA UNICA RAZAO, E ELA DECIDE DINHEIRO: o `id` da fatura
+ * ABERTA na tela e a CHAVE SINTETICA, e `pagarAFatura` usa `linha.id` como id de
+ * banco. Passar a linha da tela crua faria a chave `fatura:2026-10-01:<uuid>`
+ * virar `POST /api/scheduled-transactions/fatura:2026-10-01:<uuid>/pay` em todo
+ * caminho onde o `close` nao sobrescrevesse o id -- um 404 que, para quem
+ * clicou, se le como "o app nao conseguiu". A conversao e `gravada ? id : null`,
+ * que e exatamente o contrato que `LinhaParaPagar.id` ja declara ("`null` na
+ * fatura ABERTA sintetizada").
+ *
+ * `gravada` E O CRITERIO, e nao o prefixo `fatura:` do id. Procurar o prefixo
+ * seria uma SEGUNDA definicao de "esta linha existe no banco", e ela divergiria
+ * de `linhasDaTela` -- que deriva `gravada` do id ser nao-vazio -- no dia em que
+ * a chave mudasse de forma.
+ */
+export function linhaParaPagarDaTela(
+  linha: LinhaCruaDaTela
+): LinhaParaPagar & { id: string | null; description: string | null } {
+  return {
+    gravada: linha.gravada,
+    natureza: linha.natureza,
+    fatura: linha.fatura,
+    id: linha.gravada ? linha.id : null,
+    description: linha.descricao ?? null,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // AS FRASES
 // ---------------------------------------------------------------------------
@@ -253,6 +307,23 @@ export const MOTIVO_SEM_CONTA_PAGADORA = mensagemContaPagadora("ausente");
  */
 export const AVISO_DA_FATURA_ABERTA =
   "Esta fatura ainda está em aberto: confirmar registra o total de hoje como o valor pago. Se você lançar depois uma compra com data deste mês, ela não entra neste pagamento.";
+
+/**
+ * POR QUE A FATURA SEM DIA DE VENCIMENTO NAO GANHA O BOTAO -- HMO-311.
+ *
+ * Ela nao e uma linha da lista: sem `due_day` no cartao o banco nao calcula
+ * vencimento, e a fatura sai num bloco a parte com so `{ account_name, total }`
+ * -- SEM id e SEM `accountId`. Nao ha o que pagar por aqui nem com que chave, e
+ * nenhuma das duas escritas de `pagarAFatura` tem argumento.
+ *
+ * A FRASE E OBRIGATORIA, e nao enfeite. "A fatura do Nubank tem botao e a do C6
+ * nao" se le como tela quebrada, e a reacao natural e recarregar a pagina e
+ * tentar de novo -- nao e cadastrar o dia de vencimento, que e o caminho de
+ * verdade. Dizer QUAL e esse caminho e a unica coisa que transforma a ausencia
+ * do botao de defeito em instrucao.
+ */
+export const FATURA_SEM_VENCIMENTO_NAO_TEM_PAGAR =
+  "E por isso que esta fatura não tem o botão Pagar: sem o dia de vencimento ela não é uma linha do Previsto, e não há data para dar baixa. Configure o dia de vencimento do cartão e ela passa a aparecer na lista, com o botão.";
 
 /** Nenhuma conta pode pagar: cartao de credito nao paga cartao de credito. */
 export const SEM_CONTA_PAGADORA_CADASTRADA =

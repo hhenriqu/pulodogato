@@ -63,6 +63,7 @@ import { SecaoDaTela } from "../.tmp-secao-da-tela/components/movimentacoes/Seca
 // que decide que a linha realizada vira link e a prevista nao, e um esboco faria
 // as assercoes do `href` medirem a propria sonda.
 import {
+  ROTULO_DE_PAGAR,
   caminhoDeEdicao,
   rotuloDeConfirmar,
 } from "../.tmp-secao-da-tela/lib/acoes-da-linha.js";
@@ -143,10 +144,58 @@ const ACOES = (extra = {}) => ({
   aoEditar: () => {},
   aoExcluir: () => {},
   aoConfirmar: () => {},
+  aoPagarFatura: () => {},
   agindo: null,
   online: true,
   ...extra,
 });
+
+/** A fatura ABERTA, mas MINHA -- o caso do botao Pagar (HMO-311). */
+const FATURA_MINHA = { ...FATURA, posso_editar: true };
+
+/** A fatura FECHADA da agenda: gravada, minha, com id de banco. */
+const FATURA_FECHADA = {
+  ...FATURA,
+  id: "s-fatura",
+  gravada: true,
+  posso_editar: true,
+};
+
+/**
+ * Sabor 3: a previsao DIGITADA que alguem ligou a fatura (o elo da HMO-305).
+ *
+ * `elo_da_fatura` preenchido e o que a distingue da fechada, e e so por ele que
+ * esta suite pode medir a diferenca que importa na marcacao: ela NAO leva o nome
+ * do cartao como link -- ela e uma previsao na conta corrente, nao a fatura.
+ */
+const PREVISAO_COM_ELO = {
+  ...FATURA_FECHADA,
+  id: "s-previsao",
+  descricao: "Cartão Nubank",
+  elo_da_fatura: { accountId: CARTAO, mes: "2026-08-01" },
+};
+
+/**
+ * ALGUM `<button>` ESTA DENTRO DE UM `<a>`? -- o controle do aninhamento (HMO-311).
+ *
+ * Ate esta fase a linha de fatura era uma ancora INTEIRA, e era essa ancora uma
+ * das duas razoes pelas quais ela nao ganhava botao: botao dentro de `<a>` e
+ * aninhamento interativo invalido, e o clique faria AS DUAS COISAS -- abriria o
+ * dialogo E navegaria para a tela do cartao. Com as duas acontecendo,
+ * "funcionou" e indistinguivel do defeito.
+ *
+ * E A ASSERCAO NAO PODE SER "nao ha `<a>` na linha": o nome do cartao CONTINUA
+ * sendo um link, de proposito. O que nao pode e o botao estar dentro dele. Daí
+ * a contagem de profundidade, e nao um `includes`.
+ */
+const botaoDentroDeAncora = (html) => {
+  let profundidade = 0;
+  for (const [, fecha, tag] of html.matchAll(/<(\/?)(a|button)\b[^>]*>/g)) {
+    if (tag === "a") profundidade += fecha ? -1 : 1;
+    else if (!fecha && profundidade > 0) return true;
+  }
+  return false;
+};
 
 /** A de Transferencias -- o TERCEIRO verbo da baixa (HMO-301). */
 const TRANSFERENCIAS = {
@@ -307,12 +356,26 @@ test("cada natureza desenha um icone DIFERENTE", () => {
 // 3. O clique da fatura, e o mes que ele leva
 // ---------------------------------------------------------------------------
 
-test("a linha de fatura vira <a> para o cartao DELA", () => {
+test("o NOME DO CARTAO e o link para o cartao DELA -- e a linha nao e mais <a>", () => {
+  // ATE A HMO-311 A LINHA INTEIRA ERA A ANCORA. A troca e por dois alvos
+  // explicitos no lugar de um implicito, porque e a ancora da linha que impedia
+  // o botao Pagar de existir (aninhamento interativo invalido).
   const html = render({ linhas: [FATURA] });
   const destino = href(html);
 
-  assert.ok(destino, "a linha de fatura nao virou link");
+  assert.ok(destino, "o nome do cartao nao virou link");
   assert.ok(destino.startsWith(`/dashboard/cartoes/${CARTAO}`), destino);
+
+  // O LINK ESTA NO NOME, e nao na linha: a ancora envolve o texto da descricao
+  // e NAO o valor da linha, que e o ultimo elemento dela. Sem esta metade, a
+  // assercao de cima continuaria verde com a linha inteira sendo `<a>`.
+  const ancora = /<a\b[^>]*>([\s\S]*?)<\/a>/.exec(html);
+  assert.ok(ancora, html);
+  assert.equal(texto(ancora[1]), "Fatura Nubank");
+  assert.ok(
+    !ancora[1].includes("1.234,56"),
+    `a ancora engoliu o valor da linha: ${ancora[1]}`
+  );
 });
 
 test("o href leva 'AAAA-MM', e NAO 'AAAA-MM-01'", () => {
@@ -559,15 +622,132 @@ test("a linha REALIZADA nao tem Confirmar -- e continua com os outros dois", () 
   assert.deepEqual(rotulos, ["Editar", "Excluir"]);
 });
 
-test("a linha NAO GRAVADA (a fatura aberta) nao tem botao NENHUM", () => {
-  // Ela nao tem `scheduled_transactions.id`, e a baixa com id inventado
-  // responde 404 -- que, para quem clicou, se le como "o app nao conseguiu".
+test("a fatura aberta de OUTRO MEMBRO nao tem botao NENHUM", () => {
+  // `FATURA` e de outro membro (`posso_editar: false`). Nem a baixa generica
+  // (ela nao tem `scheduled_transactions.id`, e a baixa com id inventado
+  // responde 404) nem o Pagar da HMO-311: a RLS recusaria a escrita, e **UPDATE
+  // filtrado pela RLS volta 200 sem alterar nada**.
   const html = render({ linhas: [FATURA] });
 
   assert.deepEqual(rotulosDeAcao(html), []);
-  assert.ok(!html.includes("<button"), "a fatura aberta desenhou botao");
-  // E ela CONTINUA sendo o link para o cartao -- a acao dela e abrir o cartao.
+  assert.ok(!html.includes("<button"), "a fatura alheia desenhou botao");
+  // E ela CONTINUA levando ao cartao pelo nome -- ler nao e escrever.
   assert.ok(href(html), "a fatura perdeu o link para o cartao");
+});
+
+// ---------------------------------------------------------------------------
+// 5b. O BOTAO PAGAR NA LINHA DA FATURA (HMO-311, fase 14)
+// ---------------------------------------------------------------------------
+// "Precisa colocar o botao de pagar tbm na fatura do cartao em despesas."
+//
+// `npm run test:acoes-da-linha` prova a REGRA (`podePagarAFatura`). O que esta
+// secao mede e que a MARCACAO a leia -- e sobretudo o aninhamento: enquanto a
+// linha fosse `<a>`, o clique no botao faria as duas coisas.
+
+test("a fatura ABERTA minha ganha o botao Pagar -- e so ele", () => {
+  // O CONTROLE POSITIVO desta secao. E a fatura aberta e `gravada: false`: um
+  // botao gateado por `gravada` deixaria justamente a maior fonte do «Previsto»
+  // de fora, e todos os blocos negativos abaixo passariam verde.
+  const html = render({ linhas: [FATURA_MINHA] });
+
+  assert.deepEqual(rotulosDeAcao(html).filter((r) => r !== ""), [
+    ROTULO_DE_PAGAR,
+  ]);
+  // E o rotulo esta ESCRITO na tela, nao so no `aria-label`: este e o unico
+  // botao da linha com texto, porque o verbo e o que diz que o clique abre uma
+  // pergunta em vez de ja resolver.
+  assert.ok(texto(html).includes("Pagar"), texto(html));
+  assert.deepEqual(desabilitados(html), []);
+});
+
+test("O ANINHAMENTO: o botao Pagar NAO esta dentro do link do cartao", () => {
+  // A assercao que fecha a razao pela qual este botao nao existia. Com a linha
+  // sendo `<a>`, o clique abriria o dialogo E navegaria para a tela do cartao --
+  // e "funcionou" seria indistinguivel do defeito.
+  const html = render({ linhas: [FATURA_MINHA] });
+
+  assert.ok(href(html), "o controle nao vale: nao ha link nenhum na linha");
+  assert.ok(html.includes("<button"), "o controle nao vale: nao ha botao");
+  assert.equal(botaoDentroDeAncora(html), false, html);
+});
+
+test("CONTROLE da sonda do aninhamento: ela SABE achar botao dentro de <a>", () => {
+  // Sem este bloco, `botaoDentroDeAncora` poderia devolver `false` sempre -- e a
+  // assercao acima passaria verde medindo nada. A entrada e HTML escrito a mao,
+  // de proposito: o que esta sob teste aqui e a sonda, nao o componente.
+  assert.equal(botaoDentroDeAncora('<a href="/x"><button>Pagar</button></a>'), true);
+  assert.equal(botaoDentroDeAncora('<a href="/x">nome</a><button>Pagar</button>'), false);
+});
+
+test("a fatura FECHADA da agenda tambem ganha Pagar, e leva ao cartao pelo nome", () => {
+  const html = render({ linhas: [FATURA_FECHADA] });
+
+  assert.deepEqual(rotulosDeAcao(html).filter((r) => r !== ""), [
+    ROTULO_DE_PAGAR,
+  ]);
+  // Editar e Excluir continuam FORA (regra 5 de acoes-da-linha): a fatura nao se
+  // edita nem se apaga por aqui.
+  assert.ok(!rotulosDeAcao(html).includes("Editar"), html);
+  assert.ok(!rotulosDeAcao(html).includes("Excluir"), html);
+  assert.equal(href(html), `/dashboard/cartoes/${CARTAO}?mes=2026-08`);
+  assert.equal(botaoDentroDeAncora(html), false, html);
+});
+
+test("a previsao LIGADA AO ELO ganha Pagar e NAO ganha o link do cartao", () => {
+  // O sabor 3, e a unica diferenca de marcacao entre ele e a fatura fechada. A
+  // razao e da HMO-305: ela e uma previsao na CONTA CORRENTE, nao a fatura em si
+  // -- o link mora na linha DA fatura, que esta na mesma lista.
+  const html = render({ linhas: [PREVISAO_COM_ELO] });
+
+  assert.deepEqual(rotulosDeAcao(html).filter((r) => r !== ""), [
+    ROTULO_DE_PAGAR,
+  ]);
+  assert.equal(href(html), null, `a previsao ligada virou link: ${html}`);
+  // E A LINHA CONTINUA LA, com o nome: perder o link nao e perder a linha.
+  assert.ok(texto(html).includes("Cartão Nubank"), texto(html));
+});
+
+test("Pagar NAO brota em Receitas nem em Transferencias", () => {
+  // A mesma `SecaoDaTela` serve as tres telas. Nenhuma linha de receita carrega
+  // a chave canonica da fatura, entao o criterio (`natureza`) ja as exclui -- e
+  // este bloco e o que denuncia um criterio trocado por "a linha tem rotulo",
+  // que pegaria tambem a conta fixa das tres telas.
+  for (const [aparencia, tipo] of [
+    [RECEITAS, "income"],
+    [TRANSFERENCIAS, "transfer"],
+  ]) {
+    const html = render({
+      linhas: [linha({ tipo, natureza: "fixa", descricao: "Salário" }), FIXA],
+      aparencia,
+    });
+    assert.ok(
+      !rotulosDeAcao(html).includes(ROTULO_DE_PAGAR),
+      `${tipo} ganhou Pagar: ${rotulosDeAcao(html).join(" | ")}`
+    );
+    assert.ok(!texto(html).includes("Pagar"), texto(html));
+  }
+});
+
+test("durante uma acao o Pagar da fatura TRAVA junto", () => {
+  // Dois cliques seriam duas baixas, e a segunda volta 409 depois de a primeira
+  // ter dado certo: a tela mostraria um erro em cima de uma operacao que
+  // funcionou. O `agindo` e o id da linha -- aqui ele e de OUTRA linha, e o
+  // travamento vale para a secao inteira de proposito.
+  const html = render({
+    linhas: [FATURA_MINHA],
+    acoes: ACOES({ agindo: "outra-linha" }),
+  });
+
+  assert.deepEqual(desabilitados(html), [ROTULO_DE_PAGAR]);
+});
+
+test("sem rede o Pagar da fatura trava -- a baixa e escrita", () => {
+  const html = render({
+    linhas: [FATURA_MINHA],
+    acoes: ACOES({ online: false }),
+  });
+
+  assert.deepEqual(desabilitados(html), [ROTULO_DE_PAGAR]);
 });
 
 test("a linha de OUTRO membro do grupo nao tem Excluir -- nem os outros dois", () => {
@@ -583,16 +763,19 @@ test("a linha de OUTRO membro do grupo nao tem Excluir -- nem os outros dois", (
   assert.ok(texto(html).includes("R$ 159,90"), texto(html));
 });
 
-test("a fatura FECHADA tambem nao tem botao -- e ela e gravada e minha", () => {
-  // Dois motivos independentes (ver `podeAgirNaLinha`): a baixa dela exige a
-  // conta pagadora, e a linha e um `<a>` -- botao dentro de ancora e
-  // aninhamento interativo invalido, e o clique navegaria junto.
-  const html = render({
-    linhas: [{ ...FATURA, gravada: true, posso_editar: true, id: "s-fatura" }],
-  });
+test("a fatura FECHADA nao tem Confirmar, Editar nem Excluir -- so o Pagar", () => {
+  // Os dois motivos da regra 5 continuam valendo para a baixa GENERICA: ela
+  // exige a conta pagadora no corpo, e um "Confirmar pagamento" reaproveitado
+  // erraria em todo clique. O que a HMO-311 acrescentou foi um destino PROPRIO,
+  // nao uma excecao dentro de `podeAgirNaLinha` -- e e por isso que os tres
+  // rotulos de la continuam ausentes aqui.
+  const html = render({ linhas: [FATURA_FECHADA] });
+  const rotulos = rotulosDeAcao(html).filter((r) => r !== "");
 
-  assert.deepEqual(rotulosDeAcao(html).filter((r) => r !== ""), []);
-  assert.ok(!html.includes("<button"), html);
+  assert.ok(!rotulos.includes("Confirmar pagamento"), rotulos.join(" | "));
+  assert.ok(!rotulos.includes("Editar"), rotulos.join(" | "));
+  assert.ok(!rotulos.includes("Excluir"), rotulos.join(" | "));
+  assert.deepEqual(rotulos, [ROTULO_DE_PAGAR]);
 });
 
 test("a transferencia REALIZADA tem o Editar APAGADO, com o motivo no title", () => {

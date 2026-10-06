@@ -4753,7 +4753,48 @@ jobs:
           fi
           mv $LISTA.orig $LISTA
 
-          echo "A verificacao das acoes fica vermelha nos seis defeitos."
+          # 7) O BOTAO PAGAR DA FATURA PERDE O `posso_editar` (HMO-311, fase 14).
+          #    O mesmo modo de falha caro da regra 4, agora no caminho NOVO: a
+          #    lista de Despesas inclui linha de outro membro do grupo desde a
+          #    HMO-303, e **UPDATE filtrado pela RLS volta 200 sem alterar
+          #    nada**. O dialogo diria "Fatura paga", o saldo nao mudaria, e a
+          #    pessoa pagaria de novo pelo banco.
+          #
+          #    O `sed` E LIMITADO AO CORPO DA FUNCAO, por endereco de faixa: a
+          #    MESMA linha existe em `podeAgirNaLinha` (mutante 2), e um `/d`
+          #    solto apagaria as duas -- o mutante deixaria de ser "a regra 4 no
+          #    botao novo" e passaria a ser "a regra 4 em tudo".
+          sed -i '/^export function podePagarAFatura/,/^}/{/if (!linha.posso_editar) return false;/d}' $ACOES
+          mutou $ACOES 7
+          if npm run test:acoes-da-linha > /dev/null 2>&1; then
+            echo "::error::Verde com Pagar sobre a fatura de outro membro do grupo."
+            exit 1
+          fi
+          if npm run test:secao-da-tela > /dev/null 2>&1; then
+            echo "::error::A marcacao ficou verde com Pagar sobre fatura alheia."
+            exit 1
+          fi
+          cp $ACOES.orig $ACOES
+
+          # 8) O CRITERIO DO BOTAO PAGAR VIRA `gravada` EM VEZ DE `natureza`.
+          #    Os dois criterios se CONTRADIZEM de proposito (ver
+          #    `podePagarAFatura`), e trocar um pelo outro faz duas coisas de uma
+          #    vez: a fatura ABERTA -- a maior fonte do «Previsto» desta tela --
+          #    perde o botao, e TODA conta prevista comum ganha um "Pagar" cuja
+          #    baixa a rota recusa com 400 por falta de `payment_account_id`.
+          sed -i 's|if (linha.natureza !== "fatura") return false;|if (!linha.gravada) return false;|' $ACOES
+          mutou $ACOES 8
+          if npm run test:acoes-da-linha > /dev/null 2>&1; then
+            echo "::error::Verde com o botao Pagar decidido por gravada, e nao por natureza."
+            exit 1
+          fi
+          if npm run test:secao-da-tela > /dev/null 2>&1; then
+            echo "::error::A marcacao ficou verde com Pagar em toda conta prevista."
+            exit 1
+          fi
+          cp $ACOES.orig $ACOES
+
+          echo "A verificacao das acoes fica vermelha nos oito defeitos."
 
       - name: 'A arvore voltou ao lugar depois de "A verificacao das acoes sabe falhar"'
         run: |
@@ -4826,7 +4867,29 @@ jobs:
           fi
           cp $LISTA.orig $LISTA
 
-          echo "A sonda do gesto fica vermelha nos dois defeitos."
+          # 3) O BOTAO PAGAR APARECE E O CLIQUE NAO FAZ NADA (HMO-311, fase 14).
+          #    O defeito que SO esta sonda ve, e o mais caro dos tres estados que
+          #    o cabecalho de lib/acoes-da-linha.ts enumera: `onClick` nao sai no
+          #    HTML e nunca e chamado por um render de servidor, entao a tela sai
+          #    IDENTICA -- `test:secao-da-tela` continua verde, e e por isso que
+          #    as duas asserçoes abaixo estao no mesmo mutante.
+          SECAO=components/movimentacoes/SecaoDaTela.tsx
+          cp $SECAO $SECAO.orig
+          sed -i 's|onClick={() => acoes.aoPagarFatura(linha)}||' $SECAO
+          mutou $SECAO 3
+          if ! npm run test:secao-da-tela > /dev/null 2>&1; then
+            echo "::error::test:secao-da-tela reprovou o onClick apagado -- o mutante 3 deixou de medir o que so a sonda ve. Rever este bloco."
+            mv $SECAO.orig $SECAO
+            exit 1
+          fi
+          if npm run test:lista-na-tela > /dev/null 2>&1; then
+            echo "::error::Verde com o botao Pagar aparecendo e o clique nao abrindo o dialogo."
+            mv $SECAO.orig $SECAO
+            exit 1
+          fi
+          mv $SECAO.orig $SECAO
+
+          echo "A sonda do gesto fica vermelha nos tres defeitos."
 
       - name: 'A arvore voltou ao lugar depois de "A sonda do gesto sabe falhar"'
         run: |
@@ -5189,10 +5252,16 @@ jobs:
           # `cmp` existe porque um `sed -i` que nao casa SAI 0: sem ele, uma
           # ancora renomeada por outra issue faria este passo medir a arvore
           # intacta e ficar verde para sempre.
+          # O `sed` E GLOBAL (`g`), e nao e cosmetico: os tres arquivos
+          # EXPLICAM esta fase em prosa, e a prosa cita os mesmos literais que o
+          # guard exige. Sem o `g`, a primeira ocorrencia -- a do COMENTARIO --
+          # era a mutada, o call site ficava intacto, o guard (que varre sem
+          # comentario) continuava VERDE, e este controle reprovava a arvore
+          # CORRETA. Medido na HMO-311.
           desligar() {
             local arquivo="$1" de="$2" para="$3" rotulo="$4"
             cp "$arquivo" "$arquivo.orig310"
-            sed -i "s@$de@$para@" "$arquivo"
+            sed -i "s@$de@$para@g" "$arquivo"
             if cmp -s "$arquivo" "$arquivo.orig310"; then
               mv "$arquivo.orig310" "$arquivo"
               echo "::error::o sed de '$rotulo' nao casou nada -- a ancora mudou e este controle mediria a arvore intacta"
@@ -5230,21 +5299,46 @@ jobs:
           desligar "$TELA" 'linhaParaPagarDaAgenda(faturaParaPagar)' 'faturaParaPagar' \
             'a prop do dialogo deixa de ser normalizada -- a decisao le campos que nao existem'
 
+          # A SEGUNDA TELA (HMO-311, fase 14). Os tres fios dela sao mudos do
+          # mesmo jeito -- nenhum aparece no `tsc`, e dois deles produzem uma
+          # tela que DESENHA IGUAL.
+          LISTA='components/movimentacoes/ListaDeMovimentacao.tsx'
+          SECAO='components/movimentacoes/SecaoDaTela.tsx'
+
+          desligar "$LISTA" '<DialogoDePagamentoDaFatura' '<DialogoQualquer' \
+            'a tela de Despesas para de renderizar o dialogo -- o botao Pagar guarda um estado que ninguem le'
+          desligar "$LISTA" 'linhaParaPagarDaTela(faturaParaPagar)' 'faturaParaPagar' \
+            'a linha vai CRUA ao dialogo -- a chave sintetica da fatura aberta viraria id de banco, e o /pay responde 404'
+          desligar "$LISTA" 'aoPagar={carregar}' 'aoPagar={() => {}}' \
+            'a baixa da fatura deixa de recarregar -- o dinheiro anda e a linha fica no Previsto'
+          desligar "$LISTA" 'FATURA_SEM_VENCIMENTO_NAO_TEM_PAGAR' 'undefined' \
+            'a fatura sem dia de vencimento para de dizer por que nao tem botao -- "a do Nubank tem e a do C6 nao" se le como tela quebrada'
+          desligar "$SECAO" 'podePagarAFatura(linha)' 'false' \
+            'a marcacao para de ler a regra -- o botao Pagar desaparece sem nada no tsc'
+          desligar "$SECAO" 'acoes.aoPagarFatura(linha)' 'undefined' \
+            'o botao Pagar perde o onClick -- ele aparece e o clique nao faz nada'
+
           # A EXIGENCIA NEGATIVA, medida ao contrario: o guard tem de ficar
           # VERMELHO quando a sequencia das escritas VOLTA para dentro da tela.
           # Sem este caso, a parte do guard que impede a segunda implementacao
           # nunca foi exercitada.
-          cp "$TELA" "$TELA.orig310"
-          printf '\nconst voltou = () => fetch("/api/card-invoices/close");\n' >> "$TELA"
-          if node "$GUARD" > /dev/null 2>&1; then
-            mv "$TELA.orig310" "$TELA"
-            echo "::error::Verde com a sequencia das escritas de volta dentro da tela"
-            exit 1
-          fi
-          mv "$TELA.orig310" "$TELA"
-          echo "  vermelho em: a sequencia das escritas volta para dentro da tela"
+          #
+          # AS DUAS TELAS, porque a exigencia vale para as duas desde a fase 14:
+          # se a tela de Despesas montar o `close` por conta propria, a extracao
+          # da fase 13 virou decoracao.
+          for alvo in "$TELA" "$LISTA"; do
+            cp "$alvo" "$alvo.orig310"
+            printf '\nconst voltou = () => fetch("/api/card-invoices/close");\n' >> "$alvo"
+            if node "$GUARD" > /dev/null 2>&1; then
+              mv "$alvo.orig310" "$alvo"
+              echo "::error::Verde com a sequencia das escritas de volta dentro de $alvo"
+              exit 1
+            fi
+            mv "$alvo.orig310" "$alvo"
+            echo "  vermelho em: a sequencia das escritas volta para dentro de $alvo"
+          done
 
-          echo "A verificacao fica vermelha nos oito pontos."
+          echo "A verificacao fica vermelha nos quinze pontos."
 
       - name: 'A arvore voltou ao lugar depois de "A verificacao sabe falhar (fiacao do pagamento da fatura)"'
         run: |

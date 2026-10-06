@@ -202,6 +202,68 @@ const paraScriptClassico = (fonte) =>
     .replace(/^export\s*\{[^}]*\}\s*;$/gm, "")
     .replace(/^export /gm, "");
 
+/**
+ * UM PEDACO AUTO-CONTIDO DE UMA LIB QUE A PAGINA NAO CARREGA INTEIRA.
+ *
+ * `lib/pagamento-da-fatura.js` nao entra em `PARTES`: ela importa
+ * `lib/agenda-do-cartao` e `lib/card-invoice` -> `lib/transferencia`, quatro
+ * modulos de aritmetica de fatura por duas declaracoes. Mas as duas sao
+ * AUTO-CONTIDAS (nao usam nenhum dos imports no corpo), entao elas entram pelo
+ * CODIGO DE PRODUCAO extraido -- nao como esboco.
+ *
+ * E ISSO NAO E ZELO: `linhaParaPagarDaTela` e quem decide que a chave sintetica
+ * da fatura ABERTA (`fatura:2026-10-01:<uuid>`) NAO vai como id de banco. Um
+ * esboco dela faria o caso H medir a propria sonda -- e justamente a assercao
+ * `linha.id === null` perderia o sentido.
+ *
+ * `rotulo` entra na mensagem de erro porque uma extracao que nao casa e o modo
+ * de falha caro: ela deixaria o nome `undefined` na pagina, e o sintoma seria
+ * "ReferenceError" vinte linhas depois, sem dizer que a ancora do regex mudou.
+ */
+function daLib(arquivo, fonte, regex, rotulo) {
+  const achado = regex.exec(fonte);
+  if (!achado) {
+    throw new Error(
+      `nao achei ${rotulo} em ${arquivo}: a ancora da extracao mudou.\n` +
+        "ou ajuste o regex, ou ponha a lib inteira em PARTES"
+    );
+  }
+  return achado[0].replace(/^export /m, "");
+}
+
+const fontePagamento = readFileSync(
+  join(SAIDA, "lib/pagamento-da-fatura.js"),
+  "utf8"
+);
+
+const DA_LIB_DO_PAGAMENTO = [
+  // A funcao: do `export function` ate o `}` na COLUNA ZERO.
+  daLib(
+    "lib/pagamento-da-fatura.js",
+    fontePagamento,
+    /^export function linhaParaPagarDaTela\([\s\S]*?^\}/m,
+    "linhaParaPagarDaTela"
+  ),
+  // A frase da fatura sem vencimento: uma linha, do `export const` ao `;`.
+  daLib(
+    "lib/pagamento-da-fatura.js",
+    fontePagamento,
+    /^export const FATURA_SEM_VENCIMENTO_NAO_TEM_PAGAR = [\s\S]*?;$/m,
+    "FATURA_SEM_VENCIMENTO_NAO_TEM_PAGAR"
+  ),
+  // `today()` pelo MESMO caminho, por um motivo proprio: `lib/recurrence.js` e
+  // aritmetica de recorrencia que nada tem a ver com esta sonda, e `today` e
+  // uma linha sem import nenhum. E ela precisa ser a DE PRODUCAO -- o caso H
+  // afirma que o `hoje` que chega ao dialogo e a data de SAO PAULO, e um esboco
+  // faria a sonda comparar o proprio relogio consigo mesma.
+  daLib(
+    "lib/recurrence.js",
+    readFileSync(join(SAIDA, "lib/recurrence.js"), "utf8"),
+    /^export function today\([\s\S]*?^\}/m,
+    "today"
+  ),
+].join("\n");
+
 const PARTES = [
   // ORDEM DE DEPENDENCIA. Nao e exigencia do JavaScript para funcao declarada
   // (ela e iceada), mas e para `const` de modulo -- e quase todos tem varios.
@@ -262,7 +324,8 @@ const PAGINA = `<!doctype html>
 <html><head><meta charset="utf-8"></head><body>
 <div id="raiz-a"></div><div id="raiz-b"></div><div id="raiz-c"></div>
 <div id="raiz-d"></div><div id="raiz-e"></div><div id="raiz-f"></div>
-<div id="raiz-g"></div>
+<div id="raiz-g"></div><div id="raiz-h"></div><div id="raiz-i"></div>
+<div id="raiz-j"></div><div id="raiz-k"></div>
 <div id="resultado">a pagina nao rodou</div>
 <script>${umd("react", "react.development.js")}</script>
 <script>${umd("react-dom", "react-dom.development.js")}</script>
@@ -306,6 +369,7 @@ const Loader2 = icone("Loader2");
 const Pencil = icone("Pencil");
 const Repeat = icone("Repeat");
 const Trash2 = icone("Trash2");
+const Wallet = icone("Wallet");
 
 /** next/link: o contrato e um \`<a href>\` que envolve os filhos. */
 const Link = React.forwardRef(function Link(props, ref) {
@@ -334,6 +398,60 @@ const PainelErroDoServidor = () =>
 const caminhoDoCartaoNoMes = (conta, mes) =>
   "ESBOCO-CAMINHO:" + conta + ":" + mes;
 const formatCurrency = (v) => "ESBOCO-VALOR:" + v;
+
+/**
+ * O ELO DA FATURA (HMO-305): MARCADOR, COM A GUARDA DA PRODUCAO COPIADA.
+ *
+ * \`EloDaFatura\` real arrastaria \`lib/elo-da-fatura\` e \`lib/fatura-do-cartao\`
+ * -- e esta ultima e justamente a que a pagina deixa de fora (ver
+ * \`caminhoDoCartaoNoMes\`). Ele nao e assunto desta suite: os cliques dele sao
+ * medidos no caso J da sonda do painel do modo papel de pao, e a marcacao em
+ * \`npm run test:secao-da-tela\`, que renderiza o componente DE VERDADE.
+ *
+ * A GUARDA ("sem suspeita e sem elo, nao desenha nada") E COPIADA DE PROPOSITO,
+ * e e o unico jeito: \`SecaoDaTela\` monta este componente em TODA linha que tem
+ * id, entao um marcador sem guarda escreveria "ESBOCO" dentro das duas secoes --
+ * e o controle da suite proibe exatamente isso (e com razao: ele e o que impede
+ * um esboco de participar de uma assercao de texto).
+ */
+const EloDaFatura = (props) =>
+  props.suspeita || props.elo
+    ? React.createElement("span", null, "ESBOCO-ELO")
+    : null;
+
+/**
+ * O DIALOGO DA CONTA PAGADORA (HMO-310): REGISTRADOR, e nao marcador de texto.
+ *
+ * Ele e \`@radix-ui/react-dialog\` + \`sonner\` + \`@/components/ui/select\`, e nada
+ * disso tem build UMD -- a pagina nao tem empacotador. O conteudo dele ja esta
+ * provado onde pode ser: \`npm run test:pagamento-da-fatura\` cobre a decisao e a
+ * sequencia das escritas, e a prova ponta a ponta do dialogo em PRODUCAO esta no
+ * comentario da HMO-310.
+ *
+ * O QUE ESTA SUITE MEDE E O FIO: que o clique no botao da linha chegue aqui, com
+ * a linha CONVERTIDA (\`linhaParaPagarDaTela\`, codigo de producao extraido) e com
+ * \`hoje\` e o vencimento que a tela formatou. Por isso ele GUARDA AS PROPS em vez
+ * de escrever um marcador: o estado do dialogo nao e texto da lista, e as
+ * assercoes leem o objeto.
+ *
+ * \`ABERTO\` e sobrescrito a cada render, e nao empilhado: um array mediria
+ * quantas vezes o React renderizou, que nao e assercao de nada.
+ */
+let ABERTO = null;
+const DialogoDePagamentoDaFatura = (props) => {
+  ABERTO = props.linha
+    ? {
+        linha: props.linha,
+        valorFormatado: props.valorFormatado,
+        vencimentoFormatado: props.vencimentoFormatado,
+        hoje: props.hoje,
+      }
+    : null;
+  return null;
+};
+
+// --- o codigo de producao EXTRAIDO (ver \`daLib\` no .mjs) ---------------------
+${DA_LIB_DO_PAGAMENTO}
 
 // --- o codigo de producao, no MESMO escopo dos esbocos acima -----------------
 ${producao}
@@ -467,6 +585,7 @@ async function assentar() {
 async function montar(idDaRaiz, respostas) {
   CHAMADAS = [];
   PERGUNTAS = [];
+  ABERTO = null;
   FILA_DO_RESUMO = respostas;
 
   const raiz = document.getElementById(idDaRaiz);
@@ -720,6 +839,163 @@ const out = {};
     chamadas: CHAMADAS.slice(),
     temFormulario: !!raiz.querySelector("#edicao-valor"),
     previsto: retrato(raiz, PREVISTO),
+  };
+}
+
+// =========================================================================
+// H. PAGAR A FATURA ABERTA: o botao, o dialogo, e o clique QUE NAO NAVEGA
+// =========================================================================
+// "Precisa colocar o botao de pagar tbm na fatura do cartao em despesas."
+//
+// A fatura ABERTA e \`gravada: false\` e o \`id\` dela e a CHAVE SINTETICA. As duas
+// coisas que esta caso mede e nenhuma outra suite alcanca:
+//
+//   1. O CLIQUE NO BOTAO NAO NAVEGA. Ate esta fase a linha inteira era um \`<a>\`
+//      para a tela do cartao, e e por isso que ela nao podia ter botao: o clique
+//      faria as duas coisas, e "funcionou" seria indistinguivel do defeito. A
+//      medida e \`botao.closest("a")\` no DOM de verdade;
+//   2. A LINHA CHEGA CONVERTIDA no dialogo -- \`id: null\`. Sem a conversao,
+//      \`pagarAFatura\` montaria
+//      \`POST /api/scheduled-transactions/fatura:2026-10-01:<uuid>/pay\`.
+{
+  const aberta = linha({
+    id: "fatura:2026-10-01:" + CARTAO,
+    gravada: false,
+    descricao: "Fatura Nubank",
+    valor: 1234.56,
+    data: "2026-10-28",
+    natureza: "fatura",
+    fatura: { accountId: CARTAO, mes: "2026-10-01" },
+  });
+  const raiz = await montar("raiz-h", [corpo([aberta])]);
+
+  const secaoDoPrevisto = secao(raiz, PREVISTO);
+  const botao = secaoDoPrevisto.querySelector('[aria-label="Pagar"]');
+  const ancoras = Array.prototype.slice
+    .call(secaoDoPrevisto.querySelectorAll("a[href]"))
+    .map((a) => a.getAttribute("href"));
+
+  out.h_antes = {
+    previsto: retrato(raiz, PREVISTO),
+    dialogo: ABERTO,
+    temBotao: !!botao,
+    tagDoBotao: botao ? botao.tagName : null,
+    // A MEDIDA DO ANINHAMENTO, no DOM e nao no HTML: \`closest\` sobe a arvore de
+    // verdade. \`null\` e o que esta fase existe para conseguir.
+    botaoDentroDeAncora: botao ? botao.closest("a") !== null : null,
+    // E os DOIS ALVOS: o nome do cartao continua levando ao cartao. O caminho e
+    // marcador (\`caminhoDoCartaoNoMes\` e esboco) -- o \`?mes=\` de verdade esta em
+    // \`npm run test:secao-da-tela\`.
+    ancoras,
+    // O texto do link e o NOME, e nao a linha inteira.
+    textoDaAncora: secaoDoPrevisto.querySelector("a[href]")
+      ? secaoDoPrevisto.querySelector("a[href]").textContent.trim()
+      : null,
+  };
+
+  await clicar(raiz, PREVISTO, "Pagar");
+
+  out.h_depois = {
+    dialogo: ABERTO,
+    chamadas: CHAMADAS.slice(),
+    // A linha NAO SAIU da tela: o clique abre uma pergunta, nao escreve.
+    previsto: retrato(raiz, PREVISTO),
+  };
+}
+
+// =========================================================================
+// I. A FATURA FECHADA: o mesmo botao, e o id DE BANCO chegando no dialogo
+// =========================================================================
+{
+  const fechada = linha({
+    id: "s-fatura",
+    gravada: true,
+    descricao: "Fatura Nubank 10/2026",
+    valor: 980.4,
+    data: "2026-10-28",
+    natureza: "fatura",
+    fatura: { accountId: CARTAO, mes: "2026-10-01" },
+  });
+  const raiz = await montar("raiz-i", [corpo([fechada])]);
+
+  await clicar(raiz, PREVISTO, "Pagar");
+  out.i = { dialogo: ABERTO, chamadas: CHAMADAS.slice() };
+}
+
+// =========================================================================
+// J. A PREVISAO LIGADA AO ELO: DUAS acoes na mesma linha, e NENHUM link
+// =========================================================================
+// O sabor 3 (HMO-305). "Duas acoes na mesma linha e um estado a DESENHAR, nao a
+// descobrir": o desfazer do elo vive dentro da linha (no rodape de texto) e o
+// Pagar fica a direita, onde as outras linhas tem Editar/Excluir.
+//
+// E ela NAO leva o nome do cartao como link: ela e uma previsao na conta
+// corrente, nao a fatura em si -- a decisao da HMO-305, preservada.
+{
+  const ligada = linha({
+    id: "s-previsao",
+    gravada: true,
+    descricao: "Cartão Nubank",
+    valor: 1234.56,
+    data: "2026-10-28",
+    natureza: "fatura",
+    fatura: { accountId: CARTAO, mes: "2026-10-01" },
+    elo_da_fatura: { accountId: CARTAO, mes: "2026-10-01" },
+  });
+  const raiz = await montar("raiz-j", [corpo([ligada])]);
+
+  const secaoDoPrevisto = secao(raiz, PREVISTO);
+  await clicar(raiz, PREVISTO, "Pagar");
+
+  out.j = {
+    previsto: retrato(raiz, PREVISTO),
+    dialogo: ABERTO,
+    // O marcador do elo PRESENTE e o link do cartao AUSENTE, na mesma linha.
+    temElo: secaoDoPrevisto.textContent.indexOf("ESBOCO-ELO") !== -1,
+    ancoras: Array.prototype.slice
+      .call(secaoDoPrevisto.querySelectorAll("a[href]"))
+      .map((a) => a.getAttribute("href")),
+  };
+}
+
+// =========================================================================
+// K. A FATURA SEM DIA DE VENCIMENTO: nenhum botao, e a frase que explica
+// =========================================================================
+// Ela nao e linha da lista: vem num bloco a parte com so
+// \`{ account_name, total }\` -- sem id e sem \`accountId\`. "A fatura do Nubank tem
+// botão e a do C6 não" se lê como tela quebrada, e a reacao e recarregar a
+// pagina em vez de cadastrar o dia de vencimento, que e o caminho.
+{
+  const comVencimento = linha({
+    id: "fatura:2026-10-01:" + CARTAO,
+    gravada: false,
+    descricao: "Fatura Nubank",
+    natureza: "fatura",
+    fatura: { accountId: CARTAO, mes: "2026-10-01" },
+  });
+  const raiz = await montar("raiz-k", [
+    {
+      resumo: { total: 0, previsto: 0, realizado: 0, quantidade: 1 },
+      vencido: { total: 0, quantidade: 0 },
+      linhas: [comVencimento],
+      fatura_sem_vencimento: [{ account_name: "C6", total: 512.3 }],
+    },
+  ]);
+
+  // O BLOCO do cartao sem vencimento: ele e irmao das secoes, e nao esta dentro
+  // delas. Achado pelo titulo, pela mesma regra de \`secao\`.
+  const bloco = Array.prototype.slice
+    .call(raiz.children)
+    .find((el) => el.textContent.indexOf("fora do previsto") !== -1);
+
+  out.k = {
+    texto: bloco ? bloco.textContent.replace(/\\s+/g, " ").trim() : null,
+    // NENHUM "Pagar" no bloco -- e um "Pagar" na SECAO, que e o contraste que
+    // torna a frase necessaria.
+    pagarNoBloco: bloco
+      ? !!bloco.querySelector('[aria-label="Pagar"]')
+      : null,
+    pagarNaSecao: !!secao(raiz, PREVISTO).querySelector('[aria-label="Pagar"]'),
   };
 }
 
@@ -1002,4 +1278,148 @@ test("G3: salvo, o formulario FECHA e a lista relê", () => {
     c.url.startsWith("/api/movimentacoes/resumo")
   );
   assert.equal(leituras.length, 2, JSON.stringify(leituras));
+});
+
+// =============================================================================
+// O BOTAO PAGAR NA LINHA DA FATURA (HMO-311, fase 14)
+// =============================================================================
+
+test("H1: CONTROLE: a fatura ABERTA minha TEM o botao Pagar, e ele e <button>", () => {
+  // O controle positivo de tudo abaixo. A fatura aberta e `gravada: false`: um
+  // botao gateado por `gravada` (que e o criterio da baixa generica, regra 3)
+  // deixaria de fora justamente a maior fonte do «Previsto» desta tela, e os
+  // blocos negativos daqui para baixo passariam verde.
+  assert.ok(resultado.h_antes.previsto, "a secao Previsto nao pintou");
+  assert.match(resultado.h_antes.previsto.texto, /Fatura Nubank/);
+  assert.equal(resultado.h_antes.temBotao, true, "a fatura aberta ficou sem Pagar");
+  assert.equal(resultado.h_antes.tagDoBotao, "BUTTON");
+  assert.deepEqual(resultado.h_antes.previsto.acoes.map((a) => a.rotulo), [
+    "Pagar",
+  ]);
+  // E o dialogo nasce FECHADO: sem isto, "o clique abriu o dialogo" passaria
+  // verde num dialogo que ja estava aberto desde a montagem.
+  assert.equal(resultado.h_antes.dialogo, null, "o dialogo abriu sem clique");
+});
+
+test("H2: O ANINHAMENTO: o botao Pagar NAO esta dentro de nenhuma <a>", () => {
+  // A ASSERCAO QUE FECHA A RAZAO PELA QUAL ESTE BOTAO NAO EXISTIA. Enquanto a
+  // linha era um `<a>` para a tela do cartao, o clique no botao faria as DUAS
+  // coisas -- abrir o dialogo e navegar -- e o "funcionou" seria indistinguivel
+  // do bug. `closest("a")` sobe a arvore do DOM de verdade.
+  assert.equal(resultado.h_antes.botaoDentroDeAncora, false);
+
+  // E OS DOIS ALVOS CONTINUAM EXISTINDO: o nome do cartao ainda leva ao cartao.
+  // O caminho e marcador aqui (`caminhoDoCartaoNoMes` e esboco); o `?mes=` de
+  // verdade esta em `npm run test:secao-da-tela`.
+  assert.deepEqual(resultado.h_antes.ancoras, [
+    "ESBOCO-CAMINHO:" + "33333333-3333-4333-b333-333333333333" + ":2026-10-01",
+  ]);
+  // O LINK E O NOME, e nao a linha: se a ancora engolisse a linha inteira, o
+  // texto dela traria tambem o valor e o rotulo da natureza.
+  assert.equal(resultado.h_antes.textoDaAncora, "Fatura Nubank");
+});
+
+test("H3: o clique ABRE o dialogo com a linha CONVERTIDA -- `id: null`", () => {
+  // A chave sintetica da fatura aberta NAO e id de banco. Sem
+  // `linhaParaPagarDaTela` (codigo de producao extraido, ver `daLib`), a
+  // sequencia montaria
+  // `POST /api/scheduled-transactions/fatura:2026-10-01:<uuid>/pay` -- 404, que
+  // para quem clicou se le como "o app nao conseguiu".
+  const d = resultado.h_depois.dialogo;
+
+  assert.ok(d, "o clique em Pagar nao abriu o dialogo");
+  assert.equal(d.linha.id, null, `a chave sintetica virou id: ${d.linha.id}`);
+  assert.equal(d.linha.gravada, false);
+  assert.equal(d.linha.natureza, "fatura");
+  assert.deepEqual(d.linha.fatura, {
+    accountId: "33333333-3333-4333-b333-333333333333",
+    mes: "2026-10-01",
+  });
+  assert.equal(d.linha.description, "Fatura Nubank");
+
+  // O VENCIMENTO VAI JA FORMATADO pela tela (`dataLonga`, producao): o
+  // componente nao tem formatador proprio.
+  assert.equal(d.vencimentoFormatado, "28/10/2026");
+
+  // E `hoje` E A DATA DE SAO PAULO, nao a do navegador. O oraculo e calculado
+  // AQUI, do lado do node, e nao copiado do que a pagina devolveu -- comparar a
+  // resposta consigo mesma e o que faria esta assercao vacua.
+  //
+  // O `paid_date` da fatura decide em qual MES a baixa cai, e na Vercel (UTC) o
+  // dia vira tres horas antes do dia de Sao Paulo: um `toISOString().slice(0,10)`
+  // mandaria a fatura de outubro para novembro entre 21h e meia-noite, sem nada
+  // na tela parecendo errado.
+  //
+  // RESSALVA HONESTA: esta assercao so SEPARA as duas implementacoes quando o
+  // relogio esta na janela em que as datas diferem. Fora dela ela e verdadeira e
+  // nao distingue -- a prova de que `today()` nao depende do fuso do processo
+  // esta na suite dela, que roda nos dois fusos.
+  assert.match(d.hoje, /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(
+    d.hoje,
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Sao_Paulo",
+    }).format(new Date()),
+    "o `hoje` que chegou ao dialogo nao e a data de Sao Paulo"
+  );
+});
+
+test("H4: o clique NAO ESCREVE NADA -- ele abre uma pergunta", () => {
+  // O `close` e o `/pay` acontecem no Confirmar DO DIALOGO, depois da escolha da
+  // conta. Materializar a fatura na abertura deixaria uma fatura fechada para
+  // tras cada vez que alguem abrisse e desistisse -- e fechar nao e reversivel
+  // pela tela.
+  const escritas = resultado.h_depois.chamadas.filter((c) => c.metodo !== "GET");
+  assert.deepEqual(escritas, [], JSON.stringify(escritas));
+
+  // E UMA leitura so: sem escrita, sem releitura. A linha fica onde estava.
+  assert.equal(resultado.h_depois.chamadas.length, 1);
+  assert.match(resultado.h_depois.previsto.texto, /Fatura Nubank/);
+});
+
+test("I: a fatura FECHADA manda o id DE BANCO, e nao `null`", () => {
+  // O PAR de H3. Sem este bloco, um `id: null` incondicional passaria lá e a
+  // fatura fechada cairia em "Não foi possível registrar a fatura" sem rede
+  // nenhuma -- sobre uma fatura que ja esta registrada.
+  const d = resultado.i.dialogo;
+
+  assert.ok(d, "o clique em Pagar nao abriu o dialogo na fatura fechada");
+  assert.equal(d.linha.id, "s-fatura");
+  assert.equal(d.linha.gravada, true);
+  assert.equal(d.linha.description, "Fatura Nubank 10/2026");
+
+  const escritas = resultado.i.chamadas.filter((c) => c.metodo !== "GET");
+  assert.deepEqual(escritas, [], JSON.stringify(escritas));
+});
+
+test("J: a previsao LIGADA AO ELO tem as DUAS acoes, e NENHUM link do cartao", () => {
+  // "Duas acoes na mesma linha e um estado a DESENHAR, nao a descobrir": o
+  // desfazer do elo (marcador aqui) no rodape de texto da linha, e o Pagar a
+  // direita, onde as outras linhas tem Editar/Excluir.
+  assert.deepEqual(resultado.j.previsto.acoes.map((a) => a.rotulo), ["Pagar"]);
+  assert.equal(resultado.j.temElo, true, "o elo da HMO-305 desapareceu da linha");
+
+  // E ELA NAO LEVA AO CARTAO -- a decisao da HMO-305, preservada: ela e uma
+  // previsao na conta corrente, nao a fatura em si.
+  assert.deepEqual(resultado.j.ancoras, [], JSON.stringify(resultado.j.ancoras));
+
+  // E O PAGAR DELA FUNCIONA: gravada, com id de banco, UMA escrita so (a
+  // previsao ligada NAO leva `close` -- medido em `test:pagamento-da-fatura`).
+  assert.ok(resultado.j.dialogo, "a previsao ligada nao abriu o dialogo");
+  assert.equal(resultado.j.dialogo.linha.id, "s-previsao");
+  assert.equal(resultado.j.dialogo.linha.gravada, true);
+});
+
+test("K: a fatura SEM DIA DE VENCIMENTO nao tem Pagar -- e a tela diz por que", () => {
+  // O CONTRASTE E O QUE TORNA A FRASE NECESSARIA, e e por isso que as duas
+  // metades estao no mesmo bloco: na MESMA tela, uma fatura tem botao e a outra
+  // nao. Sem a frase, isso se le como tela quebrada e manda recarregar a pagina.
+  assert.ok(resultado.k.texto, "o bloco da fatura sem vencimento nao pintou");
+  assert.equal(resultado.k.pagarNaSecao, true, "o contraste nao vale: ninguem tem Pagar");
+  assert.equal(resultado.k.pagarNoBloco, false, "a fatura sem vencimento ganhou Pagar");
+
+  assert.match(resultado.k.texto, /C6/);
+  assert.match(resultado.k.texto, /não tem o botão Pagar/);
+  assert.match(resultado.k.texto, /dia de vencimento/);
+  assert.match(resultado.k.texto, /passa a aparecer na lista/);
 });

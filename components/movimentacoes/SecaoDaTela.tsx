@@ -58,6 +58,7 @@ import {
   Pencil,
   Repeat,
   Trash2,
+  Wallet,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -71,10 +72,12 @@ import {
 import {
   ROTULO_DE_EDITAR,
   ROTULO_DE_EXCLUIR,
+  ROTULO_DE_PAGAR,
   motivoSemEditar,
   podeConfirmar,
   podeEditar,
   podeExcluir,
+  podePagarAFatura,
   rotuloDeConfirmar,
 } from "@/lib/acoes-da-linha";
 import { caminhoDoCartaoNoMes } from "@/lib/fatura-do-cartao";
@@ -171,6 +174,25 @@ export interface AcoesDaLinha {
   aoEditar: (linha: LinhaDaTela) => void;
   aoExcluir: (linha: LinhaDaTela) => void;
   aoConfirmar: (linha: LinhaDaTela) => void;
+  /**
+   * PAGAR A FATURA -- HMO-311 (fase 14).
+   *
+   * Ela nao passa por `aoConfirmar` e nao e opcional, e as duas coisas sao
+   * deliberadas.
+   *
+   * NAO E `aoConfirmar` porque a baixa da fatura PERGUNTA ANTES: de qual conta o
+   * dinheiro saiu. O `POST /api/scheduled-transactions/{id}/pay` sem
+   * `payment_account_id` volta 400, entao um "Confirmar" reaproveitado seria um
+   * botao que erra em todo clique. Quem abre o dialogo e trata as duas escritas
+   * (o `close` da fatura aberta e o `/pay`) e `ListaDeMovimentacao`, pelo
+   * `DialogoDePagamentoDaFatura` e por `pagarAFatura` -- os dois da HMO-310.
+   *
+   * OBRIGATORIA, ao contrario de `aoConcluirElo`, pelo motivo que a HMO-301 ja
+   * escreveu no `acoes` desta secao: opcional, a fatura voltaria a ser linha sem
+   * botao no dia em que o container parasse de passar a funcao -- sem erro, sem
+   * log e com o `tsc` verde, que e exatamente o estado de antes desta fase.
+   */
+  aoPagarFatura: (linha: LinhaDaTela) => void;
   /** O id da linha cuja acao esta em curso, ou `null`. */
   agindo: string | null;
   /** Sem rede nenhuma acao sai: as tres sao escrita. */
@@ -219,17 +241,47 @@ function BotoesDaLinha({
   const editar = podeEditar(linha);
   const excluir = podeExcluir(linha);
   const confirmar = podeConfirmar(linha);
+  const pagar = podePagarAFatura(linha);
   const motivo = motivoSemEditar(linha);
 
   // Sem nenhum dos tres nao sai `<div>` nenhum: uma caixa de 0px com gap muda o
   // espacamento da linha, e a linha sem acao tem de desenhar IGUAL a de antes
   // desta issue.
-  if (!editar && !excluir && !confirmar && !motivo) return null;
+  if (!editar && !excluir && !confirmar && !pagar && !motivo) return null;
 
   const rotuloConfirmar = rotuloDeConfirmar(linha.tipo);
 
   return (
     <div className="flex shrink-0 items-center gap-1">
+      {/*
+        PAGAR A FATURA -- HMO-311, e ele e o UNICO botao desta linha com TEXTO.
+        Os outros tres sao de icone so porque sao tres numa linha de 320px; aqui
+        ha um, e o verbo e o que diz que o clique ABRE UMA PERGUNTA em vez de ja
+        resolver. Um cartao de credito desenhado sozinho a direita nao se
+        distingue do icone de natureza que a MESMA linha ja tem a esquerda.
+
+        `ROTULO_DE_PAGAR` e nao a palavra escrita aqui: ela e tambem o
+        `aria-label`, e e por ele que a sonda de navegador acha o botao.
+      */}
+      {pagar && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8 px-2"
+          disabled={travado}
+          onClick={() => acoes.aoPagarFatura(linha)}
+          aria-label={ROTULO_DE_PAGAR}
+          title={ROTULO_DE_PAGAR}
+        >
+          {emCurso ? (
+            <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+          ) : (
+            <Wallet className="mr-1 h-4 w-4" />
+          )}
+          {ROTULO_DE_PAGAR}
+        </Button>
+      )}
+
       {confirmar && (
         <Button
           size="sm"
@@ -323,15 +375,13 @@ function BotoesDaLinha({
 /**
  * Uma linha da lista.
  *
- * A FATURA E A UNICA QUE VIRA `<a>`. Linha que PARECE clicavel e nao e custa
- * mais que linha que nao parece: a pessoa toca, nada acontece, e a conclusao
- * natural e que o app travou. As outras naturezas nao tem destino decidido --
- * uma despesa comum nao tem tela propria para abrir -- entao elas continuam
- * `<div>`.
- *
- * E E POR ISSO QUE A FATURA NAO GANHA BOTAO (HMO-301), alem da razao de
- * produto que esta em `podeAgirNaLinha`: botao dentro de ancora e aninhamento
- * interativo invalido, e o clique navegaria junto com a acao.
+ * NENHUMA LINHA E `<a>` -- e ate a HMO-311 a fatura era. Linha que PARECE
+ * clicavel e nao e custa mais que linha que nao parece: a pessoa toca, nada
+ * acontece, e a conclusao natural e que o app travou. As naturezas comuns nao
+ * tem destino decidido (uma despesa comum nao tem tela propria para abrir), e a
+ * fatura, que TEM, passou a levar o destino no NOME DO CARTAO em vez de na
+ * linha inteira -- para que o botao Pagar possa existir a direita sem ficar
+ * aninhado numa ancora. Ver o comentario antes do `return`.
  */
 function LinhaDaSecao({
   linha,
@@ -352,12 +402,35 @@ function LinhaDaSecao({
 }) {
   const { Icone, rotulo, descricao } = marcaDaLinha(linha, aparencia);
 
+  // O NOME DO CARTAO COMO LINK -- HMO-311, e e o MESMO criterio que decidia a
+  // ancora da linha inteira (`linha.fatura && !linha.elo_da_fatura`), movido
+  // para dentro dela. Um segundo criterio aqui poria o link na linha errada.
+  //
+  // A previsao DIGITADA ligada ao elo continua FORA, e a razao e a da HMO-305:
+  // ela e uma previsao na conta corrente, nao a fatura em si. O link mora na
+  // linha DA fatura, que esta na mesma lista.
+  const destinoDoCartao =
+    linha.fatura && !linha.elo_da_fatura
+      ? caminhoDoCartaoNoMes(linha.fatura.accountId, linha.fatura.mes)
+      : null;
+
+  const nome = linha.descricao ?? "Sem descrição";
+
   const conteudo = (
     <>
       <div className="min-w-0 space-y-0.5">
-        <p className="truncate font-medium text-foreground">
-          {linha.descricao ?? "Sem descrição"}
-        </p>
+        {destinoDoCartao ? (
+          <p className="truncate font-medium">
+            <Link
+              href={destinoDoCartao}
+              className="text-foreground hover:underline"
+            >
+              {nome}
+            </Link>
+          </p>
+        ) : (
+          <p className="truncate font-medium text-foreground">{nome}</p>
+        )}
         <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
           <span className="inline-flex items-center gap-1">
             <Icone className="h-3 w-3" aria-label={descricao} />
@@ -445,29 +518,23 @@ function LinhaDaSecao({
   const classe =
     "flex items-start justify-between gap-3 border-b border-border py-2 last:border-0";
 
-  // A FATURA VIRA `<a>` -- MENOS A PREVISAO QUE ALGUEM LIGOU A ELA (HMO-305).
+  // NENHUMA LINHA E `<a>` DESDE A HMO-311 -- e o que mudou foi a fatura.
   //
-  // `linha.fatura` esta preenchido em toda linha que carrega a chave canonica,
-  // e desde a HMO-305 isso inclui a previsao digitada a mao que a PESSOA ligou.
-  // Essa linha tem o botao de DESFAZER dentro dela, e botao dentro de ancora e
-  // aninhamento interativo invalido: o clique navegaria junto com a acao, e o
-  // caminho de volta do elo -- o unico jeito de desfazer uma escrita que esconde
-  // dinheiro -- seria inalcancavel.
+  // Ate aqui a linha de fatura era uma ancora inteira para a tela do cartao, e
+  // era ESSA ancora uma das duas razoes pelas quais a fatura nao ganhava botao
+  // (regra 5 de lib/acoes-da-linha.ts): botao dentro de `<a>` e aninhamento
+  // interativo invalido, e o clique faria as duas coisas -- abriria o dialogo E
+  // navegaria para o cartao. Com as duas acontecendo, "funcionou" e
+  // indistinguivel do defeito.
   //
-  // O preco e nomeado e aceito: aquela linha deixa de levar para a tela do
-  // cartao. Ela e uma previsao na conta corrente, e nao a fatura em si; o link
-  // continua na linha DA fatura, que esta na mesma lista.
-  if (linha.fatura && !linha.elo_da_fatura) {
-    return (
-      <Link
-        href={caminhoDoCartaoNoMes(linha.fatura.accountId, linha.fatura.mes)}
-        className={`${classe} transition-colors hover:bg-muted/50`}
-      >
-        {conteudo}
-      </Link>
-    );
-  }
-
+  // A troca e por DOIS ALVOS EXPLICITOS, no lugar de um implicito: o NOME DO
+  // CARTAO e o link (ver `destinoDoCartao`, acima) e o botao **Pagar** fica a
+  // direita, no mesmo lugar onde as outras linhas tem Editar/Excluir.
+  //
+  // O PRECO ESTA NOMEADO E ACEITO: a linha da fatura perde o atalho implicito --
+  // tocar em qualquer lugar dela nao abre mais o cartao. Em troca, o que a
+  // pessoa pediu ("o botao de pagar tbm na fatura do cartao em despesas")
+  // existe, e os dois destinos ficam visiveis em vez de um deles ser adivinhado.
   return (
     <div className={classe}>
       {conteudo}

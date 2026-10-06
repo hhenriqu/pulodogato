@@ -184,6 +184,31 @@ const MUTANTES = [
     de: "  return contas.filter((conta) => conta.account_type !== TIPO_CARTAO);",
     para: "  return contas.filter(() => true);",
   },
+  // -------------------------------------------------------------------------
+  // HMO-311 (fase 14): a conversao da linha da TELA DE DESPESAS
+  // -------------------------------------------------------------------------
+  // `linhaParaPagarDaTela` e a irma de `linhaParaPagarDaAgenda`, e a unica
+  // razao dela existir e que nas telas de movimentacao `LinhaDaTela.id` e
+  // SEMPRE string -- na fatura ABERTA ele e a CHAVE SINTETICA, porque
+  // `linhasDaTela` precisa de chave estavel para o React.
+  //
+  // OS DOIS MUTANTES SAO UM PAR, e nenhum sozinho basta: com so o primeiro, um
+  // `id: null` fixo o mataria e passaria; com so o segundo, `id: linha.id` cru
+  // passaria. Juntos, eles obrigam a condicao a existir.
+  {
+    nome: "id_da_tela_passa_reto",
+    porque:
+      "o `id` da linha da tela vai sem a peneira de `gravada`: na fatura ABERTA ele e a chave sintetica (`fatura:2026-10-01:<uuid>`), e a sequencia monta `POST /api/scheduled-transactions/fatura:2026-10-01:<uuid>/pay` em todo ramo onde o `close` nao sobrescrever o id -- um 404 que, para quem clicou, se le como 'o app nao conseguiu'",
+    de: "    id: linha.gravada ? linha.id : null,",
+    para: "    id: linha.id,",
+  },
+  {
+    nome: "id_da_tela_sempre_nulo",
+    porque:
+      "o par do mutante acima: com `id: null` incondicional a fatura FECHADA perde o id de banco e a sequencia para em `ERRO_AO_FECHAR` sem rede nenhuma -- a tela diz 'Nao foi possivel registrar a fatura' sobre uma fatura que JA esta registrada",
+    de: "    id: linha.gravada ? linha.id : null,",
+    para: "    id: null,",
+  },
 ];
 
 const dir = mkdtempSync(join(tmpdir(), "mutantes-pagamento-da-fatura-"));
