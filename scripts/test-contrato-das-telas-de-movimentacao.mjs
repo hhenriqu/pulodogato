@@ -738,35 +738,58 @@ test("a chave da fatura mora num arquivo-FOLHA, e `card-invoice` a re-exporta", 
   );
 });
 
-test("TODA dependencia `@/` da lib esta em DEPENDENCIAS do mutador", () => {
-  // O modo de falha e o pior possivel: a dependencia que falta faz o arquivo
-  // mutado nao COMPILAR, e um mutante que nao compila conta como morto. Sem o
-  // controle positivo do runner, o placar sairia "todos os N mutantes morreram"
-  // tendo medido zero.
+test("o mutador nao tem lista de dependencia a mao para envelhecer", () => {
+  // ESTA ASSERCAO SUBSTITUI UMA (HMO-318), e vale dizer qual, porque trocar
+  // guard por guard e o jeito mais facil de perder cobertura sem perceber.
+  //
+  // Antes, o mutador montava uma arvore temporaria com uma lista
+  // `DEPENDENCIAS` escrita a mao, e este teste conferia que todo import `@/`
+  // da lib estava nela. O modo de falha coberto era o pior possivel: a
+  // dependencia que falta faz o arquivo mutado nao COMPILAR, e mutante que nao
+  // compila conta como morto -- o placar sairia "todos os N mutantes morreram"
+  // tendo medido ZERO.
+  //
+  // Nao era teorico. `mutantes-realizado-do-caixa.mjs`, da mesma familia e SEM
+  // um guard destes, passou meses abortando: a HMO-285 e a HMO-305 criaram
+  // `lib/chave-da-fatura.ts` e `lib/elo-da-fatura.ts`, e a lista dele nao
+  // acompanhou.
+  //
+  // O mutador agora passa por `criarBlocoDeMutantes`, cuja sombra espelha a
+  // arvore INTEIRA e cujas etapas saem do `scripts[suite]` do package.json. A
+  // lista a mao deixou de existir, e com ela o modo de falha -- conferir o
+  // conteudo dela nao e mais possivel. O que este teste trava agora e a
+  // propriedade que tomou o lugar: que a lista NAO VOLTE, porque voltar e
+  // voltar o envelhecimento em silencio.
   const MUTADOR = "scripts/mutantes-telas-de-movimentacao.mjs";
   const mutador = semComentarios(readFileSync(MUTADOR, "utf8"));
 
-  const bloco = mutador.match(/const DEPENDENCIAS = \[([\s\S]*?)\];/);
-  assert.ok(bloco, `nao achei DEPENDENCIAS em ${MUTADOR}`);
+  assert.match(
+    mutador,
+    /criarBlocoDeMutantes\(\{/,
+    `${MUTADOR} nao passa mais pelo bloco: sem ele volta a existir um recorte ` +
+      "de arvore a mao, que envelhece sem nada reclamar"
+  );
+  assert.ok(
+    !/const DEPENDENCIAS = \[/.test(mutador),
+    `${MUTADOR} voltou a ter DEPENDENCIAS a mao -- e a lista que o bloco existe ` +
+      "para eliminar; um import novo na lib a deixa errada em silencio"
+  );
 
+  // CONTROLE DA EXTRACAO. Sem ele as duas assercoes acima passariam sobre um
+  // arquivo vazio -- um `MUTADOR` renomeado, por exemplo, faria o
+  // `readFileSync` lancar, mas um arquivo TRUNCADO passaria calado nas duas.
+  assert.match(
+    mutador,
+    /const MUTANTES = \[/,
+    `${MUTADOR} ficou sem lista de mutantes`
+  );
   const importados = [...lib.matchAll(/from "@\/(lib\/[a-z0-9-]+)"/g)].map(
     (m) => m[1]
   );
-  // Controle da extracao: a lib tem pelo menos tres imports `@/lib/`, e um
-  // `matchAll` que nao casasse nada faria o laco abaixo passar por vacuidade.
   assert.ok(
     importados.length >= 3,
     `extrai poucos imports de ${LIB}: ${importados}`
   );
-
-  for (const dep of importados) {
-    assert.match(
-      bloco[1],
-      new RegExp(`"${dep}\\.ts"`),
-      `${dep}.ts e importado por ${LIB} e nao esta em DEPENDENCIAS de ` +
-        `${MUTADOR}: o arquivo mutado para de compilar e TODO mutante "morre"`
-    );
-  }
 });
 
 test("o criterio da fatura paga tem UM dono, e o painel o IMPORTA", () => {

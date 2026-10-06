@@ -31,36 +31,34 @@
 //                            cartao fecha R$ 1.290 mais barato, nos tres
 //                            numeros (HMO-264).
 //
-// A FONTE NUNCA E MUTADA NO DISCO
-// -------------------------------
-// A mutacao vive em memoria e e compilada de uma ARVORE TEMPORARIA. Mutar,
-// rodar e restaurar no `finally` deixa a fonte mutada no disco quando o
-// processo morre no meio -- e um `trap` que restaura por cima apaga trabalho
-// nao salvo.
-//
-// OS IMPORTS DE @/ SAO O QUE COMPLICA O BUILD
-// -------------------------------------------
-// Este modulo importa `@/lib/movimentacoes` e `@/lib/destino-do-lancamento`.
-// Compilar so o arquivo mutado com `tsc arquivo.ts` nao resolve `@/` e morre em
-// erro de compilacao -- e um mutante que nao COMPILA "morre" por motivo errado,
-// o que faz o placar mentir a favor. Por isso o runner monta a arvore
-// temporaria com as copias das duas dependencias ao lado, escreve um tsconfig
-// com `baseUrl`/`paths` e roda o mesmo resolve-aliases.mjs do npm script.
-//
 // COMO RODAR
 //   npm run mutantes:telas-de-movimentacao
+//
+// O BLOCO: UMA COMPILACAO PARA TODOS OS MUTANTES (HMO-318)
+// --------------------------------------------------------
+// Este runner era da familia da HMO-246: montava uma arvore temporaria com uma
+// lista de DEPENDENCIAS escrita a mao, sintetizava um tsconfig e disparava
+// `npx tsc` + `resolve-aliases` + `node --test` UMA VEZ POR MUTANTE. Entre
+// duas voltas mudava UM arquivo, e o programa inteiro era reparseado do zero.
+//
+// Agora as voltas dividem um processo e um cache de AST (`criarBlocoDeMutantes`,
+// HMO-319): so o arquivo mutado e reparseado. Tres coisas sairam junto, e as
+// tres eram defeito:
+//
+//   - a lista de DEPENDENCIAS a mao, que envelhecia em silencio e ja deixou
+//     runner desta familia abortando por meses (ver o conversor);
+//   - o tsconfig repetido a mao, que podia divergir do alvo `test:telas-de-movimentacao`
+//     -- agora as etapas saem do proprio package.json;
+//   - a saida MUTADA emitida dentro do repositorio, que o `finally` tinha de
+//     recompilar depois. A sombra emite em /tmp; `lib/telas-de-movimentacao.ts`
+//     e o `.tmp-*` do repositorio nao sao tocados em momento nenhum.
+//
+// A lista de mutantes abaixo nao foi reescrita: ela veio byte a byte do arquivo
+// anterior, pelo `scripts/converte-mutantes-em-bloco.mjs`.
 
-import {
-  readFileSync,
-  writeFileSync,
-  mkdtempSync,
-  mkdirSync,
-  rmSync,
-  copyFileSync,
-} from "node:fs";
-import { execFileSync } from "node:child_process";
-import { join, resolve, basename } from "node:path";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
+
+import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
 
 const FONTE = "lib/telas-de-movimentacao.ts";
 // TODA dependencia `@/` da FONTE tem de estar aqui. A que falta nao produz um
@@ -72,17 +70,6 @@ const FONTE = "lib/telas-de-movimentacao.ts";
 // import), e e exatamente por isso que a fonte pode importa-lo: `card-invoice`,
 // onde aquela chave morava, arrastaria `transferencia` -> `lancamento` para
 // dentro desta arvore.
-const DEPENDENCIAS = [
-  "lib/movimentacoes.ts",
-  "lib/destino-do-lancamento.ts",
-  "lib/chave-da-fatura.ts",
-  // HMO-305: o elo da fatura. Ele importa SO o chave-da-fatura, que ja esta
-  // acima -- se um dia ele deixar de ser folha, esta lista cresce junto ou
-  // TODO mutante deixa de compilar e o placar vira 100% sem medir nada.
-  "lib/elo-da-fatura.ts",
-];
-const SAIDA = ".tmp-telas-de-movimentacao";
-const TESTE = "scripts/test-telas-de-movimentacao.mjs";
 
 const original = readFileSync(FONTE, "utf8");
 
@@ -650,134 +637,65 @@ const MUTANTES = [
   },
 ];
 
-// ---------------------------------------------------------------------------
-// DOIS MUTANTES QUE FORAM REMOVIDOS, E O QUE ELES ENSINARAM
-// ---------------------------------------------------------------------------
-// Os dois SOBREVIVERAM na primeira rodada, e os dois sobreviveram com razao: o
-// que eles apagavam era defesa morta. A conclusao foi apagar a defesa do
-// modulo, nao escrever um teste capaz de "provar" codigo que nao faz nada.
-//
-//   `vencido_pega_realizado` apagava `if (linha.origem !== "previsto")` de
-//   `previstoVencido`. `linhaRealizada` grava `situacao: null` em TODA linha
-//   realizada, entao a linha realizada nunca passava do filtro de 'overdue' e a
-//   primeira guarda nao decidia nada. O unico teste que a mataria teria de
-//   FORJAR uma linha realizada com `situacao: "overdue"` -- um estado que o
-//   modulo nao produz, e uma trava provada so por estado forjado por fora nao
-//   prova nada. O invariante ("o realizado nasce sem situacao") passou a ter
-//   assercao propria, que e onde a regra de fato se segura.
-//
-//   `secoes_ordenam_no_lugar` apagava o `[...previstas]` de `secoesDaTela`.
-//   `filter` ja devolve array novo, entao a copia era copia de copia. O que
-//   restou para medir e OUTRA coisa, e essa importa: `secoes_compartilham_array`
-//   faz as duas secoes ordenarem o MESMO array em sentidos opostos.
+const SUITE = "test:telas-de-movimentacao";
 
-const dir = mkdtempSync(join(tmpdir(), "mut246-"));
-const dirLib = join(dir, "lib");
-mkdirSync(dirLib, { recursive: true });
-for (const dep of DEPENDENCIAS) copyFileSync(dep, join(dirLib, basename(dep)));
+const bloco = criarBlocoDeMutantes({ rotulo: "telas-de-movimentacao", suites: [SUITE] });
 
-// O tsconfig temporario e a copia do scripts/tsconfig.telas-de-movimentacao-
-// test.json apontada para a arvore mutada. `baseUrl` no dir temporario e o que
-// faz `@/lib/movimentacoes` achar a COPIA, e nao o arquivo do repo.
-const tsconfig = join(dir, "tsconfig.json");
-writeFileSync(
-  tsconfig,
-  JSON.stringify({
-    compilerOptions: {
-      outDir: resolve(SAIDA),
-      rootDir: dirLib,
-      module: "es2020",
-      target: "es2020",
-      moduleResolution: "node",
-      skipLibCheck: true,
-      baseUrl: dir,
-      paths: { "@/*": ["./*"] },
-    },
-    include: [join(dirLib, "telas-de-movimentacao.ts")],
-  })
-);
+// A sombra vive em diretorio temporario. No pior caso sobra um diretorio orfao
+// em /tmp -- e nao uma fonte mutada na arvore, que era o modo de falha do
+// desenho anterior. O handler de sinal existe para que nem o orfao sobre:
+// `finally` nao roda em SIGTERM, mas `process.exit` dispara o `exit` abaixo.
+process.on("exit", () => bloco.fechar());
+for (const sinal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(sinal, () => process.exit(1));
+}
+
+// CONTROLE POSITIVO: a arvore INTACTA tem de passar antes de qualquer mutante,
+// e pelo MESMO `rodar` que os mutantes usam -- por isso ele pega erro no
+// aparelho. Sem ele, uma sombra mal montada reprova TODO mutante e o placar sai
+// "N/N mortos" sobre zero assercoes executadas.
+const controle = bloco.rodar("controle", {}, SUITE);
+if (!controle.verde) {
+  console.error(`ABORTADO: ${FONTE} INTACTO reprova em ${SUITE} (${controle.como}).`);
+  console.error(`  ${controle.saida}`);
+  console.error("O placar nao valeria: todo mutante 'morreria' sem ter sido medido.");
+  process.exit(1);
+}
+console.log(`controle positivo: ${FONTE} intacto passa em ${SUITE}\n`);
 
 let falhas = 0;
 
-function compilaERoda(fonteTs) {
-  writeFileSync(join(dirLib, "telas-de-movimentacao.ts"), fonteTs);
-  rmSync(SAIDA, { recursive: true, force: true });
-  execFileSync("npx", ["tsc", "-p", tsconfig], { stdio: "pipe" });
-  // O tsc resolve `@/` mas nao o reescreve no JS emitido -- o mesmo passo do
-  // npm script, sem o qual o node morre em ERR_MODULE_NOT_FOUND e TODO mutante
-  // "morre" por erro de import.
-  execFileSync("node", ["scripts/resolve-aliases.mjs", SAIDA, "lib"], {
-    stdio: "pipe",
-  });
-  // O fuso e o mesmo do npm script: o controle do dia 1 (o mutante
-  // `ordem_por_date`) so e capaz de falhar em fuso negativo.
-  execFileSync("node", ["--test", TESTE], {
-    stdio: "pipe",
-    env: { ...process.env, TZ: "America/Sao_Paulo" },
-  });
-}
-
-try {
-  // CONTROLE POSITIVO: com a fonte intacta o teste tem de PASSAR. Sem isto, um
-  // "todos morreram" poderia significar apenas que o build esta quebrado e o
-  // teste reprova sempre.
-  try {
-    compilaERoda(original);
-    console.log("controle positivo: o teste passa com a fonte intacta\n");
-  } catch (e) {
-    console.error("ABORTADO: o teste reprova com a fonte INTACTA.");
-    console.error((e.stdout ?? e.stderr ?? "").toString().slice(-1500));
-    process.exit(1);
+for (const m of MUTANTES) {
+  // `String.replace` troca a PRIMEIRA ocorrencia. Um trecho que aparece duas
+  // vezes produz um mutante que muta o lugar errado e morre verde com o rotulo
+  // mentindo sobre o que foi medido -- por isso o trecho tem de ser UNICO, e
+  // nao apenas existir.
+  const ocorrencias = original.split(m.de).length - 1;
+  if (ocorrencias === 0) {
+    console.log(`  !! ${m.nome}: o trecho a mutar NAO EXISTE MAIS -- mutante invalido`);
+    falhas++;
+    continue;
+  }
+  if (ocorrencias > 1) {
+    console.log(`  !! ${m.nome}: o trecho aparece ${ocorrencias}x -- mutante ambiguo, invalido`);
+    falhas++;
+    continue;
   }
 
-  for (const m of MUTANTES) {
-    // `String.replace` troca a PRIMEIRA ocorrencia. Um trecho que aparece duas
-    // vezes produz um mutante que muta o lugar errado e morre verde com o
-    // rotulo mentindo sobre o que foi medido -- por isso o trecho tem de ser
-    // UNICO, e nao apenas existir.
-    const ocorrencias = original.split(m.de).length - 1;
-    if (ocorrencias === 0) {
-      console.log(
-        `  !! ${m.nome}: o trecho a mutar NAO EXISTE MAIS -- mutante invalido`
-      );
-      falhas++;
-      continue;
-    }
-    if (ocorrencias > 1) {
-      console.log(
-        `  !! ${m.nome}: o trecho aparece ${ocorrencias}x -- mutante ambiguo, invalido`
-      );
-      falhas++;
-      continue;
-    }
+  const r = bloco.rodar(m.nome, { [FONTE]: original.replace(m.de, m.para) }, SUITE);
 
-    const mutado = original.replace(m.de, m.para);
-
-    let sobreviveu = false;
-    try {
-      compilaERoda(mutado);
-      sobreviveu = true;
-    } catch {
-      // reprovou (ou nem compilou): e o esperado.
+  if (r.verde) {
+    console.log(`  SOBREVIVEU  ${m.nome}  <-- nenhuma assercao protege isto`);
+    console.log(`              (${m.porque})`);
+    if (r.mudouASaida === false) {
+      console.log("              (saida compilada identica a da arvore limpa: EQUIVALENTE)");
     }
-
-    if (sobreviveu) {
-      console.log(`  SOBREVIVEU  ${m.nome}  <-- nenhuma assercao protege isto`);
-      console.log(`              (${m.porque})`);
-      falhas++;
-    } else {
-      console.log(`  morreu      ${m.nome}`);
-    }
-  }
-} finally {
-  rmSync(dir, { recursive: true, force: true });
-  // Deixa o build em dia com a fonte de verdade, para o proximo
-  // `npm run test:telas-de-movimentacao` nao rodar contra um artefato mutado.
-  try {
-    rmSync(SAIDA, { recursive: true, force: true });
-    execFileSync("npm", ["run", "test:telas-de-movimentacao"], { stdio: "pipe" });
-  } catch {
-    /* o controle positivo acima ja teria falhado */
+    falhas++;
+  } else {
+    // Morrer no tsc tambem e morrer -- mutante que nao compila nao chega em
+    // producao --, mas a distincao importa: um erro de tipo nao diz que a SUITE
+    // pegou a regra.
+    console.log(`  morreu      ${m.nome}  (${r.como === "tsc" ? "tsc" : "asercao"})`);
   }
 }
 
