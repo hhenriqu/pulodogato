@@ -35,6 +35,8 @@ import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, utimesSync 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { compilarComSobrescritas } from "./compila.mjs";
+
 const RAIZ = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const FIXTURE = path.join(RAIZ, process.env.FIXTURE ?? ".tmp-compila-fixture");
 const FONTES = path.join(FIXTURE, "src");
@@ -280,4 +282,91 @@ test("o lote entende a invocacao de TODOS os alvos test:* do package.json", () =
       );
     }
   }
+});
+
+// ---------------------------------------------------------------------------
+// O caminho dos MUTANTES: compilarComSobrescritas (HMO-319)
+// ---------------------------------------------------------------------------
+// Os tres casos acima protegem o lote, que decide "esta saida ainda vale?" por
+// sha256. O caminho dos mutantes nao tem essa decisao -- ele reaproveita o AST
+// das fontes NAO mutadas, guardado no `cacheDeFontes` do processo -- e por isso
+// erra de outra forma: se o texto MUTADO entrasse no cache, a volta seguinte
+// leria o AST da volta anterior. O placar entao diria "morreu" sobre codigo que
+// ninguem compilou, e o controle positivo passaria lendo o ultimo mutante.
+//
+// Era o unico mecanismo da HMO-319 sem caso proprio aqui: a suite cobria o lote
+// e nao o cache compartilhado entre voltas.
+
+const ARGUMENTOS = () => ["-p", path.relative(RAIZ, TSCONFIG)];
+const SAIDA_DO_MUTANTE = () => path.join(FIXTURE, "out-mutante");
+const ALVO = () => path.relative(RAIZ, path.join(FONTES, "soma.ts"));
+
+const somaQue = (corpo) =>
+  `export function soma(a: number, b: number): number { return ${corpo}; }\n`;
+
+test("sobrescritas: a fonte mutada NAO entra no cache, e a volta seguinte nao a le", () => {
+  montarFixture();
+  const fora = SAIDA_DO_MUTANTE();
+
+  const controle = compilarComSobrescritas({ argumentos: ARGUMENTOS(), outDir: fora });
+  assert.equal(controle.erros, 0, `o controle devia compilar:\n${controle.mensagens.join("\n")}`);
+  const doControle = controle.emitidos.get("soma.js");
+  assert.ok(doControle, `esperava soma.js emitido, vieram: ${[...controle.emitidos.keys()]}`);
+
+  const mutado = compilarComSobrescritas({
+    argumentos: ARGUMENTOS(),
+    outDir: fora,
+    sobrescritas: { [ALVO()]: somaQue("a - b") },
+  });
+  assert.equal(mutado.erros, 0, `o mutante devia compilar:\n${mutado.mensagens.join("\n")}`);
+  assert.notEqual(
+    mutado.emitidos.get("soma.js"),
+    doControle,
+    "a mutacao tinha que mudar o byte emitido -- sem isso o resto do caso nao mede nada",
+  );
+
+  // A TRAVA. Sem sobrescritas, o byte tem que voltar a ser o do controle.
+  const depois = compilarComSobrescritas({ argumentos: ARGUMENTOS(), outDir: fora });
+  assert.equal(
+    depois.emitidos.get("soma.js"),
+    doControle,
+    "a volta sem sobrescritas emitiu o byte do MUTANTE anterior: o texto mutado " +
+      "entrou no cacheDeFontes, e nesse estado todo mutante seguinte morre verde",
+  );
+});
+
+test("sobrescritas: dois mutantes seguidos no mesmo arquivo nao dividem a saida", () => {
+  montarFixture();
+  const fora = SAIDA_DO_MUTANTE();
+  const emitir = (corpo) =>
+    compilarComSobrescritas({
+      argumentos: ARGUMENTOS(),
+      outDir: fora,
+      sobrescritas: { [ALVO()]: somaQue(corpo) },
+    }).emitidos.get("soma.js");
+
+  assert.notEqual(
+    emitir("a - b"),
+    emitir("a * b"),
+    "cada volta tem que reparsear o arquivo mutado; byte igual aqui significa " +
+      "que a segunda leu a primeira",
+  );
+});
+
+test("sobrescritas: a volta do mutante nao deixa manifesto aproveitavel", () => {
+  // A segunda trava da HMO-263, aqui no caminho novo: manifesto so nasce de
+  // quem semeia. Um manifesto no outDir do mutante reintroduziria exatamente a
+  // decisao "esta saida ainda vale?" no lugar onde errar sai mais caro.
+  montarFixture();
+  const fora = SAIDA_DO_MUTANTE();
+  compilarComSobrescritas({
+    argumentos: ARGUMENTOS(),
+    outDir: fora,
+    sobrescritas: { [ALVO()]: somaQue("a - b") },
+  });
+  assert.equal(
+    existsSync(path.join(fora, ".compilado.json")),
+    false,
+    "o outDir de um mutante nao pode ter manifesto",
+  );
 });
