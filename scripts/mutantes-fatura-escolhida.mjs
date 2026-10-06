@@ -36,12 +36,18 @@
 // comportamento de hoje. Mutante sobrevivente que esta certo polui o placar e
 // faz o proximo leitor apagar a guarda errada.
 //
-// A FONTE NUNCA E MUTADA NO DISCO
-// -------------------------------
-// A mutacao e feita em memoria e escrita num arquivo TEMPORARIO; o
-// `database/migrations/041_*.sql` nao e tocado em momento nenhum. O jeito usual
-// (mutar o arquivo, rodar, restaurar no `finally`) deixa a fonte mutada no disco
-// quando o processo morre no meio, e o placar seguinte vira ficcao.
+// A FONTE NUNCA E MUTADA NA ARVORE RASTREADA
+// ------------------------------------------
+// Nas DUAS metades. A mutacao e feita em memoria e escrita fora da arvore do
+// git -- aqui num arquivo temporario, na metade TypeScript dentro da sombra do
+// bloco. Nenhum arquivo rastreado e tocado em momento nenhum.
+//
+// O jeito usual (mutar o arquivo, rodar, restaurar no `finally`) deixa a fonte
+// mutada no disco quando o processo morre no meio, e o placar seguinte vira
+// ficcao. E "no meio" nao e hipotese: `finally` e `process.on("exit")` NAO
+// rodam em SIGTERM, que e o sinal do `timeout` do shell e do cancelamento de
+// job. Foi assim que o `mutantes-moeda` deixou `lib/moeda.ts` mutado com um
+// `.bak` ao lado no meio da medicao da HMO-319.
 //
 // A TRAVA CONTRA O MUTANTE QUE NAO SE APLICA
 // -------------------------------------------
@@ -92,9 +98,11 @@
 // =====================================================
 
 import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+
+import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
 
 const ARGS = process.argv.slice(2);
 const SO_TYPESCRIPT = ARGS.includes("--so-typescript");
@@ -350,13 +358,26 @@ function rodarMutantesDaMigration() {
 // ===========================================================================
 // A METADE TYPESCRIPT (HMO-289): A FIACAO DOS QUATRO ESCRITORES
 // ===========================================================================
-// Aqui a fonte E mutada no disco -- ao contrario da metade SQL, onde a mutacao
-// vai para um arquivo temporario. Nao ha escolha: os oraculos sao `npm run
-// test:*` e `check-fatura-no-lancamento.mjs`, e os dois leem os caminhos reais do
-// repositorio. Por isso o restauro e conferido byte a byte depois de CADA
-// mutante, e um restauro que falhe PARA o script na hora: seguir em frente
-// mediria os mutantes seguintes contra uma arvore ja estragada, e -- pior --
-// deixaria o mutante commitavel no worktree.
+// Esta metade tambem roda em BLOCO (`mutantes-em-bloco.mjs`): uma sombra em
+// diretorio temporario onde tudo e symlink menos o arquivo mutado, e um
+// processo so para as oito voltas.
+//
+// ELA FOI A ULTIMA A MIGRAR, E O MOTIVO NAO FOI TEMPO (HMO-323)
+// ------------------------------------------------------------
+// Ate a HMO-320 ela mutava `components/`, `app/` e `lib/` NO DISCO da arvore
+// rastreada e restaurava depois, com o restauro conferido byte a byte. Essa
+// conferencia pega o restauro que FALHA; ela nao pega o restauro que NUNCA
+// RODA, e e esse o caso comum -- `finally` nao roda em SIGTERM. Durante os
+// ~26s do bloco havia cinco arquivos simultaneamente mutados e commitaveis.
+//
+// O que faltava para migrar nao era desempenho: e que o bloco so aceitava
+// oraculo vindo de um alvo `test:*` COM etapa de compilacao, e seis dos oito
+// mutantes daqui sao medidos por um guard que nao compila nada -- ele le o
+// TEXTO da fonte. A HMO-323 deu ao bloco um lugar para declarar isso
+// (`oraculos`), com a recusa espelhada: suite sem compilacao e recusada, e
+// oraculo COM compilacao tambem. A sombra ja materializava o arquivo mutado em
+// disco (era o ponto 1 dela desde o comeco), entao o guard rodado com `cwd` na
+// sombra le o mutante sem a arvore de verdade ser tocada.
 //
 // POR QUE OS ORACULOS SAO DIFERENTES ENTRE SI
 // --------------------------------------------
@@ -378,9 +399,16 @@ const ARQUIVO_FILA = "lib/offline-queue.ts";
 const ARQUIVO_ROTA = "app/api/financial-installments/route.ts";
 const ARQUIVO_LANC = "lib/lancamento.ts";
 
-const GUARD = [process.execPath, ["scripts/check-fatura-no-lancamento.mjs"]];
-const TESTE_FILA = ["npm", ["run", "test:offline-queue"]];
-const TESTE_LANC = ["npm", ["run", "test:lancamento"]];
+// Os tres oraculos, pelo nome com que o bloco os conhece. O guard entra como
+// ORACULO (le a fonte, nao compila nada); os outros dois como SUITE, e dai as
+// etapas deles saem do proprio `scripts[...]` do package.json -- a receita que
+// o CI roda, e nao uma copia dela aqui.
+const GUARD = "check-fatura-no-lancamento";
+const TESTE_FILA = "test:offline-queue";
+const TESTE_LANC = "test:lancamento";
+
+const ORACULOS = { [GUARD]: "node scripts/check-fatura-no-lancamento.mjs" };
+const SUITES = [TESTE_FILA, TESTE_LANC];
 
 const MUTANTES_TS = [
   // ---------------------------------------------------------------------
@@ -396,7 +424,7 @@ const MUTANTES_TS = [
   {
     nome: "seletor_nao_devolve_a_escolha",
     arquivo: ARQUIVO_CAMPOS,
-    oraculo: GUARD,
+    alvo: GUARD,
     porque:
       "O SELETOR DECORATIVO. Sem o `onChange`, o `<select>` nativo ainda ABRE, " +
       "ainda lista os meses certos e o cursor ainda troca de linha -- mas o " +
@@ -410,7 +438,7 @@ const MUTANTES_TS = [
   {
     nome: "janela_vira_lista_vazia",
     arquivo: ARQUIVO_CAMPOS,
-    oraculo: GUARD,
+    alvo: GUARD,
     porque:
       "A CHAMADA MORTA COM O `import` INTACTO -- o caso que o cabecalho do guard " +
       "usa para justificar o `(` em cada nome de funcao. Trocar a janela por `[]` " +
@@ -423,7 +451,7 @@ const MUTANTES_TS = [
   {
     nome: "insert_sem_o_campo",
     arquivo: ARQUIVO_FORM,
-    oraculo: GUARD,
+    alvo: GUARD,
     porque:
       "O MUTANTE QUE A ISSUE PEDIU PRIMEIRO. Sem o campo no objeto `linha`, a " +
       "pessoa escolhe a fatura, a tela diz 'salvo' e a coluna fica NULA: a " +
@@ -438,7 +466,7 @@ const MUTANTES_TS = [
   {
     nome: "campo_sai_undefined",
     arquivo: ARQUIVO_FORM,
-    oraculo: GUARD,
+    alvo: GUARD,
     porque:
       "DEFEITO DE UMA PALAVRA: `undefined` no lugar de `null`. O supabase-js " +
       "OMITE a chave `undefined` do corpo, e coluna omitida num UPDATE fica " +
@@ -452,7 +480,7 @@ const MUTANTES_TS = [
   {
     nome: "data_da_compra_vira_o_mes",
     arquivo: ARQUIVO_FORM,
-    oraculo: GUARD,
+    alvo: GUARD,
     porque:
       "O CAMINHO QUE O PLANO RECUSOU (secao 2.1, caminho B): gravar dia 1 do " +
       "mes escolhido em `transaction_date`. Ele POE a compra na fatura certa -- " +
@@ -469,7 +497,7 @@ const MUTANTES_TS = [
   {
     nome: "fila_offline_perde_a_fatura",
     arquivo: ARQUIVO_FILA,
-    oraculo: TESTE_FILA,
+    alvo: TESTE_FILA,
     porque:
       "O ESCRITOR MUDO. O lancamento sem rede sincroniza, e ACEITO, vira linha " +
       "valida e cai na fatura da data -- sem erro, sem item `falhou`, sem nada " +
@@ -481,7 +509,7 @@ const MUTANTES_TS = [
   {
     nome: "ancora_da_rota_ignora_o_override",
     arquivo: ARQUIVO_ROTA,
-    oraculo: GUARD,
+    alvo: GUARD,
     porque:
       "A rota carimba o override na parcela 1 e conta as outras a partir da " +
       "fatura da DATA. Serie de 10 com a primeira numa fatura e as nove " +
@@ -507,7 +535,7 @@ const MUTANTES_TS = [
   {
     nome: "parcelas_contadas_da_data_da_compra",
     arquivo: ARQUIVO_LANC,
-    oraculo: TESTE_LANC,
+    alvo: TESTE_LANC,
     porque:
       "A VERSAO QUASE-CERTA, e a mais cara: contar as parcelas somando meses a " +
       "DATA DA COMPRA em vez de a ancora. Somar um mes a uma data NAO soma um " +
@@ -519,97 +547,95 @@ const MUTANTES_TS = [
   },
 ];
 
-/** Roda um oraculo. Verde = passou (exit 0). */
-function rodarOraculo([cmd, args]) {
-  const r = spawnSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-  return {
-    verde: r.status === 0,
-    saida: String(r.stderr || r.stdout || "").trim().split("\n").slice(-3).join(" | "),
-  };
-}
-
 function rodarMutantesDaFiacao() {
-  // O conteudo intacto de cada arquivo, lido UMA vez. E ele que restaura, e e
-  // contra ele que o restauro e conferido.
+  // O conteudo intacto de cada arquivo, lido UMA vez. Daqui em diante estes
+  // caminhos sao so LEITURA: o texto mutado vai para a sombra do bloco, nunca
+  // de volta para ca.
   const intactos = new Map();
   for (const m of MUTANTES_TS) {
     if (!intactos.has(m.arquivo)) intactos.set(m.arquivo, readFileSync(m.arquivo, "utf8"));
   }
 
-  // CONTROLE POSITIVO, UM POR ORACULO DISTINTO. Sem ele, um oraculo que ja
-  // estivesse vermelho por outro motivo faria TODO mutante "morrer", e o placar
-  // sairia cheio sem ter medido nada. E o mesmo papel do controle positivo da
-  // metade SQL.
-  const oraculos = new Map();
-  for (const m of MUTANTES_TS) oraculos.set(m.oraculo[1].join(" "), m.oraculo);
+  const bloco = criarBlocoDeMutantes({
+    suites: SUITES,
+    oraculos: ORACULOS,
+    rotulo: "fatura-escolhida",
+  });
 
-  for (const [nome, oraculo] of oraculos) {
-    const r = rodarOraculo(oraculo);
-    if (!r.verde) {
-      console.error(`CONTROLE POSITIVO FALHOU: '${nome}' ja reprova na arvore INTACTA -> ${r.saida}`);
-      console.error("Placar abaixo nao vale: um oraculo ja vermelho mata todo mutante de graca.");
-      falhou = true;
-      return;
+  try {
+    // CONTROLE POSITIVO, UM POR ORACULO DISTINTO, E ANTES DE TODO MUTANTE.
+    // Ele tem dois papeis aqui, e o segundo nasceu com o bloco:
+    //
+    //   1. um oraculo ja vermelho por outro motivo faria TODO mutante "morrer",
+    //      e o placar sairia cheio sem ter medido nada (o papel de sempre, o
+    //      mesmo do controle positivo da metade SQL);
+    //   2. a SOMBRA pode estar errada -- um oraculo que precisasse de artefato
+    //      compilado nao acharia `.tmp-*` nenhum la dentro. Ele reprova aqui,
+    //      na arvore INTACTA, antes de qualquer mutante entrar na conta.
+    //
+    // E por isso que ele e a resposta a "e se `oraculos` for declarado errado?":
+    // nao e preciso confiar na declaracao, ela e exercitada.
+    for (const alvo of [...new Set(MUTANTES_TS.map((m) => m.alvo))]) {
+      const r = bloco.rodar(`controle:${alvo}`, {}, alvo);
+      if (!r.verde) {
+        console.error(
+          `CONTROLE POSITIVO FALHOU: '${alvo}' ja reprova na arvore INTACTA (${r.como}) -> ${r.saida}`
+        );
+        console.error("Placar abaixo nao vale: um oraculo ja vermelho mata todo mutante de graca.");
+        falhou = true;
+        return;
+      }
+      console.log(`controle positivo: '${alvo}' passa na arvore intacta  OK`);
     }
-    console.log(`controle positivo: '${nome}' passa na arvore intacta  OK`);
-  }
-  console.log("");
+    console.log("");
 
-  let mortos = 0;
+    let mortos = 0;
 
-  for (const m of MUTANTES_TS) {
-    const intacto = intactos.get(m.arquivo);
+    for (const m of MUTANTES_TS) {
+      const intacto = intactos.get(m.arquivo);
 
-    // AS DUAS TRAVAS DO MUTANTE QUE NAO SE APLICA, iguais as da metade SQL.
-    // A primeira e mais importante aqui do que la: estes alvos sao codigo que a
-    // propria PR escreveu, e qualquer reescrita posterior de uma linha dessas
-    // faz o `de` deixar de casar. Sem a trava, o mutante viraria no-op, o
-    // oraculo ficaria verde e o placar leria "SOBREVIVEU" -- um alarme falso --
-    // ou, com a logica invertida, "morreu" sem nunca ter existido.
-    const ocorrencias = intacto.split(m.de).length - 1;
-    if (ocorrencias !== 1) {
-      console.error(
-        `NAO APLICOU: ${m.nome} -- o trecho procurado aparece ${ocorrencias}x em ${m.arquivo} (esperado: 1)`
-      );
-      falhou = true;
-      continue;
-    }
+      // AS DUAS TRAVAS DO MUTANTE QUE NAO SE APLICA, iguais as da metade SQL.
+      // A primeira e mais importante aqui do que la: estes alvos sao codigo que a
+      // propria PR escreveu, e qualquer reescrita posterior de uma linha dessas
+      // faz o `de` deixar de casar. Sem a trava, o mutante viraria no-op, o
+      // oraculo ficaria verde e o placar leria "SOBREVIVEU" -- um alarme falso --
+      // ou, com a logica invertida, "morreu" sem nunca ter existido.
+      //
+      // Elas respondem tambem ao que o `mudouASaida` do bloco NAO responde para
+      // um oraculo que le a fonte: la nao ha artefato para comparar, entao quem
+      // prova que a mutacao aconteceu e esta comparacao de TEXTO.
+      const ocorrencias = intacto.split(m.de).length - 1;
+      if (ocorrencias !== 1) {
+        console.error(
+          `NAO APLICOU: ${m.nome} -- o trecho procurado aparece ${ocorrencias}x em ${m.arquivo} (esperado: 1)`
+        );
+        falhou = true;
+        continue;
+      }
 
-    const mutado = intacto.replace(m.de, m.para);
-    if (mutado === intacto) {
-      console.error(`NAO MUTOU: ${m.nome} -- a substituicao nao mudou o arquivo`);
-      falhou = true;
-      continue;
-    }
+      const mutado = intacto.replace(m.de, m.para);
+      if (mutado === intacto) {
+        console.error(`NAO MUTOU: ${m.nome} -- a substituicao nao mudou o arquivo`);
+        falhou = true;
+        continue;
+      }
 
-    let r;
-    try {
-      writeFileSync(m.arquivo, mutado);
-      r = rodarOraculo(m.oraculo);
-    } finally {
-      writeFileSync(m.arquivo, intacto);
+      const r = bloco.rodar(m.nome, { [m.arquivo]: mutado }, m.alvo);
 
-      // O RESTAURO E CONFERIDO, e a falha dele e FATAL. Um `finally` que
-      // escreve nao prova que escreveu: se o restauro nao bater byte a byte, o
-      // worktree esta com o mutante dentro e tudo depois disto e ficcao.
-      if (readFileSync(m.arquivo, "utf8") !== intacto) {
-        console.error(`\nRESTAURO FALHOU em ${m.arquivo} apos o mutante '${m.nome}'.`);
-        console.error("O worktree esta MUTADO. Rode `git checkout --` nesse arquivo antes de qualquer coisa.");
-        process.exit(3);
+      if (r.verde) {
+        console.error(`SOBREVIVEU: ${m.nome}  (${m.alvo})`);
+        console.error(`            ${m.porque}`);
+        falhou = true;
+      } else {
+        mortos++;
+        console.log(`morreu:     ${m.nome}  (${m.alvo})`);
       }
     }
 
-    if (r.verde) {
-      console.error(`SOBREVIVEU: ${m.nome}  (${m.oraculo[1].join(" ")})`);
-      console.error(`            ${m.porque}`);
-      falhou = true;
-    } else {
-      mortos++;
-      console.log(`morreu:     ${m.nome}  (${m.oraculo[1].join(" ")})`);
-    }
+    console.log(`\nTypeScript: ${mortos}/${MUTANTES_TS.length} mutantes mortos`);
+  } finally {
+    bloco.fechar();
   }
-
-  console.log(`\nTypeScript: ${mortos}/${MUTANTES_TS.length} mutantes mortos`);
 }
 
 if (RODAR_SQL) rodarMutantesDaMigration();
