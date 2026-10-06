@@ -1247,6 +1247,55 @@ jobs:
       - name: O convite guardado nao se anuncia como enviado
         run: npm run test:convite-de-grupo
 
+      - name: 040_trava_de_percentual_e_papel_do_membro
+        run: $PSQL -f database/migrations/040_trava_de_percentual_e_papel_do_membro.sql
+
+      # Re-executavel: a funcao e CREATE OR REPLACE e o trigger tem
+      # DROP TRIGGER IF EXISTS antes do CREATE. Nao ha ALTER, CHECK novo nem
+      # backfill -- recolar nao duplica trigger nem mexe em linha nenhuma.
+      - name: 040 e idempotente
+        run: $PSQL -f database/migrations/040_trava_de_percentual_e_papel_do_membro.sql
+
+      # A trava de percentual e papel do membro (HMO-268, fase 2 de 7 da
+      # HMO-245). `group_members_update` (002:526) e
+      # `USING (user_id = auth.uid() OR is_group_admin(group_id))` dos dois
+      # lados -- policy de RLS diz quais LINHAS alguem alcanca, nunca quais
+      # COLUNAS, e nao compara OLD com NEW. O ramo `user_id = auth.uid()`
+      # entrega ao membro comum a propria linha INTEIRA, pelo PostgREST, com a
+      # chave anon que sai do bundle. Por isso e trigger, e nao policy.
+      #
+      # O que so o Postgres pega aqui:
+      #
+      #   - a diferenca entre "barrado pelo trigger" e "0 linhas pela RLS".
+      #     UPDATE filtrado pela RLS volta SUCESSO com zero linhas, sem erro --
+      #     um teste que so conferisse "o percentual nao mudou" ficaria verde
+      #     com trigger nenhum instalado. O helper `pg_temp.recusa` do teste
+      #     exige o SQLSTATE 42501 E a mensagem do trigger, e a SECAO 3 mostra
+      #     esse falso verde de corpo presente;
+      #   - `IS DISTINCT FROM` e nao `<>` na guarda de `percentage`, que e a
+      #     UNICA das quatro colunas que aceita nulo (001:1215). Com `<>`,
+      #     comparar 50.00 com NULL da NULL, o IF nao entra, e o membro comum
+      #     zera o proprio peso mandando `{"percentage": null}` em vez do 0.01
+      #     que as outras tentativas mandam. MEDIDO: esse mutante sobreviveu ao
+      #     teste com 31 assercoes verdes, e a assercao 'B anulando o proprio
+      #     percentual' da SECAO 2 entrou por causa dele;
+      #   - o par BEFORE / FOR EACH ROW. Um trigger de STATEMENT nao tem
+      #     OLD/NEW, que e a unica coisa que esta migration tem para olhar, e
+      #     BEFORE INSERT aparece em `pg_trigger` igual sem olhar UPDATE
+      #     nenhum -- e por isso que o bloco de prova da 040 confere `tgtype`,
+      #     e nao so a presenca do nome;
+      #   - a dependencia do GRANT do 002 em `is_group_admin(uuid)`. Sem ele o
+      #     trigger falha FECHADO com um 42501 que se le como recusa legitima,
+      #     e o que quebra e o caminho do ADMIN. A SECAO 7 revoga o GRANT de
+      #     proposito e exige que a mensagem seja a outra.
+      #
+      # Medido: 13 mutantes, 13 mortos, com controle positivo (a 040 intacta
+      # passa) e controle NEGATIVO (sem a 040 o teste reprova -- e o que detecta
+      # um template montado com a migration dentro).
+      # PG_TEMPLATE=<cadeia ate a 039> npm run mutantes:trava-de-membro
+      - name: Nao-admin nao muda o proprio percentual nem o proprio papel no grupo
+        run: $PSQL -f database/tests/040_trava_de_percentual_e_papel_do_membro_test.sql
+
       - name: 041_fatura_escolhida_no_lancamento
         run: $PSQL -f database/migrations/041_fatura_escolhida_no_lancamento.sql
 
