@@ -5163,13 +5163,196 @@ jobs:
           desligar 'lib/realizado-e-previsao.ts' '  direction: string | null | undefined' '  direction: string | null | undefined, ehFatura: boolean' \
             'direcaoNoPainel volta a receber o segundo argumento que a HMO-265 tirou'
 
-          echo "A verificacao fica vermelha nos cinco pontos de fiacao."
+          # OS QUATRO DA HMO-266: a legenda que separa as duas leituras.
+          #
+          # A HMO-266 decidiu NAO estender a regra do cartao a tela de
+          # relatorios, e o preco e que as duas telas divergem de proposito --
+          # medidos R$ 3.345 no painel contra R$ 7.545 nos relatorios, na fixture
+          # de 6 meses. A legenda e o que separa isso de um defeito aos olhos de
+          # quem compara, e ela e tao muda quanto a fiacao acima quando quebra.
+          desligar 'app/api/reports/cash-flow/route.ts' 'cartao: "compra",' '' \
+            'o ramo mensal da rota para de dizer qual criterio usou'
+
+          # O RENOMEIO, e nao a remocao. Este e o caso que passou VERDE na
+          # primeira versao da exigencia: a tela le `d.cartao`, entao renomear o
+          # campo quebra a legenda -- e `includes('cartao: "compra"')` casa DENTRO
+          # de `grao_do_cartao: "compra"`. Por isso aquela exigencia e a unica da
+          # lista escrita como regex.
+          desligar 'app/api/reports/cash-flow/route.ts' 'cartao: "compra",' 'grao_do_cartao: "compra",' \
+            'o campo do criterio e RENOMEADO -- a tela le d.cartao e nao acha nada'
+
+          desligar 'app/(dashboard)/dashboard/reports/page.tsx' 'legendaDoCartao(fluxo?.cartao)' 'legendaDoCartao("compra")' \
+            'a tela de relatorios crava o criterio em vez de ler o da resposta'
+
+          # CHAMA E NAO RENDERIZA. O mais silencioso dos cinco: a chamada fica no
+          # lugar, `legendaDoFluxo` continua sendo calculado, e a tela nao mostra
+          # nada. Nenhum lint reclama de uma variavel usada uma vez a menos no
+          # JSX, e o guard do import nao ajuda aqui porque o import e usado.
+          desligar 'app/(dashboard)/dashboard/reports/page.tsx' '{legendaDoFluxo}' '{null}' \
+            'a tela de relatorios calcula a legenda e NAO a renderiza'
+
+          desligar 'app/(dashboard)/dashboard/page.tsx' 'LEGENDA_DO_CARTAO.fatura' '""' \
+            'o painel perde a legenda gemea -- so UMA das duas telas explica'
+
+          echo "A verificacao fica vermelha nos dez pontos de fiacao."
 
       - name: 'A arvore voltou ao lugar depois de "A verificacao sabe falhar (fiacao do cartao pela fatura)"'
         run: |
           git status --porcelain > "$RUNNER_TEMP/arvore-agora.txt"
           if ! diff -q "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" > /dev/null; then
             echo "::error::O controle negativo acima nao restaurou a arvore -- procure por um .orig265 esquecido."
+            diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
+            exit 1
+          fi
+
+      # =======================================================================
+      # AS DUAS LEGENDAS QUE SEPARAM O CONSUMO DO CAIXA
+      # origem: nova (HMO-266)
+      # =======================================================================
+      # O guard acima prova que as duas legendas estao LIGADAS. Ele nao olha o
+      # que elas dizem, e um par de legendas ligadas pode estar errado de tres
+      # formas que o `tsc` nao ve, porque sao strings:
+      #
+      #   * as duas TROCADAS de lugar -- cada tela prometendo a diferenca com o
+      #     sinal invertido ("o painel mostra um total maior", quando o consumo e
+      #     sempre >= o caixa). Pior do que legenda nenhuma: manda a pessoa
+      #     procurar um defeito que nao existe no lugar errado;
+      #   * as duas IGUAIS, por copia -- uma das telas exibindo a frase da outra;
+      #   * uma delas descrevendo apenas a PROPRIA tela. Quem comparou os dois
+      #     numeros e chegou na legenda ja sabe o que aquela tela mostra; o que
+      #     ele nao sabe e qual das duas esta errada (nenhuma esta).
+      #
+      # A suite afirma sobre as propriedades do PAR -- cada legenda nomeia a
+      # outra tela, a direcao da diferenca e oposta nas duas, e as duas dizem que
+      # os dois totais estao certos -- e nao sobre o texto literal. A comparacao
+      # e sem acento e em minusculas de proposito: exigir a grafia faria de
+      # qualquer revisao de texto uma suite vermelha, e o sintoma disso e a
+      # proxima pessoa afrouxar a assercao inteira para parar o vermelho.
+      - name: As duas legendas do criterio do cartao formam um par que se explica
+        run: npm run test:criterio-do-cartao
+
+      # Controle negativo. A suite e TEXTUAL, e suite textual e a que mais
+      # facilmente passa a nao medir nada -- os cinco mutantes abaixo sao os
+      # modos de falha que importam, e todos foram medidos vermelhos.
+      - name: 'A verificacao sabe falhar (legendas do criterio do cartao)'
+        run: |
+          set -uo pipefail
+          FONTE=lib/criterio-do-cartao.ts
+
+          estragar() {
+            local de="$1" para="$2" rotulo="$3"
+            cp "$FONTE" "$FONTE.orig266"
+            # `g` no final, e nao por gosto: sem ele o `sed` troca a primeira
+            # ocorrencia de cada linha e deixa as outras -- e a troca das duas
+            # legendas abaixo depende de casar as DUAS chaves.
+            sed -i "s@$de@$para@g" "$FONTE"
+            if cmp -s "$FONTE" "$FONTE.orig266"; then
+              mv "$FONTE.orig266" "$FONTE"
+              echo "::error::o sed de '$rotulo' nao casou nada -- a ancora mudou e este controle mediria a arvore intacta"
+              exit 1
+            fi
+            # O .tmp-* compilado guarda o mutante mesmo depois de o .ts voltar.
+            # Aqui o alvo recompila por hash de conteudo (HMO-263), mas o rm e
+            # barato e nao depende disso estar certo.
+            rm -rf .tmp-criterio-do-cartao
+            if npm run test:criterio-do-cartao > /dev/null 2>&1; then
+              mv "$FONTE.orig266" "$FONTE"
+              echo "::error::Verde com a legenda estragada: $rotulo"
+              exit 1
+            fi
+            mv "$FONTE.orig266" "$FONTE"
+            rm -rf .tmp-criterio-do-cartao
+            echo "  vermelho em: $rotulo"
+          }
+
+          # 1) AS DUAS TROCADAS DE LUGAR. O mutante central desta suite: cada
+          #    tela passa a exibir a legenda da outra, e as duas prometem a
+          #    diferenca com o sinal invertido.
+          #    Nao usa o `estragar` porque e um sed de TRES substituicoes
+          #    encadeadas (compra -> TROCA -> fatura -> compra), e o helper
+          #    recebe um par so.
+          cp "$FONTE" "$FONTE.orig266"
+          sed -i 's@^  compra:$@  TROCA:@; s@^  fatura:$@  compra:@; s@^  TROCA:$@  fatura:@' "$FONTE"
+          if cmp -s "$FONTE" "$FONTE.orig266"; then
+            mv "$FONTE.orig266" "$FONTE"
+            echo "::error::a troca das duas legendas nao casou nada -- as chaves do mapa mudaram de nome"
+            exit 1
+          fi
+          rm -rf .tmp-criterio-do-cartao
+          if npm run test:criterio-do-cartao > /dev/null 2>&1; then
+            mv "$FONTE.orig266" "$FONTE"
+            echo "::error::Verde com as duas legendas TROCADAS de lugar."
+            exit 1
+          fi
+          mv "$FONTE.orig266" "$FONTE"
+          rm -rf .tmp-criterio-do-cartao
+          echo "  vermelho em: as duas legendas trocadas de lugar"
+
+          # 2) A FUNCAO IGNORA O CAMPO. Devolver sempre a legenda do consumo faz
+          #    a tela afirmar "conta na compra" debaixo de um total que pode ter
+          #    sido calculado pela fatura.
+          estragar 'if (cartao !== "compra" \&\& cartao !== "fatura") return null;' 'if (false) return null;' \
+            'legendaDoCartao aceita qualquer valor como criterio'
+
+          # 3) A LEGENDA PARA DE NOMEAR A OUTRA TELA. O defeito que parece
+          #    inofensivo: a frase continua verdadeira e deixa de resolver o
+          #    problema de quem esta comparando as duas telas.
+          estragar 'O painel conta no mês ' 'Este total conta no mês ' \
+            'a legenda dos relatorios para de nomear o painel'
+
+          # 4) A DIRECAO INVERTIDA EM UM LADO SO.
+          estragar 'menor enquanto houver fatura' 'maior enquanto houver fatura' \
+            'a legenda dos relatorios inverte a direcao da diferenca'
+
+          # 5) "OS DOIS ESTAO CERTOS" SAI DO TEXTO. Sem isso a legenda explica a
+          #    divergencia e deixa de pe a pergunta que a pessoa foi fazer.
+          estragar 'os dois estão certos, e são ' 'são ' \
+            'a legenda para de dizer que os dois totais estao certos'
+
+          # 6 e 7) O CONTRATO COM A ROTA, que e a unica assercao da suite que
+          #    nao e sobre texto. O arquivo mutado aqui e a ROTA, nao o modulo,
+          #    e e por isso que estes dois nao usam o `estragar` acima.
+          #
+          #    "consumo" nao e um nome inventado para o mutante: e como a
+          #    HMO-266 chama este criterio em prosa, inclusive no cabecalho de
+          #    lib/criterio-do-cartao.ts. Renomear o valor para a palavra que
+          #    todo mundo usa e a forma mais plausivel de quebrar isto, e nao
+          #    aparece em lugar nenhum -- a tela recebe o campo, nao reconhece, e
+          #    nao renderiza legenda.
+          estragar_rota() {
+            local de="$1" para="$2" rotulo="$3"
+            local R=app/api/reports/cash-flow/route.ts
+            cp "$R" "$R.orig266"
+            sed -i "s@$de@$para@g" "$R"
+            if cmp -s "$R" "$R.orig266"; then
+              mv "$R.orig266" "$R"
+              echo "::error::o sed de '$rotulo' nao casou nada -- a ancora na rota mudou"
+              exit 1
+            fi
+            rm -rf .tmp-criterio-do-cartao
+            if npm run test:criterio-do-cartao > /dev/null 2>&1; then
+              mv "$R.orig266" "$R"
+              echo "::error::Verde com a rota emitindo um criterio sem legenda: $rotulo"
+              exit 1
+            fi
+            mv "$R.orig266" "$R"
+            rm -rf .tmp-criterio-do-cartao
+            echo "  vermelho em: $rotulo"
+          }
+
+          estragar_rota 'cartao: "compra",' 'cartao: "consumo",' \
+            'o ramo mensal renomeia o VALOR para "consumo" -- a tela fica sem legenda'
+          estragar_rota 'cartao: cartaoPelaFatura ? "fatura" : "compra",' 'cartao: cartaoPelaFatura ? "caixa" : "compra",' \
+            'o ramo de intervalo renomeia o valor para "caixa" -- o painel fica sem legenda'
+
+          echo "A verificacao fica vermelha nos sete modos de falha do par de legendas."
+
+      - name: 'A arvore voltou ao lugar depois de "A verificacao sabe falhar (legendas do criterio do cartao)"'
+        run: |
+          rm -rf .tmp-*
+          git status --porcelain > "$RUNNER_TEMP/arvore-agora.txt"
+          if ! diff -q "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" > /dev/null; then
+            echo "::error::O controle negativo acima nao restaurou a arvore -- procure por um .orig266 esquecido."
             diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
             exit 1
           fi

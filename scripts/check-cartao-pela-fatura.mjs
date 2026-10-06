@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // =====================================================
-// A REGRA DO CARTAO ESTA LIGADA DE PONTA A PONTA? (HMO-265)
+// A REGRA DO CARTAO ESTA LIGADA DE PONTA A PONTA? (HMO-265 / HMO-266)
 // =====================================================
 //   node scripts/check-cartao-pela-fatura.mjs
 //
@@ -41,6 +41,17 @@
 //
 // E por isso que cada nome de funcao na lista abaixo vem com o `(`: o alvo e a
 // chamada, nao a mencao.
+//
+// A HMO-266 ACRESCENTOU TRES EXIGENCIAS, E ELAS SAO DO MESMO TIPO
+// ---------------------------------------------------------------
+// A decisao da HMO-266 foi NAO estender esta regra a tela de relatorios, e o
+// preco e que as duas telas divergem de proposito. A legenda que explica isso e
+// tao muda quanto a fiacao acima quando deixa de existir: string que ninguem
+// renderiza compila, e campo que a rota para de emitir nao da erro em lugar
+// nenhum -- a tela so volta a mostrar dois numeros sem explicacao, que e o
+// estado que produziu a HMO-258. As tres ultimas exigencias da lista cobrem
+// isso: o campo na rota, a chamada+render na tela de relatorios, e a legenda
+// gemea no painel.
 // =====================================================
 
 import { readFileSync } from "node:fs";
@@ -93,6 +104,58 @@ const EXIGENCIAS = [
       "sem o embed da conta a regra nao sabe que a linha esta na fatura, e sem " +
       "`ehFatura` toda transferencia entre contas proprias vira despesa do mes.",
   },
+
+  // -------------------------------------------------------------------------
+  // A LEGENDA QUE SEPARA AS DUAS LEITURAS (HMO-266)
+  // -------------------------------------------------------------------------
+  // A HMO-266 decidiu (opcao "consumo", escolhida pelo Helio) que a tela de
+  // relatorios NAO adota a regra acima: ela responde "no que o dinheiro foi
+  // gasto" e o painel responde "quando o dinheiro saiu". O preco disso e que as
+  // duas telas mostram totais diferentes para o mesmo periodo -- medidos
+  // R$ 7.545 contra R$ 3.345 na fixture de 6 meses -- e a legenda e a UNICA
+  // coisa que separa isso de um defeito aos olhos de quem compara.
+  //
+  // As tres exigencias abaixo sao de fiacao, e nenhuma aparece no `tsc`:
+  // `cartao` e campo de um objeto literal que ninguem tipa na saida, e as duas
+  // legendas sao strings que compilam igual renderizadas ou nao. Apagar
+  // qualquer uma das tres devolve o app ao estado em que a divergencia e muda --
+  // que e o estado que esta issue existe para nao deixar acontecer.
+  {
+    arquivo: "app/api/reports/cash-flow/route.ts",
+    // REGEX, e nao a string: `includes('cartao: "compra"')` casa dentro de
+    // `grao_do_cartao: "compra"`, e a tela le `d.cartao`. Renomear o campo e a
+    // forma mais plausivel de quebrar isto -- foi a mutacao que o controle
+    // negativo desta issue rodou primeiro, e ela passou VERDE na primeira
+    // versao desta exigencia. O `[^\w.]` exige que o nome comece aqui.
+    trechos: [/[^\w.]cartao: "compra"/],
+    porque:
+      "o ramo MENSAL da rota precisa dizer qual criterio usou, com esse nome de " +
+      "campo. Ele e o ramo que " +
+      "a tela de relatorios consome (`?months=N`), e sem o campo a legenda de la " +
+      "nao tem de onde sair -- ela passaria a SUPOR o criterio, que e o mesmo que " +
+      "nao ter legenda. O ramo de intervalo ja emitia o campo desde a HMO-265; " +
+      "este literal e o do ramo mensal, onde `cartao=fatura` e inalcancavel.",
+  },
+  {
+    arquivo: "app/(dashboard)/dashboard/reports/page.tsx",
+    trechos: ["legendaDoCartao(fluxo?.cartao)", "{legendaDoFluxo}"],
+    porque:
+      "a tela de relatorios precisa CHAMAR a legenda com o campo da resposta e " +
+      "RENDERIZAR o resultado. Chamar sem renderizar, ou renderizar uma constante " +
+      "sem olhar o campo, deixa a tela afirmando um criterio que ela nao leu. O " +
+      "argumento esta na exigencia de proposito: `legendaDoCartao(\"compra\")` " +
+      "compila, sempre devolve a mesma frase, e para de seguir a rota.",
+  },
+  {
+    arquivo: "app/(dashboard)/dashboard/page.tsx",
+    trechos: ["LEGENDA_DO_CARTAO.fatura"],
+    porque:
+      "o painel e a OUTRA metade do par. Uma legenda so nao resolve: quem ve " +
+      "R$ 3.345 aqui e R$ 7.545 la precisa encontrar a explicacao na tela em que " +
+      "estiver, nao na outra. Aqui e constante e nao o campo da resposta porque " +
+      "esta tela guarda apenas `d.summary` -- o que garante o criterio e o " +
+      "`cartao=fatura` da primeira exigencia deste guard.",
+  },
 ];
 
 let falhas = 0;
@@ -101,7 +164,14 @@ for (const { arquivo, trechos, porque } of EXIGENCIAS) {
   const fonte = semComentariosNemImports(readFileSync(arquivo, "utf8"));
 
   for (const trecho of trechos) {
-    if (fonte.includes(trecho)) continue;
+    // String ou RegExp. A string e o caso comum e e literal de proposito -- o
+    // alvo e a chamada `nomeDaFuncao(`, que nao precisa de regex. A regex entra
+    // onde o alvo e um NOME: `includes` casa dentro de um identificador maior
+    // (`grao_do_cartao` contem `cartao`), e renomear o campo e justamente a
+    // forma plausivel de desligar a fiacao sem apagar nada.
+    const presente =
+      trecho instanceof RegExp ? trecho.test(fonte) : fonte.includes(trecho);
+    if (presente) continue;
     console.error(`FALTA  ${arquivo}`);
     console.error(`       não cita \`${trecho}\` fora de comentário`);
     console.error(`       ${porque}`);
@@ -130,11 +200,18 @@ if (/export function direcaoNoPainel\([^)]*,/.test(realizadoEPrevisao)) {
 
 if (falhas > 0) {
   console.error(
-    `\n${falhas} ponto(s) da fiação do cartão pela fatura está desligado (HMO-265).`
+    `\n${falhas} ponto(s) da fiação do cartão pela fatura está desligado (HMO-265/HMO-266).`
   );
   process.exit(1);
 }
 
+// A contagem sai da propria lista, e nao de um numero escrito a mao. A versao
+// anterior dizia "nos quatro pontos" e continuou dizendo isso depois de a
+// HMO-266 acrescentar tres exigencias -- um rotulo que mente sobre o que acabou
+// de ser provado e pior do que rotulo nenhum.
+const pontos = EXIGENCIAS.reduce((n, e) => n + e.trechos.length, 0);
+
 console.log(
-  "OK: a regra do cartao pela fatura esta ligada nos quatro pontos, e `direcaoNoPainel` segue com um argumento."
+  `OK: a regra do cartao pela fatura esta ligada nos ${pontos} pontos, a divergencia ` +
+    "com a tela de relatorios tem legenda nas duas telas, e `direcaoNoPainel` segue com um argumento."
 );

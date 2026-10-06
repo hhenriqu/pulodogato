@@ -114,6 +114,7 @@ import {
   LinhaDeGastoVariavel,
   TileRealizadoEPrevisao,
 } from "@/components/dashboard/RealizadoEPrevisao";
+import { LEGENDA_DO_CARTAO } from "@/lib/criterio-do-cartao";
 // Os dois lados do portao do modo papel de pao (HMO-286). O `useModoPapel` ja
 // esta montado em `app/layout.tsx` pelo `ModoPapelProvider` da HMO-283.
 import { useModoPapel } from "@/components/ModoPapelProvider";
@@ -736,6 +737,29 @@ function PainelCompleto() {
             o esperado do periodo se le subtraindo os dois totais acima. */}
         <p className="text-xs text-muted-foreground">
           Saldo realizado do período: {moeda(fluxo?.net ?? 0)}
+        </p>
+
+        {/* ----------------------------------------------------------------
+            A LEGENDA DO CRITERIO DO CARTAO (HMO-266)
+            ----------------------------------------------------------------
+            A outra metade do par que comeca na tela de Relatorios. O Realizado
+            acima conta o cartao na FATURA PAGA (`&cartao=fatura` na URL la
+            atras); o grafico por mes dos Relatorios conta na COMPRA, e isso foi
+            DECIDIDO, nao esquecido -- as duas telas respondem perguntas
+            diferentes, e a HMO-266 tem o racional.
+
+            O que esta linha evita e barato de descrever: sem ela, quem abre as
+            duas telas no mesmo periodo ve R$ 3.345 aqui e R$ 7.545 la (medido na
+            fixture de 6 meses) e nao tem como saber qual delas esta com defeito.
+            Nenhuma esta.
+
+            Constante e nao `fluxo.cartao` porque esta tela nao guarda o campo --
+            ela guarda so `d.summary`. O que garante que o criterio e `fatura` e
+            o `&cartao=fatura` da URL, e isso ja tem guard proprio em
+            scripts/check-cartao-pela-fatura.mjs (primeira exigencia). O texto em
+            si mora em lib/criterio-do-cartao.ts, junto do par dele. */}
+        <p className="text-xs text-muted-foreground max-w-prose">
+          {LEGENDA_DO_CARTAO.fatura}
         </p>
 
         {/* ----------------------------------------------------------------

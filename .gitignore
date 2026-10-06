@@ -103,6 +103,7 @@ next-env.d.ts
 /.tmp-anomalies/
 /.tmp-variable-spend/
 /.tmp-cron-ledger/
+/.tmp-criterio-do-cartao/
 
 # saida do `npm run test:pwa-install`
 /.tmp-pwa-install/

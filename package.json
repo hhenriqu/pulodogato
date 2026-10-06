@@ -44,6 +44,7 @@
     "test:cash-flow": "node scripts/compila.mjs -p scripts/tsconfig.cash-flow-test.json && node scripts/resolve-aliases.mjs .tmp-cash-flow lib && node --test scripts/test-cash-flow-forecast.mjs",
     "test:variable-spend": "node scripts/compila.mjs -p scripts/tsconfig.variable-spend-test.json && node scripts/resolve-aliases.mjs .tmp-variable-spend lib && node --test scripts/test-variable-spend.mjs",
     "test:cron-ledger": "node scripts/compila.mjs -p scripts/tsconfig.cron-ledger-test.json && node scripts/resolve-aliases.mjs .tmp-cron-ledger lib && node --test scripts/test-cron-ledger.mjs",
+    "test:criterio-do-cartao": "node scripts/compila.mjs -p scripts/tsconfig.criterio-do-cartao-test.json && node --test scripts/test-criterio-do-cartao.mjs",
     "test:png": "node --test scripts/test-png.mjs",
     "test:pwa-assets": "node --test scripts/test-pwa-assets.mjs",
     "test:pwa-install": "node scripts/compila.mjs lib/pwa-install.ts --outDir .tmp-pwa-install --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-pwa-install.mjs",
