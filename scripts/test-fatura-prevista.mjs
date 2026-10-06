@@ -58,6 +58,9 @@ const OUTRO_CARTAO = "22222222-2222-4222-8222-222222222222";
 /** A janela que a tela de contas usa: de hoje ate o horizonte. */
 const JANELA = { de: "2026-10-01", ate: "2026-12-31", hoje: "2026-10-05" };
 
+/** Quem esta olhando -- `faturasPrevistasDaJanela` filtra a view por ele. */
+const EU = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa";
+
 /** Uma linha de `card_invoice_lines`, como a view a entrega. */
 function linhaDaFatura(extra = {}) {
   return {
@@ -74,6 +77,7 @@ function linhaDaFatura(extra = {}) {
 function sintetizar(linhas, extra = {}) {
   return sintetizarFaturasAbertas({
     linhas,
+    userId: EU,
     chavesPersistidas: [],
     ...JANELA,
     ...extra,
@@ -108,6 +112,39 @@ test("a fatura aberta entra na agenda com o total e o vencimento do cartao", () 
   // dentro deste total. Com `group_id` a parte do grupo dividiria a fatura
   // inteira pelo numero de membros.
   assert.equal(fatura.group_id, null);
+});
+
+test("a fatura sintetizada e DE QUEM ESTA OLHANDO -- HMO-311", () => {
+  // ATE A HMO-311 ESTE CAMPO NAO EXISTIA, e o sintoma era um botao que nao
+  // aparecia. `linhaPrevista` deriva `posso_editar` de
+  // `ehMinha(crua.user_id, meuUserId)`, e `undefined` ali vira `false`: a
+  // fatura aberta chegava a tela marcada como "linha de outra pessoa".
+  //
+  // Nao tinha efeito enquanto ela nao tinha acao nenhuma -- `podeAgirNaLinha`
+  // ja a recusava por `gravada: false`, ANTES de olhar `posso_editar`. No dia
+  // em que a fase 14 deu a ela o botao Pagar, condicionado a `posso_editar`, o
+  // botao sumiu exatamente no sabor que a fase existe para alcancar. Quem pegou
+  // foi a ESCRITA DE VERDADE em producao -- nenhuma suite daqui o alcancava,
+  // porque as fixtures de fatura aberta COPIAVAM o `posso_editar: false` de
+  // producao sem nunca perguntar se ele estava certo.
+  //
+  // E O CAMPO DIZ UM FATO, nao um palpite: `faturasPrevistasDaJanela` filtra
+  // `card_invoice_lines` por `.eq("user_id", userId)` EXPLICITAMENTE -- sem
+  // esse filtro a compra de grupo lancada no cartao de outra pessoa inflaria
+  // esta fatura, e o comentario de la diz isso. A linha e, por construcao, de
+  // quem esta olhando.
+  const { previstas } = sintetizar([linhaDaFatura()]);
+
+  assert.equal(previstas[0].user_id, EU);
+
+  // E O DONO VEM DO PARAMETRO, nao de um valor fixo: com outro `userId` a linha
+  // sai com outro dono. Sem este par, um `user_id` escrito literalmente na lib
+  // passaria na assercao de cima.
+  const outraPessoa = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb";
+  const { previstas: dela } = sintetizar([linhaDaFatura()], {
+    userId: outraPessoa,
+  });
+  assert.equal(dela[0].user_id, outraPessoa);
 });
 
 test("a linha sintetizada NAO tem id, e se anuncia como sintetizada", () => {

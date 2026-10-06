@@ -18,7 +18,9 @@
     "",
     "Comentario SO nesta chave, nunca com // no meio do objeto: o tsc aceita",
     "JSONC, mas o check-tests-in-ci.mjs le este arquivo com JSON.parse e estoura",
-    "com 'Expected double-quoted property name'."
+    "com 'Expected double-quoted property name'.",
+    "",
+    "lib/agenda-do-cartao.ts entrou na HMO-311, e nao por organizacao: e de la que sai a fatura ABERTA sintetizada (sintetizarFaturasAbertas), e o unico defeito desta fase que nenhuma suite pegou foi a linha dela chegando a tela com posso_editar: false. Com os dois arquivos aqui, a CADEIA INTEIRA -- sintetizar -> linhaPrevista -> podePagarAFatura -- cabe numa assercao, em vez de tres suites concordando sobre uma fixture escrita a mao."
   ],
   "compilerOptions": {
     "target": "es2020",
@@ -30,11 +32,16 @@
     "outDir": "../.tmp-acoes-da-linha",
     "rootDir": "..",
     "baseUrl": "..",
-    "paths": { "@/*": ["./*"] }
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
   },
   "include": [
     "../lib/acoes-da-linha.ts",
     "../lib/retorno-do-lancamento.ts",
-    "../lib/telas-de-movimentacao.ts"
+    "../lib/telas-de-movimentacao.ts",
+    "../lib/agenda-do-cartao.ts"
   ]
 }
