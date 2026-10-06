@@ -133,6 +133,7 @@ export async function faturasPrevistasDaJanela(
   }
 
   return sintetizarFaturasAbertas({
+    userId,
     linhas: abertas,
     chavesPersistidas: (fechadas ?? [])
       .map((f) => f.notes)

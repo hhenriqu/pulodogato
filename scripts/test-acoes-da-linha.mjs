@@ -56,6 +56,15 @@ const {
   rotuloDeConfirmar,
 } = await import("../.tmp-acoes-da-linha/lib/acoes-da-linha.js");
 
+// A CADEIA DE PRODUCAO INTEIRA, e nao uma fixture escrita a mao -- HMO-311.
+// Ver o ultimo bloco deste arquivo para por que ela precisa estar aqui.
+const { sintetizarFaturasAbertas } = await import(
+  "../.tmp-acoes-da-linha/lib/agenda-do-cartao.js"
+);
+const { linhaPrevista } = await import(
+  "../.tmp-acoes-da-linha/lib/telas-de-movimentacao.js"
+);
+
 const CARTAO = "33333333-3333-4333-b333-333333333333";
 
 /** Uma conta prevista comum, minha e gravada: o caso em que TUDO aparece. */
@@ -96,9 +105,17 @@ const faturaFechada = () =>
 // ---------------------------------------------------------------------------
 // OS TRES SABORES DE FATURA, TODOS MEUS -- HMO-311
 // ---------------------------------------------------------------------------
-// `faturaAberta()` acima e de OUTRO MEMBRO (`posso_editar: false`), e por isso
-// ela nao serve para medir o botao novo: ela recusaria pelo criterio errado, e o
-// bloco passaria verde com `natureza` esquecido. Estes tres sao meus.
+// `faturaAberta()` acima tem `posso_editar: false`, e por isso ela nao serve
+// para medir o botao novo: ela recusaria pelo criterio errado, e o bloco
+// passaria verde com `natureza` esquecido.
+//
+// E CUIDADO COM O QUE AQUELA FIXTURE DIZ. Ela NAO e mais a fatura aberta de
+// producao -- desde a HMO-311 a sintetizada carrega `user_id` e chega a tela
+// `posso_editar: true` (ver o bloco 11, no fim deste arquivo, onde a cadeia de
+// producao e montada de verdade). Ela continua valendo como o caso NEGATIVO:
+// uma linha de fatura que nao e minha. Nenhuma fixture escrita a mao prova de
+// onde `posso_editar` vem -- foi exatamente isso que deixou o botao sumir em
+// producao com 104 assercoes verdes.
 
 /** Sabor 1: a aberta sintetizada -- `gravada: false`, sem id de banco. */
 const faturaAbertaMinha = () =>
@@ -693,4 +710,87 @@ test("os rotulos de Editar e Excluir existem e sao diferentes", () => {
   assert.equal(ROTULO_DE_EDITAR, "Editar");
   assert.equal(ROTULO_DE_EXCLUIR, "Excluir");
   assert.notEqual(ROTULO_DE_EDITAR, ROTULO_DE_EXCLUIR);
+});
+
+// ---------------------------------------------------------------------------
+// 11. A CADEIA DE PRODUCAO, E NAO TRES SUITES CONCORDANDO SOBRE UMA FIXTURE
+// ---------------------------------------------------------------------------
+// ESTE BLOCO EXISTE PORQUE UM DEFEITO PASSOU POR TODAS AS OUTRAS SUITES.
+//
+// A fase 14 foi entregue, mergeada e publicada com 104 assercoes verdes -- e na
+// tela de Despesas de producao a linha da fatura saiu SEM o botao. A causa: a
+// fatura ABERTA sintetizada nao carregava `user_id` (`FaturaPrevista` nao tinha
+// o campo), entao `linhaPrevista` a marcava `posso_editar: false`, e
+// `podePagarAFatura` -- que exige `posso_editar`, com razao -- a recusava.
+//
+// E A RAZAO DE NINGUEM TER VISTO E O QUE IMPORTA AQUI: as fixtures de fatura
+// aberta deste repositorio (`faturaAberta()` acima, `FATURA` em
+// test-secao-da-tela.mjs) CARREGAVAM `posso_editar: false` -- copiado da
+// producao de entao, quando aquele valor nao tinha consequencia nenhuma, porque
+// `podeAgirNaLinha` ja recusava a fatura por `gravada: false` ANTES de olhar o
+// campo. As fixtures estavam certas sobre o DADO e erradas sobre o FATO, e
+// nenhuma assercao tinha como notar: as tres suites concordavam entre si.
+//
+// O que nenhuma delas fazia era PERGUNTAR A PRODUCAO de onde aquele dado vem.
+// E o que este bloco faz: ele monta a linha pela cadeia real
+// (`sintetizarFaturasAbertas` -> `linhaPrevista` -> `podePagarAFatura`), sem
+// escrever `posso_editar` em lugar nenhum.
+
+const MEU_ID = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa";
+
+/** A fatura ABERTA como PRODUCAO a produz -- nada escrito a mao aqui. */
+function faturaAbertaDaProducao(userId = MEU_ID) {
+  const { previstas } = sintetizarFaturasAbertas({
+    linhas: [
+      {
+        account_id: CARTAO,
+        account_name: "Nubank",
+        invoice_month: "2026-10-01",
+        invoice_due_date: "2026-10-28",
+        invoice_amount: 317.45,
+      },
+    ],
+    userId,
+    chavesPersistidas: [],
+    de: "2026-10-01",
+    ate: "2026-10-31",
+    hoje: "2026-10-06",
+  });
+  return previstas[0];
+}
+
+test("CADEIA: a fatura ABERTA de producao chega a tela com o botao Pagar", () => {
+  const crua = faturaAbertaDaProducao();
+  assert.ok(crua, "a sintese nao produziu fatura -- o caso nao vale");
+
+  const linha = linhaPrevista(crua, MEU_ID);
+  assert.ok(linha, "`linhaPrevista` descartou a fatura -- o caso nao vale");
+
+  // O QUE A CADEIA PRODUZ, e nao o que esta suite gostaria que ela produzisse.
+  assert.equal(linha.natureza, "fatura");
+  assert.equal(linha.gravada, false, "a fatura aberta nao existe no banco");
+  assert.equal(
+    linha.posso_editar,
+    true,
+    "a fatura sintetizada chegou a tela como linha de OUTRA pessoa -- foi este o defeito que a HMO-311 publicou"
+  );
+
+  // E A CONCLUSAO: o botao existe.
+  assert.equal(podePagarAFatura(linha), true);
+
+  // E a baixa generica continua recusada, pelos dois motivos de sempre.
+  assert.equal(podeAgirNaLinha(linha), false);
+  assert.equal(pedidoDeConfirmacao(linha), null);
+});
+
+test("CADEIA: a fatura aberta de OUTRA pessoa nao ganha o botao", () => {
+  // O PAR, e ele e o que impede o conserto de virar "aprove tudo": a cadeia
+  // tambem tem de DIZER NAO. O `userId` da sintese e o de quem leu
+  // `card_invoice_lines`; quem OLHA a tela e o segundo argumento de
+  // `linhaPrevista`. Com os dois diferentes, a linha nao e minha.
+  const crua = faturaAbertaDaProducao("bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb");
+  const linha = linhaPrevista(crua, MEU_ID);
+
+  assert.equal(linha.posso_editar, false);
+  assert.equal(podePagarAFatura(linha), false);
 });

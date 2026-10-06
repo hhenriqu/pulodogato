@@ -218,6 +218,33 @@ export interface FaturaPrevista {
   id: null;
   /** O discriminante da uniao. Sempre `true`. */
   fatura_prevista: true;
+  /**
+   * DE QUEM E ESTA FATURA -- acrescentado na HMO-311 (fase 14).
+   *
+   * E O DONO DA LEITURA, e nao um palpite: `faturasPrevistasDaJanela` filtra
+   * `card_invoice_lines` por `.eq("user_id", userId)` EXPLICITAMENTE, com o
+   * motivo escrito la (a policy do 002 tem um OR de grupo, e sem o filtro a
+   * compra de grupo lancada no cartao de OUTRA pessoa inflaria esta fatura).
+   * A linha sintetizada e, por construcao, de quem esta olhando.
+   *
+   * ATE A HMO-311 ELE FALTAVA, E O SINTOMA ERA UM BOTAO QUE NAO APARECIA.
+   * `linhaPrevista` deriva `posso_editar` de `ehMinha(crua.user_id, meuUserId)`,
+   * e `undefined` ali vira `false`: a fatura aberta chegava a tela marcada como
+   * "linha de outra pessoa". Isso nao tinha efeito enquanto ela nao tinha acao
+   * nenhuma -- `podeAgirNaLinha` ja a recusava por `gravada: false` (regra 3),
+   * ANTES de olhar `posso_editar` --, e por isso ninguem notou. No dia em que a
+   * fase 14 deu a ela um botao condicionado a `posso_editar`, o botao sumiu
+   * exatamente no sabor que a fase existe para alcancar. Quem pegou foi a
+   * ESCRITA DE VERDADE em producao; nenhuma suite daqui o alcancava, porque as
+   * fixtures de fatura aberta deste repositorio copiavam o `posso_editar: false`
+   * de producao sem nunca perguntar se ele estava certo.
+   *
+   * E ELE NAO AFROUXA NADA: `podeAgirNaLinha` continua recusando a fatura
+   * sintetizada por `gravada: false` e por `natureza`, e
+   * `fatura_suspeita`/`elo_da_fatura` continuam `null` porque as duas exigem
+   * linha GRAVADA. O unico campo que muda de valor e `posso_editar`.
+   */
+  user_id: string;
   account_id: string;
   account_name: string | null;
   /** 'AAAA-MM-01'. E o que o botao "informei que paguei" manda para o `close`. */
@@ -326,6 +353,15 @@ export interface SinteseDaFatura {
  */
 export function sintetizarFaturasAbertas(params: {
   linhas: LinhaDeFaturaAberta[];
+  /**
+   * De quem e a leitura -- vai para `FaturaPrevista.user_id` (HMO-311).
+   *
+   * OBRIGATORIO, e nao opcional com um `??`: opcional, o chamador que o
+   * esquecesse produziria uma fatura marcada como "de outra pessoa" e o botao
+   * Pagar sumiria sem erro nenhum -- que e exatamente o defeito que este campo
+   * nasceu para consertar. Ver o comentario em `FaturaPrevista.user_id`.
+   */
+  userId: string;
   /** As `notes` das previsoes que JA existem no banco. */
   chavesPersistidas: Iterable<string>;
   /** A janela da agenda, 'AAAA-MM-DD'. */
@@ -334,7 +370,7 @@ export function sintetizarFaturasAbertas(params: {
   /** 'AAAA-MM-DD' -- para "vencida" e para `days_until_due`. */
   hoje: string;
 }): SinteseDaFatura {
-  const { linhas, chavesPersistidas, de, ate, hoje } = params;
+  const { linhas, userId, chavesPersistidas, de, ate, hoje } = params;
   const persistidas = new Set(chavesPersistidas);
 
   // Agrupa por cartao+mes. O total e SUM(invoice_amount) -- a mesma soma que
@@ -411,6 +447,7 @@ export function sintetizarFaturasAbertas(params: {
     previstas.push({
       id: null,
       fatura_prevista: true,
+      user_id: userId,
       account_id: linha.account_id,
       account_name: nome,
       invoice_month: mes,

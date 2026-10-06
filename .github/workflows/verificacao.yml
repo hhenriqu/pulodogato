@@ -4794,7 +4794,33 @@ jobs:
           fi
           cp $ACOES.orig $ACOES
 
-          echo "A verificacao das acoes fica vermelha nos oito defeitos."
+          # 9) A FATURA SINTETIZADA PERDE O DONO. O defeito que ESCAPOU de 104
+          #    assercoes verdes e foi para producao na HMO-311: sem `user_id`,
+          #    `linhaPrevista` marca a fatura aberta `posso_editar: false` e o
+          #    botao Pagar some -- exatamente no sabor que a fase existe para
+          #    alcancar.
+          #
+          #    Ele nao mora em `acoes-da-linha.ts`, e esta aqui de proposito: o
+          #    que ele mede e a CADEIA (sintetizar -> linhaPrevista ->
+          #    podePagarAFatura), que e a unica coisa que teria pego o defeito.
+          #    Toda fixture escrita a mao concordava com as outras.
+          AGENDA=lib/agenda-do-cartao.ts
+          cp $AGENDA $AGENDA.orig
+          sed -i '/^      user_id: userId,$/d' $AGENDA
+          mutou $AGENDA 9
+          if npm run test:acoes-da-linha > /dev/null 2>&1; then
+            echo "::error::Verde com a fatura sintetizada chegando a tela como linha de outra pessoa."
+            mv $AGENDA.orig $AGENDA
+            exit 1
+          fi
+          if npm run test:fatura-prevista > /dev/null 2>&1; then
+            echo "::error::A sintese ficou verde sem carimbar o dono da leitura."
+            mv $AGENDA.orig $AGENDA
+            exit 1
+          fi
+          mv $AGENDA.orig $AGENDA
+
+          echo "A verificacao das acoes fica vermelha nos nove defeitos."
 
       - name: 'A arvore voltou ao lugar depois de "A verificacao das acoes sabe falhar"'
         run: |
