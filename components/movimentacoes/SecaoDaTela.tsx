@@ -50,6 +50,7 @@
 // -----------------------------------------------------------------------------
 
 import Link from "next/link";
+import type { Route } from "next";
 import {
   AlertCircle,
   Check,
@@ -319,11 +320,11 @@ function BotoesDaLinha({
             aria-label={ROTULO_DE_EDITAR}
             title={ROTULO_DE_EDITAR}
           >
-            {/* `as any`: `experimental.typedRoutes` tipa o destino como uma
+            {/* `as Route`: `experimental.typedRoutes` tipa o destino como uma
                 uniao literal, e este caminho e montado por `caminhoDeEdicao`
                 numa lib pura -- a mesma concessao de `irPara` em
                 TelaDeMovimentacao.tsx, pelo mesmo motivo. */}
-            <Link href={acoes.hrefDeEdicao(linha) as any}>
+            <Link href={acoes.hrefDeEdicao(linha) as Route}>
               <Pencil className="h-4 w-4" />
             </Link>
           </Button>

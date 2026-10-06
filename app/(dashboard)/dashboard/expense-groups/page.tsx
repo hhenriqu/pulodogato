@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { User } from "@supabase/supabase-js";
 import { Button } from "@/components/ui/button";
@@ -41,7 +41,6 @@ import {
   Archive,
   Users,
   Plus,
-  Settings,
   Share2,
   Crown,
   UserPlus,
@@ -54,7 +53,6 @@ import {
   LogIn,
   TrendingUp,
   Eye,
-  EyeOff,
   Check,
   X,
   Clock,
@@ -62,7 +60,6 @@ import {
   Edit,
   Trash2,
   UserMinus,
-  Settings2,
 } from "lucide-react";
 import { useGroupInvitations } from "@/lib/hooks/useGroupInvitations";
 
@@ -116,14 +113,9 @@ interface PendingGroupRequest {
   requested_at: string;
 }
 
-interface GroupInvitation {
-  id: string;
-  invite_method: "email" | "phone" | "code";
-  invite_target: string;
-  status: "pending" | "accepted" | "rejected" | "expired";
-  expires_at: string;
-  created_at: string;
-}
+// Nao ha interface de convite aqui: o tipo vem de `useGroupInvitations`, que e
+// quem busca e devolve a lista. A copia local que existia neste arquivo nunca
+// foi usada -- ninguem a importava e nenhuma variavel a anotava.
 
 export default function ExpenseGroupsPage() {
   const [user, setUser] = useState<User | null>(null);
@@ -192,14 +184,11 @@ export default function ExpenseGroupsPage() {
     message: "",
   });
 
-  const supabase = createClient();
-
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
+      // Dentro do callback: fora, o cliente vira dependencia dele, e nada mais
+      // nesta tela usa o Supabase direto -- o resto passa pelas rotas.
+      const supabase = createClient();
       const {
         data: { user },
       } = await supabase.auth.getUser();
@@ -247,7 +236,11 @@ export default function ExpenseGroupsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const handleCreateGroup = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -982,7 +975,7 @@ export default function ExpenseGroupsPage() {
                         </div>
 
                         <div className="flex -space-x-2">
-                          {group.members?.slice(0, 4).map((member, idx) => (
+                          {group.members?.slice(0, 4).map((member) => (
                             <Avatar
                               key={member.id}
                               className="h-8 w-8 border-2 border-background"
@@ -1296,7 +1289,7 @@ export default function ExpenseGroupsPage() {
             <CardHeader>
               <CardTitle>Editar Grupo</CardTitle>
               <CardDescription>
-                Altere as informações do grupo "{selectedGroup.name}"
+                Altere as informações do grupo &quot;{selectedGroup.name}&quot;
               </CardDescription>
             </CardHeader>
             <CardContent>

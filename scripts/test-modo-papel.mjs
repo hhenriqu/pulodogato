@@ -235,7 +235,10 @@ test("storage bloqueado nao derruba a tela -- cai no padrao", () => {
 test("sem window (SSR) a leitura devolve o padrao em vez de estourar", () => {
   // O modulo e importado por `app/layout.tsx`, que roda no servidor.
   const anterior = globalThis.window;
-  // @ts-ignore -- e exatamente o estado do servidor que esta sendo simulado.
+  // Apagar `window` e exatamente o estado do servidor que esta sendo simulado.
+  // Sem diretiva de tipo: o `include` do tsconfig e `**/*.ts` e `**/*.tsx`,
+  // entao nenhum `.mjs` de `scripts/` passa pelo tsc e a diretiva nao suprimia
+  // nada -- era um dos dois erros de lint que a HMO-179 encontrou.
   delete globalThis.window;
   try {
     assert.equal(lerModoPapel(), DEFAULT_MODO_PAPEL);
@@ -380,7 +383,7 @@ test("sem a meta de theme-color nada estoura", () => {
 
 test("sem document (SSR) aplicar nao faz nada e nao estoura", () => {
   const anterior = globalThis.document;
-  // @ts-ignore -- o estado do servidor.
+  // O estado do servidor; sem diretiva de tipo, pelo mesmo motivo de cima.
   delete globalThis.document;
   try {
     assert.doesNotThrow(() => aplicarModoPapel("ligado"));
