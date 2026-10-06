@@ -1,0 +1,41 @@
+{
+  "//": [
+    "Compila os crivos de fundamento (HMO-195) para o teste renderizar o",
+    "componente de verdade, e nao uma copia da marcacao dele. O `jsx: react-jsx`",
+    "e o que permite renderizar com react-dom/server no node, sem runner novo --",
+    "mesmo desenho do tsconfig.previsto-bloco-test.json.",
+    "",
+    "Por que a suite renderiza, e nao se contenta com lib/crivos.ts puro: a parte",
+    "que engana nesta entrega mora na MARCACAO. Um JSX que imprima os tres",
+    "estados com o mesmo texto, ou que deixe o ativo sem criterio com a lista",
+    "vazia em vez da frase, passa verde em qualquer teste de aritmetica -- e",
+    "campo vazio se le como 'ainda carregando' ou como zero, que num crivo de",
+    "divida APROVA.",
+    "",
+    "O resolve-aliases roda com --espelha-raiz porque card.tsx, button.tsx,",
+    "input.tsx, label.tsx e alert.tsx importam lib/utils.ts pelo alias @/."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-crivos",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../components/investments/CrivosDeFundamento.tsx",
+    "../components/ui/card.tsx",
+    "../components/ui/button.tsx",
+    "../components/ui/input.tsx",
+    "../components/ui/label.tsx",
+    "../components/ui/alert.tsx",
+    "../lib/crivos.ts",
+    "../lib/utils.ts"
+  ]
+}

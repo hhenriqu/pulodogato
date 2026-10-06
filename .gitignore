@@ -231,6 +231,10 @@ next-env.d.ts
 # o ingestor no meio de uma suite nao pode apagar o build do teste
 /.tmp-ingest-cvm/
 
+# test:crivos (a lista de criterios de fundamento, HMO-195 -- leva o componente
+# e os cinco arquivos de components/ui que ele importa)
+/.tmp-crivos/
+
 # test:planos-em-breve (a pagina de Planos e a pagina publica renderizadas com
 # react-dom/server, HMO-198 -- leva components/ui/, lib/planos.js,
 # lib/utils.js e types/subscription.js junto)
