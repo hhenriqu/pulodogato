@@ -20,9 +20,10 @@
 //
 // A FONTE NUNCA E MUTADA NO DISCO
 // -------------------------------
-// A mutacao e feita em memoria; o `.ts` mutado e escrito numa COPIA da arvore,
-// em diretorio temporario, e e de la que o `tsc` compila. `lib/lancamento.ts`
-// nao e tocado em momento nenhum.
+// A mutacao e feita em memoria e escrita numa SOMBRA da arvore -- um diretorio
+// temporario onde tudo e symlink menos o arquivo mutado (ver
+// `scripts/mutantes-em-bloco.mjs`). `lib/lancamento.ts` nao e tocado em momento
+// nenhum; o pior caso de um processo morto no meio e uma sombra orfa em /tmp.
 //
 // O jeito usual -- mutar o arquivo, rodar, restaurar no `finally` -- deixa a
 // fonte mutada no disco quando o processo morre no meio, e o placar seguinte
@@ -32,30 +33,12 @@
 // COMO RODAR
 //   npm run mutantes:parcelamento
 
-import {
-  readFileSync,
-  writeFileSync,
-  mkdtempSync,
-  rmSync,
-  mkdirSync,
-  cpSync,
-} from "node:fs";
-import { execFileSync } from "node:child_process";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
+
+import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
 
 const FONTE = "lib/lancamento.ts";
-const TESTE = "scripts/test-parcelamento.mjs";
-
-// O `tsc` DO PROJETO, POR CAMINHO ABSOLUTO.
-//
-// `npx tsc` nao serve aqui: a arvore mutada e um diretorio temporario SEM
-// node_modules, entao o npx cai no `tsc` do sistema (o pacote Debian
-// `node-typescript`), que responde "This is not the tsc command you are looking
-// for" e sai com erro. O sintoma e brutal -- TODO mutante "morre no tsc" e o
-// placar sai perfeito sem uma assercao ter rodado. Foi o controle positivo que
-// pegou isto; sem ele o arquivo teria nascido mentindo 16/16.
-const TSC = join(process.cwd(), "node_modules/.bin/tsc");
+const SUITE = "test:parcelamento";
 
 const original = readFileSync(FONTE, "utf8");
 
@@ -162,7 +145,18 @@ const MUTANTES = [
     nome: "parcelamento_volta_para_toda_despesa",
     porque:
       "a checkbox volta a aparecer fora do cartao, onde a rota recusa -- a tela oferece um caminho que o servidor nao atende",
-    de: "    parcelamento: !editando && ehNoCartao,",
+    // A ANCORA MUDOU DE TEXTO SEM MUDAR DE SENTIDO (HMO-319).
+    //
+    // Era `!editando && ehNoCartao`; a HMO-254 trocou por `natureza === "card"`
+    // -- de proposito, e o comentario de 12 linhas acima da linha em
+    // `lib/lancamento.ts` explica por que. O mutante continuava procurando o
+    // texto antigo, nao achava, e o runner reportava
+    // `NAO APLICOU: parcelamento_volta_para_toda_despesa`.
+    //
+    // Nao da para "consertar" isso tornando a busca frouxa: o que o mutante
+    // precisa afirmar e que a condicao do cartao carrega peso, e isso se escreve
+    // apagando a condicao -- qualquer que seja a forma dela hoje.
+    de: '    parcelamento: !editando && natureza === "card",',
     para: "    parcelamento: !editando,",
   },
   {
@@ -174,86 +168,34 @@ const MUTANTES = [
   },
 ];
 
-const dir = mkdtempSync(join(tmpdir(), "mutantes-parcelamento-"));
+// O BLOCO: um diretorio, um processo, 16 voltas dentro (HMO-319).
+//
+// Antes eram 16 copias da arvore e 16 invocacoes de `tsc`. Agora a compilacao e
+// em processo e todas as voltas dividem o AST ja parseado de tudo que nao e o
+// arquivo mutado -- que e o unico reparseado por volta. As etapas (compilar,
+// depois `node --test`) vem do proprio alvo `test:parcelamento` no package.json,
+// em vez de serem repetidas a mao aqui: duas copias da mesma receita divergem, e
+// a copia daqui mediria um pipeline que a suite nao usa mais.
+const bloco = criarBlocoDeMutantes({ rotulo: "parcelamento", suites: [SUITE] });
 
-/**
- * Compila `sql`... nao: compila a FONTE mutada numa copia da arvore e roda a
- * suite contra ela.
- *
- * A suite importa de `../.tmp-parcelamento/lib/lancamento.js` -- caminho
- * relativo ao arquivo de teste --, entao a copia precisa manter a mesma forma:
- * `<raiz>/scripts/test-parcelamento.mjs` e `<raiz>/.tmp-parcelamento/lib/`.
- */
-function rodar(nome, fonte) {
-  const raiz = join(dir, nome);
-  mkdirSync(join(raiz, "lib"), { recursive: true });
-  mkdirSync(join(raiz, "scripts"), { recursive: true });
-
-  writeFileSync(join(raiz, "lib/lancamento.ts"), fonte);
-  cpSync(TESTE, join(raiz, "scripts/test-parcelamento.mjs"));
-
-  try {
-    execFileSync(
-      TSC,
-      [
-        "lib/lancamento.ts",
-        "--outDir",
-        ".tmp-parcelamento/lib",
-        "--module",
-        "es2020",
-        "--target",
-        "es2020",
-        "--moduleResolution",
-        "node",
-        "--skipLibCheck",
-      ],
-      { cwd: raiz, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
-    );
-  } catch (e) {
-    // O `tsc` reprovando TAMBEM mata o mutante -- e um mutante que nem compila
-    // e informacao valida --, mas tem de ser distinguivel do teste reprovando:
-    // um mutante que nunca rodou nao prova nada sobre as assercoes.
-    return {
-      verde: false,
-      como: "tsc",
-      saida: String(e.stdout ?? e.message).trim().split("\n").slice(0, 2).join(" | "),
-    };
-  }
-
-  try {
-    execFileSync("node", ["--test", "scripts/test-parcelamento.mjs"], {
-      cwd: raiz,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    return { verde: true };
-  } catch (e) {
-    const saida = String(e.stdout ?? "") + String(e.stderr ?? "");
-    const quais = [...saida.matchAll(/✖ (.+?) \(/g)]
-      .map((m) => m[1])
-      .filter((n) => n !== "failing tests:");
-    return {
-      verde: false,
-      como: "teste",
-      saida: [...new Set(quais)].slice(0, 3).join("; ") || "reprovou",
-    };
-  }
-}
+const rodar = (nome, fonte) => bloco.rodar(nome, { [FONTE]: fonte }, SUITE);
 
 let falhou = false;
 
 try {
-  // CONTROLE POSITIVO. Sem ele, uma copia de arvore quebrada faria TODO mutante
-  // "morrer" e o placar sairia cheio sem que nenhuma assercao tivesse medido
-  // nada -- ver `mutantes-e-controle-negativo`.
-  const controle = rodar("controle", original);
+  // CONTROLE POSITIVO. Sem ele, um aparelho de mutacao quebrado faria TODO
+  // mutante "morrer" e o placar sairia cheio sem que nenhuma assercao tivesse
+  // medido nada -- ver `mutantes-e-controle-negativo`. Ele roda pelo MESMO
+  // caminho que os mutantes, o que o torna a unica coisa capaz de pegar erro no
+  // proprio runner.
+  const controle = bloco.rodar("controle", {}, SUITE);
   if (!controle.verde) {
     console.error(
       `CONTROLE FALHOU: a fonte intacta nao passa na suite (${controle.como}) -> ${controle.saida}`
     );
-    console.error("A copia da arvore esta errada. O placar abaixo nao vale.");
+    console.error("O aparelho de mutacao esta errado. O placar abaixo nao vale.");
     process.exitCode = 1;
-    rmSync(dir, { recursive: true, force: true });
+    bloco.fechar();
     process.exit(1);
   }
   console.log("controle: a fonte intacta passa na suite  OK\n");
@@ -282,6 +224,14 @@ try {
     if (r.verde) {
       console.error(`SOBREVIVEU: ${m.nome}`);
       console.error(`            ${m.porque}`);
+      // Sobreviver emitindo o MESMO byte nao e furo de assercao: e mutante
+      // equivalente, e nenhuma assercao o mataria. A resposta e tirar o mutante
+      // da lista, nao escrever teste -- oposta a do outro caso.
+      if (!r.mudouASaida) {
+        console.error(
+          "            (a saida compilada e identica a da arvore limpa: mutante EQUIVALENTE, nao furo de teste)",
+        );
+      }
       falhou = true;
     } else {
       mortos++;
@@ -301,7 +251,7 @@ try {
     falhou = true;
   }
 } finally {
-  rmSync(dir, { recursive: true, force: true });
+  bloco.fechar();
 }
 
 process.exitCode = falhou ? 1 : 0;

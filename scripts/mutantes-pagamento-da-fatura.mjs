@@ -36,36 +36,11 @@
 // COMO RODAR
 //   npm run mutantes:pagamento-da-fatura
 
-import {
-  readFileSync,
-  writeFileSync,
-  mkdtempSync,
-  rmSync,
-  mkdirSync,
-  cpSync,
-} from "node:fs";
-import { execFileSync } from "node:child_process";
-import { join, dirname } from "node:path";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
+import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
+import { join } from "node:path";
 
 const FONTE = "lib/pagamento-da-fatura.ts";
-
-// A COPIA PRECISA DO FECHAMENTO INTEIRO DE IMPORTS.
-//
-// O mutador copia SO o que esta nesta lista. Falta qualquer um e o `tsc` para
-// em TS2307 ("Cannot find module '@/lib/...'") antes de uma assercao rodar: o
-// placar sairia perfeito e o controle positivo reprovaria. E a mesma lista do
-// `include` do tsconfig, mais o que a suite importa.
-const ACOMPANHAM = [
-  "lib/agenda-do-cartao.ts",
-  "lib/card-invoice.ts",
-  "lib/chave-da-fatura.ts",
-  "lib/transferencia.ts",
-  "lib/lancamento.ts",
-  "scripts/tsconfig.pagamento-da-fatura-test.json",
-  "scripts/resolve-aliases.mjs",
-  "scripts/test-pagamento-da-fatura.mjs",
-];
 
 // O `tsc` DO PROJETO, POR CAMINHO ABSOLUTO.
 //
@@ -211,65 +186,28 @@ const MUTANTES = [
   },
 ];
 
-const dir = mkdtempSync(join(tmpdir(), "mutantes-pagamento-da-fatura-"));
+// O BLOCO: um diretorio, um processo, a fonte e 17 mutantes dentro (HMO-319).
+//
+// Antes cada volta montava uma arvore nova em diretorio temporario -- a fonte
+// mutada mais a lista de arquivos que a acompanham -- e chamava o `tsc`. Era o
+// programa INTEIRO reparseado por mutante, para trocar um arquivo.
+//
+// Agora a compilacao e em processo e todas as voltas dividem o AST ja parseado
+// de tudo que nao e o arquivo mutado. E as etapas vem do proprio alvo
+// `test:pagamento-da-fatura` no package.json, em vez de repetidas a mao aqui: a copia da
+// receita divergia do alvo de verdade sem nada reclamar.
+//
+// A LISTA DE ARQUIVOS QUE ACOMPANHAM DEIXOU DE EXISTIR, e e por isso que cinco
+// blocos deste repositorio pararam de reprovar na main: a compilacao le a arvore
+// de verdade e troca em memoria so o arquivo mutado, entao nao ha mais uma
+// segunda copia do grafo de modulos para envelhecer em silencio. Quem delimita o
+// que este bloco prova continua sendo o tsconfig da suite.
+const SUITE_DO_BLOCO = "test:pagamento-da-fatura";
+const bloco = criarBlocoDeMutantes({ rotulo: "pagamento-da-fatura", suites: [SUITE_DO_BLOCO] });
 
-/** Compila a fonte mutada numa copia da arvore e roda a suite contra ela. */
-function rodar(nome, fonte) {
-  const raiz = join(dir, nome);
+/** Adapta a chamada antiga `rodar(nome, fonteMutada)` ao bloco. */
+const voltaDoBloco = (nome, fonte) => bloco.rodar(nome, fonte === null ? {} : { [FONTE]: fonte }, SUITE_DO_BLOCO);
 
-  mkdirSync(join(raiz, "lib"), { recursive: true });
-  writeFileSync(join(raiz, FONTE), fonte);
-
-  for (const arquivo of ACOMPANHAM) {
-    mkdirSync(join(raiz, dirname(arquivo)), { recursive: true });
-    cpSync(arquivo, join(raiz, arquivo));
-  }
-
-  try {
-    execFileSync(TSC, ["-p", "scripts/tsconfig.pagamento-da-fatura-test.json"], {
-      cwd: raiz,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    execFileSync(
-      "node",
-      ["scripts/resolve-aliases.mjs", ".tmp-pagamento-da-fatura", "lib"],
-      { cwd: raiz, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
-    );
-  } catch (e) {
-    // O `tsc` reprovando TAMBEM mata o mutante -- um mutante que nem compila e
-    // informacao valida --, mas tem de ser DISTINGUIVEL do teste reprovando:
-    // um mutante que nunca rodou nao prova nada sobre as assercoes.
-    return {
-      verde: false,
-      como: "tsc",
-      saida: String(e.stdout ?? e.message)
-        .trim()
-        .split("\n")
-        .slice(0, 2)
-        .join(" | "),
-    };
-  }
-
-  try {
-    execFileSync("node", ["--test", "scripts/test-pagamento-da-fatura.mjs"], {
-      cwd: raiz,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    return { verde: true };
-  } catch (e) {
-    const saida = String(e.stdout ?? "") + String(e.stderr ?? "");
-    const quais = [...saida.matchAll(/✖ (.+?) \(/g)]
-      .map((m) => m[1])
-      .filter((n) => n !== "failing tests:");
-    return {
-      verde: false,
-      como: "teste",
-      saida: [...new Set(quais)].slice(0, 3).join("; ") || "reprovou",
-    };
-  }
-}
 
 let falhou = false;
 
@@ -277,13 +215,13 @@ try {
   // CONTROLE POSITIVO. Sem ele, uma copia de arvore incompleta faria TODO
   // mutante "morrer" e o placar sairia cheio sem que uma assercao tivesse
   // medido nada.
-  const controle = rodar("controle", original);
+  const controle = voltaDoBloco("controle", original);
   if (!controle.verde) {
     console.error(
       `CONTROLE FALHOU: a fonte intacta nao passa na suite (${controle.como}) -> ${controle.saida}`
     );
     console.error("A copia da arvore esta errada. O placar abaixo nao vale.");
-    rmSync(dir, { recursive: true, force: true });
+    bloco.fechar();
     process.exit(1);
   }
   console.log("controle: a fonte intacta passa na suite  OK\n");
@@ -310,10 +248,17 @@ try {
       continue;
     }
 
-    const r = rodar(m.nome, original.replace(m.de, m.para));
+    const r = voltaDoBloco(m.nome, original.replace(m.de, m.para));
     if (r.verde) {
       console.error(`SOBREVIVEU: ${m.nome}`);
       console.error(`            ${m.porque}`);
+      // Sobreviver emitindo o MESMO byte nao e furo de assercao: e mutante
+      // equivalente, e nenhuma assercao o mataria.
+      if (r.mudouASaida === false) {
+        console.error(
+          "            (a saida compilada e identica a da arvore limpa: mutante EQUIVALENTE, nao furo de teste)",
+        );
+      }
       falhou = true;
     } else {
       mortos++;
@@ -335,7 +280,7 @@ try {
     falhou = true;
   }
 } finally {
-  rmSync(dir, { recursive: true, force: true });
+  bloco.fechar();
 }
 
 process.exitCode = falhou ? 1 : 0;

@@ -22,32 +22,37 @@
 // `string` esta carregando peso -- com os tipos antigos aquele codigo compilava,
 // e e exatamente ele que estava no repositorio.
 //
-// A FONTE NUNCA E MUTADA NO DISCO
-// -------------------------------
-// A mutacao e feita em memoria e escrita numa COPIA da arvore, em diretorio
-// temporario, com `node_modules` entrando por symlink. Mutar o arquivo e
+// A FONTE DO REPOSITORIO NUNCA E MUTADA
+// -------------------------------------
+// A mutacao e escrita numa SOMBRA da arvore -- um diretorio temporario onde tudo
+// e symlink menos o arquivo mutado (ver `scripts/mutantes-em-bloco.mjs`).
+// Mutar o arquivo e
 // restaurar no `finally` deixa a fonte mutada no disco quando o processo morre
 // no meio, e o placar seguinte vira ficcao -- pior aqui, onde o worktree e
 // compartilhado com outro run e restaurar com `git checkout --` apagaria
 // trabalho nao commitado de outra issue.
 //
+// O QUE A HMO-319 CONSERTOU AQUI, E O QUE ISSO ENSINA
+// ---------------------------------------------------
+// Este bloco REPROVAVA na main, e o controle positivo e quem dizia: a copia da
+// arvore levava `components`, `lib` e `scripts`, e o codigo passou a importar
+// `@/types/financial`. A lista de copia nao acompanhou, o `tsc` nao achava o
+// modulo, e o controle reprovava antes do primeiro mutante -- invisivel porque
+// todo job de Actions voltava recusado em 3-4s desde que a franquia estourou.
+//
+// A correcao nao foi acrescentar `types` a lista: foi TIRAR a lista. A compilacao
+// agora le a arvore de verdade e troca em memoria so o arquivo mutado, entao nao
+// existe mais uma segunda copia do grafo de modulos para envelhecer em silencio.
+// O que delimita o que este bloco prova continua sendo o `tsconfig` de cada
+// suite, que e o mesmo que o CI usa.
+//
 // COMO RODAR
 //   npm run mutantes:campo-de-parcelas
 
-import {
-  readFileSync,
-  writeFileSync,
-  mkdtempSync,
-  rmSync,
-  mkdirSync,
-  symlinkSync,
-  cpSync,
-} from "node:fs";
-import { execFileSync } from "node:child_process";
-import { join, dirname } from "node:path";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 
-const RAIZ = process.cwd();
+import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
+
 const CAMPOS = "components/movimentacoes/CamposDeLancamento.tsx";
 const LIB = "lib/lancamento.ts";
 
@@ -201,83 +206,36 @@ const MUTANTES = [
   },
 ];
 
-const dir = mkdtempSync(join(tmpdir(), "mutantes-campo-de-parcelas-"));
+// O BLOCO: um diretorio, um processo, 13 mutantes e 2 controles dentro.
+//
+// Antes eram 15 copias de `components` + `lib` + `scripts` e 15 invocacoes de
+// `npm run <suite>`. As etapas de cada suite vem agora do proprio package.json,
+// e a compilacao e em processo com o AST compartilhado entre as voltas.
+const bloco = criarBlocoDeMutantes({
+  rotulo: "campo-de-parcelas",
+  suites: [CAMPOS_SUITE, LIB_SUITE],
+});
 
-/**
- * Monta uma copia da arvore com `arquivo` substituido por `fonte` e roda
- * `npm run <suite>` dentro dela.
- *
- * `node_modules` entra por SYMLINK: copiar levaria minutos por mutante, e a
- * suite nao escreve nada lá. O `tsc` do projeto e encontrado por ele.
- */
-function rodar(nome, arquivo, fonte, suite) {
-  const raiz = join(dir, nome);
-  mkdirSync(raiz, { recursive: true });
-
-  for (const alvo of ["components", "lib", "scripts"]) {
-    cpSync(join(RAIZ, alvo), join(raiz, alvo), { recursive: true });
-  }
-  cpSync(join(RAIZ, "package.json"), join(raiz, "package.json"));
-  symlinkSync(join(RAIZ, "node_modules"), join(raiz, "node_modules"));
-
-  mkdirSync(join(raiz, dirname(arquivo)), { recursive: true });
-  writeFileSync(join(raiz, arquivo), fonte);
-
-  try {
-    execFileSync("npm", ["run", suite], {
-      cwd: raiz,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    return { verde: true };
-  } catch (e) {
-    const saida = String(e.stdout ?? "") + String(e.stderr ?? "");
-
-    // O `tsc` reprovando TAMBEM mata o mutante -- um mutante que nem compila e
-    // informacao valida --, mas tem de ser distinguivel do teste reprovando: um
-    // mutante que nunca rodou nao prova nada sobre as assercoes.
-    const erroDeTipo = saida.match(/error TS\d+: .*/)?.[0];
-    if (erroDeTipo) {
-      return { verde: false, como: "tsc", saida: erroDeTipo.slice(0, 110) };
-    }
-
-    const quais = [...saida.matchAll(/✖ (.+?) \(/g)]
-      .map((m) => m[1])
-      .filter((n) => n !== "failing tests:");
-    return {
-      verde: false,
-      como: "teste",
-      saida: [...new Set(quais)].slice(0, 3).join("; ") || "reprovou",
-    };
-  }
-}
+const rodar = (nome, arquivo, fonte, suite) =>
+  bloco.rodar(nome, arquivo === null ? {} : { [arquivo]: fonte }, suite);
 
 let falhou = false;
 
 try {
-  const fontes = new Map(
-    [CAMPOS, LIB].map((a) => [a, readFileSync(join(RAIZ, a), "utf8")])
-  );
+  const fontes = new Map([CAMPOS, LIB].map((a) => [a, readFileSync(a, "utf8")]));
 
-  // CONTROLE POSITIVO, UM POR SUITE. Sem ele, uma copia de arvore quebrada faria
-  // TODO mutante "morrer" e o placar sairia cheio sem que nenhuma assercao
-  // tivesse medido nada.
-  for (const [suite, arquivo] of [
-    [CAMPOS_SUITE, CAMPOS],
-    [LIB_SUITE, LIB],
-  ]) {
-    const controle = rodar(
-      `controle-${suite.replace(/:/g, "-")}`,
-      arquivo,
-      fontes.get(arquivo),
-      suite
-    );
+  // CONTROLE POSITIVO, UM POR SUITE. Sem ele, um aparelho de mutacao quebrado
+  // faria TODO mutante "morrer" e o placar sairia cheio sem que nenhuma assercao
+  // tivesse medido nada. E ele que denunciou a lista de copia defasada que
+  // mantinha este bloco vermelho na main.
+  for (const suite of [CAMPOS_SUITE, LIB_SUITE]) {
+    const controle = rodar(`controle-${suite.replace(/:/g, "-")}`, null, null, suite);
     if (!controle.verde) {
       console.error(
         `CONTROLE FALHOU (${suite}): a fonte intacta nao passa na suite (${controle.como}) -> ${controle.saida}`
       );
-      console.error("A copia da arvore esta errada. O placar abaixo nao vale.");
-      rmSync(dir, { recursive: true, force: true });
+      console.error("O aparelho de mutacao esta errado. O placar abaixo nao vale.");
+      bloco.fechar();
       process.exit(1);
     }
     console.log(`controle: ${suite} passa com a fonte intacta  OK`);
@@ -317,6 +275,14 @@ try {
     if (r.verde) {
       console.error(`SOBREVIVEU: ${m.nome}`);
       console.error(`            ${m.porque}`);
+      // Sobreviver emitindo o MESMO byte nao e furo de assercao: e mutante
+      // equivalente, e nenhuma assercao o mataria. A resposta e tirar o mutante
+      // da lista, nao escrever teste -- oposta a do outro caso.
+      if (!r.mudouASaida) {
+        console.error(
+          "            (a saida compilada e identica a da arvore limpa: mutante EQUIVALENTE, nao furo de teste)",
+        );
+      }
       falhou = true;
     } else {
       mortos++;
@@ -338,7 +304,7 @@ try {
     falhou = true;
   }
 } finally {
-  rmSync(dir, { recursive: true, force: true });
+  bloco.fechar();
 }
 
 process.exit(falhou ? 1 : 0);

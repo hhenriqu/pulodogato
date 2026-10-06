@@ -90,7 +90,7 @@ function versaoDeLinguagem(versaoOuOpcoes) {
   return typeof versaoOuOpcoes === "object" ? versaoOuOpcoes.languageVersion : versaoOuOpcoes;
 }
 
-function lerFonteCompartilhada(nomeDoArquivo, versaoOuOpcoes, aoErrar) {
+export function lerFonteCompartilhada(nomeDoArquivo, versaoOuOpcoes, aoErrar) {
   const chave = `${path.resolve(nomeDoArquivo)}::${versaoDeLinguagem(versaoOuOpcoes)}`;
   const guardado = cacheDeFontes.get(chave);
   if (guardado) {
@@ -122,7 +122,7 @@ function lerFonteCompartilhada(nomeDoArquivo, versaoOuOpcoes, aoErrar) {
 // ---------------------------------------------------------------------------
 // Resolver um alvo: dos argumentos de `tsc` para { opcoes, raizes, outDir }
 // ---------------------------------------------------------------------------
-function resolverInvocacao(argumentos) {
+export function resolverInvocacao(argumentos) {
   const linha = ts.parseCommandLine(argumentos);
   if (linha.options.project) {
     const caminho = path.resolve(linha.options.project);
@@ -331,6 +331,83 @@ function compilarAlvo({ opcoes, raizes, tsconfig, rotulo, argumentos, semear = f
 }
 
 // ---------------------------------------------------------------------------
+// O caminho dos MUTANTES: um alvo, N programas, uma fonte trocada (HMO-319)
+// ---------------------------------------------------------------------------
+// Um bloco de controle negativo compila o MESMO alvo uma vez por mutante, e
+// entre duas voltas muda exatamente UM arquivo. Antes da HMO-319 cada volta era
+// um `tsc` novo sobre uma copia nova da arvore: o programa inteiro reparseado do
+// zero, ~1,6s de compilador para ~0,25s de assercao.
+//
+// Aqui o bloco e um processo so, e todas as voltas dividem o `cacheDeFontes`
+// deste arquivo. O unico arquivo reparseado por volta e o mutado.
+//
+// A REGRA QUE NAO PODE SER QUEBRADA: A FONTE MUTADA NUNCA ENTRA NO CACHE.
+// A chave do `cacheDeFontes` e caminho + versao de linguagem, e NAO inclui o
+// conteudo -- no lote, o conteudo de um caminho e sempre o do disco. Se o texto
+// mutado fosse guardado ali, o mutante SEGUINTE (e o controle positivo) leriam o
+// AST do mutante ANTERIOR, e o placar diria "morreu" sobre codigo que ninguem
+// compilou. E o modo de falhar mais caro deste repositorio.
+//
+// Por isso `sobrescritas` e consultada ANTES do cache e parseia sempre o texto
+// recebido, sem gravar nada. E um arquivo por volta: o custo e ruido.
+//
+// Nao se grava manifesto aqui, por dois motivos independentes: o outDir de um
+// mutante e descartavel, e manifesto so nasce de quem semeia -- a segunda trava
+// da HMO-263 contra mutante que morre verde.
+/**
+ * Compila `argumentos` (os mesmos que o `tsc` receberia) com zero ou mais
+ * arquivos substituidos em memoria, emitindo em `outDir`.
+ *
+ * `sobrescritas`: objeto de caminho (relativo a raiz do repo) -> texto da fonte.
+ * O que nao esta ali e lido do disco, da arvore de verdade.
+ *
+ * Devolve `{ erros, mensagens, emitidos }`, com `emitidos` um Map de caminho
+ * (relativo ao outDir) -> sha256 do conteudo emitido. O sha e o que permite ao
+ * chamador perguntar se a mutacao mudou a SAIDA e nao so a fonte: mutante que
+ * emite byte identico e sobrevive e mutante equivalente, nao furo de assercao.
+ */
+export function compilarComSobrescritas({ argumentos, outDir, sobrescritas = {} }) {
+  const { opcoes: opcoesDoAlvo, raizes } = resolverInvocacao(argumentos);
+  const opcoes = { ...opcoesDoAlvo, outDir: path.resolve(outDir) };
+
+  const trocados = new Map(
+    Object.entries(sobrescritas).map(([relativo, texto]) => [path.resolve(RAIZ, relativo), texto]),
+  );
+
+  rmSync(opcoes.outDir, { recursive: true, force: true });
+  mkdirSync(opcoes.outDir, { recursive: true });
+
+  const host = ts.createCompilerHost(opcoes);
+  host.getSourceFile = (nomeDoArquivo, versaoOuOpcoes, aoErrar) => {
+    const texto = trocados.get(path.resolve(nomeDoArquivo));
+    if (texto === undefined) return lerFonteCompartilhada(nomeDoArquivo, versaoOuOpcoes, aoErrar);
+    return ts.createSourceFile(nomeDoArquivo, texto, versaoOuOpcoes, false);
+  };
+
+  const emitidos = new Map();
+  const escreverOriginal = host.writeFile.bind(host);
+  host.writeFile = (nome, texto, bom, aoErrar, fontes, dados) => {
+    emitidos.set(path.relative(opcoes.outDir, path.resolve(nome)), sha(texto));
+    escreverOriginal(nome, texto, bom, aoErrar, fontes, dados);
+  };
+
+  const programa = ts.createProgram(raizes, opcoes, host);
+  const resultado = programa.emit();
+  const diagnosticos = ts
+    .getPreEmitDiagnostics(programa)
+    .concat(resultado.diagnostics)
+    .filter((d) => d.category === ts.DiagnosticCategory.Error);
+
+  return {
+    erros: diagnosticos.length,
+    mensagens: diagnosticos.map((d) =>
+      ts.formatDiagnostic(d, hostDeFormatacao).trim().replace(/\s+/g, " "),
+    ),
+    emitidos,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Descoberta dos alvos, para o modo --todas
 // ---------------------------------------------------------------------------
 // Sai do package.json, nao de uma lista a mao: suite nova entra no lote sozinha.
@@ -369,105 +446,118 @@ function alvosDoPackageJson() {
 // ---------------------------------------------------------------------------
 // Entrada
 // ---------------------------------------------------------------------------
-const argv = process.argv.slice(2);
+// Este arquivo tem DUAS vidas desde a HMO-319: a linha de comando abaixo, e um
+// modulo que os blocos de controle negativo importam para compilar N mutantes
+// num processo so (`compilarComSobrescritas`). Por isso a linha de comando mora
+// dentro de uma funcao, chamada so quando ESTE arquivo e o que o node executou
+// -- sem a guarda, importa-lo rodaria o lote dos 98 alvos e encerraria o
+// processo de quem importou.
+function linhaDeComando(argv) {
 
-if (argv.length === 0) {
-  console.error("uso: node scripts/compila.mjs --todas | <os mesmos argumentos do tsc>");
-  process.exit(1);
+  if (argv.length === 0) {
+    console.error("uso: node scripts/compila.mjs --todas | <os mesmos argumentos do tsc>");
+    process.exit(1);
+  }
+
+  const inicio = Date.now();
+
+  if (argv[0] === "--todas") {
+    const { alvos, naoEntendidos } = alvosDoPackageJson();
+
+    // Um alvo que o lote nao entende nao fica QUEBRADO -- ele so volta a compilar
+    // sozinho, devagar. Mas a erosao seria silenciosa, entao ela reprova aqui.
+    if (naoEntendidos.length > 0) {
+      console.error("O lote nao entendeu a invocacao de compilacao destes alvos:\n");
+      for (const linha of naoEntendidos) console.error(`  ${linha}`);
+      console.error("\nAjuste scripts/compila.mjs ou o comando do alvo no package.json.");
+      process.exit(1);
+    }
+
+    // Dois alvos no mesmo outDir: o segundo apagaria a saida do primeiro, e a
+    // suite do primeiro rodaria sobre arquivo que nao e dela -- ou sobre
+    // diretorio vazio. Hoje nao acontece; se passar a acontecer, para aqui em vez
+    // de virar uma suite verde sem conteudo.
+    const porSaida = new Map();
+    for (const alvo of alvos) {
+      const saida = path.resolve(alvo.opcoes.outDir ?? "");
+      if (!porSaida.has(saida)) porSaida.set(saida, []);
+      porSaida.get(saida).push(alvo.rotulo);
+    }
+    const colisoes = [...porSaida].filter(([, nomes]) => new Set(nomes).size > 1);
+    if (colisoes.length > 0) {
+      console.error("Mais de um alvo compila para o mesmo diretorio de saida:\n");
+      for (const [saida, nomes] of colisoes) {
+        console.error(`  ${path.relative(RAIZ, saida)}/ <- ${[...new Set(nomes)].join(", ")}`);
+      }
+      process.exit(1);
+    }
+
+    let erros = 0;
+    let aproveitados = 0;
+    for (const alvo of alvos) {
+      let r;
+      try {
+        r = compilarAlvo({ ...alvo, semear: true });
+      } catch (erro) {
+        // Um alvo que estoura nao pode derrubar o lote calado: os outros 96
+        // ficariam sem compilar e cada suite acharia que so precisava recompilar
+        // a sua. Conta como erro e segue.
+        console.error(`ERRO ao compilar ${alvo.rotulo}: ${erro.message}`);
+        erros++;
+        continue;
+      }
+      erros += r.erros;
+      if (r.aproveitado) aproveitados++;
+      if (r.erros > 0) console.error(`ERRO ao compilar ${alvo.rotulo}`);
+    }
+
+    const segundos = ((Date.now() - inicio) / 1000).toFixed(1);
+    if (erros > 0) {
+      console.error(`\n${erros} erro(s) de compilacao em ${alvos.length} alvos.`);
+      process.exit(1);
+    }
+    console.log(
+      `${alvos.length} alvos compilados em ${segundos}s ` +
+        `(${aproveitados} aproveitados, ${fontesLidas} arquivos lidos, ` +
+        `${fontesReaproveitadas} reaproveitamentos de parse).`,
+    );
+    process.exit(0);
+  }
+
+  // Modo de um alvo: os mesmos argumentos que o `tsc` recebia.
+  //
+  // Com `--semeia` na frente, este alvo compila em processo e DEIXA manifesto --
+  // e o que o lote faz com cada um dos 98. Fora do lote isto so serve para
+  // aquecer um alvo de proposito, e e como a suite do proprio compila.mjs monta
+  // o estado "ja compilado" que ela precisa para conferir o reaproveitamento.
+  // Sem a flag, um alvo frio e delegado ao `tsc` e nao deixa manifesto.
+  //
+  // A linha de saida diz qual dos dois caminhos foi tomado. Nao e enfeite: e o
+  // que permite ler num log de CI se o lote esta sendo aproveitado, e e o que
+  // mostra, dentro de um bloco de controle negativo, que a mutacao FORCOU
+  // recompilacao em vez de rodar sobre o artefato de antes.
+  try {
+    const semear = argv[0] === "--semeia";
+    const resto = semear ? argv.slice(1) : argv;
+    const alvo = { rotulo: "alvo", ...resolverInvocacao(resto), semear };
+    const saida = path.relative(RAIZ, path.resolve(alvo.opcoes.outDir ?? "."));
+    const r = compilarAlvo(alvo);
+    if (r.erros > 0) process.exit(1);
+    const segundos = ((Date.now() - inicio) / 1000).toFixed(1);
+    console.log(
+      r.aproveitado
+        ? `${saida}/ aproveitado do lote (entradas inalteradas), ${segundos}s`
+        : `${saida}/ compilado agora (entrada mudou ou nao havia lote), ${segundos}s`,
+    );
+    process.exit(0);
+  } catch (erro) {
+    console.error(`compila.mjs: ${erro.message}`);
+    process.exit(1);
+  }
 }
 
-const inicio = Date.now();
-
-if (argv[0] === "--todas") {
-  const { alvos, naoEntendidos } = alvosDoPackageJson();
-
-  // Um alvo que o lote nao entende nao fica QUEBRADO -- ele so volta a compilar
-  // sozinho, devagar. Mas a erosao seria silenciosa, entao ela reprova aqui.
-  if (naoEntendidos.length > 0) {
-    console.error("O lote nao entendeu a invocacao de compilacao destes alvos:\n");
-    for (const linha of naoEntendidos) console.error(`  ${linha}`);
-    console.error("\nAjuste scripts/compila.mjs ou o comando do alvo no package.json.");
-    process.exit(1);
-  }
-
-  // Dois alvos no mesmo outDir: o segundo apagaria a saida do primeiro, e a
-  // suite do primeiro rodaria sobre arquivo que nao e dela -- ou sobre
-  // diretorio vazio. Hoje nao acontece; se passar a acontecer, para aqui em vez
-  // de virar uma suite verde sem conteudo.
-  const porSaida = new Map();
-  for (const alvo of alvos) {
-    const saida = path.resolve(alvo.opcoes.outDir ?? "");
-    if (!porSaida.has(saida)) porSaida.set(saida, []);
-    porSaida.get(saida).push(alvo.rotulo);
-  }
-  const colisoes = [...porSaida].filter(([, nomes]) => new Set(nomes).size > 1);
-  if (colisoes.length > 0) {
-    console.error("Mais de um alvo compila para o mesmo diretorio de saida:\n");
-    for (const [saida, nomes] of colisoes) {
-      console.error(`  ${path.relative(RAIZ, saida)}/ <- ${[...new Set(nomes)].join(", ")}`);
-    }
-    process.exit(1);
-  }
-
-  let erros = 0;
-  let aproveitados = 0;
-  for (const alvo of alvos) {
-    let r;
-    try {
-      r = compilarAlvo({ ...alvo, semear: true });
-    } catch (erro) {
-      // Um alvo que estoura nao pode derrubar o lote calado: os outros 96
-      // ficariam sem compilar e cada suite acharia que so precisava recompilar
-      // a sua. Conta como erro e segue.
-      console.error(`ERRO ao compilar ${alvo.rotulo}: ${erro.message}`);
-      erros++;
-      continue;
-    }
-    erros += r.erros;
-    if (r.aproveitado) aproveitados++;
-    if (r.erros > 0) console.error(`ERRO ao compilar ${alvo.rotulo}`);
-  }
-
-  const segundos = ((Date.now() - inicio) / 1000).toFixed(1);
-  if (erros > 0) {
-    console.error(`\n${erros} erro(s) de compilacao em ${alvos.length} alvos.`);
-    process.exit(1);
-  }
-  console.log(
-    `${alvos.length} alvos compilados em ${segundos}s ` +
-      `(${aproveitados} aproveitados, ${fontesLidas} arquivos lidos, ` +
-      `${fontesReaproveitadas} reaproveitamentos de parse).`,
-  );
-  process.exit(0);
-}
-
-// Modo de um alvo: os mesmos argumentos que o `tsc` recebia.
-//
-// Com `--semeia` na frente, este alvo compila em processo e DEIXA manifesto --
-// e o que o lote faz com cada um dos 98. Fora do lote isto so serve para
-// aquecer um alvo de proposito, e e como a suite do proprio compila.mjs monta
-// o estado "ja compilado" que ela precisa para conferir o reaproveitamento.
-// Sem a flag, um alvo frio e delegado ao `tsc` e nao deixa manifesto.
-//
-// A linha de saida diz qual dos dois caminhos foi tomado. Nao e enfeite: e o
-// que permite ler num log de CI se o lote esta sendo aproveitado, e e o que
-// mostra, dentro de um bloco de controle negativo, que a mutacao FORCOU
-// recompilacao em vez de rodar sobre o artefato de antes.
-try {
-  const semear = argv[0] === "--semeia";
-  const resto = semear ? argv.slice(1) : argv;
-  const alvo = { rotulo: "alvo", ...resolverInvocacao(resto), semear };
-  const saida = path.relative(RAIZ, path.resolve(alvo.opcoes.outDir ?? "."));
-  const r = compilarAlvo(alvo);
-  if (r.erros > 0) process.exit(1);
-  const segundos = ((Date.now() - inicio) / 1000).toFixed(1);
-  console.log(
-    r.aproveitado
-      ? `${saida}/ aproveitado do lote (entradas inalteradas), ${segundos}s`
-      : `${saida}/ compilado agora (entrada mudou ou nao havia lote), ${segundos}s`,
-  );
-  process.exit(0);
-} catch (erro) {
-  console.error(`compila.mjs: ${erro.message}`);
-  process.exit(1);
+// `import.meta.url` x `process.argv[1]`: a comparacao e por caminho resolvido
+// porque o npm invoca `node scripts/compila.mjs` com caminho relativo.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  linhaDeComando(process.argv.slice(2));
 }
