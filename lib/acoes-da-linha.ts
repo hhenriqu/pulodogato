@@ -55,20 +55,28 @@
 //    sem alterar nada** -- o app diz "pronto" e a linha fica. Botao que aparece
 //    e nao funciona e pior que botao ausente.
 //
-// 5. A LINHA DE FATURA NAO GANHA BOTAO, mesmo GRAVADA -- e sao duas razoes
-//    independentes, as duas suficientes:
+// 5. A LINHA DE FATURA NAO ENTRA NA BAIXA GENERICA, mesmo GRAVADA -- e sao duas
+//    razoes independentes, as duas suficientes:
 //
 //      * a fatura FECHADA se paga escolhendo A CONTA PAGADORA. O caminho de
 //        `pagarFatura` exige `payment_account_id` no corpo
 //        (`validarContaPagadora` em lib/card-invoice.ts), e um POST sem ele
 //        volta erro. Um "Confirmar pagamento" que sempre falha e o botao da
 //        regra 4 com outro nome;
-//      * a linha de fatura E UM `<a>` para a tela do cartao (ver `LinhaDaSecao`
-//        em SecaoDaTela.tsx). Botao dentro de ancora e aninhamento interativo
-//        invalido, e o clique navegaria junto.
+//      * a linha de fatura ERA UM `<a>` para a tela do cartao (ver
+//        `LinhaDaSecao` em SecaoDaTela.tsx). Botao dentro de ancora e
+//        aninhamento interativo invalido, e o clique navegaria junto.
 //
-//    A fatura continua tendo o caminho dela: o clique na linha abre o cartao no
-//    mes, e a baixa com escolha de conta pagadora e em Contas a Pagar.
+//    E E POR ISSO QUE A FATURA GANHOU DESTINO PROPRIO NA HMO-311 -- `podePagarAFatura`
+//    la embaixo --, e nao uma excecao dentro de `podeAgirNaLinha`. As duas
+//    razoes acima nao foram revogadas: elas foram ATENDIDAS. O destino e o
+//    dialogo que PERGUNTA a conta pagadora
+//    (components/fatura/DialogoDePagamentoDaFatura, HMO-310), e a linha deixou
+//    de ser `<a>` -- o link virou o NOME DO CARTAO, dentro dela.
+//
+//    `podeAgirNaLinha` continua recusando a fatura, e o mutante que apaga essa
+//    recusa continua tendo de morrer: a baixa generica e justamente a que volta
+//    erro sem `payment_account_id`.
 // -----------------------------------------------------------------------------
 
 import { comOrigem } from "@/lib/retorno-do-lancamento";
@@ -90,6 +98,17 @@ export type LinhaAcionavel = Pick<
 /** O rotulo fixo dos dois botoes que nao mudam de nome por tela. */
 export const ROTULO_DE_EDITAR = "Editar";
 export const ROTULO_DE_EXCLUIR = "Excluir";
+
+/**
+ * O rotulo do botao da fatura -- "Pagar", e NAO "Confirmar pagamento".
+ *
+ * Os dois verbos prometem coisas diferentes, e so um deles e verdade aqui:
+ * "Confirmar" diz que o clique JA resolveu (e e isso que `rotuloDeConfirmar` faz
+ * nas outras linhas, onde a baixa sai no proprio clique). O da fatura ABRE UM
+ * DIALOGO e pergunta de qual conta o dinheiro saiu -- quem clica ainda tem uma
+ * escolha a fazer, e pode desistir.
+ */
+export const ROTULO_DE_PAGAR = "Pagar";
 
 /**
  * O verbo da baixa, por direcao da linha -- regra 2.
@@ -116,6 +135,62 @@ export function podeAgirNaLinha(linha: LinhaAcionavel): boolean {
   if (!linha.gravada) return false;
   if (!linha.posso_editar) return false;
   if (linha.natureza === "fatura") return false;
+  return true;
+}
+
+/**
+ * O DESTINO PROPRIO DA FATURA -- HMO-311 (fase 14).
+ *
+ * "Precisa colocar o botao de pagar tbm na fatura do cartao em despesas."
+ *
+ * NAO E `podeAgirNaLinha` COM UMA EXCECAO, e a diferenca nao e estilo: os dois
+ * criterios se CONTRADIZEM em `gravada`, e de proposito.
+ *
+ *   * `podeAgirNaLinha` recusa `gravada: false` (regra 3) porque a baixa
+ *     generica monta `/api/scheduled-transactions/{id}/pay` com o id da linha --
+ *     e a fatura ABERTA sintetizada nao tem id de banco, so a chave
+ *     `fatura:2026-10-01:<uuid>`. Aquela URL responde 404;
+ *   * aqui `gravada` NAO E CONDICAO, porque este caminho nao monta aquela URL.
+ *     Ele abre o dialogo, e a sequencia de escritas de `pagarAFatura`
+ *     (lib/pagamento-da-fatura.ts, HMO-310) MATERIALIZA a fatura aberta pelo
+ *     `POST /api/card-invoices/close` antes do `/pay` -- o id sai da resposta do
+ *     `close`, nao da linha. A fatura aberta e precisamente o sabor que esta
+ *     fase existe para alcancar: ela e a terceira fonte do «Previsto» da tela de
+ *     Despesas, e em muitos meses a maior.
+ *
+ * Por isso este modulo NAO monta `PedidoDaAcao` para a fatura: pagar fatura e
+ * uma ou duas escritas, e qual das duas sai de `gravada` -- a decisao e
+ * `decisaoDePagamentoDaFatura`, e repetir o galho aqui seria a segunda
+ * implementacao da de-duplicacao de fatura. O que esta funcao responde e so
+ * "esta linha ganha o botao?".
+ *
+ * OS TRES CRITERIOS, e nenhum e redundante com os outros:
+ *
+ *   * `natureza === "fatura"` -- o criterio do botao, dito pela issue. Ele cobre
+ *     os TRES sabores (aberta sintetizada, fechada na agenda, e a previsao
+ *     digitada que alguem ligou ao elo da HMO-305), que e exatamente o conjunto
+ *     que `pagarAFatura` sabe pagar. E e ele que impede o botao de brotar em
+ *     Receitas: nenhuma linha de receita carrega a chave canonica da fatura;
+ *
+ *   * `origem === "previsto"` -- a regra 1 vale para esta baixa tambem. Hoje
+ *     `natureza: "fatura"` NAO EXISTE no realizado (`linhaRealizada` escreve
+ *     "fixa" ou "despesa", e `fatura` sai sempre `null`), entao este criterio e
+ *     sobre o amanha com nome e numero: a HMO-264 ("A fatura PAGA vira
+ *     Realizado") faz a fatura chegar ao lado realizado. Sem ele, no dia em que
+ *     ela chegar, a tela ofereceria "Pagar" numa fatura JA PAGA -- e o `/pay`
+ *     dela grava a SEGUNDA perna do mesmo dinheiro, que e como este app ja
+ *     contou despesa duas vezes;
+ *
+ *   * `posso_editar` -- a regra 4, inteira e sem desconto. A lista de Despesas
+ *     inclui linha de OUTRO membro do grupo desde a HMO-303, e **UPDATE filtrado
+ *     pela RLS volta 200 sem alterar nada**: o dialogo diria "Fatura paga", o
+ *     saldo nao mudaria, e a pessoa pagaria de novo pelo banco. Botao que
+ *     aparece e nao funciona e pior que botao ausente.
+ */
+export function podePagarAFatura(linha: LinhaAcionavel): boolean {
+  if (linha.natureza !== "fatura") return false;
+  if (linha.origem !== "previsto") return false;
+  if (!linha.posso_editar) return false;
   return true;
 }
 

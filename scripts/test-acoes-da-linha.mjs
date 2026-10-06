@@ -41,6 +41,7 @@ import assert from "node:assert/strict";
 const {
   ROTULO_DE_EDITAR,
   ROTULO_DE_EXCLUIR,
+  ROTULO_DE_PAGAR,
   avisoDaExclusao,
   caminhoDeEdicao,
   motivoSemEditar,
@@ -51,6 +52,7 @@ const {
   podeConfirmar,
   podeEditar,
   podeExcluir,
+  podePagarAFatura,
   rotuloDeConfirmar,
 } = await import("../.tmp-acoes-da-linha/lib/acoes-da-linha.js");
 
@@ -90,6 +92,30 @@ const faturaAberta = () =>
 /** A fatura FECHADA: `scheduled_transaction` de verdade, minha e gravada. */
 const faturaFechada = () =>
   prevista({ id: "s-fatura", natureza: "fatura" });
+
+// ---------------------------------------------------------------------------
+// OS TRES SABORES DE FATURA, TODOS MEUS -- HMO-311
+// ---------------------------------------------------------------------------
+// `faturaAberta()` acima e de OUTRO MEMBRO (`posso_editar: false`), e por isso
+// ela nao serve para medir o botao novo: ela recusaria pelo criterio errado, e o
+// bloco passaria verde com `natureza` esquecido. Estes tres sao meus.
+
+/** Sabor 1: a aberta sintetizada -- `gravada: false`, sem id de banco. */
+const faturaAbertaMinha = () =>
+  prevista({
+    id: `fatura:2026-08-01:${CARTAO}`,
+    gravada: false,
+    natureza: "fatura",
+    posso_editar: true,
+  });
+
+// E OS SABORES 2 E 3 SAO A MESMA ENTRADA AQUI, de propósito nao repetidos: a
+// fatura FECHADA e a previsao DIGITADA ligada ao elo diferem em
+// `elo_da_fatura`, que nao e campo de `LinhaAcionavel` -- esta peneira nao pode
+// distingui-las, e um segundo caso "sabor 3" seria um bloco que nao mede nada.
+// Onde a diferenca existe: em `decisaoDePagamentoDaFatura` (por `gravada`, com
+// mutante obrigatorio em `npm run mutantes:pagamento-da-fatura`) e na MARCACAO
+// (so a fatura leva o nome do cartao como link -- `npm run test:secao-da-tela`).
 
 // ---------------------------------------------------------------------------
 // 1. O caso base -- sem ele, tudo abaixo passaria por vacuidade
@@ -253,6 +279,119 @@ test("`natureza: 'fatura'` recusa SOZINHO -- mesmo gravada e minha", () => {
   assert.equal(podeConfirmar(linha), false);
   assert.equal(podeExcluir(linha), false);
   assert.equal(pedidoDeConfirmacao(linha), null);
+});
+
+// ---------------------------------------------------------------------------
+// 6b. O DESTINO PROPRIO DA FATURA -- `podePagarAFatura` (HMO-311, fase 14)
+// ---------------------------------------------------------------------------
+// "Precisa colocar o botao de pagar tbm na fatura do cartao em despesas."
+//
+// Os blocos acima provam que a fatura nao entra na baixa GENERICA, e isso
+// continua valendo. O que esta secao mede e o caminho NOVO, e a armadilha dele e
+// que ele CONTRADIZ a regra 3 em `gravada` -- de proposito.
+
+test("CONTROLE: a fatura ABERTA (gravada: false) GANHA o botao Pagar", () => {
+  // O CONTROLE POSITIVO desta secao, e o caso que ela existe para alcancar: a
+  // fatura aberta sintetizada e a terceira fonte do «Previsto» da tela de
+  // Despesas, e em muitos meses a maior.
+  //
+  // Sem este bloco, um `podePagarAFatura` que copiasse `podeAgirNaLinha`
+  // (recusando `gravada: false`) passaria em todos os blocos negativos abaixo --
+  // e o sintoma no app seria a fatura aberta continuando sem botao, que e
+  // exatamente o estado de antes desta fase.
+  const linha = faturaAbertaMinha();
+
+  assert.equal(linha.gravada, false, "o caso precisa ser NAO gravado para valer");
+  assert.equal(podePagarAFatura(linha), true);
+
+  // E A BAIXA GENERICA CONTINUA RECUSADA. As duas coisas de uma vez: o botao
+  // novo existe E nenhum caminho monta a URL com a chave sintetica.
+  assert.equal(podeAgirNaLinha(linha), false);
+  assert.equal(podeConfirmar(linha), false);
+  assert.equal(pedidoDeConfirmacao(linha), null);
+  assert.equal(pedidoDeExclusao(linha), null);
+});
+
+test("a fatura FECHADA, gravada e minha, tambem ganha Pagar", () => {
+  const linha = faturaFechada();
+
+  assert.equal(linha.gravada, true);
+  assert.equal(podePagarAFatura(linha), true);
+  // Pagar e o UNICO botao dela: Editar e Excluir continuam fora (regra 5).
+  assert.equal(podeEditar(linha), false);
+  assert.equal(podeExcluir(linha), false);
+});
+
+test("`posso_editar: false` TIRA o Pagar -- a fatura de outro membro do grupo", () => {
+  // A regra 4 vale para o botao novo inteira e sem desconto, e este bloco e o
+  // que mata o mutante que a tira da condicao. O modo de falha e o caro: a RLS
+  // recusa a escrita e **UPDATE filtrado pela RLS volta 200 sem alterar nada**
+  // -- o dialogo diria "Fatura paga", o saldo nao mudaria, e a pessoa pagaria de
+  // novo pelo banco.
+  //
+  // A lista de Despesas inclui linha de outro membro desde a HMO-303, entao isto
+  // nao e hipotetico. E ele mede nos TRES sabores: com um so, um `posso_editar`
+  // escrito em um ramo deixaria os outros dois passando.
+  for (const sabor of [faturaAbertaMinha(), faturaFechada()]) {
+    assert.equal(
+      podePagarAFatura({ ...sabor, posso_editar: false }),
+      false,
+      `a fatura alheia (gravada: ${sabor.gravada}) ganhou Pagar`
+    );
+    // E o controle do par: a MESMA linha com `posso_editar: true` ganha. Sem
+    // isto, a assercao acima ficaria verde numa funcao que devolve `false`
+    // sempre.
+    assert.equal(podePagarAFatura({ ...sabor, posso_editar: true }), true);
+  }
+});
+
+test("a fatura do lado REALIZADO nao ganha Pagar -- ela ja foi paga", () => {
+  // Hoje `natureza: "fatura"` nao existe no realizado (`linhaRealizada` escreve
+  // "fixa" ou "despesa"), entao este criterio e sobre um amanha com nome e
+  // numero: a HMO-264 ("A fatura PAGA vira Realizado"). Sem ele, no dia em que
+  // ela chegar, a tela ofereceria "Pagar" numa fatura ja paga -- e o `/pay`
+  // grava a SEGUNDA perna do mesmo dinheiro.
+  const paga = { ...faturaFechada(), origem: "realizado" };
+
+  assert.equal(podePagarAFatura(paga), false);
+  // O controle do par: a MESMA linha do lado previsto ganha.
+  assert.equal(podePagarAFatura({ ...paga, origem: "previsto" }), true);
+});
+
+test("nenhuma natureza ALEM de fatura ganha Pagar -- nas tres telas", () => {
+  // A SEGUNDA METADE DO CRITERIO, e ela e o que impede o botao de brotar em
+  // Receitas: a mudanca desta fase passa pela MESMA `SecaoDaTela` que serve
+  // Receitas e Transferencias. Nenhuma linha de receita carrega a chave canonica
+  // da fatura, entao nenhuma tem `natureza: "fatura"` -- e e por `natureza` que
+  // o botao e decidido, nao por "a linha tem rotulo".
+  for (const tipo of ["income", "expense", "transfer"]) {
+    for (const natureza of ["despesa", "fixa"]) {
+      assert.equal(
+        podePagarAFatura(prevista({ tipo, natureza })),
+        false,
+        `a linha ${natureza} da tela ${tipo} ganhou Pagar`
+      );
+    }
+    // E o controle: na MESMA tela, a linha de fatura ganha. Sem ele o laco
+    // acima passaria verde numa funcao que recusa tudo.
+    assert.equal(podePagarAFatura(prevista({ tipo, natureza: "fatura" })), true);
+  }
+});
+
+test("o rotulo e 'Pagar', e NAO um dos tres verbos de Confirmar", () => {
+  // Os dois prometem coisas diferentes: "Confirmar" diz que o clique ja
+  // resolveu, e e verdade nas outras linhas -- a baixa sai no proprio clique.
+  // O da fatura ABRE UM DIALOGO e pergunta de onde o dinheiro saiu; quem clicou
+  // ainda tem uma escolha a fazer, e pode desistir.
+  assert.equal(ROTULO_DE_PAGAR, "Pagar");
+
+  for (const tipo of ["income", "expense", "transfer"]) {
+    assert.notEqual(
+      ROTULO_DE_PAGAR,
+      rotuloDeConfirmar(tipo),
+      `o rotulo da fatura colidiu com o da baixa da tela ${tipo}`
+    );
+  }
 });
 
 test("a conta FIXA (que tambem e rotulada) continua ganhando os tres", () => {

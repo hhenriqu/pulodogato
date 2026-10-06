@@ -384,6 +384,15 @@ next-env.d.ts
 # motivo das entradas acima para estar aqui.
 /.tmp-lista-na-tela/
 
+# Saida de `npm run test:elo-da-fatura` (HMO-305) e de
+# `npm run test:pagamento-da-fatura` (HMO-310). As duas FALTAVAM, e por isso
+# `check-artefatos-de-build` ja reprovava na main antes da HMO-311 (ver
+# HMO-291): as suites comecam com `rm -rf` nesses caminhos, e enquanto eles
+# estiverem fora daqui o resultado da compilacao pode ser commitado em cima de
+# arquivo de fonte -- e a partir dai rodar a suite APAGA o arquivo rastreado.
+/.tmp-elo-da-fatura/
+/.tmp-pagamento-da-fatura/
+
 # saida do `npm run test:semeadura` (HMO-272). Ela guarda tambem um
 # node_modules/@supabase/supabase-js plantado pelo monta-duble-de-rota.mjs --
 # sem esta entrada o `git status` passaria a mostrar um pacote inteiro.

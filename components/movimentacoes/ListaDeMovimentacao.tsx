@@ -95,11 +95,17 @@ import {
   type EdicaoDaPrevista,
   type PedidoDaAcao,
 } from "@/lib/acoes-da-linha";
+import { DialogoDePagamentoDaFatura } from "@/components/fatura/DialogoDePagamentoDaFatura";
+import {
+  FATURA_SEM_VENCIMENTO_NAO_TEM_PAGAR,
+  linhaParaPagarDaTela,
+} from "@/lib/pagamento-da-fatura";
 import {
   buscarLeitura,
   podeAfirmarVazio,
   type EstadoDaLeitura,
 } from "@/lib/offline-leitura";
+import { today } from "@/lib/recurrence";
 import {
   secoesDaTela,
   type LinhaDaTela,
@@ -124,6 +130,25 @@ const dataLonga = (iso: string) =>
 
 /** O valor em reais no formato que o campo de texto aceita de volta. */
 const paraOCampo = (valor: number) => valor.toFixed(2).replace(".", ",");
+
+// HOJE vem de `today()` (lib/recurrence.ts), E NAO DE UM RELOGIO PROPRIO AQUI.
+//
+// Duas razoes, e a segunda e a que custa dinheiro:
+//
+//   * `today()` ja e "hoje em 'AAAA-MM-DD', no fuso de Sao Paulo" -- o fuso ONDE
+//     OS VENCIMENTOS VIVEM. Um `new Date().toISOString()` daria o dia do
+//     APARELHO (ou da Vercel, que e UTC), e depois das 21h ele muda o DIA: o
+//     `paid_date` da fatura cairia no mes vizinho sem nada na tela parecendo
+//     errado;
+//   * uma segunda definicao de "hoje" divergiria da primeira, e `today()` e
+//     justamente quem decide os vencimentos com que esta lista e comparada.
+//
+// E ela e CHAMADA NO RENDER, nao congelada num `const` de modulo como o `HOJE`
+// de `app/.../bills/page.tsx`: este app e instalado (next-pwa) e fica semanas na
+// mesma aba. Congelado, depois da meia-noite ele mandaria a data de ontem.
+//
+// `lib/recurrence` NAO E PESO NOVO NO BUNDLE: `TelaDeMovimentacao.tsx` -- o
+// container desta lista, tambem `"use client"` -- ja o importa.
 
 export function ListaDeMovimentacao({
   tipo,
@@ -169,6 +194,18 @@ export function ListaDeMovimentacao({
 
   /** O id da linha cuja acao esta em curso. Trava os botoes DELA e os outros. */
   const [agindo, setAgindo] = useState<string | null>(null);
+
+  /**
+   * A FATURA QUE O DIALOGO DE PAGAMENTO ESTA PERGUNTANDO -- HMO-311.
+   *
+   * `null` mantem o dialogo fechado. E a LINHA inteira, e nao o id: o dialogo
+   * mostra a descricao, o valor e o vencimento dela, e a decisao de uma ou duas
+   * escritas sai de `gravada` -- com o id so, a tela teria de procurar a linha
+   * de novo num array que a releitura troca.
+   */
+  const [faturaParaPagar, setFaturaParaPagar] = useState<LinhaDaTela | null>(
+    null
+  );
 
   /** A conta prevista aberta no formulario em linha, e os tres campos dela. */
   const [editando, setEditando] = useState<LinhaDaTela | null>(null);
@@ -311,6 +348,24 @@ export function ListaDeMovimentacao({
     [disparar]
   );
 
+  /**
+   * Abre o dialogo da conta pagadora. NAO ESCREVE NADA -- HMO-311.
+   *
+   * Nenhuma rede aqui de proposito: a pergunta "de qual conta o dinheiro saiu?"
+   * nao tem resposta padrao (`validarContaPagadora` recusa cair num padrao, e
+   * diz por que: lancaria dinheiro saindo de uma conta que a pessoa nao
+   * escolheu, e o saldo errado seria descoberto semanas depois). Quem escreve,
+   * depois da escolha, e `pagarAFatura` por dentro do dialogo.
+   *
+   * E NAO E `disparar`: aquele caminho monta UM pedido e relê. A fatura aberta
+   * sao DUAS escritas na ordem certa, com o 409 do `close` que nao e erro -- e
+   * tratar isso aqui seria a segunda implementacao da de-duplicacao de fatura,
+   * divergindo de Contas a Pagar na primeira correcao.
+   */
+  const aoPagarFatura = useCallback((linha: LinhaDaTela) => {
+    setFaturaParaPagar(linha);
+  }, []);
+
   /** Abre o formulario em linha de uma conta prevista, com os valores de hoje. */
   const aoEditar = useCallback((linha: LinhaDaTela) => {
     setEditando(linha);
@@ -360,6 +415,7 @@ export function ListaDeMovimentacao({
       aoEditar,
       aoExcluir,
       aoConfirmar,
+      aoPagarFatura,
       agindo,
       online,
       // O ELO DA FATURA RECARREGA A LISTA INTEIRA -- HMO-305, e e `carregar` e
@@ -375,6 +431,7 @@ export function ListaDeMovimentacao({
       aoEditar,
       aoExcluir,
       aoConfirmar,
+      aoPagarFatura,
       agindo,
       online,
       carregar,
@@ -430,7 +487,16 @@ export function ListaDeMovimentacao({
                   <CardDescription>
                     Estes cartões têm fatura aberta e nenhum dia de vencimento
                     configurado. Sem ele não há data para calcular, e o app não
-                    inventa uma — então o valor abaixo está FORA do Previsto.
+                    inventa uma — então o valor abaixo está FORA do Previsto.{" "}
+                    {/*
+                      A FRASE OBRIGATORIA DA HMO-311. Desde esta fase a linha da
+                      fatura NA LISTA tem botao "Pagar", e esta nao tem -- ela
+                      vem com `{ account_name, total }` e nada mais, sem id e sem
+                      `accountId`. "A fatura do Nubank tem botão e a do C6 não"
+                      se lê como tela quebrada, e manda recarregar a página em
+                      vez de cadastrar o dia de vencimento, que é o caminho.
+                    */}
+                    {FATURA_SEM_VENCIMENTO_NAO_TEM_PAGAR}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-2">
@@ -595,6 +661,45 @@ export function ListaDeMovimentacao({
           />
 
           {rodape}
+
+          {/*
+            PAGAR A FATURA, PELA TELA DE DESPESAS -- HMO-311 (fase 14).
+
+            O dialogo e o da HMO-310, SEM UMA LINHA COPIADA: ele busca as contas
+            ao abrir, recusa o Confirmar sem conta escolhida com a mensagem que a
+            propria rota devolveria, e diz -- antes e depois do clique -- que o
+            patrimonio nao muda, porque quem paga R$ 1.000 e ve o patrimonio
+            parado conclui que a tela nao registrou e paga de novo.
+
+            `linhaParaPagarDaTela` NAO E ADAPTADOR DE CONVENIENCIA: o `id` da
+            fatura ABERTA nesta tela e a chave sintetica
+            (`fatura:2026-10-01:<uuid>`), e passa-la como id de banco montaria
+            `POST /api/scheduled-transactions/fatura:.../pay` -- 404. Ver o
+            cabecalho dela.
+
+            E `aoPagar` RECEBE `carregar`, QUE E A FEATURE e nao limpeza: quem de-duplica a
+            fatura e a LEITURA (`sintetizarFaturasAbertas`, na rota), entao a
+            linha so sai do «Previsto» depois de reler. Um `setLinhas` local
+            seria a SEGUNDA aritmetica da mesma regra -- o mesmo motivo de
+            `aoConcluirElo`, logo acima.
+
+            O valor e o vencimento vao JA FORMATADOS, e `hoje` no fuso de Sao
+            Paulo: o componente nao tem relogio nem formatador proprio.
+          */}
+          <DialogoDePagamentoDaFatura
+            linha={
+              faturaParaPagar ? linhaParaPagarDaTela(faturaParaPagar) : null
+            }
+            valorFormatado={
+              faturaParaPagar ? formatCurrency(faturaParaPagar.valor) : ""
+            }
+            vencimentoFormatado={
+              faturaParaPagar ? dataLonga(faturaParaPagar.data) : ""
+            }
+            hoje={today()}
+            aoFechar={() => setFaturaParaPagar(null)}
+            aoPagar={carregar}
+          />
         </>
       )}
     </>

@@ -60,6 +60,7 @@ const {
   AVISO_DA_FATURA_ABERTA,
   ERRO_AO_FECHAR,
   ERRO_AO_PAGAR,
+  FATURA_SEM_VENCIMENTO_NAO_TEM_PAGAR,
   FRASE_DO_PATRIMONIO,
   FRASE_DO_PATRIMONIO_NO_DIALOGO,
   MOTIVO_SEM_CONTA_PAGADORA,
@@ -67,6 +68,7 @@ const {
   contasQuePodemPagar,
   decisaoDePagamentoDaFatura,
   linhaParaPagarDaAgenda,
+  linhaParaPagarDaTela,
   pagarAFatura,
 } = await import("../.tmp-pagamento-da-fatura/pagamento-da-fatura.js");
 
@@ -318,6 +320,97 @@ test("`id: \"\"` nao e linha gravada", () => {
   // Um mock produz isso sem esforco, e `gravada: true` com id vazio montaria
   // `/api/scheduled-transactions//pay`.
   assert.equal(linhaParaPagarDaAgenda({ id: "", notes: CHAVE }).gravada, false);
+});
+
+// =================================================================
+// A LINHA DA TELA DE DESPESAS -> a forma que a decisao le (HMO-311)
+// =================================================================
+// `linhaParaPagarDaTela` e a irma de `linhaParaPagarDaAgenda`, para a OUTRA
+// tela -- e ela existe por um motivo que decide dinheiro: nas telas de
+// movimentacao `LinhaDaTela.id` e SEMPRE string, e na fatura ABERTA ele e a
+// CHAVE SINTETICA (`linhasDaTela` precisa de chave estavel para o React).
+//
+// Passar a linha crua faria `pagarAFatura` usar aquela chave como id de banco.
+
+test("a fatura ABERTA da tela perde o id: a chave sintetica NAO e id de banco", () => {
+  // O BLOCO QUE IMPORTA. Com `id` passando reto, o caminho monta
+  // `POST /api/scheduled-transactions/fatura:2026-10-01:<uuid>/pay` em todo
+  // ramo onde o `close` nao sobrescrever o id -- 404, que para quem clicou se le
+  // como "o app nao conseguiu".
+  const chaveSintetica = `fatura:${MES}:${CARTAO}`;
+  const l = linhaParaPagarDaTela({
+    id: chaveSintetica,
+    gravada: false,
+    natureza: "fatura",
+    fatura: { accountId: CARTAO, mes: MES },
+    descricao: "Fatura Nubank",
+  });
+
+  assert.equal(l.id, null, `a chave sintetica virou id: ${l.id}`);
+  assert.equal(l.gravada, false);
+  assert.equal(l.natureza, "fatura");
+  assert.deepEqual(l.fatura, { accountId: CARTAO, mes: MES });
+  assert.equal(l.description, "Fatura Nubank");
+
+  // E o resultado e exatamente o sabor 1 que a decisao ja conhece.
+  assert.deepEqual(decisaoDePagamentoDaFatura(l), {
+    precisaDeContaPagadora: true,
+    faturaParaFechar: { accountId: CARTAO, mesDoClose: "2026-10" },
+  });
+});
+
+test("a fatura GRAVADA da tela MANTEM o id -- senao nao haveria o que pagar", () => {
+  // O par do bloco acima. Sem ele, um `id: null` incondicional passaria no
+  // primeiro e a fatura FECHADA cairia em `ERRO_AO_FECHAR` sem rede nenhuma: a
+  // tela diria "Não foi possível registrar a fatura" sobre uma fatura que ja
+  // esta registrada.
+  const l = linhaParaPagarDaTela({
+    id: ID_DA_FECHADA,
+    gravada: true,
+    natureza: "fatura",
+    fatura: { accountId: CARTAO, mes: MES },
+    descricao: "Fatura Nubank 10/2026",
+  });
+
+  assert.equal(l.id, ID_DA_FECHADA);
+  assert.equal(decisaoDePagamentoDaFatura(l).faturaParaFechar, null);
+});
+
+test("`gravada` E o criterio, e NAO o prefixo `fatura:` do id", () => {
+  // Duas definicoes de "esta linha existe no banco" divergiriam no dia em que a
+  // chave mudasse de forma. Uma linha gravada cujo id POR ACASO comece com
+  // `fatura:` tem de manter o id; uma nao-gravada com id de aparencia normal tem
+  // de perde-lo. Os dois casos separam os dois criterios.
+  assert.equal(
+    linhaParaPagarDaTela({
+      id: "fatura:parece-chave",
+      gravada: true,
+      natureza: "fatura",
+      fatura: { accountId: CARTAO, mes: MES },
+    }).id,
+    "fatura:parece-chave"
+  );
+  assert.equal(
+    linhaParaPagarDaTela({
+      id: ID_DA_FECHADA,
+      gravada: false,
+      natureza: "fatura",
+      fatura: { accountId: CARTAO, mes: MES },
+    }).id,
+    null
+  );
+});
+
+test("descricao ausente vira `null`, e nao a string 'undefined'", () => {
+  // O dialogo escreve `linha.description` em cima do valor. `undefined` num
+  // template viraria "undefined" escrito na tela, em cima de um numero certo.
+  const l = linhaParaPagarDaTela({
+    id: ID_DA_FECHADA,
+    gravada: true,
+    natureza: "fatura",
+    fatura: null,
+  });
+  assert.equal(l.description, null);
 });
 
 // =================================================================
@@ -592,6 +685,20 @@ test("o aviso da fatura aberta diz que o valor de HOJE e o que fica", () => {
 
 test("a frase de nenhuma conta pagadora explica POR QUE o cartao nao serve", () => {
   assert.match(SEM_CONTA_PAGADORA_CADASTRADA, /cartão de crédito não paga cartão/);
+});
+
+test("a frase da fatura SEM VENCIMENTO diz que nao tem botao E qual e o caminho", () => {
+  // AS DUAS METADES SAO OBRIGATORIAS (HMO-311). Desde esta fase a fatura NA
+  // LISTA tem "Pagar", e esta -- que vem num bloco a parte com so
+  // `{ account_name, total }`, sem id e sem `accountId` -- nao tem. Dizer so que
+  // ela esta fora do Previsto deixa "a do Nubank tem botão e a do C6 não" se ler
+  // como tela quebrada, e a reacao e recarregar a pagina.
+  //
+  // A SEGUNDA metade e o que transforma a ausencia em instrucao: o caminho dela
+  // e cadastrar o dia de vencimento do cartao.
+  assert.match(FATURA_SEM_VENCIMENTO_NAO_TEM_PAGAR, /não tem o botão Pagar/);
+  assert.match(FATURA_SEM_VENCIMENTO_NAO_TEM_PAGAR, /dia de vencimento/);
+  assert.match(FATURA_SEM_VENCIMENTO_NAO_TEM_PAGAR, /passa a aparecer na lista/);
 });
 
 // =================================================================
