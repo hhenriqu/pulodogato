@@ -48,6 +48,26 @@ const DEPENDENCIAS = [
   "lib/transferencia.ts",
   "lib/lancamento.ts",
   "lib/telas-de-movimentacao.ts",
+  // AS DUAS ENTRARAM NA HMO-264, E SEM ELAS ESTE GUARD ESTAVA MORTO.
+  //
+  // `chave-da-fatura` nasceu na HMO-285 (a chave canonica saiu de `card-invoice`
+  // para um arquivo-FOLHA) e `elo-da-fatura` na HMO-305. As duas sao importadas
+  // por `telas-de-movimentacao.ts`, e `card-invoice.ts` RE-EXPORTA a primeira --
+  // e nenhuma das duas entrou nesta lista nem no `files` do tsconfig da suite.
+  //
+  // A SUITE NAO ACUSOU, e nao podia: ela compila DENTRO do repo, onde o `paths`
+  // resolve `@/lib/chave-da-fatura` para o arquivo de verdade e o tsc o puxa
+  // transitivamente, listado ou nao. O MUTADOR monta uma arvore ISOLADA com so
+  // estas copias, e ali o import nao resolve -- entao
+  // `npm run mutantes:realizado-do-caixa` abortava no controle positivo com tres
+  // TS2307 desde que a HMO-285 mergeou, e nenhum mutante deste modulo rodou mais.
+  //
+  // ABORTAR E O COMPORTAMENTO CERTO do runner, e e por isso que o estrago parou
+  // aqui: sem o controle positivo, os tres erros de compilacao fariam TODO
+  // mutante "morrer" por motivo errado e o placar diria 100% sem medir nada. O
+  // que faltava era alguem rodar o guard.
+  "lib/chave-da-fatura.ts",
+  "lib/elo-da-fatura.ts",
   "lib/movimentacoes.ts",
   "lib/destino-do-lancamento.ts",
   "lib/periodo-do-painel.ts",

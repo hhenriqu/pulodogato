@@ -57,6 +57,41 @@
 //      se ler como "o cartao conta duas vezes porque eu nao entendi a tela".
 //      `ehGastoNoCartao` tira a compra do lado realizado, e so na de Despesas.
 //
+//   6. A FATURA PAGA NAO ESTAVA EM LADO NENHUM (HMO-264). A armadilha 5 tirou a
+//      compra do Realizado contando que a FATURA estivesse no Previsto. Isso
+//      vale enquanto ela esta aberta; no mes em que ela e PAGA os dois lados a
+//      perdem ao mesmo tempo:
+//
+//        * sai do PREVISTO -- `status: 'paid'` cai em
+//          `STATUS_QUE_SAI_DO_PREVISTO` (armadilha 2), e `faturasPrevistasDaJanela`
+//          ja nao a sintetiza porque a chave canonica existe em
+//          `scheduled_transactions`;
+//        * nao entrava no REALIZADO -- a baixa grava DUAS pernas `transfer`
+//          (`pernasDoPagamentoDeFatura`), e o filtro de tipo da armadilha 4
+//          mantinha as duas fora da tela de Despesas. E as compras que a fatura
+//          contem ja tinham saido pela armadilha 5.
+//
+//      Resultado: o mes em que se pagou R$ 1.290 de cartao fechava R$ 1.290 mais
+//      barato, no Previsto, no Realizado e no Total. E um total MENOR nao parece
+//      erro -- parece um mes barato, que e a mesma direcao de falha que
+//      `ehGastoNoCartao` evita quando nao da para saber.
+//
+//      `ehPagamentoDaFatura` traz a PERNA DE SAIDA de volta, e so na tela de
+//      Despesas. O valor sai da PERNA e nunca de `scheduled_transactions.amount`:
+//      a baixa aceita valor diferente do previsto e NAO reescreve a agenda, e e
+//      a perna que diz quanto saiu de verdade -- com `transaction_date =
+//      paid_date`, que e o que poe a fatura no mes em que ela foi PAGA e nao no
+//      do vencimento (pagar atrasado contaria no mes errado).
+//
+//      A MESMA LINHA CONTINUA NA TELA DE TRANSFERENCIAS, e isso nao e contar
+//      duas vezes: nenhum total soma as tres telas. Pagar a fatura E um
+//      movimento entre duas contas minhas (e e so isso que Transferencias
+//      afirma) E o momento em que a despesa do cartao se realiza (e e so isso
+//      que Despesas afirma). Por isso o que entra em Despesas e a FATURA,
+//      reconhecida pela chave canonica -- `natureza: "fatura"` com o caminho de
+//      volta para o cartao e o mes --, e nao uma transferencia reclassificada em
+//      despesa. `tela` e o parametro que deixa as duas leituras conviverem.
+//
 // O "TOTAL" E PREVISTO + REALIZADO, E ISSO E O PEDIDO
 // ---------------------------------------------------
 // E a mesma definicao do fechamento do mes do grupo (HMO-245): o que o periodo
@@ -396,6 +431,24 @@ export interface RealizadaCrua extends LancamentoComConta {
   exchange_rate?: number | string | null;
   transaction_date?: string | null;
   currency?: string | null;
+  /**
+   * A chave canonica da fatura, quando esta linha e uma perna do pagamento dela
+   * -- HMO-264.
+   *
+   * `pagarFatura` (app/api/scheduled-transactions/[id]/pay/route.ts) copia
+   * `scheduled_transactions.notes` para as DUAS pernas, entao a chave chega
+   * aqui de graca: nao foi preciso coluna nova nem migration.
+   *
+   * OPCIONAL, E E A MESMA FAMILIA DE `account_type` E `recurring_rule_id` -- a
+   * ausencia dele e um estado legitimo (quase toda linha realizada nao tem
+   * nota), entao o `tsc` nao pode cobrar. Tirar `notes` do `select` da rota
+   * numa limpeza de "campos nao usados na tela" nao quebra compilacao nem teste
+   * de unidade: `ehPagamentoDaFatura` passa a receber `undefined` em toda linha,
+   * para de casar, e a tela de Despesas volta a perder a fatura paga inteira --
+   * o defeito desta issue, de volta e em silencio. Quem cobra a fiacao e a sonda
+   * textual de scripts/test-contrato-das-telas-de-movimentacao.mjs.
+   */
+  notes?: string | null;
   category?: {
     name?: string | null;
     is_expense?: boolean;
@@ -668,6 +721,112 @@ export function ehGastoNoCartao(crua: RealizadaCrua): boolean {
 }
 
 /**
+ * O `transaction_type` GRAVADO das duas pernas do pagamento da fatura (015).
+ *
+ * Constante e nao a string solta em `ehPagamentoDaFatura` pelo mesmo motivo de
+ * `TIPO_CARTAO`: um typo nao da erro nenhum, so para de casar -- e aqui o filtro
+ * que para de casar devolve o defeito desta issue (a fatura paga fora dos dois
+ * lados) em vez de um total inflado.
+ */
+export const TIPO_DA_PERNA_DE_PAGAMENTO = "transfer";
+
+/**
+ * Esta linha realizada e A FATURA PAGA -- a perna de SAIDA do pagamento dela?
+ *
+ * Armadilha 6 do cabecalho. "Despesas do cartao sao todas previstas e se tornam
+ * realizadas para todos os fins apos cartao ser pago."
+ *
+ * SAO TRES CRITERIOS, E NENHUM DOS TRES E ZELO -- cada um dos dois ultimos
+ * impede uma forma diferente de contar o mesmo dinheiro duas vezes:
+ *
+ *   * A CHAVE CANONICA em `notes` (`fatura:AAAA-MM-01:<cartao>`). E o unico
+ *     criterio que diz "esta linha e uma fatura", e e deliberadamente o MESMO do
+ *     lado previsto (`faturaDaChave` em `linhaPrevista`) -- dois criterios para a
+ *     mesma pergunta dariam duas respostas na mesma tela. Pelo tipo da CONTA nao
+ *     daria: a perna de saida mora na conta CORRENTE, e e a assinatura cobrada
+ *     no cartao que tem `account_id` de cartao sem ser fatura (ver o cabecalho de
+ *     lib/card-invoice.ts).
+ *
+ *   * O `transaction_type` GRAVADO E `transfer`. Quem ele separa e a PREVISAO
+ *     DIGITADA que alguem ligou ao elo da fatura (HMO-305): ligar o elo grava a
+ *     chave canonica em `scheduled_transactions.notes`, e a baixa comum copia
+ *     `notes` para a linha de `financial_transactions` que ela cria -- uma linha
+ *     `expense`, negativa, com a chave e sem contraparte, indistinguivel da
+ *     perna de saida por tudo menos esta coluna.
+ *
+ *     Sem este criterio ela NAO seria somada duas vezes (o ramo da fatura em
+ *     `linhasDaTela` faz `continue`, entao ela entra uma vez pelo ramo novo em
+ *     vez do filtro de tipo) -- e e justamente por isso que o preco e facil de
+ *     subestimar. O que ela perde e o resto: `natureza: "fatura"` tira dela o
+ *     Editar e o Excluir (`podeAgirNaLinha` recusa toda linha de fatura,
+ *     lib/acoes-da-linha.ts) e lhe da um link para um cartao que NAO e o lugar
+ *     onde aquela despesa aconteceu. Uma despesa comum da conta corrente que
+ *     deixa de ser editavel e se apresenta como fatura de um cartao e um estado
+ *     que nao da erro nenhum e que nao tem saida pela tela.
+ *
+ *     E ele tem um segundo efeito, mais caro e mais raro: o ramo da fatura
+ *     passa POR CIMA de `ehGastoNoCartao`. Uma linha `expense` na conta de um
+ *     CARTAO que carregue a chave entraria no Realizado sem a peneira da
+ *     armadilha 5 -- somada solta ali e dentro da fatura que o Previsto soma, o
+ *     defeito da HMO-260 de volta.
+ *
+ *     A leitura e da coluna CRUA e nao de `classificarMovimentacao`, pela mesma
+ *     razao de `ehGastoNoCartao`: aquele deriva o tipo da categoria ou do sinal
+ *     quando a coluna e nula, e pelo sinal a perna de saida e uma despesa.
+ *
+ *   * E ELA NAO E A PERNA DE ENTRADA. As duas pernas carregam a MESMA chave
+ *     (`pagarFatura` copia `notes` nas duas), a mesma data e o mesmo valor com
+ *     sinais opostos. Contar as duas nao daria o dobro -- daria ZERO, porque
+ *     `valorEmReais` passa `Math.abs` e as duas somariam +1.290 no Realizado,
+ *     ou seja R$ 2.580 de uma fatura de R$ 1.290. E a armadilha 3 do cabecalho
+ *     com outra roupa, e por isso o criterio e `ehPernaDeEntrada` e nao uma
+ *     comparacao de sinal escrita aqui: aquele tem DOIS criterios (o elo do 015
+ *     e o sinal), e o segundo e o que ainda pega a perna de entrada cujo elo a
+ *     FK `ON DELETE SET NULL` zerou. Uma segunda implementacao de "qual das duas
+ *     pernas" divergiria da primeira no dia em que uma das duas mudasse.
+ *
+ * NAO HA CRITERIO DE STATUS AQUI, e nao e esquecimento: a perna SO EXISTE
+ * porque a fatura foi paga -- quem a grava e `pagarFatura`, no mesmo pedido que
+ * marca `status: 'paid'`. Reler `scheduled_transactions.status` seria uma
+ * segunda consulta para confirmar o que a existencia da linha ja afirma, e ela
+ * discordaria da primeira no instante entre as duas escritas.
+ *
+ * ESTA FUNCAO TEM UM GEMEO, E ELE E DIVIDA CONHECIDA -- HMO-317
+ * ------------------------------------------------------------
+ * `ehSaidaDePagamentoDeFatura` (lib/realizado-do-caixa.ts, HMO-265) responde a
+ * MESMA pergunta para o painel, com os MESMOS tres criterios escritos a mao:
+ *
+ *     linha.transaction_type !== "transfer"  -> false
+ *     !ehFatura(linha.notes)                 -> false
+ *     linha.counterpart_transaction_id       -> false
+ *     return Number(linha.amount) < 0
+ *
+ * E AS DUAS JA DIVERGEM em um caso: `amount === 0` sem elo nenhum. La ele fica
+ * FORA (o `< 0` e estrito); aqui ele ENTRA, porque `ehPernaDeEntrada` deixa as
+ * duas linhas de zero passarem de proposito -- somar zero duas vezes continua
+ * dando zero, e esconder uma delas seria a tela apagando um lancamento que a
+ * pessoa criou. Nenhum total muda com isso HOJE, e e justamente por isso que a
+ * divergencia e perigosa: ela e a forma exata do defeito que este repositorio ja
+ * pagou caro, duas copias de um criterio de DINHEIRO que ninguem compara.
+ *
+ * NAO FOI UNIFICADO NESTA ISSUE de proposito, e o motivo e a direcao do import:
+ * `realizado-do-caixa` JA importa `TIPO_CARTAO` e `TIPOS_QUE_ENTRAM_NA_FATURA`
+ * DESTE arquivo (foi para isso que a segunda deixou de ser privada na HMO-265),
+ * entao o dono tem de ser este lado. O contrario fecharia um ciclo e obrigaria a
+ * acrescentar `realizado-do-caixa` a `DEPENDENCIAS` do mutador, onde ele
+ * arrastaria `card-invoice` -> `transferencia` -> `lancamento` atras dele.
+ * Unificar e portanto mexer no caminho de dinheiro do PAINEL -- suite e mutantes
+ * proprios, e um mutante SOBREVIVENTE com decisao escrita no cabecalho de la (o
+ * primeiro criterio e invariante, nao ramo com teste) --, que esta fora do
+ * recorte desta issue. HMO-317 faz isso com a verificacao que ele exige.
+ */
+export function ehPagamentoDaFatura(crua: RealizadaCrua): boolean {
+  if (!faturaDaChave(crua.notes)) return false;
+  if (String(crua.transaction_type) !== TIPO_DA_PERNA_DE_PAGAMENTO) return false;
+  return !ehPernaDeEntrada(crua);
+}
+
+/**
  * Converte a linha realizada para a lista.
  *
  * O `indice` existe so pela transferencia: a frase "Itaú → Nubank" precisa da
@@ -683,19 +842,42 @@ export function ehGastoNoCartao(crua: RealizadaCrua): boolean {
  * conjunto chega por argumento. Vazio significa "nenhuma", nao "nao sei": ver
  * a direcao do erro em `linhasDaTela`.
  *
- * `fatura` E SEMPRE `null` NO REALIZADO, e nao e esquecimento. O pagamento da
- * fatura e uma TRANSFERENCIA de duas pernas (`pernasDoPagamentoDeFatura`), as
- * duas `transfer`, entao nenhuma delas chega na tela de Despesas -- o mesmo
- * paragrafo que `ehGastoNoCartao` ja escreve. Nao ha linha realizada que seja
- * uma fatura nesta tela.
+ * `fatura` DEIXOU DE SER SEMPRE `null` NO REALIZADO -- HMO-264. Ele e preenchido
+ * na unica linha realizada que e uma fatura: a perna de SAIDA do pagamento dela
+ * (`ehPagamentoDaFatura`). Em toda outra continua `null`, e a razao original
+ * segue de pe -- um link para o cartao e o mes montado a partir de uma linha que
+ * nao e fatura aponta para um destino plausivel e errado.
+ *
+ * `tela` E PARAMETRO, E E O QUE DEIXA AS DUAS LEITURAS CONVIVEREM (HMO-264). A
+ * perna de saida do pagamento da fatura e `transfer` na coluna e aparece em DUAS
+ * telas: na de Transferencias ela e o movimento entre duas contas minhas
+ * (`tipo: "transfer"`), e na de Despesas ela e a fatura se realizando
+ * (`tipo: "expense"`). `tipo` e o campo que diz A QUE TELA a linha pertence --
+ * e nao o que a coluna do banco diz --, entao deixa-lo em `"transfer"` numa
+ * linha da lista de Despesas quebraria justamente o invariante pelo qual o lado
+ * previsto ja peneira (`linha.tipo === tipo` em `linhasDaTela`): a fatura paga
+ * desapareceria de Despesas no dia em que alguem repetisse aquela peneira do
+ * lado realizado, sem erro e sem teste vermelho.
+ *
+ * OBRIGATORIO, pelo mesmo motivo de `idsDeFixa`: opcional, ele cairia num
+ * default e a decisao voltaria a ser invisivel.
  */
 export function linhaRealizada(
   crua: RealizadaCrua,
   indice: IndiceDeContraparte,
   idsDeFixa: ReadonlySet<string>,
-  meuUserId: string | null | undefined
+  meuUserId: string | null | undefined,
+  tela: TipoDaTela
 ): LinhaDaTela {
   const destino = destinoDoLancamento(crua, indice);
+
+  // O CARTAO E O MES DA FATURA PAGA, ou `null` em toda outra linha.
+  //
+  // `ehPagamentoDaFatura` e nao `faturaDaChave(crua.notes)` solto: a chave
+  // canonica chega tambem na perna de ENTRADA e na despesa comum que nasceu do
+  // elo da HMO-305, e nenhuma das duas e a fatura se realizando. Os tres
+  // criterios estao no cabecalho daquela funcao.
+  const faturaPaga = ehPagamentoDaFatura(crua) ? faturaDaChave(crua.notes) : null;
 
   return {
     id: crua.id,
@@ -705,7 +887,13 @@ export function linhaRealizada(
     valor: valorEmReais(crua.amount, crua.exchange_rate),
     data: texto(crua.transaction_date) ?? "",
     origem: "realizado",
-    tipo: classificarMovimentacao(crua),
+    // A FATURA PAGA E `expense` NA TELA DE DESPESAS E `transfer` NA DE
+    // TRANSFERENCIAS -- a MESMA linha do banco, duas leituras. Ver `tela` no
+    // cabecalho.
+    tipo:
+      faturaPaga && tela === "expense"
+        ? "expense"
+        : classificarMovimentacao(crua),
     status: null,
     situacao: null,
     categoria: texto(crua.category?.name),
@@ -713,7 +901,15 @@ export function linhaRealizada(
     // nome de conta inventado. `null` cala a frase na tela.
     conta: destino.faltaConta ? null : destino.texto,
     moeda: moedaDaLinha(crua.currency),
-    natureza: idsDeFixa.has(crua.id) ? "fixa" : "despesa",
+    // FATURA PRIMEIRO, FIXA DEPOIS -- a MESMA ordem de `linhaPrevista`, e pela
+    // mesma razao (ver `natureza` em `LinhaDaTela`): chamar de "fixa" a fatura
+    // paga tiraria dela a unica coisa que `fatura` existe para dar, o caminho de
+    // volta para o cartao e o mes.
+    natureza: faturaPaga
+      ? "fatura"
+      : idsDeFixa.has(crua.id)
+        ? "fixa"
+        : "despesa",
     // SEMPRE `false` NO REALIZADO, e nao e esquecimento: a minha parte de uma
     // despesa de grupo que outra pessoa PAGOU nao esta em
     // `financial_transactions` -- ela vive em `group_share_entries` (033), que
@@ -721,8 +917,11 @@ export function linhaRealizada(
     // realizada como "de grupo" com base em `group_id` prometeria uma fracao onde
     // o valor e o que saiu CHEIO da minha conta.
     de_grupo: false,
-    fatura: null,
-    // SEMPRE `null` NO REALIZADO (HMO-305), e pela mesma razao que `fatura`: o
+    fatura: faturaPaga
+      ? { accountId: faturaPaga.accountId, mes: faturaPaga.mes }
+      : null,
+    // SEMPRE `null` NO REALIZADO (HMO-305). A razao que `fatura` tinha caiu com
+    // a HMO-264; esta nao: o
     // elo da fatura e uma decisao sobre uma conta A PAGAR -- "esta previsao e a
     // fatura do mes". Uma linha realizada e dinheiro que JA saiu, e nao ha o que
     // de-duplicar contra a fatura ABERTA. A compra no cartao, que seria a
@@ -922,6 +1121,13 @@ export function linhaPrevista(
  * Invertida a 1 com a 4, o filtro de tipo teria de decidir sobre um valor ja
  * absoluto -- e nao ha como. Invertida a 2 com a 4, o mesmo.
  *
+ * A DECISAO 1 TEM UMA EXCECAO, E E UMA SO: a FATURA PAGA (HMO-264, armadilha 6).
+ * A perna de saida do pagamento e `transfer` na coluna, entao o filtro de tipo e
+ * precisamente quem a mantinha fora da tela de Despesas -- e ela tem de estar
+ * la, porque e nela que a despesa do cartao se realiza. A excecao vem ANTES da
+ * decisao 1, e o corpo do laco explica por que nenhuma das outras tres peneiras
+ * se aplica a ela.
+ *
  * `idsDeFixa` E OBRIGATORIO DE PROPOSITO (HMO-285). Ele e o unico jeito de uma
  * linha realizada saber que veio de regra fixa -- o elo em
  * `financial_transactions` nao existe (001) --, e um parametro OPCIONAL teria
@@ -958,12 +1164,34 @@ export function linhasDaTela(
   const linhas: LinhaDaTela[] = [];
 
   for (const crua of realizadas) {
+    // A FATURA PAGA ENTRA EM DESPESAS ANTES DO FILTRO DE TIPO -- HMO-264,
+    // armadilha 6. Ela e a UNICA excecao a decisao 1, e tem de ser aqui: a perna
+    // de saida do pagamento e `transfer` na coluna, entao o filtro de tipo e
+    // exatamente quem a mantinha fora da tela de Despesas.
+    //
+    // AS TRES PENEIRAS ABAIXO NAO SE APLICAM A ELA, e nenhuma por acaso:
+    //
+    //   * a de tipo e a que ela existe para contornar;
+    //   * `ehPernaDeEntrada` ja esta DENTRO de `ehPagamentoDaFatura` (e so a
+    //      perna de saida casa), e aqui ela nem seria consultada -- a guarda e
+    //      `tipo === "transfer"`;
+    //   * `ehGastoNoCartao` nunca casaria: ela exige `transaction_type` em
+    //     ('expense','income') e esta linha e `transfer`. A fatura paga nao e
+    //     um gasto NO cartao, e o pagamento DELE.
+    //
+    // E A COMPRA CONTINUA ESCONDIDA pela armadilha 5, o que e o que impede o
+    // cartao de contar duas vezes: no mes da fatura paga a tela soma a FATURA
+    // (uma linha) e nenhuma das compras que ela contem.
+    if (tipo === "expense" && ehPagamentoDaFatura(crua)) {
+      linhas.push(linhaRealizada(crua, indice, idsDeFixa, meuUserId, tipo));
+      continue;
+    }
     if (classificarMovimentacao(crua) !== tipo) continue;
     if (tipo === "transfer" && ehPernaDeEntrada(crua)) continue;
     // O gasto no cartao esta DENTRO da fatura, e a fatura inteira ja esta no
     // lado previsto desta mesma tela. Ver armadilha 5 do cabecalho.
     if (tipo === "expense" && ehGastoNoCartao(crua)) continue;
-    linhas.push(linhaRealizada(crua, indice, idsDeFixa, meuUserId));
+    linhas.push(linhaRealizada(crua, indice, idsDeFixa, meuUserId, tipo));
   }
 
   // AS SUSPEITAS DE FATURA REPETIDA -- HMO-305, UMA VEZ, SOBRE AS PREVISTAS

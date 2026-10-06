@@ -200,12 +200,23 @@ export async function GET(request: NextRequest) {
     // nao quebra tsc nem teste de unidade nenhum: a regra pura passa a receber
     // `undefined`, deixa de casar com `credit_card`, para de filtrar, e o Total
     // da tela de Despesas volta a somar o cartao duas vezes.
+    //
+    // `notes` E LOAD-BEARING DO MESMO JEITO, E NO SENTIDO OPOSTO (HMO-264): ele e
+    // o unico campo pelo qual uma linha realizada sabe que e a FATURA PAGA. A
+    // chave canonica (`fatura:AAAA-MM-01:<cartao>`) chega aqui de graca porque
+    // `pagarFatura` copia `scheduled_transactions.notes` para as DUAS pernas do
+    // pagamento -- nao houve coluna nova nem migration. Tirar `notes` deste
+    // `select` nao quebra tsc (o campo e opcional em `RealizadaCrua`, e a
+    // ausencia e o estado da maioria das linhas) nem teste de unidade nenhum:
+    // `ehPagamentoDaFatura` para de casar, e o mes em que a fatura foi paga volta
+    // a fechar mais barato pelo valor dela inteiro -- no Previsto, no Realizado e
+    // no Total.
     const { data: realizadasCruas, error: erroRealizadas } = await supabase
       .from("financial_transactions")
       .select(
         `
         id, user_id, description, amount, exchange_rate, currency, transaction_date,
-        transaction_type, counterpart_transaction_id,
+        transaction_type, counterpart_transaction_id, notes,
         category:transaction_categories(name, is_expense),
         account:financial_accounts(id, name, account_type)
       `

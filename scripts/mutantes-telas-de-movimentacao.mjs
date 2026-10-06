@@ -26,6 +26,10 @@
 //   `cartao_entra_no_realizado` -- a compra no cartao conta no Realizado E
 //                            dentro da fatura que o Previsto soma: R$ 800 de
 //                            uma compra de R$ 400 (HMO-260).
+//   `fatura_paga_nao_entra` -- a fatura PAGA sai do Previsto e nao entra no
+//                            Realizado: o mes em que se pagou R$ 1.290 de
+//                            cartao fecha R$ 1.290 mais barato, nos tres
+//                            numeros (HMO-264).
 //
 // A FONTE NUNCA E MUTADA NO DISCO
 // -------------------------------
@@ -429,31 +433,184 @@ const MUTANTES = [
     para:
       '    fatura: daFatura ? { accountId: daFatura.accountId, mes: "" } : null,',
   },
+  // O `natureza` da realizada ganhou o galho da fatura na HMO-264, entao a
+  // ancora destes dois mudou junto. Eles continuam medindo a MESMA decisao -- o
+  // conjunto da terceira consulta e lido? ele distingue algo? --, e o que mudou
+  // e so o texto. Deixa-los com a ancora velha nao os faria passar verde: o
+  // runner reprova `ocorrencias === 0` como mutante invalido.
   {
     nome: "realizada_nunca_e_fixa",
     porque:
       "o conjunto da terceira consulta deixa de ser lido: a conta fixa que ja " +
       "foi paga aparece como lancamento comum, e a consulta extra fica paga " +
       "sem ninguem usar",
-    de: '    natureza: idsDeFixa.has(crua.id) ? "fixa" : "despesa",',
-    para: '    natureza: "despesa",',
+    de:
+      "    natureza: faturaPaga\n" +
+      '      ? "fatura"\n' +
+      "      : idsDeFixa.has(crua.id)\n" +
+      '        ? "fixa"\n' +
+      '        : "despesa",',
+    para: '    natureza: faturaPaga ? "fatura" : "despesa",',
   },
   {
     nome: "realizada_sempre_fixa",
     porque:
       "TODA linha realizada vira 'Fixa', inclusive o mercado lancado a mao -- " +
       "um rotulo que nao distingue nada se le como 'o app acha que tudo e fixo'",
-    de: '    natureza: idsDeFixa.has(crua.id) ? "fixa" : "despesa",',
+    de:
+      "    natureza: faturaPaga\n" +
+      '      ? "fatura"\n' +
+      "      : idsDeFixa.has(crua.id)\n" +
+      '        ? "fixa"\n' +
+      '        : "despesa",',
     para: '    natureza: "fixa",',
   },
+
+  // --- armadilha 6: a fatura PAGA nao estava em lado nenhum (HMO-264) ------
+  //
+  // `realizada_virou_fatura` MORAVA AQUI, e foi substituido por
+  // `fatura_paga_sem_peneira`. A ancora dele era `fatura: null,` literal em
+  // `linhaRealizada` e o porque dele era "o pagamento da fatura e transferencia
+  // de duas pernas e nao chega nesta tela" -- as duas coisas que esta issue
+  // desfez. Mantido pelo texto ele viraria mutante invalido; reescrito com a
+  // ancora nova e o porque velho, mediria uma afirmacao que o modulo nao faz
+  // mais.
   {
-    nome: "realizada_virou_fatura",
+    nome: "fatura_paga_nao_entra",
     porque:
-      "a linha realizada passa a oferecer link de fatura: o pagamento da fatura " +
-      "e transferencia de duas pernas e nao chega nesta tela, entao o link " +
-      "levaria a um cartao que aquela linha nao tem",
-    de: "    fatura: null,",
-    para: '    fatura: { accountId: crua.id, mes: "" },',
+      "o defeito da issue, inteiro: a fatura paga sai do Previsto por " +
+      "`status: 'paid'` e nao entra no Realizado -- o mes em que se pagou " +
+      "R$ 1.290 de cartao fecha R$ 1.290 mais barato, e um total MENOR nao " +
+      "parece erro, parece um mes barato",
+    de: '    if (tipo === "expense" && ehPagamentoDaFatura(crua)) {',
+    para: "    if (false) {",
+  },
+  {
+    nome: "fatura_paga_em_toda_tela",
+    porque:
+      "a excecao deixa de ser so da tela de Despesas: a chave canonica poe o " +
+      "pagamento da fatura no total de RECEITAS do mes",
+    de: '    if (tipo === "expense" && ehPagamentoDaFatura(crua)) {',
+    para: "    if (ehPagamentoDaFatura(crua)) {",
+  },
+  {
+    nome: "fatura_paga_sem_peneira",
+    porque:
+      "`linhaRealizada` passa a chamar de fatura TODA linha que carrega a " +
+      "chave -- a perna de ENTRADA e a despesa comum nascida do elo da HMO-305 " +
+      "incluidas. As duas perdem o Editar e o Excluir (`podeAgirNaLinha` recusa " +
+      "toda linha de fatura) e ganham link para um cartao que nao e onde a " +
+      "despesa aconteceu",
+    de: "  const faturaPaga = ehPagamentoDaFatura(crua) ? faturaDaChave(crua.notes) : null;",
+    para: "  const faturaPaga = faturaDaChave(crua.notes);",
+  },
+  {
+    nome: "fatura_paga_sem_chave",
+    porque:
+      "a chave canonica deixa de ser o criterio: TODA perna de saida de " +
+      "transferencia entra na tela de Despesas, e todo Pix entre contas " +
+      "proprias volta a ser gasto do mes (a armadilha 4, por outro caminho)",
+    de: "  if (!faturaDaChave(crua.notes)) return false;",
+    para: "  if (false) return false;",
+  },
+  {
+    nome: "fatura_paga_ignora_o_tipo_gravado",
+    porque:
+      "a despesa comum que nasceu do elo da fatura (HMO-305) passa a entrar " +
+      "pelo ramo da fatura: ela NAO conta duas vezes (o ramo faz `continue`), " +
+      "mas perde o Editar e o Excluir e se apresenta como fatura de um cartao. " +
+      "E o ramo passa POR CIMA de `ehGastoNoCartao`, o que devolve o defeito da " +
+      "HMO-260 para a linha de cartao que carregue a chave",
+    de: "  if (String(crua.transaction_type) !== TIPO_DA_PERNA_DE_PAGAMENTO) return false;",
+    para: "  if (false) return false;",
+  },
+  {
+    nome: "fatura_paga_pega_as_duas_pernas",
+    porque:
+      "as duas pernas do pagamento entram: elas tem a MESMA chave, a mesma " +
+      "data e o mesmo valor com sinais opostos, e `valorEmReais` passa " +
+      "`Math.abs` -- entao nao da zero, da o DOBRO. R$ 2.580 de uma fatura de " +
+      "R$ 1.290",
+    de: "  return !ehPernaDeEntrada(crua);",
+    para: "  return true;",
+  },
+  {
+    nome: "fatura_paga_e_transfer_em_despesas",
+    porque:
+      "a linha fica com `tipo: 'transfer'` na lista de Despesas. Nenhum total " +
+      "muda HOJE -- e e por isso que ele importa: `tipo` e o campo que diz a " +
+      "que tela a linha pertence, e o lado previsto ja peneira por ele " +
+      "(`linha.tipo === tipo`). A fatura paga desapareceria de Despesas no dia " +
+      "em que alguem repetisse aquela peneira do lado realizado",
+    de:
+      "    tipo:\n" +
+      '      faturaPaga && tela === "expense"\n' +
+      '        ? "expense"\n' +
+      "        : classificarMovimentacao(crua),",
+    para: "    tipo: classificarMovimentacao(crua),",
+  },
+  {
+    nome: "fatura_paga_sempre_expense",
+    porque:
+      "o OUTRO lado da mesma igualdade: a perna passa a ser `expense` tambem " +
+      "na tela de Transferencias, onde ela e um movimento entre duas contas " +
+      "minhas. Variar so um dos dois lados deixaria a decisao por tela sem " +
+      "medida",
+    de:
+      "    tipo:\n" +
+      '      faturaPaga && tela === "expense"\n' +
+      '        ? "expense"\n' +
+      "        : classificarMovimentacao(crua),",
+    para: '    tipo: faturaPaga ? "expense" : classificarMovimentacao(crua),',
+  },
+  {
+    nome: "fatura_paga_nao_se_apresenta_como_fatura",
+    porque:
+      "a fatura paga entra no numero certo e sem o rotulo: ela perde o " +
+      "«Fatura» e o caminho de volta para o cartao e o mes, e fica na lista de " +
+      "Despesas como uma linha qualquer com a descricao da fatura -- que e " +
+      "exatamente 'a transferencia reclassificada' que a issue recusa",
+    de:
+      "    natureza: faturaPaga\n" +
+      '      ? "fatura"\n' +
+      "      : idsDeFixa.has(crua.id)\n" +
+      '        ? "fixa"\n' +
+      '        : "despesa",',
+    para: '    natureza: idsDeFixa.has(crua.id) ? "fixa" : "despesa",',
+  },
+  {
+    nome: "fatura_paga_ordem_fixa_primeiro",
+    porque:
+      "FIXA antes de FATURA no realizado: a fatura paga cujo id caiu no " +
+      "conjunto da terceira consulta se chama 'fixa' e perde o cartao e o mes " +
+      "-- a unica coisa que `fatura` existe para dar",
+    de:
+      "    natureza: faturaPaga\n" +
+      '      ? "fatura"\n' +
+      "      : idsDeFixa.has(crua.id)\n" +
+      '        ? "fixa"\n' +
+      '        : "despesa",',
+    para:
+      "    natureza: idsDeFixa.has(crua.id)\n" +
+      '      ? "fixa"\n' +
+      "      : faturaPaga\n" +
+      '        ? "fatura"\n' +
+      '        : "despesa",',
+  },
+  {
+    nome: "fatura_paga_sem_mes",
+    porque:
+      "o cartao certo e o mes vazio na linha REALIZADA: o link da fatura paga " +
+      "aponta para o mes errado do cartao certo. O irmao deste mutante " +
+      "(`fatura_sem_mes`) mede o mesmo em `linhaPrevista` -- sao dois " +
+      "construtores, e o tipo `{ accountId, mes }` nao impede nenhum dos dois " +
+      "de montar a string vazia",
+    de:
+      "    fatura: faturaPaga\n" +
+      "      ? { accountId: faturaPaga.accountId, mes: faturaPaga.mes }\n" +
+      "      : null,",
+    para:
+      '    fatura: faturaPaga ? { accountId: faturaPaga.accountId, mes: "" } : null,',
   },
 
   // --- rotulos que mudam o significado do numero --------------------------

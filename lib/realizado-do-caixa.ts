@@ -179,6 +179,28 @@ export function ehCompraNoCartao(linha: LinhaDoRealizado): boolean {
  *
  * `amount === 0` sem elo nenhum fica fora dos dois lados, e e inofensivo:
  * promover zero nao mudaria numero nenhum.
+ *
+ * ESTA FUNCAO TEM UM GEMEO, E ELE E DIVIDA CONHECIDA -- HMO-317
+ * ------------------------------------------------------------
+ * `ehPagamentoDaFatura` (lib/telas-de-movimentacao.ts, HMO-264) responde a MESMA
+ * pergunta para a tela de Despesas, com os MESMOS tres criterios -- e ele os
+ * escreve delegando os dois ultimos a `ehPernaDeEntrada`, em vez de repetir o
+ * elo e o sinal a mao como aqui.
+ *
+ * E AS DUAS JA DIVERGEM no caso do paragrafo acima: `amount === 0` sem elo fica
+ * fora AQUI (o `< 0` e estrito) e ENTRA LA (`ehPernaDeEntrada` deixa as duas
+ * linhas de zero passarem de proposito). Nenhum total muda com isso hoje, e e
+ * por isso que a divergencia e perigosa: duas copias de um criterio de DINHEIRO
+ * que ninguem compara sao a forma exata do defeito que este repositorio ja pagou
+ * caro.
+ *
+ * O DONO FUTURO E `telas-de-movimentacao`, e nao este arquivo: ESTE ja importa
+ * `TIPO_CARTAO` e `TIPOS_QUE_ENTRAM_NA_FATURA` de la (foi para isso que a
+ * segunda deixou de ser privada na HMO-265), entao inverter a direcao fecharia
+ * um ciclo. Quem unificar tem de reverificar o caminho de dinheiro DESTE arquivo
+ * -- suite e mutantes proprios --, e em particular reler o primeiro criterio
+ * acima: ele e um INVARIANTE com mutante sobrevivente e decisao escrita, nao um
+ * ramo com teste. HMO-317.
  */
 export function ehSaidaDePagamentoDeFatura(linha: LinhaDoRealizado): boolean {
   if (linha.transaction_type !== "transfer") return false;
