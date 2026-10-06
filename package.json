@@ -18,6 +18,7 @@
     "type-check": "tsc --noEmit",
     "verify:crons": "bash scripts/verify-crons.sh",
     "compila-suites": "node scripts/compila.mjs --todas",
+    "test:compila": "FIXTURE=.tmp-compila-fixture node --test scripts/test-compila.mjs",
     "test:recurrence-detector": "node scripts/compila.mjs -p scripts/tsconfig.recurrence-detector-test.json && node --test scripts/test-recurrence-detector.mjs",
     "test:recurrence-scan": "node scripts/compila.mjs -p scripts/tsconfig.recurrence-scan-test.json && node scripts/resolve-aliases.mjs .tmp-recurrence-scan lib && node --test scripts/test-recurrence-scan.mjs",
     "test:recurrence-alerts": "node scripts/compila.mjs -p scripts/tsconfig.recurrence-alerts-test.json && node scripts/resolve-aliases.mjs .tmp-recurrence-alerts lib && node --test scripts/test-recurrence-alerts.mjs",

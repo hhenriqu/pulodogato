@@ -83,6 +83,34 @@ jobs:
       # Esta e a UNICA instalacao do pipeline de verificacao; eram 16.
       - run: npm ci --include=dev
 
+      # A COMPILACAO DAS SUITES, UMA VEZ SO (HMO-263).
+      #
+      # Os alvos test:* disparavam 97 invocacoes de tsc, uma por suite: 285s
+      # medidos, contra ~0,25s de assercao cada. O custo era a partida do
+      # compilador e o reparse dos MESMOS arquivos de lib/ -- 571 arquivos
+      # distintos lidos 18.759 vezes.
+      #
+      # Aqui os 97 saem de um processo unico que reaproveita o AST ja parseado:
+      # ~26s. Cada alvo continua sendo seu proprio programa, com o seu tsconfig
+      # e o seu outDir -- nao ha uniao de include, porque varios tsconfig sao
+      # estreitos de proposito (provam que um modulo compila SEM um import).
+      #
+      # Depois daqui, cada `npm run test:*` encontra a saida dele pronta e so
+      # roda as assercoes. O reaproveitamento e por sha256 das ENTRADAS, entao
+      # um mutante de controle negativo muda o hash e FORCA recompilacao: ele
+      # nao pode morrer verde sobre o artefato de antes.
+      - name: Compilar as 97 saidas das suites de uma vez
+        run: npm run compila-suites
+
+      # A decisao "esta saida ainda vale?" e o que o lote acima introduziu, e
+      # errar para o lado do "vale" faria um controle negativo ficar verde
+      # sobre o artefato de antes -- o rotulo dizendo que o mutante morreu sem
+      # ele ter sido compilado. Esta suite fixa que a decisao e por sha256 do
+      # CONTEUDO: mutar recompila, restaurar recompila, e mexer so na data do
+      # arquivo NAO recompila (uma implementacao por mtime devolveria os 285s).
+      - name: O reaproveitamento da compilacao decide por conteudo, nao por data
+        run: npm run test:compila
+
       # A FOTOGRAFIA DA ARVORE, para os passos-guarda dos controles negativos.
       #
       # O guarda compara com ESTA foto, e nao com `git diff --quiet`, por dois
