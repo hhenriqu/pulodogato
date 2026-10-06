@@ -22,16 +22,42 @@
 // texto e um erro proprio, com mensagem propria. "O alvo mudou de forma" e
 // "o teste nao pega o defeito" passam a ser dois vermelhos distinguiveis.
 //
+// O BLOCO: UMA COMPILACAO PARA OS NOVE MUTANTES (HMO-320)
+// -------------------------------------------------------
+// Antes, cada mutante era escrito em `lib/dinheiro.ts` -- o arquivo que o git
+// rastreia -- e um `npm run test:dinheiro` inteiro era disparado por cima: nove
+// partidas de npm, nove de tsc, o programa reparseado nove vezes para trocar um
+// arquivo. E restaurar no fim do laco nao e restaurar: um SIGTERM (o `timeout`
+// do shell, o cancelamento de job) matava o processo com o mutante GRAVADO na
+// fonte, e dali em diante quem rodasse a suite media o mutante.
+//
+// `criarBlocoDeMutantes` fecha as duas coisas de uma vez. A mutacao vai para uma
+// SOMBRA em diretorio temporario; `lib/dinheiro.ts` nunca e tocado. E a
+// compilacao e em processo, dividindo o AST de tudo que nao e o arquivo mutado.
+//
+// O PIPELINE VEM DO `test:dinheiro` no package.json, e nao mais repetido aqui.
+// Esta suite roda num fuso so hoje; se amanha ela passar a rodar em dois (como
+// `test:papel-de-pao` e `test:credito-de-grupo` ja fazem), o controle negativo
+// acompanha sozinho -- antes ele seguiria medindo o pipeline antigo sem nada
+// reclamar.
+//
+// O CONTROLE POSITIVO passou a existir, e era o que faltava: sem ele uma sombra
+// mal montada reprova TODO mutante e o relatorio sai dizendo "a suite fica
+// vermelha nos 9 defeitos plantados" sobre zero assercoes executadas.
+//
 // Rodar na mao:  node scripts/mutantes-dinheiro.mjs
 // =====================================================
 
-import { execSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
+import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
+
 const RAIZ = fileURLToPath(new URL("..", import.meta.url));
-const ALVO = join(RAIZ, "lib/dinheiro.ts");
+const FONTE = "lib/dinheiro.ts";
+const ALVO = join(RAIZ, FONTE);
+const SUITE = "test:dinheiro";
 
 /**
  * Cada mutante: o que ele representa, o texto exato que substitui, e por que
@@ -125,7 +151,28 @@ const MUTANTES = [
 ];
 
 const original = readFileSync(ALVO, "utf8");
+const bloco = criarBlocoDeMutantes({ rotulo: "dinheiro", suites: [SUITE] });
+// A sombra vive em diretorio temporario e sai junto com o processo -- inclusive
+// nas saidas antecipadas abaixo. No pior caso (SIGTERM) sobra um diretorio orfao
+// em /tmp; o que NAO sobra, e era o problema, e mutante em `lib/`.
+process.on("exit", () => bloco.fechar());
+
 let falhas = 0;
+
+// CONTROLE POSITIVO, antes de qualquer mutante: a arvore INTACTA tem de passar.
+// `rodar` com `{}` compila e roda a sombra sem sobrescrita nenhuma -- e e o unico
+// passo que pega erro no proprio aparelho.
+const controle = bloco.rodar("controle", {}, SUITE);
+if (!controle.verde) {
+  console.error(
+    `\n  LINHA DE BASE VERMELHA\n` +
+      `    A suite JA falha com ${FONTE} intacto (${controle.como}), entao nenhum\n` +
+      `    mutante abaixo provaria nada: todos ficariam 'vermelhos' por um defeito\n` +
+      `    que nao e o plantado.\n\n    ${controle.saida}`
+  );
+  process.exit(1);
+}
+console.log(`  controle:     ${FONTE} intacto passa na suite`);
 
 for (const m of MUTANTES) {
   const ocorrencias = original.split(m.de).length - 1;
@@ -146,34 +193,33 @@ for (const m of MUTANTES) {
     continue;
   }
 
-  writeFileSync(ALVO, original.replace(m.de, m.para));
+  const r = bloco.rodar(m.nome, { [FONTE]: original.replace(m.de, m.para) }, SUITE);
 
-  let passou;
-  try {
-    execSync("npm run test:dinheiro", { cwd: RAIZ, stdio: "pipe" });
-    passou = true;
-  } catch {
-    passou = false;
-  }
-
-  if (passou) {
+  if (r.verde) {
     console.error(
       `\n  SOBREVIVEU    ${m.nome}\n` +
         `    A suite ficou VERDE com este defeito de pe.\n` +
-        `    Por que ele importa: ${m.porque}`
+        `    Por que ele importa: ${m.porque}` +
+        // Sobreviver emitindo byte IDENTICO ao da arvore limpa nao e furo de
+        // assercao: e mutante equivalente, e nenhuma assercao o mataria. A
+        // resposta certa para os dois casos e oposta (escrever assercao x tirar
+        // o mutante da lista), e sem a distincao um equivalente fica no placar
+        // para sempre ensinando a nao ler o placar.
+        (r.mudouASaida === false
+          ? "\n    (a saida compilada e identica a da arvore limpa: mutante" +
+            " EQUIVALENTE, nao furo de teste)"
+          : "")
     );
     falhas++;
   } else {
-    console.log(`  vermelho em:  ${m.nome}`);
+    console.log(`  vermelho em:  ${m.nome}  (${r.como})`);
   }
 }
-
-writeFileSync(ALVO, original);
 
 if (falhas > 0) {
   console.error(
     `\n${falhas} de ${MUTANTES.length} mutantes nao produziram vermelho. ` +
-      `lib/dinheiro.ts foi restaurado.\n`
+      `lib/dinheiro.ts nunca foi tocado: a mutacao mora na sombra.\n`
   );
   process.exit(1);
 }

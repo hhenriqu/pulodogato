@@ -32,38 +32,48 @@
 //
 // A FONTE NUNCA E MUTADA NO DISCO
 // -------------------------------
-// Mesma escolha do mutantes-credito-de-grupo.mjs: a mutacao e compilada de uma
-// arvore TEMPORARIA. Mutar o arquivo do repo, rodar e restaurar no `finally`
-// deixa a fonte mutada no disco quando o processo morre no meio -- e aqui o
-// worktree e compartilhado com outros runs, onde isso custaria o trabalho de
-// outra pessoa.
+// A mutacao e compilada de uma arvore que nao e a do repositorio. Mutar o
+// arquivo do repo, rodar e restaurar no `finally` deixa a fonte mutada no disco
+// quando o processo morre no meio -- e aqui o worktree e compartilhado com
+// outros runs, onde isso custaria o trabalho de outra pessoa.
 //
-// A ARVORE TEMPORARIA E O lib/ INTEIRO porque o modulo importa
+// A LISTA DE "ARQUIVOS QUE ACOMPANHAM A COPIA" DEIXOU DE EXISTIR (HMO-320)
+// ------------------------------------------------------------------------
+// Este runner montava, A CADA MUTANTE, uma arvore nova em diretorio temporario
+// com `lib/` INTEIRO copiado dentro, um `tsconfig.json` sintetizado apontado
+// para ela, e tres processos por cima (`npx tsc`, `resolve-aliases`,
+// `node --test`). O `lib/` inteiro estava ali porque o modulo importa
 // `acerto-em-lancamento.ts` pelo alias `@/`, que importa dinheiro, cambio e
-// settlement. Copiar so o arquivo mutado derruba a compilacao no primeiro
-// import, e TODO mutante "morre" por erro de build.
+// settlement -- copiar so o arquivo mutado derruba a compilacao no primeiro
+// import e TODO mutante "morre" por erro de build.
+//
+// O recorte a mao e que era o problema, e nao o seu tamanho: ele e uma SEGUNDA
+// copia do grafo de modulos, e ela envelhece calada. Blocos deste repositorio
+// reprovavam na main porque o codigo passou a importar `@/types/financial` e o
+// recorte de cada um nao acompanhou -- um import novo para FORA de `lib/` este
+// tsconfig sintetizado nem veria.
+//
+// `criarBlocoDeMutantes` nao recebe recorte nenhum: ele espelha a arvore inteira
+// por symlink, troca EM MEMORIA so o arquivo mutado, e quem delimita o que o
+// bloco prova volta a ser o `scripts/tsconfig.perna-da-contraparte-test.json` --
+// o mesmo que o CI usa, e com ele o passo `resolve-aliases` que o npm script tem
+// e este runner repetia a mao. O `.tmp-perna-da-contraparte` tambem sai de cena:
+// a saida de cada volta e emitida DENTRO da sombra, entao um
+// `npm run test:perna-da-contraparte` depois deste runner nao tem como cair no
+// artefato do ultimo mutante.
+//
+// E a compilacao e UMA para todas as voltas, em processo, em vez de uma por
+// mutante.
 //
 // COMO RODAR
 //   npm run mutantes:perna-da-contraparte
 
-import {
-  readFileSync,
-  writeFileSync,
-  mkdtempSync,
-  mkdirSync,
-  rmSync,
-  cpSync,
-} from "node:fs";
-import { execFileSync } from "node:child_process";
-import { join, resolve } from "node:path";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
+
+import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
 
 const FONTE = "lib/perna-da-contraparte.ts";
-const TESTE = "scripts/test-perna-da-contraparte.mjs";
-// O MESMO diretorio que o npm script usa, porque o teste importa dele por
-// caminho literal. O `finally` apaga: sem isso, o proximo
-// `npm run test:perna-da-contraparte` rodaria contra o ultimo mutante.
-const SAIDA = ".tmp-perna-da-contraparte";
+const SUITE = "test:perna-da-contraparte";
 
 const original = readFileSync(FONTE, "utf8");
 
@@ -130,111 +140,75 @@ const MUTANTES = [
   },
 ];
 
-const dir = mkdtempSync(join(tmpdir(), "mut278-"));
-const dirLib = join(dir, "lib");
-mkdirSync(dirLib, { recursive: true });
-// lib/ inteiro: ver o cabecalho.
-cpSync("lib", dirLib, { recursive: true });
+const bloco = criarBlocoDeMutantes({ rotulo: "perna-da-contraparte", suites: [SUITE] });
+// A sombra vive em diretorio temporario e sai junto com o processo -- inclusive
+// na saida antecipada do controle. No pior caso (SIGTERM) sobra um diretorio
+// orfao em /tmp, e nao mutante em `lib/`.
+process.on("exit", () => bloco.fechar());
 
-// O tsconfig temporario e a copia do scripts/tsconfig.perna-da-contraparte-test
-// .json apontada para a arvore mutada. `baseUrl` no dir temporario e o que faz
-// `@/lib/...` achar a COPIA, e nao o arquivo do repo.
-const tsconfig = join(dir, "tsconfig.json");
-writeFileSync(
-  tsconfig,
-  JSON.stringify({
-    compilerOptions: {
-      outDir: resolve(SAIDA),
-      rootDir: dirLib,
-      module: "es2020",
-      target: "es2020",
-      moduleResolution: "node",
-      strict: true,
-      skipLibCheck: true,
-      baseUrl: dir,
-      paths: { "@/*": ["./*"] },
-    },
-    include: [join(dirLib, "perna-da-contraparte.ts")],
-  })
-);
-
-function compilaERoda(fonteTs) {
-  writeFileSync(join(dirLib, "perna-da-contraparte.ts"), fonteTs);
-  rmSync(SAIDA, { recursive: true, force: true });
-  execFileSync("npx", ["tsc", "-p", tsconfig], { stdio: "pipe" });
-  // O tsc resolve `@/` mas nao o reescreve no JS emitido -- o mesmo passo do
-  // npm script, sem o qual o node morre em ERR_MODULE_NOT_FOUND e TODO mutante
-  // "morre" por erro de import.
-  execFileSync("node", ["scripts/resolve-aliases.mjs", SAIDA, "lib"], {
-    stdio: "pipe",
-  });
-  execFileSync("node", ["--test", TESTE], { stdio: "pipe" });
-}
+/** Uma volta do bloco com estas sobrescritas (`{}` = arvore intacta). */
+const compilaERoda = (sobrescritas = {}) =>
+  bloco.rodar("perna-da-contraparte", sobrescritas, SUITE);
 
 let falhas = 0;
 let mortos = 0;
 
-try {
-  // CONTROLE POSITIVO: com a fonte intacta o teste tem de PASSAR. Sem isto, um
-  // "todos morreram" poderia significar apenas que o build esta quebrado, ou
-  // que este runner esta compilando a arvore errada, e o teste reprova sempre.
-  try {
-    compilaERoda(original);
-    console.log("controle positivo: o teste passa com a fonte intacta\n");
-  } catch (e) {
-    console.error("ABORTADO: o teste reprova com a fonte INTACTA.");
-    console.error((e.stdout ?? e.stderr ?? "").toString().slice(-1500));
-    process.exit(1);
+// CONTROLE POSITIVO: com a fonte intacta o teste tem de PASSAR. Sem isto, um
+// "todos morreram" poderia significar apenas que o build esta quebrado, ou
+// que este runner esta compilando a arvore errada, e o teste reprova sempre.
+const controle = compilaERoda();
+if (controle.verde) {
+  console.log("controle positivo: o teste passa com a fonte intacta\n");
+} else {
+  console.error("ABORTADO: o teste reprova com a fonte INTACTA.");
+  console.error(`  (${controle.como}) ${controle.saida}`);
+  process.exit(1);
+}
+
+for (const m of MUTANTES) {
+  // `String.replace` troca a PRIMEIRA ocorrencia. Um trecho que aparece duas
+  // vezes produz um mutante que muta o lugar errado e morre verde com o
+  // rotulo mentindo sobre o que foi medido -- por isso o trecho tem de ser
+  // UNICO, e nao apenas existir.
+  const ocorrencias = original.split(m.de).length - 1;
+  if (ocorrencias !== 1) {
+    console.error(
+      `NAO APLICOU: ${m.nome} -- o trecho aparece ${ocorrencias}x em ${FONTE} (tem de ser 1)`
+    );
+    falhas++;
+    continue;
   }
 
-  for (const m of MUTANTES) {
-    // `String.replace` troca a PRIMEIRA ocorrencia. Um trecho que aparece duas
-    // vezes produz um mutante que muta o lugar errado e morre verde com o
-    // rotulo mentindo sobre o que foi medido -- por isso o trecho tem de ser
-    // UNICO, e nao apenas existir.
-    const ocorrencias = original.split(m.de).length - 1;
-    if (ocorrencias !== 1) {
+  const r = compilaERoda({ [FONTE]: original.replace(m.de, m.para) });
+
+  if (r.verde) {
+    console.error(`SOBREVIVEU: ${m.nome}`);
+    console.error(`            ${m.porque}`);
+    // Sobreviver emitindo byte IDENTICO ao da arvore limpa nao e furo de
+    // assercao: e mutante equivalente, e nenhuma assercao o mataria.
+    if (r.mudouASaida === false) {
       console.error(
-        `NAO APLICOU: ${m.nome} -- o trecho aparece ${ocorrencias}x em ${FONTE} (tem de ser 1)`
+        "            (a saida compilada e identica a da arvore limpa: mutante EQUIVALENTE, nao furo de teste)"
       );
+    }
+    falhas++;
+  } else {
+    // Mutante que nao compila nao e mutante morto: ele nunca chegou ao teste.
+    // Sem esta peneira, um `de`/`para` que quebre o TypeScript conta como
+    // acerto e o placar sai cheio sem nada ter sido medido. A distincao vem do
+    // proprio bloco (`como`), e nao mais de um grep por `error TS` numa saida
+    // em que tsc e `node --test` estavam misturados.
+    if (r.como === "tsc") {
+      console.error(`NAO COMPILOU: ${m.nome} -- o mutante nao chegou ao teste`);
+      console.error(`  ${r.saida}`);
       falhas++;
       continue;
     }
-
-    let r;
-    try {
-      compilaERoda(original.replace(m.de, m.para));
-      r = { verde: true };
-    } catch (e) {
-      r = { verde: false, saida: (e.stdout ?? e.stderr ?? "").toString() };
-    }
-
-    if (r.verde) {
-      console.error(`SOBREVIVEU: ${m.nome}`);
-      console.error(`            ${m.porque}`);
-      falhas++;
-    } else {
-      // Mutante que nao compila nao e mutante morto: ele nunca chegou ao teste.
-      // Sem esta peneira, um `de`/`para` que quebre o TypeScript conta como
-      // acerto e o placar sai cheio sem nada ter sido medido.
-      if (/error TS\d+/.test(r.saida)) {
-        console.error(`NAO COMPILOU: ${m.nome} -- o mutante nao chegou ao teste`);
-        console.error((r.saida.match(/error TS\d+[^\n]*/) || [""])[0]);
-        falhas++;
-        continue;
-      }
-      mortos++;
-      console.log(`morreu:     ${m.nome}`);
-    }
+    mortos++;
+    console.log(`morreu:     ${m.nome}`);
   }
-
-  console.log(`\n${mortos}/${MUTANTES.length} mutantes mortos`);
-} finally {
-  rmSync(dir, { recursive: true, force: true });
-  // O artefato do ULTIMO mutante fica em SAIDA, que e o mesmo diretorio do npm
-  // script. Apagar aqui e o que impede `npm run test:perna-da-contraparte` de
-  // rodar contra codigo mutado e passar/reprovar por motivo nenhum.
-  rmSync(SAIDA, { recursive: true, force: true });
 }
+
+console.log(`\n${mortos}/${MUTANTES.length} mutantes mortos`);
 
 process.exitCode = falhas ? 1 : 0;

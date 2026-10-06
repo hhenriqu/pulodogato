@@ -16,8 +16,10 @@
 //
 // Cada mutacao e um defeito que alguem escreveria de verdade -- pegar o primeiro
 // resultado, trocar igualdade por `includes`, esquecer a escala, somar todas as
-// colunas da DMPL -- e nao uma quebra artificial. Ver `scripts/mutantes-moeda.mjs`,
-// mesmo desenho.
+// colunas da DMPL -- e nao uma quebra artificial. A LISTA segue o mesmo espirito
+// da de `scripts/mutantes-moeda.mjs`; o APARELHO, nao: aquele runner passou a
+// compartilhar uma compilacao entre os mutantes (`mutantes-em-bloco.mjs`,
+// HMO-319/HMO-320) e este ainda roda um `npm run` por volta.
 //
 // Roda com: node scripts/mutantes-fundamento-cvm.mjs
 // =====================================================
