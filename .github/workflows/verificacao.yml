@@ -99,7 +99,7 @@ jobs:
       # roda as assercoes. O reaproveitamento e por sha256 das ENTRADAS, entao
       # um mutante de controle negativo muda o hash e FORCA recompilacao: ele
       # nao pode morrer verde sobre o artefato de antes.
-      - name: Compilar as 97 saidas das suites de uma vez
+      - name: Compilar a saida de todas as suites de uma vez, num processo so
         run: npm run compila-suites
 
       # A decisao "esta saida ainda vale?" e o que o lote acima introduziu, e

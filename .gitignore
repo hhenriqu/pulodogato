@@ -400,6 +400,12 @@ next-env.d.ts
 # a entrada do .tmp-parcelamento acima.
 /.tmp-perna-da-contraparte/
 
+# A renda fixa que rende sozinha (HMO-192). Mesmo caso da perna acima: a suite
+# entrou na main sem a entrada aqui, e o step `Nenhum artefato de build
+# rastreado` ja reprova na main sem ninguem ver, porque todo job de Actions
+# volta recusado em 3s desde que a franquia estourou em 02/10.
+/.tmp-renda-fixa/
+
 # A fixture da suite do proprio compila.mjs (HMO-263). Ela monta modulos de
 # mentira dentro do repositorio porque o reaproveitamento so hasheia entradas
 # abaixo da raiz -- fixture em /tmp nao exercitaria nada.
