@@ -214,15 +214,27 @@ function comparar(caminhoA, caminhoB) {
     const rb = mapaB.get(nome);
     somaA += ra?.segundos ?? 0;
     somaB += rb?.segundos ?? 0;
-    const igual = (ra?.saida ?? "ausente") === (rb?.saida ?? "ausente");
+    // Passa/reprova NAO e o veredito inteiro. Um bloco que ia 13/13 e passa a
+    // 11/11 continua `ok` nos dois lados -- dois mutantes sumiram da lista e o
+    // placar nao reclamaria. O criterio de aceite da HMO-319 fala em "os MESMOS
+    // vereditos", e o veredito e o placar: as duas coisas tem que casar.
+    const mesmoDesfecho = (ra?.saida ?? "ausente") === (rb?.saida ?? "ausente");
+    const mesmoPlacar = (ra?.porque ?? "ausente") === (rb?.porque ?? "ausente");
+    const igual = mesmoDesfecho && mesmoPlacar;
     if (!igual) divergentes++;
     console.log(
       `${nome.padEnd(largura)}  ${`${(ra?.segundos ?? 0).toFixed(1)}s`.padStart(8)}  ${`${(
         rb?.segundos ?? 0
       ).toFixed(1)}s`.padStart(8)}  ${(ra?.saida ?? "ausente").padStart(8)}  ${(
         rb?.saida ?? "ausente"
-      ).padStart(8)}  ${igual ? "igual" : "** DIVERGIU **"}`,
+      ).padStart(8)}  ${
+        igual ? "igual" : mesmoDesfecho ? "** PLACAR DIVERGIU **" : "** DIVERGIU **"
+      }`,
     );
+    if (!mesmoPlacar) {
+      console.log(`${" ".repeat(largura)}  A: ${ra?.porque ?? "ausente"}`);
+      console.log(`${" ".repeat(largura)}  B: ${rb?.porque ?? "ausente"}`);
+    }
   }
   console.log(
     `\ntotal: ${somaA.toFixed(1)}s -> ${somaB.toFixed(1)}s  (${
