@@ -35,6 +35,16 @@ const LIB = "lib/papel-de-pao.ts";
 const ROTA = "app/api/papel-de-pao/painel/route.ts";
 const PAINEL = "components/papel-de-pao/PainelDePapel.tsx";
 
+// A ANCORA DOS TRES MUTANTES DE `posso_editar`, UMA VEZ SO -- e nao tres copias
+// da mesma linha. Ela ja morreu uma vez: a HMO-305 tirou a expressao de dentro
+// do objeto literal (`posso_editar: gravada && ...`) e a nomeou numa variavel,
+// porque desde entao ela decide TRES campos (os botoes, o rotulo da fatura
+// suspeita e o elo desfazivel). Os tres mutantes ficaram sem se aplicar de uma
+// vez, e repontar tres copias a mao e como a HMO-321 os encontrou. Com um nome
+// so, o proximo repontamento e uma linha.
+const POSSO =
+  "  const posso = gravada && meuUserId != null && linha.user_id === meuUserId;";
+
 const mutantes = [
   // ---------------------------------------------------------------------------
   // A FUNCAO PURA -- a invariante `soma(detalhe) === total`
@@ -43,12 +53,24 @@ const mutantes = [
     // O MUTANTE DA ISSUE. A lista mostra o valor CHEIO do grupo; o total
     // continua sendo a minha parte. Morre so contra a soma, e so no fixture
     // com grupo.
+    //
+    // A ANCORA GANHOU UM QUARTO ARGUMENTO NA HMO-305 (`suspeitas`, o mapa do
+    // elo da fatura). O `push` de tres argumentos deixou de existir, e os tres
+    // mutantes deste bloco passaram a ser dados por SOBREVIVENTES sem nunca
+    // terem sido aplicados -- HMO-321. O `suspeitas` vai adiante no `para`: o
+    // defeito aqui e o VALOR da linha, e tirar o mapa junto mediria dois
+    // defeitos de uma vez.
     nome: "o detalhe lista a linha ANTES de dividir a parte do grupo",
     arquivo: LIB,
-    de: "    detalhe.push(linhaDoDetalhe(linha, valor, ctx.meuUserId));",
+    de: "    detalhe.push(linhaDoDetalhe(linha, valor, ctx.meuUserId, suspeitas));",
     para:
       "    detalhe.push(\n" +
-      "      linhaDoDetalhe(linha, Math.abs(Number(linha.amount) || 0), ctx.meuUserId)\n" +
+      "      linhaDoDetalhe(\n" +
+      "        linha,\n" +
+      "        Math.abs(Number(linha.amount) || 0),\n" +
+      "        ctx.meuUserId,\n" +
+      "        suspeitas\n" +
+      "      )\n" +
       "    );",
   },
   {
@@ -57,36 +79,50 @@ const mutantes = [
     // MENOR que o numero de cima, e o cartao se desmente sozinho.
     nome: "o detalhe descarta a fatura aberta sintetizada",
     arquivo: LIB,
-    de: "    detalhe.push(linhaDoDetalhe(linha, valor, ctx.meuUserId));",
+    de: "    detalhe.push(linhaDoDetalhe(linha, valor, ctx.meuUserId, suspeitas));",
     para:
       "    if (linha.id != null)\n" +
-      "      detalhe.push(linhaDoDetalhe(linha, valor, ctx.meuUserId));",
+      "      detalhe.push(linhaDoDetalhe(linha, valor, ctx.meuUserId, suspeitas));",
   },
   {
     // O DETALHE MONTADO POR FORA DA PENEIRA -- a segunda leitura que a issue
     // proibe, na forma mais plausivel: um `filter` que esqueceu o STATUS.
     // 'skipped' e 'cancelled' voltam para a lista e nao voltam para o total.
+    // A ANCORA MUDOU DUAS VEZES DESDE A HMO-300, e as duas vezes o mutante
+    // ficou sem se aplicar (HMO-321): o `return` passou a devolver
+    // `{ numero, fora }` (a contagem lateral da transferencia, HMO-303) e a
+    // divisao da parte virou `parteConfiguradaDoMembro(amount, group_id,
+    // ctx.pesosPorGrupo, ctx.meuUserId)` -- `parteDoMembro` e
+    // `ctx.membrosAtivosPorGrupo`, que o `para` antigo chamava, nao existem
+    // mais neste arquivo. A afirmacao e a mesma: a lista NAO pode sair de uma
+    // segunda peneira.
     nome: "o detalhe vem de um segundo filtro, que esquece skipped/cancelled",
     arquivo: LIB,
-    de: "  return { total: centavos(total), quantidade, detalhe };",
+    de: "    numero: { total: centavos(total), quantidade, detalhe },",
     para:
-      "  return {\n" +
-      "    total: centavos(total),\n" +
-      "    quantidade,\n" +
-      "    detalhe: linhas\n" +
-      "      .filter((l) => dentroDaJanela(l.due_date, ctx.janela) && aceita(l))\n" +
-      "      .map((l) =>\n" +
-      "        linhaDoDetalhe(\n" +
-      "          l,\n" +
-      "          Math.abs(\n" +
-      "            Number(\n" +
-      "              parteDoMembro(l.amount, l.group_id, ctx.membrosAtivosPorGrupo)\n" +
-      "            ) || 0\n" +
-      "          ),\n" +
-      "          ctx.meuUserId\n" +
-      "        )\n" +
-      "      ),\n" +
-      "  };",
+      "    numero: {\n" +
+      "      total: centavos(total),\n" +
+      "      quantidade,\n" +
+      "      detalhe: linhas\n" +
+      "        .filter((l) => dentroDaJanela(l.due_date, ctx.janela) && aceita(l))\n" +
+      "        .map((l) =>\n" +
+      "          linhaDoDetalhe(\n" +
+      "            l,\n" +
+      "            Math.abs(\n" +
+      "              Number(\n" +
+      "                parteConfiguradaDoMembro(\n" +
+      "                  l.amount,\n" +
+      "                  l.group_id,\n" +
+      "                  ctx.pesosPorGrupo,\n" +
+      "                  ctx.meuUserId\n" +
+      "                )\n" +
+      "              ) || 0\n" +
+      "            ),\n" +
+      "            ctx.meuUserId,\n" +
+      "            suspeitas\n" +
+      "          )\n" +
+      "        ),\n" +
+      "    },",
   },
   {
     // INDISPONIVEL COM LISTA. `total: null` nao e zero, e uma lista debaixo de
@@ -140,16 +176,16 @@ const semLinha = (): NumeroDoPapel => VAZIO;`,
     // sem alterar nada -- o app diz "pronto" e a linha fica.
     nome: "`posso_editar` nao olha de quem e a linha",
     arquivo: LIB,
-    de: "      gravada && meuUserId != null && linha.user_id === meuUserId,",
-    para: "      gravada,",
+    de: POSSO,
+    para: "  const posso = gravada;",
   },
   {
     // A FATURA SINTETIZADA GANHA ACAO. Ela nao tem id de banco: a baixa
     // responde 404, que para quem clicou se le como "o app nao conseguiu".
     nome: "a linha nao gravada tambem ganha acao",
     arquivo: LIB,
-    de: "      gravada && meuUserId != null && linha.user_id === meuUserId,",
-    para: "      meuUserId != null && linha.user_id === meuUserId,",
+    de: POSSO,
+    para: "  const posso = meuUserId != null && linha.user_id === meuUserId;",
   },
   {
     // FALHA ABERTO em vez de fechado: sem `meuUserId` toda linha vira
@@ -157,8 +193,10 @@ const semLinha = (): NumeroDoPapel => VAZIO;`,
     // sintoma seria botao em linha alheia.
     nome: "sem `meuUserId`, toda linha gravada vira editavel",
     arquivo: LIB,
-    de: "      gravada && meuUserId != null && linha.user_id === meuUserId,",
-    para: "      gravada && (meuUserId == null || linha.user_id === meuUserId),",
+    de: POSSO,
+    para:
+      "  const posso =\n" +
+      "    gravada && (meuUserId == null || linha.user_id === meuUserId);",
   },
   {
     // `gravada` DEIXA DE OLHAR O ID: a fatura sintetizada passa a parecer
@@ -284,6 +322,13 @@ const restaurar = () => {
 };
 process.on("exit", restaurar);
 process.on("SIGINT", () => process.exit(130));
+// E SIGTERM, que e o que um `timeout` ou um cancelamento de job manda: sem este
+// handler o gancho de `exit` acima NAO roda, e a arvore fica MUTADA para quem
+// vier depois -- um defeito introduzido pelo proprio controle negativo. Os
+// outros dois runners desta familia (`painel-na-tela`, `sobra-ou-falta`) ja o
+// tinham; este nao, e e o mais longo dos tres (21 mutantes x duas suites, uma
+// delas de navegador).
+process.on("SIGTERM", () => process.exit(143));
 
 /**
  * As DUAS suites, e nao uma.

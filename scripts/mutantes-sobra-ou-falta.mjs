@@ -118,13 +118,19 @@ const mutantes = [
     // receitas recortada pela categoria Salario. A aritmetica FECHA na tela
     // (7.000 - 3.980,50) e o rotulo "Receitas" mente -- quem recebe aluguel ve
     // uma sobra MENOR do que a real, o erro na direcao cara.
+    //
+    // A ANCORA PERDEU O FECHAMENTO NA HMO-303: `somarPerna` passou a devolver
+    // `{ numero, fora }` (a contagem lateral da transferencia), e a chamada
+    // ganhou `.numero` no fim. O `  );` do fim da ancora virou `  ).numero;`,
+    // os dois mutantes desta perna deixaram de se aplicar e foram dados por
+    // SOBREVIVENTES sem nunca terem existido -- HMO-321.
     nome: "as `receitas` sao so o SALARIO (a alternativa descartada)",
     arquivo: LIB,
     de: `  const receitas = somarPerna(
     linhas,
     ctx,
     (linha) => direcaoDaAgenda(linha.direction) === "income"
-  );`,
+  ).numero;`,
     para: `  const receitas = somarPerna(
     linhas,
     ctx,
@@ -132,7 +138,7 @@ const mutantes = [
       direcaoDaAgenda(linha.direction) === "income" &&
       linha.category_id != null &&
       deSalario.has(linha.category_id)
-  );`,
+  ).numero;`,
   },
   {
     // O CARTAO LENDO A PERNA ERRADA. A perna nova continua certa e exposta na
@@ -153,12 +159,12 @@ const mutantes = [
     linhas,
     ctx,
     (linha) => direcaoDaAgenda(linha.direction) === "income"
-  );`,
+  ).numero;`,
     para: `  const receitas = somarPerna(
     linhas,
     ctx,
     (linha) => direcaoDaAgenda(linha.direction) === "expense"
-  );`,
+  ).numero;`,
   },
   {
     // A DIRECAO AUSENTE deixando de calar o CARTAO: as duas pernas saem

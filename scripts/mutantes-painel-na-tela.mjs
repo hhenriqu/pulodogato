@@ -104,14 +104,22 @@ const mutantes = [
     para: "onClick={() => setPeriodo(passoDeMes(periodo, -1))}",
   },
   {
-    // O EFEITO QUE NAO DEPENDE DO MES. Com a lista de dependencias vazia, o
-    // pedido acontece UMA vez e as setas passam a trocar so o rotulo. O
-    // `exhaustive-deps` reclamaria num `npm run lint`; este runner nao roda
-    // lint, e o ponto e que a SUITE tem de reprovar sozinha.
+    // O EFEITO QUE NAO DEPENDE DO MES. Sem `mesPedido` na lista de
+    // dependencias, o pedido acontece UMA vez e as setas passam a trocar so o
+    // rotulo. O `exhaustive-deps` reclamaria num `npm run lint`; este runner
+    // nao roda lint, e o ponto e que a SUITE tem de reprovar sozinha.
+    //
+    // A ANCORA GANHOU UMA SEGUNDA DEPENDENCIA NA HMO-305: `recarga` entrou na
+    // lista para o elo da fatura reaparecer na tela depois da escrita, e com
+    // isso `}, [mesPedido]);` deixou de existir no arquivo -- o mutante parou
+    // de se aplicar e passou a ser dado por SOBREVIVENTE sem nunca ter
+    // existido (HMO-321). `recarga` FICA no `para`: tirar as duas
+    // dependencias de uma vez mediria dois defeitos ao mesmo tempo, e o
+    // defeito desta afirmacao e so o do mes.
     nome: "o efeito nao refaz o pedido quando o mes muda",
     arquivo: PAINEL,
-    de: "  }, [mesPedido]);",
-    para: "  }, []);",
+    de: "  }, [mesPedido, recarga]);",
+    para: "  }, [recarga]);",
   },
   {
     // A RESPOSTA DE OUTRO MES, PINTADA. Sem a guarda, o cache do PWA (24h nas
