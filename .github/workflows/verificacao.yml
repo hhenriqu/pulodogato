@@ -1154,31 +1154,19 @@ jobs:
 
           # 3) A linha de lancamento volta a se recusar a encolher.
           #
-          # Este `sed` casa nas DUAS linhas da lista (a comum e a parte de
-          # grupo), porque as duas tem a mesma cadeia -- e por isso ele nao
-          # prova nada sobre a segunda: ficaria vermelho pela primeira. O
-          # mutante 4 existe para essa metade.
+          # Este `sed` casava nas DUAS linhas da lista enquanto as duas moravam
+          # neste arquivo. Desde a HMO-274 a parte de grupo esta em
+          # `components/movimentacoes/LinhaDaParteDeGrupo.tsx`, entao aqui ele
+          # casa so na linha comum -- que e o que esta escrito na mensagem de
+          # erro. A outra metade virou o passo "Os mutantes da linha da parte de
+          # grupo", com cinco mutantes em vez de um.
           sed -i 's/gap-3 min-w-0 flex-1/gap-3 flex-1/' 'app/(dashboard)/dashboard/personal-finance/page.tsx'
           if npm run test:mobile-overflow --silent > /dev/null 2>&1; then
             echo "::error::Passou verde com a linha de lancamento sem min-w-0."
             exit 1
           fi
-          git checkout -- 'app/(dashboard)/dashboard/personal-finance/page.tsx'
 
-          # 4) HMO-215: a fila de metadados da PARTE DE GRUPO para de quebrar.
-          #    A lista tem duas formas de linha desde a HMO-215, e os casos que
-          #    ancoram em `{transaction.description}` nunca olham a segunda --
-          #    ela poderia nascer sem `flex-wrap` e empurrar a pagina inteira
-          #    com a suite verde. Esta linha carrega MAIS selos que a comum
-          #    (tipo + categoria + data + nome do grupo + "a aprovar"), entao e
-          #    a que tem o piso de min-content maior das duas.
-          perl -0pi -e 's|(\{parte\.description\}</p>\s*<div className=")flex flex-wrap items-center gap-x-2 gap-y-1 |${1}flex items-center gap-x-2 |s' 'app/(dashboard)/dashboard/personal-finance/page.tsx'
-          if npm run test:mobile-overflow --silent > /dev/null 2>&1; then
-            echo "::error::Passou verde com a fila da parte de grupo sem flex-wrap."
-            exit 1
-          fi
-
-          echo "A verificacao fica vermelha nos quatro caminhos de volta."
+          echo "A verificacao fica vermelha nos tres caminhos de volta."
 
       # Terceiro inquilino sem filtro de path, pelo mesmo motivo dos dois de
       # cima -- e o que ele vigia nao tem dono topico nenhum: as 34 suites deste
@@ -1200,6 +1188,37 @@ jobs:
           git status --porcelain > "$RUNNER_TEMP/arvore-agora.txt"
           if ! diff -q "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" > /dev/null; then
             echo "::error::O controle negativo acima nao restaurou a arvore. Os passos seguintes rodariam sobre codigo mutado."
+            diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
+            exit 1
+          fi
+
+      # A outra metade do antigo mutante 4, agora que a linha da parte de grupo
+      # mora em arquivo proprio (HMO-274) e os dois casos da suite finalmente a
+      # leem de la (HMO-282).
+      #
+      # Ele virou runner em vez de mais um `sed` no bloco acima por uma razao
+      # que a HMO-282 pagou para aprender: o `perl` que ficava la mirava
+      # `{parte.description}` dentro de `personal-finance/page.tsx`, de onde o
+      # JSX tinha saido. O mutante nao aplicava em NADA. E isso nao apareceu
+      # porque a suite ja estava vermelha por conta propria -- com a suite
+      # vermelha, todo controle negativo deste formato passa sem medir nada,
+      # porque ele so pergunta "ficou vermelho?". O runner fecha os dois
+      # buracos: exige que cada ancora case exatamente 1x antes de mutar, e roda
+      # a arvore intacta primeiro como controle positivo.
+      #
+      # Sao cinco mutantes (os dois `min-w-0`, o `truncate`, o `flex-wrap` e o
+      # `gap-y`) e cada um declara QUAL dos dois casos deve derrubar -- vermelho
+      # em outro caso conta como sobrevivente, senao o mutante estaria medindo a
+      # suite e nao a afirmacao.
+      - name: Os mutantes da linha da parte de grupo
+        run: npm run mutantes:parte-de-grupo-na-lista
+
+      - name: 'A arvore voltou ao lugar depois de "Os mutantes da linha da parte de grupo"'
+        run: |
+          rm -rf .tmp-*
+          git status --porcelain > "$RUNNER_TEMP/arvore-agora.txt"
+          if ! diff -q "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" > /dev/null; then
+            echo "::error::O runner de mutantes acima nao restaurou a arvore. Os passos seguintes rodariam sobre codigo mutado."
             diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
             exit 1
           fi

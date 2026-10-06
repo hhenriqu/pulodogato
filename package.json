@@ -72,6 +72,7 @@
     "test:acerto-em-lancamento": "node scripts/compila.mjs -p scripts/tsconfig.acerto-em-lancamento-test.json && node scripts/resolve-aliases.mjs .tmp-acerto-em-lancamento lib && node --test scripts/test-acerto-em-lancamento.mjs",
     "test:perna-da-contraparte": "node scripts/compila.mjs -p scripts/tsconfig.perna-da-contraparte-test.json && node scripts/resolve-aliases.mjs .tmp-perna-da-contraparte lib && node --test scripts/test-perna-da-contraparte.mjs",
     "mutantes:perna-da-contraparte": "node scripts/mutantes-perna-da-contraparte.mjs",
+    "mutantes:parte-de-grupo-na-lista": "node scripts/mutantes-ancora-da-parte-de-grupo.mjs",
     "test:env-preview": "node scripts/compila.mjs utils/supabase/env.ts --outDir .tmp-env-preview --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-env-preview.mjs",
     "test:busca-de-perfil": "node scripts/compila.mjs lib/busca-de-perfil.ts --outDir .tmp-busca-de-perfil --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-busca-de-perfil.mjs",
     "check-rota-query-colidente": "node scripts/check-rota-query-colidente.mjs",
