@@ -1099,15 +1099,55 @@ test("a fatura paga e a PERNA DE SAIDA -- a de entrada daria R$ 2.580", () => {
 
 test("a perna de entrada SEM o elo tambem fica fora -- o sinal e a rede", () => {
   // O FK `counterpart_transaction_id` e `ON DELETE SET NULL`: a perna de entrada
-  // pode perder o elo e continuar no saldo do cartao. E o SEGUNDO criterio de
-  // `ehPernaDeEntrada` (o sinal) que a pega -- sem ele ela entraria como uma
-  // segunda fatura paga, no mesmo mes e pelo mesmo valor.
+  // pode perder o elo e continuar no saldo do cartao. E o SINAL que a pega --
+  // em `ehPernaDeEntrada` e tambem no criterio estrito de `ehPagamentoDaFatura`
+  // --, e sem ele ela entraria como uma segunda fatura paga, no mesmo mes e pelo
+  // mesmo valor.
   const semElo = pernaDeEntradaDaFatura({ counterpart_transaction_id: null });
   assert.equal(ehPagamentoDaFatura(semElo), false);
 
   const despesas = daTela([pernaDeSaidaDaFatura(), semElo], [], "expense");
   assert.equal(despesas.length, 1);
   assert.equal(resumoDaTela(despesas).realizado, 1290);
+});
+
+test("o par de pagamento de valor ZERO nao e fatura paga, e nao sai do app", () => {
+  // A DECISAO DE PRODUTO DA HMO-317, E ELA TINHA DE SER UMA:
+  // `ehPagamentoDaFatura` responde tambem pelo Realizado do painel
+  // (`realizadoComCartaoPelaFatura`, lib/realizado-do-caixa.ts), e as duas
+  // copias que existiam divergiam exatamente aqui -- o par de zero ficava fora
+  // la (o sinal estrito) e entrava nesta tela, por `ehPernaDeEntrada`, que deixa
+  // as duas linhas de zero passarem de proposito.
+  //
+  // A DECISAO E "FICA FORA", E ELA NAO APAGA NADA: `ehPernaDeEntrada` nao mudou,
+  // entao o par continua inteiro na tela de TRANSFERENCIAS, que e onde uma
+  // transferencia de valor zero mora. O argumento que justificava deixa-lo
+  // entrar ("esconder uma delas seria a tela apagando um lancamento que a pessoa
+  // criou") e sobre AQUELA tela, e continua de pe la.
+  const zeroA = pernaDeSaidaDaFatura({ id: "zero-a", amount: 0 });
+  const zeroB = pernaDeEntradaDaFatura({
+    id: "zero-b",
+    amount: 0,
+    counterpart_transaction_id: null,
+  });
+
+  assert.equal(ehPagamentoDaFatura(zeroA), false);
+  assert.equal(ehPagamentoDaFatura(zeroB), false);
+
+  // FORA DE DESPESAS: nenhuma das duas se apresenta como «Fatura» -- um rotulo
+  // que tira o Editar e o Excluir (`podeAgirNaLinha` recusa toda linha de
+  // fatura) de uma linha que a pessoa pode querer corrigir, e que oferece um
+  // caminho para a tela de um cartao por um pagamento de R$ 0,00.
+  assert.equal(daTela([zeroA, zeroB], [], "expense").length, 0);
+
+  // E INTEIRO EM TRANSFERENCIAS, as DUAS linhas. E o controle do "nao apaga": um
+  // bloco que afirmasse so a ausencia em Despesas passaria verde numa versao que
+  // tirasse o par das tres telas.
+  const transferencias = daTela([zeroA, zeroB], [], "transfer");
+  assert.deepEqual(
+    transferencias.map((l) => l.id),
+    ["zero-a", "zero-b"]
+  );
 });
 
 test("a fatura paga se apresenta como FATURA, com o cartao e o mes", () => {

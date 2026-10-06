@@ -58,8 +58,8 @@
 // despesa do mes.
 // -----------------------------------------------------------------------------
 
-import { ehFatura } from "@/lib/card-invoice";
 import {
+  ehPagamentoDaFatura,
   TIPO_CARTAO,
   TIPOS_QUE_ENTRAM_NA_FATURA,
 } from "@/lib/telas-de-movimentacao";
@@ -134,80 +134,49 @@ export function ehCompraNoCartao(linha: LinhaDoRealizado): boolean {
   return TIPOS_QUE_ENTRAM_NA_FATURA.has(String(linha.transaction_type));
 }
 
-/**
- * Esta linha e a perna de SAIDA do pagamento de uma fatura -- a que diz quanto
- * dinheiro saiu da conta corrente?
- *
- * TRES criterios, e os tres carregam peso:
- *
- *   * `transaction_type === 'transfer'`. E o que a baixa grava (015), e e o que
- *     mantem esta linha fora do agregado hoje.
- *
- *     ESTE PRIMEIRO CRITERIO E UM INVARIANTE, E NAO UM RAMO COM TESTE -- de
- *     proposito, e a nota existe para que ninguem o "cubra" depois forjando
- *     estado. Nenhum caminho de escrita do app produz uma linha com a chave
- *     `fatura:` em `notes` e tipo diferente de 'transfer': o unico escritor e
- *     `POST /api/scheduled-transactions/[id]/pay`, e la o `faturaDaChave(conta
- *     .notes)` desvia TODA conta prevista com a chave para `pagarFatura`, que
- *     grava as duas pernas por `pernasDaTransferencia` -- sempre 'transfer'.
- *     (O `ajuste-de-fatura:` da HMO-253 tem prefixo PROPRIO e nao casa com
- *     `ehFatura`.) O mutante que removia esta linha sobreviveu, e a conclusao
- *     foi escrever este paragrafo em vez de uma assercao sobre um estado que o
- *     app nao alcanca -- uma trava provada so por estado forjado por fora nao
- *     prova nada. Mesma escolha que `ehPernaDeEntrada` faz para `amount === 0`.
- *
- *     Ela fica porque e barata e porque o dia em que a baixa deixar de gravar
- *     'transfer' e o dia em que a promocao passaria a reescrever o tipo de uma
- *     linha que o agregado JA conta.
- *
- *   * `notes` e a chave canonica da fatura (`ehFatura`, ancorada nas duas
- *     pontas). `pagarFatura` copia `conta.notes` para as DUAS pernas, entao a
- *     chave esta la. Sem este criterio, toda transferencia entre contas
- *     proprias -- um Pix da corrente para a poupanca -- viraria despesa do mes.
- *
- *   * e ela nao e a perna de ENTRADA. As duas pernas tem a mesma data, a mesma
- *     chave e o mesmo tipo, e so o SINAL as distingue -- mas `agregarTransacoes`
- *     aplica `Math.abs` antes de somar. Promover as duas nao se anularia: daria
- *     a fatura em DOBRO no total de despesas, com o `net` errado pelo valor
- *     inteiro dela. A mesma armadilha 3 de lib/telas-de-movimentacao.ts.
- *
- * QUAL DAS DUAS E A DE SAIDA: os mesmos dois criterios de `ehPernaDeEntrada`
- * (lib/telas-de-movimentacao.ts), negados. O elo do 015 e de uma via -- quem
- * grava `counterpart_transaction_id` e a perna de ENTRADA, apontando para a de
- * saida -- e o sinal cobre a linha cujo par perdeu o elo (o FK e `ON DELETE SET
- * NULL`).
- *
- * `amount === 0` sem elo nenhum fica fora dos dois lados, e e inofensivo:
- * promover zero nao mudaria numero nenhum.
- *
- * ESTA FUNCAO TEM UM GEMEO, E ELE E DIVIDA CONHECIDA -- HMO-317
- * ------------------------------------------------------------
- * `ehPagamentoDaFatura` (lib/telas-de-movimentacao.ts, HMO-264) responde a MESMA
- * pergunta para a tela de Despesas, com os MESMOS tres criterios -- e ele os
- * escreve delegando os dois ultimos a `ehPernaDeEntrada`, em vez de repetir o
- * elo e o sinal a mao como aqui.
- *
- * E AS DUAS JA DIVERGEM no caso do paragrafo acima: `amount === 0` sem elo fica
- * fora AQUI (o `< 0` e estrito) e ENTRA LA (`ehPernaDeEntrada` deixa as duas
- * linhas de zero passarem de proposito). Nenhum total muda com isso hoje, e e
- * por isso que a divergencia e perigosa: duas copias de um criterio de DINHEIRO
- * que ninguem compara sao a forma exata do defeito que este repositorio ja pagou
- * caro.
- *
- * O DONO FUTURO E `telas-de-movimentacao`, e nao este arquivo: ESTE ja importa
- * `TIPO_CARTAO` e `TIPOS_QUE_ENTRAM_NA_FATURA` de la (foi para isso que a
- * segunda deixou de ser privada na HMO-265), entao inverter a direcao fecharia
- * um ciclo. Quem unificar tem de reverificar o caminho de dinheiro DESTE arquivo
- * -- suite e mutantes proprios --, e em particular reler o primeiro criterio
- * acima: ele e um INVARIANTE com mutante sobrevivente e decisao escrita, nao um
- * ramo com teste. HMO-317.
- */
-export function ehSaidaDePagamentoDeFatura(linha: LinhaDoRealizado): boolean {
-  if (linha.transaction_type !== "transfer") return false;
-  if (!ehFatura(linha.notes)) return false;
-  if (linha.counterpart_transaction_id) return false;
-  return Number(linha.amount) < 0;
-}
+// -----------------------------------------------------------------------------
+// QUEM DECIDE "ESTA LINHA E A PERNA DE SAIDA DO PAGAMENTO DA FATURA" -- HMO-317
+// -----------------------------------------------------------------------------
+// `ehPagamentoDaFatura`, importado de lib/telas-de-movimentacao.ts. ELE E O DONO
+// UNICO DA PERGUNTA, e os tres criterios com o peso de cada um estao no
+// cabecalho DELE -- aqui nao fica resumo nenhum, de proposito: um resumo e a
+// segunda copia voltando pela porta do comentario, e comentario desatualizado
+// nao da erro nenhum.
+//
+// ESTE ARQUIVO TINHA A SUA PROPRIA COPIA (`ehSaidaDePagamentoDeFatura`, HMO-265)
+// com os mesmos tres criterios escritos a mao, e as duas JA DIVERGIAM em
+// `amount === 0`: ficava fora aqui (o sinal estrito) e entrava na tela de
+// Despesas. Nenhum total mudava com isso, e era por isso que importava -- duas
+// copias de um criterio de DINHEIRO que ninguem compara sao a forma exata do
+// defeito que este repositorio ja pagou caro. A decisao unica e a que este lado
+// tomava (o par de zero fica FORA), e as tres razoes dela estao no cabecalho da
+// funcao dona.
+//
+// POR QUE O DONO E LA E NAO AQUI: este arquivo JA importava `TIPO_CARTAO` e
+// `TIPOS_QUE_ENTRAM_NA_FATURA` de la (foi para isso que a segunda deixou de ser
+// privada na HMO-265). Inverter a direcao fecharia um ciclo e poria
+// `realizado-do-caixa` -- e `card-invoice` -> `transferencia` -> `lancamento`
+// atras dele -- dentro da arvore que scripts/mutantes-telas-de-movimentacao.mjs
+// copia: todo mutante daquele modulo deixaria de COMPILAR, "morreria" por motivo
+// errado, e o placar viraria 100% sem medir nada.
+//
+// O IMPORT E A FIACAO, E E ELE QUE O `tsc` COBRA. Nao ha mais copia local para
+// divergir; o que ainda pode divergir e o CAMINHO DE DINHEIRO, e e isso que o
+// bloco "os dois leitores da fatura paga concordam, linha por linha" de
+// scripts/test-realizado-do-caixa.mjs mede: a MESMA matriz de linhas pelos dois
+// leitores, afirmando que a resposta da funcao dona e exatamente o que cada um
+// faz com a linha. Era o controle que nao existia em lugar nenhum.
+//
+// E O CRITERIO DO `transaction_type` CONTINUA SENDO UM INVARIANTE DESTE LADO,
+// nao um ramo com teste. Nenhum caminho de escrita do app produz a chave
+// `fatura:` com tipo diferente de 'transfer', e para a PROMOCAO daqui ele e
+// invisivel por um motivo a mais: a unica linha que ele separa (a despesa
+// nascida do elo da HMO-305) ja e `expense`, entao reescreve-la para `expense`
+// nao mudaria um centavo. O mutante que o removia sobreviveu, a conclusao foi
+// escrever isto em vez de forjar estado que o app nao alcanca, e a unificacao
+// nao mudou a decisao -- mudou que agora ele TEM teste, do OUTRO lado: na tela
+// de Despesas ele decide `natureza`, e la o mutante morre. Ver o bloco de notas
+// de scripts/mutantes-realizado-do-caixa.mjs.
 
 /**
  * A lista do realizado com o cartao contado pela FATURA, e nao pela compra.
@@ -236,7 +205,7 @@ export function realizadoComCartaoPelaFatura<T extends LinhaDoRealizado>(
 
   for (const linha of linhas) {
     if (ehCompraNoCartao(linha)) continue;
-    if (ehSaidaDePagamentoDeFatura(linha)) {
+    if (ehPagamentoDaFatura(linha)) {
       saida.push({ ...linha, transaction_type: "expense" });
       continue;
     }

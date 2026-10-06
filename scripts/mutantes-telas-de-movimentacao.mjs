@@ -531,7 +531,25 @@ const MUTANTES = [
       "data e o mesmo valor com sinais opostos, e `valorEmReais` passa " +
       "`Math.abs` -- entao nao da zero, da o DOBRO. R$ 2.580 de uma fatura de " +
       "R$ 1.290",
-    de: "  return !ehPernaDeEntrada(crua);",
+    // A ANCORA SAO AS DUAS LINHAS, e nao uma -- HMO-317. Com o sinal estrito ao
+    // lado, `ehPernaDeEntrada` sozinho so decide um estado que o app nao
+    // alcanca (chave + transfer + valor NEGATIVO + elo preenchido), entao um
+    // mutante que apagasse SO ele sobreviveria, com razao. O cabecalho da funcao
+    // diz isso; o que esta lista mede e o par removido junto.
+    de:
+      "  if (ehPernaDeEntrada(crua)) return false;\n" +
+      "  return Number(crua.amount) < 0;",
+    para: "  return true;",
+  },
+  {
+    nome: "fatura_paga_de_valor_zero_entra",
+    porque:
+      "o sinal deixa de ser ESTRITO (HMO-317) e as DUAS pernas de um pagamento " +
+      "de valor ZERO passam a ser a fatura paga: a tela de Despesas mostra duas " +
+      "linhas «Fatura» de R$ 0,00, sem Editar e sem Excluir (`podeAgirNaLinha` " +
+      "recusa toda linha de fatura), para um par que ja tem casa na tela de " +
+      "Transferencias -- e e la que ele continua inteiro",
+    de: "  return Number(crua.amount) < 0;",
     para: "  return true;",
   },
   {
