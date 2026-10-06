@@ -79,14 +79,21 @@ const EXIGE = [
     arquivo: TELA,
     trechos: [
       "<DialogoDePagamentoDaFatura",
-      "linhaParaPagarDaAgenda(",
-      "decisaoDePagamentoDaFatura(",
+      // OS DOIS CALL SITES, NOMEADOS. `linhaParaPagarDaAgenda(` solto nao
+      // serve, e isso foi MEDIDO pelo controle negativo em
+      // .github/workflows/verificacao.yml: a tela chama a funcao em DOIS
+      // lugares (o galho de `pedirBaixa` e a prop do dialogo), e matar um
+      // deixava o outro satisfazendo a exigencia. Com o galho morto, `pedirBaixa`
+      // volta a ter o proprio criterio de "isto e fatura?" -- o segundo dono da
+      // pergunta -- e o guard ficava verde.
+      "decisaoDePagamentoDaFatura(linhaParaPagarDaAgenda(conta))",
+      "linhaParaPagarDaAgenda(faturaParaPagar)",
       // A transferencia prevista (HMO-172) ainda da baixa por aqui, e a frase
       // dela e a MESMA -- importada, nao repetida em literal.
       "description: FRASE_DO_PATRIMONIO",
     ],
     porque:
-      "Contas a Pagar tem de CONSUMIR o extraido. Sem o componente renderizado a fatura fica sem dialogo; sem a decisao, a tela volta a ter o proprio criterio de 'isto e fatura?'.",
+      "Contas a Pagar tem de CONSUMIR o extraido. Sem o componente renderizado a fatura fica sem dialogo; sem a decisao no galho de `pedirBaixa`, a tela volta a ter o proprio criterio de 'isto e fatura?'.",
   },
   {
     arquivo: LIB,

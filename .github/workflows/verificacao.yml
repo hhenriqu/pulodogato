@@ -5216,10 +5216,19 @@ jobs:
             'o botao desabilitado perde o motivo escrito'
           desligar "$DIALOGO" 'pagarAFatura({' 'naoChama({' \
             'o dialogo importa a sequencia e NAO a chama'
+          desligar "$DIALOGO" 'decisaoDePagamentoDaFatura(linha)' 'naoDecide(linha)' \
+            'o dialogo redecide por conta propria em vez de perguntar a lib'
           desligar "$TELA" '<DialogoDePagamentoDaFatura' '<DialogoDeAlcance' \
             'a tela para de renderizar o dialogo -- a fatura fica sem onde ser paga'
-          desligar "$TELA" 'linhaParaPagarDaAgenda(conta)' 'conta' \
-            'a tela para de normalizar a linha antes da decisao'
+          # OS DOIS CALL SITES DA TELA, SEPARADOS, e isso foi medido: a primeira
+          # versao do guard exigia `linhaParaPagarDaAgenda(` solto, e matar o
+          # galho de `pedirBaixa` deixava a prop do dialogo satisfazendo a
+          # exigencia -- verde com a tela de volta ao proprio criterio de "isto e
+          # fatura?", que e o segundo dono da pergunta.
+          desligar "$TELA" 'decisaoDePagamentoDaFatura(linhaParaPagarDaAgenda(conta))' 'ehFatura(conta.notes)' \
+            'pedirBaixa volta a ter o proprio criterio de "isto e fatura?"'
+          desligar "$TELA" 'linhaParaPagarDaAgenda(faturaParaPagar)' 'faturaParaPagar' \
+            'a prop do dialogo deixa de ser normalizada -- a decisao le campos que nao existem'
 
           # A EXIGENCIA NEGATIVA, medida ao contrario: o guard tem de ficar
           # VERMELHO quando a sequencia das escritas VOLTA para dentro da tela.
@@ -5235,7 +5244,7 @@ jobs:
           mv "$TELA.orig310" "$TELA"
           echo "  vermelho em: a sequencia das escritas volta para dentro da tela"
 
-          echo "A verificacao fica vermelha nos seis pontos."
+          echo "A verificacao fica vermelha nos oito pontos."
 
       - name: 'A arvore voltou ao lugar depois de "A verificacao sabe falhar (fiacao do pagamento da fatura)"'
         run: |
