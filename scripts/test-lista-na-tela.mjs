@@ -84,8 +84,17 @@
 //                              Realizado por `origem`. ELA E A ASSERCAO (2):
 //                              esbocada, a sonda mediria a propria sonda;
 //   lib/retorno-do-lancamento.js, lib/acoes-da-linha.js -- a regra e as URLs;
+//   lib/data-digitada.js    -- `aoDigitarData`, a MASCARA do vencimento. Ela e a
+//                              assercao do caso G4 ("20/11/2026" digitado ->
+//                              `2026-11-20` no PATCH): esbocada, a sonda mediria
+//                              a propria sonda (HMO-324);
 //   components/ui/button.js, components/ui/card.js -- `id`, `aria-label`,
 //                              `disabled` e `onClick` atravessando ate o DOM;
+//   components/ui/input.js, components/ui/campo-de-data.js -- o campo de data
+//                              que SUBSTITUIU o `<input type="date">` nativo. O
+//                              componente guarda o rascunho da digitacao em
+//                              `useState` proprio, entao nao da para esboca-lo e
+//                              continuar medindo a mascara (HMO-324);
 //   components/movimentacoes/SecaoDaTela.js, ListaDeMovimentacao.js.
 //
 // E os esbocos, cada um com motivo e limite:
@@ -94,7 +103,7 @@
 //     (clsx + tailwind-merge + cva), nao comportamento, e nenhuma assercao daqui
 //     fala de classe -- quem cobra cor e `npm run check-color-tokens`. Com eles
 //     o Button de PRODUCAO entra de verdade;
-//   - os nove icones do lucide: viram `<svg>` vazio. Icone novo num dos dois
+//   - os onze icones do lucide: viram `<svg>` vazio. Icone novo num dos
 //     componentes estoura alto e claro ("ReferenceError: X is not defined"),
 //     pelo `try/catch` que a pagina tem;
 //   - `Link`: respeita o contrato do next/link (um `<a href>` que envolve os
@@ -120,7 +129,7 @@
 //   2. `new Function(parte)` por parte -> pega o que a (1) nao pega (um
 //      `export { A, B, };` de barril perde a PALAVRA e deixa virgula sobrando);
 //   3. `new Function(concatenado)` -> pega o que nenhuma das duas pega: duas
-//      partes declarando o mesmo `const` de MODULO. Com onze modulos de
+//      partes declarando o mesmo `const` de MODULO. Com quatorze modulos de
 //      producao na pagina isso nao e hipotetico -- foi por isso que
 //      `ListaDeMovimentacao` passou a usar `formatCurrency` em vez de declarar
 //      um `moeda` proprio, igual ao de `SecaoDaTela`. O sintoma seria "a pagina
@@ -274,8 +283,19 @@ const PARTES = [
   "lib/telas-de-movimentacao.js",
   "lib/retorno-do-lancamento.js",
   "lib/acoes-da-linha.js",
+  // A mascara do campo de vencimento (HMO-324). Ela entra como PRODUCAO pelo
+  // mesmo motivo que `secoesDaTela`: o caso G4 afirma que digitar "20/11/2026"
+  // grava `2026-11-20`, e e `aoDigitarData` quem faz essa traducao. Esbocada, a
+  // sonda mediria a propria sonda.
+  "lib/data-digitada.js",
   "components/ui/button.js",
   "components/ui/card.js",
+  "components/ui/input.js",
+  // `CampoDeData` depende de `Input` (acima) e de `lib/data-digitada`. Ele
+  // guarda o rascunho da digitacao em `useState` proprio, entao e o COMPONENTE
+  // que tem de entrar: nao ha como esbocar o campo e continuar medindo a
+  // mascara, que e o que esta issue trocou.
+  "components/ui/campo-de-data.js",
   "components/movimentacoes/SecaoDaTela.js",
   "components/movimentacoes/ListaDeMovimentacao.js",
 ];
@@ -325,7 +345,7 @@ const PAGINA = `<!doctype html>
 <div id="raiz-a"></div><div id="raiz-b"></div><div id="raiz-c"></div>
 <div id="raiz-d"></div><div id="raiz-e"></div><div id="raiz-f"></div>
 <div id="raiz-g"></div><div id="raiz-h"></div><div id="raiz-i"></div>
-<div id="raiz-j"></div><div id="raiz-k"></div>
+<div id="raiz-j"></div><div id="raiz-k"></div><div id="raiz-l"></div>
 <div id="resultado">a pagina nao rodou</div>
 <script>${umd("react", "react.development.js")}</script>
 <script>${umd("react-dom", "react-dom.development.js")}</script>
@@ -341,7 +361,9 @@ const PAGINA = `<!doctype html>
 // Por isso a ordem e: hooks e esbocos no topo, producao em seguida (ela precisa
 // que os nomes existam quando ela RODA, nao quando e definida), e a IIFE por
 // ultimo.
-const { useCallback, useEffect, useMemo, useState } = React;
+// \`useRef\` entrou com \`CampoDeData\` (HMO-324): ele guarda o input do
+// calendario nativo escondido para poder chamar \`showPicker()\` nele.
+const { useCallback, useEffect, useMemo, useRef, useState } = React;
 
 // --- os esbocos (ver o cabecalho do .mjs) ------------------------------------
 
@@ -357,11 +379,13 @@ const Slot = React.forwardRef(function Slot(props, ref) {
   return React.cloneElement(children, { ...resto, ref });
 });
 
-/** Os nove icones. Icone novo estoura como ReferenceError, e isso e bom. */
+/** Os onze icones. Icone novo estoura como ReferenceError, e isso e bom. */
 const icone = (nome) => (props) =>
   React.createElement("svg", { "data-icone": nome, className: props.className });
 const AlertCircle = icone("AlertCircle");
 const CalendarClock = icone("CalendarClock");
+/** O do botao de calendario de \`CampoDeData\` (HMO-324). */
+const CalendarDays = icone("CalendarDays");
 const Check = icone("Check");
 const CheckCircle2 = icone("CheckCircle2");
 const CreditCard = icone("CreditCard");
@@ -820,7 +844,14 @@ const out = {};
     // mandasse o vazio seria perda de dado em cada edicao.
     descricao: campoDescricao ? campoDescricao.value : null,
     valor: campoValor ? campoValor.value : null,
+    // O vencimento e o TEXTO EXIBIDO, e desde a HMO-324 ele e dd/mm/aaaa: o
+    // campo e \`CampoDeData\`, que mostra mascarado e emite AAAA-MM-DD por baixo.
+    // Era aqui que o \`type="date"\` nativo aparecia como "2026-10-15".
     vencimento: campoVencimento ? campoVencimento.value : null,
+    // O \`type\` do campo e a assercao que impede a VOLTA do controle nativo por
+    // esta porta: \`check-campo-de-data\` varre o fonte, mas so esta sonda diz o
+    // que o navegador recebeu de fato.
+    tipoDoVencimento: campoVencimento ? campoVencimento.type : null,
     // A frase que distingue ocorrencia de serie.
     texto: raiz.textContent.replace(/\\s+/g, " ").trim(),
   };
@@ -840,6 +871,58 @@ const out = {};
     temFormulario: !!raiz.querySelector("#edicao-valor"),
     previsto: retrato(raiz, PREVISTO),
   };
+}
+
+// =========================================================================
+// G4. DIGITAR o vencimento: dd/mm/aaaa na tela, AAAA-MM-DD no PATCH (HMO-324)
+// =========================================================================
+// O caso G acima edita descricao e valor e deixa o vencimento COMO VEIO -- ele
+// prova que a data que ja existia sobrevive a edicao. Este caso prova a outra
+// metade, que e a que a troca do campo nativo poe em risco: uma data que a
+// PESSOA DIGITA chega ao banco no formato que o banco espera.
+//
+// E e esta a assercao que o controle nativo nao conseguia ter. Num
+// \`<input type="date">\` a ordem dos tres segmentos sai do APARELHO, entao
+// digitar 20/11/2026 gravava 2026-11-20 em um aparelho e 2026-08-11 em outro
+// (11 de agosto: o dia virou mes) -- com o teste verde nos dois, porque o
+// navegador do CI tem uma ordem so. Com \`CampoDeData\` a ordem e dd/mm/aaaa em
+// todo aparelho, porque e a MASCARA que a define, e a mascara e codigo.
+//
+// Por que 20/11: dia 20 e mes 11 sao AMBIGUOS ao contrario de um jeito util --
+// "20" nao e mes valido, entao uma leitura mm/dd do que foi digitado nao
+// produziria data nenhuma e o PATCH sairia sem \`due_date\`. Ja um 05/06 passaria
+// pelas duas leituras e esta assercao ficaria sem medir nada.
+{
+  const antes = corpo([
+    linha({ id: "s-dig", descricao: "Aluguel", valor: 2500, natureza: "fixa" }),
+  ]);
+  const depois = corpo([
+    linha({ id: "s-dig", descricao: "Aluguel", valor: 2500, natureza: "fixa" }),
+  ]);
+  const raiz = await montar("raiz-l", [antes, depois]);
+
+  await clicar(raiz, PREVISTO, "Editar");
+
+  const campoVencimento = raiz.querySelector("#edicao-vencimento");
+
+  // A digitacao da data INTEIRA de uma vez. \`aoDigitarData\` trata isso como
+  // data nova (o campo estava completo e o texto nao cresceu), que e o mesmo
+  // caminho de quem seleciona tudo e redigita.
+  if (campoVencimento) digitar(campoVencimento, "20/11/2026");
+  await assentar();
+
+  out.g_digitado = {
+    // O que ficou NA TELA depois da mascara.
+    exibicao: campoVencimento ? campoVencimento.value : null,
+  };
+
+  const salvar = raiz.querySelector("#edicao-salvar");
+  if (salvar) {
+    salvar.click();
+    await assentar();
+  }
+
+  out.g_digitado.chamadas = CHAMADAS.slice();
 }
 
 // =========================================================================
@@ -1245,7 +1328,22 @@ test("G1: o Editar da prevista ABRE o formulario, com os valores de hoje", () =>
   assert.equal(resultado.g_aberto.temFormulario, true, "o Editar nao abriu nada");
   assert.equal(resultado.g_aberto.descricao, "Aluguel");
   assert.equal(resultado.g_aberto.valor, "2500,00");
-  assert.equal(resultado.g_aberto.vencimento, "2026-10-15");
+
+  // O VENCIMENTO ABRE MASCARADO (HMO-324). Ate a troca do campo este valor era
+  // "2026-10-15" -- o texto que o `<input type="date">` nativo guarda e que o
+  // navegador reordena na exibicao conforme o APARELHO. Agora o que esta na
+  // tela e o que a pessoa le em portugues, e o ISO vive por baixo (caso G2).
+  assert.equal(resultado.g_aberto.vencimento, "15/10/2026");
+
+  // E o campo NAO e o controle nativo. `check-campo-de-data` varre o fonte;
+  // esta linha afirma o que o navegador recebeu -- as duas peneiras falham por
+  // motivos diferentes e nenhuma cobre a outra.
+  assert.equal(
+    resultado.g_aberto.tipoDoVencimento,
+    "text",
+    "o campo de vencimento voltou a ser `type=date`: a ordem dos segmentos " +
+      "passa a sair do aparelho e 10/03 vira 3 de outubro sem erro nenhum"
+  );
 
   // E a frase que diz O QUE a edicao alcanca -- a ocorrencia, nao a serie.
   assert.match(resultado.g_aberto.texto, /Vale só para a ocorrência de/);
@@ -1278,6 +1376,31 @@ test("G3: salvo, o formulario FECHA e a lista relê", () => {
     c.url.startsWith("/api/movimentacoes/resumo")
   );
   assert.equal(leituras.length, 2, JSON.stringify(leituras));
+});
+
+test("G4: vencimento DIGITADO em dd/mm/aaaa vira AAAA-MM-DD no PATCH", () => {
+  // A mascara na tela: oito digitos com as duas barras, na ordem que a pessoa
+  // digitou. Sem esta linha, um campo que ENGOLISSE a digitacao (o que o nativo
+  // faz em parte das posicoes de clique: oito teclas, nada gravado) deixaria a
+  // assercao de baixo medindo a data PREENCHIDA, nao a digitada.
+  assert.equal(resultado.g_digitado.exibicao, "20/11/2026");
+
+  const patches = resultado.g_digitado.chamadas.filter((c) => c.metodo === "PATCH");
+  assert.equal(patches.length, 1, JSON.stringify(resultado.g_digitado.chamadas));
+
+  // E O QUE IMPORTA: o banco recebe ISO. `due_date` e `date` no Postgres, e
+  // "20/11/2026" seria recusado -- ou, pior, aceito ao contrario.
+  assert.equal(
+    patches[0].corpo.due_date,
+    "2026-11-20",
+    "a data digitada nao chegou em AAAA-MM-DD: " + JSON.stringify(patches[0].corpo)
+  );
+
+  // Os outros dois campos nao foram tocados neste caso, e por isso vao com o
+  // valor que abriu: a prova de que mexer na data nao zera o resto do
+  // formulario.
+  assert.equal(patches[0].corpo.description, "Aluguel");
+  assert.equal(patches[0].corpo.amount, 2500);
 });
 
 // =============================================================================

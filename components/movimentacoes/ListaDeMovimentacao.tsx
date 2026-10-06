@@ -59,6 +59,7 @@ import { CalendarClock, CheckCircle2, CreditCard, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { CampoDeData } from "@/components/ui/campo-de-data";
 // `formatCurrency` E NAO UM `moeda` PROPRIO, e a razao nao e so DRY: este
 // arquivo e `SecaoDaTela.tsx` sao CONCATENADOS num script classico pela sonda de
 // scripts/test-lista-na-tela.mjs, e dois `const moeda` de modulo com o mesmo
@@ -594,14 +595,26 @@ export function ListaDeMovimentacao({
                   </label>
                   <label className="space-y-1 text-sm">
                     <span className="text-muted-foreground">Vencimento</span>
-                    <input
+                    {/*
+                      `CampoDeData` e NAO o controle nativo: a ordem dos tres
+                      segmentos do `type="date"` sai do APARELHO, e o mesmo app
+                      mostra dd/mm para um usuario e mm/dd para outro sem nada
+                      na tela dizendo qual (medido na HMO-238). Quem digitasse
+                      10 de MARCO aqui gravaria 3 de OUTUBRO -- data valida,
+                      plausivel e sem erro nenhum no caminho, que e o defeito
+                      que so aparece meses depois num extrato que nao fecha.
+
+                      Ele MOSTRA dd/mm/aaaa e EMITE AAAA-MM-DD, que e o que
+                      `salvarEdicao` manda para o banco: o `onChange` recebe a
+                      data ja em ISO, nao um evento.
+                    */}
+                    <CampoDeData
                       id="edicao-vencimento"
-                      type="date"
-                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
                       value={campos.vencimento}
-                      onChange={(e) =>
-                        setCampos((c) => ({ ...c, vencimento: e.target.value }))
+                      onChange={(vencimento) =>
+                        setCampos((c) => ({ ...c, vencimento }))
                       }
+                      aria-label="Vencimento"
                     />
                   </label>
                 </div>
