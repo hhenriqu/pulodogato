@@ -52,6 +52,11 @@ import { Badge } from "@/components/ui/badge";
 import { TrendingUp, Plus, AlertTriangle, Trash2, Tag } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import {
+  CrivosDeFundamento,
+  type DadosDosCrivos,
+} from "@/components/investments/CrivosDeFundamento";
+import type { LimitesDosCrivos } from "@/lib/crivos";
+import {
   ROTULO_TIPO,
   TIPOS_DE_ATIVO,
   type AssetType,
@@ -121,6 +126,8 @@ function hojeISO(): string {
 export default function InvestmentsPage() {
   const [user, setUser] = useState<User | null>(null);
   const [carteira, setCarteira] = useState<Carteira | null>(null);
+  const [crivos, setCrivos] = useState<DadosDosCrivos | null>(null);
+  const [erroCrivos, setErroCrivos] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
@@ -182,13 +189,52 @@ export default function InvestmentsPage() {
     }
   }, []);
 
+  // Os criterios vem de rota propria, e a falha dela nao derruba a carteira: o
+  // fundamento da CVM depende da migration 028 estar aplicada, e a pagina de
+  // investimentos precisa abrir do mesmo jeito sem ele. Ver o cabecalho de
+  // app/api/investments/crivos/route.ts.
+  const carregarCrivos = useCallback(async () => {
+    setErroCrivos(null);
+    try {
+      const resposta = await fetch("/api/investments/crivos");
+      const corpo = await resposta.json();
+      if (!resposta.ok) {
+        setErroCrivos(corpo?.error || "Nao foi possivel carregar os criterios");
+        return;
+      }
+      setCrivos(corpo as DadosDosCrivos);
+    } catch {
+      setErroCrivos("Nao foi possivel carregar os criterios");
+    }
+  }, []);
+
+  async function salvarLimites(limites: LimitesDosCrivos) {
+    try {
+      const resposta = await fetch("/api/investments/crivos", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ limites }),
+      });
+      const corpo = await resposta.json();
+      if (!resposta.ok) {
+        return { ok: false, erro: corpo?.error as string | undefined };
+      }
+      // Recarrega para que o "valendo agora" passe a ser o que o BANCO tem, e
+      // nao o que a tela acha que gravou.
+      await carregarCrivos();
+      return { ok: true };
+    } catch {
+      return { ok: false, erro: "Nao foi possivel salvar os criterios" };
+    }
+  }
+
   useEffect(() => {
     const iniciar = async () => {
       const {
         data: { user },
       } = await supabase.auth.getUser();
       setUser(user);
-      if (user) await carregar();
+      if (user) await Promise.all([carregar(), carregarCrivos()]);
       setCarregando(false);
     };
     iniciar();
@@ -226,7 +272,9 @@ export default function InvestmentsPage() {
       setNovoNome("");
       setNovoPreco("");
       setNovaRendaFixa(valoresDeRendaFixaVazios());
-      await carregar();
+      // Ativo novo muda a lista de criterios tambem -- sem isto o ativo aparece
+      // na carteira e nao aparece nos criterios ate a pessoa recarregar a pagina.
+      await Promise.all([carregar(), carregarCrivos()]);
     } finally {
       setSalvando(false);
     }
@@ -385,7 +433,7 @@ export default function InvestmentsPage() {
         return;
       }
       if (lancAtivo === assetId) setLancAtivo("");
-      await carregar();
+      await Promise.all([carregar(), carregarCrivos()]);
     } finally {
       setSalvando(false);
     }
@@ -515,6 +563,18 @@ export default function InvestmentsPage() {
             estimado ao lado. Devolve `null` quando nao ha renda fixa na
             carteira -- ver o componente. */}
         <RendaFixaDaCarteira dados={rendaFixa} />
+        {/* --- Os critérios de fundamento (HMO-195) ------------------------- */}
+        {erroCrivos && (
+          <Alert>
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              {erroCrivos}. A carteira acima não depende disso.
+            </AlertDescription>
+          </Alert>
+        )}
+        {crivos && (
+          <CrivosDeFundamento dados={crivos} onSalvar={salvarLimites} />
+        )}
 
         {/* --- Ativos cadastrados, com o preço atual editável ---------------- */}
         <Card>
