@@ -78,6 +78,44 @@
 // divergem: mexer no alvo em package.json deixava o runner medindo um pipeline
 // que nao e mais o da suite, e nada reclamava. Aqui as etapas sao lidas do
 // proprio `scripts[suite]`, que e o que o CI roda.
+//
+// O ORACULO QUE NAO E UMA SUITE (HMO-323)
+// ---------------------------------------
+// `suites` nao cobre todo oraculo deste repositorio. Ha guards que nao compilam
+// nada: eles LEEM O TEXTO DA FONTE para afirmar fiacao ("a tela manda o campo no
+// insert"). `scripts/check-fatura-no-lancamento.mjs` e um, e seis dos oito
+// mutantes da fatura escolhida sao medidos por ele.
+//
+// Sem um lugar para declarar isso, esses mutantes ficavam de fora do bloco --
+// e ficar de fora aqui nao e so perder tempo compartilhado: e continuar mutando
+// `components/`, `app/` e `lib/` NO DISCO da arvore rastreada, que e o modo de
+// falhar que este arquivo existe para fechar (ponto 1 acima).
+//
+// O que NAO pode ser reaberto e a razao de `etapasDaSuite` PARAR numa suite sem
+// compilacao: uma suite afirma sobre o JavaScript EMITIDO, e a sombra nao herda
+// o `.tmp-*` do repositorio de proposito -- entao uma suite sem etapa de
+// compilacao assertaria sobre artefato que esta volta nao emitiu, e o placar
+// falaria de codigo que ninguem compilou.
+//
+// O invariante de verdade nao e "tudo compila". E: **a mutacao tem de chegar ao
+// que a assercao LE**. As duas declaracoes dizem por qual dos dois caminhos ela
+// chega, e cada uma e recusada pelo defeito da outra:
+//
+//   suites   -- a assercao le o artefato emitido  -> EXIGE etapa de compilacao;
+//   oraculos -- a assercao le a fonte no disco    -> RECUSA etapa de compilacao
+//               (um alvo que compila e uma suite disfarcada, e declarar aqui
+//               seria contornar a regra de cima).
+//
+// E para o oraculo a mutacao chega pelo caminho que ja existia: a sombra
+// materializa em disco exatamente o arquivo mutado, e o comando roda com
+// `cwd` na sombra. Esse arquivo escrito em disco nao foi acrescentado para isto
+// -- ele e o ponto 1 do bloco desde o comeco (ver o paragrafo entre parenteses
+// la em cima).
+//
+// E se a declaracao estiver errada? Quem pega e o CONTROLE POSITIVO, como
+// sempre. Um "oraculo" que na verdade precisa de artefato compilado nao acha
+// `.tmp-*` nenhum dentro da sombra e fica VERMELHO na arvore INTACTA, antes de
+// qualquer mutante ser contado -- e os runners param ali.
 // =====================================================
 
 import {
@@ -150,8 +188,8 @@ function materializarDiretorio(dir, relativo) {
   }
 }
 
-/** As etapas de um alvo `test:*`, na ordem, separando compilacao de assercao. */
-function etapasDaSuite(comando, suite) {
+/** As etapas de um comando, na ordem, separando compilacao de assercao. */
+function classificarEtapas(comando) {
   const etapas = [];
   for (const parte of comando.split("&&").map((s) => s.trim())) {
     if (!parte) continue;
@@ -169,16 +207,46 @@ function etapasDaSuite(comando, suite) {
       etapas.push({ tipo: "comando", linha: parte });
     }
   }
+  return etapas;
+}
+
+/** As etapas de um alvo `test:*`, na ordem, separando compilacao de assercao. */
+function etapasDaSuite(comando, suite) {
+  const etapas = classificarEtapas(comando);
 
   // Suite sem etapa de compilacao nao tem o que compartilhar, e rodar os
   // mutantes dela por aqui seria um placar sobre codigo que ninguem compilou:
   // a sobrescrita em memoria nunca chegaria a um artefato. Para alto.
   if (!etapas.some((e) => e.tipo === "compila")) {
     throw new Error(
-      `${suite}: o comando nao tem etapa de compilacao (\`${comando}\`) -- este bloco nao serve para ela`,
+      `${suite}: o comando nao tem etapa de compilacao (\`${comando}\`) -- declare como oraculo se ele le a FONTE, e nao o artefato`,
     );
   }
   return etapas;
+}
+
+/**
+ * As etapas de um ORACULO: um comando que afirma lendo a FONTE, nao o artefato.
+ *
+ * A recusa aqui e a imagem espelhada da recusa acima, e existe para o `oraculos`
+ * nao virar a porta dos fundos do `suites`: um alvo que COMPILA afirma sobre o
+ * que ele emitiu, e passar por aqui o faria rodar dentro da sombra sem que a
+ * etapa de compilacao fosse redirecionada para ela -- o `node --test` leria o
+ * `.tmp-*` que a sombra nao tem, ou pior, um artefato de outra volta.
+ *
+ * `npm run x` e resolvido para o comando de verdade antes de perguntar: um alvo
+ * de package.json escondendo um `tsc` atras do nome e exatamente o caso que a
+ * pergunta precisa enxergar.
+ */
+function etapasDoOraculo(linha, nome, pkg) {
+  const alvoNpm = linha.match(/^npm\s+run\s+(\S+)/)?.[1];
+  const comandoDoAlvo = alvoNpm ? pkg.scripts?.[alvoNpm] : null;
+  if (comandoDoAlvo && classificarEtapas(comandoDoAlvo).some((e) => e.tipo === "compila")) {
+    throw new Error(
+      `${nome}: \`${linha}\` compila (\`${comandoDoAlvo}\`) -- declare como SUITE, nao como oraculo`,
+    );
+  }
+  return [{ tipo: "comando", linha }];
 }
 
 /** Os nomes dos testes que reprovaram, do formato do `node --test`. */
@@ -199,18 +267,27 @@ function testesQueReprovaram(saida) {
  * cada um nao acompanhou. Quem delimita o que um bloco prova e o tsconfig da
  * suite, que e o mesmo que o CI usa.
  */
-export function criarBlocoDeMutantes({ suites, rotulo = "bloco" }) {
-  if (!Array.isArray(suites) || suites.length === 0) {
-    throw new Error("criarBlocoDeMutantes: passe ao menos uma suite");
+export function criarBlocoDeMutantes({ suites = [], oraculos = {}, rotulo = "bloco" }) {
+  if (!Array.isArray(suites)) {
+    throw new Error("criarBlocoDeMutantes: `suites` tem de ser uma lista");
+  }
+  const nomesDeOraculo = Object.keys(oraculos);
+  if (suites.length + nomesDeOraculo.length === 0) {
+    throw new Error("criarBlocoDeMutantes: passe ao menos uma suite ou um oraculo");
   }
 
   const pkg = JSON.parse(readFileSync(path.join(RAIZ, "package.json"), "utf8"));
-  const porSuite = new Map();
+  const porAlvo = new Map();
   for (const suite of suites) {
     const comando = pkg.scripts?.[suite];
     if (!comando) throw new Error(`${suite}: nao existe em package.json`);
-    porSuite.set(suite, etapasDaSuite(comando, suite));
+    porAlvo.set(suite, etapasDaSuite(comando, suite));
   }
+  for (const [nome, linha] of Object.entries(oraculos)) {
+    if (porAlvo.has(nome)) throw new Error(`${nome}: declarado como suite E como oraculo`);
+    porAlvo.set(nome, etapasDoOraculo(linha, nome, pkg));
+  }
+  const alvoPadrao = suites[0] ?? nomesDeOraculo[0];
 
   const dir = mkdtempSync(path.join(tmpdir(), `bloco-${rotulo}-`));
 
@@ -250,9 +327,9 @@ export function criarBlocoDeMutantes({ suites, rotulo = "bloco" }) {
   // artefato?". Preenchida na primeira volta sem sobrescritas.
   const saidaDoControle = new Map();
 
-  function rodar(nome, sobrescritas = {}, suite = suites[0]) {
-    const etapas = porSuite.get(suite);
-    if (!etapas) throw new Error(`${suite}: nao foi declarada neste bloco`);
+  function rodar(nome, sobrescritas = {}, alvo = alvoPadrao) {
+    const etapas = porAlvo.get(alvo);
+    if (!etapas) throw new Error(`${alvo}: nao foi declarado neste bloco`);
 
     // A MUTACAO VAI PARA DOIS LUGARES, DE PROPOSITO, e vem da mesma string:
     //   - a compilacao recebe o texto em memoria (`sobrescritas`), porque o AST
@@ -282,7 +359,7 @@ export function criarBlocoDeMutantes({ suites, rotulo = "bloco" }) {
     for (const etapa of etapas) {
       if (etapa.tipo !== "compila") continue;
       const { opcoes } = resolverInvocacao(etapa.argumentos);
-      if (!opcoes.outDir) throw new Error(`${suite}: etapa de compilacao sem outDir`);
+      if (!opcoes.outDir) throw new Error(`${alvo}: etapa de compilacao sem outDir`);
       const relativo = path.relative(RAIZ, path.resolve(RAIZ, opcoes.outDir));
       const r = compilarComSobrescritas({
         argumentos: etapa.argumentos,
@@ -304,11 +381,19 @@ export function criarBlocoDeMutantes({ suites, rotulo = "bloco" }) {
     if (semSobrescritas && saidaDoControle.size === 0) {
       for (const [k, v] of emitidoAgora) saidaDoControle.set(k, v);
     }
-    const mudouASaida =
-      semSobrescritas ||
-      saidaDoControle.size === 0 ||
-      emitidoAgora.size !== saidaDoControle.size ||
-      [...emitidoAgora].some(([k, v]) => saidaDoControle.get(k) !== v);
+    // `null`, e nao `true`, quando o alvo nao compila: a pergunta "o mutante e
+    // EQUIVALENTE?" e sobre o artefato, e um oraculo que le a fonte nao tem
+    // artefato para comparar. Responder `true` ali seria afirmar que a saida
+    // mudou sem ter olhado para saida nenhuma, e os runners imprimem a nota de
+    // mutante equivalente a partir desta resposta. Para esse oraculo quem
+    // responde "a mutacao aconteceu mesmo?" sao as duas travas de `de`/`para`
+    // do runner, que comparam o TEXTO antes e depois.
+    const mudouASaida = !etapas.some((e) => e.tipo === "compila")
+      ? null
+      : semSobrescritas ||
+        saidaDoControle.size === 0 ||
+        emitidoAgora.size !== saidaDoControle.size ||
+        [...emitidoAgora].some(([k, v]) => saidaDoControle.get(k) !== v);
 
     for (const etapa of etapas) {
       if (etapa.tipo !== "comando") continue;
