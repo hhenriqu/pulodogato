@@ -328,10 +328,39 @@ if (argv[0] === "--todas") {
     process.exit(1);
   }
 
+  // Dois alvos no mesmo outDir: o segundo apagaria a saida do primeiro, e a
+  // suite do primeiro rodaria sobre arquivo que nao e dela -- ou sobre
+  // diretorio vazio. Hoje nao acontece; se passar a acontecer, para aqui em vez
+  // de virar uma suite verde sem conteudo.
+  const porSaida = new Map();
+  for (const alvo of alvos) {
+    const saida = path.resolve(alvo.opcoes.outDir ?? "");
+    if (!porSaida.has(saida)) porSaida.set(saida, []);
+    porSaida.get(saida).push(alvo.rotulo);
+  }
+  const colisoes = [...porSaida].filter(([, nomes]) => new Set(nomes).size > 1);
+  if (colisoes.length > 0) {
+    console.error("Mais de um alvo compila para o mesmo diretorio de saida:\n");
+    for (const [saida, nomes] of colisoes) {
+      console.error(`  ${path.relative(RAIZ, saida)}/ <- ${[...new Set(nomes)].join(", ")}`);
+    }
+    process.exit(1);
+  }
+
   let erros = 0;
   let aproveitados = 0;
   for (const alvo of alvos) {
-    const r = compilarAlvo(alvo);
+    let r;
+    try {
+      r = compilarAlvo(alvo);
+    } catch (erro) {
+      // Um alvo que estoura nao pode derrubar o lote calado: os outros 96
+      // ficariam sem compilar e cada suite acharia que so precisava recompilar
+      // a sua. Conta como erro e segue.
+      console.error(`ERRO ao compilar ${alvo.rotulo}: ${erro.message}`);
+      erros++;
+      continue;
+    }
     erros += r.erros;
     if (r.aproveitado) aproveitados++;
     if (r.erros > 0) console.error(`ERRO ao compilar ${alvo.rotulo}`);
