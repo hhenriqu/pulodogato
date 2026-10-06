@@ -3,12 +3,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { MOEDA_PADRAO, moedaConhecida } from "@/lib/dinheiro";
 import { cotacaoCoerente, precisaDeCotacao, valorEmReais } from "@/lib/cambio";
 import {
-  DESCRICAO_DA_CATEGORIA_DE_ACERTO,
-  NOME_DA_CATEGORIA_DE_ACERTO,
+  chaveDoAcerto,
   direcaoDoAcerto,
   mensagemDaContaDoAcerto,
   pernaDoAcerto,
 } from "@/lib/acerto-em-lancamento";
+import { categoriaDoAcerto } from "@/lib/categoria-do-acerto";
 
 /**
  * Acertos de contas do grupo: o registro de "Caio pagou R$ 130 para a Ana".
@@ -38,13 +38,23 @@ import {
  *        recebe fecha o mes empatado e apaga a propria parte dela).
  *
  *   objecao 1 (um acerto nunca deve mexer na conta de OUTRA pessoa)
- *     -> continua respeitada, e e o que limita esta fase a UMA perna:
+ *     -> continua respeitada, e e o que limita este POST a UMA perna:
  *        `financial_transactions_write` e
  *        `FOR INSERT WITH CHECK (user_id = auth.uid())`
  *        (`002_rls_lockdown.sql:472`), e esta rota roda na sessao de quem
- *        clicou. A perna da contraparte e a fase 12 e vai precisar de outro
- *        mecanismo. Qualquer um dos dois lados pode registrar -- `from_user_id`
+ *        clicou. Qualquer um dos dois lados pode registrar -- `from_user_id`
  *        ou `to_user_id` igual a quem chama --, e cada um grava a PROPRIA.
+ *
+ * A PERNA DO OUTRO LADO CHEGOU NA FASE 12
+ * ---------------------------------------
+ * `settlements/[id]/perna/route.ts`: a contraparte abre a propria tela, ve o
+ * acerto ja registrado e lanca na conta DELA, na sessao dela. O POST aqui
+ * continua gravando uma perna so, e de proposito -- nao ha outro mecanismo, ha
+ * a outra sessao.
+ *
+ * O GET passou a dizer, em `minha_perna`, se quem esta lendo ja lancou. Sem esse
+ * campo a tela nao consegue distinguir "ainda nao lancado na sua conta" de
+ * "nao aconteceu", que e a parte da fase 12 que nao e dinheiro: e rotulo.
  *
  * `account_id` passou a ser obrigatorio no POST, e isso e o resto do conserto:
  * sem conta nao ha onde a perna cair, e um POST sem conta "funcionaria" como
@@ -70,82 +80,6 @@ import {
  * esta rota continua funcionando sem mudanca, e continua registrando em real --
  * que e o que ele sempre fez.
  */
-
-/**
- * A categoria reservada do acerto DAQUELE usuario, criando-a na primeira vez.
- *
- * Mesma receita do ajuste de fatura (HMO-253,
- * `app/api/card-invoices/ajuste/route.ts`): `category_id` e NOT NULL, acerto nao
- * tem categoria, e a 036 deu `user_id` + `transaction_categories_insert_own`
- * (`WITH CHECK (user_id = auth.uid())`) a `transaction_categories` -- entao a
- * linha nasce aqui, por usuario, sem migration.
- *
- * O caminho da 023 (seed global, colado a mao no SQL Editor) nao se repete: ele
- * foi necessario porque a tabela era global e o INSERT batia em 42501 em toda
- * chamada, de todo usuario.
- *
- * SELECT-depois-INSERT e nao `ON CONFLICT`: a UNIQUE das categorias de usuario e
- * indice PARCIAL (`WHERE user_id IS NOT NULL`), e indice parcial nao arbitra
- * `ON CONFLICT`. O ramo de 23505 cobre dois pedidos simultaneos do mesmo
- * usuario.
- */
-async function categoriaDoAcerto(
-  supabase: ReturnType<typeof createClient>,
-  userId: string,
-  serviceId: string
-): Promise<{ id: string } | { erro: string }> {
-  const { data: existente, error: erroBusca } = await supabase
-    .from("transaction_categories")
-    .select("id")
-    .eq("service_id", serviceId)
-    .eq("user_id", userId)
-    .eq("name", NOME_DA_CATEGORIA_DE_ACERTO)
-    .maybeSingle();
-
-  if (erroBusca) {
-    console.error("Erro ao buscar a categoria do acerto:", erroBusca);
-    return { erro: "Nao foi possivel preparar o lancamento do acerto" };
-  }
-  if (existente) return { id: existente.id };
-
-  const { data: criada, error: erroCriacao } = await supabase
-    .from("transaction_categories")
-    .insert({
-      service_id: serviceId,
-      // Do servidor, nunca do corpo do pedido.
-      user_id: userId,
-      name: NOME_DA_CATEGORIA_DE_ACERTO,
-      description: DESCRICAO_DA_CATEGORIA_DE_ACERTO,
-      icon: "handshake",
-      color_hex: "#6B7280",
-      // `is_expense` e NOT NULL e e lido so como ultimo recurso: as telas
-      // classificam por `transaction_type`, e a perna do acerto sempre grava o
-      // tipo. FALSE porque a perna NAO e despesa em nenhum dos dois lados --
-      // ela e `transfer` --, e um fallback que dissesse "despesa" seria a
-      // afirmacao errada justamente para quem recebeu.
-      is_expense: false,
-      is_active: false,
-    })
-    .select("id")
-    .single();
-
-  if (erroCriacao) {
-    if (erroCriacao.code === "23505") {
-      const { data: recem } = await supabase
-        .from("transaction_categories")
-        .select("id")
-        .eq("service_id", serviceId)
-        .eq("user_id", userId)
-        .eq("name", NOME_DA_CATEGORIA_DE_ACERTO)
-        .maybeSingle();
-      if (recem) return { id: recem.id };
-    }
-    console.error("Erro ao criar a categoria do acerto:", erroCriacao);
-    return { erro: "Nao foi possivel preparar o lancamento do acerto" };
-  }
-
-  return { id: criada.id };
-}
 
 export async function GET(
   request: NextRequest,
@@ -190,6 +124,8 @@ export async function GET(
         note,
         created_by,
         created_at,
+        from_user_id,
+        to_user_id,
         from_user:profiles!group_settlements_from_user_id_fkey (
           id, full_name, avatar_url
         ),
@@ -210,14 +146,53 @@ export async function GET(
       );
     }
 
+    // AS PERNAS DE QUEM ESTA LENDO (HMO-245, fase 12)
+    // ----------------------------------------------
+    // Uma consulta para a lista toda, por `notes IN (...)`. A RLS de
+    // `financial_transactions` filtra por `user_id`, entao o que volta e
+    // SEMPRE a propria perna -- a pergunta que a tela faz e "EU ja lancei?",
+    // nunca "o outro lancou?", que nenhuma sessao pode responder.
+    //
+    // `from_user_id` e `to_user_id` entraram no `select` acima como COLUNAS, ao
+    // lado dos embeds de `profiles`: e por esses dois ids que
+    // `comoEuVejoOAcerto` decide a direcao na tela, e ler `from_user.id` em vez
+    // da coluna falharia calado -- ser do mesmo grupo nao da acesso ao perfil
+    // do outro, entao o embed vem NULO para quem nao tem o perfil visivel e a
+    // direcao sairia como "nao sou parte" para quem e parte.
+    const chaves = (settlements || []).map((s: any) => chaveDoAcerto(s.id));
+
+    const pernasPorChave = new Map<string, any>();
+    if (chaves.length > 0) {
+      const { data: pernas } = await supabase
+        .from("financial_transactions")
+        .select("id, amount, account_id, transaction_type, notes")
+        .eq("user_id", user.id)
+        .in("notes", chaves);
+
+      for (const p of pernas || []) {
+        if (p.notes) pernasPorChave.set(p.notes, p);
+      }
+    }
+
     return NextResponse.json({
       success: true,
       settlements: (settlements || []).map((s: any) => {
         const currency = moedaConhecida(s.currency) ? s.currency : MOEDA_PADRAO;
         const rate = Number(s.exchange_rate ?? 1) || 1;
+        const minhaPerna = pernasPorChave.get(chaveDoAcerto(s.id)) || null;
 
         return {
           ...s,
+          // `null` = eu ainda nao lancei este acerto na minha conta. E a
+          // diferenca entre "ainda nao lancado" e "nao aconteceu".
+          minha_perna: minhaPerna
+            ? {
+                id: minhaPerna.id,
+                amount: Number(minhaPerna.amount),
+                account_id: minhaPerna.account_id,
+                transaction_type: minhaPerna.transaction_type,
+              }
+            : null,
           amount: Number(s.amount),
           currency,
           exchange_rate: rate,

@@ -68,6 +68,8 @@
     "test:moeda": "rm -rf .tmp-moeda && tsc -p scripts/tsconfig.moeda-test.json && node scripts/resolve-aliases.mjs .tmp-moeda lib && node --test scripts/test-moeda.mjs",
     "test:grupos": "rm -rf .tmp-grupos && tsc -p scripts/tsconfig.grupos-test.json && node scripts/resolve-aliases.mjs .tmp-grupos lib && node --test scripts/test-grupos.mjs",
     "test:acerto-em-lancamento": "rm -rf .tmp-acerto-em-lancamento && tsc -p scripts/tsconfig.acerto-em-lancamento-test.json && node scripts/resolve-aliases.mjs .tmp-acerto-em-lancamento lib && node --test scripts/test-acerto-em-lancamento.mjs",
+    "test:perna-da-contraparte": "rm -rf .tmp-perna-da-contraparte && tsc -p scripts/tsconfig.perna-da-contraparte-test.json && node scripts/resolve-aliases.mjs .tmp-perna-da-contraparte lib && node --test scripts/test-perna-da-contraparte.mjs",
+    "mutantes:perna-da-contraparte": "node scripts/mutantes-perna-da-contraparte.mjs",
     "test:env-preview": "rm -rf .tmp-env-preview && tsc utils/supabase/env.ts --outDir .tmp-env-preview --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-env-preview.mjs",
     "test:busca-de-perfil": "rm -rf .tmp-busca-de-perfil && tsc lib/busca-de-perfil.ts --outDir .tmp-busca-de-perfil --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-busca-de-perfil.mjs",
     "check-rota-query-colidente": "node scripts/check-rota-query-colidente.mjs",

@@ -1,6 +1,7 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { chaveDoAcerto } from "@/lib/acerto-em-lancamento";
+import { AVISO_AO_DESFAZER_O_ACERTO } from "@/lib/perna-da-contraparte";
 
 /**
  * Desfaz um acerto registrado por engano.
@@ -74,9 +75,17 @@ export async function DELETE(
     }
 
     // A perna de quem esta desfazendo. A RLS de `financial_transactions` ja
-    // limita a `user_id = auth.uid()`, entao quem nao registrou o acerto nao
-    // acha linha nenhuma por esta chave -- e apaga zero, que e o certo: a perna
-    // da contraparte (quando existir, F12) e dela, nao de quem clicou aqui.
+    // limita a `user_id = auth.uid()`, entao este DELETE nao alcanca a perna da
+    // contraparte -- e isso e o certo, nao uma limitacao: a perna dela mexeu no
+    // saldo da conta DELA, e so ela pode tirar (objecao 1 da 007).
+    //
+    // A CONSEQUENCIA TEM DE SER DITA, E E O QUE `AVISO_AO_DESFAZER_O_ACERTO`
+    // FAZ: desfazer o acerto depois de a contraparte ter confirmado deixa a
+    // perna dela de pe, e sem a quitacao a tela de grupo perde a linha que
+    // oferecia "desfazer o meu lancamento" a ela. A perna continua no extrato
+    // dela, com `Acerto de grupo` na descricao, e sai de la como qualquer
+    // lancamento -- mas quem desfaz e a unica pessoa que sabe, naquele
+    // instante, que o acerto deixou de valer.
     const { error: erroDaPerna } = await supabase
       .from("financial_transactions")
       .delete()
@@ -125,7 +134,12 @@ export async function DELETE(
       );
     }
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({
+      success: true,
+      // A tela mostra isto no toast. Ver o comentario acima: e a unica forma de
+      // a perna da outra pessoa nao ficar nos livros dela por esquecimento.
+      aviso: AVISO_AO_DESFAZER_O_ACERTO,
+    });
   } catch (error) {
     console.error("Erro em DELETE settlement:", error);
     return NextResponse.json(

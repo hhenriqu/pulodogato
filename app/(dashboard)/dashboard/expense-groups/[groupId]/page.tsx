@@ -92,6 +92,10 @@ import {
   type ContaParaEscolher,
 } from "@/components/grupos/DialogoDeAcerto";
 import { direcaoDoAcerto, type DirecaoDoAcerto } from "@/lib/acerto-em-lancamento";
+import {
+  comoEuVejoOAcerto,
+  type AcertoVistoPorMim,
+} from "@/lib/perna-da-contraparte";
 
 interface ExpenseGroup {
   id: string;
@@ -249,6 +253,30 @@ interface Settlement {
   to_user: { id: string; full_name: string; avatar_url?: string };
   /** A RLS so deixa desfazer quem registrou; a API ja resolve isto. */
   can_delete: boolean;
+  /**
+   * Os ids CRUS, ao lado dos embeds (HMO-245, fase 12).
+   *
+   * E por eles que `comoEuVejoOAcerto` decide a direcao. `from_user.id` nao
+   * serve: a RLS de `profiles` descarta o embed de quem nao tem o perfil
+   * visivel -- ser do mesmo grupo nao da acesso ao perfil do outro --, e a
+   * direcao sairia como "nao sou parte" para quem e parte.
+   */
+  from_user_id: string;
+  to_user_id: string;
+  created_by: string;
+  /**
+   * A MINHA perna deste acerto, ou `null` se eu ainda nao lancei (fase 12).
+   *
+   * Ela e o unico dado que distingue "ainda nao lancado na sua conta" de "nao
+   * aconteceu", e e por isso que ela vem do servidor e nao se deduz da tela: o
+   * acerto aparece igual nas duas situacoes.
+   */
+  minha_perna: {
+    id: string;
+    amount: number;
+    account_id: string | null;
+    transaction_type: string | null;
+  } | null;
 }
 
 /**
@@ -349,6 +377,30 @@ export default function GroupDetailPage() {
     nomeDaContraparte: string | null;
     acerto: AcertoParaGravar;
   } | null>(null);
+  /**
+   * O acerto JA REGISTRADO que estou lancando na minha conta (fase 12).
+   *
+   * Estado separado de `acertoEmCurso` de proposito: ali o acerto ainda nao
+   * existe e o POST vai criar a quitacao; aqui ele existe, tem id, e o pedido
+   * so grava a perna. Um estado so, com um booleano "ja existe?", e o desenho
+   * em que um defeito de fluxo registra um acerto DUPLICADO em vez de lancar o
+   * que estava na tela.
+   *
+   * O valor, a moeda e a cotacao vem da QUITACAO -- a 026 congelou as duas
+   * ultimas em `settled_on` --, e nunca da cotacao de hoje: a contraparte
+   * confirma dias depois, e pela taxa de hoje a perna dela nao fecharia com a
+   * do outro lado.
+   */
+  const [pernaEmCurso, setPernaEmCurso] = useState<{
+    settlementId: string;
+    direcao: DirecaoDoAcerto;
+    nomeDaContraparte: string | null;
+    valor: number;
+    moeda: string;
+    cotacao: number;
+  } | null>(null);
+  /** O id do acerto cuja perna esta em voo, para travar a linha DELE so. */
+  const [pernaSalvando, setPernaSalvando] = useState<string | null>(null);
   /**
    * As contas do usuario, para o campo do dialogo.
    *
@@ -743,11 +795,120 @@ export default function GroupDetailPage() {
         return;
       }
 
-      toast.success("Acerto desfeito");
+      // O AVISO VEM DA RESPOSTA (fase 12). A perna da contraparte sobrevive a
+      // este DELETE -- a RLS impede que ele a alcance, e isso e o certo: o
+      // dinheiro saiu da conta DELA. Sem dizer isso aqui, o lancamento dela
+      // fica nos livros para sempre, e quem desfaz e a unica pessoa que sabe,
+      // neste instante, que o acerto deixou de valer.
+      if (data.aviso) {
+        toast.success(`Acerto desfeito. ${data.aviso}`);
+      } else {
+        toast.success("Acerto desfeito");
+      }
       await Promise.all([loadBalances(), loadTransfers(), loadSettlements()]);
     } catch (error) {
       console.error("Erro ao desfazer acerto:", error);
       toast.error("Não foi possível desfazer o acerto");
+    }
+  };
+
+  /**
+   * Abre o dialogo da conta para um acerto JA REGISTRADO (HMO-245, fase 12).
+   *
+   * O passo que faltava: a RLS so deixa cada um lancar na propria conta, entao
+   * a perna da contraparte precisa da sessao DELA -- e da conta dela, que
+   * ninguem tem como adivinhar. Entre o registro e este clique, os dois lados
+   * veem estados diferentes do mesmo acerto, e e o rotulo da linha que diz qual.
+   */
+  const abrirLancamentoDaMinhaPerna = (s: Settlement, direcao: DirecaoDoAcerto) => {
+    const contraparte = direcao === "recebi" ? s.from_user : s.to_user;
+
+    setPernaEmCurso({
+      settlementId: s.id,
+      direcao,
+      nomeDaContraparte: contraparte?.full_name || null,
+      // Da QUITACAO, nao da tela: `amount` esta na moeda do pagamento e a
+      // cotacao e a congelada em `settled_on` (026).
+      valor: s.amount,
+      moeda: moedaDaViagem(s.currency),
+      cotacao: Number(s.exchange_rate ?? 1) || 1,
+    });
+  };
+
+  /** Grava a MINHA perna do acerto, com a conta escolhida. */
+  const lancarMinhaPerna = async (contaId: string) => {
+    if (!pernaEmCurso) return;
+    const { settlementId } = pernaEmCurso;
+
+    setPernaSalvando(settlementId);
+    try {
+      const response = await fetch(
+        `/api/expense-groups/${groupId}/settlements/${settlementId}/perna`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ account_id: contaId }),
+        }
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        toast.error(data.error || "Não foi possível lançar o acerto na sua conta");
+        return;
+      }
+
+      // O nome da conta vem da RESPOSTA: e a conta em que o lancamento caiu de
+      // verdade. "Lancado" sozinho nao distingue o caminho novo do antigo, que
+      // era a quitacao existir sem perna nenhuma deste lado.
+      const onde = data.lancamento?.account_name
+        ? ` Lançado em ${data.lancamento.account_name}.`
+        : "";
+      toast.success(`Acerto lançado na sua conta.${onde}`);
+      setPernaEmCurso(null);
+      // A lista TEM de recarregar: e `minha_perna` que muda o rotulo da linha,
+      // e sem isso a tela continuaria dizendo "ainda nao lancado na sua conta"
+      // em cima de um lancamento que acabou de cair.
+      await Promise.all([loadBalances(), loadTransfers(), loadSettlements()]);
+    } catch (error) {
+      console.error("Erro ao lancar a perna do acerto:", error);
+      toast.error("Não foi possível lançar o acerto na sua conta");
+    } finally {
+      setPernaSalvando(null);
+    }
+  };
+
+  /**
+   * Remove a MINHA perna, deixando a quitacao de pe (fase 12).
+   *
+   * O simetrico do lancamento, e o unico desfazer de quem nao registrou: a
+   * quitacao nao e dela para apagar. Quem registrou usa Desfazer, que leva a
+   * perna junto -- a rota recusa este caminho para ele, e diz por que.
+   */
+  const removerMinhaPerna = async (settlementId: string) => {
+    setPernaSalvando(settlementId);
+    try {
+      const response = await fetch(
+        `/api/expense-groups/${groupId}/settlements/${settlementId}/perna`,
+        { method: "DELETE" }
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        toast.error(data.error || "Não foi possível remover o lançamento");
+        return;
+      }
+
+      // Diz o que NAO aconteceu: "lancamento removido" sozinho e lido como
+      // "acerto desfeito", e a divida continua quitada no grupo.
+      toast.success(
+        "Lançamento removido da sua conta. O acerto continua registrado no grupo."
+      );
+      await Promise.all([loadBalances(), loadTransfers(), loadSettlements()]);
+    } catch (error) {
+      console.error("Erro ao remover a perna do acerto:", error);
+      toast.error("Não foi possível remover o lançamento");
+    } finally {
+      setPernaSalvando(null);
     }
   };
 
@@ -1876,7 +2037,36 @@ export default function GroupDetailPage() {
                       Pagamentos registrados
                     </h3>
                     <div className="space-y-2">
-                      {settlements.map((s) => (
+                      {settlements.map((s) => {
+                        /*
+                          O ESTADO DESTE ACERTO PARA MIM (HMO-245, fase 12).
+
+                          A MESMA funcao que a rota usa para decidir se aceita o
+                          pedido. Duas copias da regra -- uma no JSX, outra no
+                          servidor -- divergem no caso que importa, e a tela
+                          passa a oferecer uma acao que a rota recusa.
+
+                          `minha_perna` e o dado que nao se deduz da tela: o
+                          acerto aparece IGUAL lancado e nao lancado, e e por
+                          isso que "nao lancado" seria indistinguivel de "nao
+                          aconteceu" sem o rotulo.
+                        */
+                        const visao: AcertoVistoPorMim = comoEuVejoOAcerto({
+                          acerto: {
+                            from_user_id: s.from_user_id,
+                            to_user_id: s.to_user_id,
+                            created_by: s.created_by,
+                          },
+                          userId: user?.id || "",
+                          temPerna: Boolean(s.minha_perna),
+                          nomeDaConta: contas.find(
+                            (c) => c.id === s.minha_perna?.account_id
+                          )?.name,
+                        });
+
+                        const estaEmVoo = pernaSalvando === s.id;
+
+                        return (
                         /*
                           "Fulano pagou Beltrano em 12/03/2026" numa linha que
                           nao quebrava: dois avatares mais dois nomes livres
@@ -1891,8 +2081,9 @@ export default function GroupDetailPage() {
                         */
                         <div
                           key={s.id}
-                          className="flex items-center justify-between gap-3 p-3 border rounded-lg"
+                          className="p-3 border rounded-lg space-y-2"
                         >
+                        <div className="flex items-center justify-between gap-3">
                           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm min-w-0">
                             <Avatar className="h-6 w-6 shrink-0">
                               <AvatarImage src={s.from_user?.avatar_url} />
@@ -1940,7 +2131,7 @@ export default function GroupDetailPage() {
                                 </span>
                               )}
                             </span>
-                            {s.can_delete && (
+                            {visao.podeDesfazerOAcerto && (
                               <Button
                                 size="sm"
                                 variant="ghost"
@@ -1951,7 +2142,61 @@ export default function GroupDetailPage() {
                             )}
                           </div>
                         </div>
-                      ))}
+
+                        {/*
+                          O ESTADO DESTE ACERTO NA MINHA CONTA (fase 12).
+
+                          Sem esta linha, a tela de quem nao confirmou mostra o
+                          acerto com valor, data e os dois nomes -- e nenhum
+                          sinal de que o dinheiro nao passou pela conta dela.
+                          "Nao lancado" fica indistinguivel de "nao aconteceu",
+                          e o Pix nunca entra no extrato dela.
+
+                          `visao.rotulo` e `null` para o acerto entre outras
+                          duas pessoas: ali a frase seria mentira.
+                        */}
+                        {visao.rotulo && (
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span
+                              className={
+                                visao.estado === "a_lancar"
+                                  ? "text-xs text-warning"
+                                  : "text-xs text-muted-foreground"
+                              }
+                            >
+                              {visao.rotulo}
+                            </span>
+
+                            {visao.podeLancar && visao.direcao && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={estaEmVoo}
+                                onClick={() =>
+                                  abrirLancamentoDaMinhaPerna(s, visao.direcao!)
+                                }
+                              >
+                                {visao.direcao === "recebi"
+                                  ? "Lançar o que recebi"
+                                  : "Lançar o que paguei"}
+                              </Button>
+                            )}
+
+                            {visao.podeDesfazerSoAMinhaPerna && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled={estaEmVoo}
+                                onClick={() => removerMinhaPerna(s.id)}
+                              >
+                                Desfazer o meu lançamento
+                              </Button>
+                            )}
+                          </div>
+                        )}
+                        </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -2290,6 +2535,38 @@ export default function GroupDetailPage() {
           aviso={avisoDeSobra(acertoEmCurso.acerto)}
           aoConfirmar={registrarAcerto}
           salvando={settling === acertoEmCurso.chave}
+        />
+      )}
+
+      {/* A conta da MINHA perna, para um acerto que JA existe (fase 12).
+          O mesmo dialogo, porque o dado que falta e o mesmo -- a conta --, com
+          titulo e botao proprios: aqui nao se registra acerto nenhum, ele ja
+          esta registrado. Sem a troca de texto, "Registrar acerto" sugeriria
+          que clicar de novo registra um segundo pagamento.
+
+          `aviso` nao vem: a sobra de centavo e da DIVISAO do valor na moeda da
+          viagem, decidida quando o acerto foi registrado. Aqui o valor ja esta
+          gravado, e repetir o aviso diria que ha uma escolha a fazer onde nao
+          ha. */}
+      {pernaEmCurso && (
+        <DialogoDeAcerto
+          aberto={true}
+          aoFechar={() => setPernaEmCurso(null)}
+          direcao={pernaEmCurso.direcao}
+          nomeDaContraparte={pernaEmCurso.nomeDaContraparte}
+          valor={pernaEmCurso.valor}
+          moeda={pernaEmCurso.moeda}
+          cotacao={pernaEmCurso.cotacao}
+          contas={contas}
+          titulo={
+            pernaEmCurso.direcao === "recebi"
+              ? "Lançar o que recebi"
+              : "Lançar o que paguei"
+          }
+          rotuloDoBotao="Lançar na minha conta"
+          rotuloSalvando="Lançando..."
+          aoConfirmar={lancarMinhaPerna}
+          salvando={pernaSalvando === pernaEmCurso.settlementId}
         />
       )}
     </div>

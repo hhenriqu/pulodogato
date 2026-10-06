@@ -84,6 +84,21 @@ export interface DialogoDeAcertoProps {
   aviso?: string | null;
   aoConfirmar: (contaId: string) => void | Promise<void>;
   salvando?: boolean;
+  /**
+   * O texto do titulo e do botao, quando quem abre o dialogo NAO esta
+   * registrando o acerto (HMO-245, fase 12).
+   *
+   * A contraparte usa o MESMO dialogo -- o dado que falta e o mesmo, a conta --,
+   * mas ela nao esta registrando nada: o acerto ja existe e ela esta lancando
+   * na conta dela. "Registrar acerto" ali seria a afirmacao errada, e sugeriria
+   * que clicar duas vezes registra dois acertos.
+   *
+   * Opcionais, com o texto da fase 11 como padrao: a tela de quem registra nao
+   * muda uma letra.
+   */
+  titulo?: string;
+  rotuloDoBotao?: string;
+  rotuloSalvando?: string;
 }
 
 export function DialogoDeAcerto({
@@ -98,6 +113,9 @@ export function DialogoDeAcerto({
   aviso,
   aoConfirmar,
   salvando = false,
+  titulo: tituloDado,
+  rotuloDoBotao = "Registrar acerto",
+  rotuloSalvando = "Registrando...",
 }: DialogoDeAcertoProps) {
   // Nasce VAZIO, sempre. Um padrao aqui seria a conta errada escolhida por
   // omissao -- e o erro nao apareceria na tela do grupo, so no extrato de uma
@@ -127,7 +145,9 @@ export function DialogoDeAcerto({
     : null;
 
   const quem = (nomeDaContraparte || "").trim();
-  const titulo = direcao === "recebi" ? "Registrar o que recebi" : "Registrar o que paguei";
+  const titulo =
+    tituloDado ||
+    (direcao === "recebi" ? "Registrar o que recebi" : "Registrar o que paguei");
   const resumo =
     direcao === "recebi"
       ? `${quem || "A outra pessoa"} te pagou ${formatarValor(valor, moeda)}.`
@@ -209,7 +229,7 @@ export function DialogoDeAcerto({
             // botao que leva a recusa e pior do que um botao desabilitado.
             disabled={salvando || !contaId || !previsao?.perna}
           >
-            {salvando ? "Registrando..." : "Registrar acerto"}
+            {salvando ? rotuloSalvando : rotuloDoBotao}
           </Button>
         </DialogFooter>
       </DialogContent>
