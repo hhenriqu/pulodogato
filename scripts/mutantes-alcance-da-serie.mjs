@@ -45,43 +45,12 @@
 // COMO RODAR
 //   npm run mutantes:alcance-da-serie
 
-import {
-  readFileSync,
-  writeFileSync,
-  mkdtempSync,
-  rmSync,
-  mkdirSync,
-  cpSync,
-} from "node:fs";
-import { execFileSync } from "node:child_process";
-import { join, dirname } from "node:path";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
+import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
+import { join } from "node:path";
 
 const RECORRENCIA = "lib/recorrencia-edicao.ts";
 const PARCELAS = "lib/parcelas-edicao.ts";
-
-// A COPIA PRECISA DE MAIS QUE AS DUAS FONTES.
-//
-// `lib/lancamento.ts` entra porque parcelas-edicao.ts importa o TIPO
-// BaseDoValorParcelado de la. Sem ele na copia, TODO mutante morre no `tsc` --
-// o placar sairia perfeito e o controle positivo reprovaria. E e o controle
-// positivo que mostra isso, nao o placar.
-// E os quatro arquivos que a suite le com `readFileSync` (a secao 6 do teste,
-// que cobra OMISSAO na rota -- o passo que desaparece num refactor e que nenhuma
-// assercao sobre a regra pura alcanca). Sem eles na copia, aqueles cinco casos
-// estouram em TODO mutante: o placar sairia perfeito e o controle positivo
-// reprovaria. Foi o controle positivo que mostrou isso.
-const ACOMPANHAM = [
-  "lib/lancamento.ts",
-  "lib/alcance-na-tela.ts",
-  "lib/services/scheduled.ts",
-  "app/api/scheduled-transactions/[id]/route.ts",
-  "app/api/recurring-rules/[id]/route.ts",
-  "app/api/financial-installments/serie/[id]/route.ts",
-  "scripts/tsconfig.alcance-da-serie-test.json",
-  "scripts/resolve-aliases.mjs",
-  "scripts/test-alcance-da-serie.mjs",
-];
 
 // O `tsc` DO PROJETO, POR CAMINHO ABSOLUTO.
 //
@@ -297,67 +266,28 @@ const MUTANTES = [
   },
 ];
 
-const dir = mkdtempSync(join(tmpdir(), "mutantes-alcance-da-serie-"));
+// O BLOCO: um diretorio, um processo, a fonte e 23 mutantes dentro (HMO-319).
+//
+// Antes cada volta montava uma arvore nova em diretorio temporario -- a fonte
+// mutada mais a lista de arquivos que a acompanham -- e chamava o `tsc`. Era o
+// programa INTEIRO reparseado por mutante, para trocar um arquivo.
+//
+// Agora a compilacao e em processo e todas as voltas dividem o AST ja parseado
+// de tudo que nao e o arquivo mutado. E as etapas vem do proprio alvo
+// `test:alcance-da-serie` no package.json, em vez de repetidas a mao aqui: a copia da
+// receita divergia do alvo de verdade sem nada reclamar.
+//
+// A LISTA DE ARQUIVOS QUE ACOMPANHAM DEIXOU DE EXISTIR, e e por isso que cinco
+// blocos deste repositorio pararam de reprovar na main: a compilacao le a arvore
+// de verdade e troca em memoria so o arquivo mutado, entao nao ha mais uma
+// segunda copia do grafo de modulos para envelhecer em silencio. Quem delimita o
+// que este bloco prova continua sendo o tsconfig da suite.
+const SUITE_DO_BLOCO = "test:alcance-da-serie";
+const bloco = criarBlocoDeMutantes({ rotulo: "alcance-da-serie", suites: [SUITE_DO_BLOCO] });
 
-/** Compila as fontes numa copia da arvore e roda a suite contra ela. */
-function rodar(nome, fontes) {
-  const raiz = join(dir, nome);
+/** Adapta a chamada antiga `rodar(nome, fontes)` ao bloco. */
+const voltaDoBloco = (nome, fontes) => bloco.rodar(nome, fontes ?? {}, SUITE_DO_BLOCO);
 
-  for (const [caminho, conteudo] of Object.entries(fontes)) {
-    mkdirSync(join(raiz, dirname(caminho)), { recursive: true });
-    writeFileSync(join(raiz, caminho), conteudo);
-  }
-
-  for (const arquivo of ACOMPANHAM) {
-    mkdirSync(join(raiz, dirname(arquivo)), { recursive: true });
-    cpSync(arquivo, join(raiz, arquivo));
-  }
-
-  try {
-    execFileSync(TSC, ["-p", "scripts/tsconfig.alcance-da-serie-test.json"], {
-      cwd: raiz,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    execFileSync(
-      "node",
-      ["scripts/resolve-aliases.mjs", ".tmp-alcance-da-serie", "lib"],
-      { cwd: raiz, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
-    );
-  } catch (e) {
-    // O `tsc` reprovando TAMBEM mata o mutante -- um mutante que nem compila e
-    // informacao valida --, mas tem de ser DISTINGUIVEL do teste reprovando:
-    // um mutante que nunca rodou nao prova nada sobre as assercoes.
-    return {
-      verde: false,
-      como: "tsc",
-      saida: String(e.stdout ?? e.message)
-        .trim()
-        .split("\n")
-        .slice(0, 2)
-        .join(" | "),
-    };
-  }
-
-  try {
-    execFileSync("node", ["--test", "scripts/test-alcance-da-serie.mjs"], {
-      cwd: raiz,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    return { verde: true };
-  } catch (e) {
-    const saida = String(e.stdout ?? "") + String(e.stderr ?? "");
-    const quais = [...saida.matchAll(/✖ (.+?) \(/g)]
-      .map((m) => m[1])
-      .filter((n) => n !== "failing tests:");
-    return {
-      verde: false,
-      como: "teste",
-      saida: [...new Set(quais)].slice(0, 3).join("; ") || "reprovou",
-    };
-  }
-}
 
 let falhou = false;
 
@@ -365,13 +295,13 @@ try {
   // CONTROLE POSITIVO. Sem ele, uma copia de arvore incompleta faria TODO
   // mutante "morrer" e o placar sairia cheio sem que uma assercao tivesse
   // medido nada.
-  const controle = rodar("controle", originais);
+  const controle = voltaDoBloco("controle", originais);
   if (!controle.verde) {
     console.error(
       `CONTROLE FALHOU: as fontes intactas nao passam na suite (${controle.como}) -> ${controle.saida}`
     );
     console.error("A copia da arvore esta errada. O placar abaixo nao vale.");
-    rmSync(dir, { recursive: true, force: true });
+    bloco.fechar();
     process.exit(1);
   }
   console.log("controle: as fontes intactas passam na suite  OK\n");
@@ -400,7 +330,7 @@ try {
       continue;
     }
 
-    const r = rodar(m.nome, {
+    const r = voltaDoBloco(m.nome, {
       ...originais,
       [m.fonte]: original.replace(m.de, m.para),
     });
@@ -408,6 +338,13 @@ try {
     if (r.verde) {
       console.error(`SOBREVIVEU: ${m.nome}`);
       console.error(`            ${m.porque}`);
+      // Sobreviver emitindo o MESMO byte nao e furo de assercao: e mutante
+      // equivalente, e nenhuma assercao o mataria.
+      if (r.mudouASaida === false) {
+        console.error(
+          "            (a saida compilada e identica a da arvore limpa: mutante EQUIVALENTE, nao furo de teste)",
+        );
+      }
       falhou = true;
     } else {
       mortos++;
@@ -429,7 +366,7 @@ try {
     falhou = true;
   }
 } finally {
-  rmSync(dir, { recursive: true, force: true });
+  bloco.fechar();
 }
 
 process.exitCode = falhou ? 1 : 0;
