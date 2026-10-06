@@ -137,6 +137,12 @@ const PARTES = [
   "lib/settlement.js",
   "lib/divisao-configurada.js",
   "lib/fechamento-do-grupo.js",
+  // `periodo-do-grupo` entrou na HMO-272: o botao de semear rotula o mes com
+  // `rotuloDoMes`. Esquecer esta linha (ou a do tsconfig) nao da "import
+  // faltando": da `ReferenceError: rotuloDoMes is not defined` na PRIMEIRA
+  // renderizacao, e TODOS os casos da sonda ficam vermelhos de uma vez,
+  // inclusive os que nada tem a ver com o mes.
+  "lib/periodo-do-grupo.js",
   "components/grupos/DivisaoDoGrupo.js",
 ];
 
@@ -172,7 +178,7 @@ const ID = (caso, n) =>
 const PAGINA = `<!doctype html>
 <html><head><meta charset="utf-8"></head><body>
 <div id="raiz-a"></div><div id="raiz-b"></div><div id="raiz-c"></div>
-<div id="raiz-d"></div><div id="raiz-e"></div>
+<div id="raiz-d"></div><div id="raiz-e"></div><div id="raiz-f"></div>
 <div id="resultado">a pagina nao rodou</div>
 <script>${umd("react", "react.development.js")}</script>
 <script>${umd("react-dom", "react-dom.development.js")}</script>
@@ -454,7 +460,113 @@ r.avisoRetroativo = a.caixa.querySelectorAll(
 ).length;
 r.textoDoAviso = a.texto("divisao-aviso-retroativo");
 
-alvo("resultado").textContent = "RESULTADO" + JSON.stringify(r) + "FIM";
+// Membro comum NAO tem o botao de semear: ele escreve nos sliders, e quem nao
+// pode salvar nao tem o que fazer com eles. Par com \`f.temBotao\`, abaixo.
+r.comumTemBotaoSemear = e.achar("divisao-semear") !== null;
+
+// =============================================================================
+// CASO F -- O BOTAO QUE SEMEIA PELA RENDA (HMO-272, fase 6)
+// =============================================================================
+// A unica coisa que so o navegador responde: CLICAR no botao leva os sliders
+// para os percentuais que a rota devolveu, e acende os dois rotulos do zero?
+//
+// O \`fetch\` e dublado -- a pagina roda em \`file://\`, e a rota nao existe aqui.
+// O que o duble NAO faz e inventar formato: o corpo abaixo e o mesmo que
+// \`semearPelaRenda\` produz, campo por campo, e esse formato tem teste proprio
+// em scripts/test-semeadura-pela-renda.mjs, contra o handler de verdade. Se um
+// dia os dois discordarem, e la que fica vermelho.
+//
+// Fer: 7.000 de renda. Ana: 3.000. Dedé: NADA lancado -> 0%, e a tela tem de
+// dizer por que, porque 0% TIRA a pessoa da divisao da despesa.
+
+const F1 = "${ID("f", 1)}";
+const F2 = "${ID("f", 2)}";
+const F3 = "${ID("f", 3)}";
+
+const pedidos = [];
+
+window.fetch = (url) => {
+  pedidos.push(String(url));
+  return Promise.resolve({
+    ok: true,
+    json: () =>
+      Promise.resolve({
+        success: true,
+        mes: "2026-10",
+        soma_centesimos: 10000,
+        sem_renda_nenhuma: false,
+        membros_sem_renda: 1,
+        membros: [
+          { member_id: F1, centesimos: 7000, percentage: 70, tem_renda: true },
+          {
+            member_id: F2,
+            centesimos: 3000,
+            percentage: 30,
+            tem_renda: true,
+            // A renda SO de quem pediu -- aqui, a Ana. A rota e quem recorta.
+            renda_centavos: 300000,
+          },
+          { member_id: F3, centesimos: 0, percentage: 0, tem_renda: false },
+        ],
+      }),
+  });
+};
+
+const f = painel("raiz-f", {
+  groupId: "grupo-f",
+  mes: "2026-10",
+  ehAdmin: true,
+  modoGravado: "equal",
+  totalDoMes: 3000,
+  membros: [
+    { member_id: F1, nome: "Fer", percentage: null },
+    { member_id: F2, nome: "Ana", percentage: null },
+    { member_id: F3, nome: "Dedé", percentage: null },
+  ],
+});
+
+const leF = () => ({
+  pct: [F1, F2, F3].map((id) => f.texto("divisao-pct-" + id)),
+  valor: [F1, F2, F3].map((id) => f.texto("divisao-valor-" + id)),
+  // Modo: em Igual os campos ficam travados; semear tem de soltar.
+  campoTravado: f.achar("divisao-campo-" + F1).disabled,
+  semRenda: [F1, F2, F3].map((id) => f.texto("divisao-sem-renda-" + id)),
+  fora: [F1, F2, F3].map((id) => f.texto("divisao-fora-" + id)),
+  rendaPropria: f.texto("divisao-semear-renda-propria"),
+  semRendaNenhuma: f.texto("divisao-semear-sem-renda-nenhuma"),
+});
+
+r.f_antes = leF();
+r.f = {
+  temBotao: f.achar("divisao-semear") !== null,
+  legenda: f.texto("divisao-semear-legenda"),
+};
+
+// O clique, e DEPOIS dele o relato -- os dois dentro do mesmo IIFE assincrono.
+//
+// \`semear()\` tem \`await fetch\`, entao o DOM novo so existe depois que a
+// continuacao roda. O duble resolve sem I/O, entao a cadeia inteira e de
+// MICROTAREFAS: ela termina antes do fim da tarefa atual, e portanto antes do
+// \`load\` que o --dump-dom espera. Um duble com \`setTimeout\` quebraria essa
+// garantia, e a sonda fotografaria a tela de antes do clique reportando sucesso.
+(async () => {
+  try {
+    f.achar("divisao-semear").click();
+
+    // Tres voltas na fila de microtarefas: o \`fetch\`, o \`.json()\` e o
+    // \`finally\`. Sao de sobra -- e um numero fixo e preferivel a um \`setTimeout\`,
+    // que trocaria a fila de microtarefas por uma tarefa nova.
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    r.f_depois = leF();
+    r.f.pedidos = pedidos;
+
+    alvo("resultado").textContent = "RESULTADO" + JSON.stringify(r) + "FIM";
+  } catch (e) {
+    document.getElementById("resultado").textContent =
+      "ERRO NA PAGINA (caso F): " + (e && (e.stack || e.message));
+  }
+})();
 } catch (e) {
   // Sem isto, um erro aqui dentro vira "a pagina nao reportou nada" e o motivo
   // real fica dentro do navegador, invisivel.
@@ -664,4 +776,90 @@ test("a linha sobre despesa ja lancada esta na tela", () => {
     "o painel perdeu (ou duplicou) a linha sobre despesa ja lancada"
   );
   assert.match(resultado.textoDoAviso, /já lançadas/);
+});
+
+// =============================================================================
+// F: O BOTAO QUE SEMEIA PELA RENDA (HMO-272)
+// =============================================================================
+
+test("F: o botao de semear e so do admin, e a legenda diz o que ele faz", () => {
+  assert.equal(resultado.f.temBotao, true);
+  assert.equal(
+    resultado.comumTemBotaoSemear,
+    false,
+    "quem nao pode salvar nao tem o que fazer com os sliders semeados"
+  );
+
+  // As duas frases que a legenda tem de carregar, e as duas sao decisoes do
+  // Helio: o PERIODO da receita e que a divisao fica PARADA depois. Sem a
+  // segunda, o botao se le como "passar a dividir pela renda" -- que e a outra
+  // resposta da pergunta, a que ele recusou.
+  assert.match(resultado.f.legenda, /recebida e prevista/);
+  assert.match(resultado.f.legenda, /não muda sozinha/);
+  assert.match(resultado.f.legenda, /outubro de 2026/, "o mes, por extenso");
+});
+
+test("F: clicar leva os sliders para a proporcao da renda", () => {
+  // A medida e ANTES -> DEPOIS. O painel abre em Igual (tres membros, 3334 e
+  // dois 3333) e vai para 70/30/0 -- numeros que nao estao em prop nenhuma da
+  // tela: eles vieram da resposta.
+  assert.deepEqual(resultado.f_antes.pct, ["33,34%", "33,33%", "33,33%"]);
+  assert.deepEqual(resultado.f_depois.pct, ["70,00%", "30,00%", "0,00%"]);
+
+  // O R$ acompanha: 3.000 no mes, 70/30/0.
+  assert.match(resultado.f_depois.valor[0], /2\.100,00/);
+  assert.match(resultado.f_depois.valor[1], /900,00/);
+  assert.match(resultado.f_depois.valor[2], /0,00/);
+
+  // E a tela saiu de Igual para Proporcional -- senao os sliders mostrariam
+  // 70/30 sobre um mes que o fechamento dividiria igual.
+  assert.equal(resultado.f_antes.campoTravado, true, "em Igual, travado");
+  assert.equal(resultado.f_depois.campoTravado, false, "e agora ajustavel");
+
+  // O gesto chamou a rota certa, com o mes certo. Um GET para outro mes
+  // devolveria numeros plausiveis sobre o mes errado.
+  assert.deepEqual(resultado.f.pedidos, [
+    "/api/expense-groups/grupo-f/semear-divisao?mes=2026-10",
+  ]);
+});
+
+test("F: quem nao tem receita no mes sai em 0% COM os dois rotulos", () => {
+  // O ponto da fase que nao e aritmetica: membro em 0% e OMITIDO por
+  // `divisaoDaDespesa`, e sem rotulo a semeadura tira a pessoa da conta em
+  // silencio -- sumido da tela e indistinguivel de zerado.
+  //
+  // Os dois rotulos sao separados de proposito, e as assercoes tambem: o
+  // primeiro e um fato do MES (sobrevive a um ajuste manual depois), o segundo
+  // descreve o estado ATUAL do slider.
+  assert.equal(resultado.f_depois.semRenda[2], "Sem receita lançada em outubro de 2026.");
+  assert.match(resultado.f_depois.fora[2], /fica fora da divisão/);
+  assert.match(resultado.f_depois.fora[2], /Dedé/, "a frase diz DE QUEM");
+
+  // E nao aparecem em quem tem renda. `null` e "o elemento nao existe" -- o
+  // `texto()` desta sonda devolve null, nao "".
+  assert.equal(resultado.f_depois.semRenda[0], null);
+  assert.equal(resultado.f_depois.semRenda[1], null);
+  assert.equal(resultado.f_depois.fora[0], null);
+  assert.equal(resultado.f_depois.fora[1], null);
+
+  // Controle negativo: ANTES do clique nenhum dos dois existe. Sem isto, um
+  // rotulo que estivesse sempre na tela passaria por "a semeadura acendeu".
+  assert.deepEqual(resultado.f_antes.semRenda, [null, null, null]);
+  assert.deepEqual(resultado.f_antes.fora, [null, null, null]);
+});
+
+test("F: a renda em R$ aparece so para o proprio dono", () => {
+  // A resposta dublada traz `renda_centavos` em UMA linha (a da Ana) -- porque e
+  // isso que a rota devolve para quem pede. A tela mostra esse valor e diz que
+  // ele e privado; ela nao escolhe de quem e.
+  assert.match(resultado.f_depois.rendaPropria, /3\.000,00/);
+  assert.match(resultado.f_depois.rendaPropria, /Só você vê/);
+
+  // Antes do clique nao ha renda nenhuma na tela.
+  assert.equal(resultado.f_antes.rendaPropria, null);
+
+  // E o aviso de "ninguem lancou receita" NAO aparece: aqui duas pessoas
+  // lancaram. Ele e para o 50/50 que vem do degrau do 0/0, e confundir os dois
+  // casos e dizer "lemos a renda de voces, e ela e igual" sobre um mes vazio.
+  assert.equal(resultado.f_depois.semRendaNenhuma, null);
 });

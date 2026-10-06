@@ -383,3 +383,8 @@ next-env.d.ts
 # dez modulos que a sonda de Chromium concatena na pagina, compilados. Mesmo
 # motivo das entradas acima para estar aqui.
 /.tmp-lista-na-tela/
+
+# saida do `npm run test:semeadura` (HMO-272). Ela guarda tambem um
+# node_modules/@supabase/supabase-js plantado pelo monta-duble-de-rota.mjs --
+# sem esta entrada o `git status` passaria a mostrar um pacote inteiro.
+/.tmp-semeadura/

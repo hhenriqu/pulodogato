@@ -284,6 +284,47 @@ export function igualitario(ids: string[]): PesoDoMembro[] {
 }
 
 /**
+ * A configuracao que distribui 100% entre `ids` na PROPORCAO de `pesos`
+ * (HMO-245, fase 6).
+ *
+ * E `igualitario` com peso livre em vez de peso 1 -- as duas chamam o mesmo
+ * `distribuir`, de proposito. Existe para a semeadura pela renda
+ * (lib/semear-pela-renda.ts) nao escrever uma segunda distribuicao por maior
+ * resto: ratear 100% entre tres rendas tem exatamente a mesma sobra de centesimo
+ * que ratear entre tres membros iguais, e e a aritmetica que ja tem teste e
+ * mutante aqui.
+ *
+ * O peso e RAZAO, nao porcentagem: renda em centavos, em reais ou normalizada
+ * dao a mesma divisao. E dois comportamentos vem de graca do `distribuir`, os
+ * dois necessarios para a semeadura:
+ *
+ *   * peso ZERO recebe ZERO -- o piso e 0, o resto e 0 (o MENOR possivel), e a
+ *     sobra nunca alcanca os restos zerados. Membro sem renda lancada no mes sai
+ *     em 0%, que e o numero certo, e NAO uma fracao de uma renda inventada (que e
+ *     o que a `calculate_member_proportions` do banco faz, com
+ *     `COALESCE(..., 1000)` tres vezes);
+ *   * TODOS em zero cai no degrau do `0/0` e divide IGUAL. "Ninguem no grupo
+ *     lancou receita neste mes" e um estado real, e dividir igual e a unica saida
+ *     definida -- mas quem chama tem de DIZER na tela que foi isso que aconteceu,
+ *     ou a semeadura parece ter lido uma renda que nao existe.
+ *
+ * `pesos` e indexado por POSICAO contra `ids`, e nao casado por chave: a mesma
+ * escolha de `rebalancear` logo acima, e pelo mesmo motivo -- um mapa colapsaria
+ * duas entradas com o mesmo id e faria uma linha sumir da tela. Posicao sem peso
+ * (`undefined`) vira 0 por `pesoLimpo`, que e o membro sem renda.
+ */
+export function proporcional(
+  ids: string[],
+  pesos: readonly number[]
+): PesoDoMembro[] {
+  return distribuir(
+    ids,
+    ids.map((_, i) => pesoLimpo(pesos[i])),
+    CENTESIMOS_TOTAIS
+  );
+}
+
+/**
  * Centesimos de ponto -> o `numeric(5,2)` que as duas colunas guardam.
  *
  * Sem `Math.round` na entrada, e isso e deliberado: centesimo de ponto e a

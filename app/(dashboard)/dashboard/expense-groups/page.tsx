@@ -1648,9 +1648,22 @@ export default function ExpenseGroupsPage() {
                                   <Crown className="h-3 w-3 text-warning inline ml-1" />
                                 )}
                               </div>
-                              {prop.total_income && (
+                              {/*
+                                "So a porcentagem" (HMO-272): este R$ e SEMPRE o
+                                de quem esta olhando. A rota
+                                /api/expense-groups/proportions devolve
+                                `total_income` apenas na linha do proprio
+                                `auth.uid()` -- nas outras a chave nem vem, e e
+                                por isso que o rotulo pode dizer "Sua renda" sem
+                                conferir nada aqui.
+
+                                O recorte NAO esta neste `&&`: se estivesse, o
+                                salario dos outros estaria no JSON que o
+                                navegador baixou, escondido so da tela.
+                              */}
+                              {prop.total_income != null && (
                                 <div className="text-sm text-muted-foreground">
-                                  Renda: R${" "}
+                                  Sua renda: R${" "}
                                   {Number(prop.total_income).toLocaleString(
                                     "pt-BR",
                                     { minimumFractionDigits: 2 }
