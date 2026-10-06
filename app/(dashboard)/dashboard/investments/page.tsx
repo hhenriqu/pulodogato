@@ -61,6 +61,14 @@ import {
   type FatiaAlocacao,
   type PontoEvolucao,
 } from "@/lib/investments";
+import {
+  CamposDeRendaFixa,
+  RendaFixaDaCarteira,
+  corpoDeRendaFixa,
+  valoresDeRendaFixaVazios,
+  type RendaFixaDaRota,
+  type ValoresDeRendaFixa,
+} from "@/components/RendaFixaDaCarteira";
 
 interface AtivoDaTela {
   id: string;
@@ -70,6 +78,14 @@ interface AtivoDaTela {
   currency: string | null;
   current_price: number | string | null;
   current_price_at: string | null;
+  // Os seis campos da migration 031 (HMO-192). Nulos em todo ativo cadastrado
+  // antes dela, e e por isso que a edicao existe: o preenchimento e progressivo.
+  fixed_income_product?: string | null;
+  index_kind?: string | null;
+  index_percentage?: number | string | null;
+  spread_annual?: number | string | null;
+  applied_date?: string | null;
+  maturity_date?: string | null;
 }
 
 interface LancamentoDaTela {
@@ -114,6 +130,19 @@ export default function InvestmentsPage() {
   const [novoNome, setNovoNome] = useState("");
   const [novoTipo, setNovoTipo] = useState<AssetType>("stock");
   const [novoPreco, setNovoPreco] = useState("");
+  const [novaRendaFixa, setNovaRendaFixa] = useState<ValoresDeRendaFixa>(
+    valoresDeRendaFixaVazios()
+  );
+
+  // Renda fixa (HMO-192). `null` cobre dois estados de proposito: ainda nao
+  // carregou e nao foi possivel carregar. Nos dois o card nao aparece, e o resto
+  // da tela abre igual -- o Banco Central estar fora do ar nao e motivo para a
+  // carteira inteira ficar em branco.
+  const [rendaFixa, setRendaFixa] = useState<RendaFixaDaRota | null>(null);
+  /** Os seis campos em edicao, por asset_id. */
+  const [edicaoRf, setEdicaoRf] = useState<Record<string, ValoresDeRendaFixa>>(
+    {}
+  );
 
   // Formulario de lancamento
   const [lancAtivo, setLancAtivo] = useState("");
@@ -137,6 +166,19 @@ export default function InvestmentsPage() {
       setCarteira(corpo as Carteira);
     } catch {
       setErro("Nao foi possivel carregar a carteira");
+    }
+
+    // Segunda ida, de proposito separada: esta rota fala com o Banco Central e
+    // pode demorar ou falhar, e nenhuma das duas coisas pode atrasar ou derrubar
+    // a carteira acima. Por isso ela nao esta no mesmo `try` nem usa `setErro`:
+    // falha aqui some com o card de renda fixa, nao com a tela.
+    try {
+      const resposta = await fetch("/api/investments/renda-fixa");
+      if (resposta.ok) {
+        setRendaFixa((await resposta.json()) as RendaFixaDaRota);
+      }
+    } catch {
+      // Silencio deliberado -- ver acima.
     }
   }, []);
 
@@ -166,6 +208,13 @@ export default function InvestmentsPage() {
           name: novoNome,
           type: novoTipo,
           currentPrice: novoPreco === "" ? null : novoPreco,
+          // So renda fixa carrega os seis campos: o CHECK
+          // `renda_fixa_so_em_fixed_income` da 031 recusa uma PETR4 com
+          // indexador, porque ela apareceria na tela rendendo CDI POR CIMA da
+          // variacao de preco -- o rendimento contado duas vezes.
+          ...(novoTipo === "fixed_income"
+            ? corpoDeRendaFixa(novaRendaFixa)
+            : {}),
         }),
       });
       const corpo = await resposta.json();
@@ -176,6 +225,7 @@ export default function InvestmentsPage() {
       setNovoSymbol("");
       setNovoNome("");
       setNovoPreco("");
+      setNovaRendaFixa(valoresDeRendaFixaVazios());
       await carregar();
     } finally {
       setSalvando(false);
@@ -249,6 +299,66 @@ export default function InvestmentsPage() {
         setErro(corpo?.error || "Nao foi possivel atualizar o preco");
         return;
       }
+      await carregar();
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  /**
+   * Os valores de renda fixa de um ativo: o que esta sendo editado, ou o que
+   * veio do banco.
+   *
+   * `numeric` chega do PostgREST como STRING, e `String(null)` e "null" -- um
+   * literal que o input mostraria como texto e a rota recusaria. Daí o `?? ""`.
+   */
+  function valoresRfDoAtivo(ativo: AtivoDaTela): ValoresDeRendaFixa {
+    const emEdicao = edicaoRf[ativo.id];
+    if (emEdicao) return emEdicao;
+    return {
+      fixedIncomeProduct: ativo.fixed_income_product ?? "",
+      indexKind: ativo.index_kind ?? "",
+      indexPercentage:
+        ativo.index_percentage === null || ativo.index_percentage === undefined
+          ? ""
+          : String(Number(ativo.index_percentage)),
+      spreadAnnual:
+        ativo.spread_annual === null || ativo.spread_annual === undefined
+          ? ""
+          : String(Number(ativo.spread_annual)),
+      appliedDate: ativo.applied_date ?? "",
+      maturityDate: ativo.maturity_date ?? "",
+    };
+  }
+
+  /**
+   * Grava os seis campos da 031 de um ativo.
+   *
+   * Vao todos juntos porque os CHECK da migration cruzam uns com os outros --
+   * ver o PATCH em /api/investments/assets/[assetId].
+   */
+  async function salvarRendaFixa(ativo: AtivoDaTela) {
+    setSalvando(true);
+    setErro(null);
+    try {
+      const resposta = await fetch(`/api/investments/assets/${ativo.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(corpoDeRendaFixa(valoresRfDoAtivo(ativo))),
+      });
+      const corpo = await resposta.json();
+      if (!resposta.ok) {
+        setErro(corpo?.error || "Nao foi possivel salvar a renda fixa");
+        return;
+      }
+      // Limpa o rascunho DESTE ativo para a tela voltar a mostrar o que o banco
+      // gravou. Sem isso, um campo recusado e corrigido pelo servidor (ou um
+      // valor normalizado) continuaria na tela com o texto antigo.
+      setEdicaoRf((atual) => {
+        const proximo = { ...atual };
+        delete proximo[ativo.id];
+        return proximo;
+      });
       await carregar();
     } finally {
       setSalvando(false);
@@ -401,6 +511,11 @@ export default function InvestmentsPage() {
           }}
         />
 
+        {/* Renda fixa que rende sozinha (HMO-192): bruto em destaque, liquido
+            estimado ao lado. Devolve `null` quando nao ha renda fixa na
+            carteira -- ver o componente. */}
+        <RendaFixaDaCarteira dados={rendaFixa} />
+
         {/* --- Ativos cadastrados, com o preço atual editável ---------------- */}
         <Card>
           <CardHeader>
@@ -479,6 +594,33 @@ export default function InvestmentsPage() {
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>
+
+                {/* Os seis campos da 031 so para renda fixa (HMO-192). Este e o
+                    caminho que cumpre o "preenchimento progressivo" prometido
+                    pela migration: os ativos cadastrados desde a 021 estao
+                    todos com os campos nulos, e sem edicao eles nunca ganhariam
+                    rendimento automatico -- so quem cadastrasse de novo. */}
+                {ativo.type === "fixed_income" && (
+                  <div className="space-y-3 sm:col-span-2">
+                    <CamposDeRendaFixa
+                      idPrefixo={`rf-${ativo.id}`}
+                      valores={valoresRfDoAtivo(ativo)}
+                      onChange={(v) =>
+                        setEdicaoRf((atual) => ({ ...atual, [ativo.id]: v }))
+                      }
+                      desabilitado={salvando}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={salvando}
+                      onClick={() => salvarRendaFixa(ativo)}
+                    >
+                      Salvar renda fixa de {ativo.symbol}
+                    </Button>
+                  </div>
+                )}
               </div>
             ))}
           </CardContent>
@@ -551,6 +693,18 @@ export default function InvestmentsPage() {
                   placeholder="31,50"
                 />
               </div>
+              {/* Renda fixa pede o que nao existe em acao nenhuma: indexador,
+                  percentual do indice, data de aplicacao e vencimento
+                  (HMO-192). Sem estes campos o tipo `fixed_income` funcionava
+                  so se a pessoa reescrevesse o preco na mao todo mes. */}
+              {novoTipo === "fixed_income" && (
+                <CamposDeRendaFixa
+                  idPrefixo="novo-rf"
+                  valores={novaRendaFixa}
+                  onChange={setNovaRendaFixa}
+                  desabilitado={salvando}
+                />
+              )}
               <div className="sm:col-span-2 lg:col-span-4">
                 <Button type="submit" disabled={salvando}>
                   <Plus className="h-4 w-4 mr-2" />

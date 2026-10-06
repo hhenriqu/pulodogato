@@ -1,17 +1,32 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { TIPOS_DE_ATIVO, type AssetType } from "@/lib/investments";
+import {
+  camposDeRendaFixaVazios,
+  lerCamposDeRendaFixa,
+} from "@/lib/renda-fixa";
 
 // =====================================================
 // POST /api/investments/assets
 // =====================================================
 // Cadastra um ativo na carteira do usuario.
-// Body: { symbol, name, type, currency?, currentPrice? }
+// Body: { symbol, name, type, currency?, currentPrice?,
+//         fixedIncomeProduct?, indexKind?, indexPercentage?, spreadAnnual?,
+//         appliedDate?, maturityDate? }
 //
 // Nao ha catalogo global de tickers (ver o cabecalho da migration 021): quem
 // diz que PETR4 existe e o usuario. Entao a validacao aqui e de FORMA, nao de
 // existencia -- recusar "PETR4" por nao estar numa lista nossa deixaria o
 // usuario sem poder lancar o que ele de fato tem.
+//
+// Os seis campos de renda fixa (HMO-192) sao os da migration 031, e so entram
+// quando `type` e `fixed_income`: o CHECK
+// `investment_assets_renda_fixa_so_em_fixed_income` recusa uma PETR4 com
+// indexador, e com razao -- ela apareceria na tela como acao rendendo CDI todo
+// dia POR CIMA da variacao de preco, contando o rendimento duas vezes. Quem
+// manda os campos num ativo de outro tipo tem os campos IGNORADOS em vez de um
+// 400: o formulario esconde a secao ao trocar o tipo, e o estado dela pode
+// sobreviver a troca.
 // =====================================================
 
 /** Normaliza como o CHECK do banco exige: maiuscula, sem espaco na borda. */
@@ -89,6 +104,16 @@ export async function POST(request: NextRequest) {
       current_price_at = new Date().toISOString();
     }
 
+    // So `fixed_income` carrega os seis campos da 031 -- ver o cabecalho.
+    let rendaFixa = camposDeRendaFixaVazios();
+    if (type === "fixed_income") {
+      const leitura = lerCamposDeRendaFixa(body);
+      if (!leitura.ok) {
+        return NextResponse.json({ error: leitura.erro }, { status: 400 });
+      }
+      rendaFixa = leitura.campos;
+    }
+
     const { data, error } = await supabase
       .from("investment_assets")
       .insert({
@@ -99,6 +124,7 @@ export async function POST(request: NextRequest) {
         currency,
         current_price,
         current_price_at,
+        ...rendaFixa,
       })
       .select()
       .single();
