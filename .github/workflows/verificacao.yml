@@ -176,6 +176,36 @@ jobs:
       - name: Toda suite de teste roda em algum workflow
         run: node scripts/check-tests-in-ci.mjs
 
+      # A MESMA familia, um nivel acima, e o numero era pior: 62 runners
+      # `scripts/mutantes-*` na arvore, 19 invocados por algum step, 43 que
+      # nenhum job executava (HMO-322). Entre os 43 estava o
+      # `mutantes-crivos.mjs`, com alvo proprio no package.json.
+      #
+      # Runner de mutante e o aparelho que prova que uma suite MEDE o que diz
+      # medir. Um que ninguem roda nao prova nada e nao da sintoma -- o arquivo
+      # esta la, com o nome certo, e ler a arvore sugere que a afirmacao tem
+      # controle negativo. O `check-tests-in-ci` ao lado existe desde a HMO-145
+      # e nunca cobriu os `mutantes-*`; por isso 43 puderam acumular calados.
+      #
+      # Isto NAO liga os 43: cada job custa a partida mais o arredondamento para
+      # o minuto cheio, e a franquia e de 2.000 min/mes (HMO-261). O que a
+      # verificacao exige e que "fora do CI" seja uma DECLARACAO com motivo
+      # escrito, e nao um acidente. O `nao-triado` tem teto, e o teto so desce.
+      - name: Todo runner de mutante roda em algum workflow, ou esta declarado
+        run: node scripts/check-mutantes-in-ci.mjs
+
+      # Controle negativo da guarda acima, e ela precisa de um por ser TEXTUAL:
+      # os workflows citam runners dentro de comentarios ("A prova de mutacao
+      # completa e `npm run mutantes:retorno-lancamento`"), e uma versao que
+      # lesse comentario absolveria cinco runners sem step nenhum -- o buraco da
+      # HMO-322 reaberto por dentro da propria guarda. Esse e o terceiro mutante.
+      #
+      # Roda inteiro numa COPIA em /tmp: a guarda nao tem dependencia externa,
+      # entao nao ha motivo para mutar a arvore de producao e correr o risco de
+      # deixar o mutante gravado quando o processo morre em SIGTERM.
+      - name: A verificacao dos runners de mutante sabe falhar
+        run: node scripts/mutantes-guarda-dos-mutantes.mjs
+
       # Mora aqui pela mesma razao dos passos acima: e deriva do lado do CODIGO,
       # nao toca em database/, e o sintoma e a AUSENCIA de sintoma. Um modulo de
       # interface sem importador compila, passa no tsc, passa no next build e
