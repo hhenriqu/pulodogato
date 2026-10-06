@@ -392,3 +392,11 @@ next-env.d.ts
 # arquivo de fonte -- e a partir dai rodar a suite APAGA o arquivo rastreado.
 /.tmp-elo-da-fatura/
 /.tmp-pagamento-da-fatura/
+
+# saida do `npm run test:semeadura` (HMO-272). Ela guarda tambem um
+# node_modules/@supabase/supabase-js plantado pelo monta-duble-de-rota.mjs --
+# sem esta entrada o `git status` passaria a mostrar um pacote inteiro.
+/.tmp-semeadura/
+
+# A sugestao de divisao viva (HMO-273): arvore compilada da suite de rota.
+/.tmp-sugestao-de-divisao/

@@ -102,6 +102,8 @@
     "test:divisao-ui-dom": "rm -rf .tmp-divisao-ui && tsc -p scripts/tsconfig.divisao-ui-test.json && node --test scripts/test-divisao-ui-dom.mjs",
     "test:divisao-configurada": "rm -rf .tmp-divisao-configurada && tsc -p scripts/tsconfig.divisao-configurada-test.json && TZ=America/Sao_Paulo node --test scripts/test-divisao-configurada.mjs && TZ=UTC node --test scripts/test-divisao-configurada.mjs",
     "mutantes:divisao-configurada": "node scripts/mutantes-divisao-configurada.mjs",
+    "test:semeadura": "rm -rf .tmp-semeadura && tsc -p scripts/tsconfig.semeadura-test.json && node scripts/resolve-aliases.mjs .tmp-semeadura lib --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-semeadura utils --espelha-raiz && node scripts/resolve-next-subpaths.mjs .tmp-semeadura && node scripts/monta-duble-de-rota.mjs .tmp-semeadura && TZ=America/Sao_Paulo node --test scripts/test-semeadura-pela-renda.mjs && TZ=UTC node --test scripts/test-semeadura-pela-renda.mjs",
+    "mutantes:semeadura": "node scripts/mutantes-semeadura.mjs",
     "test:fatura-prevista": "rm -rf .tmp-fatura-prevista && tsc -p scripts/tsconfig.fatura-prevista-test.json && node scripts/resolve-aliases.mjs .tmp-fatura-prevista lib && node --test scripts/test-fatura-prevista.mjs",
     "test:elo-da-fatura": "rm -rf .tmp-elo-da-fatura && tsc -p scripts/tsconfig.elo-da-fatura-test.json && node scripts/resolve-aliases.mjs .tmp-elo-da-fatura lib && node --test scripts/test-elo-da-fatura.mjs",
     "test:pagamento-da-fatura": "rm -rf .tmp-pagamento-da-fatura && tsc -p scripts/tsconfig.pagamento-da-fatura-test.json && node scripts/resolve-aliases.mjs .tmp-pagamento-da-fatura lib && TZ=America/Sao_Paulo node --test scripts/test-pagamento-da-fatura.mjs && TZ=UTC node --test scripts/test-pagamento-da-fatura.mjs",
@@ -154,7 +156,9 @@
     "test:papel-na-tela": "rm -rf .tmp-papel-na-tela && tsc -p scripts/tsconfig.papel-na-tela-test.json && node --test scripts/test-papel-na-tela.mjs",
     "test:papel-de-pao": "rm -rf .tmp-papel-de-pao && tsc -p scripts/tsconfig.papel-de-pao-test.json && node scripts/resolve-aliases.mjs .tmp-papel-de-pao lib --espelha-raiz && TZ=America/Sao_Paulo node --test scripts/test-papel-de-pao.mjs && TZ=UTC node --test scripts/test-papel-de-pao.mjs",
     "test:menu-papel": "rm -rf .tmp-menu-papel && tsc -p scripts/tsconfig.menu-papel-test.json && node scripts/resolve-aliases.mjs .tmp-menu-papel components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-menu-papel lib --espelha-raiz && node --test scripts/test-menu-papel.mjs",
-    "test:medicao-hmo298": "MEDICAO_TSCONFIG=scripts/tsconfig.medicao-hmo298-test.json bash scripts/medicao-hmo298.sh"
+    "test:medicao-hmo298": "MEDICAO_TSCONFIG=scripts/tsconfig.medicao-hmo298-test.json bash scripts/medicao-hmo298.sh",
+    "test:sugestao-de-divisao": "rm -rf .tmp-sugestao-de-divisao && tsc -p scripts/tsconfig.sugestao-de-divisao-test.json && node scripts/resolve-aliases.mjs .tmp-sugestao-de-divisao lib --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-sugestao-de-divisao utils --espelha-raiz && node scripts/resolve-next-subpaths.mjs .tmp-sugestao-de-divisao && node scripts/monta-duble-de-rota.mjs .tmp-sugestao-de-divisao && node --test scripts/test-sugestao-de-divisao.mjs",
+    "mutantes:sugestao-de-divisao": "node scripts/mutantes-sugestao-de-divisao.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

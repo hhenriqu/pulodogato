@@ -46,6 +46,7 @@ import {
   Clock,
 } from "lucide-react";
 import SplitSuggestions from "@/components/financial/SplitSuggestions";
+import { partesParaGravar } from "@/lib/sugestao-de-divisao";
 import { CartaoOrcamentoGrupo } from "@/components/financial/CartaoOrcamentoGrupo";
 import {
   orcamentoDoGrupo,
@@ -857,16 +858,23 @@ export default function GroupDetailPage() {
       };
       delete expenseData.cotacao;
 
-      // Adicionar dados da sugestão selecionada se houver
+      // Adicionar dados da sugestão selecionada se houver.
+      //
+      // `partesParaGravar` tira a parte de 0%, e o filtro e OBRIGATORIO desde
+      // que a fase 7 ligou a sugestao configurada: `divisaoPorPorcentagem`
+      // recusa `percentage <= 0` ("Percentual inválido na divisão: 0,00%"),
+      // entao um grupo 100/0 ofereceria uma sugestao que a tela mostra certa e
+      // o POST recusa sempre. A tela continua listando o grupo inteiro; so o
+      // corpo do POST e recortado. Ver lib/sugestao-de-divisao.ts.
       if (selectedSplitSuggestion) {
         expenseData.split_type = selectedSplitSuggestion.type;
-        expenseData.custom_splits = selectedSplitSuggestion.splits.map(
-          (split: any) => ({
-            member_id: split.member_id,
-            percentage: split.percentage,
-            amount: split.amount,
-          })
-        );
+        expenseData.custom_splits = partesParaGravar(
+          selectedSplitSuggestion.splits
+        ).map((split: any) => ({
+          member_id: split.member_id,
+          percentage: split.percentage,
+          amount: split.amount,
+        }));
       }
 
       const response = await fetch(

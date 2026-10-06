@@ -60,6 +60,7 @@ import {
   CENTESIMOS_TOTAIS,
   rebalancear,
   igualitario,
+  proporcional,
   paraPercentual,
   dePercentual,
   divisaoDaDespesa,
@@ -357,6 +358,116 @@ test("igualitario fecha 10000 inclusive quando o numero de membros nao divide", 
   somaFecha(sete, "igual entre sete");
 
   assert.deepEqual(igualitario([]), []);
+});
+
+// ---------------------------------------------------------------------------
+// `proporcional`: O QUE A SEMEADURA PELA RENDA USA (HMO-272)
+// ---------------------------------------------------------------------------
+// Ela existe para a semeadura (lib/semear-pela-renda.ts) nao escrever uma
+// segunda distribuicao por maior resto. Os casos abaixo sao os que a renda
+// produz de verdade, e dois deles sao degraus: peso zero e TODOS em zero.
+
+test("proporcional distribui 100% na razao dos pesos", () => {
+  const r = proporcional(["ana", "bia"], [7000, 3000]);
+  somaFecha(r, "70/30");
+  assert.deepEqual(porMembro(r), { ana: 7000, bia: 3000 });
+
+  // O peso e RAZAO, nao porcentagem: centavos, reais ou normalizado dao o mesmo.
+  for (const escala of [1, 100, 0.001]) {
+    assert.deepEqual(
+      porMembro(proporcional(["ana", "bia"], [7000 * escala, 3000 * escala])),
+      { ana: 7000, bia: 3000 },
+      `escala ${escala}`
+    );
+  }
+});
+
+test("proporcional nao perde centesimo quando a razao nao fecha redondo", () => {
+  // Tres rendas iguais: 3333.33 cada. O centesimo que sobra tem de ir para
+  // alguem, e para um so.
+  const tres = proporcional(["ana", "bia", "cid"], [1000, 1000, 1000]);
+  somaFecha(tres, "tres rendas iguais");
+  assert.deepEqual(porMembro(tres), { ana: 3334, bia: 3333, cid: 3333 });
+
+  // E o caso que a semeadura encontra: 4000 / 2000 / 2000.
+  const torto = proporcional(["ana", "bia", "cid"], [4000, 2000, 2000]);
+  somaFecha(torto, "4000/2000/2000");
+  assert.deepEqual(porMembro(torto), { ana: 5000, bia: 2500, cid: 2500 });
+});
+
+test("peso ZERO recebe ZERO -- e nao uma fracao de renda inventada", () => {
+  // O defeito 3 de `calculate_member_proportions`: ela faz COALESCE(..., 1000)
+  // e o membro sem receita sai com uma fatia de mil reais que nao existem,
+  // tirando percentual de quem ganhou.
+  const r = proporcional(["ana", "bia"], [9000, 0]);
+  somaFecha(r, "bia sem renda");
+  assert.deepEqual(porMembro(r), { ana: 10000, bia: 0 });
+
+  // A sobra do maior resto nunca alcanca o resto zerado: com dois em zero e dois
+  // com renda, os zeros continuam em zero mesmo havendo centesimo sobrando.
+  const quatro = proporcional(["ana", "bia", "cid", "dan"], [1000, 1000, 0, 0]);
+  somaFecha(quatro, "dois em zero");
+  assert.deepEqual(porMembro(quatro), { ana: 5000, bia: 5000, cid: 0, dan: 0 });
+});
+
+test("TODOS em zero divide IGUAL -- o degrau do 0/0, e nao NaN", () => {
+  // "Ninguem do grupo lancou receita neste mes" e um estado real. A unica saida
+  // definida e dividir igual -- e quem chama tem de DIZER na tela que foi isso
+  // (`sem_renda_nenhuma`, provado em scripts/test-semeadura-pela-renda.mjs).
+  const r = proporcional(["ana", "bia", "cid"], [0, 0, 0]);
+  somaFecha(r, "ninguem com renda");
+  assert.deepEqual(porMembro(r), { ana: 3334, bia: 3333, cid: 3333 });
+});
+
+test("peso ausente, negativo ou nao numerico vira zero, nao inverte a divisao", () => {
+  // `pesoLimpo`. Posicao sem peso e o membro que a renda nao alcancou; peso
+  // negativo nao pode virar percentual negativo e muito menos empurrar a soma
+  // dos outros acima de 100%.
+  for (const ruim of [undefined, null, -5000, NaN, "muito", Infinity]) {
+    const r = proporcional(["ana", "bia"], [1000, ruim]);
+    somaFecha(r, `peso ${String(ruim)}`);
+    assert.deepEqual(porMembro(r), { ana: 10000, bia: 0 }, `peso ${String(ruim)}`);
+  }
+});
+
+test("proporcional preserva a ORDEM recebida, e e indexado por posicao", () => {
+  // A tela casa `pesos[i]` com `membros[i]`. Ordenar a saida poria o percentual
+  // de um no slider do outro.
+  const r = proporcional(["zuza", "ana"], [3000, 7000]);
+  assert.deepEqual(
+    r.map((m) => m.member_id),
+    ["zuza", "ana"]
+  );
+  assert.deepEqual(porMembro(r), { zuza: 3000, ana: 7000 });
+
+  // Peso sobrando (lista maior que a de ids) e simplesmente ignorado.
+  assert.deepEqual(porMembro(proporcional(["ana"], [1, 2, 3])), { ana: 10000 });
+});
+
+test("proporcional com lista vazia devolve lista vazia", () => {
+  assert.deepEqual(proporcional([], []), []);
+});
+
+test("o que `proporcional` produz passa pelo conferirConfiguracao", () => {
+  // A ponta solta que importa: a semeadura escreve estes numeros nos sliders, e
+  // o PUT /split-config os valida com `conferirConfiguracao`. Uma distribuicao
+  // que o proprio guard do app recusasse daria 400 no "Salvar divisão", depois
+  // de a pessoa ja ter conferido a tela.
+  for (const pesos of [[7000, 3000], [1000, 1000, 1000], [9000, 0], [0, 0, 0]]) {
+    const ids = pesos.map((_, i) => `m${i}`);
+    const r = conferirConfiguracao(
+      ids,
+      proporcional(ids, pesos).map((m) => ({
+        member_id: m.member_id,
+        percentage: paraPercentual(m.centesimos),
+      }))
+    );
+    assert.equal(
+      r.ok,
+      true,
+      `pesos ${pesos.join("/")}: ${JSON.stringify(r.recusa)}`
+    );
+  }
 });
 
 // ---------------------------------------------------------------------------
