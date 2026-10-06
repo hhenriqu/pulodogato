@@ -1,0 +1,21 @@
+{
+  "//": "Build so do teste de lib/criterio-do-cartao.ts. A lista tem UM arquivo, e isso e uma afirmacao e nao uma economia: o modulo das legendas nao importa nada do projeto, de proposito. Ele e lido por duas telas que divergem (o painel e a tela de relatorios), e qualquer import aqui -- card-invoice, periodo-do-painel, o que for -- seria uma dependencia que a tela paga para renderizar uma FRASE. Se alguem acrescentar um import a lib/criterio-do-cartao.ts, esta compilacao quebra em TS2307 antes de qualquer assercao rodar, e isso e o aviso pretendido.",
+  "compilerOptions": {
+    "outDir": "../.tmp-criterio-do-cartao",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
+  },
+  "include": [
+    "../lib/criterio-do-cartao.ts"
+  ]
+}

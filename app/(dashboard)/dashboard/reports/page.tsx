@@ -76,6 +76,7 @@ import type {
   PlannedVsActualReport,
   NetWorthReport,
 } from "@/types/financial";
+import { legendaDoCartao } from "@/lib/criterio-do-cartao";
 
 const moeda = (valor: number) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(
@@ -204,6 +205,11 @@ export default function ReportsPage() {
       })),
     [fluxo]
   );
+
+  // A LEGENDA DO CRITERIO DO CARTAO (HMO-266). Uma CHAMADA so, e nao a chamada
+  // repetida na condicao e no corpo do JSX: guard textual com dois call sites
+  // fica verde depois de alguem matar um deles.
+  const legendaDoFluxo = legendaDoCartao(fluxo?.cartao);
 
   const dadosCategorias = useMemo(
     () =>
@@ -393,6 +399,27 @@ export default function ReportsPage() {
                         Transferências entre suas contas não entram: mover
                         dinheiro não é receita nem gasto
                       </CardDescription>
+                      {/* ------------------------------------------------------
+                          A LEGENDA DO CRITERIO DO CARTAO (HMO-266)
+                          ------------------------------------------------------
+                          O custo da decisao do Helio (opcao "consumo"): este
+                          grafico e o painel mostram totais diferentes para o
+                          MESMO periodo -- medidos R$ 7.545 aqui contra R$ 3.345
+                          la, na fixture de 6 meses. Os dois estao certos, e sem
+                          esta linha a unica leitura possivel e "um dos dois esta
+                          com bug" (que e como a HMO-258 nasceu).
+
+                          O texto sai de `fluxo.cartao`, o campo que a rota
+                          devolve, e nao de uma constante local: se o criterio
+                          desta tela mudar algum dia, a legenda muda com ele em
+                          vez de passar a mentir calada. A outra metade do par
+                          esta no painel, e as duas moram em
+                          lib/criterio-do-cartao.ts. */}
+                      {legendaDoFluxo && (
+                        <p className="text-xs text-muted-foreground mt-2 max-w-prose">
+                          {legendaDoFluxo}
+                        </p>
+                      )}
                     </div>
                     <Button
                       size="sm"

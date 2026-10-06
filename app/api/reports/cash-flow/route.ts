@@ -633,6 +633,21 @@ export async function GET(request: NextRequest) {
         ...principal.summary,
       },
       grao: "mes",
+      /**
+       * Qual regra do cartao produziu estes numeros (HMO-266).
+       *
+       * CRAVADO em "compra", e nao `cartaoPelaFatura ? ... : ...` como no ramo
+       * de intervalo, porque aqui a outra resposta e inalcancavel: este ramo so
+       * roda sem `periodo`, e `cartao=fatura` sem `de`/`ate` ja foi recusado com
+       * 400 lá em cima. Escrever a condicional aqui sugeriria que o ramo mensal
+       * sabe responder pela fatura -- ele nao sabe, e e disso que a HMO-266
+       * trata.
+       *
+       * O campo existia so no ramo de intervalo desde a HMO-265, e a falta dele
+       * AQUI era o que impedia a tela de relatorios de escrever a legenda a
+       * partir da API em vez de supor o criterio.
+       */
+      cartao: "compra",
       // O `to` e o ULTIMO DIA do ultimo mes, nao o dia 1 dele. `janela.fim` e
       // dia 1 por construcao (a chave das views e `date_trunc('month', ...)`),
       // e devolver isso como fim de janela ja cortou um mes inteiro de um

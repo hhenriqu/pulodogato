@@ -846,6 +846,19 @@ export interface CashFlowReport {
     average_expense: number;
     average_income: number;
   };
+  /**
+   * Em que eixo de data o cartao de credito entrou (HMO-265 / HMO-266).
+   *
+   * `compra` conta o gasto no dia da compra, `fatura` no dia em que a fatura foi
+   * paga -- os dois defensaveis, e com totais DIFERENTES para o mesmo periodo.
+   * A tela de relatorios le este campo para escrever a legenda que explica a
+   * divergencia com o painel; sem ele, a legenda estaria supondo o criterio.
+   *
+   * Opcional porque a resposta vem de `fetch`: uma versao antiga servida de
+   * cache nao tem o campo, e `legendaDoCartao` trata isso omitindo a legenda em
+   * vez de afirmar um criterio que ninguem leu.
+   */
+  cartao?: "compra" | "fatura";
   window: { from: string; to: string; months: number };
 }
 
