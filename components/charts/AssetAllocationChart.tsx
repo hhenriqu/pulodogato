@@ -7,6 +7,7 @@ import {
   ResponsiveContainer,
   Legend,
   Tooltip,
+  type PieLabelRenderProps,
 } from "recharts";
 import {
   Card,
@@ -15,13 +16,19 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import type { PropsDeTooltip } from "@/types/grafico";
 
-interface AssetAllocationData {
+// `type`, e nao `interface`, e nao e estilo: os dois lados precisam encaixar.
+// Entra `FatiaAlocacao` (lib/investments.ts), que e uma interface sem index
+// signature; sai para o `data` do recharts, que exige `ChartDataInput` -- COM
+// index signature. O TypeScript da index signature implicita para alias de tipo
+// e nao da para interface, entao o alias atende os dois e o `[key: string]: any`
+// que estava aqui (a unica coisa que fazia a passagem compilar) sai de cena.
+type AssetAllocationData = {
   name: string;
   value: number;
   percentage: number;
-  [key: string]: any;
-}
+};
 
 interface AssetAllocationChartProps {
   data: AssetAllocationData[];
@@ -42,7 +49,10 @@ export function AssetAllocationChart({ data }: AssetAllocationChartProps) {
     }).format(value);
   };
 
-  const CustomTooltip = ({ active, payload }: any) => {
+  const CustomTooltip = ({
+    active,
+    payload,
+  }: PropsDeTooltip<AssetAllocationData>) => {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
       return (
@@ -73,9 +83,14 @@ export function AssetAllocationChart({ data }: AssetAllocationChartProps) {
                 cx="50%"
                 cy="50%"
                 labelLine={false}
-                label={(entry: any) =>
-                  `${entry.name}: ${entry.percentage.toFixed(1)}%`
-                }
+                // O recharts tipa o render do rotulo com as props do SVG da
+                // fatia, e espalha os campos do ponto de dados por cima. Dai a
+                // assercao: a assinatura tem que aceitar `PieLabelRenderProps`
+                // para encaixar em `PieLabel`, e o que a gente le e a fatia.
+                label={(props: PieLabelRenderProps) => {
+                  const fatia = props as unknown as AssetAllocationData;
+                  return `${fatia.name}: ${fatia.percentage.toFixed(1)}%`;
+                }}
                 // Sem isso o rotulo sai no cinza escuro padrao do recharts e
                 // fica ilegivel sobre o card escuro.
                 style={{ fill: "hsl(var(--foreground))" }}

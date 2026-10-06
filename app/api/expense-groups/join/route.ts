@@ -1,6 +1,8 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 
+type ClienteSupabase = Awaited<ReturnType<typeof createClient>>;
+
 // Responder a um convite de grupo -- aceitar ou recusar.
 //
 // Isto era SELECT + upsert + UPDATE soltos, e estava quebrado de duas formas
@@ -20,7 +22,7 @@ import { NextRequest, NextResponse } from "next/server";
 // autorizacao ("o convite e endereçado a auth.uid()") checada dentro da funcao,
 // nao no argumento que o cliente manda.
 async function handleInvitationResponse(
-  supabase: any,
+  supabase: ClienteSupabase,
   invitation_id: string,
   accept: boolean
 ) {

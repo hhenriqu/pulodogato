@@ -4,6 +4,21 @@ import { resumoDosGrupos, type SaldoDeGrupo } from "@/lib/grupos";
 
 export const dynamic = "force-dynamic";
 
+// O client do Supabase aqui nao tem o generic `Database`, entao todo `select()`
+// volta como `any`. Declarar a linha e anexar com `.returns<...>()` devolve a
+// conferencia do `tsc` para o uso: coluna que a view deixar de ter (ou que vier
+// com outro nome) passa a reprovar na compilacao em vez de virar `undefined`.
+// Os numericos da view chegam como string no JSON do PostgREST -- e por isso que
+// o codigo abaixo embrulha cada um em `Number()`.
+type LinhaDeSaldo = {
+  group_id: string;
+  total_paid: number | string;
+  total_owed: number | string;
+  net_balance: number | string;
+};
+
+type GrupoAtivo = { id: string; name: string };
+
 /**
  * Quanto eu devo (ou tenho a receber) somando TODOS os meus grupos (HMO-175).
  *
@@ -45,7 +60,8 @@ export async function GET() {
     const { data: linhas, error } = await supabase
       .from("group_member_balances")
       .select("group_id, total_paid, total_owed, net_balance")
-      .eq("user_id", user.id);
+      .eq("user_id", user.id)
+      .returns<LinhaDeSaldo[]>();
 
     if (error) {
       console.error("Erro ao ler os saldos dos meus grupos:", error);
@@ -55,7 +71,7 @@ export async function GET() {
       );
     }
 
-    const groupIds = (linhas || []).map((l: any) => l.group_id);
+    const groupIds = (linhas || []).map((l) => l.group_id);
 
     // `in` com lista vazia devolve tudo em algumas versoes do PostgREST -- e
     // aqui "tudo" seria todo grupo ativo do banco. Sem grupo, nao ha consulta.
@@ -65,15 +81,14 @@ export async function GET() {
           .select("id, name")
           .in("id", groupIds)
           .eq("is_active", true)
-      : { data: [] as { id: string; name: string }[] };
+          .returns<GrupoAtivo[]>()
+      : { data: [] as GrupoAtivo[] };
 
-    const nomePor = new Map(
-      (grupos || []).map((g: any) => [g.id as string, g.name as string])
-    );
+    const nomePor = new Map((grupos || []).map((g) => [g.id, g.name]));
 
     const ativas: SaldoDeGrupo[] = (linhas || [])
-      .filter((l: any) => nomePor.has(l.group_id))
-      .map((l: any) => ({
+      .filter((l) => nomePor.has(l.group_id))
+      .map((l) => ({
         group_id: l.group_id,
         nome: nomePor.get(l.group_id),
         net_balance: Number(l.net_balance),
@@ -89,7 +104,7 @@ export async function GET() {
     return NextResponse.json({
       success: true,
       resumo: resumoDosGrupos(ativas),
-      grupos: (grupos || []).map((g: any) => ({ id: g.id, name: g.name })),
+      grupos: (grupos || []).map((g) => ({ id: g.id, name: g.name })),
     });
   } catch (error) {
     console.error("Erro em GET my-balance:", error);

@@ -31,7 +31,7 @@ export function SoftFeatureGuard({
   fallback,
   showUpgradePrompt = true,
 }: SoftFeatureGuardProps) {
-  const { hasFeature, isPremium, planConfig } = useSubscription(user);
+  const { hasFeature, planConfig } = useSubscription(user);
 
   // Se não tem usuário, mostrar aviso de login
   if (!user) {

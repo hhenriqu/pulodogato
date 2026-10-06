@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import type { Route } from "next";
 import { usePathname } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
 import { useSubscription } from "@/lib/hooks/useSubscription";
@@ -42,13 +43,18 @@ export default function Sidebar({
   const setIsMobileMenuOpen =
     externalSetIsMobileMenuOpen ?? setInternalMobileMenuOpen;
   const pathname = usePathname();
-  const supabase = createClient();
   const { hasFeature, subscription, isPremium, planConfig } =
     useSubscription(user);
   const { papel } = useModoPapel();
 
   useEffect(() => {
+    // `createClient()` dentro de quem usa, e nao no corpo do componente: assim
+    // o efeito nao ganha `supabase` como dependencia. Satisfazer a dependencia
+    // sem isto so e seguro porque `utils/supabase/client.ts` reaproveita um
+    // cliente por aba -- e esse e um detalhe de OUTRO arquivo, que este efeito
+    // nao deveria ter que conhecer para nao entrar em laco.
     const getUser = async () => {
+      const supabase = createClient();
       const {
         data: { user },
       } = await supabase.auth.getUser();
@@ -58,7 +64,7 @@ export default function Sidebar({
   }, []);
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    await createClient().auth.signOut();
     window.location.href = "/login";
   };
 
@@ -115,7 +121,7 @@ export default function Sidebar({
               return (
                 <Link
                   key={item.name}
-                  href={item.href as any}
+                  href={item.href as Route}
                   className={cn(
                     isActive
                       ? "bg-primary/10 text-primary border-r-2 border-primary"
@@ -243,7 +249,7 @@ export default function Sidebar({
                 return (
                   <Link
                     key={item.name}
-                    href={item.href as any}
+                    href={item.href as Route}
                     onClick={() => setIsMobileMenuOpen(false)}
                     className={cn(
                       isActive

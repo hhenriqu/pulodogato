@@ -17,17 +17,12 @@ import {
 } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { toast } from "sonner";
 import { ChavePixDoPerfil } from "@/components/perfil/ChavePixDoPerfil";
 import {
   User as UserIcon,
-  Mail,
-  Phone,
   Shield,
-  Eye,
-  EyeOff,
   Users,
   Settings,
   Save,
@@ -185,9 +180,12 @@ export default function ProfilePage() {
     setProfile({ ...profile, ...updates });
   };
 
-  const updatePreferences = (
-    section: keyof Profile["preferences"],
-    updates: any
+  // Generico para amarrar os dois argumentos: `updates` tem que ser um pedaco
+  // da secao que `section` nomeia. Com `any` dava para passar o bloco de
+  // notificacoes em `section: "privacy"` sem nada reclamar.
+  const updatePreferences = <S extends keyof Profile["preferences"]>(
+    section: S,
+    updates: Partial<Profile["preferences"][S]>
   ) => {
     if (!profile) return;
     setProfile({

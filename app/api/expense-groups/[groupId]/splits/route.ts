@@ -1,6 +1,17 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 
+// Os dois embeds sao many-to-one (objeto, nao lista) e podem vir nulos: a RLS de
+// SELECT nao da erro para linha de grupo alheio, ela SOME do resultado. E por
+// isso que o codigo testa `membro` e `despesa` antes de usar -- o nulo aqui e um
+// estado esperado, nao defensividade sobrando.
+type ParteComVinculos = {
+  id: string;
+  status: string;
+  member: { id: string; user_id: string } | null;
+  despesa: { id: string; group_id: string } | null;
+};
+
 /**
  * Aprovar, recusar ou reabrir a PROPRIA parte numa despesa de grupo (HMO-178).
  *
@@ -98,6 +109,7 @@ export async function PATCH(
       `
       )
       .eq("id", splitId)
+      .returns<ParteComVinculos[]>()
       .maybeSingle();
 
     if (erroLeitura) {
@@ -112,8 +124,8 @@ export async function PATCH(
     // resultado. Aqui isso e indistinguivel de id inexistente, e as duas
     // respostas sao a mesma de proposito: nao vale contar a quem nao e membro
     // que aquele id existe.
-    const membro = (parte as any)?.member;
-    const despesa = (parte as any)?.despesa;
+    const membro = parte?.member;
+    const despesa = parte?.despesa;
 
     if (!parte || !membro || !despesa || despesa.group_id !== groupId) {
       return NextResponse.json(

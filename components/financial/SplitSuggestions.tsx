@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -20,10 +20,12 @@ import {
   Calculator,
   Check,
   AlertCircle,
-  Crown,
 } from "lucide-react";
 
-interface SplitSuggestion {
+// Exportada porque a tela do grupo guarda a sugestao escolhida num estado e a
+// devolve para este componente pelo prop `selectedSuggestion`: com o tipo so
+// aqui, aquele estado era `any` e os dois lados podiam divergir em silencio.
+export interface SplitSuggestion {
   type: "equal" | "proportional" | "historical";
   name: string;
   description: string;
@@ -62,11 +64,7 @@ export default function SplitSuggestions({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadSuggestions();
-  }, [groupId, amount]);
-
-  const loadSuggestions = async () => {
+  const loadSuggestions = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -93,7 +91,14 @@ export default function SplitSuggestions({
     } finally {
       setLoading(false);
     }
-  };
+    // As duas dependencias sao as mesmas que o efeito ja tinha: `groupId` e
+    // `amount` sao primitivos, entao o callback so troca de identidade quando o
+    // valor muda de verdade -- e a busca nao entra em laco.
+  }, [groupId, amount]);
+
+  useEffect(() => {
+    loadSuggestions();
+  }, [loadSuggestions]);
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat("pt-BR", {

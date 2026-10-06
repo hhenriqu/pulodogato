@@ -175,6 +175,14 @@ function consulta(linhas, tabela, registro) {
         error: linha ? null : { code: "PGRST116", message: "no rows" },
       });
     },
+    // `.returns<T>()` do client de verdade e SO tipo: ele devolve o proprio
+    // builder e nao toca em nada em runtime. Aqui ele e um no-op que devolve
+    // `api`, e precisa existir -- sem ele a cadeia da rota termina em
+    // `undefined` e a suite falha com "Cannot read properties of undefined",
+    // uma mensagem que nao aponta para o metodo que falta.
+    returns() {
+      return api;
+    },
     then(resolve, reject) {
       registro(tabela, filtros, "list");
       return Promise.resolve({

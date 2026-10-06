@@ -2,6 +2,11 @@ import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { divisaoPendenteDoGrupo } from "@/lib/services/expense-groups";
 
+// O client nao carrega o generic `Database`, entao nao da para nomear o tipo
+// dele a mao -- mas da para derivar do proprio factory. `Awaited` cobre as duas
+// formas em uso no repo (`createClient()` e `await createClient()`).
+type ClienteSupabase = Awaited<ReturnType<typeof createClient>>;
+
 export const dynamic = "force-dynamic";
 
 export async function POST(
@@ -95,7 +100,7 @@ export async function POST(
 
 // Função para arquivar grupo vazio
 async function archiveEmptyGroup(
-  supabase: any,
+  supabase: ClienteSupabase,
   groupId: string,
   userId: string
 ) {
@@ -189,7 +194,7 @@ async function archiveEmptyGroup(
 
 // Função para remover usuário do grupo
 async function removeUserFromGroup(
-  supabase: any,
+  supabase: ClienteSupabase,
   groupId: string,
   userId: string
 ) {
@@ -206,7 +211,7 @@ async function removeUserFromGroup(
       validStatusValues = enumData;
       console.log("🎯 Found valid status values:", validStatusValues);
     }
-  } catch (enumError) {
+  } catch {
     console.log("ℹ️ Could not fetch enum values, will try common values");
   }
 
@@ -232,7 +237,7 @@ async function removeUserFromGroup(
         : ["inactive", "removed", "pending"]; // Use only known-valid values
 
     for (const statusValue of statusOptions) {
-      const updateData: any = { status: statusValue };
+      const updateData: Record<string, string> = { status: statusValue };
 
       // Add left_at if field exists
       if ("left_at" in existingMember) {

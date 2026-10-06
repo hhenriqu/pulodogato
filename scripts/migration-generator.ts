@@ -1,4 +1,4 @@
-import { writeFileSync, readFileSync, existsSync } from "fs";
+import { writeFileSync, existsSync, readdirSync } from "fs";
 import { join } from "path";
 
 interface MigrationTemplate {
@@ -66,7 +66,7 @@ export class MigrationGenerator {
 
 `;
 
-      template.tables.forEach((table, index) => {
+      template.tables.forEach((table) => {
         content += `-- Tabela: ${table}
 CREATE TABLE IF NOT EXISTS ${table} (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -181,7 +181,7 @@ SELECT * FROM verify_${template.name}_migration();
       return 1;
     }
 
-    const files = require("fs").readdirSync(this.migrationsDir);
+    const files = readdirSync(this.migrationsDir);
     const migrationNumbers = files
       .filter((file: string) => file.endsWith(".sql"))
       .map((file: string) => parseInt(file.split("_")[0]))

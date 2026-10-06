@@ -4,7 +4,7 @@ import { useState, useEffect, Suspense } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
   Card,
   CardContent,
@@ -45,7 +45,6 @@ function ResetPasswordContent() {
   const [success, setSuccess] = useState(false);
   const [validToken, setValidToken] = useState<boolean | null>(null);
   const router = useRouter();
-  const searchParams = useSearchParams();
   const supabase = createClient();
 
   const {

@@ -3,6 +3,22 @@ import { NextRequest, NextResponse } from "next/server";
 import { divisaoPendenteDoGrupo } from "@/lib/services/expense-groups";
 import { moedaDoGrupoParaGravar } from "@/lib/moeda-do-grupo";
 
+// `user` e embed de UM perfil (FK many-to-one), por isso objeto e nao lista --
+// e `| null` porque a RLS de `profiles` pode esconder a linha, caso em que o
+// embed vem nulo em vez de a linha de membro desaparecer. O codigo abaixo le
+// `member.user?.id` justamente por isso.
+type MembroDoGrupo = {
+  id: string;
+  role: string;
+  status: string;
+  percentage: number | string | null;
+  user: {
+    id: string;
+    full_name: string | null;
+    avatar_url: string | null;
+  } | null;
+};
+
 export const dynamic = "force-dynamic";
 
 export async function GET(
@@ -77,7 +93,8 @@ export async function GET(
       `
       )
       .eq("group_id", groupId)
-      .in("status", ["active", "pending"]);
+      .in("status", ["active", "pending"])
+      .returns<MembroDoGrupo[]>();
 
     if (membersError) {
       console.error("Members error:", membersError);
@@ -86,16 +103,14 @@ export async function GET(
     // `members` continua sendo so os ativos: e o que alimenta o controle de
     // acesso logo abaixo e todo o calculo de divisao. Pendente nao e membro.
     const members = (allMembers || []).filter(
-      (member: any) => member.status === "active"
+      (member) => member.status === "active"
     );
     const pendingMembers = (allMembers || []).filter(
-      (member: any) => member.status === "pending"
+      (member) => member.status === "pending"
     );
 
     // Check if user is member of this group
-    const userIsMember = members.some(
-      (member: any) => member.user?.id === user.id
-    );
+    const userIsMember = members.some((member) => member.user?.id === user.id);
     if (!userIsMember) {
       return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
     }

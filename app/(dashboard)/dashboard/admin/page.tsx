@@ -51,11 +51,14 @@ export default function AdminPage() {
   const [users, setUsers] = useState<UserData[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const supabase = createClient();
   const { isAdmin, loading: subscriptionLoading } = useSubscription(user);
 
   useEffect(() => {
+    // Dentro do efeito de proposito: fora, `supabase` vira dependencia e
+    // acrescenta-la depende de o cliente ser o mesmo objeto a cada render.
+    // Aqui a questao nao se coloca, e nada mais nesta tela usa o cliente.
     const getUser = async () => {
+      const supabase = createClient();
       const {
         data: { user },
       } = await supabase.auth.getUser();

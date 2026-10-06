@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { User } from "@supabase/supabase-js";
 
@@ -44,10 +44,13 @@ export const useGroupInvitations = (user: User | null) => {
   const [acceptLoading, setAcceptLoading] = useState<string | null>(null);
   const [rejectLoading, setRejectLoading] = useState<string | null>(null);
 
-  const supabase = createClient();
+  // O id, e nao o objeto: `user` vem de `getUser()` e e um objeto novo a cada
+  // leitura, entao depender dele refazia a busca e trocava o setInterval de 60s
+  // a cada render do componente pai.
+  const userId = user?.id;
 
-  const fetchInvitations = async () => {
-    if (!user) {
+  const fetchInvitations = useCallback(async () => {
+    if (!userId) {
       setInvitations([]);
       setLoading(false);
       return;
@@ -55,6 +58,7 @@ export const useGroupInvitations = (user: User | null) => {
 
     try {
       setLoading(true);
+      const supabase = createClient();
 
       // Uma chamada. Os tres SELECTs (convites, grupos, perfis) e a juncao a mao
       // em JavaScript viraram isto -- e com eles foi embora o "convite orfao",
@@ -77,7 +81,7 @@ export const useGroupInvitations = (user: User | null) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [userId]);
 
   // Aceitar e recusar sao a mesma requisicao com um booleano diferente.
   const responderConvite = async (invitationId: string, accept: boolean) => {
@@ -140,7 +144,7 @@ export const useGroupInvitations = (user: User | null) => {
     const interval = setInterval(fetchInvitations, 60000);
 
     return () => clearInterval(interval);
-  }, [user]);
+  }, [fetchInvitations]);
 
   return {
     invitations,

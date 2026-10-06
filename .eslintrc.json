@@ -10,7 +10,12 @@
       {
         "argsIgnorePattern": "^_",
         "varsIgnorePattern": "^_",
-        "caughtErrorsIgnorePattern": "^_"
+        "caughtErrorsIgnorePattern": "^_",
+        // `const { cents, ...resto } = linha` usa `cents` para OMITIR a chave:
+        // o nome nao e lixo, e o que sai do objeto. Renomear para `_cents`
+        // (o conserto obvio) faz a chave VOLTAR para o resultado, calado --
+        // `lib/grupos.ts` devolvia `cents` no payload da API desse jeito.
+        "ignoreRestSiblings": true
       }
     ],
     "@typescript-eslint/no-empty-object-type": "warn",
@@ -18,5 +23,26 @@
     "react/no-unescaped-entities": "warn",
     "@next/next/no-img-element": "warn",
     "prefer-const": "warn"
-  }
+  },
+  "overrides": [
+    {
+      // Arquivo de configuracao e os modulos que ele carrega. Todos rodam no
+      // Node, em CommonJS, ANTES de qualquer transpilacao: aqui o require() e a
+      // interface, nao resto de migracao -- trocar por import quebra o build.
+      // Excecao explicita, que e o que a HMO-179 pedia para estes casos.
+      // Os `.js` de `scripts/` entram pelo mesmo motivo: sao utilitarios de
+      // linha de comando em CommonJS, chamados por `node scripts/...`. Os
+      // `.mjs` de la NAO entram -- aqueles sao ESM e usam import de verdade.
+      "files": [
+        "next.config.js",
+        "tailwind.config.js",
+        "lib/pwa-precache.js",
+        "lib/pwa-runtime-cache.js",
+        "scripts/**/*.js"
+      ],
+      "rules": {
+        "@typescript-eslint/no-require-imports": "off"
+      }
+    }
+  ]
 }

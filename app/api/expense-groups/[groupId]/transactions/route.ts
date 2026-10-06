@@ -5,6 +5,41 @@ import { taxaParaGravar } from "@/lib/cambio";
 import { moedaDaViagem } from "@/lib/moeda-do-grupo";
 import { divisaoParaGravar } from "@/lib/divisao-do-grupo";
 
+// Sem o generic `Database` no client, `select()` volta `any`. `transaction`,
+// `category`, `member` e `user` sao embeds many-to-one (objeto, nao lista) e
+// podem vir nulos pela RLS -- o codigo abaixo ja trata o nulo de `transaction`
+// com um `return null` e o de `member` com `?.`.
+type DespesaDoGrupo = {
+  id: string;
+  split_type: string | null;
+  created_at: string;
+  transaction: {
+    id: string;
+    description: string | null;
+    amount: number;
+    currency: string | null;
+    exchange_rate: number | null;
+    transaction_date: string;
+    created_at: string;
+    user_id: string;
+    category: { name: string; icon: string | null } | null;
+  } | null;
+};
+
+type ParteDaDespesa = {
+  id: string;
+  amount: number;
+  status: string | null;
+  member: {
+    id: string;
+    user: {
+      id: string;
+      full_name: string | null;
+      avatar_url: string | null;
+    } | null;
+  } | null;
+};
+
 export async function GET(
   request: NextRequest,
   { params }: { params: { groupId: string } }
@@ -62,7 +97,8 @@ export async function GET(
         )
       `
       )
-      .eq("group_id", groupId);
+      .eq("group_id", groupId)
+      .returns<DespesaDoGrupo[]>();
 
     if (groupError) {
       console.error("Error loading group transactions:", groupError);
@@ -74,7 +110,7 @@ export async function GET(
 
     // Get splits for each transaction and payer info
     const transactionsWithSplits = await Promise.all(
-      (groupTransactions || []).map(async (gt: any) => {
+      (groupTransactions || []).map(async (gt) => {
         if (!gt.transaction) return null;
 
         // Get payer info separately
@@ -101,7 +137,8 @@ export async function GET(
             )
           `
           )
-          .eq("group_transaction_id", gt.id);
+          .eq("group_transaction_id", gt.id)
+          .returns<ParteDaDespesa[]>();
 
         return {
           id: gt.transaction.id,
@@ -115,7 +152,7 @@ export async function GET(
           transaction_date: gt.transaction.transaction_date,
           created_at: gt.transaction.created_at,
           payer: payer,
-          splits: (splits || []).map((split: any) => ({
+          splits: (splits || []).map((split) => ({
             id: split.id,
             // A parte de cada um esta na moeda da DESPESA: `group_expense_splits`
             // nao tem moeda propria de proposito (ver a 026), porque a parte e

@@ -121,11 +121,15 @@ export async function enviarPush(
           JSON.stringify(payload)
         );
         enviados++;
-      } catch (erro: any) {
-        if (erro?.statusCode === 404 || erro?.statusCode === 410) {
+      } catch (erro) {
+        // O web-push lanca um erro com `statusCode`/`body` vindos da resposta do
+        // push service. 404/410 significam inscricao morta -- e so nesses dois
+        // que a assinatura entra na lista para ser apagada.
+        const falha = erro as { statusCode?: number; body?: unknown };
+        if (falha?.statusCode === 404 || falha?.statusCode === 410) {
           mortas.push(a.id);
         } else {
-          console.error("Falha ao enviar push:", erro?.statusCode, erro?.body);
+          console.error("Falha ao enviar push:", falha?.statusCode, falha?.body);
         }
       }
     })

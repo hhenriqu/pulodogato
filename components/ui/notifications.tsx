@@ -1,13 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuTrigger,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +16,9 @@ import { Bell, Users, Check, X, Clock, CheckCheck } from "lucide-react";
 import {
   useNotifications,
   GroupInvitationNotification,
+  // Sem este import o nome `Notification` resolve para o tipo do DOM, que tem
+  // `body`, `icon` e mais 12 campos -- e o erro aparece no CHAMADOR, nao aqui.
+  type Notification,
 } from "@/lib/hooks/useNotifications";
 import { User } from "@supabase/supabase-js";
 
@@ -39,7 +40,7 @@ export function NotificationBell({ user }: NotificationsProps) {
 
   const [isOpen, setIsOpen] = useState(false);
 
-  const handleAcceptInvite = async (notification: any) => {
+  const handleAcceptInvite = async (notification: Notification) => {
     const invitation = notification.data as GroupInvitationNotification;
     const result = await acceptGroupInvitation(invitation);
 
@@ -51,7 +52,7 @@ export function NotificationBell({ user }: NotificationsProps) {
     }
   };
 
-  const handleRejectInvite = async (notification: any) => {
+  const handleRejectInvite = async (notification: Notification) => {
     const invitation = notification.data as GroupInvitationNotification;
     const result = await rejectGroupInvitation(invitation);
 
@@ -128,114 +129,121 @@ export function NotificationBell({ user }: NotificationsProps) {
             </div>
           ) : (
             <div className="divide-y">
-              {notifications.map((notification) => (
-                <div
-                  key={notification.id}
-                  className={`p-4 hover:bg-muted/50 transition-colors ${
-                    !notification.read ? "bg-info/5" : ""
-                  }`}
-                  onClick={() =>
-                    !notification.read && markAsRead(notification.id)
-                  }
-                >
-                  <div className="flex gap-3">
-                    {/* Icon */}
-                    <div className="mt-1">
-                      {notification.type === "group_invitation" && (
-                        <div className="h-8 w-8 rounded-full bg-info/10 flex items-center justify-center">
-                          <Users className="h-4 w-4 text-info" />
-                        </div>
-                      )}
-                    </div>
+              {notifications.map((notification) => {
+                // `data` e `unknown` no tipo da notificacao, porque o conteudo
+                // muda conforme o `type`. A forma do convite e afirmada UMA vez
+                // aqui, em vez de uma vez por campo lido no JSX abaixo -- que
+                // era o que o `any` permitia, sem afirmacao nenhuma.
+                const convite =
+                  notification.type === "group_invitation"
+                    ? (notification.data as
+                        | GroupInvitationNotification
+                        | undefined)
+                    : undefined;
 
-                    {/* Content */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between">
-                        <h4 className="text-sm font-medium line-clamp-1">
-                          {notification.title}
-                        </h4>
-                        <div className="flex items-center gap-1 ml-2">
-                          <span className="text-xs text-muted-foreground">
-                            {formatTimeAgo(notification.created_at)}
-                          </span>
-                          {!notification.read && (
-                            <div className="h-2 w-2 rounded-full bg-primary"></div>
-                          )}
-                        </div>
+                return (
+                  <div
+                    key={notification.id}
+                    className={`p-4 hover:bg-muted/50 transition-colors ${
+                      !notification.read ? "bg-info/5" : ""
+                    }`}
+                    onClick={() =>
+                      !notification.read && markAsRead(notification.id)
+                    }
+                  >
+                    <div className="flex gap-3">
+                      {/* Icon */}
+                      <div className="mt-1">
+                        {notification.type === "group_invitation" && (
+                          <div className="h-8 w-8 rounded-full bg-info/10 flex items-center justify-center">
+                            <Users className="h-4 w-4 text-info" />
+                          </div>
+                        )}
                       </div>
 
-                      <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                        {notification.message}
-                      </p>
-
-                      {/* Actions for Group Invitations */}
-                      {notification.type === "group_invitation" && (
-                        <div className="flex items-center gap-2 mt-3">
-                          <Button
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleAcceptInvite(notification);
-                            }}
-                            className="h-7 text-xs"
-                          >
-                            <Check className="h-3 w-3 mr-1" />
-                            Aceitar
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleRejectInvite(notification);
-                            }}
-                            className="h-7 text-xs"
-                          >
-                            <X className="h-3 w-3 mr-1" />
-                            Rejeitar
-                          </Button>
-
-                          {/* Quem convidou. O codigo do grupo saiu daqui com a
-                              030: quem recusa o convite nao precisa sair com a
-                              chave de entrada do grupo na mao, e os dois botoes
-                              acima nunca dependeram dele. `inviter_name` pode
-                              ser nulo (perfil sem nome preenchido), entao a
-                              inicial cai para "?" em vez de sumir. */}
-                          <div className="flex items-center gap-1 ml-auto">
-                            <Avatar className="h-5 w-5">
-                              <AvatarImage
-                                src={
-                                  notification.data?.inviter_avatar_url ??
-                                  undefined
-                                }
-                              />
-                              <AvatarFallback className="text-xs">
-                                {notification.data?.inviter_name?.charAt(0) ??
-                                  "?"}
-                              </AvatarFallback>
-                            </Avatar>
+                      {/* Content */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between">
+                          <h4 className="text-sm font-medium line-clamp-1">
+                            {notification.title}
+                          </h4>
+                          <div className="flex items-center gap-1 ml-2">
                             <span className="text-xs text-muted-foreground">
-                              {notification.data?.inviter_name ?? "Alguém"}
+                              {formatTimeAgo(notification.created_at)}
                             </span>
+                            {!notification.read && (
+                              <div className="h-2 w-2 rounded-full bg-primary"></div>
+                            )}
                           </div>
                         </div>
-                      )}
 
-                      {/* Expiration for invitations */}
-                      {notification.type === "group_invitation" &&
-                        notification.data?.expires_at && (
+                        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                          {notification.message}
+                        </p>
+
+                        {/* Actions for Group Invitations */}
+                        {notification.type === "group_invitation" && (
+                          <div className="flex items-center gap-2 mt-3">
+                            <Button
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleAcceptInvite(notification);
+                              }}
+                              className="h-7 text-xs"
+                            >
+                              <Check className="h-3 w-3 mr-1" />
+                              Aceitar
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRejectInvite(notification);
+                              }}
+                              className="h-7 text-xs"
+                            >
+                              <X className="h-3 w-3 mr-1" />
+                              Rejeitar
+                            </Button>
+
+                            {/* Quem convidou. O codigo do grupo saiu daqui com a
+                                030: quem recusa o convite nao precisa sair com a
+                                chave de entrada do grupo na mao, e os dois botoes
+                                acima nunca dependeram dele. `inviter_name` pode
+                                ser nulo (perfil sem nome preenchido), entao a
+                                inicial cai para "?" em vez de sumir. */}
+                            <div className="flex items-center gap-1 ml-auto">
+                              <Avatar className="h-5 w-5">
+                                <AvatarImage
+                                  src={convite?.inviter_avatar_url ?? undefined}
+                                />
+                                <AvatarFallback className="text-xs">
+                                  {convite?.inviter_name?.charAt(0) ?? "?"}
+                                </AvatarFallback>
+                              </Avatar>
+                              <span className="text-xs text-muted-foreground">
+                                {convite?.inviter_name ?? "Alguém"}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Expiration for invitations */}
+                        {convite?.expires_at && (
                           <div className="flex items-center gap-1 mt-2 text-xs text-muted-foreground">
                             <Clock className="h-3 w-3" />
                             <span>
-                              Expira em{" "}
-                              {formatTimeAgo(notification.data.expires_at)}
+                              Expira em {formatTimeAgo(convite.expires_at)}
                             </span>
                           </div>
                         )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

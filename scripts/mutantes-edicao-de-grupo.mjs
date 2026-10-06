@@ -166,7 +166,7 @@ for (const [nome, de, para] of mutantes) {
     // mas por outro motivo, e vale distinguir no relatorio.
     try {
       psql(url, ["-f", mutado]);
-    } catch (e) {
+    } catch {
       vermelho = true;
       detalhe = "a migration mutada nem aplica";
     }

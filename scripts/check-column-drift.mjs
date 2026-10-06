@@ -421,7 +421,7 @@ function main() {
 
   console.error("O codigo pede coluna que a relacao nao tem:\n");
   for (const [chave, ocorrencias] of [...ausentes].sort()) {
-    const [relacao, coluna] = chave.split(/\.(.*)/);
+    const [relacao] = chave.split(/\.(.*)/);
     const existentes = [...colunasDe.get(relacao)].sort().join(", ");
     console.error(`  ${chave}`);
     for (const o of ocorrencias) console.error(`      ${o.arquivo}:${o.linha}  (${o.via})`);

@@ -21,6 +21,24 @@
 // por plataforma, e testa-la pela interface exigiria simular Safari.
 // =====================================================
 
+/**
+ * `navigator.standalone` nao existe no `lib.dom`: e extensao do Safari no iOS,
+ * e e o UNICO jeito de saber ali que o app abriu instalado -- no iOS o
+ * `display-mode: standalone` nem sempre responde. Dai o tipo proprio, em vez do
+ * `as any` que estava nas duas chamadas.
+ */
+export type NavegadorIOS = Navigator & { standalone?: boolean };
+
+/**
+ * O evento `beforeinstallprompt`, que tambem nao esta no `lib.dom` -- e uma
+ * extensao do Chromium. Os dois membros abaixo sao os que o codigo usa de fato:
+ * `prompt()` abre o dialogo do sistema e `userChoice` resolve com a escolha.
+ */
+export type EventoDeInstalacao = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+};
+
 /** O que a interface deve mostrar. */
 export type ConviteDeInstalacao =
   /** Nada -- ja instalado, dispensado, ou plataforma sem caminho de instalacao. */

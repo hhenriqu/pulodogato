@@ -44,6 +44,30 @@ interface SplitSuggestion {
   })[];
 }
 
+// O QUE A CONSULTA DO HISTORICO DEVOLVE
+// -------------------------------------
+// `transaction` e `member` sao embeds many-to-one (objeto, nao lista) e
+// `splits` e one-to-many. Todos podem vir NULOS, e nao por erro: a RLS nao
+// reprova a linha alheia, ela a tira do resultado -- e por isso que cada
+// leitura abaixo passa por `?.` em vez de confiar no embed.
+type DespesaRecente = {
+  id: string;
+  transaction: {
+    id: string;
+    amount: number | null;
+    transaction_date: string;
+    user_id: string;
+  } | null;
+  splits:
+    | {
+        id: string;
+        amount: number | null;
+        percentage: number | null;
+        member: { id: string; user_id: string } | null;
+      }[]
+    | null;
+};
+
 /** Quantas despesas recentes bastam para o historico dizer algo. */
 const AMOSTRA_MINIMA_DO_HISTORICO = 3;
 
@@ -248,7 +272,8 @@ export async function GET(
       .gte(
         "transaction.transaction_date",
         threeMonthsAgo.toISOString().split("T")[0]
-      );
+      )
+      .returns<DespesaRecente[]>();
 
     if (
       recentTransactions &&
@@ -264,8 +289,8 @@ export async function GET(
         ])
       );
 
-      recentTransactions.forEach((gt: any) => {
-        gt.splits?.forEach((split: any) => {
+      recentTransactions.forEach((gt) => {
+        gt.splits?.forEach((split) => {
           const memberId = split?.member?.id;
           const registro = memberId ? participacoes.get(memberId) : undefined;
           if (!registro) return;
@@ -296,13 +321,17 @@ export async function GET(
       const gastoPorMembro = new Map<string, number>();
       const membroPorUsuario = new Map(activeMembers.map((m) => [m.user_id, m.id]));
 
-      recentTransactions.forEach((gt: any) => {
-        const memberId = membroPorUsuario.get(gt?.transaction?.user_id);
+      recentTransactions.forEach((gt) => {
+        // O `user_id` sai do embed, que pode ser nulo -- entao ele e lido antes,
+        // e nao direto dentro do `get`: `Map<string, string>.get` nao aceita
+        // `undefined`, e era o `any` que escondia isso.
+        const userId = gt.transaction?.user_id;
+        const memberId = userId ? membroPorUsuario.get(userId) : undefined;
         if (!memberId) return;
         gastoPorMembro.set(
           memberId,
           (gastoPorMembro.get(memberId) ?? 0) +
-            Math.abs(Number(gt.transaction.amount) || 0)
+            Math.abs(Number(gt.transaction?.amount) || 0)
         );
       });
 

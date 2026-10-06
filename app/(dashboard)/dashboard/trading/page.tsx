@@ -15,10 +15,14 @@ import { Zap } from "lucide-react";
 export default function TradingPage() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const supabase = createClient();
-
   useEffect(() => {
+    // O `createClient()` mora DENTRO do efeito: fora dele o `supabase` e uma
+    // dependencia que o lint cobra, e satisfazer a cobranca com a chamada no
+    // corpo do componente so funciona enquanto `utils/supabase/client.ts`
+    // guardar o cliente por aba. Aqui nao depende disso -- e nada mais no
+    // componente usa o cliente.
     const getUser = async () => {
+      const supabase = createClient();
       const {
         data: { user },
       } = await supabase.auth.getUser();

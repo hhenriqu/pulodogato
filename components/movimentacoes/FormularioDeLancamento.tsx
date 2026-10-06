@@ -178,7 +178,10 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
     PreferenciaDeCategoria[]
   >([]);
   const [contas, setContas] = useState<ContaDeLancamento[]>([]);
-  const [grupos, setGrupos] = useState<any[]>([]);
+  // So `id` e `name`: e o que o seletor de grupo mostra, e o que a resposta de
+  // `/api/expense-groups` garante. Declarar o grupo inteiro aqui criaria uma
+  // segunda verdade sobre a rota para divergir dela depois.
+  const [grupos, setGrupos] = useState<{ id: string; name: string }[]>([]);
   const [conexoes, setConexoes] = useState<Conexao[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [salvando, setSalvando] = useState(false);

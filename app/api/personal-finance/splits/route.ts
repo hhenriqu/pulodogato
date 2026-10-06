@@ -1,7 +1,15 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 
-export async function GET(request: NextRequest) {
+// A consulta e `select("*")` com embeds, entao declarar coluna por coluna aqui
+// so criaria uma segunda verdade para divergir da tabela. O tipo nomeia o UNICO
+// campo de que este trecho depende -- `transaction.user_id`, que vai buscar o
+// perfil do pagador -- e deixa o resto passar como `unknown` pelo spread.
+type PartePendente = Record<string, unknown> & {
+  transaction: Record<string, unknown> & { user_id: string };
+};
+
+export async function GET(_request: NextRequest) {
   try {
     const supabase = await createClient();
     const {
@@ -28,7 +36,8 @@ export async function GET(request: NextRequest) {
       )
       .eq("participant_id", user.id)
       .eq("status", "pending")
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .returns<PartePendente[]>();
 
     if (pendingError) {
       console.error("Database error:", pendingError);
@@ -96,7 +105,7 @@ export async function GET(request: NextRequest) {
 
     // Enrich pending splits with user info
     const enrichedPendingSplits = await Promise.all(
-      (pendingSplits || []).map(async (split: any) => ({
+      (pendingSplits || []).map(async (split) => ({
         ...split,
         transaction: {
           ...split.transaction,
@@ -160,7 +169,7 @@ export async function PATCH(request: NextRequest) {
     }
 
     // Atualizar status da divisão
-    const updateData: any = {
+    const updateData: Record<string, string> = {
       status: action === "approve" ? "approved" : "rejected",
       updated_at: new Date().toISOString(),
     };

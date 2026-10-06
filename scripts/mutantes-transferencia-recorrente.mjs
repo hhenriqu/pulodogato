@@ -242,7 +242,11 @@ function rodar(db, sql) {
  * funcao faz. Ver tambem: uma guarda cuja condicao nunca acontece no teste
  * passa verde por nao ter o que conferir.
  */
-function provarAGuarda(sql, rotulo) {
+// `_rotulo` com underscore: os dois chamadores passam um rotulo ("intacta",
+// "rebaixada a NOTICE") que esta funcao nao usa -- quem imprime e quem chama.
+// O underscore e a marca que o .eslintrc deste projeto aceita para "recebido e
+// ignorado de proposito", e mantem as duas chamadas intactas.
+function provarAGuarda(sql, _rotulo) {
   const db = "hmo172_guarda";
   psql("postgres", ["-c", `DROP DATABASE IF EXISTS ${db} WITH (FORCE)`]);
   psql("postgres", ["-c", `CREATE DATABASE ${db} TEMPLATE ${TEMPLATE}`]);

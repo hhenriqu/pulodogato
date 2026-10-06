@@ -47,6 +47,7 @@
 
 import { useCallback, useMemo } from "react";
 import Link from "next/link";
+import type { Route } from "next";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowRightLeft,
@@ -161,7 +162,7 @@ export function TelaDeMovimentacao({ tipo }: { tipo: TipoDaTela }) {
    * que a pessoa manda mostra o mes dela e o botao voltar do navegador anda
    * entre periodos. A leitura refaz sozinha porque `queryDoPeriodo` muda.
    *
-   * O `as any` e o mesmo do menu lateral (components/Sidebar.tsx), pela mesma
+   * O `as Route` e o mesmo do menu lateral (components/Sidebar.tsx), pela mesma
    * razao: `experimental.typedRoutes` tipa o destino como uma UNIAO LITERAL das
    * rotas do app, e `tela.rota` vem de `TELAS_DE_MOVIMENTACAO`, que e uma lib
    * pura -- ela nao pode importar os tipos gerados do Next sem quebrar o build
@@ -171,7 +172,7 @@ export function TelaDeMovimentacao({ tipo }: { tipo: TipoDaTela }) {
    */
   const irPara = useCallback(
     (novo: Periodo) => {
-      router.push(`${tela.rota}?${periodoParaQuery(novo)}` as any);
+      router.push(`${tela.rota}?${periodoParaQuery(novo)}` as Route);
     },
     [router, tela.rota]
   );
@@ -206,13 +207,13 @@ export function TelaDeMovimentacao({ tipo }: { tipo: TipoDaTela }) {
           {/* A porta de lançar DESTA tela -- e so dela. Finanças Pessoais
               oferece as tres de uma vez porque e a lista de tudo; aqui um
               segundo botao levaria a pessoa a lançar o tipo que ela nao veio
-              lançar. O `as any` e o do `irPara` acima, pela mesma razao.
+              lançar. O `as Route` e o do `irPara` acima, pela mesma razao.
 
               `comOrigem` leva o endereco DESTA tela, com o `?de=&ate=` dentro
               (HMO-249): sem ele, salvar uma despesa de janeiro devolveria a
               pessoa ao mes corrente, onde ela nao esta. */}
           <Button asChild className="gap-2">
-            <Link href={comOrigem(aparencia.rotaDeLancar, origem) as any}>
+            <Link href={comOrigem(aparencia.rotaDeLancar, origem) as Route}>
               <aparencia.Icone className="h-4 w-4" />
               {aparencia.textoDeLancar}
             </Link>

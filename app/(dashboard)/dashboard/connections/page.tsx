@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useMemo, useState, useEffect } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { PUBLIC_PROFILE_FIELDS } from "@/lib/profile-fields";
 import { montarFiltroDeBusca } from "@/lib/busca-de-perfil";
@@ -68,6 +68,27 @@ interface Group {
   user_role?: string;
 }
 
+// A linha de `group_members` com o grupo embutido. `expense_groups` e embed
+// many-to-one (objeto, nao lista) e pode vir nulo pela RLS -- o `?.` do filtro
+// logo abaixo depende disso.
+interface ParticipacaoEmGrupo {
+  role: string;
+  expense_groups: {
+    id: string;
+    name: string;
+    description: string | null;
+    created_by: string;
+    group_type: string;
+    group_code: string | null;
+    is_active: boolean;
+  } | null;
+}
+
+/** A mesma linha, depois de descartar as que vieram sem grupo legivel. */
+type ComGrupo = ParticipacaoEmGrupo & {
+  expense_groups: NonNullable<ParticipacaoEmGrupo["expense_groups"]>;
+};
+
 export default function ConnectionsPage() {
   const [user, setUser] = useState<User | null>(null);
   const [connections, setConnections] = useState<Connection[]>([]);
@@ -79,21 +100,13 @@ export default function ConnectionsPage() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("connections");
 
-  const supabase = createClient();
+  // `useMemo` para o cliente poder ENTRAR nas dependencias abaixo sem fazer os
+  // callbacks trocarem de identidade a cada render. `createClient()` ja
+  // reaproveita um cliente por aba, mas isso e garantia de outro arquivo: aqui
+  // a estabilidade fica declarada no lugar onde os efeitos dependem dela.
+  const supabase = useMemo(() => createClient(), []);
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  useEffect(() => {
-    if (searchQuery.trim().length > 2) {
-      searchUsers();
-    } else {
-      setSearchResults([]);
-    }
-  }, [searchQuery]);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       const {
         data: { user },
@@ -149,7 +162,8 @@ export default function ConnectionsPage() {
         `
         )
         .eq("user_id", user.id)
-        .eq("status", "active");
+        .eq("status", "active")
+        .returns<ParticipacaoEmGrupo[]>();
 
       if (groupsData) {
         const groupsWithCounts = await Promise.all(
@@ -158,8 +172,14 @@ export default function ConnectionsPage() {
             // is_active separa o grupo arquivado. Sem os dois filtros, a viagem
             // que acabou e o grupo de que o usuario saiu continuariam nesta
             // lista, e so aqui -- a tela de Grupos ja os esconde.
-            .filter((item: any) => item.expense_groups?.is_active !== false)
-            .map(async (item: any) => {
+            // O `?.` protegia a COMPARACAO e nada mais: com `expense_groups`
+            // nulo, `undefined !== false` e verdadeiro, a linha passava, e o
+            // `group.id` duas linhas abaixo estourava
+            // ("Cannot read properties of null"). Agora o embed nulo e
+            // descartado aqui -- linha sem grupo legivel nao tem o que mostrar.
+            .filter((item): item is ComGrupo => item.expense_groups !== null)
+            .filter((item) => item.expense_groups.is_active !== false)
+            .map(async (item) => {
               const group = item.expense_groups;
               const { count } = await supabase
                 .from("group_members")
@@ -187,9 +207,9 @@ export default function ConnectionsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [supabase]);
 
-  const searchUsers = async () => {
+  const searchUsers = useCallback(async () => {
     if (!user) return;
 
     // Um nome com virgula ("Silva, Joao") quebrava a arvore logica do
@@ -220,7 +240,21 @@ export default function ConnectionsPage() {
     } finally {
       setSearchLoading(false);
     }
-  };
+    // `user` vem do estado e e gravado uma vez por `loadData`, entao a
+    // identidade dele nao oscila entre renders.
+  }, [supabase, user, searchQuery]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  useEffect(() => {
+    if (searchQuery.trim().length > 2) {
+      searchUsers();
+    } else {
+      setSearchResults([]);
+    }
+  }, [searchQuery, searchUsers]);
 
   const sendConnectionRequest = async (
     targetUserId: string,
@@ -420,7 +454,7 @@ export default function ConnectionsPage() {
                           )}
                           {request.message && (
                             <p className="text-sm mt-2 p-2 bg-muted rounded">
-                              "{request.message}"
+                              &quot;{request.message}&quot;
                             </p>
                           )}
                         </div>

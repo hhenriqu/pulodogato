@@ -77,7 +77,7 @@ export async function PATCH(
     // de importar para as linhas antigas, mas nao para a linha que o usuario
     // edita: ela e justamente a que ele acabou de olhar.
     const existingAmount = Number(existingTransaction.amount);
-    const updateData: any = {};
+    const updateData: Record<string, unknown> = {};
 
     if (existingTransaction.transaction_type === "transfer") {
       // PERNA DE TRANSFERENCIA NAO E RECLASSIFICADA AQUI.
@@ -134,7 +134,7 @@ export async function PATCH(
     if (group_id !== undefined) updateData.group_id = group_id || null;
 
     // Atualizar transação
-    const { data: updatedTransaction, error: updateError } = await supabase
+    const { error: updateError } = await supabase
       .from("financial_transactions")
       .update(updateData)
       .eq("id", id)

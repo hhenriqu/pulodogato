@@ -10,6 +10,46 @@ import {
 } from "@/lib/acerto-em-lancamento";
 import { categoriaDoAcerto } from "@/lib/categoria-do-acerto";
 
+// O perfil NAO vem por embed: as FKs da 007 apontam para `auth.users`, entao o
+// PostgREST nao relaciona `group_settlements` com `profiles` (ver a nota longa
+// no GET). Ele vem da segunda consulta, e `| null` porque a RLS de `profiles`
+// pode esconder a linha de quem nao e minha conexao.
+type PerfilDoAcerto = {
+  id: string;
+  full_name: string | null;
+  avatar_url: string | null;
+};
+
+// `amount` e `exchange_rate` sao numeric -- chegam como string no JSON do
+// PostgREST, que e o que justifica o `Number()` em cada leitura.
+//
+// `from_user_id`/`to_user_id` sao as COLUNAS, e e por elas que a direcao do
+// acerto e decidida. Este tipo trazia `from_user`/`to_user` (os embeds) ate a
+// HMO-278 trocar o embed por duas consultas; o `s.from_user_id` do corpo passou
+// a ser TS2551 e ficou invisivel porque o callback estava anotado `any` -- o
+// mesmo `any` que esta issue tirou. Mantenha este tipo colado no `select`.
+type AcertoDoGrupo = {
+  id: string;
+  amount: number | string;
+  currency: string | null;
+  exchange_rate: number | string | null;
+  settled_on: string;
+  note: string | null;
+  created_by: string;
+  created_at: string;
+  from_user_id: string;
+  to_user_id: string;
+};
+
+/** A perna que EU ja lancei para um acerto, quando ja lancei. */
+type PernaDoAcerto = {
+  id: string;
+  amount: number | string;
+  account_id: string | null;
+  transaction_type: string | null;
+  notes: string | null;
+};
+
 /**
  * Acertos de contas do grupo: o registro de "Caio pagou R$ 130 para a Ana".
  *
@@ -150,7 +190,8 @@ export async function GET(
       )
       .eq("group_id", groupId)
       .order("settled_on", { ascending: false })
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .returns<AcertoDoGrupo[]>();
 
     if (error) {
       console.error("Erro ao listar acertos:", error);
@@ -166,13 +207,13 @@ export async function GET(
     // derrubava a resposta inteira.
     const idsDasPessoas = Array.from(
       new Set(
-        (settlements || []).flatMap((s: any) =>
+        (settlements || []).flatMap((s) =>
           [s.from_user_id, s.to_user_id].filter(Boolean)
         )
       )
     );
 
-    const perfilPorId = new Map<string, any>();
+    const perfilPorId = new Map<string, PerfilDoAcerto>();
     if (idsDasPessoas.length > 0) {
       const { data: perfis } = await supabase
         .from("profiles")
@@ -195,15 +236,16 @@ export async function GET(
     // da coluna falharia calado -- ser do mesmo grupo nao da acesso ao perfil
     // do outro, entao o embed vem NULO para quem nao tem o perfil visivel e a
     // direcao sairia como "nao sou parte" para quem e parte.
-    const chaves = (settlements || []).map((s: any) => chaveDoAcerto(s.id));
+    const chaves = (settlements || []).map((s) => chaveDoAcerto(s.id));
 
-    const pernasPorChave = new Map<string, any>();
+    const pernasPorChave = new Map<string, PernaDoAcerto>();
     if (chaves.length > 0) {
       const { data: pernas } = await supabase
         .from("financial_transactions")
         .select("id, amount, account_id, transaction_type, notes")
         .eq("user_id", user.id)
-        .in("notes", chaves);
+        .in("notes", chaves)
+        .returns<PernaDoAcerto[]>();
 
       for (const p of pernas || []) {
         if (p.notes) pernasPorChave.set(p.notes, p);
@@ -212,7 +254,7 @@ export async function GET(
 
     return NextResponse.json({
       success: true,
-      settlements: (settlements || []).map((s: any) => {
+      settlements: (settlements || []).map((s) => {
         const currency = moedaConhecida(s.currency) ? s.currency : MOEDA_PADRAO;
         const rate = Number(s.exchange_rate ?? 1) || 1;
         const minhaPerna = pernasPorChave.get(chaveDoAcerto(s.id)) || null;

@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { User } from "@supabase/supabase-js";
 import {
-  UserPlan,
   UserSubscription,
   PlanFeature,
   hasFeature,
@@ -51,13 +50,20 @@ export function useSubscription(user?: User | null): UseSubscriptionReturn {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const supabase = createClient();
+  // So o id entra na dependencia, e nao o `user` inteiro. Quem chama este hook
+  // recebe o objeto de `supabase.auth.getUser()`, que e um objeto NOVO a cada
+  // leitura: dependendo de `user`, o callback trocaria de identidade sem nada
+  // ter mudado e o efeito abaixo recarregaria a assinatura em laco.
+  const userId = user?.id;
 
-  const loadSubscription = async () => {
-    if (!user) {
+  const loadSubscription = useCallback(async () => {
+    if (!userId) {
       setLoading(false);
       return;
     }
+
+    // Dentro do callback para nao virar dependencia dele.
+    const supabase = createClient();
 
     try {
       setLoading(true);
@@ -67,7 +73,7 @@ export function useSubscription(user?: User | null): UseSubscriptionReturn {
       const { data: subData, error: subError } = await supabase
         .from("user_subscriptions")
         .select("*")
-        .eq("user_id", user.id)
+        .eq("user_id", userId)
         .single();
 
       if (subError && subError.code !== "PGRST116") {
@@ -79,7 +85,7 @@ export function useSubscription(user?: User | null): UseSubscriptionReturn {
       const { data: usageData, error: usageError } = await supabase
         .from("user_usage_limits")
         .select("*")
-        .eq("user_id", user.id)
+        .eq("user_id", userId)
         .single();
 
       if (usageError && usageError.code !== "PGRST116") {
@@ -96,11 +102,11 @@ export function useSubscription(user?: User | null): UseSubscriptionReturn {
     } finally {
       setLoading(false);
     }
-  };
+  }, [userId]);
 
   useEffect(() => {
     loadSubscription();
-  }, [user?.id]);
+  }, [loadSubscription]);
 
   // Funções auxiliares
   const checkFeature = (feature: PlanFeature): boolean => {

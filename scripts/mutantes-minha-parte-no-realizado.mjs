@@ -369,7 +369,7 @@ try {
       // quebra a sintaxe nao prova nada sobre as assercoes.
       try {
         psql(url, ["-f", mutado]);
-      } catch (e) {
+      } catch {
         vermelho = true;
         detalhe = "a migration mutada nem aplica";
       }

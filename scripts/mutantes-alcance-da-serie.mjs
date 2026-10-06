@@ -47,19 +47,9 @@
 
 import { readFileSync } from "node:fs";
 import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
-import { join } from "node:path";
 
 const RECORRENCIA = "lib/recorrencia-edicao.ts";
 const PARCELAS = "lib/parcelas-edicao.ts";
-
-// O `tsc` DO PROJETO, POR CAMINHO ABSOLUTO.
-//
-// `npx tsc` nao serve: a arvore mutada e um diretorio temporario SEM
-// node_modules, e o npx cairia no `tsc` do sistema (o pacote Debian
-// `node-typescript`), que responde "This is not the tsc command you are looking
-// for" e sai com erro. O sintoma e brutal -- TODO mutante "morre no tsc" e o
-// placar sai perfeito sem uma assercao ter rodado.
-const TSC = join(process.cwd(), "node_modules/.bin/tsc");
 
 const originais = {
   [RECORRENCIA]: readFileSync(RECORRENCIA, "utf8"),

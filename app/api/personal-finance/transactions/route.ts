@@ -2,15 +2,27 @@ import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { normalizarLancamento } from "@/lib/movimentacoes";
 
+type ClienteSupabase = Awaited<ReturnType<typeof createClient>>;
+
+/** Uma divisao como o cliente manda no corpo do POST. */
+type DivisaoPedida = {
+  participant_id: string;
+  percentage: number;
+};
+
 // Helper function to get user group IDs
-async function getUserGroupIds(supabase: any, userId: string): Promise<string> {
+async function getUserGroupIds(
+  supabase: ClienteSupabase,
+  userId: string
+): Promise<string> {
   const { data: groups } = await supabase
     .from("group_members")
     .select("group_id")
     .eq("user_id", userId)
-    .eq("status", "active");
+    .eq("status", "active")
+    .returns<{ group_id: string }[]>();
 
-  return groups?.map((g: any) => g.group_id).join(",") || "";
+  return groups?.map((g) => g.group_id).join(",") || "";
 }
 
 export async function GET(request: NextRequest) {
@@ -111,10 +123,14 @@ export async function POST(request: NextRequest) {
       transaction_date,
       notes,
       is_shared,
-      splits,
       group_id,
       transaction_type,
     } = body;
+
+    // `body` vem de `request.json()`, que e `any`: o tipo aqui e o que a rota
+    // EXIGE do cliente, nao o que ela recebeu. So `splits` esta declarado
+    // porque e o unico campo que o codigo abaixo percorre campo a campo.
+    const splits: DivisaoPedida[] | undefined = body.splits;
 
     // Validações básicas
     if (!description || !amount || !category_id) {
@@ -176,7 +192,7 @@ export async function POST(request: NextRequest) {
     // Validar divisões se fornecidas
     if (is_shared && splits && splits.length > 0) {
       const totalPercentage = splits.reduce(
-        (sum: number, split: any) => sum + split.percentage,
+        (sum: number, split) => sum + split.percentage,
         0
       );
       if (Math.abs(totalPercentage - 100) > 0.01) {
@@ -279,7 +295,8 @@ export async function POST(request: NextRequest) {
             .from("group_members")
             .select("id")
             .eq("group_id", group_id)
-            .eq("status", "active");
+            .eq("status", "active")
+            .returns<{ id: string }[]>();
 
           if (members && members.length > 0) {
             const splitAmount = Math.abs(finalAmount) / members.length;
@@ -288,7 +305,7 @@ export async function POST(request: NextRequest) {
             const { error: groupSplitsError } = await supabase
               .from("group_expense_splits")
               .insert(
-                members.map((member: any) => ({
+                members.map((member) => ({
                   group_transaction_id: criada.id,
                   member_id: member.id,
                   percentage: splitPercentage,
@@ -307,7 +324,7 @@ export async function POST(request: NextRequest) {
 
     // Criar divisões tradicionais se necessário (para finanças pessoais)
     if (is_shared && splits && splits.length > 0 && isExpense && !group_id) {
-      const splitsData = splits.map((split: any) => ({
+      const splitsData = splits.map((split) => ({
         transaction_id: transaction.id,
         participant_id: split.participant_id,
         percentage: split.percentage,

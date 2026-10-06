@@ -438,7 +438,7 @@ export async function GET(request: NextRequest) {
     // O `eq("user_id")` vale para as duas, e na pessoal ele e load-bearing: as
     // policies de grupo tem `OR is_group_member(...)`, e sem o filtro a consulta
     // devolveria a parte dos OUTROS membros junto (medido: 400 em vez de 200).
-    let query = groupId
+    const query = groupId
       ? supabase
           .from("monthly_cash_flow")
           .select("month, income, expense, net, transaction_count, currency")
