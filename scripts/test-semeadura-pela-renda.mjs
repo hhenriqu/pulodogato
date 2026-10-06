@@ -25,6 +25,8 @@
 // id do corpo, nem que a resposta nao acrescenta a renda de volta num campo
 // novo. E a prova que falta e justamente a que o defeito original pede: a rota
 // antiga (/api/expense-groups/proportions) tambem "escondia" o valor -- no JSX.
+// Aquela rota foi REMOVIDA na fase 7 (HMO-273); ver a secao 3 no fim deste
+// arquivo para onde foi a garantia que os casos dela davam.
 //
 // E o controle positivo esta na funcao `sonda`: ela exige que os DOIS dubles
 // tenham sido consultados. Uma rota que deixasse de usar o client de sessao, ou
@@ -44,11 +46,6 @@ const {
 
 const ROTA = await import(
   "../.tmp-semeadura/app/api/expense-groups/[groupId]/semear-divisao/route.js"
-);
-
-/** A rota ANTIGA, a da funcao SQL -- a que vazava `total_income` de todo mundo. */
-const PROPORTIONS = await import(
-  "../.tmp-semeadura/app/api/expense-groups/proportions/route.js"
 );
 
 const CENTESIMOS_TOTAIS = 10000;
@@ -695,143 +692,19 @@ test("?mes= valido NAO e marcado como corrigido", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 3. A ROTA ANTIGA -- /api/expense-groups/proportions
+// 3. A ROTA ANTIGA -- /api/expense-groups/proportions -- FOI REMOVIDA (HMO-273)
 // ---------------------------------------------------------------------------
-// Ela nao foi aposentada nesta fase (isso e a 7), mas vazava salario pelos dois
-// metodos, e com defeitos DIFERENTES:
+// A fase 6 CONSERTOU o vazamento de salario daquela rota (o POST devolvia o
+// retorno cru de `calculate_member_proportions` com o `total_income` de todo
+// mundo; o GET recortava por PAPEL, e admin de grupo nao e dono do salario dos
+// outros). A fase 7 aposentou o caminho inteiro: a rota, o modal e o segundo
+// armazem de porcentagem sairam, e a semeadura pela renda desta fase e quem
+// ficou no lugar.
 //
-//   * o POST devolvia o retorno CRU de `calculate_member_proportions`, com
-//     `total_income` de todo mundo, para qualquer membro;
-//   * o GET recortava por PAPEL (`role === 'admin'`), que e outra regra. Admin de
-//     grupo nao e dono do salario dos outros.
-//
-// Os dois agora usam o MESMO recorte por linha. A tela (o modal
-// "Divisão Proporcional") passou a imprimir "Sua renda", e o rotulo so e
-// verdadeiro porque a rota garante que o valor que chega e o de quem olha.
-
-/** Chama a rota antiga com o duble de sessao. `metodo` e "GET" ou "POST". */
-async function sondaProportions({ metodo, user, membros, linhasDaProporcao }) {
-  const sessao = criarDuble({
-    user: user ? { id: user } : null,
-    tabelas: {
-      group_members: membros,
-      group_member_proportions: linhasDaProporcao,
-      "rpc:calculate_member_proportions": linhasDaProporcao,
-    },
-  });
-
-  const registro = { sessao: () => sessao.client, servico: () => sessao.client };
-  globalThis.__dubleDeSupabase = registro;
-
-  let resposta;
-  try {
-    resposta =
-      metodo === "POST"
-        ? await PROPORTIONS.POST({
-            json: async () => ({ group_id: GRUPO, calculation_month: "2026-10-01" }),
-          })
-        : await PROPORTIONS.GET({
-            url: `https://exemplo.test/api/expense-groups/proportions?group_id=${GRUPO}&month=2026-10-01`,
-          });
-  } finally {
-    delete globalThis.__dubleDeSupabase;
-  }
-
-  assert.ok(
-    (registro.chamadasDeSessao ?? 0) > 0,
-    "controle positivo: a rota antiga nao abriu o client de sessao"
-  );
-
-  return { resposta, corpo: await resposta.json() };
-}
-
-/**
- * As linhas que a funcao SQL e a tabela devolvem.
- *
- * `member_id` e `group_members.id` -- a mesma chave que o recorte compara com a
- * linha de quem pediu.
- */
-const PROPORCOES_DO_BANCO = [
-  {
-    id: "prop-a",
-    group_id: GRUPO,
-    member_id: MEMBRO_A,
-    total_income: 7000,
-    proportion_percentage: 70,
-    calculated_at: "2026-10-01T12:00:00Z",
-    calculation_month: "2026-10-01",
-    is_active: true,
-  },
-  {
-    id: "prop-b",
-    group_id: GRUPO,
-    member_id: MEMBRO_B,
-    total_income: 3000,
-    proportion_percentage: 30,
-    calculated_at: "2026-10-01T12:00:00Z",
-    calculation_month: "2026-10-01",
-    is_active: true,
-  },
-];
-
-for (const metodo of ["GET", "POST"]) {
-  test(`${metodo} /proportions nao devolve o total_income alheio`, async () => {
-    const { resposta, corpo } = await sondaProportions({
-      metodo,
-      user: USUARIO_B,
-      membros: MEMBROS_DO_BANCO,
-      linhasDaProporcao: PROPORCOES_DO_BANCO,
-    });
-
-    assert.equal(resposta.status, 200);
-
-    const deA = corpo.proportions.find((p) => p.member_id === MEMBRO_A);
-    const deB = corpo.proportions.find((p) => p.member_id === MEMBRO_B);
-
-    assert.ok(deA && deB, "as duas linhas continuam vindo");
-    assert.equal(
-      Number(deA.proportion_percentage),
-      70,
-      "o percentual de A e publico"
-    );
-    assert.equal(
-      "total_income" in deA,
-      false,
-      "o R$ da renda de A nao pode existir na resposta de B"
-    );
-    assert.equal(deB.total_income, 3000, "B ve a propria");
-    assert.equal(
-      JSON.stringify(corpo).includes("7000"),
-      false,
-      "a renda de A nao aparece em campo nenhum do corpo"
-    );
-  });
-}
-
-test("o membro ADMIN tambem nao ve a renda do outro -- papel deixou de decidir", async () => {
-  // O defeito antigo do GET era este: `role === 'admin'` liberava `total_income`
-  // de TODO MUNDO. A tela do grupo faz do criador um admin, entao esse era o
-  // caminho comum, nao a excecao.
-  const membros = [
-    { ...MEMBROS_DO_BANCO[0], role: "admin" },
-    { ...MEMBROS_DO_BANCO[1], role: "member" },
-  ];
-
-  const { corpo } = await sondaProportions({
-    metodo: "GET",
-    user: USUARIO_A,
-    membros,
-    linhasDaProporcao: PROPORCOES_DO_BANCO,
-  });
-
-  const deA = corpo.proportions.find((p) => p.member_id === MEMBRO_A);
-  const deB = corpo.proportions.find((p) => p.member_id === MEMBRO_B);
-
-  assert.equal(deA.total_income, 7000, "o admin ve a dele");
-  assert.equal(
-    "total_income" in deB,
-    false,
-    "e NAO a do outro membro, nem sendo admin do grupo"
-  );
-  assert.equal(JSON.stringify(corpo).includes("3000"), false);
-});
+// Os casos que moravam aqui foram embora com o arquivo que eles importavam --
+// rota que nao existe nao vaza. A garantia que os substitui e mais forte que
+// eles, e e um guard em vez de um caso: a secao 3 de
+// scripts/test-sugestao-de-divisao.mjs varre `app/`, `lib/`, `components/` e
+// `utils/` e exige ZERO leitor, ZERO escritor e ZERO `fetch` do caminho
+// aposentado -- inclusive um que alguem reintroduzisse em outro arquivo, que os
+// casos antigos (presos ao route.ts) nao alcancavam.
