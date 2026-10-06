@@ -8,16 +8,22 @@
 //
 // POR QUE ISTO EXISTE (HMO-263)
 // -----------------------------
-// Os alvos `test:*` disparavam 97 invocacoes de `tsc`, uma por suite. Medido
-// neste repositorio: 97 invocacoes = 285s, e as assercoes em si levam ~0,25s
-// cada. Ou seja ~89% do tempo das suites era o compilador: partida de processo
-// e, principalmente, reparsing dos MESMOS arquivos de lib/ -- 571 arquivos
-// distintos eram lidos 18.759 vezes no total.
+// Os alvos `test:*` disparavam uma invocacao de `tsc` por suite -- 98 hoje.
+// Cada uma pagava a partida do compilador e, principalmente, o reparse dos
+// MESMOS arquivos de lib/: 573 arquivos distintos lidos 18.368 vezes no total.
 //
 // Em um processo unico, com o AST de cada arquivo lido uma vez e reaproveitado
-// entre os 97 programas, os mesmos 97 alvos compilam em ~27s. A saida foi
-// comparada byte a byte com a dos 97 `tsc` separados: 468 arquivos emitidos,
-// zero diferencas, zero faltando, zero a mais.
+// entre os 98 programas, os mesmos 98 alvos compilam em ~28s contra 209s das
+// 98 invocacoes separadas. A saida foi comparada byte a byte: 98 diretorios,
+// 470 arquivos emitidos, zero diferencas, zero faltando, zero a mais.
+//
+// ONDE ISTO **NAO** AJUDA, E POR QUE
+// ----------------------------------
+// O ganho e do LOTE, e o lote so existe onde ha muitos alvos num processo. Os
+// blocos de controle negativo rodam a suite numa COPIA da arvore, uma vez por
+// mutante: um alvo, um processo, nada a compartilhar. La o caminho em processo
+// era 20% MAIS LENTO que o `tsc` -- travessia sem lote para pagar a conta. Por
+// isso o alvo frio e sozinho e delegado ao `tsc`; ver `compilarComTsc`.
 //
 // O QUE **NAO** FOI FEITO, DE PROPOSITO
 // -------------------------------------
@@ -48,6 +54,11 @@
 // manifesto que o mutante escreveu, e o alvo recompila outra vez. Isto e mais
 // forte que o `rm -rf .tmp-x` de antes, que dependia de o comando estar certo.
 //
+// E ha uma segunda trava, independente desta: manifesto so nasce de quem
+// semeia (o lote, e o `--semeia`). Na copia da arvore de um mutante nunca ha
+// manifesto, entao nem a decisao de reaproveitar e tomada ali -- compila-se
+// sempre. As duas travas protegem o mesmo mutante por caminhos diferentes.
+//
 // Mudanca de dependencia (os .d.ts de node_modules) nao entra arquivo por
 // arquivo: entra pelo hash do package-lock.json e pela versao do proprio tsc,
 // os dois dentro da impressao digital.
@@ -55,6 +66,7 @@
 
 import ts from "typescript";
 import { readFileSync, writeFileSync, existsSync, rmSync, mkdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -92,7 +104,16 @@ function lerFonteCompartilhada(nomeDoArquivo, versaoOuOpcoes, aoErrar) {
     if (aoErrar) aoErrar(String(erro));
     return undefined;
   }
-  const fonte = ts.createSourceFile(nomeDoArquivo, texto, versaoOuOpcoes, true);
+  // `setParentNodes: false` -- o ultimo argumento. Isto nao e detalhe: com
+  // `true`, o parser preenche o ponteiro de pai em CADA no da arvore, e medido
+  // aqui isso custa 667ms dos 1.649ms de um alvo tipico (40%). Nada neste
+  // arquivo caminha a arvore para cima: so emitimos e pedimos diagnosticos, e
+  // os dois usam a arvore de cima para baixo. A saida emitida com `true` e com
+  // `false` foi comparada byte a byte: identica.
+  //
+  // Quem mexer aqui: `true` volta a ser necessario so se alguem passar a usar
+  // `node.parent` neste arquivo, o que nao e o caso.
+  const fonte = ts.createSourceFile(nomeDoArquivo, texto, versaoOuOpcoes, false);
   cacheDeFontes.set(chave, fonte);
   fontesLidas++;
   return fonte;
@@ -113,7 +134,7 @@ function resolverInvocacao(argumentos) {
       },
     });
     if (!lido) throw new Error(`nao consegui ler ${linha.options.project}: ${problema ?? "motivo desconhecido"}`);
-    return { opcoes: lido.options, raizes: lido.fileNames, tsconfig: caminho };
+    return { opcoes: lido.options, raizes: lido.fileNames, tsconfig: caminho, argumentos };
   }
   if (linha.fileNames.length === 0) throw new Error("nenhum arquivo e nenhum -p na linha de comando");
 
@@ -125,7 +146,7 @@ function resolverInvocacao(argumentos) {
     throw new Error(`raiz que nao e .ts/.tsx: ${estranhas.join(", ")} -- faltou o -p?`);
   }
 
-  return { opcoes: linha.options, raizes: linha.fileNames, tsconfig: undefined };
+  return { opcoes: linha.options, raizes: linha.fileNames, tsconfig: undefined, argumentos };
 }
 
 function sha(conteudo) {
@@ -213,14 +234,43 @@ const hostDeFormatacao = {
   getNewLine: () => ts.sys.newLine,
 };
 
+/** O `tsc` deste repositorio, nao o que estiver no PATH de quem chamou. */
+const TSC = path.join(RAIZ, "node_modules", "typescript", "bin", "tsc");
+
+/**
+ * Delega ao `tsc` de verdade, com os MESMOS argumentos que o alvo sempre usou.
+ *
+ * E o caminho do alvo frio e sozinho. Os diagnosticos saem pelo stdio herdado,
+ * entao a mensagem de erro que a pessoa le e exatamente a de antes da HMO-263.
+ */
+function compilarComTsc({ argumentos, rotulo }) {
+  if (!argumentos) throw new Error(`${rotulo}: sem os argumentos originais para repassar ao tsc`);
+  const r = spawnSync(process.execPath, [TSC, ...argumentos], { cwd: RAIZ, stdio: "inherit" });
+  if (r.error) throw r.error;
+  return { erros: r.status === 0 ? 0 : 1, aproveitado: false, viaTsc: true };
+}
+
 /**
  * Compila um alvo de verdade. Devolve o numero de erros.
  *
  * Apaga o outDir antes de emitir: se o `include` de um alvo encolheu, um .js
  * orfao de ontem continuaria ali e um teste poderia importa-lo sem ninguem
  * notar.
+ *
+ * `semear` diz se esta compilacao deve deixar manifesto. Quem semeia e o lote
+ * (`--todas`), que e o unico que tem o que compartilhar: num processo com 98
+ * programas, o AST de cada arquivo de lib/ e parseado uma vez e reaproveitado.
+ *
+ * Um alvo sozinho e frio (sem manifesto para conferir) NAO passa por aqui --
+ * ele e delegado ao `tsc`, veja `compilarComTsc`. Medido: o caminho em processo
+ * leva ~1,9s contra ~1,6s do `tsc` num alvo tipico, porque sem o lote nao ha
+ * reaproveitamento de parse nenhum para pagar a conta -- so uma travessia a
+ * mais. Isso importa num lugar especifico: os controles negativos rodam a
+ * suite numa COPIA da arvore, em diretorio temporario, uma vez por mutante.
+ * La nunca ha manifesto, entao eram 24 blocos pagando a travessia e nao
+ * recebendo nada -- medido, 20% mais lentos que antes da HMO-263.
  */
-function compilarAlvo({ opcoes, raizes, tsconfig, rotulo }) {
+function compilarAlvo({ opcoes, raizes, tsconfig, rotulo, argumentos, semear = false }) {
   const outDir = opcoes.outDir
     ? path.resolve(opcoes.outDir)
     : (() => {
@@ -235,6 +285,18 @@ function compilarAlvo({ opcoes, raizes, tsconfig, rotulo }) {
 
   rmSync(outDir, { recursive: true, force: true });
   mkdirSync(outDir, { recursive: true });
+
+  // Frio e fora do lote: o `tsc` faz o mesmo mais rapido. A saida dos dois
+  // caminhos foi comparada byte a byte nos 98 alvos (470 arquivos, zero
+  // diferencas), e e por isso que alternar entre eles e seguro.
+  //
+  // Nao deixa manifesto de proposito: o outDir acabou de ser apagado, entao
+  // nao sobra artefato de antes, e a proxima chamada recompila em vez de
+  // confiar num manifesto que este caminho nao sabe preencher. Errar para o
+  // lado de recompilar e o unico erro aceitavel aqui.
+  if (!semear) {
+    return compilarComTsc({ argumentos, rotulo });
+  }
 
   const host = ts.createCompilerHost(opcoes);
   host.getSourceFile = lerFonteCompartilhada;
@@ -352,7 +414,7 @@ if (argv[0] === "--todas") {
   for (const alvo of alvos) {
     let r;
     try {
-      r = compilarAlvo(alvo);
+      r = compilarAlvo({ ...alvo, semear: true });
     } catch (erro) {
       // Um alvo que estoura nao pode derrubar o lote calado: os outros 96
       // ficariam sem compilar e cada suite acharia que so precisava recompilar
@@ -381,12 +443,20 @@ if (argv[0] === "--todas") {
 
 // Modo de um alvo: os mesmos argumentos que o `tsc` recebia.
 //
+// Com `--semeia` na frente, este alvo compila em processo e DEIXA manifesto --
+// e o que o lote faz com cada um dos 98. Fora do lote isto so serve para
+// aquecer um alvo de proposito, e e como a suite do proprio compila.mjs monta
+// o estado "ja compilado" que ela precisa para conferir o reaproveitamento.
+// Sem a flag, um alvo frio e delegado ao `tsc` e nao deixa manifesto.
+//
 // A linha de saida diz qual dos dois caminhos foi tomado. Nao e enfeite: e o
 // que permite ler num log de CI se o lote esta sendo aproveitado, e e o que
 // mostra, dentro de um bloco de controle negativo, que a mutacao FORCOU
 // recompilacao em vez de rodar sobre o artefato de antes.
 try {
-  const alvo = { rotulo: "alvo", ...resolverInvocacao(argv) };
+  const semear = argv[0] === "--semeia";
+  const resto = semear ? argv.slice(1) : argv;
+  const alvo = { rotulo: "alvo", ...resolverInvocacao(resto), semear };
   const saida = path.relative(RAIZ, path.resolve(alvo.opcoes.outDir ?? "."));
   const r = compilarAlvo(alvo);
   if (r.erros > 0) process.exit(1);

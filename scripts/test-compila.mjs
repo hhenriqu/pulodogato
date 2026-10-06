@@ -3,11 +3,11 @@
 // POR QUE ESTA SUITE EXISTE
 // -------------------------
 // Antes da HMO-263, cada alvo `test:*` comecava com `rm -rf .tmp-<nome>` e
-// compilava do zero. Era lento (97 invocacoes de tsc, 285s) mas tinha uma
-// propriedade barata de enxergar: a suite SEMPRE rodava sobre o codigo de
+// compilava do zero. Era lento (98 invocacoes de tsc, 209s medidos) mas tinha
+// uma propriedade barata de enxergar: a suite SEMPRE rodava sobre o codigo de
 // agora.
 //
-// Agora um lote compila os 97 de uma vez e cada alvo reaproveita a saida. Isso
+// Agora um lote compila os 98 de uma vez e cada alvo reaproveita a saida. Isso
 // troca tempo por uma decisao: "esta saida ainda vale?". Se essa decisao errar
 // para o lado do "vale", o estrago e o pior tipo deste repositorio -- um
 // controle negativo ficaria verde sobre o artefato de antes, e o rotulo do
@@ -19,6 +19,10 @@
 // que prova que a decisao nao e por data de modificacao -- uma implementacao
 // por mtime passaria no 3 e falharia no 4, e seria fragil justamente onde o
 // git mexe em mtime sem mexer em conteudo.
+//
+// Os dois ultimos casos cuidam do caminho FRIO, que e o dos mutantes: alvo sem
+// manifesto compila pelo `tsc` e nao deixa estado aproveitavel, e os dois
+// caminhos de emissao tem que produzir o mesmo byte.
 //
 // A fixture vive dentro do repositorio de proposito: o `compila.mjs` so
 // hasheia entradas abaixo da raiz (fora dela sao dependencias, cobertas pelo
@@ -71,12 +75,22 @@ function montarFixture({ somaErrada = false } = {}) {
   );
 }
 
-/** Roda o compila.mjs na fixture. Devolve { saida, codigo, aproveitou }. */
-function compilar() {
+/**
+ * Roda o compila.mjs na fixture. Devolve { saida, codigo, aproveitou }.
+ *
+ * `semear: true` e o que o lote (`--todas`) faz com cada alvo: compila em
+ * processo e deixa manifesto. Sem ele, um alvo frio e delegado ao `tsc` e nao
+ * deixa manifesto -- entao os casos que conferem reaproveitamento precisam
+ * SEMEAR primeiro, senao estariam medindo um estado que nunca existe.
+ */
+function compilar({ semear = false } = {}) {
   let saida;
   let codigo = 0;
+  const args = ["scripts/compila.mjs"];
+  if (semear) args.push("--semeia");
+  args.push("-p", path.relative(RAIZ, TSCONFIG));
   try {
-    saida = execFileSync("node", ["scripts/compila.mjs", "-p", path.relative(RAIZ, TSCONFIG)], {
+    saida = execFileSync("node", args, {
       cwd: RAIZ,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
@@ -92,7 +106,7 @@ const manifesto = () => path.join(SAIDA, ".compilado.json");
 
 test("compila do zero, emite o JS e deixa um manifesto", () => {
   montarFixture();
-  const r = compilar();
+  const r = compilar({ semear: true });
   assert.equal(r.codigo, 0, `compila.mjs devia ter passado:\n${r.saida}`);
   assert.equal(r.aproveitou, false, "a primeira compilacao nao tem o que aproveitar");
   assert.ok(existsSync(path.join(SAIDA, "principal.js")), "o JS emitido tem que existir");
@@ -105,7 +119,7 @@ test("compila do zero, emite o JS e deixa um manifesto", () => {
 
 test("a segunda chamada aproveita, sem recompilar", () => {
   montarFixture();
-  assert.equal(compilar().codigo, 0);
+  assert.equal(compilar({ semear: true }).codigo, 0);
   const r = compilar();
   assert.equal(r.codigo, 0, `a segunda chamada devia passar:\n${r.saida}`);
   assert.equal(r.aproveitou, true, `a segunda chamada devia ter aproveitado:\n${r.saida}`);
@@ -113,7 +127,7 @@ test("a segunda chamada aproveita, sem recompilar", () => {
 
 test("mudar o CONTEUDO de uma entrada forca recompilacao -- e o que mata o mutante", () => {
   montarFixture();
-  assert.equal(compilar().codigo, 0);
+  assert.equal(compilar({ semear: true }).codigo, 0);
   assert.equal(compilar().aproveitou, true, "pre-condicao: estava aproveitando");
 
   // O mutante: troca `a + b` por `a - b`, como um controle negativo faria.
@@ -132,7 +146,7 @@ test("mudar o CONTEUDO de uma entrada forca recompilacao -- e o que mata o mutan
 
 test("voltar a fonte ao original tambem forca recompilacao -- o restore do mutante", () => {
   montarFixture();
-  assert.equal(compilar().codigo, 0);
+  assert.equal(compilar({ semear: true }).codigo, 0);
 
   const arquivo = path.join(FONTES, "soma.ts");
   const original = readFileSync(arquivo, "utf8");
@@ -148,10 +162,10 @@ test("voltar a fonte ao original tambem forca recompilacao -- o restore do mutan
 
 test("mexer so na DATA do arquivo nao recompila: a decisao e por conteudo", () => {
   montarFixture();
-  assert.equal(compilar().codigo, 0);
+  assert.equal(compilar({ semear: true }).codigo, 0);
 
   // Um `git checkout` mexe em mtime sem mexer em conteudo. Uma implementacao
-  // por data recompilaria os 97 alvos aqui e devolveria os 285s.
+  // por data recompilaria os 98 alvos aqui e devolveria os 209s.
   const arquivo = path.join(FONTES, "soma.ts");
   const daqui = new Date(Date.now() + 60_000);
   utimesSync(arquivo, daqui, daqui);
@@ -161,7 +175,7 @@ test("mexer so na DATA do arquivo nao recompila: a decisao e por conteudo", () =
 
 test("apagar um arquivo emitido forca recompilacao", () => {
   montarFixture();
-  assert.equal(compilar().codigo, 0);
+  assert.equal(compilar({ semear: true }).codigo, 0);
   rmSync(path.join(SAIDA, "principal.js"));
 
   const r = compilar();
@@ -171,7 +185,7 @@ test("apagar um arquivo emitido forca recompilacao", () => {
 
 test("mudar o tsconfig forca recompilacao", () => {
   montarFixture();
-  assert.equal(compilar().codigo, 0);
+  assert.equal(compilar({ semear: true }).codigo, 0);
 
   const cfg = JSON.parse(readFileSync(TSCONFIG, "utf8"));
   cfg.compilerOptions.target = "es2017";
@@ -210,6 +224,40 @@ test("raiz que nao e .ts reprova em vez de compilar nada em silencio", () => {
   }
   assert.equal(codigo, 1, `devia reprovar, e saiu:\n${saida}`);
   assert.match(saida, /nao e \.ts/, "a mensagem tem que dizer qual e o problema");
+});
+
+test("alvo frio, fora do lote, compila pelo tsc e nao deixa manifesto", () => {
+  // Por que isto importa: os 24 blocos de controle negativo rodam a suite numa
+  // COPIA da arvore, em diretorio temporario, uma vez por mutante. La nunca ha
+  // manifesto, entao o caminho em processo seria travessia pura sem nenhum
+  // reaproveitamento para pagar a conta -- medido, 20% mais lento que o `tsc`.
+  //
+  // Nao deixar manifesto tambem e a parte segura: o estado aproveitavel so e
+  // criado por quem sabe preenche-lo, e na duvida recompila-se.
+  montarFixture();
+  const r = compilar();
+  assert.equal(r.codigo, 0, `o alvo frio devia compilar:\n${r.saida}`);
+  assert.equal(r.aproveitou, false, "frio nao tem o que aproveitar");
+  assert.ok(existsSync(path.join(SAIDA, "principal.js")), "o JS tem que ser emitido pelo tsc");
+  assert.equal(existsSync(manifesto()), false, "o caminho frio nao deixa manifesto");
+
+  // E por nao deixar manifesto, a chamada seguinte tambem e fria -- nunca
+  // aproveita um estado que nao foi semeado.
+  assert.equal(compilar().aproveitou, false, "sem semear, nunca aproveita");
+});
+
+test("o tsc e o caminho em processo emitem o MESMO byte", () => {
+  // A troca entre os dois caminhos so e segura porque a saida e a mesma. Esta
+  // assercao e o que impede os dois de divergirem sem ninguem ver.
+  montarFixture();
+  assert.equal(compilar().codigo, 0, "primeiro pelo tsc");
+  const peloTsc = readFileSync(path.join(SAIDA, "soma.js"), "utf8");
+
+  montarFixture();
+  assert.equal(compilar({ semear: true }).codigo, 0, "agora em processo");
+  const emProcesso = readFileSync(path.join(SAIDA, "soma.js"), "utf8");
+
+  assert.equal(emProcesso, peloTsc, "os dois caminhos tem que emitir identico");
 });
 
 test("o lote entende a invocacao de TODOS os alvos test:* do package.json", () => {

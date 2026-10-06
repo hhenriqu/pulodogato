@@ -85,20 +85,26 @@ jobs:
 
       # A COMPILACAO DAS SUITES, UMA VEZ SO (HMO-263).
       #
-      # Os alvos test:* disparavam 97 invocacoes de tsc, uma por suite: 285s
-      # medidos, contra ~0,25s de assercao cada. O custo era a partida do
-      # compilador e o reparse dos MESMOS arquivos de lib/ -- 571 arquivos
-      # distintos lidos 18.759 vezes.
+      # Os alvos test:* disparavam uma invocacao de tsc por suite -- 98 hoje,
+      # 209s medidos. O custo era a partida do compilador e o reparse dos
+      # MESMOS arquivos de lib/: 573 arquivos distintos lidos 18.368 vezes.
       #
-      # Aqui os 97 saem de um processo unico que reaproveita o AST ja parseado:
-      # ~26s. Cada alvo continua sendo seu proprio programa, com o seu tsconfig
+      # Aqui os 98 saem de um processo unico que reaproveita o AST ja parseado:
+      # ~28s. Cada alvo continua sendo seu proprio programa, com o seu tsconfig
       # e o seu outDir -- nao ha uniao de include, porque varios tsconfig sao
       # estreitos de proposito (provam que um modulo compila SEM um import).
+      # A saida foi comparada byte a byte com a dos 98 tsc separados: 98
+      # diretorios, 470 arquivos, zero diferencas.
       #
       # Depois daqui, cada `npm run test:*` encontra a saida dele pronta e so
       # roda as assercoes. O reaproveitamento e por sha256 das ENTRADAS, entao
       # um mutante de controle negativo muda o hash e FORCA recompilacao: ele
       # nao pode morrer verde sobre o artefato de antes.
+      #
+      # O que este passo NAO acelera: os blocos de controle negativo. Eles
+      # rodam a suite numa COPIA da arvore, uma vez por mutante -- um alvo, um
+      # processo, nada a compartilhar. La o alvo e delegado ao tsc, para ficar
+      # exatamente na velocidade de antes em vez de pagar travessia sem lote.
       - name: Compilar a saida de todas as suites de uma vez, num processo so
         run: npm run compila-suites
 
