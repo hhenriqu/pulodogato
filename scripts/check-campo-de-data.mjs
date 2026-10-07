@@ -33,7 +33,7 @@
 // ----------------
 //   1. nenhum `type="date"` fora do allow-list -- um so, o picker escondido que
 //      vive DENTRO de `CampoDeData` e onde ninguem digita;
-//   2. um PISO de chamadas de `<CampoDeData`, porque a peneira 1 sozinha passa
+//   2. a CONTAGEM EXATA de chamadas de `<CampoDeData`, porque a peneira 1 sozinha passa
 //      verde quando o campo e simplesmente APAGADO da tela. Campo que sumiu nao
 //      e campo nativo, e tambem nao e a feature;
 //   3. o par do seletor de periodo tem de ser ALCANCAVEL pelo menu (HMO-243).
@@ -69,15 +69,28 @@ const RAIZES = ["app", "components"];
 const PERMITIDO = "components/ui/campo-de-data.tsx";
 
 /**
- * O piso de chamadas de `<CampoDeData`: 2 da HMO-238 (tela de lancamento) + 8
- * da HMO-240 (seletor de periodo, metas x2, transferencia, conta avulsa,
- * lancamento de investimento, despesa de grupo).
+ * A contagem esperada de chamadas de `<CampoDeData`: 2 da HMO-238 (tela de lancamento) + 8
+ * da HMO-240 (seletor de periodo x2, metas x2, transferencia, conta avulsa,
+ * lancamento de investimento, despesa de grupo) + 2 da HMO-192 (renda fixa da
+ * carteira) + 1 da HMO-324 (linha de edicao da lista).
  *
- * Piso e nao igualdade: tela nova com campo de data sobe o numero e nao tem por
- * que mexer aqui. O que ele pega e a queda -- um campo que desaparece da tela
- * deixaria a peneira 1 verde por nao ter mais nada para acusar.
+ * O numero ACOMPANHA a arvore, e campo novo obriga a subir ele aqui.
+ * A versao anterior dizia o contrario -- "tela nova sobe o numero e nao tem por
+ * que mexer aqui" -- e foi assim que ele parou de pegar a queda que justifica a
+ * existencia dele: a HMO-192 (+2) e a HMO-324 (+1) entraram sem tocar no piso,
+ * a arvore chegou a 13 chamadas contra um piso de 10, e essa folga de 3 era
+ * exatamente quantos campos de data podiam desaparecer da tela com o guard
+ * verde. A sonda de controle de `verificacao` apaga UM campo e exige vermelho:
+ * com folga ela nao tinha como passar, e so nao acusou antes porque o Actions
+ * estava travado na cobranca (HMO-242) e o workflow nunca rodou.
+ *
+ * Folga zero e o que torna a sonda honesta, e por isso aqui e IGUALDADE e nao
+ * piso: com piso, a folga volta no primeiro campo novo que entrar sem mexer
+ * neste arquivo, e a sonda volta a passar verde sobre um campo apagado -- em
+ * silencio, do mesmo jeito. Igualdade falha ALTO nas duas direcoes e obriga a
+ * decisao a passar por aqui, com o motivo, sempre.
  */
-const PISO_DE_CHAMADAS = 10;
+const CHAMADAS_ESPERADAS = 13;
 
 const ATRIBUTO_DE_DATA = /type\s*=\s*(?:["']date["']|\{\s*["']date["']\s*\})/gi;
 
@@ -221,12 +234,21 @@ if (!existsSync(SELETOR)) {
   }
 }
 
-if (chamadas < PISO_DE_CHAMADAS) {
+if (chamadas < CHAMADAS_ESPERADAS) {
   console.error(
-    `XX so ${chamadas} chamada(s) de <CampoDeData, e o piso e ${PISO_DE_CHAMADAS}.\n` +
+    `XX so ${chamadas} chamada(s) de <CampoDeData, e o esperado e ${CHAMADAS_ESPERADAS}.\n` +
       "   Um campo de data saiu da tela. Se a remocao e intencional, baixe o\n" +
-      "   piso NESTE arquivo, com o motivo -- e nao em silencio: sem o piso a\n" +
+      "   numero NESTE arquivo, com o motivo -- e nao em silencio: sem ele a\n" +
       "   peneira de cima passa verde justamente quando nao ha mais campo."
+  );
+  falhou = true;
+} else if (chamadas > CHAMADAS_ESPERADAS) {
+  console.error(
+    `XX ${chamadas} chamadas de <CampoDeData, e o esperado e ${CHAMADAS_ESPERADAS}.\n` +
+      "   Campo de data novo e bem-vindo -- mas SOBE o numero NESTE arquivo,\n" +
+      "   com o motivo. Deixar a folga crescer e o que desarma a peneira de\n" +
+      "   cima: com folga de N, N campos podem desaparecer da tela com este\n" +
+      "   guard verde, e a sonda de controle de `verificacao` para de pegar."
   );
   falhou = true;
 }
@@ -235,6 +257,6 @@ if (falhou) process.exit(1);
 
 console.log(
   `OK: nenhum campo de data nativo na tela (${arquivosVistos} arquivos .tsx), ` +
-    `${chamadas} chamadas de <CampoDeData (piso ${PISO_DE_CHAMADAS}), ` +
+    `${chamadas} chamadas de <CampoDeData (esperado ${CHAMADAS_ESPERADAS}), ` +
     `e o par do seletor alcancavel pelo menu (${REGRAS_DO_SELETOR.length} regras).`
 );
