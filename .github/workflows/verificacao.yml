@@ -5622,6 +5622,88 @@ jobs:
           fi
 
       # =======================================================================
+      # A PARTE E O RATEIO DA DESPESA DE GRUPO: OS DOIS RUNNERS QUE VIRAM STEP
+      # origem: nova (HMO-329, triagem da divida da HMO-322 -- lote 1/4)
+      # =======================================================================
+      # A HMO-322 achou 43 runners de mutante que nenhum workflow invocava. A
+      # regra de triagem (decisao do Helio em 2026-10-07) inverte o onus: apagar
+      # e o DEFAULT, e ganhar step e a excecao que precisa defender a afirmacao
+      # medida. Estes dois a defendem, e sao os dois mais baratos do lote.
+      #
+      # POR QUE ESTES DOIS, E NAO OS OUTROS SETE DO LOTE
+      # ------------------------------------------------
+      # `lib/parte-do-grupo.ts` e `lib/divisao-do-grupo.ts` sao a aritmetica de
+      # "quanto desta conta e minha" e "como ela se reparte entre os membros". E
+      # a familia que JA custou dinheiro neste repositorio, repetidamente -- e
+      # cada defeito dela e silencioso, porque o numero errado sai formatado em
+      # reais e a barra enche do mesmo jeito:
+      #
+      #   * o tipo que a tela manda caindo em divisao IGUAL sem erro: o grupo
+      #     combinado em 70/30 grava 50/50 e a tela diz "sucesso" (HMO-190);
+      #   * a parte voltando a ser o valor CHEIO -- o defeito da HMO-177 -- que
+      #     infla o custo fixo; e o inverso, que e pior, porque um custo fixo
+      #     subestimado faz o safe-to-spend PROMETER dinheiro que nao sobra;
+      #   * membro em 0% com parte zerada, que derruba o INSERT inteiro em 23514
+      #     porque `group_members.percentage` aceita 0 e `expense_splits.
+      #     percentage` exige `> 0`;
+      #   * membro repetido na lista, que cobra a mesma pessoa duas vezes.
+      #
+      # `lib/parte-do-grupo.ts` e a entrada do safe-to-spend desde a HMO-306, que
+      # acabou de entrar: e o numero de maior destaque do painel.
+      #
+      # MEDIDO AO ESCREVER ISTO, e com a carga anotada de proposito, porque fome
+      # de CPU falsifica medida de tempo (um lote anterior leu "120s exatos" em
+      # quatro runners seguidos e era carga 40 em 2 nucleos):
+      #
+      #   parte-do-grupo     12 mutantes, 12 mortos, 28s (load 1,77 / 2 nucleos)
+      #   divisao-do-grupo   28 mutantes, 28 mortos, 77s (load 2,76 / 2 nucleos)
+      #
+      # Os outros sete do lote tambem matam 100%, e e por isso que nenhum deles
+      # foi apagado -- mas juntos custam ~7 min por PR, que a franquia de 2.000
+      # min/mes (HMO-261) nao absorve. O caminho deles e a migracao para o motor
+      # de bloco da HMO-319, que ja mediu -66% ao compartilhar UMA compilacao.
+      #
+      # NAO ABRE JOB NOVO: o custo de CI deste projeto e o NUMERO de jobs, cada
+      # um arredondado para o minuto cheio, e nao o minuto a mais num job que ja
+      # existe. Sao 105s somados dentro de um job que ja esta de pe.
+      #
+      # SEM `paths:`, como o resto deste workflow -- e aqui isso importa mais que
+      # o normal: as suites `test:parte-do-grupo` e `test:divisao-do-grupo` so
+      # tem passo no db-verify.yml, que E filtrado por path. Foi exatamente assim
+      # que tres suites deste repositorio ficaram paradas em verde.
+      #
+      # POR QUE O RUNNER INTEIRO, E NAO UM SUBCONJUNTO EM `sed` AQUI NO YAML
+      # -------------------------------------------------------------------
+      # Porque o runner carrega a trava que o `sed` escrito a mao nao tem: ele
+      # exige que a ancora apareca EXATAMENTE UMA VEZ e que o arquivo tenha
+      # mudado de verdade, e ACUSA quando a ancora morre em vez de dar o mutante
+      # por morto. Esta mesma issue consertou duas ancoras mortas descobertas
+      # assim -- uma morta desde a HMO-303 e outra desde a HMO-179. Um bloco de
+      # `sed` inline no lugar delas teria ficado verde mentindo.
+      - name: Os mutantes da minha parte da despesa de grupo
+        run: npm run mutantes:parte-do-grupo
+
+      - name: Os mutantes do rateio da despesa entre os membros
+        run: npm run mutantes:divisao-do-grupo
+
+      # Os dois runners acima ESCREVEM no fonte e restauram no fim (nenhum dos
+      # dois usa `criarBlocoDeMutantes` ainda). Um `process.exit` dentro de um
+      # try pularia o finally e deixaria lib/ mutado -- e dali em diante todo
+      # passo seguinte mediria o arquivo errado, verde. Este passo e o que
+      # transforma isso em reprovacao.
+      - name: 'A arvore voltou ao lugar depois dos mutantes da parte e do rateio de grupo'
+        run: |
+          # O `.tmp-*` compilado guarda o mutante mesmo depois do restore do
+          # fonte, e o passo seguinte leria o compilado velho.
+          rm -rf .tmp-*
+          git status --porcelain > "$RUNNER_TEMP/arvore-agora.txt"
+          if ! diff -q "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" > /dev/null; then
+            echo "::error::Um dos dois runners acima nao restaurou a arvore -- procure por um .bak esquecido em lib/."
+            diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
+            exit 1
+          fi
+
+      # =======================================================================
       # O ELO DA FATURA: OS MUTANTES DA DETECCAO
       # origem: nova (HMO-307, divida nomeada da HMO-305)
       # =======================================================================

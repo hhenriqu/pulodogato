@@ -231,11 +231,69 @@ export const FORA_DO_CI = {
   // nao-triado: a divida da HMO-322. Cada linha daqui tem de virar um dos
   // motivos acima, um step de workflow, ou um `git rm` -- e o TETO cai junto.
   // ---------------------------------------------------------------------
-  "scripts/mutantes-cartao-orcamento-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
-  "scripts/mutantes-divisao-do-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
-  "scripts/mutantes-divisao-ui-dom.mjs": { motivo: "nao-triado", porque: "HMO-322" },
-  "scripts/mutantes-orcamento-de-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
-  "scripts/mutantes-parte-do-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
-  "scripts/mutantes-semeadura.mjs": { motivo: "nao-triado", porque: "HMO-322" },
-  "scripts/mutantes-sugestao-de-divisao.mjs": { motivo: "nao-triado", porque: "HMO-322" },
+  // `mutantes-divisao-do-grupo` e `mutantes-parte-do-grupo` SAIRAM desta lista
+  // na HMO-329: os dois tem step proprio no verificacao.yml. 40 mutantes, 40
+  // mortos, 105s somados, sem job novo.
+  //
+  // Os cinco abaixo sao o resto do lote 1/4, e a palavra `nao-triado` ja nao
+  // descreve bem o estado deles: FORAM medidos, todos matam 100%, e nenhum e
+  // falsa cobertura. O que falta e CABER. Juntos custam ~7 min por PR, e a
+  // franquia e de 2.000 min/mes (HMO-261). O caminho deles e a migracao para o
+  // motor de bloco da HMO-319 -- que ja mediu -66% ao compartilhar uma
+  // compilacao entre os mutantes de um bloco --, e depois o step. Nenhum deles
+  // merece `git rm`: o default de apagar vale para quem nao tem quem defenda a
+  // afirmacao, e estes cinco tem.
+  "scripts/mutantes-cartao-orcamento-grupo.mjs": {
+    motivo: "nao-triado",
+    porque:
+      "HMO-322. Medido na HMO-329: 16 mutantes, 16 mortos, 72s (load 4,39 / 2 " +
+      "nucleos) -- e NAO os '>120s' que a issue do lote supunha: aquele numero era " +
+      "fome de CPU, nao custo do runner. Mede o 'nao fazer' literal da HMO-180 " +
+      "(refazer a soma dentro do JSX, com as duas telas mostrando percentuais " +
+      "diferentes para a mesma viagem) e o mes passando por `new Date()`, que no " +
+      "fuso de Sao Paulo joga o dia 01 para o mes anterior. Espera a migracao para " +
+      "o bloco da HMO-319.",
+  },
+  "scripts/mutantes-divisao-ui-dom.mjs": {
+    motivo: "nao-triado",
+    porque:
+      "HMO-322. Medido na HMO-329: 18 mutantes, 18 mortos, 84s (load 4,39 / 2 " +
+      "nucleos). Mede a FIACAO do painel, que e o que nenhum teste de " +
+      "`react-dom/server` ve, porque `onChange` nao sai no HTML -- inclusive o " +
+      "campo voltando a `type=number`, que descarta a virgula e zera a parte do " +
+      "membro, e os dois portoes de admin (o campo e o Salvar liberando para quem " +
+      "nao e admin). Precisa de navegador. Espera a migracao para o bloco da " +
+      "HMO-319; nao e candidato a `git rm`.",
+  },
+  "scripts/mutantes-orcamento-de-grupo.mjs": {
+    motivo: "nao-triado",
+    porque:
+      "HMO-322. Medido na HMO-329: 21 mutantes, 21 mortos, 84s (load 4,49 / 2 " +
+      "nucleos). O teto de grupo caindo no balde PESSOAL da um 'ja gastei' alto " +
+      "que cresce a cada membro novo da viagem, sem erro e sem cor diferente; e o " +
+      "group_id perdido na copia do carry-forward faz o teto da viagem virar " +
+      "pessoal no mes seguinte. Espera a migracao para o bloco da HMO-319.",
+  },
+  "scripts/mutantes-semeadura.mjs": {
+    motivo: "nao-triado",
+    porque:
+      "HMO-322. Medido na HMO-329: 23 mutantes, 23 mortos, 124s (load 2,21 / 2 " +
+      "nucleos) -- o mais caro do lote, porque usa DUAS suites e uma delas precisa " +
+      "de navegador. Alem do dinheiro, ele e o unico do lote que mede " +
+      "AUTORIZACAO: a leitura privilegiada perdendo o `.in(user_id)` (a service " +
+      "role passa a ler o app inteiro), o portao de pertencimento caindo (quem nao " +
+      "e do grupo recebe a divisao dele) e o botao de semear aparecendo para quem " +
+      "nao e admin. Espera a migracao para o bloco da HMO-319.",
+  },
+  "scripts/mutantes-sugestao-de-divisao.mjs": {
+    motivo: "nao-triado",
+    porque:
+      "HMO-322. Medido na HMO-329: 17 mutantes, 17 mortos, 56s (load 2,10 / 2 " +
+      "nucleos) -- depois de consertar a ancora da tela, morta desde a HMO-179 " +
+      "(o `: any` do callback saiu e a ancora foi com ele; o runner ACUSOU em vez " +
+      "de dar o mutante por morto). Mede a sugestao configurada voltando a ser " +
+      "codigo morto -- o estado de ANTES da HMO-273 -- e a parte de 0% voltando ao " +
+      "corpo do POST, que faz o lancamento falhar sempre. Espera a migracao para " +
+      "o bloco da HMO-319.",
+  },
 };

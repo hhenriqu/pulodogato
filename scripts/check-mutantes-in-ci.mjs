@@ -90,7 +90,7 @@ const DECLARACAO = "scripts/declaracao-de-mutantes-fora-do-ci.mjs";
  * step no db-verify.yml), 9 com o lote 2/4 (HMO-330: quatro apagados, quatro
  * com step -- dois deles TypeScript, ao lado da propria suite).
  */
-const TETO_NAO_TRIADO = 7;
+const TETO_NAO_TRIADO = 5;
 
 const erros = [];
 const avisos = [];
