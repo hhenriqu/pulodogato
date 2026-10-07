@@ -4879,7 +4879,21 @@ jobs:
           # 3) TODA LINHA VIRA LINK. Linha que PARECE clicavel e nao e custa
           #    mais que linha que nao parece: a pessoa toca, nada acontece, e a
           #    conclusao natural e que o app travou.
-          sed -i 's|  if (linha.fatura) {|  if (true) {|' $SECAO
+          #
+          #    O ancora era `  if (linha.fatura) {` e apodreceu na HMO-311, que
+          #    moveu o criterio para dentro da linha e o transformou no ternario
+          #    de `destinoDoCartao`. O `mutou` abaixo pegaria isso -- ele existe
+          #    para isso -- mas pegaria como job vermelho, nao como aviso.
+          #
+          #    MUTA O LADO `: null`, E NAO A CONDICAO. Forcar a condicao para
+          #    `true` NAO COMPILA (`linha.fatura` fica possibly-null em
+          #    `caminhoDoCartaoNoMes(linha.fatura.accountId, ...)`), e mutante que
+          #    nao compila "morre" por erro de tipo sem nunca exercitar assercao
+          #    nenhuma -- indistinguivel de sonda que mede a fonte intacta. Pelo
+          #    lado do `else` toda linha ganha um destino de verdade, a suite
+          #    compila, e quem fica vermelho sao as assercoes certas: "a despesa
+          #    comum NAO e link" e "a previsao LIGADA AO ELO nao ganha o link".
+          sed -i 's|      : null;|      : "/dashboard/cartoes";|' $SECAO
           mutou $SECAO 3
           if npm run test:secao-da-tela > /dev/null 2>&1; then
             echo "::error::Verde com TODA linha virando <a>."
@@ -5271,12 +5285,19 @@ jobs:
         run: |
           set -uo pipefail
           LIB=lib/realizado-do-caixa.ts
+          # O DONO do criterio "esta linha e pagamento de fatura" (HMO-265). O
+          # sinal estrito do mutante 3 mora AQUI desde que a copia local saiu
+          # deste arquivo -- ver o cabecalho de `ehPagamentoDaFatura`.
+          DONO=lib/telas-de-movimentacao.ts
           cp $LIB $LIB.orig
-          trap 'mv $LIB.orig $LIB' EXIT
+          cp $DONO $DONO.orig
+          trap 'mv $LIB.orig $LIB; mv $DONO.orig $DONO' EXIT
 
+          # Recebe o ARQUIVO, porque os mutantes desta sonda nao estao todos no
+          # mesmo: o 3 planta no dono do criterio, nao em `realizado-do-caixa`.
           mutou() {
-            if cmp -s $LIB $LIB.orig; then
-              echo "::error::o sed de '$1' nao casou nada -- o mutante nao foi aplicado e o passo mediria a fonte intacta"
+            if cmp -s "$1" "$1.orig"; then
+              echo "::error::o sed de '$2' nao casou nada em $1 -- o mutante nao foi aplicado e o passo mediria a fonte intacta"
               exit 1
             fi
           }
@@ -5284,7 +5305,7 @@ jobs:
           # 1) O DEFEITO DESTA ISSUE, INTACTO. A compra no cartao conta no dia
           #    da compra E a fatura conta de novo no dia do pagamento.
           sed -i 's|if (ehCompraNoCartao(linha)) continue;|if (false) continue;|' $LIB
-          mutou "compra no cartao fica"
+          mutou $LIB "compra no cartao fica"
           if npm run test:realizado-do-caixa > /dev/null 2>&1; then
             echo "::error::Verde com a compra no cartao contada no dia da COMPRA, junto da fatura que ja a contem."
             exit 1
@@ -5293,8 +5314,13 @@ jobs:
 
           # 2) O CARTAO DESAPARECIDO (HMO-264). A fatura paga nao entra em lugar
           #    nenhum: o mes em que se pagou R$ 1.290 fica R$ 1.290 mais barato.
-          sed -i 's|if (ehSaidaDePagamentoDeFatura(linha)) {|if (false) {|' $LIB
-          mutou "fatura paga nao entra"
+          #
+          #    O ancora era `ehSaidaDePagamentoDeFatura`, a copia LOCAL do
+          #    criterio, que a HMO-265 apagou deste arquivo em favor do dono
+          #    unico (`ehPagamentoDaFatura`, importado). Renomeou-se a chamada,
+          #    e o ancora ficou para tras.
+          sed -i 's|if (ehPagamentoDaFatura(linha)) {|if (false) {|' $LIB
+          mutou $LIB "fatura paga nao entra"
           if npm run test:realizado-do-caixa > /dev/null 2>&1; then
             echo "::error::Verde com a fatura PAGA fora do Realizado: o cartao sumiu dos dois lados."
             exit 1
@@ -5304,13 +5330,20 @@ jobs:
           # 3) A FATURA EM DOBRO. As duas pernas do pagamento tem a mesma data,
           #    a mesma chave e o mesmo tipo, e `agregarTransacoes` aplica
           #    Math.abs antes de somar -- entao elas NAO se anulam.
-          sed -i 's|  return Number(linha.amount) < 0;|  return true;|' $LIB
-          mutou "as duas pernas entram"
+          #
+          #    PLANTA NO $DONO, E NAO EM $LIB. O sinal estrito era
+          #    `Number(linha.amount) < 0` dentro da copia local que a HMO-265
+          #    apagou; hoje a decisao e uma so, a ultima linha de
+          #    `ehPagamentoDaFatura`, e `crua` e o nome do parametro la.
+          sed -i 's|  return Number(crua.amount) < 0;|  return true;|' $DONO
+          mutou $DONO "as duas pernas entram"
           if npm run test:realizado-do-caixa > /dev/null 2>&1; then
             echo "::error::Verde com as DUAS pernas do pagamento somando: a fatura em dobro no total de despesas."
             exit 1
           fi
-          cp $LIB.orig $LIB
+          # Restaura o $DONO, que foi quem este mutante plantou. Restaurar $LIB
+          # aqui deixaria o mutante 4 medindo uma arvore AINDA mutada.
+          cp $DONO.orig $DONO
 
           # 4) A COLUNA QUE NINGUEM VE. `account_type` nao aparece na tela, e
           #    tirar do `select` nao quebra tsc nem assercao de unidade: a regra
@@ -5318,7 +5351,7 @@ jobs:
           #    filtrar, e o painel volta ao defeito. Foi este o modo de falha da
           #    HMO-260.
           sed -i 's|, account:financial_accounts(account_type)";|";|' $LIB
-          mutou "select sem o embed da conta"
+          mutou $LIB "select sem o embed da conta"
           if npm run test:realizado-do-caixa > /dev/null 2>&1; then
             echo "::error::Verde com a consulta SEM account_type: a regra nao tem como saber que a linha esta na fatura."
             exit 1
