@@ -58,6 +58,22 @@
 // O template NAO pode conter a 035: ela e `IF NOT EXISTS` / `IF NOT EXISTS` na
 // constraint, entao aplicar um mutante sobre um banco que ja tem a versao boa
 // vira no-op e TODO mutante "sobrevive" por motivo nenhum.
+//
+// E O CONTROLE NEGATIVO E QUEM CONFERE ISSO (HMO-331)
+// ---------------------------------------------------
+// Nao da para confiar na receita: um template montado por engano COM a 035
+// deixa todo mutante sobreviver como no-op, e o placar sai cheio sem ter medido
+// nada. Por isso a primeira coisa que este runner faz e rodar o teste num clone
+// do template SEM aplicar a 035 -- e exigir que ele REPROVE. Se passar, o
+// runner para e diz que o placar nao vale.
+//
+// NO CI, O TEMPLATE E UM RETRATO DA PROPRIA CADEIA
+// -----------------------------------------------
+// O db-verify.yml tira `CREATE DATABASE hmo331_pre035 TEMPLATE $PGDATABASE` no
+// ponto em que a 034 acabou de entrar e a 035 ainda nao -- copia de arquivo
+// no lado do servidor, nao replica a cadeia. O retrato nao pode divergir do que
+// o job acabou de provar, porque E ele. O default `hmo211_base` ficou para quem
+// monta o template a mao, na receita acima.
 
 import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -204,14 +220,19 @@ const MUTANTES = [
 
 const dir = mkdtempSync(join(tmpdir(), "mutantes-hmo211-"));
 
-/** Roda a suite num banco novo feito do template, com `sql` no lugar da 035. */
+/**
+ * Roda a suite num banco novo feito do template, com `sql` no lugar da 035.
+ *
+ * `sql === null` quer dizer "nao aplique a 035 nenhuma" -- e o que o CONTROLE
+ * NEGATIVO usa para provar que o template esta mesmo PRE-035.
+ */
 function rodar(db, sql) {
   const arquivo = join(dir, `${db}.sql`);
-  writeFileSync(arquivo, sql);
+  if (sql !== null) writeFileSync(arquivo, sql);
   psql("postgres", ["-c", `DROP DATABASE IF EXISTS ${db} WITH (FORCE)`]);
   psql("postgres", ["-c", `CREATE DATABASE ${db} TEMPLATE ${TEMPLATE}`]);
   try {
-    psql(db, ["-f", arquivo]);
+    if (sql !== null) psql(db, ["-f", arquivo]);
     psql(db, ["-f", TESTE]);
     return { verde: true };
   } catch (e) {
@@ -231,6 +252,20 @@ function rodar(db, sql) {
 let falhou = false;
 
 try {
+  // CONTROLE NEGATIVO. Sem a 035, o teste tem de REPROVAR. E ele que detecta o
+  // template montado COM a migration dentro -- o erro que faz todo mutante
+  // "morrer" por no-op e o placar sair 11/11 sem nada ter sido medido.
+  const negativo = rodar("hmo211_mut_negativo", null);
+  if (negativo.verde) {
+    console.error("CONTROLE NEGATIVO FALHOU: o teste da 035 passa num banco SEM a 035 aplicada.");
+    console.error(
+      `O template '${TEMPLATE}' provavelmente ja contem a 035 (ou o teste nao mede nada). Placar abaixo nao vale.`,
+    );
+    falhou = true;
+  } else {
+    console.log("controle negativo: sem a 035 o teste reprova  OK");
+  }
+
   // CONTROLE POSITIVO. Sem ele, um template quebrado faria todo mutante
   // "morrer" e o placar sairia 11/11 sem que o teste tivesse medido nada.
   const controle = rodar("hmo211_mut_controle", original);

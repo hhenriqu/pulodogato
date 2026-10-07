@@ -83,8 +83,13 @@ const DECLARACAO = "scripts/declaracao-de-mutantes-fora-do-ci.mjs";
  * a crescer calados, que e o que a HMO-322 foi aberta para impedir. Com o teto,
  * triar um runner OBRIGA a baixar o numero aqui, e o numero e o placar da
  * divida.
+ *
+ * O historico do placar: 38 na HMO-322, 34 quando os quatro `precisa-de-banco`
+ * ganharam step, 33 quando o motor de bloco saiu da contagem (PR #214), 26 com
+ * o lote 4/4 (HMO-332), 17 com o lote 3/4 (HMO-331: cinco apagados, quatro com
+ * step no db-verify.yml).
  */
-const TETO_NAO_TRIADO = 26;
+const TETO_NAO_TRIADO = 17;
 
 const erros = [];
 const avisos = [];

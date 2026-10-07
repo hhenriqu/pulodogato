@@ -133,34 +133,42 @@ export const FORA_DO_CI = {
   // sabe falhar"). 57 mutantes, 57 mortos, 62s, sem job novo. Ver a nota do
   // motivo `precisa-de-banco` acima, que deixou de existir junto com eles.
 
+  // O LOTE 3/4 DA TRIAGEM (HMO-331) SAIU TODO DESTA LISTA, DE DUAS MANEIRAS.
+  // ------------------------------------------------------------------------
+  // Nove runners, e o critario que separou os dois desfechos foi: o runner
+  // guarda o que o banco GRAVA, ou o que a tela MOSTRA?
+  //
+  // Quatro guardam a gravacao e ganharam step no db-verify.yml -- as duas
+  // pernas da transferencia (`lib/transferencia.ts`) e as migrations 034, 035
+  // e 038. 39 mutantes, 39 mortos, 46s de step, nenhum job novo.
+  //
+  // Cinco guardavam leitura de painel e foram APAGADOS: cash-flow,
+  // previsto-bloco, realizado-e-previsao, periodo-painel e cron-ledger. A
+  // suite `test:*` de cada um continua no CI; o que se perdeu e a prova de que
+  // ela mede -- e o Helio decidiu em 2026-10-07 que esse preco so se paga onde
+  // errar move dinheiro. Nenhum deles grava linha nenhuma, e juntos custavam
+  // 135 recompilacoes do programa inteiro (uma por mutante, sem o motor de
+  // bloco da HMO-319). Ver o PR da HMO-331 para o veredito de cada um.
+
   // ---------------------------------------------------------------------
   // nao-triado: a divida da HMO-322. Cada linha daqui tem de virar um dos
   // motivos acima, um step de workflow, ou um `git rm` -- e o TETO cai junto.
   // ---------------------------------------------------------------------
   "scripts/mutantes-cartao-orcamento-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
-  "scripts/mutantes-cash-flow.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-chave-pix.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-convite-de-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
-  "scripts/mutantes-cron-ledger.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-divisao-configurada.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-divisao-do-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-divisao-ui-dom.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-edicao-de-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-fechamento-do-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-grupos.mjs": { motivo: "nao-triado", porque: "HMO-322" },
-  "scripts/mutantes-moeda-da-conta-prevista.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-orcamento-de-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-pagador-da-parte.mjs": { motivo: "nao-triado", porque: "HMO-322" },
-  "scripts/mutantes-parcela-n-de-m.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-parte-do-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-periodo-do-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
-  "scripts/mutantes-periodo-painel.mjs": { motivo: "nao-triado", porque: "HMO-322" },
-  "scripts/mutantes-previsto-bloco.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-previsto-x-realizado.mjs": { motivo: "nao-triado", porque: "HMO-322" },
-  "scripts/mutantes-realizado-e-previsao.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-semeadura.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-sugestao-de-divisao.mjs": { motivo: "nao-triado", porque: "HMO-322" },
-  "scripts/mutantes-transferencia-recorrente.mjs": { motivo: "nao-triado", porque: "HMO-322" },
-  "scripts/mutantes-transferencia.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-tres-numeros.mjs": { motivo: "nao-triado", porque: "HMO-322" },
 };
