@@ -68,6 +68,12 @@ const ALVOS = {
     dependencias: [
       "lib/net-worth.ts",
       "lib/card-invoice.ts",
+      // HMO-285: `ehFatura` e companhia sairam de `card-invoice.ts` para
+      // `lib/chave-da-fatura.ts` (um arquivo-FOLHA), e `card-invoice` passou a
+      // importa-lo. A lista nao acompanhou, e o runner abortou no proprio
+      // controle positivo (TS2307 na COPIA) da HMO-285 ate a HMO-325 -- sem um
+      // sinal vermelho, porque nenhum workflow o invoca.
+      "lib/chave-da-fatura.ts",
       "lib/recurrence.ts",
       "lib/transferencia.ts",
       "lib/lancamento.ts",
@@ -81,6 +87,19 @@ const ALVOS = {
     dependencias: [
       "lib/fatura-do-cartao.ts",
       "lib/offline-leitura.ts",
+      // HMO-289 (`0391cec`) deu a `fatura-do-cartao.ts` o import de
+      // `@/lib/periodo-do-painel` -- o SEGUNDO buraco deste runner, e um que a
+      // HMO-325 nao conhecia: so apareceu quando o conserto da HMO-285 (acima)
+      // deixou o alvo 1 passar e o controle positivo chegou ao alvo 2.
+      //
+      // `periodo-do-painel` NAO e folha: ele puxa `dinheiro`, `moeda` e
+      // `recurrence` (e `moeda` puxa `dinheiro` de novo). Os quatro precisam
+      // estar aqui, porque na COPIA o `paths` resolve `@/*` dentro do tmp e
+      // nenhum deles existiria.
+      "lib/periodo-do-painel.ts",
+      "lib/dinheiro.ts",
+      "lib/moeda.ts",
+      "lib/recurrence.ts",
       "types/financial.ts",
     ],
     saida: ".tmp-fatura-do-periodo",
