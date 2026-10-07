@@ -236,6 +236,14 @@ test("o mes recebido aparece por extenso", () => {
 test("o primeiro dia do mes nao volta um mes (a ISO lida como UTC)", () => {
   // 'AAAA-MM-01' passado por new Date() no fuso de Sao Paulo cai no ultimo dia
   // do mes anterior: a barra de janeiro sairia rotulada como dezembro.
+  //
+  // ESTA ASSERCAO EXIGE O `TZ=America/Sao_Paulo` DO package.json, e isso foi
+  // MEDIDO, nao suposto. Em UTC o offset e zero, `new Date("2026-01-01")` cai
+  // em janeiro mesmo, e esta assercao passa sobre a implementacao ERRADA. O
+  // runner do GitHub roda em UTC: sem o TZ no script, o mutante `o mes passa
+  // por new Date()` de mutantes-cartao-orcamento-grupo.mjs SOBREVIVIA no CI
+  // (15/16) e morria na maquina de quem escreveu (16/16). Mesmo diagnostico da
+  // HMO-210 e do mutante 3 do ajuste de fatura, em outra suite.
   const html = texto(
     render([teto({ limite: 1000, gasto: 100 })], { mes: "2026-01-01" })
   );

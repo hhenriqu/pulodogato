@@ -314,9 +314,13 @@ jobs:
       # Controle negativo. As duas peneiras do guard acima sao busca textual, e
       # busca textual sai VERDE quando para de achar o que deveria conferir.
       #
-      # A segunda peneira (o piso de chamadas) existe exatamente por isso: a
-      # primeira, sozinha, aprova a tela em que o campo foi APAGADO. Os dois
-      # defeitos sao plantados, e os dois tem que ficar vermelhos.
+      # A segunda peneira (a contagem exata de chamadas) existe exatamente por
+      # isso: a primeira, sozinha, aprova a tela em que o campo foi APAGADO. Os
+      # dois defeitos sao plantados, e os dois tem que ficar vermelhos.
+      #
+      # Esta sonda so morde com folga ZERO entre a contagem esperada e a arvore
+      # -- com folga de N, N campos somem com o guard verde. Foi o que aconteceu
+      # entre a HMO-240 e a HMO-242 (ver o comentario de CHAMADAS_ESPERADAS).
       - name: A verificacao do campo de data sabe falhar, e sabe nao falhar
         run: |
           set -uo pipefail
@@ -333,7 +337,7 @@ jobs:
           cp /tmp/campo-de-data-alvo.orig "$alvo"
 
           # 2) O campo simplesmente APAGADO. A primeira peneira nao ve: nao ha
-          #    campo nativo nenhum. Quem pega e o piso.
+          #    campo nativo nenhum. Quem pega e a contagem.
           perl -0pi -e 's{<CampoDeData\n                    id="prazo"}{<span data-sem-campo="1"\n                    id="prazo"}' "$alvo"
           if node scripts/check-campo-de-data.mjs > /dev/null 2>&1; then
             echo "::error::O guard passou verde com um campo de data apagado da tela."
@@ -3567,18 +3571,40 @@ jobs:
           #    poder ser fixo. O caso de cima ("receita nao tem natureza de
           #    despesa") afirma sobre AUSENCIA e continuaria verde com isto.
           #
-          #    A INDENTACAO DO ANCORA E 4 ESPACOS, E ISSO JA CUSTOU O JOB INTEIRO.
-          #    O mutante nasceu na HMO-170 com 6, porque a linha estava dentro de
-          #    um objeto aninhado; a HMO-188 extraiu o `comum` e a dedentou para 4,
-          #    e o ancora ficou para tras. Um `sed` que nao casa sai 0 e deixa o
-          #    arquivo INTACTO: a suite roda sobre o codigo correto, passa, e o
-          #    controle acusa "verde com o defeito plantado" -- apontando para o
-          #    codigo quando o defeito e do proprio ancora. Este job ficou vermelho
-          #    na main de 736fb65 (HMO-188) ate aqui por causa disso, e com ele os
-          #    mutantes 7 a 12 abaixo, que nunca chegavam a rodar.
-          sed -i '0,/    natureza: true,/s//    natureza: false,/' $REGRAS
+          #    O ANCORA DESTE MUTANTE JA APODRECEU DUAS VEZES, E A SEGUNDA SO
+          #    APARECEU AGORA. Ele nasceu na HMO-170 com 6 espacos de indentacao,
+          #    porque a linha estava dentro de um objeto aninhado; a HMO-188
+          #    extraiu o `comum` e a dedentou para 4, e o ancora ficou para tras.
+          #    Corrigido para 4, a HMO-254 trocou o VALOR da linha -- de
+          #    `natureza: true` para `natureza: tipo === "expense"`, porque so a
+          #    despesa escolhe o lugar -- e o ancora ficou para tras OUTRA VEZ.
+          #
+          #    Um `sed` que nao casa sai 0 e deixa o arquivo INTACTO: a suite roda
+          #    sobre o codigo correto, passa, e o controle acusa "verde com o
+          #    defeito plantado" -- apontando para o codigo quando o defeito e do
+          #    proprio ancora. Foi o que aconteceu entre a HMO-254 e a HMO-242, e
+          #    com este mutante foram os mutantes 7 a 16 abaixo, que nunca
+          #    chegavam a rodar. So nao doeu antes porque o Actions estava
+          #    travado na cobranca (HMO-242) e o job nao rodava.
+          #
+          #    Por isso aqui agora CONFERE o ancora antes de plantar, como a
+          #    sonda do alcance (mutante 4) ja fazia: "a sonda envelheceu" tem de
+          #    ser um erro que se explica, e nao uma acusacao ao codigo.
+          #
+          #    A direcao e `true`: o mutante devolve o seletor de natureza a
+          #    RECEITA. O caso de cima ("receita nao tem natureza de despesa")
+          #    afirma sobre AUSENCIA, e e justamente a ausencia que este mutante
+          #    ataca -- com `false` quem morre e a presenca na DESPESA, que outros
+          #    sete casos ja cobrem.
+          PADRAO_NATUREZA='    natureza: tipo === "expense",'
+          CASOU=$(grep -cF "$PADRAO_NATUREZA" $REGRAS)
+          if [ "$CASOU" != "1" ]; then
+            echo "::error::A sonda da natureza casa ${CASOU}x, nao 1x -- a linha mudou de forma em lib/lancamento.ts. Conserte a sonda, nao o codigo: mutante que nao aplica e indistinguivel de mutante que sobreviveu."
+            exit 1
+          fi
+          sed -i "s|$PADRAO_NATUREZA|    natureza: true,|" $REGRAS
           if npm run test:campos-lancamento > /dev/null 2>&1; then
-            echo "::error::Verde com a tela de receita sem o seletor pontual x fixa."
+            echo "::error::Verde com o seletor de natureza de volta na tela de RECEITA."
             exit 1
           fi
 
@@ -3726,13 +3752,23 @@ jobs:
           #     COBRANCA na tela de receita. Com o campo "Data" fora da tela essa
           #     frase e a unica resposta para "quando isso cai?", e chamar o
           #     salario de cobranca e o defeito que deu nome a HMO-170.
-          PADRAO_FRASE='"A primeira cobrança" : "A primeira entrada"'
+          #
+          #     O ANCORA E DE UMA LINHA SO, E DE PROPOSITO. Ele ja foi
+          #     `'"A primeira cobrança" : "A primeira entrada"'` -- os dois lados
+          #     do ternario na mesma linha -- e parou de casar quando o
+          #     formatador quebrou o ternario em duas linhas. `grep -F` e
+          #     `sed` leem LINHA A LINHA: padrao que atravessa quebra de linha
+          #     nunca casa, e aqui isso custou o step inteiro (os mutantes 6 e 16
+          #     eram os dois ultimos podres do job quando o Actions voltou na
+          #     HMO-242). O lado da receita basta para o mutante, e nao depende
+          #     de onde o formatador decide quebrar.
+          PADRAO_FRASE='"A primeira entrada"'
           CASOU=$(grep -cF "$PADRAO_FRASE" $CAMPOS)
           if [ "$CASOU" != "1" ]; then
             echo "::error::A sonda da frase da primeira cobranca casa ${CASOU}x, nao 1x, em $CAMPOS. Conserte a sonda, nao o codigo."
             exit 1
           fi
-          sed -i "s|$PADRAO_FRASE|\"A primeira cobrança\" : \"A primeira cobrança\"|" $CAMPOS
+          sed -i "s|$PADRAO_FRASE|\"A primeira cobrança\"|" $CAMPOS
           if npm run test:campos-lancamento > /dev/null 2>&1; then
             echo "::error::Verde com a tela de receita anunciando uma COBRANCA."
             exit 1
@@ -4843,7 +4879,21 @@ jobs:
           # 3) TODA LINHA VIRA LINK. Linha que PARECE clicavel e nao e custa
           #    mais que linha que nao parece: a pessoa toca, nada acontece, e a
           #    conclusao natural e que o app travou.
-          sed -i 's|  if (linha.fatura) {|  if (true) {|' $SECAO
+          #
+          #    O ancora era `  if (linha.fatura) {` e apodreceu na HMO-311, que
+          #    moveu o criterio para dentro da linha e o transformou no ternario
+          #    de `destinoDoCartao`. O `mutou` abaixo pegaria isso -- ele existe
+          #    para isso -- mas pegaria como job vermelho, nao como aviso.
+          #
+          #    MUTA O LADO `: null`, E NAO A CONDICAO. Forcar a condicao para
+          #    `true` NAO COMPILA (`linha.fatura` fica possibly-null em
+          #    `caminhoDoCartaoNoMes(linha.fatura.accountId, ...)`), e mutante que
+          #    nao compila "morre" por erro de tipo sem nunca exercitar assercao
+          #    nenhuma -- indistinguivel de sonda que mede a fonte intacta. Pelo
+          #    lado do `else` toda linha ganha um destino de verdade, a suite
+          #    compila, e quem fica vermelho sao as assercoes certas: "a despesa
+          #    comum NAO e link" e "a previsao LIGADA AO ELO nao ganha o link".
+          sed -i 's|      : null;|      : "/dashboard/cartoes";|' $SECAO
           mutou $SECAO 3
           if npm run test:secao-da-tela > /dev/null 2>&1; then
             echo "::error::Verde com TODA linha virando <a>."
@@ -5235,12 +5285,19 @@ jobs:
         run: |
           set -uo pipefail
           LIB=lib/realizado-do-caixa.ts
+          # O DONO do criterio "esta linha e pagamento de fatura" (HMO-265). O
+          # sinal estrito do mutante 3 mora AQUI desde que a copia local saiu
+          # deste arquivo -- ver o cabecalho de `ehPagamentoDaFatura`.
+          DONO=lib/telas-de-movimentacao.ts
           cp $LIB $LIB.orig
-          trap 'mv $LIB.orig $LIB' EXIT
+          cp $DONO $DONO.orig
+          trap 'mv $LIB.orig $LIB; mv $DONO.orig $DONO' EXIT
 
+          # Recebe o ARQUIVO, porque os mutantes desta sonda nao estao todos no
+          # mesmo: o 3 planta no dono do criterio, nao em `realizado-do-caixa`.
           mutou() {
-            if cmp -s $LIB $LIB.orig; then
-              echo "::error::o sed de '$1' nao casou nada -- o mutante nao foi aplicado e o passo mediria a fonte intacta"
+            if cmp -s "$1" "$1.orig"; then
+              echo "::error::o sed de '$2' nao casou nada em $1 -- o mutante nao foi aplicado e o passo mediria a fonte intacta"
               exit 1
             fi
           }
@@ -5248,7 +5305,7 @@ jobs:
           # 1) O DEFEITO DESTA ISSUE, INTACTO. A compra no cartao conta no dia
           #    da compra E a fatura conta de novo no dia do pagamento.
           sed -i 's|if (ehCompraNoCartao(linha)) continue;|if (false) continue;|' $LIB
-          mutou "compra no cartao fica"
+          mutou $LIB "compra no cartao fica"
           if npm run test:realizado-do-caixa > /dev/null 2>&1; then
             echo "::error::Verde com a compra no cartao contada no dia da COMPRA, junto da fatura que ja a contem."
             exit 1
@@ -5257,8 +5314,13 @@ jobs:
 
           # 2) O CARTAO DESAPARECIDO (HMO-264). A fatura paga nao entra em lugar
           #    nenhum: o mes em que se pagou R$ 1.290 fica R$ 1.290 mais barato.
-          sed -i 's|if (ehSaidaDePagamentoDeFatura(linha)) {|if (false) {|' $LIB
-          mutou "fatura paga nao entra"
+          #
+          #    O ancora era `ehSaidaDePagamentoDeFatura`, a copia LOCAL do
+          #    criterio, que a HMO-265 apagou deste arquivo em favor do dono
+          #    unico (`ehPagamentoDaFatura`, importado). Renomeou-se a chamada,
+          #    e o ancora ficou para tras.
+          sed -i 's|if (ehPagamentoDaFatura(linha)) {|if (false) {|' $LIB
+          mutou $LIB "fatura paga nao entra"
           if npm run test:realizado-do-caixa > /dev/null 2>&1; then
             echo "::error::Verde com a fatura PAGA fora do Realizado: o cartao sumiu dos dois lados."
             exit 1
@@ -5268,13 +5330,20 @@ jobs:
           # 3) A FATURA EM DOBRO. As duas pernas do pagamento tem a mesma data,
           #    a mesma chave e o mesmo tipo, e `agregarTransacoes` aplica
           #    Math.abs antes de somar -- entao elas NAO se anulam.
-          sed -i 's|  return Number(linha.amount) < 0;|  return true;|' $LIB
-          mutou "as duas pernas entram"
+          #
+          #    PLANTA NO $DONO, E NAO EM $LIB. O sinal estrito era
+          #    `Number(linha.amount) < 0` dentro da copia local que a HMO-265
+          #    apagou; hoje a decisao e uma so, a ultima linha de
+          #    `ehPagamentoDaFatura`, e `crua` e o nome do parametro la.
+          sed -i 's|  return Number(crua.amount) < 0;|  return true;|' $DONO
+          mutou $DONO "as duas pernas entram"
           if npm run test:realizado-do-caixa > /dev/null 2>&1; then
             echo "::error::Verde com as DUAS pernas do pagamento somando: a fatura em dobro no total de despesas."
             exit 1
           fi
-          cp $LIB.orig $LIB
+          # Restaura o $DONO, que foi quem este mutante plantou. Restaurar $LIB
+          # aqui deixaria o mutante 4 medindo uma arvore AINDA mutada.
+          cp $DONO.orig $DONO
 
           # 4) A COLUNA QUE NINGUEM VE. `account_type` nao aparece na tela, e
           #    tirar do `select` nao quebra tsc nem assercao de unidade: a regra
@@ -5282,7 +5351,7 @@ jobs:
           #    filtrar, e o painel volta ao defeito. Foi este o modo de falha da
           #    HMO-260.
           sed -i 's|, account:financial_accounts(account_type)";|";|' $LIB
-          mutou "select sem o embed da conta"
+          mutou $LIB "select sem o embed da conta"
           if npm run test:realizado-do-caixa > /dev/null 2>&1; then
             echo "::error::Verde com a consulta SEM account_type: a regra nao tem como saber que a linha esta na fatura."
             exit 1
@@ -5353,6 +5422,18 @@ jobs:
             'a Previsao para de tirar a compra no cartao -- o cartao em dobro'
           desligar 'app/api/dashboard/previsao/route.ts' 'faturasPrevistasDaJanela(supabase' 'naoChama(supabase' \
             'a Previsao para de sintetizar a fatura ABERTA -- o cartao desaparece'
+          # OS DOIS DE lib/realizado-do-caixa.ts. Eram os UNICOS pontos da lista
+          # do guard sem mutante -- e por isso o par mais barato de apodrecer: a
+          # HMO-317 renomeou a leitura local `ehFatura(notes)` para o dono unico
+          # `ehPagamentoDaFatura(linha)`, a exigencia ficou no nome antigo, e o
+          # guard entrou VERMELHO na main na #211. O vermelho so apareceu quando
+          # o Actions voltou a iniciar job (HMO-242) -- dez controles negativos
+          # aqui e nenhum cobria estas duas linhas.
+          desligar 'lib/realizado-do-caixa.ts' 'if (ehPagamentoDaFatura(linha)) {' 'if (false) {' \
+            'a fatura PAGA para de virar despesa do mes em que o dinheiro saiu'
+          desligar 'lib/realizado-do-caixa.ts' ', account:financial_accounts(account_type)"' '"' \
+            'a consulta para de pedir account_type -- a regra nao sabe o que esta na fatura'
+
           desligar 'lib/realizado-e-previsao.ts' '  direction: string | null | undefined' '  direction: string | null | undefined, ehFatura: boolean' \
             'direcaoNoPainel volta a receber o segundo argumento que a HMO-265 tirou'
 
@@ -5387,7 +5468,7 @@ jobs:
           desligar 'app/(dashboard)/dashboard/page.tsx' 'LEGENDA_DO_CARTAO.fatura' '""' \
             'o painel perde a legenda gemea -- so UMA das duas telas explica'
 
-          echo "A verificacao fica vermelha nos dez pontos de fiacao."
+          echo "A verificacao fica vermelha nos doze pontos de fiacao."
 
       - name: 'A arvore voltou ao lugar depois de "A verificacao sabe falhar (fiacao do cartao pela fatura)"'
         run: |
