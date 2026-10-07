@@ -208,6 +208,33 @@ jobs:
       - name: A verificacao dos runners de mutante sabe falhar
         run: node scripts/mutantes-guarda-dos-mutantes.mjs
 
+      # Nenhum runner NOVO muta no lugar um arquivo rastreado (HMO-327).
+      #
+      # Um runner que muta a fonte, roda a suite e restaura no fim deixa o
+      # mutante GRAVADO quando morre no meio, e dali em diante toda medicao le o
+      # arquivo errado sem nada no placar dizendo isso. Aconteceu tres vezes
+      # neste repositorio -- duas no mesmo run da HMO-322, a segunda por um
+      # runner ORFAO que seguia em laco e fazia `git status` piscar.
+      #
+      # Os sete runners que fazem isso hoje estao declarados como divida
+      # (HMO-337, a migracao para o bloco em /tmp); a lista so pode encolher, e a
+      # guarda reprova se uma entrada dela deixar de corresponder a um runner.
+      #
+      # NAO e "instale um handler de SIGTERM": esta medido que num runner de laco
+      # sincrono o handler nunca roda (o event loop nao recebe o controle) e
+      # ainda ENGOLE o sinal, deixando o runner vivo e mutando. O cabecalho da
+      # guarda traz a medicao.
+      - name: Nenhum runner de mutante novo muta a arvore no lugar
+        run: node scripts/check-mutacao-no-lugar.mjs
+
+      # Controle negativo da guarda acima -- textual, entao precisa de um. O
+      # mutante que mais importa e o do comentario: os runners FALAM do idioma
+      # proibido em prosa ("este script MUTA OS ARQUIVOS NO DISCO"), e uma versao
+      # que lesse comentario acusaria runner seguro. Roda inteiro numa copia em
+      # /tmp, com repo git de mentira, pela razao que a propria guarda defende.
+      - name: A guarda de mutacao no lugar sabe falhar
+        run: node scripts/mutantes-guarda-de-mutacao-no-lugar.mjs
+
       # E o conferidor da CONVERSAO de runner para bloco, que e o que garante que
       # converter um runner nao perdeu nenhuma entrada da lista de mutantes -- a
       # unica parte de um runner que carrega conhecimento que nao esta escrito em
