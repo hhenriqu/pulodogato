@@ -79,8 +79,14 @@ const mutantes = [
     "        minha",
   ],
   [
+    // A ancora deste mutante morreu quando a HMO-303/304 trocou a divisao IGUAL
+    // (`parteDoMembro`) pela divisao POR PESO (`parteConfiguradaDoMembro`) --
+    // a chamada passou de uma linha para cinco e de tres argumentos para
+    // quatro. O mutante seguiu no arquivo dando "trecho nao existe mais", que
+    // este runner conta como sobrevivente de proposito: um mutante que nao
+    // aplica fica verde por nao ter mexido em nada.
     "o custo fixo soma o valor cheio em vez da minha parte",
-    "      const minha = parteDoMembro(r.amount, r.group_id, membrosAtivosPorGrupo);",
+    "      const minha = parteConfiguradaDoMembro(\n        r.amount,\n        r.group_id,\n        pesosPorGrupo,\n        meuUserId\n      );",
     "      const minha = Number(r.amount) || 0;",
   ],
   [
