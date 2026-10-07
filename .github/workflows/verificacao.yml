@@ -135,6 +135,26 @@ jobs:
       - name: Runner morto por SIGKILL se cura na proxima invocacao
         run: npm run test:auto-cura
 
+      # A suite acima mede uma AUSENCIA de sujeira, e os dois criterios de
+      # aceite dela passariam identicos se `protegerArvore` fosse um `return`
+      # vazio -- o fixture restaura no caminho normal, e e so o caminho normal
+      # que eles exercitariam. Por isso a suite tem dois controles negativos, e
+      # por isso este runner existe: ele muta cada peneira da auto-cura e exige
+      # que algum dos quatro testes reprove. Oito mutantes, ~25s, e roda num
+      # repositorio git novo em /tmp -- nao toca a arvore.
+      - name: A suite da auto-cura sabe reprovar (8 mutantes)
+        run: node scripts/mutantes-auto-cura.mjs
+
+      # Consertar os 8 runners que mutavam a arvore nao fecha o buraco: o nono
+      # se escreve amanha, copiado de um dos 8, e nada da sintoma -- o sintoma
+      # aparece dias depois, num worktree herdado com um arquivo sujo que
+      # ninguem reconhece. Esta guarda exige que cada `scripts/mutantes-*` diga
+      # por construcao como a arvore volta ao lugar (sombra em /tmp, auto-cura
+      # na partida, ou declaracao conferida de que nao toca arquivo rastreado).
+      # O default para um runner novo e REPROVAR.
+      - name: Todo runner de mutante diz como restaura a arvore
+        run: node scripts/check-mutante-restaura-arvore.mjs
+
       # A FOTOGRAFIA DA ARVORE, para os passos-guarda dos controles negativos.
       #
       # O guarda compara com ESTA foto, e nao com `git diff --quiet`, por dois
