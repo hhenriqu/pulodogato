@@ -56,17 +56,31 @@ const mutantes = [
     "  return toReais(Math.round(toCents(cheio) / membros));",
     "  return cheio;",
   ],
+  // OS DOIS ABAIXO LEVAM A LINHA SEGUINTE NA ANCORA, e nao por capricho de
+  // recorte: `  if (!groupId) return cheio;` aparece DUAS vezes em
+  // lib/parte-do-grupo.ts -- em `parteConfiguradaDoMembro` (a divisao por peso,
+  // o caminho vivo desde a HMO-303/304) e em `parteDoMembro` (a divisao igual).
+  //
+  // `String.replace` troca a primeira, entao estes dois sempre mutaram
+  // `parteConfiguradaDoMembro`; o que faltava era o runner DIZER isso. Enquanto
+  // a trava de ocorrencia unica nao existia nesta familia, os dois passavam por
+  // mortos sem que o placar revelasse qual das duas funcoes havia sido medida
+  // (HMO-334). A linha do `meuUserId` so existe em `parteConfiguradaDoMembro`,
+  // e e ela que torna a ancora unica -- o `para` a repete intacta.
+  //
+  // `parteDoMembro` segue sem mutante proprio para esta decisao. E lacuna de
+  // cobertura, nao defeito daqui.
   [
     "o group_id deixa de ser olhado (toda despesa vira pessoal)",
-    "  if (!groupId) return cheio;",
-    "  if (true) return cheio;",
+    '  if (!groupId) return cheio;\n  if (typeof meuUserId !== "string" || meuUserId === "") return cheio;',
+    '  if (true) return cheio;\n  if (typeof meuUserId !== "string" || meuUserId === "") return cheio;',
   ],
 
   // --- o erro espelhado: dividir o que nao e de grupo ---
   [
     "a despesa PESSOAL passa a ser dividida tambem",
-    "  if (!groupId) return cheio;",
-    "  if (false) return cheio;",
+    '  if (!groupId) return cheio;\n  if (typeof meuUserId !== "string" || meuUserId === "") return cheio;',
+    '  if (false) return cheio;\n  if (typeof meuUserId !== "string" || meuUserId === "") return cheio;',
   ],
 
   // --- a contagem desconhecida, que nao pode virar palpite ---
@@ -82,10 +96,16 @@ const mutantes = [
   ],
 
   // --- o status do membro: quem saiu nao divide conta ---
+  // O MESMO CASO: a guarda de status esta em `montarParticipantesPorGrupo` (os
+  // PESOS) e em `contarMembrosAtivos` (a CONTAGEM), identica nas duas. Este
+  // mutante sempre mutou a primeira, os pesos; a linha do `user_id` so existe
+  // la, e e ela que fixa a ancora. O mutante de `contarMembrosAtivos` que vem
+  // logo abaixo ja ancora no `contagem.set`, que e unico -- entao a contagem
+  // tem cobertura, e o que ficou de fora e so o status DENTRO dela.
   [
     "membro inativo volta a contar (a minha parte fica MENOR do que a real)",
-    '    if (linha.status && linha.status !== "active") continue;',
-    "    if (false) continue;",
+    '    if (linha.status && linha.status !== "active") continue;\n    if (typeof linha.user_id !== "string" || linha.user_id === "") continue;',
+    '    if (false) continue;\n    if (typeof linha.user_id !== "string" || linha.user_id === "") continue;',
   ],
   [
     "a contagem passa a ser por linha e nao por grupo (um grupo herda o total do outro)",
