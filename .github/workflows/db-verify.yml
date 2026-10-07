@@ -22,9 +22,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/mutantes-categorias.sh', 'scripts/mutantes-convite-sem-conta.sh', 'scripts/mutantes-minha-parte-no-realizado.mjs', 'scripts/mutantes-trava-de-membro.mjs', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'scripts/compila.mjs', 'scripts/mutantes-em-bloco.mjs', 'scripts/duble-de-supabase.mjs', 'scripts/monta-duble-de-rota.mjs', 'scripts/resolve-next-subpaths.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/parte-do-grupo-realizada.ts', 'lib/periodo-do-painel.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/acerto-em-lancamento.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/renda-fixa.ts', 'lib/cdi.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/divisao-do-grupo.ts', 'lib/convite-de-grupo.ts', 'lib/papel-de-pao.ts', 'lib/telas-de-movimentacao.ts', 'lib/agenda-do-cartao.ts', 'lib/previsto-x-realizado.ts', 'lib/elo-da-fatura.ts', 'lib/chave-da-fatura.ts', 'scripts/medicao-*.mjs', 'scripts/medicao-*.sh', 'lib/fechamento-do-grupo.ts', 'lib/credito-de-grupo.ts', 'lib/parte-de-grupo-na-lista.ts', 'lib/periodo-do-grupo.ts', 'lib/divisao-configurada.ts', 'lib/semear-pela-renda.ts', 'lib/sugestao-de-divisao.ts', 'components/financial/SplitSuggestions.tsx', 'lib/dinheiro.ts', 'components/grupos/DivisaoDoGrupo.tsx', 'components/grupos/FechamentoDoMes.tsx', 'app/**/expense-groups/**', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'lib/services/scheduled.ts', 'components/movimentacoes/FormularioDeTransferencia.tsx', 'app/api/reports/cash-flow/route.ts', 'app/api/personal-finance/transactions/route.ts', 'components/grupos/PainelDoGrupo.tsx', 'types/financial.ts', '.github/workflows/db-verify.yml', 'lib/puxar-para-atualizar-dom.ts', 'components/Sidebar.tsx', 'components/PuxarParaAtualizar.tsx', 'lib/categorias.ts', 'components/movimentacoes/SeletorDeCategoria.tsx', 'components/movimentacoes/CamposDeLancamento.tsx', 'components/ui/button.tsx', 'components/ui/input.tsx', 'components/ui/label.tsx', 'components/ui/select.tsx', 'lib/utils.ts']
+    paths: ['database/**', 'scripts/mutantes-categorias.sh', 'scripts/mutantes-convite-sem-conta.sh', 'scripts/mutantes-minha-parte-no-realizado.mjs', 'scripts/mutantes-trava-de-membro.mjs', 'scripts/mutantes-transferencia-recorrente-app.mjs', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'scripts/compila.mjs', 'scripts/mutantes-em-bloco.mjs', 'scripts/duble-de-supabase.mjs', 'scripts/monta-duble-de-rota.mjs', 'scripts/resolve-next-subpaths.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/parte-do-grupo-realizada.ts', 'lib/periodo-do-painel.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/acerto-em-lancamento.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/renda-fixa.ts', 'lib/cdi.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/divisao-do-grupo.ts', 'lib/convite-de-grupo.ts', 'lib/papel-de-pao.ts', 'lib/telas-de-movimentacao.ts', 'lib/agenda-do-cartao.ts', 'lib/previsto-x-realizado.ts', 'lib/elo-da-fatura.ts', 'lib/chave-da-fatura.ts', 'scripts/medicao-*.mjs', 'scripts/medicao-*.sh', 'lib/fechamento-do-grupo.ts', 'lib/credito-de-grupo.ts', 'lib/parte-de-grupo-na-lista.ts', 'lib/periodo-do-grupo.ts', 'lib/divisao-configurada.ts', 'lib/semear-pela-renda.ts', 'lib/sugestao-de-divisao.ts', 'components/financial/SplitSuggestions.tsx', 'lib/dinheiro.ts', 'components/grupos/DivisaoDoGrupo.tsx', 'components/grupos/FechamentoDoMes.tsx', 'app/**/expense-groups/**', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'lib/services/scheduled.ts', 'components/movimentacoes/FormularioDeTransferencia.tsx', 'app/api/reports/cash-flow/route.ts', 'app/api/personal-finance/transactions/route.ts', 'components/grupos/PainelDoGrupo.tsx', 'types/financial.ts', '.github/workflows/db-verify.yml', 'lib/puxar-para-atualizar-dom.ts', 'components/Sidebar.tsx', 'components/PuxarParaAtualizar.tsx', 'lib/categorias.ts', 'components/movimentacoes/SeletorDeCategoria.tsx', 'components/movimentacoes/CamposDeLancamento.tsx', 'components/ui/button.tsx', 'components/ui/input.tsx', 'components/ui/label.tsx', 'components/ui/select.tsx', 'lib/utils.ts']
   pull_request:
-    paths: ['database/**', 'scripts/mutantes-categorias.sh', 'scripts/mutantes-convite-sem-conta.sh', 'scripts/mutantes-minha-parte-no-realizado.mjs', 'scripts/mutantes-trava-de-membro.mjs', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'scripts/compila.mjs', 'scripts/mutantes-em-bloco.mjs', 'scripts/duble-de-supabase.mjs', 'scripts/monta-duble-de-rota.mjs', 'scripts/resolve-next-subpaths.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/parte-do-grupo-realizada.ts', 'lib/periodo-do-painel.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/acerto-em-lancamento.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/renda-fixa.ts', 'lib/cdi.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/divisao-do-grupo.ts', 'lib/convite-de-grupo.ts', 'lib/papel-de-pao.ts', 'lib/telas-de-movimentacao.ts', 'lib/agenda-do-cartao.ts', 'lib/previsto-x-realizado.ts', 'lib/elo-da-fatura.ts', 'lib/chave-da-fatura.ts', 'scripts/medicao-*.mjs', 'scripts/medicao-*.sh', 'lib/fechamento-do-grupo.ts', 'lib/credito-de-grupo.ts', 'lib/parte-de-grupo-na-lista.ts', 'lib/periodo-do-grupo.ts', 'lib/divisao-configurada.ts', 'lib/semear-pela-renda.ts', 'lib/sugestao-de-divisao.ts', 'components/financial/SplitSuggestions.tsx', 'lib/dinheiro.ts', 'components/grupos/DivisaoDoGrupo.tsx', 'components/grupos/FechamentoDoMes.tsx', 'app/**/expense-groups/**', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'lib/services/scheduled.ts', 'components/movimentacoes/FormularioDeTransferencia.tsx', 'app/api/reports/cash-flow/route.ts', 'app/api/personal-finance/transactions/route.ts', 'components/grupos/PainelDoGrupo.tsx', 'types/financial.ts', '.github/workflows/db-verify.yml', 'lib/puxar-para-atualizar-dom.ts', 'components/Sidebar.tsx', 'components/PuxarParaAtualizar.tsx', 'lib/categorias.ts', 'components/movimentacoes/SeletorDeCategoria.tsx', 'components/movimentacoes/CamposDeLancamento.tsx', 'components/ui/button.tsx', 'components/ui/input.tsx', 'components/ui/label.tsx', 'components/ui/select.tsx', 'lib/utils.ts']
+    paths: ['database/**', 'scripts/mutantes-categorias.sh', 'scripts/mutantes-convite-sem-conta.sh', 'scripts/mutantes-minha-parte-no-realizado.mjs', 'scripts/mutantes-trava-de-membro.mjs', 'scripts/mutantes-transferencia-recorrente-app.mjs', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'scripts/compila.mjs', 'scripts/mutantes-em-bloco.mjs', 'scripts/duble-de-supabase.mjs', 'scripts/monta-duble-de-rota.mjs', 'scripts/resolve-next-subpaths.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/parte-do-grupo-realizada.ts', 'lib/periodo-do-painel.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/acerto-em-lancamento.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/renda-fixa.ts', 'lib/cdi.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/divisao-do-grupo.ts', 'lib/convite-de-grupo.ts', 'lib/papel-de-pao.ts', 'lib/telas-de-movimentacao.ts', 'lib/agenda-do-cartao.ts', 'lib/previsto-x-realizado.ts', 'lib/elo-da-fatura.ts', 'lib/chave-da-fatura.ts', 'scripts/medicao-*.mjs', 'scripts/medicao-*.sh', 'lib/fechamento-do-grupo.ts', 'lib/credito-de-grupo.ts', 'lib/parte-de-grupo-na-lista.ts', 'lib/periodo-do-grupo.ts', 'lib/divisao-configurada.ts', 'lib/semear-pela-renda.ts', 'lib/sugestao-de-divisao.ts', 'components/financial/SplitSuggestions.tsx', 'lib/dinheiro.ts', 'components/grupos/DivisaoDoGrupo.tsx', 'components/grupos/FechamentoDoMes.tsx', 'app/**/expense-groups/**', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'lib/services/scheduled.ts', 'components/movimentacoes/FormularioDeTransferencia.tsx', 'app/api/reports/cash-flow/route.ts', 'app/api/personal-finance/transactions/route.ts', 'components/grupos/PainelDoGrupo.tsx', 'types/financial.ts', '.github/workflows/db-verify.yml', 'lib/puxar-para-atualizar-dom.ts', 'components/Sidebar.tsx', 'components/PuxarParaAtualizar.tsx', 'lib/categorias.ts', 'components/movimentacoes/SeletorDeCategoria.tsx', 'components/movimentacoes/CamposDeLancamento.tsx', 'components/ui/button.tsx', 'components/ui/input.tsx', 'components/ui/label.tsx', 'components/ui/select.tsx', 'lib/utils.ts']
   workflow_dispatch:
 
 jobs:
@@ -2591,8 +2591,10 @@ jobs:
       # (filtra income/expense, nem ve as pernas) dao o MESMO numero com a
       # transferencia completa, com UMA perna so e com nenhuma. Um teste no total
       # passaria verde com a materializacao nao materializando nada.
-      # 19 de 19 mutantes mortos (npm run mutantes:transferencia-recorrente-app),
-      # somados aos 12 da HMO-164.
+      # 22 de 22 mutantes mortos, somados aos 12 da HMO-164. Quem os mede agora e
+      # um step deste job ("A transferencia recorrente sabe falhar"), e nao mais
+      # uma afirmacao solta aqui: este numero dizia 19 enquanto o runner tinha 22,
+      # porque nada o conferia (HMO-332).
       - name: Transferencia entre contas, as duas pernas
         run: npm run test:transferencia
 
@@ -2610,6 +2612,56 @@ jobs:
       # porque editar a regra tem de reapontar as ocorrencias futuras.
       - name: A ocorrencia de transferencia nasce com destino e com tipo
         run: npm run test:materializacao
+
+      # O APARELHO que prova que as DUAS suites acima medem o que dizem medir.
+      #
+      # POR QUE ESTE RUNNER GANHOU STEP E OS OUTROS SEIS DO LOTE FORAM APAGADOS
+      # ----------------------------------------------------------------------
+      # Na triagem da HMO-332 o default era `git rm`, e seis dos sete orfaos
+      # deste lote foram apagados: carteira, renda fixa, fundamento da CVM,
+      # crivos e as duas sondas de puxar-para-atualizar. Em nenhum deles errar
+      # tira dinheiro de uma conta -- erram um numero MOSTRADO, ou uma sugestao
+      # de investimento, ou recarregam a pagina na rolagem.
+      #
+      # Este erra o SALDO. A ocorrencia de transferencia que nasce sem
+      # `destination_account_id` faz a baixa gravar UMA perna: o dinheiro sai da
+      # origem e nao entra em lugar nenhum. Nao ha excecao, nao ha 500, nao ha
+      # linha vazia -- ha um patrimonio menor pelo valor transferido, plausivel,
+      # com duas casas decimais. E por ser RECORRENTE, repete todo mes sem que
+      # nada acuse. E a familia da HMO-149/HMO-164/HMO-172, e o mutante
+      # `materializacao_sem_destino` e literalmente o titulo da HMO-172.
+      #
+      # A PROVA DE QUE RUNNER NAO RODADO APODRECE, NESTE MESMO ARQUIVO
+      # -------------------------------------------------------------
+      # O comentario do step `test:transferencia`, logo acima, afirmava "19 de 19
+      # mutantes mortos" -- e o runner tem 22. O numero envelheceu justamente
+      # porque nenhum job o conferia: a afirmacao estava escrita no workflow e
+      # nada a media. E a tese da HMO-322 demonstrada no proprio lugar que ela
+      # descreve.
+      #
+      # O CUSTO MEDIDO (2026-10-07): 22 mutantes, 22 mortos, 146s -- e um TETO,
+      # nao o custo em CI: a medicao saiu numa maquina com loadavg 8,56 em 2
+      # nucleos (~4x sobrescrita). Sao 18 voltas de `npm run test:transferencia`
+      # mais 4 de `npm run test:materializacao`, uma compilacao inteira por
+      # mutante, porque este runner ainda NAO usa o motor de bloco da
+      # HMO-319/HMO-320 -- quando usar, cai de uma vez. Nenhum job novo, e o
+      # `paths:` deste workflow so o acorda quando lib/transferencia.ts,
+      # lib/services/scheduled.ts, as suites ou o proprio runner mudam.
+      #
+      # ELE ESCREVE NA ARVORE -- ao contrario dos quatro de banco mais abaixo.
+      # Muta `lib/transferencia.ts` e `lib/services/scheduled.ts` no lugar e
+      # restaura no fim, e NAO trata SIGTERM (HMO-327). Em CI isso e tolerado
+      # porque o checkout e descartavel: o pior caso de uma interrupcao e um
+      # arquivo mutado num workspace que ninguem reaproveita. O que NAO e
+      # tolerado e ele sair 0 e deixar a arvore suja, porque os steps seguintes
+      # deste mesmo job -- inclusive a comparacao de schema-columns.json --
+      # passariam a medir o arquivo errado. O step companheiro abaixo e quem
+      # prende isso.
+      - name: A transferencia recorrente sabe falhar (22 mutantes)
+        run: node scripts/mutantes-transferencia-recorrente-app.mjs
+
+      - name: 'A arvore voltou ao lugar depois de "A transferencia recorrente sabe falhar (22 mutantes)"'
+        run: git diff --exit-code -- lib/transferencia.ts lib/services/scheduled.ts
 
       # O cambio do dia da compra (HMO-182). A 026 pos um CHECK que CRUZA duas
       # colunas -- `(currency = 'BRL') = (exchange_rate = 1)` -- e a coluna nova
@@ -2669,8 +2721,22 @@ jobs:
       #     cadastra o primeiro ativo;
       #   - dividir a rentabilidade pelo valor atual em vez do custo, e a alocacao
       #     pelo patrimonio em vez do total da carteira (o defeito da HMO-146).
-      # 26 de 28 mutantes mortos; os dois sobreviventes sao no-op algebrico,
-      # explicados no cabecalho de scripts/mutantes-investments.mjs.
+      # 26 de 28 mutantes mortos. O runner que mediu isso
+      # (`scripts/mutantes-investments.mjs`) foi apagado na HMO-332 -- a carteira
+      # nao e onde errar custa dinheiro imediato, e esta suite e a afirmacao --,
+      # mas os DOIS sobreviventes ficam escritos aqui, porque senao alguem
+      # "conserta" a suite para matar um mutante que nao existe:
+      #   - "investido conta a posicao encerrada" e "alocacao inclui posicao
+      #     zerada" trocam `abertas` por `posicoes` numa soma, e sao NO-OP
+      #     algebrico: posicao encerrada tem quantidade 0, dai saem
+      #     `custo = custo - (custo/qtd)*qtd = 0` e `current_value = 0 * preco = 0`
+      #     -- ela contribui ZERO nas duas somas, com ou sem o filtro.
+      # O filtro `abertas` fica por duas razoes: a intencao ("o resumo olha a
+      # carteira de hoje") tem de estar legivel no codigo, e uma posicao
+      # encerrada com custo residual -- linha editada a mao no banco -- passaria
+      # a somar. Trocar `abertas` pelo conjunto todo em `totalDividends` e
+      # `realizedProfitLoss` NAO e no-op, e esses dois mutantes morriam: e
+      # justamente o dinheiro que a posicao encerrada deixou.
       - name: Custo medio, alocacao e evolucao da carteira
         run: npm run test:investments
 
@@ -2725,7 +2791,13 @@ jobs:
       # e as series 11 e 12 tem hoje o mesmo valor, entao trocar Selic por CDI
       # nao muda numero nenhum ate o dia em que as duas se separarem.
       # Um terceiro mutante vivo era no-op -- mutante mal escrito, nao teste
-      # fraco. Ver o cabecalho de scripts/mutantes-renda-fixa.mjs.
+      # fraco: a primeira versao dele acrescentava um `void 0;` DEPOIS do return,
+      # entao nao mutava nada e sobrevivia por construcao. Mutante vivo nem
+      # sempre e teste fraco; as vezes e mutante mal escrito.
+      # O runner que mediu os 41 (`scripts/mutantes-renda-fixa.mjs`) foi apagado
+      # na HMO-332 pelo mesmo motivo que o de investments, e as duas assercoes
+      # que ele fez nascer ficam marcadas com MEDIDO na suite -- o achado dele
+      # sobreviveu a ele.
       - name: Renda fixa rende sozinha, e LCI nao paga IR
         run: npm run test:renda-fixa
 

@@ -6,8 +6,11 @@
 // -----------------------------
 // Medido ao escrever este arquivo: 62 runners `scripts/mutantes-*` na arvore,
 // 19 invocados por algum step de workflow, 43 que nenhum job executa. Entre os
-// 43 estava o `mutantes-crivos.mjs`, que tem alvo proprio no package.json
-// (`mutantes:crivos`) e mesmo assim nao era chamado por workflow nenhum.
+// 43 estava o `mutantes-crivos.mjs`, que tinha alvo proprio no package.json
+// (`mutantes:crivos`) e mesmo assim nao era chamado por workflow nenhum -- alvo
+// npm nao e step, e so mais uma coisa que PARECE cobertura. (Ele e o alvo npm
+// foram apagados na HMO-332: ninguem defendeu a afirmacao que ele media, e o
+// `test:crivos` que a afirma continua com step proprio no verificacao.yml.)
 //
 // Runner de mutante e o aparelho que prova que uma suite MEDE o que ela diz
 // medir. Um runner que ninguem roda nao prova nada -- e nao da sintoma: o
@@ -81,7 +84,7 @@ const DECLARACAO = "scripts/declaracao-de-mutantes-fora-do-ci.mjs";
  * triar um runner OBRIGA a baixar o numero aqui, e o numero e o placar da
  * divida.
  */
-const TETO_NAO_TRIADO = 33;
+const TETO_NAO_TRIADO = 26;
 
 const erros = [];
 const avisos = [];

@@ -179,7 +179,9 @@ jobs:
       # A MESMA familia, um nivel acima, e o numero era pior: 62 runners
       # `scripts/mutantes-*` na arvore, 19 invocados por algum step, 43 que
       # nenhum job executava (HMO-322). Entre os 43 estava o
-      # `mutantes-crivos.mjs`, com alvo proprio no package.json.
+      # `mutantes-crivos.mjs`, com alvo proprio no package.json -- apagado na
+      # HMO-332, junto com o alvo, porque ninguem defendeu a afirmacao que ele
+      # media. O `test:crivos` logo abaixo, que e a afirmacao, ficou.
       #
       # Runner de mutante e o aparelho que prova que uma suite MEDE o que diz
       # medir. Um que ninguem roda nao prova nada e nao da sintoma -- o arquivo
