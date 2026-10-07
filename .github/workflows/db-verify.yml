@@ -22,9 +22,9 @@ name: db-verify
 on:
   push:
     branches: [main]
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'scripts/compila.mjs', 'scripts/mutantes-em-bloco.mjs', 'scripts/duble-de-supabase.mjs', 'scripts/monta-duble-de-rota.mjs', 'scripts/resolve-next-subpaths.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/parte-do-grupo-realizada.ts', 'lib/periodo-do-painel.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/acerto-em-lancamento.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/renda-fixa.ts', 'lib/cdi.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/divisao-do-grupo.ts', 'lib/convite-de-grupo.ts', 'lib/papel-de-pao.ts', 'lib/telas-de-movimentacao.ts', 'lib/agenda-do-cartao.ts', 'lib/previsto-x-realizado.ts', 'lib/elo-da-fatura.ts', 'lib/chave-da-fatura.ts', 'scripts/medicao-*.mjs', 'scripts/medicao-*.sh', 'lib/fechamento-do-grupo.ts', 'lib/credito-de-grupo.ts', 'lib/parte-de-grupo-na-lista.ts', 'lib/periodo-do-grupo.ts', 'lib/divisao-configurada.ts', 'lib/semear-pela-renda.ts', 'lib/sugestao-de-divisao.ts', 'components/financial/SplitSuggestions.tsx', 'lib/dinheiro.ts', 'components/grupos/DivisaoDoGrupo.tsx', 'components/grupos/FechamentoDoMes.tsx', 'app/**/expense-groups/**', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'lib/services/scheduled.ts', 'components/movimentacoes/FormularioDeTransferencia.tsx', 'app/api/reports/cash-flow/route.ts', 'app/api/personal-finance/transactions/route.ts', 'components/grupos/PainelDoGrupo.tsx', 'types/financial.ts', '.github/workflows/db-verify.yml', 'lib/puxar-para-atualizar-dom.ts', 'components/Sidebar.tsx', 'components/PuxarParaAtualizar.tsx', 'lib/categorias.ts', 'components/movimentacoes/SeletorDeCategoria.tsx', 'components/movimentacoes/CamposDeLancamento.tsx', 'components/ui/button.tsx', 'components/ui/input.tsx', 'components/ui/label.tsx', 'components/ui/select.tsx', 'lib/utils.ts']
+    paths: ['database/**', 'scripts/mutantes-categorias.sh', 'scripts/mutantes-convite-sem-conta.sh', 'scripts/mutantes-minha-parte-no-realizado.mjs', 'scripts/mutantes-trava-de-membro.mjs', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'scripts/compila.mjs', 'scripts/mutantes-em-bloco.mjs', 'scripts/duble-de-supabase.mjs', 'scripts/monta-duble-de-rota.mjs', 'scripts/resolve-next-subpaths.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/parte-do-grupo-realizada.ts', 'lib/periodo-do-painel.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/acerto-em-lancamento.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/renda-fixa.ts', 'lib/cdi.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/divisao-do-grupo.ts', 'lib/convite-de-grupo.ts', 'lib/papel-de-pao.ts', 'lib/telas-de-movimentacao.ts', 'lib/agenda-do-cartao.ts', 'lib/previsto-x-realizado.ts', 'lib/elo-da-fatura.ts', 'lib/chave-da-fatura.ts', 'scripts/medicao-*.mjs', 'scripts/medicao-*.sh', 'lib/fechamento-do-grupo.ts', 'lib/credito-de-grupo.ts', 'lib/parte-de-grupo-na-lista.ts', 'lib/periodo-do-grupo.ts', 'lib/divisao-configurada.ts', 'lib/semear-pela-renda.ts', 'lib/sugestao-de-divisao.ts', 'components/financial/SplitSuggestions.tsx', 'lib/dinheiro.ts', 'components/grupos/DivisaoDoGrupo.tsx', 'components/grupos/FechamentoDoMes.tsx', 'app/**/expense-groups/**', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'lib/services/scheduled.ts', 'components/movimentacoes/FormularioDeTransferencia.tsx', 'app/api/reports/cash-flow/route.ts', 'app/api/personal-finance/transactions/route.ts', 'components/grupos/PainelDoGrupo.tsx', 'types/financial.ts', '.github/workflows/db-verify.yml', 'lib/puxar-para-atualizar-dom.ts', 'components/Sidebar.tsx', 'components/PuxarParaAtualizar.tsx', 'lib/categorias.ts', 'components/movimentacoes/SeletorDeCategoria.tsx', 'components/movimentacoes/CamposDeLancamento.tsx', 'components/ui/button.tsx', 'components/ui/input.tsx', 'components/ui/label.tsx', 'components/ui/select.tsx', 'lib/utils.ts']
   pull_request:
-    paths: ['database/**', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'scripts/compila.mjs', 'scripts/mutantes-em-bloco.mjs', 'scripts/duble-de-supabase.mjs', 'scripts/monta-duble-de-rota.mjs', 'scripts/resolve-next-subpaths.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/parte-do-grupo-realizada.ts', 'lib/periodo-do-painel.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/acerto-em-lancamento.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/renda-fixa.ts', 'lib/cdi.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/divisao-do-grupo.ts', 'lib/convite-de-grupo.ts', 'lib/papel-de-pao.ts', 'lib/telas-de-movimentacao.ts', 'lib/agenda-do-cartao.ts', 'lib/previsto-x-realizado.ts', 'lib/elo-da-fatura.ts', 'lib/chave-da-fatura.ts', 'scripts/medicao-*.mjs', 'scripts/medicao-*.sh', 'lib/fechamento-do-grupo.ts', 'lib/credito-de-grupo.ts', 'lib/parte-de-grupo-na-lista.ts', 'lib/periodo-do-grupo.ts', 'lib/divisao-configurada.ts', 'lib/semear-pela-renda.ts', 'lib/sugestao-de-divisao.ts', 'components/financial/SplitSuggestions.tsx', 'lib/dinheiro.ts', 'components/grupos/DivisaoDoGrupo.tsx', 'components/grupos/FechamentoDoMes.tsx', 'app/**/expense-groups/**', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'lib/services/scheduled.ts', 'components/movimentacoes/FormularioDeTransferencia.tsx', 'app/api/reports/cash-flow/route.ts', 'app/api/personal-finance/transactions/route.ts', 'components/grupos/PainelDoGrupo.tsx', 'types/financial.ts', '.github/workflows/db-verify.yml', 'lib/puxar-para-atualizar-dom.ts', 'components/Sidebar.tsx', 'components/PuxarParaAtualizar.tsx', 'lib/categorias.ts', 'components/movimentacoes/SeletorDeCategoria.tsx', 'components/movimentacoes/CamposDeLancamento.tsx', 'components/ui/button.tsx', 'components/ui/input.tsx', 'components/ui/label.tsx', 'components/ui/select.tsx', 'lib/utils.ts']
+    paths: ['database/**', 'scripts/mutantes-categorias.sh', 'scripts/mutantes-convite-sem-conta.sh', 'scripts/mutantes-minha-parte-no-realizado.mjs', 'scripts/mutantes-trava-de-membro.mjs', 'scripts/db-*.sh', 'scripts/gen-*.mjs', 'scripts/test-*.mjs', 'scripts/tsconfig.*-test.json', 'scripts/resolve-aliases.mjs', 'scripts/compila.mjs', 'scripts/mutantes-em-bloco.mjs', 'scripts/duble-de-supabase.mjs', 'scripts/monta-duble-de-rota.mjs', 'scripts/resolve-next-subpaths.mjs', 'lib/recurrence.ts', 'lib/recurrence-detector.ts', 'lib/settlement.ts', 'lib/grupos.ts', 'lib/orcamento-de-grupo.ts', 'lib/parte-do-grupo.ts', 'lib/parte-do-grupo-realizada.ts', 'lib/periodo-do-painel.ts', 'lib/aprovacao-de-parte.ts', 'lib/statement.ts', 'lib/categorization.ts', 'lib/calculadoras.ts', 'lib/net-worth.ts', 'lib/card-invoice.ts', 'lib/transferencia.ts', 'lib/movimentacoes.ts', 'lib/cambio.ts', 'lib/moeda-do-grupo.ts', 'lib/acerto-em-lancamento.ts', 'lib/lancamento.ts', 'lib/lista-de-lancamentos.ts', 'lib/safe-to-spend.ts', 'lib/anomalies.ts', 'lib/cash-flow-forecast.ts', 'lib/variable-spend.ts', 'lib/investments.ts', 'lib/renda-fixa.ts', 'lib/cdi.ts', 'lib/fundamento-cvm.ts', 'lib/cvm-zip.ts', 'lib/auth-callback.ts', 'lib/signup-outcome.ts', 'lib/offline-session.ts', 'lib/offline-queue.ts', 'lib/offline-cache.ts', 'lib/ensure-profile.ts', 'lib/busca-de-perfil.ts', 'lib/chave-pix.ts', 'lib/puxar-para-atualizar.ts', 'lib/categorias-do-periodo.ts', 'lib/divisao-do-grupo.ts', 'lib/convite-de-grupo.ts', 'lib/papel-de-pao.ts', 'lib/telas-de-movimentacao.ts', 'lib/agenda-do-cartao.ts', 'lib/previsto-x-realizado.ts', 'lib/elo-da-fatura.ts', 'lib/chave-da-fatura.ts', 'scripts/medicao-*.mjs', 'scripts/medicao-*.sh', 'lib/fechamento-do-grupo.ts', 'lib/credito-de-grupo.ts', 'lib/parte-de-grupo-na-lista.ts', 'lib/periodo-do-grupo.ts', 'lib/divisao-configurada.ts', 'lib/semear-pela-renda.ts', 'lib/sugestao-de-divisao.ts', 'components/financial/SplitSuggestions.tsx', 'lib/dinheiro.ts', 'components/grupos/DivisaoDoGrupo.tsx', 'components/grupos/FechamentoDoMes.tsx', 'app/**/expense-groups/**', 'lib/services/budget.ts', 'lib/services/reports.ts', 'lib/services/recurrence-scan.ts', 'lib/services/recurrence-alerts.ts', 'lib/services/categorization.ts', 'lib/services/cron-ledger.ts', 'lib/services/scheduled.ts', 'components/movimentacoes/FormularioDeTransferencia.tsx', 'app/api/reports/cash-flow/route.ts', 'app/api/personal-finance/transactions/route.ts', 'components/grupos/PainelDoGrupo.tsx', 'types/financial.ts', '.github/workflows/db-verify.yml', 'lib/puxar-para-atualizar-dom.ts', 'components/Sidebar.tsx', 'components/PuxarParaAtualizar.tsx', 'lib/categorias.ts', 'components/movimentacoes/SeletorDeCategoria.tsx', 'components/movimentacoes/CamposDeLancamento.tsx', 'components/ui/button.tsx', 'components/ui/input.tsx', 'components/ui/label.tsx', 'components/ui/select.tsx', 'lib/utils.ts']
   workflow_dispatch:
 
 jobs:
@@ -1271,6 +1271,26 @@ jobs:
       # Medido: 9 mutantes, 9 mortos (npm run mutantes:convite-de-grupo).
       - name: O convite guardado nao se anuncia como enviado
         run: npm run test:convite-de-grupo
+
+      # O TEMPLATE PRE-040, TIRADO AQUI PORQUE AQUI E O PRE-040 (HMO-322).
+      #
+      # A prova de mutacao da 040 (mais abaixo, "A trava de membro sabe
+      # falhar") exige um banco com a cadeia ATE A 039 e SEM a 040: a 040 e
+      # `CREATE OR REPLACE FUNCTION` mais `DROP TRIGGER IF EXISTS`, entao
+      # aplicar um mutante sobre um banco que ja tem a versao boa REESCREVE a
+      # funcao boa -- e o placar viraria ficcao.
+      #
+      # Este step custa quase nada porque nao replica a cadeia: `CREATE
+      # DATABASE ... TEMPLATE` e copia de arquivo no lado do servidor. O unico
+      # requisito e que ninguem esteja conectado ao template, e entre dois
+      # steps nao ha conexao aberta -- cada `$PSQL` abre e fecha a sua.
+      #
+      # Tirar o retrato DEPOIS, replicando 001 -> 039 num banco novo, seria
+      # ~109 steps de psql pagos de novo. E tirar o retrato aqui tem uma
+      # segunda vantagem: ele nao pode divergir da cadeia que o job acabou de
+      # provar, porque E ela.
+      - name: Retrato da cadeia em 039, para a prova de mutacao da 040
+        run: $PSQL -d postgres -c "CREATE DATABASE hmo322_pre040 TEMPLATE $PGDATABASE"
 
       - name: 040_trava_de_percentual_e_papel_do_membro
         run: $PSQL -f database/migrations/040_trava_de_percentual_e_papel_do_membro.sql
@@ -2720,6 +2740,69 @@ jobs:
       # de teste mudasse, e mexer na implementacao sairia verde por ausencia.
       - name: Busca de perfil escapa o termo e nao lista a base inteira
         run: npm run test:busca-de-perfil
+
+      # ===================================================================
+      # OS CONTROLES NEGATIVOS QUE PRECISAM DE POSTGRES (HMO-322)
+      # ===================================================================
+      # Estes quatro runners existiam na arvore e NENHUM job os executava.
+      # Eram 4 dos 43 que a HMO-322 contou -- e "nao roda em lugar nenhum" nao
+      # da sintoma: o arquivo esta no repositorio, tem o nome certo, aparece no
+      # `ls`, e ler a arvore da a impressao de que aquela migration esta
+      # protegida por controle negativo.
+      #
+      # POR QUE AQUI E NAO NO verificacao.yml
+      # -------------------------------------
+      # Eles nao sao TypeScript: cada um muta a FUNCAO no Postgres (ou a
+      # migration, num arquivo temporario) e roda o teste SQL contra ela. Sem
+      # banco de verdade nao rodam. O verificacao.yml nao tem service de
+      # Postgres, e dar um a ele seria pagar a partida de uma maquina nova --
+      # a parte cara do Actions (HMO-261, franquia de 2.000 min/mes). Aqui o
+      # banco JA esta de pe e a cadeia JA subiu, entao o custo marginal e
+      # tempo de step, nao partida de maquina.
+      #
+      # O CUSTO MEDIDO, num Postgres 17 local (2026-10-07):
+      #
+      #   categorias                8 mutantes,  8 mortos,   9s
+      #   convite-sem-conta        12 mutantes, 12 mortos,   9s
+      #   minha-parte-no-realizado 24 mutantes, 24 mortos,  33s
+      #   trava-de-membro          13 mutantes, 13 mortos,  11s
+      #                            ---------------------------
+      #                            57 mutantes, 57 mortos,  62s
+      #
+      # 57 controles negativos por ~1 min de step, sem job novo. O
+      # minha-parte-no-realizado e o mais caro porque monta o proprio template
+      # (a cadeia SEM a 033); os outros tres saem de `CREATE DATABASE ...
+      # TEMPLATE`, que e copia de arquivo.
+      #
+      # NENHUM DELES ESCREVE NA ARVORE
+      # ------------------------------
+      # Isso importa num runner de mutante: quem muta a fonte no lugar e morre
+      # por timeout deixa a arvore MUTADA, e dali em diante tudo mede o arquivo
+      # errado. Os dois `.sh` nunca tocam arquivo nenhum (o mutante e um
+      # `CREATE OR REPLACE` num clone descartavel) e os dois `.mjs` escrevem a
+      # migration mutada num diretorio temporario. O pior caso de uma
+      # interrupcao aqui e um banco orfao, que morre com a maquina.
+      - name: A categoria do usuario sabe falhar (8 mutantes)
+        run: BANCO_BASE=$PGDATABASE bash scripts/mutantes-categorias.sh
+
+      - name: O convite sem conta sabe falhar (12 mutantes)
+        run: BANCO_BASE=$PGDATABASE bash scripts/mutantes-convite-sem-conta.sh
+
+      # Monta o proprio template (a cadeia inteira MENOS a 033) e confere que
+      # as views da 033 nao estao nele -- senao cada mutante seria aplicado por
+      # cima da versao boa. Alem dos 24 mutantes, prova o PREFLIGHT: num banco
+      # parado na 021 a 033 tem de falhar com a NOSSA mensagem, e nao com
+      # `column t.currency does not exist`.
+      - name: A minha parte no realizado sabe falhar (24 mutantes)
+        run: PGURL=postgresql://postgres:postgres@localhost:5432 node scripts/mutantes-minha-parte-no-realizado.mjs
+
+      # Usa o retrato tirado la atras, no ponto da cadeia em que a 039 tinha
+      # acabado de entrar e a 040 ainda nao. O runner confere as duas pontas: o
+      # controle NEGATIVO exige que o teste da 040 REPROVE no template cru (se
+      # passar, o template tem a 040 e o placar e ficcao) e o POSITIVO exige
+      # que a 040 intacta passe.
+      - name: A trava de membro sabe falhar (13 mutantes)
+        run: PG_TEMPLATE=hmo322_pre040 PG_URL_BASE=postgresql://postgres:postgres@localhost:5432 node scripts/mutantes-trava-de-membro.mjs
 
       # O guard de deriva de COLUNA (scripts/check-column-drift.mjs) roda no job
       # code-schema-drift, que nao tem Postgres, entao ele le o schema de

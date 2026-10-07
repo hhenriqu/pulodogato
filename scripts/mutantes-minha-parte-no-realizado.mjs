@@ -251,8 +251,19 @@ const mutantes = [
 // mensagem e a NOSSA. As duas metades importam -- "falhou" sozinho passaria com
 // o preflight apagado.
 const PRE022 = `tpl_033_pre022_${process.pid}`;
-const MIGRATIONS_PRE022 = ["022_", "023_", "024_", "025_", "026_", "027_",
-  "028_", "029_", "030_", "031_", "032_", "033_"];
+
+// "001 -> 021" e uma REGRA sobre o numero, e tem de ser escrita como regra.
+//
+// Isto era a lista a mao `["022_", ..., "033_"]`, correta no dia em que a 033
+// era a ultima migration da arvore. Quando a 034 entrou, ela deixou de ser
+// filtrada e passou a ser aplicada sobre um banco parado na 021 -- e a 034
+// adiciona o CHECK `currency = 'BRL'` numa coluna que a 022 cria. Resultado:
+// `column "currency" does not exist`, o runner morria antes do primeiro
+// mutante, e nada denunciou porque nenhum workflow o invocava (HMO-322).
+// Enumerar o "depois da 022" obriga toda migration futura a se lembrar deste
+// arquivo; comparar o numero nao obriga ninguem a nada.
+const PRIMEIRA_EXCLUIDA = 22;
+const ehDepoisDa022 = (m) => Number(m.slice(0, 3)) >= PRIMEIRA_EXCLUIDA;
 
 const psql = (url, args) =>
   execFileSync("psql", ["-v", "ON_ERROR_STOP=1", "--no-psqlrc", url, ...args], {
@@ -291,7 +302,7 @@ function controleDoPreflight() {
   const url = `${BASE}/${PRE022}`;
   psql(url, ["-f", "database/tests/00_supabase_shim.sql"]);
   for (const m of migrations) {
-    if (MIGRATIONS_PRE022.some((p) => m.startsWith(p))) continue;
+    if (ehDepoisDa022(m)) continue;
     psql(url, ["-f", `database/migrations/${m}`]);
   }
 

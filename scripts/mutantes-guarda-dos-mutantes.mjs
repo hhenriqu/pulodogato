@@ -38,6 +38,19 @@ const RAIZ = fileURLToPath(new URL("..", import.meta.url));
 const GUARDA = "scripts/check-mutantes-in-ci.mjs";
 const DECLARACAO = "scripts/declaracao-de-mutantes-fora-do-ci.mjs";
 const WORKFLOW = ".github/workflows/verificacao.yml";
+const WORKFLOW_DB = ".github/workflows/db-verify.yml";
+
+/**
+ * Os arquivos que a guarda LE, e de que esta medicao tira fotografia antes e
+ * depois de mutar (ver "NAO APLICOU" la embaixo).
+ *
+ * Tem de incluir TODO arquivo que algum mutante toca. Um mutante que muda um
+ * arquivo fora desta lista cai em "NAO APLICOU" -- a fotografia nao muda, a
+ * medicao conclui que a mutacao nao entrou, e o mutante some do placar. Foi o
+ * que quase aconteceu com o db-verify.yml quando a HMO-322 passou a mutar os
+ * steps de banco.
+ */
+const LIDOS_PELA_GUARDA = [GUARDA, DECLARACAO, WORKFLOW, WORKFLOW_DB, "package.json"];
 
 let sandbox = null;
 const limpar = () => {
@@ -203,13 +216,58 @@ const MUTANTES = [
     },
   },
   {
+    nome: "step de banco apagado do db-verify.yml (os 4 ligados pela HMO-322)",
+    peneira: "a peneira principal, pelo segundo workflow",
+    espera: /nenhum workflow roda e ninguem declarou[\s\S]*mutantes-categorias\.sh/,
+    // POR QUE ESTE MUTANTE EXISTE
+    // ---------------------------
+    // A HMO-322 tirou quatro runners da declaracao e deu step a cada um no
+    // db-verify.yml. Dali em diante, "estes quatro estao vigiados" passou a
+    // ser uma afirmacao sobre UM SEGUNDO workflow -- e os outros doze mutantes
+    // aqui so mexem no verificacao.yml.
+    //
+    // Sem este, apagar o step do `mutantes-categorias.sh` devolveria o runner
+    // a condicao de orfao em silencio: ele sairia da declaracao (ja saiu) e
+    // nao teria step nenhum, que e exatamente o estado que a HMO-322 foi
+    // aberta para tornar impossivel. E o buraco se reabriria pelo lado que
+    // nenhuma medicao estava olhando.
+    mutar(dir) {
+      const alvo = "scripts/mutantes-categorias.sh";
+      const w = ler(dir, WORKFLOW_DB).split("\n");
+      const i = w.findIndex((l) => l.includes(alvo) && /^\s*run:/.test(l));
+      if (i < 0) throw new Error("step do mutantes-categorias.sh nao encontrado no db-verify");
+      // Vira comentario, e nao linha apagada: assim o nome do arquivo CONTINUA
+      // no texto do workflow. Uma guarda que procurasse o nome sem recortar
+      // comentario daria o runner por vigiado, e este mutante sobreviveria --
+      // o mesmo defeito que o mutante do `coberto_por` em comentario mede do
+      // outro lado.
+      w[i] = `        # ${w[i].trim()}`;
+      escrever(dir, WORKFLOW_DB, w.join("\n"));
+    },
+  },
+  {
     nome: "motivo fora do vocabulario",
     peneira: "vocabulario fechado",
     espera: /nao esta no vocabulario/,
     mutar(dir) {
-      const d = ler(dir, DECLARACAO).replace('motivo: "precisa-de-banco"', 'motivo: "por-enquanto"');
-      if (d === ler(dir, DECLARACAO)) throw new Error("ancora do motivo nao casou");
-      escrever(dir, DECLARACAO, d);
+      // A ANCORA E A FORMA, NAO UM MOTIVO ESPECIFICO.
+      //
+      // Isto era `.replace('motivo: "precisa-de-banco"', ...)`. Quando a
+      // HMO-322 ligou os quatro runners de banco no db-verify.yml, o motivo
+      // `precisa-de-banco` saiu do vocabulario -- e este mutante ficou SEM
+      // ancora. O runner se portou bem (acusou ANCORA AUSENTE e recusou o
+      // placar em vez de contar o mutante como morto), mas o controle havia
+      // parado de medir.
+      //
+      // Casar com `motivo: "<qualquer coisa>"` nao envelhece: ele depende
+      // apenas de a declaracao ter pelo menos uma entrada, que e a premissa
+      // do arquivo. Nao serve ancorar em `nao-triado`: trocar o motivo DELE
+      // mexeria tambem na contagem do teto, e o mutante morreria pela peneira
+      // errada com a mensagem certa.
+      const alvo = /motivo: "(?!nao-triado)[a-z-]+"/;
+      const texto = ler(dir, DECLARACAO);
+      if (!alvo.test(texto)) throw new Error("ancora do motivo nao casou");
+      escrever(dir, DECLARACAO, texto.replace(alvo, 'motivo: "por-enquanto"'));
     },
   },
   {
@@ -309,7 +367,7 @@ for (const [i, m] of MUTANTES.entries()) {
     .flatMap((d) => readdirSync(join(dir, d)).map((f) => `${d}/${f}`))
     .sort()
     .join("\n");
-  const conteudoAntes = [GUARDA, DECLARACAO, WORKFLOW, "package.json"]
+  const conteudoAntes = LIDOS_PELA_GUARDA
     .map((f) => {
       try {
         return ler(dir, f);
@@ -330,7 +388,7 @@ for (const [i, m] of MUTANTES.entries()) {
     .flatMap((d) => readdirSync(join(dir, d)).map((f) => `${d}/${f}`))
     .sort()
     .join("\n");
-  const conteudoDepois = [GUARDA, DECLARACAO, WORKFLOW, "package.json"]
+  const conteudoDepois = LIDOS_PELA_GUARDA
     .map((f) => {
       try {
         return ler(dir, f);
