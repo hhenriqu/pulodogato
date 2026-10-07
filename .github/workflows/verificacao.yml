@@ -5604,6 +5604,47 @@ jobs:
           fi
 
       # =======================================================================
+      # O ELO DA FATURA: OS MUTANTES DA DETECCAO
+      # origem: nova (HMO-307, divida nomeada da HMO-305)
+      # =======================================================================
+      # A HMO-305 entregou `lib/elo-da-fatura.ts` com 23 casos de suite e nenhum
+      # runner de mutante. "A suite cobra a ausencia do rotulo" e "a suite
+      # reprova quando o rotulo acende na linha errada" sao duas afirmacoes
+      # diferentes, e so a segunda vale -- neste modulo a assimetria e o assunto
+      # inteiro: o rotulo que NAO acende deixa o mes em R$ 1.600,00, conferivel;
+      # o rotulo que acende na linha ERRADA poe na tela um botao que, clicado,
+      # esconde uma divida verdadeira.
+      #
+      # A MEDICAO ACHOU DOIS FUROS DE VERDADE na primeira volta, e os dois eram
+      # guardas que a suite NOMEAVA sem medir:
+      #
+      #   * `citacao_por_substring` -- o caso "Nu" dentro de "Numerario", que o
+      #     comentario da funcao usa para justificar a palavra inteira, e barrado
+      #     pela guarda do NOME CURTO. Trocar o criterio por `includes` ficava
+      #     verde. O caso novo e "Inter" dentro de "Internet": as duas contas
+      #     existem e vencem no mesmo mes;
+      #   * `fatura_fechada_vira_candidata` -- o `!gravada` do laco das faturas
+      #     abertas estava documentado como load-bearing, sem medicao nenhuma.
+      #     Sem ele, ligar uma previsao a uma fatura FECHADA cria duas linhas com
+      #     a mesma chave e nao ha fatura sintetizada para suprimir: o mes
+      #     continua dobrado com a tela dizendo "pronto".
+      #
+      # Os dois viraram CASO NOVO na suite, nao mutante removido da lista.
+      #
+      # NAO ABRE JOB NOVO -- o custo de CI deste projeto e o NUMERO de jobs, e
+      # este runner usa `criarBlocoDeMutantes`: um processo, uma sombra, doze
+      # voltas que dividem o AST de tudo que nao e o arquivo mutado. A fonte do
+      # repositorio nao e tocada em momento nenhum, entao nao ha passo-guarda de
+      # "a arvore voltou ao lugar" para acompanhar.
+      #
+      # SEM `paths:`, como o resto deste workflow -- e aqui isso importa mais que
+      # o normal: a suite do elo so tem passo no db-verify, que E filtrado por
+      # path. Este runner a exercita em todo PR, porque ele le as etapas do
+      # proprio alvo no package.json em vez de repetir a receita a mao.
+      - name: Os mutantes do elo da fatura -- a deteccao reprova quando erra para o lado caro
+        run: npm run mutantes:elo-da-fatura
+
+      # =======================================================================
       # PAGAR A FATURA: A DECISAO E A SEQUENCIA, FORA DA TELA
       # origem: nova (HMO-245, fase 13 -- HMO-310)
       # =======================================================================
