@@ -1,8 +1,15 @@
 #!/usr/bin/env node
 // Prova de mutacao dos tiles de Realizado/Previsao/Total (HMO-174). NAO roda em
 // CI: e ferramenta de quem escreve o teste. Cada entrada estraga uma decisao da
-// MARCACAO -- nao da aritmetica, que tem prova propria em
-// mutantes-realizado-e-previsao.mjs. A suite tem que ficar VERMELHA em todas.
+// MARCACAO -- nao da aritmetica, que e medida pela suite
+// `test:realizado-e-previsao`, essa sim com step no verificacao.yml. A suite
+// tem que ficar VERMELHA em todas.
+//
+// A aritmetica TINHA prova de mutacao propria em
+// `scripts/mutantes-realizado-e-previsao.mjs`, apagado na triagem da HMO-331:
+// nunca teve step nenhum, e o que ele guardava era leitura de painel, nao linha
+// gravada. A suite pura continua no CI; o que deixou de existir e o controle
+// negativo dela.
 //
 // O defeito que este arquivo existe para provar que a suite pega e o mais
 // silencioso da feature: os dois numeros certos impressos debaixo do rotulo um

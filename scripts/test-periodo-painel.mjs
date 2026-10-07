@@ -989,8 +989,15 @@ const HOJE = "2026-10-02";
  * copia: `react-dom/server` nao chama handler, entao nao ha como alcancar o
  * `onValueChange` de verdade sem navegador. O que torna a copia honesta e que
  * nenhuma DECISAO vive nela -- `escolhaDoSeletor` e `camposAbertos` respondem
- * tudo, e os mutantes de scripts/mutantes-periodo-painel.mjs estragam o lib, nao
- * este arquivo. Se a decisao estivesse aqui, o teste mediria a si mesmo.
+ * tudo, e viviam no `lib`, nao neste arquivo. Se a decisao estivesse aqui, o
+ * teste mediria a si mesmo.
+ *
+ * Quem provava essa separacao era `scripts/mutantes-periodo-painel.mjs`: 47
+ * mutantes que estragavam o lib e nunca este arquivo. Ele foi APAGADO na
+ * triagem da HMO-331 -- nunca teve step em workflow nenhum, custava 47
+ * recompilacoes do programa inteiro, e o que ele guarda e leitura de painel,
+ * nao linha gravada. O argumento acima continua valendo por leitura; o que nao
+ * existe mais e a medicao que o confirmava.
  *
  * A medicao em producao e o que cobre a fiacao: ver o comentario de fechamento
  * da HMO-243.
