@@ -133,14 +133,40 @@ const mutantes = [
     para: "onClick={() => setPeriodo(passoDeMes(periodo, -1))}",
   },
   {
-    // O EFEITO QUE NAO DEPENDE DO MES. Com a lista de dependencias vazia, o
-    // pedido acontece UMA vez e as setas passam a trocar so o rotulo. O
-    // `exhaustive-deps` reclamaria num `npm run lint`; este runner nao roda
-    // lint, e o ponto e que a SUITE tem de reprovar sozinha.
+    // O EFEITO QUE NAO DEPENDE DO MES. Com o `mesPedido` FORA da lista de
+    // dependencias, o pedido nao se refaz quando o mes muda e as setas passam
+    // a trocar so o rotulo. O `exhaustive-deps` reclamaria num `npm run lint`;
+    // este runner nao roda lint, e o ponto e que a SUITE tem de reprovar
+    // sozinha.
+    //
+    // O `recarga` FICA NO `para`, E ISSO NAO E DETALHE -- HMO-333. A ancora
+    // era `}, [mesPedido]);` e a lista hoje e `[mesPedido, recarga]`, porque a
+    // HMO-305 pendurou o elo da fatura num contador de recarga. Atualizar o
+    // `de` e deixar o `para` em `}, []);` -- o que ele dizia quando
+    // `mesPedido` era a lista INTEIRA -- tiraria os DOIS de uma vez, e o
+    // mutante passaria a medir "o efeito nao se refaz nunca" em vez de "o
+    // efeito nao depende do mes": o elo da fatura pararia de aparecer junto, e
+    // o mutante morreria por um defeito que nao e o dele. O `para` fiel e
+    // `}, [recarga]);` -- a recarga continua religando o efeito, e o unico
+    // sintoma que sobra e o mes.
+    //
+    // E ISSO FOI MEDIDO, nao deduzido: rodando as duas versoes do `para` na
+    // suite, elas morrem por assercoes DIFERENTES --
+    //
+    //   * `}, [recarga]);` (este) reprova em "cada clique na seta anda UM mes
+    //     -- no rotulo e no `?month=`" e "cada mes novo e UM pedido novo -- a
+    //     tela nao reusa a resposta velha". Sao as assercoes do MES, que e o
+    //     que este mutante existe para cobrar;
+    //   * `}, []);` (o descartado) nem chega nelas: reprova em "a conta nova
+    //     abre SEM papel de pao" e "clicar no papelzinho troca a classe do
+    //     <html>" -- assercoes de outra feature, que caem antes porque tirar o
+    //     `recarga` quebra a tela de forma larga.
+    //
+    // Os dois dariam 16/16 no placar. Um deles mediria outra coisa.
     nome: "o efeito nao refaz o pedido quando o mes muda",
     arquivo: PAINEL,
-    de: "  }, [mesPedido]);",
-    para: "  }, []);",
+    de: "  }, [mesPedido, recarga]);",
+    para: "  }, [recarga]);",
   },
   {
     // A RESPOSTA DE OUTRO MES, PINTADA. Sem a guarda, o cache do PWA (24h nas
