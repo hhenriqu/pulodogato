@@ -167,9 +167,18 @@ function fimDaLista(texto, aberturaIdx) {
  * Tira uma declaracao `const NOME = ...;` do texto, incluindo o bloco de
  * comentarios colado nela. Devolve o texto sem ela.
  *
- * Para `const NOME = [` multilinha, corta ate o `];` na coluna 0.
+ * Para `const NOME = [` multilinha, corta ate o `];` na coluna 0 -- ou ate o
+ * `fecho` que o chamador passar.
+ *
+ * `fecho` E PARAMETRO POR UM MOTIVO MEDIDO, NAO POR GENERALIDADE. A familia
+ * tupla (HMO-334) declara `const fontes = new Map([`, que fecha em `\n]);` e
+ * NAO em `\n];`. Com o fecho fixo, o primeiro `\n];` depois dela e o que fecha
+ * a LISTA DE MUTANTES -- e o corte levaria a lista inteira. E, byte a byte, o
+ * mesmo estrago que a HMO-318 cometeu em `mutantes-periodo-do-grupo` e que o
+ * comentario abaixo descreve; a diferenca e que aqui ele era garantido, nao
+ * acidental.
  */
-function removerDeclaracao(texto, nome) {
+function removerDeclaracao(texto, nome, fecho = "\n];") {
   const re = new RegExp(`^const ${nome} = `, "m");
   const m = re.exec(texto);
   if (!m) return texto;
@@ -187,14 +196,49 @@ function removerDeclaracao(texto, nome) {
   if (primeiraLinha.trimEnd().endsWith(";")) {
     fim = inicio + primeiraLinha.lastIndexOf(";") + 1;
   } else {
-    const fecha = texto.indexOf("\n];", inicio);
+    const fecha = texto.indexOf(fecho, inicio);
     if (fecha === -1) throw new Error(`${nome}: declaracao multilinha sem fechamento`);
-    fim = fecha + "\n];".length;
+    fim = fecha + fecho.length;
   }
   // Come a quebra de linha seguinte, para nao deixar linha em branco dupla.
   let depois = fim;
   if (texto[depois] === "\n") depois++;
   return texto.slice(0, inicio) + texto.slice(depois);
+}
+
+/**
+ * Tira uma declaracao `function NOME(...) { ... }` do texto, junto com o bloco
+ * de comentarios colado acima dela. Devolve o texto sem ela.
+ *
+ * O fim e o primeiro `^}` na coluna 0 -- o que basta porque a funcao esta no
+ * topo do modulo e nada dentro dela e indentado a zero.
+ *
+ * Existe para a familia tupla, onde o "roda a suite e diz se ficou vermelha" e
+ * uma FUNCAO (`vermelha`, `suiteVermelha`) e nao uma constante. O bloco a
+ * substitui por `bloco.rodar`, entao deixa-la no arquivo convertido seria um
+ * `execSync("npm run ...")` orfao -- codigo morto que ainda roda a suite de
+ * verdade se alguem o chamar, e um aviso de lint garantido.
+ */
+function removerFuncao(texto, nome) {
+  const m = new RegExp(`^function ${nome}\\(`, "m").exec(texto);
+  if (!m) return texto;
+  let inicio = m.index;
+  // O bloco de comentario colado acima: sobe enquanto as linhas anteriores
+  // forem `//` ou `/** ... */` sem linha em branco no meio.
+  const antes = texto.slice(0, inicio).split("\n");
+  antes.pop(); // a linha vazia que o split deixa no fim
+  let quantas = 0;
+  for (let i = antes.length - 1; i >= 0; i--) {
+    if (/^\s*(\/\/|\/\*\*|\*|\*\/)/.test(antes[i])) quantas++;
+    else break;
+  }
+  for (let i = 0; i < quantas; i++) inicio -= antes[antes.length - 1 - i].length + 1;
+
+  const fecha = texto.indexOf("\n}", m.index);
+  if (fecha === -1) throw new Error(`${nome}: funcao sem fechamento na coluna 0`);
+  let fim = fecha + "\n}".length;
+  if (texto[fim] === "\n") fim++;
+  return texto.slice(0, inicio) + texto.slice(fim);
 }
 
 /**
@@ -547,6 +591,397 @@ export function converterPainel(fonte, rotulo) {
   );
 }
 
+// ===========================================================================
+// A TERCEIRA FAMILIA: "tupla" (HMO-334)
+// ===========================================================================
+// Cinco runners -- `parte-do-grupo`, `divisao-do-grupo`, `divisao-configurada`,
+// `lancamentos-completos` e `pagador-da-parte` -- declaram os mutantes como
+// TUPLA (`[nome, de, para]`) e nao como objeto. E so isso que os separa da
+// familia do painel, e e o bastante para que o conversor dela os estrague:
+//
+//   do painel                        | tupla
+//   ---------------------------------+------------------------------------------
+//   `const mutantes = [`             | `const mutantes = [`   (igual!)
+//   entradas `{ nome:, arquivo:, }`  | entradas `[nome, de, para]`
+//   `arquivo:` POR MUTANTE           | o alvo vem de uma `const` do modulo
+//   `readFileSync` no driver gerado  | `const original = readFileSync(ALVO)` no MIOLO
+//
+// A terceira linha e a que o `ehDoPainel` usa para recusa-los, e a HMO-328 ja
+// mediu o que acontece sem ela: reconhecer so por `const mutantes = [` fez o
+// conversor aceitar `cartao-orcamento-grupo` e cuspir um arquivo que nem
+// carregava. Por isso `ehTupla` exige a ENTRADA EM FORMA DE LISTA (`^ {2}\[$`),
+// que e zero nos cinco runners do painel e nos da HMO-246.
+//
+// AS DUAS ARIDADES, E POR QUE A ISSUE ERRAVA NISTO
+// -----------------------------------------------
+// A HMO-334 supunha "um ALVO so por runner (nao e multi-arquivo)". Dois dos
+// cinco desmentem: `lancamentos-completos` e `pagador-da-parte` mutam DOIS
+// arquivos cada, por um `const fontes = new Map([...])` e uma tupla de QUATRO
+// (`[alvo, nome, de, para]`). Converter os dois como se fossem de alvo unico
+// produziria um runner que muta sempre o primeiro arquivo -- e os mutantes do
+// segundo "morreriam" medindo outra coisa.
+//
+// A aridade e lida de DUAS fontes independentes (a `const fontes` e a forma da
+// primeira entrada) e o conversor EXIGE que concordem. Uma so bastaria para
+// converter; duas e o que transforma um erro de leitura em uma excecao em vez
+// de um arquivo errado.
+//
+// O QUE SAI DO MIOLO, ALEM DO QUE JA SAIA
+// ---------------------------------------
+// `const original = readFileSync(ALVO, "utf8")` e `const fontes = new Map(...)`
+// sao MORTAS no desenho de bloco, do mesmo jeito que `DEPENDENCIAS` e morta na
+// familia HMO-246: o driver novo le o original por conta propria. Sai tambem o
+// `const SUITE = "npm run test:x"` (o bloco quer o NOME da suite, `test:x`, nao
+// a linha de comando) e a funcao que rodava a suite (`vermelha`,
+// `suiteVermelha`), que `bloco.rodar` substitui.
+//
+// A TRAVA DE OCORRENCIA UNICA, QUE AQUI MUDOU O PLACAR
+// ----------------------------------------------------
+// Como na familia do painel, tres destes cinco so tinham `includes(de)` -- quem
+// ja tinha a trava de ambiguidade era `divisao-configurada` e `pagador-da-parte`.
+// Acrescenta-la aos outros tres muda o placar se algum `de` aparecer duas vezes,
+// e na HMO-328 a medida deu zero e a trava entrou de graca.
+//
+// AQUI NAO DEU ZERO. `scripts/mede-ancora-ambigua.mjs`, estendido a esta
+// familia, leu 292 mutantes em 14 runners das duas e achou TRES ambiguos, os
+// tres em `mutantes-parte-do-grupo` -- porque `lib/parte-do-grupo.ts` tem dois
+// pares de trechos identicos em funcoes diferentes:
+//
+//   `if (!groupId) return cheio;`                     -> parteConfiguradaDoMembro
+//                                                        E parteDoMembro
+//   `if (linha.status && ... !== "active") continue;` -> montarParticipantesPorGrupo
+//                                                        E contarMembrosAtivos
+//
+// O runner antigo mutava a PRIMEIRA ocorrencia e a suite ficava vermelha, entao
+// os tres apareciam como mortos. O que ninguem sabia e QUAL das duas funcoes
+// estava sendo medida -- e as outras duas seguiam sem mutante nenhum. A trava
+// nao criou o defeito; ela o tornou visivel.
+//
+// Os tres `de` foram desambiguados num commit SEPARADO do da conversao,
+// estendidos com a linha seguinte de cada funcao, de modo a casar exatamente o
+// trecho que o runner antigo ja mutava. Veredito final identico ao de antes
+// (12/12), agora com o rotulo dizendo a verdade sobre onde mediu.
+// ===========================================================================
+
+/**
+ * Este runner e da familia tupla?
+ *
+ * `^ {2}\[$` -- uma entrada da lista que ABRE COM `[` na coluna 2 -- e o que
+ * separa esta familia das outras duas. Medido nas tres: zero nos cinco runners
+ * do painel (entradas em `{`) e zero nos da HMO-246 (que ainda por cima usam
+ * `MUTANTES` em maiuscula).
+ */
+export const ehTupla = (fonte) =>
+  /^const mutantes = \[$/m.test(fonte) && /^ {2}\[$/m.test(fonte);
+
+/**
+ * 3 (`[nome, de, para]`, um alvo) ou 4 (`[alvo, nome, de, para]`, multi-alvo).
+ *
+ * Lanca se as duas leituras discordarem -- ver a secao da familia acima.
+ */
+export function aridadeDaTupla(fonte) {
+  const temFontes = /^const fontes = new Map\(\[$/m.test(fonte);
+  // A primeira entrada comeca com uma REFERENCIA A CONSTANTE (`DESTINO,`) e nao
+  // com o rotulo entre aspas. Lida pela entrada ANCORADA, e nao por `/m` sobre o
+  // arquivo -- ver `primeiraEntradaDaLista`.
+  const entradaComAlvo = /^ {4}[A-Z][A-Z_0-9]*,$/m.test(primeiraEntradaDaLista(fonte));
+  if (temFontes !== entradaComAlvo) {
+    throw new Error(
+      `aridade ambigua: \`const fontes = new Map([\` ${temFontes ? "existe" : "nao existe"}, ` +
+        `mas a 1a entrada ${entradaComAlvo ? "" : "nao "}comeca por uma constante de arquivo`,
+    );
+  }
+  return temFontes ? 4 : 3;
+}
+
+/** A suite deste runner, pelo NOME (`test:x`) -- nunca pela linha de comando. */
+function suiteDaTupla(fonte) {
+  // `const SUITE = "npm run test:x";` (com ou sem o `npm run`, que o bloco nao
+  // quer: ele resolve as etapas pelo `scripts[...]` do package.json).
+  const constante = /^const SUITE = "(?:npm run )?(test:[a-z0-9:-]+)";$/m.exec(fonte);
+  if (constante) return constante[1];
+  // Ou a suite esta inline no `execSync` do driver.
+  const inline = /execSync\("npm run (test:[a-z0-9:-]+)"/.exec(fonte);
+  if (inline) return inline[1];
+  throw new Error('nao achei a suite (nem `const SUITE = "..."` nem `execSync("npm run ...")`)');
+}
+
+/**
+ * Recorta o miolo de um runner da familia tupla: da PRIMEIRA constante de
+ * arquivo ate o `];` que fecha `mutantes`, menos as declaracoes mortas.
+ *
+ * As constantes de arquivo PRECISAM sobreviver ao corte, e nao por elegancia: na
+ * aridade 4 a propria lista as referencia por nome (`[DESTINO, "...", ...]`), e
+ * um miolo sem elas nao carrega.
+ */
+export function mioloDaTupla(fonte) {
+  const mLista = /^const mutantes = \[$/m.exec(fonte);
+  if (!mLista) throw new Error("nao achei `const mutantes = [`");
+
+  const antesDaLista = fonte.slice(0, mLista.index);
+  // O filtro do `test:` cobre as duas formas em que a suite aparece como
+  // constante de string: `"test:x"` e `"npm run test:x"`. Sem ele, um runner com
+  // `const SUITE` declarada ANTES do `const ALVO` teria o miolo comecando na
+  // linha da suite -- e `divisao-configurada` declara exatamente nessa ordem.
+  const constantes = [...antesDaLista.matchAll(/^const ([A-Z][A-Z_0-9]*) = "([^"]+)";$/gm)].filter(
+    (m) => !/^(npm run )?test:/.test(m[2]),
+  );
+  if (constantes.length === 0) {
+    throw new Error('nao achei nenhuma `const NOME = "caminho";` antes da lista');
+  }
+
+  let miolo = fonte.slice(constantes[0].index, fimDaLista(fonte, mLista.index));
+
+  miolo = removerDeclaracao(miolo, "SUITE");
+  miolo = removerDeclaracao(miolo, "original");
+  // `fontes` fecha em `]);`, nao em `];` -- ver `removerDeclaracao`.
+  miolo = removerDeclaracao(miolo, "fontes", "\n]);");
+  for (const morta of ["vermelha", "suiteVermelha"]) miolo = removerFuncao(miolo, morta);
+
+  // AS LINHAS EM BRANCO QUE AS REMOCOES DEIXARAM, e o recorte apertado em volta
+  // delas. Tirar `const fontes = new Map([...])` do meio de duas linhas vazias
+  // deixa duas vazias seguidas -- em `lancamentos-completos`, `pagador-da-parte`
+  // (tres!) e `divisao-configurada`. E so cosmetico, mas a cosmetica aqui e o
+  // que faz `npm run lint-tudo` passar sem aviso.
+  //
+  // O COLAPSO PARA ANTES DA LISTA, de proposito. Aplicado ao miolo inteiro ele
+  // seria SIMETRICO -- os dois lados do `conferir` leem o mesmo texto colapsado
+  // --, e por isso invisivel: um runner futuro desta familia com duas linhas
+  // vazias dentro da lista as perderia em silencio, e "a lista vem byte a byte"
+  // deixaria de ser verdade sem nada acusar. Limitado as declaracoes, a promessa
+  // vale sem clausula. (Medido: nenhum dos cinco tem blanco duplo em lugar
+  // nenhum, entao hoje o recorte nao muda o resultado -- ele muda o que o
+  // conversor garante ao PROXIMO.)
+  const abre = miolo.indexOf("const mutantes = [");
+  if (abre === -1) throw new Error("o miolo recortado perdeu o `const mutantes = [`");
+  miolo = miolo.slice(0, abre).replace(/\n{3,}/g, "\n\n") + miolo.slice(abre);
+
+  return {
+    miolo: miolo.trimEnd(),
+    arquivos: constantes.map((m) => m[2]),
+  };
+}
+
+export function recortarTupla(fonte) {
+  const mImport = /^import /m.exec(fonte);
+  if (!mImport) throw new Error("nao achei o bloco de imports");
+
+  return {
+    cabecalho: podarCabecalho(fonte.slice(0, mImport.index).trimEnd(), PARAGRAFOS_MORTOS),
+    ...mioloDaTupla(fonte),
+    suite: suiteDaTupla(fonte),
+    aridade: aridadeDaTupla(fonte),
+  };
+}
+
+const NOTA_TUPLA = (arquivos, suite, quantos, aridade) => `//
+// O BLOCO: UMA COMPILACAO PARA TODOS OS MUTANTES (HMO-334)
+// --------------------------------------------------------
+// Este runner MUTAVA A ARVORE RASTREADA: guardava o texto original em memoria,
+// escrevia o mutante ${aridade === 4 ? `num dos ${arquivos.length} arquivos de producao da lista` : `em \`${arquivos[0]}\``},
+// chamava \`npm run ${suite}\` ali mesmo e restaurava depois. Dois defeitos
+// nisso, e o segundo e o que doia:
+//
+//   1. cada uma das ${quantos} voltas recompilava o programa INTEIRO, mesmo
+//      mudando UM arquivo;
+//
+//   2. o mutante ficava GRAVADO no arquivo de producao quando o processo morria
+//      no meio. A restauracao era um \`writeFileSync\` depois do laco -- que nao
+//      roda em SIGTERM, e SIGTERM e o que um timeout manda. Pior: \`execSync\`
+//      bloqueia a thread do JS, entao nem um handler de SIGTERM resolveria; o
+//      processo termina a volta em curso e aplica A SEGUINTE. Aconteceu nesta
+//      arvore duas vezes (\`PainelDePapel.tsx\` na HMO-296, e \`DivisaoDoGrupo.tsx\`
+//      herdado mutado pela HMO-263 -- por um runner DESTA familia), e nas duas
+//      o \`git status\` mostrava UM arquivo modificado: a cara de trabalho em
+//      andamento.
+//
+// Agora as voltas dividem um processo e um cache de AST
+// (\`criarBlocoDeMutantes\`, HMO-319): so o arquivo mutado e reparseado, e a
+// mutacao vai para uma SOMBRA em diretorio temporario. A arvore rastreada e o
+// \`.tmp-*\` do repositorio nao sao tocados em momento nenhum, entao o pior caso
+// de um processo morto e um diretorio orfao em /tmp.
+//
+// As etapas da suite saem do proprio \`scripts["${suite}"]\` do package.json -- o
+// comando que o CI roda --, e nao de uma receita repetida a mao aqui.
+//
+// A lista de mutantes abaixo NAO foi reescrita: ela veio byte a byte do arquivo
+// anterior, pelo \`scripts/converte-mutantes-em-bloco.mjs\`.`;
+
+function driverTupla(suite, rotulo, aridade) {
+  const quatro = aridade === 4;
+  return `
+const SUITE = "${suite}";
+
+const bloco = criarBlocoDeMutantes({ rotulo: "${rotulo}", suites: [SUITE] });
+
+// A sombra vive em diretorio temporario, e a arvore rastreada nunca e mutada --
+// era esse o modo de falha deste runner. O handler de sinal existe so para que
+// nem o diretorio orfao sobre: o fim do laco nao roda em SIGTERM, mas
+// \`process.exit\` dispara o \`exit\` abaixo.
+process.on("exit", () => bloco.fechar());
+for (const sinal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(sinal, () => process.exit(1));
+}
+
+// O texto de cada arquivo que algum mutante toca. Lido da arvore de verdade, que
+// e o original por construcao: nada mais aqui escreve nela.
+const original = new Map();
+for (const arquivo of ${quatro ? "new Set(mutantes.map(([alvo]) => alvo))" : "[ALVO]"}) {
+  original.set(arquivo, readFileSync(arquivo, "utf8"));
+}
+
+// CONTROLE POSITIVO: a arvore INTACTA tem de passar antes de qualquer mutante,
+// e pelo MESMO \`rodar\` que os mutantes usam -- por isso ele pega erro no
+// aparelho. Sem ele, uma sombra mal montada reprova TODO mutante e o placar sai
+// "N/N mortos" sobre zero assercoes executadas.
+const controle = bloco.rodar("controle", {}, SUITE);
+if (!controle.verde) {
+  console.error(\`ABORTADO: a arvore INTACTA reprova em \${SUITE} (\${controle.como}).\`);
+  console.error(\`  \${controle.saida}\`);
+  console.error("O placar nao valeria: todo mutante 'morreria' sem ter sido medido.");
+  process.exit(1);
+}
+console.log(\`controle positivo: a arvore intacta passa em \${SUITE}\\n\`);
+
+let sobreviventes = 0;
+
+for (const [${quatro ? "alvo, nome, de, para" : "nome, de, para"}] of mutantes) {${
+    quatro
+      ? ""
+      : `
+  const alvo = ALVO;`
+  }
+  const antes = original.get(alvo);
+
+  // AS TRES TRAVAS DE ANCORA. A primeira e a terceira ja existiam neste runner;
+  // a do meio e a que a conversao acrescenta (ver OCORRENCIA UNICA, no
+  // conversor): \`String.replace\` troca a PRIMEIRA ocorrencia, e um \`de\` que
+  // aparece duas vezes muta um lugar que o rotulo nao descreve.
+  const ocorrencias = antes.split(de).length - 1;
+  if (ocorrencias === 0) {
+    console.error(\`SOBREVIVEU (ancora nao casou) :: \${nome}\`);
+    console.error(\`  o texto buscado nao existe em \${alvo}: \${de}\`);
+    sobreviventes++;
+    continue;
+  }
+  if (ocorrencias > 1) {
+    console.error(\`SOBREVIVEU (ancora ambigua) :: \${nome}\`);
+    console.error(\`  o texto aparece \${ocorrencias}x em \${alvo} -- o replace muta so a 1a\`);
+    sobreviventes++;
+    continue;
+  }
+  const depois = antes.replace(de, para);
+  if (depois === antes) {
+    console.error(\`SOBREVIVEU (replace nao mudou nada) :: \${nome}\`);
+    sobreviventes++;
+    continue;
+  }
+
+  const r = bloco.rodar(nome, { [alvo]: depois }, SUITE);
+
+  if (r.verde) {
+    console.error(\`SOBREVIVEU :: \${nome}\`);
+    if (r.mudouASaida === false) {
+      console.error("  (saida compilada identica a da arvore limpa: EQUIVALENTE)");
+    }
+    sobreviventes++;
+  } else {
+    // Morrer no tsc tambem e morrer -- mutante que nao compila nao chega em
+    // producao --, mas a distincao importa: um erro de tipo nao diz que a SUITE
+    // pegou a regra.
+    console.log(\`morreu     :: \${nome}  (\${r.como === "tsc" ? "tsc" : "asercao"})\`);
+  }
+}
+
+console.log(\`\\n\${mutantes.length - sobreviventes}/\${mutantes.length} mortos\`);
+process.exit(sobreviventes === 0 ? 0 : 1);
+`;
+}
+
+/**
+ * As linhas de dentro da PRIMEIRA entrada da lista de mutantes.
+ *
+ * ANCORADA NA PRIMEIRA ENTRADA DE VERDADE, e isto foi medido: com a regex solta
+ * (`/m` sobre o texto todo) e o quantificador preguicoso, uma primeira entrada
+ * que o fecho nao casasse era SALTADA em silencio -- a regex seguia e casava a
+ * SEGUNDA. Funciona por acidente enquanto todas as entradas tem a mesma
+ * aridade, e e exatamente o tipo de leitura que mente quando uma nao tem.
+ * Cortando o texto no primeiro `[` da lista, "nao casou" passa a ser erro em vez
+ * de resposta sobre outra entrada.
+ */
+function primeiraEntradaDaLista(miolo) {
+  const mLista = /^const mutantes = \[$/m.exec(miolo);
+  const daLista = mLista ? miolo.slice(mLista.index) : miolo;
+  const abre = /^ {2}\[$/m.exec(daLista);
+  if (!abre) throw new Error("a lista de mutantes nao tem entrada nenhuma em forma de tupla");
+  // `^ {2,6}\],?$` -- o fecho aceita indentacao frouxa porque ela existe:
+  // `mutantes-lancamentos-completos` fecha uma entrada com quatro espacos. Aqui
+  // isso decide algo, ao contrario da contagem de `entradas`: sem a folga, o
+  // conversor recusaria um runner bom.
+  //
+  // `m.index !== 0` E A ANCORA, e e ela que o `/m` obriga a escrever. Sem `/m` o
+  // `$` so casa no fim da STRING e nenhuma entrada casa; com `/m` o `^` volta a
+  // poder casar em qualquer linha, e e assim que a versao anterior desta leitura
+  // pulava a primeira entrada e respondia sobre a segunda. Exigir que o casamento
+  // comece no byte zero do recorte e o que torna "a primeira entrada nao casou"
+  // um erro, e nao uma resposta sobre outra.
+  const m = /^ {2}\[\n((?: {4}.*\n)+?) {2,6}\],?$/m.exec(daLista.slice(abre.index));
+  if (!m || m.index !== 0) {
+    throw new Error("nao consegui ler a primeira entrada da lista de mutantes");
+  }
+  return m[1];
+}
+
+/**
+ * Quantos elementos tem a PRIMEIRA entrada da lista, contados na lista mesmo.
+ *
+ * A TERCEIRA LEITURA DA ARIDADE, e a que fecha um furo que o `conferir` nao
+ * fecha. `conferir` compara MIOLO, e o miolo nao muda com a aridade: um runner
+ * de tupla-4 convertido como se fosse de 3 confere OK byte a byte e gera um
+ * driver que faz `for (const [nome, de, para] of mutantes)` sobre entradas de
+ * quatro -- `nome` recebe a constante do arquivo, `de` recebe o rotulo, e todo
+ * mutante "morre" por ancora inexistente. Placar cheio, zero medido.
+ *
+ * Por isso a aridade e conferida contra a lista antes de escrever o arquivo, e
+ * nao contra as duas pistas que `aridadeDaTupla` ja cruzou: se as tres
+ * discordarem, o conversor lanca em vez de produzir o driver errado.
+ *
+ * E A UNICA DAS TRES LEITURAS QUE FUNCIONA DEPOIS DA CONVERSAO, e por isso ela e
+ * exportada. As outras duas se apoiam em coisas que a conversao APAGA -- a
+ * `const fontes = new Map` sai do miolo --, entao `aridadeDaTupla` lanca num
+ * runner ja convertido. Quem precisa ler a aridade de um runner qualquer, no
+ * estado em que ele esta (o `mede-ancora-ambigua.mjs`), tem de ler a FORMA DA
+ * LISTA, que a conversao preserva byte a byte.
+ */
+export function elementosDaPrimeiraEntrada(miolo) {
+  // Os elementos sao as linhas de nivel 4 que NAO sao comentario: o rotulo e os
+  // textos sao strings de uma linha so, e o alvo (na aridade 4) e um identificador.
+  return primeiraEntradaDaLista(miolo)
+    .split("\n")
+    .filter((l) => l.trim() && !l.trim().startsWith("//")).length;
+}
+
+export function converterTupla(fonte, rotulo) {
+  const { cabecalho, miolo, arquivos, suite, aridade } = recortarTupla(fonte);
+  const quantos = (miolo.match(/^ {2}\[$/gm) ?? []).length;
+
+  const elementos = elementosDaPrimeiraEntrada(miolo);
+  if (elementos !== aridade) {
+    throw new Error(
+      `aridade ${aridade} mas a 1a entrada tem ${elementos} elementos -- ` +
+        "o driver gerado desempacotaria a tupla errada",
+    );
+  }
+
+  return (
+    `${cabecalho}\n${NOTA_TUPLA(arquivos, suite, quantos, aridade)}\n\n` +
+    `import { readFileSync } from "node:fs";\n\n` +
+    `import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";\n\n` +
+    `${miolo}\n` +
+    driverTupla(suite, rotulo, aridade)
+  );
+}
+
 const NOTA = (arquivoFonte, suite) => `//
 // O BLOCO: UMA COMPILACAO PARA TODOS OS MUTANTES (HMO-318)
 // --------------------------------------------------------
@@ -664,12 +1099,43 @@ export function converter(fonte, rotulo) {
 // extrator quebrado truncaria os dois igual e o conferidor passaria vacuo --
 // que e, literalmente, o defeito que a HMO-318 cometeu e consertou.
 
+// AS DUAS CONTAGENS SAO POR FAMILIA, E NAO HA COMO NAO SEREM (HMO-334). As
+// travas do `conferir` contam mutantes pelo texto final: `^    nome: ` numa
+// lista de OBJETOS e `^  [` numa lista de TUPLAS. Com a contagem do objeto
+// aplicada a uma tupla, `antesN` e `depoisN` dao ZERO nos dois lados -- a trava
+// de contagem some, o piso de tamanho some com ela (ele e `100 * depoisN`), e
+// sobra so `a !== b`: exatamente o conferidor de UMA trava que a HMO-318
+// mostrou ser insuficiente. A unica coisa que acusaria seria a trava 3 ("o
+// arquivo de antes nao tinha mutante nenhum"), e ela acusaria TODA conversao
+// desta familia, inclusive a certa.
+//
+// `contar` E A TRAVA FORTE, E `entradas` NAO E. Vale dizer qual e qual, porque
+// as duas parecem simetricas na lista de problemas e nao sao: `contar` le o
+// TEXTO FINAL dos dois arquivos, que e assimetrico (o convertido foi escrito A
+// PARTIR da extracao, o de antes nao), e e so por isso que ele pega truncamento
+// igual nos dois lados. `entradas` compara `entradas(a)` com `entradas(b)`, e os
+// dois saem de miolos que, numa conversao certa, sao o mesmo texto -- ele nunca
+// divergir sozinho, e o que ele acrescenta ao `a !== b` e uma mensagem mais
+// especifica, nao uma deteccao a mais. Medido: trocar a forma do fecho aqui nao
+// muda veredito nenhum (o controle negativo da familia registra a mutacao).
+//
+// A indentacao frouxa (2 a 6) e por um caso real -- `mutantes-lancamentos-
+// completos` fecha UMA entrada com quatro espacos em vez de dois, na linha 138
+// --, mas o lugar onde ela decide algo e `elementosDaPrimeiraEntrada`, que le a
+// lista para ESCOLHER a aridade. La um fecho rigido faz o conversor recusar um
+// runner bom, e e la que o controle negativo mede.
+const CONTA_OBJETO = {
+  contar: (t) => (t.match(/^ {4}nome: /gm) ?? []).length,
+  entradas: (t) => (t.match(/^ {2}\{$/gm) ?? []).length,
+};
+
 const FAMILIAS = {
   // A ordem importa: `reconhece` e avaliado de cima para baixo.
   painel: {
     reconhece: ehDoPainel,
     recortar: recortarPainel,
     converter: converterPainel,
+    ...CONTA_OBJETO,
     // O miolo do convertido comeca na primeira `const NOME = "caminho";` e
     // termina onde o driver comeca.
     mioloDoConvertido: (t) => {
@@ -679,10 +1145,31 @@ const FAMILIAS = {
       return t.slice(m.index, fim).trimEnd();
     },
   },
+  // ANTES da `hmo246` e DEPOIS da `painel`, mas a ordem nao e o que a protege:
+  // os tres predicados sao mutuamente exclusivos por construcao (objeto com
+  // `arquivo:` / tupla em `[` / `MUTANTES` em maiuscula), e e o controle
+  // negativo da familia que cobra isso dos tres, nos dois sentidos.
+  tupla: {
+    reconhece: ehTupla,
+    recortar: recortarTupla,
+    converter: converterTupla,
+    contar: (t) => (t.match(/^ {2}\[$/gm) ?? []).length,
+    entradas: (t) => (t.match(/^ {2,6}\],?$/gm) ?? []).length,
+    // Comeca na primeira constante de arquivo -- a mesma ancora da familia do
+    // painel, e pela mesma razao: o `const SUITE = ` que o driver gera vem
+    // DEPOIS da lista, entao serve de fim.
+    mioloDoConvertido: (t) => {
+      const m = /^const [A-Z][A-Z_0-9]* = "[^"]+";$/m.exec(t);
+      const fim = t.indexOf("\nconst SUITE = ");
+      if (!m || fim === -1) return null;
+      return t.slice(m.index, fim).trimEnd();
+    },
+  },
   hmo246: {
     reconhece: (t) => /^const MUTANTES = \[$/m.test(t),
     recortar,
     converter,
+    ...CONTA_OBJETO,
     mioloDoConvertido: (t) => {
       const inicio = t.indexOf("const FONTE = ");
       const fim = t.indexOf("\nconst SUITE = ");
@@ -725,10 +1212,9 @@ export function conferir(antes, depois, familia = FAMILIAS[familiaDe(antes)]) {
   const a = familia.recortar(antes).miolo;
   const b = familia.mioloDoConvertido(depois);
 
-  const entradas = (t) => (t.match(/^ {2}\{$/gm) ?? []).length;
-  const nomes = (t) => (t.match(/^ {4}nome: /gm) ?? []).length;
-  const antesN = nomes(antes);
-  const depoisN = nomes(depois);
+  const { contar, entradas } = familia;
+  const antesN = contar(antes);
+  const depoisN = contar(depois);
 
   const problemas = [];
   if (b === null) {
@@ -772,7 +1258,7 @@ if (alvos.length > 0) {
       const antes = readFileSync(process.env.ANTES, "utf8");
       const familia = FAMILIAS[familiaDe(antes)];
       const problemas = conferir(antes, atual, familia);
-      const quantos = (atual.match(/^ {4}nome: /gm) ?? []).length;
+      const quantos = familia.contar(atual);
 
       if (problemas.length === 0) {
         console.log(`OK    ${alvo}: ${quantos} mutantes, miolo identico`);
