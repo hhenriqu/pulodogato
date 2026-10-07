@@ -150,25 +150,61 @@ export const FORA_DO_CI = {
   // 135 recompilacoes do programa inteiro (uma por mutante, sem o motor de
   // bloco da HMO-319). Ver o PR da HMO-331 para o veredito de cada um.
 
+  // Os OITO do lote 2/4 (HMO-330, 2026-10-07) tambem sairam: quatro ganharam
+  // step no db-verify.yml e quatro foram apagados. O criterio foi o do Helio
+  // ("apagar e o default; ganhar step e a excecao que justifica"), aplicado
+  // sobre CUSTO MEDIDO por mutante e sobre o que o erro custa:
+  //
+  //   step  chave-pix             6/6,   7s  policy_larga = CPF de todos vaza
+  //   step  periodo-do-grupo     14/14, 27s  R$ 5.400 onde o mes tem R$ 1.800
+  //   step  fechamento-do-grupo  21/21, 38s  previsto e realizado se cancelam
+  //   step  edicao-de-grupo      17/17, 96s  rateio + SECURITY DEFINER da 024
+  //   rm    convite-de-grupo      9/9,  57s  texto de notificacao, nao dinheiro
+  //   rm    grupos               21/21,178s  8,5s por mutante -- o pior custo
+  //   rm    previsto-x-realizado 31/34,189s  3 ancoras que a feature apagou
+  //   rm    tres-numeros         12/12,420s  35s por mutante, e so de ROTULO
+  //
+  // SOBRE OS TEMPOS: esta maquina tem 2 nucleos e havia runner de outro run
+  // no ar, entao carga falsifica a medida -- os numeros por runner acima foram
+  // colhidos sob carga 6-11 e sao PESSIMISTAS. Os quatro steps rodados em
+  // bloco e verbatim do YAML deram 58/58 em tres medicoes: 152s (carga 3-5),
+  // 136s (carga 2-4) e 91s (carga 2,5-3,2). O chao de ~91s e o mais proximo do
+  // que o job paga; a dispersao e carga, nao variacao do runner.
+  //
+  // Tres dos quatro apagados PASSAVAM. Apagar runner que passa parece
+  // desperdicio e nao e: os 58 mutantes que ficaram custam 152s, e os 76 que
+  // sairam custavam 844s pelo mesmo tipo de afirmacao. O `previsto-x-realizado`
+  // ainda e a prova viva da tese da HMO-322 -- 3 dos 34 mutantes dele miravam
+  // trecho que a feature ja havia apagado, porque runner que ninguem roda
+  // apodrece calado.
+  //
+  // O `tres-numeros` media so a MARCACAO -- qual numero sai debaixo de qual
+  // rotulo --, e a 35s por mutante era 10x o pior custo que ficou. Nota de
+  // honestidade: o `scripts/mutantes-realizado-e-previsao.mjs`, que provava a
+  // ARITMETICA ao lado dele, foi apagado pela HMO-331 no mesmo dia. Entao a
+  // aritmetica segue coberta pela suite `test:realizado-e-previsao` (com step
+  // no verificacao.yml) e NAO mais por controle negativo. O motivo de apagar o
+  // tres-numeros continua sendo o custo, nao "a prova esta em outro runner".
+  //
+  // O `convite-de-grupo` era o candidato obvio a RECLASSIFICAR (o db-verify.yml
+  // o citava em comentario, "9 mutantes, 9 mortos" -- e a medida se confirmou
+  // hoje). Foi recusado de proposito: `ferramenta-de-autor` promete que o CI
+  // roda um SUBCONJUNTO dos mutantes num bloco proprio, e aqui nao ha bloco
+  // nenhum -- so a suite. O guard teria aceitado a linha, porque o step citado
+  // existe e o nome casa exato; a peneira e mecanica e a promessa e semantica,
+  // e e a promessa que o proximo leitor vai acreditar.
+
   // ---------------------------------------------------------------------
   // nao-triado: a divida da HMO-322. Cada linha daqui tem de virar um dos
   // motivos acima, um step de workflow, ou um `git rm` -- e o TETO cai junto.
   // ---------------------------------------------------------------------
   "scripts/mutantes-cartao-orcamento-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
-  "scripts/mutantes-chave-pix.mjs": { motivo: "nao-triado", porque: "HMO-322" },
-  "scripts/mutantes-convite-de-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-divisao-configurada.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-divisao-do-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-divisao-ui-dom.mjs": { motivo: "nao-triado", porque: "HMO-322" },
-  "scripts/mutantes-edicao-de-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
-  "scripts/mutantes-fechamento-do-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
-  "scripts/mutantes-grupos.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-orcamento-de-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-pagador-da-parte.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-parte-do-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
-  "scripts/mutantes-periodo-do-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
-  "scripts/mutantes-previsto-x-realizado.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-semeadura.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-sugestao-de-divisao.mjs": { motivo: "nao-triado", porque: "HMO-322" },
-  "scripts/mutantes-tres-numeros.mjs": { motivo: "nao-triado", porque: "HMO-322" },
 };

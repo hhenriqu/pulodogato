@@ -21,9 +21,19 @@
 //     com o credito que esta em outro, com outras pessoas;
 //   - o grupo quitado, que sai da LISTA mas continua contado.
 //
-// A prova de que o teste nao e uma fixture inocente esta em
-// `scripts/mutantes-grupos.mjs`, que quebra cada uma dessas regras no codigo e
-// exige que a suite reprove.
+// A prova de que o teste nao e uma fixture inocente ESTAVA em
+// `scripts/mutantes-grupos.mjs`, apagado na triagem da HMO-330 (2026-10-07).
+// Ele media 21/21 mortos -- inclusive o sinal invertido, que exibe "voce tem
+// R$ 345 a receber" para quem DEVE R$ 345 --, mas custava 178s para 21
+// mutantes (8,5s cada, o pior custo por mutante do lote) e nenhum job o
+// executava. Ou seja: esta frase ja descrevia uma prova que nao rodava em
+// lugar nenhum, que e exatamente o problema que a HMO-322 contou.
+//
+// Entao as regras acima estao cobertas por esta suite e NAO por controle
+// negativo. Quem mexer em `lib/grupos.ts` nao tem rede: a forma barata de
+// recuperar a rede e portar os mutantes para o motor de bloco da HMO-319
+// (`scripts/mutantes-em-bloco.mjs`), que foi o que fez o fechamento-do-grupo
+// cair para 38s/21 mutantes e ganhar step.
 // =====================================================
 
 import test from "node:test";
