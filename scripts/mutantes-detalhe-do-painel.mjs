@@ -24,12 +24,41 @@
 // um sobrevivente no meio de 22 nomes se le pior. Nao e job novo: e um step do
 // mesmo job, que o custo aqui e o NUMERO DE JOBS.
 //
-// Nao usa `git checkout` para restaurar: ele restauraria a partir do INDICE, e
-// num worktree compartilhado isso ja apagou trabalho nao commitado aqui. A
-// copia original vai para a memoria e volta de la, sempre.
+// O BLOCO: UMA COMPILACAO PARA TODOS OS MUTANTES (HMO-328)
+// --------------------------------------------------------
+// Este runner MUTAVA A ARVORE RASTREADA: guardava o texto original em memoria,
+// escrevia o mutante num dos 3 arquivos de producao da lista,
+// chamava `npm run` ali mesmo e restaurava depois. Dois defeitos nisso, e o
+// segundo e o que doia:
+//
+//   1. cada volta recompilava o programa INTEIRO, mesmo mudando UM arquivo. Sao
+//      21 mutantes, e cada um roda AS DUAS suites (test:papel-de-pao, test:papel-na-tela),
+//      e era um dos passos mais caros do job de verificacao;
+//
+//   2. o mutante ficava GRAVADO no arquivo de producao quando o processo morria
+//      no meio. O gancho de restauracao e `process.on("exit")`, que NAO roda em
+//      SIGTERM -- e SIGTERM e o que um timeout manda. Pior: `execSync` bloqueia
+//      a thread do JS, entao nem um handler de SIGTERM resolve; o processo
+//      termina a volta em curso e aplica A SEGUINTE. Aconteceu nesta arvore duas
+//      vezes (`PainelDePapel.tsx` na HMO-296, `DivisaoDoGrupo.tsx` herdado
+//      mutado pela HMO-263), e nas duas o `git status` mostrava UM arquivo
+//      modificado -- a cara de trabalho em andamento.
+//
+// Agora as voltas dividem um processo e um cache de AST
+// (`criarBlocoDeMutantes`, HMO-319): so o arquivo mutado e reparseado, e a
+// mutacao vai para uma SOMBRA em diretorio temporario. A arvore rastreada e o
+// `.tmp-*` do repositorio nao sao tocados em momento nenhum, entao o pior caso
+// de um processo morto e um diretorio orfao em /tmp.
+//
+// As etapas de cada suite saem do proprio `scripts[...]` do package.json -- o
+// comando que o CI roda --, e nao de uma receita repetida a mao aqui.
+//
+// A lista de mutantes abaixo NAO foi reescrita: ela veio byte a byte do arquivo
+// anterior, pelo `scripts/converte-mutantes-em-bloco.mjs`.
 
-import { readFileSync, writeFileSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+
+import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
 
 const LIB = "lib/papel-de-pao.ts";
 const ROTA = "app/api/papel-de-pao/painel/route.ts";
@@ -275,58 +304,58 @@ const semLinha = (): NumeroDoPapel => VAZIO;`,
   },
 ];
 
+const SUITES = ["test:papel-de-pao","test:papel-na-tela"];
+
+const bloco = criarBlocoDeMutantes({ rotulo: "detalhe-do-painel", suites: SUITES });
+
+// A sombra vive em diretorio temporario, e a arvore rastreada nunca e mutada --
+// era esse o modo de falha deste runner. O handler de sinal existe so para que
+// nem o diretorio orfao sobre: `finally` nao roda em SIGTERM, mas
+// `process.exit` dispara o `exit` abaixo.
+process.on("exit", () => bloco.fechar());
+for (const sinal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(sinal, () => process.exit(1));
+}
+
+// O texto de cada arquivo que algum mutante toca. Lido da arvore de verdade, que
+// e o original por construcao: nada mais aqui escreve nela.
 const original = new Map();
 for (const arquivo of new Set(mutantes.map((m) => m.arquivo))) {
   original.set(arquivo, readFileSync(arquivo, "utf8"));
 }
-const restaurar = () => {
-  for (const [arquivo, texto] of original) writeFileSync(arquivo, texto);
-};
-process.on("exit", restaurar);
-process.on("SIGINT", () => process.exit(130));
 
-/**
- * As DUAS suites, e nao uma.
- *
- * A aritmetica do detalhe vive em `test:papel-de-pao` (pura, <1s); o
- * comportamento da seta vive em `test:papel-na-tela` (navegador, ~8s). Um
- * mutante de `PainelDePapel.tsx` nao muda nada na primeira, e um da lib nao
- * muda nada na segunda: rodar so uma faria metade dos mutantes sobreviver por
- * estar medindo o arquivo errado.
- *
- * `papel-de-pao` roda PRIMEIRO porque e a barata -- e a que mata quase tudo.
- */
-const roda = () => {
-  for (const suite of ["test:papel-de-pao", "test:papel-na-tela"]) {
-    try {
-      execSync(`npm run ${suite}`, { stdio: "pipe" });
-    } catch {
-      return false;
-    }
+// CONTROLE POSITIVO, primeiro e obrigatorio: as DUAS suites tem de passar com a
+// arvore INTACTA, e pelo MESMO `rodar` que os mutantes usam -- por isso ele pega
+// erro no proprio aparelho. Sem ele, uma sombra mal montada reprova TODO mutante
+// e o placar fecha "N/N mortos" sobre zero assercoes executadas.
+for (const suite of SUITES) {
+  const controle = bloco.rodar("controle", {}, suite);
+  if (!controle.verde) {
+    console.error(`ABORTADO: a arvore INTACTA reprova em ${suite} (${controle.como}).`);
+    console.error(`  ${controle.saida}`);
+    console.error("O placar nao valeria: todo mutante 'morreria' sem ter sido medido.");
+    process.exit(1);
   }
-  return true;
-};
-
-// CONTROLE POSITIVO, primeiro e obrigatorio: sem mutante as duas suites tem de
-// PASSAR. Se alguma estiver vermelha por outro motivo -- um erro no proprio
-// caminho da mutacao, um `.tmp` sujo, um Chromium que nao abriu --, todo
-// mutante "morre" e o placar fecha 100% sem medir nada. O controle NEGATIVO
-// nao pega isso: ele passa por outro caminho.
-console.log("controle positivo (codigo intacto): as duas suites devem PASSAR");
-if (!roda()) {
-  console.error("  REPROVOU -- conserte a suite antes de medir mutante");
-  process.exit(1);
 }
-console.log("  ok, passou\n");
+console.log(`controle positivo: a arvore intacta passa em ${SUITES.join(" e ")}\n`);
 
 let sobreviventes = 0;
+
 for (const m of mutantes) {
   const antes = original.get(m.arquivo);
-  // Um `replace` que nao casa com nada nao muda o arquivo, e a suite passa --
-  // o que se le como "mutante sobreviveu", quando o mutante nunca existiu.
-  if (!antes.includes(m.de)) {
+
+  // AS TRES TRAVAS DE ANCORA. As duas das pontas ja existiam neste runner; a do
+  // meio e a que a conversao acrescenta (ver OCORRENCIA UNICA, no conversor).
+  const ocorrencias = antes.split(m.de).length - 1;
+  if (ocorrencias === 0) {
     console.error(`SOBREVIVEU (ancora nao casou) :: ${m.nome}`);
     console.error(`  o texto buscado nao existe em ${m.arquivo}: ${m.de}`);
+    sobreviventes++;
+    continue;
+  }
+  if (ocorrencias > 1) {
+    console.error(`SOBREVIVEU (ancora ambigua) :: ${m.nome}`);
+    console.error(`  o texto aparece ${ocorrencias}x em ${m.arquivo} -- o replace muta so a 1a`);
     sobreviventes++;
     continue;
   }
@@ -336,14 +365,36 @@ for (const m of mutantes) {
     sobreviventes++;
     continue;
   }
-  writeFileSync(m.arquivo, depois);
-  const passou = roda();
-  restaurar();
-  if (passou) {
+
+  // TODAS as suites, parando na primeira que mata -- e a ordem e a do arquivo
+  // anterior, que importa: a suite barata vem primeiro justamente para que o
+  // mutante que ela mata nao pague a de navegador.
+  let r;
+  for (const suite of SUITES) {
+    r = bloco.rodar(m.nome, { [m.arquivo]: depois }, suite);
+    if (!r.verde) break;
+  }
+
+  if (r.verde) {
     console.error(`SOBREVIVEU :: ${m.nome}`);
+    // A NOTA DE MUTANTE EQUIVALENTE NAO E IMPRIMIDA AQUI, e isto e deliberado.
+    // `criarBlocoDeMutantes` guarda UMA saida de controle por BLOCO, preenchida
+    // na primeira volta sem sobrescritas -- nao uma por suite. Com duas suites, o
+    // `mudouASaida` do mutante compara o que ESTA suite emitiu com a linha de
+    // base da OUTRA, e as duas emitem conjuntos diferentes de arquivos: a
+    // resposta seria "mudou" sempre, inclusive para um mutante de fato
+    // equivalente. Imprimir a nota a partir dela seria um rotulo que nao mede o
+    // que diz; omiti-la perde uma dica e nao afirma nada falso.
+    //
+    // Quem quiser a nota de volta: a linha de base precisa ser por alvo dentro do
+    // bloco. Nao foi mexido aqui porque `mutantes-em-bloco.mjs` e compartilhado
+    // por outros runners e a nota nao muda veredito nenhum.
     sobreviventes++;
   } else {
-    console.log(`morreu     :: ${m.nome}`);
+    // Morrer no tsc tambem e morrer -- mutante que nao compila nao chega em
+    // producao --, mas a distincao importa: um erro de tipo nao diz que a SUITE
+    // pegou a regra.
+    console.log(`morreu     :: ${m.nome}  (${r.como === "tsc" ? "tsc" : "asercao"})`);
   }
 }
 
