@@ -314,9 +314,13 @@ jobs:
       # Controle negativo. As duas peneiras do guard acima sao busca textual, e
       # busca textual sai VERDE quando para de achar o que deveria conferir.
       #
-      # A segunda peneira (o piso de chamadas) existe exatamente por isso: a
-      # primeira, sozinha, aprova a tela em que o campo foi APAGADO. Os dois
-      # defeitos sao plantados, e os dois tem que ficar vermelhos.
+      # A segunda peneira (a contagem exata de chamadas) existe exatamente por
+      # isso: a primeira, sozinha, aprova a tela em que o campo foi APAGADO. Os
+      # dois defeitos sao plantados, e os dois tem que ficar vermelhos.
+      #
+      # Esta sonda so morde com folga ZERO entre a contagem esperada e a arvore
+      # -- com folga de N, N campos somem com o guard verde. Foi o que aconteceu
+      # entre a HMO-240 e a HMO-242 (ver o comentario de CHAMADAS_ESPERADAS).
       - name: A verificacao do campo de data sabe falhar, e sabe nao falhar
         run: |
           set -uo pipefail
@@ -333,7 +337,7 @@ jobs:
           cp /tmp/campo-de-data-alvo.orig "$alvo"
 
           # 2) O campo simplesmente APAGADO. A primeira peneira nao ve: nao ha
-          #    campo nativo nenhum. Quem pega e o piso.
+          #    campo nativo nenhum. Quem pega e a contagem.
           perl -0pi -e 's{<CampoDeData\n                    id="prazo"}{<span data-sem-campo="1"\n                    id="prazo"}' "$alvo"
           if node scripts/check-campo-de-data.mjs > /dev/null 2>&1; then
             echo "::error::O guard passou verde com um campo de data apagado da tela."
