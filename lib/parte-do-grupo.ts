@@ -363,6 +363,29 @@ export function montarParticipantesPorGrupo(
  * assercoes dela existirem. Mesmo argumento de `ratearCentavos` em
  * lib/fechamento-do-grupo.ts.
  *
+ * NAO TEM CHAMADOR DE PRODUCAO, E ISSO FOI CONFERIDO (HMO-338)
+ * ------------------------------------------------------------
+ * Busca por `parteDoMembro` na arvore rastreada: fora deste arquivo, as unicas
+ * ocorrencias sao comentarios, a suite `test:parte-do-grupo`, as ancoras dos
+ * runners de mutante e a lista de PROIBIDOS de `scripts/test-papel-de-pao.mjs`
+ * -- que afirma, de proposito, que o componente do painel NAO a chama (para a
+ * tela nao recalcular o que a rota ja calculou). Nenhuma rota, nenhum
+ * componente, nenhum outro modulo de `lib/`.
+ *
+ * ENTAO NAO APAGUE ISTO ACHANDO QUE E CODIGO MORTO. "Sem chamador" aqui nao e
+ * descuido, e o estado de projeto descrito acima: ela e o registro executavel
+ * da divisao igual que a base instalada tem, e o ponto de referencia que
+ * justifica o `percentage ?? 0` de `montarParticipantesPorGrupo` (peso nulo
+ * cai no degrau do 0/0 e divide IGUAL -- "igual" e ESTA funcao). Apagar a
+ * funcao apaga o lado de comparacao desse argumento.
+ *
+ * UMA RESSALVA HONESTA, para quem for confiar na frase "segunda prova
+ * independente": a comparacao entre as duas divisoes e feita por LEITURA, nao
+ * por assercao. Nenhum teste confronta `parteDoMembro` com `ratearPorPeso` ou
+ * com `parteConfiguradaDoMembro` no mesmo caso; o que existe sao dois conjuntos
+ * de assercoes com numeros fixados a mao, um para cada funcao. Eles concordam
+ * hoje, e nada avisa no dia em que pararem de concordar.
+ *
  * Fora de grupo (`group_id` nulo) a parte e o valor inteiro -- despesa pessoal
  * nao se divide com ninguem.
  *
