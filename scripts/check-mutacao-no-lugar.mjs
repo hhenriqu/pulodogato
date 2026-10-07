@@ -98,20 +98,26 @@ const DIR = join(RAIZ, "scripts");
 /**
  * Runners que HOJE mutam a arvore no lugar, com o motivo escrito. A guarda
  * existe para impedir o PROXIMO, nao para fingir que estes nao existem --
- * migrar os sete para `criarBlocoDeMutantes` e trabalho de outra issue
+ * migrar os que faltam para `criarBlocoDeMutantes` e trabalho de outra issue
  * (HMO-337), e uma guarda que reprovasse a main inteira seria desligada antes
  * de pegar o primeiro runner novo.
  *
  * Esta lista so pode ENCOLHER. Nao e lista de excecao permanente: cada entrada
  * e divida registrada, e o `mutantes-guarda-de-mutacao-no-lugar.mjs` tem um
  * mutante que prova que acrescentar nome aqui nao escapa da medicao.
+ *
+ * E ENCOLHER E OBRIGATORIO, NAO OPCIONAL (HMO-326)
+ * ------------------------------------------------
+ * A propria guarda reprova quando um nome daqui deixa de mutar no lugar, e foi
+ * o que aconteceu: a HMO-334 migrou CINCO destes runners para a sombra em /tmp
+ * e nao tirou os nomes daqui, entao a main ficou vermelha nesta guarda ("5
+ * entrada(s) de DIVIDA_CONHECIDA nao correspondem a nenhum runner que muta no
+ * lugar") -- a guarda que mede a divida passou a ser o que quebra o build.
+ *
+ * Quem migrar um runner tira o nome no MESMO commit. A divida que sobra aqui
+ * tem de ser divida de verdade.
  */
 export const DIVIDA_CONHECIDA = new Map([
-  ["mutantes-divisao-configurada.mjs", "HMO-337: muta lib/divisao-configurada.ts no lugar"],
-  ["mutantes-divisao-do-grupo.mjs", "HMO-337: muta lib/divisao-do-grupo.ts no lugar"],
-  ["mutantes-lancamentos-completos.mjs", "HMO-337: muta dois arquivos de lib/ no lugar"],
-  ["mutantes-pagador-da-parte.mjs", "HMO-337: muta lib/ e components/ no lugar"],
-  ["mutantes-parte-do-grupo.mjs", "HMO-337: muta lib/parte-do-grupo.ts no lugar"],
   ["mutantes-transferencia.mjs", "HMO-337: muta lib/transferencia.ts no lugar"],
   ["mutantes-transferencia-recorrente-app.mjs", "HMO-337: muta dois arquivos de lib/ no lugar"],
 ]);
