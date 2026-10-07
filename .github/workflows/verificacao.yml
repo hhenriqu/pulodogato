@@ -5704,6 +5704,90 @@ jobs:
           fi
 
       # =======================================================================
+      # OS CINCO DE GRUPO QUE NAO CABIAM: ~7 MIN VIRARAM 2,0
+      # origem: nova (HMO-335, o resto do lote 1/4 da HMO-322)
+      # =======================================================================
+      # A HMO-329 mediu estes cinco e achou o oposto do que a triagem esperava:
+      # nenhum e falsa cobertura, os cinco matam 100% dos mutantes. O `git rm`
+      # que era o default nao se defendeu para nenhum. O que faltava nao era
+      # justificativa -- era CABER: somavam ~7 min por PR, e a franquia e de
+      # 2.000 min/mes (HMO-261).
+      #
+      # Nenhum dos cinco usava `criarBlocoDeMutantes` (HMO-319): cada mutante
+      # recompilava o programa INTEIRO e, pior, MUTAVA A ARVORE RASTREADA e
+      # restaurava depois. Migrados para o bloco, a mutacao vai para uma sombra
+      # em /tmp e as voltas dividem um processo e um cache de AST.
+      #
+      # MEDIDO NA HMO-335, um runner por vez com `git status` conferido entre
+      # eles, carga anotada ao lado porque fome de CPU ja falsificou duas medidas
+      # desta mesma familia (a HMO-329 corrigiu 86s -> 28s e "120s" -> 72s):
+      #
+      #   runner                  placar   antes ->  agora   load (2 nucleos)
+      #   ----------------------  ------   ---------------   ----------------
+      #   orcamento-de-grupo       21/21     84s ->  12s     1,48
+      #   sugestao-de-divisao      17/17     56s ->  16s     0,56
+      #   cartao-orcamento-grupo   16/16     72s ->  19s     0,19
+      #   semeadura                23/23    124s ->  31s     0,44
+      #   divisao-ui-dom           18/18     84s ->  45s     0,86
+      #   ----------------------  ------   ---------------
+      #   total                    95/95    420s -> 123s     -71%
+      #
+      # O PLACAR E IDENTICO AO DE ANTES NOS CINCO, e e essa igualdade que prova a
+      # migracao: um runner refatorado que mede MENOS sai mais rapido pelo motivo
+      # errado. Os 95 mutantes continuam morrendo, um por um.
+      #
+      # OS DOIS DE NAVEGADOR GANHAM MENOS, e isso e esperado: `divisao-ui-dom` e
+      # a metade de tela do `semeadura` sobem um Chromium por volta, e esse custo
+      # o bloco nao compartilha -- ele compartilha a COMPILACAO. Dai -46% ali
+      # contra -86% em `orcamento-de-grupo`, que e so TypeScript.
+      #
+      # NAO HA PASSO COMPANHEIRO DE RESTAURACAO para estes cinco, ao contrario do
+      # bloco da parte e do rateio acima. Nao e esquecimento: um runner em bloco
+      # nunca escreve na arvore rastreada, entao nao existe restauracao que possa
+      # falhar. E a mesma razao pela qual os runners do painel, convertidos na
+      # HMO-328, tambem nao tem o passo.
+      #
+      # O QUE CADA UM DEFENDE -- nomeado, porque "cobertura" nao justifica minuto:
+      #
+      #   * `semeadura` e o unico do lote que mede AUTORIZACAO, e nao so dinheiro:
+      #     a leitura privilegiada perdendo o `.in(user_id)` (a service role passa
+      #     a ler o app INTEIRO), o portao de pertencimento caindo (quem nao e do
+      #     grupo recebe a divisao dele) e o botao de semear aparecendo para quem
+      #     nao e admin;
+      #   * `orcamento-de-grupo`: o teto de grupo caindo no balde PESSOAL -- um
+      #     "ja gastei" alto que cresce a cada membro novo da viagem, sem erro e
+      #     sem cor diferente -- e o `group_id` perdido na copia do
+      #     carry-forward, que faz o teto da viagem virar pessoal no mes seguinte;
+      #   * `cartao-orcamento-grupo`: o "nao fazer" literal da HMO-180 (refazer a
+      #     soma dentro do JSX, com duas telas mostrando percentuais diferentes
+      #     para a mesma viagem) e o mes passando por `new Date()`, que no fuso de
+      #     Sao Paulo joga o dia 01 para o mes anterior;
+      #   * `sugestao-de-divisao`: a sugestao configurada voltando a ser codigo
+      #     morto (o estado de ANTES da HMO-273) e a parte de 0% voltando ao corpo
+      #     do POST, que faz o lancamento falhar sempre;
+      #   * `divisao-ui-dom`: a FIACAO do painel, que e justamente o que
+      #     `react-dom/server` nao ve porque `onChange` nao sai no HTML --
+      #     inclusive o campo voltando a `type=number`, que descarta a virgula e
+      #     zera a parte do membro, e os dois portoes de admin.
+      #
+      # A ORDEM E A DO CUSTO, do mais barato ao mais caro: um defeito de
+      # aritmetica reprova o job em 12s em vez de esperar os dois Chromium.
+      - name: Os mutantes do teto de orcamento do grupo
+        run: node scripts/mutantes-orcamento-de-grupo.mjs
+
+      - name: Os mutantes da sugestao de divisao viva
+        run: node scripts/mutantes-sugestao-de-divisao.mjs
+
+      - name: Os mutantes do cartao de orcamento do grupo
+        run: node scripts/mutantes-cartao-orcamento-grupo.mjs
+
+      - name: Os mutantes da semeadura da divisao pela renda
+        run: node scripts/mutantes-semeadura.mjs
+
+      - name: Os mutantes da fiacao do painel de divisao
+        run: node scripts/mutantes-divisao-ui-dom.mjs
+
+      # =======================================================================
       # O ELO DA FATURA: OS MUTANTES DA DETECCAO
       # origem: nova (HMO-307, divida nomeada da HMO-305)
       # =======================================================================

@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 // Prova de mutacao do components/grupos/DivisaoDoGrupo.tsx -- a FIACAO do painel
-// de divisao (HMO-271 / HMO-245 fase 5). NAO roda em CI: e ferramenta de quem
-// esta escrevendo o teste. Cada entrada estraga uma ligacao da tela; a suite
-// `test:divisao-ui-dom` tem que ficar VERMELHA em todas.
+// de divisao (HMO-271 / HMO-245 fase 5). Cada entrada estraga uma ligacao da
+// tela; a suite `test:divisao-ui-dom` tem que ficar VERMELHA em todas.
 //
 // POR QUE ESTES MUTANTES, E NAO OS DA ARITMETICA
 // ---------------------------------------------
@@ -17,10 +16,48 @@
 // HTML: a tela renderizaria identica com o handler vazio.
 //
 //   node scripts/mutantes-divisao-ui-dom.mjs
-import { readFileSync, writeFileSync } from "node:fs";
-import { execSync } from "node:child_process";
+//
+// O BLOCO: UMA COMPILACAO PARA TODOS OS MUTANTES (HMO-335)
+// --------------------------------------------------------
+// Este runner MUTAVA A ARVORE RASTREADA: escrevia o mutante em `ALVO`, chamava
+// `npm run` ali mesmo e restaurava depois. Dois defeitos, e o segundo e o que
+// doia:
+//
+//   1. cada volta recompilava o programa INTEIRO e subia um CHROMIUM novo para
+//      trocar UM arquivo -- 18 voltas, 84s medidos;
+//   2. o mutante ficava GRAVADO no arquivo de producao quando o processo morria
+//      no meio. A restauracao estava no corpo do laco, sem `finally`, e
+//      `execSync` BLOQUEIA a thread do JS -- com SIGTERM (o sinal que um timeout
+//      manda) o processo termina a volta em curso e aplica A SEGUINTE. Nao e
+//      hipotese: a HMO-263 herdou um worktree com este MESMO `DivisaoDoGrupo.tsx`
+//      mutado, e o `git status` mostrava um arquivo modificado -- a cara de
+//      trabalho em andamento.
+//
+// Agora as voltas dividem um processo e um cache de AST
+// (`criarBlocoDeMutantes`, HMO-319): so o arquivo mutado e reparseado, e a
+// mutacao vai para uma SOMBRA em diretorio temporario. A arvore rastreada e o
+// `.tmp-*` do repositorio nao sao tocados em momento nenhum, entao o pior caso
+// de um processo morto e um diretorio orfao em /tmp.
+//
+// Por isso tambem sairam daqui a conferencia de "o arquivo voltou byte a byte?"
+// e a restauracao final: nao ha mais escrita na arvore para conferir nem para
+// desfazer.
+//
+// As etapas da suite saem do proprio `scripts["test:divisao-ui-dom"]` do
+// package.json -- o comando que o CI roda --, e nao de uma receita repetida a
+// mao aqui.
+//
+// A lista de mutantes abaixo NAO foi reescrita nem movida: o diff desta
+// conversao nao toca uma linha dela.
+import { readFileSync } from "node:fs";
+
+import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
 
 const ALVO = "components/grupos/DivisaoDoGrupo.tsx";
+const SUITE = "test:divisao-ui-dom";
+
+// Lido da arvore de verdade, que e o original por construcao: nada mais aqui
+// escreve nela.
 const original = readFileSync(ALVO, "utf8");
 
 const mutantes = [
@@ -127,20 +164,31 @@ const mutantes = [
   ],
 ];
 
-// CONTROLE NEGATIVO: a suite tem de estar VERDE no codigo intacto antes de
+const bloco = criarBlocoDeMutantes({ rotulo: "divisao-ui-dom", suites: [SUITE] });
+
+// A sombra vive em diretorio temporario, e a arvore rastreada nunca e mutada --
+// era esse o modo de falha deste runner. O handler de sinal existe so para que
+// nem o diretorio orfao sobre: `finally` nao roda em SIGTERM, mas
+// `process.exit` dispara o `exit` abaixo.
+process.on("exit", () => bloco.fechar());
+for (const sinal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(sinal, () => process.exit(1));
+}
+
+// CONTROLE POSITIVO: a suite tem de estar VERDE no codigo intacto antes de
 // qualquer mutante. Sem esta conferencia, uma suite quebrada por outro motivo
-// mataria os 15 mutantes de uma vez e o relatorio sairia perfeito.
+// mataria todos os mutantes de uma vez e o relatorio sairia perfeito. Ele passa
+// pelo MESMO `rodar` dos mutantes, entao pega erro no proprio aparelho.
 console.log("controle: a suite no codigo intacto...");
-try {
-  execSync("npm run test:divisao-ui-dom", { stdio: "pipe" });
-  console.log("OK   verde no codigo intacto\n");
-} catch (e) {
+const controle = bloco.rodar("controle", {}, SUITE);
+if (!controle.verde) {
   console.error(
-    "A suite JA esta vermelha sem mutante nenhum -- conserte isso antes.\n" +
-      String(e.stdout ?? e)
+    `A suite JA esta vermelha sem mutante nenhum (${controle.como}) -- conserte isso antes.\n` +
+      controle.saida
   );
   process.exit(1);
 }
+console.log("OK   verde no codigo intacto\n");
 
 let sobreviventes = 0;
 
@@ -165,29 +213,17 @@ for (const [nome, de, para] of mutantes) {
     continue;
   }
 
-  writeFileSync(ALVO, mutado);
-
-  let vermelho = false;
-  try {
-    execSync("npm run test:divisao-ui-dom", { stdio: "pipe" });
-  } catch {
-    vermelho = true;
-  }
-
-  writeFileSync(ALVO, original);
-
-  // O arquivo tem de voltar BYTE A BYTE. Sem esta conferencia um erro de
-  // escrita deixaria o mutante no disco, e o proximo run mediria outra coisa.
-  if (readFileSync(ALVO, "utf8") !== original) {
-    console.error("o arquivo NAO voltou ao original -- pare e confira o git diff");
-    process.exit(2);
-  }
+  const r = bloco.rodar(nome, { [ALVO]: mutado }, SUITE);
+  const vermelho = !r.verde;
 
   console.log(`${vermelho ? "OK  " : "VIVO"} ${nome}`);
-  if (!vermelho) sobreviventes++;
+  if (!vermelho) {
+    if (r.mudouASaida === false) {
+      console.log("     (saida compilada identica a da arvore limpa: EQUIVALENTE)");
+    }
+    sobreviventes++;
+  }
 }
-
-writeFileSync(ALVO, original);
 
 console.log(
   `\n${mutantes.length - sobreviventes}/${mutantes.length} mutantes mortos`

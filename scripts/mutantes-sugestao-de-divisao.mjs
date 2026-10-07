@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 // Prova de mutacao da sugestao de divisao viva (HMO-245 fase 7 / HMO-273).
-// NAO roda em CI: e ferramenta de quem esta escrevendo o teste.
 //
 //   node scripts/mutantes-sugestao-de-divisao.mjs
 //
@@ -30,11 +29,42 @@
 //   2. cada `replace` CONFERE que a ancora existe e que o texto mudou. Ancora
 //      que nao casa e erro do runner, nao mutante morto.
 //
-// O restore e a ultima linha, fora de try/catch com `process.exit` dentro: um
-// `exit` dentro de `try` pularia o `finally` e deixaria um arquivo de producao
-// MUTADO no worktree.
-import { readFileSync, writeFileSync, rmSync } from "node:fs";
-import { execSync } from "node:child_process";
+// O BLOCO: UMA COMPILACAO PARA TODOS OS MUTANTES (HMO-335)
+// --------------------------------------------------------
+// Este runner MUTAVA A ARVORE RASTREADA: escrevia o mutante num dos quatro
+// arquivos de producao, chamava `npm run` ali mesmo e restaurava num `finally`.
+// Dois defeitos, e o segundo e o que doia:
+//
+//   1. cada volta recompilava o programa INTEIRO para trocar UM arquivo -- 17
+//      voltas de `tsc` completo, 56s medidos;
+//   2. o `finally` NAO roda em SIGTERM, que e o sinal que um timeout manda, e
+//      `execSync` BLOQUEIA a thread do JS -- entao nem um handler de sinal
+//      resolveria. Ja aconteceu nesta arvore: a HMO-329 comecou com
+//      `lib/divisao-configurada.ts` -- um dos quatro alvos DESTE runner --
+//      mutado na arvore, e os `.tmp-*` compilados guardando a mutacao.
+//
+// Agora as voltas dividem um processo e um cache de AST
+// (`criarBlocoDeMutantes`, HMO-319): so o arquivo mutado e reparseado, e a
+// mutacao vai para uma SOMBRA em diretorio temporario. A arvore rastreada e o
+// `.tmp-*` do repositorio nao sao tocados em momento nenhum, entao o pior caso
+// de um processo morto e um diretorio orfao em /tmp.
+//
+// Por isso o `restaurar` saiu inteiro, e com ele o `rmSync` do
+// `.tmp-sugestao-de-divisao`: aquele `rmSync` existia porque o emit de uma
+// arvore MUTADA sobrevivia ao restore do fonte e era lido pela rodada seguinte
+// (ver [[tmp-compilado-guarda-o-mutante-depois-do-restore]]). O bloco emite
+// DENTRO da sombra, entao o `.tmp-*` do repositorio nunca ve codigo mutado e
+// nao ha o que limpar.
+//
+// As etapas da suite saem do proprio `scripts["test:sugestao-de-divisao"]` do
+// package.json -- o comando que o CI roda --, e nao de uma receita repetida a
+// mao aqui.
+//
+// A lista de mutantes abaixo NAO foi reescrita nem movida: o diff desta
+// conversao nao toca uma linha dela.
+import { readFileSync } from "node:fs";
+
+import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
 
 const LIB = "lib/sugestao-de-divisao.ts";
 const ROTA = "app/api/expense-groups/[groupId]/split-suggestions/route.ts";
@@ -42,30 +72,13 @@ const CONFIG = "lib/divisao-configurada.ts";
 const TELA_DO_GRUPO =
   "app/(dashboard)/dashboard/expense-groups/[groupId]/page.tsx";
 
-const SUITE = "npm run test:sugestao-de-divisao";
+const SUITE = "test:sugestao-de-divisao";
 
+// Lido da arvore de verdade, que e o original por construcao: nada mais aqui
+// escreve nela.
 const original = new Map(
   [LIB, ROTA, CONFIG, TELA_DO_GRUPO].map((a) => [a, readFileSync(a, "utf8")])
 );
-
-const restaurar = () => {
-  for (const [arquivo, fonte] of original) writeFileSync(arquivo, fonte);
-  // O emit de uma arvore MUTADA sobrevive ao restore do fonte e e lido pela
-  // proxima rodada: ver [[tmp-compilado-guarda-o-mutante-depois-do-restore]]. O
-  // npm script comeca com `rm -rf`, mas o restore tambem limpa, para o caso de
-  // o runner morrer entre a mutacao e a rodada.
-  rmSync(".tmp-sugestao-de-divisao", { recursive: true, force: true });
-};
-
-/** Roda a suite. `true` = vermelha. */
-function vermelha() {
-  try {
-    execSync(SUITE, { stdio: "pipe" });
-    return false;
-  } catch {
-    return true;
-  }
-}
 
 /** [rotulo, arquivo, de, para] */
 const mutantes = [
@@ -238,61 +251,91 @@ const mutantes = [
   ],
 ];
 
+const bloco = criarBlocoDeMutantes({ rotulo: "sugestao-de-divisao", suites: [SUITE] });
+
+// A sombra vive em diretorio temporario, e a arvore rastreada nunca e mutada --
+// era esse o modo de falha deste runner. O handler de sinal existe so para que
+// nem o diretorio orfao sobre: `finally` nao roda em SIGTERM, mas
+// `process.exit` dispara o `exit` abaixo.
+process.on("exit", () => bloco.fechar());
+for (const sinal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(sinal, () => process.exit(1));
+}
+
 let mortos = 0;
 const sobreviventes = [];
 
-try {
-  console.log(`controle positivo: \`${SUITE}\` esta verde sem mutante?`);
-  rmSync(".tmp-sugestao-de-divisao", { recursive: true, force: true });
-  if (vermelha()) {
+// O CONTROLE POSITIVO passa pelo MESMO `rodar` dos mutantes, entao agora ele
+// pega erro no proprio aparelho -- nao apenas suite vermelha.
+console.log(`controle positivo: \`${SUITE}\` esta verde sem mutante?`);
+const controle = bloco.rodar("controle", {}, SUITE);
+if (!controle.verde) {
+  console.error(
+    `   VERMELHA (${controle.como}). Todo mutante abaixo apareceria como MORTO ` +
+      "sem ter medido nada. Conserte a suite antes de rodar o mutador."
+  );
+  console.error(`   ${controle.saida}`);
+  process.exit(1);
+}
+console.log("   verde.\n");
+
+for (const [rotulo, arquivo, de, para] of mutantes) {
+  const fonte = original.get(arquivo);
+
+  // ANCORA QUE NAO CASA E ERRO DO RUNNER, e este runner para em vez de contar o
+  // mutante como sobrevivente -- semantica preservada da versao anterior.
+  if (!fonte.includes(de)) {
+    console.error(`ANCORA NAO CASOU em ${arquivo}: ${rotulo}`);
     console.error(
-      "   VERMELHA. Todo mutante abaixo apareceria como MORTO sem ter medido " +
-        "nada. Conserte a suite antes de rodar o mutador."
+      "   Isso e erro do RUNNER, nao mutante morto: o arquivo mudou e a " +
+        "mutacao nao foi aplicada. Ver " +
+        "[[controle-positivo-e-o-unico-que-pega-erro-de-script-no-runner]]."
     );
     process.exit(1);
   }
-  console.log("   verde.\n");
 
-  for (const [rotulo, arquivo, de, para] of mutantes) {
-    const fonte = original.get(arquivo);
-
-    if (!fonte.includes(de)) {
-      console.error(`ANCORA NAO CASOU em ${arquivo}: ${rotulo}`);
-      console.error(
-        "   Isso e erro do RUNNER, nao mutante morto: o arquivo mudou e a " +
-          "mutacao nao foi aplicada. Ver " +
-          "[[controle-positivo-e-o-unico-que-pega-erro-de-script-no-runner]]."
-      );
-      process.exit(1);
-    }
-
-    // `replace` (e nao `replaceAll`) estraga a PRIMEIRA ocorrencia. Toda ancora
-    // acima e unica no arquivo dela; a conferencia abaixo e o que garante isso
-    // na proxima vez que alguem mexer no fonte.
-    const mutado = fonte.replace(de, para);
-    if (mutado === fonte) {
-      console.error(`MUTACAO SEM EFEITO em ${arquivo}: ${rotulo}`);
-      process.exit(1);
-    }
-
-    writeFileSync(arquivo, mutado);
-    const morreu = vermelha();
-    writeFileSync(arquivo, fonte);
-
-    if (morreu) {
-      mortos += 1;
-      console.log(`MORTO      ${rotulo}`);
-    } else {
-      sobreviventes.push(rotulo);
-      console.log(`SOBREVIVEU ${rotulo}`);
-    }
+  // `replace` (e nao `replaceAll`) estraga a PRIMEIRA ocorrencia. A conferencia
+  // de ocorrencia UNICA e a que esta conversao acrescenta: um trecho que aparece
+  // duas vezes muta um lugar que o rotulo nao descreve. Ela entrou sem mudar
+  // veredito nenhum -- nenhuma das 17 ancoras daqui e ambigua hoje (medido na
+  // HMO-335, junto com as outras quatro listas).
+  const ocorrencias = fonte.split(de).length - 1;
+  if (ocorrencias > 1) {
+    console.error(`ANCORA AMBIGUA em ${arquivo} (${ocorrencias}x): ${rotulo}`);
+    console.error("   O `replace` mutaria a PRIMEIRA ocorrencia, que o rotulo nao descreve.");
+    process.exit(1);
   }
 
-  console.log(`\n${mortos}/${mutantes.length} mortos.`);
-  if (sobreviventes.length > 0) {
-    console.log("\nsobreviventes:");
-    for (const s of sobreviventes) console.log(`  - ${s}`);
+  const mutado = fonte.replace(de, para);
+  if (mutado === fonte) {
+    console.error(`MUTACAO SEM EFEITO em ${arquivo}: ${rotulo}`);
+    process.exit(1);
   }
-} finally {
-  restaurar();
+
+  const r = bloco.rodar(rotulo, { [arquivo]: mutado }, SUITE);
+
+  if (!r.verde) {
+    mortos += 1;
+    console.log(`MORTO      ${rotulo}`);
+  } else {
+    sobreviventes.push(rotulo);
+    console.log(`SOBREVIVEU ${rotulo}`);
+    if (r.mudouASaida === false) {
+      console.log("           (saida compilada identica a da arvore limpa: EQUIVALENTE)");
+    }
+  }
 }
+
+console.log(`\n${mortos}/${mutantes.length} mortos.`);
+if (sobreviventes.length > 0) {
+  console.log("\nsobreviventes:");
+  for (const s of sobreviventes) console.log(`  - ${s}`);
+}
+
+// O CODIGO DE SAIDA E NOVO, e sem ele o step de CI desta conversao seria VACUO.
+// A versao anterior imprimia a lista de sobreviventes e saia 0 -- como
+// ferramenta de quem escreve o teste isso bastava, porque a pessoa LE a saida.
+// Num step de workflow ninguem le: um runner que sai 0 com sobrevivente fica
+// verde para sempre e o step prova o mesmo que step nenhum. Os outros quatro
+// runners desta familia ja saiam 1; so este nao.
+process.exit(sobreviventes.length === 0 ? 0 : 1);
