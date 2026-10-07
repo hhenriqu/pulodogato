@@ -87,9 +87,10 @@ const DECLARACAO = "scripts/declaracao-de-mutantes-fora-do-ci.mjs";
  * O historico do placar: 38 na HMO-322, 34 quando os quatro `precisa-de-banco`
  * ganharam step, 33 quando o motor de bloco saiu da contagem (PR #214), 26 com
  * o lote 4/4 (HMO-332), 17 com o lote 3/4 (HMO-331: cinco apagados, quatro com
- * step no db-verify.yml).
+ * step no db-verify.yml), 9 com o lote 2/4 (HMO-330: quatro apagados, quatro
+ * com step -- dois deles TypeScript, ao lado da propria suite).
  */
-const TETO_NAO_TRIADO = 17;
+const TETO_NAO_TRIADO = 9;
 
 const erros = [];
 const avisos = [];
