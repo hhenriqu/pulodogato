@@ -40,6 +40,20 @@
 //      nas duas pontas, entao um sufixo inocente (" (confirmado)") faz a
 //      de-duplicacao parar de acontecer em silencio -- a tela diz "pronto" e o
 //      mes continua somando a divida duas vezes.
+//
+// E O QUE ESTA SUITE *COBRAVA* SEM MEDIR -- HMO-307
+// --------------------------------------------------
+// `npm run mutantes:elo-da-fatura` troca uma linha de `lib/elo-da-fatura.ts` por
+// vez e exige que esta suite reprove. Dos doze mutantes, DOIS sobreviveram na
+// primeira medicao, e os dois eram furo de verdade:
+//
+//   * `citacao_por_substring` -- o caso "Nu" dentro de "Numerario" e barrado pela
+//     guarda do NOME CURTO, nao pela comparacao por palavra inteira. O caso novo
+//     e "Inter" dentro de "Internet" (ver o caso 2);
+//   * `fatura_fechada_vira_candidata` -- o `!gravada` do laco das faturas abertas
+//     estava documentado como load-bearing e nao tinha medicao nenhuma.
+//
+// Os dois viraram CASO NOVO aqui, nao mutante removido da lista.
 // =====================================================
 
 import test from "node:test";
@@ -177,6 +191,22 @@ test("2. o nome do cartao casa por PALAVRA INTEIRA, nunca por substring", () => 
   assert.equal(descricaoCitaOCartao("Numerario da viagem", "Nu"), false);
   assert.equal(descricaoCitaOCartao("Pagar fatura Nubank", "Nubank"), true);
 
+  // E O CASO QUE MEDE A PALAVRA INTEIRA DE VERDADE -- HMO-307.
+  //
+  // As duas assercoes acima NAO medem o criterio que elas nomeiam: "Nu" tem duas
+  // letras, e quem o barra e a guarda do NOME CURTO (`p.length >= 3`) logo
+  // acima, nao a comparacao por palavra inteira. Trocar `palavras` + `every` por
+  // `includes` deixava as duas VERDES -- foi o mutante `citacao_por_substring`,
+  // sobrevivente medido em `npm run mutantes:elo-da-fatura`.
+  //
+  // Medir exige um nome de cartao com tres letras ou mais que seja PREFIXO de
+  // outra palavra, e as duas contas existem na vida real e vencem no mesmo mes:
+  // o cartao do Banco Inter e a conta de Internet. Com substring, a conta de
+  // internet ganharia o botao que esconde a fatura do cartao -- e a pessoa
+  // fecharia o mes achando ter um dinheiro que nao tem.
+  assert.equal(descricaoCitaOCartao("Internet de março", "Inter"), false);
+  assert.equal(descricaoCitaOCartao("Pagar fatura Inter", "Inter"), true);
+
   // Caixa e acento nao importam; pontuacao tampouco.
   assert.equal(descricaoCitaOCartao("pagar NUBANK.", "Nubank"), true);
   assert.equal(descricaoCitaOCartao("Fatura do Itaú", "itau"), true);
@@ -258,6 +288,48 @@ test("5. RECEITA nao e fatura -- nem quando cita o nome do cartao", () => {
     faturaAberta(),
   ]);
   assert.equal(semDirecao.size, 1);
+});
+
+test("a fatura FECHADA nao e alvo do elo -- o `!gravada` do laco e load-bearing", () => {
+  // HMO-307: a propriedade esta explicada em `suspeitasDeFaturaRepetida` como
+  // LOAD-BEARING, e nada a media -- foi o mutante `fatura_fechada_vira_candidata`
+  // (tirar o `if (gravada) continue;` do laco das faturas abertas), sobrevivente
+  // em `npm run mutantes:elo-da-fatura`.
+  //
+  // O cenario: a fatura de marco JA FOI FECHADA pelo
+  // `POST /api/card-invoices/close`, que criou uma conta a pagar GRAVADA com a
+  // chave canonica e `account_id` = o proprio cartao. Nao ha fatura sintetizada
+  // nenhuma na lista -- ela deixou de ser aberta. E a pessoa tambem anotou
+  // "Pagar fatura Nubank" na conta corrente, para o mesmo dia.
+  //
+  // Ligar a previsao digitada aquela chave criaria DUAS linhas com a MESMA chave
+  // e nao ha fatura sintetizada para suprimir: o mes continuaria dobrado, com a
+  // tela dizendo "pronto". Quem recusa gravar e a rota; aqui o rotulo nem acende.
+  const faturaFechada = {
+    id: "da-fatura-fechada",
+    description: "Fatura Nubank 03/2026",
+    notes: chaveFatura("2026-03-01", CARTAO),
+    account_name: "Nubank",
+    due_date: "2026-03-10",
+    direction: "expense",
+    group_id: null,
+  };
+
+  const suspeitas = suspeitasDeFaturaRepetida([
+    previsaoDigitada(),
+    faturaFechada,
+  ]);
+  assert.equal(suspeitas.size, 0);
+
+  // E O CONTROLE DO CASO: a MESMA previsao, com a fatura ABERTA no lugar da
+  // fechada, VIRA suspeita. Sem ele, "a fechada nao e alvo" ficaria verde com a
+  // deteccao inteiramente desligada -- e e exatamente a diferenca entre as duas
+  // linhas (o `id`) que esta sendo medida.
+  const comAAberta = suspeitasDeFaturaRepetida([
+    previsaoDigitada(),
+    faturaAberta(),
+  ]);
+  assert.equal(comAAberta.size, 1);
 });
 
 test("a FATURA sintetizada nao e suspeita de ser ela mesma", () => {
