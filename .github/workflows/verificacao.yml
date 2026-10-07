@@ -5422,6 +5422,18 @@ jobs:
             'a Previsao para de tirar a compra no cartao -- o cartao em dobro'
           desligar 'app/api/dashboard/previsao/route.ts' 'faturasPrevistasDaJanela(supabase' 'naoChama(supabase' \
             'a Previsao para de sintetizar a fatura ABERTA -- o cartao desaparece'
+          # OS DOIS DE lib/realizado-do-caixa.ts. Eram os UNICOS pontos da lista
+          # do guard sem mutante -- e por isso o par mais barato de apodrecer: a
+          # HMO-317 renomeou a leitura local `ehFatura(notes)` para o dono unico
+          # `ehPagamentoDaFatura(linha)`, a exigencia ficou no nome antigo, e o
+          # guard entrou VERMELHO na main na #211. O vermelho so apareceu quando
+          # o Actions voltou a iniciar job (HMO-242) -- dez controles negativos
+          # aqui e nenhum cobria estas duas linhas.
+          desligar 'lib/realizado-do-caixa.ts' 'if (ehPagamentoDaFatura(linha)) {' 'if (false) {' \
+            'a fatura PAGA para de virar despesa do mes em que o dinheiro saiu'
+          desligar 'lib/realizado-do-caixa.ts' ', account:financial_accounts(account_type)"' '"' \
+            'a consulta para de pedir account_type -- a regra nao sabe o que esta na fatura'
+
           desligar 'lib/realizado-e-previsao.ts' '  direction: string | null | undefined' '  direction: string | null | undefined, ehFatura: boolean' \
             'direcaoNoPainel volta a receber o segundo argumento que a HMO-265 tirou'
 
@@ -5456,7 +5468,7 @@ jobs:
           desligar 'app/(dashboard)/dashboard/page.tsx' 'LEGENDA_DO_CARTAO.fatura' '""' \
             'o painel perde a legenda gemea -- so UMA das duas telas explica'
 
-          echo "A verificacao fica vermelha nos dez pontos de fiacao."
+          echo "A verificacao fica vermelha nos doze pontos de fiacao."
 
       - name: 'A arvore voltou ao lugar depois de "A verificacao sabe falhar (fiacao do cartao pela fatura)"'
         run: |

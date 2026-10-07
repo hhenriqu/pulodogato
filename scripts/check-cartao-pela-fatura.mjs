@@ -99,10 +99,18 @@ const EXIGENCIAS = [
   },
   {
     arquivo: "lib/realizado-do-caixa.ts",
-    trechos: ["account:financial_accounts(account_type)", "ehFatura("],
+    // `ehPagamentoDaFatura(`, e nao `ehFatura(`: a HMO-317 deu um DONO SO ao
+    // criterio da perna de saida, em lib/telas-de-movimentacao.ts, e apagou
+    // deste arquivo a leitura local de `notes` por `ehFatura`. A exigencia
+    // ficou apontando para o nome antigo, e desde o merge da #211 este guard
+    // estava VERMELHO na main -- ninguem viu porque o Actions nao iniciava job
+    // (HMO-242). Ancora de guard que apodrece grita; ancora de `sed` apodrece
+    // calada (HMO-339).
+    trechos: ["account:financial_accounts(account_type)", "ehPagamentoDaFatura("],
     porque:
       "sem o embed da conta a regra nao sabe que a linha esta na fatura, e sem " +
-      "`ehFatura` toda transferencia entre contas proprias vira despesa do mes.",
+      "`ehPagamentoDaFatura` a fatura PAGA nao vira despesa do mes em que o " +
+      "dinheiro saiu -- o cartao desaparece dos dois lados (HMO-264).",
   },
 
   // -------------------------------------------------------------------------
