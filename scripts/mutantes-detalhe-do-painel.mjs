@@ -74,10 +74,20 @@ const mutantes = [
     // com grupo.
     nome: "o detalhe lista a linha ANTES de dividir a parte do grupo",
     arquivo: LIB,
-    de: "    detalhe.push(linhaDoDetalhe(linha, valor, ctx.meuUserId));",
+    // O QUARTO ARGUMENTO ENTROU NA HMO-305 -- HMO-333. `linhaDoDetalhe` ganhou
+    // `suspeitas` (o mapa da fatura repetida), e a ancora de tres argumentos
+    // deixou de casar. Ele vai tambem no `para`: um mutante que CHAMASSE com
+    // tres argumentos morreria no tsc, e morrer no tsc nao diz que a suite
+    // pegou a regra da divisao.
+    de: "    detalhe.push(linhaDoDetalhe(linha, valor, ctx.meuUserId, suspeitas));",
     para:
       "    detalhe.push(\n" +
-      "      linhaDoDetalhe(linha, Math.abs(Number(linha.amount) || 0), ctx.meuUserId)\n" +
+      "      linhaDoDetalhe(\n" +
+      "        linha,\n" +
+      "        Math.abs(Number(linha.amount) || 0),\n" +
+      "        ctx.meuUserId,\n" +
+      "        suspeitas\n" +
+      "      )\n" +
       "    );",
   },
   {
@@ -86,10 +96,11 @@ const mutantes = [
     // MENOR que o numero de cima, e o cartao se desmente sozinho.
     nome: "o detalhe descarta a fatura aberta sintetizada",
     arquivo: LIB,
-    de: "    detalhe.push(linhaDoDetalhe(linha, valor, ctx.meuUserId));",
+    // A MESMA DERIVA DO `suspeitas` do mutante acima (HMO-333), nos dois lados.
+    de: "    detalhe.push(linhaDoDetalhe(linha, valor, ctx.meuUserId, suspeitas));",
     para:
       "    if (linha.id != null)\n" +
-      "      detalhe.push(linhaDoDetalhe(linha, valor, ctx.meuUserId));",
+      "      detalhe.push(linhaDoDetalhe(linha, valor, ctx.meuUserId, suspeitas));",
   },
   {
     // O DETALHE MONTADO POR FORA DA PENEIRA -- a segunda leitura que a issue
@@ -97,24 +108,74 @@ const mutantes = [
     // 'skipped' e 'cancelled' voltam para a lista e nao voltam para o total.
     nome: "o detalhe vem de um segundo filtro, que esquece skipped/cancelled",
     arquivo: LIB,
-    de: "  return { total: centavos(total), quantidade, detalhe };",
+    // REESCRITO CONTRA A FORMA NOVA DO RETORNO -- HMO-333, e sao TRES derivas
+    // de uma vez:
+    //
+    //   1. `somarPerna` deixou de devolver o `NumeroDoPapel` cru. Desde a
+    //      HMO-303 ela devolve `{ numero, fora }` -- a contagem lateral da
+    //      transferencia --, entao o `detalhe` mutado tem de ir DENTRO do
+    //      `numero`, e o `fora` tem de continuar saindo igual: o mutante e
+    //      sobre a lista, e mexer na contagem lateral de arrasto o faria
+    //      morrer por outro motivo;
+    //   2. `parteDoMembro(amount, group_id, membrosAtivosPorGrupo)` nao existe
+    //      mais. A HMO-303 trocou a CONTAGEM de membros pelo PESO configurado:
+    //      hoje e `parteConfiguradaDoMembro(amount, group_id, pesosPorGrupo,
+    //      meuUserId)`. O segundo filtro tem de repetir a chamada ATUAL, senao
+    //      ele nao compila;
+    //   3. `linhaDoDetalhe` pede o quarto argumento (`suspeitas`, HMO-305).
+    //
+    // As tres sao a mesma exigencia: o mutante tem de COMPILAR para que o
+    // veredito signifique algo. Um `para` que nao compila morre no tsc, e
+    // morrer no tsc nao prova que a SUITE pegou a regra que a issue cobra --
+    // seria um 21/21 sobre um mutante que nunca foi medido pela assercao.
+    //
+    // `linhas`, `ctx`, `aceita` e `suspeitas` sao todos parametros de
+    // `somarPerna`, e `dentroDaJanela` e `parteConfiguradaDoMembro` sao
+    // modulo/import: todos em escopo neste ponto.
+    //
+    // E O DEFEITO MEDIDO CONTINUA O MESMO: o filtro repete a janela e o
+    // `aceita`, e ESQUECE o `STATUS_FORA_DO_PREVISTO`. 'skipped' e 'cancelled'
+    // voltam para a lista e nao voltam para o total.
+    //
+    // CONFERIDO POR QUAL ASSERCAO O MATA, e nao so pelo veredito. O segundo
+    // filtro difere do original em DUAS coisas -- o status esquecido e o
+    // `detalhe.sort` perdido --, e a lista ja tem um mutante de ordem ("a
+    // lista nao e ordenada por vencimento"). Se este morresse pela assercao de
+    // ORDEM, seria uma copia daquele e o status ficaria sem medida. Nao e o
+    // caso: ele reprova em "o detalhe FECHA com o total", nos tres casos (o
+    // fixture inteiro de marco, o mes com a fatura sintetizada, e o sem
+    // `meuUserId`) -- a invariante `soma(detalhe) === total`, que e exatamente
+    // a regra que o status esquecido quebra.
+    de: `  return {
+    numero: { total: centavos(total), quantidade, detalhe },
+    fora: { total: centavos(fora.total), quantidade: fora.quantidade },
+  };`,
     para:
       "  return {\n" +
-      "    total: centavos(total),\n" +
-      "    quantidade,\n" +
-      "    detalhe: linhas\n" +
-      "      .filter((l) => dentroDaJanela(l.due_date, ctx.janela) && aceita(l))\n" +
-      "      .map((l) =>\n" +
-      "        linhaDoDetalhe(\n" +
-      "          l,\n" +
-      "          Math.abs(\n" +
-      "            Number(\n" +
-      "              parteDoMembro(l.amount, l.group_id, ctx.membrosAtivosPorGrupo)\n" +
-      "            ) || 0\n" +
-      "          ),\n" +
-      "          ctx.meuUserId\n" +
-      "        )\n" +
-      "      ),\n" +
+      "    numero: {\n" +
+      "      total: centavos(total),\n" +
+      "      quantidade,\n" +
+      "      detalhe: linhas\n" +
+      "        .filter((l) => dentroDaJanela(l.due_date, ctx.janela) && aceita(l))\n" +
+      "        .map((l) =>\n" +
+      "          linhaDoDetalhe(\n" +
+      "            l,\n" +
+      "            Math.abs(\n" +
+      "              Number(\n" +
+      "                parteConfiguradaDoMembro(\n" +
+      "                  l.amount,\n" +
+      "                  l.group_id,\n" +
+      "                  ctx.pesosPorGrupo,\n" +
+      "                  ctx.meuUserId\n" +
+      "                )\n" +
+      "              ) || 0\n" +
+      "            ),\n" +
+      "            ctx.meuUserId,\n" +
+      "            suspeitas\n" +
+      "          )\n" +
+      "        ),\n" +
+      "    },\n" +
+      "    fora: { total: centavos(fora.total), quantidade: fora.quantidade },\n" +
       "  };",
   },
   {
@@ -162,6 +223,42 @@ const semLinha = (): NumeroDoPapel => VAZIO;`,
 
   // ---------------------------------------------------------------------------
   // `posso_editar` -- o campo que a 10/10 consome
+  //
+  // OS TRES MUTAM O CAMPO, E NAO A VARIAVEL `posso` -- HMO-333.
+  // A ancora dos tres era a expressao solta
+  // `      gravada && meuUserId != null && linha.user_id === meuUserId,`, que
+  // na epoca era o valor de `posso_editar` E DE MAIS NADA. A HMO-305 extraiu
+  // aquela expressao para `const posso`, com outra indentacao e terminando em
+  // `;`, e pendurou nela TRES campos: `posso_editar`, `fatura_suspeita` e
+  // `elo_da_fatura`.
+  //
+  // Entao havia duas formas de consertar, e elas NAO medem a mesma coisa:
+  //
+  //   * mutar a `const posso` -- mexe nos tres campos de uma vez. E um
+  //     mutante mais FACIL de matar (tres sintomas observaveis em vez de um),
+  //     e ele mede "o criterio de quem pode agir esta errado", que e mais
+  //     largo do que o que estas tres entradas foram escritas para medir;
+  //   * mutar `posso_editar: posso,` -- muda EXATAMENTE o que a ancora antiga
+  //     mudava: um campo. O `posso` continua certo para os outros dois, e o
+  //     unico sintoma e o que cada nome aqui descreve.
+  //
+  // Escolhido o segundo, e o que decide nao e gosto: `test-papel-de-pao.mjs`
+  // tem 16 assercoes sobre `posso_editar` e ZERO sobre `fatura_suspeita` ou
+  // `elo_da_fatura`. Um mutante na `const posso` morreria -- mas morreria
+  // PELAS assercoes de `posso_editar`, as mesmas que os tres daqui ja usam.
+  // Ele nao mediria nada a mais e pareceria medir tres campos: e a forma de
+  // mutante que afirma mais do que mede. O mutante no campo diz a verdade
+  // sobre o seu proprio alcance.
+  //
+  // E FICA UM BURACO NOMEADO, que esta issue nao fecha: o `posso` tambem
+  // porteia `fatura_suspeita` e `elo_da_fatura`, e NADA mede esse porteiro.
+  // `mutantes-elo-da-fatura.mjs` nao cobre isto -- ele muta
+  // `lib/elo-da-fatura.ts`, ou seja o CRITERIO da suspeita e do desfazer, nao
+  // a condicao que decide se o campo sai preenchido. Trocar o `posso` desses
+  // dois campos por `gravada` abriria o elo na linha de outro membro do grupo,
+  // onde o `UPDATE` volta 200 sem alterar nada -- e as duas suites deste
+  // runner passariam. Ver HMO-336, que entra pela ordem certa: a assercao dos
+  // dois campos primeiro, o mutante da `const posso` depois.
   // ---------------------------------------------------------------------------
   {
     // O DEFEITO CARO: todo mundo pode editar tudo. A linha de grupo do OUTRO
@@ -169,16 +266,16 @@ const semLinha = (): NumeroDoPapel => VAZIO;`,
     // sem alterar nada -- o app diz "pronto" e a linha fica.
     nome: "`posso_editar` nao olha de quem e a linha",
     arquivo: LIB,
-    de: "      gravada && meuUserId != null && linha.user_id === meuUserId,",
-    para: "      gravada,",
+    de: "    posso_editar: posso,",
+    para: "    posso_editar: gravada,",
   },
   {
     // A FATURA SINTETIZADA GANHA ACAO. Ela nao tem id de banco: a baixa
     // responde 404, que para quem clicou se le como "o app nao conseguiu".
     nome: "a linha nao gravada tambem ganha acao",
     arquivo: LIB,
-    de: "      gravada && meuUserId != null && linha.user_id === meuUserId,",
-    para: "      meuUserId != null && linha.user_id === meuUserId,",
+    de: "    posso_editar: posso,",
+    para: "    posso_editar: meuUserId != null && linha.user_id === meuUserId,",
   },
   {
     // FALHA ABERTO em vez de fechado: sem `meuUserId` toda linha vira
@@ -186,8 +283,10 @@ const semLinha = (): NumeroDoPapel => VAZIO;`,
     // sintoma seria botao em linha alheia.
     nome: "sem `meuUserId`, toda linha gravada vira editavel",
     arquivo: LIB,
-    de: "      gravada && meuUserId != null && linha.user_id === meuUserId,",
-    para: "      gravada && (meuUserId == null || linha.user_id === meuUserId),",
+    de: "    posso_editar: posso,",
+    para:
+      "    posso_editar:\n" +
+      "      gravada && (meuUserId == null || linha.user_id === meuUserId),",
   },
   {
     // `gravada` DEIXA DE OLHAR O ID: a fatura sintetizada passa a parecer

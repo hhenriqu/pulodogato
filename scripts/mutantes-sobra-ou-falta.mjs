@@ -149,11 +149,21 @@ const mutantes = [
     // uma sobra MENOR do que a real, o erro na direcao cara.
     nome: "as `receitas` sao so o SALARIO (a alternativa descartada)",
     arquivo: LIB,
+    // A ANCORA PARA NO `)` E NAO INCLUI O `;` -- HMO-333. A HMO-303 fez
+    // `somarPerna` devolver `{ numero, fora }` (a contagem lateral da
+    // transferencia), e desde entao a chamada das receitas termina em
+    // `).numero;`. A ancora antiga, que pedia `);`, deixou de casar: o replace
+    // nao mudava nada, o arquivo ia intacto para a suite, e o relatorio dizia
+    // "SOBREVIVEU" sobre um mutante que nunca foi escrito.
+    //
+    // Parar no `)` e o recorte que mede o MESMO defeito e nao depende do que
+    // vem depois: o `.numero` fica de fora da troca, continua no lugar, e o
+    // mutante e exatamente a peneira recortada pela categoria Salario.
     de: `  const receitas = somarPerna(
     linhas,
     ctx,
     (linha) => direcaoDaAgenda(linha.direction) === "income"
-  );`,
+  )`,
     para: `  const receitas = somarPerna(
     linhas,
     ctx,
@@ -161,7 +171,7 @@ const mutantes = [
       direcaoDaAgenda(linha.direction) === "income" &&
       linha.category_id != null &&
       deSalario.has(linha.category_id)
-  );`,
+  )`,
   },
   {
     // O CARTAO LENDO A PERNA ERRADA. A perna nova continua certa e exposta na
@@ -178,16 +188,19 @@ const mutantes = [
     // conta fechou exatamente no zero.
     nome: "a perna das receitas soma DESPESA",
     arquivo: LIB,
+    // A MESMA DERIVA DE UM TOKEN do mutante do Salario acima (HMO-333): a
+    // ancora para no `)`, e o `.numero;` que a HMO-303 acrescentou fica fora
+    // da troca.
     de: `  const receitas = somarPerna(
     linhas,
     ctx,
     (linha) => direcaoDaAgenda(linha.direction) === "income"
-  );`,
+  )`,
     para: `  const receitas = somarPerna(
     linhas,
     ctx,
     (linha) => direcaoDaAgenda(linha.direction) === "expense"
-  );`,
+  )`,
   },
   {
     // A DIRECAO AUSENTE deixando de calar o CARTAO: as duas pernas saem
