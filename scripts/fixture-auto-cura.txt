@@ -1,0 +1,9 @@
+Alvo do fixture da suite `test:auto-cura` (HMO-326).
+
+Este arquivo existe para ser mutado por `fixture-runner-de-auto-cura.mjs` e
+restaurado pela auto-cura. A palavra abaixo e o que a medicao troca; ela esta
+aqui para que o criterio de aceite ("git status volta limpo sem intervencao
+manual") possa ser afirmado sobre um arquivo RASTREADO, sem que a suite precise
+mutar codigo de producao para provar isso.
+
+ORIGINAL

@@ -423,3 +423,11 @@ next-env.d.ts
 
 # A sugestao de divisao viva (HMO-273): arvore compilada da suite de rota.
 /.tmp-sugestao-de-divisao/
+
+# Os sentinels da auto-cura dos runners de mutante (HMO-326). Cada arquivo aqui
+# guarda o texto ORIGINAL do que uma medicao em andamento esta mutando, mais o
+# lock com o pid do dono -- a invocacao SEGUINTE le isto para desfazer o que um
+# run morto por SIGKILL deixou gravado. Fica fora do git por dois motivos: e
+# estado de maquina, e um sentinel commitado seria uma copia de arquivo de fonte
+# em cima de si mesma (ver a entrada do .tmp-parcelamento).
+/.tmp-mutantes/
