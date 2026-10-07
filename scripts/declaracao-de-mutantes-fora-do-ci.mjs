@@ -112,6 +112,39 @@ export const FORA_DO_CI = {
     coberto_por: "A verificacao sabe falhar (realizado-do-caixa)",
   },
 
+  // Triados na HMO-329 (lote 1/4: divisao, parte e orcamento de grupo). Estes
+  // dois NAO precisaram de step novo: o CI ja rodava, inline, o subconjunto que
+  // o proprio runner nomeia como "os que viram dinheiro". O que faltava era a
+  // declaracao dizer isso -- enquanto eles estavam `nao-triado`, a divida contava
+  // como ausencia de cobertura uma cobertura que existia.
+  "scripts/mutantes-divisao-configurada.mjs": {
+    motivo: "ferramenta-de-autor",
+    porque:
+      "49 mutantes (os 8 ultimos sao de `divisaoDoPeriodo`). O verificacao.yml " +
+      "roda os QUATRO que viram dinheiro no bloco 'A verificacao sabe falhar " +
+      "(divisao configurada do grupo)', com a trava do `cmp` em cada `sed`, e o " +
+      "comentario do bloco cita este runner como a origem deles. Entre eles esta " +
+      "o `MAIOR RESTO -> ARREDONDAMENTO` que a HMO-267 pede por nome, o degrau do " +
+      "0/0 (sem ele todo grupo nao configurado mostra 'NaN%') e o membro em 0% " +
+      "voltando a entrar na despesa com parte zerada, que derruba o INSERT " +
+      "inteiro em 23514. Rodar os 49 em todo PR pagaria 45 suites a mais pelos " +
+      "mesmos quatro vereditos de dinheiro.",
+    coberto_por: "A verificacao sabe falhar (divisao configurada do grupo)",
+  },
+  "scripts/mutantes-pagador-da-parte.mjs": {
+    motivo: "ferramenta-de-autor",
+    porque:
+      "O verificacao.yml roda os TRES que o cabecalho do proprio runner chama de " +
+      "'os que mais importam, porque sao os que nao dao sintoma', no bloco 'A " +
+      "verificacao sabe falhar (pagador-da-parte)': o nome de quem pagou nunca " +
+      "chegando na linha, o rotulo de fallback saindo em branco, e o selo " +
+      "desaparecendo quando o perfil nao e legivel -- este ultimo devolve a linha " +
+      "a 'R$ 200,00 · Minha parte · Praia', que se le como despesa propria. Cada " +
+      "`sed` tem a trava do `cmp`, entao ancora reescrita reprova em vez de medir " +
+      "a arvore intacta.",
+    coberto_por: "A verificacao sabe falhar (pagador-da-parte)",
+  },
+
   // ---------------------------------------------------------------------
   // biblioteca-de-runner: nao e runner, e o motor que os runners importam.
   // ---------------------------------------------------------------------
@@ -199,11 +232,9 @@ export const FORA_DO_CI = {
   // motivos acima, um step de workflow, ou um `git rm` -- e o TETO cai junto.
   // ---------------------------------------------------------------------
   "scripts/mutantes-cartao-orcamento-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
-  "scripts/mutantes-divisao-configurada.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-divisao-do-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-divisao-ui-dom.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-orcamento-de-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
-  "scripts/mutantes-pagador-da-parte.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-parte-do-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-semeadura.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-sugestao-de-divisao.mjs": { motivo: "nao-triado", porque: "HMO-322" },
