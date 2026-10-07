@@ -353,69 +353,87 @@ const MUTANTES = [
     },
   },
   {
-    nome: "nao-triado acima do teto (a catraca andando para tras)",
+    nome: "runner novo arquivado como `nao-triado` (a divida reaberta)",
     peneira: "o teto da divida",
     espera: /estao `nao-triado`, e o teto e/,
     // O TETO E UM NUMERO QUE MUDA A CADA TRIAGEM -- nao se ancora nele.
     //
-    // Isto era `.replace("TETO_NAO_TRIADO = 34", ...)`. O teto e uma catraca
-    // que desce a cada runner triado, entao a ancora literal morre na PRIMEIRA
-    // triagem -- e morreu: baixar o teto para 33 fez este mutante cair em "NAO
-    // APLICOU" e sair do placar. O mutante seguinte a descobrir isso seria o
-    // proximo a baixar o teto, e assim por diante.
+    // Isto era `.replace("TETO_NAO_TRIADO = 34", ...)`: o mutante BAIXAVA o teto
+    // para que as entradas `nao-triado` existentes o estourassem. A ancora
+    // literal morreu na primeira triagem (baixar o teto para 33 fez o mutante
+    // cair em "NAO APLICOU" e sair do placar calado), e a versao seguinte passou
+    // a baixar o teto dinamicamente, para zero.
     //
-    // Zero serve para qualquer teto: se ha pelo menos um `nao-triado`, a
-    // contagem fica acima de zero e a peneira opina. Quando a divida chegar a
-    // zero, esta peneira nao tem mais nada para medir -- e o `throw` abaixo diz
-    // isso com essas palavras, em vez de deixar um "NAO APLICOU" que se le como
-    // defeito do runner.
+    // Essa tambem acabou, por um motivo diferente e definitivo: a HMO-335 triou
+    // os cinco ultimos e O TETO CHEGOU A ZERO. Nao existe mais entrada
+    // `nao-triado` para estourar teto nenhum, e baixar para zero um teto que JA
+    // e zero nao muda nada -- o mutante ficaria vivo medindo a arvore intacta.
+    //
+    // A MUTACAO INVERTEU DE LADO, E A PENEIRA MEDIDA E A MESMA. Em vez de baixar
+    // o teto ate as entradas o estourarem, ela ACRESCENTA uma entrada
+    // `nao-triado` com o teto parado em 0. E isso e tambem o que a peneira passou
+    // a significar em zero: nao "a divida esta grande", e sim "a divida nao se
+    // reabre" -- que e a unica forma que esta catraca ainda pode ser violada.
+    //
+    // O RUNNER DECLARADO E NOVO, criado aqui, e as tres razoes sao as tres outras
+    // peneiras que NAO podem disparar junto: se duas disparam, o `espera` casa do
+    // mesmo jeito e o mutante morre sem que ESTA peneira seja a responsavel.
+    // Criado aqui ele existe na arvore (a entrada nao fica obsoleta), nenhum
+    // workflow o invoca (a declaracao nao "ficou para tras") e ele esta declarado
+    // (nao cai na peneira principal). Sobra a catraca.
     mutar(dir) {
-      const atual = ler(dir, GUARDA).match(/TETO_NAO_TRIADO = (\d+)/);
-      if (!atual) throw new Error("TETO_NAO_TRIADO nao encontrado na guarda");
-      if (atual[1] === "0") {
+      const teto = ler(dir, GUARDA).match(/TETO_NAO_TRIADO = (\d+)/);
+      if (!teto) throw new Error("TETO_NAO_TRIADO nao encontrado na guarda");
+      if (teto[1] !== "0") {
         throw new Error(
-          "o teto ja e 0: a divida `nao-triado` acabou e esta peneira nao tem mais o que medir -- retire este mutante",
+          `o teto e ${teto[1]}, nao 0: com folga na catraca UMA entrada nova nao a estoura, ` +
+            `e este mutante mediria nada -- acrescente ${Number(teto[1]) + 1} entradas ou volte ` +
+            `a baixar o teto (ver o historico no comentario)`,
         );
       }
-      escrever(dir, GUARDA, ler(dir, GUARDA).replace(/TETO_NAO_TRIADO = \d+/, "TETO_NAO_TRIADO = 0"));
+      const novo = "scripts/mutantes-arquivado-sem-triagem.mjs";
+      escrever(dir, novo, "// runner novo, declarado em vez de triado\n");
+      const d = ler(dir, DECLARACAO).replace(
+        /^};$/m,
+        `  "${novo}": { motivo: "nao-triado", porque: "HMO-322, ainda nao olhei" },\n};`,
+      );
+      if (d === ler(dir, DECLARACAO)) throw new Error("ancora `};` da declaracao nao casou");
+      escrever(dir, DECLARACAO, d);
     },
   },
   {
-    nome: "triagem feita e teto nao acompanhou (a catraca parada)",
+    nome: "o teto SUBIU sem triagem nenhuma (a catraca afrouxada)",
     peneira: "o teto da divida, para baixo",
     espera: /baixe TETO_NAO_TRIADO para/,
-    // Tira UM `nao-triado` qualquer, e nao o `cash-flow` pelo nome.
+    // ESTE MUTANTE MUDOU DE MECANISMO NA HMO-335, e a peneira e a mesma.
     //
-    // A ancora literal era `mutantes-cash-flow.mjs`. Ela sobrevive enquanto
-    // ninguem triar o cash-flow -- e triar os `nao-triado` um a um e exatamente
-    // o trabalho que esta por vir (decisao do Helio em 2026-10-07: apagar e o
-    // default). A ancora morreria no dia em que a triagem chegasse nele, e
-    // morreria em silencio, porque "NAO APLICOU" nao se le como ancora morta.
+    // Antes ele TIRAVA uma entrada `nao-triado` da declaracao (e apagava o runner
+    // junto, senao a reprovacao vinha da peneira principal e o mutante morria
+    // pela mensagem de outra). Isso media "triou e nao baixou o teto".
     //
-    // Pegar o PRIMEIRO da lista nao envelhece: a premissa e so que exista ao
-    // menos um `nao-triado`, que e a premissa da peneira inteira.
+    // Nao da mais: a HMO-335 triou os cinco ultimos e nao existe entrada
+    // `nao-triado` para tirar. E `naoTriados.length < TETO_NAO_TRIADO` com o teto
+    // em 0 e inalcancavel por esse lado -- nao ha numero abaixo de zero.
     //
-    // O `\s*` entre o `{` e o `motivo:` nao e enfeite: ate a HMO-329 a ancora
-    // exigia os dois na MESMA linha, e quando aquela issue passou a guardar a
-    // medicao de cada `nao-triado` no `porque` as entradas viraram multi-linha
-    // e esta ancora morreu. O formato da entrada nao e a afirmacao que este
-    // mutante mede -- a afirmacao e "existe um `nao-triado`, e tirar um sem
-    // baixar o teto reprova".
+    // Entao a mutacao passou a mexer no OUTRO lado da mesma comparacao: ela SOBE
+    // o teto em um, sem triar nada. A peneira reprova igual, pela mesma linha e
+    // com a mesma mensagem, e o que o mutante passa a nomear e a propriedade que
+    // de fato importa de uma catraca -- ela nao afrouxa. Com o teto em zero, essa
+    // e a unica direcao em que ela pode ser violada.
+    //
+    // E e robusto para qualquer teto futuro, nao so para zero: com N entradas e o
+    // teto em N+1, a contagem fica abaixo do teto e a peneira opina. Nao ha
+    // numero escrito aqui para envelhecer -- foi um literal
+    // (`TETO_NAO_TRIADO = 34`) que matou a ancora dos dois mutantes do teto na
+    // primeira triagem.
     mutar(dir) {
-      const texto = ler(dir, DECLARACAO);
-      const alvo = texto.match(
-        /\s*"(scripts\/mutantes-[a-z0-9-]+\.(?:mjs|sh))":\s*\{\s*motivo: "nao-triado"[^}]*\},/,
+      const g = ler(dir, GUARDA);
+      const novo = g.replace(
+        /TETO_NAO_TRIADO = (\d+)/,
+        (_, n) => `TETO_NAO_TRIADO = ${Number(n) + 1}`,
       );
-      if (!alvo) {
-        throw new Error(
-          "nenhuma entrada `nao-triado` na declaracao -- a divida acabou e esta peneira nao tem mais o que medir",
-        );
-      }
-      escrever(dir, DECLARACAO, texto.replace(alvo[0], ""));
-      // Apagar o runner junto, senao a reprovacao vem da peneira principal
-      // ("ninguem roda e ninguem declarou") e o mutante morre pelo motivo
-      // errado com a mensagem de outra peneira.
-      rmSync(join(dir, alvo[1]));
+      if (novo === g) throw new Error("TETO_NAO_TRIADO nao encontrado na guarda");
+      escrever(dir, GUARDA, novo);
     },
   },
   {
@@ -434,23 +452,44 @@ const MUTANTES = [
     //
     // O alvo sai da propria declaracao, e nao de um nome escrito aqui: isto era
     // `mutantes-crivos.mjs` e a HMO-332 apagou aquele runner, o que derrubou
-    // este mutante com ENOENT. Pegar o PRIMEIRO `nao-triado` nao envelhece --
-    // a premissa e so que exista algum, que e a premissa da peneira.
+    // este mutante com ENOENT.
     //
-    // E o `\s*` entre o `{` e o `motivo:` existe pela mesma razao do mutante da
-    // catraca acima: a HMO-329 tornou as entradas `nao-triado` multi-linha ao
-    // guardar a medicao de cada uma no `porque`, e a ancora de uma linha so
-    // morreu junto.
+    // O MOTIVO PROCURADO DEIXOU DE SER `nao-triado` NA HMO-335, porque aquela
+    // issue triou os cinco ultimos e nao existe mais entrada com esse motivo. A
+    // peneira nunca dependeu do motivo -- ela pergunta "a declaracao cita um
+    // arquivo que nao esta na arvore?" --, entao a troca para
+    // `ferramenta-de-autor` nao afrouxa nada e tira a ancora de cima de um motivo
+    // que agora e proibido (ver o teto, em zero).
+    //
+    // E O ALVO EXCLUI QUEM TEM ALVO `npm run`, que e a parte sutil: apagar um
+    // runner citado em `package.json` faz disparar TAMBEM a peneira do alvo npm
+    // quebrado. Duas reprovacoes, o `espera` casando do mesmo jeito, e o mutante
+    // morrendo sem que esta peneira fosse a responsavel -- a mesma armadilha que
+    // o mutante da catraca descreve.
     mutar(dir) {
-      const alvo = ler(dir, DECLARACAO).match(
-        /"(scripts\/mutantes-[a-z0-9-]+\.(?:mjs|sh))":\s*\{\s*motivo: "nao-triado"/,
+      const pkg = JSON.parse(ler(dir, "package.json"));
+      const comAlvoNpm = new Set(
+        Object.entries(pkg.scripts ?? {})
+          .filter(([n]) => n.startsWith("mutantes:"))
+          .flatMap(([, c]) =>
+            [
+              ...c.matchAll(/(?:node|bash|sh)\s+(scripts\/mutantes-[a-z0-9-]+\.(?:mjs|sh))/g),
+            ].map((m) => m[1]),
+          ),
       );
-      if (!alvo) {
+      const candidatos = [
+        ...ler(dir, DECLARACAO).matchAll(
+          /"(scripts\/mutantes-[a-z0-9-]+\.(?:mjs|sh))":\s*\{\s*motivo: "ferramenta-de-autor"/g,
+        ),
+      ]
+        .map((m) => m[1])
+        .filter((f) => !comAlvoNpm.has(f));
+      if (candidatos.length === 0) {
         throw new Error(
-          "nenhuma entrada `nao-triado` na declaracao -- esta peneira precisa de uma linha declarada para apagar o arquivo por baixo dela",
+          "nenhuma entrada `ferramenta-de-autor` SEM alvo npm na declaracao -- esta peneira precisa de uma linha declarada para apagar o arquivo por baixo dela sem disparar a peneira do alvo npm",
         );
       }
-      rmSync(join(dir, alvo[1]));
+      rmSync(join(dir, candidatos[0]));
     },
   },
   {

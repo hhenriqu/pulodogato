@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Prova de mutacao do components/financial/CartaoOrcamentoGrupo.tsx. NAO roda
-// em CI: e ferramenta de quem esta escrevendo o teste. Cada entrada abaixo
-// estraga uma decisao do JSX; a suite tem que ficar VERMELHA em todas. Mutante
-// que sobrevive e um trecho que nenhum teste distingue -- ou codigo morto.
+// Prova de mutacao do components/financial/CartaoOrcamentoGrupo.tsx. Cada
+// entrada abaixo estraga uma decisao do JSX; a suite tem que ficar VERMELHA em
+// todas. Mutante que sobrevive e um trecho que nenhum teste distingue -- ou
+// codigo morto.
 //
 // O primeiro grupo e o que interessa, e e o "nao fazer" literal da HMO-180:
 // refazer a soma dentro do JSX. O numero continua plausivel, a barra continua
@@ -11,10 +11,43 @@
 // sem nada no console.
 //
 //   node scripts/mutantes-cartao-orcamento-grupo.mjs
-import { readFileSync, writeFileSync } from "node:fs";
-import { execSync } from "node:child_process";
+//
+// O BLOCO: UMA COMPILACAO PARA TODOS OS MUTANTES (HMO-335)
+// --------------------------------------------------------
+// Este runner MUTAVA A ARVORE RASTREADA: escrevia o mutante em `ALVO`, chamava
+// `npm run` ali mesmo e restaurava depois. Dois defeitos, e o segundo e o que
+// doia:
+//
+//   1. cada volta recompilava o programa INTEIRO para trocar UM arquivo -- 16
+//      voltas de `tsc` completo, 72s medidos;
+//   2. o mutante ficava GRAVADO no arquivo de producao quando o processo morria
+//      no meio. Nao havia nem `finally` aqui: a restauracao era uma linha no fim
+//      do corpo do laco, e `execSync` BLOQUEIA a thread do JS -- com SIGTERM (o
+//      sinal que um timeout manda) o processo termina a volta em curso e aplica
+//      A SEGUINTE. Ja aconteceu nesta arvore: a HMO-329 comecou com
+//      `lib/divisao-configurada.ts` mutado por um runner deste desenho.
+//
+// Agora as voltas dividem um processo e um cache de AST
+// (`criarBlocoDeMutantes`, HMO-319): so o arquivo mutado e reparseado, e a
+// mutacao vai para uma SOMBRA em diretorio temporario. A arvore rastreada e o
+// `.tmp-*` do repositorio nao sao tocados em momento nenhum, entao o pior caso
+// de um processo morto e um diretorio orfao em /tmp.
+//
+// As etapas da suite saem do proprio `scripts["test:cartao-orcamento-grupo"]`
+// do package.json -- o comando que o CI roda --, e nao de uma receita repetida
+// a mao aqui.
+//
+// A lista de mutantes abaixo NAO foi reescrita nem movida: o diff desta
+// conversao nao toca uma linha dela.
+import { readFileSync } from "node:fs";
+
+import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
 
 const ALVO = "components/financial/CartaoOrcamentoGrupo.tsx";
+const SUITE = "test:cartao-orcamento-grupo";
+
+// Lido da arvore de verdade, que e o original por construcao: nada mais aqui
+// escreve nela.
 const original = readFileSync(ALVO, "utf8");
 
 const mutantes = [
@@ -113,30 +146,64 @@ const mutantes = [
   ],
 ];
 
+const bloco = criarBlocoDeMutantes({ rotulo: "cartao-orcamento-grupo", suites: [SUITE] });
+
+// A sombra vive em diretorio temporario, e a arvore rastreada nunca e mutada --
+// era esse o modo de falha deste runner. O handler de sinal existe so para que
+// nem o diretorio orfao sobre: `finally` nao roda em SIGTERM, mas
+// `process.exit` dispara o `exit` abaixo.
+process.on("exit", () => bloco.fechar());
+for (const sinal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(sinal, () => process.exit(1));
+}
+
+// CONTROLE POSITIVO, primeiro e obrigatorio: a suite tem de passar com a arvore
+// INTACTA, e pelo MESMO `rodar` que os mutantes usam -- por isso ele pega erro
+// no proprio aparelho. Sem ele, uma sombra mal montada reprova TODO mutante e o
+// placar fecha "16/16 mortos" sobre zero assercoes executadas.
+const controle = bloco.rodar("controle", {}, SUITE);
+if (!controle.verde) {
+  console.error(`ABORTADO: ${ALVO} INTACTO reprova em ${SUITE} (${controle.como}).`);
+  console.error(`  ${controle.saida}`);
+  console.error("O placar nao valeria: todo mutante 'morreria' sem ter sido medido.");
+  process.exit(1);
+}
+console.log(`controle positivo: ${ALVO} intacto passa em ${SUITE}\n`);
+
 let sobreviventes = 0;
 
 for (const [nome, de, para] of mutantes) {
   // Um mutante que nao aplica passa por "morto" sem nunca ter existido: o
   // trecho mudou de forma, o replace nao encontra nada, e a suite fica verde
   // por nao ter sido mexida. Ele conta como sobrevivente de proposito.
-  if (!original.includes(de)) {
+  //
+  // A segunda trava -- a ocorrencia UNICA -- e a que esta conversao acrescenta:
+  // `String.replace` troca a PRIMEIRA ocorrencia, entao um trecho que aparece
+  // duas vezes muta um lugar que o rotulo nao descreve e sobrevive com o rotulo
+  // mentindo. Ela entrou sem mudar veredito nenhum: nenhuma das 16 ancoras daqui
+  // e ambigua hoje (medido na HMO-335, junto com as outras quatro listas).
+  const ocorrencias = original.split(de).length - 1;
+  if (ocorrencias === 0) {
     console.log(`??  ${nome}: o trecho nao existe mais -- mutante desatualizado`);
     sobreviventes++;
     continue;
   }
-  writeFileSync(ALVO, original.replace(de, para));
-  let vermelho = false;
-  try {
-    execSync("npm run test:cartao-orcamento-grupo", { stdio: "pipe" });
-  } catch {
-    vermelho = true;
+  if (ocorrencias > 1) {
+    console.log(`??  ${nome}: o trecho aparece ${ocorrencias}x -- mutante ambiguo, invalido`);
+    sobreviventes++;
+    continue;
   }
-  writeFileSync(ALVO, original);
-  console.log(`${vermelho ? "OK  " : "VIVO"} ${nome}`);
-  if (!vermelho) sobreviventes++;
-}
 
-writeFileSync(ALVO, original);
+  const r = bloco.rodar(nome, { [ALVO]: original.replace(de, para) }, SUITE);
+  const vermelho = !r.verde;
+  console.log(`${vermelho ? "OK  " : "VIVO"} ${nome}`);
+  if (!vermelho) {
+    if (r.mudouASaida === false) {
+      console.log("     (saida compilada identica a da arvore limpa: EQUIVALENTE)");
+    }
+    sobreviventes++;
+  }
+}
 
 console.log(
   `\n${mutantes.length - sobreviventes}/${mutantes.length} mutantes mortos`

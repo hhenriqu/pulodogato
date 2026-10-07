@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Prova de mutacao da semeadura da divisao pela renda (HMO-245 fase 6 /
-// HMO-272). NAO roda em CI: e ferramenta de quem esta escrevendo o teste.
+// HMO-272).
 //
 //   node scripts/mutantes-semeadura.mjs
 //
@@ -18,38 +18,59 @@
 //
 // TRES ARQUIVOS, DUAS SUITES
 // ---------------------------
-// As regras e a rota sao `npm run test:semeadura`; o componente e
-// `npm run test:divisao-ui-dom`, que precisa de navegador. Cada mutante diz a
-// sua, e o controle positivo roda uma vez por suite usada -- uma suite que nao
-// esteja verde ANTES faz todo mutante dela "morrer", e o relatorio sai cheio
-// sem ter medido nada.
+// As regras e a rota sao `test:semeadura`; o componente e `test:divisao-ui-dom`,
+// que precisa de navegador. Cada mutante diz a sua, e o controle positivo roda
+// uma vez por suite usada -- uma suite que nao esteja verde ANTES faz todo
+// mutante dela "morrer", e o relatorio sai cheio sem ter medido nada.
 //
-// O restore e a ultima linha, fora de try/catch com `process.exit` dentro: um
-// `exit` dentro de `try` pularia o `finally` e deixaria um arquivo de producao
-// MUTADO no worktree.
-import { readFileSync, writeFileSync } from "node:fs";
-import { execSync } from "node:child_process";
+// O BLOCO: UMA COMPILACAO PARA TODOS OS MUTANTES (HMO-335)
+// --------------------------------------------------------
+// Este runner MUTAVA A ARVORE RASTREADA: escrevia o mutante num dos tres
+// arquivos de producao, chamava `npm run` ali mesmo e restaurava num `finally`
+// (mais uma varredura final, cinto e suspensorio). Dois defeitos, e o segundo e
+// o que doia:
+//
+//   1. cada volta recompilava o programa INTEIRO para trocar UM arquivo, e as
+//      voltas da TELA subiam um CHROMIUM novo cada -- 23 voltas, 124s medidos, o
+//      runner mais caro dos cinco deste lote;
+//   2. nem o `finally` nem a varredura final rodam em SIGTERM, que e o sinal que
+//      um timeout manda, e `execSync` BLOQUEIA a thread do JS -- entao nem um
+//      handler de sinal resolveria. Ja aconteceu nesta arvore com este MESMO
+//      `components/grupos/DivisaoDoGrupo.tsx`: a HMO-263 herdou um worktree com
+//      ele mutado por um runner deste desenho.
+//
+// Agora as voltas dividem um processo e um cache de AST
+// (`criarBlocoDeMutantes`, HMO-319): so o arquivo mutado e reparseado, e a
+// mutacao vai para uma SOMBRA em diretorio temporario. A arvore rastreada e o
+// `.tmp-*` do repositorio nao sao tocados em momento nenhum, entao o pior caso
+// de um processo morto e um diretorio orfao em /tmp -- e por isso o `finally` e
+// a varredura final sairam: nao ha mais escrita na arvore para desfazer.
+//
+// As etapas de cada suite saem do proprio `scripts[...]` do package.json -- o
+// comando que o CI roda --, e nao de uma receita repetida a mao aqui. Por isso
+// `SUITE_REGRAS` e `SUITE_TELA` passaram a guardar o NOME do alvo
+// (`test:semeadura`) e nao a linha de comando (`npm run test:semeadura`): e o
+// nome que `criarBlocoDeMutantes` resolve no package.json. A lista abaixo nao
+// mudou -- ela sempre passou estas duas constantes adiante como token opaco.
+//
+// A lista de mutantes abaixo NAO foi reescrita nem movida: o diff desta
+// conversao nao toca uma linha dela.
+import { readFileSync } from "node:fs";
+
+import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
 
 const REGRAS = "lib/semear-pela-renda.ts";
 const ROTA = "app/api/expense-groups/[groupId]/semear-divisao/route.ts";
 const TELA = "components/grupos/DivisaoDoGrupo.tsx";
 
-const SUITE_REGRAS = "npm run test:semeadura";
-const SUITE_TELA = "npm run test:divisao-ui-dom";
+const SUITE_REGRAS = "test:semeadura";
+const SUITE_TELA = "test:divisao-ui-dom";
 
+// Lido da arvore de verdade, que e o original por construcao: nada mais aqui
+// escreve nela.
 const original = new Map(
   [REGRAS, ROTA, TELA].map((a) => [a, readFileSync(a, "utf8")])
 );
-
-/** Roda uma suite. `true` = vermelha. */
-function vermelha(suite) {
-  try {
-    execSync(suite, { stdio: "pipe" });
-    return false;
-  } catch {
-    return true;
-  }
-}
 
 /** [rotulo, arquivo, suite, de, para] */
 const mutantes = [
@@ -261,12 +282,29 @@ const mutantes = [
 // ---------------------------------------------------------------------------
 const suitesUsadas = [...new Set(mutantes.map(([, , suite]) => suite))];
 
+// As suites DECLARADAS ao bloco saem da propria lista de mutantes, e nao de uma
+// segunda lista escrita a mao aqui: declarar `[SUITE_REGRAS, SUITE_TELA]` fixo
+// deixaria o bloco compilando um alvo que nenhum mutante usa (ou, pior, faltando
+// o alvo de um mutante novo) sem nada reclamar.
+const bloco = criarBlocoDeMutantes({ rotulo: "semeadura", suites: suitesUsadas });
+
+// A sombra vive em diretorio temporario, e a arvore rastreada nunca e mutada --
+// era esse o modo de falha deste runner. O handler de sinal existe so para que
+// nem o diretorio orfao sobre: `finally` nao roda em SIGTERM, mas
+// `process.exit` dispara o `exit` abaixo.
+process.on("exit", () => bloco.fechar());
+for (const sinal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(sinal, () => process.exit(1));
+}
+
 for (const suite of suitesUsadas) {
   console.log(`controle positivo: \`${suite}\` esta verde sem mutante?`);
-  if (vermelha(suite)) {
+  const controle = bloco.rodar("controle", {}, suite);
+  if (!controle.verde) {
     console.error(
-      `\nA suite ja esta VERMELHA sem mutante nenhum. Nada aqui mediria nada --\n` +
-        `todo mutante dela apareceria como morto. Conserte \`${suite}\` primeiro.`
+      `\nA suite ja esta VERMELHA sem mutante nenhum (${controle.como}). Nada aqui\n` +
+        `mediria nada -- todo mutante dela apareceria como morto. Conserte\n` +
+        `\`${suite}\` primeiro.\n  ${controle.saida}`
     );
     process.exit(1);
   }
@@ -304,20 +342,17 @@ for (const [nome, arquivo, suite, de, para] of mutantes) {
     continue;
   }
 
-  writeFileSync(arquivo, mutado);
-  let morreu;
-  try {
-    morreu = vermelha(suite);
-  } finally {
-    writeFileSync(arquivo, fonte);
-  }
+  // A NOTA DE MUTANTE EQUIVALENTE NAO E IMPRIMIDA AQUI, e isto e deliberado.
+  // `criarBlocoDeMutantes` guarda UMA saida de controle por BLOCO, preenchida na
+  // primeira volta sem sobrescritas -- nao uma por suite. Com duas suites, o
+  // `mudouASaida` deste mutante compararia o que ESTA suite emitiu com a linha de
+  // base da OUTRA, e as duas emitem conjuntos diferentes de arquivos: a resposta
+  // seria "mudou" sempre, inclusive para um mutante de fato equivalente.
+  // Imprimi-la seria um rotulo que nao mede o que diz.
+  const morreu = !bloco.rodar(nome, { [arquivo]: mutado }, suite).verde;
   console.log(`${morreu ? "OK  " : "VIVO"} ${nome}`);
   if (!morreu) sobreviventes.push(nome);
 }
-
-// As ultimas coisas que este script faz -- cinto e suspensorio do `finally`
-// acima, para o caso de o loop morrer no meio.
-for (const [arquivo, fonte] of original) writeFileSync(arquivo, fonte);
 
 console.log(
   `\n${mutantes.length - sobreviventes.length}/${mutantes.length} mutantes mortos`

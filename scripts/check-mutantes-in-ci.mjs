@@ -88,9 +88,19 @@ const DECLARACAO = "scripts/declaracao-de-mutantes-fora-do-ci.mjs";
  * ganharam step, 33 quando o motor de bloco saiu da contagem (PR #214), 26 com
  * o lote 4/4 (HMO-332), 17 com o lote 3/4 (HMO-331: cinco apagados, quatro com
  * step no db-verify.yml), 9 com o lote 2/4 (HMO-330: quatro apagados, quatro
- * com step -- dois deles TypeScript, ao lado da propria suite).
+ * com step -- dois deles TypeScript, ao lado da propria suite), 5 com o lote
+ * 1/4 (HMO-329: dois ja cobertos, dois com step) e ZERO na HMO-335, quando os
+ * cinco ultimos migraram para o motor de bloco da HMO-319 e couberam (420s ->
+ * 123s somados, com o placar IDENTICO nos cinco).
+ *
+ * EM ZERO O TETO DEIXA DE SER PLACAR E VIRA PROIBICAO, que e a forma mais forte
+ * que ele pode ter: "so desce" com 0 significa que `nao-triado` nao e mais uma
+ * resposta disponivel -- o runner novo escolhe um motivo de verdade ou ganha
+ * step. O motivo continua no vocabulario de `MOTIVOS` de proposito: e este teto
+ * que o torna inalcancavel, e tirar a palavra faria a mensagem de erro perder o
+ * nome daquilo que ela esta recusando.
  */
-const TETO_NAO_TRIADO = 5;
+const TETO_NAO_TRIADO = 0;
 
 const erros = [];
 const avisos = [];
