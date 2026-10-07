@@ -34,9 +34,12 @@
 //      limpo. Sem ele, todo cenario abaixo "passa" por reprovar pelo motivo
 //      errado e o placar fecha cheio sobre nada;
 //   2. cada conversao estragada e ACUSADA, e pela mensagem certa;
-//   3. os dois casos que o `a === b` NAO pega: o conversor mutado, truncando os
-//      dois lados igual (o furo da HMO-318), e as contagens trocadas pelas da
-//      outra familia -- que e o jeito de provar que elas sao load-bearing.
+//   3. o que o `a === b` NAO pega, mutando O CONVERSOR em vez do texto: a
+//      extracao que trunca os DOIS lados igual (o furo da HMO-318), e as
+//      leituras trocadas -- a contagem pela da outra familia, a aridade fixada,
+//      o fecho da entrada exigido rigido. As tres ultimas sao "falso alarme ao
+//      contrario": com a leitura trocada, o conferidor tem de recusar a
+//      conversao CERTA, e e assim que se prova que a leitura mede algo.
 //
 // POR QUE FIXTURE, E NAO OS RUNNERS DE VERDADE (parte 1 em diante)
 // ----------------------------------------------------------------
@@ -46,11 +49,17 @@
 // proposito -- ela mede PREDICADO, que se le do arquivo atual.
 //
 // O FIXTURE DE ARIDADE 4 E O PRINCIPAL, e isso e deliberado: ele e o caso
-// difIcil (multi-arquivo, `const fontes = new Map`, `function suiteVermelha`) e
-// carrega de proposito UMA ENTRADA FECHADA COM QUATRO ESPACOS em vez de dois --
-// que nao e capricho, e a forma que `mutantes-lancamentos-completos` tem de
-// verdade na linha 138. E ela que obriga a contagem de `entradas` a aceitar
-// indentacao frouxa, e o cenario 3d prova que o fixture a exercita.
+// dificil (multi-arquivo, `const fontes = new Map`, `function suiteVermelha`) e
+// fecha a PRIMEIRA ENTRADA COM QUATRO ESPACOS em vez de dois -- que nao e
+// capricho, e a forma que `mutantes-lancamentos-completos` tem de verdade na
+// linha 138.
+//
+// Na primeira entrada, e nao numa do meio, porque e so ali que a folga decide
+// algo: `primeiraEntradaDaLista` le a PRIMEIRA para escolher a aridade, e com o
+// fecho rigido ela recusaria um runner bom. (Na contagem de `entradas` a folga
+// nao muda veredito nenhum -- `conferir` compara os dois lados, que leem o mesmo
+// texto. O cenario que mutaria `entradas` foi tirado por isso: ele sobrevivia, e
+// com razao.)
 // =====================================================
 
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
@@ -248,6 +257,11 @@ writeFileSync(ALVO, original);
 process.exit(sobreviventes === 0 ? 0 : 1);
 `;
 
+// Quantos mutantes o fixture de aridade 4 tem. As mensagens que os cenarios
+// esperam saem DAQUI e nao de um "3" digitado em cada regex: se alguem
+// acrescentar uma entrada ao fixture e esquecer de atualizar um `espera`, o
+// cenario passaria a nao casar e o controle reprovaria por contabilidade em vez
+// de por defeito.
 const QUANTOS_4 = 3;
 
 // ---------------------------------------------------------------------------
@@ -320,12 +334,12 @@ const cenarios = [
   {
     nome: "um mutante apagado da lista",
     estraga: (t) => t.replace(/ {2}\[\n {4}LIB,\n {4}"o segundo mutante",[\s\S]*?\n {2,6}\],\n/, ""),
-    espera: /3 mutantes antes, 2 depois/,
+    espera: new RegExp(`${QUANTOS_4} mutantes antes, ${QUANTOS_4 - 1} depois`),
   },
   {
     nome: "a lista inteira apagada",
     estraga: (t) => t.replace(/const mutantes = \[[\s\S]*?\n\];/, "const mutantes = [];"),
-    espera: /3 mutantes antes, 0 depois/,
+    espera: new RegExp(`${QUANTOS_4} mutantes antes, 0 depois`),
   },
   {
     nome: "o `de` de um mutante reescrito (a lista 'parece' inteira)",
@@ -439,7 +453,7 @@ const MUTACOES_DO_CONVERSOR = [
     para:
       "let miolo = fonte.slice(constantes[0].index, " +
       'fonte.indexOf("\\n    ],", mLista.index) + 7) + "\\n];";',
-    espera: /3 mutantes antes, 1 depois/,
+    espera: new RegExp(`${QUANTOS_4} mutantes antes, 1 depois`),
   },
   {
     tipo: "vacuo",
