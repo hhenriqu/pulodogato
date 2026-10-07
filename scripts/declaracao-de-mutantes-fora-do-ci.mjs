@@ -32,6 +32,12 @@
  *   pareceria vigiado. Exige `coberto_por`.
  * - `coberto-por-outro`: outro runner, este sim no CI, mede a mesma afirmacao.
  *   Exige `coberto_por`.
+ * - `biblioteca-de-runner`: NAO e um runner. E codigo compartilhado que caiu no
+ *   espaco de nomes `mutantes-*` e por isso o padrao do nome o conta como
+ *   runner. Nao tem mutante para rodar e nao faz afirmacao propria; quem o
+ *   exercita sao os runners que o importam. Exige `coberto_por` nomeando um
+ *   runner que (a) o importa e (b) e invocado por algum step -- entao "a
+ *   biblioteca e exercitada" e falsificavel, e nao uma promessa.
  * - `nao-triado`: herdado da HMO-322 e ainda nao medido. NAO e uma decisao --
  *   e a divida que o teto obriga a baixar. O Helio decidiu em 2026-10-07 que
  *   para estes o DEFAULT e APAGAR: um runner so sobrevive se alguem defender
@@ -55,6 +61,7 @@
 export const MOTIVOS = [
   "ferramenta-de-autor",
   "coberto-por-outro",
+  "biblioteca-de-runner",
   "nao-triado",
 ];
 
@@ -105,6 +112,21 @@ export const FORA_DO_CI = {
     coberto_por: "A verificacao sabe falhar (realizado-do-caixa)",
   },
 
+  // ---------------------------------------------------------------------
+  // biblioteca-de-runner: nao e runner, e o motor que os runners importam.
+  // ---------------------------------------------------------------------
+  "scripts/mutantes-em-bloco.mjs": {
+    motivo: "biblioteca-de-runner",
+    porque:
+      "Nao e runner: e o motor de bloco da HMO-319 (`criarBlocoDeMutantes`), " +
+      "importado por 21 runners, 16 deles com step em CI. Nao tem mutante " +
+      "proprio para rodar e nao faz afirmacao propria -- cair nesta lista e " +
+      "efeito do padrao de nome `mutantes-*`, nao divida de triagem. Estava " +
+      "`nao-triado`, o que inflava a divida com uma linha que nunca teria " +
+      "veredito: nao ha o que ligar no CI nem o que apagar.",
+    coberto_por: "scripts/mutantes-parcelamento.mjs",
+  },
+
   // Os quatro `precisa-de-banco` SAIRAM desta lista: eles agora tem step no
   // db-verify.yml ("A categoria do usuario sabe falhar", "O convite sem conta
   // sabe falhar", "A minha parte no realizado sabe falhar", "A trava de membro
@@ -125,7 +147,6 @@ export const FORA_DO_CI = {
   "scripts/mutantes-divisao-do-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-divisao-ui-dom.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-edicao-de-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
-  "scripts/mutantes-em-bloco.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-fechamento-do-grupo.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-fundamento-cvm.mjs": { motivo: "nao-triado", porque: "HMO-322" },
   "scripts/mutantes-grupos.mjs": { motivo: "nao-triado", porque: "HMO-322" },

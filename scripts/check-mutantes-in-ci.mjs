@@ -81,7 +81,7 @@ const DECLARACAO = "scripts/declaracao-de-mutantes-fora-do-ci.mjs";
  * triar um runner OBRIGA a baixar o numero aqui, e o numero e o placar da
  * divida.
  */
-const TETO_NAO_TRIADO = 34;
+const TETO_NAO_TRIADO = 33;
 
 const erros = [];
 const avisos = [];
@@ -238,8 +238,55 @@ for (const [arquivo, entrada] of Object.entries(FORA_DO_CI)) {
         `    A declaracao ficou para tras -- tire a linha de ${DECLARACAO}.`,
     );
   }
+  // `biblioteca-de-runner` promete duas coisas, e as duas se conferem aqui.
+  //
+  // A promessa e "nao e runner, e codigo que os runners importam, e por isso
+  // nao precisa de step proprio". Sem conferir, ela seria a melhor desculpa do
+  // vocabulario: bastaria escreve-la para qualquer orfao sair da divida.
+  //
+  // (1) alguem tem de IMPORTAR o arquivo. Se ninguem importa, ou e um runner
+  //     de verdade disfarcado, ou e codigo morto -- e os dois querem desfecho,
+  //     nao declaracao.
+  // (2) o importador citado em `coberto_por` tem de ser invocado por algum
+  //     step (conferido logo abaixo, junto com os outros motivos). Uma
+  //     biblioteca exercitada so por runners que ninguem roda nao e exercitada.
+  if (entrada.motivo === "biblioteca-de-runner") {
+    const nome = arquivo.replace(/^scripts\//, "");
+    // IMPORTAR, e nao MENCIONAR. Com `includes(nome)` esta peneira passou
+    // verde sobre uma biblioteca que ninguem importava -- e o "importador" que
+    // ela encontrava era o PROPRIO mutantes-guarda-dos-mutantes.mjs, cujo
+    // codigo cita o nome do arquivo numa string para poder muta-lo. A sonda se
+    // media a si mesma: o teste que tenta quebrar a peneira era o que a
+    // satisfazia.
+    //
+    // E a mesma distincao que a guarda ja faz nos workflows (comentario nao
+    // executa): nome dentro de string nao e dependencia. So conta `from
+    // "./x.mjs"` e `require("./x.mjs")`, que sao as duas formas com que um
+    // runner deste repositorio pega a biblioteca.
+    const escapado = nome.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const ehImport = new RegExp(`(?:from|require\\()\\s*["'][^"']*${escapado}["']`);
+    const importadores = naArvore.filter((outro) => {
+      if (outro === arquivo) return false;
+      try {
+        return ehImport.test(readFileSync(join(RAIZ, outro), "utf8"));
+      } catch {
+        return false;
+      }
+    });
+    if (importadores.length === 0) {
+      erros.push(
+        `${arquivo} se declara \`biblioteca-de-runner\` e NENHUM runner a importa.\n` +
+          `    A promessa do motivo e "quem me exercita sao os runners que me importam".\n` +
+          `    Sem importador, ou e um runner de verdade -- e quer step ou \`git rm\` --,\n` +
+          `    ou e codigo morto. O motivo nao cobre nenhum dos dois casos.`,
+      );
+    }
+  }
+
   // "Outro cobre isso" tem de ser falsificavel: o alvo citado precisa rodar.
-  const exigeCobertura = ["ferramenta-de-autor", "coberto-por-outro"].includes(entrada.motivo);
+  const exigeCobertura = ["ferramenta-de-autor", "coberto-por-outro", "biblioteca-de-runner"].includes(
+    entrada.motivo,
+  );
   if (exigeCobertura) {
     if (!entrada.coberto_por) {
       erros.push(
