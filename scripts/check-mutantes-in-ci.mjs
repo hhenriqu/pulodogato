@@ -268,9 +268,14 @@ if (orfaos.length > 0) {
       `\n    Ele parece controle negativo e nao e: ler a arvore sugere que aquela\n` +
       `    afirmacao esta protegida, e nenhum job a protege.\n\n` +
       `    Escolha um dos tres (nenhum deles e "deixa como esta"):\n` +
-      `      1. vale e passa  -> step no .github/workflows/verificacao.yml\n` +
+      `      1. vale e passa  -> step num workflow. Se e TypeScript, o\n` +
+      `         .github/workflows/verificacao.yml; se precisa de Postgres, o\n` +
+      `         .github/workflows/db-verify.yml, que ja tem banco de pe e a cadeia\n` +
+      `         subida -- la o custo e tempo de step e nao partida de maquina.\n` +
       `      2. vale e nao passa -> issue propria, e entrada \`nao-triado\` na declaracao\n` +
-      `      3. nao vale mais -> \`git rm\`, dizendo no commit por que`,
+      `      3. nao vale mais -> \`git rm\`, dizendo no commit por que.\n` +
+      `         Decisao do Helio em 2026-10-07: para o que esta sem veredito, o 3 e o\n` +
+      `         DEFAULT. O 1 e a excecao, e quem o escolhe defende a afirmacao medida.`,
   );
 }
 

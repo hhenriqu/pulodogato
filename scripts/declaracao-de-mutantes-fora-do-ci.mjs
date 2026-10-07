@@ -32,15 +32,29 @@
  *   pareceria vigiado. Exige `coberto_por`.
  * - `coberto-por-outro`: outro runner, este sim no CI, mede a mesma afirmacao.
  *   Exige `coberto_por`.
- * - `precisa-de-banco`: so roda com Postgres de verdade; o lugar dele e o
- *   `db-verify.yml`, nao o `verificacao.yml`. Exige `coberto_por` vazio.
  * - `nao-triado`: herdado da HMO-322 e ainda nao medido. NAO e uma decisao --
- *   e a divida que o teto obriga a baixar.
+ *   e a divida que o teto obriga a baixar. O Helio decidiu em 2026-10-07 que
+ *   para estes o DEFAULT e APAGAR: um runner so sobrevive se alguem defender
+ *   a afirmacao que ele mede. Ganhar step e a excecao que precisa justificar.
+ *
+ * `precisa-de-banco` ERA um motivo e NAO E MAIS.
+ * ----------------------------------------------
+ * Ele dizia "so roda com Postgres de verdade, e o lugar dele e o
+ * db-verify.yml". O problema e que ele descrevia o lugar certo e deixava o
+ * runner fora dele -- ou seja, era um motivo que se auto-refutava. Os quatro
+ * que o usavam foram medidos e ligados no db-verify.yml (HMO-322, 2026-10-07):
+ * 57 mutantes, 57 mortos, 62s, nenhum job novo, porque aquele job ja tem
+ * Postgres de pe e a cadeia ja subiu.
+ *
+ * Por isso o motivo saiu do vocabulario em vez de ficar vazio: enquanto ele
+ * existisse, "precisa de banco" seguiria disponivel como desculpa para o
+ * runner seguinte -- e a desculpa agora e falsa, porque o endereco existe e
+ * esta provado. Runner novo que precise de Postgres ganha step no
+ * db-verify.yml; se nao vale o step, nao vale o arquivo.
  */
 export const MOTIVOS = [
   "ferramenta-de-autor",
   "coberto-por-outro",
-  "precisa-de-banco",
   "nao-triado",
 ];
 
@@ -91,29 +105,11 @@ export const FORA_DO_CI = {
     coberto_por: "A verificacao sabe falhar (realizado-do-caixa)",
   },
 
-  // ---------------------------------------------------------------------
-  // precisa-de-banco: Postgres de verdade, nao cabe no verificacao.yml.
-  // ---------------------------------------------------------------------
-  "scripts/mutantes-categorias.sh": {
-    motivo: "precisa-de-banco",
-    porque:
-      "Clona o banco com CREATE DATABASE ... TEMPLATE e muta a funcao por " +
-      "CREATE OR REPLACE. Sem Postgres nao roda; o lugar dele e o db-verify.yml.",
-  },
-  "scripts/mutantes-convite-sem-conta.sh": {
-    motivo: "precisa-de-banco",
-    porque:
-      "Mesma familia do mutantes-categorias.sh: clone de banco e impressao " +
-      "digital de prosrc/prosecdef por mutante.",
-  },
-  "scripts/mutantes-minha-parte-no-realizado.mjs": {
-    motivo: "precisa-de-banco",
-    porque: "Muta a funcao no Postgres e roda o teste SQL contra ela.",
-  },
-  "scripts/mutantes-trava-de-membro.mjs": {
-    motivo: "precisa-de-banco",
-    porque: "Muta a trava no Postgres; depende da migration aplicada.",
-  },
+  // Os quatro `precisa-de-banco` SAIRAM desta lista: eles agora tem step no
+  // db-verify.yml ("A categoria do usuario sabe falhar", "O convite sem conta
+  // sabe falhar", "A minha parte no realizado sabe falhar", "A trava de membro
+  // sabe falhar"). 57 mutantes, 57 mortos, 62s, sem job novo. Ver a nota do
+  // motivo `precisa-de-banco` acima, que deixou de existir junto com eles.
 
   // ---------------------------------------------------------------------
   // nao-triado: a divida da HMO-322. Cada linha daqui tem de virar um dos
