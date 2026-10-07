@@ -284,26 +284,90 @@ const MUTANTES = [
     },
   },
   {
+    nome: "biblioteca-de-runner que NINGUEM importa",
+    peneira: "a biblioteca tem de ser importada",
+    espera: /se declara `biblioteca-de-runner` e NENHUM runner a importa/,
+    // `biblioteca-de-runner` e, de longe, o motivo mais facil de abusar: ele
+    // dispensa o step dizendo "nao sou runner, sou codigo que os runners
+    // importam". Se a guarda aceitasse isso pela palavra, qualquer orfao sairia
+    // da divida com uma linha de texto -- e a HMO-322 teria entregue uma
+    // desculpa nova em vez de uma medida.
+    //
+    // Aqui o `em-bloco` e renomeado (junto com quem o importa, para a arvore
+    // ficar consistente): a declaracao continua dizendo `biblioteca-de-runner`
+    // sobre um arquivo que ninguem mais importa, e a guarda tem de acusar.
+    mutar(dir) {
+      const alvo = "scripts/mutantes-em-bloco.mjs";
+      const texto = ler(dir, DECLARACAO);
+      if (!texto.includes(`"${alvo}"`)) throw new Error("ancora do em-bloco nao casou");
+      // Apaga o arquivo da biblioteca e poe no lugar um com nome que ninguem
+      // importa. A entrada da declaracao passa a apontar para ele.
+      escrever(dir, "scripts/mutantes-em-bloco-renomeado.mjs", ler(dir, alvo));
+      rmSync(join(dir, alvo));
+      escrever(
+        dir,
+        DECLARACAO,
+        texto.replace(`"${alvo}"`, '"scripts/mutantes-em-bloco-renomeado.mjs"'),
+      );
+    },
+  },
+  {
     nome: "nao-triado acima do teto (a catraca andando para tras)",
     peneira: "o teto da divida",
     espera: /estao `nao-triado`, e o teto e/,
+    // O TETO E UM NUMERO QUE MUDA A CADA TRIAGEM -- nao se ancora nele.
+    //
+    // Isto era `.replace("TETO_NAO_TRIADO = 34", ...)`. O teto e uma catraca
+    // que desce a cada runner triado, entao a ancora literal morre na PRIMEIRA
+    // triagem -- e morreu: baixar o teto para 33 fez este mutante cair em "NAO
+    // APLICOU" e sair do placar. O mutante seguinte a descobrir isso seria o
+    // proximo a baixar o teto, e assim por diante.
+    //
+    // Zero serve para qualquer teto: se ha pelo menos um `nao-triado`, a
+    // contagem fica acima de zero e a peneira opina. Quando a divida chegar a
+    // zero, esta peneira nao tem mais nada para medir -- e o `throw` abaixo diz
+    // isso com essas palavras, em vez de deixar um "NAO APLICOU" que se le como
+    // defeito do runner.
     mutar(dir) {
-      escrever(dir, GUARDA, ler(dir, GUARDA).replace("TETO_NAO_TRIADO = 34", "TETO_NAO_TRIADO = 20"));
+      const atual = ler(dir, GUARDA).match(/TETO_NAO_TRIADO = (\d+)/);
+      if (!atual) throw new Error("TETO_NAO_TRIADO nao encontrado na guarda");
+      if (atual[1] === "0") {
+        throw new Error(
+          "o teto ja e 0: a divida `nao-triado` acabou e esta peneira nao tem mais o que medir -- retire este mutante",
+        );
+      }
+      escrever(dir, GUARDA, ler(dir, GUARDA).replace(/TETO_NAO_TRIADO = \d+/, "TETO_NAO_TRIADO = 0"));
     },
   },
   {
     nome: "triagem feita e teto nao acompanhou (a catraca parada)",
     peneira: "o teto da divida, para baixo",
     espera: /baixe TETO_NAO_TRIADO para/,
+    // Tira UM `nao-triado` qualquer, e nao o `cash-flow` pelo nome.
+    //
+    // A ancora literal era `mutantes-cash-flow.mjs`. Ela sobrevive enquanto
+    // ninguem triar o cash-flow -- e triar os `nao-triado` um a um e exatamente
+    // o trabalho que esta por vir (decisao do Helio em 2026-10-07: apagar e o
+    // default). A ancora morreria no dia em que a triagem chegasse nele, e
+    // morreria em silencio, porque "NAO APLICOU" nao se le como ancora morta.
+    //
+    // Pegar o PRIMEIRO da lista nao envelhece: a premissa e so que exista ao
+    // menos um `nao-triado`, que e a premissa da peneira inteira.
     mutar(dir) {
-      const d = ler(dir, DECLARACAO).replace(
-        /\s*"scripts\/mutantes-cash-flow\.mjs": \{ motivo: "nao-triado", porque: "HMO-322" \},/,
-        "",
+      const texto = ler(dir, DECLARACAO);
+      const alvo = texto.match(
+        /\s*"(scripts\/mutantes-[a-z0-9-]+\.(?:mjs|sh))": \{ motivo: "nao-triado"[^}]*\},/,
       );
-      if (d === ler(dir, DECLARACAO)) throw new Error("ancora do cash-flow nao casou");
-      // Apagar o runner junto, senao a reprovacao vem da peneira principal.
-      escrever(dir, DECLARACAO, d);
-      rmSync(join(dir, "scripts/mutantes-cash-flow.mjs"));
+      if (!alvo) {
+        throw new Error(
+          "nenhuma entrada `nao-triado` na declaracao -- a divida acabou e esta peneira nao tem mais o que medir",
+        );
+      }
+      escrever(dir, DECLARACAO, texto.replace(alvo[0], ""));
+      // Apagar o runner junto, senao a reprovacao vem da peneira principal
+      // ("ninguem roda e ninguem declarou") e o mutante morre pelo motivo
+      // errado com a mensagem de outra peneira.
+      rmSync(join(dir, alvo[1]));
     },
   },
   {
