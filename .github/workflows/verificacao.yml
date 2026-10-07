@@ -208,6 +208,22 @@ jobs:
       - name: A verificacao dos runners de mutante sabe falhar
         run: node scripts/mutantes-guarda-dos-mutantes.mjs
 
+      # E o conferidor da CONVERSAO de runner para bloco, que e o que garante que
+      # converter um runner nao perdeu nenhuma entrada da lista de mutantes -- a
+      # unica parte de um runner que carrega conhecimento que nao esta escrito em
+      # nenhum outro lugar do repositorio.
+      #
+      # Ele precisa de controle proprio porque JA PASSOU VACUO: a primeira versao
+      # do conversor (HMO-318) apagou os 14 mutantes de um runner e o conferidor
+      # imprimiu `miolo identico (40 bytes)`, porque comparava duas extracoes
+      # igualmente truncadas. O cenario que reproduz esse furo MUTA O CONVERSOR,
+      # e nao o texto convertido -- e o defeito morava no extrator.
+      #
+      # Barato o bastante para rodar sem filtro de path: e texto, nao compila nada
+      # e nao abre navegador. O fixture dele e sintetico, entao nao le a arvore.
+      - name: O conferidor da conversao de mutantes sabe falhar
+        run: node scripts/mutantes-conferidor-da-conversao.mjs
+
       # Mora aqui pela mesma razao dos passos acima: e deriva do lado do CODIGO,
       # nao toca em database/, e o sintoma e a AUSENCIA de sintoma. Um modulo de
       # interface sem importador compila, passa no tsc, passa no next build e

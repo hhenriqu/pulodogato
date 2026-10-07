@@ -56,7 +56,6 @@ import { readFileSync } from "node:fs";
 import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
 
 const FONTE = "lib/fechamento-do-grupo.ts";
-const DEPENDENCIA = "lib/settlement.ts";
 
 const original = readFileSync(FONTE, "utf8");
 
