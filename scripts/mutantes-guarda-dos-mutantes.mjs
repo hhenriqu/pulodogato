@@ -304,13 +304,24 @@ const MUTANTES = [
     nome: "declaracao sem explicar por que",
     peneira: "porque obrigatorio",
     espera: /sem explicar por que/,
+    // A ancora era o literal `{ motivo: "nao-triado", porque: "HMO-322" }`, que
+    // exigia a entrada INTEIRA numa linha so. A HMO-329 reescreveu os `porque`
+    // dos `nao-triado` que sobraram para guardar a medicao de cada um, e com
+    // isso as entradas viraram multi-linha e esta ancora morreu -- de novo o
+    // padrao de "mutante cuja ancora a feature apagou", e de novo o runner se
+    // portou bem: acusou ANCORA AUSENTE em vez de contar o mutante como morto.
+    //
+    // Agora o alvo e o VALOR de um `porque` qualquer, nas duas formas. O
+    // `[\s\S]*?",\n` para na primeira linha que termina em `",` -- numa
+    // concatenacao as linhas do meio terminam em `" +`, entao esse e o fim do
+    // valor, e nao um pedaco dele. Esvaziar um pedaco deixaria o resto com mais
+    // de 5 caracteres e a peneira (`porque.trim().length < 5`) nao acusaria:
+    // o mutante sobreviveria sem que nada estivesse errado no guard.
     mutar(dir) {
-      const d = ler(dir, DECLARACAO).replace(
-        '{ motivo: "nao-triado", porque: "HMO-322" }',
-        '{ motivo: "nao-triado", porque: "" }',
-      );
-      if (d === ler(dir, DECLARACAO)) throw new Error("ancora do porque nao casou");
-      escrever(dir, DECLARACAO, d);
+      const alvo = /porque:[\s\S]*?",\n/;
+      const texto = ler(dir, DECLARACAO);
+      if (!alvo.test(texto)) throw new Error("ancora do porque nao casou");
+      escrever(dir, DECLARACAO, texto.replace(alvo, 'porque: "",\n'));
     },
   },
   {
@@ -383,10 +394,17 @@ const MUTANTES = [
     //
     // Pegar o PRIMEIRO da lista nao envelhece: a premissa e so que exista ao
     // menos um `nao-triado`, que e a premissa da peneira inteira.
+    //
+    // O `\s*` entre o `{` e o `motivo:` nao e enfeite: ate a HMO-329 a ancora
+    // exigia os dois na MESMA linha, e quando aquela issue passou a guardar a
+    // medicao de cada `nao-triado` no `porque` as entradas viraram multi-linha
+    // e esta ancora morreu. O formato da entrada nao e a afirmacao que este
+    // mutante mede -- a afirmacao e "existe um `nao-triado`, e tirar um sem
+    // baixar o teto reprova".
     mutar(dir) {
       const texto = ler(dir, DECLARACAO);
       const alvo = texto.match(
-        /\s*"(scripts\/mutantes-[a-z0-9-]+\.(?:mjs|sh))": \{ motivo: "nao-triado"[^}]*\},/,
+        /\s*"(scripts\/mutantes-[a-z0-9-]+\.(?:mjs|sh))":\s*\{\s*motivo: "nao-triado"[^}]*\},/,
       );
       if (!alvo) {
         throw new Error(
@@ -418,9 +436,14 @@ const MUTANTES = [
     // `mutantes-crivos.mjs` e a HMO-332 apagou aquele runner, o que derrubou
     // este mutante com ENOENT. Pegar o PRIMEIRO `nao-triado` nao envelhece --
     // a premissa e so que exista algum, que e a premissa da peneira.
+    //
+    // E o `\s*` entre o `{` e o `motivo:` existe pela mesma razao do mutante da
+    // catraca acima: a HMO-329 tornou as entradas `nao-triado` multi-linha ao
+    // guardar a medicao de cada uma no `porque`, e a ancora de uma linha so
+    // morreu junto.
     mutar(dir) {
       const alvo = ler(dir, DECLARACAO).match(
-        /"(scripts\/mutantes-[a-z0-9-]+\.(?:mjs|sh))": \{ motivo: "nao-triado"/,
+        /"(scripts\/mutantes-[a-z0-9-]+\.(?:mjs|sh))":\s*\{\s*motivo: "nao-triado"/,
       );
       if (!alvo) {
         throw new Error(
