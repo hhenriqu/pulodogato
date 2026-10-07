@@ -28,6 +28,8 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+import { protegerArvore } from "./auto-cura-de-mutante.mjs";
+
 const RAIZ = path.join(import.meta.dirname, "..");
 const ALVO = "components/movimentacoes/LinhaDaParteDeGrupo.tsx";
 const CAMINHO = path.join(RAIZ, ALVO);
@@ -85,7 +87,13 @@ function rodar() {
   }
 }
 
-const ORIGINAL = fs.readFileSync(CAMINHO, "utf8");
+// O ORIGINAL vem do helper, e nao de um `readFileSync` aqui, para a leitura
+// acontecer DEPOIS da auto-cura -- ver o contrato de ordem no cabecalho dele.
+const { originais, encerrar } = protegerArvore({
+  runner: "ancora-da-parte-de-grupo",
+  arquivos: [ALVO],
+});
+const ORIGINAL = originais[ALVO];
 // A arvore volta ao original mesmo se o runner morrer no meio (timeout, Ctrl-C):
 // mutante que fica aplicado vira "defeito que o teste nao pega" na proxima
 // pessoa que rodar a suite.
@@ -140,6 +148,8 @@ for (const m of MUTANTES) {
     );
   }
 }
+
+encerrar();
 
 console.log(
   `\n${MUTANTES.length - falhas}/${MUTANTES.length} mutantes mortos.`,

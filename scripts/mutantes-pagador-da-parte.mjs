@@ -30,13 +30,18 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 
+import { protegerArvore } from "./auto-cura-de-mutante.mjs";
+
 const LIB = "lib/parte-de-grupo-na-lista.ts";
 const LINHA = "components/movimentacoes/LinhaDaParteDeGrupo.tsx";
 
-const fontes = new Map([
-  [LIB, readFileSync(LIB, "utf8")],
-  [LINHA, readFileSync(LINHA, "utf8")],
-]);
+// Os originais vem do helper, e nao de `readFileSync` aqui, para a leitura
+// acontecer DEPOIS da auto-cura -- ver o contrato de ordem no cabecalho dele.
+const { originais, encerrar } = protegerArvore({
+  runner: "pagador-da-parte",
+  arquivos: [LIB, LINHA],
+});
+const fontes = new Map(Object.entries(originais));
 
 const SUITE = "npm run test:pagador-da-parte";
 
@@ -258,7 +263,7 @@ for (const [alvo, nome, de, para] of mutantes) {
 
 // Restaurar os dois fontes e a ultima coisa que este script faz. `process.exit`
 // dentro de um try pularia qualquer finally e deixaria o worktree MUTADO.
-for (const [alvo, original] of fontes) writeFileSync(alvo, original);
+encerrar();
 
 console.log(`\n${mutantes.length - sobreviventes}/${mutantes.length} mutantes mortos`);
 process.exit(sobreviventes === 0 ? 0 : 1);

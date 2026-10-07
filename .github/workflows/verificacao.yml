@@ -117,6 +117,24 @@ jobs:
       - name: O reaproveitamento da compilacao decide por conteudo, nao por data
         run: npm run test:compila
 
+      # A outra metade da infraestrutura dos controles negativos: o runner que
+      # muta a arvore RASTREADA tem de se curar na PARTIDA.
+      #
+      # `process.on("exit")` e handler de `SIGTERM` nao bastam, e isto foi
+      # medido (HMO-321): o `execSync` da suite bloqueia a thread do JS, entao
+      # um `SIGTERM` fica 2 minutos sem ser entregue -- o processo termina a
+      # suite corrente e APLICA O MUTANTE SEGUINTE -- e `SIGKILL` nao roda
+      # gancho nenhum. Um mutante gravado atravessa o run e fica
+      # indistinguivel de trabalho legitimo; ja foi commitado num PR aqui.
+      #
+      # Roda ANTES da fotografia da arvore de proposito: a suite suja e limpa
+      # um fixture RASTREADO (`scripts/fixture-auto-cura.txt`), porque e a
+      # unica forma de afirmar "o `git status` volta limpo" sobre o git de
+      # verdade e nao sobre uma copia em /tmp. Quando ela termina a arvore esta
+      # no lugar, e a foto abaixo nao herda a sujeira do meio do teste.
+      - name: Runner morto por SIGKILL se cura na proxima invocacao
+        run: npm run test:auto-cura
+
       # A FOTOGRAFIA DA ARVORE, para os passos-guarda dos controles negativos.
       #
       # O guarda compara com ESTA foto, e nao com `git diff --quiet`, por dois

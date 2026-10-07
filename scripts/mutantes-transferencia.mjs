@@ -14,10 +14,19 @@
 // =====================================================
 
 import { execSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
+
+import { protegerArvore } from "./auto-cura-de-mutante.mjs";
 
 const ALVO = "lib/transferencia.ts";
-const original = readFileSync(ALVO, "utf8");
+
+// O original vem do helper, e nao de um `readFileSync` aqui, para a leitura
+// acontecer DEPOIS da auto-cura -- ver o contrato de ordem no cabecalho dele.
+const { originais, encerrar } = protegerArvore({
+  runner: "transferencia",
+  arquivos: [ALVO],
+});
+const original = originais[ALVO];
 
 const MUTACOES = [
   {
@@ -114,7 +123,7 @@ for (const m of MUTACOES) {
   if (!vermelho) sobreviventes++;
 }
 
-writeFileSync(ALVO, original);
+encerrar();
 
 // Controle positivo: com o arquivo restaurado a suite tem que voltar ao verde.
 // Sem ele, um erro que deixasse a suite vermelha para SEMPRE mataria todas as

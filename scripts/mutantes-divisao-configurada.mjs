@@ -29,12 +29,19 @@
 // O restore do fonte e a ultima linha, fora de qualquer try/catch com
 // `process.exit` dentro: um `exit` dentro de `try` pula o `finally` e deixaria
 // lib/divisao-configurada.ts MUTADO no worktree.
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
+import { protegerArvore } from "./auto-cura-de-mutante.mjs";
 import { execSync } from "node:child_process";
 
 const ALVO = "lib/divisao-configurada.ts";
 const SUITE = "npm run test:divisao-configurada";
-const original = readFileSync(ALVO, "utf8");
+// O original vem do helper, e nao de um `readFileSync` aqui, para a leitura
+// acontecer DEPOIS da auto-cura -- ver o contrato de ordem no cabecalho dele.
+const { originais, encerrar } = protegerArvore({
+  runner: "divisao-configurada",
+  arquivos: [ALVO],
+});
+const original = originais[ALVO];
 
 /** Roda a suite. `true` = vermelha. */
 function vermelha() {
@@ -404,7 +411,7 @@ for (const [nome, de, para] of mutantes) {
 }
 
 // A ultima coisa que este script faz.
-writeFileSync(ALVO, original);
+encerrar();
 
 console.log(
   `\n${mutantes.length - sobreviventes.length}/${mutantes.length} mutantes mortos`

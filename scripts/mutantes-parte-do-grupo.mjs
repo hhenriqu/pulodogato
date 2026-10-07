@@ -10,11 +10,18 @@
 // o safe-to-spend prometer dinheiro que nao sobra, e tambem nao acusa nada.
 //
 //   node scripts/mutantes-parte-do-grupo.mjs
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
+import { protegerArvore } from "./auto-cura-de-mutante.mjs";
 import { execSync } from "node:child_process";
 
 const ALVO = "lib/parte-do-grupo.ts";
-const original = readFileSync(ALVO, "utf8");
+// O original vem do helper, e nao de um `readFileSync` aqui, para a leitura
+// acontecer DEPOIS da auto-cura -- ver o contrato de ordem no cabecalho dele.
+const { originais, encerrar } = protegerArvore({
+  runner: "parte-do-grupo",
+  arquivos: [ALVO],
+});
+const original = originais[ALVO];
 
 const mutantes = [
   // --- o defeito original: a parte do outro contando como minha ---
@@ -118,6 +125,10 @@ for (const [nome, de, para] of mutantes) {
   console.log(`${vermelho ? "OK  " : "VIVO"} ${nome}`);
   if (!vermelho) sobreviventes++;
 }
+
+// O laco acima ja restaurou a cada volta; isto apaga o sentinel e o lock da
+// auto-cura, porque daqui em diante nao ha medicao em andamento para curar.
+encerrar();
 
 // O .tmp-parte-do-grupo que sobra e o build do ULTIMO mutante. Deixar isso no
 // disco faz a proxima leitura do JS compilado mentir.

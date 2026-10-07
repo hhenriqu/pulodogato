@@ -29,15 +29,19 @@
 // =====================================================
 
 import { execSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
+
+import { protegerArvore } from "./auto-cura-de-mutante.mjs";
 
 const TRANSFERENCIA = "lib/transferencia.ts";
 const SCHEDULED = "lib/services/scheduled.ts";
 
-const originais = {
-  [TRANSFERENCIA]: readFileSync(TRANSFERENCIA, "utf8"),
-  [SCHEDULED]: readFileSync(SCHEDULED, "utf8"),
-};
+// Os originais vem do helper, e nao de `readFileSync` aqui, para a leitura
+// acontecer DEPOIS da auto-cura -- ver o contrato de ordem no cabecalho dele.
+const { originais, encerrar } = protegerArvore({
+  runner: "transferencia-recorrente-app",
+  arquivos: [TRANSFERENCIA, SCHEDULED],
+});
 
 /** `suite` e o npm script que tem de ficar vermelho. */
 const MUTACOES = [
@@ -326,7 +330,7 @@ try {
     }
   }
 } finally {
-  restaurar();
+  encerrar();
 }
 
 // Controle positivo: com os arquivos restaurados as duas suites tem de voltar ao

@@ -15,16 +15,21 @@
 //   * a guarda de `paguei_eu` caindo. A despesa que eu paguei aparece duas
 //     vezes -- os R$ 400 cheios mais os R$ 200 da minha parte --, somando R$ 600
 //     de um gasto de R$ 400.
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
+
+import { protegerArvore } from "./auto-cura-de-mutante.mjs";
 
 const DESTINO = "lib/destino-do-lancamento.ts";
 const PARTE = "lib/parte-de-grupo-na-lista.ts";
 
-const fontes = new Map([
-  [DESTINO, readFileSync(DESTINO, "utf8")],
-  [PARTE, readFileSync(PARTE, "utf8")],
-]);
+// Os originais vem do helper, e nao de `readFileSync` aqui, para a leitura
+// acontecer DEPOIS da auto-cura -- ver o contrato de ordem no cabecalho dele.
+const { originais, encerrar } = protegerArvore({
+  runner: "lancamentos-completos",
+  arquivos: [DESTINO, PARTE],
+});
+const fontes = new Map(Object.entries(originais));
 
 const mutantes = [
   // --- o sentido do destino ---
@@ -290,7 +295,7 @@ for (const [alvo, nome, de, para] of mutantes) {
 
 // Restaurar os dois fontes e a ultima coisa que este script faz. `process.exit`
 // dentro de um try pularia qualquer finally e deixaria lib/ MUTADO no worktree.
-for (const [alvo, original] of fontes) writeFileSync(alvo, original);
+encerrar();
 
 console.log(`\n${mutantes.length - sobreviventes}/${mutantes.length} mutantes mortos`);
 process.exit(sobreviventes === 0 ? 0 : 1);
