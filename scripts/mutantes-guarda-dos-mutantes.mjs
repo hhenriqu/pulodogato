@@ -153,24 +153,39 @@ const MUTANTES = [
   {
     nome: "runner citado SO em comentario de workflow conta como vigiado",
     peneira: "o recorte de comentarios",
-    espera: /nenhum workflow roda e ninguem declarou[\s\S]*mutantes-crivos\.mjs/,
-    // Tira o `crivos` da declaracao e poe o comando dele num COMENTARIO do
-    // workflow. Uma guarda que le comentario o daria por coberto; a certa
-    // continua acusando, porque comentario nao executa.
+    espera: /nenhum workflow roda e ninguem declarou[\s\S]*mutantes-so-em-comentario\.mjs/,
+    // RUNNER DE VERDADE NAO SERVE DE ANCORA: a triagem apaga runners.
+    //
+    // Isto apontava para o `mutantes-crivos.mjs` -- o exemplo que abriu a
+    // HMO-322 -- e a HMO-332 apagou aquele arquivo. A ancora na declaracao
+    // parou de casar, o mutante caiu em ANCORA AUSENTE e levou o placar com
+    // ele. E a mesma licao dos mutantes do teto mais abaixo, por outro caminho:
+    // o que a triagem mexe nao se usa como ancora.
+    //
+    // Um runner INVENTADO aqui dentro nao envelhece e mede o mesmo: nasce sem
+    // step e sem declaracao, e sua unica mencao no workflow esta num COMENTARIO.
+    // Uma guarda que lesse comentario o daria por vigiado e nao diria nada; a
+    // certa continua acusando, porque comentario nao executa. O mutante 1, logo
+    // acima, nao cita o runner em lugar nenhum e morreria com ou sem o recorte;
+    // este e o que fala sobre o recorte.
+    //
+    // MEDIDO ao reescrever isto (HMO-332): tirar o `semComentarios` da guarda
+    // NAO deixa este mutante sobreviver -- derruba o CONTROLE POSITIVO antes,
+    // com 7 erros reais ("declarado fora do CI, mas db-verify.yml o invoca"),
+    // porque os `ferramenta-de-autor` sao citados em comentario de workflow e
+    // sem o recorte passam a contar como invocados. Ou seja: o recorte esta
+    // preso pelo controle positivo, com folga, e este mutante e o que NOMEIA a
+    // regra. Vale saber, para ninguem o ler como a unica rede embaixo dela.
+    //
+    // Nao mexe no teto, porque nao cria entrada `nao-triado` nenhuma.
     mutar(dir) {
-      const d = ler(dir, DECLARACAO).replace(
-        /\s*"scripts\/mutantes-crivos\.mjs": \{ motivo: "nao-triado", porque: "HMO-322" \},/,
-        "",
-      );
-      if (d === ler(dir, DECLARACAO)) throw new Error("ancora do crivos nao casou");
-      escrever(dir, DECLARACAO, d);
+      escrever(dir, "scripts/mutantes-so-em-comentario.mjs", "// runner novo\n");
       const w = ler(dir, WORKFLOW).replace(
         /^(jobs:)/m,
-        "# roda node scripts/mutantes-crivos.mjs e npm run mutantes:crivos\n$1",
+        "# roda node scripts/mutantes-so-em-comentario.mjs e npm run mutantes:so-em-comentario\n$1",
       );
+      if (w === ler(dir, WORKFLOW)) throw new Error("ancora `jobs:` do workflow nao casou");
       escrever(dir, WORKFLOW, w);
-      // O teto cai junto, senao a reprovacao poderia vir da catraca.
-      escrever(dir, GUARDA, ler(dir, GUARDA).replace("TETO_NAO_TRIADO = 34", "TETO_NAO_TRIADO = 33"));
     },
   },
   {
@@ -184,7 +199,22 @@ const MUTANTES = [
         '  "scripts/mutantes-dinheiro.mjs": { motivo: "nao-triado", porque: "HMO-322" },\n};',
       );
       escrever(dir, DECLARACAO, d);
-      escrever(dir, GUARDA, ler(dir, GUARDA).replace("TETO_NAO_TRIADO = 34", "TETO_NAO_TRIADO = 35"));
+      // O teto SOBE um, senao a entrada nova tambem estoura a catraca e a
+      // reprovacao passa a ter duas causas -- o `espera` casaria do mesmo jeito
+      // e o mutante morreria sem que esta peneira fosse a responsavel.
+      //
+      // Dinamico pela mesma razao dos mutantes do teto mais abaixo: isto era
+      // `.replace("TETO_NAO_TRIADO = 34", ...)` e virou no-op silencioso quando
+      // a primeira triagem baixou o teto para 33 -- um `String.replace` que nao
+      // casa nao reclama. Achado ao baixar o teto para 26 (HMO-332).
+      escrever(
+        dir,
+        GUARDA,
+        ler(dir, GUARDA).replace(
+          /TETO_NAO_TRIADO = (\d+)/,
+          (_, n) => `TETO_NAO_TRIADO = ${Number(n) + 1}`,
+        ),
+      );
     },
   },
   {
@@ -382,8 +412,22 @@ const MUTANTES = [
     nome: "declaracao citando runner que nao existe na arvore",
     peneira: "entrada obsoleta",
     espera: /declara[\s\S]*que nao existe na arvore/,
+    // Apaga o ARQUIVO e deixa a LINHA da declaracao -- e isso que a peneira pega.
+    //
+    // O alvo sai da propria declaracao, e nao de um nome escrito aqui: isto era
+    // `mutantes-crivos.mjs` e a HMO-332 apagou aquele runner, o que derrubou
+    // este mutante com ENOENT. Pegar o PRIMEIRO `nao-triado` nao envelhece --
+    // a premissa e so que exista algum, que e a premissa da peneira.
     mutar(dir) {
-      rmSync(join(dir, "scripts/mutantes-crivos.mjs"));
+      const alvo = ler(dir, DECLARACAO).match(
+        /"(scripts\/mutantes-[a-z0-9-]+\.(?:mjs|sh))": \{ motivo: "nao-triado"/,
+      );
+      if (!alvo) {
+        throw new Error(
+          "nenhuma entrada `nao-triado` na declaracao -- esta peneira precisa de uma linha declarada para apagar o arquivo por baixo dela",
+        );
+      }
+      rmSync(join(dir, alvo[1]));
     },
   },
   {

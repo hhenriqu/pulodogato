@@ -9,9 +9,10 @@
 //
 // Cada mutacao e um defeito que alguem escreveria de verdade -- a ordem de dois
 // `if`, um `!!` no lugar de `=== true`, um `+` sobre string -- e nao uma quebra
-// artificial. A LISTA segue o mesmo espirito da de
-// `scripts/mutantes-investments.mjs`; o APARELHO que a roda, nao mais -- ver
-// abaixo.
+// artificial. A LISTA seguia o mesmo espirito da de
+// `scripts/mutantes-investments.mjs` (apagado na HMO-332: era orfao de CI, e a
+// carteira nao e onde errar custa dinheiro imediato); o APARELHO que a roda nao
+// segue mais -- ver abaixo.
 //
 // O BLOCO: UMA COMPILACAO PARA TODOS OS MUTANTES (HMO-320)
 // --------------------------------------------------------
