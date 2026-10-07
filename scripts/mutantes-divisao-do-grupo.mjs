@@ -10,11 +10,44 @@
 // nenhuma tela, nenhum log e nenhum tipo do TypeScript o denuncia.
 //
 //   node scripts/mutantes-divisao-do-grupo.mjs
-import { readFileSync, writeFileSync } from "node:fs";
-import { execSync } from "node:child_process";
+//
+// O BLOCO: UMA COMPILACAO PARA TODOS OS MUTANTES (HMO-334)
+// --------------------------------------------------------
+// Este runner MUTAVA A ARVORE RASTREADA: guardava o texto original em memoria,
+// escrevia o mutante em `lib/divisao-do-grupo.ts`,
+// chamava `npm run test:divisao-do-grupo` ali mesmo e restaurava depois. Dois defeitos
+// nisso, e o segundo e o que doia:
+//
+//   1. cada uma das 28 voltas recompilava o programa INTEIRO, mesmo
+//      mudando UM arquivo;
+//
+//   2. o mutante ficava GRAVADO no arquivo de producao quando o processo morria
+//      no meio. A restauracao era um `writeFileSync` depois do laco -- que nao
+//      roda em SIGTERM, e SIGTERM e o que um timeout manda. Pior: `execSync`
+//      bloqueia a thread do JS, entao nem um handler de SIGTERM resolveria; o
+//      processo termina a volta em curso e aplica A SEGUINTE. Aconteceu nesta
+//      arvore duas vezes (`PainelDePapel.tsx` na HMO-296, e `DivisaoDoGrupo.tsx`
+//      herdado mutado pela HMO-263 -- por um runner DESTA familia), e nas duas
+//      o `git status` mostrava UM arquivo modificado: a cara de trabalho em
+//      andamento.
+//
+// Agora as voltas dividem um processo e um cache de AST
+// (`criarBlocoDeMutantes`, HMO-319): so o arquivo mutado e reparseado, e a
+// mutacao vai para uma SOMBRA em diretorio temporario. A arvore rastreada e o
+// `.tmp-*` do repositorio nao sao tocados em momento nenhum, entao o pior caso
+// de um processo morto e um diretorio orfao em /tmp.
+//
+// As etapas da suite saem do proprio `scripts["test:divisao-do-grupo"]` do package.json -- o
+// comando que o CI roda --, e nao de uma receita repetida a mao aqui.
+//
+// A lista de mutantes abaixo NAO foi reescrita: ela veio byte a byte do arquivo
+// anterior, pelo `scripts/converte-mutantes-em-bloco.mjs`.
+
+import { readFileSync } from "node:fs";
+
+import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
 
 const ALVO = "lib/divisao-do-grupo.ts";
-const original = readFileSync(ALVO, "utf8");
 
 const mutantes = [
   // --- o vocabulario: o silencio que era o defeito ---
@@ -178,31 +211,84 @@ const mutantes = [
   ],
 ];
 
+const SUITE = "test:divisao-do-grupo";
+
+const bloco = criarBlocoDeMutantes({ rotulo: "divisao-do-grupo", suites: [SUITE] });
+
+// A sombra vive em diretorio temporario, e a arvore rastreada nunca e mutada --
+// era esse o modo de falha deste runner. O handler de sinal existe so para que
+// nem o diretorio orfao sobre: o fim do laco nao roda em SIGTERM, mas
+// `process.exit` dispara o `exit` abaixo.
+process.on("exit", () => bloco.fechar());
+for (const sinal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(sinal, () => process.exit(1));
+}
+
+// O texto de cada arquivo que algum mutante toca. Lido da arvore de verdade, que
+// e o original por construcao: nada mais aqui escreve nela.
+const original = new Map();
+for (const arquivo of [ALVO]) {
+  original.set(arquivo, readFileSync(arquivo, "utf8"));
+}
+
+// CONTROLE POSITIVO: a arvore INTACTA tem de passar antes de qualquer mutante,
+// e pelo MESMO `rodar` que os mutantes usam -- por isso ele pega erro no
+// aparelho. Sem ele, uma sombra mal montada reprova TODO mutante e o placar sai
+// "N/N mortos" sobre zero assercoes executadas.
+const controle = bloco.rodar("controle", {}, SUITE);
+if (!controle.verde) {
+  console.error(`ABORTADO: a arvore INTACTA reprova em ${SUITE} (${controle.como}).`);
+  console.error(`  ${controle.saida}`);
+  console.error("O placar nao valeria: todo mutante 'morreria' sem ter sido medido.");
+  process.exit(1);
+}
+console.log(`controle positivo: a arvore intacta passa em ${SUITE}\n`);
+
 let sobreviventes = 0;
 
 for (const [nome, de, para] of mutantes) {
-  // Um mutante que nao aplica passa por "morto" sem nunca ter existido: o
-  // trecho mudou de forma, o replace nao encontra nada, e a suite fica verde
-  // por nao ter sido mexida. Ele conta como sobrevivente de proposito.
-  if (!original.includes(de)) {
-    console.log(`??  ${nome}: o trecho nao existe mais -- mutante desatualizado`);
+  const alvo = ALVO;
+  const antes = original.get(alvo);
+
+  // AS TRES TRAVAS DE ANCORA. A primeira e a terceira ja existiam neste runner;
+  // a do meio e a que a conversao acrescenta (ver OCORRENCIA UNICA, no
+  // conversor): `String.replace` troca a PRIMEIRA ocorrencia, e um `de` que
+  // aparece duas vezes muta um lugar que o rotulo nao descreve.
+  const ocorrencias = antes.split(de).length - 1;
+  if (ocorrencias === 0) {
+    console.error(`SOBREVIVEU (ancora nao casou) :: ${nome}`);
+    console.error(`  o texto buscado nao existe em ${alvo}: ${de}`);
     sobreviventes++;
     continue;
   }
-  writeFileSync(ALVO, original.replace(de, para));
-  let vermelho = false;
-  try {
-    execSync("npm run test:divisao-do-grupo", { stdio: "pipe" });
-  } catch {
-    vermelho = true;
+  if (ocorrencias > 1) {
+    console.error(`SOBREVIVEU (ancora ambigua) :: ${nome}`);
+    console.error(`  o texto aparece ${ocorrencias}x em ${alvo} -- o replace muta so a 1a`);
+    sobreviventes++;
+    continue;
   }
-  console.log(`${vermelho ? "OK  " : "VIVO"} ${nome}`);
-  if (!vermelho) sobreviventes++;
+  const depois = antes.replace(de, para);
+  if (depois === antes) {
+    console.error(`SOBREVIVEU (replace nao mudou nada) :: ${nome}`);
+    sobreviventes++;
+    continue;
+  }
+
+  const r = bloco.rodar(nome, { [alvo]: depois }, SUITE);
+
+  if (r.verde) {
+    console.error(`SOBREVIVEU :: ${nome}`);
+    if (r.mudouASaida === false) {
+      console.error("  (saida compilada identica a da arvore limpa: EQUIVALENTE)");
+    }
+    sobreviventes++;
+  } else {
+    // Morrer no tsc tambem e morrer -- mutante que nao compila nao chega em
+    // producao --, mas a distincao importa: um erro de tipo nao diz que a SUITE
+    // pegou a regra.
+    console.log(`morreu     :: ${nome}  (${r.como === "tsc" ? "tsc" : "asercao"})`);
+  }
 }
 
-// Fora de qualquer try/catch com process.exit dentro: restaurar o fonte e a
-// ultima coisa que este script faz, e `process.exit()` num `try` pularia o
-// `finally` -- deixaria lib/divisao-do-grupo.ts MUTADO no worktree.
-writeFileSync(ALVO, original);
-console.log(`\n${mutantes.length - sobreviventes}/${mutantes.length} mutantes mortos`);
+console.log(`\n${mutantes.length - sobreviventes}/${mutantes.length} mortos`);
 process.exit(sobreviventes === 0 ? 0 : 1);

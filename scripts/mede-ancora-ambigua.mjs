@@ -23,8 +23,10 @@
 // a pergunta "algum `de` de hoje e ambiguo?" foi MEDIDA antes de a trava entrar,
 // e nao suposta -- e e isto que mede.
 //
-// A resposta esta logo abaixo: nenhuma. A trava entrou sem mexer em veredito
-// nenhum, e passa a valer para o mutante que vier depois.
+// Na familia do painel (HMO-328) a resposta foi "nenhuma": a trava entrou sem
+// mexer em veredito nenhum. Na familia TUPLA (HMO-334) foi TRES -- ver a medicao
+// datada mais abaixo. E a razao de isto ser um medidor e nao uma nota: a mesma
+// pergunta deu respostas diferentes nas duas familias.
 //
 // POR QUE ELE LE A LISTA EM VEZ DE A REESCREVER
 // ---------------------------------------------
@@ -34,11 +36,22 @@
 // usa) e o IMPORTA como modulo de dados, entao o que ele mede e a lista de
 // verdade, e ele nao pode divergir dela.
 //
-// Medido em 2026-10-07: 72 mutantes nos cinco runners desta familia, nenhum com
-// ancora ambigua -- e NOVE com ancora MORTA (seis em `detalhe-do-painel`, dois em
-// `sobra-ou-falta`, um em `painel-na-tela`), que e outro assunto e tem issue
-// propria. Os vereditos dos tres runners convertidos pela HMO-328 sao identicos
-// antes e depois da conversao, com esses nove inclusive.
+// Medido em 2026-10-07, familia do painel (HMO-328): 72 mutantes nos cinco
+// runners, nenhum com ancora ambigua -- e NOVE com ancora MORTA (seis em
+// `detalhe-do-painel`, dois em `sobra-ou-falta`, um em `painel-na-tela`), que e
+// outro assunto e tem issue propria. Os vereditos dos tres runners convertidos
+// pela HMO-328 sao identicos antes e depois da conversao, com esses nove
+// inclusive.
+//
+// Medido em 2026-10-07, as DUAS familias (HMO-334): 292 mutantes em 14 runners,
+// TRES com ancora ambigua, os tres em `mutantes-parte-do-grupo` -- porque
+// `lib/parte-do-grupo.ts` repete `if (!groupId) return cheio;` em
+// `parteConfiguradaDoMembro` e em `parteDoMembro`, e a guarda de status em
+// `montarParticipantesPorGrupo` e em `contarMembrosAtivos`. O runner antigo
+// mutava a primeira ocorrencia das duas e dava os tres por mortos, sem dizer
+// qual funcao havia medido. Os tres `de` foram estendidos para casar so o
+// trecho que ele ja mutava; as funcoes GEMEAS seguem sem mutante proprio, e isso
+// e uma lacuna de cobertura com issue propria -- nao um defeito da conversao.
 //
 // O CONTROLE POSITIVO DELE
 // ------------------------
@@ -52,18 +65,54 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { ehDoPainel, mioloDoPainel } from "./converte-mutantes-em-bloco.mjs";
+import {
+  ehDoPainel,
+  mioloDoPainel,
+  ehTupla,
+  mioloDaTupla,
+  elementosDaPrimeiraEntrada,
+} from "./converte-mutantes-em-bloco.mjs";
 
 const RAIZ = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 
-/** A lista `mutantes` de um runner, carregada do proprio arquivo. */
-async function lerMutantes(runner) {
-  const fonte = readFileSync(runner, "utf8");
-  const { miolo } = mioloDoPainel(fonte);
-  // O miolo e so declaracoes `const` -- as constantes de arquivo e a lista --,
-  // entao importa-lo como modulo de dados nao executa driver nenhum.
+/** Importa um miolo (so declaracoes `const`) como modulo de dados. */
+async function listaDoMiolo(miolo) {
+  // Nao executa driver nenhum: o miolo termina no `];` da lista.
   const url = `data:text/javascript,${encodeURIComponent(`${miolo}\nexport { mutantes };`)}`;
   return (await import(url)).mutantes;
+}
+
+/** A lista de um runner da familia DO PAINEL, ja em `{ nome, arquivo, de }`. */
+async function lerMutantesDoPainel(fonte) {
+  return listaDoMiolo(mioloDoPainel(fonte).miolo);
+}
+
+/**
+ * A lista de um runner da familia TUPLA, normalizada para a mesma forma.
+ *
+ * A ARIDADE VEM DA FORMA DA LISTA (`elementosDaPrimeiraEntrada`) e nao de
+ * `aridadeDaTupla`, e a diferenca nao e estilo: `aridadeDaTupla` cruza duas
+ * pistas que a conversao APAGA (a `const fontes = new Map`), entao ela lanca
+ * justamente nos runners ja convertidos -- que sao a maioria dos que esta
+ * varredura precisa ler.
+ *
+ * Na aridade 3 o alvo e a `const ALVO` do modulo. Pelo NOME, de proposito: a
+ * primeira versao disto usava "a primeira constante de arquivo", que em
+ * `edicao-de-grupo` e `minha-parte-no-realizado` seria uma escolha entre DUAS
+ * (`ALVO` e `TESTE`) decidida pela ordem de declaracao -- certa hoje e por
+ * acidente.
+ */
+async function lerMutantesDaTupla(fonte) {
+  const { miolo } = mioloDaTupla(fonte);
+  const lista = await listaDoMiolo(miolo);
+  const aridade = elementosDaPrimeiraEntrada(miolo);
+
+  if (aridade === 4) {
+    return lista.map(([arquivo, nome, de]) => ({ nome, arquivo, de }));
+  }
+  const mAlvo = /^const ALVO = "([^"]+)";$/m.exec(miolo);
+  if (!mAlvo) throw new Error("aridade 3 sem `const ALVO` -- nao sei contra qual arquivo medir");
+  return lista.map(([nome, de]) => ({ nome, arquivo: mAlvo[1], de }));
 }
 
 // O ARQUIVO QUE CONTEM UM RUNNER DE MENTIRA DENTRO DE UMA STRING.
@@ -77,7 +126,46 @@ async function lerMutantes(runner) {
 // censo. Excluir pelo NOME e deliberado -- excluir "todo runner cujo arquivo nao
 // existe" calaria justamente o defeito que vale reportar (runner que aponta para
 // arquivo apagado).
-const APARELHO = new Set(["scripts/mutantes-conferidor-da-conversao.mjs"]);
+const APARELHO = new Set([
+  "scripts/mutantes-conferidor-da-conversao.mjs",
+  // O mesmo caso, na familia tupla: o fixture dele e um runner completo de
+  // aridade 4 dentro de um template literal, e as ancoras dele apontam para
+  // `lib/exemplo.ts`, que nao existe.
+  "scripts/mutantes-conferidor-da-conversao-tupla.mjs",
+]);
+
+// OS RUNNERS DE FORMA PROPRIA, com o motivo escrito (HMO-334).
+//
+// Tres dos cinco que a HMO-335 converteu A MAO -- sem conversor, porque a
+// familia tupla so ganhou entrada na tabela depois -- tem cada um uma forma que
+// nenhum `recortar` descreve: `orcamento-de-grupo` guarda os alvos num OBJETO
+// (`const ALVOS = {`), `semeadura` e `sugestao-de-divisao` mantem no modulo um
+// `const original = new Map(...)` que o desenho de bloco nao tem, e a tupla de
+// `semeadura` carrega a SUITE como terceiro elemento.
+//
+// Declarados aqui em vez de filtrados por "tentei e nao deu": um filtro por
+// excecao capturada calaria tambem o runner que passou a nao ser legivel por
+// defeito, e e isso que esta varredura existe para ver. A trava logo abaixo
+// cobra o contrario -- runner tupla fora desta lista TEM de ser legivel.
+const FORMA_PROPRIA = new Set([
+  "scripts/mutantes-orcamento-de-grupo.mjs",
+  "scripts/mutantes-semeadura.mjs",
+  "scripts/mutantes-sugestao-de-divisao.mjs",
+]);
+
+// O MESMO predicado que o conversor usa para escolher a familia. Escrever o
+// criterio a mao aqui ja deu errado uma vez neste arquivo: `const mutantes = [`
+// sozinho arrasta os runners da familia "tupla", que precisam de outro
+// normalizador -- nao de nenhum.
+const FAMILIAS = [
+  { nome: "painel", reconhece: ehDoPainel, ler: lerMutantesDoPainel },
+  { nome: "tupla", reconhece: ehTupla, ler: lerMutantesDaTupla },
+];
+
+function familiaDoArquivo(caminho) {
+  const fonte = readFileSync(path.join(RAIZ, caminho), "utf8");
+  return FAMILIAS.find((f) => f.reconhece(fonte));
+}
 
 const alvos = process.argv.slice(2);
 const runners = alvos.length
@@ -85,24 +173,32 @@ const runners = alvos.length
   : readdirSync(path.join(RAIZ, "scripts"))
       .filter((f) => /^mutantes-.*\.mjs$/.test(f))
       .map((f) => path.join("scripts", f))
-      .filter((f) => !APARELHO.has(f))
-      // O MESMO predicado que o conversor usa para escolher a familia. Escrever
-      // o criterio a mao aqui ja deu errado uma vez neste arquivo: `const
-      // mutantes = [` sozinho arrasta os runners da familia "tupla", cujo miolo
-      // nem carrega como modulo de dados.
-      .filter((f) => ehDoPainel(readFileSync(path.join(RAIZ, f), "utf8")));
+      .filter((f) => !APARELHO.has(f) && !FORMA_PROPRIA.has(f))
+      .filter((f) => familiaDoArquivo(f));
 
 let ambiguas = 0;
 let ausentes = 0;
 let total = 0;
+const lidosPorFamilia = { painel: 0, tupla: 0 };
 
 for (const runner of runners) {
-  const mutantes = await lerMutantes(path.resolve(RAIZ, runner));
+  const familia = familiaDoArquivo(runner);
+  if (!familia) {
+    console.error(`ABORTADO: ${runner} nao e de familia nenhuma que eu saiba ler.`);
+    process.exit(1);
+  }
+  const fonte = readFileSync(path.resolve(RAIZ, runner), "utf8");
+  // Deixar a excecao SUBIR e deliberado: um runner da familia que o
+  // normalizador nao consegue ler ou mudou de forma (e entao pertence ao
+  // `FORMA_PROPRIA`, com o motivo escrito) ou quebrou. As duas coisas tem de
+  // aparecer, e nenhuma delas pode virar "0 ambiguas".
+  const mutantes = await familia.ler(fonte);
   if (mutantes.length === 0) {
     console.error(`ABORTADO: ${runner} rendeu ZERO mutantes -- a leitura da lista quebrou.`);
     process.exit(1);
   }
   total += mutantes.length;
+  lidosPorFamilia[familia.nome]++;
 
   const achados = [];
   for (const m of mutantes) {
@@ -136,8 +232,26 @@ for (const runner of runners) {
   }
 }
 
+// A TRAVA CONTRA A VARREDURA VAZIA, agora por FAMILIA. "0 ambiguas" sobre zero
+// runners de uma familia e um boletim limpo que nao mediu nada -- e seria o
+// resultado de um predicado que parasse de casar (a HMO-328 ja viu `ehDoPainel`
+// deixar de reconhecer um runner por uma mudanca de forma). Com duas familias, a
+// contagem total nao basta: a do painel sozinha passaria por "mediu tudo".
+if (!alvos.length) {
+  const vazias = Object.entries(lidosPorFamilia).filter(([, n]) => n === 0);
+  if (vazias.length > 0) {
+    console.error(
+      `\nABORTADO: nenhum runner lido da familia ${vazias.map(([n]) => n).join(", ")} -- ` +
+        "a varredura nao mediu essa familia.",
+    );
+    process.exit(1);
+  }
+}
+
 console.log(
-  `\n${total} mutantes lidos, ${ambiguas} com ancora ambigua (>1 ocorrencia)` +
+  `\n${total} mutantes lidos em ${runners.length} runners ` +
+    `(${Object.entries(lidosPorFamilia).map(([n, q]) => `${n}:${q}`).join(" ")}), ` +
+    `${ambiguas} com ancora ambigua (>1 ocorrencia)` +
     (ausentes > 0 ? `, ${ausentes} apontando para arquivo AUSENTE` : ""),
 );
 process.exit(ambiguas === 0 && ausentes === 0 ? 0 : 1);

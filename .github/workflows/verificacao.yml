@@ -251,6 +251,21 @@ jobs:
       - name: O conferidor da conversao de mutantes sabe falhar
         run: node scripts/mutantes-conferidor-da-conversao.mjs
 
+      # O MESMO CONTROLE, PARA A SEGUNDA FAMILIA (HMO-334). Nao e duplicacao: o
+      # passo acima mede o conferidor pela familia DO PAINEL, cujas listas sao de
+      # objetos, e `conferir` escolhe as contagens pela familia do arquivo de
+      # ANTES -- entao aquele fixture nunca passa pelas travas da familia tupla,
+      # que sao outras funcoes porque a lista tem outra forma.
+      #
+      # Este tambem e o unico lugar que cobra a EXCLUSIVIDADE dos tres predicados
+      # de familia, varrendo os runners de verdade. A HMO-328 mediu o custo de
+      # errar isso: reconhecer a tupla so por `const mutantes = [` fez o conversor
+      # aceitar um runner da outra familia e produzir um arquivo que nem carregava.
+      #
+      # Barato pela mesma razao: e texto. Os dois fixtures sao sinteticos.
+      - name: O conferidor da conversao de mutantes sabe falhar (familia tupla)
+        run: node scripts/mutantes-conferidor-da-conversao-tupla.mjs
+
       # Mora aqui pela mesma razao dos passos acima: e deriva do lado do CODIGO,
       # nao toca em database/, e o sintoma e a AUSENCIA de sintoma. Um modulo de
       # interface sem importador compila, passa no tsc, passa no next build e
