@@ -161,8 +161,11 @@ const mutantes = [
   [
     "a TELA volta a montar `custom_splits` sem passar pelo filtro",
     TELA_DO_GRUPO,
-    "        expenseData.custom_splits = partesParaGravar(\n          selectedSplitSuggestion.splits\n        ).map((split: any) => ({",
-    "        expenseData.custom_splits = selectedSplitSuggestion.splits.map((split: any) => ({",
+    // O `: any` do callback saiu na HMO-179 ("zero aviso de lint em 579
+    // arquivos") e levou a ancora com ele. O runner nao deu o mutante por
+    // morto: acusou ANCORA NAO CASOU e saiu 1, que e a trava funcionando.
+    "        expenseData.custom_splits = partesParaGravar(\n          selectedSplitSuggestion.splits\n        ).map((split) => ({",
+    "        expenseData.custom_splits = selectedSplitSuggestion.splits.map((split) => ({",
   ],
   // A guarda `participacoes > 0` de `pesosDoHistorico` NAO tem mutante, e a
   // ausencia e deliberada: ela e inalcancavel como causa UNICA. Tirando-a,
