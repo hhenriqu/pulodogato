@@ -1510,6 +1510,68 @@ jobs:
       - name: O rateio da baixa honra o percentual, e o grupo legado divide igual
         run: $PSQL -f database/tests/042_rateio_do_trigger_honra_o_percentual_test.sql
 
+      - name: 043_direcao_do_previsto_avulso
+        run: $PSQL -f database/migrations/043_direcao_do_previsto_avulso.sql
+
+      # Re-executavel: a 043 e um `CREATE OR REPLACE VIEW` mais o ALTER do
+      # security_invoker e os GRANTs. Nao cria objeto, nao reescreve dado e nao
+      # tem backfill -- a segunda aplicacao produz o mesmo estado da primeira.
+      - name: 043 e idempotente
+        run: $PSQL -f database/migrations/043_direcao_do_previsto_avulso.sql
+
+      # HMO-256, a terceira perna do mesmo defeito. As outras duas sao
+      # TypeScript (a rota do "posso gastar", consertada na HMO-308, e a
+      # /api/projection, nesta issue) e vivem no `verificacao.yml`; esta e a
+      # unica que e SQL, porque o criterio estava dentro da view.
+      #
+      # O defeito: `planned_vs_actual` decidia a direcao do previsto por
+      # `COALESCE(r.transaction_type, 'expense')` -- o tipo da REGRA. Previsao
+      # AVULSA nao tem regra, entao TODA receita prevista avulsa era contada
+      # como conta a pagar. Medido em producao (04/10/2026, conta de teste da
+      # HMO-255, outubro/2026): `planned_expense` 1.365,00 incluindo um bonus de
+      # 50,00 que e receita, e `planned_income` 2.700,00 sem ele.
+      #
+      # O que so o Postgres pega:
+      #
+      #   - nenhum teste de TypeScript le view. A rota de orcamento recebe dois
+      #     numeros, os dois no formato certo e os dois plausiveis. O erro so
+      #     aparece comparando com a agenda, e ele erra para o lado que nao gera
+      #     reclamacao: o app diz que a pessoa tem MENOS do que tem;
+      #   - o CASO 3 e o controle negativo, e e o que justifica o arquivo. Ele
+      #     reproduz o FILTER antigo sobre a fixture nova e EXIGE 350,00 -- sem
+      #     ele, os casos 1 e 2 nao distinguem "a 043 funciona" de "o cenario
+      #     nunca exercitou o defeito";
+      #   - o CASO 4 (a moeda) esta aqui porque o guarda original NAO ALCANCA a
+      #     043: os casos 4 e 5 do `022_currency_test.sql` guardam este mesmo
+      #     LATERAL, mas aquele arquivo roda antes da 026 e NAO e re-executavel
+      #     depois -- medido, ele morre em
+      #     `financial_transactions_rate_matches_currency`, porque a fixture em
+      #     dolar dele nasceu antes daquele CHECK. A 043 troca o `FROM` daquele
+      #     LATERAL, entao a cobertura da duplicacao por moeda veio para ca;
+      #   - o CASO 5 e a RLS pela view com a role de aplicacao. `CREATE OR
+      #     REPLACE VIEW` ja apagou `reloptions` neste repositorio, e sem
+      #     `security_invoker` esta view entrega o previsto de TODOS para
+      #     qualquer um logado.
+      #
+      # Medido: 12 assercoes verdes contra a cadeia com a 043, e o arquivo
+      # INTEIRO reprovando contra a cadeia sem ela (ERROR na primeira assercao,
+      # 350,00 onde se espera 300,00) -- o controle que prova que ele mede.
+      - name: A receita prevista AVULSA sai de planned_expense
+        run: $PSQL -f database/tests/043_direcao_do_previsto_avulso_test.sql
+
+      # A SUITE DA VIEW ANTIGA, RE-RODADA DEPOIS DA 043 (e o motivo e a regra).
+      #
+      # `goals_reports_test.sql` e quem guarda `planned_vs_actual` desde o 008,
+      # e ele roda na POSICAO dele -- muito antes da 043. Sem este step ele
+      # nunca veria a definicao nova: a 043 reescreveria o objeto que ele
+      # protege e a protecao continuaria medindo a definicao velha, verde.
+      #
+      # Ele e re-executavel (medido: passa contra a cadeia com a 043 aplicada),
+      # e e por isso que ele cabe aqui e o `022_currency_test.sql` NAO -- aquele
+      # morre no CHECK da 026, por posicao, e nao por defeito.
+      - name: O previsto x realizado do 008 continua valendo depois da 043
+        run: $PSQL -f database/tests/goals_reports_test.sql
+
       # HMO-245, o fechamento do mes do grupo. A conta de grupo que ainda nao
       # aconteceu (a internet no cartao, vencendo dia 15) vive em
       # `scheduled_transactions` e nao em `group_transactions`, entao ela nao
@@ -2145,6 +2207,32 @@ jobs:
       # os casos de recusa passariam sem recusar nada.
       - name: A configuracao de divisao so o admin grava, e o lote e atomico
         run: $PSQL -f database/tests/hmo269_split_config_test.sql
+
+      # O MESMO TESTE DA 043, DE NOVO, NO FIM DA CADEIA (HMO-256).
+      #
+      # NAO E REDUNDANTE, e o step de cima nao substitui este. O de cima roda na
+      # posicao da 043 e prova que ELA consertou a view. Este roda depois de
+      # TODAS as migrations, e existe por um motivo concreto e ja observado:
+      # `planned_vs_actual` nao se corrige em pedaco. `CREATE OR REPLACE VIEW`
+      # exige a definicao INTEIRA, entao qualquer migration futura que mexa em
+      # qualquer parte desta view precisa recolar o FILTER do previsto junto --
+      # e recolar a versao ANTIGA reverte a HMO-256 sem conflito de git, sem
+      # erro e sem sintoma, porque os dois numeros continuam plausiveis.
+      #
+      # ISSO NAO E HIPOTETICO. Enquanto esta issue estava aberta, a branch da
+      # HMO-258 (`043_realizado_de_grupo_no_previsto_x_realizado.sql`, ainda nao
+      # mergeada) ja carregava um `CREATE OR REPLACE VIEW public.planned_vs_actual`
+      # com a definicao completa e com o
+      # `COALESCE(r.transaction_type, 'expense')` velho nos dois FILTER. Mergeada
+      # depois desta, ela reporia o defeito inteiro. Quem rebasear aquela branch
+      # tem de trocar os dois FILTER por `s.direction` e o `FROM` por
+      # `public.scheduled_transactions_effective` -- e e ESTE step que avisa,
+      # em vez de a regressao chegar em producao de novo.
+      #
+      # O arquivo e re-executavel por construcao: ele e um BEGIN/ROLLBACK e nao
+      # deixa nada atras. Medido rodando duas vezes no mesmo banco.
+      - name: A receita prevista AVULSA continua fora de planned_expense no fim da cadeia
+        run: $PSQL -f database/tests/043_direcao_do_previsto_avulso_test.sql
 
       - name: Aritmetica de recorrencia
         run: npm run test:recurrence
