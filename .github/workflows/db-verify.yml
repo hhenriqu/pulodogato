@@ -2442,7 +2442,10 @@ jobs:
       # pessoal. So o primeiro deixaria passar o mutante que divide tudo, que
       # erra para BAIXO e faz o app prometer dinheiro que nao sobra.
       #
-      # 12 de 12 mutantes mortos em scripts/mutantes-parte-do-grupo.mjs.
+      # 14 de 14 mutantes mortos em scripts/mutantes-parte-do-grupo.mjs (eram 12
+      # antes da HMO-257, que acrescentou os dois da peneira do custo fixo: a
+      # transferencia recorrente voltando a contar como despesa fixa, e o
+      # allow-list no campo cru que apagaria a despesa sem transaction_type).
       - name: A minha parte da despesa fixa de grupo
         run: npm run test:parte-do-grupo
 
