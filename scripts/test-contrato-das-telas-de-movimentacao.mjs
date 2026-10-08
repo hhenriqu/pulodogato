@@ -382,7 +382,26 @@ test("as tres telas abrem sem rede -- elas sao alcancaveis de rota precacheada",
   // de TODO numero -- `numero()` e a unica funcao que formata os cartoes, e e
   // ela que decide entre o valor e o travessao. Os tres numeros estao em
   // CartoesDaTela.tsx; as frases de secao vazia, na lista (HMO-301).
-  assert.match(cartoes, /podeMostrarNumero\(estado\) && resumo/);
+  //
+  // HMO-250: sao DOIS pedagios, e eles guardam coisas DIFERENTES -- um dentro
+  // de `numero()` (os tres valores em dinheiro) e um na contagem embaixo do
+  // Total, que nao passa por `numero()`. Um `assert.match` solto pelo trecho
+  // `podeMostrarNumero(estado) && resumo` se contenta com QUALQUER um dos dois:
+  // matar o de dentro de `numero()` pintava os tres cartoes de R$ 0,00 sem dado
+  // e a suite seguia verde, satisfeita pelo da contagem. Cada um e ancorado no
+  // seu proprio ponto de uso.
+  assert.match(
+    cartoes,
+    /const numero = \([^)]*\) =>\s*podeMostrarNumero\(estado\) && resumo \?/,
+    `${CARTOES}: o pedagio saiu de dentro de \`numero()\` -- sem dado os TRES ` +
+      `cartoes pintariam R$ 0,00 em vez do travessao`
+  );
+  assert.match(
+    cartoes,
+    /podeMostrarNumero\(estado\) && resumo\s*\?\s*`\$\{resumo\.quantidade\}/,
+    `${CARTOES}: a contagem embaixo do Total nao passa pelo pedagio -- sem dado ` +
+      `ela afirmaria "0 lançamento(s)"`
+  );
   assert.match(cartoes, /<NumeroIndisponivel \/>/);
   assert.match(lista, /podeAfirmarVazio\(estado\)/);
 });

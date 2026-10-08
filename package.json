@@ -163,6 +163,7 @@
     "mutantes:credito-de-grupo": "node scripts/mutantes-credito-de-grupo.mjs",
     "mutantes:periodo-do-grupo": "node scripts/mutantes-periodo-do-grupo.mjs",
     "mutantes:telas-de-movimentacao": "node scripts/mutantes-telas-de-movimentacao.mjs",
+    "mutantes:contrato-dos-cartoes": "node scripts/mutantes-contrato-dos-cartoes.mjs",
     "test:contrato-do-fechamento": "node --test scripts/test-contrato-do-fechamento.mjs",
     "test:contrato-do-credito": "node --test scripts/test-contrato-do-credito.mjs",
     "test:contrato-do-periodo-do-grupo": "node --test scripts/test-contrato-do-periodo-do-grupo.mjs",
