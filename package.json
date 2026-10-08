@@ -103,6 +103,7 @@
     "mutantes:divisao-ui-dom": "node scripts/mutantes-divisao-ui-dom.mjs",
     "mutantes:chave-pix": "node scripts/mutantes-chave-pix.mjs",
     "mutantes:minha-parte-no-realizado": "node scripts/mutantes-minha-parte-no-realizado.mjs",
+    "mutantes:um-criterio-de-custo-pessoal": "node scripts/mutantes-um-criterio-de-custo-pessoal.mjs",
     "mutantes:moeda-da-conta-prevista": "node scripts/mutantes-moeda-da-conta-prevista.mjs",
     "mutantes:transferencia-recorrente": "node scripts/mutantes-transferencia-recorrente.mjs",
     "mutantes:transferencia-recorrente-app": "node scripts/mutantes-transferencia-recorrente-app.mjs",

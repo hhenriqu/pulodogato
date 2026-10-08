@@ -398,6 +398,7 @@
     "group_id",
     "income",
     "month",
+    "paguei_eu",
     "transaction_count",
     "user_id"
   ],

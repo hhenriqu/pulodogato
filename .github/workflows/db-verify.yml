@@ -1687,6 +1687,67 @@ jobs:
       - name: O previsto x realizado do 008 continua valendo depois da 045
         run: $PSQL -f database/tests/goals_reports_test.sql
 
+      # HMO-258, a decisao de produto que a issue dizia vir antes do codigo.
+      # Respondida em 08/10/2026: o custo pessoal e "bruto + reembolso" --
+      # INTEIRO quando eu paguei, MINHA PARTE quando outro pagou. O painel e os
+      # dois relatorios saem de 950,00 para 1.010,00 na fixture de maio da conta
+      # A, e passam a concordar com Financas Pessoais (HMO-275).
+      #
+      # A 046 sao DUAS mudancas numa view, e cada metade sozinha e um defeito que
+      # ja foi medido em banco -- por isso o teste nega cinco numeros, nao um:
+      #   920  so a metade 2: a despesa que EU paguei desaparece
+      #  1040  so a metade 1: valor cheio + a minha parte dele (dupla contagem)
+      #   950  a 033 intacta -- a terceira convencao, sem rotulo
+      #   990  a perna do grupo descartada -- fluxo de caixa, que e o criterio
+      #        CERTO de outra leitura
+      #  1020  a polaridade de `paguei_eu` invertida
+      #
+      # As duas secoes que NAO sao sobre o criterio escolhido:
+      #
+      #   - RATEIO RECUSADO (secao 4). Eu pago 200,00 pelo grupo e todos recusam
+      #     a parte: ninguem me devolve nada, logo os 200 sao meus. Antes da 046 o
+      #     painel mostrava ZERO -- `group_share_entries` exclui rejected (certo,
+      #     deliberado na 033) e o `group_id IS NULL` jogava a despesa fora do
+      #     outro lado. Isso era defeito sob QUALQUER um dos tres criterios.
+      #
+      #   - O `eq("user_id")` DO LEITOR (secao 7). A perna pessoal perdeu o
+      #     `group_id IS NULL`, que antes descartava de graca as linhas dos outros
+      #     membros; a RLS de grupo (002) permite le-las desde sempre. Os tres
+      #     leitores filtram user_id e o codigo diz que isso e load-bearing -- a
+      #     assercao fixa a DIRECAO do sintoma (sem filtro, total MAIOR) sem
+      #     travar o valor, que depende do tamanho do grupo na fixture.
+      - name: 046_um_criterio_de_custo_pessoal
+        run: $PSQL -f database/migrations/046_um_criterio_de_custo_pessoal.sql
+
+      - name: 046 e idempotente
+        run: $PSQL -f database/migrations/046_um_criterio_de_custo_pessoal.sql
+
+      - name: O custo pessoal fala UM numero -- 1.010,00, o mesmo de Financas Pessoais
+        run: $PSQL -f database/tests/046_um_criterio_de_custo_pessoal_test.sql
+
+      # POR QUE A SUITE DA 045 **NAO** E RE-RODADA AQUI, AO CONTRARIO DO QUE A
+      # PROPRIA 045 FEZ COM A DA 043.
+      #
+      # A 045 precisou re-rodar a suite da 043 porque as duas fazem
+      # `CREATE OR REPLACE VIEW` no MESMO objeto (`planned_vs_actual`): quem vem
+      # depois carrega a definicao inteira e pode reverter quem veio antes em
+      # silencio. A 046 nao toca `planned_vs_actual` -- ela mexe em
+      # `personal_category_monthly_totals` e no rollup da parte de grupo --,
+      # entao nao existe reversao a vigiar.
+      #
+      # E re-rodar a suite da 045 aqui REPROVARIA, corretamente: a secao 1 dela
+      # exige 950,00, que e o realizado pessoal pelo criterio da 033. A 046 troca
+      # esse criterio para 1.010,00. Aquela suite roda na POSICAO dela, antes da
+      # 046, e continua certa la -- igual ao teste da 033, que segue exigindo o
+      # criterio da 033. Pendurar a suite antiga depois da migration que a
+      # substitui obrigaria a "consertar" o teste, que e como um criterio velho
+      # volta escondido.
+      #
+      # A suite da 043, essa sim, roda de novo: a 046 nao mexe no previsto, e um
+      # verde aqui e barato.
+      - name: A receita prevista AVULSA continua fora de planned_expense depois da 046
+        run: $PSQL -f database/tests/043_direcao_do_previsto_avulso_test.sql
+
       # O hmo197 roda na POSICAO dele, muito acima, onde o trigger do 001 ainda
       # existe e ele o desliga com DISABLE TRIGGER. A 044 apaga esse trigger,
       # entao aquele arquivo passou a envolver o DISABLE/ENABLE num `IF EXISTS`
@@ -3308,6 +3369,21 @@ jobs:
       # `column t.currency does not exist`.
       - name: A minha parte no realizado sabe falhar (24 mutantes)
         run: PGURL=postgresql://postgres:postgres@localhost:5432 node scripts/mutantes-minha-parte-no-realizado.mjs
+
+      # A 046 troca o CRITERIO das duas views que o runner de cima mede, entao
+      # ele nao serve para ela: o teste da 033 roda na posicao da 033 e continua
+      # (corretamente) exigindo 950, e o mutante 2 dele descreve METADE da 046
+      # como defeito -- certo no lugar dele, porque na 033 sozinha aquela metade
+      # produz dupla contagem. Nenhum mutante da 033 mede o PAR de mudancas.
+      #
+      # Os dois mutantes de `security_invoker` daqui morrem na assercao sobre
+      # `reloptions`, e NAO no controle negativo da Dora -- medido. Nenhuma das
+      # duas views da 046 toca tabela com RLS (as duas leem views do 008 e da
+      # 033, que sao INVOKER e e onde a politica e avaliada), entao com so elas
+      # como DEFINER nao ha vazamento. Esta e a diferenca em relacao ao que a
+      # 033 e a 045 afirmam, com razao, nos casos delas.
+      - name: O criterio de custo pessoal sabe falhar (7 mutantes)
+        run: PGURL=postgresql://postgres:postgres@localhost:5432 node scripts/mutantes-um-criterio-de-custo-pessoal.mjs
 
       # Usa o retrato tirado la atras, no ponto da cadeia em que a 039 tinha
       # acabado de entrar e a 040 ainda nao. O runner confere as duas pontas: o
