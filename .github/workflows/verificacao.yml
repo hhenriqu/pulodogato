@@ -6265,3 +6265,33 @@ jobs:
             diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
             exit 1
           fi
+
+      # -------------------------------------------------------------------
+      # A CONTAGEM DE TRANSACOES DO GRUPO (HMO-259)
+      # -------------------------------------------------------------------
+      # `GET /api/expense-groups/{id}/balances` devolvia `paid_count +
+      # owed_count` e contava duas vezes a despesa que o membro PAGOU: 18/18/12
+      # num grupo de 12 despesas, medido na conta de teste da HMO-255 em
+      # producao. Nenhum valor em reais depende do numero -- e e justamente por
+      # isso que ele precisa de controle negativo: contador errado nao tem quem o
+      # denuncie, nao aparece em `residual`, nao desequilibra saldo. Ele so
+      # discorda da lista na mesma tela, e quem nota e a pessoa.
+      #
+      # SEM `paths:`, como todo o resto deste workflow. Aqui isso e mais do que
+      # consistencia: a contagem reproduz as duas pernas da view
+      # `group_member_balances`, entao mexer na view (database/) ou na rota
+      # (app/) sem tocar lib/contagem-do-grupo.ts e exatamente o caso que um
+      # filtro de path escrito hoje deixaria passar verde.
+      - name: A contagem de transacoes do grupo conta cada despesa uma vez
+        run: npm run test:contagem-do-grupo
+
+      # Controle negativo. A suite afirma IGUALDADES sobre numeros pequenos (12,
+      # 1, 0), que e o tipo de afirmacao que fica verde de graca -- e o 12 do caso
+      # da issue e produzido tambem por `owed_count` sozinho, que esta errado.
+      #
+      # Medido: 11 mutantes, 11 mortos, TODOS por assercao (nenhum caiu no tsc),
+      # com controle positivo. O runner inteiro roda em ~10s porque muta uma
+      # SOMBRA em /tmp num processo unico (o motor de bloco da HMO-319), entao nao
+      # ha subconjunto a escolher como nos blocos inline acima: o step roda os 11.
+      - name: Mutantes da contagem de transacoes do grupo
+        run: npm run mutantes:contagem-do-grupo

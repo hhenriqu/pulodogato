@@ -1,0 +1,28 @@
+{
+  "//": [
+    "Compila a contagem de transacoes do grupo (HMO-259) para a suite pura.",
+    "",
+    "O include tem UM arquivo e isso basta: `lib/contagem-do-grupo.ts` e folha --",
+    "nenhum import, nem de `@/`. Nao ha alias para reescrever, e o",
+    "resolve-aliases.mjs no npm script e barato e mantem a receita igual as",
+    "outras suites em vez de criar uma excecao que ninguem lembra de por que",
+    "existe.",
+    "",
+    "Comentario SO nesta chave, nunca com // no meio do objeto: o tsc aceita",
+    "JSONC, mas o check-tests-in-ci.mjs le este arquivo com JSON.parse e estoura",
+    "com 'Expected double-quoted property name'."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-contagem-do-grupo",
+    "rootDir": "../lib",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/contagem-do-grupo.ts"]
+}

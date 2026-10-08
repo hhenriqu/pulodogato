@@ -4,6 +4,10 @@ import { MOEDA_PADRAO } from "@/lib/dinheiro";
 import { precisaDeCotacao } from "@/lib/cambio";
 import { cotacaoNaData } from "@/lib/ptax";
 import { moedaDaViagem } from "@/lib/moeda-do-grupo";
+import {
+  contagemPorMembro,
+  type DespesaParaContagem,
+} from "@/lib/contagem-do-grupo";
 
 // O client nao tem o generic `Database`: sem declarar a linha, todo `select()`
 // volta `any` e o `tsc` para de conferir os nomes de coluna. Os numericos da
@@ -17,8 +21,9 @@ type LinhaDeSaldoDoGrupo = {
   settlements_paid: number | string;
   settlements_received: number | string;
   net_balance: number | string;
-  paid_count: number | string;
-  owed_count: number | string;
+  // `paid_count` e `owed_count` existem na view e sairam deste select de
+  // proposito (HMO-259): somar as duas era o defeito. Pedi-las de novo aqui e o
+  // caminho mais curto para ele voltar.
   amount_currency: string | null;
   group_currency: string | null;
 };
@@ -27,6 +32,22 @@ type PerfilDoMembro = {
   id: string;
   full_name: string | null;
   avatar_url: string | null;
+};
+
+// `transaction` e um embed PARA UM (group_transactions.transaction_id e uma FK
+// simples), entao vem objeto e nao array -- e com `!inner` no select ele nunca e
+// null. `splits` e o embed REVERSO, que vem array e vem vazio quando a despesa
+// nao foi rateada. Os dois nomes aqui tem de acompanhar o select: este tipo e so
+// uma afirmacao minha, o PostgREST nao a confere (HMO-259).
+type DespesaDoGrupo = {
+  id: string;
+  transaction: { user_id: string | null; transaction_type: string | null };
+  splits: { member_id: string | null; status: string | null }[] | null;
+};
+
+type MembroDoGrupo = {
+  id: string;
+  user_id: string;
 };
 
 /**
@@ -68,6 +89,21 @@ type PerfilDoMembro = {
  * volta da chamada, e nao um `await` solto -- `lib/ptax.ts` ja trata o timeout,
  * mas um throw inesperado dali viraria 500 numa tela que tem tudo para
  * responder.
+ *
+ * `transactions_count` NAO E paid_count + owed_count (HMO-259)
+ * -----------------------------------------------------------
+ * Era, e por isso quem pagava um jantar e rateava com os outros via a mesma
+ * despesa contada duas vezes -- 18 onde o grupo tem 12. As duas colunas da view
+ * contam coisas diferentes sobre a MESMA despesa e nao se somam; de `paid_count`
+ * e `owed_count` prontos nao se recupera a intersecao, entao esta rota volta as
+ * linhas e conta a UNIAO em `lib/contagem-do-grupo.ts`. O racional completo --
+ * inclusive por que a conta nao virou coluna da view -- esta no cabecalho de la.
+ *
+ * Isso acrescenta DUAS consultas, e e o custo de nao mentir no numero. Elas sao
+ * por GRUPO e nao por membro, o que preserva o item 2 acima: a versao anterior
+ * desta rota fazia duas consultas POR MEMBRO. As duas usam o mesmo cliente da
+ * view, logo veem exatamente as mesmas linhas que ela -- e e isso que faz a
+ * contagem concordar com o saldo em vez de ser uma segunda regra.
  */
 export async function GET(
   request: NextRequest,
@@ -108,8 +144,6 @@ export async function GET(
         settlements_paid,
         settlements_received,
         net_balance,
-        paid_count,
-        owed_count,
         amount_currency,
         group_currency
       `
@@ -136,6 +170,68 @@ export async function GET(
 
     const perfilPor = new Map((perfis || []).map((p) => [p.id, p]));
 
+    // As despesas do grupo com quem pagou cada uma e os rateios de cada uma, em
+    // UMA consulta. `!inner` no lado da transacao e deliberado: as DUAS pernas
+    // da view fazem JOIN (nao LEFT JOIN) com financial_transactions, entao
+    // despesa cuja transacao a RLS esconde nao conta por perna nenhuma -- nem
+    // pelo rateio dela. Sem o `!inner` a linha viria com `transaction: null` e
+    // os rateios continuariam contando: a contagem passaria a ver despesa que o
+    // saldo ao lado dela nao ve.
+    const { data: despesasDoGrupo, error: erroDespesas } = await supabase
+      .from("group_transactions")
+      .select(
+        `
+        id,
+        transaction:financial_transactions!inner (
+          user_id,
+          transaction_type
+        ),
+        splits:group_expense_splits (
+          member_id,
+          status
+        )
+      `
+      )
+      .eq("group_id", groupId)
+      .returns<DespesaDoGrupo[]>();
+
+    // `group_expense_splits.member_id` aponta para `group_members.id`, e a
+    // contagem e por `user_id`. SEM filtro de `status`: a perna do rateio na
+    // view junta por `em.id = es.member_id` sem exigir `active`, entao a parte
+    // que ficou no nome de quem saiu do grupo continua contando para ele.
+    const { data: membrosDoGrupo, error: erroMembros } = await supabase
+      .from("group_members")
+      .select("id, user_id")
+      .eq("group_id", groupId)
+      .returns<MembroDoGrupo[]>();
+
+    // Contagem indisponivel nao derruba a tela: o saldo e a informacao
+    // principal e nao depende disto -- mesma escolha do `today_rate`. Mas
+    // tambem nao se inventa numero: sem as linhas o mapa fica vazio e todo mundo
+    // sai com zero, que e o que a tela escreve para grupo sem despesa. Zero
+    // ao lado de um saldo diferente de zero e visivelmente estranho; 18 nao e.
+    if (erroDespesas || erroMembros) {
+      console.error(
+        "Erro ao contar as transacoes do grupo:",
+        erroDespesas || erroMembros
+      );
+    }
+
+    const userIdPorMembro = new Map<string, string>(
+      (membrosDoGrupo || []).map((m) => [m.id, m.user_id])
+    );
+
+    const despesasParaContagem: DespesaParaContagem[] = (
+      despesasDoGrupo || []
+    ).map((gt) => ({
+      id: gt.id,
+      pagador: gt.transaction?.user_id,
+      tipo: gt.transaction?.transaction_type,
+      rateios: gt.splits || [],
+    }));
+
+    const contagem = contagemPorMembro(despesasParaContagem, userIdPorMembro);
+
     const balances = (linhas || []).map((l) => ({
       member: perfilPor.get(l.user_id) || { id: l.user_id, full_name: null },
       balance: Number(l.net_balance),
@@ -143,7 +239,9 @@ export async function GET(
       total_owed: Number(l.total_owed),
       settlements_paid: Number(l.settlements_paid),
       settlements_received: Number(l.settlements_received),
-      transactions_count: Number(l.paid_count) + Number(l.owed_count),
+      // A UNIAO das despesas que ele pagou com as que lhe cabe parte, contando
+      // cada despesa uma vez. Nao e `paid_count + owed_count`: ver o cabecalho.
+      transactions_count: contagem.get(l.user_id) ?? 0,
     }));
 
     // Grupo fechado soma zero: todo real pago a mais por um e um real pago a
