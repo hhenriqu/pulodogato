@@ -37,6 +37,37 @@
 // => nenhum peso => `parteConfiguradaDoMembro` devolve o valor inteiro. Aqui
 // essa regra importa mais do que em qualquer outra leitura do app: custo fixo
 // subestimado e o app PROMETENDO dinheiro que nao existe.
+//
+// A DIRECAO VEM DA VIEW, E NAO DO TIPO DA REGRA (HMO-308)
+// -------------------------------------------------------
+// Ate a HMO-308 esta rota lia a TABELA `scheduled_transactions` e deduzia a
+// direcao do `transaction_type` da REGRA recorrente. Conta avulsa nao tem
+// regra -- e entao TODA previsao avulsa caia em `expense`, inclusive a de
+// receita, que /api/scheduled-transactions aceita desde a HMO-188 gravando
+// `transaction_type` na propria ocorrencia.
+//
+// O ERRO ERA DUPLO, e as duas metades erravam para o MESMO lado: o `tipo` e
+// lido nos dois sentidos dentro de `calcularQuantoPossoGastar` (ver o laco de
+// `previstas` em lib/safe-to-spend.ts), entao a receita que caia em `expense`
+// SOMAVA em `compromissos` E DEIXAVA de somar em `receitasPrevistas`. No
+// fixture da medicao isso valia R$ 6.200,00 de salario e aluguel recebido
+// contados como contas a pagar: «A pagar» saia R$ 7.800,00 onde as despesas de
+// verdade sao R$ 1.600,00, e «A receber» saia R$ 0,00.
+//
+// `direction` da view `scheduled_transactions_effective` (migration 027) e a
+// precedencia JA RESOLVIDA -- ocorrencia, regra, e por fim 'expense'. Refazer o
+// COALESCE aqui seria a segunda copia dela, e a copia esquecida e exatamente
+// este defeito; por isso a rota nem le `transaction_type`, que e NULO em parte
+// da base instalada e so vira direcao depois do COALESCE que mora na view.
+// Mesma leitura de /api/papel-de-pao/painel, /api/movimentacoes/resumo e
+// /api/scheduled-transactions/summary.
+//
+// A TRANSFERENCIA NAO MUDOU, e isso e decisao e nao descuido. `direcaoDaAgenda`
+// responde a pergunta de CAIXA e manda tudo que nao e `income` para o lado de
+// saida -- R$ 500,00 que vao para a poupanca saem da conta de verdade. Por isso
+// esta rota NAO chama `classeDaAgenda`, que e a pergunta "isto e conta a
+// pagar?" do «Total de contas» do modo Papel de Pao. A medicao cobra os dois
+// numeros separados (`safeEsperado` da face (a) = R$ 500,00).
 
 import { createClient } from "@/utils/supabase/server";
 import { NextResponse } from "next/server";
@@ -47,6 +78,7 @@ import {
   parteConfiguradaDoMembro,
   type ParticipantesPorGrupo,
 } from "@/lib/parte-do-grupo";
+import { direcaoDaAgenda } from "@/lib/previsto-x-realizado";
 import {
   calcularQuantoPossoGastar,
   fimDoMes,
@@ -66,10 +98,17 @@ interface LinhaPrevista {
    * log e com um numero menor e plausivel na tela.
    */
   group_id: string | null;
-  recurring_rule:
-    | { transaction_type: string }
-    | { transaction_type: string }[]
-    | null;
+  /**
+   * LOAD-BEARING (HMO-308), e o tipo e `string | null` de proposito.
+   *
+   * 'income' | 'expense' | 'transfer', da coluna homonima de
+   * `scheduled_transactions_effective` -- a precedencia ocorrencia -> regra ->
+   * 'expense' resolvida UMA vez, na migration 027. Na pratica ela nunca vem
+   * nula (o COALESCE da view termina em 'expense'); `| null` existe porque o
+   * `null` e o unico sintoma possivel de a view ter sido trocada por uma que
+   * nao entregue a coluna, e e o que `direcaoIndisponivel` varre.
+   */
+  direction: string | null;
 }
 
 /** Uma linha de `card_invoice_lines`, do jeito que o select acima a pede. */
@@ -127,14 +166,21 @@ export async function GET() {
       );
     }
 
+    // A VIEW, e nao a tabela (HMO-308): a tabela nao tem `direction`, e deduzir
+    // a direcao do tipo da REGRA faz toda previsao avulsa de receita entrar
+    // como conta a pagar -- ver o cabecalho.
+    //
+    // `status` E NAO `effective_status`, e o recorte nao mudou com a troca: a
+    // view entrega as duas colunas, `status` e a gravada, e trocar por
+    // `effective_status` aqui excluiria justamente a conta VENCIDA e nao paga --
+    // dinheiro que vai sair, e que `compromissosVencidos` existe para destacar.
+    //
     // Sem piso de data: uma conta que venceu no mes passado e nao foi paga
     // continua sendo dinheiro que vai sair. O filtro de teto e feito no
     // calculo, que ja conhece o fim do mes.
     const { data: previstas, error: erroPrevistas } = await supabase
-      .from("scheduled_transactions")
-      .select(
-        "id, amount, due_date, notes, group_id, recurring_rule:recurring_rules(transaction_type)"
-      )
+      .from("scheduled_transactions_effective")
+      .select("id, amount, due_date, notes, group_id, direction")
       .eq("user_id", user.id)
       .eq("status", "pending")
       .lte("due_date", ate);
@@ -198,15 +244,42 @@ export async function GET() {
       }
     }
 
-    // A direcao (sai ou entra) vem do tipo da REGRA, nao da ocorrencia --
-    // `scheduled_transactions.amount` e sempre positivo por CHECK. Mesma
-    // leitura da /api/projection; conta avulsa nao tem regra e e despesa.
+    // ------------------------------------------------------------------
+    // A DIRECAO INDISPONIVEL (HMO-308)
+    // ------------------------------------------------------------------
+    // A coluna vem `NOT NULL` na pratica, entao esta varredura so dispara se a
+    // view for trocada por uma que nao a entregue -- ou se o `select` perder a
+    // coluna. Ela custa uma passada e evita o modo de falha caro: sem direcao,
+    // `direcaoDaAgenda` manda TODA linha para `expense` e o defeito desta issue
+    // volta inteiro, com «A receber» em R$ 0,00 ao lado de um «A pagar» que
+    // engoliu o salario.
+    //
+    // E O QUE NAO SE FAZ AQUI E ZERAR AS PREVISTAS, e nisto a rota DIVERGE do
+    // /api/scheduled-transactions/summary de proposito. La o previsto do mes sai
+    // zerado junto com a flag, e esta certo: o bloco inteiro cala. Aqui zerar
+    // `compromissos` levantaria o "posso gastar" -- o app passaria a PROMETER
+    // dinheiro que nao sobra, que e a unica direcao de erro que esta tela nao
+    // pode ter. Entao o numero continua sendo o conservador (tudo como despesa)
+    // e a flag e o que impede a tela de afirmar que nao ha nada a receber.
+    const direcaoIndisponivel = ((previstas ?? []) as LinhaPrevista[]).some(
+      (p) => p.direction == null
+    );
+
+    if (direcaoIndisponivel) {
+      console.error(
+        "Posso gastar seguiu contando TODA previsao como despesa: a view scheduled_transactions_effective nao entregou `direction` (migration 027)"
+      );
+    }
+
+    // `amount` e sempre POSITIVO por CHECK -- a ocorrencia nao guarda sinal
+    // nenhum, e quem diz se aquilo entra ou sai e `direction`.
+    //
+    // `direcaoDaAgenda` E IMPORTADA, e nao reescrita como um `=== "income"`
+    // aqui: ela e a UNICA copia da pergunta de caixa, e e ela que manda
+    // `transfer` para o lado de saida. Um ternario escrito a mao neste ponto
+    // seria a segunda copia -- e as duas discordariam na primeira direcao nova.
     const paraCalculo: PrevistaParaGastar[] = ((previstas ??
       []) as LinhaPrevista[]).map((p) => {
-      const regra = Array.isArray(p.recurring_rule)
-        ? p.recurring_rule[0]
-        : p.recurring_rule;
-
       return {
         id: p.id,
         // A MINHA PARTE, e nao o valor cheio (HMO-306). Linha fora de grupo
@@ -220,7 +293,7 @@ export async function GET() {
         ),
         due_date: p.due_date,
         notes: p.notes,
-        tipo: regra?.transaction_type === "income" ? "income" : "expense",
+        tipo: direcaoDaAgenda(p.direction),
       };
     });
 
@@ -398,6 +471,12 @@ export async function GET() {
       // faturas, `dividaDiferida` vem 0 porque a divida inteira voltou a ser
       // descontada -- e nao porque nao ha parcela futura.
       diferido_indisponivel: semDiferido,
+      // E idem para a DIRECAO das previstas (HMO-308). Aqui o numero publicado
+      // continua sendo o conservador -- tudo contado como despesa --, entao sem
+      // esta flag a tela escreveria "+ R$ 0,00 · Receitas previstas" embaixo de
+      // um «A pagar» que somou justamente o salario. Duas afirmacoes falsas, e
+      // a tranquilizadora e a que ninguem confere.
+      direcao_indisponivel: direcaoIndisponivel,
       safe_to_spend: calcularQuantoPossoGastar({
         contas: contas ?? [],
         previstas: paraCalculo,

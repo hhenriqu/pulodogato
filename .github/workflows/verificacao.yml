@@ -2435,6 +2435,9 @@ jobs:
           # a funcao, a medicao continua verde, porque quem chamou foi o script.
           # Os cinco mutantes abaixo sao as cinco formas de desligar essa fiacao,
           # e as cinco produzem um numero plausivel sem erro de tipo e sem log.
+          # Os seis da HMO-308 (10 a 15) sao as formas de desligar a OUTRA
+          # metade da mesma consulta -- a direcao --, e valem pelo mesmo
+          # criterio: a medicao prova a conta, nunca a fiacao.
           #
           # O MUTANTE 9 JA COBROU, e e a razao de os dois ultimos existirem: a
           # primeira versao do guard exigia `.eq("user_id", user.id)` no arquivo
@@ -2482,8 +2485,16 @@ jobs:
           #    chamada fica no lugar, recebe `undefined` e devolve o valor
           #    CHEIO. Nada no `tsc` acusa, porque o campo e opcional na
           #    assinatura da funcao.
+          #
+          #    A ANCORA MUDOU NA HMO-308, e nao e detalhe de forma: ate ela o
+          #    `select` terminava em `recurring_rule:recurring_rules(...)`,
+          #    porque a rota lia a TABELA e deduzia a direcao do tipo da REGRA.
+          #    Com a troca pela view o embed deixou de existir -- e um `sed` que
+          #    nao casa SAI 0, ou seja este mutante teria passado por
+          #    "sobrevivente" sem nunca ter sido aplicado. Quem pega isso e o
+          #    `cmp` dentro de `estragar_rota`.
           estragar_rota \
-            's/notes, group_id, recurring_rule/notes, recurring_rule/' \
+            's/notes, group_id, direction/notes, direction/' \
             'o select perde o group_id -- a chamada fica e nao divide nada'
 
           # 7) A CONSULTA DOS PESOS DESAPARECE. Mapa vazio e o "desconhecido" de
@@ -2510,7 +2521,90 @@ jobs:
             's/\.eq\("user_id", user\.id\)\n(\s+\.eq\("status", "pending"\))/.or("user_id.eq." + user.id + ",group_id.not.is.null")\n$1/' \
             'o filtro de user_id cai -- a conta do outro membro entra na minha'
 
-          echo "a verificacao de fatura escolhida sabe falhar nos nove casos"
+          # ---------------------------------------------------------------
+          # 10 a 15) A DIRECAO SAI DA VIEW, E NAO DO TIPO DA REGRA (HMO-308)
+          # ---------------------------------------------------------------
+          # O defeito: a rota lia a TABELA `scheduled_transactions`, que nao tem
+          # `direction` (a coluna nasceu na 027, na view), e deduzia a direcao do
+          # `transaction_type` da REGRA. Previsao AVULSA nao tem regra -- entao
+          # toda previsao avulsa de receita caia em `expense`.
+          #
+          # E O ERRO ERA DUPLO, porque `tipo` decide AS DUAS somas de
+          # `calcularQuantoPossoGastar`: a receita marcada como despesa SOMAVA em
+          # `compromissos` E DEIXAVA de somar em `receitasPrevistas`. No fixture
+          # da medicao, R$ 6.200,00 de salario e aluguel recebido contados como
+          # contas a pagar: «A pagar» R$ 7.800,00 onde as despesas de verdade sao
+          # R$ 1.600,00, e «A receber» R$ 0,00.
+          #
+          # CADA UM DESTES SEIS MORRE POR UMA ASSERCAO DIFERENTE, e isso foi
+          # MEDIDO antes de eles entrarem aqui: 11, 12, 14 e 15 reprovam por UMA
+          # linha cada, e o 13 por UMA tambem -- e e por isso que ele poe a
+          # peneira de `classeDaAgenda` em vez de trocar a chamada. Trocar a
+          # chamada tambem reprovaria, mas pelo `exigido` do mutante 12, e a
+          # proibicao de `classeDaAgenda` ficaria sem medida nenhuma.
+          #
+          # NADA DISSO APARECE NO `tsc`: as duas fontes sao strings, e o retorno
+          # do PostgREST e `any` na pratica. A rota compila, nao loga, e devolve
+          # um numero MENOR -- o lado que parece conservador e por isso nao e
+          # conferido.
+
+          # 10) O DEFEITO DESTA ISSUE, REINTRODUZIDO: a rota volta a ler a
+          #     TABELA. E o unico dos seis que reprova por varias linhas de uma
+          #     vez, e esta certo que seja: ler a tabela desfaz a feature
+          #     inteira, nao uma decisao dela.
+          estragar_rota \
+            's/\.from\("scheduled_transactions_effective"\)/.from("scheduled_transactions")/' \
+            'a rota volta a ler a TABELA -- R$ 6.200,00 de receita viram conta a pagar'
+
+          # 11) `direction` SAI DO `select`, COM A VIEW CERTA NO LUGAR. O irmao
+          #     silencioso do mutante 6: `p.direction` vem `undefined`,
+          #     `direcaoDaAgenda` manda TODA linha para despesa, e o defeito
+          #     volta inteiro sem a rota ter trocado de fonte.
+          estragar_rota \
+            's/notes, group_id, direction/notes, group_id/' \
+            'o select perde o direction -- toda linha cai em despesa de novo'
+
+          # 12) A CHAMADA MORRE E O IMPORT FICA, como no mutante 5: a direcao
+          #     passa a ser a constante 'expense'. O nome continua aparecendo no
+          #     arquivo, e um guard que lesse a lista de imports aprovaria.
+          estragar_rota \
+            's/tipo: direcaoDaAgenda\(p\.direction\)/tipo: "expense"/' \
+            'a direcao vira a constante expense -- o salario volta a ser conta a pagar'
+
+          # 13) A TRANSFERENCIA SAI DO DESCONTO, e este e o mutante do ESCOPO:
+          #     a pergunta desta rota e CAIXA, e R$ 500,00 que vao para a
+          #     poupanca saem da conta de verdade. `classeDaAgenda` responde
+          #     outra pergunta ("isto e conta a pagar?") -- a do «Total de
+          #     contas» do modo Papel de Pao, que tira a transferencia de
+          #     proposito. Poe-la aqui alinharia as duas telas e subiria o
+          #     "posso gastar" em R$ 500,00, sem erro de tipo e sem log. O
+          #     `safeEsperado` da face (a) da medicao e a contrapartida disto.
+          estragar_rota \
+            's/as LinhaPrevista\[\]\)\.map\(\(p\) => \{/as LinhaPrevista[]).filter((p) => classeDaAgenda(p.direction) !== "transfer").map((p) => {/' \
+            'a peneira de classeDaAgenda entra -- a transferencia sai do desconto'
+
+          # 14) O TIPO DA REGRA VOLTA AO `select`, com a chamada de
+          #     `direcaoDaAgenda` INTACTA. A forma que a regressao tem de
+          #     verdade: alguem traz o embed de volta "por seguranca" e a
+          #     deducao reaparece ao lado da coluna certa. `transaction_type` e
+          #     NULO em parte da base instalada, e o COALESCE que termina em
+          #     'expense' mora na view -- refaze-lo aqui e a segunda copia da
+          #     precedencia, que e a divida que a HMO-187 ja pagou uma vez.
+          estragar_rota \
+            's/"id, amount, due_date, notes, group_id, direction"/"id, amount, due_date, notes, group_id, direction, recurring_rule:recurring_rules(transaction_type)"/' \
+            'o transaction_type da regra volta ao select -- a segunda copia da precedencia'
+
+          # 15) A FLAG SAI DA RESPOSTA. Sem `direction` o numero publicado
+          #     continua sendo o conservador (tudo como despesa) -- e e por isso
+          #     que a flag importa: a tela escreveria
+          #     "+ R$ 0,00 · Receitas previstas" embaixo de um «A pagar» que
+          #     somou justamente o salario. Duas afirmacoes falsas, e a
+          #     tranquilizadora e a que ninguem confere.
+          estragar_rota \
+            's/^      direcao_indisponivel: direcaoIndisponivel,\n//m' \
+            'a flag de direcao indisponivel sai da resposta -- a tela afirma R$ 0,00 a receber'
+
+          echo "a verificacao de fatura escolhida sabe falhar nos quinze casos"
 
       - name: 'A arvore voltou ao lugar depois de "A verificacao sabe falhar (fatura escolhida)"'
         run: |

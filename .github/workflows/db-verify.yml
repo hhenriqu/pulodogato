@@ -1610,12 +1610,28 @@ jobs:
       # configurada (R$ 300,00), entao o total caiu para R$ 7.800,00 -- os
       # R$ 700,00 da diferenca, e nada mais.
       #
-      # O script cobra os TRES numeros e a identidade entre eles
-      # (8.500 - 700 = 7.800), para que ajustar um deles ao que o codigo
-      # imprimiu nao passe verde. E cobra duas faces em que a quarta leitura
-      # DIVERGE do «Total de contas» de proposito: ela desconta a transferencia
-      # de R$ 500,00 (a pergunta dela e caixa) e NAO conta a conta de grupo do
-      # outro membro (R$ 0,00 -- a parte dele sai da carteira dele).
+      # E A HMO-308 E O SEGUNDO DEGRAU, deliberadamente separado do primeiro: a
+      # rota lia a TABELA `scheduled_transactions` e deduzia a direcao do tipo
+      # da REGRA, e previsao AVULSA nao tem regra -- R$ 6.200,00 de salario e
+      # aluguel recebido entravam como contas a pagar. Consertar isso no PR da
+      # HMO-306 faria DOIS numeros se moverem na mesma linha da medicao, e
+      # nenhum dos dois ficaria conferivel. A cadeia inteira:
+      #
+      #   8.500 - 700 (HMO-306) - 6.200 (HMO-308) = 1.600
+      #
+      # O script cobra os DOIS degraus separados, para que desfazer a parte do
+      # grupo e inflar a receita na mesma medida nao passe verde. E cobra a
+      # METADE QUE A SUBTRACAO NAO PROVA: os R$ 6.200,00 que sairam de «A pagar»
+      # tem de APARECER em «A receber». O defeito da HMO-308 era duplo (`tipo`
+      # decide as duas somas), e sem essa cobranca um conserto que simplesmente
+      # DESCARTASSE a linha de receita daria o mesmo R$ 1.600,00 e esconderia
+      # R$ 6.200,00 que a pessoa vai receber.
+      #
+      # E cobra duas faces em que a quarta leitura DIVERGE do «Total de contas»
+      # de proposito: ela desconta a transferencia de R$ 500,00 (a pergunta dela
+      # e caixa, e e `direcaoDaAgenda` que a produz -- nao `classeDaAgenda`) e
+      # NAO conta a conta de grupo do outro membro (R$ 0,00 -- a parte dele sai
+      # da carteira dele).
       #
       # O ELO EXPLICITO DA FATURA -- HMO-305, o mecanismo (b).
       #
