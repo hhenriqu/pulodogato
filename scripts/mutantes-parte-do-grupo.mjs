@@ -121,10 +121,34 @@ const mutantes = [
   ],
 
   // --- o custo fixo mensal ---
+  //
+  // A ANCORA DOS TRES ABAIXO MUDOU NA HMO-257. A peneira era
+  // `r.transaction_type !== "income"` e passou a ser
+  // `classeDaAgenda(r.transaction_type) === "expense"`, para a transferencia
+  // recorrente sair do custo fixo. O mutante da receita foi REESCRITO na ancora
+  // nova em vez de deixado para tras: ancora morta fica verde por nao ter mexido
+  // em nada, e desde a HMO-262 isso reprova no pre-commit.
   [
     "a receita volta a entrar no custo fixo",
-    '    .filter((r) => r.transaction_type !== "income")',
+    '    .filter((r) => classeDaAgenda(r.transaction_type) === "expense")',
     "    .filter(() => true)",
+  ],
+  [
+    // O DEFEITO DA HMO-257, exatamente como producao o media: a transferencia
+    // recorrente de R$ 100/mes para o PIX somando ao custo fixo (R$ 1.300,00
+    // onde o certo e R$ 1.200,00). E o criterio ANTIGO, byte a byte.
+    "a transferencia recorrente volta a contar como custo fixo (o defeito da HMO-257)",
+    '    .filter((r) => classeDaAgenda(r.transaction_type) === "expense")',
+    '    .filter((r) => r.transaction_type !== "income")',
+  ],
+  [
+    // O ERRO OPOSTO, e o caro: allow-list lido do campo CRU. Ele conserta a
+    // transferencia e passa nos testes do valor, mas `transaction_type` e NULO
+    // em parte da base instalada -- toda regra de despesa antiga sairia do custo
+    // fixo em silencio, e o numero cairia para perto de zero.
+    "a peneira passa a ler o campo CRU, e a despesa sem transaction_type desaparece",
+    '    .filter((r) => classeDaAgenda(r.transaction_type) === "expense")',
+    '    .filter((r) => r.transaction_type === "expense")',
   ],
   [
     "a normalizacao para mes desaparece (o seguro anual vira parcela mensal)",
