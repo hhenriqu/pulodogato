@@ -1748,6 +1748,49 @@ jobs:
       - name: A receita prevista AVULSA continua fora de planned_expense depois da 046
         run: $PSQL -f database/tests/043_direcao_do_previsto_avulso_test.sql
 
+      # HMO-183 (destravada pela HMO-234). O canal de e-mail do aviso de
+      # vencimento. Aditiva sobre o 009: duas colunas novas em
+      # bill_notifications, uma em notification_preferences, e `bill_alerts`
+      # recriada para expor a preferencia de canal.
+      #
+      # ESTA MIGRATION NASCEU 038 E HOJE E A 047. O numero foi tomado duas
+      # vezes enquanto o PR estava parado em conflito (a 038 virou
+      # `transferencia_recorrente`, e a corrida seguinte levou 045 e 046). Nada
+      # no corpo dela depende da posicao: ela so le `bill_alerts` como o 009 a
+      # deixou, e nenhuma migration entre o 009 e a 046 toca essa view --
+      # conferido com `git grep bill_alerts` na main antes de renumerar. Se ela
+      # for renumerada de novo, estes tres passos e os comentarios acima
+      # precisam andar junto.
+      - name: 047_aviso_por_email
+        run: $PSQL -f database/migrations/047_aviso_por_email.sql
+
+      # Re-executavel: ADD COLUMN IF NOT EXISTS nos tres, DROP CONSTRAINT IF
+      # EXISTS antes do ADD CONSTRAINT, e CREATE OR REPLACE na view.
+      - name: 047 e idempotente
+        run: $PSQL -f database/migrations/047_aviso_por_email.sql
+
+      # O que esta suite guarda, em uma linha: rodar o cron duas vezes no mesmo
+      # dia nao pode mandar dois e-mails -- e quem garante isso nao e contador
+      # nenhum no TypeScript, e a UNIQUE (scheduled_transaction_id, kind,
+      # reference_date) do 009, que faz o upsert devolver lista VAZIA na segunda
+      # execucao.
+      #
+      # E o motivo de ela rodar DEPOIS da 047, e nao antes: a maioria das
+      # assercoes e sobre a definicao nova de bill_alerts, e na posicao errada o
+      # arquivo veria a view do 009 e passaria verde sem exercitar nada.
+      #
+      # A assercao que menos parece necessaria e a que mais e: `bill_alerts tem
+      # security_invoker=true no catalogo`. CREATE OR REPLACE VIEW APAGA os
+      # reloptions -- medido num Postgres 17 local, a view sai da 047 sem a
+      # opcao se o ALTER VIEW nao estiver la. Sem ele a view roda como o DONO,
+      # a RLS de scheduled_transactions para de valer, e o sino de cada pessoa
+      # passa a listar as contas a vencer de TODO MUNDO, sem erro nenhum.
+      #
+      # Medido: 6 mutantes na 047, 6 mortos, mais o controle negativo (a suite
+      # inteira fica vermelha quando roda ANTES da 047).
+      - name: Dois crons no mesmo dia nao mandam dois e-mails, e a view nao perde o invoker
+        run: $PSQL -f database/tests/047_aviso_por_email_test.sql
+
       # O hmo197 roda na POSICAO dele, muito acima, onde o trigger do 001 ainda
       # existe e ele o desliga com DISABLE TRIGGER. A 044 apaga esse trigger,
       # entao aquele arquivo passou a envolver o DISABLE/ENABLE num `IF EXISTS`
