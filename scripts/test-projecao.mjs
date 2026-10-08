@@ -37,16 +37,23 @@
 // Mesmo desenho do test-safe-to-spend.mjs: .mjs rodando o JS que o tsc emitiu,
 // com o passo de reescrita de alias no meio, sem runner novo.
 //
-// Nao se testa a ROTA com duble de client: a consulta de previstas usa embed
-// (`recurring_rule:recurring_rules(transaction_type)`), e duble de rota com
-// embed projeta `undefined` em tudo -- o teste passaria sem ver nada. E por
-// isso que a aritmetica foi extraida para o lib.
+// Nao se testa a ROTA com duble de client: a consulta de previstas le a view
+// `scheduled_transactions_effective`, e o que importa medir e a aritmetica que
+// consome o `direction` dela -- nao a fiacao do select. E por isso que a
+// aritmetica foi extraida para o lib.
+//
+// A DIRECAO CHEGA EM `direction`, NAO NO EMBED DA REGRA (HMO-256). Os casos de
+// receita abaixo passam `direction: "income"` porque e isso que a view entrega;
+// antes desta issue eles passavam `recurring_rule: { transaction_type }`, e a
+// previsao AVULSA de receita -- a que nao tem regra nenhuma por tras -- nao
+// tinha como ser expressada. Ela e o caso `direction` sem `recurring_rule`, e
+// era exatamente o defeito.
 // =====================================================
 
 import test from "node:test";
 import assert from "node:assert/strict";
 
-const { calcularProjecao, fimDoMes, tipoDaPrevista } = await import(
+const { calcularProjecao, fimDoMes } = await import(
   "../.tmp-projecao/projecao.js"
 );
 
@@ -83,7 +90,9 @@ const prevista = (extra = {}) => ({
   amount: 100,
   due_date: "2026-10-20",
   notes: null,
-  recurring_rule: null,
+  // Sem `direction`: e a previsao avulsa de DESPESA, o caso mais comum, e o
+  // default conservador que `direcaoDaAgenda` aplica quando a coluna nao vem.
+  direction: null,
   ...extra,
 });
 
@@ -267,7 +276,7 @@ test("receita prevista sem conta entra no scheduled_in", () => {
     [
       prevista({
         amount: 250,
-        recurring_rule: { transaction_type: "income" },
+        direction: "income",
       }),
     ]
   );
@@ -300,7 +309,7 @@ test("receita vencida nao entra no overdue_total", () => {
         account_id: CORRENTE_ID,
         amount: 300,
         due_date: "2026-10-01",
-        recurring_rule: { transaction_type: "income" },
+        direction: "income",
       }),
     ]
   );
@@ -398,7 +407,7 @@ test("receita prevista pode TIRAR o aviso de uma conta", () => {
       prevista({
         account_id: CORRENTE_ID,
         amount: 200,
-        recurring_rule: { transaction_type: "income" },
+        direction: "income",
       }),
     ]
   );
@@ -429,7 +438,7 @@ test("projected_total e o saldo de hoje menos o que sai mais o que entra", () =>
       prevista({
         account_id: CORRENTE_ID,
         amount: 250,
-        recurring_rule: { transaction_type: "income" },
+        direction: "income",
       }),
     ]
   );
@@ -452,7 +461,7 @@ test("a projecao por conta desconta o que sai e soma o que entra", () => {
       prevista({
         account_id: CORRENTE_ID,
         amount: 250,
-        recurring_rule: { transaction_type: "income" },
+        direction: "income",
       }),
     ]
   );
@@ -526,63 +535,112 @@ test("amount negativo entra como modulo", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 7. A DIRECAO VEM DO TIPO DA REGRA, NAS DUAS FORMAS DO EMBED
+// 7. A DIRECAO VEM DE `direction`, E A AVULSA DE RECEITA E O CASO DA HMO-256
 // ---------------------------------------------------------------------------
+// A view ja resolveu a precedencia (ocorrencia -> regra -> 'expense'), entao
+// aqui nao ha duas formas de embed para normalizar: ha UMA coluna. O que estes
+// casos medem e que a aritmetica OBEDECE a coluna -- inclusive quando ela diz
+// 'income' sem haver regra nenhuma, que e a previsao avulsa de receita.
 
-test("o embed vem como objeto ou como array de um, e os dois leem igual", () => {
-  assert.equal(
-    tipoDaPrevista(prevista({ recurring_rule: { transaction_type: "income" } })),
-    "income"
+test("a receita prevista AVULSA entra no scheduled_in, e nao no scheduled_out", () => {
+  // O caso da issue, sem regra de recorrencia: antes da HMO-256 esta linha
+  // caia inteira em `scheduled_out`. Nao basta medir que ela SAIU do lado de
+  // pagar -- uma rota que simplesmente DESCARTASSE a linha daria o mesmo
+  // `scheduled_out`, e esconderia dinheiro que a pessoa vai receber. Por isso
+  // as duas faces sao cobradas na mesma assercao.
+  const r = calcula(
+    [corrente(1000)],
+    [prevista({ account_id: CORRENTE_ID, amount: 13, direction: "income" })]
   );
-  assert.equal(
-    tipoDaPrevista(
-      prevista({ recurring_rule: [{ transaction_type: "income" }] })
-    ),
-    "income"
-  );
-  assert.equal(tipoDaPrevista(prevista({ recurring_rule: null })), undefined);
+
+  assert.equal(daCorrente(r).scheduled_out, 0);
+  assert.equal(daCorrente(r).scheduled_in, 13);
+  assert.equal(daCorrente(r).projected_balance, 1013);
 });
 
-test("receita chega igual pelas duas formas do embed", () => {
-  const objeto = calcula(
+test("o erro da HMO-256 era DUPLO: a receita lida como despesa afunda o saldo em 2x", () => {
+  // A mesma linha pelas duas leituras. A distancia entre os dois saldos
+  // projetados e DOIS vezes o valor (uma vez por deixar de somar em
+  // `scheduled_in`, outra por somar em `scheduled_out`) -- e e por isso que o
+  // defeito valia o dobro do que a soma de compromissos sugeria.
+  const comoReceita = calcula(
     [corrente(1000)],
-    [
-      prevista({
-        account_id: CORRENTE_ID,
-        amount: 250,
-        recurring_rule: { transaction_type: "income" },
-      }),
-    ]
+    [prevista({ account_id: CORRENTE_ID, amount: 500, direction: "income" })]
   );
-  const array = calcula(
+  const comoDespesa = calcula(
     [corrente(1000)],
-    [
-      prevista({
-        account_id: CORRENTE_ID,
-        amount: 250,
-        recurring_rule: [{ transaction_type: "income" }],
-      }),
-    ]
+    [prevista({ account_id: CORRENTE_ID, amount: 500, direction: "expense" })]
   );
 
-  assert.equal(objeto.scheduled_in, 250);
-  assert.deepEqual(array, objeto);
+  assert.equal(daCorrente(comoReceita).projected_balance, 1500);
+  assert.equal(daCorrente(comoDespesa).projected_balance, 500);
+  assert.equal(
+    daCorrente(comoReceita).projected_balance -
+      daCorrente(comoDespesa).projected_balance,
+    2 * 500
+  );
 });
 
-test("regra de despesa desconta, igual a prevista avulsa", () => {
+test("direction 'expense' desconta, igual a avulsa sem direction nenhuma", () => {
+  const explicita = calcula(
+    [corrente(1000)],
+    [prevista({ account_id: CORRENTE_ID, amount: 400, direction: "expense" })]
+  );
+  const ausente = calcula(
+    [corrente(1000)],
+    [prevista({ account_id: CORRENTE_ID, amount: 400, direction: null })]
+  );
+
+  assert.equal(daCorrente(explicita).scheduled_out, 400);
+  assert.equal(daCorrente(explicita).scheduled_in, 0);
+  assert.deepEqual(ausente, explicita);
+});
+
+test("direction desconhecida cai em despesa -- o lado conservador", () => {
+  // Nao existe terceira direcao na coluna, mas a view pode ser trocada por uma
+  // que nao entregue `direction`, e `transfer` ja e valor legitimo da enum de
+  // `transaction_type`. Qualquer coisa que nao seja 'income' tem de descontar:
+  // ler uma despesa como receita prometeria folga que nao existe.
+  for (const desconhecida of ["transfer", "", "INCOME", undefined]) {
+    const r = calcula(
+      [corrente(1000)],
+      [
+        prevista({
+          account_id: CORRENTE_ID,
+          amount: 90,
+          direction: desconhecida,
+        }),
+      ]
+    );
+
+    assert.equal(
+      daCorrente(r).scheduled_out,
+      90,
+      `direction ${JSON.stringify(desconhecida)} deveria descontar`
+    );
+    assert.equal(daCorrente(r).scheduled_in, 0);
+  }
+});
+
+test("a receita prevista avulsa VENCIDA nao entra no overdue_total", () => {
+  // `overdue_total` e "conta que venceu e nao foi paga". Uma receita atrasada
+  // nao e uma divida da pessoa, e contar o salario que nao caiu como conta
+  // vencida foi o que a assercao de `vencidoTotal` sempre protegeu -- mas so
+  // conseguia proteger via REGRA. Avulsa chegava aqui como despesa vencida.
   const r = calcula(
     [corrente(1000)],
     [
       prevista({
         account_id: CORRENTE_ID,
-        amount: 400,
-        recurring_rule: { transaction_type: "expense" },
+        amount: 700,
+        due_date: "2026-10-01",
+        direction: "income",
       }),
     ]
   );
 
-  assert.equal(daCorrente(r).scheduled_out, 400);
-  assert.equal(daCorrente(r).scheduled_in, 0);
+  assert.equal(r.overdue_total, 0);
+  assert.equal(daCorrente(r).scheduled_in, 700);
 });
 
 // ---------------------------------------------------------------------------

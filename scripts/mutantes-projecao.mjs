@@ -147,14 +147,36 @@ const MUTANTES = [
     para: "projecoes.reduce((s, p) => s + p.scheduled_out, 0)",
   },
   {
-    nome: "a direcao deixa de vir do tipo da regra (tudo vira despesa)",
-    de: 'const ehReceita = tipoDaPrevista(p) === "income";',
+    nome: "a direcao deixa de ser lida (tudo vira despesa, o defeito da HMO-256)",
+    de: 'const ehReceita = direcaoDaAgenda(p.direction) === "income";',
     para: "const ehReceita = false;",
   },
   {
-    nome: "o embed em ARRAY deixa de ser lido",
-    de: "Array.isArray(p.recurring_rule)\n    ? p.recurring_rule[0]\n    : p.recurring_rule",
-    para: "p.recurring_rule as RegraDaPrevista | undefined",
+    // O mutante que SUBSTITUI "o embed em ARRAY deixa de ser lido": a HMO-256
+    // apagou a normalizacao do embed (a direcao vem de UMA coluna da view
+    // agora), e um `de:` que nao casa sai 0 sem mutar nada.
+    //
+    // ELE TEM DE PULAR `direcaoDaAgenda`, e nao variar o lado direito da
+    // igualdade. Medido: `!== "expense"` SOBREVIVE, e sobrevive CERTO --
+    // `direcaoDaAgenda` devolve `DirecaoPrevista` ("income" | "expense"), entao
+    // as duas comparacoes particionam o mesmo conjunto e o mutante e
+    // equivalente. Quem carrega o default conservador e a funcao, nao a
+    // comparacao: ler `p.direction` crua e o que perde o lado seguro, e faz
+    // `direction` nulo ou 'transfer' prometer dinheiro que nao vem.
+    nome: "a direcao e lida crua, sem o default conservador de direcaoDaAgenda",
+    de: 'const ehReceita = direcaoDaAgenda(p.direction) === "income";',
+    para: 'const ehReceita = p.direction !== "expense";',
+  },
+  {
+    // A previsao AVULSA e o caso da issue: ela tem `direction` e nao tem regra.
+    // Este mutante reintroduz a suposicao antiga pela porta dos fundos -- so
+    // confia na coluna quando ela diz 'expense' --, e e a forma mais barata de
+    // o defeito voltar sem que nenhum nome de funcao mude.
+    nome: "so a despesa e lida da coluna; a receita avulsa volta a ser despesa",
+    de: 'const ehReceita = direcaoDaAgenda(p.direction) === "income";',
+    para:
+      'const ehReceita = direcaoDaAgenda(p.direction) === "income" &&\n' +
+      "      p.notes != null;",
   },
   {
     nome: "o valor da prevista deixa de ser modulo",

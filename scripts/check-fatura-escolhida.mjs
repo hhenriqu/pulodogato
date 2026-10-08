@@ -3,6 +3,7 @@
 // PULODOGATO - O ROTULO DE FATURA LE FATURA, E NAO `current_balance` (HMO-290)
 //              O "POSSO GASTAR" DESCONTA A MINHA PARTE DO GRUPO (HMO-306)
 //              E A DIRECAO DELE SAI DA VIEW, NAO DO TIPO DA REGRA (HMO-308)
+//              -- E A DA PROJECAO TAMBEM (HMO-256, secao 7)
 // =====================================================
 //   npm run check-fatura-escolhida
 //
@@ -457,10 +458,96 @@ exigido(
 );
 
 // ---------------------------------------------------------------------------
+// 7. A PROJECAO LE A MESMA VIEW, PELO MESMO MOTIVO (HMO-256)
+// ---------------------------------------------------------------------------
+// A HMO-308 consertou o "posso gastar"; a MESMA suposicao vivia em mais dois
+// lugares, e este e o segundo: `GET /api/projection`. A terceira perna e a view
+// `planned_vs_actual`, que e SQL e nao cabe aqui -- ela vai na migration 043 e
+// quem a cobra e `database/tests/043_direcao_do_previsto_avulso_test.sql`.
+//
+// O defeito, medido em producao em 04/10/2026 com sonda controlada: uma receita
+// prevista avulsa de R$ 13,00 em 31/10 subiu os compromissos de R$ 1.480,00
+// para R$ 1.493,00 e deixou as receitas previstas em R$ 2.700,00 -- +13 no lado
+// errado, +0 no certo.
+//
+// POR QUE AS ASSERCOES SE DIVIDEM ENTRE A ROTA E O LIB: a rota decide de ONDE
+// os dados vem (a view) e o lib decide o que ELE faz com a direcao. Nenhum
+// mutante de `lib/projecao.ts` alcanca a troca da tabela pela view -- a `.from`
+// nao esta no alvo dele --, e nenhuma assercao textual na rota alcanca a
+// aritmetica. As duas metades sao necessarias, e e por isso que o conserto
+// desta issue nao fica provado por `mutantes:projecao` sozinho.
+const ROTA_DA_PROJECAO = "app/api/projection/route.ts";
+const LIB_DA_PROJECAO = "lib/projecao.ts";
+
+exigido(
+  ROTA_DA_PROJECAO,
+  `.from("${AGENDA_DO_POSSO_GASTAR}")`,
+  "a agenda da projecao tem que vir da VIEW, pela mesma razao da secao 6: ela " +
+    "e o unico lugar com a direcao resolvida (migration 027)"
+);
+// As duas metades, igual a secao 6: exigir a view sem PROIBIR a tabela deixaria
+// passar uma segunda consulta que voltasse a deduzir a direcao da regra.
+proibido(
+  ROTA_DA_PROJECAO,
+  '.from("scheduled_transactions")',
+  "a TABELA nao tem `direction`. Ler dali obriga a deduzir a direcao do tipo " +
+    "da REGRA, e previsao avulsa nao tem regra -- o defeito da HMO-256"
+);
+exigidoNaConsulta(
+  ROTA_DA_PROJECAO,
+  AGENDA_DO_POSSO_GASTAR,
+  "direction",
+  "o `select` das previstas tem que trazer `direction`. Sem a coluna, " +
+    "`p.direction` e `undefined`, `direcaoDaAgenda` manda TODA linha para " +
+    "despesa, e o defeito volta inteiro -- com a rota lendo a view certa"
+);
+// `notes` ANDA JUNTO, e nao e desta issue: e a chave canonica da fatura, o
+// criterio da exclusao da HMO-293. Ela esta aqui porque a troca da tabela pela
+// view reescreveu o `select` inteiro, e uma coluna que cai do select nao da
+// erro nenhum -- so faz a fatura fechada voltar a ser descontada em silencio.
+exigidoNaConsulta(
+  ROTA_DA_PROJECAO,
+  AGENDA_DO_POSSO_GASTAR,
+  "notes",
+  "sem `notes` a chave canonica da fatura nao chega ao lib, `ehFatura` " +
+    "devolve falso para tudo, e a fatura fechada volta ao `scheduled_out` -- " +
+    "o defeito da HMO-293, reaberto pelo select"
+);
+proibido(
+  ROTA_DA_PROJECAO,
+  "transaction_type",
+  "esta rota nao le `transaction_type`, nem da ocorrencia nem da regra. O " +
+    "`COALESCE` que termina em 'expense' mora na view: refaze-lo aqui e a " +
+    "segunda copia da precedencia"
+);
+proibido(
+  ROTA_DA_PROJECAO,
+  "recurring_rule",
+  "o embed da regra foi o que produziu o defeito: ele responde pela RECORRENCIA " +
+    "e nao pela ocorrencia, e previsao avulsa nao tem regra para embedar"
+);
+// A CHAMADA, e nao o nome -- mesmo argumento da secao 6. `direcaoDaAgenda`
+// sozinho casaria com a linha do `import`, e aprovaria um modulo que importa a
+// funcao e escreve o ternario a mao logo abaixo.
+exigido(
+  LIB_DA_PROJECAO,
+  "direcaoDaAgenda(p.direction)",
+  "a direcao de cada linha tem que passar pela funcao de lib/, que e a UNICA " +
+    "copia da precedencia. O mutante `a direcao e lida crua` mede o que se " +
+    "perde sem ela: o default conservador para `transfer` e para nulo"
+);
+proibido(
+  LIB_DA_PROJECAO,
+  "recurring_rule",
+  "a normalizacao do embed (objeto ou array de um) foi APAGADA nesta issue. " +
+    "Ela voltar significa que a direcao voltou a sair da regra"
+);
+
+// ---------------------------------------------------------------------------
 if (problemas.length > 0) {
   console.error(
     "A fiacao do numero de cartao, da parte do grupo ou da DIRECAO esta " +
-      "desligada (HMO-290 / HMO-306 / HMO-308):\n"
+      "desligada (HMO-290 / HMO-306 / HMO-308 / HMO-256):\n"
   );
   for (const p of problemas) console.error(`  - ${p}\n`);
   console.error(
