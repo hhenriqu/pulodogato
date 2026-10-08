@@ -271,8 +271,34 @@ const psql = (url, args) =>
     encoding: "utf8",
   });
 
+// "001 -> 032" tambem e uma REGRA sobre o numero, pela MESMA razao que o
+// PRE022 logo acima -- e aqui o erro durou mais porque era invisivel.
+//
+// Isto era `!f.startsWith("033_")`: "tudo menos a 033". Era equivalente a
+// "001 -> 032" no dia em que a 033 era a ultima migration da arvore, e deixou de
+// ser no dia seguinte. Da 034 a 043 nada aconteceu, porque nenhuma delas se
+// importa com as views da 033 -- o template so ganhava migrations a mais e os
+// mutantes continuavam morrendo.
+//
+// A 044 quebrou. Ela LE `personal_monthly_cash_flow` e tem preflight que aborta
+// listando o que falta; num template "tudo menos a 033" as views da 033 nao
+// existem, entao a 044 abortava -- com a mensagem certa, pelo motivo certo -- e
+// o runner morria ANTES do primeiro mutante, com erro de psql em vez de placar.
+// A 045 faria o mesmo. O sintoma nao se parece com "o filtro do template esta
+// errado": parece defeito da migration nova.
+//
+// O template tem de ser o estado do banco na POSICAO em que o teste da 033 roda
+// na cadeia -- 001 -> 032, com a 033 mutada por cima. Comparar o numero nao
+// obriga nenhuma migration futura a se lembrar deste arquivo, que e exatamente
+// o que a nota do PRE022 pede.
+const ALVO_NUM = 33;
 const migrations = readdirSync("database/migrations")
-  .filter((f) => /^0\d\d_/.test(f) && !f.startsWith("000_") && !f.startsWith("033_"))
+  .filter(
+    (f) =>
+      /^0\d\d_/.test(f) &&
+      !f.startsWith("000_") &&
+      Number(f.slice(0, 3)) < ALVO_NUM
+  )
   .sort();
 
 function montarTemplate() {

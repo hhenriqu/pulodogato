@@ -1620,6 +1620,73 @@ jobs:
       - name: Convite vencido nao muda de status por sorteio, e as leituras seguram pelo prazo
         run: $PSQL -f database/tests/044_expiracao_de_convite_sem_sorteio_test.sql
 
+      - name: 045_realizado_de_grupo_no_previsto_x_realizado
+        run: $PSQL -f database/migrations/045_realizado_de_grupo_no_previsto_x_realizado.sql
+
+      # Re-executavel: a 045 e so CREATE OR REPLACE VIEW, COMMENT, GRANT e
+      # ALTER VIEW. Nao ha ALTER de tabela, CHECK novo nem backfill.
+      - name: 045 e idempotente
+        run: $PSQL -f database/migrations/045_realizado_de_grupo_no_previsto_x_realizado.sql
+
+      # HMO-258. `planned_vs_actual` apagava a despesa de grupo inteira do lado
+      # REALIZADO: `monthly_cash_flow` tem `group_id` no grao e a rota pessoal
+      # filtra `group_id IS NULL`, entao uma despesa de grupo nunca caia na
+      # linha lida. Medido na fixture de maio da conta A da HMO-255: 900,00 onde
+      # as outras duas leituras da MESMA pagina diziam 950,00.
+      #
+      # Isso nao era uma convencao a mais, era defeito: a pergunta da issue
+      # ("90 ou 30?") tem tres respostas defensaveis e nenhuma delas e ZERO. E
+      # num relatorio de VARIANCIA o estrago e pior que um total baixo -- com
+      # 700,00 previstos ele mostrava 200,00 de estouro onde havia 250,00,
+      # parabenizando por uma economia que nao houve.
+      #
+      # O QUE SO ESTA SUITE PEGA:
+      #
+      #   - a TERCEIRA ORIGEM de `chaves` (secao 4). Um mes em que a minha unica
+      #     despesa foi paga por OUTRO membro nao tem linha minha em
+      #     `financial_transactions`, entao sem a chave nova o mes nao vem zero:
+      #     vem AUSENTE. Um mes ausente le-se na tela como "nao houve movimento".
+      #
+      #   - as DUAS PERNAS do LATERAL sendo mutuamente exclusivas (secao 3). Ela
+      #     conta LINHAS, nao dinheiro: se as duas casassem, a chave viraria duas
+      #     linhas e o relatorio contaria o PREVISTO duas vezes. Nenhuma assercao
+      #     sobre `actual_expense` pega isso -- o valor de cada linha continuaria
+      #     certo.
+      #
+      #   - o `group_id` da chave nova sendo NULL (secao 2b). Com o `group_id`
+      #     real, o membro que SO DEVE parte perde o mes inteiro do relatorio
+      #     pessoal e ganha uma linha de 0,00 no do grupo. (A primeira versao
+      #     deste comentario dizia "dobraria o realizado" -- medir o mutante
+      #     mostrou que a despesa DESAPARECE, nao dobra.)
+      #
+      #   - a FRONTEIRA DA 033 (secao 2): o relatorio do grupo continua no valor
+      #     CHEIO. "A leitura pessoal ficou certa" e "a do grupo continuou certa"
+      #     sao duas afirmacoes diferentes. A primeira versao dessa secao
+      #     esquecia o filtro de `user_id`, somava as linhas da A e da B e
+      #     fechava em 150,00 por acidente -- verde medindo outra coisa.
+      #
+      #   - o controle negativo da RLS (secao 5): com o ALTER do
+      #     `security_invoker` removido, a Dora ve 2 linhas da A. Medido.
+      #
+      # A 045 tambem RECOLA o lado previsto da 043 (`s.direction`), porque
+      # `CREATE OR REPLACE VIEW` exige a definicao inteira. O step do
+      # `043_direcao_do_previsto_avulso_test.sql` roda acima, na posicao dele; o
+      # step abaixo o re-roda DEPOIS da 045, que e o que prova que ela nao
+      # reverteu a 043.
+      - name: O previsto x realizado conta a minha parte de grupo, e o do grupo nao muda
+        run: $PSQL -f database/tests/045_realizado_de_grupo_no_previsto_x_realizado_test.sql
+
+      # A 045 reescreve `planned_vs_actual`, que e o objeto que a 043 acabou de
+      # consertar. Sem este step o conserto da 043 ficaria protegido so por um
+      # teste que roda ANTES da 045 -- exatamente o buraco pelo qual a primeira
+      # versao da 045 revertia a 043 em silencio.
+      - name: A receita prevista AVULSA continua fora de planned_expense depois da 045
+        run: $PSQL -f database/tests/043_direcao_do_previsto_avulso_test.sql
+
+      # E a suite do 008, pela mesma razao da linha de cima.
+      - name: O previsto x realizado do 008 continua valendo depois da 045
+        run: $PSQL -f database/tests/goals_reports_test.sql
+
       # O hmo197 roda na POSICAO dele, muito acima, onde o trigger do 001 ainda
       # existe e ele o desliga com DISABLE TRIGGER. A 044 apaga esse trigger,
       # entao aquele arquivo passou a envolver o DISABLE/ENABLE num `IF EXISTS`
