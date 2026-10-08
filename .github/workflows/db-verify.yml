@@ -1572,6 +1572,65 @@ jobs:
       - name: O previsto x realizado do 008 continua valendo depois da 043
         run: $PSQL -f database/tests/goals_reports_test.sql
 
+      - name: 044_expiracao_de_convite_sem_sorteio
+        run: $PSQL -f database/migrations/044_expiracao_de_convite_sem_sorteio.sql
+
+      # Re-executavel: sao tres DROP ... IF EXISTS e um COMMENT. A segunda
+      # passada so imprime os tres NOTICE de "does not exist, skipping".
+      - name: 044 e idempotente
+        run: $PSQL -f database/migrations/044_expiracao_de_convite_sem_sorteio.sql
+
+      # HMO-344: o `random()` sai do trigger de convites. O 001 deixou em
+      # `group_invitations` o trigger `cleanup_expired_invitations` (AFTER
+      # INSERT, FOR EACH ROW) que chamava `expire_old_invitations()` sob
+      # `IF random() < 0.1` -- cada INSERT de convite tinha 10% de chance de
+      # varrer a tabela inteira carimbando `status = 'expired'`.
+      #
+      # ISTO NAO ERA TEORICO: na HMO-197 o mutante `sem_prazo` sobreviveu em 4
+      # de 8 execucoes sobre clones identicos do mesmo banco, porque a linha
+      # pendente-E-expirada do teste virava `expired` e quem a excluia passava a
+      # ser o filtro de status sozinho -- mutante EQUIVALENTE, nao furo de
+      # assercao. Custou uma passada inteira de investigacao.
+      #
+      # Apagar e o conserto INTEIRO, e sem backfill, porque ninguem le o rotulo
+      # persistido e todo leitor de `status = 'pending'` ja carrega o prazo ao
+      # lado: `list_my_group_invitations()` e `respond_to_group_invitation()`
+      # (030), `has_pending_invitation()` (002), `reclamar_convites_orfaos()`
+      # (039) e a rota `invite/route.ts`. A SECAO 4 do teste prova isso nas
+      # quatro do banco, cada uma com CONTROLE POSITIVO (um convite pendente e
+      # NAO vencido que elas tem de devolver) -- sem ele uma fixture quebrada
+      # daria zero em tudo e a secao passaria vacua.
+      #
+      # O que so o Postgres pega aqui:
+      #
+      #   - o DETERMINISMO, que e o defeito em si. A SECAO 3 insere 120 convites
+      #     e exige que a linha vencida chegue ainda `pending`. MEDIDO: no banco
+      #     PRE-044 esta secao reprova (8/8 com apenas 60 insercoes; sob
+      #     `random() < 0.1`, 0.9^120 = 0.0003%). Depois da 044 nao ha sorteio
+      #     nenhum e ela e deterministica, nao "provavelmente verde";
+      #   - que `expire_old_invitations()` era uma primitiva de escrita ANONIMA.
+      #     Ela e SECURITY DEFINER e nasceu no 001 sem REVOKE, entao herdou
+      #     EXECUTE para PUBLIC: `has_function_privilege('anon', ...)` dava
+      #     true para um UPDATE de tabela inteira que ignora RLS. So o catalogo
+      #     mostra isso -- nenhum grep no app acha um chamador, porque nao havia.
+      #     A SECAO 5 exige que a funcao nao exista mais;
+      #   - a guarda de REINTRODUCAO da SECAO 2, que nao cita nome de funcao:
+      #     ela reprova qualquer trigger de `group_invitations` com `random()`
+      #     no corpo, inclusive um que alguem crie amanha com outro nome.
+      - name: Convite vencido nao muda de status por sorteio, e as leituras seguram pelo prazo
+        run: $PSQL -f database/tests/044_expiracao_de_convite_sem_sorteio_test.sql
+
+      # O hmo197 roda na POSICAO dele, muito acima, onde o trigger do 001 ainda
+      # existe e ele o desliga com DISABLE TRIGGER. A 044 apaga esse trigger,
+      # entao aquele arquivo passou a envolver o DISABLE/ENABLE num `IF EXISTS`
+      # -- do contrario rodar o teste a mao contra um banco com a cadeia INTEIRA
+      # estouraria `trigger ... does not exist`, que se le como regressao e nao
+      # e. Este passo e o que PROVA o outro mundo do condicional: o mesmo
+      # arquivo, agora sem o trigger na frente. Sem ele, o `IF EXISTS` seria uma
+      # defesa que ninguem exercita.
+      - name: hmo197 continua verde depois da 044 (o condicional do DISABLE TRIGGER)
+        run: $PSQL -f database/tests/hmo197_convite_sem_conta_test.sql
+
       # HMO-245, o fechamento do mes do grupo. A conta de grupo que ainda nao
       # aconteceu (a internet no cartao, vencendo dia 15) vive em
       # `scheduled_transactions` e nao em `group_transactions`, entao ela nao
