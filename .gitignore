@@ -429,3 +429,9 @@ next-env.d.ts
 # `.tmp-*` fora do .gitignore chega a ser commitado em cima de arquivo de
 # fonte -- ver a entrada do .tmp-parcelamento acima.
 /.tmp-projecao/
+
+# saida do `npm run test:contagem-do-grupo` (HMO-259): arvore compilada do
+# lib/contagem-do-grupo.ts para o `node --test` poder importar. Artefato, nao
+# fonte. Um `.tmp-*` fora do .gitignore chega a ser commitado em cima de arquivo
+# de fonte -- ver a entrada do .tmp-parcelamento acima.
+/.tmp-contagem-do-grupo/
