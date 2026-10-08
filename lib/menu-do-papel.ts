@@ -61,8 +61,9 @@
  * identico para `admin`, `free`, `trader` e para quem ainda nao carregou a
  * assinatura. "Grupos" DECLARA `requiredFeature: "expense_groups"`, e isso nao
  * e filtro de visibilidade nenhum -- `requiredFeature` alimenta o selo premium
- * que o `Sidebar` pinta, e `podeVerItem` so esconde item cujo `requiredPlans`
- * contenha `admin`. Quem ligar o modo ve as oito, com ou sem a feature.
+ * que o `Sidebar` pinta, e `podeVerItem` so esconde item que DECLARA
+ * `requiredPlans` sem o plano de quem olha. Quem ligar o modo ve as oito, com
+ * ou sem a feature.
  *
  * A ORDEM aqui nao e a ordem do menu -- quem ordena e o array de navegacao, que
  * continua sendo percorrido na ordem dele. Esta lista e um conjunto; esta

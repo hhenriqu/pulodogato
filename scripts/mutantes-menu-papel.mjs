@@ -1,5 +1,6 @@
 // CONTROLE NEGATIVO de `npm run test:menu-papel` -- HMO-284, ampliado pela
-// HMO-294 (as duas rotas que entraram no modo).
+// HMO-294 (as duas rotas que entraram no modo) e pela HMO-292 (os quatro
+// mutantes do filtro de plano, no lugar do unico que havia).
 //
 // A suite do menu reduzido e quase toda feita de contagens e de assercoes sobre
 // texto-fonte, e esses dois tipos sao justamente os que passam verde sem medir
@@ -106,11 +107,59 @@ const mutantes = [
       "export const navigation: NavigationItem[] = [\n" +
       '  { name: "Novidade", href: "/dashboard/novidade", icon: Settings },\n',
   },
+  // ------------------------------------------------------------------------
+  // OS QUATRO MUTANTES DO FILTRO DE PLANO (HMO-292)
+  //
+  // Antes desta issue havia UM aqui -- `return plano === "admin"` virando
+  // `return true` --, e ele era suficiente porque o predicado tinha um ramo so.
+  // Agora tem tres linhas, e cada uma responde por uma classe de usuario: quem
+  // nao tem item restrito, quem ainda nao carregou a assinatura, e quem paga um
+  // plano que esta na lista. Um mutante por linha, mais o RETROCESSO -- o
+  // defeito exato que esta issue consertou, escrito como mutante para que ele
+  // nao possa voltar em silencio.
+  // ------------------------------------------------------------------------
   {
-    nome: "o filtro de plano para de filtrar",
+    nome: "o filtro de plano para de filtrar (item restrito aparece para todos)",
     arquivo: NAVEGACAO,
-    de: '    return plano === "admin";',
-    para: "    return true;",
+    de: "  return item.requiredPlans.includes(plano);",
+    para: "  return true;",
+  },
+  {
+    // O RETROCESSO DA HMO-292. Este e o defeito que a issue consertou, inteiro:
+    // o predicado volta a olhar so o `"admin"` da lista e a exigir plano
+    // `admin`. A contagem do `trader` volta de 26 para 25 e a tela que ele
+    // comprou sai do menu dele. Se este mutante sobreviver um dia, a suite
+    // perdeu a unica assercao que separa "honra `requiredPlans`" de "exige
+    // admin".
+    //
+    // O `para` e o corpo da funcao como ele estava em `main` antes desta issue,
+    // byte a byte -- inclusive o `item.requiredPlans &&`, que aqui nao e
+    // redundancia: sem ele o mutante nao COMPILA (`requiredPlans` e opcional), a
+    // suite reprovaria pelo `tsc` e o mutante "morreria" sem nunca ter chegado a
+    // uma assercao.
+    nome: "o predicado volta a exigir `admin` e ignora o resto de requiredPlans",
+    arquivo: NAVEGACAO,
+    de: "  if (!item.requiredPlans) return true;\n  if (!plano) return false;\n\n  return item.requiredPlans.includes(plano);",
+    para:
+      '  if (item.requiredPlans && item.requiredPlans.includes("admin")) {\n' +
+      '    return plano === "admin";\n  }\n\n  return true;',
+  },
+  {
+    nome: "item SEM requiredPlans passa a ser escondido (o menu esvazia)",
+    arquivo: NAVEGACAO,
+    de: "  if (!item.requiredPlans) return true;",
+    para: "  if (!item.requiredPlans) return false;",
+  },
+  {
+    // O LADO MAIS FACIL DE ERRAR: trocar o `return false` por `true` aqui e o
+    // que `item.requiredPlans.includes(plano)` sozinho faria sem o guarda --
+    // `includes(undefined)` da `false`, entao o defeito nao e esse; o defeito e
+    // o atalho de quem acha que "sem plano" quer dizer "nao filtra ainda" e
+    // mostra Admin e Trading no primeiro quadro de todo mundo.
+    nome: "quem nao carregou a assinatura passa a ver item restrito",
+    arquivo: NAVEGACAO,
+    de: "  if (!plano) return false;",
+    para: "  if (!plano) return true;",
   },
   {
     // O mutante central da fiacao: tirar a CHAMADA e deixar o import. Nao e

@@ -19,12 +19,13 @@
 //
 // POR QUE A SUITE FIXA O PLANO
 // ----------------------------
-// `podeVerItem` e o PRIMEIRO filtro do menu e ele ja existia. Sem plano
-// `admin`, a tela de Admin sai da lista e a contagem cai de 27 para 26 -- e a
-// suite passaria a medir o PLANO em vez do MODO, variando com uma regra que
-// nao e assunto desta issue. Entao o plano entra fixo em todo caso, e ha um
-// caso proprio (`o plano e o OUTRO filtro`) que documenta a diferenca em vez de
-// deixa-la implicita.
+// `podeVerItem` e o PRIMEIRO filtro do menu e ele ja existia. O menu completo
+// so tem 27 itens para quem e `admin`: duas telas declaram `requiredPlans`
+// (Admin e Trading), e a contagem cai para 26 no plano `trader` e para 25 nos
+// outros -- a suite passaria a medir o PLANO em vez do MODO, variando com uma
+// regra que nao e assunto desta issue. Entao o plano entra fixo em todo caso, e
+// ha um caso proprio (`o plano e o OUTRO filtro`) que prende as tres contagens
+// e a tabela de quem ve o que, em vez de deixa-las implicitas.
 //
 // POR QUE ELA NAO MEDE A SI MESMA
 // -------------------------------
@@ -173,36 +174,74 @@ test("as 8 rotas do modo existem todas no array de navegacao", () => {
 // O modo nao e o plano
 // ---------------------------------------------------------------------------
 
-test("o plano e o OUTRO filtro: sem admin, o menu inteiro tem 25", () => {
+test("o plano e o OUTRO filtro: cada plano tem a sua contagem", () => {
   // Este caso existe para que o 27 lá em cima nao seja um numero misterioso. E
   // e a razao de todos os outros casos fixarem o plano.
   //
-  // Sao DOIS os itens que caem, nao um: `Admin` e `Trading`. E sobre o
-  // `Trading` ha um defeito ANTERIOR a esta issue, que esta suite registra em
-  // vez de corrigir -- ele declara `requiredPlans: ["trader", "admin"]`, mas o
-  // predicado so olha se a lista CONTEM "admin" e ai exige plano `admin`.
-  // Resultado: quem paga o plano `trader` nao ve a tela de Trading no menu.
+  // Sao DOIS os itens restritos, nao um: `Admin` (`["admin"]`) e `Trading`
+  // (`["trader", "admin"]`). Entao ha TRES contagens e nao duas, e e por isso
+  // que elas estao escritas uma por uma em vez de "sem admin da 25": o `trader`
+  // nao e o `free` com outro nome.
   //
-  // Corrigir isso aqui mudaria o menu de quem usa o app numa issue cujo
-  // assunto e outro, e mudaria a contagem que o caso de cima trava. Fica para
-  // issue propria; o caso abaixo e a prova de que o comportamento de hoje e
-  // este, e nao um acidente da mudanca da HMO-284 (que moveu o predicado de
-  // arquivo sem tocar na regra).
+  // ATE A HMO-292 as tres eram 25, 25 e 25. O predicado olhava se a lista
+  // CONTINHA "admin" e ai exigia plano `admin`, ignorando o resto -- e quem
+  // pagava o plano `trader` nao via no menu a tela de Trading que comprou. Esta
+  // suite REGISTRAVA aquele defeito, com um caso que afirmava a invisibilidade
+  // e um comentario apontando para a issue, em vez de corrigi-lo: ele foi
+  // encontrado (nao causado) na HMO-284, cujo assunto era o menu reduzido, e
+  // consertar la mudaria o menu de quem usa o app num PR sobre outra coisa.
+  assert.equal(menu({ plano: "admin", papel: false }).length, 27);
+  assert.equal(menu({ plano: "trader", papel: false }).length, 26);
+  assert.equal(menu({ plano: "invest", papel: false }).length, 25);
   assert.equal(menu({ plano: "free", papel: false }).length, 25);
+  // Sem assinatura carregada ninguem ve item restrito. E o estado dos primeiros
+  // quadros, e o menu dele e o do `free`.
   assert.equal(menu({ plano: undefined, papel: false }).length, 25);
-  assert.equal(menu({ plano: "trader", papel: false }).length, 25);
 
-  const comAdmin = hrefs(menu({ plano: "admin", papel: false }));
-  const semAdmin = hrefs(menu({ plano: "free", papel: false }));
-  for (const restrita of ["/dashboard/admin", "/dashboard/trading"]) {
-    assert.ok(comAdmin.includes(restrita));
-    assert.ok(!semAdmin.includes(restrita));
+  // A CONTAGEM NAO DIZ QUAIS. Trocar uma tela restrita pela outra -- Trading
+  // exigindo so `admin` e Admin passando a aceitar `trader` -- manteria os
+  // cinco numeros acima de pe. Entao a visibilidade das duas telas restritas
+  // vai item por item, plano por plano.
+  //
+  // E a tabela e COMPLETA de proposito: os quatro planos de `UserPlan` mais o
+  // `undefined`, vezes as duas rotas. Um `requiredPlans` alargado por acidente
+  // (um `"free"` que entrasse na lista do Trading) nao tem por onde escapar.
+  const visibilidade = {
+    admin: { "/dashboard/admin": true, "/dashboard/trading": true },
+    // A LINHA DESTA ISSUE: quem paga o plano `trader` VE a tela de Trading, e
+    // continua sem ver a de Admin -- honrar `requiredPlans` inteiro nao e
+    // afrouxar o filtro, e le-lo.
+    trader: { "/dashboard/admin": false, "/dashboard/trading": true },
+    invest: { "/dashboard/admin": false, "/dashboard/trading": false },
+    free: { "/dashboard/admin": false, "/dashboard/trading": false },
+    undefined: { "/dashboard/admin": false, "/dashboard/trading": false },
+  };
+
+  for (const [nome, esperado] of Object.entries(visibilidade)) {
+    const plano = nome === "undefined" ? undefined : nome;
+    const rotas = hrefs(menu({ plano, papel: false }));
+    for (const [restrita, deveriaVer] of Object.entries(esperado)) {
+      assert.equal(
+        rotas.includes(restrita),
+        deveriaVer,
+        `plano ${nome}: ${restrita} deveria ${deveriaVer ? "" : "NAO "}aparecer`
+      );
+    }
   }
 
-  // O defeito do `trader`, explicito: se alguem o consertar, este caso reprova
-  // e aponta para o comentario acima em vez de deixar a contagem de 25 virar
-  // 26 em silencio.
-  assert.ok(!hrefs(menu({ plano: "trader", papel: false })).includes("/dashboard/trading"));
+  // E A PREMISSA DA TABELA, explicita: estas sao as UNICAS duas telas restritas
+  // do menu, e os `requiredPlans` delas sao estes. Sem este par, o dia em que
+  // uma terceira tela ganhasse `requiredPlans` a tabela acima continuaria
+  // verde sem nunca ter olhado para ela -- e as contagens mudariam junto,
+  // pedindo so que alguem reescrevesse os numeros.
+  const restritos = navigation.filter((item) => item.requiredPlans);
+  assert.deepEqual(
+    restritos.map((item) => [item.href, [...item.requiredPlans]]),
+    [
+      ["/dashboard/trading", ["trader", "admin"]],
+      ["/dashboard/admin", ["admin"]],
+    ]
+  );
 });
 
 test("ligado, o menu reduzido e o MESMO para qualquer plano", () => {
@@ -217,9 +256,10 @@ test("ligado, o menu reduzido e o MESMO para qualquer plano", () => {
   // de que o menu passou a depender do plano esta errada: `requiredFeature`
   // NAO E FILTRO DE VISIBILIDADE. Ele alimenta o `isPremiumButNoAccess` do
   // `Sidebar`, que pinta o selo premium no item; quem decide se o item APARECE
-  // e so o `podeVerItem`, e ele esconde unicamente item cujo `requiredPlans`
-  // contenha `admin`. "Grupos" nao tem `requiredPlans`, entao sai igual para
-  // todo plano -- com selo para quem nao tem a feature, sem selo para quem tem.
+  // e so o `podeVerItem`, e ele esconde unicamente item que DECLARA
+  // `requiredPlans` sem o plano de quem olha. "Grupos" nao tem `requiredPlans`,
+  // entao sai igual para todo plano -- com selo para quem nao tem a feature,
+  // sem selo para quem tem.
   //
   // O que esta invariante trava, portanto: se alguem fizer `podeVerItem` olhar
   // `requiredFeature` (ou puser `requiredPlans` numa das oito telas), este caso
