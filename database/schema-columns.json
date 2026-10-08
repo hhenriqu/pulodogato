@@ -9,6 +9,7 @@
     "due_date",
     "group_id",
     "kind",
+    "notify_email",
     "scheduled_transaction_id",
     "transaction_type",
     "user_id"
@@ -17,6 +18,8 @@
     "body",
     "channel",
     "created_at",
+    "email_message_id",
+    "emailed_at",
     "id",
     "kind",
     "read_at",
@@ -474,6 +477,7 @@
     "created_at",
     "days_before",
     "notify_due_soon",
+    "notify_email",
     "notify_overdue",
     "updated_at",
     "user_id"
