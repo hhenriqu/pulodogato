@@ -1,9 +1,21 @@
 #!/usr/bin/env node
 // =====================================================
-// A ANCORA AMBIGUA: quantas vezes cada `de` aparece no arquivo que ele muta
+// A ANCORA DO MUTANTE: quantas vezes cada `de` aparece no arquivo que ele muta
 // =====================================================
-// Roda com:  node scripts/mede-ancora-ambigua.mjs [runner.mjs ...]
-//            (sem argumento: todos os runners da familia do painel)
+// Roda com:  npm run check-ancora-de-mutante
+//            node scripts/mede-ancora-ambigua.mjs [runner.mjs ...]
+//            (sem argumento: todos os runners das familias que ele sabe ler)
+//
+// DE MEDIDOR A GUARDA (HMO-262). O nome do arquivo diz "mede" e diz "ambigua", e
+// as duas coisas ficaram estreitas: ele AGORA REPROVA, e reprova os tres estados
+// em que uma ancora para de medir -- `de` que aparece 0 vez (MORTA), mais de uma
+// (AMBIGUA), ou cujo arquivo nao existe (AUSENTE). O arquivo nao foi renomeado de
+// proposito: a conversao dos runners para bloco esta em curso em varias branches
+// e um rename aqui colidiria com todas elas.
+//
+// O caso que fez o zero passar a reprovar esta em `npm run pre-commit`, que e
+// onde um rename e feito -- nao no CI, que e onde ele era descoberto meses
+// depois.
 //
 // POR QUE ISTO EXISTE (HMO-328)
 // -----------------------------
@@ -178,6 +190,7 @@ const runners = alvos.length
 
 let ambiguas = 0;
 let ausentes = 0;
+let mortas = 0;
 let total = 0;
 const lidosPorFamilia = { painel: 0, tupla: 0 };
 
@@ -218,8 +231,20 @@ for (const runner of runners) {
 
   console.log(`${runner}: ${mutantes.length} mutantes`);
   for (const a of achados) {
-    // Zero e "ancora morta" (a feature apagou o trecho) e e outro assunto; o que
-    // esta medicao persegue e o >1, que e o que a trava nova recusa.
+    // ZERO TAMBEM REPROVA, DESDE A HMO-262.
+    //
+    // Era so relatado ("e outro assunto"), porque o >1 era o que a trava nova da
+    // HMO-328 recusava. Mas um `de` com zero ocorrencia e o defeito que custa
+    // mais caro dos tres: o mutante NAO APLICA, a suite roda sobre o codigo
+    // correto, e a guarda que o mutante existia para vigiar fica sem controle
+    // negativo nenhum. A HMO-262 e exatamente esse caso --
+    // `parcelamento_volta_para_toda_despesa` parou de aplicar quando a HMO-254
+    // trocou `ehNoCartao` por `natureza === "card"` em `lib/lancamento.ts`, e
+    // ninguem soube por meses.
+    //
+    // Este medidor JA IMPRIMIA "ancora MORTA" nesse caso e saia ZERO. Ver o
+    // trecho ter morrido e nao reprovar e a pior combinacao possivel: o sinal
+    // existe e nao chega a ninguem.
     const rotulo =
       a.n === null
         ? "ARQUIVO AUSENTE"
@@ -229,6 +254,7 @@ for (const runner of runners) {
     console.log(`   ${rotulo}  ${a.nome}  [${a.arquivo}]`);
     if (a.n !== null && a.n > 1) ambiguas++;
     if (a.n === null) ausentes++;
+    if (a.n === 0) mortas++;
   }
 }
 
@@ -252,6 +278,7 @@ console.log(
   `\n${total} mutantes lidos em ${runners.length} runners ` +
     `(${Object.entries(lidosPorFamilia).map(([n, q]) => `${n}:${q}`).join(" ")}), ` +
     `${ambiguas} com ancora ambigua (>1 ocorrencia)` +
+    `, ${mortas} com ancora MORTA (0 ocorrencias)` +
     (ausentes > 0 ? `, ${ausentes} apontando para arquivo AUSENTE` : ""),
 );
-process.exit(ambiguas === 0 && ausentes === 0 ? 0 : 1);
+process.exit(ambiguas === 0 && mortas === 0 && ausentes === 0 ? 0 : 1);
