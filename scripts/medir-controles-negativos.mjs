@@ -209,11 +209,26 @@ function comparar(caminhoA, caminhoB) {
   let divergentes = 0;
   let somaA = 0;
   let somaB = 0;
+  // O total inteiro mistura dois tipos de bloco e por isso nao responde ao
+  // criterio sozinho. Bloco que REPROVAVA de um lado nao estava fazendo o
+  // trabalho: o de `fatura-prevista` abortava em 1,1s no controle, e quando a
+  // HMO-325 consertou a lista de copia ele passou a medir 16 mutantes em 13,8s.
+  // Somar esse +12,7s junto com a economia dos outros esconde as duas coisas.
+  // Entao: alem do total, o total restrito aos blocos que ficaram `ok` nos DOIS
+  // lados -- os unicos onde "o mesmo trabalho, em menos tempo" quer dizer algo.
+  let verdesA = 0;
+  let verdesB = 0;
+  let verdes = 0;
   for (const nome of runners) {
     const ra = mapaA.get(nome);
     const rb = mapaB.get(nome);
     somaA += ra?.segundos ?? 0;
     somaB += rb?.segundos ?? 0;
+    if (ra?.saida === "ok" && rb?.saida === "ok") {
+      verdes++;
+      verdesA += ra.segundos;
+      verdesB += rb.segundos;
+    }
     // Passa/reprova NAO e o veredito inteiro. Um bloco que ia 13/13 e passa a
     // 11/11 continua `ok` nos dois lados -- dois mutantes sumiram da lista e o
     // placar nao reclamaria. O criterio de aceite da HMO-319 fala em "os MESMOS
@@ -236,10 +251,13 @@ function comparar(caminhoA, caminhoB) {
       console.log(`${" ".repeat(largura)}  B: ${rb?.porque ?? "ausente"}`);
     }
   }
+  const porcento = (de, para) => (de > 0 ? (((de - para) / de) * 100).toFixed(0) : "0");
+  console.log(`\ntotal: ${somaA.toFixed(1)}s -> ${somaB.toFixed(1)}s  (${porcento(somaA, somaB)}% menos)`);
   console.log(
-    `\ntotal: ${somaA.toFixed(1)}s -> ${somaB.toFixed(1)}s  (${
-      somaA > 0 ? (((somaA - somaB) / somaA) * 100).toFixed(0) : "0"
-    }% menos)`,
+    `so os ${verdes} blocos ok nos dois lados: ${verdesA.toFixed(1)}s -> ${verdesB.toFixed(1)}s  (${porcento(
+      verdesA,
+      verdesB,
+    )}% menos)`,
   );
   console.log(`vereditos divergentes: ${divergentes}`);
 
