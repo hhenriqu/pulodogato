@@ -341,7 +341,27 @@ VALUES ('e0e0e0e0-0197-0000-0000-000000000007', 'limites@test.local', NOW());
 -- assercao ora como 'pending' ora como 'expired'. Um `random()` dentro de um
 -- trigger de producao e nao-determinismo que o placar de mutantes le como
 -- cobertura.
-ALTER TABLE public.group_invitations DISABLE TRIGGER cleanup_expired_invitations;
+--
+-- HMO-344 APAGOU esse trigger (migration 044), e este arquivo roda na POSICAO
+-- dele na cadeia do db-verify -- depois da 039 e ANTES da 044 -- entao aqui o
+-- trigger AINDA EXISTE e desligar continua sendo necessario. O condicional e
+-- para o outro mundo: rodar este teste a mao contra um banco com a cadeia
+-- INTEIRA (o jeito mais natural de conferir um arquivo isolado) estouraria
+-- `trigger "cleanup_expired_invitations" ... does not exist`, que se le como
+-- regressao e nao e. Com o IF, o arquivo passa nos dois mundos e a assercao
+-- "a linha expirada chega pending" la embaixo e que garante o resultado nos
+-- dois casos -- nao este bloco.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_trigger
+     WHERE tgrelid = 'public.group_invitations'::regclass
+       AND NOT tgisinternal
+       AND tgname = 'cleanup_expired_invitations'
+  ) THEN
+    ALTER TABLE public.group_invitations DISABLE TRIGGER cleanup_expired_invitations;
+  END IF;
+END $$;
 
 SET LOCAL ROLE authenticated;
 SET LOCAL request.jwt.claim.sub = 'd0d0d0d0-0197-0000-0000-000000000001';
@@ -411,7 +431,18 @@ SELECT pg_temp.expect(
       AND invited_user_id IS NULL),
   3);
 
-ALTER TABLE public.group_invitations ENABLE TRIGGER cleanup_expired_invitations;
+-- Condicional pelo mesmo motivo do DISABLE acima (ver HMO-344 / migration 044).
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_trigger
+     WHERE tgrelid = 'public.group_invitations'::regclass
+       AND NOT tgisinternal
+       AND tgname = 'cleanup_expired_invitations'
+  ) THEN
+    ALTER TABLE public.group_invitations ENABLE TRIGGER cleanup_expired_invitations;
+  END IF;
+END $$;
 
 -- =====================================================
 -- (7) BACKFILL: o convite orfao de uma conta que JA existia
