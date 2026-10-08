@@ -58,15 +58,26 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // `notes` carrega a chave canonica da fatura, e e ela que o
-    // lib/projecao.ts usa para deixar a fatura fechada fora do
-    // `scheduled_out`. Tirar a coluna do select nao da erro nenhum: so faz a
-    // exclusao parar de acontecer, em silencio.
+    // A VIEW, e nao a tabela (HMO-256): a tabela nao tem `direction`, e deduzir
+    // a direcao do tipo da REGRA faz toda receita prevista avulsa entrar como
+    // conta a pagar -- e sair do `scheduled_in` no mesmo movimento. Ver o
+    // cabecalho do lib/projecao.ts.
+    //
+    // `status` E NAO `effective_status`: a view entrega as duas, `status` e a
+    // gravada, e trocar aqui excluiria justamente a conta VENCIDA e nao paga --
+    // dinheiro que vai sair, e que o `overdue_total` existe para destacar.
+    //
+    // Duas colunas sao load-bearing e nao dao erro nenhum se sairem do select,
+    // so mudam o numero em silencio:
+    //
+    //   * `notes` carrega a chave canonica da fatura, e e ela que o
+    //     lib/projecao.ts usa para deixar a fatura fechada fora do
+    //     `scheduled_out`. Sem ela a exclusao para de acontecer.
+    //   * `direction` e a propria direcao. Sem ela toda previsao vira despesa,
+    //     que e o defeito desta issue de volta.
     const { data: previstas, error: erroPrevistas } = await supabase
-      .from("scheduled_transactions")
-      .select(
-        "id, account_id, amount, due_date, status, notes, recurring_rule:recurring_rules(transaction_type)"
-      )
+      .from("scheduled_transactions_effective")
+      .select("id, account_id, amount, due_date, status, notes, direction")
       .eq("user_id", user.id)
       .eq("status", "pending")
       .lte("due_date", ate);

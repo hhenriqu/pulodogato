@@ -116,14 +116,27 @@
 // lib/net-worth.ts fora.
 //
 // -----------------------------------------------------------------------
-// O QUE AINDA ESTA ERRADO AQUI, E TEM DONO
+// A DIRECAO SAI DA VIEW, E NAO DA REGRA -- HMO-256
 // -----------------------------------------------------------------------
-// Receita prevista AVULSA (sem regra de recorrencia) e somada como conta a
-// PAGAR: a convencao da Fase 1 diz que prevista sem regra e despesa, e a
-// direcao sai de `recurring_rules.transaction_type`. Isso e a HMO-256, que
-// nomeia tambem o `safe-to-spend` e a view `planned_vs_actual`; o Helio
-// decidiu manter separada. A perna da `projection` dela e o `tipoDaPrevista`
-// logo abaixo -- nao esta mais na rota.
+// Receita prevista AVULSA (sem regra de recorrencia) era somada como conta a
+// PAGAR. A direcao saia de `recurring_rules.transaction_type`, e previsao
+// avulsa nao tem regra: TODA avulsa caia em `expense`, inclusive a de receita,
+// que /api/scheduled-transactions aceita desde a HMO-188. O erro era DUPLO --
+// a receita somava em `scheduled_out` E deixava de somar em `scheduled_in` --,
+// e as duas metades erram para o mesmo lado: o saldo projetado afundava em
+// DOIS vezes o valor da receita.
+//
+// Agora a rota le a view `scheduled_transactions_effective` (027), que resolve
+// a precedencia ocorrencia -> regra -> 'expense' UMA vez, no banco, e entrega
+// `direction`. Quem traduz `direction` em "entra ou sai" e `direcaoDaAgenda`
+// (lib/previsto-x-realizado.ts), a MESMA funcao que o safe-to-spend usa desde
+// a HMO-308 -- refazer o COALESCE aqui criaria a segunda copia da precedencia,
+// e a copia esquecida e exatamente o defeito que esta issue conserta.
+//
+// NAO HA FLAG `direcao_indisponivel` AQUI, ao contrario do safe-to-spend. A
+// forma da resposta e congelada (logo abaixo), e o campo novo e justamente o
+// que a HMO-187 provou caro numa rota cacheada. O lado seguro ja esta coberto
+// pelo fim do COALESCE da view: `direction` nulo cai em despesa.
 //
 // A forma da resposta e CONGELADA: nenhum campo entra ou sai. A rota e
 // cacheada pelo service worker, e campo novo em rota cacheada foi o que quase
@@ -132,6 +145,7 @@
 // =====================================================
 
 import { ehFatura } from "@/lib/chave-da-fatura";
+import { direcaoDaAgenda } from "@/lib/previsto-x-realizado";
 import { lastDayOfMonth } from "@/lib/recurrence";
 
 /** O que o calculo precisa saber sobre uma conta. */
@@ -143,23 +157,11 @@ export interface ContaParaProjetar {
 }
 
 /**
- * A direcao (sai ou entra) vem do tipo da REGRA, nao da ocorrencia.
+ * Uma conta prevista do jeito que a rota entrega.
  *
- * `scheduled_transactions.amount` e sempre positivo por CHECK (005), e quem
- * diz se aquilo e despesa ou receita e `recurring_rules.transaction_type`.
- */
-export interface RegraDaPrevista {
-  transaction_type?: string | null;
-}
-
-/**
- * Uma conta prevista do jeito que a rota entrega, com o embed cru.
- *
- * O `recurring_rule` chega como OBJETO quando o PostgREST ve a FK como
- * um-para-um e como ARRAY de um elemento quando nao ve -- as duas formas
- * acontecem na mesma consulta conforme o schema muda, e e por isso que a
- * normalizacao mora aqui e nao na rota: ela e uma decisao de leitura, e
- * decisao de leitura precisa de teste.
+ * `amount` e sempre positivo por CHECK (005): a direcao NAO esta no sinal, ela
+ * esta em `direction` -- e por isso que uma receita prevista lida como despesa
+ * nao tem sintoma nenhum no valor.
  */
 export interface PrevistaParaProjetar {
   id: string;
@@ -167,7 +169,16 @@ export interface PrevistaParaProjetar {
   amount: number | string;
   due_date: string;
   notes?: string | null;
-  recurring_rule?: RegraDaPrevista | RegraDaPrevista[] | null;
+  /**
+   * A coluna homonima de `scheduled_transactions_effective` (027), com a
+   * precedencia ocorrencia -> regra -> 'expense' JA resolvida no banco.
+   *
+   * Opcional e `| null` porque o `null` e o unico sintoma possivel de a view
+   * ter sido trocada por uma que nao entregue a coluna; nesse caso
+   * `direcaoDaAgenda` manda a linha para `expense`, que e o lado conservador
+   * (ler despesa como receita prometeria dinheiro que nao vem).
+   */
+  direction?: string | null;
 }
 
 /** Uma linha da lista por conta. Espelha `AccountProjection`. */
@@ -221,21 +232,6 @@ export function fimDoMes(iso: string): string {
   return `${iso.slice(0, 7)}-${String(ultimo).padStart(2, "0")}`;
 }
 
-/**
- * 'expense' | 'income' | undefined -- o tipo da regra que gerou a prevista.
- *
- * Conta avulsa nao tem regra, e por convencao da Fase 1 e despesa. Esta e a
- * perna da HMO-256 nesta rota (ver o cabecalho).
- */
-export function tipoDaPrevista(
-  p: PrevistaParaProjetar
-): string | null | undefined {
-  const regra = Array.isArray(p.recurring_rule)
-    ? p.recurring_rule[0]
-    : p.recurring_rule;
-  return regra?.transaction_type;
-}
-
 export function calcularProjecao({
   contas,
   previstas,
@@ -275,7 +271,7 @@ export function calcularProjecao({
     // assinatura cobrada no cartao nao e fatura e tem de continuar descontando.
     if (ehFatura(p.notes)) continue;
 
-    const ehReceita = tipoDaPrevista(p) === "income";
+    const ehReceita = direcaoDaAgenda(p.direction) === "income";
     const valor = Math.abs(numero(p.amount));
 
     if (p.due_date < hoje) vencidoTotal += ehReceita ? 0 : valor;
