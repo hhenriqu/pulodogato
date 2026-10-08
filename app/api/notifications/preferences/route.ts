@@ -12,6 +12,9 @@ const PADRAO = {
   days_before: 3,
   notify_due_soon: true,
   notify_overdue: true,
+  // Ligado por padrao, igual aos outros dois e igual ao COALESCE da view. O
+  // porque esta no cabecalho da migration 047.
+  notify_email: true,
 };
 
 export async function GET() {
@@ -38,6 +41,11 @@ export async function GET() {
       // oferecer um botao "Ativar avisos" que nunca entregaria nada.
       push_available: Boolean(process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY),
       vapid_public_key: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? null,
+      // Mesma razao do push_available, para o outro canal: sem a chave do
+      // provedor o e-mail nao sai, e oferecer um botao "Avisar por e-mail"
+      // que nao entrega nada e pior do que nao oferecer -- o usuario liga,
+      // confia, e descobre no dia em que a conta vence.
+      email_available: Boolean(process.env.RESEND_API_KEY),
     });
   } catch (error) {
     console.error("Erro ao ler preferências:", error);
@@ -75,6 +83,15 @@ export async function PUT(request: NextRequest) {
           days_before: dias ?? PADRAO.days_before,
           notify_due_soon: body?.notify_due_soon ?? PADRAO.notify_due_soon,
           notify_overdue: body?.notify_overdue ?? PADRAO.notify_overdue,
+          // Sem ESTA linha o upsert nunca escreve a coluna, e desligar o
+          // e-mail na tela vira um Salvar que responde 200 e nao muda nada --
+          // a tela recarrega mostrando o valor antigo e parece bug de
+          // interface, nao de rota.
+          //
+          // E por isso que a tela precisa mandar os quatro campos sempre: o
+          // upsert grava a linha INTEIRA, entao campo omitido nao fica "como
+          // estava", cai no default. Vale para os quatro, nao so para este.
+          notify_email: body?.notify_email ?? PADRAO.notify_email,
         },
         { onConflict: "user_id" }
       )

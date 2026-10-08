@@ -179,7 +179,9 @@
     "test:menu-papel": "node scripts/compila.mjs -p scripts/tsconfig.menu-papel-test.json && node scripts/resolve-aliases.mjs .tmp-menu-papel components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-menu-papel lib --espelha-raiz && node --test scripts/test-menu-papel.mjs",
     "test:medicao-hmo298": "MEDICAO_TSCONFIG=scripts/tsconfig.medicao-hmo298-test.json bash scripts/medicao-hmo298.sh",
     "test:sugestao-de-divisao": "node scripts/compila.mjs -p scripts/tsconfig.sugestao-de-divisao-test.json && node scripts/resolve-aliases.mjs .tmp-sugestao-de-divisao lib --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-sugestao-de-divisao utils --espelha-raiz && node scripts/resolve-next-subpaths.mjs .tmp-sugestao-de-divisao && node scripts/monta-duble-de-rota.mjs .tmp-sugestao-de-divisao && node --test scripts/test-sugestao-de-divisao.mjs",
-    "mutantes:sugestao-de-divisao": "node scripts/mutantes-sugestao-de-divisao.mjs"
+    "mutantes:sugestao-de-divisao": "node scripts/mutantes-sugestao-de-divisao.mjs",
+    "test:aviso-por-email": "node scripts/compila.mjs -p scripts/tsconfig.aviso-por-email-test.json && node scripts/resolve-aliases.mjs .tmp-aviso-por-email lib && node --test scripts/test-aviso-por-email.mjs",
+    "mutantes:aviso-por-email": "node scripts/mutantes-aviso-por-email.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

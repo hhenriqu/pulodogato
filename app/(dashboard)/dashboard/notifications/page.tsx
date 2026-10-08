@@ -84,6 +84,7 @@ interface Preferencias {
   days_before: number;
   notify_due_soon: boolean;
   notify_overdue: boolean;
+  notify_email: boolean;
 }
 
 /**
@@ -112,8 +113,13 @@ export default function NotificationsPage() {
     days_before: 3,
     notify_due_soon: true,
     notify_overdue: true,
+    notify_email: true,
   });
   const [chaveVapid, setChaveVapid] = useState<string | null>(null);
+  // Null enquanto carrega. Tres estados, nao dois: "ainda nao sei" nao pode
+  // desenhar o mesmo aviso de "o servidor nao manda e-mail", que piscaria em
+  // todo carregamento de pagina.
+  const [emailDisponivel, setEmailDisponivel] = useState<boolean | null>(null);
   const [pushAtivo, setPushAtivo] = useState(false);
   const [carregando, setCarregando] = useState(true);
   const [salvando, setSalvando] = useState(false);
@@ -139,8 +145,15 @@ export default function NotificationsPage() {
           days_before: d.preferences.days_before,
           notify_due_soon: d.preferences.notify_due_soon,
           notify_overdue: d.preferences.notify_overdue,
+          // `?? true` porque a coluna so existe a partir da 047: entre o
+          // deploy e a colagem da migration a rota devolve a linha sem o
+          // campo, e `undefined` num Switch controlado o torna NAO
+          // controlado -- o React reclama no console e o botao para de
+          // responder ao clique.
+          notify_email: d.preferences.notify_email ?? true,
         });
         setChaveVapid(d.vapid_public_key);
+        setEmailDisponivel(Boolean(d.email_available));
       }
     } catch {
       toast.error("Não foi possível carregar os avisos");
@@ -426,6 +439,26 @@ export default function NotificationsPage() {
             <Switch
               checked={prefs.notify_overdue}
               onCheckedChange={(v) => setPrefs((p) => ({ ...p, notify_overdue: v }))}
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="font-medium">Avisar também por e-mail</p>
+              <p className="text-sm text-muted-foreground">
+                {emailDisponivel === false
+                  ? "O envio de e-mail ainda não está configurado no servidor."
+                  : "O mesmo aviso chega na sua caixa de entrada."}
+              </p>
+            </div>
+            {/* Desabilitado quando o servidor nao tem provedor configurado.
+                Um botao que liga uma coisa que nunca entrega e pior do que
+                botao nenhum: a pessoa liga, confia, e so descobre no dia em
+                que a conta vence. Mesmo desenho do push_available. */}
+            <Switch
+              checked={prefs.notify_email}
+              disabled={emailDisponivel === false}
+              onCheckedChange={(v) => setPrefs((p) => ({ ...p, notify_email: v }))}
             />
           </div>
 

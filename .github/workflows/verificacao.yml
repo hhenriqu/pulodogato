@@ -6352,3 +6352,37 @@ jobs:
       # ha subconjunto a escolher como nos blocos inline acima: o step roda os 11.
       - name: Mutantes da contagem de transacoes do grupo
         run: npm run mutantes:contagem-do-grupo
+
+      # -------------------------------------------------------------------
+      # O CANAL DE E-MAIL DO AVISO DE VENCIMENTO (HMO-183)
+      # -------------------------------------------------------------------
+      # A feature mora em dois arquivos com responsabilidades opostas:
+      # `lib/services/email.ts` decide COMO enviar e a rota do cron decide PARA
+      # QUEM e QUANDO. O defeito que da nome a issue nao e um erro -- e um
+      # SILENCIO: sem `RESEND_API_KEY` o canal fica desligado, e o jeito errado
+      # de fazer isso e o cron responder `ok: true` como se tivesse enviado. A
+      # suite exige que o desligamento apareca no corpo da resposta
+      # (`email_desligado`) inclusive no dia em que nao havia nada a avisar --
+      # que e o dia em que um `if (nada a fazer) return` esconderia o estado.
+      #
+      # O segundo defeito que ela prende e caro de outra forma: a rota tem de
+      # mandar o e-mail sobre os RECEM-GRAVADOS, nao sobre os alertas do dia.
+      # Sobre a lista errada, o mesmo aviso sai todo dia -- e quem impede isso
+      # nao e contador nenhum no TypeScript, e a UNIQUE da 009 que faz o upsert
+      # devolver lista vazia na segunda execucao.
+      #
+      # SEM `paths:`, como todo o resto deste workflow. Aqui isso e load-bearing
+      # e nao consistencia: quatro assercoes leem o TEXTO de
+      # `app/api/cron/bill-alerts/route.ts`, que o tsconfig da suite NAO compila
+      # -- um filtro de path escrito sobre `lib/` deixaria a rota mudar verde.
+      - name: O canal de e-mail nunca fica desligado em silencio
+        run: npm run test:aviso-por-email
+
+      # Controle negativo. Medido na HMO-234: 34 mutantes, 34 mortos, 31 por
+      # assercao e 3 pelo tsc, com controle positivo -- em ~32s, porque muta uma
+      # SOMBRA em /tmp num processo unico (o motor de bloco da HMO-319). Os 3 do
+      # compilador sao de tipo (`string | null` onde se espera `string`), e os 31
+      # restantes garantem que o placar nao e o compilador fazendo o trabalho da
+      # suite.
+      - name: Mutantes do canal de e-mail
+        run: npm run mutantes:aviso-por-email
