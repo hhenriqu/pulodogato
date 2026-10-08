@@ -37,16 +37,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { CampoDeValor } from "@/components/ui/campo-de-valor";
-import { CampoDeData } from "@/components/ui/campo-de-data";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { TrendingUp, Plus, AlertTriangle, Trash2, Tag } from "lucide-react";
@@ -55,10 +46,17 @@ import {
   CrivosDeFundamento,
   type DadosDosCrivos,
 } from "@/components/investments/CrivosDeFundamento";
+import {
+  ModalDeMovimentacao,
+  type ValoresDaMovimentacao,
+} from "@/components/investments/ModalDeMovimentacao";
+import {
+  ModalDeCadastroDeAtivo,
+  type ValoresDoAtivo,
+} from "@/components/investments/ModalDeCadastroDeAtivo";
 import type { LimitesDosCrivos } from "@/lib/crivos";
 import {
   ROTULO_TIPO,
-  TIPOS_DE_ATIVO,
   type AssetType,
   type InvestmentKind,
   type Posicao,
@@ -70,7 +68,6 @@ import {
   CamposDeRendaFixa,
   RendaFixaDaCarteira,
   corpoDeRendaFixa,
-  valoresDeRendaFixaVazios,
   type RendaFixaDaRota,
   type ValoresDeRendaFixa,
 } from "@/components/RendaFixaDaCarteira";
@@ -112,12 +109,6 @@ interface Carteira {
   evolution: PontoEvolucao[];
 }
 
-const ROTULO_KIND: Record<InvestmentKind, string> = {
-  buy: "Compra",
-  sell: "Venda",
-  dividend: "Provento",
-};
-
 /** Hoje em AAAA-MM-DD, que e o formato que o input date e a rota esperam. */
 function hojeISO(): string {
   return new Date().toISOString().slice(0, 10);
@@ -132,14 +123,18 @@ export default function InvestmentsPage() {
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
 
-  // Formulario de ativo
-  const [novoSymbol, setNovoSymbol] = useState("");
-  const [novoNome, setNovoNome] = useState("");
-  const [novoTipo, setNovoTipo] = useState<AssetType>("stock");
-  const [novoPreco, setNovoPreco] = useState("");
-  const [novaRendaFixa, setNovaRendaFixa] = useState<ValoresDeRendaFixa>(
-    valoresDeRendaFixaVazios()
-  );
+  // OS DOIS MODAIS (HMO-252)
+  //
+  // Os dois formularios desta tela eram `<Card>` empilhados no corpo da pagina,
+  // depois da lista de ativos e de dois graficos -- a unica tela de lancamento
+  // do app que a HMO-249 nao alcancou. Agora sao modais abertos por botao no
+  // cabecalho, e os campos deles sao estado DO MODAL, nao da pagina: cada
+  // abertura e uma montagem nova, logo nasce limpa sem efeito de
+  // sincronizacao, e nao existe "modal fechado guardando a compra de ontem".
+  const [movimentacaoAberta, setMovimentacaoAberta] = useState(false);
+  const [cadastroAberto, setCadastroAberto] = useState(false);
+  /** O ativo ja escolhido quando a abertura veio do `+` de uma linha. */
+  const [ativoDoModal, setAtivoDoModal] = useState("");
 
   // Renda fixa (HMO-192). `null` cobre dois estados de proposito: ainda nao
   // carregou e nao foi possivel carregar. Nos dois o card nao aparece, e o resto
@@ -150,14 +145,6 @@ export default function InvestmentsPage() {
   const [edicaoRf, setEdicaoRf] = useState<Record<string, ValoresDeRendaFixa>>(
     {}
   );
-
-  // Formulario de lancamento
-  const [lancAtivo, setLancAtivo] = useState("");
-  const [lancKind, setLancKind] = useState<InvestmentKind>("buy");
-  const [lancQuantidade, setLancQuantidade] = useState("");
-  const [lancPreco, setLancPreco] = useState("");
-  const [lancTaxas, setLancTaxas] = useState("");
-  const [lancData, setLancData] = useState(hojeISO());
 
   const supabase = createClient();
 
@@ -241,48 +228,55 @@ export default function InvestmentsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function cadastrarAtivo(evento: React.FormEvent) {
-    evento.preventDefault();
+  /**
+   * Grava o ativo. Devolve a frase de erro, ou `null` quando gravou.
+   *
+   * A frase VOLTA em vez de ir para `setErro` porque o `<Alert>` desta pagina
+   * fica atras do overlay do modal: uma recusa da rota seria invisivel para
+   * quem esta com o formulario aberto, e o sintoma e o pior possivel -- o botao
+   * que parece nao fazer nada. Quem mostra e o modal (HMO-252).
+   */
+  async function cadastrarAtivo(
+    valores: ValoresDoAtivo
+  ): Promise<string | null> {
     setSalvando(true);
-    setErro(null);
     try {
       const resposta = await fetch("/api/investments/assets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          symbol: novoSymbol,
-          name: novoNome,
-          type: novoTipo,
-          currentPrice: novoPreco === "" ? null : novoPreco,
+          symbol: valores.symbol,
+          name: valores.nome,
+          type: valores.tipo,
+          currentPrice: valores.preco === "" ? null : valores.preco,
           // So renda fixa carrega os seis campos: o CHECK
           // `renda_fixa_so_em_fixed_income` da 031 recusa uma PETR4 com
           // indexador, porque ela apareceria na tela rendendo CDI POR CIMA da
           // variacao de preco -- o rendimento contado duas vezes.
-          ...(novoTipo === "fixed_income"
-            ? corpoDeRendaFixa(novaRendaFixa)
+          ...(valores.tipo === "fixed_income"
+            ? corpoDeRendaFixa(valores.rendaFixa)
             : {}),
         }),
       });
       const corpo = await resposta.json();
       if (!resposta.ok) {
-        setErro(corpo?.error || "Nao foi possivel cadastrar o ativo");
-        return;
+        return corpo?.error || "Nao foi possivel cadastrar o ativo";
       }
-      setNovoSymbol("");
-      setNovoNome("");
-      setNovoPreco("");
-      setNovaRendaFixa(valoresDeRendaFixaVazios());
       // Ativo novo muda a lista de criterios tambem -- sem isto o ativo aparece
       // na carteira e nao aparece nos criterios ate a pessoa recarregar a pagina.
       await Promise.all([carregar(), carregarCrivos()]);
+      return null;
+    } catch {
+      return "Nao foi possivel cadastrar o ativo";
     } finally {
       setSalvando(false);
     }
   }
 
-  async function lancar(evento: React.FormEvent) {
-    evento.preventDefault();
-
+  /** O mesmo contrato de `cadastrarAtivo`: a frase de erro, ou `null`. */
+  async function lancar(
+    valores: ValoresDaMovimentacao
+  ): Promise<string | null> {
     // AS DUAS TRAVAS QUE O CONTROLE DE DATA NATIVO FAZIA SOZINHO (HMO-240)
     //
     // O campo mascarado e um input de TEXTO, e nos dois casos o navegador deixa
@@ -295,39 +289,38 @@ export default function InvestmentsPage() {
     //     data futura entra: `trade_date` so e conferido contra o formato, e um
     //     lancamento no futuro distorce preco medio e rentabilidade sem erro
     //     nenhum no caminho.
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(lancData)) {
-      setErro("Informe a data do lancamento, no formato dd/mm/aaaa.");
-      return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(valores.data)) {
+      return "Informe a data do lancamento, no formato dd/mm/aaaa.";
     }
-    if (lancData > hojeISO()) {
-      setErro("A data do lancamento nao pode ser no futuro.");
-      return;
+    if (valores.data > hojeISO()) {
+      return "A data do lancamento nao pode ser no futuro.";
     }
 
     setSalvando(true);
-    setErro(null);
     try {
       const resposta = await fetch("/api/investments/transactions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          assetId: lancAtivo,
-          kind: lancKind,
-          quantity: lancQuantidade,
-          unitPrice: lancPreco,
-          fees: lancTaxas === "" ? 0 : lancTaxas,
-          tradeDate: lancData,
+          assetId: valores.assetId,
+          kind: valores.kind,
+          quantity: valores.quantidade,
+          unitPrice: valores.preco,
+          fees: valores.taxas === "" ? 0 : valores.taxas,
+          tradeDate: valores.data,
         }),
       });
       const corpo = await resposta.json();
       if (!resposta.ok) {
-        setErro(corpo?.error || "Nao foi possivel gravar o lancamento");
-        return;
+        return corpo?.error || "Nao foi possivel gravar o lancamento";
       }
-      setLancQuantidade("");
-      setLancPreco("");
-      setLancTaxas("");
+      // Recarrega mesmo com "Salvar e continuar" ligado: a carteira ATRAS do
+      // modal passa a mostrar o lancamento que acabou de entrar, e e por ela
+      // que a pessoa confere que a sequencia esta indo.
       await carregar();
+      return null;
+    } catch {
+      return "Nao foi possivel gravar o lancamento";
     } finally {
       setSalvando(false);
     }
@@ -432,7 +425,10 @@ export default function InvestmentsPage() {
         setErro(corpo?.error || "Nao foi possivel remover o ativo");
         return;
       }
-      if (lancAtivo === assetId) setLancAtivo("");
+      // O ativo removido nao pode continuar pre-escolhido para a proxima
+      // abertura do modal: o Select ficaria apontando para um id que nao existe
+      // mais, e o Lancar devolveria 404 sem que a tela explicasse nada.
+      if (ativoDoModal === assetId) setAtivoDoModal("");
       await Promise.all([carregar(), carregarCrivos()]);
     } finally {
       setSalvando(false);
@@ -455,16 +451,46 @@ export default function InvestmentsPage() {
   return (
     <SoftFeatureGuard feature="investment_tracking" user={user}>
       <div className="container mx-auto py-6 space-y-6">
-        <div className="space-y-1">
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <TrendingUp className="h-8 w-8" />
-            Investimentos
-          </h1>
-          <p className="text-muted-foreground">
-            Carteira lançada por você. Os preços atuais são os que você informar
-            — não há cotação automática.
-          </p>
+        {/* O cabecalho, com os dois gestos de criacao (HMO-252). `sm:flex-row`
+            e nao `flex-row`: no celular o titulo e os dois botoes empilham, e um
+            trilho horizontal com tres itens ai e scroll de lado (HMO-168). */}
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-1">
+            <h1 className="text-3xl font-bold flex items-center gap-2">
+              <TrendingUp className="h-8 w-8" />
+              Investimentos
+            </h1>
+            <p className="text-muted-foreground">
+              Carteira lançada por você. Os preços atuais são os que você
+              informar — não há cotação automática.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {/* Lancar vem primeiro e e o botao cheio: cadastrar ativo se faz
+                uma vez por papel, lancar movimentacao se faz todo mes. */}
+            <Button
+              onClick={() => {
+                setAtivoDoModal("");
+                setMovimentacaoAberta(true);
+              }}
+              disabled={ativos.length === 0}
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Lançar movimentação
+            </Button>
+            <Button variant="outline" onClick={() => setCadastroAberto(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Cadastrar ativo
+            </Button>
+          </div>
         </div>
+
+        {/* O botao desabilitado sem dizer por que e um botao quebrado. */}
+        {ativos.length === 0 && (
+          <p className="text-sm text-muted-foreground">
+            Cadastre um ativo antes de lançar uma movimentação.
+          </p>
+        )}
 
         {erro && (
           <Alert variant="destructive">
@@ -551,11 +577,15 @@ export default function InvestmentsPage() {
           )}
         </div>
 
+        {/* O `+` de uma linha ABRE o modal com aquele ativo escolhido. Antes
+            desta issue ele so escrevia no estado de um formulario que ficava
+            tres secoes abaixo, sem rolar a tela: o clique nao tinha efeito
+            visivel nenhum (HMO-252). */}
         <PortfolioTable
           data={posicoes}
           onAddTransaction={(assetId) => {
-            setLancAtivo(assetId);
-            setLancKind("buy");
+            setAtivoDoModal(assetId);
+            setMovimentacaoAberta(true);
           }}
         />
 
@@ -588,7 +618,8 @@ export default function InvestmentsPage() {
           <CardContent className="space-y-4">
             {ativos.length === 0 && (
               <p className="text-sm text-muted-foreground">
-                Nenhum ativo ainda. Cadastre o primeiro no formulário abaixo.
+                Nenhum ativo ainda. Cadastre o primeiro em &ldquo;Cadastrar
+                ativo&rdquo;, no topo da tela.
               </p>
             )}
 
@@ -686,229 +717,32 @@ export default function InvestmentsPage() {
           </CardContent>
         </Card>
 
-        {/* --- Cadastrar ativo --------------------------------------------- */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Cadastrar ativo</CardTitle>
-            <CardDescription>
-              O código é como você identifica o ativo na sua carteira. Não há
-              lista fechada de códigos.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form
-              onSubmit={cadastrarAtivo}
-              className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
-            >
-              <div className="space-y-2">
-                <Label htmlFor="novo-symbol">Código</Label>
-                <Input
-                  id="novo-symbol"
-                  value={novoSymbol}
-                  onChange={(e) => setNovoSymbol(e.target.value.toUpperCase())}
-                  placeholder="PETR4"
-                  maxLength={16}
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="novo-nome">Nome</Label>
-                <Input
-                  id="novo-nome"
-                  value={novoNome}
-                  onChange={(e) => setNovoNome(e.target.value)}
-                  placeholder="Petrobras PN"
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="novo-tipo">Tipo</Label>
-                <Select
-                  value={novoTipo}
-                  onValueChange={(v) => setNovoTipo(v as AssetType)}
-                >
-                  <SelectTrigger id="novo-tipo">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {TIPOS_DE_ATIVO.map((t) => (
-                      <SelectItem key={t} value={t}>
-                        {ROTULO_TIPO[t]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                {/* Cotacao, nao valor em reais: fica sem mascara. Ver o bloco
-                    de Quantidade para o porque. */}
-                <Label htmlFor="novo-preco">Preço atual (opcional)</Label>
-                <Input
-                  id="novo-preco"
-                  type="number"
-                  step="0.00000001"
-                  min="0"
-                  value={novoPreco}
-                  onChange={(e) => setNovoPreco(e.target.value)}
-                  placeholder="31,50"
-                />
-              </div>
-              {/* Renda fixa pede o que nao existe em acao nenhuma: indexador,
-                  percentual do indice, data de aplicacao e vencimento
-                  (HMO-192). Sem estes campos o tipo `fixed_income` funcionava
-                  so se a pessoa reescrevesse o preco na mao todo mes. */}
-              {novoTipo === "fixed_income" && (
-                <CamposDeRendaFixa
-                  idPrefixo="novo-rf"
-                  valores={novaRendaFixa}
-                  onChange={setNovaRendaFixa}
-                  desabilitado={salvando}
-                />
-              )}
-              <div className="sm:col-span-2 lg:col-span-4">
-                <Button type="submit" disabled={salvando}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Cadastrar ativo
-                </Button>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
+        {/* --- Os dois modais (HMO-252) -------------------------------------
 
-        {/* --- Lançar compra, venda ou provento ---------------------------- */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Lançar movimentação</CardTitle>
-            <CardDescription>
-              Em provento, a quantidade são as cotas que receberam e o valor é o
-              valor por cota.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {ativos.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                Cadastre um ativo antes de lançar.
-              </p>
-            ) : (
-              <form
-                onSubmit={lancar}
-                className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
-              >
-                <div className="space-y-2">
-                  <Label htmlFor="lanc-ativo">Ativo</Label>
-                  <Select value={lancAtivo} onValueChange={setLancAtivo}>
-                    <SelectTrigger id="lanc-ativo">
-                      <SelectValue placeholder="Escolha o ativo" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ativos.map((a) => (
-                        <SelectItem key={a.id} value={a.id}>
-                          {a.symbol} — {a.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="lanc-kind">Movimentação</Label>
-                  <Select
-                    value={lancKind}
-                    onValueChange={(v) => setLancKind(v as InvestmentKind)}
-                  >
-                    <SelectTrigger id="lanc-kind">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(Object.keys(ROTULO_KIND) as InvestmentKind[]).map((k) => (
-                        <SelectItem key={k} value={k}>
-                          {ROTULO_KIND[k]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="lanc-data">Data</Label>
-                  {/* `CampoDeData` e nao o controle de data nativo (HMO-240).
-                      O `max={hojeISO()}` de antes valia para os dois caminhos
-                      do controle nativo; num campo de texto ele alcanca so o
-                      calendario, entao a recusa da data futura passou a ser
-                      explicita em `lancar`. */}
-                  <CampoDeData
-                    id="lanc-data"
-                    value={lancData}
-                    maxDoCalendario={hojeISO()}
-                    onChange={setLancData}
-                    required
-                    aria-label="Data do lançamento"
-                  />
-                </div>
-                <div className="space-y-2">
-                  {/* POR QUE QUANTIDADE E COTACAO NAO LEVAM A MASCARA DE R$
-                      (HMO-171)
+            Montados CONDICIONALMENTE, e nao com `open={estado}`: fechado, o
+            modal nao existe, entao a abertura seguinte e uma montagem nova e o
+            formulario nasce limpo sem nenhum efeito de sincronizacao. Nao ha o
+            estado "fechado guardando a compra de ontem" para esquecer de
+            limpar. (Em `ModalDeLancamento` da HMO-249 o `open` nasce `true`
+            pelo mesmo motivo, por outro caminho: la o modal E a rota.) */}
+        {movimentacaoAberta && (
+          <ModalDeMovimentacao
+            ativos={ativos}
+            ativoInicial={ativoDoModal}
+            hoje={hojeISO()}
+            salvando={salvando}
+            aoFechar={() => setMovimentacaoAberta(false)}
+            aoSalvar={lancar}
+          />
+        )}
 
-                      A mascara de dinheiro tem as casas da MOEDA -- duas, em
-                      real. Estes campos tem oito (`step="0.00000001"`), e por
-                      um motivo: cripto e fracao de cota nao cabem em centavos.
-
-                      Mascarar aqui nao deixaria o campo feio, arredondaria o
-                      dado: um preco de 0,00000001 viraria R$ 0,01, um erro de um
-                      milhao de vezes, em silencio -- exatamente a classe de bug
-                      que a mascara foi criada para evitar. E quantidade de cotas
-                      nem e dinheiro; nao tem simbolo de moeda para levar.
-
-                      Se um dia a cotacao precisar de mascara, ela precisa de
-                      casas por CAMPO e nao por moeda, que e outra decisao. */}
-                  <Label htmlFor="lanc-quantidade">
-                    {lancKind === "dividend" ? "Cotas" : "Quantidade"}
-                  </Label>
-                  <Input
-                    id="lanc-quantidade"
-                    type="number"
-                    step="0.00000001"
-                    min="0"
-                    value={lancQuantidade}
-                    onChange={(e) => setLancQuantidade(e.target.value)}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="lanc-preco">
-                    {lancKind === "dividend"
-                      ? "Valor por cota"
-                      : "Preço unitário"}
-                  </Label>
-                  <Input
-                    id="lanc-preco"
-                    type="number"
-                    step="0.00000001"
-                    min="0"
-                    value={lancPreco}
-                    onChange={(e) => setLancPreco(e.target.value)}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="lanc-taxas">Taxas (opcional)</Label>
-                  {/* Taxa de corretagem e dinheiro comum, com duas casas: entra
-                      mascarado como todo campo de valor do app (HMO-171). Os
-                      campos de COTACAO acima nao -- ver o comentario deles. */}
-                  <CampoDeValor
-                    id="lanc-taxas"
-                    value={lancTaxas}
-                    onChange={setLancTaxas}
-                  />
-                </div>
-                <div className="sm:col-span-2 lg:col-span-3">
-                  <Button type="submit" disabled={salvando || !lancAtivo}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    Lançar {ROTULO_KIND[lancKind].toLowerCase()}
-                  </Button>
-                </div>
-              </form>
-            )}
-          </CardContent>
-        </Card>
+        {cadastroAberto && (
+          <ModalDeCadastroDeAtivo
+            salvando={salvando}
+            aoFechar={() => setCadastroAberto(false)}
+            aoSalvar={cadastrarAtivo}
+          />
+        )}
       </div>
     </SoftFeatureGuard>
   );

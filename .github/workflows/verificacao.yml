@@ -4703,7 +4703,7 @@ jobs:
       # funcao que desfaz a issue inteira.
       #
       # A prova de mutacao completa e `npm run mutantes:retorno-lancamento`
-      # (21 mutantes, ferramenta de quem escreve o teste). Aqui ficam os quatro
+      # (26 mutantes, ferramenta de quem escreve o teste). Aqui ficam os cinco
       # que mais custam, plantados um por vez.
       - name: 'A verificacao sabe falhar (retorno-do-lancamento)'
         run: |
@@ -4784,7 +4784,24 @@ jobs:
             '  if (false) return null;'
           reprova "Verde com o 'Salvar e continuar' sendo ignorado."
 
-          echo "A verificacao fica vermelha nas quatro armadilhas."
+          # 5) A MESMA COMPRA DUAS VEZES, no formulario de investimento
+          #    (HMO-252). O mesmo mutante do (3) no outro formulario, e aqui o
+          #    estrago e mais dificil de notar: a despesa repetida e uma LINHA
+          #    a mais na lista, que se ve; a compra repetida nao -- ela entra
+          #    na conta do PRECO MEDIO do ativo, e dele saem o lucro, o
+          #    prejuizo e a rentabilidade exibidos daquele papel. O numero
+          #    errado continua parecendo um numero.
+          #
+          #    UMA linha basta de ancora: `quantidade:` so existe em
+          #    `proximaMovimentacaoDeCarteira`. E o `para` troca `inicial` por
+          #    `valores` em vez de apagar a linha, para o mutante ser "limpei
+          #    para o que estava na tela" e nao "esqueci a linha".
+          node /tmp/mutar.mjs $LIB \
+            '    quantidade: inicial.quantidade,' \
+            '    quantidade: valores.quantidade,'
+          reprova "Verde com a QUANTIDADE sobrevivendo ao Salvar e continuar -- o segundo clique grava a mesma compra e move o preco medio do ativo."
+
+          echo "A verificacao fica vermelha nas cinco armadilhas."
 
       - name: 'A arvore voltou ao lugar depois de "A verificacao sabe falhar (retorno-do-lancamento)"'
         run: |

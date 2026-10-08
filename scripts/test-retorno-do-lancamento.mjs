@@ -35,6 +35,7 @@ const {
   comOrigem,
   destinoDepoisDeSalvar,
   origemSegura,
+  proximaMovimentacaoDeCarteira,
   proximaTransferencia,
   proximoLancamento,
 } = await import("../.tmp-retorno-lancamento/retorno-do-lancamento.js");
@@ -476,4 +477,120 @@ test("a transferencia limpa valor e descricao e guarda origem/destino/data", () 
   assert.equal(proxima.destinoId, "conta-poupanca");
   assert.equal(proxima.data, "2026-03-15");
   assert.notEqual(proxima.origemId, inicialT.origemId);
+});
+
+// ---------------------------------------------------------
+// proximaMovimentacaoDeCarteira (HMO-252)
+// ---------------------------------------------------------
+// O CONTROLE DESTE BLOCO e o par quantidade+preco, e o custo de deixa-lo na
+// tela nao e uma linha repetida na lista: e o PRECO MEDIO do ativo.
+//
+// Quem tinha 100 PETR4 a R$ 20,00 e compra 100 a R$ 31,50 passa a ter 200 a
+// R$ 25,75. Com o formulario ainda preenchido, um segundo clique grava a mesma
+// compra: 300 acoes a R$ 27,67. O numero errado continua parecendo um numero --
+// nao ha linha estranha para notar, e o lucro, o prejuizo e a rentabilidade
+// daquele ativo passam todos a sair daquele R$ 27,67.
+//
+// Por isso as assercoes abaixo sao sobre CAMPO, uma por campo, e nao um
+// `deepEqual` contra um objeto esperado: deepEqual contra um objeto que eu
+// mesmo escrevi nao distingue "limpou" de "eu escrevi o valor errado no
+// esperado".
+
+/** O estado inicial do formulario, como ele abre. */
+const inicialM = () => ({
+  assetId: "",
+  kind: "buy",
+  quantidade: "",
+  preco: "",
+  taxas: "",
+  data: "2026-10-08",
+});
+
+/** O que a pessoa acabou de lancar: a compra de 100 PETR4 a R$ 31,50. */
+const movimentada = () => ({
+  ...inicialM(),
+  assetId: "ativo-petr4",
+  kind: "buy",
+  quantidade: "100",
+  preco: "31.50",
+  taxas: "4.90",
+  data: "2026-03-15",
+});
+
+test("quantidade e preco SAO LIMPOS -- e isso que impede errar o preco medio", () => {
+  const antes = movimentada();
+  // CONTROLE: antes do reset, o segundo clique em "Lançar" gravaria esta mesma
+  // compra de novo, e ela entraria na conta do preco medio.
+  assert.equal(antes.quantidade, "100");
+  assert.equal(antes.preco, "31.50");
+
+  const proxima = proximaMovimentacaoDeCarteira(antes, inicialM());
+
+  assert.equal(
+    proxima.quantidade,
+    "",
+    "sem quantidade o campo `required` recusa o reenvio em vez de aceita-lo"
+  );
+  assert.equal(proxima.preco, "");
+});
+
+test("as taxas tambem saem: corretagem herdada e preco medio errado pelo outro lado", () => {
+  const antes = movimentada();
+  assert.equal(antes.taxas, "4.90");
+
+  const proxima = proximaMovimentacaoDeCarteira(antes, inicialM());
+
+  assert.equal(proxima.taxas, "");
+});
+
+test("o ativo, o tipo e a data SOBREVIVEM: e para isso que a opcao existe", () => {
+  const proxima = proximaMovimentacaoDeCarteira(movimentada(), inicialM());
+
+  assert.equal(
+    proxima.assetId,
+    "ativo-petr4",
+    "lancar os tres proventos do mesmo ativo sem reescolher o ativo"
+  );
+  assert.equal(proxima.kind, "buy");
+  assert.equal(proxima.data, "2026-03-15");
+  // Que o ativo e a data sobreviveram so quer dizer algo porque eles DIFEREM do
+  // inicial: sem esta linha, um reset total passaria no caso de cima.
+  assert.notEqual(proxima.assetId, inicialM().assetId);
+  assert.notEqual(proxima.data, inicialM().data);
+});
+
+test("o provento guarda o tipo escolhido -- `buy` de volta seria outra operacao", () => {
+  // O caso real de quem poe a carteira em dia: a temporada de proventos. Se o
+  // tipo voltasse para "Compra", a segunda linha do mes viraria uma COMPRA do
+  // valor do provento -- dinheiro que entrou lancado como dinheiro que saiu.
+  const provento = { ...movimentada(), kind: "dividend", quantidade: "100", preco: "0.87" };
+
+  const proxima = proximaMovimentacaoDeCarteira(provento, inicialM());
+
+  assert.equal(proxima.kind, "dividend");
+  assert.notEqual(proxima.kind, inicialM().kind);
+});
+
+test("o reset da carteira nao MUTA o estado que recebeu", () => {
+  // Mesmo motivo do caso irmao de `proximoLancamento`: em React o reset roda
+  // dentro de `setValores(atual => ...)`, e mutar `atual` ali e um estado que o
+  // React nao sabe que mudou.
+  const antes = movimentada();
+  const copia = JSON.parse(JSON.stringify(antes));
+
+  proximaMovimentacaoDeCarteira(antes, inicialM());
+
+  assert.deepEqual(antes, copia, "o objeto de entrada ficou intacto");
+});
+
+test("todo campo da movimentacao existe no resultado -- nenhum vira undefined", () => {
+  const antes = movimentada();
+  const proxima = proximaMovimentacaoDeCarteira(antes, inicialM());
+
+  for (const chave of Object.keys(antes)) {
+    assert.ok(
+      chave in proxima,
+      `${chave} desapareceu: um campo faltando vira undefined no formulario`
+    );
+  }
 });
