@@ -2257,6 +2257,35 @@ jobs:
       - name: Quanto este mes cobra do cartao, e quanto fica para depois
         run: npm run test:safe-to-spend
 
+      # A PROJECAO DE SALDO E A FATURA FECHADA (HMO-293). Fechar uma fatura de
+      # R$ 300 derrubava o `projected_total` em R$ 300 sem nenhum fato novo: a
+      # conta prevista da fatura entrava no `scheduled_out` enquanto a mesma
+      # divida ja estava no `current_balance` do cartao. Medido em producao,
+      # nao lido no codigo.
+      #
+      # O que a suite guarda e o CRITERIO da exclusao: a chave canonica em
+      # `notes`, nunca `account_type`. Assinatura cobrada no cartao nao e
+      # fatura e TEM de continuar descontando -- trocar o criterio por tipo de
+      # conta apaga essa distincao e continua passando no tsc.
+      #
+      # Ela mora aqui, e nao no db-verify, de proposito: o db-verify e filtrado
+      # por `paths:`, e foi exatamente assim que tres suites deste repositorio
+      # ficaram paradas em verde (ver o item 2 do cabecalho).
+      - name: A fatura fechada fica fora do que a projecao desconta
+        run: npm run test:projecao
+
+      # Controle negativo da projecao: 23 mutantes, cada um estragando UMA
+      # decisao do lib/projecao.ts, e todos tem de morrer. O runner muta numa
+      # sombra em /tmp (`criarBlocoDeMutantes`) e roda o bloco num processo so,
+      # entao aqui o custo e tempo de step, nao partida de maquina -- e a fonte
+      # rastreada pelo git nunca e tocada, nem se o job for cancelado no meio.
+      #
+      # Ele comeca pelo CONTROLE POSITIVO (arvore intacta tem de passar). Sem
+      # isso um runner quebrado reprovaria todo mutante e imprimiria "23/23
+      # mortos" sobre zero assercoes executadas.
+      - name: 'A verificacao sabe falhar (projecao e fatura fechada)'
+        run: npm run mutantes:projecao
+
       # Controle negativo das duas decisoes de dinheiro, plantado um por vez.
       #
       # A prova de mutacao completa e `npm run mutantes:fatura-do-periodo`

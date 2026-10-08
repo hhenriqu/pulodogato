@@ -423,3 +423,9 @@ next-env.d.ts
 
 # A sugestao de divisao viva (HMO-273): arvore compilada da suite de rota.
 /.tmp-sugestao-de-divisao/
+
+# saida do `npm run test:projecao` (HMO-293a): arvore compilada do
+# lib/projecao.ts com os alias `@/` reescritos. Artefato, nao fonte. Um
+# `.tmp-*` fora do .gitignore chega a ser commitado em cima de arquivo de
+# fonte -- ver a entrada do .tmp-parcelamento acima.
+/.tmp-projecao/
