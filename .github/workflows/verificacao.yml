@@ -235,6 +235,38 @@ jobs:
       - name: A guarda de mutacao no lugar sabe falhar
         run: node scripts/mutantes-guarda-de-mutacao-no-lugar.mjs
 
+      # Nenhuma ancora de mutante parou de casar (HMO-262).
+      #
+      # Um mutante muta por texto literal (`de` -> `para`). Quando a feature
+      # RENOMEIA o trecho, o `de` casa com nada: o mutante nao aplica, a suite
+      # roda sobre o codigo CORRETO e passa, e a guarda que aquele mutante existia
+      # para vigiar fica sem controle negativo nenhum. Foi o que aconteceu com
+      # `parcelamento_volta_para_toda_despesa` -- a HMO-254 trocou `ehNoCartao`
+      # por `natureza === "card"` em lib/lancamento.ts e deixou o `de` para tras.
+      #
+      # Isto ja era MEDIDO e nao reprovava: o medidor imprimia "ancora MORTA" e
+      # saia zero, e ninguem o invocava. Agora reprova os tres estados em que uma
+      # ancora deixa de medir (0 ocorrencias, >1, arquivo ausente) e roda tambem
+      # no `npm run pre-commit`, que e onde o rename e FEITO -- nao meses depois.
+      #
+      # COBERTURA PARCIAL, de proposito: ele le as familias de forma conhecida
+      # (painel e tupla), 292 mutantes em 14 runners. Os demais tem forma propria
+      # e entram conforme a conversao para bloco avanca; a guarda ABORTA se uma
+      # familia inteira sair da varredura, entao encolher nao passa calado.
+      - name: Nenhuma ancora de mutante parou de casar
+        run: npm run check-ancora-de-mutante
+
+      # Controle negativo da guarda acima. Ela le runners por predicado de FORMA,
+      # e um predicado que para de casar faz a varredura medir o conjunto vazio e
+      # imprimir um boletim limpo. Cada estado que ela recusa tem aqui um caso, e
+      # o controle positivo (arvore intacta sai 0) e o que pega o "vermelho pelo
+      # motivo errado". Inclui o caso 6, que trava uma regressao ja medida: o
+      # driver do conversor disparava por "tem argumento" em vez de "eu sou o
+      # programa", e passar um runner para a guarda fazia o conversor REESCREVER
+      # esse runner em disco, sem medir nada.
+      - name: A guarda de ancora de mutante sabe reprovar
+        run: npm run test:ancora-de-mutante
+
       # E o conferidor da CONVERSAO de runner para bloco, que e o que garante que
       # converter um runner nao perdeu nenhuma entrada da lista de mutantes -- a
       # unica parte de um runner que carrega conhecimento que nao esta escrito em

@@ -1240,14 +1240,30 @@ export function conferir(antes, depois, familia = FAMILIAS[familiaDe(antes)]) {
 
 // --- linha de comando ------------------------------------------------------
 //
-// Importado como modulo (pelo controle negativo), `process.argv` nao tem alvo e
-// nada abaixo roda -- e por isso o `conferir`/`converter` sao exportados.
-
+// A CONDICAO E "EU SOU O PROGRAMA", NAO "TEM ARGUMENTO" (HMO-262).
+//
+// Era `if (alvos.length > 0)`, com o comentario "importado como modulo,
+// `process.argv` nao tem alvo e nada abaixo roda". Isso valia para o unico
+// importador de entao, que rodava sem argumento alis. Mas `process.argv` e do
+// PROCESSO, nao do modulo: quando o importador recebe argumentos proprios, este
+// driver os le como se fossem dele.
+//
+// O estrago medido na main (d995511), com arquivos intactos:
+//
+//     $ node scripts/mede-ancora-ambigua.mjs scripts/mutantes-parte-do-grupo.mjs
+//     convertido  scripts/mutantes-parte-do-grupo.mjs  (familia tupla)
+//
+// O runner foi REESCRITO EM DISCO e a medicao pedida nunca rodou -- o
+// `process.exit` daqui mata o processo antes. O modo por argumento que o
+// `mede-ancora-ambigua.mjs` documenta ("[runner.mjs ...]") portanto nao media
+// nada e editava arquivo rastreado pelo git, calado.
 const args = process.argv.slice(2);
 const soConferir = args[0] === "--conferir";
 const alvos = soConferir ? args.slice(1) : args;
 
-if (alvos.length > 0) {
+const souOPrograma = process.argv[1]?.endsWith("converte-mutantes-em-bloco.mjs");
+
+if (souOPrograma && alvos.length > 0) {
   let ruim = 0;
   for (const alvo of alvos) {
     const rotulo = path.basename(alvo).replace(/^mutantes-/, "").replace(/\.mjs$/, "");
@@ -1274,7 +1290,7 @@ if (alvos.length > 0) {
     console.log(`convertido  ${alvo}  (familia ${nomeDaFamilia})`);
   }
   process.exit(ruim === 0 ? 0 : 1);
-} else if (process.argv[1]?.endsWith("converte-mutantes-em-bloco.mjs")) {
+} else if (souOPrograma) {
   console.error("uso: node scripts/converte-mutantes-em-bloco.mjs [--conferir] <runner.mjs> ...");
   process.exit(2);
 }
