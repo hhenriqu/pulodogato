@@ -28,12 +28,33 @@ interface SalvarEContinuarProps {
   aoMudar: (ligado: boolean) => void;
   /** Desligado enquanto a gravacao esta em curso, como o botao de Salvar. */
   disabled?: boolean;
+  /**
+   * O texto de apoio, para quem tem OUTROS campos (HMO-252).
+   *
+   * O ROTULO continua unico -- e ele a promessa sobre o botao, e duas copias
+   * dele viram duas promessas diferentes (ver o cabecalho). O apoio, nao: ele
+   * NOMEIA campos, e o do formulario de despesa diz "Descrição e valor são
+   * limpos; categoria, conta, data e grupo continuam", que no formulario de
+   * investimento e simplesmente falso -- lá nao existe descricao nem conta, e
+   * o que fica e o ativo, o tipo e a data. Um texto que nomeia o campo errado e
+   * pior que nenhum: ele e a unica fonte sobre o que vai ser apagado, e quem
+   * confia nele deixa de conferir.
+   */
+  frases?: { ligado: string; desligado: string };
 }
+
+/** O apoio das tres telas de `financial_transactions` (HMO-249). */
+const FRASES_PADRAO = {
+  ligado:
+    "A tela fica aberta para a próxima conta. Descrição e valor são limpos; categoria, conta, data e grupo continuam.",
+  desligado: "Ao salvar, esta tela fecha e você volta de onde veio.",
+};
 
 export function SalvarEContinuar({
   ligado,
   aoMudar,
   disabled,
+  frases = FRASES_PADRAO,
 }: SalvarEContinuarProps) {
   return (
     <div className="flex items-start gap-3 rounded-lg border bg-muted/20 p-3">
@@ -52,9 +73,7 @@ export function SalvarEContinuar({
           Salvar e continuar
         </Label>
         <p className="text-sm text-muted-foreground">
-          {ligado
-            ? "A tela fica aberta para a próxima conta. Descrição e valor são limpos; categoria, conta, data e grupo continuam."
-            : "Ao salvar, esta tela fecha e você volta de onde veio."}
+          {ligado ? frases.ligado : frases.desligado}
         </p>
       </div>
     </div>

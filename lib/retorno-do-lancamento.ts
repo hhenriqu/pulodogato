@@ -295,3 +295,44 @@ export function proximaTransferencia<
     notas: inicial.notas,
   };
 }
+
+/**
+ * O mesmo para a movimentacao de carteira -- compra, venda e provento de
+ * investimento (HMO-252).
+ *
+ * POR QUE AQUI DOI MAIS DO QUE NAS OUTRAS DUAS
+ * --------------------------------------------
+ * Nas duas de cima, gravar o mesmo lancamento duas vezes erra o TOTAL do mes --
+ * uma linha repetida na lista, visivel para quem olha. Aqui o lancamento
+ * repetido entra na conta do PRECO MEDIO do ativo, que `lib/investments.ts`
+ * calcula sobre as movimentacoes: uma segunda compra de 100 PETR4 a R$ 31,50
+ * nao soma uma linha estranha, ela MOVE o preco medio -- e com ele o lucro, o
+ * prejuizo e a rentabilidade exibidos daquele ativo. A pessoa nao tem como
+ * notar olhando a lista, porque o numero errado parece um numero.
+ *
+ * O QUE E LIMPO
+ * -------------
+ *   quantidade  o campo que o navegador exige (`required`): sem ele, o segundo
+ *   e preco     clique em "Lançar" nao envia nada em vez de enviar de novo.
+ *               Sao os dois fatores do valor da operacao -- deixar UM na tela
+ *               ja bastaria para o segundo envio passar.
+ *   taxas       a corretagem e desta operacao. Carregada para a seguinte, ela
+ *               soma uma taxa fantasma ao custo -- que e preco medio errado
+ *               outra vez, pelo outro lado.
+ *
+ * O QUE SOBREVIVE
+ * ---------------
+ * Ativo, tipo de movimentacao e data. E exatamente o caso que a opcao existe
+ * para servir: por a carteira em dia e lancar os proventos do mes de um ativo,
+ * ou as tres compras do mesmo papel, sem reescolher o ativo a cada volta.
+ */
+export function proximaMovimentacaoDeCarteira<
+  V extends { quantidade: string; preco: string; taxas: string }
+>(valores: V, inicial: V): V {
+  return {
+    ...valores,
+    quantidade: inicial.quantidade,
+    preco: inicial.preco,
+    taxas: inicial.taxas,
+  };
+}

@@ -29,6 +29,12 @@
 //   `reset_total`          -- limpa tudo, inclusive categoria e grupo: a opcao
 //                             existe para nao reescolher isso, e ela passaria a
 //                             ser mais trabalho que fechar e reabrir.
+//   `carteira_quantidade_sobrevive` / `carteira_preco_sobrevive` (HMO-252)
+//                          -- O MESMO mutante de dinheiro no formulario de
+//                             investimento, onde ele e mais dificil de notar:
+//                             a compra repetida nao e uma linha estranha na
+//                             lista, e um PRECO MEDIO movido, e dele saem o
+//                             lucro e a rentabilidade do ativo.
 //
 // COMO RODAR
 //   npm run mutantes:retorno-lancamento
@@ -277,17 +283,33 @@ const MUTANTES = [
       "escreve no objeto que recebeu em vez de devolver um novo: dentro de " +
       "`setValores(atual => ...)` o React pode nao ver a mudanca, e a tela fica " +
       "com o valor da conta anterior",
+    // O `para` FECHA o parentese e devolve `valores`, de proposito. A primeira
+    // versao deste mutante trocava so `return {` por `return Object.assign(valores, {`
+    // e deixava o `};` original fechando a chamada -- parentese desbalanceado,
+    // ou seja, o mutante morria no `tsc` e a assercao "o reset nao MUTA o
+    // estado que recebeu" nunca era exercida. Morrer no compilador conta como
+    // morte no placar e NAO mede o teste: ver
+    // scripts/test-ancora-de-mutante.mjs para a mesma classe de erro.
     de: `  return {
     ...valores,
     descricao: inicial.descricao,
     valor: inicial.valor,
     notas: inicial.notas,
-    parcelado: inicial.parcelado,`,
-    para: `  return Object.assign(valores, {
+    parcelado: inicial.parcelado,
+    baseDoValorParcelado: inicial.baseDoValorParcelado,
+    parcelaAtual: inicial.parcelaAtual,
+    totalDeParcelas: inicial.totalDeParcelas,
+  };`,
+    para: `  Object.assign(valores, {
     descricao: inicial.descricao,
     valor: inicial.valor,
     notas: inicial.notas,
-    parcelado: inicial.parcelado,`,
+    parcelado: inicial.parcelado,
+    baseDoValorParcelado: inicial.baseDoValorParcelado,
+    parcelaAtual: inicial.parcelaAtual,
+    totalDeParcelas: inicial.totalDeParcelas,
+  });
+  return valores;`,
   },
   {
     nome: "transferencia_valor_sobrevive",
@@ -303,6 +325,81 @@ const MUTANTES = [
   return {
     ...valores,
     descricao: inicial.descricao,`,
+  },
+
+  // --- a movimentacao de carteira (HMO-252) --------------------------------
+  //
+  // Os tres primeiros sao O MESMO mutante de dinheiro de `valor_sobrevive`,
+  // apontado para o outro formulario -- e aqui o estrago e mais dificil de
+  // notar. Um gasto repetido na lista de lancamentos e uma LINHA a mais, que se
+  // ve. Uma compra repetida nao: ela entra na conta do PRECO MEDIO do ativo
+  // (`lib/investments.ts` o calcula sobre as movimentacoes), e o preco medio
+  // errado contamina o lucro, o prejuizo e a rentabilidade exibidos daquele
+  // ativo. O numero errado continua parecendo um numero.
+  //
+  // `valores.<campo>` em vez de `inicial.<campo>` e de proposito: a ancora fica
+  // de UMA linha e inequivoca, e o mutante deixa de ser "esqueci a linha" (que
+  // a omissao tambem produziria) para ser "limpei para o que estava na tela" --
+  // que compila, e e exatamente o defeito.
+  {
+    nome: "carteira_quantidade_sobrevive",
+    porque:
+      "a quantidade fica na tela depois de lancar: UM segundo clique em " +
+      "Lancar grava a mesma compra outra vez e MOVE o preco medio do ativo, " +
+      "sem nenhuma linha estranha para a pessoa notar",
+    de: `    quantidade: inicial.quantidade,`,
+    para: `    quantidade: valores.quantidade,`,
+  },
+  {
+    nome: "carteira_preco_sobrevive",
+    porque:
+      "o preco unitario sobrevive -- a outra metade do par que forma o valor " +
+      "da operacao; com a quantidade limpa e este nao, o reenvio volta assim " +
+      "que a pessoa digitar a quantidade da compra seguinte",
+    de: `    preco: inicial.preco,`,
+    para: `    preco: valores.preco,`,
+  },
+  {
+    nome: "carteira_taxas_sobrevivem",
+    porque:
+      "a corretagem da operacao anterior e cobrada de novo na seguinte: taxa " +
+      "fantasma somada ao custo, que e preco medio errado pelo outro lado",
+    de: `    taxas: inicial.taxas,`,
+    para: `    taxas: valores.taxas,`,
+  },
+  {
+    nome: "carteira_reset_total",
+    porque:
+      "limpa tambem o ativo, o tipo e a data: lancar os proventos do mes de um " +
+      "ativo passaria a exigir reescolher o ativo a cada volta, e a opcao " +
+      "deixaria de servir para o unico caso em que ela foi pedida",
+    de: `  return {
+    ...valores,
+    quantidade: inicial.quantidade,`,
+    para: `  return {
+    ...inicial,
+    quantidade: inicial.quantidade,`,
+  },
+  {
+    nome: "carteira_muta_o_estado_anterior",
+    porque:
+      "escreve no objeto que recebeu em vez de devolver um novo: dentro de " +
+      "`setValores(atual => ...)` o React pode nao ver a mudanca, e os campos " +
+      "ficam na tela com o que acabou de ser gravado",
+    // Parentese FECHADO -- ver o `muta_o_estado_anterior` irmao: a forma obvia
+    // deste mutante nao compila, e morrer no `tsc` nao mede a assercao.
+    de: `  return {
+    ...valores,
+    quantidade: inicial.quantidade,
+    preco: inicial.preco,
+    taxas: inicial.taxas,
+  };`,
+    para: `  Object.assign(valores, {
+    quantidade: inicial.quantidade,
+    preco: inicial.preco,
+    taxas: inicial.taxas,
+  });
+  return valores;`,
   },
 ];
 
