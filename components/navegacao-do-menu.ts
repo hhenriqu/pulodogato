@@ -307,20 +307,47 @@ export const navigation: NavigationItem[] = [
  *
  * Era o `canAccessItem` de dentro do `Sidebar`, que fechava sobre o
  * `subscription` do hook. Aqui o plano entra por ARGUMENTO -- e isso que deixa
- * a suite FIXAR o plano. Sem fixar, a contagem de 27 oscila (sem plano `admin`
- * o menu tem 26 itens) e o teste passaria a medir o plano em vez do modo.
+ * a suite FIXAR o plano. Sem fixar, a contagem de 27 oscila (ela cai para 26 no
+ * plano `trader` e para 25 nos outros) e o teste passaria a medir o plano em vez
+ * do modo.
  *
- * A regra em si nao mudou: so a tela de Admin e restrita; todo o resto passa.
+ * A REGRA MUDOU NA HMO-292, e e esta: item sem `requiredPlans` aparece para
+ * todo mundo; item COM `requiredPlans` aparece so para quem esta na lista. Ate
+ * aqui o predicado olhava se a lista CONTINHA `"admin"` e, se continha, exigia
+ * plano `admin` -- o resto da lista era ignorado. "Trading" declara
+ * `requiredPlans: ["trader", "admin"]`, e o resultado era que quem PAGAVA o
+ * plano `trader` nao via no menu a tela que comprou, enquanto
+ * `/dashboard/trading` respondia 200 para ele: a feature existia e ao mesmo
+ * tempo nao existia para o dono dela -- o sintoma que a HMO-145 foi consertar.
+ * Para "Admin" (`requiredPlans: ["admin"]`) nada mudou: a lista tem um elemento
+ * so e ele e o plano exigido.
+ *
+ * Sem plano (`undefined`, o estado dos primeiros quadros, antes de a assinatura
+ * carregar) nao se ve item restrito nenhum. O menu completo e o do `free`, e
+ * quem for `trader` ganha "Trading" um quadro depois -- o contrario (mostrar e
+ * esconder) e que seria visivel.
+ *
  * Itens `isPremium` ou com `requiredFeature` continuam APARECENDO para quem nao
  * tem a feature -- quem os pinta em cinza e poe o cadeado e o `Sidebar`.
+ * `requiredFeature` NAO E filtro de visibilidade; `requiredPlans` e.
+ *
+ * UMA COISA QUE ESTE CONSERTO NAO DECIDE: `/dashboard/trading` renderiza
+ * `EmDesenvolvimento`, e a pagina de Planos anuncia "Sinais de trading (em
+ * breve)" desde a HMO-198 -- recomendacao de compra e venda e atividade
+ * regulada pela CVM, e a decisao de produto foi marcar em breve em vez de
+ * construir. Entao o `trader` passa a ver no menu um item que leva a um aviso.
+ * Isso e proposital e nao e o que estava errado aqui: o defeito era o predicado
+ * LER `requiredPlans` pela metade, e ele leria errado qualquer lista futura.
+ * Se um dia a decisao for que a tela nao deve aparecer enquanto nao existir, o
+ * lugar disso e o ITEM (tirar do array, ou tirar o `requiredPlans` dele) -- nao
+ * um predicado que ignora o que o item declara.
  */
 export function podeVerItem(
   item: NavigationItem,
   plano: UserPlan | undefined
 ): boolean {
-  if (item.requiredPlans && item.requiredPlans.includes("admin")) {
-    return plano === "admin";
-  }
+  if (!item.requiredPlans) return true;
+  if (!plano) return false;
 
-  return true;
+  return item.requiredPlans.includes(plano);
 }
