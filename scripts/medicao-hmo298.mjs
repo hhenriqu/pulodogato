@@ -135,7 +135,14 @@ const { linhasDaTela, resumoDaTela } = await import(
   join(COMPILADO, "telas-de-movimentacao.js")
 );
 const { ratearPorPeso } = await import(join(COMPILADO, "fechamento-do-grupo.js"));
-const { somarAgenda } = await import(join(COMPILADO, "previsto-x-realizado.js"));
+// `direcaoDaAgenda` E IMPORTADA, e nao reescrita como um `=== "income"` aqui
+// (HMO-308). Ela e a UNICA copia da pergunta de caixa do app -- e e ela que
+// manda `transfer` para o lado de SAIDA, que e o que faz a face (a) desta
+// medicao valer R$ 500,00 no safe-to-spend e R$ 0,00 nas duas telas. Um ternario
+// escrito a mao neste arquivo mediria o ternario.
+const { somarAgenda, direcaoDaAgenda } = await import(
+  join(COMPILADO, "previsto-x-realizado.js")
+);
 // O ELO DA FATURA -- HMO-305. A chave canonica vem da FUNCAO de producao, e nao
 // de uma string montada aqui: montar a chave a mao nesta medicao faria o UPDATE
 // abaixo gravar a chave que ESTA MEDICAO considera certa, e nao a que o app
@@ -180,33 +187,54 @@ const HOJE = "2026-03-10";
 const JANELA = { de: "2026-03-01", ate: "2026-03-31" };
 
 // -----------------------------------------------------------------------------
-// OS TRES NUMEROS DA QUARTA LEITURA (HMO-306)
+// OS NUMEROS DA QUARTA LEITURA (HMO-306, REVISTOS NA HMO-308)
 // -----------------------------------------------------------------------------
 // Eles moram AQUI, e nao junto do controle la embaixo, porque a secao "ITEM 7"
 // imprime o "antes" e `const` em TDZ nao se le antes da declaracao -- o valor
 // repetido a mao na linha do console seria uma segunda fonte de verdade para um
 // numero de dinheiro, que e exatamente o que este arquivo existe para evitar.
 //
-// R$ 8.500,00 ERA O NUMERO DO CONTROLE NEGATIVO DA HMO-303, e ele estava
-// MEDIDO: a MINHA conta de grupo entrava cheia (R$ 1.000,00) porque a rota nao
-// trazia `group_id` no `select`. Com a parte configurada ela entra por
-// R$ 300,00, e o total cai exatamente os R$ 700,00 da diferenca:
+// SAO DOIS CONSERTOS EM SEQUENCIA, E A CADEIA DAS DUAS SUBTRACOES ESTA ESCRITA.
+// A HMO-306 foi deliberadamente a primeira metade: consertar a direcao no mesmo
+// PR faria DOIS numeros se moverem ao mesmo tempo na mesma linha da medicao, e
+// nenhum dos dois ficaria conferivel.
 //
-//   8.500,00 - (1.000,00 - 300,00) = 7.800,00
+//   R$ 8.500,00   o numero do controle negativo da HMO-303, MEDIDO: a MINHA
+//                 conta de grupo entrava cheia (R$ 1.000,00) porque a rota nao
+//                 trazia `group_id` no `select`
+//   - R$   700,00 HMO-306: a parte configurada do grupo (1.000,00 - 300,00)
+//   = R$ 7.800,00 o numero que a HMO-306 entregou
+//   - R$ 6.200,00 HMO-308: a receita prevista AVULSA que entrava como conta a
+//                 pagar (Salario 5.000,00 + Aluguel recebido 1.200,00)
+//   = R$ 1.600,00 as despesas de verdade: 300,00 (minha parte da internet)
+//                 + 800,00 (a previsao da fatura) + 500,00 (a transferencia)
 //
-// A SUBTRACAO ESTA ESCRITA, e nao so o resultado, porque e ela que torna este
-// numero conferivel: "7.800" sozinho seria indistinguivel de um valor copiado
-// da saida do codigo novo -- o que o cabecalho deste arquivo proibe. Os
-// R$ 700,00 sao a contrapartida do controle negativo da irma (HMO-303): la ele
-// nao se move, aqui ele se move e por quanto. A identidade e COBRADA no bloco
-// do controle, para que mexer num dos tres sem mexer nos outros reprove.
+// AS SUBTRACOES ESTAO ESCRITAS, e nao so o resultado, porque sao elas que tornam
+// estes numeros conferiveis: "1.600" sozinho seria indistinguivel de um valor
+// copiado da saida do codigo novo -- o que o cabecalho deste arquivo proibe. A
+// cadeia inteira e COBRADA no bloco do controle, para que mexer num dos numeros
+// sem mexer nos outros reprove.
 //
-// E O NUMERO SOBE EM VEZ DE CAIR, do ponto de vista do usuario: menos custo
-// fixo descontado e MAIS dinheiro livre. A rota antiga errava para o lado
-// seguro, mas por acidente -- ela nao sabia que havia o que dividir.
+// O DEFEITO DA HMO-308 ERA DUPLO, E E POR ISSO QUE HA UM QUARTO NUMERO AQUI.
+// `tipo` decide as DUAS somas de `calcularQuantoPossoGastar`: a receita que caia
+// em `expense` SOMAVA em `compromissos` E DEIXAVA de somar em
+// `receitasPrevistas`. Entao os R$ 6.200,00 nao so saem de um lado -- eles
+// APARECEM no outro, e `RECEITAS_PREVISTAS_ESPERADAS` e a metade que a
+// subtracao sozinha nao prova. Sem ela, um conserto que simplesmente DESCARTASSE
+// a linha de receita (em vez de contar como receita) daria o mesmo R$ 1.600,00 e
+// passaria verde escondendo R$ 6.200,00 que a pessoa vai receber.
+//
+// AS DUAS METADES ERRAVAM PARA O MESMO LADO, e o conserto move o numero na
+// direcao incomoda: menos compromisso descontado e MAIS receita somada, ou seja
+// MUITO mais dinheiro livre do que a tela dizia. A rota antiga errava para o
+// lado seguro, mas por acidente nos dois casos -- ela nao sabia que havia o que
+// dividir, e nao sabia de onde vinha a direcao.
 const SAFE_TO_SPEND_ANTES_DA_306 = 8500;
-const SAFE_TO_SPEND_ESPERADO = 7800;
 const DIFERENCA_DA_PARTE_DO_GRUPO = 700;
+const SAFE_TO_SPEND_DEPOIS_DA_306 = 7800;
+const RECEITA_CONTADA_COMO_CONTA = 6200;
+const SAFE_TO_SPEND_ESPERADO = 1600;
+const RECEITAS_PREVISTAS_ESPERADAS = 6200;
 
 // -----------------------------------------------------------------------------
 // A ponte com o banco
@@ -561,46 +589,72 @@ function leituraDoSummary(pesos) {
  *      soma descontaria o mesmo dinheiro duas vezes. E isso que faz
  *      `safeEsperado` da face (d) do outro membro ser R$ 0,00 -- e nao uma
  *      omissao da medicao.
- *   2. `classeDaAgenda` CONTINUA FORA. A transferencia de (a) segue sendo
- *      descontada aqui, pela mesma razao do bloco «A vencer»: a pergunta e
- *      caixa, e R$ 500,00 que vao para a poupanca saem da conta de verdade.
- *      Por isso a face (a) tem `esperado` R$ 0,00 e `safeEsperado` R$ 500,00.
+ *   2. `classeDaAgenda` CONTINUA FORA, E A HMO-308 NAO MEXEU NISSO. A
+ *      transferencia de (a) segue sendo descontada aqui, pela mesma razao do
+ *      bloco «A vencer»: a pergunta e caixa, e R$ 500,00 que vao para a
+ *      poupanca saem da conta de verdade. Por isso a face (a) tem `esperado`
+ *      R$ 0,00 e `safeEsperado` R$ 500,00 -- e e `direcaoDaAgenda`, e nao
+ *      `classeDaAgenda`, que produz esse R$ 500,00.
  *
- * A consulta e a da rota (user_id, `status = 'pending'`, `due_date <= ate`) e a
- * direcao sai do tipo da REGRA, nao da ocorrencia -- conta avulsa nao tem regra
- * e e despesa, que e a leitura de la.
+ * A CONSULTA LE A VIEW, E NAO A TABELA (HMO-308). E a troca que a issue pede na
+ * rota, e ela tem de acontecer aqui pelo mesmo motivo: a tabela nao tem
+ * `direction` (ela nasceu na 027, na view), entao quem le a tabela precisa
+ * deduzir a direcao -- e a deducao pelo tipo da REGRA e o defeito, porque
+ * previsao AVULSA nao tem regra. O recorte e o da rota: `user_id`,
+ * `status = 'pending'` (a coluna GRAVADA, nao `effective_status`) e
+ * `due_date <= ate`.
  *
- * `parteConfiguradaDoMembro` E IMPORTADO, como o resto deste arquivo: uma
- * divisao reescrita aqui mediria a reescrita. E o que prova que a ROTA chama a
- * funcao e `npm run check-fatura-escolhida`, que exige a chamada no fonte dela
- * -- esta medicao prova a conta, nao a fiacao.
+ * `transaction_type` NAO E LIDO AQUI, de proposito. A coluna existe na tabela
+ * desde a 022, mas e NULA em parte da base instalada -- o COALESCE que termina
+ * em 'expense' mora na view, e refaze-lo neste arquivo seria a segunda copia da
+ * precedencia. Exatamente a copia esquecida que a HMO-187 ja pagou uma vez.
+ *
+ * `parteConfiguradaDoMembro` E `direcaoDaAgenda` SAO IMPORTADOS, como o resto
+ * deste arquivo: uma divisao ou uma direcao reescrita aqui mediria a reescrita.
+ * E o que prova que a ROTA chama as funcoes e `npm run check-fatura-escolhida`,
+ * que exige as chamadas no fonte dela -- esta medicao prova a conta, nao a
+ * fiacao.
  */
 function leituraDoSafeToSpend(pesos) {
   const previstas = consultar(`
     SELECT COALESCE(json_agg(t), '[]')
       FROM (
         SELECT s.description, s.amount, s.group_id::text,
-               r.transaction_type::text AS tipo_da_regra
-          FROM scheduled_transactions s
-          LEFT JOIN recurring_rules r ON r.id = s.recurring_rule_id
+               s.direction::text AS direction
+          FROM scheduled_transactions_effective s
          WHERE s.user_id = '${EU}' AND s.status = 'pending'
            AND s.due_date <= '${JANELA.ate}'
       ) t;
   `);
 
   let total = 0;
+  let receitas = 0;
   const porDescricao = new Map();
 
   for (const p of previstas) {
     // A MESMA sequencia da rota: a parte do membro primeiro, a direcao depois.
     const minha = parteConfiguradaDoMembro(p.amount, p.group_id, pesos, EU);
+
+    // AS DUAS SOMAS, E NAO SO A DE COMPROMISSOS (HMO-308). O defeito era duplo
+    // -- `tipo` decide os dois lados --, entao medir so o total deixaria passar
+    // um conserto que DESCARTASSE a receita em vez de contar como receita.
+    if (direcaoDaAgenda(p.direction) === "income") {
+      receitas += minha;
+      continue;
+    }
+
+    // `porDescricao` leva a contribuicao para COMPROMISSOS, e e por isso que ela
+    // e escrita DEPOIS da peneira da direcao: ela alimenta `safeEsperado`, que e
+    // a coluna de "quanto esta descricao tirou do posso gastar". Antes da
+    // HMO-308 a escrita vinha antes, e a de uma receita era a propria afirmacao
+    // errada -- "o salario tirou R$ 5.000,00" -- com cara de medicao.
     porDescricao.set(p.description, (porDescricao.get(p.description) ?? 0) + minha);
-    if (p.tipo_da_regra === "income") continue;
     total += minha;
   }
 
   return {
     total: Number(total.toFixed(2)),
+    receitas: Number(receitas.toFixed(2)),
     quantidade: previstas.length,
     porDescricao,
   };
@@ -982,12 +1036,20 @@ console.log(
   `                                       custo fixo mensal    ${brl(summary.custoFixoMensal)}`
 );
 console.log(
-  `  /api/safe-to-spend (QUARTA LEITURA)                       ${brl(safeToSpend.total)}  (${safeToSpend.quantidade} linha(s))`
+  `  /api/safe-to-spend (QUARTA LEITURA)  compromissos         ${brl(safeToSpend.total)}  (${safeToSpend.quantidade} linha(s) lidas)`
+);
+console.log(
+  `                                       receitas previstas   ${brl(safeToSpend.receitas)}`
 );
 console.log(
   `                                       antes da HMO-306     ${brl(
     SAFE_TO_SPEND_ANTES_DA_306
   )}  (a MINHA conta de grupo entrava CHEIA)`
+);
+console.log(
+  `                                       antes da HMO-308     ${brl(
+    SAFE_TO_SPEND_DEPOIS_DA_306
+  )}  (a receita prevista avulsa entrava como conta a pagar)`
 );
 console.log("");
 
@@ -1163,32 +1225,84 @@ if (!bate(somaDasDuasFaces, deC)) {
   );
 }
 
-// A QUARTA LEITURA, NO TOTAL (HMO-306). Os tres numeros estao declarados no
-// topo do arquivo, com a aritmetica deles escrita; aqui eles sao COBRADOS.
+// A QUARTA LEITURA, NO TOTAL (HMO-306, REVISTA NA HMO-308). Os numeros estao
+// declarados no topo do arquivo, com a aritmetica deles escrita; aqui eles sao
+// COBRADOS.
 //
-// A identidade primeiro: os tres valem mais juntos do que separados. Sem ela,
+// A CADEIA primeiro: os numeros valem mais juntos do que separados. Sem ela,
 // alguem que mudasse o fixture e ajustasse `SAFE_TO_SPEND_ESPERADO` para o que
-// o codigo imprimiu deixaria o "antes" e a diferenca contando outra historia,
-// e o controle ficaria verde sobre uma conta que nao fecha.
+// o codigo imprimiu deixaria o "antes" e as diferencas contando outra historia,
+// e o controle ficaria verde sobre uma conta que nao fecha. Os DOIS degraus sao
+// cobrados um a um de proposito: o da HMO-306 continua tendo de fechar depois
+// que a HMO-308 passou por cima dele -- se os dois fossem reduzidos a uma
+// subtracao so, desfazer a parte do grupo e inflar a receita na mesma medida
+// passaria verde.
 if (
   SAFE_TO_SPEND_ANTES_DA_306 - DIFERENCA_DA_PARTE_DO_GRUPO !==
+  SAFE_TO_SPEND_DEPOIS_DA_306
+) {
+  falhas.push(
+    `  O degrau da HMO-306 nao fecha: ${brl(
+      SAFE_TO_SPEND_ANTES_DA_306
+    )} - ${brl(DIFERENCA_DA_PARTE_DO_GRUPO)} ≠ ${brl(
+      SAFE_TO_SPEND_DEPOIS_DA_306
+    )}.`
+  );
+}
+
+if (
+  SAFE_TO_SPEND_DEPOIS_DA_306 - RECEITA_CONTADA_COMO_CONTA !==
   SAFE_TO_SPEND_ESPERADO
 ) {
   falhas.push(
-    `  Os tres numeros da HMO-306 nao fecham entre si: ${brl(
-      SAFE_TO_SPEND_ANTES_DA_306
-    )} - ${brl(DIFERENCA_DA_PARTE_DO_GRUPO)} ≠ ${brl(SAFE_TO_SPEND_ESPERADO)}.`
+    `  O degrau da HMO-308 nao fecha: ${brl(
+      SAFE_TO_SPEND_DEPOIS_DA_306
+    )} - ${brl(RECEITA_CONTADA_COMO_CONTA)} ≠ ${brl(SAFE_TO_SPEND_ESPERADO)}.`
+  );
+}
+
+// E A RECEITA QUE SAIU DE «A PAGAR» TEM DE APARECER EM «A RECEBER», pelo MESMO
+// valor. Esta e a metade que a subtracao acima nao prova, e e a que separa o
+// conserto de um descarte: uma rota que simplesmente PULASSE a linha de receita
+// daria o mesmo R$ 1.600,00 de compromissos e esconderia R$ 6.200,00 que a
+// pessoa vai receber -- com o "posso gastar" R$ 6.200,00 menor e nada vermelho.
+if (RECEITAS_PREVISTAS_ESPERADAS !== RECEITA_CONTADA_COMO_CONTA) {
+  falhas.push(
+    `  A receita que saiu de «A pagar» (${brl(
+      RECEITA_CONTADA_COMO_CONTA
+    )}) nao e a que se espera em «A receber» (${brl(
+      RECEITAS_PREVISTAS_ESPERADAS
+    )}).\n` +
+      `      O defeito da HMO-308 e DUPLO: o mesmo valor sai de um lado e entra no outro.`
   );
 }
 
 if (!bate(safeToSpend.total, SAFE_TO_SPEND_ESPERADO)) {
   falhas.push(
-    `  QUARTA LEITURA: /api/safe-to-spend saiu ${brl(safeToSpend.total)}, esperado ${brl(
-      SAFE_TO_SPEND_ESPERADO
-    )}.\n` +
-      `      Antes da HMO-306 ela saia ${brl(SAFE_TO_SPEND_ANTES_DA_306)}, descontando a MINHA conta\n` +
-      `      de grupo CHEIA. Se ela voltou a ${brl(SAFE_TO_SPEND_ANTES_DA_306)}, a rota parou de chamar\n` +
-      `      \`parteConfiguradaDoMembro\` ou perdeu o \`group_id\` do \`select\`.`
+    `  QUARTA LEITURA, compromissos: /api/safe-to-spend saiu ${brl(
+      safeToSpend.total
+    )}, esperado ${brl(SAFE_TO_SPEND_ESPERADO)}.\n` +
+      `      Em ${brl(SAFE_TO_SPEND_DEPOIS_DA_306)} a rota voltou a ler a TABELA \`scheduled_transactions\` e a\n` +
+      `      deduzir a direcao do tipo da REGRA -- previsao avulsa nao tem regra, e ${brl(
+        RECEITA_CONTADA_COMO_CONTA
+      )} de\n` +
+      `      receita voltaram a ser contados como conta a pagar (HMO-308).\n` +
+      `      Em ${brl(SAFE_TO_SPEND_ANTES_DA_306)} ela perdeu TAMBEM a parte do grupo: parou de chamar\n` +
+      `      \`parteConfiguradaDoMembro\` ou perdeu o \`group_id\` do \`select\` (HMO-306).\n` +
+      `      Em ${brl(1100)} a transferencia de ${brl(500)} saiu desta leitura -- e ela NAO devia\n` +
+      `      sair: a pergunta aqui e caixa, e trocar \`direcaoDaAgenda\` por \`classeDaAgenda\`\n` +
+      `      e o jeito de fazer isso sem erro nenhum.`
+  );
+}
+
+if (!bate(safeToSpend.receitas, RECEITAS_PREVISTAS_ESPERADAS)) {
+  falhas.push(
+    `  QUARTA LEITURA, receitas previstas: saiu ${brl(
+      safeToSpend.receitas
+    )}, esperado ${brl(RECEITAS_PREVISTAS_ESPERADAS)}.\n` +
+      `      Em ${brl(0)} a direcao nao chegou: ou a leitura voltou para a tabela (que nao tem\n` +
+      `      \`direction\`), ou o \`select\` perdeu a coluna -- e nos dois casos TODA linha cai em\n` +
+      `      despesa, que e o defeito da HMO-308 inteiro.`
   );
 }
 
@@ -1211,10 +1325,18 @@ console.log(
     `«Total de contas» COM rotulo; o elo da fatura (HMO-305) levou (b) de ${brl(
     1600
   )} para ${brl(800)} e o desfazer devolveu;\n` +
-    `e a QUARTA leitura (/api/safe-to-spend) bateu em ${brl(SAFE_TO_SPEND_ESPERADO)} -- a MINHA conta de\n` +
-    `grupo entrou por ${brl(300)} e nao pelos ${brl(1000)} cheios, a do outro membro ficou FORA,\n` +
-    `e o total caiu os ${brl(DIFERENCA_DA_PARTE_DO_GRUPO)} da diferenca (era ${brl(
+    `e a QUARTA leitura (/api/safe-to-spend) bateu em ${brl(SAFE_TO_SPEND_ESPERADO)} de compromissos\n` +
+    `com ${brl(RECEITAS_PREVISTAS_ESPERADAS)} em receitas previstas -- a MINHA conta de grupo entrou por ${brl(
+      300
+    )} e nao\n` +
+    `pelos ${brl(1000)} cheios, a do outro membro ficou FORA, a transferencia de ${brl(
+      500
+    )} CONTINUA\n` +
+    `descontada (a pergunta e caixa), e a cadeia fecha: ${brl(
       SAFE_TO_SPEND_ANTES_DA_306
-    )} antes da HMO-306).`
+    )} - ${brl(DIFERENCA_DA_PARTE_DO_GRUPO)} (HMO-306)\n` +
+    `- ${brl(RECEITA_CONTADA_COMO_CONTA)} (HMO-308) = ${brl(
+      SAFE_TO_SPEND_ESPERADO
+    )}, e os ${brl(RECEITA_CONTADA_COMO_CONTA)} reapareceram do outro lado.`
 );
 console.log("");

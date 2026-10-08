@@ -187,7 +187,21 @@ export interface PrevistaParaGastar {
   id: string;
   amount: number | string;
   due_date: string;
-  /** 'expense' | 'income'. Ausente = despesa (conta avulsa). */
+  /**
+   * 'expense' | 'income'. Ausente = despesa.
+   *
+   * QUEM PREENCHE ISTO TEM DE PASSAR POR `direcaoDaAgenda` (HMO-308), que le a
+   * coluna `direction` da view `scheduled_transactions_effective`. O default
+   * "ausente = despesa" e o lado seguro para uma linha sem direcao, mas foi
+   * tambem a porta do defeito da HMO-308: a rota deduzia a direcao do tipo da
+   * REGRA, previsao avulsa nao tem regra, e R$ 6.200,00 de receita prevista
+   * entravam aqui como `expense`.
+   *
+   * O ERRO E DUPLO, e e por isso que ele vale ser lido antes de mexer no laco
+   * abaixo: `tipo` decide as DUAS somas. Uma receita marcada como despesa soma
+   * em `compromissos` E deixa de somar em `receitasPrevistas` -- as duas metades
+   * erram para o mesmo lado, e o app diz que sobra menos do que sobra.
+   */
   tipo?: string | null;
   notes?: string | null;
 }

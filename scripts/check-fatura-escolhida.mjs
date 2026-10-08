@@ -1,16 +1,24 @@
 #!/usr/bin/env node
 // =====================================================
 // PULODOGATO - O ROTULO DE FATURA LE FATURA, E NAO `current_balance` (HMO-290)
-//              E O "POSSO GASTAR" DESCONTA A MINHA PARTE DO GRUPO (HMO-306)
+//              O "POSSO GASTAR" DESCONTA A MINHA PARTE DO GRUPO (HMO-306)
+//              E A DIRECAO DELE SAI DA VIEW, NAO DO TIPO DA REGRA (HMO-308)
 // =====================================================
 //   npm run check-fatura-escolhida
 //
-// DUAS ISSUES NO MESMO ARQUIVO, E E DE PROPOSITO: as duas sao fiacao da MESMA
+// TRES ISSUES NO MESMO ARQUIVO, E E DE PROPOSITO: as tres sao fiacao da MESMA
 // rota (`app/api/safe-to-spend/route.ts`) e do mesmo modulo
-// (`lib/safe-to-spend.ts`), e as duas falham do mesmo jeito -- com um numero
+// (`lib/safe-to-spend.ts`), e as tres falham do mesmo jeito -- com um numero
 // menor e plausivel, sem erro de tipo e sem log. Um guard novo so para a
 // HMO-306 seria um segundo lugar para esquecer de rodar; a secao 5 abaixo e a
-// parte dela.
+// parte dela, e a secao 6 e a da HMO-308.
+//
+// AS SECOES 5 E 6 COBRAM A MESMA CONSULTA, por duas metades diferentes: a 5
+// cobra QUANTO da linha e meu (a parte do grupo) e a 6 cobra PARA QUE LADO ela
+// vai (a direcao). As duas tem de apontar para a mesma `.from(...)`, e por isso
+// o nome da fonte e a constante `AGENDA_DO_POSSO_GASTAR` -- ver o comentario
+// dela, que registra como a secao 5 quase ficou vacua quando a 6 trocou a
+// tabela pela view.
 //
 // POR QUE ESTA VERIFICACAO EXISTE
 // -------------------------------
@@ -68,6 +76,19 @@ const TELA_DE_CARTOES = "app/(dashboard)/dashboard/cartoes/page.tsx";
 const LIB_DO_PERIODO = "lib/fatura-do-periodo.ts";
 const LIB_DO_POSSO_GASTAR = "lib/safe-to-spend.ts";
 const ROTA_DO_POSSO_GASTAR = "app/api/safe-to-spend/route.ts";
+
+/**
+ * A VIEW, e nao a tabela -- a fonte da agenda no "posso gastar" (HMO-308).
+ *
+ * Ela e uma CONSTANTE e nao uma string repetida porque as cinco assercoes da
+ * secao 6 e as tres da secao 5 tem de apontar para a MESMA consulta. Com o nome
+ * digitado oito vezes, trocar a fonte num lugar so faria `consultaDe` devolver
+ * "" para as outras -- e `proibidoNaConsulta` com trecho vazio passa VERDE, sem
+ * nada para procurar. Foi assim que a secao 5 quase ficou vacua nesta issue: o
+ * `.from("scheduled_transactions")` dela deixou de existir quando a rota passou
+ * a ler a view, e o `proibidoNaConsulta` do `.or(` parou de medir em silencio.
+ */
+const AGENDA_DO_POSSO_GASTAR = "scheduled_transactions_effective";
 
 /**
  * O arquivo sem comentario nenhum.
@@ -312,7 +333,7 @@ exigido(
 );
 exigidoNaConsulta(
   ROTA_DO_POSSO_GASTAR,
-  "scheduled_transactions",
+  AGENDA_DO_POSSO_GASTAR,
   "group_id",
   "o `select` das previstas tem que trazer `group_id`. Sem ele a chamada acima " +
     "recebe `undefined` e devolve o valor CHEIO -- a fiacao parece intacta e " +
@@ -332,7 +353,7 @@ exigidoNaConsulta(
 // traz a linha de grupo de todo mundo, que e a forma da tela de Despesas.
 exigidoNaConsulta(
   ROTA_DO_POSSO_GASTAR,
-  "scheduled_transactions",
+  AGENDA_DO_POSSO_GASTAR,
   '.eq("user_id", user.id)',
   "o recorte por dono e o que mantem a conta do outro membro fora desta " +
     "leitura -- a face (d) do outro membro vale R$ 0,00 aqui, e isso e " +
@@ -340,7 +361,7 @@ exigidoNaConsulta(
 );
 proibidoNaConsulta(
   ROTA_DO_POSSO_GASTAR,
-  "scheduled_transactions",
+  AGENDA_DO_POSSO_GASTAR,
   ".or(",
   "o filtro de `user_id` NAO muda aqui, e esta e a diferenca deliberada para a " +
     "tela de Despesas (HMO-303): a pergunta e quanto EU posso gastar, e a parte " +
@@ -350,24 +371,111 @@ proibidoNaConsulta(
 );
 
 // ---------------------------------------------------------------------------
+// 6. A DIRECAO SAI DA VIEW, E NAO DO TIPO DA REGRA (HMO-308)
+// ---------------------------------------------------------------------------
+// O defeito: a rota lia a TABELA `scheduled_transactions`, que nao tem
+// `direction` (a coluna nasceu na migration 027, na view), e deduzia a direcao
+// do `transaction_type` da REGRA recorrente. Previsao AVULSA nao tem regra --
+// entao TODA previsao avulsa caia em `expense`, inclusive a de receita, que
+// /api/scheduled-transactions aceita desde a HMO-188.
+//
+// E O ERRO ERA DUPLO, porque `tipo` decide AS DUAS somas de
+// `calcularQuantoPossoGastar`: a receita marcada como despesa SOMAVA em
+// `compromissos` E DEIXAVA de somar em `receitasPrevistas`. No fixture da
+// medicao, R$ 6.200,00 de salario e aluguel recebido contados como contas a
+// pagar: «A pagar» R$ 7.800,00 onde as despesas de verdade sao R$ 1.600,00, e
+// «A receber» R$ 0,00.
+//
+// NADA DISSO APARECE NO `tsc`. `.from("scheduled_transactions")` e
+// `.from("scheduled_transactions_effective")` sao as duas strings, e o retorno
+// do PostgREST e tipado pelo `select` em `any` na pratica. A rota compila, nao
+// loga, e devolve um numero MENOR -- o lado que parece conservador e por isso
+// nao e conferido.
+exigido(
+  ROTA_DO_POSSO_GASTAR,
+  `.from("${AGENDA_DO_POSSO_GASTAR}")`,
+  "a agenda tem que vir da VIEW: ela e o unico lugar com a direcao resolvida " +
+    "(migration 027, `COALESCE(ocorrencia, regra, 'expense')`)"
+);
+// AS DUAS METADES, e as duas sao necessarias: exigir a view sem PROIBIR a
+// tabela deixaria passar uma rota que acrescentasse uma segunda consulta a
+// tabela e voltasse a deduzir a direcao dali -- e `consultaDe` casa com a
+// PRIMEIRA `.from(...)`, entao qual das duas ele mediria dependeria da ordem em
+// que elas aparecem no arquivo.
+proibido(
+  ROTA_DO_POSSO_GASTAR,
+  '.from("scheduled_transactions")',
+  "a TABELA nao tem `direction`, e quem a le precisa deduzir a direcao. A " +
+    "deducao pelo tipo da REGRA e o defeito da HMO-308: previsao avulsa nao " +
+    "tem regra, e R$ 6.200,00 de receita viram conta a pagar"
+);
+exigidoNaConsulta(
+  ROTA_DO_POSSO_GASTAR,
+  AGENDA_DO_POSSO_GASTAR,
+  "direction",
+  "o `select` das previstas tem que trazer `direction`. Sem a coluna, " +
+    "`p.direction` e `undefined`, `direcaoDaAgenda` manda TODA linha para " +
+    "despesa, e o defeito volta inteiro -- com a rota lendo a view certa"
+);
+// A CHAMADA, e nao o nome. `direcaoDaAgenda` sozinho casaria com a linha do
+// `import`, e a verificacao aprovaria um arquivo que importa a funcao e escreve
+// o ternario a mao logo abaixo -- que e a segunda copia da precedencia, e a
+// copia esquecida e este defeito (ja pago uma vez na HMO-187).
+exigido(
+  ROTA_DO_POSSO_GASTAR,
+  "direcaoDaAgenda(p.direction)",
+  "a direcao de cada linha tem que passar pela funcao de lib/, que e a UNICA " +
+    "copia da pergunta de caixa -- e e ela que manda `transfer` para o lado de " +
+    "SAIDA, porque R$ 500,00 que vao para a poupanca saem da conta de verdade"
+);
+proibido(
+  ROTA_DO_POSSO_GASTAR,
+  "transaction_type",
+  "esta rota nao le `transaction_type`, nem da ocorrencia nem da regra. A " +
+    "coluna e NULA em parte da base instalada, e o `COALESCE` que termina em " +
+    "'expense' mora na view: refaze-lo aqui e a segunda copia da precedencia"
+);
+// A TRANSFERENCIA E UMA DECISAO A PARTE, E NAO MUDA JUNTO. `classeDaAgenda`
+// responde "isto e conta a pagar?" -- a pergunta do «Total de contas» do modo
+// Papel de Pao, que tira a transferencia. A pergunta DESTA rota e caixa, e
+// R$ 500,00 guardados na poupanca saem da conta. Trocar uma pela outra nao da
+// erro de tipo (as duas recebem `string | null`) e nao da sintoma: o "posso
+// gastar" simplesmente sobe R$ 500,00.
+proibido(
+  ROTA_DO_POSSO_GASTAR,
+  "classeDaAgenda",
+  "a pergunta desta rota e CAIXA, e por isso ela chama `direcaoDaAgenda`. " +
+    "`classeDaAgenda` tiraria a transferencia do desconto, e o `safeEsperado` " +
+    "da face (a) da medicao (R$ 500,00) existe para cobrar isso"
+);
+exigido(
+  ROTA_DO_POSSO_GASTAR,
+  "direcao_indisponivel",
+  "sem `direction` o numero continua sendo o conservador (tudo como despesa), " +
+    'e por isso a tela nao pode escrever "+ R$ 0,00 · Receitas previstas" ' +
+    "embaixo de um «A pagar» que somou justamente o salario"
+);
+
+// ---------------------------------------------------------------------------
 if (problemas.length > 0) {
   console.error(
-    "A fiacao do numero de cartao ou da parte do grupo esta desligada " +
-      "(HMO-290 / HMO-306):\n"
+    "A fiacao do numero de cartao, da parte do grupo ou da DIRECAO esta " +
+      "desligada (HMO-290 / HMO-306 / HMO-308):\n"
   );
   for (const p of problemas) console.error(`  - ${p}\n`);
   console.error(
     "Ver o cabecalho de lib/fatura-do-periodo.ts, a armadilha 10 de\n" +
-      "lib/safe-to-spend.ts e `parteConfiguradaDoMembro` em\n" +
-      "lib/parte-do-grupo.ts. Se a mudanca for deliberada, a verificacao e que\n" +
-      "tem que mudar -- junto com o rotulo que a tela mostra e com o numero\n" +
-      "digitado em scripts/medicao-hmo298.mjs."
+      "lib/safe-to-spend.ts, `parteConfiguradaDoMembro` em\n" +
+      "lib/parte-do-grupo.ts e `direcaoDaAgenda` em\n" +
+      "lib/previsto-x-realizado.ts. Se a mudanca for deliberada, a verificacao\n" +
+      "e que tem que mudar -- junto com o rotulo que a tela mostra e com os\n" +
+      "numeros digitados em scripts/medicao-hmo298.mjs."
   );
   process.exit(1);
 }
 
 console.log(
   "ok: o rotulo de fatura le fatura, as duas telas fazem a segunda leitura, o " +
-    '"posso gastar" separa o que este mes cobra e desconta a MINHA parte da ' +
-    "conta de grupo."
+    '"posso gastar" separa o que este mes cobra, desconta a MINHA parte da ' +
+    "conta de grupo e tira a direcao da view -- nao do tipo da regra."
 );

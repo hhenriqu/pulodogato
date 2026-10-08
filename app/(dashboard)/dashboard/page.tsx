@@ -352,6 +352,12 @@ function PainelCompleto() {
   // vem 0 -- e "R$ 0,00 em parcelas futuras" ao lado de um desconto que
   // justamente tira as parcelas futuras sao duas afirmacoes que se contradizem.
   const [diferidoIndisponivel, setDiferidoIndisponivel] = useState(false);
+  // A view da agenda nao entregou `direction` (HMO-308), e sem ela TODA previsao
+  // foi contada como despesa -- o numero fica conservador, mas «A receber» vem
+  // R$ 0,00 e «A pagar» engoliu o que havia a receber. Os dois tiles param de
+  // afirmar valor: "+ R$ 0,00 · Receitas previstas" embaixo de um «A pagar» que
+  // somou o salario e a afirmacao falsa que ninguem confere.
+  const [direcaoIndisponivel, setDirecaoIndisponivel] = useState(false);
   // A ordem e a visibilidade dos blocos, escolhidas em /dashboard/settings.
   // Comeca no padrao -- TUDO visivel -- e so muda se a rota responder. Um
   // erro de rede aqui nao pode esconder bloco nenhum: a tela inicial mostrando
@@ -518,6 +524,7 @@ function PainelCompleto() {
         setPossoGastar(d.safe_to_spend ?? null);
         setReservaIndisponivel(Boolean(d.reserva_indisponivel));
         setDiferidoIndisponivel(Boolean(d.diferido_indisponivel));
+        setDirecaoIndisponivel(Boolean(d.direcao_indisponivel));
       } else if (!periodoTemHoje) {
         // Limpar e obrigatorio, nao higiene. Sem isto, quem navega de setembro
         // para julho continua vendo o cartao "quanto ainda posso gastar" com o
@@ -911,24 +918,51 @@ function PainelCompleto() {
                 Sem investimentos
               </p>
             </div>
+            {/* OS DOIS TILES DA DIRECAO (HMO-308). Sem `direction` a rota conta
+                  TODA previsao como despesa -- o "posso gastar" fica
+                  conservador de proposito (zerar as contas levantaria o
+                  numero, e esta tela nao pode prometer dinheiro), mas a
+                  REPARTICAO entre os dois tiles fica errada: o que havia a
+                  receber esta dentro do «A pagar». Por isso os dois calam
+                  juntos: mostrar "+ R$ 0,00 · Receitas previstas" seria afirmar
+                  que nao ha nada a receber, e e a afirmacao tranquilizadora --
+                  a que ninguem confere. */}
             <div className="rounded-lg bg-muted p-3">
               <p className="text-xs text-muted-foreground">A receber</p>
-              <p className="font-semibold text-success">
-                + {moeda(possoGastar.receitasPrevistas)}
+              <p
+                className={`font-semibold ${
+                  direcaoIndisponivel ? "text-muted-foreground" : "text-success"
+                }`}
+              >
+                {direcaoIndisponivel
+                  ? "—"
+                  : `+ ${moeda(possoGastar.receitasPrevistas)}`}
               </p>
               <p className="text-xs text-muted-foreground mt-1">
-                Receitas previstas
+                {direcaoIndisponivel
+                  ? "Não foi possível separar o que entra"
+                  : "Receitas previstas"}
               </p>
             </div>
             <div className="rounded-lg bg-muted p-3">
               <p className="text-xs text-muted-foreground">A pagar</p>
-              <p className="font-semibold text-destructive">
-                − {moeda(possoGastar.compromissos)}
+              <p
+                className={`font-semibold ${
+                  direcaoIndisponivel
+                    ? "text-muted-foreground"
+                    : "text-destructive"
+                }`}
+              >
+                {direcaoIndisponivel
+                  ? "—"
+                  : `− ${moeda(possoGastar.compromissos)}`}
               </p>
               <p className="text-xs text-muted-foreground mt-1">
-                {possoGastar.compromissosVencidos > 0
-                  ? `${moeda(possoGastar.compromissosVencidos)} em atraso`
-                  : "Contas do mês"}
+                {direcaoIndisponivel
+                  ? "Tudo contado como conta a pagar"
+                  : possoGastar.compromissosVencidos > 0
+                    ? `${moeda(possoGastar.compromissosVencidos)} em atraso`
+                    : "Contas do mês"}
               </p>
             </div>
             <div className="rounded-lg bg-muted p-3">
