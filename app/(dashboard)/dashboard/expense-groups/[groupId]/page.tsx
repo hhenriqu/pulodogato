@@ -98,6 +98,38 @@ import {
   comoEuVejoOAcerto,
   type AcertoVistoPorMim,
 } from "@/lib/perna-da-contraparte";
+import { ModalDeLancamento } from "@/components/movimentacoes/ModalDeLancamento";
+import { SalvarEContinuar } from "@/components/movimentacoes/SalvarEContinuar";
+import { proximaDespesaDeGrupo } from "@/lib/retorno-do-lancamento";
+
+/**
+ * O estado do formulario de "Adicionar Nova Despesa" como ele ABRE (HMO-251).
+ *
+ * Extraido de dentro do `useState` porque agora ele tem TRES leitores, e os tres
+ * precisam concordar: a abertura, o fechamento depois de salvar e o `inicial` de
+ * `proximaDespesaDeGrupo` -- que e quem decide qual campo fica limpo. Escrever o
+ * objeto a mao no terceiro lugar e o jeito de o reset divergir do padrao da tela
+ * no dia em que um campo novo entrar: ele nasceria preenchido na abertura e
+ * `undefined` depois do reset, sem erro nenhum.
+ *
+ * `moedaDoGrupo` e parametro porque na primeira renderizacao o grupo ainda nao
+ * carregou (`group` e `null`), e `moedaSugeridaDaDespesa(null, null)` devolve a
+ * moeda padrao -- que e exatamente o que a tela mostrava antes desta issue.
+ */
+function valoresIniciaisDaDespesa(moedaDoGrupo: string | null | undefined) {
+  return {
+    description: "",
+    amount: "",
+    category_id: "",
+    transaction_date: new Date().toISOString().split("T")[0],
+    notes: "",
+    split_type: "equal" as "equal" | "percentage" | "custom",
+    currency: moedaSugeridaDaDespesa(moedaDoGrupo, null),
+    // A cotacao do dia da compra, como TEXTO -- e o que `CampoDeCotacao`
+    // manipula, e aceitar virgula depende de a leitura ser de texto.
+    cotacao: "",
+  };
+}
 
 interface ExpenseGroup {
   id: string;
@@ -416,21 +448,30 @@ export default function GroupDetailPage() {
 
   // Estados do formulário de nova despesa
   const [showAddExpense, setShowAddExpense] = useState(false);
-  const [expenseForm, setExpenseForm] = useState({
-    description: "",
-    amount: "",
-    category_id: "",
-    transaction_date: new Date().toISOString().split("T")[0],
-    notes: "",
-    split_type: "equal" as "equal" | "percentage" | "custom",
-    // Nasce em real e passa para a moeda do grupo quando o grupo carrega (ver o
-    // efeito abaixo). Nao da para inicializar com a moeda do grupo aqui: neste
-    // ponto `group` ainda e null.
-    currency: MOEDA_PADRAO,
-    // A cotacao do dia da compra, como TEXTO -- e o que `CampoDeCotacao`
-    // manipula, e aceitar virgula depende de a leitura ser de texto.
-    cotacao: "",
-  });
+  // Nasce em real e passa para a moeda do grupo quando o grupo carrega (ver o
+  // efeito abaixo). Nao da para inicializar com a moeda do grupo aqui: neste
+  // ponto `group` ainda e null -- e e por isso que a fabrica recebe a moeda.
+  const [expenseForm, setExpenseForm] = useState(() =>
+    valoresIniciaisDaDespesa(null)
+  );
+  /**
+   * "Salvar e continuar" do formulario de despesa do grupo (HMO-251).
+   *
+   * Mora na pagina, e nao dentro do modal, para sobreviver a gravacao: o estado
+   * de um componente desmontado volta ao padrao, e o interruptor precisa
+   * continuar ligado para a SEGUNDA despesa da sequencia -- que e o unico caso
+   * em que ele serve.
+   */
+  const [continuarNaDespesa, setContinuarNaDespesa] = useState(false);
+  /**
+   * Gravacao em curso. Com o modal FECHANDO ao salvar, o duplo clique era
+   * barrado pelo proprio desaparecimento do botao; com "Salvar e continuar" o
+   * botao fica onde esta, e dois cliques rapidos entram como duas despesas --
+   * cada uma rateada entre os participantes pelo trigger do banco. O reset de
+   * `proximaDespesaDeGrupo` fecha a janela DEPOIS da resposta; este estado fecha
+   * a janela DURANTE a ida e volta, que o reset nao alcanca.
+   */
+  const [salvandoDespesa, setSalvandoDespesa] = useState(false);
   const [selectedSplitSuggestion, setSelectedSplitSuggestion] =
     useState<SplitSuggestion | null>(null);
 
@@ -993,6 +1034,11 @@ export default function GroupDetailPage() {
   const handleAddExpense = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    // Um envio por vez. `salvandoDespesa` e conferido aqui, e nao so no
+    // `disabled` do botao: o formulario tambem e enviado pelo Enter dentro de um
+    // campo de texto, que nao passa pelo botao nenhuma vez.
+    if (salvandoDespesa) return;
+
     if (!expenseForm.description.trim() || !expenseForm.amount) {
       toast.error("Preencha descrição e valor");
       return;
@@ -1027,6 +1073,7 @@ export default function GroupDetailPage() {
       return;
     }
 
+    setSalvandoDespesa(true);
     try {
       // Preparar dados da despesa
       const expenseData: Record<string, unknown> = {
@@ -1071,20 +1118,36 @@ export default function GroupDetailPage() {
 
       if (response.ok) {
         toast.success("Despesa adicionada com sucesso!");
-        setShowAddExpense(false);
-        setExpenseForm({
-          description: "",
-          amount: "",
-          category_id: "",
-          transaction_date: new Date().toISOString().split("T")[0],
-          notes: "",
-          split_type: "equal",
-          // Volta para a moeda do grupo, nao para real: a proxima despesa da
-          // viagem tambem e na moeda da viagem.
-          currency: moedaSugeridaDaDespesa(group?.currency, null),
-          cotacao: "",
-        });
+
+        // `valoresIniciaisDaDespesa` nas DUAS pernas, e a moeda do grupo e o
+        // motivo: ela volta para a moeda da viagem, nao para real -- a proxima
+        // despesa da viagem tambem e na moeda da viagem.
+        const inicial = valoresIniciaisDaDespesa(group?.currency);
+
+        if (continuarNaDespesa) {
+          // A tela FICA. `proximaDespesaDeGrupo` limpa descricao, valor e
+          // observacao e mantem categoria, data, moeda, cotacao e tipo de
+          // divisao -- o porque de cada campo esta em lib/retorno-do-lancamento.ts.
+          //
+          // A forma de funcao em `setExpenseForm` e deliberada: entre o clique e
+          // esta linha houve um `await` de rede, e `expenseForm` capturado no
+          // fechamento e o estado de ANTES. Com um objeto literal, qualquer
+          // tecla digitada durante a gravacao seria descartada; com `atual`, o
+          // reset se aplica ao estado mais novo.
+          setExpenseForm((atual) => proximaDespesaDeGrupo(atual, inicial));
+        } else {
+          setShowAddExpense(false);
+          setExpenseForm(inicial);
+        }
+
+        // Limpa nas duas pernas, e e a limpeza de DINHEIRO desta tela. A
+        // sugestao guarda o valor absoluto de cada participante, calculado sobre
+        // o total da despesa que acabou de ser gravada; reaproveitada na
+        // seguinte, ela rateia o numero errado -- e a cobranca errada vai para a
+        // conta dos outros, nao para a de quem digitou. Ver
+        // `proximaDespesaDeGrupo`.
         setSelectedSplitSuggestion(null);
+
         await loadTransactions();
         await loadBalances();
         await loadTransfers();
@@ -1094,6 +1157,8 @@ export default function GroupDetailPage() {
     } catch (error) {
       console.error("Error adding expense:", error);
       toast.error("Erro ao adicionar despesa");
+    } finally {
+      setSalvandoDespesa(false);
     }
   };
 
@@ -2370,167 +2435,214 @@ export default function GroupDetailPage() {
         </TabsContent>
       </Tabs>
 
-      {/* Add Expense Modal */}
+      {/* ----------------------------------------------------------------
+          "ADICIONAR NOVA DESPESA": O MODAL DE VERDADE (HMO-251)
+          ----------------------------------------------------------------
+          Aqui havia um modal feito a mao: um div com `fixed inset-0
+          bg-black/50` e um `<Card>` dentro. Ele PARECIA um modal, e foi por
+          isso que a HMO-249 passou por ele sem trocar -- o que faltava nao
+          aparece num print da tela:
+
+            - Esc nao fechava, e clique fora nao fechava. A unica saida era
+              achar o botao Cancelar, que no celular fica abaixo da dobra de
+              um formulario com seletor de categoria e painel de rateio.
+            - sem papel de dialogo e sem armadilha de foco: o Tab passeava
+              pela pagina ATRAS do overlay, e leitor de tela nao anunciava
+              que algo tinha aberto.
+
+          `ModalDeLancamento` resolve os tres de graca, por ser o `Dialog` do
+          repo, e ja carrega as decisoes de tamanho (a largura maior, a margem
+          de 1rem no celular, a altura maxima com rolagem por dentro) que este
+          formulario -- um dos mais altos do app -- precisa. Ele e montado
+          CONDICIONALMENTE, como em `ModalDeMovimentacao`: o `open` nasce true
+          la dentro, e quem decide se ele existe e o `showAddExpense` daqui.
+      */}
       {showAddExpense && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <CardHeader>
-              <CardTitle>Adicionar Nova Despesa</CardTitle>
-              <CardDescription>
-                Registre uma despesa para o grupo
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleAddExpense} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="description">Descrição *</Label>
-                  <Input
-                    id="description"
-                    value={expenseForm.description}
-                    onChange={(e) =>
-                      setExpenseForm({
-                        ...expenseForm,
-                        description: e.target.value,
-                      })
-                    }
-                    placeholder="Ex: Jantar no restaurante"
-                    required
-                  />
-                </div>
+        <ModalDeLancamento
+          titulo="Adicionar Nova Despesa"
+          descricao="Registre uma despesa para o grupo"
+          aoFechar={() => setShowAddExpense(false)}
+        >
+          <form onSubmit={handleAddExpense} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="description">Descrição *</Label>
+              <Input
+                id="description"
+                value={expenseForm.description}
+                onChange={(e) =>
+                  setExpenseForm({
+                    ...expenseForm,
+                    description: e.target.value,
+                  })
+                }
+                placeholder="Ex: Jantar no restaurante"
+                required
+              />
+            </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="amount">Valor *</Label>
-                  <CampoDeValor
-                    id="amount"
-                    value={expenseForm.amount}
-                    onChange={(amount) =>
-                      setExpenseForm({ ...expenseForm, amount })
-                    }
-                    required
-                  />
-                </div>
+            <div className="space-y-2">
+              <Label htmlFor="amount">Valor *</Label>
+              <CampoDeValor
+                id="amount"
+                value={expenseForm.amount}
+                onChange={(amount) =>
+                  setExpenseForm({ ...expenseForm, amount })
+                }
+                required
+              />
+            </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="transaction_date">Data</Label>
-                  {/* `CampoDeData` e nao o controle de data nativo (HMO-240). Aqui
-                      a data nao e so rotulo: `exchange_rate` e congelada pela
-                      cotacao DO DIA DA COMPRA, entao uma data lida na ordem do
-                      aparelho (mm/dd) traria a cotacao do dia errado para o
-                      rateio de uma despesa em moeda estrangeira. */}
-                  <CampoDeData
-                    id="transaction_date"
-                    value={expenseForm.transaction_date}
-                    onChange={(transaction_date) =>
-                      setExpenseForm({ ...expenseForm, transaction_date })
-                    }
-                    aria-label="Data"
-                  />
-                </div>
+            <div className="space-y-2">
+              <Label htmlFor="transaction_date">Data</Label>
+              {/* `CampoDeData` e nao o controle de data nativo (HMO-240). Aqui
+                  a data nao e so rotulo: `exchange_rate` e congelada pela
+                  cotacao DO DIA DA COMPRA, entao uma data lida na ordem do
+                  aparelho (mm/dd) traria a cotacao do dia errado para o
+                  rateio de uma despesa em moeda estrangeira. */}
+              <CampoDeData
+                id="transaction_date"
+                value={expenseForm.transaction_date}
+                onChange={(transaction_date) =>
+                  setExpenseForm({ ...expenseForm, transaction_date })
+                }
+                aria-label="Data"
+              />
+            </div>
 
-                {/* A MOEDA DA DESPESA (HMO-182, itens 2 e 3)
-                    Preenchida com a moeda do grupo, e trocavel: "sugerida" e a
-                    palavra da decisao, e uma diaria cobrada em dolar numa viagem
-                    ao Chile e o caso normal. */}
-                <div className="space-y-2">
-                  <Label htmlFor="expense_currency">Moeda</Label>
-                  <Select
-                    value={expenseForm.currency}
-                    // Trocar a moeda LIMPA a cotacao, igual ao formulario de
-                    // lancamento: a cotacao do dolar nao significa nada para o
-                    // euro, e deixa-la ali faria o campo parecer preenchido e
-                    // correto -- `CampoDeCotacao` so busca quando esta vazio.
-                    onValueChange={(value) =>
-                      setExpenseForm({
-                        ...expenseForm,
-                        currency: value,
-                        cotacao: "",
-                      })
-                    }
-                  >
-                    <SelectTrigger id="expense_currency">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {opcoesDeMoeda().map((o) => (
-                        <SelectItem key={o.codigo} value={o.codigo}>
-                          {o.rotulo}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+            {/* A MOEDA DA DESPESA (HMO-182, itens 2 e 3)
+                Preenchida com a moeda do grupo, e trocavel: "sugerida" e a
+                palavra da decisao, e uma diaria cobrada em dolar numa viagem
+                ao Chile e o caso normal. */}
+            <div className="space-y-2">
+              <Label htmlFor="expense_currency">Moeda</Label>
+              <Select
+                value={expenseForm.currency}
+                // Trocar a moeda LIMPA a cotacao, igual ao formulario de
+                // lancamento: a cotacao do dolar nao significa nada para o
+                // euro, e deixa-la ali faria o campo parecer preenchido e
+                // correto -- `CampoDeCotacao` so busca quando esta vazio.
+                onValueChange={(value) =>
+                  setExpenseForm({
+                    ...expenseForm,
+                    currency: value,
+                    cotacao: "",
+                  })
+                }
+              >
+                <SelectTrigger id="expense_currency">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {opcoesDeMoeda().map((o) => (
+                    <SelectItem key={o.codigo} value={o.codigo}>
+                      {o.rotulo}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
-                {/* A cotacao do dia da COMPRA. O componente nao renderiza nada em
-                    real, e busca a PTAX da `data` -- nao a de hoje. Sem ela o
-                    banco recusa a despesa com 23514 (CHECK da 026). */}
-                <CampoDeCotacao
-                  moeda={expenseForm.currency}
-                  data={expenseForm.transaction_date}
-                  cotacao={expenseForm.cotacao}
-                  valor={expenseForm.amount}
-                  aoMudar={(cotacao) =>
-                    setExpenseForm({ ...expenseForm, cotacao })
-                  }
+            {/* A cotacao do dia da COMPRA. O componente nao renderiza nada em
+                real, e busca a PTAX da `data` -- nao a de hoje. Sem ela o
+                banco recusa a despesa com 23514 (CHECK da 026). */}
+            <CampoDeCotacao
+              moeda={expenseForm.currency}
+              data={expenseForm.transaction_date}
+              cotacao={expenseForm.cotacao}
+              valor={expenseForm.amount}
+              aoMudar={(cotacao) =>
+                setExpenseForm({ ...expenseForm, cotacao })
+              }
+            />
+
+            <div className="space-y-2">
+              <Label htmlFor="split_type">Tipo de Divisão</Label>
+              <Select
+                value={expenseForm.split_type}
+                onValueChange={(value: "equal" | "percentage" | "custom") =>
+                  setExpenseForm({ ...expenseForm, split_type: value })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="equal">Divisão Igual</SelectItem>
+                  <SelectItem value="percentage">Por Percentual</SelectItem>
+                  <SelectItem value="custom">Customizada</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Sugestões de Split */}
+            {parseFloat(expenseForm.amount) > 0 && (
+              <div className="space-y-2">
+                <SplitSuggestions
+                  groupId={groupId}
+                  amount={parseFloat(expenseForm.amount)}
+                  onSelectSuggestion={setSelectedSplitSuggestion}
+                  selectedSuggestion={selectedSplitSuggestion}
                 />
+              </div>
+            )}
 
-                <div className="space-y-2">
-                  <Label htmlFor="split_type">Tipo de Divisão</Label>
-                  <Select
-                    value={expenseForm.split_type}
-                    onValueChange={(value: "equal" | "percentage" | "custom") =>
-                      setExpenseForm({ ...expenseForm, split_type: value })
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="equal">Divisão Igual</SelectItem>
-                      <SelectItem value="percentage">Por Percentual</SelectItem>
-                      <SelectItem value="custom">Customizada</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+            <div className="space-y-2">
+              <Label htmlFor="notes">Observações</Label>
+              <Textarea
+                id="notes"
+                value={expenseForm.notes}
+                onChange={(e) =>
+                  setExpenseForm({ ...expenseForm, notes: e.target.value })
+                }
+                placeholder="Observações adicionais..."
+                rows={3}
+              />
+            </div>
 
-                {/* Sugestões de Split */}
-                {parseFloat(expenseForm.amount) > 0 && (
-                  <div className="space-y-2">
-                    <SplitSuggestions
-                      groupId={groupId}
-                      amount={parseFloat(expenseForm.amount)}
-                      onSelectSuggestion={setSelectedSplitSuggestion}
-                      selectedSuggestion={selectedSplitSuggestion}
-                    />
-                  </div>
-                )}
+            {/* O interruptor fica ACIMA dos botoes: ele e uma promessa sobre
+                o que o botao de baixo vai fazer, e precisa ser lido antes do
+                clique.
 
-                <div className="space-y-2">
-                  <Label htmlFor="notes">Observações</Label>
-                  <Textarea
-                    id="notes"
-                    value={expenseForm.notes}
-                    onChange={(e) =>
-                      setExpenseForm({ ...expenseForm, notes: e.target.value })
-                    }
-                    placeholder="Observações adicionais..."
-                    rows={3}
-                  />
-                </div>
+                As frases sao proprias porque as padrao nomeiam campos que
+                este formulario nao tem ("conta", "grupo" -- aqui o grupo E a
+                tela) e deixam de fora justamente o que mais importa nesta:
+                a divisao sugerida, que NAO sobrevive. Um texto de apoio que
+                nomeia o campo errado e pior que nenhum -- ele e a unica
+                fonte sobre o que vai ser apagado, e quem confia nele deixa
+                de conferir. Ver `SalvarEContinuar`. */}
+            <SalvarEContinuar
+              ligado={continuarNaDespesa}
+              aoMudar={setContinuarNaDespesa}
+              disabled={salvandoDespesa}
+              frases={{
+                ligado:
+                  "A tela fica aberta para a próxima despesa do grupo. Descrição, valor e observações são limpos; categoria, data e moeda continuam. A divisão sugerida precisa ser escolhida de novo.",
+                desligado:
+                  "Ao salvar, esta tela fecha e você volta para o grupo.",
+              }}
+            />
 
-                <div className="flex gap-2">
-                  <Button type="submit">Adicionar Despesa</Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setShowAddExpense(false)}
-                  >
-                    Cancelar
-                  </Button>
-                </div>
-              </form>
-            </CardContent>
-          </Card>
-        </div>
+            <div className="flex gap-2">
+              {/* `disabled` enquanto grava. Com o modal FECHANDO ao salvar, o
+                  duplo clique era barrado pelo botao desaparecer; com
+                  "Salvar e continuar" ligado o botao fica onde esta, e cada
+                  envio repetido e uma despesa nova RATEADA entre os
+                  participantes pelo trigger do banco -- cobranca que cai na
+                  conta de outras pessoas, nao so na de quem clicou. */}
+              <Button type="submit" disabled={salvandoDespesa}>
+                {salvandoDespesa ? "Adicionando..." : "Adicionar Despesa"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={salvandoDespesa}
+                onClick={() => setShowAddExpense(false)}
+              >
+                Cancelar
+              </Button>
+            </div>
+          </form>
+        </ModalDeLancamento>
       )}
 
       {/* O campo de conta do acerto (HMO-245, fase 11). Fica fora das abas: a

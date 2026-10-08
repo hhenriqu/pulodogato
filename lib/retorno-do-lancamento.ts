@@ -336,3 +336,68 @@ export function proximaMovimentacaoDeCarteira<
     taxas: inicial.taxas,
   };
 }
+
+/**
+ * O mesmo para a despesa de um GRUPO -- "Adicionar Nova Despesa" em
+ * `/dashboard/expense-groups/[groupId]` (HMO-251).
+ *
+ * Os campos sao em ingles porque o estado daquele formulario e em ingles
+ * (`expenseForm`, que vai quase direto para o corpo do POST). Nao vale
+ * traduzi-los aqui so por simetria com as funcoes de cima: o `...valores`
+ * carrega o resto do estado, e um nome traduzido viraria um campo NOVO no
+ * objeto devolvido, deixando o original intacto -- isto e, o reset passaria a
+ * nao resetar nada, calado.
+ *
+ * POR QUE AQUI DOI MAIS DO QUE NAS TRES DE CIMA
+ * ---------------------------------------------
+ * Nas outras, o lancamento repetido erra o dinheiro de QUEM DIGITOU. Aqui nao:
+ * a despesa de grupo e rateada entre os participantes por um trigger do banco
+ * (`group_expense_splits` -- ver a divisao automatica da migration 042), entao
+ * um segundo clique em "Adicionar Despesa" cobra de OUTRAS PESSOAS uma conta que
+ * nunca existiu. Elas nao tem como desconfiar: no extrato do grupo a linha
+ * duplicada e indistinguivel de duas contas iguais no mesmo dia, que num jantar
+ * de viagem e plausivel. O acerto do mes sai errado para todo mundo.
+ *
+ * O QUE E LIMPO
+ * -------------
+ *   description  identifica ESTA despesa. Herdada, a conta seguinte e gravada
+ *                com o nome da anterior se a pessoa so trocar o valor.
+ *   amount       o campo que barra o reenvio: `handleAddExpense` recusa sem
+ *                descricao ou sem valor, entao com ele limpo o segundo clique
+ *                nao envia nada em vez de enviar de novo. E ele tambem que
+ *                esconde o painel de sugestoes de divisao, que so aparece com
+ *                `amount > 0` -- ver abaixo.
+ *   notes        a observacao e daquela despesa ("mesa de 4").
+ *
+ * O QUE SOBREVIVE, E POR QUE
+ * --------------------------
+ * `category_id`, `transaction_date`, `currency`, `cotacao` e `split_type`. E
+ * exatamente o caso que a opcao serve: lancar as cinco contas da viagem, todas
+ * na mesma categoria, no mesmo dia e na moeda da viagem, sem reescolher nada. A
+ * cotacao fica junto com a moeda e a data porque ela e a cotacao DAQUELE DIA
+ * naquela moeda -- continua sendo a taxa certa para a despesa seguinte, e
+ * limpa-la faria `CampoDeCotacao` buscar de novo o mesmo numero.
+ *
+ * `split_type` fica, mas a SUGESTAO ESCOLHIDA nao -- e ela nao mora neste
+ * objeto, e sim num estado separado da tela, que quem chama limpa junto. Os dois
+ * tem de andar assim, e por um motivo de dinheiro: a sugestao carrega o valor
+ * ABSOLUTO de cada participante (R$ 120,00 para a Ana, R$ 120,00 para o Bruno),
+ * calculado sobre o total da despesa ANTERIOR. Reaproveitada numa despesa de
+ * outro valor, ela nao erra o rateio por pouco -- ela rateia o numero errado, e
+ * a diferenca vai para a conta dos outros.
+ *
+ * Com a sugestao limpa, o `split_type` sobrevivente faz a tela PEDIR a divisao
+ * de novo ("Escolha uma das divisões sugeridas abaixo") em vez de cair em partes
+ * IGUAIS caladas, que e o defeito oposto e o pior dos dois: uma divisao
+ * silenciosamente errada parece ter funcionado.
+ */
+export function proximaDespesaDeGrupo<
+  V extends { description: string; amount: string; notes: string }
+>(valores: V, inicial: V): V {
+  return {
+    ...valores,
+    description: inicial.description,
+    amount: inicial.amount,
+    notes: inicial.notes,
+  };
+}

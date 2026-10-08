@@ -35,6 +35,14 @@
 //                             a compra repetida nao e uma linha estranha na
 //                             lista, e um PRECO MEDIO movido, e dele saem o
 //                             lucro e a rentabilidade do ativo.
+//   `grupo_valor_sobrevive` (HMO-251)
+//                          -- O MESMO mutante de dinheiro na despesa de GRUPO,
+//                             onde ele e mais CARO: um trigger do banco rateia
+//                             a despesa entre os participantes, entao o
+//                             segundo clique cobra de OUTRAS PESSOAS -- e a
+//                             linha duplicada no extrato do grupo e
+//                             indistinguivel de duas contas iguais no mesmo
+//                             dia.
 //
 // COMO RODAR
 //   npm run mutantes:retorno-lancamento
@@ -398,6 +406,86 @@ const MUTANTES = [
     quantidade: inicial.quantidade,
     preco: inicial.preco,
     taxas: inicial.taxas,
+  });
+  return valores;`,
+  },
+
+  // --- a despesa de GRUPO (HMO-251) ----------------------------------------
+  //
+  // O MESMO mutante de dinheiro, no formulario onde ele e mais CARO -- e nao por
+  // ser maior, e por cair na conta de quem nao clicou. A despesa de grupo e
+  // rateada entre os participantes por um trigger do banco
+  // (`group_expense_splits`, migration 042): a despesa gravada duas vezes manda
+  // cobranca para outras pessoas, e no extrato do grupo a linha duplicada e
+  // indistinguivel de duas contas iguais no mesmo dia -- num jantar de viagem,
+  // plausivel. Ninguem tem como desconfiar, e o acerto do mes sai errado para
+  // todo mundo.
+  //
+  // `valores.<campo>` em vez de `inicial.<campo>`, como nos mutantes de
+  // carteira: a ancora fica de UMA linha e inequivoca, e o mutante deixa de ser
+  // "esqueci a linha" para ser "limpei para o que estava na tela" -- que
+  // compila, e e exatamente o defeito.
+  {
+    nome: "grupo_valor_sobrevive",
+    porque:
+      "O MUTANTE DE DINHEIRO DESTA ISSUE: o valor da despesa fica na tela " +
+      "depois de salvar, e UM segundo clique em 'Adicionar Despesa' grava a " +
+      "mesma despesa de grupo outra vez -- rateada pelo trigger do banco, ou " +
+      "seja, cobrando de OUTRAS PESSOAS uma conta que nunca existiu",
+    de: `    amount: inicial.amount,`,
+    para: `    amount: valores.amount,`,
+  },
+  {
+    nome: "grupo_descricao_sobrevive",
+    porque:
+      "a descricao da despesa anterior fica na tela: a despesa seguinte do " +
+      "grupo e gravada com o nome da anterior se a pessoa so trocar o valor, e " +
+      "o rateio vai para os participantes com a descricao errada",
+    de: `    description: inicial.description,`,
+    para: `    description: valores.description,`,
+  },
+  {
+    nome: "grupo_notas_sobrevivem",
+    porque:
+      "a observacao daquela despesa ('mesa de 4') e herdada pela seguinte, que " +
+      "pode nem ser um jantar -- e a observacao e o que os outros participantes " +
+      "leem para conferir a cobranca",
+    de: `    notes: inicial.notes,`,
+    para: `    notes: valores.notes,`,
+  },
+  {
+    nome: "grupo_reset_total",
+    porque:
+      "limpa tambem a categoria, a data, a moeda, a cotacao e o tipo de " +
+      "divisao: lancar as cinco contas da viagem passaria a exigir reescolher " +
+      "tudo a cada volta, e a opcao deixaria de servir para o unico caso em " +
+      "que ela foi pedida",
+    de: `  return {
+    ...valores,
+    description: inicial.description,`,
+    para: `  return {
+    ...inicial,
+    description: inicial.description,`,
+  },
+  {
+    nome: "grupo_muta_o_estado_anterior",
+    porque:
+      "escreve no objeto que recebeu em vez de devolver um novo: dentro de " +
+      "`setExpenseForm(atual => ...)` o React pode nao ver a mudanca, e o valor " +
+      "da despesa que acabou de ser gravada fica na tela -- de volta ao duplo " +
+      "envio que o reset existe para fechar",
+    // Parentese FECHADO -- ver os dois `muta_o_estado_anterior` irmaos: a forma
+    // obvia deste mutante nao compila, e morrer no `tsc` nao mede a assercao.
+    de: `  return {
+    ...valores,
+    description: inicial.description,
+    amount: inicial.amount,
+    notes: inicial.notes,
+  };`,
+    para: `  Object.assign(valores, {
+    description: inicial.description,
+    amount: inicial.amount,
+    notes: inicial.notes,
   });
   return valores;`,
   },
