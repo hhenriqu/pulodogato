@@ -4868,6 +4868,40 @@ jobs:
       - name: Os nomes dos campos entre a rota e a tela
         run: npm run test:contrato-das-telas-de-movimentacao
 
+      # Controle negativo DO CONTRATO (HMO-250). O passo acima e um guard
+      # textual, e guard textual tem duas mortes silenciosas: ficar vermelho por
+      # motivo errado, ou ficar VERDE POR AUSENCIA.
+      #
+      # As duas aconteceram aqui. A HMO-246 levou os tres numeros para
+      # CartoesDaTela.tsx e as assercoes ficaram apontadas para
+      # TelaDeMovimentacao.tsx -- 2 de 8 vermelhas na main, e sem Actions
+      # ninguem viu. E depois de apontadas para o arquivo certo, o pedagio
+      # `podeMostrarNumero(estado) && resumo` era afirmado por um `assert.match`
+      # solto, que se contentava com UM dos dois pontos de uso: apagar o de
+      # dentro de `numero()` pintava os TRES cartoes de R$ 0,00 sem leitura
+      # nenhuma e esta suite seguia verde.
+      #
+      # O runner planta um defeito por vez (campo renomeado, pedagio apagado,
+      # travessao apagado) e exige vermelho em cada um. Ele restaura o arquivo
+      # no `finally` e tem controle positivo proprio -- a arvore intacta tem de
+      # estar verde ANTES, senao todo mutante "morreria" por motivo errado.
+      # Barato de rodar: a suite so le texto, nao compila nada.
+      - name: O contrato dos cartoes sabe falhar
+        run: npm run mutantes:contrato-dos-cartoes
+
+      - name: 'A arvore voltou ao lugar depois de "O contrato dos cartoes sabe falhar"'
+        run: |
+          # Mesma razao dos outros blocos: mutante nao restaurado contaminaria
+          # os passos seguintes, e o .tmp-* compilado guarda o mutante mesmo
+          # depois do restore do .tsx.
+          rm -rf .tmp-*
+          git status --porcelain > "$RUNNER_TEMP/arvore-agora.txt"
+          if ! diff -q "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" > /dev/null; then
+            echo "::error::O controle negativo acima nao restaurou a arvore. Os passos seguintes rodariam sobre codigo mutado."
+            diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
+            exit 1
+          fi
+
       # Controle negativo. A suite afirma sobre SINAL, sobre CONTAGEM e sobre
       # TIPO -- tres coisas que erram dinheiro na tela sem levantar excecao
       # nenhuma. Uma verificacao que nunca viu vermelho nao e verificacao.
