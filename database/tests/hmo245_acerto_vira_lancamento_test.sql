@@ -357,33 +357,48 @@ SELECT pg_temp.expect('a perna do outro acerto continua la',
     WHERE notes = 'acerto:a0000000-0000-0000-0000-0000000000a1'), 1::BIGINT);
 
 -- =====================================================
--- SECAO 6: o painel pessoal continua mostrando A MINHA PARTE
+-- SECAO 6: o acerto NAO entra no painel pessoal
 -- =====================================================
--- A medicao que decidiu o tipo. `personal_category_monthly_totals` (033) e o
--- pessoal (`group_id IS NULL`) MAIS a minha parte das despesas de grupo, e ela
--- ignora `transfer`.
+-- A medicao que decidiu o tipo da perna do acerto. `personal_monthly_cash_flow`
+-- (033/045) ignora `transfer`, e e isso que esta secao existe para provar.
 --
--- A Ana consumiu R$ 200 de hotel e recebeu R$ 50 de volta. O painel dela tem de
--- continuar dizendo que ela gastou a parte dela -- o reembolso nao e receita,
--- e dinheiro adiantado voltando.
-SELECT pg_temp.expect_num('com `transfer`, a despesa da Ana continua sendo a parte dela',
+-- A Ana pagou o hotel de R$ 400 e recebeu R$ 50 de volta. O painel dela tem de
+-- continuar dizendo o que o hotel lhe custou -- o reembolso nao e receita, e
+-- dinheiro adiantado voltando.
+--
+-- O NUMERO MUDOU NA 045, A AFIRMACAO NAO.
+--
+-- Esta secao nasceu valendo 200,00: o criterio da 033 era "a minha parte", e a
+-- parte da Ana no hotel e 200. A HMO-258 decidiu em 08/10/2026 que o custo
+-- pessoal e "bruto + reembolso" -- INTEIRO quando eu paguei --, entao o hotel
+-- que ELA pagou conta 400,00.
+--
+-- O que esta secao mede continua sendo exatamente o que media: que as duas
+-- pernas do acerto ficam FORA de Receitas e Despesas. Os 400 nao sao o valor que
+-- a assercao defende, sao o valor do mes; o que ela defende e `income = 0` e o
+-- `net` nao melhorar por causa do Pix -- e o controle logo abaixo, que troca o
+-- tipo para `income`, continua sendo o unico jeito de a secao ficar verde por
+-- acidente. Trocar o numero sem olhar o controle teria sido "consertar o teste".
+SELECT pg_temp.expect_num('com `transfer`, a despesa da Ana e o hotel que ELA pagou',
   (SELECT expense FROM public.personal_monthly_cash_flow
-    WHERE user_id = 'aaaaaaaa-0000-0000-0000-00000000a001'), 200.00);
+    WHERE user_id = 'aaaaaaaa-0000-0000-0000-00000000a001'), 400.00);
 
 SELECT pg_temp.expect_num('com `transfer`, o acerto NAO entra como receita',
   (SELECT income FROM public.personal_monthly_cash_flow
     WHERE user_id = 'aaaaaaaa-0000-0000-0000-00000000a001'), 0.00);
 
-SELECT pg_temp.expect_num('com `transfer`, o resultado do mes da Ana e a parte dela',
+SELECT pg_temp.expect_num('com `transfer`, o resultado do mes da Ana e o hotel inteiro',
   (SELECT net FROM public.personal_monthly_cash_flow
-    WHERE user_id = 'aaaaaaaa-0000-0000-0000-00000000a001'), -200.00);
+    WHERE user_id = 'aaaaaaaa-0000-0000-0000-00000000a001'), -400.00);
 
 -- O CONTROLE QUE MOSTRA O NUMERO DA OUTRA ESCOLHA.
 --
 -- Trocando o tipo da perna de quem recebe para `income` -- e so o tipo, nada
 -- mais --, o painel da Ana passa a somar o reembolso como receita e o mes dela
 -- fecha R$ 50 melhor do que foi. Em cima de um acerto que cobrisse a divida
--- inteira, o mes fecharia empatado: a propria parte dela, apagada.
+-- inteira de 200, o mes dela iria a -200: o hotel de 400 apareceria custando a
+-- parte da Bia a menos, e sem nada na tela dizendo que foi reembolso e nao
+-- desconto.
 SAVEPOINT tipo_income;
 
 UPDATE public.financial_transactions
@@ -396,13 +411,13 @@ SELECT pg_temp.expect_num('CONTROLE: com `income`, o reembolso vira receita de 5
 
 SELECT pg_temp.expect_num('CONTROLE: e o mes da Ana fecha 50 melhor do que foi',
   (SELECT net FROM public.personal_monthly_cash_flow
-    WHERE user_id = 'aaaaaaaa-0000-0000-0000-00000000a001'), -150.00);
+    WHERE user_id = 'aaaaaaaa-0000-0000-0000-00000000a001'), -350.00);
 
 ROLLBACK TO SAVEPOINT tipo_income;
 
-SELECT pg_temp.expect_num('restaurado: de volta a -200 com `transfer`',
+SELECT pg_temp.expect_num('restaurado: de volta a -400 com `transfer`',
   (SELECT net FROM public.personal_monthly_cash_flow
-    WHERE user_id = 'aaaaaaaa-0000-0000-0000-00000000a001'), -200.00);
+    WHERE user_id = 'aaaaaaaa-0000-0000-0000-00000000a001'), -400.00);
 
 -- A perna aparece no extrato da pessoa de qualquer forma: `transfer` fica fora
 -- de Receitas e Despesas, nao da LISTA. Quem recebeu o Pix precisa ve-lo.
