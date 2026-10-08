@@ -35,6 +35,7 @@ const {
   comOrigem,
   destinoDepoisDeSalvar,
   origemSegura,
+  proximaDespesaDeGrupo,
   proximaMovimentacaoDeCarteira,
   proximaTransferencia,
   proximoLancamento,
@@ -586,6 +587,132 @@ test("o reset da carteira nao MUTA o estado que recebeu", () => {
 test("todo campo da movimentacao existe no resultado -- nenhum vira undefined", () => {
   const antes = movimentada();
   const proxima = proximaMovimentacaoDeCarteira(antes, inicialM());
+
+  for (const chave of Object.keys(antes)) {
+    assert.ok(
+      chave in proxima,
+      `${chave} desapareceu: um campo faltando vira undefined no formulario`
+    );
+  }
+});
+
+// ---------------------------------------------------------
+// proximaDespesaDeGrupo (HMO-251)
+// ---------------------------------------------------------
+// O CONTROLE DESTE BLOCO e `amount` -- e aqui ele nao custa o dinheiro de quem
+// digitou. A despesa de grupo e rateada entre os participantes por um trigger do
+// banco (`group_expense_splits`, migration 042), entao a despesa gravada duas
+// vezes manda cobranca para a conta de OUTRAS PESSOAS. No extrato do grupo a
+// linha duplicada e indistinguivel de duas contas iguais no mesmo dia -- num
+// jantar de viagem, plausivel --, e ninguem tem como desconfiar.
+//
+// Os campos sao em ingles porque o estado do formulario e em ingles
+// (`expenseForm` em app/(dashboard)/dashboard/expense-groups/[groupId]/page.tsx).
+// As fixtures abaixo copiam aquele estado campo a campo de proposito: uma
+// fixture com nomes traduzidos passaria em todos os casos deste bloco sobre uma
+// funcao que nao limpa nada do formulario de verdade.
+
+/** O estado inicial, como `valoresIniciaisDaDespesa()` devolve na tela. */
+const inicialG = () => ({
+  description: "",
+  amount: "",
+  category_id: "",
+  transaction_date: "2026-10-08",
+  notes: "",
+  split_type: "equal",
+  currency: "BRL",
+  cotacao: "",
+});
+
+/** O que a pessoa acabou de lancar: o jantar da viagem, em dolar, por percentual. */
+const despesaDoGrupo = () => ({
+  ...inicialG(),
+  description: "Jantar do primeiro dia",
+  amount: "240.00",
+  category_id: "cat-alimentacao",
+  transaction_date: "2026-03-15",
+  notes: "mesa de 4",
+  split_type: "percentage",
+  currency: "USD",
+  cotacao: "5.12",
+});
+
+test("o valor e a descricao SAO LIMPOS -- aqui o duplo envio cobra de OUTRAS pessoas", () => {
+  const antes = despesaDoGrupo();
+  // CONTROLE: antes do reset, um segundo clique em "Adicionar Despesa" gravaria
+  // esta mesma despesa de novo -- e o trigger do banco a ratearia entre os
+  // participantes outra vez.
+  assert.equal(antes.amount, "240.00");
+  assert.equal(antes.description, "Jantar do primeiro dia");
+
+  const proxima = proximaDespesaDeGrupo(antes, inicialG());
+
+  assert.equal(
+    proxima.amount,
+    "",
+    "sem valor, handleAddExpense recusa o reenvio em vez de aceita-lo calado"
+  );
+  assert.equal(proxima.description, "");
+});
+
+test("a observacao da despesa anterior nao vai para a seguinte", () => {
+  const antes = despesaDoGrupo();
+  assert.equal(antes.notes, "mesa de 4");
+
+  const proxima = proximaDespesaDeGrupo(antes, inicialG());
+
+  assert.equal(proxima.notes, "");
+});
+
+test("categoria, data, moeda e cotacao SOBREVIVEM: e para isso que a opcao existe", () => {
+  const proxima = proximaDespesaDeGrupo(despesaDoGrupo(), inicialG());
+
+  assert.equal(
+    proxima.category_id,
+    "cat-alimentacao",
+    "lancar as cinco contas da viagem sem reescolher a categoria"
+  );
+  assert.equal(proxima.transaction_date, "2026-03-15");
+  assert.equal(proxima.currency, "USD", "a proxima conta da viagem tambem e em dolar");
+  assert.equal(
+    proxima.cotacao,
+    "5.12",
+    "a cotacao e daquele dia naquela moeda -- continua certa, e limpa-la faria CampoDeCotacao buscar o mesmo numero"
+  );
+  // Que eles sobreviveram so quer dizer algo porque DIFEREM do inicial: sem
+  // estas linhas, um reset total passaria nas assercoes de cima.
+  assert.notEqual(proxima.category_id, inicialG().category_id);
+  assert.notEqual(proxima.transaction_date, inicialG().transaction_date);
+  assert.notEqual(proxima.currency, inicialG().currency);
+});
+
+test("o tipo de divisao sobrevive -- cair em partes IGUAIS caladas e o defeito oposto", () => {
+  // A sugestao escolhida NAO mora neste objeto (e estado separado da tela, que
+  // a pagina limpa junto), e e por isso que `split_type` pode ficar: com a
+  // sugestao limpa e o tipo preservado, a tela PEDE a divisao de novo em vez de
+  // ratear em partes iguais sem avisar. Uma divisao silenciosamente errada
+  // parece ter funcionado -- e o pior dos dois defeitos.
+  const proxima = proximaDespesaDeGrupo(despesaDoGrupo(), inicialG());
+
+  assert.equal(proxima.split_type, "percentage");
+  assert.notEqual(proxima.split_type, inicialG().split_type);
+});
+
+test("o reset da despesa de grupo nao MUTA o estado que recebeu", () => {
+  // Mesmo motivo dos casos irmaos: na tela o reset roda dentro de
+  // `setExpenseForm(atual => ...)`, e mutar `atual` ali e um estado que o React
+  // nao sabe que mudou -- o valor da despesa anterior ficaria na tela.
+  const antes = despesaDoGrupo();
+  const copia = JSON.parse(JSON.stringify(antes));
+
+  proximaDespesaDeGrupo(antes, inicialG());
+
+  assert.deepEqual(antes, copia, "o objeto de entrada ficou intacto");
+});
+
+test("todo campo da despesa existe no resultado -- nenhum vira undefined", () => {
+  const antes = despesaDoGrupo();
+  const proxima = proximaDespesaDeGrupo(antes, inicialG());
 
   for (const chave of Object.keys(antes)) {
     assert.ok(

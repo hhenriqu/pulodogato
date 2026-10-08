@@ -4703,7 +4703,7 @@ jobs:
       # funcao que desfaz a issue inteira.
       #
       # A prova de mutacao completa e `npm run mutantes:retorno-lancamento`
-      # (26 mutantes, ferramenta de quem escreve o teste). Aqui ficam os cinco
+      # (31 mutantes, ferramenta de quem escreve o teste). Aqui ficam os seis
       # que mais custam, plantados um por vez.
       - name: 'A verificacao sabe falhar (retorno-do-lancamento)'
         run: |
@@ -4801,7 +4801,24 @@ jobs:
             '    quantidade: valores.quantidade,'
           reprova "Verde com a QUANTIDADE sobrevivendo ao Salvar e continuar -- o segundo clique grava a mesma compra e move o preco medio do ativo."
 
-          echo "A verificacao fica vermelha nas cinco armadilhas."
+          # 6) A MESMA DESPESA DE GRUPO DUAS VEZES (HMO-251). O mutante do (3)
+          #    no formulario do grupo, e o que CUSTA MAIS dos seis -- nao por
+          #    ser maior, mas por cair na conta de quem nao clicou. A despesa de
+          #    grupo e rateada entre os participantes por um trigger do banco
+          #    (`group_expense_splits`, migration 042), entao a despesa gravada
+          #    duas vezes manda cobranca para OUTRAS PESSOAS. E elas nao tem
+          #    como desconfiar: no extrato do grupo a linha duplicada e
+          #    indistinguivel de duas contas iguais no mesmo dia, que num jantar
+          #    de viagem e plausivel. O acerto do mes sai errado para todo mundo.
+          #
+          #    UMA linha basta de ancora: `amount:` so existe em
+          #    `proximaDespesaDeGrupo` -- as outras tres funcoes usam `valor`.
+          node /tmp/mutar.mjs $LIB \
+            '    amount: inicial.amount,' \
+            '    amount: valores.amount,'
+          reprova "Verde com o VALOR da despesa de GRUPO sobrevivendo ao Salvar e continuar -- o segundo clique grava a despesa outra vez e o trigger a rateia, cobrando de outras pessoas."
+
+          echo "A verificacao fica vermelha nas seis armadilhas."
 
       - name: 'A arvore voltou ao lugar depois de "A verificacao sabe falhar (retorno-do-lancamento)"'
         run: |
