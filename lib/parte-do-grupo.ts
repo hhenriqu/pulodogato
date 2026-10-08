@@ -84,6 +84,9 @@
 import { toCents, toReais } from "@/lib/settlement";
 import { ratearPorPeso, type ParticipanteComPeso } from "@/lib/fechamento-do-grupo";
 import { monthlyCost } from "@/lib/recurrence";
+// A peneira do custo fixo (HMO-257). Importado, e nao reescrito aqui: ver
+// `custoFixoMensalDaMinhaParte`.
+import { classeDaAgenda } from "@/lib/previsto-x-realizado";
 import type { RecurrenceFrequency } from "@/types/financial";
 
 /**
@@ -397,8 +400,31 @@ export function parteDoMembro(
  * O custo fixo mensal que e MEU: a soma das regras ativas de despesa, cada
  * linha de grupo contando so a minha parte.
  *
- * Receita fica de fora (`transaction_type === "income"`) porque a pergunta que
- * o painel faz e "quanto sai todo mes", e era assim antes desta correcao.
+ * A PENEIRA E `classeDaAgenda`, E SO A CLASSE `expense` ENTRA -- HMO-257
+ * ---------------------------------------------------------------------
+ * Receita fica de fora porque a pergunta e "quanto SAI todo mes", e isso nunca
+ * mudou. O que a HMO-257 acrescenta e a TRANSFERENCIA: a regra "Transferencia
+ * recorrente para o PIX" (R$ 100/mes, Conta Corrente -> PIX) move dinheiro
+ * entre duas contas da MESMA pessoa. Ela nao gasta nada e nao muda o
+ * patrimonio, e ainda assim passava pelo filtro antigo
+ * (`transaction_type !== "income"`) e somava R$ 100,00 ao custo fixo -- medido
+ * em R$ 1.300,00 onde o certo e R$ 1.200,00, na conta de teste da HMO-255.
+ *
+ * Guardar dinheiro na poupanca nao e custo fixo pelo MESMO argumento que ja
+ * tirou a transferencia do «Total de contas» do modo Papel de Pao na HMO-303.
+ * Por isso o criterio e `classeDaAgenda` e nao um segundo deny-list escrito
+ * aqui: a precedencia ('income' sai, 'transfer' sai, desconhecido cai em
+ * 'expense') existe em UM lugar, e quem a cobra e o `tsc` e o mutante. Duas
+ * copias discordariam na primeira mudanca, e a copia esquecida e exatamente o
+ * defeito da HMO-187.
+ *
+ * O CRITERIO E DENY-LIST POR DENTRO, E ISSO E LOAD-BEARING. `classeDaAgenda`
+ * manda desconhecido -- e `null` -- para `expense`, e `transaction_type` E NULO
+ * em parte da base instalada (ver o cabecalho de /api/safe-to-spend). Trocar
+ * isto por um allow-list `=== "expense"` lido do campo cru faria TODA regra de
+ * despesa antiga sair do custo fixo em silencio: o numero cairia para perto de
+ * zero e pareceria "nao tenho conta fixa", que e um erro muito maior do que os
+ * R$ 100 que esta issue conserta.
  *
  * A normalizacao para "por mes" continua sendo `monthlyCost` (anual/12,
  * semanal*52/12). Tomar a parte antes ou depois de normalizar da o mesmo
@@ -412,7 +438,7 @@ export function custoFixoMensalDaMinhaParte(
   hoje: string
 ): number {
   const total = regras
-    .filter((r) => r.transaction_type !== "income")
+    .filter((r) => classeDaAgenda(r.transaction_type) === "expense")
     .reduce((soma, r) => {
       const minha = parteConfiguradaDoMembro(
         r.amount,
