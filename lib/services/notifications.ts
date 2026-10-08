@@ -17,6 +17,15 @@ export interface BillAlert {
   kind: "due_soon" | "overdue";
   transaction_type: string;
   already_notified: boolean;
+  /**
+   * Quer o aviso por e-mail? Vem da view (047), com COALESCE para `true`.
+   *
+   * Opcional no tipo porque `bill_alerts` so passou a devolver a coluna na
+   * 047, e o codigo precisa continuar de pe entre o deploy do app e a colagem
+   * da migration -- nesse intervalo a chave nao vem no objeto. Quem le decide
+   * o que fazer com a ausencia; ver o cron de bill-alerts.
+   */
+  notify_email?: boolean;
 }
 
 export function formatarBRL(valor: number | string): string {

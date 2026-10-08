@@ -71,6 +71,8 @@ next-env.d.ts
 *-auth-users.sql.gz.gpg
 *-roles-rls.txt
 
+# saida do `npm run test:aviso-por-email` (HMO-183: email.ts + notifications.ts)
+/.tmp-aviso-por-email/
 # saida do `npm run test:recurrence-detector` (tsc avulso, so para o node --test)
 /.tmp-recurrence-detector/
 # saida do `npm run test:recurrence-scan` (idem, com reescrita de alias depois)

@@ -1,0 +1,16 @@
+{
+  "//": "esModuleInterop fica ligado porque notifications.ts faz (await import(\"web-push\")).default -- o tsconfig do app liga, e sem isso a compilacao do teste reprova num arquivo que o app compila. Build so do teste. notifications.ts entra junto porque a suite confronta montarEmailDoAviso() com textoDoAviso(): a regra 'uma definicao de texto para os dois canais' so e verificavel com as duas no mesmo processo. O passo resolve-aliases fica no npm script mesmo que hoje nenhum dos dois importe por @/ -- e o que evita o ERR_MODULE_NOT_FOUND no dia em que um deles passar a importar.",
+  "compilerOptions": {
+    "outDir": "../.tmp-aviso-por-email",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/services/email.ts", "../lib/services/notifications.ts"]
+}
