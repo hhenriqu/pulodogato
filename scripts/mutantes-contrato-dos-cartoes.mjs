@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // Controle negativo das assercoes que o `test:contrato-das-telas-de-movimentacao`
 // faz sobre `components/movimentacoes/CartoesDaTela.tsx` (HMO-250).
 //
@@ -28,13 +29,35 @@
 // verde. Cada pedagio passou a ser ancorado no seu ponto de uso, e os dois
 // mutantes "SOZINHO" abaixo sao o que prova isso.
 //
+// O BLOCO: A MUTACAO VAI PARA UMA SOMBRA, NUNCA PARA A ARVORE (HMO-348)
+// -----------------------------------------------------------------------
+// Este runner mutava CartoesDaTela.tsx NO LUGAR -- escrevia o mutante no
+// arquivo rastreado, rodava a suite com `execFileSync` e restaurava no
+// `finally`. `scripts/check-mutacao-no-lugar.mjs` (HMO-327) passou a reprovar
+// todo runner NOVO que faca isso: o `finally` nao roda em SIGTERM, que e
+// exatamente o sinal que o `timeout` do shell e o cancelamento de job mandam, e
+// o mutante fica GRAVADO na arvore quando o processo morre no meio.
+//
+// A suite aqui NAO COMPILA NADA -- ela le o TEXTO de CartoesDaTela.tsx, nao um
+// artefato emitido. Por isso ela entra em `oraculos`, e nao em `suites`:
+// `criarBlocoDeMutantes` recusa um oraculo que compila e recusa uma suite sem
+// etapa de compilacao, e a razao de valer para este caso e que a sombra ja
+// materializa o arquivo mutado EM DISCO (fora da arvore rastreada) para que o
+// `readFileSync` do guard leia o mutante sem a arvore de verdade ser tocada.
+//
+// Para um oraculo, `mudouASaida` vem `null` de proposito -- nao ha artefato
+// compilado para comparar com o controle --, entao quem responde "a mutacao
+// aconteceu de verdade?" e a trava de `original.includes(de)` abaixo, nao essa
+// resposta do bloco.
+//
 //   npm run mutantes:contrato-dos-cartoes
 
-import { readFileSync, writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+
+import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
 
 const ALVO = "components/movimentacoes/CartoesDaTela.tsx";
-const SUITE = "scripts/test-contrato-das-telas-de-movimentacao.mjs";
+const ORACULO = "contrato";
 
 const original = readFileSync(ALVO, "utf8");
 
@@ -89,28 +112,33 @@ const MUTANTES = [
   },
 ];
 
-/** Roda a suite e devolve true se ela ficou VERMELHA. */
-function suiteVermelha() {
-  try {
-    execFileSync("node", ["--test", SUITE], { stdio: "pipe" });
-    return false;
-  } catch {
-    return true;
-  }
+const bloco = criarBlocoDeMutantes({
+  rotulo: "contrato-dos-cartoes",
+  oraculos: { [ORACULO]: "npm run test:contrato-das-telas-de-movimentacao" },
+});
+// A sombra vive em diretorio temporario e sai junto com o processo. No pior
+// caso (SIGTERM) sobra um diretorio orfao em /tmp -- e nao um
+// `CartoesDaTela.tsx` mutado na arvore rastreada, que era o modo de falhar que
+// esta conversao fecha.
+process.on("exit", () => bloco.fechar());
+for (const sinal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(sinal, () => process.exit(1));
 }
 
-let falhas = 0;
-
-// CONTROLE POSITIVO, antes de tudo. Sem ele, um erro neste script que deixasse
-// a suite sempre vermelha faria TODO mutante "morrer" e o placar mentiria
-// verde do lado errado.
-if (suiteVermelha()) {
+// CONTROLE POSITIVO, antes de tudo. Sem ele, um erro neste script ou uma sombra
+// mal montada que deixasse o oraculo sempre vermelho faria TODO mutante
+// "morrer" e o placar mentiria verde do lado errado.
+const controle = bloco.rodar("controle", {}, ORACULO);
+if (!controle.verde) {
   console.log("RUIM  controle positivo: a arvore INTACTA ja esta vermelha");
+  console.log(`      ${controle.saida}`);
   console.log("\nconserte a suite antes de medir mutante -- com ela vermelha,");
   console.log("todo mutante morre por motivo errado e este placar nao vale nada.");
   process.exit(1);
 }
 console.log("OK    controle positivo: a arvore intacta esta verde\n");
+
+let falhas = 0;
 
 for (const { nome, de, para, todas } of MUTANTES) {
   if (!original.includes(de)) {
@@ -120,19 +148,16 @@ for (const { nome, de, para, todas } of MUTANTES) {
     continue;
   }
 
-  const mutado = todas
-    ? original.replaceAll(de, para)
-    : original.replace(de, para);
-
-  writeFileSync(ALVO, mutado);
-  let vermelha;
-  try {
-    vermelha = suiteVermelha();
-  } finally {
-    writeFileSync(ALVO, original);
+  const mutado = todas ? original.replaceAll(de, para) : original.replace(de, para);
+  if (mutado === original) {
+    console.log(`RUIM  REPLACE NO-OP  ${nome}`);
+    falhas++;
+    continue;
   }
 
-  if (vermelha) {
+  const r = bloco.rodar(nome, { [ALVO]: mutado }, ORACULO);
+
+  if (!r.verde) {
     console.log(`OK    morre          ${nome}`);
   } else {
     console.log(`RUIM  SOBREVIVE      ${nome}`);
