@@ -48,6 +48,14 @@ const {
   previstasComAMinhaParte,
 } = await import("../.tmp-parte-do-grupo/lib/parte-do-grupo.js");
 
+// O CRITERIO DO CUSTO FIXO, IMPORTADO (HMO-257) e nao reescrito como literal
+// aqui. `custoFixoMensalDaMinhaParte` peneira as regras com esta funcao; um
+// `if` copiado no teste passaria verde mesmo depois de a peneira do lib mudar
+// de ideia, que e justamente o que o bloco de mutantes precisa poder quebrar.
+const { classeDaAgenda } = await import(
+  "../.tmp-parte-do-grupo/lib/previsto-x-realizado.js"
+);
+
 const CASA = "44444444-0000-0000-0000-000000000004";
 const VIAGEM = "55555555-0000-0000-0000-000000000005";
 const HOJE = "2026-09-29";
@@ -230,6 +238,100 @@ test("receita continua fora do custo fixo", () => {
     custoFixoMensalDaMinhaParte([regraAluguel, salario], pesos, EU, HOJE),
     1500
   );
+});
+
+// -----------------------------------------------------------------------
+// A TRANSFERENCIA RECORRENTE FICA FORA DO CUSTO FIXO (HMO-257)
+// -----------------------------------------------------------------------
+// Medido na conta de teste da HMO-255, outubro/2026: `fixed_monthly_cost`
+// saia R$ 1.300,00 -- plano 1.000 + academia 200 + a transferencia de 100
+// para o PIX. Mover R$ 100 da Conta Corrente para o PIX nao gasta nada: as
+// duas contas sao da MESMA pessoa e o patrimonio nao muda.
+//
+// A fixture abaixo e a do painel da issue, com os R$ 100 no meio, e a
+// assercao negativa nomeia o numero errado: sem a peneira saem 1.300.
+
+/** As duas despesas fixas pessoais da conta de teste da HMO-255. */
+const planoDeSaude = {
+  amount: 1000,
+  frequency: "monthly",
+  interval_count: 1,
+  transaction_type: "expense",
+  group_id: null,
+};
+
+const academia = {
+  amount: 200,
+  frequency: "monthly",
+  interval_count: 1,
+  transaction_type: "expense",
+  group_id: null,
+};
+
+/** "Transferencia recorrente para o PIX": Conta Corrente -> PIX, R$ 100/mes. */
+const transferenciaParaOPix = {
+  amount: 100,
+  frequency: "monthly",
+  interval_count: 1,
+  transaction_type: "transfer",
+  group_id: null,
+};
+
+test("transferencia recorrente nao e custo fixo -- os R$ 100 do PIX saem", () => {
+  const regras = [planoDeSaude, academia, transferenciaParaOPix];
+  assert.equal(custoFixoMensalDaMinhaParte(regras, pesos, EU, HOJE), 1200);
+  // O numero que a issue mediu em producao, e que a peneira tira.
+  assert.notEqual(custoFixoMensalDaMinhaParte(regras, pesos, EU, HOJE), 1300);
+});
+
+test("a transferencia sai inteira, e nao pela metade, quando e de grupo", () => {
+  // Uma transferencia com `group_id` nao entra nem pela minha parte: o
+  // mutante que troca a peneira pela divisao deixaria R$ 50 aqui, que e um
+  // numero pequeno e plausivel -- o pior tipo.
+  const transferenciaDeGrupo = { ...transferenciaParaOPix, group_id: CASA };
+  assert.equal(
+    custoFixoMensalDaMinhaParte([academia, transferenciaDeGrupo], pesos, EU, HOJE),
+    200
+  );
+});
+
+test("regra SEM transaction_type continua contando como despesa fixa", () => {
+  // O CONTROLE QUE PROIBE O ALLOW-LIST. `recurring_rules.transaction_type` e
+  // NULO em parte da base instalada, e a peneira manda desconhecido para
+  // `expense` de proposito. Um `=== "expense"` lido do campo cru passaria
+  // nos dois testes acima e zeraria o custo fixo de quem tem regra antiga --
+  // um erro muito maior do que os R$ 100 que a issue conserta.
+  const semTipo = { ...academia, transaction_type: null };
+  const naoDeclarado = { ...academia, transaction_type: undefined };
+  assert.equal(custoFixoMensalDaMinhaParte([semTipo], pesos, EU, HOJE), 200);
+  assert.equal(custoFixoMensalDaMinhaParte([naoDeclarado], pesos, EU, HOJE), 200);
+  assert.notEqual(custoFixoMensalDaMinhaParte([semTipo], pesos, EU, HOJE), 0);
+});
+
+test("o custo fixo soma exatamente as regras de classe `expense`", () => {
+  // A amarracao com o criterio IMPORTADO, em vez de uma lista de tipos
+  // escrita a mao: se `classeDaAgenda` passar a classificar diferente, este
+  // teste acompanha e a peneira do custo fixo tem que acompanhar junto.
+  const salario = { ...planoDeSaude, amount: 9000, transaction_type: "income" };
+  const regras = [
+    planoDeSaude,
+    academia,
+    transferenciaParaOPix,
+    salario,
+    { ...academia, transaction_type: null },
+  ];
+
+  const esperado = regras
+    .filter((r) => classeDaAgenda(r.transaction_type) === "expense")
+    .reduce((soma, r) => soma + r.amount, 0);
+
+  assert.equal(custoFixoMensalDaMinhaParte(regras, pesos, EU, HOJE), esperado);
+  // E o criterio precisa EXCLUIR alguma coisa: um `classeDaAgenda` que
+  // devolvesse sempre "expense" faria o `esperado` acima crescer junto com o
+  // numero medido, e os dois lados concordariam em silencio.
+  assert.equal(classeDaAgenda("transfer"), "transfer");
+  assert.equal(classeDaAgenda("income"), "income");
+  assert.equal(classeDaAgenda(null), "expense");
 });
 
 test("a normalizacao para mes continua valendo sobre a parte", () => {

@@ -7,7 +7,11 @@
     "com `rootDir: lib` o tsc reprova com TS6059. O import e de TIPO, entao o",
     "tsc o elimina no emit; o que sobra para reescrever sao os imports de",
     "@/lib/settlement e @/lib/recurrence, que o passo do resolve-aliases resolve",
-    "com --espelha-raiz. Ver scripts/test-parte-do-grupo.mjs."
+    "com --espelha-raiz. Ver scripts/test-parte-do-grupo.mjs.",
+    "",
+    "`lib/previsto-x-realizado.ts` entra na HMO-257: o custo fixo peneira as",
+    "regras com `classeDaAgenda`, para a transferencia recorrente nao contar",
+    "como despesa fixa. Ele nao importa nada, entao nao traz cauda nenhuma."
   ],
   "compilerOptions": {
     "target": "es2020",
@@ -25,6 +29,7 @@
     "../lib/parte-do-grupo.ts",
     "../lib/settlement.ts",
     "../lib/recurrence.ts",
+    "../lib/previsto-x-realizado.ts",
     "../types/financial.ts"
   ]
 }

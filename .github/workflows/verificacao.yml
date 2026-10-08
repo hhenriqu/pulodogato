@@ -5950,7 +5950,7 @@ jobs:
       # de CPU falsifica medida de tempo (um lote anterior leu "120s exatos" em
       # quatro runners seguidos e era carga 40 em 2 nucleos):
       #
-      #   parte-do-grupo     12 mutantes, 12 mortos, 28s (load 1,77 / 2 nucleos)
+      #   parte-do-grupo     14 mutantes, 14 mortos, 28s (load 1,77 / 2 nucleos)
       #   divisao-do-grupo   28 mutantes, 28 mortos, 77s (load 2,76 / 2 nucleos)
       #
       # Os outros sete do lote tambem matam 100%, e e por isso que nenhum deles
