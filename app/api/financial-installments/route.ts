@@ -14,7 +14,8 @@
 // sucesso!" e nunca mais encontrava a compra. O defeito nao era a mensagem --
 // era que a unica prova de que o parcelamento funcionava era a propria mensagem.
 //
-// Agora a serie e materializada onde cada tipo de dinheiro JA tem leitor:
+// Agora a serie e materializada onde o dinheiro JA tem leitor -- e isso e so no
+// cartao:
 //
 //   CARTAO -> N linhas em `financial_transactions`, uma por mes de fatura.
 //     A view `card_invoice_lines` (006) decide o `invoice_month` de cada linha
@@ -22,14 +23,18 @@
 //     (HMO-210), na fatura de cada mes seguinte e na lista de Lancamentos sem um
 //     leitor novo e sem uma segunda fonte de verdade para o total da fatura.
 //
-//   FORA DO CARTAO -> N linhas em `scheduled_transactions` (Contas a Pagar).
-//     Parcela futura em conta corrente e dinheiro que ainda NAO saiu. Gravar em
-//     `financial_transactions` baixaria o saldo hoje por 10 pagamentos que nao
-//     aconteceram -- `update_account_balance_trigger` soma `NEW.amount` no saldo
-//     no instante do INSERT. Na HMO-209 a agenda passou a excluir previsao de
-//     CARTAO (para a compra nao ser cobrada duas vezes, uma avulsa e outra dentro
-//     da fatura); previsao de conta corrente nunca foi excluida, e e por isso que
-//     este ramo e visivel e o outro nao poderia ser.
+//   FORA DO CARTAO -> recusa com 400. Esta rota NAO escreve em
+//     `scheduled_transactions`: nao existe ramo que faca isso, e a recusa e
+//     deliberada -- a justificativa longa esta no proprio ramo
+//     `account_type !== "credit_card"` abaixo. Em resumo: fora do cartao a
+//     parcela ja paga e `financial_transactions` e as que faltam sao
+//     `scheduled_transactions`, duas escritas que nao cabem num comando so (ver
+//     a secao seguinte), entao a serie poderia nascer pela metade. Materializar
+//     tudo em `financial_transactions` tambem nao serve, porque
+//     `update_account_balance_trigger` soma `NEW.amount` no saldo no instante do
+//     INSERT -- baixaria o saldo hoje por 10 pagamentos que nao aconteceram. O
+//     caminho de produto para financiamento ou boleto em Nx e despesa FIXA com
+//     duracao "por N meses" (`max_occurrences`, 005).
 //
 // POR QUE O INSERT E UM SO, COM N LINHAS
 // --------------------------------------
@@ -486,8 +491,9 @@ export async function GET(request: NextRequest) {
   // antigo. Elas nao foram migradas (seria mexer em dinheiro gravado) nem
   // apagadas, e esta rota e o unico jeito de alguem olha-las. Parcelamento NOVO
   // nao passa mais por aqui: ele esta em `financial_transactions`
-  // (`installment_number` / `installment_total`, 035) ou em
-  // `scheduled_transactions`.
+  // (`installment_number` / `installment_total`, 035), e so no cartao -- o POST
+  // acima recusa fora do cartao. O equivalente fora do cartao e uma despesa
+  // FIXA, cujas ocorrencias vivem em `scheduled_transactions`.
   const supabase = createClient();
 
   try {
@@ -525,7 +531,7 @@ export async function GET(request: NextRequest) {
       installments: installments || [],
       total_found: installments?.length || 0,
       aviso:
-        "Parcelamento legado. As séries novas estão em financial_transactions (cartão) ou scheduled_transactions (fora do cartão).",
+        'Parcelamento legado. As séries novas estão em financial_transactions e só existem no cartão — fora do cartão o equivalente é uma despesa fixa com duração "por N meses".',
     });
   } catch (error) {
     console.error("Get installments error:", error);
