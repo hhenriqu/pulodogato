@@ -1909,6 +1909,107 @@ jobs:
       - name: O consumo de orcamento sabe falhar (14 mutantes)
         run: PGURL=postgresql://postgres:postgres@localhost:5432 node scripts/mutantes-consumo-de-orcamento-do-grupo.mjs
 
+      # HMO-350, O QUARTO LUGAR DO DEFEITO DA HMO-256. `bill_alerts` decidia a
+      # direcao do previsto por `COALESCE(r.transaction_type, 'expense')` -- o
+      # tipo da REGRA --, e previsao avulsa nao tem regra: toda receita prevista
+      # avulsa saia da view como conta a PAGAR. A 050 troca o `FROM` por
+      # `scheduled_transactions_effective` e le `s.direction`, igual a 043 fez
+      # na `planned_vs_actual`.
+      #
+      # O NUMERO 050 E LOAD-BEARING, E E POR ISSO QUE ESTE BLOCO FICA AQUI: a
+      # 047 recola `bill_alerts` INTEIRA. Um conserto com numero MENOR, colado
+      # antes dela, e revertido em silencio -- sem conflito de git, sem erro, e
+      # com a view voltando a dizer `expense`. Se esta migration for
+      # renumerada, o numero novo tem de continuar depois da 047 e este bloco
+      # tem de continuar DEPOIS do step dela.
+      #
+      # Medido em producao em 09/10/2026 (conta A da HMO-255, `days_before`
+      # alargado para 25): as duas receitas COM regra acertavam e a unica
+      # receita SEM regra errava -- controle positivo e negativo na mesma
+      # resposta, o que isola a causa no COALESCE da regra.
+      - name: 050_direcao_do_aviso_de_vencimento
+        run: $PSQL -f database/migrations/050_direcao_do_aviso_de_vencimento.sql
+
+      # Re-executavel: so um preflight que le o catalogo, CREATE OR REPLACE
+      # VIEW, dois COMMENT, o ALTER VIEW e os GRANTs dentro de um IF EXISTS.
+      - name: 050 e idempotente
+        run: $PSQL -f database/migrations/050_direcao_do_aviso_de_vencimento.sql
+
+      # As tres assercoes que valem o step, de 27:
+      #
+      #   1. receita prevista AVULSA sai como `income` -- a issue em uma linha.
+      #      Ela vem com o controle POSITIVO ao lado (receita COM regra, que
+      #      sempre acertou) e com a despesa avulsa, que acertava POR ACASO e
+      #      tem de seguir certa. Sozinha, a primeira nao distingue "o conserto
+      #      funciona" de "o cenario nao foi montado".
+      #   2. as SEIS linhas pendentes continuam na view. O conserto e o ROTULO,
+      #      nao a lista: um `WHERE s.direction <> 'income'` apagaria a receita
+      #      e deixaria as assercoes de direcao vacuamente verdes.
+      #   3. a conta VENCIDA continua vindo, com `kind = 'overdue'`. O `FROM`
+      #      novo expoe `effective_status`, que envelhece a linha sozinha --
+      #      filtrar por ela em vez de `status` apagaria metade do que a view
+      #      existe para avisar, sem erro nenhum.
+      #
+      # E a secao que parece sobrar e a que guarda a 047: a 050 recola as 13
+      # colunas, entao `notify_email`, o COALESCE dela, os nomes/ordem/tipos e o
+      # `security_invoker` sao todos conferidos no catalogo depois.
+      - name: A receita prevista AVULSA nao sai mais como conta a pagar no aviso
+        run: $PSQL -f database/tests/050_direcao_do_aviso_de_vencimento_test.sql
+
+      # A SUITE DA 047, RE-RODADA DEPOIS DA 050 -- a mesma regra que a 045
+      # aplicou a 043. As duas fazem `CREATE OR REPLACE VIEW` no MESMO objeto
+      # (`bill_alerts`): quem vem depois carrega a definicao inteira e pode
+      # reverter quem veio antes em silencio. Ela roda na posicao dela, muito
+      # acima, e sem este step nunca veria a definicao nova.
+      #
+      # Medido: passa contra a cadeia com a 050 aplicada.
+      - name: O aviso por e-mail da 047 continua valendo depois da 050
+        run: $PSQL -f database/tests/047_aviso_por_email_test.sql
+
+      # POR QUE O `statements_alerts_test.sql` **NAO** E RE-RODADO AQUI, ao
+      # contrario da suite da 047 logo acima. Ele REPROVARIA, e corretamente.
+      #
+      # A SECAO 9 dele e um controle negativo de RLS: apaga o `security_invoker`
+      # de `bill_alerts` e exige que o B passe a ver os vencimentos do A. Isso
+      # media a flag enquanto a view lia a TABELA `scheduled_transactions`.
+      # Depois da 050 ela le `scheduled_transactions_effective`, que tem invoker
+      # proprio -- e `security_invoker=false` so troca o dono para as relacoes
+      # referenciadas DIRETAMENTE.
+      #
+      # MEDIDO num Postgres 17 com a cadeia 001 -> 050, o B contando as linhas
+      # do A:
+      #
+      #   bill_alerts invoker, effective invoker ..... 0
+      #   bill_alerts DEFINER, effective invoker ..... 0   <-- nao vaza mais
+      #   bill_alerts invoker, effective DEFINER ..... 1   <-- vaza
+      #
+      # Aquele arquivo roda na POSICAO dele (muito antes da 050) e continua
+      # certo la, igual ao teste da 033 que segue exigindo o criterio da 033.
+      # Pendurar aqui a suite que a migration torna obsoleta obrigaria a
+      # "consertar" o teste, que e como um criterio velho volta escondido.
+      #
+      # Quem mede isto no fim da cadeia e a SECAO 5 da suite da 050: ela le os
+      # DOIS reloptions do catalogo, vaza pelo lado de BAIXO no controle
+      # negativo, e tem uma assercao que FALHA no dia em que `bill_alerts`
+      # voltar a tocar uma tabela com RLS direto -- que e quando o controle
+      # negativo precisa mudar de lugar junto.
+      #
+      # O runner abaixo prova que a suite mede o que diz medir. Ele falsifica
+      # cada perna da precedencia da 027 separadamente (ocorrencia, regra,
+      # 'expense'), o achatamento de `transfer` em `expense`, os dois recortes
+      # de status, a direcao entrando no WHERE e as quatro linhas que a 050
+      # tinha de repor da 047/009. O mutante do `security_invoker` morre na
+      # assercao de CATALOGO, nao no controle da RLS -- ver acima.
+      #
+      # Barato: a cadeia 001 -> 049 sobe UMA vez num template e cada mutante sai
+      # de `CREATE DATABASE ... TEMPLATE`. A mutacao vai para uma sombra em
+      # /tmp; a arvore nunca e tocada.
+      # Medido num Postgres 17 local (2026-10-09): 14 mutantes, 14 mortos, 13
+      # deles por assercao da suite, mais o controle negativo (a suite fica
+      # vermelha num banco que para na 049) e o positivo.
+      - name: O aviso de vencimento sabe falhar (14 mutantes)
+        run: PGURL=postgresql://postgres:postgres@localhost:5432 node scripts/mutantes-direcao-do-aviso.mjs
+
       # OS 12 PASSOS DE SUITE ABAIXO RODAM COM A TRAVA DA 048 DE PE, e isso nao
       # e acidente: sao eles que provam que a trava nao barra escrita legitima.
       # Sete deles inserem em `financial_transactions` direto (hmo190,
@@ -1925,6 +2026,12 @@ jobs:
       # views reescritas", abaixo, e o cabecalho de
       # `pg_temp.conta_a_parte_de_grupo` no proprio arquivo de teste). Remedido
       # num Postgres 17 local com a 049 na cadeia: as 12 continuam verdes.
+      #
+      # A 050 (HMO-350) entrou no mesmo lugar, logo depois da 049, e eles rodam
+      # com as TRES. Ela mexe so na `bill_alerts`, que nenhum destes 12 arquivos
+      # le -- quem le aquela view e o `statements_alerts_test.sql`, que roda
+      # muito acima, e a suite da 047, re-rodada no bloco da 050. Remedido num
+      # Postgres 17 local com a 050 na cadeia: as 12 continuam verdes.
       #
       # O hmo197 roda na POSICAO dele, muito acima, onde o trigger do 001 ainda
       # existe e ele o desliga com DISABLE TRIGGER. A 044 apaga esse trigger,
