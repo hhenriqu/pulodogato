@@ -2846,6 +2846,38 @@ jobs:
       - name: A subcategoria nas M parcelas da serie
         run: npm run test:subcategoria-nas-parcelas
 
+      # HMO-224. O POST de /api/personal-finance/transactions descartava a
+      # subcategoria: o corpo nao era desestruturado com `subcategory_id` e o
+      # INSERT nao listava a coluna. Quem postasse ali criava lancamento com
+      # subcategoria NULA em silencio -- 201, corpo completo de volta, nenhum
+      # erro.
+      #
+      # ERA ROTA DORMENTE, E ESTE STEP E O QUE IMPEDE QUE VOLTE A SER ARMADILHA.
+      # Medido na main quando a issue foi escrita: nenhuma tela fazia POST nesta
+      # rota (o formulario grava pelo cliente do navegador, que ja mandava o
+      # campo; da rota o app so usava DELETE /[id] e o export). Por isso nao
+      # entrou na HMO-216 e por isso o defeito nao tinha sintoma. O risco era o
+      # reaproveitamento -- a rota existe, parece a maneira certa de criar
+      # lancamento pela API, e docs/TESTING_GUIDE.md ainda a lista como
+      # endpoint testado.
+      #
+      # A SUITE CHAMA O HANDLER e olha o PAYLOAD gravado mais a linha RELIDA
+      # pela propria rota. A resposta nao serve de medida: e 201 com o corpo
+      # completo com o campo e sem ele. O `tsc` tambem nao: `request.json()` e
+      # `any`, entao desestruturar campo que ninguem manda compila, e o objeto
+      # literal do `.insert()` esta na fronteira permissiva do supabase-js --
+      # apagar a linha compila.
+      #
+      # O par (category_id, subcategory_id) invalido NAO e validado na rota: a
+      # FK composta da 036 o recusa no banco. Isso esta medido, porque o
+      # conserto zeloso (conferir o par em TypeScript e cair para null) recria o
+      # defeito desta issue com um guard verde em cima.
+      #
+      # 9 de 9 em scripts/mutantes-subcategoria-no-lancamento.mjs (step proprio
+      # no verificacao.yml).
+      - name: A subcategoria no POST de lancamento
+        run: npm run test:subcategoria-no-lancamento
+
       # HMO-201. O painel do grupo precisa perguntar por um periodo de datas
       # qualquer, e `category_monthly_totals` so responde por MES. Quando o
       # periodo corta meses pela metade a soma passa a ser feita no

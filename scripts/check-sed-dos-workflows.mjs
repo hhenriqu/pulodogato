@@ -315,7 +315,7 @@ export function provaLocalDosSeds(corpo) {
 function atribuicao(texto) {
   const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(texto);
   if (!m) return null;
-  let valor = m[2].trim();
+  const valor = m[2].trim();
   if (/\$\(|`/.test(valor)) return { nome: m[1], valor: null };
   return { nome: m[1], valor: desaspar(valor) };
 }

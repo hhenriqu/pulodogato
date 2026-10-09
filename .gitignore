@@ -444,3 +444,10 @@ next-env.d.ts
 # `.tmp-*` fora do .gitignore chega a ser commitado em cima de arquivo de fonte
 # -- ver a entrada do .tmp-parcelamento acima.
 /.tmp-subcategoria-nas-parcelas/
+
+# saida do `npm run test:subcategoria-no-lancamento` (HMO-224): o route handler
+# de /api/personal-finance/transactions compilado, com os dubles do client
+# plantados dentro, para o `node --test` poder chamar o POST. Artefato, nao
+# fonte. Um `.tmp-*` fora do .gitignore chega a ser commitado em cima de arquivo
+# de fonte -- ver a entrada do .tmp-parcelamento acima.
+/.tmp-subcategoria-no-lancamento/
