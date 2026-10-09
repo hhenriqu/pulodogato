@@ -457,3 +457,11 @@ next-env.d.ts
 # fonte. Um `.tmp-*` fora do .gitignore chega a ser commitado em cima de arquivo
 # de fonte -- ver a entrada do .tmp-parcelamento acima.
 /.tmp-subcategoria-no-lancamento/
+
+# saida do `npm run test:parte-do-grupo-no-csv` (HMO-207): TRES route handlers
+# de /api/reports compilados -- o export (o CSV) e o cash-flow e o categories
+# (a tela) --, com os dubles do client plantados dentro, para o `node --test`
+# poder comparar as duas fontes por moeda. Artefato, nao fonte. Um `.tmp-*`
+# fora do .gitignore chega a ser commitado em cima de arquivo de fonte -- ver a
+# entrada do .tmp-parcelamento acima.
+/.tmp-parte-do-grupo-no-csv/

@@ -1,0 +1,43 @@
+{
+  "//": [
+    "A parte de grupo no CSV de relatorio (HMO-207).",
+    "",
+    "Compila TRES route handlers, e sao tres porque a assercao que importa e de",
+    "IGUALDADE entre duas fontes, nao 'o CSV tem uma linha de grupo':",
+    "",
+    "  ../app/api/reports/export/route.ts     -- o arquivo (o lado consertado)",
+    "  ../app/api/reports/cash-flow/route.ts  -- a tela, no modo mes",
+    "  ../app/api/reports/categories/route.ts -- a tela, no modo mes",
+    "",
+    "Medir so o export deixaria passar o defeito simetrico: um conserto que",
+    "acrescentasse a linha de grupo com OUTRO criterio (dividindo pelos membros,",
+    "por exemplo) daria um CSV com linha de USD e ainda assim diferente da tela.",
+    "Com os tres na mesma arvore a sonda compara resposta com resposta, sobre o",
+    "MESMO fixture, e nenhum numero esperado e escrito a mao.",
+    "",
+    "`rootDir` e a raiz do projeto: as rotas importam @/lib, @/utils e @/types, e",
+    "com rootDir em lib/ o tsc reprova com TS6059. O emit espelha a raiz, entao o",
+    "resolve-aliases roda com --espelha-raiz nos dois.",
+    "",
+    "utils/supabase/server.ts e compilado junto e DEPOIS sobrescrito pelo",
+    "scripts/monta-duble-de-rota.mjs -- o modulo real importa `next/headers`, que",
+    "nao roda fora do runtime do Next. Ver scripts/test-parte-do-grupo-no-csv.mjs."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-parte-do-grupo-no-csv",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../app/api/reports/export/route.ts",
+    "../app/api/reports/cash-flow/route.ts",
+    "../app/api/reports/categories/route.ts"
+  ]
+}

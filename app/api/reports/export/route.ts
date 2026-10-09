@@ -22,6 +22,46 @@
 //
 // Se algum dia for preciso PDF sem interacao humana (envio por e-mail, por
 // exemplo), o lugar e um job separado, nao esta rota.
+//
+// A PARTE DE GRUPO: QUAIS RELATORIOS A CONTAM, E POR QUE NAO SAO TODOS (HMO-207)
+// ------------------------------------------------------------------------------
+// A HMO-202 fez o realizado PESSOAL contar A MINHA PARTE das despesas de grupo,
+// lendo as views da 033 em vez de filtrar `group_id IS NULL`. Ela mudou
+// /api/reports/cash-flow e /api/reports/categories e NAO mudou esta rota, sem
+// dizer que era de proposito -- e nao era. O resultado foi a pior forma de
+// divergencia que este produto sabe produzir: o CSV abria, tinha cabecalho,
+// tinha coluna de Moeda e SOMAVA SOZINHO NA PLANILHA, so que sem a linha de
+// 180,00 em dolar que a tela mostrava. Quem exportasse para conferir o mes
+// concluiria que a TELA estava inflada -- confiaria no arquivo e desconfiaria do
+// numero certo. Antes da 033 os dois lados concordavam (os dois escondiam a
+// parte de grupo); foi a correcao PARCIAL que criou a discordancia.
+//
+// Por isso os quatro `group_id IS NULL` desta rota nao tem o mesmo destino, e a
+// razao de cada um fica escrita no proprio ramo:
+//
+//   * `cash-flow`  -> `personal_monthly_cash_flow` (033). Tem tela equivalente,
+//                     e ela le essa view. CONSERTADO.
+//   * `categories` -> `personal_category_monthly_totals` (033). Idem.
+//   * `planned`    -> continua em `planned_vs_actual` com `group_id IS NULL`,
+//                     porque /api/reports/planned-vs-actual faz EXATAMENTE o
+//                     mesmo filtro. Aqui os dois lados ja concordam, e trocar so
+//                     este criaria a divergencia que o resto deste comentario
+//                     descreve -- ao contrario.
+//   * `transactions` -> continua excluindo grupo. O substituto da lista da tela
+//                     nao e este relatorio, e /api/personal-finance/transactions/export,
+//                     cujo cabecalho explica as DUAS diferencas de WHERE (grupo e
+//                     `service_id`). Ver o ramo no fim deste arquivo.
+//
+// O criterio que generaliza, e que a HMO-202 nao aplicou: o que decide se um
+// ramo muda nao e o NOME do relatorio, e o WHERE do lado que o usuario ve.
+//
+// SO MODO MES, E ISSO LIMITA O CONSERTO
+// -------------------------------------
+// Esta rota recorta por `?months=N` (`janelaDeMeses`) e nao aceita `de`/`ate`.
+// Entao das duas metades do criterio da 033 -- rollup mensal no modo mes,
+// `group_share_entries` somada no modo intervalo -- so a primeira tem onde
+// acontecer aqui. Nada de `partesComoTransacoes` neste arquivo: nao ha caminho
+// que leia linha crua.
 
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
@@ -33,6 +73,7 @@ import {
   rotuloMes,
 } from "@/lib/services/reports";
 import { somarMeses } from "@/lib/services/budget";
+import { viewDaParteAusente } from "@/lib/parte-do-grupo-realizada";
 
 const RELATORIOS = [
   "cash-flow",
@@ -103,17 +144,62 @@ export async function GET(request: NextRequest) {
     let nome: string;
 
     if (report === "cash-flow") {
-      const q = supabase
-        .from("monthly_cash_flow")
-        .select("month, income, expense, net, transaction_count, currency")
-        .eq("user_id", user.id)
-        .gte("month", janela.inicio)
-        .lte("month", janela.fim);
+      // DUAS VIEWS, E NAO UMA COM FILTRO (HMO-207)
+      //
+      // Tem que ser a MESMA fonte que /api/reports/cash-flow usa no modo mes,
+      // porque e disso que a igualdade entre a tela e o arquivo depende:
+      //
+      //   grupo   -> `monthly_cash_flow`, que tem `group_id` no grao. No painel
+      //              do grupo o numero certo e o valor CHEIO da viagem.
+      //   pessoal -> `personal_monthly_cash_flow` (033), que soma o que e so do
+      //              usuario com A PARTE dele das despesas de grupo. Ela NAO tem
+      //              `group_id` -- nem poderia: no pessoal a Viagem e a Casa
+      //              somam na mesma linha do mes.
+      //
+      // O `eq("user_id")` vale para as duas, e na pessoal ele e load-bearing e
+      // nao higiene: as policies de grupo tem `OR is_group_member(...)`, e sem
+      // ele a consulta traz a parte dos OUTROS membros junto.
+      const query = groupId
+        ? supabase
+            .from("monthly_cash_flow")
+            .select("month, income, expense, net, transaction_count, currency")
+            .eq("user_id", user.id)
+            .eq("group_id", groupId)
+            .gte("month", janela.inicio)
+            .lte("month", janela.fim)
+        : supabase
+            .from("personal_monthly_cash_flow")
+            .select("month, income, expense, net, transaction_count, currency")
+            .eq("user_id", user.id)
+            .gte("month", janela.inicio)
+            .lte("month", janela.fim);
 
-      const { data } = await (groupId
-        ? q.eq("group_id", groupId)
-        : q.is("group_id", null)
-      ).order("month", { ascending: true });
+      let { data, error } = await query.order("month", { ascending: true });
+
+      // A janela entre o deploy e a colagem da 033: cai para a view antiga em
+      // vez de entregar arquivo vazio. Ver viewDaParteAusente em
+      // lib/parte-do-grupo-realizada.ts -- so os dois codigos de relacao
+      // inexistente, para erro de verdade nao virar silencio.
+      if (error && !groupId && viewDaParteAusente(error)) {
+        const antiga = await supabase
+          .from("monthly_cash_flow")
+          .select("month, income, expense, net, transaction_count, currency")
+          .eq("user_id", user.id)
+          .is("group_id", null)
+          .gte("month", janela.inicio)
+          .lte("month", janela.fim)
+          .order("month", { ascending: true });
+
+        data = antiga.data;
+        error = antiga.error;
+      }
+
+      // ESTA ROTA NUNCA CONFERIU `error`, NOS CINCO RELATORIOS: uma falha de
+      // leitura sai como CSV so-cabecalho, que na planilha se le como "nao
+      // houve movimento no periodo". Consertar isso e mudar o contrato dos
+      // outros quatro ramos e nao cabe na HMO-207; registrar, cabe -- sem o log
+      // o modo de falha nao existe em lugar nenhum.
+      if (error) console.error("Erro ao exportar fluxo de caixa:", error);
 
       // A coluna "Moeda" e o que mantem este CSV correto depois da 022. Ele nao
       // agrega nada -- despeja as linhas da view -- entao um mes com duas moedas
@@ -133,15 +219,54 @@ export async function GET(request: NextRequest) {
       );
       nome = nomeArquivoCsv("fluxo-de-caixa", janela);
     } else if (report === "categories") {
-      const base = supabase
-        .from("category_monthly_totals")
-        .select("month, category_id, expense, income, transaction_count, currency")
-        .gte("month", janela.inicio)
-        .lte("month", janela.fim);
+      // DUAS VIEWS (HMO-207), pela mesma razao do ramo de cash-flow acima, e
+      // com uma exigencia a mais: tem que ser a mesma fonte que AQUELE ramo
+      // usa. `personal_monthly_cash_flow` e rollup de
+      // `personal_category_monthly_totals`, entao ler as duas mantem o total do
+      // fluxo igual a soma das categorias -- dois CSVs do mesmo mes que nao
+      // fecham entre si sao o sintoma de haver duas definicoes.
+      //
+      // No relatorio de GRUPO nao se filtra `user_id`: o ponto e ver o gasto da
+      // viagem inteira, de todos os membros, e a RLS ja garante que so membro
+      // enxerga essas linhas. No PESSOAL o `eq("user_id")` e obrigatorio, pelo
+      // `OR is_group_member(...)` das policies.
+      const query = groupId
+        ? supabase
+            .from("category_monthly_totals")
+            .select(
+              "month, category_id, expense, income, transaction_count, currency"
+            )
+            .gte("month", janela.inicio)
+            .lte("month", janela.fim)
+            .eq("group_id", groupId)
+        : supabase
+            .from("personal_category_monthly_totals")
+            .select(
+              "month, category_id, expense, income, transaction_count, currency"
+            )
+            .gte("month", janela.inicio)
+            .lte("month", janela.fim)
+            .eq("user_id", user.id);
 
-      const { data } = groupId
-        ? await base.eq("group_id", groupId)
-        : await base.eq("user_id", user.id).is("group_id", null);
+      let { data, error } = await query;
+
+      // A queda da janela de colagem da 033, igual ao ramo de cash-flow.
+      if (error && !groupId && viewDaParteAusente(error)) {
+        const antiga = await supabase
+          .from("category_monthly_totals")
+          .select(
+            "month, category_id, expense, income, transaction_count, currency"
+          )
+          .gte("month", janela.inicio)
+          .lte("month", janela.fim)
+          .eq("user_id", user.id)
+          .is("group_id", null);
+
+        data = antiga.data;
+        error = antiga.error;
+      }
+
+      if (error) console.error("Erro ao exportar gastos por categoria:", error);
 
       const linhas = data ?? [];
       const ids = Array.from(new Set(linhas.map((l) => l.category_id)));
@@ -168,6 +293,21 @@ export async function GET(request: NextRequest) {
       );
       nome = nomeArquivoCsv("gastos-por-categoria", janela);
     } else if (report === "planned") {
+      // `group_id IS NULL` FICA, E ISSO E A CONCLUSAO DA MEDICAO (HMO-207)
+      //
+      // /api/reports/planned-vs-actual -- o lado que o usuario ve -- faz
+      // `.eq("user_id", ...)` e o MESMO `.is("group_id", null)`, sobre a MESMA
+      // view. Os dois lados ja concordam, entao aqui nao ha o que consertar:
+      // trocar so este ramo produziria exatamente a divergencia que a HMO-207
+      // existe para apagar, de cabeca para baixo -- o arquivo passaria a contar
+      // a parte de grupo que a tela nao conta.
+      //
+      // Nao ha `personal_planned_vs_actual`: a 033 criou quatro views e nenhuma
+      // delas e do previsto. A parte de grupo no PREVISTO e feita em JavaScript,
+      // em lib/parte-do-grupo.ts (HMO-177), por outro criterio -- ela DIVIDE
+      // pelos membros ativos, porque conta que ainda nao foi paga nao tem rateio
+      // gravado. Levar aquele criterio para ca sem tela correspondente seria uma
+      // terceira definicao de "minha parte".
       const q = supabase
         .from("planned_vs_actual")
         .select("*")
@@ -226,6 +366,21 @@ export async function GET(request: NextRequest) {
     } else {
       // O extrato: uma linha por lancamento. E o que o contador pede e o que o
       // usuario quer quando desconfia de um numero agregado.
+      //
+      // `group_id IS NULL` FICA AQUI TAMBEM, POR OUTRA RAZAO (HMO-207)
+      //
+      // Este ramo tambem exclui grupo, e a tentacao e consertar os quatro de uma
+      // vez. Mas o substituto da lista da tela nao e este relatorio: o botao
+      // "Exportar CSV" de /dashboard/personal-finance aponta para
+      // /api/personal-finance/transactions/export, e o cabecalho DAQUELE arquivo
+      // registra as duas diferencas de WHERE que o levaram a existir -- grupo e
+      // `service_id`, a segunda das quais este ramo nao filtra.
+      //
+      // Entao a divergencia que a HMO-207 mediu nao se aplica: este CSV nao tem
+      // uma tela que ele contradiga. Mudar o WHERE dele por simetria de NOME
+      // daria um extrato com a linha de -400 do hotel E a parte de 200 da mesma
+      // despesa, que e a dupla contagem descrita em
+      // lib/parte-de-grupo-na-lista.ts (HMO-215).
       const base = supabase
         .from("financial_transactions")
         .select(
