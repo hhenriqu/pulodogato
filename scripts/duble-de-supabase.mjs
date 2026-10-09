@@ -158,13 +158,62 @@ function consulta(linhas, tabela, registro, escrever = () => {}) {
       escrever({ tabela, verbo: "insert", linhas: gravadas, descartadas });
       registro(tabela, filtros, "insert");
 
+      // A LINHA GRAVADA PASSA A SER LEGIVEL (HMO-224)
+      // ---------------------------------------------
+      // `linhas` e o array que veio de `tabelas[tabela]`, por referencia, e
+      // cada `from()` monta um `consulta` novo sobre ele. Empurrar aqui faz a
+      // linha recem-inserida aparecer numa leitura POSTERIOR -- que e o que o
+      // banco faz, e o que uma rota que RELE o que acabou de gravar depende.
+      //
+      // Sem isto, a releitura da rota de lancamento (`.select(...).eq("id",
+      // ...).single()`) nao acha nada e a resposta sai com `transaction: null`
+      // -- 201 e corpo vazio. Uma sonda escrita sobre a resposta mediria o
+      // caminho de erro achando que media a feature.
+      //
+      // So vale para tabela SEMEADA (`tabelas.x = []` conta): sem a chave,
+      // `tabelas[tabela] ?? []` fabrica um array novo a cada `from()` e nao ha
+      // onde acumular. Isso e proposital -- quem nao semeou nao quer estado.
+      linhas.push(...gravadas);
+
+      /**
+       * O cliente de verdade deixa `insert().select()` continuar a cadeia:
+       * `.single()` e `.maybeSingle()` vem DEPOIS do select, e e assim que a
+       * rota de lancamento pega o id da linha que criou. Devolver uma Promise
+       * crua aqui quebrava essa rota com "select(...).single is not a
+       * function" -- erro de duble que se le como erro de rota.
+       *
+       * O objeto e thenable, entao `await ...select("id")` (o que a rota de
+       * parcelas faz, em lote) continua valendo sem mudanca.
+       */
+      const depoisDoSelect = (cols) => {
+        const projetadas = gravadas.map((l) => projetar(l, cols));
+        return {
+          single() {
+            return Promise.resolve({
+              data: projetadas[0] ?? null,
+              error: projetadas[0]
+                ? null
+                : { code: "PGRST116", message: "no rows" },
+            });
+          },
+          maybeSingle() {
+            return Promise.resolve({
+              data: projetadas[0] ?? null,
+              error: null,
+            });
+          },
+          then(resolve, reject) {
+            return Promise.resolve({ data: projetadas, error: null }).then(
+              resolve,
+              reject
+            );
+          },
+        };
+      };
+
       const depois = {
         select(selecao) {
-          const cols = colunasDe(selecao);
-          return Promise.resolve({
-            data: gravadas.map((l) => projetar(l, cols)),
-            error: null,
-          });
+          return depoisDoSelect(colunasDe(selecao));
         },
         then(resolve, reject) {
           return Promise.resolve({ data: gravadas, error: null }).then(

@@ -120,6 +120,7 @@ export async function POST(request: NextRequest) {
       description,
       amount,
       category_id,
+      subcategory_id,
       transaction_date,
       notes,
       is_shared,
@@ -236,6 +237,20 @@ export async function POST(request: NextRequest) {
         // tres views da 008 a descartam -- ela aparece na lista e some do
         // fluxo de caixa, dos relatorios e do orcamento (HMO-181).
         transaction_type: tipo,
+        // Sem esta linha o POST gravava subcategoria NULA em silencio -- 201, e
+        // o lancamento aparecia sem subcategoria no relatorio (HMO-224). Nao
+        // mordeu ninguem porque nenhuma tela postava aqui; a armadilha era para
+        // o proximo chamador pela API (fila offline, importador, integracao).
+        //
+        // `|| null` cobre as duas formas de "sem subcategoria": chave ausente
+        // vira `undefined`, que o PostgREST DESCARTA da coluna em vez de gravar
+        // nulo, e o `""` de um select vazio nao e uuid. O par invalido nao se
+        // valida aqui -- a FK composta da 036 o recusa no banco.
+        //
+        // Fica DEPOIS de `transaction_type` de proposito: o guard de fonte em
+        // test-movimentacoes.mjs mede `.insert({` -> `transaction_type:` numa
+        // janela de 600 caracteres, e comentario conta como orcamento.
+        subcategory_id: subcategory_id || null,
         transaction_date:
           transaction_date || new Date().toISOString().split("T")[0],
         notes,

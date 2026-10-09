@@ -4649,6 +4649,27 @@ jobs:
       - name: Os mutantes da subcategoria nas parcelas
         run: npm run mutantes:subcategoria-nas-parcelas
 
+      # HMO-224, a irma da de cima na OUTRA rota: o POST de
+      # /api/personal-finance/transactions nao lia `subcategory_id` do corpo e
+      # nao o listava no INSERT. As assercoes de `test:movimentacoes` sobre esta
+      # rota falam de tipo e sinal (HMO-181) e nao distinguem um campo a mais ou
+      # a menos no objeto do `insert`; o `tsc` tambem nao, porque o corpo e
+      # `any` e o objeto literal esta na fronteira do supabase-js.
+      #
+      # Medido na HMO-224 ao escrever isto: 9 mutantes, 9 mortos. O primeiro e o
+      # controle negativo da entrega (a rota volta a descartar o campo, que e
+      # literalmente o estado de antes da issue). O segundo apaga o campo do
+      # destructuring e morre no COMPILADOR -- abate legitimo, e a prova de que
+      # as duas metades do conserto estao amarradas.
+      #
+      # O ultimo e o conserto zeloso: a rota passa a conferir o par
+      # (category_id, subcategory_id) em TypeScript e cai para null quando nao
+      # acha. Isso recria o defeito original -- subcategoria sumindo em
+      # silencio, com 201 -- e e por isso que ele esta medido: o arbitro do par
+      # e a FK composta da 036, validada em prod.
+      - name: Os mutantes da subcategoria no POST de lancamento
+        run: npm run mutantes:subcategoria-no-lancamento
+
       # O ROTULO NA FATURA. E aqui que a parcela aparece para o usuario -- o
       # "caminho de volta" sem o qual esta feature grava e desaparece.
       - name: O rotulo parcela N de M na tela do cartao

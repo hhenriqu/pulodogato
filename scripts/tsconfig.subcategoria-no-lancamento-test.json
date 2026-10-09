@@ -1,0 +1,41 @@
+{
+  "//": [
+    "A subcategoria no POST de /api/personal-finance/transactions (HMO-224).",
+    "",
+    "Compila o route handler app/api/personal-finance/transactions/route.ts. O",
+    "tsc puxa sozinho as dependencias dele -- lib/movimentacoes.ts e",
+    "utils/supabase/server.ts --, e e por isso que o `include` tem um arquivo so.",
+    "",
+    "POR QUE A ROTA, E NAO UM GUARD DE TEXTO",
+    "O defeito era uma AUSENCIA em dois lugares: `subcategory_id` nao estava no",
+    "destructuring do corpo nem no objeto do `.insert()`. Nenhum dos dois e",
+    "visivel para o `tsc`: `request.json()` devolve `any`, entao desestruturar um",
+    "campo que ninguem manda compila, e o objeto literal que vai para o",
+    "`.insert()` do supabase-js esta na fronteira permissiva do client --",
+    "ACRESCENTAR ou APAGAR a linha compila igual. A rota tambem responde 201 com",
+    "o corpo completo nos dois casos, entao a resposta nao distingue. A unica",
+    "medida que corresponde a promessa e CHAMAR o handler e olhar o payload que",
+    "ele mandou gravar.",
+    "",
+    "`rootDir` e a raiz do projeto: a rota importa @/lib e @/utils, e com rootDir",
+    "em app/ o tsc reprova com TS6059. O emit espelha a raiz, entao o passo do",
+    "resolve-aliases roda com --espelha-raiz.",
+    "",
+    "utils/supabase/server.ts e compilado junto e DEPOIS sobrescrito pelo",
+    "scripts/monta-duble-de-rota.mjs -- o modulo real importa `next/headers`, que",
+    "nao roda fora do runtime do Next."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-subcategoria-no-lancamento",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../app/api/personal-finance/transactions/route.ts"]
+}
