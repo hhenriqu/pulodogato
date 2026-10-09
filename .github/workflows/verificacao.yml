@@ -4626,6 +4626,29 @@ jobs:
       - name: Os mutantes do campo de parcelas
         run: npm run mutantes:campo-de-parcelas
 
+      # A SUBCATEGORIA NA SERIE (HMO-218), E POR QUE ELA TEM RUNNER PROPRIO
+      #
+      # A divida que a HMO-216 deixou aberta era "falta `subcategory_id` em
+      # `transaction_installments`". Ela mudou de lugar: a HMO-211 reescreveu
+      # esta rota, a RPC `create_installments` perdeu o ultimo chamador do app e
+      # a serie nova vira linhas de `financial_transactions` -- tabela que JA tem
+      # a coluna e a FK composta da 036. O que faltava era a rota COPIAR o campo.
+      #
+      # Nenhum dos runners acima pega isso: `mutantes:parcelamento` mede valor,
+      # data e numero da parcela, e um campo a mais ou a menos no objeto do
+      # `insert` nao muda nada do que eles asseveram. O `tsc` tambem nao -- o
+      # campo entra num objeto literal que vai para o supabase-js, e apagar a
+      # linha compila.
+      #
+      # Medido na HMO-218 ao escrever isto, em 10s: 8 mutantes, 8 mortos. Dois
+      # deles sao o controle negativo da entrega (a rota volta a descartar o
+      # campo; a tela volta a nao manda-lo), e o da tela so morre porque a
+      # assercao recorta o corpo do `fetch`: o arquivo tem outras duas
+      # ocorrencias de `subcategory_id:`, e um guard de arquivo inteiro ficava
+      # verde com o defeito de pe.
+      - name: Os mutantes da subcategoria nas parcelas
+        run: npm run mutantes:subcategoria-nas-parcelas
+
       # O ROTULO NA FATURA. E aqui que a parcela aparece para o usuario -- o
       # "caminho de volta" sem o qual esta feature grava e desaparece.
       - name: O rotulo parcela N de M na tela do cartao

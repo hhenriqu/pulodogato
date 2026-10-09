@@ -437,3 +437,10 @@ next-env.d.ts
 # fonte. Um `.tmp-*` fora do .gitignore chega a ser commitado em cima de arquivo
 # de fonte -- ver a entrada do .tmp-parcelamento acima.
 /.tmp-contagem-do-grupo/
+
+# saida do `npm run test:subcategoria-nas-parcelas` (HMO-218): o route handler
+# de /api/financial-installments compilado, com os dubles do client plantados
+# dentro, para o `node --test` poder chamar o POST. Artefato, nao fonte. Um
+# `.tmp-*` fora do .gitignore chega a ser commitado em cima de arquivo de fonte
+# -- ver a entrada do .tmp-parcelamento acima.
+/.tmp-subcategoria-nas-parcelas/

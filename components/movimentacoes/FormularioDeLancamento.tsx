@@ -749,6 +749,15 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       body: JSON.stringify({
         account_id: valores.contaId || null,
         category_id: valores.categoriaId,
+        // A SUBCATEGORIA ESCOLHIDA VAI PARA A SERIE TODA (HMO-218)
+        //
+        // O seletor de subcategoria aparece no cartao como em qualquer despesa
+        // -- `camposDoTipo` nao o esconde na natureza `card` --, entao a pessoa
+        // ESCOLHE "Mercado > Feira" e clica em parcelar. Sem este campo no
+        // corpo, `gravarTransacao` gravava a escolha e `criarParcelas` a
+        // descartava: o mesmo formulario, com o mesmo campo preenchido, levava
+        // a subcategoria ou nao dependendo de uma checkbox trinta linhas acima.
+        subcategory_id: valores.subcategoriaId || null,
         description: valores.descricao,
         valor: valores.valor,
         base: valores.baseDoValorParcelado,
