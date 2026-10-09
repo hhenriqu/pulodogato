@@ -54,6 +54,7 @@ import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
 
 const DESTINO = "lib/destino-do-lancamento.ts";
 const PARTE = "lib/parte-de-grupo-na-lista.ts";
+const ROTULO = "lib/rotulo-da-categoria.ts";
 
 const mutantes = [
   // --- o sentido do destino ---
@@ -287,6 +288,63 @@ const mutantes = [
     "o cartao passa a contar a parte CONTADA PELA QUANTIDADE, nao pelo valor",
     "  const despesas = meu.despesas + totalDasPartesDeTerceiros(partes);",
     "  const despesas = meu.despesas + partes.length;",
+  ],
+
+  // --- o rotulo da categoria (HMO-221) ---
+  //
+  // A guarda da "Outros" e mutada nos DOIS sentidos, de proposito. Variar um
+  // lado so deixaria o outro sem medida: `return true` prova que a suite
+  // distingue "Outros" suprimida de "Outros" mostrada, e `return false` prova
+  // que ela distingue a supressao de "apaga toda subcategoria" -- que e o
+  // retrocesso silencioso desta issue, porque ele devolve exatamente a tela de
+  // antes dela.
+  [
+    ROTULO,
+    "a 'Outros' que o formulario pre-seleciona volta a aparecer em toda linha",
+    "  return nome !== SUBCATEGORIA_PADRAO;",
+    "  return true;",
+  ],
+  [
+    ROTULO,
+    "a supressao engole TODA subcategoria (a tela volta ao estado pre-HMO-221)",
+    "  return nome !== SUBCATEGORIA_PADRAO;",
+    "  return false;",
+  ],
+  [
+    ROTULO,
+    "a guarda da subcategoria padrao deixa de ser consultada",
+    "  const subVisivel = sub && subcategoriaDistingue(sub) ? sub : null;",
+    "  const subVisivel = sub;",
+  ],
+  [
+    ROTULO,
+    "os dois nomes trocam de lado ('Mercado - Alimentação')",
+    "  if (categoria && subVisivel) return `${categoria}${SEPARADOR}${subVisivel}`;",
+    "  if (categoria && subVisivel) return `${subVisivel}${SEPARADOR}${categoria}`;",
+  ],
+  [
+    ROTULO,
+    "o separador muda e o rotulo deixa de ser o que a issue pediu",
+    'const SEPARADOR = " - ";',
+    'const SEPARADOR = " / ";',
+  ],
+  [
+    ROTULO,
+    "nome de subcategoria em branco deixa de contar como ausente",
+    '  return typeof valor === "string" && valor.trim() ? valor.trim() : null;',
+    '  return typeof valor === "string" ? valor : null;',
+  ],
+  [
+    ROTULO,
+    "o embed em ARRAY perde a subcategoria (a forma que o supabase-js pode tipar)",
+    "  if (Array.isArray(valor)) return valor[0] ?? null;",
+    "  if (Array.isArray(valor)) return null;",
+  ],
+  [
+    ROTULO,
+    "a categoria ausente passa a desenhar meio separador (' - Mercado')",
+    '  return subVisivel ?? "";',
+    '  return subVisivel ? `${SEPARADOR}${subVisivel}` : "";',
   ],
 ];
 

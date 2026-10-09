@@ -43,6 +43,17 @@ const {
   resumoComPartesDeGrupo,
 } = await import("../.tmp-lancamentos-completos/parte-de-grupo-na-lista.js");
 
+const { rotuloDaCategoria } = await import(
+  "../.tmp-lancamentos-completos/rotulo-da-categoria.js"
+);
+
+// O nome da subcategoria padrao vem de lib/categorias.ts, e NAO escrito "Outros"
+// aqui: se o teste trouxesse a sua propria copia, renomear a constante deixaria
+// a suite verde medindo um nome que o fonte nao usa mais.
+const { SUBCATEGORIA_PADRAO } = await import(
+  "../.tmp-lancamentos-completos/categorias.js"
+);
+
 // O CRITERIO ANTIGO, DE PROPOSITO DUPLICADO AQUI (controle negativo da HMO-275).
 //
 // Ate a HMO-275 os tres cartoes somavam `resumoDoPeriodo(transactions)` -- so as
@@ -636,4 +647,106 @@ test("a nota do cartao de Despesas casa com o que foi somado nele", () => {
 
   assert.equal(nota.total, r.despesas - resumoDoPeriodo(minhas).despesas);
   assert.equal(nota.quantas, partes.length);
+});
+
+// =====================================================
+// O ROTULO DA CATEGORIA NA LINHA (HMO-221)
+// =====================================================
+// A terceira coisa que esta linha da lista diz, junto com o destino (HMO-215) e
+// a parte de grupo (HMO-275): QUAL subcategoria. Ver lib/rotulo-da-categoria.ts
+// para o porque de "Outros" nao aparecer.
+//
+// O CONTROLE NEGATIVO E O CRITERIO ANTIGO, e ele esta aqui pelo mesmo motivo do
+// `resumoDoPeriodo` acima: `rotuloAntigo` e literalmente o que o JSX fazia
+// antes desta issue (`transaction.category?.name`). Toda assercao que afirma
+// que a subcategoria APARECEU confere tambem que o criterio antigo devolvia
+// OUTRA coisa -- senao a assercao passaria verde num rotulo que nunca mudou.
+const rotuloAntigo = (mov) => mov.category?.name ?? "";
+
+const linha = (extra = {}) => ({
+  category: { name: "Alimentação" },
+  ...extra,
+});
+
+test("HMO-221: a subcategoria entra no rotulo, como 'Categoria - Subcategoria'", () => {
+  const mov = linha({ subcategory: { id: "s1", name: "Mercado" } });
+
+  assert.equal(rotuloDaCategoria(mov), "Alimentação - Mercado");
+  // A janela do teste nao esta cega: o criterio antigo diz outra coisa.
+  assert.notEqual(rotuloDaCategoria(mov), rotuloAntigo(mov));
+});
+
+test("HMO-221: duas linhas da MESMA categoria deixam de ser indistinguiveis", () => {
+  // E o defeito inteiro da issue, escrito como assercao: antes desta issue os
+  // dois rotulos eram a mesma string.
+  const mercado = linha({ subcategory: { id: "s1", name: "Mercado" } });
+  const restaurante = linha({ subcategory: { id: "s2", name: "Restaurante" } });
+
+  assert.notEqual(rotuloDaCategoria(mercado), rotuloDaCategoria(restaurante));
+  assert.equal(rotuloAntigo(mercado), rotuloAntigo(restaurante));
+});
+
+test("HMO-221: a 'Outros' da 036 NAO aparece -- o formulario a pre-seleciona", () => {
+  // Toda categoria tem "Outros" por invariante, e `subcategoriaCoerente` a
+  // escolhe sozinha. Mostra-la seria "Alimentação - Outros" em quase toda
+  // linha da tela.
+  const mov = linha({ subcategory: { id: "s0", name: SUBCATEGORIA_PADRAO } });
+
+  assert.equal(rotuloDaCategoria(mov), "Alimentação");
+  // Aqui o rotulo novo e o antigo COINCIDEM de proposito.
+  assert.equal(rotuloDaCategoria(mov), rotuloAntigo(mov));
+});
+
+test("HMO-221: a supressao e so da 'Outros', e nao de todo nome parecido", () => {
+  // Controle da regra acima: sem ele, um `return ""` no lugar da comparacao
+  // passaria o teste da "Outros" e apagaria toda subcategoria.
+  const mov = linha({ subcategory: { id: "s9", name: "Outros 2" } });
+
+  assert.equal(rotuloDaCategoria(mov), "Alimentação - Outros 2");
+});
+
+test("HMO-221: linha sem subcategoria mostra a categoria, exatamente como antes", () => {
+  // `subcategory_id` e nulavel e o join e LEFT (medido no PostgREST de prod):
+  // a linha chega com `subcategory: null` e tem de continuar igual.
+  for (const ausente of [null, undefined]) {
+    const mov = linha({ subcategory: ausente });
+    assert.equal(rotuloDaCategoria(mov), "Alimentação");
+    assert.equal(rotuloDaCategoria(mov), rotuloAntigo(mov));
+  }
+});
+
+test("HMO-221: o embed vale nas DUAS formas -- objeto e array", () => {
+  // Medido: para esta FK o PostgREST devolve objeto. Mas embed tipado no plural
+  // e o jeito mais barato de uma leitura virar `undefined` sem sintoma -- aqui
+  // as duas formas dao o mesmo rotulo, e array vazio e a mesma ausencia de null.
+  const comArray = linha({ subcategory: [{ id: "s1", name: "Mercado" }] });
+  const comObjeto = linha({ subcategory: { id: "s1", name: "Mercado" } });
+
+  assert.equal(rotuloDaCategoria(comArray), rotuloDaCategoria(comObjeto));
+  assert.equal(rotuloDaCategoria(linha({ subcategory: [] })), "Alimentação");
+});
+
+test("HMO-221: nome em branco conta como ausente, e nao desenha separador vazio", () => {
+  // Sem o trim isto imprimiria "Alimentação -  " na tela: um separador
+  // apontando para nada. Mesma regra de `nomeDaConta` no destino.
+  for (const branco of ["", "   ", null, undefined]) {
+    const mov = linha({ subcategory: { id: "s1", name: branco } });
+    assert.equal(rotuloDaCategoria(mov), "Alimentação");
+  }
+});
+
+test("HMO-221: categoria que a RLS nao devolveu nao apaga a linha nem meia frase", () => {
+  // `category` E um embed, e embed cai na RLS de quem le. O rotulo diz a parte
+  // que sobrou, e nunca " - Mercado" com um lado em branco.
+  const semCategoria = { category: null, subcategory: { id: "s1", name: "Mercado" } };
+  assert.equal(rotuloDaCategoria(semCategoria), "Mercado");
+
+  // Nada legivel: string vazia, que e o que a tela ja mostrava. Nunca
+  // "undefined" nem excecao -- a linha continua na lista.
+  assert.equal(rotuloDaCategoria({}), "");
+  assert.equal(rotuloDaCategoria({ category: null, subcategory: null }), "");
+  assert.equal(
+    rotuloDaCategoria({ category: { name: "  " }, subcategory: { name: SUBCATEGORIA_PADRAO } }),
+    ""
+  );
 });
