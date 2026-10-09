@@ -13,6 +13,19 @@
 -- 900 e 1010. O "respostas_distintas" no fim imprime 2 em vez de 4, e e esse
 -- numero que diz se a issue continua fechada.
 --
+-- A SEXTA LINHA E DE OUTRA PERGUNTA (HMO-347, migration 049). As cinco de cima
+-- perguntam "quanto a A gastou em maio?"; a sexta pergunta "quanto do TETO de
+-- mercado ela consumiu?", que recorta UMA categoria. Ela entra aqui porque o
+-- criterio e o mesmo e o defeito era o mesmo da `planned_vs_actual`: despesa de
+-- grupo ignorada por inteiro.
+--
+--   antes da 049 .....  500,00  e 'ok'     (os 90 que ela pagou e os 20 que
+--                                           ela deve nao contavam)
+--   depois da 049 ....  610,00  e 'alert'
+--
+-- Ela NAO entra no `respostas_distintas` -- ver o comentario na CTE
+-- `orcamento`.
+--
 -- Os ROTULOS de cada linha dizem a FONTE, nao o numero: a proxima migration que
 -- mexer nessas views muda os valores, e um rotulo escrito como "950" viraria
 -- mentira no dia do merge com o medidor continuando a imprimir bonito.
@@ -89,6 +102,20 @@ VALUES
    '95800000-0000-0000-0000-000000000001', 'Mercado do grupo',
    -60.00, DATE '2026-05-20', 'expense');
 
+-- A SEXTA LEITURA (HMO-347) precisa de um TETO para ter o que consumir, e as
+-- outras cinco nao precisavam de nada alem das despesas.
+--
+-- 700,00 na categoria do mercado, em maio. O numero nao e arbitrario: ele e o
+-- unico da fixture que faz o STATUS mudar junto com o valor. Pelo criterio
+-- ANTERIOR a 049 o consumo e 500,00 (71% -> 'ok'); pelo dela, 610,00 (87% ->
+-- 'alert',
+-- porque o limiar padrao e 0,800). Com um teto folgado as duas migrations
+-- imprimiriam 'ok' e o medidor mostraria so um numero mudando de lugar.
+INSERT INTO public.budgets (id, user_id, category_id, month, amount_limit) VALUES
+  ('b5800000-0000-0000-0000-000000000001',
+   'a5800000-0000-0000-0000-0000000000a1',
+   'b9db286c-ce4f-4fbe-b0bf-f3133185f90f', DATE '2026-05-01', 700.00);
+
 \set QUIET off
 \echo ''
 \echo '--- A fixture nasceu com rateio? (se nao, todo zero abaixo e "o trigger nao rodou") ---'
@@ -157,6 +184,20 @@ custo AS (
                     WHERE user_id = 'a5800000-0000-0000-0000-0000000000a1'
                       AND month = DATE '2026-05-01'
                       AND NOT paguei_eu), 0) AS v
+),
+-- 6. /dashboard/budget e a barra da tela do grupo (HMO-347). Esta linha nao e
+--    "quanto eu gastei no mes": e quanto de UM TETO foi consumido, e por isso o
+--    valor dela e sempre menor que os outros cinco (o teto e de UMA categoria,
+--    a do mercado -- 500 + 90 + 20 = 610, sem o combustivel de 400).
+--
+--    ELA FICA FORA DO `respostas_distintas` NO FIM, de proposito: aquele
+--    contador responde "quantos numeros diferentes o app da para a MESMA
+--    pergunta", e esta e outra pergunta. Somada la, ela inflaria o contador
+--    para 3 e o medidor passaria a acusar divergencia onde nao ha nenhuma.
+orcamento AS (
+  SELECT spent AS v, consumption_status AS status
+    FROM public.budget_consumption
+   WHERE id = 'b5800000-0000-0000-0000-000000000001'
 )
 SELECT * FROM (
   SELECT 1 AS n, '/dashboard/despesas (movimentacoes/resumo)' AS tela,
@@ -173,6 +214,10 @@ SELECT * FROM (
          (SELECT v FROM patrimonio), 'grupo integral'
   UNION ALL SELECT 5, '/dashboard/personal-finance (HMO-275)',
          (SELECT v FROM custo), 'bruto + reembolso -- o criterio APROVADO'
+  UNION ALL SELECT 6, 'budget_consumption (teto de 700 no mercado)',
+         (SELECT v FROM orcamento),
+         'le budget_consumption; so a categoria do teto. status: '
+           || (SELECT status FROM orcamento)
 ) x ORDER BY n;
 COMMIT;
 

@@ -46,6 +46,39 @@ BEGIN
   RAISE NOTICE 'ok: % (%)', label, got;
 END $$;
 
+-- ---------------------------------------------------------------------------
+-- A 049 JA ESTA NESTE BANCO? -- e por que esta pergunta mora num arquivo de
+-- teste
+-- ---------------------------------------------------------------------------
+-- Este arquivo roda DUAS vezes no db-verify, de proposito, e os dois lugares
+-- veem definicoes DIFERENTES de `budget_consumption`:
+--
+--   * no passo do 006, contra a view recem-criada (e, mais tarde na cadeia, a
+--     da 026) -- onde o teto PESSOAL ignora despesa de grupo inteira;
+--   * no passo "O contrato do 006 e do 007 sobrevive as views reescritas", ja
+--     depois da 049 -- onde o teto pessoal conta bruto + reembolso.
+--
+-- O criterio mudou de proposito (HMO-347, decisao de produto de 08/10/2026), e
+-- nenhum numero unico e verdade nas duas posicoes. As alternativas eram piores:
+-- apagar a assercao deixaria a perna pessoal do teto sem medida nenhuma, e
+-- tirar este arquivo de uma das duas posicoes perderia metade da cobertura.
+--
+-- O SINAL E ESTRUTURAL, E NAO UMA RECONTA DO CRITERIO. A pergunta e "esta view
+-- le `group_share_entries`?", respondida pelo catalogo -- `pg_get_viewdef`
+-- devolve a definicao NORMALIZADA pelo Postgres, sem comentario nenhum, entao
+-- nao ha como casar com a prosa de uma migration. E o modo de falha e o certo:
+-- se a 049 algum dia deixar de ler aquela view, a sonda escolhe o ramo errado e
+-- a assercao fica VERMELHA com o numero na tela -- nao verde por acidente.
+--
+-- Os dois ramos sao assercoes de numero cravado, e os DOIS rodam em todo PR.
+-- O mesmo desenho do `IF EXISTS` do hmo197_convite_sem_conta_test.sql, que
+-- tambem tem um step proprio para provar o outro mundo do condicional.
+CREATE OR REPLACE FUNCTION pg_temp.conta_a_parte_de_grupo() RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+  SELECT pg_get_viewdef('public.budget_consumption'::regclass)
+           LIKE '%group_share_entries%';
+$$;
+
 -- =====================================================
 -- Fixture
 -- =====================================================
@@ -140,17 +173,43 @@ VALUES
 -- =====================================================
 -- Este e o coracao da Fase 2: se a soma pegar a linha errada, o app acusa
 -- estouro que nao houve (ou cala um que houve).
-SELECT pg_temp.expect_num('teto pessoal consumiu 800 (nao pegou grupo, receita nem mes passado)',
+-- O teto pessoal do A, nos dois criterios -- ver pg_temp.conta_a_parte_de_grupo
+-- no topo. O que NAO depende do criterio, e vale nas duas posicoes: a receita
+-- de 400 na mesma categoria nao devolve espaco no teto, e o mercado do mes
+-- passado fica fora da janela. Fosse qualquer um dos dois contado, nenhum dos
+-- dois numeros abaixo apareceria.
+--
+--   006/026 ....  800,00  = 300 + 500 (grupo inteiro de fora)
+--   049 ........ 1800,00  = 800 + 900 (o mercado da casa que o A PAGOU, cheio)
+--                           + 100 (a parte do A na feira de 200 que o B pagou)
+SELECT pg_temp.expect_num(
+  CASE WHEN pg_temp.conta_a_parte_de_grupo()
+       THEN 'teto pessoal consumiu 1800 apos a 049 (800 meu + 900 que EU paguei no grupo + 100 da feira do B)'
+       ELSE 'teto pessoal consumiu 800 (006/026: nao pegou grupo, receita nem mes passado)'
+  END,
   (SELECT spent FROM public.budget_consumption
-    WHERE id = 'a0000000-0000-0000-0000-0000000000e1'), 800.00);
+    WHERE id = 'a0000000-0000-0000-0000-0000000000e1'),
+  CASE WHEN pg_temp.conta_a_parte_de_grupo() THEN 1800.00 ELSE 800.00 END);
 
-SELECT pg_temp.expect_num('teto pessoal em alerta aos 80%',
+-- O ratio sai do mesmo `spent`, e e ele que desenha a barra: 80% de 1.000 no
+-- criterio do 006, 180% no da 049.
+SELECT pg_temp.expect_num(
+  CASE WHEN pg_temp.conta_a_parte_de_grupo()
+       THEN 'teto pessoal a 180% do teto apos a 049'
+       ELSE 'teto pessoal em alerta aos 80%'
+  END,
   (SELECT consumed_ratio FROM public.budget_consumption
-    WHERE id = 'a0000000-0000-0000-0000-0000000000e1'), 0.8000);
+    WHERE id = 'a0000000-0000-0000-0000-0000000000e1'),
+  CASE WHEN pg_temp.conta_a_parte_de_grupo() THEN 1.8000 ELSE 0.8000 END);
 
-SELECT pg_temp.expect('status do teto pessoal e alert',
+-- E o status, que e o que a pessoa ve. Assercao sobre o TEXTO, e nao contagem
+-- de linhas: `count(*) = 1` com o status errado seria zero, e "zero linhas" nao
+-- distingue "status outro" de "teto desapareceu da view".
+SELECT pg_temp.expect('status do teto pessoal segue o criterio do banco',
   (SELECT count(*) FROM public.budget_consumption
-    WHERE id = 'a0000000-0000-0000-0000-0000000000e1' AND consumption_status = 'alert'), 1);
+    WHERE id = 'a0000000-0000-0000-0000-0000000000e1'
+      AND consumption_status = CASE WHEN pg_temp.conta_a_parte_de_grupo()
+                                    THEN 'exceeded' ELSE 'alert' END), 1);
 
 -- O teto do grupo soma o gasto de TODOS os membros: 900 do A + 200 do B.
 SELECT pg_temp.expect_num('teto da casa soma os dois membros',
@@ -169,9 +228,14 @@ SELECT pg_temp.expect('teto pessoal estourado vira exceeded',
   (SELECT count(*) FROM public.budget_consumption
     WHERE id = 'a0000000-0000-0000-0000-0000000000e1' AND consumption_status = 'exceeded'), 1);
 
+-- 700 - 800 nos dois criterios? Nao: 700 - 1800 depois da 049. O SINAL e o que
+-- esta assercao guarda (o "Estourou R$ ..." da tela sai dele), e o modulo
+-- continua cravado em cada mundo para um `remaining` que esquecesse uma das
+-- pernas nao passar por aqui.
 SELECT pg_temp.expect_num('remaining fica negativo quando estoura',
   (SELECT remaining FROM public.budget_consumption
-    WHERE id = 'a0000000-0000-0000-0000-0000000000e1'), -100.00);
+    WHERE id = 'a0000000-0000-0000-0000-0000000000e1'),
+  CASE WHEN pg_temp.conta_a_parte_de_grupo() THEN -1100.00 ELSE -100.00 END);
 
 UPDATE public.budgets SET amount_limit = 1000.00
  WHERE id = 'a0000000-0000-0000-0000-0000000000e1';
