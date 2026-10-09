@@ -235,6 +235,137 @@ test("o rodape diz como desligar o canal", () => {
 });
 
 // ---------------------------------------------------------------------------
+// A DIRECAO DA FRASE (HMO-350)
+// ---------------------------------------------------------------------------
+// `textoDoAviso` declarava `transaction_type` na interface `BillAlert` e NUNCA
+// o lia: toda frase era de conta a pagar. Medido em producao em 09/10/2026,
+// texto literal que o servidor devolveu:
+//
+//     Bonus (previsto) vence em 20 dias          -- R$ 50,00, RECEITA
+//     Aluguel recebido (fixa) vence em 16 dias   -- R$ 2.000,00, RECEITA
+//
+// O conserto da view (050) sozinho nao mudava nada disso, porque a coluna nao
+// tinha leitor. As assercoes abaixo sao o leitor.
+//
+// Elas vivem NESTE arquivo de proposito: e a suite que ja tem `textoDoAviso` e
+// `montarEmailDoAviso` no mesmo processo, e e o canal de E-MAIL que torna o
+// defeito caro -- com a 047 colada, a frase errada sai na caixa de entrada
+// cobrando o usuario por dinheiro que ele vai RECEBER.
+
+const RECEITA = { ...ALERTA, description: "Bônus", transaction_type: "income", amount: 50 };
+
+/**
+ * O valor como `formatarBRL` o escreve, com o ESPACO QUE NAO QUEBRA.
+ *
+ * `Intl.NumberFormat("pt-BR", { currency: "BRL" })` separa "R$" do numero com
+ * U+00A0, nao com um espaco comum -- medido. Uma assercao escrita com espaco
+ * normal nunca casa, e a mensagem de erro imprime as duas strings IDENTICAS na
+ * tela ("esperado R$ 50,00, obtido R$ 50,00"), o que manda procurar o defeito
+ * em qualquer outro lugar. Por isso o caractere e nomeado aqui uma vez, em vez
+ * de ser colado invisivel em cada assercao.
+ */
+const RS = (texto) => `R$\u00A0${texto}`;
+
+test("receita prevista ENTRA, e nao vence", () => {
+  const { title } = textoDoAviso({ ...RECEITA, days_until: 20 });
+  assert.equal(title, "Bônus entra em 20 dias");
+  assert.ok(!/vence/.test(title), "receita anunciada como conta vencendo e o defeito da HMO-350");
+});
+
+test("despesa prevista continua vencendo -- o caso que acertava por acaso", () => {
+  // A maioria das linhas de producao. Um conserto que inverta ESTE caso troca
+  // um defeito pequeno por um grande, e sem esta assercao nada o pegaria.
+  const { title } = textoDoAviso({ ...ALERTA, days_until: 20 });
+  assert.equal(title, "Aluguel vence em 20 dias");
+});
+
+test("receita VENCIDA nao vira cobranca", () => {
+  // O pior caso da issue: `kind = 'overdue'` gerava "está vencida -- venceu há
+  // N dias" sobre dinheiro a receber.
+  const { title, body } = textoDoAviso({ ...RECEITA, kind: "overdue", days_until: -4 });
+  assert.equal(title, "Bônus não entrou");
+  assert.equal(body, RS("50,00 — era para entrar há 4 dias."));
+  assert.ok(
+    !/venc/.test(title + body),
+    "uma receita atrasada nao venceu, nao e devida e nao e cobranca"
+  );
+});
+
+test("despesa vencida continua dizendo que venceu", () => {
+  const { title, body } = textoDoAviso({ ...ALERTA, kind: "overdue", days_until: -4 });
+  assert.equal(title, "Aluguel está vencida");
+  assert.equal(body, RS("1.850,50 — venceu há 4 dias."));
+});
+
+test("o singular vale para receita tambem -- ontem, hoje e amanha", () => {
+  // A regra que o resto deste arquivo ja protege para despesa: "em 1 dias" e
+  // "há 1 dias" fazem o app parecer quebrado no aviso mais importante. Uma
+  // ramificacao nova e exatamente onde essa regra se perde.
+  assert.equal(textoDoAviso({ ...RECEITA, days_until: 1 }).title, "Bônus entra amanhã");
+  assert.equal(textoDoAviso({ ...RECEITA, days_until: 0 }).title, "Bônus entra hoje");
+  assert.equal(
+    textoDoAviso({ ...RECEITA, kind: "overdue", days_until: -1 }).body,
+    RS("50,00 — era para entrar ontem.")
+  );
+});
+
+test("o valor da receita e formatado igual, e sem sinal", () => {
+  // `formatarBRL` usa Math.abs: previsto e realizado tem sinais opostos no
+  // banco, e a frase nunca mostra "-R$".
+  assert.equal(textoDoAviso({ ...RECEITA, amount: -50 }).body, RS("50,00"));
+  assert.equal(textoDoAviso({ ...RECEITA, amount: "50" }).body, RS("50,00"));
+});
+
+test("transferencia prevista usa a frase de SAIDA -- criterio explicito, nao default", () => {
+  // Medido em producao: a "Transferência recorrente para o PIX" de R$ 100,00
+  // sai como "vence em 18 dias". Isso FICA: o dinheiro sai mesmo da conta de
+  // origem na data, e inverter a frase anunciaria a perna errada. O que esta
+  // assercao compra e que a escolha seja MEDIDA -- se um dia `transfer` ganhar
+  // frase propria, o vermelho aparece aqui, e nao numa caixa de entrada.
+  const t = textoDoAviso({ ...ALERTA, transaction_type: "transfer", days_until: 18 });
+  assert.equal(t.title, "Aluguel vence em 18 dias");
+  assert.ok(!/entra/.test(t.title), "transferencia nao ENTRA na conta de origem");
+});
+
+test("tipo ausente cai no lado de saida -- a view velha nao quebra o app novo", () => {
+  // Entre o deploy e a colagem da 050, `bill_alerts` responde pelo tipo da
+  // REGRA. O app novo lendo aquela view tem que se comportar como o app velho,
+  // nao escolher um lado novo por acidente.
+  const semTipo = { ...ALERTA };
+  delete semTipo.transaction_type;
+  assert.equal(textoDoAviso({ ...semTipo, days_until: 20 }).title, "Aluguel vence em 20 dias");
+});
+
+test("o E-MAIL da receita nao cobra nada -- assunto, texto e html", () => {
+  // A ponta que a issue existe para fechar: a frase atravessa
+  // `montarEmailDoAviso` sem passar por nenhuma segunda formatacao, entao o
+  // conserto em `textoDoAviso` vale para os tres canais de uma vez.
+  const email = montarEmailDoAviso(textoDoAviso({ ...RECEITA, kind: "overdue", days_until: -4 }));
+
+  // Nenhuma das tres partes pode cobrar. O assunto e o `title` sozinho, entao
+  // "era para entrar" (que mora no `body`) e cobrado so do texto e do html --
+  // exigir a frase inteira no assunto passaria a medir o formato do e-mail em
+  // vez da direcao do aviso.
+  assert.equal(email.subject, "Bônus não entrou");
+  for (const [onde, conteudo] of [
+    ["assunto", email.subject],
+    ["texto", email.text],
+    ["html", email.html],
+  ]) {
+    assert.ok(!/venc/i.test(conteudo), `o ${onde} do e-mail ainda cobra uma receita`);
+  }
+  for (const [onde, conteudo] of [
+    ["texto", email.text],
+    ["html", email.html],
+  ]) {
+    assert.ok(
+      conteudo.includes("era para entrar há 4 dias"),
+      `o ${onde} do e-mail perdeu a frase de receita`
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
 // ESCAPE: o nome da conta vem do usuario
 // ---------------------------------------------------------------------------
 
