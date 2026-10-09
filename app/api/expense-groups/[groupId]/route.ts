@@ -2,6 +2,7 @@ import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { divisaoPendenteDoGrupo } from "@/lib/services/expense-groups";
 import { moedaDoGrupoParaGravar } from "@/lib/moeda-do-grupo";
+import { conferirEscrita } from "@/lib/escrita-conferida";
 
 // `user` e embed de UM perfil (FK many-to-one), por isso objeto e nao lista --
 // e `| null` porque a RLS de `profiles` pode esconder a linha, caso em que o
@@ -385,19 +386,31 @@ export async function DELETE(
     // -- e ainda tentava gravar `metadata`, coluna que nunca existiu.
     const arquivadoEm = new Date().toISOString();
 
-    const { error: archiveError } = await supabase
-      .from("expense_groups")
-      .update({
-        is_active: false,
-        archived_at: arquivadoEm,
-        archived_by: user.id,
-      })
-      .eq("id", groupId);
+    // `.select()` NAO e enfeite aqui (HMO-203). Escrita barrada pela RLS volta
+    // sucesso com ZERO LINHAS, nao erro -- e `supabase-js` sem `.select()` nao
+    // entrega contagem, entao `if (archiveError)` fica nulo e a rota responde
+    // "Grupo arquivado com sucesso" sobre uma escrita que nao aconteceu. Foi
+    // exatamente isso que a rota de RESTAURAR fazia, medido em producao. Aqui o
+    // caminho hoje funciona (o admin ainda esta 'active' quando arquiva, entao
+    // ele passa em `is_group_admin`), e e por isso que a conferencia entra
+    // agora: enquanto funciona, o dia em que parar sera silencioso.
+    const arquivamentoDoGrupo = conferirEscrita(
+      await supabase
+        .from("expense_groups")
+        .update({
+          is_active: false,
+          archived_at: arquivadoEm,
+          archived_by: user.id,
+        })
+        .eq("id", groupId)
+        .select("id"),
+      "arquivar o grupo"
+    );
 
-    if (archiveError) {
-      console.error("Error archiving group:", archiveError);
+    if (!arquivamentoDoGrupo.ok) {
+      console.error("Error archiving group:", arquivamentoDoGrupo);
       return NextResponse.json(
-        { error: `Erro ao arquivar grupo: ${archiveError.message}` },
+        { error: `Erro ao arquivar grupo: ${arquivamentoDoGrupo.mensagem}` },
         { status: 500 }
       );
     }
@@ -409,19 +422,31 @@ export async function DELETE(
     // A rota respondia "Grupo arquivado com sucesso" com um `archived_at` que
     // nunca foi gravado, e a listagem de arquivados -- que procura os grupos
     // pelo `status = 'archived'` do membro -- nunca acharia nada.
-    const { error: membersArchiveError } = await supabase
-      .from("group_members")
-      .update({ status: "archived", archived_at: arquivadoEm })
-      .eq("group_id", groupId)
-      .eq("status", "active");
+    //
+    // ZERO LINHA aqui tambem e falha, e nao e caso teorico. Quem chega neste
+    // ponto passou pelo pre-check de membro ACTIVE la em cima, entao existe ao
+    // menos uma linha para arquivar -- a dele. Zero significa que a escrita nao
+    // pegou, e o resultado e o grupo arquivado SEM NENHUM MEMBRO arquivado: ele
+    // sai da lista ativa por `is_active` e nao entra na de arquivados, que
+    // procura os grupos pelo `status='archived'` do membro. O grupo fica
+    // inalcancavel pelas duas telas, depois de um "arquivado com sucesso".
+    const arquivamentoDosMembros = conferirEscrita(
+      await supabase
+        .from("group_members")
+        .update({ status: "archived", archived_at: arquivadoEm })
+        .eq("group_id", groupId)
+        .eq("status", "active")
+        .select("id"),
+      "arquivar os membros do grupo"
+    );
 
-    if (membersArchiveError) {
-      console.error("Error archiving members:", membersArchiveError);
+    if (!arquivamentoDosMembros.ok) {
+      console.error("Error archiving members:", arquivamentoDosMembros);
       return NextResponse.json(
         {
           error:
             "O grupo foi arquivado, mas os membros nao: ele nao apareceria na lista de arquivados. " +
-            membersArchiveError.message,
+            arquivamentoDosMembros.mensagem,
         },
         { status: 500 }
       );

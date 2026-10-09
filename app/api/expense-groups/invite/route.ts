@@ -57,13 +57,48 @@ export async function POST(request: NextRequest) {
     // sem esta normalizacao.
     const group = (
       Array.isArray(membership.group) ? membership.group[0] : membership.group
-    ) as { name: string; group_code: string } | undefined;
+    ) as { name: string; group_code: string; is_active: boolean } | undefined;
 
     if (!group) {
       console.error("Admin sem grupo no embed:", { group_id, user: user.id });
       return NextResponse.json(
         { error: "Grupo não encontrado" },
         { status: 404 }
+      );
+    }
+
+    // GRUPO ARQUIVADO NAO RECEBE CONVITE (HMO-203, item 3)
+    // ----------------------------------------------------
+    // O guard de admin acima olha `group_members` e MAIS NADA -- entao convidar
+    // para um grupo com `is_active = false` passava, gravava a linha e respondia
+    // 201 "Convite enviado para <nome>. Ele aparece nas notificacoes do app
+    // dela". So que `list_my_group_invitations()` (030) filtra `g.is_active =
+    // TRUE` e `respond_to_group_invitation()` recusa grupo inativo: o convite
+    // nunca aparece no sino de ninguem e nunca poderia ser aceito.
+    //
+    // Reproduzido em producao em 2026-09-30: convite
+    // 15a4b3c5-6eee-4007-bd64-9409229a85d7 criado com 201, sino da convidada
+    // vazio. E a mesma classe de bug que a HMO-196 fechou ("a rota dizia enviado
+    // e nada saia"), reaberta por outro caminho.
+    //
+    // O estado que torna isso alcancavel e o estado parcial da HMO-203 (grupo
+    // inativo com membro 'active'), mas esta recusa vale INDEPENDENTE da 051 --
+    // o item 3 da issue e separado do 1 de proposito, porque prometer uma
+    // entrega impossivel e defeito por si so. Depois da 051 este ramo tambem
+    // diz ao admin o que fazer: restaurar primeiro.
+    //
+    // `=== false` e nao `!group.is_active`: a coluna tem DEFAULT true e e
+    // `boolean` sem NOT NULL no 001, e um `undefined` vindo de um embed que
+    // mudou de colunas recusaria convite em grupo ATIVO. O ramo so dispara com
+    // o valor que o banco realmente grava para arquivado.
+    if (group.is_active === false) {
+      return NextResponse.json(
+        {
+          error:
+            "Este grupo está arquivado, então o convite não apareceria para " +
+            "ninguém. Restaure o grupo antes de convidar.",
+        },
+        { status: 400 }
       );
     }
 

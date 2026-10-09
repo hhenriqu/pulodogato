@@ -1,5 +1,6 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
+import { conferirEscrita } from "@/lib/escrita-conferida";
 import { divisaoPendenteDoGrupo } from "@/lib/services/expense-groups";
 
 // O client nao carrega o generic `Database`, entao nao da para nomear o tipo
@@ -144,19 +145,28 @@ async function archiveEmptyGroup(
   // sabia desfazer.
   const arquivadoEm = new Date().toISOString();
 
-  const { error: archiveError } = await supabase
-    .from("expense_groups")
-    .update({
-      is_active: false,
-      archived_at: arquivadoEm,
-      archived_by: userId,
-    })
-    .eq("id", groupId);
+  // `.select()` + linhas afetadas (HMO-203): escrita barrada pela RLS volta
+  // sucesso com ZERO LINHAS, e sem `.select()` o `supabase-js` nao entrega
+  // contagem -- `if (archiveError)` fica nulo e esta rota responderia
+  // "arquivado pois voce era o ultimo membro" sobre um grupo que continua
+  // ativo. Medido em producao na rota de restaurar, que fazia exatamente isto.
+  const arquivamentoDoGrupo = conferirEscrita(
+    await supabase
+      .from("expense_groups")
+      .update({
+        is_active: false,
+        archived_at: arquivadoEm,
+        archived_by: userId,
+      })
+      .eq("id", groupId)
+      .select("id"),
+    "arquivar o grupo ao sair dele"
+  );
 
-  if (archiveError) {
-    console.error("Error archiving group:", archiveError);
+  if (!arquivamentoDoGrupo.ok) {
+    console.error("Error archiving group:", arquivamentoDoGrupo);
     return NextResponse.json(
-      { error: "Erro ao arquivar grupo" },
+      { error: `Erro ao arquivar grupo: ${arquivamentoDoGrupo.mensagem}` },
       { status: 500 }
     );
   }
@@ -165,19 +175,26 @@ async function archiveEmptyGroup(
   // de arquivados encontra o grupo pelo `status = 'archived'` do membro, entao
   // um grupo arquivado cujos membros continuaram 'active' fica invisivel nas
   // duas telas -- e o usuario recebeu "arquivado com sucesso".
-  const { error: membersError } = await supabase
-    .from("group_members")
-    .update({ status: "archived", archived_at: arquivadoEm })
-    .eq("group_id", groupId)
-    .eq("status", "active");
+  //
+  // Zero linha tambem e falha, pela mesma razao: quem chega aqui e o ULTIMO
+  // membro 'active' do grupo, entao existe exatamente uma linha para arquivar.
+  const arquivamentoDosMembros = conferirEscrita(
+    await supabase
+      .from("group_members")
+      .update({ status: "archived", archived_at: arquivadoEm })
+      .eq("group_id", groupId)
+      .eq("status", "active")
+      .select("id"),
+    "arquivar os membros do grupo ao sair dele"
+  );
 
-  if (membersError) {
-    console.error("Error archiving members:", membersError);
+  if (!arquivamentoDosMembros.ok) {
+    console.error("Error archiving members:", arquivamentoDosMembros);
     return NextResponse.json(
       {
         error:
           "O grupo foi arquivado, mas os membros nao: ele nao apareceria na lista de arquivados. " +
-          membersError.message,
+          arquivamentoDosMembros.mensagem,
       },
       { status: 500 }
     );
@@ -246,25 +263,38 @@ async function removeUserFromGroup(
 
       console.log(`🔄 Trying to update with status: "${statusValue}"`);
 
-      const { error: updateError } = await supabase
-        .from("group_members")
-        .update(updateData)
-        .eq("group_id", groupId)
-        .eq("user_id", userId);
+      // `if (!updateError)` ERA O CRITERIO AQUI, E ELE NUNCA FALHA (HMO-203).
+      // --------------------------------------------------------------------
+      // Esta cascata tenta um `status` por vez e para no primeiro que "deu
+      // certo". Sem `.select()`, "deu certo" era so a ausencia de erro -- e um
+      // UPDATE que a RLS filtra NAO levanta erro: ele volta sucesso com zero
+      // linha. Entao a primeira volta do laco sempre parecia funcionar, o laco
+      // nunca chegava as outras estrategias, e a rota respondia "Voce saiu do
+      // grupo com sucesso!" sem ter escrito nada -- a mesma mentira que a rota
+      // de restaurar contava.
+      //
+      // Com a contagem, zero linha CAI PARA A TENTATIVA SEGUINTE, que e o que a
+      // cascata sempre quis fazer.
+      const saida = conferirEscrita(
+        await supabase
+          .from("group_members")
+          .update(updateData)
+          .eq("group_id", groupId)
+          .eq("user_id", userId)
+          .select("id"),
+        `sair do grupo com status "${statusValue}"`
+      );
 
-      if (!updateError) {
+      if (saida.ok) {
         console.log(`✅ Successfully updated with status: "${statusValue}"`);
         return NextResponse.json({
           success: true,
           action: "user_left",
           message: "Você saiu do grupo com sucesso!",
         });
-      } else {
-        console.log(
-          `❌ Failed with status "${statusValue}":`,
-          updateError.message
-        );
       }
+
+      console.log(`❌ Failed with status "${statusValue}":`, saida.mensagem);
     }
   }
 
@@ -272,37 +302,48 @@ async function removeUserFromGroup(
   if (existingMember && "left_at" in existingMember) {
     console.log("🔄 Trying to update with only left_at field");
 
-    const { error: leftAtError } = await supabase
-      .from("group_members")
-      .update({ left_at: new Date().toISOString() })
-      .eq("group_id", groupId)
-      .eq("user_id", userId);
+    const saidaPorLeftAt = conferirEscrita(
+      await supabase
+        .from("group_members")
+        .update({ left_at: new Date().toISOString() })
+        .eq("group_id", groupId)
+        .eq("user_id", userId)
+        .select("id"),
+      "marcar a saida do grupo com left_at"
+    );
 
-    if (!leftAtError) {
+    if (saidaPorLeftAt.ok) {
       console.log("✅ Successfully updated with left_at");
       return NextResponse.json({
         success: true,
         action: "user_left",
         message: "Você saiu do grupo com sucesso!",
       });
-    } else {
-      console.log("❌ Failed to update with left_at:", leftAtError.message);
     }
+
+    console.log("❌ Failed to update with left_at:", saidaPorLeftAt.mensagem);
   }
 
   // Strategy 4: Fallback to deletion
   console.log("🔄 Falling back to member deletion");
 
-  const { error: deleteError } = await supabase
-    .from("group_members")
-    .delete()
-    .eq("group_id", groupId)
-    .eq("user_id", userId);
+  // Ultima estrategia, e a unica que resta: aqui zero linha e falha de verdade
+  // -- as tres anteriores nao escreveram e esta tambem nao. Responder sucesso
+  // neste ponto diria "voce saiu" a alguem que continua membro do grupo.
+  const remocao = conferirEscrita(
+    await supabase
+      .from("group_members")
+      .delete()
+      .eq("group_id", groupId)
+      .eq("user_id", userId)
+      .select("id"),
+    "sair do grupo"
+  );
 
-  if (deleteError) {
-    console.error("❌ Error deleting member:", deleteError);
+  if (!remocao.ok) {
+    console.error("❌ Error deleting member:", remocao);
     return NextResponse.json(
-      { error: `Erro ao sair do grupo: ${deleteError.message}` },
+      { error: `Erro ao sair do grupo: ${remocao.mensagem}` },
       { status: 500 }
     );
   }

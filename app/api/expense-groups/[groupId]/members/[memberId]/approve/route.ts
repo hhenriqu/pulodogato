@@ -1,5 +1,6 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
+import { conferirEscrita } from "@/lib/escrita-conferida";
 
 export const dynamic = "force-dynamic";
 
@@ -81,15 +82,40 @@ export async function POST(
 
     const novoStatus = action === "approve" ? "active" : "removed";
 
-    const { error: updateError } = await supabase
-      .from("group_members")
-      .update({ status: novoStatus })
-      .eq("id", memberId)
-      .eq("group_id", groupId)
-      .eq("status", "pending");
+    // `.select()` + linhas afetadas (HMO-203). Sem contagem, `if (updateError)`
+    // nao distingue "aprovou" de "nao escreveu nada": escrita filtrada pela RLS
+    // volta sucesso com zero linha, e o `.eq("status","pending")` acrescenta um
+    // segundo caminho para zero -- se o pedido foi respondido por outro admin
+    // entre a leitura e a escrita, nenhuma linha casa. Nos dois casos a rota
+    // respondia "X agora faz parte do grupo!" e X continuava de fora.
+    const resposta = conferirEscrita(
+      await supabase
+        .from("group_members")
+        .update({ status: novoStatus })
+        .eq("id", memberId)
+        .eq("group_id", groupId)
+        .eq("status", "pending")
+        .select("id"),
+      "responder ao pedido de entrada"
+    );
 
-    if (updateError) {
-      console.error("Error updating member status:", updateError);
+    if (!resposta.ok) {
+      console.error("Error updating member status:", resposta);
+
+      // Zero linha aqui e quase sempre corrida com outro admin, e isso nao e
+      // erro de servidor: 409 com a frase que diz o que aconteceu. O resto
+      // (erro de banco, `.select()` esquecido) continua 500.
+      if (resposta.motivo === "nenhuma-linha") {
+        return NextResponse.json(
+          {
+            error:
+              "Esse pedido de entrada nao esta mais pendente -- outro " +
+              "administrador pode ter respondido antes. Recarregue a lista.",
+          },
+          { status: 409 }
+        );
+      }
+
       return NextResponse.json(
         { error: "Erro ao responder ao pedido de entrada" },
         { status: 500 }
