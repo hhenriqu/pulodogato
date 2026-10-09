@@ -59,6 +59,7 @@ import {
   type Periodo,
 } from "@/lib/periodo-do-painel";
 import { today } from "@/lib/recurrence";
+import { dataNaTela } from "@/lib/data-na-tela";
 import { SeletorDePeriodo } from "@/components/dashboard/SeletorDePeriodo";
 import { rotaDoTipo, tipoDoLancamento } from "@/lib/lancamento";
 import { ROTA_DA_TRANSFERENCIA } from "@/lib/transferencia";
@@ -1928,9 +1929,13 @@ function Lancamentos() {
                             )}
                             <span>•</span>
                             <span>
-                              {new Date(
-                                transaction.transaction_date
-                              ).toLocaleDateString("pt-BR")}
+                              {/* `dataNaTela` e nao `new Date(...)`:
+                                  `transaction_date` e coluna `date` e chega
+                                  como "2026-10-09"; o construtor a le como
+                                  meia-noite UTC e em Sao Paulo escrevia
+                                  08/10/2026 -- TODA linha um dia mais cedo
+                                  (HMO-353). */}
+                              {dataNaTela(transaction.transaction_date)}
                             </span>
                             {/*
                               O NOME DO GRUPO, e não "Compartilhado" (HMO-175).

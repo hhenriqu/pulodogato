@@ -73,6 +73,7 @@ import {
 } from "@/components/grupos/DivisaoDoGrupo";
 import { FechamentoDoMes } from "@/components/grupos/FechamentoDoMes";
 import { today } from "@/lib/recurrence";
+import { dataNaTela } from "@/lib/data-na-tela";
 import {
   mesDaData,
   recortarPrevistas,
@@ -1522,9 +1523,7 @@ export default function GroupDetailPage() {
                                   ? `Vai pagar: ${item.payer.full_name}`
                                   : "Responsável não identificado"}{" "}
                                 • vence{" "}
-                                {new Date(
-                                  `${item.due_date}T00:00:00`
-                                ).toLocaleDateString("pt-BR")}
+                                {dataNaTela(item.due_date)}
                               </p>
                             </div>
                           </div>
@@ -1642,9 +1641,7 @@ export default function GroupDetailPage() {
                               </h4>
                               <p className="text-sm text-muted-foreground">
                                 Pago por {transaction.payer.full_name} •{" "}
-                                {new Date(
-                                  transaction.transaction_date
-                                ).toLocaleDateString("pt-BR")}
+                                {dataNaTela(transaction.transaction_date)}
                               </p>
                             </div>
                           </div>

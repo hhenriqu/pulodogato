@@ -1,6 +1,8 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 
+import { dataOuMomentoNaTela } from "@/lib/data-na-tela";
+
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
@@ -23,8 +25,17 @@ export function formatPercentage(value: number): string {
   }).format(value / 100);
 }
 
+/**
+ * A data de um VALOR que pode ser um dia do calendario ou um instante.
+ *
+ * O corpo mora em lib/data-na-tela.ts, e nao aqui, por duas razoes: este arquivo
+ * importa `clsx`/`tailwind-merge` e por isso nao cabe num `node --test` barato, e
+ * a regra precisava de teste nos dois fusos. O `new Date(date)` que estava aqui
+ * recuava UM DIA toda coluna `date` -- `settled_on` e `today_rate_date` chegam
+ * como `"2026-10-09"` e saiam como 08/10/2026 em Sao Paulo (HMO-353).
+ */
 export function formatDate(date: string | Date): string {
-  return new Intl.DateTimeFormat("pt-BR").format(new Date(date));
+  return dataOuMomentoNaTela(date);
 }
 
 export function calculateAveragePrice(
