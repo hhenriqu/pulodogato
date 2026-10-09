@@ -6444,6 +6444,21 @@ jobs:
       - name: Os mutantes do rateio da despesa entre os membros
         run: npm run mutantes:divisao-do-grupo
 
+      # Os mutantes do CSV de relatorio (HMO-207). Este runner USA
+      # `criarBlocoDeMutantes`, entao a mutacao vive na sombra em /tmp e a
+      # arvore do repositorio nunca e escrita -- ao contrario dos dois acima.
+      #
+      # Os dois primeiros sao o que a issue pede pelo nome ("trocar a view nova
+      # pela antiga tem que MATAR a assercao"), nas duas versoes que falham
+      # diferente: uma erra o numero para MAIS (valor cheio no lugar da parte) e
+      # a outra APAGA a linha de dolar, que foi a medicao de producao.
+      #
+      # Os dois do `eq("user_id")` so morrem pela recusa de linha repetida: sem
+      # o filtro o CSV ganha uma SEGUNDA linha de USD com o mesmo valor, e um
+      # total comparado por moeda continuaria batendo com a tela.
+      - name: Os mutantes da parte de grupo no CSV de relatorio
+        run: npm run mutantes:parte-do-grupo-no-csv
+
       # Os dois runners acima ESCREVEM no fonte e restauram no fim (nenhum dos
       # dois usa `criarBlocoDeMutantes` ainda). Um `process.exit` dentro de um
       # try pularia o finally e deixaria lib/ mutado -- e dali em diante todo

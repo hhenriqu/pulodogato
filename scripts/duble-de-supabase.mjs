@@ -264,6 +264,28 @@ function consulta(linhas, tabela, registro, escrever = () => {}) {
       filtradas = filtradas.filter((l) => l[coluna] !== valor);
       return api;
     },
+    /**
+     * `.is(coluna, null)` do PostgREST -- que e `IS NULL`, e nao `= null`
+     * (HMO-207).
+     *
+     * Faltava, e a falta NAO aparecia como duble incompleto: `api.is is not a
+     * function` no meio de uma sonda de rota se le como rota quebrada. Ele e
+     * necessario para medir os dois caminhos que o criterio da 033 deixou em
+     * pe -- a queda para a view antiga enquanto a migration nao foi colada, e
+     * os ramos que continuam filtrando grupo de proposito.
+     *
+     * `l[coluna] ?? null` e deliberado em vez de `=== null`: fixture que OMITE
+     * `group_id` esta dizendo "lancamento que nao e de grupo", e e assim que as
+     * linhas pessoais sao escritas. Exigir a chave presente com valor `null`
+     * faria a sonda medir um recorte vazio e passar verde por vacuidade.
+     */
+    is(coluna, valor) {
+      filtros.push(["is", coluna, valor]);
+      filtradas = filtradas.filter((l) =>
+        valor === null ? (l[coluna] ?? null) === null : l[coluna] === valor
+      );
+      return api;
+    },
     in(coluna, valores) {
       filtros.push(["in", coluna, [...valores]]);
       filtradas = filtradas.filter((l) => valores.includes(l[coluna]));
@@ -272,6 +294,21 @@ function consulta(linhas, tabela, registro, escrever = () => {}) {
     gte(coluna, valor) {
       filtros.push(["gte", coluna, valor]);
       filtradas = filtradas.filter((l) => String(l[coluna]) >= String(valor));
+      return api;
+    },
+    /**
+     * `lt` -- o extremo ABERTO (HMO-207).
+     *
+     * Faltava, e o sintoma era o pior tipo: /api/reports/export?report=transactions
+     * faz `.lt("transaction_date", somarMeses(janela.fim, 1))`, entao
+     * `api.lt is not a function` estourava DENTRO do try/catch da rota e saia
+     * como `{"error":"Erro interno"}` com status 500. Uma sonda que olhasse o
+     * corpo leria "a rota esta quebrada" e iria depurar a rota -- que esta
+     * certa. Nao e `lte`: o mes seguinte nao entra.
+     */
+    lt(coluna, valor) {
+      filtros.push(["lt", coluna, valor]);
+      filtradas = filtradas.filter((l) => String(l[coluna]) < String(valor));
       return api;
     },
     lte(coluna, valor) {
@@ -377,8 +414,10 @@ export function criarDuble({ user = null, tabelas = {}, erros = {} } = {}) {
             select: () => falha,
             eq: () => falha,
             neq: () => falha,
+            is: () => falha,
             in: () => falha,
             gte: () => falha,
+            lt: () => falha,
             lte: () => falha,
             order: () => falha,
             maybeSingle: () =>
