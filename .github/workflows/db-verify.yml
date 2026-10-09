@@ -1856,6 +1856,58 @@ jobs:
       # PG_TEMPLATE=hmo232_pre048 npm run mutantes:trava-de-tipo
       - name: transaction_type nao aceita mais nulo, e a trava e NOT NULL e nao CHECK
         run: $PSQL -f database/tests/048_trava_de_tipo_do_lancamento_test.sql
+      # HMO-347. O segundo dos dois leitores que a 033 anotou em "O QUE ESTA
+      # MIGRATION NAO TOCA": `budget_consumption` responde "quanto do meu
+      # orcamento eu gastei" e ignorava despesa de grupo INTEIRA. A 045/046
+      # fecharam o primeiro (`planned_vs_actual`); este fecha o segundo, com o
+      # MESMO criterio decidido na HMO-258 em 08/10/2026 -- bruto + reembolso.
+      #
+      # Medido na fixture de maio da conta A, com um teto pessoal de 700,00 na
+      # categoria do mercado: 500,00 e 'ok' antes, 610,00 e 'alert' depois. A
+      # barra ficava VERDE num mes em que o teto ja passou dos 80%.
+      - name: 049_consumo_de_orcamento_do_grupo
+        run: $PSQL -f database/migrations/049_consumo_de_orcamento_do_grupo.sql
+
+      # Re-executavel: so CREATE OR REPLACE VIEW, COMMENT, ALTER VIEW e GRANT,
+      # mais um preflight que so le o catalogo.
+      - name: 049 e idempotente
+        run: $PSQL -f database/migrations/049_consumo_de_orcamento_do_grupo.sql
+
+      # A 049 sao DUAS mudancas numa view, e cada metade sozinha e um numero
+      # plausivel que a barra do orcamento mostraria sem erro -- a suite nega os
+      # seis que foram medidos em banco (500, 520, 550, 590, 620, 640).
+      #
+      # As tres assercoes que valem o step:
+      #
+      #   1. 610,00 e 'alert' no teto PESSOAL -- a issue em uma linha.
+      #   2. 150,00 no teto de GRUPO, que a 049 NAO muda. A perna do reembolso
+      #      fica desligada nele; vazando, a barra da viagem sobe a cada membro
+      #      novo (170 com um membro, mais a cada um).
+      #   3. 600,00 num teto em REAIS de uma viagem em DOLAR. A 026 trouxe a
+      #      conversao para esta view; a perna 2 e nova e precisa dela tambem, e
+      #      a cotacao dela vem do JOIN com financial_transactions. Os quatro
+      #      mundos (600 / 520 / 200 / 120) sao distinguiveis de proposito.
+      #
+      # Medido: 14 mutantes, 14 mortos, mais o controle negativo (a suite fica
+      # vermelha num banco que para na 048) e o positivo.
+      - name: O consumo de orcamento conta a despesa de grupo pelo criterio aprovado
+        run: $PSQL -f database/tests/049_consumo_de_orcamento_do_grupo_test.sql
+
+      # O runner que prova que a suite ACIMA mede o que ela diz medir.
+      #
+      # O que ele falsifica e que a suite sozinha nao garante: as duas metades
+      # da migration separadamente (cada uma da um numero plausivel), a
+      # conversao de moeda em CADA perna (variar so um lado deixaria o outro sem
+      # medida), os tres recortes da perna nova (categoria, mes, usuario -- sem
+      # eles o teto consome gasto de outra categoria, de outro mes ou de outra
+      # pessoa) e o `security_invoker`, que `CREATE OR REPLACE VIEW` apaga.
+      #
+      # Barato: a cadeia 001 -> 048 sobe UMA vez num template e cada mutante sai
+      # de `CREATE DATABASE ... TEMPLATE`. A mutacao vai para uma sombra em
+      # /tmp; a arvore nunca e tocada.
+      # Medido num Postgres 17 local (2026-10-08): 14 mutantes, 14 mortos.
+      - name: O consumo de orcamento sabe falhar (14 mutantes)
+        run: PGURL=postgresql://postgres:postgres@localhost:5432 node scripts/mutantes-consumo-de-orcamento-do-grupo.mjs
 
       # OS 12 PASSOS DE SUITE ABAIXO RODAM COM A TRAVA DA 048 DE PE, e isso nao
       # e acidente: sao eles que provam que a trava nao barra escrita legitima.
@@ -1865,6 +1917,14 @@ jobs:
       # travasse mais do que devia, o vermelho apareceria AQUI e nao no teste
       # dela. MEDIDO num Postgres 17 local antes de escrever estes steps: as 12
       # passam com a trava aplicada.
+      #
+      # A 049 (HMO-347) entrou ACIMA, entre a 048 e estes 12 passos, entao eles
+      # rodam com as DUAS de pe -- e o `budget_invoice_test.sql` deixou de ser
+      # so testemunha da trava: nesta posicao ele e o SEGUNDO MUNDO do
+      # condicional da 049 (ver o step "O contrato do 006 e do 007 sobrevive as
+      # views reescritas", abaixo, e o cabecalho de
+      # `pg_temp.conta_a_parte_de_grupo` no proprio arquivo de teste). Remedido
+      # num Postgres 17 local com a 049 na cadeia: as 12 continuam verdes.
       #
       # O hmo197 roda na POSICAO dele, muito acima, onde o trigger do 001 ainda
       # existe e ele o desliga com DISABLE TRIGGER. A 044 apaga esse trigger,
@@ -2363,6 +2423,20 @@ jobs:
       # Rodar de novo, aqui, e o que prova que a 026 preservou esse contrato em
       # vez de apenas nao ter quebrado nada que a 026 mesma testa. As duas sao
       # re-executaveis (conferido); custa segundos.
+      #
+      # E ESTA POSICAO PASSOU A SER O SEGUNDO MUNDO DE UM CONDICIONAL (HMO-347).
+      # A 048 troca o criterio do teto PESSOAL de `budget_consumption`, de
+      # proposito (decisao de produto de 08/10/2026): o mesmo mes consome 800,00
+      # pelo 006/026 e 1.800,00 pela 048, e nenhum numero unico e verdade nas
+      # duas posicoes em que este arquivo roda.
+      #
+      # `budget_invoice_test.sql` entao pergunta ao CATALOGO qual criterio esta
+      # no banco (`pg_get_viewdef` da view le `group_share_entries`?) e assere
+      # numero cravado em cada ramo -- ver o cabecalho de
+      # `pg_temp.conta_a_parte_de_grupo` no proprio arquivo. O step do 006 roda
+      # o ramo antigo; ESTE roda o novo. Tirar um dos dois deixaria metade do
+      # condicional sem ninguem exercitando, que e o mesmo desenho do
+      # `hmo197_convite_sem_conta_test.sql` e do step dele logo depois da 044.
       - name: O contrato do 006 e do 007 sobrevive as views reescritas
         run: |
           $PSQL -f database/tests/group_settlement_test.sql
