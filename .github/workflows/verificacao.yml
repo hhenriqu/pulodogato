@@ -267,6 +267,42 @@ jobs:
       - name: A guarda de ancora de mutante sabe reprovar
         run: npm run test:ancora-de-mutante
 
+      # A MESMA PERGUNTA, PARA AS ANCORAS QUE VIVEM NESTE ARQUIVO (HMO-231).
+      # As duas guardas acima leem os runners `.mjs`; nenhuma delas olha os 148
+      # `sed -i` dos workflows, e e la que a ancora podre custou mais caro.
+      #
+      # O mecanismo: `sed -i` cujo padrao nao casa SAI 0 e nao muda nada. A suite
+      # seguinte roda a fonte INTACTA, passa -- corretamente -- e o `if` do
+      # controle negativo le esse verde como "a suite nao pegou o defeito". A
+      # HMO-199 contou 57 runs vermelhos seguidos assim, na main inclusive, e
+      # NOVE issues abertas em 24h (HMO-205, 212, 213, 214, 217, 222, 223, 229,
+      # 230) -- nenhuma pegou a causa, porque o vermelho acusa a suite e o
+      # defeito mora num `sed` dentro de um YAML.
+      #
+      # Isto reprova no PR que quebra a ancora. E o que importa: a ancora
+      # apodrece na refatoracao BEM FEITA -- quem dedenta uma linha ou troca um
+      # padding por variavel de safe-area nao tem motivo nenhum para procurar um
+      # `sed` aqui dentro. Foi assim que a HMO-185 matou a ancora do
+      # `menu-mobile`, e o PR #136 consertou UM caso.
+      - name: Nenhuma ancora de `sed` dos workflows parou de casar
+        run: npm run check-sed-dos-workflows
+
+      # Controle negativo da guarda acima, e ele tem DUAS metades. Exigir que a
+      # guarda reprove nao basta: o caso 13 prova que o mesmo padrao quebrado,
+      # SEM a guarda, volta a mentir (`sed` sai 0, nao muda um byte). Sem essa
+      # metade o controle provaria so que a mensagem nova existe -- e foi assim
+      # que o PR #136 provou que a guarda e quem trabalha.
+      #
+      # Os casos 4 e 5 travam os dois erros de dialeto que a varredura da HMO-199
+      # cometeu: o padrao e REGEX (um `includes()` literal da falso negativo em
+      # `--success: [0-9.]* [0-9.]*%`) e e BRE, nao ERE (em ERE o `(` de
+      # `Boolean(categoria)` viraria grupo e a guarda mediria outro padrao).
+      #
+      # Roda inteiro em `mkdtempSync`: nao escreve na arvore, e por isso nao tem
+      # `trap` nem nada para restaurar.
+      - name: A guarda de `sed` dos workflows sabe reprovar
+        run: npm run test:sed-dos-workflows
+
       # E o conferidor da CONVERSAO de runner para bloco, que e o que garante que
       # converter um runner nao perdeu nenhuma entrada da lista de mutantes -- a
       # unica parte de um runner que carrega conhecimento que nao esta escrito em
