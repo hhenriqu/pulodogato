@@ -37,6 +37,20 @@
 // `gravarTransacao`. `replace` pega a PRIMEIRA ocorrencia, e as duas linhas sao
 // identicas fora da margem -- sem a indentacao na ancora, o mutante que diz
 // mexer nas parcelas mexeria no lancamento avulso e mediria outra feature.
+//
+// A FORMA DA LISTA E A DA FAMILIA TUPLA DE ARIDADE 4, E ISSO NAO E ESTILO
+// -----------------------------------------------------------------------
+// `scripts/mede-ancora-ambigua.mjs` -- a guarda que reprova ancora morta,
+// ambigua ou de arquivo inexistente em TODO runner do repo -- le a lista de
+// verdade em vez de a copiar, e so sabe ler duas formas. Com a tupla na ordem
+// `[rotulo, arquivo, de, para]` e um `const original = new Map(` multilinha
+// ANTES da lista, ele quebrava: o `removerDeclaracao` do conversor corta a
+// declaracao multilinha ate o proximo `\n];`, que era o que FECHA esta lista --
+// e a leitura levava a lista inteira junto. Dai a ordem `[ALVO, rotulo, de,
+// para]` e o `original` montado DEPOIS da lista, como em
+// `mutantes-pagador-da-parte`: assim a guarda mede estas oito ancoras em vez de
+// me por na lista de excecoes dela, e e justamente aqui que ela paga -- as duas
+// ancoras de tela acima SO se distinguem pela margem.
 import { readFileSync } from "node:fs";
 
 import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
@@ -44,28 +58,20 @@ import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
 const ROTA = "app/api/financial-installments/route.ts";
 const FORMULARIO = "components/movimentacoes/FormularioDeLancamento.tsx";
 
-const SUITE = "test:subcategoria-nas-parcelas";
-
-// Lido da arvore de verdade, que e o original por construcao: nada mais aqui
-// escreve nela.
-const original = new Map(
-  [ROTA, FORMULARIO].map((a) => [a, readFileSync(a, "utf8")])
-);
-
-/** [rotulo, arquivo, de, para] */
+/** [alvo, rotulo, de, para] */
 const mutantes = [
   // =========================================================================
   // A ENTREGA: o campo atravessa a rota
   // =========================================================================
   [
-    "A ROTA VOLTA A DESCARTAR A SUBCATEGORIA (o estado de antes da HMO-218)",
     ROTA,
+    "A ROTA VOLTA A DESCARTAR A SUBCATEGORIA (o estado de antes da HMO-218)",
     "      subcategory_id: subcategory_id || null,\n",
     "",
   ],
   [
-    "A TELA VOLTA A NAO MANDAR O CAMPO (e as outras duas ocorrencias ficam)",
     FORMULARIO,
+    "A TELA VOLTA A NAO MANDAR O CAMPO (e as outras duas ocorrencias ficam)",
     "        subcategory_id: valores.subcategoriaId || null,\n",
     "",
   ],
@@ -74,32 +80,32 @@ const mutantes = [
   // O CAMPO VAI, MAS VAI ERRADO
   // =========================================================================
   [
-    "a rota GRAVA null fixo: o corpo e lido e jogado fora",
     ROTA,
+    "a rota GRAVA null fixo: o corpo e lido e jogado fora",
     "      subcategory_id: subcategory_id || null,",
     "      subcategory_id: null,",
   ],
   [
-    'o `|| null` vira `|| ""`: uuid vazio e 22P02, e a serie inteira nao grava',
     ROTA,
+    'o `|| null` vira `|| ""`: uuid vazio e 22P02, e a serie inteira nao grava',
     "      subcategory_id: subcategory_id || null,",
     '      subcategory_id: subcategory_id || "",',
   ],
   [
-    "SO A PARCELA 1 leva a subcategoria: as outras M-1 gravam null",
     ROTA,
+    "SO A PARCELA 1 leva a subcategoria: as outras M-1 gravam null",
     "      subcategory_id: subcategory_id || null,",
     "      subcategory_id: i === 0 ? subcategory_id || null : null,",
   ],
   [
-    "o campo entra so DA PARCELA 2 em diante: o lote do PostgREST o descarta inteiro",
     ROTA,
+    "o campo entra so DA PARCELA 2 em diante: o lote do PostgREST o descarta inteiro",
     "      subcategory_id: subcategory_id || null,",
     "      ...(i > 0 ? { subcategory_id: subcategory_id || null } : {}),",
   ],
   [
-    "a rota perde a CATEGORIA e mantem a subcategoria: o par que a FK recusa",
     ROTA,
+    "a rota perde a CATEGORIA e mantem a subcategoria: o par que a FK recusa",
     "      category_id,\n      // A MESMA SUBCATEGORIA",
     "      category_id: null,\n      // A MESMA SUBCATEGORIA",
   ],
@@ -108,17 +114,26 @@ const mutantes = [
   // A TELA MANDA, MAS MANDA OUTRA COISA
   // =========================================================================
   [
-    "a tela manda a CATEGORIA no lugar da subcategoria",
     FORMULARIO,
+    "a tela manda a CATEGORIA no lugar da subcategoria",
     "        subcategory_id: valores.subcategoriaId || null,",
     "        subcategory_id: valores.categoriaId || null,",
   ],
 ];
 
+const SUITE = "test:subcategoria-nas-parcelas";
+
 const bloco = criarBlocoDeMutantes({
   suites: [SUITE],
   rotulo: "subcategoria-nas-parcelas",
 });
+
+// Lido da arvore de verdade, que e o original por construcao: nada mais aqui
+// escreve nela. Montado DEPOIS da lista -- ver A FORMA DA LISTA, no cabecalho.
+const original = new Map();
+for (const arquivo of new Set(mutantes.map(([alvo]) => alvo))) {
+  original.set(arquivo, readFileSync(arquivo, "utf8"));
+}
 
 // CONTROLE POSITIVO: a arvore limpa tem de passar. Ver o cabecalho.
 const limpo = bloco.rodar("<arvore limpa>", {}, SUITE);
@@ -135,13 +150,27 @@ console.log("controle positivo: arvore limpa VERDE.\n");
 let mortos = 0;
 const sobreviventes = [];
 
-for (const [rotulo, arquivo, de, para] of mutantes) {
+for (const [arquivo, rotulo, de, para] of mutantes) {
   const fonte = original.get(arquivo);
+  const ocorrencias = fonte.split(de).length - 1;
 
-  if (!fonte.includes(de)) {
+  if (ocorrencias === 0) {
     console.error(
       `ANCORA MORTA  ${rotulo}\n  ${arquivo} nao contem o trecho procurado. ` +
         "Isto e erro do runner, nao mutante morto -- conserte a ancora."
+    );
+    bloco.fechar();
+    process.exit(1);
+  }
+
+  // A TRAVA DE OCORRENCIA UNICA. `String.replace` troca a PRIMEIRA ocorrencia:
+  // um `de` que aparece duas vezes muta um lugar que o rotulo nao descreve, e o
+  // mutante passa a medir outra feature. E o risco concreto deste runner -- ver
+  // AS DUAS ANCORAS DE TELA, no cabecalho.
+  if (ocorrencias > 1) {
+    console.error(
+      `ANCORA AMBIGUA  ${rotulo}\n  o trecho aparece ${ocorrencias}x em ${arquivo} ` +
+        "-- o replace muta so a 1a. Isto e erro do runner; estreite a ancora."
     );
     bloco.fechar();
     process.exit(1);
