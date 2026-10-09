@@ -82,8 +82,8 @@ export interface PassoDeReset {
  *
  * Sem `ON DELETE` nenhum -- ou seja, NO ACTION. Apagar `financial_accounts`
  * antes das transacoes nao cascateia: levanta erro. O mesmo vale para
- * transaction_installments, recurring_rules e scheduled_transactions, que
- * tambem apontam para contas sem cascata.
+ * recurring_rules e scheduled_transactions, que tambem apontam para contas sem
+ * cascata.
  */
 export const PLANO_DE_RESET: PassoDeReset[] = [
   {
@@ -161,12 +161,15 @@ export const PLANO_DE_RESET: PassoDeReset[] = [
     rotulo: "Extratos importados",
     apontaPara: ["financial_accounts"],
   },
-  {
-    tabela: "transaction_installments",
-    coluna: "user_id",
-    rotulo: "Parcelamentos",
-    apontaPara: ["financial_accounts"],
-  },
+  // PARCELAMENTO NAO TEM PASSO PROPRIO, E NAO E ESQUECIMENTO (HMO-225).
+  //
+  // Ate a HMO-358 havia um passo para `transaction_installments`. A tabela ficou
+  // orfa: desde a 035 a serie parcelada e materializada em
+  // `financial_transactions` (uma linha por mes de fatura), entao as parcelas de
+  // hoje ja sao apagadas no passo de `financial_transactions` abaixo. Um passo
+  // proprio para a tabela antiga so produziria "Parcelamentos: 0" num relatorio
+  // de quem acabou de apagar uma compra em 10x -- o mesmo relatorio mentiroso
+  // que o comentario de `payroll_deductions` acima descreve.
   {
     // group_transactions e expense_splits cascateiam a partir daqui.
     //
