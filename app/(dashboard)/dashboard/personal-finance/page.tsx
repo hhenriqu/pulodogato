@@ -23,6 +23,10 @@ import {
   type ContaDoLancamento,
 } from "@/lib/destino-do-lancamento";
 import {
+  rotuloDaCategoria,
+  type SubcategoriaDoRotulo,
+} from "@/lib/rotulo-da-categoria";
+import {
   linhasDaLista,
   nomesDosPagadores,
   notaDasPartesDeTerceiros,
@@ -132,6 +136,17 @@ interface FinancialTransaction {
   counterpart_transaction_id?: string | null;
   /** A conta do lancamento. `null` quando a linha nao tem conta registrada. */
   account?: ContaDoLancamento | null;
+  /**
+   * A subcategoria do lancamento (HMO-221, migration 036).
+   *
+   * Vem do embed `subcategory:transaction_subcategories(id, name)` em
+   * `consultarPagina`. `null` quando a linha nao tem subcategoria -- a coluna e
+   * nulavel e o join e LEFT, entao a linha chega inteira de qualquer jeito.
+   *
+   * Declarada aqui E em `types/financial.ts` nao estaria: `types/financial.ts`
+   * tem `subcategory_id`, a COLUNA, e nao o embed, que so esta consulta pede.
+   */
+  subcategory?: SubcategoriaDoRotulo | null;
   /**
    * "parcela N de M" (HMO-211, migration 035).
    *
@@ -801,6 +816,7 @@ function Lancamentos() {
         *,
         category:transaction_categories(*),
         account:financial_accounts(id, name, account_type),
+        subcategory:transaction_subcategories(id, name),
         expense_splits(
           *,
           participant:profiles!expense_splits_participant_id_fkey(full_name, avatar_url)
@@ -1850,7 +1866,30 @@ function Lancamentos() {
                                 }[classificarMovimentacao(transaction)]
                               }
                             </Badge>
-                            <span>{transaction.category?.name}</span>
+                            {/*
+                              A CATEGORIA, E A SUBCATEGORIA QUANDO ELA DIZ
+                              ALGO (HMO-221)
+                              --------------------------------------------
+                              Era `transaction.category?.name` sozinho: duas
+                              despesas em "Alimentação / Mercado" e
+                              "Alimentação / Restaurante" ficavam com
+                              exatamente a mesma cara nesta linha, e a
+                              subcategoria -- que o formulario grava e o
+                              seletor le de volta desde a HMO-216 -- nao
+                              existia em nenhuma LISTA do app.
+
+                              A regra mora em lib/rotulo-da-categoria.ts, com
+                              teste, e nao num template aqui, por um motivo
+                              que o JSX esconderia: ela SUPRIME a "Outros".
+                              Toda categoria tem uma por invariante da 036 e o
+                              formulario a pre-seleciona, entao
+                              "Categoria - Subcategoria" escrito ao pe da
+                              letra imprimiria "Alimentação - Outros" em quase
+                              toda linha -- gastando a largura que a HMO-215
+                              acabou de dividir com o destino para nao dizer
+                              nada.
+                            */}
+                            <span>{rotuloDaCategoria(transaction)}</span>
                             {/*
                               O DESTINO (HMO-215)
                               -------------------

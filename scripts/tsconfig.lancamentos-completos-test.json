@@ -1,5 +1,5 @@
 {
-  "//": "Build so do teste da HMO-215. Os dois modulos importam @/lib/movimentacoes (para nao ter uma segunda definicao de 'que tipo e esta linha'), e o tsc resolve o alias @/ por `paths` mas NAO o reescreve no JS emitido -- por isso o npm script tem o passo resolve-aliases depois. Ver scripts/test-lancamentos-completos.mjs.",
+  "//": "Build do teste da LINHA INTEIRA da lista -- HMO-215 (o destino e a parte de grupo) e HMO-221 (a subcategoria no rotulo). Os tres modulos importam @/lib/* (movimentacoes, para nao ter uma segunda definicao de 'que tipo e esta linha'; categorias, para o nome da subcategoria padrao sair de um lugar so), e o tsc resolve o alias @/ por `paths` mas NAO o reescreve no JS emitido -- por isso o npm script tem o passo resolve-aliases depois. Ver scripts/test-lancamentos-completos.mjs.",
   "compilerOptions": {
     "outDir": "../.tmp-lancamentos-completos",
     "rootDir": "../lib",
@@ -13,6 +13,7 @@
   },
   "include": [
     "../lib/destino-do-lancamento.ts",
-    "../lib/parte-de-grupo-na-lista.ts"
+    "../lib/parte-de-grupo-na-lista.ts",
+    "../lib/rotulo-da-categoria.ts"
   ]
 }
