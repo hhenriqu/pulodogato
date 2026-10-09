@@ -1,5 +1,6 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
+import { conferirEscrita } from "@/lib/escrita-conferida";
 
 export const dynamic = "force-dynamic";
 
@@ -95,20 +96,30 @@ export async function POST(
     // Aplicar mudança
     const newRole = action === "promote" ? "admin" : "member";
 
-    const { error: updateError } = await supabase
-      .from("group_members")
-      .update({
-        role: newRole,
-        role_updated_at: new Date().toISOString(),
-        role_updated_by: user.id,
-      })
-      .eq("group_id", groupId)
-      .eq("user_id", memberId);
+    // `.select()` + linhas afetadas (HMO-203). A trava do 040 recusa a troca de
+    // `role` por quem nao e admin com um RAISE de verdade (42501), entao ESSE
+    // caminho ja aparecia no `updateError`. O que nao aparecia e o outro: a
+    // policy de UPDATE de `group_members` filtrando a LINHA em silencio -- zero
+    // linha, nenhum erro -- e a rota respondendo "X foi promovido a
+    // administrador com sucesso!" sobre uma escrita que nao aconteceu.
+    const mudancaDePapel = conferirEscrita(
+      await supabase
+        .from("group_members")
+        .update({
+          role: newRole,
+          role_updated_at: new Date().toISOString(),
+          role_updated_by: user.id,
+        })
+        .eq("group_id", groupId)
+        .eq("user_id", memberId)
+        .select("id"),
+      "alterar a permissao do membro"
+    );
 
-    if (updateError) {
-      console.error("Error updating member role:", updateError);
+    if (!mudancaDePapel.ok) {
+      console.error("Error updating member role:", mudancaDePapel);
       return NextResponse.json(
-        { error: "Erro ao alterar permissão do membro" },
+        { error: `Erro ao alterar permissão do membro: ${mudancaDePapel.mensagem}` },
         { status: 500 }
       );
     }

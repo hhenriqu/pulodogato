@@ -3709,6 +3709,27 @@ jobs:
       - name: A mascara, e o valor plano por tras dela
         run: npm run test:dinheiro
 
+      # ZERO LINHA E FALHA, NAO SUCESSO (HMO-203).
+      #
+      # A rota de restaurar grupo respondia HTTP 200 "Grupo restaurado com
+      # sucesso!" com a linha intacta no banco -- medido em producao, antes e
+      # depois. Nao era descuido: a policy de UPDATE filtrava a linha (RLS
+      # FILTRA, nao recusa), o PostgREST devolvia 200 com corpo `[]`, e
+      # `supabase-js` sem `.select()` nao entrega contagem. `data` e `error` vinham
+      # os DOIS nulos, entao `if (error)` nao tinha como disparar.
+      #
+      # `lib/escrita-conferida.ts` e o criterio dessas rotas, e a suite afirma
+      # sobre o MOTIVO de cada falha, nao sobre `ok === false`: os tres modos de
+      # falhar precisam continuar sendo tres. Colapsar `sem-select` em
+      # `nenhuma-linha` daria a uma rota mal escrita a aparencia de uma rota
+      # barrada pela RLS, e o conserto iria para a policy em vez do `.select()`.
+      #
+      # SEM FILTRO DE `paths`, pela mesma razao do passo acima: o modulo e o
+      # criterio de oito rotas de grupo e vai ser usado por mais. Roda em
+      # segundos e nao precisa de banco.
+      - name: Escrita sob RLS que nao pegou linha nao sai como sucesso
+        run: npm run test:escrita-conferida
+
       # Controle negativo. As asercoes da suite sao quase todas igualdades de
       # string, e igualdade de string continua verde quando o codigo vira outra
       # coisa por baixo -- desde que a outra coisa produza o mesmo texto nos
