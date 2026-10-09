@@ -51,7 +51,7 @@
 // O mutante `parcelas_barreira_por_data` existe para isso ficar vermelho.
 // ---------------------------------------------------------------------------
 
-import type { BaseDoValorParcelado } from "@/lib/lancamento";
+import { somaMeses, type BaseDoValorParcelado } from "@/lib/lancamento";
 
 /**
  * Os tres alcances. Mesmas palavras da recorrencia de proposito: e a mesma
@@ -354,4 +354,295 @@ export function consequenciaDoAlcance(
   }
 
   return frases.length > 0 ? frases.join(" ") : null;
+}
+
+// ---------------------------------------------------------------------------
+// MOVER A PARCELA DE FATURA, E A SERIE INTEIRA COM ELA (HMO-357)
+// ---------------------------------------------------------------------------
+// "Quando movo uma parcela, as demais devem mover junto."
+//
+// O QUE ACONTECIA
+// ---------------
+// Mover uma parcela era uma edicao de UMA linha: o formulario grava
+// `financial_transactions` direto pelo supabase-js, e trocar a data (ou a
+// fatura escolhida da 041) de "parcela 3 de 10" movia a 3 e deixava as outras
+// nove onde estavam. O resultado nao da erro: a serie passa a ter duas parcelas
+// na mesma fatura e um mes vazio no fim, e as duas faturas fecham num valor
+// plausivel.
+//
+// A serie de um parcelamento NAO e um conjunto de dez linhas independentes --
+// ela e uma CADENCIA de um mes. Mover uma parcela sem mover as seguintes
+// destroi a unica propriedade que faz a serie ser uma serie.
+//
+// POR QUE O DESLOCAMENTO E EM MESES DE FATURA, E NAO EM DIAS
+// ----------------------------------------------------------
+// Porque a cadencia que existe e a da FATURA, e porque somar dias (ou somar
+// meses na `transaction_date`) nao soma uma fatura:
+//
+//   compra 31/01, cartao fecha dia 30
+//     31/01 -> dia 31 > 30             -> fatura de FEVEREIRO
+//     28/02 (31/01 + 1 mes, grampeado) -> dia 28 <= 30 -> fatura de FEVEREIRO
+//
+// Deslocar "um mes" pela data deixaria a parcela na MESMA fatura -- ver o
+// cabecalho de `datasDasParcelasNoCartao`. Entao o delta e medido entre o
+// `invoice_month` de origem e o de destino da ancora (dois `AAAA-MM-01`), e e
+// esse numero de meses que cada irma alcancada anda, cada uma a partir da
+// fatura DELA.
+//
+// `somaMeses` e reusada em vez de reescrita aqui porque e a mesma aritmetica de
+// string sem `Date` que a criacao da serie usa (meia-noite UTC reimpressa com
+// `toISOString` devolve o dia anterior a oeste de Greenwich, e o teste passaria
+// em UTC e falharia em America/Sao_Paulo). Com o dia 1 ela nunca grampeia.
+//
+// E CADA IRMA ANDA A PARTIR DA FATURA DELA, NAO EM CADEIA
+// -------------------------------------------------------
+// `somaMeses(fatura_da_irma, delta)`, e nao `somaMeses(destino_da_vizinha, 1)`:
+// encadear arrasta para frente qualquer irregularidade que a serie ja tenha (uma
+// parcela que alguem ja moveu a mao, uma fatura pulada) e reescreve a serie
+// inteira em vez de move-la. O deslocamento preserva o espacamento que existe --
+// inclusive um espacamento errado, que nao e esta funcao que conserta.
+// ---------------------------------------------------------------------------
+
+/**
+ * 'AAAA-MM' (como a tela fala) -> 'AAAA-MM-01' (como a coluna aceita), ou
+ * `null` quando nao da para ler.
+ *
+ * Dia 1 porque e o que a 041 permite: `CHECK (invoice_month_override =
+ * date_trunc('month', invoice_month_override))`. Mandar 'AAAA-MM' cru para uma
+ * coluna `date` e erro de sintaxe (22008) e mandar um dia qualquer bate no
+ * CHECK (23514) -- as duas falhas chegam como mensagem de Postgres que nao
+ * nomeia o campo.
+ *
+ * `app/api/financial-installments/route.ts` (a CRIACAO da serie) tem uma copia
+ * privada identica desta funcao. Ela nao foi substituida aqui de proposito:
+ * unificar as duas mexe no caminho que grava a compra parcelada, que nao e o
+ * que esta mudanca toca. Se a regra do dia 1 mudar, sao dois lugares.
+ */
+export function mesDaFaturaPedida(bruto: unknown): string | null {
+  const mes = String(bruto ?? "").trim();
+  if (!/^\d{4}-\d{2}$/.test(mes)) return null;
+
+  const numeroDoMes = Number(mes.slice(5, 7));
+  if (numeroDoMes < 1 || numeroDoMes > 12) return null;
+
+  return `${mes}-01`;
+}
+
+/** 'AAAA-MM-01' -> indice absoluto de mes. `null` se nao e um mes de fatura. */
+function indiceDoMesDaFatura(mes: string): number | null {
+  // O DIA 1 E EXIGIDO, e nao normalizado em silencio: `invoice_month` e sempre
+  // o primeiro dia do mes na 006, e a 041 tem CHECK de `date_trunc`. Um
+  // 'AAAA-MM-15' chegando aqui e um chamador que confundiu mes de fatura com
+  // data de compra -- aceitar o dia 15 esconderia esse erro e gravaria a serie
+  // numa fatura que ninguem escolheu.
+  const casa = /^(\d{4})-(\d{2})-01$/.exec(mes);
+  if (!casa) return null;
+
+  const ano = Number(casa[1]);
+  const numeroDoMes = Number(casa[2]);
+  if (numeroDoMes < 1 || numeroDoMes > 12) return null;
+
+  return ano * 12 + (numeroDoMes - 1);
+}
+
+/**
+ * Quantos meses de fatura separam duas faturas ('AAAA-MM-01').
+ *
+ * Positivo quando `para` e depois de `de`. `null` quando uma das duas nao e um
+ * mes de fatura legivel -- e nao 0, que seria indistinguivel de "nao ha
+ * movimento" e faria um destino ilegivel passar como pedido inofensivo.
+ */
+export function mesesEntreFaturas(de: string, para: string): number | null {
+  const origem = indiceDoMesDaFatura(de);
+  const destino = indiceDoMesDaFatura(para);
+  if (origem === null || destino === null) return null;
+  return destino - origem;
+}
+
+/** Para onde cada parcela alcancada vai: o `invoice_month` novo dela. */
+export interface MovimentoDeParcela {
+  id: string;
+  /** 'AAAA-MM-01'. */
+  invoiceMonth: string;
+}
+
+/**
+ * Por que o movimento foi recusado. Cada motivo tem uma frase propria na rota:
+ * um "não foi possível mover" generico sobre uma serie de dez parcelas nao diz
+ * a ninguem o que fazer em seguida.
+ */
+export type RecusaDeMovimento =
+  /** A ancora nao esta em fatura nenhuma: nao ha de onde medir o delta. */
+  | "ancora_sem_fatura"
+  /** O destino nao e um 'AAAA-MM-01' (ou a conta de meses saiu do calendario). */
+  | "destino_ilegivel"
+  /** O destino e a fatura onde a parcela ja esta. */
+  | "sem_movimento"
+  /** Uma alcancada nao esta em fatura nenhuma: nao ha de onde desloca-la. */
+  | "parcela_sem_fatura"
+  /** O destino de alguma alcancada e uma fatura JA PAGA. */
+  | "fatura_paga_no_destino";
+
+export type PlanoDeMovimento =
+  | { ok: true; delta: number; movimentos: MovimentoDeParcela[] }
+  | { ok: false; motivo: RecusaDeMovimento; parcelas: string[] };
+
+/**
+ * Para qual fatura vai cada parcela alcancada, quando a ancora vai para
+ * `destinoDaAncora`.
+ *
+ * Quem decide QUAIS parcelas sao alcancadas e `planejarAlteracaoDeParcelas` --
+ * esta funcao so desloca as que recebeu. Em `apenas_esta` isso e um movimento
+ * de uma parcela so, que e legitimo: e o comportamento de hoje, com a diferenca
+ * de ter sido escolhido em voz alta.
+ *
+ * TUDO OU NADA, E ISSO E A DECISAO PRINCIPAL DAQUI
+ * ------------------------------------------------
+ * Qualquer impedimento recusa o movimento INTEIRO, em vez de mover as que dao e
+ * deixar as outras. Mover 6 de 8 parcelas e exatamente o estado que esta issue
+ * existe para eliminar -- e o unico jeito de descobri-lo seria reconferir oito
+ * faturas a mao.
+ *
+ * E A FATURA PAGA E RECUSA, NAO PRESERVACAO
+ * -----------------------------------------
+ * `planejarAlteracaoDeParcelas` ja tira de `ids` as parcelas que ESTAO em
+ * fatura paga. Esta funcao cuida do outro lado: uma parcela que CAIRIA numa
+ * fatura paga. Deixa-la entrar mudaria o total de uma fatura que a pessoa ja
+ * conferiu e pagou -- e a conta do cartao nao muda junto. Nenhum alcance
+ * autoriza isso, entao e recusa e nao aviso.
+ */
+export function novasFaturasDasParcelas(entrada: {
+  ancora: ParcelaParaAlcance;
+  /** 'AAAA-MM-01': a fatura para onde a ancora vai. */
+  destinoDaAncora: string;
+  /** As parcelas que o alcance pegou, a ancora inclusa. */
+  alcancadas: ParcelaParaAlcance[];
+  mesesDeFaturaPaga?: string[];
+}): PlanoDeMovimento {
+  const { ancora, destinoDaAncora, alcancadas } = entrada;
+  const pagas = new Set(entrada.mesesDeFaturaPaga ?? []);
+
+  if (!ancora.invoice_month) {
+    return { ok: false, motivo: "ancora_sem_fatura", parcelas: [ancora.id] };
+  }
+
+  const delta = mesesEntreFaturas(ancora.invoice_month, destinoDaAncora);
+  if (delta === null) {
+    return { ok: false, motivo: "destino_ilegivel", parcelas: [] };
+  }
+  if (delta === 0) {
+    return { ok: false, motivo: "sem_movimento", parcelas: [] };
+  }
+
+  const emOrdem = [...alcancadas].sort(
+    (a, b) => a.installment_number - b.installment_number
+  );
+
+  const semFatura = emOrdem.filter((p) => !p.invoice_month).map((p) => p.id);
+  if (semFatura.length > 0) {
+    return { ok: false, motivo: "parcela_sem_fatura", parcelas: semFatura };
+  }
+
+  const movimentos: MovimentoDeParcela[] = [];
+  const noPago: string[] = [];
+
+  for (const p of emOrdem) {
+    const destino = somaMeses(String(p.invoice_month), delta);
+    if (!destino) {
+      // A conta de meses saiu do calendario (ano fora de 0001..9999). Nao e um
+      // caso de usuario, e e por isso que ele recusa em vez de pular a linha:
+      // pular deixaria a serie meio movida pelo mesmo pedido.
+      return { ok: false, motivo: "destino_ilegivel", parcelas: [p.id] };
+    }
+    if (pagas.has(destino)) noPago.push(p.id);
+    movimentos.push({ id: p.id, invoiceMonth: destino });
+  }
+
+  if (noPago.length > 0) {
+    return { ok: false, motivo: "fatura_paga_no_destino", parcelas: noPago };
+  }
+
+  return { ok: true, delta, movimentos };
+}
+
+/** O que a tela manda no corpo para mover: um destino, ou nada. */
+export type DestinoPedido =
+  | { invoice_month: string }
+  | { transaction_date: string };
+
+/**
+ * A pessoa MOVEU esta parcela no formulario? E, se moveu, qual destino declara
+ * o movimento?
+ *
+ * O formulario tem DOIS campos que decidem em que fatura a compra cai -- a data
+ * e o seletor de fatura da 041 --, e eles nao tem o mesmo peso: com o override
+ * preenchido, a fatura e a escolha e a data nao coloca nada. E por isso que
+ * "mudou a data" nao e, sozinho, um movimento:
+ *
+ *   fatura escolhida (nova, nao vazia) -> o destino e ELA. Explicita ganha.
+ *   fatura APAGADA no seletor          -> a compra volta a cair pela data, e o
+ *                                         destino e a data que vai ser gravada.
+ *   sem fatura escolhida, data mudou   -> o destino e a data nova.
+ *   fatura escolhida INTACTA           -> nao ha movimento, mesmo com a data
+ *                                         mudando: o override continua
+ *                                         colocando a parcela onde ela esta.
+ *
+ * O ultimo caso e o que esta funcao existe para acertar. Tratar toda troca de
+ * data como movimento faria a serie andar quando a parcela NAO anda -- as nove
+ * irmas mudariam de fatura e a ancora ficaria onde estava, que e o defeito desta
+ * issue invertido e pior (a tela nem mostra as irmas).
+ */
+export function movimentoPedidoNaTela(entrada: {
+  /** `transaction_date` como esta gravada ('AAAA-MM-DD'). */
+  dataGravada: string;
+  /** `invoice_month_override` gravado, em 'AAAA-MM', ou "" quando nulo. */
+  faturaGravada: string;
+  /** A data no campo ('AAAA-MM-DD'). */
+  dataNova: string;
+  /** O seletor de fatura ('AAAA-MM'), ou "" em "pela data da compra". */
+  faturaNova: string;
+}): DestinoPedido | null {
+  const { dataGravada, faturaGravada, dataNova, faturaNova } = entrada;
+
+  const mudouAFatura = faturaNova !== faturaGravada;
+  const mudouAData = dataNova !== dataGravada;
+
+  if (mudouAFatura && faturaNova) return { invoice_month: faturaNova };
+  if (mudouAFatura) return { transaction_date: dataNova };
+  if (mudouAData && !faturaNova) return { transaction_date: dataNova };
+
+  return null;
+}
+
+/**
+ * A frase que declara o movimento, para a tela e para o toast.
+ *
+ * Ela diz o NUMERO de parcelas e o SENTIDO, porque "as demais movem junto" tem
+ * duas leituras na cabeca de quem clica -- "as nove restantes" e "as seis
+ * seguintes" -- e so o alcance escolhido distingue as duas. Sem o numero, o
+ * dialogo de "esta e as proximas" e o de "todas" dizem a mesma coisa.
+ */
+export function consequenciaDoMovimento(
+  plano: PlanoDeParcelas,
+  delta: number
+): string {
+  const quantas = plano.ids.length;
+  const meses = Math.abs(delta);
+  const sentido = delta > 0 ? "para frente" : "para trás";
+  const emMeses = `${meses} ${meses === 1 ? "mês" : "meses"} ${sentido}`;
+
+  const frases: string[] = [
+    quantas === 1
+      ? `Só esta parcela anda ${emMeses}. As outras ficam nas faturas delas.`
+      : `${quantas} parcelas andam ${emMeses}, cada uma a partir da fatura dela.`,
+  ];
+
+  const quantasPagas = plano.preservadasPorFaturaPaga.length;
+  if (quantasPagas > 0) {
+    frases.push(
+      `${quantasPagas} parcela${quantasPagas === 1 ? " está" : "s estão"} em fatura já paga e não ${quantasPagas === 1 ? "foi" : "foram"} movida${quantasPagas === 1 ? "" : "s"}.`
+    );
+  }
+
+  return frases.join(" ");
 }

@@ -50,10 +50,17 @@ import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
 
 const RECORRENCIA = "lib/recorrencia-edicao.ts";
 const PARCELAS = "lib/parcelas-edicao.ts";
+// MUTAVEL DESDE A HMO-357: o dialogo de MOVER tem consequencias proprias, e as
+// da alteracao de valor estariam erradas nele (mover nao muda o total da
+// compra). Sem a tela aqui, o `if` que escolhe entre os dois conjuntos de
+// frases nao teria mutante -- e e um `if` que, apagado, nao quebra nada: o
+// dialogo abre, as tres opcoes aparecem, e as frases descrevem outra operacao.
+const TELA = "lib/alcance-na-tela.ts";
 
 const originais = {
   [RECORRENCIA]: readFileSync(RECORRENCIA, "utf8"),
   [PARCELAS]: readFileSync(PARCELAS, "utf8"),
+  [TELA]: readFileSync(TELA, "utf8"),
 };
 
 const MUTANTES = [
@@ -253,6 +260,84 @@ const MUTANTES = [
       "a frase da tela passa a dizer so o total NOVO: 'o total da compra passa a ser R$ 2.600,00' sozinho nao diz se era isso que a pessoa esperava, e e justamente nessa comparacao que ela descobre que escolheu o alcance errado",
     de: "        ? `Muda da parcela ${plano.ancoraEm} em diante. As ${anteriores} anteriores ficam com o valor antigo, então o total da compra passa a ser ${emReais(total.depois)} (era ${emReais(total.antes)}).`",
     para: "        ? `Muda da parcela ${plano.ancoraEm} em diante. O total da compra passa a ser ${emReais(total.depois)}.`",
+  },
+  // -------------------------------------------------------------------------
+  // MOVER A PARCELA MOVE A SERIE (HMO-357)
+  // -------------------------------------------------------------------------
+  // Nenhum destes da erro em runtime. Todos produzem uma fatura de aparencia
+  // normal, com a serie torta dentro -- duas parcelas num mes e um mes vazio no
+  // fim, cada fatura fechando num valor plausivel.
+  {
+    nome: "movimento_joga_a_serie_toda_na_mesma_fatura",
+    fonte: PARCELAS,
+    porque:
+      "cada parcela deixa de andar a partir da fatura DELA e passa a ir para a fatura da ancora: as dez parcelas da compra caem todas no mesmo mes. A fatura daquele mes cobra a compra inteira e os outros nove meses ficam vazios -- e o total da compra continua certo, entao nenhuma soma denuncia",
+    de: "    const destino = somaMeses(String(p.invoice_month), delta);",
+    para: "    const destino = somaMeses(String(ancora.invoice_month), delta);",
+  },
+  {
+    nome: "deslocamento_medido_ao_contrario",
+    fonte: PARCELAS,
+    porque:
+      "o deslocamento troca de sinal: quem adia a parcela de outubro para novembro ADIANTA a serie para setembro. O numero de meses esta certo, o sentido nao, e a tela diz 'movi 8 parcelas 1 mes para frente' sobre uma serie que andou para tras",
+    de: "  return destino - origem;",
+    para: "  return origem - destino;",
+  },
+  {
+    nome: "destino_em_fatura_paga_aceito",
+    fonte: PARCELAS,
+    porque:
+      "a parcela passa a poder CAIR numa fatura ja paga. O total daquela fatura muda depois de a pessoa ter conferido e pagado -- e a conta do cartao nao muda junto. E o outro lado da barreira de fatura paga: a regra ja protege a parcela que ESTA numa, e esta guarda protege a que iria para uma",
+    de: "  if (noPago.length > 0) {",
+    para: "  if (false) {",
+  },
+  {
+    nome: "destino_igual_a_origem_vira_movimento",
+    fonte: PARCELAS,
+    porque:
+      "mudar o DIA dentro da mesma fatura (de 05 para 10 de outubro) passa a 'mover' a serie zero meses: a rota reescreve as dez linhas, responde que a serie andou, e o toast afirma um movimento que nao houve",
+    de: "  if (delta === 0) {",
+    para: "  if (false) {",
+  },
+  {
+    nome: "dia_qualquer_aceito_como_mes_de_fatura",
+    fonte: PARCELAS,
+    porque:
+      "'2026-11-15' passa a ser aceito como mes de fatura. A 041 tem CHECK `invoice_month_override = date_trunc('month', ...)`, entao o UPDATE volta 23514 no meio da serie -- com algumas parcelas ja movidas e uma mensagem de Postgres que nao nomeia o campo",
+    de: "  const casa = /^(\\d{4})-(\\d{2})-01$/.exec(mes);",
+    para: "  const casa = /^(\\d{4})-(\\d{2})-\\d{2}$/.exec(mes);",
+  },
+  {
+    nome: "data_mudada_move_mesmo_com_fatura_escolhida",
+    fonte: PARCELAS,
+    porque:
+      "com a fatura escolhida INTACTA, mudar a data passa a mover a serie. O override continua colocando a ancora onde ela estava, entao as nove irmas andam e a ancora FICA -- o defeito desta issue invertido, e pior: a tela mostra a parcela editada no lugar certo e nao mostra as irmas",
+    de: "  if (mudouAData && !faturaNova) return { transaction_date: dataNova };",
+    para: "  if (mudouAData) return { transaction_date: dataNova };",
+  },
+  {
+    nome: "data_ganha_da_fatura_escolhida",
+    fonte: PARCELAS,
+    porque:
+      "a escolha explicita de fatura perde para a data: quem move a compra para a fatura de dezembro ve a serie andar para a fatura da data da compra, que e outro mes. A rota recusa data e fatura juntas justamente porque sao dois destinos",
+    de: "  if (mudouAFatura && faturaNova) return { invoice_month: faturaNova };",
+    para: "  if (mudouAFatura && faturaNova) return { transaction_date: dataNova };",
+  },
+  {
+    nome: "frase_do_movimento_sem_quantas_parcelas",
+    fonte: PARCELAS,
+    porque:
+      "a declaracao perde o NUMERO de parcelas. 'as demais movem junto' tem duas leituras na cabeca de quem clica -- 'as nove restantes' e 'as oito seguintes' --, e so o numero distingue 'esta e as proximas' de 'todas' antes do clique",
+    de: "      : `${quantas} parcelas andam ${emMeses}, cada uma a partir da fatura dela.`,",
+    para: "      : `As parcelas andam ${emMeses}.`,",
+  },
+  {
+    nome: "mover_mostra_as_consequencias_do_valor",
+    fonte: TELA,
+    porque:
+      "o dialogo de MOVER volta a mostrar as frases da alteracao de valor: 'as anteriores ficam com o valor antigo, então o total da compra deixa de ser o valor da parcela vezes o número de parcelas' -- um total recalculado que mover nao muda, e nenhuma palavra sobre a cadencia nem sobre duas parcelas na mesma fatura",
+    de: "  if (ehParcela && movendo) {",
+    para: "  if (false) {",
   },
 ];
 

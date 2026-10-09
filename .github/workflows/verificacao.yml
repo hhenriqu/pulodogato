@@ -2264,6 +2264,14 @@ jobs:
       # trocam a barreira de status por uma de data. O proprio runner reprova se
       # nenhum mutante morrer por assercao -- uma suite vazia tiraria placar
       # perfeito.
+      #
+      # A HMO-357 somou NOVE mutantes do movimento da serie -- 32/32 mortos,
+      # todos por assercao. Os dois que dao nome a ela:
+      # `movimento_joga_a_serie_toda_na_mesma_fatura` (as dez parcelas caindo no
+      # mesmo mes, com o total da compra ainda certo, entao nenhuma soma
+      # denuncia) e `data_mudada_move_mesmo_com_fatura_escolhida` (as irmas
+      # andando com a ancora PARADA -- o defeito da issue invertido, e pior,
+      # porque a tela mostra a parcela editada no lugar certo).
       - name: Os mutantes das duas barreiras
         run: npm run mutantes:alcance-da-serie
 
@@ -2285,9 +2293,18 @@ jobs:
           set -uo pipefail
           TELA=components/cartoes/FaturaDoCartao.tsx
           ROTA=app/api/scheduled-transactions/\[id\]/route.ts
+          # OS DOIS ALVOS DA HMO-357, no MESMO trap: a restauracao tem de
+          # acontecer tambem quando um controle reprova e o passo sai com
+          # `exit 1`. O passo seguinte compara `git status --porcelain` com o
+          # retrato do inicio, e um arquivo mutado deixado atras contamina todos
+          # os passos deste job.
+          FORM=components/movimentacoes/FormularioDeLancamento.tsx
+          ROTA_SERIE=app/api/financial-installments/serie/\[id\]/route.ts
           cp "$TELA" "$TELA.orig"
           cp "$ROTA" "$ROTA.orig"
-          trap 'mv "$TELA.orig" "$TELA"; mv "$ROTA.orig" "$ROTA"' EXIT
+          cp "$FORM" "$FORM.orig"
+          cp "$ROTA_SERIE" "$ROTA_SERIE.orig"
+          trap 'mv "$TELA.orig" "$TELA"; mv "$ROTA.orig" "$ROTA"; mv "$FORM.orig" "$FORM"; mv "$ROTA_SERIE.orig" "$ROTA_SERIE"' EXIT
 
           # ------------------------------------------------------------------
           # O GUARDA DE TODO MUTANTE: ELE TEM DE TER SIDO APLICADO (HMO-231)
@@ -2337,7 +2354,31 @@ jobs:
           fi
           cp "$ROTA.orig" "$ROTA"
 
-          echo "os dois controles negativos reprovaram, como deviam"
+          # 3) HMO-357: O FORMULARIO VOLTANDO A SALVAR SEM PERGUNTAR. E o estado
+          #    anterior a issue -- mover a parcela 3 de 10 grava UMA linha e
+          #    deixa as outras nove onde estavam. Os mutantes acima nao pegam
+          #    isto: eles mutam `lib/`, e a regra do movimento continua perfeita
+          #    com o formulario nunca a chamando.
+          sed -i 's#            setPerguntandoAlcance(true);#            void 0;#' "$FORM"
+          mutou "$FORM" 3
+          if npm run test:alcance-da-serie > /dev/null 2>&1; then
+            echo "::error::Verde com o formulario salvando a parcela movida sem perguntar o alcance."
+            exit 1
+          fi
+          cp "$FORM.orig" "$FORM"
+
+          # 4) HMO-357: A ROTA GRAVANDO A FATURA DE NINGUEM. Trocar o destino de
+          #    cada parcela por `null` deixa a serie inteira caindo pela data:
+          #    o pedido responde "movi 8 parcelas" e nada se moveu.
+          sed -i 's#? { invoice_month_override: m.invoiceMonth }#? { invoice_month_override: null }#' "$ROTA_SERIE"
+          mutou "$ROTA_SERIE" 4
+          if npm run test:alcance-da-serie > /dev/null 2>&1; then
+            echo "::error::Verde com a rota deixando de gravar a fatura de destino de cada parcela."
+            exit 1
+          fi
+          cp "$ROTA_SERIE.orig" "$ROTA_SERIE"
+
+          echo "os quatro controles negativos reprovaram, como deviam"
 
       - name: 'A arvore voltou ao lugar depois de "A verificacao sabe falhar (alcance-da-serie)"'
         run: |

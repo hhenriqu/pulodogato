@@ -69,6 +69,21 @@ export interface DialogoDeAlcanceProps {
   /** O valor muda neste pedido? Decide se a pergunta de base aparece. */
   mudaValor?: boolean;
   /**
+   * O pedido MOVE a parcela de fatura (HMO-357)? Troca as consequencias pelas
+   * do movimento -- as do valor afirmariam um total recalculado que mover nao
+   * muda.
+   */
+  movendo?: boolean;
+  /**
+   * Um fato a mais sobre ESTE pedido, abaixo da consequencia do alcance.
+   *
+   * Existe para o caso em que o mesmo Salvar faz duas coisas de alcances
+   * diferentes: mover a serie e alterar o valor/descricao SO desta parcela. Sem
+   * dizer isso, quem escolhe "todas" sai acreditando que o valor novo foi para
+   * as dez.
+   */
+  aviso?: string | null;
+  /**
    * O total da compra como esta hoje, e como fica depois -- por alcance.
    *
    * A TELA TEM DE MOSTRAR O TOTAL RECALCULADO ANTES DO SALVAR. Em "a partir
@@ -106,6 +121,8 @@ export function DialogoDeAlcance({
   ancora,
   totalDeParcelas,
   mudaValor = false,
+  movendo = false,
+  aviso = null,
   totalDaCompra,
   aoConfirmar,
   salvando = false,
@@ -119,7 +136,13 @@ export function DialogoDeAlcance({
   const [alcance, setAlcance] = useState<Alcance>("apenas_esta");
   const [base, setBase] = useState<BaseDoValorParcelado>("parcela");
 
-  const opcoes = opcoesDeAlcance({ tipo, acao, ancora, totalDeParcelas });
+  const opcoes = opcoesDeAlcance({
+    tipo,
+    acao,
+    ancora,
+    totalDeParcelas,
+    movendo,
+  });
   const consequencia = consequenciaNaTela(alcance, opcoes);
   const perguntarBase = precisaPerguntarBase({ tipo, alcance, mudaValor });
 
@@ -183,6 +206,14 @@ export function DialogoDeAlcance({
                 lugar onde a tela diz que "esta e as proximas" encerra o gasto
                 fixo, e que "todas" alcanca meses anteriores em aberto. */}
             <p className="text-xs text-muted-foreground">{consequencia}</p>
+
+            {/* O QUE ESTE PEDIDO FAZ FORA DO ALCANCE ESCOLHIDO.
+                Mover a serie e alterar o valor so desta parcela podem sair do
+                MESMO Salvar, e sem esta frase quem escolhe "todas" acredita que
+                o valor novo foi para todas. */}
+            {aviso && (
+              <p className="text-xs font-medium text-foreground">{aviso}</p>
+            )}
           </div>
 
           {/* A MESMA PERGUNTA QUE A HMO-211 JA FAZ NO LANCAMENTO, COM AS MESMAS

@@ -41,6 +41,12 @@ import {
   totalDaCompra,
   consequenciaDoAlcance,
   ehAlcanceDeParcelaValido,
+  // O movimento da serie (HMO-357) -- secao 7.
+  mesesEntreFaturas,
+  mesDaFaturaPedida,
+  novasFaturasDasParcelas,
+  consequenciaDoMovimento,
+  movimentoPedidoNaTela,
 } from "../.tmp-alcance-da-serie/lib/parcelas-edicao.js";
 
 import {
@@ -803,5 +809,517 @@ test("o DELETE da serie reamarra as parcelas que sobraram", () => {
     ROTA_SERIE,
     /installment_parent_id:\s*novaPrimeira/,
     "o DELETE nao reamarra a serie"
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 7. MOVER UMA PARCELA MOVE A SERIE (HMO-357)
+// ---------------------------------------------------------------------------
+// "Quando movo uma parcela, as demais devem mover junto."
+//
+// A serie de um parcelamento nao e um conjunto de dez linhas independentes: ela
+// e uma CADENCIA de um mes. Mover a parcela 3 sem mover as seguintes poe duas
+// parcelas na mesma fatura e deixa um mes vazio no fim -- e as duas faturas
+// fecham num valor plausivel, sem erro em lugar nenhum.
+//
+// A FIXTURE ACIMA E A QUE INTERESSA, e por um detalhe: a parcela 4 cai no MESMO
+// mes de fatura que a 3 (uma compra perto do fechamento faz isso). E ele que
+// separa a implementacao certa -- cada parcela anda a partir da fatura DELA --
+// da que encadeia (`somaMeses(destino_da_vizinha, 1)`), que normalizaria o
+// espacamento e moveria a 4 um mes a mais do que a pessoa pediu.
+
+const idsMovidos = (plano) => plano.movimentos.map((m) => `${m.id}:${m.invoiceMonth}`);
+
+test("mover a parcela 3 um mes para frente move da 3 em diante", () => {
+  const ancora = PARCELAS[2]; // p3, fatura de outubro/2026
+  const plano = planejarAlteracaoDeParcelas(
+    "esta_e_proximas",
+    ancora,
+    PARCELAS,
+    FATURAS_PAGAS
+  );
+  const alcancadas = PARCELAS.filter((x) => plano.ids.includes(x.id));
+
+  const movimento = novasFaturasDasParcelas({
+    ancora,
+    destinoDaAncora: "2026-11-01",
+    alcancadas,
+    mesesDeFaturaPaga: FATURAS_PAGAS,
+  });
+
+  assert.equal(movimento.ok, true);
+  assert.equal(movimento.delta, 1);
+
+  // A 4 vai para NOVEMBRO, junto da 3 -- ela ja estava na mesma fatura que a 3,
+  // e o movimento preserva o espacamento que existe em vez de inventar um.
+  assert.deepEqual(idsMovidos(movimento), [
+    "p3:2026-11-01",
+    "p4:2026-11-01",
+    "p5:2026-12-01",
+    "p6:2027-01-01",
+    "p7:2027-02-01",
+    "p8:2027-03-01",
+    "p9:2027-04-01",
+    "p10:2027-05-01",
+  ]);
+
+  // E as duas primeiras -- as de fatura ja paga -- nao entram no movimento.
+  assert.ok(!movimento.movimentos.some((m) => m.id === "p1" || m.id === "p2"));
+});
+
+test("o deslocamento e o MESMO para todas: a cadencia de um mes sobrevive", () => {
+  // A prova independente da lista literal acima: a diferenca entre a fatura de
+  // destino de cada parcela e a de origem dela e a mesma para todas. Uma
+  // implementacao encadeada quebra esta igualdade exatamente no par 3/4.
+  const ancora = PARCELAS[2];
+  const plano = planejarAlteracaoDeParcelas("todas", ancora, PARCELAS, []);
+  const alcancadas = PARCELAS.filter((x) => plano.ids.includes(x.id));
+
+  const movimento = novasFaturasDasParcelas({
+    ancora,
+    destinoDaAncora: "2027-01-01", // tres meses para frente
+    alcancadas,
+    mesesDeFaturaPaga: [],
+  });
+
+  assert.equal(movimento.ok, true);
+  assert.equal(movimento.delta, 3);
+  assert.equal(movimento.movimentos.length, 10);
+
+  for (const m of movimento.movimentos) {
+    const origem = PARCELAS.find((x) => x.id === m.id).invoice_month;
+    assert.equal(
+      mesesEntreFaturas(origem, m.invoiceMonth),
+      3,
+      `${m.id} andou um numero de meses diferente do pedido`
+    );
+  }
+});
+
+test("mover PARA TRAS tambem arrasta a serie", () => {
+  const ancora = PARCELAS[4]; // p5, novembro/2026
+  const plano = planejarAlteracaoDeParcelas("esta_e_proximas", ancora, PARCELAS, []);
+  const alcancadas = PARCELAS.filter((x) => plano.ids.includes(x.id));
+
+  const movimento = novasFaturasDasParcelas({
+    ancora,
+    destinoDaAncora: "2026-10-01",
+    alcancadas,
+    mesesDeFaturaPaga: [],
+  });
+
+  assert.equal(movimento.ok, true);
+  assert.equal(movimento.delta, -1);
+  assert.deepEqual(idsMovidos(movimento), [
+    "p5:2026-10-01",
+    "p6:2026-11-01",
+    "p7:2026-12-01",
+    "p8:2027-01-01",
+    "p9:2027-02-01",
+    "p10:2027-03-01",
+  ]);
+});
+
+test("'apenas_esta' move UMA parcela, e e uma escolha legitima", () => {
+  const ancora = PARCELAS[2];
+  const plano = planejarAlteracaoDeParcelas("apenas_esta", ancora, PARCELAS, []);
+  const alcancadas = PARCELAS.filter((x) => plano.ids.includes(x.id));
+
+  const movimento = novasFaturasDasParcelas({
+    ancora,
+    destinoDaAncora: "2026-12-01",
+    alcancadas,
+    mesesDeFaturaPaga: [],
+  });
+
+  assert.equal(movimento.ok, true);
+  assert.deepEqual(idsMovidos(movimento), ["p3:2026-12-01"]);
+});
+
+test("O MUTANTE CRITICO DO MOVIMENTO: cair numa fatura PAGA e recusa, nao aviso", () => {
+  // `planejarAlteracaoDeParcelas` protege a parcela que ESTA em fatura paga.
+  // Este e o outro lado: a parcela que CAIRIA numa. Deixa-la entrar mudaria o
+  // total de uma fatura que a pessoa ja conferiu e pagou -- e a conta do cartao
+  // nao muda junto. Nenhum alcance autoriza isso.
+  const ancora = PARCELAS[2]; // p3, outubro
+  const plano = planejarAlteracaoDeParcelas("esta_e_proximas", ancora, PARCELAS, FATURAS_PAGAS);
+  const alcancadas = PARCELAS.filter((x) => plano.ids.includes(x.id));
+
+  const movimento = novasFaturasDasParcelas({
+    ancora,
+    destinoDaAncora: "2026-09-01", // setembro esta PAGO
+    alcancadas,
+    mesesDeFaturaPaga: FATURAS_PAGAS,
+  });
+
+  assert.equal(movimento.ok, false);
+  assert.equal(movimento.motivo, "fatura_paga_no_destino");
+  // A 3 e a 4 cairiam em setembro (as duas estao em outubro hoje).
+  assert.deepEqual(movimento.parcelas, ["p3", "p4"]);
+  // E NADA e movido: um movimento aplicado pela metade e o estado que esta
+  // issue existe para eliminar.
+  assert.equal(movimento.movimentos, undefined);
+});
+
+test("destino igual a origem nao e erro nem movimento", () => {
+  // E o que acontece quando a pessoa muda o DIA dentro da mesma fatura (de 05
+  // para 10 de outubro). Recusar bloquearia uma edicao legitima; mover as irmas
+  // zero meses e dizer que a serie andou seria pior.
+  const ancora = PARCELAS[2];
+  const movimento = novasFaturasDasParcelas({
+    ancora,
+    destinoDaAncora: "2026-10-01",
+    alcancadas: [ancora],
+    mesesDeFaturaPaga: [],
+  });
+
+  assert.equal(movimento.ok, false);
+  assert.equal(movimento.motivo, "sem_movimento");
+});
+
+test("sem fatura na ancora ou numa alcancada, o movimento inteiro e recusado", () => {
+  const semFatura = p(3, null);
+  assert.deepEqual(
+    novasFaturasDasParcelas({
+      ancora: semFatura,
+      destinoDaAncora: "2026-11-01",
+      alcancadas: [semFatura],
+    }),
+    { ok: false, motivo: "ancora_sem_fatura", parcelas: ["p3"] }
+  );
+
+  // Uma IRMA sem fatura tambem para o pedido todo: mover as oito que dao e
+  // deixar uma atras desmonta a cadencia sem nada na tela dizendo qual linha
+  // ficou.
+  const movimento = novasFaturasDasParcelas({
+    ancora: PARCELAS[2],
+    destinoDaAncora: "2026-11-01",
+    alcancadas: [PARCELAS[2], p(7, null), PARCELAS[7]],
+  });
+  assert.equal(movimento.ok, false);
+  assert.equal(movimento.motivo, "parcela_sem_fatura");
+  assert.deepEqual(movimento.parcelas, ["p7"]);
+});
+
+test("o destino tem de ser um MES de fatura, com o dia 1", () => {
+  // 'AAAA-MM-15' chegando aqui e quem confundiu mes de fatura com data de
+  // compra. Normalizar em silencio gravaria a serie numa fatura que ninguem
+  // escolheu -- e a 041 tem CHECK de date_trunc, entao o banco recusaria depois,
+  // com uma mensagem que nao nomeia o campo.
+  for (const destino of ["2026-11-15", "2026-11", "novembro", "", "2026-13-01"]) {
+    const movimento = novasFaturasDasParcelas({
+      ancora: PARCELAS[2],
+      destinoDaAncora: destino,
+      alcancadas: [PARCELAS[2]],
+    });
+    assert.equal(movimento.ok, false, `${destino} passou`);
+    assert.equal(movimento.motivo, "destino_ilegivel", `${destino}: motivo errado`);
+  }
+});
+
+test("mesesEntreFaturas conta meses, atravessa o ano e recusa o ilegivel", () => {
+  assert.equal(mesesEntreFaturas("2026-10-01", "2026-11-01"), 1);
+  assert.equal(mesesEntreFaturas("2026-10-01", "2026-10-01"), 0);
+  assert.equal(mesesEntreFaturas("2026-11-01", "2027-01-01"), 2);
+  assert.equal(mesesEntreFaturas("2026-12-01", "2027-12-01"), 12);
+  assert.equal(mesesEntreFaturas("2027-01-01", "2026-11-01"), -2);
+  // `null` e nao 0: zero e indistinguivel de "nao ha movimento", e um destino
+  // ilegivel passaria como pedido inofensivo.
+  assert.equal(mesesEntreFaturas("2026-10-01", "lixo"), null);
+  assert.equal(mesesEntreFaturas("", "2026-10-01"), null);
+});
+
+test("'AAAA-MM' da tela vira 'AAAA-MM-01' da coluna", () => {
+  assert.equal(mesDaFaturaPedida("2026-11"), "2026-11-01");
+  assert.equal(mesDaFaturaPedida(" 2026-01 "), "2026-01-01");
+  // O dia 1 e exigencia da 041 (CHECK date_trunc), entao uma data completa NAO
+  // e aceita aqui: ela e outra pergunta (em que fatura esta data cai?), e quem
+  // responde essa e a card_invoice_month no banco.
+  assert.equal(mesDaFaturaPedida("2026-11-01"), null);
+  assert.equal(mesDaFaturaPedida("2026-13"), null);
+  assert.equal(mesDaFaturaPedida(null), null);
+  assert.equal(mesDaFaturaPedida(undefined), null);
+});
+
+test("a tela declara QUANTAS parcelas andam e para que lado", () => {
+  const ancora = PARCELAS[2];
+  const plano = planejarAlteracaoDeParcelas(
+    "esta_e_proximas",
+    ancora,
+    PARCELAS,
+    FATURAS_PAGAS
+  );
+
+  const frase = consequenciaDoMovimento(plano, 1);
+  assert.match(frase, /8 parcelas andam 1 mês para frente/);
+  // "as demais movem junto" tem duas leituras na cabeca de quem clica -- "as
+  // nove restantes" e "as oito seguintes" --, e so o numero distingue as duas.
+  assert.match(frase, /a partir da fatura dela/);
+
+  assert.match(consequenciaDoMovimento(plano, -2), /2 meses para trás/);
+
+  const soEsta = planejarAlteracaoDeParcelas("apenas_esta", ancora, PARCELAS, []);
+  assert.match(
+    consequenciaDoMovimento(soEsta, 1),
+    /Só esta parcela anda 1 mês para frente/
+  );
+});
+
+test("a frase conta, em separado, a parcela que nao foi movida por fatura paga", () => {
+  const ancora = PARCELAS[3]; // p4
+  const plano = planejarAlteracaoDeParcelas("todas", ancora, PARCELAS, FATURAS_PAGAS);
+  const frase = consequenciaDoMovimento(plano, 1);
+  assert.match(frase, /2 parcelas estão em fatura já paga e não foram movidas/);
+});
+
+// ---------------------------------------------------------------------------
+// 7b. A ROTA MOVE DE VERDADE
+// ---------------------------------------------------------------------------
+// As assercoes puras acima provam a REGRA. Nenhuma delas prova que a rota a
+// chama: um `if (false)` em volta do bloco do movimento passa por todas, e o
+// sintoma seria o de sempre -- a parcela anda sozinha e a serie fica torta.
+//
+// E OS COMENTARIOS SAO REMOVIDOS ANTES DE QUALQUER BUSCA. Este arquivo e a rota
+// explicam por escrito exatamente o que estas assercoes procuram ("aceita
+// `invoice_month`", "chama `novasFaturasDasParcelas`"): sobre o texto cru elas
+// passariam verdes com o codigo apagado.
+
+const semComentarios = (fonte) =>
+  fonte
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+
+const CODIGO_DA_SERIE = semComentarios(ROTA_SERIE);
+
+test("a rota aceita as DUAS formas de mover: a fatura e a data", () => {
+  // As duas, porque sao os dois caminhos pelos quais a tela move uma parcela
+  // hoje: o seletor de fatura (041) e o campo de data.
+  assert.match(CODIGO_DA_SERIE, /invoice_month,/, "a rota nao le invoice_month do corpo");
+  assert.match(CODIGO_DA_SERIE, /transaction_date,/, "a rota nao le transaction_date do corpo");
+  assert.match(
+    CODIGO_DA_SERIE,
+    /mudaFatura\s*&&\s*mudaData/,
+    "a rota nao recusa os dois destinos no mesmo pedido"
+  );
+});
+
+test("a rota chama a REGRA do movimento, e nao uma aritmetica propria", () => {
+  assert.match(
+    CODIGO_DA_SERIE,
+    /novasFaturasDasParcelas\(/,
+    "a rota nao usa a regra do deslocamento"
+  );
+  // Nenhuma conta de mes escrita na rota: duas copias da aritmetica divergem no
+  // primeiro conserto que so uma das duas receber.
+  assert.ok(
+    !/somaMeses\(|getUTCMonth|setMonth/.test(CODIGO_DA_SERIE),
+    "a rota cresceu a propria aritmetica de meses"
+  );
+});
+
+test("em que fatura cai a data nova: a rota PERGUNTA ao banco", () => {
+  // `card_invoice_month` (006) e a unica fonte dessa regra. Recalcula-la em
+  // TypeScript criaria a segunda, e as duas divergiriam no primeiro dia de
+  // fechamento alterado -- "31/01 com fechamento no dia 30 cai em fevereiro" e
+  // o caso que uma reimplementacao perde na borda.
+  assert.match(
+    CODIGO_DA_SERIE,
+    /rpc\(\s*"card_invoice_month"/,
+    "a rota nao pergunta ao banco em que fatura a data cai"
+  );
+  assert.match(
+    CODIGO_DA_SERIE,
+    /closing_day/,
+    "a rota nao leva o dia de fechamento do cartao para a RPC"
+  );
+});
+
+test("a rota grava UMA linha por parcela movida, com a fatura de cada uma", () => {
+  // `.in(ids).update({invoice_month_override: X})` poria a MESMA fatura em todas
+  // -- a serie inteira numa fatura so, que e um defeito maior do que o que esta
+  // issue conserta.
+  assert.match(
+    CODIGO_DA_SERIE,
+    /movimento\.movimentos/,
+    "a rota nao percorre os movimentos"
+  );
+  assert.match(
+    CODIGO_DA_SERIE,
+    /invoice_month_override:\s*m\.invoiceMonth/,
+    "a rota nao grava a fatura de destino de cada parcela"
+  );
+  assert.match(
+    CODIGO_DA_SERIE,
+    /\.eq\("id",\s*m\.id\)/,
+    "a rota nao grava parcela por parcela"
+  );
+});
+
+test("a rota devolve quantas parcelas andaram", () => {
+  // Sem este numero, "Parcela alterada" sobre um pedido que moveu oito linhas
+  // em sete faturas esconde justamente o que a issue entregou -- e conferir
+  // seria abrir as sete faturas.
+  assert.match(CODIGO_DA_SERIE, /parcelas_movidas:/);
+  assert.match(CODIGO_DA_SERIE, /deslocamento_em_meses:/);
+});
+
+// ---------------------------------------------------------------------------
+// 7c. QUANDO A TELA MOVEU, E QUANDO ELA SO EDITOU
+// ---------------------------------------------------------------------------
+// O formulario tem DOIS campos que colocam a compra numa fatura -- a data e o
+// seletor da 041 --, e eles nao tem o mesmo peso. Com override preenchido, a
+// fatura e a escolha e a data nao coloca nada: tratar toda troca de data como
+// movimento faria as nove irmas andarem com a ancora PARADA, que e o defeito
+// desta issue invertido e pior (a tela nem mostra as irmas).
+
+test("a fatura escolhida e o destino, e ela ganha da data", () => {
+  assert.deepEqual(
+    movimentoPedidoNaTela({
+      dataGravada: "2026-10-04",
+      faturaGravada: "",
+      dataNova: "2026-10-04",
+      faturaNova: "2026-12",
+    }),
+    { invoice_month: "2026-12" }
+  );
+
+  // As duas mudaram: a escolha explicita e o destino. A rota recusaria as duas
+  // juntas -- sao dois lugares diferentes para a mesma parcela.
+  assert.deepEqual(
+    movimentoPedidoNaTela({
+      dataGravada: "2026-10-04",
+      faturaGravada: "2026-10",
+      dataNova: "2026-11-20",
+      faturaNova: "2026-12",
+    }),
+    { invoice_month: "2026-12" }
+  );
+});
+
+test("apagar a fatura escolhida devolve a parcela para a data, e isso MOVE", () => {
+  assert.deepEqual(
+    movimentoPedidoNaTela({
+      dataGravada: "2026-10-04",
+      faturaGravada: "2026-12",
+      dataNova: "2026-10-04",
+      faturaNova: "",
+    }),
+    { transaction_date: "2026-10-04" }
+  );
+});
+
+test("sem fatura escolhida, mudar a data MOVE", () => {
+  assert.deepEqual(
+    movimentoPedidoNaTela({
+      dataGravada: "2026-10-04",
+      faturaGravada: "",
+      dataNova: "2026-11-04",
+      faturaNova: "",
+    }),
+    { transaction_date: "2026-11-04" }
+  );
+});
+
+test("O MUTANTE CRITICO DA TELA: com a fatura escolhida INTACTA, a data nao move", () => {
+  // O override continua colocando a parcela onde ela esta. Se isto virasse
+  // movimento, as irmas andariam e a ancora ficaria -- e a tela nao mostra as
+  // irmas, entao ninguem veria.
+  assert.equal(
+    movimentoPedidoNaTela({
+      dataGravada: "2026-10-04",
+      faturaGravada: "2026-11",
+      dataNova: "2026-10-20",
+      faturaNova: "2026-11",
+    }),
+    null
+  );
+});
+
+test("Salvar sem mexer na colocacao nao pergunta nada", () => {
+  assert.equal(
+    movimentoPedidoNaTela({
+      dataGravada: "2026-10-04",
+      faturaGravada: "",
+      dataNova: "2026-10-04",
+      faturaNova: "",
+    }),
+    null
+  );
+});
+
+test("mover tem as PROPRIAS consequencias na tela, e nao as do valor", () => {
+  const movendo = opcoesDeAlcance({
+    tipo: "parcela",
+    acao: "alterar",
+    ancora: "parcela 3 de 10",
+    totalDeParcelas: 10,
+    movendo: true,
+  });
+
+  // Mover NAO muda o total da compra, entao a frase do valor ("o total da compra
+  // deixa de ser o valor da parcela vezes o numero de parcelas") seria falsa
+  // aqui. O que esta em jogo e a cadencia.
+  assert.match(
+    consequenciaNaTela("esta_e_proximas", movendo),
+    /a partir da fatura dela/
+  );
+  assert.ok(
+    !/total da compra/.test(consequenciaNaTela("esta_e_proximas", movendo)),
+    "a consequencia de mover fala do total da compra, que mover nao muda"
+  );
+  // E "apenas esta" declara o estado que a issue existe para evitar.
+  assert.match(
+    consequenciaNaTela("apenas_esta", movendo),
+    /duas parcelas podem acabar na mesma fatura/
+  );
+  assert.match(
+    consequenciaNaTela("todas", movendo),
+    /fatura já paga não são movidas/
+  );
+
+  // Sem `movendo`, as frases continuam sendo as do valor -- a alteracao de valor
+  // nao mudou de texto.
+  const alterandoValor = opcoesDeAlcance({
+    tipo: "parcela",
+    acao: "alterar",
+    ancora: "parcela 3 de 10",
+    totalDeParcelas: 10,
+  });
+  assert.match(
+    consequenciaNaTela("esta_e_proximas", alterandoValor),
+    /valor da parcela vezes o número de parcelas/
+  );
+});
+
+test("o formulario pergunta o alcance ANTES de gravar a linha movida", () => {
+  // A fiacao: sem ela, a regra e a rota existem e o Salvar continua movendo uma
+  // linha so. Os comentarios saem antes da busca -- o formulario explica por
+  // escrito exatamente isto.
+  const FORMULARIO = semComentarios(
+    readFileSync("components/movimentacoes/FormularioDeLancamento.tsx", "utf8")
+  );
+
+  assert.match(
+    FORMULARIO,
+    /movimentoPedidoNaTela\(/,
+    "o formulario nao decide se a parcela foi movida"
+  );
+  assert.match(
+    FORMULARIO,
+    /financial-installments\/serie\//,
+    "o formulario nao chama a rota que conhece a serie"
+  );
+  assert.match(
+    FORMULARIO,
+    /setPerguntandoAlcance\(true\)/,
+    "o formulario nao abre a pergunta do alcance"
+  );
+  // A ORDEM: mover primeiro, gravar depois. Gravar antes apagaria a fatura de
+  // ORIGEM, e a rota leria deslocamento zero sobre a parcela ja movida.
+  const pedido = FORMULARIO.indexOf("financial-installments/serie/");
+  const gravacao = FORMULARIO.indexOf("await gravarTransacao()", pedido);
+  assert.ok(
+    pedido > 0 && gravacao > pedido,
+    "o formulario grava a linha antes de pedir o movimento"
   );
 });
