@@ -482,7 +482,9 @@ export function camposDoTipo(
     // aqui a checkbox aparecia em toda despesa, e fora do cartao ela nao
     // funcionava: a rota gravava em `transaction_installments`, uma tabela sem
     // leitor nenhum no app, e a compra parcelada desaparecia de Lancamentos, de
-    // Contas a Pagar e da fatura. Nao ha nada de util sendo retirado da tela.
+    // Contas a Pagar e da fatura. Nao ha nada de util sendo retirado da tela --
+    // a medicao da HMO-225 nao achou uma unica linha viva naquela tabela, e o
+    // ultimo codigo que a tocava saiu na HMO-358.
     //
     // E nao e um buraco no produto. Uma serie fora do cartao tem a parcela N
     // paga e as seguintes nao, o que exigiria escrever em DUAS tabelas na mesma
@@ -1455,7 +1457,9 @@ export function regraDeRecorrencia(
  * Para onde este lancamento vai (HMO-188).
  *
  *   regra     -> `recurring_rules` (005). Natureza fixa nao e lancamento.
- *   parcelas  -> `transaction_installments`, pela rota de parcelas.
+ *   parcelas  -> N linhas de `financial_transactions`, uma por mes de fatura,
+ *                pela rota de parcelas (`POST /api/financial-installments`), e
+ *                so no cartao -- que e onde elas tem leitor (035, HMO-211).
  *   previsao  -> `scheduled_transactions`. Nao confirmado: ainda nao aconteceu.
  *   transacao -> `financial_transactions`, como sempre foi.
  *

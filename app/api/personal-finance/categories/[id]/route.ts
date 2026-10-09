@@ -283,8 +283,8 @@ export async function DELETE(
     // Categoria propria. Tentamos o DELETE e deixamos o BANCO decidir se ela
     // esta em uso, em vez de contar lancamentos antes: a contagem e uma corrida
     // (um lancamento criado entre o COUNT e o DELETE) e, pior, ela precisaria
-    // olhar QUATRO tabelas (financial_transactions, transaction_installments,
-    // recurring_rules, scheduled_transactions). O 23503 e a resposta exata.
+    // olhar TRES tabelas (financial_transactions, recurring_rules,
+    // scheduled_transactions). O 23503 e a resposta exata.
     const { error } = await supabase
       .from("transaction_categories")
       .delete()

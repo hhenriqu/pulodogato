@@ -328,9 +328,11 @@ export function FaturaDoCartao({
 
                         E AQUI QUE O PARCELAMENTO PASSA A EXISTIR NA TELA. Antes
                         da 035 as parcelas iam para `transaction_installments`,
-                        que nao tem leitor nenhum: a compra em 10x era gravada e
-                        desaparecia de Lancamentos, de Contas a Pagar e da
-                        fatura. Agora cada parcela e uma compra no cartao, no mes
+                        que nunca teve leitor nenhum: a compra em 10x era gravada
+                        e desaparecia de Lancamentos, de Contas a Pagar e da
+                        fatura. Aquela tabela ficou orfa e sem linha viva
+                        (HMO-225/358), e nao vale procurar nada la.
+                        Agora cada parcela e uma compra no cartao, no mes
                         da fatura dela, e esta linha e o rotulo que diz qual.
 
                         O rotulo sai das COLUNAS, nao da descricao. A descricao
