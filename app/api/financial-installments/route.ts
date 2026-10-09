@@ -94,6 +94,16 @@ export async function POST(request: NextRequest) {
     const {
       account_id,
       category_id,
+      // A SUBCATEGORIA ATRAVESSA A SERIE (HMO-218)
+      //
+      // Sem ela aqui, parcelar era o UNICO caminho da tela que perdia a
+      // subcategoria: as outras tres (`financial_transactions` avulso,
+      // `recurring_rules`, `scheduled_transactions`) a gravam desde a HMO-216,
+      // e a 036 deu a coluna as tres. A pessoa escolhia "Mercado > Feira" numa
+      // compra em 10x, o toast dizia "10 parcelas em a fatura do cartão", e as
+      // dez linhas nasciam com a categoria e sem a subcategoria -- sem erro
+      // nenhum, porque a coluna e nulavel.
+      subcategory_id,
       description,
       notes,
       group_id,
@@ -117,6 +127,7 @@ export async function POST(request: NextRequest) {
     } = body as {
       account_id?: string | null;
       category_id?: string;
+      subcategory_id?: string | null;
       description?: string;
       notes?: string | null;
       group_id?: string | null;
@@ -336,6 +347,21 @@ export async function POST(request: NextRequest) {
       user_id: user.id,
       service_id: service.id,
       category_id,
+      // A MESMA SUBCATEGORIA NAS M LINHAS, E CONSTANTE DE PROPOSITO.
+      //
+      // Uma serie e UMA compra: "Feira" na parcela 1 e "Outros" na 7a seriam
+      // dois gastos diferentes no relatorio de uma compra so. Como o valor e
+      // igual em todas as linhas, o lote do PostgREST (que monta as colunas a
+      // partir da PRIMEIRA linha -- ver `invoice_month_override` abaixo) nao
+      // tem como descartar o campo em algumas e manter em outras.
+      //
+      // `|| null` e nao `""`: a coluna e uuid e string vazia volta 22P02, o
+      // mesmo motivo que esta em `scheduled-transactions`. E quem confere se a
+      // subcategoria PERTENCE a categoria e o banco, pela FK composta
+      // `(category_id, subcategory_id)` que a 036 criou nas tres tabelas --
+      // `financial_transactions` entre elas. Um par trocado volta 23503 e
+      // derruba a serie inteira, em vez de gravar dez linhas incoerentes.
+      subcategory_id: subcategory_id || null,
       account_id,
       description: descricaoDaParcela(description, p.numero, total),
       // NEGATIVO, por `valorGravado`: neste banco despesa e gravada negativa, e

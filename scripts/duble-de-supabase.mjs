@@ -108,7 +108,7 @@ function projetar(linha, colunas) {
  * `await` nele resolve para `{ data, error }`, como no client de verdade --
  * `then` e o que faz isso funcionar sem Promise de mentira.
  */
-function consulta(linhas, tabela, registro) {
+function consulta(linhas, tabela, registro, escrever = () => {}) {
   let filtradas = [...linhas];
   let colunas = null;
   const filtros = [];
@@ -117,6 +117,93 @@ function consulta(linhas, tabela, registro) {
     select(selecao) {
       colunas = colunasDe(selecao);
       return api;
+    },
+    // -----------------------------------------------------------------------
+    // AS ESCRITAS (HMO-218)
+    // -----------------------------------------------------------------------
+    // O duble nasceu lendo, porque a HMO-272 media um recorte de RESPOSTA. Uma
+    // feature que promete "o campo X chega ao banco" nao se mede na resposta: a
+    // rota devolve o mesmo `{ success: true }` com o campo e sem ele. O que
+    // corresponde a promessa e olhar o PAYLOAD que a rota mandou gravar.
+    //
+    // `insert` EMULA O LOTE DO POSTGREST, E ISSO NAO E ZELO EXCESSIVO
+    // --------------------------------------------------------------
+    // No client de verdade as colunas do comando saem da PRIMEIRA linha do
+    // array: uma chave presente na linha 1 e ausente na 2 grava `null` na 2, e
+    // uma chave AUSENTE na linha 1 e descartada de todas as outras -- em
+    // silencio, sem erro. A rota de parcelas depende disso (ver
+    // `invoice_month_override`, que e `null` de proposito nas parcelas 2..M).
+    // Um duble que guardasse o array cru deixaria passar verde exatamente o
+    // defeito que aquele comentario descreve.
+    insert(payload) {
+      const propostas = Array.isArray(payload) ? payload : [payload];
+      const colunasDoLote = Object.keys(propostas[0] ?? {});
+      const gravadas = propostas.map((proposta, i) => {
+        const linha = { id: `${tabela}-${i + 1}` };
+        for (const coluna of colunasDoLote) linha[coluna] = proposta[coluna];
+        return linha;
+      });
+
+      // As chaves que o lote DESCARTOU por nao estarem na primeira linha. A
+      // sonda pode exigir que esta lista esteja vazia, que e a unica forma de
+      // ver o descarte silencioso descrito acima.
+      const descartadas = [
+        ...new Set(
+          propostas.flatMap((p) =>
+            Object.keys(p).filter((c) => !colunasDoLote.includes(c))
+          )
+        ),
+      ];
+
+      escrever({ tabela, verbo: "insert", linhas: gravadas, descartadas });
+      registro(tabela, filtros, "insert");
+
+      const depois = {
+        select(selecao) {
+          const cols = colunasDe(selecao);
+          return Promise.resolve({
+            data: gravadas.map((l) => projetar(l, cols)),
+            error: null,
+          });
+        },
+        then(resolve, reject) {
+          return Promise.resolve({ data: gravadas, error: null }).then(
+            resolve,
+            reject
+          );
+        },
+      };
+      return depois;
+    },
+    /**
+     * `update` guarda o PATCH e os filtros. Quem chama `.update({...}).in("id",
+     * ids)` esta dizendo "estas linhas, este campo" -- e as duas metades
+     * importam: um patch certo com filtro errado reescreve a tabela.
+     */
+    update(patch) {
+      const alvo = { tabela, verbo: "update", patch, filtros };
+      const depois = {
+        eq(coluna, valor) {
+          filtros.push(["eq", coluna, valor]);
+          return depois;
+        },
+        in(coluna, valores) {
+          filtros.push(["in", coluna, [...valores]]);
+          return depois;
+        },
+        select() {
+          return depois;
+        },
+        then(resolve, reject) {
+          escrever(alvo);
+          registro(tabela, filtros, "update");
+          return Promise.resolve({ data: null, error: null }).then(
+            resolve,
+            reject
+          );
+        },
+      };
+      return depois;
     },
     eq(coluna, valor) {
       filtros.push(["eq", coluna, valor]);
@@ -209,12 +296,24 @@ export function criarDuble({ user = null, tabelas = {}, erros = {} } = {}) {
   /** Toda consulta que passou por aqui, para a sonda conferir o que foi lido. */
   const lidas = [];
 
+  /**
+   * Toda ESCRITA que passou por aqui (HMO-218), na ordem. Cada item e
+   * `{ tabela, verbo, linhas|patch, ... }` -- ver `insert`/`update` em
+   * `consulta`. E aqui que uma sonda confere que o campo chegou ao banco.
+   */
+  const escritas = [];
+
   const registro = (tabela, filtros, terminador) => {
     lidas.push({ tabela, filtros, terminador });
   };
 
+  const escrever = (operacao) => {
+    escritas.push(operacao);
+  };
+
   return {
     lidas,
+    escritas,
     client: {
       auth: {
         getUser: () =>
@@ -246,7 +345,7 @@ export function criarDuble({ user = null, tabelas = {}, erros = {} } = {}) {
           registro(tabela, [], "erro");
           return falha;
         }
-        return consulta(tabelas[tabela] ?? [], tabela, registro);
+        return consulta(tabelas[tabela] ?? [], tabela, registro, escrever);
       },
       rpc(nome, args) {
         registro(`rpc:${nome}`, [["args", "", args]], "rpc");

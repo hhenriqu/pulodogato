@@ -1,0 +1,38 @@
+{
+  "//": [
+    "A subcategoria na compra parcelada (HMO-218).",
+    "",
+    "Compila o route handler app/api/financial-installments/route.ts. O tsc puxa",
+    "sozinho as dependencias dele -- lib/lancamento.ts e utils/supabase/server.ts",
+    "--, e e por isso que o `include` tem um arquivo so.",
+    "",
+    "POR QUE A ROTA, E NAO SO A REGRA",
+    "O que a issue promete e que a subcategoria escolhida CHEGA AO BANCO nas M",
+    "linhas da serie. Isso nao esta em funcao pura nenhuma: `serieDeParcelas`",
+    "calcula valores e datas e nunca ve a subcategoria. O campo entra no objeto",
+    "literal que vai para `.insert()`, e um objeto literal na fronteira do",
+    "supabase-js nao tem tipo que o `tsc` cobre -- tirar a linha compila. A unica",
+    "medida que corresponde a promessa e CHAMAR o handler e olhar o payload.",
+    "",
+    "`rootDir` e a raiz do projeto: a rota importa @/lib e @/utils, e com rootDir",
+    "em app/ o tsc reprova com TS6059. O emit espelha a raiz, entao o passo do",
+    "resolve-aliases roda com --espelha-raiz.",
+    "",
+    "utils/supabase/server.ts e compilado junto e DEPOIS sobrescrito pelo",
+    "scripts/monta-duble-de-rota.mjs -- o modulo real importa `next/headers`, que",
+    "nao roda fora do runtime do Next."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-subcategoria-nas-parcelas",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../app/api/financial-installments/route.ts"]
+}
