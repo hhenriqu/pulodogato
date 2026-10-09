@@ -379,3 +379,57 @@ test("a ponta a ponta: nome do mapa de perfis chega ao HTML da linha", () => {
   );
   assert.equal(seloDoPagador(html).texto, "Pago por Ana Souza");
 });
+
+// ---------------------------------------------------------------------------
+// A DATA DA LINHA, NO FUSO DO USUARIO (HMO-353)
+// ---------------------------------------------------------------------------
+// Mora aqui, e nao em scripts/test-data-na-tela.mjs, porque e a unica suite do
+// repositorio que RENDERIZA este componente. `dataNaTela` tem teste de funcao
+// pura la, e ele passaria verde com o JSX chamando `new Date` -- a funcao certa
+// existindo e a tela ignorando ela. A assercao abaixo le o HTML que sai.
+//
+// O npm script fixa `TZ=America/Sao_Paulo`: em UTC o defeito NAO se manifesta
+// (meia-noite UTC lida em UTC devolve o mesmo dia), e o runner do GitHub roda em
+// UTC. Sem o fuso fixo esta assercao passa verde com o defeito intacto.
+// ---------------------------------------------------------------------------
+
+test("a premissa: a suite roda no fuso do usuario, senao a data nao mede nada", () => {
+  assert.equal(
+    Intl.DateTimeFormat().resolvedOptions().timeZone,
+    "America/Sao_Paulo",
+    "rode pelo npm script (test:pagador-da-parte), que fixa o fuso. Em UTC a " +
+      "assercao da data abaixo passa verde sobre o defeito da HMO-353."
+  );
+  assert.ok(
+    new Date("2026-09-18").getTimezoneOffset() > 0,
+    "o offset tem de ser positivo (fuso a oeste de Greenwich) para o recuo de " +
+      "um dia ser possivel."
+  );
+});
+
+test("a data da linha e o dia gravado, e nao o anterior", () => {
+  // `transaction_date` da fixture e 2026-09-18. `new Date("2026-09-18")` e
+  // meia-noite UTC, que em Sao Paulo e dia 17 as 21h -- e era 17/09/2026 que a
+  // tela escrevia, para toda linha, para todo usuario (medido em producao).
+  const { linhas } = partesDeTerceirosNaLista(
+    [parteBruta],
+    new Map([[DESPESA, despesaLida]]),
+    new Map([[ANA, "Ana Souza"]])
+  );
+  const html = renderToStaticMarkup(
+    h(LinhaDaParteDeGrupo, {
+      parte: linhas[0],
+      nomeDoGrupo: { [GRUPO]: "Praia" },
+    })
+  );
+
+  assert.ok(
+    html.includes("18/09/2026"),
+    `a linha nao escreveu 18/09/2026. HTML: ${html}`
+  );
+  assert.ok(
+    !html.includes("17/09/2026"),
+    "a linha escreveu 17/09/2026 -- um dia mais cedo. E o defeito da HMO-353: " +
+      "`new Date` sobre a coluna `date` recua a data em todo fuso negativo."
+  );
+});

@@ -18,6 +18,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import type { PropsDeTooltip } from "@/types/grafico";
+import { dataCurtaNaTela } from "@/lib/data-na-tela";
 
 interface PerformanceData {
   date: string;
@@ -58,12 +59,11 @@ export function PerformanceChart({
     }).format(value);
   };
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString("pt-BR", {
-      month: "short",
-      day: "numeric",
-    });
-  };
+  // `dataCurtaNaTela` e nao `new Date(dateString)`: cada ponto da serie e o
+  // ULTIMO dia de um mes ("2026-10-31"), e o construtor o lia como meia-noite
+  // UTC -- em Sao Paulo o eixo escrevia "30 de out." no ponto de 31 de
+  // outubro, deslocando todo rotulo um dia para tras (HMO-353).
+  const formatDate = (dateString: string) => dataCurtaNaTela(dateString);
 
   const CustomTooltip = ({
     active,

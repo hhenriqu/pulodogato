@@ -292,6 +292,12 @@ next-env.d.ts
 # entrada do .tmp-parcelamento acima.
 /.tmp-data-digitada/
 
+# O JS compilado de lib/data-na-tela.ts, para a suite de fuso rodar a funcao de
+# verdade em vez de uma copia. Artefato, nao fonte -- e um `.tmp-*` fora do
+# .gitignore chega a ser commitado em cima de arquivo de fonte (ver a entrada do
+# .tmp-parcelamento acima).
+/.tmp-data-na-tela/
+
 # Build do `npm run test:fechamento-do-grupo` (HMO-245, o fechamento do mes do
 # grupo). Leva o settlement.js junto porque a lib importa `toCents` e
 # `simplifySettlements` de la -- o acerto do mes usa o MESMO guloso do acerto do

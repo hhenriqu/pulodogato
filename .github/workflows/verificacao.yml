@@ -6809,3 +6809,118 @@ jobs:
       # suite.
       - name: Mutantes do canal de e-mail
         run: npm run mutantes:aviso-por-email
+      # A DATA DE TODO LANCAMENTO DA LISTA APARECIA UM DIA MAIS CEDO (HMO-353).
+      #
+      # `transaction_date`, `due_date` e `settled_on` sao colunas `date`: chegam
+      # como a string "2026-10-09", um dia do calendario sem hora e sem fuso.
+      # `new Date("2026-10-09")` nao le isso como um dia -- le como meia-noite
+      # UTC, e em America/Sao_Paulo (UTC-3) isso e 2026-10-08 as 21h. A tela
+      # escrevia 08/10/2026. Medido em producao em 2026-10-09 com a conta de
+      # teste e Chromium headless, nao suposto.
+      #
+      # O fuso de TODO usuario deste app e UTC-3, entao valia para toda linha de
+      # toda lista -- e quem confere o extrato do banco contra o app le isso como
+      # "o app GRAVOU errado", nao "o app mostra errado".
+      #
+      # SEM `paths:`, como todo o resto deste workflow, e aqui isso e
+      # load-bearing: o defeito volta numa TELA NOVA (`new Date(iso)` e o que o
+      # editor completa sozinho), e tela nova nao esta em nenhuma lista de
+      # caminhos escrita hoje.
+      - name: Nenhuma tela converte coluna date com new Date
+        run: npm run check-data-na-tela
+
+      # Controle negativo. As peneiras do guard acima sao busca textual, e busca
+      # textual sai VERDE quando para de achar o que deveria conferir. Os tres
+      # defeitos abaixo sao formas diferentes do mesmo estrago, e o quarto caso e
+      # o controle positivo -- sem ele um "vermelho pelo motivo errado" passa por
+      # verificacao boa.
+      - name: A verificacao da data na tela sabe falhar, e sabe nao falhar
+        run: |
+          set -uo pipefail
+          guard='scripts/check-data-na-tela.mjs'
+
+          alvo='components/movimentacoes/LinhaDaParteDeGrupo.tsx'
+          cp "$alvo" /tmp/data-na-tela-alvo.orig
+          cp lib/utils.ts /tmp/data-na-tela-utils.orig
+          trap 'cp /tmp/data-na-tela-alvo.orig "$alvo"; cp /tmp/data-na-tela-utils.orig lib/utils.ts' EXIT
+
+          # 1) O defeito da issue de volta: new Date sobre a coluna date.
+          perl -0pi -e 's{\{dataNaTela\(parte\.transactionDate\)\}}{\{new Date(parte.transactionDate).toLocaleDateString("pt-BR")\}}' "$alvo"
+          if cmp -s /tmp/data-na-tela-alvo.orig "$alvo"; then
+            echo "::error::a mutacao 1 nao casou em $alvo -- a ancora mudou e o controle negativo mediria o conjunto vazio."
+            exit 1
+          fi
+          if node "$guard" > /dev/null 2>&1; then
+            echo "::error::O guard passou verde com new Date sobre parte.transactionDate -- o defeito da HMO-353."
+            exit 1
+          fi
+          cp /tmp/data-na-tela-alvo.orig "$alvo"
+
+          # 2) A data simplesmente APAGADA da tela. A peneira 1 nao ve nada para
+          #    acusar: nao ha mais new Date nenhum. Quem pega e a contagem.
+          perl -0pi -e 's{\{dataNaTela\(parte\.transactionDate\)\}}{\{null\}}' "$alvo"
+          if cmp -s /tmp/data-na-tela-alvo.orig "$alvo"; then
+            echo "::error::a mutacao 2 nao casou em $alvo -- a ancora mudou."
+            exit 1
+          fi
+          if node "$guard" > /dev/null 2>&1; then
+            echo "::error::O guard passou verde com a data APAGADA da linha da parte de grupo."
+            exit 1
+          fi
+          cp /tmp/data-na-tela-alvo.orig "$alvo"
+
+          # 3) formatDate de lib/utils.ts volta a converter com new Date. Era UMA
+          #    linha servindo tres telas, e ela mora fora das raizes da peneira 1.
+          perl -0pi -e 's{return dataOuMomentoNaTela\(date\);}{return new Intl.DateTimeFormat("pt-BR").format(new Date(date));}' lib/utils.ts
+          if cmp -s /tmp/data-na-tela-utils.orig lib/utils.ts; then
+            echo "::error::a mutacao 3 nao casou em lib/utils.ts -- a ancora mudou."
+            exit 1
+          fi
+          if node "$guard" > /dev/null 2>&1; then
+            echo "::error::O guard passou verde com formatDate convertendo coluna date com new Date."
+            exit 1
+          fi
+          cp /tmp/data-na-tela-utils.orig lib/utils.ts
+
+          # 4) E SABE NAO FALHAR. Os arquivos corrigidos citam new Date em PROSA,
+          #    para explicar o que foi consertado -- um guard que lesse comentario
+          #    reprovaria justamente eles, o avesso do que ele mede.
+          if ! node "$guard" > /dev/null 2>&1; then
+            echo "::error::O guard reprova a arvore correta."
+            exit 1
+          fi
+
+          echo "O guard fica vermelho nos tres defeitos e verde na arvore correta."
+
+      - name: 'A arvore voltou ao lugar depois de "A verificacao da data na tela sabe falhar, e sabe nao falhar"'
+        run: |
+          # Um mutante nao restaurado contaminaria os passos seguintes -- e o
+          # .tmp-* compilado guarda o mutante mesmo depois do restore do .ts.
+          rm -rf .tmp-*
+          git diff --quiet -- components/movimentacoes/LinhaDaParteDeGrupo.tsx lib/utils.ts || {
+            echo "::error::a arvore nao voltou ao lugar depois do controle negativo da data na tela."
+            exit 1
+          }
+
+      # A suite da data na tela. Ela roda em America/Sao_Paulo E em UTC, e isso
+      # nao e zelo -- e a medida que decide se ela mede algo.
+      #
+      # Quatro mutantes de lib/data-na-tela.ts, medidos em 2026-10-09:
+      #
+      #   mutante                                       Sao_Paulo   UTC
+      #   dataNaTela volta a passar por new Date         MORTO       MORTO
+      #   dataCurtaNaTela perde timeZone: "UTC"          MORTO       VIVO
+      #   dataOuMomentoNaTela manda tudo por new Date    MORTO       VIVO
+      #   dataOuMomentoNaTela textualiza o instante      MORTO       VIVO
+      #
+      # TRES DE QUATRO SOBREVIVEM EM UTC, que e o fuso DESTE RUNNER. Uma suite
+      # rodando so aqui passaria verde com o defeito intacto -- ja aconteceu na
+      # HMO-210, mesmo commit, mesma suite, verde em CI e vermelho no sandbox.
+      # Por isso o npm script fixa os dois fusos e a peneira 5 do guard acima
+      # exige que ele continue fixando: tirar um TZ nao quebra teste nenhum.
+      #
+      # A suite tambem afirma a PREMISSA (o fuso resolvido e um dos dois) e
+      # REPRODUZ o defeito com new Date cru. Esse segundo controle e quem avisa
+      # se um dia o motor parar de errar e a suite virar cerimonia.
+      - name: A data da lista nao aparece um dia mais cedo
+        run: npm run test:data-na-tela

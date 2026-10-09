@@ -45,6 +45,7 @@ import {
   pagadorNaLinha,
   type LancamentoDeTerceiro,
 } from "@/lib/parte-de-grupo-na-lista";
+import { dataNaTela } from "@/lib/data-na-tela";
 
 /**
  * O dinheiro desta tela sai todo da MESMA funcao.
@@ -101,7 +102,7 @@ export function LinhaDaParteDeGrupo({
             {parte.categoria?.name && <span>{parte.categoria.name}</span>}
             <span>•</span>
             <span>
-              {new Date(parte.transactionDate).toLocaleDateString("pt-BR")}
+              {dataNaTela(parte.transactionDate)}
             </span>
             <span>•</span>
             <Badge variant="outline" className="flex items-center gap-1">

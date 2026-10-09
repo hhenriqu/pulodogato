@@ -1,0 +1,14 @@
+{
+  "//": "Build so do teste: lib/data-na-tela.ts importa @/lib/data-digitada (dataParaExibicao, o UNICO parse textual de AAAA-MM-DD do projeto). O tsc resolve o alias @/ por `paths` mas NAO o reescreve no JS emitido, entao o npm script tem um passo de reescrita depois. Ver scripts/test-data-na-tela.mjs.",
+  "compilerOptions": {
+    "outDir": "../.tmp-data-na-tela",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/data-na-tela.ts"]
+}
