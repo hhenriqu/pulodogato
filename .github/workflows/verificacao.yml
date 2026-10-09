@@ -267,6 +267,60 @@ jobs:
       - name: A guarda de ancora de mutante sabe reprovar
         run: npm run test:ancora-de-mutante
 
+      # A MESMA PERGUNTA, PARA AS ANCORAS QUE VIVEM NESTE ARQUIVO (HMO-231).
+      # As duas guardas acima leem os runners `.mjs`; nenhuma delas olha os 148
+      # `sed -i` dos workflows, e e la que a ancora podre custou mais caro.
+      #
+      # O mecanismo: `sed -i` cujo padrao nao casa SAI 0 e nao muda nada. A suite
+      # seguinte roda a fonte INTACTA, passa -- corretamente -- e o `if` do
+      # controle negativo le esse verde como "a suite nao pegou o defeito". A
+      # HMO-199 contou 57 runs vermelhos seguidos assim, na main inclusive, e
+      # NOVE issues abertas em 24h (HMO-205, 212, 213, 214, 217, 222, 223, 229,
+      # 230) -- nenhuma pegou a causa, porque o vermelho acusa a suite e o
+      # defeito mora num `sed` dentro de um YAML.
+      #
+      # Isto reprova no PR que quebra a ancora. E o que importa: a ancora
+      # apodrece na refatoracao BEM FEITA -- quem dedenta uma linha ou troca um
+      # padding por variavel de safe-area nao tem motivo nenhum para procurar um
+      # `sed` aqui dentro. Foi assim que a HMO-185 matou a ancora do
+      # `menu-mobile`, e o PR #136 consertou UM caso.
+      - name: Nenhuma ancora de `sed` dos workflows parou de casar
+        run: npm run check-sed-dos-workflows
+
+      # Controle negativo da guarda acima, e ele tem DUAS metades. Exigir que a
+      # guarda reprove nao basta: o caso 13 prova que o mesmo padrao quebrado,
+      # SEM a guarda, volta a mentir (`sed` sai 0, nao muda um byte). Sem essa
+      # metade o controle provaria so que a mensagem nova existe -- e foi assim
+      # que o PR #136 provou que a guarda e quem trabalha.
+      #
+      # Os casos 4 e 5 travam os dois erros de dialeto que a varredura da HMO-199
+      # cometeu: o padrao e REGEX (um `includes()` literal da falso negativo em
+      # `--success: [0-9.]* [0-9.]*%`) e e BRE, nao ERE (em ERE o `(` de
+      # `Boolean(categoria)` viraria grupo e a guarda mediria outro padrao).
+      #
+      # Roda inteiro em `mkdtempSync`: nao escreve na arvore, e por isso nao tem
+      # `trap` nem nada para restaurar.
+      - name: A guarda de `sed` dos workflows sabe reprovar
+        run: npm run test:sed-dos-workflows
+
+      # E OS MUTANTES DELA. O passo acima prova que a guarda SABE reprovar; este
+      # prova que cada decisao dela esta MEDIDA por algum caso -- perguntas
+      # diferentes, e a segunda e a que apodrece, porque um refator que troque o
+      # dialeto deixa os 74 casos verdes se nenhum deles depender daquela linha.
+      # Ele planta o defeito no FONTE da guarda e exige vermelho no controle.
+      #
+      # Achou tres lacunas reais ao ser escrito: o `-E` era conferido no recorte
+      # mas nunca na MEDICAO; a trava que fecha a janela da prova no `sed` de
+      # baixo nao tinha caso alheio (o consumo fechava antes, e o fixture passava
+      # igual sem ela); e o `exit` do conjunto vazio morava em `principal()`, que
+      # nenhum caso chamava. Os tres ganharam caso -- 14/14 mortos.
+      #
+      # Roda numa copia do repositorio em `mkdtempSync`, nunca na arvore, que e a
+      # regra que o `check-mutacao-no-lugar.mjs` cobra dos runners novos. 14s,
+      # num job que ja existe.
+      - name: Os mutantes da guarda de `sed` dos workflows
+        run: npm run mutantes:guarda-do-sed-dos-workflows
+
       # E o conferidor da CONVERSAO de runner para bloco, que e o que garante que
       # converter um runner nao perdeu nenhuma entrada da lista de mutantes -- a
       # unica parte de um runner que carrega conhecimento que nao esta escrito em
@@ -865,6 +919,24 @@ jobs:
           probe='components/_color_probe.tsx'
           trap 'rm -f "$probe" && git checkout -- app/globals.css' EXIT
 
+          # ------------------------------------------------------------------
+          # O GUARDA DE TODO MUTANTE: ELE TEM DE TER SIDO APLICADO (HMO-231)
+          # ------------------------------------------------------------------
+          # `sed` que nao casa SAI 0 e deixa o arquivo INTACTO. A suite entao
+          # roda sobre o codigo CORRETO, passa verde, e o `if` seguinte le esse
+          # verde como "a suite nao pegou o defeito" -- acusando o codigo em vez
+          # do workflow. Foi o que produziu 57 runs vermelhos seguidos na
+          # HMO-199, e nove issues abertas em 24h procurando no lugar errado.
+          #
+          # Este bloco restaura com `git checkout --` e nao guarda `.orig`,
+          # entao quem responde "o arquivo mudou?" e o proprio git.
+          mutou() {
+            if git diff --quiet -- "$1"; then
+              echo "::error::o mutante $2 nao se aplicou a $1 -- a ancora do sed mudou de forma. Conserte o padrao NESTE workflow, nao o codigo."
+              exit 1
+            fi
+          }
+
           # 1) Cor fixa: a classe existe, o Tailwind gera, o tema ignora.
           cat > "$probe" <<'TSX'
           export function Probe() {
@@ -879,6 +951,7 @@ jobs:
 
           # 2) Token legal, contraste ilegal.
           sed -i 's/--success: [0-9.]* [0-9.]*% [0-9.]*%/--success: 142.1 70.6% 45%/' app/globals.css
+          mutou app/globals.css 2
           if node scripts/check-color-tokens.mjs > /dev/null 2>&1; then
             echo "::error::A verificacao passou verde com --success em 2.3:1."
             exit 1
@@ -1210,8 +1283,27 @@ jobs:
           set -uo pipefail
           trap 'git checkout -- components/ui/tabs.tsx components/subscription/SoftFeatureGuard.tsx' EXIT
 
+          # ------------------------------------------------------------------
+          # O GUARDA DE TODO MUTANTE: ELE TEM DE TER SIDO APLICADO (HMO-231)
+          # ------------------------------------------------------------------
+          # `sed` que nao casa SAI 0 e deixa o arquivo INTACTO. A suite entao
+          # roda sobre o codigo CORRETO, passa verde, e o `if` seguinte le esse
+          # verde como "a suite nao pegou o defeito" -- acusando o codigo em vez
+          # do workflow. Foi o que produziu 57 runs vermelhos seguidos na
+          # HMO-199, e nove issues abertas em 24h procurando no lugar errado.
+          #
+          # Este bloco restaura com `git checkout --` e nao guarda `.orig`,
+          # entao quem responde "o arquivo mudou?" e o proprio git.
+          mutou() {
+            if git diff --quiet -- "$1"; then
+              echo "::error::o mutante $2 nao se aplicou a $1 -- a ancora do sed mudou de forma. Conserte o padrao NESTE workflow, nao o codigo."
+              exit 1
+            fi
+          }
+
           # 1) A barra de abas volta a ter a largura do conteudo.
           sed -i 's/ overflow-x-auto//' components/ui/tabs.tsx
+          mutou components/ui/tabs.tsx 1
           if npm run test:mobile-overflow --silent > /dev/null 2>&1; then
             echo "::error::Passou verde com o TabsList sem overflow-x-auto."
             exit 1
@@ -1220,6 +1312,7 @@ jobs:
 
           # 2) Os dois botoes do cartao Premium voltam a brigar por uma linha.
           sed -i 's/flex flex-wrap gap-2/flex gap-2/' components/subscription/SoftFeatureGuard.tsx
+          mutou components/subscription/SoftFeatureGuard.tsx 2
           if npm run test:mobile-overflow --silent > /dev/null 2>&1; then
             echo "::error::Passou verde com o cartao Premium sem flex-wrap."
             exit 1
@@ -1260,9 +1353,28 @@ jobs:
           # mutado para os passos seguintes.
           trap "git checkout -- app/globals.css 'app/(dashboard)/layout.tsx' 'app/(dashboard)/dashboard/personal-finance/page.tsx'" EXIT
 
+          # ------------------------------------------------------------------
+          # O GUARDA DE TODO MUTANTE: ELE TEM DE TER SIDO APLICADO (HMO-231)
+          # ------------------------------------------------------------------
+          # `sed` que nao casa SAI 0 e deixa o arquivo INTACTO. A suite entao
+          # roda sobre o codigo CORRETO, passa verde, e o `if` seguinte le esse
+          # verde como "a suite nao pegou o defeito" -- acusando o codigo em vez
+          # do workflow. Foi o que produziu 57 runs vermelhos seguidos na
+          # HMO-199, e nove issues abertas em 24h procurando no lugar errado.
+          #
+          # Este bloco restaura com `git checkout --` e nao guarda `.orig`,
+          # entao quem responde "o arquivo mudou?" e o proprio git.
+          mutou() {
+            if git diff --quiet -- "$1"; then
+              echo "::error::o mutante $2 nao se aplicou a $1 -- a ancora do sed mudou de forma. Conserte o padrao NESTE workflow, nao o codigo."
+              exit 1
+            fi
+          }
+
           # 1) O espacador volta a ter altura escrita a mao, e para de
           #    acompanhar o header.
           sed -i 's/height: calc(var(--app-header) + var(--safe-top));/height: var(--app-header);/' app/globals.css
+          mutou app/globals.css 1
           if npm run test:mobile-overflow --silent > /dev/null 2>&1; then
             echo "::error::Passou verde com o espacador ignorando o recorte do topo."
             exit 1
@@ -1272,6 +1384,7 @@ jobs:
           # 2) O painel volta a 100vh -- a altura que o Safari do iPhone so
           #    entrega depois que a pessoa rola.
           sed -i 's/className="min-h-app bg-background"/className="min-h-screen bg-background"/' 'app/(dashboard)/layout.tsx'
+          mutou 'app/(dashboard)/layout.tsx' 2
           if npm run test:mobile-overflow --silent > /dev/null 2>&1; then
             echo "::error::Passou verde com o painel de volta em min-h-screen."
             exit 1
@@ -1287,6 +1400,7 @@ jobs:
           # erro. A outra metade virou o passo "Os mutantes da linha da parte de
           # grupo", com cinco mutantes em vez de um.
           sed -i 's/gap-3 min-w-0 flex-1/gap-3 flex-1/' 'app/(dashboard)/dashboard/personal-finance/page.tsx'
+          mutou 'app/(dashboard)/dashboard/personal-finance/page.tsx' 3
           if npm run test:mobile-overflow --silent > /dev/null 2>&1; then
             echo "::error::Passou verde com a linha de lancamento sem min-w-0."
             exit 1
@@ -1359,6 +1473,24 @@ jobs:
           set -uo pipefail
           trap 'git checkout -- .gitignore && rm -rf .tmp-contas' EXIT
 
+          # ------------------------------------------------------------------
+          # O GUARDA DE TODO MUTANTE: ELE TEM DE TER SIDO APLICADO (HMO-231)
+          # ------------------------------------------------------------------
+          # `sed` que nao casa SAI 0 e deixa o arquivo INTACTO. A suite entao
+          # roda sobre o codigo CORRETO, passa verde, e o `if` seguinte le esse
+          # verde como "a suite nao pegou o defeito" -- acusando o codigo em vez
+          # do workflow. Foi o que produziu 57 runs vermelhos seguidos na
+          # HMO-199, e nove issues abertas em 24h procurando no lugar errado.
+          #
+          # Este bloco restaura com `git checkout --` e nao guarda `.orig`,
+          # entao quem responde "o arquivo mudou?" e o proprio git.
+          mutou() {
+            if git diff --quiet -- "$1"; then
+              echo "::error::o mutante $2 nao se aplicou a $1 -- a ancora do sed mudou de forma. Conserte o padrao NESTE workflow, nao o codigo."
+              exit 1
+            fi
+          }
+
           # 1) Um artefato de build rastreado pelo git.
           mkdir -p .tmp-contas && echo "compilado" > .tmp-contas/lixo.js
           git add -f .tmp-contas/lixo.js
@@ -1372,6 +1504,7 @@ jobs:
           # 2) A lacuna original: suite que compila para um diretorio que o
           #    .gitignore nao cobre.
           sed -i '/^\/\.tmp-recorrencia-edicao\/$/d' .gitignore
+          mutou .gitignore 2
           if node scripts/check-artefatos-de-build.mjs > /dev/null 2>&1; then
             echo "::error::Passou verde com .tmp-recorrencia-edicao fora do .gitignore."
             exit 1
@@ -2156,10 +2289,29 @@ jobs:
           cp "$ROTA" "$ROTA.orig"
           trap 'mv "$TELA.orig" "$TELA"; mv "$ROTA.orig" "$ROTA"' EXIT
 
+          # ------------------------------------------------------------------
+          # O GUARDA DE TODO MUTANTE: ELE TEM DE TER SIDO APLICADO (HMO-231)
+          # ------------------------------------------------------------------
+          # `sed` que nao casa SAI 0 e deixa o arquivo INTACTO. A suite entao
+          # roda sobre o codigo CORRETO, passa verde, e o `if` seguinte le esse
+          # verde como "a suite nao pegou o defeito" -- acusando o codigo em vez
+          # do workflow. Foi o que produziu 57 runs vermelhos seguidos na
+          # HMO-199, e nove issues abertas em 24h procurando no lugar errado.
+          #
+          # `cmp` compara com a copia intacta: se nada mudou, o mutante nao
+          # existe mais, e e ESTE passo que esta quebrado.
+          mutou() {
+            if cmp -s "$1" "$1.orig"; then
+              echo "::error::o mutante $2 nao se aplicou a $1 -- a ancora do sed mudou de forma. Conserte o padrao NESTE workflow, nao o codigo."
+              exit 1
+            fi
+          }
+
           # 1) O botao de apagar parcela aparecendo em TODA linha da fatura, e
           #    nao so nas parcelas. Apagar uma compra avulsa cairia na rota de
           #    serie, que responde 400 sobre a linha que a pessoa clicou.
           sed -i 's#{aoApagarParcela && gasto.installment_number ? (#{aoApagarParcela ? (#' "$TELA"
+          mutou "$TELA" 1
           if npm run test:tela-do-cartao > /dev/null 2>&1; then
             echo "::error::Verde com o botao de apagar parcela em toda linha da fatura."
             exit 1
@@ -2694,10 +2846,29 @@ jobs:
           cp $CAMPOS $CAMPOS.orig
           trap 'mv $REGRAS.orig $REGRAS; mv $TELA.orig $TELA; mv $LISTA.orig $LISTA; mv $CAMPOS.orig $CAMPOS' EXIT
 
+          # ------------------------------------------------------------------
+          # O GUARDA DE TODO MUTANTE: ELE TEM DE TER SIDO APLICADO (HMO-231)
+          # ------------------------------------------------------------------
+          # `sed` que nao casa SAI 0 e deixa o arquivo INTACTO. A suite entao
+          # roda sobre o codigo CORRETO, passa verde, e o `if` seguinte le esse
+          # verde como "a suite nao pegou o defeito" -- acusando o codigo em vez
+          # do workflow. Foi o que produziu 57 runs vermelhos seguidos na
+          # HMO-199, e nove issues abertas em 24h procurando no lugar errado.
+          #
+          # `cmp` compara com a copia intacta: se nada mudou, o mutante nao
+          # existe mais, e e ESTE passo que esta quebrado.
+          mutou() {
+            if cmp -s "$1" "$1.orig"; then
+              echo "::error::o mutante $2 nao se aplicou a $1 -- a ancora do sed mudou de forma. Conserte o padrao NESTE workflow, nao o codigo."
+              exit 1
+            fi
+          }
+
           # 1) A fatura escolhida pela POSICAO, e nao pelo id. O defeito central:
           #    os gastos do cartao errado embaixo do nome do cartao certo. Dois
           #    cartoes do mesmo dono, dois totais plausiveis, nada vermelho.
           sed -i 's#return faturas.find((f) => f.account_id === accountId) ?? null;#return faturas[0] ?? null;#' $REGRAS
+          mutou $REGRAS 1
           if npm run test:fatura-do-cartao > /dev/null 2>&1; then
             echo "::error::Verde com a fatura escolhida por posicao."
             exit 1
@@ -2714,6 +2885,7 @@ jobs:
           #    o controle acusaria o codigo em vez do mutante. Aconteceu ao
           #    escrever este job.
           sed -i 's#return (fatura.lines ?? \[\]).filter((l) => l.account_id === accountId);#return fatura.lines ?? \[\];#' $REGRAS
+          mutou $REGRAS 2
           if npm run test:fatura-do-cartao > /dev/null 2>&1; then
             echo "::error::Verde com a compra de outro cartao na lista."
             exit 1
@@ -2726,6 +2898,7 @@ jobs:
           #    outra pessoa -- e a tela listaria gastos sem cabecalho que os
           #    explique.
           sed -i 's#    cartoes.find((c) => c.id === id \&\& c.account_type === "credit_card") ??#    cartoes.find((c) => c.id === id) ??#' $REGRAS
+          mutou $REGRAS 3
           if npm run test:fatura-do-cartao > /dev/null 2>&1; then
             echo "::error::Verde com conta que nao e cartao abrindo a tela de fatura."
             exit 1
@@ -2736,6 +2909,7 @@ jobs:
           #    fresco libera o total de uma fatura que nao carregou, e "R$ 0,00"
           #    fica indistinguivel de um mes sem compra nenhuma.
           sed -i 's#if (GRAVIDADE.indexOf(estado) < GRAVIDADE.indexOf(pior)) pior = estado;#if (GRAVIDADE.indexOf(estado) > GRAVIDADE.indexOf(pior)) pior = estado;#' $REGRAS
+          mutou $REGRAS 4
           if npm run test:fatura-do-cartao > /dev/null 2>&1; then
             echo "::error::Verde com a tela tomando a melhor das duas leituras."
             exit 1
@@ -2753,6 +2927,7 @@ jobs:
           #    estado novo a GRAVIDADE nao depende daquele -1 por acidente --,
           #    mas ela nao da para medir por remocao.
           sed -i 's#if (estados.some((e) => e === null)) return null;#if (estados.some((e) => e === null)) return "fresco";#' $REGRAS
+          mutou $REGRAS 5
           if npm run test:fatura-do-cartao > /dev/null 2>&1; then
             echo "::error::Verde com numero impresso durante o carregamento."
             exit 1
@@ -2763,6 +2938,7 @@ jobs:
           #    fuso de Sao Paulo, volta para 30/09: o rotulo diz "setembro" sobre
           #    a fatura de outubro. O total continua certo.
           sed -i 's#  return `${MESES\[numeroDoMes - 1\]} de ${mes.slice(0, 4)}`;#  const d = new Date(mes); return `${MESES[d.getMonth()]} de ${d.getFullYear()}`;#' $REGRAS
+          mutou $REGRAS 6
           if npm run test:fatura-do-cartao > /dev/null 2>&1; then
             echo "::error::Verde com o mes da fatura passando por new Date()."
             exit 1
@@ -2772,6 +2948,7 @@ jobs:
           # 7) O total sem o rotulo do mes. Bloco sem eixo de tempo mente no
           #    rotulo: o numero esta certo e ninguem sabe de que mes ele e.
           sed -i 's#  const mostraTotal = podeMostrarNumero(estado) \&\& rotuloDoMes !== null;#  const mostraTotal = podeMostrarNumero(estado);#' $TELA
+          mutou $TELA 7
           if npm run test:tela-do-cartao > /dev/null 2>&1; then
             echo "::error::Verde com o total impresso sem mes que o nomeie."
             exit 1
@@ -2782,6 +2959,7 @@ jobs:
           #    sobre uma fatura que a tela nao conseguiu ler -- uma afirmacao
           #    sobre o dinheiro da pessoa que o app nao tem como fazer.
           sed -i 's#            {podeAfirmarVazio(estado) \&\& rotuloDoMes ? (#            {true ? (#' $TELA
+          mutou $TELA 8
           if npm run test:tela-do-cartao > /dev/null 2>&1; then
             echo "::error::Verde afirmando que o cartao nao teve gasto sem ter lido a fatura."
             exit 1
@@ -2790,6 +2968,7 @@ jobs:
 
           # 9) O total sem o pedagio de leitura. R$ 0,00 sem rede.
           sed -i 's#  const mostraTotal = podeMostrarNumero(estado) \&\& rotuloDoMes !== null;#  const mostraTotal = rotuloDoMes !== null;#' $TELA
+          mutou $TELA 9
           if npm run test:tela-do-cartao > /dev/null 2>&1; then
             echo "::error::Verde com o total impresso sem dado atras dele."
             exit 1
@@ -2809,7 +2988,9 @@ jobs:
           test "$(grep -c '^      </Link>$' $LISTA)" = "1" || { echo "::error::ancora </Link> do mutante 10 mudou de forma"; exit 1; }
           test "$(grep -c '^    </Card>$' $LISTA)" = "1" || { echo "::error::ancora </Card> do mutante 10 mudou de forma"; exit 1; }
           sed -i '/^      <\/Link>$/d' $LISTA
+          mutou $LISTA 10
           sed -i 's#^    </Card>$#      </Link>\n    </Card>#' $LISTA
+          mutou $LISTA 10b
           if npm run test:tela-do-cartao > /dev/null 2>&1; then
             echo "::error::Verde com Editar e Arquivar dentro da area clicavel do cartao."
             exit 1
@@ -2819,6 +3000,7 @@ jobs:
           # 11) O card da lista deixando de ser link. A issue inteira deixa de
           #     existir, e a tela fica exatamente como era antes dela.
           sed -i 's#        href={caminhoDoCartao(conta.id)}#        href="/dashboard/cartoes"#' $LISTA
+          mutou $LISTA 11
           if npm run test:tela-do-cartao > /dev/null 2>&1; then
             echo "::error::Verde com o card da lista sem link para o cartao."
             exit 1
@@ -2830,6 +3012,7 @@ jobs:
           #     significa "editar este lancamento" no formulario -- o gasto novo
           #     chegaria pedindo para editar o lancamento cujo id e o do cartao.
           sed -i 's#export const PARAM_DO_CARTAO = "cartao";#export const PARAM_DO_CARTAO = "id";#' $REGRAS
+          mutou $REGRAS 12
           if npm run test:fatura-do-cartao > /dev/null 2>&1; then
             echo "::error::Verde com o cartao viajando na chave id."
             exit 1
@@ -2840,6 +3023,7 @@ jobs:
           #     formulario, e grava no Visa: dois cartoes dela, valor plausivel,
           #     e ela so descobre ao abrir a fatura do cartao em que nao lancou.
           sed -i 's#          {cartaoFixado ? (#          {false ? (#' $CAMPOS
+          mutou $CAMPOS 13
           if npm run test:campos-lancamento > /dev/null 2>&1; then
             echo "::error::Verde com o seletor de cartao livre vindo da tela do cartao."
             exit 1
@@ -2850,6 +3034,7 @@ jobs:
           #     Fixa" ali gravaria uma regra mensal em recurring_rules em vez da
           #     compra -- e a tela de origem e a FATURA de um cartao.
           sed -i 's#  const naturezaTravada = Boolean(cartaoFixado);#  const naturezaTravada = false;#' $CAMPOS
+          mutou $CAMPOS 14
           if npm run test:campos-lancamento > /dev/null 2>&1; then
             echo "::error::Verde com o seletor de natureza livre vindo da tela do cartao."
             exit 1
@@ -2997,11 +3182,30 @@ jobs:
           cp lib/account-reset.ts lib/account-reset.ts.orig
           trap 'mv lib/account-reset.ts.orig lib/account-reset.ts' EXIT
 
+          # ------------------------------------------------------------------
+          # O GUARDA DE TODO MUTANTE: ELE TEM DE TER SIDO APLICADO (HMO-231)
+          # ------------------------------------------------------------------
+          # `sed` que nao casa SAI 0 e deixa o arquivo INTACTO. A suite entao
+          # roda sobre o codigo CORRETO, passa verde, e o `if` seguinte le esse
+          # verde como "a suite nao pegou o defeito" -- acusando o codigo em vez
+          # do workflow. Foi o que produziu 57 runs vermelhos seguidos na
+          # HMO-199, e nove issues abertas em 24h procurando no lugar errado.
+          #
+          # `cmp` compara com a copia intacta: se nada mudou, o mutante nao
+          # existe mais, e e ESTE passo que esta quebrado.
+          mutou() {
+            if cmp -s "$1" "$1.orig"; then
+              echo "::error::o mutante $2 nao se aplicou a $1 -- a ancora do sed mudou de forma. Conserte o padrao NESTE workflow, nao o codigo."
+              exit 1
+            fi
+          }
+
           # 1) Tabela que nao existe no schema. O plano usa `.from(variavel)`,
           #    entao o check-table-drift NAO enxerga estes nomes -- este teste
           #    e a unica coisa entre um nome errado e um reset que falha no
           #    meio, com parte da conta ja apagada.
           sed -i 's/tabela: "budgets"/tabela: "budgetz"/' lib/account-reset.ts
+          mutou lib/account-reset.ts 1
           if npm run test:account-reset > /dev/null 2>&1; then
             echo "::error::A verificacao passou verde com uma tabela inventada no plano."
             exit 1
@@ -3013,6 +3217,7 @@ jobs:
           #    do usuario, e RLS sem policy de DELETE nao da erro -- apaga zero
           #    linhas e devolve sucesso.
           sed -i 's/tabela: "budgets"/tabela: "user_usage_limits"/' lib/account-reset.ts
+          mutou lib/account-reset.ts 2
           if npm run test:account-reset > /dev/null 2>&1; then
             echo "::error::A verificacao passou verde com uma tabela sem policy de DELETE."
             exit 1
@@ -3141,10 +3346,29 @@ jobs:
           # para o codigo errado.
           trap 'mv $REGRAS.orig $REGRAS; mv $CAMPOS.orig $CAMPOS; mv $PRECACHE.orig $PRECACHE; mv $AGENDA.orig $AGENDA; mv $LISTA.orig $LISTA; mv $RESUMO.orig $RESUMO; mv $SERVICO.orig $SERVICO' EXIT
 
+          # ------------------------------------------------------------------
+          # O GUARDA DE TODO MUTANTE: ELE TEM DE TER SIDO APLICADO (HMO-231)
+          # ------------------------------------------------------------------
+          # `sed` que nao casa SAI 0 e deixa o arquivo INTACTO. A suite entao
+          # roda sobre o codigo CORRETO, passa verde, e o `if` seguinte le esse
+          # verde como "a suite nao pegou o defeito" -- acusando o codigo em vez
+          # do workflow. Foi o que produziu 57 runs vermelhos seguidos na
+          # HMO-199, e nove issues abertas em 24h procurando no lugar errado.
+          #
+          # `cmp` compara com a copia intacta: se nada mudou, o mutante nao
+          # existe mais, e e ESTE passo que esta quebrado.
+          mutou() {
+            if cmp -s "$1" "$1.orig"; then
+              echo "::error::o mutante $2 nao se aplicou a $1 -- a ancora do sed mudou de forma. Conserte o padrao NESTE workflow, nao o codigo."
+              exit 1
+            fi
+          }
+
           # 1) A tela de Contas volta a pedir os campos de fatura. E a issue ao
           #    contrario, e o caso mais obvio -- esta aqui para provar que o
           #    oraculo esta ligado no que a issue pediu.
           sed -i 's|return { tipo: true, fatura: false, substantivo: "conta" };|return { tipo: true, fatura: true, substantivo: "conta" };|' $REGRAS
+          mutou $REGRAS 1
           if npm run test:campos-da-conta > /dev/null 2>&1; then
             echo "::error::Verde com limite e dias de fatura na tela de Contas."
             exit 1
@@ -3156,6 +3380,7 @@ jobs:
           #    renderiza os tres campos nas duas telas do mesmo jeito. E a forma
           #    exata do bug que a tela antiga tinha.
           sed -i 's|{campos.fatura && (|{true \&\& (|' $CAMPOS
+          mutou $CAMPOS 2
           if npm run test:campos-da-conta > /dev/null 2>&1; then
             echo "::error::Verde com o bloco de fatura renderizado nas duas telas."
             exit 1
@@ -3173,6 +3398,7 @@ jobs:
           #    seguinte passa verde sobre o codigo correto -- um controle
           #    negativo que nao controla nada. Aconteceu ao escrever este job.
           sed -i 's#credit_limit: temFatura ? valores.credit_limit || null : null,#credit_limit: valores.credit_limit || null,#' $REGRAS
+          mutou $REGRAS 3
           if npm run test:contas > /dev/null 2>&1; then
             echo "::error::Verde com limite gravado numa conta corrente."
             exit 1
@@ -3183,6 +3409,7 @@ jobs:
           #    "Faturas em aberto" viraria -R$ 1.280,35. O saldo das contas
           #    continua certo, que e o que faz ninguem procurar.
           sed -i 's|return soma + (escopo === "cartao" ? Math.abs(valor) : valor);|return soma + valor;|' $REGRAS
+          mutou $REGRAS 4
           if npm run test:contas > /dev/null 2>&1; then
             echo "::error::Verde com a fatura somada com o sinal negativo."
             exit 1
@@ -3194,6 +3421,7 @@ jobs:
           #    mexer nela tem que acender vermelho -- porque move um tipo inteiro
           #    de um total para o outro.
           sed -i 's|{ valor: "debit_card", rotulo: "Cartão de débito", escopo: "conta" },|{ valor: "debit_card", rotulo: "Cartão de débito", escopo: "cartao" },|' $REGRAS
+          mutou $REGRAS 5
           if npm run test:contas > /dev/null 2>&1; then
             echo "::error::Verde com o cartao de debito na tela de Cartoes, sem ninguem ter decidido isso."
             exit 1
@@ -3211,6 +3439,7 @@ jobs:
           #    Um controle plantado nele ficaria verde sempre, e isso e pior do
           #    que nao ter controle -- foi tentado primeiro, e passou.
           sed -i 's#{editando \&\& (#{false \&\& (#' $CAMPOS
+          mutou $CAMPOS 6
           if npm run test:campos-da-conta > /dev/null 2>&1; then
             echo "::error::Verde sem a frase que explica o tipo travado na edicao."
             exit 1
@@ -3221,6 +3450,7 @@ jobs:
           #    so uma das duas novas entrar, o toque no item que ficou de fora
           #    cai na pagina /offline -- com o app instalado e tudo no aparelho.
           sed -i '/^  "\/dashboard\/cartoes",$/d' $PRECACHE
+          mutou $PRECACHE 7
           if npm run test:pwa-precache > /dev/null 2>&1; then
             echo "::error::Verde com a tela de Cartoes fora do precache."
             exit 1
@@ -3235,6 +3465,7 @@ jobs:
           #    "Esta conta nao e um cartao de credito" sobre um cartao que a
           #    pessoa cadastrou na tela de Cartoes.
           sed -i 's#  tiposDoEscopo(escopo)\[0\].valor;#  tiposDoEscopo("conta")[0].valor;#' $REGRAS
+          mutou $REGRAS 8
           if npm run test:contas > /dev/null 2>&1; then
             echo "::error::Verde com o cartao sendo criado como conta corrente."
             exit 1
@@ -3249,6 +3480,7 @@ jobs:
           #    compra individual volta para a agenda, ao lado da fatura que ja a
           #    contem, e o cabecalho soma as duas.
           sed -i 's#return ehFatura(linha.notes);#return true;#' $AGENDA
+          mutou $AGENDA 9
           if npm run test:agenda-do-cartao > /dev/null 2>&1; then
             echo "::error::Verde com a compra de cartao de volta em Contas a Pagar."
             exit 1
@@ -3260,6 +3492,7 @@ jobs:
           #     e a pessoa deixa de ser cobrada da unica conta de cartao que ela
           #     paga. Nada na tela diz que faltou uma linha.
           sed -i 's#return ehFatura(linha.notes);#return false;#' $AGENDA
+          mutou $AGENDA 10
           if npm run test:agenda-do-cartao > /dev/null 2>&1; then
             echo "::error::Verde com a FATURA desaparecendo de Contas a Pagar."
             exit 1
@@ -3270,6 +3503,7 @@ jobs:
           #     Aqui some a agenda INTEIRA: luz, agua, aluguel -- nada disso tem
           #     `notes` de fatura. A tela abre vazia, sem erro nenhum.
           sed -i 's#if (contaDaLinha(linha.account)?.account_type !== TIPO_CARTAO) return true;#if (false) return true;#' $AGENDA
+          mutou $AGENDA 11
           if npm run test:agenda-do-cartao > /dev/null 2>&1; then
             echo "::error::Verde com a conta a pagar comum fora da agenda."
             exit 1
@@ -3282,6 +3516,7 @@ jobs:
           #     contem a compra duas vezes. Nenhum teste de funcao pura ve isso --
           #     por isso a suite le as duas rotas.
           sed -i 's#agendaSemCompraNoCartao(linhasBrutas#(linhasBrutas#' $RESUMO
+          mutou $RESUMO 12
           if npm run test:agenda-do-cartao > /dev/null 2>&1; then
             echo "::error::Verde com o resumo somando o que a lista nao mostra."
             exit 1
@@ -3291,6 +3526,7 @@ jobs:
           # 13) O mesmo esquecimento do outro lado -- a lista sem filtro e o
           #     resumo com ele. Simetrico, e igualmente invisivel.
           sed -i 's#agendaSemCompraNoCartao(scheduled#(scheduled#' $LISTA
+          mutou $LISTA 13
           if npm run test:agenda-do-cartao > /dev/null 2>&1; then
             echo "::error::Verde com a lista sem o filtro do cartao."
             exit 1
@@ -3302,6 +3538,7 @@ jobs:
           #     aparece" e o resumo volta a somar as compras de cartao. Verde, com
           #     o numero antigo -- o filtro continua no codigo, sem dado para ler.
           sed -i 's#, notes, account:financial_accounts(account_type)##' $RESUMO
+          mutou $RESUMO 14
           if npm run test:agenda-do-cartao > /dev/null 2>&1; then
             echo "::error::Verde com o resumo sem as colunas que o filtro le."
             exit 1
@@ -3315,6 +3552,7 @@ jobs:
           #     defeito da issue. Sem erro, sem log, sem teste vermelho -- se nao
           #     fosse por este caso.
           sed -i 's#if (Array.isArray(account)) return account\[0\] ?? null;#if (false) return account[0] ?? null;#' $AGENDA
+          mutou $AGENDA 15
           if npm run test:agenda-do-cartao > /dev/null 2>&1; then
             echo "::error::Verde com o embed em array passando reto pelo filtro."
             exit 1
@@ -3334,6 +3572,7 @@ jobs:
           #     tela -- e o numero menor e o que parece certo a quem nao somou
           #     na mao. Nenhum teste de funcao pura ve isso.
           sed -i 's#^import { faturasPrevistasDaJanela } from "@/lib/services/fatura-prevista";#// mutante: o resumo esqueceu a sintese#' $RESUMO
+          mutou $RESUMO 16
           if npm run test:fatura-prevista > /dev/null 2>&1; then
             echo "::error::Verde com o resumo sem a fatura aberta que a lista mostra."
             exit 1
@@ -3344,6 +3583,7 @@ jobs:
           #     aberta e a lista nao a mostra. Simetrico, e igualmente
           #     invisivel: o cabecalho fica MAIOR que as linhas.
           sed -i 's#^import { faturasPrevistasDaJanela } from "@/lib/services/fatura-prevista";#// mutante: a lista esqueceu a sintese#' $LISTA
+          mutou $LISTA 17
           if npm run test:fatura-prevista > /dev/null 2>&1; then
             echo "::error::Verde com a lista sem a fatura aberta que o resumo soma."
             exit 1
@@ -3362,6 +3602,7 @@ jobs:
           #     fatura que OUTRO membro fechou num cartao dele suprimiria a
           #     minha fatura prevista. A suite cobra as duas.
           sed -i 's#\.eq("user_id", userId)##' $SERVICO
+          mutou $SERVICO 18
           if npm run test:fatura-prevista > /dev/null 2>&1; then
             echo "::error::Verde com a fatura prevista somando a compra de grupo de outra pessoa."
             exit 1
@@ -3628,9 +3869,28 @@ jobs:
           cp $CATEGORIAS $CATEGORIAS.orig
           trap 'mv $CAMPOS.orig $CAMPOS; mv $REGRAS.orig $REGRAS; mv $CATEGORIAS.orig $CATEGORIAS' EXIT
 
+          # ------------------------------------------------------------------
+          # O GUARDA DE TODO MUTANTE: ELE TEM DE TER SIDO APLICADO (HMO-231)
+          # ------------------------------------------------------------------
+          # `sed` que nao casa SAI 0 e deixa o arquivo INTACTO. A suite entao
+          # roda sobre o codigo CORRETO, passa verde, e o `if` seguinte le esse
+          # verde como "a suite nao pegou o defeito" -- acusando o codigo em vez
+          # do workflow. Foi o que produziu 57 runs vermelhos seguidos na
+          # HMO-199, e nove issues abertas em 24h procurando no lugar errado.
+          #
+          # `cmp` compara com a copia intacta: se nada mudou, o mutante nao
+          # existe mais, e e ESTE passo que esta quebrado.
+          mutou() {
+            if cmp -s "$1" "$1.orig"; then
+              echo "::error::o mutante $2 nao se aplicou a $1 -- a ancora do sed mudou de forma. Conserte o padrao NESTE workflow, nao o codigo."
+              exit 1
+            fi
+          }
+
           # 1) O rateio renderizado nas duas telas, que e o que a tela antiga
           #    fazia: o bloco existia sempre e so era escondido por condicao.
           sed -i 's|{campos.rateio && rateio}|{rateio}|' $CAMPOS
+          mutou $CAMPOS 1
           if npm run test:campos-lancamento > /dev/null 2>&1; then
             echo "::error::Verde com o bloco de rateio aparecendo na tela de receita."
             exit 1
@@ -3652,6 +3912,7 @@ jobs:
           #    correto) em vez da sonda (que envelheceu). Mutante que nao aplica e
           #    indistinguivel de mutante que sobreviveu.
           sed -i 's|.filter((c) => c.is_expense === querDespesa)|.filter(() => true)|' $CATEGORIAS
+          mutou $CATEGORIAS 2
           if npm run test:campos-lancamento > /dev/null 2>&1; then
             echo "::error::Verde com o seletor de categoria sem filtro por tipo."
             exit 1
@@ -3663,6 +3924,7 @@ jobs:
           #    dinheiro ENTRANDO -- e o saldo fecha errado para mais, que e o
           #    lado do qual ninguem reclama.
           sed -i 's|return tipo === "expense" ? -Math.abs(valor) : Math.abs(valor);|return tipo === "expense" ? -valor : valor;|' $REGRAS
+          mutou $REGRAS 3
           if npm run test:lancamento > /dev/null 2>&1; then
             echo "::error::Verde com o sinal da despesa dependendo do que foi digitado."
             exit 1
@@ -3704,6 +3966,7 @@ jobs:
             exit 1
           fi
           sed -i "s|$PADRAO|if (false) {|" $ALCANCE
+          mutou $ALCANCE 4
           if npm run test:recorrencia-edicao > /dev/null 2>&1; then
             echo "::error::Verde com a edicao alcancando meses ANTERIORES ao clicado."
             mv $ALCANCE.orig $ALCANCE
@@ -3715,6 +3978,7 @@ jobs:
           #    pago tem uma transacao real amarrada nele -- mexer no valor
           #    reescreve um extrato que a pessoa ja conferiu.
           sed -i 's|if (irma.status !== "pending") {|if (false) {|' $ALCANCE
+          mutou $ALCANCE 5
           if npm run test:recorrencia-edicao > /dev/null 2>&1; then
             echo "::error::Verde com a edicao em lote alterando ocorrencia JA PAGA."
             mv $ALCANCE.orig $ALCANCE
@@ -3758,6 +4022,7 @@ jobs:
             exit 1
           fi
           sed -i "s|$PADRAO_NATUREZA|    natureza: true,|" $REGRAS
+          mutou $REGRAS 6
           if npm run test:campos-lancamento > /dev/null 2>&1; then
             echo "::error::Verde com o seletor de natureza de volta na tela de RECEITA."
             exit 1
@@ -3779,6 +4044,7 @@ jobs:
           #    com o campo FORA da tela. A compra reaparece em Contas a Pagar ao
           #    lado da fatura cheia, e nao ha nada na tela que explique por que.
           sed -i 's|if (!campos.dataDeRealizacao) return "previsao";|if (!valores.confirmado) return "previsao";|' $REGRAS
+          mutou $REGRAS 7
           if npm run test:lancamento > /dev/null 2>&1; then
             echo "::error::Verde com o gasto no cartao indo para Contas a Pagar."
             exit 1
@@ -3788,6 +4054,7 @@ jobs:
           # 8) A regra do cartao desligada: a checkbox "Ja paguei" volta, e com
           #    ela o caminho inteiro do defeito.
           sed -i 's|const ehCompraNoCartao = tipo === "expense" && natureza === "card";|const ehCompraNoCartao = false;|' $REGRAS
+          mutou $REGRAS 8
           if npm run test:lancamento > /dev/null 2>&1; then
             echo "::error::Verde com 'Ja paguei' de volta no gasto do cartao."
             exit 1
@@ -3800,6 +4067,7 @@ jobs:
           #    data prevista -- todo salario previsto viraria transacao no ato,
           #    entrando no saldo antes de o dinheiro cair.
           sed -i 's|const ehCompraNoCartao = tipo === "expense" && natureza === "card";|const ehCompraNoCartao = natureza === "card";|' $REGRAS
+          mutou $REGRAS 9
           if npm run test:lancamento > /dev/null 2>&1; then
             echo "::error::Verde com a tela de receita perdendo a confirmacao."
             exit 1
@@ -3810,6 +4078,7 @@ jobs:
           #     compra que ja aconteceu, e o de baixo pedindo "quando voce espera
           #     pagar" sobre uma linha que nao espera pagamento nenhum.
           sed -i 's|dataPrevista: !ehFixa && !ehCompraNoCartao,|dataPrevista: !ehFixa,|' $REGRAS
+          mutou $REGRAS 10
           if npm run test:lancamento > /dev/null 2>&1; then
             echo "::error::Verde com data prevista no gasto do cartao."
             exit 1
@@ -3822,6 +4091,7 @@ jobs:
           #     errada --, e e exatamente o tipo de defeito que nenhum teste
           #     manual pega.
           sed -i 's|"Data da compra"|"Data do pagamento"|' $REGRAS
+          mutou $REGRAS 11
           if npm run test:lancamento > /dev/null 2>&1; then
             echo "::error::Verde com o cartao pedindo a data do PAGAMENTO."
             exit 1
@@ -3833,6 +4103,7 @@ jobs:
           #     mostra "Ja paguei" num gasto de cartao -- o campo que esta issue
           #     tirou de la.
           sed -i 's|{campos.confirmacao && (|{true && (|' $CAMPOS
+          mutou $CAMPOS 12
           if npm run test:campos-lancamento > /dev/null 2>&1; then
             echo "::error::Verde com a checkbox de confirmacao renderizada sempre."
             exit 1
@@ -3862,6 +4133,7 @@ jobs:
             exit 1
           fi
           sed -i "s|$PADRAO_FIXA|dataDeRealizacao: !ehPrevisao,|" $REGRAS
+          mutou $REGRAS 13
           if npm run test:campos-lancamento > /dev/null 2>&1; then
             echo "::error::Verde com o campo 'Data' de volta na despesa fixa."
             exit 1
@@ -3880,6 +4152,7 @@ jobs:
             exit 1
           fi
           sed -i "s|$PADRAO_START|start_date: valores.data,|" $REGRAS
+          mutou $REGRAS 14
           if npm run test:lancamento > /dev/null 2>&1; then
             echo "::error::Verde com o start_date da regra saindo de um campo que a tela nao mostra."
             exit 1
@@ -3897,6 +4170,7 @@ jobs:
             exit 1
           fi
           sed -i "s|{campos.dataDeRealizacao && (|{true \&\& (|" $CAMPOS
+          mutou $CAMPOS 15
           if npm run test:campos-lancamento > /dev/null 2>&1; then
             echo "::error::Verde com o bloco de data renderizado sempre, inclusive na fixa."
             exit 1
@@ -3924,6 +4198,7 @@ jobs:
             exit 1
           fi
           sed -i "s|$PADRAO_FRASE|\"A primeira cobrança\"|" $CAMPOS
+          mutou $CAMPOS 16
           if npm run test:campos-lancamento > /dev/null 2>&1; then
             echo "::error::Verde com a tela de receita anunciando uma COBRANCA."
             exit 1
@@ -3990,12 +4265,31 @@ jobs:
           cp $PARTE $PARTE.orig
           trap 'mv $DESTINO.orig $DESTINO; mv $PARTE.orig $PARTE' EXIT
 
+          # ------------------------------------------------------------------
+          # O GUARDA DE TODO MUTANTE: ELE TEM DE TER SIDO APLICADO (HMO-231)
+          # ------------------------------------------------------------------
+          # `sed` que nao casa SAI 0 e deixa o arquivo INTACTO. A suite entao
+          # roda sobre o codigo CORRETO, passa verde, e o `if` seguinte le esse
+          # verde como "a suite nao pegou o defeito" -- acusando o codigo em vez
+          # do workflow. Foi o que produziu 57 runs vermelhos seguidos na
+          # HMO-199, e nove issues abertas em 24h procurando no lugar errado.
+          #
+          # `cmp` compara com a copia intacta: se nada mudou, o mutante nao
+          # existe mais, e e ESTE passo que esta quebrado.
+          mutou() {
+            if cmp -s "$1" "$1.orig"; then
+              echo "::error::o mutante $2 nao se aplicou a $1 -- a ancora do sed mudou de forma. Conserte o padrao NESTE workflow, nao o codigo."
+              exit 1
+            fi
+          }
+
           # 1) A PARTE DE GRUPO ENTRANDO POSITIVA. A view do 033 devolve a parte
           #    POSITIVA (200.00 para uma despesa de -400.00) e a lista pinta pelo
           #    sinal. Sem o `-Math.abs`, a minha parte do jantar aparece em VERDE,
           #    como receita -- e o numero exibido continua certo, porque a tela
           #    usa Math.abs para formatar. Nada nessa linha parece errado.
           sed -i 's|amount: -Math.abs(parte.amount),|amount: parte.amount,|' $PARTE
+          mutou $PARTE 1
           if npm run test:lancamentos-completos > /dev/null 2>&1; then
             echo "::error::Verde com a minha parte da despesa de grupo entrando como RECEITA."
             exit 1
@@ -4007,6 +4301,7 @@ jobs:
           #    lista como transacao minha. Sem a guarda, o hotel aparece duas
           #    vezes e soma R$ 600 de um gasto de R$ 400.
           sed -i 's|if (parte.paguei_eu) continue;|if (false) continue;|' $PARTE
+          mutou $PARTE 2
           if npm run test:lancamentos-completos > /dev/null 2>&1; then
             echo "::error::Verde com a despesa que EU paguei contada duas vezes."
             exit 1
@@ -4017,6 +4312,7 @@ jobs:
           #    "Despesas" tem que casar com o que a aba mostra; ignorando as
           #    partes, a aba anuncia 4 e abre com 6 linhas.
           sed -i 's|todos: minhas.length + partes.length,|todos: minhas.length,|' $PARTE
+          mutou $PARTE 3
           if npm run test:lancamentos-completos > /dev/null 2>&1; then
             echo "::error::Verde com a contagem da barra ignorando as partes de grupo."
             exit 1
@@ -4028,6 +4324,7 @@ jobs:
           #    SINAL. Invertido, a tela afirma que o dinheiro foi da poupanca
           #    para a corrente quando foi o contrario -- e se le como fato.
           sed -i 's|const souASaida = mov.amount < 0;|const souASaida = mov.amount > 0;|' $DESTINO
+          mutou $DESTINO 4
           if npm run test:lancamentos-completos > /dev/null 2>&1; then
             echo "::error::Verde com a seta da transferencia apontando para o lado errado."
             exit 1
@@ -4371,10 +4668,29 @@ jobs:
           cp $CAMPOS $CAMPOS.orig
           trap 'mv $TELA.orig $TELA; mv $CAMPOS.orig $CAMPOS' EXIT
 
+          # ------------------------------------------------------------------
+          # O GUARDA DE TODO MUTANTE: ELE TEM DE TER SIDO APLICADO (HMO-231)
+          # ------------------------------------------------------------------
+          # `sed` que nao casa SAI 0 e deixa o arquivo INTACTO. A suite entao
+          # roda sobre o codigo CORRETO, passa verde, e o `if` seguinte le esse
+          # verde como "a suite nao pegou o defeito" -- acusando o codigo em vez
+          # do workflow. Foi o que produziu 57 runs vermelhos seguidos na
+          # HMO-199, e nove issues abertas em 24h procurando no lugar errado.
+          #
+          # `cmp` compara com a copia intacta: se nada mudou, o mutante nao
+          # existe mais, e e ESTE passo que esta quebrado.
+          mutou() {
+            if cmp -s "$1" "$1.orig"; then
+              echo "::error::o mutante $2 nao se aplicou a $1 -- a ancora do sed mudou de forma. Conserte o padrao NESTE workflow, nao o codigo."
+              exit 1
+            fi
+          }
+
           # 1) A fatura voltando a imprimir so a data, sem o rotulo da parcela.
           #    E o estado ANTERIOR a esta issue: as parcelas no banco, a fatura
           #    somando certo, e nada na tela dizendo que aquilo e uma parcela.
           sed -i 's#{rotuloDaParcela(#{((#' $TELA
+          mutou $TELA 1
           if npm run test:tela-do-cartao > /dev/null 2>&1; then
             echo "::error::Verde com a fatura sem o rotulo de parcela."
             exit 1
@@ -4387,6 +4703,7 @@ jobs:
           #    pessoa so descobre procurando nas faturas passadas uma parcela que
           #    nunca existiu.
           sed -i 's#{resumo && (#{false \&\& (#' $CAMPOS
+          mutou $CAMPOS 2
           if npm run test:campos-lancamento > /dev/null 2>&1; then
             echo "::error::Verde com o resumo das parcelas fora da tela."
             exit 1
@@ -4540,6 +4857,24 @@ jobs:
           set -uo pipefail
           trap 'git checkout -- public/icons/icon-192x192.png public/manifest.json next.config.js' EXIT
 
+          # ------------------------------------------------------------------
+          # O GUARDA DE TODO MUTANTE: ELE TEM DE TER SIDO APLICADO (HMO-231)
+          # ------------------------------------------------------------------
+          # `sed` que nao casa SAI 0 e deixa o arquivo INTACTO. A suite entao
+          # roda sobre o codigo CORRETO, passa verde, e o `if` seguinte le esse
+          # verde como "a suite nao pegou o defeito" -- acusando o codigo em vez
+          # do workflow. Foi o que produziu 57 runs vermelhos seguidos na
+          # HMO-199, e nove issues abertas em 24h procurando no lugar errado.
+          #
+          # Este bloco restaura com `git checkout --` e nao guarda `.orig`,
+          # entao quem responde "o arquivo mudou?" e o proprio git.
+          mutou() {
+            if git diff --quiet -- "$1"; then
+              echo "::error::o mutante $2 nao se aplicou a $1 -- a ancora do sed mudou de forma. Conserte o padrao NESTE workflow, nao o codigo."
+              exit 1
+            fi
+          }
+
           # 1) O defeito original: SVG com nome .png, servido como image/png.
           printf '<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"><svg/>' \
             > public/icons/icon-192x192.png
@@ -4583,6 +4918,7 @@ jobs:
           # 4) O desvio apontando para rota que nao existe -- o jeito de
           #    reintroduzir o mesmo defeito sem apagar nenhuma linha.
           sed -i 's|document: "/offline"|document: "/rota-que-nao-existe"|' next.config.js
+          mutou next.config.js 4
           if npm run check-pwa-assets > /dev/null 2>&1; then
             echo "::error::A verificacao passou verde com o desvio para rota inexistente."
             exit 1
@@ -4945,12 +5281,31 @@ jobs:
           cp $LIB $LIB.orig
           trap 'mv $LIB.orig $LIB' EXIT
 
+          # ------------------------------------------------------------------
+          # O GUARDA DE TODO MUTANTE: ELE TEM DE TER SIDO APLICADO (HMO-231)
+          # ------------------------------------------------------------------
+          # `sed` que nao casa SAI 0 e deixa o arquivo INTACTO. A suite entao
+          # roda sobre o codigo CORRETO, passa verde, e o `if` seguinte le esse
+          # verde como "a suite nao pegou o defeito" -- acusando o codigo em vez
+          # do workflow. Foi o que produziu 57 runs vermelhos seguidos na
+          # HMO-199, e nove issues abertas em 24h procurando no lugar errado.
+          #
+          # `cmp` compara com a copia intacta: se nada mudou, o mutante nao
+          # existe mais, e e ESTE passo que esta quebrado.
+          mutou() {
+            if cmp -s "$1" "$1.orig"; then
+              echo "::error::o mutante $2 nao se aplicou a $1 -- a ancora do sed mudou de forma. Conserte o padrao NESTE workflow, nao o codigo."
+              exit 1
+            fi
+          }
+
           # 1) OS DOIS LADOS SE CANCELANDO. `financial_transactions.amount` de
           #    despesa e negativo e `scheduled_transactions.amount` tem
           #    CHECK (> 0): sem o `Math.abs`, R$ 159,90 previstos anulam
           #    R$ 159,90 realizados e o mes fecha em ZERO -- com as duas
           #    despesas visiveis na lista logo abaixo do total.
           sed -i 's|const quantia = Number.isFinite(bruto) ? Math.abs(bruto) : 0;|const quantia = Number.isFinite(bruto) ? bruto : 0;|' $LIB
+          mutou $LIB 1
           if npm run test:telas-de-movimentacao > /dev/null 2>&1; then
             echo "::error::Verde com o previsto CANCELANDO o realizado no total."
             exit 1
@@ -4961,6 +5316,7 @@ jobs:
           #    linha de financial_transactions, ou seja ja esta no lado
           #    realizado desta mesma tela.
           sed -i 's|if (STATUS_QUE_SAI_DO_PREVISTO.has(String(crua.status))) return null;|if (false) return null;|' $LIB
+          mutou $LIB 2
           if npm run test:telas-de-movimentacao > /dev/null 2>&1; then
             echo "::error::Verde com a conta prevista JA PAGA contada duas vezes."
             exit 1
@@ -4970,6 +5326,7 @@ jobs:
           # 3) AS DUAS PERNAS DA TRANSFERENCIA. Elas tem a mesma
           #    transaction_date (015), entao caem sempre no mesmo periodo.
           sed -i 's|if (tipo === "transfer" \&\& ehPernaDeEntrada(crua)) continue;|if (false) continue;|' $LIB
+          mutou $LIB 3
           if npm run test:telas-de-movimentacao > /dev/null 2>&1; then
             echo "::error::Verde com as DUAS pernas do Pix somando: R\$ 1.000 virando R\$ 2.000."
             exit 1
@@ -4979,6 +5336,7 @@ jobs:
           # 4) O TIPO SAINDO DO SINAL. A perna de saida de uma transferencia e
           #    negativa e tem categoria de despesa: pelo sinal ela e um gasto.
           sed -i 's|if (classificarMovimentacao(crua) !== tipo) continue;|if ((Number(crua.amount) < 0 ? "expense" : "income") !== tipo) continue;|' $LIB
+          mutou $LIB 4
           if npm run test:telas-de-movimentacao > /dev/null 2>&1; then
             echo "::error::Verde com a transferencia entrando no total de DESPESAS pelo sinal."
             exit 1
@@ -4992,6 +5350,7 @@ jobs:
           #    com as DUAS linhas visiveis na lista, o que faz a soma "fechar"
           #    com a tela.
           sed -i 's|if (tipo === "expense" \&\& ehGastoNoCartao(crua)) continue;|if (false) continue;|' $LIB
+          mutou $LIB 5
           if npm run test:telas-de-movimentacao > /dev/null 2>&1; then
             echo "::error::Verde com a compra no cartao somando junto da FATURA que ja a contem: R\$ 800 de uma compra de R\$ 400."
             exit 1
@@ -5021,10 +5380,29 @@ jobs:
           cp $CARTOES $CARTOES.orig
           trap 'mv $CARTOES.orig $CARTOES' EXIT
 
+          # ------------------------------------------------------------------
+          # O GUARDA DE TODO MUTANTE: ELE TEM DE TER SIDO APLICADO (HMO-231)
+          # ------------------------------------------------------------------
+          # `sed` que nao casa SAI 0 e deixa o arquivo INTACTO. A suite entao
+          # roda sobre o codigo CORRETO, passa verde, e o `if` seguinte le esse
+          # verde como "a suite nao pegou o defeito" -- acusando o codigo em vez
+          # do workflow. Foi o que produziu 57 runs vermelhos seguidos na
+          # HMO-199, e nove issues abertas em 24h procurando no lugar errado.
+          #
+          # `cmp` compara com a copia intacta: se nada mudou, o mutante nao
+          # existe mais, e e ESTE passo que esta quebrado.
+          mutou() {
+            if cmp -s "$1" "$1.orig"; then
+              echo "::error::o mutante $2 nao se aplicou a $1 -- a ancora do sed mudou de forma. Conserte o padrao NESTE workflow, nao o codigo."
+              exit 1
+            fi
+          }
+
           # 6) O PREVISTO IMPRESSO NO CARTAO "REALIZADO". As 34 assercoes puras
           #    e os 32 mutantes passam verdes nisto: a conta esta certa e a tela
           #    e que esta mostrando o numero do vizinho.
           sed -i 's|<CardTitle className="text-2xl">{numero(resumo?.realizado)}</CardTitle>|<CardTitle className="text-2xl">{numero(resumo?.previsto)}</CardTitle>|' $CARTOES
+          mutou $CARTOES 6
           if npm run test:cartoes-da-tela > /dev/null 2>&1; then
             echo "::error::Verde com o PREVISTO impresso no cartao Realizado."
             exit 1
@@ -5035,6 +5413,7 @@ jobs:
           #    "R$ 0,00" antes de a leitura responder -- e num mes com despesa
           #    isso nao parece erro, parece um mes barato.
           sed -i 's|podeMostrarNumero(estado) \&\& resumo ? (|true ? (|' $CARTOES
+          mutou $CARTOES 7
           if npm run test:cartoes-da-tela > /dev/null 2>&1; then
             echo "::error::Verde com R\$ 0,00 impresso SEM leitura nenhuma."
             exit 1
