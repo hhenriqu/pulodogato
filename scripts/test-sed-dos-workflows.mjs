@@ -37,10 +37,11 @@
 // opiniao.
 // =====================================================
 
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, cpSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { varrer, reprovados, padraoDaExpressao, recortarSed } from "./check-sed-dos-workflows.mjs";
 
@@ -411,6 +412,23 @@ console.log("\n11b) PROVA LOCAL: cobrada de TODO `sed`, e nas formas que a arvor
   ok("dois `sed`, uma prova: reprova so o descoberto", rd.fora.length === 1, `reprovados=${rd.fora.length}`);
   ok("e e o SEGUNDO", /const b = 1;/.test(rd.fora[0]?.texto || ""), rd.fora[0]?.texto);
   rmSync(doisSeds, { recursive: true, force: true });
+
+  // A MESMA RESSALVA NA ORDEM INVERSA, que e a que mede a janela fechar no
+  // `sed` de baixo. No caso acima o consumo (`npm run`) fecha a janela antes de
+  // qualquer coisa, entao ele passava igual com a trava removida; aqui a prova
+  // do SEGUNDO `sed` fica no caminho do primeiro, e so a trava impede que ela
+  // o absolva. E a forma exata do `cartoes.yml`: 15 mutacoes, uma prova.
+  const provaDoSeguinte = arvore({
+    ".github/workflows/x.yml": passo(
+      "planta",
+      `cp lib/alvo.ts lib/alvo.ts.orig\nsed -i 's#const a = 1;#const a = 2;#' lib/alvo.ts\nsed -i 's#const b = 1;#const b = 2;#' lib/alvo.ts\nif cmp -s lib/alvo.ts lib/alvo.ts.orig; then exit 1; fi\nnpm run test:x`,
+    ),
+    "lib/alvo.ts": "const a = 1;\nconst b = 1;\n",
+  });
+  const rps = medir(provaDoSeguinte);
+  ok("a prova do `sed` de baixo nao absolve o de cima", rps.fora.length === 1, `reprovados=${rps.fora.length}`);
+  ok("e o descoberto e o PRIMEIRO", /const a = 1;/.test(rps.fora[0]?.texto || ""), rps.fora[0]?.texto);
+  rmSync(provaDoSeguinte, { recursive: true, force: true });
 }
 
 // -----------------------------------------------------------------------------
@@ -480,6 +498,26 @@ console.log("\n14) O RECORTE, nos delimitadores que a arvore usa");
   // `-E` muda o dialeto, e o recorte tem de dizer isso.
   ok("`-E` e reconhecido como ERE", recortarSed(`sed -i -E 's/a+/b/' f.ts`)?.ere === true);
   ok("sem `-E` e BRE", recortarSed(`sed -i 's/a+/b/' f.ts`)?.ere === false);
+
+  // E O `-E` TEM DE CHEGAR A MEDICAO, nao so ao recorte. `a+` e quantificador em
+  // ERE e texto literal em BRE, entao o MESMO padrao contra o MESMO arquivo da
+  // vereditos opostos nos dois dialetos -- e e o unico jeito de provar que a
+  // flag nao e lida e jogada fora. O mutante `dialeto_sempre_bre` sobrevivia a
+  // todos os casos acima justamente por isso: eles conferiam o recorte, nao a
+  // medicao.
+  const comE = arvore({
+    ".github/workflows/x.yml": passo("planta", `sed -i -E 's/ba+r/x/' lib/alvo.ts`),
+    "lib/alvo.ts": "baaar\n",
+  });
+  ok("ERE: `ba+r` casa `baaar`", medir(comE).achados[0]?.estado === "CASOU", JSON.stringify(medir(comE).achados[0]));
+  rmSync(comE, { recursive: true, force: true });
+
+  const semE = arvore({
+    ".github/workflows/x.yml": passo("planta", `sed -i 's/ba+r/x/' lib/alvo.ts`),
+    "lib/alvo.ts": "baaar\n",
+  });
+  ok("BRE: o mesmo `ba+r` e literal e NAO casa `baaar`", medir(semE).achados[0]?.estado === "ANCORA_MORTA", JSON.stringify(medir(semE).achados[0]));
+  rmSync(semE, { recursive: true, force: true });
 }
 
 // -----------------------------------------------------------------------------
@@ -511,6 +549,55 @@ console.log("\n16) CONTROLE POSITIVO NA ARVORE DE VERDADE: a guarda le os workfl
     achados.every((a) => ["CASOU", "ANCORA_MORTA", "ALVO_AUSENTE", "DINAMICO", "FORMA_DESCONHECIDA"].includes(a.estado)),
   );
   console.log(`       (${achados.length} \`sed -i\` lidos na arvore de verdade)`);
+}
+
+// -----------------------------------------------------------------------------
+console.log("\n17) O PROGRAMA, e o controle positivo do CONJUNTO VAZIO");
+// Os casos acima importam `varrer`/`reprovados` -- nenhum deles passa por
+// `principal()`, que e onde moram os codigos de saida e a trava do conjunto
+// vazio. Era a lacuna que o mutante `controle_positivo_do_conjunto_vazio`
+// explorava: apagar aquele `exit 1` nao mexia em caso nenhum.
+//
+// O estado que ele protege: uma varredura que nao acha `sed` NENHUM imprime um
+// boletim limpo e sai 0. Mover `.github/workflows/`, renomear o diretorio ou
+// mudar a forma do comando sairia como "tudo em ordem" -- a forma mais
+// confortavel de esta guarda mentir.
+{
+  const guarda = fileURLToPath(new URL("check-sed-dos-workflows.mjs", import.meta.url));
+
+  function rodarComoPrograma(arquivos) {
+    const raiz = arvore(arquivos);
+    mkdirSync(join(raiz, "scripts"), { recursive: true });
+    mkdirSync(join(raiz, ".github", "workflows"), { recursive: true });
+    cpSync(guarda, join(raiz, "scripts", "check-sed-dos-workflows.mjs"));
+    const r = spawnSync("node", ["scripts/check-sed-dos-workflows.mjs"], { cwd: raiz, encoding: "utf8" });
+    rmSync(raiz, { recursive: true, force: true });
+    return { status: r.status, saida: (r.stdout || "") + (r.stderr || "") };
+  }
+
+  // Sem `sed` nenhum: tem de REPROVAR, e dizer que mediu o conjunto vazio.
+  const vazio = rodarComoPrograma({ ".github/workflows/x.yml": `jobs:\n  j:\n    steps:\n      - name: nada\n        run: echo oi\n` });
+  ok("conjunto vazio reprova", vazio.status === 1, `status=${vazio.status}`);
+  ok("e diz que mediu o conjunto vazio", /conjunto vazio/.test(vazio.saida), vazio.saida.trim().slice(0, 120));
+
+  // E o programa em ordem sai 0 -- senao o caso acima mediria "reprova sempre".
+  const ok0 = rodarComoPrograma({
+    ".github/workflows/x.yml": passo(
+      "planta",
+      `cp lib/alvo.ts lib/alvo.ts.orig\nsed -i 's#const a = 1;#const a = 2;#' lib/alvo.ts\nif cmp -s lib/alvo.ts lib/alvo.ts.orig; then exit 1; fi\nnpm run test:x`,
+    ),
+    "lib/alvo.ts": "const a = 1;\n",
+  });
+  ok("e o programa em ordem sai 0", ok0.status === 0, `status=${ok0.status}\n${ok0.saida.trim().slice(0, 200)}`);
+
+  // E a ancora morta reprova PELO PROGRAMA, com anotacao de arquivo e linha --
+  // que e o que faz o erro aparecer no lugar certo no PR.
+  const morta = rodarComoPrograma({
+    ".github/workflows/x.yml": passo("planta", `sed -i 's#const a = 1;#const a = 2;#' lib/alvo.ts`),
+    "lib/alvo.ts": "const a = 99;\n",
+  });
+  ok("ancora morta reprova pelo programa", morta.status === 1, `status=${morta.status}`);
+  ok("com anotacao `::error file=...,line=...`", /::error file=[^,]+,line=\d+::/.test(morta.saida), morta.saida.trim().slice(0, 160));
 }
 
 console.log(`\n${casos - falhas}/${casos} casos ok`);

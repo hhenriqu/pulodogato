@@ -18,6 +18,7 @@
     "test:ancora-de-mutante": "node scripts/test-ancora-de-mutante.mjs",
     "check-sed-dos-workflows": "node scripts/check-sed-dos-workflows.mjs",
     "test:sed-dos-workflows": "node scripts/test-sed-dos-workflows.mjs",
+    "mutantes:guarda-do-sed-dos-workflows": "node scripts/mutantes-guarda-do-sed-dos-workflows.mjs",
     "mutantes:guarda-de-mutacao-no-lugar": "node scripts/mutantes-guarda-de-mutacao-no-lugar.mjs",
     "check-pwa-assets": "node scripts/check-pwa-assets.mjs",
     "generate-pwa-icons": "node scripts/generate-pwa-icons.mjs",

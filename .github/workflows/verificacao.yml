@@ -303,6 +303,24 @@ jobs:
       - name: A guarda de `sed` dos workflows sabe reprovar
         run: npm run test:sed-dos-workflows
 
+      # E OS MUTANTES DELA. O passo acima prova que a guarda SABE reprovar; este
+      # prova que cada decisao dela esta MEDIDA por algum caso -- perguntas
+      # diferentes, e a segunda e a que apodrece, porque um refator que troque o
+      # dialeto deixa os 74 casos verdes se nenhum deles depender daquela linha.
+      # Ele planta o defeito no FONTE da guarda e exige vermelho no controle.
+      #
+      # Achou tres lacunas reais ao ser escrito: o `-E` era conferido no recorte
+      # mas nunca na MEDICAO; a trava que fecha a janela da prova no `sed` de
+      # baixo nao tinha caso alheio (o consumo fechava antes, e o fixture passava
+      # igual sem ela); e o `exit` do conjunto vazio morava em `principal()`, que
+      # nenhum caso chamava. Os tres ganharam caso -- 14/14 mortos.
+      #
+      # Roda numa copia do repositorio em `mkdtempSync`, nunca na arvore, que e a
+      # regra que o `check-mutacao-no-lugar.mjs` cobra dos runners novos. 14s,
+      # num job que ja existe.
+      - name: Os mutantes da guarda de `sed` dos workflows
+        run: npm run mutantes:guarda-do-sed-dos-workflows
+
       # E o conferidor da CONVERSAO de runner para bloco, que e o que garante que
       # converter um runner nao perdeu nenhuma entrada da lista de mutantes -- a
       # unica parte de um runner que carrega conhecimento que nao esta escrito em
