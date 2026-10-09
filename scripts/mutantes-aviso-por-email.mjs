@@ -30,11 +30,19 @@ import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
 
 const SERVICO = "lib/services/email.ts";
 const ROTA = "app/api/cron/bill-alerts/route.ts";
+// O TERCEIRO ALVO (HMO-350). `textoDoAviso` mora aqui, e e a UNICA definicao da
+// frase para os tres canais -- o sino, o push e o e-mail. Ele entrou nesta
+// prova, e nao numa nova, porque a suite ja compilava os dois `lib/services`
+// juntos para confrontar `montarEmailDoAviso` com `textoDoAviso`: o mutante da
+// direcao precisa das duas no mesmo processo para provar que o e-mail nao ganha
+// copia propria da frase.
+const NOTIFICACOES = "lib/services/notifications.ts";
 const SUITE = "test:aviso-por-email";
 
 const fontes = new Map([
   [SERVICO, readFileSync(SERVICO, "utf8")],
   [ROTA, readFileSync(ROTA, "utf8")],
+  [NOTIFICACOES, readFileSync(NOTIFICACOES, "utf8")],
 ]);
 
 const mutantes = [
@@ -266,6 +274,82 @@ const mutantes = [
     "canal desligado passa a reportar todo mundo como SEM ENDERECO",
     "    const { paraEnviar, recusaram, semEndereco } = canalLigado\n      ? separarDestinatarios(",
     "    const { paraEnviar, recusaram, semEndereco } = true\n      ? separarDestinatarios(",
+  ],
+
+  // -------------------------------------------------------------------------
+  // A DIRECAO DA FRASE (HMO-350)
+  // -------------------------------------------------------------------------
+  // O primeiro e o estado em que o codigo ESTAVA: `transaction_type` declarado
+  // na interface e nunca lido, toda frase de conta a pagar. Ele e o controle
+  // negativo da metade de TypeScript desta issue -- se ele sobreviver, as dez
+  // assercoes novas nao estao vendo a direcao.
+  [
+    NOTIFICACOES,
+    "a direcao volta a ser ignorada -- receita anunciada como conta a pagar",
+    '  return tipo === "income";',
+    "  return false;",
+  ],
+  // O MUTANTE DO `transfer`, e e o unico motivo de o criterio ser
+  // `=== "income"` e nao `!== "expense"`: as duas formas dao o mesmo resultado
+  // para receita E para despesa, e divergem SO na transferencia. Sem a
+  // assercao do PIX ele sobrevive, e a frase passa a dizer que uma
+  // transferencia de saida "entra em 18 dias".
+  [
+    NOTIFICACOES,
+    "transferencia prevista passa a ENTRAR na conta",
+    '  return tipo === "income";',
+    '  return tipo !== "expense";',
+  ],
+  // O lado oposto: despesa anunciada como receita. Compila, e a frase fica
+  // plausivel -- "Aluguel entra em 20 dias" se le como um aviso qualquer.
+  [
+    NOTIFICACOES,
+    "toda conta passa a ENTRAR, inclusive despesa",
+    '  return tipo === "income";',
+    "  return true;",
+  ],
+  // Tipo AUSENTE. Entre o deploy e a colagem da 050 a view responde pelo tipo
+  // da regra, e `transaction_type` pode nao vir -- o app novo tem de se
+  // comportar como o velho nesse intervalo, e nao escolher um lado novo.
+  [
+    NOTIFICACOES,
+    "tipo ausente passa a contar como receita",
+    '  return tipo === "income";',
+    '  return tipo !== "expense" && tipo !== "transfer";',
+  ],
+  // A frase do VENCIDO, que e o caso em que o defeito fica pior: uma receita
+  // atrasada anunciada como cobranca.
+  [
+    NOTIFICACOES,
+    "receita atrasada volta a ser cobranca no titulo",
+    "        title: `${alerta.description} não entrou`,",
+    "        title: `${alerta.description} está vencida`,",
+  ],
+  [
+    NOTIFICACOES,
+    "receita atrasada volta a ser cobranca no corpo",
+    "            ? `${valor} — era para entrar ontem.`\n            : `${valor} — era para entrar há ${atraso} dias.`,",
+    "            ? `${valor} — venceu ontem.`\n            : `${valor} — venceu há ${atraso} dias.`,",
+  ],
+  // O singular da receita. A regra ja existia para despesa e e exatamente numa
+  // ramificacao nova que ela se perde: "entra em 1 dias" no aviso da vespera.
+  [
+    NOTIFICACOES,
+    "a receita perde o singular de ontem",
+    "          atraso === 1\n            ? `${valor} — era para entrar ontem.`",
+    "          atraso === 2\n            ? `${valor} — era para entrar ontem.`",
+  ],
+  [
+    NOTIFICACOES,
+    "a receita perde o amanha e diz «entra em 1 dias»",
+    "    if (dias === 1) {\n      return { title: `${alerta.description} entra amanhã`, body: valor };\n    }",
+    "",
+  ],
+  [
+    NOTIFICACOES,
+    "a receita perde o hoje e diz «entra em 0 dias»",
+    "    if (dias === 0) {\n      return { title: `${alerta.description} entra hoje`, body: valor };\n    }",
+    "",
   ],
 ];
 
