@@ -89,13 +89,20 @@ console.log("\n1) CONTROLE POSITIVO: ancora intacta nao reprova nada");
 // Se este caso falhar, todos os outros viram vacuos: um criterio que reprova
 // tudo "pega" qualquer defeito plantado sem medir nada.
 {
+  // O passo em ordem nos DOIS quesitos: ancora viva E prova local. Um dos dois
+  // faltando ja reprova (casos 2 e 11b), entao o controle positivo precisa dos
+  // dois -- senao ele mediria "a guarda reprova tudo".
   const raiz = arvore({
-    ".github/workflows/x.yml": passo("planta", `sed -i 's#const a = 1;#const a = 2;#' lib/alvo.ts`),
+    ".github/workflows/x.yml": passo(
+      "planta",
+      `cp lib/alvo.ts lib/alvo.ts.orig\nsed -i 's#const a = 1;#const a = 2;#' lib/alvo.ts\nif cmp -s lib/alvo.ts lib/alvo.ts.orig; then exit 1; fi\nnpm run test:x`,
+    ),
     "lib/alvo.ts": "const a = 1;\n",
   });
   const { achados, fora } = medir(raiz);
   ok("um `sed` lido", achados.length === 1, `leu ${achados.length}`);
   ok("estado CASOU", achados[0]?.estado === "CASOU", `estado=${achados[0]?.estado}`);
+  ok("tem prova local", achados[0]?.temProvaLocal === true, `provadoPor=${achados[0]?.provadoPor}`);
   ok("nenhum reprovado", fora.length === 0, JSON.stringify(fora.map((f) => f.estado)));
   rmSync(raiz, { recursive: true, force: true });
 }
@@ -270,7 +277,11 @@ console.log("\n11) DINAMICO: sem prova local reprova; com `cmp -s` passa");
   const r1 = medir(semProva);
   ok("estado DINAMICO", r1.achados[0]?.estado === "DINAMICO", `estado=${r1.achados[0]?.estado}`);
   ok("reprova sem prova local", r1.fora.length === 1, `reprovados=${r1.fora.length}`);
-  ok("frase cita a prova que falta", /DINAMICO SEM PROVA LOCAL/.test(r1.fora[0]?.frase || ""), r1.fora[0]?.frase);
+  ok(
+    "frase cita a prova que falta, e diz que o padrao e dinamico",
+    /SEM PROVA LOCAL/.test(r1.fora[0]?.frase || "") && /\$de/.test(r1.fora[0]?.frase || ""),
+    r1.fora[0]?.frase,
+  );
   rmSync(semProva, { recursive: true, force: true });
 
   const comProva = arvore({
@@ -284,6 +295,122 @@ console.log("\n11) DINAMICO: sem prova local reprova; com `cmp -s` passa");
   ok("segue DINAMICO", r2.achados[0]?.estado === "DINAMICO");
   ok("nao reprova com `cmp -s` no passo", r2.fora.length === 0, JSON.stringify(r2.fora.map((f) => f.frase)));
   rmSync(comProva, { recursive: true, force: true });
+}
+
+// -----------------------------------------------------------------------------
+console.log("\n11b) PROVA LOCAL: cobrada de TODO `sed`, e nas formas que a arvore usa");
+// A segunda afirmacao da guarda. O caso 1 (ancora viva, sem prova) tem de
+// reprovar: conferir o padrao de fora le a arvore de HOJE, e nao mede o momento
+// em que o mutante e plantado.
+{
+  const sedCru = `cp lib/alvo.ts lib/alvo.ts.orig\nsed -i 's#const a = 1;#const a = 2;#' lib/alvo.ts\nnpm run test:x`;
+  const semProva = arvore({ ".github/workflows/x.yml": passo("planta", sedCru), "lib/alvo.ts": "const a = 1;\n" });
+  const r = medir(semProva);
+  ok("ancora VIVA mas sem prova local reprova", r.fora.length === 1 && /SEM PROVA LOCAL/.test(r.fora[0].frase), JSON.stringify(r.fora.map((f) => f.estado + ":" + f.frase.slice(0, 40))));
+  ok("e o estado segue CASOU (a ancora esta viva mesmo)", r.achados[0]?.estado === "CASOU");
+  ok("a frase ensina o idioma da arvore", /mutou\(\)/.test(r.fora[0]?.frase || ""), r.fora[0]?.frase);
+  rmSync(semProva, { recursive: true, force: true });
+
+  // As cinco formas de prova que a arvore usa, cada uma na janela do `sed`.
+  // Sem este caso, acrescentar uma marca nova a lista passaria sem medicao --
+  // e marca que FALTA na lista nao e lacuna de cobertura, e falso vermelho
+  // sobre um passo que ja prova (foi o que `diff -q` custou: 12 deles).
+  const formas = [
+    ["cmp -s", `if cmp -s lib/alvo.ts lib/alvo.ts.orig; then exit 1; fi`],
+    ["diff -q", `if diff -q lib/alvo.ts.orig lib/alvo.ts > /dev/null; then exit 1; fi`],
+    ["git diff --quiet", `if git diff --quiet -- lib/alvo.ts; then exit 1; fi`],
+    ["grep -q", `if ! grep -q 'const a = 2;' lib/alvo.ts; then exit 1; fi`],
+    ["grep -cF", `CASOU=$(grep -cF 'const a = 2;' lib/alvo.ts)`],
+  ];
+  for (const [nome, prova] of formas) {
+    const raiz = arvore({
+      ".github/workflows/x.yml": passo("planta", `cp lib/alvo.ts lib/alvo.ts.orig\nsed -i 's#const a = 1;#const a = 2;#' lib/alvo.ts\n${prova}\nnpm run test:x`),
+      "lib/alvo.ts": "const a = 1;\n",
+    });
+    ok(`prova aceita: \`${nome}\``, medir(raiz).fora.length === 0, JSON.stringify(medir(raiz).fora.map((f) => f.frase.slice(0, 60))));
+    rmSync(raiz, { recursive: true, force: true });
+  }
+
+  // A PRE-conferencia, o idioma do mutante 10 de `cartoes` e de
+  // `lancamento.yml`: `test "$(grep -c ...)" = "1"` ANTES do `sed`. E a forma
+  // mais forte (exige UMA ocorrencia, nao apenas uma), e recusa-la seria a
+  // guarda mandando consertar justamente o `sed` melhor provado da arvore.
+  const prechecado = arvore({
+    ".github/workflows/x.yml": passo(
+      "planta",
+      `test "$(grep -c '^const a = 1;$' lib/alvo.ts)" = "1" || { echo "::error::ancora mudou"; exit 1; }\nsed -i 's#const a = 1;#const a = 2;#' lib/alvo.ts\nnpm run test:x`,
+    ),
+    "lib/alvo.ts": "const a = 1;\n",
+  });
+  const rp = medir(prechecado);
+  ok("pre-conferencia antes do `sed` conta como prova", rp.fora.length === 0, JSON.stringify(rp.fora.map((f) => f.frase.slice(0, 60))));
+  ok("e registra a forma", rp.achados[0]?.provadoPor === "pre-conferencia da ancora antes do sed", `por=${rp.achados[0]?.provadoPor}`);
+  rmSync(prechecado, { recursive: true, force: true });
+
+  // Mas a pre-conferencia do `sed` ANTERIOR nao vale para este: a janela para
+  // tras fecha no `sed` de cima, senao uma conferencia so absolveria a cadeia
+  // inteira -- que e a ressalva do `cartoes.yml` ao contrario.
+  const precheckDoAnterior = arvore({
+    ".github/workflows/x.yml": passo(
+      "planta",
+      `test "$(grep -c '^const a = 1;$' lib/alvo.ts)" = "1" || exit 1\nsed -i 's#const a = 1;#const a = 2;#' lib/alvo.ts\nsed -i 's#const b = 1;#const b = 2;#' lib/alvo.ts\nnpm run test:x`,
+    ),
+    "lib/alvo.ts": "const a = 1;\nconst b = 1;\n",
+  });
+  const rpa = medir(precheckDoAnterior);
+  ok("a pre-conferencia nao vaza para o `sed` seguinte", rpa.fora.length === 1, `reprovados=${rpa.fora.length}`);
+  ok("e o reprovado e o segundo", /const b = 1;/.test(rpa.fora[0]?.texto || ""), rpa.fora[0]?.texto);
+  rmSync(precheckDoAnterior, { recursive: true, force: true });
+
+  // O idioma `mutou()` -- a maioria dos `sed` da arvore e provada assim.
+  const comFuncao = arvore({
+    ".github/workflows/x.yml": passo(
+      "planta",
+      `cp lib/alvo.ts lib/alvo.ts.orig\nmutou() {\n  if cmp -s "$1" "$1.orig"; then\n    echo "::error::nao aplicou"\n    exit 1\n  fi\n}\nsed -i 's#const a = 1;#const a = 2;#' lib/alvo.ts\nmutou lib/alvo.ts 1\nnpm run test:x`,
+    ),
+    "lib/alvo.ts": "const a = 1;\n",
+  });
+  const rf = medir(comFuncao);
+  ok("chamada de `mutou` conta como prova", rf.fora.length === 0, JSON.stringify(rf.fora.map((f) => f.frase.slice(0, 60))));
+  ok("e o achado registra por que foi provado", rf.achados[0]?.provadoPor === "chamada de funcao que prova", `por=${rf.achados[0]?.provadoPor}`);
+  rmSync(comFuncao, { recursive: true, force: true });
+
+  // E a funcao que NAO prova nao vale: `planta()` que so muta, sem conferir.
+  const funcaoVazia = arvore({
+    ".github/workflows/x.yml": passo(
+      "planta",
+      `planta() {\n  echo "$1"\n}\nsed -i 's#const a = 1;#const a = 2;#' lib/alvo.ts\nplanta lib/alvo.ts\nnpm run test:x`,
+    ),
+    "lib/alvo.ts": "const a = 1;\n",
+  });
+  ok("funcao que nao confere nada nao conta como prova", medir(funcaoVazia).fora.length === 1);
+  rmSync(funcaoVazia, { recursive: true, force: true });
+
+  // A JANELA FECHA NO CONSUMO: prova que chega depois de a suite rodar nao
+  // distingue mais nada -- a suite ja leu a fonte intacta e ja passou.
+  const provaTardia = arvore({
+    ".github/workflows/x.yml": passo(
+      "planta",
+      `cp lib/alvo.ts lib/alvo.ts.orig\nsed -i 's#const a = 1;#const a = 2;#' lib/alvo.ts\nnpm run test:x\nif cmp -s lib/alvo.ts lib/alvo.ts.orig; then exit 1; fi`,
+    ),
+    "lib/alvo.ts": "const a = 1;\n",
+  });
+  ok("prova DEPOIS da suite nao conta", medir(provaTardia).fora.length === 1, JSON.stringify(medir(provaTardia).fora.map((f) => f.frase.slice(0, 40))));
+  rmSync(provaTardia, { recursive: true, force: true });
+
+  // E a prova de UM `sed` nao cobre o `sed` seguinte -- a ressalva que a
+  // propria HMO-231 fez sobre `cartoes.yml`: 15 mutacoes, UMA prova.
+  const doisSeds = arvore({
+    ".github/workflows/x.yml": passo(
+      "planta",
+      `cp lib/alvo.ts lib/alvo.ts.orig\nsed -i 's#const a = 1;#const a = 2;#' lib/alvo.ts\nif cmp -s lib/alvo.ts lib/alvo.ts.orig; then exit 1; fi\nnpm run test:x\nsed -i 's#const b = 1;#const b = 2;#' lib/alvo.ts\nnpm run test:x`,
+    ),
+    "lib/alvo.ts": "const a = 1;\nconst b = 1;\n",
+  });
+  const rd = medir(doisSeds);
+  ok("dois `sed`, uma prova: reprova so o descoberto", rd.fora.length === 1, `reprovados=${rd.fora.length}`);
+  ok("e e o SEGUNDO", /const b = 1;/.test(rd.fora[0]?.texto || ""), rd.fora[0]?.texto);
+  rmSync(doisSeds, { recursive: true, force: true });
 }
 
 // -----------------------------------------------------------------------------

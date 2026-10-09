@@ -24,11 +24,24 @@
 // caso. Esta guarda fecha a classe: ela reprova no PR que quebra a ancora, em
 // vez de dias depois, no vermelho da main.
 //
-// O QUE ELA AFIRMA
-// ----------------
-// Para cada `sed -i` dos workflows: o padrao casa **pelo menos uma linha** do
-// arquivo que o proprio comando cita. Zero linha = ancora MORTA = o mutante
-// mediria a fonte intacta.
+// O QUE ELA AFIRMA, E SAO DUAS COISAS
+// -----------------------------------
+// 1. ANCORA VIVA: o padrao casa **pelo menos uma linha** do arquivo que o
+//    proprio comando cita. Zero linha = ancora MORTA = o mutante mediria a
+//    fonte intacta.
+// 2. PROVA LOCAL: entre cada `sed` e a suite que ele deveria reprovar existe um
+//    `cmp -s`/`diff -q`/`git diff --quiet`/`grep -q`/`grep -cF` que afirma que
+//    o arquivo MUDOU, com mensagem propria.
+//
+// As duas, e nao uma: a (1) le a arvore de HOJE, no PR, e e o que pega a
+// refatoracao que mata a ancora; a (2) mede no momento em que o mutante e
+// plantado, e e a unica que pega o `sed` que deixa de casar por algo que nao
+// esta no padrao -- um `cp` que nao rodou, um alvo que um passo anterior
+// reescreveu, ou um padrao dinamico que a (1) nao sabe conferir de fora.
+//
+// Medido ao escrever isto: dos 148 `sed -i`, 75 ja tinham prova local e 73 nao.
+// Os 73 ganharam a sua, entao a divida e ZERO e a exigencia nao precisa de
+// lista de excecao -- ver "POR QUE ELA NAO TEM LISTA DE EXCECAO" abaixo.
 //
 // DIALETO: `grep` EM BRE, QUE E O DIALETO DO `sed` -- NAO `includes()`, NAO ERE
 // ---------------------------------------------------------------------------
@@ -62,17 +75,16 @@
 // O que ela NAO consegue resolver e declarado como tal, nunca escondido: os
 // runners "em bloco" fazem `for ... ; do sed -i "s@$de@$para@" "$arquivo"`, onde
 // o padrao sai de uma LISTA percorrida em laco. Para esses nao existe padrao
-// estatico para conferir -- e para eles a guarda cobra a outra prova, a LOCAL:
-// o passo tem de ter `cmp -s` (ou `grep -cF` exigindo 1) depois do `sed`, que e
-// o que pega a ancora morta em tempo de execucao. Um `sed` dinamico sem prova
-// local nenhuma e exatamente o estado que mente, e reprova aqui.
+// estatico para conferir, e a unica prova possivel e a LOCAL -- que a guarda
+// cobra de todo `sed`, dinamico ou nao.
 //
 // POR QUE ELA NAO TEM LISTA DE EXCECAO
 // ------------------------------------
 // Lista a mao vence pelo cansaco: quem quebra a ancora acrescenta o nome e
 // segue. Todo veredito aqui sai do CODIGO -- do texto do workflow e do arquivo
-// alvo. O unico estado tolerado e o `sed` dinamico COM prova local, e isso e
-// medido, nao declarado.
+// alvo. Ela so pode ser assim porque a divida foi a ZERO antes de a exigencia
+// entrar: uma guarda que nasce reprovando 73 `sed` seria desligada por uma
+// lista de excecao antes de pegar o primeiro `sed` novo.
 //
 // E ELA TEM CONTROLE NEGATIVO PROPRIO
 // -----------------------------------
@@ -91,12 +103,26 @@ const RAIZ = fileURLToPath(new URL("..", import.meta.url));
 const DIR_WORKFLOWS = join(RAIZ, ".github", "workflows");
 
 /**
- * Marcas de prova LOCAL que um passo pode trazer depois do `sed`. As tres
- * formas que a arvore ja usa, da mais forte para a mais fraca: `cmp -s` contra
- * o `.orig` (prova que o arquivo MUDOU), `CASOU=$(grep -cF ...)` exigindo
- * exatamente 1, e `grep -q` no resultado da mutacao.
+ * Marcas de prova LOCAL que um passo pode trazer depois do `sed`. As formas que
+ * a arvore JA usa, da mais forte para a mais fraca: comparacao com a copia
+ * intacta (`cmp -s` ou `diff -q` contra o `.orig`, que provam que o arquivo
+ * MUDOU), `CASOU=$(grep -cF ...)` exigindo exatamente 1, e `grep -q` no
+ * resultado da mutacao.
+ *
+ * `diff -q` nao e redundante com `cmp -s`: os passos "A verificacao das acoes
+ * sabe falhar" e "A sonda do gesto sabe falhar" escrevem
+ * `if diff -q "$1.orig" "$1" > /dev/null` dentro de `mutou()`, e sem esta
+ * entrada a guarda acusava os 12 `sed` deles de descobertos -- 12 falsos
+ * vermelhos sobre passos que provam cada mutante. Marca de prova que falta
+ * nesta lista nao e lacuna de cobertura: e a guarda mandando consertar o que
+ * ja esta certo.
+ *
+ * `git diff --quiet` e a forma dos cinco blocos que restauram com
+ * `git checkout --` em vez de guardar `.orig` (color-tokens, scroll
+ * horizontal, area util, artefatos, pwa-assets): sem copia intacta para
+ * comparar, quem responde "o arquivo mudou?" e o proprio git.
  */
-const MARCAS_DE_PROVA = [/cmp -s/, /CASOU=/, /grep -cF/, /grep -q/];
+const MARCAS_DE_PROVA = [/cmp -s/, /diff -q/, /git diff --quiet/, /CASOU=/, /grep -cF/, /grep -q/];
 
 // -----------------------------------------------------------------------------
 // Leitura do workflow: passos, atribuicoes de shell e as linhas de `sed -i`
@@ -239,6 +265,29 @@ export function provaLocalDosSeds(corpo) {
     // Forma 2: o `sed` mora dentro de uma funcao que prova.
     if (queProvam.some((f) => i > f.inicio && i < f.fim)) {
       porLinha.set(corpo[i].linha, { provado: true, por: "funcao que muta e confere" });
+      continue;
+    }
+
+    // Forma 4: a PRE-conferencia, que e a mais forte das formas e por isso nao
+    // pode ser recusada. `lancamento.yml` escreve
+    // `test "$(grep -c '^      </Link>$' $LISTA)" = "1"` ANTES do `sed`: ela
+    // nao afirma so que a ancora existe, afirma que existe UMA vez -- o que a
+    // conferencia de depois nao distingue (`String.replace` troca a primeira
+    // ocorrencia, e um `de` ambiguo muta um lugar que o nome do mutante nao
+    // descreve; e o assunto do `mede-ancora-ambigua.mjs`).
+    //
+    // Sem esta forma a guarda reprovaria os dois `sed` do mutante 10 de
+    // `cartoes` -- que sao justamente os melhor provados do arquivo. Guarda que
+    // manda consertar o que esta certo e desligada no mes seguinte.
+    let prechecado = false;
+    for (let j = i - 1; j >= 0; j--) {
+      const t = corpo[j].texto;
+      if (ehComentario(t)) continue;
+      if (ehLinhaDeSed(t) || ehConsumo(t)) break;
+      if (/grep -c/.test(t)) { prechecado = true; break; }
+    }
+    if (prechecado) {
+      porLinha.set(corpo[i].linha, { provado: true, por: "pre-conferencia da ancora antes do sed" });
       continue;
     }
 
@@ -515,13 +564,23 @@ export function reprovados(achados) {
         ...a,
         frase: `FORMA NAO MEDIDA (${a.motivo}): ensine esta forma a check-sed-dos-workflows.mjs, senao a guarda fica vacua neste \`sed\`.`,
       });
-    } else if (a.estado === "DINAMICO" && !a.temProvaLocal) {
+    } else if (!a.temProvaLocal) {
+      // Vale para os DOIS: o `sed` de padrao dinamico, que esta guarda nao sabe
+      // conferir de fora, e o estatico, que ela confere -- mas confere a arvore
+      // de HOJE. A prova local e a que mede no momento em que o mutante e
+      // plantado, e e a unica que pega o `sed` que deixa de casar por algo que
+      // nao esta no padrao (um `cp` que nao rodou, um alvo reescrito por um
+      // passo anterior). As duas respondem perguntas diferentes.
+      const porque = a.pendentes
+        ? `o padrao vem de ${a.pendentes.map((p) => "$" + p).join(", ")}, que nao tem valor estatico aqui`
+        : `a conferencia estatica le a arvore de hoje, nao o momento em que o mutante e plantado`;
       fora.push({
         ...a,
         frase:
-          `DINAMICO SEM PROVA LOCAL: o padrao vem de ${a.pendentes.map((p) => "$" + p).join(", ")}, ` +
-          `que nao tem valor estatico aqui, e o passo nao tem \`cmp -s\` nem \`grep -cF\` depois do \`sed\`. ` +
-          `Sem uma das duas provas, ancora morta sai como verde.`,
+          `SEM PROVA LOCAL: ${porque}, e nao ha \`cmp -s\`, \`diff -q\`, \`git diff --quiet\`, ` +
+          `\`grep -q\` nem \`grep -cF\` entre este \`sed\` e a suite que ele deveria reprovar. ` +
+          `Sem isso, ancora morta sai como verde. O idioma da arvore e uma funcao \`mutou()\` ` +
+          `no topo do passo e um \`mutou <alvo> <n>\` depois de cada \`sed\`.`,
       });
     }
   }
@@ -544,13 +603,16 @@ function principal() {
   for (const a of achados) porEstado.set(a.estado, (porEstado.get(a.estado) || 0) + 1);
 
   const fora = reprovados(achados);
-  const dinamicosComProva = achados.filter((a) => a.estado === "DINAMICO" && a.temProvaLocal).length;
 
   console.log(`check-sed-dos-workflows: ${achados.length} \`sed -i\` lidos`);
   for (const [estado, n] of [...porEstado].sort()) console.log(`  ${estado}: ${n}`);
-  if (dinamicosComProva) {
-    console.log(`  (dos DINAMICO, ${dinamicosComProva} tem prova local \`cmp -s\`/\`grep -cF\` no passo -- medidos em tempo de execucao)`);
+
+  const porForma = new Map();
+  for (const a of achados.filter((a) => a.temProvaLocal)) {
+    porForma.set(a.provadoPor, (porForma.get(a.provadoPor) || 0) + 1);
   }
+  console.log(`  com prova local: ${achados.filter((a) => a.temProvaLocal).length}`);
+  for (const [forma, n] of [...porForma].sort((a, b) => b[1] - a[1])) console.log(`    ${forma}: ${n}`);
 
   if (fora.length) {
     console.error("");
@@ -565,7 +627,7 @@ function principal() {
     process.exit(1);
   }
 
-  console.log("Toda ancora de `sed` casa no arquivo que ela cita.");
+  console.log("Toda ancora de `sed` casa no arquivo que ela cita, e todo `sed` prova que mutou.");
 }
 
 // Programa so quando E o programa: importado como modulo (pelo controle
