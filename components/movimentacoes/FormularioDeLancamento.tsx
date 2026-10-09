@@ -49,6 +49,9 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { SoftFeatureGuard } from "@/components/subscription/SoftFeatureGuard";
 import { Trash2, Users } from "lucide-react";
 import { CamposDeLancamento } from "@/components/movimentacoes/CamposDeLancamento";
+import { DialogoDeAlcance } from "@/components/series/DialogoDeAlcance";
+import { movimentoPedidoNaTela } from "@/lib/parcelas-edicao";
+import type { Alcance } from "@/lib/alcance-na-tela";
 import { ModalDeLancamento } from "@/components/movimentacoes/ModalDeLancamento";
 import { SalvarEContinuar } from "@/components/movimentacoes/SalvarEContinuar";
 import { usePreferenciaDeMoeda } from "@/lib/hooks/usePreferenciaDeMoeda";
@@ -71,6 +74,7 @@ import {
   naturezaDoLugar,
   parcelaDigitada,
   regraDeRecorrencia,
+  rotuloDaParcela,
   valoresIniciais,
   validarLancamento,
   valorGravado,
@@ -189,6 +193,29 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
   const [catalogoDe, setCatalogoDe] = useState<number | null>(null);
   const [valores, setValores] = useState<ValoresDeLancamento>(valoresIniciais);
   const [editando, setEditando] = useState(false);
+  /**
+   * A SERIE DA PARCELA QUE ESTA ABERTA PARA EDICAO (HMO-357)
+   *
+   * `null` em tudo que nao e parcela de cartao -- e e isso que mantem o
+   * formulario de sempre sem nenhuma pergunta nova.
+   *
+   * Guarda a colocacao COMO ESTAVA ao abrir (`transaction_date` e
+   * `invoice_month_override`), porque e a comparacao com ela que diz se a pessoa
+   * MOVEU a parcela. Sem o retrato, "mudou de fatura?" so poderia ser respondido
+   * por "o campo esta preenchido", que e verdade em toda compra no cartao e
+   * abriria a pergunta do alcance em cada Salvar.
+   */
+  const [parcelaAberta, setParcelaAberta] = useState<{
+    numero: number;
+    total: number | null;
+    dataGravada: string;
+    faturaGravada: string;
+    /** Como o campo de valor abriu: em reais, positivo, igual ao estado. */
+    valorNaTela: string;
+    descricaoGravada: string;
+  } | null>(null);
+  /** O alcance pedido e ainda nao respondido, com o Salvar esperando. */
+  const [perguntandoAlcance, setPerguntandoAlcance] = useState(false);
   /**
    * "Salvar e continuar" (HMO-249): o modal nao fecha depois de gravar.
    *
@@ -510,6 +537,33 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
     );
 
     setEditando(true);
+    // A SERIE, SE ESTA LINHA FOR UMA PARCELA (HMO-357)
+    //
+    // `installment_number` e a marca: ela e NULL em toda compra avulsa e vem
+    // NOT NULL junto com `installment_total` por CHECK (035) -- nao existe "e
+    // parcela mas nao se sabe de quantas". O retrato da colocacao e tirado aqui
+    // porque e o unico momento em que o que esta GRAVADO ainda esta na mao: um
+    // render depois, `valores` ja e o que a pessoa esta digitando.
+    setParcelaAberta(
+      linha.installment_number
+        ? {
+            numero: Number(linha.installment_number),
+            total: linha.installment_total
+              ? Number(linha.installment_total)
+              : null,
+            dataGravada: String(linha.transaction_date ?? ""),
+            faturaGravada: linha.invoice_month_override
+              ? String(linha.invoice_month_override).slice(0, 7)
+              : "",
+            // As MESMAS expressoes que preenchem `valores` abaixo, de proposito:
+            // o aviso compara o campo com o que ele tinha ao abrir, e uma
+            // formatacao diferente aqui faria "o valor mudou" ser verdade em
+            // todo Salvar.
+            valorNaTela: Math.abs(Number(linha.amount)).toString(),
+            descricaoGravada: linha.description ?? "",
+          }
+        : null
+    );
     setValores({
       ...valoresIniciais(),
       descricao: linha.description ?? "",
@@ -930,6 +984,92 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
     irPara(destinoDepoisDeSalvar({ origem, continuar: false })!);
   };
 
+  // ---------------------------------------------------------------------------
+  // MOVER UMA PARCELA MOVE A SERIE (HMO-357)
+  // ---------------------------------------------------------------------------
+  // "Quando movo uma parcela, as demais devem mover junto."
+  //
+  // O Salvar desta tela grava UMA linha (`gravarTransacao`). Numa parcela de
+  // cartao isso movia a parcela 3 de 10 e deixava as outras nove onde estavam:
+  // duas parcelas na mesma fatura, um mes vazio no fim, e as duas faturas
+  // fechando num valor plausivel -- sem erro em lugar nenhum.
+  //
+  // Entao quando a linha aberta E uma parcela e a colocacao dela muda, o Salvar
+  // para e PERGUNTA o alcance (o mesmo dialogo da exclusao, HMO-228). A serie
+  // anda por `PATCH /api/financial-installments/serie/{id}`, que e quem sabe o
+  // que e uma serie -- um laco de ids aqui ficaria aplicado pela metade quando a
+  // conexao cai, e meia serie movida nao tem como ser descoberta depois.
+  const destinoDoMovimento = parcelaAberta
+    ? movimentoPedidoNaTela({
+        dataGravada: parcelaAberta.dataGravada,
+        faturaGravada: parcelaAberta.faturaGravada,
+        dataNova: valores.data,
+        faturaNova: valores.mesDaFatura,
+      })
+    : null;
+
+  /**
+   * O mesmo Salvar tambem mexeu em valor ou descricao?
+   *
+   * E o que o aviso do dialogo declara: a serie e movida no alcance escolhido,
+   * mas esses dois campos continuam valendo so para esta parcela.
+   */
+  const valorOuDescricaoMudou = Boolean(
+    parcelaAberta &&
+      (valores.valor !== parcelaAberta.valorNaTela ||
+        valores.descricao !== parcelaAberta.descricaoGravada)
+  );
+
+  /**
+   * Move a serie no alcance escolhido e, depois, grava esta linha.
+   *
+   * A ORDEM IMPORTA: a rota mede o deslocamento entre a fatura de ORIGEM da
+   * ancora e a de destino. Gravar a linha primeiro apagaria a origem -- a rota
+   * leria a parcela ja movida, acharia deslocamento zero e devolveria "a fatura
+   * desta parcela não mudou" sobre o pedido que acabou de move-la.
+   *
+   * E ela nao grava nada quando a rota recusa: um 409 de fatura paga com a linha
+   * ja gravada deixaria a ancora movida sozinha, que e exatamente o estado que
+   * esta issue remove.
+   */
+  const moverSerieEGravar = async (alcance: Alcance) => {
+    setSalvando(true);
+    try {
+      if (alcance !== "apenas_esta" && destinoDoMovimento) {
+        const resposta = await fetch(
+          `/api/financial-installments/serie/${idParaEditar}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            // O alcance e o destino vao no CORPO, e o destino e UM so: a rota
+            // recusa data e fatura juntas porque sao dois lugares diferentes
+            // para a mesma parcela.
+            body: JSON.stringify({ alcance, ...destinoDoMovimento }),
+          }
+        );
+        const dados = await resposta.json().catch(() => ({}));
+
+        if (!resposta.ok) {
+          toast.error(
+            dados.error || `O movimento foi recusado (HTTP ${resposta.status}).`
+          );
+          return;
+        }
+
+        if (dados.message) toast.success(dados.message);
+      }
+
+      await gravarTransacao();
+      setPerguntandoAlcance(false);
+      terminar();
+    } catch (erro) {
+      console.error("Erro ao mover a série de parcelas:", erro);
+      toast.error("Erro ao mover as parcelas desta compra.");
+    } finally {
+      setSalvando(false);
+    }
+  };
+
   const enviar = async (evento: React.FormEvent) => {
     evento.preventDefault();
 
@@ -983,6 +1123,16 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
           if (await criarContaPrevista()) terminar();
           return;
         case "transacao":
+          // A PERGUNTA DO ALCANCE VEM ANTES DA GRAVACAO (HMO-357)
+          //
+          // E so aqui: mover uma parcela e uma edicao de linha gravada, e os
+          // outros tres destinos criam coisa nova (regra, serie, previsao), onde
+          // nao ha serie existente para arrastar. A gravacao continua em
+          // `moverSerieEGravar`, depois da resposta.
+          if (destinoDoMovimento) {
+            setPerguntandoAlcance(true);
+            return;
+          }
           await gravarTransacao();
           terminar();
           return;
@@ -1240,6 +1390,7 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
   }
 
   return (
+    <>
     <ModalDeLancamento
       titulo={tituloDoModal}
       descricao={copia.descricao}
@@ -1491,5 +1642,48 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
         </CardContent>
       </Card>
     </ModalDeLancamento>
+
+      {/*
+        A PERGUNTA DO ALCANCE AO MOVER UMA PARCELA (HMO-357)
+
+        FORA do `ModalDeLancamento`, e nao dentro: o formulario ja vive num
+        `Dialog` (a rota E o modal), e um segundo Dialog dentro do
+        `DialogContent` do primeiro empilha duas camadas de dismiss -- o Esc e o
+        clique fora passam a ter dois donos. Como irmao, o dialogo do alcance e
+        uma camada so, e fechar ele nao fecha o formulario por tras.
+
+        O mesmo dialogo da exclusao (HMO-228), com `movendo` ligado: as
+        consequencias de mover sao outras frases, porque mover NAO muda o total
+        da compra -- o que muda e a colocacao, e o que a pessoa precisa saber e
+        que a cadencia de um mes e preservada.
+
+        `aviso` cobre o Salvar que faz duas coisas: a serie e movida no alcance
+        escolhido, mas valor e descricao continuam valendo so para esta parcela
+        (a serie inteira tem a pergunta "parcela ou total", e ela e outra tela).
+        Sem a frase, quem escolhe "todas" sai acreditando que o valor novo foi
+        para as dez.
+      */}
+      {parcelaAberta && (
+        <DialogoDeAlcance
+          aberto={perguntandoAlcance}
+          aoFechar={() => setPerguntandoAlcance(false)}
+          tipo="parcela"
+          acao="alterar"
+          movendo
+          ancora={
+            rotuloDaParcela(parcelaAberta.numero, parcelaAberta.total) ??
+            `parcela ${parcelaAberta.numero}`
+          }
+          totalDeParcelas={parcelaAberta.total}
+          aviso={
+            valorOuDescricaoMudou
+              ? "O valor e a descrição que você alterou valem só para esta parcela."
+              : null
+          }
+          aoConfirmar={(alcance) => moverSerieEGravar(alcance)}
+          salvando={salvando}
+        />
+      )}
+    </>
   );
 }

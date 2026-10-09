@@ -155,7 +155,7 @@
     "test:parcelamento": "node scripts/compila.mjs lib/lancamento.ts --outDir .tmp-parcelamento/lib --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-parcelamento.mjs",
     "mutantes:parcelamento": "node scripts/mutantes-parcelamento.mjs",
     "mutantes:campo-de-parcelas": "node scripts/mutantes-campo-de-parcelas.mjs",
-    "test:alcance-da-serie": "node scripts/compila.mjs -p scripts/tsconfig.alcance-da-serie-test.json && node scripts/resolve-aliases.mjs .tmp-alcance-da-serie lib && node --test scripts/test-alcance-da-serie.mjs",
+    "test:alcance-da-serie": "node scripts/compila.mjs -p scripts/tsconfig.alcance-da-serie-test.json && node scripts/resolve-aliases.mjs .tmp-alcance-da-serie lib --espelha-raiz && node --test scripts/test-alcance-da-serie.mjs",
     "mutantes:alcance-da-serie": "node scripts/mutantes-alcance-da-serie.mjs",
     "mutantes:tipo-e-sinal": "node scripts/mutantes-tipo-e-sinal.mjs",
     "mutantes:convite-sem-conta": "bash scripts/mutantes-convite-sem-conta.sh",

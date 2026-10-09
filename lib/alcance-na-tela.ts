@@ -61,8 +61,23 @@ export function opcoesDeAlcance(entrada: {
   ancora: string;
   /** M, so na parcela. Entra no rotulo de "todas" ("todas as 10"). */
   totalDeParcelas?: number | null;
+  /**
+   * O pedido MOVE a parcela de fatura (HMO-357)?
+   *
+   * As consequencias de alterar o VALOR e de MOVER sao frases diferentes, e as
+   * do valor estariam erradas aqui: "as anteriores ficam com o valor antigo,
+   * então o total da compra deixa de ser..." nao descreve nada do que acontece
+   * quando a pessoa troca a parcela de fatura -- o total da compra nao muda ao
+   * mover. O que muda e a colocacao, e o que a pessoa precisa saber e que a
+   * CADENCIA e preservada (cada parcela anda a partir da fatura dela) e que
+   * "apenas esta" deixa duas parcelas na mesma fatura.
+   *
+   * So tem efeito na parcela e na acao de alterar: nao ha "mover" numa conta
+   * fixa (mudar a data de uma ocorrencia nao desloca a regra) nem em apagar.
+   */
+  movendo?: boolean;
 }): OpcaoDeAlcance[] {
-  const { tipo, acao, ancora, totalDeParcelas } = entrada;
+  const { tipo, acao, ancora, totalDeParcelas, movendo = false } = entrada;
   const ehParcela = tipo === "parcela";
 
   const todasRotulo =
@@ -94,6 +109,35 @@ export function opcoesDeAlcance(entrada: {
         consequencia: ehParcela
           ? "A compra inteira é apagada, com todas as parcelas. Parcelas em fatura já paga não são apagadas."
           : "O gasto fixo é encerrado e as ocorrências em aberto saem da agenda. O que já foi pago permanece no histórico.",
+      },
+    ];
+  }
+
+  // MOVER TEM AS PROPRIAS CONSEQUENCIAS (HMO-357)
+  //
+  // Elas vem antes das de valor porque sao outro conjunto de fatos, e nao uma
+  // variacao de texto: ao mover, o total da compra NAO muda, a cadencia de um
+  // mes e o que esta em jogo, e "apenas esta" produz o estado que a issue
+  // existe para evitar -- duas parcelas na mesma fatura.
+  if (ehParcela && movendo) {
+    return [
+      {
+        valor: "apenas_esta",
+        rotulo: `Apenas esta (${ancora})`,
+        consequencia:
+          "Só esta parcela muda de fatura. As outras ficam onde estão — duas parcelas podem acabar na mesma fatura e um mês pode ficar sem nenhuma.",
+      },
+      {
+        valor: "esta_e_proximas",
+        rotulo: "Esta e as próximas",
+        consequencia:
+          "Esta e as seguintes andam juntas, cada uma a partir da fatura dela, mantendo um mês entre as parcelas. As anteriores ficam onde estão.",
+      },
+      {
+        valor: "todas",
+        rotulo: todasRotulo,
+        consequencia:
+          "A compra inteira anda junto, mantendo um mês entre as parcelas. Parcelas em fatura já paga não são movidas.",
       },
     ];
   }
