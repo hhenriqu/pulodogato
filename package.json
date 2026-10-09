@@ -184,6 +184,7 @@
     "mutantes:projecao": "node scripts/mutantes-projecao.mjs",
     "mutantes:trava-de-membro": "node scripts/mutantes-trava-de-membro.mjs",
     "mutantes:trava-de-tipo": "node scripts/mutantes-trava-de-tipo.mjs",
+    "mutantes:restauracao-do-grupo": "node scripts/mutantes-restauracao-do-grupo.mjs",
     "check-fatura-escolhida": "node scripts/check-fatura-escolhida.mjs",
     "test:modo-papel": "node scripts/compila.mjs -p scripts/tsconfig.modo-papel-test.json && node scripts/resolve-aliases.mjs .tmp-modo-papel lib --espelha-raiz && node --test scripts/test-modo-papel.mjs",
     "test:papel-na-tela": "node scripts/compila.mjs -p scripts/tsconfig.papel-na-tela-test.json && node --test scripts/test-papel-na-tela.mjs",
