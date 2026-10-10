@@ -103,6 +103,136 @@ function projetar(linha, colunas) {
 }
 
 /**
+ * Parte uma lista do PostgREST na VIRGULA DE NIVEL ZERO (HMO-373).
+ *
+ * Irmao do `colunasDe`, e pelo mesmo motivo: a virgula e separador, mas a
+ * virgula DENTRO de `and(...)` e dentro de um operando `"citado"` e texto. Um
+ * `split(",")` cru picaria `and(a.eq.1,b.eq.2)` no meio.
+ */
+function partirNoNivelZero(expressao) {
+  const partes = [];
+  let atual = "";
+  let profundidade = 0;
+  let citando = false;
+
+  for (let i = 0; i < expressao.length; i++) {
+    const c = expressao[i];
+
+    if (citando) {
+      // Dentro de aspas, `\` escapa o proximo caractere -- e o que
+      // `citar()` de lib/busca-de-perfil.ts emite.
+      if (c === "\\") {
+        atual += c + (expressao[i + 1] ?? "");
+        i++;
+        continue;
+      }
+      if (c === '"') citando = false;
+      atual += c;
+      continue;
+    }
+
+    if (c === '"') {
+      citando = true;
+      atual += c;
+      continue;
+    }
+    if (c === "(") profundidade++;
+    if (c === ")") profundidade--;
+    if (c === "," && profundidade === 0) {
+      partes.push(atual);
+      atual = "";
+      continue;
+    }
+    atual += c;
+  }
+
+  if (atual) partes.push(atual);
+  return partes;
+}
+
+/** Tira as aspas (e os escapes) de um operando citado do PostgREST. */
+function descitar(valor) {
+  if (valor.length >= 2 && valor.startsWith('"') && valor.endsWith('"')) {
+    return valor.slice(1, -1).replace(/\\(.)/g, "$1");
+  }
+  return valor;
+}
+
+/**
+ * Avalia UM ramo da arvore logica do PostgREST contra uma linha.
+ *
+ * Aceita `and(...)` / `or(...)` aninhados e as folhas `coluna.op.valor`.
+ *
+ * OPERADOR DESCONHECIDO ESTOURA, e isto e load-bearing
+ * ----------------------------------------------------
+ * A tentacao e devolver `true` no `default` -- "nao sei avaliar, nao filtro".
+ * Isso transformaria todo `.or()` com um operador novo num NO-OP, e uma sonda
+ * que medisse recorte de busca passaria verde com a rota devolvendo a base
+ * inteira. O duble inteiro existe porque ele FILTRA DE VERDADE (ver o cabecalho
+ * do arquivo), entao a resposta honesta para "nao sei" e parar.
+ */
+function avaliarRamo(ramo, linha) {
+  const limpo = ramo.trim();
+
+  const grupo = /^(and|or)\((.*)\)$/s.exec(limpo);
+  if (grupo) {
+    const ramos = partirNoNivelZero(grupo[2]);
+    return grupo[1] === "and"
+      ? ramos.every((r) => avaliarRamo(r, linha))
+      : ramos.some((r) => avaliarRamo(r, linha));
+  }
+
+  // `coluna.op.resto` -- o resto pode conter pontos (um e-mail, por exemplo),
+  // entao o split e nos DOIS primeiros pontos, nao em todos.
+  const primeiro = limpo.indexOf(".");
+  const segundo = limpo.indexOf(".", primeiro + 1);
+  if (primeiro === -1 || segundo === -1) {
+    throw new Error(
+      `duble-de-supabase: nao sei ler o ramo \`${limpo}\` de um .or(). ` +
+        "A forma esperada e `coluna.operador.valor` ou `and(...)`/`or(...)`."
+    );
+  }
+
+  const coluna = limpo.slice(0, primeiro);
+  const op = limpo.slice(primeiro + 1, segundo);
+  const bruto = limpo.slice(segundo + 1);
+  const valor = descitar(bruto);
+  const celula = linha[coluna] ?? null;
+
+  switch (op) {
+    case "eq":
+      // O PostgREST manda tudo como texto; `true`/`false` chegam como palavra.
+      if (valor === "true") return celula === true;
+      if (valor === "false") return celula === false;
+      return String(celula) === valor;
+    case "neq":
+      return String(celula) !== valor;
+    case "is":
+      if (valor === "null") return celula === null;
+      if (valor === "true") return celula === true;
+      if (valor === "false") return celula === false;
+      throw new Error(`duble-de-supabase: \`is.${valor}\` nao e um valor de IS.`);
+    case "like":
+    case "ilike": {
+      // `%` e o curinga do LIKE; o resto do termo e literal. O `i` de `ilike`
+      // e o que faz "AGENTE" achar "Agente Paperclip", que e o caso real.
+      const padrao = valor
+        .split("%")
+        .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+        .join(".*");
+      return new RegExp(`^${padrao}$`, op === "ilike" ? "is" : "s").test(
+        String(celula ?? "")
+      );
+    }
+    default:
+      throw new Error(
+        `duble-de-supabase: operador \`${op}\` (em \`${limpo}\`) nao esta ` +
+          "implementado. Implemente-o em vez de deixar o .or() virar no-op."
+      );
+  }
+}
+
+/**
  * Um builder de consulta encadeavel sobre um array de linhas.
  *
  * `await` nele resolve para `{ data, error }`, como no client de verdade --
@@ -142,6 +272,9 @@ function consulta(
         if (op === "in") return valor.includes(l[coluna]);
         if (op === "neq") return l[coluna] !== valor;
         if (op === "is") return valor === null ? l[coluna] == null : l[coluna] === valor;
+        if (op === "or")
+          return partirNoNivelZero(valor).some((r) => avaliarRamo(r, l));
+        if (op === "not") return !avaliarRamo(`${coluna}.${valor[0]}.${valor[1]}`, l);
         return true;
       })
     );
@@ -173,6 +306,14 @@ function consulta(
       },
       is(coluna, valor) {
         filtros.push(["is", coluna, valor]);
+        return depois;
+      },
+      or(expressao) {
+        filtros.push(["or", "", expressao]);
+        return depois;
+      },
+      not(coluna, operador, valor) {
+        filtros.push(["not", coluna, [operador, valor]]);
         return depois;
       },
       in(coluna, valores) {
@@ -393,6 +534,39 @@ function consulta(
       );
       return api;
     },
+    /**
+     * `.or("a.eq.1,b.ilike.%x%")` -- a arvore de disjuncao do PostgREST
+     * (HMO-373).
+     *
+     * Faltava inteiro, e a falta era a pior possivel para uma sonda de BUSCA:
+     * `/api/users/search` monta o casamento de nome/apelido num `.or()`, entao
+     * `api.or is not a function` estourava dentro do try/catch da rota e saia
+     * como `{"error":"Erro interno do servidor"}` com status 500. Uma sonda que
+     * olhasse so o status leria "rota quebrada". E a tentacao de resolver com
+     * `or: () => api` e pior: o filtro viraria no-op, a rota pareceria devolver
+     * todo mundo que o fixture tem, e o teste do recorte da busca passaria
+     * verde medindo nada.
+     */
+    or(expressao) {
+      filtros.push(["or", "", expressao]);
+      const ramos = partirNoNivelZero(expressao);
+      filtradas = filtradas.filter((l) => ramos.some((r) => avaliarRamo(r, l)));
+      return api;
+    },
+    /**
+     * `.not(coluna, op, valor)` -- a negacao de UM operador (HMO-373).
+     *
+     * O caso que o trouxe e `.not("allow_connections", "is", false)`, que e
+     * `IS NOT FALSE`: o portao de conexao que aceita `true` E `NULL` e recusa
+     * so o `false` explicito. Ver `aplicarPortaoDeConexao` em
+     * `lib/busca-de-perfil.ts`.
+     */
+    not(coluna, operador, valor) {
+      filtros.push(["not", coluna, [operador, valor]]);
+      const ramo = `${coluna}.${operador}.${valor}`;
+      filtradas = filtradas.filter((l) => !avaliarRamo(ramo, l));
+      return api;
+    },
     in(coluna, valores) {
       filtros.push(["in", coluna, [...valores]]);
       filtradas = filtradas.filter((l) => valores.includes(l[coluna]));
@@ -554,11 +728,18 @@ export function criarDuble({
             eq: () => falha,
             neq: () => falha,
             is: () => falha,
+            or: () => falha,
+            not: () => falha,
             in: () => falha,
             gte: () => falha,
             lt: () => falha,
             lte: () => falha,
             order: () => falha,
+            // `limit` entrou junto com o `or`/`not` (HMO-373): a busca de
+            // pessoas termina em `.limit(20)`, e sem ele um fixture com
+            // `erros: { profiles: ... }` estouraria com "falha.limit is not a
+            // function" em vez de exercitar o caminho de erro da rota.
+            limit: () => falha,
             maybeSingle: () =>
               Promise.resolve({ data: null, error: erros[tabela] }),
             single: () =>

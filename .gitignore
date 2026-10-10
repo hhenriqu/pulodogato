@@ -512,3 +512,11 @@ next-env.d.ts
 # pessoa. Artefato, nao fonte. Um `.tmp-*` fora do .gitignore chega a ser
 # commitado em cima de arquivo de fonte -- ver a entrada do .tmp-parcelamento.
 /.tmp-pra-quem-pagar-na-tela/
+
+# saida do `npm run test:portao-de-conexao` (HMO-373): os route handlers de
+# /api/users/search e /api/connections compilados, com os clients do Supabase
+# trocados por duble, para a sonda CHAMAR os handlers e olhar quem a busca
+# devolve nos tres estados de `allow_connections` (true, NULL, false).
+# Artefato, nao fonte. Um `.tmp-*` fora do .gitignore chega a ser commitado em
+# cima de arquivo de fonte -- ver a entrada do .tmp-parcelamento acima.
+/.tmp-portao-de-conexao/
