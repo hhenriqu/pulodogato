@@ -1316,10 +1316,308 @@ test("o formulario pergunta o alcance ANTES de gravar a linha movida", () => {
   );
   // A ORDEM: mover primeiro, gravar depois. Gravar antes apagaria a fatura de
   // ORIGEM, e a rota leria deslocamento zero sobre a parcela ja movida.
-  const pedido = FORMULARIO.indexOf("financial-installments/serie/");
-  const gravacao = FORMULARIO.indexOf("await gravarTransacao()", pedido);
+  //
+  // A ANCORA DESTA ASSERCAO TEM DE SER O `method: "PATCH"`, E NAO A URL DA ROTA.
+  //
+  // Ela media por `indexOf("financial-installments/serie/")` e por
+  // `indexOf("await gravarTransacao()")`, e a HMO-361 fez as duas escaparem de
+  // uma vez, continuando VERDE:
+  //
+  //   - a URL passou a aparecer ANTES, no `GET` que carrega as parcelas para a
+  //     previa do total -- ou seja, a ancora passou a apontar para uma leitura
+  //     que nao grava nada;
+  //   - `await gravarTransacao()` sem argumento passou a existir so no outro
+  //     caminho (o Salvar que nao e parcela, em `enviar`), que fica depois no
+  //     arquivo. A busca achava ELE e a comparacao dava certo por acidente.
+  //
+  // Com as duas escapadas juntas, a assercao comparava a posicao de um GET com a
+  // de uma chamada de outra funcao e afirmava uma ordem que nao tinha medido.
+  //
+  // E A BUSCA TEM DE SER DENTRO DO CORPO DA FUNCAO, nao no arquivo todo.
+  // Procurar "existe um `gravarTransacao` depois do PATCH" no arquivo inteiro
+  // fica verde com uma gravacao a MAIS posta ANTES do PATCH -- medido: um
+  // `await gravarTransacao({})` enfiado acima do fetch nao reprovava nada,
+  // porque a gravacao legitima continuava existindo depois. O que esta em jogo
+  // e a PRIMEIRA gravacao deste caminho, entao o recorte e o corpo de
+  // `aplicarAlcanceEGravar` e a comparacao e sem `fromIndex`.
+  const abre = FORMULARIO.indexOf("const aplicarAlcanceEGravar");
+  const fecha = FORMULARIO.indexOf("const enviar =", abre);
   assert.ok(
-    pedido > 0 && gravacao > pedido,
-    "o formulario grava a linha antes de pedir o movimento"
+    abre > 0 && fecha > abre,
+    "nao achei o corpo de aplicarAlcanceEGravar -- a ancora deste caso mudou de nome"
   );
+  const corpoDoSalvar = FORMULARIO.slice(abre, fecha);
+
+  const pedido = corpoDoSalvar.indexOf('method: "PATCH"');
+  const gravacao = corpoDoSalvar.indexOf("await gravarTransacao(");
+  assert.ok(pedido > 0, "o Salvar da serie nao faz o PATCH");
+  assert.ok(
+    gravacao > pedido,
+    "o formulario grava a linha antes de pedir a alteracao da serie"
+  );
+});
+
+// =====================================================
+// 8. O VALOR E A DESCRICAO TAMBEM SEGUEM O ALCANCE (HMO-361)
+// =====================================================
+// A HMO-357 ligou o MOVIMENTO e deixou valor/descricao de proposito -- o dialogo
+// avisava que os dois valiam so para a parcela clicada. Esta secao cobra a outra
+// metade: alterar o valor de uma compra de 10x pela tela de lancamento tem de
+// alcancar a serie, e nao gravar UMA linha e deixar nove com o valor antigo.
+//
+// O que estas assercoes pegam e OMISSAO de fiacao. A regra pura ja tem 32
+// mutantes mortos e continuaria perfeita com a tela nunca a chamando -- foi
+// exatamente esse o estado que abriu esta issue.
+
+test("o formulario pergunta o alcance quando o VALOR muda, nao so quando move", () => {
+  const FORMULARIO = semComentarios(
+    readFileSync("components/movimentacoes/FormularioDeLancamento.tsx", "utf8")
+  );
+
+  // Os dois retratos comparados com o que esta na tela. Sem eles, "mudou?" so
+  // poderia ser respondido por "o campo tem valor", que e verdade sempre.
+  assert.match(
+    FORMULARIO,
+    /valorMudou\s*=\s*Boolean\(/,
+    "o formulario nao decide se o valor mudou"
+  );
+  assert.match(
+    FORMULARIO,
+    /descricaoMudou\s*=\s*Boolean\(/,
+    "o formulario nao decide se a descricao mudou"
+  );
+  // E o portao do dialogo soma os TRES, e nao so o movimento: era o
+  // `if (destinoDoMovimento)` sozinho que deixava a correcao de valor gravar uma
+  // linha so.
+  assert.match(
+    FORMULARIO,
+    /precisaDoAlcance[\s\S]{0,200}destinoDoMovimento[\s\S]{0,80}valorMudou[\s\S]{0,80}descricaoMudou/,
+    "o portao da pergunta nao cobre valor e descricao"
+  );
+  assert.match(
+    FORMULARIO,
+    /if\s*\(precisaDoAlcance\)\s*\{[\s\S]{0,120}setPerguntandoAlcance\(true\)/,
+    "o Salvar nao abre a pergunta pelo portao que cobre os tres casos"
+  );
+});
+
+test("o formulario manda amount, base e description para a rota da serie", () => {
+  const FORMULARIO = semComentarios(
+    readFileSync("components/movimentacoes/FormularioDeLancamento.tsx", "utf8")
+  );
+
+  // `base` vai junto com `amount` e nao sozinha: a rota EXIGE a base em qualquer
+  // alcance que pegue mais de uma parcela, e um corpo com valor e sem base volta
+  // 400 ("Informe se o valor digitado e o de cada parcela ou o total").
+  assert.match(
+    FORMULARIO,
+    /amount:\s*Number\.parseFloat\(valores\.valor\),\s*base/,
+    "o formulario nao manda o valor digitado e a base para a serie"
+  );
+  assert.match(
+    FORMULARIO,
+    /descricaoMudou\s*\?\s*\{\s*description:\s*valores\.descricao\s*\}/,
+    "o formulario nao manda a descricao para a serie"
+  );
+  // Cada campo entra so se a pessoa mexeu nele. Mandar o valor intacto
+  // reescreveria as dez parcelas com o numero que ja estava la -- e, em base
+  // "total", repartiria um total que ninguem digitou.
+  assert.match(
+    FORMULARIO,
+    /valorMudou\s*\?\s*\{\s*amount:/,
+    "o formulario manda o valor mesmo quando ele nao mudou"
+  );
+});
+
+test("quem grava a ancora e a ROTA: o formulario nao regrava amount em cima dela", () => {
+  // O CONFLITO QUE A HMO-357 EVITOU DEIXANDO O VALOR DE FORA.
+  //
+  // A rota alcanca a ancora sempre, e em base "total" a sobra dos centavos cai
+  // na ULTIMA alcancada -- a parte da ancora quase nunca e o numero digitado
+  // (ver o caso aritmetico abaixo). Um `update({amount: digitado})` do
+  // formulario depois do PATCH desfaz a reparticao, e a compra deixa de fechar
+  // sem nenhum erro.
+  const FORMULARIO = semComentarios(
+    readFileSync("components/movimentacoes/FormularioDeLancamento.tsx", "utf8")
+  );
+
+  assert.match(
+    FORMULARIO,
+    /serieJaGravou\.serieLevaOValor\s*\?\s*\{\}\s*:\s*\{\s*amount:/,
+    "o formulario grava o amount mesmo quando a rota da serie ja o gravou"
+  );
+  assert.match(
+    FORMULARIO,
+    /serieJaGravou\.serieLevaADescricao\s*\?\s*\{\}\s*:\s*\{\s*description:/,
+    "o formulario grava a description mesmo quando a rota da serie ja a gravou"
+  );
+  // E o UPDATE usa a linha filtrada, nao a original. Montar `linhaParaEditar` e
+  // mandar `linha` seria o defeito inteiro de pe com o filtro escrito ao lado.
+  assert.match(
+    FORMULARIO,
+    /\.update\(linhaParaEditar\)/,
+    "o UPDATE da edicao nao usa a linha sem os campos da serie"
+  );
+  // Em `apenas_esta` a rota nao e chamada e o formulario grava tudo: um alcance
+  // de uma parcela so nao tem reparticao para preservar.
+  assert.match(
+    FORMULARIO,
+    /pelaSerie\s*=\s*alcance\s*!==\s*"apenas_esta"/,
+    "o formulario chama a rota da serie tambem em apenas_esta"
+  );
+});
+
+test("em base total a ancora NAO vale o numero digitado -- a razao de a rota ser a dona", () => {
+  // O caso que justifica a assercao de cima, medido na regra pura: R$ 100 em 3
+  // parcelas da 33,33 + 33,33 + 33,34. Se o formulario regravasse a ancora com
+  // o digitado, ela passaria a valer 100 e a compra somaria 166,67.
+  const parcelas = [1, 2, 3].map((n) => ({
+    id: `p${n}`,
+    installment_number: n,
+    invoice_month: `2026-0${n}-01`,
+    amount: -100,
+  }));
+
+  const plano = planejarAlteracaoDeParcelas("todas", parcelas[0], parcelas, []);
+  const novos = novosValoresDasParcelas({
+    base: "total",
+    valorDigitado: 100,
+    alcancadas: parcelas.filter((p) => plano.ids.includes(p.id)),
+    preservadas: [],
+  });
+
+  assert.equal(novos.valores[0].amount, -33.33, "a ancora nao recebeu a parte dela");
+  assert.equal(novos.valores[2].amount, -33.34, "a sobra nao caiu na ultima");
+  assert.equal(novos.totalRecalculado, 100);
+  // O numero digitado (100) NAO e o da ancora. E esta a diferenca que o
+  // formulario apagaria ao regravar a linha.
+  assert.notEqual(
+    Math.abs(novos.valores[0].amount),
+    100,
+    "o caso escolhido nao distingue a parte da ancora do total digitado"
+  );
+});
+
+test("a previa do total usa as funcoes PURAS, e nao uma aritmetica da tela", () => {
+  const FORMULARIO = semComentarios(
+    readFileSync("components/movimentacoes/FormularioDeLancamento.tsx", "utf8")
+  );
+
+  // A tela TEM de mostrar o total recalculado antes do Salvar. Uma aritmetica
+  // de previa escrita no componente divergiria da gravacao exatamente onde
+  // importa (a sobra dos centavos), e erraria por um centavo sem dar erro.
+  assert.match(
+    FORMULARIO,
+    /planejarAlteracaoDeParcelas\(/,
+    "a tela nao usa o plano para saber quais parcelas o alcance pega"
+  );
+  assert.match(
+    FORMULARIO,
+    /novosValoresDasParcelas\(/,
+    "a tela nao usa a regra do valor para a previa do total"
+  );
+  assert.match(
+    FORMULARIO,
+    /totalDaCompra={totalDaCompraNaTela}/,
+    "o dialogo nao recebe o total da compra"
+  );
+  assert.match(
+    FORMULARIO,
+    /mudaValor={valorMudou}/,
+    "o dialogo nao recebe se o valor mudou -- a pergunta parcela/total nao aparece"
+  );
+  // E a previa roda sobre os MESMOS dados da gravacao: os meses de fatura paga
+  // vem do GET da propria rota. Sem eles o plano alcanca parcelas que o PATCH
+  // vai preservar, e a previa promete um total maior do que o gravado.
+  assert.match(
+    FORMULARIO,
+    /mesesDeFaturaPaga/,
+    "a previa nao conhece as faturas pagas"
+  );
+  // Nenhuma conta de centavos escrita na tela.
+  assert.ok(
+    !/Math\.round\([^)]*100\)/.test(FORMULARIO),
+    "a tela cresceu a propria aritmetica de centavos para a previa"
+  );
+});
+
+test("`movendo` do dialogo deixou de ser fixo: um Salvar que so muda o valor usa as frases do valor", () => {
+  const FORMULARIO = semComentarios(
+    readFileSync("components/movimentacoes/FormularioDeLancamento.tsx", "utf8")
+  );
+
+  // Fixo em `movendo`, a tela mostraria "a compra inteira anda junto, mantendo
+  // um mes entre as parcelas" para quem so corrigiu R$ 300 -- uma consequencia
+  // que nao descreve nada do que vai acontecer, e que nao menciona o total.
+  assert.match(
+    FORMULARIO,
+    /movendo={Boolean\(destinoDoMovimento\)}/,
+    "o dialogo recebe `movendo` fixo e descreve movimento num Salvar que so muda o valor"
+  );
+});
+
+test("o dialogo NAO afirma mais que o valor vale so para esta parcela", () => {
+  // A frase era verdadeira na HMO-357 e virou mentira na HMO-361. Os comentarios
+  // saem antes da busca: tanto o dialogo quanto o formulario CITAM a frase por
+  // escrito, ao explicar que ela saiu -- sobre o texto cru esta assercao
+  // reprovaria a arvore certa.
+  const DIALOGO = semComentarios(
+    readFileSync("components/series/DialogoDeAlcance.tsx", "utf8")
+  );
+  const FORMULARIO = semComentarios(
+    readFileSync("components/movimentacoes/FormularioDeLancamento.tsx", "utf8")
+  );
+
+  for (const [nome, fonte] of [
+    ["o dialogo", DIALOGO],
+    ["o formulario", FORMULARIO],
+  ]) {
+    assert.ok(
+      !/valem só para esta parcela|vale só para esta parcela/.test(fonte),
+      `${nome} ainda diz que o valor vale so para a parcela clicada`
+    );
+  }
+
+  // E o prop sumiu junto: um prop sem chamador e a armadilha que esta issue
+  // existe para fechar, so que na tela.
+  assert.ok(
+    !/\baviso\b/.test(DIALOGO),
+    "o dialogo ainda tem o prop `aviso`, sem ninguem passando"
+  );
+});
+
+test("a rota tem GET, e ele devolve as parcelas E os meses de fatura paga", () => {
+  // A previa do total nao pode inventar a leitura: `invoice_month` sai da view,
+  // a serie sai do `installment_parent_id` e os meses pagos saem de
+  // `scheduled_transactions`. Remontar isso no cliente criaria uma segunda
+  // definicao de "quais parcelas esta alteracao alcanca".
+  assert.match(
+    CODIGO_DA_SERIE,
+    /export async function GET\(/,
+    "a rota nao tem GET para a tela ler a serie"
+  );
+  // `lerSerie` REUSADA, e nao uma leitura propria do GET: duas leituras
+  // divergem no primeiro conserto que so uma receber, e a previa passaria a
+  // prometer um total que o PATCH nao grava.
+  assert.match(
+    CODIGO_DA_SERIE,
+    /export async function GET\([\s\S]{0,900}lerSerie\(supabase/,
+    "o GET nao reusa a leitura que o PATCH usa"
+  );
+  assert.match(
+    CODIGO_DA_SERIE,
+    /export async function GET\([\s\S]{0,1600}meses_de_fatura_paga/,
+    "o GET nao devolve os meses de fatura paga"
+  );
+  // A forma de `ParcelaParaAlcance`, para a tela repassar sem remontar nada: um
+  // campo renomeado sairia como `undefined` dentro do plano, e `invoice_month`
+  // ausente e tratado como "nao e fatura paga" -- o defeito sairia como um total
+  // plausivel.
+  for (const campo of ["installment_number", "invoice_month", "amount"]) {
+    assert.match(
+      CODIGO_DA_SERIE,
+      new RegExp(`export async function GET\\([\\s\\S]{0,1600}${campo}:`),
+      `o GET nao devolve ${campo} em cada parcela`
+    );
+  }
 });

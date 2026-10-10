@@ -2286,8 +2286,10 @@ jobs:
       # As assercoes que mais importam nesta feature sao de AUSENCIA ("a parcela
       # paga NAO foi alterada", "a compra avulsa NAO ganha botao"), e assercao
       # de ausencia passa verde tambem quando ela deixa de achar o que deveria
-      # procurar. Os mutantes acima cobrem as duas regras puras; estes dois
-      # cobrem o que esta FORA delas.
+      # procurar. Os mutantes acima cobrem as duas regras puras; estes seis
+      # cobrem o que esta FORA delas -- a FIACAO, que e onde esta familia falha:
+      # a regra do valor tem 32 mutantes mortos e ficou dois meses sem nenhuma
+      # tela a chamando (HMO-361), com todos eles verdes.
       - name: 'A verificacao sabe falhar (alcance-da-serie)'
         run: |
           set -uo pipefail
@@ -2378,7 +2380,39 @@ jobs:
           fi
           cp "$ROTA_SERIE.orig" "$ROTA_SERIE"
 
-          echo "os quatro controles negativos reprovaram, como deviam"
+          # 5) HMO-361: A PERGUNTA VOLTANDO A SER SO DO MOVIMENTO. E o estado
+          #    anterior a esta issue, e o que a HMO-357 deixou de proposito:
+          #    quem corrige o valor de uma compra de 10x corrige UMA parcela e
+          #    as outras nove ficam com o valor antigo. O total da compra passa
+          #    a ser um numero que nao existe em lugar nenhum, e as nove faturas
+          #    seguintes continuam fechando plausiveis.
+          #
+          #    Os mutantes de `lib/` nao pegam isto: a regra do valor tem 32
+          #    mutantes mortos e continua perfeita com a tela nunca a chamando.
+          sed -i 's#parcelaAberta && (destinoDoMovimento || valorMudou || descricaoMudou)#parcelaAberta \&\& destinoDoMovimento#' "$FORM"
+          mutou "$FORM" 5
+          if npm run test:alcance-da-serie > /dev/null 2>&1; then
+            echo "::error::Verde com o formulario perguntando o alcance so no movimento -- a correcao de valor grava uma linha so."
+            exit 1
+          fi
+          cp "$FORM.orig" "$FORM"
+
+          # 6) HMO-361: O FORMULARIO REGRAVANDO A ANCORA EM CIMA DA ROTA. Este e
+          #    o conflito que a HMO-357 evitou deixando o valor de fora: a rota
+          #    alcanca a ancora SEMPRE, e em base "total" a sobra dos centavos
+          #    cai na ULTIMA alcancada -- a parte da ancora quase nunca e o
+          #    numero digitado. Gravar `linha` inteira depois do PATCH poe o
+          #    digitado na ancora e a compra deixa de fechar: R$ 100 em 3
+          #    parcelas passa a somar R$ 166,67, sem erro nenhum.
+          sed -i 's#\.update(linhaParaEditar)#.update(linha)#' "$FORM"
+          mutou "$FORM" 6
+          if npm run test:alcance-da-serie > /dev/null 2>&1; then
+            echo "::error::Verde com o formulario regravando o valor da ancora em cima da reparticao que a rota fez."
+            exit 1
+          fi
+          cp "$FORM.orig" "$FORM"
+
+          echo "os seis controles negativos reprovaram, como deviam"
 
       - name: 'A arvore voltou ao lugar depois de "A verificacao sabe falhar (alcance-da-serie)"'
         run: |

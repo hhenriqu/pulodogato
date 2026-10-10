@@ -75,15 +75,6 @@ export interface DialogoDeAlcanceProps {
    */
   movendo?: boolean;
   /**
-   * Um fato a mais sobre ESTE pedido, abaixo da consequencia do alcance.
-   *
-   * Existe para o caso em que o mesmo Salvar faz duas coisas de alcances
-   * diferentes: mover a serie e alterar o valor/descricao SO desta parcela. Sem
-   * dizer isso, quem escolhe "todas" sai acreditando que o valor novo foi para
-   * as dez.
-   */
-  aviso?: string | null;
-  /**
    * O total da compra como esta hoje, e como fica depois -- por alcance.
    *
    * A TELA TEM DE MOSTRAR O TOTAL RECALCULADO ANTES DO SALVAR. Em "a partir
@@ -122,7 +113,6 @@ export function DialogoDeAlcance({
   totalDeParcelas,
   mudaValor = false,
   movendo = false,
-  aviso = null,
   totalDaCompra,
   aoConfirmar,
   salvando = false,
@@ -207,13 +197,12 @@ export function DialogoDeAlcance({
                 fixo, e que "todas" alcanca meses anteriores em aberto. */}
             <p className="text-xs text-muted-foreground">{consequencia}</p>
 
-            {/* O QUE ESTE PEDIDO FAZ FORA DO ALCANCE ESCOLHIDO.
-                Mover a serie e alterar o valor so desta parcela podem sair do
-                MESMO Salvar, e sem esta frase quem escolhe "todas" acredita que
-                o valor novo foi para todas. */}
-            {aviso && (
-              <p className="text-xs font-medium text-foreground">{aviso}</p>
-            )}
+            {/* AQUI HAVIA UM `aviso` (HMO-357), e ele SAIU na HMO-361.
+                A frase era "o valor e a descrição que você alterou valem só
+                para esta parcela", e ela descrevia o estado em que o valor NAO
+                seguia o alcance. Agora segue: valor e descricao vao para a rota
+                da serie junto com o movimento, no alcance escolhido. Manter a
+                frase seria a tela afirmando o contrario do que ela faz. */}
           </div>
 
           {/* A MESMA PERGUNTA QUE A HMO-211 JA FAZ NO LANCAMENTO, COM AS MESMAS
