@@ -467,6 +467,47 @@
     "transaction_count",
     "user_id"
   ],
+  "mybank_due_entries": [
+    "amount",
+    "description",
+    "due_date",
+    "id",
+    "installment_number",
+    "installment_total",
+    "lender_user_id",
+    "loan_id",
+    "reported_at",
+    "status",
+    "user_id"
+  ],
+  "mybank_installments": [
+    "amount",
+    "created_at",
+    "due_date",
+    "id",
+    "installment_number",
+    "installment_total",
+    "loan_id",
+    "paid_date",
+    "paid_transaction_id",
+    "reported_at",
+    "status",
+    "updated_at"
+  ],
+  "mybank_loans": [
+    "borrower_user_id",
+    "created_at",
+    "description",
+    "first_due_date",
+    "id",
+    "installment_count",
+    "interest_rate",
+    "lender_account_id",
+    "lender_user_id",
+    "principal",
+    "status",
+    "updated_at"
+  ],
   "net_worth_history": [
     "month",
     "net_change",
