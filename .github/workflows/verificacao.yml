@@ -7062,3 +7062,37 @@ jobs:
       # se um dia o motor parar de errar e a suite virar cerimonia.
       - name: A data da lista nao aparece um dia mais cedo
         run: npm run test:data-na-tela
+
+      # A REGRA DO PAGADOR no previsto (HMO-363, fase F1 da HMO-360).
+      #
+      # A conta de grupo de R$ 1.000 num grupo 70/30 tem DUAS respostas certas na
+      # aba Despesas, e qual vale depende de quem LANCOU: R$ 1.000 quando sou eu
+      # que fronto o pagamento, R$ 300 ("pagar para Leticia") quando e ela.
+      # `previstasComAMinhaParte`, que continua em producao nas outras quatro
+      # leituras, responde R$ 300 nos dois casos -- ela nunca olha `user_id`.
+      #
+      # Esta fase NAO LIGA NADA: nenhuma leitura chama a funcao nova ainda. O que
+      # o step mede e a regra e a conciliacao dela com a F3 (o reembolso previsto
+      # na aba Receitas), afirmada em TRES numeros separados -- 1300 de bruto, 600
+      # de liquido, 700 de reembolso. Afirmar so o liquido passaria verde com as
+      # duas parcelas erradas, que e `duas-pernas-mantem-o-total-certo`.
+      - name: A regra do pagador no previsto de Despesas
+        run: npm run test:regra-do-pagador
+
+      # Controle negativo. A suite afirma numeros pequenos e redondos (300, 1000,
+      # 1300) e igualdades de REFERENCIA -- as duas familias que ficam verdes de
+      # graca.
+      #
+      # Medido: 14 mutantes, 14 mortos, TODOS por assercao (nenhum caiu no tsc),
+      # com controle positivo. Os tres que a issue nomeia estao no topo da lista
+      # (`sem_dono`, `dono_invertido`, `sem_abs`). O runner inteiro roda em ~1min
+      # porque muta uma SOMBRA em /tmp num processo unico (o motor de bloco da
+      # HMO-319), entao o step roda os 14 e nao um subconjunto.
+      #
+      # DOIS sobreviventes conhecidos foram apagados em vez de escondidos, e as
+      # razoes estao no cabecalho do runner: `igualdade_frouxa` e matematicamente
+      # EQUIVALENTE, e o guarda que o mutante `sem_guarda_do_campo_da_linha`
+      # atacaria era CODIGO MORTO (medido, 0 de 25 pares de entrada diferem) e
+      # saiu de `euFrontoAConta`.
+      - name: Mutantes da regra do pagador no previsto
+        run: npm run mutantes:regra-do-pagador
