@@ -291,6 +291,11 @@ const PARTES = [
   "lib/chave-da-fatura.js",
   "lib/elo-da-fatura.js",
   "components/fatura/EloDaFatura.js",
+  // A LINHA DO DETALHE, EXTRAIDA NA HMO-365 e agora compartilhada com o painel
+  // "pra quem pagar" da aba Despesas. Ela entra ANTES do PainelDePapel porque e
+  // dependencia dele; esbocar seria medir a propria copia justamente nos casos H
+  // e J, que leem o rotulo de grupo, a data e o elo DESTA linha.
+  "components/papel-de-pao/LinhaDeDetalhe.js",
   "components/papel-de-pao/PainelDePapel.js",
 ];
 

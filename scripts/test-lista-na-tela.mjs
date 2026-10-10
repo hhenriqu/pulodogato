@@ -489,6 +489,34 @@ const EloDaFatura = (props) =>
     : null;
 
 /**
+ * O PAINEL "PRA QUEM PAGAR" (HMO-365): MARCADOR, COM A GUARDA DA PRODUCAO
+ * COPIADA -- pela MESMA razao do \`EloDaFatura\` logo acima.
+ *
+ * Ele nao e assunto desta suite: a marcacao dele, o chevron e o rotulo honesto
+ * sao medidos em \`npm run test:pra-quem-pagar-na-tela\`, que renderiza o
+ * componente DE VERDADE num Chromium, e a aritmetica em
+ * \`npm run test:pra-quem-pagar\`. Aqui ele existe porque
+ * \`ListaDeMovimentacao\` passou a importa-lo, e um nome que a pagina nao declara
+ * vira \`ReferenceError\` no render -- com o sintoma deslocado: \`ReactDOM.render\`
+ * relanca o erro numa MACROTASK, este arnes drena so microtasks, e o que chega
+ * nao e o \`ReferenceError\` mas "secao ausente: Previsto no período", que se le
+ * como arnes quebrado. Foi exatamente o que aconteceu na primeira volta da
+ * HMO-365 (24 de 24 vermelhos).
+ *
+ * A GUARDA ("lista vazia nao desenha painel nenhum") E COPIADA DE PROPOSITO: os
+ * corpos de resposta desta suite nao tem \`pra_quem_pagar\`, entao o estado chega
+ * \`[]\` e o componente de verdade devolve \`null\`. Um marcador sem guarda
+ * escreveria "ESBOCO" na tela em TODO caso -- e, embora este painel fique FORA
+ * das duas secoes, o controle da suite que proibe a palavra existe justamente
+ * para impedir um esboco de participar de assercao de texto, e um marcador que
+ * aparece onde a producao nao desenha nada e uma divergencia a toa.
+ */
+const PainelPraQuemPagar = (props) =>
+  props.destinos && props.destinos.length > 0
+    ? React.createElement("div", null, "ESBOCO-PRA-QUEM-PAGAR")
+    : null;
+
+/**
  * O DIALOGO DA CONTA PAGADORA (HMO-310): REGISTRADOR, e nao marcador de texto.
  *
  * Ele e \`@radix-ui/react-dialog\` + \`sonner\` + \`@/components/ui/select\`, e nada

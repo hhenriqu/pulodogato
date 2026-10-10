@@ -1,0 +1,39 @@
+{
+  "//": [
+    "O agrupamento por destinatario e o rotulo honesto (HMO-365, fase F2 da",
+    "HMO-360).",
+    "",
+    "`rootDir` e a raiz do projeto, e nao `lib`, pela mesma razao do",
+    "tsconfig.regra-do-pagador-test.json: a arvore importada alcanca",
+    "`@/types/financial` e com `rootDir: lib` o tsc reprova com TS6059.",
+    "",
+    "O `include` tem UM arquivo porque o resto vem pelos imports:",
+    "lib/pra-quem-pagar.ts importa `valorEmReais` e",
+    "`STATUS_QUE_SAI_DO_PREVISTO` de lib/telas-de-movimentacao.ts (que traz",
+    "movimentacoes, chave-da-fatura, agenda-do-cartao e os outros) e o TIPO",
+    "`LinhaDoDetalhe` de lib/papel-de-pao.ts. As duas constantes sao importadas",
+    "em vez de copiadas de proposito -- ver o cabecalho do .ts: uma copia da",
+    "lista de status divergiria da peneira do cartao «Previsto» no dia em que um",
+    "quarto status entrar, e o painel passaria a somar conta ja paga.",
+    "",
+    "O passo do resolve-aliases (--espelha-raiz) reescreve os `@/lib/...` do",
+    "emit.",
+    "",
+    "Comentario SO nesta chave, nunca com // no meio do objeto: o tsc aceita",
+    "JSONC, mas o check-tests-in-ci.mjs le este arquivo com JSON.parse e",
+    "estoura com 'Expected double-quoted property name'."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-pra-quem-pagar",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/pra-quem-pagar.ts"]
+}

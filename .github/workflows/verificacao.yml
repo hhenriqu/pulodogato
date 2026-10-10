@@ -7174,3 +7174,75 @@ jobs:
       # interpolacao `{LEGENDA_DO_LIQUIDO}`.
       - name: Mutantes da fiacao do bruto e do reembolso
         run: npm run mutantes:fiacao-do-bruto
+
+      # PRA QUEM PAGAR E O CHEVRON NA ABA DESPESAS (HMO-365, fase F2 da
+      # HMO-360).
+      #
+      # A fase anterior pos a MINHA PARTE da conta que outro membro frontou no
+      # «Previsto» de Despesas, carimbada com `pagar_para`. O numero estava
+      # certo e a tela era MUDA sobre a quem eu devo -- e esse e o estado que
+      # faz a conta do outro se ler como conta propria.
+      #
+      # A SUITE AFIRMA A INVARIANTE `soma(detalhe) === total` POR DESTINATARIO,
+      # que e a entrega herdada da HMO-300: um chevron que abre uma lista que
+      # nao fecha com o numero de cima transforma um numero conferivel num
+      # numero desmentido pela propria tela. Ela sai de graca no codigo (o total
+      # e a soma das MESMAS linhas, no mesmo laco), e e justamente por isso que
+      # ela precisa de assercao: nada no tipo obriga as duas pontas a continuarem
+      # vindo da mesma fonte.
+      #
+      # E a peneira de status vem da CONSTANTE de lib/telas-de-movimentacao.ts,
+      # nao de uma copia da lista: `paid`/`skipped`/`cancelled` fora de sincronia
+      # com o cartao «Previsto» faria o painel dizer "pague R$ 500" sobre R$ 300
+      # de divida real, com o cartao de cima, lido da mesma fonte, mostrando
+      # outro numero.
+      - name: Pra quem pagar na aba Despesas
+        run: npm run test:pra-quem-pagar
+
+      # A MESMA feature, medida NA TELA por um Chromium -- e nao por assercao
+      # textual sobre o fonte, que e o que a issue pede explicitamente (assercao
+      # de rotulo casa com o comentario e com o dado rotulado).
+      #
+      # QUATRO COISAS QUE SO O DOM DENUNCIA, e nenhuma delas quebra build:
+      #   1. o ROTULO SEM A PESSOA. Com o perfil ilegivel pela RLS, um
+      #      `{destino.nome}` solto renderiza NADA -- e `is_public` tem DEFAULT
+      #      true, entao isso quase nunca acontece em teste e acontece em
+      #      producao;
+      #   2. o CHEVRON DESLIGADO. A lista no DOM escondida com `hidden` NAO sai
+      #      do `textContent`, e uma sonda ingenua ficaria verde com a seta
+      #      inerte;
+      #   3. os DOIS CHEVRONS ACOPLADOS por `aria-controls` repetido: abrir um
+      #      abre o outro, com os dois valores certos nos lugares trocados;
+      #   4. o TOTAL NO LUGAR ERRADO -- as 25 assercoes de aritmetica passariam
+      #      todas verdes com o JSX imprimindo o total de um destinatario na
+      #      linha do outro.
+      #
+      # O ROTULO DE FALLBACK E CALCULADO POR PRODUCAO na pagina da sonda
+      # (`rotuloDoDestino` extraida do .tmp por regex), e nao entregue pronto no
+      # fixture: com o texto literal no fixture, o caso que a issue manda provar
+      # mediria a si mesmo e ficaria verde com o fallback inteiramente quebrado.
+      - name: Pra quem pagar na tela, no navegador
+        run: npm run test:pra-quem-pagar-na-tela
+
+      # Controle negativo das duas suites acima, num runner so.
+      #
+      # Medido: 29 mutantes, 29 mortos, 28 deles por ASSERCAO (um so caiu no
+      # tsc), com controle positivo nas duas suites. Cada mutante roda nas duas
+      # e para na primeira que mata, e o relato diz QUAL matou -- marcar a suite
+      # errada produziria "sobreviveu" sobre um defeito que a outra pega, que e o
+      # pior relato possivel porque manda consertar o que nao esta quebrado.
+      #
+      # UM sobreviveu na primeira volta e o conserto foi na SUITE, nao no codigo:
+      # `nome_em_branco_vira_nome` apaga o `.trim()` de `rotuloDoDestino`, e pela
+      # porta de `destinosDoPagamento` aquele guarda nunca decide nada (a lib ja
+      # normaliza o nome em branco para `null` antes de chamar). So que a funcao e
+      # EXPORTADA e a sonda de navegador a chama direto, sem normalizacao -- o
+      # guarda e load-bearing para todo outro chamador, entao a saida foi medi-lo
+      # e nao apaga-lo (ao contrario de `euFrontoAConta` na F1, onde 0 de 25 pares
+      # de entrada diferiam e o guarda morto saiu).
+      #
+      # E um sobrevivente conhecido esta DECLARADO no cabecalho do runner em vez
+      # de omitido: `marca_calculada_a_parte` e equivalente, porque a lib
+      # normaliza o nome antes de montar o objeto.
+      - name: Mutantes do pra quem pagar
+        run: npm run mutantes:pra-quem-pagar

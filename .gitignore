@@ -497,3 +497,18 @@ next-env.d.ts
 # nao fonte. Um `.tmp-*` fora do .gitignore chega a ser commitado em cima de
 # arquivo de fonte -- ver a entrada do .tmp-parcelamento acima.
 /.tmp-despesa-publicada-no-grupo/
+
+# saida do `npm run test:pra-quem-pagar` (HMO-365): lib/pra-quem-pagar.ts
+# compilado, com os `@/` reescritos, para o `node --test` medir o agrupamento por
+# destinatario e o rotulo honesto contra o modulo de verdade. Artefato, nao
+# fonte. Um `.tmp-*` fora do .gitignore chega a ser commitado em cima de arquivo
+# de fonte -- ver a entrada do .tmp-parcelamento acima.
+/.tmp-pra-quem-pagar/
+
+# saida do `npm run test:pra-quem-pagar-na-tela` (HMO-365): o componente
+# PainelPraQuemPagar e a LinhaDeDetalhe compartilhada, compilados com
+# `jsx: react`, para a sonda de Chromium concatenar numa pagina e LER O DOM --
+# o chevron, o `aria-expanded` e o rotulo que nunca fica sem mencao a outra
+# pessoa. Artefato, nao fonte. Um `.tmp-*` fora do .gitignore chega a ser
+# commitado em cima de arquivo de fonte -- ver a entrada do .tmp-parcelamento.
+/.tmp-pra-quem-pagar-na-tela/
