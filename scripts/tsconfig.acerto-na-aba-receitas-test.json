@@ -1,0 +1,21 @@
+{
+  "//": "Build so do teste de lib/acerto-na-aba-receitas.ts (HMO-366). Ela importa perna-da-contraparte.ts e acerto-em-lancamento.ts pelo alias @/ -- que por sua vez puxam dinheiro.ts, cambio.ts e settlement.ts --, e o tipo TipoDaTela de telas-de-movimentacao.ts por `import type` (apagado no JS emitido, mas o tsc le o arquivo). O tsc resolve o alias por `paths` e NAO o reescreve no JS emitido, por isso o npm script roda scripts/resolve-aliases.mjs depois. O teste importa descricaoDoAcerto e chaveDoAcerto do MESMO .tmp: a frase da linha da tela tem de ser a MESMA que a perna grava em `description`, e isso so se prova atravessando as duas.",
+  "compilerOptions": {
+    "outDir": "../.tmp-acerto-na-aba-receitas",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
+  },
+  "include": [
+    "../lib/acerto-na-aba-receitas.ts"
+  ]
+}

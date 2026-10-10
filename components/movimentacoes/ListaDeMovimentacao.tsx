@@ -97,6 +97,24 @@ import {
   type PedidoDaAcao,
 } from "@/lib/acoes-da-linha";
 import { DialogoDePagamentoDaFatura } from "@/components/fatura/DialogoDePagamentoDaFatura";
+// O MESMO dialogo da tela do grupo, e nao um seletor de conta novo (HMO-366): o
+// dado que falta e o mesmo -- de qual conta o dinheiro veio --, e ele ja filtra
+// as contas elegiveis pela MESMA funcao que o servidor usa (`contasParaOAcerto`,
+// por dentro). Um seletor proprio aqui seria a segunda lista de contas
+// elegiveis, e a divergencia apareceria como opcao que o POST recusa.
+import {
+  DialogoDeAcerto,
+  type ContaParaEscolher,
+} from "@/components/grupos/DialogoDeAcerto";
+import {
+  ACERTO_FORA_DO_PREVISTO,
+  ACERTO_FORA_DO_REALIZADO,
+  SUBTITULO_A_CONFIRMAR,
+  TITULO_A_CONFIRMAR,
+  TITULO_CONFIRMADO,
+  type AcertoNaAbaReceitas,
+  type AcertosNaAbaReceitas,
+} from "@/lib/acerto-na-aba-receitas";
 import {
   FATURA_SEM_VENCIMENTO_NAO_TEM_PAGAR,
   linhaParaPagarDaTela,
@@ -130,6 +148,17 @@ interface RespostaDaTela {
   vencido?: { total: number; quantidade: number };
   linhas?: LinhaDaTela[];
   fatura_sem_vencimento?: { account_name: string | null; total: number }[];
+  /**
+   * OS ACERTOS DE GRUPO DA ABA RECEITAS -- HMO-366.
+   *
+   * Campo PROPRIO, fora de `resumo` e de `linhas`: nenhum dos valores entra em
+   * cartao nenhum (as duas razoes estao em lib/acerto-na-aba-receitas.ts) e
+   * fabricar `LinhaDaTela` para eles daria a cada um os tres botoes de
+   * `posso_editar` sobre um id que nao existe em `scheduled_transactions` --
+   * `UPDATE` recusado pela RLS volta 200 sem alterar nada, ou seja o app diria
+   * "pronto" e nada teria acontecido.
+   */
+  acertos_do_grupo?: AcertosNaAbaReceitas | null;
 }
 
 /** 'AAAA-MM-DD' -> 'DD/MM/AAAA', por fatia. Nunca `new Date`. */
@@ -198,6 +227,16 @@ export function ListaDeMovimentacao({
   const [semVencimento, setSemVencimento] = useState<
     { account_name: string | null; total: number }[] | null
   >(null);
+  /**
+   * OS ACERTOS DE GRUPO DESTA ABA -- HMO-366.
+   *
+   * `null` = esta resposta nao fala de acerto. Nao e o mesmo que vazio, e a
+   * diferenca e a mesma de `semVencimento` logo acima: uma resposta guardada no
+   * aparelho de antes desta feature nao tem o campo, e um `{a_confirmar: []}`
+   * ali afirmaria "voce nao tem nada a confirmar" com base num corpo que nunca
+   * respondeu isso.
+   */
+  const [acertos, setAcertos] = useState<AcertosNaAbaReceitas | null>(null);
   const [estado, setEstado] = useState<EstadoDaLeitura | null>(null);
   const [guardadoEm, setGuardadoEm] = useState<Date | null>(null);
   const [carregando, setCarregando] = useState(true);
@@ -216,6 +255,23 @@ export function ListaDeMovimentacao({
   const [faturaParaPagar, setFaturaParaPagar] = useState<LinhaDaTela | null>(
     null
   );
+
+  /**
+   * O ACERTO CUJA CONTA O DIALOGO ESTA PERGUNTANDO -- HMO-366.
+   *
+   * `null` mantem o dialogo fechado. E a LINHA inteira e nao o id, pelo motivo
+   * de `faturaParaPagar` acima: o dialogo mostra o valor, a moeda, a cotacao e
+   * o nome de quem pagou, e com o id so a tela teria de procurar a linha de
+   * novo num array que a releitura troca.
+   */
+  const [acertoEmCurso, setAcertoEmCurso] =
+    useState<AcertoNaAbaReceitas | null>(null);
+
+  /** As MINHAS contas, lidas quando o dialogo do acerto abre. */
+  const [contasDoAcerto, setContasDoAcerto] = useState<ContaParaEscolher[]>([]);
+
+  /** O id do acerto cuja confirmacao esta em voo. Trava o botao DELE. */
+  const [acertoSalvando, setAcertoSalvando] = useState<string | null>(null);
 
   /** A conta prevista aberta no formulario em linha, e os tres campos dela. */
   const [editando, setEditando] = useState<LinhaDaTela | null>(null);
@@ -243,11 +299,16 @@ export function ListaDeMovimentacao({
       // desta feature nao tem o campo, e `[]` ali afirmaria "nenhum cartao sem
       // vencimento" com base num corpo que nunca respondeu isso.
       setSemVencimento(leitura.dados.fatura_sem_vencimento ?? null);
+      // `?? null` pelo mesmo motivo da linha acima: resposta antiga do aparelho
+      // nao tem o campo, e afirmar "nada a confirmar" com base nela esconderia
+      // um Pix que ja esta na conta de alguem.
+      setAcertos(leitura.dados.acertos_do_grupo ?? null);
     } else {
       // A leitura falhou: a lista SAI da tela. Deixar a do periodo anterior
       // seria a tela mostrando setembro com o titulo de outubro.
       setResumo(null);
       setLinhas([]);
+      setAcertos(null);
     }
 
     setCarregando(false);
@@ -375,6 +436,96 @@ export function ListaDeMovimentacao({
   const aoPagarFatura = useCallback((linha: LinhaDaTela) => {
     setFaturaParaPagar(linha);
   }, []);
+
+  /**
+   * ABRE O DIALOGO DA CONTA DO ACERTO. NAO ESCREVE NADA -- HMO-366.
+   *
+   * A pergunta "em qual conta o dinheiro entrou?" nao tem resposta padrao, e e
+   * a mesma recusa do dialogo da fatura logo acima: escolher a primeira conta
+   * da lista poria dinheiro numa conta que a pessoa nao escolheu, e o erro
+   * apareceria semanas depois no extrato de uma conta que ela nao estava
+   * olhando. A rota tambem recusa um POST sem `account_id`.
+   *
+   * As contas sao lidas AQUI e nao no render: `/api/financial-accounts` por
+   * linha da lista seria uma consulta por acerto, e a lista de contas nao muda
+   * entre eles. Falhar na leitura NAO impede o dialogo de abrir -- ele diz, com
+   * a frase que a propria lib escreve, que nao ha conta elegivel.
+   */
+  const aoConfirmarAcerto = useCallback(async (acerto: AcertoNaAbaReceitas) => {
+    setAcertoEmCurso(acerto);
+
+    try {
+      const resposta = await fetch("/api/financial-accounts");
+      const dados = await resposta.json();
+      setContasDoAcerto(Array.isArray(dados.accounts) ? dados.accounts : []);
+    } catch (erro) {
+      console.error("Não foi possível carregar as contas do acerto:", erro);
+      setContasDoAcerto([]);
+      toast.error("Não foi possível carregar suas contas");
+    }
+  }, []);
+
+  /**
+   * GRAVA A MINHA PERNA DO ACERTO, na conta escolhida -- HMO-366.
+   *
+   * E A ROTA QUE JA EXISTE (`settlements/[id]/perna`, HMO-245 fase 12), sem uma
+   * linha de regra nova: ela e quem confere "sou parte?" e "ja lancei?" pela
+   * mesma funcao pura da tela do grupo, e quem grava a perna como `transfer`
+   * com `group_id: null` literal. As duas coisas tem medicao atras delas, e
+   * reimplementar o insert aqui perderia as duas de uma vez -- um insert
+   * negativo com `group_id` e RATEADO pelo trigger (medido: 2 partes de R$ 400
+   * viram 4 somando R$ 600), ou seja pagar divida criaria divida nova.
+   *
+   * NAO E `disparar`: aquele caminho recebe uma `LinhaDaTela`, monta UM pedido
+   * a partir dela e trava o botao por `linha.id`. Aqui o pedido depende da
+   * conta que a pessoa acabou de escolher no dialogo, e o alvo nao e uma linha
+   * da lista. O que e igual -- a mensagem da ROTA primeiro e a RELEITURA depois
+   * -- esta igual de proposito.
+   *
+   * A RELEITURA E A FEATURE. Sem ela a linha ficaria no bloco "a confirmar"
+   * depois de um 200, e o segundo clique responderia 409 em cima de uma
+   * operacao que deu certo.
+   */
+  const lancarMinhaPerna = useCallback(
+    async (contaId: string) => {
+      const acerto = acertoEmCurso;
+      if (!acerto) return;
+
+      setAcertoSalvando(acerto.settlementId);
+      try {
+        const resposta = await fetch(
+          `/api/expense-groups/${acerto.groupId}/settlements/${acerto.settlementId}/perna`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ account_id: contaId }),
+          }
+        );
+
+        const dados = await resposta.json().catch(() => ({}));
+
+        if (!resposta.ok) {
+          throw new Error(
+            dados.error || `O pedido foi recusado (HTTP ${resposta.status}).`
+          );
+        }
+
+        setAcertoEmCurso(null);
+        toast.success("Acerto lançado na sua conta.");
+        await carregar();
+      } catch (erro) {
+        console.error("Erro ao lançar a perna do acerto:", erro);
+        toast.error(
+          erro instanceof Error && erro.message
+            ? erro.message
+            : "Não foi possível lançar o acerto na sua conta."
+        );
+      } finally {
+        setAcertoSalvando(null);
+      }
+    },
+    [acertoEmCurso, carregar]
+  );
 
   /** Abre o formulario em linha de uma conta prevista, com os valores de hoje. */
   const aoEditar = useCallback((linha: LinhaDaTela) => {
@@ -667,6 +818,84 @@ export function ListaDeMovimentacao({
             acoes={acoes}
           />
 
+          {/*
+            "ELA PAGOU; EU CONFIRMO" -- HMO-366, fase F4 da HMO-360.
+
+            BLOCO PROPRIO, ENTRE AS DUAS SECOES, E NAO LINHA DENTRO DELAS.
+            Tres razoes, e a primeira sozinha decidiria:
+
+              1. o valor NAO entra no cartao «Previsto» (ele ja esta lá dentro,
+                 como reembolso previsto da F3 -- `fecharMes` nao desconta
+                 acerto registrado), e uma linha DENTRO da secao cujo numero e o
+                 cartao se le como parte daquele numero. A frase
+                 `ACERTO_FORA_DO_PREVISTO` e o que torna isso legivel;
+              2. a acao e OUTRA. `pedidoDeConfirmacao` monta
+                 `/api/scheduled-transactions/<id>/pay`, e esta linha nao e uma
+                 conta prevista -- o botao certo e o POST da perna, com a conta
+                 escolhida no dialogo. Para por essas linhas em `SecaoDaTela`
+                 seria preciso ensinar `lib/acoes-da-linha.ts` a devolver dois
+                 pedidos diferentes, e o modo de falha disso e o botao errado em
+                 cima da linha certa;
+              3. `LinhaDaTela` exige `posso_editar`/`gravada`, e fabricar isso
+                 aqui daria Editar e Excluir sobre um id que nao existe em
+                 `scheduled_transactions`.
+
+            O BLOCO SO EXISTE QUANDO HA LINHA. `acertos` e `null` quando a
+            resposta nao fala de acerto (ou veio do aparelho), e um card vazio
+            dizendo "nada a confirmar" seria o zero confiante desta tela.
+          */}
+          {acertos && acertos.a_confirmar.length > 0 && (
+            <Card className="border-warning/40">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <CalendarClock className="h-4 w-4 text-warning" />
+                  {TITULO_A_CONFIRMAR}
+                </CardTitle>
+                <CardDescription>
+                  {SUBTITULO_A_CONFIRMAR} {ACERTO_FORA_DO_PREVISTO}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {acertos.a_confirmar.map((acerto) => (
+                  <div
+                    key={acerto.id}
+                    className="flex flex-col gap-2 border-b border-border py-2 last:border-0 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-foreground">
+                        {acerto.descricao}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {dataLonga(acerto.data)}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <p className="font-semibold">
+                        {formatCurrency(acerto.valor, acerto.moeda)}
+                      </p>
+                      <Button
+                        size="sm"
+                        id={`confirmar-acerto-${acerto.settlementId}`}
+                        onClick={() => void aoConfirmarAcerto(acerto)}
+                        // `!online` pelo mesmo motivo das tres acoes da linha:
+                        // escrita sem rede nao fica pendente neste caminho, ela
+                        // FALHA -- e um botao habilitado em cima de uma lista
+                        // que veio do aparelho prometeria um lancamento que nao
+                        // vai acontecer.
+                        disabled={acertoSalvando !== null || !online}
+                      >
+                        {acertoSalvando === acerto.settlementId && (
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        )}
+                        Confirmar
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
           <SecaoDaTela
             titulo="Realizado no período"
             icone={<CheckCircle2 className="h-4 w-4 text-success" />}
@@ -681,6 +910,61 @@ export function ListaDeMovimentacao({
             aparencia={aparencia}
             acoes={acoes}
           />
+
+          {/*
+            O ACERTO JA CONFIRMADO, QUE E A PEGADINHA DE UX DESTA FASE -- HMO-366.
+
+            A perna e `transfer` (`TIPO_DA_PERNA`), e `transfer` NAO entra em
+            Receitas realizadas: sem este bloco, confirmar faria a linha
+            DESAPARECER da tela -- ela sai do bloco de cima e nao aparece em
+            baixo. "Cliquei e o valor sumiu" e indistinguivel de bug, e o caminho
+            dessa estranheza termina em alguem lancando a receita a mao para
+            "consertar", que e a conta duas vezes que a 007 recusou.
+
+            E o rotulo diz POR QUE o cartao «Realizado» nao subiu
+            (`ACERTO_FORA_DO_REALIZADO`). Sem a frase, o bloco seria um valor a
+            mais sem explicacao ao lado de um numero que nao se mexeu -- a
+            familia `despesa-de-grupo-tem-tres-convencoes` outra vez.
+          */}
+          {acertos && acertos.confirmados.length > 0 && (
+            <Card className="border-success/40">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <CheckCircle2 className="h-4 w-4 text-success" />
+                  {TITULO_CONFIRMADO}
+                </CardTitle>
+                <CardDescription>{ACERTO_FORA_DO_REALIZADO}</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {acertos.confirmados.map((acerto) => (
+                  <div
+                    key={acerto.id}
+                    className="flex items-center justify-between gap-3 border-b border-border py-2 last:border-0"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-foreground">
+                        {acerto.descricao}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {dataLonga(acerto.data)}
+                      </p>
+                    </div>
+                    {/*
+                      SEM BOTAO AQUI, e a ausencia e decisao: remover a propria
+                      perna existe (`DELETE` da mesma rota), mas ela e uma acao
+                      sobre o EXTRATO, e o lugar dela e onde a quitacao esta --
+                      a tela do grupo, que mostra as duas ao lado dos nomes e do
+                      saldo. Um "desfazer" aqui, longe daquele contexto, convida
+                      a tirar o lancamento de um Pix que de fato aconteceu.
+                    */}
+                    <p className="font-semibold text-success">
+                      {formatCurrency(acerto.valor, acerto.moeda)}
+                    </p>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
 
           {rodape}
 
@@ -722,6 +1006,44 @@ export function ListaDeMovimentacao({
             aoFechar={() => setFaturaParaPagar(null)}
             aoPagar={carregar}
           />
+
+          {/*
+            A CONTA DA MINHA PERNA DO ACERTO -- HMO-366.
+
+            O MESMO dialogo da tela do grupo (`DialogoDeAcerto`, HMO-245 fase
+            12), com o mesmo titulo e o mesmo rotulo de botao que a contraparte
+            ja ve lá: aqui nao se registra acerto nenhum -- ele ja esta
+            registrado --, e "Registrar acerto" sugeriria que clicar de novo
+            registra um segundo pagamento.
+
+            `direcao="recebi"` LITERAL, e nao um campo da linha: por construcao
+            `acertosNaAbaReceitas` so devolve acerto em que EU sou
+            `to_user_id` (e e `comoEuVejoOAcerto` quem decide isso). Um campo
+            aqui seria uma segunda fonte para a mesma direcao, e o defeito dela
+            e o sinal invertido -- a perna sairia NEGATIVA, tirando da conta o
+            dinheiro que entrou.
+
+            `aviso` nao vem, pelo mesmo motivo da tela do grupo: a sobra de
+            centavo e da DIVISAO do valor na moeda da viagem, decidida quando o
+            acerto foi registrado. Aqui o valor ja esta gravado.
+          */}
+          {acertoEmCurso && (
+            <DialogoDeAcerto
+              aberto={true}
+              aoFechar={() => setAcertoEmCurso(null)}
+              direcao="recebi"
+              nomeDaContraparte={acertoEmCurso.nomeDaContraparte}
+              valor={acertoEmCurso.valor}
+              moeda={acertoEmCurso.moeda}
+              cotacao={acertoEmCurso.cotacao}
+              contas={contasDoAcerto}
+              titulo="Lançar o que recebi"
+              rotuloDoBotao="Lançar na minha conta"
+              rotuloSalvando="Lançando..."
+              aoConfirmar={lancarMinhaPerna}
+              salvando={acertoSalvando === acertoEmCurso.settlementId}
+            />
+          )}
         </>
       )}
     </>

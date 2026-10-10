@@ -420,6 +420,12 @@ next-env.d.ts
 # a entrada do .tmp-parcelamento acima.
 /.tmp-perna-da-contraparte/
 
+# O acerto de grupo na aba Receitas (HMO-366). A entrada entra JUNTO com a
+# suite de proposito: `check-artefatos-de-build` reprova enquanto o `.tmp-*`
+# estiver fora daqui, e a razao nao e arrumacao -- compilado commitado em cima
+# de arquivo de fonte e um apagao silencioso (ver a perna, acima).
+/.tmp-acerto-na-aba-receitas/
+
 # A renda fixa que rende sozinha (HMO-192). Mesmo caso da perna acima: a suite
 # entrou na main sem a entrada aqui, e o step `Nenhum artefato de build
 # rastreado` ja reprova na main sem ninguem ver, porque todo job de Actions

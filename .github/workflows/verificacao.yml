@@ -1846,6 +1846,41 @@ jobs:
       - name: 'A verificacao sabe falhar (a perna da contraparte)'
         run: npm run mutantes:perna-da-contraparte
 
+      # ==================================================================
+      # "ELA PAGOU; EU CONFIRMO" NA ABA RECEITAS (HMO-366, F4 da HMO-360)
+      # ==================================================================
+      # A fase 12, acima, poe o estado na tela DO GRUPO. Esta leva o MESMO
+      # estado para a aba Receitas, que e onde a pessoa pergunta "o que
+      # entrou?" -- e sem migration: a policy da 007 ja deixa os dois lados
+      # verem a quitacao, `comoEuVejoOAcerto` ja responde "EU ja lancei?" e o
+      # POST da perna ja existe.
+      #
+      # Esta suite fixa o que as de cima nao conseguem ver, porque elas olham
+      # UM acerto por uma sessao:
+      #   - o acerto em que EU PAGO nao entra na aba RECEITAS. Ele tambem esta
+      #     `a_lancar` para mim, e listado aqui poria uma SAIDA de dinheiro na
+      #     aba de receita -- com o dialogo abrindo em `direcao: "recebi"`, a
+      #     perna sairia POSITIVA e a conta de quem pagou SUBIRIA;
+      #   - a quitacao entre outras duas pessoas -- que a policy me deixa LER --
+      #     fica fora;
+      #   - CONFIRMAR MOVE A LINHA DE LADO, e as duas metades sao uma assercao
+      #     so: a perna e `transfer`, e `transfer` nao entra em Receitas
+      #     realizadas -- entao sem o bloco de recebidos confirmar faz a linha
+      #     DESAPARECER da tela. "Cliquei e o valor sumiu" termina em alguem
+      #     lancando a receita a mao, que e a conta duas vezes que a 007
+      #     recusou.
+      - name: O acerto de grupo a confirmar na aba Receitas, e o lado ja confirmado
+        run: npm run test:acerto-na-aba-receitas
+
+      # Controle negativo, pelo mesmo motivo do da fase 12 e com o mesmo
+      # aparelho: os enunciados desta fase sao "esta linha aparece AQUI e nao
+      # ALI", e e isso que uma suite confirma por acidente olhando so o lado que
+      # calhou de estar certo. O runner muta uma COPIA de lib/ em diretorio
+      # temporario -- a fonte do repo nao e tocada, entao nao ha arvore para
+      # restaurar depois.
+      - name: 'A verificacao sabe falhar (o acerto na aba Receitas)'
+        run: npm run mutantes:acerto-na-aba-receitas
+
       # A ARVORE. O teste puro acima passa verde com o bloco inteiro faltando na
       # tela, com a linha do ajuste sem rotulo, e com "Ajustar saldo" oferecido
       # sobre uma leitura que falhou.
