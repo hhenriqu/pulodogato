@@ -108,10 +108,103 @@ function projetar(linha, colunas) {
  * `await` nele resolve para `{ data, error }`, como no client de verdade --
  * `then` e o que faz isso funcionar sem Promise de mentira.
  */
-function consulta(linhas, tabela, registro, escrever = () => {}) {
+function consulta(
+  linhas,
+  tabela,
+  registro,
+  escrever = () => {},
+  rlsBarra = false
+) {
   let filtradas = [...linhas];
   let colunas = null;
   const filtros = [];
+
+  /**
+   * As linhas que um UPDATE/DELETE com estes filtros alcanca (HMO-356).
+   *
+   * Repetir o casamento aqui, em vez de reaproveitar o `filtradas` do caminho de
+   * leitura, e deliberado: `update` e `delete` montam a cadeia num objeto
+   * PROPRIO (`depois`), e os `eq`/`in` deles empilham em `filtros` sem nunca
+   * passar pelo `api.eq`. Sem isto a contagem de linhas afetadas seria a tabela
+   * inteira -- um `.delete().eq("id", x)` "apagaria" tudo aos olhos da sonda.
+   *
+   * `rlsBarra` responde ZERO sem erro: e a resposta medida em producao em
+   * 2026-09-30 (HTTP 200, corpo `[]`) quando a policy nao casa com a linha. A
+   * RLS FILTRA em vez de recusar, entao nao ha erro para imitar -- e e por isso
+   * que ela precisa de um botao em vez de sair de um filtro.
+   */
+  const alcancadas = () => {
+    if (rlsBarra) return [];
+
+    return linhas.filter((l) =>
+      filtros.every(([op, coluna, valor]) => {
+        if (op === "eq") return l[coluna] === valor;
+        if (op === "in") return valor.includes(l[coluna]);
+        if (op === "neq") return l[coluna] !== valor;
+        if (op === "is") return valor === null ? l[coluna] == null : l[coluna] === valor;
+        return true;
+      })
+    );
+  };
+
+  /**
+   * A cadeia de um UPDATE/DELETE: `.eq()`/`.in()` filtram, `.select()` pede as
+   * linhas afetadas de volta, `await` executa.
+   *
+   * SEM `.select()` O RETORNO E `{ data: null, error: null }`, E ISSO E LOAD-BEARING
+   * ------------------------------------------------------------------------------
+   * E o que o client de verdade faz, e e a razao de `lib/escrita-conferida.ts`
+   * separar `sem-select` de `nenhuma-linha`: um duble que devolvesse a contagem
+   * sem o `.select()` daria a uma rota que esqueceu o `.select()` a aparencia de
+   * uma rota conferida, e o defeito da HMO-203 passaria verde aqui.
+   */
+  function escritaFiltrada(verbo, alvo, aplicar) {
+    let pediuSelect = false;
+    let selecao = null;
+
+    const depois = {
+      eq(coluna, valor) {
+        filtros.push(["eq", coluna, valor]);
+        return depois;
+      },
+      neq(coluna, valor) {
+        filtros.push(["neq", coluna, valor]);
+        return depois;
+      },
+      is(coluna, valor) {
+        filtros.push(["is", coluna, valor]);
+        return depois;
+      },
+      in(coluna, valores) {
+        filtros.push(["in", coluna, [...valores]]);
+        return depois;
+      },
+      select(cols) {
+        pediuSelect = true;
+        selecao = colunasDe(cols);
+        return depois;
+      },
+      then(resolve, reject) {
+        const atingidas = alcancadas();
+        aplicar(atingidas);
+        // A projecao sai DEPOIS de aplicar, e serve aos dois verbos: o
+        // `.select()` do PostgREST num UPDATE devolve a linha JA com o patch, e
+        // num DELETE devolve a linha que saiu -- `atingidas` guarda as
+        // referencias, entao o splice nao as apaga daqui.
+        escrever({ ...alvo, linhasAfetadas: atingidas.length });
+        registro(tabela, filtros, verbo);
+
+        return Promise.resolve({
+          data: pediuSelect
+            ? atingidas.map((l) => projetar(l, selecao))
+            : null,
+          error: null,
+        }).then(resolve, reject);
+      },
+    };
+
+    return depois;
+  }
 
   const api = {
     select(selecao) {
@@ -155,7 +248,21 @@ function consulta(linhas, tabela, registro, escrever = () => {}) {
         ),
       ];
 
-      escrever({ tabela, verbo: "insert", linhas: gravadas, descartadas });
+      // O REGISTRO E UMA COPIA, E NAO AS LINHAS VIVAS (HMO-356)
+      // -------------------------------------------------------
+      // `gravadas` vai para `linhas`, e desde que `update` passou a aplicar o
+      // patch EM CIMA das linhas semeadas (para a rota reler o que escreveu),
+      // guardar a referencia aqui deixava o UPDATE reescrever a historia: uma
+      // sonda que afirmasse "a despesa combinada nasce SEM group_id" lia
+      // `group_id: "grupo-1"` -- o valor que o UPDATE posterior gravou -- e
+      // reprovava a rota certa. `escritas` e o que a rota MANDOU, no instante em
+      // que mandou, e tem de ficar imune ao que vem depois.
+      escrever({
+        tabela,
+        verbo: "insert",
+        linhas: gravadas.map((l) => ({ ...l })),
+        descartadas,
+      });
       registro(tabela, filtros, "insert");
 
       // A LINHA GRAVADA PASSA A SER LEGIVEL (HMO-224)
@@ -231,28 +338,28 @@ function consulta(linhas, tabela, registro, escrever = () => {}) {
      */
     update(patch) {
       const alvo = { tabela, verbo: "update", patch, filtros };
-      const depois = {
-        eq(coluna, valor) {
-          filtros.push(["eq", coluna, valor]);
-          return depois;
-        },
-        in(coluna, valores) {
-          filtros.push(["in", coluna, [...valores]]);
-          return depois;
-        },
-        select() {
-          return depois;
-        },
-        then(resolve, reject) {
-          escrever(alvo);
-          registro(tabela, filtros, "update");
-          return Promise.resolve({ data: null, error: null }).then(
-            resolve,
-            reject
-          );
-        },
-      };
-      return depois;
+      return escritaFiltrada("update", alvo, (atingidas) => {
+        // O patch e aplicado DE VERDADE nas linhas semeadas: uma rota que
+        // escreve e depois RELE (ou um segundo update no mesmo pedido) tem de
+        // ver o valor novo, como veria no banco.
+        for (const l of atingidas) Object.assign(l, patch);
+      });
+    },
+    /**
+     * `delete` faltava inteiro (HMO-356), e a falta nao aparecia como duble
+     * incompleto: `api.delete is not a function` no meio de uma sonda de rota se
+     * le como rota quebrada. Ele e necessario para medir CAMINHO DE COMPENSACAO
+     * -- o `desfazer` da rota de despesa de grupo, que apaga o lancamento quando
+     * a divisao nao pode ser gravada.
+     */
+    delete() {
+      const alvo = { tabela, verbo: "delete", filtros };
+      return escritaFiltrada("delete", alvo, (atingidas) => {
+        for (const l of atingidas) {
+          const i = linhas.indexOf(l);
+          if (i !== -1) linhas.splice(i, 1);
+        }
+      });
     },
     eq(coluna, valor) {
       filtros.push(["eq", coluna, valor]);
@@ -329,6 +436,20 @@ function consulta(linhas, tabela, registro, escrever = () => {}) {
       });
       return api;
     },
+    /**
+     * `.limit(n)` (HMO-356). Faltava, e a rota de despesa de grupo o usa para
+     * pegar a categoria padrao (`.limit(1).single()`). A ausencia estourava com
+     * `api.limit is not a function`, que nao aponta para o metodo que falta.
+     *
+     * Ele CORTA de verdade em vez de ser no-op: um `.limit(1)` seguido de
+     * `.then` tem de devolver uma linha, e um duble que ignorasse o corte
+     * esconderia uma rota que le a colecao inteira achando que leu a primeira.
+     */
+    limit(n) {
+      filtros.push(["limit", "", n]);
+      filtradas = filtradas.slice(0, n);
+      return api;
+    },
     maybeSingle() {
       registro(tabela, filtros, "maybeSingle");
       const linha = filtradas[0];
@@ -377,8 +498,20 @@ function consulta(linhas, tabela, registro, escrever = () => {}) {
  *
  * `user` vira o retorno de `auth.getUser()`. `null` responde sessao ausente, que
  * e o caminho do 401.
+ *
+ * `rlsFiltra` (HMO-356) e a lista de tabelas cuja ESCRITA alcanca zero linhas
+ * sem erro -- `{ financial_transactions: true }`. Nao e "o duble ganhou RLS": e
+ * um botao para a sonda reproduzir a UNICA resposta que a policy da quando ela
+ * nao casa com a linha, que e sucesso com zero linha. As policies continuam
+ * sendo provadas em database/tests/*.sql; o que se mede aqui e o que a ROTA faz
+ * com essa resposta.
  */
-export function criarDuble({ user = null, tabelas = {}, erros = {} } = {}) {
+export function criarDuble({
+  user = null,
+  tabelas = {},
+  erros = {},
+  rlsFiltra = {},
+} = {}) {
   /** Toda consulta que passou por aqui, para a sonda conferir o que foi lido. */
   const lidas = [];
 
@@ -412,6 +545,12 @@ export function criarDuble({ user = null, tabelas = {}, erros = {} } = {}) {
         if (erros[tabela]) {
           const falha = {
             select: () => falha,
+            // `update`/`delete` entraram na HMO-356: sem eles uma sonda que
+            // pedisse `erros: { financial_transactions: ... }` estouraria com
+            // "falha.update is not a function", que se le como rota quebrada.
+            update: () => falha,
+            delete: () => falha,
+            insert: () => falha,
             eq: () => falha,
             neq: () => falha,
             is: () => falha,
@@ -433,7 +572,13 @@ export function criarDuble({ user = null, tabelas = {}, erros = {} } = {}) {
           registro(tabela, [], "erro");
           return falha;
         }
-        return consulta(tabelas[tabela] ?? [], tabela, registro, escrever);
+        return consulta(
+          tabelas[tabela] ?? [],
+          tabela,
+          registro,
+          escrever,
+          Boolean(rlsFiltra[tabela])
+        );
       },
       rpc(nome, args) {
         registro(`rpc:${nome}`, [["args", "", args]], "rpc");

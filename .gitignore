@@ -465,3 +465,22 @@ next-env.d.ts
 # fora do .gitignore chega a ser commitado em cima de arquivo de fonte -- ver a
 # entrada do .tmp-parcelamento acima.
 /.tmp-parte-do-grupo-no-csv/
+
+# saida do `npm run test:escrita-conferida` (HMO-203): lib/escrita-conferida.ts
+# compilado. Artefato, nao fonte. Um `.tmp-*` fora do .gitignore chega a ser
+# commitado em cima de arquivo de fonte -- ver a entrada do .tmp-parcelamento
+# acima.
+#
+# A entrada FALTAVA desde o PR #259, e o `check-artefatos-de-build.mjs` ja
+# acusava na main limpa (conferido na HMO-356 rodando o guard com a arvore sem
+# modificacao nenhuma). Entrou aqui por isso: deixar o guard vermelho por divida
+# alheia apagaria o sinal da entrada nova logo abaixo.
+/.tmp-escrita-conferida/
+
+# saida do `npm run test:despesa-publicada-no-grupo` (HMO-356): o route handler
+# de /api/expense-groups/[groupId]/transactions compilado, com os dubles do
+# client plantados dentro, para o `node --test` poder chamar o POST e ver se a
+# rota ainda diz sucesso sobre um UPDATE que nao pegou linha nenhuma. Artefato,
+# nao fonte. Um `.tmp-*` fora do .gitignore chega a ser commitado em cima de
+# arquivo de fonte -- ver a entrada do .tmp-parcelamento acima.
+/.tmp-despesa-publicada-no-grupo/
