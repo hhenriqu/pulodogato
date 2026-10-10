@@ -37,7 +37,10 @@ const H = { apikey: KEY, Authorization: `Bearer ${KEY}` };
 
 const TABLES = [
   "profiles", "financial_services", "transaction_categories",
-  "financial_accounts", "financial_transactions", "transaction_installments",
+  "financial_accounts", "financial_transactions",
+  // `transaction_installments` saiu com a 052 (HMO-225): a tabela nao existe
+  // mais. Deixa-la aqui devolveria o ramo `missing` e poluiria a auditoria com
+  // uma linha que se le como deriva de permissao, e e so tabela apagada.
   "expense_groups", "group_members", "group_transactions",
   "group_expense_splits", "group_member_proportions", "group_invitations",
   "expense_splits", "user_balances", "user_subscriptions", "user_usage_limits",

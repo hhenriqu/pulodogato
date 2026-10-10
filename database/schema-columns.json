@@ -734,28 +734,6 @@
     "updated_at",
     "user_id"
   ],
-  "transaction_installments": [
-    "account_id",
-    "attachment_url",
-    "category_id",
-    "created_at",
-    "description",
-    "due_date",
-    "group_id",
-    "group_split_type",
-    "id",
-    "installment_amount",
-    "installment_number",
-    "is_active",
-    "notes",
-    "paid_date",
-    "parent_transaction_id",
-    "total_amount",
-    "total_installments",
-    "transaction_type",
-    "updated_at",
-    "user_id"
-  ],
   "transaction_subcategories": [
     "category_id",
     "created_at",

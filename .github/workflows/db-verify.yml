@@ -2091,6 +2091,153 @@ jobs:
       - name: A restauracao do grupo sabe falhar (24 mutantes)
         run: PG_TEMPLATE=hmo203_pre051 PG_URL_BASE=postgresql://postgres:postgres@localhost:5432 node scripts/mutantes-restauracao-do-grupo.mjs
 
+      # Retrato tirado ANTES da 052, no unico ponto da cadeia em que
+      # `transaction_installments` ainda existe e ja esta no estado final. O
+      # controle negativo do preflight (o step depois do proximo) semeia UMA
+      # LINHA nele: no banco principal nao da, porque la a tabela ja foi
+      # apagada pela 052, e semear antes da 052 faria a propria cadeia abortar.
+      - name: Retrato da cadeia em 051, para o controle negativo do preflight da 052
+        run: $PSQL -d postgres -c "CREATE DATABASE hmo359_pre052 TEMPLATE $PGDATABASE"
+
+      # A 052 apaga `transaction_installments` e as duas RPCs dela
+      # (`create_installments`, `pay_installment`), atras de um preflight que
+      # ABORTA se achar linha. A tabela e folha -- as 4 FKs dela sao de saida --
+      # e nenhuma view, trigger ou FK a referencia, entao nada aqui embaixo
+      # depende dela. MEDIDO antes de escrever este step: dos 93 steps que
+      # rodam DEPOIS deste ponto, nenhum le a tabela; os tres de deriva (que
+      # rodam o 000 e o 002, que a citam) montam banco PROPRIO com apenas o
+      # shim e o 001_baseline, onde ela existe.
+      - name: 052_drop_de_transaction_installments
+        run: $PSQL -f database/migrations/052_drop_de_transaction_installments.sql
+
+      # Re-executavel: `IF EXISTS` nos tres DROPs, e o preflight sai por um
+      # `to_regclass(...) IS NULL` quando a tabela ja nao esta la. Sem essa
+      # guarda a segunda colagem morreria em `relation ... does not exist`
+      # DENTRO do preflight -- e colar duas vezes e o caminho normal aqui,
+      # porque a primeira tentativa pode ter abortado.
+      - name: 052 e idempotente
+        run: $PSQL -f database/migrations/052_drop_de_transaction_installments.sql
+
+      # O CONTROLE NEGATIVO DO PREFLIGHT. Sem ele o `RAISE EXCEPTION` da 052 e
+      # decoracao, e esta migration passa a ser "apaguei dinheiro confiando
+      # numa estimativa read-only".
+      #
+      # A contagem que a HMO-225 fez em prod e CEGA POR RLS: a unica policy da
+      # tabela e para `{authenticated}` e a credencial `paperclip_ro` nao tem
+      # BYPASSRLS, entao `count(*) = 0` por ela nao prova tabela vazia. O que
+      # havia era TETO (heap de uma pagina, autovacuum nunca rodado, ~36 linhas
+      # vitalicias), nao zero. Por isso a contagem vive DENTRO da migration: no
+      # SQL Editor a colagem roda como `postgres`, que bypassa RLS.
+      #
+      # Tres casos, todos no retrato pre-052:
+      #
+      #   1. `is_active = true`  -> aborta, nomeando a contagem real, e NAO
+      #      apaga nada (tudo dentro de BEGIN/COMMIT: a linha e as duas funcoes
+      #      continuam la depois do erro);
+      #   2. `is_active = NULL`  -> conta como ATIVA. E para isto que o
+      #      `IS NOT FALSE` existe: a coluna e nullable, e `= true` descartaria
+      #      a linha NULL da contagem de ativas em SILENCIO;
+      #   3. `is_active = false` -> tambem aborta, porque o gatilho e `v_total`
+      #      e nao `v_ativas`. Linha inativa e linha de dinheiro igual; o NOTICE
+      #      e que as separa (`1 linha(s), 0 ativa(s)`).
+      #
+      # Medido num Postgres 17 local (2026-10-09) com 5 mutantes, 5 mortos:
+      # `is_active = true` (mata o caso 2), `v_total < 0` e
+      # `RAISE EXCEPTION -> RAISE NOTICE` (matam os casos 1 e 3 -- os dois
+      # APAGAM a linha semeada), remover o `RAISE NOTICE` da contagem, e
+      # remover a guarda de idempotencia (mata o step acima).
+      - name: O preflight da 052 se recusa a apagar dinheiro (3 casos)
+        run: |
+          set -euo pipefail
+          M=database/migrations/052_drop_de_transaction_installments.sql
+          falhas=0
+
+          semear() {  # semear <db> <literal de is_active>
+            psql -v ON_ERROR_STOP=1 -q -d "$1" <<SQL
+          INSERT INTO auth.users (id, email)
+            VALUES ('33333333-3333-3333-3333-333333333333', 'hmo359@ci.local');
+          INSERT INTO public.profiles (id, full_name)
+            VALUES ('33333333-3333-3333-3333-333333333333', 'HMO-359');
+          INSERT INTO public.transaction_installments
+                 (user_id, category_id, description, total_amount,
+                  installment_amount, installment_number, total_installments,
+                  due_date, transaction_type, is_active)
+            VALUES ('33333333-3333-3333-3333-333333333333',
+                    'b9db286c-ce4f-4fbe-b0bf-f3133185f90f',
+                    'parcela de producao que ninguem le', 300.00, 100.00,
+                    1, 3, '2026-01-10', 'expense', $2);
+          SQL
+          }
+
+          caso() {  # caso <sufixo> <literal is_active> <"N ativa(s)" esperado>
+            db="hmo359_neg_$1"
+            psql -v ON_ERROR_STOP=1 -q -d postgres \
+              -c "DROP DATABASE IF EXISTS $db WITH (FORCE)" \
+              -c "CREATE DATABASE $db TEMPLATE hmo359_pre052"
+            semear "$db" "$2"
+
+            if saida=$(psql -v ON_ERROR_STOP=1 --no-psqlrc -d "$db" -f "$M" 2>&1); then
+              echo "::error::[$1] A 052 APAGOU UMA LINHA DE DINHEIRO: o preflight nao abortou."
+              echo "$saida"
+              falhas=$((falhas+1))
+              return
+            fi
+
+            if ! grep -qF 'HMO-225 ABORTADA: 1 linha(s) em transaction_installments' <<< "$saida"; then
+              echo "::error::[$1] Abortou sem a mensagem/contagem certas."
+              echo "$saida"
+              falhas=$((falhas+1))
+            fi
+
+            if ! grep -qF "tem 1 linha(s), $3" <<< "$saida"; then
+              echo "::error::[$1] O NOTICE da contagem nao disse 'tem 1 linha(s), $3'."
+              echo "$saida"
+              falhas=$((falhas+1))
+            fi
+
+            # Nada pode ter sido apagado: a linha e as DUAS funcoes continuam.
+            rastro=$(psql -tAc "
+              SELECT (SELECT count(*) FROM public.transaction_installments)
+                   + (SELECT count(*) FROM pg_proc p
+                        JOIN pg_namespace n ON n.oid = p.pronamespace
+                       WHERE n.nspname = 'public'
+                         AND p.proname IN ('create_installments', 'pay_installment'));" -d "$db")
+            if [ "$rastro" != '3' ]; then
+              echo "::error::[$1] O abort deixou rastro: esperado 3 objetos, veio '$rastro'."
+              falhas=$((falhas+1))
+            fi
+
+            echo "[$1] ok: abortou, nomeou a contagem, e nao apagou nada."
+          }
+
+          caso ativa  true  '1 ativa(s)'
+          caso nula   NULL  '1 ativa(s)'
+          caso falsa  false '0 ativa(s)'
+
+          # Controle do caminho BOM, no mesmo retrato: sem linha semeada a 052
+          # aplica e o NOTICE mostra o zero -- esse NOTICE E o "mostrar ao dono
+          # o que vai embora" que a HMO-225 exigia.
+          psql -v ON_ERROR_STOP=1 -q -d postgres \
+            -c "DROP DATABASE IF EXISTS hmo359_bom WITH (FORCE)" \
+            -c "CREATE DATABASE hmo359_bom TEMPLATE hmo359_pre052"
+          bom=$(psql -v ON_ERROR_STOP=1 --no-psqlrc -d hmo359_bom -f "$M" 2>&1)
+          if ! grep -qF 'transaction_installments tem 0 linha(s), 0 ativa(s)' <<< "$bom"; then
+            echo "::error::[bom] O NOTICE da contagem nao saiu no caminho bom."
+            echo "$bom"
+            falhas=$((falhas+1))
+          fi
+          if ! grep -qF '052 ok:' <<< "$bom"; then
+            echo "::error::[bom] O bloco de prova da 052 nao confirmou o DROP."
+            echo "$bom"
+            falhas=$((falhas+1))
+          fi
+
+          if [ "$falhas" != '0' ]; then
+            echo "::error::O preflight da 052 nao protege a tabela ($falhas falha(s))."
+            exit 1
+          fi
+          echo "Preflight da 052: aborta nos 3 casos sem apagar nada, e mostra o zero no caminho bom."
+
       # OS 12 PASSOS DE SUITE ABAIXO RODAM COM A TRAVA DA 048 DE PE, e isso nao
       # e acidente: sao eles que provam que a trava nao barra escrita legitima.
       # Sete deles inserem em `financial_transactions` direto (hmo190,
