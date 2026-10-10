@@ -211,6 +211,10 @@ next-env.d.ts
 # saida do `npm run test:regra-do-pagador` (HMO-363; espelha a raiz pelo mesmo
 # motivo da suite acima -- a regra importa lib/parte-do-grupo.ts)
 /.tmp-regra-do-pagador/
+# saida do `npm run test:bruto-e-reembolso` (HMO-364; a mesma razao, e com
+# QUATRO entradas no tsconfig -- ela mede a reconciliacao entre as duas metades
+# da feature, entao precisa das duas no mesmo processo)
+/.tmp-bruto-e-reembolso/
 /.tmp-cambio/
 
 # saida do `npm run test:cartao-orcamento-grupo` (HMO-180; espelha a raiz, entao

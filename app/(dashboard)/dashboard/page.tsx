@@ -115,6 +115,7 @@ import {
   TileRealizadoEPrevisao,
 } from "@/components/dashboard/RealizadoEPrevisao";
 import { LEGENDA_DO_CARTAO } from "@/lib/criterio-do-cartao";
+import { LEGENDA_DO_LIQUIDO } from "@/lib/legenda-do-bruto-e-do-liquido";
 // Os dois lados do portao do modo papel de pao (HMO-286). O `useModoPapel` ja
 // esta montado em `app/layout.tsx` pelo `ModoPapelProvider` da HMO-283.
 import { useModoPapel } from "@/components/ModoPapelProvider";
@@ -909,6 +910,32 @@ function PainelCompleto() {
               </Link>
             </Button>
           </div>
+
+          {/*
+            A PERGUNTA QUE ESTE NUMERO RESPONDE (HMO-364, fase F5 da HMO-360).
+
+            Este cartao conta a conta de grupo so pela MINHA PARTE (HMO-306/308),
+            e desde a fase F1b a aba Despesas conta a mesma conta INTEIRA quando
+            sou eu que a pago. Os dois estao certos -- "quanto posso gastar" e
+            "quanto sai da minha conta" sao perguntas diferentes -- e vao
+            discordar na mesma navegacao.
+
+            A legenda e o que separa isso de bug. Este app ja pagou quatro vezes
+            pela familia `despesa-de-grupo-tem-tres-convencoes`: telas mostrando
+            990 / 950 / 900 lado a lado, nenhuma errada sozinha e nenhuma com
+            rotulo. O texto mora em lib/legenda-do-bruto-e-do-liquido.ts junto
+            com o da outra tela, porque as duas frases sao uma explicacao so
+            dita de dois lados.
+          */}
+          <p className="text-xs text-muted-foreground">
+            {LEGENDA_DO_LIQUIDO}{" "}
+            <Link
+              href="/dashboard/despesas"
+              className="underline hover:text-foreground"
+            >
+              Abrir Despesas
+            </Link>
+          </p>
 
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             <div className="rounded-lg bg-muted p-3">

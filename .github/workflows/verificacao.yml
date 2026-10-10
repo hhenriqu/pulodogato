@@ -7096,3 +7096,46 @@ jobs:
       # saiu de `euFrontoAConta`.
       - name: Mutantes da regra do pagador no previsto
         run: npm run mutantes:regra-do-pagador
+
+      # DESPESAS EM BRUTO + REEMBOLSO PREVISTO EM RECEITAS (HMO-364, fases
+      # F1b/F3/F5 da HMO-360).
+      #
+      # As tres fases foram no mesmo release, e isso e a trava central do plano:
+      # com a regra do pagador ligada na aba Despesas, o «Previsto» passa a
+      # contar a conta de grupo que o usuario FRONTA pelo valor cheio. Se o
+      # reembolso previsto nao entrar em Receitas junto, aquele numero infla sem
+      # contrapartida e a tela mostra uma divida que nao e dele.
+      #
+      # A SUITE AFIRMA AS DUAS PERNAS EM SEPARADO, e nunca o liquido: o bruto de
+      # Despesas e o reembolso de Receitas se ANULAM por construcao, entao uma
+      # assercao sobre "Despesas menos Receitas" fica verde com as duas parcelas
+      # infladas -- foi assim que a transferencia de duas pernas somou R$ 1.000
+      # em Receitas e R$ 1.000 em Despesas por meses em producao, com o saldo
+      # exato ao lado (`duas-pernas-mantem-o-total-certo`).
+      #
+      # Os dois CONTROLES NEGATIVOS estao dentro dela, e sao o que distingue
+      # "ligado" de "nao medi nada": pela regra antiga o mesmo mes da R$ 900 em
+      # vez de R$ 1.200, e sem o reembolso Receitas fica em R$ 5.000 em vez de
+      # R$ 5.300. Nenhum numero esperado e escrito a mao no lado de Receitas --
+      # o R$ 300 sai de `fecharMes` + `creditoAReceber`, as funcoes que a rota
+      # chama.
+      - name: Despesas em bruto e reembolso previsto em Receitas
+        run: npm run test:bruto-e-reembolso
+
+      # Controle negativo da FIACAO, que e o que esta fase acrescentou de novo.
+      #
+      # A aritmetica das duas metades ja tem mutantes
+      # (`mutantes:regra-do-pagador`, `mutantes:credito-de-grupo`,
+      # `mutantes:telas-de-movimentacao`). O que nenhum deles alcanca e a troca
+      # de `previstasPelaRegraDoPagador` por `previstasComAMinhaParte` na rota:
+      # as duas tem assinatura compativel, a troca COMPILA, nao lanca, e devolve
+      # um «Previsto» R$ 300 menor que parece plausivel.
+      #
+      # Medido: 10 mutantes, 10 mortos, com controle positivo nas DUAS suites
+      # que o runner usa. Tres deles sobreviveram na primeira volta -- a sonda
+      # textual casava com o NOME da constante, inclusive na linha de import, e
+      # ficava verde com o JSX desenhando nada. Dois foram repontados para a
+      # suite que renderiza o componente e a terceira assercao passou a exigir a
+      # interpolacao `{LEGENDA_DO_LIQUIDO}`.
+      - name: Mutantes da fiacao do bruto e do reembolso
+        run: npm run mutantes:fiacao-do-bruto

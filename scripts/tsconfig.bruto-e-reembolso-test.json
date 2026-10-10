@@ -1,0 +1,36 @@
+{
+  "//": [
+    "Despesas em bruto + reembolso previsto em Receitas (HMO-364, fases F1b/F3",
+    "da HMO-360).",
+    "",
+    "QUATRO arquivos no `include`, e nao um: esta suite e a unica que mede a",
+    "RECONCILIACAO entre os dois cartoes, entao ela precisa das duas metades no",
+    "mesmo processo -- a regra do pagador, a funcao que ela substituiu, os tres",
+    "numeros da tela e o credito do fechamento. Nenhum numero esperado e escrito",
+    "a mao no lado de Receitas: o reembolso sai de `fecharMes` +",
+    "`creditoAReceber`, as mesmas funcoes que a rota chama.",
+    "",
+    "`rootDir` e a raiz do projeto, e nao `lib`, pela mesma razao do",
+    "tsconfig.regra-do-pagador-test.json: lib/parte-do-grupo.ts importa",
+    "`@/types/financial` e com `rootDir: lib` o tsc reprova com TS6059. O passo",
+    "do resolve-aliases (--espelha-raiz) reescreve os `@/lib/...` do emit."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-bruto-e-reembolso",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../lib/regra-do-pagador.ts",
+    "../lib/parte-do-grupo.ts",
+    "../lib/telas-de-movimentacao.ts",
+    "../lib/credito-de-grupo.ts"
+  ]
+}

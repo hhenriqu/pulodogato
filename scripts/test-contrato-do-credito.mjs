@@ -44,6 +44,17 @@ import { readFileSync } from "node:fs";
 const TELA = "app/(dashboard)/dashboard/personal-finance/page.tsx";
 const ROTA = "app/api/expense-groups/my-credit/route.ts";
 const LIB = "lib/credito-de-grupo.ts";
+/**
+ * As seis consultas, que sairam da rota na HMO-364.
+ *
+ * A aba Receitas passou a somar o MESMO credito dentro do cartao «Previsto»
+ * (fase F3 da HMO-360), e duas copias das mesmas consultas divergiriam na
+ * primeira mudanca -- a familia de `fontes-consistentes-que-discordam`. Este
+ * arquivo entra no recorte porque metade do contrato que este teste tranca
+ * mudou de endereco: apontar tudo para a rota deixaria as assercoes verdes
+ * medindo um arquivo que nao consulta mais nada.
+ */
+const SERVICO = "lib/services/credito-dos-grupos.ts";
 
 /** Tira comentario de bloco, de linha e de JSX -- ver o cabecalho. */
 function semComentarios(fonte) {
@@ -57,6 +68,7 @@ const telaCrua = readFileSync(TELA, "utf8");
 const tela = semComentarios(telaCrua);
 const rota = semComentarios(readFileSync(ROTA, "utf8"));
 const lib = semComentarios(readFileSync(LIB, "utf8"));
+const servico = semComentarios(readFileSync(SERVICO, "utf8"));
 
 /** Os campos declarados numa `interface X { ... }`. */
 function camposDaInterface(fonte, nome, arquivo) {
@@ -124,9 +136,40 @@ test("a tela le os campos de cada linha, e nao esquece o nome do devedor", () =>
 });
 
 test("a rota devolve `credito`, e e por esse nome que a tela le", () => {
+  // DUAS PERNAS DESDE A HMO-364, e as duas sao necessarias.
+  //
+  // As seis consultas sairam da rota para lib/services/credito-dos-grupos.ts,
+  // porque a aba Receitas passou a somar o MESMO credito dentro do cartao
+  // «Previsto» (fase F3 da HMO-360) e duas copias das mesmas consultas
+  // divergiriam na primeira mudanca. Entao a chamada de `creditoAReceber` nao
+  // esta mais nesta rota -- ela esta no modulo.
+  //
+  // Afirmar so a perna da ROTA deixaria passar um modulo que devolve um objeto
+  // montado a mao; afirmar so a perna do MODULO deixaria passar uma rota que
+  // responde com outro nome de campo, e a tela mostraria "ninguem te deve
+  // nada". As duas pernas, porque o defeito de cada lado e invisivel do outro.
   assert.ok(
-    /credito:\s*creditoAReceber\(/.test(rota),
-    "A rota tem de devolver o resultado em `credito:` -- e o nome que a tela le."
+    /credito:\s*leitura\.credito/.test(rota),
+    "A rota tem de devolver o credito em `credito:` -- e o nome que a tela le."
+  );
+  assert.ok(
+    /lerCreditoDosGrupos\(/.test(rota),
+    "A rota tem de ler pelo modulo compartilhado (lib/services/credito-dos-grupos.ts)."
+  );
+  assert.ok(
+    /credito:\s*creditoAReceber\(/.test(servico),
+    "lib/services/credito-dos-grupos.ts tem de devolver `creditoAReceber(...)` " +
+      "-- quem agrega por (grupo, devedor) e a funcao pura, que tem 12 mutantes."
+  );
+  // E A FALHA TEM DE CONTINUAR DANDO 500 AQUI. Esta rota existe para responder o
+  // credito: sem ele a resposta nao tem conteudo. A aba Receitas faz o OPOSTO com
+  // a mesma falha (segue com os tres numeros e o reembolso zerado), e foi por
+  // isso que o erro passou a voltar como valor em vez de excecao -- um `ok`
+  // ignorado aqui devolveria 200 com `credito` undefined, e a tela leria
+  // "ninguem te deve nada".
+  assert.ok(
+    /if\s*\(!leitura\.ok\)[\s\S]{0,200}status:\s*500/.test(rota),
+    "A rota tem de devolver 500 quando a leitura do credito falha."
   );
   assert.ok(
     tela.includes("dados.credito"),

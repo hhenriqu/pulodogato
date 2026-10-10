@@ -110,14 +110,23 @@ import { today } from "@/lib/recurrence";
 import {
   secoesDaTela,
   type LinhaDaTela,
-  type ResumoDaTela,
+  type ResumoComReembolso,
   type TelaDeMovimentacao as CatalogoDaTela,
   type TipoDaTela,
 } from "@/lib/telas-de-movimentacao";
 
 /** O que a rota responde. */
 interface RespostaDaTela {
-  resumo?: ResumoDaTela;
+  /**
+   * O resumo COM o reembolso previsto do grupo -- HMO-364.
+   *
+   * `ResumoComReembolso` e nao `ResumoDaTela`: o reembolso entra DENTRO de
+   * `previsto` na aba Receitas, e o campo ao lado e o unico jeito de a tela
+   * dizer que ele esta ali. Tipar isto como `ResumoDaTela` nao quebraria o
+   * tsc (`res.json()` e `any`) -- o campo chegaria e ninguem o leria, e o
+   * cartao subiria sem rotulo.
+   */
+  resumo?: ResumoComReembolso;
   vencido?: { total: number; quantidade: number };
   linhas?: LinhaDaTela[];
   fatura_sem_vencimento?: { account_name: string | null; total: number }[];
@@ -180,7 +189,7 @@ export function ListaDeMovimentacao({
    */
   rodape?: React.ReactNode;
 }) {
-  const [resumo, setResumo] = useState<ResumoDaTela | null>(null);
+  const [resumo, setResumo] = useState<ResumoComReembolso | null>(null);
   const [vencido, setVencido] = useState<{ total: number; quantidade: number }>({
     total: 0,
     quantidade: 0,

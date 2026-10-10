@@ -635,6 +635,91 @@ const MUTANTES = [
     de: "    conta: destino.faltaConta ? null : destino.texto,",
     para: "    conta: destino.texto,",
   },
+
+  // --- o REEMBOLSO DO GRUPO no «Previsto» (HMO-364, fase F3 da HMO-360) -----
+  //
+  // `resumoComReembolsoPrevisto` e uma soma de tres linhas, e e justamente por
+  // isso que ela esta aqui: os jeitos errados de escrever esta soma nao dao
+  // erro nenhum, nao ficam vazios e produzem numeros plausiveis. O balde errado
+  // publica receita que ninguem pagou; o total quieto faz os tres cartoes
+  // deixarem de fechar entre si; a tela errada abate uma promessa da conta a
+  // pagar.
+  {
+    nome: "reembolso_no_realizado",
+    porque:
+      "o credito entra em «Realizado» de Receitas: a tela publica como RECEBIDO " +
+      "um dinheiro que ninguem pagou -- a recusa escrita no cabecalho de " +
+      "lib/credito-de-grupo.ts, desfeita. E o «Total» nao denuncia, porque ele " +
+      "sobe igual nos dois casos",
+    de: "    previsto: centavos(resumo.previsto + reembolso.total),",
+    para: "    realizado: centavos(resumo.realizado + reembolso.total),",
+  },
+  {
+    nome: "reembolso_fora_do_total",
+    porque:
+      "o «Previsto» sobe R$ 300 e o «Total» nao: os tres cartoes, lado a lado, " +
+      "param de fechar entre si -- `total` deixa de ser `previsto + realizado`, " +
+      "que e a definicao que a legenda do proprio cartao escreve",
+    de: "    total: centavos(resumo.total + reembolso.total),",
+    para: "    total: resumo.total,",
+  },
+  {
+    nome: "reembolso_em_toda_tela",
+    porque:
+      "o reembolso tambem soma no «Previsto» de DESPESAS: a conta a pagar do " +
+      "mes ganha R$ 300 que sao credito a receber. O numero fica MAIOR na tela " +
+      "em que maior se le como divida, e a aritmetica continua exata",
+    de: '  if (tipo !== "income") return { ...resumo, reembolso_previsto: null };',
+    para: "  if (false) return { ...resumo, reembolso_previsto: null };",
+  },
+  {
+    nome: "reembolso_nao_entra",
+    porque:
+      "a fase F3 desligada com a F1b ligada -- o estado que o plano da HMO-360 " +
+      "proibe de ir sozinho para producao: o «Previsto» de Despesas conta a " +
+      "conta de grupo inteira e NADA sobe do outro lado. A tela mostra uma " +
+      "divida que nao e do usuario",
+    de: "    previsto: centavos(resumo.previsto + reembolso.total),",
+    para: "    previsto: resumo.previsto,",
+  },
+  {
+    nome: "reembolso_negativo_entra",
+    porque:
+      "a guarda do zero cai e um total negativo DERRUBA a receita prevista do " +
+      "mes -- o numero certo com o sinal invertido, apresentado na tela como " +
+      "credito a receber (a familia de `previsto-e-realizado-tem-sinais-opostos`)",
+    de: "  if (!reembolso || reembolso.total <= 0) {",
+    para: "  if (!reembolso) {",
+  },
+  {
+    nome: "reembolso_zero_desenha_a_frase",
+    porque:
+      '"inclui R$ 0,00 de reembolso previsto de 0 pessoas" na tela de quem nao ' +
+      "participa de grupo nenhum: ruido que parece recurso quebrado. O numero " +
+      "do cartao fica CERTO, e so a frase aparece -- nenhum total denuncia",
+    de: "  if (!reembolso || reembolso.total <= 0) {",
+    para: "  if (!reembolso || reembolso.total < 0) {",
+  },
+  {
+    nome: "reembolso_conta_como_linha",
+    porque:
+      'a contagem sobe junto: "N lançamento(s)" promete uma linha que a lista ' +
+      "NAO tem, porque o credito nasce de `fecharMes` e nao de uma previsao " +
+      "gravada. O rotulo deixa de casar com o dado rotulado, e nenhum valor em " +
+      "reais muda",
+    de: "    reembolso_previsto: reembolso,",
+    para:
+      "    quantidadePrevista: resumo.quantidadePrevista + reembolso.quantos,\n" +
+      "    reembolso_previsto: reembolso,",
+  },
+  {
+    nome: "reembolso_sem_centavos",
+    porque:
+      "a soma volta a ser ponto flutuante cru: R$ 0,10 previstos + R$ 0,20 de " +
+      "reembolso viram 0.30000000000000004 no cartao",
+    de: "    previsto: centavos(resumo.previsto + reembolso.total),",
+    para: "    previsto: resumo.previsto + reembolso.total,",
+  },
 ];
 
 const SUITE = "test:telas-de-movimentacao";

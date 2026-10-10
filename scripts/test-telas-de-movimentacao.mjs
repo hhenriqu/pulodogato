@@ -33,6 +33,7 @@ const {
   linhasDaTela,
   secoesDaTela,
   resumoDaTela,
+  resumoComReembolsoPrevisto,
   previstoVencido,
   indiceDeContraparte,
 } = await import("../.tmp-telas-de-movimentacao/telas-de-movimentacao.js");
@@ -1812,4 +1813,133 @@ test("os DOIS lados ausentes nao se igualam -- o caso que as guardas existem par
     false,
     'user_id "" contra meuUserId "" ficou editavel'
   );
+});
+
+// ---------------------------------------------------------------------------
+// resumoComReembolsoPrevisto -- O REEMBOLSO DO GRUPO NO «Previsto» (HMO-364)
+// ---------------------------------------------------------------------------
+// A fase F3 da HMO-360. A aritmetica e uma soma, e e justamente por isso que
+// ela mora numa funcao: os jeitos errados de escrever esta soma nao dao erro
+// nenhum. Somar no `realizado` publica como recebido um dinheiro que ninguem
+// pagou; nao somar no `total` faz o cartao «Total» discordar da soma dos dois
+// cartoes ao lado dele; somar em TODA tela abate uma promessa da conta a pagar.
+// Os tres compilam e os tres produzem numeros plausiveis.
+//
+// O CONTROLE DE CADA BLOCO E O RESUMO DE PARTIDA, afirmado campo a campo: sem
+// ele "previsto = 1300" passaria verde numa funcao que IGNORA o resumo e
+// devolve o reembolso.
+
+/** Um resumo de partida com os seis campos diferentes entre si. */
+const RESUMO_BASE = {
+  previsto: 1000,
+  realizado: 250,
+  total: 1250,
+  quantidadePrevista: 3,
+  quantidadeRealizada: 2,
+  quantidade: 5,
+};
+
+/** O reembolso de tres devedores em dois grupos. */
+const REEMBOLSO = { total: 300, quantos: 3, grupos: 2 };
+
+test("em Receitas o reembolso entra no previsto e no total, e SO neles", () => {
+  const com = resumoComReembolsoPrevisto(RESUMO_BASE, "income", REEMBOLSO);
+
+  // AS DUAS PARCELAS EM ASSERCOES SEPARADAS. O par previsto/realizado nao se
+  // anula aqui, mas a familia e a mesma de `duas-pernas-mantem-o-total-certo`:
+  // afirmar so o `total` deixaria passar a soma feita no balde errado, porque
+  // `total` sobe 300 nos dois casos.
+  assert.equal(com.previsto, 1300, "o previsto tem de somar o reembolso");
+  assert.equal(
+    com.realizado,
+    250,
+    "o realizado NAO pode mudar -- o credito e sobre conta que ninguem pagou"
+  );
+  assert.equal(com.total, 1550, "o total e previsto + realizado, e sobe junto");
+
+  // AS CONTAGENS NAO SOBEM: o reembolso nao e linha da lista. "N lançamento(s)"
+  // prometeria uma linha que a lista nao tem.
+  assert.equal(com.quantidadePrevista, 3);
+  assert.equal(com.quantidadeRealizada, 2);
+  assert.equal(com.quantidade, 5);
+
+  // E ele vai dito em separado, ou o numero sobe sem rotulo (fase F5).
+  assert.deepEqual(com.reembolso_previsto, REEMBOLSO);
+});
+
+test("em Despesas e em Transferencias o reembolso nao toca em numero nenhum", () => {
+  for (const tipo of ["expense", "transfer"]) {
+    const com = resumoComReembolsoPrevisto(RESUMO_BASE, tipo, REEMBOLSO);
+
+    // O CONTROLE DESTE BLOCO: os seis campos iguais aos de partida. "o previsto
+    // nao e 1300" passaria verde numa funcao que devolvesse `{}`.
+    for (const campo of Object.keys(RESUMO_BASE)) {
+      assert.equal(
+        com[campo],
+        RESUMO_BASE[campo],
+        `${tipo}: ${campo} mudou -- em Despesas o reembolso seria um abatimento ` +
+          `da conta a pagar, que e o criterio do safe-to-spend e nao desta tela`
+      );
+    }
+
+    assert.equal(
+      com.reembolso_previsto,
+      null,
+      `${tipo}: o campo tem de vir null, senao a tela desenha a frase do reembolso`
+    );
+  }
+});
+
+test("sem reembolso o resumo passa intacto, e o campo e null e nao zero", () => {
+  // `null` e nao `{ total: 0, ... }`: "R$ 0,00 de reembolso previsto" na tela de
+  // quem nao participa de grupo nenhum e ruido que parece recurso quebrado.
+  for (const vazio of [null, undefined, { total: 0, quantos: 0, grupos: 0 }]) {
+    const com = resumoComReembolsoPrevisto(RESUMO_BASE, "income", vazio);
+
+    for (const campo of Object.keys(RESUMO_BASE)) {
+      assert.equal(com[campo], RESUMO_BASE[campo], `${campo} mudou com ${vazio}`);
+    }
+    assert.equal(com.reembolso_previsto, null);
+  }
+});
+
+test("reembolso negativo nao derruba a receita prevista", () => {
+  // `creditoAReceber` nao devolve negativo hoje (`creditoSemDevedorCents` prende
+  // no zero), entao esta entrada e out-of-contract e o teste dela e sintetico
+  // por construcao. A guarda existe porque o defeito e MUDO: somar -300 aqui
+  // derrubaria o «Previsto» de Receitas em 300 e a tela apresentaria isso como
+  // credito A RECEBER -- o numero certo com o sinal invertido, que e a familia
+  // de `previsto-e-realizado-tem-sinais-opostos`.
+  const com = resumoComReembolsoPrevisto(RESUMO_BASE, "income", {
+    total: -300,
+    quantos: 1,
+    grupos: 1,
+  });
+
+  assert.equal(com.previsto, 1000, "o previsto nao pode CAIR por reembolso");
+  assert.equal(com.total, 1250);
+  assert.equal(com.reembolso_previsto, null);
+});
+
+test("o resumo de partida nao e mutado -- a funcao devolve objeto novo", () => {
+  // `resumoDaTela` devolve o objeto que a rota tambem usa; mutar no lugar faria
+  // um efeito a distancia que nao aparece em nenhuma das duas funcoes.
+  const partida = { ...RESUMO_BASE };
+  const com = resumoComReembolsoPrevisto(partida, "income", REEMBOLSO);
+
+  assert.equal(partida.previsto, 1000, "a funcao mutou o argumento");
+  assert.notEqual(com, partida);
+});
+
+test("o reembolso soma em centavos inteiros, sem residuo de ponto flutuante", () => {
+  // 0.1 + 0.2 = 0.30000000000000004. `centavos` existe para o cartao nao
+  // mostrar isso, e o mutante que o remove tem de morrer aqui.
+  const com = resumoComReembolsoPrevisto(
+    { ...RESUMO_BASE, previsto: 0.1, realizado: 0, total: 0.1 },
+    "income",
+    { total: 0.2, quantos: 1, grupos: 1 }
+  );
+
+  assert.equal(com.previsto, 0.3);
+  assert.equal(com.total, 0.3);
 });

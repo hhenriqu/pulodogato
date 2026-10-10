@@ -1467,6 +1467,111 @@ export function resumoDaTela(linhas: readonly LinhaDaTela[]): ResumoDaTela {
 }
 
 /**
+ * O REEMBOLSO QUE OS OUTROS ME DEVEM, como ele entra no «Previsto» de Receitas
+ * -- HMO-364, fase F3 da HMO-360.
+ *
+ * Os tres campos sao exatamente os de `notaDoCreditoAReceber`
+ * (lib/credito-de-grupo.ts), e isso e deliberado: o calculo do credito por
+ * grupo e por devedor ja existe, tem 17 blocos de teste e 12 mutantes, e uma
+ * segunda contagem aqui ("quantos devedores?") empataria com a dele na maioria
+ * dos meses e divergiria justamente no que dói -- o devedor que aparece em dois
+ * meses do periodo e e UMA linha agregada.
+ *
+ * `quantos` e `grupos` existem porque a frase do cartao concorda em numero com
+ * eles. Concordancia calculada no meio do JSX e o que divergiu da conta no
+ * cartao de Despesas antes da HMO-275.
+ */
+export interface ReembolsoPrevisto {
+  /** BRL, POSITIVO. A soma das linhas de credito do periodo. */
+  total: number;
+  /** Quantas pessoas devem -- uma linha por (grupo, devedor). */
+  quantos: number;
+  /** De quantos grupos. */
+  grupos: number;
+}
+
+/**
+ * O resumo com o reembolso DENTRO do «Previsto» e dito em separado.
+ *
+ * `reembolso_previsto` nao e enfeite do cartao: sem ele o valor entra no
+ * «Previsto» de Receitas e NAO HA como a tela dizer que ele esta ali. Isso
+ * fabrica o quinto numero sem rotulo da familia
+ * `despesa-de-grupo-tem-tres-convencoes`, que e o defeito que a F5 do plano da
+ * HMO-360 existe para nao ter -- e, pior, o valor se le como receita que ja
+ * esta garantida.
+ */
+export interface ResumoComReembolso extends ResumoDaTela {
+  /** `null` = nao ha reembolso nenhum, ou esta tela nao e a de Receitas. */
+  reembolso_previsto: ReembolsoPrevisto | null;
+}
+
+/**
+ * Soma o reembolso de grupo ao «Previsto» -- e SO na tela de Receitas.
+ *
+ * POR QUE O PREVISTO, E POR QUE NAO O REALIZADO
+ * ---------------------------------------------
+ * O cabecalho de lib/credito-de-grupo.ts recusa, por escrito, exportar
+ * qualquer coisa que some em `receitas`: `fecharMes` mistura previsto com
+ * realizado, entao somar o credito no REALIZADO publicaria como recebido um
+ * dinheiro que ninguem pagou -- a familia de
+ * `a-vencer-soma-receita-prevista-como-conta-a-pagar`. Essa recusa continua de
+ * pe, e o que muda e o BALDE: aqui o destino e o previsto, e a simetria e
+ * exata, porque a despesa correspondente tambem nao foi paga. A Lais pode nao
+ * pagar; a conta do grupo tambem pode nao ser paga.
+ *
+ * E ELE TEM DE ENTRAR, OU A F1b MENTE
+ * -----------------------------------
+ * Desde a F1b (HMO-364) a aba Despesas conta a conta de grupo que EU fronto
+ * pelo valor CHEIO -- `previstasPelaRegraDoPagador`. Sem esta funcao, o
+ * «Previsto» de Despesas sobe R$ 300 num grupo 70/30 de R$ 1.000 e NADA sobe do
+ * outro lado: a tela passa a mostrar uma divida que nao e minha. O plano da
+ * HMO-360 registra isso como a trava central -- "F1 e F3 vao juntas ou nao
+ * vao".
+ *
+ * O `realizado` NAO E TOCADO, E NEM AS CONTAGENS
+ * ---------------------------------------------
+ * `quantidadePrevista` conta LINHAS DA LISTA, e o reembolso nao e linha: o
+ * credito nasce de `fecharMes`, que neta o mes, e nao de uma previsao gravada
+ * que a pessoa possa abrir, editar ou confirmar. Incrementar a contagem
+ * prometeria na frase "N lançamento(s)" uma linha que a lista nao tem --
+ * `assercao-de-rotulo-casa-com-o-dado-rotulado` do lado da contagem.
+ *
+ * `total` SOBE JUNTO porque ele e `previsto + realizado` por definicao
+ * (`resumoDaTela`); deixa-lo quieto faria o cartao «Total» discordar da soma
+ * dos dois cartoes ao lado dele, que e a especie de defeito que esta tela
+ * inteira foi escrita para nao ter.
+ *
+ * REEMBOLSO ZERO E `null`, E NAO UM ZERO: "R$ 0,00 a receber de grupos" na tela
+ * de quem nao participa de grupo nenhum e ruido que parece recurso quebrado --
+ * a mesma escolha de `notaDoCreditoAReceber` e de `notaDasPartesDeTerceiros`.
+ */
+export function resumoComReembolsoPrevisto(
+  resumo: ResumoDaTela,
+  tipo: TipoDaTela,
+  reembolso: ReembolsoPrevisto | null
+): ResumoComReembolso {
+  // SO EM RECEITAS. Em Despesas o mesmo valor seria um abatimento da conta a
+  // pagar (o criterio do `safe-to-spend`, que e outra pergunta e outra tela), e
+  // em Transferencias ele nao significa nada.
+  if (tipo !== "income") return { ...resumo, reembolso_previsto: null };
+
+  // `<= 0` e nao `=== 0`: `creditoAReceber` nunca devolve negativo (ver
+  // `creditoSemDevedorCents`), e se um dia devolver, somar isso ao «Previsto»
+  // de Receitas DERRUBARIA a receita prevista do mes com um numero que a tela
+  // apresentaria como credito a receber.
+  if (!reembolso || reembolso.total <= 0) {
+    return { ...resumo, reembolso_previsto: null };
+  }
+
+  return {
+    ...resumo,
+    previsto: centavos(resumo.previsto + reembolso.total),
+    total: centavos(resumo.total + reembolso.total),
+    reembolso_previsto: reembolso,
+  };
+}
+
+/**
  * Quanto do previsto desta tela JA VENCEU.
  *
  * Nao e um quarto cartao -- a issue pede tres. E a nota embaixo do cartao

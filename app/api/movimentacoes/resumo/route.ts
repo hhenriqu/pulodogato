@@ -61,36 +61,64 @@
 // casa com `credit_card`, o filtro passa a nao filtrar nada e a tela volta ao
 // defeito desta issue -- sem erro, sem log e com o tsc verde.
 //
-// O QUE FICA DE FORA, E A TELA DIZ
-// --------------------------------
-// A MINHA PARTE das despesas de grupo que outra pessoa pagou
+// O QUE FICA DE FORA DO REALIZADO, E A TELA DIZ
+// ---------------------------------------------
+// A MINHA PARTE das despesas de grupo que outra pessoa JA PAGOU
 // (`group_share_entries`, 033). Ela esta na lista de Financas Pessoais (HMO-215)
 // e nao entra aqui, pelo mesmo motivo que nao entra nos tres cartoes de la: o
 // realizado soma o valor CHEIO do que saiu da minha conta, e acrescentar uma
 // FRACAO do que saiu da conta de outro misturaria dois criterios dentro de um
 // numero so. A legenda da tela de Despesas diz isso em uma linha -- um valor
 // que falta sem rotulo e indistinguivel de um bug.
+//
+// O LADO PREVISTO DO GRUPO: BRUTO AQUI, REEMBOLSO EM RECEITAS (HMO-364)
+// ---------------------------------------------------------------------
+// Esta rota -- e so ela entre as cinco leituras do previsto -- aplica a REGRA
+// DO PAGADOR (`previstasPelaRegraDoPagador`, passo 3a): a conta de grupo que EU
+// fronto entra pelo valor CHEIO, a que outro membro fronta entra pela minha
+// parte. A aba Despesas responde *"quanto sai da minha conta"*.
+//
+// A contrapartida e o passo 3c: o que os outros me devem entra no cartao
+// «Previsto» da aba Receitas como REEMBOLSO PREVISTO. As duas coisas sao UMA
+// decisao e nao podem ser separadas -- sem o reembolso, o Previsto de Despesas
+// sobe sem contrapartida e a tela mostra uma divida que nao e minha.
+//
+// E as duas vao DISCORDAR do painel na mesma navegacao, de proposito: o
+// `safe-to-spend` responde *"quanto posso gastar"* e conta so a minha parte
+// (HMO-306/308, que a secao 4 do plano da HMO-360 decidiu NAO reverter). Cada
+// um dos dois numeros leva a legenda de lib/legenda-do-bruto-e-do-liquido.ts,
+// porque numero novo sem rotulo e indistinguivel de bug -- e esta e a quinta
+// convencao da familia `despesa-de-grupo-tem-tres-convencoes`.
 // =============================================================================
 
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { today } from "@/lib/recurrence";
-import { janelaParaMaterializar, periodoCorrente, periodoDaQuery } from "@/lib/periodo-do-painel";
+import {
+  janelaParaMaterializar,
+  mesesDoPeriodo,
+  periodoCorrente,
+  periodoDaQuery,
+} from "@/lib/periodo-do-painel";
 import { materializarAgenda } from "@/lib/services/scheduled";
 import { faturasPrevistasDaJanela } from "@/lib/services/fatura-prevista";
+import { lerCreditoDosGrupos } from "@/lib/services/credito-dos-grupos";
+import { notaDoCreditoAReceber } from "@/lib/credito-de-grupo";
 import { agendaSemCompraNoCartao } from "@/lib/agenda-do-cartao";
 import {
   montarParticipantesPorGrupo,
-  previstasComAMinhaParte,
   type ParticipantesPorGrupo,
 } from "@/lib/parte-do-grupo";
+import { previstasPelaRegraDoPagador } from "@/lib/regra-do-pagador";
 import {
   linhasDaTela,
   previstoVencido,
+  resumoComReembolsoPrevisto,
   resumoDaTela,
   telaDoTipo,
   type PrevistaCrua,
   type RealizadaCrua,
+  type ReembolsoPrevisto,
 } from "@/lib/telas-de-movimentacao";
 
 export async function GET(request: NextRequest) {
@@ -320,12 +348,34 @@ export async function GET(request: NextRequest) {
     const agenda = agendaSemCompraNoCartao(agendaCrua ?? []);
 
     // ----------------------------------------------------------------
-    // 3a. A MINHA PARTE DAS LINHAS DE GRUPO -- HMO-303
+    // 3a. A REGRA DO PAGADOR NAS LINHAS DE GRUPO -- HMO-303, HMO-364
     // ----------------------------------------------------------------
-    // A pergunta "qual e a minha parte desta despesa de grupo?" tem UMA resposta
-    // certa, e e a que o fechamento do grupo vai cobrar. Esta tela passa a dar a
-    // mesma resposta que o painel do modo Papel de Pao e que `ratearPorPeso` --
-    // nao porque tres lugares calculam igual, mas porque e a mesma funcao.
+    // A pergunta "quanto desta despesa de grupo entra nesta tela?" tem DUAS
+    // respostas certas, e qual vale depende de quem LANCOU a conta. Desde a
+    // HMO-364 (fase F1b da HMO-360) esta leitura -- e SO esta -- responde pela
+    // REGRA DO PAGADOR: valor CHEIO na conta que EU fronto, a minha parte na
+    // que outro membro fronta. A aba Despesas responde *"quanto sai da minha
+    // conta"*, e no dia do vencimento sai a conta inteira.
+    //
+    // A CONTRAPARTIDA E OBRIGATORIA, E ELA ESTA NO PASSO 4 DESTE ARQUIVO: a
+    // parte dos outros volta como REEMBOLSO PREVISTO no cartao «Previsto» da
+    // aba Receitas (fase F3). Sem ela esta troca infla o Previsto de Despesas
+    // sem contrapartida e a tela mostra uma divida que nao e minha -- "F1 e F3
+    // vao juntas ou nao vao" e a trava central do plano da HMO-360.
+    //
+    // AS OUTRAS QUATRO LEITURAS NAO MUDARAM, E ISSO FOI DECIDIDO:
+    // `papel-de-pao/painel`, `safe-to-spend`, `scheduled-transactions/summary`
+    // e `dashboard/previsao` continuam chamando `parteConfiguradaDoMembro`
+    // direto, pela minha parte. A secao 4 do plano pergunta isso em voz alta e
+    // responde NAO REVERTER a HMO-306/308: o `safe-to-spend` responde *"posso
+    // gastar isso?"* e e conservador de proposito. Os dois numeros vao
+    // discordar na mesma navegacao, e e por isso que cada um leva a legenda de
+    // lib/legenda-do-bruto-e-do-liquido.ts.
+    //
+    // Quem DIVIDE continua sendo `parteConfiguradaDoMembro`, inalterada: a
+    // resposta "qual e a minha parte" tem um lugar so, e e a que o fechamento
+    // do grupo vai cobrar. O que a regra do pagador acrescenta e QUAL das duas
+    // respostas a linha recebe.
     //
     // `id, user_id, percentage` SAO LOAD-BEARING -- ver o comentario identico em
     // app/api/papel-de-pao/painel/route.ts. E `ORDER BY` nao aparece aqui de
@@ -361,11 +411,69 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const agendaComAMinhaParte = previstasComAMinhaParte(
-      agenda as (PrevistaCrua & { group_id?: string | null })[],
+    const agendaPelaRegraDoPagador = previstasPelaRegraDoPagador(
+      agenda as (PrevistaCrua & {
+        group_id?: string | null;
+        user_id?: string | null;
+      })[],
       pesosPorGrupo,
       user.id
     );
+
+    // ----------------------------------------------------------------
+    // 3c. O REEMBOLSO PREVISTO DO GRUPO -- HMO-364, fase F3 da HMO-360
+    // ----------------------------------------------------------------
+    // O outro lado da regra do pagador. Se a aba Despesas conta a conta de
+    // grupo que eu fronto pelo valor CHEIO, o que os outros me devem tem de
+    // aparecer como RECEITA PREVISTA -- senao a soma deixa de fechar e a tela
+    // promete uma divida que nao e minha.
+    //
+    // SO NA ABA RECEITAS, pela mesma razao da fatura logo abaixo: nas outras
+    // duas o valor seria descartado depois de seis consultas. `tipo=expense`
+    // NAO ganha um desconto aqui -- "quanto sai da minha conta" nao abate
+    // promessa, e quem abate e o `safe-to-spend`, que e outra pergunta e outra
+    // tela.
+    //
+    // ELE VAI PARA O «PREVISTO» E NUNCA PARA O REALIZADO. A recusa escrita no
+    // cabecalho de lib/credito-de-grupo.ts -- "este modulo NAO exporta nada que
+    // some em `receitas`" -- continua de pe: ela protege o REALIZADO de receber
+    // credito sobre conta que ninguem pagou. Aqui o balde e o previsto, e a
+    // simetria e exata, porque a despesa correspondente tambem nao foi paga.
+    // Quem soma e `resumoComReembolsoPrevisto`, que tem assercao e mutante.
+    //
+    // FALHAR AQUI NAO DERRUBA A LEITURA, e e a mesma decisao da consulta 3b e
+    // da materializacao da agenda: o reembolso fica `null`, o cartao «Previsto»
+    // volta a ser o de antes desta issue e os tres numeros nao mentem -- eles
+    // ficam MENORES, que e a direcao barata. Trocar Total, Previsto e Realizado
+    // do mes por uma tela de erro por causa do reembolso seria o pior dos dois.
+    // O `console.error` fica porque "o reembolso desapareceu" e um sintoma que
+    // ninguem reporta.
+    let reembolso: ReembolsoPrevisto | null = null;
+
+    if (tela.tipo === "income") {
+      // `mesesDoPeriodo` devolve 'AAAA-MM-01' (a chave das views do 008) e
+      // `fecharMes` recorta por 'AAAA-MM' -- a mesma conversao da rota
+      // my-credit, que le o mesmo credito pelo mesmo modulo.
+      const leitura = await lerCreditoDosGrupos(
+        supabase,
+        user.id,
+        mesesDoPeriodo(periodo).map((m) => m.slice(0, 7))
+      );
+
+      if (!leitura.ok) {
+        console.error(
+          "A tela de movimentação seguiu sem o reembolso previsto do grupo:",
+          leitura.mensagem
+        );
+      } else {
+        // `notaDoCreditoAReceber` E QUEM CONTA, e nao um `.length` daqui: a
+        // frase do cartao concorda em numero com `quantos` e `grupos`, e
+        // concordancia calculada fora da funcao que agrega e o que divergiu da
+        // conta no cartao de Despesas antes da HMO-275. Ela devolve `null`
+        // quando nao ha linha nenhuma, que e o estado de quem nao tem grupo.
+        reembolso = notaDoCreditoAReceber(leitura.credito);
+      }
+    }
 
     // A fatura aberta do cartao, so na tela de Despesas: ela e `direction:
     // "expense"` por construcao, e chamar a leitura nas outras duas gastaria
@@ -435,10 +543,10 @@ export async function GET(request: NextRequest) {
     // 4. Os tres numeros e a lista
     // ----------------------------------------------------------------
     const previstas: PrevistaCrua[] = [
-      ...(agendaComAMinhaParte as PrevistaCrua[]),
-      // A fatura sintetizada NAO passa por `previstasComAMinhaParte`: ela nasce
-      // com `group_id` ausente (fatura de cartao nao e de grupo) e a funcao a
-      // devolveria intacta. Deixa-la fora do `map` diz isso no codigo.
+      ...(agendaPelaRegraDoPagador as PrevistaCrua[]),
+      // A fatura sintetizada NAO passa por `previstasPelaRegraDoPagador`: ela
+      // nasce com `group_id` ausente (fatura de cartao nao e de grupo) e a
+      // funcao a devolveria intacta. Deixa-la fora do `map` diz isso no codigo.
       ...(fatura.previstas as PrevistaCrua[]),
     ];
 
@@ -468,7 +576,23 @@ export async function GET(request: NextRequest) {
       user.id
     );
 
-    const resumo = resumoDaTela(linhas);
+    // O REEMBOLSO ENTRA DEPOIS DE `resumoDaTela`, E FORA DE `linhas`.
+    //
+    // Ele nao e linha da lista: o credito nasce de `fecharMes`, que NETA o mes
+    // por devedor, e nao de uma previsao gravada que a pessoa possa abrir,
+    // editar ou confirmar. Fabricar uma linha sintetica aqui daria a ela os
+    // tres botoes de `posso_editar` sobre um id que nao existe em tabela
+    // nenhuma -- e `UPDATE` recusado pela RLS volta 200 sem alterar nada, ou
+    // seja o app diria "pronto" e nada teria acontecido.
+    //
+    // Por isso `quantidadePrevista` tambem NAO sobe: a frase "N lançamento(s)"
+    // prometeria uma linha que a lista nao tem. Quem garante isso e
+    // `resumoComReembolsoPrevisto`, com mutante por cima.
+    const resumo = resumoComReembolsoPrevisto(
+      resumoDaTela(linhas),
+      tela.tipo,
+      reembolso
+    );
     const vencido = previstoVencido(linhas);
 
     return NextResponse.json({
