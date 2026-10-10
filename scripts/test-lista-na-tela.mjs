@@ -273,6 +273,45 @@ const DA_LIB_DO_PAGAMENTO = [
   ),
 ].join("\n");
 
+/**
+ * AS CINCO FRASES DO ACERTO DE GRUPO NA ABA RECEITAS (HMO-366).
+ *
+ * `lib/acerto-na-aba-receitas.js` NAO entra em `PARTES`: ela importa
+ * `lib/dinheiro`, `lib/acerto-em-lancamento` e `lib/perna-da-contraparte` --
+ * tres modulos a mais na pagina (e os que eles arrastam) por cinco strings, e
+ * cada um deles declara `const` de topo que pode colidir com os que ja estao la.
+ *
+ * As cinco constantes sao AUTO-CONTIDAS (string literal, sem usar nenhum dos
+ * imports), entao entram pelo CODIGO DE PRODUCAO extraido -- e e isso que
+ * importa aqui: as assercoes do caso M leem O TEXTO QUE A LIB DEFINE. Escritas
+ * a mao na sonda, elas casariam com qualquer coisa que o componente imprimisse,
+ * e a suite mediria a propria sonda.
+ */
+const DAS_FRASES_DO_ACERTO = (() => {
+  const arquivo = "lib/acerto-na-aba-receitas.js";
+  const fonte = readFileSync(join(SAIDA, arquivo), "utf8");
+
+  return [
+    "TITULO_A_CONFIRMAR",
+    "SUBTITULO_A_CONFIRMAR",
+    "TITULO_CONFIRMADO",
+    "ACERTO_FORA_DO_REALIZADO",
+    "ACERTO_FORA_DO_PREVISTO",
+  ]
+    .map((nome) =>
+      daLib(
+        arquivo,
+        fonte,
+        // Do `export const <NOME> =` ate o `;` no fim da linha. O tsc emite as
+        // cinco numa linha so (medido), e `[^\n]*` garante que a extracao nao
+        // atravesse para a declaracao seguinte se isso mudar.
+        new RegExp("^export const " + nome + " = [^\\n]*;$", "m"),
+        nome
+      )
+    )
+    .join("\n");
+})();
+
 const PARTES = [
   // ORDEM DE DEPENDENCIA. Nao e exigencia do JavaScript para funcao declarada
   // (ela e iceada), mas e para `const` de modulo -- e quase todos tem varios.
@@ -346,6 +385,7 @@ const PAGINA = `<!doctype html>
 <div id="raiz-d"></div><div id="raiz-e"></div><div id="raiz-f"></div>
 <div id="raiz-g"></div><div id="raiz-h"></div><div id="raiz-i"></div>
 <div id="raiz-j"></div><div id="raiz-k"></div><div id="raiz-l"></div>
+<div id="raiz-m"></div>
 <div id="resultado">a pagina nao rodou</div>
 <script>${umd("react", "react.development.js")}</script>
 <script>${umd("react-dom", "react-dom.development.js")}</script>
@@ -421,7 +461,12 @@ const PainelErroDoServidor = () =>
 /** Marcadores: o href do cartao e a moeda do cartao sem vencimento. */
 const caminhoDoCartaoNoMes = (conta, mes) =>
   "ESBOCO-CAMINHO:" + conta + ":" + mes;
-const formatCurrency = (v) => "ESBOCO-VALOR:" + v;
+// A MOEDA ENTRA NO MARCADOR (HMO-366): \`formatCurrency\` recebe DOIS argumentos,
+// e o segundo e load-bearing nos blocos de acerto de grupo -- a 026 deixa a
+// quitacao ser em USD, e um \`formatCurrency(valor)\` sem a moeda imprimiria
+// R$ 50,00 em cima de US$ 50,00, que e um numero certo com o simbolo errado.
+// Sem o segundo campo aqui, nenhuma assercao desta sonda distinguiria os dois.
+const formatCurrency = (v, moeda) => "ESBOCO-VALOR:" + v + ":" + moeda;
 
 /**
  * O ELO DA FATURA (HMO-305): MARCADOR, COM A GUARDA DA PRODUCAO COPIADA.
@@ -474,8 +519,57 @@ const DialogoDePagamentoDaFatura = (props) => {
   return null;
 };
 
+/**
+ * O DIALOGO DA CONTA DO ACERTO (HMO-366): REGISTRADOR, e ele tambem DRIVE.
+ *
+ * Ele e \`@radix-ui/react-dialog\` + \`@/components/ui/select\`, e nada disso tem
+ * build UMD -- a pagina nao tem empacotador. O conteudo dele esta provado onde
+ * pode ser: \`npm run test:acerto-em-lancamento\` cobre quais contas servem, a
+ * conversao e as frases, e e o MESMO dialogo que a tela do grupo usa desde a
+ * HMO-245 fase 12.
+ *
+ * O que o caso M mede e o FIO, e em dois sentidos:
+ *
+ *   * para DENTRO: que o clique em Confirmar chegue aqui com o acerto certo --
+ *     valor, moeda, cotacao, nome de quem pagou, e \`direcao: "recebi"\`, que e o
+ *     que decide o SINAL da perna;
+ *   * para FORA: a sonda CHAMA \`ACERTO_ABERTO.aoConfirmar("<id de conta>")\`,
+ *     que e exatamente o que o botao do dialogo real faz com a conta escolhida.
+ *     E so assim que o POST da perna sai do aparelho de verdade e a releitura
+ *     acontece -- um esboco que so guardasse props mediria metade do gesto.
+ *
+ * E ELE DEIXA UMA MARCA NO DOM, que e como "fechou" se mede. A alternativa
+ * tentada primeiro -- zerar \`ACERTO_ABERTO\` antes de confirmar e exigir que ele
+ * continue nulo -- NAO FUNCIONA, e o porque vale escrito: \`lancarMinhaPerna\`
+ * comeca com \`setAcertoSalvando\`, que re-renderiza o dialogo AINDA ABERTO (e
+ * certo: ele mostra "Lançando..."). O registro reaparece, e a assercao reprova
+ * uma tela que esta correta. Com a marca, o criterio e o que a pessoa ve: o
+ * dialogo esta montado ou nao.
+ */
+let ACERTO_ABERTO = null;
+const DialogoDeAcerto = (props) => {
+  ACERTO_ABERTO = props.aberto
+    ? {
+        direcao: props.direcao,
+        nomeDaContraparte: props.nomeDaContraparte,
+        valor: props.valor,
+        moeda: props.moeda,
+        cotacao: props.cotacao,
+        contas: props.contas,
+        titulo: props.titulo,
+        rotuloDoBotao: props.rotuloDoBotao,
+        salvando: props.salvando,
+        aoConfirmar: props.aoConfirmar,
+      }
+    : null;
+  return props.aberto
+    ? React.createElement("div", { "data-esboco": "dialogo-do-acerto" })
+    : null;
+};
+
 // --- o codigo de producao EXTRAIDO (ver \`daLib\` no .mjs) ---------------------
 ${DA_LIB_DO_PAGAMENTO}
+${DAS_FRASES_DO_ACERTO}
 
 // --- o codigo de producao, no MESMO escopo dos esbocos acima -----------------
 ${producao}
@@ -518,6 +612,15 @@ window.fetch = async (url, init) => {
     const atual =
       FILA_DO_RESUMO.length > 1 ? FILA_DO_RESUMO.shift() : FILA_DO_RESUMO[0];
     return resposta(atual);
+  }
+
+  // AS CONTAS DO DIALOGO DO ACERTO (HMO-366). A forma e a de
+  // \`GET /api/financial-accounts\`: \`{ accounts: [...] }\`. Ela importa porque o
+  // componente le \`dados.accounts\` -- um \`{ data: [...] }\` aqui deixaria o
+  // dialogo abrir com a lista vazia, e o caso M passaria verde sobre um dialogo
+  // que nao oferece conta nenhuma.
+  if (String(url).startsWith("/api/financial-accounts")) {
+    return resposta({ accounts: CONTAS });
   }
 
   // A acao sempre da certo: o caminho de ERRO nao e o assunto desta suite (ele
@@ -568,6 +671,65 @@ const corpo = (linhas) => ({
   fatura_sem_vencimento: [],
 });
 
+/** As contas que \`GET /api/financial-accounts\` devolve no caso M. */
+const CONTAS = [
+  {
+    id: "conta-nubank",
+    name: "Nubank",
+    account_type: "checking",
+    currency: "BRL",
+  },
+];
+
+const GRUPO = "77777777-7777-4777-b777-777777777777";
+const ACERTO_ID = "5e111111-1111-4111-b111-111111111111";
+
+/**
+ * Um acerto da aba Receitas, na forma que \`acertosNaAbaReceitas\` devolve.
+ *
+ * A sonda monta o OBJETO porque o que esta sendo medido e o componente: quem
+ * decide qual acerto vai para qual lado e a lib pura, e ela tem suite e 12
+ * mutantes proprios (\`npm run test:acerto-na-aba-receitas\`). Repetir aquela
+ * decisao aqui seria a sonda medindo a propria sonda.
+ */
+const acerto = (extra) =>
+  Object.assign(
+    {
+      id: "acerto:" + ACERTO_ID,
+      settlementId: ACERTO_ID,
+      groupId: GRUPO,
+      descricao: "Acerto de grupo — Letícia me pagou (Casa)",
+      valor: 300,
+      moeda: "BRL",
+      cotacao: 1,
+      data: "2026-10-08",
+      nomeDaContraparte: "Letícia",
+    },
+    extra
+  );
+
+/** O corpo da aba RECEITAS, com os dois lados do acerto. */
+const corpoDeReceita = (acertos) =>
+  Object.assign(corpo([]), {
+    acertos_do_grupo: acertos,
+  });
+
+const TELA_DE_RECEITA = {
+  tipo: "income",
+  rota: "/dashboard/receitas",
+  titulo: "Receitas",
+  oQueOPrevistoE: "o que ainda entra no período",
+  oQueORealizadoE: "o que já entrou na sua conta",
+};
+
+const APARENCIA_DE_RECEITA = {
+  Icone: icone("TrendingUp"),
+  cor: "text-success",
+  rotaDeLancar: "/dashboard/movimentacoes/receita",
+  textoDeLancar: "Nova Receita",
+  palavraDaLinha: "Receita",
+};
+
 const TELA = {
   tipo: "expense",
   rota: "/dashboard/despesas",
@@ -605,24 +767,39 @@ async function assentar() {
   }
 }
 
-/** Monta a lista num container, com a fila de respostas do resumo. */
-async function montar(idDaRaiz, respostas) {
+/**
+ * Monta a lista num container, com a fila de respostas do resumo.
+ *
+ * \`extras\` SOBRESCREVE as props (HMO-366): o caso M monta a aba RECEITAS, que e
+ * o mesmo componente com outro \`tipo\` e outros rotulos. Um segundo \`montar\`
+ * copiado seria a segunda definicao do arnes, e ela envelheceria calada --
+ * o default continua sendo Despesas, entao nenhum dos doze casos anteriores
+ * muda uma letra.
+ */
+async function montar(idDaRaiz, respostas, extras) {
   CHAMADAS = [];
   PERGUNTAS = [];
   ABERTO = null;
+  ACERTO_ABERTO = null;
   FILA_DO_RESUMO = respostas;
 
   const raiz = document.getElementById(idDaRaiz);
   ReactDOM.render(
-    React.createElement(ListaDeMovimentacao, {
-      tipo: "expense",
-      tela: TELA,
-      aparencia: APARENCIA,
-      queryDoPeriodo: "de=2026-10-01&ate=2026-10-31",
-      rotuloDoPeriodo: "outubro de 2026",
-      origem: "/dashboard/despesas?de=2026-10-01&ate=2026-10-31",
-      rodape: null,
-    }),
+    React.createElement(
+      ListaDeMovimentacao,
+      Object.assign(
+        {
+          tipo: "expense",
+          tela: TELA,
+          aparencia: APARENCIA,
+          queryDoPeriodo: "de=2026-10-01&ate=2026-10-31",
+          rotuloDoPeriodo: "outubro de 2026",
+          origem: "/dashboard/despesas?de=2026-10-01&ate=2026-10-31",
+          rodape: null,
+        },
+        extras || {}
+      )
+    ),
     raiz
   );
   await assentar();
@@ -1079,6 +1256,113 @@ const out = {};
       ? !!bloco.querySelector('[aria-label="Pagar"]')
       : null,
     pagarNaSecao: !!secao(raiz, PREVISTO).querySelector('[aria-label="Pagar"]'),
+  };
+}
+
+// =========================================================================
+// M. "ELA PAGOU; EU CONFIRMO": o bloco aparece, o POST sai, E A LINHA MUDA DE
+//    LADO -- HMO-366, fase F4 da HMO-360
+// =========================================================================
+// O controle que a issue exige, inteiro e em UMA montagem: ANTES de confirmar a
+// linha esta no lado a confirmar; DEPOIS ela sai de la e aparece ROTULADA no
+// lado recebido, FORA do total. Medir so a primeira metade deixaria passar o
+// defeito que esta fase existe para resolver -- a perna e \`transfer\`, nao entra
+// em Receitas realizadas, e sem o segundo bloco confirmar faz a linha
+// DESAPARECER da tela.
+//
+// E o POST tem de sair com a CONTA: sem \`account_id\` a rota responde 400, e um
+// "Confirmar" que abre dialogo e nao escreve nada passaria por qualquer assercao
+// de DOM.
+{
+  const antes = corpoDeReceita({ a_confirmar: [acerto()], confirmados: [] });
+  const depois = corpoDeReceita({ a_confirmar: [], confirmados: [acerto()] });
+
+  const raiz = await montar("raiz-m", [antes, depois], {
+    tipo: "income",
+    tela: TELA_DE_RECEITA,
+    aparencia: APARENCIA_DE_RECEITA,
+    origem: "/dashboard/receitas?de=2026-10-01&ate=2026-10-31",
+  });
+
+  // OS BLOCOS SAO IRMAOS DAS SECOES, e nao estao dentro delas: achados pelo
+  // TITULO que a lib define, pela mesma regra de \`secao\`.
+  const bloco = (titulo) =>
+    Array.prototype.slice
+      .call(raiz.children)
+      .find(function (el) {
+        return el.textContent.indexOf(titulo) !== -1;
+      }) || null;
+
+  const retratoDoBloco = (titulo) => {
+    const el = bloco(titulo);
+    if (!el) return null;
+    return {
+      texto: el.textContent.replace(/\\s+/g, " ").trim(),
+      // O botao pelo \`id\` que o componente da a ele: \`aria-label\` e a chave das
+      // acoes de LINHA (\`SecaoDaTela\`), e este botao nao e uma delas.
+      temConfirmar: !!el.querySelector("#confirmar-acerto-" + ACERTO_ID),
+      confirmarDesabilitado: el.querySelector("#confirmar-acerto-" + ACERTO_ID)
+        ? el.querySelector("#confirmar-acerto-" + ACERTO_ID).disabled === true
+        : null,
+    };
+  };
+
+  out.m_antes = {
+    aConfirmar: retratoDoBloco(TITULO_A_CONFIRMAR),
+    recebido: retratoDoBloco(TITULO_CONFIRMADO),
+    // As duas secoes normais continuam na tela, e VAZIAS: o acerto nao e linha
+    // da lista, e ninguem o somou em cartao nenhum.
+    previsto: retrato(raiz, PREVISTO),
+    realizado: retrato(raiz, REALIZADO),
+    chamadas: CHAMADAS.slice(),
+  };
+
+  // 1. O clique abre o dialogo e LE AS CONTAS -- nenhuma escrita ainda.
+  raiz.querySelector("#confirmar-acerto-" + ACERTO_ID).click();
+  await assentar();
+
+  out.m_dialogo = {
+    // O CONTROLE DA ASSERCAO DE "FECHOU" la embaixo: aqui a marca TEM de estar
+    // no DOM. Sem este par, um esboco que nunca montasse nada faria
+    // \`dialogoNoDom: false\` passar verde nos DOIS momentos.
+    noDom: !!raiz.querySelector('[data-esboco="dialogo-do-acerto"]'),
+    aberto: ACERTO_ABERTO
+      ? {
+          direcao: ACERTO_ABERTO.direcao,
+          nomeDaContraparte: ACERTO_ABERTO.nomeDaContraparte,
+          valor: ACERTO_ABERTO.valor,
+          moeda: ACERTO_ABERTO.moeda,
+          cotacao: ACERTO_ABERTO.cotacao,
+          contas: ACERTO_ABERTO.contas,
+          titulo: ACERTO_ABERTO.titulo,
+          rotuloDoBotao: ACERTO_ABERTO.rotuloDoBotao,
+        }
+      : null,
+    chamadas: CHAMADAS.slice(),
+  };
+
+  // 2. A conta escolhida no dialogo -- o mesmo que o botao real faz.
+  if (ACERTO_ABERTO) await ACERTO_ABERTO.aoConfirmar("conta-nubank");
+  await assentar();
+
+  out.m_depois = {
+    aConfirmar: retratoDoBloco(TITULO_A_CONFIRMAR),
+    recebido: retratoDoBloco(TITULO_CONFIRMADO),
+    previsto: retrato(raiz, PREVISTO),
+    realizado: retrato(raiz, REALIZADO),
+    chamadas: CHAMADAS.slice(),
+    // FECHOU? Pela MARCA NO DOM, e nao pelo registro de props: ver o esboco.
+    dialogoNoDom: !!raiz.querySelector('[data-esboco="dialogo-do-acerto"]'),
+    toasts: TOASTS.slice(),
+  };
+
+  // As frases de producao, para a assercao comparar com o que esta na tela.
+  out.m_frases = {
+    tituloAConfirmar: TITULO_A_CONFIRMAR,
+    subtitulo: SUBTITULO_A_CONFIRMAR,
+    tituloConfirmado: TITULO_CONFIRMADO,
+    foraDoPrevisto: ACERTO_FORA_DO_PREVISTO,
+    foraDoRealizado: ACERTO_FORA_DO_REALIZADO,
   };
 }
 
@@ -1545,4 +1829,166 @@ test("K: a fatura SEM DIA DE VENCIMENTO nao tem Pagar -- e a tela diz por que", 
   assert.match(resultado.k.texto, /não tem o botão Pagar/);
   assert.match(resultado.k.texto, /dia de vencimento/);
   assert.match(resultado.k.texto, /passa a aparecer na lista/);
+});
+
+// =============================================================================
+// M. "ELA PAGOU; EU CONFIRMO" NA ABA RECEITAS -- HMO-366, fase F4 da HMO-360
+// =============================================================================
+
+test("M: CONTROLE -- a aba Receitas pintou, e o bloco a confirmar esta nela", () => {
+  // O controle que da sentido a toda assercao negativa deste caso. Sem ele,
+  // "a linha nao esta mais no bloco a confirmar" ficaria verde por a pagina nao
+  // ter pintado nada -- indistinguivel de uma feature que funciona.
+  assert.ok(resultado.m_antes.previsto, "a secao Previsto nao existe na aba Receitas");
+  assert.ok(resultado.m_antes.realizado, "a secao Realizado nao existe na aba Receitas");
+
+  const b = resultado.m_antes.aConfirmar;
+  assert.ok(b, "o bloco de acerto a confirmar nao pintou");
+  assert.match(b.texto, /Letícia/, "a linha nao nomeia quem pagou");
+  // O VALOR E A MOEDA chegaram ao formatador, que nesta sonda e MARCADOR (ver
+  // `formatCurrency` no cabecalho). A moeda e load-bearing: a 026 deixa a
+  // quitacao ser em USD, e um `formatCurrency(valor)` sem o segundo argumento
+  // imprimiria R$ em cima de dolar -- numero certo, simbolo errado. Quem prova
+  // o FORMATO e `npm run test:dinheiro`; o que se mede aqui e o fio.
+  assert.match(b.texto, /ESBOCO-VALOR:300:BRL/);
+  assert.equal(b.temConfirmar, true, "a linha a confirmar nao ganhou botao");
+  assert.equal(
+    b.confirmarDesabilitado,
+    false,
+    "o botao nasceu desabilitado com a leitura fresca"
+  );
+
+  // A LEITURA E A DA ABA RECEITAS: com `?tipo=expense` a rota nao devolveria
+  // acerto nenhum (a guarda esta na lib, com mutante), e este caso inteiro
+  // estaria medindo outra tela.
+  const [primeira] = resultado.m_antes.chamadas;
+  assert.equal(
+    primeira.url,
+    "/api/movimentacoes/resumo?tipo=income&de=2026-10-01&ate=2026-10-31"
+  );
+});
+
+test("M: o acerto a confirmar NAO entra nas duas secoes nem nos cartoes", () => {
+  // As duas razoes estao no cabecalho de lib/acerto-na-aba-receitas.ts: o
+  // «Previsto» de Receitas JA conta este dinheiro como reembolso previsto (F3),
+  // e a perna e `transfer`. A tela mostra o valor FORA dos tres cartoes, e isto
+  // afirma que ele nao vazou para a lista -- onde `resumoDaTela` o somaria.
+  assert.ok(
+    !resultado.m_antes.previsto.texto.includes("Letícia"),
+    resultado.m_antes.previsto.texto
+  );
+  assert.ok(
+    !resultado.m_antes.realizado.texto.includes("Letícia"),
+    resultado.m_antes.realizado.texto
+  );
+
+  // E a frase DIZ que ele esta fora, com as palavras da lib -- nao com uma
+  // copia escrita nesta sonda.
+  assert.ok(
+    resultado.m_antes.aConfirmar.texto.includes(resultado.m_frases.foraDoPrevisto),
+    resultado.m_antes.aConfirmar.texto
+  );
+  assert.ok(
+    resultado.m_antes.aConfirmar.texto.includes(resultado.m_frases.subtitulo),
+    resultado.m_antes.aConfirmar.texto
+  );
+});
+
+test("M: o clique ABRE o dialogo com a conta a escolher, e NAO escreve nada", () => {
+  const d = resultado.m_dialogo.aberto;
+  assert.ok(d, "o clique em Confirmar nao abriu o dialogo do acerto");
+  assert.equal(
+    resultado.m_dialogo.noDom,
+    true,
+    "o dialogo nao foi montado: a assercao de 'fechou' la embaixo seria vacua"
+  );
+
+  // `direcao` e o que decide o SINAL da perna: com "paguei" o Pix de R$ 300
+  // SAIRIA da conta de quem recebeu.
+  assert.equal(d.direcao, "recebi");
+  assert.equal(d.valor, 300);
+  assert.equal(d.moeda, "BRL");
+  assert.equal(d.cotacao, 1);
+  assert.equal(d.nomeDaContraparte, "Letícia");
+  // O titulo e o botao sao os da CONTRAPARTE (fase 12), e nao os de registrar:
+  // o acerto ja existe, e "Registrar acerto" sugeriria um segundo pagamento.
+  assert.equal(d.titulo, "Lançar o que recebi");
+  assert.equal(d.rotuloDoBotao, "Lançar na minha conta");
+
+  // As contas chegaram, e vieram da rota -- `GET /api/financial-accounts`.
+  assert.deepEqual(d.contas.map((c) => c.id), ["conta-nubank"]);
+  const leituras = resultado.m_dialogo.chamadas.filter((c) => c.metodo === "GET");
+  assert.ok(
+    leituras.some((c) => c.url === "/api/financial-accounts"),
+    JSON.stringify(leituras)
+  );
+
+  // NENHUMA ESCRITA ate aqui: a pergunta "de qual conta?" nao tem resposta
+  // padrao, e um POST disparado no clique do botao da linha lancaria o dinheiro
+  // numa conta que a pessoa nao escolheu.
+  const escritas = resultado.m_dialogo.chamadas.filter((c) => c.metodo !== "GET");
+  assert.deepEqual(escritas, [], JSON.stringify(escritas));
+});
+
+test("M: confirmar chama o POST da PERNA, com o grupo, o acerto e a conta", () => {
+  const escritas = resultado.m_depois.chamadas.filter((c) => c.metodo !== "GET");
+  assert.equal(escritas.length, 1, JSON.stringify(escritas));
+
+  const [post] = escritas;
+  assert.equal(post.metodo, "POST");
+  // A ROTA QUE JA EXISTE (HMO-245 fase 12), e e ela quem grava a perna como
+  // `transfer` com `group_id: null` literal -- as duas regras com medicao
+  // atras. Qualquer outra URL aqui significaria insert novo em outro lugar.
+  assert.equal(
+    post.url,
+    "/api/expense-groups/77777777-7777-4777-b777-777777777777" +
+      "/settlements/5e111111-1111-4111-b111-111111111111/perna"
+  );
+  // `account_id` E A ENTREGA DO DIALOGO: sem ele a rota responde 400, e o
+  // "Confirmar" viraria um botao que abre dialogo e nao lanca nada.
+  assert.deepEqual(post.corpo, { account_id: "conta-nubank" });
+});
+
+test("M: depois de confirmar a linha SAI do a confirmar e APARECE no recebido", () => {
+  // AS DUAS METADES, no mesmo bloco. Esta e a assercao da issue, e a segunda e
+  // a que importa: a perna e `transfer` e nao entra em Receitas realizadas,
+  // entao sem o bloco de recebidos a linha DESAPARECERIA da tela depois do
+  // clique -- indistinguivel de bug, e o caminho dessa estranheza termina em
+  // alguem lancando a receita a mao.
+  assert.equal(
+    resultado.m_depois.aConfirmar,
+    null,
+    "o bloco a confirmar continuou na tela depois de confirmar"
+  );
+
+  const r = resultado.m_depois.recebido;
+  assert.ok(r, "a linha confirmada DESAPARECEU: e o defeito que a F4 resolve");
+  assert.match(r.texto, /Letícia/);
+  assert.match(r.texto, /ESBOCO-VALOR:300:BRL/);
+  assert.equal(r.temConfirmar, false, "a linha ja lancada ganhou Confirmar de novo");
+
+  // E O ROTULO DIZ POR QUE O CARTAO «Realizado» NAO SUBIU. Sem a frase, o
+  // bloco seria um valor a mais ao lado de um numero que nao se mexeu.
+  assert.ok(
+    r.texto.includes(resultado.m_frases.foraDoRealizado),
+    r.texto
+  );
+  assert.ok(
+    !resultado.m_depois.realizado.texto.includes("Letícia"),
+    resultado.m_depois.realizado.texto
+  );
+
+  // A RELEITURA ACONTECEU -- e e ela que move a linha de lado. Sem ela a rota
+  // responderia 200 e o bloco ficaria onde estava, com o segundo clique caindo
+  // no 409 de uma operacao que deu certo.
+  const leituras = resultado.m_depois.chamadas.filter(
+    (c) => c.metodo === "GET" && c.url.startsWith("/api/movimentacoes/resumo")
+  );
+  assert.equal(leituras.length, 2, JSON.stringify(leituras));
+
+  // O dialogo fechou, e o toast confirma pela palavra que o app escolheu.
+  assert.equal(resultado.m_depois.dialogoNoDom, false, "o dialogo ficou aberto");
+  const ultimo = resultado.m_depois.toasts[resultado.m_depois.toasts.length - 1];
+  assert.equal(ultimo.tipo, "success", JSON.stringify(ultimo));
+  assert.match(ultimo.texto, /conta/);
 });

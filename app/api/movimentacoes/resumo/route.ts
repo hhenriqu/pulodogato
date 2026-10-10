@@ -110,6 +110,13 @@ import {
   type ParticipantesPorGrupo,
 } from "@/lib/parte-do-grupo";
 import { previstasPelaRegraDoPagador } from "@/lib/regra-do-pagador";
+import { chaveDoAcerto } from "@/lib/acerto-em-lancamento";
+import {
+  acertosNaAbaReceitas,
+  ACERTOS_VAZIOS,
+  type AcertoCruDaReceita,
+  type AcertosNaAbaReceitas,
+} from "@/lib/acerto-na-aba-receitas";
 import {
   linhasDaTela,
   previstoVencido,
@@ -475,6 +482,150 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // ----------------------------------------------------------------
+    // 3d. "ELA PAGOU; EU CONFIRMO" -- HMO-366, fase F4 da HMO-360
+    // ----------------------------------------------------------------
+    // Os acertos de grupo em que EU sou `to_user_id` e que a MINHA sessao ainda
+    // nao lancou. O estado inteiro ja existia no banco e em lib puro, e esta
+    // leitura e a unica coisa que faltava -- ver o cabecalho de
+    // lib/acerto-na-aba-receitas.ts. SEM MIGRATION.
+    //
+    // NENHUM DESTES VALORES ENTRA EM `resumo` NEM EM `linhas`, e as duas razoes
+    // estao escritas naquele cabecalho: o «Previsto» de Receitas JA conta este
+    // dinheiro como reembolso previsto (F3, e `fecharMes` nao desconta acerto
+    // registrado), e a perna e `transfer`, que nao e receita realizada. Eles
+    // viajam em CAMPO PROPRIO da resposta, como `fatura_sem_vencimento` ja faz.
+    //
+    // FALHAR AQUI NAO DERRUBA A LEITURA -- mesma decisao de 3b, 3c e da
+    // materializacao da agenda: os dois lados ficam vazios, a aba volta a ser a
+    // de antes desta issue e nenhum numero se mexe. O `console.error` fica
+    // porque "o acerto a confirmar desapareceu" e um sintoma que ninguem
+    // reporta.
+    let acertos: AcertosNaAbaReceitas | null = null;
+
+    if (tela.tipo === "income") {
+      acertos = ACERTOS_VAZIOS;
+
+      // `to_user_id = eu` NA CONSULTA, e nao so na funcao pura: a policy da 007
+      // e `USING (is_group_member(group_id))`, entao sem este filtro a resposta
+      // traria TODO acerto de TODO grupo meu -- inclusive os entre outras duas
+      // pessoas -- para a funcao descartar depois. `acertosNaAbaReceitas`
+      // descarta de novo (pela direcao), e isso nao e redundancia: o filtro aqui
+      // e tamanho de payload, e o de la e a regra que o teste alcanca.
+      //
+      // `settled_on` recorta pelo MESMO periodo da tela. A perna nasce com
+      // `transaction_date = settled_on` (`pernaDoAcerto`), entao o acerto e a
+      // perna dele caem sempre no mesmo mes -- confirmar nao muda a linha de
+      // periodo, ela muda de LADO dentro do periodo.
+      //
+      // GRUPO ARQUIVADO NAO E FILTRADO, ao contrario de `lerCreditoDosGrupos`:
+      // la o que se lista e PROMESSA (o que ainda vao me pagar), e cobrar
+      // residuo de viagem arquivada e ruido. Aqui a pessoa DISSE que me pagou --
+      // o dinheiro pode estar na minha conta e eu ainda nao ter lancado. Esconder
+      // isso porque o grupo foi arquivado deixaria o Pix fora do extrato para
+      // sempre, sem nada na tela dizendo que ha algo a fazer.
+      const { data: acertosCrus, error: erroAcertos } = await supabase
+        .from("group_settlements")
+        .select(
+          "id, group_id, from_user_id, to_user_id, created_by, amount, currency, exchange_rate, settled_on"
+        )
+        .eq("to_user_id", user.id)
+        .gte("settled_on", periodo.de)
+        .lte("settled_on", periodo.ate)
+        .order("settled_on", { ascending: false });
+
+      if (erroAcertos) {
+        console.error(
+          "A tela de movimentação seguiu sem os acertos de grupo a confirmar:",
+          erroAcertos
+        );
+      } else if ((acertosCrus ?? []).length > 0) {
+        const crus = acertosCrus as AcertoCruDaReceita[];
+
+        // AS MINHAS PERNAS, POR `notes IN (...)` -- a MESMA consulta que o GET
+        // da tela do grupo faz (settlements/route.ts). A RLS de
+        // `financial_transactions` filtra por `user_id`, entao o que volta e
+        // sempre a propria perna: a pergunta e "EU ja lancei?", nunca "o outro
+        // lancou?", que nenhuma sessao pode responder por policy.
+        //
+        // O `.eq("user_id")` nao e confianca na RLS: `rls-com-or-infla-agregado
+        // -pessoal` esta medido neste repositorio, e a policy de SELECT de
+        // `financial_transactions` tem um `OR` de grupo (002) -- sem o filtro, a
+        // perna de OUTRO membro sobre uma despesa de grupo poderia entrar na
+        // contagem e o meu acerto apareceria como "ja lancado" sem eu ter
+        // lancado nada. O botao Confirmar desapareceria, e o Pix ficaria fora do
+        // meu extrato para sempre.
+        const chaves = crus.map((a) => chaveDoAcerto(a.id));
+
+        const { data: pernas, error: erroPernas } = await supabase
+          .from("financial_transactions")
+          .select("notes")
+          .eq("user_id", user.id)
+          .in("notes", chaves);
+
+        if (erroPernas) {
+          // AQUI A FALHA NAO PODE SEGUIR EM FRENTE, e e a excecao a regra deste
+          // arquivo: sem saber quais pernas existem, TODO acerto do periodo
+          // pareceria "a confirmar" -- inclusive os que eu ja lancei. A tela
+          // ofereceria Confirmar sobre dinheiro que ja esta na conta, o POST
+          // responderia 409 e o segundo clique seria lido como app travado.
+          // Vazio dos dois lados e a direcao barata: a aba fica como antes.
+          console.error(
+            "A tela de movimentação seguiu sem saber quais acertos eu já lancei:",
+            erroPernas
+          );
+        } else {
+          const chavesComPerna = new Set(
+            (pernas ?? [])
+              .map((p) => p.notes)
+              .filter((n): n is string => typeof n === "string" && n.length > 0)
+          );
+
+          // Os nomes e os grupos sao SO PARA A FRASE, e e por isso que a falha
+          // deles nao derruba nada: `descricaoDoAcerto` tem fallback escrito
+          // para os dois ("Acerto de grupo — recebido"). Ser do mesmo grupo NAO
+          // da acesso ao perfil do outro -- as policies de SELECT de `profiles`
+          // nao olham `group_members` --, entao o perfil ausente e caminho
+          // normal, nao erro.
+          const idsDePagadores = Array.from(
+            new Set(crus.map((a) => a.from_user_id).filter(Boolean))
+          );
+          const idsDeGrupos = Array.from(
+            new Set(crus.map((a) => a.group_id).filter(Boolean))
+          );
+
+          const [{ data: perfis }, { data: gruposDoAcerto }] = await Promise.all([
+            supabase.from("profiles").select("id, full_name").in("id", idsDePagadores),
+            supabase.from("expense_groups").select("id, name").in("id", idsDeGrupos),
+          ]);
+
+          const nomes = new Map<string, string>();
+          for (const p of perfis ?? []) {
+            const nome = (p.full_name ?? "").trim();
+            // Nome em branco e tratado como AUSENTE: `full_name` nao tem NOT
+            // NULL em `profiles` (001), e guardar `""` aqui faria a frase sair
+            // "Acerto de grupo — me pagou", com o espaco e nada antes.
+            if (p.id && nome) nomes.set(p.id, nome);
+          }
+
+          const grupos = new Map<string, string>();
+          for (const g of gruposDoAcerto ?? []) {
+            const nome = (g.name ?? "").trim();
+            if (g.id && nome) grupos.set(g.id, nome);
+          }
+
+          acertos = acertosNaAbaReceitas({
+            acertos: crus,
+            tipo: tela.tipo,
+            userId: user.id,
+            chavesComPerna,
+            nomes,
+            grupos,
+          });
+        }
+      }
+    }
+
     // A fatura aberta do cartao, so na tela de Despesas: ela e `direction:
     // "expense"` por construcao, e chamar a leitura nas outras duas gastaria
     // duas consultas para descartar tudo depois.
@@ -613,6 +764,20 @@ export async function GET(request: NextRequest) {
        * dizendo que ele foi ignorado. Ver HMO-227.
        */
       fatura_sem_vencimento: fatura.semVencimento,
+      /**
+       * OS ACERTOS DE GRUPO DESTA ABA -- HMO-366, so em `tipo=income`.
+       *
+       * `null` nas outras duas telas, e isso NAO e o mesmo que vazio: a tela
+       * distingue "nao ha acerto nenhum" (dois arrays vazios) de "esta resposta
+       * nao fala de acerto" (campo ausente), e a segunda e tambem o estado de
+       * uma resposta guardada no aparelho de antes desta feature. Um `[]` ali
+       * afirmaria "voce nao tem nada a confirmar" com base num corpo que nunca
+       * respondeu isso.
+       *
+       * FORA de `resumo` e FORA de `linhas`, pelas duas razoes do cabecalho de
+       * lib/acerto-na-aba-receitas.ts.
+       */
+      acertos_do_grupo: acertos,
     });
   } catch (error) {
     console.error("Erro na tela de movimentação:", error);
