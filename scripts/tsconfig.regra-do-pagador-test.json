@@ -1,0 +1,27 @@
+{
+  "//": [
+    "A regra do pagador no previsto (HMO-363, fase F1 da HMO-360).",
+    "",
+    "`rootDir` e a raiz do projeto, e nao `lib`, pela mesma razao do",
+    "tsconfig.parte-do-grupo-test.json: lib/parte-do-grupo.ts importa",
+    "`@/types/financial` e com `rootDir: lib` o tsc reprova com TS6059.",
+    "",
+    "O `include` tem UM arquivo porque o resto vem pelos imports: a regra importa",
+    "lib/parte-do-grupo.ts, que traz lib/settlement.ts, lib/fechamento-do-grupo.ts,",
+    "lib/recurrence.ts, lib/previsto-x-realizado.ts e types/financial.ts. O passo",
+    "do resolve-aliases (--espelha-raiz) reescreve os `@/lib/...` do emit."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-regra-do-pagador",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/regra-do-pagador.ts"]
+}

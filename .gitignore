@@ -208,6 +208,9 @@ next-env.d.ts
 # saida do `npm run test:parte-do-grupo` (HMO-177; espelha a raiz, entao leva
 # lib/settlement.js, lib/recurrence.js e o types/ junto)
 /.tmp-parte-do-grupo/
+# saida do `npm run test:regra-do-pagador` (HMO-363; espelha a raiz pelo mesmo
+# motivo da suite acima -- a regra importa lib/parte-do-grupo.ts)
+/.tmp-regra-do-pagador/
 /.tmp-cambio/
 
 # saida do `npm run test:cartao-orcamento-grupo` (HMO-180; espelha a raiz, entao
