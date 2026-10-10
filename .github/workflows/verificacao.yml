@@ -4745,6 +4745,33 @@ jobs:
       - name: Os mutantes da subcategoria nas parcelas
         run: npm run mutantes:subcategoria-nas-parcelas
 
+      # HMO-356. O que `test:despesa-publicada-no-grupo` promete e que a rota de
+      # despesa de grupo deixe de responder SUCESSO quando o UPDATE que publica
+      # `group_id` nao pega linha nenhuma -- o silencio da HMO-203 nesta rota, e
+      # com consequencia pior: sem a coluna, a policy de SELECT de
+      # financial_transactions esconde a despesa de todos os outros membros, e o
+      # grupo divide uma conta que metade dele nao ve.
+      #
+      # Nenhuma outra suite alcanca isso. `test:escrita-conferida` prova a FUNCAO
+      # e nao a fiacao; `test:divisao-do-grupo` prova a aritmetica do 70/30 e
+      # nunca ve a resposta HTTP; e o `tsc` nao ve nada, porque o conserto e uma
+      # chamada a mais num `await` cuja forma nao muda.
+      #
+      # Medido na HMO-356 ao escrever isto: 8 mutantes, 8 mortos. O primeiro e o
+      # controle negativo da entrega, e ele apaga o RAMO DE ERRO deixando
+      # `conferirEscrita` e `.select("id")` no arquivo -- entao ele e tambem a
+      # prova de que um guard textual nao serviria: o arquivo passou a ter duas
+      # chamadas de `conferirEscrita` com proposito oposto, e `includes` fica
+      # verde matando a que importa.
+      #
+      # O que o UPDATE SEM `.eq` ensinou: ele SOBREVIVEU na primeira medicao,
+      # porque a sonda semeava uma linha so e "esta despesa" e "todas as
+      # despesas" eram o mesmo conjunto. Morreu depois de o fixture ganhar uma
+      # despesa PESSOAL vizinha -- a linha que um UPDATE sem filtro arrastaria
+      # para dentro do grupo.
+      - name: Os mutantes da despesa publicada no grupo
+        run: npm run mutantes:despesa-publicada-no-grupo
+
       # HMO-224, a irma da de cima na OUTRA rota: o POST de
       # /api/personal-finance/transactions nao lia `subcategory_id` do corpo e
       # nao o listava no INSERT. As assercoes de `test:movimentacoes` sobre esta

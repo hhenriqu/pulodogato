@@ -3181,6 +3181,29 @@ jobs:
       - name: A subcategoria nas M parcelas da serie
         run: npm run test:subcategoria-nas-parcelas
 
+      # HMO-356. Na divisao COMBINADA a despesa nasce sem `group_id` de proposito
+      # (com a coluna preenchida o trigger rateia IGUAL antes de a rota falar), e
+      # a coluna entra num UPDATE no fim. Esse UPDATE era cru: escrita que a
+      # policy nao alcanca volta SUCESSO COM ZERO LINHA -- a RLS filtra em vez de
+      # recusar --, e sem `.select()` o supabase-js nao da contagem, entao
+      # `if (erroGrupo)` nao tinha como disparar. A rota respondia 200 e a tela
+      # dizia "Despesa adicionada com sucesso!" sobre uma despesa que a policy de
+      # SELECT de financial_transactions (`group_id IS NOT NULL AND
+      # is_group_member(group_id)`) esconde de TODOS os outros membros: o grupo
+      # divide uma conta que metade dele nao ve.
+      #
+      # A SUITE CHAMA O HANDLER, e aqui isso nao e preferencia de estilo: depois
+      # do conserto o arquivo tem DUAS chamadas de `conferirEscrita` com
+      # proposito OPOSTO -- a do UPDATE muda a resposta, a do `delete` de
+      # compensacao nunca pode mudar (trocar o motivo apagaria o erro que
+      # disparou a compensacao). Um guard textual fica verde matando a que
+      # importa; so o corpo da resposta distingue as duas.
+      #
+      # 8 de 8 em scripts/mutantes-despesa-publicada-no-grupo.mjs (step proprio
+      # no verificacao.yml).
+      - name: A despesa de grupo que a rota diz ter publicado
+        run: npm run test:despesa-publicada-no-grupo
+
       # HMO-224. O POST de /api/personal-finance/transactions descartava a
       # subcategoria: o corpo nao era desestruturado com `subcategory_id` e o
       # INSERT nao listava a coluna. Quem postasse ali criava lancamento com

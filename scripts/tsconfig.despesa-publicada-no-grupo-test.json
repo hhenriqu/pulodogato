@@ -1,0 +1,41 @@
+{
+  "//": [
+    "A despesa de grupo que a rota diz ter publicado (HMO-356).",
+    "",
+    "Compila o route handler app/api/expense-groups/[groupId]/transactions/route.ts.",
+    "O tsc puxa sozinho as dependencias dele -- lib/escrita-conferida.ts,",
+    "lib/divisao-do-grupo.ts, lib/cambio.ts, lib/moeda-do-grupo.ts, lib/dinheiro.ts",
+    "e utils/supabase/server.ts --, e e por isso que o `include` tem um arquivo so.",
+    "",
+    "POR QUE A ROTA, E NAO SO O CRITERIO",
+    "`npm run test:escrita-conferida` ja prova que `conferirEscrita` separa os tres",
+    "modos de falhar. O que ela NAO alcanca e se esta rota CHAMA o criterio: a",
+    "promessa da HMO-356 e que a resposta deixe de dizer sucesso quando a escrita",
+    "nao pegou linha, e isso vive na fiacao, nao na funcao. Um guard textual sobre o",
+    "fonte tambem nao serve -- o arquivo passou a ter DUAS chamadas de",
+    "`conferirEscrita` com proposito oposto (a do UPDATE muda a resposta, a do",
+    "`delete` de compensacao nao pode mudar), e `includes(\"conferirEscrita\")` fica",
+    "verde matando a que importa.",
+    "",
+    "`rootDir` e a raiz do projeto: a rota importa @/lib e @/utils, e com rootDir",
+    "em app/ o tsc reprova com TS6059. O emit espelha a raiz, entao o passo do",
+    "resolve-aliases roda com --espelha-raiz.",
+    "",
+    "utils/supabase/server.ts e compilado junto e DEPOIS sobrescrito pelo",
+    "scripts/monta-duble-de-rota.mjs -- o modulo real importa `next/headers`, que",
+    "nao roda fora do runtime do Next."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-despesa-publicada-no-grupo",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../app/api/expense-groups/[groupId]/transactions/route.ts"]
+}

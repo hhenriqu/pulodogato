@@ -4,6 +4,7 @@ import { moedaConhecida } from "@/lib/dinheiro";
 import { taxaParaGravar } from "@/lib/cambio";
 import { moedaDaViagem } from "@/lib/moeda-do-grupo";
 import { divisaoParaGravar } from "@/lib/divisao-do-grupo";
+import { conferirEscrita } from "@/lib/escrita-conferida";
 
 // Sem o generic `Database` no client, `select()` volta `any`. `transaction`,
 // `category`, `member` e `user` sao embeds many-to-one (objeto, nao lista) e
@@ -386,10 +387,39 @@ export async function POST(
     // junto.
     const desfazer = async (motivo: string, erro: unknown) => {
       console.error(motivo, erro);
-      await supabase
-        .from("financial_transactions")
-        .delete()
-        .eq("id", transaction.id);
+
+      // ESTA ESCRITA E CONFERIDA PARA O LOG, E NUNCA MUDA A RESPOSTA (HMO-356)
+      // ---------------------------------------------------------------------
+      // A assimetria com o UPDATE la embaixo e deliberada. Aqui zero linha NAO
+      // pode virar a falha que a rota reporta: a rota JA esta falhando, e
+      // trocar `motivo` por "a compensacao nao pegou nada" apagaria o erro que
+      // disparou a compensacao -- que e o unico que diz o que consertar. E o
+      // mesmo recorte que lib/escrita-conferida.ts descreve no fim do cabecalho
+      // e que a HMO-356 reafirma para os dois `delete` de settlements.
+      //
+      // Mas zero linha tambem nao e inocente, e e por isso que o `.select()`
+      // entra: sem apagar nada a CASCADE de group_transactions.transaction_id
+      // nao roda, e sobra exatamente o lancamento orfao que este bloco existe
+      // para evitar -- nas despesas pessoais de quem lancou, ausente do grupo,
+      // sem ninguem entender de onde veio. `conferirEscrita` aqui serve so para
+      // o log nomear a linha que ficou, e para separar "a policy recusou" de
+      // "esta chamada perdeu o `.select()`" quando alguem for ler.
+      const compensacao = conferirEscrita(
+        await supabase
+          .from("financial_transactions")
+          .delete()
+          .eq("id", transaction.id)
+          .select("id"),
+        `apagar a despesa ${transaction.id}, que ficou sem divisao de grupo`
+      );
+
+      if (!compensacao.ok) {
+        console.error(
+          `Compensacao sem efeito (${compensacao.motivo}): a despesa ` +
+            `${transaction.id} ficou ORFA -- gravada, fora do grupo, visivel ` +
+            `so para quem lancou. ${compensacao.mensagem}`
+        );
+      }
 
       return NextResponse.json({ error: motivo }, { status: 500 });
     };
@@ -440,13 +470,47 @@ export async function POST(
       // acabou de ser criada e nao recria nem recalcula nada (o valor nao
       // mudou). Sem este passo a despesa fica invisivel para os outros membros
       // -- e a policy de SELECT de financial_transactions que depende dela.
-      const { error: erroGrupo } = await supabase
-        .from("financial_transactions")
-        .update({ group_id: groupId })
-        .eq("id", transaction.id);
+      //
+      // `.select()` + LINHAS AFETADAS (HMO-356)
+      // ---------------------------------------
+      // Ate aqui era `.update(...).eq(...)` cru, e `if (erroGrupo)` era o unico
+      // criterio. Esse `if` NAO distingue "publicou" de "nao escreveu nada":
+      // escrita que a policy nao alcanca volta sucesso com ZERO linha -- a RLS
+      // FILTRA em vez de recusar --, e sem `.select()` o supabase-js nao entrega
+      // contagem, entao `data` e `error` vinham os dois nulos. E a mesma mentira
+      // medida em producao em 2026-09-30 na rota de restaurar grupo (HMO-203,
+      // ver lib/escrita-conferida.ts).
+      //
+      // Zero linha AQUI e o pior silencio desta rota, e nao o mais barato: a
+      // despesa fica gravada e visivel para quem lancou, enquanto a policy de
+      // SELECT de financial_transactions -- `group_id IS NOT NULL AND
+      // is_group_member(group_id)` -- a esconde de TODOS os outros membros. O
+      // grupo entao divide uma conta que metade dele nao consegue ver, os
+      // saldos de `group_member_balances` discordam entre as pessoas, e a tela
+      // de quem lancou disse "Despesa adicionada com sucesso!".
+      //
+      // Diferente do laco que a HMO-356 descrevia: aqui e UMA linha, pela chave
+      // primaria, numa despesa que esta rota acabou de inserir. Nao ha "movi N
+      // de M" para reportar e nenhuma decisao de produto a tomar -- zero linha e
+      // falha, e `desfazer` ja sabe o que fazer com ela.
+      //
+      // O `.select()` depende da policy de SELECT, e aqui isso e seguro porque a
+      // perna `user_id = auth.uid()` dela cobre o dono -- e o dono e quem esta
+      // chamando, pela chave primaria da linha que ele mesmo acabou de inserir.
+      // Em escrita de linha ALHEIA esse detalhe se inverte e vira armadilha: o
+      // UPDATE grava e o `.select()` volta vazio, e a conferencia reprovaria uma
+      // escrita que funcionou.
+      const publicacao = conferirEscrita(
+        await supabase
+          .from("financial_transactions")
+          .update({ group_id: groupId })
+          .eq("id", transaction.id)
+          .select("id"),
+        "publicar a despesa no grupo"
+      );
 
-      if (erroGrupo) {
-        return desfazer("Erro ao publicar a despesa no grupo.", erroGrupo);
+      if (!publicacao.ok) {
+        return desfazer("Erro ao publicar a despesa no grupo.", publicacao);
       }
     } else {
       // DIVISAO IGUAL: a transacao ja nasceu com `group_id`, e o trigger
