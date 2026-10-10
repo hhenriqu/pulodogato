@@ -32,6 +32,27 @@
  * E a mesma regua que o Helio fixou na HMO-265 -- *conta quando a fatura e paga,
  * nao na compra*. A Lais pode nao pagar.
  *
+ * A RECUSA CONTINUA DE PE, E O BALDE MUDOU (HMO-364, fase F3 da HMO-360)
+ * ---------------------------------------------------------------------
+ * `notaDoCreditoAReceber` passou a alimentar tambem o cartao «Previsto» da aba
+ * Receitas (`/api/movimentacoes/resumo?tipo=income`), e isso NAO e uma excecao
+ * aberta na recusa de cima -- e a leitura exata dela.
+ *
+ * O que a recusa protege e o REALIZADO: credito sobre conta que ninguem pagou
+ * nao pode entrar em "o que voce ja recebeu", porque a Lais pode nao pagar e o
+ * saldo nao denunciaria. No «Previsto» a simetria e exata -- a despesa
+ * correspondente tambem nao foi paga, e ela esta no «Previsto» da aba Despesas
+ * pelo valor BRUTO desde a mesma issue (`previstasPelaRegraDoPagador`). As duas
+ * pontas sao promessa, as duas estao no previsto, e nenhuma das duas esta no
+ * realizado.
+ *
+ * Por isso este modulo continua sem importar `resumoDoPeriodo` e sem exportar
+ * nada que some em `receitas`: quem soma e `resumoComReembolsoPrevisto`
+ * (lib/telas-de-movimentacao.ts), que recebe o total como numero, so age na
+ * tela de Receitas e NAO TOCA o `realizado` -- com mutante por cima de cada uma
+ * dessas tres coisas. O caminho que publicaria receita inexistente continua nao
+ * existindo.
+ *
  * DUAS FONTES, E CADA UMA RESPONDE UMA PERGUNTA DIFERENTE
  * ------------------------------------------------------
  * `fecharMes` devolve as duas coisas de que esta leitura precisa, e elas nao sao

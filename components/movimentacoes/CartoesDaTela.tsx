@@ -45,8 +45,9 @@ import {
 } from "@/components/ui/card";
 import { NumeroIndisponivel } from "@/components/SemRede";
 import { podeMostrarNumero, type EstadoDaLeitura } from "@/lib/offline-leitura";
+import { LEGENDA_DO_BRUTO } from "@/lib/legenda-do-bruto-e-do-liquido";
 import type {
-  ResumoDaTela,
+  ResumoComReembolso,
   TelaDeMovimentacao as TelaDoCatalogo,
 } from "@/lib/telas-de-movimentacao";
 
@@ -67,8 +68,15 @@ export function CartoesDaTela({
   tela: TelaDoCatalogo;
   /** A classe de cor da tela, em token. Ver `APARENCIA` no container. */
   cor: string;
-  /** `null` = nao houve leitura. Nenhum numero pode sair daqui. */
-  resumo: ResumoDaTela | null;
+  /**
+   * `null` = nao houve leitura. Nenhum numero pode sair daqui.
+   *
+   * `ResumoComReembolso` e nao `ResumoDaTela` desde a HMO-364: o reembolso
+   * previsto do grupo entra DENTRO de `previsto` na aba Receitas, e sem o campo
+   * ao lado nao ha como a tela dizer que ele esta ali -- um valor a mais sem
+   * rotulo e indistinguivel de bug.
+   */
+  resumo: ResumoComReembolso | null;
   vencido: { total: number; quantidade: number };
   estado: EstadoDaLeitura | null;
 }) {
@@ -127,6 +135,55 @@ export function CartoesDaTela({
               {vencido.quantidade === 1 ? "linha" : "linhas"} que já
               {vencido.quantidade === 1 ? " venceu" : " venceram"}
             </p>
+          )}
+
+          {/*
+            O REEMBOLSO DO GRUPO, DITO ONDE ELE ESTA (HMO-364, fase F3).
+
+            O valor JA ESTA dentro do numero acima -- `resumoComReembolsoPrevisto`
+            o soma no «Previsto» da aba Receitas. Esta linha existe porque sem
+            ela ele seria invisivel: o cartao subiria R$ 300 e nada na tela
+            diria de onde vieram, que e o quinto numero sem rotulo da familia
+            `despesa-de-grupo-tem-tres-convencoes`.
+
+            E ela diz PREVISTO em voz alta, porque o risco de leitura e o
+            contrario: "a receber" num cartao verde se le como dinheiro que ja
+            entrou. A Lais pode nao pagar, e a conta do grupo tambem pode nao
+            ser paga -- as duas pontas sao promessa, e e por isso que as duas
+            estao no previsto e nenhuma no realizado.
+
+            `podeMostrarNumero` tambem aqui, e pelo motivo do vencido logo
+            acima: "R$ 300 a receber" dito sobre um cache de ontem pode ja ter
+            sido pago.
+          */}
+          {podeMostrarNumero(estado) && resumo?.reembolso_previsto && (
+            <p className="text-xs text-muted-foreground">
+              inclui {moeda(resumo.reembolso_previsto.total)} de reembolso
+              previsto de {resumo.reembolso_previsto.quantos}{" "}
+              {resumo.reembolso_previsto.quantos === 1 ? "pessoa" : "pessoas"} em{" "}
+              {resumo.reembolso_previsto.grupos}{" "}
+              {resumo.reembolso_previsto.grupos === 1 ? "grupo" : "grupos"} —
+              ainda não recebido
+            </p>
+          )}
+
+          {/*
+            A PERGUNTA QUE ESTE NUMERO RESPONDE (HMO-364, fase F5).
+
+            So na aba Despesas, e ela e entrega e nao enfeite: desde a fase F1b
+            este «Previsto» conta a conta de grupo que a pessoa paga INTEIRA, e
+            o cartao «Quanto ainda posso gastar» do painel conta so a parte
+            dela. Os dois numeros estao certos e vao discordar na mesma
+            navegacao. Sem esta linha, o menor dos dois se le como conta
+            perdida, e o caminho dessa estranheza termina em alguem
+            "consertando" a conta por fora.
+
+            O texto mora em lib/legenda-do-bruto-e-do-liquido.ts junto com o do
+            outro lado: editar um e esquecer o outro produz duas legendas que se
+            contradizem, que e pior do que nenhuma.
+          */}
+          {tela.tipo === "expense" && (
+            <p className="text-xs text-muted-foreground">{LEGENDA_DO_BRUTO}</p>
           )}
         </CardHeader>
       </Card>

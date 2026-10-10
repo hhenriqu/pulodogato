@@ -1120,3 +1120,261 @@ test("a baixa, a exclusao e a edicao vao para as rotas que EXISTEM (HMO-301)", (
     );
   }
 });
+
+// -----------------------------------------------------------------------------
+// A FIACAO DO BRUTO E DO REEMBOLSO (HMO-364, fases F1b/F3/F5 da HMO-360)
+// -----------------------------------------------------------------------------
+// As duas fases vao no MESMO release, e a razao esta no plano: com a regra do
+// pagador a aba Despesas conta bruto, e se o reembolso previsto nao entrar em
+// Receitas junto, o Previsto de Despesas infla sem contrapartida e a tela mostra
+// uma divida que nao e do usuario.
+//
+// A ARITMETICA DAS DUAS ESTA MEDIDA EM OUTRO LUGAR -- `test:bruto-e-reembolso`
+// afirma os dois numeros em separado, com controle negativo de cada fase, e
+// `test:telas-de-movimentacao` tem a soma no «Previsto» com mutantes. O que
+// ESTAS assercoes trancam e a FIACAO: qual funcao a rota chama, e se a tela le o
+// campo. Nenhuma das duas coisas o tsc cobra -- `previstasComAMinhaParte` e
+// `previstasPelaRegraDoPagador` tem assinatura compativel, e trocar uma pela
+// outra compila e devolve numeros plausiveis.
+
+test("a rota de Despesas chama a REGRA DO PAGADOR, e nao a divisao cega", () => {
+  assert.match(
+    rota,
+    /previstasPelaRegraDoPagador\(/,
+    "A rota tem de chamar `previstasPelaRegraDoPagador` (lib/regra-do-pagador.ts). " +
+      "Sem ela a conta de grupo que o usuario FRONTA volta a entrar pela parte " +
+      "dele -- a aba Despesas diz R$ 300 num mes em que R$ 1.000 saem da conta."
+  );
+
+  // E a antiga tem de SAIR. As duas ao mesmo tempo dividiriam a linha duas
+  // vezes, ou (pior) a segunda desfaria a primeira sem erro nenhum.
+  assert.ok(
+    !/previstasComAMinhaParte/.test(rota),
+    "A rota ainda menciona `previstasComAMinhaParte`. A fase F1b a substituiu " +
+      "NESTA leitura; as outras quatro continuam com ela, por decisao da secao " +
+      "4 do plano da HMO-360."
+  );
+
+  // O `user_id` da AGENDA e o campo inteiro da regra: sem ele no `select`,
+  // `euFrontoAConta` recebe `undefined` em toda linha e NADA conta bruto. Ele
+  // ja estava la desde a HMO-301, e esta assercao e o que impede que uma
+  // limpeza de "campos nao usados" o leve.
+  const agenda = rota.match(
+    /from\("scheduled_transactions_effective"\)\s*\.select\(\s*`([\s\S]*?)`/
+  );
+  assert.ok(agenda, "Nao achei o select da agenda na rota.");
+  for (const coluna of ["user_id", "group_id"]) {
+    assert.match(
+      agenda[1],
+      new RegExp(`\\b${coluna}\\b`),
+      `O select da agenda perdeu \`${coluna}\` -- a regra do pagador fica sem ` +
+        `o campo por que ela decide, e nao quebra tsc nem teste de unidade.`
+    );
+  }
+});
+
+test("as outras QUATRO leituras do previsto NAO foram ligadas na regra nova", () => {
+  // A secao 4 do plano da HMO-360 decidiu NAO reverter a HMO-306/308: o
+  // safe-to-spend responde "posso gastar isso?" e e conservador de proposito.
+  // Ligar a regra do pagador la faria o cartao prometer dinheiro que e de outra
+  // pessoa -- o pior erro possivel naquele numero.
+  //
+  // A assercao e sobre o IMPORT e sobre a CHAMADA, porque uma sem a outra fica
+  // verde pelo lado errado: um import nao usado passa o `includes` da chamada,
+  // e uma chamada por outro nome passa a do import.
+  // A ANCORA DO CONTROLE POSITIVO E POR ARQUIVO, e nao uma so para os quatro:
+  // tres chamam `parteConfiguradaDoMembro` direto e o painel do Papel de Pao
+  // DELEGA -- ele passa `pesosPorGrupo` para `painelDePapel`, que divide la
+  // dentro. Uma ancora unica reprovaria o painel sem nada estar errado nele, que
+  // e a pior especie de teste: ela treina quem a ve vermelha a ignorar a suite.
+  const conservadoras = [
+    [
+      "app/api/papel-de-pao/painel/route.ts",
+      /painelDePapel\(\s*linhas,\s*\{[\s\S]*?pesosPorGrupo,/,
+    ],
+    ["app/api/safe-to-spend/route.ts", /parteConfiguradaDoMembro\(/],
+    [
+      "app/api/scheduled-transactions/summary/route.ts",
+      /parteConfiguradaDoMembro\(/,
+    ],
+    ["app/api/dashboard/previsao/route.ts", /parteConfiguradaDoMembro\(/],
+  ];
+
+  for (const [arquivo, ancoraDaParte] of conservadoras) {
+    const fonte = semComentarios(readFileSync(arquivo, "utf8"));
+
+    assert.ok(
+      !/regra-do-pagador/.test(fonte),
+      `${arquivo} importa lib/regra-do-pagador.ts. As quatro leituras ` +
+        `conservadoras contam A MINHA PARTE, e isso foi decidido na secao 4 do ` +
+        `plano -- nao revertido por refatoracao.`
+    );
+    assert.ok(
+      !/previstasPelaRegraDoPagador/.test(fonte),
+      `${arquivo} chama \`previstasPelaRegraDoPagador\`.`
+    );
+
+    // CONTROLE POSITIVO das duas negacoes acima: se o arquivo deixasse de
+    // dividir a parte do grupo (ou mudasse de nome, ou saisse do lugar), os
+    // dois `!test` passariam verdes medindo um arquivo que nao divide nada.
+    assert.match(
+      fonte,
+      ancoraDaParte,
+      `${arquivo} nao divide mais a parte do grupo por ${ancoraDaParte} -- esta ` +
+        `assercao parou de medir a leitura que ela existe para proteger.`
+    );
+  }
+});
+
+test("o reembolso do grupo entra pelo modulo compartilhado, e so em Receitas", () => {
+  // UMA leitura para as duas rotas. Copiar as seis consultas para ca criaria a
+  // segunda implementacao do mesmo credito -- dois numeros plausiveis que
+  // divergiriam na primeira mudanca, que e a familia de
+  // `fontes-consistentes-que-discordam`.
+  assert.match(
+    rota,
+    /lerCreditoDosGrupos\(/,
+    "A rota tem de ler o credito por `lerCreditoDosGrupos` " +
+      "(lib/services/credito-dos-grupos.ts), o mesmo modulo da rota my-credit."
+  );
+  assert.match(
+    semComentarios(readFileSync("app/api/expense-groups/my-credit/route.ts", "utf8")),
+    /lerCreditoDosGrupos\(/,
+    "A rota my-credit tem de ler pelo MESMO modulo -- senao as duas voltam a " +
+      "ter uma copia das consultas cada."
+  );
+
+  // SO EM RECEITAS. Em Despesas o mesmo valor seria um abatimento da conta a
+  // pagar, que e o criterio do safe-to-spend -- outra pergunta, outra tela.
+  assert.match(
+    rota,
+    /tela\.tipo === "income"[\s\S]{0,400}lerCreditoDosGrupos\(/,
+    'A leitura do credito tem de estar dentro do ramo `tela.tipo === "income"`.'
+  );
+});
+
+test("o reembolso vai para o «Previsto» por `resumoComReembolsoPrevisto`", () => {
+  // A funcao e quem decide o balde, e ela tem assercao e mutante. A rota nao
+  // pode somar por fora: `previsto: resumo.previsto + reembolso.total` escrito
+  // aqui seria uma segunda aritmetica, sem teste, no arquivo onde o mutador nao
+  // chega.
+  assert.match(
+    rota,
+    /resumoComReembolsoPrevisto\(\s*resumoDaTela\(linhas\),/,
+    "O resumo da resposta tem de passar por `resumoComReembolsoPrevisto`."
+  );
+
+  // E a rota nao pode fazer aritmetica propria com o reembolso. `.total` lido
+  // fora da chamada e o cheiro: ele significa que alguem somou a mao.
+  assert.ok(
+    !/reembolso[\s\S]{0,40}\.total\s*[+\-]/.test(rota),
+    "A rota esta somando o reembolso a mao. Quem soma e a funcao pura."
+  );
+
+  // A CONTAGEM: `notaDoCreditoAReceber` e quem conta devedores e grupos, e nao
+  // um `.length` da rota -- a frase do cartao concorda em numero com eles.
+  assert.match(
+    rota,
+    /notaDoCreditoAReceber\(/,
+    "A rota tem de usar `notaDoCreditoAReceber` para contar devedores e grupos."
+  );
+});
+
+test("o cartao «Previsto» DIZ que o reembolso esta dentro dele (fase F5)", () => {
+  // O defeito que esta assercao impede: o numero sobe R$ 300 e nada na tela diz
+  // de onde vieram. E o quinto numero sem rotulo da familia
+  // `despesa-de-grupo-tem-tres-convencoes`, que este app ja pagou quatro vezes
+  // -- e um valor a mais sem rotulo e indistinguivel de bug.
+  // A ASSERCAO E SOBRE A LEITURA DO CAMPO NO JSX, e nao sobre o nome aparecer
+  // no arquivo: `cartoes.includes("reembolso_previsto")` casaria com a
+  // DECLARACAO do tipo e com qualquer comentario, e ficaria verde num
+  // componente que le o campo e nao desenha nada. Quem mede "aparece na tela" e
+  // a suite que renderiza (test-cartoes-da-tela.mjs, 4 blocos); o que esta aqui
+  // e o elo do NOME entre a rota e o componente, que o tsc nao liga.
+  assert.match(
+    cartoes,
+    /resumo\?\.reembolso_previsto/,
+    "CartoesDaTela.tsx nunca le `resumo?.reembolso_previsto`. O valor entraria " +
+      "no «Previsto» de Receitas invisivel."
+  );
+  assert.match(
+    cartoes,
+    /resumo\.reembolso_previsto\.total/,
+    "O cartao nao imprime o TOTAL do reembolso -- uma frase sem o valor nao " +
+      "diz quanto do «Previsto» e promessa."
+  );
+
+  // A FONTE CRUA e a certa para o TEXTO: o que esta sendo medido e a frase que
+  // a pessoa le, e ela vive dentro do JSX.
+  const cartoesCrus = readFileSync(CARTOES, "utf8");
+  assert.match(
+    cartoesCrus,
+    /reembolso\s+previsto/,
+    "A frase do cartao tem de dizer PREVISTO -- um valor a receber num cartao " +
+      "verde se le como dinheiro que ja entrou."
+  );
+  assert.match(
+    cartoesCrus,
+    /ainda não recebido/,
+    "A frase tem de dizer que o dinheiro ainda nao chegou."
+  );
+});
+
+test("os DOIS numeros que vao discordar levam a legenda de cada um (fase F5)", () => {
+  // A aba Despesas responde "quanto sai da sua conta" (bruto) e o cartao
+  // «Quanto ainda posso gastar» responde "quanto voce pode gastar" (liquido).
+  // Os dois estao certos e aparecem na mesma navegacao. Sem legenda, o menor
+  // dos dois se le como conta perdida, e o caminho dessa estranheza termina em
+  // alguem "consertando" a conta por fora.
+  const LEGENDAS = "lib/legenda-do-bruto-e-do-liquido.ts";
+  const legendas = readFileSync(LEGENDAS, "utf8");
+
+  // As duas frases moram no MESMO arquivo porque sao uma explicacao so dita de
+  // dois lados: editar uma e esquecer a outra produz duas legendas que se
+  // contradizem, que e pior do que nenhuma.
+  for (const nome of ["LEGENDA_DO_BRUTO", "LEGENDA_DO_LIQUIDO"]) {
+    assert.match(
+      legendas,
+      new RegExp(`export const ${nome}\\b`),
+      `${LEGENDAS} nao exporta mais ${nome}.`
+    );
+  }
+
+  // `{NOME}` E NAO `includes("NOME")`, NOS DOIS ARQUIVOS.
+  //
+  // `includes` casa com a linha de IMPORT -- `import { LEGENDA_DO_LIQUIDO }
+  // from ...` --, entao ele fica verde num arquivo que importa a constante e
+  // nao a escreve em lugar nenhum. E a familia de
+  // `guard-de-fiacao-casa-com-o-import`, e aqui ela e barata de evitar: o
+  // import tem ESPACOS dentro das chaves e a interpolacao do JSX nao.
+  assert.match(
+    cartoes,
+    /\{LEGENDA_DO_BRUTO\}/,
+    "O cartao «Previsto» da aba Despesas nao escreve a legenda do bruto."
+  );
+
+  const painel = semComentarios(
+    readFileSync("app/(dashboard)/dashboard/page.tsx", "utf8")
+  );
+  assert.match(
+    painel,
+    /\{LEGENDA_DO_LIQUIDO\}/,
+    "O cartao «Quanto ainda posso gastar» nao escreve a legenda do liquido. " +
+      "Ele e o numero MENOR dos dois, que e o que se le como conta perdida."
+  );
+
+  // E cada legenda nomeia a pergunta do OUTRO lado, com link: uma frase que
+  // explica so o proprio numero deixa o outro sem explicacao.
+  for (const frase of ["PERGUNTA_DO_BRUTO", "PERGUNTA_DO_LIQUIDO"]) {
+    const ocorrencias = legendas.split(frase).length - 1;
+    assert.ok(
+      ocorrencias >= 3,
+      `${frase} aparece ${ocorrencias}x em ${LEGENDAS}: as duas legendas tem ` +
+        `de citar as DUAS perguntas (a declaracao + um uso em cada frase).`
+    );
+  }
+  assert.ok(
+    painel.includes('href="/dashboard/despesas"'),
+    "A legenda do painel tem de levar a aba Despesas."
+  );
+});

@@ -245,3 +245,104 @@ test("a cor do Total chega como classe, e e a que a tela passou", () => {
   assert.ok(verde.includes("text-success"));
   assert.ok(!verde.includes("text-destructive"));
 });
+
+// ---------------------------------------------------------------------------
+// 5. O REEMBOLSO DO GRUPO E AS DUAS LEGENDAS (HMO-364, fases F3 e F5)
+// ---------------------------------------------------------------------------
+// O que estes blocos medem e `nao aparece` e `aparece onde`, que e propriedade
+// da MARCACAO: a soma esta coberta por test-telas-de-movimentacao (6 blocos) e
+// por mutantes. O defeito que mora so aqui e o valor entrando no «Previsto» com
+// a frase impressa no cartao de baixo, ou nao impressa nenhuma -- os dois
+// deixam a aritmetica exata e a tela muda.
+
+const REEMBOLSO = { total: 300, quantos: 1, grupos: 1 };
+
+test("o reembolso previsto aparece como nota do «Previsto», no plural certo", () => {
+  const t = texto(
+    render({
+      tela: RECEITAS,
+      resumo: { ...RESUMO, reembolso_previsto: { total: 300, quantos: 3, grupos: 2 } },
+    })
+  );
+
+  assert.match(t, /inclui R\$ 300,00 de reembolso previsto/);
+  assert.match(t, /3 pessoas em 2 grupos/);
+  // E a frase diz que o dinheiro NAO chegou: "a receber" num cartao verde se le
+  // como dinheiro que ja entrou.
+  assert.match(t, /ainda não recebido/);
+});
+
+test("um devedor em um grupo fala no singular", () => {
+  const t = texto(
+    render({ tela: RECEITAS, resumo: { ...RESUMO, reembolso_previsto: REEMBOLSO } })
+  );
+
+  assert.match(t, /1 pessoa em 1 grupo/);
+  assert.ok(
+    !/1 pessoas|1 grupos/.test(t),
+    "a frase concorda em numero com `quantos` e `grupos` -- e a concordancia " +
+      "nao pode ser calculada no meio do JSX"
+  );
+});
+
+test("sem reembolso a nota NAO aparece -- nem 'R$ 0,00 de reembolso'", () => {
+  for (const vazio of [null, undefined]) {
+    const t = texto(
+      render({ tela: RECEITAS, resumo: { ...RESUMO, reembolso_previsto: vazio } })
+    );
+    assert.ok(
+      !t.includes("reembolso"),
+      `com reembolso_previsto=${vazio} a tela escreveu a frase. "R$ 0,00 de ` +
+        `reembolso previsto" na tela de quem nao tem grupo e ruido que parece ` +
+        `recurso quebrado.`
+    );
+  }
+});
+
+test("sem leitura a nota de reembolso tambem cala", () => {
+  // Mesmo motivo do vencido: "R$ 300 a receber" dito sobre um cache de ontem
+  // pode ja ter sido pago. E `resumo: null` e o outro estado -- a resposta que
+  // veio sem o campo.
+  for (const props of [
+    { estado: null },
+    { estado: "sem-rede" },
+    { resumo: null },
+  ]) {
+    const t = texto(
+      render({
+        tela: RECEITAS,
+        resumo: { ...RESUMO, reembolso_previsto: REEMBOLSO },
+        ...props,
+      })
+    );
+    assert.ok(
+      !t.includes("reembolso"),
+      `com ${JSON.stringify(props)} a nota de reembolso apareceu`
+    );
+  }
+});
+
+test("a legenda do bruto sai na aba Despesas, e SO nela", () => {
+  // A fase F5. Sem esta linha o «Previsto» de Despesas conta a conta de grupo
+  // inteira e o cartao «Quanto ainda posso gastar» conta so a parte -- dois
+  // numeros certos discordando na mesma navegacao, e o menor deles se lendo
+  // como conta perdida.
+  const despesas = texto(render({ tela: DESPESAS }));
+
+  assert.match(despesas, /quanto sai da sua conta/);
+  assert.match(
+    despesas,
+    /Quanto ainda posso gastar/,
+    "a legenda tem de dizer ONDE a outra pergunta e respondida -- uma frase " +
+      "que explica so o proprio numero deixa o outro sem explicacao"
+  );
+
+  // Em Receitas e em Transferencias a mesma frase estaria errada: aquele
+  // «Previsto» nao conta conta de grupo nenhuma pelo bruto.
+  for (const tela of [RECEITAS, telaDoTipo("transfer")]) {
+    assert.ok(
+      !texto(render({ tela })).includes("quanto sai da sua conta"),
+      `a legenda do bruto apareceu na tela ${tela.tipo}`
+    );
+  }
+});

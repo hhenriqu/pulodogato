@@ -326,16 +326,43 @@ export function TelaDeMovimentacao({ tipo }: { tipo: TipoDaTela }) {
                   </Link>
                   .
                 </p>
+                {/*
+                  A FRASE DIZ "JA PAGOU", E A PALAVRA E O QUE A TORNA VERDADE
+                  (HMO-364).
+
+                  Ela fala do REALIZADO: a minha parte de uma despesa de grupo
+                  que outra pessoa ja pagou (`group_share_entries`, 033) nao
+                  entra nestes totais. O lado PREVISTO e o contrario desde a
+                  fase F1b -- a conta de grupo que vence no periodo entra aqui
+                  pela regra do pagador, inteira quando sou eu que pago e pela
+                  minha parte quando e outro membro.
+
+                  Sem "ja pagou" a frase cobriria os dois lados e passaria a
+                  mentir sobre um deles, que e o defeito que ela existe para nao
+                  ter: uma legenda errada e pior que nenhuma, porque ela e lida
+                  como a explicacao oficial do numero.
+                */}
                 <p>
-                  Sua parte das despesas de grupo que outra pessoa pagou também
-                  não entra nestes totais — ela aparece em{" "}
+                  Sua parte das despesas de grupo que outra pessoa{" "}
+                  <strong>já pagou</strong> não entra nestes totais — ela
+                  aparece em{" "}
                   <Link
                     href="/dashboard/personal-finance"
                     className="underline hover:text-foreground"
                   >
                     Finanças Pessoais
                   </Link>
-                  , onde a lista junta as duas origens.
+                  , onde a lista junta as duas origens. O que ainda{" "}
+                  <strong>vence</strong> no período entra: inteiro quando é você
+                  que paga a conta do grupo, e a parte dos outros volta como
+                  reembolso previsto em{" "}
+                  <Link
+                    href="/dashboard/receitas"
+                    className="underline hover:text-foreground"
+                  >
+                    Receitas
+                  </Link>
+                  .
                 </p>
               </div>
             )}
