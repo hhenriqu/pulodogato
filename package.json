@@ -203,7 +203,10 @@
     "test:sugestao-de-divisao": "node scripts/compila.mjs -p scripts/tsconfig.sugestao-de-divisao-test.json && node scripts/resolve-aliases.mjs .tmp-sugestao-de-divisao lib --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-sugestao-de-divisao utils --espelha-raiz && node scripts/resolve-next-subpaths.mjs .tmp-sugestao-de-divisao && node scripts/monta-duble-de-rota.mjs .tmp-sugestao-de-divisao && node --test scripts/test-sugestao-de-divisao.mjs",
     "mutantes:sugestao-de-divisao": "node scripts/mutantes-sugestao-de-divisao.mjs",
     "test:aviso-por-email": "node scripts/compila.mjs -p scripts/tsconfig.aviso-por-email-test.json && node scripts/resolve-aliases.mjs .tmp-aviso-por-email lib && node --test scripts/test-aviso-por-email.mjs",
-    "mutantes:aviso-por-email": "node scripts/mutantes-aviso-por-email.mjs"
+    "mutantes:aviso-por-email": "node scripts/mutantes-aviso-por-email.mjs",
+    "test:pra-quem-pagar": "node scripts/compila.mjs -p scripts/tsconfig.pra-quem-pagar-test.json && node scripts/resolve-aliases.mjs .tmp-pra-quem-pagar lib --espelha-raiz && node --test scripts/test-pra-quem-pagar.mjs",
+    "mutantes:pra-quem-pagar": "node scripts/mutantes-pra-quem-pagar.mjs",
+    "test:pra-quem-pagar-na-tela": "node scripts/compila.mjs -p scripts/tsconfig.pra-quem-pagar-test.json && node scripts/compila.mjs -p scripts/tsconfig.pra-quem-pagar-na-tela-test.json && node --test scripts/test-pra-quem-pagar-na-tela.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

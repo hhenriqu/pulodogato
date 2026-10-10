@@ -118,6 +118,10 @@ import {
   type AcertosNaAbaReceitas,
 } from "@/lib/acerto-na-aba-receitas";
 import {
+  destinosDoPagamento,
+  type DestinoDoPagamento,
+} from "@/lib/pra-quem-pagar";
+import {
   linhasDaTela,
   previstoVencido,
   resumoComReembolsoPrevisto,
@@ -626,6 +630,113 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // ----------------------------------------------------------------
+    // 3e. PRA QUEM PAGAR -- HMO-365, fase F2 da HMO-360
+    // ----------------------------------------------------------------
+    // O outro lado do carimbo de `previstasPelaRegraDoPagador`. A linha de grupo
+    // que OUTRO membro frontou ja entra no «Previsto» pela minha parte; o que
+    // faltava era dizer A QUEM eu pago -- `pagar_para` morria dentro de
+    // `linhasDaTela`, que monta `LinhaDaTela` campo por campo.
+    //
+    // SO NA ABA DESPESAS, pela razao da fatura logo abaixo: em Receitas e
+    // Transferencias isto seria duas consultas para descartar tudo depois. E o
+    // lado de Receitas desta mesma divida ja tem dono (o reembolso previsto, 3c).
+    //
+    // DUAS CONSULTAS, E SO QUANDO HA DESTINATARIO. `profiles` da o nome e
+    // `expense_groups` da o nome do grupo; sem linha de outro membro no periodo
+    // (o caso de quem nao tem grupo, e de quem fronta tudo) nenhuma das duas
+    // acontece.
+    //
+    // FALHAR AQUI NAO DERRUBA A LEITURA, e e a mesma decisao de 3b e 3c: os
+    // mapas ficam vazios, `rotuloDoDestino` cai no rotulo escrito ("outro membro
+    // de Casa", ou "do grupo") e o painel continua de pe dizendo o que sabe. O
+    // que ele NAO faz e desaparecer -- a divida seguiria dentro do cartao
+    // «Previsto» de cima, sem nada na tela explicando de quem ela e.
+    let destinos: DestinoDoPagamento[] = [];
+
+    if (tela.tipo === "expense") {
+      // O `pagar_para` so e carimbado em linha de grupo de outro membro, entao
+      // este filtro e exatamente "ha a quem pagar?". `!== undefined` e nao um
+      // `Boolean(...)`: `null` e um destinatario de verdade (linha de grupo sem
+      // `user_id` legivel) e um `if (p.pagar_para)` o descartaria.
+      const comDestino = agendaPelaRegraDoPagador.filter(
+        (p) => p.pagar_para !== undefined
+      );
+
+      if (comDestino.length > 0) {
+        const idsDePagadores = Array.from(
+          new Set(
+            comDestino
+              .map((p) => p.pagar_para)
+              .filter((id): id is string => typeof id === "string" && id !== "")
+          )
+        );
+
+        const idsDeGrupos = Array.from(
+          new Set(
+            comDestino
+              .map((p) => p.group_id)
+              .filter((id): id is string => typeof id === "string" && id !== "")
+          )
+        );
+
+        // `profiles` POR `id`, O MESMO CAMINHO DA ROTA my-credit. E o nome pode
+        // simplesmente NAO VIR: nenhuma das tres policies de SELECT de
+        // `profiles` olha `group_members` (`id = auth.uid()`, `is_public = TRUE`
+        // do 002, "conexao aceita" do 010), entao dividir a conta com alguem nao
+        // da acesso ao perfil dele -- e o PostgREST nao levanta erro nisso, a
+        // linha so nao vem. `is_public` tem DEFAULT true, entao na pratica a
+        // maioria chega, e e isso que torna o caminho sem nome perigoso: ele
+        // quase nunca acontece em teste e acontece em producao.
+        const [perfis, grupos] = await Promise.all([
+          idsDePagadores.length > 0
+            ? supabase.from("profiles").select("id, full_name").in("id", idsDePagadores)
+            : Promise.resolve({ data: [], error: null }),
+          idsDeGrupos.length > 0
+            ? supabase.from("expense_groups").select("id, name").in("id", idsDeGrupos)
+            : Promise.resolve({ data: [], error: null }),
+        ]);
+
+        if (perfis.error) {
+          console.error(
+            "A tela de Despesas seguiu sem o nome de quem frontou a conta:",
+            perfis.error
+          );
+        }
+        if (grupos.error) {
+          console.error(
+            "A tela de Despesas seguiu sem o nome do grupo:",
+            grupos.error
+          );
+        }
+
+        const nomes = new Map<string, string>();
+        for (const perfil of (perfis.data ?? []) as {
+          id?: string | null;
+          full_name?: string | null;
+        }[]) {
+          // Nome em branco NAO entra no mapa: `full_name` nao tem NOT NULL nem
+          // CHECK de tamanho em `profiles` (001), e guardar `""` faria o rotulo
+          // sair "Pagar para " -- com o espaco e nada depois. O perfil legivel e
+          // sem nome cai no mesmo caminho do invisivel, de proposito. Mesmo
+          // critério de `nomesDosPagadores` (HMO-274).
+          const nome = (perfil?.full_name ?? "").trim();
+          if (perfil?.id && nome) nomes.set(perfil.id, nome);
+        }
+
+        const nomesDeGrupos = new Map<string, string>();
+        for (const grupo of (grupos.data ?? []) as {
+          id?: string | null;
+          name?: string | null;
+        }[]) {
+          const nome = (grupo?.name ?? "").trim();
+          if (grupo?.id && nome) nomesDeGrupos.set(grupo.id, nome);
+        }
+
+        destinos = destinosDoPagamento(comDestino, nomes, nomesDeGrupos);
+      }
+    }
+
     // A fatura aberta do cartao, so na tela de Despesas: ela e `direction:
     // "expense"` por construcao, e chamar a leitura nas outras duas gastaria
     // duas consultas para descartar tudo depois.
@@ -778,6 +889,20 @@ export async function GET(request: NextRequest) {
        * lib/acerto-na-aba-receitas.ts.
        */
       acertos_do_grupo: acertos,
+      /**
+       * PRA QUEM PAGAR -- HMO-365, so na aba Despesas (`[]` nas outras duas).
+       *
+       * Cada item traz o rotulo PRONTO (`rotulo.texto` + `rotulo.temNome`), e
+       * nao so o nome: o fallback de perfil ilegivel e decisao de uma funcao so
+       * (`rotuloDoDestino`), porque calcular o texto na rota e a marca na tela e
+       * a receita do rotulo que mente -- ver o cabecalho de lib/pra-quem-pagar.ts.
+       *
+       * O VALOR DAQUI JA ESTA DENTRO DE `resumo.previsto`. Nao e um acrescimo, e
+       * a tela diz isso por escrito (`NOTA_PRA_QUEM_PAGAR`): e a minha parte das
+       * contas que outra pessoa frontou, que a regra do pagador (HMO-363) ja
+       * somou no «Previsto».
+       */
+      pra_quem_pagar: destinos,
     });
   } catch (error) {
     console.error("Erro na tela de movimentação:", error);

@@ -76,6 +76,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { CartoesDaTela } from "@/components/movimentacoes/CartoesDaTela";
+import { PainelPraQuemPagar } from "@/components/movimentacoes/PainelPraQuemPagar";
+import type { DestinoDoPagamento } from "@/lib/pra-quem-pagar";
 import {
   SecaoDaTela,
   type AcoesDaLinha,
@@ -122,6 +124,7 @@ import {
 import {
   buscarLeitura,
   podeAfirmarVazio,
+  podeMostrarNumero,
   type EstadoDaLeitura,
 } from "@/lib/offline-leitura";
 import { today } from "@/lib/recurrence";
@@ -159,6 +162,14 @@ interface RespostaDaTela {
    * "pronto" e nada teria acontecido.
    */
   acertos_do_grupo?: AcertosNaAbaReceitas | null;
+  /**
+   * PRA QUEM PAGAR -- HMO-365, so na aba Despesas.
+   *
+   * Ausente no corpo guardado pelo PWA de antes desta issue, e por isso o `??
+   * []` na leitura: o painel simplesmente nao aparece, que e o mesmo estado de
+   * quem nao tem grupo.
+   */
+  pra_quem_pagar?: DestinoDoPagamento[];
 }
 
 /** 'AAAA-MM-DD' -> 'DD/MM/AAAA', por fatia. Nunca `new Date`. */
@@ -237,6 +248,12 @@ export function ListaDeMovimentacao({
    * respondeu isso.
    */
   const [acertos, setAcertos] = useState<AcertosNaAbaReceitas | null>(null);
+  /**
+   * PRA QUEM PAGAR -- HMO-365. `[]` e nao `null`: aqui a lista vazia e a
+   * resposta sem o campo significam a MESMA coisa para a tela (nenhum painel),
+   * ao contrario de `semVencimento`, onde `[]` seria uma afirmacao.
+   */
+  const [praQuemPagar, setPraQuemPagar] = useState<DestinoDoPagamento[]>([]);
   const [estado, setEstado] = useState<EstadoDaLeitura | null>(null);
   const [guardadoEm, setGuardadoEm] = useState<Date | null>(null);
   const [carregando, setCarregando] = useState(true);
@@ -303,12 +320,17 @@ export function ListaDeMovimentacao({
       // nao tem o campo, e afirmar "nada a confirmar" com base nela esconderia
       // um Pix que ja esta na conta de alguem.
       setAcertos(leitura.dados.acertos_do_grupo ?? null);
+      setPraQuemPagar(leitura.dados.pra_quem_pagar ?? []);
     } else {
       // A leitura falhou: a lista SAI da tela. Deixar a do periodo anterior
       // seria a tela mostrando setembro com o titulo de outubro.
       setResumo(null);
       setLinhas([]);
       setAcertos(null);
+      // Pelo MESMO motivo das duas acima: um painel "pague R$ 300 para a
+      // Leticia" sobrevivendo a uma leitura que falhou e uma divida afirmada
+      // sobre o periodo ANTERIOR, debaixo do titulo do novo.
+      setPraQuemPagar([]);
     }
 
     setCarregando(false);
@@ -628,6 +650,23 @@ export function ListaDeMovimentacao({
             vencido={vencido}
             estado={estado}
           />
+
+          {/*
+            PRA QUEM PAGAR (HMO-365, fase F2 da HMO-360)
+
+            Debaixo dos cartoes e NAO como um quarto cartao: o valor ja esta
+            dentro do «Previsto» (a regra do pagador pos a minha parte la), e um
+            cartao a mais na fileira seria lido como uma segunda divida. O
+            proprio painel diz isso por escrito.
+
+            `podeMostrarNumero` tambem aqui, e pelo motivo do vencido e do
+            reembolso em `CartoesDaTela`: "pague R$ 300 para a Leticia" dito
+            sobre um cache de ontem pode ja ter sido pago. O componente devolve
+            `null` com a lista vazia, entao quem nao tem grupo nao ve nada.
+          */}
+          {tipo === "expense" && podeMostrarNumero(estado) && (
+            <PainelPraQuemPagar destinos={praQuemPagar} />
+          )}
 
           {/*
             A FATURA SEM DATA DE VENCIMENTO (HMO-227)
