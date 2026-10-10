@@ -50,7 +50,13 @@ import { SoftFeatureGuard } from "@/components/subscription/SoftFeatureGuard";
 import { Trash2, Users } from "lucide-react";
 import { CamposDeLancamento } from "@/components/movimentacoes/CamposDeLancamento";
 import { DialogoDeAlcance } from "@/components/series/DialogoDeAlcance";
-import { movimentoPedidoNaTela } from "@/lib/parcelas-edicao";
+import {
+  movimentoPedidoNaTela,
+  novosValoresDasParcelas,
+  planejarAlteracaoDeParcelas,
+  totalDaCompra,
+  type ParcelaParaAlcance,
+} from "@/lib/parcelas-edicao";
 import type { Alcance } from "@/lib/alcance-na-tela";
 import { ModalDeLancamento } from "@/components/movimentacoes/ModalDeLancamento";
 import { SalvarEContinuar } from "@/components/movimentacoes/SalvarEContinuar";
@@ -78,6 +84,7 @@ import {
   valoresIniciais,
   validarLancamento,
   valorGravado,
+  type BaseDoValorParcelado,
   type CategoriaDeLancamento,
   type ContaDeLancamento,
   type TipoLancamento,
@@ -213,6 +220,25 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
     /** Como o campo de valor abriu: em reais, positivo, igual ao estado. */
     valorNaTela: string;
     descricaoGravada: string;
+  } | null>(null);
+  /**
+   * AS PARCELAS DA COMPRA, PARA O DIALOGO MOSTRAR O TOTAL ANTES DO SALVAR
+   * (HMO-361)
+   *
+   * Vem de `GET /api/financial-installments/serie/{id}`, a MESMA leitura que o
+   * PATCH usa para decidir o que alterar. Remontar isso aqui pelo supabase-js
+   * criaria uma segunda definicao de "quais parcelas esta alteracao alcanca" (o
+   * `invoice_month` sai da view, a serie sai do `installment_parent_id`, os
+   * meses pagos saem de `scheduled_transactions`), e a previa passaria a
+   * prometer um total que a rota nao grava.
+   *
+   * `null` enquanto nao carregou e em tudo que nao e parcela. O dialogo
+   * simplesmente nao mostra a linha do total nesse caso -- um numero chutado
+   * ali seria pior do que numero nenhum.
+   */
+  const [serieDaParcela, setSerieDaParcela] = useState<{
+    parcelas: ParcelaParaAlcance[];
+    mesesDeFaturaPaga: string[];
   } | null>(null);
   /** O alcance pedido e ainda nao respondido, com o Salvar esperando. */
   const [perguntandoAlcance, setPerguntandoAlcance] = useState(false);
@@ -513,6 +539,31 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
     }
   };
 
+  /**
+   * As parcelas da compra a que esta linha pertence, pela rota que as conhece.
+   *
+   * Sem `toast` e sem `throw`: ver a chamada em `carregarParaEdicao`. O que se
+   * perde quando isto falha e a linha do total no dialogo, nao a edicao.
+   */
+  const carregarSerieDaParcela = async (parcelaId: string) => {
+    try {
+      const resposta = await fetch(
+        `/api/financial-installments/serie/${parcelaId}`
+      );
+      if (!resposta.ok) return;
+      const dados = await resposta.json();
+      if (!Array.isArray(dados?.parcelas)) return;
+      setSerieDaParcela({
+        parcelas: dados.parcelas as ParcelaParaAlcance[],
+        mesesDeFaturaPaga: Array.isArray(dados.meses_de_fatura_paga)
+          ? (dados.meses_de_fatura_paga as string[])
+          : [],
+      });
+    } catch (erro) {
+      console.error("Não foi possível ler as parcelas desta compra:", erro);
+    }
+  };
+
   /** Traz do banco o lancamento que o `?id=` aponta. */
   const carregarParaEdicao = async (
     id: string,
@@ -564,6 +615,20 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
           }
         : null
     );
+    // A SERIE INTEIRA, PARA O TOTAL DA PREVIA (HMO-361)
+    //
+    // Nao e `await`: o formulario abre com o que ja esta na mao, e esta leitura
+    // so e necessaria quando a pessoa mexer no valor e o dialogo abrir. Travar
+    // a abertura numa segunda ida ao servidor atrasaria todo clique em "editar"
+    // de uma parcela por um numero que a maioria dos cliques nao vai usar.
+    //
+    // Falha em silencio de proposito: a previa do total desaparece (o dialogo
+    // nao mostra a linha quando nao ha numero), e o resto da edicao continua
+    // funcionando -- quem grava e a rota, que faz a propria leitura. Um toast de
+    // erro aqui acusaria uma falha de algo que a pessoa nao pediu.
+    if (linha.installment_number) {
+      void carregarSerieDaParcela(id);
+    }
     setValores({
       ...valoresIniciais(),
       descricao: linha.description ?? "",
@@ -1008,20 +1073,92 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       })
     : null;
 
-  /**
-   * O mesmo Salvar tambem mexeu em valor ou descricao?
-   *
-   * E o que o aviso do dialogo declara: a serie e movida no alcance escolhido,
-   * mas esses dois campos continuam valendo so para esta parcela.
-   */
-  const valorOuDescricaoMudou = Boolean(
-    parcelaAberta &&
-      (valores.valor !== parcelaAberta.valorNaTela ||
-        valores.descricao !== parcelaAberta.descricaoGravada)
+  // ---------------------------------------------------------------------------
+  // E O VALOR TAMBEM SEGUE O ALCANCE (HMO-361)
+  // ---------------------------------------------------------------------------
+  // A HMO-357 entregou o MOVIMENTO e deixou valor/descricao de fora: o dialogo
+  // avisava que esses dois valiam so para a parcela clicada. Era a outra metade
+  // do mesmo defeito -- quem corrige o valor de uma compra de 10x corrigia UMA
+  // parcela e as outras nove ficavam com o valor antigo. O total da compra
+  // passava a ser um numero que nao existe em lugar nenhum, e as nove faturas
+  // seguintes continuavam fechando plausiveis.
+  //
+  // `valorNaTela` e `descricaoGravada` sao o retrato de como os campos ABRIRAM
+  // (ver `parcelaAberta`). Comparar com eles e o que distingue "a pessoa mexeu
+  // no valor" de "o campo tem valor", que e verdade em todo Salvar.
+  const valorMudou = Boolean(
+    parcelaAberta && valores.valor !== parcelaAberta.valorNaTela
+  );
+  const descricaoMudou = Boolean(
+    parcelaAberta && valores.descricao !== parcelaAberta.descricaoGravada
   );
 
   /**
-   * Move a serie no alcance escolhido e, depois, grava esta linha.
+   * Este Salvar tem alguma coisa que a serie precisa responder?
+   *
+   * As tres juntas, porque o alcance e UMA pergunta: mover, mudar o valor e
+   * mudar a descricao saem do mesmo Salvar e a pessoa responde uma vez.
+   */
+  const precisaDoAlcance = Boolean(
+    parcelaAberta && (destinoDoMovimento || valorMudou || descricaoMudou)
+  );
+
+  /**
+   * O TOTAL DA COMPRA ANTES E DEPOIS, POR ALCANCE E POR BASE (HMO-361)
+   *
+   * A tela TEM de mostrar o total recalculado antes do Salvar: em "a partir
+   * daquela" as parcelas anteriores ficam com o valor velho, entao o total
+   * DEIXA de ser `parcela x M` -- e sem este numero o resumo da compra afirma um
+   * total que o banco nao tem.
+   *
+   * Calculado com as MESMAS funcoes puras que a rota chama, sobre os MESMOS
+   * dados (`serieDaParcela` vem do GET da propria rota). Uma aritmetica de
+   * previa escrita aqui divergiria da gravacao exatamente onde importa: a sobra
+   * dos centavos em base "total" cai na ULTIMA parcela alcancada, e uma previa
+   * que divida igual erra por um centavo sem nunca dar erro.
+   *
+   * `null` quando a conta nao fecha -- um total menor do que as parcelas
+   * preservadas ja somam, por exemplo. E o mesmo caso que a rota recusa com 400,
+   * e o dialogo esconde a linha em vez de imprimir um numero invalido.
+   */
+  const totalDaCompraNaTela =
+    parcelaAberta && serieDaParcela && valorMudou
+      ? {
+          antes: totalDaCompra(serieDaParcela.parcelas),
+          depois: (alcance: Alcance, base: BaseDoValorParcelado) => {
+            // A ancora pelo ID, e nao pelo `installment_number`: a rota planeja
+            // sobre a linha de `{id}`, e achar a ancora por outro criterio faria
+            // a previa planejar sobre OUTRA parcela se dois numeros
+            // coincidissem na serie (nada no banco impede). O id e o que os dois
+            // lados tem em comum.
+            const ancora = serieDaParcela.parcelas.find(
+              (p) => p.id === idParaEditar
+            );
+            if (!ancora) return null;
+
+            const plano = planejarAlteracaoDeParcelas(
+              alcance,
+              ancora,
+              serieDaParcela.parcelas,
+              serieDaParcela.mesesDeFaturaPaga
+            );
+            const novos = novosValoresDasParcelas({
+              base,
+              valorDigitado: Number.parseFloat(valores.valor),
+              alcancadas: serieDaParcela.parcelas.filter((p) =>
+                plano.ids.includes(p.id)
+              ),
+              preservadas: serieDaParcela.parcelas.filter((p) =>
+                plano.preservadas.includes(p.id)
+              ),
+            });
+            return novos ? novos.totalRecalculado : null;
+          },
+        }
+      : undefined;
+
+  /**
+   * Aplica este Salvar na serie, no alcance escolhido, e depois grava esta linha.
    *
    * A ORDEM IMPORTA: a rota mede o deslocamento entre a fatura de ORIGEM da
    * ancora e a de destino. Gravar a linha primeiro apagaria a origem -- a rota
@@ -1030,12 +1167,50 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
    *
    * E ela nao grava nada quando a rota recusa: um 409 de fatura paga com a linha
    * ja gravada deixaria a ancora movida sozinha, que e exatamente o estado que
-   * esta issue remove.
+   * a HMO-357 removeu.
+   *
+   * QUEM GRAVA A ANCORA, E POR QUE ISSO NAO E DETALHE (HMO-361)
+   * -----------------------------------------------------------
+   * A rota alcanca a ancora SEMPRE (ela e o primeiro id do plano). Em base
+   * "total" o digitado e repartido entre as alcancadas e a SOBRA DOS CENTAVOS
+   * CAI NA ULTIMA -- entao a parte da ancora quase nunca e o numero que esta no
+   * campo. Se o formulario tambem gravasse `amount` com o digitado, ele
+   * sobrescreveria a parte que a rota acabou de calcular, e a compra deixaria de
+   * fechar: R$ 100 em 3 parcelas (33,33 + 33,33 + 33,34) passaria a somar
+   * R$ 166,67 com a ancora valendo 100.
+   *
+   * Entao a regra e uma so: **quando a rota leva o campo, o formulario nao o
+   * grava.** `gravarTransacao` recebe isso explicitamente, e o resto da linha
+   * (categoria, conta, notas, data) continua saindo daqui -- esses campos valem
+   * so para a parcela clicada e a rota da serie nem os aceita.
    */
-  const moverSerieEGravar = async (alcance: Alcance) => {
+  const aplicarAlcanceEGravar = async (
+    alcance: Alcance,
+    base: BaseDoValorParcelado
+  ) => {
     setSalvando(true);
     try {
-      if (alcance !== "apenas_esta" && destinoDoMovimento) {
+      // Em `apenas_esta` a rota nao e chamada: uma parcela so, e o formulario ja
+      // grava exatamente essa linha. Passar por la mudaria o rotulo "(N/M)" da
+      // descricao sem ninguem pedir, e o resultado e o mesmo.
+      const pelaSerie = alcance !== "apenas_esta";
+      // O que a rota leva neste pedido. Sao os campos que valem para a SERIE;
+      // cada um entra so se a pessoa mexeu nele -- a rota recusa um corpo sem
+      // nada para atualizar, e mandar o valor intacto reescreveria as dez
+      // parcelas com o numero que ja estava la (e, em base "total", repartiria
+      // um total que ninguem digitou).
+      const corpoDaSerie = {
+        ...(destinoDoMovimento ?? {}),
+        ...(valorMudou
+          ? { amount: Number.parseFloat(valores.valor), base }
+          : {}),
+        ...(descricaoMudou ? { description: valores.descricao } : {}),
+      };
+
+      const serieLevaOValor = pelaSerie && valorMudou;
+      const serieLevaADescricao = pelaSerie && descricaoMudou;
+
+      if (pelaSerie && Object.keys(corpoDaSerie).length > 0) {
         const resposta = await fetch(
           `/api/financial-installments/serie/${idParaEditar}`,
           {
@@ -1044,14 +1219,14 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
             // O alcance e o destino vao no CORPO, e o destino e UM so: a rota
             // recusa data e fatura juntas porque sao dois lugares diferentes
             // para a mesma parcela.
-            body: JSON.stringify({ alcance, ...destinoDoMovimento }),
+            body: JSON.stringify({ alcance, ...corpoDaSerie }),
           }
         );
         const dados = await resposta.json().catch(() => ({}));
 
         if (!resposta.ok) {
           toast.error(
-            dados.error || `O movimento foi recusado (HTTP ${resposta.status}).`
+            dados.error || `A alteração foi recusada (HTTP ${resposta.status}).`
           );
           return;
         }
@@ -1059,12 +1234,12 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
         if (dados.message) toast.success(dados.message);
       }
 
-      await gravarTransacao();
+      await gravarTransacao({ serieLevaOValor, serieLevaADescricao });
       setPerguntandoAlcance(false);
       terminar();
     } catch (erro) {
-      console.error("Erro ao mover a série de parcelas:", erro);
-      toast.error("Erro ao mover as parcelas desta compra.");
+      console.error("Erro ao alterar a série de parcelas:", erro);
+      toast.error("Erro ao alterar as parcelas desta compra.");
     } finally {
       setSalvando(false);
     }
@@ -1123,13 +1298,18 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
           if (await criarContaPrevista()) terminar();
           return;
         case "transacao":
-          // A PERGUNTA DO ALCANCE VEM ANTES DA GRAVACAO (HMO-357)
+          // A PERGUNTA DO ALCANCE VEM ANTES DA GRAVACAO (HMO-357 / HMO-361)
           //
-          // E so aqui: mover uma parcela e uma edicao de linha gravada, e os
+          // E so aqui: alterar uma parcela e uma edicao de linha gravada, e os
           // outros tres destinos criam coisa nova (regra, serie, previsao), onde
           // nao ha serie existente para arrastar. A gravacao continua em
-          // `moverSerieEGravar`, depois da resposta.
-          if (destinoDoMovimento) {
+          // `aplicarAlcanceEGravar`, depois da resposta.
+          //
+          // `precisaDoAlcance` cobre as TRES coisas que a serie responde: mover
+          // (HMO-357), o valor e a descricao (HMO-361). Perguntar so no
+          // movimento era o que deixava a correcao de valor gravando uma linha
+          // so.
+          if (precisaDoAlcance) {
             setPerguntandoAlcance(true);
             return;
           }
@@ -1169,7 +1349,21 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
     }
   };
 
-  const gravarTransacao = async () => {
+  /**
+   * Grava esta linha.
+   *
+   * `serieLevaOValor` / `serieLevaADescricao` dizem que a rota da serie JA
+   * gravou aquele campo em todas as parcelas alcancadas -- a ancora inclusa --,
+   * e que portanto ele NAO deve ser gravado aqui (ver `aplicarAlcanceEGravar`
+   * para o que acontece se for). Os dois nascem `false`, entao todo chamador que
+   * nao passa nada grava a linha inteira, como sempre.
+   */
+  const gravarTransacao = async (
+    serieJaGravou: {
+      serieLevaOValor?: boolean;
+      serieLevaADescricao?: boolean;
+    } = {}
+  ) => {
     const valor = valorGravado(tipo, Number.parseFloat(valores.valor));
     // A MESMA funcao que decide o que esta na tela decide o que vai no corpo --
     // ver `invoice_month_override` abaixo. Ler a natureza crua aqui criaria uma
@@ -1262,10 +1456,28 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
 
     let transacao: { id: string };
 
+    // OS CAMPOS QUE A ROTA DA SERIE JA GRAVOU SAEM DAQUI (HMO-361)
+    //
+    // Nao e otimizacao: regravar `amount` com o digitado DESFAZ a reparticao que
+    // a rota fez. Em base "total", R$ 100 em 3 parcelas vira 33,33 + 33,33 +
+    // 33,34, e a ancora quase nunca vale o numero que esta no campo -- o
+    // formulario poria 100 nela e a compra somaria 166,67 sem nenhum erro.
+    //
+    // `description` sai pelo mesmo motivo menor mas visivel: a rota remonta o
+    // rotulo "(N/M)" por parcela, e o campo da tela carrega o da ancora.
+    const { amount: _valorDaAncora, description: _descricaoDaAncora, ...semSerie } = linha;
+    const linhaParaEditar = {
+      ...semSerie,
+      ...(serieJaGravou.serieLevaOValor ? {} : { amount: linha.amount }),
+      ...(serieJaGravou.serieLevaADescricao
+        ? {}
+        : { description: linha.description }),
+    };
+
     if (editando && idParaEditar) {
       const { data, error } = await supabase
         .from("financial_transactions")
-        .update(linha)
+        .update(linhaParaEditar)
         .eq("id", idParaEditar)
         .eq("user_id", user!.id)
         .select()
@@ -1644,7 +1856,7 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
     </ModalDeLancamento>
 
       {/*
-        A PERGUNTA DO ALCANCE AO MOVER UMA PARCELA (HMO-357)
+        A PERGUNTA DO ALCANCE AO ALTERAR UMA PARCELA (HMO-357 / HMO-361)
 
         FORA do `ModalDeLancamento`, e nao dentro: o formulario ja vive num
         `Dialog` (a rota E o modal), e um segundo Dialog dentro do
@@ -1652,16 +1864,25 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
         clique fora passam a ter dois donos. Como irmao, o dialogo do alcance e
         uma camada so, e fechar ele nao fecha o formulario por tras.
 
-        O mesmo dialogo da exclusao (HMO-228), com `movendo` ligado: as
-        consequencias de mover sao outras frases, porque mover NAO muda o total
-        da compra -- o que muda e a colocacao, e o que a pessoa precisa saber e
-        que a cadencia de um mes e preservada.
+        O mesmo dialogo da exclusao (HMO-228). As tres ligacoes aqui:
 
-        `aviso` cobre o Salvar que faz duas coisas: a serie e movida no alcance
-        escolhido, mas valor e descricao continuam valendo so para esta parcela
-        (a serie inteira tem a pergunta "parcela ou total", e ela e outra tela).
-        Sem a frase, quem escolhe "todas" sai acreditando que o valor novo foi
-        para as dez.
+        `movendo` so quando a pessoa MOVEU de fatura, e nao mais fixo: as
+        consequencias de mover sao outras frases (mover nao muda o total da
+        compra, o que muda e a colocacao), e um Salvar que so corrige o valor
+        precisa das frases do valor -- as do movimento nao descreveriam nada do
+        que vai acontecer.
+
+        `mudaValor` liga a pergunta "o valor digitado e de cada parcela ou o
+        total da compra?", que a rota EXIGE em qualquer alcance que pegue mais
+        de uma parcela. Sem ela o pedido volta 400.
+
+        `totalDaCompra` e o total recalculado antes do Salvar. Ele vem de
+        `undefined` enquanto a serie nao carregou, e ai o dialogo nao mostra a
+        linha -- um numero chutado ali seria pior do que numero nenhum.
+
+        E o `aviso` SAIU: ele dizia "o valor e a descrição que você alterou valem
+        só para esta parcela", e desde a HMO-361 isso e falso -- os dois seguem o
+        alcance escolhido, como o movimento.
       */}
       {parcelaAberta && (
         <DialogoDeAlcance
@@ -1669,18 +1890,15 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
           aoFechar={() => setPerguntandoAlcance(false)}
           tipo="parcela"
           acao="alterar"
-          movendo
+          movendo={Boolean(destinoDoMovimento)}
+          mudaValor={valorMudou}
           ancora={
             rotuloDaParcela(parcelaAberta.numero, parcelaAberta.total) ??
             `parcela ${parcelaAberta.numero}`
           }
           totalDeParcelas={parcelaAberta.total}
-          aviso={
-            valorOuDescricaoMudou
-              ? "O valor e a descrição que você alterou valem só para esta parcela."
-              : null
-          }
-          aoConfirmar={(alcance) => moverSerieEGravar(alcance)}
+          totalDaCompra={totalDaCompraNaTela}
+          aoConfirmar={(alcance, base) => aplicarAlcanceEGravar(alcance, base)}
           salvando={salvando}
         />
       )}

@@ -1,3 +1,4 @@
+// GET    /api/financial-installments/serie/{id}  le as parcelas de uma compra
 // PATCH  /api/financial-installments/serie/{id}  altera parcelas de uma compra
 // DELETE /api/financial-installments/serie/{id}  apaga parcelas de uma compra
 //
@@ -324,6 +325,85 @@ function mensagemDaAlteracao(entrada: {
   // noticia so o movimento deixaria a alteracao de valor invisivel, e e ela que
   // muda o total da compra.
   return mudouCampos ? `${doMovimento} ${doValor}` : doMovimento;
+}
+
+/**
+ * AS PARCELAS DA COMPRA, PARA A TELA PODER MOSTRAR O TOTAL ANTES DO SALVAR
+ * (HMO-361)
+ * ---------------------------------------------------------------------------
+ * O dialogo do alcance tem de dizer em quanto o total da compra fica ANTES de
+ * gravar -- em "a partir daquela" as parcelas anteriores ficam com o valor
+ * velho, e o total DEIXA de ser `parcela x M`. Esse numero sai de
+ * `novosValoresDasParcelas`, a mesma funcao que o PATCH usa, mas ela precisa
+ * das parcelas e dos meses de fatura paga, e o formulario nao tem nem uma coisa
+ * nem outra.
+ *
+ * POR QUE NAO A TELA CONSULTANDO O BANCO DIRETO
+ * ---------------------------------------------
+ * Ela poderia: o formulario ja fala com o supabase-js. Mas as duas leituras que
+ * o plano exige nao sao triviais -- o `invoice_month` vem da view
+ * `card_invoice_lines` (e nao de `transaction_date`), a serie se encontra pelo
+ * `installment_parent_id` (que nao esta na view), e os meses pagos saem de
+ * `scheduled_transactions` filtradas por `faturaDaChave` com o cartao certo.
+ * Reescrever isso no cliente criaria uma SEGUNDA definicao de "quais parcelas
+ * esta alteracao alcanca", e a previa passaria a prometer um total que o PATCH
+ * nao produz. O jeito de a previa nao mentir e ela ser calculada sobre os
+ * MESMOS dados -- entao a leitura e a daqui, `lerSerie`, reusada inteira.
+ *
+ * A resposta e so o que o plano precisa. `description` e `account_id` ficam de
+ * fora de proposito: o que esta rota devolve e o que a decisao usa, e um campo
+ * a mais aqui e um campo que alguem vai ler na tela em vez de ler do
+ * formulario.
+ */
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const supabase = createClient();
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+    }
+
+    const lida = await lerSerie(supabase, params.id, user.id);
+    if (!lida.ok) {
+      return NextResponse.json({ error: lida.erro }, { status: lida.status });
+    }
+    const { ancora, serie, mesesPagos } = lida;
+
+    return NextResponse.json({
+      // `ParcelaParaAlcance` e exatamente esta forma, de proposito: a tela
+      // repassa a lista para as funcoes puras sem remontar nada. Um campo
+      // renomeado aqui apareceria como `undefined` dentro do plano, e o plano
+      // trata `invoice_month` ausente como "nao e fatura paga" -- ou seja, o
+      // defeito sairia como um total plausivel.
+      parcelas: serie.map((l) => ({
+        id: l.id,
+        installment_number: l.installment_number,
+        invoice_month: l.invoice_month,
+        amount: l.amount,
+      })),
+      // Os meses pagos vao JUNTO, e nao numa segunda chamada: sem eles o plano
+      // alcanca parcelas que o PATCH vai preservar, e a previa mostra um total
+      // maior do que o que vai ser gravado.
+      meses_de_fatura_paga: mesesPagos,
+      ancora: {
+        id: ancora.id,
+        installment_number: ancora.installment_number,
+        installment_total: ancora.installment_total,
+        invoice_month: ancora.invoice_month,
+      },
+      total_da_compra: totalDaCompra(serie),
+    });
+  } catch (error) {
+    console.error("Erro ao ler a série de parcelas:", error);
+    return NextResponse.json({ error: "Erro interno" }, { status: 500 });
+  }
 }
 
 /** O alcance do corpo, com o padrao conservador e a recusa explicita. */
