@@ -3,7 +3,10 @@
 import { useCallback, useMemo, useState, useEffect } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { PUBLIC_PROFILE_FIELDS } from "@/lib/profile-fields";
-import { montarFiltroDeBusca } from "@/lib/busca-de-perfil";
+import {
+  aplicarPortaoDeConexao,
+  montarFiltroDeBusca,
+} from "@/lib/busca-de-perfil";
 import Link from "next/link";
 import { User } from "@supabase/supabase-js";
 import { Button } from "@/components/ui/button";
@@ -223,14 +226,18 @@ export default function ConnectionsPage() {
 
     setSearchLoading(true);
     try {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select(PUBLIC_PROFILE_FIELDS)
-        .or(filtro)
-        .eq("is_public", true)
-        .eq("allow_connections", true)
-        .neq("id", user.id)
-        .limit(10);
+      // O portao de `allow_connections` aceita `NULL` como "permite"
+      // (HMO-373) -- a decisao esta em `aplicarPortaoDeConexao`. O
+      // `.eq("allow_connections", true)` daqui escondia da tela o perfil que a
+      // policy da 010 admite.
+      const { data, error } = await aplicarPortaoDeConexao(
+        supabase
+          .from("profiles")
+          .select(PUBLIC_PROFILE_FIELDS)
+          .or(filtro)
+          .eq("is_public", true)
+          .neq("id", user.id)
+      ).limit(10);
 
       if (error) throw error;
       setSearchResults(data || []);

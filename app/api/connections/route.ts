@@ -1,5 +1,6 @@
 import { createClient } from "@/utils/supabase/server";
 import { PUBLIC_PROFILE_FIELDS } from "@/lib/profile-fields";
+import { permiteConexao } from "@/lib/busca-de-perfil";
 import { NextResponse } from "next/server";
 
 export async function GET() {
@@ -92,7 +93,12 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!targetProfile.allow_connections) {
+    // `permiteConexao` em vez de `!targetProfile.allow_connections` (HMO-373):
+    // `!null` e `true`, entao a rota RECUSAVA com "não aceita conexões" o
+    // perfil que a policy de INSERT da 010 admite -- ela compara
+    // `COALESCE(allow_connections, true)`. O INSERT logo abaixo teria passado;
+    // quem barrava era esta linha.
+    if (!permiteConexao(targetProfile.allow_connections)) {
       return NextResponse.json(
         { error: "Este usuário não aceita conexões" },
         { status: 400 }

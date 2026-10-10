@@ -4807,6 +4807,34 @@ jobs:
       - name: Os mutantes da despesa publicada no grupo
         run: npm run mutantes:despesa-publicada-no-grupo
 
+      # HMO-373. O controle negativo de `test:portao-de-conexao`, e o primeiro
+      # mutante da lista e o que a issue pede nominalmente: o filtro da busca
+      # voltando a ser `.eq("allow_connections", true)`, ou seja o estado exato
+      # da `main`, em que o perfil com a coluna NULA fica invisivel.
+      #
+      # Esse mutante mora no CALL SITE da rota, e nao no corpo de
+      # `aplicarPortaoDeConexao`, e a razao e que mutar o helper NAO MEDIRIA
+      # NADA: o parametro dele e generico (`Q extends { not(...): Q }`), entao
+      # trocar `.not(...)` por `.eq(...)` ali morre no `tsc` do passo de
+      # compilacao em vez de morrer numa assercao -- e mutante morto pelo
+      # compilador conta erro de tipo como cobertura. No call site o
+      # encadeamento e o do supabase-js de verdade, onde o `.eq` tipa, compila e
+      # roda; quem o mata e a assercao.
+      #
+      # A familia que mais vale aqui e a do E-MAIL. `get_user_by_email` (001) e
+      # SECURITY DEFINER e nao sabe de `is_public` nem de `allow_connections`:
+      # ela devolve QUALQUER conta confirmada. Por isso a rota a usa so para
+      # resolver o `id` e RELE `profiles` com os dois portoes -- e os tres
+      # mutantes que tiram um portao da releitura, ou que devolvem a linha da
+      # RPC direto, transformam a busca num oraculo de "este e-mail tem conta no
+      # app". Um deles tambem prova que o e-mail devolvido pela funcao e
+      # descartado: se ele vazasse para o corpo, a busca por NOME passaria a
+      # entregar o e-mail de quem ela achou.
+      #
+      # Medido na HMO-373 ao escrever isto: 14 mutantes, 14 mortos.
+      - name: Os mutantes do portao de conexao
+        run: npm run mutantes:portao-de-conexao
+
       # HMO-224, a irma da de cima na OUTRA rota: o POST de
       # /api/personal-finance/transactions nao lia `subcategory_id` do corpo e
       # nao o listava no INSERT. As assercoes de `test:movimentacoes` sobre esta

@@ -206,7 +206,9 @@
     "mutantes:aviso-por-email": "node scripts/mutantes-aviso-por-email.mjs",
     "test:pra-quem-pagar": "node scripts/compila.mjs -p scripts/tsconfig.pra-quem-pagar-test.json && node scripts/resolve-aliases.mjs .tmp-pra-quem-pagar lib --espelha-raiz && node --test scripts/test-pra-quem-pagar.mjs",
     "mutantes:pra-quem-pagar": "node scripts/mutantes-pra-quem-pagar.mjs",
-    "test:pra-quem-pagar-na-tela": "node scripts/compila.mjs -p scripts/tsconfig.pra-quem-pagar-test.json && node scripts/compila.mjs -p scripts/tsconfig.pra-quem-pagar-na-tela-test.json && node --test scripts/test-pra-quem-pagar-na-tela.mjs"
+    "test:pra-quem-pagar-na-tela": "node scripts/compila.mjs -p scripts/tsconfig.pra-quem-pagar-test.json && node scripts/compila.mjs -p scripts/tsconfig.pra-quem-pagar-na-tela-test.json && node --test scripts/test-pra-quem-pagar-na-tela.mjs",
+    "test:portao-de-conexao": "node scripts/compila.mjs -p scripts/tsconfig.portao-de-conexao-test.json && node scripts/resolve-aliases.mjs .tmp-portao-de-conexao lib --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-portao-de-conexao utils --espelha-raiz && node scripts/resolve-next-subpaths.mjs .tmp-portao-de-conexao && node scripts/monta-duble-de-rota.mjs .tmp-portao-de-conexao && node --test scripts/test-portao-de-conexao.mjs",
+    "mutantes:portao-de-conexao": "node scripts/mutantes-portao-de-conexao.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
