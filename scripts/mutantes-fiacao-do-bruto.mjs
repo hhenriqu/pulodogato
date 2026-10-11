@@ -146,8 +146,18 @@ const MUTANTES = [
       "tela le `resumo.reembolso_previsto` como `undefined`, a frase desaparece " +
       "e o «Previsto» de Receitas volta a ignorar o credito -- sem erro nenhum, " +
       "porque `res.json()` e `any` e o tsc nao liga os dois lados",
-    de: "    const resumo = resumoComReembolsoPrevisto(\n      resumoDaTela(linhas),",
-    para: "    const resumo = resumoDaTela(\n      (linhas),",
+    // ANCORA REPONTADA NA HMO-379, e ela estava MORTA (0 ocorrencias): a F4
+    // (HMO-372) EMBRULHOU esta chamada em `resumoComAReceberDoMyBank(...)`, e
+    // com isso `const resumo = resumoComReembolsoPrevisto(` deixou de existir
+    // no arquivo. O runner acusava `RUIM ANCORA MORTA` -- ou seja este defeito
+    // ficou sem medida nenhuma desde a F4, e o step de CI vermelho na main.
+    // E a familia `mutante-cuja-ancora-a-feature-apagou`.
+    //
+    // O ALVO CONTINUA SENDO O MESMO DEFEITO: tirar a funcao do balde do
+    // reembolso, deixando o embrulho do MyBank em pe. O resumo sai cru de
+    // `resumoDaTela` e `resumo.reembolso_previsto` chega `undefined` na tela.
+    de: "      resumoComReembolsoPrevisto(resumoDaTela(linhas), tela.tipo, reembolso),",
+    para: "      resumoDaTela(linhas),",
     caso: "o reembolso vai para o «Previsto» por `resumoComReembolsoPrevisto`",
   },
   {
@@ -159,8 +169,17 @@ const MUTANTES = [
       "ele e o mutante de uma decisao que so a fiacao guarda: o ramo existe para " +
       "a aba Despesas e a de Transferencias nao gastarem seis consultas para " +
       "descartar tudo depois",
-    de: '    if (tela.tipo === "income") {',
-    para: "    if (true) {",
+    // ANCORA REPONTADA NA HMO-379, e ela estava AMBIGUA (3 ocorrencias): a F4
+    // (HMO-372) acrescentou o ramo do MyBank e a HMO-366 o dos acertos, os
+    // tres com o MESMO `if (tela.tipo === "income") {`. `String.replace` troca
+    // a PRIMEIRA -- aqui, por sorte, ainda era a do reembolso, mas o runner
+    // recusa ancora ambigua de proposito: na proxima insercao acima dela o
+    // mutante passaria a medir outro ramo com o rotulo deste.
+    //
+    // A DECLARACAO DO `let` E O QUE DESAMBIGUA, e ela e unica por construcao --
+    // cada um dos tres ramos preenche uma variavel com nome proprio.
+    de: '    let reembolso: ReembolsoPrevisto | null = null;\n\n    if (tela.tipo === "income") {',
+    para: '    let reembolso: ReembolsoPrevisto | null = null;\n\n    if (true) {',
     caso: "o reembolso do grupo entra pelo modulo compartilhado, e so em Receitas",
   },
   {
@@ -217,6 +236,46 @@ const MUTANTES = [
     para: "          {false && (",
     medida: MARCACAO,
     caso: "a legenda do bruto sai na aba Despesas, e SO nela",
+  },
+  // --- F7: o «a receber» do MyBank, que ficou SEM ROTULO (HMO-379) ---------
+  // A fiacao que faltou de verdade, e nao uma hipotese: a F4 (HMO-372) somou o
+  // valor no «Previsto» de Receitas e `a_receber_do_mybank` ficou sem UM
+  // consumidor na UI. Producao mostrou «Previsto» R$ 30,00 em cima de "Nada
+  // previsto neste período", com o contador ao lado dizendo (0).
+  {
+    nome: "f7_mybank_sem_rotulo",
+    alvo: CARTOES,
+    porque:
+      "o estado EXATO que a HMO-379 conserta: o «Previsto» de Receitas sobe " +
+      "R$ 30,00 e nada na tela diz de onde vieram. A aritmetica fica exata, as " +
+      "cinco suites ficam verdes (nenhuma ve rotulo -- a familia " +
+      "`campo-de-rotulo-passa-pela-suite-de-aritmetica-inteira`) e o valor fica " +
+      "indistinguivel de bug: foi assim que ele chegou a producao",
+    // A GUARDA FICA CEGA, E NENHUM `false` ENTRA NA CADEIA -- pela MESMA razao
+    // escrita em `f5_reembolso_sem_rotulo` logo acima: com o literal `false` o
+    // tsc descarta o estreitamento de `resumo?.a_receber_do_mybank &&` e o
+    // mutante morre em TS18047, no compilador e nao na assercao.
+    de: "{podeMostrarNumero(estado) && resumo?.a_receber_do_mybank && (",
+    para: "{podeMostrarNumero(null) && resumo?.a_receber_do_mybank && (",
+    medida: MARCACAO,
+    caso: "o «a receber» do MyBank aparece como nota do «Previsto»",
+  },
+  {
+    nome: "f7_mybank_conta_parcelas_em_vez_de_pessoas",
+    alvo: CARTOES,
+    porque:
+      "a frase passa a dizer '4 pessoas' para QUATRO PARCELAS de UMA pessoa. " +
+      "Numero plausivel, frase gramatical, soma intacta -- e o rotulo mentindo " +
+      "sobre quantas conexoes devem. Nenhuma assercao de aritmetica o alcanca",
+    // A ANCORA LEVA A LINHA DE CIMA porque `.devedores` sozinho casa DUAS vezes
+    // (o valor e a concordancia de plural), e o runner exige 1x -- ancora
+    // ambigua muta o lugar errado e o rotulo mente sobre o que foi medido.
+    de:
+      'a receber de{" "}\n              {resumo.a_receber_do_mybank.devedores}{" "}',
+    para:
+      'a receber de{" "}\n              {resumo.a_receber_do_mybank.parcelas}{" "}',
+    medida: MARCACAO,
+    caso: "o «a receber» do MyBank aparece como nota do «Previsto»",
   },
   {
     nome: "f5_painel_sem_a_pergunta",

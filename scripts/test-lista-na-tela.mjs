@@ -386,6 +386,8 @@ const PAGINA = `<!doctype html>
 <div id="raiz-g"></div><div id="raiz-h"></div><div id="raiz-i"></div>
 <div id="raiz-j"></div><div id="raiz-k"></div><div id="raiz-l"></div>
 <div id="raiz-m"></div>
+<!-- As DUAS do caso N (HMO-379): a conta COM promessa e o controle negativo. -->
+<div id="raiz-n"></div><div id="raiz-n2"></div>
 <div id="resultado">a pagina nao rodou</div>
 <script>${umd("react", "react.development.js")}</script>
 <script>${umd("react-dom", "react-dom.development.js")}</script>
@@ -1394,6 +1396,60 @@ const out = {};
   };
 }
 
+// =========================================================================
+// N. A FRASE DE VAZIO CONCORDA COM O CARTAO -- HMO-379
+// =========================================================================
+// O defeito, medido em producao na tela do CREDOR: o cartao «Previsto» dizia
+// R$ 30,00 e, na mesma dobra, "Previsto no período (0)" dizia "Nada previsto
+// neste período.". O numero nao tinha linha que o explicasse e o contador ao
+// lado dele dizia zero -- quem olha le "o total esta errado".
+//
+// AS DUAS MONTAGENS SAO O PAR, e e por isso que elas sao duas: a conta COM
+// promessa tem de ler a frase nova, e a conta VAZIA tem de continuar lendo
+// "Nada previsto neste período.". Medir so a primeira deixaria passar uma
+// frase que aparece em toda tela, inclusive na de quem nao tem nada -- e esse
+// e o defeito mais barato de escrever aqui (basta trocar o \`> 0\` por \`>= 0\`).
+{
+  // So \`a_receber_do_mybank\`, com ZERO linhas: o caso da issue, com os quatro
+  // campos medidos em prod -- {"total":30,"parcelas":1,"devedores":1,"emprestimos":1}.
+  const comMyBank = Object.assign(corpo([]), {
+    resumo: {
+      total: 30,
+      previsto: 30,
+      realizado: 0,
+      quantidade: 0,
+      reembolso_previsto: null,
+      a_receber_do_mybank: {
+        total: 30,
+        parcelas: 1,
+        devedores: 1,
+        emprestimos: 1,
+      },
+    },
+  });
+
+  const raizN = await montar("raiz-n", [comMyBank], {
+    tipo: "income",
+    tela: TELA_DE_RECEITA,
+    aparencia: APARENCIA_DE_RECEITA,
+    origem: "/dashboard/receitas?de=2026-10-01&ate=2026-10-31",
+  });
+
+  out.n_com_promessa = retrato(raizN, PREVISTO);
+
+  // O CONTROLE NEGATIVO: a conta vazia, sem promessa nenhuma. \`corpo([])\` ja
+  // devolve um resumo zerado e SEM as duas chaves -- que e tambem a forma de
+  // uma resposta guardada no aparelho de antes destas features.
+  const raizVazia = await montar("raiz-n2", [corpo([])], {
+    tipo: "income",
+    tela: TELA_DE_RECEITA,
+    aparencia: APARENCIA_DE_RECEITA,
+    origem: "/dashboard/receitas?de=2026-10-01&ate=2026-10-31",
+  });
+
+  out.n_sem_promessa = retrato(raizVazia, PREVISTO);
+}
+
 document.getElementById("resultado").textContent =
   "RESULTADO" + JSON.stringify(out) + "FIM";
 } catch (e) {
@@ -2019,4 +2075,75 @@ test("M: depois de confirmar a linha SAI do a confirmar e APARECE no recebido", 
   const ultimo = resultado.m_depois.toasts[resultado.m_depois.toasts.length - 1];
   assert.equal(ultimo.tipo, "success", JSON.stringify(ultimo));
   assert.match(ultimo.texto, /conta/);
+});
+
+test("N: CONTROLE -- as duas montagens pintaram a secao «Previsto» vazia", () => {
+  // O controle que da sentido as duas assercoes abaixo. Sem ele, "a frase X nao
+  // esta na tela" fica verde porque a secao nao pintou -- e e justamente o modo
+  // de falha deste arnes (ver o CONTROLE do caso A).
+  for (const qual of ["n_com_promessa", "n_sem_promessa"]) {
+    assert.ok(resultado[qual], `a secao «Previsto» nao existe em ${qual}`);
+    // ZERO LINHAS nas duas: e esta a situacao que a issue descreve. Com linha,
+    // `SecaoDaTela` nem desenha a frase de vazio e tudo abaixo seria vacuo.
+    // `\s*` E NAO UM ESPACO: o titulo e a contagem nascem em elementos irmaos
+    // sem espaco entre eles, e o DOM sai "Previsto no período(0)".
+    assert.match(
+      resultado[qual].texto,
+      /Previsto no período\s*\(0\)/,
+      `${qual} tem linha na secao -- a frase de vazio nem aparece: ` +
+        resultado[qual].texto
+    );
+  }
+});
+
+test("N: com «a receber» do MyBank a secao NAO afirma que nada esta previsto", () => {
+  // A ENTREGA desta issue, do lado da lista. O cartao diz R$ 30,00 e esta secao
+  // nao pode dizer "Nada previsto neste período." ao lado dele.
+  const t = resultado.n_com_promessa.texto;
+
+  assert.ok(
+    !t.includes("Nada previsto neste período."),
+    "a secao afirmou vazio com R$ 30,00 no cartao «Previsto» -- o defeito " +
+      "medido em producao na HMO-379: " + t
+  );
+  assert.match(
+    t,
+    /Nenhum lançamento previsto neste período/,
+    "a frase nova nao apareceu: " + t
+  );
+  assert.match(
+    t,
+    /promessas sem linha própria/,
+    "a frase nao explica POR QUE o numero do cartao nao tem linha aqui: " + t
+  );
+  // E ELA CARREGA O VALOR, pelo formatador (esbocado nesta sonda, ver
+  // `formatCurrency` no topo). Sem o numero, a frase nao liga o que a pessoa
+  // esta lendo no cartao ao que ela esta contando na lista.
+  assert.match(
+    t,
+    /ESBOCO-VALOR:30:BRL/,
+    "a frase perdeu o VALOR do previsto sem linha: " + t
+  );
+});
+
+test("N: CONTROLE NEGATIVO -- a conta VAZIA continua lendo 'Nada previsto'", () => {
+  // A prova que a issue pede do outro lado. Sem este bloco, trocar o `> 0` da
+  // producao por `>= 0` passaria verde: a frase nova apareceria na tela de TODA
+  // conta, inclusive na de quem nunca teve grupo nem MyBank, dizendo que
+  // R$ 0,00 sao promessa.
+  const t = resultado.n_sem_promessa.texto;
+
+  assert.match(
+    t,
+    /Nada previsto neste período\./,
+    "a conta sem promessa nenhuma perdeu a frase de vazio de verdade: " + t
+  );
+  assert.ok(
+    !t.includes("promessas sem linha própria"),
+    "a frase das promessas apareceu numa conta que nao tem nenhuma: " + t
+  );
+  assert.ok(
+    !t.includes("ESBOCO-VALOR"),
+    "a conta vazia formatou um valor na frase de vazio: " + t
+  );
 });

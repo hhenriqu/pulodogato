@@ -322,6 +322,120 @@ test("sem leitura a nota de reembolso tambem cala", () => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// O «A RECEBER» DO MYBANK -- HMO-379
+// ---------------------------------------------------------------------------
+// O defeito que estes blocos impedem foi MEDIDO EM PRODUCAO, e e o irmao exato
+// do de cima: `resumoComAReceberDoMyBank` soma o valor no «Previsto» de
+// Receitas desde a HMO-372, e `a_receber_do_mybank` nao tinha UM consumidor na
+// UI. Com um emprestimo de R$ 30,00, a tela do credor dizia «Total» R$ 30,00
+// sobre "0 lançamento(s)", «Previsto» R$ 30,00, e "Previsto no período (0)" com
+// "Nada previsto neste período." -- um numero sem nenhuma linha que o
+// explicasse. As 175 assercoes das cinco suites passavam verdes assim: nenhuma
+// delas ve ROTULO, que e a familia
+// `campo-de-rotulo-passa-pela-suite-de-aritmetica-inteira`.
+//
+// OS QUATRO CAMPOS TEM VALORES DIFERENTES de proposito (30 / 4 / 3 / 2): com
+// dois deles iguais, um JSX que imprimisse `parcelas` onde vai `devedores`
+// passaria verde. A fixture e que separa os quatro.
+const A_RECEBER = { total: 30, parcelas: 4, devedores: 3, emprestimos: 2 };
+
+test("o «a receber» do MyBank aparece como nota do «Previsto», no plural certo", () => {
+  const t = texto(render({ tela: RECEITAS, resumo: { ...RESUMO, a_receber_do_mybank: A_RECEBER } }));
+
+  assert.match(
+    t,
+    /inclui R\$ 30,00 a receber/,
+    "o cartao nao imprime o TOTAL do «a receber» -- uma frase sem o valor nao " +
+      "diz quanto do «Previsto» e promessa"
+  );
+  assert.match(
+    t,
+    /3 pessoas em 2 empréstimos do MyBank/,
+    "a frase tem de contar PESSOAS e EMPRESTIMOS, e nos campos certos: " +
+      "`parcelas` (4) nao e nenhum dos dois"
+  );
+  // A ORACAO QUE IMPORTA: o numero NAO esta no «Quanto ainda posso gastar», que
+  // e o outro cartao que a pessoa olha no mesmo minuto. Sem ela, ver R$ 30,00
+  // aqui e nao ve-los la se le como "o app perdeu a parcela".
+  assert.match(
+    t,
+    /não entra em «Quanto ainda posso gastar»/,
+    "a legenda perdeu a oracao do safe-to-spend (LEGENDA_DO_A_RECEBER_DO_MYBANK)"
+  );
+  assert.match(t, /é promessa e não dinheiro/);
+});
+
+test("um devedor em um emprestimo fala no singular", () => {
+  const t = texto(
+    render({
+      tela: RECEITAS,
+      resumo: {
+        ...RESUMO,
+        a_receber_do_mybank: { total: 30, parcelas: 1, devedores: 1, emprestimos: 1 },
+      },
+    })
+  );
+
+  // O caso da issue, medido em prod: {"total":30,"parcelas":1,"devedores":1,"emprestimos":1}.
+  assert.match(t, /1 pessoa em 1 empréstimo do MyBank/);
+  assert.ok(
+    !/1 pessoas|1 empréstimos/.test(t),
+    "a frase concorda em numero com `devedores` e `emprestimos` -- e a " +
+      "concordancia nao pode ser calculada no meio do JSX"
+  );
+});
+
+test("sem MyBank a nota NAO aparece -- o CONTROLE NEGATIVO da conta vazia", () => {
+  // A prova que a issue pede: a conta sem emprestimo nenhum le os MESMOS
+  // numeros de hoje e NENHUMA frase nova. "R$ 0,00 a receber do MyBank" na tela
+  // de quem nao tem conexao e ruido que parece recurso quebrado.
+  for (const vazio of [null, undefined]) {
+    const t = texto(
+      render({ tela: RECEITAS, resumo: { ...RESUMO, a_receber_do_mybank: vazio } })
+    );
+    assert.ok(
+      !t.includes("MyBank"),
+      `com a_receber_do_mybank=${vazio} a tela escreveu a frase`
+    );
+    assert.ok(
+      !t.includes("a receber"),
+      `com a_receber_do_mybank=${vazio} a tela falou de "a receber"`
+    );
+  }
+});
+
+test("sem leitura a nota do MyBank tambem cala", () => {
+  // Mesmo motivo do vencido e do reembolso: "R$ 30,00 a receber" dito sobre um
+  // cache de ontem pode ja ter sido pago. E `resumo: null` e o outro estado --
+  // a resposta guardada no aparelho de ANTES desta feature, que nem tem o campo.
+  for (const props of [{ estado: null }, { estado: "sem-rede" }, { resumo: null }]) {
+    const t = texto(
+      render({ tela: RECEITAS, resumo: { ...RESUMO, a_receber_do_mybank: A_RECEBER }, ...props })
+    );
+    assert.ok(
+      !t.includes("MyBank"),
+      `com ${JSON.stringify(props)} a nota do MyBank apareceu`
+    );
+  }
+});
+
+test("as DUAS promessas se dizem em separado quando as duas existem", () => {
+  // Quem tem grupo E MyBank le as duas frases, e e assim que um «Previsto» de
+  // R$ 330,00 se desmancha em R$ 300,00 do grupo e R$ 30,00 da conexao. Somar
+  // os dois num campo so -- a tentacao que o cabecalho de
+  // `resumoComAReceberDoMyBank` recusa -- tiraria da tela justamente isto.
+  const t = texto(
+    render({
+      tela: RECEITAS,
+      resumo: { ...RESUMO, reembolso_previsto: REEMBOLSO, a_receber_do_mybank: A_RECEBER },
+    })
+  );
+
+  assert.match(t, /inclui R\$ 300,00 de reembolso previsto/);
+  assert.match(t, /inclui R\$ 30,00 a receber/);
+});
+
 test("a legenda do bruto sai na aba Despesas, e SO nela", () => {
   // A fase F5. Sem esta linha o «Previsto» de Despesas conta a conta de grupo
   // inteira e o cartao «Quanto ainda posso gastar» conta so a parte -- dois

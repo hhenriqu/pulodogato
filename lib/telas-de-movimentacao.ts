@@ -1598,6 +1598,82 @@ export interface ResumoComReembolso extends ResumoDaTela {
 }
 
 /**
+ * O «a receber» do MyBank COMO O CARTAO PRECISA DELE -- HMO-379.
+ *
+ * Os quatro campos de `AReceberDoMyBank` (lib/leituras-do-mybank.ts), declarados
+ * aqui pelo MESMO motivo de `ReembolsoPrevisto` estar aqui e nao em
+ * `lib/credito-de-grupo.ts`: importar o tipo de la arrastaria
+ * `leituras-do-mybank` -> `emprestimo-do-mybank` -> `lancamento` +
+ * `transferencia` para dentro do `rootDir: lib` que as suites e o mutador desta
+ * lib usam -- a mesma razao escrita em `TIPO_CARTAO` (HMO-260).
+ *
+ * E o preco e o mesmo: DUAS declaracoes que podem se separar, com o modo de
+ * falha mudo (um campo renomeado de um lado deixa a legenda do cartao com
+ * `undefined` onde ia um numero, sem erro). Quem as mantem juntas e a assercao
+ * de FORMA que ja existe sobre a rota -- o `deepEqual` dos quatro campos em
+ * scripts/test-leituras-do-mybank.mjs --, e nao o `tsc`.
+ */
+export interface AReceberNoPrevisto {
+  /** BRL, POSITIVO. A soma das parcelas em aberto do periodo. */
+  total: number;
+  /** Quantas parcelas. */
+  parcelas: number;
+  /** De quantas pessoas. */
+  devedores: number;
+  /** De quantos emprestimos. */
+  emprestimos: number;
+}
+
+/**
+ * O resumo COMO A TELA O RECEBE: com as duas promessas que moram no «Previsto».
+ *
+ * Este e o tipo dos cartoes e do estado da lista, e nao `ResumoComReembolso`:
+ * a HMO-372 acrescentou `a_receber_do_mybank` a resposta da rota e a tela ficou
+ * com o tipo ANTIGO, que nao tem o campo. O efeito foi o defeito da HMO-379 --
+ * o campo chegava no corpo e nenhum componente podia sequer mencionar o nome
+ * dele sem erro de `tsc`, entao o numero entrava no «Previsto» MUDO.
+ *
+ * Os dois campos sao `| null` e nao opcionais, como o irmao: uma resposta
+ * guardada no aparelho de antes da feature nao os tem, e os leitores usam
+ * `resumo?.campo` justamente por isso.
+ */
+export interface ResumoDoCartao extends ResumoComReembolso {
+  /** `null` = nenhuma conexao me deve nada, ou esta tela nao e a de Receitas. */
+  a_receber_do_mybank: AReceberNoPrevisto | null;
+}
+
+/**
+ * Quanto do «Previsto» NAO TEM LINHA na lista da tela -- HMO-379.
+ *
+ * As duas promessas que `resumoComReembolsoPrevisto` e
+ * `resumoComAReceberDoMyBank` somam ao cartao nascem FORA de
+ * `scheduled_transactions`, e nenhuma das duas vira linha (a razao inteira esta
+ * na rota: fabricar a linha daria Editar/Excluir sobre um id que nao existe em
+ * tabela nenhuma, e `UPDATE` recusado pela RLS volta 200 sem alterar nada).
+ *
+ * Por isso a secao «Previsto no periodo» pode ter ZERO linhas com o cartao
+ * «Previsto» em R$ 30,00 -- e era exatamente isso que a tela dizia ao lado da
+ * frase "Nada previsto neste periodo.", que e a leitura "o total esta errado"
+ * que este app ja produziu quatro vezes.
+ *
+ * Esta funcao e o que deixa a frase de vazio DISTINGUIR os dois casos. Ela
+ * devolve dinheiro, nao booleano, porque a frase diz o VALOR: "nenhum
+ * lancamento, e os R$ 30,00 do «Previsto» vem daqui" responde a pergunta que
+ * "nada previsto" responde errado.
+ */
+export function previstoSemLinha(resumo: ResumoDoCartao | null): number {
+  if (!resumo) return 0;
+
+  // `?? 0` nos dois, e nao um `if` por campo: os dois sao `| null` quando a
+  // tela nao e Receitas, e uma resposta do aparelho de antes da feature nao tem
+  // nem a chave.
+  return centavos(
+    (resumo.reembolso_previsto?.total ?? 0) +
+      (resumo.a_receber_do_mybank?.total ?? 0)
+  );
+}
+
+/**
  * Soma o reembolso de grupo ao «Previsto» -- e SO na tela de Receitas.
  *
  * POR QUE O PREVISTO, E POR QUE NAO O REALIZADO
