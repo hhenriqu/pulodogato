@@ -489,7 +489,7 @@ const MUTANTES = [
     de:
       "    natureza: faturaPaga\n" +
       '      ? "fatura"\n' +
-      "      : ehEntradaSoltaDoMyBank(crua)\n" +
+      "      : ehEntradaSoltaDoMyBank(crua) || saidaDoAutoEmprestimo\n" +
       '        ? "mybank"\n' +
       "        : idsDeFixa.has(crua.id)\n" +
       '          ? "fixa"\n' +
@@ -497,7 +497,7 @@ const MUTANTES = [
     para:
       "    natureza: faturaPaga\n" +
       '      ? "fatura"\n' +
-      "      : ehEntradaSoltaDoMyBank(crua)\n" +
+      "      : ehEntradaSoltaDoMyBank(crua) || saidaDoAutoEmprestimo\n" +
       '        ? "mybank"\n' +
       '        : "despesa",',
   },
@@ -509,7 +509,7 @@ const MUTANTES = [
     de:
       "    natureza: faturaPaga\n" +
       '      ? "fatura"\n' +
-      "      : ehEntradaSoltaDoMyBank(crua)\n" +
+      "      : ehEntradaSoltaDoMyBank(crua) || saidaDoAutoEmprestimo\n" +
       '        ? "mybank"\n' +
       "        : idsDeFixa.has(crua.id)\n" +
       '          ? "fixa"\n' +
@@ -600,8 +600,15 @@ const MUTANTES = [
       "linhas «Fatura» de R$ 0,00, sem Editar e sem Excluir (`podeAgirNaLinha` " +
       "recusa toda linha de fatura), para um par que ja tem casa na tela de " +
       "Transferencias -- e e la que ele continua inteiro",
-    de: "  return Number(crua.amount) < 0;",
-    para: "  return true;",
+    // A LINHA DE CIMA ESTA NA ANCORA pela trava de ambiguidade, e desde a
+    // HMO-385: `return Number(crua.amount) < 0;` existe tambem em
+    // `ehSaidaDaParcelaDoAutoEmprestimo` (o mesmo criterio de sinal, sobre outra
+    // perna). O `if (ehPernaDeEntrada(crua)) return false;` e o que diz que a
+    // funcao cegada e esta -- mesma receita de `mybank_sem_o_sinal`.
+    de:
+      "  if (ehPernaDeEntrada(crua)) return false;\n" +
+      "  return Number(crua.amount) < 0;",
+    para: "  if (ehPernaDeEntrada(crua)) return false;\n  return true;",
   },
   {
     nome: "fatura_paga_e_transfer_em_despesas",
@@ -613,10 +620,16 @@ const MUTANTES = [
       "em que alguem repetisse aquela peneira do lado realizado",
     de:
       "    tipo:\n" +
-      '      faturaPaga && tela === "expense"\n' +
+      '      (faturaPaga || saidaDoAutoEmprestimo) && tela === "expense"\n' +
       '        ? "expense"\n' +
       "        : classificarMovimentacao(crua),",
-    para: "    tipo: classificarMovimentacao(crua),",
+    // O `para` PRESERVA O RAMO DA PARCELA PAGA (HMO-385): a condicao passou a
+    // ter dois operandos, e quem mede o meu e
+    // `parcela_paga_e_transfer_em_despesas`. Apagar os dois aqui deixaria cada
+    // um deles sem medida propria
+    // (`variar-um-lado-da-igualdade-deixa-a-guarda-sem-medida`).
+    para:
+      '    tipo: saidaDoAutoEmprestimo && tela === "expense" ? "expense" : classificarMovimentacao(crua),',
   },
   {
     nome: "fatura_paga_sempre_expense",
@@ -627,10 +640,15 @@ const MUTANTES = [
       "medida",
     de:
       "    tipo:\n" +
-      '      faturaPaga && tela === "expense"\n' +
+      '      (faturaPaga || saidaDoAutoEmprestimo) && tela === "expense"\n' +
       '        ? "expense"\n' +
       "        : classificarMovimentacao(crua),",
-    para: '    tipo: faturaPaga ? "expense" : classificarMovimentacao(crua),',
+    // O `tela` E COMPARTILHADO pelos dois ramos desde a HMO-385, entao apagar a
+    // guarda apaga a decisao por tela das DUAS linhas que aparecem em duas abas
+    // -- e e isso que este mutante mede. Os dois operandos ficam no `para` de
+    // proposito: quem varia cada um deles e o seu mutante proprio.
+    para:
+      '    tipo: (faturaPaga || saidaDoAutoEmprestimo) ? "expense" : classificarMovimentacao(crua),',
   },
   {
     nome: "fatura_paga_nao_se_apresenta_como_fatura",
@@ -647,13 +665,13 @@ const MUTANTES = [
     de:
       "    natureza: faturaPaga\n" +
       '      ? "fatura"\n' +
-      "      : ehEntradaSoltaDoMyBank(crua)\n" +
+      "      : ehEntradaSoltaDoMyBank(crua) || saidaDoAutoEmprestimo\n" +
       '        ? "mybank"\n' +
       "        : idsDeFixa.has(crua.id)\n" +
       '          ? "fixa"\n' +
       '          : "despesa",',
     para:
-      "    natureza: ehEntradaSoltaDoMyBank(crua)\n" +
+      "    natureza: ehEntradaSoltaDoMyBank(crua) || saidaDoAutoEmprestimo\n" +
       '      ? "mybank"\n' +
       "      : idsDeFixa.has(crua.id)\n" +
       '        ? "fixa"\n' +
@@ -668,7 +686,7 @@ const MUTANTES = [
     de:
       "    natureza: faturaPaga\n" +
       '      ? "fatura"\n' +
-      "      : ehEntradaSoltaDoMyBank(crua)\n" +
+      "      : ehEntradaSoltaDoMyBank(crua) || saidaDoAutoEmprestimo\n" +
       '        ? "mybank"\n' +
       "        : idsDeFixa.has(crua.id)\n" +
       '          ? "fixa"\n' +
@@ -678,7 +696,7 @@ const MUTANTES = [
       '      ? "fixa"\n' +
       "      : faturaPaga\n" +
       '        ? "fatura"\n' +
-      "        : ehEntradaSoltaDoMyBank(crua)\n" +
+      "        : ehEntradaSoltaDoMyBank(crua) || saidaDoAutoEmprestimo\n" +
       '          ? "mybank"\n' +
       '          : "despesa",',
   },
@@ -709,8 +727,15 @@ const MUTANTES = [
       "da de-duplicacao: a transferencia de antes do 015 (ou a que perdeu o " +
       "elo por ON DELETE SET NULL) volta a contar duas vezes, que e o defeito " +
       "da armadilha 3 por um caminho novo",
-    de: "  if (!temOEloDaParcelaDoMyBank(crua.notes)) return false;",
-    para: "  if (false) return false;",
+    // A LINHA DE BAIXO ESTA NA ANCORA pela trava de ambiguidade (HMO-385): a
+    // leitura da chave e IDENTICA nos dois consultores do lado realizado, e o
+    // criterio do ELO e o que existe so aqui.
+    de:
+      "  if (!temOEloDaParcelaDoMyBank(crua.notes)) return false;\n" +
+      "  if (texto(crua.counterpart_transaction_id)) return false;",
+    para:
+      "  if (false) return false;\n" +
+      "  if (texto(crua.counterpart_transaction_id)) return false;",
   },
   {
     nome: "mybank_ignora_o_elo_do_015",
@@ -730,17 +755,41 @@ const MUTANTES = [
       "anotasse com a chave `mybank:` passa a ser a perna solta -- e a leitura " +
       "e da coluna CRUA porque pelo SINAL esta linha e indistinguivel de uma " +
       "receita",
-    de: "  if (String(crua.transaction_type) !== TIPO_DA_PARCELA_DO_MYBANK) return false;",
-    para: "  if (false) return false;",
+    // AS DUAS LINHAS DE BAIXO ESTAO NA ANCORA pela trava de ambiguidade
+    // (HMO-385): as DUAS primeiras linhas desta funcao sao iguais as de
+    // `ehSaidaDaParcelaDoAutoEmprestimo`, e so a TERCEIRA (o elo) as separa --
+    // entao a ancora precisa chegar ate ela.
+    de:
+      "  if (String(crua.transaction_type) !== TIPO_DA_PARCELA_DO_MYBANK) return false;\n" +
+      "  if (!temOEloDaParcelaDoMyBank(crua.notes)) return false;\n" +
+      "  if (texto(crua.counterpart_transaction_id)) return false;",
+    para:
+      "  if (false) return false;\n" +
+      "  if (!temOEloDaParcelaDoMyBank(crua.notes)) return false;\n" +
+      "  if (texto(crua.counterpart_transaction_id)) return false;",
   },
   {
     nome: "mybank_sem_o_sinal",
+    // O `porque` DESTE MUTANTE FOI REESCRITO NA HMO-385, porque o antigo passou
+    // a ser falso.
+    //
+    // Ele dizia: "o selo passa a valer para a perna NEGATIVA -- a saida de um
+    // par do Caso A vem rotulada «MyBank», o selo de uma linha SEM par". Essa
+    // frase descrevia o estado anterior a esta issue; agora aquela perna leva o
+    // selo DE PROPOSITO, por `ehSaidaDaParcelaDoAutoEmprestimo`, e o argumento
+    // da reversao esta no `natureza` de `linhaRealizada`. Mantido pelo texto
+    // velho, este mutante afirmaria sobre o modulo uma decisao que ele nao toma
+    // mais -- e passaria verde pelo motivo errado, que e pior que morrer.
     porque:
-      "o selo passa a valer para a perna NEGATIVA: a saida de um par do Caso A " +
-      "-- que tem a nota e nao tem elo -- vem rotulada «MyBank», o selo de uma " +
-      "linha SEM par, dizendo que nao houve contrapartida numa transferencia " +
-      "que tem as duas pernas gravadas. Nenhum total muda, e e por isso que " +
-      "ele importa",
+      "esta funcao deixa de responder «qual perna e a SOLTA» e passa a " +
+      "responder «qual linha tem a chave», que e a pergunta de outro dono: sem " +
+      "o sinal ela casa tambem com a perna de SAIDA do Caso A e com a perna de " +
+      "valor ZERO sem elo -- e essa ultima e a que muda de rotulo, porque " +
+      "`ehSaidaDaParcelaDoAutoEmprestimo` exige valor NEGATIVO e o zero nao e " +
+      "saida de nada (a decisao do zero da armadilha 3). Duas perguntas " +
+      "colapsadas em uma e o que desarma a de-duplicacao do Caso A no dia em " +
+      "que o `ehPernaDeEntrada` da armadilha 3 mudar de criterio, e o contrato " +
+      "desta funcao e o unico lugar que o impede",
     // A LINHA DE CIMA ESTA NA ANCORA pela trava de ambiguidade: o `return
     // Number(crua.amount) > 0;` existe tambem em `ehPernaDeEntrada`. O `return
     // false` do elo e o que diz que a funcao cegada e esta.
@@ -757,10 +806,16 @@ const MUTANTES = [
       "a perna solta entra no numero certo e sem o selo: a MESMA serie se " +
       "apresenta como «MyBank» nas 23 previsoes e como transferencia comum na " +
       "unica que foi paga, e quem confere o extrato nao acha o que recebeu",
+    // ELE APAGA SO O OPERANDO DO CASO B DESDE A HMO-385. O ramo do selo passou a
+    // ter dois reconhecedores, e o `para` preserva o meu: assim este mutante
+    // continua medindo o selo da perna SOLTA (quem o mata e a assercao da
+    // armadilha 7) e `selo_da_parcela_paga_no_realizado` mede o da parcela paga.
+    // Apagar o ramo inteiro faria os dois casos cairem juntos e nenhum dos dois
+    // teria medida propria.
     de:
       "    natureza: faturaPaga\n" +
       '      ? "fatura"\n' +
-      "      : ehEntradaSoltaDoMyBank(crua)\n" +
+      "      : ehEntradaSoltaDoMyBank(crua) || saidaDoAutoEmprestimo\n" +
       '        ? "mybank"\n' +
       "        : idsDeFixa.has(crua.id)\n" +
       '          ? "fixa"\n' +
@@ -768,9 +823,147 @@ const MUTANTES = [
     para:
       "    natureza: faturaPaga\n" +
       '      ? "fatura"\n' +
-      "      : idsDeFixa.has(crua.id)\n" +
-      '        ? "fixa"\n' +
-      '        : "despesa",',
+      "      : saidaDoAutoEmprestimo\n" +
+      '        ? "mybank"\n' +
+      "        : idsDeFixa.has(crua.id)\n" +
+      '          ? "fixa"\n' +
+      '          : "despesa",',
+  },
+
+  // --- armadilha 8: a parcela PAGA do Caso A (HMO-385) --------------------
+  //
+  // O caso medido em PRODUCAO pela prova da HMO-382 (2026-10-11, conta de teste,
+  // sessao real): `SONDA HMO382 moto eletrica (1/24)`, R$ 10,00. Enquanto
+  // pendente ela aparecia nas duas abas com o selo; depois da baixa DESAPARECIA
+  // de Despesas e perdia o selo em Transferencias. A baixa grava um PAR, com a
+  // mesma nota `mybank:` nas duas pernas e o elo do 015 na de entrada -- e a de
+  // saida e `transfer` na coluna, entao o filtro de tipo a tirava de Despesas.
+  //
+  // NAO HA SALDO ERRADO PARA DENUNCIAR: as duas pernas estao certas. O que
+  // falhava era so a aba que existe para dizer quanto saiu da conta no mes.
+  {
+    nome: "parcela_paga_do_caso_a_sai_de_despesas",
+    porque:
+      "o defeito desta issue inteiro de volta: a excecao do realizado " +
+      "desaparece, o filtro de tipo volta a tirar a perna de saida da aba " +
+      "Despesas, e os R$ 10,00 que de fato sairam da conta corrente somem do " +
+      "mes em que foram pagos -- um mes MENOR, sem saldo errado e sem excecao " +
+      "para denunciar, que e a direcao de falha que nao parece erro",
+    de:
+      '    if (tipo === "expense" && ehSaidaDaParcelaDoAutoEmprestimo(crua)) {\n' +
+      "      linhas.push(linhaRealizada(crua, indice, idsDeFixa, meuUserId, tipo));\n" +
+      "      continue;\n    }\n",
+    para: "",
+  },
+  {
+    nome: "parcela_paga_vaza_para_receitas",
+    porque:
+      "a guarda de TELA cai e a excecao passa a valer nas tres abas: a perna " +
+      "de saida da parcela entra em Receitas, onde uma linha NEGATIVA reduz o " +
+      "«Realizado» do mes -- a armadilha 1 que a HMO-380 documentou, e o " +
+      "mesmo cuidado de ordem que a excecao da fatura paga ja tinha",
+    de: '    if (tipo === "expense" && ehSaidaDaParcelaDoAutoEmprestimo(crua)) {',
+    para: "    if (ehSaidaDaParcelaDoAutoEmprestimo(crua)) {",
+  },
+  {
+    nome: "parcela_paga_sem_o_sinal",
+    porque:
+      "as DUAS pernas do par entram na aba Despesas: a parcela de R$ 10,00 " +
+      "vira R$ 20,00 com duas linhas dizendo a MESMA descricao e a MESMA data " +
+      "-- a armadilha 3 por um caminho novo, e no lado em que ela nao " +
+      "de-duplica nada. O sinal e o UNICO criterio que separa as duas pernas: " +
+      "nota e `transaction_type` sao identicos nas duas",
+    // A LINHA DE CIMA ESTA NA ANCORA pela trava de ambiguidade: as tres linhas
+    // desta funcao existem, uma a uma, nos outros consultores do MyBank. A
+    // chave SEGUIDA do sinal (sem o elo no meio) e o que diz que a funcao
+    // cegada e esta.
+    de:
+      "  if (!temOEloDaParcelaDoMyBank(crua.notes)) return false;\n" +
+      "  return Number(crua.amount) < 0;",
+    para:
+      "  if (!temOEloDaParcelaDoMyBank(crua.notes)) return false;\n" +
+      "  return true;",
+  },
+  {
+    nome: "parcela_paga_sem_a_chave_canonica",
+    porque:
+      "a chave deixa de ser criterio e TODA transferencia de saida passa a ser " +
+      "parcela do MyBank: o Pix que eu mando para a minha poupanca entra na " +
+      "aba Despesas (onde ele nao e gasto, so dinheiro mudando de conta) e " +
+      "ainda vem rotulado «MyBank» -- o «Total» de Despesas sobe por uma linha " +
+      "que nao e despesa de ninguem",
+    de:
+      "  if (!temOEloDaParcelaDoMyBank(crua.notes)) return false;\n" +
+      "  return Number(crua.amount) < 0;",
+    para: "  if (false) return false;\n  return Number(crua.amount) < 0;",
+  },
+  {
+    nome: "parcela_paga_sem_o_tipo_gravado",
+    porque:
+      "o `transaction_type` deixa de ser criterio e a excecao passa a engolir " +
+      "linhas que o caminho COMUM deveria peneirar: uma compra no cartao cujas " +
+      "notas comecassem por `mybank:` escaparia de `ehGastoNoCartao` (a " +
+      "armadilha 5) pelo `continue` da excecao, e contaria DUAS vezes -- " +
+      "dentro da fatura e como compra",
+    // AS DUAS LINHAS DE BAIXO ESTAO NA ANCORA pela trava de ambiguidade: as
+    // duas primeiras linhas desta funcao sao iguais as de
+    // `ehEntradaSoltaDoMyBank`, e e a TERCEIRA (o sinal, e nao o elo) que as
+    // separa -- entao a ancora precisa chegar ate ela.
+    de:
+      "  if (String(crua.transaction_type) !== TIPO_DA_PARCELA_DO_MYBANK) return false;\n" +
+      "  if (!temOEloDaParcelaDoMyBank(crua.notes)) return false;\n" +
+      "  return Number(crua.amount) < 0;",
+    para:
+      "  if (false) return false;\n" +
+      "  if (!temOEloDaParcelaDoMyBank(crua.notes)) return false;\n" +
+      "  return Number(crua.amount) < 0;",
+  },
+  {
+    nome: "parcela_paga_e_transfer_em_despesas",
+    porque:
+      "a parcela paga entra no numero certo com `tipo: 'transfer'` na lista de " +
+      "Despesas. Nenhum total muda HOJE -- e e por isso que ele importa: " +
+      "`tipo` e o campo que diz a que tela a linha pertence, e o lado previsto " +
+      "ja peneira por ele (`linha.tipo === tipo`). A parcela paga " +
+      "desapareceria de Despesas no dia em que alguem repetisse aquela " +
+      "peneira do lado realizado -- exatamente o defeito que esta issue acabou " +
+      "de consertar, de volta por outro caminho",
+    // O `para` PRESERVA O RAMO DA FATURA PAGA: quem o mede e
+    // `fatura_paga_e_transfer_em_despesas`.
+    de:
+      "    tipo:\n" +
+      '      (faturaPaga || saidaDoAutoEmprestimo) && tela === "expense"\n' +
+      '        ? "expense"\n' +
+      "        : classificarMovimentacao(crua),",
+    para:
+      '    tipo: faturaPaga && tela === "expense" ? "expense" : classificarMovimentacao(crua),',
+  },
+  {
+    nome: "selo_da_parcela_paga_no_realizado",
+    porque:
+      "a parcela paga entra no numero certo e SEM o selo -- a segunda metade " +
+      "do defeito medido em producao, onde ela vinha `natureza: \"despesa\"` " +
+      "em Transferencias depois da baixa. A MESMA serie se apresenta como " +
+      "«MyBank» nas 23 parcelas pendentes e como transferencia comum na unica " +
+      "que foi paga, nas DUAS abas",
+    // ELE APAGA SO O MEU OPERANDO: o do Caso B e medido por
+    // `selo_do_mybank_no_realizado`.
+    de:
+      "    natureza: faturaPaga\n" +
+      '      ? "fatura"\n' +
+      "      : ehEntradaSoltaDoMyBank(crua) || saidaDoAutoEmprestimo\n" +
+      '        ? "mybank"\n' +
+      "        : idsDeFixa.has(crua.id)\n" +
+      '          ? "fixa"\n' +
+      '          : "despesa",',
+    para:
+      "    natureza: faturaPaga\n" +
+      '      ? "fatura"\n' +
+      "      : ehEntradaSoltaDoMyBank(crua)\n" +
+      '        ? "mybank"\n' +
+      "        : idsDeFixa.has(crua.id)\n" +
+      '          ? "fixa"\n' +
+      '          : "despesa",',
   },
   {
     nome: "fatura_paga_sem_mes",

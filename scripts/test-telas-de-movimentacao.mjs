@@ -27,6 +27,7 @@ const {
   ehGastoNoCartao,
   ehPagamentoDaFatura,
   ehEntradaSoltaDoMyBank,
+  ehSaidaDaParcelaDoAutoEmprestimo,
   ehParcelaDevidaDoMyBank,
   PREFIXO_DO_ELO_DO_MYBANK,
   TIPO_CARTAO,
@@ -1440,12 +1441,21 @@ test("o Caso A continua de-duplicado: as DUAS pernas com a mesma nota contam UMA
   assert.equal(linhas[0].id, "saida");
   assert.equal(resumoDaTela(linhas).realizado, 1000);
   assert.notEqual(resumoDaTela(linhas).realizado, 2000);
-  // E A PERNA QUE FICOU NAO LEVA O SELO. Ela carrega a nota `mybank:` e nao tem
-  // elo -- os dois primeiros criterios casam --, e o que a separa da perna
-  // solta e o SINAL. Sem esse criterio a saida de um par viria rotulada
-  // "MyBank", que e o selo de uma linha SEM par: o rotulo diria que nao houve
-  // contrapartida numa transferencia que tem as duas pernas gravadas.
-  assert.equal(linhas[0].natureza, "despesa");
+  // E A PERNA QUE FICOU LEVA O SELO -- MUDOU NA HMO-385, e a inversao e o
+  // assunto desta issue.
+  //
+  // Esta assercao dizia `"despesa"`, pelo argumento que a HMO-380 escreveu no
+  // criterio do sinal de `ehEntradaSoltaDoMyBank`: "«MyBank» e o selo de uma
+  // linha SEM par". A premissa caiu em duas medidas -- o selo DESENHA a palavra
+  // de procedencia «MyBank» (`marcaDaLinha`), e o lado PREVISTO ja o poe nesta
+  // mesma parcela, que e justamente a linha que vira um par quando paga. O
+  // argumento inteiro esta no `natureza` de `linhaRealizada`.
+  //
+  // Quem o poe aqui e `ehSaidaDaParcelaDoAutoEmprestimo`, e NAO um afrouxamento
+  // do sinal de `ehEntradaSoltaDoMyBank`: a de-duplicacao acima -- as tres
+  // assercoes de `length`, `id` e total -- e o que aquele criterio protege, e
+  // ela continua medida nesta mesma montagem.
+  assert.equal(linhas[0].natureza, "mybank");
 });
 
 test("ehEntradaSoltaDoMyBank: os QUATRO criterios, um a um", () => {
@@ -1514,6 +1524,210 @@ test("a excecao do MyBank nao afrouxa a de-duplicacao de um Pix comum", () => {
 
   assert.equal(linhas.length, 1);
   assert.equal(linhas[0].id, "a");
+});
+
+// -----------------------------------------------------
+// ARMADILHA 8: a parcela PAGA do Caso A saia de Despesas (HMO-385)
+// -----------------------------------------------------
+// O caso medido em PRODUCAO pela prova da HMO-382 (2026-10-11, conta de teste,
+// sessao real): `SONDA HMO382 moto eletrica (1/24)`, R$ 10,00, lida em
+// `GET /api/movimentacoes/resumo` nas duas abas, antes e depois da baixa.
+//
+//   | momento             | Despesas              | Transferencias          |
+//   | previsao pendente   | aparece, "mybank"     | aparece, "mybank"       |
+//   | depois da baixa     | NAO APARECE           | aparece, "despesa"      |
+//   | depois do estorno   | aparece, "mybank"     | aparece, "mybank"       |
+//
+// A baixa grava o par (`pernasDaTransferencia`, HMO-382) com a MESMA nota
+// `mybank:` nas duas pernas e o elo do 015 na de entrada. A de saida e
+// `transfer` na coluna, entao o filtro de tipo a tirava de Despesas.
+
+/** O par que a baixa do Caso A grava, como em prod. Nota igual nas DUAS. */
+const NOTA_DA_PARCELA_PAGA = `${PREFIXO_DO_ELO_DO_MYBANK}parcela-1-de-24`;
+const SAIDA_DA_PARCELA_PAGA = {
+  id: "saida-paga",
+  description: "SONDA HMO382 moto eletrica (1/24)",
+  amount: -10,
+  transaction_type: "transfer",
+  counterpart_transaction_id: null,
+  notes: NOTA_DA_PARCELA_PAGA,
+  account: { id: "cc", name: "Conta Corrente" },
+};
+const ENTRADA_DA_PARCELA_PAGA = {
+  id: "entrada-paga",
+  description: "SONDA HMO382 moto eletrica (1/24)",
+  amount: 10,
+  transaction_type: "transfer",
+  counterpart_transaction_id: "saida-paga",
+  notes: NOTA_DA_PARCELA_PAGA,
+  account: { id: "inv", name: "Investimentos" },
+};
+const PAR_DA_PARCELA_PAGA = [
+  realizada(SAIDA_DA_PARCELA_PAGA),
+  realizada(ENTRADA_DA_PARCELA_PAGA),
+];
+
+test("a parcela PAGA do Caso A aparece na aba Despesas -- os R$ 10,00 medidos em prod", () => {
+  const linhas = daTela(PAR_DA_PARCELA_PAGA, [], "expense");
+
+  // CONTROLE, e e o defeito medido: o MESMO par sem a chave canonica nao tem
+  // excecao nenhuma, e o filtro de tipo manda as duas pernas embora. Este zero e
+  // o que a aba Despesas respondia em producao depois da baixa.
+  const semAChave = daTela(
+    [
+      realizada({ ...SAIDA_DA_PARCELA_PAGA, notes: null }),
+      realizada({ ...ENTRADA_DA_PARCELA_PAGA, notes: null }),
+    ],
+    [],
+    "expense"
+  );
+  assert.equal(semAChave.length, 0, "o controle precisa sumir para a assercao valer");
+  assert.equal(resumoDaTela(semAChave).realizado, 0);
+
+  // UMA LINHA, E E A DE SAIDA: a de entrada e positiva e nao casa com a excecao.
+  assert.equal(linhas.length, 1, "uma linha por parcela, nao duas");
+  assert.equal(linhas[0].id, "saida-paga");
+  assert.equal(resumoDaTela(linhas).realizado, 10);
+  // O R$ 2.000 DA PARCELA DE R$ 1.000, no tamanho desta montagem: se o criterio
+  // do sinal cair, as DUAS pernas entram e o total dobra.
+  assert.notEqual(resumoDaTela(linhas).realizado, 20);
+  // `tipo` DIZ A QUE ABA ELA PERTENCE, e nao o que a coluna do banco diz.
+  assert.equal(linhas[0].tipo, "expense");
+  // O SELO, o mesmo que o lado previsto poe nas outras 23 parcelas.
+  assert.equal(linhas[0].natureza, "mybank");
+});
+
+test("o selo vale nas DUAS abas: a mesma perna paga e «MyBank» em Transferencias", () => {
+  const emTransferencias = daTela(PAR_DA_PARCELA_PAGA, [], "transfer");
+
+  // A de-duplicacao da armadilha 3 continua: a de entrada sai, a de saida fica.
+  assert.equal(emTransferencias.length, 1);
+  assert.equal(emTransferencias[0].id, "saida-paga");
+  assert.equal(resumoDaTela(emTransferencias).realizado, 10);
+  // E AQUI ESTAVA A SEGUNDA METADE DO DEFEITO: em producao esta linha vinha
+  // `natureza: "despesa"` depois da baixa. A frase do codigo promete o selo nas
+  // duas abas; antes desta issue ela valia so enquanto a parcela nao fosse paga.
+  assert.equal(emTransferencias[0].natureza, "mybank");
+  // `tipo` NAO e sobrescrito nesta aba: a linha e a transferencia que ela e.
+  assert.equal(emTransferencias[0].tipo, "transfer");
+
+  // E A MESMA LINHA, nos dois lados -- uma por aba, nao duas na mesma.
+  const emDespesas = daTela(PAR_DA_PARCELA_PAGA, [], "expense");
+  assert.equal(emDespesas[0].id, emTransferencias[0].id);
+  assert.equal(emDespesas[0].natureza, emTransferencias[0].natureza);
+});
+
+test("a excecao NAO vaza para Receitas -- a perna de entrada nao e receita nova", () => {
+  // A armadilha 1 da HMO-380, e sao DOIS mecanismos que a impedem: a guarda
+  // `tipo === "expense"` da excecao e o sinal NEGATIVO da propria funcao.
+  // O principal voltando para a conta de investimento nao e receita
+  // (`PARCELA_FORA_DO_REALIZADO`), e a perna positiva e de-duplicada.
+  const emReceitas = daTela(PAR_DA_PARCELA_PAGA, [], "income");
+
+  assert.equal(emReceitas.length, 0);
+  assert.equal(resumoDaTela(emReceitas).realizado, 0);
+});
+
+test("no mes da baixa a parcela conta UMA vez: a previsao `paid` nao soma junto", () => {
+  // O PONTO 2 DA ISSUE, que pedia assercao e nao confianca. A rota NAO filtra
+  // `status` no SQL de proposito, entao a previsao PAGA chega aqui junto com as
+  // duas pernas que a baixa gravou -- e e `linhaPrevista` quem a descarta
+  // (`paid` esta em `STATUS_QUE_SAI_DO_PREVISTO`), ANTES da excecao do
+  // auto-emprestimo ser consultada.
+  const previsaoPaga = prevista({
+    id: "s-mybank",
+    description: "SONDA HMO382 moto eletrica (1/24)",
+    amount: "10.00",
+    direction: "transfer",
+    notes: NOTA_DA_PARCELA_PAGA,
+    status: "paid",
+    effective_status: "paid",
+  });
+
+  const linhas = daTela(PAR_DA_PARCELA_PAGA, [previsaoPaga], "expense");
+
+  // CONTROLE POSITIVO: a MESMA previsao `pending` entra, pela excecao do lado
+  // previsto. Sem ele este teste passaria vacuo se a previsao nunca chegasse a
+  // ser considerada (`sonda-de-horizonte-vence-fora-da-janela-e-mede-zero`).
+  const pendente = daTela(
+    PAR_DA_PARCELA_PAGA,
+    [{ ...previsaoPaga, status: "pending", effective_status: "pending" }],
+    "expense"
+  );
+  assert.equal(pendente.length, 2, "pendente, a previsao entra -- o controle");
+  assert.equal(resumoDaTela(pendente).previsto, 10);
+
+  // E PAGA, ELA NAO ENTRA: uma linha so, a realizada, e o previsto e ZERO.
+  assert.equal(linhas.length, 1, "a parcela paga nao conta duas vezes");
+  assert.equal(linhas[0].origem, "realizado");
+  assert.equal(resumoDaTela(linhas).previsto, 0);
+  assert.equal(resumoDaTela(linhas).realizado, 10);
+  // O TOTAL DO MES: R$ 10,00 e nao R$ 20,00. E a aritmetica que a issue pediu.
+  assert.equal(resumoDaTela(linhas).total, 10);
+});
+
+test("ehSaidaDaParcelaDoAutoEmprestimo: os TRES criterios, um a um", () => {
+  const saida = {
+    amount: -10,
+    transaction_type: "transfer",
+    notes: NOTA_DA_PARCELA_PAGA,
+    counterpart_transaction_id: null,
+  };
+
+  assert.equal(ehSaidaDaParcelaDoAutoEmprestimo(saida), true);
+
+  // 1. O `transaction_type` GRAVADO. Sem ele a excecao engoliria linhas que o
+  //    caminho comum deve peneirar -- `ehGastoNoCartao` em particular --, e a
+  //    leitura e da coluna CRUA: pelo SINAL esta linha e uma despesa comum.
+  assert.equal(
+    ehSaidaDaParcelaDoAutoEmprestimo({ ...saida, transaction_type: "expense" }),
+    false
+  );
+  assert.equal(
+    ehSaidaDaParcelaDoAutoEmprestimo({ ...saida, transaction_type: null }),
+    false
+  );
+  const { transaction_type: _tipo, ...semTipo } = saida;
+  assert.equal(ehSaidaDaParcelaDoAutoEmprestimo(semTipo), false);
+
+  // 2. A CHAVE CANONICA, no COMECO da string -- o mesmo criterio dos outros tres
+  //    consultores do MyBank, pelo `temOEloDaParcelaDoMyBank` que todos chamam.
+  assert.equal(ehSaidaDaParcelaDoAutoEmprestimo({ ...saida, notes: null }), false);
+  assert.equal(ehSaidaDaParcelaDoAutoEmprestimo({ ...saida, notes: undefined }), false);
+  const { notes: _notas, ...semNota } = saida;
+  assert.equal(ehSaidaDaParcelaDoAutoEmprestimo(semNota), false);
+  assert.equal(
+    ehSaidaDaParcelaDoAutoEmprestimo({ ...saida, notes: "paguei fora do mybank: dinheiro" }),
+    false
+  );
+  assert.equal(
+    ehSaidaDaParcelaDoAutoEmprestimo({ ...saida, notes: "fatura:2026-11-01:cartao" }),
+    false
+  );
+
+  // 3. O SINAL NEGATIVO, que e quem separa esta perna da OUTRA do mesmo par --
+  //    a de entrada tem a mesma nota e o mesmo tipo. O zero nao e saida de nada
+  //    (a decisao do zero da armadilha 3), e a string negativa casa porque o
+  //    valor chega como texto do PostgREST.
+  assert.equal(ehSaidaDaParcelaDoAutoEmprestimo({ ...saida, amount: 10 }), false);
+  assert.equal(ehSaidaDaParcelaDoAutoEmprestimo({ ...saida, amount: 0 }), false);
+  assert.equal(ehSaidaDaParcelaDoAutoEmprestimo({ ...saida, amount: "-10.00" }), true);
+
+  // NAO HA CRITERIO DE ELO, e a assercao e o que impede alguem de acrescentar
+  // um: a perna de saida ja nunca carrega o elo (o 015 grava so na de entrada),
+  // e exigir `IS NULL` faria a parcela paga sumir de Despesas de novo no dia em
+  // que o elo passasse a ser gravado nas duas.
+  assert.equal(
+    ehSaidaDaParcelaDoAutoEmprestimo({ ...saida, counterpart_transaction_id: "x" }),
+    true
+  );
+
+  // E AS DUAS PERGUNTAS SAO DIFERENTES: a perna solta do Caso B (positiva, sem
+  // elo) NAO e a de saida do Caso A, e vice-versa. Nenhuma das duas funcoes
+  // responde pelo caso da outra -- e por isso o selo precisa das duas.
+  assert.equal(ehEntradaSoltaDoMyBank(saida), false);
+  assert.equal(ehSaidaDaParcelaDoAutoEmprestimo(PERNA_SOLTA_DO_MYBANK), false);
+  assert.equal(ehEntradaSoltaDoMyBank(PERNA_SOLTA_DO_MYBANK), true);
 });
 
 // -----------------------------------------------------
