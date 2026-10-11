@@ -7274,3 +7274,40 @@ jobs:
       # normaliza o nome antes de montar o objeto.
       - name: Mutantes do pra quem pagar
         run: npm run mutantes:pra-quem-pagar
+
+      # -----------------------------------------------------------------------
+      # MyBank F2 -- a serie do emprestimo e as duas rotas (HMO-370)
+      # -----------------------------------------------------------------------
+      # SEM `paths:`, como todo o resto deste workflow, e aqui isso e o que
+      # importa: a suite nao toca no Postgres (o duble de client responde no
+      # lugar dele), entao ela nao pertence ao db-verify -- que precisa do
+      # servico de banco e e filtrado por `paths:`. Um dia em que alguem mexa so
+      # em `lib/safe-to-spend.ts` e passe a contar a parcela do MyBank duas
+      # vezes, este step roda de qualquer jeito.
+      #
+      # O que ela prova, em uma linha cada:
+      #   * 24x de R$ 10.000 (que NAO divide redondo) somando exatamente o
+      #     principal, com a ultima parcela absorvendo o centavo -- e aqui a
+      #     ultima e a MENOR, que e o caso que distingue `round` de `ceil`;
+      #   * o CASO B nao escrevendo em `scheduled_transactions` nem em
+      #     `financial_transactions`: a assercao e de AUSENCIA, porque emprestar
+      #     para outra pessoa criando conta a pagar no meu nome nao da erro em
+      #     lugar nenhum -- as linhas sao minhas e a RLS as aceita;
+      #   * o devedor nao alcancando `amount` pelo corpo do pedido (o outro lado
+      #     da `mybank_installments_trava_do_devedor` da 053);
+      #   * o UPDATE filtrado pela RLS nao respondendo sucesso.
+      - name: MyBank -- a serie do emprestimo e as rotas
+        run: npm run test:emprestimo-do-mybank
+
+      # Controle negativo do step acima: 19 mutantes, 19 mortos.
+      #
+      # Os dois que a issue HMO-370 pede por nome sao os dois primeiros da lista
+      # do runner: `transfer` virando `expense` no Caso A (o dinheiro sai da
+      # conta corrente e nao chega a de investimento) e o Caso B gravando linha
+      # minha. A guarda do Caso B tem DUAS linhas e por isso tem DOIS mutantes:
+      # apagar so a do caso nao muda o que a rota faz no pedido normal -- lá o
+      # `contaDePagamentoId` ja chega `null` e a segunda guarda devolve `[]` de
+      # qualquer jeito. Quem mata o mutante da guarda do caso e, e so, o teste
+      # que manda `conta_de_pagamento_id` junto com `devedor_id`.
+      - name: Mutantes do MyBank F2
+        run: npm run mutantes:emprestimo-do-mybank

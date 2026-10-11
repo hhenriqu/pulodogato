@@ -520,3 +520,12 @@ next-env.d.ts
 # Artefato, nao fonte. Um `.tmp-*` fora do .gitignore chega a ser commitado em
 # cima de arquivo de fonte -- ver a entrada do .tmp-parcelamento acima.
 /.tmp-portao-de-conexao/
+
+# saida do `npm run test:emprestimo-do-mybank` (HMO-370, MyBank F2): os route
+# handlers de /api/mybank/loans e /api/mybank/installments/[id] compilados, com
+# os clients do Supabase trocados por duble, para a sonda CHAMAR os handlers e
+# olhar o que eles MANDARAM gravar -- em especial que o Caso B (emprestei para
+# uma conexao) nao escreve linha nenhuma em `scheduled_transactions`.
+# Artefato, nao fonte. Um `.tmp-*` fora do .gitignore chega a ser commitado em
+# cima de arquivo de fonte -- ver a entrada do .tmp-parcelamento acima.
+/.tmp-emprestimo-do-mybank/

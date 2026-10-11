@@ -1,0 +1,297 @@
+#!/usr/bin/env node
+// Prova de mutacao do MyBank F2 -- a serie do emprestimo e as duas rotas
+// (HMO-370).
+//
+//   node scripts/mutantes-emprestimo-do-mybank.mjs
+//
+// Cada entrada estraga UMA decisao; `npm run test:emprestimo-do-mybank` tem de
+// ficar VERMELHA em todas. Mutante que sobrevive e um trecho que nenhuma
+// assercao distingue.
+//
+// OS DOIS QUE A ISSUE NOMEIA SAO OS DOIS PRIMEIROS DA LISTA
+// ---------------------------------------------------------
+// `O CASO A GRAVA expense EM VEZ DE transfer` e `O CASO B GRAVA LINHA MINHA`
+// sao os mutantes que a HMO-370 pede por nome, e se qualquer um dos dois
+// sobrevive nenhum outro compensa -- a suite nao estaria medindo a feature.
+//
+// POR QUE OS DOIS SAO DINHEIRO ERRADO E NAO UM ERRO
+// -------------------------------------------------
+// O primeiro: com `expense` no lugar de `transfer`, a baixa da previsao cria UMA
+// perna negativa na conta corrente e a conta de investimento nunca recebe nada.
+// R$ 1.000 por mes saem do patrimonio e nao chegam a lugar nenhum. O CHECK do
+// destino (`scheduled_transactions_destino_check`, 038) e o que torna isso
+// detectavel NO BANCO -- mas o banco so e consultado se a linha chegar la, e e
+// a rota que decide o tipo.
+//
+// O segundo: com a guarda do caso apagada, emprestar R$ 24.000 para a Lais cria
+// 24 contas a pagar NO MEU NOME. O safe-to-spend desconta R$ 1.000 por mes de
+// um dinheiro que ELA paga, Despesas infla, e nenhuma tela diz por que. Nada no
+// caminho reclama: as linhas sao minhas, a RLS as aceita.
+//
+// A GUARDA DO CASO B TEM DUAS LINHAS, E ELAS SAO MUTADAS JUNTAS
+// ------------------------------------------------------------
+// `previsoesDoEmprestimo` tem `if (caso !== "auto") return []` E
+// `if (!contaDePagamentoId) return []`. Apagar so a primeira nao muda o que a
+// ROTA faz no Caso B normal: lá o `contaDePagamentoId` ja chega `null`, e a
+// segunda guarda devolve `[]` de qualquer jeito. Por isso a entrega tem DOIS
+// mutantes -- um que apaga as duas (o estado "a feature nunca existiu") e um
+// que apaga so a do caso (que o teste do corpo com `conta_de_pagamento_id`
+// mata, e so ele). Ver `duas-guardas-redundantes-fazem-os-dois-mutantes-
+// sobreviverem`.
+//
+// A FORMA DA LISTA E A DA FAMILIA TUPLA DE ARIDADE 4
+// -------------------------------------------------
+// `scripts/mede-ancora-ambigua.mjs` -- a guarda que reprova ancora morta,
+// ambigua ou de arquivo inexistente em TODO runner do repo -- le a lista de
+// verdade em vez de a copiar, e so sabe ler duas formas. Dai a ordem
+// `[alvo, rotulo, de, para]` e o `original` montado DEPOIS da lista. As ancoras
+// sao strings de uma linha com `\n` escapado, nunca template literal.
+import { readFileSync } from "node:fs";
+
+import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
+
+const LIB = "lib/emprestimo-do-mybank.ts";
+const LOANS = "app/api/mybank/loans/route.ts";
+const PARCELA = "app/api/mybank/installments/[id]/route.ts";
+
+/** [alvo, rotulo, de, para] */
+const mutantes = [
+  // =========================================================================
+  // OS DOIS QUE A ISSUE NOMEIA
+  // =========================================================================
+  [
+    LIB,
+    "O CASO A GRAVA expense EM VEZ DE transfer (o dinheiro sai da corrente e nao chega ao investimento)",
+    '    transaction_type: "transfer" as const,',
+    '    transaction_type: "expense" as unknown as "transfer",',
+  ],
+  [
+    LIB,
+    "O CASO B GRAVA LINHA MINHA (as duas guardas somem: 24 contas a pagar por um dinheiro que ela paga)",
+    '  if (params.caso !== "auto") return [];\n  if (!params.contaDePagamentoId) return [];',
+    '  const forcado = params.contaDePagamentoId ?? params.contaCredoraId;\n  if (!forcado) return [];',
+  ],
+  [
+    LIB,
+    "O CASO B GRAVA LINHA MINHA so quando o corpo manda conta de pagamento (a guarda do CASO sozinha)",
+    '  if (params.caso !== "auto") return [];\n  if (!params.contaDePagamentoId) return [];',
+    "  if (!params.contaDePagamentoId) return [];",
+  ],
+
+  // =========================================================================
+  // A OUTRA METADE DO MESMO PAR: o recebimento do Caso B
+  // =========================================================================
+  [
+    LIB,
+    "a perna de entrada nasce no CASO ERRADO (o auto-emprestimo ganha uma 3a perna e conta o dinheiro duas vezes)",
+    '  if (params.caso !== "conexao") return null;',
+    '  if (params.caso !== "auto") return null;',
+  ],
+  [
+    PARCELA,
+    "o recebimento vira `income`: principal voltando conta como receita 24 vezes",
+    "        ...perna,",
+    '        ...perna,\n        transaction_type: "income" as unknown as "transfer",',
+  ],
+  [
+    PARCELA,
+    "o CASO A aceita `paid` aqui: emprestimo quitado sem nada ter saido da conta",
+    '    if (caso === "auto") {\n      return NextResponse.json(',
+    '    if (false) {\n      return NextResponse.json(',
+  ],
+
+  // =========================================================================
+  // A ARITMETICA, que e importada e pode deixar de ser usada
+  // =========================================================================
+  [
+    LIB,
+    "a parcela vai NEGATIVA para o banco (23514 na serie inteira, por `expense`)",
+    '    amount: valorGravado("income", p.valor),',
+    '    amount: valorGravado("expense", p.valor),',
+  ],
+  [
+    LIB,
+    "a serie comeca na parcela 2: a soma das parcelas deixa de fechar com o principal",
+    "    parcelaAtual: 1,",
+    "    parcelaAtual: 2,",
+  ],
+  [
+    LOANS,
+    "`principal` grava o valor DIGITADO: R$ 1.000 num emprestimo de R$ 24.000",
+    "        description: String(descricao).trim(),\n        principal: serieFechada.valorTotal,",
+    "        description: String(descricao).trim(),\n        principal: Number(valor),",
+  ],
+
+  // =========================================================================
+  // AS DUAS TRAVAS DA 053, em forma de pergunta da rota
+  // =========================================================================
+  [
+    LIB,
+    "a trava da conta de investimento cai: o MyBank empresta da conta corrente",
+    '  if (params.contaCredora.account_type !== "investment") {',
+    "  if (false) {",
+  ],
+  [
+    LIB,
+    "a trava da conexao cai: da para criar divida no nome de um estranho",
+    '  if (params.caso === "conexao" && !params.conexaoAceita) {',
+    "  if (false) {",
+  ],
+  [
+    LOANS,
+    "a conexao PENDENTE serve: quem so recebeu o convite ja pode ser devedor",
+    '        .eq("status", "accepted")',
+    '        .neq("status", "nunca-este-valor")',
+  ],
+
+  // =========================================================================
+  // O LADO DO DEVEDOR -- o que a policy nao consegue fazer
+  // =========================================================================
+  [
+    PARCELA,
+    "o devedor passa a mexer no `amount` pelo corpo do pedido (a divida encolhe)",
+    '        .update({ status: "reported", reported_at: new Date().toISOString() })',
+    '        .update({ status: "reported", reported_at: new Date().toISOString(), amount: body.amount })',
+  ],
+  [
+    PARCELA,
+    "o devedor leva a parcela a `paid`: quem nao ve o dinheiro chegar confirma",
+    "    if (!souOCredor) {",
+    "    if (false) {",
+  ],
+  [
+    PARCELA,
+    "o aviso aceita qualquer estado de partida (parcela paga volta a `reported`)",
+    '      if (parcela.status !== "pending") {',
+    "      if (false) {",
+  ],
+  [
+    PARCELA,
+    "o UPDATE filtrado pela RLS responde SUCESSO (zero linha alcancada, 200 na tela)",
+    "      if (erroDoAviso || !atualizadas || atualizadas.length === 0) {",
+    "      if (erroDoAviso) {",
+  ],
+
+  // =========================================================================
+  // AS LEITURAS
+  // =========================================================================
+  [
+    LOANS,
+    'o GET perde o `.eq("lender_user_id")`: o que EU devo entra na lista "A receber"',
+    '      .eq("lender_user_id", user.id)',
+    '      .neq("lender_user_id", "nunca-este-id")',
+  ],
+  [
+    LIB,
+    "`parcelaAConfirmar` le o estado errado: quem avisou nao ganha a acao Confirmar",
+    '  return parcela.status === "reported";',
+    '  return parcela.status === "paid";',
+  ],
+
+  // =========================================================================
+  // O DESFAZER do passo 3
+  // =========================================================================
+  [
+    LOANS,
+    "previsao que falha deixa o emprestimo gravado: divida que a pessoa nunca ve para pagar",
+    '        await supabase.from("mybank_loans").delete().eq("id", emprestimo.id);\n        return NextResponse.json(\n          {\n            error:\n              "Não foi possível agendar as parcelas em Contas a Pagar. Nada foi gravado.",',
+    '        return NextResponse.json(\n          {\n            error:\n              "Não foi possível agendar as parcelas em Contas a Pagar. Nada foi gravado.",',
+  ],
+];
+
+const SUITE = "test:emprestimo-do-mybank";
+
+const bloco = criarBlocoDeMutantes({
+  suites: [SUITE],
+  rotulo: "emprestimo-do-mybank",
+});
+
+// Lido da arvore de verdade, que e o original por construcao: nada mais aqui
+// escreve nela. Montado DEPOIS da lista -- ver A FORMA DA LISTA, no cabecalho.
+const original = new Map();
+for (const arquivo of new Set(mutantes.map(([alvo]) => alvo))) {
+  original.set(arquivo, readFileSync(arquivo, "utf8"));
+}
+
+// CONTROLE POSITIVO: a arvore limpa tem de passar. Sem ele, uma suite ja
+// vermelha -- ou um erro de script -- deixaria TODO mutante aparecendo como
+// morto e o placar sairia cheio sem medir nada.
+const limpo = bloco.rodar("<arvore limpa>", {}, SUITE);
+if (!limpo.verde) {
+  console.error(
+    "controle positivo REPROVOU: a suite ja esta vermelha sem mutante nenhum. " +
+      "Todo mutante abaixo apareceria como MORTO sem medir nada."
+  );
+  bloco.fechar();
+  process.exit(1);
+}
+console.log("controle positivo: arvore limpa VERDE.\n");
+
+let mortos = 0;
+const sobreviventes = [];
+
+for (const [arquivo, rotulo, de, para] of mutantes) {
+  const fonte = original.get(arquivo);
+  const ocorrencias = fonte.split(de).length - 1;
+
+  if (ocorrencias === 0) {
+    console.error(
+      `ANCORA MORTA  ${rotulo}\n  ${arquivo} nao contem o trecho procurado. ` +
+        "Isto e erro do runner, nao mutante morto -- conserte a ancora."
+    );
+    bloco.fechar();
+    process.exit(1);
+  }
+
+  // A TRAVA DE OCORRENCIA UNICA. `String.replace` troca a PRIMEIRA ocorrencia:
+  // um `de` que aparece duas vezes muta um lugar que o rotulo nao descreve. O
+  // risco e concreto aqui -- os comentarios destes arquivos CITAM as proprias
+  // ancoras (`principal: serieFechada.valorTotal` aparece na prosa que explica
+  // por que ele nao e o valor digitado), e uma ancora curta demais mutaria a
+  // explicacao e deixaria o codigo intacto, com o placar dizendo "sobreviveu".
+  if (ocorrencias > 1) {
+    console.error(
+      `ANCORA AMBIGUA  ${rotulo}\n  o trecho aparece ${ocorrencias}x em ${arquivo} ` +
+        "-- o replace muta so a 1a. Isto e erro do runner; estreite a ancora."
+    );
+    bloco.fechar();
+    process.exit(1);
+  }
+
+  const mutado = fonte.replace(de, para);
+
+  if (mutado === fonte) {
+    console.error(
+      `MUTACAO NO-OP  ${rotulo}\n  o replace nao mudou o texto de ${arquivo}.`
+    );
+    bloco.fechar();
+    process.exit(1);
+  }
+
+  const r = bloco.rodar(rotulo, { [arquivo]: mutado }, SUITE);
+
+  if (!r.verde) {
+    mortos += 1;
+    console.log(`MORTO      ${rotulo}`);
+  } else {
+    sobreviventes.push(rotulo);
+    console.log(`SOBREVIVEU ${rotulo}`);
+    if (r.mudouASaida === false) {
+      console.log(
+        "           (saida compilada identica a da arvore limpa: EQUIVALENTE)"
+      );
+    }
+  }
+}
+
+bloco.fechar();
+
+console.log(`\n${mortos}/${mutantes.length} mortos.`);
+if (sobreviventes.length > 0) {
+  console.log("\nsobreviventes:");
+  for (const s of sobreviventes) console.log(`  - ${s}`);
+}
+
+// Sai 1 com sobrevivente: um runner que saisse 0 deixaria o step de CI verde
+// para sempre e provaria o mesmo que step nenhum.
+process.exit(sobreviventes.length === 0 ? 0 : 1);

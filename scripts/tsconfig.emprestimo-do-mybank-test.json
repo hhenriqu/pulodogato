@@ -1,0 +1,50 @@
+{
+  "//": [
+    "MyBank F2 -- a aritmetica do emprestimo e as rotas (HMO-370).",
+    "",
+    "Compila as DUAS rotas e, por arrasto do tsc, `lib/emprestimo-do-mybank.ts`",
+    "com as dependencias dele (lib/lancamento.ts, lib/transferencia.ts) e",
+    "utils/supabase/server.ts.",
+    "",
+    "  * app/api/mybank/loans/route.ts -- POST (cria) e GET (lista);",
+    "  * app/api/mybank/installments/[id]/route.ts -- PATCH (avisa/confirma).",
+    "",
+    "POR QUE A FUNCAO PURA NAO TEM TSCONFIG PROPRIO",
+    "A suite mede as duas coisas que a issue pede -- a serie de 24x fechando com",
+    "o principal, e as rotas -- e o emit das rotas JA inclui a funcao pura. Um",
+    "segundo alvo compilaria `lib/emprestimo-do-mybank.ts` duas vezes para provar",
+    "o mesmo, e cada alvo e um processo de tsc (ver",
+    "`lote-de-compilacao-nao-ajuda-um-alvo-por-processo`).",
+    "",
+    "POR QUE AS ROTAS, E NAO SO A FUNCAO PURA",
+    "`previsoesDoEmprestimo` devolver `[]` no Caso B nao prova que a ROTA nao",
+    "escreve em `scheduled_transactions`: a rota podia montar a linha a mao, ou",
+    "chamar a funcao e ignorar o retorno. A promessa da issue -- 'pra mim nao",
+    "deve aparecer como despesa' -- vive na fiacao, e a unica forma de medi-la e",
+    "olhar o que a rota MANDOU gravar. Dai o duble de client.",
+    "",
+    "`rootDir` e a raiz do projeto: as rotas importam @/lib e @/utils, e com",
+    "rootDir em app/ o tsc reprova com TS6059. O emit espelha a raiz, entao o",
+    "passo do resolve-aliases roda com --espelha-raiz.",
+    "",
+    "utils/supabase/server.ts e compilado junto e DEPOIS sobrescrito pelo",
+    "scripts/monta-duble-de-rota.mjs -- o modulo real importa `next/headers`,",
+    "que nao roda fora do runtime do Next."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-emprestimo-do-mybank",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../app/api/mybank/loans/route.ts",
+    "../app/api/mybank/installments/[id]/route.ts"
+  ]
+}
