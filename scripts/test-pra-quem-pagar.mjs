@@ -50,7 +50,6 @@ import assert from "node:assert/strict";
 const { destinosDoPagamento, rotuloDoDestino, totalPraQuemPagar, DESTINO_SEM_NOME } =
   await import("../.tmp-pra-quem-pagar/lib/pra-quem-pagar.js");
 
-const EU = "11111111-0000-0000-0000-000000000001";
 const LETICIA = "22222222-0000-0000-0000-000000000002";
 const ANA = "33333333-0000-0000-0000-000000000003";
 const CASA = "44444444-0000-0000-0000-000000000004";
@@ -85,7 +84,19 @@ function parteDoGrupo({
   return { id, description, amount, due_date, status, group_id, pagar_para };
 }
 
-/** A linha pessoal, e a de grupo que EU frontei: as duas sem `pagar_para`. */
+/**
+ * A linha pessoal, e a de grupo que EU frontei: as duas sem `pagar_para`.
+ *
+ * E AQUI ESTA TODO O "EU" DESTA SUITE -- na AUSENCIA do campo, e nao numa
+ * constante de `user_id`. `destinosDoPagamento` nao recebe `meuUserId`: quem
+ * sabe quem sou eu e `previstasPelaRegraDoPagador`, um passo antes, e o que
+ * chega aqui ja e o resultado dessa decisao. O `const EU` que a suite irma
+ * (`test-regra-do-pagador.mjs`) tem e load-bearing la justamente porque a
+ * funcao DELA leva `meuUserId` como terceiro argumento -- copiar a constante
+ * para ca junto com o cabecalho e o que a HMO-388 removeu, e re-adiciona-la
+ * nao daria caso de teste nenhum: `pagar_para` apontando para mim e estado
+ * que `euFrontoAConta` barra um passo antes de este modulo existir.
+ */
 const PESSOAL = {
   id: "prev-pessoal",
   description: "Internet",
