@@ -50,7 +50,6 @@ import assert from "node:assert/strict";
 const { destinosDoPagamento, rotuloDoDestino, totalPraQuemPagar, DESTINO_SEM_NOME } =
   await import("../.tmp-pra-quem-pagar/lib/pra-quem-pagar.js");
 
-const EU = "11111111-0000-0000-0000-000000000001";
 const LETICIA = "22222222-0000-0000-0000-000000000002";
 const ANA = "33333333-0000-0000-0000-000000000003";
 const CASA = "44444444-0000-0000-0000-000000000004";
@@ -85,7 +84,26 @@ function parteDoGrupo({
   return { id, description, amount, due_date, status, group_id, pagar_para };
 }
 
-/** A linha pessoal, e a de grupo que EU frontei: as duas sem `pagar_para`. */
+/**
+ * A linha pessoal, e a de grupo que EU frontei: as duas sem `pagar_para`.
+ *
+ * E POR ISSO QUE NAO HA AQUI UMA CONSTANTE COM O MEU `user_id`, e a ausencia e
+ * deliberada -- um id meu nesta lista de fixtures nao teria onde entrar:
+ * `PrevistaComDestino` nao declara campo de dono, e `destinosDoPagamento` recebe
+ * so `(previstas, nomes, gruposPorId)`. A minha identidade nao chega a este
+ * modulo.
+ *
+ * E `pagar_para` igual ao meu id nao e estado alcancavel:
+ * `previstasPelaRegraDoPagador` devolve a linha INTACTA quando
+ * `euFrontoAConta(p.user_id, meuUserId)` (lib/regra-do-pagador.ts), entao o
+ * carimbo so carrega id de OUTRO membro -- "a tela diria «pagar para voce»" e
+ * nomeado no cabecalho de la como o defeito que aquele ramo existe para nao
+ * cometer. Uma fixture que carimbasse `pagar_para` com o MEU id afirmaria sobre
+ * um estado que a funcao de um passo antes nao sabe produzir.
+ *
+ * Estas duas constantes sao, portanto, a UNICA forma que "a minha linha" tem de
+ * chegar aqui: `pagar_para` ausente.
+ */
 const PESSOAL = {
   id: "prev-pessoal",
   description: "Internet",
