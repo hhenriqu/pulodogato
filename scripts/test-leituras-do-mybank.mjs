@@ -685,6 +685,241 @@ test("leitura 2: a parcela `paid` nao conta como a receber, a `reported` conta",
 });
 
 // =====================================================
+// LEITURA 4 -- a aba Despesas do DEVEDOR (HMO-377)
+// =====================================================
+// A leitura que a HMO-372 deixou de fora de proposito, e que esta issue liga.
+//
+// O NUMERO MEDIDO NA main 40c7b01, do lado da Lais, no MESMO periodo:
+//
+//   * Contas a Pagar  ....... R$ 1.200,00  (R$ 200 de luz + a parcela de R$ 1.000)
+//   * aba Despesas .......... R$   200,00  (uma linha so, a de luz)
+//
+// Duas telas do mesmo app, dois numeros para a MESMA divida, e nada na tela
+// dizendo por que -- a familia `despesa-de-grupo-tem-tres-convencoes`. Depois
+// desta issue as duas dizem R$ 1.200,00.
+//
+// O que a devedora tem: a conta de luz DELA (R$ 200) e a parcela pela view.
+
+/** O retrato da Lais: a luz e dela, e nao ha previsao de MyBank nenhuma. */
+const COMO_A_LAIS_VE = {
+  ...SEM_MYBANK,
+  financial_accounts: [],
+  scheduled_transactions_effective: [{ ...CONTA_DE_LUZ, user_id: A_LAIS }],
+};
+
+test("leitura 4: a parcela que a devedora DEVE aparece na aba Despesas -- R$ 200 vira R$ 1.200", async () => {
+  const d = duble(A_LAIS, {
+    ...COMO_A_LAIS_VE,
+    mybank_due_entries: [DIVIDA_DA_LAIS],
+  });
+
+  const { status, corpo } = await chamar(
+    MOVIMENTACAO.GET,
+    d,
+    `http://t/api/movimentacoes/resumo?tipo=expense&de=${HOJE}&ate=${FIM_DO_MES}`
+  );
+
+  assert.equal(status, 200);
+
+  // O NUMERO. R$ 1.200,00 contra os R$ 200,00 que esta mesma aba respondia
+  // antes -- e os R$ 1.200,00 com que Contas a Pagar ja concordava (leitura 1b).
+  assert.equal(corpo.resumo.previsto, 1200);
+  assert.equal(corpo.resumo.total, 1200);
+  assert.equal(corpo.resumo.realizado, 0, "nada foi pago: a parcela e promessa");
+
+  // E A CONTAGEM SOBE JUNTO, ao contrario do reembolso de grupo e do «a
+  // receber» do MyBank: ali a promessa NAO vira linha e `quantidadePrevista`
+  // nao podia subir (a frase "N lançamento(s)" prometeria uma linha que a lista
+  // nao tem). Aqui ela VIRA linha, entao o contador e a lista concordam.
+  assert.equal(corpo.resumo.quantidadePrevista, 2);
+  assert.equal(corpo.linhas.length, 2);
+
+  const parcela = corpo.linhas.find((l) => l.natureza === "mybank");
+  assert.ok(parcela, "a parcela devida tem de estar na lista, com o selo");
+  assert.equal(parcela.valor, 1000, "a string numeric(15,2) tem de virar numero");
+  assert.equal(parcela.tipo, "expense");
+  assert.equal(parcela.origem, "previsto");
+  assert.equal(parcela.descricao, "Moto elétrica");
+  assert.equal(parcela.data, VENCE_DIA_10);
+  assert.equal(parcela.situacao, "pending");
+
+  // A CHAVE NAO E UM UUID, e isso e o que impede a acao de ir para a rota
+  // errada: `mybank:<id>` nao passa por um `/api/scheduled-transactions/<uuid>`
+  // plausivel. A linha tambem nao e `gravada`, e e isso que faz
+  // `lib/acoes-da-linha.ts` recusar os tres botoes (regra 3) -- a assercao sobre
+  // a recusa em si mora em scripts/test-acoes-da-linha.mjs, que e quem compila
+  // aquele modulo.
+  assert.equal(parcela.gravada, false);
+  assert.equal(parcela.id, `mybank:${PARCELA_3_DE_24}`);
+  assert.ok(
+    !/^[0-9a-f-]{36}$/.test(parcela.id),
+    "a chave da linha nao pode ser um uuid nu: ela viraria uma URL de scheduled-transactions"
+  );
+
+  // E A LUZ NAO SE MEXEU. Sem esta assercao, um defeito que trocasse a conta de
+  // luz pela parcela (em vez de acrescenta-la) daria os mesmos R$ 1.200 se os
+  // valores coincidissem -- e daria 1 linha, nao 2.
+  const luz = corpo.linhas.find((l) => l.descricao === "Luz");
+  assert.ok(luz, "a conta de luz da devedora continua na lista");
+  assert.equal(luz.valor, 200);
+  assert.equal(luz.natureza, "despesa");
+});
+
+test("leitura 4: a parcela entra UMA vez -- nao ha linha repetida nem valor dobrado", async () => {
+  // O CONTROLE QUE IMPORTA, dito pela issue: "a parcela nao pode passar a ser
+  // contada DUAS vezes". Ha dois jeitos de ela dobrar, e os dois estao medidos:
+  //
+  //   * a MESMA fonte entrando duas vezes na lista (duas linhas de R$ 1.000);
+  //   * as DUAS fontes casando na mesma parcela -- a view E uma previsao em
+  //     `scheduled_transactions` com a mesma chave `mybank:<id>`. E esse o
+  //     cenario deste caso: o fixture poe as DUAS, que e o estado que a view
+  //     impede no banco (`borrower IS DISTINCT FROM lender`, 053) e que um
+  //     `CREATE OR REPLACE VIEW` descuidado reabriria.
+  const d = duble(A_LAIS, {
+    ...COMO_A_LAIS_VE,
+    mybank_due_entries: [DIVIDA_DA_LAIS],
+  });
+
+  const { corpo } = await chamar(
+    MOVIMENTACAO.GET,
+    d,
+    `http://t/api/movimentacoes/resumo?tipo=expense&de=${HOJE}&ate=${FIM_DO_MES}`
+  );
+
+  const comAChave = corpo.linhas.filter((l) =>
+    String(l.id ?? "").startsWith("mybank:")
+  );
+  assert.equal(comAChave.length, 1, "uma linha por parcela, nunca duas");
+
+  // A SOMA E O SEGUNDO LADO DA MESMA PERGUNTA, e ela nao e redundante com a
+  // contagem: `csv-nao-agrega-filtro-perdido-vira-linha-repetida` -- o total
+  // pode fechar com a lista dobrada se a soma vier de outro lugar, e a lista
+  // pode dobrar com o total certo. As duas assercoes juntas fecham os dois.
+  assert.equal(corpo.resumo.previsto, 1200);
+});
+
+test("leitura 4: a parcela da devedora NAO vaza para Transferencias nem para Receitas", async () => {
+  // A DIFERENCA COM O CASO A, e ela e deliberada. A parcela do auto-emprestimo
+  // aparece nas DUAS abas (Despesas e Transferencias) porque ela E uma
+  // transferencia: o dinheiro vai da minha corrente para a MINHA conta de
+  // investimento. Esta aqui sai da conta da devedora para a conta de OUTRA
+  // PESSOA -- dizer "andou entre as suas contas" sobre ela seria uma frase
+  // falsa na tela. `direction: 'expense'` em `parcelasDevidasNaAgenda` e o que
+  // decide, e nenhuma excecao de aba e aberta para ela.
+  for (const tipo of ["transfer", "income"]) {
+    const d = duble(A_LAIS, {
+      ...COMO_A_LAIS_VE,
+      scheduled_transactions_effective: [],
+      mybank_due_entries: [DIVIDA_DA_LAIS],
+    });
+
+    const { corpo } = await chamar(
+      MOVIMENTACAO.GET,
+      d,
+      `http://t/api/movimentacoes/resumo?tipo=${tipo}&de=${HOJE}&ate=${FIM_DO_MES}`
+    );
+
+    assert.equal(corpo.linhas.length, 0, `a parcela nao pode aparecer em ${tipo}`);
+    assert.equal(corpo.resumo.previsto, 0, `nem somar no previsto de ${tipo}`);
+
+    // E A ROTA NEM CONSULTOU A VIEW nessas duas abas: a leitura e guardada por
+    // `tela.tipo === "expense"`. Sem esta assercao, uma versao que consultasse
+    // sempre e descartasse depois passaria igual -- e gastaria uma consulta por
+    // leitura de Receitas em toda sessao do app.
+    assert.ok(
+      !d.lidas.some((l) => l.tabela === "mybank_due_entries"),
+      `a aba ${tipo} nao tem o que fazer com a divida do MyBank: nao deve consultar a view`
+    );
+  }
+});
+
+test("leitura 4: o RECORTE DE DATA vale -- a parcela de abril nao entra na aba de marco", async () => {
+  // `leitura-sem-recorte-de-data-soma-o-horizonte`: a view e a divida INTEIRA
+  // (24 parcelas de R$ 1.000). Sem o recorte, o «Previsto» de marco somaria os
+  // R$ 24.000 do emprestimo todo. As DUAS pontas da janela vao na chamada --
+  // diferente do safe-to-spend, que passa `de: null` de proposito.
+  const d = duble(A_LAIS, {
+    ...COMO_A_LAIS_VE,
+    mybank_due_entries: [
+      DIVIDA_DA_LAIS,
+      { ...DIVIDA_DA_LAIS, id: "parcela-de-abril", due_date: "2026-04-10" },
+      { ...DIVIDA_DA_LAIS, id: "parcela-de-fevereiro", due_date: "2026-02-10" },
+    ],
+  });
+
+  const { corpo } = await chamar(
+    MOVIMENTACAO.GET,
+    d,
+    `http://t/api/movimentacoes/resumo?tipo=expense&de=${HOJE}&ate=${FIM_DO_MES}`
+  );
+
+  assert.equal(corpo.resumo.previsto, 1200, "uma parcela so entra na janela");
+  assert.equal(
+    corpo.linhas.filter((l) => l.natureza === "mybank").length,
+    1
+  );
+});
+
+test("leitura 4: a parcela VENCIDA da devedora cai em «vencido», na aba Despesas", async () => {
+  // O mesmo `CASE` da 027 chegando ate a tela: `pending` com vencimento antes
+  // de hoje e `overdue`, e `previstoVencido` e quem separa os dois baldes. Sem
+  // isso a parcela atrasada ficaria em "ainda vai vencer" -- e a aba Despesas e
+  // onde a pessoa abre para ver o que esta atrasado.
+  const d = duble(A_LAIS, {
+    ...COMO_A_LAIS_VE,
+    scheduled_transactions_effective: [],
+    mybank_due_entries: [{ ...DIVIDA_DA_LAIS, due_date: "2026-03-01" }],
+  });
+
+  const { corpo } = await chamar(
+    MOVIMENTACAO.GET,
+    d,
+    `http://t/api/movimentacoes/resumo?tipo=expense&de=2026-03-01&ate=${FIM_DO_MES}`
+  );
+
+  assert.equal(corpo.vencido.total, 1000);
+  assert.equal(corpo.vencido.quantidade, 1);
+  assert.equal(corpo.linhas[0].situacao, "overdue");
+});
+
+test("leitura 4: a parcela `paid` nao aparece na aba Despesas", async () => {
+  // A view so devolve `pending`/`reported` (053), entao o fixture modela isso: a
+  // parcela paga simplesmente NAO vem. O caso existe porque a direcao do erro
+  // importa -- uma parcela paga na lista de "o que ainda vence" e uma divida
+  // cobrada duas vezes.
+  //
+  // `reported` CONTINUA APARECENDO, e isso e a convencao da HMO-366: "eu avisei
+  // que paguei e o credor ainda nao confirmou" ainda e divida. Mapear `reported`
+  // para fora faria o «Previsto» descer no clique do devedor -- um botao que
+  // paga a conta.
+  const paga = duble(A_LAIS, { ...COMO_A_LAIS_VE, mybank_due_entries: [] });
+  const avisada = duble(A_LAIS, {
+    ...COMO_A_LAIS_VE,
+    mybank_due_entries: [
+      { ...DIVIDA_DA_LAIS, status: "reported", reported_at: "2026-03-06" },
+    ],
+  });
+
+  const comPaga = await chamar(
+    MOVIMENTACAO.GET,
+    paga,
+    `http://t/api/movimentacoes/resumo?tipo=expense&de=${HOJE}&ate=${FIM_DO_MES}`
+  );
+  const comAvisada = await chamar(
+    MOVIMENTACAO.GET,
+    avisada,
+    `http://t/api/movimentacoes/resumo?tipo=expense&de=${HOJE}&ate=${FIM_DO_MES}`
+  );
+
+  assert.equal(comPaga.corpo.resumo.previsto, 200, "paga: volta ao retrato");
+  assert.equal(comAvisada.corpo.resumo.previsto, 1200, "reported: continua divida");
+  assert.equal(
+    comAvisada.corpo.linhas.find((l) => l.natureza === "mybank").valor,
+    1000
+  );
+});
+
+// =====================================================
 // LEITURA 3 -- posso gastar?
 // =====================================================
 

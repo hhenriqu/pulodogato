@@ -563,6 +563,126 @@ test("a rota TRAZ `notes` do realizado -- sem ele a fatura PAGA desaparece", () 
   );
 });
 
+test("a rota LE a divida do MyBank e a CONCATENA nas previstas (HMO-377)", () => {
+  // POR QUE UMA SONDA TEXTUAL AQUI, e nao so o mutante da lib: a mudanca desta
+  // issue tem DUAS metades, e o mutador de lib/telas-de-movimentacao.ts nao
+  // alcanca a segunda. `ehParcelaDevidaDoMyBank` pode estar perfeita e com
+  // mutante morto enquanto a rota simplesmente nao chama `lerDividaDoMyBank` --
+  // e o sintoma seria a aba Despesas voltando aos R$ 200,00 da main 40c7b01,
+  // com a lib verde e o `tsc` verde. E a mesma armadilha que fez a HMO-379
+  // achar `a_receber_do_mybank` sem um unico consumidor na UI.
+  //
+  // E A SONDA LE A FONTE SEM COMENTARIO (`semComentarios`), porque esta rota
+  // CITA `lerDividaDoMyBank` dentro do comentario que explica a decisao: um
+  // `includes` sobre o arquivo cru casaria com a explicacao e nao com o codigo
+  // (`assercao-de-fiacao-casa-com-o-import`,
+  // `guard-com-janela-de-chars-conta-comentario`).
+
+  // 1. A CHAMADA EXISTE. O `import` sozinho nao prova nada -- ele e exatamente
+  //    o que sobra quando alguem apaga o uso (`fiacao-provada-tirando-o-import`).
+  assert.match(
+    rota,
+    /await lerDividaDoMyBank\(\s*supabase,\s*user\.id,/,
+    `${ROTA} nao chama mais \`lerDividaDoMyBank\`: a parcela que a pessoa DEVE ` +
+      "a uma conexao desaparece da aba Despesas e a tela volta a discordar de " +
+      "Contas a Pagar pela mesma divida -- R$ 200,00 contra R$ 1.200,00"
+  );
+
+  // 2. E ELA E GUARDADA PELA ABA DE DESPESAS. Sem a guarda, Receitas e
+  //    Transferencias gastam uma consulta por leitura para descartar tudo
+  //    depois -- e a assercao de que elas NAO consultam a view esta medida na
+  //    rota de verdade em scripts/test-leituras-do-mybank.mjs (leitura 4).
+  assert.match(
+    rota,
+    /tela\.tipo === "expense"\)\s*\{\s*const leitura = await lerDividaDoMyBank/,
+    "a leitura da divida do MyBank perdeu a guarda `tela.tipo === \"expense\"`"
+  );
+
+  // 3. O DONO DA LEITURA E PREENCHIDO. `ParcelaDevidaNaAgenda` nasce com
+  //    `user_id: ""` de proposito (a view devolve `borrower_user_id`, mas quem
+  //    carimba a sessao e a rota), e `posso_editar` sai de
+  //    `ehMinha(crua.user_id, meuUserId)`. Sem esta chamada a parcela chega a
+  //    tela marcada como linha de OUTRA PESSOA -- hoje isso nao muda botao
+  //    nenhum (`gravada: false` ja recusa os tres), e e justamente por isso que
+  //    a perda passaria calada. E a licao da HMO-311 na fatura sintetizada.
+  assert.match(
+    rota,
+    /comODonoDaLeitura\(leitura\.linhas, user\.id\)/,
+    `${ROTA} nao carimba mais o dono da parcela devida: \`posso_editar\` cai ` +
+      "para `false` e a linha se apresenta como de outra pessoa"
+  );
+
+  // 4. E A LISTA DE FATO ENTRA EM `previstas`. E o elo que faz a linha existir:
+  //    a leitura pode acontecer, o resultado ser guardado numa variavel e nunca
+  //    chegar a `linhasDaTela` -- um estado que compila, nao quebra teste de
+  //    unidade nenhum e devolve exatamente os numeros de antes desta issue
+  //    (`coluna-declarada-e-nunca-lida-faz-conserto-de-view-virar-no-op`).
+  const montagem = rota.match(/const previstas: PrevistaCrua\[\] = \[([^;]*)\];/);
+  assert.ok(montagem, `nao achei a montagem de \`previstas\` em ${ROTA}`);
+  assert.match(
+    montagem[1],
+    /\.\.\.\(parcelasDevidas as unknown as PrevistaCrua\[\]\)/,
+    "a divida do MyBank e lida e NAO entra em `previstas`: a aba Despesas " +
+      "continua sem a parcela, com a leitura acontecendo e o resultado descartado"
+  );
+  // Controle da extracao: as duas outras fontes do previsto tem de estar no
+  // MESMO bloco capturado. Sem isto um `match` que pegasse o pedaco errado do
+  // arquivo poderia casar por acaso.
+  assert.match(montagem[1], /agendaPelaRegraDoPagador/, "a sonda capturou o bloco errado");
+  assert.match(montagem[1], /fatura\.previstas/, "a sonda capturou o bloco errado");
+});
+
+test("o selo «MyBank» CHEGA a tela, e com a palavra de Contas a Pagar (HMO-377)", () => {
+  // `natureza: "mybank"` existe desde a HMO-372 e ganhou o lado realizado na
+  // HMO-380 -- e ate esta issue NENHUM componente o lia. O campo viajava na
+  // resposta da rota e morria em `marcaDaLinha`, caindo no caso comum: a
+  // parcela se apresentava como despesa qualquer. E o mesmo defeito que a
+  // HMO-379 achou em `a_receber_do_mybank`, e a razao pela qual o teste
+  // "todo campo de LinhaDaTela tem leitor" nao o pegou e que ele media o CAMPO
+  // (`natureza` tem leitor) e nao o VALOR.
+  assert.match(
+    secao,
+    /linha\.natureza === "mybank"/,
+    "SecaoDaTela.tsx nao le `natureza === \"mybank\"`: a parcela que a pessoa " +
+      "DEVE a uma conexao aparece como despesa comum de R$ 1.000 numa linha sem " +
+      "botao nenhum, e isso e indistinguivel de bug"
+  );
+
+  // A PALAVRA E A MESMA DAS OUTRAS DUAS TELAS. `SELO_DO_MYBANK` e "MyBank" em
+  // lib/emprestimo-do-mybank.ts, e e o que `ParcelaDevidaNaAgenda.selo` leva
+  // para Contas a Pagar. A string esta escrita no componente (e nao importada)
+  // para nao arrastar `@/lib/lancamento` para a arvore que a sonda de navegador
+  // compila -- entao quem tranca a igualdade e esta assercao.
+  const EMPRESTIMO = "lib/emprestimo-do-mybank.ts";
+  const emprestimo = semComentarios(readFileSync(EMPRESTIMO, "utf8"));
+  const declarado = emprestimo.match(
+    /export const SELO_DO_MYBANK = "([^"]+)";/
+  );
+  assert.ok(declarado, `nao achei SELO_DO_MYBANK em ${EMPRESTIMO}`);
+
+  const noRamo = secao.match(
+    /linha\.natureza === "mybank"\)\s*\{\s*return \{[^}]*rotulo: "([^"]+)"/
+  );
+  assert.ok(noRamo, "nao achei o rotulo do ramo `mybank` em SecaoDaTela.tsx");
+  assert.equal(
+    noRamo[1],
+    declarado[1],
+    "o rotulo da lista divergiu de `SELO_DO_MYBANK`: as duas telas que mostram " +
+      "a MESMA divida passam a chamá-la por nomes diferentes, e quem olha vai " +
+      "procurar a diferenca que nao existe"
+  );
+
+  // E O ICONE NAO E O DO GASTO FIXO. A parcela E uma serie (3/24), entao
+  // `Repeat` seria plausivel -- e e por isso que ele esta recusado: aquele
+  // desenho ja significa "fixo" nesta lista, e dizer duas coisas com o mesmo
+  // icone apaga a distincao que o rotulo tenta fazer.
+  assert.doesNotMatch(
+    noRamo[0],
+    /Icone: Repeat/,
+    "o selo do MyBank nao pode usar o icone do gasto fixo"
+  );
+});
+
 test("a rota TRAZ `recurring_rule_id` da view -- sem ele toda conta fixa vira comum", () => {
   // HMO-285, e a MESMA familia de `account_type` acima. A diferenca e que aqui o
   // campo e OPCIONAL em `PrevistaCrua`, porque a ausencia dele e um estado

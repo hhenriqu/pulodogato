@@ -396,31 +396,48 @@ const MUTANTES = [
       "a fatura que tambem tiver `recurring_rule_id` vira 'Fixa' e PERDE o " +
       "campo `fatura` -- o unico que leva de volta ao cartao e ao mes, que e o " +
       "ponto da issue. Nenhum total se mexe",
+    // A ANCORA GANHOU O RAMO `"mybank"` NA HMO-377, e o `para` o PRESERVA de
+    // proposito -- a mesma decisao, pela mesma razao, dos dois mutantes de ordem
+    // do lado realizado: quem apaga aquele ramo e
+    // `selo_do_mybank_no_previsto_devido`, e variar os dois no mesmo `para`
+    // deixaria cada um sem medida propria
+    // (`variar-um-lado-da-igualdade-deixa-a-guarda-sem-medida`).
     de:
       "    natureza: daFatura\n" +
       '      ? "fatura"\n' +
-      "      : texto(crua.recurring_rule_id)\n" +
-      '        ? "fixa"\n' +
-      '        : "despesa",',
+      "      : ehParcelaDevidaDoMyBank(crua)\n" +
+      '        ? "mybank"\n' +
+      "        : texto(crua.recurring_rule_id)\n" +
+      '          ? "fixa"\n' +
+      '          : "despesa",',
     para:
       "    natureza: texto(crua.recurring_rule_id)\n" +
       '      ? "fixa"\n' +
       "      : daFatura\n" +
       '        ? "fatura"\n' +
-      '        : "despesa",',
+      "        : ehParcelaDevidaDoMyBank(crua)\n" +
+      '          ? "mybank"\n' +
+      '          : "despesa",',
   },
   {
     nome: "previsto_sempre_comum",
     porque:
-      "a fatura e a conta fixa deixam de ser reconhecidas: a tela volta a " +
-      "chamar tudo de linha comum, que e o estado de antes da issue -- e o " +
-      "Total continua fechando no centavo",
+      "a fatura, a conta fixa e a parcela do MyBank deixam de ser reconhecidas: " +
+      "a tela volta a chamar tudo de linha comum, que e o estado de antes da " +
+      "issue -- e o Total continua fechando no centavo",
+    // A CADEIA INTEIRA, COM OS TRES RAMOS (o `"mybank"` entrou na HMO-377).
+    // Este mutante colapsa os tres de uma vez, e e deliberado que ele seja MAIOR
+    // que `selo_do_mybank_no_previsto_devido`: aquele apaga SO o ramo do MyBank
+    // (a fatura e a fixa continuam de pe) e e o que mede o selo em isolado. Os
+    // dois morrem, e cada um aponta um defeito diferente.
     de:
       "    natureza: daFatura\n" +
       '      ? "fatura"\n' +
-      "      : texto(crua.recurring_rule_id)\n" +
-      '        ? "fixa"\n' +
-      '        : "despesa",',
+      "      : ehParcelaDevidaDoMyBank(crua)\n" +
+      '        ? "mybank"\n' +
+      "        : texto(crua.recurring_rule_id)\n" +
+      '          ? "fixa"\n' +
+      '          : "despesa",',
     para: '    natureza: "despesa",',
   },
   {
@@ -769,6 +786,86 @@ const MUTANTES = [
       "      : null,",
     para:
       '    fatura: faturaPaga ? { accountId: faturaPaga.accountId, mes: "" } : null,',
+  },
+
+  // --- a parcela que EU DEVO a uma conexao (HMO-377) ----------------------
+  //
+  // O Caso B do lado do DEVEDOR. Ela chega pela view `mybank_due_entries`, na
+  // forma de `parcelasDevidasNaAgenda` (`id: null`, `direction: 'expense'`,
+  // chave `mybank:<id>` em `notes`) -- e nao por `scheduled_transactions`,
+  // porque o credor nao pode gravar linha no meu nome.
+  //
+  // O NUMERO QUE ESTES TRES MUTANTES PROTEGEM esta medido na ROTA
+  // (scripts/test-leituras-do-mybank.mjs, leitura 4): a aba Despesas da devedora
+  // dizia R$ 200,00 enquanto Contas a Pagar dizia R$ 1.200,00, pela MESMA
+  // divida e no MESMO periodo.
+  //
+  // NAO HA MUTANTE DE ORDEM (`fixa` antes de `mybank`) de proposito, e isto e
+  // medicao e nao esquecimento: `ParcelaDevidaNaAgenda.recurring_rule_id` e
+  // `null` por construcao, entao os dois ramos nao podem casar na mesma linha
+  // hoje -- um mutante que trocasse a ordem seria EQUIVALENTE e sobreviveria
+  // sem apontar defeito nenhum (`mutante-sobrevivente-pode-estar-certo`). A
+  // ordem continua escrita no codigo pela razao de sempre; o que nao existe e
+  // uma medicao vazia por cima dela.
+  {
+    nome: "selo_do_mybank_no_previsto_devido",
+    porque:
+      "a parcela da conexao entra no numero certo e SEM o selo: ela se " +
+      "apresenta como despesa comum de R$ 1.000 numa lista onde nao tem botao " +
+      "nenhum (`gravada: false`), e quem for conferir procura em Contas a Pagar " +
+      "uma conta que la aparece rotulada «MyBank» -- duas palavras para a mesma " +
+      "divida nas duas telas que a mostram",
+    de:
+      "    natureza: daFatura\n" +
+      '      ? "fatura"\n' +
+      "      : ehParcelaDevidaDoMyBank(crua)\n" +
+      '        ? "mybank"\n' +
+      "        : texto(crua.recurring_rule_id)\n" +
+      '          ? "fixa"\n' +
+      '          : "despesa",',
+    para:
+      "    natureza: daFatura\n" +
+      '      ? "fatura"\n' +
+      "      : texto(crua.recurring_rule_id)\n" +
+      '        ? "fixa"\n' +
+      '        : "despesa",',
+  },
+  {
+    nome: "parcela_devida_sem_a_chave_canonica",
+    porque:
+      "a chave deixa de ser o criterio e TODA previsao de despesa leva o selo " +
+      "«MyBank» -- a conta de luz da pessoa passa a se apresentar como parcela " +
+      "de emprestimo, que e um rotulo errado sobre um numero certo em cima da " +
+      "lista inteira",
+    // A ANCORA LEVA O `if` INTEIRO com a quebra de linha do prettier: o
+    // `return temOEloDaParcelaDoMyBank(crua.notes);` desta funcao e identico ao
+    // de `ehParcelaDoAutoEmprestimo`, e mutar por ele pegaria a PRIMEIRA
+    // ocorrencia -- a funcao errada (`mutante-por-replace-estraga-a-primeira-ocorrencia`).
+    de:
+      "  if (String(crua.direction ?? \"\") !== DIRECAO_DA_PARCELA_DEVIDA_DO_MYBANK) {\n" +
+      "    return false;\n" +
+      "  }\n" +
+      "  return temOEloDaParcelaDoMyBank(crua.notes);",
+    para:
+      "  if (String(crua.direction ?? \"\") !== DIRECAO_DA_PARCELA_DEVIDA_DO_MYBANK) {\n" +
+      "    return false;\n" +
+      "  }\n" +
+      "  return true;",
+  },
+  {
+    nome: "parcela_devida_sem_a_direcao",
+    porque:
+      "a `direction` deixa de separar os dois casos: a parcela do " +
+      "AUTO-emprestimo (`transfer`) passa a casar aqui tambem, e as duas " +
+      "perguntas do MyBank no lado previsto viram uma so -- o selo do Caso A " +
+      "deixa de ter dono proprio e a assimetria que a HMO-372 escreveu " +
+      "(transferencia entre contas minhas contra dinheiro que sai para outra " +
+      "pessoa) para de existir no codigo",
+    de:
+      "  if (String(crua.direction ?? \"\") !== DIRECAO_DA_PARCELA_DEVIDA_DO_MYBANK) {\n" +
+      "    return false;\n" +
+      "  }",
+    para: "  if (false) {\n    return false;\n  }",
   },
 
   // --- rotulos que mudam o significado do numero --------------------------

@@ -388,6 +388,8 @@ const PAGINA = `<!doctype html>
 <div id="raiz-m"></div>
 <!-- As DUAS do caso N (HMO-379): a conta COM promessa e o controle negativo. -->
 <div id="raiz-n"></div><div id="raiz-n2"></div>
+<!-- As DUAS do caso O (HMO-377): a parcela devida e a despesa comum ao lado. -->
+<div id="raiz-o"></div>
 <div id="resultado">a pagina nao rodou</div>
 <script>${umd("react", "react.development.js")}</script>
 <script>${umd("react-dom", "react-dom.development.js")}</script>
@@ -1450,6 +1452,43 @@ const out = {};
   out.n_sem_promessa = retrato(raizVazia, PREVISTO);
 }
 
+// =========================================================================
+// O. A PARCELA DO MYBANK QUE EU DEVO, NA ABA DESPESAS -- HMO-377
+// =========================================================================
+// A linha que esta issue acrescenta, e ela e um sabor novo nesta lista: ela tem
+// \`gravada: false\` (vem da view \`mybank_due_entries\`, nao de
+// \`scheduled_transactions\`) E \`posso_editar: true\` (a divida e minha). A
+// fatura ABERTA e a unica outra linha nao-gravada da tela, e ela tem destino
+// proprio (o botao Pagar, HMO-311) -- esta aqui NAO tem.
+//
+// O QUE SO O NAVEGADOR MEDE: que o selo «MyBank» PINTA. \`natureza: "mybank"\`
+// existia desde a HMO-372 e nenhum componente o lia -- o campo chegava na
+// resposta e morria em \`marcaDaLinha\`, e a parcela saia desenhada como despesa
+// comum. Nem o \`tsc\` nem a suite da lib podiam ver isso: o campo existe, o
+// valor esta certo, e o ramo que falta e um \`if\` que ninguem escreveu.
+//
+// A DESPESA COMUM AO LADO E O CONTROLE, e ela e obrigatoria: um selo escrito em
+// TODA linha pintaria igual no caso de cima, e "o rotulo apareceu" ficaria
+// verde com o rotulo nao distinguindo nada.
+{
+  const parcelaDoMyBank = linha({
+    id: "mybank:cccccccc-0000-0000-0000-000000000003",
+    gravada: false,
+    posso_editar: true,
+    descricao: "Moto elétrica",
+    valor: 1000,
+    natureza: "mybank",
+    conta: null,
+    categoria: null,
+  });
+
+  const luz = linha({ id: "s-luz", descricao: "Luz", valor: 200 });
+
+  const raizO = await montar("raiz-o", [corpo([parcelaDoMyBank, luz])]);
+
+  out.o_previsto = retrato(raizO, PREVISTO);
+}
+
 document.getElementById("resultado").textContent =
   "RESULTADO" + JSON.stringify(out) + "FIM";
 } catch (e) {
@@ -2145,5 +2184,109 @@ test("N: CONTROLE NEGATIVO -- a conta VAZIA continua lendo 'Nada previsto'", () 
   assert.ok(
     !t.includes("ESBOCO-VALOR"),
     "a conta vazia formatou um valor na frase de vazio: " + t
+  );
+});
+
+// =============================================================================
+// O. A PARCELA DO MYBANK QUE EU DEVO, NA ABA DESPESAS -- HMO-377
+// =============================================================================
+
+test("O: a parcela do MyBank PINTA na secao Previsto, com o selo e o valor", () => {
+  // O CONTROLE QUE DA SENTIDO AO RESTO: a secao existe e as duas linhas estao
+  // nela. Sem ele, toda assercao negativa abaixo ficaria verde por a pagina nao
+  // ter pintado nada -- indistinguivel de uma feature que funciona.
+  const p = resultado.o_previsto;
+  assert.ok(p, "a secao Previsto nao pintou");
+
+  assert.match(p.texto, /Moto elétrica/, "a parcela do MyBank nao esta na lista");
+
+  // O VALOR, PELO FORMATADOR DE VERDADE. Esta secao NAO usa o `formatCurrency`
+  // que o resto desta sonda substitui por marcador: `SecaoDaTela.tsx` tem o seu
+  // proprio `moeda()` com `Intl.NumberFormat("pt-BR")`. O `\s?` no lugar do
+  // espaco e obrigatorio -- o pt-BR separa o "R$" do numero com NBSP
+  // (`intl-pt-br-separa-o-real-com-nbsp`), e `retrato` normaliza os brancos.
+  assert.match(p.texto, /R\$\s?1\.000,00/, "o valor da parcela nao chegou");
+
+  // E O SUBTOTAL DA SECAO E O NUMERO DESTA ISSUE, na tela: R$ 1.200,00 -- os
+  // R$ 200 da conta de luz mais a parcela de R$ 1.000. E o mesmo valor que a
+  // rota devolve (scripts/test-leituras-do-mybank.mjs, leitura 4) e o mesmo com
+  // que Contas a Pagar ja concordava. Antes desta issue esta secao somava
+  // R$ 200,00 e a parcela nao estava na lista.
+  assert.match(
+    p.texto,
+    /R\$\s?1\.200,00/,
+    "o subtotal da secao Previsto nao e R$ 1.200,00: " + p.texto
+  );
+  assert.match(p.texto, /\(2\)/, "o contador da secao nao conta as duas linhas");
+
+  // O SELO. E o que esta issue levou a tela: `natureza: "mybank"` existia desde
+  // a HMO-372 e NENHUM componente o lia -- a parcela saia desenhada como
+  // despesa comum. A palavra e a mesma de Contas a Pagar (`SELO_DO_MYBANK`), e
+  // a igualdade entre as duas e trancada em
+  // scripts/test-contrato-das-telas-de-movimentacao.mjs.
+  assert.match(
+    p.texto,
+    /MyBank/,
+    "o selo «MyBank» nao pintou: a parcela que a pessoa DEVE a uma conexao se " +
+      "apresenta como despesa comum de R$ 1.000 numa linha sem botao nenhum, e " +
+      "isso e indistinguivel de bug -- " + p.texto
+  );
+});
+
+test("O: CONTROLE -- a despesa comum AO LADO nao ganhou o selo", () => {
+  // Sem este par, um "MyBank" escrito em toda linha passaria o caso de cima: o
+  // rotulo apareceria e nao distinguiria nada. A conta de luz esta na MESMA
+  // secao da mesma montagem, e o rotulo de natureza comum e omitido de proposito
+  // (ver o cabecalho de SecaoDaTela.tsx).
+  const p = resultado.o_previsto;
+
+  assert.match(p.texto, /Luz/, "o controle nao vale: a despesa comum nao pintou");
+  assert.match(p.texto, /R\$\s?200,00/);
+
+  // UMA ocorrencia de "MyBank", e nao duas: a palavra pertence a UMA das duas
+  // linhas. Duas ocorrencias seriam o selo em toda linha, que e exatamente o
+  // defeito que este controle existe para pegar.
+  const vezes = p.texto.split("MyBank").length - 1;
+  assert.equal(
+    vezes,
+    1,
+    `o selo «MyBank» apareceu ${vezes} vez(es) numa secao com UMA parcela: ` +
+      p.texto
+  );
+});
+
+test("O: a parcela do MyBank nao ganha Editar, Excluir, Confirmar nem Pagar", () => {
+  // O CUIDADO QUE A ISSUE NOMEIA, medido na TELA e nao so na lib. A linha tem
+  // `posso_editar: true` (a divida e minha) e `gravada: false` (ela nao existe
+  // em `scheduled_transactions`), e e a regra 3 de lib/acoes-da-linha.ts que a
+  // deixa sem botao. Sem isso, a chave `mybank:<id>` viraria caminho num
+  // `POST /api/scheduled-transactions/mybank:.../pay` -- 404, que para quem
+  // clicou se le como "o app nao conseguiu". A parcela TEM onde ser operada:
+  // /dashboard/mybank e o bloco de Contas a Pagar, que mandam
+  // `PATCH /api/mybank/installments/[id]`.
+  //
+  // A FATURA ABERTA E O CONTRASTE que torna esta assercao necessaria: ela
+  // tambem e `gravada: false` e GANHA botao (Pagar, HMO-311), porque aquele
+  // caminho materializa a fatura antes de pagar. A parcela do MyBank nao tem
+  // equivalente, entao "nao-gravada" nao implica "sem botao" nesta tela -- tem
+  // de ser medido.
+  // Nenhuma acao da secao pode citar a chave do MyBank numa URL.
+  for (const acao of resultado.o_previsto.acoes) {
+    assert.ok(
+      !String(acao.href ?? "").includes("mybank:"),
+      `uma acao montou URL com a chave canonica do MyBank: ${JSON.stringify(acao)}`
+    );
+  }
+
+  // E A CONTA DE BOTOES FECHA COM A DESPESA COMUM SOZINHA. A luz e gravada e
+  // minha, entao ela ganha os TRES (Editar, Excluir, Confirmar pagamento) -- e
+  // sao exatamente esses tres que a secao tem. Um quarto botao significaria que
+  // a parcela ganhou algum.
+  const rotulos = resultado.o_previsto.acoes.map((a) => a.rotulo).sort();
+  assert.deepEqual(
+    rotulos,
+    ["Confirmar pagamento", "Editar", "Excluir"],
+    "a secao tem botao a mais ou a menos: so a conta de luz deveria ter os " +
+      `tres, e a parcela do MyBank nenhum -- ${JSON.stringify(resultado.o_previsto.acoes)}`
   );
 });

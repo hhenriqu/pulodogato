@@ -27,6 +27,7 @@ const {
   ehGastoNoCartao,
   ehPagamentoDaFatura,
   ehEntradaSoltaDoMyBank,
+  ehParcelaDevidaDoMyBank,
   PREFIXO_DO_ELO_DO_MYBANK,
   TIPO_CARTAO,
   TIPO_DA_PERNA_DE_PAGAMENTO,
@@ -1513,6 +1514,160 @@ test("a excecao do MyBank nao afrouxa a de-duplicacao de um Pix comum", () => {
 
   assert.equal(linhas.length, 1);
   assert.equal(linhas[0].id, "a");
+});
+
+// -----------------------------------------------------
+// A PARCELA QUE EU DEVO A UMA CONEXAO -- HMO-377
+// -----------------------------------------------------
+// O Caso B do lado do DEVEDOR. Ela nao esta em `scheduled_transactions` (o
+// credor nao pode gravar no meu nome, e a RLS recusaria): vem da view
+// `mybank_due_entries`, pela rota, na forma de `parcelasDevidasNaAgenda` --
+// `id: null`, `direction: 'expense'` e a chave `mybank:<id>` em `notes`.
+//
+// O NUMERO que esta ligacao vale esta medido na ROTA, em
+// scripts/test-leituras-do-mybank.mjs (leitura 4): a aba Despesas da devedora
+// ia de R$ 200,00 para R$ 1.200,00, que e o que Contas a Pagar ja dizia. Aqui
+// mede-se a REGRA.
+
+/** A parcela devida, na forma com que a rota a entrega a `linhasDaTela`. */
+const parcelaDevida = (over = {}) => ({
+  id: null,
+  user_id: EU,
+  description: "Moto elétrica",
+  amount: 1000,
+  due_date: "2026-10-15",
+  status: "pending",
+  effective_status: "pending",
+  direction: "expense",
+  notes: `${PREFIXO_DO_ELO_DO_MYBANK}parcela-3`,
+  recurring_rule_id: null,
+  group_id: null,
+  ...over,
+});
+
+test("a parcela devida do MyBank entra na aba Despesas, com o selo e SEM id de banco", () => {
+  const linhas = daTela([], [parcelaDevida()], "expense");
+
+  assert.equal(linhas.length, 1);
+  assert.equal(linhas[0].valor, 1000);
+  assert.equal(linhas[0].tipo, "expense");
+  assert.equal(linhas[0].natureza, "mybank", "sem o selo ela se le como despesa comum");
+
+  // A CHAVE E A NOTA, e nao um id de banco: `linhaPrevista` cai em
+  // `texto(crua.notes)` quando `id` e nulo. O prefixo e o que impede qualquer
+  // `href` montado com este campo de passar por um uuid de
+  // `/api/scheduled-transactions`.
+  assert.equal(linhas[0].gravada, false);
+  assert.equal(linhas[0].id, `${PREFIXO_DO_ELO_DO_MYBANK}parcela-3`);
+
+  // CONTROLE: a MESMA linha sem a chave canonica e uma despesa comum. Sem este
+  // par, um `natureza: "mybank"` escrito em toda previsao passaria verde.
+  //
+  // `id: "s1"` NO CONTROLE, e nao `id: null` como no caso de cima: sem chave
+  // NENHUMA (`id` e `notes` os dois nulos) `linhaPrevista` devolve `null` e a
+  // linha nao existe para ser classificada -- o controle mediria a ausencia da
+  // linha em vez da ausencia do selo, e passaria verde com o selo escrito em
+  // toda previsao. Com o id, o que varia entre os dois e SO a chave canonica.
+  const semAChave = daTela([], [parcelaDevida({ id: "s1", notes: null })], "expense");
+  assert.equal(semAChave.length, 1, "a linha gravada existe sem a nota");
+  assert.equal(semAChave[0].natureza, "despesa");
+  assert.equal(semAChave[0].valor, 1000, "o valor nao depende do selo");
+});
+
+test("sem chave canonica E sem id de banco a parcela NAO vira linha", () => {
+  // A propriedade de seguranca por tras do controle acima: `linhaPrevista`
+  // exige UMA das duas chaves (`id ?? notes`) e devolve `null` sem nenhuma. Uma
+  // leitura da view que perdesse `notes` no caminho nao produziria uma linha com
+  // `id` vazio -- que e o estado em que um `href` montado com o campo viraria
+  // `/api/scheduled-transactions//pay`.
+  assert.equal(linhaPrevista(parcelaDevida({ notes: null })), null);
+  assert.equal(linhaPrevista(parcelaDevida({ notes: "   " })), null);
+});
+
+test("a parcela devida NAO aparece em Transferencias nem em Receitas", () => {
+  // A assimetria com o Caso A, e ela e a decisao: aquela parcela e `transfer`
+  // na coluna e aparece nas DUAS abas, porque o dinheiro andou entre contas
+  // MINHAS. Esta sai para a conta de outra pessoa -- "andou entre as suas
+  // contas" seria falso sobre ela.
+  for (const tipo of ["transfer", "income"]) {
+    assert.equal(
+      daTela([], [parcelaDevida()], tipo).length,
+      0,
+      `a parcela devida nao pertence a aba ${tipo}`
+    );
+  }
+});
+
+test("o Caso A e o Caso B nao se confundem -- a `direction` e o que separa", () => {
+  // As duas previsoes carregam a MESMA chave `mybank:`, e sao linhas diferentes
+  // de dinheiro: a de `transfer` e o auto-emprestimo (aparece em Despesas E em
+  // Transferencias, pela excecao de `linhasDaTela`), a de `expense` e a divida
+  // com a conexao (aparece SO em Despesas). Um criterio que lesse apenas a nota
+  // daria o mesmo tratamento as duas -- e poria a divida da conexao na aba de
+  // Transferencias, que e a frase falsa.
+  const casoA = parcelaDevida({ id: "s1", direction: "transfer" });
+  const casoB = parcelaDevida();
+
+  assert.equal(ehParcelaDevidaDoMyBank(casoB), true);
+  assert.equal(ehParcelaDevidaDoMyBank(casoA), false, "o Caso A nao e parcela DEVIDA");
+
+  // E as duas levam o selo, cada uma pelo seu caminho.
+  assert.equal(daTela([], [casoA], "expense")[0].natureza, "mybank");
+  assert.equal(daTela([], [casoB], "expense")[0].natureza, "mybank");
+
+  // A diferenca medida: em Transferencias so o Caso A sobrevive.
+  assert.equal(daTela([], [casoA], "transfer").length, 1);
+  assert.equal(daTela([], [casoB], "transfer").length, 0);
+});
+
+test("ehParcelaDevidaDoMyBank: os DOIS criterios, um a um", () => {
+  const devida = { direction: "expense", notes: `${PREFIXO_DO_ELO_DO_MYBANK}p3` };
+  assert.equal(ehParcelaDevidaDoMyBank(devida), true);
+
+  // 1. A `direction` E `expense`. Sem este criterio, a parcela do auto-emprestimo
+  //    (`transfer`) tambem casaria -- e o selo dela ja vem de outro lugar.
+  assert.equal(ehParcelaDevidaDoMyBank({ ...devida, direction: "transfer" }), false);
+  assert.equal(ehParcelaDevidaDoMyBank({ ...devida, direction: "income" }), false);
+  assert.equal(ehParcelaDevidaDoMyBank({ ...devida, direction: null }), false);
+  assert.equal(ehParcelaDevidaDoMyBank({ ...devida, direction: undefined }), false);
+  assert.equal(
+    ehParcelaDevidaDoMyBank({ ...devida, direction: "EXPENSE" }),
+    false,
+    "a coluna da view e minuscula: um casamento sem caixa aceitaria valor que a view nao produz"
+  );
+
+  // 2. A CHAVE CANONICA em `notes`, por `startsWith` e nao por `includes`:
+  //    `guard-de-includes-casa-dentro-de-identificador-maior`.
+  assert.equal(ehParcelaDevidaDoMyBank({ ...devida, notes: null }), false);
+  assert.equal(ehParcelaDevidaDoMyBank({ ...devida, notes: undefined }), false);
+  assert.equal(ehParcelaDevidaDoMyBank({ ...devida, notes: "" }), false);
+  assert.equal(
+    ehParcelaDevidaDoMyBank({ ...devida, notes: "paguei fora do mybank: dinheiro" }),
+    false,
+    "uma nota que CITA a palavra no meio da frase nao e o elo"
+  );
+  assert.equal(
+    ehParcelaDevidaDoMyBank({ ...devida, notes: "fatura:2026-11-01:cartao" }),
+    false,
+    "a chave da FATURA nao e a chave do MyBank"
+  );
+});
+
+test("a parcela devida vencida sai com `overdue`, e entra no balde do vencido", () => {
+  // `effective_status` chega calculado de `parcelasDevidasNaAgenda` (o mesmo
+  // `CASE` da 027). O que se mede aqui e que ele ATRAVESSA `linhaPrevista` ate
+  // `previstoVencido` -- a aba Despesas e onde se abre para ver o atraso.
+  const linhas = daTela(
+    [],
+    [parcelaDevida({ effective_status: "overdue", due_date: "2026-09-01" })],
+    "expense"
+  );
+
+  assert.equal(linhas[0].situacao, "overdue");
+
+  const vencido = previstoVencido(linhas);
+  assert.equal(vencido.total, 1000);
+  assert.equal(vencido.quantidade, 1);
 });
 
 // -----------------------------------------------------
