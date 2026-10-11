@@ -87,7 +87,110 @@ const mutantes = [
 console.log(readFileSync(ALVO, "utf8").length);
 `;
 
+// =====================================================
+// OS FIXTURES DA VARREDURA (HMO-389)
+// =====================================================
+// Os casos 1-6 passam o runner por ARGUMENTO. O defeito da HMO-389 vivia no
+// OUTRO modo -- a varredura por `readdirSync` --, e so nele: era um
+// `.filter((f) => familiaDoArquivo(f))` que jogava fora, sem imprimir nada,
+// todo runner que nao fosse `painel` nem `tupla`. A familia HMO-246 (a de
+// `const MUTANTES = [` em caixa alta) nao estava na tabela da guarda, e com ela
+// foram 39 dos 73 runners -- incluindo `telas-de-movimentacao` (75 mutantes, o
+// maior do repositorio) e `realizado-do-caixa`.
+//
+// Por isso estes fixtures vem em TRIO: um runner de cada familia. Um fixture so
+// nao distingue "a guarda le as tres" de "a guarda le a minha e descarta as
+// outras duas em silencio" -- que e exatamente o estado que passou meses.
+
+const RUNNER_TUPLA = `#!/usr/bin/env node
+const ALVO = "lib/exemplo-da-ancora.ts";
+
+const mutantes = [
+  [
+    "tupla_guarda_do_saldo",
+    ${JSON.stringify(ANCORA)},
+    "  if (false) return 0;",
+  ],
+];
+
+console.log(mutantes.length);
+`;
+
+// A familia HMO-246: `const FONTE` e a lista em CAIXA ALTA. O `const ALVO`
+// derivado e o `const original` entram de proposito -- sao as declaracoes que
+// chamam funcao (`join`, `readFileSync`) e que faziam o miolo ESTOURAR no
+// import antes de `mioloDoHmo246` passar a remove-las. Sem elas aqui, o fixture
+// nao exercitaria o pedaco do conserto que mais custou a achar.
+const RUNNER_HMO246 = `#!/usr/bin/env node
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+const FONTE = "lib/exemplo-da-ancora.ts";
+const ALVO = join(RAIZ, FONTE);
+const SUITE = "test:exemplo-da-ancora";
+const original = readFileSync(ALVO, "utf8");
+
+const MUTANTES = [
+  {
+    nome: "hmo246_guarda_do_saldo",
+    de: ${JSON.stringify(ANCORA)},
+    para: "  if (false) return 0;",
+  },
+];
+
+console.log(MUTANTES.length, original.length, SUITE);
+`;
+
+// FORMA QUE NENHUM PREDICADO RECONHECE: a lista se chama `MUTACOES`. E a forma
+// real de `mutantes-transferencia.mjs` e `mutantes-transferencia-recorrente-app.mjs`,
+// dois dos 39 calados.
+const RUNNER_SEM_FAMILIA = `#!/usr/bin/env node
+const ALVO = "lib/exemplo-da-ancora.ts";
+
+const MUTACOES = [
+  {
+    nome: "forma_que_a_guarda_nao_le",
+    de: ${JSON.stringify(ANCORA)},
+    para: "  if (false) return 0;",
+  },
+];
+
+console.log(MUTACOES.length);
+`;
+
 const raizTmp = mkdtempSync(path.join(tmpdir(), "ancora-de-mutante-"));
+
+/**
+ * Uma arvore para a VARREDURA (sem argumento): um runner de cada familia, mais
+ * os extras que o caso pedir. `extras` e um objeto `{ nomeDoArquivo: fonte }`.
+ */
+function arvoreDaVarredura(nome, alvo, extras = {}) {
+  const raiz = path.join(raizTmp, nome);
+  mkdirSync(path.join(raiz, "scripts"), { recursive: true });
+  mkdirSync(path.join(raiz, "lib"), { recursive: true });
+
+  for (const f of [GUARDA, "scripts/converte-mutantes-em-bloco.mjs"]) {
+    copyFileSync(path.join(RAIZ, f), path.join(raiz, f));
+  }
+  const runners = {
+    "mutantes-exemplo-da-ancora.mjs": RUNNER_FIXTURE,
+    "mutantes-exemplo-da-tupla.mjs": RUNNER_TUPLA,
+    "mutantes-exemplo-do-hmo246.mjs": RUNNER_HMO246,
+    ...extras,
+  };
+  for (const [arquivo, fonte] of Object.entries(runners)) {
+    writeFileSync(path.join(raiz, "scripts", arquivo), fonte);
+  }
+  writeFileSync(path.join(raiz, "lib/exemplo-da-ancora.ts"), alvo);
+
+  return raiz;
+}
+
+/** Roda a guarda no modo VARREDURA -- sem argumento nenhum. */
+function varrer(raiz) {
+  const r = spawnSync(process.execPath, [GUARDA], { cwd: raiz, encoding: "utf8" });
+  return { codigo: r.status, saida: `${r.stdout}${r.stderr}` };
+}
 
 /**
  * Monta uma arvore minima: a guarda, o conversor de onde ela importa os
@@ -270,6 +373,95 @@ console.log("6. o modo por argumento nao reescreve o runner em disco");
     "o conversor nao se anunciou",
     !/^convertido /m.test(saida),
     `o driver do conversor rodou:\n${saida}`,
+  );
+}
+
+// =====================================================
+// 7. A VARREDURA LE AS TRES FAMILIAS (o lado de COBERTURA da HMO-389)
+// =====================================================
+// O controle positivo da varredura, e ele precisa olhar o PLACAR POR FAMILIA e
+// nao so o exit code: uma guarda que lesse duas das tres familias e descartasse
+// a terceira em silencio sairia 0 aqui tambem -- foi literalmente o estado da
+// main por meses. O que distingue os dois mundos e o `hmo246:1`.
+console.log("7. a varredura le as tres familias e diz quantas de cada");
+{
+  const { codigo, saida } = varrer(arvoreDaVarredura("tres-familias", ALVO_INTACTO));
+  afirmar("sai 0", codigo === 0, `saiu ${codigo}:\n${saida}`);
+  afirmar(
+    "conta 1 runner de cada familia (painel:1 tupla:1 hmo246:1)",
+    /painel:1 tupla:1 hmo246:1/.test(saida),
+    `o placar por familia nao viu as tres:\n${saida}`,
+  );
+  afirmar(
+    "mede os 3 mutantes, um por runner",
+    /3 mutantes lidos em 3 runners/.test(saida),
+    `nao somou os tres:\n${saida}`,
+  );
+}
+
+// =====================================================
+// 8. ANCORA MORTA NUM RUNNER DA FAMILIA HMO-246 REPROVA
+// =====================================================
+// O caso 2 prova isto na familia do painel. Repetir na HMO-246 nao e redundante:
+// era a familia AUSENTE da tabela, e o defeito que a HMO-389 mediu foi
+// exatamente este -- `npm run check-ancora-de-mutante` saindo 0 e dizendo
+// `0 com ancora MORTA` com sete ancoras quebradas, porque os runners que as
+// tinham nunca entravam no censo.
+//
+// Medido na HMO-389 plantando uma ancora morta em
+// `mutantes-telas-de-movimentacao.mjs`, na main (8f5b79c) e com o conserto:
+//
+//     guarda ANTES:   exit 0   "616 mutantes em 29 runners, 0 com ancora MORTA"
+//     guarda DEPOIS:  exit 1   "ancora MORTA  sem_abs  [lib/telas-de-movimentacao.ts]"
+console.log("8. ancora morta na familia HMO-246 reprova");
+{
+  const renomeado = ALVO_INTACTO.replace("saldo < 0", "valor < 0");
+  afirmar(
+    "o alvo renomeado realmente perdeu a ancora",
+    !renomeado.includes(ANCORA),
+    "o fixture nao mudou nada -- este caso seria vacuo",
+  );
+
+  const { codigo, saida } = varrer(arvoreDaVarredura("hmo246-morta", renomeado));
+  afirmar("sai != 0", codigo !== 0, `saiu ${codigo}, deveria reprovar:\n${saida}`);
+  afirmar(
+    "nomeia o mutante da familia HMO-246",
+    /ancora MORTA {2}hmo246_guarda_do_saldo/.test(saida),
+    `nao acusou o mutante do runner HMO-246:\n${saida}`,
+  );
+}
+
+// =====================================================
+// 9. RUNNER DE FORMA DESCONHECIDA ABORTA -- NAO E DESCARTADO (a HMO-389)
+// =====================================================
+// ESTE E O CONTROLE NEGATIVO DO DEFEITO. Na main, o `.filter` tirava o runner de
+// forma desconhecida da lista antes do laco, e a varredura seguia e SAIA 0 --
+// com um boletim limpo que nao mencionava o arquivo em lugar nenhum. O
+// `console.error("nao e de familia nenhuma")` existia dentro do laco e era
+// inalcancavel.
+//
+// A arvore tem as tres familias legiveis DE PROPOSITO: sem elas, a guarda antiga
+// sairia 1 de todo modo (pela trava de "familia sem nenhum runner lido") e este
+// caso passaria vacuo, sem distinguir o conserto do defeito. Com elas, a guarda
+// antiga sai 0 e a consertada sai 1 -- e o que a assercao mede e o NOME do
+// arquivo aparecer na saida.
+console.log("9. runner de forma desconhecida aborta a varredura (o defeito da HMO-389)");
+{
+  const raiz = arvoreDaVarredura("sem-familia", ALVO_INTACTO, {
+    "mutantes-de-forma-desconhecida.mjs": RUNNER_SEM_FAMILIA,
+  });
+  const { codigo, saida } = varrer(raiz);
+
+  afirmar("sai != 0", codigo !== 0, `saiu ${codigo}, deveria abortar:\n${saida}`);
+  afirmar(
+    "nomeia O ARQUIVO que nao soube ler",
+    /mutantes-de-forma-desconhecida\.mjs/.test(saida),
+    `descartou em silencio -- o nome nao aparece na saida:\n${saida}`,
+  );
+  afirmar(
+    "diz que a familia e que nao foi reconhecida",
+    /nao e de familia nenhuma/.test(saida),
+    `abortou por outro motivo:\n${saida}`,
   );
 }
 
