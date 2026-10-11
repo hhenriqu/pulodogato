@@ -30,6 +30,11 @@
 //                            Realizado: o mes em que se pagou R$ 1.290 de
 //                            cartao fecha R$ 1.290 mais barato, nos tres
 //                            numeros (HMO-264).
+//   `perna_solta_do_mybank_sai` -- a perna de entrada que a conexao pagou
+//                            (UMA linha, sem par) e descartada pela
+//                            de-duplicacao da armadilha 3: R$ 100 que entraram
+//                            na conta de investimento somem das TRES abas
+//                            (HMO-380).
 //
 // COMO RODAR
 //   npm run mutantes:telas-de-movimentacao
@@ -117,8 +122,16 @@ const MUTANTES = [
     porque:
       "as duas pernas do Pix contam: R$ 1.000 viram R$ 2.000, e a lista mostra " +
       "as duas linhas com a mesma descricao e a mesma data",
-    de: '    if (tipo === "transfer" && ehPernaDeEntrada(crua)) continue;',
-    para: "    if (false) continue;",
+    // A ANCORA GANHOU UMA TERCEIRA CONJUNCAO NA HMO-380 (a excecao da perna
+    // solta, armadilha 7), e por isso ela e multilinha agora. Este `para` apaga
+    // a de-duplicacao INTEIRA; quem mede so a excecao e
+    // `perna_solta_do_mybank_sai`.
+    de:
+      '    if (\n      tipo === "transfer" &&\n' +
+      "      ehPernaDeEntrada(crua) &&\n" +
+      "      !ehEntradaSoltaDoMyBank(crua)\n" +
+      "    ) {\n      continue;\n    }",
+    para: "    if (false) {\n      continue;\n    }",
   },
   {
     nome: "entrada_so_pelo_elo",
@@ -126,8 +139,18 @@ const MUTANTES = [
       "transferencia de antes do 015 (ou cujo par perdeu o elo por " +
       "ON DELETE SET NULL) volta a ser contada duas vezes -- e o valor dobrado " +
       "e plausivel",
-    de: "  return Number(crua.amount) > 0;",
-    para: "  return false;",
+    // A LINHA DE CIMA ENTROU NA ANCORA NA HMO-380, e nao e zelo: desde que
+    // `ehEntradaSoltaDoMyBank` existe, `  return Number(crua.amount) > 0;`
+    // aparece DUAS vezes no arquivo, e a trava de ambiguidade deste runner
+    // reprovaria o mutante ("aparece 2x"). A linha de cima e o que diz QUAL das
+    // duas funcoes esta sendo cegada -- `return true` no elo e desta, `return
+    // false` e da outra.
+    de:
+      "  if (texto(crua.counterpart_transaction_id)) return true;\n" +
+      "  return Number(crua.amount) > 0;",
+    para:
+      "  if (texto(crua.counterpart_transaction_id)) return true;\n" +
+      "  return false;",
   },
   {
     nome: "entrada_so_pelo_sinal",
@@ -151,8 +174,14 @@ const MUTANTES = [
     porque:
       "a regra da transferencia aplicada a TODAS as telas: toda receita " +
       "(amount positivo) desaparece da tela de Receitas",
-    de: '    if (tipo === "transfer" && ehPernaDeEntrada(crua)) continue;',
-    para: "    if (ehPernaDeEntrada(crua)) continue;",
+    de:
+      '    if (\n      tipo === "transfer" &&\n' +
+      "      ehPernaDeEntrada(crua) &&\n" +
+      "      !ehEntradaSoltaDoMyBank(crua)\n" +
+      "    ) {\n      continue;\n    }",
+    para:
+      "    if (ehPernaDeEntrada(crua) && !ehEntradaSoltaDoMyBank(crua)) {\n" +
+      "      continue;\n    }",
   },
 
   // --- armadilha 5: o gasto no cartao ja esta na fatura (HMO-260) ----------
@@ -234,8 +263,13 @@ const MUTANTES = [
     porque:
       "a conta prevista entra em qualquer tela: o salario previsto de R$ 7.000 " +
       "aparece como despesa prevista do mes",
-    de: "    if (linha && linha.tipo === tipo) linhas.push(linha);",
-    para: "    if (linha) linhas.push(linha);",
+    // ANCORA JA MORTA ANTES DESTA ISSUE, consertada aqui porque este runner
+    // passou a ser rodado: a HMO-372 tirou o `linha &&` da condicao (o
+    // `if (!linha) continue;` subiu para antes da excecao do auto-emprestimo) e
+    // o mutante ficou com o endereco velho -- "o trecho a mutar NAO EXISTE
+    // MAIS", sem medir nada desde entao. `mutante-cuja-ancora-a-feature-apagou`.
+    de: "    if (linha.tipo === tipo) linhas.push(linha);",
+    para: "    linhas.push(linha);",
   },
   {
     nome: "previsto_sem_direction",
@@ -431,13 +465,24 @@ const MUTANTES = [
       "o conjunto da terceira consulta deixa de ser lido: a conta fixa que ja " +
       "foi paga aparece como lancamento comum, e a consulta extra fica paga " +
       "sem ninguem usar",
+    // A ANCORA GANHOU O RAMO `"mybank"` NA HMO-380, e o `para` o preserva: o
+    // que este mutante mede e o conjunto da terceira consulta deixar de ser
+    // lido, nao o selo do MyBank (quem mede aquele e
+    // `selo_do_mybank_no_realizado`).
     de:
       "    natureza: faturaPaga\n" +
       '      ? "fatura"\n' +
-      "      : idsDeFixa.has(crua.id)\n" +
-      '        ? "fixa"\n' +
+      "      : ehEntradaSoltaDoMyBank(crua)\n" +
+      '        ? "mybank"\n' +
+      "        : idsDeFixa.has(crua.id)\n" +
+      '          ? "fixa"\n' +
+      '          : "despesa",',
+    para:
+      "    natureza: faturaPaga\n" +
+      '      ? "fatura"\n' +
+      "      : ehEntradaSoltaDoMyBank(crua)\n" +
+      '        ? "mybank"\n' +
       '        : "despesa",',
-    para: '    natureza: faturaPaga ? "fatura" : "despesa",',
   },
   {
     nome: "realizada_sempre_fixa",
@@ -447,9 +492,11 @@ const MUTANTES = [
     de:
       "    natureza: faturaPaga\n" +
       '      ? "fatura"\n' +
-      "      : idsDeFixa.has(crua.id)\n" +
-      '        ? "fixa"\n' +
-      '        : "despesa",',
+      "      : ehEntradaSoltaDoMyBank(crua)\n" +
+      '        ? "mybank"\n' +
+      "        : idsDeFixa.has(crua.id)\n" +
+      '          ? "fixa"\n' +
+      '          : "despesa",',
     para: '    natureza: "fixa",',
   },
 
@@ -575,13 +622,25 @@ const MUTANTES = [
       "«Fatura» e o caminho de volta para o cartao e o mes, e fica na lista de " +
       "Despesas como uma linha qualquer com a descricao da fatura -- que e " +
       "exatamente 'a transferencia reclassificada' que a issue recusa",
+    // A ANCORA GANHOU UM RAMO NA HMO-380 (`"mybank"`, armadilha 7). Os `para`
+    // destes dois mutantes PRESERVAM aquele ramo de proposito: quem o apaga e
+    // `selo_do_mybank_no_realizado`, logo abaixo, e variar os dois ramos no
+    // mesmo `para` deixaria cada um deles sem medida propria
+    // (`variar-um-lado-da-igualdade-deixa-a-guarda-sem-medida`).
     de:
       "    natureza: faturaPaga\n" +
       '      ? "fatura"\n' +
+      "      : ehEntradaSoltaDoMyBank(crua)\n" +
+      '        ? "mybank"\n' +
+      "        : idsDeFixa.has(crua.id)\n" +
+      '          ? "fixa"\n' +
+      '          : "despesa",',
+    para:
+      "    natureza: ehEntradaSoltaDoMyBank(crua)\n" +
+      '      ? "mybank"\n' +
       "      : idsDeFixa.has(crua.id)\n" +
       '        ? "fixa"\n' +
       '        : "despesa",',
-    para: '    natureza: idsDeFixa.has(crua.id) ? "fixa" : "despesa",',
   },
   {
     nome: "fatura_paga_ordem_fixa_primeiro",
@@ -592,14 +651,108 @@ const MUTANTES = [
     de:
       "    natureza: faturaPaga\n" +
       '      ? "fatura"\n' +
-      "      : idsDeFixa.has(crua.id)\n" +
-      '        ? "fixa"\n' +
-      '        : "despesa",',
+      "      : ehEntradaSoltaDoMyBank(crua)\n" +
+      '        ? "mybank"\n' +
+      "        : idsDeFixa.has(crua.id)\n" +
+      '          ? "fixa"\n' +
+      '          : "despesa",',
     para:
       "    natureza: idsDeFixa.has(crua.id)\n" +
       '      ? "fixa"\n' +
       "      : faturaPaga\n" +
       '        ? "fatura"\n' +
+      "        : ehEntradaSoltaDoMyBank(crua)\n" +
+      '          ? "mybank"\n' +
+      '          : "despesa",',
+  },
+
+  // --- armadilha 7: a perna de entrada SOLTA (HMO-380) --------------------
+  //
+  // O caso medido em producao pela prova da HMO-374: UMA linha `transfer`,
+  // positiva, sem elo, com a chave `mybank:<id>` -- e as tres abas de
+  // Movimentacoes lendo R$ 0,00 sobre um saldo que subiu R$ 100,00.
+  {
+    nome: "perna_solta_do_mybank_sai",
+    porque:
+      "o defeito desta issue inteiro de volta: a de-duplicacao da armadilha 3 " +
+      "volta a descartar a perna que a conexao pagou, e os R$ 100,00 que " +
+      "entraram de verdade na conta de investimento somem das TRES abas -- um " +
+      "mes MENOR, que e a direcao de falha que nao parece erro",
+    de:
+      '    if (\n      tipo === "transfer" &&\n' +
+      "      ehPernaDeEntrada(crua) &&\n" +
+      "      !ehEntradaSoltaDoMyBank(crua)\n" +
+      "    ) {\n      continue;\n    }",
+    para: '    if (tipo === "transfer" && ehPernaDeEntrada(crua)) {\n      continue;\n    }',
+  },
+  {
+    nome: "mybank_sem_a_chave_canonica",
+    porque:
+      "a chave deixa de ser o criterio e TODA perna de entrada sem elo escapa " +
+      "da de-duplicacao: a transferencia de antes do 015 (ou a que perdeu o " +
+      "elo por ON DELETE SET NULL) volta a contar duas vezes, que e o defeito " +
+      "da armadilha 3 por um caminho novo",
+    de: "  if (!temOEloDaParcelaDoMyBank(crua.notes)) return false;",
+    para: "  if (false) return false;",
+  },
+  {
+    nome: "mybank_ignora_o_elo_do_015",
+    porque:
+      "a armadilha 3 volta para o CASO A: a baixa da previsao do " +
+      "auto-emprestimo grava as DUAS pernas com a mesma nota `mybank:` " +
+      "(HMO-382), e sem o criterio do elo as duas entram -- R$ 2.000 de uma " +
+      "parcela de R$ 1.000, com as duas linhas na lista dizendo a mesma " +
+      "descricao e a mesma data",
+    de: "  if (texto(crua.counterpart_transaction_id)) return false;",
+    para: "  if (false) return false;",
+  },
+  {
+    nome: "mybank_sem_o_tipo_gravado",
+    porque:
+      "o `transaction_type` deixa de ser criterio: uma RECEITA que alguem " +
+      "anotasse com a chave `mybank:` passa a ser a perna solta -- e a leitura " +
+      "e da coluna CRUA porque pelo SINAL esta linha e indistinguivel de uma " +
+      "receita",
+    de: "  if (String(crua.transaction_type) !== TIPO_DA_PARCELA_DO_MYBANK) return false;",
+    para: "  if (false) return false;",
+  },
+  {
+    nome: "mybank_sem_o_sinal",
+    porque:
+      "o selo passa a valer para a perna NEGATIVA: a saida de um par do Caso A " +
+      "-- que tem a nota e nao tem elo -- vem rotulada «MyBank», o selo de uma " +
+      "linha SEM par, dizendo que nao houve contrapartida numa transferencia " +
+      "que tem as duas pernas gravadas. Nenhum total muda, e e por isso que " +
+      "ele importa",
+    // A LINHA DE CIMA ESTA NA ANCORA pela trava de ambiguidade: o `return
+    // Number(crua.amount) > 0;` existe tambem em `ehPernaDeEntrada`. O `return
+    // false` do elo e o que diz que a funcao cegada e esta.
+    de:
+      "  if (texto(crua.counterpart_transaction_id)) return false;\n" +
+      "  return Number(crua.amount) > 0;",
+    para:
+      "  if (texto(crua.counterpart_transaction_id)) return false;\n" +
+      "  return true;",
+  },
+  {
+    nome: "selo_do_mybank_no_realizado",
+    porque:
+      "a perna solta entra no numero certo e sem o selo: a MESMA serie se " +
+      "apresenta como «MyBank» nas 23 previsoes e como transferencia comum na " +
+      "unica que foi paga, e quem confere o extrato nao acha o que recebeu",
+    de:
+      "    natureza: faturaPaga\n" +
+      '      ? "fatura"\n' +
+      "      : ehEntradaSoltaDoMyBank(crua)\n" +
+      '        ? "mybank"\n' +
+      "        : idsDeFixa.has(crua.id)\n" +
+      '          ? "fixa"\n' +
+      '          : "despesa",',
+    para:
+      "    natureza: faturaPaga\n" +
+      '      ? "fatura"\n' +
+      "      : idsDeFixa.has(crua.id)\n" +
+      '        ? "fixa"\n' +
       '        : "despesa",',
   },
   {

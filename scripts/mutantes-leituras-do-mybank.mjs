@@ -150,9 +150,14 @@ const mutantes = [
   ],
   [
     TELAS,
+    // A ANCORA MUDOU DE ENDERECO NA HMO-380, e a linha mutada e a MESMA: o
+    // `startsWith` saiu do corpo de `ehParcelaDoAutoEmprestimo` para
+    // `temOEloDaParcelaDoMyBank`, porque o lado REALIZADO passou a fazer a mesma
+    // pergunta (`ehEntradaSoltaDoMyBank`). Agora o mutante cega os DOIS
+    // consultores de uma vez -- quem o mata continua sendo esta suite.
     "o criterio do elo vira `includes`: uma nota que CITA `mybank:` no meio da frase passa a ser o elo",
-    "  return String(crua.notes ?? \"\").startsWith(PREFIXO_DA_PARCELA_DO_MYBANK);",
-    "  return String(crua.notes ?? \"\").includes(PREFIXO_DA_PARCELA_DO_MYBANK);",
+    "  String(notas ?? \"\").startsWith(PREFIXO_DA_PARCELA_DO_MYBANK);",
+    "  String(notas ?? \"\").includes(PREFIXO_DA_PARCELA_DO_MYBANK);",
   ],
   [
     TELAS,
