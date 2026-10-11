@@ -1,10 +1,29 @@
 "use client";
 
 // ---------------------------------------------------------------------------
-// O LADO DO DEVEDOR, EM CONTAS A PAGAR -- HMO-371 (F3 da HMO-368)
+// O LADO DO DEVEDOR -- HMO-371 (F3 da HMO-368)
 // ---------------------------------------------------------------------------
 // "as parcelas aparecem em Contas a Pagar com o selo 'MyBank -- <quem
 // emprestou>' e o botao de avisar que pagou."
+//
+// ESTE BLOCO MORA EM `/dashboard/mybank` DESDE A HMO-386
+// -----------------------------------------------------
+// Ele nasceu em `/dashboard/bills`, e la ele DOBRAVA a linha: a agenda daquela
+// tela ja mostra a parcela em janela desde a HMO-372 (`lerDividaDoMyBank`,
+// leitura 1 de 7), e a mesma parcela acabava desenhada duas vezes -- uma na
+// agenda e uma aqui. Medido em producao: a descricao aparecia 4 vezes com 2
+// parcelas em janela, e nenhum total discordava (a parcela entra em «Total a
+// pagar» uma vez, pela agenda), entao nada ficava vermelho.
+//
+// A saida escolhida foi a que NAO MEXE EM DINHEIRO: o bloco saiu daquela tela e
+// a linha da agenda ganhou o gesto de `reported`
+// (`components/mybank/LinhaDaParcelaDoMyBank.tsx`). A outra saida -- tirar a
+// linha da agenda e deixar este bloco dono unico -- faria «Total a pagar»
+// DESCER, e essa e a direcao em que quem olha gasta o que nao tem.
+//
+// O COMPONENTE EM SI NAO MUDOU com a mudanca de endereco, e as decisoes abaixo
+// continuam valendo: elas sao sobre o bloco ser um bloco (com a divida inteira)
+// e nao sobre em qual tela ele esta.
 //
 // UM BLOCO PROPRIO, E NAO LINHA DENTRO DA AGENDA
 // ----------------------------------------------
@@ -59,9 +78,11 @@
 //      resto da pagina 3.000 pixels para baixo.
 //
 // A SOBREPOSICAO EM SI -- a parcela em janela aparecendo em DUAS linhas da mesma
-// tela, uma na agenda e uma aqui -- nao e desta issue. Ela se resolve tirando a
-// linha de MyBank da agenda (e `ehParcelaDoMyBank` existe para isso) ou tirando
-// este bloco da tela, e as duas mexem em "Total a pagar".
+// tela, uma na agenda e uma aqui -- nao era daquela issue. ELA FOI RESOLVIDA NA
+// HMO-386, pela segunda das duas saidas: este bloco saiu de `/dashboard/bills`
+// (ver o topo deste arquivo). E `ehParcelaDoMyBank` ganhou chamador -- nao para
+// FILTRAR a agenda, que era a saida 1, mas para a agenda desenhar aquela linha
+// do jeito dela.
 // ---------------------------------------------------------------------------
 
 import { useCallback, useEffect, useState } from "react";

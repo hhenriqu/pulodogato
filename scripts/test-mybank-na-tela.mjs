@@ -224,6 +224,10 @@ const PARTES = [
   "components/movimentacoes/PerguntaDaBaseDoValor.js",
   "components/mybank/PainelDoMyBank.js",
   "components/mybank/ParcelasDoMyBankQueEuDevo.js",
+  // A LINHA DA AGENDA (HMO-386). Ela e a dona da parcela em `/dashboard/bills`
+  // desde que o bloco saiu daquela tela: sem esta parte o mount da secao J
+  // morre em `ReferenceError: LinhaDaParcelaDoMyBank is not defined`.
+  "components/mybank/LinhaDaParcelaDoMyBank.js",
 ];
 
 const producao = PARTES.map((parte) => {
@@ -275,6 +279,12 @@ const BRUNO = "d2222222-2222-4222-b222-222222222222";
 const CARLA = "d3333333-3333-4333-b333-333333333333";
 const EU = "e0000000-0000-4000-b000-000000000000";
 const PARCELA_QUE_EU_DEVO = "f1111111-1111-4111-b111-111111111111";
+// A parcela da LINHA DA AGENDA (HMO-386). Id PROPRIO, e nao o do bloco: a
+// assercao do PATCH compara a URL que saiu com o id que entrou, e um id
+// compartilhado com o bloco deixaria de distinguir qual dos dois gestos a
+// chamada veio -- os dois mandam o mesmo corpo para a mesma rota.
+const PARCELA_NA_AGENDA = "f2222222-2222-4222-b222-222222222222";
+const PARCELA_NA_AGENDA_AVISADA = "f3333333-3333-4333-b333-333333333333";
 
 // A pagina e montada com template literal, e NUNCA com `String.replace`: o
 // bundle do React tem `$$typeof` dentro, e numa string de substituicao `$$`
@@ -290,6 +300,7 @@ const PAGINA = `<!doctype html>
 <div id="raiz-g4"></div><div id="raiz-g4b"></div>
 <div id="raiz-i"></div><div id="raiz-i2"></div><div id="raiz-i3"></div>
 <div id="raiz-i4"></div><div id="raiz-i5"></div>
+<div id="raiz-j1"></div><div id="raiz-j2"></div><div id="raiz-j3"></div>
 <div id="resultado">a pagina nao rodou</div>
 <script>${umd("react", "react.development.js")}</script>
 <script>${umd("react-dom", "react-dom.development.js")}</script>
@@ -327,6 +338,18 @@ const Loader2 = icone("Loader2");
 const PiggyBank = icone("PiggyBank");
 const Plus = icone("Plus");
 const Users = icone("Users");
+
+/**
+ * next/link: uma ancora (HMO-386).
+ *
+ * \`LinhaDaParcelaDoMyBank\` leva o selo do MyBank para \`/dashboard/mybank\`, que
+ * e onde a divida inteira (e o nome de quem emprestou) mora. Sem este esboco a
+ * linha morre em \`ReferenceError: Link is not defined\` no primeiro render --
+ * familia \`import-novo-no-componente-derruba-a-sonda-de-navegador\`. O \`href\`
+ * e repassado de proposito: a secao J o afirma.
+ */
+const Link = (props) =>
+  React.createElement("a", { href: props.href, className: props.className }, props.children);
 
 /** sonner: um registrador. O que as assercoes leem e a CHAMADA, nao o toast. */
 const TOASTS = [];
@@ -1597,6 +1620,145 @@ async function preencherEmprestimo(achar, valor) {
   };
 }
 
+// =============================================================================
+// J -- A LINHA DA AGENDA: a parcela desenhada UMA vez, em Contas a Pagar
+//      (HMO-386)
+// =============================================================================
+// A mesma parcela aparecia em DUAS linhas de \`/dashboard/bills\`: uma na agenda
+// (a HMO-372 fundiu a divida na rota) e uma no bloco do devedor (HMO-371). A
+// saida escolhida tirou o BLOCO daquela tela -- ele foi para
+// \`/dashboard/mybank\` -- e deu a LINHA o gesto que so o bloco tinha.
+//
+// O QUE ESTA SECAO MEDE, E QUE O SOURCE-LEVEL NAO ALCANCA: a linha faz o gesto
+// certo (\`reported\`, na rota do MyBank, com o id que esta em
+// \`mybank_installment_id\`), le o estado certo (\`mybank_status\`, e nao \`status\`)
+// e NAO oferece nenhuma das quatro acoes da agenda -- todas montariam a URL com
+// o \`id: null\` que esta linha tem por construcao.
+{
+  /** A linha no formato de \`parcelasDevidasNaAgenda\` (lib/leituras-do-mybank). */
+  const naAgenda = (id, mybankStatus) => ({
+    id: null,
+    parcela_do_mybank: true,
+    mybank_installment_id: id,
+    mybank_loan_id: "l-moto",
+    lender_user_id: ${JSON.stringify(LAIS)},
+    user_id: ${JSON.stringify(EU)},
+    description: "Moto eletrica",
+    amount: 1000,
+    due_date: "2026-11-10",
+    // \`status\` E SEMPRE 'pending' AQUI, INCLUSIVE NA PARCELA AVISADA, e e isso
+    // que da sentido ao caso J3: aquele campo e de DINHEIRO (\`reported\` ainda e
+    // divida), e quem diz o estado da TELA e \`mybank_status\`. Um componente que
+    // lesse \`status\` passaria J1 e falharia J3.
+    status: "pending",
+    mybank_status: mybankStatus,
+    effective_status: "pending",
+    days_until_due: 30,
+    direction: "expense",
+    notes: "mybank:" + id,
+    group_id: null,
+    recurring_rule_id: null,
+    selo: "MyBank",
+    installment_number: 2,
+    installment_total: 24,
+  });
+
+  const ler = (raiz) => {
+    const el = raiz.querySelector("[data-parcela-do-mybank]");
+    if (!el) return { linha: null };
+    return {
+      linha: el.getAttribute("data-parcela-do-mybank"),
+      selo: el.querySelector("[data-selo-do-mybank]")
+        ? el.querySelector("[data-selo-do-mybank]").textContent
+        : null,
+      // O ENDERECO do selo: e por ele que o nome de quem emprestou continua
+      // alcancavel depois de o bloco sair desta tela.
+      href: el.querySelector("a") ? el.querySelector("a").getAttribute("href") : null,
+      rotulo: el.querySelector("[data-parcela-rotulo]")
+        ? el.querySelector("[data-parcela-rotulo]").textContent
+        : null,
+      avisar: el.querySelector("[data-avisar]")
+        ? el.querySelector("[data-avisar]").getAttribute("data-avisar")
+        : null,
+      avisarDesabilitado: el.querySelector("[data-avisar]")
+        ? el.querySelector("[data-avisar]").disabled
+        : null,
+      // O ATRIBUTO e nao o texto: e ele que diz de QUAL parcela este estado e
+      // -- duas linhas avisadas na mesma secao tem o mesmo texto, e a sonda de
+      // producao conta por id.
+      avisado: el.querySelector("[data-avisado]")
+        ? el.querySelector("[data-avisado]").getAttribute("data-avisado")
+        : null,
+      // TODOS os botoes da linha. A medida de "ela nao herdou as acoes da
+      // agenda" e a CONTAGEM: procurar por titulo daria verde se o botao
+      // mudasse de rotulo, e a linha da agenda tem quatro deles (baixa,
+      // alterar, pular, comprovante).
+      botoes: el.querySelectorAll("button").length,
+      texto: el.textContent,
+    };
+  };
+
+  // J1/J2: a parcela PENDENTE -- tem o botao, e o clique manda \`reported\`.
+  let avisos = 0;
+  const raiz1 = document.getElementById("raiz-j1");
+  CHAMADAS = [];
+  ReactDOM.render(
+    React.createElement(LinhaDaParcelaDoMyBank, {
+      parcela: naAgenda(${JSON.stringify(PARCELA_NA_AGENDA)}, "pending"),
+      valor: "R$ 1.000,00",
+      aoAvisar: () => {
+        avisos += 1;
+      },
+      online: true,
+    }),
+    raiz1
+  );
+  await assentar();
+  out.j_pendente = ler(raiz1);
+  // A LINHA NAO BUSCA NADA SOZINHA: a agenda ja veio na leitura da tela, e um
+  // \`fetch\` no mount seria a divida lida duas vezes por pagina.
+  out.j_leituras_no_mount = CHAMADAS.map((c) => c.url);
+
+  CHAMADAS = [];
+  clicar(raiz1.querySelector("[data-avisar]"));
+  await assentar();
+  out.j_aviso = {
+    patches: CHAMADAS.filter((c) => c.metodo === "PATCH"),
+    // O \`aoAvisar\` e o que recarrega a agenda da tela. Sem ele o rotulo da
+    // linha ficaria dizendo "Avisar que paguei" depois do aviso ter saido.
+    recarregou: avisos,
+  };
+
+  // J3: a parcela JA AVISADA -- o botao virou estado, e nao desapareceu.
+  const raiz2 = document.getElementById("raiz-j2");
+  ReactDOM.render(
+    React.createElement(LinhaDaParcelaDoMyBank, {
+      parcela: naAgenda(${JSON.stringify(PARCELA_NA_AGENDA_AVISADA)}, "reported"),
+      valor: "R$ 1.000,00",
+      aoAvisar: () => {},
+      online: true,
+    }),
+    raiz2
+  );
+  await assentar();
+  out.j_avisada = ler(raiz2);
+
+  // J4: SEM REDE o botao fica desabilitado -- as outras linhas desta tela usam
+  // o mesmo \`online\`, e um gesto que sai offline morre no \`catch\`.
+  const raiz3 = document.getElementById("raiz-j3");
+  ReactDOM.render(
+    React.createElement(LinhaDaParcelaDoMyBank, {
+      parcela: naAgenda(${JSON.stringify(PARCELA_NA_AGENDA)}, "pending"),
+      valor: "R$ 1.000,00",
+      aoAvisar: () => {},
+      online: false,
+    }),
+    raiz3
+  );
+  await assentar();
+  out.j_offline = ler(raiz3);
+}
+
 document.getElementById("resultado").textContent =
   "RESULTADO" + JSON.stringify(out) + "FIM";
 } catch (e) {
@@ -2493,4 +2655,99 @@ test("I7: o cancelamento que FALHOU tem segunda tentativa", () => {
   // fica em voo para sempre, e o botao -- que nao tem `disabled` -- continua
   // clicavel sem chamar rota nenhuma e sem dizer nada.
   assert.equal(resultado.i_retentativa.total, 2);
+});
+
+// ---------------------------------------------------------------------------
+// J -- a linha da agenda em Contas a Pagar (HMO-386)
+// ---------------------------------------------------------------------------
+// A parcela aparecia em DUAS linhas da mesma tela. O bloco saiu de
+// `/dashboard/bills` (ele e de `/dashboard/mybank`) e a linha da agenda ganhou
+// o gesto. Estas cinco medidas sao a segunda metade: sem elas o PR seria
+// "apagar o bloco", e o devedor perderia o unico botao que tinha.
+//
+// A CONTAGEM DE 2 PARA 1 NA PAGINA nao se mede aqui -- ela e composicao de
+// tela, e a sonda dela e `scripts/probe-linha-dobrada-do-mybank.mjs`, em
+// producao, com «Total a pagar» de controle negativo.
+
+test("J1: a linha carrega o id da parcela, o selo e o rotulo n de m", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  const linha = resultado.j_pendente;
+  // O ID NO DOM e a ancora da contagem da sonda de producao: a descricao nao
+  // serve, porque ela e do EMPRESTIMO e as parcelas dele a repetem.
+  assert.equal(linha.linha, PARCELA_NA_AGENDA);
+  assert.equal(linha.selo, "MyBank");
+  // O ENDERECO DA DIVIDA INTEIRA. O nome de quem emprestou sai de `profiles` e
+  // nao vem nesta leitura (ela alimenta quatro rotas de dinheiro); o caminho
+  // para ele e este link.
+  assert.equal(linha.href, "/dashboard/mybank");
+  assert.match(linha.rotulo, /parcela 2 de 24/);
+  // O VALOR vem da tela JA FORMATADO: a linha nao reimplementa `moeda()`, senao
+  // duas linhas vizinhas da mesma lista poderiam formatar diferente.
+  assert.match(linha.texto, /R\$ 1\.000,00/);
+});
+
+test("J2: a linha NAO oferece nenhuma das quatro acoes da agenda", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // UM botao, e e o de avisar. A linha da agenda tem quatro (baixa, alterar,
+  // pular, comprovante) e as quatro montariam a URL com `id: null` -- a baixa
+  // hoje sai pelo `if (conta.id === null) return` da tela, ou seja um botao de
+  // pagar que nao faz nada.
+  assert.equal(resultado.j_pendente.botoes, 1);
+  assert.equal(resultado.j_pendente.avisar, PARCELA_NA_AGENDA);
+
+  // E ela nao busca nada no mount: a agenda ja veio na leitura da tela.
+  assert.deepEqual(resultado.j_leituras_no_mount, []);
+});
+
+test("J3: avisar que paguei manda `reported` na rota do MyBank, e recarrega", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  assert.equal(
+    resultado.j_aviso.patches.length,
+    1,
+    JSON.stringify(resultado.j_aviso)
+  );
+  const [patch] = resultado.j_aviso.patches;
+  // A ROTA DO MYBANK com o id de `mybank_installment_id`, e NAO
+  // `/api/scheduled-transactions/<id>/pay`: esta linha nao esta naquela tabela,
+  // e o `id` dela e `null`.
+  assert.equal(patch.url, `/api/mybank/installments/${PARCELA_NA_AGENDA}`);
+  // `reported`, e NUNCA `paid`: quem leva a parcela a paga e quem recebe o
+  // dinheiro. A rota recusa `paid` do devedor com 403.
+  assert.equal(patch.corpo.status, "reported");
+  assert.notEqual(patch.corpo.status, "paid");
+  // A agenda da tela e recarregada: o rotulo desta linha depende do
+  // `mybank_status`, que acabou de mudar no servidor.
+  assert.equal(resultado.j_aviso.recarregou, 1);
+});
+
+test("J4: quem JA avisou le o estado, e o estado sai de `mybank_status`", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  const linha = resultado.j_avisada;
+
+  // ESTE E O CASO QUE SEPARA OS DOIS CAMPOS. O fixture tem `status: 'pending'`
+  // (o campo de DINHEIRO, que e `pending` tambem quando a parcela esta avisada,
+  // senao o «A vencer» desceria no clique do devedor) e
+  // `mybank_status: 'reported'`. Um componente que lesse `status` ofereceria o
+  // botao aqui -- e o segundo PATCH responde 200 sem mudar nada, entao o
+  // sintoma seria um botao que parece funcionar e nao faz diferenca nenhuma.
+  assert.equal(linha.avisar, null, JSON.stringify(linha));
+  assert.equal(linha.botoes, 0);
+  assert.equal(linha.avisado, PARCELA_NA_AGENDA_AVISADA);
+  // O botao VIRA ESTADO e nao desaparece: a frase diz o que falta, e de quem.
+  assert.match(linha.texto, /Avisei que paguei/);
+  assert.match(linha.texto, /falta quem emprestou confirmar/);
+});
+
+test("J5: sem rede o gesto fica desabilitado", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // O mesmo `online` das outras linhas desta tela. Sem ele o toque offline vai
+  // para o `catch` e o toast diz "nao foi possivel" depois do gesto, em vez de
+  // o botao dizer antes.
+  assert.equal(resultado.j_offline.avisar, PARCELA_NA_AGENDA);
+  assert.equal(resultado.j_offline.avisarDesabilitado, true);
 });

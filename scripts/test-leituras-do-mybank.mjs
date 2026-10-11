@@ -1116,3 +1116,34 @@ test("o recorte de data da funcao pura aceita `de: null` e nunca passa do teto",
     1
   );
 });
+
+test("a linha da agenda carrega os DOIS status: o de dinheiro e o da tela", () => {
+  // HMO-386. A linha da agenda e a dona da parcela em Contas a Pagar desde que
+  // o bloco do devedor saiu daquela tela, e o gesto dela ("avisar que paguei")
+  // precisa saber se a pessoa JA avisou. O `status` nao pode responder isso: ele
+  // e o campo de DINHEIRO e vale `'pending'` nos dois casos de proposito --
+  // `reported` ainda e divida, e mapea-lo para outra coisa aqui faria o «A
+  // vencer» descer no instante do clique do devedor (a convencao da HMO-366,
+  // afirmada em "a parcela `reported` continua divida" acima).
+  //
+  // Entao `mybank_status` existe ao lado dele. SEM ESTA ASSERCAO o campo e
+  // invisivel para a suite: um `mybank_status: "pending"` fixo passaria tudo o
+  // que ja estava escrito, e o sintoma na tela seria o botao "Avisar que
+  // paguei" oferecido a quem ja avisou -- o segundo PATCH responde 200 sem
+  // mudar nada, entao o botao parece funcionar e nao faz diferenca nenhuma.
+  const [pendente] = LEITURAS.parcelasDevidasNaAgenda([DIVIDA_DA_LAIS], HOJE);
+  const [avisada] = LEITURAS.parcelasDevidasNaAgenda(
+    [{ ...DIVIDA_DA_LAIS, status: "reported", reported_at: "2026-03-06" }],
+    HOJE
+  );
+
+  // O CAMPO DE DINHEIRO: igual nos dois. E o que impede o botao do devedor de
+  // pagar a conta dele.
+  assert.equal(pendente.status, "pending");
+  assert.equal(avisada.status, "pending");
+
+  // O CAMPO DA TELA: diferente nos dois. E a unica diferenca entre as duas
+  // linhas, e e ela que o gesto le.
+  assert.equal(pendente.mybank_status, "pending");
+  assert.equal(avisada.mybank_status, "reported");
+});

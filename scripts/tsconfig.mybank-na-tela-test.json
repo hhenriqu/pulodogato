@@ -44,6 +44,7 @@
   "include": [
     "../components/mybank/PainelDoMyBank.tsx",
     "../components/mybank/ParcelasDoMyBankQueEuDevo.tsx",
+    "../components/mybank/LinhaDaParcelaDoMyBank.tsx",
     "../components/movimentacoes/PerguntaDaBaseDoValor.tsx",
     "../components/ui/button.tsx",
     "../components/ui/card.tsx",
