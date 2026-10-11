@@ -7276,7 +7276,8 @@ jobs:
         run: npm run mutantes:pra-quem-pagar
 
       # -----------------------------------------------------------------------
-      # MyBank F2 -- a serie do emprestimo e as duas rotas (HMO-370)
+      # MyBank -- a serie do emprestimo, as rotas e o ciclo do Caso A
+      # (HMO-370 e HMO-382)
       # -----------------------------------------------------------------------
       # SEM `paths:`, como todo o resto deste workflow, e aqui isso e o que
       # importa: a suite nao toca no Postgres (o duble de client responde no
@@ -7295,11 +7296,23 @@ jobs:
       #     lugar nenhum -- as linhas sao minhas e a RLS as aceita;
       #   * o devedor nao alcancando `amount` pelo corpo do pedido (o outro lado
       #     da `mybank_installments_trava_do_devedor` da 053);
-      #   * o UPDATE filtrado pela RLS nao respondendo sucesso.
-      - name: MyBank -- a serie do emprestimo e as rotas
+      #   * o UPDATE filtrado pela RLS nao respondendo sucesso;
+      #   * (HMO-382) O CICLO DO CASO A FECHANDO: a baixa da transferencia
+      #     prevista levando a parcela a `paid` com o elo na perna de ENTRADA, o
+      #     estorno a devolvendo a `pending` com os tres campos, e as duas
+      #     ordens que fazem a falha no meio ser sempre "nao aconteceu" em vez de
+      #     "metade aconteceu" -- a parcela baixada ANTES da previsao na ida, e
+      #     devolvida ANTES de qualquer DELETE na volta.
+      - name: MyBank -- a serie do emprestimo, as rotas e o ciclo do Caso A
         run: npm run test:emprestimo-do-mybank
 
-      # Controle negativo do step acima: 19 mutantes, 19 mortos.
+      # Controle negativo do step acima: 33 mutantes, 33 mortos.
+      #
+      # O que a HMO-382 pede por nome e `A PARCELA FICA EM pending`: o dinheiro
+      # anda certo nas 24 vezes (corrente -X, investimento +X) e o painel do
+      # MyBank segue cobrando tudo. E o oposto da familia HMO-149 -- lá o numero
+      # fecha e o fato nao aconteceu; aqui o fato aconteceu e o numero nao mexe
+      # --, e por isso nenhum saldo errado o denuncia depois.
       #
       # Os dois que a issue HMO-370 pede por nome sao os dois primeiros da lista
       # do runner: `transfer` virando `expense` no Caso A (o dinheiro sai da
@@ -7309,7 +7322,7 @@ jobs:
       # `contaDePagamentoId` ja chega `null` e a segunda guarda devolve `[]` de
       # qualquer jeito. Quem mata o mutante da guarda do caso e, e so, o teste
       # que manda `conta_de_pagamento_id` junto com `devedor_id`.
-      - name: Mutantes do MyBank F2
+      - name: Mutantes do MyBank -- emprestimo e ciclo do Caso A
         run: npm run mutantes:emprestimo-do-mybank
 
       # -----------------------------------------------------------------------

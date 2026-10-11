@@ -101,8 +101,135 @@ export const JUROS_DA_FASE_1 = 0;
  * numa URL (a mesma razao do `acerto:` na HMO-366), e para que a chave seja
  * `grep`avel: "quem sao as pernas do MyBank" e uma busca por `mybank:`.
  */
+export const PREFIXO_DA_CHAVE_DO_MYBANK = "mybank:";
+
 export function chaveDaParcelaDoMyBank(installmentId: string): string {
-  return `mybank:${installmentId}`;
+  return `${PREFIXO_DA_CHAVE_DO_MYBANK}${installmentId}`;
+}
+
+/**
+ * O INVERSO da chave: qual parcela esta previsao paga, ou `null`.
+ *
+ * E a metade que faltava do elo (HMO-382). A F2 gravou a chave e a F4 nunca a
+ * LEU na baixa: cada parcela do Caso A nascia com `notes = mybank:<id>`, a baixa
+ * da transferencia prevista movia o dinheiro certo, e `mybank_installments`
+ * ficava em `pending` para sempre -- eu pagava a moto para mim mesmo nas 24
+ * vezes e o painel do MyBank seguia dizendo que eu devia tudo. O oposto da
+ * familia HMO-149: lá o numero fecha e o fato nao aconteceu; aqui o fato
+ * aconteceu e o numero nao mexe.
+ *
+ * A COMPARACAO E DE CHAVE INTEIRA, NAO `includes`
+ * -----------------------------------------------
+ * `notes` e um campo que a pessoa digita. Procurar o prefixo em qualquer
+ * posicao faria uma anotacao como "paguei o mybank: 300 reais" virar elo para
+ * um id inventado -- e o efeito nao seria erro, seria um UPDATE em parcela
+ * nenhuma (ou, com sorte do azar, em uma parcela de outro emprestimo). Entao a
+ * chave e o `notes` INTEIRO, como em `RE_CHAVE_FATURA`, e o id nao pode conter
+ * espaco: o unico jeito de uma previsao ter elo e ela ter nascido com ele.
+ */
+export function parcelaDaChaveDoMyBank(
+  notes: string | null | undefined
+): string | null {
+  if (typeof notes !== "string") return null;
+  if (!notes.startsWith(PREFIXO_DA_CHAVE_DO_MYBANK)) return null;
+
+  const id = notes.slice(PREFIXO_DA_CHAVE_DO_MYBANK.length);
+  if (!id || /\s/.test(id)) return null;
+
+  return id;
+}
+
+/**
+ * A baixa desta previsao leva ESTA parcela a `paid`?
+ *
+ * `null` (a parcela nao existe) devolve `false`, E ISSO NAO E DEFENSIVIDADE
+ * ------------------------------------------------------------------------
+ * O elo pendurado e um estado alcancavel: `mybank_loans_delete` (053) deixa
+ * apagar emprestimo sem parcela paga, o CASCADE de `loan_id` leva as parcelas,
+ * e as 24 transferencias previstas ficam -- com `notes` apontando para ids que
+ * nao existem mais. Essa previsao continua sendo dinheiro que a pessoa quer
+ * mover entre contas DELA, e recusar a baixa por causa do elo morto seria
+ * transformar "o MyBank nao sabe mais desta parcela" em "voce nao consegue
+ * mais transferir". A baixa anda; so nao ha parcela para marcar.
+ *
+ * `cancelled` tambem devolve `false`: parcela cancelada nao volta a `paid` por
+ * efeito colateral de uma baixa, e `paid` ja esta no destino.
+ */
+export function parcelaSegueABaixaDaPrevisao(
+  parcela: { status: string } | null | undefined
+): boolean {
+  if (!parcela) return false;
+  return parcela.status === "pending" || parcela.status === "reported";
+}
+
+/** O estorno da baixa devolve ESTA parcela a `pending`? */
+export function parcelaSegueAoEstornoDaPrevisao(
+  parcela: { status: string } | null | undefined
+): boolean {
+  if (!parcela) return false;
+  return parcela.status === "paid";
+}
+
+/** O patch da parcela quando a previsao e baixada. */
+export interface BaixaDaParcela {
+  status: "paid";
+  paid_date: string;
+  paid_transaction_id: string;
+}
+
+/**
+ * O que a baixa da previsao grava na parcela.
+ *
+ * `pernaDeEntradaId` E A PERNA POSITIVA, A DA CONTA DE INVESTIMENTO
+ * ----------------------------------------------------------------
+ * A baixa de uma transferencia grava DUAS pernas, e `scheduled_transactions.
+ * transaction_id` aponta para a de SAIDA (e onde o dinheiro saiu, e e por ela
+ * que o estorno acha a contraparte). A parcela aponta para a de ENTRADA, e por
+ * uma razao diferente: `paid_transaction_id` responde "onde foi que este
+ * dinheiro entrou", e a resposta e a conta de investimento -- a mesma coluna
+ * que no Caso B guarda a perna de entrada que o credor lanca
+ * (`pernaDeEntradaDoPagamento`). Apontar para a saida faria a mesma coluna
+ * querer dizer coisas opostas nos dois casos, e o sintoma seria uma tela
+ * futura mostrando "a parcela 3 entrou na conta corrente" com sinal negativo.
+ *
+ * O nome do parametro e o que carrega essa decisao: um `transactionId` cru
+ * aceitaria a perna errada sem que a chamada parecesse errada.
+ */
+export function patchDaBaixaDaParcela(params: {
+  paidDate: string;
+  pernaDeEntradaId: string;
+}): BaixaDaParcela {
+  return {
+    status: "paid",
+    paid_date: params.paidDate,
+    paid_transaction_id: params.pernaDeEntradaId,
+  };
+}
+
+/** O patch que devolve a parcela ao estado de antes da baixa. */
+export interface EstornoDaParcela {
+  status: "pending";
+  paid_date: null;
+  paid_transaction_id: null;
+}
+
+/**
+ * O que o estorno da baixa devolve a parcela.
+ *
+ * OS TRES CAMPOS JUNTOS, E O `paid_date: null` E OBRIGATORIO
+ * ----------------------------------------------------------
+ * `mybank_installments_paid_check` e `CHECK ((status = 'paid') = (paid_date IS
+ * NOT NULL))`: um estorno que mexesse so no `status` seria recusado em 23514
+ * pelo proprio banco. O `paid_transaction_id: null` nao e exigido por CHECK
+ * nenhum -- e ele que impede a parcela pendente de continuar apontando para um
+ * lancamento que acabou de ser apagado.
+ *
+ * NAO volta para `reported`, mesmo que a parcela tenha passado por lá: no Caso
+ * A nao ha a quem avisar (eu sou os dois lados, e o PATCH recusa o aviso por
+ * isso), entao `pending` e o unico estado anterior possivel desta parcela.
+ */
+export function patchDoEstornoDaParcela(): EstornoDaParcela {
+  return { status: "pending", paid_date: null, paid_transaction_id: null };
 }
 
 /** Por que este pedido de emprestimo nao serve. */

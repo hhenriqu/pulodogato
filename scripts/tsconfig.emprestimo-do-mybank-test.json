@@ -1,13 +1,24 @@
 {
   "//": [
-    "MyBank F2 -- a aritmetica do emprestimo e as rotas (HMO-370).",
+    "MyBank -- a aritmetica do emprestimo e as TRES rotas do ciclo (HMO-370 e",
+    "HMO-382).",
     "",
-    "Compila as DUAS rotas e, por arrasto do tsc, `lib/emprestimo-do-mybank.ts`",
-    "com as dependencias dele (lib/lancamento.ts, lib/transferencia.ts) e",
+    "Compila as rotas e, por arrasto do tsc, `lib/emprestimo-do-mybank.ts` com as",
+    "dependencias dele (lib/lancamento.ts, lib/transferencia.ts) e",
     "utils/supabase/server.ts.",
     "",
     "  * app/api/mybank/loans/route.ts -- POST (cria) e GET (lista);",
-    "  * app/api/mybank/installments/[id]/route.ts -- PATCH (avisa/confirma).",
+    "  * app/api/mybank/installments/[id]/route.ts -- PATCH (avisa/confirma);",
+    "  * app/api/scheduled-transactions/[id]/pay/route.ts -- POST (baixa a",
+    "    previsao do Caso A, e e o unico lugar que leva a parcela do",
+    "    auto-emprestimo a `paid`) e DELETE (estorna, e a devolve a `pending`).",
+    "",
+    "POR QUE A ROTA DA BAIXA MORA NESTA SUITE, E NAO NUMA NOVA",
+    "O ciclo do Caso A e UM fato repartido em tres rotas, e o defeito que a",
+    "HMO-382 fechou vivia exatamente na costura: a F2 gravou a chave",
+    "`mybank:<id>` em `notes` e nada a LIA na baixa. Uma suite por rota mediria",
+    "cada ponta e nenhuma mediria a emenda -- e o fixture do Caso A (emprestimo +",
+    "parcela + previsao com o elo) ja estava construido aqui.",
     "",
     "POR QUE A FUNCAO PURA NAO TEM TSCONFIG PROPRIO",
     "A suite mede as duas coisas que a issue pede -- a serie de 24x fechando com",
@@ -45,6 +56,7 @@
   },
   "include": [
     "../app/api/mybank/loans/route.ts",
-    "../app/api/mybank/installments/[id]/route.ts"
+    "../app/api/mybank/installments/[id]/route.ts",
+    "../app/api/scheduled-transactions/[id]/pay/route.ts"
   ]
 }

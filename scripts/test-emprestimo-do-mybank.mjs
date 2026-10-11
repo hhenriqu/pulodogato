@@ -1044,3 +1044,535 @@ test("status fora de reported/paid e recusado", async () => {
     assert.equal(r.sessao.escritas.length, 0);
   }
 });
+
+// ---------------------------------------------------------------------------
+// PARTE 7 -- O CICLO DO CASO A FECHA (HMO-382)
+// ---------------------------------------------------------------------------
+// A baixa da transferencia prevista leva a parcela do MyBank a `paid`, e o
+// estorno a devolve a `pending`.
+//
+// O QUE ESTA PARTE EXISTE PARA IMPEDIR
+// ------------------------------------
+// O estado que a main tinha depois da F4: eu pago a moto para mim mesmo nas 24
+// vezes, a conta corrente baixa `-X`, a conta de investimento sobe `+X`, o
+// patrimonio fica certo -- e `mybank_installments.status` fica em `pending`
+// PARA SEMPRE, com o painel do MyBank dizendo que eu devo as 24 parcelas. E o
+// oposto da familia HMO-149 ("o numero fecha, o fato nao aconteceu"): aqui o
+// fato aconteceu e o numero nao mexe.
+//
+// E NAO SE CONSERTA ACEITANDO `paid` NO PATCH: a recusa daquela rota esta certa
+// (ver o teste "CASO A: o credor NAO marca `paid` aqui"), porque aceitar lá
+// produziria emprestimo quitado sem nada ter saido da conta. Os dois testes
+// convivem de proposito -- um exige a recusa, o outro exige o caminho que
+// funciona.
+//
+// POR QUE A PROVA E PELA ROTA, E NAO PELA FUNCAO PURA
+// ---------------------------------------------------
+// `parcelaDaChaveDoMyBank("mybank:p1") === "p1"` nao prova nada sobre a baixa:
+// o defeito consertado aqui era precisamente a rota NAO CHAMAR a leitura do
+// elo. O que corresponde a promessa e o UPDATE que a rota mandou -- tabela,
+// patch e contagem de linhas.
+
+const PAY = await import(
+  "../.tmp-emprestimo-do-mybank/app/api/scheduled-transactions/[id]/pay/route.js"
+);
+
+/** A parcela 3/24 do MEU auto-emprestimo -- o Caso A da HMO-368. */
+const PARCELA_DO_AUTO = {
+  id: "parcela-do-auto",
+  loan_id: "loan-auto",
+  installment_number: 3,
+  installment_total: 24,
+  amount: 1000,
+  due_date: "2027-01-10",
+  status: "pending",
+  reported_at: null,
+  paid_date: null,
+  paid_transaction_id: null,
+};
+
+const EMPRESTIMO_DO_AUTO = {
+  id: "loan-auto",
+  lender_user_id: EU,
+  lender_account_id: INVESTIMENTO,
+  // O Caso A em uma linha: eu sou os dois lados.
+  borrower_user_id: EU,
+  description: "Moto elétrica",
+  principal: 24000,
+  installment_count: 24,
+  first_due_date: "2026-11-10",
+  status: "active",
+  created_at: "2026-10-10T00:00:00Z",
+};
+
+/**
+ * A transferencia prevista que a F2 criou para essa parcela: do corrente para o
+ * investimento, com o elo em `notes`.
+ */
+const PREVISAO_DO_AUTO = {
+  id: "prev-do-auto",
+  user_id: EU,
+  account_id: CORRENTE,
+  destination_account_id: INVESTIMENTO,
+  description: "Moto elétrica (3/24)",
+  amount: 1000,
+  due_date: "2027-01-10",
+  transaction_type: "transfer",
+  status: "pending",
+  paid_date: null,
+  transaction_id: null,
+  category_id: CATEGORIA_TRANSFER,
+  subcategory_id: null,
+  group_id: null,
+  notes: "mybank:parcela-do-auto",
+  created_at: "2026-10-10T00:00:00Z",
+};
+
+function tabelasDoCicloDoAuto(extra = {}) {
+  return tabelas({
+    mybank_loans: [{ ...EMPRESTIMO_DO_AUTO }],
+    mybank_installments: [{ ...PARCELA_DO_AUTO }],
+    scheduled_transactions: [{ ...PREVISAO_DO_AUTO }],
+    ...extra,
+  });
+}
+
+async function pagarPrevisao({ tabelas: linhas, corpo = {}, erros, rlsFiltra } = {}) {
+  const sessao = criarDuble({
+    user: { id: EU },
+    tabelas: linhas ?? tabelasDoCicloDoAuto(),
+    ...(erros ? { erros } : {}),
+    ...(rlsFiltra ? { rlsFiltra } : {}),
+  });
+  const registro = { sessao: () => sessao.client };
+  globalThis.__dubleDeSupabase = registro;
+
+  let resposta;
+  try {
+    resposta = await PAY.POST(
+      { json: async () => corpo },
+      { params: { id: "prev-do-auto" } }
+    );
+  } finally {
+    delete globalThis.__dubleDeSupabase;
+  }
+
+  return { status: resposta.status, corpo: await resposta.json(), sessao, registro };
+}
+
+async function estornarPrevisao({ tabelas: linhas, rlsFiltra } = {}) {
+  const sessao = criarDuble({
+    user: { id: EU },
+    tabelas: linhas ?? tabelasDoCicloDoAuto(),
+    ...(rlsFiltra ? { rlsFiltra } : {}),
+  });
+  globalThis.__dubleDeSupabase = { sessao: () => sessao.client };
+
+  let resposta;
+  try {
+    resposta = await PAY.DELETE(
+      {},
+      { params: { id: "prev-do-auto" } }
+    );
+  } finally {
+    delete globalThis.__dubleDeSupabase;
+  }
+
+  return { status: resposta.status, corpo: await resposta.json(), sessao };
+}
+
+/** Os UPDATEs que a rota mandou para `mybank_installments`. */
+function patchesDaParcela(sessao) {
+  return sessao.escritas.filter(
+    (e) => e.tabela === "mybank_installments" && e.verbo === "update"
+  );
+}
+
+/** As duas pernas que a baixa inseriu, na ordem. */
+function pernas(sessao) {
+  return sessao.escritas
+    .filter((e) => e.tabela === "financial_transactions" && e.verbo === "insert")
+    .map((e) => e.linhas[0]);
+}
+
+test("A BAIXA DA PREVISAO LEVA A PARCELA A `paid` -- o ciclo do Caso A fecha", async () => {
+  const linhas = tabelasDoCicloDoAuto();
+  const { status, corpo, sessao } = await pagarPrevisao({
+    tabelas: linhas,
+    corpo: { paid_date: "2027-01-12" },
+  });
+
+  assert.equal(status, 200);
+
+  // O DINHEIRO PRIMEIRO: as duas pernas, e so duas.
+  const [saida, entrada] = pernas(sessao);
+  assert.equal(pernas(sessao).length, 2);
+  assert.equal(saida.account_id, CORRENTE);
+  assert.ok(saida.amount < 0, "a saida e NEGATIVA na conta corrente");
+  assert.equal(entrada.account_id, INVESTIMENTO);
+  assert.ok(entrada.amount > 0, "a entrada e POSITIVA na conta de investimento");
+
+  // E A PARCELA. Um UPDATE, nesta tabela, com os tres campos.
+  const patches = patchesDaParcela(sessao);
+  assert.equal(patches.length, 1);
+  assert.equal(patches[0].patch.status, "paid");
+  assert.equal(patches[0].patch.paid_date, "2027-01-12");
+  // `mybank_installments_paid_check` e `(status='paid') = (paid_date IS NOT
+  // NULL)`: `paid` sem data derruba a linha em 23514.
+  assert.ok(patches[0].patch.paid_date);
+  // ALCANCOU A LINHA: patch certo com filtro errado reescreve a tabela ou
+  // nenhuma linha, e nos dois casos a resposta da rota e a mesma.
+  assert.equal(patches[0].linhasAfetadas, 1);
+
+  // E o estado final da linha semeada, que e o que o painel do MyBank le.
+  assert.equal(linhas.mybank_installments[0].status, "paid");
+
+  assert.equal(corpo.mybank_installment_id, "parcela-do-auto");
+});
+
+test("o elo aponta para a perna de ENTRADA, a da conta de investimento", async () => {
+  const { sessao } = await pagarPrevisao();
+
+  const [saida, entrada] = pernas(sessao);
+  const patch = patchesDaParcela(sessao)[0].patch;
+
+  // `paid_transaction_id` responde "onde foi que este dinheiro ENTROU", e e a
+  // mesma coluna que no Caso B guarda a perna de entrada que o credor lanca.
+  // Apontar para a saida faria a coluna querer dizer coisas opostas nos dois
+  // casos -- e uma tela futura mostraria "a parcela 3 entrou na conta corrente"
+  // com sinal negativo.
+  assert.notEqual(
+    saida.id,
+    entrada.id,
+    "as duas pernas tem ids diferentes -- sem isto esta assercao nao mediria nada"
+  );
+  assert.equal(patch.paid_transaction_id, entrada.id);
+  assert.notEqual(patch.paid_transaction_id, saida.id);
+
+  // E a previsao continua apontando para a SAIDA: e por ela que o estorno acha
+  // a contraparte (`counterpart_transaction_id = transaction_id`).
+  const baixaDaPrevisao = sessao.escritas.find(
+    (e) => e.tabela === "scheduled_transactions" && e.verbo === "update"
+  );
+  assert.equal(baixaDaPrevisao.patch.transaction_id, saida.id);
+});
+
+test("a parcela e baixada ANTES da previsao: a falha nela nao deixa baixa sem parcela", async () => {
+  const { sessao } = await pagarPrevisao();
+
+  const ordem = sessao.escritas.map((e) => `${e.verbo}:${e.tabela}`);
+  const parcela = ordem.indexOf("update:mybank_installments");
+  const previsao = ordem.indexOf("update:scheduled_transactions");
+
+  // A ORDEM E A FEATURE. Com a parcela DEPOIS, uma falha nela deixaria previsao
+  // paga + dinheiro movido + parcela pendente -- o proprio defeito que a
+  // HMO-382 fecha, e sem ninguem para consertar depois.
+  assert.ok(parcela > -1 && previsao > -1);
+  assert.ok(
+    parcela < previsao,
+    `a parcela tem de ser baixada antes da previsao; a ordem foi ${ordem.join(" > ")}`
+  );
+});
+
+test("a parcela que a RLS nao deixa baixar DESFAZ as duas pernas -- nada fica lancado", async () => {
+  const linhas = tabelasDoCicloDoAuto();
+  const { status, corpo, sessao } = await pagarPrevisao({
+    tabelas: linhas,
+    // A unica resposta que a policy da quando ela nao casa com a linha: 200 com
+    // corpo `[]`. A `mybank_installments_trava_do_devedor` (053) tambem recusa
+    // -- com excecao -- quem nao e o credor.
+    rlsFiltra: { mybank_installments: true },
+  });
+
+  assert.equal(status, 500);
+  assert.match(corpo.error, /Nada foi lançado/i);
+
+  // AS DUAS PERNAS FORAM APAGADAS, e a de ENTRADA primeiro: ela aponta para a
+  // de saida e o FK e ON DELETE SET NULL.
+  const apagadas = sessao.escritas.filter(
+    (e) => e.tabela === "financial_transactions" && e.verbo === "delete"
+  );
+  assert.equal(apagadas.length, 2);
+
+  // E A PREVISAO NAO FOI BAIXADA. Este e o estado que a posicao do passo 2.5
+  // garante: "nao deu baixa", que a pessoa ve e refaz.
+  assert.equal(
+    sessao.escritas.some(
+      (e) => e.tabela === "scheduled_transactions" && e.verbo === "update"
+    ),
+    false,
+    "a previsao continua pendente"
+  );
+  assert.equal(linhas.scheduled_transactions[0].status, "pending");
+});
+
+test("previsao SEM elo do MyBank: a baixa segue igual e nao toca parcela nenhuma", async () => {
+  // O CONTROLE NEGATIVO DA FEATURE. Sem ele, um `parcelaDaChaveDoMyBank` que
+  // devolvesse o `notes` cru passaria verde: toda transferencia prevista tentaria
+  // baixar uma parcela, e a de luz do mes que vem levaria 500.
+  const linhas = tabelasDoCicloDoAuto({
+    scheduled_transactions: [
+      { ...PREVISAO_DO_AUTO, notes: "transferência pro investimento" },
+    ],
+  });
+
+  const { status, corpo, sessao } = await pagarPrevisao({ tabelas: linhas });
+
+  assert.equal(status, 200);
+  assert.equal(corpo.message, "Transferência confirmada");
+  assert.equal(corpo.mybank_installment_id, null);
+  assert.equal(patchesDaParcela(sessao).length, 0);
+  assert.equal(
+    sessao.lidas.some((l) => l.tabela === "mybank_installments"),
+    false,
+    "sem elo nao ha nem leitura da tabela de parcelas"
+  );
+  // E o dinheiro andou do mesmo jeito.
+  assert.equal(pernas(sessao).length, 2);
+  assert.equal(linhas.scheduled_transactions[0].status, "paid");
+});
+
+test("`notes` que so CONTEM a palavra mybank nao e elo", async () => {
+  // `notes` e campo digitado. Uma busca por prefixo em qualquer posicao faria
+  // "paguei o mybank: 300 reais" virar elo para um id inventado.
+  for (const notes of [
+    "paguei o mybank: 300 reais",
+    // ESTA e a que distingue `startsWith` de `includes`: com busca em qualquer
+    // posicao, o `slice` do tamanho do prefixo devolveria "ank:p1" -- um id
+    // inventado, que nao e vazio e nao tem espaco para a peneira seguinte pegar.
+    "ver mybank:p1",
+    "mybank:parcela do auto",
+    "mybank:",
+    "fatura:2027-01|cartao-1",
+    null,
+  ]) {
+    assert.equal(
+      LIB.parcelaDaChaveDoMyBank(notes),
+      null,
+      `${JSON.stringify(notes)} nao e chave de parcela`
+    );
+  }
+
+  assert.equal(LIB.parcelaDaChaveDoMyBank("mybank:p1"), "p1");
+  // O ida-e-volta: quem grava e quem le usam a MESMA chave.
+  assert.equal(
+    LIB.parcelaDaChaveDoMyBank(LIB.chaveDaParcelaDoMyBank("parcela-do-auto")),
+    "parcela-do-auto"
+  );
+});
+
+test("elo PENDURADO (a parcela nao existe mais) nao impede a transferencia", async () => {
+  // Estado alcancavel: `mybank_loans_delete` (053) deixa apagar emprestimo sem
+  // parcela paga, o CASCADE leva as parcelas, e as 24 previsoes ficam com
+  // `notes` apontando para ids que nao existem mais. Recusar a baixa ali
+  // transformaria "o MyBank nao sabe mais desta parcela" em "voce nao consegue
+  // mais transferir o seu dinheiro".
+  const linhas = tabelasDoCicloDoAuto({ mybank_installments: [] });
+
+  const { status, corpo, sessao } = await pagarPrevisao({ tabelas: linhas });
+
+  assert.equal(status, 200);
+  assert.equal(corpo.mybank_installment_id, null);
+  assert.equal(patchesDaParcela(sessao).length, 0);
+  assert.equal(pernas(sessao).length, 2);
+  assert.equal(linhas.scheduled_transactions[0].status, "paid");
+});
+
+test("parcela CANCELADA nao volta a `paid` por efeito colateral da baixa", async () => {
+  const linhas = tabelasDoCicloDoAuto({
+    mybank_installments: [{ ...PARCELA_DO_AUTO, status: "cancelled" }],
+  });
+
+  const { status, sessao } = await pagarPrevisao({ tabelas: linhas });
+
+  assert.equal(status, 200);
+  assert.equal(patchesDaParcela(sessao).length, 0);
+  assert.equal(linhas.mybank_installments[0].status, "cancelled");
+});
+
+test("O ESTORNO DEVOLVE A PARCELA A `pending` -- e os tres campos juntos", async () => {
+  const linhas = tabelasDoCicloDoAuto({
+    scheduled_transactions: [
+      {
+        ...PREVISAO_DO_AUTO,
+        status: "paid",
+        paid_date: "2027-01-12",
+        transaction_id: "tx-saida",
+      },
+    ],
+    mybank_installments: [
+      {
+        ...PARCELA_DO_AUTO,
+        status: "paid",
+        paid_date: "2027-01-12",
+        paid_transaction_id: "tx-entrada",
+      },
+    ],
+    financial_transactions: [
+      { id: "tx-saida", user_id: EU, amount: -1000 },
+      {
+        id: "tx-entrada",
+        user_id: EU,
+        amount: 1000,
+        counterpart_transaction_id: "tx-saida",
+      },
+    ],
+  });
+
+  const { status, sessao } = await estornarPrevisao({ tabelas: linhas });
+
+  assert.equal(status, 200);
+
+  const patches = patchesDaParcela(sessao);
+  assert.equal(patches.length, 1);
+  assert.equal(patches[0].patch.status, "pending");
+  // OS TRES CAMPOS. `paid_date` e exigido pelo CHECK; `paid_transaction_id` e o
+  // que impede a parcela pendente de apontar para um lancamento apagado -- o FK
+  // e ON DELETE SET NULL, entao a coluna zeraria sozinha, mas o `status` NAO
+  // volta sozinho e a parcela ficaria "paga" sem dinheiro.
+  assert.equal(patches[0].patch.paid_date, null);
+  assert.equal(patches[0].patch.paid_transaction_id, null);
+  assert.equal(patches[0].linhasAfetadas, 1);
+
+  assert.equal(linhas.mybank_installments[0].status, "pending");
+  assert.equal(linhas.scheduled_transactions[0].status, "pending");
+  // As duas pernas sairam.
+  assert.equal(linhas.financial_transactions.length, 0);
+});
+
+test("o estorno desfaz a PARCELA primeiro: parcela presa nao apaga o dinheiro", async () => {
+  const linhas = tabelasDoCicloDoAuto({
+    scheduled_transactions: [
+      {
+        ...PREVISAO_DO_AUTO,
+        status: "paid",
+        paid_date: "2027-01-12",
+        transaction_id: "tx-saida",
+      },
+    ],
+    mybank_installments: [
+      {
+        ...PARCELA_DO_AUTO,
+        status: "paid",
+        paid_date: "2027-01-12",
+        paid_transaction_id: "tx-entrada",
+      },
+    ],
+    financial_transactions: [
+      { id: "tx-saida", user_id: EU, amount: -1000 },
+      {
+        id: "tx-entrada",
+        user_id: EU,
+        amount: 1000,
+        counterpart_transaction_id: "tx-saida",
+      },
+    ],
+  });
+
+  const { status, corpo, sessao } = await estornarPrevisao({
+    tabelas: linhas,
+    rlsFiltra: { mybank_installments: true },
+  });
+
+  assert.equal(status, 500);
+  assert.match(corpo.error, /Nada foi estornado/i);
+
+  // NADA FOI TOCADO. O contrario -- apagar as pernas e deixar a parcela paga --
+  // seria emprestimo quitado de graca, pior que nao ter estornado.
+  assert.equal(linhas.financial_transactions.length, 2);
+  assert.equal(linhas.scheduled_transactions[0].status, "paid");
+  assert.equal(
+    sessao.escritas.some((e) => e.tabela === "financial_transactions"),
+    false
+  );
+  assert.equal(
+    sessao.escritas.some((e) => e.tabela === "scheduled_transactions"),
+    false
+  );
+});
+
+test("estorno de previsao SEM elo nao mexe em parcela nenhuma", async () => {
+  const linhas = tabelasDoCicloDoAuto({
+    scheduled_transactions: [
+      {
+        ...PREVISAO_DO_AUTO,
+        notes: null,
+        status: "paid",
+        paid_date: "2027-01-12",
+        transaction_id: "tx-saida",
+      },
+    ],
+    financial_transactions: [{ id: "tx-saida", user_id: EU, amount: -1000 }],
+  });
+
+  const { status, sessao } = await estornarPrevisao({ tabelas: linhas });
+
+  assert.equal(status, 200);
+  assert.equal(patchesDaParcela(sessao).length, 0);
+  assert.equal(linhas.scheduled_transactions[0].status, "pending");
+});
+
+test("estorno com elo PENDURADO: a parcela nao existe e o estorno acontece igual", async () => {
+  // A outra metade do elo pendurado, do lado do desfazer. Aqui a tolerancia a
+  // `null` e load-bearing e nao ha segunda guarda: um
+  // `parcelaSegueAoEstornoDaPrevisao` que aceitasse a parcela ausente mandaria
+  // um UPDATE para um id que nao existe, alcancaria zero linha e recusaria o
+  // estorno -- a pessoa nao conseguiria mais desfazer a baixa.
+  const linhas = tabelasDoCicloDoAuto({
+    mybank_installments: [],
+    scheduled_transactions: [
+      {
+        ...PREVISAO_DO_AUTO,
+        status: "paid",
+        paid_date: "2027-01-12",
+        transaction_id: "tx-saida",
+      },
+    ],
+    financial_transactions: [{ id: "tx-saida", user_id: EU, amount: -1000 }],
+  });
+
+  const { status, sessao } = await estornarPrevisao({ tabelas: linhas });
+
+  assert.equal(status, 200);
+  assert.equal(patchesDaParcela(sessao).length, 0);
+  assert.equal(linhas.scheduled_transactions[0].status, "pending");
+  assert.equal(linhas.financial_transactions.length, 0);
+});
+
+test("estorno repetido: a parcela ja pendente nao e tocada de novo", async () => {
+  // O caminho de retentativa: a primeira tentativa devolveu a parcela e falhou
+  // na soltura da previsao. Na segunda, `parcelaSegueAoEstornoDaPrevisao` ve
+  // `pending` e nao refaz o UPDATE -- sem isto o estorno nao seria repetivel.
+  const linhas = tabelasDoCicloDoAuto({
+    scheduled_transactions: [
+      {
+        ...PREVISAO_DO_AUTO,
+        status: "paid",
+        paid_date: "2027-01-12",
+        transaction_id: "tx-saida",
+      },
+    ],
+    mybank_installments: [{ ...PARCELA_DO_AUTO, status: "pending" }],
+    financial_transactions: [{ id: "tx-saida", user_id: EU, amount: -1000 }],
+  });
+
+  const { status, sessao } = await estornarPrevisao({ tabelas: linhas });
+
+  assert.equal(status, 200);
+  assert.equal(patchesDaParcela(sessao).length, 0);
+  assert.equal(linhas.scheduled_transactions[0].status, "pending");
+});
+
+test("CONTROLE: a rota da baixa usou o duble (as assercoes de ausencia nao sao vacuas)", async () => {
+  const { registro, sessao } = await pagarPrevisao();
+
+  assert.ok(
+    registro.chamadasDeSessao > 0,
+    "a rota tem de ter pedido o client de sessao ao duble"
+  );
+  assert.equal(
+    sessao.lidas.some((l) => l.tabela === "mybank_installments"),
+    true,
+    "e tem de ter ido a `mybank_installments` -- e dela que sai a decisao"
+  );
+});
