@@ -7497,3 +7497,54 @@ jobs:
       # controle 3/4, que afirma a FORMA da resposta.
       - name: Mutantes do MyBank F4
         run: npm run mutantes:leituras-do-mybank
+
+      # O EXPORT DE RELATORIO CONFERE O `error` DAS OITO LEITURAS (HMO-378)
+      #
+      # Defeito pre-existente, medido e registrado pela HMO-207 e deixado para
+      # ca de proposito. A rota tinha DOZE chamadas `.from(...)`: duas
+      # desestruturavam `error` (so para `console.error`) e ZERO mudavam a
+      # resposta. Uma leitura que falhava virava `data: null`, o `?? []`
+      # seguinte fazia dela uma secao vazia, e o export respondia 200 com um
+      # CSV sem linhas -- com os cabecalhos de download corretos.
+      #
+      # O 200 e a parte caro. Na planilha, um arquivo com cabecalho e zero
+      # linhas nao se le como erro: le-se como «nao houve movimento no
+      # periodo». E pior que o irmao `fontes-consistentes-que-discordam`: ali
+      # dois numeros discordam e alguem percebe, aqui o arquivo e internamente
+      # coerente, soma sozinho na planilha, e esta vazio.
+      #
+      # 34 casos. Doze deles forcam o erro de UMA consulta por vez (uma por
+      # consulta, e nao uma por guarda: as tres do ramo de `cash-flow`
+      # chegam a mesma guarda por caminhos diferentes) e exigem 500 com o NOME
+      # da consulta no corpo. Os outros sao os tres controles positivos, sem os
+      # quais o conserto passaria verde devolvendo 500 sempre:
+      #
+      #   A. os cinco relatorios saindo 200 e com as linhas certas, numeros
+      #      escritos como literais;
+      #   B. a janela entre o deploy e a colagem da 033: a view pessoal
+      #      ausente tem de CAIR para a antiga e sair 200. Guardar ANTES da
+      #      queda e o erro que este controle pega, e ele nao tem sintoma
+      #      nenhum fora daquela janela. As duas fontes tem numeros diferentes
+      #      no fixture, senao o controle nao diria QUAL foi lida;
+      #   C. o ramo que nao consulta (extrato sem categoria e sem conta) entra
+      #      na guarda com `{ data: [] }` sem `error` e tem de sair 200 -- uma
+      #      guarda escrita ao contrario reprovaria toda conta nova.
+      - name: Export de relatorio -- as oito leituras conferem o erro
+        run: npm run test:export-de-relatorio
+
+      # Controle negativo do step acima: 8 mutantes, 8 mortos.
+      #
+      # Um por GUARDA, e a mutacao e a mesma nos oito -- `linhasOuFalha(` volta
+      # a ser uma arrow que descarta o `error` e devolve `r.data ?? []`, que e
+      # literalmente o codigo que estava ali antes da HMO-378. Cada mutante
+      # reconstroi o defeito original em UM ramo e deixa os outros sete
+      # consertados, que e a unica forma de medir se a suite aponta qual ramo
+      # perdeu a guarda. Um mutante unico sobre a funcao mataria as oito de uma
+      # vez e deixaria sete sem conferencia.
+      #
+      # As ancoras carregam o NOME DA CONSULTA, e isso e obrigatorio:
+      # `linhasOuFalha(` aparece oito vezes no arquivo e
+      # `const linhas = linhasOuFalha(` aparece duas. A trava de ocorrencia
+      # unica do runner e o que pega a ancora ambigua.
+      - name: Mutantes das guardas de leitura do export
+        run: npm run mutantes:export-de-relatorio

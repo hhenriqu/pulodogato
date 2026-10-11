@@ -62,6 +62,34 @@
 // `group_share_entries` somada no modo intervalo -- so a primeira tem onde
 // acontecer aqui. Nada de `partesComoTransacoes` neste arquivo: nao ha caminho
 // que leia linha crua.
+//
+// TODA LEITURA DAQUI CONFERE `error`, E UMA QUE FALHA DA 500 (HMO-378)
+// --------------------------------------------------------------------
+// Medido em 2026-10-11: esta rota tinha DOZE chamadas `.from(...)`, duas
+// desestruturavam `error` (so para `console.error`) e ZERO mudavam a resposta.
+// Uma leitura que falhava virava `data: null`, o `?? []` seguinte fazia dela
+// uma secao vazia, e a rota respondia **200 com um CSV sem linhas** -- que na
+// planilha se le como "nao houve movimento no periodo", nao como "a leitura
+// falhou". A HMO-207 mediu isso, instrumentou dois ramos e deixou escrito que
+// nao consertaria; esta e a issue que consertou.
+//
+// As doze chamadas compartilham OITO pontos de guarda, porque a queda da 033
+// reatribui `data`/`error` na mesma variavel em dois ramos. Cada ponto e uma
+// chamada a `linhasOuFalha` (lib/leitura-do-export.ts), e cada uma tem um
+// mutante proprio em scripts/mutantes-export-de-relatorio.mjs -- uma guarda
+// escrita em oito lugares e sete lugares para esquecer.
+//
+// A guarda vem **DEPOIS** da queda da 033, e isso e load-bearing: guardar antes
+// faria a rota responder 500 na janela entre o deploy e a colagem da migration,
+// que e exatamente o caso que `viewDaParteAusente` existe para atravessar. Ha
+// um controle positivo para isso na suite (`npm run test:export-de-relatorio`),
+// porque "o conserto 500-ou-nada quebrou a queda" nao tem sintoma nenhum fora
+// daquela janela.
+//
+// Por que 500 e nao uma linha de erro dentro do CSV: ver o cabecalho de
+// lib/leitura-do-export.ts. Em resumo, o export existe para ser arquivado e
+// conferido fora do app, e um CSV incompleto nao tem onde se explicar no lugar
+// em que vai ser lido.
 
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
@@ -74,6 +102,10 @@ import {
 } from "@/lib/services/reports";
 import { somarMeses } from "@/lib/services/budget";
 import { viewDaParteAusente } from "@/lib/parte-do-grupo-realizada";
+import {
+  FalhaDeLeituraDoExport,
+  linhasOuFalha,
+} from "@/lib/leitura-do-export";
 
 const RELATORIOS = [
   "cash-flow",
@@ -194,12 +226,13 @@ export async function GET(request: NextRequest) {
         error = antiga.error;
       }
 
-      // ESTA ROTA NUNCA CONFERIU `error`, NOS CINCO RELATORIOS: uma falha de
-      // leitura sai como CSV so-cabecalho, que na planilha se le como "nao
-      // houve movimento no periodo". Consertar isso e mudar o contrato dos
-      // outros quatro ramos e nao cabe na HMO-207; registrar, cabe -- sem o log
-      // o modo de falha nao existe em lugar nenhum.
-      if (error) console.error("Erro ao exportar fluxo de caixa:", error);
+      // GUARDA 1 de 8 (HMO-378) -- cobre as TRES consultas acima: a de grupo,
+      // a pessoal da 033 e a queda. Ela vem depois da queda de proposito: antes
+      // dela, a janela entre o deploy e a colagem da 033 responderia 500.
+      const linhasDoFluxo = linhasOuFalha("o fluxo de caixa mensal", {
+        data,
+        error,
+      });
 
       // A coluna "Moeda" e o que mantem este CSV correto depois da 022. Ele nao
       // agrega nada -- despeja as linhas da view -- entao um mes com duas moedas
@@ -208,7 +241,7 @@ export async function GET(request: NextRequest) {
       // primeira reacao de qualquer um e somar as duas.
       csv = montarCsv(
         ["Mês", "Moeda", "Entradas", "Saídas", "Resultado", "Lançamentos"],
-        (data ?? []).map((d) => [
+        linhasDoFluxo.map((d) => [
           rotuloMes(String(d.month)),
           String(d.currency ?? "BRL"),
           Number(d.income),
@@ -266,17 +299,33 @@ export async function GET(request: NextRequest) {
         error = antiga.error;
       }
 
-      if (error) console.error("Erro ao exportar gastos por categoria:", error);
+      // GUARDA 2 de 8 (HMO-378) -- as tres consultas de categoria acima.
+      const linhas = linhasOuFalha("os gastos por categoria", { data, error });
 
-      const linhas = data ?? [];
       const ids = Array.from(new Set(linhas.map((l) => l.category_id)));
-      const { data: categorias } = ids.length
-        ? await supabase
-            .from("transaction_categories")
-            .select("id, name")
-            .in("id", ids)
-        : { data: [] };
-      const porId = new Map((categorias ?? []).map((c) => [c.id, c.name]));
+
+      // GUARDA 3 de 8 (HMO-378) -- o join de ROTULO, e ele tem um modo de falha
+      // proprio: sem a guarda, uma falha aqui produz 200 com todas as linhas
+      // dizendo "Sem categoria", porque o `porId.get(...) ?? "Sem categoria"`
+      // nao distingue "esta categoria nao existe" de "nao consegui ler nenhuma".
+      // O arquivo sai com os VALORES certos e a classificacao inteira apagada,
+      // o que e pior que o arquivo vazio: ele soma.
+      //
+      // O ramo sem consulta (`ids.length === 0`) entra na guarda com
+      // `error` ausente e sai como lista vazia -- e e por isso que o `error` de
+      // `linhasOuFalha` e opcional. Nao se inventa um `error: null` aqui para
+      // satisfazer o tipo: o ramo que nao consulta nao tem erro.
+      const categorias = linhasOuFalha(
+        "os nomes das categorias",
+        ids.length
+          ? await supabase
+              .from("transaction_categories")
+              .select("id, name")
+              .in("id", ids)
+          : { data: [] as { id: string; name: string }[] }
+      );
+
+      const porId = new Map(categorias.map((c) => [c.id, c.name]));
 
       csv = montarCsv(
         ["Mês", "Moeda", "Categoria", "Saídas", "Entradas", "Lançamentos"],
@@ -315,10 +364,22 @@ export async function GET(request: NextRequest) {
         .gte("month", janela.inicio)
         .lte("month", janela.fim);
 
-      const { data } = await (groupId
+      // A resposta sai numa variavel e a guarda vem na linha seguinte, em vez
+      // de a consulta ir dentro da chamada: `scripts/mutantes-parte-do-grupo-no-csv.mjs`
+      // tem uma ancora de mutante sobre o `: q.is("group_id", null)` desta
+      // expressao, e aninha-la um nivel a mais mudaria a indentacao e MATARIA
+      // aquela ancora -- `componente-extraido-leva-o-endereco-das-assercoes-com-ele`.
+      // A guarda de `npm run check-ancora-de-mutante` pega isso; o formato
+      // abaixo e o que a mantem viva de graca.
+      const previsto = await (groupId
         ? q.eq("group_id", groupId)
         : q.is("group_id", null)
       ).order("month", { ascending: true });
+
+      // GUARDA 4 de 8 (HMO-378). Este ramo e o que a HMO-207 NAO instrumentou:
+      // antes desta linha ele nao desestruturava `error` em lugar nenhum, e
+      // uma falha de leitura saia como nove colunas e zero linhas.
+      const linhasDoPrevisto = linhasOuFalha("o previsto x realizado", previsto);
 
       csv = montarCsv(
         [
@@ -332,7 +393,7 @@ export async function GET(request: NextRequest) {
           "Contas em aberto",
           "Contas vencidas",
         ],
-        (data ?? []).map((d) => [
+        linhasDoPrevisto.map((d) => [
           rotuloMes(String(d.month)),
           String(d.currency ?? "BRL"),
           Number(d.planned_expense),
@@ -346,17 +407,23 @@ export async function GET(request: NextRequest) {
       );
       nome = nomeArquivoCsv("previsto-x-realizado", janela);
     } else if (report === "net-worth") {
-      const { data } = await supabase
-        .from("net_worth_history")
-        .select("month, net_change, net_worth")
-        .eq("user_id", user.id)
-        .gte("month", janela.inicio)
-        .lte("month", janela.fim)
-        .order("month", { ascending: true });
+      // GUARDA 5 de 8 (HMO-378). O patrimonio e o relatorio onde o CSV vazio
+      // mente mais alto: duas colunas de numero e nenhuma linha se le como
+      // "este app nao sabe meu patrimonio", e nao como leitura falhada.
+      const linhasDoPatrimonio = linhasOuFalha(
+        "o historico de patrimonio",
+        await supabase
+          .from("net_worth_history")
+          .select("month, net_change, net_worth")
+          .eq("user_id", user.id)
+          .gte("month", janela.inicio)
+          .lte("month", janela.fim)
+          .order("month", { ascending: true })
+      );
 
       csv = montarCsv(
         ["Mês", "Variação no mês", "Patrimônio no fim do mês"],
-        (data ?? []).map((d) => [
+        linhasDoPatrimonio.map((d) => [
           rotuloMes(String(d.month)),
           Number(d.net_change),
           Number(d.net_worth),
@@ -393,14 +460,23 @@ export async function GET(request: NextRequest) {
         // nao acharia nenhum lancamento dos ultimos vinte dias.
         .lt("transaction_date", somarMeses(janela.fim, 1));
 
-      const { data } = groupId
+      // A consulta sai numa variavel pela mesma razao do ramo de `planned`
+      // acima: o `.is("group_id", null)` desta expressao e ancora de mutante em
+      // scripts/mutantes-parte-do-grupo-no-csv.mjs, e aninha-la mudaria a
+      // indentacao e mataria a ancora.
+      const extrato = groupId
         ? await base.eq("group_id", groupId).order("transaction_date")
         : await base
             .eq("user_id", user.id)
             .is("group_id", null)
             .order("transaction_date");
 
-      const linhas = data ?? [];
+      // GUARDA 6 de 8 (HMO-378). O extrato e o relatorio que alguem abre
+      // JUSTAMENTE para desconfiar de um numero agregado -- "o painel diz
+      // R$ 4.000 e o extrato nao tem linha nenhuma" nao se resolve a favor do
+      // extrato por acaso: o extrato parece a fonte mais crua das duas.
+      const linhas = linhasOuFalha("o extrato de lancamentos", extrato);
+
       const catIds = Array.from(
         new Set(linhas.map((l) => l.category_id).filter(Boolean))
       );
@@ -408,7 +484,7 @@ export async function GET(request: NextRequest) {
         new Set(linhas.map((l) => l.account_id).filter(Boolean))
       );
 
-      const [{ data: categorias }, { data: contas }] = await Promise.all([
+      const [respostaDasCategorias, respostaDasContas] = await Promise.all([
         catIds.length
           ? supabase
               .from("transaction_categories")
@@ -423,8 +499,27 @@ export async function GET(request: NextRequest) {
           : Promise.resolve({ data: [] as { id: string; name: string }[] }),
       ]);
 
-      const nomeCat = new Map((categorias ?? []).map((c) => [c.id, c.name]));
-      const nomeConta = new Map((contas ?? []).map((c) => [c.id, c.name]));
+      // GUARDA 7 e GUARDA 8 de 8 (HMO-378). Sao DUAS guardas e nao uma, mesmo
+      // saindo do mesmo `Promise.all`: as duas consultas falham por razoes
+      // diferentes e o `Promise.all` nao as junta -- ele devolve as duas
+      // respostas, cada uma com o seu `error`. Uma guarda so cobriria a
+      // primeira, e o sintoma da outra seria a coluna "Conta" inteira em branco
+      // num arquivo com 200.
+      //
+      // E o modo de falha dos dois joins de rotulo e o mesmo do ramo de
+      // categorias: o arquivo sai com os VALORES certos e a classificacao
+      // apagada. Ele soma na planilha, entao nada nele chama atencao.
+      const nomeCat = new Map(
+        linhasOuFalha("os nomes das categorias do extrato", respostaDasCategorias).map(
+          (c) => [c.id, c.name]
+        )
+      );
+      const nomeConta = new Map(
+        linhasOuFalha("os nomes das contas do extrato", respostaDasContas).map((c) => [
+          c.id,
+          c.name,
+        ])
+      );
       const tipo: Record<string, string> = {
         income: "Receita",
         expense: "Despesa",
@@ -451,6 +546,26 @@ export async function GET(request: NextRequest) {
     return new NextResponse(csv, { headers: cabecalhosCsv(nome) });
   } catch (error) {
     console.error("Erro ao exportar relatório:", error);
+
+    // A LEITURA QUE FALHOU DIZ O NOME DELA (HMO-378)
+    //
+    // "Erro interno" sobre um export de oito consultas manda quem recebeu o 500
+    // abrir a rota e adivinhar qual nao leu. O `instanceof` e o que separa esta
+    // falha de um defeito de programacao: as duas respondem 500, mas repetir a
+    // mensagem de um `TypeError` no corpo vazaria caminho de arquivo e nome de
+    // variavel. So a falha de leitura tem corpo proprio.
+    if (error instanceof FalhaDeLeituraDoExport) {
+      return NextResponse.json(
+        {
+          error: `Não foi possível ler ${error.consulta}. O arquivo não foi gerado: um CSV incompleto não teria como se explicar na planilha.`,
+          consulta: error.consulta,
+          detalhe: error.detalhe,
+          codigo: error.codigo,
+        },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json({ error: "Erro interno" }, { status: 500 });
   }
 }

@@ -215,6 +215,8 @@
     "mutantes:emprestimo-do-mybank": "node scripts/mutantes-emprestimo-do-mybank.mjs",
     "mutantes:mybank-na-tela": "node scripts/mutantes-mybank-na-tela.mjs",
     "test:leituras-do-mybank": "node scripts/compila.mjs -p scripts/tsconfig.leituras-do-mybank-test.json && node scripts/resolve-aliases.mjs .tmp-leituras-do-mybank lib --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-leituras-do-mybank utils --espelha-raiz && node scripts/resolve-next-subpaths.mjs .tmp-leituras-do-mybank && node scripts/monta-duble-de-rota.mjs .tmp-leituras-do-mybank && node --test scripts/test-leituras-do-mybank.mjs",
+    "test:export-de-relatorio": "node scripts/compila.mjs -p scripts/tsconfig.export-de-relatorio-test.json && node scripts/resolve-aliases.mjs .tmp-export-de-relatorio lib --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-export-de-relatorio utils --espelha-raiz && node scripts/resolve-next-subpaths.mjs .tmp-export-de-relatorio && node scripts/monta-duble-de-rota.mjs .tmp-export-de-relatorio && node --test scripts/test-export-de-relatorio.mjs",
+    "mutantes:export-de-relatorio": "node scripts/mutantes-export-de-relatorio.mjs",
     "mutantes:leituras-do-mybank": "node scripts/mutantes-leituras-do-mybank.mjs"
   },
   "dependencies": {

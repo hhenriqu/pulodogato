@@ -544,3 +544,9 @@ next-env.d.ts
 # a declarou aqui: `check-artefatos-de-build` ficou vermelho na `main`, e a
 # correcao e de uma linha no arquivo que a F3 ja toca.
 /.tmp-leituras-do-mybank/
+
+# npm run test:export-de-relatorio -- as oito guardas de leitura do export de
+# relatorio (HMO-378). Declarado JUNTO com a suite, e nao na issue seguinte: foi
+# a falta desta linha que deixou `check-artefatos-de-build` vermelho na `main`
+# quando a HMO-372 criou a dela (ver a entrada acima).
+/.tmp-export-de-relatorio/
