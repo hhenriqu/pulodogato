@@ -1,0 +1,824 @@
+"use client";
+
+// ---------------------------------------------------------------------------
+// A TELA DO MYBANK -- /dashboard/mybank (HMO-371, F3 da HMO-368)
+// ---------------------------------------------------------------------------
+// Uma conta de investimento minha virando banco: ela empresta, e a divida volta
+// parcelada -- para mim mesmo (Caso A) ou para uma conexao (Caso B).
+//
+// A TELA NAO DECIDE NADA DE DINHEIRO
+// ----------------------------------
+// A aritmetica e de `lib/lancamento.ts` (`serieDeParcelas`, `resumoDaSerie`), a
+// regra de quais pernas cada caso gera e de `lib/emprestimo-do-mybank.ts` (F2),
+// e os recortes desta tela sao de `lib/mybank-na-tela.ts`. Aqui ficam o gesto, a
+// chamada e a frase -- e e deliberado: um `if (base === "total")` com uma
+// multiplicacao ao lado dentro deste arquivo seria a terceira aritmetica de
+// parcela do app, e as tres discordariam sobre quanto e 24x de R$ 1.000,01.
+//
+// `problemaDoEmprestimo` E CHAMADA AQUI, E ISSO NAO E VALIDACAO DUPLICADA
+// ----------------------------------------------------------------------
+// A MESMA funcao roda nos dois lados: aqui, para a pessoa ler a frase antes de
+// apertar, e na rota, porque quem chega pelo PostgREST direto nao passa por
+// tela nenhuma. Uma copia da regra aqui seria duplicacao; a mesma funcao nao e
+// -- e e ela, e nao um `disabled` calculado a mao, que decide se o botao envia.
+//
+// DOIS SELETORES NATIVOS, E NAO O SELECT DO RADIX
+// -----------------------------------------------
+// `<select>` nativo pelo mesmo motivo que a pergunta da HMO-211 e radio nativo:
+// o Radix Select monta as opcoes num PORTAL e so quando o menu abre, entao a
+// assercao "o seletor lista so conta de investimento" leria uma lista vazia e
+// passaria verde sobre um seletor que oferece a conta corrente. Com o select
+// nativo as `<option>` estao no DOM, e a sonda as conta. O preco e conhecido: a
+// aparencia e a do sistema, e nao a do resto do app.
+//
+// O `id` DE CADA ANCORA E PARTE DA ENTREGA
+// ---------------------------------------
+// `mybank-conta`, `mybank-total-emprestado`, `mybank-a-receber`,
+// `mybank-devedor`, `mybank-erro` e os `data-*` das linhas sao lidos pela sonda
+// de navegador. Renomear um deles sem mexer na sonda a deixa vermelha -- que e o
+// comportamento certo: a ancora e um contrato, nao um detalhe de estilo.
+// ---------------------------------------------------------------------------
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
+import {
+  AlertCircle,
+  Landmark,
+  Loader2,
+  PiggyBank,
+  Plus,
+  Users,
+} from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { CampoDeValor } from "@/components/ui/campo-de-valor";
+import { CampoDeData } from "@/components/ui/campo-de-data";
+import { PerguntaDaBaseDoValor } from "@/components/movimentacoes/PerguntaDaBaseDoValor";
+
+import { formatCurrency } from "@/lib/utils";
+import { dataOuMomentoNaTela } from "@/lib/data-na-tela";
+import {
+  mensagemDoProblema,
+  problemaDoEmprestimo,
+  serieDoEmprestimo,
+  casoDoEmprestimo,
+  JUROS_DA_FASE_1,
+  MAX_PARCELAS_DO_MYBANK,
+  MIN_PARCELAS_DO_MYBANK,
+  SUBTITULO_A_CONFIRMAR_NO_MYBANK,
+  TITULO_A_CONFIRMAR_NO_MYBANK,
+  PARCELA_FORA_DO_REALIZADO,
+} from "@/lib/emprestimo-do-mybank";
+import {
+  parcelaDigitada,
+  resumoDaSerie,
+  type BaseDoValorParcelado,
+} from "@/lib/lancamento";
+import {
+  conexoesParaEmprestar,
+  contasQueEmprestam,
+  contasQuePagamAParcela,
+  devedorTemConexaoAceita,
+  linhasAReceber,
+  progressoDoEmprestimo,
+  proximoVencimento,
+  rotuloDaContaCredora,
+  totaisDaContaCredora,
+  valorDaParcelaNaLista,
+  type ConexaoCrua,
+  type ContaNaTelaDoMyBank,
+  type EmprestimoDoMyBank,
+} from "@/lib/mybank-na-tela";
+
+/** "eu mesmo" ou "uma conexao" -- o radio que a issue pede. */
+type QuemPaga = "eu" | "conexao";
+
+const PARCELAS_PADRAO = "12";
+
+export function PainelDoMyBank({ meuId }: { meuId: string }) {
+  const [contas, setContas] = useState<ContaNaTelaDoMyBank[]>([]);
+  const [emprestimos, setEmprestimos] = useState<EmprestimoDoMyBank[]>([]);
+  const [conexoes, setConexoes] = useState<ConexaoCrua[]>([]);
+  const [carregando, setCarregando] = useState(true);
+  const [salvando, setSalvando] = useState(false);
+
+  const [contaEscolhida, setContaEscolhida] = useState<string | null>(null);
+
+  const [descricao, setDescricao] = useState("");
+  const [valor, setValor] = useState("");
+  const [base, setBase] = useState<BaseDoValorParcelado>("parcela");
+  const [parcelas, setParcelas] = useState(PARCELAS_PADRAO);
+  const [primeiroVencimento, setPrimeiroVencimento] = useState("");
+  const [quemPaga, setQuemPaga] = useState<QuemPaga>("eu");
+  const [devedorId, setDevedorId] = useState<string | null>(null);
+  const [contaDePagamentoId, setContaDePagamentoId] = useState<string | null>(
+    null
+  );
+  const [erro, setErro] = useState<string | null>(null);
+
+  const carregar = useCallback(async () => {
+    try {
+      // AS TRES LEITURAS EM PARALELO, e cada uma com `ok` conferido.
+      //
+      // `response.json()` de um 500 deste app devolve `{ error: "..." }`, que e
+      // um objeto perfeitamente valido -- e `dados.accounts ?? []` o lê como
+      // "nenhuma conta". A tela abriria dizendo "cadastre uma conta de
+      // investimento" para quem tem seis. E o `export-de-relatorio-nunca-
+      // confere-error-nos-cinco` deste repositorio, no outro sentido.
+      const [respContas, respEmprestimos, respConexoes] = await Promise.all([
+        fetch("/api/financial-accounts"),
+        fetch("/api/mybank/loans"),
+        fetch("/api/connections"),
+      ]);
+
+      if (respContas.ok) {
+        const dados = await respContas.json();
+        setContas(dados.accounts ?? []);
+      }
+
+      if (respEmprestimos.ok) {
+        const dados = await respEmprestimos.json();
+        setEmprestimos(dados.loans ?? []);
+      }
+
+      if (respConexoes.ok) {
+        const dados = await respConexoes.json();
+        // `/api/connections` devolve a LISTA nua, nao `{ connections: [...] }`
+        // -- as duas formas existem no app (`/api/personal-finance/connections`
+        // e a outra), e trocar uma pela outra deixaria o seletor vazio sem erro
+        // nenhum.
+        setConexoes(Array.isArray(dados) ? dados : []);
+      }
+    } catch (e) {
+      console.error("Erro ao carregar o MyBank:", e);
+      toast.error("Não foi possível carregar o MyBank.");
+    } finally {
+      setCarregando(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    carregar();
+  }, [carregar]);
+
+  const contasCredoras = useMemo(() => contasQueEmprestam(contas), [contas]);
+
+  // A PRIMEIRA CONTA DE INVESTIMENTO VIRA A ESCOLHIDA, uma vez.
+  //
+  // `contaEscolhida === null` na guarda e nao um `!contaEscolhida`: id vazio nao
+  // existe, e a diferenca importa no dia em que a pessoa trocar de conta e a
+  // lista for recarregada -- sem a guarda o seletor voltaria sozinho para a
+  // primeira, desfazendo a escolha de quem olha.
+  useEffect(() => {
+    if (contaEscolhida === null && contasCredoras.length > 0) {
+      setContaEscolhida(contasCredoras[0].id);
+    }
+  }, [contaEscolhida, contasCredoras]);
+
+  const contasPagadoras = useMemo(
+    () => contasQuePagamAParcela(contas, contaEscolhida),
+    [contas, contaEscolhida]
+  );
+
+  const devedoresPossiveis = useMemo(
+    () => conexoesParaEmprestar(conexoes, meuId),
+    [conexoes, meuId]
+  );
+
+  const doEscolhido = useMemo(
+    () =>
+      contaEscolhida === null
+        ? []
+        : emprestimos.filter((e) => e.conta_credora_id === contaEscolhida),
+    [emprestimos, contaEscolhida]
+  );
+
+  const totais = useMemo(
+    () => totaisDaContaCredora(emprestimos, contaEscolhida),
+    [emprestimos, contaEscolhida]
+  );
+
+  const aReceber = useMemo(() => linhasAReceber(doEscolhido), [doEscolhido]);
+
+  const aConfirmar = useMemo(
+    () => aReceber.filter((linha) => linha.aConfirmar),
+    [aReceber]
+  );
+
+  const numeroDeParcelas = parcelaDigitada(parcelas);
+
+  const serie = useMemo(
+    () =>
+      serieDoEmprestimo({
+        valor,
+        base,
+        parcelas: numeroDeParcelas,
+        primeiroVencimento,
+      }),
+    [valor, base, numeroDeParcelas, primeiroVencimento]
+  );
+
+  const resumo = resumoDaSerie(serie);
+
+  const devedorDoPedido = quemPaga === "conexao" ? devedorId : meuId;
+
+  /**
+   * O CASO, e o `null` tratado EXPLICITAMENTE.
+   *
+   * `devedorId` e `null` enquanto ninguem foi escolhido no seletor. Um
+   * `?? meuId` aqui faria o pedido virar AUTO-EMPRESTIMO -- e a recusa sairia
+   * como "escolha a conta de onde as parcelas saem", uma frase sobre um campo
+   * que este ramo da tela nao tem. Quem marcou "uma conexao" e nao escolheu a
+   * pessoa precisa ler que falta a pessoa, e e `devedor_sem_conexao` que diz
+   * isso.
+   *
+   * Foi a sonda de navegador que achou isto: o caso B media a recusa e recebia
+   * a frase da conta de pagamento. Com `?? meuId` nada compilava errado, nada
+   * respondia 500, e a tela recusava com a razao errada.
+   */
+  const caso =
+    devedorDoPedido === null
+      ? "conexao"
+      : casoDoEmprestimo({
+          lenderUserId: meuId,
+          borrowerUserId: devedorDoPedido,
+        });
+
+  /**
+   * O PROBLEMA DO PEDIDO, pela MESMA funcao que a rota chama.
+   *
+   * `conexaoAceita` sai de `devedorTemConexaoAceita` sobre a lista JA FILTRADA
+   * por `status === "accepted"`: se o nome nao esta entre as opcoes, ele nao e
+   * aceito, por construcao. Perguntar a lista crua aqui deixaria a tela aceitar
+   * um pedido que a trigger da 053 recusa.
+   */
+  const problema = problemaDoEmprestimo({
+    descricao,
+    base,
+    caso,
+    contaCredoraPedida: contaEscolhida,
+    contaCredora: contasCredoras.find((c) => c.id === contaEscolhida) ?? null,
+    contaDePagamentoPedida: quemPaga === "eu" ? contaDePagamentoId : null,
+    contaDePagamento:
+      quemPaga === "eu"
+        ? contasPagadoras.find((c) => c.id === contaDePagamentoId) ?? null
+        : null,
+    conexaoAceita:
+      quemPaga === "conexao"
+        ? devedorTemConexaoAceita(devedoresPossiveis, devedorId)
+        : false,
+    juros: JUROS_DA_FASE_1,
+    parcelas: numeroDeParcelas,
+    serie,
+  });
+
+  async function emprestar() {
+    // A RECUSA SAI DA FUNCAO PURA, e a frase tambem.
+    //
+    // Nao ha um segundo criterio aqui ("se faltar descricao, diga X"): a
+    // mensagem e `mensagemDoProblema`, a mesma que a rota devolve no 400. Duas
+    // frases para o mesmo motivo fariam a tela e a API discordarem sobre o que
+    // esta errado.
+    if (problema) {
+      setErro(mensagemDoProblema(problema));
+      return;
+    }
+
+    setErro(null);
+    setSalvando(true);
+
+    try {
+      const resposta = await fetch("/api/mybank/loans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          descricao,
+          conta_credora_id: contaEscolhida,
+          // `null` EXPLICITO no Caso B: a rota so exige conta de pagamento no
+          // auto-emprestimo, e mandar uma aqui faria `previsoesDoEmprestimo`
+          // ter as duas guardas satisfeitas -- 24 contas a pagar no meu nome
+          // por um dinheiro que a outra pessoa paga.
+          conta_de_pagamento_id: quemPaga === "eu" ? contaDePagamentoId : null,
+          // Ausente quer dizer "eu mesmo"; a rota traduz para o meu id.
+          devedor_id: quemPaga === "conexao" ? devedorId : null,
+          // O VALOR VAI CRU, COM A BASE AO LADO (HMO-211): quem faz a conta e o
+          // servidor, com a mesma funcao pura que montou o resumo acima.
+          valor,
+          base,
+          parcelas: numeroDeParcelas,
+          primeiro_vencimento: primeiroVencimento,
+          juros: JUROS_DA_FASE_1,
+        }),
+      });
+
+      const dados = await resposta.json();
+
+      if (!resposta.ok) {
+        setErro(dados.error ?? "Não foi possível criar o empréstimo.");
+        return;
+      }
+
+      // A MENSAGEM E A DA ROTA, e ela diz ONDE a parcela vai aparecer.
+      //
+      // Os dois casos tem destinos diferentes (Contas a Pagar no A, so o MyBank
+      // no B), e um texto escrito aqui faria o Caso B parecer que criou conta a
+      // pagar no meu nome -- que e exatamente o que ele nao faz.
+      toast.success(dados.message ?? "Empréstimo criado.");
+
+      setDescricao("");
+      setValor("");
+      setParcelas(PARCELAS_PADRAO);
+      setPrimeiroVencimento("");
+      await carregar();
+    } catch (e) {
+      console.error("Erro ao criar o emprestimo:", e);
+      setErro("Não foi possível criar o empréstimo.");
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  async function confirmarRecebimento(parcelaId: string) {
+    try {
+      const resposta = await fetch(`/api/mybank/installments/${parcelaId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "paid" }),
+      });
+
+      const dados = await resposta.json();
+
+      if (!resposta.ok) {
+        toast.error(dados.error ?? "Não foi possível confirmar.");
+        return;
+      }
+
+      toast.success(dados.message ?? "Parcela baixada.");
+      await carregar();
+    } catch (e) {
+      console.error("Erro ao confirmar a parcela:", e);
+      toast.error("Não foi possível confirmar.");
+    }
+  }
+
+  if (carregando) {
+    return (
+      <div className="flex items-center gap-2 p-6 text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        <span>Carregando o MyBank…</span>
+      </div>
+    );
+  }
+
+  // SEM CONTA DE INVESTIMENTO NAO HA MYBANK, e a tela diz o que fazer.
+  //
+  // Nao e gate de plano (Decisao 5 da HMO-368: quem tem conta de investimento
+  // tem MyBank) -- e a ausencia do pre-requisito, com o caminho para resolve-la
+  // na propria frase. Uma tela vazia aqui se leria como feature quebrada.
+  if (contasCredoras.length === 0) {
+    return (
+      <div className="space-y-4 p-4">
+        <h1 className="text-2xl font-bold">MyBank</h1>
+        <Card id="mybank-sem-conta">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <PiggyBank className="h-4 w-4" />
+              Você ainda não tem conta de investimento
+            </CardTitle>
+            <CardDescription>
+              O MyBank empresta de uma conta de investimento sua. Cadastre uma em
+              Contas e o empréstimo passa a ser possível.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button asChild>
+              <a href="/dashboard/contas">Ir para Contas</a>
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 p-4">
+      <div>
+        <h1 className="text-2xl font-bold">MyBank</h1>
+        <p className="text-sm text-muted-foreground">
+          A sua conta de investimento emprestando — para você mesmo ou para uma
+          conexão —, e a dívida voltando parcelada.
+        </p>
+      </div>
+
+      {/* =====================================================================
+          CABECALHO: o seletor da conta credora e os dois totais dela
+          ===================================================================== */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Landmark className="h-4 w-4" />
+            Conta que empresta
+          </CardTitle>
+          <CardDescription>
+            Só conta de investimento aparece aqui: é o que a trava do banco
+            exige, e oferecer conta corrente seria oferecer uma opção que o
+            empréstimo recusa.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <select
+            id="mybank-conta"
+            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+            value={contaEscolhida ?? ""}
+            onChange={(e) => setContaEscolhida(e.target.value)}
+          >
+            {contasCredoras.map((conta) => (
+              <option key={conta.id} value={conta.id} data-conta={conta.id}>
+                {rotuloDaContaCredora(conta)}
+              </option>
+            ))}
+          </select>
+
+          {/* OS DOIS NUMEROS, COM ROTULO PROPRIO CADA UM. Ver
+              `totaisDaContaCredora`: depois da primeira parcela paga de um
+              emprestimo de R$ 24.000 o emprestado continua R$ 24.000 e o a
+              receber e R$ 23.000 -- um numero so faria quem olha concluir que o
+              outro esta errado. */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground">Total emprestado</p>
+              <p
+                id="mybank-total-emprestado"
+                className="text-xl font-semibold"
+              >
+                {formatCurrency(totais.emprestado)}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {totais.quantosEmprestimos} empréstimo
+                {totais.quantosEmprestimos === 1 ? "" : "s"} em andamento
+              </p>
+            </div>
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground">Total a receber</p>
+              <p id="mybank-a-receber" className="text-xl font-semibold">
+                {formatCurrency(totais.aReceber)}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {totais.quantasParcelasEmAberto} parcela
+                {totais.quantasParcelasEmAberto === 1 ? "" : "s"} em aberto
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* =====================================================================
+          NOVO EMPRESTIMO
+          ===================================================================== */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Plus className="h-4 w-4" />
+            Novo empréstimo
+          </CardTitle>
+          <CardDescription>Juro zero nesta fase.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="mybank-descricao">Para que é</Label>
+            <Input
+              id="mybank-descricao"
+              value={descricao}
+              onChange={(e) => setDescricao(e.target.value)}
+              placeholder="Moto elétrica"
+            />
+          </div>
+
+          {/* QUEM PAGA: radio, e nao select, pelo mesmo motivo da pergunta da
+              HMO-211 -- as duas respostas levam a telas diferentes (o Caso A
+              cria conta a pagar minha; o Caso B nao cria linha minha nenhuma),
+              e nenhuma delas e um padrao inofensivo. */}
+          <fieldset className="space-y-2">
+            <legend className="text-sm font-medium">Quem paga</legend>
+            <div className="flex flex-col gap-2 sm:flex-row sm:gap-6">
+              <div className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  id="mybank-quem-eu"
+                  name="mybank_quem_paga"
+                  value="eu"
+                  checked={quemPaga === "eu"}
+                  onChange={() => setQuemPaga("eu")}
+                />
+                <Label htmlFor="mybank-quem-eu">eu mesmo</Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  id="mybank-quem-conexao"
+                  name="mybank_quem_paga"
+                  value="conexao"
+                  checked={quemPaga === "conexao"}
+                  onChange={() => setQuemPaga("conexao")}
+                />
+                <Label htmlFor="mybank-quem-conexao">uma conexão</Label>
+              </div>
+            </div>
+          </fieldset>
+
+          {quemPaga === "conexao" ? (
+            <div className="space-y-2">
+              <Label htmlFor="mybank-devedor">Quem vai pagar</Label>
+              {devedoresPossiveis.length === 0 ? (
+                <p
+                  id="mybank-sem-conexao"
+                  className="flex items-center gap-2 text-sm text-muted-foreground"
+                >
+                  <Users className="h-4 w-4" />
+                  Você ainda não tem conexão aceita. Convide a pessoa em Conexões
+                  — só é possível emprestar para quem já aceitou.
+                </p>
+              ) : (
+                <select
+                  id="mybank-devedor"
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  value={devedorId ?? ""}
+                  onChange={(e) => setDevedorId(e.target.value || null)}
+                >
+                  <option value="">Escolha a pessoa</option>
+                  {devedoresPossiveis.map((devedor) => (
+                    <option
+                      key={devedor.id}
+                      value={devedor.id}
+                      data-devedor={devedor.id}
+                    >
+                      {devedor.nome}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <Label htmlFor="mybank-conta-de-pagamento">
+                Conta de onde as parcelas saem
+              </Label>
+              <select
+                id="mybank-conta-de-pagamento"
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                value={contaDePagamentoId ?? ""}
+                onChange={(e) => setContaDePagamentoId(e.target.value || null)}
+              >
+                <option value="">Escolha a conta</option>
+                {contasPagadoras.map((conta) => (
+                  <option
+                    key={conta.id}
+                    value={conta.id}
+                    data-pagadora={conta.id}
+                  >
+                    {rotuloDaContaCredora(conta)}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-muted-foreground">
+                A parcela é gravada como transferência para a conta de
+                investimento e aparece em Contas a Pagar com o selo MyBank: é
+                dinheiro que sai da sua conta no dia do vencimento, e não
+                dinheiro que deixou de ser seu.
+              </p>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <Label htmlFor="mybank-valor">Valor</Label>
+            <CampoDeValor id="mybank-valor" value={valor} onChange={setValor} />
+          </div>
+
+          {/* A PERGUNTA DA HMO-211, O MESMO COMPONENTE DO LANCAMENTO.
+              `rotuloDoTotal` muda porque "o total da compra" e falso num
+              emprestimo -- nao se compra nada. */}
+          <PerguntaDaBaseDoValor
+            valor={base}
+            aoEscolher={setBase}
+            rotuloDoTotal="o total do empréstimo"
+            idPrefixo="mybank_"
+            nome="mybank_base_do_valor"
+          />
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="mybank-parcelas">Parcelas</Label>
+              <Input
+                id="mybank-parcelas"
+                type="text"
+                inputMode="numeric"
+                value={parcelas}
+                onChange={(e) => setParcelas(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                De {MIN_PARCELAS_DO_MYBANK} a {MAX_PARCELAS_DO_MYBANK}.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="mybank-vencimento">1º vencimento</Label>
+              <CampoDeData
+                id="mybank-vencimento"
+                value={primeiroVencimento}
+                onChange={setPrimeiroVencimento}
+              />
+            </div>
+          </div>
+
+          {resumo && (
+            <p
+              id="mybank-resumo"
+              data-resumo
+              className="rounded-md bg-muted p-3 text-sm"
+            >
+              {resumo}
+            </p>
+          )}
+
+          {erro && (
+            <p
+              id="mybank-erro"
+              className="flex items-start gap-2 text-sm text-destructive"
+            >
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{erro}</span>
+            </p>
+          )}
+
+          <Button
+            id="mybank-emprestar"
+            onClick={emprestar}
+            disabled={salvando}
+            className="w-full sm:w-auto"
+          >
+            {salvando ? "Emprestando…" : "Emprestar"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* =====================================================================
+          A CONFIRMAR -- quem deve avisou e eu ainda nao lancei (forma da HMO-366)
+          ===================================================================== */}
+      {aConfirmar.length > 0 && (
+        <Card className="border-warning/40" id="mybank-a-confirmar">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">
+              {TITULO_A_CONFIRMAR_NO_MYBANK}
+            </CardTitle>
+            <CardDescription>
+              {SUBTITULO_A_CONFIRMAR_NO_MYBANK}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {aConfirmar.map((linha) => (
+              <div
+                key={linha.id}
+                data-confirmar={linha.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3"
+              >
+                <div>
+                  <p className="font-medium">{linha.descricao}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {linha.quemDevePagar} · parcela {linha.rotulo}
+                  </p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="font-semibold">
+                    {formatCurrency(linha.valor)}
+                  </span>
+                  <Button
+                    size="sm"
+                    onClick={() => confirmarRecebimento(linha.id)}
+                  >
+                    Confirmar
+                  </Button>
+                </div>
+              </div>
+            ))}
+            <p className="text-xs text-muted-foreground">
+              {PARCELA_FORA_DO_REALIZADO}
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* =====================================================================
+          A LISTA DE EMPRESTIMOS
+          ===================================================================== */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Empréstimos desta conta</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {doEscolhido.length === 0 ? (
+            <p id="mybank-sem-emprestimo" className="text-sm text-muted-foreground">
+              Esta conta ainda não emprestou nada.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {doEscolhido.map((emprestimo) => {
+                const vencimento = proximoVencimento(emprestimo);
+                const parcela = valorDaParcelaNaLista(emprestimo);
+
+                return (
+                  <div
+                    key={emprestimo.id}
+                    data-emprestimo={emprestimo.id}
+                    className="space-y-1 rounded-lg border p-3"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="font-medium">{emprestimo.descricao}</p>
+                      <Badge variant="outline" data-progresso>
+                        {progressoDoEmprestimo(emprestimo)}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      <span data-devedor-do-emprestimo>
+                        {emprestimo.quem_deve_pagar}
+                      </span>
+                      {parcela !== null && (
+                        <> · {formatCurrency(parcela)} por parcela</>
+                      )}
+                      {vencimento ? (
+                        <> · vence {dataOuMomentoNaTela(vencimento)}</>
+                      ) : (
+                        <> · nada em aberto</>
+                      )}
+                      {" · "}
+                      {emprestimo.status}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* =====================================================================
+          "A RECEBER" -- uma linha por parcela em aberto, com os TRES campos
+          ===================================================================== */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">A receber</CardTitle>
+          <CardDescription>
+            Uma linha por parcela em aberto, com o valor, a parcela e quem deve
+            pagar.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {aReceber.length === 0 ? (
+            <p id="mybank-sem-receber" className="text-sm text-muted-foreground">
+              Nada a receber nesta conta.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {aReceber.map((linha) => (
+                <div
+                  key={linha.id}
+                  data-receber={linha.id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate font-medium">{linha.descricao}</p>
+                    {/* OS TRES CAMPOS DA ISSUE, cada um na sua ancora.
+
+                        `data-quem-deve` existe para a sonda poder afirmar que
+                        ESTE campo esta na linha: sem ele, uma assercao sobre o
+                        texto da linha inteira continuaria passando com o nome
+                        apagado, porque "Você mesmo" e o nome da conexao
+                        aparecem em outros lugares da tela. */}
+                    <p className="text-xs text-muted-foreground">
+                      <span data-quem-deve>{linha.quemDevePagar}</span>
+                      {" · parcela "}
+                      <span data-parcela-rotulo>{linha.rotulo}</span>
+                      {" · vence "}
+                      {dataOuMomentoNaTela(linha.vencimento)}
+                    </p>
+                  </div>
+                  <span data-valor className="font-semibold">
+                    {formatCurrency(linha.valor)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

@@ -1,0 +1,330 @@
+#!/usr/bin/env node
+// Prova de mutacao da TELA do MyBank -- HMO-371 (F3 da HMO-368).
+//
+//   node scripts/mutantes-mybank-na-tela.mjs
+//
+// Cada entrada estraga UMA decisao; `npm run test:mybank-na-tela` tem de ficar
+// VERMELHA em todas. Mutante que sobrevive e um trecho que nenhuma assercao
+// distingue.
+//
+// OS DOIS QUE A ISSUE NOMEIA SAO OS DOIS PRIMEIROS DA LISTA
+// ---------------------------------------------------------
+// `O SELETOR LISTA CONTA CORRENTE` e `A LINHA PERDE O "QUEM DEVE PAGAR"` sao os
+// mutantes que a HMO-371 pede por nome, e se qualquer um dos dois sobrevive
+// nenhum outro compensa -- a sonda nao estaria medindo a feature.
+//
+// POR QUE ESTES DOIS, E POR QUE ELES NAO DAO ERRO EM LUGAR NENHUM
+// ---------------------------------------------------------------
+// O primeiro: a rota recusa conta corrente (`conta_credora_nao_e_investimento`)
+// e a trigger da 053 recusa depois dela. O defeito, portanto, nao e dinheiro
+// errado -- e um formulario que OFERECE uma opcao que sempre falha. Nada
+// compila errado, nada responde 500: a pessoa escolhe a conta corrente, aperta
+// e leva uma recusa que nao sabia que ia levar. So contar as `<option>` do DOM
+// mede isso.
+//
+// O segundo: a issue nomeia TRES campos na linha de "A receber" (valor, `n de
+// m`, quem deve pagar) e os tres existem no corpo que a rota devolve. Uma linha
+// que imprime dois deles fica com APARENCIA PERFEITA -- e um emprestimo para a
+// Lais e um auto-emprestimo ficam indistinguiveis na mesma lista. E por isso
+// que a assercao e sobre a ancora `data-quem-deve`, e nao sobre o texto da
+// linha: "Você mesmo" e o nome da conexao aparecem em outros lugares da tela.
+//
+// A FORMA DA LISTA E A DA FAMILIA TUPLA DE ARIDADE 4
+// -------------------------------------------------
+// `scripts/mede-ancora-ambigua.mjs` -- a guarda que reprova ancora morta,
+// ambigua ou de arquivo inexistente em TODO runner do repo -- le a lista de
+// verdade em vez de a copiar, e so sabe ler duas formas. Dai a ordem
+// `[alvo, rotulo, de, para]` e o `original` montado DEPOIS da lista. As ancoras
+// sao strings de uma linha com `\n` escapado, nunca template literal.
+//
+// NENHUM MUTANTE AQUI MORRE NO `tsc`
+// ----------------------------------
+// A suite compila a arvore mutada antes de rodar, entao um mutante que nao
+// compile aparece como MORTO sem ter medido assercao nenhuma -- o
+// `mutante-de-retrocesso-morre-no-tsc`. Por isso as mutacoes de JSX trocam o
+// CONTEUDO (`{linha.quemDevePagar}` -> `{""}`) em vez de apagar o elemento, e
+// as de predicado trocam o operador em vez de remover o parametro.
+import { readFileSync } from "node:fs";
+
+import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
+
+const LIB = "lib/mybank-na-tela.ts";
+const PAINEL = "components/mybank/PainelDoMyBank.tsx";
+const DEVEDOR = "components/mybank/ParcelasDoMyBankQueEuDevo.tsx";
+
+/** [alvo, rotulo, de, para] */
+const mutantes = [
+  // =========================================================================
+  // OS DOIS QUE A ISSUE NOMEIA
+  // =========================================================================
+
+  [
+    LIB,
+    "O SELETOR LISTA CONTA CORRENTE (o filtro de investimento cai)",
+    "      conta.account_type === TIPO_DA_CONTA_CREDORA && conta.is_active !== false",
+    "      conta.is_active !== false",
+  ],
+
+  [
+    PAINEL,
+    'A LINHA DE "A RECEBER" PERDE O "QUEM DEVE PAGAR"',
+    "<span data-quem-deve>{linha.quemDevePagar}</span>",
+    '<span data-quem-deve>{""}</span>',
+  ],
+
+  // =========================================================================
+  // O CABECALHO
+  // =========================================================================
+
+  [
+    LIB,
+    "a conta com is_active NULL desaparece do seletor (=== true)",
+    "      conta.account_type === TIPO_DA_CONTA_CREDORA && conta.is_active !== false",
+    "      conta.account_type === TIPO_DA_CONTA_CREDORA && conta.is_active === true",
+  ],
+
+  [
+    LIB,
+    "o rotulo da opcao perde o TIPO da conta",
+    "  return `${conta.name} · ${porTipo(conta.account_type as never).rotulo}`;",
+    "  return `${conta.name}`;",
+  ],
+
+  [
+    LIB,
+    "os totais somam TODAS as contas, nao a escolhida",
+    "    (e) => e.status === \"active\" && (contaId === null || e.conta_credora_id === contaId)",
+    "    (e) => e.status === \"active\"",
+  ],
+
+  [
+    LIB,
+    "o total a receber conta a parcela JA PAGA",
+    "      if (!parcelaEmAberto(parcela)) continue;\n      aReceber += parcela.valor;",
+    "      aReceber += parcela.valor;",
+  ],
+
+  [
+    LIB,
+    "o emprestimo QUITADO volta a contar no emprestado",
+    "    (e) => e.status === \"active\" && (contaId === null || e.conta_credora_id === contaId)",
+    "    (e) => (contaId === null || e.conta_credora_id === contaId)",
+  ],
+
+  [
+    LIB,
+    "o progresso n/m conta a parcela EM ABERTO como paga",
+    "  const pagas = emprestimo.parcelas.filter((p) => p.status === \"paid\").length;",
+    "  const pagas = emprestimo.parcelas.filter((p) => p.status === \"pending\").length;",
+  ],
+
+  // =========================================================================
+  // "A RECEBER"
+  // =========================================================================
+
+  [
+    LIB,
+    'a parcela PAGA entra na lista de "A receber"',
+    "      if (!parcelaEmAberto(parcela)) continue;\n\n      linhas.push({",
+    "      linhas.push({",
+  ],
+
+  [
+    LIB,
+    "a ordem de A receber inverte (o vencimento mais longe primeiro)",
+    "      : a.vencimento < b.vencimento",
+    "      : a.vencimento > b.vencimento",
+  ],
+
+  [
+    LIB,
+    "o emprestimo CANCELADO aparece em A receber",
+    '    if (emprestimo.status !== "active") continue;',
+    "    if (false) continue;",
+  ],
+
+  // =========================================================================
+  // A RECUSA DA CONEXAO NAO ACEITA
+  // =========================================================================
+
+  [
+    LIB,
+    "o seletor de devedor oferece a conexao PENDENTE",
+    '    if (conexao.status !== "accepted") continue;',
+    "    if (false) continue;",
+  ],
+
+  [
+    LIB,
+    "o lado da conexao sai do EMBED, e nao de requester_id",
+    "    const souOPedinte = conexao.requester_id === meuId;",
+    "    const souOPedinte = conexao.requester?.id === meuId;",
+  ],
+
+  [
+    LIB,
+    "devedor nao escolhido passa por conexao aceita",
+    "  if (!devedorId) return false;",
+    "  if (!devedorId) return true;",
+  ],
+
+  [
+    PAINEL,
+    'marcar "uma conexao" sem escolher a pessoa vira AUTO-emprestimo',
+    '    devedorDoPedido === null\n      ? "conexao"',
+    '    devedorDoPedido === null\n      ? "auto"',
+  ],
+
+  [
+    PAINEL,
+    "o Caso B manda a conta de pagamento (24 contas a pagar no meu nome)",
+    '          conta_de_pagamento_id: quemPaga === "eu" ? contaDePagamentoId : null,',
+    "          conta_de_pagamento_id: contaDePagamentoId,",
+  ],
+
+  [
+    PAINEL,
+    "o botao Emprestar ignora o problema e chama a rota de qualquer jeito",
+    "    if (problema) {\n      setErro(mensagemDoProblema(problema));\n      return;\n    }",
+    "    if (problema) {\n      setErro(mensagemDoProblema(problema));\n    }",
+  ],
+
+  [
+    PAINEL,
+    "o valor vai MULTIPLICADO pelo cliente, em vez de cru com a base",
+    "          valor,\n          base,",
+    '          valor: String(Number(valor) * numeroDeParcelas),\n          base: "total" as typeof base,',
+  ],
+
+  // =========================================================================
+  // O LADO DO DEVEDOR
+  // =========================================================================
+
+  [
+    LIB,
+    "o selo imprime 'MyBank — null' quando o perfil do credor nao e legivel",
+    "  if (!quemEmprestou) return SELO_DO_MYBANK;",
+    "  if (false) return SELO_DO_MYBANK;",
+  ],
+
+  [
+    LIB,
+    "quem JA AVISOU ganha o botao de avisar de novo",
+    '  return parcela.status === "pending";',
+    "  return true;",
+  ],
+
+  [
+    DEVEDOR,
+    "o devedor marca a parcela como PAGA (quitada sem nada ter se movido)",
+    '        body: JSON.stringify({ status: "reported" }),',
+    '        body: JSON.stringify({ status: "paid" }),',
+  ],
+
+  [
+    DEVEDOR,
+    "o bloco do devedor le a rota de QUEM ME DEVE, e nao a view do devedor",
+    '      const resposta = await fetch("/api/mybank/due");',
+    '      const resposta = await fetch("/api/mybank/loans");',
+  ],
+];
+
+const SUITE = "test:mybank-na-tela";
+
+const bloco = criarBlocoDeMutantes({
+  suites: [SUITE],
+  rotulo: "mybank-na-tela",
+});
+
+// Lido da arvore de verdade, que e o original por construcao: nada mais aqui
+// escreve nela. Montado DEPOIS da lista -- ver A FORMA DA LISTA, no cabecalho.
+const original = new Map();
+for (const arquivo of new Set(mutantes.map(([alvo]) => alvo))) {
+  original.set(arquivo, readFileSync(arquivo, "utf8"));
+}
+
+// CONTROLE POSITIVO: a arvore limpa tem de passar. Sem ele, uma suite ja
+// vermelha -- ou um Chromium que nao existe -- deixaria TODO mutante aparecendo
+// como morto e o placar sairia cheio sem medir nada. Em sonda de navegador isso
+// nao e hipotese: as quatro sondas irmas ficaram 100% vermelhas numa arvore
+// intocada quando o Playwright da maquina subiu de versao.
+const limpo = bloco.rodar("<arvore limpa>", {}, SUITE);
+if (!limpo.verde) {
+  console.error(
+    "controle positivo REPROVOU: a suite ja esta vermelha sem mutante nenhum. " +
+      "Todo mutante abaixo apareceria como MORTO sem medir nada.\n" +
+      "Se for navegador, exporte CHROMIUM_BIN."
+  );
+  bloco.fechar();
+  process.exit(1);
+}
+console.log("controle positivo: arvore limpa VERDE.\n");
+
+let mortos = 0;
+const sobreviventes = [];
+
+for (const [arquivo, rotulo, de, para] of mutantes) {
+  const fonte = original.get(arquivo);
+  const ocorrencias = fonte.split(de).length - 1;
+
+  if (ocorrencias === 0) {
+    console.error(
+      `ANCORA MORTA  ${rotulo}\n  ${arquivo} nao contem o trecho procurado. ` +
+        "Isto e erro do runner, nao mutante morto -- conserte a ancora."
+    );
+    bloco.fechar();
+    process.exit(1);
+  }
+
+  // A TRAVA DE OCORRENCIA UNICA. `String.replace` troca a PRIMEIRA ocorrencia:
+  // um `de` que aparece duas vezes muta um lugar que o rotulo nao descreve. O
+  // risco e concreto nestes tres arquivos -- os comentarios CITAM as proprias
+  // ancoras (`is_active !== false` aparece na prosa que explica por que nao e
+  // `=== true`), e uma ancora curta demais mutaria a explicacao e deixaria o
+  // codigo intacto, com o placar dizendo "sobreviveu".
+  if (ocorrencias > 1) {
+    console.error(
+      `ANCORA AMBIGUA  ${rotulo}\n  o trecho aparece ${ocorrencias}x em ${arquivo} ` +
+        "-- o replace muta so a 1a. Isto e erro do runner; estreite a ancora."
+    );
+    bloco.fechar();
+    process.exit(1);
+  }
+
+  const mutado = fonte.replace(de, para);
+
+  if (mutado === fonte) {
+    console.error(
+      `MUTACAO NO-OP  ${rotulo}\n  o replace nao mudou o texto de ${arquivo}.`
+    );
+    bloco.fechar();
+    process.exit(1);
+  }
+
+  const r = bloco.rodar(rotulo, { [arquivo]: mutado }, SUITE);
+
+  if (!r.verde) {
+    mortos += 1;
+    console.log(`MORTO      ${rotulo}`);
+  } else {
+    sobreviventes.push(rotulo);
+    console.log(`SOBREVIVEU ${rotulo}`);
+    if (r.mudouASaida === false) {
+      console.log(
+        "           (saida compilada identica a da arvore limpa: EQUIVALENTE)"
+      );
+    }
+  }
+}
+
+bloco.fechar();
+
+console.log(`\n${mortos}/${mutantes.length} mortos.`);
+if (sobreviventes.length > 0) {
+  console.log("\nsobreviventes:");
+  for (const s of sobreviventes) console.log(`  - ${s}`);
+}
+
+// Sai 1 com sobrevivente: um runner que saisse 0 deixaria o step de CI verde
+// para sempre e provaria o mesmo que step nenhum.
+process.exit(sobreviventes.length === 0 ? 0 : 1);

@@ -7313,6 +7313,57 @@ jobs:
         run: npm run mutantes:emprestimo-do-mybank
 
       # -----------------------------------------------------------------------
+      # MyBank F3 -- a tela /dashboard/mybank e o lado do devedor (HMO-371)
+      # -----------------------------------------------------------------------
+      # SONDA DE NAVEGADOR, e aqui ela e a unica forma de medir o que a issue
+      # pede. As tres coisas que esta suite prova nao aparecem em `tsc`, `lint`
+      # nem `build`:
+      #
+      #   * o seletor do cabecalho listando SO conta de investimento. A rota
+      #     recusa conta corrente e a trigger da 053 recusa depois dela -- entao
+      #     o defeito nao e dinheiro errado, e um formulario que OFERECE uma
+      #     opcao que sempre falha: a pessoa escolhe, aperta e leva uma recusa
+      #     que nao sabia que ia levar. So contar as `<option>` do DOM mede isso;
+      #   * o formulario recusando conexao NAO ACEITA, pelos dois lados (quem
+      #     esta `pending` nao aparece como opcao, e apertar sem escolher nao
+      #     chama a rota), com controle positivo ao lado -- sem ele, um
+      #     formulario que recusasse todo mundo passaria a assercao de recusa;
+      #   * a linha de "A receber" com os TRES campos que a issue nomeia (valor,
+      #     `n de m`, quem deve pagar). Uma linha com dois deles fica com
+      #     aparencia perfeita, e e por isso que a assercao e sobre cada ancora
+      #     e nao sobre o texto da linha.
+      #
+      # E o lado do devedor: o selo "MyBank — <quem emprestou>" em Contas a
+      # Pagar, o caso do perfil ILEGIVEL (selo so "MyBank", parcela continua na
+      # lista) e o botao mandando `reported`, nunca `paid`.
+      #
+      # NO RUNNER DO ACTIONS quem casa e `/usr/bin/google-chrome`, que ja vem na
+      # imagem -- nenhum workflow instala Playwright. Nesta maquina e preciso
+      # exportar `CHROMIUM_BIN`; a busca desta sonda VARRE a pasta do Playwright
+      # (`chromium-*`) em vez de fixar a versao no fonte, que foi o que deixou as
+      # quatro sondas antigas 100% vermelhas quando o ambiente subiu de 1243
+      # para 1248.
+      - name: MyBank -- a tela, o seletor e a linha de A receber
+        run: npm run test:mybank-na-tela
+
+      # Controle negativo do step acima: 22 mutantes, 22 mortos.
+      #
+      # Os dois que a issue HMO-371 pede por nome sao os dois primeiros da lista
+      # do runner: o filtro de `account_type = 'investment'` caindo (o seletor
+      # passa a oferecer conta corrente e cartao) e o `data-quem-deve` da linha
+      # ficando vazio.
+      #
+      # Tres deles so morrem por causa de linhas do FIXTURE que existem para
+      # isso, e vale dizer quais -- sem elas os tres sobrevivem com o codigo
+      # certo do outro lado: um emprestimo `settled` e um `cancelled` COM parcela
+      # em aberto na mesma conta credora (sem eles, "A receber" ignorando o
+      # status do emprestimo da a mesma lista), e uma conexao aceita cujo embed
+      # do MEU lado vem NULO -- o caso que a RLS de `profiles` produz, e o unico
+      # em que decidir o lado por `requester_id` difere de decidir pelo embed.
+      - name: Mutantes da tela do MyBank
+        run: npm run mutantes:mybank-na-tela
+
+      # -----------------------------------------------------------------------
       # MyBank F4 -- as sete leituras de dinheiro (HMO-372)
       # -----------------------------------------------------------------------
       # SEM `paths:`, como todo o resto deste workflow, e aqui isso e a entrega:

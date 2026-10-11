@@ -72,7 +72,8 @@ const PERMITIDO = "components/ui/campo-de-data.tsx";
  * A contagem esperada de chamadas de `<CampoDeData`: 2 da HMO-238 (tela de lancamento) + 8
  * da HMO-240 (seletor de periodo x2, metas x2, transferencia, conta avulsa,
  * lancamento de investimento, despesa de grupo) + 2 da HMO-192 (renda fixa da
- * carteira) + 1 da HMO-324 (linha de edicao da lista).
+ * carteira) + 1 da HMO-324 (linha de edicao da lista) + 1 da HMO-371 (o 1o
+ * vencimento do emprestimo do MyBank).
  *
  * O numero ACOMPANHA a arvore, e campo novo obriga a subir ele aqui.
  * A versao anterior dizia o contrario -- "tela nova sobe o numero e nao tem por
@@ -90,7 +91,7 @@ const PERMITIDO = "components/ui/campo-de-data.tsx";
  * silencio, do mesmo jeito. Igualdade falha ALTO nas duas direcoes e obriga a
  * decisao a passar por aqui, com o motivo, sempre.
  */
-const CHAMADAS_ESPERADAS = 13;
+const CHAMADAS_ESPERADAS = 14;
 
 const ATRIBUTO_DE_DATA = /type\s*=\s*(?:["']date["']|\{\s*["']date["']\s*\})/gi;
 

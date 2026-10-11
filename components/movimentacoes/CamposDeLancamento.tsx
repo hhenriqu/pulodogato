@@ -34,6 +34,7 @@ import { CalendarClock, CreditCard, Receipt, Repeat } from "lucide-react";
 import { CampoDeData } from "@/components/ui/campo-de-data";
 import { janelaDeFaturas, rotuloDaFatura } from "@/lib/fatura-do-cartao";
 import { CampoDeCotacao } from "@/components/movimentacoes/CampoDeCotacao";
+import { PerguntaDaBaseDoValor } from "@/components/movimentacoes/PerguntaDaBaseDoValor";
 import {
   SeletorDeCategoria,
   type ResultadoDeCriacao,
@@ -618,53 +619,25 @@ export function CamposDeLancamento({
 
             {valores.parcelado && campos.parcelamento && (
               <div className="space-y-4">
-                {/* A PERGUNTA, EM RADIO E NAO EM SELECT
+                {/* A PERGUNTA SAIU DAQUI NA HMO-371, e o componente e o mesmo
+                    que o formulario de emprestimo do MyBank usa.
 
-                    Duas opcoes exclusivas das quais NENHUMA e um padrao
-                    inofensivo: ler "1.000" como parcela ou como total da uma
-                    compra dez vezes diferente. Radio mostra as duas respostas ao
-                    mesmo tempo; um select mostra uma e esconde a outra atras de
-                    um clique, e o valor que fica visivel passa por "o normal".
+                    O conteudo nao mudou -- os dois `id`, o `name`, os rotulos e
+                    as classes desceram byte a byte para
+                    `PerguntaDaBaseDoValor`. O porque de ser radio e nao select,
+                    e o porque de nenhuma das duas respostas ser um padrao
+                    inofensivo, estao no cabecalho de la.
 
-                    `<input type="radio">` nativo, e nao o Select do Radix: o
-                    teste desta tela renderiza com `react-dom/server`, e o Radix
-                    Select nao imprime o valor escolhido no servidor -- a
-                    assercao leria vazio em qualquer caso. */}
-                <fieldset className="space-y-2">
-                  <legend className="text-sm font-medium">
-                    O valor acima é:
-                  </legend>
-                  <div className="flex flex-col gap-2 sm:flex-row sm:gap-6">
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="radio"
-                        id="base_parcela"
-                        name="base_do_valor"
-                        value="parcela"
-                        checked={valores.baseDoValorParcelado === "parcela"}
-                        onChange={() =>
-                          aoMudar({ baseDoValorParcelado: "parcela" })
-                        }
-                      />
-                      <Label htmlFor="base_parcela">
-                        o valor de cada parcela
-                      </Label>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="radio"
-                        id="base_total"
-                        name="base_do_valor"
-                        value="total"
-                        checked={valores.baseDoValorParcelado === "total"}
-                        onChange={() =>
-                          aoMudar({ baseDoValorParcelado: "total" })
-                        }
-                      />
-                      <Label htmlFor="base_total">o total da compra</Label>
-                    </div>
-                  </div>
-                </fieldset>
+                    A alternativa era o MyBank ter a propria copia da pergunta:
+                    duas telas do mesmo app ensinando coisas diferentes sobre o
+                    que o numero digitado significa, com a MESMA
+                    `serieDeParcelas` do outro lado das duas. */}
+                <PerguntaDaBaseDoValor
+                  valor={valores.baseDoValorParcelado}
+                  aoEscolher={(base) =>
+                    aoMudar({ baseDoValorParcelado: base })
+                  }
+                />
 
                 {/* "EM QUAL PARCELA AQUELA SE REFERE DE QUANTAS NO TOTAL"
 
