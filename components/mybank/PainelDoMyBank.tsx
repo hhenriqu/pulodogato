@@ -50,6 +50,16 @@
 // em voo, e nao um booleano. Com um booleano global, confirmar a parcela 3 e
 // logo depois a 4 (duas baixas legitimas, em sequencia) perderia a segunda.
 //
+// O BOTAO «Cancelar» E DESTRUTIVO E MUDA A TELA DE OUTRA PESSOA (HMO-391)
+// ----------------------------------------------------------------------
+// Ele aparece SO em emprestimo `active`, pergunta com `confirm()` antes, e a
+// pergunta vem de `avisoDoCancelamento` (que tem teste) porque ela e o unico
+// lugar onde se le o que o cancelamento NAO faz: nao registra pagamento e nao
+// amortiza nada. No Caso B a tela que muda e a de quem deve, e a pergunta diz
+// isso pelo nome.
+//
+// `cancelandoRef` e a mesma trava de `parcelasEmVooRef`, por emprestimo.
+//
 // E O LATCH NAO ALCANCA O F5: ISSO E `lib/pedido-de-emprestimo`
 // ------------------------------------------------------------
 // Recarregar a pagina zera todo ref e todo state. Quem viu "Emprestando..." e
@@ -90,10 +100,12 @@ import { PerguntaDaBaseDoValor } from "@/components/movimentacoes/PerguntaDaBase
 import { formatCurrency } from "@/lib/utils";
 import { dataOuMomentoNaTela } from "@/lib/data-na-tela";
 import {
+  avisoDoCancelamento,
   mensagemDoProblema,
   problemaDoEmprestimo,
   serieDoEmprestimo,
   casoDoEmprestimo,
+  STATUS_CANCELADO,
   JUROS_DA_FASE_1,
   MAX_PARCELAS_DO_MYBANK,
   MIN_PARCELAS_DO_MYBANK,
@@ -178,6 +190,20 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
    * nao pode repetir e a MESMA parcela -- entao a trava e por id.
    */
   const parcelasEmVooRef = useRef<Set<string>>(new Set());
+
+  /**
+   * OS CANCELAMENTOS EM VOO -- um `Set` de ids de EMPRESTIMO.
+   *
+   * A mesma forma de `parcelasEmVooRef`, e por `useRef` pela mesma razao do
+   * `emprestandoRef`: o `disabled` so chega ao DOM depois do re-render, e dois
+   * toques na mesma linha mandariam dois PATCH. Aqui o segundo nao duplica
+   * dinheiro -- ele cai no 409 de "ja cancelado" --, mas mostra um toast de erro
+   * logo depois do toast de sucesso, sobre uma operacao que deu certo.
+   *
+   * Por emprestimo, e nao um booleano global: cancelar duas dividas erradas em
+   * sequencia e legitimo, e um booleano perderia a segunda.
+   */
+  const cancelandoRef = useRef<Set<string>>(new Set());
 
   const carregar = useCallback(async () => {
     try {
@@ -541,6 +567,73 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
       // tem `disabled`) sem nunca mais chamar a rota -- um clique que nao faz
       // nada e nao diz nada, que e pior que o erro.
       parcelasEmVooRef.current.delete(parcelaId);
+    }
+  }
+
+  /**
+   * Cancelar o emprestimo -- a acao destrutiva desta tela (HMO-391).
+   *
+   * A PERGUNTA E `confirm()`, E ISSO E A CONVENCAO MEDIVEL DESTE REPOSITORIO
+   * ----------------------------------------------------------------------
+   * O mesmo caminho de `ListaDeMovimentacao`: a sonda substitui
+   * `window.confirm`, LE a frase que o app passou e afirma sobre ela. Com um
+   * dialogo de componente o que estaria provado seria o texto do esboco -- e
+   * aqui o TEXTO e parte da entrega, porque ele e o unico lugar onde a pessoa
+   * le que cancelar nao e pagar.
+   *
+   * O texto vem de `avisoDoCancelamento`, que tem teste. Escrito aqui, ele
+   * passaria por qualquer suite intacto.
+   */
+  async function cancelarEmprestimo(emprestimo: EmprestimoDoMyBank) {
+    // A TRAVA POR EMPRESTIMO, NA PRIMEIRA LINHA -- antes do `confirm()`.
+    //
+    // Antes da pergunta e nao depois: `confirm()` e bloqueante, mas o clique
+    // que chega enquanto o PATCH esta em voo (a pergunta ja respondida) abriria
+    // uma SEGUNDA pergunta sobre uma divida que esta sendo encerrada.
+    if (cancelandoRef.current.has(emprestimo.id)) return;
+
+    if (
+      !confirm(
+        avisoDoCancelamento({
+          descricao: emprestimo.descricao,
+          caso: emprestimo.caso,
+          // `quem_deve_pagar` JA e o nome resolvido pela rota (`quemDevePagar`),
+          // inclusive a frase de contato indisponivel. No Caso A ele e "Você
+          // mesmo", e a frase do aviso nao usa nome nenhum ali.
+          nomeDoDevedor:
+            emprestimo.caso === "conexao" ? emprestimo.quem_deve_pagar : null,
+        })
+      )
+    ) {
+      return;
+    }
+
+    cancelandoRef.current.add(emprestimo.id);
+
+    try {
+      const resposta = await fetch(`/api/mybank/loans/${emprestimo.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: STATUS_CANCELADO }),
+      });
+
+      const dados = await resposta.json();
+
+      if (!resposta.ok) {
+        toast.error(dados.error ?? "Não foi possível cancelar o empréstimo.");
+        return;
+      }
+
+      // A MENSAGEM DA ROTA, e nao uma frase daqui: e ela que diz quantas
+      // parcelas foram canceladas, quantas pagas ficaram e o que saiu da agenda
+      // -- numeros que so o servidor tem depois de escrever.
+      toast.success(dados.message ?? "Empréstimo cancelado.");
+      await carregar();
+    } catch (e) {
+      console.error("Erro ao cancelar o emprestimo:", e);
+      toast.error("Não foi possível cancelar o empréstimo.");
+    } finally {
+      cancelandoRef.current.delete(emprestimo.id);
     }
   }
 
@@ -915,9 +1008,32 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="font-medium">{emprestimo.descricao}</p>
-                      <Badge variant="outline" data-progresso>
-                        {progressoDoEmprestimo(emprestimo)}
-                      </Badge>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" data-progresso>
+                          {progressoDoEmprestimo(emprestimo)}
+                        </Badge>
+                        {/* O BOTAO SO EM `active`, E A CONDICAO E O STATUS DA
+                            LINHA -- nao "tem parcela em aberto".
+
+                            Emprestimo `settled` ou `cancelled` nao tem o que
+                            encerrar, e a rota recusa os dois com frase propria;
+                            oferecer o botao ali seria oferecer um clique cujo
+                            unico resultado possivel e um toast de erro. E a
+                            condicao e o status e nao as parcelas porque um
+                            emprestimo `active` com todas as parcelas pagas (e
+                            que por algum motivo nao virou `settled`) AINDA
+                            precisa de saida -- e o caso que abriu a HMO-383. */}
+                        {emprestimo.status === "active" && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            data-cancelar-emprestimo={emprestimo.id}
+                            onClick={() => cancelarEmprestimo(emprestimo)}
+                          >
+                            Cancelar
+                          </Button>
+                        )}
+                      </div>
                     </div>
                     <p className="text-xs text-muted-foreground">
                       <span data-devedor-do-emprestimo>

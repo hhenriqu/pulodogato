@@ -643,3 +643,274 @@ export function quemDevePagar(params: {
   if (params.caso === "auto") return "Você mesmo";
   return params.nomeDoDevedor ?? "Quem deve (contato indisponível)";
 }
+
+// ---------------------------------------------------------------------------
+// O CANCELAMENTO DO EMPRESTIMO EM ATIVIDADE (F3 da HMO-383, issue HMO-391)
+// ---------------------------------------------------------------------------
+// Antes desta fase nao havia caminho nenhum de encerramento: `app/api/mybank/`
+// tinha POST e GET de emprestimo, GET da agenda e o PATCH da parcela, e mais
+// nada. Uma divida digitada errada -- a que abriu a HMO-383, duplicada em
+// producao -- so saia por SQL colado a mao.
+//
+// CANCELAR E VIRAR UM STATUS, E ISSO NAO E PREGUICA DE MODELAGEM
+// --------------------------------------------------------------
+// As duas leituras do MyBank filtram `mybank_loans.status = 'active'` (a lista
+// do credor em `lerAReceberDoMyBank`, e a view `mybank_due_entries` do lado do
+// devedor). Virar o status apaga a divida DAS DUAS TELAS de uma vez, sem leitor
+// novo e sem migration -- `mybank_loans_status_check` ja aceita `cancelled`
+// desde a 053. E DELETE nao serviria: `mybank_loans_delete` recusa emprestimo
+// com parcela `paid` de proposito, porque o CASCADE de `loan_id` levaria a
+// parcela que tem perna em `financial_transactions`.
+//
+// A PARCELA `paid` FICA `paid`, E ESSE E O LIMITE DA OPERACAO
+// -----------------------------------------------------------
+// Parcela paga e dinheiro que se moveu: no Caso A a baixa da previsao gravou as
+// duas pernas da transferencia; no Caso B o credor lancou a perna de entrada.
+// Reescrever essas parcelas para `cancelled` apagaria o historico do dinheiro --
+// o saldo da conta de investimento continuaria subido e nenhuma parcela
+// explicaria por que. Cancelar encerra o que esta EM ABERTO; o que ja aconteceu
+// nao se desfaz por aqui (e `mybank_installments_paid_check`, que e
+// `CHECK ((status = 'paid') = (paid_date IS NOT NULL))`, passa nas canceladas
+// justamente porque elas mantem `paid_date` nulo).
+//
+// A ORDEM DOS PASSOS E SOBRE DINHEIRO, E A DIRECAO DA FALHA PARCIAL E ESCOLHIDA
+// -----------------------------------------------------------------------------
+// A rota faz, nesta ordem: (2) o emprestimo vira `cancelled`; (3) as parcelas em
+// aberto viram `cancelled`; (4) as previsoes ainda `pending` do Caso A sao
+// apagadas de `scheduled_transactions`.
+//
+// Quebrar no meio DESTA ordem deixa previsao orfa em Contas a Pagar: a pessoa e
+// cobrada por uma parcela de uma divida que nao existe mais -- e ela PERCEBE, e
+// tem como consertar (a linha e dela, e Contas a Pagar sabe excluir previsao).
+// A ordem inversa -- apagar as previsoes primeiro -- deixaria a divida viva com
+// as contas a pagar sumidas: o safe-to-spend passaria a mostrar dinheiro que ja
+// esta comprometido, ninguem reportaria nada, e o erro apareceria como surpresa
+// no fim do mes. Entre um erro visivel e um erro que infla o disponivel, esta
+// feature escolhe o visivel.
+// ---------------------------------------------------------------------------
+
+/** O status que encerra a divida nas duas telas. `mybank_loans_status_check`, 053. */
+export const STATUS_CANCELADO = "cancelled";
+
+/** Por que este cancelamento nao serve. */
+export type ProblemaDoCancelamento =
+  | "nao_sou_o_credor"
+  | "emprestimo_ja_cancelado"
+  | "emprestimo_ja_quitado";
+
+/**
+ * O cancelamento pode acontecer? `null` quando pode, ou o motivo.
+ *
+ * `nao_sou_o_credor` VEM PRIMEIRO, E A ORDEM E A RESPOSTA
+ * ------------------------------------------------------
+ * `mybank_loans_select` e `lender OR borrower`, entao o DEVEDOR enxerga a linha
+ * e chega aqui com um emprestimo legivel. Perguntar pelo status antes diria "esse
+ * emprestimo ja foi quitado" para quem nao tem nada a cancelar -- vazando o
+ * estado da divida de outra pessoa numa mensagem de erro. Primeiro "isto nao e
+ * seu para cancelar"; o estado so se discute com quem manda nele.
+ *
+ * E A PERGUNTA E FEITA ANTES, NAO SO DEPOIS: `mybank_loans_update` e
+ * `USING/WITH CHECK (lender_user_id = auth.uid())`, e UPDATE que a policy filtra
+ * volta como SUCESSO COM ZERO LINHAS neste app -- sem erro, sem SQLSTATE
+ * (`update-filtrado-pela-rls-vira-sucesso`). Sem esta pergunta o devedor
+ * receberia "divida cancelada" e nada teria mudado em tela nenhuma.
+ */
+export function problemaDoCancelamento(params: {
+  emprestimo: { lender_user_id: string; status: string };
+  meuId: string;
+}): ProblemaDoCancelamento | null {
+  if (params.emprestimo.lender_user_id !== params.meuId) {
+    return "nao_sou_o_credor";
+  }
+
+  // OS DOIS ESTADOS ENCERRADOS TEM FRASE SEPARADA, e nao e detalhe: dizer
+  // "ja foi cancelado" de um emprestimo `settled` e desmentir o proprio banco
+  // para quem acabou de receber a ultima parcela.
+  if (params.emprestimo.status === STATUS_CANCELADO) {
+    return "emprestimo_ja_cancelado";
+  }
+  if (params.emprestimo.status === "settled") {
+    return "emprestimo_ja_quitado";
+  }
+
+  return null;
+}
+
+/** A frase que a tela mostra para cada recusa de cancelamento. */
+export function mensagemDoProblemaDoCancelamento(
+  problema: ProblemaDoCancelamento
+): string {
+  switch (problema) {
+    case "nao_sou_o_credor":
+      return "Só quem emprestou pode cancelar este empréstimo. Fale com quem emprestou.";
+    case "emprestimo_ja_cancelado":
+      return "Este empréstimo já está cancelado.";
+    case "emprestimo_ja_quitado":
+      return "Este empréstimo já foi quitado — não há mais nada em aberto para cancelar.";
+  }
+}
+
+/**
+ * Os estados em que a parcela ainda nao virou fato de dinheiro.
+ *
+ * `paid` esta FORA, e e a invariante desta feature (ver o cabecalho da secao).
+ * `cancelled` tambem: cancelar duas vezes nao tem segundo efeito.
+ */
+export const STATUS_EM_ABERTO_DA_PARCELA: readonly string[] = [
+  "pending",
+  "reported",
+];
+
+/**
+ * Esta parcela e cancelada junto com o emprestimo?
+ *
+ * Escrita sobre `STATUS_EM_ABERTO_DA_PARCELA` em vez de repetir a comparacao de
+ * `parcelaSegueABaixaDaPrevisao` -- que hoje tem o mesmo conjunto por
+ * coincidencia de significado, nao por ser a mesma pergunta. A baixa pergunta
+ * "esta parcela pode virar paga"; esta pergunta "esta parcela pode ser
+ * encerrada sem apagar dinheiro". No dia em que um estado novo entrar na tabela
+ * as duas podem querer respostas diferentes, e duas comparacoes identicas no
+ * mesmo arquivo seriam lidas como uma copia a ser unificada.
+ *
+ * (`lib/mybank-na-tela.ts` tem um terceiro conjunto com os mesmos dois estados,
+ * `STATUS_EM_ABERTO`, e ele responde a uma quarta pergunta -- "esta parcela
+ * aparece na lista A receber". Unificar os tres num lugar so apagaria a medicao
+ * de dois modulos para economizar duas linhas, e amarraria este arquivo a um
+ * modulo de tela -- ele nao importa nada alem de `lancamento` e `transferencia`
+ * de proposito, e e isso que o deixa compilar na suite sem o runtime do Next.)
+ */
+export function parcelaSegueOCancelamento(parcela: { status: string }): boolean {
+  return STATUS_EM_ABERTO_DA_PARCELA.includes(parcela.status);
+}
+
+/** O patch da parcela encerrada junto com o emprestimo. */
+export interface CancelamentoDaParcela {
+  status: "cancelled";
+}
+
+/**
+ * O que o cancelamento grava na parcela em aberto -- `status`, E MAIS NADA.
+ *
+ * Nao ha `paid_date` nem `paid_transaction_id` aqui porque a parcela em aberto
+ * ja os tem nulos, e `mybank_installments_paid_check` so exige a equivalencia
+ * entre `status = 'paid'` e `paid_date IS NOT NULL`. Um `paid_date: null`
+ * explicito nao mudaria nada hoje e seria uma mentira amanha: ele diria que
+ * esta funcao sabe apagar carimbo de pagamento, e e justamente o que ela nao faz.
+ */
+export function patchDoCancelamentoDaParcela(): CancelamentoDaParcela {
+  return { status: "cancelled" };
+}
+
+/**
+ * As chaves das previsoes a apagar de `scheduled_transactions` -- so o Caso A.
+ *
+ * `[]` NO CASO B, PELA MESMA RAZAO DE `previsoesDoEmprestimo`
+ * ----------------------------------------------------------
+ * No Caso B o emprestimo nunca gravou linha minha em tabela nenhuma de dinheiro
+ * -- nao ha previsao para apagar, e o id da parcela da devedora existe do mesmo
+ * jeito. Montar a chave dele aqui e mandar o DELETE assim mesmo nao daria erro
+ * (nenhuma linha casaria), e e exatamente o tipo de passo que fica no codigo
+ * parecendo necessario; o que importa e a decisao estar escrita no mesmo lugar
+ * onde a criacao a tomou.
+ *
+ * E A LISTA VAZIA E UMA ARMADILHA DO POSTGREST, NAO UMA ECONOMIA
+ * --------------------------------------------------------------
+ * `.in("notes", [])` nao filtra nada: a clausula vazia simplesmente desaparece,
+ * e o DELETE passa a alcancar TODA linha que a RLS entrega -- todas as
+ * previsoes pendentes da pessoa. A mesma armadilha esta documentada em
+ * `lib/services/divida-do-mybank.ts`, do lado da leitura (lá o sintoma e ler
+ * parcela alheia; aqui seria apagar a agenda inteira). Quem chama GUARDA NO
+ * `.length` desta lista.
+ */
+export function chavesDasPrevisoesDoCancelamento(params: {
+  caso: CasoDoEmprestimo;
+  parcelasCanceladas: { id: string }[];
+}): string[] {
+  if (params.caso !== "auto") return [];
+  return params.parcelasCanceladas.map((p) => chaveDaParcelaDoMyBank(p.id));
+}
+
+/**
+ * O aviso do `confirm()`, e ele diz o que o cancelamento NAO faz.
+ *
+ * Tres coisas, e as tres sao necessarias:
+ *
+ *   1. que a divida sai das duas telas -- no Caso B a tela que muda e DE OUTRA
+ *      PESSOA, e quem clica tem de saber disso antes;
+ *   2. que isto NAO e pagamento. Quem cancela achando que esta quitando ve a
+ *      divida desaparecer e conclui que pagou -- e o dinheiro nunca se moveu;
+ *   3. que nao amortiza nada. Antecipar parcela e abater principal e outra
+ *      operacao (tem aritmetica propria e decisao sobre juros), e esta nao e ela.
+ *
+ * O texto vive aqui, e nao no componente, para ter teste: escrito no JSX ele
+ * passaria por qualquer suite intacto.
+ */
+export function avisoDoCancelamento(params: {
+  descricao: string;
+  caso: CasoDoEmprestimo;
+  nomeDoDevedor: string | null;
+}): string {
+  const ondeSai =
+    params.caso === "auto"
+      ? "As parcelas em aberto saem das suas Contas a Pagar"
+      : `A dívida sai da sua lista e da tela de ${
+          params.nomeDoDevedor ?? "quem deve"
+        }`;
+
+  return (
+    `Cancelar “${params.descricao}”?\n\n` +
+    `${ondeSai}. As parcelas já pagas continuam pagas.\n\n` +
+    "Cancelar NÃO registra pagamento e NÃO amortiza nada: nenhum dinheiro se move."
+  );
+}
+
+/**
+ * O que mudou, nos DOIS lados -- a resposta da rota, pelo princípio de
+ * `mensagemDaCriacao`.
+ *
+ * Um "empréstimo cancelado" seco deixaria a pergunta mais importante sem
+ * resposta: o que aconteceu com as parcelas pagas, e o que a outra pessoa vai
+ * ver. Entao a frase conta as tres coisas que mudaram de estado (as canceladas,
+ * as pagas que ficaram, as contas a pagar que sairam) e nomeia quem deixa de ser
+ * cobrado.
+ */
+export function mensagemDoCancelamento(params: {
+  caso: CasoDoEmprestimo;
+  quantasCanceladas: number;
+  quantasPagas: number;
+  previsoesApagadas: number;
+  nomeDoDevedor: string | null;
+}): string {
+  const partes: string[] = [
+    params.quantasCanceladas === 1
+      ? "1 parcela cancelada"
+      : `${params.quantasCanceladas} parcelas canceladas`,
+  ];
+
+  if (params.caso === "auto") {
+    partes.push(
+      params.previsoesApagadas === 1
+        ? "1 conta a pagar saiu da sua agenda"
+        : `${params.previsoesApagadas} contas a pagar saíram da sua agenda`
+    );
+  } else {
+    // O NOME, QUANDO HA UM. Perfil ilegivel e caso real -- desfazer a conexao
+    // depois de emprestar deixa a divida de pe e o nome fora de alcance
+    // (`quemDevePagar` tem a mesma frase para a lista).
+    partes.push(
+      `a dívida saiu das despesas de ${
+        params.nomeDoDevedor ?? "quem deve"
+      }`
+    );
+  }
+
+  if (params.quantasPagas > 0) {
+    partes.push(
+      params.quantasPagas === 1
+        ? "a parcela já paga continua paga"
+        : `as ${params.quantasPagas} parcelas já pagas continuam pagas`
+    );
+  }
+
+  return `${partes.join("; ")}.`;
+}

@@ -288,6 +288,8 @@ const PAGINA = `<!doctype html>
 <div id="raiz-g1-controle"></div><div id="raiz-g1-controle-2"></div>
 <div id="raiz-h"></div><div id="raiz-h2"></div><div id="raiz-h3"></div>
 <div id="raiz-g4"></div><div id="raiz-g4b"></div>
+<div id="raiz-i"></div><div id="raiz-i2"></div><div id="raiz-i3"></div>
+<div id="raiz-i4"></div><div id="raiz-i5"></div>
 <div id="resultado">a pagina nao rodou</div>
 <script>${umd("react", "react.development.js")}</script>
 <script>${umd("react-dom", "react-dom.development.js")}</script>
@@ -655,6 +657,16 @@ let POST_DE_EMPRESTIMO_FALHA = false;
 let PATCH_DE_PARCELA_FALHA = false;
 
 /**
+ * O PATCH do CANCELAMENTO caindo na rede (HMO-391).
+ *
+ * Existe para medir o \`delete\` do \`finally\`: sem ele o emprestimo fica em voo
+ * para sempre, e o botao Cancelar -- que nao tem \`disabled\` -- continua
+ * clicavel sem chamar rota nenhuma e sem dizer nada. Um clique que nao faz nada
+ * e nao avisa e pior que o erro.
+ */
+let PATCH_DE_EMPRESTIMO_FALHA = false;
+
+/**
  * O POST DE EMPRESTIMO RESPONDE 409? -- usado por G4 (HMO-390).
  *
  * 409 e "o id que voce escolheu e de uma linha que nao e sua". O par guardado
@@ -696,6 +708,16 @@ window.fetch = async (url, init) => {
     alvo.startsWith("/api/mybank/installments/") &&
     metodo === "PATCH"
   ) {
+    throw new TypeError("Failed to fetch");
+  }
+
+  if (
+    PATCH_DE_EMPRESTIMO_FALHA &&
+    alvo.startsWith("/api/mybank/loans/") &&
+    metodo === "PATCH"
+  ) {
+    // Registrado em CHAMADAS acima: o PATCH SAIU, e e por isso que I7 sabe
+    // distinguir "a primeira tentativa nao aconteceu" de "a segunda nao saiu".
     throw new TypeError("Failed to fetch");
   }
 
@@ -1365,6 +1387,213 @@ async function preencherEmprestimo(achar, valor) {
   out.g4b = {
     idDaQueda: caiu ? caiu.corpo.id : null,
     idDepois: depoisDaQueda ? depoisDaQueda.corpo.id : null,
+  };
+}
+
+// =============================================================================
+// I -- o botao «Cancelar»: so em \`active\`, com pergunta, e a pergunta DECIDE
+//      (HMO-391)
+// =============================================================================
+// Tres coisas que nao aparecem em \`tsc\`, \`lint\` nem \`build\`, e as tres sao a
+// feature:
+//
+//   * O BOTAO NAO EXISTIR em emprestimo \`settled\` nem \`cancelled\`. Os dois ja
+//     estao encerrados e a rota recusa os dois com frase propria -- oferecer o
+//     clique ali e oferecer uma operacao cujo unico resultado possivel e um
+//     toast de erro. O fixture padrao tem os TRES estados na MESMA conta, entao
+//     "o botao aparece" e "o botao aparece onde deve" sao perguntas diferentes;
+//   * A PERGUNTA SER BLOQUEANTE E DECIDIR. \`confirm()\` devolvendo \`false\` tem de
+//     deixar a tela exatamente como estava: zero PATCH. Uma acao destrutiva cujo
+//     cancelar nao cancela e pior que nao ter a pergunta, porque a pessoa confia
+//     nela;
+//   * O TEXTO DA PERGUNTA, lido do que o app PASSOU para \`window.confirm\` -- e a
+//     unica forma de medir o texto de um dialogo nativo, e a razao pela qual esta
+//     tela usa \`confirm()\` e nao um dialogo de componente.
+{
+  // A pergunta e substituida, como em \`ListaDeMovimentacao\`: a sonda guarda o
+  // texto e DECIDE a resposta.
+  let PERGUNTAS = [];
+  let RESPOSTA_DA_PERGUNTA = false;
+  window.confirm = function (texto) {
+    PERGUNTAS.push(texto);
+    return RESPOSTA_DA_PERGUNTA;
+  };
+
+  // O fixture volta ao padrao (a secao H o trocou): os tres estados na conta
+  // CARTEIRA, mais o emprestimo da outra conta.
+  LOANS = [
+    {
+      id: "l-ativo",
+      descricao: "Moto eletrica",
+      conta_credora_id: ${JSON.stringify(CARTEIRA)},
+      caso: "conexao",
+      status: "active",
+      principal: 24000,
+      total_de_parcelas: 24,
+      primeiro_vencimento: "2026-09-10",
+      quem_deve_pagar: "Lais",
+      devedor_id: ${JSON.stringify(LAIS)},
+      parcelas: [
+        { id: "p-i1", valor: 1000, numero: 1, total: 24, rotulo: "1 de 24", vencimento: "2026-09-10", status: "pending", a_confirmar: false },
+      ],
+    },
+    {
+      id: "l-auto-ativo",
+      descricao: "Notebook para mim",
+      conta_credora_id: ${JSON.stringify(CARTEIRA)},
+      caso: "auto",
+      status: "active",
+      principal: 6000,
+      total_de_parcelas: 6,
+      primeiro_vencimento: "2026-10-05",
+      quem_deve_pagar: "Voce mesmo",
+      devedor_id: ${JSON.stringify(EU)},
+      parcelas: [
+        { id: "p-i2", valor: 1000, numero: 1, total: 6, rotulo: "1 de 6", vencimento: "2026-10-05", status: "pending", a_confirmar: false },
+      ],
+    },
+    {
+      id: "l-ja-quitado",
+      descricao: "Celular quitado",
+      conta_credora_id: ${JSON.stringify(CARTEIRA)},
+      caso: "conexao",
+      status: "settled",
+      principal: 2000,
+      total_de_parcelas: 2,
+      primeiro_vencimento: "2026-05-10",
+      quem_deve_pagar: "Lais",
+      devedor_id: ${JSON.stringify(LAIS)},
+      parcelas: [],
+    },
+    {
+      id: "l-ja-cancelado",
+      descricao: "Bicicleta cancelada",
+      conta_credora_id: ${JSON.stringify(CARTEIRA)},
+      caso: "conexao",
+      status: "cancelled",
+      principal: 999,
+      total_de_parcelas: 1,
+      primeiro_vencimento: "2026-08-10",
+      quem_deve_pagar: "Bruno",
+      devedor_id: ${JSON.stringify(BRUNO)},
+      parcelas: [],
+    },
+  ];
+
+  const raiz = await montarPainel("raiz-i");
+  const botaoDe = (id) =>
+    raiz.querySelector('[data-cancelar-emprestimo="' + id + '"]');
+
+  // I1: QUAIS LINHAS TEM BOTAO. A lista das linhas vem junto, para a assercao
+  // poder separar "o botao nao esta ali" de "a linha nao esta ali".
+  out.i_linhas = Array.from(raiz.querySelectorAll("[data-emprestimo]")).map(
+    (el) => el.getAttribute("data-emprestimo")
+  );
+  out.i_com_botao = Array.from(
+    raiz.querySelectorAll("[data-cancelar-emprestimo]")
+  ).map((el) => el.getAttribute("data-cancelar-emprestimo"));
+
+  // I2: A PERGUNTA RECUSADA NAO MANDA NADA.
+  PERGUNTAS = [];
+  CHAMADAS = [];
+  RESPOSTA_DA_PERGUNTA = false;
+  clicar(botaoDe("l-ativo"));
+  await assentar();
+  out.i_recusada = {
+    perguntas: PERGUNTAS.slice(),
+    patches: CHAMADAS.filter((c) => c.metodo === "PATCH").length,
+  };
+
+  // I3: A PERGUNTA ACEITA MANDA UM PATCH, com \`status: cancelled\` no corpo.
+  PERGUNTAS = [];
+  CHAMADAS = [];
+  RESPOSTA_DA_PERGUNTA = true;
+  clicar(botaoDe("l-ativo"));
+  await assentar();
+  out.i_aceita = CHAMADAS.filter((c) => c.metodo === "PATCH").map((c) => ({
+    url: c.url,
+    corpo: c.corpo,
+  }));
+
+  // I4: O TEXTO DO CASO A diz Contas a Pagar; o do CASO B nomeia a outra pessoa.
+  const raiz2 = await montarPainel("raiz-i2");
+  const botaoDe2 = (id) =>
+    raiz2.querySelector('[data-cancelar-emprestimo="' + id + '"]');
+
+  PERGUNTAS = [];
+  RESPOSTA_DA_PERGUNTA = false;
+  clicar(botaoDe2("l-auto-ativo"));
+  await assentar();
+  out.i_texto_do_auto = PERGUNTAS[0] || null;
+
+  // I5: DOIS TOQUES NO MESMO TICK dao UM PATCH -- o latch por emprestimo.
+  //
+  // Dentro de \`unstable_batchedUpdates\`, como a secao H: fora dele o React
+  // legado descarrega entre os dois cliques e o teste mediria o re-render em vez
+  // do latch (\`latch-de-dois-cliques-so-mede-dentro-de-batchedupdates\`).
+  const raiz3 = await montarPainel("raiz-i3");
+  const botaoDe3 = (id) =>
+    raiz3.querySelector('[data-cancelar-emprestimo="' + id + '"]');
+
+  PERGUNTAS = [];
+  CHAMADAS = [];
+  RESPOSTA_DA_PERGUNTA = true;
+  ReactDOM.unstable_batchedUpdates(function () {
+    clicar(botaoDe3("l-ativo"));
+    clicar(botaoDe3("l-ativo"));
+  });
+  await assentar();
+  out.i_dois_toques = {
+    perguntas: PERGUNTAS.length,
+    patches: CHAMADAS.filter((c) => c.metodo === "PATCH").length,
+  };
+
+  // I6: CONTROLE DO I5 -- DUAS dividas DIFERENTES no mesmo tick passam as duas.
+  //
+  // Sem este caso, um booleano global no lugar do \`Set\` passaria I5 e seria uma
+  // regressao de produto: cancelar duas dividas erradas em sequencia (que e o
+  // caso que abriu a HMO-383 -- duas, lancadas sem querer) perderia a segunda,
+  // calada.
+  const raiz4 = await montarPainel("raiz-i4");
+  const botaoDe4 = (id) =>
+    raiz4.querySelector('[data-cancelar-emprestimo="' + id + '"]');
+
+  PERGUNTAS = [];
+  CHAMADAS = [];
+  RESPOSTA_DA_PERGUNTA = true;
+  ReactDOM.unstable_batchedUpdates(function () {
+    clicar(botaoDe4("l-ativo"));
+    clicar(botaoDe4("l-auto-ativo"));
+  });
+  await assentar();
+  out.i_duas_dividas = CHAMADAS.filter((c) => c.metodo === "PATCH").map(
+    (c) => c.url
+  );
+
+  // I7: O CANCELAMENTO QUE FALHOU TEM SEGUNDA TENTATIVA (o \`delete\` do
+  // \`finally\`).
+  const raiz5 = await montarPainel("raiz-i5");
+  const botaoDe5 = (id) =>
+    raiz5.querySelector('[data-cancelar-emprestimo="' + id + '"]');
+
+  PERGUNTAS = [];
+  CHAMADAS = [];
+  RESPOSTA_DA_PERGUNTA = true;
+  PATCH_DE_EMPRESTIMO_FALHA = true;
+  clicar(botaoDe5("l-ativo"));
+  await assentar();
+  const primeiroCancelamento = CHAMADAS.filter(
+    (c) => c.metodo === "PATCH"
+  ).length;
+
+  // A rede volta, e a pessoa tenta DE NOVO a mesma divida.
+  PATCH_DE_EMPRESTIMO_FALHA = false;
+  clicar(botaoDe5("l-ativo"));
+  await assentar();
+
+  out.i_retentativa = {
+    primeira: primeiroCancelamento,
+    total: CHAMADAS.filter((c) => c.metodo === "PATCH").length,
   };
 }
 
@@ -2157,4 +2386,111 @@ test("G4b: controle -- num erro que NAO e 409 o pedido FICA guardado", () => {
     resultado.g4b.idDaQueda,
     "a queda de rede esqueceu o pedido: o reenvio criaria a SEGUNDA divida"
   );
+});
+
+// ---------------------------------------------------------------------------
+// I -- o botao «Cancelar» (HMO-391)
+// ---------------------------------------------------------------------------
+
+test("I1: o botao Cancelar existe SO nos emprestimos `active`", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // CONTROLE POSITIVO: as quatro linhas estao na tela. Sem ele, uma lista vazia
+  // faria "nenhum botao no quitado" passar verde sobre uma tela sem linha
+  // nenhuma -- a assercao de ausencia mais facil de mentir que existe.
+  assert.deepEqual(
+    resultado.i_linhas.sort(),
+    ["l-ativo", "l-auto-ativo", "l-ja-cancelado", "l-ja-quitado"],
+    JSON.stringify(resultado.i_linhas)
+  );
+
+  // E O BOTAO esta nos DOIS ativos e em nenhum dos dois encerrados: a rota
+  // recusa `settled` e `cancelled` com frase propria, e oferecer o clique ali
+  // seria oferecer uma operacao cujo unico resultado possivel e um erro.
+  assert.deepEqual(
+    resultado.i_com_botao.sort(),
+    ["l-ativo", "l-auto-ativo"],
+    JSON.stringify(resultado.i_com_botao)
+  );
+});
+
+test("I2: a pergunta RECUSADA nao manda PATCH nenhum", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // A pergunta ACONTECEU -- sem esta assercao, um botao que nao faz nada
+  // passaria o `patches === 0` de baixo.
+  assert.equal(resultado.i_recusada.perguntas.length, 1);
+
+  // E o texto diz as tres coisas: o que e, o que acontece, e o que NAO
+  // acontece. A ultima e a que importa: quem cancela achando que esta quitando
+  // ve a divida desaparecer e conclui que pagou.
+  const pergunta = resultado.i_recusada.perguntas[0];
+  assert.match(pergunta, /Moto eletrica|Moto elétrica/);
+  assert.match(pergunta, /NÃO registra pagamento/);
+  assert.match(pergunta, /NÃO amortiza/);
+  assert.match(pergunta, /já pagas continuam pagas/i);
+  // No Caso B a tela que muda e DE OUTRA PESSOA, e a pergunta a nomeia.
+  assert.match(pergunta, /tela de Lais|tela de Laís/);
+
+  // Uma acao destrutiva cujo "cancelar" nao cancela e pior que nao ter a
+  // pergunta, porque a pessoa confia nela.
+  assert.equal(resultado.i_recusada.patches, 0);
+});
+
+test("I3: a pergunta ACEITA manda UM PATCH, com `status: cancelled` no corpo", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  assert.equal(resultado.i_aceita.length, 1, JSON.stringify(resultado.i_aceita));
+
+  const [patch] = resultado.i_aceita;
+  assert.equal(patch.url, "/api/mybank/loans/l-ativo");
+  // O corpo INTEIRO: a rota recusa qualquer outro `status`, e um corpo com
+  // campos a mais seria um PATCH que tenta editar a divida.
+  assert.deepEqual(patch.corpo, { status: "cancelled" });
+});
+
+test("I4: no CASO A a pergunta fala de Contas a Pagar, e nao de outra pessoa", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  const pergunta = resultado.i_texto_do_auto;
+  assert.ok(pergunta, "a pergunta do auto-emprestimo nao aconteceu");
+  assert.match(pergunta, /Contas a Pagar/i);
+  // Dizer "a divida sai da tela de Voce mesmo" seria o texto do Caso B vazando
+  // para o caso em que nao ha segunda pessoa nenhuma.
+  assert.doesNotMatch(pergunta, /tela de/i);
+  assert.match(pergunta, /NÃO registra pagamento/);
+});
+
+test("I5: dois toques no MESMO emprestimo dao UMA pergunta e UM PATCH", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // A trava e lida ANTES do `confirm()`: um segundo clique no mesmo tick nao
+  // abre uma segunda pergunta sobre uma divida que esta sendo encerrada.
+  assert.equal(resultado.i_dois_toques.perguntas, 1);
+  assert.equal(resultado.i_dois_toques.patches, 1);
+});
+
+test("I6: controle -- cancelar DUAS dividas diferentes no mesmo tick passa as duas", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // O par de I5: um booleano global no lugar do `Set` passaria I5 e perderia a
+  // segunda divida, calada. E duas dividas erradas em sequencia e exatamente o
+  // caso que abriu a HMO-383.
+  assert.deepEqual(
+    resultado.i_duas_dividas.sort(),
+    ["/api/mybank/loans/l-ativo", "/api/mybank/loans/l-auto-ativo"],
+    JSON.stringify(resultado.i_duas_dividas)
+  );
+});
+
+test("I7: o cancelamento que FALHOU tem segunda tentativa", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // CONTROLE POSITIVO: o primeiro PATCH saiu (e caiu na rede).
+  assert.equal(resultado.i_retentativa.primeira, 1);
+
+  // E a segunda tentativa TAMBEM sai. Sem o `delete` do `finally` o emprestimo
+  // fica em voo para sempre, e o botao -- que nao tem `disabled` -- continua
+  // clicavel sem chamar rota nenhuma e sem dizer nada.
+  assert.equal(resultado.i_retentativa.total, 2);
 });
