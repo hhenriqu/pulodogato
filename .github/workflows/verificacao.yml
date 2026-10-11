@@ -7620,3 +7620,49 @@ jobs:
       # unica do runner e o que pega a ancora ambigua.
       - name: Mutantes das guardas de leitura do export
         run: npm run mutantes:export-de-relatorio
+      # -----------------------------------------------------------------------
+      # MyBank -- a parcela em UMA linha de Contas a Pagar (HMO-386)
+      # -----------------------------------------------------------------------
+      # O defeito que este step guarda nao estava dentro de componente nenhum:
+      # ele era a COMPOSICAO da pagina. A F4 (HMO-372) fundiu a divida do
+      # devedor na agenda de `/dashboard/bills`, recortada pela janela; a F3
+      # (HMO-371) ja tinha posto na mesma tela um bloco com a divida inteira. As
+      # duas metades, medidas separadas, estavam CERTAS -- e juntas desenhavam a
+      # mesma parcela duas vezes. Medido em producao antes do conserto: a
+      # descricao aparecia 4 vezes numa tela com 2 parcelas em janela.
+      #
+      # POR QUE NENHUM STEP ACIMA VIA ISSO, E POR QUE NADA FICAVA VERMELHO: a
+      # parcela entra em «Total a pagar» UMA vez (ela vem da agenda; o bloco nao
+      # soma nada). Nao havia total para discordar -- era duplicacao de LINHA.
+      #
+      # Este guard e textual e roda em milissegundos. Ele exige que Contas a
+      # Pagar desenhe a parcela pela linha propria (com o gesto de `reported`, o
+      # id no DOM e a `key` que nao e `null`), que o bloco da divida inteira
+      # esteja em `/dashboard/mybank`, e PROIBE o bloco de voltar para Contas a
+      # Pagar. Ele le o fonte SEM COMENTARIO de proposito: os tres arquivos
+      # explicam esta decisao em prosa e citam os nomes que ele procura, entao
+      # com os comentarios dentro apagar o render deixaria o guard verde.
+      - name: MyBank -- a fiacao da linha unica em Contas a Pagar
+        run: npm run check-linha-do-mybank
+
+      # Controle negativo do step acima E dos dois pares de steps anteriores:
+      # 12 mutantes, 12 mortos, com TRES oraculos declarados por mutante.
+      #
+      # Quatro deles sao medidos pelo guard, e sao os que importam aqui -- guard
+      # cuja assercao nunca foi vista reprovar e guard que pode estar casando
+      # com outra linha do arquivo. Dois merecem o nome:
+      #
+      #   * `O BLOCO VOLTA PARA CONTAS A PAGAR` e o defeito da issue remontado;
+      #   * `O BLOCO SOME DAS DUAS TELAS` e a metade cara da saida escolhida:
+      #     tirar o bloco de Contas a Pagar sem ele reaparecer em
+      #     /dashboard/mybank nao conserta a duplicacao, APAGA a resposta de
+      #     "quanto eu ainda devo ao todo". O `tsc` fica verde nesse mutante --
+      #     so sobra um import nao usado em arquivo de app.
+      #
+      # Os outros oito medem o gesto (secao J da sonda de navegador) e a funcao
+      # pura que separa os dois status: `status` e o campo de DINHEIRO e vale
+      # 'pending' tambem na parcela avisada, de proposito; `mybank_status` e o da
+      # TELA. Um componente que lesse o primeiro ofereceria "Avisar que paguei" a
+      # quem ja avisou, e o segundo PATCH responde 200 sem mudar nada.
+      - name: Mutantes da linha unica do MyBank
+        run: npm run mutantes:linha-do-mybank

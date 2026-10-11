@@ -83,7 +83,11 @@ import {
 import { DialogoDeAlcance } from "@/components/series/DialogoDeAlcance";
 import { DialogoDePagamentoDaFatura } from "@/components/fatura/DialogoDePagamentoDaFatura";
 import { Receipts } from "@/components/Receipts";
-import { ParcelasDoMyBankQueEuDevo } from "@/components/mybank/ParcelasDoMyBankQueEuDevo";
+import { LinhaDaParcelaDoMyBank } from "@/components/mybank/LinhaDaParcelaDoMyBank";
+import {
+  ehParcelaDoMyBank,
+  type ParcelaDevidaNaAgenda,
+} from "@/lib/leituras-do-mybank";
 import { ehFatura } from "@/lib/card-invoice";
 import {
   FRASE_DO_PATRIMONIO,
@@ -161,25 +165,45 @@ interface FormContaAvulsa {
 const HOJE = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
 
 /**
- * Uma linha desta tela: a previsao GRAVADA ou a fatura aberta sintetizada.
+ * Uma linha desta tela: a previsao GRAVADA, a fatura aberta sintetizada, ou a
+ * parcela que eu devo no MyBank.
  *
  * A uniao e declarada aqui e nao em `lib/agenda-do-cartao.ts` porque aquele
  * arquivo e compilado por suites com `rootDir: lib` e nao pode importar
  * `@/types/financial` (TS6059). O que importa e que o tipo seja a UNIAO em todo
  * lugar desta tela: com `ScheduledTransaction[]` o `tsc` deixaria `conta.id`
  * passar e as acoes montariam `/api/scheduled-transactions/null/pay`.
+ *
+ * A PARCELA DO MYBANK ENTROU NA UNIAO NA HMO-386, e nao e arrumacao de tipo: a
+ * rota ja a devolvia desde a HMO-372 (leitura 1 de 7) e esta tela a tratava
+ * como `ScheduledTransaction` -- com `id: null` passando pelo `tsc` como
+ * `string`. Era por isso que ela ganhava as quatro acoes da agenda, todas
+ * inuteis e caladas, e que duas delas na mesma secao colidiam na `key` do React
+ * (ver `chaveDeAcao`).
  */
-type LinhaDaAgendaOuFatura = ScheduledTransaction | FaturaPrevista;
+type LinhaDaAgendaOuFatura =
+  | ScheduledTransaction
+  | FaturaPrevista
+  | ParcelaDevidaNaAgenda;
 
 /**
- * A chave do estado `agindo` para uma linha da agenda.
+ * A chave do estado `agindo` para uma linha da agenda, e a `key` do React.
  *
  * A fatura sintetizada nao tem `id` (HMO-227), e `agindo === conta.id` com os
  * dois `null` deixaria TODA linha sintetizada girando o spinner ao mesmo tempo.
  * A chave canonica em `notes` e unica por cartao+mes e nunca colide com um uuid.
+ *
+ * A PARCELA DO MYBANK TAMBEM NAO TEM `id` (HMO-386), e sem este galho duas
+ * parcelas na mesma secao davam a MESMA key (`null`) -- o React reusaria uma
+ * linha no lugar da outra. O id dela mora em `mybank_installment_id`, que e o
+ * que `PATCH /api/mybank/installments/[id]` recebe.
  */
 const chaveDeAcao = (conta: LinhaDaAgendaOuFatura) =>
-  ehFaturaPrevista(conta) ? conta.notes : conta.id;
+  ehFaturaPrevista(conta)
+    ? conta.notes
+    : ehParcelaDoMyBank(conta)
+      ? conta.mybank_installment_id
+      : conta.id;
 
 export default function BillsPage() {
   // A UNIAO, e nao `ScheduledTransaction[]`: a fatura aberta chega aqui junto
@@ -676,7 +700,21 @@ export default function BillsPage() {
     }
   };
 
-  const Linha = ({ conta }: { conta: LinhaDaAgendaOuFatura }) => {
+  /**
+   * A linha da previsao gravada e da fatura sintetizada.
+   *
+   * A PARCELA DO MYBANK NAO PASSA POR AQUI (HMO-386): ela tem desenho proprio
+   * (`LinhaDaParcelaDoMyBank`), e quem escolhe e a `Secao`. O tipo diz isso --
+   * `Exclude<..., ParcelaDevidaNaAgenda>` --, e e ele que impede o galho de
+   * voltar para dentro deste componente: aqui dentro ja ha um `useState` (o do
+   * comprovante), e um `return` condicional antes dele seria chamada de hook em
+   * ordem variavel.
+   */
+  const Linha = ({
+    conta,
+  }: {
+    conta: Exclude<LinhaDaAgendaOuFatura, ParcelaDevidaNaAgenda>;
+  }) => {
     const vencida = conta.effective_status === "overdue";
     const dias = conta.days_until_due ?? 0;
     // A fatura ABERTA (HMO-227). Ela nao tem `id`, entao as tres acoes que
@@ -842,12 +880,32 @@ export default function BillsPage() {
         {contas.length === 0 ? (
           <p className="py-2 text-sm text-muted-foreground">{vazio}</p>
         ) : (
-          // `chaveDeAcao` e nao `conta.id`: a fatura sintetizada vem com
-          // `id: null`, e duas delas na mesma secao dariam a MESMA key -- o
-          // React reusaria uma linha no lugar da outra.
-          contas.map((conta) => (
-            <Linha key={chaveDeAcao(conta)} conta={conta} />
-          ))
+          // `chaveDeAcao` e nao `conta.id`: a fatura sintetizada e a parcela do
+          // MyBank vem com `id: null`, e duas delas na mesma secao dariam a
+          // MESMA key -- o React reusaria uma linha no lugar da outra.
+          //
+          // A ESCOLHA DO DESENHO E AQUI, E NAO DENTRO DE `Linha` (HMO-386).
+          //
+          // A parcela do MyBank e UMA linha desta lista -- e e por isso que
+          // «Total a pagar» nao muda: ela continua vindo da agenda e continua
+          // somada uma vez. O que ela nao pode e herdar as acoes daqui: todas
+          // montariam a URL com o `id: null` que ela tem por construcao, e o
+          // gesto dela e «avisar que paguei», que nao move dinheiro nenhum.
+          // O porque de o bloco da divida ter saido desta tela esta no
+          // cabecalho de `LinhaDaParcelaDoMyBank`.
+          contas.map((conta) =>
+            ehParcelaDoMyBank(conta) ? (
+              <LinhaDaParcelaDoMyBank
+                key={chaveDeAcao(conta)}
+                parcela={conta}
+                valor={moeda(Number(conta.amount))}
+                aoAvisar={carregar}
+                online={online}
+              />
+            ) : (
+              <Linha key={chaveDeAcao(conta)} conta={conta} />
+            )
+          )
         )}
       </CardContent>
     </Card>
@@ -1238,23 +1296,29 @@ export default function BillsPage() {
           porque sem rede `semVencimento` fica `null`.
           ------------------------------------------------------------------ */}
       {/* ------------------------------------------------------------------
-          O LADO DO DEVEDOR DO MYBANK (HMO-371)
+          O LADO DO DEVEDOR DO MYBANK: A LINHA ESTA NA AGENDA, E O BLOCO NAO
+          ESTA MAIS AQUI (HMO-371, consertado na HMO-386)
 
-          Parcela de emprestimo que alguem me fez pelo MyBank, com o selo
-          "MyBank — <quem emprestou>" e o botao de avisar que paguei.
+          A HMO-371 pos nesta tela um bloco «Parcelas do MyBank» com a divida
+          inteira. A HMO-372 fundiu a mesma divida na AGENDA (leitura 1 de 7),
+          recortada pela janela da pagina. O resultado era a mesma parcela
+          desenhada DUAS vezes na mesma tela -- medido em producao: a descricao
+          aparecia 4 vezes com 2 parcelas em janela.
 
-          O componente se protege: sem parcela nenhuma ele devolve `null`, e
-          esta tela fica IDENTICA ao que era -- nenhum card a mais, e nenhum dos
-          quatro totais do topo muda. Os totais sao assunto da F4 (as sete
-          leituras do plano da HMO-368), e mexer neles num PR cuja prova e a
-          tela e o jeito classico de esta feature virar dinheiro errado e
-          plausivel.
+          O bloco foi para `/dashboard/mybank`, que e onde a divida INTEIRA
+          (fora da janela, 25 parcelas ate 2028 no caso que a HMO-381 mediu) faz
+          sentido, e a linha da agenda ganhou o gesto que so o bloco tinha
+          (`LinhaDaParcelaDoMyBank`).
 
-          O auto-emprestimo NAO passa por aqui: ele ja esta na agenda acima como
+          O QUE NAO MUDOU, E E O CONTROLE NEGATIVO DESTA ISSUE: «Total a pagar».
+          A parcela continua vindo da agenda e continua somada UMA vez -- a
+          outra saida possivel (tirar a linha da agenda) a faria DESCER, e essa
+          e a direcao em que quem olha gasta o que nao tem.
+
+          O auto-emprestimo nao passa por nada disso: ele ja esta na agenda como
           transferencia prevista, e a view `mybank_due_entries` (053) o exclui de
           proposito -- somar os dois mostraria a mesma parcela duas vezes.
           ------------------------------------------------------------------ */}
-      <ParcelasDoMyBankQueEuDevo />
 
       {semVencimento !== null && semVencimento.length > 0 && (
         <Card className="border-warning/40">

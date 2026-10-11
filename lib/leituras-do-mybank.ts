@@ -161,6 +161,25 @@ export interface ParcelaDevidaNaAgenda {
    * A convencao e a da HMO-366, e a view entrega os dois status por isso.
    */
   status: "pending";
+  /**
+   * O status DE VERDADE da parcela no MyBank -- `pending` ou `reported`.
+   *
+   * ELE EXISTE PORQUE O `status` ACIMA NAO PODE DIZE-LO (HMO-386). Aquele campo
+   * e de DINHEIRO: ele e `'pending'` tambem quando a parcela esta `reported`, de
+   * proposito, senao o «A vencer» desceria no instante do clique do devedor.
+   * Mas a TELA precisa da distincao para o GESTO: quem ja avisou nao avisa de
+   * novo, e o botao vira a frase de espera ("falta quem emprestou confirmar").
+   *
+   * Sem este campo a linha da agenda ofereceria "Avisar que paguei" a quem ja
+   * avisou -- e o segundo PATCH responde 200 sem mudar nada, entao o sintoma
+   * seria um botao que parece funcionar e nao faz diferenca nenhuma. Era este o
+   * unico motivo pelo qual o gesto so existia no bloco do devedor, e por isso
+   * ele nasce aqui junto da HMO-386, que moveu o gesto para a linha.
+   *
+   * `reported_at` NAO SERVE NO LUGAR DELE: ele continua preenchido depois de o
+   * credor confirmar, e quem decide o estado e o `status`.
+   */
+  mybank_status: "pending" | "reported";
   effective_status: "pending" | "overdue";
   days_until_due: number;
   /**
@@ -223,6 +242,18 @@ export function parcelasDevidasNaAgenda(
       amount: valorDaParcela(parcela),
       due_date: vencimento,
       status: "pending" as const,
+      // O STATUS DA TELA, separado do de dinheiro (ver o campo).
+      //
+      // A COMPARACAO E CONTRA `'reported'` E NAO CONTRA `'pending'`: a view
+      // entrega `status IN ('pending','reported')` hoje, e um `=== 'pending' ?
+      // 'pending' : 'reported'` chamaria de "avisada" qualquer parcela que a
+      // view venha a entregar amanha com outro status. A direcao segura e
+      // "avisada so quando esta escrito `reported`": o erro possivel passa a ser
+      // oferecer o botao a mais, e nao esconder o botao de quem precisa dele.
+      mybank_status:
+        String(parcela.status) === "reported"
+          ? ("reported" as const)
+          : ("pending" as const),
       // O MESMO `CASE` da migration 027, em JavaScript: `pending` com
       // vencimento anterior a hoje e `overdue`. Comparacao de string ISO e
       // comparacao de data -- `AAAA-MM-DD` ordena lexicograficamente.
