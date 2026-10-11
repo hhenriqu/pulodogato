@@ -1320,6 +1320,122 @@ test("o cartao «Previsto» DIZ que o reembolso esta dentro dele (fase F5)", () 
   );
 });
 
+test("o cartao «Previsto» DIZ que o «a receber» do MyBank esta dentro dele (HMO-379)", () => {
+  // O ELO QUE FALTOU, e este bloco existe porque ele faltou de verdade: a F4
+  // (HMO-372) acrescentou `a_receber_do_mybank` a resposta da rota e o campo
+  // ficou SEM UM UNICO CONSUMIDOR na UI -- `git grep a_receber_do_mybank --
+  // app components` nao devolvia nada. Medido em producao: «Previsto» R$ 30,00
+  // em cima de "Nada previsto neste período", com o contador ao lado dizendo
+  // (0). A suite inteira passava verde assim, porque numero nenhum mudou -- a
+  // familia `campo-de-rotulo-passa-pela-suite-de-aritmetica-inteira`.
+  //
+  // TUDO AQUI LE `cartoes`, QUE E A FONTE SEM COMENTARIO, inclusive as
+  // assercoes de TEXTO -- e isso e diferente do bloco do reembolso acima, que
+  // usa `cartoesCrus`. A razao e que o comentario deste bloco no componente
+  // CITA a frase ("R$ 30,00 a receber", "do MyBank"): medida na fonte crua, a
+  // assercao casaria com o comentario e ficaria verde num componente que
+  // apagou o JSX. E a familia `assercao-textual-casa-com-o-comentario`.
+  assert.match(
+    cartoes,
+    /resumo\?\.a_receber_do_mybank/,
+    "CartoesDaTela.tsx nunca le `resumo?.a_receber_do_mybank`. O valor entraria " +
+      "no «Previsto» de Receitas invisivel -- o defeito da HMO-379."
+  );
+  assert.match(
+    cartoes,
+    /resumo\.a_receber_do_mybank\.total/,
+    "O cartao nao imprime o TOTAL do «a receber» -- uma frase sem o valor nao " +
+      "diz quanto do «Previsto» e promessa."
+  );
+
+  // AS DUAS CONTAGENS, cada uma no campo dela. `parcelas` NAO e nenhuma das
+  // duas: quatro parcelas de uma pessoa num emprestimo sao "1 pessoa em 1
+  // empréstimo", e trocar os campos daria uma frase plausivel e errada.
+  for (const campo of ["devedores", "emprestimos"]) {
+    assert.match(
+      cartoes,
+      new RegExp(`resumo\\.a_receber_do_mybank\\.${campo}`),
+      `A frase nao le \`${campo}\` -- ela tem de contar pessoas E emprestimos.`
+    );
+  }
+
+  assert.match(
+    cartoes,
+    /a receber de/,
+    "A frase tem de dizer A RECEBER -- um valor que ainda nao entrou, num cartao " +
+      "verde, se le como dinheiro que ja esta na conta."
+  );
+  assert.match(
+    cartoes,
+    /do MyBank/,
+    "A frase tem de NOMEAR o MyBank: quem tem grupo E conexao le as duas notas, " +
+      "e sem o nome elas sao indistinguiveis."
+  );
+
+  // A ORACAO DO SAFE-TO-SPEND VEM DA CONSTANTE, e por INTERPOLACAO -- nao
+  // copiada. Duas copias da mesma frase se separam na primeira edicao, e o
+  // sintoma e uma tela que contradiz a outra.
+  assert.match(
+    cartoes,
+    /\{LEGENDA_DO_A_RECEBER_DO_MYBANK\}/,
+    "A oracao do safe-to-spend tem de ser INTERPOLADA de " +
+      "`LEGENDA_DO_A_RECEBER_DO_MYBANK`, e nao reescrita no JSX."
+  );
+
+  // E A CONSTANTE TEM DE DIZER A COISA. Ela nasceu na F2 e ficou ORFA ate esta
+  // issue: sem esta assercao, uma limpeza de "constante nao usada" a esvazia e
+  // a interpolacao acima continua verde imprimindo string vazia.
+  //
+  // `semComentarios` TAMBEM AQUI, e aqui ele e obrigatorio: o docstring da
+  // constante contem a frase "Quanto ainda posso gastar" em prosa. Na fonte
+  // crua esta assercao passaria com a constante esvaziada.
+  const mybank = semComentarios(
+    readFileSync("lib/leituras-do-mybank.ts", "utf8")
+  );
+  assert.match(
+    mybank,
+    /Quanto ainda posso gastar/,
+    "`LEGENDA_DO_A_RECEBER_DO_MYBANK` perdeu a oracao que importa: ela diz que " +
+      "este numero NAO esta no safe-to-spend, que e o outro cartao que a pessoa " +
+      "olha no mesmo minuto."
+  );
+});
+
+test("a frase de vazio do «Previsto» CONCORDA com o cartao (HMO-379)", () => {
+  // A SEGUNDA METADE DO DEFEITO. "Nada previsto neste período." dito embaixo de
+  // um cartao «Previsto» de R$ 30,00 e a leitura "o total esta errado" -- e as
+  // duas promessas que o cartao soma (reembolso da HMO-364, MyBank da HMO-372)
+  // nascem FORA de `scheduled_transactions` e NENHUMA das duas vira linha na
+  // secao.
+  //
+  // A DECISAO, REGISTRADA: a parcela NAO vira linha, e a frase deixa de
+  // afirmar vazio. A razao esta no call-site e e a mesma que manteve o
+  // reembolso e o acerto fora das duas secoes -- `LinhaDaTela` exige
+  // `posso_editar`/`gravada`, e fabricar isso daria Editar/Excluir sobre um id
+  // que nao existe em `scheduled_transactions`. O "0 lançamento(s)" do «Total»
+  // fica como esta: ele conta lancamentos, e lancamentos sao zero de verdade.
+  assert.match(
+    lista,
+    /previstoSemLinha\(resumo\)/,
+    "A lista nao chama `previstoSemLinha`: a frase de vazio volta a afirmar " +
+      "'Nada previsto neste período' com o cartao «Previsto» em R$ 30,00."
+  );
+  assert.match(
+    lista,
+    /promessas sem linha própria/,
+    "A frase nova nao esta na lista -- ela e o que explica o numero do cartao " +
+      "para quem conta as linhas e acha zero."
+  );
+  // E A FRASE ANTIGA CONTINUA EXISTINDO: quem nao tem grupo nem MyBank tem de
+  // ler "Nada previsto neste período." -- o controle negativo da issue.
+  assert.match(
+    lista,
+    /Nada previsto neste período\./,
+    "A frase de vazio de verdade desapareceu: a conta sem promessa nenhuma " +
+      "precisa continuar lendo que nao ha nada previsto."
+  );
+});
+
 test("os DOIS numeros que vao discordar levam a legenda de cada um (fase F5)", () => {
   // A aba Despesas responde "quanto sai da sua conta" (bruto) e o cartao
   // «Quanto ainda posso gastar» responde "quanto voce pode gastar" (liquido).

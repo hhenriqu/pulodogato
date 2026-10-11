@@ -34,6 +34,7 @@ const {
   secoesDaTela,
   resumoDaTela,
   resumoComReembolsoPrevisto,
+  previstoSemLinha,
   previstoVencido,
   indiceDeContraparte,
 } = await import("../.tmp-telas-de-movimentacao/telas-de-movimentacao.js");
@@ -1942,4 +1943,97 @@ test("o reembolso soma em centavos inteiros, sem residuo de ponto flutuante", ()
 
   assert.equal(com.previsto, 0.3);
   assert.equal(com.total, 0.3);
+});
+
+// ---------------------------------------------------------------------------
+// previstoSemLinha -- QUANTO DO «Previsto» NAO TEM LINHA (HMO-379)
+// ---------------------------------------------------------------------------
+// O defeito que esta funcao existe para consertar foi medido em producao: o
+// cartao «Previsto» em R$ 30,00 e, na mesma dobra, o bloco "Previsto no período
+// (0)" dizendo "Nada previsto neste período.". As duas promessas que o cartao
+// soma nascem fora de `scheduled_transactions` e nenhuma delas vira linha, e a
+// frase de vazio nao tinha como saber disso.
+//
+// ELA DEVOLVE DINHEIRO E NAO BOOLEANO porque a frase diz o VALOR. Um booleano
+// faria a tela escrever "ha algo previsto sem linha", que e mais vago do que o
+// numero que a pessoa esta olhando.
+
+/** O resumo da tela, com as duas promessas vazias. */
+const SEM_PROMESSA = {
+  ...RESUMO_BASE,
+  reembolso_previsto: null,
+  a_receber_do_mybank: null,
+};
+
+test("sem promessa nenhuma o previsto-sem-linha e ZERO", () => {
+  // O CONTROLE NEGATIVO da issue: a conta vazia tem de continuar lendo
+  // "Nada previsto neste período.", e quem decide isso e o zero daqui.
+  assert.equal(previstoSemLinha(SEM_PROMESSA), 0);
+
+  // `null` e o resumo que nao veio (leitura falhada, ou resposta do aparelho de
+  // antes da feature). Ele NAO pode virar frase nova: sem resumo a tela ja tem
+  // a frase "Não dá para conferir o previsto agora.".
+  assert.equal(previstoSemLinha(null), 0);
+});
+
+test("cada promessa entra sozinha, e as duas somam", () => {
+  // OS TRES CASOS SEPARADOS, com valores DIFERENTES (300 e 30): com os dois
+  // iguais, uma funcao que lesse o mesmo campo duas vezes passaria verde.
+  assert.equal(
+    previstoSemLinha({ ...SEM_PROMESSA, reembolso_previsto: REEMBOLSO }),
+    300,
+    "o reembolso de grupo sozinho -- o defeito da HMO-364 tinha a MESMA forma"
+  );
+  assert.equal(
+    previstoSemLinha({
+      ...SEM_PROMESSA,
+      a_receber_do_mybank: { total: 30, parcelas: 1, devedores: 1, emprestimos: 1 },
+    }),
+    30,
+    "o «a receber» do MyBank sozinho -- o caso medido em prod na HMO-379"
+  );
+  assert.equal(
+    previstoSemLinha({
+      ...SEM_PROMESSA,
+      reembolso_previsto: REEMBOLSO,
+      a_receber_do_mybank: { total: 30, parcelas: 1, devedores: 1, emprestimos: 1 },
+    }),
+    330,
+    "quem tem grupo E MyBank tem as DUAS fora da lista, e a frase diz a soma"
+  );
+});
+
+test("o previsto-sem-linha IGNORA o previsto que TEM linha", () => {
+  // A assercao que separa esta funcao de `resumo.previsto`. O `RESUMO_BASE` tem
+  // `previsto: 1000` de linhas gravadas de verdade; devolver 1000 (ou 1300)
+  // faria a frase afirmar que TODO o previsto e promessa sem linha -- e ela
+  // apareceria em toda tela que tem previsao normal, que e pior que o defeito
+  // original.
+  assert.equal(previstoSemLinha({ ...SEM_PROMESSA, previsto: 1000 }), 0);
+  assert.equal(
+    previstoSemLinha({ ...SEM_PROMESSA, reembolso_previsto: REEMBOLSO }),
+    300,
+    "com previsto=1000 e reembolso=300, o que nao tem linha sao os 300"
+  );
+});
+
+test("o previsto-sem-linha soma em centavos inteiros", () => {
+  // Mesma razao do bloco do reembolso: 0.1 + 0.2 = 0.30000000000000004, e este
+  // numero vai DIRETO para uma frase que a pessoa le.
+  assert.equal(
+    previstoSemLinha({
+      ...SEM_PROMESSA,
+      reembolso_previsto: { total: 0.1, quantos: 1, grupos: 1 },
+      a_receber_do_mybank: { total: 0.2, parcelas: 1, devedores: 1, emprestimos: 1 },
+    }),
+    0.3
+  );
+});
+
+test("a resposta ANTIGA do aparelho, sem as duas chaves, nao quebra", () => {
+  // Uma copia guardada de antes da HMO-364/372 nao tem `reembolso_previsto` nem
+  // `a_receber_do_mybank`. `?? 0` e o que faz isso ser zero em vez de `NaN` --
+  // e `NaN > 0` e falso, entao o sintoma nao seria um erro: seria a frase certa
+  // por acidente, ate alguem "simplificar" a comparacao.
+  assert.equal(previstoSemLinha({ ...RESUMO_BASE }), 0);
 });

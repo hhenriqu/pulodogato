@@ -46,8 +46,9 @@ import {
 import { NumeroIndisponivel } from "@/components/SemRede";
 import { podeMostrarNumero, type EstadoDaLeitura } from "@/lib/offline-leitura";
 import { LEGENDA_DO_BRUTO } from "@/lib/legenda-do-bruto-e-do-liquido";
+import { LEGENDA_DO_A_RECEBER_DO_MYBANK } from "@/lib/leituras-do-mybank";
 import type {
-  ResumoComReembolso,
+  ResumoDoCartao,
   TelaDeMovimentacao as TelaDoCatalogo,
 } from "@/lib/telas-de-movimentacao";
 
@@ -71,12 +72,18 @@ export function CartoesDaTela({
   /**
    * `null` = nao houve leitura. Nenhum numero pode sair daqui.
    *
-   * `ResumoComReembolso` e nao `ResumoDaTela` desde a HMO-364: o reembolso
+   * `ResumoDoCartao` e nao `ResumoDaTela` desde a HMO-364: o reembolso
    * previsto do grupo entra DENTRO de `previsto` na aba Receitas, e sem o campo
    * ao lado nao ha como a tela dizer que ele esta ali -- um valor a mais sem
    * rotulo e indistinguivel de bug.
+   *
+   * E `ResumoDoCartao` e nao `ResumoComReembolso` desde a HMO-379, pela MESMA
+   * razao aplicada a segunda promessa: `a_receber_do_mybank` chegava no corpo
+   * da rota desde a HMO-372 e o tipo daqui nao tinha o campo, entao o valor
+   * entrava no «Previsto» de Receitas MUDO -- R$ 30,00 em cima de "Nada
+   * previsto neste periodo".
    */
-  resumo: ResumoComReembolso | null;
+  resumo: ResumoDoCartao | null;
   vencido: { total: number; quantidade: number };
   estado: EstadoDaLeitura | null;
 }) {
@@ -164,6 +171,51 @@ export function CartoesDaTela({
               {resumo.reembolso_previsto.grupos}{" "}
               {resumo.reembolso_previsto.grupos === 1 ? "grupo" : "grupos"} —
               ainda não recebido
+            </p>
+          )}
+
+          {/*
+            O «A RECEBER» DO MYBANK, DITO ONDE ELE ESTA (HMO-379).
+
+            IRMA EXATA do bloco do reembolso acima, e ela existe pelo defeito
+            que a F4 deixou: `resumoComAReceberDoMyBank` soma o valor no
+            «Previsto» de Receitas desde a HMO-372, e `a_receber_do_mybank` NAO
+            TINHA UM UNICO CONSUMIDOR na UI. Medido em producao com um
+            emprestimo de R$ 30,00: o cartao «Total» dizia R$ 30,00 sobre
+            "0 lançamento(s)", o cartao «Previsto» dizia R$ 30,00, e o bloco
+            "Previsto no período (0)" dizia "Nada previsto neste período." --
+            um numero sem nenhuma linha que o explicasse, com o contador ao lado
+            dele afirmando zero. Quem olha le "o total esta errado".
+
+            CAMPO PROPRIO, LEGENDA PROPRIA: o valor nao esta dentro de
+            `reembolso_previsto` (ver o cabecalho de
+            `resumoComAReceberDoMyBank`), e por isso a frase e uma segunda
+            linha e nao um texto mais longo na de cima. Quem tem grupo E MyBank
+            le as duas, e e assim que "R$ 1.300 a receber" se desmancha em
+            R$ 300 do grupo Casa e R$ 1.000 da moto da Lais.
+
+            A SEGUNDA ORACAO sai de `LEGENDA_DO_A_RECEBER_DO_MYBANK`, onde a
+            F2 a escreveu e de onde ela nunca saiu: ela diz que o numero NAO
+            esta no «Quanto ainda posso gastar», que e o outro cartao que a
+            pessoa olha no mesmo minuto. Sem ela, ver R$ 30,00 aqui e nao
+            ve-los la se le como "o app perdeu a parcela".
+
+            `podeMostrarNumero` tambem aqui, e pelo motivo do vencido e do
+            reembolso: "R$ 30,00 a receber" dito sobre um cache de ontem pode ja
+            ter sido pago.
+          */}
+          {podeMostrarNumero(estado) && resumo?.a_receber_do_mybank && (
+            <p className="text-xs text-muted-foreground">
+              inclui {moeda(resumo.a_receber_do_mybank.total)} a receber de{" "}
+              {resumo.a_receber_do_mybank.devedores}{" "}
+              {resumo.a_receber_do_mybank.devedores === 1
+                ? "pessoa"
+                : "pessoas"}{" "}
+              em {resumo.a_receber_do_mybank.emprestimos}{" "}
+              {resumo.a_receber_do_mybank.emprestimos === 1
+                ? "empréstimo"
+                : "empréstimos"}{" "}
+              do MyBank — {LEGENDA_DO_A_RECEBER_DO_MYBANK}
             </p>
           )}
 

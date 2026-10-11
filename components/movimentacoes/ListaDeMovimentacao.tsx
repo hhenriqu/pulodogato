@@ -129,9 +129,10 @@ import {
 } from "@/lib/offline-leitura";
 import { today } from "@/lib/recurrence";
 import {
+  previstoSemLinha,
   secoesDaTela,
   type LinhaDaTela,
-  type ResumoComReembolso,
+  type ResumoDoCartao,
   type TelaDeMovimentacao as CatalogoDaTela,
   type TipoDaTela,
 } from "@/lib/telas-de-movimentacao";
@@ -139,15 +140,20 @@ import {
 /** O que a rota responde. */
 interface RespostaDaTela {
   /**
-   * O resumo COM o reembolso previsto do grupo -- HMO-364.
+   * O resumo COM as duas promessas que moram no «Previsto» -- HMO-364 e
+   * HMO-372.
    *
-   * `ResumoComReembolso` e nao `ResumoDaTela`: o reembolso entra DENTRO de
-   * `previsto` na aba Receitas, e o campo ao lado e o unico jeito de a tela
-   * dizer que ele esta ali. Tipar isto como `ResumoDaTela` nao quebraria o
-   * tsc (`res.json()` e `any`) -- o campo chegaria e ninguem o leria, e o
-   * cartao subiria sem rotulo.
+   * `ResumoDoCartao` e nao `ResumoDaTela`: as duas entram DENTRO de `previsto`
+   * na aba Receitas, e o campo ao lado e o unico jeito de a tela dizer que elas
+   * estao ali. Tipar isto como `ResumoDaTela` nao quebraria o tsc (`res.json()`
+   * e `any`) -- o campo chegaria e ninguem o leria, e o cartao subiria sem
+   * rotulo.
+   *
+   * E FOI ISSO QUE ACONTECEU com o MyBank (HMO-379): aqui dizia
+   * `ResumoComReembolso`, que tem o reembolso e NAO tem `a_receber_do_mybank`.
+   * A rota mandava o campo desde a F4 e o tipo da tela o escondia.
    */
-  resumo?: ResumoComReembolso;
+  resumo?: ResumoDoCartao;
   vencido?: { total: number; quantidade: number };
   linhas?: LinhaDaTela[];
   fatura_sem_vencimento?: { account_name: string | null; total: number }[];
@@ -229,7 +235,7 @@ export function ListaDeMovimentacao({
    */
   rodape?: React.ReactNode;
 }) {
-  const [resumo, setResumo] = useState<ResumoComReembolso | null>(null);
+  const [resumo, setResumo] = useState<ResumoDoCartao | null>(null);
   const [vencido, setVencido] = useState<{ total: number; quantidade: number }>({
     total: 0,
     quantidade: 0,
@@ -848,10 +854,51 @@ export function ListaDeMovimentacao({
             subtitulo={tela.oQueOPrevistoE}
             linhas={previstas}
             carregando={carregando}
+            /*
+              A FRASE DE VAZIO TEM DE CONCORDAR COM O CARTAO -- HMO-379.
+
+              "Nada previsto neste período." dito embaixo de um cartao
+              «Previsto» de R$ 30,00 e a leitura "o total esta errado", e foi o
+              que producao mostrou: as duas promessas que o cartao soma
+              (reembolso de grupo, HMO-364; a receber do MyBank, HMO-372)
+              nascem FORA de `scheduled_transactions` e NENHUMA das duas vira
+              linha nesta secao.
+
+              A DECISAO, entre as duas que a issue poe como defensaveis:
+              a parcela NAO vira linha, e a frase deixa de afirmar vazio.
+              Fabricar a linha era a outra, e ela custa mais do que parece --
+              `LinhaDaTela` exige `posso_editar`/`gravada`, e isso daria Editar
+              e Excluir sobre um id que nao existe em `scheduled_transactions`;
+              `lib/acoes-da-linha.ts` montaria
+              `/api/scheduled-transactions/<id>/pay` para uma parcela de
+              `mybank_installments`, que e o botao errado em cima da linha
+              certa; e `UPDATE` recusado pela RLS volta 200 sem alterar nada, ou
+              seja o app diria "pronto" e nada teria acontecido. E a mesma
+              razao, escrita nos mesmos termos, que manteve o reembolso e o
+              acerto de grupo FORA das duas secoes. A parcela TEM onde ser
+              operada: /dashboard/mybank, que a F3 construiu.
+
+              O "0 lançamento(s)" embaixo do «Total» FICA COMO ESTA, e isso
+              tambem e decisao: ele conta lancamentos, e lancamentos sao zero de
+              verdade. O que faltava nao era corrigir o contador -- era o numero
+              ter uma frase que o explicasse. Subir a contagem prometeria uma
+              linha que a lista nao tem, que e o defeito que a rota ja evitava
+              de proposito para o reembolso.
+            */
             vazio={
-              podeAfirmarVazio(estado)
-                ? "Nada previsto neste período."
-                : "Não dá para conferir o previsto agora."
+              !podeAfirmarVazio(estado)
+                ? "Não dá para conferir o previsto agora."
+                : previstoSemLinha(resumo) > 0
+                  ? // "BRL" EXPLICITO, e nao o default: e a mesma moeda que os
+                    // cartoes usam (o `moeda()` de `CartoesDaTela` e BRL fixo),
+                    // e escrever o argumento deixa a suposicao a vista em vez de
+                    // escondida num default. As duas promessas sao somadas em
+                    // reais pelas libs que as produzem.
+                    `Nenhum lançamento previsto neste período. Os ${formatCurrency(
+                      previstoSemLinha(resumo),
+                      "BRL"
+                    )} do «Previsto» são promessas sem linha própria — veja a legenda do cartão.`
+                  : "Nada previsto neste período."
             }
             aparencia={aparencia}
             acoes={acoes}

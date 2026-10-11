@@ -368,11 +368,21 @@ export function aReceberDoMyBank(
  * inteira esta em lib/legenda-do-bruto-e-do-liquido.ts; esta e a mesma decisao
  * aplicada ao MyBank.
  *
- * A SEGUNDA ORACAO E A QUE IMPORTA: ela diz que o numero NAO esta no
- * safe-to-spend, que e o outro cartao que a pessoa vai olhar no mesmo minuto.
- * Sem ela, ver R$ 1.000 aqui e nao ve-los la se le como "o app perdeu a
- * parcela".
+ * ESTA E A ORACAO QUE IMPORTA: ela diz que o numero NAO esta no safe-to-spend,
+ * que e o outro cartao que a pessoa vai olhar no mesmo minuto. Sem ela, ver
+ * R$ 1.000 aqui e nao ve-los la se le como "o app perdeu a parcela".
+ *
+ * ELA E A SEGUNDA METADE DA FRASE, e nao a frase toda -- HMO-379. A primeira
+ * ("inclui R$ 30,00 a receber de 1 pessoa em 1 emprestimo do MyBank") mora no
+ * JSX de `components/movimentacoes/CartoesDaTela.tsx`, porque e ela que carrega
+ * os NUMEROS: a forma e a do irmao `reembolso_previsto` (HMO-364), que tambem
+ * conta pessoas e grupos no proprio cartao.
+ *
+ * O texto perdeu o "Inclui o que suas conexoes ainda devem no MyBank:" que
+ * tinha ao nascer, porque a oracao de cima passou a dizer isso com o valor e as
+ * contagens -- as duas juntas repetiriam "inclui" duas vezes numa legenda de
+ * uma linha. A constante nao tinha UM consumidor quando foi reescrita (era
+ * justamente o defeito da HMO-379), entao nada dependia da forma antiga.
  */
 export const LEGENDA_DO_A_RECEBER_DO_MYBANK =
-  "Inclui o que suas conexões ainda devem no MyBank: é promessa e não " +
-  "dinheiro, então não entra em «Quanto ainda posso gastar».";
+  "é promessa e não dinheiro, então não entra em «Quanto ainda posso gastar».";
