@@ -3594,7 +3594,11 @@ test("O CONTROLE DA ISSUE: a soma da divida continua fechando com o principal", 
 
 test("ANTECIPAR 2: as parcelas 5 e 6 viram `paid` e a SOMA continua R$ 600", async () => {
   const linhas = tabelasDaAntecipacao();
-  const { status, corpo, sessao } = await antecipar({ tabelas: linhas });
+  // SEM `sessao`: tudo o que este teste afirma e lido na TABELA (o que de fato
+  // ficou gravado) e na resposta. As assercoes sobre o que a rota MANDOU gravar
+  // -- quantas chamadas de insert, os filtros, o patch -- estao nos dois testes
+  // seguintes, com nomes que dizem isso.
+  const { status, corpo } = await antecipar({ tabelas: linhas });
 
   assert.equal(status, 200, JSON.stringify(corpo));
   assert.equal(corpo.success, true);
