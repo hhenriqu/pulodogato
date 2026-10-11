@@ -1116,6 +1116,79 @@ export function ehParcelaDoAutoEmprestimo(crua: {
 export const PREFIXO_DO_ELO_DO_MYBANK = PREFIXO_DA_PARCELA_DO_MYBANK;
 
 /**
+ * `direction` com que a parcela que o DEVEDOR deve chega na agenda (HMO-372).
+ *
+ * `'expense'` E NAO `'transfer'`, e a assimetria com `TIPO_DA_PARCELA_DO_MYBANK`
+ * logo acima e a decisao de dinheiro escrita no cabecalho de
+ * `ParcelaDevidaNaAgenda.direction` (lib/leituras-do-mybank.ts): no
+ * auto-emprestimo o dinheiro vai da minha conta corrente para a MINHA conta de
+ * investimento (patrimonio nenhum muda, logo `transfer`), enquanto aqui ele sai
+ * das contas da devedora para a conta de OUTRA PESSOA -- ele deixa de ser dela.
+ *
+ * A string esta repetida aqui pela razao de `PREFIXO_DA_PARCELA_DO_MYBANK`: a
+ * fonte e `lib/leituras-do-mybank.ts`, que importa `@/lib/emprestimo-do-mybank`
+ * -> `@/lib/lancamento`, e esse import nao cabe na arvore que o `rootDir: lib`
+ * das suites deste modulo compila.
+ */
+const DIRECAO_DA_PARCELA_DEVIDA_DO_MYBANK = "expense";
+
+/**
+ * Esta previsao e a parcela que EU DEVO a uma conexao do MyBank -- HMO-377?
+ *
+ * O CASO B, QUE A HMO-372 DEIXOU DE FORA DESTA TELA DE PROPOSITO
+ * -------------------------------------------------------------
+ * A parcela do devedor NAO esta em `scheduled_transactions`: o credor nao pode
+ * gravar linha no meu nome (a RLS daquela tabela e `user_id = auth.uid()`, e
+ * deveria recusar). Ela sai da view `mybank_due_entries`, e ate esta issue
+ * entrava em DUAS leituras -- Contas a Pagar e o safe-to-spend -- e em nenhuma
+ * aba de Movimentacoes. Medido na main 40c7b01, do lado da devedora: Contas a
+ * Pagar somava R$ 1.200,00 (R$ 200 de luz + a parcela de R$ 1.000) e a aba
+ * Despesas do MESMO periodo respondia R$ 200,00, com uma linha so. Duas telas
+ * do mesmo app, dois numeros para a mesma divida, e nada na tela dizendo por
+ * que: a familia `despesa-de-grupo-tem-tres-convencoes`, que este repositorio
+ * ja pagou quatro vezes.
+ *
+ * ESTA FUNCAO SO DECIDE O SELO, E NAO SE A LINHA ENTRA
+ * ---------------------------------------------------
+ * E a diferenca dela para `ehParcelaDoAutoEmprestimo`, e ela vem da `direction`.
+ * A linha do Caso A e `transfer` na coluna, entao a peneira `linha.tipo === tipo`
+ * de `linhasDaTela` a mandaria SO para a aba Transferencias -- ela precisa de uma
+ * excecao para alcancar Despesas. A do Caso B ja chega `expense`
+ * (`parcelasDevidasNaAgenda`), entao ela entra em Despesas pelo caminho comum e
+ * fica fora das outras duas sem excecao nenhuma. Isso tambem e o que impede ela
+ * de aparecer em Transferencias: nada andou entre duas contas MINHAS, e aquela
+ * aba afirma exatamente isso.
+ *
+ * OS DOIS CRITERIOS SAO OBRIGATORIOS, e e o mesmo par de
+ * `ehParcelaDoAutoEmprestimo` com a outra direcao -- a chave canonica sai do
+ * `temOEloDaParcelaDoMyBank` que as duas chamam, para que o dia em que a chave
+ * ganhar um segundo prefixo mude UM lugar e nao dois
+ * (`fontes-consistentes-que-discordam`).
+ *
+ * `direction` E O CRITERIO QUE IMPORTA, pela mesma razao escrita naquele
+ * cabecalho: sem ele, qualquer previsao que alguem anotasse com a palavra
+ * `mybank:` em `notes` levaria o selo. Com ele, o que sobra e uma previsao de
+ * DESPESA digitada a mao cujas notas comecam por `mybank:` -- e o custo desse
+ * caso e um ROTULO a mais numa linha, nunca um numero: `natureza` nao entra em
+ * soma nenhuma (`resumoDaTela` nao a le) e `gravada` continua decidindo os
+ * botoes. E a mesma exposicao que o Caso A aceita desde a HMO-372, e errar para
+ * o lado do rotulo e o barato.
+ *
+ * AS DUAS SAO MUTUAMENTE EXCLUSIVAS PELA `direction`, e e por isso que a ordem
+ * entre elas em `linhaPrevista` nao decide nada: `'transfer'` e `'expense'` nao
+ * podem ser a mesma string.
+ */
+export function ehParcelaDevidaDoMyBank(crua: {
+  notes?: string | null;
+  direction?: string | null;
+}): boolean {
+  if (String(crua.direction ?? "") !== DIRECAO_DA_PARCELA_DEVIDA_DO_MYBANK) {
+    return false;
+  }
+  return temOEloDaParcelaDoMyBank(crua.notes);
+}
+
+/**
  * Esta linha realizada e a perna de entrada SOLTA do pagamento do MyBank?
  *
  * Armadilha 7 do cabecalho, e e lá que esta a decisao de produto ("ela volta
@@ -1424,12 +1497,30 @@ export function linhaPrevista(
     categoria: texto(umDoEmbed(crua.category)?.name),
     conta: nomeDaConta,
     moeda: moedaDaLinha(crua.currency),
-    // FATURA PRIMEIRO, FIXA DEPOIS. Ver `natureza` em `LinhaDaTela`.
+    // FATURA, MYBANK, FIXA, DESPESA -- a MESMA ordem de `linhaRealizada`, e
+    // pelas mesmas razoes (ver `natureza` em `LinhaDaTela`).
+    //
+    // `"mybank"` ENTROU NO PREVISTO AVULSO NA HMO-377. Ele e o selo da parcela
+    // que EU DEVO a uma conexao (`ehParcelaDevidaDoMyBank`), que chega aqui pela
+    // view `mybank_due_entries` e nao por `scheduled_transactions`. Sem ele a
+    // linha se apresenta como despesa comum, e quem for conferir vai procurar
+    // em Contas a Pagar uma conta que la aparece com o selo "MyBank" -- duas
+    // palavras para a mesma divida nas duas telas que a mostram.
+    //
+    // ELE NAO COBRE O CASO A: aquela linha e `transfer` na coluna e quem poe o
+    // selo nela e `linhasDaTela`, que a sobrescreve ao abrir a excecao de aba.
+    // As duas sao mutuamente exclusivas pela `direction`.
+    //
+    // ANTES DE `"fixa"` pela razao de sempre -- um rotulo mais informativo sobre
+    // a mesma linha --, e isto nao e empate hipotetico: `recurring_rule_id` e
+    // `null` em `ParcelaDevidaNaAgenda`, entao hoje os dois nao casam juntos.
     natureza: daFatura
       ? "fatura"
-      : texto(crua.recurring_rule_id)
-        ? "fixa"
-        : "despesa",
+      : ehParcelaDevidaDoMyBank(crua)
+        ? "mybank"
+        : texto(crua.recurring_rule_id)
+          ? "fixa"
+          : "despesa",
     // `!= null` e nao `texto(...) !== null`: `group_id` e uuid ou nulo, e o que
     // interessa aqui e a PRESENCA do elo, nao o conteudo dele. Ver `de_grupo` em
     // `LinhaDaTela` -- e o mesmo criterio de `LinhaDoDetalhe.de_grupo`.

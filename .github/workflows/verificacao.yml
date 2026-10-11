@@ -5532,7 +5532,21 @@ jobs:
 
           # 3) AS DUAS PERNAS DA TRANSFERENCIA. Elas tem a mesma
           #    transaction_date (015), entao caem sempre no mesmo periodo.
-          sed -i 's|if (tipo === "transfer" \&\& ehPernaDeEntrada(crua)) continue;|if (false) continue;|' $LIB
+          #
+          #    A ANCORA E UMA LINHA DO MEIO DA CONDICAO, e nao o `if` inteiro:
+          #    a HMO-380 acrescentou o terceiro criterio (`!ehEntradaSoltaDoMyBank`)
+          #    e o prettier quebrou o `if` em cinco linhas, enquanto este `sed`
+          #    continuou apontando para a forma de UMA linha. `sed` e
+          #    linha-a-linha, entao nenhum padrao alcanca o `if` inteiro -- e o
+          #    padrao morto deixou ESTE passo vermelho na main desde aquela
+          #    issue (`mutou` o pega, que e para isso que ele existe).
+          #
+          #    Cegar o segundo criterio para `false` zera a condicao toda, que e
+          #    exatamente o defeito que este mutante quer plantar: a perna de
+          #    entrada deixa de ser descartada e o Pix de R$ 1.000 conta duas
+          #    vezes. `ehPernaDeEntrada(crua) &&` aparece UMA vez no arquivo (o
+          #    outro consultor, `ehPagamentoDaFatura`, a chama sem o `&&`).
+          sed -i 's|      ehPernaDeEntrada(crua) \&\&|      false \&\&|' $LIB
           mutou $LIB 3
           if npm run test:telas-de-movimentacao > /dev/null 2>&1; then
             echo "::error::Verde com as DUAS pernas do Pix somando: R\$ 1.000 virando R\$ 2.000."
@@ -7409,6 +7423,17 @@ jobs:
       #   * leitura 3 -- a parcela que EU devo reduzindo o disponivel em
       #     exatamente R$ 1.000, e a parcela A RECEBER nao o aumentando. A
       #     direcao e HMO-306/308 e a HMO-364 decidiu nao reverter;
+      #   * leitura 4 (HMO-377) -- a parcela que o DEVEDOR deve aparecendo na aba
+      #     Despesas dele. E a leitura que a HMO-372 deixou de fora de proposito,
+      #     e o numero que ela vale esta medido: a aba Despesas da devedora dizia
+      #     R$ 200,00 enquanto Contas a Pagar dizia R$ 1.200,00, pela MESMA
+      #     divida e no MESMO periodo. O controle que importa e que ela entra UMA
+      #     vez -- as duas fontes (a view e a previsao do Caso A em
+      #     `scheduled_transactions`) sao DISJUNTAS no banco, pelo
+      #     `borrower IS DISTINCT FROM lender` da 053, e nao de-duplicadas na
+      #     rota. E ela NAO vaza para Transferencias: ela e `direction:
+      #     'expense'`, e dizer "andou entre as suas contas" sobre dinheiro que
+      #     foi para a conta de OUTRA PESSOA seria uma frase falsa na tela;
       #   * O RECORTE DE DATA em cada uma: a view e a divida INTEIRA (24
       #     parcelas por emprestimo) e nao tem recorte de periodo, de proposito.
       #     Sem o recorte, o «A vencer» de marco somaria R$ 24.000.

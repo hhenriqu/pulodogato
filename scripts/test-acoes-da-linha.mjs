@@ -256,6 +256,54 @@ test("`gravada: false` recusa SOZINHO -- mesmo com posso_editar e natureza comum
   assert.equal(podeAgirNaLinha(linha), false, "`gravada: false` passou");
 });
 
+test("a parcela do MyBank que EU DEVO nao ganha botao nenhum -- HMO-377", () => {
+  // O CUIDADO QUE A ISSUE NOMEIA, medido. A parcela que a pessoa deve a uma
+  // conexao entrou na aba Despesas nesta issue, e ela vem da view
+  // `mybank_due_entries` -- nao de `scheduled_transactions`. Entao:
+  //
+  //   * `gravada: false`, porque ela nao existe naquela tabela;
+  //   * `posso_editar: true`, porque a divida E dela (a rota carimba o dono com
+  //     `comODonoDaLeitura`);
+  //   * `id` e a chave canonica `mybank:<id>`, e nao um uuid.
+  //
+  // E E A COMBINACAO QUE IMPORTA: `posso_editar: true` sozinho convidaria os
+  // tres botoes, e a regra 3 (`gravada`) e a unica coisa entre a linha e um
+  // `POST /api/scheduled-transactions/mybank:<id>/pay`. Aquela rota responderia
+  // 404 -- que, para quem clicou, se le como "o app nao conseguiu" -- e a
+  // parcela TEM onde ser operada: /dashboard/mybank e o bloco de Contas a Pagar,
+  // onde o botao manda `PATCH /api/mybank/installments/[id]`.
+  const parcela = prevista({
+    id: "mybank:cccccccc-0000-0000-0000-000000000003",
+    gravada: false,
+    natureza: "mybank",
+    posso_editar: true,
+    tipo: "expense",
+  });
+
+  assert.equal(parcela.posso_editar, true, "o caso precisa ser MEU para valer");
+
+  assert.equal(podeAgirNaLinha(parcela), false);
+  assert.equal(podeConfirmar(parcela), false);
+  assert.equal(podeEditar(parcela), false);
+  assert.equal(podeExcluir(parcela), false);
+
+  // E NENHUMA URL E MONTADA. E o que o `null` de contrato existe para garantir:
+  // sem ele, a chave `mybank:...` viraria caminho numa rota de
+  // `scheduled-transactions`.
+  assert.equal(pedidoDeConfirmacao(parcela), null);
+  assert.equal(pedidoDeExclusao(parcela), null);
+  assert.equal(caminhoDeEdicao(parcela, "/dashboard/despesas", null), null);
+
+  // Nem o botao da fatura: `natureza` nao e "fatura", e aquele caminho e o
+  // UNICO que ignora `gravada` de proposito (ele materializa a fatura aberta
+  // antes de pagar). A parcela do MyBank nao tem equivalente.
+  assert.equal(podePagarAFatura(parcela), false);
+
+  // E o Editar nao fica nem APAGADO, pela razao da linha de outro membro: um
+  // botao cinza sem motivo e indistinguivel de tela quebrada.
+  assert.equal(motivoSemEditar(parcela), null);
+});
+
 // ---------------------------------------------------------------------------
 // 5. Regra 4: sem `posso_editar` nao sai botao
 // ---------------------------------------------------------------------------

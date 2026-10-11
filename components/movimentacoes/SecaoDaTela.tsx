@@ -137,6 +137,39 @@ function marcaDaLinha(
       descricao: "fatura de cartão",
     };
   }
+  // O SELO DO MYBANK -- HMO-377, e ele chegou a tela NESTA issue.
+  //
+  // `natureza: "mybank"` existe desde a HMO-372 (a parcela prevista do
+  // auto-emprestimo) e ganhou o lado realizado na HMO-380 (a perna solta que a
+  // conexao pagou), mas NENHUM componente o lia: `git grep 'natureza ===
+  // "mybank"'` em components/ e app/ nao devolvia uma linha. O campo viajava na
+  // resposta da rota e morria aqui, caindo no `return` comum logo abaixo --
+  // a familia `coluna-declarada-e-nunca-lida-faz-conserto-de-view-virar-no-op`,
+  // e o mesmo defeito que a HMO-379 achou em `a_receber_do_mybank`.
+  //
+  // E E O SELO QUE ESTA ISSUE PRECISA, porque a linha que ela acrescenta e a
+  // parcela que a pessoa DEVE a outra pessoa: sem o rotulo ela e uma despesa de
+  // R$ 1.000 que nao esta no extrato de ninguem e que a lista mostra sem botao
+  // nenhum (`gravada: false`). "Uma despesa que eu nao lancei e nao consigo
+  // editar" e indistinguivel de bug; "MyBank" diz onde ela e operada.
+  //
+  // O TEXTO E O MESMO DE Contas a Pagar (`SELO_DO_MYBANK` = "MyBank", que
+  // `ParcelaDevidaNaAgenda.selo` carrega naquela tela), pela razao do cabecalho
+  // deste arquivo: as duas telas mostram a MESMA divida, e dois nomes para ela
+  // fazem a pessoa procurar a diferenca que nao existe. A string esta escrita
+  // aqui e nao importada para este componente nao arrastar
+  // `lib/emprestimo-do-mybank` -> `@/lib/lancamento` para dentro da arvore que a
+  // sonda de navegador compila; quem tranca a igualdade e
+  // scripts/test-contrato-das-telas-de-movimentacao.mjs.
+  //
+  // `Wallet` E NAO `Repeat`: a parcela do MyBank E uma serie (3/24), entao o
+  // icone de repeticao seria plausivel -- e e exatamente por isso que ele esta
+  // recusado. `Repeat` ja significa "gasto fixo" nesta lista, e dizer com o
+  // mesmo desenho duas coisas diferentes apaga a distincao que o rotulo tenta
+  // fazer. `Wallet` ja e o vocabulario de conta/carteira neste arquivo.
+  if (linha.natureza === "mybank") {
+    return { Icone: Wallet, rotulo: "MyBank", descricao: "MyBank" };
+  }
   if (linha.natureza === "fixa") {
     return { Icone: Repeat, rotulo: "fixo", descricao: "fixo" };
   }
