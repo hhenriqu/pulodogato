@@ -36,6 +36,27 @@
 // nao tem como descobrir que faltou. Entao o passo 3 que falha apaga o
 // emprestimo (o `ON DELETE CASCADE` de `loan_id` leva as parcelas) e a resposta
 // diz que nada foi gravado.
+//
+// A CHAVE DO PEDIDO: `id` VINDO DO CLIENTE, E `23505` RESPONDIDO COM 200 (HMO-390)
+// -------------------------------------------------------------------------------
+// Esta rota nao tinha idempotencia nenhuma, e `mybank_loans` nao tem UNIQUE
+// sobre `(lender, borrower, principal, first_due_date)`: dois POSTs iguais
+// criavam DUAS dividas de 24 meses. O `disabled` da tela nao alcanca o caminho
+// mais provavel -- recarregar a pagina e reenviar o mesmo formulario.
+//
+// O conserto usa a unicidade que a 053 JA tem: o cliente escolhe o `id`, a rota
+// insere com ele, e o segundo POST bate na PK. `23505` nao e erro aqui; e a
+// resposta "esse pedido ja virou linha", e a rota devolve 200 com a linha.
+//
+// Tres coisas que fazem isto ser seguro, e cada uma esta comentada no ponto onde
+// mora:
+//
+//   1. o `id` e conferido como uuid ANTES (senao 22P02 viraria um 500);
+//   2. no insert ele e ESPALHADO condicionalmente -- `id: null` explicito
+//      derrubaria o `DEFAULT gen_random_uuid()` da coluna;
+//   3. no `23505` a linha relida e conferida com `lender_user_id === user.id`.
+//      A policy de SELECT da 053 e `lender OR borrower`: sem esta conferencia um
+//      id colidido devolveria o emprestimo de OUTRA pessoa.
 // ---------------------------------------------------------------------------
 
 import { createClient } from "@/utils/supabase/server";
@@ -54,6 +75,7 @@ import {
   type ParcelaGravada,
 } from "@/lib/emprestimo-do-mybank";
 import type { BaseDoValorParcelado } from "@/lib/lancamento";
+import { ehUuid } from "@/lib/pedido-de-emprestimo";
 import { NOME_DA_CATEGORIA_DE_TRANSFERENCIA } from "@/lib/transferencia";
 
 /**
@@ -106,6 +128,9 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const {
+      // O id DO EMPRESTIMO, ESCOLHIDO PELO CLIENTE (HMO-390). Ver o bloco
+      // "A CHAVE DO PEDIDO" no cabecalho deste arquivo.
+      id,
       descricao,
       conta_credora_id,
       conta_de_pagamento_id,
@@ -122,6 +147,8 @@ export async function POST(request: NextRequest) {
       primeiro_vencimento,
       juros,
     } = body as {
+      /** A chave do pedido. Ausente = a coluna usa o `DEFAULT gen_random_uuid()`. */
+      id?: string | null;
       descricao?: string;
       conta_credora_id?: string | null;
       conta_de_pagamento_id?: string | null;
@@ -136,6 +163,21 @@ export async function POST(request: NextRequest) {
 
     const contaCredoraPedida = conta_credora_id || null;
     const contaDePagamentoPedida = conta_de_pagamento_id || null;
+
+    // A CHAVE DO PEDIDO, CONFERIDA COMO uuid ANTES DE VIRAR CHAVE PRIMARIA.
+    //
+    // Sem esta peneira um `id: "abc"` chega ao Postgres e volta
+    // `22P02 invalid input syntax for type uuid` -- que esta rota devolveria
+    // como 500 "erro interno". Um pedido malformado respondendo 500 nao se le
+    // como pedido malformado em log nenhum, e o 400 daqui diz o que esta errado.
+    const pedidoId = id || null;
+
+    if (pedidoId !== null && !ehUuid(pedidoId)) {
+      return NextResponse.json(
+        { error: "O identificador do pedido não é um UUID." },
+        { status: 400 }
+      );
+    }
 
     // AUSENTE QUER DIZER "EU MESMO", e a coluna continua NOT NULL no banco.
     //
@@ -279,6 +321,14 @@ export async function POST(request: NextRequest) {
     const { data: emprestimo, error: erroDoEmprestimo } = await supabase
       .from("mybank_loans")
       .insert({
+        // O id DO PEDIDO, QUANDO VEIO UM.
+        //
+        // `...(pedidoId ? { id: pedidoId } : {})` e nao `id: pedidoId`: a
+        // coluna e NOT NULL com `DEFAULT gen_random_uuid()`, e um `id: null`
+        // explicito no payload DERRUBA o default (o Postgres recebe o NULL e
+        // recusa com 23502) -- quem chega pelo PostgREST sem mandar id, e as
+        // sondas que nao sabem desta issue, pararia de conseguir emprestar.
+        ...(pedidoId ? { id: pedidoId } : {}),
         lender_user_id: user.id,
         lender_account_id: credora.id,
         borrower_user_id: devedorId,
@@ -291,6 +341,81 @@ export async function POST(request: NextRequest) {
       })
       .select("id")
       .single();
+
+    // -----------------------------------------------------------------------
+    // O SEGUNDO POST COM O MESMO id: `23505`, E A RESPOSTA E 200 COM O QUE EXISTE
+    // -----------------------------------------------------------------------
+    // Este e o caminho que nenhum `disabled` de tela alcanca: recarregar a
+    // pagina e reenviar o mesmo formulario. A PK da 053 recusa a segunda linha,
+    // e e isso que torna a idempotencia EXATA -- sem janela de tempo e sem
+    // heuristica de "pedido parecido".
+    //
+    // A ARMADILHA: `.select()` POR id MENTE EM LINHA ALHEIA
+    // ----------------------------------------------------
+    // `mybank_loans_select` e `lender_user_id = auth.uid() OR borrower_user_id =
+    // auth.uid()`. Um id escolhido pelo cliente pode colidir com a linha de
+    // OUTRA pessoa -- inclusive uma em que eu sou DEVEDOR --, e um re-`select`
+    // nu passaria pela policy e devolveria aquele emprestimo como se fosse o
+    // meu: a tela diria "criado" mostrando uma divida que eu devo a alguem.
+    // Por isso a conferencia e `lender_user_id === user.id`, e nao "o select
+    // achou a linha". Familia `o .select() mente em linha alheia`.
+    //
+    // Nao e so privacidade: sem o 409 o cliente nunca descobre que o id dele
+    // colidiu, e o emprestimo que ele pediu simplesmente nao existe.
+    if (erroDoEmprestimo?.code === "23505" && pedidoId) {
+      const { data: jaExistia } = await supabase
+        .from("mybank_loans")
+        .select("id, lender_user_id, installment_count, principal, borrower_user_id")
+        .eq("id", pedidoId)
+        .maybeSingle();
+
+      // `!jaExistia` cobre a colisao com a linha de um TERCEIRO: ali a policy
+      // nao alcanca a linha e o select volta vazio, que e indistinguivel de
+      // "nao existe" -- e as duas levam ao mesmo 409.
+      if (!jaExistia || jaExistia.lender_user_id !== user.id) {
+        console.error(
+          "MyBank: id de pedido colidiu com linha que nao e do credor.",
+          { pedidoId }
+        );
+        return NextResponse.json(
+          {
+            error:
+              "Esse pedido não pôde ser confirmado. Tente de novo.",
+          },
+          { status: 409 }
+        );
+      }
+
+      // 200, E NAO 201: nada foi gravado AGORA.
+      //
+      // A contagem vem do banco e nao de `numeroDeParcelas`: o que importa aqui
+      // e o que a divida TEM, nao o que este pedido pediu -- e os dois podem
+      // divergir se o primeiro POST tiver morrido entre o passo 1 e o passo 2.
+      const { count: quantasParcelas } = await supabase
+        .from("mybank_installments")
+        .select("id", { count: "exact", head: true })
+        .eq("loan_id", jaExistia.id);
+
+      const casoGravado = casoDoEmprestimo({
+        lenderUserId: user.id,
+        borrowerUserId: jaExistia.borrower_user_id,
+      });
+
+      return NextResponse.json(
+        {
+          success: true,
+          loan_id: jaExistia.id,
+          caso: casoGravado,
+          /** A marca do caminho idempotente: a sonda afirma sobre ela. */
+          ja_existia: true,
+          total_de_parcelas: quantasParcelas ?? 0,
+          principal: Number(jaExistia.principal),
+          message:
+            "Esse empréstimo já tinha sido criado. Nada foi duplicado.",
+        },
+        { status: 200 }
+      );
+    }
 
     if (erroDoEmprestimo || !emprestimo) {
       console.error("Erro ao criar o emprestimo do MyBank:", erroDoEmprestimo);
