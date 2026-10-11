@@ -1,7 +1,7 @@
 {
   "//": [
-    "MyBank -- a aritmetica do emprestimo e as QUATRO rotas do ciclo (HMO-370,",
-    "HMO-382 e HMO-391).",
+    "MyBank -- a aritmetica do emprestimo e as CINCO rotas do ciclo (HMO-370,",
+    "HMO-382, HMO-391 e HMO-395).",
     "",
     "Compila as rotas e, por arrasto do tsc, `lib/emprestimo-do-mybank.ts` com as",
     "dependencias dele (lib/lancamento.ts, lib/transferencia.ts) e",
@@ -14,7 +14,17 @@
     "    auto-emprestimo a `paid`) e DELETE (estorna, e a devolve a `pending`);",
     "  * app/api/mybank/loans/[id]/route.ts -- PATCH (cancela: o emprestimo vira",
     "    `cancelled`, as parcelas em aberto tambem, as `paid` ficam, e as",
-    "    previsoes `pending` do Caso A sao apagadas -- HMO-391).",
+    "    previsoes `pending` do Caso A sao apagadas -- HMO-391);",
+    "  * app/api/mybank/loans/[id]/antecipacao/route.ts -- POST (antecipa N",
+    "    parcelas do FIM da serie: cada uma ganha uma perna de entrada e vira",
+    "    `paid`. Nada e cancelado, nenhum `amount` e tocado -- HMO-395).",
+    "",
+    "A ANTECIPACAO MORA AQUI PELA MESMA RAZAO DO CANCELAMENTO",
+    "Ela e o TERCEIRO chamador de `emprestimoFicouQuitado` e o segundo de",
+    "`pernaDeEntradaDoPagamento` e `patchDaBaixaDaParcela`: antecipar 2 de 2",
+    "quita o emprestimo, e e nesta suite que os tres chamadores estao juntos. Uma",
+    "suite nova mediria a rota e nao a emenda -- e `mesmo-alvo-nao-prova-coberto`",
+    "exige que a rota nova tenha a PROPRIA ancora para a perna `transfer`.",
     "",
     "O CANCELAMENTO MORA AQUI PELA MESMA RAZAO DA BAIXA",
     "Ele e a OUTRA ponta do mesmo elo `mybank:<id>`: a baixa o LE para marcar a",
@@ -66,6 +76,7 @@
   "include": [
     "../app/api/mybank/loans/route.ts",
     "../app/api/mybank/loans/[id]/route.ts",
+    "../app/api/mybank/loans/[id]/antecipacao/route.ts",
     "../app/api/mybank/installments/[id]/route.ts",
     "../app/api/scheduled-transactions/[id]/pay/route.ts"
   ]
