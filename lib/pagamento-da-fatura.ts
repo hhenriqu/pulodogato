@@ -75,14 +75,32 @@ import { TIPO_CARTAO } from "@/lib/agenda-do-cartao";
 import { faturaDaChave, mensagemContaPagadora } from "@/lib/card-invoice";
 
 /**
- * As tres respostas possiveis para "o que esta linha e".
+ * As respostas possiveis para "o que esta linha e".
  *
  * Os valores sao os de `NaturezaDaLinha` (lib/telas-de-movimentacao.ts) de
  * proposito: e assim que `LinhaDaTela` satisfaz `LinhaParaPagar`
  * estruturalmente, sem adaptador e sem campo novo. O tipo nao e importado de la
  * porque aquele arquivo arrasta o grafo das duas telas atras dele.
+ *
+ * E ISSO E O QUE FEZ O `tsc` COBRAR A DECISAO SOBRE `"mybank"` (HMO-372): a
+ * natureza nova de `NaturezaDaLinha` NAO compilou em
+ * `components/movimentacoes/ListaDeMovimentacao.tsx` ate aparecer aqui. A uniao
+ * estreita fez o trabalho dela -- a parcela do auto-emprestimo e CLICAVEL em
+ * Despesas (ela e uma previsao gravada de verdade, ao contrario da fatura
+ * aberta), entao atravessar este modulo sem ninguem ter decidido o que ela e
+ * seria um dialogo respondendo por adivinhacao.
+ *
+ * A DECISAO E: `"mybank"` se comporta como `"despesa"` em
+ * `decisaoDePagamentoDaFatura` -- `precisaDeContaPagadora: false`. Nao e
+ * omissao: a parcela do auto-emprestimo JA nasce com `account_id` (de onde o
+ * dinheiro sai) e `destination_account_id` (a conta de investimento), postos por
+ * `previsoesDoEmprestimo` (lib/emprestimo-do-mybank.ts). Pedir a conta pagadora
+ * no dialogo seria pedir um dado que a linha carrega -- e a conta escolhida ali
+ * poderia DISCORDAR do `account_id` da previsao, gravando a perna de saida numa
+ * conta e a de entrada noutra: as duas pernas de uma transferencia que nao se
+ * encontram.
  */
-export type NaturezaParaPagar = "despesa" | "fatura" | "fixa";
+export type NaturezaParaPagar = "despesa" | "fatura" | "fixa" | "mybank";
 
 /**
  * O que a decisao precisa saber da linha -- e nada mais.

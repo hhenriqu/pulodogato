@@ -79,6 +79,7 @@ import {
   type ParticipantesPorGrupo,
 } from "@/lib/parte-do-grupo";
 import { direcaoDaAgenda } from "@/lib/previsto-x-realizado";
+import { lerDividaDoMyBank } from "@/lib/services/divida-do-mybank";
 import {
   calcularQuantoPossoGastar,
   fimDoMes,
@@ -296,6 +297,69 @@ export async function GET() {
         tipo: direcaoDaAgenda(p.direction),
       };
     });
+
+    // ------------------------------------------------------------------
+    // A PARCELA QUE EU DEVO NO MYBANK (HMO-372, leitura 3 de 7)
+    // ------------------------------------------------------------------
+    // "parcela que EU devo reduz o disponivel; parcela a receber NAO o
+    // aumenta" -- e as duas metades dessa frase sao resolvidas em lugares
+    // diferentes:
+    //
+    //   * o DEVEDOR entra aqui. A parcela dele nao esta em
+    //     `scheduled_transactions` (o credor nao pode gravar no nome dele), e
+    //     sem esta leitura o «Quanto ainda posso gastar» da Lais ignora
+    //     R$ 1.000 que vao sair da conta dela no dia 10 -- a unica direcao de
+    //     erro que esta tela nao pode ter;
+    //   * o CREDOR nao entra em lugar nenhum, e isso ja era verdade antes
+    //     desta issue: `previsoesDoEmprestimo` devolve `[]` no Caso B, entao
+    //     nao existe linha minha para somar. O «a receber» do MyBank vai para
+    //     o «Previsto» da aba RECEITAS (decisao 2) e NAO para ca, porque
+    //     promessa nao e dinheiro -- a mesma decisao da HMO-306/308 sobre o
+    //     reembolso de grupo, que a HMO-364 resolveu explicitamente nao
+    //     reverter.
+    //
+    // `de: null` -- SEM PISO DE DATA, igual a consulta das previstas acima: uma
+    // parcela que venceu no mes passado e que o credor ainda nao confirmou
+    // continua sendo dinheiro que vai sair. Com piso em `hoje` ela
+    // desapareceria do calculo no dia seguinte ao vencimento, e o disponivel
+    // SUBIRIA por ela estar atrasada.
+    //
+    // NAO PASSA POR `parteConfiguradaDoMembro`: divida de MyBank tem
+    // `group_id: null` por construcao, entao o rateio nao tem o que dividir --
+    // e manda-la pelo mesmo `map` acima seria um `group_id` a inventar.
+    const divida = await lerDividaDoMyBank(supabase, user.id, {
+      de: null,
+      ate,
+      hoje,
+    });
+
+    if (!divida.ok) {
+      // O numero fica MENOR em compromissos, logo MAIOR em disponivel -- a
+      // direcao ruim desta tela. Por isso o `console.error` e, diferente do
+      // resto da rota, a mensagem diz o que a pessoa esta vendo.
+      console.error(
+        "Posso gastar seguiu SEM descontar a parcela do MyBank (o disponível está otimista):",
+        divida.mensagem
+      );
+    }
+
+    for (const parcela of divida.ok ? divida.linhas : []) {
+      paraCalculo.push({
+        // `mybank_installment_id` e nao `parcela.id`: `id` e `null` nesta linha
+        // de proposito (ela nao e uma `scheduled_transaction`), e um `null` em
+        // `PrevistaParaGastar.id` colidiria com ele mesmo se um dia o calculo
+        // indexar por id -- duas parcelas viram uma.
+        id: parcela.mybank_installment_id,
+        amount: parcela.amount,
+        due_date: parcela.due_date,
+        notes: parcela.notes,
+        // `direcaoDaAgenda` IMPORTADA tambem aqui, sobre o `direction` que a
+        // linha carrega -- e nao um `"expense"` literal. O literal seria a
+        // segunda copia da pergunta de caixa, e no dia em que o MyBank tiver
+        // uma parcela a receber nesta mesma lista ela entraria como despesa.
+        tipo: direcaoDaAgenda(parcela.direction),
+      });
+    }
 
     // ------------------------------------------------------------------
     // A quinta parcela: o que ainda falta separar para as metas (HMO-155)

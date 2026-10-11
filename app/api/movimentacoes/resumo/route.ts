@@ -124,6 +124,7 @@ import {
 import {
   linhasDaTela,
   previstoVencido,
+  resumoComAReceberDoMyBank,
   resumoComReembolsoPrevisto,
   resumoDaTela,
   telaDoTipo,
@@ -131,6 +132,8 @@ import {
   type RealizadaCrua,
   type ReembolsoPrevisto,
 } from "@/lib/telas-de-movimentacao";
+import { lerAReceberDoMyBank } from "@/lib/services/divida-do-mybank";
+import type { AReceberDoMyBank } from "@/lib/leituras-do-mybank";
 
 export async function GET(request: NextRequest) {
   try {
@@ -505,6 +508,41 @@ export async function GET(request: NextRequest) {
     // de antes desta issue e nenhum numero se mexe. O `console.error` fica
     // porque "o acerto a confirmar desapareceu" e um sintoma que ninguem
     // reporta.
+    // ----------------------------------------------------------------
+    // 3c-bis. O «A RECEBER» DO MYBANK -- HMO-372, decisao 2 da HMO-368
+    // ----------------------------------------------------------------
+    // A simetria com o reembolso de grupo logo acima e exata: o que a conexao
+    // ainda me deve e PROMESSA, vai para o «Previsto» de Receitas e nunca para o
+    // Realizado -- quando ela paga, a perna e `transfer` e nao `income`, porque
+    // principal voltando move dinheiro de lugar e nao e receita nova (ver
+    // `pernaDeEntradaDoPagamento` em lib/emprestimo-do-mybank.ts).
+    //
+    // SO NA ABA RECEITAS, pela mesma razao do reembolso: nas outras duas o valor
+    // seria descartado depois de duas consultas.
+    //
+    // FALHAR AQUI NAO DERRUBA A LEITURA -- mesma decisao de 3b, 3c e 3d: o
+    // campo fica `null`, o cartao «Previsto» volta a ser o de antes desta issue
+    // e os tres numeros nao mentem, eles ficam MENORES. O `console.error` fica
+    // porque "o a receber do MyBank desapareceu" e um sintoma que ninguem
+    // reporta.
+    let aReceberDoMyBank: AReceberDoMyBank | null = null;
+
+    if (tela.tipo === "income") {
+      const leitura = await lerAReceberDoMyBank(supabase, user.id, {
+        de: periodo.de,
+        ate: periodo.ate,
+      });
+
+      if (!leitura.ok) {
+        console.error(
+          "A tela de movimentação seguiu sem o «a receber» do MyBank:",
+          leitura.mensagem
+        );
+      } else {
+        aReceberDoMyBank = leitura.aReceber;
+      }
+    }
+
     let acertos: AcertosNaAbaReceitas | null = null;
 
     if (tela.tipo === "income") {
@@ -850,10 +888,22 @@ export async function GET(request: NextRequest) {
     // Por isso `quantidadePrevista` tambem NAO sobe: a frase "N lançamento(s)"
     // prometeria uma linha que a lista nao tem. Quem garante isso e
     // `resumoComReembolsoPrevisto`, com mutante por cima.
-    const resumo = resumoComReembolsoPrevisto(
-      resumoDaTela(linhas),
+    // E O «A RECEBER» DO MYBANK ENTRA DEPOIS DELE -- HMO-372, decisao 2 da
+    // HMO-368.
+    //
+    // CAMPO PROPRIO (`a_receber_do_mybank`) e nao dentro de
+    // `reembolso_previsto`: a issue manda reusar a FORMA de
+    // `lib/services/credito-dos-grupos.ts`, nao o balde. A razao inteira esta no
+    // cabecalho de `resumoComAReceberDoMyBank` -- somar os dois no mesmo campo
+    // apagaria a medicao do credito de grupo e tiraria da tela a frase que diz
+    // de onde vem cada parte.
+    //
+    // A ORDEM DAS DUAS CHAMADAS NAO IMPORTA HOJE e isso esta escrito la: as duas
+    // somam no mesmo par de campos e nenhuma le o que a outra escreveu.
+    const resumo = resumoComAReceberDoMyBank(
+      resumoComReembolsoPrevisto(resumoDaTela(linhas), tela.tipo, reembolso),
       tela.tipo,
-      reembolso
+      aReceberDoMyBank
     );
     const vencido = previstoVencido(linhas);
 
