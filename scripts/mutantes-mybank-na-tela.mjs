@@ -389,6 +389,47 @@ const mutantes = [
     "    if (parcelasEmVooRef.current.has(parcelaId)) return;\n    parcelasEmVooRef.current.add(parcelaId);",
     "    parcelasEmVooRef.current.add(parcelaId);",
   ],
+
+  // =========================================================================
+  // O BOTAO «Cancelar» (HMO-391, F3 da HMO-383)
+  // =========================================================================
+  // Os tres sao sobre uma acao DESTRUTIVA que muda a tela de outra pessoa, e
+  // nenhum deles da erro em lugar nenhum quando acontece.
+
+  [
+    PAINEL,
+    "O BOTAO CANCELAR APARECE EM EMPRESTIMO JA ENCERRADO (clique cujo unico resultado possivel e um erro)",
+    '                        {emprestimo.status === "active" && (',
+    '                        {emprestimo.status !== "nunca-este-status" && (',
+  ],
+
+  [
+    PAINEL,
+    "A PERGUNTA DEIXA DE DECIDIR (o `confirm()` acontece e a resposta e ignorada: cancelar nao cancela)",
+    "    if (\n      !confirm(",
+    "    if (\n      !!confirm(",
+  ],
+
+  [
+    PAINEL,
+    "o cancelamento perde a trava (dois toques dao duas perguntas e dois PATCH na MESMA divida)",
+    "    if (cancelandoRef.current.has(emprestimo.id)) return;",
+    "    if (false) return;",
+  ],
+
+  [
+    PAINEL,
+    "a trava do cancelamento vira BOOLEANO GLOBAL (cancelar uma divida errada tranca a outra)",
+    "    if (cancelandoRef.current.has(emprestimo.id)) return;",
+    "    if (cancelandoRef.current.size > 0) return;",
+  ],
+
+  [
+    PAINEL,
+    "o emprestimo nunca SAI do conjunto (o cancelamento que falhou nao tem segunda tentativa)",
+    "      cancelandoRef.current.delete(emprestimo.id);",
+    "      void emprestimo.id;",
+  ],
 ];
 
 const SUITE = "test:mybank-na-tela";

@@ -62,6 +62,7 @@ import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
 
 const LIB = "lib/emprestimo-do-mybank.ts";
 const LOANS = "app/api/mybank/loans/route.ts";
+const CANCELA = "app/api/mybank/loans/[id]/route.ts";
 const PARCELA = "app/api/mybank/installments/[id]/route.ts";
 const BAIXA = "app/api/scheduled-transactions/[id]/pay/route.ts";
 
@@ -338,6 +339,105 @@ const mutantes = [
     "o id malformado deixa de ser peneirado (22P02 vira 500 em vez de 400)",
     "    if (pedidoId !== null && !ehUuid(pedidoId)) {",
     "    if (false && pedidoId !== null && !ehUuid(pedidoId)) {",
+  ],
+
+  // =========================================================================
+  // O CANCELAMENTO (HMO-391, F3 da HMO-383)
+  // =========================================================================
+  // Os dois primeiros desta secao sao os que a issue nomeia, e os dois apagam
+  // historico de dinheiro SEM erro nenhum no caminho:
+  //
+  //   * a parcela `paid` reescrita para `cancelled` perde o unico registro que
+  //     explica o saldo da conta de investimento. `mybank_installments_paid_
+  //     check` nao reclama: ele compara `status = 'paid'` com `paid_date IS NOT
+  //     NULL`, e o UPDATE que mexe nos dois passa;
+  //   * a previsao JA BAIXADA apagada deixa as duas pernas da transferencia
+  //     orfas no extrato -- o dinheiro andou e nenhuma linha diz por que.
+  //
+  // E o terceiro e a ORDEM, que e a direcao da falha parcial desta feature.
+
+  [
+    LIB,
+    "O CANCELAMENTO ALCANCA A PARCELA `paid` (apaga o registro do dinheiro que ja se moveu)",
+    "  return STATUS_EM_ABERTO_DA_PARCELA.includes(parcela.status);",
+    "  return true;",
+  ],
+
+  [
+    CANCELA,
+    "A PREVISAO JA PAGA E APAGADA (o filtro de `pending` cai e o historico do que ja foi pago vai embora)",
+    '        .eq("status", "pending")\n        .in("notes", chaves)',
+    '        .in("notes", chaves)',
+  ],
+
+  [
+    CANCELA,
+    "A ORDEM INVERTIDA 4<->2: as previsoes saem ANTES de a divida ser encerrada (divida viva sem contas a pagar)",
+    "    const todas = parcelas ?? [];",
+    '    const todas = parcelas ?? [];\n    await supabase\n      .from("scheduled_transactions")\n      .delete()\n      .eq("user_id", user.id)\n      .eq("status", "pending")\n      .in(\n        "notes",\n        todas.filter(parcelaSegueOCancelamento).map((p) => "mybank:" + p.id)\n      )\n      .select("id");',
+  ],
+
+  [
+    CANCELA,
+    "a guarda do `.length` das previsoes cai: `.in` vazio no PostgREST apaga a agenda INTEIRA de Contas a Pagar",
+    "    if (chaves.length > 0) {",
+    "    if (chaves.length >= 0) {",
+  ],
+
+  [
+    CANCELA,
+    "a guarda do `.length` das parcelas cai: `.in(\"id\", [])` alcanca parcela paga de OUTRO emprestimo meu",
+    "    if (aCancelar.length > 0) {",
+    "    if (aCancelar.length >= 0) {",
+  ],
+
+  [
+    LIB,
+    "o DEVEDOR cancela a divida dele (a pergunta de credor cai, e a RLS nao recusa: ela FILTRA)",
+    "  if (params.emprestimo.lender_user_id !== params.meuId) {",
+    "  if (false) {",
+  ],
+
+  [
+    CANCELA,
+    "A LINHA DEVOLVIDA PELO UPDATE NAO E CONFERIDA (cancelei, e a linha escrita e de outro credor)",
+    "    if (cancelados.some((l) => l.lender_user_id !== user.id)) {",
+    "    if (false) {",
+  ],
+
+  [
+    CANCELA,
+    "o UPDATE do cancelamento filtrado pela RLS responde SUCESSO (zero linha, 200 e a divida de pe)",
+    "    if (erroDoCancelamento || !cancelados || cancelados.length === 0) {",
+    "    if (erroDoCancelamento) {",
+  ],
+
+  [
+    LIB,
+    "o emprestimo JA CANCELADO e cancelado de novo (as parcelas canceladas sao reescritas)",
+    "  if (params.emprestimo.status === STATUS_CANCELADO) {",
+    "  if (false) {",
+  ],
+
+  [
+    LIB,
+    "o emprestimo QUITADO aceita cancelamento (quem recebeu a ultima parcela ve a divida virar cancelada)",
+    '  if (params.emprestimo.status === "settled") {',
+    "  if (false) {",
+  ],
+
+  [
+    CANCELA,
+    "o corpo deixa de ser peneirado: qualquer `status` no pedido cancela o emprestimo",
+    "    if (status !== STATUS_CANCELADO) {",
+    "    if (false) {",
+  ],
+
+  [
+    CANCELA,
+    "a recusa ao devedor vira 409 (o codigo deixa de distinguir `nao e seu` de `ja encerrado`)",
+    '          status: problema === "nao_sou_o_credor" ? 403 : 409,',
+    "          status: 409,",
   ],
 ];
 

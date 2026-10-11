@@ -1787,3 +1787,689 @@ test("id que colide com emprestimo em que eu sou DEVEDOR volta 409, e nao vaza a
   assert.equal(corpo.loan_id, undefined);
   assert.match(corpo.error, /Tente de novo/i);
 });
+
+// ---------------------------------------------------------------------------
+// PARTE 9 -- PATCH /api/mybank/loans/[id]: o CANCELAMENTO (HMO-391, F3)
+// ---------------------------------------------------------------------------
+// O que esta parte existe para impedir, e as quatro coisas sao dinheiro errado:
+//
+//   1. A PARCELA `paid` SER REESCRITA PARA `cancelled`. Ela tem (ou teve) perna
+//      em `financial_transactions`: o dinheiro saiu da conta corrente e entrou
+//      na de investimento. Cancelar essa parcela apaga o fato e deixa o saldo
+//      sem nada que o explique -- e nada no caminho reclama, porque
+//      `mybank_installments_paid_check` so compara `status = 'paid'` com
+//      `paid_date IS NOT NULL` e o UPDATE que mexe nos dois passa.
+//
+//   2. A PREVISAO JA PAGA SER APAGADA. Mesma familia, do outro lado do elo: a
+//      previsao baixada e o registro da transferencia que aconteceu. Apagar a
+//      linha deixa as duas pernas orfas no extrato.
+//
+//   3. O `.in` COM LISTA VAZIA. No Caso B nao ha previsao nenhuma do meu lado, e
+//      `.in("notes", [])` no PostgREST NAO filtra: o DELETE alcanca toda
+//      previsao pendente que a RLS entrega -- a agenda inteira de Contas a Pagar
+//      vai embora, com 200 na tela. A guarda e o `.length`, e o teste do Caso B
+//      e quem a mede.
+//
+//   4. O DEVEDOR RECEBER "CANCELADO" SEM NADA TER MUDADO. `mybank_loans_select`
+//      e `lender OR borrower`, entao ele LE a linha; e UPDATE que a policy
+//      filtra volta 200 com corpo vazio. Sem a pergunta de credor a rota
+//      responderia sucesso de uma escrita que nao aconteceu.
+//
+// A ORDEM TAMBEM E MEDIDA (`assercao-de-ORDEM-por-indexof`), porque ela e a
+// direcao da falha parcial: emprestimo -> parcelas -> previsoes. Invertida, a
+// divida ficaria viva sem as contas a pagar dela -- dinheiro subestimado, e
+// ninguem reporta.
+
+const CANCELA = await import(
+  "../.tmp-emprestimo-do-mybank/app/api/mybank/loans/[id]/route.js"
+);
+
+/**
+ * O Caso A do cancelamento: 3 parcelas, a 1 JA PAGA, e uma previsao por parcela
+ * -- a da parcela paga tambem ja baixada.
+ *
+ * A PARCELA PAGA E A PREVISAO PAGA ESTAO NO FIXTURE DE PROPOSITO: elas sao o
+ * controle negativo desta issue. Sem elas, "cancelar tudo" e "cancelar o que
+ * esta em aberto" alcancam o MESMO conjunto, e os dois mutantes principais
+ * sobrevivem (`mutante-de-ramo-de-passagem-exige-fixture-do-outro-ramo`).
+ */
+const PARCELAS_DO_AUTO_A_CANCELAR = [
+  {
+    id: "p-paga",
+    loan_id: "loan-auto",
+    installment_number: 1,
+    installment_total: 3,
+    amount: 1000,
+    due_date: "2026-11-10",
+    status: "paid",
+    reported_at: null,
+    paid_date: "2026-11-11",
+    paid_transaction_id: "tx-da-paga",
+  },
+  {
+    id: "p-pendente",
+    loan_id: "loan-auto",
+    installment_number: 2,
+    installment_total: 3,
+    amount: 1000,
+    due_date: "2026-12-10",
+    status: "pending",
+    reported_at: null,
+    paid_date: null,
+    paid_transaction_id: null,
+  },
+  {
+    id: "p-avisada",
+    loan_id: "loan-auto",
+    installment_number: 3,
+    installment_total: 3,
+    amount: 1000,
+    due_date: "2027-01-10",
+    // `reported` tambem e "em aberto": o devedor avisou e o credor nao
+    // confirmou. Sem esta linha um criterio `status === "pending"` passaria.
+    status: "reported",
+    reported_at: "2027-01-09T00:00:00Z",
+    paid_date: null,
+    paid_transaction_id: null,
+  },
+];
+
+function previsaoDaParcela(parcelaId, status, extra = {}) {
+  return {
+    ...PREVISAO_DO_AUTO,
+    id: `prev-${parcelaId}`,
+    notes: `mybank:${parcelaId}`,
+    status,
+    ...extra,
+  };
+}
+
+const PREVISOES_DO_AUTO_A_CANCELAR = [
+  // A previsao da parcela paga: JA BAIXADA. Fato consumado -- fica.
+  previsaoDaParcela("p-paga", "paid", {
+    paid_date: "2026-11-11",
+    transaction_id: "tx-da-paga",
+  }),
+  previsaoDaParcela("p-pendente", "pending"),
+  previsaoDaParcela("p-avisada", "pending"),
+  // A VIZINHA: previsao pendente MINHA que nao e do MyBank. Sem ela, "apagar as
+  // previsoes do emprestimo" e "apagar a agenda" sao o mesmo conjunto, e o
+  // mutante que tira a guarda do `.length` sobrevive.
+  {
+    ...PREVISAO_DO_AUTO,
+    id: "prev-alheia",
+    description: "Aluguel",
+    notes: null,
+    status: "pending",
+  },
+];
+
+function tabelasDoCancelamento(extra = {}) {
+  return tabelas({
+    mybank_loans: [{ ...EMPRESTIMO_DO_AUTO }],
+    mybank_installments: PARCELAS_DO_AUTO_A_CANCELAR.map((p) => ({ ...p })),
+    scheduled_transactions: PREVISOES_DO_AUTO_A_CANCELAR.map((p) => ({ ...p })),
+    ...extra,
+  });
+}
+
+async function cancelarEmprestimo({
+  quem = EU,
+  loanId = "loan-auto",
+  corpo = { status: "cancelled" },
+  tabelas: linhas,
+  erros,
+  rlsFiltra,
+} = {}) {
+  const sessao = criarDuble({
+    user: { id: quem },
+    tabelas: linhas ?? tabelasDoCancelamento(),
+    ...(erros ? { erros } : {}),
+    ...(rlsFiltra ? { rlsFiltra } : {}),
+  });
+  const registro = { sessao: () => sessao.client };
+  globalThis.__dubleDeSupabase = registro;
+
+  let resposta;
+  try {
+    resposta = await CANCELA.PATCH(
+      { json: async () => corpo },
+      { params: { id: loanId } }
+    );
+  } finally {
+    delete globalThis.__dubleDeSupabase;
+  }
+
+  return { status: resposta.status, corpo: await resposta.json(), sessao, registro };
+}
+
+/** Os ids que um UPDATE/DELETE alcancou, pelo filtro `.in` que a rota montou. */
+function idsDoFiltroIn(escrita, coluna) {
+  const achado = (escrita.filtros ?? []).find(
+    ([op, c]) => op === "in" && c === coluna
+  );
+  return achado ? achado[2] : null;
+}
+
+function escritasEm(sessao, tabela, verbo) {
+  return sessao.escritas.filter((e) => e.tabela === tabela && e.verbo === verbo);
+}
+
+test("CASO A: o emprestimo vira `cancelled`, as abertas tambem, e a PAGA fica paga", async () => {
+  const linhas = tabelasDoCancelamento();
+  const { status, corpo, sessao } = await cancelarEmprestimo({ tabelas: linhas });
+
+  assert.equal(status, 200, JSON.stringify(corpo));
+
+  // 1. O EMPRESTIMO. As duas leituras do MyBank filtram `active`, entao e este
+  // UPDATE que tira a divida das duas telas.
+  const [doEmprestimo] = escritasEm(sessao, "mybank_loans", "update");
+  assert.equal(doEmprestimo.patch.status, "cancelled");
+  assert.equal(doEmprestimo.linhasAfetadas, 1);
+  assert.equal(linhas.mybank_loans[0].status, "cancelled");
+
+  // 2. AS PARCELAS, e o `.in` LISTA SO AS DUAS EM ABERTO.
+  const [dasParcelas] = escritasEm(sessao, "mybank_installments", "update");
+  assert.equal(dasParcelas.patch.status, "cancelled");
+  assert.deepEqual(idsDoFiltroIn(dasParcelas, "id").sort(), [
+    "p-avisada",
+    "p-pendente",
+  ]);
+  assert.equal(dasParcelas.linhasAfetadas, 2);
+
+  // O PATCH DA PARCELA NAO MEXE EM MAIS NADA: `paid_date` e
+  // `paid_transaction_id` fora do patch e o que mantem o CHECK da 053 em paz e
+  // o que impede este caminho de apagar carimbo de pagamento.
+  assert.deepEqual(Object.keys(dasParcelas.patch), ["status"]);
+
+  // 3. O CONTROLE NEGATIVO DA ISSUE, lido na TABELA e nao na resposta.
+  const porId = new Map(linhas.mybank_installments.map((p) => [p.id, p]));
+  assert.equal(porId.get("p-paga").status, "paid");
+  assert.equal(porId.get("p-paga").paid_date, "2026-11-11");
+  assert.equal(porId.get("p-paga").paid_transaction_id, "tx-da-paga");
+  assert.equal(porId.get("p-pendente").status, "cancelled");
+  assert.equal(porId.get("p-avisada").status, "cancelled");
+
+  // 4. AS PREVISOES: as duas pendentes do elo saem; a paga e a alheia ficam.
+  const [doDelete] = escritasEm(sessao, "scheduled_transactions", "delete");
+  assert.deepEqual(idsDoFiltroIn(doDelete, "notes").sort(), [
+    "mybank:p-avisada",
+    "mybank:p-pendente",
+  ]);
+  assert.equal(doDelete.linhasAfetadas, 2);
+
+  const sobraram = linhas.scheduled_transactions.map((p) => p.id).sort();
+  assert.deepEqual(sobraram, ["prev-alheia", "prev-p-paga"]);
+
+  assert.equal(corpo.parcelas_canceladas, 2);
+  assert.equal(corpo.parcelas_pagas_intactas, 1);
+  assert.equal(corpo.previsoes_apagadas, 2);
+});
+
+test("a previsao JA PAGA do elo NAO e apagada -- o `status = pending` esta no DELETE", async () => {
+  // O ELO DA PARCELA PAGA PRECISA ENTRAR NO `.in`, e e isso que este fixture
+  // arranja: aqui `p-paga` esta PENDENTE (entao ela e cancelada e o elo dela vai
+  // para a lista) e a PREVISAO dela ja foi baixada. E o unico arranjo em que o
+  // filtro de `status` decide sozinho -- com a parcela paga o elo nem chegava a
+  // lista, e o teste mediria o passo 3 achando que mede o 4
+  // (`mutante-de-ramo-de-passagem-exige-fixture-do-outro-ramo`).
+  const linhas = tabelasDoCancelamento({
+    mybank_installments: [
+      {
+        ...PARCELAS_DO_AUTO_A_CANCELAR[0],
+        status: "pending",
+        paid_date: null,
+        paid_transaction_id: null,
+      },
+    ],
+  });
+
+  const { status, corpo, sessao } = await cancelarEmprestimo({ tabelas: linhas });
+
+  assert.equal(status, 200, JSON.stringify(corpo));
+
+  const [doDelete] = escritasEm(sessao, "scheduled_transactions", "delete");
+  assert.deepEqual(idsDoFiltroIn(doDelete, "notes"), ["mybank:p-paga"]);
+
+  // O FILTRO ESTA NO PEDIDO...
+  assert.ok(
+    (doDelete.filtros ?? []).some(
+      ([op, coluna, valor]) =>
+        op === "eq" && coluna === "status" && valor === "pending"
+    ),
+    `o DELETE das previsoes nao filtrou por status pendente: ${JSON.stringify(
+      doDelete.filtros
+    )}`
+  );
+
+  // ...E A LINHA CONTINUA LA, que e a assercao que vale: previsao baixada e o
+  // registro da transferencia que aconteceu, e apaga-la deixaria as duas pernas
+  // orfas no extrato.
+  const paga = linhas.scheduled_transactions.find((p) => p.id === "prev-p-paga");
+  assert.ok(paga, "a previsao ja paga foi apagada pelo cancelamento");
+  assert.equal(paga.status, "paid");
+  assert.equal(paga.transaction_id, "tx-da-paga");
+  assert.equal(doDelete.linhasAfetadas, 0);
+  assert.equal(corpo.previsoes_apagadas, 0);
+});
+
+test("A ORDEM: o emprestimo sai de `active` ANTES de a previsao ser apagada", async () => {
+  const { sessao } = await cancelarEmprestimo();
+
+  const ordem = sessao.escritas.map((e) => `${e.tabela}:${e.verbo}`);
+  const doEmprestimo = ordem.indexOf("mybank_loans:update");
+  const dasParcelas = ordem.indexOf("mybank_installments:update");
+  const dasPrevisoes = ordem.indexOf("scheduled_transactions:delete");
+
+  assert.ok(doEmprestimo >= 0 && dasParcelas >= 0 && dasPrevisoes >= 0, ordem.join(" > "));
+
+  // A DIRECAO DA FALHA PARCIAL, escrita como assercao: quebrar no meio desta
+  // ordem deixa previsao orfa em Contas a Pagar (a pessoa e cobrada e PERCEBE).
+  // A ordem inversa deixaria a divida viva sem as contas a pagar -- dinheiro
+  // subestimado, e ninguem reporta.
+  assert.ok(
+    doEmprestimo < dasParcelas,
+    `o emprestimo tem de ser cancelado antes das parcelas: ${ordem.join(" > ")}`
+  );
+  assert.ok(
+    dasParcelas < dasPrevisoes,
+    `as parcelas tem de ser canceladas antes de as previsoes serem apagadas: ${ordem.join(" > ")}`
+  );
+});
+
+test("CASO B: NENHUM delete em `scheduled_transactions` -- a guarda da lista vazia", async () => {
+  const linhas = tabelasDoCancelamento({
+    mybank_loans: [{ ...EMPRESTIMO_PARA_A_LAIS }],
+    mybank_installments: [{ ...PARCELA_DA_LAIS }],
+    // A agenda da pessoa, intacta e pendente: e ela que um `.in("notes", [])`
+    // levaria embora inteira.
+    scheduled_transactions: [
+      { ...PREVISAO_DO_AUTO, id: "prev-aluguel", notes: null, status: "pending" },
+      { ...PREVISAO_DO_AUTO, id: "prev-luz", notes: null, status: "pending" },
+    ],
+  });
+
+  const { status, corpo, sessao } = await cancelarEmprestimo({
+    loanId: "loan-lais",
+    tabelas: linhas,
+  });
+
+  assert.equal(status, 200, JSON.stringify(corpo));
+  assert.equal(corpo.caso, "conexao");
+
+  // A ASSERCAO E A AUSENCIA DO DELETE, e nao "nada foi apagado": um DELETE que
+  // por sorte nao casou com nenhuma linha passaria pela segunda e nao pela
+  // primeira -- e e o DELETE emitido que apaga a agenda quando o fixture tem
+  // previsao com `notes` nulo.
+  assert.equal(escritasEm(sessao, "scheduled_transactions", "delete").length, 0);
+  assert.equal(corpo.previsoes_apagadas, 0);
+  assert.deepEqual(
+    linhas.scheduled_transactions.map((p) => p.id).sort(),
+    ["prev-aluguel", "prev-luz"]
+  );
+
+  // E a divida sai da tela DELA pelo status do emprestimo, que e o unico passo
+  // que o Caso B precisa.
+  assert.equal(linhas.mybank_loans[0].status, "cancelled");
+  assert.equal(linhas.mybank_installments[0].status, "cancelled");
+
+  // A frase diz o que mudou no lado dela, com o nome.
+  assert.match(corpo.message, /Laís Bernucio/);
+});
+
+test("quem NAO e o credor recebe recusa explicita, e nada e escrito", async () => {
+  const linhas = tabelasDoCancelamento({
+    mybank_loans: [{ ...EMPRESTIMO_PARA_A_LAIS }],
+    mybank_installments: [{ ...PARCELA_DA_LAIS }],
+  });
+
+  const { status, corpo, sessao } = await cancelarEmprestimo({
+    quem: LAIS,
+    loanId: "loan-lais",
+    tabelas: linhas,
+  });
+
+  // 403 EXPLICITO, e nao 200 de uma escrita que a RLS filtrou.
+  assert.equal(status, 403);
+  assert.match(corpo.error, /Só quem emprestou/i);
+  assert.equal(corpo.success, undefined);
+  assert.equal(sessao.escritas.length, 0);
+  assert.equal(linhas.mybank_loans[0].status, "active");
+});
+
+test("a recusa ao devedor nao conta o ESTADO da divida (nem `settled` nem `cancelled`)", async () => {
+  const { status, corpo } = await cancelarEmprestimo({
+    quem: LAIS,
+    loanId: "loan-lais",
+    tabelas: tabelasDoCancelamento({
+      mybank_loans: [{ ...EMPRESTIMO_PARA_A_LAIS, status: "settled" }],
+      mybank_installments: [{ ...PARCELA_DA_LAIS }],
+    }),
+  });
+
+  // A ORDEM DAS PERGUNTAS E A RESPOSTA: "nao e seu" vem antes de "ja quitado",
+  // senao a mensagem de erro conta o estado da divida de outra pessoa.
+  assert.equal(status, 403);
+  assert.doesNotMatch(corpo.error, /quitado|cancelado/i);
+});
+
+test("emprestimo JA CANCELADO e recusado com frase propria, e nao cancela de novo", async () => {
+  const linhas = tabelasDoCancelamento({
+    mybank_loans: [{ ...EMPRESTIMO_DO_AUTO, status: "cancelled" }],
+  });
+
+  const { status, corpo, sessao } = await cancelarEmprestimo({ tabelas: linhas });
+
+  assert.equal(status, 409);
+  assert.match(corpo.error, /já está cancelado/i);
+  assert.equal(sessao.escritas.length, 0);
+});
+
+test("emprestimo JA QUITADO tem frase DIFERENTE da do cancelado", async () => {
+  const { status, corpo } = await cancelarEmprestimo({
+    tabelas: tabelasDoCancelamento({
+      mybank_loans: [{ ...EMPRESTIMO_DO_AUTO, status: "settled" }],
+    }),
+  });
+
+  assert.equal(status, 409);
+  // Dizer "ja cancelado" de um emprestimo quitado desmente o banco para quem
+  // acabou de receber a ultima parcela.
+  assert.match(corpo.error, /quitado/i);
+  assert.doesNotMatch(corpo.error, /já está cancelado/i);
+});
+
+test("o UPDATE do emprestimo filtrado pela RLS NAO responde sucesso", async () => {
+  const linhas = tabelasDoCancelamento();
+  const { status, corpo, sessao } = await cancelarEmprestimo({
+    tabelas: linhas,
+    // A resposta medida em producao: 200 com corpo vazio, sem erro nenhum.
+    rlsFiltra: { mybank_loans: true },
+  });
+
+  assert.equal(status, 500);
+  assert.equal(corpo.success, undefined);
+  assert.match(corpo.error, /Nada foi alterado/i);
+
+  // E O PASSO 3 NAO ACONTECE: parcela cancelada de um emprestimo que continua
+  // ativo e o pior dos dois estados -- a divida aparece nas telas sem nenhuma
+  // parcela a pagar.
+  assert.equal(escritasEm(sessao, "mybank_installments", "update").length, 0);
+  assert.equal(escritasEm(sessao, "scheduled_transactions", "delete").length, 0);
+  assert.equal(linhas.mybank_installments[1].status, "pending");
+});
+
+test("as parcelas que a RLS nao deixa cancelar NAO levam as previsoes embora", async () => {
+  const linhas = tabelasDoCancelamento();
+  const { status, corpo, sessao } = await cancelarEmprestimo({
+    tabelas: linhas,
+    rlsFiltra: { mybank_installments: true },
+  });
+
+  // O emprestimo JA esta cancelado e isso nao e desfeito -- ressuscitar a
+  // divida por causa do passo seguinte seria trocar um erro visivel por outro.
+  assert.equal(status, 500);
+  assert.equal(linhas.mybank_loans[0].status, "cancelled");
+  assert.match(corpo.error, /continuam em aberto/i);
+  assert.equal(corpo.parcelas_em_aberto, 2);
+
+  // A PREVISAO DA PARCELA QUE CONTINUOU EM ABERTO FICA. Apaga-la seria a
+  // direcao de falha que esta ordem existe para evitar: cobranca invisivel.
+  assert.equal(escritasEm(sessao, "scheduled_transactions", "delete").length, 0);
+  assert.equal(linhas.scheduled_transactions.length, 4);
+});
+
+test("a linha DEVOLVIDA pelo UPDATE e conferida: credor diferente volta 500", async () => {
+  // O FIXTURE E UM ESTADO QUE A CHAVE PRIMARIA PROIBE, e isso esta escrito aqui
+  // de proposito: duas linhas de `mybank_loans` com o mesmo id. Nenhum caminho
+  // de producao chega nele hoje -- a pergunta do passo 1 ja barrou o devedor, e
+  // a PK impede o homonimo.
+  //
+  // E a conferencia continua valendo a linha que ocupa: ela e sobre o UPDATE QUE
+  // ACONTECEU, e nao sobre a linha que foi lida antes dele. O que ela protege e
+  // o dia em que `mybank_loans_update` afrouxar (uma policy que passe a aceitar
+  // o devedor, um `OR` novo) -- e este e o unico arranjo em que a sonda alcanca
+  // essa guarda. Sem este teste a linha ficaria sem medicao nenhuma, e um
+  // mutante que a apagasse sobreviveria dizendo "nenhuma assercao protege isto".
+  const linhas = tabelasDoCancelamento({
+    mybank_loans: [
+      { ...EMPRESTIMO_DO_AUTO },
+      { ...EMPRESTIMO_DO_AUTO, lender_user_id: LAIS, borrower_user_id: LAIS },
+    ],
+  });
+
+  const { status, corpo, sessao } = await cancelarEmprestimo({ tabelas: linhas });
+
+  assert.equal(status, 500);
+  assert.equal(corpo.success, undefined);
+
+  // E O PASSO 3 NAO ACONTECE: a rota para na conferencia, antes de mexer em
+  // parcela nenhuma.
+  assert.equal(escritasEm(sessao, "mybank_installments", "update").length, 0);
+  assert.equal(escritasEm(sessao, "scheduled_transactions", "delete").length, 0);
+});
+
+test("emprestimo com TODAS as parcelas pagas: nao ha `.in` vazio em parcela nenhuma", async () => {
+  const linhas = tabelasDoCancelamento({
+    mybank_installments: [{ ...PARCELAS_DO_AUTO_A_CANCELAR[0] }],
+    scheduled_transactions: [
+      previsaoDaParcela("p-paga", "paid", {
+        paid_date: "2026-11-11",
+        transaction_id: "tx-da-paga",
+      }),
+      { ...PREVISAO_DO_AUTO, id: "prev-alheia", notes: null, status: "pending" },
+    ],
+  });
+
+  const { status, corpo, sessao } = await cancelarEmprestimo({ tabelas: linhas });
+
+  assert.equal(status, 200, JSON.stringify(corpo));
+  assert.equal(linhas.mybank_loans[0].status, "cancelled");
+
+  // SEM UPDATE DE PARCELA E SEM DELETE: um `.in("id", [])` aqui alcancaria toda
+  // parcela que a RLS entrega -- inclusive as pagas de OUTROS emprestimos meus.
+  assert.equal(escritasEm(sessao, "mybank_installments", "update").length, 0);
+  assert.equal(escritasEm(sessao, "scheduled_transactions", "delete").length, 0);
+  assert.equal(linhas.mybank_installments[0].status, "paid");
+  assert.equal(linhas.scheduled_transactions.length, 2);
+  assert.equal(corpo.parcelas_canceladas, 0);
+  assert.equal(corpo.parcelas_pagas_intactas, 1);
+});
+
+test("corpo sem `status: cancelled` e recusado, e a rota nao edita a divida", async () => {
+  for (const corpo of [
+    {},
+    { status: "settled" },
+    { status: "active" },
+    // O ataque: encolher a divida pelo mesmo PATCH que encerra.
+    { status: "cancelled!", principal: 1, installment_count: 1 },
+  ]) {
+    const linhas = tabelasDoCancelamento();
+    const r = await cancelarEmprestimo({ corpo, tabelas: linhas });
+
+    assert.equal(r.status, 400, JSON.stringify(corpo));
+    assert.match(r.corpo.error, /cancelled/);
+    assert.equal(r.sessao.escritas.length, 0);
+    assert.equal(linhas.mybank_loans[0].status, "active");
+  }
+});
+
+test("o PATCH nunca grava campo nenhum do corpo no emprestimo", async () => {
+  const linhas = tabelasDoCancelamento();
+  const { status, sessao } = await cancelarEmprestimo({
+    corpo: {
+      status: "cancelled",
+      principal: 1,
+      installment_count: 1,
+      borrower_user_id: LAIS,
+      lender_user_id: LAIS,
+      lender_account_id: "conta-da-lais",
+    },
+    tabelas: linhas,
+  });
+
+  assert.equal(status, 200);
+
+  // A defesa e a AUSENCIA: `status` e o unico campo que este arquivo le do
+  // corpo, em ramo nenhum. Nao ha `delete patch.principal` para alguem remover.
+  const [doEmprestimo] = escritasEm(sessao, "mybank_loans", "update");
+  assert.deepEqual(Object.keys(doEmprestimo.patch), ["status"]);
+  assert.equal(linhas.mybank_loans[0].principal, 24000);
+  assert.equal(linhas.mybank_loans[0].borrower_user_id, EU);
+});
+
+test("emprestimo que nao e meu nem e divida minha volta 404, e nao 403", async () => {
+  const { status, corpo, sessao } = await cancelarEmprestimo({
+    loanId: "loan-de-ninguem",
+  });
+
+  assert.equal(status, 404);
+  assert.match(corpo.error, /não encontrado/i);
+  assert.equal(sessao.escritas.length, 0);
+});
+
+test("CONTROLE: a rota do cancelamento usou o duble (as ausencias nao sao vacuas)", async () => {
+  const { sessao } = await cancelarEmprestimo();
+
+  // Sem este controle, um `__dubleDeSupabase` que nao chegasse a rota faria
+  // TODA assercao de ausencia desta parte passar verde sem medir nada.
+  assert.ok(sessao.lidas.length > 0, "a rota nao leu nada pelo duble");
+  assert.ok(
+    sessao.escritas.length >= 3,
+    `a rota escreveu menos do que os tres passos: ${JSON.stringify(
+      sessao.escritas.map((e) => `${e.tabela}:${e.verbo}`)
+    )}`
+  );
+});
+
+// ---------------------------------------------------------------------------
+// PARTE 10 -- as frases do cancelamento (funcao pura)
+// ---------------------------------------------------------------------------
+
+test("o aviso do `confirm()` diz o que o cancelamento NAO faz", () => {
+  const aviso = LIB.avisoDoCancelamento({
+    descricao: "Moto elétrica",
+    caso: "auto",
+    nomeDoDevedor: null,
+  });
+
+  assert.match(aviso, /Moto elétrica/);
+  assert.match(aviso, /Contas a Pagar/i);
+  assert.match(aviso, /já pagas continuam pagas/i);
+  // AS DUAS NEGATIVAS, e elas sao a razao de este texto ter teste: quem cancela
+  // achando que esta quitando ve a divida desaparecer e conclui que pagou.
+  assert.match(aviso, /NÃO registra pagamento/);
+  assert.match(aviso, /NÃO amortiza/);
+});
+
+test("no Caso B o aviso diz que a tela que muda e a de OUTRA pessoa", () => {
+  const aviso = LIB.avisoDoCancelamento({
+    descricao: "Moto elétrica",
+    caso: "conexao",
+    nomeDoDevedor: "Laís",
+  });
+
+  assert.match(aviso, /tela de Laís/);
+  assert.match(aviso, /NÃO registra pagamento/);
+});
+
+test("aviso do Caso B sem nome legivel nao mostra `null`", () => {
+  const aviso = LIB.avisoDoCancelamento({
+    descricao: "Moto elétrica",
+    caso: "conexao",
+    nomeDoDevedor: null,
+  });
+
+  assert.doesNotMatch(aviso, /null|undefined/);
+  assert.match(aviso, /quem deve/i);
+});
+
+test("a mensagem do cancelamento conta os DOIS lados, e nomeia quem deixa de ser cobrado", () => {
+  const doCasoB = LIB.mensagemDoCancelamento({
+    caso: "conexao",
+    quantasCanceladas: 23,
+    quantasPagas: 1,
+    previsoesApagadas: 0,
+    nomeDoDevedor: "Laís",
+  });
+
+  assert.match(doCasoB, /23 parcelas canceladas/);
+  assert.match(doCasoB, /despesas de Laís/);
+  assert.match(doCasoB, /já paga continua paga/);
+
+  const doCasoA = LIB.mensagemDoCancelamento({
+    caso: "auto",
+    quantasCanceladas: 2,
+    quantasPagas: 0,
+    previsoesApagadas: 2,
+    nomeDoDevedor: null,
+  });
+
+  assert.match(doCasoA, /2 parcelas canceladas/);
+  assert.match(doCasoA, /2 contas a pagar saíram/i);
+  // Sem parcela paga, a frase NAO inventa a oracao sobre elas. O padrao e a
+  // ORACAO e nao a palavra: "contas a pagar" contem "paga", e um
+  // `doesNotMatch(/paga/i)` reprovaria a frase certa.
+  assert.doesNotMatch(doCasoA, /continuam? paga/i);
+});
+
+test("`parcelaSegueOCancelamento`: so `pending` e `reported`", () => {
+  assert.equal(LIB.parcelaSegueOCancelamento({ status: "pending" }), true);
+  assert.equal(LIB.parcelaSegueOCancelamento({ status: "reported" }), true);
+  // As duas que NAO podem entrar: a paga (apagaria historico de dinheiro) e a
+  // ja cancelada (cancelar duas vezes nao tem segundo efeito).
+  assert.equal(LIB.parcelaSegueOCancelamento({ status: "paid" }), false);
+  assert.equal(LIB.parcelaSegueOCancelamento({ status: "cancelled" }), false);
+});
+
+test("`chavesDasPrevisoesDoCancelamento`: Caso A tem chave por parcela, Caso B e vazio", () => {
+  assert.deepEqual(
+    LIB.chavesDasPrevisoesDoCancelamento({
+      caso: "auto",
+      parcelasCanceladas: [{ id: "p1" }, { id: "p2" }],
+    }),
+    ["mybank:p1", "mybank:p2"]
+  );
+
+  // O Caso B nunca gravou previsao minha: a lista e vazia POR DECISAO, e e o
+  // `.length` de quem chama que impede o `.in` vazio de apagar a agenda.
+  assert.deepEqual(
+    LIB.chavesDasPrevisoesDoCancelamento({
+      caso: "conexao",
+      parcelasCanceladas: [{ id: "p1" }],
+    }),
+    []
+  );
+});
+
+test("`problemaDoCancelamento`: o credor passa, o devedor nao, e o estado vem depois", () => {
+  const ativo = { lender_user_id: EU, status: "active" };
+
+  assert.equal(LIB.problemaDoCancelamento({ emprestimo: ativo, meuId: EU }), null);
+  assert.equal(
+    LIB.problemaDoCancelamento({ emprestimo: ativo, meuId: LAIS }),
+    "nao_sou_o_credor"
+  );
+  assert.equal(
+    LIB.problemaDoCancelamento({
+      emprestimo: { lender_user_id: EU, status: "cancelled" },
+      meuId: EU,
+    }),
+    "emprestimo_ja_cancelado"
+  );
+  assert.equal(
+    LIB.problemaDoCancelamento({
+      emprestimo: { lender_user_id: EU, status: "settled" },
+      meuId: EU,
+    }),
+    "emprestimo_ja_quitado"
+  );
+  // A ORDEM: quem nao e o credor nao chega a saber o estado da divida.
+  assert.equal(
+    LIB.problemaDoCancelamento({
+      emprestimo: { lender_user_id: EU, status: "settled" },
+      meuId: LAIS,
+    }),
+    "nao_sou_o_credor"
+  );
+});

@@ -1,7 +1,7 @@
 {
   "//": [
-    "MyBank -- a aritmetica do emprestimo e as TRES rotas do ciclo (HMO-370 e",
-    "HMO-382).",
+    "MyBank -- a aritmetica do emprestimo e as QUATRO rotas do ciclo (HMO-370,",
+    "HMO-382 e HMO-391).",
     "",
     "Compila as rotas e, por arrasto do tsc, `lib/emprestimo-do-mybank.ts` com as",
     "dependencias dele (lib/lancamento.ts, lib/transferencia.ts) e",
@@ -11,7 +11,16 @@
     "  * app/api/mybank/installments/[id]/route.ts -- PATCH (avisa/confirma);",
     "  * app/api/scheduled-transactions/[id]/pay/route.ts -- POST (baixa a",
     "    previsao do Caso A, e e o unico lugar que leva a parcela do",
-    "    auto-emprestimo a `paid`) e DELETE (estorna, e a devolve a `pending`).",
+    "    auto-emprestimo a `paid`) e DELETE (estorna, e a devolve a `pending`);",
+    "  * app/api/mybank/loans/[id]/route.ts -- PATCH (cancela: o emprestimo vira",
+    "    `cancelled`, as parcelas em aberto tambem, as `paid` ficam, e as",
+    "    previsoes `pending` do Caso A sao apagadas -- HMO-391).",
+    "",
+    "O CANCELAMENTO MORA AQUI PELA MESMA RAZAO DA BAIXA",
+    "Ele e a OUTRA ponta do mesmo elo `mybank:<id>`: a baixa o LE para marcar a",
+    "parcela, o cancelamento o usa para APAGAR a previsao. Medir os dois na mesma",
+    "suite e o que deixa a emenda visivel -- e o fixture do Caso A (emprestimo +",
+    "parcelas + previsoes com o elo) e o mesmo.",
     "",
     "POR QUE A ROTA DA BAIXA MORA NESTA SUITE, E NAO NUMA NOVA",
     "O ciclo do Caso A e UM fato repartido em tres rotas, e o defeito que a",
@@ -56,6 +65,7 @@
   },
   "include": [
     "../app/api/mybank/loans/route.ts",
+    "../app/api/mybank/loans/[id]/route.ts",
     "../app/api/mybank/installments/[id]/route.ts",
     "../app/api/scheduled-transactions/[id]/pay/route.ts"
   ]

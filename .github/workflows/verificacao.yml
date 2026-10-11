@@ -7316,11 +7316,20 @@ jobs:
       #     estorno a devolvendo a `pending` com os tres campos, e as duas
       #     ordens que fazem a falha no meio ser sempre "nao aconteceu" em vez de
       #     "metade aconteceu" -- a parcela baixada ANTES da previsao na ida, e
-      #     devolvida ANTES de qualquer DELETE na volta.
+      #     devolvida ANTES de qualquer DELETE na volta;
+      #   * (HMO-391) O CANCELAMENTO: o emprestimo virando `cancelled` -- o que
+      #     apaga a divida das DUAS telas de uma vez, porque as duas leituras
+      #     filtram `active` --, as parcelas em aberto acompanhando, e a parcela
+      #     `paid` FICANDO `paid`: ela tem perna em `financial_transactions`, e
+      #     reescreve-la apagaria o registro de um dinheiro que se moveu. Mais a
+      #     previsao ja baixada do Caso A sobrevivendo ao DELETE (`status =
+      #     'pending'` no filtro) e as DUAS guardas de `.length` antes do `.in`:
+      #     clausula `.in` vazia no PostgREST NAO filtra, e sem elas cancelar um
+      #     emprestimo do Caso B levaria a agenda INTEIRA de Contas a Pagar.
       - name: MyBank -- a serie do emprestimo, as rotas e o ciclo do Caso A
         run: npm run test:emprestimo-do-mybank
 
-      # Controle negativo do step acima: 33 mutantes, 33 mortos.
+      # Controle negativo do step acima: 50 mutantes, 50 mortos.
       #
       # O que a HMO-382 pede por nome e `A PARCELA FICA EM pending`: o dinheiro
       # anda certo nas 24 vezes (corrente -X, investimento +X) e o painel do
@@ -7336,6 +7345,15 @@ jobs:
       # `contaDePagamentoId` ja chega `null` e a segunda guarda devolve `[]` de
       # qualquer jeito. Quem mata o mutante da guarda do caso e, e so, o teste
       # que manda `conta_de_pagamento_id` junto com `devedor_id`.
+      #
+      # Os tres que a HMO-391 pede por nome sao os tres primeiros da secao do
+      # cancelamento, e os tres apagam dinheiro sem erro nenhum no caminho:
+      # cancelar TAMBEM a parcela `paid` (o unico registro que explica o saldo da
+      # conta de investimento), apagar a previsao JA BAIXADA (as duas pernas da
+      # transferencia ficam orfas no extrato), e INVERTER a ordem 4<->2 -- esse
+      # ultimo e mutado injetando o DELETE das previsoes ANTES do UPDATE do
+      # emprestimo, e quem o mata e a assercao de ORDEM por `indexOf` sobre as
+      # escritas que a rota mandou.
       - name: Mutantes do MyBank -- emprestimo e ciclo do Caso A
         run: npm run mutantes:emprestimo-do-mybank
 
@@ -7370,10 +7388,17 @@ jobs:
       # (`chromium-*`) em vez de fixar a versao no fonte, que foi o que deixou as
       # quatro sondas antigas 100% vermelhas quando o ambiente subiu de 1243
       # para 1248.
+      #
+      # (HMO-391) E o botao «Cancelar»: ele existe SO em emprestimo `active` (o
+      # fixture tem os tres estados na MESMA conta, entao "o botao aparece" e "o
+      # botao aparece onde deve" sao perguntas diferentes), a pergunta recusada
+      # nao manda PATCH nenhum, e o TEXTO dela diz o que o cancelamento NAO faz
+      # -- nao registra pagamento e nao amortiza nada. Quem cancela achando que
+      # esta quitando ve a divida desaparecer e conclui que pagou.
       - name: MyBank -- a tela, o seletor e a linha de A receber
         run: npm run test:mybank-na-tela
 
-      # Controle negativo do step acima: 22 mutantes, 22 mortos.
+      # Controle negativo do step acima: 45 mutantes, 45 mortos.
       #
       # Os dois que a issue HMO-371 pede por nome sao os dois primeiros da lista
       # do runner: o filtro de `account_type = 'investment'` caindo (o seletor
@@ -7387,6 +7412,14 @@ jobs:
       # status do emprestimo da a mesma lista), e uma conexao aceita cujo embed
       # do MEU lado vem NULO -- o caso que a RLS de `profiles` produz, e o unico
       # em que decidir o lado por `requester_id` difere de decidir pelo embed.
+      #
+      # (HMO-391) Os cinco do botao «Cancelar» entram nesta lista, e o mais
+      # caro deles e `A PERGUNTA DEIXA DE DECIDIR`: o `confirm()` acontece, a
+      # tela parece pedir confirmacao, e a resposta e ignorada -- uma acao
+      # destrutiva cujo "cancelar" nao cancela, que e pior que nao ter a
+      # pergunta, porque a pessoa confia nela. So sonda de navegador mede isso:
+      # ela SUBSTITUI `window.confirm`, le a frase que o app passou e DECIDE a
+      # resposta.
       - name: Mutantes da tela do MyBank
         run: npm run mutantes:mybank-na-tela
 
