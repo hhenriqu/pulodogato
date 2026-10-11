@@ -2854,3 +2854,1278 @@ test("previsao SEM elo do MyBank nao toca `mybank_loans`", async () => {
   assert.equal(corpo.emprestimo_quitado, false);
   assert.equal(corpo.message, "Transferência confirmada");
 });
+
+// ---------------------------------------------------------------------------
+// PARTE 12 -- A ANTECIPACAO DE PARCELAS (HMO-395, F2 da HMO-393)
+// ---------------------------------------------------------------------------
+// O QUE ESTA PARTE EXISTE PARA IMPEDIR, e a primeira e a razao de a issue
+// existir:
+//
+//   1. A ANTECIPACAO CANCELAR A CAUDA. O desenho que a HMO-393 propunha no item
+//      2 -- as parcelas do fim viram `cancelled` E o dinheiro paga as proximas em
+//      aberto -- EXTINGUE O DOBRO DO QUE FOI PAGO. Quatro parcelas saem do
+//      caminho, duas foram pagas, e a divida de R$ 600 se resolve com R$ 400.
+//      Nenhum CHECK reclama e as duas telas ficam consistentes ENTRE SI: o unico
+//      numero que denuncia e `soma(pagas) + soma(em aberto)` comparado com
+//      `principal`, e esse numero nao esta em tela nenhuma.
+//
+//      E por isso o controle desta issue e uma assercao de SOMATORIO, lida na
+//      TABELA, e nao de `status`: os dois desenhos escrevem status diferentes, e
+//      so um deles perde dinheiro. Uma assercao de status mataria o mutante pelo
+//      motivo errado e continuaria verde no dia em que o desenho mudasse de
+//      status sem mudar de aritmetica.
+//
+//   2. A ESCOLHA PEGAR A CABECA DA SERIE. Com `ASC` no lugar de `DESC` o total
+//      recebido e o MESMO e as duas telas ficam consistentes -- mas a serie NAO
+//      ENCURTA: a decisao de produto ("2 parcelas menos", "ENCURTA a serie")
+//      deixa de ser cumprida sem nenhum numero errado em lugar nenhum. O que
+//      mede isso e QUAIS parcelas foram baixadas e qual passou a ser o ultimo
+//      vencimento em aberto.
+//
+//   3. A PERNA SER `income`. Principal voltando nao e receita, e aqui o defeito
+//      e maior que na parcela avulsa: a antecipacao lanca N pernas de uma vez,
+//      entao o mesmo principal entraria como renda N vezes num unico clique. A
+//      parcela avulsa ja tem ancora propria para isso; esta rota precisa da DELA
+//      (`mesmo-alvo-nao-prova-coberto-compare-as-ancoras`).
+//
+//   4. O CREDOR SER CONFERIDO SO DEPOIS DO UPDATE. `mybank_loans_select` e
+//      `lender OR borrower`: a devedora LE a linha. A trava do devedor (053)
+//      recusa `paid_date` com excecao, mas a POLICY de UPDATE filtra em silencio
+//      -- 200 com `[]` --, e sem a pergunta na rota ela receberia "antecipei
+//      duas parcelas" de uma escrita que nao aconteceu.
+//
+//   5. O ROLLBACK DA PERNA NAO RODAR. Perna sem parcela baixada e dinheiro no
+//      extrato que nenhuma divida explica: o saldo da conta de investimento sobe
+//      e a divida fica inteira de pe.
+//
+// O FIXTURE TEM PARCELA JA PAGA, E ISSO E O QUE FAZ O SOMATORIO MEDIR
+// ------------------------------------------------------------------
+// Com todas as parcelas em aberto, "pagar a cauda" e "cancelar a cauda e pagar a
+// cabeca" movem a MESMA quantidade de dinheiro para dentro do periodo medido, e
+// o somatorio de uma serie virgem nao distingue os dois arranjos tao bem. Com a
+// parcela 1 ja paga ANTES do pedido, a soma do que o devedor pagou ao todo entra
+// na conta -- e e ela que cai de R$ 600 para R$ 400 no desenho que cancela
+// (`mutante-de-ramo-de-passagem-exige-fixture-do-outro-ramo`).
+//
+// E O VIZINHO: um SEGUNDO emprestimo meu, com parcelas em aberto de vencimento
+// MAIOR. Sem ele, "as parcelas desta divida" e "as parcelas que a RLS entrega"
+// sao o mesmo conjunto, e o mutante que apaga o `.eq("loan_id")` sobrevive
+// antecipando a parcela de outra divida.
+
+const ANTECIPA = await import(
+  "../.tmp-emprestimo-do-mybank/app/api/mybank/loans/[id]/antecipacao/route.js"
+);
+
+/** 6 x R$ 100 para a Lais -- o emprestimo da medicao em producao. */
+const EMPRESTIMO_A_ANTECIPAR = {
+  id: "loan-antecipa",
+  lender_user_id: EU,
+  lender_account_id: INVESTIMENTO,
+  borrower_user_id: LAIS,
+  description: "Notebook",
+  principal: 600,
+  installment_count: 6,
+  first_due_date: "2026-11-10",
+  status: "active",
+  // A trava `mybank_loans_interest_rate_fase_1` prende isto em 0, e e ela que
+  // faz `valorDaAntecipacao` poder ser uma soma simples. O `numeric` do
+  // PostgREST chega como STRING, e o fixture imita isso de proposito: com
+  // `!== 0` no lugar do `Number(...)` a recusa de juro dispararia em TODO
+  // emprestimo da fase 1 e a feature inteira ficaria inalcancavel.
+  interest_rate: "0.00",
+  created_at: "2026-10-10T00:00:00Z",
+};
+
+function parcelaDoNotebook(numero, status, extra = {}) {
+  // Vencimentos mensais a partir de 11/2026: a parcela 6 vence em 04/2027.
+  const mes = String(10 + numero).padStart(2, "0");
+  const ano = numero <= 2 ? 2026 : 2027;
+  const mesReal = numero <= 2 ? mes : String(numero - 2).padStart(2, "0");
+
+  return {
+    id: `n${numero}`,
+    loan_id: "loan-antecipa",
+    installment_number: numero,
+    installment_total: 6,
+    amount: 100,
+    due_date: `${ano}-${mesReal}-10`,
+    status,
+    reported_at: null,
+    paid_date: null,
+    paid_transaction_id: null,
+    ...extra,
+  };
+}
+
+/**
+ * A serie: 1 JA PAGA, 2..6 em aberto -- e a 4 em `reported`.
+ *
+ * A `reported` nao e enfeite: ela e "em aberto" tanto quanto a `pending` (o
+ * devedor avisou, o credor nao confirmou), e sem ela um criterio
+ * `status === "pending"` passaria em toda assercao desta parte.
+ */
+const PARCELAS_DO_NOTEBOOK = [
+  parcelaDoNotebook(1, "paid", {
+    paid_date: "2026-11-11",
+    paid_transaction_id: "tx-n1",
+  }),
+  parcelaDoNotebook(2, "pending"),
+  parcelaDoNotebook(3, "pending"),
+  parcelaDoNotebook(4, "reported", { reported_at: "2027-02-09T00:00:00Z" }),
+  parcelaDoNotebook(5, "pending"),
+  parcelaDoNotebook(6, "pending"),
+];
+
+/** O VIZINHO: outra divida minha, com parcela em aberto de vencimento MAIOR. */
+const EMPRESTIMO_VIZINHO = {
+  ...EMPRESTIMO_A_ANTECIPAR,
+  id: "loan-vizinho",
+  description: "Bicicleta",
+  principal: 200,
+  installment_count: 2,
+};
+
+const PARCELAS_DO_VIZINHO = [
+  {
+    ...parcelaDoNotebook(1, "pending"),
+    id: "v1",
+    loan_id: "loan-vizinho",
+    installment_total: 2,
+    // DEPOIS de toda parcela do notebook: se o `.eq("loan_id")` cair, esta e a
+    // primeira que a escolha da cauda pega.
+    due_date: "2029-12-10",
+  },
+];
+
+function tabelasDaAntecipacao(extra = {}) {
+  return tabelas({
+    mybank_loans: [{ ...EMPRESTIMO_A_ANTECIPAR }, { ...EMPRESTIMO_VIZINHO }],
+    mybank_installments: [
+      ...PARCELAS_DO_NOTEBOOK.map((p) => ({ ...p })),
+      ...PARCELAS_DO_VIZINHO.map((p) => ({ ...p })),
+    ],
+    ...extra,
+  });
+}
+
+async function antecipar({
+  quem = EU,
+  loanId = "loan-antecipa",
+  corpo = { parcelas: 2, data_do_pagamento: "2026-12-01" },
+  tabelas: linhas,
+  erros,
+  rlsFiltra,
+} = {}) {
+  const sessao = criarDuble({
+    user: { id: quem },
+    tabelas: linhas ?? tabelasDaAntecipacao(),
+    ...(erros ? { erros } : {}),
+    ...(rlsFiltra ? { rlsFiltra } : {}),
+  });
+  const registro = { sessao: () => sessao.client };
+  globalThis.__dubleDeSupabase = registro;
+
+  let resposta;
+  try {
+    resposta = await ANTECIPA.POST(
+      { json: async () => corpo },
+      { params: { id: loanId } }
+    );
+  } finally {
+    delete globalThis.__dubleDeSupabase;
+  }
+
+  return { status: resposta.status, corpo: await resposta.json(), sessao, registro };
+}
+
+/**
+ * A INVARIANTE DO DINHEIRO: `soma(pagas) + soma(em aberto) = principal`.
+ *
+ * Lida na TABELA e em CENTAVOS INTEIROS -- somar reais em float daria
+ * 599,9999999999999 e o teste passaria ou falharia pelo IEEE 754 em vez de pela
+ * feature. O que a soma NAO inclui e `cancelled`: parcela cancelada nao foi paga
+ * nem e divida, e e exatamente por isso que cancelar a cauda faz esta soma cair.
+ */
+function somaDaDivida(linhasDasParcelas, loanId) {
+  const daSerie = linhasDasParcelas.filter((p) => p.loan_id === loanId);
+
+  const emCentavos = (status) =>
+    daSerie
+      .filter((p) => status.includes(p.status))
+      .reduce((t, p) => t + Math.round(Number(p.amount) * 100), 0);
+
+  const pagas = emCentavos(["paid"]);
+  const emAberto = emCentavos(["pending", "reported"]);
+
+  return { pagas, emAberto, total: pagas + emAberto };
+}
+
+// ---------------------------------------------------------------------------
+// 12.1 -- A REGRA PURA: a escolha da cauda
+// ---------------------------------------------------------------------------
+
+test("`parcelasDaAntecipacao` pega as N em aberto de MAIOR vencimento", () => {
+  const escolhidas = LIB.parcelasDaAntecipacao({
+    parcelas: PARCELAS_DO_NOTEBOOK,
+    quantas: 2,
+  });
+
+  // AS DO FIM, e na ordem da cauda para cima.
+  assert.deepEqual(
+    escolhidas.map((p) => p.installment_number),
+    [6, 5]
+  );
+});
+
+test("`parcelasDaAntecipacao` NAO alcanca `paid` nem `cancelled`", () => {
+  const serie = [
+    ...PARCELAS_DO_NOTEBOOK.slice(0, 4),
+    parcelaDoNotebook(5, "cancelled"),
+    parcelaDoNotebook(6, "paid", {
+      paid_date: "2027-01-01",
+      paid_transaction_id: "tx-n6",
+    }),
+  ];
+
+  const escolhidas = LIB.parcelasDaAntecipacao({ parcelas: serie, quantas: 3 });
+
+  // Antecipar uma parcela PAGA seria pagar duas vezes a mesma coisa; uma
+  // CANCELADA nao e divida. Sobram 2, 3 e 4 -- e a maior vem primeiro.
+  assert.deepEqual(
+    escolhidas.map((p) => p.installment_number),
+    [4, 3, 2]
+  );
+});
+
+test("empate de vencimento: o desempate e `installment_number` DESC", () => {
+  // AS DUAS NO MESMO DIA, e semeadas na ordem CRESCENTE de numero. `sort` e
+  // ESTAVEL: sem o desempate ele devolve esta mesma ordem e a escolha pega a 5,
+  // e um teste escrito sobre um fixture ja ordenado na direcao certa nao mediria
+  // nada (`sort-estavel-faz-o-teste-de-desempate-nao-medir-nada`).
+  const serie = [
+    parcelaDoNotebook(5, "pending", { due_date: "2027-03-10" }),
+    parcelaDoNotebook(6, "pending", { due_date: "2027-03-10" }),
+  ];
+
+  const escolhidas = LIB.parcelasDaAntecipacao({ parcelas: serie, quantas: 1 });
+
+  assert.deepEqual(
+    escolhidas.map((p) => p.installment_number),
+    [6]
+  );
+});
+
+test("`parcelasDaAntecipacao` NAO reordena a lista que recebeu", () => {
+  // A rota le as parcelas UMA vez e passa o mesmo array para a escolha, para
+  // `quantasEmAberto` e para `ultimoVencimentoEmAberto`. Um `.sort()` sem copia
+  // reordenaria o array de quem chamou como efeito colateral de escolher.
+  const serie = PARCELAS_DO_NOTEBOOK.map((p) => ({ ...p }));
+  const antes = serie.map((p) => p.installment_number);
+
+  LIB.parcelasDaAntecipacao({ parcelas: serie, quantas: 3 });
+
+  assert.deepEqual(
+    serie.map((p) => p.installment_number),
+    antes
+  );
+});
+
+test("`valorDaAntecipacao` soma em CENTAVOS: 12 x 33,33 nao vira dizima", () => {
+  // O CASO TEM DE SER UM QUE DIVIRJA, E 24 x 416,67 NAO E UM DELES.
+  //
+  // O numero canonico desta feature -- 24 x R$ 416,67, a serie de R$ 10.000 da
+  // PARTE 1 -- soma EXATO em float: 10000.08 pelos dois caminhos. Um teste
+  // escrito sobre ele afirma a resposta certa pelo motivo errado, e o mutante
+  // que troca a soma de centavos pela soma de reais SOBREVIVE. Foi exatamente o
+  // que aconteceu na primeira volta desta medicao -- 77 de 78, e o sobrevivente
+  // era este (`caso-da-issue-nao-distingue-floor-de-round`).
+  //
+  // R$ 400 em 12 x R$ 33,33 diverge: somando reais da 399.95999999999987.
+  const parcelas = Array.from({ length: 12 }, () => ({ amount: 33.33 }));
+
+  const valor = LIB.valorDaAntecipacao({ parcelasEscolhidas: parcelas });
+
+  assert.equal(valor, 399.96);
+
+  // O CONTROLE DO PROPRIO CASO. Sem esta linha nada neste teste prova que o
+  // caso escolhido distingue os dois caminhos, e quem mexer aqui pode trocar
+  // por um valor que volta a nao medir nada.
+  assert.notEqual(
+    parcelas.reduce((t, p) => t + p.amount, 0),
+    399.96,
+    "o caso escolhido tem de DIVERGIR da soma em reais"
+  );
+
+  assert.equal(LIB.valorDaAntecipacao({ parcelasEscolhidas: [] }), 0);
+});
+
+test("`ultimoVencimentoEmAberto`: `MM/AAAA` da parcela em aberto mais distante", () => {
+  // 6 vence em 04/2027 e esta em aberto.
+  assert.equal(LIB.ultimoVencimentoEmAberto(PARCELAS_DO_NOTEBOOK), "04/2027");
+
+  // Com 5 e 6 pagas, o fim da serie passa a ser a 4 -- 02/2027. E e isto que
+  // "a serie encurtou" quer dizer com um numero.
+  const depois = PARCELAS_DO_NOTEBOOK.map((p) =>
+    p.installment_number >= 5 ? { ...p, status: "paid" } : p
+  );
+  assert.equal(LIB.ultimoVencimentoEmAberto(depois), "02/2027");
+
+  // Nada em aberto devolve `null`, e nao a string de uma data qualquer: e o
+  // sinal de "a divida acabou" que a mensagem le.
+  assert.equal(
+    LIB.ultimoVencimentoEmAberto(
+      PARCELAS_DO_NOTEBOOK.map((p) => ({ ...p, status: "paid" }))
+    ),
+    null
+  );
+});
+
+test("`ultimoVencimentoEmAberto` ordena pelo ISO, e nao pelo rotulo", () => {
+  // `MM/AAAA` NAO ordena lexicograficamente: "01/2028" vem antes de "09/2026".
+  // Ordenar os rotulos devolveria 09/2026 como o ultimo vencimento.
+  const serie = [
+    parcelaDoNotebook(1, "pending", { due_date: "2026-09-10" }),
+    parcelaDoNotebook(2, "pending", { due_date: "2028-01-10" }),
+  ];
+
+  assert.equal(LIB.ultimoVencimentoEmAberto(serie), "01/2028");
+});
+
+// ---------------------------------------------------------------------------
+// 12.2 -- A REGRA PURA: as recusas, e a ORDEM delas
+// ---------------------------------------------------------------------------
+
+test("`problemaDaAntecipacao`: o credor passa, e a devedora nao", () => {
+  const base = {
+    emprestimo: EMPRESTIMO_A_ANTECIPAR,
+    parcelas: PARCELAS_DO_NOTEBOOK,
+    quantas: 2,
+  };
+
+  assert.equal(LIB.problemaDaAntecipacao({ ...base, meuId: EU }), null);
+  assert.equal(
+    LIB.problemaDaAntecipacao({ ...base, meuId: LAIS }),
+    "nao_sou_o_credor"
+  );
+});
+
+test("`problemaDaAntecipacao`: a pergunta de credor VEM ANTES do estado", () => {
+  // A devedora LE a linha (`mybank_loans_select` e `lender OR borrower`).
+  // Perguntar pelo estado primeiro diria "esse emprestimo esta cancelado" a quem
+  // nao tem nada a antecipar -- vazando o estado da divida de outra pessoa numa
+  // mensagem de erro. A mesma razao de `problemaDoCancelamento`.
+  for (const estado of ["cancelled", "settled"]) {
+    assert.equal(
+      LIB.problemaDaAntecipacao({
+        emprestimo: { ...EMPRESTIMO_A_ANTECIPAR, status: estado },
+        meuId: LAIS,
+        parcelas: PARCELAS_DO_NOTEBOOK,
+        quantas: 2,
+      }),
+      "nao_sou_o_credor",
+      `com status ${estado} a devedora nao pode saber o estado`
+    );
+  }
+});
+
+test("`problemaDaAntecipacao`: emprestimo fora de `active` nao antecipa", () => {
+  for (const estado of ["cancelled", "settled"]) {
+    assert.equal(
+      LIB.problemaDaAntecipacao({
+        emprestimo: { ...EMPRESTIMO_A_ANTECIPAR, status: estado },
+        meuId: EU,
+        parcelas: PARCELAS_DO_NOTEBOOK,
+        quantas: 2,
+      }),
+      "emprestimo_nao_esta_ativo"
+    );
+  }
+});
+
+test("`problemaDaAntecipacao`: juro diferente de zero e RECUSADO, nao calculado", () => {
+  // Com juro, antecipar tem de descontar o juro NAO-CORRIDO da cauda, e somar
+  // `amount` cobraria juro de um tempo que nao existiu. A trava da 053 prende
+  // isto em 0 hoje; a recusa e o que faz o dia em que ela mudar ser um 409 em
+  // vez de um erro de dinheiro.
+  assert.equal(
+    LIB.problemaDaAntecipacao({
+      emprestimo: { ...EMPRESTIMO_A_ANTECIPAR, interest_rate: "1.50" },
+      meuId: EU,
+      parcelas: PARCELAS_DO_NOTEBOOK,
+      quantas: 2,
+    }),
+    "juros_impedem_a_antecipacao"
+  );
+
+  // E o `numeric` como STRING continua passando: `"0.00" !== 0` e verdade, e um
+  // `!==` cru aqui recusaria TODO emprestimo da fase 1.
+  for (const juro of ["0.00", 0, "0", null, undefined]) {
+    assert.equal(
+      LIB.problemaDaAntecipacao({
+        emprestimo: { ...EMPRESTIMO_A_ANTECIPAR, interest_rate: juro },
+        meuId: EU,
+        parcelas: PARCELAS_DO_NOTEBOOK,
+        quantas: 2,
+      }),
+      null,
+      `juro ${JSON.stringify(juro)} e juro zero`
+    );
+  }
+});
+
+test("`problemaDaAntecipacao`: `quantas` tem de ser inteiro >= 1", () => {
+  for (const quantas of [0, -1, 1.5, NaN, Number("duas")]) {
+    assert.equal(
+      LIB.problemaDaAntecipacao({
+        emprestimo: EMPRESTIMO_A_ANTECIPAR,
+        meuId: EU,
+        parcelas: PARCELAS_DO_NOTEBOOK,
+        quantas,
+      }),
+      "quantas_invalida",
+      `${JSON.stringify(quantas)} nao e um numero de parcelas`
+    );
+  }
+});
+
+test("`problemaDaAntecipacao`: nao da para antecipar mais do que esta em aberto", () => {
+  // Sao 5 em aberto (a 1 ja foi paga): 5 passa, 6 nao.
+  assert.equal(LIB.quantasEmAberto(PARCELAS_DO_NOTEBOOK), 5);
+
+  assert.equal(
+    LIB.problemaDaAntecipacao({
+      emprestimo: EMPRESTIMO_A_ANTECIPAR,
+      meuId: EU,
+      parcelas: PARCELAS_DO_NOTEBOOK,
+      quantas: 5,
+    }),
+    null
+  );
+
+  assert.equal(
+    LIB.problemaDaAntecipacao({
+      emprestimo: EMPRESTIMO_A_ANTECIPAR,
+      meuId: EU,
+      parcelas: PARCELAS_DO_NOTEBOOK,
+      quantas: 6,
+    }),
+    "mais_do_que_em_aberto"
+  );
+});
+
+test("`problemaDaAntecipacao`: o CASO A e recusado aqui, e por ultimo", () => {
+  const auto = {
+    ...EMPRESTIMO_A_ANTECIPAR,
+    // Eu sou os dois lados: a parcela e uma transferencia prevista, e quem move
+    // o dinheiro e a baixa dela em Contas a Pagar.
+    borrower_user_id: EU,
+  };
+
+  assert.equal(
+    LIB.problemaDaAntecipacao({
+      emprestimo: auto,
+      meuId: EU,
+      parcelas: PARCELAS_DO_NOTEBOOK,
+      quantas: 2,
+    }),
+    "caso_a_nao_entra_aqui"
+  );
+
+  // E A ORDEM: um Caso A com `quantas` malformado responde pela FORMA do corpo,
+  // e nao pelo ponteiro para outra tela. A frase do Caso A nomeia outro caminho,
+  // e mandar alguem para lá com um pedido que lá tambem seria recusado troca uma
+  // recusa por uma caminhada inutil.
+  assert.equal(
+    LIB.problemaDaAntecipacao({
+      emprestimo: auto,
+      meuId: EU,
+      parcelas: PARCELAS_DO_NOTEBOOK,
+      quantas: 99,
+    }),
+    "mais_do_que_em_aberto"
+  );
+});
+
+test("as frases das recusas dizem o que fazer, e a de `quantas` fala dos R$ 150", () => {
+  const contexto = { status: "cancelled", emAberto: 5 };
+
+  // A recusa ao devedor nao conta o estado da divida.
+  const doDevedor = LIB.mensagemDoProblemaDaAntecipacao(
+    "nao_sou_o_credor",
+    contexto
+  );
+  assert.match(doDevedor, /Só quem emprestou/i);
+  assert.equal(/cancel|settled|quitad/i.test(doDevedor), false);
+
+  // A FRASE QUE A ISSUE PEDE POR NOME: `valor` nao existe no contrato, entao
+  // R$ 150 contra parcelas de R$ 200 nao tem como ser expresso -- e a razao
+  // precisa estar escrita onde a pessoa a le, em vez de so recusar.
+  const deQuantas = LIB.mensagemDoProblemaDaAntecipacao(
+    "quantas_invalida",
+    contexto
+  );
+  assert.match(deQuantas, /parcela inteira/i);
+  assert.match(deQuantas, /pagamento parcial de parcela é outra operação/i);
+  assert.match(deQuantas, /não existe hoje/i);
+
+  // O ponteiro do Caso A, na convencao do PATCH da parcela.
+  assert.match(
+    LIB.mensagemDoProblemaDaAntecipacao("caso_a_nao_entra_aqui", contexto),
+    /Contas a Pagar/
+  );
+
+  // O estado entra na frase de quem manda nele...
+  assert.match(
+    LIB.mensagemDoProblemaDaAntecipacao("emprestimo_nao_esta_ativo", contexto),
+    /"cancelled"/
+  );
+  // ...e a contagem na de "mais do que em aberto", nos dois plurais.
+  assert.match(
+    LIB.mensagemDoProblemaDaAntecipacao("mais_do_que_em_aberto", contexto),
+    /5 parcelas em aberto/
+  );
+  assert.match(
+    LIB.mensagemDoProblemaDaAntecipacao("mais_do_que_em_aberto", {
+      status: "active",
+      emAberto: 1,
+    }),
+    /Só resta 1 parcela/
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 12.3 -- A REGRA PURA: a mensagem, e a TERCEIRA frase dela
+// ---------------------------------------------------------------------------
+
+test("`mensagemDaAntecipacao` diz as TRES coisas que mudaram", () => {
+  const frase = LIB.mensagemDaAntecipacao({
+    numerosAntecipados: [6, 5],
+    ultimoVencimentoAntes: "04/2027",
+    ultimoVencimentoDepois: "02/2027",
+    quitado: false,
+    serieRelida: true,
+  });
+
+  // 1. quantas sairam, e QUAIS;
+  assert.match(frase, /2 parcelas antecipadas/);
+  assert.match(frase, /6 e 5/);
+  // 2. o fim da serie, antes e depois -- a unica frase que diz "encurtou" com
+  //    um numero;
+  assert.match(frase, /era 04\/2027/);
+  assert.match(frase, /passou a ser 02\/2027/);
+  // 3. QUE O VALOR DE QUEM SOBRA NAO MUDOU. Sem ela a leitura natural de "duas
+  //    parcelas menos" e "baixaram minha prestacao", e a pessoa passa a esperar
+  //    um debito menor no mes que vem.
+  assert.match(frase, /mantêm o valor/i);
+  assert.match(frase, /não baixa a prestação/i);
+});
+
+test("`mensagemDaAntecipacao` no singular nao diz `1 parcelas`", () => {
+  const frase = LIB.mensagemDaAntecipacao({
+    numerosAntecipados: [6],
+    ultimoVencimentoAntes: "04/2027",
+    ultimoVencimentoDepois: "03/2027",
+    quitado: false,
+    serieRelida: true,
+  });
+
+  assert.match(frase, /Parcela 6 antecipada/);
+  assert.equal(/1 parcelas/.test(frase), false);
+});
+
+test("`mensagemDaAntecipacao`: sem nada em aberto a TERCEIRA frase SAI", () => {
+  const frase = LIB.mensagemDaAntecipacao({
+    numerosAntecipados: [6, 5],
+    ultimoVencimentoAntes: "04/2027",
+    ultimoVencimentoDepois: null,
+    quitado: true,
+    serieRelida: true,
+  });
+
+  assert.match(frase, /quitado/i);
+  assert.match(frase, /sai da lista A receber/i);
+  // "As que sobram mantem o valor" sobre ZERO parcelas e uma promessa sobre uma
+  // cobranca futura que nao existe -- quem acabou de quitar leria isso como
+  // "ainda vou pagar".
+  assert.equal(/mantêm o valor/i.test(frase), false);
+  assert.equal(/passou a ser/.test(frase), false);
+});
+
+test("`mensagemDaAntecipacao`: nada em aberto SEM quitacao nao anuncia quitacao", () => {
+  // O ESTADO ALCANCAVEL: a serie zerou e o UPDATE de `settled` foi filtrado pela
+  // policy -- 200 com `[]`, sem erro. O emprestimo continua `active` e as duas telas
+  // continuam mostrando a divida. Deduzir a quitacao de "nao sobrou vencimento"
+  // faria a frase anunciar um status que tela nenhuma leria.
+  const frase = LIB.mensagemDaAntecipacao({
+    numerosAntecipados: [6, 5],
+    ultimoVencimentoAntes: "04/2027",
+    ultimoVencimentoDepois: null,
+    quitado: false,
+    serieRelida: true,
+  });
+
+  assert.match(frase, /continua em atividade/i);
+  assert.equal(/quitado/i.test(frase), false);
+  assert.equal(/sai da lista/i.test(frase), false);
+});
+
+// ---------------------------------------------------------------------------
+// 12.4 -- A ROTA: o passo 4 da medicao, e o somatorio
+// ---------------------------------------------------------------------------
+
+test("`mensagemDaAntecipacao`: releitura que FALHOU nao afirma que a divida acabou", () => {
+  // O ESTADO: as parcelas foram pagas de verdade e a releitura da serie falhou.
+  // `ultimoVencimentoDepois` chega `null` -- indistinguivel de "nao sobrou nada" --,
+  // e sem ramo proprio a frase anunciaria o fim da divida porque a rota nao
+  // conseguiu PERGUNTAR se ela acabou. O dinheiro entrou, entao quem le
+  // concluiria que quitou.
+  const frase = LIB.mensagemDaAntecipacao({
+    numerosAntecipados: [6, 5],
+    ultimoVencimentoAntes: "04/2027",
+    ultimoVencimentoDepois: null,
+    quitado: false,
+    serieRelida: false,
+  });
+
+  assert.match(frase, /2 parcelas antecipadas/);
+  assert.match(frase, /não consegui reler/i);
+  assert.match(frase, /confira a lista A receber/i);
+
+  // NADA AFIRMADO SOBRE O RESTO DA SERIE: nem quitacao, nem "nao sobrou
+  // parcela", nem o valor de quem fica.
+  assert.equal(/quitado/i.test(frase), false);
+  assert.equal(/Não sobrou/i.test(frase), false);
+  assert.equal(/mantêm o valor/i.test(frase), false);
+});
+
+test("a RELEITURA que falha nao faz a rota dizer que sobrou zero", async () => {
+  const linhas = tabelasDaAntecipacao();
+
+  // O ARRANJO: a releitura da serie e a ULTIMA leitura de `mybank_installments`
+  // da rota, e e a unica que pode falhar DEPOIS de o dinheiro ter entrado.
+  // `erros` do duble derruba a tabela inteira e impediria o pedido de comecar,
+  // entao o embrulho deixa as duas primeiras leituras passarem e derruba a
+  // terceira.
+  const sessao = criarDuble({ user: { id: EU }, tabelas: linhas });
+  let leituras = 0;
+  globalThis.__dubleDeSupabase = {
+    sessao: () => ({
+      ...sessao.client,
+      from(tabela) {
+        const api = sessao.client.from(tabela);
+        if (tabela !== "mybank_installments") return api;
+        return {
+          ...api,
+          select(cols) {
+            leituras += 1;
+            if (leituras < 2) return api.select(cols);
+            const falha = {
+              eq: () => falha,
+              then: (res, rej) =>
+                Promise.resolve({
+                  data: null,
+                  error: { code: "XX000", message: "conexão caiu" },
+                }).then(res, rej),
+            };
+            return falha;
+          },
+        };
+      },
+    }),
+  };
+
+  let resposta;
+  try {
+    resposta = await ANTECIPA.POST(
+      { json: async () => ({ parcelas: 2, data_do_pagamento: "2026-12-01" }) },
+      { params: { id: "loan-antecipa" } }
+    );
+  } finally {
+    delete globalThis.__dubleDeSupabase;
+  }
+
+  const corpo = await resposta.json();
+
+  // O DINHEIRO ENTROU, e a rota diz isso.
+  assert.equal(resposta.status, 200, JSON.stringify(corpo));
+  assert.equal(corpo.parcelas_antecipadas, 2);
+  assert.equal(linhas.financial_transactions.length, 2);
+
+  // E O QUE ELA NAO SABE SAI COMO `null`, E NAO COMO ZERO. Um `0` aqui diria
+  // "nao sobrou nada a pagar" porque a releitura falhou, e as parcelas pagas ja
+  // estao pagas -- quem le concluiria que quitou.
+  assert.equal(corpo.parcelas_em_aberto, null);
+  assert.equal(corpo.ultimo_vencimento_depois, null);
+  assert.equal(corpo.emprestimo_quitado, false);
+  assert.match(corpo.message, /não consegui reler/i);
+  assert.equal(/quitado/i.test(corpo.message), false);
+
+  // E NADA DE `settled`: sem saber o que sobrou, declarar a quitacao tiraria a
+  // divida das duas telas (que filtram `active`) por causa de uma consulta que
+  // nao respondeu.
+  assert.equal(escritasEm(sessao, "mybank_loans", "update").length, 0);
+  assert.equal(
+    linhas.mybank_loans.find((l) => l.id === "loan-antecipa").status,
+    "active"
+  );
+});
+
+test("O CONTROLE DA ISSUE: a soma da divida continua fechando com o principal", async () => {
+  // ESTE TESTE TEM UMA ASSERCAO SO, E ISSO E DELIBERADO.
+  //
+  // O mutante que a issue nomeia -- "a antecipacao CANCELA a cauda" -- escreve
+  // `cancelled` em duas parcelas e `paid` em duas outras. Num teste que TAMBEM
+  // afirme `status` ele morre na primeira assercao de status, e o placar diz
+  // "morto" sem que nada tenha medido o dinheiro: a prova ficaria amarrada a
+  // qual status cada desenho escreve, e nao ao fato de um deles perder R$ 200.
+  //
+  // Aqui a unica assercao e o somatorio. Com a cauda cancelada ele cai de
+  // R$ 600 para R$ 400, e nenhum CHECK deste banco reclama disso.
+  const linhas = tabelasDaAntecipacao();
+  const { status, corpo } = await antecipar({ tabelas: linhas });
+  assert.equal(status, 200, JSON.stringify(corpo));
+
+  assert.equal(
+    somaDaDivida(linhas.mybank_installments, "loan-antecipa").total,
+    Math.round(EMPRESTIMO_A_ANTECIPAR.principal * 100),
+    "soma(pagas) + soma(em aberto) tem de continuar sendo o principal"
+  );
+});
+
+test("ANTECIPAR 2: as parcelas 5 e 6 viram `paid` e a SOMA continua R$ 600", async () => {
+  const linhas = tabelasDaAntecipacao();
+  // SEM `sessao`: tudo o que este teste afirma e lido na TABELA (o que de fato
+  // ficou gravado) e na resposta. As assercoes sobre o que a rota MANDOU gravar
+  // -- quantas chamadas de insert, os filtros, o patch -- estao nos dois testes
+  // seguintes, com nomes que dizem isso.
+  const { status, corpo } = await antecipar({ tabelas: linhas });
+
+  assert.equal(status, 200, JSON.stringify(corpo));
+  assert.equal(corpo.success, true);
+  assert.equal(corpo.parcelas_antecipadas, 2);
+  assert.equal(corpo.valor, 200);
+
+  const porId = new Map(linhas.mybank_installments.map((p) => [p.id, p]));
+
+  // AS DO FIM DA SERIE VIRAM `paid` -- e com os tres campos juntos, que e o que
+  // `mybank_installments_paid_check` exige.
+  for (const id of ["n5", "n6"]) {
+    assert.equal(porId.get(id).status, "paid", `${id} tem de estar paga`);
+    assert.equal(porId.get(id).paid_date, "2026-12-01");
+    assert.ok(porId.get(id).paid_transaction_id, `${id} aponta para a perna`);
+  }
+
+  // NADA E CANCELADO. `cancelled` quer dizer "encerrada sem dinheiro" neste
+  // banco, e e isso que extinguiria o dobro do que foi pago.
+  assert.equal(
+    linhas.mybank_installments.filter((p) => p.status === "cancelled").length,
+    0
+  );
+
+  // A PARCELA 2 CONTINUA PENDENTE, NO DIA DELA E COM O VALOR DELA. Esta e a
+  // metade da decisao de produto que nenhum numero de total denuncia: a serie
+  // encurta pelo FIM, e nao pela frente.
+  assert.equal(porId.get("n2").status, "pending");
+  assert.equal(porId.get("n2").due_date, "2026-12-10");
+  assert.equal(porId.get("n2").amount, 100);
+  assert.equal(porId.get("n3").status, "pending");
+  assert.equal(porId.get("n4").status, "reported");
+
+  // O CONTROLE DESTA ISSUE: `soma(pagas) + soma(em aberto) = principal`. Com a
+  // cauda CANCELADA esta soma cai para R$ 400 e nenhum CHECK reclama.
+  const soma = somaDaDivida(linhas.mybank_installments, "loan-antecipa");
+  assert.equal(soma.pagas, 30000, "pagas: a 1, a 5 e a 6");
+  assert.equal(soma.emAberto, 30000, "em aberto: a 2, a 3 e a 4");
+  assert.equal(
+    soma.total,
+    Math.round(EMPRESTIMO_A_ANTECIPAR.principal * 100),
+    "soma(pagas) + soma(em aberto) tem de ser o principal"
+  );
+
+  // E A SERIE ENCURTOU: o fim era 04/2027 e passou a ser 02/2027.
+  assert.equal(corpo.ultimo_vencimento_antes, "04/2027");
+  assert.equal(corpo.ultimo_vencimento_depois, "02/2027");
+  assert.deepEqual(corpo.numeros, [6, 5]);
+  assert.equal(corpo.parcelas_em_aberto, 3);
+  assert.equal(corpo.emprestimo_quitado, false);
+  assert.match(corpo.message, /mantêm o valor/i);
+});
+
+test("as DUAS pernas sao `transfer` POSITIVA na conta de investimento, uma por parcela", async () => {
+  const linhas = tabelasDaAntecipacao();
+  const { status, corpo, sessao } = await antecipar({ tabelas: linhas });
+
+  assert.equal(status, 200, JSON.stringify(corpo));
+
+  const lancamentos = escritasEm(sessao, "financial_transactions", "insert");
+  // UMA CHAMADA DE INSERT POR PARCELA, e nao um lote: o rollback precisa saber
+  // qual perna desfazer, e um `.in()` de N ids num UPDATE so seria atomico na
+  // baixa e nao nas N pernas.
+  assert.equal(lancamentos.length, 2);
+
+  const pernas = lancamentos.map((e) => e.linhas[0]);
+  for (const perna of pernas) {
+    // `transfer` E NAO `income`: principal voltando nao e receita, e aqui o
+    // mesmo principal entraria como renda DUAS vezes num unico clique.
+    assert.equal(perna.transaction_type, "transfer");
+    assert.equal(perna.account_id, INVESTIMENTO);
+    assert.equal(perna.amount, 100);
+    assert.ok(perna.amount > 0, "a entrada e positiva");
+    assert.equal(perna.transaction_date, "2026-12-01");
+    assert.equal(perna.category_id, CATEGORIA_TRANSFER);
+    assert.equal(perna.group_id, null);
+  }
+
+  // O ELO, NOS DOIS SENTIDOS: a perna leva `mybank:<id>` em `notes`, e a parcela
+  // aponta para a perna DELA. Sem a segunda metade, duas parcelas poderiam
+  // apontar para a mesma linha e uma perna ficaria sem divida que a explicasse.
+  assert.deepEqual(pernas.map((p) => p.notes).sort(), ["mybank:n5", "mybank:n6"]);
+
+  const porId = new Map(linhas.mybank_installments.map((p) => [p.id, p]));
+  const elos = [
+    porId.get("n5").paid_transaction_id,
+    porId.get("n6").paid_transaction_id,
+  ];
+  assert.equal(new Set(elos).size, 2, "cada parcela aponta para a perna DELA");
+  assert.deepEqual(corpo.transacoes.sort(), [...elos].sort());
+});
+
+test("o patch da baixa nao toca `amount` nem `installment_total`", async () => {
+  const linhas = tabelasDaAntecipacao();
+  const { sessao } = await antecipar({ tabelas: linhas });
+
+  for (const escrita of escritasEm(sessao, "mybank_installments", "update")) {
+    // A decisao de produto em forma de assercao: "as que sobram mantem o valor"
+    // e verdade porque NENHUM `amount` e tocado -- nem das que ficam nem das que
+    // saem. E `installment_total` intacto e o que mantem o CHECK
+    // `installment_number BETWEEN 1 AND installment_total` fora do caminho, que
+    // e a razao de esta issue nao ter migration.
+    assert.deepEqual(Object.keys(escrita.patch).sort(), [
+      "paid_date",
+      "paid_transaction_id",
+      "status",
+    ]);
+    assert.equal(escrita.linhasAfetadas, 1);
+  }
+
+  assert.equal(escritasEm(sessao, "mybank_loans", "update").length, 0);
+});
+
+test("a escolha da cauda e SO desta divida: a parcela do vizinho nao e tocada", async () => {
+  const linhas = tabelasDaAntecipacao();
+  const { status, corpo } = await antecipar({ tabelas: linhas });
+
+  assert.equal(status, 200, JSON.stringify(corpo));
+
+  // `v1` vence em 2029 -- depois de TODA parcela do notebook. Sem o
+  // `.eq("loan_id")` na leitura ela seria a primeira da cauda, e antecipar o
+  // notebook pagaria a bicicleta.
+  const vizinha = linhas.mybank_installments.find((p) => p.id === "v1");
+  assert.equal(vizinha.status, "pending");
+  assert.equal(vizinha.paid_date, null);
+  assert.equal(vizinha.paid_transaction_id, null);
+
+  const soma = somaDaDivida(linhas.mybank_installments, "loan-vizinho");
+  assert.equal(soma.pagas, 0);
+});
+
+test("ANTECIPAR AS 5 QUE SOBRAM: o emprestimo vira `settled` e sai das telas", async () => {
+  const linhas = tabelasDaAntecipacao();
+  const { status, corpo, sessao } = await antecipar({
+    tabelas: linhas,
+    corpo: { parcelas: 5, data_do_pagamento: "2026-12-01" },
+  });
+
+  assert.equal(status, 200, JSON.stringify(corpo));
+  assert.equal(corpo.parcelas_antecipadas, 5);
+  assert.equal(corpo.valor, 500);
+
+  const [quitacao] = escritasEm(sessao, "mybank_loans", "update");
+  assert.deepEqual(quitacao.patch, { status: "settled" });
+  assert.equal(quitacao.linhasAfetadas, 1);
+  assert.equal(
+    linhas.mybank_loans.find((l) => l.id === "loan-antecipa").status,
+    "settled"
+  );
+  assert.equal(corpo.emprestimo_quitado, true);
+
+  // A SOMA DEPOIS DA QUITACAO: tudo pago, nada em aberto, e o total continua o
+  // principal. E o desenho que cancela a cauda chegaria aqui com R$ 100.
+  const soma = somaDaDivida(linhas.mybank_installments, "loan-antecipa");
+  assert.equal(soma.pagas, 60000);
+  assert.equal(soma.emAberto, 0);
+  assert.equal(soma.total, 60000);
+
+  // E A FRASE MUDA: nao ha "as que sobram mantem o valor" quando nao sobra nada.
+  assert.equal(corpo.ultimo_vencimento_depois, null);
+  assert.match(corpo.message, /quitado/i);
+  assert.equal(/mantêm o valor/i.test(corpo.message), false);
+
+  // O VIZINHO NAO QUITA JUNTO: ele tem parcela em aberto e o UPDATE e por id.
+  assert.equal(escritasEm(sessao, "mybank_loans", "update").length, 1);
+  assert.equal(
+    linhas.mybank_loans.find((l) => l.id === "loan-vizinho").status,
+    "active"
+  );
+});
+
+test("a quitacao filtrada pela RLS NAO desfaz as baixas, e a resposta nao mente", async () => {
+  const linhas = tabelasDaAntecipacao();
+  const { status, corpo, sessao } = await antecipar({
+    tabelas: linhas,
+    corpo: { parcelas: 5, data_do_pagamento: "2026-12-01" },
+    // O UPDATE em `mybank_loans` alcanca ZERO linha, sem erro.
+    rlsFiltra: { mybank_loans: true },
+  });
+
+  // O DINHEIRO FICA. Reverter cinco baixas para preservar um status seria trocar
+  // um registro atrasado por cinco pagamentos apagados.
+  assert.equal(status, 200, JSON.stringify(corpo));
+  assert.equal(corpo.parcelas_antecipadas, 5);
+  assert.equal(
+    linhas.mybank_installments.filter(
+      (p) => p.loan_id === "loan-antecipa" && p.status === "paid"
+    ).length,
+    6
+  );
+  assert.equal(linhas.financial_transactions.length, 5);
+
+  // E A RESPOSTA NAO MENTE: o UPDATE nao alcancou a linha, entao nao houve
+  // quitacao -- e a frase nao pode anunciar um status que tela nenhuma leria.
+  assert.equal(corpo.emprestimo_quitado, false);
+  assert.equal(
+    linhas.mybank_loans.find((l) => l.id === "loan-antecipa").status,
+    "active"
+  );
+  assert.equal(/quitado/i.test(corpo.message), false);
+  assert.match(corpo.message, /continua em atividade/i);
+  assert.equal(escritasEm(sessao, "mybank_loans", "update").length, 1);
+});
+
+test("antecipar 1 com 2 em aberto NAO quita nada", async () => {
+  const linhas = tabelasDaAntecipacao({
+    mybank_loans: [{ ...EMPRESTIMO_A_ANTECIPAR }],
+    mybank_installments: [
+      parcelaDoNotebook(5, "pending"),
+      parcelaDoNotebook(6, "pending"),
+    ],
+  });
+
+  const { status, corpo, sessao } = await antecipar({
+    tabelas: linhas,
+    corpo: { parcelas: 1, data_do_pagamento: "2026-12-01" },
+  });
+
+  assert.equal(status, 200, JSON.stringify(corpo));
+  assert.equal(corpo.parcelas_antecipadas, 1);
+  assert.equal(corpo.emprestimo_quitado, false);
+  assert.equal(escritasEm(sessao, "mybank_loans", "update").length, 0);
+  assert.equal(
+    linhas.mybank_installments.find((p) => p.id === "n5").status,
+    "pending"
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 12.5 -- A ROTA: as recusas, e NADA e escrito em nenhuma delas
+// ---------------------------------------------------------------------------
+
+test("A DEVEDORA LEVA 403, e nada e escrito -- o passo 6 da medicao", async () => {
+  const linhas = tabelasDaAntecipacao();
+  const { status, corpo, sessao } = await antecipar({
+    quem: LAIS,
+    tabelas: linhas,
+  });
+
+  // A trava da 053 recusaria `paid_date` com `insufficient_privilege`, mas a
+  // POLICY de UPDATE FILTRA em silencio -- 200 com `[]`. Sem a pergunta na rota
+  // ela receberia "antecipei duas parcelas" de uma escrita que nao aconteceu.
+  assert.equal(status, 403);
+  assert.match(corpo.error, /Só quem emprestou/i);
+  assert.equal(sessao.escritas.length, 0);
+
+  // E A FRASE NAO CONTA O ESTADO DA DIVIDA.
+  assert.equal(/active|cancel|settled/i.test(corpo.error), false);
+});
+
+test("o CASO A e recusado com o ponteiro para Contas a Pagar, e sem escrita", async () => {
+  const linhas = tabelasDaAntecipacao({
+    mybank_loans: [{ ...EMPRESTIMO_A_ANTECIPAR, borrower_user_id: EU }],
+  });
+
+  const { status, corpo, sessao } = await antecipar({ tabelas: linhas });
+
+  // Antecipar aqui encurtaria a serie sem nada ter saido da conta: a parcela do
+  // auto-emprestimo JA e uma transferencia prevista, e quem move o dinheiro e a
+  // baixa dela. "O numero fecha, o fato nao aconteceu."
+  assert.equal(status, 400);
+  assert.match(corpo.error, /Contas a Pagar/);
+  assert.equal(sessao.escritas.length, 0);
+});
+
+test("corpo sem `parcelas`, ou com valor em reais, e recusado em 400", async () => {
+  for (const corpo of [
+    {},
+    { parcelas: 0 },
+    { parcelas: -2 },
+    { parcelas: 1.5 },
+    { parcelas: "duas" },
+    // O PEDIDO QUE A FORMA DO CORPO TORNA INEXPRIMIVEL: R$ 150 contra parcelas
+    // de R$ 100. `valor` nao e um campo desta rota, entao ele chega como corpo
+    // sem `parcelas` -- e a recusa vem com a frase que diz o que fazer.
+    { valor: 150 },
+  ]) {
+    const r = await antecipar({ corpo });
+
+    assert.equal(r.status, 400, `corpo ${JSON.stringify(corpo)} tem de ser 400`);
+    assert.match(r.corpo.error, /parcela inteira/i);
+    assert.equal(r.sessao.escritas.length, 0);
+  }
+});
+
+test("antecipar MAIS do que esta em aberto e 409, e nao antecipa o que cabe", async () => {
+  const linhas = tabelasDaAntecipacao();
+  const { status, corpo, sessao } = await antecipar({
+    tabelas: linhas,
+    corpo: { parcelas: 6 },
+  });
+
+  // Sao 5 em aberto. Antecipar "as 5 que cabem" seria a rota decidir um valor
+  // diferente do que a pessoa confirmou -- e o valor e dinheiro que sai da conta
+  // dela.
+  assert.equal(status, 409);
+  assert.match(corpo.error, /5 parcelas em aberto/);
+  assert.equal(sessao.escritas.length, 0);
+});
+
+test("emprestimo fora de `active` e 409, com o status na frase", async () => {
+  for (const estado of ["cancelled", "settled"]) {
+    const linhas = tabelasDaAntecipacao({
+      mybank_loans: [{ ...EMPRESTIMO_A_ANTECIPAR, status: estado }],
+    });
+
+    const r = await antecipar({ tabelas: linhas });
+
+    assert.equal(r.status, 409);
+    assert.match(r.corpo.error, new RegExp(estado));
+    assert.equal(r.sessao.escritas.length, 0);
+  }
+});
+
+test("emprestimo COM JURO e recusado em 409 -- a fase 2 reabre a feature", async () => {
+  const linhas = tabelasDaAntecipacao({
+    mybank_loans: [{ ...EMPRESTIMO_A_ANTECIPAR, interest_rate: "2.00" }],
+  });
+
+  const { status, corpo, sessao } = await antecipar({ tabelas: linhas });
+
+  // Somar `amount` com juro cobraria juro de um tempo que nao existiu. A rota
+  // recusa em vez de calcular errado.
+  assert.equal(status, 409);
+  assert.match(corpo.error, /juro/i);
+  assert.equal(sessao.escritas.length, 0);
+});
+
+test("emprestimo que nao e meu nem e divida minha volta 404, e nao 403", async () => {
+  const { status, sessao } = await antecipar({ loanId: "loan-que-nao-existe" });
+
+  // "Existe mas nao e seu" confirmaria a existencia do id para quem o chutou.
+  assert.equal(status, 404);
+  assert.equal(sessao.escritas.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// 12.6 -- A ROTA: o rollback da perna, e a antecipacao PARCIAL
+// ---------------------------------------------------------------------------
+
+test("A BAIXA FILTRADA PELA RLS DESFAZ A PERNA -- nada de dinheiro fica no extrato", async () => {
+  const linhas = tabelasDaAntecipacao();
+  const { status, corpo, sessao } = await antecipar({
+    tabelas: linhas,
+    // A escrita em `mybank_installments` alcanca ZERO linha, sem erro -- a
+    // resposta medida em producao quando a policy nao casa com a linha.
+    rlsFiltra: { mybank_installments: true },
+  });
+
+  // NENHUMA PARCELA ENTROU: o mundo esta como antes do pedido.
+  assert.equal(status, 500);
+  assert.equal(corpo.parcelas_antecipadas, 0);
+
+  // A PERNA FOI GRAVADA E DEPOIS APAGADA. Sem o rollback ela ficaria no extrato
+  // da conta de investimento sem nenhuma parcela paga que a explicasse -- o
+  // saldo sobe e a divida fica inteira de pe.
+  const insercoes = escritasEm(sessao, "financial_transactions", "insert");
+  assert.equal(insercoes.length, 1, "a perna da PRIMEIRA parcela foi tentada");
+
+  const [apagada] = escritasEm(sessao, "financial_transactions", "delete");
+  assert.ok(apagada, "a perna tem de ser apagada quando a baixa nao alcanca");
+  assert.deepEqual(apagada.filtros, [
+    ["eq", "id", insercoes[0].linhas[0].id],
+  ]);
+  assert.equal(linhas.financial_transactions.length, 0);
+
+  // E O LACO PARA NA PRIMEIRA: insistir nas seguintes depois de uma falha de
+  // escrita so aumenta a chance de parar num estado pior.
+  assert.equal(linhas.mybank_installments.filter((p) => p.status === "paid").length, 1);
+  assert.equal(escritasEm(sessao, "mybank_loans", "update").length, 0);
+});
+
+test("a perna que NAO entra nao deixa parcela baixada, e nada e apagado", async () => {
+  const linhas = tabelasDaAntecipacao();
+  const { status, corpo, sessao } = await antecipar({
+    tabelas: linhas,
+    erros: {
+      financial_transactions: { code: "XX000", message: "sem espaço" },
+    },
+  });
+
+  assert.equal(status, 500);
+  assert.equal(corpo.parcelas_antecipadas, 0);
+
+  // A BAIXA NAO ACONTECE: ela vem DEPOIS da perna de proposito. Na ordem
+  // inversa a parcela ficaria paga apontando para um lancamento que nao existe.
+  assert.equal(escritasEm(sessao, "mybank_installments", "update").length, 0);
+  assert.equal(
+    linhas.mybank_installments.filter((p) => p.status === "paid").length,
+    1,
+    "so a parcela que ja estava paga antes do pedido"
+  );
+});
+
+/**
+ * Um cliente que deixa a PRIMEIRA baixa passar e faz a SEGUNDA alcancar ZERO
+ * LINHA, sem erro -- a forma exata que a RLS produz (200 com corpo `[]`).
+ *
+ * POR QUE UM EMBRULHO, E NAO `rlsFiltra`/`erros` DO DUBLE
+ * ----------------------------------------------------
+ * Os dois botoes do duble valem para a TABELA INTEIRA: eles derrubariam a
+ * primeira baixa tambem, e o caso medido voltaria a ser "nada entrou" -- que ja
+ * tem teste. A antecipacao PARCIAL e um estado que so existe quando uma parcela
+ * entra e a seguinte nao, e sem este embrulho ele nao tem como ser montado.
+ *
+ * O embrulho intercepta SO `update` em `mybank_installments`: os `insert` das
+ * pernas, o `delete` do rollback e todas as leituras continuam indo ao duble, e
+ * e por isso que as assercoes sobre eles continuam medindo o duble.
+ */
+function clienteComASegundaBaixaFiltrada(client) {
+  let baixas = 0;
+
+  return {
+    ...client,
+    from(tabela) {
+      const api = client.from(tabela);
+      if (tabela !== "mybank_installments") return api;
+
+      return {
+        ...api,
+        update(patch) {
+          baixas += 1;
+          if (baixas === 1) return api.update(patch);
+
+          // Zero linha e nenhum erro. A cadeia devolve `this` em cada filtro
+          // porque a rota encadeia `.eq().select()` antes do `await`.
+          const cadeia = {
+            eq: () => cadeia,
+            in: () => cadeia,
+            select: () => cadeia,
+            then: (res, rej) =>
+              Promise.resolve({ data: [], error: null }).then(res, rej),
+          };
+          return cadeia;
+        },
+      };
+    },
+  };
+}
+
+test("ANTECIPACAO PARCIAL: a resposta diz o NUMERO, e nao `sucesso`", async () => {
+  const linhas = tabelasDaAntecipacao();
+  const sessao = criarDuble({ user: { id: EU }, tabelas: linhas });
+  globalThis.__dubleDeSupabase = {
+    sessao: () => clienteComASegundaBaixaFiltrada(sessao.client),
+  };
+
+  let resposta;
+  try {
+    resposta = await ANTECIPA.POST(
+      { json: async () => ({ parcelas: 2, data_do_pagamento: "2026-12-01" }) },
+      { params: { id: "loan-antecipa" } }
+    );
+  } finally {
+    delete globalThis.__dubleDeSupabase;
+  }
+
+  const corpo = await resposta.json();
+
+  // 200, PORQUE UMA PARCELA FOI ANTECIPADA DE VERDADE -- o dinheiro entrou e a
+  // parcela 6 esta paga. Devolver 500 aqui diria que nada aconteceu.
+  assert.equal(resposta.status, 200, JSON.stringify(corpo));
+
+  // O CONTRATO E O NUMERO. `success` e `false` justamente para que quem le so
+  // ele nao trate 1-de-2 como 2.
+  assert.equal(corpo.parcelas_antecipadas, 1);
+  assert.equal(corpo.parcelas_pedidas, 2);
+  assert.equal(corpo.success, false);
+  assert.ok(corpo.parcial, "a resposta diz o que parou");
+  assert.deepEqual(corpo.numeros, [6]);
+  assert.equal(corpo.valor, 100);
+
+  // A FRASE TAMBEM SAI DO QUE ENTROU: "2 parcelas antecipadas" de uma so seria
+  // a resposta mentindo sobre o dinheiro que ela mesma movimentou.
+  assert.match(corpo.message, /Parcela 6 antecipada/);
+  assert.equal(/2 parcelas antecipadas/.test(corpo.message), false);
+
+  const porId = new Map(linhas.mybank_installments.map((p) => [p.id, p]));
+
+  // A 6 ENTROU INTEIRA (perna + baixa); a 5 nao entrou de jeito nenhum.
+  assert.equal(porId.get("n6").status, "paid");
+  assert.ok(porId.get("n6").paid_transaction_id);
+  assert.equal(porId.get("n5").status, "pending");
+  assert.equal(porId.get("n5").paid_date, null);
+
+  // E A PERNA DA 5 FOI DESFEITA: sobra UMA linha de dinheiro, a da parcela que
+  // de fato baixou. Sem o rollback sobrariam duas, e uma delas sem divida que a
+  // explicasse.
+  assert.equal(linhas.financial_transactions.length, 1);
+  assert.equal(linhas.financial_transactions[0].notes, "mybank:n6");
+
+  // PARAR NO MEIO E UM ESTADO CONSISTENTE, E ESTA E A ASSERCAO QUE O DIZ:
+  // `soma(pagas) + soma(em aberto) = principal` vale depois de CADA parcela, e
+  // e por isso que esta rota nao precisa de transacao.
+  const soma = somaDaDivida(linhas.mybank_installments, "loan-antecipa");
+  assert.equal(soma.pagas, 20000, "a 1 (de antes) e a 6");
+  assert.equal(soma.emAberto, 40000, "a 2, a 3, a 4 e a 5");
+  assert.equal(
+    soma.total,
+    Math.round(EMPRESTIMO_A_ANTECIPAR.principal * 100),
+    "a invariante vale no estado parcial"
+  );
+
+  // E NAO HOUVE QUITACAO: sobrou divida em aberto.
+  assert.equal(corpo.emprestimo_quitado, false);
+  assert.equal(
+    linhas.mybank_loans.find((l) => l.id === "loan-antecipa").status,
+    "active"
+  );
+});
+
+test("CONTROLE: a rota da antecipacao usou o duble (as ausencias nao sao vacuas)", async () => {
+  const { sessao } = await antecipar();
+
+  // Sem esta sonda, um `erros`/`rlsFiltra` mal montado faria a rota cair no
+  // `catch` e TODA assercao de "nada foi escrito" passaria sem medir nada.
+  assert.ok(
+    sessao.lidas.some((l) => l.tabela === "mybank_loans"),
+    "a rota leu o emprestimo pelo duble"
+  );
+  assert.ok(
+    sessao.lidas.some((l) => l.tabela === "mybank_installments"),
+    "a rota leu as parcelas pelo duble"
+  );
+  assert.ok(
+    sessao.escritas.some(
+      (e) => e.tabela === "financial_transactions" && e.verbo === "insert"
+    ),
+    "a rota gravou perna pelo duble"
+  );
+});

@@ -1023,3 +1023,428 @@ export interface QuitacaoDoEmprestimo {
 export function patchDaQuitacaoDoEmprestimo(): QuitacaoDoEmprestimo {
   return { status: "settled" };
 }
+
+// ---------------------------------------------------------------------------
+// A ANTECIPACAO DE PARCELAS (F2 da HMO-393, issue HMO-395)
+// ---------------------------------------------------------------------------
+// "Vou adiantar duas parcelas" num emprestimo de 24 x R$ 1.000. A decisao de
+// produto e tres frases: DUAS PARCELAS MENOS, as que sobram MANTEM O VALOR, e a
+// serie ENCURTA. Nada aqui baixa prestacao.
+//
+// O DINHEIRO PAGA A CAUDA. NADA E CANCELADO -- E ESSA E A CORRECAO QUE VEM ANTES
+// -----------------------------------------------------------------------------
+// O desenho obvio -- as parcelas do fim viram `cancelled` E o dinheiro paga as
+// proximas em aberto -- EXTINGUE O DOBRO DO QUE FOI PAGO. Num emprestimo de
+// R$ 24.000 em 24 x R$ 1.000, com 1 e 2 pagas, entrando R$ 2.000: as parcelas 3
+// e 4 viram `paid` e as 23 e 24 viram `cancelled`. Quatro parcelas saem do
+// caminho e so duas foram pagas: a divida de R$ 24.000 se resolve com R$ 22.000,
+// e o credor recebe R$ 2.000 a menos.
+//
+// Nenhum CHECK reclama disso, as duas telas ficam consistentes ENTRE SI, e
+// `soma(pagas) + soma(em aberto)` passa a dar R$ 22.000 sem que nada compare
+// esse numero com `mybank_loans.principal`. E `cancelled` quer dizer "encerrada
+// sem dinheiro" neste banco -- `avisoDoCancelamento` promete por extenso, na
+// tela, que cancelar NAO amortiza nada.
+//
+// Entao: as parcelas de MAIOR VENCIMENTO viram `paid`, com `paid_date` e uma
+// perna de entrada cada. A parcela 3 continua `pending`, vence no mes que vem,
+// com o valor que sempre teve -- nenhum `amount` e tocado em lugar nenhum desta
+// secao. A serie que acabava em 08/2028 acaba em 06/2028.
+//
+// A INVARIANTE QUE ISSO PRESERVA, E ELA E A ASSERCAO DO MUTANTE PRINCIPAL
+// ----------------------------------------------------------------------
+//   soma(recebido) + soma(em aberto) = principal
+//
+// Com o dinheiro pagando a cauda ela vale depois de CADA parcela antecipada.
+// Com a cauda cancelada ela quebra, e quebra calada. O mutante "a antecipacao
+// CANCELA a cauda" tem de morrer numa assercao de SOMATORIO -- uma assercao de
+// `status` o mataria pelo motivo errado (os dois desenhos escrevem status
+// diferentes; so um deles perde dinheiro).
+//
+// PARAR NO MEIO E UM ESTADO CONSISTENTE, E E POR ISSO QUE NAO HA TRANSACAO
+// -----------------------------------------------------------------------
+// Cada parcela antecipada e fechada em si: uma perna de entrada, uma baixa. A
+// invariante acima continua valendo depois de cada uma, entao "antecipei 1 das 2
+// que pedi" e um resultado, nao um estado quebrado -- e a resposta diz o NUMERO
+// em vez de dizer sucesso.
+//
+// A alternativa (um `.in()` de N ids num UPDATE so) seria atomica na baixa e NAO
+// nas N pernas: "4 pernas gravadas, 4 parcelas pagas, 1 perna perdida" e
+// irreconciliavel, porque `paid_transaction_id` aponta para uma linha que nao
+// existe. Por isso a rota faz uma parcela de cada vez, e desfaz a perna quando a
+// baixa dela falha.
+//
+// JUROS ZERO ESTA USADO, NAO ESCONDIDO -- E A FASE 2 REABRE ESTA FEATURE
+// ---------------------------------------------------------------------
+// `mybank_loans_interest_rate_fase_1` (053) trava `interest_rate = 0`, e e por
+// isso que `valorDaAntecipacao` e uma SOMA SIMPLES: cada real antecipado abate
+// principal real a real. Com juro, antecipar tem de descontar o juro NAO-CORRIDO
+// da cauda, e somar `amount` passaria a cobrar juro de um tempo que nao existiu.
+// Por isso `problemaDaAntecipacao` RECUSA `interest_rate <> 0` em vez de calcular
+// errado -- a trava do banco e a razao pela qual a soma esta certa HOJE, e a
+// recusa e o que faz o dia em que ela mudar ser um 409 e nao um erro de dinheiro.
+//
+// ZERO MIGRATION, E ISSO FOI MEDIDO NA 053
+// ----------------------------------------
+// `installment_total` NAO e tocado, entao `installment_number BETWEEN 1 AND
+// installment_total` nao tem como ser violado. `((status='paid') = (paid_date IS
+// NOT NULL))` e atendido por `patchDaBaixaDaParcela`. E NAO EXISTE TRAVA DE ORDEM
+// DE PAGAMENTO: nenhum CHECK e nenhuma das duas triggers compara
+// `installment_number` com o das vizinhas, entao pagar a 24 com a 3 pendente e um
+// UPDATE comum.
+// ---------------------------------------------------------------------------
+
+/** O estado em que o emprestimo aceita antecipacao. */
+export const STATUS_ATIVO = "active";
+
+/** Por que esta antecipacao nao serve. */
+export type ProblemaDaAntecipacao =
+  | "nao_sou_o_credor"
+  | "emprestimo_nao_esta_ativo"
+  | "juros_impedem_a_antecipacao"
+  | "quantas_invalida"
+  | "mais_do_que_em_aberto"
+  | "caso_a_nao_entra_aqui";
+
+/** O que a escolha da cauda precisa saber de uma parcela. */
+export interface ParcelaParaAntecipar {
+  id: string;
+  installment_number: number;
+  installment_total: number;
+  amount: number;
+  due_date: string;
+  status: string;
+}
+
+/**
+ * As N parcelas em aberto de MAIOR VENCIMENTO -- a cauda da serie.
+ *
+ * OS DOIS CRITERIOS IMPORTAM, E O SEGUNDO NAO E ENFEITE
+ * ----------------------------------------------------
+ * `due_date DESC` e o que "encurtar a serie" quer dizer para quem olha a tela: o
+ * fim da divida se aproxima. `installment_number DESC` e o desempate, e ele
+ * existe porque duas parcelas podem vencer no MESMO dia -- uma serie criada com
+ * `primeiro_vencimento` em 31/01 grampeia em fevereiro (ver
+ * `serieDeParcelas`), e nada impede dois emprestimos de parcelas coincidirem num
+ * mes curto. Sem o desempate as duas sairiam na ordem que o banco devolveu, e um
+ * teste de empate nao mediria nada porque `Array.prototype.sort` e ESTAVEL:
+ * ele devolveria a ordem do fixture e passaria verde com o criterio ausente
+ * (`sort-estavel-faz-o-teste-de-desempate-nao-medir-nada`).
+ *
+ * `paid` E `cancelled` FICAM FORA, pelo filtro de `STATUS_EM_ABERTO_DA_PARCELA`:
+ * antecipar uma parcela ja paga seria pagar duas vezes a mesma coisa, e uma
+ * cancelada nao e divida.
+ *
+ * O `.sort()` ORDENA NO LUGAR, E ELE SO PODE PORQUE O `filter` JA COPIOU
+ * ---------------------------------------------------------------------
+ * `Array.prototype.filter` devolve um array NOVO, entao o `sort` abaixo mexe na
+ * copia e nao na lista que a rota leu do banco. Isso importa porque a rota passa
+ * o MESMO array para esta funcao, para `quantasEmAberto` e para
+ * `ultimoVencimentoEmAberto`: reordenar a lista de quem chamou como efeito
+ * colateral de escolher a cauda nao daria sintoma AQUI, e daria lá -- num rotulo
+ * de vencimento ou numa contagem. Quem mexer nesta funcao tem de manter a copia
+ * em algum passo; o teste "NAO reordena a lista que recebeu" e o que guarda isso.
+ */
+export function parcelasDaAntecipacao(params: {
+  parcelas: ParcelaParaAntecipar[];
+  quantas: number;
+}): ParcelaParaAntecipar[] {
+  const emAberto = params.parcelas.filter((p) =>
+    STATUS_EM_ABERTO_DA_PARCELA.includes(p.status)
+  );
+
+  const daCaudaParaCima = emAberto.sort((a, b) => {
+    if (a.due_date !== b.due_date) {
+      return String(a.due_date) < String(b.due_date) ? 1 : -1;
+    }
+    return b.installment_number - a.installment_number;
+  });
+
+  return daCaudaParaCima.slice(0, params.quantas);
+}
+
+/** Quantas parcelas desta serie ainda sao divida. */
+export function quantasEmAberto(parcelas: { status: string }[]): number {
+  return parcelas.filter((p) => STATUS_EM_ABERTO_DA_PARCELA.includes(p.status))
+    .length;
+}
+
+/**
+ * A antecipacao pode acontecer? `null` quando pode, ou o motivo.
+ *
+ * A ORDEM E A RESPOSTA, E A PRIMEIRA PERGUNTA E A MESMA DE `problemaDoCancelamento`
+ * --------------------------------------------------------------------------------
+ * `mybank_loans_select` e `lender OR borrower`: o DEVEDOR enxerga a linha e
+ * chega aqui com um emprestimo legivel. Perguntar pelo estado antes diria "esse
+ * emprestimo nao esta ativo" a quem nao tem nada a antecipar -- vazando o estado
+ * da divida de outra pessoa numa mensagem de erro. Primeiro "isto nao e seu"; o
+ * estado so se discute com quem manda nele.
+ *
+ * E a pergunta e feita ANTES DA ESCRITA, nao so depois: `mybank_loans_update` e
+ * `lender_user_id = auth.uid()` nos dois lados e `mybank_installments_trava_do_
+ * devedor` (053) levanta `insufficient_privilege` em `paid_date` e
+ * `paid_transaction_id` -- mas UPDATE que a POLICY filtra volta 200 com `[]`,
+ * sem erro e sem SQLSTATE (`update-filtrado-pela-rls-vira-sucesso`). Sem esta
+ * pergunta o devedor receberia "antecipei duas parcelas" e nada teria mudado.
+ *
+ * `juros_impedem_a_antecipacao` ENTRA NO BLOCO DE ESTADO DO EMPRESTIMO
+ * -------------------------------------------------------------------
+ * Ele e uma pergunta sobre a linha do emprestimo, como `status`, e por isso vem
+ * junto dela -- depois da pergunta de credor, que e a que guarda o vazamento.
+ * Ver JUROS ZERO ESTA USADO, no cabecalho desta secao, para o porque de ele ser
+ * uma recusa e nao um calculo.
+ *
+ * `caso_a_nao_entra_aqui` VEM POR ULTIMO, e isso e deliberado
+ * ----------------------------------------------------------
+ * Ele e o unico problema cuja frase NOMEIA OUTRO CAMINHO ("pague em Contas a
+ * Pagar") -- a convencao que o PATCH da parcela ja estabeleceu, e pela mesma
+ * razao. Mandar alguem para outra tela com um pedido que lá tambem seria
+ * recusado ("antecipe 99 de 6 em Contas a Pagar") troca uma recusa por uma
+ * caminhada inutil. As perguntas de boa-formacao vem antes para que o ponteiro,
+ * quando sai, aponte para algo que vai funcionar. E o vazamento nao e questao
+ * aqui: no Caso A o credor e o devedor sao a MESMA pessoa, e ela ja passou pela
+ * primeira pergunta.
+ */
+export function problemaDaAntecipacao(params: {
+  emprestimo: {
+    lender_user_id: string;
+    borrower_user_id: string;
+    status: string;
+    interest_rate?: number | string | null;
+  };
+  meuId: string;
+  parcelas: { status: string }[];
+  quantas: number;
+}): ProblemaDaAntecipacao | null {
+  if (params.emprestimo.lender_user_id !== params.meuId) {
+    return "nao_sou_o_credor";
+  }
+
+  // `cancelled` e `settled` cairiam aqui com a mesma frase, de proposito: os
+  // dois sao "nao ha nada em aberto para antecipar", e a frase diz o status para
+  // quem le. Separar as duas, como `problemaDoCancelamento` faz, importa lá
+  // porque cancelar um emprestimo quitado desmente o banco para quem acabou de
+  // receber; aqui as duas respostas seriam a mesma acao (nenhuma).
+  if (params.emprestimo.status !== STATUS_ATIVO) {
+    return "emprestimo_nao_esta_ativo";
+  }
+
+  // `Number(...)` e nao `!== 0`: `numeric` chega do PostgREST como STRING
+  // ("0.00"), e `"0.00" !== 0` e verdade -- a recusa dispararia em todo
+  // emprestimo da fase 1 e a feature inteira seria inalcancavel.
+  if (Number(params.emprestimo.interest_rate ?? 0) !== JUROS_DA_FASE_1) {
+    return "juros_impedem_a_antecipacao";
+  }
+
+  // INTEIRO E >= 1. `valor` nao existe no contrato desta rota (ver
+  // `mensagemDoProblemaDaAntecipacao`), entao o pedido de "R$ 150 contra
+  // parcelas de R$ 200" nao tem como ser EXPRESSO -- a recusa esta na forma do
+  // corpo, que e mais forte que uma validacao. `2.5 parcelas` e o que sobra para
+  // esta pergunta barrar.
+  if (!Number.isInteger(params.quantas) || params.quantas < 1) {
+    return "quantas_invalida";
+  }
+
+  if (params.quantas > quantasEmAberto(params.parcelas)) {
+    return "mais_do_que_em_aberto";
+  }
+
+  if (
+    casoDoEmprestimo({
+      lenderUserId: params.emprestimo.lender_user_id,
+      borrowerUserId: params.emprestimo.borrower_user_id,
+    }) === "auto"
+  ) {
+    return "caso_a_nao_entra_aqui";
+  }
+
+  return null;
+}
+
+/** A frase que a tela mostra para cada recusa de antecipacao. */
+export function mensagemDoProblemaDaAntecipacao(
+  problema: ProblemaDaAntecipacao,
+  contexto: { status: string; emAberto: number }
+): string {
+  switch (problema) {
+    case "nao_sou_o_credor":
+      return "Só quem emprestou pode antecipar parcelas deste empréstimo. Fale com quem emprestou.";
+    case "emprestimo_nao_esta_ativo":
+      return `Este empréstimo está "${contexto.status}" — não há nada em aberto para antecipar.`;
+    case "juros_impedem_a_antecipacao":
+      return "Este empréstimo tem juro, e antecipar com juro exige descontar o juro que não correu. Essa conta ainda não existe aqui.";
+    case "quantas_invalida":
+      // A FRASE DIZ O QUE FAZER COM R$ 150, e nao so recusa. Quem chega aqui
+      // provavelmente queria mandar um VALOR; o corpo nao tem esse campo, e a
+      // razao precisa estar escrita onde a pessoa a le.
+      return (
+        "Diga quantas parcelas quer antecipar — um número inteiro, de 1 em diante. " +
+        "Esta operação só aceita parcela inteira: pagamento parcial de parcela é outra operação, e não existe hoje."
+      );
+    case "mais_do_que_em_aberto":
+      return contexto.emAberto === 1
+        ? "Só resta 1 parcela em aberto neste empréstimo."
+        : `Este empréstimo tem ${contexto.emAberto} parcelas em aberto — não dá para antecipar mais do que isso.`;
+    case "caso_a_nao_entra_aqui":
+      // A MESMA CONVENCAO DO PATCH DA PARCELA, e pela mesma razao: no
+      // auto-emprestimo a parcela JA e uma transferencia prevista, e quem move o
+      // dinheiro e a baixa dela em Contas a Pagar. Antecipar aqui encurtaria a
+      // serie sem nada ter saido da conta.
+      return (
+        "Este empréstimo é para você mesmo: as parcelas são transferências agendadas. " +
+        "Antecipe pagando-as em Contas a Pagar — é isso que move o dinheiro da sua conta para a de investimento. " +
+        "Antecipar aqui deixaria a série mais curta sem nada ter saído da conta."
+      );
+  }
+}
+
+/**
+ * Quanto a antecipacao custa -- a SOMA das parcelas escolhidas.
+ *
+ * SOMA SIMPLES PORQUE O JURO E ZERO, e a trava do banco e quem garante isso
+ * (`mybank_loans_interest_rate_fase_1`). Ver o cabecalho desta secao: com juro,
+ * somar `amount` cobraria juro de um tempo que nao existiu, e por isso
+ * `problemaDaAntecipacao` recusa em vez de esta funcao calcular errado.
+ *
+ * EM CENTAVOS INTEIROS, e nao somando reais: 24 x 416,67 em float da
+ * 9999,999999999998, e o valor da resposta -- que a pessoa confere contra o
+ * extrato -- sairia com uma dizima. A aritmetica deste repositorio soma centavos
+ * e divide no fim, pela mesma razao que `serieDeParcelas` faz.
+ */
+export function valorDaAntecipacao(params: {
+  parcelasEscolhidas: { amount: number }[];
+}): number {
+  const centavos = params.parcelasEscolhidas.reduce(
+    (total, p) => total + Math.round(Number(p.amount) * 100),
+    0
+  );
+
+  return centavos / 100;
+}
+
+/**
+ * `AAAA-MM-DD` -> `MM/AAAA`, por fatia de string.
+ *
+ * NUNCA `new Date(iso).getMonth()`: o construtor le `AAAA-MM-DD` como meia-noite
+ * UTC, e no fuso de Sao Paulo o dia 1 volta para o mes anterior -- a frase diria
+ * "07/2028" de uma parcela de agosto, e o erro passa verde em CI que roda em UTC
+ * (`teste-de-data-passa-em-utc-e-nao-ve-o-bug`).
+ *
+ * `lib/mybank-na-tela.ts` tem a mesma funcao, privada, e as duas ficam. Este
+ * modulo nao importa nada alem de `lancamento` e `transferencia` de proposito --
+ * e isso que o deixa compilar na suite sem o runtime do Next --, e importar um
+ * modulo de tela por quatro linhas amarraria os dois (a mesma razao pela qual
+ * `STATUS_EM_ABERTO_DA_PARCELA` convive com o `STATUS_EM_ABERTO` de lá).
+ */
+function mesDoVencimentoDaParcela(iso: string): string {
+  const [ano, mes] = String(iso).split("-");
+  return `${mes}/${ano}`;
+}
+
+/**
+ * O ultimo vencimento de um conjunto de parcelas, em `MM/AAAA`. `null` em lista
+ * vazia -- que e o caso "nao sobrou nada em aberto".
+ *
+ * ORDENA SOBRE O ISO CRU: `MM/AAAA` nao ordena lexicograficamente ("01/2028"
+ * vem antes de "09/2026"), entao o rotulo sai DEPOIS da ordenacao. A mesma
+ * armadilha que `escopoDoBlocoDoDevedor` documenta.
+ */
+export function ultimoVencimentoEmAberto(
+  parcelas: { due_date: string; status: string }[]
+): string | null {
+  const isos = parcelas
+    .filter((p) => STATUS_EM_ABERTO_DA_PARCELA.includes(p.status))
+    .map((p) => String(p.due_date))
+    .sort();
+
+  if (isos.length === 0) return null;
+
+  return mesDoVencimentoDaParcela(isos[isos.length - 1]);
+}
+
+/**
+ * O que mudou -- e a TERCEIRA frase e a que impede a leitura errada.
+ *
+ * Tres coisas, e as tres sao necessarias:
+ *
+ *   1. QUANTAS PARCELAS SAIRAM, e quais numeros. "2 parcelas antecipadas" sem os
+ *      numeros deixa quem olha a lista procurando quais sumiram;
+ *   2. QUAL ERA E QUAL PASSOU A SER O ULTIMO VENCIMENTO. E a unica frase que diz
+ *      "a serie encurtou" com um numero -- e e o que distingue este desenho de
+ *      um que so tivesse recebido dinheiro adiantado;
+ *   3. QUE O VALOR DE QUEM SOBRA NAO MUDOU. Sem ela a leitura natural de "duas
+ *      parcelas menos" e "baixaram minha prestacao", e a pessoa passa a esperar
+ *      um debito menor no mes que vem. Nenhum `amount` e tocado por esta
+ *      feature, e isso tem de estar dito onde se le.
+ *
+ * QUANDO O EMPRESTIMO QUITA, A TERCEIRA FRASE SAI -- e nao e economia de texto:
+ * "as que sobram mantem o valor" sobre zero parcelas e uma afirmacao sobre um
+ * conjunto vazio, e quem acabou de quitar a divida leria uma promessa sobre
+ * cobranca futura que nao existe. No lugar dela entra o que de fato aconteceu: o
+ * emprestimo esta quitado e sai da lista.
+ *
+ * `quitado` ENTRA SEPARADO DE `ultimoVencimentoDepois`, E ISSO E UMA CORRECAO
+ * --------------------------------------------------------------------------
+ * A tentacao e deduzir a quitacao de `ultimoVencimentoDepois === null` -- "nao
+ * sobrou vencimento, entao acabou". Os dois NAO sao a mesma coisa, e o estado em
+ * que divergem e alcancavel: quando nao sobra parcela em aberto mas o UPDATE de
+ * `settled` e filtrado pela policy (200 com `[]`, sem erro), o emprestimo
+ * continua `active`. Com a deducao, a frase anunciaria "quitado e sai da lista A
+ * receber" de um emprestimo que as duas telas continuam mostrando -- a resposta
+ * dizendo o que DEVERIA ter ficado em vez do que ficou, que e exatamente o que a
+ * HMO-394 escolheu nao fazer.
+ *
+ * Por isso ha QUATRO ramos, e os dois ultimos sao dois estados que a frase nao
+ * pode confundir: "nada em aberto e status intacto" e "eu NAO SEI o que sobrou".
+ *
+ * `serieRelida: false` E O RAMO DO "NAO SEI", E ELE NAO E DEFENSIVO
+ * ----------------------------------------------------------------
+ * A releitura da serie e uma consulta, e consulta falha. Com ela falhando,
+ * `ultimoVencimentoDepois` chega `null` -- indistinguivel de "nao sobrou nada".
+ * Sem este ramo a frase afirmaria que a divida acabou porque a rota nao
+ * conseguiu PERGUNTAR se ela acabou, que e a pior das tres respostas possiveis:
+ * o dinheiro entrou de verdade e a pessoa acharia que quitou. Aqui ela diz o que
+ * aconteceu (as parcelas antecipadas) e manda conferir o resto.
+ */
+export function mensagemDaAntecipacao(params: {
+  numerosAntecipados: number[];
+  ultimoVencimentoAntes: string;
+  /** `null` quando nao sobrou parcela em aberto. Irrelevante se `serieRelida` e `false`. */
+  ultimoVencimentoDepois: string | null;
+  /** O emprestimo se declarou `settled` DE VERDADE (o UPDATE alcancou a linha). */
+  quitado: boolean;
+  /** A releitura da serie respondeu? `false` quando a consulta falhou. */
+  serieRelida: boolean;
+}): string {
+  const quantas = params.numerosAntecipados.length;
+
+  const quais = params.numerosAntecipados.join(" e ");
+  const abertura =
+    quantas === 1
+      ? `Parcela ${quais} antecipada — a do fim da série.`
+      : `${quantas} parcelas antecipadas: as do fim da série (${quais}).`;
+
+  if (params.quitado) {
+    return `${abertura} Não sobrou nada em aberto: o empréstimo está quitado e sai da lista A receber.`;
+  }
+
+  if (!params.serieRelida) {
+    return (
+      `${abertura} O dinheiro entrou, mas não consegui reler as parcelas que sobraram: ` +
+      "confira a lista A receber."
+    );
+  }
+
+  if (params.ultimoVencimentoDepois === null) {
+    return (
+      `${abertura} Não sobrou parcela em aberto, mas o empréstimo continua em atividade: ` +
+      "confira a lista A receber."
+    );
+  }
+
+  return (
+    `${abertura} O último vencimento era ${params.ultimoVencimentoAntes} e passou a ser ` +
+    `${params.ultimoVencimentoDepois}. As parcelas que sobram mantêm o valor de sempre — ` +
+    "antecipar encurta a série, não baixa a prestação."
+  );
+}

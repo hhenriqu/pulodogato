@@ -65,6 +65,7 @@ const LOANS = "app/api/mybank/loans/route.ts";
 const CANCELA = "app/api/mybank/loans/[id]/route.ts";
 const PARCELA = "app/api/mybank/installments/[id]/route.ts";
 const BAIXA = "app/api/scheduled-transactions/[id]/pay/route.ts";
+const ANTECIPA = "app/api/mybank/loans/[id]/antecipacao/route.ts";
 
 /** [alvo, rotulo, de, para] */
 const mutantes = [
@@ -394,8 +395,15 @@ const mutantes = [
   [
     LIB,
     "o DEVEDOR cancela a divida dele (a pergunta de credor cai, e a RLS nao recusa: ela FILTRA)",
-    "  if (params.emprestimo.lender_user_id !== params.meuId) {",
-    "  if (false) {",
+    // A ASSINATURA DA FUNCAO ENTRA NA ANCORA, E NAO E ZELO: desde a HMO-395
+    // `problemaDaAntecipacao` tem esta MESMA linha, palavra por palavra, porque
+    // e a mesma decisao (a RLS filtra em vez de recusar, entao a rota pergunta
+    // antes). A ancora, escrita quando a linha era unica, passou a casar duas
+    // vezes e o runner a reprovaria como ambigua -- e o `replace` mutaria a
+    // primeira, que nao e a que o rotulo descreve.
+    // Ver `funcao-nova-que-copia-criterio-torna-ancora-alheia-ambigua`.
+    "}): ProblemaDoCancelamento | null {\n  if (params.emprestimo.lender_user_id !== params.meuId) {",
+    "}): ProblemaDoCancelamento | null {\n  if (false) {",
   ],
 
   [
@@ -488,6 +496,236 @@ const mutantes = [
     "o UPDATE da quitacao perde o filtro do id (TODO emprestimo que a RLS entrega vira `settled`)",
     '        .eq("id", parcelaDoMyBank.loan_id)',
     "",
+  ],
+
+  // =========================================================================
+  // A ANTECIPACAO DE PARCELAS (HMO-395, F2 da HMO-393)
+  // =========================================================================
+  // O PRIMEIRO E O CONTROLE DA CORRECAO QUE VEM ANTES DESTA FEATURE.
+  //
+  // A HMO-393 propunha, no item 2, que as parcelas antecipadas saissem do fim da
+  // serie para `cancelled` E que o dinheiro pagasse as proximas em aberto. Isso
+  // EXTINGUE O DOBRO DO QUE FOI PAGO: quatro parcelas saem do caminho e duas
+  // foram pagas. Este mutante e aquele desenho escrito inteiro -- a cauda
+  // cancelada e a cabeca paga.
+  //
+  // Ele tem de morrer no teste "O CONTROLE DA ISSUE", que tem UMA assercao e ela
+  // e de SOMATORIO. Num teste que tambem afirmasse `status` ele morreria na
+  // primeira assercao de status, e a prova ficaria amarrada a qual status cada
+  // desenho escreve em vez do fato de um deles perder R$ 200 -- e nenhum CHECK
+  // deste banco reclama disso.
+  //
+  // O SEGUNDO NAO ERRA NUMERO NENHUM. Com `ASC` no lugar de `DESC` o total
+  // recebido e o mesmo e as duas telas ficam consistentes; o que se perde e a
+  // decisao de produto ("ENCURTA a serie"), e ela so se mede por QUAIS parcelas
+  // baixaram e por qual passou a ser o ultimo vencimento em aberto.
+
+  [
+    ANTECIPA,
+    "A ANTECIPACAO CANCELA A CAUDA E PAGA A CABECA (o desenho do item 2: extingue o DOBRO do que foi pago)",
+    "    const escolhidas = parcelasDaAntecipacao({ parcelas, quantas });",
+    '    const aCancelar = parcelasDaAntecipacao({ parcelas, quantas });\n' +
+      "    await supabase\n" +
+      '      .from("mybank_installments")\n' +
+      '      .update({ status: "cancelled" })\n' +
+      '      .in(\n' +
+      '        "id",\n' +
+      "        aCancelar.map((p) => p.id)\n" +
+      "      )\n" +
+      '      .select("id");\n' +
+      "    const escolhidas = parcelas\n" +
+      '      .filter((p) => p.status === "pending" || p.status === "reported")\n' +
+      "      .filter((p) => !aCancelar.some((c) => c.id === p.id))\n" +
+      "      .sort((a, b) => a.installment_number - b.installment_number)\n" +
+      "      .slice(0, quantas);",
+  ],
+
+  [
+    LIB,
+    "A ESCOLHA PEGA A CABECA DA SERIE (DESC -> ASC: o total e o mesmo e a serie NAO encurta)",
+    "      return String(a.due_date) < String(b.due_date) ? 1 : -1;",
+    "      return String(a.due_date) < String(b.due_date) ? -1 : 1;",
+  ],
+
+  [
+    LIB,
+    "o desempate de vencimento igual cai (duas parcelas do mesmo dia saem na ordem que o banco devolveu)",
+    "    return b.installment_number - a.installment_number;",
+    "    return 0;",
+  ],
+
+  [
+    LIB,
+    "a escolha alcanca parcela PAGA e CANCELADA (antecipar paga duas vezes a mesma parcela)",
+    "  const emAberto = params.parcelas.filter((p) =>\n    STATUS_EM_ABERTO_DA_PARCELA.includes(p.status)\n  );\n\n  const daCaudaParaCima",
+    "  const emAberto = params.parcelas.filter(() => true);\n\n  const daCaudaParaCima",
+  ],
+
+  [
+    LIB,
+    "a escolha REORDENA a lista de quem chamou (o rotulo de vencimento e a contagem da rota leem outra ordem)",
+    "  const emAberto = params.parcelas.filter((p) =>\n    STATUS_EM_ABERTO_DA_PARCELA.includes(p.status)\n  );\n\n  const daCaudaParaCima",
+    "  params.parcelas.sort((a, b) => b.installment_number - a.installment_number);\n  const emAberto = params.parcelas.filter((p) =>\n    STATUS_EM_ABERTO_DA_PARCELA.includes(p.status)\n  );\n\n  const daCaudaParaCima",
+  ],
+
+  // -------------------------------------------------------------------------
+  // A PERNA -- e ela precisa da PROPRIA ancora
+  // -------------------------------------------------------------------------
+  // `mesmo-alvo-nao-prova-coberto-compare-as-ancoras`: a parcela avulsa ja tem
+  // mutante de `income` no PATCH da parcela, e ele nao diz nada sobre esta rota.
+  // E aqui o defeito e MAIOR -- a antecipacao lanca N pernas num unico pedido,
+  // entao o mesmo principal entraria como renda N vezes de uma vez.
+
+  [
+    ANTECIPA,
+    "a perna da antecipacao vira `income` (o mesmo principal conta como receita N vezes num clique)",
+    "          ...perna,",
+    '          ...perna,\n          transaction_type: "income" as unknown as "transfer",',
+  ],
+
+  [
+    ANTECIPA,
+    "O ROLLBACK DA PERNA NAO RODA quando a baixa falha (perna orfa: dinheiro no extrato que nenhuma divida explica)",
+    '        await supabase\n          .from("financial_transactions")\n          .delete()\n          .eq("id", lancamento.id);\n\n        console.error(\n          "Antecipacao desfeita nesta parcela: a baixa nao alcancou a linha",',
+    '        console.error(\n          "Antecipacao desfeita nesta parcela: a baixa nao alcancou a linha",',
+  ],
+
+  [
+    ANTECIPA,
+    "a baixa filtrada pela RLS responde SUCESSO (zero linha alcancada, e a perna fica no extrato)",
+    "      if (erroDaBaixa || !baixadas || baixadas.length === 0) {",
+    "      if (erroDaBaixa) {",
+  ],
+
+  // -------------------------------------------------------------------------
+  // O CREDOR, e as duas leituras filtradas pelo emprestimo
+  // -------------------------------------------------------------------------
+
+  [
+    LIB,
+    "O CREDOR DEIXA DE SER CONFERIDO (a devedora recebe sucesso de um UPDATE que a RLS filtrou)",
+    "}): ProblemaDaAntecipacao | null {\n  if (params.emprestimo.lender_user_id !== params.meuId) {",
+    "}): ProblemaDaAntecipacao | null {\n  if (false) {",
+  ],
+
+  [
+    ANTECIPA,
+    "a leitura da serie perde o filtro do emprestimo (antecipar esta divida paga a parcela de OUTRA)",
+    '        "id, installment_number, installment_total, amount, due_date, status"\n      )\n      .eq("loan_id", emprestimo.id);',
+    '        "id, installment_number, installment_total, amount, due_date, status"\n      )\n      ;',
+  ],
+
+  [
+    ANTECIPA,
+    "a RELEITURA perde o filtro do emprestimo (parcela de outra divida impede a quitacao)",
+    '      .select("id, status, due_date")\n      .eq("loan_id", emprestimo.id);',
+    '      .select("id, status, due_date")\n      ;',
+  ],
+
+  [
+    ANTECIPA,
+    "a quitacao da antecipacao nao confere a CONTAGEM (a resposta diz quitado sobre UPDATE que a RLS filtrou)",
+    "        emprestimoQuitado =\n          !erroDaQuitacao && !!quitados && quitados.length > 0;",
+    "        emprestimoQuitado = !erroDaQuitacao;",
+  ],
+
+  // -------------------------------------------------------------------------
+  // AS RECUSAS -- cada uma e dinheiro saindo da conta sem ter sido pedido
+  // -------------------------------------------------------------------------
+
+  [
+    LIB,
+    "o emprestimo COM JURO passa (somar `amount` cobra juro de um tempo que nao existiu)",
+    "  if (Number(params.emprestimo.interest_rate ?? 0) !== JUROS_DA_FASE_1) {",
+    "  if (false) {",
+  ],
+
+  [
+    LIB,
+    "o juro chega como STRING e a recusa dispara em TODO emprestimo da fase 1 (a feature fica inalcancavel)",
+    "  if (Number(params.emprestimo.interest_rate ?? 0) !== JUROS_DA_FASE_1) {",
+    "  if ((params.emprestimo.interest_rate ?? 0) !== JUROS_DA_FASE_1) {",
+  ],
+
+  [
+    LIB,
+    "o emprestimo CANCELADO ou QUITADO aceita antecipacao (dinheiro sai da conta por uma divida que acabou)",
+    "  if (params.emprestimo.status !== STATUS_ATIVO) {",
+    "  if (false) {",
+  ],
+
+  [
+    LIB,
+    "`quantas` fracionario ou zero passa (o pedido de R$ 150 deixa de ter recusa com frase)",
+    "  if (!Number.isInteger(params.quantas) || params.quantas < 1) {",
+    "  if (false) {",
+  ],
+
+  [
+    LIB,
+    "da para antecipar MAIS do que esta em aberto (a rota decide um valor diferente do que a pessoa confirmou)",
+    "  if (params.quantas > quantasEmAberto(params.parcelas)) {",
+    "  if (false) {",
+  ],
+
+  [
+    LIB,
+    "o CASO A entra aqui (a serie do auto-emprestimo encurta sem nada ter saido da conta)",
+    '    }) === "auto"\n  ) {\n    return "caso_a_nao_entra_aqui";',
+    '    }) !== "auto"\n  ) {\n    return "caso_a_nao_entra_aqui";',
+  ],
+
+  // -------------------------------------------------------------------------
+  // A ARITMETICA E AS FRASES
+  // -------------------------------------------------------------------------
+
+  [
+    LIB,
+    "`valorDaAntecipacao` soma REAIS em vez de centavos (o valor da resposta sai com dizima)",
+    "    (total, p) => total + Math.round(Number(p.amount) * 100),\n    0\n  );\n\n  return centavos / 100;",
+    "    (total, p) => total + Number(p.amount),\n    0\n  );\n\n  return centavos;",
+  ],
+
+  [
+    LIB,
+    "`ultimoVencimentoEmAberto` ordena o ROTULO e nao o ISO (01/2028 vem antes de 09/2026)",
+    '    .map((p) => String(p.due_date))\n    .sort();\n\n  if (isos.length === 0) return null;\n\n  return mesDoVencimentoDaParcela(isos[isos.length - 1]);',
+    '    .map((p) => mesDoVencimentoDaParcela(String(p.due_date)))\n    .sort();\n\n  if (isos.length === 0) return null;\n\n  return isos[isos.length - 1];',
+  ],
+
+  [
+    LIB,
+    "a mensagem perde a TERCEIRA frase (duas parcelas menos se le como `baixaram minha prestacao`)",
+    '    `${params.ultimoVencimentoDepois}. As parcelas que sobram mantêm o valor de sempre — ` +\n    "antecipar encurta a série, não baixa a prestação."',
+    "    `${params.ultimoVencimentoDepois}.`",
+  ],
+
+  [
+    LIB,
+    "a mensagem DEDUZ a quitacao de `nao sobrou vencimento` (anuncia quitado de um emprestimo ainda `active`)",
+    "  if (params.quitado) {",
+    "  if (params.ultimoVencimentoDepois === null) {",
+  ],
+
+  [
+    LIB,
+    "a releitura que FALHOU passa por `nao sobrou nada` (a frase anuncia o fim de uma divida que a rota nao conseguiu ler)",
+    "  if (!params.serieRelida) {",
+    "  if (false) {",
+  ],
+
+  [
+    ANTECIPA,
+    "a releitura que falhou devolve `parcelas_em_aberto: 0` (zero diz `nada a pagar` onde a rota nao sabe)",
+    "    let aindaEmAberto: number | null = null;",
+    "    let aindaEmAberto: number | null = 0;",
+  ],
+
+  [
+    ANTECIPA,
+    "a resposta conta as parcelas PEDIDAS e nao as que entraram (2 antecipadas quando so uma baixou)",
+    "      numerosAntecipados: antecipadas.map((p) => p.numero),",
+    "      numerosAntecipados: escolhidas.map((p) => p.installment_number),",
   ],
 ];
 

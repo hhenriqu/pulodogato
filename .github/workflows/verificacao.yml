@@ -7398,10 +7398,21 @@ jobs:
       #     'pending'` no filtro) e as DUAS guardas de `.length` antes do `.in`:
       #     clausula `.in` vazia no PostgREST NAO filtra, e sem elas cancelar um
       #     emprestimo do Caso B levaria a agenda INTEIRA de Contas a Pagar.
+      #   * (HMO-395) A ANTECIPACAO: as N parcelas em aberto de MAIOR vencimento
+      #     virando `paid`, cada uma com a PROPRIA perna de entrada. Nada e
+      #     cancelado e nenhum `amount` e tocado -- a decisao de produto ("duas
+      #     parcelas menos", "as que sobram mantem o valor", "ENCURTA a serie")
+      #     em forma de assercao. O controle desta parte e um teste com UMA
+      #     assercao, e ela e de SOMATORIO: `soma(pagas) + soma(em aberto)` tem
+      #     de continuar sendo o `principal`. O desenho que a HMO-393 propunha --
+      #     cancelar a cauda E pagar a cabeca -- faz essa soma cair de R$ 600
+      #     para R$ 400 sem que nenhum CHECK reclame e com as duas telas
+      #     consistentes entre si, e nenhuma assercao de `status` distingue os
+      #     dois desenhos pelo motivo certo.
       - name: MyBank -- a serie do emprestimo, as rotas e o ciclo do Caso A
         run: npm run test:emprestimo-do-mybank
 
-      # Controle negativo do step acima: 50 mutantes, 50 mortos.
+      # Controle negativo do step acima: 78 mutantes, 78 mortos.
       #
       # O que a HMO-382 pede por nome e `A PARCELA FICA EM pending`: o dinheiro
       # anda certo nas 24 vezes (corrente -X, investimento +X) e o painel do
@@ -7426,6 +7437,23 @@ jobs:
       # ultimo e mutado injetando o DELETE das previsoes ANTES do UPDATE do
       # emprestimo, e quem o mata e a assercao de ORDEM por `indexOf` sobre as
       # escritas que a rota mandou.
+      #
+      # O que a HMO-395 pede por nome e `A ANTECIPACAO CANCELA A CAUDA E PAGA A
+      # CABECA`: o desenho do item 2 da HMO-393, escrito inteiro como mutante.
+      # Ele perdoa R$ 200 de uma divida de R$ 600 e nao da erro em lugar nenhum,
+      # e por isso tem de morrer numa assercao de SOMATORIO e nao de `status` --
+      # os dois desenhos escrevem status diferentes, e so um deles perde dinheiro.
+      # O segundo da secao e o unico desta suite que NAO erra numero nenhum:
+      # `DESC` -> `ASC` na escolha da cauda recebe o mesmo total e deixa a serie
+      # do mesmo tamanho; quem o mata e a assercao de QUAIS parcelas baixaram.
+      #
+      # A ANCORA DO MUTANTE DO CANCELAMENTO MUDOU NESTA ENTREGA, e nao por
+      # estilo: `problemaDaAntecipacao` copia a primeira pergunta de
+      # `problemaDoCancelamento` palavra por palavra (e a mesma decisao -- a RLS
+      # filtra em vez de recusar, entao a rota pergunta antes), e a linha passou a
+      # casar duas vezes no arquivo. As duas ancoras ganharam a assinatura da
+      # funcao no comeco. Ver `funcao-nova-que-copia-criterio-torna-ancora-alheia-
+      # ambigua`; `npm run check-ancora-de-mutante` e quem reprova isso.
       - name: Mutantes do MyBank -- emprestimo e ciclo do Caso A
         run: npm run mutantes:emprestimo-do-mybank
 
