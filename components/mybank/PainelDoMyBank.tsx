@@ -438,6 +438,27 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
       const dados = await resposta.json();
 
       if (!resposta.ok) {
+        // O 409 ESQUECE O PEDIDO, E SEM ISSO O "tente de novo" E MENTIRA.
+        //
+        // 409 quer dizer "o id que você escolheu é de uma linha que não é sua"
+        // (ver o bloco do `23505` na rota). O par guardado continuaria casando
+        // com este formulário, então o reenvio mandaria o MESMO id, colidiria
+        // com a MESMA linha e voltaria 409 -- para sempre. A pessoa leria
+        // "tente de novo" num botão que nunca mais funciona.
+        //
+        // Nos OUTROS erros o par FICA de propósito: é justamente ali que ele
+        // serve (a rede que caiu, o 500 do meio do caminho), e é o que faz o
+        // reenvio depois do F5 não criar a segunda dívida.
+        if (resposta.status === 409) {
+          try {
+            sessionStorage.removeItem(CHAVE_DO_PEDIDO);
+          } catch {
+            // Armazenamento indisponivel nao e erro de pessoa -- e sem o par
+            // guardado o proximo envio ja sorteia um id novo, que e exatamente
+            // o que este ramo quer.
+          }
+        }
+
         setErro(dados.error ?? "Não foi possível criar o empréstimo.");
         return;
       }

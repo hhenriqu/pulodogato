@@ -287,6 +287,7 @@ const PAGINA = `<!doctype html>
 <div id="raiz-g1"></div><div id="raiz-g2"></div><div id="raiz-g3"></div>
 <div id="raiz-g1-controle"></div><div id="raiz-g1-controle-2"></div>
 <div id="raiz-h"></div><div id="raiz-h2"></div><div id="raiz-h3"></div>
+<div id="raiz-g4"></div><div id="raiz-g4b"></div>
 <div id="resultado">a pagina nao rodou</div>
 <script>${umd("react", "react.development.js")}</script>
 <script>${umd("react-dom", "react-dom.development.js")}</script>
@@ -372,9 +373,13 @@ try {
 
 let CHAMADAS = [];
 
-const resposta = (corpo, ok) => ({
+// O \`status\` EXPLICITO entrou na HMO-390: o componente ramifica em
+// \`resposta.status === 409\` (o id colidiu com linha alheia), e um duble
+// que so soubesse devolver 400 faria aquele ramo ser INALCANCAVEL -- o caso G4
+// passaria medindo o ramo de erro genérico e o mutante do 409 sobreviveria.
+const resposta = (corpo, ok, status) => ({
   ok: ok === undefined ? true : ok,
-  status: ok === false ? 400 : 200,
+  status: status ?? (ok === false ? 400 : 200),
   headers: { get: () => null },
   json: async () => corpo,
 });
@@ -649,6 +654,16 @@ let POST_DE_EMPRESTIMO_FALHA = false;
  */
 let PATCH_DE_PARCELA_FALHA = false;
 
+/**
+ * O POST DE EMPRESTIMO RESPONDE 409? -- usado por G4 (HMO-390).
+ *
+ * 409 e "o id que voce escolheu e de uma linha que nao e sua". O par guardado
+ * TEM de ser esquecido nesse ramo, senao o reenvio manda o mesmo id, colide com
+ * a mesma linha e volta 409 para sempre -- e a frase "tente de novo" vira
+ * mentira num botao que nunca mais funciona.
+ */
+let POST_DE_EMPRESTIMO_409 = false;
+
 window.fetch = async (url, init) => {
   const metodo = (init && init.method) || "GET";
   const corpo = init && init.body ? JSON.parse(init.body) : null;
@@ -662,6 +677,18 @@ window.fetch = async (url, init) => {
   ) {
     // Registrado em CHAMADAS acima: o POST SAIU, e e o id dele que G2 compara.
     throw new TypeError("Failed to fetch");
+  }
+
+  if (
+    POST_DE_EMPRESTIMO_409 &&
+    alvo.startsWith("/api/mybank/loans") &&
+    metodo === "POST"
+  ) {
+    return resposta(
+      { error: "Esse pedido nao pode ser confirmado. Tente de novo." },
+      false,
+      409
+    );
   }
 
   if (
@@ -1266,6 +1293,78 @@ async function preencherEmprestimo(achar, valor) {
   out.h_retentativa = {
     primeira: primeiraTentativa,
     total: CHAMADAS.filter((c) => c.metodo === "PATCH").length,
+  };
+}
+
+// G4 -- O 409 ESQUECE O PEDIDO, E E ISSO QUE FAZ O "tente de novo" SER VERDADE
+//
+// 409 quer dizer "o id que voce escolheu e de uma linha que nao e sua". O par
+// guardado continuaria casando com este formulario, entao sem o \`removeItem\`
+// deste ramo o reenvio mandaria o MESMO id, colidiria com a MESMA linha e
+// voltaria 409 -- para sempre. A frase que a rota manda ("Tente de novo") seria
+// mentira num botao que nunca mais funciona.
+//
+// O controle e o id: depois do 409 o proximo POST tem de sair com um id
+// DIFERENTE. Afirmar so "saiu um segundo POST" passaria verde com o id repetido
+// -- e e o id repetido que condena a pessoa ao 409 eterno.
+{
+  POST_DE_EMPRESTIMO_409 = true;
+
+  const raiz = await montarPainel("raiz-g4");
+  const achar = (id) => raiz.querySelector("[id='" + id + "']");
+  await preencherEmprestimo(achar, "2400.00");
+
+  CHAMADAS = [];
+  clicar(achar("mybank-emprestar"));
+  await assentar();
+  const recusado = CHAMADAS.filter((c) => c.metodo === "POST")[0] || null;
+
+  // A FRASE E LIDA AQUI, e nao depois da retentativa: o segundo envio da
+  // certo e o \`setErro(null)\` dele apaga o aviso. Lido no fim, o campo vem
+  // \`null\` -- que se le como "a rota nao avisou nada", e nao como "o aviso
+  // ja saiu da tela".
+  const erroDo409 = achar("mybank-erro")
+    ? achar("mybank-erro").textContent
+    : null;
+
+  // A pessoa le a frase e tenta de novo, no mesmo formulario.
+  POST_DE_EMPRESTIMO_409 = false;
+  CHAMADAS = [];
+  clicar(achar("mybank-emprestar"));
+  await assentar();
+  const retentativa = CHAMADAS.filter((c) => c.metodo === "POST")[0] || null;
+
+  out.g4 = {
+    erro: erroDo409,
+    idRecusado: recusado ? recusado.corpo.id : null,
+    idDaRetentativa: retentativa ? retentativa.corpo.id : null,
+  };
+
+  // CONTROLE DO CONTROLE: num erro que NAO e 409 (a rede caiu) o par FICA --
+  // e ele que faz o reenvio depois do F5 nao criar a segunda divida. Sem este
+  // caso, um \`removeItem\` posto no caminho de erro INTEIRO passaria G4 e
+  // desfaria G2 em silencio.
+  POST_DE_EMPRESTIMO_FALHA = true;
+
+  const raizB = await montarPainel("raiz-g4b");
+  const acharB = (id) => raizB.querySelector("[id='" + id + "']");
+  await preencherEmprestimo(acharB, "2400.00");
+
+  CHAMADAS = [];
+  clicar(acharB("mybank-emprestar"));
+  await assentar();
+  const caiu = CHAMADAS.filter((c) => c.metodo === "POST")[0] || null;
+
+  CHAMADAS = [];
+  clicar(acharB("mybank-emprestar"));
+  await assentar();
+  const depoisDaQueda = CHAMADAS.filter((c) => c.metodo === "POST")[0] || null;
+
+  POST_DE_EMPRESTIMO_FALHA = false;
+
+  out.g4b = {
+    idDaQueda: caiu ? caiu.corpo.id : null,
+    idDepois: depoisDaQueda ? depoisDaQueda.corpo.id : null,
   };
 }
 
@@ -2017,5 +2116,45 @@ test("H3: a baixa que FALHOU tem segunda tentativa (a parcela sai do conjunto)",
     2,
     "a parcela nao saiu do conjunto depois da falha: a baixa ficou sem " +
       "segunda tentativa e o botao virou um clique que nao faz nada"
+  );
+});
+
+test("G4: depois do 409 o reenvio sai com um id NOVO (o `tente de novo` funciona)", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // A frase da rota chegou a tela: sem ela o caso mediria um ramo que a pessoa
+  // nao ve.
+  assert.match(String(resultado.g4.erro), /Tente de novo/i);
+
+  // CONTROLE POSITIVO: os dois POSTs sairam.
+  assert.ok(resultado.g4.idRecusado, "o POST recusado com 409 nao saiu");
+  assert.ok(resultado.g4.idDaRetentativa, "a retentativa nao mandou POST");
+
+  // O id TROCOU. Com o par guardado intacto, o reenvio repetiria o id,
+  // colidiria com a MESMA linha alheia e voltaria 409 para sempre -- "tente de
+  // novo" num botao que nunca mais funciona.
+  assert.notEqual(
+    resultado.g4.idDaRetentativa,
+    resultado.g4.idRecusado,
+    "depois do 409 a tela reenviou o MESMO id: a pessoa fica presa no 409"
+  );
+});
+
+test("G4b: controle -- num erro que NAO e 409 o pedido FICA guardado", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  assert.ok(resultado.g4b.idDaQueda, "o POST que cai na rede nao saiu");
+  assert.ok(resultado.g4b.idDepois, "o reenvio depois da queda nao saiu");
+
+  // O MESMO id. Este e o caso que a issue existe para consertar, e ele e o
+  // oposto de G4: aqui a dívida PODE ter sido gravada, e repetir o id e o que
+  // faz a rota responder 200 com ela em vez de criar a segunda.
+  //
+  // Sem este caso, um `removeItem` posto no caminho de erro INTEIRO passaria G4
+  // e desfaria G2 em silencio.
+  assert.equal(
+    resultado.g4b.idDepois,
+    resultado.g4b.idDaQueda,
+    "a queda de rede esqueceu o pedido: o reenvio criaria a SEGUNDA divida"
   );
 });

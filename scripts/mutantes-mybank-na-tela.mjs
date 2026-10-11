@@ -343,8 +343,23 @@ const mutantes = [
   [
     PAINEL,
     "o pedido NAO e esquecido no sucesso (o proximo emprestimo igual volta 200 sem gravar)",
-    "        sessionStorage.removeItem(CHAVE_DO_PEDIDO);",
-    "        void CHAVE_DO_PEDIDO;",
+    // A ANCORA LEVA O `try {` DA LINHA DE CIMA, e isso e obrigatorio.
+    //
+    // Ha DOIS `removeItem(CHAVE_DO_PEDIDO)` no arquivo: este (sucesso, oito
+    // espacos) e o do ramo do 409 (doze). A indentacao nao os separa -- o
+    // trecho de oito espacos e SUBSTRING da linha de doze, porque doze espacos
+    // comecam com oito. A ancora curta casava nos dois e
+    // `check-ancora-de-mutante` reprovava com "ancora AMBIGUA (2x)". Familia
+    // `guard-de-includes-casa-dentro-de-identificador-maior`.
+    "      try {\n        sessionStorage.removeItem(CHAVE_DO_PEDIDO);",
+    "      try {\n        void CHAVE_DO_PEDIDO;",
+  ],
+
+  [
+    PAINEL,
+    "o 409 NAO esquece o pedido (o `tente de novo` manda o mesmo id e colide para sempre)",
+    "        if (resposta.status === 409) {",
+    "        if (resposta.status === 410) {",
   ],
 
   [
