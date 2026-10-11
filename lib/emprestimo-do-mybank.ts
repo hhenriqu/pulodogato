@@ -1394,16 +1394,27 @@ export function ultimoVencimentoEmAberto(
  * dizendo o que DEVERIA ter ficado em vez do que ficou, que e exatamente o que a
  * HMO-394 escolheu nao fazer.
  *
- * Por isso ha TRES ramos, e o terceiro e esse estado: nada em aberto e status
- * intacto. A frase dele nao promete nada e manda conferir.
+ * Por isso ha QUATRO ramos, e os dois ultimos sao dois estados que a frase nao
+ * pode confundir: "nada em aberto e status intacto" e "eu NAO SEI o que sobrou".
+ *
+ * `serieRelida: false` E O RAMO DO "NAO SEI", E ELE NAO E DEFENSIVO
+ * ----------------------------------------------------------------
+ * A releitura da serie e uma consulta, e consulta falha. Com ela falhando,
+ * `ultimoVencimentoDepois` chega `null` -- indistinguivel de "nao sobrou nada".
+ * Sem este ramo a frase afirmaria que a divida acabou porque a rota nao
+ * conseguiu PERGUNTAR se ela acabou, que e a pior das tres respostas possiveis:
+ * o dinheiro entrou de verdade e a pessoa acharia que quitou. Aqui ela diz o que
+ * aconteceu (as parcelas antecipadas) e manda conferir o resto.
  */
 export function mensagemDaAntecipacao(params: {
   numerosAntecipados: number[];
   ultimoVencimentoAntes: string;
-  /** `null` quando nao sobrou parcela em aberto. */
+  /** `null` quando nao sobrou parcela em aberto. Irrelevante se `serieRelida` e `false`. */
   ultimoVencimentoDepois: string | null;
   /** O emprestimo se declarou `settled` DE VERDADE (o UPDATE alcancou a linha). */
   quitado: boolean;
+  /** A releitura da serie respondeu? `false` quando a consulta falhou. */
+  serieRelida: boolean;
 }): string {
   const quantas = params.numerosAntecipados.length;
 
@@ -1415,6 +1426,13 @@ export function mensagemDaAntecipacao(params: {
 
   if (params.quitado) {
     return `${abertura} Não sobrou nada em aberto: o empréstimo está quitado e sai da lista A receber.`;
+  }
+
+  if (!params.serieRelida) {
+    return (
+      `${abertura} O dinheiro entrou, mas não consegui reler as parcelas que sobraram: ` +
+      "confira a lista A receber."
+    );
   }
 
   if (params.ultimoVencimentoDepois === null) {

@@ -412,13 +412,21 @@ export async function POST(
 
     let emprestimoQuitado = false;
     let ultimoVencimentoDepois: string | null = null;
-    let aindaEmAberto = 0;
+    // `null` E NAO `0`, E A DIFERENCA E DINHEIRO. Com a releitura falhando, um
+    // `0` aqui diria "nao sobrou nada a pagar" porque a rota nao conseguiu
+    // PERGUNTAR quanto sobrou -- e as parcelas antecipadas ja estao pagas, entao
+    // quem le concluiria que quitou. `null` e "nao sei", e a frase tem ramo
+    // proprio para ele.
+    let aindaEmAberto: number | null = null;
+    const serieRelida = !erroDaReleitura && !!serieDepois;
 
-    if (!erroDaReleitura && serieDepois) {
+    // `&& serieDepois` DE NOVO e so para o tsc estreitar o tipo: a pergunta e
+    // `serieRelida`, e escrever a condicao de outra forma aqui deixaria duas
+    // versoes do mesmo criterio em linhas vizinhas -- as duas podendo divergir
+    // na primeira mudanca sem que nada reclame.
+    if (serieRelida && serieDepois) {
       aindaEmAberto = quantasEmAberto(serieDepois);
-      ultimoVencimentoDepois = ultimoVencimentoEmAberto(
-        serieDepois as { due_date: string; status: string }[]
-      );
+      ultimoVencimentoDepois = ultimoVencimentoEmAberto(serieDepois);
 
       if (emprestimoFicouQuitado({ parcelas: serieDepois })) {
         const { data: quitados, error: erroDaQuitacao } = await supabase
@@ -450,6 +458,7 @@ export async function POST(
       // UPDATE ter alcancado a linha o emprestimo continua `active`, e anunciar
       // quitacao ali seria a resposta dizendo o que deveria ter ficado.
       quitado: emprestimoQuitado,
+      serieRelida,
     });
 
     return NextResponse.json({

@@ -3403,6 +3403,7 @@ test("`mensagemDaAntecipacao` diz as TRES coisas que mudaram", () => {
     ultimoVencimentoAntes: "04/2027",
     ultimoVencimentoDepois: "02/2027",
     quitado: false,
+    serieRelida: true,
   });
 
   // 1. quantas sairam, e QUAIS;
@@ -3425,6 +3426,7 @@ test("`mensagemDaAntecipacao` no singular nao diz `1 parcelas`", () => {
     ultimoVencimentoAntes: "04/2027",
     ultimoVencimentoDepois: "03/2027",
     quitado: false,
+    serieRelida: true,
   });
 
   assert.match(frase, /Parcela 6 antecipada/);
@@ -3437,6 +3439,7 @@ test("`mensagemDaAntecipacao`: sem nada em aberto a TERCEIRA frase SAI", () => {
     ultimoVencimentoAntes: "04/2027",
     ultimoVencimentoDepois: null,
     quitado: true,
+    serieRelida: true,
   });
 
   assert.match(frase, /quitado/i);
@@ -3458,6 +3461,7 @@ test("`mensagemDaAntecipacao`: nada em aberto SEM quitacao nao anuncia quitacao"
     ultimoVencimentoAntes: "04/2027",
     ultimoVencimentoDepois: null,
     quitado: false,
+    serieRelida: true,
   });
 
   assert.match(frase, /continua em atividade/i);
@@ -3468,6 +3472,103 @@ test("`mensagemDaAntecipacao`: nada em aberto SEM quitacao nao anuncia quitacao"
 // ---------------------------------------------------------------------------
 // 12.4 -- A ROTA: o passo 4 da medicao, e o somatorio
 // ---------------------------------------------------------------------------
+
+test("`mensagemDaAntecipacao`: releitura que FALHOU nao afirma que a divida acabou", () => {
+  // O ESTADO: as parcelas foram pagas de verdade e a releitura da serie falhou.
+  // `ultimoVencimentoDepois` chega `null` -- indistinguivel de "nao sobrou nada" --,
+  // e sem ramo proprio a frase anunciaria o fim da divida porque a rota nao
+  // conseguiu PERGUNTAR se ela acabou. O dinheiro entrou, entao quem le
+  // concluiria que quitou.
+  const frase = LIB.mensagemDaAntecipacao({
+    numerosAntecipados: [6, 5],
+    ultimoVencimentoAntes: "04/2027",
+    ultimoVencimentoDepois: null,
+    quitado: false,
+    serieRelida: false,
+  });
+
+  assert.match(frase, /2 parcelas antecipadas/);
+  assert.match(frase, /não consegui reler/i);
+  assert.match(frase, /confira a lista A receber/i);
+
+  // NADA AFIRMADO SOBRE O RESTO DA SERIE: nem quitacao, nem "nao sobrou
+  // parcela", nem o valor de quem fica.
+  assert.equal(/quitado/i.test(frase), false);
+  assert.equal(/Não sobrou/i.test(frase), false);
+  assert.equal(/mantêm o valor/i.test(frase), false);
+});
+
+test("a RELEITURA que falha nao faz a rota dizer que sobrou zero", async () => {
+  const linhas = tabelasDaAntecipacao();
+
+  // O ARRANJO: a releitura da serie e a ULTIMA leitura de `mybank_installments`
+  // da rota, e e a unica que pode falhar DEPOIS de o dinheiro ter entrado.
+  // `erros` do duble derruba a tabela inteira e impediria o pedido de comecar,
+  // entao o embrulho deixa as duas primeiras leituras passarem e derruba a
+  // terceira.
+  const sessao = criarDuble({ user: { id: EU }, tabelas: linhas });
+  let leituras = 0;
+  globalThis.__dubleDeSupabase = {
+    sessao: () => ({
+      ...sessao.client,
+      from(tabela) {
+        const api = sessao.client.from(tabela);
+        if (tabela !== "mybank_installments") return api;
+        return {
+          ...api,
+          select(cols) {
+            leituras += 1;
+            if (leituras < 2) return api.select(cols);
+            const falha = {
+              eq: () => falha,
+              then: (res, rej) =>
+                Promise.resolve({
+                  data: null,
+                  error: { code: "XX000", message: "conexão caiu" },
+                }).then(res, rej),
+            };
+            return falha;
+          },
+        };
+      },
+    }),
+  };
+
+  let resposta;
+  try {
+    resposta = await ANTECIPA.POST(
+      { json: async () => ({ parcelas: 2, data_do_pagamento: "2026-12-01" }) },
+      { params: { id: "loan-antecipa" } }
+    );
+  } finally {
+    delete globalThis.__dubleDeSupabase;
+  }
+
+  const corpo = await resposta.json();
+
+  // O DINHEIRO ENTROU, e a rota diz isso.
+  assert.equal(resposta.status, 200, JSON.stringify(corpo));
+  assert.equal(corpo.parcelas_antecipadas, 2);
+  assert.equal(linhas.financial_transactions.length, 2);
+
+  // E O QUE ELA NAO SABE SAI COMO `null`, E NAO COMO ZERO. Um `0` aqui diria
+  // "nao sobrou nada a pagar" porque a releitura falhou, e as parcelas pagas ja
+  // estao pagas -- quem le concluiria que quitou.
+  assert.equal(corpo.parcelas_em_aberto, null);
+  assert.equal(corpo.ultimo_vencimento_depois, null);
+  assert.equal(corpo.emprestimo_quitado, false);
+  assert.match(corpo.message, /não consegui reler/i);
+  assert.equal(/quitado/i.test(corpo.message), false);
+
+  // E NADA DE `settled`: sem saber o que sobrou, declarar a quitacao tiraria a
+  // divida das duas telas (que filtram `active`) por causa de uma consulta que
+  // nao respondeu.
+  assert.equal(escritasEm(sessao, "mybank_loans", "update").length, 0);
+  assert.equal(
+    linhas.mybank_loans.find((l) => l.id === "loan-antecipa").status,
+    "active"
+  );
+});
 
 test("O CONTROLE DA ISSUE: a soma da divida continua fechando com o principal", async () => {
   // ESTE TESTE TEM UMA ASSERCAO SO, E ISSO E DELIBERADO.

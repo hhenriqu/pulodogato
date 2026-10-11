@@ -708,6 +708,20 @@ const mutantes = [
   ],
 
   [
+    LIB,
+    "a releitura que FALHOU passa por `nao sobrou nada` (a frase anuncia o fim de uma divida que a rota nao conseguiu ler)",
+    "  if (!params.serieRelida) {",
+    "  if (false) {",
+  ],
+
+  [
+    ANTECIPA,
+    "a releitura que falhou devolve `parcelas_em_aberto: 0` (zero diz `nada a pagar` onde a rota nao sabe)",
+    "    let aindaEmAberto: number | null = null;",
+    "    let aindaEmAberto: number | null = 0;",
+  ],
+
+  [
     ANTECIPA,
     "a resposta conta as parcelas PEDIDAS e nao as que entraram (2 antecipadas quando so uma baixou)",
     "      numerosAntecipados: antecipadas.map((p) => p.numero),",
