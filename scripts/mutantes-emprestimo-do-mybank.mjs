@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Prova de mutacao do MyBank F2 -- a serie do emprestimo e as duas rotas
-// (HMO-370).
+// Prova de mutacao do MyBank -- a serie do emprestimo, as rotas e o ciclo do
+// Caso A (HMO-370 e HMO-382).
 //
 //   node scripts/mutantes-emprestimo-do-mybank.mjs
 //
@@ -39,6 +39,16 @@
 // mata, e so ele). Ver `duas-guardas-redundantes-fazem-os-dois-mutantes-
 // sobreviverem`.
 //
+// O QUE A HMO-382 PEDE POR NOME: `A PARCELA FICA EM pending`
+// ----------------------------------------------------------
+// E o primeiro da secao do ciclo, e e o estado em que a main ficou depois da
+// F4: a baixa da previsao move o dinheiro certo (corrente `-X`, investimento
+// `+X`) e `mybank_installments.status` nao mexe. Eu pago a moto para mim mesmo
+// nas 24 vezes e o painel do MyBank segue dizendo que eu devo tudo. O oposto da
+// familia HMO-149 -- lá o numero fecha e o fato nao aconteceu; aqui o fato
+// aconteceu e o numero nao mexe --, e por isso ele e mais dificil de achar
+// depois: nenhum saldo esta errado.
+//
 // A FORMA DA LISTA E A DA FAMILIA TUPLA DE ARIDADE 4
 // -------------------------------------------------
 // `scripts/mede-ancora-ambigua.mjs` -- a guarda que reprova ancora morta,
@@ -53,6 +63,7 @@ import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
 const LIB = "lib/emprestimo-do-mybank.ts";
 const LOANS = "app/api/mybank/loans/route.ts";
 const PARCELA = "app/api/mybank/installments/[id]/route.ts";
+const BAIXA = "app/api/scheduled-transactions/[id]/pay/route.ts";
 
 /** [alvo, rotulo, de, para] */
 const mutantes = [
@@ -196,6 +207,94 @@ const mutantes = [
     "previsao que falha deixa o emprestimo gravado: divida que a pessoa nunca ve para pagar",
     '        await supabase.from("mybank_loans").delete().eq("id", emprestimo.id);\n        return NextResponse.json(\n          {\n            error:\n              "Não foi possível agendar as parcelas em Contas a Pagar. Nada foi gravado.",',
     '        return NextResponse.json(\n          {\n            error:\n              "Não foi possível agendar as parcelas em Contas a Pagar. Nada foi gravado.",',
+  ],
+
+  // =========================================================================
+  // O CICLO DO CASO A (HMO-382) -- a baixa da previsao e o estorno
+  // =========================================================================
+  [
+    BAIXA,
+    "A PARCELA FICA EM `pending` (o dinheiro anda 24 vezes e o MyBank segue cobrando tudo)",
+    "  if (fechaOCicloDoMyBank && parcelaDoMyBank) {\n    const { data: parcelasBaixadas, error: erroDaParcela } = await supabase",
+    "  if (false && parcelaDoMyBank) {\n    const { data: parcelasBaixadas, error: erroDaParcela } = await supabase",
+  ],
+  [
+    BAIXA,
+    "o elo da parcela aponta para a perna de SAIDA (a parcela diz ter entrado na conta corrente, negativa)",
+    "          pernaDeEntradaId: txEntrada.id,",
+    "          pernaDeEntradaId: txSaida.id,",
+  ],
+  [
+    BAIXA,
+    "a baixa da parcela filtrada pela RLS responde SUCESSO (zero linha alcancada, parcela pendente e previsao paga)",
+    "    if (erroDaParcela || !parcelasBaixadas || parcelasBaixadas.length === 0) {",
+    "    if (erroDaParcela) {",
+  ],
+  [
+    BAIXA,
+    "a parcela que nao baixou NAO desfaz as pernas (dinheiro movido sem baixa e sem parcela)",
+    '      await supabase.from("financial_transactions").delete().eq("id", txEntrada.id);\n      await supabase.from("financial_transactions").delete().eq("id", txSaida.id);\n      console.error(\n        "Baixa desfeita: a parcela do MyBank não pôde ser marcada como paga",',
+    '      console.error(\n        "Baixa desfeita: a parcela do MyBank não pôde ser marcada como paga",',
+  ],
+  [
+    BAIXA,
+    "a resposta nao diz qual parcela foi baixada (a tela nao tem como saber que o MyBank mudou)",
+    "    mybank_installment_id: fechaOCicloDoMyBank ? parcelaDoMyBank?.id ?? null : null,",
+    "    mybank_installment_id: null as string | null,",
+  ],
+  [
+    BAIXA,
+    "o ESTORNO nao devolve a parcela (parcela paga sem dinheiro: emprestimo quitado de graca)",
+    "      if (parcelaSegueAoEstornoDaPrevisao(parcela ?? null)) {",
+    "      if (false) {",
+  ],
+  [
+    BAIXA,
+    "o estorno recusado pela RLS segue apagando o dinheiro (parcela fica paga e as pernas somem)",
+    "        if (erroDaParcela || !devolvidas || devolvidas.length === 0) {",
+    "        if (erroDaParcela) {",
+  ],
+  [
+    LIB,
+    "a chave casa em QUALQUER posicao de `notes` (uma anotacao digitada vira elo para um id inventado)",
+    "  if (!notes.startsWith(PREFIXO_DA_CHAVE_DO_MYBANK)) return null;",
+    "  if (!notes.includes(PREFIXO_DA_CHAVE_DO_MYBANK)) return null;",
+  ],
+  [
+    LIB,
+    "o id do elo aceita espaco (texto livre depois do prefixo passa por id de parcela)",
+    "  if (!id || /\\s/.test(id)) return null;",
+    "  if (!id) return null;",
+  ],
+  [
+    LIB,
+    "a baixa alcanca parcela em QUALQUER estado (a cancelada volta a `paid` por efeito colateral)",
+    '  return parcela.status === "pending" || parcela.status === "reported";',
+    "  return true;",
+  ],
+  [
+    LIB,
+    "o estorno le o estado errado da parcela (a parcela paga nao volta a pendente)",
+    '  return parcela.status === "paid";',
+    '  return parcela.status === "pending";',
+  ],
+  [
+    LIB,
+    "o estorno aceita a parcela AUSENTE (elo pendurado faz o desfazer recusar para sempre)",
+    "export function parcelaSegueAoEstornoDaPrevisao(\n  parcela: { status: string } | null | undefined\n): boolean {\n  if (!parcela) return false;",
+    "export function parcelaSegueAoEstornoDaPrevisao(\n  parcela: { status: string } | null | undefined\n): boolean {\n  if (!parcela) return true;",
+  ],
+  [
+    LIB,
+    "o estorno mexe so no `status` (23514 no `mybank_installments_paid_check`, e a parcela fica presa em paid)",
+    '  return { status: "pending", paid_date: null, paid_transaction_id: null };',
+    '  return { status: "pending" } as EstornoDaParcela;',
+  ],
+  [
+    LIB,
+    "a baixa grava `reported` em vez de `paid` (a parcela do auto-emprestimo espera uma confirmacao que nao existe)",
+    '    status: "paid",\n    paid_date: params.paidDate,',
+    '    status: "reported" as "paid",\n    paid_date: params.paidDate,',
   ],
 ];
 

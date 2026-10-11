@@ -25,6 +25,15 @@
 //    lib/card-invoice.ts, junto dos testes. Aqui fica so a sequencia de
 //    escrita, que tem tres passos em vez de dois e por isso um desfazimento
 //    a mais.
+//
+// 4. A PARCELA DO MYBANK FECHA O CICLO AQUI (HMO-382). Quando a transferencia
+//    prevista carrega `notes = mybank:<id da parcela>`, esta baixa e o unico
+//    lugar do app que leva aquela parcela a `paid` -- o PATCH de
+//    /api/mybank/installments/[id] recusa `paid` no auto-emprestimo de
+//    proposito, porque aceitar lá deixaria o emprestimo quitado sem nada ter
+//    saido da conta. O estorno (DELETE) devolve a parcela a `pending`, e e o
+//    PRIMEIRO passo dele: desfazer a parcela nao move dinheiro, entao falhar
+//    ali nao deixa nenhum estado intermediario.
 
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
@@ -41,6 +50,13 @@ import {
   validarBaixaDeTransferencia,
   mensagemDaBaixaDeTransferencia,
 } from "@/lib/transferencia";
+import {
+  parcelaDaChaveDoMyBank,
+  parcelaSegueABaixaDaPrevisao,
+  parcelaSegueAoEstornoDaPrevisao,
+  patchDaBaixaDaParcela,
+  patchDoEstornoDaParcela,
+} from "@/lib/emprestimo-do-mybank";
 
 export async function POST(
   request: NextRequest,
@@ -476,6 +492,26 @@ async function pagarFatura(params: {
  * `counterpart_transaction_id = conta.transaction_id`, e o elo mora na perna de
  * entrada apontando para a de saida. Apontar para a entrada deixaria o estorno
  * sem achar a outra perna.
+ *
+ * O PASSO 2.5: A PARCELA DO MYBANK (HMO-382)
+ * ------------------------------------------
+ * Quando a previsao carrega `notes = mybank:<id da parcela>`, ela e uma parcela
+ * do auto-emprestimo (Caso A da HMO-368) e esta baixa e o unico lugar onde
+ * aquela parcela pode virar `paid`: o PATCH de `/api/mybank/installments/[id]`
+ * RECUSA `paid` no Caso A de proposito, porque aceitar lá quitaria o emprestimo
+ * sem nada ter saido da conta. Sem este passo o dinheiro andava certo (corrente
+ * `-X`, investimento `+X`) e a parcela ficava em `pending` para sempre -- eu
+ * pagava a moto para mim mesmo 24 vezes e o painel do MyBank seguia dizendo que
+ * eu devia tudo.
+ *
+ * ELE ENTRA ENTRE O PASSO 2 E O PASSO 3, E A POSICAO E A DECISAO
+ * -------------------------------------------------------------
+ * Depois das pernas porque `paid_transaction_id` aponta para uma delas (FK para
+ * `financial_transactions`), e ANTES da baixa da previsao porque e o que mantem
+ * a promessa desta rota: a falha no meio tem de ser "nao deu baixa", que o
+ * usuario ve e refaz. Se a parcela fosse o ULTIMO passo, uma falha nela deixaria
+ * previsao paga + dinheiro movido + parcela pendente -- exatamente o defeito que
+ * a HMO-382 existe para fechar, so que sem ninguem para consertar depois.
  */
 async function pagarTransferencia(params: {
   // O tipo do cliente do supabase-js so aparece na assinatura de createClient;
@@ -503,6 +539,28 @@ async function pagarTransferencia(params: {
       { status: 400 }
     );
   }
+
+  // A PARCELA DO MYBANK, LIDA ANTES DA PRIMEIRA ESCRITA
+  //
+  // Ler agora e o que permite decidir, sem nada gravado ainda, se esta baixa
+  // fecha um ciclo do MyBank ou e uma transferencia prevista comum. A leitura
+  // nao filtra por `user_id`: `mybank_installments` nao tem essa coluna -- a
+  // autorizacao mora no emprestimo e e a RLS (`mybank_installments_select`, 053)
+  // que decide se eu alcanco a linha. Parcela de emprestimo alheio volta como
+  // `null` e cai no mesmo caminho do elo pendurado.
+  const parcelaDoMyBankId = parcelaDaChaveDoMyBank(conta.notes);
+  let parcelaDoMyBank: { id: string; status: string } | null = null;
+
+  if (parcelaDoMyBankId) {
+    const { data: parcela } = await supabase
+      .from("mybank_installments")
+      .select("id, status")
+      .eq("id", parcelaDoMyBankId)
+      .maybeSingle();
+    parcelaDoMyBank = parcela ?? null;
+  }
+
+  const fechaOCicloDoMyBank = parcelaSegueABaixaDaPrevisao(parcelaDoMyBank);
 
   const { saida, entrada } = pernasDaTransferencia({
     // A baixa aceita valor diferente do previsto, como a comum: o CHECK do banco
@@ -572,6 +630,52 @@ async function pagarTransferencia(params: {
     );
   }
 
+  // PASSO 2.5 -- a parcela do MyBank vira `paid` (HMO-382). Ver o cabecalho
+  // desta funcao para a posicao; aqui fica o porque de cada detalhe.
+  if (fechaOCicloDoMyBank && parcelaDoMyBank) {
+    const { data: parcelasBaixadas, error: erroDaParcela } = await supabase
+      .from("mybank_installments")
+      // O elo aponta para a perna de ENTRADA -- a positiva, a da conta de
+      // investimento. Ver `patchDaBaixaDaParcela`: e a mesma coluna que no Caso
+      // B guarda a entrada que o credor lanca, e apontar para a saida faria ela
+      // querer dizer coisas opostas nos dois casos.
+      .update(
+        patchDaBaixaDaParcela({
+          paidDate: paid_date,
+          pernaDeEntradaId: txEntrada.id,
+        })
+      )
+      .eq("id", parcelaDoMyBank.id)
+      .select("id, status");
+
+    // `.select()` E A CONTAGEM NAO SAO DECORACAO. Um UPDATE que a policy nao
+    // deixa casar responde 200 com corpo vazio -- a RLS FILTRA em vez de recusar
+    // --, entao sem conferir a contagem esta rota diria "parcela paga" sobre um
+    // UPDATE que alcancou zero linha. O caminho e real aqui: a trigger
+    // `mybank_installments_trava_do_devedor` (053) tambem recusa, e com
+    // excecao, se quem clicou nao for o credor.
+    if (erroDaParcela || !parcelasBaixadas || parcelasBaixadas.length === 0) {
+      // NADA FICA GRAVADO. A previsao ainda nao foi baixada (este passo vem
+      // antes), entao desfazer as duas pernas devolve o mundo ao estado de
+      // antes do clique -- "nao deu baixa", que a pessoa ve e refaz. A ordem e a
+      // mesma do passo 3: a entrada primeiro, porque e ela que aponta para a
+      // saida e o FK e ON DELETE SET NULL.
+      await supabase.from("financial_transactions").delete().eq("id", txEntrada.id);
+      await supabase.from("financial_transactions").delete().eq("id", txSaida.id);
+      console.error(
+        "Baixa desfeita: a parcela do MyBank não pôde ser marcada como paga",
+        erroDaParcela
+      );
+      return NextResponse.json(
+        {
+          error:
+            "Não foi possível baixar a parcela do MyBank. Nada foi lançado — tente novamente.",
+        },
+        { status: 500 }
+      );
+    }
+  }
+
   const { data: baixada, error: erroBaixa } = await supabase
     .from("scheduled_transactions")
     .update({ status: "paid", paid_date, transaction_id: txSaida.id })
@@ -586,6 +690,26 @@ async function pagarTransferencia(params: {
     // no saldo do destino, sem nada que diga de onde veio.
     await supabase.from("financial_transactions").delete().eq("id", txEntrada.id);
     await supabase.from("financial_transactions").delete().eq("id", txSaida.id);
+
+    // E a parcela volta com elas. Sem este desfazimento o estorno automatico
+    // deixaria o estado pior do que o defeito original: parcela do MyBank paga,
+    // previsao pendente e nenhum dinheiro lancado -- emprestimo quitado de
+    // graca. O `paid_transaction_id` ja teria ficado NULL pelo FK (ON DELETE SET
+    // NULL), mas o `status` NAO volta sozinho.
+    if (fechaOCicloDoMyBank && parcelaDoMyBank) {
+      const { error: erroDoEstornoDaParcela } = await supabase
+        .from("mybank_installments")
+        .update(patchDoEstornoDaParcela())
+        .eq("id", parcelaDoMyBank.id);
+
+      if (erroDoEstornoDaParcela) {
+        console.error(
+          "A parcela do MyBank ficou paga sem baixa na previsão:",
+          erroDoEstornoDaParcela
+        );
+      }
+    }
+
     console.error(
       "Baixa desfeita: não foi possível marcar a transferência como feita",
       erroBaixa
@@ -597,7 +721,17 @@ async function pagarTransferencia(params: {
   }
 
   return NextResponse.json({
-    message: "Transferência confirmada",
+    // A palavra muda quando a baixa fechou um ciclo do MyBank: quem pagou a
+    // parcela 3/24 do proprio emprestimo precisa ler que a PARCELA foi baixada,
+    // e nao so que uma transferencia aconteceu -- e o painel do MyBank e a outra
+    // tela que mudou, e ela nao esta na frente de quem clicou.
+    message: fechaOCicloDoMyBank
+      ? "Parcela do MyBank paga"
+      : "Transferência confirmada",
+    // O id da parcela que esta baixa alcancou, ou `null`. Sai da rota em vez de
+    // a tela reler `notes`: a decisao de QUANDO o elo vale (chave inteira,
+    // parcela existente, estado que aceita a baixa) tem um dono.
+    mybank_installment_id: fechaOCicloDoMyBank ? parcelaDoMyBank?.id ?? null : null,
     scheduled: baixada,
     transaction: txSaida,
     counterpart: txEntrada,
@@ -624,9 +758,11 @@ export async function DELETE(
       return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
     }
 
+    // `notes` entra no select por causa do elo do MyBank (HMO-382): e dele que
+    // sai o id da parcela a devolver para `pending`.
     const { data: conta } = await supabase
       .from("scheduled_transactions")
-      .select("status, transaction_id")
+      .select("status, transaction_id, notes")
       .eq("id", params.id)
       .eq("user_id", user.id)
       .single();
@@ -659,6 +795,60 @@ export async function DELETE(
         .eq("user_id", user.id)
         .maybeSingle();
       pernaOposta = oposta?.id ?? null;
+    }
+
+    // ---------------------------------------------------------------
+    // A PARCELA DO MYBANK VOLTA PARA `pending` (HMO-382)
+    // ---------------------------------------------------------------
+    // PRIMEIRO DE TODOS OS PASSOS, e isso e a decisao: desfazer a parcela nao
+    // move dinheiro nenhum, entao falhar aqui deixa o mundo exatamente como
+    // estava -- previsao paga, pernas no lugar, parcela paga -- e a pessoa
+    // reclica. Qualquer outra posicao abriria uma janela com a parcela paga e o
+    // dinheiro desfeito: emprestimo quitado de graca, que e pior do que o
+    // defeito que a HMO-382 conserta.
+    //
+    // O `paid_transaction_id` NAO volta sozinho. O FK e ON DELETE SET NULL,
+    // entao apagar a perna zera a coluna e deixa a parcela em `paid` sem elo
+    // nenhum -- "paga", sem dinheiro e sem como descobrir por quem. E
+    // `mybank_installments_paid_check` (`(status = 'paid') = (paid_date IS NOT
+    // NULL)`) nao acusa esse estado: ele olha a data, nao o elo.
+    //
+    // A re-leitura do estado existe para o estorno ser repetivel: se a soltura
+    // da previsao falhar e a pessoa tentar de novo, a parcela ja esta em
+    // `pending` e `parcelaSegueAoEstornoDaPrevisao` devolve `false` -- o UPDATE
+    // nao e refeito e nao ha o que dar errado duas vezes.
+    const parcelaDoMyBankId = parcelaDaChaveDoMyBank(conta.notes);
+    if (parcelaDoMyBankId) {
+      const { data: parcela } = await supabase
+        .from("mybank_installments")
+        .select("id, status")
+        .eq("id", parcelaDoMyBankId)
+        .maybeSingle();
+
+      if (parcelaSegueAoEstornoDaPrevisao(parcela ?? null)) {
+        const { data: devolvidas, error: erroDaParcela } = await supabase
+          .from("mybank_installments")
+          .update(patchDoEstornoDaParcela())
+          .eq("id", parcelaDoMyBankId)
+          .select("id, status");
+
+        // Contagem zero e o UPDATE que a RLS FILTROU (200, corpo vazio). Parar
+        // aqui e o que impede o estorno de apagar o dinheiro e deixar a parcela
+        // paga: nada foi tocado ainda.
+        if (erroDaParcela || !devolvidas || devolvidas.length === 0) {
+          console.error(
+            "Estorno recusado: a parcela do MyBank não voltou para pendente",
+            erroDaParcela
+          );
+          return NextResponse.json(
+            {
+              error:
+                "Não foi possível devolver a parcela do MyBank para pendente. Nada foi estornado — tente novamente.",
+            },
+            { status: 500 }
+          );
+        }
+      }
     }
 
     // Ordem inversa da baixa: solta a conta primeiro. A constraint

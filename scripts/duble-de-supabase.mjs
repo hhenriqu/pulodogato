@@ -243,11 +243,35 @@ function consulta(
   tabela,
   registro,
   escrever = () => {},
-  rlsBarra = false
+  rlsBarra = false,
+  sequencias = new Map()
 ) {
   let filtradas = [...linhas];
   let colunas = null;
   const filtros = [];
+
+  /**
+   * O proximo id desta tabela NA SESSAO -- e a sequencia e por sessao, nao por
+   * chamada de `insert` (HMO-382).
+   *
+   * Antes o id saia do indice DENTRO do lote (`${tabela}-${i + 1}`), e duas
+   * chamadas de `insert` de uma linha so na mesma tabela devolviam o MESMO id.
+   * Isso fabrica equivalencia falsa em toda rota que grava duas linhas e
+   * precisa escolher UMA: a baixa de uma transferencia grava a perna de saida e
+   * a de entrada e amarra a parcela do MyBank a de ENTRADA (ver
+   * `patchDaBaixaDaParcela`). Com os dois ids iguais, trocar uma perna pela
+   * outra passava verde -- a assercao comparava `"financial_transactions-1"`
+   * com `"financial_transactions-1"` e o mutante do elo errado sobrevivia sem
+   * que nada no teste parecesse fraco.
+   *
+   * A sequencia continua de 1 em cada tabela, entao a PRIMEIRA linha inserida
+   * continua sendo `<tabela>-1`, como antes.
+   */
+  const proximoNaSequencia = () => {
+    const n = (sequencias.get(tabela) ?? 0) + 1;
+    sequencias.set(tabela, n);
+    return n;
+  };
 
   /**
    * As linhas que um UPDATE/DELETE com estes filtros alcanca (HMO-356).
@@ -325,24 +349,61 @@ function consulta(
         selecao = colunasDe(cols);
         return depois;
       },
+      /**
+       * O ESCRITO, e nao o lido: `.update({...}).eq(...).select().single()` e a
+       * forma que a baixa de conta prevista usa nos tres caminhos dela.
+       *
+       * Faltava (HMO-382), e a falta NAO se lia como duble incompleto:
+       * `...select(...).single is not a function` cai no `catch` da rota e sai
+       * como `500 {"error":"Erro interno"}` -- uma sonda escrita sobre a
+       * resposta mede o caminho de erro achando que mede a feature.
+       *
+       * Zero linha alcancada devolve `PGRST116` em `single`, como o cliente de
+       * verdade: e assim que a rota distingue "a RLS filtrou" de "deu certo", e
+       * e esse caminho que o botao `rlsFiltra` exercita. `maybeSingle` devolve
+       * `null` sem erro, que e a outra metade do contrato.
+       */
+      single() {
+        return concluir().then(({ data, error }) => ({
+          data: data?.[0] ?? null,
+          error:
+            error ??
+            (data && data.length > 0
+              ? null
+              : { code: "PGRST116", message: "no rows" }),
+        }));
+      },
+      maybeSingle() {
+        return concluir().then(({ data, error }) => ({
+          data: data?.[0] ?? null,
+          error: error ?? null,
+        }));
+      },
       then(resolve, reject) {
-        const atingidas = alcancadas();
-        aplicar(atingidas);
-        // A projecao sai DEPOIS de aplicar, e serve aos dois verbos: o
-        // `.select()` do PostgREST num UPDATE devolve a linha JA com o patch, e
-        // num DELETE devolve a linha que saiu -- `atingidas` guarda as
-        // referencias, entao o splice nao as apaga daqui.
-        escrever({ ...alvo, linhasAfetadas: atingidas.length });
-        registro(tabela, filtros, verbo);
-
-        return Promise.resolve({
-          data: pediuSelect
-            ? atingidas.map((l) => projetar(l, selecao))
-            : null,
-          error: null,
-        }).then(resolve, reject);
+        return concluir().then(resolve, reject);
       },
     };
+
+    /**
+     * Executa a escrita e projeta o resultado. Um lugar so, porque os tres
+     * terminadores (`then`, `single`, `maybeSingle`) tem de aplicar o patch
+     * exatamente uma vez e registrar exatamente uma escrita.
+     */
+    function concluir() {
+      const atingidas = alcancadas();
+      aplicar(atingidas);
+      // A projecao sai DEPOIS de aplicar, e serve aos dois verbos: o
+      // `.select()` do PostgREST num UPDATE devolve a linha JA com o patch, e
+      // num DELETE devolve a linha que saiu -- `atingidas` guarda as
+      // referencias, entao o splice nao as apaga daqui.
+      escrever({ ...alvo, linhasAfetadas: atingidas.length });
+      registro(tabela, filtros, verbo);
+
+      return Promise.resolve({
+        data: pediuSelect ? atingidas.map((l) => projetar(l, selecao)) : null,
+        error: null,
+      });
+    }
 
     return depois;
   }
@@ -372,8 +433,8 @@ function consulta(
     insert(payload) {
       const propostas = Array.isArray(payload) ? payload : [payload];
       const colunasDoLote = Object.keys(propostas[0] ?? {});
-      const gravadas = propostas.map((proposta, i) => {
-        const linha = { id: `${tabela}-${i + 1}` };
+      const gravadas = propostas.map((proposta) => {
+        const linha = { id: `${tabela}-${proximoNaSequencia()}` };
         for (const coluna of colunasDoLote) linha[coluna] = proposta[coluna];
         return linha;
       });
@@ -704,6 +765,14 @@ export function criarDuble({
     escritas.push(operacao);
   };
 
+  /**
+   * A sequencia de ids de cada tabela, viva pela sessao inteira. Ver
+   * `proximoNaSequencia` em `consulta`: sem ela duas linhas inseridas na mesma
+   * tabela nascem com o mesmo id, e toda rota que grava duas e escolhe uma fica
+   * sem ter como ser medida.
+   */
+  const sequencias = new Map();
+
   return {
     lidas,
     escritas,
@@ -758,7 +827,11 @@ export function criarDuble({
           tabela,
           registro,
           escrever,
-          Boolean(rlsFiltra[tabela])
+          Boolean(rlsFiltra[tabela]),
+          // A sequencia de ids e da SESSAO: cada `from()` monta um `consulta`
+          // novo, e um contador local a ele voltaria a 1 em cada chamada --
+          // exatamente o empate que a sequencia existe para desfazer.
+          sequencias
         );
       },
       rpc(nome, args) {
