@@ -26,6 +26,8 @@ const {
   ehPernaDeEntrada,
   ehGastoNoCartao,
   ehPagamentoDaFatura,
+  ehEntradaSoltaDoMyBank,
+  PREFIXO_DO_ELO_DO_MYBANK,
   TIPO_CARTAO,
   TIPO_DA_PERNA_DE_PAGAMENTO,
   linhaRealizada,
@@ -1343,6 +1345,174 @@ test("sem id E sem notes a linha fica fora -- nao ha chave estavel", () => {
   assert.equal(linhaPrevista({ ...prevista(), id: null, notes: null }), null);
   assert.equal(linhaPrevista({ ...prevista(), id: "", notes: "" }), null);
   assert.equal(linhaPrevista({ ...prevista(), id: "   ", notes: undefined }), null);
+});
+
+// -----------------------------------------------------
+// ARMADILHA 7: a perna de entrada SOLTA nao estava em lado nenhum (HMO-380)
+// -----------------------------------------------------
+// O caso medido em PRODUCAO pela prova da HMO-374: a devedora avisou, o credor
+// confirmou, a rota gravou UMA linha (`transfer`, +100, sem elo, com a chave
+// `mybank:<id>`), o saldo da conta de investimento foi de R$ 0,00 a R$ 100,00 --
+// e as TRES abas de Movimentacoes de novembro leram R$ 0,00.
+//
+// `ehPernaDeEntrada` casa com ela pelo SINAL, e o `continue` da armadilha 3 a
+// descartava. Nao ha segunda perna: a saida aconteceu na conta de OUTRA PESSOA.
+
+/** A perna que app/api/mybank/installments/[id]/route.ts grava, como em prod. */
+const PERNA_SOLTA_DO_MYBANK = {
+  id: "ec4bb603",
+  description: "Moto eletrica HMO-374 (prova) (1/24)",
+  amount: 100,
+  transaction_type: "transfer",
+  counterpart_transaction_id: null,
+  notes: `${PREFIXO_DO_ELO_DO_MYBANK}parcela-1-de-24`,
+  account: { id: "inv", name: "Investimentos" },
+};
+
+test("a perna SOLTA do MyBank aparece na aba Transferencias -- os R$ 100 medidos em prod", () => {
+  const linhas = daTela([realizada(PERNA_SOLTA_DO_MYBANK)], [], "transfer");
+
+  // CONTROLE, e e o defeito medido: a MESMA linha sem a chave canonica some. Se
+  // a excecao desaparecer, este numero e o que a aba volta a mostrar.
+  const semAChave = daTela(
+    [realizada({ ...PERNA_SOLTA_DO_MYBANK, notes: null })],
+    [],
+    "transfer"
+  );
+  assert.equal(semAChave.length, 0, "o controle precisa sumir para a assercao valer");
+  assert.equal(resumoDaTela(semAChave).realizado, 0);
+
+  assert.equal(linhas.length, 1);
+  assert.equal(linhas[0].id, "ec4bb603");
+  assert.equal(resumoDaTela(linhas).realizado, 100);
+  // A frase sai por QUAL ponta e conhecida, e nao por qual perna e a desenhada:
+  // a conta da outra ponta nao e minha, entao nao ha "A → B" a dizer.
+  assert.equal(linhas[0].conta, "entrou em Investimentos");
+  // O SELO, o mesmo que o lado previsto poe nas outras 23 parcelas.
+  assert.equal(linhas[0].natureza, "mybank");
+});
+
+test("ela NAO entra em Despesas nem em Receitas -- os outros dois zeros estao certos", () => {
+  // Nao e gasto (nada saiu de conta minha) e o principal voltando nao e receita
+  // nova (`PARCELA_FORA_DO_REALIZADO`). So o zero de Transferencias era defeito.
+  const emDespesas = daTela([realizada(PERNA_SOLTA_DO_MYBANK)], [], "expense");
+  const emReceitas = daTela([realizada(PERNA_SOLTA_DO_MYBANK)], [], "income");
+
+  assert.equal(emDespesas.length, 0);
+  assert.equal(emReceitas.length, 0);
+  assert.equal(resumoDaTela(emDespesas).realizado, 0);
+  assert.equal(resumoDaTela(emReceitas).realizado, 0);
+});
+
+test("o Caso A continua de-duplicado: as DUAS pernas com a mesma nota contam UMA vez", () => {
+  // A baixa da previsao do auto-emprestimo (HMO-382) grava `comum.notes` nas
+  // DUAS pernas -- a nota `mybank:` chega igual na saida e na entrada -- e o elo
+  // do 015 na de entrada. Sem o criterio do elo em `ehEntradaSoltaDoMyBank` a
+  // armadilha 3 voltaria para o Caso A inteiro.
+  const nota = `${PREFIXO_DO_ELO_DO_MYBANK}parcela-do-auto`;
+  const linhas = daTela(
+    [
+      realizada({
+        id: "saida",
+        amount: -1000,
+        transaction_type: "transfer",
+        notes: nota,
+        account: { id: "cc", name: "Itaú" },
+      }),
+      realizada({
+        id: "entrada",
+        amount: 1000,
+        transaction_type: "transfer",
+        notes: nota,
+        counterpart_transaction_id: "saida",
+        account: { id: "inv", name: "Investimentos" },
+      }),
+    ],
+    [],
+    "transfer"
+  );
+
+  // CONTROLE: as duas pernas somam 2.000 em valor absoluto.
+  assert.equal(Math.abs(-1000) + Math.abs(1000), 2000);
+
+  assert.equal(linhas.length, 1, "uma linha por parcela, nao duas");
+  assert.equal(linhas[0].id, "saida");
+  assert.equal(resumoDaTela(linhas).realizado, 1000);
+  assert.notEqual(resumoDaTela(linhas).realizado, 2000);
+  // E A PERNA QUE FICOU NAO LEVA O SELO. Ela carrega a nota `mybank:` e nao tem
+  // elo -- os dois primeiros criterios casam --, e o que a separa da perna
+  // solta e o SINAL. Sem esse criterio a saida de um par viria rotulada
+  // "MyBank", que e o selo de uma linha SEM par: o rotulo diria que nao houve
+  // contrapartida numa transferencia que tem as duas pernas gravadas.
+  assert.equal(linhas[0].natureza, "despesa");
+});
+
+test("ehEntradaSoltaDoMyBank: os QUATRO criterios, um a um", () => {
+  const nota = `${PREFIXO_DO_ELO_DO_MYBANK}p1`;
+  const solta = {
+    amount: 100,
+    transaction_type: "transfer",
+    notes: nota,
+    counterpart_transaction_id: null,
+  };
+
+  assert.equal(ehEntradaSoltaDoMyBank(solta), true);
+
+  // 1. O `transaction_type` GRAVADO. Uma receita anotada com a chave nao e a
+  //    perna -- e a leitura e da coluna CRUA: pelo SINAL esta linha e receita.
+  assert.equal(ehEntradaSoltaDoMyBank({ ...solta, transaction_type: "income" }), false);
+  assert.equal(ehEntradaSoltaDoMyBank({ ...solta, transaction_type: null }), false);
+  const { transaction_type: _tipo, ...semTipo } = solta;
+  assert.equal(ehEntradaSoltaDoMyBank(semTipo), false);
+
+  // 2. A CHAVE CANONICA, no COMECO da string. As TRES ausencias respondem nao, e
+  //    uma nota que apenas CITA `mybank:` no meio de uma frase nao e o elo.
+  assert.equal(ehEntradaSoltaDoMyBank({ ...solta, notes: null }), false);
+  assert.equal(ehEntradaSoltaDoMyBank({ ...solta, notes: undefined }), false);
+  const { notes: _notas, ...semNota } = solta;
+  assert.equal(ehEntradaSoltaDoMyBank(semNota), false);
+  assert.equal(
+    ehEntradaSoltaDoMyBank({ ...solta, notes: "paguei fora do mybank: dinheiro" }),
+    false
+  );
+  // A chave de OUTRA feature nao casa: `fatura:` tem prefixo proprio.
+  assert.equal(
+    ehEntradaSoltaDoMyBank({ ...solta, notes: "fatura:2026-11-01:cartao" }),
+    false
+  );
+
+  // 3. O ELO DO 015 NULO -- o criterio que separa o Caso B do Caso A. E elo e
+  //    TEXTO: `""` e `"   "` nao sao elo, e tratar um deles como elo tiraria a
+  //    perna solta da tela de novo.
+  assert.equal(ehEntradaSoltaDoMyBank({ ...solta, counterpart_transaction_id: "x" }), false);
+  assert.equal(ehEntradaSoltaDoMyBank({ ...solta, counterpart_transaction_id: "" }), true);
+  assert.equal(ehEntradaSoltaDoMyBank({ ...solta, counterpart_transaction_id: "   " }), true);
+  const { counterpart_transaction_id: _elo, ...semElo } = solta;
+  assert.equal(ehEntradaSoltaDoMyBank(semElo), true);
+
+  // 4. O SINAL POSITIVO. Ela responde sobre a linha que `ehPernaDeEntrada`
+  //    tirou, e so sobre ela: a negativa nunca foi descartada, e um par de ZERO
+  //    sem elo continua inteiro na aba (a decisao do zero da armadilha 3).
+  assert.equal(ehEntradaSoltaDoMyBank({ ...solta, amount: -100 }), false);
+  assert.equal(ehEntradaSoltaDoMyBank({ ...solta, amount: 0 }), false);
+  assert.equal(ehEntradaSoltaDoMyBank({ ...solta, amount: "100.00" }), true);
+});
+
+test("a excecao do MyBank nao afrouxa a de-duplicacao de um Pix comum", () => {
+  // O par sem nota nenhuma -- o caso da armadilha 3 -- continua contando uma
+  // vez. A assercao existe porque a excecao mora na MESMA linha do `continue`:
+  // um `||` onde ha `&&` desarmaria a de-duplicacao inteira.
+  const linhas = daTela(
+    [
+      realizada({ id: "a", amount: -500, transaction_type: "transfer" }),
+      realizada({ id: "b", amount: 500, transaction_type: "transfer" }),
+    ],
+    [],
+    "transfer"
+  );
+
+  assert.equal(linhas.length, 1);
+  assert.equal(linhas[0].id, "a");
 });
 
 // -----------------------------------------------------

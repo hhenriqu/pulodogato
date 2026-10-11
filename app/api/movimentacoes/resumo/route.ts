@@ -253,6 +253,13 @@ export async function GET(request: NextRequest) {
     // `ehPagamentoDaFatura` para de casar, e o mes em que a fatura foi paga volta
     // a fechar mais barato pelo valor dela inteiro -- no Previsto, no Realizado e
     // no Total.
+    //
+    // E DESDE A HMO-380 `notes` CARREGA UMA SEGUNDA CHAVE CANONICA
+    // (`mybank:<id da parcela>`), que e como a perna de entrada SOLTA do MyBank
+    // escapa da de-duplicacao da armadilha 3 (`ehEntradaSoltaDoMyBank`). Tira-lo
+    // daqui agora custa as DUAS leituras: a fatura paga some da aba Despesas e o
+    // dinheiro que a conexao pagou some da aba Transferencias -- e esta segunda
+    // nao tem nem o sintoma do total, porque a linha e a unica daquele dinheiro.
     const { data: realizadasCruas, error: erroRealizadas } = await supabase
       .from("financial_transactions")
       .select(
