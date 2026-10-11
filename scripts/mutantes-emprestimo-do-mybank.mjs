@@ -296,6 +296,49 @@ const mutantes = [
     '    status: "paid",\n    paid_date: params.paidDate,',
     '    status: "reported" as "paid",\n    paid_date: params.paidDate,',
   ],
+
+  // =========================================================================
+  // A CHAVE DO PEDIDO (HMO-390, F1 da HMO-383)
+  // =========================================================================
+  // Nenhum destes tres da erro em lugar nenhum quando acontece: a rota continua
+  // respondendo 201, o emprestimo continua nascendo, e o que se perde e so a
+  // recusa do REENVIO -- que ninguem ve ate a segunda divida de 24 meses
+  // aparecer na tela.
+
+  [
+    LOANS,
+    "O id DO PEDIDO NAO CHEGA AO INSERT (a coluna usa o DEFAULT e o reenvio cria a SEGUNDA divida)",
+    "        ...(pedidoId ? { id: pedidoId } : {}),\n",
+    "",
+  ],
+
+  [
+    LOANS,
+    "O 23505 DEVOLVE A LINHA SEM CONFERIR O CREDOR (vaza emprestimo em que eu sou DEVEDOR)",
+    "      if (!jaExistia || jaExistia.lender_user_id !== user.id) {",
+    "      if (!jaExistia) {",
+  ],
+
+  [
+    LOANS,
+    "o 23505 volta a ser erro (500 em vez de 200 com o emprestimo que ja existe)",
+    '    if (erroDoEmprestimo?.code === "23505" && pedidoId) {',
+    '    if (false && erroDoEmprestimo?.code === "23505" && pedidoId) {',
+  ],
+
+  [
+    LOANS,
+    "a contagem do caminho idempotente sai do PEDIDO e nao do banco",
+    "        total_de_parcelas: quantasParcelas ?? 0,",
+    "        total_de_parcelas: numeroDeParcelas,",
+  ],
+
+  [
+    LOANS,
+    "o id malformado deixa de ser peneirado (22P02 vira 500 em vez de 400)",
+    "    if (pedidoId !== null && !ehUuid(pedidoId)) {",
+    "    if (false && pedidoId !== null && !ehUuid(pedidoId)) {",
+  ],
 ];
 
 const SUITE = "test:emprestimo-do-mybank";

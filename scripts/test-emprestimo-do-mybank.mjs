@@ -1690,7 +1690,14 @@ test("o SEGUNDO POST com o mesmo id devolve 200 com o emprestimo que ja existe",
   let resposta;
   try {
     resposta = await LOANS.POST({
-      json: async () => ({ ...CORPO_AUTO, id: PEDIDO }),
+      // `parcelas: 12` CONTRA AS 24 QUE JA EXISTEM, de proposito.
+      //
+      // A rota promete que a contagem da resposta vem do BANCO e nao do pedido,
+      // e com os dois numeros iguais essa promessa nao tem como ser medida: um
+      // `total_de_parcelas: numeroDeParcelas` passaria verde. O cenario e o que
+      // o comentario da rota descreve -- o primeiro POST morreu entre o passo 1
+      // e o passo 2, e o reenvio pede outra coisa.
+      json: async () => ({ ...CORPO_AUTO, id: PEDIDO, parcelas: 12 }),
     });
   } finally {
     delete globalThis.__dubleDeSupabase;
@@ -1704,9 +1711,14 @@ test("o SEGUNDO POST com o mesmo id devolve 200 com o emprestimo que ja existe",
   assert.equal(corpo.loan_id, PEDIDO);
   assert.match(corpo.message, /já tinha sido criado/i);
 
-  // A CONTAGEM VEM DO BANCO. Se ela viesse de `parcelas` do pedido, a resposta
-  // mentiria sobre uma divida que o primeiro POST pode ter deixado incompleta.
-  assert.equal(corpo.total_de_parcelas, 24);
+  // A CONTAGEM VEM DO BANCO (24), E NAO DO PEDIDO (12). Se ela viesse do
+  // pedido, a resposta mentiria sobre uma divida que o primeiro POST pode ter
+  // deixado incompleta.
+  assert.equal(
+    corpo.total_de_parcelas,
+    24,
+    "a contagem saiu do pedido e nao do banco"
+  );
 
   // E NADA DE NOVO FOI GRAVADO -- nem parcela, nem previsao. Sem esta
   // assercao, uma rota que caisse no 200 DEPOIS de inserir as 24 parcelas de
