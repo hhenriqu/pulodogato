@@ -1020,9 +1020,16 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
                             oferecer o botao ali seria oferecer um clique cujo
                             unico resultado possivel e um toast de erro. E a
                             condicao e o status e nao as parcelas porque um
-                            emprestimo `active` com todas as parcelas pagas (e
-                            que por algum motivo nao virou `settled`) AINDA
-                            precisa de saida -- e o caso que abriu a HMO-383. */}
+                            emprestimo `active` com todas as parcelas pagas AINDA
+                            precisa de saida -- e o caso que abriu a HMO-383.
+
+                            Desde a HMO-394 o ciclo de pagamento escreve
+                            `settled`, entao esse estado deixou de nascer: quem
+                            paga a ultima parcela ve a linha sair do painel
+                            quitada, e nao com o botao Cancelar. Mas ele nao
+                            desapareceu -- os emprestimos que quitaram ANTES
+                            daquela entrega seguem `active`, e e por eles que a
+                            condicao continua sendo o status. */}
                         {emprestimo.status === "active" && (
                           <Button
                             variant="outline"

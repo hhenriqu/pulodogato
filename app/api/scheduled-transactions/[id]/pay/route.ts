@@ -51,10 +51,12 @@ import {
   mensagemDaBaixaDeTransferencia,
 } from "@/lib/transferencia";
 import {
+  emprestimoFicouQuitado,
   parcelaDaChaveDoMyBank,
   parcelaSegueABaixaDaPrevisao,
   parcelaSegueAoEstornoDaPrevisao,
   patchDaBaixaDaParcela,
+  patchDaQuitacaoDoEmprestimo,
   patchDoEstornoDaParcela,
 } from "@/lib/emprestimo-do-mybank";
 
@@ -512,6 +514,17 @@ async function pagarFatura(params: {
  * usuario ve e refaz. Se a parcela fosse o ULTIMO passo, uma falha nela deixaria
  * previsao paga + dinheiro movido + parcela pendente -- exatamente o defeito que
  * a HMO-382 existe para fechar, so que sem ninguem para consertar depois.
+ *
+ * O PASSO 4: O EMPRESTIMO QUITADO (HMO-394)
+ * -----------------------------------------
+ * Quando a baixa foi a da ULTIMA parcela em aberto, o emprestimo vira `settled`.
+ * Ele e o passo 4 e nao um pedaco do 2.5 pela razao OPOSTA a do paragrafo acima:
+ * a quitacao e a unica escrita desta rota que NAO deve ser desfeita, e o passo
+ * 2.5 tem um estorno atras dele. Gravar `settled` no 2.5 deixaria, quando a baixa
+ * da previsao falhasse, um emprestimo `settled` com parcela devolvida a `pending`
+ * -- e as duas telas do MyBank filtram `active`, entao a divida viva sairia das
+ * duas e ninguem seria cobrado. O passo 4 fica depois do ultimo desfazimento
+ * possivel, onde ja nao ha o que reverter.
  */
 async function pagarTransferencia(params: {
   // O tipo do cliente do supabase-js so aparece na assinatura de createClient;
@@ -549,12 +562,17 @@ async function pagarTransferencia(params: {
   // que decide se eu alcanco a linha. Parcela de emprestimo alheio volta como
   // `null` e cai no mesmo caminho do elo pendurado.
   const parcelaDoMyBankId = parcelaDaChaveDoMyBank(conta.notes);
-  let parcelaDoMyBank: { id: string; status: string } | null = null;
+  let parcelaDoMyBank:
+    | { id: string; status: string; loan_id: string }
+    | null = null;
 
   if (parcelaDoMyBankId) {
     const { data: parcela } = await supabase
       .from("mybank_installments")
-      .select("id, status")
+      // `loan_id` entra por causa da quitacao (HMO-394): e por ele que o passo 4
+      // le a serie inteira para decidir se esta baixa foi a ultima. Lido aqui, no
+      // mesmo SELECT, em vez de numa segunda consulta la embaixo.
+      .select("id, status, loan_id")
       .eq("id", parcelaDoMyBankId)
       .maybeSingle();
     parcelaDoMyBank = parcela ?? null;
@@ -720,14 +738,69 @@ async function pagarTransferencia(params: {
     );
   }
 
+  // PASSO 4 -- o emprestimo se declara `settled` (HMO-394).
+  //
+  // AQUI, E NAO NO PASSO 2.5: esta e a primeira linha depois do ULTIMO
+  // desfazimento possivel. O passo 2.5 ainda tem um estorno atras dele -- a
+  // falha da baixa da previsao desfaz as duas pernas E devolve a parcela a
+  // `pending` --, e aquele estorno nao sabe desfazer o status do emprestimo.
+  // Gravar `settled` la deixaria, na falha, um emprestimo `settled` com parcela
+  // `pending`: como as duas telas do MyBank filtram `active`, a divida viva
+  // desapareceria das duas e ninguem seria cobrado por ela.
+  //
+  // E NADA DAQUI PARA BAIXO E DESFEITO. Se o UPDATE falhar, o emprestimo fica
+  // `active` com todas as parcelas pagas -- o estado de antes desta issue, e
+  // correto em dinheiro. Ver o cabecalho da secao `settled` em
+  // `lib/emprestimo-do-mybank.ts`.
+  let emprestimoQuitado = false;
+
+  if (fechaOCicloDoMyBank && parcelaDoMyBank) {
+    const { data: parcelasDoEmprestimo, error: erroDaReleitura } = await supabase
+      .from("mybank_installments")
+      .select("id, status")
+      .eq("loan_id", parcelaDoMyBank.loan_id);
+
+    if (
+      !erroDaReleitura &&
+      parcelasDoEmprestimo &&
+      emprestimoFicouQuitado({ parcelas: parcelasDoEmprestimo })
+    ) {
+      const { data: quitados, error: erroDaQuitacao } = await supabase
+        .from("mybank_loans")
+        .update(patchDaQuitacaoDoEmprestimo())
+        .eq("id", parcelaDoMyBank.loan_id)
+        .select("id, status");
+
+      // `mybank_loans_update` e `lender_user_id = auth.uid()`, e UPDATE que a
+      // policy filtra volta 200 com zero linha. O caminho e real: quem chega
+      // aqui e quem tem a previsao na agenda, e no Caso B isso pode ser o
+      // DEVEDOR -- que nao e o credor e cujo UPDATE nao alcanca a linha.
+      emprestimoQuitado = !erroDaQuitacao && !!quitados && quitados.length > 0;
+
+      if (!emprestimoQuitado) {
+        console.error(
+          "MyBank: a ultima parcela foi paga e o emprestimo nao virou settled.",
+          { loanId: parcelaDoMyBank.loan_id, erro: erroDaQuitacao }
+        );
+      }
+    }
+  }
+
   return NextResponse.json({
     // A palavra muda quando a baixa fechou um ciclo do MyBank: quem pagou a
     // parcela 3/24 do proprio emprestimo precisa ler que a PARCELA foi baixada,
     // e nao so que uma transferencia aconteceu -- e o painel do MyBank e a outra
-    // tela que mudou, e ela nao esta na frente de quem clicou.
-    message: fechaOCicloDoMyBank
-      ? "Parcela do MyBank paga"
-      : "Transferência confirmada",
+    // tela que mudou, e ela nao esta na frente de quem clicou. E quando foi a
+    // ULTIMA parcela, a frase diz o fim da divida: e a unica vez que o
+    // emprestimo sai do painel, e sair sem explicacao se le como erro.
+    message: emprestimoQuitado
+      ? "Última parcela paga: empréstimo quitado"
+      : fechaOCicloDoMyBank
+        ? "Parcela do MyBank paga"
+        : "Transferência confirmada",
+    // `false` tambem quando a quitacao falhou em silencio: a resposta diz o que
+    // ficou gravado, nao o que deveria ter ficado.
+    emprestimo_quitado: emprestimoQuitado,
     // O id da parcela que esta baixa alcancou, ou `null`. Sai da rota em vez de
     // a tela reler `notes`: a decisao de QUANDO o elo vale (chave inteira,
     // parcela existente, estado que aceita a baixa) tem um dono.

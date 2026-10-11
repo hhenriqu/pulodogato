@@ -40,6 +40,15 @@
 // -- a baixa da previsao marcando a parcela como `paid` -- e trabalho da F4, com
 // as outras leituras; aqui o que importa e que a parcela NAO fique paga por
 // engano no meio do caminho.
+//
+// E A ULTIMA PARCELA QUITA O EMPRESTIMO (HMO-394)
+// -----------------------------------------------
+// Depois da baixa, esta rota pergunta a serie inteira se sobrou algo em aberto
+// (`emprestimoFicouQuitado`) e, se nao, leva o emprestimo a `settled`. E o passo
+// final e nao pode desfazer nada: o dinheiro ja entrou e a parcela ja esta paga.
+// Antes desta entrega NINGUEM escrevia `settled` -- o emprestimo 24/24 pago ficava
+// `active` para sempre e a unica saida da tela era o botao Cancelar, que carimba
+// uma divida honrada como cancelada.
 // ---------------------------------------------------------------------------
 
 import { createClient } from "@/utils/supabase/server";
@@ -48,6 +57,8 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   casoDoEmprestimo,
   chaveDaParcelaDoMyBank,
+  emprestimoFicouQuitado,
+  patchDaQuitacaoDoEmprestimo,
   pernaDeEntradaDoPagamento,
 } from "@/lib/emprestimo-do-mybank";
 import { hojeISO } from "@/lib/lancamento";
@@ -352,13 +363,62 @@ export async function PATCH(
       );
     }
 
+    // -----------------------------------------------------------------------
+    // O EMPRESTIMO SE DECLARA `settled` -- consequencia, e nao a operacao
+    // -----------------------------------------------------------------------
+    // Daqui para baixo NADA e desfeito: a parcela esta paga e o dinheiro entrou.
+    // Se qualquer um destes dois passos falhar, o emprestimo fica `active` com
+    // todas as parcelas pagas -- que e exatamente o estado em que esta rota
+    // deixava TODO emprestimo antes da HMO-394, e que e correto em dinheiro.
+    const { data: parcelasDoEmprestimo, error: erroDaReleitura } = await supabase
+      .from("mybank_installments")
+      .select("id, status")
+      .eq("loan_id", emprestimo.id);
+
+    let emprestimoQuitado = false;
+
+    // A RELEITURA E A FONTE, e nao a parcela em maos: a decisao e sobre a SERIE
+    // inteira, e esta rota so conhece uma linha dela. A leitura ja ve a baixa
+    // acima porque ela foi gravada antes -- e se a releitura falhar, nao ha
+    // quitacao a declarar e tambem nao ha nada a consertar.
+    if (!erroDaReleitura && parcelasDoEmprestimo) {
+      if (emprestimoFicouQuitado({ parcelas: parcelasDoEmprestimo })) {
+        const { data: quitados, error: erroDaQuitacao } = await supabase
+          .from("mybank_loans")
+          .update(patchDaQuitacaoDoEmprestimo())
+          .eq("id", emprestimo.id)
+          .select("id, status");
+
+        // O `.length` DE NOVO, e aqui ele tem caminho real: `mybank_loans_update`
+        // e `lender_user_id = auth.uid()`, e UPDATE que a policy filtra volta 200
+        // com zero linha neste app -- sem erro e sem SQLSTATE. Quem chega a este
+        // ramo e o credor, entao a filtragem nao deveria acontecer; se acontecer,
+        // responder "quitado" seria afirmar um status que nenhuma tela leria.
+        emprestimoQuitado =
+          !erroDaQuitacao && !!quitados && quitados.length > 0;
+
+        if (!emprestimoQuitado) {
+          console.error(
+            "MyBank: a ultima parcela foi paga e o emprestimo nao virou settled.",
+            { loanId: emprestimo.id, erro: erroDaQuitacao }
+          );
+        }
+      }
+    }
+
     return NextResponse.json({
       success: true,
       status: "paid",
       transaction_id: lancamento.id,
       paid_date: dataDoPagamento,
-      message:
-        "Parcela baixada. O valor entrou na conta de investimento como transferência — principal voltando não é receita.",
+      // O estado do EMPRESTIMO sai na resposta porque a lista de onde a pessoa
+      // clicou filtra `active`: a linha vai desaparecer dela, e desaparecer sem
+      // explicacao se le como erro. `false` aqui tambem cobre a falha silenciosa
+      // acima -- a resposta diz o que ficou, nao o que deveria ter ficado.
+      emprestimo_quitado: emprestimoQuitado,
+      message: emprestimoQuitado
+        ? "Última parcela recebida: o empréstimo está quitado e sai da lista A receber. O valor entrou na conta de investimento como transferência — principal voltando não é receita."
+        : "Parcela baixada. O valor entrou na conta de investimento como transferência — principal voltando não é receita.",
     });
   } catch (error) {
     console.error("MyBank installments PATCH error:", error);
