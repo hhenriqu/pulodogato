@@ -227,6 +227,90 @@ const mutantes = [
     '      const resposta = await fetch("/api/mybank/due");',
     '      const resposta = await fetch("/api/mybank/loans");',
   ],
+
+  // =========================================================================
+  // O ESCOPO DO BLOCO E O COLAPSO -- HMO-381
+  // =========================================================================
+  // A issue mediu dois escopos na mesma tela sem rotulo nenhum, e a escolha foi
+  // a saida (2): o bloco fica FORA da janela da pagina e DIZ que fica. Os
+  // mutantes abaixo cobrem as duas metades que a escolha obriga a entregar --
+  // o escopo dito na tela e o colapso -- e o controle de cada uma.
+  //
+  // NENHUM DELES MOVE DINHEIRO, e e por isso que eles existem: estragar o
+  // subtitulo ou o colapso deixa a tela com os mesmos numeros de antes. Nao ha
+  // total para discordar, nao ha 500, nao ha tipo errado -- so os 3.000 pixels
+  // de volta, ou uma frase que fala de um periodo que nao e o da lista logo
+  // abaixo dela.
+
+  [
+    LIB,
+    "o subtitulo nega a janela mas NAO diz de que periodo o bloco fala",
+    "  return `Toda a dívida em aberto, ${quando}. ${FRASE_FORA_DA_JANELA}`;",
+    "  return FRASE_FORA_DA_JANELA;",
+  ],
+
+  [
+    LIB,
+    "o periodo do subtitulo confia na ORDEM da rota, e nao ordena",
+    "  const isos = parcelas.map((parcela) => String(parcela.vencimento)).sort();",
+    "  const isos = parcelas.map((parcela) => String(parcela.vencimento));",
+  ],
+
+  [
+    DEVEDOR,
+    "a frase de escopo chega VAZIA a tela",
+    "          {escopoDoBlocoDoDevedor(parcelas)}",
+    '          {""}',
+  ],
+
+  [
+    LIB,
+    "fechado, o bloco devolve a lista INTEIRA (o colapso nao corta nada)",
+    "    visiveis: parcelas.slice(0, PARCELAS_VISIVEIS_FECHADO),",
+    "    visiveis: parcelas,",
+  ],
+
+  [
+    DEVEDOR,
+    "a lista imprime TODAS as parcelas, e nao as visiveis do bloco",
+    "        {bloco.visiveis.map((parcela) => (",
+    "        {parcelas.map((parcela) => (",
+  ],
+
+  [
+    DEVEDOR,
+    "o bloco nasce ABERTO (o conserto vale so para quem toca no botao)",
+    "  const [aberto, setAberto] = useState(false);",
+    "  const [aberto, setAberto] = useState(true);",
+  ],
+
+  [
+    LIB,
+    "o botao do colapso nao diz QUANTAS parcelas ficaram escondidas",
+    "    rotuloDoBotao: `Mostrar as outras ${escondidas} ${palavra}`,",
+    "    rotuloDoBotao: `Mostrar as outras ${palavra}`,",
+  ],
+
+  [
+    LIB,
+    "o numero do botao conta a lista toda, e nao o que ficou escondido",
+    "  const escondidas = parcelas.length - PARCELAS_VISIVEIS_FECHADO;",
+    "  const escondidas = parcelas.length;",
+  ],
+
+  [
+    LIB,
+    "aberto, o botao DESAPARECE e nao ha caminho de volta",
+    '      rotuloDoBotao: "Mostrar menos",',
+    "      rotuloDoBotao: null,",
+  ],
+
+  [
+    LIB,
+    "a lista que CABE inteira tambem ganha botao de colapso",
+    "  const cabe = parcelas.length <= PARCELAS_VISIVEIS_FECHADO;",
+    "  const cabe = false;",
+  ],
 ];
 
 const SUITE = "test:mybank-na-tela";

@@ -24,6 +24,44 @@
 // E ESSE E O CONTROLE NEGATIVO DESTE COMPONENTE: sem linha nenhuma ele devolve
 // `null`. Uma conta sem MyBank le a tela de Contas a Pagar EXATAMENTE como lia
 // antes -- nenhum card a mais, nenhum total diferente.
+//
+// ---------------------------------------------------------------------------
+// O ESCOPO DESTE BLOCO E A DIVIDA INTEIRA, DE PROPOSITO -- HMO-381
+// ---------------------------------------------------------------------------
+// A HMO-381 mediu em producao dois escopos na mesma tela sem rotulo nenhum: o
+// card "Total a pagar" e os tres grupos da agenda falavam da janela da pagina
+// (2026-10-01 a 2027-01-01, R$ 160,00) e este bloco mostrava 25 linhas, ate
+// 15/10/2028. A issue oferecia duas saidas -- o bloco obedecer a janela, ou o
+// bloco dizer que nao a segue. ESTE BLOCO FICA FORA DA JANELA, e a razao e um
+// achado que o print nao mostrava:
+//
+// A AGENDA JA MOSTRA AS PARCELAS EM JANELA. `GET /api/scheduled-transactions`
+// funde a divida do MyBank na agenda desde a HMO-372 (`lerDividaDoMyBank`,
+// recortada por `{ de, ate }`), e `/dashboard/bills` NAO filtra essas linhas --
+// `ehParcelaDoMyBank` existe em `lib/leituras-do-mybank.ts` sem um unico
+// chamador. As tres linhas de "Mais adiante" do print SAO parcelas de MyBank.
+//
+// Entao um bloco recortado pela janela seria exatamente redundante: as mesmas
+// linhas, nenhuma a mais, logo acima das da agenda. Com o escopo inteiro ele
+// responde uma pergunta que nenhum outro pedaco da tela responde -- "quanto eu
+// ainda devo ao todo" -- e e o unico lugar com o gesto de `reported`, que a
+// linha da agenda nao tem.
+//
+// O QUE A ESCOLHA OBRIGA A ENTREGAR, e sem o que ela seria so o defeito com
+// outro nome:
+//
+//   1. O ESCOPO DITO NA TELA (`data-escopo`), com o periodo MEDIDO nas parcelas
+//      carregadas. `SUBTITULO_DO_DEVEDOR` explica o que o bloco E; ele nunca
+//      disse de que periodo fala, e era isso que fazia os dois escopos se
+//      confundirem.
+//   2. O COLAPSO depois de `PARCELAS_VISIVEIS_FECHADO` linhas. Sem ele a
+//      escolha nao conserta o sintoma que a issue abriu: o bloco empurrava o
+//      resto da pagina 3.000 pixels para baixo.
+//
+// A SOBREPOSICAO EM SI -- a parcela em janela aparecendo em DUAS linhas da mesma
+// tela, uma na agenda e uma aqui -- nao e desta issue. Ela se resolve tirando a
+// linha de MyBank da agenda (e `ehParcelaDoMyBank` existe para isso) ou tirando
+// este bloco da tela, e as duas mexem em "Total a pagar".
 // ---------------------------------------------------------------------------
 
 import { useCallback, useEffect, useState } from "react";
@@ -43,6 +81,8 @@ import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/utils";
 import { dataOuMomentoNaTela } from "@/lib/data-na-tela";
 import {
+  blocoDoDevedor,
+  escopoDoBlocoDoDevedor,
   podeAvisarQuePagou,
   seloDoMyBank,
   ROTULO_DE_AVISAR,
@@ -55,6 +95,9 @@ import {
 export function ParcelasDoMyBankQueEuDevo() {
   const [parcelas, setParcelas] = useState<ParcelaQueEuDevo[]>([]);
   const [avisando, setAvisando] = useState<string | null>(null);
+  // FECHADO E O ESTADO INICIAL: o bloco comprido e o sintoma da HMO-381, e
+  // nascer aberto deixaria o conserto valendo so para quem toca no botao.
+  const [aberto, setAberto] = useState(false);
 
   const carregar = useCallback(async () => {
     try {
@@ -108,6 +151,8 @@ export function ParcelasDoMyBankQueEuDevo() {
   // identica ao que era antes desta issue.
   if (parcelas.length === 0) return null;
 
+  const bloco = blocoDoDevedor(parcelas, aberto);
+
   return (
     <Card id="mybank-que-eu-devo">
       <CardHeader className="pb-3">
@@ -116,9 +161,17 @@ export function ParcelasDoMyBankQueEuDevo() {
           {TITULO_DO_DEVEDOR}
         </CardTitle>
         <CardDescription>{SUBTITULO_DO_DEVEDOR}</CardDescription>
+        {/* O ESCOPO, em ancora PROPRIA e nao dentro da frase acima: as duas
+            dizem coisas de naturezas diferentes (o que o bloco e, e de que
+            periodo ele fala), e juntas num paragrafo so a segunda se perde --
+            era justamente ela que faltava. Separada, ela tambem e assertavel
+            sem que a assercao case com o resto do subtitulo. */}
+        <CardDescription data-escopo>
+          {escopoDoBlocoDoDevedor(parcelas)}
+        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-2">
-        {parcelas.map((parcela) => (
+        {bloco.visiveis.map((parcela) => (
           <div
             key={parcela.id}
             data-devo={parcela.id}
@@ -164,6 +217,24 @@ export function ParcelasDoMyBankQueEuDevo() {
             </div>
           </div>
         ))}
+
+        {/* O BOTAO DO COLAPSO.
+            `rotuloDoBotao === null` e o caso em que a lista cabe inteira: ali
+            nao ha botao nenhum, e nao um botao vazio. O rotulo diz QUANTAS
+            faltam -- ver `blocoDoDevedor`. */}
+        {bloco.rotuloDoBotao ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="w-full"
+            data-expandir
+            data-escondidas={bloco.escondidas}
+            onClick={() => setAberto((estava) => !estava)}
+          >
+            {bloco.rotuloDoBotao}
+          </Button>
+        ) : null}
       </CardContent>
     </Card>
   );
