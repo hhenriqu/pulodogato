@@ -63,8 +63,21 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 const SAIDA = ".tmp-pra-quem-pagar-na-tela";
-/** O .tmp da suite de aritmetica -- e so de onde `rotuloDoDestino` sai. */
-const SAIDA_DA_LIB = ".tmp-pra-quem-pagar";
+/**
+ * De onde `rotuloDoDestino` sai -- o MESMO outDir desta suite desde a HMO-376.
+ *
+ * Era `.tmp-pra-quem-pagar`, o outDir do alvo irmao, e o comando npm desta suite
+ * recompilava o tsconfig DELE para popular aquele diretorio. Com isso dois
+ * alvos `test:*` emitiam para a mesma saida, e o `--todas` do compila.mjs (o
+ * step 6 do db-verify, antes de qualquer SQL) recusa isso de proposito: o
+ * segundo apagaria a saida do primeiro. Rodando um alvo por vez nada reclamava,
+ * e a main ficou vermelha do merge da HMO-365 ate a HMO-376.
+ *
+ * Agora `lib/pra-quem-pagar.ts` entra no `include` do tsconfig DESTA suite e
+ * emite aqui. A constante continua separada de `SAIDA` porque o que ela aponta
+ * e outra coisa: o .js da lib, nao o do componente.
+ */
+const SAIDA_DA_LIB = SAIDA;
 
 /**
  * Acha um Chromium: o do `CHROMIUM_BIN`, o que o Playwright baixou, ou o Chrome
