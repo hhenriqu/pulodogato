@@ -241,6 +241,12 @@ function removerFuncao(texto, nome) {
   return texto.slice(0, inicio) + texto.slice(fim);
 }
 
+// AS DECLARACOES QUE O BLOCO TORNOU MORTAS nesta familia. Em lista nomeada, e
+// nao embutidas no laco, porque `mioloDoHmo246` PARTE desta mesma lista -- e
+// duas listas de declaracao morta que divergem em silencio e exatamente o tipo
+// de deriva que o conferidor do conversor nao veria.
+const MORTAS_DO_HMO246 = ["DEPENDENCIAS", "DEPENDENCIA", "SAIDA", "TESTE"];
+
 /**
  * Recorta o runner antigo nas tres partes que importam.
  *
@@ -275,7 +281,7 @@ export function recortar(fonte) {
   // A ordem importa menos do que parece (`^const DEPENDENCIA = ` nao casa com
   // `const DEPENDENCIAS = `, porque o que vem depois do nome e um `S`), mas o
   // plural vem primeiro de proposito: e a forma comum.
-  for (const morta of ["DEPENDENCIAS", "DEPENDENCIA", "SAIDA", "TESTE"]) {
+  for (const morta of MORTAS_DO_HMO246) {
     miolo = removerDeclaracao(miolo, morta);
   }
 
@@ -285,6 +291,71 @@ export function recortar(fonte) {
     arquivoFonte: mFonte[1],
     suite: mSuite[1],
   };
+}
+
+/**
+ * O predicado da familia HMO-246, exportado pelo mesmo motivo que `ehDoPainel` e
+ * `ehTupla` o sao: quem precisa escolher a familia de um runner (o conversor
+ * aqui, a guarda de ancora em `mede-ancora-ambigua.mjs`) tem de ler UM criterio,
+ * nao uma copia dele. A guarda nascer sem este predicado e a HMO-389: ela
+ * conhecia duas das tres familias e DESCARTAVA A TERCEIRA EM SILENCIO.
+ *
+ * O que separa esta familia das outras duas e a CAIXA ALTA da lista. Os tres
+ * predicados sao mutuamente exclusivos por construcao, e e o controle negativo
+ * da familia que cobra isso dos tres.
+ */
+export const ehHmo246 = (fonte) => /^const MUTANTES = \[$/m.test(fonte);
+
+// AS DECLARACOES QUE SO ATRAPALHAM QUEM CARREGA O MIOLO COMO DADO, e por que
+// elas nao estao na lista acima.
+//
+// `recortar` COPIA o miolo para o arquivo convertido, e o que ele devolve e
+// comparado byte a byte com o convertido por `conferir`. Tirar mais coisa la
+// quebraria essa comparacao. A guarda de ancora, ao contrario, IMPORTA o miolo
+// como modulo de dados -- e aí uma declaracao que chama funcao (`readFileSync`,
+// `join`, `fileURLToPath`) nao e inofensiva: ela ESTOURA no import, porque o
+// miolo nao carrega os imports do runner.
+//
+// As tres familias de estrago, medidas nos 18 runners (HMO-389):
+//
+//   `const ALVO = join(RAIZ, FONTE);`                 -> `join is not defined`
+//   `const ALVO = fileURLToPath(new URL(...));`       -> `fileURLToPath ...`
+//   `const original = readFileSync(FONTE, "utf8");`   -> `readFileSync ...`
+//   `const ORIGINAIS = new Map(... readFileSync ...)` -> idem, e fecha em `);`
+//
+// `ALVO` sai sem perda de informacao: nesta familia o alvo autoritativo e
+// `FONTE` (o caminho RELATIVO A RAIZ, que e o que a guarda precisa), e `ALVO` e
+// so o absoluto derivado dele, para o driver escrever. Se algum runner futuro
+// REFERENCIAR `ALVO` dentro da lista, o import estoura e a guarda ABORTA --
+// que e o resultado certo, e nao um `0 ambiguas` calado.
+const MORTAS_SO_PARA_DADOS = ["ALVO", "original", "ORIGINAIS"];
+
+/**
+ * O miolo de um runner da familia HMO-246, pronto para ser IMPORTADO como
+ * modulo de dados -- a mesma forma que `mioloDoPainel` e `mioloDaTupla`
+ * devolvem, e para o mesmo consumidor (a guarda de ancora).
+ *
+ * NAO E `recortar`. Ele exige a suite no `finally` e o bloco de imports, que a
+ * guarda nao usa e que os runners JA convertidos para bloco nao tem na forma
+ * que ele procura -- medido na HMO-389: `recortar` recusou 17 dos 18 runners
+ * desta familia com "nao achei a suite no `finally`", e o 18o estourou em
+ * `readFileSync is not defined`. Ler a lista nao pode depender de o runner ter
+ * driver nenhum.
+ */
+export function mioloDoHmo246(fonte) {
+  const mFonte = /^const FONTE = "([^"]+)";$/m.exec(fonte);
+  if (!mFonte) throw new Error('nao achei `const FONTE = "...";`');
+
+  const mLista = /^const MUTANTES = \[$/m.exec(fonte);
+  if (!mLista) throw new Error("nao achei `const MUTANTES = [`");
+
+  let miolo = fonte.slice(mFonte.index, fimDaLista(fonte, mLista.index));
+  for (const morta of MORTAS_DO_HMO246) miolo = removerDeclaracao(miolo, morta);
+  // O fecho `\n);` cobre `const ORIGINAIS = new Map(` -- ver `removerDeclaracao`,
+  // onde o fecho e parametro por este motivo medido e nao por generalidade.
+  for (const morta of MORTAS_SO_PARA_DADOS) miolo = removerDeclaracao(miolo, morta, "\n);");
+
+  return { miolo: miolo.trimEnd(), arquivoFonte: mFonte[1] };
 }
 
 // ===========================================================================
@@ -1166,7 +1237,7 @@ const FAMILIAS = {
     },
   },
   hmo246: {
-    reconhece: (t) => /^const MUTANTES = \[$/m.test(t),
+    reconhece: ehHmo246,
     recortar,
     converter,
     ...CONTA_OBJETO,
