@@ -5479,7 +5479,7 @@ jobs:
       # nenhuma. Uma verificacao que nunca viu vermelho nao e verificacao.
       #
       # A prova de mutacao completa e `npm run mutantes:telas-de-movimentacao`
-      # (32 mutantes, ferramenta de quem escreve o teste). Aqui ficam os cinco
+      # (75 mutantes, ferramenta de quem escreve o teste). Aqui ficam os cinco
       # que mais custam, um por armadilha, plantados um por vez.
       - name: 'A verificacao sabe falhar (telas-de-movimentacao)'
         run: |

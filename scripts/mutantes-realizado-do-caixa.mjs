@@ -185,8 +185,17 @@ const MUTANTES = [
       "`transaction_count` sobe DOIS -- o tile «Lancamentos» discordando do " +
       "total ao lado dele, que e a forma de erro mais barata de nao notar " +
       "(HMO-317)",
-    de: "  return Number(crua.amount) < 0;",
-    para: "  return true;",
+    // A LINHA DE CIMA ESTA NA ANCORA pela trava de ambiguidade, e desde a
+    // HMO-385: `return Number(crua.amount) < 0;` passou a existir tambem em
+    // `ehSaidaDaParcelaDoAutoEmprestimo`, no MESMO arquivo (o criterio de sinal
+    // da perna de SAIDA da parcela paga do MyBank). O
+    // `if (ehPernaDeEntrada(crua)) return false;` e o que diz que a funcao
+    // cegada e `ehPagamentoDaFatura` -- a mesma receita que o irmao
+    // `as_duas_pernas_entram`, logo acima, ja usava.
+    de:
+      "  if (ehPernaDeEntrada(crua)) return false;\n" +
+      "  return Number(crua.amount) < 0;",
+    para: "  if (ehPernaDeEntrada(crua)) return false;\n  return true;",
   },
   {
     nome: "fatura_sem_a_chave",
