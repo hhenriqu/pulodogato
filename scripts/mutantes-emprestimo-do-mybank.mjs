@@ -439,6 +439,56 @@ const mutantes = [
     '          status: problema === "nao_sou_o_credor" ? 403 : 409,',
     "          status: 409,",
   ],
+
+  // =========================================================================
+  // `settled`: A QUITACAO (HMO-394, F1 da HMO-393)
+  // =========================================================================
+  // O PRIMEIRO E O QUE A ISSUE NOMEIA, e ele e o INVERSO do defeito que a fase
+  // conserta: nao "o emprestimo pago nao se declara quitado", e sim "o
+  // emprestimo que ninguem pagou se declara quitado".
+  //
+  // Com a exigencia de uma `paid` apagada, o emprestimo gravado pela metade --
+  // zero parcelas, estado que o ramo idempotente de `loans/route.ts:392`
+  // reconhece por extenso ("morreu entre o passo 1 e o passo 2") -- passa a
+  // satisfazer "nada em aberto" e vira `settled`. As duas telas filtram
+  // `active`, entao ele SAI DAS DUAS como divida cumprida: uma divida real
+  // desaparece sem nunca ter sido cobrada. E nenhum saldo denuncia, porque
+  // nenhum dinheiro foi lancado errado -- ele so deixou de ser pedido.
+
+  [
+    LIB,
+    "`emprestimoFicouQuitado` IGNORA A EXIGENCIA DE UMA `paid` (o emprestimo gravado pela metade se declara quitado)",
+    '  return params.parcelas.some((p) => p.status === "paid");',
+    "  return true;",
+  ],
+
+  [
+    LIB,
+    "`emprestimoFicouQuitado` ignora as parcelas EM ABERTO (a 3/24 paga quita a divida inteira)",
+    "  if (aindaEmAberto) return false;",
+    "",
+  ],
+
+  [
+    PARCELA,
+    "a quitacao nao confere a CONTAGEM (a resposta diz `quitado` sobre UPDATE que a RLS filtrou)",
+    "        emprestimoQuitado =\n          !erroDaQuitacao && !!quitados && quitados.length > 0;",
+    "        emprestimoQuitado = !erroDaQuitacao;",
+  ],
+
+  [
+    PARCELA,
+    "a releitura da serie perde o filtro do emprestimo (parcela de OUTRA divida impede a quitacao)",
+    '      .eq("loan_id", emprestimo.id);',
+    "      ;",
+  ],
+
+  [
+    BAIXA,
+    "o UPDATE da quitacao perde o filtro do id (TODO emprestimo que a RLS entrega vira `settled`)",
+    '        .eq("id", parcelaDoMyBank.loan_id)',
+    "",
+  ],
 ];
 
 const SUITE = "test:emprestimo-do-mybank";

@@ -888,11 +888,27 @@ const PARCELA_DA_LAIS = {
   paid_transaction_id: null,
 };
 
-async function mexerNaParcela(quem, corpoDoPedido, extra = {}) {
+// `rlsFiltra` SAI DO `extra` ANTES DE ELE VIRAR TABELA. Sem esta separacao a
+// opcao entra em `tabelas()` como se fosse uma tabela chamada "rlsFiltra", o
+// duble a ignora em silencio e o teste que pedia a escrita filtrada mede o
+// caminho FELIZ -- passando com a assercao invertida.
+async function mexerNaParcela(
+  quem,
+  corpoDoPedido,
+  { rlsFiltra, ...extra } = {}
+) {
   const sessao = criarDuble({
     user: { id: quem },
+    ...(rlsFiltra ? { rlsFiltra } : {}),
     tabelas: tabelas({
-      mybank_loans: [EMPRESTIMO_PARA_A_LAIS],
+      // A COPIA NAO E ESTILO: o duble aplica o patch DE VERDADE nas linhas
+      // semeadas (`Object.assign(l, patch)`, para a rota reler o que escreveu),
+      // e desde a HMO-394 esta rota ESCREVE em `mybank_loans` -- a quitacao.
+      // Semear a constante por referencia fazia o `settled` de um teste vazar
+      // para `EMPRESTIMO_PARA_A_LAIS` e, dali, para todos os testes seguintes:
+      // dois do cancelamento quebraram com "409" e "settled em vez de active",
+      // longe daqui e sem relacao aparente com a parcela.
+      mybank_loans: [{ ...EMPRESTIMO_PARA_A_LAIS }],
       mybank_installments: [{ ...PARCELA_DA_LAIS }],
       ...extra,
     }),
@@ -2472,4 +2488,369 @@ test("`problemaDoCancelamento`: o credor passa, o devedor nao, e o estado vem de
     }),
     "nao_sou_o_credor"
   );
+});
+
+// ---------------------------------------------------------------------------
+// PARTE 11 -- `settled`: O EMPRESTIMO QUE CHEGOU AO FIM (HMO-394, F1 da HMO-393)
+// ---------------------------------------------------------------------------
+// Antes desta entrega `mybank_loans.status = 'settled'` NAO ERA ESCRITO POR
+// NINGUEM: o CHECK da 053 o aceitava, as duas telas filtravam `active` e
+// `problemaDoCancelamento` ja tinha a frase de `emprestimo_ja_quitado` -- e o
+// ciclo de pagamento nao alcancava o status. Um emprestimo 24/24 pago ficava
+// `active` para sempre e a unica saida da tela era o botao Cancelar: uma divida
+// integralmente honrada terminava carimbada como cancelada.
+//
+// O QUE ESTA PARTE EXISTE PARA IMPEDIR, e nao e o defeito original
+// ----------------------------------------------------------------
+// E o INVERSO dele: um emprestimo que se declara quitado sem ter sido pago.
+// `emprestimoFicouQuitado` exige nenhuma parcela em aberto E ao menos uma
+// `paid`, e a segunda condicao nao e defensiva -- sem ela o emprestimo gravado
+// pela metade (o POST que morreu entre os dois inserts, estado que o proprio
+// ramo idempotente de `loans/route.ts` reconhece) tem zero parcela, "nada em
+// aberto" e verdade, e a divida se declara cumprida: ela sai das duas telas, que
+// filtram `active`, e ninguem e cobrado por ela nunca mais.
+//
+// A POSICAO DA ESCRITA TEM TESTE PROPRIO
+// --------------------------------------
+// A quitacao e a ULTIMA escrita das duas rotas, depois do ultimo desfazimento
+// possivel. No Caso A isso importa: se ela estivesse no passo 2.5, a falha da
+// baixa da previsao -- que desfaz as pernas e devolve a parcela a `pending` --
+// deixaria um emprestimo `settled` com parcela pendente, e a divida viva sairia
+// das duas telas. `a quitacao NAO acontece quando a baixa da previsao falha`
+// mede exatamente isso.
+
+// ---------------------------------------------------------------------------
+// A regra pura
+// ---------------------------------------------------------------------------
+
+test("`emprestimoFicouQuitado`: nada em aberto E ao menos uma paga", () => {
+  assert.equal(
+    LIB.emprestimoFicouQuitado({ parcelas: [{ status: "paid" }] }),
+    true
+  );
+  assert.equal(
+    LIB.emprestimoFicouQuitado({
+      parcelas: [{ status: "paid" }, { status: "paid" }],
+    }),
+    true
+  );
+});
+
+test("`emprestimoFicouQuitado`: UMA parcela em aberto basta para nao estar quitado", () => {
+  // Os dois estados de `STATUS_EM_ABERTO_DA_PARCELA`, um a um: 23 pagas e uma
+  // pendente e o caso real do penultimo mes.
+  for (const emAberto of ["pending", "reported"]) {
+    assert.equal(
+      LIB.emprestimoFicouQuitado({
+        parcelas: [{ status: "paid" }, { status: emAberto }],
+      }),
+      false,
+      `${emAberto} em aberto nao pode quitar o emprestimo`
+    );
+  }
+});
+
+test("`emprestimoFicouQuitado`: ZERO parcelas NAO e quitacao -- o emprestimo gravado pela metade", () => {
+  // O ESTADO E ALCANCAVEL, nao hipotese: o POST de `/api/mybank/loans` grava o
+  // emprestimo e a serie em dois inserts, e o ramo idempotente do 23505 diz por
+  // extenso que o primeiro pode ter morrido entre o passo 1 e o passo 2.
+  //
+  // Sem a exigencia de uma `paid`, `[].some(...)` e `false`, "nada em aberto" e
+  // verdade e esta divida se declara cumprida -- saindo das duas telas, que
+  // filtram `active`, sem nunca ter sido cobrada.
+  assert.equal(LIB.emprestimoFicouQuitado({ parcelas: [] }), false);
+});
+
+test("`emprestimoFicouQuitado`: TODAS canceladas e `cancelled`, e nao quitacao", () => {
+  // Esse estado ja tem rota propria (o PATCH do cancelamento). Chamar de quitado
+  // um emprestimo que ninguem pagou diria que a divida foi honrada.
+  assert.equal(
+    LIB.emprestimoFicouQuitado({
+      parcelas: [{ status: "cancelled" }, { status: "cancelled" }],
+    }),
+    false
+  );
+});
+
+test("`emprestimoFicouQuitado`: paga + cancelada, nada em aberto, E quitacao", () => {
+  // A cauda que a antecipacao encurta (F2): 1 paga e as outras canceladas chegou
+  // ao fim tanto quanto um 24/24. O criterio e "nada EM ABERTO e algum dinheiro
+  // entrou", e nao "todas pagas".
+  assert.equal(
+    LIB.emprestimoFicouQuitado({
+      parcelas: [{ status: "paid" }, { status: "cancelled" }],
+    }),
+    true
+  );
+});
+
+test("a quitacao torna `emprestimo_ja_quitado` ALCANCAVEL -- e as duas pontas concordam", () => {
+  // A frase de `emprestimo_ja_quitado` existe desde a HMO-391 e era INALCANCAVEL:
+  // ninguem escrevia `settled`. Esta fase a alcanca, e o que liga as duas pontas
+  // e o status -- escrito por `patchDaQuitacaoDoEmprestimo`, lido por
+  // `problemaDoCancelamento`. Os dois comparam o MESMO literal em arquivos
+  // diferentes; se divergirem, o emprestimo fica quitado e o botao Cancelar volta
+  // a aparecer, cada lado certo sozinho.
+  const statusGravado = LIB.patchDaQuitacaoDoEmprestimo().status;
+
+  assert.equal(
+    LIB.problemaDoCancelamento({
+      emprestimo: { lender_user_id: EU, status: statusGravado },
+      meuId: EU,
+    }),
+    "emprestimo_ja_quitado"
+  );
+  assert.match(
+    LIB.mensagemDoProblemaDoCancelamento("emprestimo_ja_quitado"),
+    /quitado/i
+  );
+});
+
+test("`patchDaQuitacaoDoEmprestimo`: so `status`, e mais nada", () => {
+  const patch = LIB.patchDaQuitacaoDoEmprestimo();
+
+  assert.equal(patch.status, "settled");
+  // A LISTA DE CHAVES, e nao so o `status`: a 053 tem trigger de carimbo em
+  // `updated_at` e nao tem coluna de data de quitacao -- um campo a mais aqui
+  // competiria com o trigger ou inventaria coluna que nao existe (42703).
+  assert.deepEqual(Object.keys(patch), ["status"]);
+  assert.equal(LIB.STATUS_QUITADO, "settled");
+});
+
+// ---------------------------------------------------------------------------
+// O chamador 1: o PATCH da parcela (Caso B)
+// ---------------------------------------------------------------------------
+
+test("A ULTIMA PARCELA QUITA O EMPRESTIMO -- o PATCH da parcela fecha o ciclo", async () => {
+  const { status, corpo, sessao } = await mexerNaParcela(
+    EU,
+    { status: "paid", data_do_pagamento: "2027-01-12" },
+    { mybank_installments: [{ ...PARCELA_DA_LAIS, status: "reported" }] }
+  );
+
+  assert.equal(status, 200);
+
+  const quitacoes = sessao.escritas.filter(
+    (e) => e.tabela === "mybank_loans" && e.verbo === "update"
+  );
+  assert.equal(quitacoes.length, 1);
+  assert.equal(quitacoes[0].patch.status, "settled");
+  // O FILTRO E PELO ID DO EMPRESTIMO. Um UPDATE sem ele alcancaria todo
+  // emprestimo que a RLS entrega -- os meus outros, todos quitados de uma vez.
+  assert.deepEqual(quitacoes[0].filtros, [["eq", "id", "loan-lais"]]);
+
+  assert.equal(corpo.emprestimo_quitado, true);
+  assert.match(corpo.message, /quitado/i);
+
+  // A ORDEM: a parcela e baixada ANTES de o emprestimo ser quitado. A decisao le
+  // a serie do banco, e lela antes da baixa veria a parcela ainda em aberto.
+  const tabelasEscritas = sessao.escritas.map((e) => `${e.tabela}:${e.verbo}`);
+  assert.ok(
+    tabelasEscritas.indexOf("mybank_installments:update") <
+      tabelasEscritas.indexOf("mybank_loans:update"),
+    `a baixa vem antes da quitacao: ${tabelasEscritas.join(" -> ")}`
+  );
+});
+
+test("parcela paga com OUTRA ainda pendente NAO quita o emprestimo", async () => {
+  const { status, corpo, sessao } = await mexerNaParcela(
+    EU,
+    { status: "paid" },
+    {
+      mybank_installments: [
+        { ...PARCELA_DA_LAIS, status: "reported" },
+        // A 4/24, pendente: a divida continua viva.
+        {
+          ...PARCELA_DA_LAIS,
+          id: "p4",
+          installment_number: 4,
+          status: "pending",
+        },
+      ],
+    }
+  );
+
+  assert.equal(status, 200);
+  assert.equal(
+    sessao.escritas.filter((e) => e.tabela === "mybank_loans").length,
+    0,
+    "nenhuma escrita em mybank_loans enquanto ha parcela em aberto"
+  );
+  assert.equal(corpo.emprestimo_quitado, false);
+  // E a frase NAO fala de quitacao: dizer "quitado" aqui mandaria a pessoa parar
+  // de esperar as 20 parcelas que faltam.
+  assert.doesNotMatch(corpo.message, /quitado/i);
+});
+
+test("a releitura da serie e SO deste emprestimo -- parcela de outro nao impede a quitacao", async () => {
+  const { status, corpo, sessao } = await mexerNaParcela(
+    EU,
+    { status: "paid" },
+    {
+      mybank_loans: [
+        { ...EMPRESTIMO_PARA_A_LAIS },
+        // Um SEGUNDO emprestimo meu, vivo, com parcela pendente. A RLS entrega
+        // as duas linhas: `mybank_installments_select` e por emprestimo meu, nao
+        // por serie.
+        { ...EMPRESTIMO_PARA_A_LAIS, id: "loan-geladeira" },
+      ],
+      mybank_installments: [
+        { ...PARCELA_DA_LAIS, status: "reported" },
+        {
+          ...PARCELA_DA_LAIS,
+          id: "p-geladeira",
+          loan_id: "loan-geladeira",
+          status: "pending",
+        },
+      ],
+    }
+  );
+
+  assert.equal(status, 200);
+
+  // SEM o `.eq("loan_id", ...)` a releitura traria a pendente do OUTRO
+  // emprestimo, "ainda em aberto" seria verdade e a moto nunca se declararia
+  // quitada -- um emprestimo que se recusa a terminar porque outro esta em dia.
+  assert.equal(corpo.emprestimo_quitado, true);
+
+  const quitacoes = sessao.escritas.filter(
+    (e) => e.tabela === "mybank_loans" && e.verbo === "update"
+  );
+  assert.equal(quitacoes.length, 1);
+  assert.deepEqual(quitacoes[0].filtros, [["eq", "id", "loan-lais"]]);
+});
+
+test("a quitacao filtrada pela RLS NAO desfaz a baixa, e a resposta nao mente", async () => {
+  const { status, corpo, sessao } = await mexerNaParcela(
+    EU,
+    { status: "paid", data_do_pagamento: "2027-01-12" },
+    {
+      mybank_installments: [{ ...PARCELA_DA_LAIS, status: "reported" }],
+      // `mybank_loans_update` e `lender_user_id = auth.uid()`: UPDATE que a
+      // policy filtra volta 200 com ZERO linha neste app, sem erro e sem
+      // SQLSTATE. Sem conferir o `.length` a rota diria "quitado".
+      rlsFiltra: { mybank_loans: true },
+    }
+  );
+
+  // 200, E NADA E DESFEITO: o dinheiro entrou e a parcela esta paga. O estado que
+  // sobra -- parcela `paid`, emprestimo `active` -- e exatamente o de antes desta
+  // issue, e e correto em dinheiro. Reverter a baixa para preservar o status
+  // trocaria um registro atrasado por um pagamento apagado.
+  assert.equal(status, 200);
+  assert.equal(corpo.success, true);
+  assert.equal(corpo.status, "paid");
+  assert.ok(corpo.transaction_id, "a perna de entrada continua gravada");
+
+  // A RESPOSTA DIZ O QUE FICOU, e nao o que deveria ter ficado.
+  assert.equal(corpo.emprestimo_quitado, false);
+  assert.doesNotMatch(corpo.message, /quitado/i);
+
+  // E O UPDATE FOI TENTADO. Sem esta assercao o teste nao distingue "a RLS
+  // filtrou a escrita" de "o ramo da quitacao nem rodou" -- os dois dao
+  // `emprestimo_quitado: false`, e o segundo passaria vacuo se a condicao de
+  // quitacao quebrasse.
+  const quitacoes = sessao.escritas.filter(
+    (e) => e.tabela === "mybank_loans" && e.verbo === "update"
+  );
+  assert.equal(quitacoes.length, 1);
+  assert.equal(quitacoes[0].patch.status, "settled");
+});
+
+// ---------------------------------------------------------------------------
+// O chamador 2: a baixa da previsao (Caso A)
+// ---------------------------------------------------------------------------
+
+test("CASO A: a baixa da ULTIMA parcela quita o emprestimo", async () => {
+  const linhas = tabelasDoCicloDoAuto();
+  const { status, corpo, sessao } = await pagarPrevisao({
+    tabelas: linhas,
+    corpo: { paid_date: "2027-01-12" },
+  });
+
+  assert.equal(status, 200);
+
+  const quitacoes = sessao.escritas.filter(
+    (e) => e.tabela === "mybank_loans" && e.verbo === "update"
+  );
+  assert.equal(quitacoes.length, 1);
+  assert.equal(quitacoes[0].patch.status, "settled");
+  assert.deepEqual(quitacoes[0].filtros, [["eq", "id", "loan-auto"]]);
+
+  // A LINHA SEMEADA, e nao so o patch: e ela que as duas telas leem.
+  assert.equal(linhas.mybank_loans[0].status, "settled");
+
+  assert.equal(corpo.emprestimo_quitado, true);
+  assert.match(corpo.message, /quitado/i);
+});
+
+test("CASO A: com outra parcela pendente a baixa NAO quita nada", async () => {
+  const linhas = tabelasDoCicloDoAuto({
+    mybank_loans: [{ ...EMPRESTIMO_DO_AUTO }],
+    mybank_installments: [
+      { ...PARCELA_DO_AUTO },
+      {
+        ...PARCELA_DO_AUTO,
+        id: "parcela-4",
+        installment_number: 4,
+        status: "pending",
+      },
+    ],
+    scheduled_transactions: [{ ...PREVISAO_DO_AUTO }],
+  });
+
+  const { status, corpo, sessao } = await pagarPrevisao({ tabelas: linhas });
+
+  assert.equal(status, 200);
+  assert.equal(
+    sessao.escritas.filter((e) => e.tabela === "mybank_loans").length,
+    0
+  );
+  assert.equal(linhas.mybank_loans[0].status, "active");
+  assert.equal(corpo.emprestimo_quitado, false);
+  assert.equal(corpo.message, "Parcela do MyBank paga");
+});
+
+test("A QUITACAO NAO ACONTECE QUANDO A BAIXA DA PREVISAO FALHA -- a posicao do passo 4", async () => {
+  const linhas = tabelasDoCicloDoAuto();
+  const { status, sessao } = await pagarPrevisao({
+    tabelas: linhas,
+    // A baixa da previsao e o ULTIMO passo que pode voltar atras: a falha nela
+    // desfaz as duas pernas e devolve a parcela a `pending`.
+    rlsFiltra: { scheduled_transactions: true },
+  });
+
+  assert.equal(status, 500);
+
+  // E O EMPRESTIMO NAO FOI TOCADO. Se a quitacao estivesse no passo 2.5, junto da
+  // baixa da parcela, este estorno deixaria um emprestimo `settled` com parcela
+  // `pending` -- e como as duas telas do MyBank filtram `active`, a divida viva
+  // sairia das duas e ninguem seria cobrado por ela. O estorno nao sabe desfazer
+  // o status do emprestimo; a saida e a quitacao vir DEPOIS dele.
+  assert.equal(
+    sessao.escritas.filter((e) => e.tabela === "mybank_loans").length,
+    0,
+    "nenhuma escrita em mybank_loans quando a baixa da previsao falha"
+  );
+  assert.equal(linhas.mybank_loans[0].status, "active");
+  assert.equal(linhas.mybank_installments[0].status, "pending");
+});
+
+test("previsao SEM elo do MyBank nao toca `mybank_loans`", async () => {
+  const linhas = tabelasDoCicloDoAuto({
+    scheduled_transactions: [{ ...PREVISAO_DO_AUTO, notes: "Aluguel" }],
+  });
+
+  const { status, corpo, sessao } = await pagarPrevisao({ tabelas: linhas });
+
+  assert.equal(status, 200);
+  // A transferencia prevista comum nao tem emprestimo para quitar. Sem a guarda
+  // do elo, a releitura da serie sairia com `loan_id` indefinido -- e um
+  // `.eq("loan_id", undefined)` no PostgREST nao filtra nada.
+  assert.equal(
+    sessao.escritas.filter((e) => e.tabela === "mybank_loans").length,
+    0
+  );
+  assert.equal(corpo.emprestimo_quitado, false);
+  assert.equal(corpo.message, "Transferência confirmada");
 });

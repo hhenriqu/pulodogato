@@ -914,3 +914,112 @@ export function mensagemDoCancelamento(params: {
 
   return `${partes.join("; ")}.`;
 }
+
+// ---------------------------------------------------------------------------
+// `settled`: O EMPRESTIMO QUE CHEGOU AO FIM (F1 da HMO-393, issue HMO-394)
+// ---------------------------------------------------------------------------
+// Antes desta fase NINGUEM escrevia `settled`. `mybank_loans_status_check` (053)
+// o aceita desde o primeiro dia, as duas leituras filtram `status = 'active'` e
+// `problemaDoCancelamento` ja tinha a frase de `emprestimo_ja_quitado` -- mas o
+// ciclo de pagamento nao alcancava o status: o PATCH da parcela, que e quem leva
+// a ultima a `paid`, nao tocava o emprestimo. Um emprestimo 24/24 quitado ficava
+// `active` para sempre, e a unica saida que a tela oferecia era o botao Cancelar.
+// Uma divida integralmente honrada terminava carimbada como CANCELADA.
+//
+// A CONSEQUENCIA E DE REGISTRO, E E POR ISSO QUE O DEFEITO NAO FOI REPORTADO
+// --------------------------------------------------------------------------
+// Nenhum numero esta errado hoje: as pernas de cada parcela paga estao lancadas
+// e o patrimonio fecha. O que esta errado e o que o historico DIZ -- quem paga a
+// ultima parcela ve o progresso chegar a "24 de 24" e nada declarar o fim. E o
+// oposto da familia HMO-149 ("o numero fecha, o fato nao aconteceu"): aqui o
+// fato aconteceu e nenhum numero denuncia que o registro ficou atras.
+//
+// `settled` E CONSEQUENCIA, NAO A OPERACAO: A ESCRITA FALHA SEM DESFAZER NADA
+// ---------------------------------------------------------------------------
+// Os tres chamadores gravam `settled` DEPOIS de o dinheiro estar gravado, e
+// nenhum deles desfaz coisa alguma se o UPDATE do emprestimo falhar. O estado
+// que sobra -- parcela paga, emprestimo `active` -- e exatamente o estado de
+// hoje, e e correto em dinheiro: reverter a baixa para preservar o status seria
+// trocar um registro atrasado por um pagamento apagado. A resposta diz o que
+// ficou; nada e revertido.
+//
+// E A POSICAO DA ESCRITA E ESCOLHIDA: DEPOIS DO ULTIMO DESFAZIMENTO POSSIVEL
+// --------------------------------------------------------------------------
+// Na baixa da previsao (Caso A) a quitacao NAO entra no passo 2.5, junto da
+// baixa da parcela: aquele passo ainda tem um estorno depois dele (a falha da
+// baixa da previsao desfaz as duas pernas E devolve a parcela a `pending`), e o
+// estorno nao sabe desfazer o status do emprestimo. Gravar `settled` ali
+// deixaria, na falha, um emprestimo `settled` com parcela `pending` -- e como as
+// duas telas filtram `active`, a divida viva desapareceria de ambas. A quitacao
+// vai depois do ultimo passo que pode voltar atras, onde ja nao ha o que desfazer.
+//
+// POR QUE NAO HA COLUNA DE DATA
+// -----------------------------
+// `mybank_loans` nao tem `settled_at`, e nao e omissao da 053: a data em que a
+// divida acabou e o `paid_date` da ultima parcela, que ja esta gravado e e o
+// unico lugar onde ela nao pode discordar de si mesma. Uma coluna nova aqui
+// precisaria ser mantida em sincronia com aquela a cada antecipacao e estorno.
+// ---------------------------------------------------------------------------
+
+/** O status do emprestimo que chegou ao fim. `mybank_loans_status_check`, 053. */
+export const STATUS_QUITADO = "settled";
+
+/**
+ * O emprestimo chegou ao fim? Nenhuma parcela em aberto E ao menos uma `paid`.
+ *
+ * A EXIGENCIA DE UMA `paid` NAO E DEFENSIVA -- ELA SEPARA TRES ESTADOS
+ * -------------------------------------------------------------------
+ * "nenhuma parcela em aberto" e verdade em tres mundos diferentes, e so um deles
+ * e quitacao:
+ *
+ *   1. todas pagas -> QUITADO, e e o unico que esta funcao reconhece;
+ *   2. todas canceladas -> o emprestimo e `cancelled`, e ja tem rota propria
+ *      (`PATCH /api/mybank/loans/[id]`). Chamar isso de quitado diria que uma
+ *      divida que ninguem pagou foi honrada;
+ *   3. NENHUMA PARCELA -- e este e estado ALCANCAVEL, nao hipotese defensiva. O
+ *      POST de `/api/mybank/loans` grava o emprestimo e a serie em DOIS inserts,
+ *      e o ramo idempotente do 23505 diz por extenso que o primeiro POST pode ter
+ *      "morrido entre o passo 1 e o passo 2". Sem a segunda condicao,
+ *      `[].some(...)` e `false`, "nao ha parcela em aberto" e verdade, e o
+ *      emprestimo gravado pela metade se declara quitado: ele sai das duas telas
+ *      (que filtram `active`) como divida cumprida, e uma divida real desaparece
+ *      sem nunca ter sido cobrada.
+ *
+ * O terceiro e o mutante obrigatorio desta fase. A segunda condicao e a REGRA,
+ * nao uma guarda -- apaga-la nao degrada a resposta, inverte-a.
+ *
+ * `cancelled` NAO BLOQUEIA A QUITACAO, e isso e deliberado: um emprestimo com 23
+ * parcelas pagas e a ultima cancelada (a cauda que a antecipacao encurta, na F2)
+ * chegou ao fim tanto quanto um 24/24. O que a funcao exige e que nao haja nada
+ * EM ABERTO e que algum dinheiro tenha entrado.
+ */
+export function emprestimoFicouQuitado(params: {
+  parcelas: { status: string }[];
+}): boolean {
+  const aindaEmAberto = params.parcelas.some((p) =>
+    STATUS_EM_ABERTO_DA_PARCELA.includes(p.status)
+  );
+  if (aindaEmAberto) return false;
+
+  return params.parcelas.some((p) => p.status === "paid");
+}
+
+/** O patch do emprestimo que se declara quitado. */
+export interface QuitacaoDoEmprestimo {
+  status: "settled";
+}
+
+/**
+ * O que a quitacao grava no emprestimo -- `status`, E MAIS NADA.
+ *
+ * Sem `updated_at`: a 053 tem trigger de carimbo, e escreve-lo aqui a mao
+ * competiria com ele. E sem data de quitacao, por nao haver coluna -- ver POR QUE
+ * NAO HA COLUNA DE DATA, no cabecalho desta secao.
+ *
+ * A funcao existe para os tres chamadores escreverem a MESMA coisa: o `UPDATE`
+ * esta em tres rotas, e o literal repetido tres vezes e o que deixa duas delas
+ * concordarem e a terceira divergir sem que nada reclame.
+ */
+export function patchDaQuitacaoDoEmprestimo(): QuitacaoDoEmprestimo {
+  return { status: "settled" };
+}

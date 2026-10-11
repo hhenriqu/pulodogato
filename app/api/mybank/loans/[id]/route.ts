@@ -90,6 +90,11 @@ export async function PATCH(
     // para alguem remover sem querer -- editar a divida nao e uma operacao que
     // esta rota saiba fazer, e `settled` e estado que o ciclo de pagamento
     // alcanca, nao que a tela declare.
+    //
+    // E DESDE A HMO-394 O CICLO ALCANCA MESMO: quem escreve `settled` sao o PATCH
+    // da parcela e a baixa da previsao, pela regra `emprestimoFicouQuitado`.
+    // Antes dela esta frase descrevia uma intencao -- ninguem escrevia o status,
+    // e um emprestimo 24/24 pago so saia das telas pelo botao Cancelar.
     if (status !== STATUS_CANCELADO) {
       return NextResponse.json(
         {
@@ -224,8 +229,12 @@ export async function PATCH(
     // -----------------------------------------------------------------------
     // 3. As parcelas em aberto. As `paid` nao entram no `.in`
     // -----------------------------------------------------------------------
-    // A lista vazia e um estado REAL: emprestimo em que toda parcela ja foi paga
-    // e que esta sendo encerrado a mao em vez de virar `settled`. `.in("id", [])`
+    // A lista vazia e um estado REAL, e continua sendo depois da HMO-394: o
+    // emprestimo em que toda parcela ja foi paga vira `settled` pelo ciclo de
+    // pagamento, mas os que QUITARAM ANTES daquela entrega ficaram `active` --
+    // ninguem os reescreveu -- e para eles o botao Cancelar segue sendo a unica
+    // saida. E um emprestimo de parcela nenhuma (o POST que morreu entre os dois
+    // inserts) tambem chega aqui com a lista vazia. `.in("id", [])`
     // no PostgREST nao filtra nada -- o UPDATE alcancaria TODA parcela que a RLS
     // entrega, inclusive as pagas de OUTROS emprestimos meus. A guarda e o
     // `.length`.
