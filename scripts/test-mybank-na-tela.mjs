@@ -286,6 +286,7 @@ const PAGINA = `<!doctype html>
 <div id="raiz-e"></div><div id="raiz-f"></div>
 <div id="raiz-g1"></div><div id="raiz-g2"></div><div id="raiz-g3"></div>
 <div id="raiz-g1-controle"></div><div id="raiz-g1-controle-2"></div>
+<div id="raiz-h"></div><div id="raiz-h2"></div>
 <div id="resultado">a pagina nao rodou</div>
 <script>${umd("react", "react.development.js")}</script>
 <script>${umd("react-dom", "react-dom.development.js")}</script>
@@ -395,7 +396,15 @@ const PARCELAS_DA_MOTO = [
   { id: "p-3", valor: 1000, numero: 3, total: 24, rotulo: "3 de 24", vencimento: "2026-11-10", status: "reported", a_confirmar: true },
 ];
 
-const LOANS = [
+/**
+ * O que \`/api/mybank/loans\` (GET) responde AGORA -- trocado pela secao H.
+ *
+ * \`let\` pelo mesmo motivo de \`DEVIDO_AGORA\`: a secao H precisa de DUAS parcelas
+ * \`reported\` para medir que a trava de confirmacao e por id (um \`Set\`) e nao um
+ * booleano global. Acrescenta-las a \`PARCELAS_DA_MOTO\` mudaria a contagem que C4
+ * afirma -- a sonda passaria a medir um fixture diferente do que o caso diz.
+ */
+let LOANS = [
   {
     id: "l-moto",
     descricao: "Moto eletrica",
@@ -1147,6 +1156,76 @@ async function preencherEmprestimo(achar, valor) {
   };
 }
 
+// =============================================================================
+// H -- confirmar a MESMA parcela duas vezes da UMA baixa, e as DIFERENTES nao
+//      se atrapalham (HMO-390)
+// =============================================================================
+// \`confirmarRecebimento\` nao tinha guarda NENHUMA antes desta issue -- nem
+// \`salvando\`, nem \`disabled\`, nem latch --, entao dois toques na mesma linha
+// mandavam duas baixas da mesma parcela.
+//
+// E POR QUE A TRAVA E UM \`Set\` E NAO UM BOOLEANO
+// ---------------------------------------------
+// Um booleano global consertaria H1 e QUEBRARIA H2: confirmar a parcela 3 e logo
+// depois a 4 sao duas baixas legitimas, e a segunda cairia calada. H2 e o
+// controle que impede o conserto de virar uma regressao de produto -- sem ele, o
+// mutante que troca o \`Set\` por um booleano sobreviveria.
+{
+  // DUAS parcelas \`reported\`, que o fixture padrao nao tem (ver \`LOANS\`).
+  LOANS = [
+    {
+      id: "l-duas",
+      descricao: "Moto eletrica",
+      conta_credora_id: ${JSON.stringify(CARTEIRA)},
+      caso: "conexao",
+      status: "active",
+      principal: 24000,
+      total_de_parcelas: 24,
+      primeiro_vencimento: "2026-09-10",
+      quem_deve_pagar: "Lais",
+      devedor_id: ${JSON.stringify(LAIS)},
+      parcelas: [
+        { id: "p-x", valor: 1000, numero: 3, total: 24, rotulo: "3 de 24", vencimento: "2026-11-10", status: "reported", a_confirmar: true },
+        { id: "p-y", valor: 1000, numero: 4, total: 24, rotulo: "4 de 24", vencimento: "2026-12-10", status: "reported", a_confirmar: true },
+      ],
+    },
+  ];
+
+  const raiz = await montarPainel("raiz-h");
+  const botaoDe = (id) =>
+    raiz.querySelector('[data-confirmar="' + id + '"] button');
+
+  // CONTROLE: as duas linhas existem. Sem isto, \`botaoDe\` devolvendo \`null\`
+  // faria as duas assercoes de baixo medirem zero clique.
+  out.h_linhas = Array.from(raiz.querySelectorAll("[data-confirmar]")).map((el) =>
+    el.getAttribute("data-confirmar")
+  );
+
+  // H1: A MESMA PARCELA, DOIS TOQUES NO MESMO TICK.
+  CHAMADAS = [];
+  ReactDOM.unstable_batchedUpdates(function () {
+    clicar(botaoDe("p-x"));
+    clicar(botaoDe("p-x"));
+  });
+  await assentar();
+  out.h_mesma = CHAMADAS.filter((c) => c.metodo === "PATCH").map((c) => c.url);
+
+  // H2: DUAS PARCELAS DIFERENTES, tambem no mesmo tick -- as duas passam.
+  const raiz2 = await montarPainel("raiz-h2");
+  const botaoDe2 = (id) =>
+    raiz2.querySelector('[data-confirmar="' + id + '"] button');
+
+  CHAMADAS = [];
+  ReactDOM.unstable_batchedUpdates(function () {
+    clicar(botaoDe2("p-x"));
+    clicar(botaoDe2("p-y"));
+  });
+  await assentar();
+  out.h_diferentes = CHAMADAS.filter((c) => c.metodo === "PATCH").map(
+    (c) => c.url
+  );
+}
+
 document.getElementById("resultado").textContent =
   "RESULTADO" + JSON.stringify(out) + "FIM";
 } catch (e) {
@@ -1845,5 +1924,33 @@ test("G3: controle -- formulario DIFERENTE recebe id DIFERENTE", () => {
     resultado.g3.baseId,
     "um formulario com outro valor reaproveitou o id do anterior: o segundo " +
       "emprestimo voltaria 200 com a divida do primeiro, sem gravar nada"
+  );
+});
+
+test("H1: confirmar a MESMA parcela duas vezes manda UMA baixa", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // CONTROLE: as duas linhas `reported` renderizaram. Com zero linha os
+  // cliques nao aconteceriam e "uma baixa" passaria medindo nada.
+  assert.deepEqual(resultado.h_linhas, ["p-x", "p-y"]);
+
+  assert.deepEqual(
+    resultado.h_mesma,
+    ["/api/mybank/installments/p-x"],
+    "a mesma parcela foi baixada mais de uma vez: " +
+      JSON.stringify(resultado.h_mesma)
+  );
+});
+
+test("H2: controle -- parcelas DIFERENTES continuam baixaveis no mesmo tick", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // O QUE IMPEDE O CONSERTO DE VIRAR REGRESSAO. Com um booleano global no lugar
+  // do `Set`, a segunda parcela cairia calada -- e H1 continuaria verde.
+  assert.deepEqual(
+    resultado.h_diferentes,
+    ["/api/mybank/installments/p-x", "/api/mybank/installments/p-y"],
+    "duas parcelas diferentes nao foram as duas confirmadas (a trava virou " +
+      "booleano global?): " + JSON.stringify(resultado.h_diferentes)
   );
 });
