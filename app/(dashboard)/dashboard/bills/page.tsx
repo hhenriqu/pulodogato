@@ -83,6 +83,7 @@ import {
 import { DialogoDeAlcance } from "@/components/series/DialogoDeAlcance";
 import { DialogoDePagamentoDaFatura } from "@/components/fatura/DialogoDePagamentoDaFatura";
 import { Receipts } from "@/components/Receipts";
+import { ParcelasDoMyBankQueEuDevo } from "@/components/mybank/ParcelasDoMyBankQueEuDevo";
 import { ehFatura } from "@/lib/card-invoice";
 import {
   FRASE_DO_PATRIMONIO,
@@ -1236,6 +1237,25 @@ export default function BillsPage() {
           vem da mesma leitura que as linhas -- sem rede nao ha bloco nenhum,
           porque sem rede `semVencimento` fica `null`.
           ------------------------------------------------------------------ */}
+      {/* ------------------------------------------------------------------
+          O LADO DO DEVEDOR DO MYBANK (HMO-371)
+
+          Parcela de emprestimo que alguem me fez pelo MyBank, com o selo
+          "MyBank — <quem emprestou>" e o botao de avisar que paguei.
+
+          O componente se protege: sem parcela nenhuma ele devolve `null`, e
+          esta tela fica IDENTICA ao que era -- nenhum card a mais, e nenhum dos
+          quatro totais do topo muda. Os totais sao assunto da F4 (as sete
+          leituras do plano da HMO-368), e mexer neles num PR cuja prova e a
+          tela e o jeito classico de esta feature virar dinheiro errado e
+          plausivel.
+
+          O auto-emprestimo NAO passa por aqui: ele ja esta na agenda acima como
+          transferencia prevista, e a view `mybank_due_entries` (053) o exclui de
+          proposito -- somar os dois mostraria a mesma parcela duas vezes.
+          ------------------------------------------------------------------ */}
+      <ParcelasDoMyBankQueEuDevo />
+
       {semVencimento !== null && semVencimento.length > 0 && (
         <Card className="border-warning/40">
           <CardHeader className="pb-2">

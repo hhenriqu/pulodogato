@@ -529,3 +529,18 @@ next-env.d.ts
 # Artefato, nao fonte. Um `.tmp-*` fora do .gitignore chega a ser commitado em
 # cima de arquivo de fonte -- ver a entrada do .tmp-parcelamento acima.
 /.tmp-emprestimo-do-mybank/
+
+# npm run test:mybank-na-tela -- a sonda de navegador da tela do MyBank
+# (HMO-371, F3 da HMO-368). Aqui vao `PainelDoMyBank`,
+# `ParcelasDoMyBankQueEuDevo`, `PerguntaDaBaseDoValor`, os cinco primitivos de
+# `components/ui` e as oito libs de que eles dependem, compilados com
+# `jsx: react` para a pagina do Chromium rodar como script CLASSICO.
+# Artefato, nao fonte -- um `.tmp-*` fora do .gitignore chega a ser commitado em
+# cima de arquivo de fonte, e dai rodar a suite apaga um arquivo rastreado.
+/.tmp-mybank-na-tela/
+
+# npm run test:leituras-do-mybank -- as leituras de dinheiro do MyBank (HMO-372,
+# F4 da HMO-368). A entrada entrou pela HMO-371 porque a F4 criou a suite e nao
+# a declarou aqui: `check-artefatos-de-build` ficou vermelho na `main`, e a
+# correcao e de uma linha no arquivo que a F3 ja toca.
+/.tmp-leituras-do-mybank/

@@ -1850,6 +1850,41 @@ const PAINEL = fileURLToPath(
 const FONTE_DO_PAINEL = readFileSync(PAINEL, "utf8");
 const CODIGO_DO_PAINEL = semComentario(FONTE_DO_PAINEL);
 
+/**
+ * A LINHA DE DETALHE, que SAIU do painel (endereco corrigido na HMO-371).
+ *
+ * O link da fatura mora em `components/papel-de-pao/LinhaDeDetalhe.tsx` desde a
+ * extracao daquele componente, e o caso "a fatura da lista aponta para o cartao
+ * NAQUELE MES" continuava procurando o call site em `PainelDePapel.tsx` -- onde
+ * ele nao esta mais. Esta suite estava VERMELHA na `main` por isso, com o codigo
+ * de producao correto do outro lado.
+ *
+ * Os outros dez casos deste bloco continuam lendo o PAINEL: so o do link mudou
+ * de endereco. Um `CODIGO_DO_PAINEL` que concatenasse os dois arquivos
+ * consertaria este caso e AFROUXARIA os outros dez -- qualquer um deles passaria
+ * a casar em qualquer dos dois componentes.
+ */
+const LINHA_DE_DETALHE = fileURLToPath(
+  new URL("../components/papel-de-pao/LinhaDeDetalhe.tsx", import.meta.url)
+);
+const FONTE_DA_LINHA = readFileSync(LINHA_DE_DETALHE, "utf8");
+const CODIGO_DA_LINHA = semComentario(FONTE_DA_LINHA);
+
+test("o strip de comentario funciona na linha de detalhe", () => {
+  // O MESMO par de controle do painel, e pelo mesmo motivo: sem ele um
+  // `semComentario` que devolvesse a fonte intacta (ou vazia) deixaria o caso do
+  // link passando sem sentido.
+  const soEmComentario = "monta o link que leva";
+  assert.ok(
+    FONTE_DA_LINHA.includes(soEmComentario),
+    "a frase-controle saiu de LinhaDeDetalhe.tsx: reescreva este caso"
+  );
+  assert.ok(
+    !CODIGO_DA_LINHA.includes(soEmComentario),
+    "o strip de comentario nao removeu um comentario conhecido da linha"
+  );
+});
+
 test("o strip de comentario funciona no painel -- senao os casos dele sao vacuos", () => {
   assert.ok(
     /A SOMA DAS LINHAS ABERTAS E/.test(FONTE_DO_PAINEL),
@@ -1923,10 +1958,14 @@ test("a fatura da lista aponta para o cartao NAQUELE MES", () => {
   // sem o mes o link abre o mes corrente do cartao certo -- o destino
   // plausivel e errado que ninguem reporta. A ancora e o CALL SITE com os dois
   // argumentos, porque `caminhoDoCartaoNoMes(id, null)` compila igual.
+  //
+  // O ENDERECO MUDOU (HMO-371): o call site vive em `LinhaDeDetalhe.tsx` desde a
+  // extracao daquele componente, e este caso continuava procurando no painel --
+  // vermelho na `main` sobre codigo de producao correto.
   assert.match(
-    CODIGO_DO_PAINEL,
+    CODIGO_DA_LINHA,
     /caminhoDoCartaoNoMes\(linha\.fatura\.accountId,\s*linha\.fatura\.mes\)/,
-    "o painel nao monta o link da fatura por caminhoDoCartaoNoMes(accountId, mes)"
+    "a linha de detalhe nao monta o link da fatura por caminhoDoCartaoNoMes(accountId, mes)"
   );
 });
 

@@ -31,6 +31,7 @@ import {
   CreditCard,
   Landmark,
   CalendarClock,
+  HandCoins,
   PiggyBank,
   Target,
   Bell,
@@ -172,6 +173,28 @@ export const navigation: NavigationItem[] = [
     icon: TrendingUp,
     requiredFeature: "investment_tracking",
     isPremium: true,
+  },
+  // "MyBank" entrou na HMO-371, logo abaixo de "Investimentos" de propósito: é
+  // a conta de investimento virando banco -- ela empresta, e a dívida volta
+  // parcelada. Quem acabou de ver o que tem aplicado tem, uma linha abaixo, a
+  // tela que empresta dali.
+  //
+  // SEM `requiredFeature` E SEM `requiredPlans`, e isso é a Decisão 5 da
+  // HMO-368 escrita no array: quem tem conta de investimento tem MyBank. Não há
+  // gate novo de plano em nenhuma das três camadas (menu, página, rotas) -- a
+  // feature não consome nada além do banco do próprio usuário, e a pergunta que
+  // ela responde ("quanto eu emprestei e quanto falta voltar") é justamente a
+  // que não pode depender de plano para ser respondida.
+  //
+  // A tela se protege sozinha quando o pré-requisito falta: sem nenhuma conta
+  // `account_type = 'investment'` ela diz o que fazer, com o caminho para
+  // Contas. Esconder o item do menu nesse caso seria a feature existindo e ao
+  // mesmo tempo não existindo para quem usa o app -- o sintoma que a HMO-145
+  // foi consertar.
+  {
+    name: "MyBank",
+    href: "/dashboard/mybank",
+    icon: HandCoins,
   },
   // "Patrimônio" entrou na HMO-145, logo abaixo de "Investimentos" de
   // propósito: é a tela que responde o que "Investimentos" promete e ainda não

@@ -63,6 +63,22 @@ import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
 const LIB = "lib/papel-de-pao.ts";
 const ROTA = "app/api/papel-de-pao/painel/route.ts";
 const PAINEL = "components/papel-de-pao/PainelDePapel.tsx";
+/**
+ * A LINHA DE DETALHE SAIU DO PAINEL, e um mutante ficou apontando para o
+ * endereco antigo (achado na HMO-371).
+ *
+ * O link da fatura mora em `components/papel-de-pao/LinhaDeDetalhe.tsx` desde a
+ * extracao daquele componente. O mutante "o link da fatura esquece o mes"
+ * continuava com `arquivo: PAINEL`, e `npm run check-ancora-de-mutante`
+ * reprovava com "ancora MORTA" -- com um custo que vai alem dele: aquela guarda
+ * e um step do `verificacao` e roda ANTES de quase tudo, entao o job inteiro
+ * parava ali e todo step depois dele nunca rodava.
+ *
+ * E ISSO NAO E CONSERTAR A ANCORA PARA CALAR A GUARDA: o mutante continua sendo
+ * o mesmo e continua morrendo pela mesma assercao -- ele so passou a mutar o
+ * arquivo onde o codigo esta hoje.
+ */
+const DETALHE = "components/papel-de-pao/LinhaDeDetalhe.tsx";
 
 const mutantes = [
   // ---------------------------------------------------------------------------
@@ -397,7 +413,7 @@ const semLinha = (): NumeroDoPapel => VAZIO;`,
     // O LINK DA FATURA PERDE O MES. O destino plausivel e errado: abre o mes
     // corrente do cartao certo, e a tela de destino parece perfeita.
     nome: "o link da fatura esquece o mes",
-    arquivo: PAINEL,
+    arquivo: DETALHE,
     de: "caminhoDoCartaoNoMes(linha.fatura.accountId, linha.fatura.mes)",
     para: "caminhoDoCartaoNoMes(linha.fatura.accountId, null)",
   },

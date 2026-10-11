@@ -22,6 +22,7 @@
   },
   "include": [
     "../components/movimentacoes/CamposDeLancamento.tsx",
+    "../components/movimentacoes/PerguntaDaBaseDoValor.tsx",
     "../components/ui/campo-de-valor.tsx",
     "../components/ui/input.tsx",
     "../components/ui/label.tsx",

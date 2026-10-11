@@ -75,16 +75,23 @@ const nomes = (itens) => itens.map((item) => item.name);
 // Desligado: o menu inteiro
 // ---------------------------------------------------------------------------
 
-test("desligado, o menu tem EXATAMENTE 27 itens", () => {
+test("desligado, o menu tem EXATAMENTE 28 itens", () => {
   const itens = menu({ plano: "admin", papel: false });
 
   // Se este numero mudou, foi porque alguem acrescentou (ou tirou) um item do
   // array. Isso nao e um erro -- e a pergunta que esta suite existe para
   // forcar: o item novo aparece no modo papel de pao? Se sim, entre com ele em
   // `ROTAS_DO_MENU_DE_PAPEL` e no caso do menu reduzido abaixo; se nao, ajuste
-  // so este 27.
-  assert.equal(itens.length, 27);
-  assert.equal(navigation.length, 27);
+  // so este 28.
+  //
+  // O 27 VIROU 28 NA HMO-371: entrou "MyBank" (`/dashboard/mybank`), e a
+  // resposta a pergunta acima foi NAO -- ele fica FORA do modo papel de pao. O
+  // modo e para quem quer o app simples; emprestar dinheiro para si mesmo em 24x
+  // nao e uma das cinco telas de dinheiro que ele promete. As oito rotas do modo
+  // continuam as mesmas, e o caso das 20 telas escondidas abaixo e quem prova
+  // que a nova esta entre elas.
+  assert.equal(itens.length, 28);
+  assert.equal(navigation.length, 28);
 });
 
 test("desligado, o filtro do modo devolve o MESMO array -- sem copia", () => {
@@ -144,13 +151,21 @@ test("ligado, os 8 itens sao as telas certas -- conferido pelo NOME", () => {
   ]);
 });
 
-test("ligado, as 19 telas restantes saem do menu -- nenhuma sobra", () => {
+test("ligado, as 20 telas restantes saem do menu -- nenhuma sobra", () => {
   const dentro = new Set(hrefs(menu({ plano: "admin", papel: true })));
   const fora = hrefs(menu({ plano: "admin", papel: false })).filter(
     (href) => !dentro.has(href)
   );
 
-  assert.equal(fora.length, 19);
+  // 19 -> 20 na HMO-371: "MyBank" entrou no array e fica FORA do modo. O laco
+  // abaixo e quem prova que ele esta entre as escondidas de verdade -- a
+  // contagem sozinha nao distingue "o item novo ficou fora" de "um item antigo
+  // saiu e o novo entrou".
+  assert.equal(fora.length, 20);
+  assert.ok(
+    fora.includes("/dashboard/mybank"),
+    "o MyBank deveria estar entre as telas escondidas pelo modo"
+  );
   // E um controle do `noMenuDoPapel`, nao so aritmetica: cada rota escondida
   // tem de ser reprovada pelo predicado, uma por uma. Uma rota que saisse da
   // lista por outro motivo (um `href` duplicado comendo o Set, por exemplo)
@@ -190,13 +205,19 @@ test("o plano e o OUTRO filtro: cada plano tem a sua contagem", () => {
   // e um comentario apontando para a issue, em vez de corrigi-lo: ele foi
   // encontrado (nao causado) na HMO-284, cujo assunto era o menu reduzido, e
   // consertar la mudaria o menu de quem usa o app num PR sobre outra coisa.
-  assert.equal(menu({ plano: "admin", papel: false }).length, 27);
-  assert.equal(menu({ plano: "trader", papel: false }).length, 26);
-  assert.equal(menu({ plano: "invest", papel: false }).length, 25);
-  assert.equal(menu({ plano: "free", papel: false }).length, 25);
+  //
+  // As cinco subiram de 1 na HMO-371, e TODAS as cinco: "MyBank" nao declara
+  // `requiredPlans` nenhum (Decisao 5 da HMO-368 -- quem tem conta de
+  // investimento tem MyBank), entao ele entra no menu de todo plano, inclusive
+  // de quem ainda nao carregou a assinatura. Se um dia alguem gatear a tela, sao
+  // estes cinco numeros que deixam de fechar -- e nao um comentario.
+  assert.equal(menu({ plano: "admin", papel: false }).length, 28);
+  assert.equal(menu({ plano: "trader", papel: false }).length, 27);
+  assert.equal(menu({ plano: "invest", papel: false }).length, 26);
+  assert.equal(menu({ plano: "free", papel: false }).length, 26);
   // Sem assinatura carregada ninguem ve item restrito. E o estado dos primeiros
   // quadros, e o menu dele e o do `free`.
-  assert.equal(menu({ plano: undefined, papel: false }).length, 25);
+  assert.equal(menu({ plano: undefined, papel: false }).length, 26);
 
   // A CONTAGEM NAO DIZ QUAIS. Trocar uma tela restrita pela outra -- Trading
   // exigindo so `admin` e Admin passando a aceitar `trader` -- manteria os
