@@ -52,6 +52,7 @@
     "../components/ui/label.tsx",
     "../lib/mybank-na-tela.ts",
     "../lib/emprestimo-do-mybank.ts",
+    "../lib/pedido-de-emprestimo.ts",
     "../lib/lancamento.ts",
     "../lib/transferencia.ts",
     "../lib/contas.ts",

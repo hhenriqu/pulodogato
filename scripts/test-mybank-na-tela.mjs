@@ -205,6 +205,13 @@ const PARTES = [
   "lib/lancamento.js",
   "lib/transferencia.js",
   "lib/emprestimo-do-mybank.js",
+  // A CHAVE DO PEDIDO (HMO-390). Sem esta linha o `PainelDoMyBank` compila e a
+  // pagina CARREGA, e `emprestar()` morre em `ReferenceError:
+  // assinaturaDoPedido is not defined` -- dentro do `try` dele, entao o sintoma
+  // nao se le como erro de sonda: e o POST que simplesmente nao sai, e o
+  // controle positivo de B3 caindo de 1 para 0. Familia
+  // `import-novo-no-componente-derruba-a-sonda-de-navegador`.
+  "lib/pedido-de-emprestimo.js",
   "lib/contas.js",
   "lib/mybank-na-tela.js",
   "lib/data-digitada.js",
