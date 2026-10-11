@@ -244,11 +244,31 @@ function consulta(
   registro,
   escrever = () => {},
   rlsBarra = false,
-  sequencias = new Map()
+  sequencias = new Map(),
+  /**
+   * O erro que SO o `insert` desta tabela devolve, e nada mais (HMO-390).
+   *
+   * `erros: { tabela: ... }` existe desde antes e serve para "a tabela inteira
+   * esta inacessivel": ele faz select, update e delete falharem junto. Uma
+   * violacao de UNIQUE nao e isso -- no Postgres o INSERT falha com `23505` e a
+   * tabela continua perfeitamente LEGIVEL, que e justamente o que a rota faz em
+   * seguida (ela rele a linha que ja existe, por id).
+   *
+   * Sem esta opcao a unica forma de montar o caso seria `erros`, e ali a
+   * releitura da rota falharia tambem: a rota cairia no 409 por nao ter achado
+   * a linha, e a sonda do caminho 200 mediria o ramo errado -- verde pelo
+   * motivo oposto ao que ela afirma.
+   */
+  erroDeInsert = null
 ) {
   let filtradas = [...linhas];
   let colunas = null;
   const filtros = [];
+
+  /** `select(..., { count })` foi pedido? Ver `select` (HMO-390). */
+  let contagem = false;
+  /** `{ head: true }` junto: devolve o numero e NENHUMA linha. */
+  let soCabecalho = false;
 
   /**
    * O proximo id desta tabela NA SESSAO -- e a sequencia e por sessao, nao por
@@ -409,8 +429,25 @@ function consulta(
   }
 
   const api = {
-    select(selecao) {
+    select(selecao, opcoes) {
       colunas = colunasDe(selecao);
+
+      // `{ count: "exact", head: true }` (HMO-390)
+      // ----------------------------------------
+      // O duble ignorava o segundo argumento, e isso fazia TODA contagem
+      // responder `undefined`. Numa rota que escreve `count ?? 0` -- o padrao
+      // deste repositorio -- `undefined` vira **zero**: a sonda le 0, a rota
+      // esta certa, e a assercao reprova o codigo bom. Pior no outro sentido,
+      // que e o que importa aqui: uma assercao `count === 0` passaria VACUA
+      // sobre qualquer numero de linhas.
+      //
+      // `head: true` nao devolve linha nenhuma (`data: null`), igual ao
+      // PostgREST: quem pede `head` quer o numero, e uma lista devolvida aqui
+      // deixaria passar verde uma rota que lesse `data.length`.
+      if (opcoes && opcoes.count) {
+        contagem = true;
+        soCabecalho = Boolean(opcoes.head);
+      }
       return api;
     },
     // -----------------------------------------------------------------------
@@ -431,6 +468,28 @@ function consulta(
     // Um duble que guardasse o array cru deixaria passar verde exatamente o
     // defeito que aquele comentario descreve.
     insert(payload) {
+      // O INSERT QUE FALHA SOZINHO (HMO-390) -- ver `erroDeInsert` na
+      // assinatura. Nada e escrito, nada entra em `linhas`, e a cadeia continua
+      // respondendo: a rota faz `.select("id").single()` depois do insert, e um
+      // objeto sem `select` aqui estouraria com "select is not a function", que
+      // se le como rota quebrada.
+      //
+      // O registro sai como verbo `insert-recusado`, e nao `insert`: uma sonda
+      // que conte os inserts da tabela nao pode contar este, senao "o insert
+      // saiu" deixa de distinguir gravado de recusado.
+      if (erroDeInsert) {
+        registro(tabela, filtros, "insert-recusado");
+        const recusa = {
+          select: () => recusa,
+          single: () => Promise.resolve({ data: null, error: erroDeInsert }),
+          maybeSingle: () =>
+            Promise.resolve({ data: null, error: erroDeInsert }),
+          then: (res, rej) =>
+            Promise.resolve({ data: null, error: erroDeInsert }).then(res, rej),
+        };
+        return recusa;
+      }
+
       const propostas = Array.isArray(payload) ? payload : [payload];
       const colunasDoLote = Object.keys(propostas[0] ?? {});
       const gravadas = propostas.map((proposta) => {
@@ -713,10 +772,14 @@ function consulta(
       return api;
     },
     then(resolve, reject) {
-      registro(tabela, filtros, "list");
+      registro(tabela, filtros, contagem ? "count" : "list");
       return Promise.resolve({
-        data: filtradas.map((l) => projetar(l, colunas)),
+        // `head: true` -> `data: null`, como o PostgREST. Ver `select`.
+        data: soCabecalho ? null : filtradas.map((l) => projetar(l, colunas)),
         error: null,
+        // `count` SO quando pedido: um `count` sempre presente faria uma rota
+        // que o le sem pedir passar verde aqui e falhar em producao.
+        ...(contagem ? { count: filtradas.length } : {}),
       }).then(resolve, reject);
     },
   };
@@ -746,6 +809,12 @@ export function criarDuble({
   tabelas = {},
   erros = {},
   rlsFiltra = {},
+  /**
+   * `{ mybank_loans: { code: "23505", message: "..." } }` -- o erro que SO o
+   * `insert` daquela tabela devolve (HMO-390). Ver `erroDeInsert` em `consulta`
+   * para o porque de nao dar para usar `erros` aqui.
+   */
+  errosDeInsert = {},
 } = {}) {
   /** Toda consulta que passou por aqui, para a sonda conferir o que foi lido. */
   const lidas = [];
@@ -831,7 +900,8 @@ export function criarDuble({
           // A sequencia de ids e da SESSAO: cada `from()` monta um `consulta`
           // novo, e um contador local a ele voltaria a 1 em cada chamada --
           // exatamente o empate que a sequencia existe para desfazer.
-          sequencias
+          sequencias,
+          errosDeInsert[tabela] ?? null
         );
       },
       rpc(nome, args) {

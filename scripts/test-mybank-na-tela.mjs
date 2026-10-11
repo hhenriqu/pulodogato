@@ -205,6 +205,13 @@ const PARTES = [
   "lib/lancamento.js",
   "lib/transferencia.js",
   "lib/emprestimo-do-mybank.js",
+  // A CHAVE DO PEDIDO (HMO-390). Sem esta linha o `PainelDoMyBank` compila e a
+  // pagina CARREGA, e `emprestar()` morre em `ReferenceError:
+  // assinaturaDoPedido is not defined` -- dentro do `try` dele, entao o sintoma
+  // nao se le como erro de sonda: e o POST que simplesmente nao sai, e o
+  // controle positivo de B3 caindo de 1 para 0. Familia
+  // `import-novo-no-componente-derruba-a-sonda-de-navegador`.
+  "lib/pedido-de-emprestimo.js",
   "lib/contas.js",
   "lib/mybank-na-tela.js",
   "lib/data-digitada.js",
@@ -277,6 +284,10 @@ const PAGINA = `<!doctype html>
 <html><head><meta charset="utf-8"></head><body>
 <div id="raiz-a"></div><div id="raiz-b"></div><div id="raiz-c"></div>
 <div id="raiz-e"></div><div id="raiz-f"></div>
+<div id="raiz-g1"></div><div id="raiz-g2"></div><div id="raiz-g3"></div>
+<div id="raiz-g1-controle"></div><div id="raiz-g1-controle-2"></div>
+<div id="raiz-h"></div><div id="raiz-h2"></div><div id="raiz-h3"></div>
+<div id="raiz-g4"></div><div id="raiz-g4b"></div>
 <div id="resultado">a pagina nao rodou</div>
 <script>${umd("react", "react.development.js")}</script>
 <script>${umd("react-dom", "react-dom.development.js")}</script>
@@ -362,9 +373,13 @@ try {
 
 let CHAMADAS = [];
 
-const resposta = (corpo, ok) => ({
+// O \`status\` EXPLICITO entrou na HMO-390: o componente ramifica em
+// \`resposta.status === 409\` (o id colidiu com linha alheia), e um duble
+// que so soubesse devolver 400 faria aquele ramo ser INALCANCAVEL -- o caso G4
+// passaria medindo o ramo de erro genérico e o mutante do 409 sobreviveria.
+const resposta = (corpo, ok, status) => ({
   ok: ok === undefined ? true : ok,
-  status: ok === false ? 400 : 200,
+  status: status ?? (ok === false ? 400 : 200),
   headers: { get: () => null },
   json: async () => corpo,
 });
@@ -386,7 +401,15 @@ const PARCELAS_DA_MOTO = [
   { id: "p-3", valor: 1000, numero: 3, total: 24, rotulo: "3 de 24", vencimento: "2026-11-10", status: "reported", a_confirmar: true },
 ];
 
-const LOANS = [
+/**
+ * O que \`/api/mybank/loans\` (GET) responde AGORA -- trocado pela secao H.
+ *
+ * \`let\` pelo mesmo motivo de \`DEVIDO_AGORA\`: a secao H precisa de DUAS parcelas
+ * \`reported\` para medir que a trava de confirmacao e por id (um \`Set\`) e nao um
+ * booleano global. Acrescenta-las a \`PARCELAS_DA_MOTO\` mudaria a contagem que C4
+ * afirma -- a sonda passaria a medir um fixture diferente do que o caso diz.
+ */
+let LOANS = [
   {
     id: "l-moto",
     descricao: "Moto eletrica",
@@ -607,11 +630,74 @@ const DIVIDA_COMPRIDA = Array.from({ length: 25 }, function (_, i) {
  */
 let DEVIDO_AGORA = QUE_EU_DEVO;
 
+/**
+ * O POST DE EMPRESTIMO FALHA? -- usado por G2/G3 (HMO-390).
+ *
+ * A chave de pedido so SOBREVIVE ao caminho de erro: no sucesso a tela faz
+ * \`removeItem\`, de proposito (emprestar o mesmo valor de novo e legitimo). Entao
+ * para medir o reaproveitamento do id e preciso um primeiro POST que FALHE --
+ * que e tambem o caso real da issue: quem viu "Emprestando..." e achou que
+ * travou.
+ *
+ * O \`throw\` imita queda de REDE, e nao um 500: e o ramo em que a tela nao
+ * recebeu resposta nenhuma, o unico em que a pessoa genuinamente nao sabe se a
+ * divida foi criada.
+ */
+let POST_DE_EMPRESTIMO_FALHA = false;
+
+/**
+ * A BAIXA DA PARCELA FALHA? -- usado por H3 (HMO-390).
+ *
+ * E o que permite medir o \`delete\` do \`Set\`: sem ele, a parcela cuja baixa
+ * falhou fica em voo PARA SEMPRE, e como o botao Confirmar nao tem \`disabled\`,
+ * a pessoa segue clicando num botao que nao chama rota nenhuma e nao diz nada.
+ */
+let PATCH_DE_PARCELA_FALHA = false;
+
+/**
+ * O POST DE EMPRESTIMO RESPONDE 409? -- usado por G4 (HMO-390).
+ *
+ * 409 e "o id que voce escolheu e de uma linha que nao e sua". O par guardado
+ * TEM de ser esquecido nesse ramo, senao o reenvio manda o mesmo id, colide com
+ * a mesma linha e volta 409 para sempre -- e a frase "tente de novo" vira
+ * mentira num botao que nunca mais funciona.
+ */
+let POST_DE_EMPRESTIMO_409 = false;
+
 window.fetch = async (url, init) => {
   const metodo = (init && init.method) || "GET";
   const corpo = init && init.body ? JSON.parse(init.body) : null;
   const alvo = String(url);
   CHAMADAS.push({ metodo, url: alvo, corpo });
+
+  if (
+    POST_DE_EMPRESTIMO_FALHA &&
+    alvo.startsWith("/api/mybank/loans") &&
+    metodo === "POST"
+  ) {
+    // Registrado em CHAMADAS acima: o POST SAIU, e e o id dele que G2 compara.
+    throw new TypeError("Failed to fetch");
+  }
+
+  if (
+    POST_DE_EMPRESTIMO_409 &&
+    alvo.startsWith("/api/mybank/loans") &&
+    metodo === "POST"
+  ) {
+    return resposta(
+      { error: "Esse pedido nao pode ser confirmado. Tente de novo." },
+      false,
+      409
+    );
+  }
+
+  if (
+    PATCH_DE_PARCELA_FALHA &&
+    alvo.startsWith("/api/mybank/installments/") &&
+    metodo === "PATCH"
+  ) {
+    throw new TypeError("Failed to fetch");
+  }
 
   if (alvo.startsWith("/api/financial-accounts")) {
     // A forma e \`{ accounts: [...] }\`. Um \`{ data: [...] }\` aqui deixaria o
@@ -944,6 +1030,341 @@ const out = {};
     escopo: Boolean(raiz.querySelector("[data-escopo]")),
     texto: raiz.textContent,
     leituras: CHAMADAS.map((c) => c.url),
+  };
+}
+
+// =============================================================================
+// G -- o segundo clique nao cria a segunda divida (HMO-390, F1 da HMO-383)
+// =============================================================================
+// Tres montagens, e cada uma mede uma coisa que a outra nao mede:
+//
+//   G1  dois cliques no MESMO tick -> UM POST. E a trava de \`useRef\`.
+//   G2  a tela REMONTADA (o F5) refazendo o mesmo formulario -> o MESMO id no
+//       corpo. E a chave de pedido em \`sessionStorage\`.
+//   G3  formulario DIFERENTE -> id DIFERENTE. E o controle que impede G2 de
+//       passar com um id constante.
+//
+// POR QUE OS DOIS CLIQUES VAO DENTRO DE \`unstable_batchedUpdates\`
+// --------------------------------------------------------------
+// \`dispatchEvent\` e sincrono, mas o \`ReactDOM.render\` legado DESCARREGA o
+// \`setSalvando(true)\` no fim de cada evento discreto. Dois \`clicar()\` soltos,
+// um depois do outro, dariam ao React a chance de re-renderizar no meio -- e o
+// segundo clique cairia no \`disabled={salvando}\` do botao.
+//
+// A sonda passaria VERDE, e pelo motivo errado: ela estaria medindo o
+// \`disabled\`, que ja existia antes desta issue, e o mutante que troca o
+// \`useRef\` por \`useState\` SOBREVIVERIA. \`unstable_batchedUpdates\` mantem as
+// duas entregas na mesma descarga, que e o toque duplo de celular.
+//
+// E para isso nao ficar sendo uma afirmacao de comentario, G1 LE o
+// \`disabled\` do botao no instante do segundo clique e o reporta. A assercao
+// exige \`false\` ali: se um dia o React passar a descarregar no meio, a sonda
+// falha em vez de virar vacua. Familia
+// \`mutante-de-ramo-de-passagem-exige-fixture-do-outro-ramo\`.
+{
+  const raiz = await montarPainel("raiz-g1");
+  const achar = (id) => raiz.querySelector("[id='" + id + "']");
+
+  // O FORMULARIO VALIDO DO CASO A ("eu mesmo paga"): sem isto o \`problema\`
+  // barraria o envio e o POST nao sairia por motivo nenhum ligado a trava --
+  // zero POST passaria a assercao "um POST" de G1 ao contrario.
+  digitar(achar("mybank-conta"), ${JSON.stringify(TESOURO)});
+  digitar(achar("mybank-conta-de-pagamento"), ${JSON.stringify(CORRENTE)});
+  digitar(achar("mybank-descricao"), "Bicicleta");
+  digitar(achar("mybank-valor"), "2400.00");
+  digitar(achar("mybank-parcelas"), "24");
+  digitar(achar("mybank-vencimento"), "2026-11-10");
+  await assentar();
+
+  CHAMADAS = [];
+  const botao = achar("mybank-emprestar");
+
+  let desabilitadoNoSegundo = null;
+  ReactDOM.unstable_batchedUpdates(function () {
+    clicar(botao);
+    // Lido ANTES do segundo clique, e dentro do mesmo lote: e o estado do DOM
+    // que o segundo toque encontraria.
+    desabilitadoNoSegundo = botao.disabled;
+    clicar(botao);
+  });
+  await assentar();
+
+  out.g1 = {
+    posts: CHAMADAS.filter((c) => c.metodo === "POST"),
+    desabilitadoNoSegundo,
+    erro: achar("mybank-erro") ? achar("mybank-erro").textContent : null,
+  };
+}
+
+/**
+ * Preenche o formulario de emprestimo do Caso A ("eu mesmo pago").
+ *
+ * G2 e G3 precisam preencher DUAS vezes cada uma (antes e depois do "F5"), e a
+ * assinatura do pedido e feita do conteudo dos campos: um campo digitado numa
+ * das voltas e esquecido na outra mudaria a assinatura e faria G2 reprovar por
+ * erro da sonda, com a cara de defeito de producao.
+ */
+async function preencherEmprestimo(achar, valor) {
+  digitar(achar("mybank-conta"), ${JSON.stringify(TESOURO)});
+  digitar(achar("mybank-conta-de-pagamento"), ${JSON.stringify(CORRENTE)});
+  digitar(achar("mybank-descricao"), "Bicicleta");
+  digitar(achar("mybank-valor"), valor);
+  digitar(achar("mybank-parcelas"), "24");
+  digitar(achar("mybank-vencimento"), "2026-11-10");
+  await assentar();
+}
+
+// G2 e G3 -- O F5, E O CONTROLE QUE O IMPEDE DE SER VACUO.
+//
+// O "F5" aqui e uma MONTAGEM NOVA em outra raiz: \`emprestandoRef\`,
+// \`parcelasEmVooRef\` e todo o \`useState\` nascem limpos, exatamente como depois
+// de recarregar a pagina. O que atravessa e o \`sessionStorage\` -- que e o ponto
+// inteiro desta metade da issue.
+//
+// POR QUE O PRIMEIRO POST TEM DE FALHAR
+// -------------------------------------
+// No SUCESSO a tela faz \`removeItem\` de proposito (emprestar o mesmo valor de
+// novo e um pedido legitimo). Entao o reaproveitamento so e observavel depois de
+// um POST que falhou -- que e exatamente o caso relatado na issue: a pessoa viu
+// "Emprestando...", achou que travou, e recarregou.
+//
+// O id NAO E SEMEADO A MAO, e isso e deliberado: a assinatura e montada do
+// conteudo dos campos (inclusive do \`valor\`, que passa por campo mascarado), e
+// uma assinatura escrita a mao aqui mediria a minha copia da regra em vez da
+// regra. G2 compara dois ids que a TELA produziu.
+//
+// G3 e o controle: mesmo par guardado, formulario DIFERENTE (outro valor), id
+// DIFERENTE. Sem ele, uma tela que mandasse um id constante -- ou que
+// reaproveitasse o id para QUALQUER formulario -- passaria G2 limpa, e seria um
+// defeito pior do que o que a issue conserta: o segundo emprestimo voltaria 200
+// com a divida do primeiro, sem nunca ter sido gravado.
+{
+  // (1) A PRIMEIRA TENTATIVA, QUE FALHA NA REDE.
+  POST_DE_EMPRESTIMO_FALHA = true;
+
+  const raiz = await montarPainel("raiz-g2");
+  await preencherEmprestimo((id) => raiz.querySelector("[id='" + id + "']"), "2400.00");
+
+  CHAMADAS = [];
+  clicar(raiz.querySelector("[id='mybank-emprestar']"));
+  await assentar();
+  const primeiro = CHAMADAS.filter((c) => c.metodo === "POST")[0] || null;
+
+  // (2) O F5: montagem nova, e agora a rede funciona.
+  POST_DE_EMPRESTIMO_FALHA = false;
+
+  const raiz2 = await montarPainel("raiz-g3");
+  const achar2 = (id) => raiz2.querySelector("[id='" + id + "']");
+  await preencherEmprestimo(achar2, "2400.00");
+
+  CHAMADAS = [];
+  clicar(achar2("mybank-emprestar"));
+  await assentar();
+  const segundo = CHAMADAS.filter((c) => c.metodo === "POST")[0] || null;
+
+  out.g2 = {
+    primeiroId: primeiro ? primeiro.corpo.id : null,
+    segundoId: segundo ? segundo.corpo.id : null,
+    // O par e esquecido no SUCESSO: depois de (2) o armazenamento tem de estar
+    // limpo. Sem esta leitura, um \`removeItem\` apagado passaria a sonda e o
+    // PROXIMO emprestimo igual voltaria 200 sem gravar nada.
+    guardadoDepoisDoSucesso: sessionStorage.getItem(
+      "pulodogato:mybank:pedido-de-emprestimo"
+    ),
+  };
+
+  // (3) O CONTROLE: outro formulario depois de outra falha -> outro id.
+  POST_DE_EMPRESTIMO_FALHA = true;
+
+  const raiz3 = await montarPainel("raiz-g1-controle");
+  await preencherEmprestimo((id) => raiz3.querySelector("[id='" + id + "']"), "2400.00");
+  CHAMADAS = [];
+  clicar(raiz3.querySelector("[id='mybank-emprestar']"));
+  await assentar();
+  const base = CHAMADAS.filter((c) => c.metodo === "POST")[0] || null;
+
+  const raiz4 = await montarPainel("raiz-g1-controle-2");
+  const achar4 = (id) => raiz4.querySelector("[id='" + id + "']");
+  // O VALOR e o unico campo trocado: assinatura diferente, id diferente.
+  await preencherEmprestimo(achar4, "999.00");
+  CHAMADAS = [];
+  clicar(achar4("mybank-emprestar"));
+  await assentar();
+  const outro = CHAMADAS.filter((c) => c.metodo === "POST")[0] || null;
+
+  POST_DE_EMPRESTIMO_FALHA = false;
+
+  out.g3 = {
+    baseId: base ? base.corpo.id : null,
+    outroId: outro ? outro.corpo.id : null,
+  };
+}
+
+// =============================================================================
+// H -- confirmar a MESMA parcela duas vezes da UMA baixa, e as DIFERENTES nao
+//      se atrapalham (HMO-390)
+// =============================================================================
+// \`confirmarRecebimento\` nao tinha guarda NENHUMA antes desta issue -- nem
+// \`salvando\`, nem \`disabled\`, nem latch --, entao dois toques na mesma linha
+// mandavam duas baixas da mesma parcela.
+//
+// E POR QUE A TRAVA E UM \`Set\` E NAO UM BOOLEANO
+// ---------------------------------------------
+// Um booleano global consertaria H1 e QUEBRARIA H2: confirmar a parcela 3 e logo
+// depois a 4 sao duas baixas legitimas, e a segunda cairia calada. H2 e o
+// controle que impede o conserto de virar uma regressao de produto -- sem ele, o
+// mutante que troca o \`Set\` por um booleano sobreviveria.
+{
+  // DUAS parcelas \`reported\`, que o fixture padrao nao tem (ver \`LOANS\`).
+  LOANS = [
+    {
+      id: "l-duas",
+      descricao: "Moto eletrica",
+      conta_credora_id: ${JSON.stringify(CARTEIRA)},
+      caso: "conexao",
+      status: "active",
+      principal: 24000,
+      total_de_parcelas: 24,
+      primeiro_vencimento: "2026-09-10",
+      quem_deve_pagar: "Lais",
+      devedor_id: ${JSON.stringify(LAIS)},
+      parcelas: [
+        { id: "p-x", valor: 1000, numero: 3, total: 24, rotulo: "3 de 24", vencimento: "2026-11-10", status: "reported", a_confirmar: true },
+        { id: "p-y", valor: 1000, numero: 4, total: 24, rotulo: "4 de 24", vencimento: "2026-12-10", status: "reported", a_confirmar: true },
+      ],
+    },
+  ];
+
+  const raiz = await montarPainel("raiz-h");
+  const botaoDe = (id) =>
+    raiz.querySelector('[data-confirmar="' + id + '"] button');
+
+  // CONTROLE: as duas linhas existem. Sem isto, \`botaoDe\` devolvendo \`null\`
+  // faria as duas assercoes de baixo medirem zero clique.
+  out.h_linhas = Array.from(raiz.querySelectorAll("[data-confirmar]")).map((el) =>
+    el.getAttribute("data-confirmar")
+  );
+
+  // H1: A MESMA PARCELA, DOIS TOQUES NO MESMO TICK.
+  CHAMADAS = [];
+  ReactDOM.unstable_batchedUpdates(function () {
+    clicar(botaoDe("p-x"));
+    clicar(botaoDe("p-x"));
+  });
+  await assentar();
+  out.h_mesma = CHAMADAS.filter((c) => c.metodo === "PATCH").map((c) => c.url);
+
+  // H2: DUAS PARCELAS DIFERENTES, tambem no mesmo tick -- as duas passam.
+  const raiz2 = await montarPainel("raiz-h2");
+  const botaoDe2 = (id) =>
+    raiz2.querySelector('[data-confirmar="' + id + '"] button');
+
+  CHAMADAS = [];
+  ReactDOM.unstable_batchedUpdates(function () {
+    clicar(botaoDe2("p-x"));
+    clicar(botaoDe2("p-y"));
+  });
+  await assentar();
+  out.h_diferentes = CHAMADAS.filter((c) => c.metodo === "PATCH").map(
+    (c) => c.url
+  );
+
+  // H3: A BAIXA QUE FALHOU TEM SEGUNDA TENTATIVA.
+  //
+  // O \`delete\` do \`finally\` e o que faz esta linha existir. Sem ele a parcela
+  // fica em voo para sempre -- e, como o botao Confirmar NAO tem \`disabled\`, a
+  // pessoa continua podendo clicar num botao que nao chama rota nenhuma e nao
+  // diz nada. Um clique que nao faz nada e nao avisa e pior que o erro.
+  const raiz3 = await montarPainel("raiz-h3");
+  const botaoDe3 = (id) =>
+    raiz3.querySelector('[data-confirmar="' + id + '"] button');
+
+  CHAMADAS = [];
+  PATCH_DE_PARCELA_FALHA = true;
+  clicar(botaoDe3("p-x"));
+  await assentar();
+  const primeiraTentativa = CHAMADAS.filter((c) => c.metodo === "PATCH").length;
+
+  // A rede volta, e a pessoa tenta DE NOVO a mesma parcela.
+  PATCH_DE_PARCELA_FALHA = false;
+  clicar(botaoDe3("p-x"));
+  await assentar();
+
+  out.h_retentativa = {
+    primeira: primeiraTentativa,
+    total: CHAMADAS.filter((c) => c.metodo === "PATCH").length,
+  };
+}
+
+// G4 -- O 409 ESQUECE O PEDIDO, E E ISSO QUE FAZ O "tente de novo" SER VERDADE
+//
+// 409 quer dizer "o id que voce escolheu e de uma linha que nao e sua". O par
+// guardado continuaria casando com este formulario, entao sem o \`removeItem\`
+// deste ramo o reenvio mandaria o MESMO id, colidiria com a MESMA linha e
+// voltaria 409 -- para sempre. A frase que a rota manda ("Tente de novo") seria
+// mentira num botao que nunca mais funciona.
+//
+// O controle e o id: depois do 409 o proximo POST tem de sair com um id
+// DIFERENTE. Afirmar so "saiu um segundo POST" passaria verde com o id repetido
+// -- e e o id repetido que condena a pessoa ao 409 eterno.
+{
+  POST_DE_EMPRESTIMO_409 = true;
+
+  const raiz = await montarPainel("raiz-g4");
+  const achar = (id) => raiz.querySelector("[id='" + id + "']");
+  await preencherEmprestimo(achar, "2400.00");
+
+  CHAMADAS = [];
+  clicar(achar("mybank-emprestar"));
+  await assentar();
+  const recusado = CHAMADAS.filter((c) => c.metodo === "POST")[0] || null;
+
+  // A FRASE E LIDA AQUI, e nao depois da retentativa: o segundo envio da
+  // certo e o \`setErro(null)\` dele apaga o aviso. Lido no fim, o campo vem
+  // \`null\` -- que se le como "a rota nao avisou nada", e nao como "o aviso
+  // ja saiu da tela".
+  const erroDo409 = achar("mybank-erro")
+    ? achar("mybank-erro").textContent
+    : null;
+
+  // A pessoa le a frase e tenta de novo, no mesmo formulario.
+  POST_DE_EMPRESTIMO_409 = false;
+  CHAMADAS = [];
+  clicar(achar("mybank-emprestar"));
+  await assentar();
+  const retentativa = CHAMADAS.filter((c) => c.metodo === "POST")[0] || null;
+
+  out.g4 = {
+    erro: erroDo409,
+    idRecusado: recusado ? recusado.corpo.id : null,
+    idDaRetentativa: retentativa ? retentativa.corpo.id : null,
+  };
+
+  // CONTROLE DO CONTROLE: num erro que NAO e 409 (a rede caiu) o par FICA --
+  // e ele que faz o reenvio depois do F5 nao criar a segunda divida. Sem este
+  // caso, um \`removeItem\` posto no caminho de erro INTEIRO passaria G4 e
+  // desfaria G2 em silencio.
+  POST_DE_EMPRESTIMO_FALHA = true;
+
+  const raizB = await montarPainel("raiz-g4b");
+  const acharB = (id) => raizB.querySelector("[id='" + id + "']");
+  await preencherEmprestimo(acharB, "2400.00");
+
+  CHAMADAS = [];
+  clicar(acharB("mybank-emprestar"));
+  await assentar();
+  const caiu = CHAMADAS.filter((c) => c.metodo === "POST")[0] || null;
+
+  CHAMADAS = [];
+  clicar(acharB("mybank-emprestar"));
+  await assentar();
+  const depoisDaQueda = CHAMADAS.filter((c) => c.metodo === "POST")[0] || null;
+
+  POST_DE_EMPRESTIMO_FALHA = false;
+
+  out.g4b = {
+    idDaQueda: caiu ? caiu.corpo.id : null,
+    idDepois: depoisDaQueda ? depoisDaQueda.corpo.id : null,
   };
 }
 
@@ -1560,4 +1981,180 @@ test("F: controle negativo -- devedor sem parcela nao ve o bloco", () => {
   // A BUSCA SAIU. Sem esta linha o caso passaria verde se o componente nao
   // tivesse montado -- e "nao montou" nao e "montou e decidiu nao mostrar".
   assert.deepEqual(resultado.f.leituras, ["/api/mybank/due"]);
+});
+
+// =============================================================================
+// G -- o segundo clique nao cria a segunda divida (HMO-390, F1 da HMO-383)
+// =============================================================================
+
+test("G1: dois cliques no MESMO tick -> UM unico POST", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // O CONTROLE DE VACUIDADE VEM PRIMEIRO, e ele e o que faz este caso medir a
+  // trava de `useRef` em vez do `disabled={salvando}` que ja existia.
+  //
+  // Se o React tivesse descarregado o re-render entre os dois `dispatchEvent`,
+  // o botao estaria `disabled` e o segundo clique nao chegaria ao handler --
+  // zero POST a mais, assercao verde, e o mutante `useRef -> useState`
+  // SOBREVIVENDO. Exigir `false` aqui prende a sonda no cenario que ela diz
+  // medir: os dois cliques entraram em `emprestar()`.
+  assert.equal(
+    resultado.g1.desabilitadoNoSegundo,
+    false,
+    "o botao ja estava desabilitado no segundo clique: a sonda mediria o " +
+      "`disabled`, nao o latch, e o mutante de `useState` sobreviveria"
+  );
+
+  // CONTROLE POSITIVO: o POST saiu. Com zero POST (formulario invalido, esboco
+  // faltando) a assercao de "um" passaria pelo lado errado.
+  assert.equal(
+    resultado.g1.posts.length,
+    1,
+    `saiu(ram) ${resultado.g1.posts.length} POST(s) de emprestimo, esperado 1. ` +
+      `erro na tela: ${JSON.stringify(resultado.g1.erro)}`
+  );
+
+  // E o corpo leva a chave do pedido -- sem ela o servidor nao tem como
+  // recusar o reenvio depois de um F5.
+  assert.match(
+    String(resultado.g1.posts[0].corpo.id),
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    "o POST saiu sem `id` de pedido: " +
+      JSON.stringify(resultado.g1.posts[0].corpo)
+  );
+});
+
+test("G2: o F5 reenvia o MESMO formulario com o MESMO id de pedido", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // Os dois POSTs sairam: sem isto, `null === null` passaria verde sobre uma
+  // tela que nao mandou nada.
+  assert.ok(
+    resultado.g2.primeiroId,
+    "o primeiro POST (o que falha na rede) nao saiu"
+  );
+  assert.ok(resultado.g2.segundoId, "o POST depois do F5 nao saiu");
+
+  // O MESMO id. E isto que faz a PK da 053 recusar a segunda divida: a rota
+  // responde 200 com o emprestimo que ja existe, em vez de criar o segundo.
+  assert.equal(
+    resultado.g2.segundoId,
+    resultado.g2.primeiroId,
+    "depois do F5 a tela mandou um id NOVO -- o reenvio criaria a segunda divida"
+  );
+
+  // E no SUCESSO o par e esquecido, senao o proximo emprestimo igual voltaria
+  // 200 sem gravar nada.
+  assert.equal(
+    resultado.g2.guardadoDepoisDoSucesso,
+    null,
+    "o pedido ficou guardado depois do sucesso: o proximo emprestimo igual " +
+      "reaproveitaria o id e voltaria 200 sem gravar"
+  );
+});
+
+test("G3: controle -- formulario DIFERENTE recebe id DIFERENTE", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  assert.ok(resultado.g3.baseId, "o POST da base do controle nao saiu");
+  assert.ok(resultado.g3.outroId, "o POST do formulario trocado nao saiu");
+
+  // Sem este caso, um id CONSTANTE passaria G1 e G2 limpas -- e o segundo
+  // emprestimo de verdade voltaria 200 com a divida do primeiro.
+  assert.notEqual(
+    resultado.g3.outroId,
+    resultado.g3.baseId,
+    "um formulario com outro valor reaproveitou o id do anterior: o segundo " +
+      "emprestimo voltaria 200 com a divida do primeiro, sem gravar nada"
+  );
+});
+
+test("H1: confirmar a MESMA parcela duas vezes manda UMA baixa", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // CONTROLE: as duas linhas `reported` renderizaram. Com zero linha os
+  // cliques nao aconteceriam e "uma baixa" passaria medindo nada.
+  assert.deepEqual(resultado.h_linhas, ["p-x", "p-y"]);
+
+  assert.deepEqual(
+    resultado.h_mesma,
+    ["/api/mybank/installments/p-x"],
+    "a mesma parcela foi baixada mais de uma vez: " +
+      JSON.stringify(resultado.h_mesma)
+  );
+});
+
+test("H2: controle -- parcelas DIFERENTES continuam baixaveis no mesmo tick", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // O QUE IMPEDE O CONSERTO DE VIRAR REGRESSAO. Com um booleano global no lugar
+  // do `Set`, a segunda parcela cairia calada -- e H1 continuaria verde.
+  assert.deepEqual(
+    resultado.h_diferentes,
+    ["/api/mybank/installments/p-x", "/api/mybank/installments/p-y"],
+    "duas parcelas diferentes nao foram as duas confirmadas (a trava virou " +
+      "booleano global?): " + JSON.stringify(resultado.h_diferentes)
+  );
+});
+
+test("H3: a baixa que FALHOU tem segunda tentativa (a parcela sai do conjunto)", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // CONTROLE: a primeira tentativa saiu de verdade. Com zero PATCH aqui, "duas
+  // no total" nunca seria alcancado e o caso mediria outra coisa.
+  assert.equal(
+    resultado.h_retentativa.primeira,
+    1,
+    "a primeira tentativa (a que falha na rede) nao saiu"
+  );
+
+  // A SEGUNDA TENTATIVA SAIU. Sem o `delete` do `finally` a parcela fica em voo
+  // para sempre: o botao continua clicavel (ele nao tem `disabled`) e nunca
+  // mais chama a rota.
+  assert.equal(
+    resultado.h_retentativa.total,
+    2,
+    "a parcela nao saiu do conjunto depois da falha: a baixa ficou sem " +
+      "segunda tentativa e o botao virou um clique que nao faz nada"
+  );
+});
+
+test("G4: depois do 409 o reenvio sai com um id NOVO (o `tente de novo` funciona)", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // A frase da rota chegou a tela: sem ela o caso mediria um ramo que a pessoa
+  // nao ve.
+  assert.match(String(resultado.g4.erro), /Tente de novo/i);
+
+  // CONTROLE POSITIVO: os dois POSTs sairam.
+  assert.ok(resultado.g4.idRecusado, "o POST recusado com 409 nao saiu");
+  assert.ok(resultado.g4.idDaRetentativa, "a retentativa nao mandou POST");
+
+  // O id TROCOU. Com o par guardado intacto, o reenvio repetiria o id,
+  // colidiria com a MESMA linha alheia e voltaria 409 para sempre -- "tente de
+  // novo" num botao que nunca mais funciona.
+  assert.notEqual(
+    resultado.g4.idDaRetentativa,
+    resultado.g4.idRecusado,
+    "depois do 409 a tela reenviou o MESMO id: a pessoa fica presa no 409"
+  );
+});
+
+test("G4b: controle -- num erro que NAO e 409 o pedido FICA guardado", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  assert.ok(resultado.g4b.idDaQueda, "o POST que cai na rede nao saiu");
+  assert.ok(resultado.g4b.idDepois, "o reenvio depois da queda nao saiu");
+
+  // O MESMO id. Este e o caso que a issue existe para consertar, e ele e o
+  // oposto de G4: aqui a dívida PODE ter sido gravada, e repetir o id e o que
+  // faz a rota responder 200 com ela em vez de criar a segunda.
+  //
+  // Sem este caso, um `removeItem` posto no caminho de erro INTEIRO passaria G4
+  // e desfaria G2 em silencio.
+  assert.equal(
+    resultado.g4b.idDepois,
+    resultado.g4b.idDaQueda,
+    "a queda de rede esqueceu o pedido: o reenvio criaria a SEGUNDA divida"
+  );
 });

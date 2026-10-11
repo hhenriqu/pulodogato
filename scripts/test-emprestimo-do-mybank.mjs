@@ -1576,3 +1576,214 @@ test("CONTROLE: a rota da baixa usou o duble (as assercoes de ausencia nao sao v
     "e tem de ter ido a `mybank_installments` -- e dela que sai a decisao"
   );
 });
+
+// ---------------------------------------------------------------------------
+// PARTE 5 -- A CHAVE DO PEDIDO: o segundo POST com o mesmo id (HMO-390, F1)
+// ---------------------------------------------------------------------------
+// O que esta parte mede e o caminho que NENHUMA trava de tela alcanca:
+// recarregar a pagina e reenviar o mesmo formulario. A unicidade usada e a PK
+// que a 053 ja tem -- nao ha migration nesta issue.
+
+/** Um uuid qualquer, no formato que a coluna exige. */
+const PEDIDO = "aaaaaaaa-1111-4111-b111-aaaaaaaaaaaa";
+
+/** A violacao de PK que o Postgres devolve no segundo insert com o mesmo id. */
+const DUPLICADA = {
+  code: "23505",
+  message:
+    'duplicate key value violates unique constraint "mybank_loans_pkey"',
+};
+
+test("o id do pedido CHEGA ao insert, e nao e descartado no caminho", async () => {
+  const { status, sessao } = await criarEmprestimo({
+    ...CORPO_AUTO,
+    id: PEDIDO,
+  });
+
+  assert.equal(status, 201);
+
+  const insercoes = sessao.escritas.filter(
+    (e) => e.tabela === "mybank_loans" && e.verbo === "insert"
+  );
+  assert.equal(insercoes.length, 1);
+
+  // O `id` NO PAYLOAD. Sem esta assercao, o mutante que apaga o
+  // `...(pedidoId ? { id: pedidoId } : {})` do insert sobrevive: a rota
+  // continua respondendo 201, o emprestimo continua nascendo, e a idempotencia
+  // simplesmente deixa de existir -- a coluna usa o `DEFAULT gen_random_uuid()`
+  // e o reenvio cria a SEGUNDA divida sem nada parecer errado.
+  assert.equal(
+    insercoes[0].linhas[0].id,
+    PEDIDO,
+    "o insert nao levou o id do pedido: o reenvio criaria a segunda divida"
+  );
+});
+
+test("sem id de pedido a coluna fica com o DEFAULT -- o insert nao manda `id: null`", async () => {
+  const { status, sessao } = await criarEmprestimo(CORPO_AUTO);
+
+  assert.equal(status, 201);
+
+  const insercao = sessao.escritas.filter(
+    (e) => e.tabela === "mybank_loans" && e.verbo === "insert"
+  )[0];
+
+  // `id: null` EXPLICITO derruba o `DEFAULT gen_random_uuid()` da coluna: o
+  // Postgres recebe o NULL e recusa com 23502. Quem chama esta rota sem mandar
+  // id (o PostgREST, as sondas que nao sabem desta issue) pararia de conseguir
+  // emprestar -- entao a chave tem de estar AUSENTE, e nao nula.
+  assert.ok(
+    !Object.prototype.hasOwnProperty.call(insercao.linhas[0], "id") ||
+      insercao.linhas[0].id === "mybank_loans-1",
+    "o insert mandou `id` sem o cliente ter pedido: " +
+      JSON.stringify(insercao.linhas[0])
+  );
+});
+
+test("id de pedido que nao e uuid volta 400, e NAO 500", async () => {
+  const { status, corpo, sessao } = await criarEmprestimo({
+    ...CORPO_AUTO,
+    id: "abc",
+  });
+
+  // `"abc"` numa coluna uuid e `22P02 invalid input syntax`, que esta rota
+  // devolveria como 500 "erro interno" -- um pedido malformado que nao se le
+  // como pedido malformado em log nenhum.
+  assert.equal(status, 400);
+  assert.match(corpo.error, /UUID/i);
+
+  // E nada foi gravado: a peneira e ANTES do insert.
+  assert.equal(
+    sessao.escritas.some((e) => e.tabela === "mybank_loans"),
+    false,
+    "a rota gravou algo antes de recusar o id malformado"
+  );
+});
+
+test("o SEGUNDO POST com o mesmo id devolve 200 com o emprestimo que ja existe", async () => {
+  // O emprestimo que o PRIMEIRO POST gravou, e que a PK vai recusar de novo.
+  const sessao = criarDuble({
+    user: { id: EU },
+    tabelas: tabelas({
+      mybank_loans: [
+        {
+          id: PEDIDO,
+          lender_user_id: EU,
+          borrower_user_id: EU,
+          principal: 24000,
+          installment_count: 24,
+        },
+      ],
+      // As 24 parcelas que ja existem: a contagem da resposta vem DAQUI, e nao
+      // de `parcelas` do pedido.
+      mybank_installments: Array.from({ length: 24 }, (_, i) => ({
+        id: `p-${i + 1}`,
+        loan_id: PEDIDO,
+      })),
+    }),
+    // SO o insert falha. A tabela continua legivel, que e o que a rota faz em
+    // seguida -- ver `erroDeInsert` em `scripts/duble-de-supabase.mjs`.
+    errosDeInsert: { mybank_loans: DUPLICADA },
+  });
+  globalThis.__dubleDeSupabase = { sessao: () => sessao.client };
+
+  let resposta;
+  try {
+    resposta = await LOANS.POST({
+      // `parcelas: 12` CONTRA AS 24 QUE JA EXISTEM, de proposito.
+      //
+      // A rota promete que a contagem da resposta vem do BANCO e nao do pedido,
+      // e com os dois numeros iguais essa promessa nao tem como ser medida: um
+      // `total_de_parcelas: numeroDeParcelas` passaria verde. O cenario e o que
+      // o comentario da rota descreve -- o primeiro POST morreu entre o passo 1
+      // e o passo 2, e o reenvio pede outra coisa.
+      json: async () => ({ ...CORPO_AUTO, id: PEDIDO, parcelas: 12 }),
+    });
+  } finally {
+    delete globalThis.__dubleDeSupabase;
+  }
+  const corpo = await resposta.json();
+
+  // 200, E NAO 500 NEM 201: nada foi gravado AGORA, e o pedido nao e um erro.
+  assert.equal(resposta.status, 200, JSON.stringify(corpo));
+  assert.equal(corpo.success, true);
+  assert.equal(corpo.ja_existia, true);
+  assert.equal(corpo.loan_id, PEDIDO);
+  assert.match(corpo.message, /já tinha sido criado/i);
+
+  // A CONTAGEM VEM DO BANCO (24), E NAO DO PEDIDO (12). Se ela viesse do
+  // pedido, a resposta mentiria sobre uma divida que o primeiro POST pode ter
+  // deixado incompleta.
+  assert.equal(
+    corpo.total_de_parcelas,
+    24,
+    "a contagem saiu do pedido e nao do banco"
+  );
+
+  // E NADA DE NOVO FOI GRAVADO -- nem parcela, nem previsao. Sem esta
+  // assercao, uma rota que caisse no 200 DEPOIS de inserir as 24 parcelas de
+  // novo passaria verde, e a divida ficaria com 48.
+  for (const tabela of [
+    "mybank_installments",
+    "scheduled_transactions",
+    "financial_transactions",
+  ]) {
+    assert.equal(
+      sessao.escritas.some((e) => e.tabela === tabela && e.verbo === "insert"),
+      false,
+      `o caminho idempotente inseriu em ${tabela}`
+    );
+  }
+});
+
+test("id que colide com emprestimo em que eu sou DEVEDOR volta 409, e nao vaza a linha", async () => {
+  // A ARMADILHA DA ISSUE, e ela e de privacidade E de dinheiro.
+  //
+  // A policy de SELECT da 053 e `lender OR borrower`: esta linha PASSA pela
+  // policy para mim, porque eu sou o devedor dela. Um re-`select` nu por id
+  // devolveria 200 com um emprestimo que eu DEVO, e a tela diria "criado"
+  // mostrando a divida de outra pessoa. Familia
+  // `o .select() mente em linha alheia`.
+  const sessao = criarDuble({
+    user: { id: EU },
+    tabelas: tabelas({
+      mybank_loans: [
+        {
+          id: PEDIDO,
+          lender_user_id: LAIS,
+          borrower_user_id: EU,
+          principal: 99999,
+          installment_count: 60,
+        },
+      ],
+    }),
+    errosDeInsert: { mybank_loans: DUPLICADA },
+  });
+  globalThis.__dubleDeSupabase = { sessao: () => sessao.client };
+
+  let resposta;
+  try {
+    resposta = await LOANS.POST({
+      json: async () => ({ ...CORPO_AUTO, id: PEDIDO }),
+    });
+  } finally {
+    delete globalThis.__dubleDeSupabase;
+  }
+  const corpo = await resposta.json();
+
+  assert.equal(resposta.status, 409, JSON.stringify(corpo));
+
+  // NADA DA LINHA ALHEIA NA RESPOSTA. A assercao e sobre o corpo INTEIRO
+  // serializado, e nao sobre campos escolhidos: `loan_id` ausente nao prova que
+  // o `principal` tambem esta, e e o conjunto que a issue exige.
+  const serializado = JSON.stringify(corpo);
+  for (const vazamento of [PEDIDO, LAIS, "99999", "60"]) {
+    assert.ok(
+      !serializado.includes(vazamento),
+      `o 409 vazou ${vazamento} da linha alheia: ${serializado}`
+    );
+  }
+  assert.equal(corpo.success, undefined);
+  assert.equal(corpo.loan_id, undefined);
+  assert.match(corpo.error, /Tente de novo/i);
+});

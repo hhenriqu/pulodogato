@@ -37,9 +37,31 @@
 // `mybank-devedor`, `mybank-erro` e os `data-*` das linhas sao lidos pela sonda
 // de navegador. Renomear um deles sem mexer na sonda a deixa vermelha -- que e o
 // comportamento certo: a ancora e um contrato, nao um detalhe de estilo.
+//
+// O QUE SEGURA O SEGUNDO CLIQUE E O `useRef`, E NAO O `disabled` (HMO-390)
+// -----------------------------------------------------------------------
+// `disabled={salvando}` continua no botao, e ele e o que a PESSOA ve -- mas ele
+// nao decide nada: `setSalvando(true)` so chega ao DOM depois do re-render, e
+// num toque duplo de celular os dois cliques entram em `emprestar()` antes
+// disso. Quem decide e `emprestandoRef`, lido e gravado na PRIMEIRA linha da
+// funcao, porque `ref.current` muda no mesmo tick.
+//
+// `confirmarRecebimento` tem a mesma trava, mas por PARCELA -- um `Set` de ids
+// em voo, e nao um booleano. Com um booleano global, confirmar a parcela 3 e
+// logo depois a 4 (duas baixas legitimas, em sequencia) perderia a segunda.
+//
+// E O LATCH NAO ALCANCA O F5: ISSO E `lib/pedido-de-emprestimo`
+// ------------------------------------------------------------
+// Recarregar a pagina zera todo ref e todo state. Quem viu "Emprestando..." e
+// achou que travou recarrega e redigita -- e nenhuma trava de tela alcanca esse
+// caminho. O que alcanca e o `id` que esta tela escolhe para o emprestimo e
+// guarda em `sessionStorage` junto com a assinatura do formulario: o segundo
+// POST com o mesmo id bate na chave primaria da 053 e a rota responde 200 com o
+// emprestimo que ja existe. O porque de ser o par `(assinatura, id)`, e nao so o
+// id, esta no cabecalho de `lib/pedido-de-emprestimo.ts`.
 // ---------------------------------------------------------------------------
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   AlertCircle,
@@ -85,6 +107,12 @@ import {
   type BaseDoValorParcelado,
 } from "@/lib/lancamento";
 import {
+  assinaturaDoPedido,
+  idDoPedido,
+  lerPedidoGuardado,
+  CHAVE_DO_PEDIDO,
+} from "@/lib/pedido-de-emprestimo";
+import {
   conexoesParaEmprestar,
   contasQueEmprestam,
   contasQuePagamAParcela,
@@ -125,6 +153,31 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
     null
   );
   const [erro, setErro] = useState<string | null>(null);
+
+  /**
+   * A TRAVA DO ENVIO, E ELA E `useRef` E NAO `useState` DE PROPOSITO.
+   *
+   * `salvando` (acima) e o que a tela MOSTRA; este ref e o que DECIDE. A
+   * diferenca e o tick: `setSalvando(true)` agenda um re-render, e o
+   * `disabled={salvando}` do botao so chega ao DOM depois dele -- dois cliques
+   * no mesmo tick (o toque duplo de celular) passam os dois. `ref.current = true`
+   * vale na linha seguinte, para o clique seguinte, sem render nenhum no meio.
+   *
+   * Trocar este `useRef` por `useState` deixa a tela com a MESMA aparencia e
+   * volta a criar duas dividas: e um dos mutantes de
+   * `scripts/mutantes-latch-do-mybank.mjs`.
+   */
+  const emprestandoRef = useRef(false);
+
+  /**
+   * AS PARCELAS EM VOO -- UM `Set` DE ids, E NAO UM BOOLEANO.
+   *
+   * Um booleano global aqui seria uma regressao de produto: confirmar a parcela
+   * 3 e logo depois a 4 sao duas baixas legitimas em sequencia, e com um
+   * booleano a segunda cairia calada enquanto a primeira estivesse em voo. O que
+   * nao pode repetir e a MESMA parcela -- entao a trava e por id.
+   */
+  const parcelasEmVooRef = useRef<Set<string>>(new Set());
 
   const carregar = useCallback(async () => {
     try {
@@ -283,25 +336,86 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
   });
 
   async function emprestar() {
-    // A RECUSA SAI DA FUNCAO PURA, e a frase tambem.
+    // A TRAVA, NA PRIMEIRA LINHA, E ANTES DE QUALQUER `await`.
     //
-    // Nao ha um segundo criterio aqui ("se faltar descricao, diga X"): a
-    // mensagem e `mensagemDoProblema`, a mesma que a rota devolve no 400. Duas
-    // frases para o mesmo motivo fariam a tela e a API discordarem sobre o que
-    // esta errado.
-    if (problema) {
-      setErro(mensagemDoProblema(problema));
-      return;
-    }
-
-    setErro(null);
-    setSalvando(true);
+    // Entre o `if` e a atribuicao nao ha ponto de suspensao nenhum, entao o
+    // segundo clique do mesmo tick ve `true` e sai. Qualquer linha de trabalho
+    // acima desta -- inclusive a leitura do `problema` -- reabriria a janela que
+    // esta trava existe para fechar.
+    if (emprestandoRef.current) return;
+    emprestandoRef.current = true;
 
     try {
+      // A RECUSA SAI DA FUNCAO PURA, e a frase tambem.
+      //
+      // Nao ha um segundo criterio aqui ("se faltar descricao, diga X"): a
+      // mensagem e `mensagemDoProblema`, a mesma que a rota devolve no 400. Duas
+      // frases para o mesmo motivo fariam a tela e a API discordarem sobre o que
+      // esta errado.
+      //
+      // Ela esta DENTRO do `try` por causa do `finally`: antes da trava este
+      // `return` era so uma saida, e agora ele tem de liberar o ref -- senao
+      // um pedido incompleto tranca o botao para sempre, e a unica saida da
+      // pessoa seria recarregar.
+      if (problema) {
+        setErro(mensagemDoProblema(problema));
+        return;
+      }
+
+      setErro(null);
+      setSalvando(true);
+
+      // O id DESTE PEDIDO (HMO-390).
+      //
+      // `sessionStorage` dentro de `try/catch` proprio: navegador em modo
+      // restrito pode LANCAR no `getItem`, e um throw aqui derrubaria o
+      // emprestimo inteiro por causa do armazenamento. Sem o par guardado a
+      // feature degrada para "um id novo por envio" -- que e o comportamento de
+      // antes desta issue, e nao um erro para a pessoa ler.
+      const assinatura = assinaturaDoPedido({
+        descricao,
+        contaCredoraId: contaEscolhida,
+        contaDePagamentoId: quemPaga === "eu" ? contaDePagamentoId : null,
+        devedorId: quemPaga === "conexao" ? devedorId : null,
+        valor,
+        base,
+        parcelas,
+        primeiroVencimento,
+      });
+
+      let guardado = null;
+      try {
+        guardado = lerPedidoGuardado(sessionStorage.getItem(CHAVE_DO_PEDIDO));
+      } catch {
+        guardado = null;
+      }
+
+      const pedido = idDoPedido({
+        guardado,
+        assinatura,
+        novoId: crypto.randomUUID(),
+      });
+
+      try {
+        sessionStorage.setItem(
+          CHAVE_DO_PEDIDO,
+          JSON.stringify(pedido.aGuardar)
+        );
+      } catch {
+        // Ver acima: sem armazenamento a feature degrada, nao falha.
+      }
+
       const resposta = await fetch("/api/mybank/loans", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          // O id DO EMPRESTIMO, ESCOLHIDO AQUI (HMO-390).
+          //
+          // A coluna tem `DEFAULT gen_random_uuid()`, entao mandar o id nao e
+          // obrigatorio -- e e por isso que ele funciona como chave de pedido:
+          // a rota insere ESTE id, a PK recusa o segundo com `23505`, e o
+          // recarregar-e-reenviar deixa de criar a segunda divida.
+          id: pedido.id,
           descricao,
           conta_credora_id: contaEscolhida,
           // `null` EXPLICITO no Caso B: a rota so exige conta de pagamento no
@@ -324,6 +438,27 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
       const dados = await resposta.json();
 
       if (!resposta.ok) {
+        // O 409 ESQUECE O PEDIDO, E SEM ISSO O "tente de novo" E MENTIRA.
+        //
+        // 409 quer dizer "o id que você escolheu é de uma linha que não é sua"
+        // (ver o bloco do `23505` na rota). O par guardado continuaria casando
+        // com este formulário, então o reenvio mandaria o MESMO id, colidiria
+        // com a MESMA linha e voltaria 409 -- para sempre. A pessoa leria
+        // "tente de novo" num botão que nunca mais funciona.
+        //
+        // Nos OUTROS erros o par FICA de propósito: é justamente ali que ele
+        // serve (a rede que caiu, o 500 do meio do caminho), e é o que faz o
+        // reenvio depois do F5 não criar a segunda dívida.
+        if (resposta.status === 409) {
+          try {
+            sessionStorage.removeItem(CHAVE_DO_PEDIDO);
+          } catch {
+            // Armazenamento indisponivel nao e erro de pessoa -- e sem o par
+            // guardado o proximo envio ja sorteia um id novo, que e exatamente
+            // o que este ramo quer.
+          }
+        }
+
         setErro(dados.error ?? "Não foi possível criar o empréstimo.");
         return;
       }
@@ -335,6 +470,19 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
       // pagar no meu nome -- que e exatamente o que ele nao faz.
       toast.success(dados.message ?? "Empréstimo criado.");
 
+      // O PEDIDO E ESQUECIDO SO NO SUCESSO, e isso e o que libera o PROXIMO
+      // emprestimo igual.
+      //
+      // Emprestar de novo o mesmo valor para a mesma pessoa no mesmo dia e um
+      // pedido legitimo; sem este `removeItem` ele reaproveitaria o id do
+      // anterior e voltaria 200 com uma divida que ja existia, sem gravar nada.
+      // No caminho de ERRO o par FICA -- e justamente ali que ele serve.
+      try {
+        sessionStorage.removeItem(CHAVE_DO_PEDIDO);
+      } catch {
+        // Ver a leitura, acima: armazenamento indisponivel nao e erro de pessoa.
+      }
+
       setDescricao("");
       setValor("");
       setParcelas(PARCELAS_PADRAO);
@@ -344,11 +492,28 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
       console.error("Erro ao criar o emprestimo:", e);
       setErro("Não foi possível criar o empréstimo.");
     } finally {
+      // A TRAVA E LIBERADA AQUI, E NAO NO FIM DO CAMINHO FELIZ.
+      //
+      // `finally` cobre as tres saidas (o `problema`, o `!resposta.ok` e o
+      // throw de rede). Liberar depois do `carregar()` deixaria o botao preso
+      // em todo caminho de erro.
+      emprestandoRef.current = false;
       setSalvando(false);
     }
   }
 
   async function confirmarRecebimento(parcelaId: string) {
+    // A TRAVA POR PARCELA, NA PRIMEIRA LINHA.
+    //
+    // `has`/`add` no mesmo tick, pelo mesmo motivo do `emprestandoRef`: aqui nao
+    // havia guarda NENHUMA antes da HMO-390 -- nem `disabled` --, entao dois
+    // toques na mesma linha mandavam duas baixas da mesma parcela.
+    //
+    // O `Set` e o que mantem as parcelas INDEPENDENTES: `linha.id` e a chave, e
+    // confirmar a 3 nao tranca a 4.
+    if (parcelasEmVooRef.current.has(parcelaId)) return;
+    parcelasEmVooRef.current.add(parcelaId);
+
     try {
       const resposta = await fetch(`/api/mybank/installments/${parcelaId}`, {
         method: "PATCH",
@@ -368,6 +533,14 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
     } catch (e) {
       console.error("Erro ao confirmar a parcela:", e);
       toast.error("Não foi possível confirmar.");
+    } finally {
+      // A parcela SAI do conjunto, nos tres caminhos.
+      //
+      // Sem o `delete` a trava viraria permanente: a baixa que falhou por rede
+      // nao teria segunda tentativa, e o botao continuaria clicavel (ele nao
+      // tem `disabled`) sem nunca mais chamar a rota -- um clique que nao faz
+      // nada e nao diz nada, que e pior que o erro.
+      parcelasEmVooRef.current.delete(parcelaId);
     }
   }
 

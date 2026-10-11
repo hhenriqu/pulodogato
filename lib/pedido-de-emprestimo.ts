@@ -1,0 +1,201 @@
+// ---------------------------------------------------------------------------
+// O PEDIDO DE EMPRESTIMO: UM id POR PREENCHIMENTO, PARA O SEGUNDO CLIQUE NAO
+// CRIAR A SEGUNDA DIVIDA (HMO-390, F1 da HMO-383)
+// ---------------------------------------------------------------------------
+// `POST /api/mybank/loans` nao tinha idempotencia nenhuma, e `mybank_loans` nao
+// tem UNIQUE sobre `(lender, borrower, principal, first_due_date)`: dois POSTs
+// iguais criavam DUAS dividas de 24 meses. O `disabled={salvando}` da tela nao
+// alcanca isso -- ele morre com o re-render, e nao existe mais depois de um F5.
+//
+// A SAIDA E A CHAVE PRIMARIA QUE JA E UNICA
+// -----------------------------------------
+// A tela escolhe o `id` do emprestimo e o manda no corpo. O segundo POST com o
+// mesmo id bate na PK e volta `23505`; a rota le a linha que ja existe e
+// responde 200 com ELA. Nao ha janela de tempo, nao ha heuristica de
+// "parecido", e nao precisa de migration: a unicidade e a PK da 053.
+//
+// POR QUE A DECISAO MORA NUMA FUNCAO PURA, E NAO NO COMPONENTE
+// -----------------------------------------------------------
+// O que decide se um POST e "o mesmo pedido" ou "um pedido novo" e dinheiro: na
+// escolha errada, ou a pessoa fica sem conseguir emprestar duas vezes o mesmo
+// valor, ou volta a criar divida em dobro. Dentro do `onClick` isso nao tem como
+// ser medido sem navegador; aqui tem, e por isso as duas pontas (a assinatura e
+// a decisao) sao funcoes.
+//
+// A ASSINATURA E DO CONTEUDO DO FORMULARIO, E ISSO E O QUE FAZ O F5 FUNCIONAR
+// --------------------------------------------------------------------------
+// Guardar so o id (numa chave fixa) teria um defeito pior do que o que conserta:
+// se o primeiro POST se perdesse na rede DEPOIS de gravar, e a pessoa trocasse
+// os valores e enviasse OUTRO emprestimo, o id guardado faria a rota devolver
+// 200 com o emprestimo ANTIGO -- a tela diria "criado" sobre uma divida que nao
+// e a que ela acabou de digitar. Por isso o que se guarda e o par
+// `(assinatura, id)`: o id so se repete quando o formulario e o MESMO.
+//
+// E e isso tambem que alcanca o caminho que o `disabled` nao alcanca. O recarregar
+// esvazia o `useState` todo, mas quem viu "Emprestando..." e achou que travou
+// redigita os mesmos valores -- mesma assinatura, mesmo id, `23505`, 200 com o
+// emprestimo que ja existe. Uma divida, nao duas.
+//
+// Depois do SUCESSO o par e descartado (`esquecerOPedido`), e isso tambem e
+// deliberado: emprestar DE NOVO o mesmo valor para a mesma pessoa no mesmo dia e
+// um pedido legitimo, e um id derivado so do conteudo (um hash, sem
+// armazenamento) o recusaria para sempre.
+// ---------------------------------------------------------------------------
+
+/** A chave de `sessionStorage`. Uma so: o formulario tambem e um so. */
+export const CHAVE_DO_PEDIDO = "pulodogato:mybank:pedido-de-emprestimo";
+
+/**
+ * Os campos do formulario que definem QUAL emprestimo esta sendo pedido.
+ *
+ * Todos eles entram na assinatura. Deixar um de fora faria dois emprestimos
+ * diferentes nesse campo compartilharem o id -- e o segundo voltaria 200 com o
+ * primeiro, sem nunca ter sido gravado.
+ */
+export type CamposDoPedido = {
+  descricao: string;
+  contaCredoraId: string | null;
+  contaDePagamentoId: string | null;
+  devedorId: string | null;
+  valor: string;
+  base: string;
+  parcelas: string;
+  primeiroVencimento: string;
+};
+
+/** O par guardado entre um envio e o seguinte. */
+export type PedidoGuardado = {
+  id: string;
+  assinatura: string;
+};
+
+/**
+ * A ASSINATURA DO PEDIDO -- o conteudo do formulario numa string estavel.
+ *
+ * `JSON.stringify` do objeto NAO serve: a ordem das chaves de um literal e
+ * estavel em V8, mas a de um objeto montado em outro lugar nao e garantida pela
+ * linguagem, e uma ordem diferente mudaria a assinatura sem nada ter mudado no
+ * formulario -- o F5 criaria a segunda divida de novo, so que de um jeito que
+ * nenhum teste de campo pegaria.
+ *
+ * `\u0000` (NUL) como separador, e nao `|`: descricao pode conter qualquer
+ * coisa que a pessoa digitar, e com um separador digitavel
+ * `{descricao: "a|b", valor: "1"}` e `{descricao: "a", valor: "b|1"}`
+ * colidiriam.
+ *
+ * E ELE E ESCRITO COMO ESCAPE (`"\u0000"`), NUNCA COMO O BYTE CRU. Um NUL
+ * literal no fonte faz o git classificar o arquivo como BINARIO: o diff vira
+ * "Bin 7734 -> 7744 bytes" e toda revisao deste arquivo fica cega -- foi o que
+ * aconteceu com a primeira versao dele. O valor em runtime e exatamente o
+ * mesmo; o que muda e o fonte continuar sendo TEXTO.
+ */
+export function assinaturaDoPedido(campos: CamposDoPedido): string {
+  return [
+    campos.descricao.trim(),
+    campos.contaCredoraId ?? "",
+    campos.contaDePagamentoId ?? "",
+    campos.devedorId ?? "",
+    campos.valor.trim(),
+    campos.base,
+    campos.parcelas.trim(),
+    campos.primeiroVencimento.trim(),
+  ].join("\u0000");
+}
+
+/**
+ * O id a mandar no POST, e o par a guardar.
+ *
+ * `guardado` e o que estava em `sessionStorage` (ou `null`); `novoId` e um
+ * `crypto.randomUUID()` que o chamador ja gerou -- a funcao fica pura, e com
+ * isso o teste pode afirmar QUAL dos dois ids saiu.
+ *
+ * `reaproveitado` existe para a sonda poder distinguir os dois caminhos sem ler
+ * o id: `id === novoId` seria uma assercao que passa verde no dia em que a
+ * funcao devolver o id novo por engano nos dois casos.
+ */
+export function idDoPedido({
+  guardado,
+  assinatura,
+  novoId,
+}: {
+  guardado: PedidoGuardado | null;
+  assinatura: string;
+  novoId: string;
+}): { id: string; aGuardar: PedidoGuardado; reaproveitado: boolean } {
+  // A assinatura VAZIA nao reaproveita nada.
+  //
+  // Ela acontece com o formulario em branco -- e, sem esta guarda, um
+  // formulario em branco casaria com outro formulario em branco e os dois
+  // pedidos dividiriam o id. A rota recusa pedido em branco com 400 antes de
+  // gravar, entao isso nao chega a criar divida, mas o 400 do segundo viria
+  // como 200 do primeiro, que e pior do que o 400.
+  const casa =
+    guardado !== null &&
+    guardado.assinatura === assinatura &&
+    assinatura.replace(/\u0000/g, "") !== "";
+
+  if (casa) {
+    return { id: guardado.id, aGuardar: guardado, reaproveitado: true };
+  }
+
+  return {
+    id: novoId,
+    aGuardar: { id: novoId, assinatura },
+    reaproveitado: false,
+  };
+}
+
+/**
+ * O par lido de `sessionStorage`, ou `null`.
+ *
+ * Toda forma de lixo volta `null` -- JSON invalido, objeto sem os dois campos,
+ * campo que nao e string. O armazenamento e do navegador da pessoa e pode ter
+ * qualquer coisa de uma versao anterior do app; um `JSON.parse` solto aqui
+ * derrubaria o `emprestar()` inteiro no `catch`, e a tela diria "nao foi
+ * possivel criar o emprestimo" por causa de uma string velha.
+ */
+export function lerPedidoGuardado(bruto: string | null): PedidoGuardado | null {
+  if (!bruto) return null;
+
+  try {
+    const lido: unknown = JSON.parse(bruto);
+
+    if (
+      typeof lido === "object" &&
+      lido !== null &&
+      typeof (lido as PedidoGuardado).id === "string" &&
+      typeof (lido as PedidoGuardado).assinatura === "string" &&
+      (lido as PedidoGuardado).id !== ""
+    ) {
+      return {
+        id: (lido as PedidoGuardado).id,
+        assinatura: (lido as PedidoGuardado).assinatura,
+      };
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+/**
+ * O FORMATO DE uuid, conferido antes de o id virar chave primaria.
+ *
+ * A rota precisa disto: `id` escolhido pelo cliente chega como qualquer coisa, e
+ * `"abc"` num `uuid` faz o Postgres responder `22P02 invalid input syntax`, que
+ * a rota devolveria como 500 "erro interno" -- um 500 por pedido malformado, que
+ * nao se le como pedido malformado em log nenhum.
+ *
+ * O teste e de FORMA, nao de versao: a trava de versao (`[1-5]` no terceiro
+ * grupo) recusaria um uuid v7 perfeitamente valido no dia em que a plataforma
+ * mudar, e o que a coluna exige e um uuid -- nao um uuid v4.
+ */
+export function ehUuid(valor: unknown): boolean {
+  return (
+    typeof valor === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      valor
+    )
+  );
+}

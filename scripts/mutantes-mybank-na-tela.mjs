@@ -185,8 +185,12 @@ const mutantes = [
   [
     PAINEL,
     "o botao Emprestar ignora o problema e chama a rota de qualquer jeito",
-    "    if (problema) {\n      setErro(mensagemDoProblema(problema));\n      return;\n    }",
-    "    if (problema) {\n      setErro(mensagemDoProblema(problema));\n    }",
+    // A INDENTACAO E DE SEIS ESPACOS DESDE A HMO-390: o bloco passou para
+    // DENTRO do `try` de `emprestar()`, para o `finally` liberar o latch
+    // tambem no caminho do pedido incompleto. A ancora antiga (quatro espacos)
+    // morreu com a mudanca -- familia `mutante-cuja-ancora-a-feature-apagou`.
+    "      if (problema) {\n        setErro(mensagemDoProblema(problema));\n        return;\n      }",
+    "      if (problema) {\n        setErro(mensagemDoProblema(problema));\n      }",
   ],
 
   [
@@ -310,6 +314,80 @@ const mutantes = [
     "a lista que CABE inteira tambem ganha botao de colapso",
     "  const cabe = parcelas.length <= PARCELAS_VISIVEIS_FECHADO;",
     "  const cabe = false;",
+  ],
+
+  // =========================================================================
+  // A TRAVA DO SEGUNDO CLIQUE (HMO-390, F1 da HMO-383)
+  // =========================================================================
+  // O `disabled={salvando}` do botao JA EXISTIA antes desta issue, e e por isso
+  // que estes mutantes importam: com o latch estragado a tela fica com a MESMA
+  // aparencia -- o botao escurece, o texto vira "Emprestando...", nada reclama
+  // --, e o que muda e que o toque duplo cria DUAS dividas de 24 meses.
+  //
+  // O primeiro e o que a issue nomeia: o latch volta a depender de render.
+
+  [
+    PAINEL,
+    "O LATCH VOLTA A DEPENDER DE RENDER (le o useState em vez do useRef, e o toque duplo cria DUAS dividas)",
+    "    if (emprestandoRef.current) return;",
+    "    if (salvando) return;",
+  ],
+
+  [
+    PAINEL,
+    "o latch nao e ARMADO (o ref e lido e nunca gravado)",
+    "    emprestandoRef.current = true;\n",
+    "",
+  ],
+
+  [
+    PAINEL,
+    "o pedido NAO e esquecido no sucesso (o proximo emprestimo igual volta 200 sem gravar)",
+    // A ANCORA LEVA O `try {` DA LINHA DE CIMA, e isso e obrigatorio.
+    //
+    // Ha DOIS `removeItem(CHAVE_DO_PEDIDO)` no arquivo: este (sucesso, oito
+    // espacos) e o do ramo do 409 (doze). A indentacao nao os separa -- o
+    // trecho de oito espacos e SUBSTRING da linha de doze, porque doze espacos
+    // comecam com oito. A ancora curta casava nos dois e
+    // `check-ancora-de-mutante` reprovava com "ancora AMBIGUA (2x)". Familia
+    // `guard-de-includes-casa-dentro-de-identificador-maior`.
+    "      try {\n        sessionStorage.removeItem(CHAVE_DO_PEDIDO);",
+    "      try {\n        void CHAVE_DO_PEDIDO;",
+  ],
+
+  [
+    PAINEL,
+    "o 409 NAO esquece o pedido (o `tente de novo` manda o mesmo id e colide para sempre)",
+    "        if (resposta.status === 409) {",
+    "        if (resposta.status === 410) {",
+  ],
+
+  [
+    PAINEL,
+    "o POST sai SEM a chave do pedido (o reenvio depois do F5 cria a segunda divida)",
+    "          id: pedido.id,\n",
+    "",
+  ],
+
+  [
+    PAINEL,
+    "A TRAVA DA PARCELA VIRA BOOLEANO GLOBAL (confirmar a 3 impede de confirmar a 4)",
+    "    if (parcelasEmVooRef.current.has(parcelaId)) return;",
+    "    if (parcelasEmVooRef.current.size > 0) return;",
+  ],
+
+  [
+    PAINEL,
+    "a parcela nunca SAI do conjunto (a baixa que falhou nao tem segunda tentativa)",
+    "      parcelasEmVooRef.current.delete(parcelaId);",
+    "      void parcelaId;",
+  ],
+
+  [
+    PAINEL,
+    "a confirmacao perde a trava por completo (dois toques dao duas baixas na MESMA parcela)",
+    "    if (parcelasEmVooRef.current.has(parcelaId)) return;\n    parcelasEmVooRef.current.add(parcelaId);",
+    "    parcelasEmVooRef.current.add(parcelaId);",
   ],
 ];
 
