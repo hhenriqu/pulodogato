@@ -286,7 +286,7 @@ const PAGINA = `<!doctype html>
 <div id="raiz-e"></div><div id="raiz-f"></div>
 <div id="raiz-g1"></div><div id="raiz-g2"></div><div id="raiz-g3"></div>
 <div id="raiz-g1-controle"></div><div id="raiz-g1-controle-2"></div>
-<div id="raiz-h"></div><div id="raiz-h2"></div>
+<div id="raiz-h"></div><div id="raiz-h2"></div><div id="raiz-h3"></div>
 <div id="resultado">a pagina nao rodou</div>
 <script>${umd("react", "react.development.js")}</script>
 <script>${umd("react-dom", "react-dom.development.js")}</script>
@@ -640,6 +640,15 @@ let DEVIDO_AGORA = QUE_EU_DEVO;
  */
 let POST_DE_EMPRESTIMO_FALHA = false;
 
+/**
+ * A BAIXA DA PARCELA FALHA? -- usado por H3 (HMO-390).
+ *
+ * E o que permite medir o \`delete\` do \`Set\`: sem ele, a parcela cuja baixa
+ * falhou fica em voo PARA SEMPRE, e como o botao Confirmar nao tem \`disabled\`,
+ * a pessoa segue clicando num botao que nao chama rota nenhuma e nao diz nada.
+ */
+let PATCH_DE_PARCELA_FALHA = false;
+
 window.fetch = async (url, init) => {
   const metodo = (init && init.method) || "GET";
   const corpo = init && init.body ? JSON.parse(init.body) : null;
@@ -652,6 +661,14 @@ window.fetch = async (url, init) => {
     metodo === "POST"
   ) {
     // Registrado em CHAMADAS acima: o POST SAIU, e e o id dele que G2 compara.
+    throw new TypeError("Failed to fetch");
+  }
+
+  if (
+    PATCH_DE_PARCELA_FALHA &&
+    alvo.startsWith("/api/mybank/installments/") &&
+    metodo === "PATCH"
+  ) {
     throw new TypeError("Failed to fetch");
   }
 
@@ -1224,6 +1241,32 @@ async function preencherEmprestimo(achar, valor) {
   out.h_diferentes = CHAMADAS.filter((c) => c.metodo === "PATCH").map(
     (c) => c.url
   );
+
+  // H3: A BAIXA QUE FALHOU TEM SEGUNDA TENTATIVA.
+  //
+  // O \`delete\` do \`finally\` e o que faz esta linha existir. Sem ele a parcela
+  // fica em voo para sempre -- e, como o botao Confirmar NAO tem \`disabled\`, a
+  // pessoa continua podendo clicar num botao que nao chama rota nenhuma e nao
+  // diz nada. Um clique que nao faz nada e nao avisa e pior que o erro.
+  const raiz3 = await montarPainel("raiz-h3");
+  const botaoDe3 = (id) =>
+    raiz3.querySelector('[data-confirmar="' + id + '"] button');
+
+  CHAMADAS = [];
+  PATCH_DE_PARCELA_FALHA = true;
+  clicar(botaoDe3("p-x"));
+  await assentar();
+  const primeiraTentativa = CHAMADAS.filter((c) => c.metodo === "PATCH").length;
+
+  // A rede volta, e a pessoa tenta DE NOVO a mesma parcela.
+  PATCH_DE_PARCELA_FALHA = false;
+  clicar(botaoDe3("p-x"));
+  await assentar();
+
+  out.h_retentativa = {
+    primeira: primeiraTentativa,
+    total: CHAMADAS.filter((c) => c.metodo === "PATCH").length,
+  };
 }
 
 document.getElementById("resultado").textContent =
@@ -1952,5 +1995,27 @@ test("H2: controle -- parcelas DIFERENTES continuam baixaveis no mesmo tick", ()
     ["/api/mybank/installments/p-x", "/api/mybank/installments/p-y"],
     "duas parcelas diferentes nao foram as duas confirmadas (a trava virou " +
       "booleano global?): " + JSON.stringify(resultado.h_diferentes)
+  );
+});
+
+test("H3: a baixa que FALHOU tem segunda tentativa (a parcela sai do conjunto)", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // CONTROLE: a primeira tentativa saiu de verdade. Com zero PATCH aqui, "duas
+  // no total" nunca seria alcancado e o caso mediria outra coisa.
+  assert.equal(
+    resultado.h_retentativa.primeira,
+    1,
+    "a primeira tentativa (a que falha na rede) nao saiu"
+  );
+
+  // A SEGUNDA TENTATIVA SAIU. Sem o `delete` do `finally` a parcela fica em voo
+  // para sempre: o botao continua clicavel (ele nao tem `disabled`) e nunca
+  // mais chama a rota.
+  assert.equal(
+    resultado.h_retentativa.total,
+    2,
+    "a parcela nao saiu do conjunto depois da falha: a baixa ficou sem " +
+      "segunda tentativa e o botao virou um clique que nao faz nada"
   );
 });
