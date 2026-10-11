@@ -379,6 +379,155 @@ export const SUBTITULO_DO_DEVEDOR =
 export const TITULO_DO_DEVEDOR = "Parcelas do MyBank";
 
 // ---------------------------------------------------------------------------
+// DE QUE PERIODO O BLOCO DO DEVEDOR FALA -- HMO-381
+// ---------------------------------------------------------------------------
+// O bloco mostra a divida INTEIRA, e nao a janela de `/dashboard/bills`. A
+// escolha e a saida (2) da HMO-381 e o porque esta no cabecalho de
+// `ParcelasDoMyBankQueEuDevo.tsx` -- aqui mora so a frase que a diz na tela.
+//
+// POR QUE A FRASE NAO E UMA CONSTANTE
+// -----------------------------------
+// "Nao segue o periodo da pagina" sozinha e verdadeira e inutil: ela nega um
+// recorte sem dizer qual e o do bloco, e quem le continua sem saber se as 25
+// linhas vao ate o ano que vem ou ate 2028. O periodo MEDIDO nas parcelas
+// carregadas e o unico numero que responde isso, e ele nao se escreve a mao --
+// muda a cada parcela paga.
+//
+// E e por isso que o `painel-sem-eixo-de-tempo-mente-no-rotulo` nao se resolve
+// com texto fixo: o rotulo tem de sair do MESMO dado que a lista imprime, senao
+// as duas metades do bloco podem discordar sem que nada falhe.
+
+/**
+ * `AAAA-MM-DD` -> `MM/AAAA`, por fatia de string.
+ *
+ * NUNCA `new Date(iso).getMonth()`: o construtor le `AAAA-MM-DD` como meia-noite
+ * UTC, e no fuso de Sao Paulo o dia 1 de um mes volta para o mes anterior. O
+ * rotulo diria "09/2026" para uma parcela de outubro -- um erro que passa verde
+ * em CI que roda em UTC (`teste-de-data-passa-em-utc-e-nao-ve-o-bug`).
+ */
+function mesDoVencimento(iso: string): string {
+  const [ano, mes] = String(iso).split("-");
+  return `${mes}/${ano}`;
+}
+
+/** A segunda metade da frase: o que o bloco NAO e. */
+export const FRASE_FORA_DA_JANELA =
+  "Este bloco não segue o período da página.";
+
+/**
+ * "Toda a dívida em aberto, de 09/2026 a 10/2028. Este bloco não segue o
+ * período da página."
+ *
+ * ORDENA AS DATAS AQUI, e nao confia na ordem da rota. `GET /api/mybank/due` ja
+ * devolve por `due_date` crescente, e ler `parcelas[0]` e `parcelas[n-1]`
+ * funcionaria hoje -- e viraria uma frase errada no dia em que alguem tirasse o
+ * `.order()` da rota, ou em que a tela passasse a ordenar por valor. O rotulo
+ * ficaria mentindo sobre a lista que esta logo abaixo dele, sem erro nenhum.
+ *
+ * SEM PARCELA NENHUMA devolve so a frase de escopo: o bloco inteiro desaparece
+ * nesse caso (e o controle negativo do componente), entao esta metade nunca
+ * chega a tela -- mas uma funcao que estourasse em lista vazia derrubaria a
+ * pagina no primeiro `[]` que a rota devolvesse.
+ */
+export function escopoDoBlocoDoDevedor(
+  parcelas: { vencimento: string }[]
+): string {
+  if (parcelas.length === 0) return FRASE_FORA_DA_JANELA;
+
+  // `AAAA-MM-DD` ordena lexicograficamente, mas `MM/AAAA` NAO -- "01/2028" vem
+  // antes de "09/2026". A ordenacao e sobre o ISO cru, e o rotulo sai depois.
+  // `.sort()` e sobre a copia que o `.map()` acabou de fazer: ordenar
+  // `parcelas` em si reordenaria a LISTA DA TELA como efeito colateral de
+  // montar um subtitulo.
+  const isos = parcelas.map((parcela) => String(parcela.vencimento)).sort();
+  const primeiro = mesDoVencimento(isos[0]);
+  const ultimo = mesDoVencimento(isos[isos.length - 1]);
+
+  // UMA PARCELA SO (ou todas no mesmo mes) diz "em 10/2026": "de 10/2026 a
+  // 10/2026" se le como um intervalo quebrado.
+  const quando =
+    primeiro === ultimo ? `em ${primeiro}` : `de ${primeiro} a ${ultimo}`;
+
+  return `Toda a dívida em aberto, ${quando}. ${FRASE_FORA_DA_JANELA}`;
+}
+
+// ---------------------------------------------------------------------------
+// O COLAPSO -- o bloco deixa de empurrar a pagina 3.000 pixels para baixo
+// ---------------------------------------------------------------------------
+// Dois emprestimos de 12 e 13 parcelas dao 25 linhas, e elas vinham TODAS
+// abertas: o bloco ficava mais comprido que o resto da tela de Contas a Pagar
+// somado. Ver `scroll-horizontal-no-celular` para o lado do eixo X; este e o do
+// eixo Y, e o sintoma dele e a pessoa nao achar o formulario de cadastro.
+
+/**
+ * Quantas linhas o bloco mostra fechado.
+ *
+ * CINCO, e nao tres nem dez: a divida tipica deste app e mensal, e cinco cobrem
+ * o proximo semestre -- o horizonte que a tela de Contas a Pagar ja usa. Com
+ * tres, um emprestimo de quatro parcelas (que cabe inteiro na tela) ganharia um
+ * botao para esconder UMA linha.
+ */
+export const PARCELAS_VISIVEIS_FECHADO = 5;
+
+/** O que o bloco do devedor mostra agora, aberto ou fechado. */
+export interface BlocoDoDevedor<T> {
+  /** As linhas a imprimir. */
+  visiveis: T[];
+  /** Quantas ficaram de fora. `0` quando aberto, ou quando tudo cabe. */
+  escondidas: number;
+  /**
+   * O rotulo do botao, ou `null` quando nao ha botao nenhum.
+   *
+   * `null` E NAO `""`: uma string vazia renderiza um botao clicavel de zero
+   * caracteres no fim do bloco, e nada falharia por causa dele.
+   */
+  rotuloDoBotao: string | null;
+}
+
+/**
+ * AS LINHAS QUE O BLOCO IMPRIME, e o rotulo do botao que revela o resto.
+ *
+ * O ROTULO DIZ QUANTAS FALTAM, e nao "Ver mais".
+ * ----------------------------------------------
+ * "Ver mais" esconde justamente o que a pessoa precisa decidir se vale o toque:
+ * cinco de 25 e um bloco que esconde 80% da divida, e cinco de seis nao. Com o
+ * numero no botao, o colapso para de ser indistinguivel de "o resto nao
+ * existe" -- a familia `sumido-da-tela-pode-ser-so-indistinguivel`, e a mesma
+ * razao de `recortarPrevistas` contar o que deixa de fora.
+ *
+ * ABERTO, O BOTAO FICA (dizendo "Mostrar menos") em vez de desaparecer: um
+ * botao que some depois do toque deixa a pessoa sem caminho de volta, e o bloco
+ * aberto e exatamente o que esta issue veio encurtar.
+ */
+export function blocoDoDevedor<T>(
+  parcelas: T[],
+  aberto: boolean
+): BlocoDoDevedor<T> {
+  const cabe = parcelas.length <= PARCELAS_VISIVEIS_FECHADO;
+
+  // CABE INTEIRO: nenhum botao, nem aberto nem fechado. O estado de abertura
+  // nao pode produzir duas telas diferentes para a mesma lista curta.
+  if (cabe) return { visiveis: parcelas, escondidas: 0, rotuloDoBotao: null };
+
+  if (aberto) {
+    return {
+      visiveis: parcelas,
+      escondidas: 0,
+      rotuloDoBotao: "Mostrar menos",
+    };
+  }
+
+  const escondidas = parcelas.length - PARCELAS_VISIVEIS_FECHADO;
+  const palavra = escondidas === 1 ? "parcela" : "parcelas";
+
+  return {
+    visiveis: parcelas.slice(0, PARCELAS_VISIVEIS_FECHADO),
+    escondidas,
+    rotuloDoBotao: `Mostrar as outras ${escondidas} ${palavra}`,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // AS CONEXOES QUE PODEM TOMAR EMPRESTADO
 // ---------------------------------------------------------------------------
 

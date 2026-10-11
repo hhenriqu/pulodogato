@@ -276,6 +276,7 @@ const PARCELA_QUE_EU_DEVO = "f1111111-1111-4111-b111-111111111111";
 const PAGINA = `<!doctype html>
 <html><head><meta charset="utf-8"></head><body>
 <div id="raiz-a"></div><div id="raiz-b"></div><div id="raiz-c"></div>
+<div id="raiz-e"></div><div id="raiz-f"></div>
 <div id="resultado">a pagina nao rodou</div>
 <script>${umd("react", "react.development.js")}</script>
 <script>${umd("react-dom", "react-dom.development.js")}</script>
@@ -563,6 +564,49 @@ const QUE_EU_DEVO = [
   },
 ];
 
+// ---------------------------------------------------------------------------
+// A DIVIDA COMPRIDA -- o caso que a HMO-381 mediu em producao
+// ---------------------------------------------------------------------------
+// 25 parcelas mensais, de 10/2026 a 10/2028 -- o que a devedora tinha na tela:
+// dois emprestimos abertos, 25 linhas ate 15/10/2028, e o resto da pagina 3.000
+// pixels abaixo.
+//
+// SEIS MESES NAO BASTARIAM. Com seis parcelas o colapso esconde UMA, e um
+// mutante que trocasse \`PARCELAS_VISIVEIS_FECHADO\` por 6 (ou que mandasse a
+// lista inteira) sobreviveria -- a diferenca entre 5 visiveis e 6 nao se
+// distingue de "cabe inteiro". Com 25 a assercao e sobre 5 contra 25.
+const DIVIDA_COMPRIDA = Array.from({ length: 25 }, function (_, i) {
+  // 10/2026 + i meses, por aritmetica de inteiro e com \`padStart\` -- nunca
+  // \`new Date(...).setMonth()\`, que no fuso daqui devolve o mes anterior para
+  // o dia 1. \`9\` e outubro em base zero, e a 25a parcela cai em 10/2028, a
+  // mesma do print da issue.
+  const mesCorrido = 9 + i;
+  const ano = 2026 + Math.floor(mesCorrido / 12);
+  const mes = String((mesCorrido % 12) + 1).padStart(2, "0");
+
+  return {
+    id: "longa-" + i,
+    loan_id: i < 12 ? "l-comprido-1" : "l-comprido-2",
+    descricao: "Reforma",
+    valor: 100,
+    vencimento: ano + "-" + mes + "-15",
+    status: "pending",
+    numero: i + 1,
+    total: 25,
+    rotulo: i + 1 + " de 25",
+    quem_emprestou: "Marcos",
+  };
+});
+
+/**
+ * O QUE \`/api/mybank/due\` RESPONDE AGORA -- trocado entre os casos.
+ *
+ * \`let\` e nao parametro: o componente nao recebe as parcelas, ele as BUSCA, e
+ * e justamente isso que a HMO-381 mede (a busca sai sem parametro de data). Um
+ * fixture passado por prop provaria outra coisa.
+ */
+let DEVIDO_AGORA = QUE_EU_DEVO;
+
 window.fetch = async (url, init) => {
   const metodo = (init && init.method) || "GET";
   const corpo = init && init.body ? JSON.parse(init.body) : null;
@@ -578,7 +622,7 @@ window.fetch = async (url, init) => {
     return resposta({ loans: LOANS });
   }
   if (alvo.startsWith("/api/mybank/due")) {
-    return resposta({ parcelas: QUE_EU_DEVO });
+    return resposta({ parcelas: DEVIDO_AGORA });
   }
   if (alvo.startsWith("/api/connections")) {
     // A LISTA NUA, nao \`{ connections: [...] }\`. As duas formas existem no
@@ -820,6 +864,12 @@ const out = {};
         : null,
     })),
     leituras: CHAMADAS.map((c) => c.url),
+    escopo: raiz.querySelector("[data-escopo]")
+      ? raiz.querySelector("[data-escopo]").textContent
+      : null,
+    // TRES parcelas CABEM: nao pode haver botao de colapso aqui. E o controle
+    // que separa "o botao aparece quando precisa" de "o botao aparece sempre".
+    temBotaoDeExpandir: Boolean(raiz.querySelector("[data-expandir]")),
     recorte: recorteDe(raiz),
   };
 
@@ -827,6 +877,74 @@ const out = {};
   clicar(raiz.querySelector("[data-avisar]"));
   await assentar();
   out.c_aviso = CHAMADAS.filter((c) => c.metodo === "PATCH");
+}
+
+// =============================================================================
+// E -- a divida comprida: o escopo dito na tela, e o colapso (HMO-381)
+// =============================================================================
+{
+  DEVIDO_AGORA = DIVIDA_COMPRIDA;
+  CHAMADAS = [];
+  const raiz = document.getElementById("raiz-e");
+  ReactDOM.render(React.createElement(ParcelasDoMyBankQueEuDevo), raiz);
+  await assentar();
+
+  const ler = () => ({
+    linhas: Array.from(raiz.querySelectorAll("[data-devo]")).map((el) =>
+      el.getAttribute("data-devo")
+    ),
+    escopo: raiz.querySelector("[data-escopo]")
+      ? raiz.querySelector("[data-escopo]").textContent
+      : null,
+    botao: raiz.querySelector("[data-expandir]")
+      ? raiz.querySelector("[data-expandir]").textContent
+      : null,
+    escondidas: raiz.querySelector("[data-expandir]")
+      ? raiz.querySelector("[data-expandir]").getAttribute("data-escondidas")
+      : null,
+    // A ALTURA DO BLOCO, em pixels: e o sintoma da issue medido em vez de
+    // descrito. "Nao empurra mais a pagina" nao se prova contando linhas --
+    // um colapso que escondesse as linhas com CSS daria a mesma contagem.
+    altura: raiz.getBoundingClientRect().height,
+  });
+
+  out.e_fechado = ler();
+
+  clicar(raiz.querySelector("[data-expandir]"));
+  await assentar();
+  out.e_aberto = ler();
+
+  // E DE VOLTA: o botao aberto tem de fechar. Sem este terceiro retrato, um
+  // botao que so abre passaria verde -- e o bloco aberto e o que a issue veio
+  // encurtar.
+  clicar(raiz.querySelector("[data-expandir]"));
+  await assentar();
+  out.e_refechado = ler();
+
+  out.e_recorte = recorteDe(raiz);
+}
+
+// =============================================================================
+// F -- controle negativo: devedor sem parcela nenhuma nao ve o bloco
+// =============================================================================
+// A issue pede este controle por nome. Sem ele, um componente que montasse o
+// card SEMPRE (so com a lista vazia) passaria todas as assercoes de E: o
+// subtitulo de escopo estaria la, o botao nao estaria, e nada falharia.
+{
+  DEVIDO_AGORA = [];
+  CHAMADAS = [];
+  const raiz = document.getElementById("raiz-f");
+  ReactDOM.render(React.createElement(ParcelasDoMyBankQueEuDevo), raiz);
+  await assentar();
+
+  out.f = {
+    // O CARD INTEIRO, pelo id -- e nao as linhas. Um card vazio com titulo e
+    // subtitulo de escopo tambem tem zero linhas.
+    card: Boolean(raiz.querySelector("[id='mybank-que-eu-devo']")),
+    escopo: Boolean(raiz.querySelector("[data-escopo]")),
+    texto: raiz.textContent,
+    leituras: CHAMADAS.map((c) => c.url),
+  };
 }
 
 document.getElementById("resultado").textContent =
@@ -1103,6 +1221,9 @@ test("C6: o recorte do iPhone -- nada estoura a largura de 390px", () => {
   for (const [nome, recorte] of [
     ["a tela do MyBank", resultado.a.recorte],
     ["o bloco do devedor", resultado.c.recorte],
+    // ABERTO, com 25 linhas: o botao do colapso e o `w-full` dele sao largura
+    // nova no bloco, e e o estado aberto que tem mais conteudo para estourar.
+    ["o bloco do devedor com a divida comprida", resultado.e_recorte],
   ]) {
     // CONTROLE: a caixa tem largura de verdade. Com `clientWidth` 0 (raiz
     // oculta, render que nao aconteceu) a comparacao de baixo passaria vacua.
@@ -1293,4 +1414,150 @@ test("D5: avisar que paguei manda `reported`, e NUNCA `paid`", () => {
   // E a rota nunca le valor do corpo: a tela tambem nao o manda.
   assert.equal(patch.corpo.amount, undefined);
   assert.equal(patch.corpo.valor, undefined);
+});
+
+// ---------------------------------------------------------------------------
+// E e F -- o ESCOPO do bloco dito na tela, e o colapso (HMO-381)
+// ---------------------------------------------------------------------------
+// A HMO-381 mediu em producao dois escopos na mesma tela sem rotulo: o card
+// "Total a pagar" falava da janela da pagina (R$ 160,00, 2026-10-01 a
+// 2027-01-01) e este bloco mostrava 25 linhas ate 15/10/2028. A escolha da
+// issue foi a saida (2) -- o bloco fica FORA da janela e diz que fica --, e o
+// porque esta no cabecalho de `ParcelasDoMyBankQueEuDevo.tsx`.
+//
+// POR QUE A PROVA NAO E "o numero de linhas MUDA entre duas janelas"
+// -----------------------------------------------------------------
+// Era a prova da saida (1). Na (2) o componente nao tem janela para variar: ele
+// nao recebe data nenhuma e a busca dele sai sem parametro. O que substitui
+// aquela medida sao tres fatos, e os tres sao mensuraveis:
+//
+//   * a busca NAO leva recorte de data (E1), que e a forma mecanica de "fora da
+//     janela, de proposito";
+//   * o subtitulo NOMEIA o periodo que o bloco cobre (E2) -- e o periodo sai do
+//     dado, nao de um literal, senao as duas metades do bloco poderiam
+//     discordar sem que nada falhasse;
+//   * o bloco deixa de ser comprido (E3/E4), que e o sintoma que a issue abriu.
+
+test("E1: a busca do bloco NAO leva recorte de data -- o escopo e deliberado", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // A rota nua, sem `?`. Esta e a assercao que distingue a saida (2) da (1):
+  // com `?de=&ate=` a resposta passaria a depender da janela da pagina, e o
+  // subtitulo de escopo passaria a mentir.
+  assert.deepEqual(resultado.c.leituras, ["/api/mybank/due"]);
+  for (const url of resultado.c.leituras) {
+    assert.ok(
+      !url.includes("?"),
+      `a busca saiu com parametro (${url}) -- o bloco passou a seguir uma janela ` +
+        "e o subtitulo de escopo ficou falso"
+    );
+  }
+});
+
+test("E2: o subtitulo diz o PERIODO do bloco, medido nas parcelas", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  const escopo = resultado.e_fechado.escopo;
+  assert.ok(escopo, "o bloco nao tem a frase de escopo");
+
+  // A FRASE DE NEGACAO sozinha nao bastaria -- ver o cabecalho de
+  // `escopoDoBlocoDoDevedor`. Ela e necessaria, e e a primeira metade.
+  assert.match(escopo, /não segue o período da página/);
+
+  // E AS DUAS PONTAS MEDIDAS: 10/2026 e 10/2028, a segunda a do print da
+  // issue. Sao elas que impedem a frase de ser um literal -- a primeira e a
+  // ultima das 25 parcelas do fixture, e mudam quando a divida muda.
+  assert.match(escopo, /de 10\/2026 a 10\/2028/);
+
+  // CONTROLE: a frase do caso C (tres parcelas, 09/2026 a 10/2026) e DIFERENTE.
+  // Sem isto, um `escopoDoBlocoDoDevedor` que devolvesse o literal
+  // "de 10/2026 a 10/2028" para qualquer lista passaria a assercao de cima.
+  assert.match(resultado.c.escopo, /de 09\/2026 a 10\/2026/);
+  assert.notEqual(resultado.c.escopo, escopo);
+});
+
+test("E3: fechado, o bloco mostra 5 de 25 e o botao diz quantas faltam", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  const fechado = resultado.e_fechado;
+  assert.equal(
+    fechado.linhas.length,
+    5,
+    `fechado mostrou ${fechado.linhas.length} linhas: ${JSON.stringify(fechado.linhas)}`
+  );
+  // AS CINCO PRIMEIRAS, e nao cinco quaisquer: o fixture esta em ordem de
+  // vencimento, e um `slice` do fim esconderia justamente o que vence antes.
+  assert.deepEqual(fechado.linhas, [
+    "longa-0",
+    "longa-1",
+    "longa-2",
+    "longa-3",
+    "longa-4",
+  ]);
+
+  // O BOTAO DIZ O NUMERO. "Ver mais" esconde o que a pessoa precisa para
+  // decidir se vale o toque -- cinco de 25 e um bloco que esconde 80% da
+  // divida, e cinco de seis nao e.
+  assert.ok(fechado.botao, "fechado nao tem botao de expandir");
+  assert.match(fechado.botao, /20/);
+  assert.equal(fechado.escondidas, "20");
+  assert.match(fechado.botao, /parcelas/);
+
+  // E O CONTROLE DO COLAPSO: tres parcelas CABEM, e ali nao ha botao nenhum.
+  // Sem ele, um botao que aparecesse sempre passaria a assercao de cima.
+  assert.equal(
+    resultado.c.temBotaoDeExpandir,
+    false,
+    "o bloco de tres parcelas ganhou botao de colapso -- ele cabe inteiro"
+  );
+});
+
+test("E4: o colapso encurta o bloco DE VERDADE, em pixels, e volta", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  const { e_fechado: fechado, e_aberto: aberto, e_refechado: refechado } = resultado;
+
+  // ABERTO: as 25, e o botao vira "Mostrar menos" em vez de desaparecer.
+  assert.equal(aberto.linhas.length, 25, JSON.stringify(aberto.linhas.length));
+  assert.ok(aberto.botao, "aberto perdeu o botao -- nao ha caminho de volta");
+  assert.match(aberto.botao, /Mostrar menos/);
+  assert.equal(aberto.escondidas, "0");
+
+  // O SINTOMA DA ISSUE, EM PIXELS. Contar linhas nao prova isto: um colapso
+  // que escondesse as 20 com CSS daria 5 na contagem e a mesma altura. O
+  // criterio e folgado de proposito (metade) -- o que ele barra e "a altura
+  // nao mudou", nao um limite de pixel especifico.
+  assert.ok(
+    fechado.altura > 0 && aberto.altura > 0,
+    `altura zero (${fechado.altura}/${aberto.altura}) -- a medida seria vacua`
+  );
+  assert.ok(
+    fechado.altura < aberto.altura / 2,
+    `o bloco fechado (${fechado.altura}px) nao e nem metade do aberto ` +
+      `(${aberto.altura}px) -- o colapso nao encurtou nada`
+  );
+
+  // E FECHA DE NOVO: o segundo toque volta ao retrato de antes.
+  assert.equal(refechado.linhas.length, 5);
+  assert.deepEqual(refechado.linhas, fechado.linhas);
+  assert.equal(refechado.altura, fechado.altura);
+});
+
+test("F: controle negativo -- devedor sem parcela nao ve o bloco", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // O CARD INTEIRO AUSENTE, e nao so sem linhas: um card com titulo e frase de
+  // escopo sobre uma lista vazia diria "Toda a dívida em aberto" a quem nao
+  // deve nada.
+  assert.equal(
+    resultado.f.card,
+    false,
+    "o bloco apareceu para quem nao deve nada: " + resultado.f.texto
+  );
+  assert.equal(resultado.f.escopo, false);
+  assert.equal(resultado.f.texto, "");
+
+  // A BUSCA SAIU. Sem esta linha o caso passaria verde se o componente nao
+  // tivesse montado -- e "nao montou" nao e "montou e decidiu nao mostrar".
+  assert.deepEqual(resultado.f.leituras, ["/api/mybank/due"]);
 });
