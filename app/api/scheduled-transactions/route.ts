@@ -25,6 +25,8 @@ import {
   agendaSemCompraNoCartao,
 } from "@/lib/agenda-do-cartao";
 import { faturasPrevistasDaJanela } from "@/lib/services/fatura-prevista";
+import { lerDividaDoMyBank } from "@/lib/services/divida-do-mybank";
+import { comODonoDaLeitura } from "@/lib/leituras-do-mybank";
 
 export async function GET(request: NextRequest) {
   try {
@@ -129,8 +131,48 @@ export async function GET(request: NextRequest) {
       ? await faturasPrevistasDaJanela(supabase, user.id, { de, ate, hoje: today() })
       : { previstas: [], semVencimento: [] };
 
+    // -----------------------------------------------------------------------
+    // A PARCELA QUE EU DEVO NO MYBANK ENTRA AQUI (HMO-372, leitura 1 de 7)
+    // -----------------------------------------------------------------------
+    // Ela NAO esta em `scheduled_transactions`: o credor nao pode gravar linha
+    // no meu nome (a RLS daquela tabela e `user_id = auth.uid()` e recusaria, e
+    // deveria). O lado do devedor sai pela view `mybank_due_entries`, que nasceu
+    // na F1 SEM LEITOR -- e enquanto nao houver leitor a divida existe no banco,
+    // a RLS a entrega, e nenhuma tela pergunta.
+    //
+    // O AUTO-EMPRESTIMO NAO VEM POR AQUI, e e o que impede a parcela de aparecer
+    // DUAS vezes: a view tem `borrower_user_id IS DISTINCT FROM lender_user_id`,
+    // e a parcela do Caso A ja esta na consulta acima -- ela e uma linha de
+    // `scheduled_transactions` com `transaction_type = 'transfer'`, e
+    // `direcaoDaAgenda('transfer')` a manda para o lado de saida (HMO-303).
+    //
+    // MESMO `incluiPendente` DA FATURA, pela mesma razao: a view so devolve
+    // `pending`/`reported`, entao toda linha dela e uma previsao em aberto.
+    // Devolve-la em `?status=paid` poria uma linha pendente numa lista de pagas.
+    //
+    // `groupId` A EXCLUI: divida de MyBank nao tem `group_id`, entao a lista
+    // filtrada por um grupo nao pode conter nenhuma. Sem esta condicao, filtrar
+    // por grupo passaria a somar a parcela do MyBank em TODO grupo.
+    const divida =
+      incluiPendente && !groupId
+        ? await lerDividaDoMyBank(supabase, user.id, { de, ate, hoje: today() })
+        : { ok: true as const, linhas: [] };
+
+    if (!divida.ok) {
+      // A agenda inteira nao cai por causa do MyBank -- mesma decisao da
+      // materializacao acima. O numero fica MENOR (falta uma conta a pagar), que
+      // e a direcao que a pessoa percebe, e nao a que a faz gastar o que nao tem.
+      console.error("A agenda seguiu sem a dívida do MyBank:", divida.mensagem);
+    }
+
     return NextResponse.json({
-      scheduled: agendaComFaturasAbertas(daAgenda, fatura.previstas),
+      scheduled: agendaComFaturasAbertas(
+        [
+          ...daAgenda,
+          ...comODonoDaLeitura(divida.ok ? divida.linhas : [], user.id),
+        ],
+        fatura.previstas
+      ),
       // Os cartoes com fatura aberta e sem `due_day`: eles NAO tem linha na
       // agenda porque nao ha vencimento para calcular, e a tela precisa dizer
       // isso em vez de deixar a fatura desaparecer calada. Ver

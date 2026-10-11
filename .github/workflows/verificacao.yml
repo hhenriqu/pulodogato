@@ -7311,3 +7311,67 @@ jobs:
       # que manda `conta_de_pagamento_id` junto com `devedor_id`.
       - name: Mutantes do MyBank F2
         run: npm run mutantes:emprestimo-do-mybank
+
+      # -----------------------------------------------------------------------
+      # MyBank F4 -- as sete leituras de dinheiro (HMO-372)
+      # -----------------------------------------------------------------------
+      # SEM `paths:`, como todo o resto deste workflow, e aqui isso e a entrega:
+      # o defeito que esta fase existe para nao ter nasce de um arquivo que nao
+      # tem "mybank" no nome. Um dia em que alguem mexa so em
+      # `lib/telas-de-movimentacao.ts` ou em `lib/previsto-x-realizado.ts` e a
+      # parcela do auto-emprestimo saia da aba Despesas, este step roda de
+      # qualquer jeito.
+      #
+      # A suite sobe QUATRO route handlers com duble de client -- nao toca no
+      # Postgres, entao ela nao pertence ao db-verify (que precisa do servico de
+      # banco e e filtrado por `paths:`).
+      #
+      # O que ela prova, em uma linha cada:
+      #   * O CONTROLE NEGATIVO, primeiro: uma conta sem emprestimo nenhum le os
+      #     MESMOS numeros de hoje nas quatro rotas -- R$ 200,00 de conta de luz
+      #     em Contas a Pagar, no «A vencer», no «Previsto» de Despesas, e
+      #     `a_receber_do_mybank: null` em Receitas. E a FORMA entra no controle,
+      #     nao so os numeros: um campo que aparecesse zerado em toda conta do
+      #     app mudaria o contrato da tela sem mudar numero nenhum;
+      #   * leitura 1 -- a parcela do devedor aparecendo em Contas a Pagar pela
+      #     view `mybank_due_entries`, e o auto-emprestimo aparecendo UMA vez (a
+      #     view o exclui; a previsao de `scheduled_transactions` e a unica
+      #     linha dele). A lista E o cabecalho, medidos em separado;
+      #   * leitura 2 -- o auto-emprestimo entrando no «Previsto» de Despesas
+      #     com `natureza: "mybank"` E continuando na aba Transferencias, e o «a
+      #     receber» da conexao entrando no «Previsto» de Receitas em CAMPO
+      #     PROPRIO (nao somado dentro de `reembolso_previsto`, que apagaria a
+      #     medicao do credito de grupo);
+      #   * leitura 3 -- a parcela que EU devo reduzindo o disponivel em
+      #     exatamente R$ 1.000, e a parcela A RECEBER nao o aumentando. A
+      #     direcao e HMO-306/308 e a HMO-364 decidiu nao reverter;
+      #   * O RECORTE DE DATA em cada uma: a view e a divida INTEIRA (24
+      #     parcelas por emprestimo) e nao tem recorte de periodo, de proposito.
+      #     Sem o recorte, o «A vencer» de marco somaria R$ 24.000.
+      #
+      # O RELOGIO E CONGELADO na suite (`mock.timers`, 2026-03-05): `today()` sai
+      # de `new Date()` e dele saem `effective_status`, o fim do mes do
+      # safe-to-spend e a janela. Com o relogio de verdade a parcela do dia 10
+      # estaria "a vencer" em nove dias do mes e "vencida" nos outros vinte e um
+      # -- a suite seria vermelha em dois tercos dos dias do ano, e verde no dia
+      # certo com a logica de `overdue` apagada.
+      - name: MyBank -- as sete leituras de dinheiro
+        run: npm run test:leituras-do-mybank
+
+      # Controle negativo do step acima: 24 mutantes, 24 mortos.
+      #
+      # Um por leitura, com ancora NOMEADA -- e as ancoras sao trechos de
+      # codigo, nunca frases de comentario: os quatro arquivos mutados CITAM nos
+      # comentarios as proprias decisoes que as ancoras alcancam
+      # (`lerDividaDoMyBank`, `de: null`, `transfer`), entao uma ancora curta
+      # mutaria a EXPLICACAO e deixaria o codigo intacto. A trava de ocorrencia
+      # unica do runner e o que pega esse caso.
+      #
+      # O controle negativo da conta vazia NAO tem mutante proprio, e nao pode
+      # ter: "a conta sem MyBank le os mesmos numeros" e uma afirmacao de
+      # AUSENCIA, e quem a quebra e cada um dos mutantes que faz uma leitura
+      # somar o que nao devia. O mutante do `a_receber_do_mybank: { total: 0 }` e
+      # o caso puro disso -- ele nao muda numero nenhum, e e morto so pelo
+      # controle 3/4, que afirma a FORMA da resposta.
+      - name: Mutantes do MyBank F4
+        run: npm run mutantes:leituras-do-mybank

@@ -282,8 +282,15 @@ export const STATUS_QUE_SAI_DO_PREVISTO: ReadonlySet<string> = new Set([
  * mesmo nas tres. Quem imprimir isto na tela tem de escolher a palavra pela
  * tela, nao pelo valor -- "Despesa" escrito embaixo de um salario previsto
  * seria um rotulo errado sobre um numero certo.
+ *
+ * `"mybank"` ENTROU NA HMO-372, e e o SELO que a decisao 1 da HMO-368 pede.
+ * Ele existe porque a parcela do auto-emprestimo e a unica linha da aba
+ * Despesas que e uma TRANSFERENCIA na coluna do banco: sem o selo, ela se le
+ * como uma despesa comum, e quem conferir o extrato vai procurar um gasto de
+ * R$ 1.000 que nao existe -- o dinheiro foi para a propria conta de
+ * investimento da pessoa. Ver `ehParcelaDoAutoEmprestimo`.
  */
-export type NaturezaDaLinha = "despesa" | "fatura" | "fixa";
+export type NaturezaDaLinha = "despesa" | "fatura" | "fixa" | "mybank";
 
 /** Uma linha pronta para a lista da tela. */
 export interface LinhaDaTela {
@@ -971,6 +978,67 @@ export function ehPagamentoDaFatura(crua: PernaDoPagamentoDaFatura): boolean {
 }
 
 /**
+ * O PREFIXO DO ELO DA PARCELA DO MYBANK -- `chaveDaParcelaDoMyBank` (HMO-370).
+ *
+ * A string esta REPETIDA aqui, e nao importada, e a razao e a mesma pela qual
+ * `TIPO_DA_PERNA_DE_PAGAMENTO` tambem vive neste arquivo: o `tsconfig` das
+ * suites que compilam este modulo tem `rootDir: lib`, e `lib/emprestimo-do-mybank.ts`
+ * importa `@/lib/lancamento` -- um import a mais na arvore de quem so quer a
+ * lista da tela. O que impede as duas copias de divergirem e
+ * `scripts/test-leituras-do-mybank.mjs`, que afirma a igualdade entre esta
+ * constante e `chaveDaParcelaDoMyBank("x")` -- se o prefixo mudar la, a suite
+ * reprova aqui.
+ */
+const PREFIXO_DA_PARCELA_DO_MYBANK = "mybank:";
+
+/** `transaction_type` com que a parcela do auto-emprestimo e PREVISTA (F2). */
+const TIPO_DA_PARCELA_DO_MYBANK = "transfer";
+
+/**
+ * Esta previsao e a parcela de um AUTO-EMPRESTIMO do MyBank?
+ *
+ * POR QUE ELA PRECISA DE UMA EXCECAO (HMO-372, leitura 2 de 7)
+ * -----------------------------------------------------------
+ * A decisao 1 da HMO-368 diz, aprovada: o auto-emprestimo e GRAVADO como
+ * transferencia (e so assim o «Total de contas» fica certo -- o dinheiro vai da
+ * minha conta corrente para a minha conta de investimento, e patrimonio nenhum
+ * muda) e APARECE em Despesas (porque no dia 10 saem R$ 1.000 da conta
+ * corrente, que e a pergunta que a aba Despesas passou a responder na HMO-364:
+ * "quanto sai da sua conta", e nao "o que deixou de ser seu").
+ *
+ * Sem esta excecao as duas metades da decisao se excluem: `linhaPrevista`
+ * deriva `tipo` de `direction`, `direction` e `'transfer'`, e a peneira
+ * `linha.tipo === tipo` manda a parcela SO para a aba Transferencias. A pessoa
+ * abre Despesas no dia 9, nao ve a parcela, e conclui que o MyBank nao cobrou.
+ *
+ * E A LINHA CONTINUA EM TRANSFERENCIAS, nas duas abas, pelo mesmo mecanismo e
+ * pela mesma razao da fatura paga (`ehPagamentoDaFatura`): o «Total» de cada aba
+ * e o da propria aba, entao nao ha numero nenhum em que ela entre duas vezes --
+ * e tira-la de Transferencias esconderia uma transferencia de verdade, que e o
+ * que aquela aba existe para listar.
+ *
+ * OS DOIS CRITERIOS SAO OBRIGATORIOS, e o `transaction_type` e o que importa:
+ * sem ele, qualquer previsao de RECEITA que alguem anotasse com a palavra
+ * `mybank:` em `notes` entraria na aba Despesas. Com ele, so a linha que a F2
+ * grava casa -- `previsoesDoEmprestimo` e o unico lugar do app que escreve as
+ * duas coisas juntas.
+ */
+export function ehParcelaDoAutoEmprestimo(crua: {
+  notes?: string | null;
+  direction?: string | null;
+}): boolean {
+  if (String(crua.direction ?? "") !== TIPO_DA_PARCELA_DO_MYBANK) return false;
+  // `startsWith` e nao `includes`: `guard-de-includes-casa-dentro-de-identificador-maior`
+  // -- uma nota que CITE `mybank:` no meio de uma frase ("paguei fora do
+  // mybank: dinheiro") nao e o elo, e o elo e sempre o comeco da string porque
+  // `chaveDaParcelaDoMyBank` o constroi com template.
+  return String(crua.notes ?? "").startsWith(PREFIXO_DA_PARCELA_DO_MYBANK);
+}
+
+/** O prefixo, para a suite afirmar que ele nao divergiu da F2. */
+export const PREFIXO_DO_ELO_DO_MYBANK = PREFIXO_DA_PARCELA_DO_MYBANK;
+
+/**
  * Converte a linha realizada para a lista.
  *
  * O `indice` existe so pela transferencia: a frase "Itaú → Nubank" precisa da
@@ -1354,7 +1422,31 @@ export function linhasDaTela(
 
   for (const crua of previstas) {
     const linha = linhaPrevista(crua, meuUserId, suspeitas);
-    if (linha && linha.tipo === tipo) linhas.push(linha);
+    if (!linha) continue;
+
+    // A PARCELA DO AUTO-EMPRESTIMO ENTRA EM DESPESAS -- HMO-372, leitura 2 de
+    // 7, e a decisao 1 da HMO-368. E a MESMA excecao da fatura paga logo acima,
+    // do lado previsto: a linha e `transfer` na coluna e tem de aparecer em
+    // DUAS abas, e e `tipo` (nao `direction`) que diz a que aba ela pertence.
+    //
+    // `tipo` SOBRESCRITO AQUI e nao dentro de `linhaPrevista`: aquela funcao ve
+    // UMA linha e nao sabe que tela a esta pedindo -- e e exatamente por isso
+    // que `linhaRealizada` recebe `tela` como parametro desde a HMO-264. Dar o
+    // mesmo parametro a `linhaPrevista` exigiria torna-lo opcional (ha
+    // chamadores com dois argumentos), e opcional ele cairia num default e a
+    // decisao voltaria a ser invisivel.
+    //
+    // `natureza: "mybank"` E O SELO, e ele vale nas duas abas: em Despesas
+    // porque sem ele a linha se le como gasto comum, e em Transferencias porque
+    // "MyBank" e mais informativo que "Despesa" sobre a mesma linha.
+    if (ehParcelaDoAutoEmprestimo(crua)) {
+      if (tipo === "expense" || linha.tipo === tipo) {
+        linhas.push({ ...linha, tipo, natureza: "mybank" });
+      }
+      continue;
+    }
+
+    if (linha.tipo === tipo) linhas.push(linha);
   }
 
   // `localeCompare` SOBRE A STRING ISO, e nao `new Date(...)`.
@@ -1568,6 +1660,62 @@ export function resumoComReembolsoPrevisto(
     previsto: centavos(resumo.previsto + reembolso.total),
     total: centavos(resumo.total + reembolso.total),
     reembolso_previsto: reembolso,
+  };
+}
+
+/**
+ * O que a conexao ainda me deve no MyBank, no «Previsto» de Receitas -- HMO-372,
+ * leitura 2 de 7, e a decisao 2 da HMO-368.
+ *
+ * CAMPO PROPRIO E NAO DENTRO DE `reembolso_previsto`
+ * -------------------------------------------------
+ * A issue manda "reusar `lib/services/credito-dos-grupos.ts` como FORMA", e
+ * forma e o que se reusa aqui: um resultado que entra no previsto e se diz em
+ * separado. O NUMERO e outro balde. Somar o MyBank dentro de
+ * `reembolso_previsto` teria dois precos:
+ *
+ *   * apagaria a medicao do credito de grupo -- a suite daquele modulo afirma
+ *     um total, e um segundo somador no mesmo campo faz os dois mutantes
+ *     sobreviverem (`unificar-criterio-duplicado-apaga-a-medicao-do-outro-modulo`);
+ *   * a tela perderia a frase que diz de onde vem cada parte. "R$ 1.300 a
+ *     receber" sem dizer que R$ 300 sao do grupo Casa e R$ 1.000 sao da moto da
+ *     Lais e o quinto numero sem rotulo da familia
+ *     `despesa-de-grupo-tem-tres-convencoes`.
+ *
+ * A COMPOSICAO E ASSOCIATIVA, E ISSO E O QUE A PERMITE: a rota chama
+ * `resumoComReembolsoPrevisto` e depois esta, e a ordem nao muda o resultado
+ * porque as duas somam no MESMO par de campos e nenhuma le o que a outra
+ * escreveu. Se um dia uma delas passar a ler `resumo.previsto` para decidir
+ * algo, a ordem passa a importar e isto deixa de ser verdade.
+ *
+ * `<= 0` PELA MESMA RAZAO de `resumoComReembolsoPrevisto`: `aReceberDoMyBank`
+ * nunca devolve negativo (o CHECK do banco e `amount > 0` e a funcao usa
+ * `Math.abs`), e se um dia devolver, somar isso aqui DERRUBARIA a receita
+ * prevista do mes com um numero que a tela apresenta como credito a receber.
+ */
+export function resumoComAReceberDoMyBank<R extends ResumoDaTela>(
+  resumo: R,
+  tipo: TipoDaTela,
+  aReceber: { total: number } | null
+): R & { a_receber_do_mybank: { total: number } | null } {
+  // SO EM RECEITAS, e as outras duas abas nao sao simetria vazia:
+  //
+  //   * em DESPESAS a parcela a receber seria um abatimento da conta a pagar --
+  //     o criterio do `safe-to-spend`, que e outra pergunta e outra tela, e que
+  //     a HMO-306/308 decidiu NAO reverter;
+  //   * em TRANSFERENCIAS ela nao significa nada: o dinheiro da conexao nao se
+  //     move entre duas contas minhas.
+  if (tipo !== "income") return { ...resumo, a_receber_do_mybank: null };
+
+  if (!aReceber || aReceber.total <= 0) {
+    return { ...resumo, a_receber_do_mybank: null };
+  }
+
+  return {
+    ...resumo,
+    previsto: centavos(resumo.previsto + aReceber.total),
+    total: centavos(resumo.total + aReceber.total),
+    a_receber_do_mybank: aReceber,
   };
 }
 

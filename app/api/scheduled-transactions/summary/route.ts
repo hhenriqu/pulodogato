@@ -52,6 +52,7 @@ import {
   agendaSemCompraNoCartao,
 } from "@/lib/agenda-do-cartao";
 import { faturasPrevistasDaJanela } from "@/lib/services/fatura-prevista";
+import { lerDividaDoMyBank } from "@/lib/services/divida-do-mybank";
 import {
   direcaoDaAgenda,
   somarAgenda,
@@ -172,8 +173,36 @@ export async function GET(request: NextRequest) {
       { de, ate, hoje }
     );
 
+    // A PARCELA QUE EU DEVO NO MYBANK ENTRA ANTES DAS SOMAS (HMO-372, leitura 1
+    // de 7), pela MESMA leitura e o MESMO recorte da lista -- `lerDividaDoMyBank`.
+    // Somar na lista e nao aqui faria o «A vencer» deste cabecalho ficar MENOR
+    // que a soma das linhas logo abaixo dele, na mesma tela, e o numero menor e
+    // o que parece certo a quem nao somou na mao -- a mesma razao pela qual a
+    // fatura aberta entra aqui e nao so na lista (HMO-227).
+    //
+    // A linha vem com `direction: 'expense'`, `group_id: null` e
+    // `effective_status` ja calculado: ela entra em "a pagar" (ou em "vencido a
+    // pagar"), nunca em "a receber", e nao passa pelo rateio de grupo -- divida
+    // de MyBank nao tem grupo.
+    //
+    // O auto-emprestimo NAO vem por aqui: a view o exclui (`borrower IS DISTINCT
+    // FROM lender`) e a parcela dele ja esta em `semCompraDeCartao` como
+    // transferencia prevista. E isto que faz "aparece UMA vez" ser verdade nos
+    // dois numeros da tela, e nao so na lista.
+    const divida = await lerDividaDoMyBank(supabase, user.id, {
+      de,
+      ate,
+      hoje,
+    });
+
+    if (!divida.ok) {
+      // Mesma decisao da materializacao acima: o resumo nao cai por causa do
+      // MyBank. O «A vencer» fica MENOR, que e a direcao barata.
+      console.error("O resumo seguiu sem a dívida do MyBank:", divida.mensagem);
+    }
+
     const linhas = agendaComFaturasAbertas(
-      semCompraDeCartao,
+      [...semCompraDeCartao, ...(divida.ok ? divida.linhas : [])],
       previsaoDaFatura.previstas
     );
 
