@@ -413,7 +413,7 @@ export function compilarComSobrescritas({ argumentos, outDir, sobrescritas = {} 
 // Sai do package.json, nao de uma lista a mao: suite nova entra no lote sozinha.
 // O `check-tests-in-ci.mjs` ja garante que todo `test:*` tem step no CI; aqui a
 // garantia complementar e que todo `test:*` que compila esta no lote.
-function alvosDoPackageJson() {
+export function alvosDoPackageJson() {
   const pkg = JSON.parse(readFileSync(path.join(RAIZ, "package.json"), "utf8"));
   const alvos = [];
   const naoEntendidos = [];
@@ -441,6 +441,45 @@ function alvosDoPackageJson() {
     }
   }
   return { alvos, naoEntendidos };
+}
+
+/**
+ * Os outDirs que mais de um alvo `test:*` reivindica.
+ *
+ * Dois alvos no mesmo outDir: o segundo apagaria a saida do primeiro, e a suite
+ * do primeiro rodaria sobre arquivo que nao e dela -- ou sobre diretorio vazio.
+ *
+ * ESTE E O UNICO LUGAR ONDE O CRITERIO MORA, e por isso ele e exportado em vez
+ * de ficar embutido no `--todas`. Quem mais o usa e o `check-tests-in-ci.mjs`, e
+ * a razao e a HMO-376: o `--todas` so roda no step 6 do `db-verify`, um job com
+ * filtro de `paths:` que NAO cita todo `scripts/tsconfig.*`. Entao a colisao que
+ * a HMO-365 introduziu passou verde no PR #268 e so apareceu depois do merge,
+ * deixando a main vermelha num step que roda ANTES de qualquer SQL -- nenhuma
+ * migration, nenhuma suite de banco e nenhum runner de mutante chegaram a rodar,
+ * na main nem em PR nenhum, por varios dias.
+ *
+ * Reescrever a conferencia la (textualmente, sobre o package.json) daria uma
+ * segunda definicao de "mesmo outDir" para divergir desta: o `resolverInvocacao`
+ * resolve `-p tsconfig`, `--outDir` solto e caminho relativo, e uma copia a mao
+ * acertaria um desses tres e erraria os outros calada.
+ *
+ * Devolve `[{ saida, alvos }]`, com `saida` relativa a raiz -- vazio quando esta
+ * tudo certo.
+ */
+export function colisoesDeOutDir(alvos) {
+  const porSaida = new Map();
+  for (const alvo of alvos) {
+    const saida = path.resolve(alvo.opcoes.outDir ?? "");
+    if (!porSaida.has(saida)) porSaida.set(saida, []);
+    porSaida.get(saida).push(alvo.rotulo);
+  }
+
+  // Dedup por ROTULO: um alvo que invoca o compilador duas vezes para o mesmo
+  // outDir (acontece quando a suite precisa de dois passos) nao e colisao --
+  // quem reclama e o outDir disputado por DOIS alvos diferentes.
+  return [...porSaida]
+    .map(([saida, rotulos]) => ({ saida: path.relative(RAIZ, saida), alvos: [...new Set(rotulos)] }))
+    .filter(({ alvos: nomes }) => nomes.length > 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -473,21 +512,13 @@ function linhaDeComando(argv) {
       process.exit(1);
     }
 
-    // Dois alvos no mesmo outDir: o segundo apagaria a saida do primeiro, e a
-    // suite do primeiro rodaria sobre arquivo que nao e dela -- ou sobre
-    // diretorio vazio. Hoje nao acontece; se passar a acontecer, para aqui em vez
-    // de virar uma suite verde sem conteudo.
-    const porSaida = new Map();
-    for (const alvo of alvos) {
-      const saida = path.resolve(alvo.opcoes.outDir ?? "");
-      if (!porSaida.has(saida)) porSaida.set(saida, []);
-      porSaida.get(saida).push(alvo.rotulo);
-    }
-    const colisoes = [...porSaida].filter(([, nomes]) => new Set(nomes).size > 1);
+    // O criterio mora em `colisoesDeOutDir` -- ver o cabecalho dela. Aqui ele
+    // para o lote; no `check-tests-in-ci.mjs` ele reprova o PR antes do merge.
+    const colisoes = colisoesDeOutDir(alvos);
     if (colisoes.length > 0) {
       console.error("Mais de um alvo compila para o mesmo diretorio de saida:\n");
-      for (const [saida, nomes] of colisoes) {
-        console.error(`  ${path.relative(RAIZ, saida)}/ <- ${[...new Set(nomes)].join(", ")}`);
+      for (const { saida, alvos: nomes } of colisoes) {
+        console.error(`  ${saida}/ <- ${nomes.join(", ")}`);
       }
       process.exit(1);
     }

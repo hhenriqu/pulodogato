@@ -632,6 +632,78 @@ jobs:
             diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
             exit 1
           fi
+
+      # A TERCEIRA peneira do mesmo arquivo, que a HMO-376 acrescentou, e ela
+      # precisa de controle proprio: o controle acima planta uma suite que
+      # nenhum workflow roda, o que reprova na PRIMEIRA peneira e sai antes de
+      # esta terceira ser avaliada. Sem o passo abaixo, a colisao de outDir
+      # ficaria sem medicao nenhuma.
+      #
+      # O defeito que ela existe para pegar (HMO-365, PR #268): dois alvos
+      # `test:*` emitindo para o mesmo outDir. O `npm run compila-suites` recusa
+      # isso -- e o step 6 do db-verify, ANTES de qualquer SQL -- mas aquele job
+      # tem filtro de `paths:` que nao cita todo `scripts/tsconfig.*`, entao o PR
+      # passou verde e a main ficou vermelha depois do merge, sem migration,
+      # suite de banco nem runner de mutante rodando por varios dias.
+      #
+      # A colisao e plantada em alvos que JA EXISTEM, e nao por um `test:` novo:
+      # um nome novo reprovaria na primeira peneira e o controle mediria o
+      # criterio errado, verde por motivo nenhum. Por isso tambem a saida e
+      # conferida pelo TEXTO -- "sai 1" nao distingue qual peneira reprovou.
+      - name: A verificacao de dois alvos no mesmo diretorio de saida sabe falhar
+        run: |
+          set -uo pipefail
+          cp package.json package.json.orig
+          trap 'mv package.json.orig package.json' EXIT
+
+          node -e '
+            const fs = require("node:fs");
+            const p = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            const re = /scripts\/tsconfig\.[\w.-]+\.json/;
+            const comTsconfig = Object.entries(p.scripts ?? {}).filter(
+              ([n, c]) => n.startsWith("test:") && /compila\.mjs -p /.test(c) && re.test(c)
+            );
+            if (comTsconfig.length < 2) {
+              console.error("Menos de dois alvos test:* com -p tsconfig: a sonda perdeu o alvo.");
+              process.exit(1);
+            }
+            const doador = comTsconfig[0][1].match(re)[0];
+            const [vitima, comando] = comTsconfig[1];
+            if (comando.includes(doador)) {
+              console.error("A vitima ja compila o tsconfig do doador: a sonda nao plantaria nada.");
+              process.exit(1);
+            }
+            p.scripts[vitima] = "node scripts/compila.mjs -p " + doador + " && " + comando;
+            fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");
+            console.log("Colisao plantada: " + vitima + " passa a emitir tambem no outDir de " + doador);
+          '
+
+          if saida=$(node scripts/check-tests-in-ci.mjs 2>&1); then
+            echo "::error::A verificacao passou verde com dois alvos test:* no mesmo diretorio de saida."
+            echo "$saida"
+            exit 1
+          fi
+
+          if ! echo "$saida" | grep -q "mesmo diretorio de saida"; then
+            echo "::error::A verificacao reprovou, mas por OUTRO motivo -- a peneira de outDir nao foi a que mordeu."
+            echo "$saida"
+            exit 1
+          fi
+
+          echo "A verificacao fica vermelha quando dois alvos disputam o mesmo outDir."
+
+      - name: 'A arvore voltou ao lugar depois de "A verificacao de dois alvos no mesmo diretorio de saida sabe falhar"'
+        run: |
+          # Em 21 jobs separados, um mutante que nao fosse restaurado morria
+          # com o VM. Aqui ele contaminaria os passos seguintes -- e o
+          # .tmp-* compilado guarda o mutante mesmo depois do restore do .ts.
+          rm -rf .tmp-*
+          git status --porcelain > "$RUNNER_TEMP/arvore-agora.txt"
+          if ! diff -q "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" > /dev/null; then
+            echo "::error::O controle negativo acima nao restaurou a arvore. Os passos seguintes rodariam sobre codigo mutado."
+            diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
+            exit 1
+          fi
       - name: A verificacao de codigo morto sabe falhar
         run: |
           set -uo pipefail
