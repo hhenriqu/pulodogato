@@ -103,11 +103,12 @@ const SAIDA = ".tmp-mybank-na-tela";
  * do sistema (o runner do Actions ja vem com um).
  *
  * A VERSAO DO PLAYWRIGHT NAO ESTA FIXA AQUI, de proposito. As quatro sondas
- * antigas tem `chromium-1243` escrito no fonte, e o dia em que a maquina subiu
- * para a 1248 as quatro ficaram 100% vermelhas numa arvore intocada -- com a
- * mensagem verdadeira ("Nenhum Chromium encontrado") aparecendo UMA vez no meio
- * de dezenas de `TypeError` identicos. Aqui a pasta e VARRIDA: qualquer
- * `chromium-*` serve, e o proximo bump nao derruba esta suite.
+ * antigas tinham `chromium-1243` escrito no fonte, e o dia em que a maquina
+ * subiu para a 1248 as quatro ficaram 100% vermelhas numa arvore intocada --
+ * com a mensagem verdadeira ("Nenhum Chromium encontrado") aparecendo UMA vez
+ * no meio de dezenas de `TypeError` identicos. Aqui a pasta e VARRIDA: qualquer
+ * `chromium-*` serve, e o proximo bump nao derruba esta suite. A HMO-406
+ * portou a varredura para aquelas quatro -- nenhuma sonda adivinha mais.
  */
 function acharChromium() {
   const candidatos = [process.env.CHROMIUM_BIN];

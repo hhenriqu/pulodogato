@@ -130,13 +130,13 @@ const PAGINA_COMPILADA = "app/(dashboard)/dashboard/cash-flow/page.js";
  * Acha um Chromium: o do `CHROMIUM_BIN`, o que o Playwright baixou, ou o Chrome
  * do sistema (o runner do Actions ja vem com um).
  *
- * A VERSAO DO PLAYWRIGHT NAO ESTA FIXA AQUI, e essa e a unica diferenca em
- * relacao as outras quatro sondas de navegador deste repositorio -- que tem
- * `chromium-1243` escrito no fonte. O bump do ambiente para `chromium-1248`
- * deixou as quatro 100% vermelhas numa arvore intocada, e o sintoma de
- * superficie e dezenas de `Cannot read properties of null`: le-se como "o meu
- * import derrubou a pagina", que e o diagnostico errado e caro. A pasta e
- * LISTADA em vez de adivinhada, entao o proximo bump nao morde.
+ * A VERSAO DO PLAYWRIGHT NAO ESTA FIXA AQUI. As outras quatro sondas de
+ * navegador deste repositorio tinham `chromium-1243` escrito no fonte, e o
+ * bump do ambiente para `chromium-1248` deixou as quatro 100% vermelhas numa
+ * arvore intocada; o sintoma de superficie e dezenas de `Cannot read properties
+ * of null`: le-se como "o meu import derrubou a pagina", que e o diagnostico
+ * errado e caro. A pasta e LISTADA em vez de adivinhada, entao o proximo bump
+ * nao morde. A HMO-406 portou esta mesma busca para as quatro.
  */
 function acharChromium() {
   const candidatos = [process.env.CHROMIUM_BIN];

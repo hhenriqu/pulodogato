@@ -83,12 +83,14 @@ const SAIDA_DA_LIB = SAIDA;
  * Acha um Chromium: o do `CHROMIUM_BIN`, o que o Playwright baixou, ou o Chrome
  * do sistema (o runner do Actions ja vem com um).
  *
- * A VERSAO DO PLAYWRIGHT NAO E FIXA AQUI, ao contrario das sondas mais antigas
- * deste repositorio: elas tem "chromium-1243" escrito no fonte, e no dia em que
- * o ambiente subiu para 1248 as quatro ficaram 100% vermelhas numa arvore
+ * A VERSAO DO PLAYWRIGHT NAO E FIXA AQUI. As sondas mais antigas deste
+ * repositorio tinham "chromium-1243" escrito no fonte, e no dia em que o
+ * ambiente subiu para 1248 as quatro ficaram 100% vermelhas numa arvore
  * intocada -- com o sintoma deslocado ("Cannot read properties of null"),
  * porque a mensagem verdadeira aparece uma vez no meio de 47 TypeError. A
  * varredura por prefixo custa um `readdirSync` e nao tem esse modo de falha.
+ * A HMO-406 portou essa varredura para as quatro: hoje nenhuma sonda deste
+ * repositorio adivinha o numero.
  */
 function acharChromium() {
   const candidatos = [process.env.CHROMIUM_BIN];
