@@ -301,6 +301,8 @@ const PAGINA = `<!doctype html>
 <div id="raiz-i"></div><div id="raiz-i2"></div><div id="raiz-i3"></div>
 <div id="raiz-i4"></div><div id="raiz-i5"></div>
 <div id="raiz-j1"></div><div id="raiz-j2"></div><div id="raiz-j3"></div>
+<div id="raiz-k"></div><div id="raiz-k2"></div><div id="raiz-k3"></div>
+<div id="raiz-k4"></div><div id="raiz-k5"></div><div id="raiz-k6"></div>
 <div id="resultado">a pagina nao rodou</div>
 <script>${umd("react", "react.development.js")}</script>
 <script>${umd("react-dom", "react-dom.development.js")}</script>
@@ -699,6 +701,27 @@ let PATCH_DE_EMPRESTIMO_FALHA = false;
  */
 let POST_DE_EMPRESTIMO_409 = false;
 
+/**
+ * O POST DA ANTECIPACAO CAINDO NA REDE (HMO-397) -- usado por K10.
+ *
+ * Existe para medir o \`delete\` do \`finally\` de \`antecipar\`: sem ele o
+ * emprestimo fica em voo PARA SEMPRE, e o botao -- que volta habilitado quando o
+ * estado de "em voo" e limpo, e nunca e -- ficaria preso em "Antecipando…" sem
+ * chamar rota nenhuma e sem dizer nada.
+ */
+let POST_DE_ANTECIPACAO_FALHA = false;
+
+/**
+ * O POST DA ANTECIPACAO DE QUAL EMPRESTIMO FICA PENDURADO -- usado por K9.
+ *
+ * \`null\` = nenhum. Com o id de um emprestimo, o \`fetch\` daquela antecipacao
+ * devolve uma promessa que NUNCA resolve: e o unico jeito de ter a primeira
+ * antecipacao EM VOO enquanto a segunda e pedida, que e o estado em que o
+ * \`Set\` de ids se distingue de um booleano global. Com a primeira ja respondida
+ * as duas formas dao o mesmo resultado, e o controle nao mediria nada.
+ */
+let POST_DE_ANTECIPACAO_PENDURA = null;
+
 window.fetch = async (url, init) => {
   const metodo = (init && init.method) || "GET";
   const corpo = init && init.body ? JSON.parse(init.body) : null;
@@ -740,6 +763,27 @@ window.fetch = async (url, init) => {
     metodo === "PATCH"
   ) {
     // Registrado em CHAMADAS acima: o PATCH SAIU, e e por isso que I7 sabe
+    // distinguir "a primeira tentativa nao aconteceu" de "a segunda nao saiu".
+    throw new TypeError("Failed to fetch");
+  }
+
+  if (
+    POST_DE_ANTECIPACAO_PENDURA &&
+    alvo === "/api/mybank/loans/" + POST_DE_ANTECIPACAO_PENDURA + "/antecipacao" &&
+    metodo === "POST"
+  ) {
+    // Registrado em CHAMADAS acima: o POST SAIU. A promessa nunca resolve, e e
+    // por isso que o \`finally\` de \`antecipar\` nao roda -- o emprestimo fica no
+    // conjunto, que e exatamente o estado que K9 precisa medir.
+    return new Promise(function () {});
+  }
+
+  if (
+    POST_DE_ANTECIPACAO_FALHA &&
+    /\\/api\\/mybank\\/loans\\/[^/]+\\/antecipacao$/.test(alvo) &&
+    metodo === "POST"
+  ) {
+    // Registrado em CHAMADAS acima: o POST SAIU, e e por isso que K10 sabe
     // distinguir "a primeira tentativa nao aconteceu" de "a segunda nao saiu".
     throw new TypeError("Failed to fetch");
   }
@@ -1759,6 +1803,351 @@ async function preencherEmprestimo(achar, valor) {
   out.j_offline = ler(raiz3);
 }
 
+// =============================================================================
+// K -- o gesto «Antecipar»: o dialogo diz os tres numeros ANTES do clique
+//      (HMO-397, F4 da HMO-393)
+// =============================================================================
+// O que esta secao mede, e nenhum item aparece em \`tsc\`, \`lint\` nem \`build\`:
+//
+//   * O GESTO APARECER SO ONDE SERVE, e a condicao e DIFERENTE da do Cancelar:
+//     \`active\` **E** com parcela em aberto. O emprestimo \`active\` com a serie
+//     inteira paga -- alcancavel, sao os que quitaram antes da HMO-394 -- tem
+//     Cancelar e NAO tem Antecipar. Os dois botoes na mesma linha e o que torna
+//     essa diferenca mensuravel: uma condicao copiada do Cancelar daria duas
+//     listas identicas;
+//
+//   * OS TRES NUMEROS ANTES DO CLIQUE, e com zero POST. Depois do clique o
+//     dinheiro ja saiu da conta de quem paga e nao existe "desantecipar" -- a
+//     previa e a unica chance de a pessoa ver o que vai acontecer. A assercao le
+//     o TEXTO do \`data-previa-antecipacao\` e conta as chamadas: uma previa que
+//     consultasse a rota para montar o numero seria outra feature;
+//
+//   * A TERCEIRA FRASE ("as que sobram mantem o valor"), que e a que impede a
+//     leitura errada. Sem ela a tela fica PLAUSIVEL e a pessoa le "minha parcela
+//     baixou" -- a variante de produto REJEITADA no cartao \`ae436b4a\`. E o
+//     mutante nomeado da issue;
+//
+//   * O LATCH DE DOIS CLIQUES, dentro de \`unstable_batchedUpdates\` e LENDO o
+//     \`disabled\` no instante do segundo (como G1). Aqui o segundo clique custa
+//     DINHEIRO: a rota de antecipacao nao tem idempotencia por id, entao dois
+//     POST pagam a cauda duas vezes -- duas pernas de entrada por parcela e o
+//     dobro no extrato;
+//
+//   * A PARCELA ANTECIPADA SE DISTINGUINDO na lista do credor, sem coluna nova.
+{
+  // O fixture da secao: QUATRO estados na MESMA conta, e cada um existe para
+  // separar uma pergunta da outra.
+  LOANS = [
+    {
+      // 6 parcelas, a 1 PAGA EM DIA (\`paid_date\` = \`vencimento\`: ela NAO e
+      // antecipada, e e isso que impede o rotulo de antecipada de aparecer em
+      // toda parcela paga) e 5 em aberto, de 11/2026 a 03/2027.
+      id: "l-k-ativo",
+      descricao: "Moto eletrica",
+      conta_credora_id: ${JSON.stringify(CARTEIRA)},
+      caso: "conexao",
+      status: "active",
+      principal: 600,
+      total_de_parcelas: 6,
+      primeiro_vencimento: "2026-10-10",
+      quem_deve_pagar: "Lais",
+      devedor_id: ${JSON.stringify(LAIS)},
+      parcelas: [
+        { id: "p-k1", valor: 100, numero: 1, total: 6, rotulo: "1 de 6", vencimento: "2026-10-10", status: "paid", a_confirmar: false, paid_date: "2026-10-10" },
+        { id: "p-k2", valor: 100, numero: 2, total: 6, rotulo: "2 de 6", vencimento: "2026-11-10", status: "pending", a_confirmar: false, paid_date: null },
+        { id: "p-k3", valor: 100, numero: 3, total: 6, rotulo: "3 de 6", vencimento: "2026-12-10", status: "pending", a_confirmar: false, paid_date: null },
+        { id: "p-k4", valor: 100, numero: 4, total: 6, rotulo: "4 de 6", vencimento: "2027-01-10", status: "pending", a_confirmar: false, paid_date: null },
+        { id: "p-k5", valor: 100, numero: 5, total: 6, rotulo: "5 de 6", vencimento: "2027-02-10", status: "pending", a_confirmar: false, paid_date: null },
+        { id: "p-k6", valor: 100, numero: 6, total: 6, rotulo: "6 de 6", vencimento: "2027-03-10", status: "pending", a_confirmar: false, paid_date: null },
+      ],
+    },
+    {
+      // O AUTO-EMPRESTIMO: a previa dele tem a frase de onde o dinheiro sai, e
+      // ele e o segundo emprestimo do controle do latch (K7).
+      id: "l-k-auto",
+      descricao: "Notebook para mim",
+      conta_credora_id: ${JSON.stringify(CARTEIRA)},
+      caso: "auto",
+      status: "active",
+      principal: 300,
+      total_de_parcelas: 3,
+      primeiro_vencimento: "2026-11-05",
+      quem_deve_pagar: "Voce mesmo",
+      devedor_id: ${JSON.stringify(EU)},
+      parcelas: [
+        { id: "p-ka1", valor: 100, numero: 1, total: 3, rotulo: "1 de 3", vencimento: "2026-11-05", status: "pending", a_confirmar: false, paid_date: null },
+        { id: "p-ka2", valor: 100, numero: 2, total: 3, rotulo: "2 de 3", vencimento: "2026-12-05", status: "pending", a_confirmar: false, paid_date: null },
+        { id: "p-ka3", valor: 100, numero: 3, total: 3, rotulo: "3 de 3", vencimento: "2027-01-05", status: "pending", a_confirmar: false, paid_date: null },
+      ],
+    },
+    {
+      // \`active\` COM A SERIE INTEIRA PAGA -- o estado que separa as duas
+      // condicoes. Sem esta linha, "antecipar aparece onde o cancelar aparece"
+      // passaria verde, e o gesto ficaria oferecido num emprestimo em que a rota
+      // so pode responder \`mais_do_que_em_aberto\`.
+      id: "l-k-pago",
+      descricao: "Celular pago sem settled",
+      conta_credora_id: ${JSON.stringify(CARTEIRA)},
+      caso: "conexao",
+      status: "active",
+      principal: 200,
+      total_de_parcelas: 2,
+      primeiro_vencimento: "2026-05-10",
+      quem_deve_pagar: "Lais",
+      devedor_id: ${JSON.stringify(LAIS)},
+      parcelas: [
+        { id: "p-kp1", valor: 100, numero: 1, total: 2, rotulo: "1 de 2", vencimento: "2026-05-10", status: "paid", a_confirmar: false, paid_date: "2026-05-10" },
+        { id: "p-kp2", valor: 100, numero: 2, total: 2, rotulo: "2 de 2", vencimento: "2026-06-10", status: "paid", a_confirmar: false, paid_date: "2026-06-10" },
+      ],
+    },
+    {
+      // A SERIE COM PARCELA ANTECIPADA: a 4 paga em 10/2026 vencendo em 01/2027.
+      // O badge diz \`2/4\` com a 2 e a 3 pendentes, e e o rotulo de antecipada que
+      // explica a diferenca.
+      id: "l-k-antecipada",
+      descricao: "Geladeira",
+      conta_credora_id: ${JSON.stringify(CARTEIRA)},
+      caso: "conexao",
+      status: "active",
+      principal: 400,
+      total_de_parcelas: 4,
+      primeiro_vencimento: "2026-10-10",
+      quem_deve_pagar: "Bruno",
+      devedor_id: ${JSON.stringify(BRUNO)},
+      parcelas: [
+        { id: "p-kn1", valor: 100, numero: 1, total: 4, rotulo: "1 de 4", vencimento: "2026-10-10", status: "paid", a_confirmar: false, paid_date: "2026-10-10" },
+        { id: "p-kn2", valor: 100, numero: 2, total: 4, rotulo: "2 de 4", vencimento: "2026-11-10", status: "pending", a_confirmar: false, paid_date: null },
+        { id: "p-kn3", valor: 100, numero: 3, total: 4, rotulo: "3 de 4", vencimento: "2026-12-10", status: "pending", a_confirmar: false, paid_date: null },
+        { id: "p-kn4", valor: 100, numero: 4, total: 4, rotulo: "4 de 4", vencimento: "2027-01-10", status: "paid", a_confirmar: false, paid_date: "2026-10-11" },
+      ],
+    },
+    {
+      // \`cancelled\` COM PARCELA EM ABERTO -- a combinacao que ninguem escreve de
+      // proposito e que o banco PERMITE (\`status\` e coluna de texto na 053, e
+      // cancelar o emprestimo nao renumera nem apaga as parcelas). E ela que
+      // torna a pergunta de STATUS do \`podeAntecipar\` MENSURAVEL: sem esta
+      // linha, um \`podeAntecipar\` que so olhasse "tem parcela em aberto" daria
+      // exatamente a mesma lista de botoes -- medido, aquele mutante sobreviveu
+      // ate este fixture existir.
+      //
+      // E o defeito seria real: a rota recusa com \`emprestimo_nao_esta_ativo\`, e
+      // a tela estaria oferecendo o gesto num emprestimo encerrado.
+      id: "l-k-cancelado",
+      descricao: "Bicicleta cancelada",
+      conta_credora_id: ${JSON.stringify(CARTEIRA)},
+      caso: "conexao",
+      status: "cancelled",
+      principal: 100,
+      total_de_parcelas: 1,
+      primeiro_vencimento: "2026-08-10",
+      quem_deve_pagar: "Bruno",
+      devedor_id: ${JSON.stringify(BRUNO)},
+      parcelas: [
+        { id: "p-kc1", valor: 100, numero: 1, total: 1, rotulo: "1 de 1", vencimento: "2026-08-10", status: "pending", a_confirmar: false, paid_date: null },
+      ],
+    },
+    {
+      id: "l-k-quitado",
+      descricao: "Bicicleta quitada",
+      conta_credora_id: ${JSON.stringify(CARTEIRA)},
+      caso: "conexao",
+      status: "settled",
+      principal: 100,
+      total_de_parcelas: 1,
+      primeiro_vencimento: "2026-04-10",
+      quem_deve_pagar: "Lais",
+      devedor_id: ${JSON.stringify(LAIS)},
+      parcelas: [
+        { id: "p-kq1", valor: 100, numero: 1, total: 1, rotulo: "1 de 1", vencimento: "2026-04-10", status: "paid", a_confirmar: false, paid_date: "2026-04-10" },
+      ],
+    },
+  ];
+
+  const raiz = await montarPainel("raiz-k");
+  const anteciparDe = (id) =>
+    raiz.querySelector('[data-antecipar-emprestimo="' + id + '"]');
+  const previaDe = (raizDoCaso, id) => {
+    const el = raizDoCaso.querySelector(
+      '[data-previa-antecipacao="' + id + '"]'
+    );
+    return el ? el.textContent : null;
+  };
+
+  // K1: QUAIS LINHAS TEM CADA BOTAO. As duas listas saem juntas porque a
+  // assercao e sobre a DIFERENCA entre elas -- uma condicao copiada do Cancelar
+  // daria duas listas iguais e nenhum numero errado.
+  out.k_linhas = Array.from(raiz.querySelectorAll("[data-emprestimo]")).map(
+    (el) => el.getAttribute("data-emprestimo")
+  );
+  out.k_com_antecipar = Array.from(
+    raiz.querySelectorAll("[data-antecipar-emprestimo]")
+  ).map((el) => el.getAttribute("data-antecipar-emprestimo"));
+  out.k_com_cancelar = Array.from(
+    raiz.querySelectorAll("[data-cancelar-emprestimo]")
+  ).map((el) => el.getAttribute("data-cancelar-emprestimo"));
+
+  // K2: O ROTULO DA PARCELA ANTECIPADA, ao lado do progresso que ele explica.
+  out.k_antecipada = Array.from(raiz.querySelectorAll("[data-emprestimo]")).map(
+    (el) => ({
+      id: el.getAttribute("data-emprestimo"),
+      progresso: el.querySelector("[data-progresso]").textContent,
+      antecipadas: el.querySelector("[data-antecipadas]")
+        ? el.querySelector("[data-antecipadas]").textContent
+        : null,
+    })
+  );
+
+  // K3: O DIALOGO ABRE SEM CHAMAR ROTA NENHUMA, e a previa de 1 parcela diz o
+  // valor, o vencimento novo e a terceira frase.
+  CHAMADAS = [];
+  clicar(anteciparDe("l-k-ativo"));
+  await assentar();
+
+  const dialogo = raiz.querySelector(
+    '[data-dialogo-antecipacao="l-k-ativo"]'
+  );
+  const seletorDeQuantas = raiz.querySelector(
+    '[data-antecipar-quantas="l-k-ativo"]'
+  );
+
+  out.k_abertura = {
+    chamadas: CHAMADAS.map((c) => c.metodo + " " + c.url),
+    temDialogo: Boolean(dialogo),
+    // AS OPCOES: no maximo as em aberto (5), e nunca as 6 da serie. E a recusa
+    // de \`mais_do_que_em_aberto\` escrita na FORMA do campo.
+    opcoes: seletorDeQuantas
+      ? Array.from(seletorDeQuantas.options).map((o) => o.value)
+      : null,
+    previa: previaDe(raiz, "l-k-ativo"),
+    // O dialogo e de UM emprestimo so: nenhum outro pode ter aberto junto.
+    quantosDialogos: raiz.querySelectorAll("[data-dialogo-antecipacao]").length,
+  };
+
+  // K4: TROCAR A QUANTIDADE REFAZ A PREVIA -- 2 parcelas custam o dobro e o
+  // ultimo vencimento anda DOIS meses. Sem este gesto, uma previa fixa em 1
+  // passaria K3.
+  digitar(seletorDeQuantas, "2");
+  await assentar();
+  out.k_previa_de_duas = previaDe(raiz, "l-k-ativo");
+
+  // K5: ANTECIPAR TODAS AS EM ABERTO -- a previa diz que QUITA, e a terceira
+  // frase SAI (promessa sobre conjunto vazio).
+  digitar(seletorDeQuantas, "5");
+  await assentar();
+  out.k_previa_que_quita = previaDe(raiz, "l-k-ativo");
+
+  // K6: O CASO A diz de onde o dinheiro sai e o que muda em Contas a Pagar.
+  const raiz2 = await montarPainel("raiz-k2");
+  clicar(raiz2.querySelector('[data-antecipar-emprestimo="l-k-auto"]'));
+  await assentar();
+  out.k_previa_do_auto = previaDe(raiz2, "l-k-auto");
+
+  // K7: O CLIQUE MANDA UM POST, na rota da antecipacao, com \`parcelas: N\` --
+  // e \`valor\` NAO existe no corpo (a decisao (a) da secao 4 do plano).
+  const raiz3 = await montarPainel("raiz-k3");
+  clicar(raiz3.querySelector('[data-antecipar-emprestimo="l-k-ativo"]'));
+  await assentar();
+  digitar(raiz3.querySelector('[data-antecipar-quantas="l-k-ativo"]'), "3");
+  await assentar();
+
+  CHAMADAS = [];
+  clicar(raiz3.querySelector('[data-confirmar-antecipacao="l-k-ativo"]'));
+  await assentar();
+  out.k_post = CHAMADAS.filter((c) => c.metodo === "POST").map((c) => ({
+    url: c.url,
+    corpo: c.corpo,
+  }));
+  // O DIALOGO FECHA NO SUCESSO: deixado aberto, o proximo clique antecipa de
+  // novo sobre uma serie que a tela acabou de recarregar.
+  out.k_dialogo_depois = Boolean(
+    raiz3.querySelector('[data-dialogo-antecipacao="l-k-ativo"]')
+  );
+
+  // K8: DOIS CLIQUES NO MESMO TICK -> UM POST, e o \`disabled\` ainda era \`false\`
+  // no segundo.
+  //
+  // Dentro de \`unstable_batchedUpdates\` e lendo o \`disabled\` no instante do
+  // segundo clique, como G1: fora dele o React legado descarrega entre os dois,
+  // o botao ja estaria desabilitado e o que o caso mediria seria o \`disabled\` --
+  // com o mutante que troca o \`useRef\` por \`useState\` SOBREVIVENDO
+  // (\`latch-de-dois-cliques-so-mede-dentro-de-batchedupdates\`).
+  const raiz4 = await montarPainel("raiz-k4");
+  clicar(raiz4.querySelector('[data-antecipar-emprestimo="l-k-ativo"]'));
+  await assentar();
+
+  CHAMADAS = [];
+  let desabilitadoNoSegundo = null;
+  ReactDOM.unstable_batchedUpdates(function () {
+    const botao = raiz4.querySelector(
+      '[data-confirmar-antecipacao="l-k-ativo"]'
+    );
+    clicar(botao);
+    desabilitadoNoSegundo = botao.disabled;
+    clicar(botao);
+  });
+  await assentar();
+  out.k_dois_cliques = {
+    desabilitadoNoSegundo,
+    posts: CHAMADAS.filter((c) => c.metodo === "POST").length,
+  };
+
+  // K9: CONTROLE DO K8 -- a SEGUNDA divida passa COM A PRIMEIRA EM VOO.
+  //
+  // E PRECISO PENDURAR O PRIMEIRO POST, e nao so antecipar duas em sequencia:
+  // com a primeira ja respondida o \`Set\` esta vazio, e um booleano global daria
+  // o MESMO resultado -- o caso nao mediria nada (medido: aquele mutante
+  // sobreviveu ate este POST passar a pendurar).
+  //
+  // E o estado e ALCANCAVEL pela tela, nao fabricado: o dialogo fecha so na
+  // resposta, e o botao «Antecipar» das OUTRAS linhas continua clicavel durante
+  // o POST. Abrir o dialogo da segunda divida fecha o da primeira e deixa as
+  // duas na mesma janela -- com um booleano global, a segunda cairia calada.
+  const raiz5 = await montarPainel("raiz-k5");
+  CHAMADAS = [];
+  POST_DE_ANTECIPACAO_PENDURA = "l-k-ativo";
+
+  clicar(raiz5.querySelector('[data-antecipar-emprestimo="l-k-ativo"]'));
+  await assentar();
+  clicar(raiz5.querySelector('[data-confirmar-antecipacao="l-k-ativo"]'));
+  await assentar();
+
+  // A PRIMEIRA CONTINUA EM VOO AQUI -- o \`fetch\` dela nunca resolve, entao o
+  // \`finally\` de \`antecipar\` nao rodou e o id dela segue no conjunto.
+  clicar(raiz5.querySelector('[data-antecipar-emprestimo="l-k-auto"]'));
+  await assentar();
+  clicar(raiz5.querySelector('[data-confirmar-antecipacao="l-k-auto"]'));
+  await assentar();
+
+  POST_DE_ANTECIPACAO_PENDURA = null;
+
+  out.k_duas_dividas = CHAMADAS.filter((c) => c.metodo === "POST").map(
+    (c) => c.url
+  );
+
+  // K10: A ANTECIPACAO QUE FALHOU TEM SEGUNDA TENTATIVA (o \`delete\` do
+  // \`finally\`). Sem ele o emprestimo fica em voo para sempre e o botao volta
+  // habilitado sem chamar rota nenhuma -- um clique que nao faz nada e nao diz
+  // nada.
+  const raiz6 = await montarPainel("raiz-k6");
+  clicar(raiz6.querySelector('[data-antecipar-emprestimo="l-k-ativo"]'));
+  await assentar();
+
+  CHAMADAS = [];
+  POST_DE_ANTECIPACAO_FALHA = true;
+  clicar(raiz6.querySelector('[data-confirmar-antecipacao="l-k-ativo"]'));
+  await assentar();
+  const primeiraAntecipacao = CHAMADAS.filter((c) => c.metodo === "POST").length;
+
+  POST_DE_ANTECIPACAO_FALHA = false;
+  clicar(raiz6.querySelector('[data-confirmar-antecipacao="l-k-ativo"]'));
+  await assentar();
+
+  out.k_retentativa = {
+    primeira: primeiraAntecipacao,
+    total: CHAMADAS.filter((c) => c.metodo === "POST").length,
+  };
+}
+
 document.getElementById("resultado").textContent =
   "RESULTADO" + JSON.stringify(out) + "FIM";
 } catch (e) {
@@ -2750,4 +3139,252 @@ test("J5: sem rede o gesto fica desabilitado", () => {
   // o botao dizer antes.
   assert.equal(resultado.j_offline.avisar, PARCELA_NA_AGENDA);
   assert.equal(resultado.j_offline.avisarDesabilitado, true);
+});
+
+// =============================================================================
+// K -- o gesto «Antecipar» (HMO-397, F4 da HMO-393)
+// =============================================================================
+
+test("K1: «Antecipar» exige `active` E parcela em aberto -- e o Cancelar nao", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // AS SEIS LINHAS ESTAO NA TELA. A lista vem junto para a assercao poder
+  // separar "o botao nao esta ali" de "a linha nao esta ali".
+  assert.deepEqual(
+    resultado.k_linhas.sort(),
+    [
+      "l-k-antecipada",
+      "l-k-ativo",
+      "l-k-auto",
+      "l-k-cancelado",
+      "l-k-pago",
+      "l-k-quitado",
+    ],
+    JSON.stringify(resultado.k_linhas)
+  );
+
+  // ANTECIPAR: os tres `active` COM parcela em aberto, e so eles. Os dois que
+  // ficam FORA cobrem uma metade da condicao cada:
+  //
+  //   * `l-k-pago` e `active` SEM nada em aberto -- a rota so poderia responder
+  //     `mais_do_que_em_aberto`;
+  //   * `l-k-cancelado` TEM parcela em aberto e NAO e `active` -- a rota recusa
+  //     com `emprestimo_nao_esta_ativo`.
+  //
+  // Sem o segundo, um `podeAntecipar` que esquecesse o status daria esta mesma
+  // lista (medido: o mutante sobreviveu).
+  assert.deepEqual(
+    resultado.k_com_antecipar.sort(),
+    ["l-k-antecipada", "l-k-ativo", "l-k-auto"],
+    JSON.stringify(resultado.k_com_antecipar)
+  );
+
+  // CANCELAR: os QUATRO `active`, inclusive o que nao tem nada em aberto --
+  // encerrar aquele emprestimo ainda faz sentido, e e o caso que abriu a
+  // HMO-383. ESTA e a assercao que prova que as duas condicoes sao DIFERENTES:
+  // uma condicao copiada daria as duas listas iguais.
+  assert.deepEqual(
+    resultado.k_com_cancelar.sort(),
+    ["l-k-antecipada", "l-k-ativo", "l-k-auto", "l-k-pago"],
+    JSON.stringify(resultado.k_com_cancelar)
+  );
+  assert.notDeepEqual(
+    resultado.k_com_antecipar.sort(),
+    resultado.k_com_cancelar.sort(),
+    "as duas listas ficaram iguais: a condicao do Antecipar foi copiada do Cancelar"
+  );
+});
+
+test("K2: a parcela antecipada se distingue, e e ela que explica o `2/4`", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  const porId = {};
+  for (const linha of resultado.k_antecipada) porId[linha.id] = linha;
+
+  // A SERIE COM A 4 ANTECIPADA: `2/4` com a 2 e a 3 pendentes. O progresso esta
+  // CERTO (secao 0 do plano, oito leituras medidas) -- o que faltava era a tela
+  // dizer POR QUE duas estao pagas se a terceira ainda vence.
+  assert.equal(porId["l-k-antecipada"].progresso, "2/4");
+  assert.equal(porId["l-k-antecipada"].antecipadas, "1 antecipada (4)");
+
+  // CONTROLE: a parcela paga EM DIA (`paid_date` = `vencimento`) nao e
+  // antecipada. Com `<=` no criterio, as duas linhas abaixo teriam rotulo -- e
+  // ele perderia o sentido justamente onde serve.
+  assert.equal(porId["l-k-ativo"].progresso, "1/6");
+  assert.equal(
+    porId["l-k-ativo"].antecipadas,
+    null,
+    "a parcela paga EM DIA apareceu como antecipada: o criterio virou `<=`?"
+  );
+  assert.equal(porId["l-k-pago"].antecipadas, null);
+});
+
+test("K3: o dialogo mostra o valor e o novo ultimo vencimento ANTES do clique", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  const abertura = resultado.k_abertura;
+
+  assert.ok(abertura.temDialogo, "o dialogo nao abriu");
+  // UM dialogo, e nao um por emprestimo: a quantidade e um estado so, e duas
+  // previas na tela leriam o valor de um com a quantidade do outro.
+  assert.equal(abertura.quantosDialogos, 1);
+
+  // ZERO CHAMADA: a previa sai da serie que a tela ja tem. Uma previa que
+  // consultasse a rota para montar o numero seria outra feature -- e um gesto
+  // que escreve antes de a pessoa confirmar seria a pior versao desta.
+  assert.deepEqual(
+    abertura.chamadas,
+    [],
+    "abrir o dialogo chamou a rede: " + JSON.stringify(abertura.chamadas)
+  );
+
+  // AS OPCOES SAO 1..5 (as em aberto), e NUNCA 6 (a serie inteira): a recusa de
+  // `mais_do_que_em_aberto` esta na FORMA do campo.
+  assert.deepEqual(abertura.opcoes, ["1", "2", "3", "4", "5"]);
+
+  const previa = abertura.previa;
+  assert.ok(previa, "a previa nao apareceu");
+
+  // (1) O VALOR TOTAL, com o NBSP do `formatCurrency` de producao.
+  assert.match(previa, /R\$\s?100,00/);
+  // (2) QUAL PASSA A SER O ULTIMO VENCIMENTO: era 03/2027, passa a 02/2027.
+  assert.match(previa, /03\/2027/);
+  assert.match(previa, /02\/2027/);
+  // (3) QUE O VALOR DAS QUE SOBRAM NAO MUDA -- a frase que impede "baixaram
+  // minha parcela?", que e a variante de produto REJEITADA no cartao
+  // `ae436b4a`. Sem ela a tela fica plausivel e a leitura errada e a natural.
+  assert.match(previa, /continuam com o valor de sempre/);
+  assert.match(previa, /não baixa a prestação/);
+  // E a parcela nomeada e a DO FIM (a 6), nao a proxima a vencer (a 2).
+  assert.match(previa, /\b6\b/);
+});
+
+test("K4: trocar a quantidade refaz a previa -- 2 custam o dobro e tiram 2 meses", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  const previa = resultado.k_previa_de_duas;
+  assert.ok(previa, "a previa de 2 parcelas nao apareceu");
+
+  // O DOBRO, e os DOIS numeros da cauda (5 e 6) -- na ordem da SERIE, e nao na
+  // ordem em que `parcelasDaAntecipacao` as escolheu (6 e 5).
+  assert.match(previa, /R\$\s?200,00/);
+  assert.match(previa, /5 e 6/);
+  // O ultimo vencimento anda DOIS meses: 03/2027 -> 01/2027.
+  assert.match(previa, /01\/2027/);
+  // E a terceira frase continua: sobram tres parcelas, e elas mantem o valor.
+  assert.match(previa, /continuam com o valor de sempre/);
+});
+
+test("K5: antecipar TODAS as em aberto diz que quita, e a terceira frase SAI", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  const previa = resultado.k_previa_que_quita;
+  assert.ok(previa, "a previa de 5 parcelas nao apareceu");
+
+  assert.match(previa, /R\$\s?500,00/);
+  assert.match(previa, /fica quitado/);
+  assert.match(previa, /sai da lista A receber/);
+
+  // A TERCEIRA FRASE SAI, e isso nao e economia de texto: "as que sobram mantem
+  // o valor" sobre ZERO parcelas e uma promessa de cobranca futura que nao vai
+  // existir. A mesma regra de `mensagemDaAntecipacao`.
+  assert.ok(
+    !/continuam com o valor de sempre/.test(previa),
+    "a frase sobre as que sobram apareceu numa antecipacao que QUITA: " + previa
+  );
+});
+
+test("K6: no CASO A a previa diz de onde o dinheiro sai, e o que muda em Contas a Pagar", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  const previa = resultado.k_previa_do_auto;
+  assert.ok(previa, "a previa do auto-emprestimo nao apareceu");
+
+  // No auto-emprestimo e a conta corrente da PROPRIA pessoa que e debitada, e a
+  // antecipacao muda uma tela que nao esta na frente de quem clica: as contas a
+  // pagar daquelas parcelas sao BAIXADAS (HMO-396), nao removidas. Quem aperta
+  // sem ler isso descobre o debito pelo extrato.
+  assert.match(previa, /conta corrente/);
+  assert.match(previa, /Contas a Pagar/);
+  assert.match(previa, /não removida/);
+});
+
+test("K7: confirmar manda UM POST na rota da antecipacao, com `parcelas` e sem `valor`", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  assert.equal(resultado.k_post.length, 1, JSON.stringify(resultado.k_post));
+  const [post] = resultado.k_post;
+
+  // A ROTA IRMA, e nao o `PATCH` de `loans/[id]`: aquele `if` recusa todo corpo
+  // que nao seja `{status:"cancelled"}`, e abri-lo para um segundo verbo e
+  // desmontar uma defesa medida (cabecalho da rota da F2).
+  assert.equal(post.url, "/api/mybank/loans/l-k-ativo/antecipacao");
+  assert.equal(post.corpo.parcelas, 3);
+  // `valor` NAO EXISTE no contrato -- decisao (a) da secao 4 do plano. A recusa
+  // de "R$ 150 contra parcelas de R$ 200" esta na FORMA do corpo.
+  assert.equal(
+    post.corpo.valor,
+    undefined,
+    "a tela mandou um valor em reais: " + JSON.stringify(post.corpo)
+  );
+  // E o dialogo FECHA no sucesso: aberto, o proximo clique antecipa de novo
+  // sobre uma serie que a tela acabou de recarregar.
+  assert.equal(resultado.k_dialogo_depois, false);
+});
+
+test("K8: dois cliques no MESMO tick dao UM POST (e o `disabled` nao foi quem segurou)", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // A PRE-CONDICAO DO CASO: o botao ainda estava HABILITADO no segundo clique.
+  // Sem ela o que estaria medido e o `disabled`, e o mutante que troca o
+  // `useRef` por `useState` sobreviveria -- a trava do estado so chega ao DOM
+  // depois do re-render, e o toque duplo de celular acontece antes dele.
+  assert.equal(
+    resultado.k_dois_cliques.desabilitadoNoSegundo,
+    false,
+    "o botao ja estava desabilitado no 2o clique: o caso mediria o `disabled`, nao o latch"
+  );
+
+  // UM POST. Dois pagariam a cauda DUAS vezes: a rota de antecipacao nao tem
+  // idempotencia por id, entao sairiam duas pernas de entrada por parcela, o
+  // dobro no extrato, e as parcelas seguintes da serie pagas sem pedido.
+  assert.equal(
+    resultado.k_dois_cliques.posts,
+    1,
+    `sairam ${resultado.k_dois_cliques.posts} POST(s) de antecipacao, esperado 1`
+  );
+});
+
+test("K9: controle -- a segunda divida passa COM A PRIMEIRA EM VOO", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // Sem este caso, um booleano global no lugar do `Set` passaria K8 e seria uma
+  // regressao calada: o dialogo fecha so na resposta, e o botao «Antecipar» das
+  // outras linhas continua clicavel durante o POST -- com um booleano, a segunda
+  // antecipacao (legitima, em outra divida) nao sairia e nada diria por que.
+  //
+  // O POST da primeira fica PENDURADO de proposito: com ela ja respondida as
+  // duas formas dariam o mesmo resultado e o controle seria vacuo.
+  assert.deepEqual(
+    resultado.k_duas_dividas.sort(),
+    [
+      "/api/mybank/loans/l-k-ativo/antecipacao",
+      "/api/mybank/loans/l-k-auto/antecipacao",
+    ],
+    JSON.stringify(resultado.k_duas_dividas)
+  );
+});
+
+test("K10: a antecipacao que FALHOU tem segunda tentativa", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // A primeira SAIU (e caiu na rede).
+  assert.equal(resultado.k_retentativa.primeira, 1);
+  // E a segunda tambem: sem o `delete` do `finally` o emprestimo ficaria em voo
+  // para sempre, com o botao preso em "Antecipando…" sem chamar rota nenhuma.
+  assert.equal(
+    resultado.k_retentativa.total,
+    2,
+    "a segunda tentativa nao saiu: o emprestimo ficou em voo (falta o `delete` do `finally`?)"
+  );
 });
