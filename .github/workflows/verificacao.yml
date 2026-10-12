@@ -7412,7 +7412,7 @@ jobs:
       - name: MyBank -- a serie do emprestimo, as rotas e o ciclo do Caso A
         run: npm run test:emprestimo-do-mybank
 
-      # Controle negativo do step acima: 78 mutantes, 78 mortos.
+      # Controle negativo do step acima: 93 mutantes, 93 mortos.
       #
       # O que a HMO-382 pede por nome e `A PARCELA FICA EM pending`: o dinheiro
       # anda certo nas 24 vezes (corrente -X, investimento +X) e o painel do
@@ -7454,6 +7454,33 @@ jobs:
       # casar duas vezes no arquivo. As duas ancoras ganharam a assinatura da
       # funcao no comeco. Ver `funcao-nova-que-copia-criterio-torna-ancora-alheia-
       # ambigua`; `npm run check-ancora-de-mutante` e quem reprova isso.
+      #
+      # O QUE A HMO-396 PEDE POR NOME: `A PREVISAO E APAGADA EM VEZ DE BAIXADA`
+      # ----------------------------------------------------------------------
+      # Ele e o espelho do mutante do cancelamento, e o espelho e o ponto: as
+      # duas operacoes acham as MESMAS linhas pelo MESMO elo (`mybank:<id>`) e
+      # fazem com elas coisas opostas. O cancelamento APAGA porque nada se moveu;
+      # a antecipacao do Caso A BAIXA porque o dinheiro se moveu -- e a previsao
+      # e o registro de que ele se moveu. Com o DELETE no lugar do UPDATE a
+      # parcela fica paga, R$ 50 saem da conta corrente, e a linha que explica
+      # esse debito desaparece de Contas a Pagar: sobram duas pernas em
+      # `financial_transactions` que nenhuma conta a pagar explica.
+      #
+      # O segundo da secao -- `o CASO A NAO LE AS PREVISOES` -- nao perde
+      # dinheiro: ele apaga a unica forma de antecipar um auto-emprestimo. Ele
+      # ocupa o lugar de medicao do mutante `o CASO A entra aqui`, que SAIU desta
+      # lista nesta entrega porque a F3 apagou a ancora dele (a recusa
+      # `caso_a_nao_entra_aqui`). Mante-lo com ancora nova deixaria o porque
+      # dele mentindo -- a serie nao encurta mais "sem nada ter saido da conta",
+      # porque a rota agora move o dinheiro.
+      #
+      # E QUATRO ANCORAS DESTA LISTA MUDARAM DE ARQUIVO, nao de texto: os passos
+      # 2/2.5/3 da rota da baixa viraram
+      # `lib/services/baixa-da-transferencia-prevista.ts` para que a antecipacao
+      # do Caso A os CHAME em vez de reescrever as quarenta linhas de
+      # movimentacao de dinheiro. O codigo foi movido com a indentacao intacta de
+      # proposito, e a prova da refatoracao e o placar: 80/80 antes, 93/93
+      # depois, com os 80 de antes entre eles.
       - name: Mutantes do MyBank -- emprestimo e ciclo do Caso A
         run: npm run mutantes:emprestimo-do-mybank
 
