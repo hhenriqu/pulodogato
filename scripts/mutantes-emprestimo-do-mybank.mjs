@@ -942,6 +942,29 @@ const mutantes = [
     "  return pago < vence;",
     "  return pago > vence;",
   ],
+
+  // =========================================================================
+  // O STATUS NA RESPOSTA DO GET -- HMO-398
+  // =========================================================================
+  // Esta rota e a UNICA das quatro leituras do MyBank que nao filtra `active`, e
+  // e por isso que ela e a unica que pode mostrar o registro de uma divida
+  // honrada. O mutante e o conserto que PARECE certo -- "deixar igual as outras
+  // tres" --, e ele esvaziaria a secao dos encerrados do painel SEM MUDAR NUMERO
+  // NENHUM: os totais e o "A receber" ja ignoravam o quitado.
+
+  [
+    LOANS,
+    "O GET DA LISTA PASSA A FILTRAR `active` (a secao dos encerrados do painel esvazia, e nenhum numero da tela muda)",
+    '      .eq("lender_user_id", user.id)',
+    '      .eq("lender_user_id", user.id)\n      .eq("status", "active")',
+  ],
+
+  [
+    LOANS,
+    "o `status` sai do `select` do GET (a tela perde o campo que separa os em andamento dos encerrados)",
+    '        "id, lender_account_id, borrower_user_id, description, principal, installment_count, first_due_date, status, created_at"',
+    '        "id, lender_account_id, borrower_user_id, description, principal, installment_count, first_due_date, created_at"',
+  ],
 ];
 
 const SUITE = "test:emprestimo-do-mybank";

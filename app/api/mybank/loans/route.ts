@@ -567,6 +567,27 @@ function emReais(v: number): string {
 // "apenas como a receber no mybank informando valor, numero da parcela e quem
 // deve pagar."
 //
+// E NENHUM FILTRO DE `status` -- A UNICA DAS QUATRO LEITURAS SEM ELE (HMO-398)
+// ---------------------------------------------------------------------------
+// As outras tres filtram `status = 'active'`, e estao certas em filtrar:
+// `totaisDaContaCredora` e `lerAReceberDoMyBank` somam DINHEIRO A RECEBER, e a
+// view `mybank_due_entries` monta Contas a Pagar do devedor -- emprestimo
+// quitado ou cancelado nao tem nada em nenhum dos tres.
+//
+// Esta rota alimenta a LISTA "Emprestimos desta conta", que e outra coisa: e o
+// unico lugar do app onde o registro de uma divida HONRADA aparece. Filtrar
+// aqui apagaria a unica coisa que a HMO-394 (o `settled`) existe para mostrar --
+// e nao ha outra tela onde procurar, porque `mybank_loans_delete` recusa
+// emprestimo com parcela `paid` de proposito.
+//
+// O RECORTE E DA TELA, e ele existe: `recorteDaListaDeEmprestimos`
+// (`lib/mybank-na-tela.ts`) separa os em andamento dos encerrados e deixa os
+// encerrados atras de um botao, FECHADOS por padrao. Acrescentar um `.eq("status",
+// "active")` aqui "para ficar igual as outras tres" esvaziaria aquela secao sem
+// mudar NUMERO NENHUM na tela -- e e por isso que ha mutante com esse nome em
+// `scripts/mutantes-emprestimo-do-mybank.mjs`, e uma assercao de GET que exige
+// o `settled` e o `cancelled` no corpo.
+//
 // `lender_user_id = auth.uid()` NO FILTRO, E ISSO NAO E O QUE A RLS JA FAZ
 // -----------------------------------------------------------------------
 // `mybank_loans_select` e `lender_user_id = auth.uid() OR borrower_user_id =

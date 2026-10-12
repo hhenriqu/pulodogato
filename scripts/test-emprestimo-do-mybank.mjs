@@ -822,6 +822,45 @@ test("GET nao mistura o que EU devo com o que me devem", async () => {
   );
 });
 
+test("GET devolve o emprestimo ENCERRADO junto com o ativo (HMO-398)", async () => {
+  // ESTA ROTA E A UNICA DAS QUATRO LEITURAS DO MYBANK QUE NAO FILTRA `active`,
+  // e isso e deliberado -- e a assercao que prende a decisao.
+  //
+  // `totaisDaContaCredora`, `lerAReceberDoMyBank` e a view `mybank_due_entries`
+  // filtram `status = 'active'`, porque emprestimo quitado nao tem nada a
+  // receber. Esta rota NAO pode filtrar: ela alimenta a lista "Emprestimos
+  // desta conta", e e o unico lugar do app onde o registro de uma divida
+  // HONRADA aparece -- `mybank_loans_delete` recusa emprestimo com parcela
+  // `paid` de proposito, entao nao ha outra tela onde procurar.
+  //
+  // Quem recortar a lista e a TELA, com `recorteDaListaDeEmprestimos`: os
+  // encerrados ficam atras de um botao, e nao fora da resposta. Um `.eq("status",
+  // "active")` acrescentado aqui "para ficar igual as outras tres" esvaziaria
+  // aquela secao SEM MUDAR NUMERO NENHUM -- exatamente a forma do defeito que a
+  // HMO-398 veio consertar.
+  const { corpo } = await lerEmprestimos({
+    mybank_loans: [
+      EMPRESTIMO_PARA_A_LAIS,
+      { ...EMPRESTIMO_PARA_A_LAIS, id: "loan-quitado", status: "settled" },
+      { ...EMPRESTIMO_PARA_A_LAIS, id: "loan-cancelado", status: "cancelled" },
+    ],
+    mybank_installments: [],
+  });
+
+  assert.deepEqual(
+    corpo.loans.map((l) => l.id).sort(),
+    ["loan-cancelado", "loan-lais", "loan-quitado"],
+    JSON.stringify(corpo.loans.map((l) => ({ id: l.id, status: l.status })))
+  );
+
+  // E O `status` DE CADA UM CHEGA NO CORPO: sem ele no `select`, a tela nao tem
+  // como separar os dois grupos, e a lista voltaria a misturar tudo.
+  assert.deepEqual(
+    corpo.loans.map((l) => l.status).sort(),
+    ["active", "cancelled", "settled"]
+  );
+});
+
 test("GET: o devedor que avisou aparece como `a_confirmar` (estado derivado)", async () => {
   const { corpo } = await lerEmprestimos({
     mybank_loans: [EMPRESTIMO_PARA_A_LAIS],

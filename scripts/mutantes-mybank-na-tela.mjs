@@ -569,6 +569,101 @@ const mutantes = [
     "        body: JSON.stringify({ parcelas: quantas }),",
     "        body: JSON.stringify({ parcelas: quantas, valor: 0 }),",
   ],
+
+  // =========================================================================
+  // O RECORTE DA LISTA -- HMO-398
+  // =========================================================================
+  // O PRIMEIRO E O QUE A ISSUE NOMEIA: "o recorte da lista passa a aceitar
+  // qualquer status". Com ele a tela volta EXATAMENTE ao estado de producao que
+  // abriu a issue -- o emprestimo quitado listado junto com os em andamento --
+  // e NENHUM NUMERO MUDA: `totaisDaContaCredora`, `linhasAReceber` e
+  // `mybank_due_entries` ja filtravam `active`, e foi essa concordancia dos
+  // numeros que deixou o defeito passar pela HMO-394.
+  //
+  // O SEGUNDO E O MAIS IMPORTANTE: o recorte lendo as PARCELAS em vez do status.
+  // E a implementacao que parece certa -- "encerrado e quem nao tem nada a
+  // receber" -- e ela coincide com a certa em todo fixture onde `settled` e
+  // "tudo pago" andam juntos. So o par do fixture da secao K a separa:
+  // `l-k-pago` e `active` com 2/2 pagas (o emprestimo LEGADO, que quitou antes
+  // da HMO-394 e por isso ainda precisa do botao Cancelar) e `l-k-quitado` e
+  // `settled` com 1/1. Este mutante esconde o legado e o deixa sem saida.
+
+  [
+    LIB,
+    "O RECORTE DA LISTA ACEITA QUALQUER STATUS (o emprestimo quitado volta para a lista, e nenhum numero muda)",
+    "  return emprestimo.status !== STATUS_EM_ANDAMENTO;",
+    "  return false;",
+  ],
+
+  [
+    LIB,
+    "O RECORTE LE AS PARCELAS EM VEZ DO STATUS (o emprestimo `active` com a serie toda paga e escondido, e perde o botao Cancelar)",
+    "  return emprestimo.status !== STATUS_EM_ANDAMENTO;",
+    "  return !emprestimo.parcelas.some(parcelaEmAberto);",
+  ],
+
+  [
+    LIB,
+    "o recorte manda TODO emprestimo para os encerrados (o outro lado da comparacao: a secao em andamento fica vazia)",
+    "  return emprestimo.status !== STATUS_EM_ANDAMENTO;",
+    "  return true;",
+  ],
+
+  [
+    LIB,
+    "o resumo do card para de contar os ENCERRADOS (a secao fechada volta a ser indistinguivel de `nao tem mais nada`)",
+    "  const resumo = `${emAndamento.length} em andamento · ${encerrados.length} ${palavra}`;",
+    "  const resumo = `${emAndamento.length} em andamento`;",
+  ],
+
+  [
+    LIB,
+    'o rotulo do botao perde o NUMERO (vira um "Ver mais" que nao se distingue de "o resto nao existe")',
+    "      : `Mostrar os ${encerrados.length} ${palavra}`,",
+    '      : "Mostrar os encerrados",',
+  ],
+
+  [
+    LIB,
+    "a secao fechada ja mostra os encerrados (`visiveis` ignora o estado do botao)",
+    "    visiveis: encerradosAbertos ? [...emAndamento, ...encerrados] : emAndamento,",
+    "    visiveis: [...emAndamento, ...encerrados],",
+  ],
+
+  [
+    PAINEL,
+    "A LISTA VOLTA A IMPRIMIR `doEscolhido` (o recorte existe em `lib/` e a tela nao o usa -- o defeito exato da HMO-398)",
+    "              {recorteDaLista.visiveis.map((emprestimo) => {",
+    "              {doEscolhido.map((emprestimo) => {",
+  ],
+
+  [
+    PAINEL,
+    "a secao dos encerrados ABRE por padrao (a lista volta a acumular uma linha por divida encerrada, para sempre)",
+    "  const [encerradosAbertos, setEncerradosAbertos] = useState(false);",
+    "  const [encerradosAbertos, setEncerradosAbertos] = useState(true);",
+  ],
+
+  [
+    PAINEL,
+    "o botao dos encerrados so ABRE (quem toca uma vez fica sem caminho de volta)",
+    "              onClick={() => setEncerradosAbertos((antes) => !antes)}",
+    "              onClick={() => setEncerradosAbertos(true)}",
+  ],
+
+  [
+    PAINEL,
+    "a linha encerrada perde o MARCADOR (o quitado fica indistinguivel do em andamento dentro da lista aberta)",
+    '                    data-encerrado={encerrado ? "sim" : undefined}',
+    "                    data-encerrado={undefined}",
+  ],
+
+  [
+    PAINEL,
+    "o status da linha volta CRU do banco (a tela em portugues imprime `settled` e `cancelled`)",
+    "                        {rotuloDoStatusDoEmprestimo(emprestimo)}",
+    "                        {emprestimo.status}",
+  ],
 ];
 
 const SUITE = "test:mybank-na-tela";

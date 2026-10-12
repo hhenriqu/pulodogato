@@ -155,14 +155,17 @@ import {
   contasQueEmprestam,
   contasQuePagamAParcela,
   devedorTemConexaoAceita,
+  emprestimoEncerrado,
   linhasAReceber,
   podeAntecipar,
   previaDaAntecipacaoNaTela,
   progressoDoEmprestimo,
   proximoVencimento,
   quantasEmAbertoNoEmprestimo,
+  recorteDaListaDeEmprestimos,
   rotuloDaContaCredora,
   rotuloDasParcelasAntecipadas,
+  rotuloDoStatusDoEmprestimo,
   totaisDaContaCredora,
   valorDaParcelaNaLista,
   type ConexaoCrua,
@@ -275,6 +278,17 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
    */
   const antecipandoRef = useRef<Set<string>>(new Set());
 
+  /**
+   * A SECAO DOS ENCERRADOS ESTA ABERTA? (HMO-398). Fechada por padrao.
+   *
+   * O recorte em si e de `recorteDaListaDeEmprestimos`, em `lib/`; aqui mora so
+   * o estado do botao. Fechada por padrao porque cada divida encerrada fica na
+   * lista PARA SEMPRE -- `mybank_loans_delete` recusa emprestimo com parcela
+   * `paid` de proposito --, e a F2 da HMO-393 produz um `settled` por
+   * antecipacao total.
+   */
+  const [encerradosAbertos, setEncerradosAbertos] = useState(false);
+
   const carregar = useCallback(async () => {
     try {
       // AS TRES LEITURAS EM PARALELO, e cada uma com `ok` conferido.
@@ -350,6 +364,17 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
         ? []
         : emprestimos.filter((e) => e.conta_credora_id === contaEscolhida),
     [emprestimos, contaEscolhida]
+  );
+
+  /**
+   * O RECORTE DA LISTA (HMO-398) -- os em andamento em cima, os encerrados atras
+   * de um botao. A decisao esta em `lib/mybank-na-tela`, nao aqui: um `useMemo`
+   * com o filtro escrito dentro dele nao tem suite que o alcance, e e por isso
+   * que `totaisDaContaCredora` tambem mora lá.
+   */
+  const recorteDaLista = useMemo(
+    () => recorteDaListaDeEmprestimos(doEscolhido, encerradosAbertos),
+    [doEscolhido, encerradosAbertos]
   );
 
   const totais = useMemo(
@@ -1141,11 +1166,22 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
       )}
 
       {/* =====================================================================
-          A LISTA DE EMPRESTIMOS
+          A LISTA DE EMPRESTIMOS -- os em andamento, e os encerrados atras de um
+          botao (HMO-398)
           ===================================================================== */}
-      <Card>
+      <Card data-card-da-lista>
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Empréstimos desta conta</CardTitle>
+          {/* O SUBTITULO CONTA OS DOIS GRUPOS, inclusive com a secao fechada.
+
+              Sem ele, a unica leitura disponivel para quem acabou de pagar a
+              ultima parcela seria "a linha desapareceu" -- e o card ficaria com
+              a aparencia de mostrar tudo o que tem, que e o defeito que esta
+              issue veio consertar e nao repetir. Ver `resumo` em
+              `recorteDaListaDeEmprestimos`. */}
+          <CardDescription data-resumo-da-lista>
+            {recorteDaLista.resumo}
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {doEscolhido.length === 0 ? (
@@ -1154,7 +1190,7 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
             </p>
           ) : (
             <div className="space-y-3">
-              {doEscolhido.map((emprestimo) => {
+              {recorteDaLista.visiveis.map((emprestimo) => {
                 const vencimento = proximoVencimento(emprestimo);
                 const parcela = valorDaParcelaNaLista(emprestimo);
                 const emAberto = quantasEmAbertoNoEmprestimo(emprestimo);
@@ -1174,11 +1210,22 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
                       )
                     : null;
 
+                // O MARCADOR DA LINHA ENCERRADA, e ele e um ATRIBUTO proprio
+                // (`data-encerrado`). A posicao na lista nao serve: aberta, os
+                // encerrados vem DEPOIS dos em andamento, e uma assercao por
+                // indice continuaria passando com os dois grupos embaralhados.
+                const encerrado = emprestimoEncerrado(emprestimo);
+
                 return (
                   <div
                     key={emprestimo.id}
                     data-emprestimo={emprestimo.id}
-                    className="space-y-1 rounded-lg border p-3"
+                    data-encerrado={encerrado ? "sim" : undefined}
+                    className={
+                      encerrado
+                        ? "space-y-1 rounded-lg border border-dashed p-3 opacity-70"
+                        : "space-y-1 rounded-lg border p-3"
+                    }
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="font-medium">{emprestimo.descricao}</p>
@@ -1249,7 +1296,16 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
                         <> · nada em aberto</>
                       )}
                       {" · "}
-                      {emprestimo.status}
+                      {/* O STATUS EM PORTUGUES, e numa ancora propria.
+
+                          A linha imprimia `emprestimo.status` CRU -- "settled"
+                          e "cancelled", os valores do CHECK da 053, numa tela em
+                          portugues. E ela e a leitura que distingue um
+                          emprestimo quitado de um cancelado DENTRO da secao dos
+                          encerrados, onde os dois convivem. */}
+                      <span data-status-do-emprestimo>
+                        {rotuloDoStatusDoEmprestimo(emprestimo)}
+                      </span>
                       {/* A PARCELA ANTECIPADA SE DISTINGUE, E SEM COLUNA NOVA
                           (HMO-397).
 
@@ -1362,7 +1418,43 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
                   </div>
                 );
               })}
+
+              {/* A CONTA QUE SO TEM DIVIDA ENCERRADA, com a secao fechada.
+
+                  Sem esta frase a area da lista ficaria em branco, e branco se
+                  le como "nao tem nada" -- exatamente o que o botao logo abaixo
+                  desmente. Ela e condicionada aos EM ANDAMENTO e nao ao total:
+                  "Esta conta ainda nao emprestou nada" (acima) e outra coisa, e
+                  seria uma frase falsa aqui. */}
+              {recorteDaLista.emAndamento.length === 0 && (
+                <p
+                  id="mybank-nada-em-andamento"
+                  className="text-sm text-muted-foreground"
+                >
+                  Nada em andamento nesta conta.
+                </p>
+              )}
             </div>
+          )}
+
+          {/* O BOTAO DOS ENCERRADOS -- e o rotulo DIZ QUANTOS, nao "Ver mais".
+
+              `rotuloDoBotao === null` quando nao ha encerrado nenhum: nenhum
+              botao, e o estado de abertura nao pode produzir duas telas
+              diferentes para a mesma conta. A mesma forma de `blocoDoDevedor`.
+
+              O rotulo com o NUMERO e o que separa o colapso de "o resto nao
+              existe" -- `sumido-da-tela-pode-ser-so-indistinguivel`. */}
+          {recorteDaLista.rotuloDoBotao !== null && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              data-encerrados-do-mybank
+              onClick={() => setEncerradosAbertos((antes) => !antes)}
+            >
+              {recorteDaLista.rotuloDoBotao}
+            </Button>
           )}
         </CardContent>
       </Card>

@@ -1551,6 +1551,17 @@ async function preencherEmprestimo(achar, valor) {
   const botaoDe = (id) =>
     raiz.querySelector('[data-cancelar-emprestimo="' + id + '"]');
 
+  // O RECORTE DA HMO-398 ABRE O PAINEL COM OS ENCERRADOS FECHADOS, e esta secao
+  // mede o botao Cancelar nos DOIS grupos -- entao ela ABRE a secao antes de
+  // ler. O estado fechado vai medido junto (\`i_fechadas\`): sem ele, abrir aqui
+  // esconderia o recorte desta sonda, e I1 passaria a falar de uma tela que
+  // ninguem ve ao chegar no painel.
+  out.i_fechadas = Array.from(raiz.querySelectorAll("[data-emprestimo]")).map(
+    (el) => el.getAttribute("data-emprestimo")
+  );
+  clicar(raiz.querySelector("[data-encerrados-do-mybank]"));
+  await assentar();
+
   // I1: QUAIS LINHAS TEM BOTAO. A lista das linhas vem junto, para a assercao
   // poder separar "o botao nao esta ali" de "a linha nao esta ali".
   out.i_linhas = Array.from(raiz.querySelectorAll("[data-emprestimo]")).map(
@@ -1972,6 +1983,66 @@ async function preencherEmprestimo(achar, valor) {
     );
     return el ? el.textContent : null;
   };
+
+  // =========================================================================
+  // L (HMO-398) -- O RECORTE DA LISTA, medido NESTE fixture de proposito
+  // =========================================================================
+  // Ele e o unico que tem os DOIS lados do controle negativo na mesma conta:
+  //
+  //   * \`l-k-pago\` -- \`active\` com a serie INTEIRA paga (2/2). E o emprestimo
+  //     LEGADO, o que quitou antes da HMO-394, e ele tem de ficar EM ANDAMENTO:
+  //     e de lá que vem a saida dele (o botao Cancelar);
+  //   * \`l-k-quitado\` -- \`settled\`, tambem com tudo pago (1/1).
+  //
+  // Os dois tem a MESMA forma de parcelas ("nada em aberto") e status
+  // diferentes. Um recorte que lesse as parcelas em vez do status mandaria os
+  // dois para a secao escondida -- e e esse o recorte que parece certo.
+  const idsDe = (seletor) =>
+    Array.from(raiz.querySelectorAll(seletor)).map((el) =>
+      el.getAttribute("data-emprestimo")
+    );
+  const botaoDosEncerrados = () =>
+    raiz.querySelector("[data-encerrados-do-mybank]");
+  const fotoDaLista = () => ({
+    linhas: idsDe("[data-emprestimo]"),
+    encerradas: idsDe("[data-emprestimo][data-encerrado]"),
+    resumo: raiz.querySelector("[data-resumo-da-lista]").textContent,
+    rotuloDoBotao: botaoDosEncerrados()
+      ? botaoDosEncerrados().textContent
+      : null,
+    // O status de cada linha, pela ancora propria: e ele que distingue o
+    // quitado do cancelado DENTRO da secao dos encerrados.
+    status: Array.from(raiz.querySelectorAll("[data-emprestimo]")).map((el) => ({
+      id: el.getAttribute("data-emprestimo"),
+      texto: el.querySelector("[data-status-do-emprestimo]").textContent,
+    })),
+  });
+
+  out.l_fechada = fotoDaLista();
+
+  clicar(botaoDosEncerrados());
+  await assentar();
+  out.l_aberta = fotoDaLista();
+
+  // E VOLTA. Um botao que so abre deixa a pessoa sem caminho de volta, e a
+  // secao aberta e exatamente o que esta issue veio encurtar.
+  clicar(botaoDosEncerrados());
+  await assentar();
+  out.l_fechada_de_novo = fotoDaLista();
+
+  // A ALTURA EM PIXELS, nos dois estados: o colapso tem de encurtar o card DE
+  // VERDADE. Sem esta medida, "a linha saiu do DOM" poderia conviver com um
+  // card do mesmo tamanho -- a forma de E4, para o bloco do devedor.
+  const cardDaLista = raiz.querySelector("[data-card-da-lista]");
+  out.l_altura_fechada = cardDaLista.getBoundingClientRect().height;
+
+  // O ULTIMO CLIQUE DEIXA A SECAO ABERTA DE PROPOSITO: K1 em diante mede o
+  // botao Cancelar e o Antecipar nos DOIS grupos, e fosse so no grupo em
+  // andamento "o encerrado nao tem botao" passaria vacuo -- a linha dele nem
+  // estaria na tela.
+  clicar(botaoDosEncerrados());
+  await assentar();
+  out.l_altura_aberta = cardDaLista.getBoundingClientRect().height;
 
   // K1: QUAIS LINHAS TEM CADA BOTAO. As duas listas saem juntas porque a
   // assercao e sobre a DIFERENCA entre elas -- uma condicao copiada do Cancelar
@@ -2946,6 +3017,17 @@ test("G4b: controle -- num erro que NAO e 409 o pedido FICA guardado", () => {
 test("I1: o botao Cancelar existe SO nos emprestimos `active`", () => {
   if (erroDeExecucao) throw erroDeExecucao;
 
+  // O RECORTE DA HMO-398 ESCONDE OS DOIS ENCERRADOS ao abrir o painel, e esta
+  // secao SO pode medir "o encerrado nao tem botao" com a linha dele na tela --
+  // dai ela clicar no botao dos encerrados antes de ler. As duas fotos vao
+  // juntas: a fechada prova que o recorte aconteceu, a aberta prova que a
+  // ausencia do botao e uma CONDICAO e nao um markup sem botao.
+  assert.deepEqual(
+    resultado.i_fechadas.sort(),
+    ["l-ativo", "l-auto-ativo"],
+    JSON.stringify(resultado.i_fechadas)
+  );
+
   // CONTROLE POSITIVO: as quatro linhas estao na tela. Sem ele, uma lista vazia
   // faria "nenhum botao no quitado" passar verde sobre uma tela sem linha
   // nenhuma -- a assercao de ausencia mais facil de mentir que existe.
@@ -3386,5 +3468,134 @@ test("K10: a antecipacao que FALHOU tem segunda tentativa", () => {
     resultado.k_retentativa.total,
     2,
     "a segunda tentativa nao saiu: o emprestimo ficou em voo (falta o `delete` do `finally`?)"
+  );
+});
+
+// ---------------------------------------------------------------------------
+// L (HMO-398) -- O RECORTE DA LISTA: o emprestimo encerrado sai de cima
+// ---------------------------------------------------------------------------
+// A HMO-394 fez o ciclo de pagamento escrever `status = 'settled'`, afirmando
+// que "nenhuma leitura muda de codigo". Tres leituras filtravam `active` e a
+// quarta -- a LISTA "Emprestimos desta conta" -- nao filtrava nada: medido em
+// producao, um emprestimo de 2 x R$ 50 integralmente pago continuava listado
+// enquanto o "a receber" daquela conta nao o contava mais.
+//
+// O RECORTE E UMA SEPARACAO, NAO UM FILTRO. Filtrar `active` como as outras tres
+// apagaria a unica coisa que a HMO-394 existe para mostrar -- quem acaba de
+// pagar a ultima parcela veria a linha SUMIR, e `mybank_loans_delete` recusa
+// emprestimo com parcela `paid` de proposito: nao ha outra tela onde procurar.
+
+const EM_ANDAMENTO_DO_K = [
+  "l-k-antecipada",
+  "l-k-ativo",
+  "l-k-auto",
+  "l-k-pago",
+];
+const ENCERRADOS_DO_K = ["l-k-cancelado", "l-k-quitado"];
+
+test("L1: o painel abre com os encerrados FORA da lista, e o resumo conta os dois", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  assert.deepEqual(
+    resultado.l_fechada.linhas.sort(),
+    EM_ANDAMENTO_DO_K,
+    JSON.stringify(resultado.l_fechada.linhas)
+  );
+  assert.deepEqual(resultado.l_fechada.encerradas, []);
+
+  // O RESUMO CONTA OS DOIS GRUPOS mesmo com a secao fechada. Sem ele a unica
+  // leitura disponivel para quem acabou de quitar seria "a linha desapareceu",
+  // e o card ficaria com a aparencia de mostrar tudo o que tem -- a familia
+  // `sumido-da-tela-pode-ser-so-indistinguivel`.
+  assert.equal(resultado.l_fechada.resumo, "4 em andamento · 2 encerrados");
+
+  // E O ROTULO DO BOTAO DIZ QUANTOS, nao "Ver mais": e o numero que separa o
+  // colapso de "o resto nao existe".
+  assert.equal(resultado.l_fechada.rotuloDoBotao, "Mostrar os 2 encerrados");
+});
+
+test("L2: controle negativo -- `active` com a serie TODA paga fica EM ANDAMENTO", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // OS DOIS LADOS, e eles tem a MESMA forma de parcelas: `l-k-pago` e 2/2 e
+  // `l-k-quitado` e 1/1 -- nenhum dos dois tem nada em aberto. O que os separa
+  // e SO o status, e e isso que esta assercao prende.
+  const progresso = new Map(
+    resultado.k_antecipada.map((l) => [l.id, l.progresso])
+  );
+  assert.equal(progresso.get("l-k-pago"), "2/2");
+  assert.equal(progresso.get("l-k-quitado"), "1/1");
+
+  // O LEGADO FICA: ele e o emprestimo que quitou ANTES da HMO-394 (que nao tem
+  // migration de backfill), e e da secao em andamento que vem a saida dele --
+  // o botao Cancelar, que K1 mede ao lado. Um recorte que lesse "nao tem
+  // parcela em aberto" o esconderia e o deixaria sem caminho nenhum.
+  assert.ok(
+    resultado.l_fechada.linhas.includes("l-k-pago"),
+    "o emprestimo `active` com tudo pago foi escondido: o recorte leu as parcelas, nao o status"
+  );
+  assert.ok(
+    !resultado.l_fechada.linhas.includes("l-k-quitado"),
+    "o `settled` continuou na lista: o recorte nao aconteceu"
+  );
+});
+
+test("L3: o botao revela os dois encerrados, e cada um vem MARCADO", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  assert.deepEqual(
+    resultado.l_aberta.linhas.sort(),
+    [...EM_ANDAMENTO_DO_K, ...ENCERRADOS_DO_K].sort(),
+    JSON.stringify(resultado.l_aberta.linhas)
+  );
+
+  // A MARCA E O ATRIBUTO e nao a posicao: aberta, os encerrados vem depois dos
+  // em andamento, e uma assercao por indice continuaria passando com os dois
+  // grupos embaralhados.
+  assert.deepEqual(resultado.l_aberta.encerradas.sort(), ENCERRADOS_DO_K);
+
+  assert.equal(resultado.l_aberta.rotuloDoBotao, "Esconder os encerrados");
+  // O RESUMO NAO MUDA com a abertura: ele conta o que a conta TEM, e nao o que
+  // a tela mostra agora.
+  assert.equal(resultado.l_aberta.resumo, resultado.l_fechada.resumo);
+});
+
+test("L4: o status sai em portugues, e distingue o quitado do cancelado", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  const texto = new Map(resultado.l_aberta.status.map((s) => [s.id, s.texto]));
+  assert.equal(texto.get("l-k-ativo"), "em andamento");
+  assert.equal(texto.get("l-k-pago"), "em andamento");
+  // OS DOIS ENCERRADOS NAO SAO A MESMA COISA, e e dentro desta secao que a
+  // diferenca importa: um foi honrado, o outro foi desfeito.
+  assert.equal(texto.get("l-k-quitado"), "quitado");
+  assert.equal(texto.get("l-k-cancelado"), "cancelado");
+
+  // E NENHUM VALOR CRU DO CHECK DA 053 SOBROU na tela em portugues.
+  for (const { id, texto: t } of resultado.l_aberta.status) {
+    assert.ok(
+      !["active", "settled", "cancelled"].includes(t),
+      `${id} imprimiu o status cru do banco: ${t}`
+    );
+  }
+});
+
+test("L5: fechar devolve a lista curta, e o colapso encurta o card EM PIXELS", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // O BOTAO VOLTA. Um colapso que so abre deixa a pessoa sem caminho de volta,
+  // e a lista comprida e exatamente o que esta issue veio encurtar.
+  assert.deepEqual(
+    resultado.l_fechada_de_novo.linhas.sort(),
+    EM_ANDAMENTO_DO_K,
+    JSON.stringify(resultado.l_fechada_de_novo.linhas)
+  );
+
+  // E ENCURTA DE VERDADE: sem esta medida, "a linha saiu do DOM" poderia
+  // conviver com um card do mesmo tamanho. A forma de E4, para o bloco do
+  // devedor.
+  assert.ok(
+    resultado.l_altura_aberta > resultado.l_altura_fechada + 40,
+    `o card nao encurtou: ${resultado.l_altura_fechada} fechado vs ${resultado.l_altura_aberta} aberto`
   );
 });
