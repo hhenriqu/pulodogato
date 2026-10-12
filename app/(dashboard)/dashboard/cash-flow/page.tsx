@@ -29,6 +29,16 @@ import {
   type GastoVariavel,
   type CategoriaDoGasto,
 } from "@/lib/variable-spend";
+import {
+  buscarLeitura,
+  podeAfirmarVazio,
+  type EstadoDaLeitura,
+} from "@/lib/offline-leitura";
+import {
+  FaixaDadoDoAparelho,
+  PainelErroDoServidor,
+  PainelSemRede,
+} from "@/components/SemRede";
 
 // =====================================================
 // Previsao de fluxo de caixa (HMO-145)
@@ -59,6 +69,39 @@ import {
 // O ajuste mora no navegador (localStorage), nao no banco: e preferencia de
 // leitura de UMA pessoa numa tela, e guardar isso exigiria migration -- ou
 // seja, um passo manual em producao -- para nao mudar nenhuma conta.
+//
+// -----------------------------------------------------------------------
+// DE ONDE VEIO O NUMERO (HMO-401)
+// -----------------------------------------------------------------------
+// Esta e a leitura mais PESADA do app: `/api/cash-flow` materializa a agenda
+// antes de somar, e faz seis consultas. O service worker guarda as respostas de
+// `/api/` por sete dias e serve a copia guardada quando o servidor passa de dez
+// segundos (`lib/pwa-runtime-cache.js`, `networkTimeoutSeconds: 10`). Ou seja: e
+// a tela com a maior chance de mostrar a copia -- e ela era a unica tela pesada
+// que nao DIZIA isso. A copia chega com `resposta.ok` verdadeiro e todo campo no
+// lugar; do lado do React nao ha nada que a distinga, a nao ser o carimbo.
+//
+// O efeito pratico era o sintoma da HMO-400: apagar uma receita na tela de
+// Receitas (que refaz a propria leitura) e abrir o Fluxo de Caixa mostrava o
+// estado de ANTES, sem nada na tela dizendo isso. Nenhum erro de servidor
+// envolvido -- a rota apaga certo.
+//
+// O cache de sete dias NAO muda: ler offline e feature, e uma previsao rotulada
+// "de 09/10 as 10:03" e util. O que muda e a tela calar. Daqui em diante a
+// leitura passa por `buscarLeitura` e os quatro estados dela tem destino:
+//
+//   do-aparelho      -> a faixa com o momento, e os numeros CONTINUAM na tela
+//                       (o dado e real, so pode estar velho);
+//   sem-rede         -> `PainelSemRede` NO LUGAR dos numeros;
+//   erro-do-servidor -> `PainelErroDoServidor`, que manda esperar e nao
+//                       procurar sinal;
+//   sessao-recusada  -> quem manda para /login e o layout.
+//
+// A decisao do item 2 da issue -- "pedir a leitura sem cache depois de uma
+// escrita?" -- ficou no MEIO: nao em toda carga (isso apagaria a leitura
+// offline da tela mais pesada do app, que e justamente onde ela mais serve),
+// e sim no botao "Atualizar" da faixa, que e o unico momento em que a pessoa
+// pediu explicitamente o numero de agora. Ver `PARAM_SEM_COPIA`.
 //
 // Toda cor sai de token (bg-card, text-muted-foreground, text-destructive...).
 // Uma classe de paleta fixa do Tailwind passa no build e vira um bloco claro no
@@ -138,6 +181,24 @@ const CHAVE_AJUSTE_CATEGORIAS = "pulodogato:cash-flow:gasto-por-categoria:v1";
 
 /** O que a linha "sem categoria" mostra. O calculo so conhece a chave vazia. */
 const ROTULO_SEM_CATEGORIA = "Sem categoria";
+
+/**
+ * O parametro que faz o pedido NAO cair na copia guardada no aparelho.
+ *
+ * `cache: "reload"` no `fetch` nao serve: ele pula o cache HTTP do navegador e
+ * nao tem efeito nenhum sobre o Cache Storage do service worker -- a regra
+ * NetworkFirst continua servindo a copia quando o servidor passa dos dez
+ * segundos, e o botao "Atualizar" devolveria exatamente a mesma faixa com
+ * exatamente o mesmo momento. Um botao que nao muda nada e pior que botao
+ * nenhum: a pessoa conclui que o app travou.
+ *
+ * Um parametro novo muda a CHAVE do cache, entao o workbox nao acha copia para
+ * esta URL e nao tem para onde cair: ou vem do servidor, ou a tela diz
+ * "sem rede" -- que e honesto. A rota ignora o parametro (ela le `dias` e
+ * `gastoDiario` e mais nada), e isso e deliberado: o desvio e do service
+ * worker, e nao deve chegar como regra no servidor.
+ */
+const PARAM_SEM_COPIA = "semCopia";
 
 function formatarBRL(valor: number): string {
   return Number(valor).toLocaleString("pt-BR", {
@@ -597,7 +658,14 @@ export default function CashFlowPage() {
   const [semGasto, setSemGasto] = useState(false);
   const [dias, setDias] = useState<number>(90);
   const [carregando, setCarregando] = useState(true);
-  const [erro, setErro] = useState<string | null>(null);
+
+  // De onde veio o que esta na tela (HMO-401). Antes disto a tela tinha UM
+  // estado de falha -- uma tarja com "Nao foi possivel carregar a previsao" --
+  // e o caso perigoso nao era falha nenhuma: a copia do aparelho entrava pelo
+  // caminho de SUCESSO, e a previsao de ontem aparecia sem uma palavra sobre
+  // isso. Ver o cabecalho deste arquivo.
+  const [estado, setEstado] = useState<EstadoDaLeitura | null>(null);
+  const [guardadoEm, setGuardadoEm] = useState<Date | null>(null);
 
   // `null` = usar o valor calculado. O estado comeca em `undefined` ate o
   // localStorage ser lido, e a primeira busca espera por isso: carregar com o
@@ -639,27 +707,50 @@ export default function CashFlowPage() {
     }
   }, []);
 
-  const carregar = useCallback(async () => {
-    if (ajuste === undefined) return;
-    setCarregando(true);
-    setErro(null);
-    try {
+  /**
+   * A leitura, classificada.
+   *
+   * `semCopia` so e verdadeiro quando a PESSOA pediu -- o botao "Atualizar" da
+   * faixa. Nunca e passado por referencia direta a um `onClick`: o React
+   * entregaria o evento do clique como primeiro argumento, e um `MouseEvent` e
+   * verdadeiro, entao toda tentativa de novo sairia furando o cache sem ninguem
+   * ter pedido. Dai os `() => carregar(...)` explicitos la embaixo.
+   */
+  const carregar = useCallback(
+    async (semCopia = false) => {
+      if (ajuste === undefined) return;
+      setCarregando(true);
+
       const query = new URLSearchParams({ dias: String(dias) });
       if (ajuste !== null) query.set("gastoDiario", String(ajuste));
-      const resp = await fetch(`/api/cash-flow?${query}`);
-      if (!resp.ok) throw new Error("Não foi possível carregar a previsão.");
-      const dados = await resp.json();
-      setFluxo(dados.cash_flow);
-      setEventos(dados.upcoming || []);
-      setGasto(dados.variable_spend ?? null);
-      setSemAssinaturas(Boolean(dados.recorrencias_indisponiveis));
-      setSemGasto(Boolean(dados.gasto_indisponivel));
-    } catch (e) {
-      setErro(e instanceof Error ? e.message : "Erro inesperado.");
-    } finally {
+      if (semCopia) query.set(PARAM_SEM_COPIA, String(Date.now()));
+
+      const leitura = await buscarLeitura<{
+        cash_flow?: FluxoDeCaixa;
+        upcoming?: EventoDoFluxo[];
+        variable_spend?: GastoVariavel | null;
+        recorrencias_indisponiveis?: boolean;
+        gasto_indisponivel?: boolean;
+      }>(`/api/cash-flow?${query}`);
+
+      setEstado(leitura.estado);
+      setGuardadoEm(leitura.guardadoEm);
+
+      // Sem corpo, o que ja estava na tela FICA. Zerar aqui faria o grafico
+      // desaparecer ao perder o sinal no meio de uma troca de horizonte -- e o
+      // painel de sem-rede ja substitui o conteudo quando nao ha nada.
+      if (leitura.dados) {
+        setFluxo(leitura.dados.cash_flow ?? null);
+        setEventos(leitura.dados.upcoming || []);
+        setGasto(leitura.dados.variable_spend ?? null);
+        setSemAssinaturas(Boolean(leitura.dados.recorrencias_indisponiveis));
+        setSemGasto(Boolean(leitura.dados.gasto_indisponivel));
+      }
+
       setCarregando(false);
-    }
-  }, [dias, ajuste]);
+    },
+    [dias, ajuste]
+  );
 
   useEffect(() => {
     carregar();
@@ -818,13 +909,15 @@ export default function CashFlowPage() {
         </div>
       </div>
 
-      {erro && (
-        <Card className="border-destructive">
-          <CardContent className="flex items-center gap-2 pt-6 text-destructive">
-            <AlertTriangle className="h-4 w-4" />
-            <span className="text-sm">{erro}</span>
-          </CardContent>
-        </Card>
+      {/* A faixa vai ACIMA de tudo, e nao ao lado do grafico: ela fala de TODO
+          numero desta tela, inclusive da data do mergulho, que e a manchete.
+          "Atualizar" pede sem a copia -- ver PARAM_SEM_COPIA. */}
+      {estado === "do-aparelho" && (
+        <FaixaDadoDoAparelho
+          guardadoEm={guardadoEm}
+          soLeitura
+          aoTentarDeNovo={() => carregar(true)}
+        />
       )}
 
       {/* A rota seguiu sem as assinaturas: a linha ficou OTIMISTA e a tela tem
@@ -847,6 +940,13 @@ export default function CashFlowPage() {
             Calculando...
           </CardContent>
         </Card>
+      ) : estado === "sem-rede" ? (
+        <PainelSemRede oQue="a sua previsão" aoTentarDeNovo={() => carregar()} />
+      ) : estado === "erro-do-servidor" ? (
+        <PainelErroDoServidor
+          oQue="a sua previsão"
+          aoTentarDeNovo={() => carregar()}
+        />
       ) : !fluxo ? null : (
         <>
           {/* A resposta pela qual a tela existe. */}
@@ -1067,7 +1167,15 @@ export default function CashFlowPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {eventos.length === 0 ? (
+              {/*
+                `podeAfirmarVazio` e nao so `length === 0`: com a copia do
+                aparelho a lista pode estar vazia por ser de ANTES de a pessoa
+                cadastrar a primeira conta, e as duas frases abaixo afirmam
+                justamente o contrario -- a segunda chega a convidar a cadastrar
+                de novo o que ja existe. Com dado guardado a secao fica sem
+                frase: quem explica o vazio e a faixa, la em cima.
+              */}
+              {eventos.length === 0 && podeAfirmarVazio(estado) ? (
                 <div className="space-y-2 py-4 text-center">
                   <p className="text-sm text-foreground">
                     Nenhum compromisso previsto para os próximos {fluxo.dias}{" "}
