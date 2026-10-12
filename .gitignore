@@ -550,3 +550,8 @@ next-env.d.ts
 # a falta desta linha que deixou `check-artefatos-de-build` vermelho na `main`
 # quando a HMO-372 criou a dela (ver a entrada acima).
 /.tmp-export-de-relatorio/
+
+# npm run test:receita-no-fluxo -- a receita prevista no fluxo de caixa
+# (HMO-400). Declarado JUNTO com a suite, pelo mesmo motivo das duas entradas
+# acima: sem a linha, `check-artefatos-de-build` fica vermelho na `main`.
+/.tmp-receita-no-fluxo/

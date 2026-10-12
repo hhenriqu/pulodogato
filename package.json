@@ -214,9 +214,11 @@
     "test:mybank-na-tela": "node scripts/compila.mjs -p scripts/tsconfig.mybank-na-tela-test.json && node --test scripts/test-mybank-na-tela.mjs",
     "mutantes:emprestimo-do-mybank": "node scripts/mutantes-emprestimo-do-mybank.mjs",
     "mutantes:mybank-na-tela": "node scripts/mutantes-mybank-na-tela.mjs",
+    "test:receita-no-fluxo": "node scripts/compila.mjs -p scripts/tsconfig.receita-no-fluxo-test.json && node scripts/resolve-aliases.mjs .tmp-receita-no-fluxo lib --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-receita-no-fluxo utils --espelha-raiz && node scripts/resolve-next-subpaths.mjs .tmp-receita-no-fluxo && node scripts/monta-duble-de-rota.mjs .tmp-receita-no-fluxo && node --test scripts/test-receita-no-fluxo.mjs",
     "test:leituras-do-mybank": "node scripts/compila.mjs -p scripts/tsconfig.leituras-do-mybank-test.json && node scripts/resolve-aliases.mjs .tmp-leituras-do-mybank lib --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-leituras-do-mybank utils --espelha-raiz && node scripts/resolve-next-subpaths.mjs .tmp-leituras-do-mybank && node scripts/monta-duble-de-rota.mjs .tmp-leituras-do-mybank && node --test scripts/test-leituras-do-mybank.mjs",
     "test:export-de-relatorio": "node scripts/compila.mjs -p scripts/tsconfig.export-de-relatorio-test.json && node scripts/resolve-aliases.mjs .tmp-export-de-relatorio lib --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-export-de-relatorio utils --espelha-raiz && node scripts/resolve-next-subpaths.mjs .tmp-export-de-relatorio && node scripts/monta-duble-de-rota.mjs .tmp-export-de-relatorio && node --test scripts/test-export-de-relatorio.mjs",
     "mutantes:export-de-relatorio": "node scripts/mutantes-export-de-relatorio.mjs",
+    "mutantes:receita-no-fluxo": "node scripts/mutantes-receita-no-fluxo.mjs",
     "mutantes:leituras-do-mybank": "node scripts/mutantes-leituras-do-mybank.mjs",
     "check-linha-do-mybank": "node scripts/check-linha-do-mybank-na-agenda.mjs",
     "mutantes:linha-do-mybank": "node scripts/mutantes-linha-do-mybank.mjs"

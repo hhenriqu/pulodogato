@@ -78,6 +78,7 @@ import {
   type TransacaoParaGastoVariavel,
 } from "@/lib/variable-spend";
 import { addDays, normalizeMerchant } from "@/lib/recurrence-detector";
+import { direcaoDaAgenda } from "@/lib/previsto-x-realizado";
 import {
   COLUNAS_DA_TRANSACAO,
   MAX_TRANSACOES,
@@ -89,10 +90,15 @@ interface LinhaPrevista {
   description: string | null;
   amount: number | string;
   due_date: string;
-  recurring_rule:
-    | { transaction_type: string }
-    | { transaction_type: string }[]
-    | null;
+  /**
+   * A direcao JA RESOLVIDA pela view (027): ocorrencia -> regra -> 'expense'.
+   *
+   * Nao e `transaction_type` e nao e o embed da regra -- ver o comentario da
+   * consulta. `string | null` e nao a uniao fechada porque e coluna de view
+   * lida pelo supabase-js: o tipo aqui nao prova nada sobre o que chega, e
+   * `direcaoDaAgenda` e quem peneira.
+   */
+  direction: string | null;
 }
 
 export async function GET(request: NextRequest) {
@@ -144,11 +150,41 @@ export async function GET(request: NextRequest) {
     // Sem piso de data: uma conta que venceu no mes passado e nao foi paga
     // continua sendo dinheiro que vai sair, e o calculo a traz para hoje. O
     // teto e feito aqui porque o banco ja sabe filtrar por data.
+    //
+    // A VIEW, E NAO A TABELA COM O EMBED DA REGRA (HMO-400)
+    // -----------------------------------------------------
+    // Esta consulta lia `scheduled_transactions` com
+    // `recurring_rule:recurring_rules(transaction_type)` e deduzia a direcao da
+    // REGRA. A ocorrencia tambem guarda `transaction_type` desde a 027, e a
+    // previsao AVULSA -- a que nasce em «Nova receita», sem regra fixa nenhuma
+    // atras -- nao tem regra para consultar: o embed vinha `null` e o `?:` caia
+    // em `"expense"`. Uma receita prevista entrava no fluxo de caixa como conta
+    // a pagar, pelo valor inteiro e com o sinal invertido.
+    //
+    // MEDIDO EM PRODUCAO na HMO-400, pela conta de teste: uma receita prevista
+    // de R$ 1.000,00 derrubou o saldo projetado de -189,98 para -1.189,98 (uma
+    // diferenca de R$ 1.000, nao de R$ 2.000: o valor nao era somado do lado
+    // certo, era subtraido do errado) e apareceu em «o que vem por ai» como
+    // -1.000,00. A tela de Receitas, no mesmo instante, mostrava
+    // `previsto: 1000` -- as duas leituras discordavam no SINAL.
+    //
+    // `direction` da `scheduled_transactions_effective` e a precedencia
+    // (ocorrencia -> regra -> 'expense') resolvida UMA vez na migration 027,
+    // cujo proprio comentario nomeia este defeito: "a copia esquecida em uma das
+    // tres rotas de leitura seria justamente uma receita prevista aparecendo
+    // como conta a pagar". /api/projection ja tinha sido consertada assim na
+    // HMO-256 e /api/dashboard/previsao nasceu lendo a view; esta rota era a
+    // copia que faltava.
+    //
+    // O `.eq("user_id")` FICA, e isso nao e redundancia com a RLS: a view e
+    // `security_invoker` e deixa passar as linhas de GRUPO dos outros membros
+    // (a policy do 005 libera `group_id IS NOT NULL AND is_group_member(...)`).
+    // Sem o filtro, o aluguel de R$ 3.000 do grupo entraria no fluxo de caixa
+    // de cada membro pelo valor CHEIO -- o recorte da minha parte e de
+    // /api/dashboard/previsao, nao desta rota.
     const { data: previstas, error: erroPrevistas } = await supabase
-      .from("scheduled_transactions")
-      .select(
-        "id, description, amount, due_date, recurring_rule:recurring_rules(transaction_type)"
-      )
+      .from("scheduled_transactions_effective")
+      .select("id, description, amount, due_date, direction")
       .eq("user_id", user.id)
       .eq("status", "pending")
       .lte("due_date", ate);
@@ -161,20 +197,19 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // `direcaoDaAgenda` e nao um `=== "income"` escrito aqui: a precedencia
+    // ("so `income` sai do lado de pagar", desconhecido cai em despesa) tem UMA
+    // copia, em lib/previsto-x-realizado.ts, e e ela que o «A vencer» e o
+    // safe-to-spend ja usam. Repetir a comparacao aqui seria a segunda copia --
+    // e foi a divergencia entre copias que produziu esta issue.
     const paraCalculo: PrevistaParaFluxo[] = ((previstas ??
-      []) as LinhaPrevista[]).map((p) => {
-      const regra = Array.isArray(p.recurring_rule)
-        ? p.recurring_rule[0]
-        : p.recurring_rule;
-
-      return {
-        id: p.id,
-        description: p.description,
-        amount: p.amount,
-        due_date: p.due_date,
-        tipo: regra?.transaction_type === "income" ? "income" : "expense",
-      };
-    });
+      []) as LinhaPrevista[]).map((p) => ({
+      id: p.id,
+      description: p.description,
+      amount: p.amount,
+      due_date: p.due_date,
+      tipo: direcaoDaAgenda(p.direction),
+    }));
 
     // As assinaturas que o detector achou sozinho. `IGNORED` e `CANCELLED`
     // ficam de fora ja na consulta -- o filtro tambem esta dentro do calculo (e
