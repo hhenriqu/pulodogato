@@ -173,9 +173,13 @@ async function painelDoCredor(quem, loanId) {
 
   const emprestimo = (r.corpo.loans ?? []).find((l) => l.id === loanId);
   if (!emprestimo) {
-    // A lista filtra `status = 'active'`: um emprestimo ausente aqui pode ser
-    // "quitado" (o passo 7) ou "nunca existiu", e os dois NAO sao a mesma
-    // coisa. Quem chama distingue pela leitura da tabela.
+    // A MEDICAO DE 2026-10-12 DESMENTIU O QUE ESTE COMENTARIO DIZIA ANTES: a
+    // rota NAO filtra por status. Depois do passo 7 o emprestimo volta aqui
+    // PRESENTE, com `status: "settled"` e `aReceber: 0` -- quem filtra
+    // `status === "active"` e a TELA, em `linhasAReceber` (`lib/mybank-na-tela.
+    // ts`), e e por isso que ele sai do cartao "A receber" sem sair da resposta.
+    // Entao ausencia aqui so pode ser "nunca existiu", e o passo 7 prova a
+    // quitacao pelo `status` que leu, nao por nao ter achado nada.
     return { presente: false };
   }
 
@@ -486,10 +490,15 @@ const loanNaTabela = await tabela(
 );
 
 linha(`emprestimo na tabela: ${JSON.stringify(loanNaTabela.corpo)}`);
+linha(`A (painel): ${JSON.stringify(noFimDeA)}`);
+// "Sai da lista A receber" e consequencia do `status`, nao da ausencia: a rota
+// devolve o emprestimo quitado, e `linhasAReceber` descarta todo emprestimo com
+// `status !== "active"`. Entao o que prova o passo 7 e o par (settled, 0).
 linha(
-  `A (painel): ${
-    noFimDeA.presente ? JSON.stringify(noFimDeA) : "FORA da lista A receber"
-  }`
+  `sai do cartao "A receber": ` +
+    (noFimDeA.status === "settled" && noFimDeA.aReceber === 0
+      ? `sim -- status ${noFimDeA.status} e a receber R$ 0`
+      : `<<< NAO: status ${noFimDeA.status}, a receber R$ ${noFimDeA.aReceber}`)
 );
 linha(`B (Contas a Pagar): ${JSON.stringify(noFimDeB)}`);
 
