@@ -39,8 +39,18 @@ const originais = {
   [SCHEDULED]: readFileSync(SCHEDULED, "utf8"),
 };
 
-/** `suite` e o npm script que tem de ficar vermelho. */
-const MUTACOES = [
+/**
+ * `suite` e o npm script que tem de ficar vermelho.
+ *
+ * A LISTA SE CHAMA `MUTANTES`, E NAO `MUTACOES` (HMO-392). Nao e gosto: os tres
+ * predicados de familia de `converte-mutantes-em-bloco.mjs` procuram
+ * `const MUTANTES = [` ou `const mutantes = [`, e enquanto esta lista se chamava
+ * `MUTACOES` nenhum deles casava -- este runner era DESCARTADO EM SILENCIO por
+ * `npm run check-ancora-de-mutante`, a guarda que confere se cada `de` ainda
+ * aparece (uma vez so) no arquivo que ele muta. Renomear de volta tira os 22
+ * mutantes daqui da medicao outra vez.
+ */
+const MUTANTES = [
   // -------------------------------------------------------------------------
   // A REGRA
   // -------------------------------------------------------------------------
@@ -296,7 +306,7 @@ const restaurar = () => {
 };
 
 try {
-  for (const m of MUTACOES) {
+  for (const m of MUTANTES) {
     const original = originais[m.alvo];
     if (!original.includes(m.de)) {
       // Mutante que nao aplica e o pior resultado: conta como morto sem nunca
@@ -345,7 +355,7 @@ for (const suite of ["test:transferencia", "test:materializacao"]) {
 
 console.log(
   sobreviventes === 0
-    ? `\n${MUTACOES.length} de ${MUTACOES.length} mutacoes mortas.`
-    : `\n${sobreviventes} SOBREVIVENTE(S) de ${MUTACOES.length}.`
+    ? `\n${MUTANTES.length} de ${MUTANTES.length} mutacoes mortas.`
+    : `\n${sobreviventes} SOBREVIVENTE(S) de ${MUTANTES.length}.`
 );
 process.exit(sobreviventes === 0 && controleOk ? 0 : 1);

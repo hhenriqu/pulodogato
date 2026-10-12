@@ -158,13 +158,247 @@ const MUTACOES = [
 console.log(MUTACOES.length);
 `;
 
+// =====================================================
+// OS FIXTURES DAS QUATRO FORMAS SEM `const FONTE` (HMO-392)
+// =====================================================
+// A HMO-389 deixou 20 runners em `FORMA_PROPRIA` com a forma de cada um
+// escrita. Os 17 que a HMO-392 ensinou sao lidos por `mioloDeVariosAlvos`, e os
+// fixtures abaixo sao a forma de cada grupo reduzida ao minimo que ainda
+// exercita a parte que pode falhar em silencio.
+//
+// POR QUE ELES NAO ENTRAM NA ARVORE PADRAO DA VARREDURA
+// -----------------------------------------------------
+// Os casos 7-9 afirmam `3 mutantes lidos em 3 runners` e `painel:1 tupla:1
+// hmo246:1`. Somar fixture na arvore padrao mudaria esses numeros e eu
+// consertaria a assercao -- que e como um controle negativo deixa de medir sem
+// ninguem notar. Os novos entram por `extras`, nos casos que os pedem.
+
+const ANCORA_DO_OUTRO = "  return 1;";
+const OUTRO_ALVO = `export function um(): number {
+${ANCORA_DO_OUTRO}
+}
+`;
+
+// O trecho que aparece DUAS vezes -- o alvo do `todas: true`.
+const PEDAGIO = "podeMostrarNumero(estado) && resumo";
+const ALVO_REPETIDO = `export const a = ${PEDAGIO} ? 1 : 0;
+export const b = ${PEDAGIO} ? 2 : 0;
+`;
+
+const MIGRACAO = "database/migrations/exemplo_da_ancora.sql";
+const ANCORA_SQL = "ALTER TABLE public.exemplo\n  ALTER COLUMN tipo SET NOT NULL;";
+const A_VIEW = "CREATE OR REPLACE VIEW public.exemplo_view AS SELECT 1;";
+const SQL_INTACTO = `-- a migration de exemplo
+${A_VIEW}
+
+${ANCORA_SQL}
+`;
+
+// 1. MIGRATION SQL, E COM AS DUAS LISTAS (o lote de 8 + `fatura-escolhida`).
+//
+// Tres coisas que nenhum fixture anterior tinha, e as tres sao parte do
+// conserto:
+//
+//   - o alvo e `const MIGRATION`, e NAO existe `const FONTE`;
+//   - `const VIEW_INTEIRA` e recortado do PROPRIO arquivo (`original.slice`).
+//     `mioloDoHmo246` APAGA o `const original` por nao precisar dele; aqui
+//     apagar deixa o miolo sem carregar, e e por isso que a leitura nova
+//     importa o miolo com um `readFileSync` resolvido contra a RAIZ;
+//   - uma SEGUNDA lista (`MUTANTES_TS`), cujo mutante tem `arquivo:` E `alvo:`
+//     -- e o `alvo:` dali e o nome de uma SUITE, nao um caminho. Lido como
+//     caminho, sairia `ARQUIVO AUSENTE`.
+//
+// `const psql` fica no recorte de proposito: ele chama `execFileSync` e
+// referencia `PG`, que esta FORA do recorte. Definir a funcao e inofensivo --
+// chamar e que nao seria --, e e esse o unico motivo de os oito runners de
+// migration poderem ser lidos sem driver nenhum.
+const RUNNER_MIGRACAO = `#!/usr/bin/env node
+import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+
+const PG = process.env.PG_URL_BASE ?? "postgresql://postgres:postgres@127.0.0.1:5432";
+const TEMPLATE = process.env.PG_TEMPLATE ?? "exemplo_base";
+const MIGRATION = ${JSON.stringify(MIGRACAO)};
+const TESTE = "database/tests/exemplo_da_ancora_test.sql";
+
+const psql = (db, args) =>
+  execFileSync("psql", ["-v", "ON_ERROR_STOP=1", \`\${PG}/\${db}\`, ...args], {
+    encoding: "utf8",
+  });
+
+const original = readFileSync(MIGRATION, "utf8");
+
+const A_TRAVA = ${JSON.stringify(ANCORA_SQL)};
+
+const VIEW_INTEIRA = original.slice(
+  original.indexOf("CREATE OR REPLACE VIEW"),
+  original.indexOf("SELECT 1;") + "SELECT 1;".length,
+);
+
+const MUTANTES = [
+  { nome: "migracao_sem_a_trava", de: A_TRAVA, para: "-- (mutado) sem a trava" },
+  { nome: "migracao_sem_a_view", de: VIEW_INTEIRA, para: "-- (mutado) sem a view" },
+];
+
+const ARQUIVO_TS = "lib/exemplo-da-ancora.ts";
+
+const MUTANTES_TS = [
+  {
+    nome: "segunda_lista_guarda_do_saldo",
+    arquivo: ARQUIVO_TS,
+    alvo: "test:exemplo-da-ancora",
+    de: ${JSON.stringify(ANCORA)},
+    para: "  if (false) return 0;",
+  },
+];
+
+console.log(MUTANTES.length, MUTANTES_TS.length, TESTE, TEMPLATE, psql.length);
+`;
+
+// 2. MULTI-ARQUIVO SEM ALVO DE MODULO (`alcance-da-serie` e os outros tres).
+//
+// `const MARCACAO` vem ANTES das constantes de caminho de proposito: e a forma
+// de `mutantes-fiacao-do-bruto.mjs`, cujo campo `medida:` fez a primeira versao
+// desta leitura abortar com `MARCACAO is not defined` -- porque a coleta de
+// identificadores era uma LISTA de campos conhecidos e `medida` era o setimo.
+// O `const originais` com `readFileSync` por alvo e a outra metade da forma.
+const RUNNER_MULTI_ALVO = `#!/usr/bin/env node
+import { readFileSync } from "node:fs";
+
+const MARCACAO = "test:exemplo-da-ancora";
+
+const UM = "lib/exemplo-da-ancora.ts";
+const OUTRO = "lib/exemplo-do-outro-alvo.ts";
+
+const originais = {
+  [UM]: readFileSync(UM, "utf8"),
+  [OUTRO]: readFileSync(OUTRO, "utf8"),
+};
+
+const MUTANTES = [
+  {
+    nome: "multi_no_primeiro",
+    fonte: UM,
+    de: ${JSON.stringify(ANCORA)},
+    para: "  if (false) return 0;",
+    medida: MARCACAO,
+  },
+  {
+    nome: "multi_no_segundo",
+    alvo: OUTRO,
+    de: ${JSON.stringify(ANCORA_DO_OUTRO)},
+    para: "  return 2;",
+    medida: MARCACAO,
+  },
+];
+
+console.log(MUTANTES.length, Object.keys(originais).length);
+`;
+
+// 3. O ALVO CHAMADO `ALVO`, com `todas: true` (`contrato-dos-cartoes`).
+//
+// O `todas: true` esta aqui porque foi ele que produziu as SEIS primeiras
+// "ancoras ambiguas" da leitura nova, e as seis eram FALSAS: o driver destes
+// runners usa `replaceAll`, e as duas ocorrencias SAO o mutante. O driver do
+// fixture repete esse `replaceAll` para que o campo nao seja decoracao.
+const RUNNER_ALVO_NOMEADO = `#!/usr/bin/env node
+import { readFileSync } from "node:fs";
+
+const ALVO = "lib/exemplo-do-repetido.ts";
+const ORACULO = "contrato";
+
+const original = readFileSync(ALVO, "utf8");
+
+const MUTANTES = [
+  {
+    nome: "as_duas_ocorrencias_de_uma_vez",
+    de: ${JSON.stringify(PEDAGIO)},
+    para: "true",
+    todas: true,
+  },
+];
+
+for (const { de, para, todas } of MUTANTES) {
+  console.log(todas ? original.replaceAll(de, para) : original.replace(de, para), ORACULO);
+}
+`;
+
+// 4. O ALVO POR APELIDO (`fatura-do-periodo`).
+//
+// `alvo: "apelido-do-alvo"` nao e caminho nenhum: quem sabe o caminho e o
+// `const ALVOS`. Sem ler o mapa, os mutantes sairiam todos como
+// `ARQUIVO AUSENTE` -- alto e errado.
+const RUNNER_APELIDO = `#!/usr/bin/env node
+const ALVOS = {
+  "apelido-do-alvo": {
+    fonte: "lib/exemplo-da-ancora.ts",
+    dependencias: [],
+    saida: ".tmp-exemplo-da-ancora",
+  },
+};
+
+const MUTANTES = [
+  {
+    alvo: "apelido-do-alvo",
+    nome: "apelido_guarda_do_saldo",
+    de: ${JSON.stringify(ANCORA)},
+    para: "  if (false) return 0;",
+  },
+];
+
+console.log(Object.keys(ALVOS).length, MUTANTES.length);
+`;
+
+// 5. O CASO QUE TEM DE ABORTAR: `const FONTE` E DUAS LISTAS.
+//
+// `mioloDoHmo246` recorta do `const FONTE` ao `];` da PRIMEIRA lista -- ele nao
+// tem como saber que ha outra. Nenhum runner de verdade esta nesse estado hoje
+// (o unico de duas listas nao declara `FONTE`), e esta forma existe so para que
+// o caminho antigo NAO possa medir metade de um runner em silencio no dia em que
+// alguem acrescentar uma segunda lista a um runner com `FONTE`.
+const RUNNER_FONTE_COM_DUAS_LISTAS = `#!/usr/bin/env node
+const FONTE = "lib/exemplo-da-ancora.ts";
+
+const MUTANTES = [
+  {
+    nome: "fonte_primeira_lista",
+    de: ${JSON.stringify(ANCORA)},
+    para: "  if (false) return 0;",
+  },
+];
+
+const MUTANTES_DEPOIS = [
+  {
+    nome: "fonte_segunda_lista",
+    de: ${JSON.stringify(ANCORA)},
+    para: "  if (0) return 0;",
+  },
+];
+
+console.log(FONTE, MUTANTES.length, MUTANTES_DEPOIS.length);
+`;
+
+/** Os quatro fixtures da HMO-392, prontos para entrar como `extras`. */
+const FORMAS_SEM_FONTE = {
+  "mutantes-exemplo-da-migracao.mjs": RUNNER_MIGRACAO,
+  "mutantes-exemplo-multi-alvo.mjs": RUNNER_MULTI_ALVO,
+  "mutantes-exemplo-do-alvo-nomeado.mjs": RUNNER_ALVO_NOMEADO,
+  "mutantes-exemplo-do-apelido.mjs": RUNNER_APELIDO,
+};
+
 const raizTmp = mkdtempSync(path.join(tmpdir(), "ancora-de-mutante-"));
 
 /**
  * Uma arvore para a VARREDURA (sem argumento): um runner de cada familia, mais
  * os extras que o caso pedir. `extras` e um objeto `{ nomeDoArquivo: fonte }`.
+ *
+ * `alvos` sao os arquivos MUTADOS alem de `lib/exemplo-da-ancora.ts` --
+ * `{ "caminho/relativo.ts": conteudo }`. Os fixtures da HMO-392 medem quatro
+ * arquivos diferentes (um `.sql` entre eles), e o caso que mata UMA ancora
+ * precisa deixar as outras tres vivas: sem isso a assercao nao distinguiria
+ * "acusou o mutante certo" de "acusou todos".
  */
-function arvoreDaVarredura(nome, alvo, extras = {}) {
+function arvoreDaVarredura(nome, alvo, extras = {}, alvos = {}) {
   const raiz = path.join(raizTmp, nome);
   mkdirSync(path.join(raiz, "scripts"), { recursive: true });
   mkdirSync(path.join(raiz, "lib"), { recursive: true });
@@ -182,9 +416,20 @@ function arvoreDaVarredura(nome, alvo, extras = {}) {
     writeFileSync(path.join(raiz, "scripts", arquivo), fonte);
   }
   writeFileSync(path.join(raiz, "lib/exemplo-da-ancora.ts"), alvo);
+  for (const [caminho, conteudo] of Object.entries(alvos)) {
+    mkdirSync(path.join(raiz, path.dirname(caminho)), { recursive: true });
+    writeFileSync(path.join(raiz, caminho), conteudo);
+  }
 
   return raiz;
 }
+
+/** Os alvos que os quatro fixtures da HMO-392 mutam, todos intactos. */
+const ALVOS_SEM_FONTE = {
+  "lib/exemplo-do-outro-alvo.ts": OUTRO_ALVO,
+  "lib/exemplo-do-repetido.ts": ALVO_REPETIDO,
+  [MIGRACAO]: SQL_INTACTO,
+};
 
 /** Roda a guarda no modo VARREDURA -- sem argumento nenhum. */
 function varrer(raiz) {
@@ -462,6 +707,218 @@ console.log("9. runner de forma desconhecida aborta a varredura (o defeito da HM
     "diz que a familia e que nao foi reconhecida",
     /nao e de familia nenhuma/.test(saida),
     `abortou por outro motivo:\n${saida}`,
+  );
+}
+
+// =====================================================
+// 10. AS QUATRO FORMAS SEM `const FONTE` SAO LIDAS (HMO-392)
+// =====================================================
+// O CONTROLE POSITIVO DA ISSUE. Na main os quatro fixtures casam com `ehHmo246`
+// (o predicado e a CAIXA ALTA da lista, e eles a tem) e `mioloDoHmo246` os
+// recusa no primeiro `if` -- era isso que mantinha 17 runners de verdade em
+// `FORMA_PROPRIA`. Medido com estes fixtures na main (5739b26):
+//
+//     guarda ANTES:  exit 1  Error: nao achei `const FONTE = "...";`
+//     guarda DEPOIS: exit 0  10 mutantes lidos em 7 runners
+//
+// A assercao olha o TOTAL e cada nome de mutante, nao so o exit code: um
+// normalizador que lesse a primeira lista de `exemplo-da-migracao` e parasse
+// sairia 0 tambem, com 9 mutantes em vez de 10 -- e a diferenca de UM e o lote
+// inteiro de `MUTANTES_TS` em `mutantes-fatura-escolhida.mjs`.
+console.log("10. a varredura le as quatro formas sem `const FONTE`");
+{
+  const { codigo, saida } = varrer(
+    arvoreDaVarredura("sem-fonte", ALVO_INTACTO, FORMAS_SEM_FONTE, ALVOS_SEM_FONTE),
+  );
+  afirmar("sai 0", codigo === 0, `saiu ${codigo}:\n${saida}`);
+  afirmar(
+    "le os 7 runners e soma os 10 mutantes",
+    /10 mutantes lidos em 7 runners/.test(saida),
+    `o total nao fecha -- alguma lista ficou sem ser lida:\n${saida}`,
+  );
+  afirmar(
+    "a familia hmo246 passa a contar os 5 (1 com FONTE + 4 sem)",
+    /hmo246:5/.test(saida),
+    `o placar por familia nao viu os quatro novos:\n${saida}`,
+  );
+  afirmar(
+    "le AS DUAS listas do fixture de migration (2 + 1)",
+    /mutantes-exemplo-da-migracao\.mjs: 3 mutantes/.test(saida),
+    `leu metade do runner de duas listas e disse que leu o runner:\n${saida}`,
+  );
+  afirmar(
+    "nenhuma ancora morta nem ambigua nos quatro",
+    /0 com ancora ambigua[^\n]*0 com ancora MORTA/.test(saida),
+    `a leitura nova inventou achado em arvore intacta:\n${saida}`,
+  );
+  afirmar(
+    "nao sobra nenhum dos quatro na lista de `sem medir`",
+    !/sem medir {2}scripts\/mutantes-exemplo-(da-migracao|multi-alvo|do-alvo-nomeado|do-apelido)/.test(
+      saida,
+    ),
+    `um fixture entrou como excluido pelo nome:\n${saida}`,
+  );
+}
+
+// =====================================================
+// 11. ANCORA MORTA NA SEGUNDA LISTA REPROVA (a armadilha das DUAS listas)
+// =====================================================
+// `mutantes-fatura-escolhida.mjs` muta a migration 041 (`MUTANTES`, 10) E a
+// fiacao de TypeScript que a le (`MUTANTES_TS`, 8). Um leitor que parasse na
+// primeira lista imprimiria `10 mutantes`, entraria no censo como runner MEDIDO
+// e deixaria 8 ancoras sem medida -- com nada na saida dizendo isso. E a mentira
+// da HMO-389 uma camada mais para dentro: um numero verdadeiro sobre um recorte
+// que a linha nao menciona.
+//
+// Este caso mata a ancora da SEGUNDA lista e deixa a primeira (o `.sql`)
+// intacta. Um leitor de uma lista so sai 0 aqui.
+console.log("11. ancora morta na SEGUNDA lista do mesmo runner reprova");
+{
+  const renomeado = ALVO_INTACTO.replace("saldo < 0", "valor < 0");
+  afirmar(
+    "o alvo da segunda lista realmente perdeu a ancora",
+    !renomeado.includes(ANCORA),
+    "o fixture nao mudou nada -- este caso seria vacuo",
+  );
+  afirmar(
+    "a primeira lista (o .sql) segue intacta",
+    SQL_INTACTO.includes(ANCORA_SQL),
+    "o .sql do fixture perdeu a ancora -- o caso nao isolaria a segunda lista",
+  );
+
+  const { codigo, saida } = varrer(
+    arvoreDaVarredura("segunda-lista-morta", renomeado, FORMAS_SEM_FONTE, ALVOS_SEM_FONTE),
+  );
+  afirmar("sai != 0", codigo !== 0, `saiu ${codigo}, deveria reprovar:\n${saida}`);
+  afirmar(
+    "nomeia o mutante da SEGUNDA lista",
+    /ancora MORTA {2}segunda_lista_guarda_do_saldo/.test(saida),
+    `a segunda lista nao foi medida:\n${saida}`,
+  );
+  afirmar(
+    "nao acusa os mutantes da PRIMEIRA lista, que estao vivos",
+    !/migracao_sem_a_(trava|view)/.test(saida),
+    `acusou a lista intacta junto -- o alvo das duas listas se misturou:\n${saida}`,
+  );
+
+  // A OUTRA METADE: o caminho ANTIGO (o do `const FONTE`) nao pode medir
+  // metade de um runner em silencio. Ele recorta do `FONTE` ao `];` da primeira
+  // lista, entao a unica saida honesta e ABORTAR nomeando o arquivo.
+  const comFonte = varrer(
+    arvoreDaVarredura("fonte-com-duas-listas", ALVO_INTACTO, {
+      "mutantes-exemplo-de-duas-com-fonte.mjs": RUNNER_FONTE_COM_DUAS_LISTAS,
+    }),
+  );
+  afirmar(
+    "`const FONTE` com duas listas ABORTA",
+    comFonte.codigo !== 0,
+    `saiu ${comFonte.codigo} -- mediu so a primeira lista e passou:\n${comFonte.saida}`,
+  );
+  afirmar(
+    "a mensagem nomeia o arquivo e as duas listas",
+    /mutantes-exemplo-de-duas-com-fonte\.mjs/.test(comFonte.saida) &&
+      /MUTANTES, MUTANTES_DEPOIS/.test(comFonte.saida),
+    `abortou sem dizer qual runner nem quais listas:\n${comFonte.saida}`,
+  );
+}
+
+// =====================================================
+// 12. O ALVO DE CADA MUTANTE E O CERTO, NAO "o primeiro arquivo do runner"
+// =====================================================
+// O MODO DE FALHA MAIS CARO DESTA FAMILIA, e o que a HMO-389 pagou tres vezes:
+// atribuir o arquivo errado produz `ancora MORTA` FALSA, que reprova a main
+// acusando codigo CORRETO. A primeira reacao de quem ve isso e desligar o step,
+// e ai a guarda inteira para de valer.
+//
+// O caso mata a ancora SO de `lib/exemplo-do-outro-alvo.ts` -- o SEGUNDO alvo
+// do fixture multi-arquivo, nomeado por `alvo:` -- e deixa
+// `lib/exemplo-da-ancora.ts` intacto. Uma leitura que medisse tudo contra o
+// primeiro arquivo declarado acusaria `multi_no_primeiro` (que esta vivo) e
+// calaria `multi_no_segundo` (que morreu): os dois erros de uma vez, e o exit
+// code seria o mesmo.
+console.log("12. a ancora morta e atribuida ao arquivo CERTO entre os varios alvos");
+{
+  const outroMorto = OUTRO_ALVO.replace("return 1;", "return 42;");
+  afirmar(
+    "o segundo alvo realmente perdeu a ancora",
+    !outroMorto.includes(ANCORA_DO_OUTRO),
+    "o fixture nao mudou nada -- este caso seria vacuo",
+  );
+
+  const { codigo, saida } = varrer(
+    arvoreDaVarredura("alvo-certo", ALVO_INTACTO, FORMAS_SEM_FONTE, {
+      ...ALVOS_SEM_FONTE,
+      "lib/exemplo-do-outro-alvo.ts": outroMorto,
+    }),
+  );
+  afirmar("sai != 0", codigo !== 0, `saiu ${codigo}, deveria reprovar:\n${saida}`);
+  afirmar(
+    "acusa `multi_no_segundo`, e no arquivo dele",
+    /ancora MORTA {2}multi_no_segundo {2}\[lib\/exemplo-do-outro-alvo\.ts\]/.test(saida),
+    `nao mediu o mutante contra o alvo que ele nomeia:\n${saida}`,
+  );
+  afirmar(
+    "NAO acusa `multi_no_primeiro`, cuja ancora esta viva",
+    !/multi_no_primeiro/.test(saida),
+    `MORTA FALSA: mediu o primeiro mutante contra o arquivo do segundo:\n${saida}`,
+  );
+  afirmar(
+    "NAO acusa o mutante do apelido, que aponta para o alvo intacto",
+    !/apelido_guarda_do_saldo/.test(saida),
+    `o mapa de apelidos resolveu para o arquivo errado:\n${saida}`,
+  );
+}
+
+// =====================================================
+// 13. `todas: true` DISPENSA A OCORRENCIA UNICA -- MAS NAO O ZERO
+// =====================================================
+// AS SEIS PRIMEIRAS "ANCORAS AMBIGUAS" DA LEITURA NOVA ERAM FALSAS: cinco em
+// `mutantes-transferencia-recorrente.mjs` e uma em
+// `mutantes-contrato-dos-cartoes.mjs`, todas em mutantes com `todas: true`, cujo
+// driver usa `replaceAll` -- ali as DUAS ocorrencias sao o mutante, e o
+// comentario do `CORPO_DO_CHECK` diz isso em voz alta.
+//
+// O risco de respeitar o campo e transformar `todas: true` em escotilha: um
+// mutante que nao mede nada ficaria verde so por declarar o campo. Por isso o
+// caso tem as DUAS metades, e a segunda e a que importa -- `replaceAll` de um
+// trecho que nao existe tambem nao muta nada.
+console.log("13. `todas: true` passa com 2 ocorrencias e REPROVA com zero");
+{
+  afirmar(
+    "o alvo do `todas` realmente tem o trecho DUAS vezes",
+    ALVO_REPETIDO.split(PEDAGIO).length - 1 === 2,
+    "o fixture nao repete o trecho -- a metade positiva seria vacua",
+  );
+
+  const { codigo, saida } = varrer(
+    arvoreDaVarredura("todas-duas", ALVO_INTACTO, FORMAS_SEM_FONTE, ALVOS_SEM_FONTE),
+  );
+  afirmar("2 ocorrencias com `todas: true` sai 0", codigo === 0, `saiu ${codigo}:\n${saida}`);
+  afirmar(
+    "nao acusa AMBIGUA no mutante que quer as duas",
+    !/as_duas_ocorrencias_de_uma_vez/.test(saida),
+    `AMBIGUA FALSA: o campo \`todas\` nao foi lido:\n${saida}`,
+  );
+
+  // A SEGUNDA METADE: o mesmo mutante, com o trecho apagado do alvo.
+  const semOPedagio = ALVO_REPETIDO.replaceAll(PEDAGIO, "sempre");
+  afirmar(
+    "o alvo sem o pedagio realmente perdeu o trecho",
+    !semOPedagio.includes(PEDAGIO),
+    "o fixture nao mudou nada -- a metade negativa seria vacua",
+  );
+
+  const zero = varrer(
+    arvoreDaVarredura("todas-zero", ALVO_INTACTO, FORMAS_SEM_FONTE, {
+      ...ALVOS_SEM_FONTE,
+      "lib/exemplo-do-repetido.ts": semOPedagio,
+    }),
+  );
+  afirmar("zero ocorrencia com `todas: true` sai != 0", zero.codigo !== 0, `saiu ${zero.codigo}`);
+  afirmar(
+    "diz ancora MORTA e nomeia o mutante",
+    /ancora MORTA {2}as_duas_ocorrencias_de_uma_vez/.test(zero.saida),
+    `\`todas: true\` virou escotilha -- zero ocorrencia passou:\n${zero.saida}`,
   );
 }
 

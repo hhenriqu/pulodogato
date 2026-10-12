@@ -113,6 +113,8 @@ import {
   mioloDaTupla,
   ehHmo246,
   mioloDoHmo246,
+  mioloDeVariosAlvos,
+  nomesDasListas,
   elementosDaPrimeiraEntrada,
 } from "./converte-mutantes-em-bloco.mjs";
 
@@ -123,6 +125,84 @@ async function listaDoMiolo(miolo) {
   // Nao executa driver nenhum: o miolo termina no `];` da lista.
   const url = `data:text/javascript,${encodeURIComponent(`${miolo}\nexport { mutantes };`)}`;
   return (await import(url)).mutantes;
+}
+
+/**
+ * Importa um miolo que PRECISA de `readFileSync` -- a leitura das formas sem
+ * `const FONTE` (HMO-392).
+ *
+ * `mioloDoHmo246` resolve esse problema APAGANDO as declaracoes que chamam
+ * funcao (`const original = readFileSync(FONTE, "utf8")` e companhia), e ali
+ * isso nao perde nada: nenhum `de` daquela familia deriva do texto do arquivo.
+ * Nas formas novas, perde. `mutantes-fatura-escolhida.mjs` declara
+ *
+ *     const VIEW_INTEIRA = original.slice(original.indexOf("CREATE OR REPLACE VIEW ..."), ...);
+ *
+ * e um dos mutantes da migration tem `de: VIEW_INTEIRA` -- o `CREATE OR REPLACE
+ * VIEW` inteiro, recortado do proprio .sql. Apagar `original` ali nao deixa a
+ * ancora sem medicao: deixa o miolo sem CARREGAR (`original is not defined`), e
+ * a guarda abortaria num runner correto.
+ *
+ * O `readFileSync` do prologo e RESOLVIDO CONTRA A RAIZ, e nao contra o `cwd`.
+ * Os runners leem o alvo por caminho relativo porque o `npm run` deles sempre
+ * roda da raiz; a guarda nao tem essa garantia -- ela e invocada por caminho
+ * absoluto pelo `pre-commit`, pelo CI e pelos fixtures de
+ * `test-ancora-de-mutante.mjs`, que rodam com `cwd` numa arvore temporaria.
+ * Cruzar arquivo lido por caminho relativo com um `cwd` que nao e a raiz e como
+ * se mede DUAS arvores de uma vez.
+ */
+async function importarMiolo(miolo, nomes) {
+  const prologo = [
+    'import { readFileSync as __lerDoDisco } from "node:fs";',
+    'import __caminho from "node:path";',
+    `const __RAIZ = ${JSON.stringify(RAIZ)};`,
+    "const readFileSync = (p, enc) => __lerDoDisco(__caminho.resolve(__RAIZ, p), enc);",
+  ].join("\n");
+  const corpo = `${prologo}\n${miolo}\nexport { ${nomes.join(", ")} };`;
+  return await import(`data:text/javascript,${encodeURIComponent(corpo)}`);
+}
+
+/**
+ * O ALVO DE UM MUTANTE -- a funcao UNICA que as duas leituras da familia
+ * HMO-246 usam (HMO-392).
+ *
+ * Ela existe como funcao, e nao repetida nas duas, porque a precedencia entre
+ * os campos E o criterio: errar nela nao da erro, da `ancora MORTA` FALSA, que
+ * reprova a main acusando codigo correto. Duas copias que derivassem em
+ * silencio seriam a familia
+ * `unificar-criterio-duplicado-apaga-a-medicao-do-outro-modulo` de novo.
+ *
+ * TRES NOMES PARA O MESMO CAMPO, medidos nos 17 runners da HMO-392:
+ * `arquivo:` (5), `alvo:` (3) e `fonte:` (2). `fonte` entra na precedencia sem
+ * poder mudar veredito nenhum -- nenhum dos 19 runners que a guarda JA lia o
+ * usa (medido: `grep -l "    fonte:" scripts/mutantes-*.mjs` da 4 arquivos, e
+ * os 4 estavam em `FORMA_PROPRIA`).
+ *
+ * `arquivo` VEM ANTES DE `alvo` E ISSO E A TRAVA, nao estilo. Em
+ * `mutantes-fatura-escolhida.mjs` a segunda lista tem OS DOIS, e `alvo:` ali
+ * nao e caminho nenhum: e o nome do ORACULO que tem de ficar vermelho
+ * (`"check-fatura-no-lancamento"`, `"test:offline-queue"`). Lido como caminho,
+ * sairia `ARQUIVO AUSENTE` nos oito.
+ *
+ * `mapaDeAlvos` resolve o APELIDO. `mutantes-fatura-do-periodo.mjs` tem
+ * `alvo: "posso-gastar"` e um `const ALVOS` que diz que isso e
+ * `lib/safe-to-spend.ts`. Um apelido que NAO esteja no mapa segue adiante como
+ * caminho e sai `ARQUIVO AUSENTE` -- alto e nomeado, que e o veredito certo
+ * para um apelido que o mapa perdeu.
+ */
+function alvoDoMutante(m, padrao, mapaDeAlvos) {
+  const bruto = m.arquivo ?? m.fonte ?? m.alvo ?? padrao;
+  if (bruto === undefined || bruto === null) {
+    throw new Error(
+      `o mutante \`${m.nome}\` nao tem alvo: nem campo proprio ` +
+        "(`arquivo`/`fonte`/`alvo`) nem alvo de modulo no runner",
+    );
+  }
+  if (mapaDeAlvos && Object.hasOwn(mapaDeAlvos, bruto)) {
+    const entrada = mapaDeAlvos[bruto];
+    return typeof entrada === "string" ? entrada : entrada.fonte;
+  }
+  return bruto;
 }
 
 /** A lista de um runner da familia DO PAINEL, ja em `{ nome, arquivo, de }`. */
@@ -187,14 +267,92 @@ async function lerMutantesDaTupla(fonte) {
  * como `ARQUIVO AUSENTE`: alto, nomeado e reprovando -- nao como MORTA falsa.
  */
 async function lerMutantesDoHmo246(fonte) {
+  // SEM `const FONTE` A LEITURA E OUTRA (HMO-392). O predicado da familia e a
+  // CAIXA ALTA da lista, e 17 runners a tinham sem nunca serem medidos: o alvo
+  // deles e `const MIGRATION` (os 8 de migration SQL), `const ALVO`, um
+  // `const ALVOS` indexado por apelido, ou nada -- so `arquivo:`/`fonte:`/`alvo:`
+  // por mutante. O `if` escolhe o normalizador; a resolucao do alvo por mutante
+  // e a MESMA funcao nos dois (`alvoDoMutante`).
+  if (!/^const FONTE = "[^"]+";$/m.test(fonte)) return lerMutantesDeVariosAlvos(fonte);
+
+  // SEGUNDA LISTA NUM RUNNER COM `FONTE` ABORTA, em vez de ser medida pela
+  // metade (HMO-392).
+  //
+  // `mioloDoHmo246` recorta do `const FONTE` ao `];` da PRIMEIRA
+  // `const MUTANTES = [` e nao tem como saber que ha outra. Hoje nenhum runner
+  // com `FONTE` tem duas listas (medido: o unico de duas e
+  // `mutantes-fatura-escolhida.mjs`, que nao declara `FONTE` e por isso cai no
+  // outro normalizador, que varre TODAS as listas). Mas o dia em que alguem
+  // acrescentar uma `MUTANTES_TS` a um runner com `FONTE`, esta guarda
+  // imprimiria a contagem da primeira lista e entraria no censo como runner
+  // MEDIDO -- a mesma mentira da HMO-389, que e um numero verdadeiro sobre um
+  // recorte que a linha nao menciona.
+  //
+  // Abortar e nao "ler as duas" de proposito: ler as duas aqui exigiria ensinar
+  // `mioloDoHmo246` a achar o inicio do recorte da segunda lista, que e
+  // exatamente o que `mioloDeVariosAlvos` faz. Quem encostar nesta trava tem
+  // duas saidas certas, e nenhuma delas e silenciosa: tirar o `const FONTE` do
+  // runner (e cair no outro normalizador) ou dar ao recorte do `FONTE` o mesmo
+  // laco. A errada -- medir metade -- deixa de ser alcancavel.
+  const listas = nomesDasListas(fonte);
+  if (listas.length > 1) {
+    throw new Error(
+      `tem \`const FONTE\` E ${listas.length} listas (${listas.join(", ")}) -- ` +
+        "o recorte por FONTE le so a primeira, e medir metade do runner e pior " +
+        "que nao medir: ele entraria no censo como MEDIDO",
+    );
+  }
+
   const { miolo, arquivoFonte } = mioloDoHmo246(fonte);
   const url = `data:text/javascript,${encodeURIComponent(`${miolo}\nexport { MUTANTES };`)}`;
   const lista = (await import(url)).MUTANTES;
   return lista.map((m) => ({
     nome: m.nome,
-    arquivo: m.arquivo ?? m.alvo ?? arquivoFonte,
+    arquivo: alvoDoMutante(m, arquivoFonte, null),
     de: m.de,
+    todas: Boolean(m.todas),
   }));
+}
+
+/**
+ * A lista (ou AS LISTAS) de um runner da familia HMO-246 sem `const FONTE`.
+ *
+ * O LACO SOBRE `nomesDasListas` E A TRAVA CONTRA MEDIR METADE.
+ * `mutantes-fatura-escolhida.mjs` muta a migration 041 (`MUTANTES`, 10 mutantes
+ * contra o `.sql`) E a fiacao de TypeScript que a le (`MUTANTES_TS`, 8 mutantes
+ * com `arquivo:` por mutante, em cinco arquivos). Uma leitura que parasse na
+ * primeira lista imprimiria `10 mutantes` e entraria no censo como runner
+ * MEDIDO, com 8 mutantes de medicao faltando e nada na saida dizendo isso -- que
+ * e a mesma mentira da HMO-389 (um numero verdadeiro sobre um recorte que a
+ * linha nao menciona), so uma camada mais para dentro. O proprio runner imprime
+ * os dois placares separados (`SQL: n/10` e `TypeScript: n/8`), e 18 e a soma
+ * que a guarda tem de casar.
+ */
+async function lerMutantesDeVariosAlvos(fonte) {
+  const lidos = [];
+  let apartirDe = 0;
+
+  for (const nomeDaLista of nomesDasListas(fonte)) {
+    const { miolo, arquivoFonte, temMapaDeAlvos, fim } = mioloDeVariosAlvos(
+      fonte,
+      nomeDaLista,
+      apartirDe,
+    );
+    const nomes = temMapaDeAlvos ? [nomeDaLista, "ALVOS"] : [nomeDaLista];
+    const modulo = await importarMiolo(miolo, nomes);
+    const mapaDeAlvos = temMapaDeAlvos ? modulo.ALVOS : null;
+
+    for (const m of modulo[nomeDaLista]) {
+      lidos.push({
+        nome: m.nome,
+        arquivo: alvoDoMutante(m, arquivoFonte, mapaDeAlvos),
+        de: m.de,
+        todas: Boolean(m.todas),
+      });
+    }
+    apartirDe = fim;
+  }
+  return lidos;
 }
 
 // O ARQUIVO QUE CONTEM UM RUNNER DE MENTIRA DENTRO DE UMA STRING.
@@ -237,68 +395,28 @@ const APARELHO = new Set([
 // defeito, e e isso que esta varredura existe para ver. A trava logo abaixo
 // cobra o contrario -- runner tupla fora desta lista TEM de ser legivel.
 //
-// OS 20 QUE A HMO-389 ACRESCENTOU vem DEPOIS, agrupados pela forma MEDIDA (nao
-// por "tentei e nao deu"). Eles eram o resto do ponto cego: dos 39 descartados
-// em silencio, 18 passaram a ser lidos pela familia HMO-246 e 1 era a
-// biblioteca (`APARELHO`); estes 20 seguem sem medicao -- a diferenca e que
-// agora isso esta ESCRITO, contado no boletim e com issue propria, em vez de
-// desaparecer num `.filter`.
+// OS 20 QUE A HMO-389 ACRESCENTOU FORAM 17 ENSINADOS E 3 PERMANENTES (HMO-392).
+//
+// A HMO-389 agrupou os 20 pela forma MEDIDA (nao por "tentei e nao deu") e
+// escreveu, em cada grupo, o que faltava para le-los. A HMO-392 leu essa lista
+// como o roteiro que ela era:
+//
+//   8  migration SQL          `mioloDeVariosAlvos` com alvo `const MIGRATION`
+//   4  multi-arquivo          o mesmo, sem alvo de modulo -- `arquivo:`/`fonte:`/
+//                             `alvo:`/`medida:` por mutante
+//   3  alvo com outro nome    `const ALVO`, ou `const ALVOS` por apelido
+//   2  lista chamada MUTACOES RENOMEADOS para `MUTANTES`, sem predicado novo
+//   --
+//   17 medidos.  Os 3 que sobram mutam arvore de FIXTURE e ficam aqui PARA
+//                SEMPRE -- o motivo esta escrito no grupo deles abaixo, e nao e
+//                "ainda nao sei ler a forma".
+//
+// Censo depois: 76 runners no disco, 67 medidos, 9 excluidos pelo nome (3 de
+// `APARELHO`, 3 de forma propria da HMO-334, 3 de fixture).
 const FORMA_PROPRIA = new Set([
   "scripts/mutantes-orcamento-de-grupo.mjs",
   "scripts/mutantes-semeadura.mjs",
   "scripts/mutantes-sugestao-de-divisao.mjs",
-
-  // --- MUTAM UMA MIGRATION SQL, nao um modulo TypeScript (8) -------------
-  // Forma comum medida nos oito: `const PG`, `const TEMPLATE`,
-  // `const MIGRATION`, `const TESTE`, `const psql = (db, args) =>` e
-  // `const original = readFileSync(MIGRATION, "utf8")`. O alvo e `MIGRATION`
-  // -- nao existe `const FONTE` --, e os `de` sao constantes de template
-  // literal declaradas entre o `original` e a lista.
-  //
-  // A ancora deles E mensuravel em principio (contar o trecho no .sql e a
-  // mesma operacao), e falta so um normalizador cujo alvo seja `MIGRATION`.
-  // Nao entra aqui junto com a familia HMO-246 porque atribuir o arquivo
-  // errado produz "ancora MORTA" FALSA -- que reprova a main acusando codigo
-  // correto, o pior resultado possivel para uma guarda.
-  "scripts/mutantes-chave-pix.mjs",
-  "scripts/mutantes-moeda-da-conta-prevista.mjs",
-  "scripts/mutantes-parcela-n-de-m.mjs",
-  "scripts/mutantes-restauracao-do-grupo.mjs",
-  "scripts/mutantes-transferencia-recorrente.mjs",
-  "scripts/mutantes-trava-de-membro.mjs",
-  "scripts/mutantes-trava-de-tipo.mjs",
-  // O mesmo, mais DUAS listas (`MUTANTES` e `MUTANTES_TS`) e `arquivo:` por
-  // mutante: ele muta a migration E o TypeScript que a le. Um normalizador que
-  // leia so a primeira lista mediria metade dos mutantes e diria "li o runner".
-  "scripts/mutantes-fatura-escolhida.mjs",
-
-  // --- MULTI-ARQUIVO EM CAIXA ALTA (4) ----------------------------------
-  // `const MUTANTES = [` (entao `ehHmo246` os reconhece) mas SEM `const FONTE`:
-  // o alvo vem de varias constantes de arquivo (`RECORRENCIA`/`PARCELAS`/`TELA`,
-  // `CAMPOS`/`LIB`, `CONTRATO`/`MARCACAO`/`ROTA`/`CARTOES`/`SAFE`/`PAINEL`,
-  // `REGRA`/`ROTA`/`EDICAO`) e, em dois deles, de um `arquivo:` por mutante.
-  // E a familia do painel em caixa alta -- `ehDoPainel` exige `mutantes`
-  // minusculo e nao os alcanca.
-  "scripts/mutantes-alcance-da-serie.mjs",
-  "scripts/mutantes-campo-de-parcelas.mjs",
-  "scripts/mutantes-fiacao-do-bruto.mjs",
-  "scripts/mutantes-tipo-e-sinal.mjs",
-
-  // --- O ALVO NAO SE CHAMA `FONTE` (3) ----------------------------------
-  // `const ALVO = "caminho"` (`ancora-da-parte-de-grupo`, `contrato-dos-cartoes`)
-  // ou um OBJETO de alvos indexado por apelido, com `alvo: "posso-gastar"` por
-  // mutante (`fatura-do-periodo`, que e a mesma forma de `orcamento-de-grupo`
-  // la em cima).
-  "scripts/mutantes-ancora-da-parte-de-grupo.mjs",
-  "scripts/mutantes-contrato-dos-cartoes.mjs",
-  "scripts/mutantes-fatura-do-periodo.mjs",
-
-  // --- A LISTA SE CHAMA `MUTACOES` (2) ----------------------------------
-  // Nenhum dos tres predicados casa: eles nao tem `const MUTANTES = [` nem
-  // `const mutantes = [`. Renomear a lista nos dois arquivos os traria para a
-  // familia HMO-246 de graca, e e a conversao mais barata que sobrou.
-  "scripts/mutantes-transferencia.mjs",
-  "scripts/mutantes-transferencia-recorrente-app.mjs",
 
   // --- GUARDAS DE CI: mutam arvore de FIXTURE, nao a arvore rastreada (3) -
   // Os tres montam uma arvore temporaria (`const RAIZ`, `const GUARDA`,
@@ -412,7 +530,24 @@ for (const runner of runners) {
   // normalizador nao consegue ler ou mudou de forma (e entao pertence ao
   // `FORMA_PROPRIA`, com o motivo escrito) ou quebrou. As duas coisas tem de
   // aparecer, e nenhuma delas pode virar "0 ambiguas".
-  const mutantes = await familia.ler(fonte);
+  //
+  // MAS A EXCECAO CRUA NAO DIZ DE QUAL RUNNER SE TRATA (HMO-392). O `throw` sai
+  // de dentro do normalizador, que recebe a FONTE e nao o caminho, e o stack
+  // trace que chega ao terminal cita `mede-ancora-ambigua.mjs` e
+  // `converte-mutantes-em-bloco.mjs` -- nunca o arquivo com o defeito. E a
+  // mesma reclamacao que o `try/catch` do ENOENT logo abaixo faz em voz alta
+  // ("o stack trace esconde de qual runner e qual mutante se trata"), e ela
+  // valia aqui tambem: ler `nao achei const MUTANTES = [` sem saber ONDE manda
+  // procurar em 67 arquivos.
+  //
+  // O re-throw NAO engole nada: ele prefixa o nome, mantem a causa em `cause`
+  // e deixa a excecao subir igual.
+  let mutantes;
+  try {
+    mutantes = await familia.ler(fonte);
+  } catch (e) {
+    throw new Error(`${runner} (familia ${familia.nome}): ${e.message}`, { cause: e });
+  }
   if (mutantes.length === 0) {
     console.error(`ABORTADO: ${runner} rendeu ZERO mutantes -- a leitura da lista quebrou.`);
     process.exit(1);
@@ -433,7 +568,33 @@ for (const runner of runners) {
       continue;
     }
     const n = texto.split(m.de).length - 1;
-    if (n !== 1) achados.push({ nome: m.nome, arquivo: m.arquivo, n });
+    // `todas: true` -- O MUTANTE QUE QUER AS DUAS OCORRENCIAS (HMO-392).
+    //
+    // A trava de ocorrencia unica existe porque `String.replace` troca a
+    // PRIMEIRA, e um `de` que casa duas vezes muta um lugar que o rotulo do
+    // mutante nao descreve. Dois dos 17 runners que esta issue ensinou declaram
+    // `todas: true` e o driver deles usa `replaceAll` -- ali as duas ocorrencias
+    // SAO o mutante, e a contagem >1 e a forma certa e nao o defeito.
+    //
+    // ISTO NAO E UMA LISTA DE EXCECAO: o campo e lido do MESMO objeto que o
+    // driver le (`for (const { nome, de, para, todas } of MUTANTES)` ->
+    // `todas ? original.replaceAll(de, para) : original.replace(de, para)`), que
+    // e a razao de ele poder ser respeitado sem abrir escotilha. Um `todas: true`
+    // que o driver nao honrasse seria outro assunto -- e apareceria como mutante
+    // sobrevivente no placar do runner, nao aqui.
+    //
+    // AS SEIS PRIMEIRAS AMBIGUAS QUE A LEITURA NOVA ENCONTROU ERAM ESTAS, e
+    // eram todas FALSAS -- cinco em `transferencia-recorrente` (o
+    // `CORPO_DO_CHECK` e identico nas duas tabelas, e o comentario dele DIZ que
+    // mutar as duas de uma vez e o que se quer) e uma em `contrato-dos-cartoes`
+    // (`os DOIS pedagios de uma vez`, 4x de proposito). E a HMO-389 se
+    // repetindo: a primeira safra de achados de uma leitura nova e suspeita de
+    // atribuicao errada ate ser conferida no arquivo.
+    //
+    // ZERO CONTINUA REPROVANDO, e e o que mantem a medicao viva aqui:
+    // `replaceAll` de um trecho que nao existe tambem nao muta nada.
+    const defeito = m.todas ? n === 0 : n !== 1;
+    if (defeito) achados.push({ nome: m.nome, arquivo: m.arquivo, n });
   }
 
   console.log(`${runner}: ${mutantes.length} mutantes`);
