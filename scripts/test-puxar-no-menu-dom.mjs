@@ -45,7 +45,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  readFileSync,
+  readdirSync,
+  existsSync,
+  mkdtempSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -59,14 +65,31 @@ const SAIDA = ".tmp-puxar-dom";
  * Uma suite que se desliga sozinha quando falta o navegador e indistinguivel
  * de uma suite que passou, e a metade de DOM desta issue voltaria a nao ter
  * cobertura nenhuma sem ninguem notar.
+ *
+ * A VERSAO DO PLAYWRIGHT NAO ESTA FIXA AQUI: a pasta e LISTADA em vez de
+ * adivinhada. Com `chromium-1243` escrito no fonte, o bump do ambiente para
+ * `chromium-1248` deixou esta sonda 100% vermelha numa arvore intocada, e o
+ * sintoma de superficie sao dezenas de `Cannot read properties of null` -- que
+ * se leem como "um import novo derrubou a pagina", o diagnostico errado e caro.
+ * O `Nenhum Chromium encontrado` de verdade aparece UMA vez, no meio delas.
  */
 function acharChromium() {
   const candidatos = [process.env.CHROMIUM_BIN];
 
-  const base = `${process.env.HOME}/.cache/ms-playwright`;
-  for (const dir of ["chromium-1243", "chromium_headless_shell-1243"]) {
-    for (const sufixo of ["chrome-linux64/chrome", "chrome-linux/chrome"]) {
-      candidatos.push(join(base, dir, sufixo));
+  for (const base of [
+    `${process.env.HOME}/.cache/ms-playwright`,
+    "/paperclip/.cache/ms-playwright",
+  ]) {
+    if (!existsSync(base)) continue;
+    for (const dir of readdirSync(base).sort().reverse()) {
+      if (!/^chromium(_headless_shell)?-\d+$/.test(dir)) continue;
+      for (const sufixo of [
+        "chrome-linux64/chrome",
+        "chrome-linux/chrome",
+        "chrome-headless-shell-linux64/chrome-headless-shell",
+      ]) {
+        candidatos.push(join(base, dir, sufixo));
+      }
     }
   }
 
