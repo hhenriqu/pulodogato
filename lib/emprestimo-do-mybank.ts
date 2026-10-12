@@ -1103,8 +1103,7 @@ export type ProblemaDaAntecipacao =
   | "emprestimo_nao_esta_ativo"
   | "juros_impedem_a_antecipacao"
   | "quantas_invalida"
-  | "mais_do_que_em_aberto"
-  | "caso_a_nao_entra_aqui";
+  | "mais_do_que_em_aberto";
 
 /** O que a escolha da cauda precisa saber de uma parcela. */
 export interface ParcelaParaAntecipar {
@@ -1194,16 +1193,21 @@ export function quantasEmAberto(parcelas: { status: string }[]): number {
  * Ver JUROS ZERO ESTA USADO, no cabecalho desta secao, para o porque de ele ser
  * uma recusa e nao um calculo.
  *
- * `caso_a_nao_entra_aqui` VEM POR ULTIMO, e isso e deliberado
- * ----------------------------------------------------------
- * Ele e o unico problema cuja frase NOMEIA OUTRO CAMINHO ("pague em Contas a
- * Pagar") -- a convencao que o PATCH da parcela ja estabeleceu, e pela mesma
- * razao. Mandar alguem para outra tela com um pedido que lá tambem seria
- * recusado ("antecipe 99 de 6 em Contas a Pagar") troca uma recusa por uma
- * caminhada inutil. As perguntas de boa-formacao vem antes para que o ponteiro,
- * quando sai, aponte para algo que vai funcionar. E o vazamento nao e questao
- * aqui: no Caso A o credor e o devedor sao a MESMA pessoa, e ela ja passou pela
- * primeira pergunta.
+ * O CASO A NAO E MAIS UMA RECUSA AQUI (HMO-396), E O PORQUE E DE DINHEIRO
+ * ----------------------------------------------------------------------
+ * A F2 recusava o Caso A com um ponteiro para Contas a Pagar. A F3 apagou essa
+ * recusa porque o ponteiro podia apontar para uma tela VAZIA: a parcela da
+ * cauda vence em 2028 e a previsao dela pode estar fora do horizonte de Contas
+ * a Pagar (`skipped-protege-so-o-horizonte-ja-materializado`). Mandar a pessoa
+ * pagar lá nao era alternativa; era mandar procurar uma linha que nao esta na
+ * tela.
+ *
+ * Entao o Caso A ANTECIPA, e o que o banco exige dele e uma pergunta que esta
+ * funcao NAO TEM COMO FAZER: existe, para cada parcela da cauda, uma previsao
+ * `pending` com o elo `mybank:<id>`? Isso e uma leitura, e por isso vive em
+ * `paresDaAntecipacaoDoCasoA` -- depois desta funcao, antes da primeira
+ * escrita. O que ficou aqui e so o que se decide com o emprestimo e a serie em
+ * maos.
  */
 export function problemaDaAntecipacao(params: {
   emprestimo: {
@@ -1249,15 +1253,6 @@ export function problemaDaAntecipacao(params: {
     return "mais_do_que_em_aberto";
   }
 
-  if (
-    casoDoEmprestimo({
-      lenderUserId: params.emprestimo.lender_user_id,
-      borrowerUserId: params.emprestimo.borrower_user_id,
-    }) === "auto"
-  ) {
-    return "caso_a_nao_entra_aqui";
-  }
-
   return null;
 }
 
@@ -1285,16 +1280,6 @@ export function mensagemDoProblemaDaAntecipacao(
       return contexto.emAberto === 1
         ? "Só resta 1 parcela em aberto neste empréstimo."
         : `Este empréstimo tem ${contexto.emAberto} parcelas em aberto — não dá para antecipar mais do que isso.`;
-    case "caso_a_nao_entra_aqui":
-      // A MESMA CONVENCAO DO PATCH DA PARCELA, e pela mesma razao: no
-      // auto-emprestimo a parcela JA e uma transferencia prevista, e quem move o
-      // dinheiro e a baixa dela em Contas a Pagar. Antecipar aqui encurtaria a
-      // serie sem nada ter saido da conta.
-      return (
-        "Este empréstimo é para você mesmo: as parcelas são transferências agendadas. " +
-        "Antecipe pagando-as em Contas a Pagar — é isso que move o dinheiro da sua conta para a de investimento. " +
-        "Antecipar aqui deixaria a série mais curta sem nada ter saído da conta."
-      );
   }
 }
 
@@ -1320,6 +1305,205 @@ export function valorDaAntecipacao(params: {
   );
 
   return centavos / 100;
+}
+
+// ---------------------------------------------------------------------------
+// A ANTECIPACAO NO CASO A (F3 da HMO-393, issue HMO-396)
+// ---------------------------------------------------------------------------
+// AS PREVISOES DA CAUDA SAO BAIXADAS, NAO APAGADAS -- E O CRITERIO E O OPOSTO
+// DO CANCELAMENTO, PELO MESMO ELO
+// ---------------------------------------------------------------------------
+// As duas operacoes acham as MESMAS LINHAS pela MESMA chave (`mybank:<id da
+// parcela>`), e fazem com elas coisas opostas:
+//
+//   CANCELAR  -> `chavesDasPrevisoesDoCancelamento` + DELETE. Nada se moveu:
+//     a previsao e uma cobranca futura que deixou de existir, e apagar e o que
+//     tira a linha de Contas a Pagar.
+//   ANTECIPAR -> `chavesDasPrevisoesDaAntecipacao` + UPDATE para `paid`. O
+//     dinheiro SE MOVEU: a previsao e o registro de que ele se moveu. Apagada,
+//     a parcela ficaria paga, o saldo da conta corrente ficaria menor, e a
+//     linha que explica o porque teria desaparecido do historico -- duas pernas
+//     em `financial_transactions` sem nenhuma previsao que as explique, que e a
+//     direcao de falha de `o-banco-ja-divide-despesa-de-grupo` ao contrario:
+//     o fato aconteceu e o registro nao existe.
+//
+// O par e deliberado, e por isso as duas funcoes sao vizinhas na leitura e tem
+// mutante cada uma. A unica coisa que as distingue e o verbo de quem chama.
+//
+// POR QUE ESTA ROTA TEM DE FAZER O TRABALHO, E NAO MANDAR PARA CONTAS A PAGAR
+// --------------------------------------------------------------------------
+// A parcela da cauda vence em 2028, e a previsao dela PODE ESTAR FORA DO
+// HORIZONTE de Contas a Pagar (`skipped-protege-so-o-horizonte-ja-
+// materializado`). A recusa que a F2 escrevia -- "antecipe pagando em Contas a
+// Pagar" -- mandava a pessoa para uma tela onde a linha podia nao estar.
+//
+// A PREVISAO E OBRIGATORIA, E A AUSENCIA DELA E RECUSA E NAO IMPROVISO
+// -------------------------------------------------------------------
+// E dela que sai a CONTA DE ONDE O DINHEIRO SAI: `mybank_loans` guarda a conta
+// credora (`lender_account_id`, o destino) e NAO guarda a conta de pagamento --
+// `previsoesDoEmprestimo` recebeu `contaDePagamentoId` na criacao e so a
+// previsao a guardou (`account_id`). Sem previsao nao ha de onde debitar, e um
+// Caso A sem previsao existe de verdade: a criacao sem `conta_de_pagamento_id`
+// grava `[]` previsoes (a segunda guarda de `previsoesDoEmprestimo`). Entao a
+// rota RECUSA, nomeando as parcelas -- escolher uma conta por conta propria
+// seria mover dinheiro de uma conta que a pessoa nao indicou.
+// ---------------------------------------------------------------------------
+
+/**
+ * As chaves das previsoes a BAIXAR -- so o Caso A. O espelho de
+ * `chavesDasPrevisoesDoCancelamento`, e o espelho e o ponto.
+ *
+ * `[]` NO CASO B, PELA MESMA RAZAO DE LA: o Caso B nunca gravou linha minha em
+ * tabela nenhuma de dinheiro, entao nao ha previsao para baixar -- quem paga a
+ * parcela da conexao e `pernaDeEntradaDoPagamento`, com UMA perna, e o dinheiro
+ * vem de fora das minhas contas.
+ *
+ * E A LISTA VAZIA E A MESMA ARMADILHA DO POSTGREST, com um sintoma PIOR
+ * --------------------------------------------------------------------
+ * `.in("notes", [])` nao filtra nada: a clausula vazia desaparece e a consulta
+ * passa a alcancar TODA linha que a RLS entrega. No cancelamento isso apagava a
+ * agenda inteira; aqui o verbo e UPDATE para `paid`, e o estrago seria TODA
+ * previsao pendente da pessoa virando paga -- contas a pagar que ninguem pagou
+ * saindo da tela, com `transaction_id` apontando para a perna de uma parcela de
+ * emprestimo. Quem chama GUARDA NO `.length` desta lista.
+ */
+export function chavesDasPrevisoesDaAntecipacao(params: {
+  caso: CasoDoEmprestimo;
+  parcelasAntecipadas: { id: string }[];
+}): string[] {
+  if (params.caso !== "auto") return [];
+  return params.parcelasAntecipadas.map((p) => chaveDaParcelaDoMyBank(p.id));
+}
+
+/**
+ * O que a baixa de uma previsao grava nela -- `paid`, a data e o elo da perna.
+ *
+ * `transaction_id` APONTA PARA A PERNA DE SAIDA, e nao para a de entrada. E o
+ * oposto de `patchDaBaixaDaParcela` (que aponta para a entrada), e as duas
+ * estao certas: a previsao responde "de onde saiu o dinheiro desta conta a
+ * pagar" e a parcela responde "onde ele entrou". O elo da previsao e tambem o
+ * que faz o estorno funcionar -- o DELETE da rota da baixa acha a contraparte
+ * por `counterpart_transaction_id = conta.transaction_id`, e esse elo mora na
+ * perna de ENTRADA apontando para a de SAIDA.
+ *
+ * E ESTA FUNCAO E O QUE DISTINGUE BAIXAR DE APAGAR em uma linha de codigo. O
+ * mutante que a troca por um DELETE e o da issue: a parcela fica paga, o
+ * dinheiro saiu da conta, e a previsao que comprova isso desaparece.
+ */
+export interface BaixaDaPrevisao {
+  status: "paid";
+  paid_date: string;
+  transaction_id: string;
+}
+
+export function patchDaBaixaDaPrevisao(params: {
+  paidDate: string;
+  pernaDeSaidaId: string;
+}): BaixaDaPrevisao {
+  return {
+    status: "paid",
+    paid_date: params.paidDate,
+    transaction_id: params.pernaDeSaidaId,
+  };
+}
+
+/**
+ * A previsao do Caso A, como a antecipacao precisa dela para mover o dinheiro.
+ *
+ * `amount` ENTRA, E NAO E ELE QUE MANDA. A previsao e EDITAVEL em Contas a Pagar
+ * -- a pessoa pode ter mudado o valor dela a mao --, e a divida e a PARCELA.
+ * Quem chama passa o valor da parcela por `valorPago`; este campo existe para
+ * que a linha a baixar chegue inteira, e nao para ser a fonte do dinheiro.
+ */
+export interface PrevisaoABaixar {
+  id: string;
+  account_id: string;
+  destination_account_id: string | null;
+  description: string;
+  amount: number;
+  category_id: string | null;
+  due_date: string;
+  notes: string | null;
+  created_at?: string | null;
+}
+
+/** Uma parcela da cauda ao lado da previsao que a paga. */
+export interface ParDaAntecipacaoDoCasoA<P> {
+  parcela: P;
+  previsao: PrevisaoABaixar;
+}
+
+/**
+ * Casa cada parcela da cauda com a previsao dela, PELO ELO -- e diz quais
+ * ficaram sem.
+ *
+ * A ORDEM DA SAIDA E A DA CAUDA, e nao a que o banco devolveu
+ * ----------------------------------------------------------
+ * Os pares saem na ordem de `escolhidas` (`due_date DESC`), porque e nessa
+ * ordem que a rota move o dinheiro e e nessa ordem que a resposta lista os
+ * numeros. Deixar a ordem do `SELECT ... IN (...)` mandar aqui faria "parei na
+ * segunda parcela" querer dizer uma parcela diferente a cada chamada, e o
+ * rollback de uma antecipacao parcial deixaria de ser reproduzivel.
+ *
+ * `parcelasSemPrevisao` SAI SEPARADO EM VEZ DE A FUNCAO DEVOLVER `null`
+ * --------------------------------------------------------------------
+ * Quem chama precisa dos NUMEROS para a frase ("a parcela 6 nao tem conta a
+ * pagar"), e um `null` obrigaria a rota a redescobri-los -- uma segunda copia
+ * do mesmo criterio de casamento, que e onde as duas divergem na primeira
+ * mudanca. A rota recusa quando a lista nao esta vazia; a decisao de recusar e
+ * dela, porque e ela que sabe que nada foi escrito ainda.
+ *
+ * MAIS DE UMA PREVISAO PARA A MESMA CHAVE: A PRIMEIRA, E A ORDEM NAO IMPORTA
+ * -------------------------------------------------------------------------
+ * `notes` e campo que a pessoa digita, entao duas linhas com `mybank:<id>` sao
+ * possiveis. Nenhum criterio aqui as desempata com honestidade (as duas se
+ * dizem a conta a pagar da mesma parcela), e por isso esta funcao pega UMA e a
+ * outra fica onde esta -- em aberto, visivel, para quem souber o que ela e.
+ * Baixar as duas moveria o dobro do dinheiro da parcela.
+ */
+export function paresDaAntecipacaoDoCasoA<
+  P extends { id: string; installment_number: number },
+>(params: {
+  escolhidas: P[];
+  previsoes: PrevisaoABaixar[];
+}): {
+  pares: ParDaAntecipacaoDoCasoA<P>[];
+  parcelasSemPrevisao: number[];
+} {
+  const pares: ParDaAntecipacaoDoCasoA<P>[] = [];
+  const parcelasSemPrevisao: number[] = [];
+
+  for (const parcela of params.escolhidas) {
+    const chave = chaveDaParcelaDoMyBank(parcela.id);
+    const previsao = params.previsoes.find((p) => p.notes === chave);
+
+    if (previsao) {
+      pares.push({ parcela, previsao });
+    } else {
+      parcelasSemPrevisao.push(parcela.installment_number);
+    }
+  }
+
+  return { pares, parcelasSemPrevisao };
+}
+
+/**
+ * A recusa de "nao achei a conta a pagar desta parcela", com os numeros.
+ *
+ * A frase diz as DUAS coisas que a pessoa precisa para agir: quais parcelas, e
+ * que nada foi antecipado. Sem a segunda, quem pedisse 3 e lesse a recusa nao
+ * saberia se as outras 2 entraram -- e tentaria de novo sobre um estado que
+ * nao conhece.
+ */
+export function mensagemDaPrevisaoDaCaudaAusente(numeros: number[]): string {
+  const quais = numeros.join(", ");
+  const plural = numeros.length === 1 ? "a parcela" : "as parcelas";
+
+  return (
+    `Não encontrei em Contas a Pagar a transferência agendada de ${plural} ${quais} ` +
+    "deste empréstimo para você mesmo. É dela que sai a conta de onde o dinheiro é debitado, " +
+    "então nada foi antecipado — confira se a conta a pagar foi excluída à mão."
+  );
 }
 
 /**
@@ -1405,6 +1589,17 @@ export function ultimoVencimentoEmAberto(
  * conseguiu PERGUNTAR se ela acabou, que e a pior das tres respostas possiveis:
  * o dinheiro entrou de verdade e a pessoa acharia que quitou. Aqui ela diz o que
  * aconteceu (as parcelas antecipadas) e manda conferir o resto.
+ *
+ * A FRASE DO CASO A E A QUARTA, E ELA E SOBRE A OUTRA TELA (HMO-396)
+ * -----------------------------------------------------------------
+ * No auto-emprestimo a antecipacao muda uma tela que NAO esta na frente de quem
+ * clicou: as contas a pagar daquelas parcelas sairam de "a pagar" e viraram
+ * "pagas". Sem dizer isso, quem for conferir encontra duas linhas pagas que nao
+ * pagou pela tela de Contas a Pagar e nao tem como saber de onde elas vieram --
+ * ou, pior, procura as linhas no lugar de sempre e conclui que foram apagadas.
+ * A frase diz tambem DE ONDE o dinheiro saiu, porque no Caso A e a conta
+ * corrente da propria pessoa que foi debitada (no Caso B nada sai de conta
+ * minha, e por isso a frase nao existe lá).
  */
 export function mensagemDaAntecipacao(params: {
   numerosAntecipados: number[];
@@ -1415,14 +1610,28 @@ export function mensagemDaAntecipacao(params: {
   quitado: boolean;
   /** A releitura da serie respondeu? `false` quando a consulta falhou. */
   serieRelida: boolean;
+  /** `"auto"` acrescenta a frase das contas a pagar baixadas. */
+  caso?: CasoDoEmprestimo;
 }): string {
   const quantas = params.numerosAntecipados.length;
 
   const quais = params.numerosAntecipados.join(" e ");
-  const abertura =
+  const oQueSaiu =
     quantas === 1
       ? `Parcela ${quais} antecipada — a do fim da série.`
       : `${quantas} parcelas antecipadas: as do fim da série (${quais}).`;
+
+  // A frase do Caso A entra na ABERTURA, e nao num dos quatro ramos: ela e
+  // verdade nos quatro (o dinheiro saiu da conta corrente e as previsoes foram
+  // baixadas tanto na antecipacao que quita quanto na que a releitura perdeu), e
+  // repeti-la em cada ramo seria a mesma frase em quatro lugares para divergir
+  // no primeiro conserto.
+  const abertura =
+    params.caso === "auto"
+      ? `${oQueSaiu} O dinheiro saiu da sua conta corrente para a de investimento, ` +
+        `e ${quantas === 1 ? "a conta a pagar dela foi baixada" : "as contas a pagar delas foram baixadas"} ` +
+        "em Contas a Pagar — não removidas."
+      : oQueSaiu;
 
   if (params.quitado) {
     return `${abertura} Não sobrou nada em aberto: o empréstimo está quitado e sai da lista A receber.`;

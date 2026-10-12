@@ -3313,14 +3313,19 @@ test("`problemaDaAntecipacao`: nao da para antecipar mais do que esta em aberto"
   );
 });
 
-test("`problemaDaAntecipacao`: o CASO A e recusado aqui, e por ultimo", () => {
+test("`problemaDaAntecipacao`: o CASO A PASSA (a F3 derrubou aquela recusa)", () => {
   const auto = {
     ...EMPRESTIMO_A_ANTECIPAR,
-    // Eu sou os dois lados: a parcela e uma transferencia prevista, e quem move
-    // o dinheiro e a baixa dela em Contas a Pagar.
+    // Eu sou os dois lados -- o Caso A em uma linha.
     borrower_user_id: EU,
   };
 
+  // A F2 devolvia `caso_a_nao_entra_aqui` aqui, apontando para Contas a Pagar.
+  // A F3 apagou a recusa porque o ponteiro podia apontar para uma tela VAZIA: a
+  // previsao da parcela da cauda pode estar fora do horizonte de Contas a Pagar.
+  // Esta assercao e a que impede a recusa de voltar de lado -- um `if` de caso
+  // reintroduzido aqui tornaria a antecipacao do Caso A inalcancavel sem que
+  // nenhuma outra assercao da suite reclamasse.
   assert.equal(
     LIB.problemaDaAntecipacao({
       emprestimo: auto,
@@ -3328,13 +3333,12 @@ test("`problemaDaAntecipacao`: o CASO A e recusado aqui, e por ultimo", () => {
       parcelas: PARCELAS_DO_NOTEBOOK,
       quantas: 2,
     }),
-    "caso_a_nao_entra_aqui"
+    null
   );
 
-  // E A ORDEM: um Caso A com `quantas` malformado responde pela FORMA do corpo,
-  // e nao pelo ponteiro para outra tela. A frase do Caso A nomeia outro caminho,
-  // e mandar alguem para lá com um pedido que lá tambem seria recusado troca uma
-  // recusa por uma caminhada inutil.
+  // E AS OUTRAS PERGUNTAS CONTINUAM VALENDO NO CASO A: o que mudou foi so a
+  // recusa pelo caso. Um Caso A com `quantas` maior que o que esta em aberto
+  // continua respondendo pelo estado da divida.
   assert.equal(
     LIB.problemaDaAntecipacao({
       emprestimo: auto,
@@ -3343,6 +3347,19 @@ test("`problemaDaAntecipacao`: o CASO A e recusado aqui, e por ultimo", () => {
       quantas: 99,
     }),
     "mais_do_que_em_aberto"
+  );
+
+  // E o Caso A de quem NAO e o credor continua levando a primeira pergunta. (No
+  // Caso A de verdade os dois lados sao a mesma pessoa; este fixture e o
+  // emprestimo de OUTRA pessoa para ela mesma, que a RLS deixa a Lais ler.)
+  assert.equal(
+    LIB.problemaDaAntecipacao({
+      emprestimo: auto,
+      meuId: LAIS,
+      parcelas: PARCELAS_DO_NOTEBOOK,
+      quantas: 2,
+    }),
+    "nao_sou_o_credor"
   );
 });
 
@@ -3368,12 +3385,6 @@ test("as frases das recusas dizem o que fazer, e a de `quantas` fala dos R$ 150"
   assert.match(deQuantas, /pagamento parcial de parcela é outra operação/i);
   assert.match(deQuantas, /não existe hoje/i);
 
-  // O ponteiro do Caso A, na convencao do PATCH da parcela.
-  assert.match(
-    LIB.mensagemDoProblemaDaAntecipacao("caso_a_nao_entra_aqui", contexto),
-    /Contas a Pagar/
-  );
-
   // O estado entra na frase de quem manda nele...
   assert.match(
     LIB.mensagemDoProblemaDaAntecipacao("emprestimo_nao_esta_ativo", contexto),
@@ -3391,6 +3402,156 @@ test("as frases das recusas dizem o que fazer, e a de `quantas` fala dos R$ 150"
     }),
     /Só resta 1 parcela/
   );
+});
+
+// ---------------------------------------------------------------------------
+// 12.2b -- A REGRA PURA DO CASO A: o elo da cauda, o par e o patch (HMO-396)
+// ---------------------------------------------------------------------------
+
+test("`chavesDasPrevisoesDaAntecipacao`: o elo das N da cauda, e `[]` no Caso B", () => {
+  const escolhidas = [{ id: "a4" }, { id: "a3" }];
+
+  assert.deepEqual(
+    LIB.chavesDasPrevisoesDaAntecipacao({
+      caso: "auto",
+      parcelasAntecipadas: escolhidas,
+    }),
+    ["mybank:a4", "mybank:a3"]
+  );
+
+  // `[]` NO CASO B, pela mesma razao de `chavesDasPrevisoesDoCancelamento`: nao
+  // existe previsao minha para baixar. E quem chama GUARDA NO `.length` -- um
+  // `.in("notes", [])` no PostgREST nao filtra nada, e aqui o verbo e UPDATE
+  // para `paid`: TODA previsao pendente da pessoa viraria paga.
+  assert.deepEqual(
+    LIB.chavesDasPrevisoesDaAntecipacao({
+      caso: "conexao",
+      parcelasAntecipadas: escolhidas,
+    }),
+    []
+  );
+});
+
+test("`chavesDasPrevisoesDaAntecipacao` e a do cancelamento acham AS MESMAS linhas", () => {
+  // O PAR QUE A ISSUE MANDA COPIAR E NAO REINVENTAR: mesmo elo, criterio oposto.
+  // Se as duas divergissem na chave, uma das duas operacoes passaria a nao achar
+  // a previsao -- o cancelamento deixaria conta a pagar orfa na agenda, e a
+  // antecipacao recusaria toda parcela em 409.
+  const parcelas = [{ id: "a4" }, { id: "a3" }];
+
+  assert.deepEqual(
+    LIB.chavesDasPrevisoesDaAntecipacao({
+      caso: "auto",
+      parcelasAntecipadas: parcelas,
+    }),
+    LIB.chavesDasPrevisoesDoCancelamento({
+      caso: "auto",
+      parcelasCanceladas: parcelas,
+    })
+  );
+});
+
+test("`paresDaAntecipacaoDoCasoA` casa pelo elo, na ordem DA CAUDA", () => {
+  const escolhidas = [
+    { id: "a4", installment_number: 4 },
+    { id: "a3", installment_number: 3 },
+  ];
+
+  // As previsoes chegam na ordem do banco, que e OUTRA.
+  const previsoes = [
+    { id: "prev-a3", notes: "mybank:a3", account_id: "corrente" },
+    { id: "prev-a4", notes: "mybank:a4", account_id: "corrente" },
+  ];
+
+  const { pares, parcelasSemPrevisao } = LIB.paresDaAntecipacaoDoCasoA({
+    escolhidas,
+    previsoes,
+  });
+
+  assert.equal(parcelasSemPrevisao.length, 0);
+  // A ORDEM E A DA CAUDA, e nao a do `SELECT ... IN (...)`: e nessa ordem que o
+  // dinheiro se move e que a resposta lista os numeros. Com a ordem do banco
+  // mandando, "parei na segunda parcela" quereria dizer uma parcela diferente a
+  // cada chamada.
+  assert.deepEqual(
+    pares.map((p) => [p.parcela.installment_number, p.previsao.id]),
+    [
+      [4, "prev-a4"],
+      [3, "prev-a3"],
+    ]
+  );
+});
+
+test("`paresDaAntecipacaoDoCasoA` NOMEIA as parcelas que ficaram sem previsao", () => {
+  const { pares, parcelasSemPrevisao } = LIB.paresDaAntecipacaoDoCasoA({
+    escolhidas: [
+      { id: "a4", installment_number: 4 },
+      { id: "a3", installment_number: 3 },
+    ],
+    previsoes: [{ id: "prev-a3", notes: "mybank:a3" }],
+  });
+
+  // Os NUMEROS, porque e deles que a frase e feita. Um `null` obrigaria a rota a
+  // redescobri-los -- uma segunda copia do mesmo casamento.
+  assert.deepEqual(parcelasSemPrevisao, [4]);
+  assert.equal(pares.length, 1);
+});
+
+test("`paresDaAntecipacaoDoCasoA`: elo PARECIDO nao casa", () => {
+  // `mybank:a4x` nao e a previsao da parcela `a4`. Um casamento por `startsWith`
+  // ou `includes` baixaria a conta a pagar de outra parcela -- e moveria o
+  // dinheiro da parcela errada.
+  const { parcelasSemPrevisao } = LIB.paresDaAntecipacaoDoCasoA({
+    escolhidas: [{ id: "a4", installment_number: 4 }],
+    previsoes: [
+      { id: "p1", notes: "mybank:a4x" },
+      { id: "p2", notes: "mybank:a40" },
+      { id: "p3", notes: "a4" },
+      { id: "p4", notes: null },
+    ],
+  });
+
+  assert.deepEqual(parcelasSemPrevisao, [4]);
+});
+
+test("`patchDaBaixaDaPrevisao` aponta para a SAIDA, e nao apaga nada", () => {
+  const patch = LIB.patchDaBaixaDaPrevisao({
+    paidDate: "2026-10-20",
+    pernaDeSaidaId: "tx-saida",
+  });
+
+  assert.deepEqual(patch, {
+    status: "paid",
+    paid_date: "2026-10-20",
+    transaction_id: "tx-saida",
+  });
+
+  // `scheduled_transactions_paid_check` nao existe, mas a tela de Contas a Pagar
+  // le `paid_date` para dizer "pago em": `paid` sem data sairia como pago sem
+  // dia. E `status` E `paid_date` entram JUNTOS por isso.
+  assert.ok(patch.paid_date);
+
+  // E O OPOSTO DE `patchDaBaixaDaParcela`, de proposito: a previsao responde "de
+  // onde saiu", a parcela responde "onde entrou".
+  const daParcela = LIB.patchDaBaixaDaParcela({
+    paidDate: "2026-10-20",
+    pernaDeEntradaId: "tx-entrada",
+  });
+  assert.equal(daParcela.paid_transaction_id, "tx-entrada");
+  assert.notEqual(patch.transaction_id, daParcela.paid_transaction_id);
+});
+
+test("`mensagemDaPrevisaoDaCaudaAusente` nomeia as parcelas e diz que NADA entrou", () => {
+  const uma = LIB.mensagemDaPrevisaoDaCaudaAusente([4]);
+  assert.match(uma, /a parcela 4/);
+  assert.match(uma, /nada foi antecipado/i);
+
+  const duas = LIB.mensagemDaPrevisaoDaCaudaAusente([4, 3]);
+  assert.match(duas, /as parcelas 4, 3/);
+  // A SEGUNDA METADE E A QUE IMPORTA: sem ela quem pedisse 3 e lesse a recusa
+  // nao saberia se as outras 2 entraram, e tentaria de novo sobre um estado que
+  // nao conhece.
+  assert.match(duas, /nada foi antecipado/i);
 });
 
 // ---------------------------------------------------------------------------
@@ -3848,19 +4009,535 @@ test("A DEVEDORA LEVA 403, e nada e escrito -- o passo 6 da medicao", async () =
   assert.equal(/active|cancel|settled/i.test(corpo.error), false);
 });
 
-test("o CASO A e recusado com o ponteiro para Contas a Pagar, e sem escrita", async () => {
-  const linhas = tabelasDaAntecipacao({
-    mybank_loans: [{ ...EMPRESTIMO_A_ANTECIPAR, borrower_user_id: EU }],
+// ---------------------------------------------------------------------------
+// 12.5b -- A ANTECIPACAO NO CASO A (F3, HMO-396)
+// ---------------------------------------------------------------------------
+// O FIXTURE E O DA MEDICAO EM PRODUCAO QUE A ISSUE PEDE: um auto-emprestimo de
+// 4 x R$ 50, antecipar 2, e conferir as quatro coisas -- as duas parcelas
+// `paid`, as duas previsoes da cauda BAIXADAS (nao sumidas), duas pernas por
+// parcela (saida e entrada, que e o que torna o Caso A diferente) e a soma
+// fechando.
+
+/** O auto-emprestimo da medicao: 4 x R$ 50 de mim para mim. */
+const AUTO_A_ANTECIPAR = {
+  id: "loan-auto-antecipa",
+  lender_user_id: EU,
+  lender_account_id: INVESTIMENTO,
+  // O Caso A em uma linha: eu sou os dois lados.
+  borrower_user_id: EU,
+  description: "Bicicleta ergométrica",
+  principal: 200,
+  installment_count: 4,
+  first_due_date: "2026-11-10",
+  status: "active",
+  interest_rate: "0.00",
+  created_at: "2026-10-10T00:00:00Z",
+};
+
+const VENCIMENTOS_DO_AUTO = [
+  "2026-11-10",
+  "2026-12-10",
+  "2027-01-10",
+  "2027-02-10",
+];
+
+function parcelaDoAutoAAntecipar(numero, status = "pending", extra = {}) {
+  return {
+    id: `a${numero}`,
+    loan_id: "loan-auto-antecipa",
+    installment_number: numero,
+    installment_total: 4,
+    amount: 50,
+    due_date: VENCIMENTOS_DO_AUTO[numero - 1],
+    status,
+    reported_at: null,
+    paid_date: null,
+    paid_transaction_id: null,
+    ...extra,
+  };
+}
+
+/**
+ * A transferencia prevista de cada parcela -- com o elo `mybank:a<N>`.
+ *
+ * `account_id` E A CONTA CORRENTE, e e por isso que a previsao e obrigatoria no
+ * Caso A: `mybank_loans` guarda a conta credora (o DESTINO) e nao guarda a de
+ * pagamento. Sem esta linha a rota nao tem de onde debitar.
+ */
+function previsaoDoAutoAAntecipar(numero, extra = {}) {
+  return {
+    id: `prev-a${numero}`,
+    user_id: EU,
+    account_id: CORRENTE,
+    destination_account_id: INVESTIMENTO,
+    description: `Bicicleta ergométrica (${numero}/4)`,
+    amount: 50,
+    due_date: VENCIMENTOS_DO_AUTO[numero - 1],
+    transaction_type: "transfer",
+    status: "pending",
+    paid_date: null,
+    transaction_id: null,
+    category_id: CATEGORIA_TRANSFER,
+    subcategory_id: null,
+    group_id: null,
+    notes: `mybank:a${numero}`,
+    created_at: "2026-10-10T00:00:00Z",
+    ...extra,
+  };
+}
+
+function tabelasDoAutoAAntecipar(extra = {}) {
+  return tabelas({
+    mybank_loans: [{ ...AUTO_A_ANTECIPAR }],
+    mybank_installments: [1, 2, 3, 4].map((n) => parcelaDoAutoAAntecipar(n)),
+    scheduled_transactions: [1, 2, 3, 4].map((n) =>
+      previsaoDoAutoAAntecipar(n)
+    ),
+    ...extra,
+  });
+}
+
+function anteciparNoAuto(opcoes = {}) {
+  return antecipar({
+    loanId: "loan-auto-antecipa",
+    tabelas: tabelasDoAutoAAntecipar(),
+    ...opcoes,
+  });
+}
+
+/** As previsoes que a rota mandou BAIXAR (update), e as que ela APAGOU. */
+function escritasNaAgenda(sessao, verbo) {
+  return sessao.escritas.filter(
+    (e) => e.tabela === "scheduled_transactions" && e.verbo === verbo
+  );
+}
+
+test("CASO A: antecipar 2 PAGA as parcelas 4 e 3 e BAIXA as previsoes delas", async () => {
+  const linhas = tabelasDoAutoAAntecipar();
+  const { status, corpo } = await anteciparNoAuto({
+    tabelas: linhas,
+    corpo: { parcelas: 2, data_do_pagamento: "2026-10-20" },
   });
 
-  const { status, corpo, sessao } = await antecipar({ tabelas: linhas });
+  assert.equal(status, 200);
+  assert.equal(corpo.caso, "auto");
+  assert.equal(corpo.parcelas_antecipadas, 2);
+  assert.deepEqual(corpo.numeros, [4, 3]);
+  assert.equal(corpo.valor, 100);
 
-  // Antecipar aqui encurtaria a serie sem nada ter saido da conta: a parcela do
-  // auto-emprestimo JA e uma transferencia prevista, e quem move o dinheiro e a
-  // baixa dela. "O numero fecha, o fato nao aconteceu."
-  assert.equal(status, 400);
-  assert.match(corpo.error, /Contas a Pagar/);
+  // AS DUAS PARCELAS DA CAUDA, PAGAS -- e as 1 e 2 intactas.
+  const porNumero = (n) =>
+    linhas.mybank_installments.find((p) => p.installment_number === n);
+  assert.equal(porNumero(4).status, "paid");
+  assert.equal(porNumero(3).status, "paid");
+  assert.equal(porNumero(2).status, "pending");
+  assert.equal(porNumero(1).status, "pending");
+  // O valor de quem sobra NAO mudou -- a decisao de produto em uma assercao.
+  assert.equal(Number(porNumero(2).amount), 50);
+
+  // AS DUAS PREVISOES, BAIXADAS. O `status` e `paid`, a data e a do pagamento, e
+  // a LINHA CONTINUA NA TABELA: e ela que comprova, no historico de Contas a
+  // Pagar, que o dinheiro saiu da conta corrente.
+  const previsao = (n) =>
+    linhas.scheduled_transactions.find((p) => p.id === `prev-a${n}`);
+  assert.equal(linhas.scheduled_transactions.length, 4);
+  assert.equal(previsao(4).status, "paid");
+  assert.equal(previsao(3).status, "paid");
+  assert.equal(previsao(4).paid_date, "2026-10-20");
+  // E as da cabeca continuam a pagar, com a data de vencimento intacta.
+  assert.equal(previsao(2).status, "pending");
+  assert.equal(previsao(1).status, "pending");
+
+  assert.equal(corpo.previsoes_baixadas, 2);
+
+  // A INVARIANTE DO DINHEIRO: soma(pagas) + soma(em aberto) = principal.
+  const soma = somaDaDivida(linhas.mybank_installments, "loan-auto-antecipa");
+  assert.equal(soma.pagas, 10000);
+  assert.equal(soma.emAberto, 10000);
+  assert.equal(soma.total, 20000);
+});
+
+test("CASO A: as previsoes sao BAIXADAS e NUNCA apagadas -- o mutante da issue", async () => {
+  const linhas = tabelasDoAutoAAntecipar();
+  const { sessao } = await anteciparNoAuto({ tabelas: linhas });
+
+  // O PAR COM O CANCELAMENTO, E O CRITERIO E O OPOSTO. O cancelamento acha as
+  // MESMAS linhas pelo MESMO elo e manda DELETE, porque lá nada se moveu. Aqui o
+  // verbo e UPDATE: apagada, a parcela ficaria paga, o saldo da conta corrente
+  // menor, e a linha que explica o porque teria desaparecido do historico.
+  assert.equal(escritasNaAgenda(sessao, "delete").length, 0);
+
+  const baixas = escritasNaAgenda(sessao, "update");
+  assert.equal(baixas.length, 2);
+
+  for (const baixa of baixas) {
+    assert.equal(baixa.patch.status, "paid");
+    assert.ok(baixa.patch.paid_date, "a baixa carimba a data");
+    // ALCANCOU A LINHA: patch certo com filtro errado reescreve nenhuma linha,
+    // e a resposta da rota seria a mesma.
+    assert.equal(baixa.linhasAfetadas, 1);
+  }
+
+  // E as quatro linhas continuam na tabela, que e a assercao que distingue
+  // "baixada" de "apagada" no estado final e nao so no verbo.
+  assert.equal(linhas.scheduled_transactions.length, 4);
+});
+
+test("CASO A: DUAS pernas por parcela -- a saida da corrente e a entrada no investimento", async () => {
+  const linhas = tabelasDoAutoAAntecipar();
+  const { sessao } = await anteciparNoAuto({ tabelas: linhas });
+
+  // QUATRO pernas para duas parcelas: e isso que torna o Caso A diferente do
+  // Caso B, onde ha UMA perna por parcela (o dinheiro vem de fora das minhas
+  // contas). Com uma perna so aqui, o patrimonio cairia R$ 100 sem nada chegar a
+  // conta de investimento.
+  const todas = pernas(sessao);
+  assert.equal(todas.length, 4);
+
+  for (const [saida, entrada] of [
+    [todas[0], todas[1]],
+    [todas[2], todas[3]],
+  ]) {
+    assert.equal(saida.account_id, CORRENTE);
+    assert.ok(saida.amount < 0, "a saida e NEGATIVA na conta corrente");
+    assert.equal(saida.transaction_type, "transfer");
+
+    assert.equal(entrada.account_id, INVESTIMENTO);
+    assert.ok(entrada.amount > 0, "a entrada e POSITIVA no investimento");
+    // `transfer` E NAO `income`: principal voltando nao e receita, e a
+    // antecipacao lanca N de uma vez.
+    assert.equal(entrada.transaction_type, "transfer");
+
+    // O elo entre as duas pernas, que e o que o estorno procura.
+    assert.equal(entrada.counterpart_transaction_id, saida.id);
+  }
+
+  // E O SALDO FECHA: o que saiu da corrente entrou no investimento, real a real.
+  const soma = (conta) =>
+    todas
+      .filter((p) => p.account_id === conta)
+      .reduce((t, p) => t + Math.round(Number(p.amount) * 100), 0);
+  assert.equal(soma(CORRENTE), -10000);
+  assert.equal(soma(INVESTIMENTO), 10000);
+});
+
+test("CASO A: os DOIS elos apontam para pernas OPOSTAS, e as duas estao certas", async () => {
+  const linhas = tabelasDoAutoAAntecipar();
+  const { sessao } = await anteciparNoAuto({
+    tabelas: linhas,
+    corpo: { parcelas: 1 },
+  });
+
+  const [saida, entrada] = pernas(sessao);
+  assert.notEqual(
+    saida.id,
+    entrada.id,
+    "as pernas tem ids diferentes -- sem isto nada abaixo mediria nada"
+  );
+
+  // A PARCELA aponta para a ENTRADA: "onde este dinheiro entrou".
+  const patchDaParcela = patchesDaParcela(sessao)[0].patch;
+  assert.equal(patchDaParcela.paid_transaction_id, entrada.id);
+
+  // A PREVISAO aponta para a SAIDA: "de onde saiu o dinheiro desta conta a
+  // pagar" -- e e esse elo que faz o estorno achar a contraparte por
+  // `counterpart_transaction_id = transaction_id`. Apontar as duas para a mesma
+  // perna deixaria o estorno sem achar a outra.
+  const baixaDaPrevisao = escritasNaAgenda(sessao, "update")[0].patch;
+  assert.equal(baixaDaPrevisao.transaction_id, saida.id);
+  assert.notEqual(baixaDaPrevisao.transaction_id, patchDaParcela.paid_transaction_id);
+});
+
+test("CASO A: a frase diz que as contas a pagar foram BAIXADAS, nao removidas", async () => {
+  const { corpo } = await anteciparNoAuto();
+
+  assert.match(corpo.message, /conta corrente para a de investimento/i);
+  assert.match(corpo.message, /baixadas/i);
+  assert.match(corpo.message, /não removidas/i);
+  // E as tres frases de sempre continuam lá.
+  assert.match(corpo.message, /fim da série/i);
+  assert.match(corpo.message, /mantêm o valor/i);
+});
+
+test("CASO A: o valor que se move e o da PARCELA, nao o da previsao editada", async () => {
+  // A previsao e editavel em Contas a Pagar: nada impede a pessoa de ter mudado
+  // o valor dela a mao. A divida e a PARCELA, e e a soma das parcelas que a
+  // resposta afirma ter movido -- se a previsao mandasse, o extrato e a resposta
+  // discordariam e a invariante do principal quebraria calada.
+  const linhas = tabelasDoAutoAAntecipar({
+    scheduled_transactions: [
+      previsaoDoAutoAAntecipar(1),
+      previsaoDoAutoAAntecipar(2),
+      previsaoDoAutoAAntecipar(3),
+      previsaoDoAutoAAntecipar(4, { amount: 999 }),
+    ],
+  });
+
+  const { status, corpo, sessao } = await anteciparNoAuto({
+    tabelas: linhas,
+    corpo: { parcelas: 1 },
+  });
+
+  assert.equal(status, 200);
+  // A RESPOSTA diz R$ 50...
+  assert.equal(corpo.valor, 50);
+  // ...e as duas pernas movem R$ 50, que e a mesma coisa que ela diz.
+  const [saida, entrada] = pernas(sessao);
+  assert.equal(Math.round(Number(saida.amount) * 100), -5000);
+  assert.equal(Math.round(Number(entrada.amount) * 100), 5000);
+
+  // E a invariante continua fechando com o principal de R$ 200.
+  const soma = somaDaDivida(linhas.mybank_installments, "loan-auto-antecipa");
+  assert.equal(soma.total, 20000);
+});
+
+test("CASO A: parcela da cauda SEM previsao e 409, e NADA e escrito", async () => {
+  // A conta a pagar da parcela 4 foi excluida a mao. Antecipar 2 pediria as
+  // parcelas 4 e 3, e a 4 nao tem de onde debitar.
+  const linhas = tabelasDoAutoAAntecipar({
+    scheduled_transactions: [1, 2, 3].map((n) => previsaoDoAutoAAntecipar(n)),
+  });
+
+  const { status, corpo, sessao } = await anteciparNoAuto({ tabelas: linhas });
+
+  // A RECUSA VEM ANTES DA PRIMEIRA ESCRITA. Descobrir isso depois de baixar a
+  // parcela 3 deixaria uma antecipada e uma recusada, pelo motivo mais confuso
+  // possivel -- e e por isso que as previsoes sao lidas no passo 2.5.
+  assert.equal(status, 409);
+  assert.match(corpo.error, /parcela 4/);
+  assert.match(corpo.error, /nada foi antecipado/i);
+  assert.equal(corpo.parcelas_antecipadas, 0);
   assert.equal(sessao.escritas.length, 0);
+});
+
+test("CASO A: previsao de OUTRA pessoa com o mesmo elo NAO serve", async () => {
+  // `notes` e campo que a pessoa digita: nada impede a previsao de outra conta
+  // de ter `mybank:a4` ali. O `.eq("user_id")` e a camada que nao depende da RLS.
+  const linhas = tabelasDoAutoAAntecipar({
+    scheduled_transactions: [
+      previsaoDoAutoAAntecipar(1),
+      previsaoDoAutoAAntecipar(2),
+      previsaoDoAutoAAntecipar(3),
+      previsaoDoAutoAAntecipar(4, { user_id: LAIS }),
+    ],
+  });
+
+  const { status, corpo, sessao } = await anteciparNoAuto({ tabelas: linhas });
+
+  assert.equal(status, 409);
+  assert.match(corpo.error, /parcela 4/);
+  assert.equal(sessao.escritas.length, 0);
+});
+
+test("CASO A: previsao JA baixada nao e re-baixada -- o filtro de `pending`", async () => {
+  // Previsao `paid` com a parcela ainda em aberto e um estado torto que existe
+  // (baixa a mao, estorno pela metade). Sem o filtro de `pending` a rota a
+  // re-baixaria, repontando `transaction_id` para a perna nova e deixando a
+  // antiga orfa no extrato.
+  const linhas = tabelasDoAutoAAntecipar({
+    scheduled_transactions: [
+      previsaoDoAutoAAntecipar(1),
+      previsaoDoAutoAAntecipar(2),
+      previsaoDoAutoAAntecipar(3),
+      previsaoDoAutoAAntecipar(4, {
+        status: "paid",
+        paid_date: "2026-10-01",
+        transaction_id: "tx-antiga",
+      }),
+    ],
+  });
+
+  const { status, corpo, sessao } = await anteciparNoAuto({ tabelas: linhas });
+
+  assert.equal(status, 409);
+  assert.match(corpo.error, /parcela 4/);
+  assert.equal(sessao.escritas.length, 0);
+  // E a perna antiga continua apontada: nada foi repontado.
+  assert.equal(
+    linhas.scheduled_transactions.find((p) => p.id === "prev-a4").transaction_id,
+    "tx-antiga"
+  );
+});
+
+test("CASO A: a baixa da PREVISAO filtrada pela RLS desfaz as pernas E a parcela", async () => {
+  const linhas = tabelasDoAutoAAntecipar();
+  const { status, corpo, sessao } = await anteciparNoAuto({
+    tabelas: linhas,
+    corpo: { parcelas: 1 },
+    // O UPDATE em `scheduled_transactions` alcanca ZERO linha, sem erro -- a
+    // policy FILTRA em vez de recusar.
+    rlsFiltra: { scheduled_transactions: true },
+  });
+
+  assert.equal(status, 500);
+  assert.equal(corpo.parcelas_antecipadas, 0);
+
+  // AS DUAS PERNAS FORAM APAGADAS: dinheiro no extrato sem previsao baixada e o
+  // estado que ninguem reconcilia depois.
+  const apagadas = sessao.escritas.filter(
+    (e) => e.tabela === "financial_transactions" && e.verbo === "delete"
+  );
+  assert.equal(apagadas.length, 2);
+
+  // E A PARCELA VOLTOU A `pending`. Sem este desfazimento o estado ficaria pior
+  // do que o defeito: parcela paga, previsao pendente e nenhum dinheiro lancado
+  // -- emprestimo andando de graca.
+  const porNumero = (n) =>
+    linhas.mybank_installments.find((p) => p.installment_number === n);
+  assert.equal(porNumero(4).status, "pending");
+  assert.equal(porNumero(4).paid_date, null);
+});
+
+/**
+ * Um cliente que deixa a PRIMEIRA baixa de previsao passar e faz a SEGUNDA
+ * alcancar ZERO LINHA, sem erro -- a forma exata que a RLS produz.
+ *
+ * O irmao de `clienteComASegundaBaixaFiltrada`, e pela mesma razao: os botoes do
+ * duble valem para a TABELA INTEIRA e derrubariam a primeira tambem, e a
+ * antecipacao PARCIAL do Caso A e um estado que so existe quando uma parcela
+ * entra inteira e a seguinte nao. Este embrulho intercepta SO `update` em
+ * `scheduled_transactions`: as pernas, o estorno da parcela e as leituras
+ * continuam indo ao duble.
+ */
+function clienteComASegundaBaixaDaPrevisaoFiltrada(client) {
+  let baixas = 0;
+
+  return {
+    ...client,
+    from(tabela) {
+      const api = client.from(tabela);
+      if (tabela !== "scheduled_transactions") return api;
+
+      return {
+        ...api,
+        update(patch) {
+          baixas += 1;
+          if (baixas === 1) return api.update(patch);
+
+          // Zero linha e nenhum erro. A rota encadeia `.eq().eq().select()
+          // .single()` antes do `await`, e `single()` de zero linha devolve
+          // `data: null`.
+          const cadeia = {
+            eq: () => cadeia,
+            in: () => cadeia,
+            select: () => cadeia,
+            single: () => cadeia,
+            then: (res, rej) =>
+              Promise.resolve({ data: null, error: null }).then(res, rej),
+          };
+          return cadeia;
+        },
+      };
+    },
+  };
+}
+
+test("CASO A PARCIAL: a 2a previsao nao baixa, e `previsoes_baixadas` diz 1", async () => {
+  const linhas = tabelasDoAutoAAntecipar();
+  const sessao = criarDuble({ user: { id: EU }, tabelas: linhas });
+  globalThis.__dubleDeSupabase = {
+    sessao: () => clienteComASegundaBaixaDaPrevisaoFiltrada(sessao.client),
+  };
+
+  let resposta;
+  try {
+    resposta = await ANTECIPA.POST(
+      { json: async () => ({ parcelas: 2, data_do_pagamento: "2026-10-20" }) },
+      { params: { id: "loan-auto-antecipa" } }
+    );
+  } finally {
+    delete globalThis.__dubleDeSupabase;
+  }
+
+  const corpo = await resposta.json();
+
+  // 200: a parcela 4 entrou INTEIRA (duas pernas, parcela paga, previsao
+  // baixada). Devolver 500 aqui diria que nada aconteceu.
+  assert.equal(resposta.status, 200, JSON.stringify(corpo));
+  assert.equal(corpo.parcelas_antecipadas, 1);
+  assert.equal(corpo.parcelas_pedidas, 2);
+  assert.equal(corpo.success, false);
+
+  // O CAMPO CONTA O QUE FOI BAIXADO, E NAO O QUE FOI PEDIDO. Com `2` aqui a
+  // resposta afirmaria ter baixado a conta a pagar da parcela 3 -- que continua
+  // pendente na agenda, esperando ser paga de novo.
+  assert.equal(corpo.previsoes_baixadas, 1);
+
+  const porNumero = (n) =>
+    linhas.mybank_installments.find((p) => p.installment_number === n);
+  const previsao = (n) =>
+    linhas.scheduled_transactions.find((p) => p.id === `prev-a${n}`);
+
+  // A 4 ENTROU INTEIRA...
+  assert.equal(porNumero(4).status, "paid");
+  assert.equal(previsao(4).status, "paid");
+
+  // ...E A 3 NAO ENTROU DE JEITO NENHUM: a previsao dela continua pendente, a
+  // parcela voltou a `pending` pelo estorno, e as duas pernas foram desfeitas.
+  assert.equal(previsao(3).status, "pending");
+  assert.equal(porNumero(3).status, "pending");
+  assert.equal(porNumero(3).paid_date, null);
+
+  // SOBRAM DUAS linhas de dinheiro -- as da parcela 4. Sem o rollback sobrariam
+  // quatro, e duas delas sem conta a pagar nem parcela que as explicasse.
+  assert.equal(linhas.financial_transactions.length, 2);
+  for (const linha of linhas.financial_transactions) {
+    assert.equal(linha.notes, "mybank:a4");
+  }
+
+  // E A INVARIANTE CONTINUA FECHANDO: R$ 50 pagos + R$ 150 em aberto = R$ 200.
+  const soma = somaDaDivida(linhas.mybank_installments, "loan-auto-antecipa");
+  assert.equal(soma.pagas, 5000);
+  assert.equal(soma.emAberto, 15000);
+  assert.equal(soma.total, 20000);
+});
+
+test("CASO A: antecipar as 4 quita o emprestimo e baixa as 4 previsoes", async () => {
+  const linhas = tabelasDoAutoAAntecipar();
+  const { status, corpo } = await anteciparNoAuto({
+    tabelas: linhas,
+    corpo: { parcelas: 4 },
+  });
+
+  assert.equal(status, 200);
+  assert.equal(corpo.parcelas_antecipadas, 4);
+  assert.equal(corpo.previsoes_baixadas, 4);
+  assert.equal(corpo.emprestimo_quitado, true);
+  assert.equal(linhas.mybank_loans[0].status, "settled");
+
+  // As quatro previsoes BAIXADAS, e as quatro linhas ainda na agenda.
+  assert.equal(linhas.scheduled_transactions.length, 4);
+  assert.equal(
+    linhas.scheduled_transactions.filter((p) => p.status === "paid").length,
+    4
+  );
+
+  // A frase do Caso A sobrevive ao ramo da quitacao -- ela e a abertura.
+  assert.match(corpo.message, /baixadas/i);
+  assert.match(corpo.message, /quitado/i);
+});
+
+test("CASO B: nenhuma previsao e tocada -- a rota nem procura por elas", async () => {
+  const linhas = tabelasDaAntecipacao({
+    // Uma previsao MINHA com o elo de uma parcela da Lais: se a rota procurasse
+    // previsoes no Caso B, esta seria baixada e o dinheiro contaria duas vezes.
+    scheduled_transactions: [
+      {
+        ...previsaoDoAutoAAntecipar(1),
+        id: "prev-intrusa",
+        notes: "mybank:n6",
+      },
+    ],
+  });
+
+  const { status, sessao } = await antecipar({ tabelas: linhas });
+
+  assert.equal(status, 200);
+  assert.equal(escritasNaAgenda(sessao, "update").length, 0);
+  assert.equal(escritasNaAgenda(sessao, "delete").length, 0);
+  assert.equal(linhas.scheduled_transactions[0].status, "pending");
+  // E UMA perna por parcela, nao duas: o Caso B nao tem conta minha de origem.
+  assert.equal(pernas(sessao).length, 2);
 });
 
 test("corpo sem `parcelas`, ou com valor em reais, e recusado em 400", async () => {

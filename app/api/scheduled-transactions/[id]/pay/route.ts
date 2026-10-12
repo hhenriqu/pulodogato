@@ -46,7 +46,6 @@ import {
   pernasDoPagamentoDeFatura,
 } from "@/lib/card-invoice";
 import {
-  pernasDaTransferencia,
   validarBaixaDeTransferencia,
   mensagemDaBaixaDeTransferencia,
 } from "@/lib/transferencia";
@@ -55,10 +54,10 @@ import {
   parcelaDaChaveDoMyBank,
   parcelaSegueABaixaDaPrevisao,
   parcelaSegueAoEstornoDaPrevisao,
-  patchDaBaixaDaParcela,
   patchDaQuitacaoDoEmprestimo,
   patchDoEstornoDaParcela,
 } from "@/lib/emprestimo-do-mybank";
+import { baixaDaTransferenciaPrevista } from "@/lib/services/baixa-da-transferencia-prevista";
 
 export async function POST(
   request: NextRequest,
@@ -206,7 +205,6 @@ export async function POST(
         conta,
         valorPago,
         paid_date,
-        scheduledId: params.id,
       });
     }
 
@@ -479,6 +477,14 @@ async function pagarFatura(params: {
  * propria linha da agenda (`account_id` = origem, `destination_account_id` =
  * destino, migration 038), e nao em `notes` + corpo do pedido.
  *
+ * OS PASSOS 2, 2.5 E 3 MORAM EM `lib/services/` DESDE A HMO-396
+ * ------------------------------------------------------------
+ * `baixaDaTransferenciaPrevista` e esta rota de ali para baixo, movida inteira
+ * para que a antecipacao do Caso A (`/api/mybank/loans/[id]/antecipacao`) a
+ * CHAME em vez de reescrever as quarenta linhas de movimentacao de dinheiro.
+ * Nada do que esta prosa descreve mudou de comportamento -- e o cabecalho de lá
+ * e onde cada decisao agora esta explicada por extenso.
+ *
  * A ORDEM segue o mesmo principio do resto da rota -- o pior caso tem de ser
  * "nao deu baixa", que o usuario ve e refaz, nunca "metade da transferencia no
  * saldo", que ninguem percebe:
@@ -537,10 +543,13 @@ async function pagarTransferencia(params: {
   conta: any;
   valorPago: number | null;
   paid_date: string;
-  scheduledId: string;
+  // `scheduledId` SAIU DAQUI NA HMO-396, e nao por limpeza: a linha a baixar e
+  // `conta`, e `baixaDaTransferenciaPrevista` filtra o UPDATE por `conta.id`.
+  // Receber o id por fora daria DUAS fontes para "qual previsao baixar", e o dia
+  // em que elas divergissem o UPDATE acertaria outra linha -- com as pernas
+  // lancadas pela conta deste pedido.
 }): Promise<NextResponse> {
-  const { supabase, userId, serviceId, conta, valorPago, paid_date, scheduledId } =
-    params;
+  const { supabase, userId, serviceId, conta, valorPago, paid_date } = params;
 
   // RECUSA ANTES DA PRIMEIRA ESCRITA. Descobrir no passo 2 que nao ha destino
   // deixaria a perna de saida no saldo -- metade de uma transferencia, o estado
@@ -580,163 +589,32 @@ async function pagarTransferencia(params: {
 
   const fechaOCicloDoMyBank = parcelaSegueABaixaDaPrevisao(parcelaDoMyBank);
 
-  const { saida, entrada } = pernasDaTransferencia({
-    // A baixa aceita valor diferente do previsto, como a comum: o CHECK do banco
-    // e `amount > 0` e `valorPago` ja veio por `Math.abs`.
-    valor: valorPago ?? Number(conta.amount),
-    origemId: conta.account_id,
-    destinoId: conta.destination_account_id,
-    descricao: conta.description,
+  // O DINHEIRO, A PARCELA E A PREVISAO -- os passos 2, 2.5 e 3, que desde a
+  // HMO-396 moram em `lib/services/baixa-da-transferencia-prevista.ts` porque a
+  // antecipacao do Caso A os CHAMA em vez de reescrever. A ordem e os
+  // desfazimentos nao mudaram; o cabecalho de lá os explica passo a passo, e o
+  // cabecalho desta funcao diz por que a posicao de cada um e a decisao.
+  const movimento = await baixaDaTransferenciaPrevista({
+    supabase,
+    userId,
+    serviceId,
+    conta,
+    valorPago,
+    paidDate: paid_date,
+    // `fechaOCicloDoMyBank` DECIDE AQUI, e nao lá: quem sabe se o elo vale
+    // (chave inteira, parcela existente, estado que aceita a baixa) e esta
+    // rota, que ja leu a parcela. `null` pula o passo 2.5.
+    parcela: fechaOCicloDoMyBank && parcelaDoMyBank ? parcelaDoMyBank : null,
   });
 
-  // `group_id: null` e `is_shared: false` nas duas pernas, mesmo que a conta
-  // prevista tenha grupo -- igual a rota da transferencia pontual. Transferencia
-  // entre contas proprias nao e despesa compartilhada, e os triggers de grupo
-  // (sync_transaction_with_group, auto_create_group_transaction) criariam rateio
-  // para ela, cobrando dos outros membros um valor que eles ja rateiam nas
-  // COMPRAS.
-  const comum = {
-    user_id: userId,
-    service_id: serviceId,
-    category_id: conta.category_id,
-    group_id: null,
-    is_shared: false,
-    transaction_date: paid_date,
-    notes: conta.notes,
-    // As duas datas sobrevivem a baixa, como na comum (027): `expected_date`
-    // guarda o dia previsto e `launch_date` o dia em que a previsao foi criada.
-    // Sem elas a transferencia prevista para o dia 5 e feita no dia 12 nao teria
-    // como dizer que atrasou.
-    expected_date: conta.due_date,
-    launch_date: conta.created_at
-      ? String(conta.created_at).slice(0, 10)
-      : paid_date,
-  };
-
-  const { data: txSaida, error: erroSaida } = await supabase
-    .from("financial_transactions")
-    .insert({ ...comum, ...saida })
-    .select()
-    .single();
-
-  if (erroSaida || !txSaida) {
-    console.error("Erro ao lançar a saída da transferência prevista:", erroSaida);
+  if (!movimento.ok) {
     return NextResponse.json(
-      { error: "Não foi possível lançar a transferência" },
-      { status: 500 }
+      { error: movimento.erro },
+      { status: movimento.status }
     );
   }
 
-  const { data: txEntrada, error: erroEntrada } = await supabase
-    .from("financial_transactions")
-    .insert({ ...comum, ...entrada, counterpart_transaction_id: txSaida.id })
-    .select()
-    .single();
-
-  if (erroEntrada || !txEntrada) {
-    await supabase.from("financial_transactions").delete().eq("id", txSaida.id);
-    console.error(
-      "Transferência desfeita: a perna de entrada não entrou",
-      erroEntrada
-    );
-    return NextResponse.json(
-      {
-        error:
-          "Não foi possível completar a transferência. Nada foi lançado — tente novamente.",
-      },
-      { status: 500 }
-    );
-  }
-
-  // PASSO 2.5 -- a parcela do MyBank vira `paid` (HMO-382). Ver o cabecalho
-  // desta funcao para a posicao; aqui fica o porque de cada detalhe.
-  if (fechaOCicloDoMyBank && parcelaDoMyBank) {
-    const { data: parcelasBaixadas, error: erroDaParcela } = await supabase
-      .from("mybank_installments")
-      // O elo aponta para a perna de ENTRADA -- a positiva, a da conta de
-      // investimento. Ver `patchDaBaixaDaParcela`: e a mesma coluna que no Caso
-      // B guarda a entrada que o credor lanca, e apontar para a saida faria ela
-      // querer dizer coisas opostas nos dois casos.
-      .update(
-        patchDaBaixaDaParcela({
-          paidDate: paid_date,
-          pernaDeEntradaId: txEntrada.id,
-        })
-      )
-      .eq("id", parcelaDoMyBank.id)
-      .select("id, status");
-
-    // `.select()` E A CONTAGEM NAO SAO DECORACAO. Um UPDATE que a policy nao
-    // deixa casar responde 200 com corpo vazio -- a RLS FILTRA em vez de recusar
-    // --, entao sem conferir a contagem esta rota diria "parcela paga" sobre um
-    // UPDATE que alcancou zero linha. O caminho e real aqui: a trigger
-    // `mybank_installments_trava_do_devedor` (053) tambem recusa, e com
-    // excecao, se quem clicou nao for o credor.
-    if (erroDaParcela || !parcelasBaixadas || parcelasBaixadas.length === 0) {
-      // NADA FICA GRAVADO. A previsao ainda nao foi baixada (este passo vem
-      // antes), entao desfazer as duas pernas devolve o mundo ao estado de
-      // antes do clique -- "nao deu baixa", que a pessoa ve e refaz. A ordem e a
-      // mesma do passo 3: a entrada primeiro, porque e ela que aponta para a
-      // saida e o FK e ON DELETE SET NULL.
-      await supabase.from("financial_transactions").delete().eq("id", txEntrada.id);
-      await supabase.from("financial_transactions").delete().eq("id", txSaida.id);
-      console.error(
-        "Baixa desfeita: a parcela do MyBank não pôde ser marcada como paga",
-        erroDaParcela
-      );
-      return NextResponse.json(
-        {
-          error:
-            "Não foi possível baixar a parcela do MyBank. Nada foi lançado — tente novamente.",
-        },
-        { status: 500 }
-      );
-    }
-  }
-
-  const { data: baixada, error: erroBaixa } = await supabase
-    .from("scheduled_transactions")
-    .update({ status: "paid", paid_date, transaction_id: txSaida.id })
-    .eq("id", scheduledId)
-    .eq("user_id", userId)
-    .select()
-    .single();
-
-  if (erroBaixa || !baixada) {
-    // A entrada primeiro: ela aponta para a saida, e o FK e ON DELETE SET NULL.
-    // Apagar a saida antes deixaria a entrada sem elo nenhum -- uma perna solta
-    // no saldo do destino, sem nada que diga de onde veio.
-    await supabase.from("financial_transactions").delete().eq("id", txEntrada.id);
-    await supabase.from("financial_transactions").delete().eq("id", txSaida.id);
-
-    // E a parcela volta com elas. Sem este desfazimento o estorno automatico
-    // deixaria o estado pior do que o defeito original: parcela do MyBank paga,
-    // previsao pendente e nenhum dinheiro lancado -- emprestimo quitado de
-    // graca. O `paid_transaction_id` ja teria ficado NULL pelo FK (ON DELETE SET
-    // NULL), mas o `status` NAO volta sozinho.
-    if (fechaOCicloDoMyBank && parcelaDoMyBank) {
-      const { error: erroDoEstornoDaParcela } = await supabase
-        .from("mybank_installments")
-        .update(patchDoEstornoDaParcela())
-        .eq("id", parcelaDoMyBank.id);
-
-      if (erroDoEstornoDaParcela) {
-        console.error(
-          "A parcela do MyBank ficou paga sem baixa na previsão:",
-          erroDoEstornoDaParcela
-        );
-      }
-    }
-
-    console.error(
-      "Baixa desfeita: não foi possível marcar a transferência como feita",
-      erroBaixa
-    );
-    return NextResponse.json(
-      { error: "Não foi possível dar baixa na transferência prevista" },
-      { status: 500 }
-    );
-  }
+  const { txSaida, txEntrada, baixada } = movimento;
 
   // PASSO 4 -- o emprestimo se declara `settled` (HMO-394).
   //

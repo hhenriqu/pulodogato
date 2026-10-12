@@ -66,6 +66,15 @@ const CANCELA = "app/api/mybank/loans/[id]/route.ts";
 const PARCELA = "app/api/mybank/installments/[id]/route.ts";
 const BAIXA = "app/api/scheduled-transactions/[id]/pay/route.ts";
 const ANTECIPA = "app/api/mybank/loans/[id]/antecipacao/route.ts";
+// A HMO-396 MOVEU os passos 2/2.5/3 da baixa para ca, e a antecipacao do Caso A
+// passou a CHAMA-LOS em vez de reescrever as quarenta linhas de movimentacao de
+// dinheiro. QUATRO ancoras desta lista mudaram de arquivo e NAO de texto -- o
+// codigo foi movido com a indentacao intacta, de proposito, para que a prova da
+// refatoracao fosse o placar e nao a releitura de cada mutante
+// (`igualdade-de-placar-prova-refatoracao-mesmo-vermelha`). As outras quatro
+// ficaram em `BAIXA`: duas no estorno (que nao foi movido), uma na resposta e
+// uma no passo 4.
+const SERVICO = "lib/services/baixa-da-transferencia-prevista.ts";
 
 /** [alvo, rotulo, de, para] */
 const mutantes = [
@@ -215,25 +224,25 @@ const mutantes = [
   // O CICLO DO CASO A (HMO-382) -- a baixa da previsao e o estorno
   // =========================================================================
   [
-    BAIXA,
+    SERVICO,
     "A PARCELA FICA EM `pending` (o dinheiro anda 24 vezes e o MyBank segue cobrando tudo)",
     "  if (fechaOCicloDoMyBank && parcelaDoMyBank) {\n    const { data: parcelasBaixadas, error: erroDaParcela } = await supabase",
     "  if (false && parcelaDoMyBank) {\n    const { data: parcelasBaixadas, error: erroDaParcela } = await supabase",
   ],
   [
-    BAIXA,
+    SERVICO,
     "o elo da parcela aponta para a perna de SAIDA (a parcela diz ter entrado na conta corrente, negativa)",
     "          pernaDeEntradaId: txEntrada.id,",
     "          pernaDeEntradaId: txSaida.id,",
   ],
   [
-    BAIXA,
+    SERVICO,
     "a baixa da parcela filtrada pela RLS responde SUCESSO (zero linha alcancada, parcela pendente e previsao paga)",
     "    if (erroDaParcela || !parcelasBaixadas || parcelasBaixadas.length === 0) {",
     "    if (erroDaParcela) {",
   ],
   [
-    BAIXA,
+    SERVICO,
     "a parcela que nao baixou NAO desfaz as pernas (dinheiro movido sem baixa e sem parcela)",
     '      await supabase.from("financial_transactions").delete().eq("id", txEntrada.id);\n      await supabase.from("financial_transactions").delete().eq("id", txSaida.id);\n      console.error(\n        "Baixa desfeita: a parcela do MyBank não pôde ser marcada como paga",',
     '      console.error(\n        "Baixa desfeita: a parcela do MyBank não pôde ser marcada como paga",',
@@ -295,8 +304,15 @@ const mutantes = [
   [
     LIB,
     "a baixa grava `reported` em vez de `paid` (a parcela do auto-emprestimo espera uma confirmacao que nao existe)",
-    '    status: "paid",\n    paid_date: params.paidDate,',
-    '    status: "reported" as "paid",\n    paid_date: params.paidDate,',
+    // A ANCORA LEVA A TERCEIRA LINHA DESDE A HMO-396, e nao por capricho:
+    // `patchDaBaixaDaPrevisao` nasceu com as DUAS primeiras linhas identicas a
+    // estas (`status: "paid"` + `paid_date: params.paidDate`), e a ancora de
+    // duas linhas passou a casar nas duas funcoes -- `funcao-nova-que-copia-
+    // criterio-torna-ancora-alheia-ambigua`. O que distingue as duas e a coluna
+    // do elo: `paid_transaction_id` aqui (onde o dinheiro ENTROU),
+    // `transaction_id` lá (de onde ele SAIU).
+    '    status: "paid",\n    paid_date: params.paidDate,\n    paid_transaction_id:',
+    '    status: "reported" as "paid",\n    paid_date: params.paidDate,\n    paid_transaction_id:',
   ],
 
   // =========================================================================
@@ -668,12 +684,23 @@ const mutantes = [
     "  if (false) {",
   ],
 
-  [
-    LIB,
-    "o CASO A entra aqui (a serie do auto-emprestimo encurta sem nada ter saido da conta)",
-    '    }) === "auto"\n  ) {\n    return "caso_a_nao_entra_aqui";',
-    '    }) !== "auto"\n  ) {\n    return "caso_a_nao_entra_aqui";',
-  ],
+  // O MUTANTE DO CASO A RECUSADO SAIU DAQUI NA F3 (HMO-396), E O PORQUE IMPORTA
+  // ---------------------------------------------------------------------------
+  // Ele era `o CASO A entra aqui (a serie do auto-emprestimo encurta sem nada ter
+  // saido da conta)`, e mutava a recusa `caso_a_nao_entra_aqui` de
+  // `problemaDaAntecipacao`. A F3 APAGOU AQUELA RECUSA -- o Caso A antecipa, e
+  // move o dinheiro --, entao a ancora dele deixou de existir
+  // (`mutante-cuja-ancora-a-feature-apagou`).
+  //
+  // Mante-lo com uma ancora nova seria pior do que apaga-lo: o ROTULO afirma que
+  // a serie encurtaria "sem nada ter saido da conta", e isso deixou de ser
+  // verdade -- a rota agora move o dinheiro e baixa as previsoes. Um mutante que
+  // morre com um porque mentindo e
+  // `reverter-decisao-de-produto-deixa-o-porque-do-mutante-mentindo`.
+  //
+  // O QUE FICOU NO LUGAR DA MEDICAO QUE ELE FAZIA: a secao DO CASO A, abaixo. Em
+  // particular `o CASO A NAO LE AS PREVISOES`, que e o mesmo defeito escrito na
+  // direcao de hoje -- a serie encurtando sem o dinheiro se mover.
 
   // -------------------------------------------------------------------------
   // A ARITMETICA E AS FRASES
@@ -726,6 +753,128 @@ const mutantes = [
     "a resposta conta as parcelas PEDIDAS e nao as que entraram (2 antecipadas quando so uma baixou)",
     "      numerosAntecipados: antecipadas.map((p) => p.numero),",
     "      numerosAntecipados: escolhidas.map((p) => p.installment_number),",
+  ],
+
+  // =========================================================================
+  // A ANTECIPACAO NO CASO A (HMO-396, F3 da HMO-393)
+  // =========================================================================
+  // O PRIMEIRO E O QUE A ISSUE PEDE POR NOME, E E O ESPELHO DO MUTANTE DO
+  // CANCELAMENTO.
+  //
+  // `A PREVISAO E APAGADA EM VEZ DE BAIXADA`: a parcela fica paga, o dinheiro
+  // saiu da conta corrente e entrou na de investimento -- e a linha que comprova
+  // isso desaparece de Contas a Pagar. Sobram duas pernas em
+  // `financial_transactions` que nenhuma conta a pagar explica, e o historico da
+  // pessoa passa a ter um debito de R$ 50 sem origem.
+  //
+  // Ele precisa de ancora PROPRIA porque o cancelamento tem o mutante OPOSTO (`A
+  // PREVISAO JA PAGA E APAGADA`, que mede o filtro de `pending` do DELETE), e os
+  // dois acham as mesmas linhas pelo mesmo elo. Um mutante no outro arquivo nao
+  // diz nada sobre este: `mesmo-alvo-nao-prova-coberto-compare-as-ancoras`.
+  //
+  // O SEGUNDO NAO PERDE DINHEIRO NENHUM, e e o que torna o par visivel: com o
+  // `if (caso === "auto")` cego, a antecipacao do Caso A cai no caminho do Caso B
+  // -- `pernaDeEntradaDoPagamento` devolve `null` lá, e a rota para. O defeito
+  // nao e a resposta 500; e que a unica forma de antecipar um auto-emprestimo
+  // deixa de existir, e a recusa que a F2 tinha (com a frase que apontava o
+  // caminho) tambem ja nao esta lá.
+
+  [
+    SERVICO,
+    "A PREVISAO E APAGADA EM VEZ DE BAIXADA (a parcela fica paga, o dinheiro saiu, e o registro que o comprova desaparece)",
+    "    .update(patchDaBaixaDaPrevisao({ paidDate: paid_date, pernaDeSaidaId: txSaida.id }))",
+    "    .delete()",
+  ],
+
+  [
+    SERVICO,
+    "o elo da PREVISAO aponta para a perna de ENTRADA (o estorno deixa de achar a contraparte e apaga meia transferencia)",
+    "    .update(patchDaBaixaDaPrevisao({ paidDate: paid_date, pernaDeSaidaId: txSaida.id }))",
+    "    .update(patchDaBaixaDaPrevisao({ paidDate: paid_date, pernaDeSaidaId: txEntrada.id }))",
+  ],
+
+  [
+    LIB,
+    "`patchDaBaixaDaPrevisao` NAO carimba a data (a conta a pagar aparece como paga sem dia, e o CHECK do `paid` da parcela nao cobre esta tabela)",
+    "    status: \"paid\",\n    paid_date: params.paidDate,\n    transaction_id: params.pernaDeSaidaId,",
+    "    status: \"paid\",\n    paid_date: undefined as unknown as string,\n    transaction_id: params.pernaDeSaidaId,",
+  ],
+
+  [
+    ANTECIPA,
+    "o CASO A NAO LE AS PREVISOES e cai no caminho do Caso B (a unica forma de antecipar auto-emprestimo deixa de existir)",
+    "      if (caso === \"auto\") {\n        const previsao = previsaoDaParcela.get(parcela.id);",
+    "      if (false) {\n        const previsao = previsaoDaParcela.get(parcela.id);",
+  ],
+
+  [
+    ANTECIPA,
+    "a guarda do `.length` das chaves cai: o Caso B passa a exigir previsao de parcela que nunca teve uma (`.in` vazio no PostgREST alcanca a agenda INTEIRA)",
+    "    if (chaves.length > 0) {",
+    "    if (true) {",
+  ],
+
+  [
+    ANTECIPA,
+    "a previsao ja BAIXADA e re-baixada (o `transaction_id` repontado deixa a perna antiga orfa no extrato)",
+    "        .eq(\"status\", \"pending\")\n        .in(\"notes\", chaves);",
+    "        .in(\"notes\", chaves);",
+  ],
+
+  [
+    ANTECIPA,
+    "a previsao de OUTRA conta com o mesmo `notes` serve (a camada que nao depende da RLS cai)",
+    "        .eq(\"user_id\", user.id)\n        // `pending` SO.",
+    "        // `pending` SO.",
+  ],
+
+  [
+    ANTECIPA,
+    "a parcela sem conta a pagar deixa de ser recusada ANTES da escrita (descobre no meio, com parcelas ja antecipadas)",
+    "      if (parcelasSemPrevisao.length > 0) {",
+    "      if (false) {",
+  ],
+
+  [
+    ANTECIPA,
+    "o valor que se move sai da PREVISAO editada a mao (o extrato e a resposta discordam, e a invariante do principal quebra calada)",
+    "          valorPago: Number(parcela.amount),",
+    "          valorPago: null,",
+  ],
+
+  [
+    LIB,
+    "o elo do par casa por `includes` (a conta a pagar de OUTRA parcela e baixada: o dinheiro sai pela parcela errada)",
+    "    const previsao = params.previsoes.find((p) => p.notes === chave);",
+    "    const previsao = params.previsoes.find((p) =>\n      String(p.notes ?? \"\").includes(chave)\n    );",
+  ],
+
+  [
+    LIB,
+    "a ORDEM dos pares deixa de ser a da cauda (`parei na segunda parcela` passa a querer dizer uma parcela diferente a cada chamada)",
+    "  return { pares, parcelasSemPrevisao };",
+    "  return { pares: pares.slice().reverse(), parcelasSemPrevisao };",
+  ],
+
+  [
+    LIB,
+    "`chavesDasPrevisoesDaAntecipacao` monta chave no CASO B (a antecipacao de conexao passa a exigir previsao que nunca existiu)",
+    '  if (params.caso !== "auto") return [];\n  return params.parcelasAntecipadas.map((p) => chaveDaParcelaDoMyBank(p.id));',
+    "  return params.parcelasAntecipadas.map((p) => chaveDaParcelaDoMyBank(p.id));",
+  ],
+
+  [
+    LIB,
+    "a frase do CASO A nao diz que as contas a pagar foram BAIXADAS (quem for conferir acha duas linhas pagas sem explicacao, ou conclui que foram apagadas)",
+    "  const abertura =\n    params.caso === \"auto\"",
+    "  const abertura =\n    false",
+  ],
+
+  [
+    ANTECIPA,
+    "`previsoes_baixadas` conta as PEDIDAS e nao as baixadas (a antecipacao parcial afirma ter baixado conta a pagar que ficou pendente)",
+    "      previsoes_baixadas: previsoesBaixadas,",
+    "      previsoes_baixadas: escolhidas.length,",
   ],
 ];
 

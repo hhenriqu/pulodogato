@@ -54,10 +54,16 @@
 //   2. ler as parcelas; escolher as N da cauda pela regra pura
 //      (`parcelasDaAntecipacao`: `due_date DESC`, desempate por
 //      `installment_number DESC`);
+//   2.5. SO NO CASO A: ler as previsoes da cauda pelo elo e recusar, com NADA
+//      gravado, se faltar a de alguma parcela -- e DA PREVISAO que sai a conta
+//      de onde o dinheiro e debitado;
 //   3. POR PARCELA, UMA DE CADA VEZ: gravar a perna de entrada e so depois a
 //      baixa. Se a baixa falhar, APAGAR A PERNA que acabou de entrar e parar --
 //      o mesmo rollback que a baixa da previsao faz, pelo mesmo motivo: perna
-//      sem parcela baixada e dinheiro no extrato que nenhuma divida explica;
+//      sem parcela baixada e dinheiro no extrato que nenhuma divida explica.
+//      NO CASO A sao DUAS pernas e a previsao tambem e baixada, e os tres passos
+//      saem de `baixaDaTransferenciaPrevista` -- o mesmo codigo que Contas a
+//      Pagar chamaria, com o mesmo desfazimento;
 //   4. `settled` pela regra da HMO-394, se nao sobrou nada em aberto;
 //   5. a resposta diz QUANTAS DE VERDADE ENTRARAM.
 //
@@ -89,6 +95,33 @@
 // vem depois, e nenhuma LEITURA muda -- `escopoDoBlocoDoDevedor` ja anda sozinho
 // de "a 08/2028" para "a 06/2028" porque le as parcelas em aberto. Se alguma
 // leitura parecer precisar de conserto, o desenho saiu do trilho.
+//
+// O CASO A ENTRA AQUI DESDE A F3 (HMO-396), E AS PREVISOES SAO BAIXADAS
+// --------------------------------------------------------------------
+// A F2 RECUSAVA o Caso A com uma frase que apontava para Contas a Pagar -- a
+// convencao do `PATCH` da parcela (`installments/[id]/route.ts:226`), e pela
+// mesma razao: a parcela do auto-emprestimo JA e transferencia prevista. A F3
+// derrubou aquela recusa por uma razao de dinheiro: a parcela da cauda vence em
+// 2028, e a previsao dela pode estar FORA DO HORIZONTE de Contas a Pagar
+// (`skipped-protege-so-o-horizonte-ja-materializado`). O ponteiro mandava a
+// pessoa para uma tela onde a linha podia nao estar.
+//
+// O `PATCH` da parcela CONTINUA recusando `paid` no Caso A, e isso nao e
+// incoerencia: lá a recusa esta certa (marcar `paid` sem mover dinheiro deixaria
+// o emprestimo andando de graca) e AQUI a rota move o dinheiro.
+//
+// Entao no Caso A a rota faz o trabalho, e faz chamando o mesmo codigo que
+// Contas a Pagar chamaria: `baixaDaTransferenciaPrevista`
+// (`lib/services/baixa-da-transferencia-prevista.ts`) -- duas pernas, a parcela
+// `paid` e a previsao BAIXADA, nessa ordem, com os desfazimentos. A previsao
+// vira `paid` e NAO e apagada: ela e o registro de que o dinheiro se moveu. O
+// cancelamento apaga as mesmas linhas, pelo mesmo elo, porque lá nada se moveu
+// -- mesmo elo, criterio oposto, e o oposto e o ponto.
+//
+// As pernas do Caso A sao DUAS (saida da corrente, entrada no investimento) e no
+// Caso B e UMA (o dinheiro vem de fora das minhas contas). E por isso que
+// `pernaDeEntradaDoPagamento` devolve `null` no Caso A: as duas pernas de lá nao
+// sao a mesma decisao, e misturar as duas contaria o dinheiro duas vezes.
 // ---------------------------------------------------------------------------
 
 import { createClient } from "@/utils/supabase/server";
@@ -97,9 +130,12 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   casoDoEmprestimo,
   chaveDaParcelaDoMyBank,
+  chavesDasPrevisoesDaAntecipacao,
   emprestimoFicouQuitado,
   mensagemDaAntecipacao,
+  mensagemDaPrevisaoDaCaudaAusente,
   mensagemDoProblemaDaAntecipacao,
+  paresDaAntecipacaoDoCasoA,
   parcelasDaAntecipacao,
   patchDaBaixaDaParcela,
   patchDaQuitacaoDoEmprestimo,
@@ -108,8 +144,10 @@ import {
   quantasEmAberto,
   ultimoVencimentoEmAberto,
   valorDaAntecipacao,
+  type PrevisaoABaixar,
 } from "@/lib/emprestimo-do-mybank";
 import { hojeISO } from "@/lib/lancamento";
+import { baixaDaTransferenciaPrevista } from "@/lib/services/baixa-da-transferencia-prevista";
 import { NOME_DA_CATEGORIA_DE_TRANSFERENCIA } from "@/lib/transferencia";
 
 export async function POST(
@@ -190,12 +228,12 @@ export async function POST(
     });
 
     if (problema) {
-      // 403 so para "nao e seu". 400 para corpo malformado e para o Caso A (que
-      // aponta OUTRO caminho), e 409 para o que conflita com o estado da divida.
+      // 403 so para "nao e seu". 400 para corpo malformado, e 409 para o que
+      // conflita com o estado da divida.
       const codigo =
         problema === "nao_sou_o_credor"
           ? 403
-          : problema === "quantas_invalida" || problema === "caso_a_nao_entra_aqui"
+          : problema === "quantas_invalida"
             ? 400
             : 409;
 
@@ -234,6 +272,12 @@ export async function POST(
     // N parcelas dariam N pares de consultas identicas, e a falha de uma delas
     // no meio do laco pararia a antecipacao DEPOIS de algumas parcelas, por um
     // motivo que nao tem nada a ver com dinheiro.
+    //
+    // A EXIGENCIA DA CATEGORIA NAO E SO DO CASO B, e por isso ela nao esta num
+    // ramo: no Caso A as pernas herdam o `category_id` DA PREVISAO, e aquele
+    // valor e esta mesma categoria reservada -- `previsoesDoEmprestimo` a gravou
+    // na criacao da serie. Uma antecipacao do Caso A num banco sem a 023 criaria
+    // pernas apontando para uma categoria que nao existe mais.
     const { data: servico } = await supabase
       .from("financial_services")
       .select("id")
@@ -269,6 +313,91 @@ export async function POST(
     }
 
     // -----------------------------------------------------------------------
+    // 2.5. CASO A: as previsoes da cauda, pelo elo -- LIDAS ANTES DA ESCRITA
+    // -----------------------------------------------------------------------
+    // Ler agora e o que permite recusar, com NADA gravado, o Caso A cuja parcela
+    // da cauda nao tem conta a pagar. Descobrir isso na terceira parcela de
+    // quatro deixaria duas antecipadas e uma recusa, pelo motivo mais confuso
+    // possivel -- e a conta de onde o dinheiro sai mora NA PREVISAO, nao no
+    // emprestimo (ver o cabecalho da secao do Caso A em
+    // `lib/emprestimo-do-mybank.ts`).
+    const previsaoDaParcela = new Map<string, PrevisaoABaixar>();
+
+    const chaves = chavesDasPrevisoesDaAntecipacao({
+      caso,
+      parcelasAntecipadas: escolhidas,
+    });
+
+    // A GUARDA DO `.length`, E ELA NAO E ECONOMIA DE CHAMADA -- a MESMA do
+    // cancelamento (`loans/[id]/route.ts`), e aqui o estrago e pior.
+    //
+    // No Caso B a lista e vazia por decisao (`chavesDasPrevisoesDaAntecipacao`
+    // devolve `[]`: nao existe previsao minha), e `.in("notes", [])` NAO FILTRA
+    // -- a clausula vazia desaparece e a consulta alcanca TODA linha que a RLS
+    // entrega. No cancelamento o verbo era DELETE e apagava a agenda inteira;
+    // aqui as linhas lidas sao as que virao a ser BAIXADAS, e o Caso B passaria
+    // a exigir previsao para parcelas que nunca tiveram uma -- recusando toda
+    // antecipacao de conexao em 409, ou baixando a conta a pagar errada se o
+    // `notes` de alguma casar.
+    //
+    // E E POR ISSO QUE A PERGUNTA E `chaves.length`, E NAO `caso === "auto"`:
+    // as duas sao a mesma hoje, e a do `.length` e a que continua certa se a
+    // regra do elo mudar de ideia sobre algum caso.
+    if (chaves.length > 0) {
+      const { data: previsoes, error: erroDasPrevisoes } = await supabase
+        .from("scheduled_transactions")
+        .select(
+          "id, account_id, destination_account_id, description, amount, due_date, category_id, notes, created_at"
+        )
+        // `user_id` EXPLICITO, como no cancelamento: `notes` e campo que a pessoa
+        // digita, e nada impede a previsao de outra conta de ter `mybank:<id>`
+        // ali. A RLS tambem barra, e esta e a camada que nao depende dela.
+        .eq("user_id", user.id)
+        // `pending` SO. A previsao ja `paid` e fato consumado, e a parcela dela
+        // nao estaria em aberto para entrar na cauda -- mas o filtro nao e
+        // redundante: sem ele uma previsao baixada a mao seria re-baixada, com
+        // `transaction_id` repontado para a perna nova e a perna antiga orfa.
+        .eq("status", "pending")
+        .in("notes", chaves);
+
+      if (erroDasPrevisoes || !previsoes) {
+        console.error(
+          "Erro ao ler as previsoes da cauda a antecipar:",
+          erroDasPrevisoes
+        );
+        return NextResponse.json(
+          {
+            error:
+              "Não foi possível ler as contas a pagar destas parcelas. Nada foi antecipado.",
+          },
+          { status: 500 }
+        );
+      }
+
+      const { pares, parcelasSemPrevisao } = paresDaAntecipacaoDoCasoA({
+        escolhidas,
+        previsoes,
+      });
+
+      if (parcelasSemPrevisao.length > 0) {
+        // 409 E NAO 500: o estado do banco e legivel e coerente -- a parcela
+        // existe, a conta a pagar dela nao. Nada foi escrito, e a frase diz
+        // quais parcelas e onde conferir.
+        return NextResponse.json(
+          {
+            error: mensagemDaPrevisaoDaCaudaAusente(parcelasSemPrevisao),
+            parcelas_antecipadas: 0,
+          },
+          { status: 409 }
+        );
+      }
+
+      for (const par of pares) {
+        previsaoDaParcela.set(par.parcela.id, par.previsao);
+      }
+    }
+
+    // -----------------------------------------------------------------------
     // 3. UMA PARCELA DE CADA VEZ: a perna de entrada, e so depois a baixa
     // -----------------------------------------------------------------------
     // `amount` E NAO `valor` NO NOME DO CAMPO: e esta lista que vai a
@@ -286,7 +415,81 @@ export async function POST(
     /** O que parou o laco, quando algo parou. */
     let parouPor: string | null = null;
 
+    /** Quantas previsoes da cauda foram BAIXADAS (Caso A). Nunca apagadas. */
+    let previsoesBaixadas = 0;
+
     for (const parcela of escolhidas) {
+      // ---------------------------------------------------------------------
+      // CASO A: duas pernas, a parcela e a PREVISAO BAIXADA -- pelo servico
+      // ---------------------------------------------------------------------
+      // `baixaDaTransferenciaPrevista` e o passo 2/2.5/3 da rota da baixa, e
+      // chamar o mesmo codigo e a entrega desta fase: antecipar a parcela 24 faz
+      // exatamente o que fazer ela em Contas a Pagar faria, na mesma ordem e com
+      // os mesmos desfazimentos. A previsao vira `paid` -- BAIXADA, nao apagada:
+      // ela e o registro de que o dinheiro se moveu, e e o oposto do
+      // cancelamento, que apaga porque lá nada se moveu.
+      if (caso === "auto") {
+        const previsao = previsaoDaParcela.get(parcela.id);
+
+        if (!previsao) {
+          // Inalcancavel: o passo 2.5 recusou a antecipacao inteira quando
+          // faltava qualquer previsao. Chegar aqui quer dizer que o
+          // emparelhamento e este laco discordam, e a resposta certa e nao
+          // gravar mais nada.
+          console.error(
+            "MyBank: parcela da cauda sem previsao no laco da antecipacao",
+            { parcelaId: parcela.id, loanId: emprestimo.id }
+          );
+          parouPor = `A parcela ${parcela.installment_number} não tem conta a pagar.`;
+          break;
+        }
+
+        const movimento = await baixaDaTransferenciaPrevista({
+          supabase,
+          userId: user.id,
+          serviceId: servico.id,
+          conta: previsao,
+          // O VALOR SAI DA PARCELA, e nao da previsao -- e as duas podem
+          // DIVERGIR. A previsao e editavel em Contas a Pagar: nada impede a
+          // pessoa de ter mudado o valor dela a mao. A divida e a parcela, e e a
+          // soma das parcelas que `valorDaAntecipacao` devolve na resposta --
+          // deixar a previsao mandar faria o dinheiro que se move divergir do
+          // valor que a propria resposta afirma ter movido, e a invariante
+          // `soma(recebido) + soma(em aberto) = principal` quebraria calada.
+          valorPago: Number(parcela.amount),
+          paidDate: dataDoPagamento,
+          parcela: { id: parcela.id },
+        });
+
+        if (!movimento.ok) {
+          // O servico ja desfez o que esta parcela tinha escrito -- as pernas, e
+          // a parcela quando foi a previsao que falhou. As anteriores ficaram
+          // inteiras, e o laco para: insistir nas seguintes depois de uma falha
+          // de escrita so aumenta a chance de parar num estado pior.
+          console.error("Antecipacao do Caso A desfeita nesta parcela:", {
+            parcelaId: parcela.id,
+            parouEm: movimento.parouEm,
+          });
+          parouPor = `A parcela ${parcela.installment_number} não pôde ser antecipada, e o que ela havia lançado foi desfeito.`;
+          break;
+        }
+
+        previsoesBaixadas += 1;
+
+        antecipadas.push({
+          id: parcela.id,
+          numero: parcela.installment_number,
+          amount: Number(parcela.amount),
+          vencimento: String(parcela.due_date),
+          // A PERNA DE ENTRADA, como no Caso B: e a que `paid_transaction_id`
+          // aponta, e e a que responde "onde este dinheiro entrou". A de saida
+          // esta no elo da previsao.
+          transacao: movimento.txEntrada.id,
+        });
+
+        continue;
+      }
+
       // `transfer` e nao `income`: principal voltando NAO e receita. Com
       // `income` o mesmo dinheiro contaria como renda uma vez por parcela
       // antecipada -- e a antecipacao lanca varias de uma vez, o que torna o
@@ -301,9 +504,11 @@ export async function POST(
       });
 
       if (!perna) {
-        // Inalcancavel: `caso_a_nao_entra_aqui` ja saiu acima, e so o Caso A
-        // devolve `null`. Chegar aqui quer dizer que a decisao de pernas e esta
-        // rota discordam, e a resposta certa e nao gravar mais nada.
+        // Inalcancavel: o Caso A saiu por `continue` acima, e so ele devolve
+        // `null`. Chegar aqui quer dizer que a decisao de pernas e esta rota
+        // discordam sobre qual caso e qual, e a resposta certa e nao gravar mais
+        // nada -- uma perna no caso errado daria ao auto-emprestimo uma TERCEIRA
+        // perna e contaria o mesmo dinheiro duas vezes.
         console.error(
           "MyBank: pernaDeEntradaDoPagamento devolveu null na antecipacao",
           { caso, loanId: emprestimo.id }
@@ -459,6 +664,9 @@ export async function POST(
       // quitacao ali seria a resposta dizendo o que deveria ter ficado.
       quitado: emprestimoQuitado,
       serieRelida,
+      // A FRASE DO CASO A diz o que mudou na OUTRA tela: as contas a pagar
+      // daquelas parcelas foram baixadas, e o dinheiro saiu da conta corrente.
+      caso,
     });
 
     return NextResponse.json({
@@ -478,6 +686,13 @@ export async function POST(
       ultimo_vencimento_depois: ultimoVencimentoDepois,
       parcelas_em_aberto: aindaEmAberto,
       emprestimo_quitado: emprestimoQuitado,
+      // QUANTAS PREVISOES FORAM BAIXADAS -- `0` no Caso B, onde nao existe
+      // previsao minha. E o campo que a medicao em producao confere contra as
+      // linhas de Contas a Pagar: `previsoes_baixadas: 2` com duas linhas
+      // `paid` e o que distingue "baixadas" de "apagadas", e um DELETE no lugar
+      // do UPDATE devolveria este mesmo numero com as linhas sumidas -- por isso
+      // a medicao conta as linhas, e nao acredita no campo.
+      previsoes_baixadas: previsoesBaixadas,
       ...(parouPor ? { parcial: parouPor } : {}),
       message,
     });
