@@ -560,3 +560,13 @@ next-env.d.ts
 # (HMO-400). Declarado JUNTO com a suite, pelo mesmo motivo das duas entradas
 # acima: sem a linha, `check-artefatos-de-build` fica vermelho na `main`.
 /.tmp-receita-no-fluxo/
+
+# npm run test:soft-delete-monotonico -- o soft delete da ocorrencia nao rebaixa
+# `cancelled` para `skipped` (HMO-403). O emit espelha a raiz (a rota importa
+# @/lib e @/utils), entao a arvore inteira do alvo cai aqui -- inclusive um
+# `node_modules/@supabase/supabase-js` plantado pelo monta-duble-de-rota.
+# Artefato, nao fonte. Declarado JUNTO com a suite, pelo mesmo motivo das
+# entradas acima: sem a linha, `check-artefatos-de-build` fica vermelho na
+# `main`, e um `.tmp-*` fora do .gitignore chega a ser commitado em cima de
+# arquivo de fonte (ver a entrada do .tmp-parcelamento).
+/.tmp-soft-delete-monotonico/

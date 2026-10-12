@@ -32,6 +32,7 @@ import {
   conferirPatchNoAlcance,
   ehAlcanceValido,
   alcancaIrmas,
+  oSoftDeleteAvanca,
   ALCANCES,
 } from "../.tmp-alcance-da-serie/lib/recorrencia-edicao.js";
 
@@ -198,6 +199,79 @@ test("'todas' recusa due_date, igual a 'esta_e_proximas'", () => {
 // ---------------------------------------------------------------------------
 // 2. APAGAR, E O `end_date` QUE FECHA A TORNEIRA
 // ---------------------------------------------------------------------------
+
+// A ESCALA DA MONOTONIA (HMO-403)
+// -------------------------------
+// `oSoftDeleteAvanca` e medida DIRETAMENTE aqui, e nao so pelo que
+// `planejarExclusao` faz com ela, porque metade da escala nao aparece no plano:
+// o plano so pergunta sobre gravar `skipped`, e a direcao `skipped` ->
+// `cancelled` -- a que `encerrarRegra` usa para a linha pulada deixar de ser um
+// estado intermediario eterno -- nao passa por ele. Sem estes casos, a diferenca
+// entre `cancelled: 2` e `cancelled: 1` na tabela de distancias nao e observavel
+// em lugar nenhum, e e justamente ela que separa "o rebaixamento morreu" de "o
+// rebaixamento E o caminho de limpeza morreram juntos".
+test("a escala do soft delete so autoriza escrita que AFASTA da agenda", () => {
+  // O defeito da issue, na funcao: `skipped` sobre `cancelled` e retrocesso.
+  assert.equal(oSoftDeleteAvanca("cancelled", "skipped"), false);
+
+  // E o caminho inverso AVANCA -- encerrar a serie e mais final que pular um
+  // mes. E por isto que a escala e um numero e nao um predicado
+  // `jaSaiuDaAgenda(status)`: um predicado recusaria os dois.
+  assert.equal(oSoftDeleteAvanca("skipped", "cancelled"), true);
+
+  // O caso comum, dos dois lados.
+  assert.equal(oSoftDeleteAvanca("pending", "skipped"), true);
+  assert.equal(oSoftDeleteAvanca("pending", "cancelled"), true);
+
+  // Gravar o mesmo estado nao e avanco: nao perde nada, mas conta "pulei 1"
+  // num mes que ninguem acabou de pular. `>` e nao `>=`.
+  assert.equal(oSoftDeleteAvanca("skipped", "skipped"), false);
+  assert.equal(oSoftDeleteAvanca("cancelled", "cancelled"), false);
+  assert.equal(oSoftDeleteAvanca("pending", "pending"), false);
+
+  // FORA DA ESCALA A RESPOSTA E `false`, NOS DOIS LADOS. Fechado por omissao de
+  // proposito: quem barra a ocorrencia PAGA e a rota, com 409 e a frase do
+  // estorno -- mas se `paid` entrasse na escala, a irma paga de uma serie seria
+  // marcada `skipped` pelo caminho das irmas, depois de o dinheiro ter andado.
+  assert.equal(oSoftDeleteAvanca("paid", "skipped"), false);
+  assert.equal(oSoftDeleteAvanca("paid", "cancelled"), false);
+  // `overdue` nunca e gravado (e uma pergunta, nao um estado: ver a SECAO 5 da
+  // migration 005), e um estado novo no enum de amanha cai no mesmo lugar.
+  assert.equal(oSoftDeleteAvanca("overdue", "skipped"), false);
+  assert.equal(oSoftDeleteAvanca("pending", "overdue"), false);
+});
+
+test("apagar 'apenas_esta' de uma ocorrencia JA FORA nao marca nada", () => {
+  // Medido em producao (HMO-400): a ocorrencia `cancelled` era reescrita para
+  // `skipped`, com 200 na resposta. O plano e a primeira das duas travas; a
+  // segunda e o filtro de status da propria escrita, medido em
+  // scripts/test-soft-delete-monotonico.mjs.
+  for (const status of ["skipped", "cancelled"]) {
+    const plano = planejarExclusao("apenas_esta", o("nov", "2026-11-10", status), SERIE);
+    assert.deepEqual(plano.idsParaPular, [], status);
+    assert.deepEqual(plano.preservadas, ["nov"], status);
+    assert.equal(plano.ancoraJaForaDaAgenda, true, status);
+    assert.equal(plano.encerrarRegraEm, null, status);
+  }
+});
+
+test("apagar 'esta_e_proximas' de uma ancora JA FORA ainda encerra a REGRA", () => {
+  // O conserto obvio e errado: quem le "se a ancora ja esta fora, devolve na
+  // hora" para o encerramento junto, e a regra continua gerando os meses
+  // seguintes. A conta nao volta amanha -- volta alguns MESES depois.
+  const plano = planejarExclusao("esta_e_proximas", NOVEMBRO, SERIE);
+
+  assert.equal(plano.ancoraJaForaDaAgenda, true, "novembro esta `skipped`");
+  assert.ok(!plano.idsParaPular.includes("nov"), "a ancora ja fora nao e remarcada");
+  assert.deepEqual(plano.idsParaPular.slice().sort(), ["dez", "fev"]);
+  assert.equal(
+    plano.encerrarRegraEm,
+    "2026-11-10",
+    "a torneira tem de fechar mesmo sem nada a marcar na ancora"
+  );
+  // E a ancora entra na contagem do que ficou como estava.
+  assert.ok(plano.preservadas.includes("nov"));
+});
 
 test("apagar 'apenas_esta': pula a linha e NAO encerra a regra", () => {
   const plano = planejarExclusao("apenas_esta", DEZEMBRO, SERIE);

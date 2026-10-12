@@ -305,7 +305,79 @@ export function conferirPatchNoAlcance(
 // que a rota CHAME aquele caminho em vez de crescer um segundo igual -- dois
 // lugares que encerram uma regra divergem no primeiro conserto que so um dos
 // dois receber.
+//
+// E O SOFT DELETE E MONOTONICO (HMO-403)
+// --------------------------------------
+// Medido em PRODUCAO pela validacao larga da HMO-400: `DELETE` com
+// `{alcance:"apenas_esta"}` numa ocorrencia JA `cancelled` respondia 200 e a
+// reescrevia para `skipped`. Em seis linhas de uma serie (1 `skipped` + 5
+// `cancelled`), as seis terminaram `skipped` -- um comando chamado "apagar"
+// PIOROU o estado de cinco delas.
+//
+// A causa nao foi filtro esquecido: e que o caminho escrevia um estado FIXO
+// (`skipped`) em vez de respeitar um estado final JA alcancado. O soft delete
+// nao era idempotente nem monotonico.
+//
+// Depois da migration 054 (HMO-402) `skipped` e `cancelled` estao os DOIS fora
+// do Previsto x Realizado, entao o rebaixamento parou de custar dinheiro em
+// qualquer leitura de hoje. O que ele continua custando e a INFORMACAO de que a
+// serie foi encerrada -- e qualquer leitura futura que volte a distinguir os
+// dois estados herda o defeito de um banco cuja historia foi reescrita para
+// tras. E essa, e nao o sintoma de 054, a razao desta regra.
 // ---------------------------------------------------------------------------
+
+/**
+ * Quao longe da agenda cada estado poe a linha.
+ *
+ * NUMERO, e nao um predicado `jaSaiuDaAgenda(status)`, porque as duas perguntas
+ * que o soft delete faz tem respostas OPOSTAS sobre o mesmo par de estados:
+ *
+ *   gravar `skipped`   sobre `cancelled`   REBAIXA  <- o defeito da HMO-403
+ *   gravar `cancelled` sobre `skipped`     AVANCA   <- encerrar a serie e mais
+ *                                                      final que pular um mes
+ *
+ * Um predicado recusaria os dois, e com isso fecharia tambem o unico caminho
+ * que o app tem para a linha `skipped` largada parar de ser um estado
+ * intermediario eterno (ver `encerrarRegra` em lib/services/scheduled.ts).
+ *
+ * `paid` NAO entra na escala, de proposito: ele nao e "mais ou menos fora da
+ * agenda" -- e dinheiro que andou --, e um numero para ele convidaria a
+ * comparar o que nao se compara. Quem recusa a ocorrencia paga e a rota, com
+ * 409 e a frase que explica o estorno. `overdue` tambem fica fora porque ele
+ * nunca e GRAVADO: e uma pergunta (`due_date < hoje AND status = 'pending'`),
+ * respondida pela view da SECAO 5 da migration 005.
+ */
+const DISTANCIA_DA_AGENDA: Record<string, number> = {
+  pending: 0,
+  skipped: 1,
+  cancelled: 2,
+};
+
+/**
+ * Gravar `statusNovo` sobre `statusAtual` afasta mais a linha da agenda?
+ *
+ * E a unica pergunta que autoriza uma escrita de soft delete. `false` quer
+ * dizer "nao escreva", nos dois casos em que isso acontece:
+ *
+ *   - seria um RETROCESSO (`skipped` sobre `cancelled`);
+ *   - seria um NO-OP (`skipped` sobre `skipped`) -- que nao perde estado, mas
+ *     infla a contagem que a rota devolve e a tela mostra ("pulei 7") com meses
+ *     que ninguem tirou agora. Por isso a comparacao e `>` e nao `>=`.
+ *
+ * Status fora da escala respondem `false` nos DOIS lados: se nao se sabe quao
+ * final um estado e, nao se escreve em cima dele. Fechado por omissao de
+ * proposito -- um `paid` que escapasse do 409 da rota, ou um estado novo no
+ * enum amanha, seria preservado em vez de reescrito.
+ */
+export function oSoftDeleteAvanca(
+  statusAtual: string,
+  statusNovo: string
+): boolean {
+  const atual = DISTANCIA_DA_AGENDA[statusAtual];
+  const novo = DISTANCIA_DA_AGENDA[statusNovo];
+  if (atual === undefined || novo === undefined) return false;
+  return novo > atual;
+}
 
 export interface PlanoDeExclusao {
   /**
@@ -333,6 +405,20 @@ export interface PlanoDeExclusao {
   preservadas: string[];
   /** A data da ocorrencia clicada. */
   ancoraEm: string;
+  /**
+   * A ancora JA estava fora da agenda (`skipped` ou `cancelled`), entao ela nao
+   * entra em `idsParaPular` -- gravar `skipped` em cima seria no-op ou
+   * RETROCESSO (HMO-403).
+   *
+   * Existe como campo proprio, e nao como `idsParaPular.length === 0`
+   * deduzido pela rota, por dois motivos. O primeiro e que a deducao nao vale em
+   * `esta_e_proximas`: ali a lista pode vir CHEIA de irmas pendentes com a
+   * ancora de fora, e a resposta diria "pulei esta e as 2 proximas" sobre uma
+   * ocorrencia que ela nao tocou. O segundo e que este caso e um SUCESSO
+   * idempotente e nao um erro -- a rota precisa distingui-lo de "nao achei
+   * linha nenhuma para pular", que e 500.
+   */
+  ancoraJaForaDaAgenda: boolean;
 }
 
 /**
@@ -358,6 +444,7 @@ export function planejarExclusao(
     apagarDeVez: false,
     preservadas: [],
     ancoraEm: ancora.due_date,
+    ancoraJaForaDaAgenda: false,
   };
 
   // Conta avulsa: nao ha regra para ressuscitar a linha, entao DELETE e a
@@ -368,8 +455,22 @@ export function planejarExclusao(
 
   if (alcance === "todas") return { ...base, desativarRegra: true };
 
+  // A ANCORA SO ENTRA SE A ESCRITA AVANCAR (HMO-403). Uma ocorrencia que ja
+  // esta `cancelled` nao vira `skipped`: seria apagar a informacao de que a
+  // serie foi encerrada, e foi o que a HMO-400 mediu em cinco linhas de
+  // producao. Uma que ja esta `skipped` tambem nao entra -- gravar o mesmo
+  // estado nao perde nada, mas conta como "pulei 1" numa linha que ninguem
+  // acabou de pular.
+  //
+  // Esta pergunta nao e `status !== "pending"`: `paid` tambem responde `false`
+  // aqui, e e de proposito que a barra da ocorrencia paga continue sendo o 409
+  // da rota, com a frase do estorno, e nao um "nada para apagar" generico.
+  const ancoraAvanca = oSoftDeleteAvanca(ancora.status, "skipped");
+
   if (alcance === "apenas_esta") {
-    return { ...base, idsParaPular: [ancora.id] };
+    return ancoraAvanca
+      ? { ...base, idsParaPular: [ancora.id] }
+      : { ...base, preservadas: [ancora.id], ancoraJaForaDaAgenda: true };
   }
 
   // esta_e_proximas
@@ -385,10 +486,13 @@ export function planejarExclusao(
       preservadas.push(irma.id);
       continue;
     }
-    // Paga fica: o dinheiro andou. `skipped`/`cancelled` tambem, por ja estarem
-    // fora da agenda -- remarcar o que ja esta pulado inflaria a contagem que a
-    // tela mostra ("pulei 7") com meses que ninguem tirou agora.
-    if (irma.status !== "pending") {
+    // A MESMA pergunta da ancora, e e de proposito que seja a mesma funcao e
+    // nao `irma.status !== "pending"` escrito de novo: duas grafias de uma regra
+    // divergem no primeiro conserto que so uma das duas receber. A paga fica
+    // porque o dinheiro andou; a `skipped`/`cancelled` fica porque remarcar o
+    // que ja esta fora inflaria a contagem que a tela mostra ("pulei 7") com
+    // meses que ninguem tirou agora.
+    if (!oSoftDeleteAvanca(irma.status, "skipped")) {
       preservadas.push(irma.id);
       continue;
     }
@@ -397,8 +501,14 @@ export function planejarExclusao(
 
   return {
     ...base,
-    idsParaPular: [ancora.id, ...alcancadas],
+    idsParaPular: ancoraAvanca ? [ancora.id, ...alcancadas] : alcancadas,
+    // A REGRA E ENCERRADA MESMO COM A ANCORA JA FORA. Quem pediu "esta e as
+    // proximas" pediu para fechar a torneira a partir dali, e esse passo e
+    // idempotente por conta propria -- gravar a mesma `end_date` duas vezes nao
+    // tira nada do lugar. Pular o encerramento porque "nao havia o que marcar
+    // na ancora" devolveria 200 e deixaria a regra gerando os meses seguintes.
     encerrarRegraEm: ancora.due_date,
-    preservadas,
+    ancoraJaForaDaAgenda: !ancoraAvanca,
+    preservadas: ancoraAvanca ? preservadas : [ancora.id, ...preservadas],
   };
 }

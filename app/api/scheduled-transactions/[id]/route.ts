@@ -443,9 +443,18 @@ export async function DELETE(
       }
 
       return NextResponse.json({
-        message: `Gasto fixo encerrado. ${encerrada.canceladas} ocorrência(s) em aberto saíram da agenda.`,
+        // OS DOIS NUMEROS, SEPARADOS (HMO-403). As que sairam da agenda AGORA e
+        // as que ja estavam puladas e agora estao encerradas junto com a serie.
+        // Somar os dois num N so prometeria que N meses sairam da agenda neste
+        // pedido; nao dizer o segundo esconderia o unico caminho que o app tem
+        // para a linha `skipped` largada deixar de ser estado intermediario.
+        message:
+          encerrada.jaEstavamFora > 0
+            ? `Gasto fixo encerrado. ${encerrada.canceladas} ocorrência(s) em aberto saíram da agenda, e ${encerrada.jaEstavamFora} que já estava(m) pulada(s) foi(ram) encerrada(s) junto.`
+            : `Gasto fixo encerrado. ${encerrada.canceladas} ocorrência(s) em aberto saíram da agenda.`,
         rule: encerrada.rule,
         ocorrencias_canceladas: encerrada.canceladas,
+        ocorrencias_ja_fora_encerradas: encerrada.jaEstavamFora,
         // As pagas e as vencidas em aberto ficam, e a tela diz isso: a conta
         // que venceu e nao foi paga continua sendo uma divida real.
         preservadas: 0,
@@ -479,18 +488,59 @@ export async function DELETE(
     // Ocorrencia de gasto fixo e derivada da regra: apagar so faria a proxima
     // geracao trazer de volta. Vira 'skipped', que ocupa o lugar dela no indice
     // unico (recurring_rule_id, due_date) da 005 e nao ressuscita.
-    const { data: puladas, error } = await supabase
-      .from("scheduled_transactions")
-      .update({ status: "skipped" })
-      .in("id", plano.idsParaPular)
-      .eq("user_id", user.id)
-      .select();
+    //
+    // A LISTA PODE VIR VAZIA, E ISSO E SUCESSO (HMO-403)
+    // --------------------------------------------------
+    // Quando a ancora ja estava `skipped`/`cancelled` e nao ha irma pendente
+    // para marcar, nao ha nada a gravar. O `if` abaixo e o que separa esse caso
+    // do 500: sem ele `.in("id", [])` devolve zero linha, cai no
+    // `puladas.length === 0` e a rota responde "nao foi possivel pular esta
+    // conta" sobre uma conta que ja esta exatamente onde o pedido quer.
+    let puladas: { id: string }[] = [];
 
-    if (error || !puladas || puladas.length === 0) {
-      return NextResponse.json(
-        { error: "Não foi possível pular esta conta" },
-        { status: 500 }
-      );
+    if (plano.idsParaPular.length > 0) {
+      const { data, error } = await supabase
+        .from("scheduled_transactions")
+        .update({ status: "skipped" })
+        .in("id", plano.idsParaPular)
+        .eq("user_id", user.id)
+        // O FILTRO DE STATUS NA PROPRIA ESCRITA, e nao so no plano.
+        //
+        // O plano decidiu a partir de um `status` lido algumas linhas acima.
+        // Entre aquela leitura e esta escrita cabe um segundo pedido -- a aba
+        // aberta duas vezes, a retentativa do cliente que perdeu a resposta --,
+        // e sem este filtro o UPDATE rebaixaria para `skipped` a linha que o
+        // outro pedido acabou de deixar `cancelled`. E a janela que faz "o plano
+        // nunca rebaixa" ser diferente de "a ROTA nunca rebaixa", e so a segunda
+        // e verdade para quem le o banco depois.
+        //
+        // Nao estreita nada em uso normal: toda linha que o plano escolhe esta
+        // `pending` -- a paga virou 409 la em cima, e `oSoftDeleteAvanca` tirou
+        // as que ja estavam fora da agenda.
+        .eq("status", "pending")
+        .select();
+
+      if (error) {
+        return NextResponse.json(
+          { error: "Não foi possível pular esta conta" },
+          { status: 500 }
+        );
+      }
+
+      puladas = data ?? [];
+
+      // Zero linha com lista NAO vazia e outra coisa: alguem mudou o estado
+      // debaixo da gente (ou a RLS nao casou). Dizer sucesso aqui afirmaria uma
+      // escrita que nao aconteceu.
+      if (puladas.length === 0) {
+        return NextResponse.json(
+          {
+            error:
+              "Estas ocorrências mudaram de estado enquanto o pedido ia. Recarregue a agenda e tente de novo.",
+          },
+          { status: 409 }
+        );
+      }
     }
 
     // -----------------------------------------------------------------------
@@ -529,17 +579,33 @@ export async function DELETE(
       regraEncerradaEm = plano.encerrarRegraEm;
     }
 
+    // A FRASE TEM DE SABER QUE A ANCORA PODE NAO TER SIDO TOCADA (HMO-403).
+    // "Tirei ESTA e as 2 proximas" sobre uma ocorrencia que a rota preservou e
+    // uma resposta que mente -- e mente do jeito pior, confirmando a acao que
+    // nao houve. Quando ela ja estava fora, a frase diz isso, e o pedido
+    // continua sendo um sucesso: pedir de novo o que ja esta feito nao e erro.
+    const mensagem = plano.ancoraJaForaDaAgenda
+      ? puladas.length > 0
+        ? `Esta ocorrência já estava fora da agenda. Tirei as ${puladas.length} próximas, e o gasto fixo foi encerrado em ${plano.encerrarRegraEm}.`
+        : "Esta ocorrência já estava fora da agenda: nada mudou."
+      : puladas.length > 1
+        ? `Tirei esta e as ${puladas.length - 1} próximas da agenda. O gasto fixo foi encerrado em ${plano.encerrarRegraEm}.`
+        : "Ocorrência pulada (o gasto fixo continua ativo)";
+
     return NextResponse.json({
-      message:
-        plano.idsParaPular.length > 1
-          ? `Tirei esta e as ${plano.idsParaPular.length - 1} próximas da agenda. O gasto fixo foi encerrado em ${plano.encerrarRegraEm}.`
-          : "Ocorrência pulada (o gasto fixo continua ativo)",
-      scheduled: puladas.find((linha) => linha.id === params.id) ?? puladas[0],
+      message: mensagem,
+      // `?? null`, e nao `?? puladas[0]`: o pedido e sobre `params.id`, e
+      // devolver a linha de uma IRMA debaixo desta chave entregaria ao cliente
+      // o estado de um mes que ele nao pediu, como se fosse o do mes que pediu.
+      scheduled: puladas.find((linha) => linha.id === params.id) ?? null,
       ocorrencias_puladas: puladas.length,
-      // Quantas ficaram na agenda por serem anteriores a esta ou por ja terem
-      // sido pagas. A garantia so e visivel se ela vier em numero.
+      // Quantas ficaram na agenda por serem anteriores a esta, por ja terem
+      // sido pagas ou por ja estarem fora. A garantia so e visivel em numero.
       preservadas: plano.preservadas.length,
       regra_encerrada_em: regraEncerradaEm,
+      // O cliente precisa poder distinguir "pulei" de "ja estava pulada" sem
+      // ler a frase: as duas respostas sao 200, e so este campo as separa.
+      ancora_ja_fora_da_agenda: plano.ancoraJaForaDaAgenda,
     });
   } catch (error) {
     console.error("Erro ao excluir conta prevista:", error);

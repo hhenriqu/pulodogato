@@ -227,6 +227,10 @@ export async function DELETE(
       message: "Gasto fixo desativado",
       rule: encerrada.rule,
       scheduled_cancelled: encerrada.canceladas,
+      // As que ja estavam `skipped` e foram encerradas junto (HMO-403), em
+      // numero proprio: somadas ao de cima, prometeriam que N meses sairam da
+      // agenda neste pedido, e parte deles ja estava fora.
+      scheduled_ja_fora_encerradas: encerrada.jaEstavamFora,
     });
   } catch (error) {
     console.error("Erro ao desativar gasto fixo:", error);
