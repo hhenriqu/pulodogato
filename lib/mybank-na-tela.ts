@@ -37,7 +37,14 @@
 // ---------------------------------------------------------------------------
 
 import { porTipo } from "@/lib/contas";
-import { SELO_DO_MYBANK } from "@/lib/emprestimo-do-mybank";
+import {
+  parcelaFoiAntecipada,
+  parcelasDaAntecipacao,
+  SELO_DO_MYBANK,
+  ultimoVencimentoEmAberto,
+  valorDaAntecipacao,
+  type ParcelaParaAntecipar,
+} from "@/lib/emprestimo-do-mybank";
 
 /** O tipo de conta que o MyBank aceita como credora -- a trava 1 da 053. */
 export const TIPO_DA_CONTA_CREDORA = "investment";
@@ -317,6 +324,160 @@ export function valorDaParcelaNaLista(
   if (emprestimo.parcelas.length === 0) return null;
   const emAberto = emprestimo.parcelas.filter(parcelaEmAberto);
   return (emAberto[0] ?? emprestimo.parcelas[0]).valor;
+}
+
+// ---------------------------------------------------------------------------
+// O GESTO DE ANTECIPAR, NA TELA (F4 da HMO-393, issue HMO-397)
+// ---------------------------------------------------------------------------
+// A ARITMETICA JA EXISTE, E ESTA SECAO NAO A REESCREVE: quem escolhe a cauda e
+// `parcelasDaAntecipacao` (F2), quem soma e `valorDaAntecipacao` (em CENTAVOS
+// inteiros, porque 24 x 416,67 em float da 9999,999999999998) e quem monta o
+// `MM/AAAA` e `ultimoVencimentoEmAberto`. As tres sao as MESMAS funcoes que a
+// rota chama -- e e isso que faz a previa do dialogo e a frase da resposta
+// concordarem sobre quanto sai da conta e sobre onde a serie passa a acabar.
+//
+// UMA SEGUNDA COPIA AQUI SERIA A TERCEIRA ARITMETICA DE PARCELA DO APP, e as
+// tres discordariam no primeiro centavo -- `fontes-consistentes-que-discordam`,
+// desta vez com o numero que a pessoa le ANTES de apertar.
+//
+// O PRECO E UMA TRADUCAO DE VOCABULARIO, E ELA E EXPLICITA
+// -------------------------------------------------------
+// `ParcelaDoMyBank` e o que a ROTA devolve (`valor`, `numero`, `vencimento`), e
+// `ParcelaParaAntecipar` e o que o BANCO tem (`amount`, `installment_number`,
+// `due_date`). `parcelaParaAntecipar` faz a ponte num lugar so. Deixar o
+// componente montar esse objeto na chamada esconderia a traducao dentro do JSX,
+// onde nenhum mutante a alcanca -- e trocar `valor` por `total` ali sairia com
+// aparencia perfeita e um valor errado no dialogo.
+// ---------------------------------------------------------------------------
+
+/**
+ * A parcela da TELA na forma que a aritmetica da antecipacao le.
+ *
+ * `installment_total` vai de `total` porque e o que a rota manda; nenhuma das
+ * tres funcoes da antecipacao o le (`installment_total` nao e tocado por esta
+ * feature, e e isso que a faz caber sem migration), e ele esta aqui so porque o
+ * tipo o exige.
+ */
+export function parcelaParaAntecipar(
+  parcela: ParcelaDoMyBank
+): ParcelaParaAntecipar {
+  return {
+    id: parcela.id,
+    installment_number: parcela.numero,
+    installment_total: parcela.total,
+    amount: parcela.valor,
+    due_date: parcela.vencimento,
+    status: parcela.status,
+  };
+}
+
+/** Quantas parcelas deste emprestimo ainda sao divida. */
+export function quantasEmAbertoNoEmprestimo(
+  emprestimo: EmprestimoDoMyBank
+): number {
+  return emprestimo.parcelas.filter(parcelaEmAberto).length;
+}
+
+/**
+ * O GESTO DE ANTECIPAR APARECE? -- `active` **E** com parcela em aberto.
+ *
+ * A CONDICAO E DIFERENTE DA DO CANCELAR, E A DIFERENCA E DE PROPOSITO
+ * ------------------------------------------------------------------
+ * Cancelar e so pelo status: um emprestimo `active` sem nada em aberto AINDA
+ * precisa de saida (e o caso que abriu a HMO-383), entao o botao fica. Antecipar
+ * sem nada em aberto nao tem o que fazer -- `parcelasDaAntecipacao` devolveria
+ * `[]`, o dialogo nao teria opcao nenhuma para oferecer e a rota recusaria com
+ * `mais_do_que_em_aberto`. Oferecer o gesto ali e oferecer um clique cujo unico
+ * resultado possivel e um toast de erro.
+ *
+ * E essa diferenca e ALCANCAVEL, nao teorica: os emprestimos que quitaram ANTES
+ * da HMO-394 seguem `active` com a serie inteira paga, e e exatamente por eles
+ * que o Cancelar continua condicionado so ao status.
+ */
+export function podeAntecipar(emprestimo: EmprestimoDoMyBank): boolean {
+  return (
+    emprestimo.status === "active" && quantasEmAbertoNoEmprestimo(emprestimo) > 0
+  );
+}
+
+/** O que o dialogo mostra ANTES do clique -- os numeros, nao a frase. */
+export interface PreviaDaAntecipacaoNaTela {
+  /** Quantas parcelas de verdade seriam pagas (nunca mais do que as em aberto). */
+  quantas: number;
+  /** Os numeros delas, na ordem da serie -- e e nesta ordem que a frase os diz. */
+  numeros: number[];
+  /** A soma, em reais. Quem formata e quem mostra. */
+  valor: number;
+  ultimoVencimentoAntes: string | null;
+  /** `null` quando nao sobra parcela em aberto: a antecipacao QUITA o emprestimo. */
+  ultimoVencimentoDepois: string | null;
+}
+
+/**
+ * A PREVIA, montada das MESMAS funcoes que a rota usa.
+ *
+ * OS NUMEROS SAEM ORDENADOS PELA SERIE, E NAO PELA CAUDA
+ * -----------------------------------------------------
+ * `parcelasDaAntecipacao` devolve da cauda para cima (`due_date DESC`), que e a
+ * ordem em que ela ESCOLHE. A frase diz "as 23 e 24", nao "as 24 e 23" -- e o
+ * `sort` aqui e sobre uma copia (`map` ja copiou), entao ele nao reordena a
+ * lista que a funcao de escolha devolveu.
+ *
+ * O `ultimoVencimentoDepois` E CALCULADO POR EXCLUSAO DE id, E NAO POR CONTAGEM
+ * ---------------------------------------------------------------------------
+ * "as em aberto menos as N ultimas" daria o mesmo resultado quase sempre e
+ * erraria no empate: duas parcelas vencendo no mesmo dia (uma serie que comeca
+ * em 31/01 grampeia em fevereiro) sairiam da contagem na ordem da lista, e nao
+ * na ordem que `parcelasDaAntecipacao` escolheu. Excluir pelos ids escolhidos e
+ * o que mantem a previa e a escrita falando das MESMAS parcelas.
+ */
+export function previaDaAntecipacaoNaTela(
+  emprestimo: EmprestimoDoMyBank,
+  quantas: number
+): PreviaDaAntecipacaoNaTela {
+  const todas = emprestimo.parcelas.map(parcelaParaAntecipar);
+  const escolhidas = parcelasDaAntecipacao({ parcelas: todas, quantas });
+  const ids = new Set(escolhidas.map((p) => p.id));
+
+  return {
+    quantas: escolhidas.length,
+    numeros: escolhidas.map((p) => p.installment_number).sort((a, b) => a - b),
+    valor: valorDaAntecipacao({ parcelasEscolhidas: escolhidas }),
+    ultimoVencimentoAntes: ultimoVencimentoEmAberto(todas),
+    ultimoVencimentoDepois: ultimoVencimentoEmAberto(
+      todas.filter((p) => !ids.has(p.id))
+    ),
+  };
+}
+
+/**
+ * O ROTULO DA PARCELA ANTECIPADA na lista do credor -- `null` quando nao ha.
+ *
+ * ELE EXPLICA O `4/24` AO LADO DE "vence <parcela 3>", e e so por isso que ele
+ * existe. `progressoDoEmprestimo` continua `pagas/installment_count` e continua
+ * CERTO (as oito leituras da secao 0 do plano foram medidas, e nenhuma mente) --
+ * mas quatro pagas com a terceira ainda pendente e uma tela que pede explicacao,
+ * e sem ela a unica conclusao disponivel e "a contagem esta errada".
+ *
+ * OS NUMEROS VAO NO ROTULO, e nao so a contagem: "2 antecipadas" deixa quem olha
+ * procurando QUAIS na lista de 24. E a ordem e a da serie, pela mesma razao da
+ * previa.
+ */
+export function rotuloDasParcelasAntecipadas(
+  emprestimo: EmprestimoDoMyBank
+): string | null {
+  const numeros = emprestimo.parcelas
+    .filter((p) =>
+      parcelaFoiAntecipada({ paid_date: p.paid_date, due_date: p.vencimento })
+    )
+    .map((p) => p.numero)
+    .sort((a, b) => a - b);
+
+  if (numeros.length === 0) return null;
+
+  return numeros.length === 1
+    ? `1 antecipada (${numeros[0]})`
+    : `${numeros.length} antecipadas (${numeros.join(" e ")})`;
 }
 
 // ---------------------------------------------------------------------------

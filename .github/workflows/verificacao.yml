@@ -7481,6 +7481,20 @@ jobs:
       # movimentacao de dinheiro. O codigo foi movido com a indentacao intacta de
       # proposito, e a prova da refatoracao e o placar: 80/80 antes, 93/93
       # depois, com os 80 de antes entre eles.
+      #
+      # (HMO-397, F4) 100/100. Os SETE novos sao da frase do ANTES e do criterio
+      # da parcela antecipada, e o mais caro deles e `A PREVIA OMITE QUE O VALOR
+      # DAS QUE SOBRAM NAO MUDA`: ele nao muda numero nenhum -- a tela fica
+      # PLAUSIVEL e a pessoa le "baixaram minha parcela", que e a variante de
+      # produto REJEITADA no cartao `ae436b4a`. A frase e o unico lugar da tela
+      # onde se le QUAL das duas features foi construida, e e por isso que ela
+      # vive em `lib/`: escrita no JSX, passaria por qualquer suite intacta (a
+      # mesma razao que o `avisoDoCancelamento` ja da).
+      #
+      # A issue HMO-397 aponta `mutantes-leituras-do-mybank.mjs` para aquele
+      # mutante. Ele esta NESTE runner porque e a suite DESTE que afirma sobre a
+      # frase; plantado no outro ele sobreviveria, e o placar diria "a suite nao
+      # mede isso" sobre uma frase que esta medida.
       - name: Mutantes do MyBank -- emprestimo e ciclo do Caso A
         run: npm run mutantes:emprestimo-do-mybank
 
@@ -7547,6 +7561,29 @@ jobs:
       # pergunta, porque a pessoa confia nela. So sonda de navegador mede isso:
       # ela SUBSTITUI `window.confirm`, le a frase que o app passou e DECIDE a
       # resposta.
+      #
+      # (HMO-397) 62 mutantes, 62 mortos -- os 17 novos sao do gesto «Antecipar»
+      # e do dialogo dele, e DOIS deles sobreviveram na primeira medicao por
+      # falta de linha de fixture. Vale dizer quais, porque e a mesma licao das
+      # tres de cima:
+      #
+      #   * `podeAntecipar` perdendo o `status === "active"` precisou de um
+      #     emprestimo `cancelled` COM parcela em aberto (combinacao que o banco
+      #     permite: cancelar nao renumera nem apaga parcela). Sem ele, as duas
+      #     condicoes dao a mesma lista de botoes;
+      #   * a trava virando BOOLEANO GLOBAL precisou do primeiro POST
+      #     PENDURADO. Com a primeira antecipacao ja respondida, o `Set` de ids e
+      #     um booleano se comportam igual -- e o estado e alcancavel pela tela,
+      #     porque o dialogo fecha so na resposta e o botao das outras linhas
+      #     continua clicavel durante o POST.
+      #
+      # O mais caro em dinheiro e `A ANTECIPACAO PERDE A TRAVA`: a rota de
+      # antecipacao NAO tem idempotencia por id (a de emprestimo tem, desde a
+      # HMO-390), entao o toque duplo de celular paga a cauda DUAS vezes -- duas
+      # pernas de entrada por parcela e o dobro no extrato. Ele e medido dentro
+      # de `unstable_batchedUpdates` lendo o `disabled` no instante do segundo
+      # clique: fora dele o React descarrega no meio, o botao ja estaria
+      # desabilitado e o mutante que troca o `useRef` pelo estado sobreviveria.
       - name: Mutantes da tela do MyBank
         run: npm run mutantes:mybank-na-tela
 

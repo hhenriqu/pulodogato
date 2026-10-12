@@ -4811,3 +4811,151 @@ test("CONTROLE: a rota da antecipacao usou o duble (as ausencias nao sao vacuas)
     "a rota gravou perna pelo duble"
   );
 });
+
+// =====================================================
+// A PREVIA DO DIALOGO E A PARCELA ANTECIPADA (HMO-397, F4 da HMO-393)
+// =====================================================
+// A frase do ANTES, e nao a do depois. Ela esta em `lib/` pela razao que o
+// `avisoDoCancelamento` ja da: escrita no componente ela passaria por qualquer
+// suite intacta -- `tsc`, `lint` e `build` nao tem opiniao sobre uma frase, e a
+// sonda de navegador le o que a tela mostrar sem saber o que ela deveria mostrar.
+
+test("`previaDaAntecipacao` diz as TRES coisas, antes do clique", () => {
+  const frase = LIB.previaDaAntecipacao({
+    numeros: [23, 24],
+    valorFormatado: "R$ 2.000,00",
+    ultimoVencimentoAntes: "08/2028",
+    ultimoVencimentoDepois: "06/2028",
+  });
+
+  // (1) QUANTO CUSTA AGORA, com os numeros das parcelas: o gesto nao tem campo
+  // de valor (decisao (a) da secao 4 do plano), entao este e o unico lugar onde
+  // o total aparece ANTES de o dinheiro sair.
+  assert.match(frase, /2 parcelas/);
+  assert.match(frase, /23 e 24/);
+  assert.match(frase, /R\$ 2\.000,00/);
+
+  // (2) QUAL PASSA A SER O ULTIMO VENCIMENTO -- a unica frase que diz "a serie
+  // encurta" com um numero.
+  assert.match(frase, /08\/2028/);
+  assert.match(frase, /06\/2028/);
+
+  // (3) QUE O VALOR DAS QUE SOBRAM NAO MUDA. Sem ela a leitura natural de "duas
+  // parcelas menos" e "baixaram minha prestacao" -- que e a variante de produto
+  // REJEITADA no cartao `ae436b4a`. A frase nao descreve uma escolha de
+  // implementacao: ela diz QUAL das duas features existe.
+  assert.match(frase, /continuam com o valor de sempre/);
+  assert.match(frase, /não baixa a prestação/);
+});
+
+test("`previaDaAntecipacao` no singular nao diz `1 parcelas`", () => {
+  const frase = LIB.previaDaAntecipacao({
+    numeros: [24],
+    valorFormatado: "R$ 1.000,00",
+    ultimoVencimentoAntes: "08/2028",
+    ultimoVencimentoDepois: "07/2028",
+  });
+
+  assert.match(frase, /1 parcela \(a 24/);
+  assert.ok(!/1 parcelas/.test(frase), frase);
+  // A terceira frase fica: ainda sobra serie.
+  assert.match(frase, /continuam com o valor de sempre/);
+});
+
+test("`previaDaAntecipacao`: a que QUITA perde a terceira frase", () => {
+  const frase = LIB.previaDaAntecipacao({
+    numeros: [5, 6],
+    valorFormatado: "R$ 200,00",
+    ultimoVencimentoAntes: "03/2027",
+    // `null` = nao sobra parcela em aberto.
+    ultimoVencimentoDepois: null,
+  });
+
+  assert.match(frase, /fica quitado/);
+  assert.match(frase, /sai da lista A receber/);
+
+  // "as que sobram mantem o valor" sobre ZERO parcelas e uma promessa de
+  // cobranca futura que nao vai existir -- a mesma regra de
+  // `mensagemDaAntecipacao`.
+  assert.ok(
+    !/continuam com o valor de sempre/.test(frase),
+    "a frase sobre as que sobram apareceu numa previa que QUITA: " + frase
+  );
+  // E ela nao pode inventar um vencimento: `null` nao vira "null" na tela.
+  assert.ok(!/null/.test(frase), frase);
+});
+
+test("`previaDaAntecipacao` do CASO A diz de onde o dinheiro sai", () => {
+  const frase = LIB.previaDaAntecipacao({
+    numeros: [5, 6],
+    valorFormatado: "R$ 200,00",
+    ultimoVencimentoAntes: "03/2027",
+    ultimoVencimentoDepois: "01/2027",
+    caso: "auto",
+  });
+
+  // No auto-emprestimo e a conta corrente da PROPRIA pessoa que e debitada, e a
+  // antecipacao muda uma tela que nao esta na frente de quem clica: as contas a
+  // pagar da cauda sao BAIXADAS (HMO-396), nao removidas.
+  assert.match(frase, /conta corrente/);
+  assert.match(frase, /Contas a Pagar/);
+  assert.match(frase, /não removida/);
+  // E a terceira frase continua -- ela e sobre a serie, nao sobre o caso.
+  assert.match(frase, /continuam com o valor de sempre/);
+
+  // CONTROLE: o Caso B NAO ganha essa frase. Nada sai de conta minha lá, e
+  // dize-lo seria descrever um debito que nao existe.
+  const casoB = LIB.previaDaAntecipacao({
+    numeros: [5, 6],
+    valorFormatado: "R$ 200,00",
+    ultimoVencimentoAntes: "03/2027",
+    ultimoVencimentoDepois: "01/2027",
+  });
+  assert.ok(!/conta corrente/.test(casoB), casoB);
+});
+
+test("`parcelaFoiAntecipada`: `paid_date` ANTES do vencimento, e nunca no dia", () => {
+  // ANTECIPADA: paga em 10/2026 vencendo em 01/2027.
+  assert.equal(
+    LIB.parcelaFoiAntecipada({ paid_date: "2026-10-11", due_date: "2027-01-10" }),
+    true
+  );
+
+  // PAGA EM DIA NAO E ANTECIPADA -- `<` e nao `<=`. Com `<=`, toda parcela paga
+  // pontualmente apareceria rotulada como antecipada, e o rotulo perderia o
+  // sentido justamente onde serve (distinguir a parcela da cauda no meio das
+  // pendentes).
+  assert.equal(
+    LIB.parcelaFoiAntecipada({ paid_date: "2026-10-10", due_date: "2026-10-10" }),
+    false
+  );
+
+  // PAGA EM ATRASO, muito menos.
+  assert.equal(
+    LIB.parcelaFoiAntecipada({ paid_date: "2026-11-20", due_date: "2026-10-10" }),
+    false
+  );
+
+  // SEM `paid_date` -- a parcela em aberto. Sem a guarda do vazio, `""` e menor
+  // que qualquer data e TODA parcela pendente se rotularia como antecipada.
+  assert.equal(
+    LIB.parcelaFoiAntecipada({ paid_date: null, due_date: "2027-01-10" }),
+    false
+  );
+  assert.equal(LIB.parcelaFoiAntecipada({ due_date: "2027-01-10" }), false);
+  assert.equal(LIB.parcelaFoiAntecipada({ paid_date: "2026-10-11" }), false);
+
+  // A VIRADA DE ANO, que e onde uma comparacao por DIA-E-MES erraria: paga em
+  // 12/2026 vencendo em 01/2027 E antecipada. Isso so sai certo porque os dois
+  // campos sao `date` na 053 (`:325` e `:334`) e chegam `AAAA-MM-DD`, cuja ordem
+  // lexicografica e a cronologica -- e e por isso que a funcao compara string e
+  // nao constroi `Date` (que leria o dia 1 como o mes anterior no fuso daqui).
+  assert.equal(
+    LIB.parcelaFoiAntecipada({ paid_date: "2026-12-20", due_date: "2027-01-10" }),
+    true
+  );
+  assert.equal(
+    LIB.parcelaFoiAntecipada({ paid_date: "2027-01-10", due_date: "2026-12-20" }),
+    false
+  );
+});

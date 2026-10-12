@@ -883,6 +883,65 @@ const mutantes = [
     "      previsoes_baixadas: previsoesBaixadas,",
     "      previsoes_baixadas: escolhidas.length,",
   ],
+
+  // =========================================================================
+  // A PREVIA DO DIALOGO E A PARCELA ANTECIPADA (F4 da HMO-393, issue HMO-397)
+  // =========================================================================
+  // O PRIMEIRO E O MUTANTE NOMEADO DA HMO-397, e ele e o unico desta lista cujo
+  // sintoma e so uma frase -- e e por isso que ele importa: a tela fica
+  // PLAUSIVEL, nenhum numero muda, e a pessoa le "baixaram minha parcela". Essa
+  // e a variante de produto que Helio REJEITOU no cartao `ae436b4a` (manter o
+  // numero de parcelas e baixar o valor de cada uma), e ela nao existe no
+  // codigo: a frase e o unico lugar da tela onde se le qual das duas features
+  // foi construida.
+  //
+  // A issue aponta `scripts/mutantes-leituras-do-mybank.mjs` para ele. Ele esta
+  // AQUI porque a suite daquele runner (`test:leituras-do-mybank`) nao tem
+  // assercao nenhuma sobre esta frase -- plantado lá ele sobreviveria, e o
+  // placar diria "a suite nao mede isso" sobre uma frase que ESTA medida. O
+  // mutante vive onde a assercao que o mata vive
+  // (`mesmo-alvo-nao-prova-coberto-compare-as-ancoras`).
+  [
+    LIB,
+    "A PREVIA OMITE QUE O VALOR DAS QUE SOBRAM NAO MUDA (a tela fica plausivel e a pessoa le `baixaram minha parcela` -- a variante REJEITADA no cartao ae436b4a)",
+    "    `${params.ultimoVencimentoDepois}. As parcelas que sobram continuam com o valor de sempre: ` +\n    \"antecipar encurta a série e não baixa a prestação.\"",
+    "    `${params.ultimoVencimentoDepois}.`",
+  ],
+
+  [
+    LIB,
+    "a previa perde o ULTIMO VENCIMENTO e fica so com a promessa (a serie `encurtar` deixa de ter numero na tela, e o gesto se le como `pagar adiantado`)",
+    "    `${comecoDaPrevia} O último vencimento é ${params.ultimoVencimentoAntes} e passa a ser ` +\n    `${params.ultimoVencimentoDepois}. As parcelas que sobram continuam",
+    "    `${comecoDaPrevia} As parcelas que sobram continuam",
+  ],
+
+  [
+    LIB,
+    "a previa que QUITA mantem a promessa sobre as que sobram (quem acabou de quitar le uma garantia de cobranca futura que nao existe)",
+    "  if (params.ultimoVencimentoDepois === null) {\n    return (\n      `${comecoDaPrevia} Não sobra nenhuma parcela em aberto: o empréstimo fica quitado ` +\n      \"e sai da lista A receber.\"\n    );\n  }",
+    "  if (false) {\n    return \"\";\n  }",
+  ],
+
+  [
+    LIB,
+    "`parcelaFoiAntecipada` aceita o pagamento NO DIA (`<` vira `<=`: toda parcela paga pontualmente se rotula como antecipada, e o rotulo perde o sentido onde ele serve)",
+    "  return pago < vence;",
+    "  return pago <= vence;",
+  ],
+
+  [
+    LIB,
+    "`parcelaFoiAntecipada` perde a guarda do vazio (a parcela PENDENTE vira antecipada: `\"\"` e menor que qualquer data)",
+    '  if (pago === "" || vence === "") return false;',
+    "  if (false) return false;",
+  ],
+
+  [
+    LIB,
+    "`parcelaFoiAntecipada` compara as datas pela ORDEM INVERSA (a parcela paga EM ATRASO vira antecipada, e a antecipada perde o rotulo -- os dois sentidos errados de uma vez)",
+    "  return pago < vence;",
+    "  return pago > vence;",
+  ],
 ];
 
 const SUITE = "test:emprestimo-do-mybank";

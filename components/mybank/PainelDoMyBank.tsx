@@ -60,6 +60,31 @@
 //
 // `cancelandoRef` e a mesma trava de `parcelasEmVooRef`, por emprestimo.
 //
+// O GESTO «Antecipar» PERGUNTA UM NUMERO, E POR ISSO NAO E `confirm()` (HMO-397)
+// -----------------------------------------------------------------------------
+// Ele aparece ao lado do Cancelar, e a condicao e OUTRA: `podeAntecipar` exige
+// `active` **e** parcela em aberto, porque antecipar sem nada em aberto nao tem
+// o que fazer (o Cancelar fica so pelo status, de proposito -- ver lá).
+//
+// O dialogo e inline, com `<select>` nativo de 1 ate as em aberto, e mostra
+// ANTES do clique as tres coisas que a decisao de produto promete: o valor
+// total, qual passa a ser o ultimo vencimento, e que o valor das que sobram nao
+// muda. A terceira e a que impede a leitura errada ("baixaram minha parcela?"),
+// que e a variante REJEITADA no cartao `ae436b4a`. A frase inteira vem de
+// `previaDaAntecipacao`, em `lib/`, pela mesma razao do `avisoDoCancelamento`.
+//
+// `antecipandoRef` e a terceira trava deste arquivo, e e a mais caro das tres: a
+// rota de antecipacao NAO tem idempotencia por id (a de emprestimo tem), entao o
+// segundo clique paga a cauda duas vezes -- duas pernas de entrada por parcela e
+// o dobro no extrato.
+//
+// E A PARCELA ANTECIPADA SE DISTINGUE NA LISTA, SEM COLUNA NOVA
+// ------------------------------------------------------------
+// `rotuloDasParcelasAntecipadas` (`paid_date < due_date`, estado derivado -- a
+// forma da HMO-366) e o que explica o `4/24` do badge ao lado de "vence
+// <parcela 3>". `progressoDoEmprestimo` continua `pagas/installment_count` e
+// continua certo; o que faltava era a tela dizer por que.
+//
 // E O LATCH NAO ALCANCA O F5: ISSO E `lib/pedido-de-emprestimo`
 // ------------------------------------------------------------
 // Recarregar a pagina zera todo ref e todo state. Quem viu "Emprestando..." e
@@ -102,6 +127,7 @@ import { dataOuMomentoNaTela } from "@/lib/data-na-tela";
 import {
   avisoDoCancelamento,
   mensagemDoProblema,
+  previaDaAntecipacao,
   problemaDoEmprestimo,
   serieDoEmprestimo,
   casoDoEmprestimo,
@@ -130,9 +156,13 @@ import {
   contasQuePagamAParcela,
   devedorTemConexaoAceita,
   linhasAReceber,
+  podeAntecipar,
+  previaDaAntecipacaoNaTela,
   progressoDoEmprestimo,
   proximoVencimento,
+  quantasEmAbertoNoEmprestimo,
   rotuloDaContaCredora,
+  rotuloDasParcelasAntecipadas,
   totaisDaContaCredora,
   valorDaParcelaNaLista,
   type ConexaoCrua,
@@ -204,6 +234,46 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
    * sequencia e legitimo, e um booleano perderia a segunda.
    */
   const cancelandoRef = useRef<Set<string>>(new Set());
+
+  /**
+   * QUAL EMPRESTIMO TEM O DIALOGO DE ANTECIPAR ABERTO (HMO-397). `null` = nenhum.
+   *
+   * UM SO, e nao um `Set`: o dialogo pergunta "quantas parcelas" e mostra o valor
+   * total daquela serie. Dois abertos ao mesmo tempo teriam duas previas na tela
+   * e um unico campo de quantidade -- a pessoa leria o valor de um emprestimo com
+   * a quantidade do outro. Abrir o segundo fecha o primeiro, por construcao.
+   */
+  const [antecipando, setAntecipando] = useState<string | null>(null);
+
+  /** Quantas parcelas o dialogo esta pedindo. String porque e o valor do `<select>`. */
+  const [quantasParaAntecipar, setQuantasParaAntecipar] = useState("1");
+
+  /**
+   * AS ANTECIPACOES EM VOO -- o `Set` que o `disabled` MOSTRA.
+   *
+   * Ele e `useState` de proposito, e nao e ele que decide: ver `antecipandoRef`,
+   * logo abaixo. O que ele faz e deixar o botao desabilitado DEPOIS do
+   * re-render, que e o que a pessoa ve -- e o que da ao caso do latch uma medida
+   * honesta: a sonda le o `disabled` no instante do segundo clique e afirma que
+   * ele ainda era `false`, provando que quem segurou o POST foi o ref.
+   */
+  const [antecipacoesEmVoo, setAntecipacoesEmVoo] = useState<string[]>([]);
+
+  /**
+   * A TRAVA DA ANTECIPACAO -- `useRef`, e por emprestimo.
+   *
+   * `useRef` pela razao do `emprestandoRef`: `setAntecipacoesEmVoo` agenda um
+   * re-render, e o `disabled` so chega ao DOM depois dele -- os dois cliques de
+   * um toque duplo entram no handler antes disso. E aqui o custo do segundo
+   * clique e DINHEIRO: a rota de antecipacao nao tem idempotencia por id (o POST
+   * de emprestimo tem; este nao), entao dois POST pagam a cauda DUAS vezes --
+   * duas pernas de entrada por parcela, o dobro do valor no extrato, e parcelas
+   * que ja estavam `paid` sendo pagas de novo mais acima na serie.
+   *
+   * Por emprestimo e nao um booleano global, como `cancelandoRef`: antecipar em
+   * duas dividas diferentes em sequencia e legitimo.
+   */
+  const antecipandoRef = useRef<Set<string>>(new Set());
 
   const carregar = useCallback(async () => {
     try {
@@ -637,6 +707,94 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
     }
   }
 
+  /**
+   * ABRIR O DIALOGO DE ANTECIPAR (HMO-397).
+   *
+   * A QUANTIDADE VOLTA PARA 1 A CADA ABERTURA, e isso nao e arrumacao: sem o
+   * reset, abrir o dialogo de um emprestimo com 6 parcelas em aberto depois de
+   * ter escolhido 12 em outro deixaria o `<select>` com um valor que nao esta
+   * entre as opcoes -- o navegador mostraria a primeira opcao e o estado
+   * continuaria 12, entao a previa diria "12 parcelas" e o POST mandaria 12 numa
+   * serie que tem 6. O `value` do `<select>` e o estado, nao o contrario.
+   */
+  function abrirAntecipacao(emprestimo: EmprestimoDoMyBank) {
+    setQuantasParaAntecipar("1");
+    setAntecipando(emprestimo.id);
+  }
+
+  /**
+   * Antecipar -- a operacao que move dinheiro ANTES do vencimento (HMO-397).
+   *
+   * NAO HA `confirm()` AQUI, E A DIFERENCA COM O CANCELAR E DE CONTEUDO
+   * ------------------------------------------------------------------
+   * O cancelamento e um gesto de UM clique sobre uma decisao binaria, e por isso
+   * a pergunta nativa serve: o texto de `avisoDoCancelamento` e tudo o que falta
+   * dizer. A antecipacao PEDE UM NUMERO, e o valor total muda com ele -- um
+   * `confirm()` teria de ser montado depois de a pessoa escolher, em outro lugar
+   * da tela, e o numero que ela leria seria o de antes da escolha. O dialogo
+   * mostra a previa AO LADO do campo, e ela se refaz a cada troca.
+   *
+   * O que o `confirm()` garantia continua garantido pelo mesmo caminho de
+   * sempre: o texto vem de `previaDaAntecipacao`, em `lib/`, e tem suite propria
+   * -- escrito aqui ele passaria por qualquer uma delas intacto.
+   */
+  async function antecipar(emprestimo: EmprestimoDoMyBank) {
+    // A TRAVA POR EMPRESTIMO, NA PRIMEIRA LINHA -- `has`/`add` no mesmo tick.
+    //
+    // Antes de qualquer `await` e antes de qualquer `setState`: e o unico lugar
+    // onde ela pega o segundo clique de um toque duplo (ver `antecipandoRef`).
+    if (antecipandoRef.current.has(emprestimo.id)) return;
+    antecipandoRef.current.add(emprestimo.id);
+    setAntecipacoesEmVoo((voando) => [...voando, emprestimo.id]);
+
+    // `Number(...)` do valor do `<select>`, e as opcoes dele sao 1..em aberto --
+    // entao `mais_do_que_em_aberto` nao e alcancavel pela tela. A rota continua
+    // perguntando, porque quem chega pelo PostgREST nao passa por tela nenhuma.
+    const quantas = Number(quantasParaAntecipar);
+
+    try {
+      const resposta = await fetch(
+        `/api/mybank/loans/${emprestimo.id}/antecipacao`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ parcelas: quantas }),
+        }
+      );
+
+      const dados = await resposta.json();
+
+      if (!resposta.ok) {
+        toast.error(dados.error ?? "Não foi possível antecipar as parcelas.");
+        return;
+      }
+
+      // A MENSAGEM DA ROTA, e nao uma frase daqui: e ela que diz quantas
+      // parcelas DE VERDADE entraram (o laco pode ter parado no meio), qual
+      // passou a ser o ultimo vencimento e se o emprestimo quitou -- numeros que
+      // so o servidor tem depois de escrever.
+      //
+      // `success: false` na antecipacao PARCIAL vem como sucesso aqui de
+      // proposito: 1 de 2 antecipada e dinheiro que se moveu e parcela que ficou
+      // paga, e um toast de ERRO sobre isso faria a pessoa tentar de novo e
+      // antecipar uma terceira. A mensagem da rota diz o numero.
+      toast.success(dados.message ?? "Parcelas antecipadas.");
+      setAntecipando(null);
+      await carregar();
+    } catch (e) {
+      console.error("Erro ao antecipar as parcelas:", e);
+      toast.error("Não foi possível antecipar as parcelas.");
+    } finally {
+      // A TRAVA E LIBERADA NOS TRES CAMINHOS. Sem o `delete`, a antecipacao que
+      // falhou por rede nao teria segunda tentativa: o botao voltaria a ficar
+      // habilitado (o `disabled` sai do estado) e nao chamaria rota nenhuma.
+      antecipandoRef.current.delete(emprestimo.id);
+      setAntecipacoesEmVoo((voando) =>
+        voando.filter((id) => id !== emprestimo.id)
+      );
+    }
+  }
+
   if (carregando) {
     return (
       <div className="flex items-center gap-2 p-6 text-muted-foreground">
@@ -999,6 +1157,22 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
               {doEscolhido.map((emprestimo) => {
                 const vencimento = proximoVencimento(emprestimo);
                 const parcela = valorDaParcelaNaLista(emprestimo);
+                const emAberto = quantasEmAbertoNoEmprestimo(emprestimo);
+                const antecipadas = rotuloDasParcelasAntecipadas(emprestimo);
+
+                // A PREVIA SO E MONTADA COM O DIALOGO ABERTO. Ela percorre a
+                // serie inteira tres vezes (escolher a cauda, somar, achar o
+                // ultimo vencimento), e fazer isso para as 24 parcelas de todos
+                // os emprestimos da conta em cada render seria trabalho jogado
+                // fora -- e, com `quantasParaAntecipar` sendo um estado SO, a
+                // previa dos outros falaria da quantidade escolhida neste.
+                const previa =
+                  antecipando === emprestimo.id
+                    ? previaDaAntecipacaoNaTela(
+                        emprestimo,
+                        Number(quantasParaAntecipar)
+                      )
+                    : null;
 
                 return (
                   <div
@@ -1030,6 +1204,26 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
                             desapareceu -- os emprestimos que quitaram ANTES
                             daquela entrega seguem `active`, e e por eles que a
                             condicao continua sendo o status. */}
+                        {/* O GESTO DE ANTECIPAR, E A CONDICAO DELE E OUTRA
+                            (HMO-397).
+
+                            `podeAntecipar` e `active` **E** com parcela em
+                            aberto -- diferente do Cancelar logo abaixo, que e so
+                            pelo status, de proposito. O porque das duas
+                            condicoes diferentes esta na funcao, em `lib/`: o
+                            emprestimo `active` com a serie toda paga (os que
+                            quitaram antes da HMO-394) ainda precisa de saida, e
+                            nao tem o que antecipar. */}
+                        {podeAntecipar(emprestimo) && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            data-antecipar-emprestimo={emprestimo.id}
+                            onClick={() => abrirAntecipacao(emprestimo)}
+                          >
+                            Antecipar
+                          </Button>
+                        )}
                         {emprestimo.status === "active" && (
                           <Button
                             variant="outline"
@@ -1056,7 +1250,115 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
                       )}
                       {" · "}
                       {emprestimo.status}
+                      {/* A PARCELA ANTECIPADA SE DISTINGUE, E SEM COLUNA NOVA
+                          (HMO-397).
+
+                          Ela e o que explica o `4/24` do badge acima ao lado de
+                          "vence <parcela 3>": quatro pagas com a terceira ainda
+                          pendente e uma tela que pede explicacao, e sem ela a
+                          unica conclusao disponivel e "a contagem esta errada"
+                          -- que e justamente a leitura que a secao 0 do plano
+                          mediu como CERTA. O criterio e `paid_date < due_date`,
+                          derivado (a forma da HMO-366), nao uma coluna. */}
+                      {antecipadas !== null && (
+                        <> · <span data-antecipadas>{antecipadas}</span></>
+                      )}
                     </p>
+
+                    {/* ====================================================
+                        O DIALOGO DE ANTECIPAR -- os tres numeros ANTES do clique
+                        ==================================================== */}
+                    {previa !== null && (
+                      <div
+                        data-dialogo-antecipacao={emprestimo.id}
+                        className="mt-2 space-y-2 rounded-lg border border-warning/40 bg-muted/40 p-3"
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Label
+                            htmlFor={`mybank-antecipar-quantas-${emprestimo.id}`}
+                            className="text-xs"
+                          >
+                            Quantas parcelas antecipar?
+                          </Label>
+                          {/* UM `<select>` NATIVO DE 1 ATE AS EM ABERTO, E NAO
+                              UM CAMPO DE NUMERO.
+
+                              Tres razoes, e as tres sao medidas:
+
+                                * `mais_do_que_em_aberto` deixa de ser
+                                  alcancavel pela tela -- a recusa esta na FORMA
+                                  do campo, nao numa validacao que alguem pode
+                                  afrouxar (a mesma escolha que tirou `valor` do
+                                  corpo da rota);
+                                * `<input type="number">` descarta a virgula e
+                                  aceita texto vazio no `value` do navegador, e
+                                  um campo vazio aqui mandaria `parcelas: NaN`;
+                                * nativo e nao o Select do Radix pela razao que o
+                                  cabecalho deste arquivo ja da: o Radix monta as
+                                  `<option>` num PORTAL e so quando o menu abre,
+                                  entao a assercao "o seletor oferece no maximo
+                                  as em aberto" leria uma lista vazia e passaria
+                                  verde. */}
+                          <select
+                            id={`mybank-antecipar-quantas-${emprestimo.id}`}
+                            data-antecipar-quantas={emprestimo.id}
+                            value={quantasParaAntecipar}
+                            onChange={(e) =>
+                              setQuantasParaAntecipar(e.target.value)
+                            }
+                            className="h-9 rounded-md border bg-background px-2 text-sm"
+                          >
+                            {Array.from({ length: emAberto }, (_, i) => (
+                              <option key={i + 1} value={String(i + 1)}>
+                                {i + 1}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* A PREVIA, E O TEXTO VEM DE `lib/`.
+
+                            Escrito aqui ele passaria por qualquer suite intacto
+                            -- e a razao que `avisoDoCancelamento` ja da. O valor
+                            chega FORMATADO porque `lib/emprestimo-do-mybank`
+                            nao importa `formatCurrency` de proposito (seria o
+                            segundo formatador de real do app). */}
+                        <p
+                          data-previa-antecipacao={emprestimo.id}
+                          className="text-xs text-muted-foreground"
+                        >
+                          {previaDaAntecipacao({
+                            numeros: previa.numeros,
+                            valorFormatado: formatCurrency(previa.valor),
+                            ultimoVencimentoAntes: previa.ultimoVencimentoAntes,
+                            ultimoVencimentoDepois:
+                              previa.ultimoVencimentoDepois,
+                            caso: emprestimo.caso,
+                          })}
+                        </p>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button
+                            size="sm"
+                            data-confirmar-antecipacao={emprestimo.id}
+                            disabled={antecipacoesEmVoo.includes(emprestimo.id)}
+                            onClick={() => antecipar(emprestimo)}
+                          >
+                            {antecipacoesEmVoo.includes(emprestimo.id)
+                              ? "Antecipando…"
+                              : "Confirmar antecipação"}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            data-fechar-antecipacao={emprestimo.id}
+                            onClick={() => setAntecipando(null)}
+                          >
+                            Voltar
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}

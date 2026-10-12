@@ -430,6 +430,145 @@ const mutantes = [
     "      cancelandoRef.current.delete(emprestimo.id);",
     "      void emprestimo.id;",
   ],
+
+  // =========================================================================
+  // O GESTO DE ANTECIPAR (F4 da HMO-393, issue HMO-397)
+  // =========================================================================
+  // O PRIMEIRO E O MAIS CARO DOS DOZE DESTE ARQUIVO, e vale dizer por que: ele
+  // nao muda numero nenhum na tela. `podeAntecipar` copiada do Cancelar oferece
+  // o gesto num emprestimo `active` sem nada em aberto -- e a rota so pode
+  // responder `mais_do_que_em_aberto` ali. Nada compila errado, nada responde
+  // 500: a pessoa aperta e leva uma recusa que nao sabia que ia levar, no mesmo
+  // lugar onde o gesto irmao funciona. Os emprestimos que quitaram ANTES da
+  // HMO-394 seguem `active` com a serie paga, entao esse estado existe de
+  // verdade na base.
+  [
+    LIB,
+    "O GESTO DE ANTECIPAR APARECE ONDE O CANCELAR APARECE (`podeAntecipar` perde a exigencia de parcela em aberto: o emprestimo `active` com a serie toda paga oferece um clique que a rota so pode recusar)",
+    "    emprestimo.status === \"active\" && quantasEmAbertoNoEmprestimo(emprestimo) > 0",
+    '    emprestimo.status === "active"',
+  ],
+
+  [
+    LIB,
+    "o gesto aparece em emprestimo QUITADO (`podeAntecipar` perde o status: a rota recusa com `emprestimo_nao_esta_ativo`, e a tela oferece de todo jeito)",
+    "    emprestimo.status === \"active\" && quantasEmAbertoNoEmprestimo(emprestimo) > 0",
+    "    quantasEmAbertoNoEmprestimo(emprestimo) > 0",
+  ],
+
+  [
+    LIB,
+    "a previa calcula o ultimo vencimento sobre a serie INTEIRA (o dialogo diz que a serie acaba no mesmo mes de antes: `encurtar a serie` deixa de ser o que a tela promete)",
+    "    ultimoVencimentoDepois: ultimoVencimentoEmAberto(\n      todas.filter((p) => !ids.has(p.id))\n    ),",
+    "    ultimoVencimentoDepois: ultimoVencimentoEmAberto(todas),",
+  ],
+
+  [
+    LIB,
+    "a previa soma a serie INTEIRA e nao a cauda escolhida (o dialogo diz R$ 500,00 de uma antecipacao de R$ 100,00 -- o numero que a pessoa confere contra a conta)",
+    "    valor: valorDaAntecipacao({ parcelasEscolhidas: escolhidas }),",
+    "    valor: valorDaAntecipacao({ parcelasEscolhidas: todas }),",
+  ],
+
+  [
+    LIB,
+    "os numeros da previa saem na ordem da CAUDA (o dialogo diz `as 6 e 5`, e quem procura na lista le a serie de tras para frente)",
+    "    numeros: escolhidas.map((p) => p.installment_number).sort((a, b) => a - b),",
+    "    numeros: escolhidas.map((p) => p.installment_number),",
+  ],
+
+  [
+    LIB,
+    "o rotulo da parcela antecipada DESAPARECE (o `2/4` ao lado de `vence <parcela 3>` fica sem explicacao, e a leitura disponivel e `a contagem esta errada`)",
+    "  if (numeros.length === 0) return null;",
+    "  if (numeros.length >= 0) return null;",
+  ],
+
+  [
+    LIB,
+    "o rotulo de antecipada conta TODA parcela paga (a paga em dia entra, e o rotulo perde o sentido justamente onde ele serve)",
+    "      parcelaFoiAntecipada({ paid_date: p.paid_date, due_date: p.vencimento })",
+    '      p.status === "paid"',
+  ],
+
+  [
+    LIB,
+    "a traducao de vocabulario troca o VALOR pelo numero da parcela (a soma da previa sai de `numero` em vez de `valor`: R$ 6,00 numa antecipacao de R$ 600)",
+    "    amount: parcela.valor,",
+    "    amount: parcela.numero,",
+  ],
+
+  [
+    LIB,
+    "a traducao de vocabulario perde o `due_date` (a cauda passa a ser escolhida sobre uma data vazia, e `encurtar a serie` escolhe parcela pelo desempate)",
+    "    due_date: parcela.vencimento,",
+    '    due_date: "",',
+  ],
+
+  // O LATCH, E ELE E O MAIS CARO EM DINHEIRO: a rota de antecipacao NAO tem
+  // idempotencia por id (a de emprestimo tem, desde a HMO-390), entao o segundo
+  // POST paga a cauda outra vez -- duas pernas de entrada por parcela, o dobro
+  // no extrato, e as parcelas seguintes da serie pagas sem ninguem ter pedido.
+  [
+    PAINEL,
+    "A ANTECIPACAO PERDE A TRAVA (dois toques pagam a cauda DUAS vezes: a rota nao tem idempotencia por id, e sai o dobro no extrato)",
+    "    if (antecipandoRef.current.has(emprestimo.id)) return;",
+    "    if (false) return;",
+  ],
+
+  [
+    PAINEL,
+    "a trava da antecipacao vira BOOLEANO GLOBAL (antecipar numa divida tranca a outra, calada)",
+    "    if (antecipandoRef.current.has(emprestimo.id)) return;",
+    "    if (antecipandoRef.current.size > 0) return;",
+  ],
+
+  // A TROCA DO `useRef` PELO ESTADO, que e o mutante que so o caso lido DENTRO
+  // de `unstable_batchedUpdates` mata: com o latch no estado, o `disabled` so
+  // chega ao DOM depois do re-render e o toque duplo de celular passa os dois
+  // cliques. Fora do `batchedUpdates` a tela teria exatamente a mesma aparencia
+  // (`latch-de-dois-cliques-so-mede-dentro-de-batchedupdates`).
+  [
+    PAINEL,
+    "a trava da antecipacao passa a ser o ESTADO (o `disabled` so chega ao DOM depois do re-render: o toque duplo de celular paga a cauda duas vezes)",
+    "    if (antecipandoRef.current.has(emprestimo.id)) return;\n    antecipandoRef.current.add(emprestimo.id);",
+    "    if (antecipacoesEmVoo.includes(emprestimo.id)) return;",
+  ],
+
+  [
+    PAINEL,
+    "o emprestimo nunca sai do conjunto da antecipacao (a antecipacao que falhou nao tem segunda tentativa, e o botao fica preso em `Antecipando…`)",
+    "      antecipandoRef.current.delete(emprestimo.id);",
+    "      void emprestimo.id;",
+  ],
+
+  [
+    PAINEL,
+    "o seletor oferece a serie INTEIRA e nao as em aberto (o dialogo deixa pedir 6 de uma serie com 5 em aberto, e a rota recusa com `mais_do_que_em_aberto`)",
+    "                            {Array.from({ length: emAberto }, (_, i) => (",
+    "                            {Array.from({ length: emprestimo.total_de_parcelas }, (_, i) => (",
+  ],
+
+  [
+    PAINEL,
+    "a previa fica presa em UMA parcela (trocar a quantidade muda o `<select>` e nao muda o valor nem o vencimento: a pessoa confirma 5 lendo o numero de 1)",
+    "                        Number(quantasParaAntecipar)",
+    "                        1",
+  ],
+
+  [
+    PAINEL,
+    "o dialogo FICA ABERTO depois do sucesso (o clique seguinte antecipa de novo sobre a serie que a tela acabou de recarregar)",
+    "      setAntecipando(null);\n      await carregar();",
+    "      await carregar();",
+  ],
+
+  [
+    PAINEL,
+    "o POST da antecipacao leva um VALOR em reais (o campo que a decisao (a) da secao 4 do plano tirou do contrato volta pela tela)",
+    "        body: JSON.stringify({ parcelas: quantas }),",
+    "        body: JSON.stringify({ parcelas: quantas, valor: 0 }),",
+  ],
 ];
 
 const SUITE = "test:mybank-na-tela";

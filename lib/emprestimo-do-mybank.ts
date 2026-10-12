@@ -1663,3 +1663,184 @@ export function mensagemDaAntecipacao(params: {
     "antecipar encurta a série, não baixa a prestação."
   );
 }
+
+// ---------------------------------------------------------------------------
+// O GESTO NA TELA (F4 da HMO-393, issue HMO-397)
+// ---------------------------------------------------------------------------
+// A F2 deu a frase do DEPOIS (`mensagemDaAntecipacao`). O que falta e a frase do
+// ANTES: o dialogo tem de dizer as tres coisas com NUMERO antes de a pessoa
+// apertar, porque depois do clique o dinheiro ja saiu da conta de quem paga e
+// nao existe "desantecipar" (secao 6 do plano).
+//
+// POR QUE O TEXTO VIVE AQUI E NAO NO JSX
+// --------------------------------------
+// E a mesma razao que `avisoDoCancelamento` ja da: escrito dentro do componente
+// ele passaria por QUALQUER suite intacto -- `tsc`, `lint` e `build` nao tem
+// opiniao sobre uma frase, e a sonda de navegador le o que a tela mostrar sem
+// saber o que ela deveria mostrar. Aqui a frase e uma assercao de uma linha, e o
+// mutante que apaga a terceira parte dela morre em `test:emprestimo-do-mybank`.
+//
+// O VALOR CHEGA FORMATADO, E ISSO E DE PROPOSITO
+// ---------------------------------------------
+// `valorFormatado` e uma string e nao um numero porque este modulo NAO IMPORTA
+// `lib/utils` nem `lib/dinheiro` (ver o cabecalho do arquivo: e isso que o deixa
+// compilar na suite sem o runtime do Next), e porque reescrever a formatacao de
+// real aqui seria o segundo formatador de dinheiro do app -- com o primeiro
+// separando o `R$` com NBSP (`intl-pt-br-separa-o-real-com-nbsp`) e este com
+// espaco comum. Quem chama passa `formatCurrency(valorDaAntecipacao(...))`: a
+// SOMA e desta lib, a MASCARA e de quem ja a tem.
+// ---------------------------------------------------------------------------
+
+/**
+ * A PREVIA DO DIALOGO -- as tres coisas, antes do clique.
+ *
+ * AS TRES, E A TERCEIRA E A QUE IMPEDE A LEITURA ERRADA
+ * ----------------------------------------------------
+ *   1. QUANTO CUSTA AGORA, em reais, com os numeros das parcelas. Sem o valor a
+ *      pessoa escolhe "quantas" sem saber quanto sai da conta -- e o gesto nao
+ *      tem campo de valor de proposito (decisao (a) da secao 4 do plano), entao
+ *      este e o unico lugar onde o total aparece ANTES;
+ *   2. QUAL PASSA A SER O ULTIMO VENCIMENTO. E a unica frase que diz "a serie
+ *      encurta" com um numero, e e o que distingue este desenho de um que so
+ *      recebesse dinheiro adiantado;
+ *   3. QUE O VALOR DE QUEM SOBRA NAO MUDA. A leitura natural de "duas parcelas
+ *      menos" e "baixaram minha prestacao", e quem acredita nisso passa a
+ *      esperar um debito menor no mes que vem. Nenhum `amount` e tocado por esta
+ *      feature -- e a variante que BAIXARIA a prestacao foi REJEITADA no cartao
+ *      `ae436b4a`, entao a frase nao esta descrevendo uma escolha de
+ *      implementacao: ela esta dizendo qual das duas features existe.
+ *
+ * QUANDO A ANTECIPACAO QUITA, A TERCEIRA SAI -- pela mesma razao de
+ * `mensagemDaAntecipacao`: "as que sobram mantem o valor" sobre zero parcelas e
+ * uma promessa de cobranca futura que nao existe. No lugar dela entra o que vai
+ * acontecer (o emprestimo quita e sai da lista A receber).
+ *
+ * `ultimoVencimentoDepois === null` E "QUITA" AQUI, E ISSO NAO E O BUG DE
+ * `mensagemDaAntecipacao`
+ * ----------------------------------------------------------------------
+ * Lá os dois estados divergem porque o UPDATE de `settled` pode ter sido
+ * filtrado pela policy -- e a frase do DEPOIS nao pode anunciar um estado que o
+ * banco nao tem. Aqui nada foi escrito ainda: a previa fala do que a serie em
+ * maos diz, e "nao sobra parcela em aberto" e exatamente a condicao de
+ * `emprestimoFicouQuitado`. Nao ha terceiro estado para confundir.
+ */
+export function previaDaAntecipacao(params: {
+  /** Os numeros das parcelas da cauda que vao ser pagas, na ordem da serie. */
+  numeros: number[];
+  /** `formatCurrency(valorDaAntecipacao(...))` -- ver O VALOR CHEGA FORMATADO. */
+  valorFormatado: string;
+  ultimoVencimentoAntes: string | null;
+  /** `null` quando nao sobra parcela em aberto: a antecipacao QUITA. */
+  ultimoVencimentoDepois: string | null;
+  /** `"auto"` acrescenta de onde o dinheiro sai e o que muda em Contas a Pagar. */
+  caso?: CasoDoEmprestimo;
+}): string {
+  const quantas = params.numeros.length;
+  const quais = params.numeros.join(" e ");
+
+  const oQueSai =
+    quantas === 1
+      ? `Antecipar 1 parcela (a ${quais}, a do fim da série) custa ${params.valorFormatado} agora.`
+      : `Antecipar ${quantas} parcelas (as ${quais}, as do fim da série) custa ${params.valorFormatado} agora.`;
+
+  // A FRASE DO CASO A entra na abertura, como em `mensagemDaAntecipacao`: ela e
+  // verdade nos dois ramos abaixo, e no Caso A e a conta corrente da propria
+  // pessoa que sera debitada -- quem aperta sem ler isso descobre o debito pelo
+  // extrato.
+  //
+  // O NOME E `comecoDaPrevia` E NAO `abertura`, E ISSO NAO E ESTILO
+  // --------------------------------------------------------------
+  // `mensagemDaAntecipacao` tem, 60 linhas acima, um `const abertura =` seguido
+  // do MESMO `params.caso === "auto"` -- e aquele trecho e a ancora de um
+  // mutante da F2 ("a frase do CASO A nao diz que as contas a pagar foram
+  // BAIXADAS"). Com o mesmo nome aqui, o trecho passa a aparecer DUAS vezes no
+  // arquivo e o runner da F2 para com ANCORA AMBIGUA -- e o mutante dela
+  // deixaria de ser medido por causa de uma funcao nova que so copiou um
+  // critério (`funcao-nova-que-copia-criterio-torna-ancora-alheia-ambigua`).
+  const comecoDaPrevia =
+    params.caso === "auto"
+      ? `${oQueSai} O dinheiro sai da sua conta corrente para a de investimento, ` +
+        `e ${quantas === 1 ? "a conta a pagar dela" : "as contas a pagar delas"} ` +
+        "é baixada em Contas a Pagar — não removida."
+      : oQueSai;
+
+  if (params.ultimoVencimentoDepois === null) {
+    return (
+      `${comecoDaPrevia} Não sobra nenhuma parcela em aberto: o empréstimo fica quitado ` +
+      "e sai da lista A receber."
+    );
+  }
+
+  // A FRASE E NO FUTURO, E ELA NAO PODE SER A MESMA STRING DA DO DEPOIS
+  // -------------------------------------------------------------------
+  // Duas razoes, e a segunda e mecanica. A primeira: aqui nada aconteceu ainda
+  // -- "o ultimo vencimento ERA 08/2028" seria falso antes do clique, porque ele
+  // continua sendo. A segunda: `mensagemDaAntecipacao` fecha com estas MESMAS
+  // duas linhas, e repetir o texto ao pe da letra faria o trecho aparecer duas
+  // vezes no arquivo -- a ancora do mutante dela ("a mensagem perde a TERCEIRA
+  // frase") viraria AMBIGUA e aquele mutante deixaria de ser medido
+  // (`funcao-nova-que-copia-criterio-torna-ancora-alheia-ambigua`, que a guarda
+  // `mede-ancora-ambigua` pegou nesta PR).
+  //
+  // O QUE NAO PODE DIVERGIR E A PROMESSA, e ela nao divergiu: as duas dizem que
+  // o valor de quem sobra nao muda e que antecipar encurta a serie. Cada uma tem
+  // o proprio mutante e a propria assercao, que e o que impede uma de passar a
+  // medir a outra (`unificar-criterio-duplicado-apaga-a-medicao-do-outro-modulo`).
+  return (
+    `${comecoDaPrevia} O último vencimento é ${params.ultimoVencimentoAntes} e passa a ser ` +
+    `${params.ultimoVencimentoDepois}. As parcelas que sobram continuam com o valor de sempre: ` +
+    "antecipar encurta a série e não baixa a prestação."
+  );
+}
+
+/**
+ * ESTA PARCELA FOI ANTECIPADA? `paid_date < due_date`, e SEM COLUNA NOVA.
+ *
+ * A FORMA E A DA HMO-366: ESTADO DERIVAVEL, NAO COLUNA
+ * ---------------------------------------------------
+ * Uma coluna `antecipada` seria uma segunda fonte para um fato que as duas que
+ * ja existem respondem juntas, e ela divergiria na primeira baixa feita por
+ * outro caminho (o `PATCH` da parcela, o passo 2.5 do `pay/route.ts`). O par
+ * `(paid_date, due_date)` ja esta gravado em toda parcela paga, e o CHECK
+ * `((status='paid') = (paid_date IS NOT NULL))` da 053 e quem garante que ele
+ * nao esta vazio.
+ *
+ * E ELA TEM TRABALHO A FAZER NA TELA, nao e enfeite: com as parcelas 23 e 24
+ * antecipadas, a lista do credor mostra `4/24` ao lado de "vence <parcela 3>".
+ * Quem le isso nao tem como saber por que quatro estao pagas se a terceira ainda
+ * vence -- e a conclusao disponivel ("a contagem esta errada") e justamente a
+ * que a secao 0 do plano mediu como CERTA. O rotulo de antecipada e o que
+ * explica a diferenca sem mexer em leitura nenhuma.
+ *
+ * `<` E NAO `<=`, E A DIFERENCA E UM DIA DE TRABALHO DE SUPORTE
+ * -----------------------------------------------------------
+ * Pagar a parcela NO DIA do vencimento e pagar em dia, nao antecipar. Com `<=`,
+ * toda parcela paga pontualmente apareceria rotulada como antecipada -- e o
+ * rotulo perderia o sentido justamente onde ele serve (distinguir a parcela da
+ * cauda no meio das pendentes).
+ *
+ * COMPARACAO DE STRING, E ELA E SEGURA PORQUE OS DOIS CAMPOS SAO `date`
+ * ---------------------------------------------------------------------
+ * Medido na 053 e nao suposto: `due_date date NOT NULL` (`:325`) e `paid_date
+ * date` (`:334`). O PostgREST devolve os dois como `AAAA-MM-DD`, que ordena
+ * lexicograficamente igual a cronologicamente -- e e por isso que NAO ha corte
+ * de string nem `new Date()` aqui. `new Date(iso)` seria o erro conhecido deste
+ * repositorio: o construtor le `AAAA-MM-DD` como meia-noite UTC, e no fuso de
+ * Sao Paulo o dia 1 volta para o mes anterior
+ * (`teste-de-data-passa-em-utc-e-nao-ve-o-bug`).
+ *
+ * O VAZIO DEVOLVE `false`, e isso e o certo: parcela sem `paid_date` nao foi
+ * paga, entao nao foi antecipada. Um `null` lido como `""` e menor que qualquer
+ * data -- sem esta guarda, TODA parcela pendente se rotularia como antecipada.
+ */
+export function parcelaFoiAntecipada(parcela: {
+  paid_date?: string | null;
+  due_date?: string | null;
+}): boolean {
+  const pago = String(parcela.paid_date ?? "");
+  const vence = String(parcela.due_date ?? "");
+
+  if (pago === "" || vence === "") return false;
+
+  return pago < vence;
+}
