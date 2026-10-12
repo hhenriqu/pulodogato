@@ -1497,10 +1497,16 @@ export function paresDaAntecipacaoDoCasoA<
  */
 export function mensagemDaPrevisaoDaCaudaAusente(numeros: number[]): string {
   const quais = numeros.join(", ");
-  const plural = numeros.length === 1 ? "a parcela" : "as parcelas";
+  // A CONTRACAO VEM NO PROPRIO RAMO, e nao um `de ${plural}` com "a parcela"
+  // dentro: a medicao em producao leu "de a parcela 2" na frase. Juntar a
+  // preposicao com o artigo e o tipo de coisa que passa por toda assercao de
+  // `match` (o trecho "a parcela 2" casa dentro de "de a parcela 2") e aparece
+  // inteira na tela.
+  const quem =
+    numeros.length === 1 ? `da parcela ${quais}` : `das parcelas ${quais}`;
 
   return (
-    `Não encontrei em Contas a Pagar a transferência agendada de ${plural} ${quais} ` +
+    `Não encontrei em Contas a Pagar a transferência agendada ${quem} ` +
     "deste empréstimo para você mesmo. É dela que sai a conta de onde o dinheiro é debitado, " +
     "então nada foi antecipado — confira se a conta a pagar foi excluída à mão."
   );

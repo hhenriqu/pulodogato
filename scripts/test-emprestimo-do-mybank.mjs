@@ -3543,11 +3543,16 @@ test("`patchDaBaixaDaPrevisao` aponta para a SAIDA, e nao apaga nada", () => {
 
 test("`mensagemDaPrevisaoDaCaudaAusente` nomeia as parcelas e diz que NADA entrou", () => {
   const uma = LIB.mensagemDaPrevisaoDaCaudaAusente([4]);
-  assert.match(uma, /a parcela 4/);
+  // `agendada DA parcela 4`, e nao `agendada de a parcela 4`: a medicao em
+  // producao leu a frase com "de a" porque um `match` de "a parcela 4" casa
+  // dentro dela. A assercao leva a PREPOSICAO para medir a contracao.
+  assert.match(uma, /agendada da parcela 4 /);
+  assert.equal(/ de a parcela/.test(uma), false);
   assert.match(uma, /nada foi antecipado/i);
 
   const duas = LIB.mensagemDaPrevisaoDaCaudaAusente([4, 3]);
-  assert.match(duas, /as parcelas 4, 3/);
+  assert.match(duas, /agendada das parcelas 4, 3 /);
+  assert.equal(/ de as parcelas/.test(duas), false);
   // A SEGUNDA METADE E A QUE IMPORTA: sem ela quem pedisse 3 e lesse a recusa
   // nao saberia se as outras 2 entraram, e tentaria de novo sobre um estado que
   // nao conhece.
