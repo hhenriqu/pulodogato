@@ -2310,6 +2310,113 @@ jobs:
       - name: As travas do MyBank sabem falhar (21 mutantes)
         run: PGURL=postgresql://postgres:postgres@localhost:5432 node scripts/mutantes-mybank-travas.mjs
 
+      - name: 054_ocorrencia_apagada_fora_do_previsto
+        run: $PSQL -f database/migrations/054_ocorrencia_apagada_fora_do_previsto.sql
+
+      # Re-executavel: a 054 e so CREATE OR REPLACE VIEW, COMMENT, GRANT e
+      # ALTER VIEW. Nao ha ALTER de tabela, CHECK novo nem backfill.
+      - name: 054 e idempotente
+        run: $PSQL -f database/migrations/054_ocorrencia_apagada_fora_do_previsto.sql
+
+      # HMO-402. O previsto de `planned_vs_actual` somava com
+      # `s.status <> 'cancelled'`, e `skipped` passava -- e apagar a ocorrencia
+      # de UM MES de uma conta fixa grava exatamente `skipped` (a linha fica na
+      # tabela de proposito, para nao ressuscitar na agenda). Entao a conta que
+      # o usuario apagou saia do Fluxo de Caixa, da agenda, do painel e do
+      # resumo, e continuava somada so AQUI.
+      #
+      # Achado em producao pela validacao larga da HMO-400, com a prevista
+      # AVULSA como controle negativo: mesma rota de DELETE, mesmo mes, mesma
+      # leitura, e ela limpa -- porque nela o DELETE apaga a linha de verdade.
+      # Sem esse controle, "o numero nao mudou" se leria como janela da sonda.
+      #
+      # O QUE SO ESTA SUITE PEGA:
+      #
+      #   - o LADO DA DESPESA (secao 2). Os dois `SUM(...) FILTER` estao sob o
+      #     MESMO `WHERE`, e a issue trazia esse lado como "li no SQL e nao
+      #     medi". Medido: `expense_variance` ia a -1.830,00, que a tela le como
+      #     "gastou 1.830 menos do que previu" -- o relatorio parabenizando por
+      #     uma economia que nao houve, vinda de uma linha apagada.
+      #
+      #   - o CONTROLE POSITIVO (secao 3), e e ele que torna as secoes 1 e 2 uma
+      #     medida. O conserto TIRA linhas de uma soma, entao o jeito facil de
+      #     errar e tirar demais: uma view que devolvesse zero para tudo passaria
+      #     as duas primeiras com louvor. A conta `paid` de 11,00 esta la para
+      #     separar `NOT IN ('cancelled','skipped')` de `IN ('pending')` -- a
+      #     segunda derruba a conta JA PAGA e deixa a receita certa, que e o tipo
+      #     de defeito meio-certo que passa batido.
+      #
+      #   - `cancelled` CONTINUAR fora (secao 4). Era a unica exclusao antes da
+      #     054, e `CREATE OR REPLACE VIEW` exige a definicao inteira -- recolar
+      #     o arquivo podia ter perdido ela. Nada mais no teste pega isso: as
+      #     secoes 1-3 ficam verdes e so o total muda, e nenhuma delas o soma.
+      #
+      #   - A CATRACA DO ENUM (secao 5), que e o conserto da causa-raiz. O filtro
+      #     e uma lista por EXCLUSAO, e foi assim que o `skipped` entrou nesta
+      #     soma sozinho: ele nasceu no enum depois do 008 e ninguem revisitou o
+      #     `<> 'cancelled'`. A secao enumera `scheduled_status` e reprova com o
+      #     NOME do estado novo que ninguem classificou. Medido: um
+      #     `ALTER TYPE ... ADD VALUE 'postponed'` deixa este step vermelho.
+      #
+      #   - o CONTROLE NEGATIVO DO CRITERIO (secao 6), no desenho do caso 3 da
+      #     043: ele roda o filtro ANTIGO ao lado do novo sobre a MESMA fixture e
+      #     exige que os dois DISCORDEM (5.700 contra 700). As secoes 1 e 2
+      #     provam que a view mudou; esta prova que a FIXTURE ainda contem o
+      #     caso -- no dia em que alguem tirar a linha `skipped` dos dados, as
+      #     secoes 1 e 2 seguem verdes medindo nada e esta fica vermelha.
+      #
+      #   - o controle negativo da RLS (secao 8). A 054 faz
+      #     `CREATE OR REPLACE VIEW`, que APAGA as reloptions, e
+      #     `security_invoker` e uma reloption. As somas das outras secoes
+      #     filtram `user_id` na mao, entao elas dariam os MESMOS numeros com a
+      #     RLS furada -- sem esta secao o arquivo inteiro mediria superusuario.
+      #     Medido: sem o `ALTER VIEW`, a Dora passa a ver as linhas da outra
+      #     conta.
+      #
+      # 12 mutantes medidos num Postgres 17 local antes deste step entrar (banco
+      # TEMPLATE parando na 053, um banco novo por mutante): os 12 morrem e o
+      # controle positivo fica verde. Entre eles, os dois que revertem a 043 e o
+      # que apaga o `ALTER VIEW` do `security_invoker`.
+      - name: A ocorrencia APAGADA de conta fixa sai do previsto (receita e despesa)
+        run: $PSQL -f database/tests/054_ocorrencia_apagada_fora_do_previsto_test.sql
+
+      # A 054 reescreve `planned_vs_actual` INTEIRA -- `CREATE OR REPLACE VIEW`
+      # nao aceita menos --, entao ela recarrega o lado previsto da 043
+      # (`s.direction`) e a definicao da 045 (a terceira origem de `chaves` e as
+      # duas pernas do realizado). Os steps dos dois testes rodam acima, nas
+      # posicoes deles, onde NAO veem este arquivo.
+      #
+      # Isto nao e zelo: a primeira versao da 045 revertia a 043 em silencio por
+      # exatamente este buraco -- SQL valido, nenhuma suite do 008 reclamando, e
+      # toda receita prevista AVULSA de volta a ser contada como conta a pagar. O
+      # cabecalho da 043 pediu estes re-runs por escrito.
+      - name: A receita prevista AVULSA continua fora de planned_expense depois da 054
+        run: $PSQL -f database/tests/043_direcao_do_previsto_avulso_test.sql
+
+      # A SUITE DA 045 **NAO** E RE-RODADA AQUI, pela mesma razao que o bloco da
+      # 046 ja documentou -- e eu tentei antes de ler: re-rodar
+      # `045_realizado_de_grupo_no_previsto_x_realizado_test.sql` nesta posicao
+      # REPROVA, corretamente. A secao 1 dela exige 950,00, que e o realizado
+      # pessoal pelo criterio da 033; a 046 trocou o criterio para
+      # "bruto + reembolso" e o mesmo mes passou a valer 1.010,00. Medido aqui:
+      # `esperado 950.00, obtido 1010.00`. Aquele arquivo esta certo na POSICAO
+      # DELE e nao existe fixture que passe nas duas.
+      #
+      # Isso deixaria a definicao que a 054 RECOLA da 045 (a terceira origem de
+      # `chaves` e as duas pernas mutuamente exclusivas do realizado) protegida
+      # so por um teste que roda ANTES deste arquivo -- o mesmo buraco pelo qual
+      # a primeira versao da 045 revertia a 043. Como a suite nao pode vir, as
+      # duas afirmacoes foram RE-ESCRITAS na secao 9 do teste da 054, na forma
+      # que nao apodrece com o criterio: ela exige que o mes exista e que o
+      # realizado pessoal seja diferente de zero (o defeito da 045 era o mes vir
+      # AUSENTE) e conta LINHAS por chave, sem cravar valor de dinheiro nenhum.
+      # Foi justamente cravar o valor que tornou a suite da 045 irreprodutivel
+      # aqui.
+      #
+      # E a suite do 008, que e a dona original da view, pela mesma razao.
+      - name: O previsto x realizado do 008 continua valendo depois da 054
+        run: $PSQL -f database/tests/goals_reports_test.sql
+
       # OS 12 PASSOS DE SUITE ABAIXO RODAM COM A TRAVA DA 048 DE PE, e isso nao
       # e acidente: sao eles que provam que a trava nao barra escrita legitima.
       # Sete deles inserem em `financial_transactions` direto (hmo190,
