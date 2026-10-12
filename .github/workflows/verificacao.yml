@@ -2382,6 +2382,38 @@ jobs:
       - name: Os mutantes das duas barreiras
         run: npm run mutantes:alcance-da-serie
 
+      # O SOFT DELETE NAO ANDA PARA TRAS (HMO-403)
+      # ------------------------------------------
+      # Medido em producao pela validacao larga da HMO-400: `DELETE` com
+      # `{alcance:"apenas_esta"}` numa ocorrencia JA `cancelled` respondia 200 e a
+      # reescrevia para `skipped`. Em 6 linhas de uma serie (1 `skipped` + 5
+      # `cancelled`) as seis terminaram `skipped` -- um comando chamado "apagar"
+      # piorou o estado de cinco delas.
+      #
+      # POR QUE ESTE STEP E UMA SONDA DE ROTA, E NAO MAIS UM CASO DA REGRA PURA
+      # O step de cima ja prova o PLANO. O defeito vivia DEPOIS dele: o UPDATE da
+      # rota nao tinha filtro de status, entao plano certo e escrita errada
+      # conviviam sem nada reclamar. E os dois oraculos obvios nao servem --
+      # conferir o codigo de resposta nao mede nada (deu 200 nas seis vezes), e a
+      # rota de LISTA filtra `skipped` E `cancelled`, entao a tela diz "sumiu" nos
+      # dois casos. O unico oraculo que distingue os estados e o `status` na
+      # tabela, e e o que esta suite rele.
+      - name: O soft delete da ocorrencia nao rebaixa cancelled para skipped
+        run: npm run test:soft-delete-monotonico
+
+      # OS MUTANTES DO MESMO CONSERTO -- 17/17 mortos, todos por assercao.
+      #
+      # Ele mede contra DUAS suites, e isso nao e arrumacao: a rota tem duas
+      # travas para a mesma coisa (o plano escolhe as linhas, e o filtro de status
+      # da escrita confere de novo), e duas guardas que se cobrem fazem os dois
+      # mutantes sobreviverem. Cada mutante nomeia o oraculo que o mata.
+      #
+      # O que custou aparelho novo foi `o filtro de status sai da escrita`: para
+      # ter medida ele precisa de uma linha que mude de estado ENTRE a leitura e
+      # a escrita da mesma volta, e a sonda ganhou um gancho para encenar isso.
+      - name: Os mutantes do soft delete monotonico
+        run: npm run mutantes:soft-delete-monotonico
+
       # A TELA DO CARTAO, RENDERIZADA. A regra pura passa verde com o botao de
       # apagar inteiro fora da tela -- e era a tela do cartao que nao tinha
       # caminho nenhum para apagar uma parcela.

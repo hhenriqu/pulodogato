@@ -319,6 +319,19 @@ function consulta(
         if (op === "or")
           return partirNoNivelZero(valor).some((r) => avaliarRamo(r, l));
         if (op === "not") return !avaliarRamo(`${coluna}.${valor[0]}.${valor[1]}`, l);
+        // COMPARACAO POR STRING, igual aos `gte`/`lt`/`lte` da cadeia de
+        // LEITURA: as colunas comparadas assim sao `date` em ISO
+        // (`YYYY-MM-DD`), e nessa forma a ordem lexicografica e a cronologica.
+        //
+        // Faltavam aqui (HMO-403), e a falta nao se lia como duble incompleto:
+        // `encerrarRegra` termina em `.update(...).eq(...).gte("due_date",
+        // today())`, e sem o `gte` no `depois` a cadeia estourava
+        // `...gte is not a function`, o `catch` da rota devolvia
+        // `500 {"error":"Erro interno"}`, e uma sonda escrita sobre a resposta
+        // mediria o caminho de erro achando que mede a feature.
+        if (op === "gte") return String(l[coluna]) >= String(valor);
+        if (op === "lt") return String(l[coluna]) < String(valor);
+        if (op === "lte") return String(l[coluna]) <= String(valor);
         return true;
       })
     );
@@ -362,6 +375,30 @@ function consulta(
       },
       in(coluna, valores) {
         filtros.push(["in", coluna, [...valores]]);
+        return depois;
+      },
+      /**
+       * As comparacoes de ORDEM na cadeia de escrita (HMO-403).
+       *
+       * `encerrarRegra` em lib/services/scheduled.ts termina em
+       * `.update({status:"cancelled"}).eq(...).gte("due_date", today())` -- a
+       * barreira que protege a conta VENCIDA e nao paga, que continua sendo uma
+       * divida real. Sem `gte` aqui, a cadeia estourava
+       * `...gte is not a function`, o `catch` da rota devolvia `500 {"error":
+       * "Erro interno"}`, e uma sonda escrita sobre a resposta mediria o caminho
+       * de erro achando que mede a feature. `lt`/`lte` entram junto porque a
+       * cadeia de leitura tem os tres e a assimetria seria o proximo buraco.
+       */
+      gte(coluna, valor) {
+        filtros.push(["gte", coluna, valor]);
+        return depois;
+      },
+      lt(coluna, valor) {
+        filtros.push(["lt", coluna, valor]);
+        return depois;
+      },
+      lte(coluna, valor) {
+        filtros.push(["lte", coluna, valor]);
         return depois;
       },
       select(cols) {

@@ -134,8 +134,15 @@ const MUTANTES = [
     fonte: RECORRENCIA,
     porque:
       "o defeito que esta em producao hoje: 'esta e as proximas' pula so a linha clicada. Quem apaga a conta fixa perde UM mes e recebe os outros de volta",
-    de: "    idsParaPular: [ancora.id, ...alcancadas],",
-    para: "    idsParaPular: [ancora.id],",
+    // A LINHA PROCURADA MUDOU DE FORMA NA HMO-403, e este `de` seguiu junto. O
+    // `idsParaPular` de `esta_e_proximas` passou a ser condicional, porque a
+    // ancora que ja esta `cancelled` nao entra na lista (gravar `skipped` em
+    // cima dela seria um rebaixamento). Sem este acerto o `de` ficaria com zero
+    // ocorrencia no arquivo: o runner reprova com "o trecho procurado nao esta
+    // em lib/recorrencia-edicao.ts", que e o modo certo de falhar -- mas quem
+    // mexe na linha e quem tem de acertar a ancora, nao o run seguinte.
+    de: "    idsParaPular: ancoraAvanca ? [ancora.id, ...alcancadas] : alcancadas,",
+    para: "    idsParaPular: ancoraAvanca ? [ancora.id] : alcancadas,",
   },
   {
     nome: "exclusao_todas_cresce_caminho_proprio",

@@ -152,13 +152,46 @@ export async function materializarAgenda(
  * outras regras de alcance: aqui nao se esta corrigindo um valor, e sim tirando
  * da agenda o que ainda nao venceu. A conta que venceu e nao foi paga continua
  * sendo uma divida real -- cancela-la apagaria da tela um atraso que existe.
+ *
+ * E A LINHA JA PULADA TAMBEM E ENCERRADA (HMO-403)
+ * ------------------------------------------------
+ * Medido em producao: encerrar uma serie cujas seis ocorrencias estavam todas
+ * `skipped` respondia "Gasto fixo encerrado. **0** ocorrencia(s) em aberto
+ * sairam da agenda" e nao tocava em nenhuma. As seis ficavam `skipped` para
+ * sempre -- e nao havia caminho NENHUM no app para mudar isso, so um DELETE no
+ * SQL Editor. A tela dizia que a serie acabou e o banco guardava seis linhas
+ * dizendo "este mes foi pulado, a serie continua".
+ *
+ * Pular um mes e um estado INTERMEDIARIO; encerrar a serie e o final. Levar a
+ * linha de um para o outro e a mesma monotonia que `oSoftDeleteAvanca` cobra do
+ * caminho inverso (lib/recorrencia-edicao.ts): o soft delete so anda para a
+ * frente, e aqui ele anda.
+ *
+ * SAO DUAS ESCRITAS, E NAO UM `in("status", [...])`, PELA CONTAGEM
+ * ---------------------------------------------------------------
+ * `canceladas` alimenta a frase "N ocorrencia(s) em aberto sairam da agenda".
+ * Somar as ja puladas nesse N faria a frase prometer que N meses sairam da
+ * agenda agora, quando parte deles ja estava fora -- a mesma inflacao de
+ * contagem que `planejarExclusao` recusa. E o `.select()` de um UPDATE unico
+ * nao permite separar depois: ele devolve as linhas DEPOIS da escrita, todas
+ * com `cancelled`, sem vestigio de onde cada uma estava.
+ *
+ * E as barreiras de data sao diferentes de proposito: a `pending` tem `gte(hoje)`
+ * porque a vencida em aberto e divida de verdade, e a `skipped` NAO tem porque
+ * um mes que a pessoa ja tirou da agenda nao e divida nenhuma -- e sao
+ * justamente as linhas antigas as que ficariam presas para sempre.
  */
 export async function encerrarRegra(
   supabase: SupabaseClient,
   ruleId: string,
   userId: string,
 ): Promise<
-  | { ok: true; rule: Record<string, unknown>; canceladas: number }
+  | {
+      ok: true;
+      rule: Record<string, unknown>;
+      canceladas: number;
+      jaEstavamFora: number;
+    }
   | { ok: false; motivo: "nao_encontrada" | "erro" }
 > {
   const { data: rule, error } = await supabase
@@ -180,7 +213,20 @@ export async function encerrarRegra(
     .gte("due_date", today())
     .select("id");
 
-  return { ok: true, rule, canceladas: canceladas?.length ?? 0 };
+  const { data: jaEstavamFora } = await supabase
+    .from("scheduled_transactions")
+    .update({ status: "cancelled" })
+    .eq("recurring_rule_id", ruleId)
+    .eq("user_id", userId)
+    .eq("status", "skipped")
+    .select("id");
+
+  return {
+    ok: true,
+    rule,
+    canceladas: canceladas?.length ?? 0,
+    jaEstavamFora: jaEstavamFora?.length ?? 0,
+  };
 }
 
 /**
