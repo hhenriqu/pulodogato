@@ -65,6 +65,43 @@
 // trecho que ele ja mutava; as funcoes GEMEAS seguem sem mutante proprio, e isso
 // e uma lacuna de cobertura com issue propria -- nao um defeito da conversao.
 //
+// Medido em 2026-10-12, as TRES familias, na main (5739b26) -- HMO-375: 1060
+// mutantes em 50 runners, 0 ambigua e ZERO MORTA. As NOVE ancoras mortas da
+// medicao de 2026-10-07 fecharam, e a ultima a cair foi `o link da fatura
+// esquece o mes`, de `detalhe-do-painel`: ela apontava para `PainelDePapel.tsx`
+// depois de o call site ter se mudado para `LinhaDeDetalhe.tsx`.
+//
+// E ESTA GUARDA VERDE NAO E A PROVA QUE FALTAVA. Ela diz que o `de` existe e e
+// unico -- nao que o mutante AINDA MORRE. Sao perguntas diferentes, e consertar
+// um endereco e exatamente onde a segunda pode passar a mentir: um `arquivo:`
+// remendado para casar com qualquer coisa deixa esta varredura verde e o placar
+// do runner contando um mutante que a suite nao mede mais. Por isso a HMO-375
+// nao se fechou aqui: fechou rodando `scripts/mutantes-detalhe-do-painel.mjs`
+// inteiro -- 21/21 mortos, com `o link da fatura esquece o mes` morto POR
+// ASSERCAO (a de `test-papel-de-pao.mjs`, que a HMO-371 mudou de endereco junto,
+// lendo `CODIGO_DA_LINHA` em vez de concatenar os dois arquivos e afrouxar os
+// outros dez casos). Quem for reabrir uma ancora morta deve as duas medicoes.
+//
+// As DUAS medicoes foram repetidas na main (29b5adf), depois de a main andar:
+// mesmos 1060/50/0/0 na guarda e mesmos 21/21 no runner.
+//
+// E A SEGUNDA MEDICAO NAO RODA DE GRACA NESTA MAQUINA. `detalhe-do-painel` tem
+// `test:papel-na-tela` entre as suites, que e sonda de navegador com a versao do
+// Chromium FIXA no fonte; sem a variavel o runner nao mede nada e sai no proprio
+// controle positivo:
+//
+//     ABORTADO: a arvore INTACTA reprova em test:papel-na-tela (teste).
+//
+// que se le como "a main esta quebrada" -- e numa issue sobre guarda vermelha
+// parece confirmacao do defeito investigado. A palavra "Chromium" nao aparece na
+// saida do runner: ela morre dentro do processo da suite, e so aparece rodando
+// `npm run test:papel-na-tela` direto. Antes de re-medir:
+//
+//     export CHROMIUM_BIN=/paperclip/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome
+//
+// Confira o numero com `ls -d /paperclip/.cache/ms-playwright/chromium-*` -- o
+// proximo bump do Playwright quebra de novo, com o mesmo sintoma deslocado.
+//
 // O CONTROLE POSITIVO DELE
 // ------------------------
 // Um medidor que nao acha mutante nenhum imprime "0 ambiguas" e parece um boletim
