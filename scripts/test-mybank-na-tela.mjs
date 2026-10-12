@@ -303,6 +303,7 @@ const PAGINA = `<!doctype html>
 <div id="raiz-j1"></div><div id="raiz-j2"></div><div id="raiz-j3"></div>
 <div id="raiz-k"></div><div id="raiz-k2"></div><div id="raiz-k3"></div>
 <div id="raiz-k4"></div><div id="raiz-k5"></div><div id="raiz-k6"></div>
+<div id="raiz-l-singular"></div>
 <div id="resultado">a pagina nao rodou</div>
 <script>${umd("react", "react.development.js")}</script>
 <script>${umd("react-dom", "react-dom.development.js")}</script>
@@ -948,6 +949,11 @@ const out = {};
     emprestimos: Array.from(raiz.querySelectorAll("[data-emprestimo]")).map(
       (el) => el.getAttribute("data-emprestimo")
     ),
+    // HMO-398: a conta SEM nenhum encerrado nao ganha botao de colapso -- o
+    // estado de abertura nao pode produzir duas telas para a mesma conta.
+    resumo: raiz.querySelector("[data-resumo-da-lista]").textContent,
+    temBotaoDeEncerrados:
+      raiz.querySelector("[data-encerrados-do-mybank]") !== null,
   };
 }
 
@@ -2216,6 +2222,74 @@ async function preencherEmprestimo(achar, valor) {
   out.k_retentativa = {
     primeira: primeiraAntecipacao,
     total: CHAMADAS.filter((c) => c.metodo === "POST").length,
+  };
+}
+
+// =============================================================================
+// L-SINGULAR (HMO-398) -- UM encerrado so, que e o fixture de PRODUCAO
+// =============================================================================
+// A conta de teste em producao tem UM emprestimo \`settled\` (\`75620507\`), e a
+// primeira versao deste recorte publicou "Mostrar os 1 encerrado" por causa
+// disso: o artigo nao concordava com o numero. Nenhum fixture da secao K pegava
+// isso -- os dois tem DOIS encerrados, onde singular e plural dao o mesmo texto.
+//
+// O CONTROLE DO OUTRO LADO E A CONTA SEM NENHUM ENCERRADO, medido no
+// \`a_tesouro\` da secao A: lá o botao nao existe (\`rotuloDoBotao === null\`).
+{
+  LOANS = [
+    {
+      id: "l-s-ativo",
+      descricao: "Moto eletrica",
+      conta_credora_id: ${JSON.stringify(CARTEIRA)},
+      caso: "conexao",
+      status: "active",
+      principal: 200,
+      total_de_parcelas: 2,
+      primeiro_vencimento: "2026-11-10",
+      quem_deve_pagar: "Lais",
+      devedor_id: ${JSON.stringify(LAIS)},
+      parcelas: [
+        { id: "p-s1", valor: 100, numero: 1, total: 2, rotulo: "1 de 2", vencimento: "2026-11-10", status: "pending", a_confirmar: false, paid_date: null },
+        { id: "p-s2", valor: 100, numero: 2, total: 2, rotulo: "2 de 2", vencimento: "2026-12-10", status: "pending", a_confirmar: false, paid_date: null },
+      ],
+    },
+    {
+      // O RETRATO DO \`75620507\` DE PRODUCAO: \`settled\`, 2 de 2 pagas.
+      id: "l-s-quitado",
+      descricao: "HMO394 depois (quitacao)",
+      conta_credora_id: ${JSON.stringify(CARTEIRA)},
+      caso: "conexao",
+      status: "settled",
+      principal: 100,
+      total_de_parcelas: 2,
+      primeiro_vencimento: "2026-05-10",
+      quem_deve_pagar: "Lais",
+      devedor_id: ${JSON.stringify(LAIS)},
+      parcelas: [
+        { id: "p-sq1", valor: 50, numero: 1, total: 2, rotulo: "1 de 2", vencimento: "2026-05-10", status: "paid", a_confirmar: false, paid_date: "2026-05-10" },
+        { id: "p-sq2", valor: 50, numero: 2, total: 2, rotulo: "2 de 2", vencimento: "2026-06-10", status: "paid", a_confirmar: false, paid_date: "2026-06-10" },
+      ],
+    },
+  ];
+
+  const raiz = await montarPainel("raiz-l-singular");
+  const botao = () => raiz.querySelector("[data-encerrados-do-mybank]");
+
+  out.l_singular_fechada = {
+    linhas: Array.from(raiz.querySelectorAll("[data-emprestimo]")).map((el) =>
+      el.getAttribute("data-emprestimo")
+    ),
+    resumo: raiz.querySelector("[data-resumo-da-lista]").textContent,
+    rotuloDoBotao: botao() ? botao().textContent : null,
+  };
+
+  clicar(botao());
+  await assentar();
+  out.l_singular_aberta = {
+    linhas: Array.from(raiz.querySelectorAll("[data-emprestimo]")).map((el) =>
+      el.getAttribute("data-emprestimo")
+    ),
+    rotuloDoBotao: botao() ? botao().textContent : null,
   };
 }
 
@@ -3597,5 +3671,49 @@ test("L5: fechar devolve a lista curta, e o colapso encurta o card EM PIXELS", (
   assert.ok(
     resultado.l_altura_aberta > resultado.l_altura_fechada + 40,
     `o card nao encurtou: ${resultado.l_altura_fechada} fechado vs ${resultado.l_altura_aberta} aberto`
+  );
+});
+
+test("L6: UM encerrado so -- o artigo concorda com o numero (o fixture de producao)", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // A conta de teste em PRODUCAO tem exatamente este retrato: um `active` e um
+  // `settled`. A primeira versao deste recorte publicou "Mostrar os 1
+  // encerrado", e nenhum fixture da secao K pegava isso -- os dois tem DOIS
+  // encerrados, onde singular e plural dao o mesmo texto.
+  assert.deepEqual(resultado.l_singular_fechada.linhas, ["l-s-ativo"]);
+  assert.equal(
+    resultado.l_singular_fechada.resumo,
+    "1 em andamento · 1 encerrado"
+  );
+  assert.equal(
+    resultado.l_singular_fechada.rotuloDoBotao,
+    "Mostrar o 1 encerrado"
+  );
+
+  // E O ROTULO DE FECHAR CONCORDA TAMBEM: "Esconder os encerrados" com um
+  // encerrado so e o mesmo erro, no outro estado do botao.
+  assert.deepEqual(resultado.l_singular_aberta.linhas.sort(), [
+    "l-s-ativo",
+    "l-s-quitado",
+  ]);
+  assert.equal(
+    resultado.l_singular_aberta.rotuloDoBotao,
+    "Esconder o encerrado"
+  );
+});
+
+test("L7: controle do outro lado -- conta SEM encerrado nao tem botao nenhum", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // A conta Tesouro tem um emprestimo `active` e nada mais. Sem este caso, um
+  // botao que aparecesse sempre (dizendo "Mostrar os 0 encerrados") passaria
+  // todas as assercoes de L1 a L6.
+  assert.deepEqual(resultado.a_tesouro.emprestimos, ["l-outra-conta"]);
+  assert.equal(resultado.a_tesouro.resumo, "1 em andamento · 0 encerrados");
+  assert.equal(
+    resultado.a_tesouro.temBotaoDeEncerrados,
+    false,
+    "a conta sem divida encerrada ganhou botao de colapso"
   );
 });
