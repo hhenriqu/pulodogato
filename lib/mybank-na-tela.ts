@@ -293,6 +293,165 @@ export function totaisDaContaCredora(
   };
 }
 
+// ---------------------------------------------------------------------------
+// O RECORTE DA LISTA -- o emprestimo encerrado sai de cima da tela (HMO-398)
+// ---------------------------------------------------------------------------
+// A HMO-394 fez o ciclo de pagamento escrever `status = 'settled'` na ultima
+// parcela, e a issue dela afirmou que "nenhuma leitura muda de codigo". Isso
+// estava certo para TRES leituras e errado para a quarta:
+//
+//   * `totaisDaContaCredora` (os numeros do cabecalho) filtra `active`;
+//   * `linhasAReceber` (o card "A receber") filtra `active`;
+//   * `mybank_due_entries` (o lado do devedor, na 053) filtra `active`;
+//   * a LISTA "Emprestimos desta conta" NAO filtrava nada -- `GET
+//     /api/mybank/loans` devolve todos os status (de proposito: ela e a unica
+//     leitura que pode mostrar o registro de uma divida honrada) e a tela os
+//     imprimia todos juntos, sem recorte nenhum.
+//
+// O numero, portanto, estava certo e a lista discordava dele: medido em
+// producao, um emprestimo de 2 x R$ 50 integralmente pago continuava listado
+// enquanto o "a receber" daquela conta nao o contava.
+//
+// POR QUE NAO FILTRAR `active` NA LISTA, COMO AS OUTRAS TRES
+// ---------------------------------------------------------
+// Porque apagaria a unica coisa que a HMO-394 existe para mostrar. Quem acaba
+// de pagar a ultima parcela veria a linha SUMIR da tela, sem registro nenhum de
+// que a divida foi honrada -- e nao ha outra tela onde procurar: a rota
+// `mybank_loans_delete` recusa emprestimo com parcela `paid` de proposito.
+// `sumido-da-tela-pode-ser-so-indistinguivel`: a linha ausente nao se distingue
+// de "nunca existiu".
+//
+// Dai o recorte ser uma SEPARACAO e nao um filtro: os encerrados continuam
+// alcancaveis, e so param de empurrar os em andamento para baixo. A F2 da
+// HMO-393 (a antecipacao) e o que torna isso urgente -- cada antecipacao total
+// produz um `settled`, e sem recorte a lista acumularia um por divida encerrada
+// para sempre.
+
+/** O unico status de emprestimo que a 053 considera em andamento. */
+export const STATUS_EM_ANDAMENTO = "active";
+
+/**
+ * O EMPRESTIMO ENCERRADO: quitado (`settled`) ou cancelado (`cancelled`).
+ *
+ * A PERGUNTA E O STATUS, E NUNCA AS PARCELAS -- e e aqui que mora a unica
+ * decisao desta feature. Um emprestimo `active` com a serie INTEIRA paga existe
+ * de verdade e nao esta encerrado: sao os que quitaram ANTES da HMO-394 (que
+ * nao tem migration de backfill), e um deles esta em producao na conta de teste
+ * (`240d8536`, 2/2 pagas e `active`). Eles precisam continuar em andamento
+ * porque e de lá que vem a saida deles: o botao Cancelar e condicionado ao
+ * status pela mesma razao (ver o comentario dele em `PainelDoMyBank`, e a
+ * HMO-383, que abriu esse caso).
+ *
+ * Um recorte que lesse "nao tem parcela em aberto" mandaria aquele emprestimo
+ * para a secao escondida e o deixaria sem caminho nenhum -- e daria a MESMA
+ * lista em todo fixture onde `settled` e "tudo pago" coincidem, que e a
+ * coincidencia que faz esse defeito passar.
+ *
+ * `!== STATUS_EM_ANDAMENTO` e nao `=== 'settled' || === 'cancelled'`: `status` e
+ * coluna de texto com CHECK na 053, e um quarto valor futuro deve nascer FORA do
+ * "em andamento" -- a secao que oferece gestos que a rota so pode recusar.
+ */
+export function emprestimoEncerrado(emprestimo: EmprestimoDoMyBank): boolean {
+  return emprestimo.status !== STATUS_EM_ANDAMENTO;
+}
+
+/**
+ * O rotulo do status na linha, em portugues.
+ *
+ * A linha imprimia `emprestimo.status` CRU -- "settled" e "cancelled", os
+ * valores do CHECK da 053, numa tela em portugues. O fallback devolve o valor
+ * cru em vez de uma string vazia pela razao de `rotuloDaParcela`: um status novo
+ * no banco tem de APARECER na tela, e nao virar uma linha sem estado nenhum.
+ */
+export function rotuloDoStatusDoEmprestimo(emprestimo: {
+  status: string;
+}): string {
+  if (emprestimo.status === STATUS_EM_ANDAMENTO) return "em andamento";
+  if (emprestimo.status === "settled") return "quitado";
+  if (emprestimo.status === "cancelled") return "cancelado";
+  return emprestimo.status;
+}
+
+/** O que a lista "Emprestimos desta conta" imprime agora, aberta ou fechada. */
+export interface RecorteDaListaDeEmprestimos {
+  emAndamento: EmprestimoDoMyBank[];
+  /** TODOS os encerrados, revelados ou nao. E a contagem dos rotulos. */
+  encerrados: EmprestimoDoMyBank[];
+  /**
+   * As linhas a imprimir, nesta ordem: os em andamento, e depois os encerrados
+   * que o botao revelou. Fechada, e so `emAndamento`.
+   *
+   * UMA LISTA SO, e nao duas secoes com markup proprio: os encerrados tem de
+   * passar pela MESMA linha dos ativos para que a ausencia do «Cancelar» e do
+   * «Antecipar» neles continue sendo uma CONDICAO medivel (`emprestimo.status
+   * === "active" &&`) em vez de um markup que nunca teve botao. Uma linha
+   * reduzida para os encerrados faria aquelas duas assercoes de ausencia
+   * passarem vacuas -- a familia `trap-do-controle-negativo-apaga-meu-trabalho`.
+   */
+  visiveis: EmprestimoDoMyBank[];
+  /** "4 em andamento · 2 encerrados" -- o subtitulo do card. */
+  resumo: string;
+  /**
+   * O rotulo do botao, ou `null` quando nao ha encerrado nenhum.
+   *
+   * `null` e nao `""` pela razao de `blocoDoDevedor`: string vazia renderiza um
+   * botao clicavel de zero caractere, e nada falharia por causa dele.
+   */
+  rotuloDoBotao: string | null;
+}
+
+/**
+ * OS EM ANDAMENTO EM CIMA, OS ENCERRADOS ATRAS DE UM BOTAO.
+ *
+ * FECHADA POR PADRAO, e o rotulo do botao DIZ QUANTOS ESTAO ESCONDIDOS -- a
+ * mesma escolha de `blocoDoDevedor` e de `recortarPrevistas`, e pela mesma
+ * razao: "Ver mais" nao se distingue de "o resto nao existe".
+ *
+ * O RESUMO CONTA OS DOIS LADOS mesmo com a secao fechada. Sem ele, a unica
+ * leitura disponivel para quem acabou de quitar uma divida seria "a linha
+ * desapareceu" -- e o card ficaria com a aparencia de estar mostrando tudo o que
+ * tem, que e o defeito que este recorte veio consertar e nao repetir.
+ *
+ * A ORDEM DENTRO DE CADA GRUPO E A QUE A ROTA MANDOU (`created_at` decrescente,
+ * `app/api/mybank/loans/route.ts`): o recorte separa, nao reordena. Ordenar aqui
+ * faria a lista discordar do `.order()` da rota sem nada ter mudado.
+ */
+export function recorteDaListaDeEmprestimos(
+  emprestimos: EmprestimoDoMyBank[],
+  encerradosAbertos: boolean
+): RecorteDaListaDeEmprestimos {
+  const emAndamento = emprestimos.filter((e) => !emprestimoEncerrado(e));
+  const encerrados = emprestimos.filter((e) => emprestimoEncerrado(e));
+
+  // UMA SO ESCOLHA DE PLURAL, usada no resumo E no botao: duas copias do mesmo
+  // ternario fariam um mutante em cada uma sobreviver pela outra -- a familia
+  // `duas-guardas-redundantes-fazem-os-dois-mutantes-sobreviverem`.
+  const palavra = encerrados.length === 1 ? "encerrado" : "encerrados";
+  const resumo = `${emAndamento.length} em andamento · ${encerrados.length} ${palavra}`;
+
+  // NENHUM ENCERRADO: nem botao nem secao. O estado de abertura nao pode
+  // produzir duas telas diferentes para a mesma conta sem divida encerrada.
+  if (encerrados.length === 0) {
+    return {
+      emAndamento,
+      encerrados,
+      visiveis: emAndamento,
+      resumo,
+      rotuloDoBotao: null,
+    };
+  }
+
+  return {
+    emAndamento,
+    encerrados,
+    visiveis: encerradosAbertos ? [...emAndamento, ...encerrados] : emAndamento,
+    resumo,
+    rotuloDoBotao: encerradosAbertos
+      ? "Esconder os encerrados"
+      : `Mostrar os ${encerrados.length} ${palavra}`,
+  };
+}
+
 /** O progresso `3/24` da lista de emprestimos -- quantas parcelas ja foram pagas. */
 export function progressoDoEmprestimo(emprestimo: EmprestimoDoMyBank): string {
   const pagas = emprestimo.parcelas.filter((p) => p.status === "paid").length;
