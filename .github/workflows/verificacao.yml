@@ -7758,3 +7758,25 @@ jobs:
       # quem ja avisou, e o segundo PATCH responde 200 sem mudar nada.
       - name: Mutantes da linha unica do MyBank
         run: npm run mutantes:linha-do-mybank
+
+      # A RECEITA PREVISTA NO FLUXO DE CAIXA (HMO-400) -- controle negativo do
+      # step `npm run test:receita-no-fluxo` do db-verify.
+      #
+      # 9 mutantes, 9 mortos. O PRIMEIRO e a razao deste runner existir, e nao
+      # da para substitui-lo por "rodar a suite contra o codigo de antes": o
+      # codigo antigo lia a TABELA, o fixture da suite enche a VIEW, e entao
+      # NENHUMA previsao chega ao calculo -- a suite fica vermelha por falta de
+      # dado, e isso nao prova que ela distingue o SINAL de uma linha que
+      # chegou. O mutante mantem a leitura da view e troca so a direcao por
+      # "expense": e o defeito da issue isolado da troca de relacao.
+      #
+      # Os outros oito cobrem as duas meias-correcoes plausiveis (ler
+      # `transaction_type` cru, que deixa a receita FIXA errada e a avulsa
+      # certa; e reescrever a peneira a mao, que le a transferencia como
+      # entrada) e os recortes da consulta -- o filtro de usuario, que a view
+      # `security_invoker` torna obrigatorio porque ela deixa passar a linha de
+      # grupo dos outros membros, e as tres formas de estragar o `status`, uma
+      # delas ("aceitar tudo que nao foi pago") devolvendo exatamente o sintoma
+      # relatado na issue: a receita apagada reaparecendo no fluxo de caixa.
+      - name: Mutantes da receita prevista no fluxo de caixa
+        run: npm run mutantes:receita-no-fluxo
