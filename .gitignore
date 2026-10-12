@@ -404,6 +404,11 @@ next-env.d.ts
 # motivo das entradas acima para estar aqui.
 /.tmp-lista-na-tela/
 
+# Saida de `npm run test:fluxo-na-tela` (HMO-401): a PAGINA
+# app/(dashboard)/dashboard/cash-flow/page.tsx, components/SemRede.tsx e as
+# libs que a sonda de Chromium concatena na pagina, compilados. Mesmo motivo.
+/.tmp-fluxo-na-tela/
+
 # Saida de `npm run test:elo-da-fatura` (HMO-305) e de
 # `npm run test:pagamento-da-fatura` (HMO-310). As duas FALTAVAM, e por isso
 # `check-artefatos-de-build` ja reprovava na main antes da HMO-311 (ver

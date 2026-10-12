@@ -6151,6 +6151,133 @@ jobs:
           fi
 
       # =======================================================================
+      # O FLUXO DE CAIXA DIZ QUANDO O NUMERO E COPIA DO APARELHO
+      # origem: HMO-401 (sai da HMO-400)
+      # =======================================================================
+      # "ao apagar uma receita, ela continua aparecendo no fluxo de caixa" -- e a
+      # medicao em producao mostrou que o servidor apaga certo nas tres formas de
+      # receita. O caminho que sobrou e este, e ele explica o sintoma relatado
+      # SEM nenhum erro de servidor:
+      #
+      # o service worker guarda as respostas de `/api/` por SETE dias e serve a
+      # copia guardada quando o servidor passa de dez segundos
+      # (`lib/pwa-runtime-cache.js`). `/api/cash-flow` materializa a agenda antes
+      # de somar e faz seis consultas -- e a leitura mais pesada do app, a com a
+      # maior chance de estourar os dez segundos num celular. A copia chega com
+      # `resposta.ok` verdadeiro e todo campo no lugar: do lado do React nao ha o
+      # que a distinga, a nao ser o carimbo.
+      #
+      # Cinco telas ja leem o carimbo e escrevem o aviso. O Fluxo de Caixa era a
+      # unica tela PESADA que nao -- ela fazia `fetch` cru e a previsao de ontem
+      # entrava pelo caminho de SUCESSO, com a data do mergulho anunciada e nada
+      # na tela dizendo de quando era.
+      #
+      # `test:pwa-runtime-cache` e `test:offline-leitura` ficam VERDES com a tela
+      # calada: um prova que o service worker carimba, o outro que
+      # `classificarLeitura` le o carimbo. Era a TELA que nao tinha prova.
+      #
+      # Sem navegador a suite FALHA, e nao pula: suite que se desliga sozinha e
+      # indistinguivel de suite que passou.
+      - name: O Fluxo de Caixa avisa que o numero e copia do aparelho
+        run: npm run test:fluxo-na-tela
+
+      # Controle negativo. Aqui ele e METADE do assunto, e nao um apendice: o
+      # defeito simetrico do silencio e a faixa que aparece SEMPRE, e esse nao
+      # tem sintoma nenhum -- a faixa vira moldura, a pessoa para de ler, e o dia
+      # em que o numero for velho de verdade ela nao vai olhar. Os mutantes 1 e 2
+      # sao esse par, plantados na MESMA linha, em direcoes opostas.
+      - name: A sonda do aviso de copia sabe falhar
+        run: |
+          set -uo pipefail
+          FLUXO='app/(dashboard)/dashboard/cash-flow/page.tsx'
+          cp "$FLUXO" "$FLUXO.orig"
+          trap 'mv "$FLUXO.orig" "$FLUXO"' EXIT
+
+          mutou() {
+            if diff -q "$1.orig" "$1" > /dev/null; then
+              echo "::error::O mutante $2 nao alterou $1 -- a ancora do sed mudou."
+              exit 1
+            fi
+          }
+
+          # 1) A TELA VOLTA A CALAR. O defeito da issue, exatamente: a copia de
+          #    ate sete dias na tela, completa e plausivel, sem uma palavra sobre
+          #    de quando e.
+          sed -i 's|{estado === "do-aparelho" \&\& (|{false \&\& (|' "$FLUXO"
+          mutou "$FLUXO" 1
+          if npm run test:fluxo-na-tela > /dev/null 2>&1; then
+            echo "::error::Verde com a tela mostrando a copia do aparelho sem avisar que e copia."
+            exit 1
+          fi
+          cp "$FLUXO.orig" "$FLUXO"
+
+          # 2) A FAIXA VIRA MOLDURA. O gemeo do 1: ela passa a aparecer tambem
+          #    sobre a resposta da REDE, e deixa de significar alguma coisa.
+          sed -i 's|{estado === "do-aparelho" \&\& (|{true \&\& (|' "$FLUXO"
+          mutou "$FLUXO" 2
+          if npm run test:fluxo-na-tela > /dev/null 2>&1; then
+            echo "::error::Verde com a faixa de dado velho aparecendo sobre dado fresco."
+            exit 1
+          fi
+          cp "$FLUXO.orig" "$FLUXO"
+
+          # 3) A TELA VOLTA A AFIRMAR O VAZIO. Com a copia do aparelho a lista
+          #    pode ser de ANTES da primeira conta cadastrada, e "Cadastre suas
+          #    contas" convida a cadastrar de novo o que ja existe.
+          sed -i 's|eventos.length === 0 \&\& podeAfirmarVazio(estado)|eventos.length === 0|' "$FLUXO"
+          mutou "$FLUXO" 3
+          if npm run test:fluxo-na-tela > /dev/null 2>&1; then
+            echo "::error::Verde com a tela afirmando 'nenhum compromisso previsto' sobre copia guardada."
+            exit 1
+          fi
+          cp "$FLUXO.orig" "$FLUXO"
+
+          # 4) O BOTAO "ATUALIZAR" NAO FURA A COPIA. Ele responderia com a mesma
+          #    copia e a mesma faixa: botao que nao muda nada e pior que botao
+          #    nenhum, porque a pessoa conclui que o app travou.
+          sed -i 's|if (semCopia) query.set(PARAM_SEM_COPIA, String(Date.now()));||' "$FLUXO"
+          mutou "$FLUXO" 4
+          if npm run test:fluxo-na-tela > /dev/null 2>&1; then
+            echo "::error::Verde com o botao Atualizar pedindo a mesma copia de novo."
+            exit 1
+          fi
+          cp "$FLUXO.orig" "$FLUXO"
+
+          # 5) O DESVIO VIRA REGRA. O gemeo do 4, e o mais caro dos dois: o
+          #    parametro em TODA carga apaga a leitura offline justamente da tela
+          #    mais pesada do app, que e onde ela mais serve.
+          sed -i 's|if (semCopia) query.set(PARAM_SEM_COPIA|query.set(PARAM_SEM_COPIA|' "$FLUXO"
+          mutou "$FLUXO" 5
+          if npm run test:fluxo-na-tela > /dev/null 2>&1; then
+            echo "::error::Verde com a tela furando o cache do aparelho em toda carga."
+            exit 1
+          fi
+          cp "$FLUXO.orig" "$FLUXO"
+
+          # 6) SEM REDE VOLTA AO ZERO CONFIANTE. Sem o painel, a tela sem rede
+          #    nenhuma volta a desenhar o que sobrou do estado anterior.
+          sed -i 's|estado === "sem-rede" ? (|false ? (|' "$FLUXO"
+          mutou "$FLUXO" 6
+          if npm run test:fluxo-na-tela > /dev/null 2>&1; then
+            echo "::error::Verde com a tela sem rede nenhuma nao mostrando o painel de sem conexao."
+            exit 1
+          fi
+          cp "$FLUXO.orig" "$FLUXO"
+
+          echo "A sonda do aviso de copia fica vermelha nos seis defeitos."
+
+      - name: 'A arvore voltou ao lugar depois de "A sonda do aviso de copia sabe falhar"'
+        run: |
+          # O .tmp-* compilado guarda o mutante mesmo depois do restore do .tsx.
+          rm -rf .tmp-*
+          git status --porcelain > "$RUNNER_TEMP/arvore-agora.txt"
+          if ! diff -q "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" > /dev/null; then
+            echo "::error::O controle negativo acima nao restaurou a arvore. Os passos seguintes rodariam sobre codigo mutado."
+            diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
+            exit 1
+          fi
+
+      # =======================================================================
       # O CARTAO CONTA PELA FATURA PAGA, NAO PELA COMPRA
       # origem: HMO-265 (nasceu aqui -- ver o item 1 do cabecalho deste arquivo)
       # =======================================================================
