@@ -359,6 +359,183 @@ export function mioloDoHmo246(fonte) {
 }
 
 // ===========================================================================
+// A MESMA FAMILIA, SEM `const FONTE` (HMO-392)
+// ===========================================================================
+// `ehHmo246` sempre reconheceu estes 17 runners -- o predicado e a CAIXA ALTA da
+// lista, e eles a tem. O que os mantinha em `FORMA_PROPRIA` desde a HMO-389 era
+// `mioloDoHmo246` recusa-los no primeiro `if`: nenhum declara `const FONTE`. O
+// alvo deles mora em outro lugar, e em QUATRO lugares diferentes:
+//
+//   8  migration SQL          `const MIGRATION = "database/migrations/...sql"`
+//   4  multi-arquivo          nenhum alvo de modulo; `arquivo:`/`fonte:`/`alvo:`
+//                             por mutante, apontando para constantes de caminho
+//   3  alvo com outro nome    `const ALVO = "..."`, ou `const ALVOS = {}` com
+//                             `alvo: "apelido"` por mutante
+//   2  lista chamada MUTACOES  (estes dois foram RENOMEADOS, nao ensinados --
+//                             ver o comentario no fim desta secao)
+//
+// POR QUE NAO ALARGAR `mioloDoHmo246`
+// -----------------------------------
+// O contrato dele e estreito de proposito e esta medido: quando `FONTE` existe,
+// ele e autoritativo e `ALVO` e o absoluto derivado dele, que `MORTAS_SO_PARA_DADOS`
+// JOGA FORA. Aqui `ALVO` e a unica pista que existe. Os dois criterios sao
+// incompativeis no mesmo corpo, e o que NAO pode duplicar e a resolucao do alvo
+// por mutante -- essa mora numa funcao so, em `mede-ancora-ambigua.mjs`.
+//
+// O RECORTE COMECA ONDE A LISTA PRECISA, NAO NO TOPO DO MODULO
+// ------------------------------------------------------------
+// `mioloDoHmo246` ancora em `const FONTE`, que por convencao e a primeira
+// declaracao do runner. Sem esse nome nao ha ancora fixa, e "do fim dos imports
+// ate a lista" seria errado: `mutantes-fatura-escolhida.mjs` tem, nesse trecho,
+// um `if (SO_TYPESCRIPT && SO_SQL) { ...; process.exit(2); }` em coluna zero --
+// um recorte ingenuo o importaria como dado e o `process.exit` mataria a guarda
+// DE DENTRO, que e a forma de morte mais difícil de ler que existe (sai 2, sem
+// boletim, sem stack).
+//
+// Entao o inicio e CALCULADO: a declaracao mais ANTIGA entre (a) o alvo de
+// modulo, se houver, e (b) as constantes que a propria lista referencia por
+// nome. Quem decide o recorte e a lista, e nao um palpite sobre a forma do
+// arquivo.
+//
+// O ERRO QUE FALTAR UM NOME PRODUZ E O CERTO: se a coleta de identificadores
+// deixar de fora uma constante que a lista usa, o import do miolo estoura com
+// `X is not defined` e a guarda ABORTA nomeando o runner. O que esta secao
+// nunca pode produzir e alvo ERRADO com ocorrencia zero -- a `ancora MORTA`
+// falsa que a HMO-389 pagou tres vezes e que reprova a main acusando codigo
+// correto.
+const MORTAS_DE_VARIOS_ALVOS = ["RAIZ", "CAMINHO"];
+
+/** Os nomes de alvo de modulo, na ordem em que a leitura os aceita. */
+const NOMES_DE_ALVO_DE_MODULO = ["FONTE", "MIGRATION", "ALVO"];
+
+/**
+ * Os identificadores que a LISTA referencia -- os unicos nomes que o miolo
+ * precisa ter em escopo.
+ *
+ * Casa QUALQUER `campo: IDENTIFICADOR` (sem aspas e sem backtick): `de: A_TRAVA`,
+ * `fonte: RECORRENCIA`, `alvo: ROTA`, `medida: MARCACAO`. `de: "texto"` e
+ * `alvo: "apelido"` nao casam de proposito -- eles nao precisam de declaracao
+ * nenhuma, e `para: null` tampouco (nao ha `const null`).
+ *
+ * POR QUE QUALQUER CAMPO E NAO UMA LISTA DE NOMES. A primeira versao disto
+ * listava os seis campos que eu havia visto (`arquivo`, `fonte`, `alvo`, `de`,
+ * `para`, `suite`) e `mutantes-fiacao-do-bruto.mjs` abortou no import com
+ * `MARCACAO is not defined`: ele tem um SETIMO campo, `medida:`, que nomeia a
+ * suite por mutante e cuja constante e declarada ANTES da primeira constante de
+ * caminho -- logo fora do recorte. Uma lista de campos conhecidos e uma lista de
+ * divida (`lista-de-divida-na-guarda-vence-e-quebra-a-main`): o oitavo campo
+ * chega com o proximo runner e quebra a main de quem nao o escreveu.
+ *
+ * O criterio certo nao e "que campos existem" e sim "a lista cita um nome", que
+ * e exatamente o que o escopo do miolo precisa satisfazer. Nome a mais nao faz
+ * mal: ele so entra na conta do inicio do recorte se TIVER declaracao no trecho.
+ */
+function identificadoresDaLista(lista) {
+  const ids = new Set();
+  for (const m of lista.matchAll(/^\s+\w+:\s*([A-Za-z_$][\w$]*)\s*,?$/gm)) {
+    ids.add(m[1]);
+  }
+  return ids;
+}
+
+/**
+ * O alvo de MODULO, se houver exatamente um.
+ *
+ * Dois nomes declarados ao mesmo tempo LANCA em vez de escolher por ordem: a
+ * escolha por ordem de declaracao e o defeito que o comentario de
+ * `lerMutantesDaTupla` descreve ("certa hoje e por acidente"), e aqui ela
+ * decidiria contra qual arquivo TODOS os mutantes sem campo proprio sao
+ * medidos.
+ */
+function alvoDeModulo(fonte, de, ate) {
+  const trecho = fonte.slice(de, ate);
+  const achados = [];
+  for (const nome of NOMES_DE_ALVO_DE_MODULO) {
+    const m = new RegExp(`^const ${nome} = "([^"]+)";$`, "m").exec(trecho);
+    if (m) achados.push({ nome, caminho: m[1], indice: de + m.index });
+  }
+  if (achados.length > 1) {
+    throw new Error(
+      `dois alvos de modulo (${achados.map((a) => a.nome).join(", ")}) -- ` +
+        "nao sei contra qual arquivo medir",
+    );
+  }
+  return achados[0] ?? null;
+}
+
+/** Todas as listas de mutante de um runner, na ordem do arquivo. */
+export function nomesDasListas(fonte) {
+  return [...fonte.matchAll(/^const (MUTANTES(?:_[A-Z0-9_]+)?) = \[$/gm)].map((m) => m[1]);
+}
+
+/**
+ * O miolo de UMA lista de um runner da familia HMO-246 sem `const FONTE`.
+ *
+ * `apartirDe` existe para a SEGUNDA lista. `mutantes-fatura-escolhida.mjs` muta
+ * a migration (`MUTANTES`) E o TypeScript que a le (`MUTANTES_TS`, com
+ * `arquivo:` por mutante), e um leitor que parasse na primeira mediria METADE
+ * dos mutantes dizendo "li o runner" -- a forma de mentira que esta familia de
+ * guardas mais paga. Com `apartirDe` no fim da lista anterior, a busca pelo
+ * alvo de modulo tambem fica restrita ao trecho da lista ATUAL: o `MIGRATION`
+ * da primeira nao vira alvo padrao dos mutantes da segunda.
+ */
+export function mioloDeVariosAlvos(fonte, nomeDaLista = "MUTANTES", apartirDe = 0) {
+  const mLista = new RegExp(`^const ${nomeDaLista} = \\[$`, "m").exec(fonte.slice(apartirDe));
+  if (!mLista) throw new Error(`nao achei \`const ${nomeDaLista} = [\``);
+  const abertura = apartirDe + mLista.index;
+  const fim = fimDaLista(fonte, abertura);
+  const lista = fonte.slice(abertura, fim);
+
+  const alvo = alvoDeModulo(fonte, apartirDe, abertura);
+  const candidatos = alvo ? [alvo.indice] : [];
+
+  // O MAPA DE APELIDOS. `mutantes-fatura-do-periodo.mjs` indexa os alvos por
+  // apelido (`alvo: "posso-gastar"` -> `ALVOS["posso-gastar"].fonte`), que e a
+  // mesma forma de `mutantes-orcamento-de-grupo.mjs`. Sem le-lo, `"posso-gastar"`
+  // seria tratado como caminho e sairia `ARQUIVO AUSENTE` nos 16 mutantes.
+  const mAlvos = /^const ALVOS = \{$/m.exec(fonte.slice(apartirDe, abertura));
+  if (mAlvos) candidatos.push(apartirDe + mAlvos.index);
+
+  // SO os identificadores que TEM declaracao no trecho. Um nome sem declaracao
+  // aqui nao vira candidato a inicio do recorte -- ele estoura no import, que e
+  // o resultado certo e nao um recorte alargado por palpite.
+  for (const id of identificadoresDaLista(lista)) {
+    const m = new RegExp(`^const ${id} = `, "m").exec(fonte.slice(apartirDe, abertura));
+    if (m) candidatos.push(apartirDe + m.index);
+  }
+  if (candidatos.length === 0) {
+    throw new Error(
+      `${nomeDaLista}: nem alvo de modulo nem constante referenciada pela lista -- ` +
+        "nao sei onde comecar o recorte",
+    );
+  }
+
+  let miolo = fonte.slice(Math.min(...candidatos), fim);
+  for (const morta of MORTAS_DO_HMO246) miolo = removerDeclaracao(miolo, morta);
+  for (const morta of MORTAS_DE_VARIOS_ALVOS) miolo = removerDeclaracao(miolo, morta);
+
+  return {
+    miolo: miolo.trimEnd(),
+    arquivoFonte: alvo?.caminho ?? null,
+    temMapaDeAlvos: Boolean(mAlvos),
+    fim,
+  };
+}
+
+// A LISTA CHAMADA `MUTACOES`: RENOMEADA, NAO ENSINADA (HMO-392)
+// -------------------------------------------------------------
+// `mutantes-transferencia.mjs` e `mutantes-transferencia-recorrente-app.mjs`
+// chamavam a lista de `MUTACOES` -- e por isso nenhum dos TRES predicados de
+// familia casava com eles. Os dois foram renomeados para `MUTANTES`, e nenhum
+// predicado mudou.
+//
+// Ensinar `MUTACOES` ao predicado seria mais barato de escrever e pior: passaria
+// a existir DUAS grafias canonicas para a mesma coisa, e a terceira (`MUTACAO`,
+// `LISTA`, ...) ficaria a um runner de distancia. O caso 9 de
+// `test-ancora-de-mutante.mjs` guarda essa decisao: o fixture dele chama a lista
+// de `MUTACOES` e a guarda tem de ABORTAR nomeando o arquivo.
+
+// ===========================================================================
 // A SEGUNDA FAMILIA: "do painel" (HMO-328)
 // ===========================================================================
 // Tres runners -- `painel-na-tela`, `sobra-ou-falta` e `detalhe-do-painel` --

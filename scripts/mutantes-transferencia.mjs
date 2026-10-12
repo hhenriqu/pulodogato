@@ -19,7 +19,14 @@ import { readFileSync, writeFileSync } from "node:fs";
 const ALVO = "lib/transferencia.ts";
 const original = readFileSync(ALVO, "utf8");
 
-const MUTACOES = [
+// A LISTA SE CHAMA `MUTANTES`, E NAO `MUTACOES` (HMO-392). Nao e gosto: os tres
+// predicados de familia de `converte-mutantes-em-bloco.mjs` procuram
+// `const MUTANTES = [` ou `const mutantes = [`, e enquanto esta lista se chamava
+// `MUTACOES` nenhum deles casava -- este runner era DESCARTADO EM SILENCIO por
+// `npm run check-ancora-de-mutante`, a guarda que confere se cada `de` ainda
+// aparece (uma vez so) no arquivo que ele muta. Renomear de volta tira os 12
+// mutantes daqui da medicao outra vez.
+const MUTANTES = [
   {
     nome: "as duas pernas com o MESMO sinal (saida positiva)",
     de: "      amount: -total,",
@@ -94,7 +101,7 @@ const MUTACOES = [
 
 let sobreviventes = 0;
 
-for (const m of MUTACOES) {
+for (const m of MUTANTES) {
   if (!original.includes(m.de)) {
     console.log(`?? NAO APLICADA (trecho mudou): ${m.nome}`);
     sobreviventes++;
@@ -129,7 +136,7 @@ try {
 
 console.log(
   sobreviventes === 0
-    ? `\n${MUTACOES.length} de ${MUTACOES.length} mutacoes mortas.`
-    : `\n${sobreviventes} SOBREVIVENTE(S) de ${MUTACOES.length}.`
+    ? `\n${MUTANTES.length} de ${MUTANTES.length} mutacoes mortas.`
+    : `\n${sobreviventes} SOBREVIVENTE(S) de ${MUTANTES.length}.`
 );
 process.exit(sobreviventes === 0 ? 0 : 1);
