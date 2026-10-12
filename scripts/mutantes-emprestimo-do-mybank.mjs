@@ -865,6 +865,13 @@ const mutantes = [
 
   [
     LIB,
+    "a frase da previsao ausente volta a dizer `de a parcela 2` (o defeito que a medicao em producao achou, e que todo `match` de `a parcela` deixa passar)",
+    "  const quem =\n    numeros.length === 1 ? `da parcela ${quais}` : `das parcelas ${quais}`;\n\n  return (\n    `Não encontrei em Contas a Pagar a transferência agendada ${quem} ` +",
+    "  const quem =\n    numeros.length === 1 ? `a parcela ${quais}` : `as parcelas ${quais}`;\n\n  return (\n    `Não encontrei em Contas a Pagar a transferência agendada de ${quem} ` +",
+  ],
+
+  [
+    LIB,
     "a frase do CASO A nao diz que as contas a pagar foram BAIXADAS (quem for conferir acha duas linhas pagas sem explicacao, ou conclui que foram apagadas)",
     "  const abertura =\n    params.caso === \"auto\"",
     "  const abertura =\n    false",
