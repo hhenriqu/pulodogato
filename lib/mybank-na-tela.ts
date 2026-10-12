@@ -423,10 +423,17 @@ export function recorteDaListaDeEmprestimos(
   const emAndamento = emprestimos.filter((e) => !emprestimoEncerrado(e));
   const encerrados = emprestimos.filter((e) => emprestimoEncerrado(e));
 
-  // UMA SO ESCOLHA DE PLURAL, usada no resumo E no botao: duas copias do mesmo
-  // ternario fariam um mutante em cada uma sobreviver pela outra -- a familia
-  // `duas-guardas-redundantes-fazem-os-dois-mutantes-sobreviverem`.
-  const palavra = encerrados.length === 1 ? "encerrado" : "encerrados";
+  // UMA SO ESCOLHA DE NUMERO, usada no resumo E nos dois rotulos do botao: duas
+  // copias do mesmo ternario fariam um mutante em cada uma sobreviver pela
+  // outra -- `duas-guardas-redundantes-fazem-os-dois-mutantes-sobreviverem`.
+  //
+  // O ARTIGO CONCORDA JUNTO COM O SUBSTANTIVO, e nao e enfeite: o fixture de
+  // producao desta issue tem UM encerrado, e "Mostrar os 1 encerrado" foi o
+  // rotulo que a primeira versao publicou. E a familia do caso que esta suite ja
+  // guarda em `previaDaAntecipacao no singular nao diz "1 parcelas"`.
+  const umSo = encerrados.length === 1;
+  const artigo = umSo ? "o" : "os";
+  const palavra = umSo ? "encerrado" : "encerrados";
   const resumo = `${emAndamento.length} em andamento · ${encerrados.length} ${palavra}`;
 
   // NENHUM ENCERRADO: nem botao nem secao. O estado de abertura nao pode
@@ -447,8 +454,8 @@ export function recorteDaListaDeEmprestimos(
     visiveis: encerradosAbertos ? [...emAndamento, ...encerrados] : emAndamento,
     resumo,
     rotuloDoBotao: encerradosAbertos
-      ? "Esconder os encerrados"
-      : `Mostrar os ${encerrados.length} ${palavra}`,
+      ? `Esconder ${artigo} ${palavra}`
+      : `Mostrar ${artigo} ${encerrados.length} ${palavra}`,
   };
 }
 

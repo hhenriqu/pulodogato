@@ -619,8 +619,38 @@ const mutantes = [
   [
     LIB,
     'o rotulo do botao perde o NUMERO (vira um "Ver mais" que nao se distingue de "o resto nao existe")',
-    "      : `Mostrar os ${encerrados.length} ${palavra}`,",
+    "      : `Mostrar ${artigo} ${encerrados.length} ${palavra}`,",
     '      : "Mostrar os encerrados",',
+  ],
+
+  // O ARTIGO E O SUBSTANTIVO, cada um com o seu mutante: o fixture de producao
+  // tem UM encerrado so, e foi ele que publicou "Mostrar os 1 encerrado".
+  [
+    LIB,
+    'o artigo do rotulo nao concorda com o numero ("Mostrar os 1 encerrado", que foi o que a primeira versao publicou)',
+    '  const artigo = umSo ? "o" : "os";',
+    '  const artigo = "os";',
+  ],
+
+  [
+    LIB,
+    'o substantivo nao concorda com o numero ("1 encerrados" no resumo e no botao)',
+    '  const palavra = umSo ? "encerrado" : "encerrados";',
+    '  const palavra = "encerrados";',
+  ],
+
+  [
+    LIB,
+    "o rotulo de FECHAR deixa de concordar (o outro estado do botao, que o rotulo de abrir nao cobre)",
+    "      ? `Esconder ${artigo} ${palavra}`",
+    '      ? "Esconder os encerrados"',
+  ],
+
+  [
+    LIB,
+    "o botao aparece na conta SEM nenhum encerrado (um clique que revela uma lista vazia, dizendo que ha o que revelar)",
+    "  if (encerrados.length === 0) {",
+    "  if (false) {",
   ],
 
   [
