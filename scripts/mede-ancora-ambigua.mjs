@@ -102,6 +102,21 @@
 // Confira o numero com `ls -d /paperclip/.cache/ms-playwright/chromium-*` -- o
 // proximo bump do Playwright quebra de novo, com o mesmo sintoma deslocado.
 //
+// Medido em 2026-10-12, DEPOIS da HMO-392: 1283 mutantes em 67 runners, 0
+// ambigua e 0 MORTA. Os 1060/50 da linha acima nao mudaram de veredito -- os 50
+// runners que a varredura ja lia dao a MESMA contagem, um por um; o que entrou
+// foram os 17 que a HMO-389 havia deixado em `FORMA_PROPRIA` com a forma de cada
+// um escrita, mais 223 mutantes.
+//
+// E AS SEIS PRIMEIRAS "AMBIGUAS" DA LEITURA NOVA ERAM FALSAS, pela segunda vez
+// nesta familia de guardas (a HMO-389 pagou o mesmo com tres MORTAS). Cinco em
+// `transferencia-recorrente` e uma em `contrato-dos-cartoes`, todas em mutantes
+// que declaram `todas: true` e cujo driver usa `replaceAll` -- ali as DUAS
+// ocorrencias sao o mutante, e o comentario do `CORPO_DO_CHECK` diz isso em voz
+// alta. A conferencia a mao antes de acreditar no achado e o unico passo que
+// separou "guarda nova encontrou defeito" de "guarda nova reprova a main
+// acusando codigo correto".
+//
 // O CONTROLE POSITIVO DELE
 // ------------------------
 // Um medidor que nao acha mutante nenhum imprime "0 ambiguas" e parece um boletim
