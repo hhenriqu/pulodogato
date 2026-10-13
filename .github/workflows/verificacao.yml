@@ -7712,11 +7712,16 @@ jobs:
       # lista) e o botao mandando `reported`, nunca `paid`.
       #
       # NO RUNNER DO ACTIONS quem casa e `/usr/bin/google-chrome`, que ja vem na
-      # imagem -- nenhum workflow instala Playwright. Nesta maquina e preciso
-      # exportar `CHROMIUM_BIN`; a busca desta sonda VARRE a pasta do Playwright
-      # (`chromium-*`) em vez de fixar a versao no fonte, que foi o que deixou as
-      # quatro sondas antigas 100% vermelhas quando o ambiente subiu de 1243
-      # para 1248.
+      # imagem -- nenhum workflow instala Playwright. NAO e preciso exportar
+      # `CHROMIUM_BIN` em maquina nenhuma: a busca desta sonda VARRE a pasta do
+      # Playwright (`chromium-*`) em vez de fixar a versao no fonte, que foi o
+      # que deixou as quatro sondas antigas 100% vermelhas quando o ambiente
+      # subiu de 1243 para 1248 (consertado na HMO-406, que portou esta busca
+      # para as outras seis). A frase anterior aqui dizia o contrario e ja
+      # contradizia a clausula seguinte; medido na HMO-405 sem variavel nenhuma.
+      # Exportar a variavel a mao hoje so esconderia regressao na deteccao -- e
+      # se um dia o navegador faltar de verdade, o `ABORTADO` do preflight diz
+      # `Aponte CHROMIUM_BIN para um binario` em vez do nome do caso.
       #
       # (HMO-391) E o botao «Cancelar»: ele existe SO em emprestimo `active` (o
       # fixture tem os tres estados na MESMA conta, entao "o botao aparece" e "o
