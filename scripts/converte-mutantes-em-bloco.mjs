@@ -58,6 +58,36 @@
 // - O handler de SIGINT/SIGTERM. A sombra do bloco ja tira o pior modo de falha
 //   (a fonte do repositorio nunca e mutada), mas um `exit` explicito garante
 //   que o diretorio temporario saia junto em vez de vazar em /tmp.
+//
+// O TEXTO DO `ABORTADO` NAO MORA AQUI (HMO-405)
+// ---------------------------------------------
+// Os tres templates abaixo imprimem o bloco do controle positivo que reprovou:
+//
+//     ABORTADO: a arvore INTACTA reprova em ${SUITE} (${controle.como}).
+//       ${controle.saida}
+//
+// A primeira linha e daqui. A SEGUNDA nao e: `controle.saida` vem de
+// `resumoDaReprovacao`, em `scripts/mutantes-em-bloco.mjs`. A HMO-405 pediu que
+// esse bloco dissesse `CHROMIUM_BIN` quando a sonda de navegador nao achasse o
+// binario -- a palavra nao aparecia, e os nomes dos casos que saiam no lugar se
+// liam como defeito do app. O conserto foi no MOTOR, e nao nestes templates, por
+// tres razoes, e esta nota existe para que ninguem o refaca no lugar errado:
+//
+//   1. o defeito era o CONTEUDO da linha, nao o molde. O molde sempre imprimiu
+//      `controle.saida`; quem descartava a causa era o resumidor do motor;
+//   2. consertar aqui alcancaria so os runners que forem reconvertidos, e os 45
+//      ja convertidos continuariam cegos. No motor desce para os 45 de uma vez
+//      -- inclusive para os que tem forma propria e nunca passaram por aqui;
+//   3. mexer no molde tira o runner da FORMA CANONICA, e e por ela que
+//      `scripts/mede-ancora-ambigua.mjs` reconhece familia. Remendar um runner
+//      so o faria cair de `painel`/`tupla`/`hmo246` para `FORMA_PROPRIA`, isto
+//      e, sairia da medicao de ancora sem que o placar reclamasse.
+//
+// Conferido antes de mexer: `mede-ancora-ambigua.mjs` NAO asserta o texto do
+// `ABORTADO` dos runners (le por predicado de familia e parseia a lista de
+// mutantes), e o `desistiu` de `medir-controles-negativos.mjs` procura uma linha
+// que COMECE com `ABORTADO` -- a linha da causa e indentada, entao ela nao casa
+// nem antes nem depois da HMO-405. Quem alterar a forma deve reconferir os dois.
 // =====================================================
 
 import { readFileSync, writeFileSync } from "node:fs";

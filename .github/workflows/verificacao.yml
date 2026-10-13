@@ -321,6 +321,35 @@ jobs:
       - name: Os mutantes da guarda de `sed` dos workflows
         run: npm run mutantes:guarda-do-sed-dos-workflows
 
+      # A LINHA QUE OS 45 RUNNERS IMPRIMEM QUANDO O PLACAR NAO VALE (HMO-405).
+      #
+      # `resumoDaReprovacao`, em `scripts/mutantes-em-bloco.mjs`, e o texto do
+      # `ABORTADO` do preflight -- o unico sintoma disponivel no momento em que o
+      # controle positivo reprova e alguem precisa descobrir por que. Ate a
+      # HMO-405 ela devolvia so os NOMES dos casos, que e exatamente a parte que
+      # mente quando a suite quebra por motivo estrutural: a sonda de navegador
+      # sem Chromium abortava com "o navegador rodou e reportou as duas paginas",
+      # que se le como defeito do app, enquanto `Aponte CHROMIUM_BIN para um
+      # binario` era descartado. Custou o diagnostico errado duas vezes na
+      # HMO-375, numa issue sobre guarda vermelha -- onde a mensagem passa por
+      # confirmacao do defeito investigado.
+      #
+      # Os fixtures sao saida literal do `node --test`, nao string montada a mao:
+      # a forma `AssertionError [ERR_ASSERTION]:` e as 47 falhas com 34 textos
+      # distintos (que `formaDaCausa` colapsa em 2 familias) vieram de corrida de
+      # verdade. Texto puro, nao compila nada e nao abre navegador.
+      - name: A causa de verdade sai na linha do ABORTADO
+        run: npm run test:causa-da-reprovacao
+
+      # Controle da suite acima pelo mecanismo que ela protege: o defeito e
+      # plantado NO FONTE do motor de bloco e cada mutante tem de morrer. Achou
+      # duas coisas reais ao ser escrito -- um `.filter` que nunca disparava (saiu
+      # do motor) e o fato de que `formaDaCausa` nao estava medida, porque no
+      # fixture a causa do Chromium e a primeira da saida e as vagas sairiam
+      # certas sem colapso nenhum. 9/9 mortos.
+      - name: Os mutantes da causa na linha do ABORTADO
+        run: npm run mutantes:causa-da-reprovacao
+
       # E o conferidor da CONVERSAO de runner para bloco, que e o que garante que
       # converter um runner nao perdeu nenhuma entrada da lista de mutantes -- a
       # unica parte de um runner que carrega conhecimento que nao esta escrito em

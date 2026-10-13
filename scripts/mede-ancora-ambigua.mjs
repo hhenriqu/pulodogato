@@ -85,22 +85,24 @@
 // As DUAS medicoes foram repetidas na main (29b5adf), depois de a main andar:
 // mesmos 1060/50/0/0 na guarda e mesmos 21/21 no runner.
 //
-// E A SEGUNDA MEDICAO NAO RODA DE GRACA NESTA MAQUINA. `detalhe-do-painel` tem
-// `test:papel-na-tela` entre as suites, que e sonda de navegador com a versao do
-// Chromium FIXA no fonte; sem a variavel o runner nao mede nada e sai no proprio
-// controle positivo:
+// A SEGUNDA MEDICAO JA RODA DE GRACA -- NAO EXPORTE `CHROMIUM_BIN`.
+// `detalhe-do-painel` tem `test:papel-na-tela` entre as suites, que e sonda de
+// navegador, e por duas issues ela custou caro aqui. As duas causas estao
+// fechadas, e e por isso que esta nota mudou de conteudo e nao saiu:
 //
-//     ABORTADO: a arvore INTACTA reprova em test:papel-na-tela (teste).
+//   HMO-406: a versao do Chromium estava FIXA no fonte das sondas
+//            (`chromium-1243`) e a maquina subiu para 1248 -- 100% vermelhas numa
+//            arvore intocada. Hoje `acharChromium()` LISTA a pasta
+//            (`readdirSync` + regex), entao o proximo bump nao quebra nada;
+//   HMO-405: quando nao havia Chromium alcancavel, o preflight abortava com
+//            "o navegador rodou e reportou as duas paginas" -- o nome do caso --
+//            e a palavra "Chromium" nao aparecia. Hoje a linha traz a CAUSA:
+//            `causa: Error: Nenhum Chromium encontrado. Aponte CHROMIUM_BIN
+//            para um binario [...]`, com a contagem de casos na frente.
 //
-// que se le como "a main esta quebrada" -- e numa issue sobre guarda vermelha
-// parece confirmacao do defeito investigado. A palavra "Chromium" nao aparece na
-// saida do runner: ela morre dentro do processo da suite, e so aparece rodando
-// `npm run test:papel-na-tela` direto. Antes de re-medir:
-//
-//     export CHROMIUM_BIN=/paperclip/.cache/ms-playwright/chromium-1248/chrome-linux64/chrome
-//
-// Confira o numero com `ls -d /paperclip/.cache/ms-playwright/chromium-*` -- o
-// proximo bump do Playwright quebra de novo, com o mesmo sintoma deslocado.
+// Ou seja: o runner mede sem variavel nenhuma, e se um dia o navegador faltar de
+// verdade o abort diz o que fazer. Exportar `CHROMIUM_BIN` a mao hoje so serve
+// para esconder uma regressao na deteccao -- nao faca.
 //
 // Medido em 2026-10-12, DEPOIS da HMO-392: 1283 mutantes em 67 runners, 0
 // ambigua e 0 MORTA. Os 1060/50 da linha acima nao mudaram de veredito -- os 50
