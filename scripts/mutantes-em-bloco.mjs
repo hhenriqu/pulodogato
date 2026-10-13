@@ -249,12 +249,68 @@ function etapasDoOraculo(linha, nome, pkg) {
   return [{ tipo: "comando", linha }];
 }
 
-/** Os nomes dos testes que reprovaram, do formato do `node --test`. */
-function testesQueReprovaram(saida) {
-  const quais = [...saida.matchAll(/✖ (.+?) \(/g)]
-    .map((m) => m[1])
-    .filter((n) => n !== "failing tests:");
-  return [...new Set(quais)].slice(0, 3).join("; ") || "reprovou";
+/**
+ * A FORMA de uma causa: o detalhe que varia de caso para caso sai fora.
+ *
+ * Existe por causa do caso real medido na HMO-405: uma suite de navegador sem
+ * Chromium emitiu 47 falhas com 34 textos de erro DISTINTOS -- um
+ * `Error: Nenhum Chromium encontrado [...]` e 33 `Cannot read properties of
+ * null (reading 'X')`, um por nome de campo lido da pagina que nunca abriu.
+ * Contadas cruas, as 33 derivadas afogam a unica que diz o que fazer. Colapsadas
+ * pela forma, as 34 viram 2 familias, e a causa de verdade cabe na linha.
+ */
+function formaDaCausa(causa) {
+  return causa.replace(/'[^']*'/g, "'~'").replace(/"[^"]*"/g, '"~"');
+}
+
+/**
+ * O resumo de uma suite que reprovou, para a linha do `ABORTADO` dos runners.
+ *
+ * NAO e so a lista de nomes de caso, e e por isso que esta funcao trocou de
+ * nome: ate a HMO-405 ela devolvia so os nomes, e o nome do caso e justamente a
+ * parte que MENTE quando a suite quebra por motivo estrutural. Medido: a sonda
+ * `test:papel-na-tela` sem Chromium abortava com
+ *
+ *     o navegador rodou e reportou as duas paginas; A: a conta nova abre SEM [...]
+ *
+ * -- que se le como "o navegador rodou e nao reportou", ou seja como defeito do
+ * app. A frase que resolve (`Aponte CHROMIUM_BIN para um binario`) estava na
+ * saida da suite, a 62a linha, e era descartada aqui. Numa issue sobre guarda
+ * vermelha isso passa por confirmacao do defeito investigado, e custou o
+ * diagnostico errado duas vezes na HMO-375.
+ *
+ * A ORDEM DOS CAMPOS E DELIBERADA: contagem, causa, nomes. Quem le quer saber,
+ * nessa ordem, se foi estrutural (`47 casos` reprovando nao e assercao: e
+ * aparelho), o que fazer a respeito, e so depois onde. Se algum consumidor
+ * truncar a linha, o que sobra e a parte que diagnostica.
+ */
+export function resumoDaReprovacao(saida) {
+  // O `✖` tambem abre o cabecalho `✖ failing tests:` da secao final, mas ele NAO
+  // casa aqui: o regex exige ` (` depois do nome (o tempo do caso) e o cabecalho
+  // termina a linha nos dois-pontos. Ate a HMO-405 havia um
+  // `.filter((n) => n !== "failing tests:")` nesta cadeia; o runner de mutantes
+  // mostrou que ele nunca dispara -- mutante que o desliga SOBREVIVE --, e filtro
+  // que nao filtra e divida que se le como decisao medida. Saiu.
+  const nomes = [...new Set([...saida.matchAll(/✖ (.+?) \(/g)].map((m) => m[1]))];
+
+  // `AssertionError [ERR_ASSERTION]: ...` tambem casa -- o `[^:\n]*` e o que
+  // deixa o sufixo entre colchetes passar. As duas formas foram lidas de saida
+  // de verdade do `node --test`, nao supostas.
+  const porForma = new Map();
+  for (const [, causa] of saida.matchAll(/^ *([A-Za-z]*Error\b[^:\n]*: .+)$/gm)) {
+    const forma = formaDaCausa(causa);
+    if (!porForma.has(forma)) porForma.set(forma, causa.trim());
+  }
+  const causas = [...porForma.values()];
+
+  const partes = [];
+  if (nomes.length) partes.push(`${nomes.length} caso(s) reprovaram`);
+  if (causas.length) {
+    partes.push(`causa: ${causas.slice(0, 2).map((c) => c.slice(0, 200)).join(" | ")}`);
+    if (causas.length > 2) partes.push(`+${causas.length - 2} outra(s) familia(s) de causa`);
+  }
+  if (nomes.length) partes.push(`casos: ${nomes.slice(0, 3).join("; ")}`);
+  return partes.join(" -- ") || "reprovou";
 }
 
 /**
@@ -405,7 +461,7 @@ export function criarBlocoDeMutantes({ suites = [], oraculos = {}, rotulo = "blo
       });
       if (r.status !== 0) {
         const saida = String(r.stdout ?? "") + String(r.stderr ?? "");
-        return { verde: false, como: "teste", saida: testesQueReprovaram(saida), mudouASaida };
+        return { verde: false, como: "teste", saida: resumoDaReprovacao(saida), mudouASaida };
       }
     }
 
