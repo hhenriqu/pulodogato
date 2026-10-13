@@ -326,7 +326,12 @@ test("as frases dizem FORA do total, e as duas falam de cartoes diferentes", () 
   // Elas sao a entrega da pegadinha desta fase: um valor na tela que nao esta
   // em nenhum dos tres cartoes, sem frase, e indistinguivel de bug.
   assert.match(ACERTO_FORA_DO_PREVISTO, /Previsto/);
-  assert.match(ACERTO_FORA_DO_PREVISTO, /reembolso previsto/);
+  // `desconta`, e NAO `reembolso previsto`: desde o teto do acerto (HMO-404) o
+  // valor pago SAI do «Previsto». A frase ANTIGA ("este valor já está lá
+  // dentro, como reembolso previsto do grupo") casava com /reembolso previsto/
+  // do mesmo jeito -- a assercao antiga ficaria verde afirmando na tela o
+  // oposto do que a leitura passou a fazer.
+  assert.match(ACERTO_FORA_DO_PREVISTO, /desconta/);
   assert.match(ACERTO_FORA_DO_REALIZADO, /Realizado/);
   assert.match(ACERTO_FORA_DO_REALIZADO, /transfer/i);
 

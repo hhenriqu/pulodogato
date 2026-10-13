@@ -7968,3 +7968,51 @@ jobs:
       # relatado na issue: a receita apagada reaparecendo no fluxo de caixa.
       - name: Mutantes da receita prevista no fluxo de caixa
         run: npm run mutantes:receita-no-fluxo
+
+      # O ACERTO REGISTRADO VIRA TETO DO CREDITO A RECEBER (HMO-404)
+      # -----------------------------------------------------------
+      # Medido em producao na HMO-367 (`scripts/medicao-hmo367-duas-leituras.mjs`,
+      # 12/10/2026, fixture HMO-255): o C pagou os R$ 240,00 que devia a A pela
+      # propria sugestao da tela; a tela do grupo passou a dizer "nada a receber"
+      # e a aba Receitas continuou prometendo R$ 39,99 a receber do MESMO C -- em
+      # outubro, o mes do acerto, E em setembro. No mesmo corpo de resposta a
+      # mesma divida aparecia como *recebida* (bloco da HMO-366) e como *a
+      # receber* no «Previsto».
+      #
+      # POR QUE O CRITERIO E UM TETO E NAO UMA SUBTRACAO, em um numero:
+      # `39,99 - 240,00 = -200,01`. O acerto de 240 quita SEIS meses de 40, e o
+      # credito do mes e de um mes -- as duas grandezas nao se subtraem, e nada
+      # liga um acerto ao mes que ele quita (`group_settlements` tem UM
+      # `settled_on` e nenhum elo com a despesa). Entao:
+      #
+      #   teto(g, devedor) = max(0, acumulado(g, devedor) - acertos_recebidos(g, devedor))
+      #   credito_do_periodo = min(credito_do_periodo, teto(g, devedor))
+      #
+      # A suite alimenta o teto com a saida REAL de `fecharMes` (previsto +
+      # realizado, como a HMO-245 pediu) -- um fechamento escrito a mao nao teria
+      # previsto nem realizado dentro, teria numeros, e passaria igual num mundo
+      # em que o teto saisse da view do 007, que e so realizado.
+      - name: O acerto vira teto do credito a receber
+        run: npm run test:teto-do-acerto
+
+      # CONTROLE NEGATIVO DO STEP ACIMA -- 11 mutantes, 11 mortos, todos por
+      # assercao (nenhum pelo tsc).
+      #
+      # Dois merecem o nome:
+      #
+      #   * `chave_sem_devedor` agrega o acerto por GRUPO, que e o que a view do
+      #     007 ja faz (`settlements_received` soma todos os pagadores): o Pix do
+      #     C abate o que o D me deve. Ele SO morre com fixture de DOIS devedores
+      #     no mesmo grupo, um que pagou e um que nao -- com um devedor so os
+      #     dois criterios empatam, e trocar a fixture o ressuscita sem nenhuma
+      #     assercao mudar de cor;
+      #   * `teto_no_total` aplica o teto ao total em vez de linha por linha, e o
+      #     numero grande deixa de ser a soma das linhas que a pessoa consegue
+      #     apontar na tela -- criterio da HMO-275.
+      #
+      # Os dois pisos (`Math.max(0, ...)` no teto e o descarte da linha zerada)
+      # entram como UM mutante, e nao dois: eles se cobrem entre si, e um de cada
+      # vez sobreviveria com razao -- a mesma conclusao que `residuo_sem_piso`
+      # registrou em mutantes-credito-de-grupo.
+      - name: Mutantes do teto do acerto
+        run: npm run mutantes:teto-do-acerto

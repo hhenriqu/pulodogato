@@ -1786,7 +1786,28 @@ export default function GroupDetailPage() {
                 <Calculator className="h-5 w-5" />
                 Resumo de Balanços
               </CardTitle>
-              <CardDescription>Quem deve pagar para quem</CardDescription>
+              {/*
+                O EIXO DE TEMPO E O RECORTE, ESCRITOS (HMO-404, item 2)
+                ------------------------------------------------------
+                Medido em producao (HMO-367, 12/10/2026, fixture HMO-255): este
+                cartao dizia R$ 240,00 a receber do mesmo devedor de quem o
+                bloco "A receber dos grupos" da aba Receitas dizia R$ 39,99 --
+                no mesmo dia, sem acerto nenhum no meio. Nenhum dos dois esta
+                errado: aqui sai de `group_member_balances` (007), que e o
+                ACUMULADO de todos os meses e conta SO O REALIZADO, e ja neta os
+                acertos registrados; la sai de `fecharMes`, que e por mes e soma
+                previsto junto com realizado.
+
+                Sem o eixo de tempo escrito, os dois numeros se leem como um
+                deles estando quebrado -- `painel-sem-eixo-de-tempo-mente-no-rotulo`
+                aplicado a duas telas em vez de uma. A frase nao unifica nada: os
+                numeros continuam diferentes porque as perguntas sao diferentes.
+              */}
+              <CardDescription>
+                Quem deve pagar para quem — acumulado de todos os meses, só do
+                que já foi pago, com os acertos já descontados. A aba Receitas
+                mostra o previsto do período.
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">

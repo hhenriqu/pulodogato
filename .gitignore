@@ -384,6 +384,7 @@ next-env.d.ts
 /.tmp-pagador-da-parte/
 # saida do `npm run test:credito-de-grupo` (HMO-277)
 /.tmp-credito-de-grupo/
+/.tmp-teto-do-acerto/
 # saida do `npm run test:secao-da-tela` (HMO-287)
 /.tmp-secao-da-tela/
 
