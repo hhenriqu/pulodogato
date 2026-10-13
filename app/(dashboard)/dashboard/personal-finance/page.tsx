@@ -1551,6 +1551,30 @@ function Lancamentos() {
                   identificado no acerto
                 </p>
               )}
+              {/*
+                AS DUAS TELAS DIZEM NUMEROS DIFERENTES, E ESTA FRASE E A
+                ENTREGA DO ITEM 2 DA HMO-404
+                ------------------------------------------------------------
+                Medido em producao (HMO-367, 12/10/2026, fixture HMO-255): este
+                bloco dizia R$ 39,99 e a tela do grupo dizia R$ 240,00 sobre o
+                MESMO devedor, no mesmo dia, SEM acerto nenhum no meio. Os dois
+                estao certos e respondem perguntas diferentes -- aqui e o
+                previsto DO PERIODO (previsto + realizado, recortado por mes);
+                la e o ACUMULADO de todos os meses, so do que ja foi pago.
+
+                O teto do acerto (item 1) NAO apaga essa divergencia, de
+                proposito: ele tira do credito o que ja foi recebido, e nao
+                unifica os dois recortes. O que faltava era nada na tela dizer
+                isso -- e `fontes-consistentes-que-discordam` nao se conserta
+                igualando numeros certos, se conserta escrevendo a pergunta de
+                cada um. A frase e curta de proposito: ela existe para o numero
+                desta tela nao ser lido como contradicao do outro.
+              */}
+              <p className="text-xs text-muted-foreground">
+                Deste período. A tela do grupo mostra o acumulado de todos os
+                meses, só do que já foi pago — os dois números não precisam
+                bater.
+              </p>
             </div>
 
             {/* `grid-cols-1` explícito: sem ele o trilho automático usa o

@@ -137,8 +137,15 @@ const MUTANTES = [
     // A frase do OUTRO bloco, escrita por extenso: uma referencia a
     // `ACERTO_FORA_DO_PREVISTO` nao compila (ele e declarado DEPOIS neste
     // arquivo), e mutante que nao compila nunca chega ao teste.
+    //
+    // E POR ISSO ELA MORA EM DOIS LUGARES, e tem de ser atualizada nos dois: a
+    // frase que esta linha copiava ("este valor já está lá dentro, como
+    // reembolso previsto do grupo") deixou de existir na HMO-404, quando o teto
+    // do acerto passou a TIRAR o valor pago do «Previsto». Copiada
+    // desatualizada, o mutante continuaria morrendo -- por ser diferente da
+    // outra frase -- com o rotulo mentindo sobre o que ele encena.
     para:
-      "export const ACERTO_FORA_DO_REALIZADO =\n  \"Fora do Previsto acima: este valor já está lá dentro, como reembolso previsto do grupo.\";",
+      "export const ACERTO_FORA_DO_REALIZADO =\n  \"Fora do Previsto acima: o Previsto já desconta este pagamento — ele deixou de ser reembolso previsto quando o acerto foi registrado.\";",
   },
 ];
 

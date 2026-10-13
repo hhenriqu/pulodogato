@@ -1,5 +1,5 @@
 /**
- * LER O CREDITO A RECEBER DE TODOS OS MEUS GRUPOS -- as seis consultas, num
+ * LER O CREDITO A RECEBER DE TODOS OS MEUS GRUPOS -- as sete consultas, num
  * lugar so.
  *
  * Extraido de app/api/expense-groups/my-credit/route.ts na HMO-364 (fase F3 da
@@ -38,6 +38,25 @@
  * Por isso o retorno e um resultado discriminado e nao um `throw`: um `throw`
  * aqui obrigaria a segunda chamadora a um `try` em volta para descartar, e
  * `catch` vazio e onde erro de verdade vai morrer em silencio.
+ *
+ * O ACERTO ENTRA COMO TETO, E O TETO TEM UM LIMITE DECLARADO (HMO-404)
+ * -------------------------------------------------------------------
+ * A setima consulta le `group_settlements` e o teto e aplicado por
+ * (grupo, devedor) sobre a posicao ACUMULADA -- `aplicarTetoDoAcerto`
+ * (lib/teto-do-acerto.ts), que carrega o criterio, as tres alternativas
+ * reprovadas e o numero que reprovou cada uma. E por isso que este modulo fecha
+ * CADA GRUPO DUAS VEZES: uma nos meses pedidos (o credito da tela) e outra em
+ * todos os meses do grupo (o acumulado de onde sai o teto).
+ *
+ * O TETO E EXATO PARA O PERIODO INTEIRO E APROXIMADO PARA UM SUB-PERIODO.
+ * Exemplo: o C deve 40 realizado em setembro e 100 previsto em outubro, e paga
+ * 40. O acumulado e 140, o teto e 100: setembro + outubro da 100 (exato), mas
+ * SETEMBRO SOZINHO continua mostrando 40, embora aquele mes tenha sido pago.
+ * Isso e inevitavel com os dados de hoje -- `group_settlements` tem UM
+ * `settled_on` e nenhum elo com a despesa nem com o mes que ela quita, entao
+ * nada diz QUAL mes o pagamento cobre. O conserto exato e um elo explicito
+ * acerto <-> divida, na forma do elo da fatura da HMO-305: migration, fase
+ * propria, issue propria -- nao se faz com uma heuristica de data aqui.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -46,6 +65,7 @@ import {
   fecharMes,
   linhaDoRealizado,
   linhaDoPrevisto,
+  mesDaData,
   type LinhaCrua,
 } from "@/lib/fechamento-do-grupo";
 import { divisaoDoPeriodo } from "@/lib/divisao-configurada";
@@ -54,6 +74,11 @@ import {
   type CreditoAReceber,
   type FechamentoDeGrupo,
 } from "@/lib/credito-de-grupo";
+import {
+  acertosRecebidosPorDevedor,
+  aplicarTetoDoAcerto,
+  type AcertoRecebidoCru,
+} from "@/lib/teto-do-acerto";
 
 /** O credito lido, ou a mensagem que a rota de credito devolve em 500. */
 export type LeituraDoCredito =
@@ -66,6 +91,27 @@ export const CREDITO_VAZIO: CreditoAReceber = {
   total: 0,
   sem_devedor: 0,
 };
+
+/**
+ * Todos os meses em que o grupo tem alguma conta -- o dominio do ACUMULADO.
+ *
+ * NAO e `mesesComConta` (lib/fechamento-do-grupo.ts), e a diferenca importa:
+ * aquela existe para o SELETOR de mes da tela e por isso inclui SEMPRE o mes de
+ * hoje, mesmo vazio. O acumulado nao depende de hoje -- ele e a posicao do par
+ * (grupo, devedor) desde o primeiro lancamento --, e pendurar um relogio nesta
+ * resposta faria o teto mudar na virada do mes sem nada ter acontecido no grupo.
+ *
+ * Mes sem conta nenhuma nao e omissao: `fecharMes` nele devolveria saldo zero e
+ * nenhuma transferencia, ou seja somaria zero ao acumulado.
+ */
+function mesesDoGrupo(linhas: readonly LinhaCrua[]): string[] {
+  const meses = new Set<string>();
+  for (const l of linhas) {
+    const mes = mesDaData(l.data);
+    if (mes) meses.add(mes);
+  }
+  return Array.from(meses);
+}
 
 /**
  * O credito a receber do usuario nos meses pedidos.
@@ -273,9 +319,53 @@ export async function lerCreditoDosGrupos(
   }
 
   // ----------------------------------------------------------------
-  // 6. Um fechamento por grupo e por mes, e o recorte do meu credito
+  // 6. Os ACERTOS que eu JA RECEBI nesses grupos (HMO-404)
   // ----------------------------------------------------------------
+  // POR PAR, E NAO PELA VIEW. `group_member_balances.settlements_received`
+  // agrega todos os pagadores num numero so e perde QUEM pagou -- e a linha do
+  // credito e por (grupo, devedor). E a view e SO REALIZADO, entao ela nao
+  // serve nem como teto: grupo com divida inteiramente prevista tem
+  // `net_balance = 0` e zerar o credito por isso mataria o caso da internet do
+  // C6. Daqui sai SO o acerto; o teto sai da aritmetica do `fecharMes`.
+  //
+  // `to_user_id = eu` e o recorte que importa: a policy `group_settlements_select`
+  // e `is_group_member(group_id)` (007), ou seja a minha sessao le TODOS os
+  // acertos dos meus grupos -- inclusive os entre outras duas pessoas e os que
+  // EU paguei. Sem o filtro, o pagamento que o D fez para o C abateria o que o
+  // C me deve.
+  //
+  // A FALHA AQUI NAO PASSA COMO ZERO. Seguir sem os acertos significa publicar
+  // de novo, como "a receber", dinheiro que ja entrou -- o defeito exato desta
+  // issue. Entao ela volta como erro, e cada chamadora decide (500 na rota do
+  // credito; credito zerado na aba Receitas), igual as outras seis.
+  const { data: acertosCrus, error: erroAcertos } = await supabase
+    .from("group_settlements")
+    .select("group_id, from_user_id, amount, exchange_rate")
+    .in("group_id", groupIds)
+    .eq("to_user_id", userId);
+
+  if (erroAcertos) {
+    console.error("Erro ao ler os acertos dos grupos:", erroAcertos);
+    return {
+      ok: false,
+      mensagem: "Não foi possível carregar os acertos dos seus grupos",
+    };
+  }
+
+  const acertos = acertosRecebidosPorDevedor(
+    (acertosCrus ?? []) as AcertoRecebidoCru[]
+  );
+
+  // ----------------------------------------------------------------
+  // 7. Um fechamento por grupo e por mes, e o recorte do meu credito
+  // ----------------------------------------------------------------
+  // DOIS conjuntos de fechamentos, do MESMO `fecharMes` e sobre as MESMAS
+  // linhas: os meses pedidos (o credito que a tela mostra) e todos os meses do
+  // grupo (o acumulado de onde sai o teto do acerto). Calcular o acumulado por
+  // outro caminho -- somar saldos, ou ler a view -- poria duas aritmeticas na
+  // mesma leitura, e elas divergiriam exatamente onde o teto morde.
   const fechamentos: FechamentoDeGrupo[] = [];
+  const fechamentosAcumulados: FechamentoDeGrupo[] = [];
 
   for (const grupo of ativos) {
     const membrosDoGrupo = membrosPorGrupo.get(grupo.id) ?? [];
@@ -307,7 +397,26 @@ export async function lerCreditoDosGrupos(
         fechamento: fecharMes(linhas, membros, mes),
       });
     }
+
+    for (const mes of mesesDoGrupo(linhas)) {
+      fechamentosAcumulados.push({
+        grupo: { id: grupo.id, nome: grupo.name },
+        fechamento: fecharMes(linhas, membros, mes),
+      });
+    }
   }
 
-  return { ok: true, credito: creditoAReceber(fechamentos, userId) };
+  // O teto entra DEPOIS de `creditoAReceber`, e sobre as linhas que ela
+  // agregou: quem decide "por (grupo, devedor)" continua sendo a funcao pura
+  // que tem 12 mutantes, e o teto e uma segunda funcao pura por cima dela
+  // (lib/teto-do-acerto.ts). Sem acerto nenhum o `min` e no-op -- ver o
+  // cabecalho de la.
+  return {
+    ok: true,
+    credito: aplicarTetoDoAcerto({
+      doPeriodo: creditoAReceber(fechamentos, userId),
+      acumulado: creditoAReceber(fechamentosAcumulados, userId),
+      acertos,
+    }),
+  };
 }

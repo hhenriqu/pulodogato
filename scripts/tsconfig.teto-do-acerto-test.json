@@ -1,0 +1,18 @@
+{
+  "//": "Build so do teste do teto do acerto (HMO-404 item 1). Compila TRES modulos de proposito: lib/teto-do-acerto.ts (o que a fase entrega), lib/credito-de-grupo.ts (quem agrega por (grupo, devedor) -- o teto recebe a saida REAL dela, e nao um objeto escrito a mao) e lib/fechamento-do-grupo.ts (a fonte do acumulado: o teto sai da aritmetica do proprio `fecharMes`, com previsto e realizado juntos, e um fechamento a mao nao teria previsto nem realizado dentro). Os imports de @/ sao resolvidos pelo tsc via `paths` mas NAO reescritos no JS emitido, entao o npm script tem um passo de reescrita depois. Ver scripts/test-teto-do-acerto.mjs.",
+  "compilerOptions": {
+    "outDir": "../.tmp-teto-do-acerto",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../lib/teto-do-acerto.ts",
+    "../lib/credito-de-grupo.ts",
+    "../lib/fechamento-do-grupo.ts"
+  ]
+}

@@ -8,6 +8,16 @@
 //   ID_A=<uuid> ID_B=<uuid> ID_C=<uuid> GRUPO_ID=<uuid> \
 //   node scripts/medicao-hmo367-duas-leituras.mjs
 //
+// ATENCAO, O SINAL DELA FOI VIRADO NA HMO-404
+// -------------------------------------------
+// Esta sonda nasceu afirmando o DEFEITO, e era verde por causa dele. Com o teto
+// do acerto implementado (HMO-404), as tres assercoes do bloco [5] foram
+// INVERTIDAS -- elas agora exigem que o credito CAIA, e os numeros antigos
+// ficaram escritos ao lado de cada uma. Consequencia pratica: rodada contra
+// producao ANTES do deploy do teto, a sonda reprova de proposito nessas tres
+// linhas, e isso e o controle negativo dela. Todo o resto (L1, o controle da
+// conta B, o desfazer) continua valendo nos dois lados.
+//
 // POR QUE ESTA MEDICAO EXISTE ANTES DE QUALQUER CONSERTO
 // -----------------------------------------------------
 // A HMO-367 nasceu da hipotese "o acerto nao abaixa o credito, entao subtraia o
@@ -293,23 +303,49 @@ medir(
   `${antes[aOut].L1_transfers_para_mim} -> ${depois[aOut].L1_transfers_para_mim}`
 );
 
-console.log("\n  -- O DEFEITO DA ISSUE --");
+// ---------------------------------------------------------------------------
+// O SINAL DESTAS TRES ASSERCOES FOI VIRADO NA HMO-404 -- E ELAS SAO O ORACULO
+// ---------------------------------------------------------------------------
+// Ate a HMO-404 elas afirmavam o DEFEITO, e eram verdes porque o defeito
+// existia. Os numeros que elas mediam, em producao, contra o codigo de antes
+// (prod, 12/10/2026 e de novo em 13/10/2026 -- as duas rodadas identicas):
+//
+//   L2 my-credit de A, out/2026:  39,99  ->  39,99   (NAO mudou)
+//   L2 my-credit de A, set/2026:  39,99  ->  39,99   (NAO mudou)
+//   reembolso_previsto de A:      {"total":39.99,...} -> IDENTICO
+//   confirmados 1 E credito 39,99 no MESMO corpo de resposta
+//
+// Apagar a sonda perderia o oraculo; deixar o sinal antigo deixaria a sonda
+// verde sobre o conserto que ela existe para medir. Entao ela ficou, com o
+// sinal invertido: o que era "nao mudou" agora exige MUDOU, e e o mesmo
+// arquivo que mede o antes e o depois. O teto do acerto previsto para o caso
+// medido e `max(0, 240 - 240) = 0`, ou seja os 39,99 vao a 0,00.
+console.log("\n  -- O CONSERTO DA HMO-404: O ACERTO VIRA TETO --");
 for (const [rotulo, chave] of [["out/2026 (o mes do acerto)", aOut], ["set/2026", "A | set/2026 -- CONTROLE de mes"]]) {
   medir(
-    `DEFEITO: L2 my-credit de A nao mudou em ${rotulo}`,
-    antes[chave].L2_my_credit_total === depois[chave].L2_my_credit_total,
+    `CONSERTO: L2 my-credit de A CAIU em ${rotulo} (antes: 39,99 -> 39,99)`,
+    Number(depois[chave].L2_my_credit_total) < Number(antes[chave].L2_my_credit_total),
     `${antes[chave].L2_my_credit_total} -> ${depois[chave].L2_my_credit_total}`
   );
 }
+// O numero exato, e nao so a direcao: o acerto de 240 cobre o acumulado de 240,
+// entao o teto e ZERO e o credito do mes vai a zero (ou a linha sai da lista, e
+// `my-credit` responde total 0). Uma assercao so de direcao passaria verde com
+// o teto subtraindo o acerto DENTRO do mes, que e a alternativa 1, reprovada.
 medir(
-  "DEFEITO: o reembolso_previsto do «Previsto» de A nao mudou",
-  JSON.stringify(antes[aOut].L2_reembolso_previsto) === JSON.stringify(depois[aOut].L2_reembolso_previsto),
+  "CONSERTO: o credito de A vai a ZERO em out/2026 (teto = max(0, 240 - 240))",
+  Number(depois[aOut].L2_my_credit_total) === 0,
+  `${antes[aOut].L2_my_credit_total} -> ${depois[aOut].L2_my_credit_total}`
+);
+medir(
+  "CONSERTO: o reembolso_previsto do «Previsto» de A mudou (antes: identico)",
+  JSON.stringify(antes[aOut].L2_reembolso_previsto) !== JSON.stringify(depois[aOut].L2_reembolso_previsto),
   `${JSON.stringify(antes[aOut].L2_reembolso_previsto)} -> ${JSON.stringify(depois[aOut].L2_reembolso_previsto)}`
 );
 medir(
-  "DEFEITO: a MESMA divida aparece como recebida (HMO-366) e como a receber no mesmo corpo",
+  "CONSERTO: a mesma divida NAO aparece mais como recebida e como a receber no mesmo corpo",
   Number(depois[aOut].L2_acertos_do_grupo?.confirmados) > 0 &&
-    Number(depois[aOut].L2_my_credit_total) > 0,
+    Number(depois[aOut].L2_my_credit_total) === 0,
   `confirmados ${depois[aOut].L2_acertos_do_grupo?.confirmados} e credito ${depois[aOut].L2_my_credit_total}`
 );
 medir(

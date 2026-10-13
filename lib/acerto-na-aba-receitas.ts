@@ -36,14 +36,22 @@
 // =============================================================================
 // POR QUE ESTAS LINHAS FICAM FORA DOS TRES CARTOES -- AS DUAS RAZOES
 // =============================================================================
-// 1. O «PREVISTO» DE RECEITAS JA CONTA ESTE DINHEIRO. Desde a F3 (HMO-364) o
-//    cartao soma o REEMBOLSO PREVISTO do grupo (`resumoComReembolsoPrevisto`),
-//    que vem de `creditoAReceber` -> `fecharMes`. E `fecharMes` NAO LE
-//    `group_settlements`: ele neta despesas do mes por membro e mais nada
-//    (confira: nenhuma das seis consultas de lib/services/credito-dos-grupos.ts
-//    toca aquela tabela). Entao registrar o acerto NAO abaixa o credito, e somar
-//    o acerto no «Previsto» contaria os mesmos R$ 300 duas vezes -- um numero
-//    inflado e plausivel, que e a familia de `duas-pernas-mantem-o-total-certo`.
+// 1. SOMAR AQUI CONTARIA O MESMO DINHEIRO DUAS VEZES -- e o motivo MUDOU de
+//    mecanismo na HMO-404, embora a conclusao continue a mesma.
+//
+//    Ate a HMO-404 o argumento era que o «Previsto» JA CONTAVA este dinheiro:
+//    `fecharMes` nao lia `group_settlements`, entao registrar o acerto nao
+//    abaixava o credito e o valor seguia dentro do cartao. Agora a setima
+//    consulta de lib/services/credito-dos-grupos.ts le aquela tabela e o acerto
+//    entra como TETO (`aplicarTetoDoAcerto`, lib/teto-do-acerto.ts): o valor
+//    pago SAI do «Previsto».
+//
+//    E por isso que somar aqui continua errado, pelo caminho inverso: o teto
+//    acabou de tirar este valor do «Previsto» porque ele JA FOI RECEBIDO, e
+//    poe-lo de volta num bloco somado seria repor a promessa que o pagamento
+//    desfez -- a familia de `duas-pernas-mantem-o-total-certo`. O que a tela
+//    deve ao leitor nao e o numero somado, e a FRASE
+//    (`ACERTO_FORA_DO_PREVISTO`), que diz que o Previsto ja desconta isto.
 //
 // 2. A PERNA E `transfer`, E `transfer` NAO E RECEITA REALIZADA. Confirmar grava
 //    `TIPO_DA_PERNA` (lib/acerto-em-lancamento.ts), e a invariante que aquele
@@ -189,13 +197,25 @@ export const ACERTO_FORA_DO_REALIZADO =
 /**
  * POR QUE O VALOR A CONFIRMAR NAO ESTA NO CARTAO «Previsto».
  *
- * O «Previsto» de Receitas ja conta este dinheiro como REEMBOLSO PREVISTO
- * (F3/HMO-364), e `fecharMes` nao desconta acerto registrado -- ver a razao 1
- * do cabecalho. Somar aqui contaria duas vezes; nao dizer isso deixaria a
- * pessoa somando a lista a mao para descobrir a diferenca.
+ * ATE A HMO-404 ELA DIZIA O CONTRARIO, e a frase antiga esta aqui porque ela e
+ * o registro do que mudou:
+ *
+ *   "Fora do Previsto acima: este valor já está lá dentro, como reembolso
+ *    previsto do grupo."
+ *
+ * Aquilo era verdade enquanto `fecharMes` ignorava `group_settlements`. Com o
+ * teto do acerto (HMO-404) o valor pago SAI do «Previsto», e manter a frase
+ * antiga faria a tela afirmar que o dinheiro esta num numero de onde ele acabou
+ * de ser retirado -- a familia de `comentario-que-mente-esta-repetido`, mas na
+ * tela, onde ninguem grepa.
+ *
+ * A frase nova diz o estado novo: o «Previsto» ja desconta este pagamento. Ela
+ * continua sendo necessaria pela mesma razao de antes -- um valor na tela que
+ * nao esta em nenhum dos tres cartoes, sem frase, e indistinguivel de bug, e o
+ * caminho dessa estranheza termina em alguem lancando a receita a mao.
  */
 export const ACERTO_FORA_DO_PREVISTO =
-  "Fora do Previsto acima: este valor já está lá dentro, como reembolso previsto do grupo.";
+  "Fora do Previsto acima: o Previsto já desconta este pagamento — ele deixou de ser reembolso previsto quando o acerto foi registrado.";
 
 /**
  * Os acertos que a aba Receitas mostra, separados pelo MEU estado.

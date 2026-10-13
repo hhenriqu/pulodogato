@@ -157,9 +157,15 @@ test("a rota devolve `credito`, e e por esse nome que a tela le", () => {
     "A rota tem de ler pelo modulo compartilhado (lib/services/credito-dos-grupos.ts)."
   );
   assert.ok(
-    /credito:\s*creditoAReceber\(/.test(servico),
-    "lib/services/credito-dos-grupos.ts tem de devolver `creditoAReceber(...)` " +
+    /doPeriodo:\s*creditoAReceber\(/.test(servico),
+    "lib/services/credito-dos-grupos.ts tem de agregar por `creditoAReceber(...)` " +
       "-- quem agrega por (grupo, devedor) e a funcao pura, que tem 12 mutantes."
+  );
+  assert.ok(
+    /credito:\s*aplicarTetoDoAcerto\(/.test(servico),
+    "O credito devolvido tem de passar por `aplicarTetoDoAcerto` (HMO-404): sem " +
+      "ele a aba Receitas promete de novo o que ja foi pago -- medido em " +
+      "producao, R$ 39,99 prometidos depois de um Pix de R$ 240,00."
   );
   // E A FALHA TEM DE CONTINUAR DANDO 500 AQUI. Esta rota existe para responder o
   // credito: sem ele a resposta nao tem conteudo. A aba Receitas faz o OPOSTO com
@@ -197,6 +203,84 @@ test("a rota e a tela concordam no recorte de periodo", () => {
         `bloco soma um recorte de tempo que a legenda nao descreve.`
     );
   }
+});
+
+// -----------------------------------------------------------------------------
+// A SETIMA CONSULTA, E OS DOIS RECORTES QUE ELA TEM DE TER (HMO-404)
+// -----------------------------------------------------------------------------
+// A aritmetica do teto esta coberta por test-teto-do-acerto.mjs (14 blocos,
+// dois fusos) e por 11 mutantes. O que a funcao pura NAO pode medir e a
+// CONSULTA que a alimenta: ela recebe um array, e um array vazio porque o
+// `.eq()` errado nao devolveu linha nenhuma e indistinguivel de "nao ha acerto"
+// -- o teto fica no-op e o defeito da issue volta inteiro, verde.
+test("a setima consulta le os acertos por grupo E por quem recebeu", () => {
+  const consulta = servico.match(
+    /from\("group_settlements"\)([\s\S]*?);/
+  );
+  assert.ok(
+    consulta,
+    "Nao achei a consulta de `group_settlements` em lib/services/credito-dos-grupos.ts. " +
+      "Sem ela o acerto nao abate nada e a aba Receitas promete dinheiro que ja entrou."
+  );
+
+  const corpo = consulta[1];
+
+  // `to_user_id = eu`: a policy `group_settlements_select` e
+  // `is_group_member(group_id)` (007), entao a minha sessao le TODOS os acertos
+  // dos meus grupos -- inclusive os entre outras duas pessoas e os que EU
+  // paguei. Sem este recorte, o Pix que o D fez para o C abateria o que o C me
+  // deve.
+  assert.match(
+    corpo,
+    /\.eq\("to_user_id",\s*userId\)/,
+    "A consulta tem de filtrar `to_user_id = userId`."
+  );
+  assert.match(
+    corpo,
+    /\.in\("group_id",\s*groupIds\)/,
+    "A consulta tem de se limitar aos grupos ativos que a consulta 1 achou."
+  );
+  // `from_user_id` e metade da chave do par: sem ele no `select`, a agregacao
+  // por (grupo, devedor) nao tem devedor e cai no criterio da view, que e o que
+  // a issue mandou NAO fazer.
+  for (const campo of ["group_id", "from_user_id", "amount", "exchange_rate"]) {
+    assert.ok(
+      corpo.includes(campo),
+      `A consulta tem de trazer \`${campo}\` -- ele e lido por ` +
+        `acertosRecebidosPorDevedor.`
+    );
+  }
+});
+
+test("a falha da setima consulta NAO passa como zero", () => {
+  // Seguir sem os acertos e publicar de novo, como "a receber", dinheiro que ja
+  // entrou -- o defeito exato desta issue. Entao ela volta como erro, igual as
+  // outras seis, e cada chamadora decide o desfecho.
+  assert.match(
+    servico,
+    /if \(erroAcertos\)[\s\S]{0,200}ok: false/,
+    "Erro ao ler os acertos tem de voltar como `ok: false`, e nao virar " +
+      "`acertos` vazio -- um teto no-op devolve o defeito da issue em silencio."
+  );
+});
+
+test("o acumulado sai do MESMO `fecharMes`, sobre todos os meses do grupo", () => {
+  // As tres alternativas reprovadas na HMO-367 estao todas aqui: somar saldos,
+  // ler `group_member_balances.net_balance` (que e so realizado -- zeraria
+  // credito previsto legitimo) ou pedir o acumulado a outra consulta poriam
+  // DUAS aritmeticas na mesma leitura, e elas divergiriam exatamente onde o
+  // teto morde.
+  assert.match(
+    servico,
+    /fechamentosAcumulados\.push\(\{[\s\S]{0,200}fecharMes\(linhas, membros, mes\)/,
+    "O acumulado tem de vir de `fecharMes` sobre as MESMAS linhas do periodo."
+  );
+  assert.ok(
+    !/net_balance|settlements_received/.test(servico),
+    "O teto NAO sai de `group_member_balances`: a view e so realizado, e um " +
+      "grupo com divida inteiramente prevista tem `net_balance = 0` -- o teto " +
+      "zeraria credito previsto legitimo (o caso da internet do C6)."
+  );
 });
 
 // -----------------------------------------------------------------------------
@@ -259,6 +343,53 @@ test("o bloco e a frase dizem A RECEBER e previsto, nos comentarios E na tela", 
     "O bloco tem de dizer QUANDO o credito vira receita -- senao 'previsto' " +
       "nao tem desfecho e a pessoa nao sabe o que fazer com o numero."
   );
+});
+
+// -----------------------------------------------------------------------------
+// AS DUAS TELAS DIZEM O RECORTE DELAS (HMO-404, item 2)
+// -----------------------------------------------------------------------------
+// Medido em producao (HMO-367): este bloco dizia R$ 39,99 e a tela do grupo
+// dizia R$ 240,00 sobre o MESMO devedor, no mesmo dia, SEM acerto nenhum. Os
+// dois estao certos -- periodo+previsto contra acumulado+realizado --, e o teto
+// do item 1 nao apaga a divergencia de proposito. O que faltava era nada na
+// tela dizer, e e so isso que estas duas assercoes trancam.
+//
+// A fonte CRUA e a certa aqui: o que esta sendo medido e o texto que a pessoa
+// le, e ele vive dentro do JSX.
+test("o bloco A RECEBER diz que e do periodo, e aponta a outra leitura", () => {
+  assert.match(
+    telaCrua,
+    /Deste período\./,
+    "O bloco tem de dizer que o numero e DO PERIODO."
+  );
+  assert.match(
+    telaCrua,
+    /acumulado de todos os\s*\n?\s*meses/,
+    "E tem de dizer o que a outra tela responde -- senao os dois numeros se " +
+      "leem como um deles estando quebrado."
+  );
+});
+
+test("o cartao da tela do grupo diz que e o acumulado, e so o pago", () => {
+  const grupoCru = readFileSync(
+    "app/(dashboard)/dashboard/expense-groups/[groupId]/page.tsx",
+    "utf8"
+  );
+  const descricao = grupoCru.match(
+    /Quem deve pagar para quem([\s\S]{0,400}?)<\/CardDescription>/
+  );
+  assert.ok(
+    descricao,
+    "Nao achei a descricao do cartao 'Resumo de Balanços' na tela do grupo."
+  );
+  for (const frase of ["acumulado de todos os meses", "já foi pago"]) {
+    assert.ok(
+      descricao[1].includes(frase),
+      `A descricao tem de dizer "${frase}" -- a view do 007 e acumulada e so ` +
+        `realizada, e sem isso escrito o numero dela parece contradizer a aba ` +
+        `Receitas.`
+    );
+  }
 });
 
 test("o caminho de FALHA tem texto proprio, separado do vazio", () => {
