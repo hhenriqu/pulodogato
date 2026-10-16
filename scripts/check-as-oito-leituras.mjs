@@ -1,8 +1,17 @@
 #!/usr/bin/env node
 // =====================================================
-// AS OITO LEITURAS DA AGENDA LEEM `my_status` (HMO-411)
+// AS LEITURAS DA AGENDA LEEM `my_status` (HMO-411, HMO-416)
 // =====================================================
 //   npm run check-as-oito-leituras
+//
+// «OITO» E O NOME HISTORICO, E HOJE SAO NOVE MAIS TRES EXCECOES. A HMO-411
+// moveu oito leituras e deixou tres da mesma view em `status` sem estarem em
+// lista nenhuma -- nem medidas, nem declaradas. A HMO-416 decidiu as tres, uma
+// a uma: a da fatura do cartao e sobre a PESSOA e trocou (virou a nona de
+// `LEITURAS`); as duas do grupo sao sobre a CONTA e entraram em `EXCECOES`,
+// cada uma com o paragrafo que diz por que. O arquivo conserva o nome para nao
+// mexer no step do CI nem no `package.json` por causa de um numero; quem conta
+// e `LEITURAS.length`, e a mensagem final imprime os dois totais.
 //
 // `scheduled_transactions` tem UMA coluna `status` e ela e do DONO. Numa conta
 // de grupo isso quer dizer que a conta sumia do «a pagar» de todos os membros
@@ -22,12 +31,22 @@
 // delas seria invisivel -- e o sintoma nao e erro, e a conta de grupo do outro
 // membro entrando ou saindo de uma soma de dinheiro.
 //
-// E E UM GUARD DE CONVENCAO, TAMBEM. Tres das oito (safe-to-spend, projection,
-// cash-flow) filtram `user_id = auth.uid()` na mao e por isso NAO mudam de
-// numero: para linha minha a 055 garante `my_status = status::text`. Elas
-// trocaram assim mesmo para haver UMA convencao -- com metade das rotas numa
-// coluna e metade na outra, a proxima pessoa teria de descobrir caso a caso.
-// Este arquivo e o que torna essa convencao verificavel.
+// E E UM GUARD DE CONVENCAO, TAMBEM. Quatro das nove (safe-to-spend,
+// projection, cash-flow e a fatura do cartao) filtram `user_id = auth.uid()` na
+// mao e por isso NAO mudam de numero: para linha minha a 055 garante
+// `my_status = status::text`, e a secao 2 de
+// database/tests/hmo407_pagamento_de_conta_de_grupo_test.sql prende essa
+// igualdade sobre seis linhas do proprio dono. Elas trocaram assim mesmo para
+// haver UMA convencao -- com metade das rotas numa coluna e metade na outra, a
+// proxima pessoa teria de descobrir caso a caso. Este arquivo e o que torna
+// essa convencao verificavel.
+//
+// PARA AS QUATRO INERTES, ESTE GUARD E A UNICA MEDIDA POSSIVEL, e vale dizer
+// por que: «inerte» quer dizer que nenhuma assercao de COMPORTAMENTO consegue
+// distinguir as duas colunas ali. Uma suite de rota montada sobre conta
+// individual passa verde com qualquer das duas, hoje e no dia da reversao --
+// seria controle negativo vacuo. Quem mede a convencao e a lista abaixo; quem
+// mede o NUMERO e a secao 2 do teste da 055, no banco.
 //
 // O FONTE VEM SEM COMENTARIO, E AQUI ISSO E LOAD-BEARING: as oito rotas
 // EXPLICAM a troca em comentario e escrevem `status` dentro da explicacao --
@@ -72,6 +91,14 @@ const LEITURAS = [
   ["app/api/safe-to-spend/route.ts", "o posso gastar", "filtro"],
   ["app/api/projection/route.ts", "a projecao", "filtro"],
   ["app/api/cash-flow/route.ts", "o fluxo de caixa", "filtro"],
+  // A NONA, da HMO-416. Mesmo argumento das tres inertes acima: ela filtra
+  // `user_id = auth.uid()` na linha de cima, entao a troca nao mudou numero --
+  // entrou para a convencao ser uma so. Ver o comentario na rota.
+  [
+    "app/api/card-invoices/route.ts",
+    "as previsoes pendentes do cartao",
+    "filtro",
+  ],
 ];
 
 /** `my_status` ou `my_effective_status` -- o estado DA PESSOA. */
@@ -79,21 +106,71 @@ const daPessoa = (colunas) =>
   colunas.some((c) => c === "my_status" || c === "my_effective_status");
 
 /**
- * A EXCECAO DECLARADA, e ela nao e esquecimento.
+ * AS EXCECOES DECLARADAS, e nenhuma delas e esquecimento.
  *
- * `app/api/expense-groups/[groupId]/scheduled/route.ts` le a MESMA view e
- * continua filtrando `.neq("status", "paid")` de proposito: o GRUPO nao tem
- * status de pago. Quando o dono da baixa, a despesa vira real, o rateio nasce
- * e a linha passa para a aba de despesas -- ela sai das previstas. A pergunta
- * ali e sobre a CONTA, nao sobre a pessoa.
+ * Cada entrada e `[arquivo, porque, onde]`. O `onde` e o mesmo campo de
+ * `LEITURAS` e pela mesma razao -- so que invertido: diz em que lugar da cadeia
+ * a coluna DA CONTA tem de continuar aparecendo. As tres nao usam o mesmo
+ * verbo, e um guard que exigisse `.neq("status", "paid")` das tres (a forma da
+ * primeira) reprovaria as duas que trazem a coluna no `select` e decidem em JS.
  *
  * Esta lista existe para que a excecao seja uma DECISAO escrita, e nao uma
  * ausencia. Acrescentar um arquivo aqui tem de custar o paragrafo que explica
  * por que aquela leitura e sobre a conta.
  */
-const EXCECOES = new Set([
-  "app/api/expense-groups/[groupId]/scheduled/route.ts",
-]);
+const EXCECOES = [
+  [
+    "app/api/expense-groups/[groupId]/scheduled/route.ts",
+    "a tela do grupo (HMO-411)",
+    "filtro",
+  ],
+  [
+    "app/api/expense-groups/[groupId]/fechamento/route.ts",
+    "o fechamento do mes do grupo (HMO-416)",
+    "select",
+  ],
+  [
+    "app/api/expense-groups/[groupId]/semear-divisao/route.ts",
+    "a semeadura pela renda (HMO-416)",
+    "select",
+  ],
+];
+
+// POR QUE AS TRES SAO SOBRE A CONTA, uma a uma -- o paragrafo que esta lista
+// cobra:
+//
+//   1. A TELA DO GRUPO (HMO-411) filtra `.neq("status", "paid")` de proposito:
+//      o GRUPO nao tem status de pago. Quando o dono da baixa, a despesa vira
+//      real, o rateio nasce e a linha passa para a aba de despesas -- ela sai
+//      das previstas. Lendo `my_status` aqui o aluguel apareceria nas DUAS
+//      abas.
+//
+//   2. O FECHAMENTO DO MES (HMO-416) traz a coluna no `select` e decide em
+//      `linhaDoPrevisto`, que devolve `null` para a conta com baixa. A exclusao
+//      e a unica defesa contra contar a mesma conta duas vezes: a baixa criou a
+//      transacao real, que ja entrou pelo lado realizado. E a rota filtra
+//      `group_id` e MAIS NADA -- ela traz a linha de todos os membros. Para a
+//      conta de OUTRO membro que ele ja pagou, `status` = `paid` mas o meu
+//      `my_status` e `COALESCE(<a minha linha de pagamento>, 'pending')` =
+//      `pending`: a prevista nao seria descartada, somaria em cima da
+//      realizada, e o total do grupo sairia DOBRADO naquela conta.
+//
+//   3. A SEMEADURA PELA RENDA (HMO-416) e a mesma aritmetica no lado da
+//      receita, pela mesma `linhaDoPrevisto` -- e tem uma segunda razao, mais
+//      forte, que e propria dela: ela le pelo CLIENTE DE SERVICE ROLE
+//      (`createServiceClient`, a leitura privilegiada da rota). Ali
+//      `auth.uid()` e NULL, e as duas pernas do CASE da 055 dependem dele --
+//      `s.user_id = auth.uid()` nunca e verdade e o join
+//      `p.user_id = auth.uid()` nunca casa. `my_status` desaba para a
+//      CONSTANTE `'pending'` em toda linha, inclusive nas pagas. Trocar aqui
+//      nao trocaria de criterio: apagaria o criterio, e toda receita prevista
+//      ja recebida contaria duas vezes na semeadura.
+//
+// As tres fazem a MESMA pergunta -- "esta conta do grupo ja aconteceu?" --, que
+// e a pergunta de que a aritmetica do grupo precisa. Nenhuma pergunta "eu ja
+// paguei a MINHA parte?": essa e a pergunta da HMO-411, e as rotas que a fazem
+// nao passam por esta cadeia (a tela do grupo monta o estado por membro de
+// `group_bill_payments`, lida a parte, e nao da coluna da view).
 
 /** As colunas de estado que sao do DONO -- nenhuma das oito pode usa-las. */
 const DO_DONO = ["status", "effective_status"];
@@ -142,6 +219,35 @@ function cadeiaDaView(fonte) {
   return [literal, ...continuacoes].join("\n");
 }
 
+/**
+ * As colunas de estado que a cadeia FILTRA e as que ela PEDE no `select`.
+ *
+ * Um extrator so, usado pelas duas direcoes do guard -- as nove leituras e as
+ * tres excecoes. Dois extratores (um por direcao) e o que faz uma mudanca de
+ * forma consertar metade do guard e deixar a outra metade medindo nada; e aqui
+ * nao ha o risco de `conferidor-com-o-mesmo-extrator-nos-dois-lados-passa-
+ * vacuo`, porque os dois lados nao sao as duas pontas de uma igualdade: sao
+ * duas assercoes opostas sobre a MESMA extracao.
+ */
+function colunasDaCadeia(cadeia) {
+  // AS COLUNAS FILTRADAS, extraidas como palavra inteira. O regex pega
+  // `.eq("coluna"`, `.in("coluna"`, `.neq("coluna"` e `.gte/.lte`, que sao os
+  // verbos que estas rotas usam.
+  const filtradas = [...cadeia.matchAll(/\.(?:eq|neq|in|gte|lte)\(\s*"([^"]+)"/g)].map(
+    (m) => m[1]
+  );
+
+  // E AS COLUNAS PEDIDAS NO `select`, tambem como palavra inteira: o
+  // `my_status` que a rota soma em JS entra por aqui, nao por filtro.
+  const select = /\.select\(\s*(?:`([^`]*)`|"([^"]*)")/.exec(cadeia);
+  const pedidas = (select?.[1] ?? select?.[2] ?? "")
+    .split(",")
+    .map((c) => c.trim())
+    .filter(Boolean);
+
+  return { filtradas, pedidas };
+}
+
 let falhas = 0;
 
 for (const [arquivo, apelido, onde] of LEITURAS) {
@@ -159,21 +265,7 @@ for (const [arquivo, apelido, onde] of LEITURAS) {
     continue;
   }
 
-  // AS COLUNAS FILTRADAS, extraidas como palavra inteira. O regex pega
-  // `.eq("coluna"`, `.in("coluna"`, `.neq("coluna"` e `.gte/.lte`, que sao os
-  // verbos que estas oito usam.
-  const filtradas = [...cadeia.matchAll(/\.(?:eq|neq|in|gte|lte)\(\s*"([^"]+)"/g)].map(
-    (m) => m[1]
-  );
-
-  // E AS COLUNAS PEDIDAS NO `select`, tambem como palavra inteira: o
-  // `my_status` que a rota soma em JS entra por aqui, nao por filtro.
-  const select = /\.select\(\s*(?:`([^`]*)`|"([^"]*)")/.exec(cadeia);
-  const pedidas = (select?.[1] ?? select?.[2] ?? "")
-    .split(",")
-    .map((c) => c.trim())
-    .filter(Boolean);
-
+  const { filtradas, pedidas } = colunasDaCadeia(cadeia);
   const usadas = [...filtradas, ...pedidas];
 
   for (const proibida of DO_DONO) {
@@ -211,21 +303,73 @@ for (const [arquivo, apelido, onde] of LEITURAS) {
   }
 }
 
-// A EXCECAO E CONFERIDA AO CONTRARIO: ela TEM de continuar lendo `status`.
-// Sem esta metade, alguem "arrumando" a tela do grupo para `my_status` faria a
-// conta prevista reaparecer na aba de previstas depois da baixa -- dobrando o
-// aluguel na tela, porque a despesa ja esta na aba de despesas.
-for (const arquivo of EXCECOES) {
+// AS EXCECOES SAO CONFERIDAS AO CONTRARIO: elas TEM de continuar lendo a coluna
+// da CONTA. Sem esta metade, alguem "arrumando" as tres para `my_status` faria
+// a conta de grupo ja paga voltar para dentro das somas -- na tela, nas DUAS
+// abas; no fechamento e na semeadura, como total dobrado.
+//
+// E SAO DUAS ASSERCOES, NAO UMA, e a segunda nao e redundante:
+//
+//   (a) a coluna da conta TEM de aparecer no `onde` declarado. Pega quem trocou
+//       `status` por `my_status` no lugar -- e pega tambem quem simplesmente a
+//       APAGOU do `select`: ali `linha.status` chega `undefined`, nunca e
+//       `"paid"`, e `linhaDoPrevisto` para de descartar a conta com baixa. O
+//       sintoma e total dobrado, sem erro nenhum.
+//
+//   (b) a coluna da PESSOA nao pode aparecer em lugar nenhum da cadeia. Sem
+//       esta, o caminho de defeito mais provavel passa verde: acrescentar
+//       `my_status` ao `select` ao LADO de `status` (a (a) continua satisfeita)
+//       e depois mudar o consumidor em JS para ler o campo novo. A decisao
+//       escrita aqui e "esta leitura nao usa o estado da pessoa", e e isso que
+//       (b) mede.
+for (const [arquivo, apelido, onde] of EXCECOES) {
   const cadeia = cadeiaDaView(semComentarios(readFileSync(arquivo, "utf8")));
-  if (!cadeia || !/\.neq\(\s*"status"/.test(cadeia)) {
+
+  if (!cadeia) {
     falhas += 1;
     console.error(
-      `\n✖ ${arquivo}\n` +
-        '  a excecao declarada perdeu o `.neq("status", "paid")`.\n' +
+      `\n✖ ${arquivo} (${apelido})\n` +
+        `  nao achei um \`.from("${VIEW}")\` legivel.\n` +
+        "  ou a excecao saiu da view, ou a forma da cadeia mudou e esta metade " +
+        "do guard parou de medir -- as duas pedem olho humano."
+    );
+    continue;
+  }
+
+  const { filtradas, pedidas } = colunasDaCadeia(cadeia);
+  const ondeEsta = onde === "filtro" ? filtradas : pedidas;
+
+  // (a) a coluna da CONTA, no lugar declarado.
+  if (!ondeEsta.some((c) => DO_DONO.includes(c))) {
+    falhas += 1;
+    console.error(
+      `\n✖ ${arquivo} (${apelido})\n` +
+        `  a excecao declarada perdeu \`status\` do ${onde} da cadeia da view.\n` +
         "  o GRUPO nao tem status de pago, e isso foi pedido: a conta paga sai " +
-        "das previstas porque a baixa cria a transacao real e o rateio, e a " +
-        "despesa passa para a aba de despesas. Lendo `my_status` aqui, ela " +
-        "voltaria -- e o aluguel apareceria nas DUAS abas."
+        "das previstas porque a baixa cria a transacao real e o rateio. Esta " +
+        "leitura e sobre a CONTA -- ver o paragrafo dela em `EXCECOES`.\n" +
+        (onde === "filtro"
+          ? "  ela recorta no banco: o `.neq(\"status\", \"paid\")` tem de voltar."
+          : "  ela traz a coluna e decide em JS (`linhaDoPrevisto` descarta a " +
+            "conta com baixa). Sem `status` no `select` o campo chega " +
+            "`undefined`, nada e descartado, e o total sai DOBRADO.")
+    );
+  }
+
+  // (b) e NENHUMA coluna da pessoa, em lugar nenhum da cadeia.
+  const daPessoaNaCadeia = [...filtradas, ...pedidas].filter((c) =>
+    daPessoa([c])
+  );
+  if (daPessoaNaCadeia.length > 0) {
+    falhas += 1;
+    console.error(
+      `\n✖ ${arquivo} (${apelido})\n` +
+        `  a cadeia da view passou a usar \`${daPessoaNaCadeia.join("`, `")}\`, ` +
+        "que e o estado da PESSOA.\n" +
+        "  esta leitura esta em `EXCECOES` por uma decisao escrita: a pergunta " +
+        "dela e «esta conta do grupo ja aconteceu?», e nao «eu ja paguei a " +
+        "minha parte?». Se a decisao mudou, mude o paragrafo e mova o arquivo " +
+        "para `LEITURAS` -- nao acrescente a coluna aqui."
     );
   }
 }
@@ -237,5 +381,5 @@ if (falhas) {
 
 console.log(
   `✔ as ${LEITURAS.length} leituras de ${VIEW} usam o estado da PESSOA, ` +
-    `e a ${EXCECOES.size} excecao declarada segue no estado da CONTA.`
+    `e as ${EXCECOES.length} excecoes declaradas seguem no estado da CONTA.`
 );
