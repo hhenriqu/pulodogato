@@ -1609,8 +1609,32 @@ test("os DOIS numeros que vao discordar levam a legenda de cada um (fase F5)", (
         `de citar as DUAS perguntas (a declaracao + um uso em cada frase).`
     );
   }
+  // A FIACAO DO LINK, E NAO O ENDERECO LITERAL (HMO-415).
+  //
+  // Ate a HMO-415 esta assercao exigia `href="/dashboard/despesas"` -- e aquele
+  // literal era o defeito, nao o contrato: `lerPeriodo`, do outro lado, cai no
+  // MES CORRENTE quando nao acha `?de=&ate=`. O cartao aparece em todo periodo
+  // que contem hoje, e conter hoje nao e ser o mes corrente -- num intervalo de
+  // 15/09 a 20/10 o link nu abria outubro inteiro a partir de uma legenda que
+  // falava do intervalo. Quem mede o `href` RENDERIZADO, em navegador e nos
+  // quatro periodos, e `scripts/test-painel-clicavel.mjs`; o que fica aqui e a
+  // fiacao: a legenda tem link, e ele sai de `rotaDaTelaDoLado`.
+  //
+  // E O RECORTE E A LEGENDA, nao o arquivo inteiro: a MESMA chamada aparece no
+  // tile de Despesas 240 linhas acima (HMO-408), e um `includes` no painel todo
+  // ficaria verde com o link da legenda nu de novo.
+  const inicioDaLegenda = painel.indexOf("{LEGENDA_DO_LIQUIDO}");
+  const fimDaLegenda = painel.indexOf("Abrir Despesas", inicioDaLegenda);
   assert.ok(
-    painel.includes('href="/dashboard/despesas"'),
-    "A legenda do painel tem de levar a aba Despesas."
+    inicioDaLegenda >= 0 && fimDaLegenda > inicioDaLegenda,
+    "A legenda do painel nao tem mais o link «Abrir Despesas» para a aba Despesas."
+  );
+  assert.ok(
+    painel
+      .slice(inicioDaLegenda, fimDaLegenda)
+      .includes('rotaDaTelaDoLado("despesa", periodo)'),
+    "O «Abrir Despesas» da legenda do painel tem de levar a aba Despesas COM a " +
+      "janela da tela: um link nu abre o mes corrente, e o cartao existe em " +
+      "periodo que contem hoje sem ser o mes corrente."
   );
 });
