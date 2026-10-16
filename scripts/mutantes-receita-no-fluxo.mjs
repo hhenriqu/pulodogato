@@ -72,25 +72,25 @@ const MUTANTES = [
   // --- os recortes da consulta ---
   {
     nome: "o filtro de usuario sai (a linha de grupo do outro membro entra)",
-    de: '      .eq("user_id", user.id)\n      .eq("status", "pending")',
-    para: '      .eq("status", "pending")',
+    de: '      .eq("user_id", user.id)\n      .eq("my_status", "pending")',
+    para: '      .eq("my_status", "pending")',
   },
   {
     nome: "o recorte de status sai (a receita apagada volta a aparecer)",
-    de: '      .eq("status", "pending")\n',
+    de: '      .eq("my_status", "pending")\n',
     para: "",
   },
   {
     nome: "o status passa a aceitar tudo que nao foi pago (skipped volta)",
-    de: '.eq("status", "pending")',
-    para: '.neq("status", "paid")',
+    de: '.eq("my_status", "pending")',
+    para: '.neq("my_status", "paid")',
   },
   {
     nome: "o status e lido do campo derivado (a vencida sai da projecao)",
     // `effective_status` e 'overdue' quando a linha venceu, e ela TEM de
     // continuar na projecao: conta vencida e dinheiro que ainda vai sair.
-    de: '.eq("status", "pending")',
-    para: '.eq("effective_status", "pending")',
+    de: '.eq("my_status", "pending")',
+    para: '.eq("my_effective_status", "pending")',
   },
 ];
 

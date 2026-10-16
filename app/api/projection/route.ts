@@ -86,7 +86,11 @@ export async function GET(request: NextRequest) {
     //     que e o defeito desta issue de volta.
     const { data: previstas, error: erroPrevistas } = await supabase
       .from("scheduled_transactions_effective")
-      .select("id, account_id, amount, due_date, my_status, notes, direction")
+      // `my_status` SAI DO SELECT e fica so no filtro abaixo (HMO-411): o
+      // `status` que estava aqui nunca foi lido -- `PrevistaParaProjetar` nem
+      // declara o campo --, e coluna trazida e nunca lida e divida que a
+      // proxima pessoa confunde com criterio.
+      .select("id, account_id, amount, due_date, notes, direction")
       .eq("user_id", user.id)
       .eq("my_status", "pending")
       .lte("due_date", ate);

@@ -231,7 +231,12 @@
     "mutantes:receita-no-fluxo": "node scripts/mutantes-receita-no-fluxo.mjs",
     "mutantes:leituras-do-mybank": "node scripts/mutantes-leituras-do-mybank.mjs",
     "check-linha-do-mybank": "node scripts/check-linha-do-mybank-na-agenda.mjs",
-    "mutantes:linha-do-mybank": "node scripts/mutantes-linha-do-mybank.mjs"
+    "mutantes:linha-do-mybank": "node scripts/mutantes-linha-do-mybank.mjs",
+    "test:minha-baixa": "node scripts/compila.mjs -p scripts/tsconfig.minha-baixa-test.json && node scripts/resolve-aliases.mjs .tmp-minha-baixa lib --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-minha-baixa utils --espelha-raiz && node scripts/resolve-next-subpaths.mjs .tmp-minha-baixa && node scripts/monta-duble-de-rota.mjs .tmp-minha-baixa && node --test scripts/test-minha-baixa.mjs",
+    "test:conta-de-grupo-na-tela": "node scripts/compila.mjs -p scripts/tsconfig.conta-de-grupo-na-tela-test.json && node --test scripts/test-conta-de-grupo-na-tela.mjs",
+    "check-conta-de-grupo-na-agenda": "node scripts/check-conta-de-grupo-na-agenda.mjs",
+    "check-as-oito-leituras": "node scripts/check-as-oito-leituras.mjs",
+    "test:conta-de-grupo-na-agenda": "node scripts/compila.mjs lib/conta-de-grupo-na-agenda.ts --outDir .tmp-conta-de-grupo-na-agenda/lib --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-conta-de-grupo-na-agenda.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

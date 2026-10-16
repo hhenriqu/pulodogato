@@ -644,6 +644,95 @@ function consulta(
       });
     },
     /**
+     * `upsert` entrou na HMO-411, e a falta tinha a mesma cara das outras:
+     * `api.upsert is not a function` se le como rota quebrada.
+     *
+     * ELE HONRA O `onConflict`, E ISSO E O PONTO -- NAO E DETALHE DE FIDELIDADE
+     * -----------------------------------------------------------------------
+     * Um upsert de duble que so empilhasse a linha nova passaria verde com a
+     * rota mandando o arbitro ERRADO, e o defeito que isso esconde e caro: no
+     * banco de verdade, `onConflict` que nao casa com uma constraint UNIQUE
+     * existente nao e ignorado -- o insert estoura com chave duplicada na
+     * segunda vez que a pessoa toca o botao. `ON CONFLICT` tambem nao e
+     * arbitrado por indice PARCIAL, e esse e o erro vizinho.
+     *
+     * Entao aqui a chave e lida de `onConflict`, as colunas sao comparadas
+     * contra as linhas ja semeadas, e o caso "achou" vira UPDATE no lugar --
+     * e e isso que torna a assercao "o segundo toque nao cria linha nova"
+     * capaz de reprovar alguma coisa.
+     *
+     * SEM `onConflict` o comportamento e o do cliente de verdade: insert puro,
+     * que num conflito real seria erro de chave. O duble nao simula o erro --
+     * ele nao conhece as constraints --, mas tambem nao finge que deu certo
+     * por um caminho que o banco nao tem.
+     */
+    upsert(payload, opcoes = {}) {
+      const propostas = Array.isArray(payload) ? payload : [payload];
+      const chave = String(opcoes.onConflict ?? "")
+        .split(",")
+        .map((c) => c.trim())
+        .filter(Boolean);
+
+      const novas = [];
+      const atualizadas = [];
+
+      for (const proposta of propostas) {
+        const existente = chave.length
+          ? linhas.find((l) => chave.every((c) => l[c] === proposta[c]))
+          : undefined;
+
+        if (existente) {
+          Object.assign(existente, proposta);
+          atualizadas.push(existente);
+        } else {
+          novas.push(proposta);
+        }
+      }
+
+      // O REGISTRO SEPARA OS DOIS CAMINHOS. Uma sonda que conte "upsert" sem
+      // distinguir insert de update nao consegue afirmar "o segundo toque nao
+      // criou linha nova", que e justamente a pergunta.
+      if (atualizadas.length) {
+        escrever({
+          tabela,
+          verbo: "upsert-update",
+          linhas: atualizadas.map((l) => ({ ...l })),
+          descartadas: [],
+        });
+        registro(tabela, filtros, "upsert-update");
+      }
+
+      if (novas.length) {
+        const gravadas = novas.map((proposta) => ({
+          id: `${tabela}-${proximoNaSequencia()}`,
+          ...proposta,
+        }));
+        escrever({
+          tabela,
+          verbo: "upsert-insert",
+          linhas: gravadas.map((l) => ({ ...l })),
+          descartadas: [],
+        });
+        registro(tabela, filtros, "upsert-insert");
+        linhas.push(...gravadas);
+      }
+
+      const resultado = [...atualizadas, ...linhas.slice(-novas.length || 0)];
+
+      return {
+        select: () => ({
+          single: () =>
+            Promise.resolve({ data: resultado[0] ?? null, error: null }),
+          maybeSingle: () =>
+            Promise.resolve({ data: resultado[0] ?? null, error: null }),
+          then: (res, rej) =>
+            Promise.resolve({ data: resultado, error: null }).then(res, rej),
+        }),
+        then: (res, rej) =>
+          Promise.resolve({ data: resultado, error: null }).then(res, rej),
+      };
+    },
+    /**
      * `delete` faltava inteiro (HMO-356), e a falta nao aparecia como duble
      * incompleto: `api.delete is not a function` no meio de uma sonda de rota se
      * le como rota quebrada. Ele e necessario para medir CAMINHO DE COMPENSACAO

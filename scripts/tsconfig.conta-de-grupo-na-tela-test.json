@@ -1,0 +1,48 @@
+{
+  "//": [
+    "A LINHA DA CONTA DE GRUPO EM CONTAS A PAGAR -- sonda de navegador (HMO-411).",
+    "",
+    "O include lista as RAIZES; o tsc puxa sozinho o que elas importam.",
+    "",
+    "`jsx: react` (classico, `React.createElement`) e NAO `react-jsx`: o",
+    "automatico emite `import { jsx as _jsx } from \"react/jsx-runtime\"`, e a",
+    "sonda roda o .js como SCRIPT CLASSICO com os imports tirados -- `_jsx`",
+    "ficaria undefined e o render morreria na primeira tag. E o mesmo ajuste",
+    "das outras sondas de navegador deste repositorio.",
+    "",
+    "`allowUmdGlobalAccess` vem junto por consequencia: com `jsx: react` o tsc",
+    "passa a tratar como TS2686 todo componente que nao importa React -- e",
+    "nenhum deles importa, porque o Next nao exige. A alternativa era um",
+    "`import * as React` drive-by em componente que ja tem suite propria, por",
+    "uma opcao que so vale neste tsconfig.",
+    "",
+    "`lib/utils.ts` NAO entra: ela importa `clsx` e `tailwind-merge`, que nao",
+    "existem como script classico. A sonda esboca o `cn`, que e calculo de",
+    "string.",
+    "",
+    "A PAGINA DE 1.600 LINHAS NAO ENTRA, e isso e deliberado -- ver o cabecalho",
+    "do .mjs. O que a sonda mede e a LINHA; quem mede o DESPACHO (o galho da",
+    "`Secao` que manda a conta de grupo para ca em vez de para a `Linha` comum)",
+    "e scripts/check-conta-de-grupo-na-agenda.mjs, pela mesma divisao de",
+    "trabalho que a HMO-386 usou nesta mesma tela."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "jsx": "react",
+    "allowUmdGlobalAccess": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-conta-de-grupo-na-tela",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../components/grupos/LinhaDaContaDoGrupo.tsx",
+    "../components/ui/button.tsx",
+    "../components/ui/badge.tsx"
+  ]
+}

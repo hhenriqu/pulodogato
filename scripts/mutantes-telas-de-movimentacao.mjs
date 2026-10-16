@@ -103,7 +103,7 @@ const MUTANTES = [
     porque:
       "a conta prevista com baixa entra junto com a transacao que ela gerou -- " +
       "a internet de R$ 159,90 vira R$ 319,80 no mes em que foi paga",
-    de: "  if (STATUS_QUE_SAI_DO_PREVISTO.has(String(crua.status))) return null;",
+    de: "  if (STATUS_QUE_SAI_DO_PREVISTO.has(String(crua.my_status))) return null;",
     para: "  if (false) return null;",
   },
   {

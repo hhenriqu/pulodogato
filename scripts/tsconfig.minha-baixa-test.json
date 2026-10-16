@@ -1,0 +1,47 @@
+{
+  "//": [
+    "O GESTO DO MEMBRO E O ESTADO POR MEMBRO -- HMO-411.",
+    "",
+    "DUAS rotas no `include`, e as duas estao aqui de proposito -- uma ESCREVE o",
+    "estado da pessoa e a outra o LE, e nenhuma prova a outra:",
+    "",
+    "  * app/api/scheduled-transactions/[id]/minha-baixa/route.ts -- o gesto. E",
+    "    aqui que se mede a decisao D1 (so o status, NENHUM lancamento: gravar um",
+    "    contaria a parte do membro duas vezes, porque a trigger do rateio ja a",
+    "    realizou), o arbitro do `ON CONFLICT` e a recusa da conta propria;",
+    "  * app/api/expense-groups/[groupId]/scheduled/route.ts -- o LEITOR. Sem ele",
+    "    o `reported` e dado sem leitor, que nesta base e o mesmo que nao existir,",
+    "    e a feature passaria verde com ninguem vendo nada. E e tambem onde se",
+    "    mede que a rota NAO inventa 'Ana pendente' para quem a RLS escondeu.",
+    "",
+    "POR QUE AS ROTAS, E NAO SO AS FUNCOES PURAS",
+    "A promessa desta issue e sobre o que as rotas ESCREVEM e DEVOLVEM. A parte",
+    "pura (`ehContaDeGrupoDeOutro`, `estadoDaMinhaParte`) tem suite propria em",
+    "test-conta-de-grupo-na-agenda.mjs, e ela passaria verde com as duas rotas",
+    "aqui sem chamar nenhuma das duas.",
+    "",
+    "`rootDir` e a raiz do projeto: as rotas importam @/lib e @/utils, e com",
+    "rootDir em app/ o tsc reprova com TS6059. O emit espelha a raiz, entao o",
+    "passo do resolve-aliases roda com --espelha-raiz.",
+    "",
+    "utils/supabase/server.ts e compilado junto e DEPOIS sobrescrito pelo",
+    "scripts/monta-duble-de-rota.mjs -- o modulo real importa `next/headers`, que",
+    "nao roda fora do runtime do Next."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-minha-baixa",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../app/api/scheduled-transactions/[id]/minha-baixa/route.ts",
+    "../app/api/expense-groups/[groupId]/scheduled/route.ts"
+  ]
+}
