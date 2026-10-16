@@ -285,6 +285,34 @@ export type AjusteAutomatico =
   | { ok: false; erro: string };
 
 /**
+ * As duas recusas desta conta que PRECISAM nomear o que o usuario esta olhando.
+ *
+ * As outras duas ("alto demais") falam de um limite de coluna e servem igual em
+ * qualquer tela. Estas duas nao: elas apontam o campo vazio e a base que nao deu
+ * para ler, e os dois tem nome diferente no cartao e na conta corrente.
+ *
+ * EXISTE PORQUE A ARITMETICA E A MESMA E O VOCABULARIO NAO (HMO-409). O ajuste
+ * de saldo da CONTA (lib/ajuste-de-saldo-da-conta.ts) chama esta funcao -- a
+ * subtracao em centavos, o teto e o `fecha: true` sao identicos, e uma segunda
+ * copia divergiria no caso que ninguem testa. Mas "Informe quanto o cartão diz
+ * hoje" numa tela de conta corrente e uma frase errada, e o tipo de erro que
+ * ninguem abre issue para consertar: o usuario le "cartão", nao entende, e
+ * desiste do ajuste.
+ */
+export interface TextosDoAjuste {
+  /** Nao deu para ler o que a pessoa digitou (campo vazio, texto, NaN). */
+  semValorDigitado: string;
+  /** Nao deu para ler a base com que comparar (a fatura, ou o saldo). */
+  semBaseParaComparar: string;
+}
+
+/** O vocabulario do cartao -- o padrao, porque foi ele que nasceu aqui. */
+export const TEXTOS_DO_AJUSTE_DA_FATURA: TextosDoAjuste = {
+  semValorDigitado: "Informe quanto o cartão diz hoje",
+  semBaseParaComparar: "Não foi possível ler o total desta fatura para comparar",
+};
+
+/**
  * O saldo real informado + o total da fatura -> o ajuste que faz os dois baterem.
  *
  * O `totalSemAjuste` E O TOTAL SEM AJUSTE NENHUM, e nao o total que esta na
@@ -298,10 +326,14 @@ export type AjusteAutomatico =
 export function ajusteParaFecharEm(params: {
   saldoReal: unknown;
   totalSemAjuste: unknown;
+  /** O vocabulario das duas recusas. Omitido, fala do cartao. */
+  textos?: TextosDoAjuste;
 }): AjusteAutomatico {
+  const textos = params.textos ?? TEXTOS_DO_AJUSTE_DA_FATURA;
+
   const centavosDoSaldo = centavosDe(params.saldoReal);
   if (centavosDoSaldo === null) {
-    return { ok: false, erro: "Informe quanto o cartão diz hoje" };
+    return { ok: false, erro: textos.semValorDigitado };
   }
 
   // Armadilha 3: sem o total da fatura nao ha subtracao possivel, e a recusa
@@ -310,7 +342,7 @@ export function ajusteParaFecharEm(params: {
   if (centavosDaFatura === null) {
     return {
       ok: false,
-      erro: "Não foi possível ler o total desta fatura para comparar",
+      erro: textos.semBaseParaComparar,
     };
   }
 

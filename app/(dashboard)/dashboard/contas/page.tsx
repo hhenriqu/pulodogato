@@ -22,6 +22,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -36,7 +37,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Archive, CreditCard, Loader2, Pencil, Plus, Wallet } from "lucide-react";
+import {
+  Archive,
+  CreditCard,
+  Loader2,
+  Pencil,
+  Plus,
+  Scale,
+  Wallet,
+} from "lucide-react";
 import type { FinancialAccount } from "@/types/financial";
 import {
   porTipo,
@@ -47,9 +56,11 @@ import {
 } from "@/lib/contas";
 import { CamposDaConta } from "@/components/contas/CamposDaConta";
 import { ContasArquivadas } from "@/components/contas/ContasArquivadas";
+import { AjusteDeSaldoDaConta } from "@/components/contas/AjusteDeSaldoDaConta";
 import { iconeDoTipo } from "@/components/contas/icone-da-conta";
 import { useContas } from "@/lib/hooks/useContas";
 import { formatarValor } from "@/lib/dinheiro";
+import { diaLocalDe } from "@/lib/ajuste-de-saldo-da-conta";
 import {
   podeAfirmarVazio,
   podeMostrarNumero,
@@ -88,6 +99,176 @@ export default function ContasPage() {
 
   // Saldo com SINAL: uma conta no vermelho tem que puxar o total para baixo.
   const saldo = useMemo(() => totalDoEscopo(ativas, "conta"), [ativas]);
+
+  // -----------------------------------------------------------------------
+  // O AJUSTE DE SALDO DA CONTA: A FIACAO (HMO-409)
+  // -----------------------------------------------------------------------
+  // Mora aqui porque `AjusteDeSaldoDaConta` nao tem rede -- ele so chama
+  // handlers. Ver o cabecalho dele.
+  const [contaEmAjuste, setContaEmAjuste] = useState<FinancialAccount | null>(
+    null
+  );
+  const [diaDoAjuste, setDiaDoAjuste] = useState("");
+  const [conferindoAjuste, setConferindoAjuste] = useState(false);
+  /** O GET respondeu? Enquanto for `false`, o bloco nao afirma nem oferece nada. */
+  const [podeConferirAjuste, setPodeConferirAjuste] = useState(false);
+  const [valorDoAjuste, setValorDoAjuste] = useState<number | null>(null);
+  const [saldoSemAjuste, setSaldoSemAjuste] = useState<number | null>(null);
+  const [saldoRealDaConta, setSaldoRealDaConta] = useState("");
+  const [descricaoDoAjuste, setDescricaoDoAjuste] = useState("");
+  const [salvandoAjuste, setSalvandoAjuste] = useState(false);
+
+  /**
+   * Abre o dialogo e pergunta ao servidor o que ja existe NAQUELE DIA.
+   *
+   * O CAMPO DE SALDO NASCE VAZIO. Preenche-lo com `current_balance` seria o
+   * default obvio e colapsaria a feature: o campo ja viria com o numero que faz
+   * a diferenca ser zero, e quem clicasse Salvar sem digitar REMOVERIA o ajuste
+   * que estava valendo. O saldo real e o unico dado que so a pessoa tem.
+   *
+   * A DESCRICAO, sim, reabre com a que esta gravada: ela e texto do usuario, e
+   * perde-la a cada alteracao obrigaria a redigitar o motivo do ajuste.
+   */
+  async function abrirAjuste(conta: FinancialAccount) {
+    // O DIA SAI DO RELOGIO DO APARELHO. A chave canonica e a data do lancamento
+    // sao "o dia em que a pessoa conferiu o saldo", e esse e o dia dela.
+    // `diaLocalDe` le getFullYear/getMonth/getDate; `hojeISO()` de
+    // lib/lancamento.ts corta a ISO, que e UTC, e das 21h em diante em Sao Paulo
+    // dataria o ajuste em AMANHA -- uma chave de um dia que nao chegou, e um
+    // ajuste a mais quando a pessoa conferisse de novo pela manha.
+    const dia = diaLocalDe(new Date());
+
+    setContaEmAjuste(conta);
+    setDiaDoAjuste(dia);
+    setSaldoRealDaConta("");
+    setDescricaoDoAjuste("");
+    setValorDoAjuste(null);
+    setSaldoSemAjuste(null);
+    setPodeConferirAjuste(false);
+    setConferindoAjuste(true);
+
+    try {
+      const resposta = await fetch(
+        `/api/financial-accounts/ajuste?account_id=${encodeURIComponent(
+          conta.id
+        )}&data=${dia}`
+      );
+      const dados = await resposta.json().catch(() => ({}));
+
+      if (!resposta.ok) {
+        toast.error(
+          dados.error ||
+            `Não foi possível conferir o ajuste (HTTP ${resposta.status}).`
+        );
+        return;
+      }
+
+      setValorDoAjuste(dados.ajuste ? Number(dados.ajuste.amount) : null);
+      setSaldoSemAjuste(Number(dados.saldo_sem_ajuste));
+      setDescricaoDoAjuste(dados.ajuste?.description ?? "");
+      // POR ULTIMO, e so no caminho de sucesso: e este `true` que autoriza o
+      // bloco a dizer "esta conta não tem ajuste" e a oferecer o formulario.
+      setPodeConferirAjuste(true);
+    } catch (erro) {
+      console.error("Erro ao conferir o ajuste de saldo:", erro);
+      toast.error("Não foi possível conferir o ajuste desta conta");
+    } finally {
+      setConferindoAjuste(false);
+    }
+  }
+
+  async function salvarAjuste() {
+    if (!contaEmAjuste) return;
+    setSalvandoAjuste(true);
+    try {
+      const resposta = await fetch("/api/financial-accounts/ajuste", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          account_id: contaEmAjuste.id,
+          data: diaDoAjuste,
+          // O UNICO DADO QUE A TELA MANDA: quanto a conta mostra hoje. A
+          // diferenca e a direcao saem do servidor, sobre o saldo lido na hora
+          // -- mandar a diferenca daqui a calcularia sobre o saldo que esta na
+          // tela, que pode ter ficado velho (ver o cabecalho da rota).
+          saldo_real: saldoRealDaConta,
+          descricao: descricaoDoAjuste,
+        }),
+      });
+      const dados = await resposta.json().catch(() => ({}));
+
+      if (!resposta.ok) {
+        toast.error(
+          dados.error || `O ajuste foi recusado (HTTP ${resposta.status}).`
+        );
+        return;
+      }
+
+      // TRES DESFECHOS, TRES FRASES. A rota distingue "lancou a diferenca", "o
+      // saldo ja batia e o ajuste saiu" e "o saldo ja batia e nao havia
+      // ajuste"; um unico "Ajuste gravado" diria que gravou dinheiro nos dois
+      // casos em que ela nao gravou nada -- inclusive no que ela APAGOU uma
+      // linha.
+      if (dados.fecha) {
+        toast.success(
+          dados.removido
+            ? "O saldo já é esse — o ajuste anterior foi removido"
+            : "O saldo já é esse — nada a ajustar"
+        );
+      } else {
+        const diferenca = Number(dados.diferenca);
+        toast.success(
+          Number.isFinite(diferenca)
+            ? `Ajuste de ${formatarValor(
+                Math.abs(diferenca),
+                contaEmAjuste.currency ?? undefined
+              )} ${diferenca > 0 ? "lançado como entrada" : "lançado como saída"}`
+            : "Ajuste de saldo gravado"
+        );
+      }
+
+      setContaEmAjuste(null);
+      // Recarrega a lista em vez de remendar o saldo na memoria: `current_balance`
+      // e mantido por trigger, e um remendo aqui seria uma segunda conta do
+      // mesmo numero -- livre para divergir do banco sem nada ficar vermelho.
+      carregar();
+    } catch (erro) {
+      console.error("Erro ao gravar o ajuste de saldo:", erro);
+      toast.error("Erro ao gravar o ajuste de saldo");
+    } finally {
+      setSalvandoAjuste(false);
+    }
+  }
+
+  async function removerAjuste() {
+    if (!contaEmAjuste) return;
+    setSalvandoAjuste(true);
+    try {
+      const resposta = await fetch(
+        `/api/financial-accounts/ajuste?account_id=${encodeURIComponent(
+          contaEmAjuste.id
+        )}&data=${diaDoAjuste}`,
+        { method: "DELETE" }
+      );
+      const dados = await resposta.json().catch(() => ({}));
+
+      if (!resposta.ok) {
+        toast.error(
+          dados.error || `Não foi possível remover (HTTP ${resposta.status}).`
+        );
+        return;
+      }
+
+      toast.success("Ajuste de saldo removido");
+      setContaEmAjuste(null);
+      carregar();
+    } catch (erro) {
+      console.error("Erro ao remover o ajuste de saldo:", erro);
+      toast.error("Erro ao remover o ajuste de saldo");
+    } finally {
+      setSalvandoAjuste(false);
+    }
+  }
 
   function abrirNovo() {
     setForm(valoresIniciais("conta", preferenciaDeMoeda.oficial));
@@ -255,6 +436,23 @@ export default function ContasPage() {
                           <Pencil className="mr-1 h-3 w-3" />
                           Editar
                         </Button>
+                        {/* O AJUSTE E ACAO DE LINHA, e nao campo do dialogo de
+                            edicao: a lista de Contas nao tem pagina de detalhe,
+                            e o formulario de edicao grava cadastro (nome, tipo,
+                            banco) -- um campo de saldo no meio dele pareceria
+                            cadastro tambem, e "corrigir o saldo" nao e editar a
+                            conta: e lancar um movimento datado. Precisa de rede
+                            na abertura (o GET do ajuste do dia), entao fica
+                            apagado sem ela, como o botao de nova conta. */}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => abrirAjuste(conta)}
+                          disabled={!online}
+                        >
+                          <Scale className="mr-1 h-3 w-3" />
+                          Ajustar saldo
+                        </Button>
                         <Button
                           size="sm"
                           variant="ghost"
@@ -294,6 +492,50 @@ export default function ContasPage() {
           </Card>
         </>
       )}
+
+      {/* O DIALOGO DO AJUSTE. O `<Dialog>` fica aqui e nao dentro do
+          componente, para o teste poder renderizar o formulario de verdade com
+          `react-dom/server` -- o `DialogContent` do Radix vive atras de um
+          portal e nao sai no HTML do servidor. */}
+      <Dialog
+        open={contaEmAjuste !== null}
+        onOpenChange={(aberta) => {
+          if (!aberta) setContaEmAjuste(null);
+        }}
+      >
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              Ajustar saldo{contaEmAjuste ? ` · ${contaEmAjuste.name}` : ""}
+            </DialogTitle>
+          </DialogHeader>
+
+          {contaEmAjuste &&
+            (conferindoAjuste ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-5 w-5 animate-spin text-info" />
+              </div>
+            ) : (
+              <AjusteDeSaldoDaConta
+                nomeDaConta={contaEmAjuste.name}
+                data={diaDoAjuste}
+                moeda={contaEmAjuste.currency ?? undefined}
+                estado={estado}
+                podeConferir={podeConferirAjuste}
+                valorAtual={valorDoAjuste}
+                saldoSemAjuste={saldoSemAjuste}
+                saldoReal={saldoRealDaConta}
+                descricao={descricaoDoAjuste}
+                salvando={salvandoAjuste}
+                aoMudarSaldoReal={setSaldoRealDaConta}
+                aoMudarDescricao={setDescricaoDoAjuste}
+                aoSalvar={salvarAjuste}
+                aoRemover={removerAjuste}
+                aoFechar={() => setContaEmAjuste(null)}
+              />
+            ))}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={aberto} onOpenChange={setAberto}>
         <DialogContent className="max-h-[90vh] overflow-y-auto">
