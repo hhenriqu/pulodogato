@@ -782,9 +782,15 @@ test("dezembro nao vira janeiro do ano seguinte", () => {
   assert.equal(fimDoMes("2026-12-05"), "2026-12-31");
 });
 
-test("usuario novo, com as quatro contas zeradas, ve zero e nao NaN", () => {
-  // `create_default_accounts` cria quatro contas zeradas no cadastro. Sem
-  // guarda de divisao, a tela imprimiria NaN no primeiro acesso de todo mundo.
+test("usuario novo, com as contas zeradas, ve zero e nao NaN", () => {
+  // `create_default_accounts` cria contas zeradas no cadastro -- duas desde a
+  // 056 (Conta Corrente e Dinheiro). Sem guarda de divisao, a tela imprimiria
+  // NaN no primeiro acesso de todo mundo.
+  //
+  // As quatro contas abaixo NUNCA foram as contas padrao, nem antes da 056:
+  // `savings` e `investment` nao estao entre as que a funcao cria. O que este
+  // caso mede e "toda conta em zero", e as quatro cobrem as quatro classes que
+  // o calculo trata de forma diferente -- por isso o fixture fica como esta.
   const r = calcularQuantoPossoGastar({
     contas: [
       corrente(0),

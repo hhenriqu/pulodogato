@@ -33,9 +33,11 @@
 //      R$ 500; dividir por ele devolveria "investimentos = 2000% da carteira".
 //      Com patrimonio negativo o divisor troca de sinal e TODA a composicao
 //      aparece invertida, sem erro nenhum na tela.
-//   3. DIVISAO POR ZERO. Usuario novo tem as quatro contas padrao zeradas
-//      (`create_default_accounts`). Sem guarda, cada percentual vira NaN e a
-//      tela imprime "NaN%" em quatro tiles.
+//   3. DIVISAO POR ZERO. Usuario novo tem as contas padrao zeradas
+//      (`create_default_accounts`, que desde a 056 cria DUAS: Conta Corrente e
+//      Dinheiro). Sem guarda, cada percentual vira NaN e a tela imprime "NaN%"
+//      em todos os tiles. A guarda nao depende de QUANTAS contas sao: o que
+//      zera o divisor e o total de ativos, e ele da zero com duas ou com dez.
 //   4. VARIACAO COMPARANDO COM ZERO. O primeiro mes da janela nao tem mes
 //      anterior. Tratar o ausente como zero faz a variacao do primeiro mes ser
 //      o patrimonio inteiro -- um salto que nunca aconteceu, no grafico que

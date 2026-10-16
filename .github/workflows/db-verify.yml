@@ -3579,8 +3579,11 @@ jobs:
       #     ativos: quem tem R$ 10.000 aplicados e R$ 9.500 de fatura aparece
       #     com "investimentos = 2000% da carteira", e com patrimonio negativo
       #     a barra inteira sai invertida;
-      #   - usuario novo tem as quatro contas padrao zeradas, e sem guarda de
-      #     divisao por zero a tela imprime NaN% em quatro tiles.
+      #   - usuario novo tem as contas padrao zeradas (DUAS desde a 056), e sem
+      #     guarda de divisao por zero a tela imprime NaN% em todos os tiles. O
+      #     fixture do teste segue com quatro contas de proposito: ele tem que
+      #     valer tambem para quem se cadastrou antes da 056 e ficou com Cartao
+      #     de Credito e PIX.
       - name: Consolidacao do patrimonio liquido
         run: npm run test:net-worth
 
@@ -4635,3 +4638,67 @@ jobs:
             exit 1
           fi
           echo "merge restaurou por cima das contas existentes sem duplicar nada ($contas conta(s))."
+
+      # =====================================================================
+      # HMO-412 -- A CONTA PADRAO DO USUARIO NOVO (056)
+      # =====================================================================
+      # O BLOCO INTEIRO FICA NO FIM DO JOB, e nao na posicao "natural" logo
+      # depois da 054, por tres razoes:
+      #
+      #   1. a 055 ("group_bill_payments", a irma desta mesma issue) esta sendo
+      #      escrita em paralelo e vai se inserir depois da 054. Os dois blocos
+      #      no mesmo ponto do arquivo colidiriam textualmente, num conflito que
+      #      so existe por causa do lugar;
+      #
+      #   2. a 056 e INERTE para toda suite acima. Ela troca o corpo de
+      #      `create_default_accounts`, que nenhum teste da cadeia chama -- o
+      #      unico chamador no repositorio e o GET /api/financial-accounts. A
+      #      cadeia 001 -> 054 que os outros steps exercitam fica BYTE A BYTE a
+      #      mesma, entao mover este bloco para ca nao muda nenhum outro step;
+      #
+      #   3. o passo de fixture abaixo COMITA (precisa comitar, ver o cabecalho
+      #      dele). Aqui no fim, depois de toda suite que conta linhas, plantar
+      #      dado que sobrevive a transacao nao alcanca mais ninguem -- que e
+      #      exatamente a armadilha que o `027_historico_antes_da_027.sql` ja
+      #      pagou uma vez, derrubando o `view_security_invoker_test.sql` com
+      #      uma mensagem sobre RLS.
+      #
+      # A fixture vem ANTES da migration de proposito. A HMO-412 decidiu que
+      # NAO HA BACKFILL -- quem ja tem uma conta PIX ou um cartao continua com
+      # eles, porque apagar conta existente apagaria lancamento junto. Num banco
+      # construido do zero essa metade da decisao nao e mensuravel: quando a 056
+      # roda, nao existe conta PIX nenhuma para um backfill morder. MEDIDO num
+      # Postgres 17 local: sem esta fixture, o mutante que acrescenta
+      # `DELETE ... WHERE account_type IN ('credit_card','digital')
+      #  AND NOT EXISTS (lancamento)` a 056 SOBREVIVE a suite inteira.
+      - name: Contas plantadas ANTES da 056 (a fixture do "sem backfill")
+        run: $PSQL -f database/tests/056_contas_antes_da_056.sql
+
+      - name: 056_conta_padrao_do_usuario_novo
+        run: $PSQL -f database/migrations/056_conta_padrao_do_usuario_novo.sql
+
+      # Re-executavel: a 056 e so CREATE OR REPLACE FUNCTION mais um COMMENT.
+      # Nao ha ALTER de tabela, CHECK novo nem backfill, entao o re-run nao
+      # precisa de guarda.
+      - name: 056 e idempotente
+        run: $PSQL -f database/migrations/056_conta_padrao_do_usuario_novo.sql
+
+      # A armadilha deste arquivo, e o motivo de ele afirmar o CONJUNTO das
+      # duas contas em vez de "o PIX sumiu": `count(*) WHERE name = 'PIX'` da
+      # ZERO por quatro razoes diferentes, e so uma delas e a feature -- a 056
+      # funcionou, a funcao nao rodou, a funcao rodou e nao inseriu nada, ou a
+      # guarda de "ja tem conta" abortou cedo. As quatro passam numa assercao
+      # de ausencia; nenhuma passa numa que exige DUAS linhas com ESTES dois
+      # nomes.
+      #
+      # 15 mutantes medidos num Postgres 17 local antes deste step entrar
+      # (banco TEMPLATE parando na 054 mais a fixture, um banco novo por
+      # mutante): os 15 morrem e o controle positivo fica verde. Entre eles, o
+      # que devolve o PIX, o que devolve o cartao, o que troca os atributos das
+      # duas mantendo os nomes, o que apaga a guarda de "ja tem conta" (que a
+      # secao 1 sozinha NAO pega -- ela roda num usuario limpo), o que deixa a
+      # funcao com assinatura nova e duas versoes vivas em `pg_proc`, e os dois
+      # backfills de "limpeza". Controle negativo: num banco que para na 054
+      # este arquivo fica vermelho com "esperado 2, obtido 4".
+      - name: O usuario novo recebe SO Conta Corrente e Dinheiro
+        run: $PSQL -f database/tests/056_conta_padrao_do_usuario_novo_test.sql
