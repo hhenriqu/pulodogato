@@ -172,10 +172,18 @@ export async function GET(request: NextRequest) {
     // `eloDesfazivel` em lib/elo-da-fatura.ts. Sem esta coluna, `elo_da_fatura`
     // sai `null` em toda linha: o rotulo de "ligada à fatura" desaparece e o
     // caminho de volta sai da tela, sem que numero nenhum mude.
+    //
+    // `my_status` NO LUGAR DE `status` (HMO-411, leitura 5 de 8) -- o porque
+    // completo esta no cabecalho de app/api/scheduled-transactions/route.ts.
+    // Esta leitura NAO filtra `user_id` de proposito (a RLS entrega a linha de
+    // grupo do outro membro, e o painel a soma pela minha parte), entao ate
+    // agora `STATUS_FORA_DO_PREVISTO` era conferido contra o estado do DONO: a
+    // conta que o Helio pagou saia do previsto da Lais sem que ela tivesse
+    // resolvido a parte dela.
     const { data: linhasBrutas, error } = await supabase
       .from("scheduled_transactions_effective")
       .select(
-        "id, due_date, description, amount, status, direction, category_id, group_id, user_id, notes, account_id, account:financial_accounts(account_type)"
+        "id, due_date, description, amount, my_status, direction, category_id, group_id, user_id, notes, account_id, account:financial_accounts(account_type)"
       )
       .gte("due_date", janela.de)
       .lte("due_date", janela.ate);

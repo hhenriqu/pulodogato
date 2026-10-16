@@ -128,7 +128,7 @@ const LINHAS_DO_PAR = [
     user_id: EU,
     due_date: "2026-03-05",
     amount: 7000,
-    status: "pending",
+    my_status: "pending",
     direction: "income",
     category_id: SALARIO,
     group_id: null,
@@ -139,7 +139,7 @@ const LINHAS_DO_PAR = [
     user_id: EU,
     due_date: "2026-03-20",
     amount: 2000,
-    status: "pending",
+    my_status: "pending",
     direction: "expense",
     category_id: SERVICOS,
     group_id: null,
@@ -160,7 +160,7 @@ const LINHAS = [
     user_id: EU,
     due_date: "2026-03-10",
     amount: 2500,
-    status: "pending",
+    my_status: "pending",
     direction: "income",
     category_id: MORADIA,
     group_id: null,
@@ -173,7 +173,7 @@ const LINHAS = [
     user_id: EU,
     due_date: "2026-03-20",
     amount: 180.5,
-    status: "pending",
+    my_status: "pending",
     direction: "expense",
     category_id: SERVICOS,
     group_id: null,
@@ -187,7 +187,7 @@ const LINHAS = [
     user_id: EU,
     due_date: "2026-03-08",
     amount: 2000,
-    status: "paid",
+    my_status: "paid",
     direction: "expense",
     category_id: MORADIA,
     group_id: null,
@@ -200,7 +200,7 @@ const LINHAS = [
     user_id: EU,
     due_date: "2026-03-12",
     amount: 99,
-    status: "cancelled",
+    my_status: "cancelled",
     direction: "expense",
     category_id: SERVICOS,
     group_id: null,
@@ -211,7 +211,7 @@ const LINHAS = [
     user_id: EU,
     due_date: "2026-03-13",
     amount: 49,
-    status: "skipped",
+    my_status: "skipped",
     direction: "expense",
     category_id: SERVICOS,
     group_id: null,
@@ -225,7 +225,7 @@ const LINHAS = [
     user_id: EU,
     due_date: "2026-03-22",
     amount: -300,
-    status: "pending",
+    my_status: "pending",
     direction: "expense",
     category_id: SERVICOS,
     group_id: null,
@@ -238,7 +238,7 @@ const LINHAS = [
     user_id: OUTRO,
     due_date: "2026-03-28",
     amount: 3000,
-    status: "pending",
+    my_status: "pending",
     direction: "expense",
     category_id: MORADIA,
     group_id: GRUPO_CASA,
@@ -253,7 +253,7 @@ const LINHAS = [
     user_id: EU,
     due_date: "2026-04-05",
     amount: 7000,
-    status: "pending",
+    my_status: "pending",
     direction: "income",
     category_id: SALARIO,
     group_id: null,
@@ -264,7 +264,7 @@ const LINHAS = [
     user_id: EU,
     due_date: "2026-02-05",
     amount: 7000,
-    status: "pending",
+    my_status: "pending",
     direction: "income",
     category_id: SALARIO,
     group_id: null,
@@ -277,7 +277,7 @@ const LINHAS = [
     user_id: EU,
     due_date: "2026-02-20",
     amount: 1234.56,
-    status: "pending",
+    my_status: "pending",
     direction: "expense",
     category_id: SERVICOS,
     group_id: null,
@@ -307,7 +307,7 @@ const FATURA_ABERTA = {
   description: "Fatura Nubank 03/2026",
   amount: 820.4,
   due_date: "2026-03-25",
-  status: "pending",
+  my_status: "pending",
   direction: "expense",
   group_id: null,
   category_id: null,
@@ -751,7 +751,7 @@ test("O recorte do mes: os dois extremos da janela ENTRAM", () => {
     {
       due_date: "2026-03-01",
       amount: 10,
-      status: "pending",
+      my_status: "pending",
       direction: "expense",
       category_id: SERVICOS,
       group_id: null,
@@ -759,7 +759,7 @@ test("O recorte do mes: os dois extremos da janela ENTRAM", () => {
     {
       due_date: "2026-03-31",
       amount: 5,
-      status: "pending",
+      my_status: "pending",
       direction: "expense",
       category_id: SERVICOS,
       group_id: null,
@@ -972,7 +972,7 @@ test("O filtro de categoria: mais de um id de salario conta (catalogo + a propri
     {
       due_date: "2026-03-25",
       amount: 1200,
-      status: "pending",
+      my_status: "pending",
       direction: "income",
       category_id: MEU_SALARIO,
       group_id: null,
@@ -996,7 +996,7 @@ test("O filtro de categoria: linha sem category_id nunca cai no salario", () => 
     {
       due_date: "2026-03-10",
       amount: 450,
-      status: "pending",
+      my_status: "pending",
       direction: "expense",
       notes: "fatura:2026-03",
     },
@@ -1045,7 +1045,7 @@ test("O caso vazio: catalogo sem a categoria Salario -> indisponivel, nao zero",
 
 test("O caso vazio: todas as linhas do mes canceladas -> indisponivel", () => {
   const canceladas = LINHAS.filter((l) => l.due_date.startsWith("2026-03")).map(
-    (l) => ({ ...l, status: "cancelled" })
+    (l) => ({ ...l, my_status: "cancelled" })
   );
 
   const painel = painelDePapel(canceladas, ctx);
@@ -1073,22 +1073,22 @@ test("'paid' fica DENTRO do previsto; 'skipped' e 'cancelled' saem", () => {
     group_id: null,
   };
 
-  const paga = painelDePapel([{ ...base, amount: 100, status: "paid" }], ctx);
+  const paga = painelDePapel([{ ...base, amount: 100, my_status: "paid" }], ctx);
   assert.deepEqual(soNumero(paga.total_de_contas), { total: 100, quantidade: 1 });
 
-  for (const status of ["skipped", "cancelled"]) {
-    const fora = painelDePapel([{ ...base, amount: 100, status }], ctx);
+  for (const my_status of ["skipped", "cancelled"]) {
+    const fora = painelDePapel([{ ...base, amount: 100, my_status }], ctx);
     assert.deepEqual(
       soNumero(fora.total_de_contas),
       { total: null, quantidade: 0 },
-      `status ${status} deveria sair do previsto`
+      `my_status ${my_status} deveria sair do previsto`
     );
   }
 
   // 'overdue' nunca e GRAVADO (a view o calcula na hora): uma conta vencida
   // continua sendo uma conta que o mes previa.
   const vencida = painelDePapel(
-    [{ ...base, amount: 100, status: "pending" }],
+    [{ ...base, amount: 100, my_status: "pending" }],
     ctx
   );
   assert.equal(vencida.total_de_contas.total, 100);
@@ -1102,7 +1102,7 @@ test("a linha de grupo entra pela MINHA parte, nao pelo valor cheio", () => {
     {
       due_date: "2026-03-28",
       amount: 3000,
-      status: "pending",
+      my_status: "pending",
       direction: "expense",
       category_id: MORADIA,
       group_id: GRUPO_CASA,
@@ -1129,7 +1129,7 @@ test("o painel cobra o PERCENTUAL configurado, e nao a divisao igual (HMO-303)",
     {
       due_date: "2026-03-28",
       amount: 3000,
-      status: "pending",
+      my_status: "pending",
       direction: "expense",
       category_id: MORADIA,
       group_id: GRUPO_CASA,
@@ -1199,7 +1199,7 @@ test("direcao ausente FORA da janela nao cala nada", () => {
   // vizinho mal formado nao derruba o mes.
   const linhas = [
     ...LINHAS_DO_PAR,
-    { due_date: "2026-04-09", amount: 500, status: "pending" },
+    { due_date: "2026-04-09", amount: 500, my_status: "pending" },
   ];
 
   const painel = painelDePapel(linhas, ctx);
@@ -1214,7 +1214,7 @@ test("a soma fecha em centavos, sem o residuo do ponto flutuante", () => {
   const tresDeDezCentavos = [0.1, 0.2, 0.3].map((amount, i) => ({
     due_date: `2026-03-0${i + 1}`,
     amount,
-    status: "pending",
+    my_status: "pending",
     direction: "expense",
     category_id: SERVICOS,
     group_id: null,
@@ -1277,17 +1277,17 @@ test("a perna das receitas obedece ao STATUS: 'paid' entra, 'skipped' sai", () =
   };
 
   assert.equal(
-    painelDePapel([{ ...base, status: "paid" }], ctx).receitas.total,
+    painelDePapel([{ ...base, my_status: "paid" }], ctx).receitas.total,
     500,
     "a receita JA RECEBIDA saiu do previsto do mes"
   );
 
-  for (const status of ["skipped", "cancelled"]) {
-    const fora = painelDePapel([{ ...base, status }], ctx);
+  for (const my_status of ["skipped", "cancelled"]) {
+    const fora = painelDePapel([{ ...base, my_status }], ctx);
     assert.deepEqual(
       soNumero(fora.receitas),
       { total: null, quantidade: 0 },
-      `a receita '${status}' continua contando como prevista`
+      `a receita '${my_status}' continua contando como prevista`
     );
   }
 });
@@ -1300,7 +1300,7 @@ test("a perna das receitas divide a linha de GRUPO pela minha parte", () => {
     {
       due_date: "2026-03-11",
       amount: 1000,
-      status: "pending",
+      my_status: "pending",
       direction: "income",
       category_id: MORADIA,
       group_id: GRUPO_CASA,
@@ -1317,7 +1317,7 @@ test("a perna das receitas soma o `amount` em MODULO", () => {
     {
       due_date: "2026-03-07",
       amount: -1000,
-      status: "pending",
+      my_status: "pending",
       direction: "income",
       category_id: MORADIA,
       group_id: null,
@@ -1369,7 +1369,7 @@ const MES_APERTADO = [
   {
     due_date: "2026-03-05",
     amount: 1200,
-    status: "pending",
+    my_status: "pending",
     direction: "income",
     category_id: SALARIO,
     group_id: null,
@@ -1377,7 +1377,7 @@ const MES_APERTADO = [
   {
     due_date: "2026-03-18",
     amount: 1500,
-    status: "pending",
+    my_status: "pending",
     direction: "expense",
     category_id: SERVICOS,
     group_id: null,
@@ -1801,9 +1801,23 @@ test("o `select` da rota traz as tres colunas que a lista precisa", () => {
 
   // E as que ja la estavam continuam: tirar uma delas mudaria a SOMA, nao a
   // lista. `notes` e o embed da conta sao de `agendaSemCompraNoCartao`.
-  for (const coluna of ["due_date", "amount", "status", "direction", "category_id", "group_id", "notes"]) {
+  for (const coluna of ["due_date", "amount", "my_status", "direction", "category_id", "group_id", "notes"]) {
     assert.ok(colunas.includes(coluna), `a coluna \`${coluna}\` saiu do select`);
   }
+
+  // `my_status` E NAO `status`, E A AUSENCIA DO VELHO E METADE DA GUARDA
+  // (HMO-411). O laco acima passaria igual com as DUAS colunas no select, e e
+  // esse o estado que esta issue nao pode deixar para tras: duas fontes do
+  // mesmo criterio -- uma com o estado do DONO, outra com o da PESSOA -- para
+  // divergirem na proxima edicao.
+  //
+  // A comparacao e de elemento exato na lista ja separada por virgula, e nao
+  // um `includes("status")` sobre a string inteira do select: `my_status`
+  // CONTEM `status`, e o casamento de substring reprovaria a arvore certa.
+  assert.ok(
+    !colunas.includes("status"),
+    "a coluna `status` -- a do DONO -- voltou ao select junto com `my_status`"
+  );
   assert.match(select[1], /account:financial_accounts\(account_type\)/);
 });
 
@@ -2010,7 +2024,7 @@ test("a transferencia sai do «Total de contas» E e CONTADA a parte", () => {
     {
       due_date: "2026-03-10",
       amount: 500,
-      status: "pending",
+      my_status: "pending",
       direction: "transfer",
       category_id: null,
       group_id: null,
@@ -2019,7 +2033,7 @@ test("a transferencia sai do «Total de contas» E e CONTADA a parte", () => {
     {
       due_date: "2026-03-20",
       amount: 200,
-      status: "pending",
+      my_status: "pending",
       direction: "expense",
       category_id: SERVICOS,
       group_id: null,
@@ -2058,7 +2072,7 @@ test("mes SEM transferencia tem a contagem zerada -- e por isso a tela cala", ()
       {
         due_date: "2026-03-20",
         amount: 200,
-        status: "pending",
+        my_status: "pending",
         direction: "expense",
         category_id: SERVICOS,
         group_id: null,

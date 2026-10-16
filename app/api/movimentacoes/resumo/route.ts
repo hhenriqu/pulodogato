@@ -324,11 +324,19 @@ export async function GET(request: NextRequest) {
     // R$ 1.000 entrava CHEIA num mes em que o grupo cobra R$ 300. Ele alimenta
     // duas coisas: a divisao (`previstasComAMinhaParte`) e o ROTULO
     // (`LinhaDaTela.de_grupo`).
+    //
+    // `my_status`/`my_effective_status` NO LUGAR DE `status`/`effective_status`
+    // (HMO-411, leitura 4 de 8) -- o porque completo esta no cabecalho de
+    // app/api/scheduled-transactions/route.ts. E o `OR` logo abaixo que torna a
+    // troca necessaria AQUI: ele traz a conta de grupo do outro membro para
+    // estas telas de proposito, e ate agora o estado que a classificava era o
+    // do DONO -- o aluguel que o Helio pagou saia do previsto da Lais no mesmo
+    // instante, sem que ela tivesse resolvido a parte dela.
     const { data: agendaCrua, error: erroAgenda } = await supabase
       .from("scheduled_transactions_effective")
       .select(
         `
-        id, user_id, description, amount, due_date, status, effective_status, currency,
+        id, user_id, description, amount, due_date, my_status, my_effective_status, currency,
         direction, notes, recurring_rule_id, group_id,
         category:transaction_categories(name),
         account:financial_accounts(id, name, account_type)

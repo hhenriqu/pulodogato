@@ -151,6 +151,13 @@ const CONTA_DE_LUZ = {
   due_date: VENCE_DIA_10,
   status: "pending",
   effective_status: "pending",
+  // AS DUAS COLUNAS DE HMO-411 VEM JUNTO DAS ANTIGAS, E NAO NO LUGAR DELAS:
+  // este fixture e uma linha da VIEW, e a view entrega as quatro. Para conta
+  // que nao e de grupo a 055 garante `my_status = status::text` -- o fixture
+  // repete essa igualdade de proposito, e e ela que faz esta suite ser o
+  // controle de "o numero NAO muda para conta individual".
+  my_status: "pending",
+  my_effective_status: "pending",
   currency: "BRL",
   direction: "expense",
   notes: null,
@@ -176,6 +183,10 @@ const PARCELA_DO_AUTO_EMPRESTIMO = {
   due_date: VENCE_DIA_10,
   status: "pending",
   effective_status: "pending",
+  // Ver CONTA_DE_LUZ: linha da view, as quatro colunas, e a igualdade que a
+  // 055 garante para linha de que eu sou o dono.
+  my_status: "pending",
+  my_effective_status: "pending",
   currency: "BRL",
   direction: "transfer",
   notes: EMPRESTIMO.chaveDaParcelaDoMyBank(PARCELA_3_DE_24),

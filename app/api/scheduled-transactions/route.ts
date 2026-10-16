@@ -15,6 +15,49 @@
 // entao quem nao abre Orcamentos nunca via a fatura do cartao em Contas a
 // Pagar. A sintese sai da MESMA funcao pura que o /summary chama, pela mesma
 // razao de sempre: o cabecalho e as linhas da mesma tela nao podem discordar.
+//
+// ---------------------------------------------------------------------------
+// `my_status` NO LUGAR DE `status` -- HMO-411, E ESTE E O CABECALHO CANONICO
+// ---------------------------------------------------------------------------
+// As OITO leituras de `scheduled_transactions_effective` que filtram ou somam
+// por estado passaram a ler `my_status`/`my_effective_status`. As outras sete
+// apontam para aqui em vez de repetir o porque -- criterio repetido e criterio
+// que diverge.
+//
+// O DEFEITO: `scheduled_transactions` tem UMA coluna `status`, e ela e do
+// DONO. O Helio paga o aluguel do grupo Casa e a conta desaparece do «a pagar»
+// da Lais e da Ana no mesmo instante -- elas ainda devem a parte delas, e a
+// tela para de dizer isso. A migration 055 acrescentou o estado POR PESSOA
+// (`group_bill_payments`) e o exps na view como `my_status`:
+//
+//   * linha de que EU sou o dono ......... `my_status = status::text`, sempre;
+//   * linha de grupo de OUTRO dono ....... o estado da MINHA linha de
+//     pagamento, e `'pending'` quando ela nao existe (linha ausente = pending).
+//
+// POR QUE AS OITO, E NAO SO AS CINCO QUE MUDAM DE NUMERO
+// ------------------------------------------------------
+// Cinco leituras classificavam pelo `status` do dono e mudam de comportamento.
+// Tres ja filtravam `user_id = auth.uid()` na mao (safe-to-spend, projection,
+// cash-flow) e por isso NAO mudam: para linha minha as duas colunas sao iguais
+// por construcao. Elas trocam assim mesmo, por UMA CONVENCAO SO -- com metade
+// das rotas em `status` e metade em `my_status`, a proxima pessoa teria de
+// descobrir caso a caso qual das duas cada rota devia ler, e a copia esquecida
+// seria a conta de grupo do outro membro reaparecendo numa soma de dinheiro.
+//
+// O CONTROLE QUE VALE: para conta que NAO e de grupo, nenhum numero pode mudar
+// em nenhuma das oito. Se algum mudar, o defeito e da view, nao da leitura.
+//
+// AS DUAS COLUNAS SAO `text`, E NAO `public.scheduled_status`: `reported` nao
+// existe naquele enum e nao vai entrar nele. Quem comparar `my_status` com
+// `status` tem de castar.
+//
+// A LINHA SINTETIZADA PRECISA DOS CAMPOS. A fatura aberta
+// (lib/agenda-do-cartao.ts) e a parcela do MyBank (lib/leituras-do-mybank.ts)
+// nao saem da view: elas sao montadas em JS e entram nas mesmas somas. Sem
+// `my_status`/`my_effective_status` nelas, o campo chega `undefined` e a linha
+// cai calada do lado de fora de todo filtro -- «Total a pagar» ficaria MENOR,
+// que e a direcao que faz a pessoa gastar o que nao tem. As duas sao sempre de
+// quem le, entao os campos novos repetem os antigos.
 
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
@@ -84,14 +127,24 @@ export async function GET(request: NextRequest) {
 
     if (groupId) query = query.eq("group_id", groupId);
 
+    // OS TRES FILTROS SAO POR `my_status` (HMO-411, leitura 1 de 8) -- o porque
+    // esta no cabecalho deste arquivo. Esta e a leitura em que o sintoma
+    // aparece: e esta lista que esvaziava para a Lais quando o Helio pagava.
+    //
+    // `reported` CHEGA AQUI E ISSO E DESEJADO: quem avisou que pagou sai de
+    // «em aberto» (o `status=open` da tela) pelo primeiro ramo, e so volta a
+    // aparecer se desfizer o aviso. O terceiro ramo -- o default da tela -- nao
+    // o lista de proposito: ele nao e nem "o que ainda vou pagar" nem "o que
+    // ja foi pago", e a linha de quem avisou mora na tela do GRUPO, que e onde
+    // o dono confirma.
     if (status === "open") {
       // "em aberto" e o filtro que a tela usa: pendente ou vencida.
-      query = query.eq("status", "pending");
+      query = query.eq("my_status", "pending");
     } else if (status && status !== "all") {
-      query = query.eq("status", status);
+      query = query.eq("my_status", status);
     } else if (!status) {
       // Cancelada e pulada so aparecem se pedirem explicitamente.
-      query = query.in("status", ["pending", "paid"]);
+      query = query.in("my_status", ["pending", "paid"]);
     }
 
     const { data: scheduled, error } = await query;
@@ -178,6 +231,20 @@ export async function GET(request: NextRequest) {
       // isso em vez de deixar a fatura desaparecer calada. Ver
       // `FaturaSemVencimento` em lib/agenda-do-cartao.ts.
       cards_without_due_day: fatura.semVencimento,
+      // QUEM ESTA OLHANDO (HMO-411). A tela precisa saber de quem e cada linha
+      // para escolher o DESENHO dela: a conta de grupo que outro membro criou
+      // ganha `LinhaDaContaDoGrupo`, com UM botao, porque os quatro da linha
+      // comum respondem 404 ou 200-sem-fazer-nada para quem nao e o dono.
+      //
+      // UM CAMPO NA RESPOSTA, E NAO UM `minha: boolean` EM CADA LINHA: a regra
+      // tem tres condicoes (ver `ehContaDeGrupoDeOutro`), e carimba-la linha a
+      // linha aqui poria a segunda copia dela no servidor -- a tela do grupo
+      // le a mesma regra. A copia esquecida seria a linha de grupo voltando a
+      // receber os quatro botoes, que e o defeito de hoje.
+      //
+      // Nao e vazamento: e o id de quem fez a requisicao, que o cliente ja tem
+      // na sessao.
+      meu_user_id: user.id,
       generated: geradas,
       range: { from: de, to: ate },
     });

@@ -182,11 +182,17 @@ export async function GET(request: NextRequest) {
     // Sem o filtro, o aluguel de R$ 3.000 do grupo entraria no fluxo de caixa
     // de cada membro pelo valor CHEIO -- o recorte da minha parte e de
     // /api/dashboard/previsao, nao desta rota.
+    //
+    // `my_status` E NAO `status` (HMO-411, leitura 8 de 8) -- o porque completo
+    // esta no cabecalho de app/api/scheduled-transactions/route.ts. Aqui a
+    // troca e demonstravelmente INOCUA pelo mesmo `.eq("user_id")` do paragrafo
+    // acima: so passa linha minha, e para linha minha a 055 define
+    // `my_status = status::text` sempre. Ela esta aqui por UMA CONVENCAO SO.
     const { data: previstas, error: erroPrevistas } = await supabase
       .from("scheduled_transactions_effective")
       .select("id, description, amount, due_date, direction")
       .eq("user_id", user.id)
-      .eq("status", "pending")
+      .eq("my_status", "pending")
       .lte("due_date", ate);
 
     if (erroPrevistas) {

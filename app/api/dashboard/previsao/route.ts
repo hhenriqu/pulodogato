@@ -227,12 +227,24 @@ export async function GET(request: NextRequest) {
     // `.eq("account.account_type", ...)`: no PostgREST um filtro sobre coluna de
     // embed vira INNER JOIN, e a previsao SEM conta escolhida -- que e o caso
     // mais comum -- sairia da resposta junto. Ver HMO-209.
+    //
+    // `my_status` E NAO `status` (HMO-411, leitura 3 de 8) -- o porque completo
+    // esta no cabecalho de app/api/scheduled-transactions/route.ts. **Esta e
+    // uma das tres leituras em que a troca MUDA DE NUMERO**, e e para isso que
+    // ela existe: sem filtro de `user_id` (ver o paragrafo acima), a conta de
+    // grupo do outro membro chega aqui, e ate agora o `status` que a filtrava
+    // era o DELE. Quando o Helio dava baixa no aluguel do grupo, a parte da
+    // Lais sumia da previsao dela no mesmo instante -- dinheiro que ela ainda
+    // vai passar para ele, e que o painel parava de contar. Com `my_status` a
+    // linha so sai da previsao de cada um quando AQUELA pessoa resolve a parte
+    // dela. Para conta individual nada muda: a 055 define
+    // `my_status = status::text` para toda linha de que eu sou o dono.
     const { data: previstas, error: erroPrevistas } = await supabase
       .from("scheduled_transactions_effective")
       .select(
         "id, description, notes, amount, due_date, direction, group_id, account:financial_accounts(account_type)"
       )
-      .eq("status", "pending")
+      .eq("my_status", "pending")
       .lte("due_date", janela.ate);
 
     if (erroPrevistas) {
