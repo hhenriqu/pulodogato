@@ -571,3 +571,13 @@ next-env.d.ts
 # `main`, e um `.tmp-*` fora do .gitignore chega a ser commitado em cima de
 # arquivo de fonte (ver a entrada do .tmp-parcelamento).
 /.tmp-soft-delete-monotonico/
+
+# npm run test:painel-clicavel -- os tiles de Receitas e Despesas do painel
+# levam a janela da tela no clique (HMO-408). A sonda monta
+# app/(dashboard)/dashboard/page.tsx em navegador, entao o emit traz a pagina e
+# as quinze partes que ela arrasta. Artefato, nao fonte. Declarado JUNTO com a
+# suite, pelo mesmo motivo das entradas acima: sem a linha,
+# `check-artefatos-de-build` fica vermelho na `main`, e um `.tmp-*` fora do
+# .gitignore chega a ser commitado em cima de arquivo de fonte (ver a entrada do
+# .tmp-parcelamento).
+/.tmp-painel-clicavel/

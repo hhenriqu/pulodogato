@@ -64,6 +64,7 @@ const {
   periodoDoPreset,
   periodoParaQuery,
   presetDoPeriodo,
+  rotaDaTelaDoLado,
   rotuloDoPeriodo,
   rotuloDoSaldo,
   somarPrevistas,
@@ -268,6 +269,73 @@ test("um intervalo personalizado tambem sobrevive a ida e volta pela URL", () =>
     lerPeriodo(params.get("de"), params.get("ate"), "2026-09-29"),
     original
   );
+});
+
+// ---------------------------------------------------------------------------
+// 4b. O endereco dos tiles clicaveis do painel (HMO-408)
+// ---------------------------------------------------------------------------
+// A aritmetica aqui e de uma linha; o que estes casos guardam e a IDA E VOLTA:
+// o endereco que o tile monta, lido pelo `lerPeriodo` do destino, tem de
+// devolver o MESMO periodo. E essa a afirmacao que o usuario percebe -- clicar
+// num numero de agosto e chegar em agosto --, e ela e falsificavel sem navegador.
+//
+// Quem prova que a PAGINA passa o periodo da tela (e nao o mes corrente) e
+// `npm run test:painel-clicavel`, em navegador: daqui nao se ve fiacao.
+
+test("o tile leva a tela cheia do lado dele, com a janela da tela dentro", () => {
+  const agosto = { de: "2026-08-01", ate: "2026-08-31", modo: "mes" };
+
+  assert.equal(
+    rotaDaTelaDoLado("receita", agosto),
+    "/dashboard/receitas?de=2026-08-01&ate=2026-08-31"
+  );
+  assert.equal(
+    rotaDaTelaDoLado("despesa", agosto),
+    "/dashboard/despesas?de=2026-08-01&ate=2026-08-31"
+  );
+});
+
+test("o endereco do tile sobrevive a ida e volta pelo lerPeriodo do destino", () => {
+  // O destino NAO e a tela inicial: `?de=&ate=` cortado la cai no mes corrente
+  // (o caso de baixo), e e justamente essa rede que faz um link nu levar quem
+  // olhava agosto para outubro sem sintoma. Por isso a prova e a volta inteira,
+  // e nao a igualdade com um literal escrito a mao.
+  for (const original of [
+    { de: "2026-08-01", ate: "2026-08-31", modo: "mes" },
+    { de: "2026-07-15", ate: "2026-09-10", modo: "intervalo" },
+  ]) {
+    for (const lado of ["receita", "despesa"]) {
+      const url = new URL(rotaDaTelaDoLado(lado, original), "https://x.test");
+      assert.deepEqual(
+        lerPeriodo(
+          url.searchParams.get("de"),
+          url.searchParams.get("ate"),
+          "2026-10-16"
+        ),
+        original,
+        `${lado}: ${url.pathname}${url.search}`
+      );
+    }
+  }
+});
+
+test("o lado escolhe a tela, e as duas telas sao diferentes", () => {
+  // Um `lado` ignorado -- os dois tiles apontando para a mesma tela -- some no
+  // JSX: o tile de receitas abriria Despesas com o periodo certo, e a unica
+  // pista seria o titulo da tela de destino.
+  const periodo = { de: "2026-08-01", ate: "2026-08-31", modo: "mes" };
+  const receitas = new URL(
+    rotaDaTelaDoLado("receita", periodo),
+    "https://x.test"
+  ).pathname;
+  const despesas = new URL(
+    rotaDaTelaDoLado("despesa", periodo),
+    "https://x.test"
+  ).pathname;
+
+  assert.equal(receitas, "/dashboard/receitas");
+  assert.equal(despesas, "/dashboard/despesas");
+  assert.notEqual(receitas, despesas);
 });
 
 test("na TELA, parametro estragado vira o mes corrente em vez de tela branca", () => {
