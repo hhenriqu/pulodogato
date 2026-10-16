@@ -966,11 +966,24 @@ function PainelCompleto() {
             rotulo. O texto mora em lib/legenda-do-bruto-e-do-liquido.ts junto
             com o da outra tela, porque as duas frases sao uma explicacao so
             dita de dois lados.
+
+            E O LINK LEVA A JANELA DA TELA (HMO-415), pela mesma razao dos dois
+            tiles la em cima: `lerPeriodo`, do outro lado, cai no MES CORRENTE
+            quando nao acha `?de=&ate=`, e um link nu aqui mandaria quem clicou
+            para outro periodo sem erro, sem tela vazia e sem nada dizendo que o
+            periodo mudou no caminho.
+
+            Este cartao erra MENOS que os tiles, e nao por acerto: ele so
+            aparece quando o periodo contem hoje (`temHoje`, logo acima). Mas
+            conter hoje nao e ser o mes corrente -- num periodo de 15/09 a 20/10
+            o link nu abria outubro inteiro a partir de uma legenda que fala do
+            intervalo. Por isso o endereco sai de `rotaDaTelaDoLado`, e nao de
+            um literal: e a mesma `periodoParaQuery` do seletor de periodo.
           */}
           <p className="text-xs text-muted-foreground">
             {LEGENDA_DO_LIQUIDO}{" "}
             <Link
-              href="/dashboard/despesas"
+              href={rotaDaTelaDoLado("despesa", periodo) as Route}
               className="underline hover:text-foreground"
             >
               Abrir Despesas

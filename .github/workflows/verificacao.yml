@@ -8355,13 +8355,19 @@ jobs:
       - name: Os tiles do painel levam a janela da tela
         run: npm run test:painel-clicavel
 
-      # Controle negativo. Os cinco mutantes sao as cinco formas de o link
-      # chegar ao destino sem a janela -- e NENHUMA delas tem sintoma: as cinco
-      # compilam, renderizam, abrem a tela certa e mostram numero.
+      # Controle negativo. Os seis mutantes sao as formas de o link chegar ao
+      # destino sem a janela -- e NENHUMA delas tem sintoma: as seis compilam,
+      # renderizam, abrem a tela certa e mostram numero.
       #
       # Os mutantes 1 e 2 sao o par que a issue mandou medir: o 1 tira a janela e
       # o 2 troca a janela da tela pelo mes corrente. Uma sonda que usasse o mes
       # corrente como periodo de teste ficaria VERDE nos dois.
+      #
+      # O 6 e o terceiro link do mesmo arquivo (HMO-415): o «Abrir Despesas» da
+      # legenda do cartao de quanto posso gastar, que ficou nu quando a HMO-408
+      # consertou os dois tiles. Ele nao e redundante com o 1 por um motivo que
+      # esta medido na sonda -- o cartao dele so desenha quando o periodo contem
+      # hoje, e e por isso que o caso D existe.
       - name: A sonda do painel clicavel sabe falhar
         run: |
           set -uo pipefail
@@ -8414,7 +8420,21 @@ jobs:
           # 4) COPIA-E-COLA: o tile de Despesas aponta para Receitas. Os dois
           #    blocos de JSX sao irmaos identicos a menos de uma palavra, e este
           #    e o erro que se comete escrevendo o segundo.
-          sed -i 's|rotaDaTelaDoLado("despesa", periodo) as Route|rotaDaTelaDoLado("receita", periodo) as Route|' "$PAINEL"
+          #
+          #    A ANCORA LEVA A INDENTACAO, e nao e enfeite: desde a HMO-415 esta
+          #    chamada aparece DUAS vezes no arquivo -- no tile (10 espacos) e no
+          #    «Abrir Despesas» da legenda do cartao de quanto posso gastar (14).
+          #    `sed` sem endereco mutaria as duas, e mutante que muta dois
+          #    lugares nao mede nenhum dos dois: a suite reprova pelo primeiro e
+          #    o nome do mutante passa a descrever o que ele nao mediu. Dai o
+          #    `^...$`, e dai a conferencia de que ele casa UMA linha -- que e o
+          #    que apodrece calado no dia em que alguem dedentar o JSX.
+          CASOU=$(grep -c '^          href={rotaDaTelaDoLado("despesa", periodo) as Route}$' "$PAINEL")
+          if [ "$CASOU" != 1 ]; then
+            echo "::error::A ancora do tile de Despesas casa $CASOU linhas de $PAINEL -- devia casar 1."
+            exit 1
+          fi
+          sed -i 's|^          href={rotaDaTelaDoLado("despesa", periodo) as Route}$|          href={rotaDaTelaDoLado("receita", periodo) as Route}|' "$PAINEL"
           mutou "$PAINEL" 4
           if npm run test:painel-clicavel > /dev/null 2>&1; then
             echo "::error::Verde com o tile de Despesas abrindo a tela de Receitas."
@@ -8433,7 +8453,31 @@ jobs:
           fi
           cp "$PERIODO.orig" "$PERIODO"
 
-          echo "A sonda do painel clicavel fica vermelha nos cinco defeitos."
+          # 6) O «ABRIR DESPESAS» DA LEGENDA DO CARTAO DE QUANTO POSSO GASTAR
+          #    FICA NU (HMO-415). O defeito do mutante 1 no terceiro link do
+          #    arquivo, com uma diferenca que e a razao de ele ter mutante
+          #    proprio: o cartao e CONDICIONAL -- so desenha quando o periodo
+          #    contem hoje --, entao nos periodos dos casos A e B o anchor nao
+          #    existe e toda assercao sobre o `href` dele passaria verde numa
+          #    lista vazia. Quem mata este mutante e o caso D da sonda, que e um
+          #    intervalo contendo hoje SEM ser o mes corrente.
+          #
+          #    Mesma ancora indentada do 4, pelo mesmo motivo -- do outro lado:
+          #    aqui sao os 14 espacos.
+          CASOU=$(grep -c '^              href={rotaDaTelaDoLado("despesa", periodo) as Route}$' "$PAINEL")
+          if [ "$CASOU" != 1 ]; then
+            echo "::error::A ancora do «Abrir Despesas» do cartao casa $CASOU linhas de $PAINEL -- devia casar 1."
+            exit 1
+          fi
+          sed -i 's|^              href={rotaDaTelaDoLado("despesa", periodo) as Route}$|              href={"/dashboard/despesas" as Route}|' "$PAINEL"
+          mutou "$PAINEL" 6
+          if npm run test:painel-clicavel > /dev/null 2>&1; then
+            echo "::error::Verde com o «Abrir Despesas» do cartao de quanto posso gastar levando para a tela sem a janela do periodo."
+            exit 1
+          fi
+          cp "$PAINEL.orig" "$PAINEL"
+
+          echo "A sonda do painel clicavel fica vermelha nos seis defeitos."
 
       - name: 'A arvore voltou ao lugar depois de "A sonda do painel clicavel sabe falhar"'
         run: |
