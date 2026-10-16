@@ -28,12 +28,13 @@
 //    parte dele nas despesas compartilhadas vai junto. O dado e dele, e vai
 //    embora; o efeito atravessa para os outros membros.
 //
-// 3. NAO recria as quatro contas padrao. Nao precisa: `create_default_accounts`
+// 3. NAO recria as contas padrao. Nao precisa: `create_default_accounts`
 //    ja e chamada pelo GET /api/financial-accounts quando o usuario nao tem
 //    conta nenhuma, e ela mesma verifica isso antes de inserir. Depois do
-//    reset, a primeira visita ao painel recria Conta Corrente, Cartao de
-//    Credito, Dinheiro e PIX zeradas -- literalmente o estado de conta nova.
-//    Recriar aqui tambem so criaria um segundo lugar com a mesma regra.
+//    reset, a primeira visita ao painel recria Conta Corrente e Dinheiro
+//    zeradas (DUAS desde a 056; antes dela eram quatro, com Cartao de Credito
+//    e PIX) -- literalmente o estado de conta nova. Recriar aqui tambem so
+//    criaria um segundo lugar com a mesma regra.
 //
 // POR QUE O APAGAMENTO USA A SESSAO DO USUARIO, E NAO A CHAVE DE SERVICO
 // ----------------------------------------------------------------------

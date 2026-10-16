@@ -20,8 +20,8 @@
 //   - dividir a participacao pelo PATRIMONIO LIQUIDO em vez do total de
 //     ativos (quem tem R$ 10.000 aplicados e R$ 9.500 de fatura aparece com
 //     "investimentos = 2000% da carteira");
-//   - dividir por zero em usuario novo, que tem as quatro contas padrao
-//     zeradas (`create_default_accounts`) -- quatro tiles imprimindo NaN%;
+//   - dividir por zero em usuario novo, que tem as contas padrao zeradas
+//     (`create_default_accounts`) -- todos os tiles imprimindo NaN%;
 //   - tratar o mes ausente como zero na variacao, o que faz o primeiro mes da
 //     janela saltar do nada ate o patrimonio inteiro.
 //
@@ -184,8 +184,13 @@ test("cheque especial nao encolhe o divisor da composicao", () => {
 // A armadilha 3: divisao por zero
 // =====================================================
 
-test("usuario novo com as quatro contas padrao zeradas nao produz NaN", () => {
-  // create_default_accounts cria exatamente estas quatro, todas em zero.
+test("usuario novo, com as contas padrao zeradas, nao produz NaN", () => {
+  // As QUATRO do fixture, e nao as duas que `create_default_accounts` cria
+  // desde a 056, de proposito: este caso tem que valer tambem para quem se
+  // cadastrou ANTES dela e ficou com Cartao de Credito e PIX, e para quem
+  // cadastrou os dois na mao depois. Quatro e o caso mais largo -- ele cobre
+  // uma classe de ativo a mais (`digital`) e uma de divida (`credit_card`) --,
+  // e o que o teste mede e o divisor zerado, que nao depende da contagem.
   const c = consolidar([
     conta("1", "checking", 0),
     conta("2", "credit_card", 0),
