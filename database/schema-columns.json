@@ -318,6 +318,16 @@
     "updated_at",
     "user_id"
   ],
+  "group_bill_payments": [
+    "confirmed_at",
+    "created_at",
+    "id",
+    "reported_at",
+    "scheduled_transaction_id",
+    "status",
+    "updated_at",
+    "user_id"
+  ],
   "group_expense_splits": [
     "amount",
     "approved_at",
@@ -688,6 +698,8 @@
     "effective_status",
     "group_id",
     "id",
+    "my_effective_status",
+    "my_status",
     "notes",
     "paid_date",
     "recurring_rule_id",
