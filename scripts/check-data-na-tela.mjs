@@ -104,9 +104,18 @@ const COLUNAS_DE_DIA = [
 const FUNCOES_CERTAS = ["dataNaTela", "dataCurtaNaTela"];
 
 /**
- * Quantas chamadas das funcoes acima existem em `app/` e `components/`. CINCO,
- * da HMO-353: a linha da lista de lancamentos, a despesa e o vencimento da tela
- * do grupo, a linha da minha parte do grupo, o eixo do grafico de evolucao.
+ * Quantas chamadas das funcoes acima existem em `app/` e `components/`. CINCO
+ * da HMO-353 -- a linha da lista de lancamentos, a despesa e o vencimento da
+ * tela do grupo, a linha da minha parte do grupo, o eixo do grafico de
+ * evolucao -- mais UMA da HMO-409: o dia do ajuste de saldo da conta, em
+ * `components/contas/AjusteDeSaldoDaConta.tsx`.
+ *
+ * Aquela sexta nao e decoracao, e por isso ela entrou: o ajuste de saldo e um
+ * lancamento DATADO (e nao um UPDATE em `current_balance`), e a data e o que
+ * decide em que mes do grafico de patrimonio o degrau aparece -- e o que forma
+ * a chave canonica que faz salvar duas vezes substituir em vez de empilhar.
+ * "O saldo passa para X" sem dizer o dia e um numero certo respondendo uma
+ * pergunta que o leitor nao sabe qual e.
  *
  * IGUALDADE, E NAO PISO -- E ISSO E UMA LICAO MEDIDA, NAO PREFERENCIA
  * -------------------------------------------------------------------
@@ -125,7 +134,7 @@ const FUNCOES_CERTAS = ["dataNaTela", "dataCurtaNaTela"];
  * Falhar alto nos dois sentidos e o preco de o controle negativo continuar
  * medindo algo.
  */
-const CHAMADAS_ESPERADAS = 5;
+const CHAMADAS_ESPERADAS = 6;
 
 /**
  * `formatDate` de lib/utils.ts, que recebe `settled_on` e `today_rate_date`

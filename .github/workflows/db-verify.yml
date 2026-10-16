@@ -3053,6 +3053,37 @@ jobs:
       - name: O ajuste de saldo cai na fatura certa e com o sinal certo
         run: $PSQL -f database/tests/ajuste_de_fatura_test.sql
 
+      # O AJUSTE DE SALDO DAS CONTAS (HMO-409). Tambem sem migration, e pelo
+      # mesmo motivo do step acima ele precisa de banco: a feature inteira se
+      # apoia em comportamento que ja esta aqui, e nada disso esta escrito no
+      # codigo dela.
+      #
+      #   - `update_account_balance` somando `NEW.amount` CRU em
+      #     `current_balance`. E ele, e nao a rota, que faz a conta FECHAR no
+      #     numero digitado -- e e por ele que o ajuste da conta NAO inverte o
+      #     sinal (o do cartao inverte, porque a view dele publica `-amount`).
+      #     Com a inversao copiada de la, o saldo erra pelo DOBRO da diferenca;
+      #   - o mesmo trigger estornando `OLD.amount` no UPDATE: a rota TROCA o
+      #     ajuste, e sem o estorno cada alteracao cobra a diferenca de novo;
+      #   - `net_worth_history`, que reconstroi o patrimonio de tras para frente
+      #     a partir do saldo de hoje. E esta view, e so ela, que decide que o
+      #     ajuste tem de ser um LANCAMENTO DATADO e nao um UPDATE em
+      #     `current_balance`;
+      #   - `auto_create_group_transaction`, que rateia todo lancamento negativo
+      #     com `group_id` preenchido -- o motivo do `group_id: null` literal no
+      #     INSERT da rota;
+      #   - as policies da 036, sem as quais o INSERT da categoria reservada
+      #     volta 42501 e nenhum ajuste e gravado (o que aconteceu na HMO-162).
+      #
+      # Tem DOIS contrafactuais com SAVEPOINT, e sem eles duas assercoes
+      # centrais seriam vacuas: "os meses anteriores do patrimonio nao se
+      # mexeram" tambem e verdade num banco onde o ajuste nao entrou, e "o
+      # ajuste nao virou despesa do grupo" tambem e verdade num banco sem o
+      # trigger de rateio. Cada contrafactual roda a implementacao ERRADA, mede
+      # que ela quebra, e desfaz.
+      - name: O ajuste de saldo da conta fecha pelo trigger, sem mexer no passado
+        run: $PSQL -f database/tests/ajuste_de_saldo_da_conta_test.sql
+
       # O acerto de grupo passou a gravar lancamento (HMO-245, fase 11). Esta
       # suite faz O QUE A ROTA FAZ, na sessao `authenticated` de cada pessoa, e
       # mede `current_balance` antes e depois -- componente renderizado nao

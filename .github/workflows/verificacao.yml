@@ -1788,6 +1788,314 @@ jobs:
         run: npm run test:ajuste-de-fatura
 
       # =======================================================================
+      # O AJUSTE DE SALDO TAMBEM PARA CONTAS (HMO-409)
+      # =======================================================================
+      # A aritmetica e REUSADA -- `ajusteParaFecharEm` e a mesma funcao, com os
+      # 25 mutantes do bloco acima atras dela. Esta suite nao a remede. O que
+      # ela mede sao os CINCO pontos em que a conta nao e o cartao, e os cinco
+      # erram calado:
+      #
+      #   1. o sinal NAO se inverte. No cartao `amount = -valorNaFatura`,
+      #      porque a view publica `(-t.amount)`; na conta o trigger soma a
+      #      coluna CRUA, entao `amount` E a diferenca. Copiar a inversao de la
+      #      afasta o saldo do banco pelo DOBRO -- com a previa da tela
+      #      concordando, porque e a mesma conta;
+      #   2. a base SUBTRAI o ajuste existente, enquanto a do cartao SOMA (pelo
+      #      mesmo motivo). Copiar o sinal de la erra a base pelo dobro do
+      #      ajuste gravado, e so no SEGUNDO ajuste do mesmo dia;
+      #   3. a chave e por DIA. Por mes, o ajuste de hoje apagaria o de duas
+      #      semanas atras, perdendo a diferenca que apareceu no meio;
+      #   4. a categoria reservada e outra ("Ajuste de saldo"). Reusar "Ajuste
+      #      de fatura" rotula o ajuste da conta corrente como ajuste de cartao
+      #      em todo relatorio por categoria;
+      #   5. `group_id: null` e `is_shared: false` vao LITERAIS no INSERT --
+      #      um ajuste negativo com `group_id` e rateado pelo trigger e vira
+      #      despesa do grupo, dividida com todo mundo, em silencio.
+      #
+      # SEM FILTRO DE `paths`, como o resto deste job.
+      #
+      # O QUE ESTE JOB NAO COBRE: o banco. Que o saldo FECHE no numero digitado
+      # e que os meses anteriores de `net_worth_history` NAO se mexam sao o
+      # trigger e uma view -- os dois numeros que a issue manda prender estao
+      # em database/tests/ajuste_de_saldo_da_conta_test.sql, no db-verify.
+      # Simula-los aqui seria conferir a simulacao contra ela mesma.
+      - name: As regras do ajuste de saldo da conta
+        run: npm run test:ajuste-de-saldo-da-conta
+
+      # A ARVORE. A suite acima passa verde com o bloco inteiro faltando na
+      # tela de Contas -- e e justamente na tela que mora o unico defeito desta
+      # feature que a suite do cartao nao teria como pegar: o vocabulario
+      # invertido (ver o mutante 12).
+      - name: O bloco de ajuste, renderizado na tela de Contas
+        run: npm run test:ajuste-da-conta-na-tela
+
+      # Controle negativo. As duas suites acima afirmam muito sobre AUSENCIA --
+      # "nenhum UPDATE em financial_accounts", "o ajuste de ontem nao foi
+      # tocado", "a previa NAO aparece sem base" -- e assercao de ausencia passa
+      # verde tambem quando ela deixa de achar o que deveria procurar.
+      #
+      # Cada mutante abaixo e um defeito que alguem escreveria de boa-fe, e a
+      # maioria deles e o que sai de COPIAR o ajuste do cartao sem notar que a
+      # base, o sinal e a chave sao outros.
+      - name: 'A verificacao sabe falhar (ajuste-de-saldo-da-conta)'
+        run: |
+          set -uo pipefail
+          REGRAS=lib/ajuste-de-saldo-da-conta.ts
+          ROTA=app/api/financial-accounts/ajuste/route.ts
+          BLOCO=components/contas/AjusteDeSaldoDaConta.tsx
+          cp $REGRAS $REGRAS.orig
+          cp $ROTA $ROTA.orig
+          cp $BLOCO $BLOCO.orig
+          trap 'mv $REGRAS.orig $REGRAS; mv $ROTA.orig $ROTA; mv $BLOCO.orig $BLOCO' EXIT
+
+          # `sed` que nao casa SAI 0 e deixa o arquivo INTACTO: a suite roda
+          # sobre o codigo correto, passa verde, e este job acusa o codigo em
+          # vez do mutante. `cmp` com a copia intacta e o que distingue os dois.
+          mutou() {
+            if cmp -s "$1" "$1.orig"; then
+              echo "::error::o mutante $2 nao se aplicou a $1 -- a ancora do sed mudou de forma"
+              exit 1
+            fi
+          }
+
+          # ==================================================================
+          # OS QUATRO QUE SAEM DE COPIAR O CARTAO
+          # ==================================================================
+
+          # 1) O SINAL INVERTIDO. No cartao `amount = -valorNaFatura`, porque a
+          #    view publica `(-t.amount) AS invoice_amount`. Na conta o trigger
+          #    `update_account_balance` soma a coluna CRUA, entao `amount` E a
+          #    diferenca. Com a inversao, a conta que devia fechar em R$ 2.380
+          #    vai para R$ 2.480 -- R$ 100 longe do banco, pelo numero que a
+          #    pessoa digitou certo, e com a previa da tela concordando.
+          sed -i 's#    amount: params.diferenca,#    amount: -params.diferenca,#' $REGRAS
+          mutou $REGRAS 1
+          if npm run test:ajuste-de-saldo-da-conta > /dev/null 2>&1; then
+            echo "::error::Verde com o ajuste da conta gravado com o sinal invertido."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 2) A BASE SOMADA EM VEZ DE SUBTRAIDA. `centavosDaFaturaSemAjuste`
+          #    (cartao) SOMA o amount, e esta' certo la. Aqui subtrair e o certo,
+          #    pelo mesmo motivo do mutante 1. Somar erra a base pelo DOBRO do
+          #    ajuste existente -- e so no SEGUNDO ajuste do mesmo dia, com os
+          #    dois numeros plausiveis.
+          sed -i 's#  return centavosDoSaldo - doAjuste;#  return centavosDoSaldo + doAjuste;#' $REGRAS
+          mutou $REGRAS 2
+          if npm run test:ajuste-de-saldo-da-conta > /dev/null 2>&1; then
+            echo "::error::Verde com o ajuste existente saindo da base pelo sinal do cartao."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 3) A CHAVE POR MES, que e a do cartao. O ajuste de hoje passaria a
+          #    reescrever o de duas semanas atras, e a diferenca que apareceu no
+          #    meio sumiria do extrato sem nada explicando a mudanca de saldo.
+          sed -i 's#  return `${PREFIXO_CHAVE_AJUSTE_DE_SALDO}${dia}:${accountId}`;#  return `${PREFIXO_CHAVE_AJUSTE_DE_SALDO}${dia.slice(0, 7)}-01:${accountId}`;#' $REGRAS
+          mutou $REGRAS 3
+          if npm run test:ajuste-de-saldo-da-conta > /dev/null 2>&1; then
+            echo "::error::Verde com a chave do ajuste de conta por mes, e nao por dia."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 4) A CATEGORIA DO CARTAO REUSADA. Rotularia o ajuste de uma conta
+          #    corrente como ajuste de fatura em todo relatorio por categoria --
+          #    que e exatamente onde se vai procurar o dinheiro que ninguem
+          #    discriminou.
+          sed -i 's#export const NOME_DA_CATEGORIA_DE_AJUSTE_DE_SALDO = "Ajuste de saldo";#export const NOME_DA_CATEGORIA_DE_AJUSTE_DE_SALDO = "Ajuste de fatura";#' $REGRAS
+          mutou $REGRAS 4
+          if npm run test:ajuste-de-saldo-da-conta > /dev/null 2>&1; then
+            echo "::error::Verde com o ajuste da conta usando a categoria reservada do cartao."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # ==================================================================
+          # O LANCAMENTO
+          # ==================================================================
+
+          # 5) O TIPO TROCADO. O saldo fecharia igual (o trigger soma `amount`
+          #    sem olhar o tipo) e o fluxo de caixa inverteria: a entrada nao
+          #    detalhada vira DESPESA do mes, e a saida vira receita.
+          sed -i 's#    transaction_type: params.diferenca > 0 ? "income" : "expense",#    transaction_type: params.diferenca > 0 ? "expense" : "income",#' $REGRAS
+          mutou $REGRAS 5
+          if npm run test:ajuste-de-saldo-da-conta > /dev/null 2>&1; then
+            echo "::error::Verde com o tipo do lancamento do ajuste trocado."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 6) O RATEIO SILENCIOSO. `auto_create_group_transaction` rateia TODO
+          #    lancamento negativo que chegue com `group_id`: um ajuste de
+          #    -R$ 50 vira despesa nova do grupo, dividida com todo mundo, e
+          #    cada membro passa a dever a parte dele de um dinheiro que ninguem
+          #    gastou. Sem erro, sem log, sem sintoma.
+          sed -i 's#        group_id: null,#        group_id: corpo?.group_id ?? null,#' $ROTA
+          mutou $ROTA 6
+          if npm run test:ajuste-de-saldo-da-conta > /dev/null 2>&1; then
+            echo "::error::Verde com o ajuste aceitando group_id do corpo do pedido."
+            exit 1
+          fi
+          cp $ROTA.orig $ROTA
+
+          # 7) `is_shared` VERDADEIRO. As leituras de grupo e de custo pessoal
+          #    separam a linha compartilhada da individual por esta coluna: o
+          #    ajuste entraria no rateio das telas mesmo sem `group_id`.
+          sed -i 's#        is_shared: false,#        is_shared: true,#' $ROTA
+          mutou $ROTA 7
+          if npm run test:ajuste-de-saldo-da-conta > /dev/null 2>&1; then
+            echo "::error::Verde com o ajuste de saldo marcado como compartilhado."
+            exit 1
+          fi
+          cp $ROTA.orig $ROTA
+
+          # 8) O CARTAO ACEITO. O ajuste do cartao e por FATURA -- o que se deve
+          #    naquele mes --, e nao pelo saldo acumulado. Aplicar este aqui num
+          #    cartao gravaria uma linha que a fatura de nenhum mes explicaria.
+          sed -i 's#  if (escopoDoTipo(conta.account_type) !== "conta") {#  if (false) {#' $ROTA
+          mutou $ROTA 8
+          if npm run test:ajuste-de-saldo-da-conta > /dev/null 2>&1; then
+            echo "::error::Verde com o ajuste de saldo de conta aceitando um cartao de credito."
+            exit 1
+          fi
+          cp $ROTA.orig $ROTA
+
+          # ==================================================================
+          # A DATA
+          # ==================================================================
+
+          # 9) O DIA QUE NAO EXISTE NO MES. '2026-02-30' chega no `date` do
+          #    Postgres como 22008 -- "Erro interno" na tela, em vez de uma
+          #    recusa que diz qual campo esta errado.
+          sed -i 's#  if (dia > ultimoDia) return null;##' $REGRAS
+          mutou $REGRAS 9
+          if npm run test:ajuste-de-saldo-da-conta > /dev/null 2>&1; then
+            echo "::error::Verde com 30 de fevereiro aceito como data do ajuste."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 10) O DIA PELA ISO EM UTC. 21h30 em Sao Paulo ja e o dia SEGUINTE em
+          #     UTC: o ajuste seria datado em AMANHA -- uma chave canonica de um
+          #     dia que nao chegou, e um ajuste a mais quando a pessoa
+          #     conferisse de novo pela manha. ESTE MUTANTE SOBREVIVE EM UTC,
+          #     que e o fuso do runner: por isso o npm script fixa
+          #     TZ=America/Sao_Paulo, e a suite tem um controle que reprova se o
+          #     fuso nao for esse.
+          sed -i 's#  return `${ano}-${mes}-${dia}`;#  return agora.toISOString().slice(0, 10);#' $REGRAS
+          mutou $REGRAS 10
+          if npm run test:ajuste-de-saldo-da-conta > /dev/null 2>&1; then
+            echo "::error::Verde com o dia do ajuste saindo da ISO em UTC."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # ==================================================================
+          # A TELA
+          # ==================================================================
+
+          # 11) A RECUSA FALANDO DE CARTAO. A aritmetica e a mesma funcao do
+          #     cartao; o vocabulario nao pode ser. "Informe quanto o cartão diz
+          #     hoje" numa tela de conta corrente e uma frase que fala de outra
+          #     coisa, e quem a le conclui que abriu a tela errada.
+          sed -i 's#  semValorDigitado: "Informe quanto a conta mostra hoje",#  semValorDigitado: "Informe quanto o cartão diz hoje",#' $REGRAS
+          mutou $REGRAS 11
+          if npm run test:ajuste-de-saldo-da-conta > /dev/null 2>&1; then
+            echo "::error::Verde com a recusa do ajuste de conta falando de cartao."
+            exit 1
+          fi
+          cp $REGRAS.orig $REGRAS
+
+          # 12) O VOCABULARIO DO CARTAO NA PREVIA, e este e o defeito que SO
+          #     esta tela tem. No cartao, "acrescimo" quer dizer que a divida
+          #     subiu; numa conta corrente, um saldo que sobe e dinheiro que
+          #     apareceu. E "abatimento" -- boa noticia no cartao -- passaria a
+          #     nomear o saldo CAINDO. Nada da erro, e nao ha como quem le saber
+          #     que o sentido esta invertido.
+          sed -i 's#          — {calculado.valorNaFatura > 0 ? "entrada de " : "saída de "}#          — {calculado.valorNaFatura > 0 ? "acréscimo de " : "abatimento de "}#' $BLOCO
+          mutou $BLOCO 12
+          if npm run test:ajuste-da-conta-na-tela > /dev/null 2>&1; then
+            echo "::error::Verde com a tela da conta herdando o vocabulario do cartao."
+            exit 1
+          fi
+          cp $BLOCO.orig $BLOCO
+
+          # 13) A PREVIA SEM O DIA. Ele decide em que mes do grafico de
+          #     patrimonio o degrau aparece, e e ele que forma a chave canonica.
+          #     Este mutante JA SOBREVIVEU a uma versao desta suite: a assercao
+          #     procurava a data em qualquer lugar do bloco, e casava com a
+          #     frase de abertura ("lançada como um movimento em 16/10/2026").
+          #     Hoje a assercao exige conta, valores, direcao e dia na MESMA
+          #     expressao.
+          sed -i 's#          em {diaNaTela}.#          .#' $BLOCO
+          mutou $BLOCO 13
+          if npm run test:ajuste-da-conta-na-tela > /dev/null 2>&1; then
+            echo "::error::Verde com a previa do ajuste sem dizer em que dia ele e lancado."
+            exit 1
+          fi
+          cp $BLOCO.orig $BLOCO
+
+          # 14) "O SALDO JA E ESSE" SEM TEXTO NENHUM. O melhor desfecho possivel
+          #     fica indistinguivel de nada ter acontecido: a pessoa digita o
+          #     numero do banco, a tela nao diz nada, e ela procura o que errou.
+          #     Pior: o aviso de que o ajuste velho VAI SAIR desaparece junto, e
+          #     "Salvar" passa a remover dinheiro do saldo calado.
+          sed -i 's#  const fecha = calculado.ok && calculado.fecha;#  const fecha = false;#' $BLOCO
+          mutou $BLOCO 14
+          if npm run test:ajuste-da-conta-na-tela > /dev/null 2>&1; then
+            echo "::error::Verde sem dizer na tela que o saldo ja e o informado."
+            exit 1
+          fi
+          cp $BLOCO.orig $BLOCO
+
+          # 15) O BOTAO DIZENDO "SALVAR" QUANDO ELE VAI REMOVER. O clique apaga o
+          #     ajuste que estava valendo, e o rotulo prometeu gravar um.
+          sed -i 's#            : fecha && valorAtual !== null#            : false#' $BLOCO
+          mutou $BLOCO 15
+          if npm run test:ajuste-da-conta-na-tela > /dev/null 2>&1; then
+            echo "::error::Verde com o botao prometendo salvar o que ele vai remover."
+            exit 1
+          fi
+          cp $BLOCO.orig $BLOCO
+
+          # 16) O FORMULARIO OFERECIDO SEM TER CONFERIDO. Um POST dali
+          #     reescreveria um ajuste que a tela nao sabe que existe, e a pessoa
+          #     somaria a mesma diferenca de novo achando que criava a primeira.
+          sed -i 's#  if (!podeConferir) {#  if (false) {#' $BLOCO
+          mutou $BLOCO 16
+          if npm run test:ajuste-da-conta-na-tela > /dev/null 2>&1; then
+            echo "::error::Verde oferecendo o ajuste sobre uma conta que a tela nao conferiu."
+            exit 1
+          fi
+          cp $BLOCO.orig $BLOCO
+
+          # 17) NUMERO IMPRESSO SEM LEITURA. O zero (ou o valor velho) confiante
+          #     sobre uma leitura que nao veio -- e numero na tela e lido.
+          sed -i 's#  const mostraNumero = podeMostrarNumero(estado);#  const mostraNumero = true;#' $BLOCO
+          mutou $BLOCO 17
+          if npm run test:ajuste-da-conta-na-tela > /dev/null 2>&1; then
+            echo "::error::Verde imprimindo o saldo sobre uma leitura que nao veio."
+            exit 1
+          fi
+          cp $BLOCO.orig $BLOCO
+
+          echo "A verificacao fica vermelha nos dezessete defeitos."
+
+      - name: 'A arvore voltou ao lugar depois de "A verificacao sabe falhar (ajuste-de-saldo-da-conta)"'
+        run: |
+          # O .tmp-* compilado guarda o mutante mesmo depois do restore do .ts,
+          # e os passos seguintes rodariam sobre ele.
+          rm -rf .tmp-*
+          git status --porcelain > "$RUNNER_TEMP/arvore-agora.txt"
+          if ! diff -q "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" > /dev/null; then
+            echo "::error::O controle negativo acima nao restaurou a arvore. Os passos seguintes rodariam sobre codigo mutado."
+            diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
+            exit 1
+          fi
+
+      # =======================================================================
       # O ACERTO DE GRUPO VIRA LANCAMENTO (HMO-245, fase 11)
       # =======================================================================
       # `group_settlements` existia desde a 007 sem gerar lancamento nenhum: o

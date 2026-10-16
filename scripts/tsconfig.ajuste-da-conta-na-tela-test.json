@@ -1,0 +1,46 @@
+{
+  "//": [
+    "O bloco do ajuste de saldo na tela de Contas (HMO-409).",
+    "",
+    "Molde do scripts/tsconfig.ajuste-na-tela-test.json, que faz o mesmo para o",
+    "bloco do cartao. O `include` e explicito (e nao so o componente) porque o",
+    "tsc precisa emitir tambem os primitivos de components/ui que ele usa -- a",
+    "sonda renderiza o componente DE VERDADE com react-dom/server, e um import",
+    "nao emitido vira ERR_MODULE_NOT_FOUND na importacao, nao erro de compilacao.",
+    "",
+    "`components/contas/AjusteDeSaldoDaConta.tsx` nao traz o `<Dialog>` em volta",
+    "-- ele fica na pagina. E deliberado: o `DialogContent` do Radix vive atras",
+    "de um portal e de um estado de abertura, e nao sai no HTML do servidor. Um",
+    "componente que o embrulhasse renderizaria uma casca vazia aqui, e a suite",
+    "passaria verde com o formulario inteiro apagado."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-ajuste-da-conta-na-tela",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../components/contas/AjusteDeSaldoDaConta.tsx",
+    "../components/SemRede.tsx",
+    "../components/ui/button.tsx",
+    "../components/ui/badge.tsx",
+    "../components/ui/input.tsx",
+    "../components/ui/label.tsx",
+    "../components/ui/campo-de-valor.tsx",
+    "../components/ui/calculadora-de-valor.tsx",
+    "../lib/ajuste-de-saldo-da-conta.ts",
+    "../lib/ajuste-de-fatura.ts",
+    "../lib/data-na-tela.ts",
+    "../lib/offline-leitura.ts",
+    "../lib/dinheiro.ts",
+    "../lib/utils.ts"
+  ]
+}
