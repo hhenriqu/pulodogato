@@ -3101,6 +3101,104 @@ jobs:
       - name: A configuracao de divisao so o admin grava, e o lote e atomico
         run: $PSQL -f database/tests/hmo269_split_config_test.sql
 
+      # A 055 (HMO-407/410) ENTRA AQUI, E NAO DEPOIS DO BLOCO DO 043 ABAIXO.
+      #
+      # O step do 043 que fecha este bloco se chama "no fim da cadeia" e o
+      # cabecalho dele diz, por escrito, que ele roda "depois de TODAS as
+      # migrations". Por uma migration nova DEPOIS dele aquele comentario
+      # passaria a mentir e o step deixaria de guardar a ultima migration --
+      # que e exatamente a que mais precisa dele aqui, porque a 055 RECRIA
+      # `scheduled_transactions_effective` e `planned_vs_actual` le DAQUELA
+      # view. Com a 055 acima, o step continua sendo o ultimo e passa a ser um
+      # dos guardas desta migration, sem precisar de copia.
+      #
+      # A 055 cria `group_bill_payments` (o estado de pagamento de uma conta
+      # prevista de grupo POR PESSOA) e acrescenta `my_status` e
+      # `my_effective_status` NO FIM daquela view. E aditiva no sentido forte do
+      # lado da tabela -- objeto novo, sem leitor nenhum neste PR --, e do lado
+      # da view o risco e outro e e real: ONZE consultas dependem dela.
+      - name: 055_pagamento_de_conta_de_grupo
+        run: $PSQL -f database/migrations/055_pagamento_de_conta_de_grupo.sql
+
+      # Re-executavel: `CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT
+      # EXISTS`, `CREATE OR REPLACE` na funcao e na view, e `DROP POLICY IF
+      # EXISTS` / `DROP TRIGGER IF EXISTS` antes de cada policy e cada trigger.
+      # Colar duas vezes e o caminho normal aqui, porque a primeira tentativa
+      # pode ter abortado no preflight.
+      - name: 055 e idempotente
+        run: $PSQL -f database/migrations/055_pagamento_de_conta_de_grupo.sql
+
+      # A suite da 055, na POSICAO dela da cadeia. As que valem o step sao as
+      # que nao dao erro quando quebram:
+      #
+      #   * o NUMERO da issue e um ESTADO e nao dinheiro: com a conta do grupo
+      #     em `status = 'paid'` (o dono pagou), o `my_status` da OUTRA pessoa
+      #     continua `pending`. A assercao vem em par com a leitura da coluna
+      #     VELHA na mesma linha, senao "pending" nao distingue a feature de uma
+      #     fixture sem conta paga;
+      #   * a CONTAGEM de linhas da view por tres pessoas diferentes -- a guarda
+      #     do LEFT JOIN novo. A conta da fixture tem DUAS linhas de pagamento
+      #     de proposito: sem o `AND p.user_id = auth.uid()` ela dobraria nas
+      #     onze consultas, e o sintoma seria dinheiro em dobro, nao erro;
+      #   * «para toda linha minha, my_status = status» -- e ela que autoriza as
+      #     oito leituras do app a trocarem uma coluna pela outra sem mudar de
+      #     numero, e ela tem controle positivo proprio (quantas linhas foram
+      #     comparadas), senao uma view que devolvesse zero linha passaria;
+      #   * `reported` NAO virando `overdue` depois do vencimento, medido na
+      #     MESMA linha lida por duas pessoas;
+      #   * as DUAS travas do lado do membro, separadas: a policy e a TRIGGER. O
+      #     caminho que so a trigger fecha e o repontamento -- ele passa pelas
+      #     duas metades da policy de UPDATE, porque nenhuma delas ve NEW e OLD
+      #     ao mesmo tempo;
+      #   * `security_invoker` pelo CATALOGO, porque neste banco o dono e
+      #     superusuario e um teste so de comportamento ficaria VERDE com a view
+      #     furada pelo `CREATE OR REPLACE`;
+      #   * a LISTA ORDENADA das 22 colunas da view, que e o que prende as duas
+      #     novas no FIM e as vinte antigas no nome e na posicao;
+      #   * o CONTROLE NEGATIVO: reproduz o join sem o filtro de `auth.uid()`
+      #     sobre a mesma fixture e EXIGE o numero errado. Ele reprova no dia em
+      #     que a fixture deixar de conter o caso -- e nesse dia as assercoes
+      #     acima parariam de medir sem avisar.
+      #
+      # 19 mutantes da 055 foram aplicados num Postgres 17 local (banco novo por
+      # mutante, controle positivo na arvore intacta) e 16 morreram. Tres
+      # assercoes deste arquivo existem SO porque a varredura mostrou que sem
+      # elas o defeito passava, e os 3 sobreviventes estao anotados no cabecalho
+      # do teste como no-ops de defesa em profundidade -- com o porque medido,
+      # para ninguem os "consertar".
+      - name: O pago de uma conta de grupo e da pessoa, nao do grupo
+        run: $PSQL -f database/tests/hmo407_pagamento_de_conta_de_grupo_test.sql
+
+      # OS QUATRO RE-RUNS ABAIXO SAO O PRECO DE RECRIAR UMA VIEW COM ONZE
+      # LEITORES, e nenhum deles e zelo.
+      #
+      # `CREATE OR REPLACE VIEW` apaga os reloptions: sem o
+      # `ALTER VIEW ... SET (security_invoker = true)` do fim da 055 esta view
+      # volta a rodar com o privilegio do DONO, a RLS de `scheduled_transactions`
+      # deixa de valer, e a agenda de cada usuario passa a listar as contas de
+      # TODO MUNDO -- sem erro e com numeros plausiveis. A 047 mediu isso e
+      # documentou. Este e o guard global.
+      - name: Nenhuma view escapa da RLS, depois da 055
+        run: $PSQL -f database/tests/view_security_invoker_test.sql
+
+      # A RLS da tabela base ATRAVES da view. O guard de cima prova o
+      # reloption pelo catalogo; este prova o comportamento.
+      - name: A RLS da agenda continua valendo depois da 055
+        run: $PSQL -f database/tests/scheduled_rls_test.sql
+
+      # `planned_vs_actual` (043/045/054) le `scheduled_transactions_effective` no
+      # `FROM`. A 055 nao toca aquela view -- so acrescenta coluna no fim desta
+      # --, e e justamente por isso que o re-run importa: "nao toquei" e uma
+      # afirmacao sobre o arquivo, nao sobre o resultado. O teste da 054 e o mais
+      # novo e carrega as afirmacoes da 043 e da 045 junto.
+      - name: A ocorrencia APAGADA continua fora do previsto depois da 055
+        run: $PSQL -f database/tests/054_ocorrencia_apagada_fora_do_previsto_test.sql
+
+      # `bill_alerts` (050) tambem le esta view no `FROM`, e e o outro leitor que
+      # uma coluna nova no meio (em vez de no fim) teria quebrado calado.
+      - name: O aviso de vencimento continua valendo depois da 055
+        run: $PSQL -f database/tests/050_direcao_do_aviso_de_vencimento_test.sql
+
       # O MESMO TESTE DA 043, DE NOVO, NO FIM DA CADEIA (HMO-256).
       #
       # NAO E REDUNDANTE, e o step de cima nao substitui este. O de cima roda na
