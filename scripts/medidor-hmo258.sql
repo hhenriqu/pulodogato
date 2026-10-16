@@ -7,14 +7,34 @@
 -- Nao assere nada: IMPRIME. O que a issue precisa saber primeiro e quantos
 -- numeros diferentes existem hoje, e nenhum deles levanta erro.
 --
--- ESTADO AO ENTRAR NA MAIN (045 e 046 mergeadas): as cinco leituras dao DUAS
--- respostas -- 990,00 (fluxo de caixa: o que saiu da minha conta) e 1.010,00
--- (custo pessoal: bruto + reembolso). Antes da 045/046 eram quatro: 990, 950,
--- 900 e 1010. O "respostas_distintas" no fim imprime 2 em vez de 4, e e esse
--- numero que diz se a issue continua fechada.
+-- ESTADO MEDIDO EM 16/10/2026, na main d7a4c8a, com a cadeia 001->056 (HMO-413):
+-- TRES respostas, nao duas.
 --
--- A SEXTA LINHA E DE OUTRA PERGUNTA (HMO-347, migration 049). As cinco de cima
--- perguntam "quanto a A gastou em maio?"; a sexta pergunta "quanto do TETO de
+--   990,00  fluxo de caixa -- o que saiu da minha conta  (decidido, com rotulo)
+--   1010,00 custo pessoal -- bruto + reembolso           (decidido, com rotulo)
+--   950,00  "so a minha parte" -- O PAINEL PRINCIPAL     (RECUSADO em 08/10,
+--                                                         e sem rotulo na tela)
+--
+-- O 950 e a convencao que o Helio descartou ao escolher 1.010,00 na interaction
+-- da HMO-258, e ela esta viva na tela mais aberta do app. A 046 nao a removeu:
+-- ela mudou as VIEWS, e o painel nao le view nenhuma (linha 2b).
+--
+-- POR QUE ESTE MEDIDOR IMPRIMIA 2 E DIZIA QUE ESTAVA TUDO BEM
+-- ----------------------------------------------------------
+-- A linha do painel media `personal_monthly_cash_flow` debaixo do rotulo
+-- "painel + reports/cash-flow + categories". A view responde ao modo MES; o
+-- painel pergunta pelo modo INTERVALO (`&cartao=fatura`) e nunca a consulta.
+-- Entao o medidor mediu a view, imprimiu 1.010,00 no lugar do painel, e a 046
+-- pos no proprio cabecalho "painel ... 950,00 -> 1.010,00" apoiada nisso.
+-- O contador de respostas e a conferencia da issue -- e ele estava medindo a
+-- correcao, nao a tela.
+--
+-- Antes da 045/046 eram quatro respostas (990, 950, 900, 1010); hoje sao tres.
+-- O "respostas_distintas" no fim imprime 3, e so cai para 2 quando o ramo de
+-- intervalo de `/api/reports/cash-flow` passar a somar bruto + reembolso.
+--
+-- A ULTIMA LINHA E DE OUTRA PERGUNTA (HMO-347, migration 049). As seis de cima
+-- perguntam "quanto a A gastou em maio?"; a ultima pergunta "quanto do TETO de
 -- mercado ela consumiu?", que recorta UMA categoria. Ela entra aqui porque o
 -- criterio e o mesmo e o defeito era o mesmo da `planned_vs_actual`: despesa de
 -- grupo ignorada por inteiro.
@@ -151,12 +171,55 @@ resumo AS (
      AND transaction_type = 'expense'
      AND transaction_date BETWEEN DATE '2026-05-01' AND DATE '2026-05-31'
 ),
--- 2. /api/reports/cash-flow e /api/reports/categories no modo MES: rollup da 033.
-painel AS (
+-- 2. /api/reports/cash-flow e /api/reports/categories no modo MES (`?months=N`):
+--    rollup da 033. Quem pergunta assim e a TELA DE RELATORIOS
+--    (app/(dashboard)/dashboard/reports/page.tsx monta `?months=${meses}`).
+--    O PAINEL PRINCIPAL NAO -- ver a linha 2b.
+relatorios AS (
   SELECT COALESCE(SUM(expense), 0) AS v
     FROM public.personal_monthly_cash_flow
    WHERE user_id = 'a5800000-0000-0000-0000-0000000000a1'
      AND month = DATE '2026-05-01'
+),
+-- 2b. O PAINEL PRINCIPAL, QUE NAO LE VIEW NENHUMA (HMO-413).
+--
+-- Esta linha nasceu porque a linha 2 estava rotulada "painel + reports/
+-- cash-flow + categories" e media uma view que O PAINEL NUNCA CONSULTA. O
+-- painel chama `/api/reports/cash-flow?de=&ate=&cartao=fatura`
+-- (app/(dashboard)/dashboard/page.tsx:441), e `cartao=fatura` cai no ramo
+-- `periodo.modo === "intervalo" || cartaoPelaFatura` da rota -- que soma as
+-- linhas CRUAS no JavaScript, mesmo quando o periodo e um mes inteiro. O
+-- parametro nao e opcional naquela tela (o comentario de la diz isso), entao
+-- NAO EXISTE caminho em que o painel leia `personal_monthly_cash_flow`.
+--
+-- Consequencia que custou uma migration: a 046 mudou as VIEWS e declarou, no
+-- proprio cabecalho, "painel ... 950,00 -> 1.010,00". O commit dela (b9fb8c4)
+-- nao toca um unico arquivo de `app/`, e o painel continua em 950,00 -- a
+-- TERCEIRA convencao, a que o Helio recusou em 08/10 ao escolher 1.010,00. O
+-- medidor certificou a correcao porque media a view pelo nome do painel.
+--
+-- Os dois filtros abaixo sao os da rota, e sao eles que dao 950:
+--   * `financial_transactions` com `group_id IS NULL` -- o jantar de 90 que a A
+--     pagou fica FORA inteiro (a linha dele tem `group_id` preenchido);
+--   * `group_share_entries` SEM filtro de `paguei_eu` -- entao volta a parte da
+--     A nos DOIS rateios: 30 (do que ela pagou) + 20 (do que a B pagou).
+-- O criterio aprovado quer 90 + 20; este caminho da 30 + 20.
+painel AS (
+  SELECT COALESCE((
+           SELECT SUM(ABS(amount))
+             FROM public.financial_transactions
+            WHERE user_id = 'a5800000-0000-0000-0000-0000000000a1'
+              AND group_id IS NULL
+              AND transaction_type = 'expense'
+              AND transaction_date BETWEEN DATE '2026-05-01' AND DATE '2026-05-31'
+         ), 0)
+       + COALESCE((
+           SELECT SUM(ABS(amount))
+             FROM public.group_share_entries
+            WHERE user_id = 'a5800000-0000-0000-0000-0000000000a1'
+              AND transaction_type = 'expense'
+              AND transaction_date BETWEEN DATE '2026-05-01' AND DATE '2026-05-31'
+         ), 0) AS v
 ),
 -- 3. /api/reports/planned-vs-actual. A rota filtra `group_id IS NULL` quando o
 --    relatorio e pessoal (route.ts:56).
@@ -202,19 +265,28 @@ orcamento AS (
 SELECT * FROM (
   SELECT 1 AS n, '/dashboard/despesas (movimentacoes/resumo)' AS tela,
          (SELECT v FROM resumo) AS valor, 'grupo INTEGRAL (90), ignora o da B' AS convencao
-  UNION ALL SELECT 2, 'painel + reports/cash-flow + categories',
+  UNION ALL SELECT 2, 'tela de Relatorios (?months=N)',
          -- O ROTULO DIZ A FONTE, NAO O NUMERO, de proposito: as linhas 2 e 3
          -- sao as duas que as migrations 045/046 mudam, e um rotulo escrito
          -- como "MINHA PARTE: 30 + 20" virou mentira no dia do merge sem
          -- ninguem reparar -- o medidor continuaria imprimindo bonito.
-         (SELECT v FROM painel), 'le personal_monthly_cash_flow (033: minha parte; 046: bruto + reembolso)'
-  UNION ALL SELECT 3, 'reports/planned-vs-actual (actual_expense)',
+         --
+         -- E O ROTULO TEM DE DIZER *QUEM PERGUNTA*, nao so a view (HMO-413).
+         -- Este dizia "painel + reports/cash-flow + categories" e media a view
+         -- do modo MES; o painel pergunta pelo modo INTERVALO e nunca viu este
+         -- numero. A guarda escrita acima cobria o rotulo-que-cita-o-NUMERO e
+         -- nao cobriu o rotulo-que-cita-a-TELA, que e o que apodreceu.
+         (SELECT v FROM relatorios), 'le personal_monthly_cash_flow (033: minha parte; 046: bruto + reembolso)'
+  UNION ALL SELECT 3, 'PAINEL principal (?de=&ate=&cartao=fatura)',
+         (SELECT v FROM painel),
+         'soma as linhas cruas na rota: group_id IS NULL + parte dos DOIS rateios -- NAO le view'
+  UNION ALL SELECT 4, 'reports/planned-vs-actual (actual_expense)',
          (SELECT v FROM pva), 'le monthly_cash_flow c/ group_id IS NULL (008); personal_ apos a 045/046'
-  UNION ALL SELECT 4, 'reports/net-worth (|net_change|)',
+  UNION ALL SELECT 5, 'reports/net-worth (|net_change|)',
          (SELECT v FROM patrimonio), 'grupo integral'
-  UNION ALL SELECT 5, '/dashboard/personal-finance (HMO-275)',
+  UNION ALL SELECT 6, '/dashboard/personal-finance (HMO-275)',
          (SELECT v FROM custo), 'bruto + reembolso -- o criterio APROVADO'
-  UNION ALL SELECT 6, 'budget_consumption (teto de 700 no mercado)',
+  UNION ALL SELECT 7, 'budget_consumption (teto de 700 no mercado)',
          (SELECT v FROM orcamento),
          'le budget_consumption; so a categoria do teto. status: '
            || (SELECT status FROM orcamento)
@@ -236,6 +308,23 @@ SELECT count(DISTINCT v) AS respostas_distintas
     UNION ALL
     SELECT COALESCE(SUM(expense), 0) FROM public.personal_monthly_cash_flow
      WHERE user_id = 'a5800000-0000-0000-0000-0000000000a1' AND month = DATE '2026-05-01'
+    UNION ALL
+    -- O PAINEL PRINCIPAL ENTRA AQUI (HMO-413). Sem ele este contador imprimia
+    -- 2 -- "duas pontas decididas, as duas com rotulo" -- enquanto a tela mais
+    -- aberta do app mostrava um TERCEIRO numero sem rotulo nenhum. Era o
+    -- contador que dizia que a 046 tinha terminado o servico.
+    SELECT COALESCE((
+             SELECT SUM(ABS(amount)) FROM public.financial_transactions
+              WHERE user_id = 'a5800000-0000-0000-0000-0000000000a1'
+                AND group_id IS NULL AND transaction_type = 'expense'
+                AND transaction_date BETWEEN DATE '2026-05-01' AND DATE '2026-05-31'
+           ), 0)
+         + COALESCE((
+             SELECT SUM(ABS(amount)) FROM public.group_share_entries
+              WHERE user_id = 'a5800000-0000-0000-0000-0000000000a1'
+                AND transaction_type = 'expense'
+                AND transaction_date BETWEEN DATE '2026-05-01' AND DATE '2026-05-31'
+           ), 0)
     UNION ALL
     SELECT COALESCE(SUM(actual_expense), 0) FROM public.planned_vs_actual
      WHERE user_id = 'a5800000-0000-0000-0000-0000000000a1'
