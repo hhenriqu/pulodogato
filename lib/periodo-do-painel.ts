@@ -150,6 +150,35 @@ export function periodoParaQuery(periodo: Periodo): string {
   return `de=${periodo.de}&ate=${periodo.ate}`;
 }
 
+/**
+ * O endereco da tela cheia de um dos dois lados, COM a janela da tela dentro.
+ *
+ * Os tiles de Receitas e Despesas do painel levam para `/dashboard/receitas` e
+ * `/dashboard/despesas` (HMO-408), e a querystring nao e enfeite: do outro lado
+ * quem le a URL e o `lerPeriodo` acima, e ele CAI NO MES CORRENTE quando nao
+ * acha `de`/`ate` -- de proposito, porque a tela de destino nao pode nascer em
+ * branco por causa de um link cortado no meio.
+ *
+ * Essa rede, boa para um link colado de fora, e exatamente o defeito aqui: um
+ * link nu levaria quem esta olhando agosto -- e acabou de clicar num numero de
+ * agosto -- para outubro, sem erro, sem tela vazia e sem nada na tela dizendo
+ * que o periodo mudou no caminho. Dai a janela ir junto, e dai este endereco
+ * nascer de `periodoParaQuery` em vez de um template literal no JSX: um `&`
+ * perdido ou um `ate` esquecido seriam invisiveis ali.
+ *
+ * Devolve `string`, e nao `Route`: `experimental.typedRoutes` tipa o destino do
+ * `Link` como uma uniao literal de rotas, e esta lib nao importa tipo do
+ * `next`. O `as Route` fica no chamador, como no `irPara` de
+ * components/movimentacoes/TelaDeMovimentacao.tsx.
+ */
+export function rotaDaTelaDoLado(
+  lado: "receita" | "despesa",
+  periodo: Periodo
+): string {
+  const tela = lado === "receita" ? "receitas" : "despesas";
+  return `/dashboard/${tela}?${periodoParaQuery(periodo)}`;
+}
+
 // -----------------------------------------------------------------------------
 // O PAR PERSONALIZADO ENQUANTO ESTA SENDO DIGITADO (HMO-240)
 // -----------------------------------------------------------------------------

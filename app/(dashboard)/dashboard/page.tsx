@@ -53,6 +53,7 @@
 // -----------------------------------------------------------------------------
 
 import { ReactNode, Suspense, useCallback, useEffect, useState } from "react";
+import type { Route } from "next";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -90,6 +91,7 @@ import {
   contemHoje,
   lerPeriodo,
   periodoParaQuery,
+  rotaDaTelaDoLado,
   rotuloDoPeriodo,
   rotuloDoSaldo,
   somarPrevistas,
@@ -692,24 +694,62 @@ function PainelCompleto() {
                 pela propria agenda dele.
 
             Agora cada lado diz Realizado, Previsao e Total esperado, e as duas
-            parcelas somam o total por construcao. */}
-        <TileRealizadoEPrevisao
-          lado="receita"
-          numeros={numerosDoPainel.receita}
-          rotulo={rotulo}
-          periodoEncerrado={janelaPrevisao === null}
-          periodoFuturo={janelaRealizadoDaTela === null}
-          previsaoIncompleta={previsaoIncompleta}
-        />
+            parcelas somam o total por construcao.
 
-        <TileRealizadoEPrevisao
-          lado="despesa"
-          numeros={numerosDoPainel.despesa}
-          rotulo={rotulo}
-          periodoEncerrado={janelaPrevisao === null}
-          periodoFuturo={janelaRealizadoDaTela === null}
-          previsaoIncompleta={previsaoIncompleta}
-        />
+            E DESDE A HMO-408 OS DOIS SAO LINK (parte 2 do plano da HMO-407)
+            ----------------------------------------------------------------
+            Cada tile e a porta da tela cheia do lado dele -- as linhas que
+            compoem aqueles tres numeros. O destino nao e novo e nem ganhou
+            leitura nova: `/dashboard/receitas` e `/dashboard/despesas` ja
+            existem e ja leem `?de=&ate=`.
+
+            A JANELA VAI JUNTO, e isso e a feature, nao um detalhe de
+            implementacao. `lerPeriodo`, do outro lado, cai no mes corrente
+            quando nao acha os parametros; sem eles, clicar num numero de agosto
+            abriria outubro. O endereco sai de `rotaDaTelaDoLado` -- a mesma
+            `periodoParaQuery` que o seletor de periodo usa --, e nao de um
+            template literal aqui, porque um `ate` esquecido no JSX nao quebra
+            build, nao quebra tipo e nao deixa a tela vazia.
+
+            OS DOIS LADOS MOSTRAM NUMEROS DIFERENTES QUANDO HA DESPESA DE GRUPO,
+            e isso foi decidido (decisao D3 da HMO-407), nao esquecido: o
+            «Realizado» daqui vem de /api/reports/cash-flow, que conta a conta de
+            grupo pela MINHA PARTE (HMO-306/308), e a tela de destino vem de
+            /api/movimentacoes/resumo, que conta o grupo integral. A divergencia
+            ja existia hoje e era invisivel; o clique a poe a um passo de
+            distancia. Igualar mexe em `monthly_cash_flow` e tem follow-up
+            proprio nas filhas da HMO-407 -- nao se conserta por aqui.
+
+            O `as Route` e o do `irPara` da tela de movimentacao, pela mesma
+            razao: `experimental.typedRoutes` tipa o destino como uniao literal
+            de rotas e nao reconhece endereco montado em tempo de execucao. */}
+        <Link
+          href={rotaDaTelaDoLado("receita", periodo) as Route}
+          className="block rounded-lg transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <TileRealizadoEPrevisao
+            lado="receita"
+            numeros={numerosDoPainel.receita}
+            rotulo={rotulo}
+            periodoEncerrado={janelaPrevisao === null}
+            periodoFuturo={janelaRealizadoDaTela === null}
+            previsaoIncompleta={previsaoIncompleta}
+          />
+        </Link>
+
+        <Link
+          href={rotaDaTelaDoLado("despesa", periodo) as Route}
+          className="block rounded-lg transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <TileRealizadoEPrevisao
+            lado="despesa"
+            numeros={numerosDoPainel.despesa}
+            rotulo={rotulo}
+            periodoEncerrado={janelaPrevisao === null}
+            periodoFuturo={janelaRealizadoDaTela === null}
+            previsaoIncompleta={previsaoIncompleta}
+          />
+        </Link>
 
         {/* Outro tile sem eixo de tempo, e de um tipo diferente do saldo: o
             custo fixo sai das regras recorrentes ATIVAS, que sao uma

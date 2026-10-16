@@ -8021,3 +8021,119 @@ jobs:
       # registrou em mutantes-credito-de-grupo.
       - name: Mutantes do teto do acerto
         run: npm run mutantes:teto-do-acerto
+
+      # =======================================================================
+      # OS TILES DO PAINEL LEVAM A JANELA DA TELA NO CLIQUE
+      # origem: HMO-408 (parte 2 do plano da HMO-407)
+      # =======================================================================
+      # Os tiles de Receitas e Despesas viraram Link para `/dashboard/receitas` e
+      # `/dashboard/despesas`. O destino nao e novo e nao ganhou leitura nova; o
+      # que esta issue acrescenta e a JANELA indo junto.
+      #
+      # E e ela que precisa de prova. `lerPeriodo`, do outro lado, cai no MES
+      # CORRENTE quando nao acha `?de=&ate=` -- de proposito, para link colado de
+      # fora nao virar tela em branco. Com o link nu essa rede se transforma no
+      # defeito: quem clica num numero de agosto chega em outubro, sem erro, sem
+      # tela vazia e sem nada dizendo que o periodo mudou no caminho.
+      #
+      # `test:periodo-painel` prova a FUNCAO e `test:tres-numeros` prova o TILE;
+      # as duas ficam verdes com a pagina passando o mes corrente para o link,
+      # porque nenhuma alcanca a fiacao. Dai a sonda de navegador: ela monta
+      # `app/(dashboard)/dashboard/page.tsx` inteira, com `?de=&ate=` na URL, e
+      # le o `href` dos dois anchors.
+      #
+      # Sem navegador a suite FALHA, e nao pula: suite que se desliga sozinha e
+      # indistinguivel de suite que passou.
+      - name: Os tiles do painel levam a janela da tela
+        run: npm run test:painel-clicavel
+
+      # Controle negativo. Os cinco mutantes sao as cinco formas de o link
+      # chegar ao destino sem a janela -- e NENHUMA delas tem sintoma: as cinco
+      # compilam, renderizam, abrem a tela certa e mostram numero.
+      #
+      # Os mutantes 1 e 2 sao o par que a issue mandou medir: o 1 tira a janela e
+      # o 2 troca a janela da tela pelo mes corrente. Uma sonda que usasse o mes
+      # corrente como periodo de teste ficaria VERDE nos dois.
+      - name: A sonda do painel clicavel sabe falhar
+        run: |
+          set -uo pipefail
+          PAINEL='app/(dashboard)/dashboard/page.tsx'
+          PERIODO='lib/periodo-do-painel.ts'
+          cp "$PAINEL" "$PAINEL.orig"
+          cp "$PERIODO" "$PERIODO.orig"
+          trap 'mv "$PAINEL.orig" "$PAINEL"; mv "$PERIODO.orig" "$PERIODO"' EXIT
+
+          mutou() {
+            if diff -q "$1.orig" "$1" > /dev/null; then
+              echo "::error::O mutante $2 nao alterou $1 -- a ancora do sed mudou."
+              exit 1
+            fi
+          }
+
+          # 1) O LINK FICA NU. O defeito da issue, exatamente: o clique leva para
+          #    a tela certa e para o MES CORRENTE, partindo de um numero de
+          #    agosto.
+          sed -i 's|rotaDaTelaDoLado("receita", periodo) as Route|"/dashboard/receitas" as Route|' "$PAINEL"
+          mutou "$PAINEL" 1
+          if npm run test:painel-clicavel > /dev/null 2>&1; then
+            echo "::error::Verde com o tile de Receitas levando para a tela sem a janela do periodo."
+            exit 1
+          fi
+          cp "$PAINEL.orig" "$PAINEL"
+
+          # 2) O ENDERECO LEVA O MES CORRENTE, e nao o periodo que esta na tela.
+          #    O gemeo do 1, e o que a armadilha da issue nomeia: o `href` tem
+          #    `de`/`ate`, parece completo, e aponta para o mes errado.
+          sed -i 's|?${periodoParaQuery(periodo)}`;|?${periodoParaQuery(periodoCorrente())}`;|' "$PERIODO"
+          mutou "$PERIODO" 2
+          if npm run test:painel-clicavel > /dev/null 2>&1; then
+            echo "::error::Verde com o link do tile levando o mes corrente em vez do periodo da tela."
+            exit 1
+          fi
+          cp "$PERIODO.orig" "$PERIODO"
+
+          # 3) SO O `de` VAI. Meia janela e o mesmo que nenhuma: sem o `ate`, o
+          #    `lerPeriodo` do destino descarta o par inteiro e cai no mes
+          #    corrente.
+          sed -i 's|?${periodoParaQuery(periodo)}`;|?de=${periodo.de}`;|' "$PERIODO"
+          mutou "$PERIODO" 3
+          if npm run test:painel-clicavel > /dev/null 2>&1; then
+            echo "::error::Verde com o link levando so o de, sem o ate."
+            exit 1
+          fi
+          cp "$PERIODO.orig" "$PERIODO"
+
+          # 4) COPIA-E-COLA: o tile de Despesas aponta para Receitas. Os dois
+          #    blocos de JSX sao irmaos identicos a menos de uma palavra, e este
+          #    e o erro que se comete escrevendo o segundo.
+          sed -i 's|rotaDaTelaDoLado("despesa", periodo) as Route|rotaDaTelaDoLado("receita", periodo) as Route|' "$PAINEL"
+          mutou "$PAINEL" 4
+          if npm run test:painel-clicavel > /dev/null 2>&1; then
+            echo "::error::Verde com o tile de Despesas abrindo a tela de Receitas."
+            exit 1
+          fi
+          cp "$PAINEL.orig" "$PAINEL"
+
+          # 5) O `lado` E IGNORADO na lib. Mesmo destino do 4, do outro lado da
+          #    fronteira: aqui os DOIS tiles vao para Receitas, e o periodo
+          #    continua certo nos dois.
+          sed -i 's|const tela = lado === "receita" ? "receitas" : "despesas";|const tela = "receitas";|' "$PERIODO"
+          mutou "$PERIODO" 5
+          if npm run test:painel-clicavel > /dev/null 2>&1; then
+            echo "::error::Verde com os dois tiles apontando para a mesma tela."
+            exit 1
+          fi
+          cp "$PERIODO.orig" "$PERIODO"
+
+          echo "A sonda do painel clicavel fica vermelha nos cinco defeitos."
+
+      - name: 'A arvore voltou ao lugar depois de "A sonda do painel clicavel sabe falhar"'
+        run: |
+          # O .tmp-* compilado guarda o mutante mesmo depois do restore do .tsx.
+          rm -rf .tmp-*
+          git status --porcelain > "$RUNNER_TEMP/arvore-agora.txt"
+          if ! diff -q "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" > /dev/null; then
+            echo "::error::O controle negativo acima nao restaurou a arvore. Os passos seguintes rodariam sobre codigo mutado."
+            diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
+            exit 1
+          fi
