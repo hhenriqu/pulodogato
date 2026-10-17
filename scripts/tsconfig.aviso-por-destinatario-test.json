@@ -1,0 +1,50 @@
+{
+  "//": [
+    "O aviso de vencimento da conta de grupo vai para cada membro (HMO-414).",
+    "",
+    "Compila as DUAS rotas que leem `bill_alerts`, porque a 057 as puxa para",
+    "lados opostos e e justamente o par que precisa ser medido junto:",
+    "",
+    "  - app/api/cron/bill-alerts/route.ts   NAO filtra user_id (precisa do",
+    "    conjunto inteiro para o fan-out) e grava com `onConflict` nomeado;",
+    "  - app/api/notifications/route.ts      FILTRA user_id (senao o membro ve a",
+    "    mesma conta uma vez por pessoa do grupo).",
+    "",
+    "Um teste que medisse so uma das duas passaria verde com a outra errada, e os",
+    "dois erros sao silenciosos: o do cron grava UMA linha em vez de tres sem",
+    "levantar erro (`ON CONFLICT DO NOTHING`), e o do sino triplica a lista sem",
+    "mudar nenhum numero de dinheiro.",
+    "",
+    "POR QUE A ROTA, E NAO UM GUARD TEXTUAL",
+    "`onConflict` e uma STRING de nomes de colunas, e o PostgREST exige que ela",
+    "case com um indice unico do banco -- divergir faz o cron responder ERRO todo",
+    "dia. Um `includes(\"user_id\")` sobre o arquivo fica verde casando com",
+    "`user_id: a.user_id` da linha gravada, que esta logo acima no mesmo arquivo.",
+    "A assercao tem de ser sobre o ARGUMENTO que a rota passou.",
+    "",
+    "`rootDir` e a raiz do projeto: as rotas importam @/lib e @/utils, e com",
+    "rootDir em app/ o tsc reprova com TS6059. O emit espelha a raiz, entao o",
+    "resolve-aliases roda com --espelha-raiz.",
+    "",
+    "utils/supabase/server.ts e compilado junto e DEPOIS sobrescrito pelo",
+    "scripts/monta-duble-de-rota.mjs -- o modulo real importa `next/headers`, que",
+    "nao roda fora do runtime do Next. O mesmo passo planta o duble de",
+    "@supabase/supabase-js, que e por onde o cron pega a service_role."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-aviso-por-destinatario",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../app/api/cron/bill-alerts/route.ts",
+    "../app/api/notifications/route.ts"
+  ]
+}

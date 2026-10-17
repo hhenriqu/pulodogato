@@ -7592,6 +7592,39 @@ jobs:
       # suite.
       - name: Mutantes do canal de e-mail
         run: npm run mutantes:aviso-por-email
+
+      # -------------------------------------------------------------------
+      # O AVISO DA CONTA DE GRUPO VAI PARA CADA MEMBRO (HMO-414)
+      # -------------------------------------------------------------------
+      # A migration 057 fez `bill_alerts` devolver uma linha POR DESTINATARIO
+      # (os membros ativos do grupo, mais o dono). Isso sozinho nao manda um
+      # e-mail a mais, e as duas metades que faltam vivem em rotas com
+      # exigencias OPOSTAS -- e por isso a suite compila as duas juntas:
+      #
+      #   * o CRON nao filtra `user_id` (precisa do conjunto inteiro) e grava
+      #     com `onConflict` nomeado. Com `user_id` fora dessa lista, o aviso
+      #     do segundo membro colide com o do primeiro e o `ignoreDuplicates`
+      #     responde `INSERT 0 0` -- SEM ERRO, com o job verde: o fan-out
+      #     inteiro grava UMA linha;
+      #   * o SINO filtra `user_id`. A RLS NAO recorta o fan-out para o leitor
+      #     (`group_members_select` mostra o grupo inteiro a qualquer membro),
+      #     entao sem o filtro um membro de grupo de 3 pessoas ve a mesma conta
+      #     TRES vezes, com `overdue_count` triplicado.
+      #
+      # A assercao e sobre o ARGUMENTO que a rota passou ao client, nao sobre o
+      # texto do arquivo: um `includes("user_id")` sobre o fonte fica verde
+      # casando com `user_id: a.user_id` tres linhas acima do `onConflict`.
+      #
+      # CONTROLE NEGATIVO dentro da propria suite: a MESMA rota, com o duble
+      # colidindo pela chave do 009, grava 1 de 3 e responde 200. E medido que a
+      # suite reprova contra o codigo de antes -- 3 assercoes vermelhas com o
+      # `onConflict` velho e o filtro do sino apagados.
+      #
+      # SEM `paths:`, como todo o resto deste workflow -- e aqui isso tambem e
+      # load-bearing: a suite mede DUAS rotas, e um filtro escrito sobre uma
+      # delas deixaria a outra mudar verde.
+      - name: O aviso da conta de grupo vai para cada membro
+        run: npm run test:aviso-por-destinatario
       # A DATA DE TODO LANCAMENTO DA LISTA APARECIA UM DIA MAIS CEDO (HMO-353).
       #
       # `transaction_date`, `due_date` e `settled_on` sao colunas `date`: chegam

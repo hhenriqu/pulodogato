@@ -24,8 +24,21 @@
 // O QUE IMPEDE O SPAM
 // -------------------
 // A view ja traz `already_notified`, e o INSERT bate na UNIQUE
-// (scheduled_transaction_id, kind, reference_date) do 009. Mesmo que o cron
-// rode dez vezes no mesmo dia, o aviso sai uma vez so.
+// (scheduled_transaction_id, user_id, kind, reference_date) da 057. Mesmo que o
+// cron rode dez vezes no mesmo dia, o aviso sai uma vez so POR PESSOA.
+//
+// UMA CONTA DE GRUPO RENDE UM AVISO POR MEMBRO (HMO-414)
+// ------------------------------------------------------
+// Conta prevista de grupo e UMA linha, do dono -- e por isso o aviso saia so
+// para ele. Desde a 057 `bill_alerts` devolve uma linha POR DESTINATARIO (os
+// membros ativos do grupo, mais o dono), e esta rota nao precisou saber de
+// grupo nenhum: ela continua gravando `a.user_id`, que agora e o destinatario.
+//
+// O QUE ELA PRECISOU SABER E O `onConflict`. Com `user_id` fora da chave, o
+// aviso do segundo membro colide com o do primeiro e o `ignoreDuplicates`
+// responde `INSERT 0 0` -- SEM ERRO. Medido: o fan-out inteiro gravava UMA
+// linha. E por isso que o nome das colunas aqui e load-bearing, e por que esta
+// rota tem de ir ao ar ANTES de a 057 ser colada (ver o cabecalho dela).
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
@@ -165,7 +178,11 @@ export async function GET(request: NextRequest) {
     const { data: gravados, error: erroGravar } = await admin
       .from("bill_notifications")
       .upsert(linhas, {
-        onConflict: "scheduled_transaction_id,kind,reference_date",
+        // `user_id` ENTRA AQUI, e a lista tem de casar com a UNIQUE da 057: o
+        // PostgREST exige um indice unico com estas colunas e responde ERRO
+        // quando nao acha -- nao "ignorei o conflito". Sem `user_id`, o aviso
+        // do segundo membro de um grupo era descartado em silencio.
+        onConflict: "scheduled_transaction_id,user_id,kind,reference_date",
         ignoreDuplicates: true,
       })
       .select("id, user_id, scheduled_transaction_id, title, body");
@@ -214,8 +231,10 @@ export async function GET(request: NextRequest) {
     // -----------------------------------------------------------------------
     // Depois do push, e sobre a MESMA lista `novos` -- os avisos que acabaram
     // de ser gravados. E dai que vem a idempotencia do canal: a UNIQUE
-    // (scheduled_transaction_id, kind, reference_date) da 009 faz o segundo
-    // cron do dia devolver `novos` vazio, entao ele nao manda e-mail nenhum.
+    // (scheduled_transaction_id, user_id, kind, reference_date) da 057 faz o
+    // segundo cron do dia devolver `novos` vazio, entao ele nao manda e-mail
+    // nenhum. Por PESSOA desde a 057: o aviso que a Lais ja recebeu nao cala
+    // mais o da Ana sobre a mesma conta.
     // Nao ha contagem separada a manter; o que ja protegia o push protege o
     // e-mail pela mesma linha.
     // Com o canal desligado NAO se procura endereco nenhum. `enderecosDe` e
