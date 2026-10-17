@@ -85,6 +85,12 @@
 // As DUAS medicoes foram repetidas na main (29b5adf), depois de a main andar:
 // mesmos 1060/50/0/0 na guarda e mesmos 21/21 no runner.
 //
+// O 21/21 ACIMA E A MEDICAO DAQUELE DIA, e nao o placar de hoje: a HMO-336
+// acrescentou dois mutantes aquele runner (o porteiro `posso` de
+// `fatura_suspeita` e de `elo_da_fatura`, que estavam em zero assercoes) e o
+// placar passou a 23/23. O numero fica escrito como foi medido -- reescrever a
+// medicao para o total de hoje seria afirmar que a de 2026-10-07 viu 23.
+//
 // A SEGUNDA MEDICAO JA RODA DE GRACA -- NAO EXPORTE `CHROMIUM_BIN`.
 // `detalhe-do-painel` tem `test:papel-na-tela` entre as suites, que e sonda de
 // navegador, e por duas issues ela custou caro aqui. As duas causas estao
