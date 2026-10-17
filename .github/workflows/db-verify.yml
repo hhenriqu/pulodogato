@@ -4831,3 +4831,89 @@ jobs:
       # este arquivo fica vermelho com "esperado 2, obtido 4".
       - name: O usuario novo recebe SO Conta Corrente e Dinheiro
         run: $PSQL -f database/tests/056_conta_padrao_do_usuario_novo_test.sql
+
+      # =====================================================================
+      # HMO-414 -- O AVISO DE VENCIMENTO POR DESTINATARIO (057)
+      # =====================================================================
+      # O BLOCO FICA NO FIM DO JOB, depois do da 056, por dois motivos:
+      #
+      #   1. a 057 recola `bill_alerts`, que a 047 e a 050 ja recolaram. Uma
+      #      migration que mexe nessa view TEM de rodar depois das duas, e o
+      #      numero (057) e a posicao do step carregam isso juntos -- um step
+      #      colocado antes da 050 aplicaria a 050 por cima e reverteria o
+      #      fan-out em silencio, que e exatamente o acidente que o cabecalho
+      #      da 050 escreveu para o futuro;
+      #
+      #   2. a 057 e INERTE para toda suite acima. Ela nao toca nenhuma das
+      #      outras views nem nenhuma tabela alem da UNIQUE de
+      #      `bill_notifications`, e a cadeia 001 -> 056 que os steps anteriores
+      #      exercitam fica byte a byte a mesma. MEDIDO: as quatro suites que
+      #      leem `bill_alerts` ou a RLS da agenda
+      #      (`050_direcao_do_aviso_de_vencimento_test`,
+      #      `view_security_invoker_test`, `scheduled_rls_test` e
+      #      `hmo407_pagamento_de_conta_de_grupo_test`) continuam VERDES contra
+      #      um banco com a 057 aplicada.
+      - name: 057_aviso_de_vencimento_por_destinatario
+        run: $PSQL -f database/migrations/057_aviso_de_vencimento_por_destinatario.sql
+
+      # Re-executavel, e aqui o re-run NAO e formalidade: a SECAO 1 troca uma
+      # CONSTRAINT. `DROP ... IF EXISTS` + `ADD` solto reprovaria a segunda
+      # colagem com "constraint already exists" -- a migration confere a lista
+      # de colunas do que existe e nao mexe quando ja esta certo, e este step e
+      # o que prova isso. Producao recebe migration por colagem a mao, e colar
+      # duas vezes acontece.
+      - name: 057 e idempotente
+        run: $PSQL -f database/migrations/057_aviso_de_vencimento_por_destinatario.sql
+
+      # 11 mutantes da 057 medidos num Postgres 17 local antes deste step
+      # entrar (banco TEMPLATE parando na 056, um banco novo por mutante):
+      # 10 morrem e o controle positivo fica verde. Entre eles: o defeito
+      # restaurado (destinatario volta a ser `s.user_id`), o `UNION` com o dono
+      # apagado, `UNION ALL` em vez de `UNION`, o recorte de membro ATIVO
+      # apagado, o LATERAL sem o "mesmo grupo", o `already_notified` de volta a
+      # global, a preferencia de volta a do dono, o recorte por
+      # `effective_status`, a UNIQUE sem `user_id` e o `ALTER VIEW` do
+      # security_invoker apagado.
+      #
+      # O 11o SOBREVIVE e esta certo: `s.group_id IS NOT NULL` e redundante com
+      # a igualdade de baixo (`gm.group_id = NULL` nao casa com nada). Esta
+      # DOCUMENTADO no corpo da migration, com a medicao.
+      #
+      # DUAS ARMADILHAS DE ANCORA, pagas nesta rodada e anotadas porque as duas
+      # dao placar BOM com mutante que nao mediu nada:
+      #
+      #   * a lista de colunas da UNIQUE aparecia nos DOIS ramos do DO (o
+      #     `IF` de "nao existe" e o `ELSIF` de "troca"). `String.replace`
+      #     troca a PRIMEIRA ocorrencia -- o ramo que nunca roda num banco que
+      #     tem a UNIQUE do 009. O mutante "SOBREVIVEU" sem ter mutado nada que
+      #     executa. A migration passou a montar o DDL UMA vez (`v_add`);
+      #   * apagar so a linha `WHERE s.group_id IS NOT NULL` deixa
+      #     `FROM group_members gm AND ...` e o mutante morre no psql, o que
+      #     nao prova assercao nenhuma. O mutante certo troca o PAR de linhas.
+      #
+      # O controle negativo externo do arquivo de teste: contra um banco parado
+      # na 056 ele fica VERMELHO na primeira assercao, com o defeito impresso
+      # ("esperado Ana, Helio, Lais; obtido Helio").
+      - name: O aviso da conta de grupo vai para cada membro, nao so para o dono
+        run: $PSQL -f database/tests/057_aviso_de_vencimento_por_destinatario_test.sql
+
+      # A 057 e a TERCEIRA migration a recolar `bill_alerts` (depois da 047 e da
+      # 050). O cabecalho da 050 pediu este step em voz alta: recolar a view com
+      # a definicao velha reverte o conserto da direcao SEM erro, sem log e sem
+      # sintoma na tela. O step do mesmo arquivo logo depois da 055 ja existe --
+      # este e o de DEPOIS da 057, e a cadeia passou a ter duas views no caminho.
+      #
+      # E ele carrega um segundo medidor de graca: a suite da 050 tem uma
+      # assercao que REPROVA se `bill_alerts` como DEFINER voltar a vazar linha.
+      # A 057 faz a view tocar `public.group_members` DIRETO, que era o cenario
+      # previsto para reabrir o furo -- medido, nao reabriu (o portao e o `FROM`
+      # de fora, e membro ja ve o grupo inteiro por `group_members_select`). Se
+      # algum dia reabrir, e aqui que aparece.
+      - name: A direcao do aviso continua valendo depois da 057
+        run: $PSQL -f database/tests/050_direcao_do_aviso_de_vencimento_test.sql
+
+      # `CREATE OR REPLACE VIEW` APAGA os reloptions, e a 057 recria uma view
+      # que estava na lista deste arquivo. Sem o `ALTER VIEW` do fim da
+      # migration, este step e quem reprova.
+      - name: Nenhuma view escapa da RLS, depois da 057
+        run: $PSQL -f database/tests/view_security_invoker_test.sql
