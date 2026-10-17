@@ -7,17 +7,22 @@
 -- Nao assere nada: IMPRIME. O que a issue precisa saber primeiro e quantos
 -- numeros diferentes existem hoje, e nenhum deles levanta erro.
 --
--- ESTADO MEDIDO EM 16/10/2026, na main d7a4c8a, com a cadeia 001->056 (HMO-413):
--- TRES respostas, nao duas.
+-- ESTADO MEDIDO EM 17/10/2026, com a cadeia 001->057 e os filtros da HMO-418 no
+-- ramo de intervalo da rota: DUAS respostas.
 --
 --   990,00  fluxo de caixa -- o que saiu da minha conta  (decidido, com rotulo)
 --   1010,00 custo pessoal -- bruto + reembolso           (decidido, com rotulo)
+--
+-- ESTADO ANTERIOR, medido em 16/10/2026 na main d7a4c8a com a cadeia 001->056
+-- (HMO-413): TRES respostas. A terceira era
+--
 --   950,00  "so a minha parte" -- O PAINEL PRINCIPAL     (RECUSADO em 08/10,
 --                                                         e sem rotulo na tela)
 --
--- O 950 e a convencao que o Helio descartou ao escolher 1.010,00 na interaction
--- da HMO-258, e ela esta viva na tela mais aberta do app. A 046 nao a removeu:
--- ela mudou as VIEWS, e o painel nao le view nenhuma (linha 2b).
+-- O 950 era a convencao que o Helio descartou ao escolher 1.010,00 na
+-- interaction da HMO-258, e ela viveu nove dias na tela mais aberta do app. A
+-- 046 nao a removeu: ela mudou as VIEWS, e o painel nao le view nenhuma
+-- (linha 2b). Quem a removeu foi a HMO-418, nos dois filtros da ROTA.
 --
 -- POR QUE ESTE MEDIDOR IMPRIMIA 2 E DIZIA QUE ESTAVA TUDO BEM
 -- ----------------------------------------------------------
@@ -29,9 +34,10 @@
 -- O contador de respostas e a conferencia da issue -- e ele estava medindo a
 -- correcao, nao a tela.
 --
--- Antes da 045/046 eram quatro respostas (990, 950, 900, 1010); hoje sao tres.
--- O "respostas_distintas" no fim imprime 3, e so cai para 2 quando o ramo de
--- intervalo de `/api/reports/cash-flow` passar a somar bruto + reembolso.
+-- Antes da 045/046 eram quatro respostas (990, 950, 900, 1010); depois dela,
+-- tres; depois da HMO-418, DUAS. O "respostas_distintas" no fim imprime 2 -- e
+-- 2 e o piso: as duas que sobraram sao perguntas diferentes, cada uma com
+-- rotulo na tela, e nao uma divergencia a consertar.
 --
 -- A ULTIMA LINHA E DE OUTRA PERGUNTA (HMO-347, migration 049). As seis de cima
 -- perguntam "quanto a A gastou em maio?"; a ultima pergunta "quanto do TETO de
@@ -194,22 +200,32 @@ relatorios AS (
 --
 -- Consequencia que custou uma migration: a 046 mudou as VIEWS e declarou, no
 -- proprio cabecalho, "painel ... 950,00 -> 1.010,00". O commit dela (b9fb8c4)
--- nao toca um unico arquivo de `app/`, e o painel continua em 950,00 -- a
+-- nao toca um unico arquivo de `app/`, e o painel continuou em 950,00 -- a
 -- TERCEIRA convencao, a que o Helio recusou em 08/10 ao escolher 1.010,00. O
 -- medidor certificou a correcao porque media a view pelo nome do painel.
 --
--- Os dois filtros abaixo sao os da rota, e sao eles que dao 950:
---   * `financial_transactions` com `group_id IS NULL` -- o jantar de 90 que a A
---     pagou fica FORA inteiro (a linha dele tem `group_id` preenchido);
---   * `group_share_entries` SEM filtro de `paguei_eu` -- entao volta a parte da
---     A nos DOIS rateios: 30 (do que ela pagou) + 20 (do que a B pagou).
--- O criterio aprovado quer 90 + 20; este caminho da 30 + 20.
+-- OS DOIS FILTROS ABAIXO SAO OS DA ROTA, E A HMO-418 TROCOU OS DOIS. O que cada
+-- um fazia, e o numero que cada combinacao da nesta fixture:
+--
+--   `financial_transactions` com `group_id IS NULL`  -- o jantar de 90 que a A
+--      pagou ficava FORA inteiro (a linha dele tem `group_id` preenchido). SAIU.
+--   `group_share_entries` sem filtro de `paguei_eu`  -- voltava a parte da A nos
+--      DOIS rateios: 30 (do que ela pagou) + 20 (do que a B pagou). Agora so o
+--      segundo, por `NOT paguei_eu`.
+--
+--   os dois filtros antigos ......   950,00  (a convencao RECUSADA)
+--   so o primeiro trocado ........ 1.040,00  (valor cheio + a minha parte dele)
+--   so o segundo trocado .........   920,00  (a despesa que eu paguei sai)
+--   os dois trocados ............. 1.010,00  <- o criterio aprovado, e o de hoje
+--
+-- Os quatro numeros sao distintos de proposito: este medidor nao assere nada, e
+-- um deles no lugar do outro e a unica coisa que denuncia meia correcao. Quem
+-- assere e scripts/test-criterio-do-painel.mjs, chamando a rota.
 painel AS (
   SELECT COALESCE((
            SELECT SUM(ABS(amount))
              FROM public.financial_transactions
             WHERE user_id = 'a5800000-0000-0000-0000-0000000000a1'
-              AND group_id IS NULL
               AND transaction_type = 'expense'
               AND transaction_date BETWEEN DATE '2026-05-01' AND DATE '2026-05-31'
          ), 0)
@@ -217,6 +233,7 @@ painel AS (
            SELECT SUM(ABS(amount))
              FROM public.group_share_entries
             WHERE user_id = 'a5800000-0000-0000-0000-0000000000a1'
+              AND NOT paguei_eu
               AND transaction_type = 'expense'
               AND transaction_date BETWEEN DATE '2026-05-01' AND DATE '2026-05-31'
          ), 0) AS v
@@ -279,7 +296,7 @@ SELECT * FROM (
          (SELECT v FROM relatorios), 'le personal_monthly_cash_flow (033: minha parte; 046: bruto + reembolso)'
   UNION ALL SELECT 3, 'PAINEL principal (?de=&ate=&cartao=fatura)',
          (SELECT v FROM painel),
-         'soma as linhas cruas na rota: group_id IS NULL + parte dos DOIS rateios -- NAO le view'
+         'soma as linhas cruas na rota: tudo o que EU lancei + a parte do que OUTRO pagou (418) -- NAO le view'
   UNION ALL SELECT 4, 'reports/planned-vs-actual (actual_expense)',
          (SELECT v FROM pva), 'le monthly_cash_flow c/ group_id IS NULL (008); personal_ apos a 045/046'
   UNION ALL SELECT 5, 'reports/net-worth (|net_change|)',
@@ -313,15 +330,22 @@ SELECT count(DISTINCT v) AS respostas_distintas
     -- 2 -- "duas pontas decididas, as duas com rotulo" -- enquanto a tela mais
     -- aberta do app mostrava um TERCEIRO numero sem rotulo nenhum. Era o
     -- contador que dizia que a 046 tinha terminado o servico.
+    --
+    -- COM OS FILTROS DA HMO-418 ele e 1.010,00 e o contador caiu para 2. ESTA
+    -- COPIA TEM DE ACOMPANHAR A CTE `painel` ACIMA: sao os mesmos dois filtros
+    -- escritos duas vezes (a CTE imprime a linha, esta soma o distinct), e uma
+    -- delas parada no criterio antigo faria o contador acusar divergencia que
+    -- nao existe -- ou, pior, esconder uma que existe.
     SELECT COALESCE((
              SELECT SUM(ABS(amount)) FROM public.financial_transactions
               WHERE user_id = 'a5800000-0000-0000-0000-0000000000a1'
-                AND group_id IS NULL AND transaction_type = 'expense'
+                AND transaction_type = 'expense'
                 AND transaction_date BETWEEN DATE '2026-05-01' AND DATE '2026-05-31'
            ), 0)
          + COALESCE((
              SELECT SUM(ABS(amount)) FROM public.group_share_entries
               WHERE user_id = 'a5800000-0000-0000-0000-0000000000a1'
+                AND NOT paguei_eu
                 AND transaction_type = 'expense'
                 AND transaction_date BETWEEN DATE '2026-05-01' AND DATE '2026-05-31'
            ), 0)

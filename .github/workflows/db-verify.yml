@@ -3683,6 +3683,49 @@ jobs:
       - name: A paginacao do intervalo soma as duas paginas
         run: npm run test:paginacao-do-intervalo
 
+      # O CRITERIO DE CUSTO PESSOAL DO PAINEL (HMO-258, HMO-418)
+      #
+      # Vizinha da de cima porque e a continuacao dela: a de cima provou que a
+      # SEGUNDA PAGINA entra no total daquele ramo; esta prova QUAIS LINHAS
+      # entram. Sem a de cima esta nao existiria -- o ramo nao era sondavel.
+      #
+      # A decisao e de produto e ja existe: interaction
+      # `hmo258:criterio-do-relatorio:v1`, respondida em 08/10/2026 por uma
+      # PESSOA -- 1.010,00, bruto + reembolso (INTEIRO quando eu paguei, MINHA
+      # PARTE quando outro pagou). O painel mostrava 950,00, que e a opcao
+      # DESCARTADA na mesma interaction, e sem o rotulo que ela pedia.
+      #
+      # A migration 046 pos esse criterio nas views e declarou no cabecalho dela
+      # "painel ... 950,00 -> 1.010,00". O commit dela nao toca um arquivo de
+      # `app/`, e O PAINEL NAO LE VIEW NENHUMA: ele chama
+      # /api/reports/cash-flow?de=&ate=&cartao=fatura, e `cartao=fatura` cai no
+      # ramo que soma as linhas cruas mesmo num mes inteiro. Nenhuma migration
+      # pode mudar o numero daquela tela -- e por isso esta suite CHAMA os dois
+      # handlers em vez de medir view.
+      #
+      # /api/reports/categories entra junto, e isso nao e zelo: o cabecalho das
+      # duas rotas diz que elas leem o MESMO conjunto de linhas, senao o total do
+      # fluxo deixa de bater com a soma das categorias e a pizza do painel nao
+      # fecha em 100%. A de categorias nao tem chamador no modo pessoal hoje
+      # (`PainelDoGrupo` sempre passa `groupId`), e e por isso que ela e a que
+      # apodrece calada.
+      #
+      # O criterio sao DOIS filtros e cada um sem o outro erra dinheiro num
+      # sentido diferente -- 950 / 1.040 / 920 / 1.010 na fixture de maio, quatro
+      # numeros distintos. A secao 0 CALCULA os quatro do fixture e reprova se uma
+      # edicao futura colapsar dois deles, que e como a suite deixaria de
+      # discriminar sem ficar vermelha.
+      #
+      # Oito controles negativos medidos, todos vermelhos: `group_id IS NULL` de
+      # volta no fluxo (11 casos), `paguei_eu = false` removido do fluxo (9), os
+      # dois juntos (11), a polaridade de `paguei_eu` invertida (9), as duas
+      # mesmas mutacoes na rota de categorias (3 cada), e os dois `eq("user_id")`
+      # -- o da consulta de partes (9) e o da de transacoes (11), que virou
+      # load-bearing quando o filtro de grupo saiu. O runner que re-roda isso em
+      # CI e a HMO-421.
+      - name: O painel soma bruto + reembolso (o criterio aprovado na HMO-258)
+        run: npm run test:criterio-do-painel
+
       # A aritmetica das opcoes de divisao (HMO-190), o par em TypeScript do
       # teste SQL mais acima. Ela mora no mesmo job porque divide o MESMO
       # dinheiro: as partes tem que fechar o total nos mesmos centavos inteiros

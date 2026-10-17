@@ -711,14 +711,20 @@ function PainelCompleto() {
             template literal aqui, porque um `ate` esquecido no JSX nao quebra
             build, nao quebra tipo e nao deixa a tela vazia.
 
-            OS DOIS LADOS MOSTRAM NUMEROS DIFERENTES QUANDO HA DESPESA DE GRUPO,
-            e isso foi decidido (decisao D3 da HMO-407), nao esquecido: o
-            «Realizado» daqui vem de /api/reports/cash-flow, que conta a conta de
-            grupo pela MINHA PARTE (HMO-306/308), e a tela de destino vem de
-            /api/movimentacoes/resumo, que conta o grupo integral. A divergencia
-            ja existia hoje e era invisivel; o clique a poe a um passo de
-            distancia. Igualar mexe em `monthly_cash_flow` e tem follow-up
-            proprio nas filhas da HMO-407 -- nao se conserta por aqui.
+            OS DOIS LADOS AINDA PODEM MOSTRAR NUMEROS DIFERENTES QUANDO HA
+            DESPESA DE GRUPO, e isso foi decidido (decisao D3 da HMO-407), nao
+            esquecido -- mas o MOTIVO mudou na HMO-418. O «Realizado» daqui vem
+            de /api/reports/cash-flow, que passou a contar a despesa de grupo
+            pelo criterio aprovado na HMO-258: INTEIRA quando eu paguei, pela
+            MINHA PARTE quando outro pagou. A tela de destino vem de
+            /api/movimentacoes/resumo, que conta integral o que eu paguei e
+            IGNORA o que outro pagou. Ou seja: os dois lados agora concordam
+            sobre a despesa que EU paguei, e divergem no reembolso que eu devo --
+            a diferenca entre «o que me custou» e «o que saiu da minha conta»,
+            que sao as duas pontas decididas, cada uma com rotulo na tela do lado
+            dela. Nao se iguala por aqui, e nao e mais `monthly_cash_flow` que
+            responde: o cabecalho de app/api/movimentacoes/resumo/route.ts diz
+            por que aquela ponta e a que e.
 
             O `as Route` e o do `irPara` da tela de movimentacao, pela mesma
             razao: `experimental.typedRoutes` tipa o destino como uniao literal
