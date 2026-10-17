@@ -39,6 +39,7 @@
   },
   "include": [
     "../app/api/reports/cash-flow/route.ts",
-    "../app/api/reports/categories/route.ts"
+    "../app/api/reports/categories/route.ts",
+    "../app/api/movimentacoes/resumo/route.ts"
   ]
 }

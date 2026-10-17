@@ -65,9 +65,11 @@ import {
   lerPeriodo,
   periodoCorrente,
   periodoParaQuery,
+  rotaDoPainel,
   rotuloDoPeriodo,
   type Periodo,
 } from "@/lib/periodo-do-painel";
+import { LEGENDA_DO_CAIXA_REALIZADO } from "@/lib/legenda-do-bruto-e-do-liquido";
 import { today } from "@/lib/recurrence";
 import { ROTA_DA_TRANSFERENCIA } from "@/lib/transferencia";
 import { comOrigem } from "@/lib/retorno-do-lancamento";
@@ -363,6 +365,37 @@ export function TelaDeMovimentacao({ tipo }: { tipo: TipoDaTela }) {
                     Receitas
                   </Link>
                   .
+                </p>
+                {/*
+                  A VOLTA PARA O NUMERO DE ONDE A PESSOA VEIO (HMO-413).
+
+                  A frase de cima e completa sobre ESTA tela e muda de assunto
+                  na hora de dizer onde a parte aparece: ela aponta para
+                  Financas Pessoais. Isso bastava enquanto o painel mostrava um
+                  TERCEIRO numero (950,00, a convencao recusada em 08/10). Depois
+                  da HMO-418 o «Realizado» do painel passou a ser exatamente o
+                  outro lado deste -- 1.010,00 contra 990,00 na fixture de maio,
+                  com a diferenca inteira numa perna so --, e desde a HMO-408 o
+                  tile de lado e um LINK para ca. Quem chega aqui chega CLICANDO
+                  num numero maior, e nada ligava um ao outro.
+
+                  O ENDERECO SAI DE `rotaDoPainel`, com a janela: o painel le
+                  `?de=&ate=` e cai no mes corrente sem eles. Um link nu levaria
+                  quem olha maio para o painel de outubro, e a frase passaria a
+                  apresentar como par dois numeros que nao se comparam.
+
+                  O texto e o par de `LEGENDA_DO_CUSTO_REALIZADO`, que fica no
+                  painel: as duas moram no mesmo arquivo porque sao uma
+                  explicacao dita dos dois lados.
+                */}
+                <p>
+                  {LEGENDA_DO_CAIXA_REALIZADO}{" "}
+                  <Link
+                    href={rotaDoPainel(periodo) as Route}
+                    className="underline hover:text-foreground"
+                  >
+                    Abrir o painel
+                  </Link>
                 </p>
               </div>
             )}

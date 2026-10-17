@@ -63,6 +63,15 @@ const RAIZ = "../.tmp-criterio-do-painel";
 
 const FLUXO = await import(`${RAIZ}/app/api/reports/cash-flow/route.js`);
 const CATEGORIAS = await import(`${RAIZ}/app/api/reports/categories/route.js`);
+/**
+ * A ROTA DA TELA DE DESTINO -- o outro lado do clique (HMO-413, secao 8).
+ *
+ * Ela entra NESTA suite, e nao numa nova, porque o que a secao 8 mede e uma
+ * SUBTRACAO entre as duas rotas na MESMA fixture. Duas suites com duas fixtures
+ * "iguais" provariam cada numero sozinho e nenhuma provaria a DIFERENCA -- e e a
+ * diferenca que as duas legendas da HMO-413 afirmam para quem le a tela.
+ */
+const RESUMO = await import(`${RAIZ}/app/api/movimentacoes/resumo/route.js`);
 
 /** EU sou a conta A da fixture da HMO-255. */
 const EU = "a5800000-0000-0000-0000-0000000000a1";
@@ -103,9 +112,21 @@ const ATE = "2026-05-31";
 const DE_PARTIDO = "2026-04-20";
 const ATE_PARTIDO = "2026-05-31";
 
+/**
+ * O servico `personal_finance` (HMO-413, secao 8).
+ *
+ * `/api/movimentacoes/resumo` filtra o realizado por `service_id` e devolve 404
+ * quando nao acha a linha de `financial_services`. As outras duas rotas nao
+ * olham a coluna -- ela entra na fixture porque o app a grava, e sem ela a
+ * secao 8 mediria 0,00 com status 200, que se le como "a tela de destino perdeu
+ * tudo".
+ */
+const SERVICO = "ffffffff-0000-0000-0000-000000000001";
+
 /** `amount` NEGATIVO, como o app grava (pulodogato-amount-sign-convention). */
 const transacao = (extra) => ({
   user_id: EU,
+  service_id: SERVICO,
   account_id: CONTA_MINHA,
   group_id: null,
   currency: "BRL",
@@ -314,6 +335,7 @@ async function chamar(rota, url, { tabelas, erros = {} } = {}) {
       transaction_categories: CATALOGO,
       financial_transactions: TRANSACOES,
       group_share_entries: PARTES,
+      financial_services: [{ id: SERVICO, name: "personal_finance" }],
       ...tabelas,
     },
     erros,
@@ -324,7 +346,12 @@ async function chamar(rota, url, { tabelas, erros = {} } = {}) {
 
   let resposta;
   try {
-    resposta = await rota.GET({ url });
+    // `nextUrl` JUNTO DO `url`, e os dois sao lidos: as duas rotas de relatorio
+    // fazem `new URL(request.url)` e a de movimentacoes le
+    // `request.nextUrl.searchParams` (sonda-de-rota-precisa-de-nexturl). Passar
+    // so um dos dois faz a rota que le o outro cair no periodo corrente -- com
+    // 200 na mao e um numero de outro mes.
+    resposta = await rota.GET({ url, nextUrl: new URL(url) });
   } finally {
     delete globalThis.__dubleDeSupabase;
   }
@@ -745,4 +772,113 @@ test("secao 7: sem a 033 colada, o que sobra e o que EU lancei", async () => {
         "HMO-418, onde a queda levava junto a despesa de grupo que eu paguei"
     );
   }
+});
+
+// ===========================================================================
+// SECAO 8 - O QUE AS DUAS LEGENDAS DA HMO-413 AFIRMAM (o par do clique)
+// ===========================================================================
+// As secoes de cima provam o numero do PAINEL. Esta prova a RELACAO entre ele e
+// o numero da TELA DE DESTINO, que e o que as duas frases dizem em voz alta:
+//
+//   no painel ............ "a aba Despesas mostra menos, e esta certa"
+//   na aba Despesas ...... "no painel, o «Realizado» mostra mais, e esta certo"
+//
+// Nenhuma assercao de uma rota so alcanca isso. As duas frases sao sobre uma
+// SUBTRACAO, e uma subtracao tem duas pontas: a HMO-418 consertou a ponta de
+// cima sem que nada no repo medisse a de baixo, e foi assim que o comentario do
+// painel chegou a afirmar "cada uma com rotulo na tela do lado dela" quando o
+// rotulo de um dos lados nao existia.
+//
+// A DIFERENCA TEM DE SER EXATAMENTE UMA PERNA, e e isso que a assercao crava.
+// "O painel mostra mais" tem infinitas causas (uma categoria a mais, uma data
+// fora da janela, o cartao contado na compra) e so UMA delas e a que as frases
+// explicam: a minha parte do que OUTRO pagou. Entao a secao nao compara os dois
+// numeros com `>`, que ficaria verde por qualquer motivo -- ela exige que a
+// diferenca seja o valor daquela perna, calculado do fixture.
+//
+// O DIA EM QUE ESTA SECAO FICAR VERMELHA, A ENTREGA E APAGAR AS DUAS FRASES, e
+// nao consertar o numero: se alguem alinhar as duas rotas (uma decisao de
+// produto que ninguem tomou -- o cabecalho de
+// app/api/movimentacoes/resumo/route.ts tem o racional de por que a aba responde
+// "quanto sai da minha conta"), as legendas passam a descrever uma divergencia
+// que nao existe mais. Legenda que mente e pior que legenda nenhuma, e e por
+// isso que a mensagem abaixo diz o que fazer.
+
+/** A perna que separa as duas leituras: a minha parte do que OUTRO pagou. */
+const MINHA_PARTE_DO_QUE_OUTRO_PAGOU = somaDeDespesa(
+  PARTES.filter((p) => p.user_id === EU && p.paguei_eu === false)
+);
+
+/** O que a aba Despesas soma: o valor CHEIO das linhas que EU lancei. */
+const O_QUE_SAIU_DA_MINHA_CONTA = somaDeDespesa(
+  TRANSACOES.filter((l) => l.user_id === EU)
+);
+
+const urlDaAbaDespesas =
+  `https://exemplo.test/api/movimentacoes/resumo?tipo=expense&de=${DE}&ate=${ATE}`;
+
+test("secao 8: a diferenca entre o painel e a aba Despesas e UMA perna", async () => {
+  // ANTI-VACUIDADE, no mesmo espirito da secao 0: com a perna valendo 0,00 os
+  // dois numeros seriam iguais e toda assercao abaixo passaria sem distinguir
+  // nada -- inclusive num futuro em que alguem tirasse a parte da B do fixture.
+  assert.ok(
+    MINHA_PARTE_DO_QUE_OUTRO_PAGOU > 0,
+    "a fixture nao tem mais parte minha de despesa que OUTRO pagou: a perna que " +
+      "separa as duas leituras vale 0,00 e esta secao deixa de medir a " +
+      "diferenca que as duas legendas explicam"
+  );
+
+  const painel = await chamar(FLUXO, urlDoPainel);
+  assert.equal(painel.resposta.status, 200, await textoDoErro(painel.resposta));
+  const doPainel = (await painel.resposta.json()).summary.total_expense;
+
+  const aba = await chamar(RESUMO, urlDaAbaDespesas);
+  assert.equal(aba.resposta.status, 200, await textoDoErro(aba.resposta));
+  const corpoDaAba = await aba.resposta.json();
+  const daAba = corpoDaAba.resumo.realizado;
+
+  // O LADO DE BAIXO, CRAVADO NO QUE O FIXTURE DIZ -- e nao no numero do painel
+  // menos a perna. Escrever `doPainel - MINHA_PARTE...` aqui faria a assercao
+  // seguinte ser verdadeira por construcao: as duas pontas tem de sair de
+  // fontes independentes para a subtracao provar alguma coisa.
+  assert.equal(
+    daAba,
+    O_QUE_SAIU_DA_MINHA_CONTA,
+    `o «Realizado» da aba Despesas tem de ser ${O_QUE_SAIU_DA_MINHA_CONTA} -- o ` +
+      "valor CHEIO das tres linhas que EU lancei, incluindo o jantar de grupo " +
+      `de 90 inteiro. ${APROVADO} significa que a aba passou a somar tambem a ` +
+      "parte do que outro pagou, e as duas legendas da HMO-413 viraram mentira: " +
+      "a entrega, nesse caso, e APAGAR as duas frases de " +
+      "lib/legenda-do-bruto-e-do-liquido.ts, nao ajustar este numero. " +
+      `achado: ${daAba}`
+  );
+
+  assert.equal(
+    doPainel,
+    APROVADO,
+    diagnostico(doPainel)
+  );
+
+  // A FRASE, EM ARITMETICA.
+  assert.equal(
+    Number((doPainel - daAba).toFixed(2)),
+    MINHA_PARTE_DO_QUE_OUTRO_PAGOU,
+    `o painel mostra ${doPainel} e a aba Despesas ${daAba}: a diferenca tem de ` +
+      `ser ${MINHA_PARTE_DO_QUE_OUTRO_PAGOU} -- a minha parte do mercado que a ` +
+      "B pagou, e NADA mais. Qualquer outro valor significa que as duas " +
+      "leituras divergem por um segundo motivo, e as legendas explicam so o " +
+      `primeiro. achado: ${Number((doPainel - daAba).toFixed(2))}`
+  );
+
+  // E A DIRECAO, que e o que cada frase diz do numero do OUTRO lado. Ela esta
+  // INVERTIDA em relacao ao par do previsto (la o painel mostra MENOS), e uma
+  // frase que trocasse os papeis mandaria a pessoa procurar o dinheiro no lado
+  // errado -- ver o segundo eixo no cabecalho de
+  // lib/legenda-do-bruto-e-do-liquido.ts.
+  assert.ok(
+    doPainel > daAba,
+    `a legenda do painel diz "a aba Despesas mostra menos" e a da aba diz "no ` +
+      `painel mostra mais": com ${doPainel} no painel e ${daAba} na aba, as ` +
+      "duas frases estao com os papeis trocados"
+  );
 });
