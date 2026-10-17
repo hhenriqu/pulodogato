@@ -581,3 +581,13 @@ next-env.d.ts
 # .gitignore chega a ser commitado em cima de arquivo de fonte (ver a entrada do
 # .tmp-parcelamento).
 /.tmp-painel-clicavel/
+
+# O emit das DUAS rotas que leem `bill_alerts` -- o cron de vencimento e o sino
+# --, para a suite do aviso por destinatario chamar os handlers de verdade com
+# duble de Supabase (HMO-414). A assercao que importa e sobre o `onConflict` que
+# a rota PASSA ao client, e isso so existe em tempo de execucao. Artefato, nao
+# fonte. Declarado JUNTO com a suite, pelo mesmo motivo das entradas acima: sem
+# a linha, `check-artefatos-de-build` fica vermelho na `main`, e um `.tmp-*`
+# fora do .gitignore chega a ser commitado em cima de arquivo de fonte (ver a
+# entrada do .tmp-parcelamento).
+/.tmp-aviso-por-destinatario/

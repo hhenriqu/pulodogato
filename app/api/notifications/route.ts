@@ -40,7 +40,22 @@ export async function GET() {
     }
 
     const [{ data: alertas, error: erroAlertas }, { data: avisos }] = await Promise.all([
-      supabase.from("bill_alerts").select("*").order("due_date", { ascending: true }),
+      // `eq("user_id", ...)` E OBRIGATORIO DESDE A 057, e nao e defesa em
+      // profundidade -- e correcao de contagem. A view passou a devolver uma
+      // linha POR DESTINATARIO (HMO-414), e a RLS NAO recorta isso para o
+      // leitor: a policy `group_members_select` (002) e
+      // `user_id = auth.uid() OR is_group_member(group_id)`, ou seja membro ve
+      // o grupo inteiro. MEDIDO num Postgres 17 com a cadeia 001 -> 057: sem
+      // este filtro a Lais ve a conta da casa TRES vezes no sino -- uma por
+      // membro do grupo -- e `overdue_count` triplica com ela.
+      //
+      // O cron NAO filtra, de proposito: e ele que precisa do conjunto inteiro
+      // para fazer o fan-out.
+      supabase
+        .from("bill_alerts")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("due_date", { ascending: true }),
       supabase
         .from("bill_notifications")
         .select("*")
