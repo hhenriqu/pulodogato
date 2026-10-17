@@ -32,7 +32,7 @@
 // segundo e o que doia:
 //
 //   1. cada volta recompilava o programa INTEIRO, mesmo mudando UM arquivo. Sao
-//      21 mutantes, e cada um roda AS DUAS suites (test:papel-de-pao, test:papel-na-tela),
+//      23 mutantes, e cada um roda AS DUAS suites (test:papel-de-pao, test:papel-na-tela),
 //      e era um dos passos mais caros do job de verificacao;
 //
 //   2. o mutante ficava GRAVADO no arquivo de producao quando o processo morria
@@ -143,7 +143,7 @@ const mutantes = [
     // As tres sao a mesma exigencia: o mutante tem de COMPILAR para que o
     // veredito signifique algo. Um `para` que nao compila morre no tsc, e
     // morrer no tsc nao prova que a SUITE pegou a regra que a issue cobra --
-    // seria um 21/21 sobre um mutante que nunca foi medido pela assercao.
+    // seria um 23/23 sobre um mutante que nunca foi medido pela assercao.
     //
     // `linhas`, `ctx`, `aceita` e `suspeitas` sao todos parametros de
     // `somarPerna`, e `dentroDaJanela` e `parteConfiguradaDoMembro` sao
@@ -238,7 +238,8 @@ const semLinha = (): NumeroDoPapel => VAZIO;`,
   },
 
   // ---------------------------------------------------------------------------
-  // `posso_editar` -- o campo que a 10/10 consome
+  // O PORTEIRO `posso` -- `posso_editar` (o campo que a 10/10 consome), e
+  // desde a HMO-336 os outros dois que ele porteia
   //
   // OS TRES MUTAM O CAMPO, E NAO A VARIAVEL `posso` -- HMO-333.
   // A ancora dos tres era a expressao solta
@@ -266,15 +267,34 @@ const semLinha = (): NumeroDoPapel => VAZIO;`,
   // mutante que afirma mais do que mede. O mutante no campo diz a verdade
   // sobre o seu proprio alcance.
   //
-  // E FICA UM BURACO NOMEADO, que esta issue nao fecha: o `posso` tambem
-  // porteia `fatura_suspeita` e `elo_da_fatura`, e NADA mede esse porteiro.
+  // O BURACO QUE SOBROU ESTA FECHADO -- HMO-336, e ele vale ler como exemplo
+  // de que o conserto e o INVERSO do atalho. O `posso` tambem porteia
+  // `fatura_suspeita` e `elo_da_fatura`, e nada media esse porteiro:
   // `mutantes-elo-da-fatura.mjs` nao cobre isto -- ele muta
   // `lib/elo-da-fatura.ts`, ou seja o CRITERIO da suspeita e do desfazer, nao
-  // a condicao que decide se o campo sai preenchido. Trocar o `posso` desses
-  // dois campos por `gravada` abriria o elo na linha de outro membro do grupo,
-  // onde o `UPDATE` volta 200 sem alterar nada -- e as duas suites deste
-  // runner passariam. Ver HMO-336, que entra pela ordem certa: a assercao dos
-  // dois campos primeiro, o mutante da `const posso` depois.
+  // a condicao que decide se o campo sai preenchido. Trocar `posso` por
+  // `gravada` nesses dois campos acendia rotulo e desfazer em linha cujo
+  // `UPDATE` a RLS recusa (e recusa pela RLS volta 200 sem alterar nada), e as
+  // duas suites deste runner passavam.
+  //
+  // A HMO-336 entrou pela ordem que a HMO-333 pediu -- a assercao dos dois
+  // campos primeiro, o mutante depois --, e com UMA correcao de rumo que o
+  // criterio dela escrevia como "o mutante da `const posso`":
+  //
+  // UM MUTANTE NA `const posso` CONTINUARIA MENTINDO, inclusive agora. Ele
+  // muda os TRES campos de uma vez, e os 16 casos de `posso_editar` o matam
+  // antes de qualquer assercao nova ser consultada -- `bloco.rodar` para na
+  // primeira suite vermelha e devolve um booleano, nao a lista de assercoes
+  // que reprovaram. O veredito "morreu" nao distinguiria "o porteiro de
+  // `fatura_suspeita` esta medido" de "`posso_editar` esta medido", que e
+  // exatamente o defeito que esta secao descreve nos tres de cima.
+  //
+  // Entao sao DOIS mutantes, um por campo, e o placar vai de 21 para 23 e nao
+  // para 22. Cada um e matavel por UMA assercao e so por ela: apagar o caso de
+  // `fatura_suspeita` da suite deixa o mutante de `fatura_suspeita` vivo, e
+  // nenhum dos outros 22 cobre por ele. Um mutante unico cobrindo os dois
+  // campos morreria pelo que sobrasse, e a assercao apagada nao faria falta a
+  // ninguem -- o buraco desta issue, outra vez, um nivel menor.
   // ---------------------------------------------------------------------------
   {
     // O DEFEITO CARO: todo mundo pode editar tudo. A linha de grupo do OUTRO
@@ -303,6 +323,37 @@ const semLinha = (): NumeroDoPapel => VAZIO;`,
     para:
       "    posso_editar:\n" +
       "      gravada && (meuUserId == null || linha.user_id === meuUserId),",
+  },
+  {
+    // O PORTEIRO DO ROTULO -- HMO-336. O rotulo "pode ser a mesma divida da
+    // fatura" propoe um `UPDATE` em `scheduled_transactions`, e com `gravada`
+    // no lugar de `posso` ele acende em linha que a pessoa nao pode gravar.
+    // Rotulo sem acao possivel e pior que rotulo nenhum: aponta um problema e
+    // nao deixa resolver.
+    //
+    // O CAMINHO OBSERVAVEL E O `meuUserId` AUSENTE, e nao a linha do outro
+    // membro: `suspeitasDeFaturaRepetida` recusa `group_id IS NOT NULL`, entao
+    // a linha do outro membro nunca tem suspeita e ali este mutante seria
+    // EQUIVALENTE. Quem o mata e "`fatura_suspeita` FALHA FECHADO".
+    nome: "`fatura_suspeita` acende sem saber de quem e a linha",
+    arquivo: LIB,
+    de: "      posso && id !== null && suspeitas ? suspeitas.get(id) ?? null : null,",
+    para:
+      "      gravada && id !== null && suspeitas ? suspeitas.get(id) ?? null : null,",
+  },
+  {
+    // O PORTEIRO DO DESFAZER -- HMO-336. `eloDesfazivel` nao filtra grupo, e
+    // por isso este e matavel onde o defeito e mais caro: a linha do OUTRO
+    // membro do grupo ganha o desfazer, o `UPDATE` volta 200 sem alterar nada,
+    // a tela diz "elo desfeito" e o mes continua com a divida dobrada.
+    //
+    // O `gravada` DO TERCEIRO ARGUMENTO FICA, de proposito: trocar os dois
+    // faria o mutante mexer tambem no criterio de `eloDesfazivel`, que
+    // `mutantes-elo-da-fatura.mjs` ja mede. Aqui so o porteiro muda.
+    nome: "`elo_da_fatura` oferece o desfazer na linha de outro membro",
+    arquivo: LIB,
+    de: "    elo_da_fatura: posso",
+    para: "    elo_da_fatura: gravada",
   },
   {
     // `gravada` DEIXA DE OLHAR O ID: a fatura sintetizada passa a parecer

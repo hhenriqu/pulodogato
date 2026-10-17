@@ -614,6 +614,164 @@ test("`posso_editar` FALHA FECHADO: sem `meuUserId`, nenhuma linha ganha acao", 
   );
 });
 
+// ---------------------------------------------------------------------------
+// O PORTEIRO `posso`, PELOS OUTROS DOIS CAMINHOS -- HMO-336
+// ---------------------------------------------------------------------------
+// A HMO-305 extraiu `gravada && meuUserId != null && linha.user_id ===
+// meuUserId` para a variavel `posso` de `linhaDoDetalhe` e pendurou nela TRES
+// campos: `posso_editar`, `fatura_suspeita` e `elo_da_fatura`. Os casos acima
+// medem o PRIMEIRO; estes dois medem os outros, que estavam em ZERO assercoes
+// -- o porteiro era medido por um dos tres caminhos que ele porteia.
+//
+// O DEFEITO QUE OS DOIS BARRAM E O MESMO, e e o caro: trocar `posso` por
+// `gravada` SO nesses dois campos acende o rotulo de suspeita e oferece o
+// desfazer do elo numa linha em que o `UPDATE` em `scheduled_transactions`
+// seria recusado pela RLS -- e `UPDATE` recusado pela RLS volta 200 sem alterar
+// nada. O app diria "pronto" e o numero nao mudaria. Rotulo sem acao possivel e
+// pior que rotulo nenhum: ele aponta um problema e nao deixa resolver, que e o
+// que o comentario da propria fonte diz.
+//
+// OS DOIS CAMPOS EXIGEM CASOS DIFERENTES, e nao e gosto -- e a unica forma de
+// cada um ser observavel:
+//
+//   * `suspeitasDeFaturaRepetida` RECUSA a linha de grupo (`if (linha.group_id
+//     != null) continue;`), entao a linha do outro membro nunca chega a ter
+//     suspeita e o porteiro de `fatura_suspeita` e indistinguivel ali -- o
+//     campo sai `null` com `posso` ou com `gravada`. O caminho que sobra e o
+//     `meuUserId` AUSENTE, numa linha que SIM tem suspeita: e o mesmo modo de
+//     falha (rotulo em linha que eu nao posso gravar) pela outra metade da
+//     mesma expressao, e e o estado de uma rota que esqueceu de passar o campo;
+//   * `eloDesfazivel` nao filtra grupo nenhum. Aquele e medido onde a issue o
+//     descreve: na linha do OUTRO membro do grupo.
+//
+// A CHAVE CANONICA VAI LITERAL AQUI, e nao por `chaveFatura(...)`: importar a
+// funcao arrastaria `lib/chave-da-fatura.ts` para o grafo desta suite por uma
+// string. O preco (uma chave escrita a mao que podia nao casar com
+// `RE_CHAVE_FATURA`, deixando os dois casos verdes por vacuidade) e pago pelo
+// controle positivo de cada caso -- com a chave errada e a MINHA linha que
+// reprova primeiro.
+// ---------------------------------------------------------------------------
+
+/** O `notes` que `sintetizarFaturasAbertas` grava, e que o elo reconhece. */
+const CHAVE_DA_FATURA = `fatura:2026-03-01:${CARTAO_NUBANK}`;
+
+/** A conta corrente de onde o dinheiro da fatura sai -- nao e o cartao. */
+const CONTA_CORRENTE = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
+
+/**
+ * A FATURA ABERTA COM A CHAVE, que e a forma de verdade.
+ *
+ * `FATURA_ABERTA` nao a carrega porque nenhum caso acima precisa dela; aqui ela
+ * e obrigatoria: `suspeitasDeFaturaRepetida` reconhece a fatura pelo `notes`, e
+ * sem chave nenhuma suspeita existe e o caso de baixo nao mediria nada.
+ */
+const FATURA_ABERTA_COM_CHAVE = { ...FATURA_ABERTA, notes: CHAVE_DA_FATURA };
+
+/** A previsao digitada a mao que PODE ser a fatura do Nubank: minha, gravada. */
+const PREVISAO_DA_FATURA = {
+  id: "cccccccc-0000-0000-0000-000000000013",
+  description: "Pagar fatura Nubank",
+  user_id: EU,
+  account_id: CONTA_CORRENTE,
+  due_date: "2026-03-10",
+  amount: 820.4,
+  status: "pending",
+  direction: "expense",
+  category_id: SERVICOS,
+  group_id: null,
+};
+
+test("`fatura_suspeita` FALHA FECHADO: sem `meuUserId`, nenhum rotulo acende", () => {
+  const linhas = [
+    ...LINHAS_DO_PAR.slice(0, 1),
+    PREVISAO_DA_FATURA,
+    FATURA_ABERTA_COM_CHAVE,
+  ];
+
+  // O CONTROLE POSITIVO PRIMEIRO: com o campo, o rotulo acende -- e diz QUAL
+  // fatura e qual cartao. Sem este par, o caso de baixo ficaria verde com
+  // `fatura_suspeita` apagado de vez.
+  const comDono = painelDePapel(linhas, ctx);
+  const minha = comDono.total_de_contas.detalhe.find(
+    (l) => l.descricao === PREVISAO_DA_FATURA.description
+  );
+  assert.ok(minha, "a previsao digitada nao entrou na lista");
+  assert.equal(minha.gravada, true, "a previsao digitada veio como nao gravada");
+  assert.deepEqual(minha.fatura_suspeita, {
+    accountId: CARTAO_NUBANK,
+    mes: "2026-03-01",
+    nomeDoCartao: "Nubank",
+    // Sem anotacao propria nao ha texto para avisar que vai ser substituido.
+    aviso: null,
+  });
+
+  // E A FATURA SINTETIZADA NAO SE ACUSA A SI MESMA: ela e a outra ponta do elo.
+  const aberta = comDono.total_de_contas.detalhe.find((l) => !l.gravada);
+  assert.equal(aberta.fatura_suspeita, null);
+
+  // O CASO: a rota que esqueceu de passar quem esta olhando. O rotulo propoe um
+  // `UPDATE` em `scheduled_transactions`, e sem dono conhecido nenhuma linha
+  // tem dono comprovado -- rotulo aqui seria rotulo que a RLS nao deixa agir.
+  const semDono = painelDePapel(linhas, { ...ctx, meuUserId: undefined });
+  for (const l of semDono.total_de_contas.detalhe) {
+    assert.equal(
+      l.fatura_suspeita,
+      null,
+      `${l.descricao} acendeu o rotulo de suspeita sem dono conhecido`
+    );
+  }
+});
+
+test("`elo_da_fatura`: a minha linha desfaz, a do outro membro do grupo nao", () => {
+  // As duas linhas sao gravadas, as duas carregam a MESMA chave, e as duas
+  // estao na conta corrente (o elo aponta para o CARTAO, que e outra conta).
+  // A unica diferenca e de quem elas sao.
+  const minhaComElo = { ...PREVISAO_DA_FATURA, notes: CHAVE_DA_FATURA };
+  const doOutroComElo = {
+    ...PREVISAO_DA_FATURA,
+    id: "cccccccc-0000-0000-0000-000000000014",
+    description: "Fatura do cartao da casa",
+    user_id: OUTRO,
+    group_id: GRUPO_CASA,
+    notes: CHAVE_DA_FATURA,
+  };
+
+  const detalhe = painelDePapel(
+    [minhaComElo, doOutroComElo],
+    ctx
+  ).total_de_contas.detalhe;
+
+  // O CONTROLE POSITIVO: na minha linha o caminho de volta existe, com o mes da
+  // FATURA (e nao o do vencimento que eu digitei).
+  const minha = detalhe.find((l) => !l.de_grupo);
+  assert.deepEqual(minha.elo_da_fatura, {
+    accountId: CARTAO_NUBANK,
+    mes: "2026-03-01",
+  });
+
+  // O CASO: a linha do outro membro entra na lista (ela entra no total) e sai
+  // sem o desfazer. Desfazer e um `UPDATE` que a RLS recusa, e recusa pela RLS
+  // volta 200 sem alterar nada: a tela diria "elo desfeito" e o mes continuaria
+  // dobrado.
+  const doOutro = detalhe.find((l) => l.de_grupo);
+  assert.equal(doOutro.gravada, true, "a linha do outro membro existe no banco");
+  assert.equal(doOutro.posso_editar, false);
+  assert.equal(
+    doOutro.elo_da_fatura,
+    null,
+    "a linha do outro membro ganhou o desfazer do elo"
+  );
+
+  // E A MESMA FALHA FECHADA do campo acima: sem `meuUserId`, nem a minha.
+  assert.deepEqual(
+    painelDePapel([minhaComElo, doOutroComElo], {
+      ...ctx,
+      meuUserId: undefined,
+    }).total_de_contas.detalhe.map((l) => l.elo_da_fatura),
+    [null, null]
+  );
+});
+
 test("sem `user_id` na leitura, a linha entra na soma e sai sem acao", () => {
   // A rota que esquecesse a coluna no `select`. O total continua certo -- o
   // campo nao entra em soma nenhuma --, e a lista perde os botoes.
