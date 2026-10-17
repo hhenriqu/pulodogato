@@ -271,6 +271,35 @@ function consulta(
   let soCabecalho = false;
 
   /**
+   * A faixa pedida por `.range(de, ate)`, ou `null` (HMO-417). Ver `range`.
+   *
+   * GUARDADA EM VEZ DE APLICADA NA HORA, E ESSA E A PARTE QUE IMPORTA
+   * -----------------------------------------------------------------
+   * Todo filtro desta cadeia recorta `filtradas` no ato, e para `eq`/`gte` isso
+   * da no mesmo: conjuncao nao depende de ordem. Paginacao depende. No PostgREST
+   * o `Range` e um cabecalho da MESMA requisicao que leva o `WHERE`, e o
+   * LIMIT/OFFSET e aplicado depois dele -- a ordem das chamadas no builder nao
+   * significa nada.
+   *
+   * E /api/reports/cash-flow chama nessa ordem exata:
+   *
+   *   .gte(...).lte(...).order("id").range(inicio, inicio + 999)
+   *   ...e SO DEPOIS .eq("user_id", ...).is("group_id", null)
+   *
+   * (o `.eq` sai do ternario `groupId ? ... : ...` no fim de `pagina`). Um
+   * `range` que cortasse na hora pegaria as 1000 primeiras linhas da tabela
+   * INTEIRA e so entao tiraria as de outros usuarios -- a pagina viria com 3 em
+   * vez de 1000, o laco da rota pararia na primeira volta, e o total do periodo
+   * sairia MENOR sem erro nenhum. Exatamente o defeito que a paginacao da rota
+   * existe para evitar, fabricado pelo duble.
+   */
+  let faixa = null;
+
+  /** `filtradas` recortada pela faixa, se houver. `ate` INCLUSIVO. */
+  const comFaixa = (lista) =>
+    faixa ? lista.slice(faixa[0], faixa[1] + 1) : lista;
+
+  /**
    * O proximo id desta tabela NA SESSAO -- e a sequencia e por sessao, nao por
    * chamada de `insert` (HMO-382).
    *
@@ -781,9 +810,43 @@ function consulta(
       filtradas = filtradas.slice(0, n);
       return api;
     },
+    /**
+     * `.range(de, ate)` -- a PAGINACAO do PostgREST (HMO-417).
+     *
+     * Faltava, e a falta tirava do alcance de qualquer sonda o ramo de INTERVALO
+     * de /api/reports/cash-flow e /api/reports/categories -- o ramo que o painel
+     * principal usa, porque `cartao=fatura` sempre cai nele. As duas rotas
+     * paginam as DUAS consultas que elas somam no JavaScript
+     * (`financial_transactions` e `group_share_entries`), entao
+     * `api.range is not a function` estourava dentro do `try` da rota, o `catch`
+     * devolvia `500 {"error":"Erro interno"}`, e uma sonda escrita sobre a
+     * resposta mediria O CAMINHO DE ERRO achando que mede a feature -- o modo de
+     * falha que o controle positivo de scripts/test-semeadura-pela-renda.mjs
+     * existe para denunciar.
+     *
+     * `ate` E INCLUSIVO, NOS DOIS EXTREMOS, COMO NO POSTGREST
+     * ------------------------------------------------------
+     * `range(0, 999)` traz 1000 linhas, e nao 999. Um `slice(de, ate)` aqui
+     * pareceria so um off-by-one de duble, mas o efeito e dinheiro: a rota para
+     * de paginar quando a pagina volta INCOMPLETA
+     * (`if (lote.length < TAMANHO_DA_PAGINA) break`). Com uma linha a menos por
+     * pagina, a primeira volta ja parece a ultima, a segunda pagina nunca e
+     * pedida, e o total do periodo sai MENOR -- sem erro, com cara de numero
+     * certo. E a mesma classe de defeito que a paginacao da rota foi escrita
+     * para evitar.
+     *
+     * O corte e DEFERIDO para o terminador (ver `faixa`/`comFaixa`): a rota
+     * encadeia `.range()` ANTES do `.eq("user_id")`, e cortar na hora recortaria
+     * a tabela inteira em vez do recorte do usuario.
+     */
+    range(de, ate) {
+      filtros.push(["range", "", [de, ate]]);
+      faixa = [de, ate];
+      return api;
+    },
     maybeSingle() {
       registro(tabela, filtros, "maybeSingle");
-      const linha = filtradas[0];
+      const linha = comFaixa(filtradas)[0];
       return Promise.resolve({
         data: linha ? projetar(linha, colunas) : null,
         error: null,
@@ -791,7 +854,7 @@ function consulta(
     },
     single() {
       registro(tabela, filtros, "single");
-      const linha = filtradas[0];
+      const linha = comFaixa(filtradas)[0];
       return Promise.resolve({
         data: linha ? projetar(linha, colunas) : null,
         // O client de verdade devolve erro quando `single()` nao acha linha. A
@@ -812,10 +875,17 @@ function consulta(
       registro(tabela, filtros, contagem ? "count" : "list");
       return Promise.resolve({
         // `head: true` -> `data: null`, como o PostgREST. Ver `select`.
-        data: soCabecalho ? null : filtradas.map((l) => projetar(l, colunas)),
+        data: soCabecalho
+          ? null
+          : comFaixa(filtradas).map((l) => projetar(l, colunas)),
         error: null,
         // `count` SO quando pedido: um `count` sempre presente faria uma rota
         // que o le sem pedir passar verde aqui e falhar em producao.
+        //
+        // E ele e o total que casa com os filtros, SEM a faixa (HMO-417) -- o
+        // `count=exact` do PostgREST conta a selecao inteira, nao a pagina. E o
+        // que torna `count` util para paginar: uma contagem que voltasse o
+        // tamanho da pagina diria a quem le que acabou na primeira volta.
         ...(contagem ? { count: filtradas.length } : {}),
       }).then(resolve, reject);
     },
@@ -915,6 +985,15 @@ export function criarDuble({
             // `erros: { profiles: ... }` estouraria com "falha.limit is not a
             // function" em vez de exercitar o caminho de erro da rota.
             limit: () => falha,
+            // `range` entrou na HMO-417, e aqui ele e o que torna sondavel a
+            // QUEDA da parte de grupo: o ramo de intervalo de
+            // /api/reports/cash-flow pagina `group_share_entries` e trata
+            // `42P01`/`PGRST205` como "a 033 nao foi colada ainda" (ver
+            // viewDaParteAusente). Um fixture com
+            // `erros: { group_share_entries: ... }` estouraria com
+            // "falha.range is not a function" antes de chegar nesse `if`, e a
+            // sonda mediria o `catch` da rota em vez da queda.
+            range: () => falha,
             maybeSingle: () =>
               Promise.resolve({ data: null, error: erros[tabela] }),
             single: () =>
