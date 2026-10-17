@@ -42,6 +42,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { today } from "@/lib/recurrence";
 import {
   CalendarClock,
   CheckCircle2,
@@ -73,9 +74,12 @@ const dataCurta = (iso: string) => {
   return `${dia}/${mes}/${ano.slice(2)}`;
 };
 
-const HOJE = new Intl.DateTimeFormat("en-CA", {
-  timeZone: "America/Sao_Paulo",
-}).format(new Date());
+/* A data de hoje saiu daqui (HMO-315). Era uma constante de modulo, avaliada
+ * uma vez quando o navegador avalia o chunk -- nao quando a pessoa abre o
+ * dialogo de aporte. Numa aba de PWA que atravessa a meia-noite ela congela em
+ * ONTEM, e o `contributed_at` do aporte e data de dinheiro: no dia 1o o aporte
+ * cai no mes anterior. `today()` e lido no gesto; o fuso continua explicito
+ * dentro dele. */
 
 interface FormMeta {
   title: string;
@@ -127,7 +131,9 @@ export default function GoalsPage() {
     null
   );
   const [valorAporte, setValorAporte] = useState("");
-  const [dataAporte, setDataAporte] = useState(HOJE);
+  // Preguicoso (`() => today()`), e re-semeado em `abrirAporte`: o estado
+  // inicial pode ser de dias atras numa aba que nao recarregou (HMO-315).
+  const [dataAporte, setDataAporte] = useState(() => today());
   const [aportes, setAportes] = useState<GoalContribution[]>([]);
 
   const carregar = useCallback(async () => {
@@ -210,7 +216,9 @@ export default function GoalsPage() {
   const abrirAporte = async (meta: GoalWithProgress) => {
     setMetaDoAporte(meta);
     setValorAporte("");
-    setDataAporte(HOJE);
+    // `today()` no gesto de abrir (HMO-315): e esta data que vai como
+    // `contributed_at` se a pessoa nao trocar o campo.
+    setDataAporte(today());
     setAportes([]);
 
     const res = await fetch(`/api/goals/${meta.id}`);

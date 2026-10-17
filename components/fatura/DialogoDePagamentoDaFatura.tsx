@@ -19,6 +19,13 @@
 //    da tela, e `hoje` chega de quem tem o fuso (`America/Sao_Paulo` na tela).
 //    Um `new Date()` aqui poria o fuso do servidor de render na data do
 //    pagamento.
+//
+//    `hoje` e uma FUNCAO e nao uma string (HMO-315), e a diferenca e dinheiro:
+//    uma string e lida no render do pai, e o `paid_date` que este dialogo grava
+//    e do clique em Confirmar. Numa aba de PWA aberta a noite inteira os dois
+//    nao sao o mesmo dia -- e no dia 1o nem o mesmo MES, o que muda o
+//    lancamento de mes no fluxo de caixa sem nada na tela acusar. O fuso
+//    continua sendo da tela; o relogio e lido no gesto.
 // 3. NAO ESCREVE AS FRASES. Elas vem da lib, porque as duas telas dizem a mesma
 //    coisa sobre a mesma linha -- e porque `MOTIVO_SEM_CONTA_PAGADORA` e a
 //    recusa que a propria rota devolve.
@@ -99,8 +106,14 @@ export interface DialogoDePagamentoDaFaturaProps {
   valorFormatado: string;
   /** O vencimento, JA formatado pela tela ("10/11/26"). */
   vencimentoFormatado: string;
-  /** 'AAAA-MM-DD'. Quem tem o fuso e a tela. */
-  hoje: string;
+  /**
+   * Devolve hoje em 'AAAA-MM-DD'. Quem tem o fuso e a tela.
+   *
+   * FUNCAO e nao string, de proposito (HMO-315): e chamada no clique de
+   * Confirmar, para o `paid_date` ser o dia do pagamento e nao o dia em que a
+   * aba abriu. O tipo e a guarda -- passar uma data ja congelada nao compila.
+   */
+  hoje: () => string;
   /** Fechar o dialogo (desistir, ou depois do sucesso). */
   aoFechar: () => void;
   /** Recarregar a tela: a baixa mudou saldo e tirou a linha da agenda. */
@@ -173,7 +186,9 @@ export function DialogoDePagamentoDaFatura({
       const resultado = await pagarAFatura({
         linha,
         contaPagadoraId: contaPagadora,
-        pagoEm: hoje,
+        // `hoje()` AQUI, dentro do handler (HMO-315): esta e a linha que decide
+        // em que dia -- e no dia 1o, em que MES -- a fatura paga aparece.
+        pagoEm: hoje(),
         rede: (url, init) => fetch(url, init),
       });
 

@@ -118,6 +118,7 @@ import {
   PainelSemRede,
 } from "@/components/SemRede";
 import { useEstaOnline } from "@/lib/hooks/useEstaOnline";
+import { today } from "@/lib/recurrence";
 import type {
   RecurringRule,
   ScheduledTransaction,
@@ -167,7 +168,27 @@ interface FormContaAvulsa {
   due_date: string;
 }
 
-const HOJE = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
+/* A DATA DE HOJE E LIDA NO GESTO, NUNCA GUARDADA NO MODULO (HMO-315)
+ *
+ * Aqui existia uma constante de modulo com a data de hoje. Num componente
+ * `"use client"` ela e avaliada UMA vez, quando o navegador avalia o chunk --
+ * nao quando a pessoa clica. Numa aba que atravessa a meia-noite ela continua
+ * sendo a data de ONTEM, e este app e PWA: aba aberta por dias no celular e o
+ * caso normal, nao o raro.
+ *
+ * Tres dos quatro usos gravavam dinheiro ou data de dinheiro (o `paid_date` da
+ * baixa, o `paid_date` da fatura, o vencimento sugerido). No dia 1o a data de
+ * ontem cai no MES ANTERIOR: o lancamento troca de mes no fluxo de caixa, no
+ * teto da categoria e no "quanto este mes cobra", a baixa responde 200, a data
+ * gravada e plausivel e nada na tela acusa. Quem descobre e quem fecha o mes.
+ *
+ * `today()` de `@/lib/recurrence` e o mesmo helper que as rotas usam, com o
+ * fuso `America/Sao_Paulo` EXPLICITO. Nunca `new Date().toISOString()`: as 21h
+ * de Sao Paulo o UTC ja esta no dia seguinte e o erro so trocaria de direcao.
+ *
+ * `scripts/check-data-no-clique.mjs` cobra no CI que nenhuma tela volte a
+ * guardar data de modulo, e `scripts/test-data-no-clique.mjs` prova, com o
+ * relogio congelado, que a data e a do CLIQUE e nao a da montagem. */
 
 /**
  * Uma linha desta tela: a previsao GRAVADA, a fatura aberta sintetizada, ou a
@@ -281,13 +302,26 @@ export default function BillsPage() {
     group_id: "",
   });
 
-  const [formAvulsa, setFormAvulsa] = useState<FormContaAvulsa>({
+  // O inicializador e PREGUICOSO (`() => ...`): passar o objeto direto faria
+  // `today()` rodar em todo render, e o estado inicial so vale no primeiro.
+  // Mesmo assim, o vencimento sugerido e re-semeado quando o dialogo ABRE (ver
+  // `aoAbrirDialogAvulsa`) -- o primeiro render pode ser de dias atras.
+  const [formAvulsa, setFormAvulsa] = useState<FormContaAvulsa>(() => ({
     description: "",
     amount: "",
     category_id: "",
     account_id: "",
-    due_date: HOJE,
-  });
+    due_date: today(),
+  }));
+
+  // O vencimento sugerido nasce no gesto de ABRIR, e nao na montagem da tela
+  // (HMO-315). Numa aba que ficou aberta a noite inteira, o estado inicial
+  // acima e de ontem; abrir o dialogo e o ultimo momento antes de a pessoa ver
+  // a data, entao e aqui que ela e lida do relogio.
+  const aoAbrirDialogAvulsa = useCallback((aberto: boolean) => {
+    if (aberto) setFormAvulsa((atual) => ({ ...atual, due_date: today() }));
+    setDialogAvulsa(aberto);
+  }, []);
 
   const carregar = useCallback(async () => {
     // Seis buscas, e o `Promise.all` de `fetch` cru tinha um efeito que nao
@@ -437,7 +471,9 @@ export default function BillsPage() {
       const resposta = await fetch(`/api/scheduled-transactions/${conta.id}/pay`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ paid_date: HOJE }),
+        // `today()` AQUI DENTRO, no clique (HMO-315): e a data em que o
+        // dinheiro saiu que esta sendo gravada.
+        body: JSON.stringify({ paid_date: today() }),
       });
       const dados = await resposta.json();
 
@@ -719,7 +755,7 @@ export default function BillsPage() {
         amount: "",
         category_id: "",
         account_id: "",
-        due_date: HOJE,
+        due_date: today(),
       });
       await carregar();
     } catch (erro) {
@@ -973,7 +1009,7 @@ export default function BillsPage() {
         </div>
 
         <div className="flex gap-2">
-          <Dialog open={dialogAvulsa} onOpenChange={setDialogAvulsa}>
+          <Dialog open={dialogAvulsa} onOpenChange={aoAbrirDialogAvulsa}>
             <DialogTrigger asChild>
               {/* Cadastrar precisa de rede: o formulario tem sete campos, e
                   perde-los no botao Salvar e pior do que o botao apagado. */}
@@ -1494,9 +1530,13 @@ export default function BillsPage() {
           Despesas vai pagar fatura pelo MESMO caminho, e um segundo tratamento
           do 409 do `close` seria a segunda implementacao da de-duplicacao.
 
-          O valor e o vencimento vao JA FORMATADOS (`moeda`, `dataCurta`) e
-          `hoje` vai como `HOJE`, no fuso de Sao Paulo -- o componente nao tem
-          relogio nem formatador proprio. */}
+          O valor e o vencimento vao JA FORMATADOS (`moeda`, `dataCurta`), e
+          `hoje` vai como FUNCAO -- nao como string (HMO-315). Quem tem o fuso
+          continua sendo a tela; o que mudou e QUANDO ela e lida: uma string
+          seria lida neste render, e o dialogo grava o `paid_date` da fatura no
+          clique de Confirmar, que pode ser do dia seguinte. O tipo da prop
+          (`() => string`) e o que impede a volta: passar uma data congelada
+          aqui deixou de compilar. */}
       <DialogoDePagamentoDaFatura
         linha={
           faturaParaPagar
@@ -1513,7 +1553,7 @@ export default function BillsPage() {
         vencimentoFormatado={
           faturaParaPagar ? dataCurta(faturaParaPagar.due_date) : ""
         }
-        hoje={HOJE}
+        hoje={today}
         aoFechar={() => setFaturaParaPagar(null)}
         aoPagar={carregar}
       />

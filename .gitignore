@@ -305,6 +305,13 @@ next-env.d.ts
 # .tmp-parcelamento acima).
 /.tmp-data-na-tela/
 
+# O JS compilado de lib/recurrence.ts e lib/pagamento-da-fatura.ts, para a suite
+# da HMO-315 medir o `paid_date` que a PRODUCAO monta em vez de uma copia -- a
+# data afirmada sai do JSON.stringify de `pagarAFatura`. Artefato, nao fonte, e
+# um `.tmp-*` fora do .gitignore chega a ser commitado em cima de arquivo de
+# fonte (ver a entrada do .tmp-parcelamento acima).
+/.tmp-data-no-clique/
+
 # Build do `npm run test:fechamento-do-grupo` (HMO-245, o fechamento do mes do
 # grupo). Leva o settlement.js junto porque a lib importa `toCents` e
 # `simplifySettlements` de la -- o acerto do mes usa o MESMO guloso do acerto do

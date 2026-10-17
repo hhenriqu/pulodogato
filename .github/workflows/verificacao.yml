@@ -7750,6 +7750,204 @@ jobs:
       - name: A data da lista nao aparece um dia mais cedo
         run: npm run test:data-na-tela
 
+      # A DATA DE HOJE E LIDA NO GESTO, NUNCA GUARDADA NO MODULO (HMO-315).
+      #
+      # `bills/page.tsx` tinha `const HOJE = ...format(new Date())` no topo do
+      # arquivo. Num componente `"use client"` aquilo e avaliado UMA vez, quando
+      # o navegador avalia o chunk -- nao quando a pessoa clica. Este app e PWA
+      # com service worker: a aba atravessa a meia-noite e `HOJE` continua sendo
+      # a data de ONTEM.
+      #
+      # Tres dos quatro usos gravavam dinheiro ou data de dinheiro. No dia 1o a
+      # data de ontem cai no MES ANTERIOR: o lancamento troca de mes no fluxo de
+      # caixa e no teto da categoria, a baixa responde 200, a data gravada e
+      # plausivel e NADA na tela acusa. Quem descobre e quem fecha o mes.
+      #
+      # A varredura achou o mesmo defeito em QUATRO arquivos escritos por
+      # caminhos diferentes (bills, budgets, goals, payroll), e e isso que
+      # justifica guard em vez de so o conserto: a forma errada e a que se
+      # escreve sem pensar, e a quinta tela nasceria igual.
+      #
+      # SEM `paths:`, como todo o resto deste workflow, e aqui isso e
+      # load-bearing pelo mesmo motivo do guard da data na tela: o defeito volta
+      # numa TELA NOVA, que nao esta em nenhuma lista de caminhos escrita hoje.
+      - name: Nenhuma tela congela a data de hoje em constante de modulo
+        run: npm run check-data-no-clique
+
+      # Controle negativo. O guard e busca textual, e busca textual sai VERDE
+      # quando para de achar o que deveria conferir. As quatro mutacoes abaixo
+      # sao as quatro formas de desfazer a HMO-315 -- duas pela porta da frente
+      # (a constante de modulo volta) e duas pela porta do meio (a data congela
+      # no render em vez do modulo). A quinta e o controle positivo.
+      - name: A verificacao da data no clique sabe falhar, e sabe nao falhar
+        run: |
+          set -uo pipefail
+          guard='scripts/check-data-no-clique.mjs'
+
+          bills='app/(dashboard)/dashboard/bills/page.tsx'
+          budgets='app/(dashboard)/dashboard/budgets/page.tsx'
+          lista='components/movimentacoes/ListaDeMovimentacao.tsx'
+          dialogo='components/fatura/DialogoDePagamentoDaFatura.tsx'
+
+          cp "$bills" /tmp/no-clique-bills.orig
+          cp "$budgets" /tmp/no-clique-budgets.orig
+          cp "$lista" /tmp/no-clique-lista.orig
+          cp "$dialogo" /tmp/no-clique-dialogo.orig
+          trap 'cp /tmp/no-clique-bills.orig "$bills"; cp /tmp/no-clique-budgets.orig "$budgets"; cp /tmp/no-clique-lista.orig "$lista"; cp /tmp/no-clique-dialogo.orig "$dialogo"' EXIT
+
+          # 1) O defeito da issue de volta, na forma MULTILINHA em que ele
+          #    existia. A forma importa: a primeira versao do detector cortava o
+          #    inicializador no primeiro statement de coluna 0, e o prettier poe
+          #    o fecho de uma chamada multilinha exatamente ali -- ela via "="
+          #    e ia embora. As quatro ocorrencias reais eram multilinha.
+          perl -0pi -e 's{import \{ today \} from "\@/lib/recurrence";}{$&\nconst HOJE = new Intl.DateTimeFormat("en-CA", \{\n  timeZone: "America/Sao_Paulo",\n\}).format(new Date());}' "$bills"
+          if cmp -s /tmp/no-clique-bills.orig "$bills"; then
+            echo "::error::a mutacao 1 nao casou em $bills -- a ancora mudou e o controle negativo mediria o conjunto vazio."
+            exit 1
+          fi
+          if node "$guard" > /dev/null 2>&1; then
+            echo "::error::O guard passou verde com a constante de modulo MULTILINHA de volta -- o defeito da HMO-315."
+            exit 1
+          fi
+          cp /tmp/no-clique-bills.orig "$bills"
+
+          # 2) A mesma coisa numa linha so, e sem Intl: o mes corrente de
+          #    budgets deixa de ser funcao e vira constante. Era literalmente
+          #    assim antes da HMO-315, e o preco la e a tela inteira (tetos,
+          #    gasto, sobra) falando do mes ERRADO depois da virada do mes.
+          perl -0pi -e 's{const mesCorrente = \(\) => today\(\)\.slice\(0, 7\);}{const mesCorrente = today().slice(0, 7);}' "$budgets"
+          if cmp -s /tmp/no-clique-budgets.orig "$budgets"; then
+            echo "::error::a mutacao 2 nao casou em $budgets -- a ancora mudou."
+            exit 1
+          fi
+          if node "$guard" > /dev/null 2>&1; then
+            echo "::error::O guard passou verde com o mes corrente congelado em constante de modulo."
+            exit 1
+          fi
+          cp /tmp/no-clique-budgets.orig "$budgets"
+
+          # 3) A PORTA DO MEIO: a data nao congela no modulo, congela no RENDER.
+          #    `hoje={today()}` era como ListaDeMovimentacao estava escrita, e o
+          #    que a achou foi o tipo da prop deixando de compilar. O guard
+          #    tambem tem de pegar, porque `tsc` so roda no `next build`.
+          #
+          #    A ancora leva a LINHA SEGUINTE de proposito, e isso nao e
+          #    firula. `hoje={today}` aparece DUAS vezes no arquivo: primeiro no
+          #    comentario que explica a HMO-315, depois no JSX. Sem `/g` o perl
+          #    casa a primeira, que e a do comentario -- e `semComentarios`
+          #    apaga comentario antes da varredura, entao o guard nao via
+          #    mutacao nenhuma e este controle passava verde sobre um mutante
+          #    que nunca tocou no codigo. O `cmp` nao salvava: o arquivo MUDOU,
+          #    so que no lugar errado. Medido aqui, nao suposto.
+          perl -0pi -e 's{hoje=\{today\}\n(\s*)aoFechar=}{hoje=\{today()\}\n$1aoFechar=}' "$lista"
+          if cmp -s /tmp/no-clique-lista.orig "$lista"; then
+            echo "::error::a mutacao 3 nao casou em $lista -- a ancora mudou."
+            exit 1
+          fi
+          if ! grep -q 'hoje={today()}' "$lista"; then
+            echo "::error::a mutacao 3 mudou $lista mas nao produziu hoje={today()} -- casou no lugar errado."
+            exit 1
+          fi
+          if node "$guard" > /dev/null 2>&1; then
+            echo "::error::O guard passou verde com hoje={today()} -- a data lida no render, e o paid_date e do clique."
+            exit 1
+          fi
+          cp /tmp/no-clique-lista.orig "$lista"
+
+          # 4) E a porta do meio pela RAIZ: o tipo da prop volta a aceitar
+          #    string. Sem ele nada impede as duas telas de congelar de novo, e
+          #    a mutacao 3 deixaria de ser sequer um erro de compilacao.
+          perl -0pi -e 's{hoje: \(\) => string;}{hoje: string;}' "$dialogo"
+          if cmp -s /tmp/no-clique-dialogo.orig "$dialogo"; then
+            echo "::error::a mutacao 4 nao casou em $dialogo -- a ancora mudou."
+            exit 1
+          fi
+          if node "$guard" > /dev/null 2>&1; then
+            echo "::error::O guard passou verde com a prop hoje voltando a ser string."
+            exit 1
+          fi
+          cp /tmp/no-clique-dialogo.orig "$dialogo"
+
+          # 5) E SABE NAO FALHAR. Os quatro arquivos corrigidos citam
+          #    `const HOJE = ... new Date()` em PROSA, para explicar o que saiu
+          #    dali -- um guard que lesse comentario reprovaria justamente eles.
+          if ! node "$guard" > /dev/null 2>&1; then
+            echo "::error::O guard reprova a arvore correta."
+            exit 1
+          fi
+
+          echo "O guard fica vermelho nas quatro mutacoes e verde na arvore correta."
+
+      - name: 'A arvore voltou ao lugar depois de "A verificacao da data no clique sabe falhar, e sabe nao falhar"'
+        run: |
+          # Um mutante nao restaurado contaminaria os passos seguintes -- e o
+          # .tmp-* compilado guarda o mutante mesmo depois do restore do .tsx.
+          rm -rf .tmp-*
+          git diff --quiet -- 'app/(dashboard)/dashboard/bills/page.tsx' 'app/(dashboard)/dashboard/budgets/page.tsx' components/movimentacoes/ListaDeMovimentacao.tsx components/fatura/DialogoDePagamentoDaFatura.tsx || {
+            echo "::error::a arvore nao voltou ao lugar depois do controle negativo da data no clique."
+            exit 1
+          }
+
+      # A suite da data no clique. Ela roda nos DOIS fusos pelo mesmo motivo da
+      # suite acima: o sandbox e Sao Paulo, este runner e UTC, e o instante que
+      # ela usa (23:50 de 31/10 em Sao Paulo) ja virou o dia -- e o MES -- em
+      # UTC. As assercoes sao de valor absoluto para valerem nos dois, o que so
+      # e possivel porque `today()` pede America/Sao_Paulo EXPLICITAMENTE.
+      #
+      # O que esta suite mede e o que nenhum guard textual alcanca: o relogio
+      # ANDANDO entre a montagem e o clique. Um teste que chame a funcao uma vez
+      # so passa verde com a constante de modulo intacta -- a constante so erra
+      # quando o tempo passa entre a avaliacao e o uso. Por isso todo caso de
+      # sequencia tem o par, e o par do defeito AFIRMA a data errada com numero
+      # em vez de um `assert.ok(!...)`.
+      #
+      # A divisao de trabalho, dita em voz alta: o guard acima pega a FORMA (a
+      # constante voltou ao fonte), esta suite pega o COMPORTAMENTO (a data
+      # gravada e a do clique) e o `tsc` pega o TIPO da prop. Nenhum dos tres
+      # cobre os outros dois.
+      - name: A baixa grava a data do clique, nao a da montagem
+        run: npm run test:data-no-clique
+
+      # Controle negativo da suite. Ela so vale se morrer quando `today()` perde
+      # o fuso explicito -- que e a outra metade da HMO-315: trocar o fuso de
+      # Sao Paulo por UTC nao quebra build, nao quebra tipo, e das 21h a
+      # meia-noite grava o dia seguinte. O erro apenas troca de direcao.
+      - name: A suite da data no clique sabe falhar
+        run: |
+          set -uo pipefail
+          alvo='lib/recurrence.ts'
+          cp "$alvo" /tmp/no-clique-recurrence.orig
+          trap 'cp /tmp/no-clique-recurrence.orig "$alvo"; rm -rf .tmp-data-no-clique' EXIT
+
+          perl -0pi -e 's{export function today\(timeZone = "America/Sao_Paulo"\)}{export function today(timeZone = "UTC")}' "$alvo"
+          if cmp -s /tmp/no-clique-recurrence.orig "$alvo"; then
+            echo "::error::a mutacao nao casou em $alvo -- a ancora mudou e este controle mediria o conjunto vazio."
+            exit 1
+          fi
+
+          rm -rf .tmp-data-no-clique
+          if npm run test:data-no-clique > /dev/null 2>&1; then
+            echo "::error::a suite passou verde com today() em UTC -- ela nao esta medindo o fuso."
+            exit 1
+          fi
+
+          cp /tmp/no-clique-recurrence.orig "$alvo"
+          rm -rf .tmp-data-no-clique
+          if ! npm run test:data-no-clique > /dev/null 2>&1; then
+            echo "::error::a suite reprova a arvore correta."
+            exit 1
+          fi
+
+          echo "A suite fica vermelha com today() em UTC e verde na arvore correta."
+
+      - name: 'A arvore voltou ao lugar depois de "A suite da data no clique sabe falhar"'
+        run: |
+          rm -rf .tmp-*
+          git diff --quiet -- lib/recurrence.ts || {
+            echo "::error::a arvore nao voltou ao lugar depois do controle negativo da suite da data no clique."
+            exit 1
+          }
+
       # A REGRA DO PAGADOR no previsto (HMO-363, fase F1 da HMO-360).
       #
       # A conta de grupo de R$ 1.000 num grupo 70/30 tem DUAS respostas certas na

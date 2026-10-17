@@ -55,6 +55,7 @@ import type {
   FinancialAccount,
 } from "@/types/financial";
 import { separarOrcamentos } from "@/lib/orcamento-de-grupo";
+import { today } from "@/lib/recurrence";
 import {
   CartaoOrcamentoGrupo,
   LinhaDeTeto,
@@ -80,10 +81,12 @@ const nomeDoMes = (iso: string) => {
   return `${MESES[Number(mes) - 1]} de ${ano}`;
 };
 
-const HOJE = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(
-  new Date()
-);
-const MES_CORRENTE = HOJE.slice(0, 7);
+/* O mes corrente saiu do modulo (HMO-315). Era constante avaliada uma vez por
+ * chunk, e numa aba de PWA que atravessa a virada do mes o seletor abria no mes
+ * ANTERIOR -- a tela inteira (tetos, gasto, sobra) falando do mes errado com um
+ * rotulo plausivel. Aqui nao se grava data, entao o preco e leitura e nao
+ * dinheiro; o defeito e o mesmo. `mesCorrente()` le o relogio quando chamada. */
+const mesCorrente = () => today().slice(0, 7);
 
 interface FormOrcamento {
   category_id: string;
@@ -104,7 +107,7 @@ interface FormCartao {
 }
 
 export default function BudgetsPage() {
-  const [mes, setMes] = useState(MES_CORRENTE);
+  const [mes, setMes] = useState(mesCorrente);
   const [budgets, setBudgets] = useState<BudgetWithConsumption[]>([]);
   const [invoices, setInvoices] = useState<CardInvoice[]>([]);
   const [projecao, setProjecao] = useState<ProjectionSummary | null>(null);
