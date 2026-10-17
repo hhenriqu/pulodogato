@@ -179,6 +179,26 @@ export function rotaDaTelaDoLado(
   return `/dashboard/${tela}?${periodoParaQuery(periodo)}`;
 }
 
+/**
+ * O endereco do PAINEL, COM a janela da tela dentro -- a volta (HMO-413).
+ *
+ * Mesma funcao que a de cima, no sentido contrario, e pela MESMA razao: o painel
+ * tambem le `?de=&ate=` (`lerPeriodo(searchParams.get("de"), ...)` em
+ * app/(dashboard)/dashboard/page.tsx) e tambem cai no mes corrente sem eles.
+ *
+ * Ela nasceu para a legenda do «Realizado» da aba Despesas, e ali a janela e o
+ * que torna a frase VERDADE em vez de so bonita: a legenda diz "no painel, o
+ * «Realizado» mostra mais" comparando DOIS NUMEROS DO MESMO PERIODO. Um link nu
+ * levaria quem esta olhando maio para o painel de outubro, e os dois numeros que
+ * a pessoa veria lado a lado nao seriam o par que a frase explica -- uma legenda
+ * que apresenta uma comparacao falsa e pior do que legenda nenhuma.
+ *
+ * `string` e nao `Route`, pelo motivo escrito na de cima.
+ */
+export function rotaDoPainel(periodo: Periodo): string {
+  return `/dashboard?${periodoParaQuery(periodo)}`;
+}
+
 // -----------------------------------------------------------------------------
 // O PAR PERSONALIZADO ENQUANTO ESTA SENDO DIGITADO (HMO-240)
 // -----------------------------------------------------------------------------

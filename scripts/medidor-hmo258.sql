@@ -39,6 +39,21 @@
 -- 2 e o piso: as duas que sobraram sao perguntas diferentes, cada uma com
 -- rotulo na tela, e nao uma divergencia a consertar.
 --
+-- "CADA UMA COM ROTULO NA TELA" SO FICOU VERDADE NA HMO-413, e nao aqui.
+-- Quando esta linha foi escrita, o 990 tinha a frase da aba Despesas e o 1.010
+-- tinha a de `/dashboard/personal-finance` -- mas o 1.010 passara a aparecer
+-- TAMBEM no painel, num tile que e LINK para a tela do 990 desde a HMO-408, e
+-- daquele lado nao havia rotulo nenhum. Dois numeros a um clique, cada um
+-- legitimo, e nada ligando um ao outro. A HMO-413 pos o par de frases
+-- (`LEGENDA_DO_CUSTO_REALIZADO` e `LEGENDA_DO_CAIXA_REALIZADO`, em
+-- lib/legenda-do-bruto-e-do-liquido.ts) e a prova da subtracao entre as duas
+-- ROTAS na secao 8 de `npm run test:criterio-do-painel`.
+--
+-- E ISSO E O PADRAO DESTA FAMILIA, nao um detalhe desta volta: o contador
+-- abaixo conta NUMEROS, e "2 respostas" nunca implicou "2 rotulos". Este
+-- medidor nao sabe ler tela. Quem baixar o contador para 2 de novo noutra
+-- leitura tem de conferir o rotulo dos DOIS lados a mao.
+--
 -- A ULTIMA LINHA E DE OUTRA PERGUNTA (HMO-347, migration 049). As seis de cima
 -- perguntam "quanto a A gastou em maio?"; a ultima pergunta "quanto do TETO de
 -- mercado ela consumiu?", que recorta UMA categoria. Ela entra aqui porque o

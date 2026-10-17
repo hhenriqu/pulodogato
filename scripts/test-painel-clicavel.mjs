@@ -711,6 +711,7 @@ const retrato = (raiz) => {
     receitas: tileDe(anchors, "Receitas"),
     despesas: tileDe(anchors, "Despesas"),
     abrirDespesas: linkPorTexto(anchors, "Abrir Despesas"),
+    compararEmDespesas: linkPorTexto(anchors, "Comparar em Despesas"),
     hrefs: anchors.map((a) => a.getAttribute("href")),
     esbocos: (texto.match(/\\[ESBOCO-[^\\]]+\\]/g) || [])
       .filter((v, i, t) => t.indexOf(v) === i)
@@ -1079,4 +1080,106 @@ test("cada tile aponta para a tela DELE", () => {
       `${chave}: Despesas aponta para ${caso.despesas.href}`
     );
   }
+});
+
+// ---------------------------------------------------------------------------
+// O QUARTO LINK: o «Comparar em Despesas» da legenda do REALIZADO (HMO-413)
+// ---------------------------------------------------------------------------
+// MESMA ARMADILHA DOS TRES DE CIMA, e por isso o caso vive aqui e nao na sonda
+// textual: `test-contrato-das-telas-de-movimentacao.mjs` prova que o `href` sai
+// de `rotaDaTelaDoLado` lendo o JSX, e isso nao distingue "o endereco carrega a
+// janela" de "o endereco carrega uma janela errada". O que decide e o atributo
+// RENDERIZADO, nos quatro periodos.
+//
+// E AQUI A EXIGENCIA E NOS QUATRO, nao em dois. O cartao de "quanto posso
+// gastar" so desenha quando o periodo contem hoje (dai o `temCartao` do CASOS);
+// esta legenda fica no bloco dos tiles, que desenha sempre. Um `temCartao` mal
+// copiado para ca faria o caso passar por ausencia em metade dos periodos --
+// que e como esta sonda ficaria verde sem medir nada.
+//
+// A LEGENDA SEM LINK COM JANELA NAO E MEIA ENTREGA: ela afirma uma comparacao
+// entre dois numeros ("a aba Despesas mostra menos"), e os dois numeros so se
+// comparam no MESMO periodo. Mandar quem olha maio para o painel de outubro faz
+// a frase apresentar um par que nao existe.
+
+test("os quatro periodos: o «Comparar em Despesas» leva a janela da tela", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  for (const [chave, nome, janela] of CASOS) {
+    const caso = resultado[chave];
+
+    // CONTROLE POSITIVO, caso a caso: `href: null` tambem sai de "achei dois" e
+    // de "nao achei nenhum", e as duas causas se leem como periodo errado.
+    assert.equal(
+      caso.compararEmDespesas.quantos,
+      1,
+      `${nome}: anchors de "Comparar em Despesas": ` +
+        `${caso.compararEmDespesas.quantos}. A legenda do «Realizado» desenha ` +
+        "em TODO periodo -- 0 e a legenda sumida, 2 e um rotulo duplicado (e " +
+        `com 2 o link do cartao tambem fica \`null\`). hrefs: ${JSON.stringify(caso.hrefs)}`
+    );
+
+    if (janela) {
+      assert.equal(
+        caso.compararEmDespesas.href,
+        enderecoEsperado("despesas", janela),
+        `${nome}: o «Comparar em Despesas» nao levou a janela da tela`
+      );
+    } else {
+      // O painel nu: formato e nao valor, pelo motivo do caso C dos tiles -- o
+      // mes corrente depende do dia em que o CI roda.
+      assert.match(
+        caso.compararEmDespesas.href,
+        /^\/dashboard\/despesas\?de=\d{4}-\d{2}-01&ate=\d{4}-\d{2}-\d{2}$/,
+        `${nome}: o «Comparar em Despesas» nao leva uma janela de mes: ` +
+          `${caso.compararEmDespesas.href}`
+      );
+    }
+  }
+
+  // O QUE TIRA A VACUIDADE: com o link nu de volta no lugar, os quatro casos
+  // devolvem `/dashboard/despesas` e todas as assercoes de cima que comparam
+  // com `enderecoEsperado` reprovam -- menos a do painel nu, que e a que
+  // sobrevive. Estas duas pegam o defeito pelo outro lado, sem depender de
+  // nenhum literal de data.
+  assert.notEqual(
+    resultado.a.compararEmDespesas.href,
+    resultado.c.compararEmDespesas.href,
+    "o periodo da URL nao chegou no link da legenda: agosto e o painel nu deram " +
+      "o mesmo endereco"
+  );
+  assert.notEqual(
+    resultado.a.compararEmDespesas.href,
+    resultado.b.compararEmDespesas.href,
+    "os dois periodos da sonda deram o mesmo endereco na legenda do «Realizado»"
+  );
+});
+
+// E O ROTULO DO CARTAO CONTINUA UNICO -- o controle da colisao que de fato
+// aconteceu. Na primeira volta da HMO-413 a legenda nova usava "Abrir
+// Despesas", o `linkPorTexto` do cartao passou a achar DOIS anchors e o caso da
+// HMO-415 reprovou dizendo "nao levou a janela da tela" -- uma mensagem sobre
+// periodo para um defeito de rotulo duplicado. Esta assercao nomeia a causa.
+test("os dois links da mesma tela tem rotulos DIFERENTES", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // O caso `d` desenha os DOIS: o cartao (porque o periodo contem hoje) e a
+  // legenda do realizado (que desenha sempre).
+  const caso = resultado.d;
+  assert.equal(caso.abrirDespesas.quantos, 1, "o «Abrir Despesas» do cartao");
+  assert.equal(
+    caso.compararEmDespesas.quantos,
+    1,
+    "o «Comparar em Despesas» da legenda do «Realizado»"
+  );
+  // E OS DOIS APONTAM PARA O MESMO LUGAR, de proposito: e a mesma tela, no
+  // mesmo periodo. E justamente por isso que o rotulo tem de distinguir -- o
+  // `href` nao distingue, e quem navega por lista de links leria a mesma frase
+  // duas vezes sem saber que uma fala do previsto e a outra do realizado.
+  assert.equal(
+    caso.abrirDespesas.href,
+    caso.compararEmDespesas.href,
+    "os dois links da tela deixaram de apontar para o mesmo periodo: um dos dois " +
+      "perdeu a janela"
+  );
 });
