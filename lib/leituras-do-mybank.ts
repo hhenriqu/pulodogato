@@ -181,6 +181,27 @@ export interface ParcelaDevidaNaAgenda {
    */
   mybank_status: "pending" | "reported";
   effective_status: "pending" | "overdue";
+  /**
+   * O ESTADO DA PESSOA (HMO-411). Aqui ele e SEMPRE a copia dos dois acima.
+   *
+   * Divida de MyBank nao e conta de grupo: ela nao tem `group_id` e nao tem
+   * linha em `group_bill_payments`. Quem le e sempre o devedor, entao
+   * `my_status === status` por construcao.
+   *
+   * `my_status` SEGUE `status` E NAO `mybank_status`, E ISSO E A MESMA DECISAO
+   * DE DINHEIRO DOS DOIS CAMPOS ACIMA: ele e `'pending'` tambem quando a
+   * parcela esta `reported`, porque nesse intervalo a divida AINDA EXISTE --
+   * o credor pode nao ter recebido. Fazer `my_status` seguir `mybank_status`
+   * poria `'reported'` num campo que as somas de dinheiro filtram por
+   * `'pending'`, e o «A vencer» desceria no instante do clique do devedor: um
+   * botao que paga a conta. A distincao para a TELA continua em
+   * `mybank_status`, que e quem o botao le.
+   *
+   * ELES NAO SAO DECORACAO: sem estes dois campos a parcela chega `undefined`
+   * em todo filtro por `my_status` e cai calada para fora de «Total a pagar».
+   */
+  my_status: "pending";
+  my_effective_status: "pending" | "overdue";
   days_until_due: number;
   /**
    * `'expense'` E NAO `'transfer'`, e esta e a unica assimetria com o Caso A.
@@ -258,6 +279,13 @@ export function parcelasDevidasNaAgenda(
       // vencimento anterior a hoje e `overdue`. Comparacao de string ISO e
       // comparacao de data -- `AAAA-MM-DD` ordena lexicograficamente.
       effective_status: vencimento < hoje ? ("overdue" as const) : ("pending" as const),
+      // Os dois de HMO-411, iguais aos de dinheiro acima -- ver o porque no
+      // campo `my_status` da interface. Escritos a partir da MESMA expressao,
+      // e nao copiados da variavel acima, para que uma mudanca na regra de
+      // `overdue` nao deixe metade da dupla para tras.
+      my_status: "pending" as const,
+      my_effective_status:
+        vencimento < hoje ? ("overdue" as const) : ("pending" as const),
       days_until_due: diasAte(vencimento, hoje),
       direction: "expense" as const,
       notes: chaveDaParcelaDoMyBank(parcela.id),

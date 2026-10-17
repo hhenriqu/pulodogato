@@ -254,6 +254,22 @@ export interface FaturaPrevista {
   due_date: string;
   status: "pending";
   effective_status: "pending" | "overdue";
+  /**
+   * O ESTADO DA PESSOA (HMO-411), e aqui ele e SEMPRE igual ao de cima.
+   *
+   * Fatura de cartao nao e de grupo: ela e sintetizada das compras de UMA conta
+   * minha, entao quem le e sempre o dono e `my_status === status` por
+   * construcao -- a mesma igualdade que a 055 garante na view para toda linha
+   * pessoal.
+   *
+   * ELES NAO SAO DECORACAO. Desde a HMO-411 as somas de dinheiro filtram por
+   * `my_status`: sem estes dois campos a fatura aberta chega `undefined` em
+   * todo filtro e cai calada para fora de «Total a pagar» e do «A vencer» --
+   * numero MENOR, sem erro nenhum, que e a direcao que faz a pessoa gastar o
+   * que nao tem.
+   */
+  my_status: "pending";
+  my_effective_status: "pending" | "overdue";
   days_until_due: number;
   direction: "expense";
   /** A chave canonica que o `close` vai gravar -- a mesma que de-duplica aqui. */
@@ -456,6 +472,12 @@ export function sintetizarFaturasAbertas(params: {
       due_date: vencimento,
       status: "pending",
       effective_status: vencimento < hoje ? "overdue" : "pending",
+      // Os dois campos de HMO-411, iguais aos de cima por construcao -- ver o
+      // porque no campo `my_status` da interface. Escritos a partir das MESMAS
+      // expressoes, e nao copiados das variaveis acima, para que uma mudanca na
+      // regra de `overdue` nao deixe metade da dupla para tras.
+      my_status: "pending",
+      my_effective_status: vencimento < hoje ? "overdue" : "pending",
       days_until_due: diasAte(vencimento, hoje),
       // Fatura e sempre dinheiro saindo. Nao sai de `direction` da view porque
       // nao ha linha na view -- e `expense` e a mesma direcao que o `close`

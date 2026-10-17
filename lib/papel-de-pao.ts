@@ -127,8 +127,24 @@ export interface LinhaPrevistaDoPapel {
   due_date: string;
   /** Positivo na view. O `Math.abs` abaixo nao confia nisso. */
   amount: number | string;
-  /** O status GRAVADO, nao o `effective_status` derivado. */
-  status?: string | null;
+  /**
+   * O estado DA PESSOA que esta lendo -- `my_status` da view (HMO-411).
+   *
+   * E o GRAVADO, nao o derivado: `my_effective_status` acrescenta so o
+   * `overdue`, que nao e um dos `STATUS_FORA_DO_PREVISTO`.
+   *
+   * ERA `status`, e a troca de nome e o ponto: a rota deste painel nao filtra
+   * `user_id`, entao a conta de grupo do outro membro chega aqui e
+   * `scheduled_transactions.status` e do DONO. Fora do grupo as duas colunas
+   * sao iguais por construcao (055), entao nenhum numero pessoal muda.
+   *
+   * OBRIGATORIO, e isso tambem mudou: `String(undefined)` nunca cai em
+   * `STATUS_FORA_DO_PREVISTO`, entao um campo esquecido deixaria a conta JA
+   * PAGA dentro do previsto -- numero inchado, sem erro. Com ele obrigatorio o
+   * tsc aponta cada fonte, e as fontes nao sao so a view: a fatura sintetizada
+   * tambem entra nesta lista.
+   */
+  my_status: string;
   /** 'income' | 'expense', da coluna `direction` do 027. */
   direction?: string | null;
   category_id?: string | null;
@@ -580,7 +596,10 @@ function somarPerna(
     if (!dentroDaJanela(linha.due_date, ctx.janela)) continue;
 
     // 'skipped' e 'cancelled' deixaram de fazer parte da promessa do mes.
-    if (STATUS_FORA_DO_PREVISTO.has(String(linha.status ?? "pending"))) continue;
+    // O `?? "pending"` CAIU JUNTO com a troca para `my_status` (HMO-411): o
+    // campo agora e obrigatorio, e o default escondia justamente o caso em que
+    // ele faltava.
+    if (STATUS_FORA_DO_PREVISTO.has(String(linha.my_status))) continue;
 
     if (!aceita(linha)) {
       // A LINHA RECUSADA QUE AINDA TEM DE SER DITA. O valor e a MINHA parte,

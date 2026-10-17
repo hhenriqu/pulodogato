@@ -98,8 +98,8 @@ const prevista = (over = {}) => ({
   description: "conta",
   amount: "100.00",
   due_date: "2026-10-15",
-  status: "pending",
-  effective_status: "pending",
+  my_status: "pending",
+  my_effective_status: "pending",
   direction: "expense",
   ...over,
 });
@@ -159,7 +159,7 @@ test("a conta prevista com baixa fica FORA do previsto -- ela ja esta no realiza
   // status 'paid' E a transacao que a baixa criou.
   const linhas = daTela(
     [realizada({ id: "t1", description: "Internet", amount: -159.9 })],
-    [prevista({ id: "s1", description: "Internet", status: "paid", amount: "159.90" })],
+    [prevista({ id: "s1", description: "Internet", my_status: "paid", amount: "159.90" })],
     "expense"
   );
 
@@ -172,20 +172,20 @@ test("a conta prevista com baixa fica FORA do previsto -- ela ja esta no realiza
   assert.equal(r.total, 159.9);
   assert.notEqual(r.total, 319.8);
   assert.equal(linhas.length, 1);
-  assert.equal(linhaPrevista(prevista({ status: "paid" })), null);
+  assert.equal(linhaPrevista(prevista({ my_status: "paid" })), null);
 });
 
 test("skipped e cancelled saem do previsto; pending e overdue ficam", () => {
-  assert.equal(linhaPrevista(prevista({ status: "skipped" })), null);
-  assert.equal(linhaPrevista(prevista({ status: "cancelled" })), null);
+  assert.equal(linhaPrevista(prevista({ my_status: "skipped" })), null);
+  assert.equal(linhaPrevista(prevista({ my_status: "cancelled" })), null);
 
-  assert.ok(linhaPrevista(prevista({ status: "pending" })));
+  assert.ok(linhaPrevista(prevista({ my_status: "pending" })));
   // 'overdue' NUNCA e gravado em `status` -- a view o calcula em
   // `effective_status`. Uma conta vencida continua sendo uma conta que o
   // periodo previa: tirando-a daqui, o total de Despesas DIMINUIRIA no dia
   // seguinte ao vencimento, que e o dia em que a pessoa abre a tela.
   const vencida = linhaPrevista(
-    prevista({ status: "pending", effective_status: "overdue" })
+    prevista({ my_status: "pending", my_effective_status: "overdue" })
   );
   assert.ok(vencida);
   assert.equal(vencida.situacao, "overdue");
@@ -201,8 +201,8 @@ test("o vencido e um RECORTE do previsto, nao uma soma a parte", () => {
   const linhas = daTela(
     [],
     [
-      prevista({ id: "a", amount: "400.00", effective_status: "overdue" }),
-      prevista({ id: "b", amount: "100.00", effective_status: "pending" }),
+      prevista({ id: "a", amount: "400.00", my_effective_status: "overdue" }),
+      prevista({ id: "b", amount: "100.00", my_effective_status: "pending" }),
     ],
     "expense"
   );
@@ -432,8 +432,8 @@ const faturaAberta = (over = {}) => ({
   description: "Fatura C6 10/2026",
   amount: 400,
   due_date: "2026-10-10",
-  status: "pending",
-  effective_status: "pending",
+  my_status: "pending",
+  my_effective_status: "pending",
   direction: "expense",
   account_name: "C6",
   ...over,
@@ -736,8 +736,8 @@ test("a fatura aberta entra no previsto com chave de fatura e `gravada: false`",
     description: "Fatura C6 · out/2026",
     amount: 1240.55,
     due_date: "2026-10-10",
-    status: "pending",
-    effective_status: "pending",
+    my_status: "pending",
+    my_effective_status: "pending",
     direction: "expense",
     account_name: "C6",
   });
@@ -814,8 +814,8 @@ test("a fatura ABERTA (sintetizada) e `fatura`, e carrega cartao E mes", () => {
     description: "Fatura C6 · out/2026",
     amount: 1240.55,
     due_date: "2026-10-10",
-    status: "pending",
-    effective_status: "pending",
+    my_status: "pending",
+    my_effective_status: "pending",
     direction: "expense",
     account_name: "C6",
   });
@@ -1030,8 +1030,8 @@ const faturaPaga = (over = {}) =>
     amount: "1290.00",
     due_date: "2026-10-10",
     notes: CHAVE_DE_FATURA,
-    status: "paid",
-    effective_status: "paid",
+    my_status: "paid",
+    my_effective_status: "paid",
     ...over,
   });
 
@@ -1053,7 +1053,7 @@ test("o mes da fatura PAGA fecha no MESMO Total do mes da fatura ABERTA", () => 
   const aberta = daTela([compra], [faturaAberta({ amount: 1290 })], "expense");
 
   // MES B: a MESMA compra, e a fatura foi PAGA. Ela saiu do Previsto por
-  // `status: 'paid'` (armadilha 2) e o pagamento entrou em duas pernas.
+  // `my_status: 'paid'` (armadilha 2) e o pagamento entrou em duas pernas.
   const paga = daTela(
     [compra, pernaDeSaidaDaFatura(), pernaDeEntradaDaFatura()],
     [faturaPaga()],
@@ -1640,8 +1640,8 @@ test("no mes da baixa a parcela conta UMA vez: a previsao `paid` nao soma junto"
     amount: "10.00",
     direction: "transfer",
     notes: NOTA_DA_PARCELA_PAGA,
-    status: "paid",
-    effective_status: "paid",
+    my_status: "paid",
+    my_effective_status: "paid",
   });
 
   const linhas = daTela(PAR_DA_PARCELA_PAGA, [previsaoPaga], "expense");
@@ -1651,7 +1651,7 @@ test("no mes da baixa a parcela conta UMA vez: a previsao `paid` nao soma junto"
   // ser considerada (`sonda-de-horizonte-vence-fora-da-janela-e-mede-zero`).
   const pendente = daTela(
     PAR_DA_PARCELA_PAGA,
-    [{ ...previsaoPaga, status: "pending", effective_status: "pending" }],
+    [{ ...previsaoPaga, my_status: "pending", my_effective_status: "pending" }],
     "expense"
   );
   assert.equal(pendente.length, 2, "pendente, a previsao entra -- o controle");
@@ -1750,8 +1750,8 @@ const parcelaDevida = (over = {}) => ({
   description: "Moto elétrica",
   amount: 1000,
   due_date: "2026-10-15",
-  status: "pending",
-  effective_status: "pending",
+  my_status: "pending",
+  my_effective_status: "pending",
   direction: "expense",
   notes: `${PREFIXO_DO_ELO_DO_MYBANK}parcela-3`,
   recurring_rule_id: null,
@@ -1873,7 +1873,7 @@ test("a parcela devida vencida sai com `overdue`, e entra no balde do vencido", 
   // `previstoVencido` -- a aba Despesas e onde se abre para ver o atraso.
   const linhas = daTela(
     [],
-    [parcelaDevida({ effective_status: "overdue", due_date: "2026-09-01" })],
+    [parcelaDevida({ my_effective_status: "overdue", due_date: "2026-09-01" })],
     "expense"
   );
 
@@ -2114,7 +2114,7 @@ test("um mes inteiro: as tres telas somam cada uma o seu, sem sobreposicao", () 
   const todasAsPrevistas = [
     prevista({ id: "internet", amount: "159.90", direction: "expense" }),
     prevista({ id: "freela", amount: "1200.00", direction: "income" }),
-    prevista({ id: "ja-paga", amount: "80.00", direction: "expense", status: "paid" }),
+    prevista({ id: "ja-paga", amount: "80.00", direction: "expense", my_status: "paid" }),
   ];
 
   const receitas = resumoDaTela(daTela(todasAsRealizadas, todasAsPrevistas, "income"));

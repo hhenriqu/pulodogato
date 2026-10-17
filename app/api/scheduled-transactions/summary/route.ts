@@ -136,10 +136,20 @@ export async function GET(request: NextRequest) {
     // este resumo somaria as compras que a lista nao mostra mais, e o "a vencer"
     // do cabecalho discordaria das linhas logo abaixo dele, na MESMA tela -- com
     // o numero maior, que e o que parece certo.
+    //
+    // `my_status`/`my_effective_status` NO LUGAR DE `status`/`effective_status`
+    // (HMO-411, leitura 2 de 8) -- o porque completo esta no cabecalho de
+    // app/api/scheduled-transactions/route.ts. Esta leitura NAO filtra
+    // `user_id` (a RLS do 005 entrega a linha de grupo do outro membro, e ela
+    // precisa chegar para entrar pela minha parte -- ver o laco das somas):
+    // ate aqui o estado que a classificava era o do DONO, e o «A vencer» da
+    // Lais caia sozinho quando o Helio pagava a conta do grupo. As duas colunas
+    // ANTIGAS saem do select de proposito: deixa-las so daria duas fontes para
+    // o mesmo criterio divergirem depois.
     const { data: linhasBrutas, error } = await supabase
       .from("scheduled_transactions_effective")
       .select(
-        "due_date, amount, status, effective_status, group_id, direction, notes, account:financial_accounts(account_type)"
+        "due_date, amount, my_status, my_effective_status, group_id, direction, notes, account:financial_accounts(account_type)"
       )
       .gte("due_date", de)
       .lte("due_date", ate);
@@ -319,11 +329,16 @@ export async function GET(request: NextRequest) {
         (linha as { direction?: string | null }).direction
       );
 
+      // `my_status`/`my_effective_status` (HMO-411). Os nomes dos campos de
+      // `LinhaEmAberto` nao mudaram -- o que mudou e de QUAL coluna eles saem.
+      // A linha sintetizada da fatura e a do MyBank chegam aqui com os dois
+      // campos iguais aos antigos, por construcao: as duas sao sempre de quem
+      // le.
       const emAberto = emAbertoPorMes.get(mes) ?? [];
       emAberto.push({
         amount: valor,
-        status: String(linha.status),
-        effective_status: String(linha.effective_status),
+        status: String(linha.my_status),
+        effective_status: String(linha.my_effective_status),
         direcao,
       });
       emAbertoPorMes.set(mes, emAberto);
@@ -332,7 +347,7 @@ export async function GET(request: NextRequest) {
       // acima. Usar `linha.amount` cru aqui faria o previsto de um casal
       // discordar do "a vencer" que aparece tres blocos acima, na mesma tela.
       const daAgenda = agendaPorMes.get(mes) ?? [];
-      daAgenda.push({ amount: valor, status: String(linha.status), direcao });
+      daAgenda.push({ amount: valor, status: String(linha.my_status), direcao });
       agendaPorMes.set(mes, daAgenda);
     }
 

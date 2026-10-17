@@ -171,10 +171,16 @@ export async function GET() {
     // a direcao do tipo da REGRA faz toda previsao avulsa de receita entrar
     // como conta a pagar -- ver o cabecalho.
     //
-    // `status` E NAO `effective_status`, e o recorte nao mudou com a troca: a
-    // view entrega as duas colunas, `status` e a gravada, e trocar por
-    // `effective_status` aqui excluiria justamente a conta VENCIDA e nao paga --
+    // `my_status` E NAO `my_effective_status`, e o recorte nao mudou com a
+    // troca: a view entrega as duas colunas, a primeira e a gravada, e trocar
+    // pela derivada aqui excluiria justamente a conta VENCIDA e nao paga --
     // dinheiro que vai sair, e que `compromissosVencidos` existe para destacar.
+    //
+    // `my_status` E NAO `status` (HMO-411, leitura 6 de 8) -- o porque completo
+    // esta no cabecalho de app/api/scheduled-transactions/route.ts. Aqui a
+    // troca e demonstravelmente INOCUA: o `.eq("user_id", user.id)` logo abaixo
+    // so deixa passar linha minha, e para linha minha a 055 define
+    // `my_status = status::text` sempre. Ela esta aqui por UMA CONVENCAO SO.
     //
     // Sem piso de data: uma conta que venceu no mes passado e nao foi paga
     // continua sendo dinheiro que vai sair. O filtro de teto e feito no
@@ -183,7 +189,7 @@ export async function GET() {
       .from("scheduled_transactions_effective")
       .select("id, amount, due_date, notes, group_id, direction")
       .eq("user_id", user.id)
-      .eq("status", "pending")
+      .eq("my_status", "pending")
       .lte("due_date", ate);
 
     if (erroPrevistas) {

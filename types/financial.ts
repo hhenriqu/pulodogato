@@ -455,6 +455,26 @@ export interface ScheduledTransaction {
 
   /** Vem da view scheduled_transactions_effective, calculado na hora. */
   effective_status?: ScheduledStatus;
+  /**
+   * O ESTADO DE QUEM ESTA LENDO -- `my_status` da view (HMO-411, migration 055).
+   *
+   * `status` e `effective_status` acima sao do DONO da linha, porque
+   * `scheduled_transactions` tem uma coluna de status so. Numa conta de GRUPO
+   * isso quer dizer que a conta sumia do «a pagar» de todos os membros no
+   * instante em que o dono pagava -- eles ainda deviam a parte deles.
+   *
+   * Para linha de que eu sou o dono as duas duplas sao IGUAIS, sempre; e por
+   * isso que trocar uma pela outra nao muda numero nenhum fora do grupo.
+   *
+   * `string` E NAO `ScheduledStatus`: o estado da pessoa tem um valor que
+   * aquele enum nao tem (`reported` -- "avisei que paguei, falta o dono
+   * confirmar") e nao tem os que so fazem sentido para a linha inteira. Tipar
+   * como `ScheduledStatus` faria o `tsc` garantir um dominio que o banco nao
+   * garante.
+   */
+  my_status?: string;
+  /** `my_effective_status` -- o de cima com o `overdue` do vencimento aplicado. */
+  my_effective_status?: string;
   /** Negativo = vencida ha N dias. */
   days_until_due?: number;
   /**

@@ -5963,7 +5963,7 @@ jobs:
           # 2) A MESMA CONTA DUAS VEZES. A conta prevista com baixa ja virou
           #    linha de financial_transactions, ou seja ja esta no lado
           #    realizado desta mesma tela.
-          sed -i 's|if (STATUS_QUE_SAI_DO_PREVISTO.has(String(crua.status))) return null;|if (false) return null;|' $LIB
+          sed -i 's|if (STATUS_QUE_SAI_DO_PREVISTO.has(String(crua.my_status))) return null;|if (false) return null;|' $LIB
           mutou $LIB 2
           if npm run test:telas-de-movimentacao > /dev/null 2>&1; then
             echo "::error::Verde com a conta prevista JA PAGA contada duas vezes."
@@ -8522,3 +8522,58 @@ jobs:
             diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
             exit 1
           fi
+
+      # =====================================================================
+      # HMO-411 -- o "pago" passa a ser POR PESSOA
+      # =====================================================================
+      # `scheduled_transactions` tem UMA coluna `status` e ela e do DONO: o
+      # Helio pagava o aluguel do grupo Casa e a conta DESAPARECIA do «a
+      # pagar» da Lais e da Ana, que ainda deviam a parte delas. A migration
+      # 055 pos o estado de cada pessoa na view (`my_status`), e estes quatro
+      # steps medem as quatro metades do conserto.
+
+      # A REGRA PURA de "esta conta de grupo nao e minha", com as tres
+      # condicoes. A mais sutil e o `meuUserId` vazio devolvendo `false`: com
+      # `""` a comparacao de dono seria verdadeira para TODA linha, e a tela
+      # trocaria os quatro botoes de todo mundo pelo botao unico do membro.
+      - name: Conta de grupo -- a regra de quem e a linha
+        run: npm run test:conta-de-grupo-na-agenda
+
+      # A LINHA NOVA, montada num Chromium de verdade. Tudo assercao de
+      # PRESENCA e de COMPORTAMENTO: um botao so, a URL do POST comparada com
+      # o id que entrou, o DELETE do desfazer, e a tarja de atraso saindo de
+      # `my_effective_status` -- o fixture tem `effective_status: "paid"` (o
+      # dono pagou) junto, e lendo a coluna errada a conta apareceria "em dia"
+      # para quem ainda deve. "O botao de pagar sumiu" NAO e medido aqui: isso
+      # passa verde numa tela vazia, e quem o mede e o step seguinte.
+      - name: Conta de grupo -- a linha em Contas a Pagar, no navegador
+        run: npm run test:conta-de-grupo-na-tela
+
+      # O DESPACHO, que e o que de fato tira os quatro botoes da linha. Ele e
+      # textual porque a `Linha` da agenda e um fechamento dentro de uma
+      # pagina de 1.600 linhas, que nao se monta em sonda -- a mesma divisao
+      # de trabalho da HMO-386 nesta mesma tela. Le o fonte SEM COMENTARIO de
+      # proposito: os arquivos explicam a decisao em prosa e citam os nomes
+      # que o guard procura.
+      - name: Conta de grupo -- o despacho na tela e o leitor no grupo
+        run: npm run check-conta-de-grupo-na-agenda
+
+      # O GESTO E O LEITOR, com duble de supabase. A assercao que carrega a
+      # issue e a decisao D1: a rota NAO grava lancamento nenhum. Ela e medida
+      # pela lista FECHADA de tabelas escritas, e nao pela ausencia de uma
+      # delas -- quando o dono da baixa, a trigger ja rateia a despesa e a
+      # parte do membro ja fica realizada em `group_share_entries`, entao um
+      # segundo lancamento aqui a contaria DUAS vezes, sem erro nenhum e com
+      # cara de numero certo.
+      - name: Conta de grupo -- o gesto do membro e o quadro por membro
+        run: npm run test:minha-baixa
+
+      # AS OITO LEITURAS, e este guard existe porque QUATRO delas nao tem rota
+      # montada em suite nenhuma (previsao, papel de pao, projection e
+      # cash-flow) e o cliente do supabase aqui NAO e tipado: `.eq("status")` e
+      # `.eq("my_status")` passam identicos pelo tsc. Ele tambem prende a
+      # excecao declarada ao contrario -- a tela do GRUPO continua lendo
+      # `status`, porque o grupo nao tem status de pago e a conta paga sai das
+      # previstas de proposito.
+      - name: As oito leituras da agenda usam o estado da PESSOA
+        run: npm run check-as-oito-leituras

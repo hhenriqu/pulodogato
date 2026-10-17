@@ -565,8 +565,27 @@ export interface PrevistaCrua {
   description?: string | null;
   amount: number | string | null;
   due_date?: string | null;
-  status?: string | null;
-  effective_status?: string | null;
+  /**
+   * O ESTADO DA PESSOA QUE ESTA LENDO -- `my_status` da view (HMO-411).
+   *
+   * ERA `status`, E A TROCA DE NOME E O PONTO. A rota desta tela traz a conta
+   * de grupo do OUTRO membro de proposito (o `.or(group_id.not.is.null)` da
+   * HMO-303), e `scheduled_transactions.status` e do DONO: a conta que o Helio
+   * pagou saia do previsto da Lais no mesmo instante, sem que ela tivesse
+   * resolvido a parte dela. A view 055 resolve isso por linha, e para conta
+   * que nao e de grupo `my_status = status::text` sempre -- a troca nao muda
+   * numero nenhum fora do grupo.
+   *
+   * OBRIGATORIO, E ISSO TAMBEM MUDOU. O campo antigo era opcional, e um
+   * `String(undefined)` nunca cai em `STATUS_QUE_SAI_DO_PREVISTO`: a previsao
+   * ja paga ficaria no previsto, inflando o numero, sem erro nenhum. Com o
+   * campo obrigatorio o tsc aponta toda fonte que esqueceu de traze-lo -- e as
+   * fontes nao sao so a view: a fatura sintetizada e a parcela do MyBank sao
+   * montadas em JS, e as duas tiveram de ganhar o campo.
+   */
+  my_status: string;
+  /** `my_effective_status` da view -- o unico que sabe dizer 'overdue' para MIM. */
+  my_effective_status?: string | null;
   currency?: string | null;
   /** A coluna `direction` da view. NUNCA o `transaction_type` cru. */
   direction?: string | null;
@@ -1591,7 +1610,7 @@ export function linhaPrevista(
    */
   suspeitas?: ReadonlyMap<string, SuspeitaDeFatura>
 ): LinhaDaTela | null {
-  if (STATUS_QUE_SAI_DO_PREVISTO.has(String(crua.status))) return null;
+  if (STATUS_QUE_SAI_DO_PREVISTO.has(String(crua.my_status))) return null;
 
   const tela = telaDoTipo(crua.direction);
   if (!tela) return null;
@@ -1638,8 +1657,8 @@ export function linhaPrevista(
     data: texto(crua.due_date) ?? "",
     origem: "previsto",
     tipo: tela.tipo,
-    status: texto(crua.status),
-    situacao: texto(crua.effective_status),
+    status: texto(crua.my_status),
+    situacao: texto(crua.my_effective_status),
     categoria: texto(umDoEmbed(crua.category)?.name),
     conta: nomeDaConta,
     moeda: moedaDaLinha(crua.currency),

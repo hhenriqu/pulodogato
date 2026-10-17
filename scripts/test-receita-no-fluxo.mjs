@@ -118,6 +118,12 @@ const prevista = (extra = {}) => ({
   due_date: VENCE_DIA_20,
   status: "pending",
   effective_status: "pending",
+  // AS DUAS COLUNAS DE HMO-411, junto das antigas e nao no lugar delas: este
+  // fixture e uma linha da VIEW, e a view entrega as quatro. Para linha de que
+  // eu sou o dono a 055 garante `my_status = status::text`, e e por isso que
+  // nenhum numero desta suite mudou com a troca.
+  my_status: "pending",
+  my_effective_status: "pending",
   direction: "expense",
   recurring_rule_id: null,
   ...extra,
@@ -300,7 +306,7 @@ test("controle: a transferencia prevista continua saindo da conta", async () => 
 // "mostrar o historico" devolveria o defeito relatado.
 
 test("receita PULADA (skipped) nao aparece no fluxo de caixa", async () => {
-  const pulada = prevista({ direction: "income", status: "skipped" });
+  const pulada = prevista({ direction: "income", my_status: "skipped" });
   const { corpo } = await chamar([pulada]);
 
   assert.equal(corpo.cash_flow.totalEntra, 0);
@@ -310,8 +316,8 @@ test("receita PULADA (skipped) nao aparece no fluxo de caixa", async () => {
 
 test("receita CANCELADA e receita PAGA tambem ficam fora", async () => {
   const { corpo } = await chamar([
-    prevista({ direction: "income", status: "cancelled" }),
-    prevista({ direction: "income", status: "paid" }),
+    prevista({ direction: "income", my_status: "cancelled" }),
+    prevista({ direction: "income", my_status: "paid" }),
   ]);
 
   assert.equal(corpo.cash_flow.totalEntra, 0);
@@ -350,7 +356,8 @@ test("a rota le a VIEW `scheduled_transactions_effective`, nao a tabela", async 
   );
   assert.ok(
     daAgenda.filtros.some(
-      ([op, coluna, valor]) => op === "eq" && coluna === "status" && valor === "pending"
+      ([op, coluna, valor]) =>
+        op === "eq" && coluna === "my_status" && valor === "pending"
     ),
     "o recorte de `pending` e o que mantem a receita apagada fora da projecao"
   );

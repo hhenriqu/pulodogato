@@ -63,9 +63,18 @@ export async function GET(request: NextRequest) {
     // conta a pagar -- e sair do `scheduled_in` no mesmo movimento. Ver o
     // cabecalho do lib/projecao.ts.
     //
-    // `status` E NAO `effective_status`: a view entrega as duas, `status` e a
-    // gravada, e trocar aqui excluiria justamente a conta VENCIDA e nao paga --
-    // dinheiro que vai sair, e que o `overdue_total` existe para destacar.
+    // `my_status` E NAO `my_effective_status`: a view entrega as duas, a
+    // primeira e a gravada, e trocar aqui excluiria justamente a conta VENCIDA
+    // e nao paga -- dinheiro que vai sair, e que o `overdue_total` existe para
+    // destacar.
+    //
+    // `my_status` E NAO `status` (HMO-411, leitura 7 de 8) -- o porque completo
+    // esta no cabecalho de app/api/scheduled-transactions/route.ts. Aqui a
+    // troca e demonstravelmente INOCUA: o `.eq("user_id", user.id)` logo abaixo
+    // so deixa passar linha minha, e para linha minha a 055 define
+    // `my_status = status::text` sempre. Ela esta aqui por UMA CONVENCAO SO --
+    // metade das rotas em `status` e metade em `my_status` obrigaria a proxima
+    // pessoa a descobrir caso a caso qual das duas cada rota devia ler.
     //
     // Duas colunas sao load-bearing e nao dao erro nenhum se sairem do select,
     // so mudam o numero em silencio:
@@ -77,9 +86,13 @@ export async function GET(request: NextRequest) {
     //     que e o defeito desta issue de volta.
     const { data: previstas, error: erroPrevistas } = await supabase
       .from("scheduled_transactions_effective")
-      .select("id, account_id, amount, due_date, status, notes, direction")
+      // `my_status` SAI DO SELECT e fica so no filtro abaixo (HMO-411): o
+      // `status` que estava aqui nunca foi lido -- `PrevistaParaProjetar` nem
+      // declara o campo --, e coluna trazida e nunca lida e divida que a
+      // proxima pessoa confunde com criterio.
+      .select("id, account_id, amount, due_date, notes, direction")
       .eq("user_id", user.id)
-      .eq("status", "pending")
+      .eq("my_status", "pending")
       .lte("due_date", ate);
 
     if (erroPrevistas) {

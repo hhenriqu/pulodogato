@@ -230,7 +230,42 @@ interface GroupScheduled {
     name: string;
     icon?: string;
   } | null;
+  /**
+   * O ESTADO DE CADA PESSOA NESTA CONTA (HMO-411).
+   *
+   * Opcional porque a resposta guardada no aparelho de antes desta feature nao
+   * tem o campo: `undefined` nao desenha o quadro e a tela volta a ser a de
+   * ontem. Uma lista VAZIA, ao contrario, seria uma afirmacao -- e por isso o
+   * default aqui nao e `[]`.
+   */
+  estado_por_membro?: EstadoDoMembroNaPrevista[];
+  /**
+   * `true` = quem esta olhando NAO criou esta conta, e a RLS da 055 so lhe
+   * entrega a propria linha de pagamento. A lista acima esta curta por isso, e
+   * nao porque os outros membros estejam pendentes. Os dois casos sao a MESMA
+   * lista curta, e sem esta flag o segundo se leria como o primeiro.
+   */
+  estado_parcial?: boolean;
 }
+
+/** Uma pessoa no quadro "quem ja resolveu a parte dela" (HMO-411). */
+interface EstadoDoMembroNaPrevista {
+  user_id: string;
+  full_name: string | null;
+  avatar_url?: string | null;
+  estado: "pago" | "avisou" | "pendente";
+}
+
+/** O que cada estado diz na tela. UMA copia, lida so pelo quadro. */
+const FRASE_DO_ESTADO: Record<EstadoDoMembroNaPrevista["estado"], string> = {
+  pago: "pagou",
+  avisou: "avisou que pagou",
+  pendente: "pendente",
+};
+
+/** A frase que explica a lista curta de quem nao criou a conta. */
+const SO_O_DONO_VE_O_QUADRO =
+  "Só quem criou a conta vê o aviso dos outros membros.";
 
 interface BalanceSummary {
   member: {
@@ -1546,6 +1581,57 @@ export default function GroupDetailPage() {
                             </Badge>
                           </div>
                         </div>
+
+                        {/*
+                          QUEM JA RESOLVEU A PARTE DELE (HMO-411).
+
+                          Sem este bloco o `reported` que o membro grava em
+                          `group_bill_payments` e dado sem leitor -- nesta base
+                          o mesmo que nao existir --, e a feature passaria
+                          verde com ninguem vendo nada.
+
+                          `item.estado_por_membro &&` e nao `?.length`: a
+                          resposta guardada no aparelho de antes desta feature
+                          vem sem o campo, e desenhar um quadro vazio ali
+                          afirmaria "ninguem avisou" com base num corpo que
+                          nunca respondeu isso.
+                        */}
+                        {item.estado_por_membro && (
+                          <div
+                            className="mt-3 border-t border-border pt-2"
+                            data-quadro-da-prevista={item.id}
+                          >
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                              {item.estado_por_membro.map((membro, i) => (
+                                <span
+                                  key={membro.user_id}
+                                  data-estado-do-membro={membro.user_id}
+                                  data-estado={membro.estado}
+                                >
+                                  {i > 0 && <span className="mr-2">·</span>}
+                                  <span
+                                    className={
+                                      membro.estado === "pendente"
+                                        ? ""
+                                        : "text-foreground"
+                                    }
+                                  >
+                                    {membro.full_name ?? "Membro"}{" "}
+                                    {FRASE_DO_ESTADO[membro.estado]}
+                                  </span>
+                                </span>
+                              ))}
+                            </div>
+                            {item.estado_parcial && (
+                              <p
+                                className="mt-1 text-xs text-muted-foreground"
+                                data-quadro-parcial={item.id}
+                              >
+                                {SO_O_DONO_VE_O_QUADRO}
+                              </p>
+                            )}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </CardContent>

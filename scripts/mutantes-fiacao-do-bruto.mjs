@@ -123,8 +123,8 @@ const MUTANTES = [
       "em toda linha: NENHUMA conta de grupo conta bruto, e o efeito e o mesmo " +
       "de desligar a F1b -- sem erro, sem log, com o tsc verde (o campo e " +
       "opcional em `PrevistaCrua`, porque a fatura sintetizada nao o tem)",
-    de: "id, user_id, description, amount, due_date, status, effective_status, currency,",
-    para: "id, description, amount, due_date, status, effective_status, currency,",
+    de: "id, user_id, description, amount, due_date, my_status, my_effective_status, currency,",
+    para: "id, description, amount, due_date, my_status, my_effective_status, currency,",
     caso: "a rota de Despesas chama a REGRA DO PAGADOR",
   },
   {

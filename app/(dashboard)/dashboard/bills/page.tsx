@@ -85,6 +85,11 @@ import { DialogoDePagamentoDaFatura } from "@/components/fatura/DialogoDePagamen
 import { Receipts } from "@/components/Receipts";
 import { LinhaDaParcelaDoMyBank } from "@/components/mybank/LinhaDaParcelaDoMyBank";
 import {
+  LinhaDaContaDoGrupo,
+  type ContaDeGrupoNaAgenda,
+} from "@/components/grupos/LinhaDaContaDoGrupo";
+import { ehContaDeGrupoDeOutro } from "@/lib/conta-de-grupo-na-agenda";
+import {
   ehParcelaDoMyBank,
   type ParcelaDevidaNaAgenda,
 } from "@/lib/leituras-do-mybank";
@@ -217,6 +222,13 @@ export default function BillsPage() {
   const [semVencimento, setSemVencimento] = useState<
     FaturaSemVencimento[] | null
   >(null);
+  // QUEM ESTA OLHANDO (HMO-411). Sem isto a tela nao tem como saber de quem e
+  // cada linha, e a conta de grupo que outro membro criou continuaria com os
+  // quatro botoes da agenda -- que respondem 404 ou 200-sem-fazer-nada para
+  // quem nao e o dono. `null` = a leitura nao trouxe o campo (resposta
+  // guardada no aparelho de antes desta feature), e nesse caso a tela volta a
+  // ser a de antes: ver o comentario no `setMeuUserId`.
+  const [meuUserId, setMeuUserId] = useState<string | null>(null);
   const [rules, setRules] = useState<RecurringRule[]>([]);
   const [categories, setCategories] = useState<TransactionCategory[]>([]);
   const [accounts, setAccounts] = useState<FinancialAccount[]>([]);
@@ -289,6 +301,8 @@ export default function BillsPage() {
       buscarLeitura<{
         scheduled?: LinhaDaAgendaOuFatura[];
         cards_without_due_day?: FaturaSemVencimento[];
+        /** Quem esta olhando (HMO-411) -- ver o `setMeuUserId` abaixo. */
+        meu_user_id?: string;
       }>("/api/scheduled-transactions?status=open"),
       buscarLeitura<{ rules?: RecurringRule[] }>("/api/recurring-rules"),
       buscarLeitura<{ categories?: TransactionCategory[] }>(
@@ -309,6 +323,12 @@ export default function BillsPage() {
     setGuardadoEm(agenda.guardadoEm);
     if (agenda.dados) {
       setScheduled(agenda.dados.scheduled ?? []);
+      // `?? null` e nao `?? ""` (HMO-411), e a direcao do erro e o motivo: com
+      // `""` a comparacao de dono seria verdadeira para TODA linha, e a tela
+      // trocaria os quatro botoes de todo mundo pelo botao unico do membro.
+      // `ehContaDeGrupoDeOutro` recusa o vazio por isso -- sem o campo a tela
+      // volta a ser a de antes desta feature, que e o erro barato.
+      setMeuUserId(agenda.dados.meu_user_id ?? null);
       // `?? null` e nao `?? []`: a resposta guardada no aparelho de antes desta
       // feature nao tem o campo, e `[]` ali afirmaria "nenhum cartao sem
       // vencimento" com base num corpo que nunca respondeu isso.
@@ -346,7 +366,17 @@ export default function BillsPage() {
 
     for (const conta of scheduled) {
       const dias = conta.days_until_due ?? 0;
-      if (conta.effective_status === "overdue") vencidas.push(conta);
+      // `my_effective_status` E NAO `effective_status` (HMO-411): aquele e o
+      // do DONO. Numa conta de grupo que ele ja pagou ele vale `paid`, e a
+      // linha cairia em «esta semana» ou «depois» para quem ainda deve a
+      // parte dela -- vencida ha um mes e sem tarja vermelha.
+      //
+      // O `??` MANTEM A TELA VIVA com a resposta guardada no aparelho de antes
+      // desta feature, que nao tem a coluna nova: sem ele toda linha do cache
+      // deixaria de ser vencida de uma vez. A fatura sintetizada e a parcela
+      // do MyBank trazem os dois campos iguais por construcao.
+      const situacao = conta.my_effective_status ?? conta.effective_status;
+      if (situacao === "overdue") vencidas.push(conta);
       else if (dias <= 7) semana.push(conta);
       else depois.push(conta);
     }
@@ -893,11 +923,24 @@ export default function BillsPage() {
           // gesto dela e «avisar que paguei», que nao move dinheiro nenhum.
           // O porque de o bloco da divida ter saido desta tela esta no
           // cabecalho de `LinhaDaParcelaDoMyBank`.
+          // A CONTA DE GRUPO DE OUTRO DONO E O TERCEIRO DESENHO (HMO-411), e
+          // ela entra na MESMA lista e no MESMO «Total a pagar» -- o que muda
+          // e so o gesto. Os quatro botoes da `Linha` falham calados nela:
+          // «dar baixa» responde 404 e «alterar»/«pular» voltam 200 sem
+          // alterar nada. Ver lib/conta-de-grupo-na-agenda.ts.
           contas.map((conta) =>
             ehParcelaDoMyBank(conta) ? (
               <LinhaDaParcelaDoMyBank
                 key={chaveDeAcao(conta)}
                 parcela={conta}
+                valor={moeda(Number(conta.amount))}
+                aoAvisar={carregar}
+                online={online}
+              />
+            ) : ehContaDeGrupoDeOutro(conta, meuUserId) ? (
+              <LinhaDaContaDoGrupo
+                key={chaveDeAcao(conta)}
+                conta={conta as ContaDeGrupoNaAgenda}
                 valor={moeda(Number(conta.amount))}
                 aoAvisar={carregar}
                 online={online}
