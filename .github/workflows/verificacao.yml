@@ -8577,3 +8577,20 @@ jobs:
       # previstas de proposito.
       - name: As oito leituras da agenda usam o estado da PESSOA
         run: npm run check-as-oito-leituras
+
+      # E O CONTROLE NEGATIVO DAQUELE GUARD (HMO-416). O passo acima sai verde
+      # na arvore certa, e verde na arvore certa nao prova nada: um guard cujo
+      # criterio parou de casar imprime o mesmo `✔`. Este runner planta os dez
+      # defeitos NO FONTE DAS ROTAS -- a reversao de `my_status` para `status`,
+      # a excecao "arrumada" para a coluna nova, o filtro apagado -- e exige
+      # que o guard fique vermelho em cada um.
+      #
+      # Ele importa mais que a media porque o mutante principal
+      # (`card_invoices_volta_para_status`) e INERTE em producao: a rota filtra
+      # `user_id` na mao, entao nenhuma suite de comportamento pode mata-lo. O
+      # guard e o unico aparelho que sobra, e isto e o que mede o guard.
+      #
+      # Custa segundos e nenhuma instalacao nova: o runner copia a arvore para
+      # /tmp e roda `node` puro, sem build e sem banco.
+      - name: Os mutantes da convencao my_status (o guard acima sabe reprovar?)
+        run: npm run mutantes:as-tres-leituras

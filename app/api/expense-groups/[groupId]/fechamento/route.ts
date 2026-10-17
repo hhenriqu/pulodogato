@@ -198,6 +198,31 @@ export async function GET(
     // `direction` e lida da view e repassada crua: a precedencia entre o tipo
     // da ocorrencia e o da regra recorrente e da 027, e refazer esse COALESCE
     // aqui e o defeito que ela fechou.
+    //
+    // `status`, E NAO `my_status` -- EXCECAO DECLARADA (HMO-416)
+    // ----------------------------------------------------------
+    // A HMO-411 pos o estado POR PESSOA (`my_status`) nas oito leituras de
+    // dinheiro desta view, e esta NAO entra nelas. A pergunta aqui e sobre a
+    // CONTA, nao sobre quem le: o recorte e `.eq("group_id", ...)`, entao vem a
+    // conta de TODOS os membros, e o que `linhaDoPrevisto` precisa saber de cada
+    // uma e "esta conta ja recebeu baixa?" -- porque se recebeu, a transacao
+    // real que nasceu dela JA esta no lado realizado deste mesmo fechamento,
+    // lido logo acima por `group_transactions`.
+    //
+    // Com `my_status` isto quebraria de DUAS maneiras, e nenhuma da erro:
+    //
+    //   1. para a conta de OUTRO membro, `my_status` e a MINHA parte nela
+    //      (`COALESCE(group_bill_payments.status, 'pending')`). A conta que o
+    //      dono pagou chegaria como `pending` e entraria no previsto -- somada
+    //      a propria transacao real dela. A internet de R$ 159,90 paga dia 15
+    //      vira R$ 319,80 no fechamento de outubro;
+    //   2. e o `select` deixaria de trazer o campo `status`, entao
+    //      `linhaDoPrevisto` leria `linha.status === undefined`, que nunca e
+    //      `"paid"` -- a mesma duplicacao, agora para TODA conta do grupo.
+    //
+    // `scripts/check-as-oito-leituras.mjs` confere esta leitura AO CONTRARIO:
+    // ela TEM de continuar trazendo `status` no `select` e NAO pode citar
+    // `my_status`.
     const { data: previstas, error: erroPrevistas } = await supabase
       .from("scheduled_transactions_effective")
       .select("id, description, amount, due_date, user_id, status, direction")

@@ -210,6 +210,35 @@ export async function GET(
     // ocorrencia e o da regra recorrente e da 027, e refazer esse COALESCE aqui e
     // o defeito que ela fechou. E a prevista com baixa sai em `linhaDoPrevisto`,
     // nao num `.neq()` -- senao a receita paga contaria duas vezes.
+    //
+    // `status`, E NAO `my_status` -- EXCECAO DECLARADA (HMO-416)
+    // ----------------------------------------------------------
+    // Esta e a mais dura das tres excecoes, porque aqui `my_status` nao seria
+    // so a coluna errada: seria uma CONSTANTE.
+    //
+    // A leitura e pelo `admin`, o cliente de service role montado logo acima, e
+    // a 055 define as duas colunas novas em cima de `auth.uid()`:
+    //
+    //     CASE WHEN s.user_id = auth.uid() THEN s.status::text
+    //          ELSE COALESCE(p.status, 'pending') END
+    //     ... LEFT JOIN group_bill_payments p ON ... AND p.user_id = auth.uid()
+    //
+    // Sem sessao, `auth.uid()` e NULL: o `WHEN` nunca e verdadeiro (NULL nao e
+    // TRUE) e o join nunca casa, entao `my_status` sai `'pending'` para TODA
+    // linha -- inclusive para a que ja recebeu baixa. `linhaDoPrevisto` deixaria
+    // de descartar qualquer uma, e cada receita ja paga seria contada duas
+    // vezes: uma em `financial_transactions` (a consulta logo acima) e outra
+    // como prevista. A divisao por renda sairia semeada com o dobro da renda de
+    // quem mais recebeu -- numero plausivel, sem erro nenhum na tela.
+    //
+    // E mesmo com sessao a troca seria errada pelo motivo das outras duas: o
+    // recorte e `.in("user_id", userIds)` -- vem a previsao de todos os membros
+    // --, e a pergunta e sobre a CONTA de cada um ("ja recebeu baixa?"), nao
+    // sobre a minha parte nela.
+    //
+    // `scripts/check-as-oito-leituras.mjs` confere esta leitura AO CONTRARIO:
+    // ela TEM de continuar trazendo `status` no `select` e NAO pode citar
+    // `my_status`.
     const { data: previstas, error: erroPrevistas } = await admin
       .from("scheduled_transactions_effective")
       .select("id, description, amount, due_date, user_id, status, direction")
