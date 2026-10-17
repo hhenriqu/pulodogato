@@ -57,6 +57,52 @@ export const FALTA_O_DONO_CONFIRMAR = "falta quem criou a conta confirmar";
 /** O rotulo do desfazer. */
 export const ROTULO_DESFAZER = "Desfazer";
 
+// ---------------------------------------------------------------------------
+// AS FRASES QUE A ROTA DO GESTO RESPONDE
+// ---------------------------------------------------------------------------
+// Elas moram AQUI, e nao em `app/api/scheduled-transactions/[id]/minha-baixa/
+// route.ts`, por uma razao do framework e nao de gosto: um `route.ts` do App
+// Router so pode exportar o que o Next conhece (os verbos, `dynamic`,
+// `revalidate`, ...), e `export const RECUSA_DA_CONTA_PROPRIA` reprova o
+// `next build` inteiro com
+//
+//     Type error: Route ".../minha-baixa/route.ts" does not match the required
+//     types of a Next.js Route. "RECUSA_DA_CONTA_PROPRIA" is not a valid Route
+//     export field.
+//
+// Isso NAO aparece no `tsc` da suite -- a suite compila o arquivo com um
+// tsconfig proprio, que nao conhece a regra do App Router, e passa verde com as
+// constantes la dentro. Quem reprova e so o `next build` (o mesmo ponto cego de
+// `typedroutes-so-aparece-no-next-build`). Entao a frase que a rota devolve nao
+// pode nascer no arquivo da rota, e este modulo -- que ja guarda os rotulos da
+// MESMA feature, lidos pela tela -- e o lugar onde ela cabe.
+//
+// A suite `test-minha-baixa.mjs` confere o corpo da resposta contra estas
+// constantes, e nao contra texto escrito a mao: literal repetido no teste
+// passaria verde com a rota devolvendo outra coisa.
+
+/**
+ * A frase de quem tentou avisar numa conta que e dele mesmo.
+ *
+ * Ela diz PARA ONDE ir: uma mensagem que nao diz deixa a pessoa no mesmo lugar
+ * em que o 404 da `../pay` a deixava.
+ */
+export const RECUSA_DA_CONTA_PROPRIA =
+  "Esta conta prevista é sua: use o botão de dar baixa, que registra o pagamento de verdade.";
+
+/** A frase de quem ja avisou. Nao e erro -- e estado. */
+export const JA_AVISADO = "Você já avisou que pagou a sua parte.";
+
+/** A frase de quem foi confirmado pelo dono e tentou mexer. */
+export const JA_CONFIRMADO =
+  "Quem criou a conta já confirmou a sua parte. Fale com essa pessoa para desfazer.";
+
+/** O que a rota responde quando o aviso entra agora. */
+export const AVISADO_AGORA = "Avisamos quem criou a conta.";
+
+/** O que a rota responde quando o aviso e desfeito. */
+export const AVISO_DESFEITO = "Desfeito: sua parte voltou para pendente.";
+
 /**
  * Esta linha da agenda e uma conta de GRUPO de que eu NAO sou o dono?
  *

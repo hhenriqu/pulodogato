@@ -61,6 +61,13 @@ const PREVISTAS_DO_GRUPO = await import(
   `${RAIZ}/app/api/expense-groups/[groupId]/scheduled/route.js`
 );
 
+// As frases vem do lib, e nao da rota: `route.ts` do App Router nao pode
+// exportar nada fora do que o Next conhece (o `next build` reprova com "«X» is
+// not a valid Route export field", e so ele reprova). Comparar o corpo da
+// resposta com estas constantes -- e nao com literal repetido aqui -- e o que
+// faz a suite reprovar quando a rota passa a devolver outra coisa.
+const FRASES = await import(`${RAIZ}/lib/conta-de-grupo-na-agenda.js`);
+
 const O_HELIO = "11111111-1111-1111-1111-111111111111";
 const A_LAIS = "22222222-2222-2222-2222-222222222222";
 const A_ANA = "33333333-3333-3333-3333-333333333333";
@@ -216,7 +223,7 @@ test("o segundo toque nao cria linha nova -- e responde 'voce ja avisou'", async
   const segundo = await chamar(MINHA_BAIXA.POST, d, { params: { id: O_ALUGUEL } });
 
   assert.equal(segundo.status, 200, "o duplo toque no celular nao e erro");
-  assert.equal(segundo.corpo.message, MINHA_BAIXA.JA_AVISADO);
+  assert.equal(segundo.corpo.message, FRASES.JA_AVISADO);
   // NENHUMA ESCRITA NOVA. O `USING` da policy de UPDATE da 055 exige `pending`
   // na linha ANTIGA, e num `INSERT ... ON CONFLICT DO UPDATE` o Postgres
   // aborta a instrucao inteira quando ele recusa: um upsert cego aqui seria um
@@ -276,7 +283,7 @@ test("o DONO da conta e mandado para o botao de dar baixa, e nada e gravado", as
   });
 
   assert.equal(status, 409);
-  assert.equal(corpo.error, MINHA_BAIXA.RECUSA_DA_CONTA_PROPRIA);
+  assert.equal(corpo.error, FRASES.RECUSA_DA_CONTA_PROPRIA);
   // A FRASE TEM DE DIZER PARA ONDE IR. Uma recusa que nao aponta o outro botao
   // deixa a pessoa onde o 404 da `../pay` ja a deixava.
   assert.match(corpo.error, /baixa/i);
@@ -335,7 +342,7 @@ test("depois de o dono confirmar, o membro nao desfaz nem reavisa", async () => 
     });
 
     assert.equal(status, 409, `${verbo} devia recusar depois do paid`);
-    assert.equal(corpo.error, MINHA_BAIXA.JA_CONFIRMADO);
+    assert.equal(corpo.error, FRASES.JA_CONFIRMADO);
     assert.equal(d.escritas.length, 0, `${verbo} escreveu depois do paid`);
   }
 });

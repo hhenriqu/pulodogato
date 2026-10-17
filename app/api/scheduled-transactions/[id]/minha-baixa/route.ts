@@ -73,31 +73,27 @@
 // `s.status::text` e ignora `group_bill_payments`. Seria um estado gravado sem
 // leitor, que nesta base e o mesmo que nao existir.
 
+// ---------------------------------------------------------------------------
+// AS FRASES VEM DE @/lib, E NAO DAQUI -- REGRA DO APP ROUTER
+// ---------------------------------------------------------------------------
+// Um `route.ts` do App Router so pode exportar o que o Next conhece. Qualquer
+// outro `export const` reprova o `next build` inteiro com "«X» is not a valid
+// Route export field" -- e o `tsc` da suite NAO ve isso, porque compila este
+// arquivo com um tsconfig que nao conhece a regra. Entao as frases moram em
+// lib/conta-de-grupo-na-agenda.ts, junto dos rotulos da mesma feature.
+
+import {
+  AVISADO_AGORA,
+  AVISO_DESFEITO,
+  JA_AVISADO,
+  JA_CONFIRMADO,
+  RECUSA_DA_CONTA_PROPRIA,
+} from "@/lib/conta-de-grupo-na-agenda";
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 
 /** O arbitro do `ON CONFLICT` -- a UNIQUE da secao 2 da migration 055. */
 const CONFLITO_DA_PARTE = "scheduled_transaction_id,user_id";
-
-/**
- * A frase de quem tentou avisar numa conta que e dele mesmo.
- *
- * Exportada porque a suite a confere: uma mensagem que nao diz PARA ONDE ir
- * deixa a pessoa no mesmo lugar em que o 404 da `../pay` a deixava.
- */
-export const RECUSA_DA_CONTA_PROPRIA =
-  "Esta conta prevista é sua: use o botão de dar baixa, que registra o pagamento de verdade.";
-
-/** A frase de quem ja avisou. Nao e erro -- e estado. */
-export const JA_AVISADO = "Você já avisou que pagou a sua parte.";
-
-/** A frase de quem foi confirmado pelo dono e tentou mexer. */
-export const JA_CONFIRMADO =
-  "Quem criou a conta já confirmou a sua parte. Fale com essa pessoa para desfazer.";
-
-export const AVISADO_AGORA = "Avisamos quem criou a conta.";
-
-export const AVISO_DESFEITO = "Desfeito: sua parte voltou para pendente.";
 
 /** O que o SELECT de contexto precisa saber da conta prevista. */
 type ContaDoGrupo = {
