@@ -46,6 +46,7 @@ import {
   X,
 } from "lucide-react";
 import type { FinancialAccount, TransactionCategory } from "@/types/financial";
+import { today } from "@/lib/recurrence";
 
 const TIPOS_DESCONTO = [
   { valor: "INSS", rotulo: "INSS" },
@@ -97,7 +98,12 @@ type Contracheque = {
   }>;
 };
 
-const mesAtual = () => new Date().toISOString().slice(0, 7);
+// `today()` e nao `toISOString()` (HMO-315). Esta funcao ja era chamada no
+// gesto -- o defeito dela era o FUSO: `toISOString()` e UTC, e das 21:00 as
+// 23:59 do ultimo dia do mes em Sao Paulo o UTC ja esta no mes SEGUINTE. A tela
+// de contracheques abria no mes que vem, vazia, nas tres horas do mes em que
+// mais gente confere a folha. `today()` pede `America/Sao_Paulo` explicito.
+const mesAtual = () => today().slice(0, 7);
 
 export default function PayrollPage() {
   const [contracheques, setContracheques] = useState<Contracheque[]>([]);

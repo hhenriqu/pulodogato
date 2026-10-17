@@ -199,9 +199,15 @@ const paraOCampo = (valor: number) => valor.toFixed(2).replace(".", ",");
 //   * uma segunda definicao de "hoje" divergiria da primeira, e `today()` e
 //     justamente quem decide os vencimentos com que esta lista e comparada.
 //
-// E ela e CHAMADA NO RENDER, nao congelada num `const` de modulo como o `HOJE`
-// de `app/.../bills/page.tsx`: este app e instalado (next-pwa) e fica semanas na
-// mesma aba. Congelado, depois da meia-noite ele mandaria a data de ontem.
+// E ela NAO E CONGELADA num `const` de modulo: este app e instalado (next-pwa)
+// e fica semanas na mesma aba. Congelada, depois da meia-noite ela mandaria a
+// data de ontem.
+//
+// Desde a HMO-315 a propria FUNCAO vai na prop (`hoje={today}`), e nao o
+// resultado dela: chamar no render ja era muito melhor que congelar no modulo,
+// mas ainda era um render -- e o `paid_date` que o dialogo grava e do clique em
+// Confirmar, que pode ser de outro dia. O tipo da prop (`() => string`) e o que
+// impede a volta das duas formas antigas.
 //
 // `lib/recurrence` NAO E PESO NOVO NO BUNDLE: `TelaDeMovimentacao.tsx` -- o
 // container desta lista, tambem `"use client"` -- ja o importa.
@@ -1075,8 +1081,9 @@ export function ListaDeMovimentacao({
             seria a SEGUNDA aritmetica da mesma regra -- o mesmo motivo de
             `aoConcluirElo`, logo acima.
 
-            O valor e o vencimento vao JA FORMATADOS, e `hoje` no fuso de Sao
-            Paulo: o componente nao tem relogio nem formatador proprio.
+            O valor e o vencimento vao JA FORMATADOS, e `hoje` vai como FUNCAO
+            no fuso de Sao Paulo: o componente nao tem relogio nem formatador
+            proprio, e a data e lida no clique de Confirmar (HMO-315).
           */}
           <DialogoDePagamentoDaFatura
             linha={
@@ -1088,7 +1095,7 @@ export function ListaDeMovimentacao({
             vencimentoFormatado={
               faturaParaPagar ? dataLonga(faturaParaPagar.data) : ""
             }
-            hoje={today()}
+            hoje={today}
             aoFechar={() => setFaturaParaPagar(null)}
             aoPagar={carregar}
           />

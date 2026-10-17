@@ -1,0 +1,46 @@
+{
+  "//": [
+    "Compila para a suite da HMO-315 (a data lida no clique, nao na montagem).",
+    "",
+    "Dois alvos de producao: `lib/recurrence.ts`, que e quem le o relogio, e",
+    "`lib/pagamento-da-fatura.ts`, que e quem monta o corpo com `paid_date` --",
+    "a data que a suite afirma sai do JSON.stringify de producao.",
+    "",
+    "O include lista o fechamento INTEIRO e nao so os dois arquivos:",
+    "`pagamento-da-fatura` importa `@/lib/agenda-do-cartao` (TIPO_CARTAO) e",
+    "`@/lib/card-invoice` (faturaDaChave, mensagemContaPagadora), e aquele",
+    "arrasta `transferencia` -> `lancamento`. O tsc seguiria os imports sozinho,",
+    "mas um mutador copia para a arvore temporaria SO o que esta listado -- e um",
+    "mutante que nao compila 'morre' por motivo errado, com o placar mentindo a",
+    "favor.",
+    "",
+    "`rootDir` e `../lib` e o npm script roda o resolve-aliases.mjs depois: o tsc",
+    "resolve `@/lib/...` por `paths` mas NAO reescreve o alias no JS emitido, e",
+    "`node --test` nao sabe o que e `@/`.",
+    "",
+    "Comentario SO nesta chave, nunca com // no meio do objeto: o tsc aceita",
+    "JSONC, mas o check-tests-in-ci.mjs le este arquivo com JSON.parse e estoura",
+    "com 'Expected double-quoted property name'."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-data-no-clique",
+    "rootDir": "../lib",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../lib/recurrence.ts",
+    "../lib/pagamento-da-fatura.ts",
+    "../lib/agenda-do-cartao.ts",
+    "../lib/card-invoice.ts",
+    "../lib/chave-da-fatura.ts",
+    "../lib/transferencia.ts",
+    "../lib/lancamento.ts"
+  ]
+}
