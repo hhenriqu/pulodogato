@@ -35,7 +35,13 @@ import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, utimesSync 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { compilarComSobrescritas } from "./compila.mjs";
+import ts from "typescript";
+import {
+  compilarComSobrescritas,
+  baldeDasOpcoes,
+  lerFonteCompartilhada,
+  resolverInvocacao,
+} from "./compila.mjs";
 
 const RAIZ = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const FIXTURE = path.join(RAIZ, process.env.FIXTURE ?? ".tmp-compila-fixture");
@@ -368,5 +374,179 @@ test("sobrescritas: a volta do mutante nao deixa manifesto aproveitavel", () => 
     existsSync(path.join(fora, ".compilado.json")),
     false,
     "o outDir de um mutante nao pode ter manifesto",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// O BALDE do cache de fontes: alvos de `jsx` diferente nao dividem AST (HMO-419)
+// ---------------------------------------------------------------------------
+// Os casos acima protegem o reaproveitamento de SAIDA (o manifesto) e o cache
+// entre voltas de mutante. Este bloco protege uma terceira coisa, que nao tinha
+// caso nenhum e por isso quebrou: o cache de AST compartilhado entre os 127
+// alvos do lote.
+//
+// O `ts.createProgram` nao le o SourceFile -- ele ESCREVE DE VOLTA nele. Em
+// `collectExternalModuleReferences` a primeira linha e `if (file.imports) return;`,
+// e o `file.imports` que ele calcula leva imports SINTETIZADOS a partir de
+// `jsx`, `jsxImportSource` e `importHelpers`. Com o objeto compartilhado entre
+// programas de opcoes diferentes, o segundo programa herda o campo do primeiro.
+//
+// Na pratica: um alvo `jsx: "react"` compila um .tsx e o campo nasce sem o
+// import sintetico; um alvo `jsx: "react-jsx"` que depois reaproveite o mesmo
+// objeto estoura no `Debug.assert` do `getJSXRuntimeImportSpecifier`. Era isto
+// que derrubava 5 alvos de tela e, com eles, o 5o step do `verificacao` e do
+// `db-verify` -- os ~560 steps seguintes dos dois jobs nunca rodavam.
+//
+// O caso 2 e a regressao; o caso 3 e o controle negativo que prova que o caso 2
+// mede o mecanismo e nao o acaso -- com o balde constante (o desenho de antes),
+// a MESMA sequencia tem que estourar. Sem ele, o caso 2 passaria verde tambem
+// num mundo onde o balde nao fizesse nada.
+
+const FONTES_JSX = path.join(FIXTURE, "src-jsx");
+const TSCONFIG_JSX = (sabor) => path.join(FIXTURE, `tsconfig.jsx-${sabor}.json`);
+
+/**
+ * Fixture de JSX: um .tsx com um import de topo DE VERDADE, e dois tsconfigs
+ * que diferem so no `jsx`.
+ *
+ * O import de topo nao e enfeite -- e a condicao do estouro. Sem nenhum import,
+ * `file.imports` fica vazio, `imports[0]` e `undefined`, o `if (specifier)` do
+ * tsc protege o assert e a emissao sai identica. Verificado: um .tsx sem import
+ * nao reproduz o defeito, e uma fixture assim daria um caso verde vazio.
+ */
+function montarFixtureJsx() {
+  rmSync(FIXTURE, { recursive: true, force: true });
+  mkdirSync(FONTES_JSX, { recursive: true });
+
+  writeFileSync(path.join(FONTES_JSX, "dep.ts"), `export const dep = 1;\n`);
+  writeFileSync(
+    path.join(FONTES_JSX, "Comp.tsx"),
+    `import { dep } from "./dep";\nexport const C = () => <div>{dep}</div>;\n`,
+  );
+
+  for (const [sabor, jsx] of [["react", "react"], ["react-jsx", "react-jsx"]]) {
+    writeFileSync(
+      TSCONFIG_JSX(sabor),
+      JSON.stringify(
+        {
+          compilerOptions: {
+            outDir: `./out-jsx-${sabor}`,
+            module: "es2020",
+            target: "es2020",
+            moduleResolution: "node",
+            skipLibCheck: true,
+            jsx,
+            // Com `jsx: "react"` o .tsx referencia o React como global UMD, e
+            // um arquivo que e modulo levaria TS2686. Importar o React aqui
+            // resolveria o erro mas poria "react" em `imports[0]`; deste jeito
+            // quem fica em `imports[0]` e o `./dep`, que e a condicao do
+            // estouro que estes casos medem.
+            allowUmdGlobalAccess: true,
+          },
+          include: ["./src-jsx/**/*.ts", "./src-jsx/**/*.tsx"],
+        },
+        null,
+        2,
+      ),
+    );
+  }
+}
+
+const ARGS_JSX = (sabor) => ["-p", path.relative(RAIZ, TSCONFIG_JSX(sabor))];
+
+test("balde: jsx, jsxImportSource e importHelpers separam o cache de fontes", () => {
+  // Os tres campos que alimentam os imports sintetizados de
+  // `collectExternalModuleReferences`. Se um deles deixar de separar balde --
+  // porque uma versao nova de tsc mudou o `getKeyForCompilationSettings`, de
+  // onde a chave sai -- o defeito volta, e volta como `Debug Failure` num alvo
+  // que nao mudou. Esta assercao e o que faz esse dia reprovar aqui primeiro.
+  const base = { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.ES2020 };
+  const balde = (extra) => baldeDasOpcoes({ ...base, ...extra });
+
+  assert.notEqual(
+    balde({ jsx: ts.JsxEmit.React }),
+    balde({ jsx: ts.JsxEmit.ReactJSX }),
+    "`jsx: react` e `jsx: react-jsx` NAO podem dividir AST -- e o defeito da HMO-419",
+  );
+  assert.notEqual(
+    balde({ jsx: ts.JsxEmit.ReactJSX }),
+    balde({ jsx: ts.JsxEmit.ReactJSX, jsxImportSource: "preact" }),
+    "`jsxImportSource` muda o import sintetizado, entao tem que mudar o balde",
+  );
+  assert.notEqual(
+    balde({ importHelpers: true }),
+    balde({ importHelpers: false }),
+    "`importHelpers` poe o tslib em imports[0] e desloca o indice do jsx",
+  );
+
+  // E o contrario: o que NAO muda os imports sintetizados nao pode dividir
+  // balde, senao os 127 alvos viram 127 baldes e o lote perde a razao de ser --
+  // cada alvo tem o seu proprio outDir, e sao eles que precisam compartilhar.
+  assert.equal(
+    balde({ jsx: ts.JsxEmit.ReactJSX, outDir: "/a" }),
+    balde({ jsx: ts.JsxEmit.ReactJSX, outDir: "/b" }),
+    "`outDir` nao pode separar balde -- se separasse, nao haveria compartilhamento nenhum",
+  );
+});
+
+test("balde: react e depois react-jsx no mesmo processo compilam os dois", () => {
+  montarFixtureJsx();
+
+  const comReact = compilarComSobrescritas({
+    argumentos: ARGS_JSX("react"),
+    outDir: path.join(FIXTURE, "fora-react"),
+  });
+  assert.equal(comReact.erros, 0, `o alvo react devia compilar:\n${comReact.mensagens.join("\n")}`);
+
+  // A ordem importa: so o `react-jsx` consulta `imports[0]`, entao e o SEGUNDO
+  // que estoura. Invertida, a sequencia passa mesmo com o defeito presente.
+  const comReactJsx = compilarComSobrescritas({
+    argumentos: ARGS_JSX("react-jsx"),
+    outDir: path.join(FIXTURE, "fora-react-jsx"),
+  });
+  assert.equal(
+    comReactJsx.erros,
+    0,
+    `o alvo react-jsx devia compilar depois do react:\n${comReactJsx.mensagens.join("\n")}`,
+  );
+
+  // E nao basta "nao estourou": a saida tem que ser a do react-jsx de verdade.
+  // Um conserto que silenciasse o assert deixaria o `_jsx` sem de onde vir.
+  const emitido = readFileSync(path.join(FIXTURE, "fora-react-jsx", "Comp.js"), "utf8");
+  assert.match(
+    emitido,
+    /from "react\/jsx-runtime"/,
+    `o react-jsx tem que emitir o import do jsx-runtime, e emitiu:\n${emitido}`,
+  );
+  const doReact = readFileSync(path.join(FIXTURE, "fora-react", "Comp.js"), "utf8");
+  assert.match(doReact, /React\.createElement/, `o react classico tem que emitir createElement:\n${doReact}`);
+});
+
+test("controle negativo: com balde CONSTANTE, a mesma sequencia estoura", () => {
+  // O desenho de antes da HMO-419: chave de cache sem as opcoes, ou seja um
+  // balde so para todo mundo. `lerFonteCompartilhada` com o 4o argumento no
+  // default ("") e exatamente isso.
+  //
+  // Se este caso parar de estourar, o caso de cima deixou de medir o mecanismo
+  // -- ou porque o tsc consertou a invariante upstream (e ai o balde e so
+  // zelo), ou porque a fixture parou de reproduzir. Nos dois casos quem le esta
+  // suite precisa saber, e nao descobrir num job vermelho.
+  montarFixtureJsx();
+
+  const compilarComBaldeUnico = (sabor, fora) => {
+    const { opcoes: doAlvo, raizes } = resolverInvocacao(ARGS_JSX(sabor));
+    const opcoes = { ...doAlvo, outDir: path.resolve(fora) };
+    const host = ts.createCompilerHost(opcoes);
+    host.getSourceFile = (nome, versao, aoErrar) => lerFonteCompartilhada(nome, versao, aoErrar);
+    host.writeFile = () => {};
+    ts.createProgram(raizes, opcoes, host).emit();
+  };
+
+  compilarComBaldeUnico("react", path.join(FIXTURE, "unico-react"));
+  assert.throws(
+    () => compilarComBaldeUnico("react-jsx", path.join(FIXTURE, "unico-react-jsx")),
+    /synthesized JSX runtime import/,
+    "sem o balde, o react-jsx TEM que estourar depois do react -- se nao estoura, " +
+      "o caso de cima nao esta provando nada",
   );
 });

@@ -79,10 +79,27 @@ const CONTRATO = "npm run test:contrato-das-telas-de-movimentacao";
 /** A suite que renderiza os cartoes. */
 const MARCACAO = "test:cartoes-da-tela";
 
+/**
+ * A suite que CHAMA OS DOIS HANDLERS do par do realizado (HMO-413, secao 8).
+ *
+ * Declarada como SUITE e nao como oraculo porque ela COMPILA (`compila.mjs` ->
+ * `.tmp-criterio-do-painel`): o bloco redireciona a etapa de compilacao para a
+ * sombra, e sem isso o `node --test` leria o artefato de outra volta.
+ *
+ * Ela entra aqui por uma razao que as outras duas nao cobrem: as duas legendas
+ * da HMO-413 afirmam uma SUBTRACAO entre duas rotas ("a aba Despesas mostra
+ * menos"). `CONTRATO` ve que a frase esta escrita, `MARCACAO` ve que ela
+ * aparece -- nenhuma das duas ve se ela e VERDADE. E o lado da aba Despesas e
+ * justamente o que nada no repo media antes desta issue.
+ */
+const CRITERIO = "test:criterio-do-painel";
+
 const ROTA = "app/api/movimentacoes/resumo/route.ts";
 const CARTOES = "components/movimentacoes/CartoesDaTela.tsx";
 const SAFE = "app/api/safe-to-spend/route.ts";
 const PAINEL = "app/(dashboard)/dashboard/page.tsx";
+const TELA = "components/movimentacoes/TelaDeMovimentacao.tsx";
+const LEGENDAS = "lib/legenda-do-bruto-e-do-liquido.ts";
 
 const MUTANTES = [
   // --- F1b: a regra do pagador ligada SO nesta leitura ---------------------
@@ -288,6 +305,111 @@ const MUTANTES = [
     para: '            {""}{" "}',
     caso: "os DOIS numeros que vao discordar levam a legenda de cada um",
   },
+
+  // --- F8: o par do REALIZADO, e a direcao INVERTIDA (HMO-413) -------------
+  //
+  // O eixo que a F5 nao cobre. A F5 e o PREVISTO (aba 1.000 vs painel 700); esta
+  // e o REALIZADO (painel 1.010 vs aba 990), e os papeis se trocam: aqui o
+  // painel mostra MAIS. As duas vivem na MESMA tela, e e dai que vem o
+  // `f8_direcao_trocada` logo abaixo.
+  //
+  // POR QUE ELES EXISTEM DEPOIS DA HMO-418 ter posto o numero certo: a HMO-418
+  // consertou a ponta de cima e o comentario do painel passou a afirmar que as
+  // duas pontas tinham rotulo. Uma delas nao tinha -- e o tile e um LINK para a
+  // outra desde a HMO-408. Nada no repo media essa afirmacao.
+  {
+    nome: "f8_painel_realizado_sem_a_pergunta",
+    alvo: PAINEL,
+    porque:
+      "o estado que a HMO-413 conserta: o tile mostra 1.010,00, leva num " +
+      "clique para 990,00 e nada diz que os 20,00 de diferenca sao a parte " +
+      "que eu devo. E o numero MAIOR levando ao menor -- a direcao em que se " +
+      "le 'o app perdeu uma despesa no caminho'",
+    de: '          {LEGENDA_DO_CUSTO_REALIZADO}{" "}',
+    para: '          {""}{" "}',
+    caso: "o par do REALIZADO tambem leva legenda dos dois lados",
+  },
+  {
+    nome: "f8_aba_sem_a_volta",
+    alvo: TELA,
+    porque:
+      "a metade de LA. A aba Despesas volta a explicar o proprio numero " +
+      "apontando para Financas Pessoais, e quem chegou clicando no tile do " +
+      "painel continua sem ligar um numero ao outro -- era o estado de antes " +
+      "da HMO-413, e ele parece completo porque a frase existe",
+    de: '                  {LEGENDA_DO_CAIXA_REALIZADO}{" "}',
+    para: '                  {""}{" "}',
+    caso: "o par do REALIZADO tambem leva legenda dos dois lados",
+  },
+  {
+    nome: "f8_direcao_trocada",
+    alvo: LEGENDAS,
+    porque:
+      "O MUTANTE QUE NENHUMA ASSERCAO DE FIACAO PEGA. A frase continua " +
+      "escrita, continua aparecendo na tela, continua citando as duas " +
+      "perguntas -- e manda a pessoa procurar os 20,00 no lado errado. No " +
+      "eixo do previsto 'a aba Despesas mostra mais' e VERDADE, e as duas " +
+      "frases vivem na mesma tela: e uma troca que se le como copia-e-cola " +
+      "correto",
+    // A ANCORA NAO LEVA A CRASE DE ABERTURA: a oracao comeca no MEIO de um
+    // pedaco do template (`junto. A aba Despesas mostra menos...`), e um
+    // backtick colado na frente a deixa com 0 ocorrencia -- medido ao escrever
+    // isto, e o runner acusou ANCORA MORTA antes de contar o mutante.
+    de: "A aba Despesas mostra menos, e está certa",
+    para: "A aba Despesas mostra mais, e está certa",
+    caso: "o par do REALIZADO tambem leva legenda dos dois lados",
+  },
+  {
+    nome: "f8_link_nu_no_painel",
+    alvo: PAINEL,
+    porque:
+      "a legenda fala do periodo que esta na tela e o link abre o mes " +
+      "corrente (`lerPeriodo` cai nele sem `?de=&ate=`). A frase apresenta " +
+      "como par dois numeros de MESES DIFERENTES, que de fato nao se comparam " +
+      "-- uma legenda que monta uma comparacao falsa e pior que legenda " +
+      "nenhuma. E o defeito que a HMO-415 consertou no tile ao lado",
+    // A ANCORA LEVA A LINHA DA LEGENDA porque `rotaDaTelaDoLado(\"despesa\",
+    // periodo)` casa TRES vezes neste arquivo (o tile, esta legenda e o cartao
+    // «posso gastar»), e o runner exige 1x -- ancora ambigua muta o lugar
+    // errado e o rotulo mente sobre o que foi medido.
+    de:
+      '          {LEGENDA_DO_CUSTO_REALIZADO}{" "}\n          <Link\n' +
+      "            href={rotaDaTelaDoLado(\"despesa\", periodo) as Route}",
+    para:
+      '          {LEGENDA_DO_CUSTO_REALIZADO}{" "}\n          <Link\n' +
+      '            href={"/dashboard/despesas" as Route}',
+    caso: "o par do REALIZADO tambem leva legenda dos dois lados",
+  },
+  {
+    nome: "f8_link_nu_na_volta",
+    alvo: TELA,
+    porque:
+      "o mesmo defeito na volta, e ele e mais facil de escrever: `/dashboard` " +
+      "e uma rota estatica, o `typedRoutes` aceita o literal sem reclamar e o " +
+      "tsc fica verde. Quem olha maio na aba Despesas vai para o painel de " +
+      "outubro",
+    de: "href={rotaDoPainel(periodo) as Route}",
+    para: 'href={"/dashboard" as Route}',
+    caso: "o par do REALIZADO tambem leva legenda dos dois lados",
+  },
+  {
+    nome: "f8_a_aba_passa_a_somar_o_grupo_dos_outros",
+    alvo: ROTA,
+    porque:
+      "O CONTROLE DO LADO QUE NINGUEM MEDIA. Sem o `eq(\"user_id\")` o " +
+      "realizado da aba passa a somar a despesa de grupo que OUTRO membro " +
+      "lancou (a policy do 002 a torna visivel), e o numero do destino sai " +
+      "1.050,00 em vez de 990,00. As duas legendas continuam escritas, " +
+      "aparecendo e bem redigidas -- e a subtracao que elas afirmam deixa de " +
+      "ser a minha parte do que outro pagou",
+    // A ANCORA LEVA A LINHA DE BAIXO: `eq(\"user_id\", user.id)` casa QUATRO
+    // vezes nesta rota, e so esta e a consulta do realizado.
+    de:
+      '      .eq("user_id", user.id)\n      .eq("service_id", servico.id)',
+    para: '      .eq("service_id", servico.id)',
+    medida: CRITERIO,
+    caso: "secao 8: a diferenca entre o painel e a aba Despesas e UMA perna",
+  },
 ];
 
 /** O fonte de cada alvo, lido UMA vez -- a arvore nunca e escrita. */
@@ -300,7 +422,7 @@ const ORIGINAIS = new Map(
 
 const bloco = criarBlocoDeMutantes({
   rotulo: "fiacao-do-bruto",
-  suites: [MARCACAO],
+  suites: [MARCACAO, CRITERIO],
   oraculos: { [CONTRATO]: CONTRATO },
 });
 
@@ -317,7 +439,7 @@ for (const sinal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
 // placar sai perfeito sobre zero assercoes
 // (`suite-vermelha-faz-todo-controle-negativo-passar-vacuo`).
 console.log("CONTROLE POSITIVO (arvore intacta)");
-for (const medida of [CONTRATO, MARCACAO]) {
+for (const medida of [CONTRATO, MARCACAO, CRITERIO]) {
   const controle = bloco.rodar("controle", {}, medida);
   if (!controle.verde) {
     console.log(`RUIM  a arvore INTACTA ja esta vermelha em ${medida}`);

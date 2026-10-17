@@ -117,7 +117,10 @@ import {
   TileRealizadoEPrevisao,
 } from "@/components/dashboard/RealizadoEPrevisao";
 import { LEGENDA_DO_CARTAO } from "@/lib/criterio-do-cartao";
-import { LEGENDA_DO_LIQUIDO } from "@/lib/legenda-do-bruto-e-do-liquido";
+import {
+  LEGENDA_DO_CUSTO_REALIZADO,
+  LEGENDA_DO_LIQUIDO,
+} from "@/lib/legenda-do-bruto-e-do-liquido";
 // Os dois lados do portao do modo papel de pao (HMO-286). O `useModoPapel` ja
 // esta montado em `app/layout.tsx` pelo `ModoPapelProvider` da HMO-283.
 import { useModoPapel } from "@/components/ModoPapelProvider";
@@ -711,14 +714,28 @@ function PainelCompleto() {
             template literal aqui, porque um `ate` esquecido no JSX nao quebra
             build, nao quebra tipo e nao deixa a tela vazia.
 
-            OS DOIS LADOS MOSTRAM NUMEROS DIFERENTES QUANDO HA DESPESA DE GRUPO,
-            e isso foi decidido (decisao D3 da HMO-407), nao esquecido: o
-            «Realizado» daqui vem de /api/reports/cash-flow, que conta a conta de
-            grupo pela MINHA PARTE (HMO-306/308), e a tela de destino vem de
-            /api/movimentacoes/resumo, que conta o grupo integral. A divergencia
-            ja existia hoje e era invisivel; o clique a poe a um passo de
-            distancia. Igualar mexe em `monthly_cash_flow` e tem follow-up
-            proprio nas filhas da HMO-407 -- nao se conserta por aqui.
+            OS DOIS LADOS AINDA PODEM MOSTRAR NUMEROS DIFERENTES QUANDO HA
+            DESPESA DE GRUPO, e isso foi decidido (decisao D3 da HMO-407), nao
+            esquecido -- mas o MOTIVO mudou na HMO-418. O «Realizado» daqui vem
+            de /api/reports/cash-flow, que passou a contar a despesa de grupo
+            pelo criterio aprovado na HMO-258: INTEIRA quando eu paguei, pela
+            MINHA PARTE quando outro pagou. A tela de destino vem de
+            /api/movimentacoes/resumo, que conta integral o que eu paguei e
+            IGNORA o que outro pagou. Ou seja: os dois lados agora concordam
+            sobre a despesa que EU paguei, e divergem no reembolso que eu devo --
+            a diferenca entre «o que me custou» e «o que saiu da minha conta»,
+            que sao as duas pontas decididas. Nao se iguala por aqui, e nao e
+            mais `monthly_cash_flow` que responde: o cabecalho de
+            app/api/movimentacoes/resumo/route.ts diz por que aquela ponta e a
+            que e.
+
+            E O ROTULO DESSA DIFERENCA E DA HMO-413, nao da HMO-418. Ate ela
+            esta nota dizia "cada uma com rotulo na tela do lado dela", e isso
+            era meia verdade: a aba Despesas tinha a frase dela, e o rotulo
+            DESTE lado nao existia -- o tile mostrava o numero MAIOR, levava
+            para o menor num clique e nao dizia nada. A frase agora esta logo
+            abaixo do bloco dos tiles (`LEGENDA_DO_CUSTO_REALIZADO`), junto da
+            legenda do criterio do cartao, porque ela explica o MESMO numero.
 
             O `as Route` e o do `irPara` da tela de movimentacao, pela mesma
             razao: `experimental.typedRoutes` tipa o destino como uniao literal
@@ -808,6 +825,58 @@ function PainelCompleto() {
             si mora em lib/criterio-do-cartao.ts, junto do par dele. */}
         <p className="text-xs text-muted-foreground max-w-prose">
           {LEGENDA_DO_CARTAO.fatura}
+        </p>
+
+        {/* ----------------------------------------------------------------
+            A LEGENDA DO CRITERIO DE GRUPO DO «REALIZADO» (HMO-413)
+            ----------------------------------------------------------------
+            A terceira legenda deste bloco, e as tres falam de UM numero so: o
+            «Realizado» dos dois tiles. A de cima diz quando o CARTAO conta
+            (fatura paga, nao compra); esta diz quanto da DESPESA DE GRUPO
+            conta.
+
+            POR QUE ELA NASCEU DEPOIS DO NUMERO FICAR CERTO. A HMO-418 pos o
+            criterio aprovado em 08/10/2026 aqui -- 1.010,00, bruto + reembolso
+            -- e com isso trocou a divergencia de lugar em vez de encerra-la: o
+            tile acima e um LINK para a aba Despesas desde a HMO-408, a aba
+            responde "quanto SAI da minha conta" (990,00 na fixture de maio) e
+            os dois passaram a discordar em UMA perna, a um clique, sem nada
+            ligando um numero ao outro. A perna e a minha parte do que OUTRO
+            pagou: ela me CUSTOU e nao SAIU da minha conta.
+
+            O LINK NAO E ENFEITE E O ENDERECO NAO E LITERAL, pela razao do
+            cartao de baixo: `lerPeriodo`, do outro lado, cai no mes corrente
+            quando nao acha `?de=&ate=`. Uma legenda que fala do numero de
+            agosto abrindo outubro e pior que legenda nenhuma -- ela
+            apresentaria dois numeros que de fato nao se comparam como se
+            fossem o par explicado aqui. Por isso `rotaDaTelaDoLado`, a mesma
+            dos tiles e do cartao de baixo.
+
+            O par da frase mora em lib/legenda-do-bruto-e-do-liquido.ts: a
+            metade de LA (`LEGENDA_DO_CAIXA_REALIZADO`, na aba Despesas) aponta
+            de volta para este numero. As duas sao uma explicacao dita de dois
+            lados, e e por isso que elas estao no mesmo arquivo -- editar uma e
+            esquecer a outra produz duas legendas que se contradizem.
+
+            O ROTULO NAO E "Abrir Despesas", E ISSO E DELIBERADO. O cartao de
+            baixo ja tem um link com esse texto e para o MESMO endereco. Dois
+            anchors de texto identico na mesma tela sao ruins de duas maneiras
+            de uma vez: quem navega por lista de links le a mesma frase duas
+            vezes sem saber que uma fala do previsto e a outra do realizado, e
+            `scripts/test-painel-clicavel.mjs` acha o link do cartao por TEXTO
+            EXATO (`linkPorTexto`) -- com dois iguais ela devolve
+            `quantos: 2, href: null` e o caso da HMO-415 reprova. Medido: foi
+            exatamente o que aconteceu na primeira volta desta mudanca. O verbo
+            tambem diz melhor o que o clique faz: daqui se vai COMPARAR o
+            1.010,00 com o 990,00. */}
+        <p className="text-xs text-muted-foreground max-w-prose">
+          {LEGENDA_DO_CUSTO_REALIZADO}{" "}
+          <Link
+            href={rotaDaTelaDoLado("despesa", periodo) as Route}
+            className="underline hover:text-foreground"
+          >
+            Comparar em Despesas
+          </Link>
         </p>
 
         {/* ----------------------------------------------------------------
@@ -966,11 +1035,24 @@ function PainelCompleto() {
             rotulo. O texto mora em lib/legenda-do-bruto-e-do-liquido.ts junto
             com o da outra tela, porque as duas frases sao uma explicacao so
             dita de dois lados.
+
+            E O LINK LEVA A JANELA DA TELA (HMO-415), pela mesma razao dos dois
+            tiles la em cima: `lerPeriodo`, do outro lado, cai no MES CORRENTE
+            quando nao acha `?de=&ate=`, e um link nu aqui mandaria quem clicou
+            para outro periodo sem erro, sem tela vazia e sem nada dizendo que o
+            periodo mudou no caminho.
+
+            Este cartao erra MENOS que os tiles, e nao por acerto: ele so
+            aparece quando o periodo contem hoje (`temHoje`, logo acima). Mas
+            conter hoje nao e ser o mes corrente -- num periodo de 15/09 a 20/10
+            o link nu abria outubro inteiro a partir de uma legenda que fala do
+            intervalo. Por isso o endereco sai de `rotaDaTelaDoLado`, e nao de
+            um literal: e a mesma `periodoParaQuery` do seletor de periodo.
           */}
           <p className="text-xs text-muted-foreground">
             {LEGENDA_DO_LIQUIDO}{" "}
             <Link
-              href="/dashboard/despesas"
+              href={rotaDaTelaDoLado("despesa", periodo) as Route}
               className="underline hover:text-foreground"
             >
               Abrir Despesas

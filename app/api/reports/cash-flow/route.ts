@@ -8,27 +8,52 @@
 // categorias.
 //
 // Sem `groupId` o relatorio e PESSOAL: o que e so do usuario MAIS a parte dele
-// das despesas de grupo.
+// das despesas que OUTRO pagou.
 //
-// A PARTE DE GRUPO ENTRA AQUI, E NAO PELA REMOCAO DO FILTRO (HMO-202)
-// -------------------------------------------------------------------
+// O CRITERIO DO CUSTO PESSOAL: BRUTO + REEMBOLSO (HMO-258, HMO-418)
+// -----------------------------------------------------------------
 // Ate a 033 este caminho filtrava `group_id IS NULL`, e o efeito era que a
 // despesa de grupo nao aparecia no painel pessoal de NINGUEM -- nem de quem
 // pagou (0,00 medido), nem de quem devia a parte (0,00 medido).
 //
-// Remover o filtro teria sido pior do que o buraco: a despesa da viagem que o
-// usuario pagou entraria no fluxo de caixa dele com o valor CHEIO do hotel, e o
-// mes pessoal fecharia no vermelho por causa de dinheiro que os outros membros
-// ja devolveram -- enquanto quem NAO pagou continuaria sem ver nada.
+// A 033 trouxe A PARTE DE CADA UM, lida de `group_expense_splits` (nunca
+// recalculada) via `group_share_entries`. Mas ela a trouxe para OS DOIS LADOS:
+// quem pagou o jantar de 90 via a parte dele (30) em vez do valor cheio. Isso
+// era uma TERCEIRA convencao de custo pessoal, sem rotulo em tela nenhuma, e a
+// pergunta de produto atras dela foi respondida em 08/10/2026 -- interaction
+// `hmo258:criterio-do-relatorio:v1`, por uma PESSOA:
 //
-// O que entra e A PARTE DE CADA UM, lida de `group_expense_splits` (nunca
-// recalculada), que e o mesmo criterio que o previsto usa desde a HMO-177. Para
-// quem pagou isso substitui o valor cheio pela parte dele; para os outros
-// acrescenta a parte deles; e a soma entre os membros continua sendo a despesa
-// inteira. Quem faz essa conta e a migration 033:
+//   INTEIRO quando EU paguei          (o jantar de 90 conta 90)
+//   MINHA PARTE quando OUTRO pagou    (o mercado de 60 da B conta 20)
 //
-//   modo mes       -> `personal_monthly_cash_flow` (rollup, sai do banco)
-//   modo intervalo -> `group_share_entries` somada junto com as transacoes
+// E o mesmo criterio que `resumoComPartesDeGrupo` (lib/parte-de-grupo-na-lista.ts,
+// HMO-275) usa em Financas Pessoais, e o que a migration 046 colocou nas views
+// do modo mes. Quem o aplica depende do ramo:
+//
+//   modo mes       -> `personal_monthly_cash_flow` (rollup, sai do banco: 033+046)
+//   modo intervalo -> AQUI, nos dois filtros da secao abaixo
+//
+// OS DOIS FILTROS DO MODO INTERVALO SO FUNCIONAM JUNTOS
+// ----------------------------------------------------
+// E o espelho exato das duas pernas da 046, e cada um sem o outro erra dinheiro
+// num sentido diferente -- medido na fixture de maio da HMO-255, onde o numero
+// aprovado e 1.010,00:
+//
+//   `financial_transactions` sem `group_id IS NULL`   -> a despesa que EU paguei
+//                                                       entra INTEIRA;
+//   `group_share_entries` com `NOT paguei_eu`         -> so a parte do que OUTRO
+//                                                       pagou.
+//
+//   os dois filtros antigos ...... 950,00  (minha parte dos dois lados)
+//   so o primeiro trocado ........ 1.040,00 (valor cheio + a minha parte dele)
+//   so o segundo trocado ......... 920,00  (a despesa que eu paguei desaparece)
+//   os dois trocados ............. 1.010,00 <- o criterio aprovado
+//
+// O `.eq("user_id")` passa a ser a UNICA coisa que separa a minha despesa de
+// grupo da dos outros membros, e por isso ele ficou mais load-bearing do que
+// era: a linha de uma despesa de grupo tem `user_id` = quem PAGOU, e a policy do
+// 002 (`user_id = auth.uid() OR is_group_member(group_id)`) deixa eu ler a dos
+// meus colegas. Mesma propriedade que a 046 escreveu para quem le as views.
 //
 // Com `groupId` nada disso se aplica: o painel DO GRUPO mostra o valor CHEIO da
 // viagem, de todos os membros, e continua lendo `monthly_cash_flow`.
@@ -215,9 +240,22 @@ export async function GET(request: NextRequest) {
           .order("id", { ascending: true })
           .range(inicio, inicio + TAMANHO_DA_PAGINA - 1);
 
+        // SEM `is("group_id", null)` NO CAMINHO PESSOAL (HMO-418).
+        //
+        // A despesa de grupo que EU paguei entra INTEIRA -- e a metade 1 do
+        // criterio aprovado, descrita no cabecalho deste arquivo. Ela so esta
+        // correta porque a consulta de `group_share_entries` logo abaixo
+        // descarta `paguei_eu`; sem isso o valor cheio e a minha parte dele
+        // somariam a mesma despesa duas vezes (1.040,00 na fixture de maio).
+        //
+        // O `eq("user_id")` e o que impede a despesa de grupo dos OUTROS
+        // membros de entrar: a linha dela tem `user_id` = quem pagou, e a
+        // policy do 002 me deixa LER a linha de quem divide grupo comigo. Era
+        // o `group_id IS NULL` que descartava essas linhas de graca; agora o
+        // filtro de usuario e sozinho.
         return groupId
           ? base.eq("group_id", groupId)
-          : base.eq("user_id", user.id).is("group_id", null);
+          : base.eq("user_id", user.id);
       };
 
       // ------------------------------------------------------------------
@@ -276,7 +314,8 @@ export async function GET(request: NextRequest) {
         if (lote.length < TAMANHO_DA_PAGINA) break;
       }
 
-      // A MINHA PARTE DAS DESPESAS DE GRUPO, no mesmo intervalo (HMO-202).
+      // A MINHA PARTE DAS DESPESAS QUE OUTRO PAGOU, no mesmo intervalo
+      // (HMO-202, recortada pela HMO-418).
       //
       // So no relatorio PESSOAL: com `groupId` a tela quer o valor cheio da
       // viagem, que as linhas de `financial_transactions` acima ja trazem.
@@ -292,6 +331,20 @@ export async function GET(request: NextRequest) {
             .from("group_share_entries")
             .select(COLUNAS_DA_PARTE_DE_GRUPO)
             .eq("user_id", user.id)
+            // `paguei_eu = false` E A METADE 2 DO CRITERIO (HMO-418).
+            //
+            // O espelho do `WHERE NOT g.paguei_eu` da perna 2 da migration 046.
+            // O que EU paguei ja veio INTEIRO na consulta de cima; somar a minha
+            // parte dele aqui contaria a mesma despesa duas vezes -- 120 de um
+            // jantar de 90.
+            //
+            // `eq(..., false)` e nao `not(..., "is", true)`: `paguei_eu` e
+            // `(t.user_id = em.user_id)` na 033, e quando `em.user_id` e nulo
+            // (convite sem conta, 039) a propria coluna `user_id` da view sai
+            // nula e o filtro de usuario acima ja descartou a linha. Os dois
+            // escrevem a mesma selecao, e `eq` e o que a tela de Financas
+            // Pessoais ja usa (HMO-275) -- uma forma so para o mesmo criterio.
+            .eq("paguei_eu", false)
             .gte("transaction_date", periodo.de)
             .lte("transaction_date", periodo.ate)
             .order("id", { ascending: true })
@@ -337,6 +390,21 @@ export async function GET(request: NextRequest) {
       //   * depois da parte de grupo, porque as linhas de `group_share_entries`
       //     atravessam a regra intactas (nao tem conta nem `notes`) e separa-las
       //     em duas listas criaria um segundo caminho para somar;
+      //
+      //     DESDE A HMO-418 A LISTA TEM UM TERCEIRO TIPO DE LINHA, e ele NAO
+      //     atravessa intacto: a despesa de grupo que eu paguei vem agora de
+      //     `financial_transactions`, com conta e `notes`. Lancada no CARTAO,
+      //     ela e compra no cartao como qualquer outra e sai daqui -- passa a
+      //     contar no mes em que a fatura for paga, junto com o resto da fatura.
+      //     E a resposta certa e e a mesma que uma despesa pessoal no cartao
+      //     recebe; o que nao podia acontecer era ela sair da conta por um
+      //     criterio (grupo) e voltar por outro (fatura).
+      //
+      //     A assimetria que fica: a MINHA PARTE de uma despesa que outro pagou
+      //     no cartao DELE continua contando no mes da compra. Nao ha fatura
+      //     minha que a contenha -- o que eu devo e um reembolso a uma pessoa,
+      //     nao uma linha de fatura -- e `group_share_entries` nao tem conta
+      //     para a regra olhar.
       //   * antes da agregacao, porque `agregarTransacoesPorMoeda` continua
       //     sendo a UNICA funcao que soma. A regra so tira linha e reescreve
       //     `transaction_type`; nenhuma aritmetica e refeita aqui.

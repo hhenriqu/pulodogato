@@ -1,0 +1,45 @@
+{
+  "//": [
+    "O criterio de custo pessoal do painel: bruto + reembolso (HMO-258, HMO-418).",
+    "",
+    "DOIS route handlers no `include`, e os dois sao load-bearing. O cabecalho de",
+    "cada uma das rotas diz que elas leem o MESMO conjunto de linhas de proposito:",
+    "o total do fluxo tem de ser igual a soma das categorias, senao a pizza do",
+    "painel nao fecha em 100%. Medir uma e supor a outra deixaria a divergencia",
+    "exatamente onde ela nasceria -- e a de categorias nao tem chamador no modo",
+    "pessoal hoje, entao ela e a que apodrece calada.",
+    "",
+    "`../app/api/reports/cash-flow/route.ts`  -- o `?de=&ate=&cartao=fatura` do painel",
+    "`../app/api/reports/categories/route.ts` -- o mesmo periodo, por categoria",
+    "",
+    "A paginacao deste mesmo ramo e medida por tsconfig.paginacao-do-intervalo-test",
+    "(HMO-417), que compila so a primeira rota. As duas suites nao se substituem: a",
+    "de la prova que a SEGUNDA PAGINA entra no total, com fixture de 1001 linhas; a",
+    "daqui prova QUAIS LINHAS entram, com a fixture de maio de 4 despesas.",
+    "",
+    "`rootDir` e a raiz do projeto: as rotas importam @/lib e @/utils, e com",
+    "rootDir em app/ o tsc reprova com TS6059. O emit espelha a raiz, entao os dois",
+    "passos de resolve-aliases rodam com --espelha-raiz.",
+    "",
+    "utils/supabase/server.ts e compilado junto e DEPOIS sobrescrito pelo",
+    "scripts/monta-duble-de-rota.mjs -- o modulo real importa `next/headers`, que",
+    "nao roda fora do runtime do Next."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-criterio-do-painel",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../app/api/reports/cash-flow/route.ts",
+    "../app/api/reports/categories/route.ts",
+    "../app/api/movimentacoes/resumo/route.ts"
+  ]
+}

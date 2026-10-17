@@ -581,3 +581,38 @@ next-env.d.ts
 # .gitignore chega a ser commitado em cima de arquivo de fonte (ver a entrada do
 # .tmp-parcelamento).
 /.tmp-painel-clicavel/
+
+# O emit das DUAS rotas que leem `bill_alerts` -- o cron de vencimento e o sino
+# --, para a suite do aviso por destinatario chamar os handlers de verdade com
+# duble de Supabase (HMO-414). A assercao que importa e sobre o `onConflict` que
+# a rota PASSA ao client, e isso so existe em tempo de execucao. Artefato, nao
+# fonte. Declarado JUNTO com a suite, pelo mesmo motivo das entradas acima: sem
+# a linha, `check-artefatos-de-build` fica vermelho na `main`, e um `.tmp-*`
+# fora do .gitignore chega a ser commitado em cima de arquivo de fonte (ver a
+# entrada do .tmp-parcelamento).
+/.tmp-aviso-por-destinatario/
+
+# AS QUATRO QUE FALTARAM, e a guarda esta VERMELHA na `main` por elas (medido
+# em 17/10/2026, HMO-413): `check-artefatos-de-build` lista as suites cujo
+# `outDir` nao esta aqui e sai 1, entao ele e tudo-ou-nada -- declarar duas e
+# deixar duas mantem o check vermelho e nao protege nenhuma das quatro.
+#
+# As quatro sao emit de suite, nao fonte. Rodar a suite APAGA e reescreve o
+# diretorio: commitado por engano, a proxima volta da suite apaga arquivo
+# rastreado (ver a entrada do .tmp-parcelamento).
+#
+# O emit dos handlers de /api/reports/cash-flow, /api/reports/categories e
+# /api/movimentacoes/resumo, para a suite do criterio do painel CHAMAR as tres
+# rotas com duble -- o painel nao le view nenhuma, e so a rota responde
+# (HMO-418, e a secao 8 da HMO-413).
+/.tmp-criterio-do-painel/
+
+# O emit de /api/reports/cash-flow para a suite que prova que a SEGUNDA PAGINA
+# do ramo de intervalo entra no total, com fixture de 1001 linhas (HMO-417).
+/.tmp-paginacao-do-intervalo/
+
+# O emit das duas telas do ajuste de saldo da conta (HMO-409): a da conta e a do
+# cartao tem sinais OPOSTOS, e a suite monta as duas para a assercao ler o sinal
+# renderizado.
+/.tmp-ajuste-da-conta-na-tela/
+/.tmp-ajuste-de-saldo-da-conta/

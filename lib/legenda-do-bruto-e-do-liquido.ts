@@ -29,6 +29,47 @@
  * lib pura nao pode importar sem quebrar o build standalone que as suites e o
  * mutador usam). O que mora aqui e o TEXTO, que e o que a pessoa le e o que as
  * sondas medem.
+ *
+ * ===========================================================================
+ * O SEGUNDO EIXO: O REALIZADO -- E A DIRECAO SE INVERTE (HMO-413)
+ * ===========================================================================
+ * As duas frases de cima falam do PREVISTO. Depois da HMO-418 existe um segundo
+ * par, no REALIZADO, entre as MESMAS DUAS TELAS -- e ele aponta para o outro
+ * lado. Medido nos dois route handlers com a fixture de maio da HMO-255
+ * (`npm run test:criterio-do-painel`, secao 8):
+ *
+ *   eixo        tela                       numero    quem responde
+ *   ----------  -------------------------  --------  --------------------------
+ *   PREVISTO    aba Despesas (bruto)       1.000,00  MAIOR
+ *   PREVISTO    painel «posso gastar»        700,00  menor
+ *   REALIZADO   painel «Realizado»         1.010,00  MAIOR
+ *   REALIZADO   aba Despesas «Realizado»     990,00  menor
+ *
+ * O PAINEL MOSTRA MENOS NO PREVISTO E MAIS NO REALIZADO. E por isso que nenhuma
+ * das quatro frases pode dizer "o painel mostra menos" sem nomear de qual dos
+ * dois numeros ela fala: as duas primeiras vivem na MESMA TELA que as duas
+ * ultimas, e uma frase sem eixo contradiz a vizinha dela -- que e exatamente o
+ * defeito que o paragrafo acima diz ser pior do que nao ter legenda.
+ *
+ * DE ONDE VEM O 20,00 DO REALIZADO
+ * --------------------------------
+ * Os dois lados concordam sobre a despesa de grupo que EU paguei (ela entra
+ * INTEIRA nos dois desde a HMO-418). Eles divergem em UMA perna so: a minha
+ * parte do que OUTRO pagou. O painel a soma -- e o criterio "bruto + reembolso"
+ * que o Helio escolheu em 08/10/2026 na interaction
+ * `hmo258:criterio-do-relatorio:v1` --, e a aba Despesas nao, porque o realizado
+ * dela soma o valor CHEIO do que saiu da minha conta e aquela parte nao saiu
+ * dela (o cabecalho de app/api/movimentacoes/resumo/route.ts tem o racional).
+ *
+ * POR QUE ISTO PRECISOU DE LEGENDA, E A HMO-418 NAO BASTOU
+ * -------------------------------------------------------
+ * A HMO-418 pos o numero certo no painel e com isso deixou o par num estado
+ * pior de LER do que o anterior: antes da HMO-407 os dois numeros estavam em
+ * telas distantes; depois dela o tile «Realizado» de Despesas e um LINK para a
+ * aba Despesas. Agora clica-se em 1.010,00 e chega-se em 990,00 -- a um clique,
+ * sem nada em nenhum dos dois lados ligando um ao outro. A aba Despesas ja
+ * dizia que a parte de quem pagou por mim nao entra nos totais dela, mas
+ * apontava para Financas Pessoais, nao para o numero de onde a pessoa veio.
  */
 
 /**
@@ -69,9 +110,54 @@ export const LEGENDA_DO_BRUTO =
  * Ela diz o numero MAIOR em voz alta ("a aba Despesas mostra mais") porque a
  * surpresa esta nessa direcao: quem ve R$ 700 aqui e R$ 1.000 la precisa saber
  * que os R$ 300 nao foram esquecidos -- eles sao a parte de outra pessoa.
+ *
+ * "NO «PREVISTO»" FOI ACRESCENTADO NA HMO-413, e nao e redundancia: no eixo do
+ * REALIZADO a comparacao se inverte (o painel mostra 1.010,00 e a aba Despesas
+ * 990,00), e as duas frases vivem na MESMA tela. Sem o recorte esta aqui diria
+ * "a aba Despesas mostra mais" a dois centimetros de uma legenda dizendo que
+ * ela mostra menos -- ver o segundo eixo no cabecalho.
  */
 export const LEGENDA_DO_LIQUIDO =
   `Este número responde ${PERGUNTA_DO_LIQUIDO}: a conta de grupo entra só ` +
   `pela sua parte, porque o reembolso dos outros é promessa e não dinheiro. ` +
-  `A aba Despesas mostra mais, e está certa: ela responde ` +
+  `A aba Despesas mostra mais no «Previsto», e está certa: ela responde ` +
+  `${PERGUNTA_DO_BRUTO}.`;
+
+/**
+ * A pergunta do «Realizado» do painel -- o CUSTO (HMO-413).
+ *
+ * "Custou para você" e nao "saiu da sua conta", e a diferenca e a perna inteira
+ * que separa os dois numeros: a minha parte do mercado que a B pagou me CUSTOU
+ * 20,00 e nao SAIU da minha conta -- ela sai no dia em que eu pagar a B. E a
+ * mesma distincao que a `PERGUNTA_DO_BRUTO` faz do outro lado ("sai da sua
+ * conta" e nao "é seu"), aplicada a outra perna.
+ */
+export const PERGUNTA_DO_CUSTO = "quanto custou para você";
+
+/**
+ * A legenda dos tiles «Realizado» do painel -- o lado de ONDE A PESSOA CLICA.
+ *
+ * Ela nomeia o numero do DESTINO ("a aba Despesas mostra menos") porque a
+ * surpresa esta nessa direcao: quem clica em 1.010,00 e chega em 990,00 precisa
+ * saber que os 20,00 nao foram perdidos no caminho. E o espelho exato da
+ * `LEGENDA_DO_LIQUIDO`, com os papeis trocados -- ver o segundo eixo no
+ * cabecalho.
+ */
+export const LEGENDA_DO_CUSTO_REALIZADO =
+  `Este «Realizado» responde ${PERGUNTA_DO_CUSTO}: a despesa de grupo que ` +
+  `você pagou entra inteira, e a sua parte da que outra pessoa pagou entra ` +
+  `junto. A aba Despesas mostra menos, e está certa: ela responde ` +
+  `${PERGUNTA_DO_BRUTO}, e essa parte ainda não saiu dela.`;
+
+/**
+ * A legenda do «Realizado» da aba Despesas -- o lado de ONDE A PESSOA CHEGA.
+ *
+ * Ela existe porque a frase que a aba Despesas ja tinha aponta para Financas
+ * Pessoais, e nao para o painel: ate a HMO-413 quem chegava aqui vindo do tile
+ * lia que a parte de quem pagou por ela "nao entra nestes totais" e nao tinha
+ * como ligar isso ao numero MAIOR que acabara de clicar.
+ */
+export const LEGENDA_DO_CAIXA_REALIZADO =
+  `No painel, o «Realizado» mostra mais, e está certo: ele responde ` +
+  `${PERGUNTA_DO_CUSTO} e soma essa parte; aqui a pergunta é ` +
   `${PERGUNTA_DO_BRUTO}.`;

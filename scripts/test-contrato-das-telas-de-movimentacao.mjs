@@ -1609,8 +1609,174 @@ test("os DOIS numeros que vao discordar levam a legenda de cada um (fase F5)", (
         `de citar as DUAS perguntas (a declaracao + um uso em cada frase).`
     );
   }
+  // A FIACAO DO LINK, E NAO O ENDERECO LITERAL (HMO-415).
+  //
+  // Ate a HMO-415 esta assercao exigia `href="/dashboard/despesas"` -- e aquele
+  // literal era o defeito, nao o contrato: `lerPeriodo`, do outro lado, cai no
+  // MES CORRENTE quando nao acha `?de=&ate=`. O cartao aparece em todo periodo
+  // que contem hoje, e conter hoje nao e ser o mes corrente -- num intervalo de
+  // 15/09 a 20/10 o link nu abria outubro inteiro a partir de uma legenda que
+  // falava do intervalo. Quem mede o `href` RENDERIZADO, em navegador e nos
+  // quatro periodos, e `scripts/test-painel-clicavel.mjs`; o que fica aqui e a
+  // fiacao: a legenda tem link, e ele sai de `rotaDaTelaDoLado`.
+  //
+  // E O RECORTE E A LEGENDA, nao o arquivo inteiro: a MESMA chamada aparece no
+  // tile de Despesas 240 linhas acima (HMO-408), e um `includes` no painel todo
+  // ficaria verde com o link da legenda nu de novo.
+  const inicioDaLegenda = painel.indexOf("{LEGENDA_DO_LIQUIDO}");
+  const fimDaLegenda = painel.indexOf("Abrir Despesas", inicioDaLegenda);
   assert.ok(
-    painel.includes('href="/dashboard/despesas"'),
-    "A legenda do painel tem de levar a aba Despesas."
+    inicioDaLegenda >= 0 && fimDaLegenda > inicioDaLegenda,
+    "A legenda do painel nao tem mais o link «Abrir Despesas» para a aba Despesas."
+  );
+  assert.ok(
+    painel
+      .slice(inicioDaLegenda, fimDaLegenda)
+      .includes('rotaDaTelaDoLado("despesa", periodo)'),
+    "O «Abrir Despesas» da legenda do painel tem de levar a aba Despesas COM a " +
+      "janela da tela: um link nu abre o mes corrente, e o cartao existe em " +
+      "periodo que contem hoje sem ser o mes corrente."
+  );
+});
+
+test("o par do REALIZADO tambem leva legenda dos dois lados (HMO-413)", () => {
+  // O SEGUNDO EIXO, e ele nao e repeticao do de cima.
+  //
+  // O teste anterior cobre o PREVISTO: aba Despesas 1.000 vs painel «posso
+  // gastar» 700. Este cobre o REALIZADO: painel 1.010 vs aba Despesas 990 --
+  // medido nos dois route handlers em `npm run test:criterio-do-painel`, secao
+  // 8. E A DIRECAO SE INVERTE: no previsto o painel mostra MENOS, no realizado
+  // mostra MAIS. Por isso as frases nao se reaproveitam, e por isso as quatro
+  // moram no mesmo arquivo -- duas delas vivem na MESMA tela e uma sem recorte
+  // de eixo contradiz a vizinha.
+  //
+  // Por que ele existe: ate a HMO-413 o tile «Realizado» do painel era um LINK
+  // (HMO-408) para um numero 20,00 menor, e o rotulo desse lado nao existia. O
+  // comentario do proprio painel afirmava que existia.
+  const LEGENDAS = "lib/legenda-do-bruto-e-do-liquido.ts";
+  const legendas = readFileSync(LEGENDAS, "utf8");
+
+  for (const nome of [
+    "PERGUNTA_DO_CUSTO",
+    "LEGENDA_DO_CUSTO_REALIZADO",
+    "LEGENDA_DO_CAIXA_REALIZADO",
+  ]) {
+    assert.match(
+      legendas,
+      new RegExp(`export const ${nome}\\b`),
+      `${LEGENDAS} nao exporta mais ${nome}.`
+    );
+  }
+
+  // CADA FRASE CITA AS DUAS PERGUNTAS. Uma legenda que explica so o proprio
+  // numero deixa o outro sem explicacao, e e o outro que a pessoa acabou de ver.
+  for (const [nome, frase] of [
+    ["LEGENDA_DO_CUSTO_REALIZADO", "PERGUNTA_DO_CUSTO"],
+    ["LEGENDA_DO_CUSTO_REALIZADO", "PERGUNTA_DO_BRUTO"],
+    ["LEGENDA_DO_CAIXA_REALIZADO", "PERGUNTA_DO_CUSTO"],
+    ["LEGENDA_DO_CAIXA_REALIZADO", "PERGUNTA_DO_BRUTO"],
+  ]) {
+    // O CORPO VAI ATE O PROXIMO `export const`, e nao ate o proximo `;`.
+    // Medido ao escrever isto: um ponto-e-virgula DENTRO do texto da legenda
+    // cortava o recorte no meio da frase e a assercao reprovava uma legenda
+    // correta. Um recorte que depende da pontuacao da prosa mede a prosa.
+    //
+    // E ELE PARA NO `/**` DO VIZINHO, nao so no `export` dele: o comentario da
+    // legenda seguinte fala das MESMAS perguntas, e um recorte que o engolisse
+    // ficaria verde com a frase vazia -- a assercao mediria a documentacao.
+    const inicio = legendas.indexOf(`export const ${nome}`);
+    const limites = ["\nexport const ", "\n/**"]
+      .map((marca) => legendas.indexOf(marca, inicio + 1))
+      .filter((i) => i !== -1);
+    const corpo = legendas.slice(
+      inicio,
+      limites.length ? Math.min(...limites) : legendas.length
+    );
+    assert.ok(
+      corpo.includes(frase),
+      `${nome} nao cita ${frase}: a frase explica o proprio numero e deixa o do ` +
+        "outro lado sem explicacao -- e os dois aparecem a um clique de distancia."
+    );
+  }
+
+  // A DIRECAO, NO TEXTO. As duas frases afirmam qual lado mostra mais, e a
+  // secao 8 de `test:criterio-do-painel` mede que a afirmacao e verdade. Sem
+  // esta assercao uma reescrita poderia trocar os papeis e mandar a pessoa
+  // procurar o dinheiro no lado errado, com as duas suites verdes.
+  assert.match(
+    legendas,
+    /A aba Despesas mostra menos/,
+    "LEGENDA_DO_CUSTO_REALIZADO perdeu a oracao da DIRECAO: ela existe para " +
+      "dizer que o numero do destino e MENOR -- e e nessa direcao que a " +
+      "surpresa doi, porque a pessoa clicou no maior."
+  );
+  assert.match(
+    legendas,
+    /No painel, o «Realizado» mostra mais/,
+    "LEGENDA_DO_CAIXA_REALIZADO perdeu a oracao da DIRECAO: ela e o espelho da " +
+      "de cima, dita do lado de quem CHEGOU."
+  );
+  // E A DO PREVISTO CONTINUA RECORTADA PELO EIXO DELA. Sem "no «Previsto»" a
+  // frase do `safe-to-spend` diz "a aba Despesas mostra mais" a dois
+  // centimetros de uma legenda dizendo que ela mostra menos, na mesma tela.
+  assert.match(
+    legendas,
+    /A aba Despesas mostra mais no «Previsto»/,
+    "LEGENDA_DO_LIQUIDO perdeu o recorte de eixo: com o par do REALIZADO na " +
+      "mesma tela, 'a aba Despesas mostra mais' sem dizer DE QUE NUMERO " +
+      "contradiz a legenda vizinha."
+  );
+
+  // `{NOME}` E NAO `includes("NOME")`, pela razao escrita no teste de cima: o
+  // `includes` casa com a linha de import e fica verde num arquivo que importa
+  // a constante e nao a escreve em lugar nenhum.
+  const painel = semComentarios(
+    readFileSync("app/(dashboard)/dashboard/page.tsx", "utf8")
+  );
+  assert.match(
+    painel,
+    /\{LEGENDA_DO_CUSTO_REALIZADO\}/,
+    "o painel nao escreve a legenda do «Realizado». O tile dele e um LINK para " +
+      "um numero MENOR desde a HMO-408."
+  );
+  assert.match(
+    componente,
+    /\{LEGENDA_DO_CAIXA_REALIZADO\}/,
+    "a aba Despesas nao escreve a volta da legenda. A frase que ela ja tinha " +
+      "aponta para Financas Pessoais, e nao para o numero de onde a pessoa veio."
+  );
+
+  // A JANELA VAI NOS DOIS LINKS, e isso e a feature e nao detalhe: as duas
+  // telas leem `?de=&ate=` e as DUAS caem no mes corrente sem eles. Uma legenda
+  // que fala de maio abrindo outubro apresenta como par dois numeros que nao se
+  // comparam -- pior que legenda nenhuma.
+  //
+  // E O RECORTE E A LEGENDA, nao o arquivo: a MESMA chamada aparece no tile e no
+  // cartao «posso gastar», e um `includes` no painel todo ficaria verde com o
+  // link daqui nu.
+  const inicio = painel.indexOf("{LEGENDA_DO_CUSTO_REALIZADO}");
+  const fim = painel.indexOf("</p>", inicio);
+  assert.ok(
+    inicio >= 0 && fim > inicio,
+    "a legenda do «Realizado» do painel nao fecha o paragrafo: o recorte abaixo " +
+      "mediria o arquivo inteiro."
+  );
+  assert.ok(
+    painel.slice(inicio, fim).includes('rotaDaTelaDoLado("despesa", periodo)'),
+    "o link da legenda do «Realizado» nao leva a janela da tela. `lerPeriodo`, " +
+      "do outro lado, cai no mes corrente sem `?de=&ate=`."
+  );
+
+  const inicioDaVolta = componente.indexOf("{LEGENDA_DO_CAIXA_REALIZADO}");
+  const fimDaVolta = componente.indexOf("</p>", inicioDaVolta);
+  assert.ok(
+    inicioDaVolta >= 0 && fimDaVolta > inicioDaVolta,
+    "a legenda da volta nao fecha o paragrafo na aba Despesas."
+  );
+  assert.ok(
+    componente.slice(inicioDaVolta, fimDaVolta).includes("rotaDoPainel(periodo)"),
+    "o «Abrir o painel» nao leva a janela da tela: o painel tambem le " +
+      "`?de=&ate=` e tambem cai no mes corrente sem eles, entao um link nu " +
+      "compararia maio com outubro."
   );
 });

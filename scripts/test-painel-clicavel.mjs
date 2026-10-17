@@ -27,20 +27,37 @@
 // A assercao fica indistinguivel entre "o link levou a janela da tela" e "o
 // link nao levou nada e o destino caiu na rede do `lerPeriodo`".
 //
-// Dai os tres casos, e dai o caso C existir:
+// Dai os quatro casos, e dai o caso C existir:
 //
 //   A. agosto de 2026 (`?de=2026-08-01&ate=2026-08-31`) -- um mes FECHADO, que
 //      nao e o mes corrente;
 //   B. 15/07 a 10/09 -- um INTERVALO, que nem comeca nem termina em mes
 //      inteiro. Mata o mutante que normaliza o periodo para o mes;
 //   C. /dashboard NU, sem parametro nenhum -- o unico caso em que o link deve
-//      carregar o mes corrente, porque e nele que a tela esta.
+//      carregar o mes corrente, porque e nele que a tela esta;
+//   D. um intervalo que CONTEM HOJE sem ser o mes corrente (HMO-415) -- o unico
+//      em que o cartao de "quanto ainda posso gastar" desenha. Ver `COM_HOJE`.
 //
 // E a vacuidade do A e do B nao e vigiada por relogio escrito no fonte: os
 // casos exigem `href(A) !== href(C)` e `href(B) !== href(C)`. Se algum dia o
 // periodo da sonda COINCIDIR com o mes corrente, ou se o link parar de levar a
 // janela, os dois lados ficam iguais e a suite reprova dizendo isso. Um
 // `assert` contra a data de hoje escrita aqui envelheceria calado.
+//
+// O «ABRIR DESPESAS» DO CARTAO DE QUANTO POSSO GASTAR (HMO-415)
+// -------------------------------------------------------------
+// O mesmo defeito, no mesmo arquivo, num terceiro link: a legenda do cartao
+// "quanto ainda posso gastar" levava `/dashboard/despesas` NU. O estrago e
+// menor que o dos tiles porque o cartao so aparece quando o periodo contem
+// hoje -- mas conter hoje nao e ser o mes corrente, e num periodo de 15/09 a
+// 20/10 o link nu abria outubro inteiro.
+//
+// E o cartao ser CONDICIONAL e o que exige o caso D, em vez de uma assercao a
+// mais sobre o caso A: em agosto o cartao nao existe, o anchor nao existe, e
+// toda afirmacao sobre o `href` dele passaria vacua numa lista vazia. O caso D
+// e o periodo em que ele desenha, e o corpo de `/api/safe-to-spend` que o faz
+// desenhar e servido so nele e no C (`POSSO_GASTAR_CHEIO`). Os casos declaram
+// qual dos dois estados esperam, nos dois sentidos.
 //
 // COMO O CODIGO DE PRODUCAO CHEGA NA PAGINA
 // -----------------------------------------
@@ -357,6 +374,50 @@ const AGOSTO = { de: "2026-08-01", ate: "2026-08-31" };
 /** Nem comeca nem termina em mes inteiro: modo intervalo. */
 const INTERVALO = { de: "2026-07-15", ate: "2026-09-10" };
 
+/**
+ * UM PERIODO QUE CONTEM HOJE SEM SER O MES CORRENTE (HMO-415).
+ *
+ * As duas metades do nome sao exigencias, e cada uma mata uma forma de o caso
+ * nao medir nada:
+ *
+ *   contem hoje -- o cartao de "quanto ainda posso gastar" so desenha quando o
+ *     periodo cobre o dia de hoje (`temHoje`, em page.tsx). Fora disso o anchor
+ *     de "Abrir Despesas" NAO EXISTE, e afirmar um `href` sobre lista vazia
+ *     passa verde com o link nu;
+ *   sem ser o mes corrente -- com o mes corrente na URL, o link nu e o link com
+ *     a janela chegam no MESMO periodo, porque `lerPeriodo` cai justamente no
+ *     mes corrente quando nao acha os parametros. E a armadilha que o caso C
+ *     mede para os tiles.
+ *
+ * Por isso o `de` e o dia 15 do mes ANTERIOR: nunca o primeiro dia de um mes,
+ * entao `modoDoPeriodo` sempre responde "intervalo" e o `de` sempre difere do
+ * `de` de qualquer mes corrente -- as duas exigencias por construcao, em
+ * qualquer dia em que o CI rode.
+ *
+ * E ELE E CALCULADO, nao escrito: um par de datas fixo aqui conteria hoje por
+ * algumas semanas e depois pararia -- o cartao sumiria da sonda sem erro, e o
+ * caso D passaria a medir a ausencia dele. O relogio e o mesmo `Intl` em
+ * America/Sao_Paulo do `today()` de lib/recurrence.ts, que e quem a pagina
+ * consulta do outro lado.
+ *
+ * A MARGEM DE DEZ DIAS NO `ate` NAO E ENFEITE. Este relogio e o do processo do
+ * teste, e o `contemHoje` da pagina roda no navegador, segundos depois; se a
+ * virada do dia caisse entre os dois, um `ate` igual a hoje deixaria o cartao
+ * de fora e a suite ficaria vermelha com a arvore intacta.
+ */
+const COM_HOJE = (() => {
+  const hoje = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+  }).format(new Date());
+  const [ano, mes] = hoje.split("-").map(Number);
+  const anterior = mes === 1 ? [ano - 1, 12] : [ano, mes - 1];
+  // Meio-dia UTC: somar dias assim nao encosta em fuso nenhum.
+  const ate = new Date(Date.parse(`${hoje}T12:00:00Z`) + 10 * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+  return { de: `${anterior[0]}-${String(anterior[1]).padStart(2, "0")}-15`, ate };
+})();
+
 const enderecoEsperado = (tela, janela) =>
   `/dashboard/${tela}?de=${janela.de}&ate=${janela.ate}`;
 
@@ -366,7 +427,7 @@ const enderecoEsperado = (tela, janela) =>
 // nao se le como o que e.
 const PAGINA = `<!doctype html>
 <html><head><meta charset="utf-8"></head><body>
-<div id="raiz-a"></div><div id="raiz-b"></div><div id="raiz-c"></div>
+<div id="raiz-a"></div><div id="raiz-b"></div><div id="raiz-c"></div><div id="raiz-d"></div>
 <div id="resultado"></div>
 <script>${umd("react", "react.development.js")}</script>
 <script>${umd("react-dom", "react-dom.development.js")}</script>
@@ -499,6 +560,35 @@ const DashboardPage = __exige(${JSON.stringify(ENTRADA)}, ["default"]).default;
 let CHAMADAS = [];
 let NAO_MODELADAS = [];
 
+// O CORPO QUE FAZ O CARTAO DE "QUANTO AINDA POSSO GASTAR" DESENHAR (HMO-415).
+//
+// \`possoGastar && (\` esconde o cartao inteiro quando a rota responde
+// \`safe_to_spend: null\`, e sem cartao nao existe o anchor de "Abrir Despesas"
+// para ter \`href\`. Nenhuma assercao desta suite le um destes numeros -- eles
+// estao aqui pelo mesmo motivo que o resto da rede desta sonda.
+//
+// As duas listas vazias DE PROPOSITO: cartao com divida e meta com reserva
+// acrescentam linha ao cartao, e nenhuma e medida aqui.
+const POSSO_GASTAR_CHEIO = {
+  ate: ${JSON.stringify(COM_HOJE.ate)},
+  diasRestantes: 12,
+  disponivel: 4200,
+  receitasPrevistas: 0,
+  compromissos: 1500,
+  compromissosVencidos: 0,
+  dividaDeCartao: 700,
+  dividaDiferida: 0,
+  reservaDeMetas: 0,
+  livre: 2000,
+  porDia: 166.66,
+  cartoes: [],
+  metas: [],
+};
+
+// Qual corpo a rota responde NESTE caso: \`null\` (o cartao nao desenha) ou o de
+// cima. Quem escolhe e o \`montar\`, e cada caso declara a sua escolha.
+let POSSO_GASTAR = null;
+
 const RESPOSTAS = [
   [/^\\/api\\/financial-accounts/, () => ({
     accounts: [{ id: "c-1", name: "Conta corrente", current_balance: 4200 }],
@@ -516,7 +606,7 @@ const RESPOSTAS = [
     recorrencias_indisponiveis: false,
   })],
   [/^\\/api\\/goals\\?/, () => ({ goals: [] })],
-  [/^\\/api\\/safe-to-spend/, () => ({ safe_to_spend: null })],
+  [/^\\/api\\/safe-to-spend/, () => ({ safe_to_spend: POSSO_GASTAR })],
   [/^\\/api\\/settings\\/dashboard/, () => ({ layout: null })],
   [/^\\/api\\/reports\\/net-worth\\?/, () => ({ months: [] })],
 ];
@@ -592,12 +682,36 @@ function tileDe(anchors, titulo) {
   };
 }
 
+/**
+ * UM LINK ACHADO PELO TEXTO EXATO -- o "Abrir Despesas" da legenda do cartao.
+ *
+ * Pelo texto, e nao por \`data-*\` posto para o teste, pelo mesmo motivo do
+ * \`tileDe\`: ancora inventada muda de nome num refactor e a busca passa a
+ * devolver lista vazia -- e "o href nao tem o periodo" e verdade numa lista
+ * vazia. Igualdade exata, e nao \`indexOf\`: o anchor envolve so as duas
+ * palavras, e um \`indexOf\` casaria tambem com um \`<a>\` que envolvesse a
+ * legenda inteira.
+ *
+ * Devolve \`quantos\` sempre, e os casos declaram o numero que esperam -- 1 nos
+ * dois em que o cartao desenha, 0 nos dois em que ele nao existe.
+ */
+function linkPorTexto(anchors, rotulo) {
+  const achados = anchors.filter(function (a) {
+    return a.textContent.replace(/\\s+/g, " ").trim() === rotulo;
+  });
+  if (achados.length !== 1) return { quantos: achados.length, href: null };
+  // \`getAttribute\`, e nao \`.href\`, pelo motivo do \`tileDe\`.
+  return { quantos: 1, href: achados[0].getAttribute("href") };
+}
+
 const retrato = (raiz) => {
   const anchors = Array.prototype.slice.call(raiz.querySelectorAll("a"));
   const texto = raiz.textContent.replace(/\\s+/g, " ").trim();
   return {
     receitas: tileDe(anchors, "Receitas"),
     despesas: tileDe(anchors, "Despesas"),
+    abrirDespesas: linkPorTexto(anchors, "Abrir Despesas"),
+    compararEmDespesas: linkPorTexto(anchors, "Comparar em Despesas"),
     hrefs: anchors.map((a) => a.getAttribute("href")),
     esbocos: (texto.match(/\\[ESBOCO-[^\\]]+\\]/g) || [])
       .filter((v, i, t) => t.indexOf(v) === i)
@@ -608,9 +722,13 @@ const retrato = (raiz) => {
   };
 };
 
-/** Monta o painel num container, com os parametros de URL do caso. */
-async function montar(idDaRaiz, params) {
+/**
+ * Monta o painel num container, com os parametros de URL do caso e o corpo de
+ * \`/api/safe-to-spend\` que aquele caso serve.
+ */
+async function montar(idDaRaiz, params, possoGastar) {
   PARAMS = params;
+  POSSO_GASTAR = possoGastar || null;
   CHAMADAS = [];
   NAO_MODELADAS = [];
   EMPURRADOS = [];
@@ -626,7 +744,10 @@ const out = {};
 // =========================================================================
 // A. UM MES FECHADO NA URL: os dois tiles levam AQUELA janela
 // =========================================================================
-out.a = await montar("raiz-a", ${JSON.stringify(AGOSTO)});
+// Sem corpo de \`safe-to-spend\`, e isso nao e economia: agosto nao contem hoje,
+// a pagina nem pede a rota, e o cartao de "quanto posso gastar" nao desenha.
+// E o estado que torna o caso D necessario.
+out.a = await montar("raiz-a", ${JSON.stringify(AGOSTO)}, null);
 
 // =========================================================================
 // B. UM INTERVALO que nao e mes inteiro: a janela vai como esta, sem arredondar
@@ -634,7 +755,7 @@ out.a = await montar("raiz-a", ${JSON.stringify(AGOSTO)});
 // Mata o mutante que monta o endereco a partir do MES do periodo em vez do
 // periodo -- com o caso A sozinho, 01/08..31/08 e o mes dele proprio e os dois
 // enderecos sao identicos.
-out.b = await montar("raiz-b", ${JSON.stringify(INTERVALO)});
+out.b = await montar("raiz-b", ${JSON.stringify(INTERVALO)}, null);
 
 // =========================================================================
 // C. /dashboard NU: o link leva o mes corrente, que e onde a tela esta
@@ -642,7 +763,19 @@ out.b = await montar("raiz-b", ${JSON.stringify(INTERVALO)});
 // O gemeo que tira a vacuidade dos outros dois. Se o link parar de levar
 // janela, ou se o periodo da sonda virar o mes corrente, o \`href\` daqui fica
 // IGUAL ao do A -- e os casos exigem que seja diferente.
-out.c = await montar("raiz-c", {});
+//
+// E ELE SERVE O CORPO CHEIO: o painel nu esta no mes corrente, que contem hoje,
+// entao o cartao de "quanto posso gastar" desenha aqui -- e e este o gemeo nu
+// do "Abrir Despesas" do caso D.
+out.c = await montar("raiz-c", {}, POSSO_GASTAR_CHEIO);
+
+// =========================================================================
+// D. UM INTERVALO QUE CONTEM HOJE: o «Abrir Despesas» do cartao (HMO-415)
+// =========================================================================
+// O unico caso em que o cartao de "quanto ainda posso gastar" desenha com um
+// periodo que NAO e o mes corrente -- as duas coisas que a assercao do link da
+// legenda precisa ao mesmo tempo. Ver \`COM_HOJE\`.
+out.d = await montar("raiz-d", ${JSON.stringify(COM_HOJE)}, POSSO_GASTAR_CHEIO);
 
 document.getElementById("resultado").textContent =
   "RESULTADO" + JSON.stringify(out) + "FIM";
@@ -721,17 +854,23 @@ try {
 
 // FALHA, e nunca `skip`, sem navegador: um canal opcional fica desligado sem
 // sintoma, e a suite verde sem ter rodado nada e pior que a suite vermelha.
-test("o navegador rodou e o painel reportou os tres casos", () => {
+test("o navegador rodou e o painel reportou os quatro casos", () => {
   if (erroDeExecucao) throw erroDeExecucao;
   assert.ok(resultado, "a pagina nao reportou resultado");
-  assert.deepEqual(Object.keys(resultado).sort(), ["a", "b", "c"]);
+  assert.deepEqual(Object.keys(resultado).sort(), ["a", "b", "c", "d"]);
 });
 
-/** Os tres casos, com o nome que o relato usa. */
+/**
+ * Os quatro casos, com o nome que o relato usa. O ultimo campo e se aquele
+ * periodo faz o cartao de "quanto ainda posso gastar" DESENHAR -- e com ele a
+ * ausencia do cartao nos dois primeiros casos e uma afirmacao do caso, e nao
+ * uma assercao que passa por nao achar nada.
+ */
 const CASOS = [
-  ["a", "mes fechado na URL", AGOSTO],
-  ["b", "intervalo na URL", INTERVALO],
-  ["c", "/dashboard nu", null],
+  ["a", "mes fechado na URL", AGOSTO, false],
+  ["b", "intervalo na URL", INTERVALO, false],
+  ["c", "/dashboard nu", null, true],
+  ["d", "intervalo que contem hoje", COM_HOJE, true],
 ];
 
 // ---------------------------------------------------------------------------
@@ -742,7 +881,7 @@ const CASOS = [
 // `quantos === 1` tambem recusa o oposto: o tile dentro de dois anchors
 // aninhados, que o navegador desaninha e o React nem avisa.
 
-for (const [chave, nome] of CASOS) {
+for (const [chave, nome, , temCartao] of CASOS) {
   test(`${nome}: os dois tiles sao exatamente UM anchor cada`, () => {
     if (erroDeExecucao) throw erroDeExecucao;
     const caso = resultado[chave];
@@ -773,6 +912,30 @@ for (const [chave, nome] of CASOS) {
         );
       }
     }
+  });
+
+  // O CONTROLE POSITIVO DO CASO D, e o negativo do A e do B (HMO-415).
+  //
+  // O cartao de "quanto ainda posso gastar" e condicional em duas coisas: o
+  // periodo contem hoje E a rota respondeu numero. Sem este caso, a assercao do
+  // `href` do "Abrir Despesas" passaria verde em qualquer periodo que nao
+  // desenhasse o cartao -- inclusive com o link nu de volta no lugar.
+  //
+  // Nos dois sentidos, e nao so o `=== 1`: o cartao desenhando onde nao devia
+  // (em agosto, dizendo o que sobra "ate" um dia que ja passou) e o defeito que
+  // o `setPossoGastar(null)` de page.tsx existe para evitar.
+  test(`${nome}: o cartao de quanto posso gastar ${
+    temCartao ? "desenhou" : "nao desenhou"
+  }`, () => {
+    if (erroDeExecucao) throw erroDeExecucao;
+    const caso = resultado[chave];
+    assert.equal(
+      caso.abrirDespesas.quantos,
+      temCartao ? 1 : 0,
+      `anchors de "Abrir Despesas": ${caso.abrirDespesas.quantos}\n` +
+        `hrefs na tela: ${JSON.stringify(caso.hrefs)}\n` +
+        `trecho: ${caso.trecho}`
+    );
   });
 
   test(`${nome}: a sonda modelou todas as rotas que a pagina pediu`, () => {
@@ -868,6 +1031,39 @@ test("/dashboard nu: o link leva o mes corrente -- e ele e OUTRO periodo", () =>
   );
 });
 
+// ---------------------------------------------------------------------------
+// O MESMO DEFEITO NO TERCEIRO LINK: o «Abrir Despesas» do cartao (HMO-415)
+// ---------------------------------------------------------------------------
+
+test("intervalo que contem hoje: o «Abrir Despesas» do cartao leva AQUELA janela", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  assert.equal(
+    resultado.d.abrirDespesas.href,
+    enderecoEsperado("despesas", COM_HOJE),
+    "o «Abrir Despesas» da legenda do cartao nao levou a janela da tela"
+  );
+
+  // O QUE TIRA A VACUIDADE, pelo mesmo mecanismo do caso C dos tiles: o painel
+  // nu desenha o MESMO cartao, com o mes corrente. Com o link nu de volta no
+  // lugar, os dois lados ficam `/dashboard/despesas` e esta assercao reprova
+  // dizendo isso -- a de cima tambem, mas esta e a que sobrevive a um `de`/`ate`
+  // que exista e aponte para o mes errado.
+  assert.notEqual(
+    resultado.d.abrirDespesas.href,
+    resultado.c.abrirDespesas.href,
+    "o periodo da URL nao chegou no link da legenda: o intervalo e o painel nu deram o mesmo endereco"
+  );
+
+  // Formato, e nao valor, pelo motivo do caso C: o mes corrente depende do dia
+  // em que o CI roda, e um literal aqui envelheceria calado.
+  assert.match(
+    resultado.c.abrirDespesas.href,
+    /^\/dashboard\/despesas\?de=\d{4}-\d{2}-01&ate=\d{4}-\d{2}-\d{2}$/,
+    `o «Abrir Despesas» do painel nu nao leva uma janela de mes: ${resultado.c.abrirDespesas.href}`
+  );
+});
+
 test("cada tile aponta para a tela DELE", () => {
   if (erroDeExecucao) throw erroDeExecucao;
   // Os dois tiles apontando para a mesma tela compilam, rendem e passam em
@@ -884,4 +1080,106 @@ test("cada tile aponta para a tela DELE", () => {
       `${chave}: Despesas aponta para ${caso.despesas.href}`
     );
   }
+});
+
+// ---------------------------------------------------------------------------
+// O QUARTO LINK: o «Comparar em Despesas» da legenda do REALIZADO (HMO-413)
+// ---------------------------------------------------------------------------
+// MESMA ARMADILHA DOS TRES DE CIMA, e por isso o caso vive aqui e nao na sonda
+// textual: `test-contrato-das-telas-de-movimentacao.mjs` prova que o `href` sai
+// de `rotaDaTelaDoLado` lendo o JSX, e isso nao distingue "o endereco carrega a
+// janela" de "o endereco carrega uma janela errada". O que decide e o atributo
+// RENDERIZADO, nos quatro periodos.
+//
+// E AQUI A EXIGENCIA E NOS QUATRO, nao em dois. O cartao de "quanto posso
+// gastar" so desenha quando o periodo contem hoje (dai o `temCartao` do CASOS);
+// esta legenda fica no bloco dos tiles, que desenha sempre. Um `temCartao` mal
+// copiado para ca faria o caso passar por ausencia em metade dos periodos --
+// que e como esta sonda ficaria verde sem medir nada.
+//
+// A LEGENDA SEM LINK COM JANELA NAO E MEIA ENTREGA: ela afirma uma comparacao
+// entre dois numeros ("a aba Despesas mostra menos"), e os dois numeros so se
+// comparam no MESMO periodo. Mandar quem olha maio para o painel de outubro faz
+// a frase apresentar um par que nao existe.
+
+test("os quatro periodos: o «Comparar em Despesas» leva a janela da tela", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  for (const [chave, nome, janela] of CASOS) {
+    const caso = resultado[chave];
+
+    // CONTROLE POSITIVO, caso a caso: `href: null` tambem sai de "achei dois" e
+    // de "nao achei nenhum", e as duas causas se leem como periodo errado.
+    assert.equal(
+      caso.compararEmDespesas.quantos,
+      1,
+      `${nome}: anchors de "Comparar em Despesas": ` +
+        `${caso.compararEmDespesas.quantos}. A legenda do «Realizado» desenha ` +
+        "em TODO periodo -- 0 e a legenda sumida, 2 e um rotulo duplicado (e " +
+        `com 2 o link do cartao tambem fica \`null\`). hrefs: ${JSON.stringify(caso.hrefs)}`
+    );
+
+    if (janela) {
+      assert.equal(
+        caso.compararEmDespesas.href,
+        enderecoEsperado("despesas", janela),
+        `${nome}: o «Comparar em Despesas» nao levou a janela da tela`
+      );
+    } else {
+      // O painel nu: formato e nao valor, pelo motivo do caso C dos tiles -- o
+      // mes corrente depende do dia em que o CI roda.
+      assert.match(
+        caso.compararEmDespesas.href,
+        /^\/dashboard\/despesas\?de=\d{4}-\d{2}-01&ate=\d{4}-\d{2}-\d{2}$/,
+        `${nome}: o «Comparar em Despesas» nao leva uma janela de mes: ` +
+          `${caso.compararEmDespesas.href}`
+      );
+    }
+  }
+
+  // O QUE TIRA A VACUIDADE: com o link nu de volta no lugar, os quatro casos
+  // devolvem `/dashboard/despesas` e todas as assercoes de cima que comparam
+  // com `enderecoEsperado` reprovam -- menos a do painel nu, que e a que
+  // sobrevive. Estas duas pegam o defeito pelo outro lado, sem depender de
+  // nenhum literal de data.
+  assert.notEqual(
+    resultado.a.compararEmDespesas.href,
+    resultado.c.compararEmDespesas.href,
+    "o periodo da URL nao chegou no link da legenda: agosto e o painel nu deram " +
+      "o mesmo endereco"
+  );
+  assert.notEqual(
+    resultado.a.compararEmDespesas.href,
+    resultado.b.compararEmDespesas.href,
+    "os dois periodos da sonda deram o mesmo endereco na legenda do «Realizado»"
+  );
+});
+
+// E O ROTULO DO CARTAO CONTINUA UNICO -- o controle da colisao que de fato
+// aconteceu. Na primeira volta da HMO-413 a legenda nova usava "Abrir
+// Despesas", o `linkPorTexto` do cartao passou a achar DOIS anchors e o caso da
+// HMO-415 reprovou dizendo "nao levou a janela da tela" -- uma mensagem sobre
+// periodo para um defeito de rotulo duplicado. Esta assercao nomeia a causa.
+test("os dois links da mesma tela tem rotulos DIFERENTES", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // O caso `d` desenha os DOIS: o cartao (porque o periodo contem hoje) e a
+  // legenda do realizado (que desenha sempre).
+  const caso = resultado.d;
+  assert.equal(caso.abrirDespesas.quantos, 1, "o «Abrir Despesas» do cartao");
+  assert.equal(
+    caso.compararEmDespesas.quantos,
+    1,
+    "o «Comparar em Despesas» da legenda do «Realizado»"
+  );
+  // E OS DOIS APONTAM PARA O MESMO LUGAR, de proposito: e a mesma tela, no
+  // mesmo periodo. E justamente por isso que o rotulo tem de distinguir -- o
+  // `href` nao distingue, e quem navega por lista de links leria a mesma frase
+  // duas vezes sem saber que uma fala do previsto e a outra do realizado.
+  assert.equal(
+    caso.abrirDespesas.href,
+    caso.compararEmDespesas.href,
+    "os dois links da tela deixaram de apontar para o mesmo periodo: um dos dois " +
+      "perdeu a janela"
+  );
 });
