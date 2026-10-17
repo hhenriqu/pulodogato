@@ -78,20 +78,127 @@ const VERSAO_DO_FORMATO = 1;
 // ---------------------------------------------------------------------------
 // Cache de arquivos-fonte parseados, compartilhado por todos os programas.
 // ---------------------------------------------------------------------------
-// A chave inclui o languageVersion porque o parser depende dele. O `jsx` NAO
-// entra na chave: quem decide se `<div>` e JSX ou asercao de tipo e a extensao
-// do arquivo (.tsx), nao a opcao -- a opcao governa a EMISSAO. A comparacao
-// byte a byte com os 97 `tsc` separados e o que sustenta essa afirmacao.
+// A chave inclui o languageVersion porque o parser depende dele, e inclui um
+// BALDE derivado das opcoes de compilacao do alvo. O balde nao e zelo: sem ele
+// o lote nao compila (HMO-419).
+//
+// POR QUE O BALDE (a afirmacao que estava aqui antes estava ERRADA)
+// ------------------------------------------------------------------
+// O comentario anterior dizia que o `jsx` nao precisava entrar na chave, porque
+// quem decide se `<div>` e JSX e a extensao do arquivo e a opcao governa so a
+// EMISSAO. A primeira metade e verdade; a segunda e falsa, e por um caminho que
+// nao passa pelo parser: o `ts.createProgram` ESCREVE DE VOLTA no objeto
+// SourceFile, e o que ele escreve depende das opcoes.
+//
+// Em `collectExternalModuleReferences` (program.ts) a primeira linha e
+// `if (file.imports) return;` -- o campo e calculado UMA vez por objeto e nunca
+// mais. E o que ele calcula comeca assim:
+//
+//     if (options.importHelpers) imports = [importSintetico("tslib")];
+//     const jsxImport = getJSXRuntimeImport(getJSXImplicitImportBase(options, file), options);
+//     if (jsxImport) imports.push(importSintetico(jsxImport));
+//
+// Ou seja: `file.imports` carrega imports SINTETIZADOS a partir de `jsx`,
+// `jsxImportSource` e `importHelpers`. Compartilhar o objeto entre programas com
+// opcoes diferentes significa que o segundo programa herda o `file.imports` do
+// primeiro, calculado com as opcoes do primeiro.
+//
+// Com `jsx: "react"` o campo nasce SEM o import sintetico. Um alvo
+// `jsx: "react-jsx"` que depois reaproveite o mesmo objeto cai no
+// `getJSXRuntimeImportSpecifier`, que faz
+//
+//     Debug.assert(nodeIsSynthesized(file.imports[0]) && ...,
+//                  "Expected sourceFile.imports[0] to be the synthesized JSX runtime import")
+//
+// e estoura. Era isto que derrubava 5 alvos de tela do lote -- e, por ser o 5o
+// step do `verificacao` e do `db-verify`, derrubava os dois jobs inteiros antes
+// de qualquer step util.
+//
+// Medido com um .tsx de duas linhas, dois programas num processo (HMO-419):
+//
+//     cache compartilhado  react -> react-jsx :  2o ESTOUROU (Debug Failure)
+//     cache compartilhado  react-jsx -> react :  ok
+//     caches separados     nas duas ordens    :  ok
+//
+// A direcao importa porque so o `react-jsx` consulta `imports[0]`. E o estouro
+// exige que o .tsx tenha um import de topo DE VERDADE: sem nenhum, o campo fica
+// vazio, `imports[0]` e `undefined`, o `if (specifier)` protege o assert e a
+// emissao sai identica -- verificado. Por isso o sintoma e barulhento e nao
+// silencioso, e por isso ele parece aleatorio: depende da ORDEM dos alvos no
+// package.json e de qual .tsx dois alvos de `jsx` diferente dividem.
+//
+// DE ONDE SAI A CHAVE DO BALDE
+// ----------------------------
+// Do proprio TypeScript: `getKeyForCompilationSettings` e o que o
+// `DocumentRegistry` (o cache de fontes do language service) usa para separar
+// baldes, exatamente por este motivo. Conferido nesta versao do tsc: a chave
+// inclui `jsx`, `jsxImportSource` e `importHelpers` -- os tres que alimentam o
+// trecho acima -- alem de target, module, moduleResolution, strict, alwaysStrict,
+// moduleDetection e pathsBasePath. E deixa de fora `outDir`, `rootDir`, `paths`,
+// `lib` e `declaration` -- e e isso que preserva o lote: `outDir` e o campo que
+// TODO alvo tem diferente, e se ele separasse balde cada alvo ficaria sozinho no
+// seu e o ganho da HMO-263 iria embora inteiro. Medido hoje, os alvos cabem em 6
+// baldes, o maior com cerca da metade deles.
+//
+// O QUE O BALDE CUSTA, MEDIDO
+// ---------------------------
+// Separar baldes faz o mesmo arquivo de lib/ ser parseado uma vez por balde em
+// vez de uma vez so. Re-rodada a comparacao da HMO-263 com o balde no lugar, em
+// diretorios de saida privados para nao haver corrida com mais nada (127 alvos):
+//
+//     127 invocacoes de `tsc` separadas : 300,7s
+//     o lote, num processo so           :  46,5s
+//     883 arquivos emitidos             : byte a byte identicos, 0 faltando, 0 a mais
+//
+// Ou seja o lote continua ~6,5x mais rapido que os `tsc` separados, e agora sai
+// 0 em vez de derrubar o job. O balde nao e de graca -- sem ele o numero seria
+// melhor -- mas sem ele tambem nao ha numero, porque 5 alvos estouram.
+//
+// Nao se escreve a lista de campos a mao aqui de proposito: ela e divida que
+// envelhece calada a cada versao de tsc, e o sintoma de uma lista incompleta e
+// este mesmo `Debug Failure` voltando num alvo novo.
+//
+// O unico campo acrescentado a mao e `isolatedModules`/`verbatimModuleSyntax`,
+// que o upstream NAO poe na chave e que aparece no `if` que decide se os imports
+// sinteticos entram (`getIsolatedModules(options) || isExternalModule(file)`).
+// Hoje nenhum tsconfig de alvo o define, entao ele nao divide balde nenhum -- ele
+// esta aqui para que passar a definir um nao reabra a HMO-419.
 const cacheDeFontes = new Map();
 let fontesLidas = 0;
 let fontesReaproveitadas = 0;
+
+const registroDeBaldes = ts.createDocumentRegistry();
+
+/**
+ * O balde de cache de um alvo: dois alvos so dividem AST parseado se esta chave
+ * bater. Ver o cabecalho da secao para o porque de cada pedaco.
+ */
+export function baldeDasOpcoes(opcoes) {
+  const doUpstream = registroDeBaldes.getKeyForCompilationSettings(opcoes);
+  const modulosIsolados = !!(opcoes.isolatedModules || opcoes.verbatimModuleSyntax);
+  return `${doUpstream}|isolatedModules=${modulosIsolados}`;
+}
+
+/**
+ * Um leitor de fontes amarrado ao balde de `opcoes`, pronto para virar
+ * `host.getSourceFile`.
+ *
+ * E uma fabrica, e nao um parametro a mais em `lerFonteCompartilhada`, porque a
+ * assinatura de `getSourceFile` e do TypeScript: o 4o argumento que ele passa e
+ * `shouldCreateNewSourceFile`, entao nao ha vaga ali para o balde.
+ */
+export function leitorDeFontes(opcoes) {
+  const balde = baldeDasOpcoes(opcoes);
+  return (nomeDoArquivo, versaoOuOpcoes, aoErrar) =>
+    lerFonteCompartilhada(nomeDoArquivo, versaoOuOpcoes, aoErrar, balde);
+}
 
 function versaoDeLinguagem(versaoOuOpcoes) {
   return typeof versaoOuOpcoes === "object" ? versaoOuOpcoes.languageVersion : versaoOuOpcoes;
 }
 
-export function lerFonteCompartilhada(nomeDoArquivo, versaoOuOpcoes, aoErrar) {
-  const chave = `${path.resolve(nomeDoArquivo)}::${versaoDeLinguagem(versaoOuOpcoes)}`;
+export function lerFonteCompartilhada(nomeDoArquivo, versaoOuOpcoes, aoErrar, balde = "") {
+  const chave = `${balde}::${path.resolve(nomeDoArquivo)}::${versaoDeLinguagem(versaoOuOpcoes)}`;
   const guardado = cacheDeFontes.get(chave);
   if (guardado) {
     fontesReaproveitadas++;
@@ -299,7 +406,10 @@ function compilarAlvo({ opcoes, raizes, tsconfig, rotulo, argumentos, semear = f
   }
 
   const host = ts.createCompilerHost(opcoes);
-  host.getSourceFile = lerFonteCompartilhada;
+  // Amarrado ao balde DESTE alvo: compartilhar AST com um alvo de `jsx`
+  // diferente faz o `createProgram` herdar o `file.imports` do outro e estourar
+  // na emissao. Ver o cabecalho da secao do cache (HMO-419).
+  host.getSourceFile = leitorDeFontes(opcoes);
 
   const emitidos = [];
   const escreverOriginal = host.writeFile.bind(host);
@@ -378,9 +488,10 @@ export function compilarComSobrescritas({ argumentos, outDir, sobrescritas = {} 
   mkdirSync(opcoes.outDir, { recursive: true });
 
   const host = ts.createCompilerHost(opcoes);
+  const lerDoBalde = leitorDeFontes(opcoes);
   host.getSourceFile = (nomeDoArquivo, versaoOuOpcoes, aoErrar) => {
     const texto = trocados.get(path.resolve(nomeDoArquivo));
-    if (texto === undefined) return lerFonteCompartilhada(nomeDoArquivo, versaoOuOpcoes, aoErrar);
+    if (texto === undefined) return lerDoBalde(nomeDoArquivo, versaoOuOpcoes, aoErrar);
     return ts.createSourceFile(nomeDoArquivo, texto, versaoOuOpcoes, false);
   };
 
