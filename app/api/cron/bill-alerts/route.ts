@@ -39,6 +39,29 @@
 // responde `INSERT 0 0` -- SEM ERRO. Medido: o fan-out inteiro gravava UMA
 // linha. E por isso que o nome das colunas aqui e load-bearing, e por que esta
 // rota tem de ir ao ar ANTES de a 057 ser colada (ver o cabecalho dela).
+//
+// E O DIA ENTRE O DEPLOY E A COLAGEM? (a queda de volta para a chave do 009)
+// --------------------------------------------------------------------------
+// "Deploy antes da colagem" e o lado CERTO da ordem -- mas enquanto a 057 nao
+// esta colada a lista larga nao casa com nenhum indice, e o PostgREST responde
+// ERRO, nao "ignorei o conflito". Medido num Postgres 17 com a
+// `bill_notifications` do 009:
+//
+//   INSERT ... ON CONFLICT (scheduled_transaction_id, user_id, kind,
+//   reference_date) DO NOTHING
+//   -> ERROR 42P10: there is no unique or exclusion constraint matching the
+//      ON CONFLICT specification
+//
+// Sem queda de volta, o PRIMEIRO dia com conta a avisar depois do deploy
+// perderia o aviso de TODO MUNDO -- inclusive o do dono, que funciona hoje.
+// Entao: `42P10` na lista da 057 -> grava de novo pela chave do 009, que e
+// exatamente o comportamento de hoje (o fan-out colapsa numa linha porque a
+// view velha ja devolve uma linha so, do dono).
+//
+// A queda NAO e silenciosa: `unique_antiga: true` entra na resposta e e por ela
+// que `cron_runs` guarda o dia em que isso aconteceu. Um canal que se degrada
+// sem sintoma vira defeito permanente; este diz o proprio nome no registro.
+// Quando a 057 for colada, a primeira tentativa passa e este caminho morre.
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
@@ -52,6 +75,34 @@ import { comRegistro } from "@/lib/services/cron-ledger";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
+
+/**
+ * As duas listas de `onConflict`. Ficam em constantes NOMEADAS porque a
+ * diferenca entre elas e exatamente uma coluna, e e essa coluna que decide se o
+ * aviso do segundo membro do grupo e gravado ou descartado.
+ */
+const CHAVE_057 = "scheduled_transaction_id,user_id,kind,reference_date";
+const CHAVE_009 = "scheduled_transaction_id,kind,reference_date";
+
+/**
+ * "A lista do `onConflict` nao casa com nenhum indice unico" -- o unico erro
+ * que justifica tentar de novo pela chave antiga.
+ *
+ * `42P10` e o SQLSTATE que o Postgres levanta em `infer_arbiter_indexes`, e o
+ * PostgREST o repassa no campo `code`. A segunda condicao existe porque esse
+ * repasse e do PostgREST, nao nosso: se uma versao dele trocar o `code` por um
+ * proprio, a mensagem continua sendo a do Postgres -- e uma queda de volta que
+ * para de funcionar em silencio e pior do que nao ter.
+ *
+ * Qualquer OUTRO erro de gravacao continua virando 500: o fim do dia nao pode
+ * ser "tentei de novo de um jeito diferente e deu errado de novo tambem".
+ */
+function semIndiceParaOnConflict(erro: { code?: string; message?: string }): boolean {
+  return (
+    erro.code === "42P10" ||
+    /no unique or exclusion constraint matching/i.test(erro.message ?? "")
+  );
+}
 
 /**
  * O e-mail de cada usuario, lido pela API de admin.
@@ -175,17 +226,31 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    const { data: gravados, error: erroGravar } = await admin
-      .from("bill_notifications")
-      .upsert(linhas, {
-        // `user_id` ENTRA AQUI, e a lista tem de casar com a UNIQUE da 057: o
-        // PostgREST exige um indice unico com estas colunas e responde ERRO
-        // quando nao acha -- nao "ignorei o conflito". Sem `user_id`, o aviso
-        // do segundo membro de um grupo era descartado em silencio.
-        onConflict: "scheduled_transaction_id,user_id,kind,reference_date",
-        ignoreDuplicates: true,
-      })
-      .select("id, user_id, scheduled_transaction_id, title, body");
+    const gravarCom = (onConflict: string) =>
+      admin
+        .from("bill_notifications")
+        .upsert(linhas, { onConflict, ignoreDuplicates: true })
+        .select("id, user_id, scheduled_transaction_id, title, body");
+
+    // `user_id` ENTRA AQUI, e a lista tem de casar com a UNIQUE da 057: o
+    // PostgREST exige um indice unico com estas colunas e responde ERRO quando
+    // nao acha -- nao "ignorei o conflito". Sem `user_id`, o aviso do segundo
+    // membro de um grupo era descartado em silencio.
+    let { data: gravados, error: erroGravar } = await gravarCom(CHAVE_057);
+    let uniqueAntiga = false;
+
+    if (erroGravar && semIndiceParaOnConflict(erroGravar)) {
+      // A 057 ainda nao foi colada. Grava pela chave do 009 em vez de perder o
+      // dia inteiro de aviso -- ver o cabecalho.
+      console.error(
+        "Cron: a UNIQUE de bill_notifications ainda e a do 009 (a 057 nao foi " +
+          "colada). Gravando pela chave antiga: o aviso de conta de grupo sai " +
+          "so para o dono hoje.",
+        erroGravar
+      );
+      uniqueAntiga = true;
+      ({ data: gravados, error: erroGravar } = await gravarCom(CHAVE_009));
+    }
 
     if (erroGravar) {
       console.error("Cron: erro ao gravar avisos:", erroGravar);
@@ -297,6 +362,11 @@ export async function GET(request: NextRequest) {
         push: enviados,
         assinaturas_removidas: removidos,
         push_desligado: pushDesligado,
+        // A queda de volta para a chave do 009, se ela aconteceu. `true` aqui
+        // significa: o aviso saiu, mas a 057 ainda nao esta colada e por isso a
+        // conta de grupo avisou so o dono naquele dia. E o campo que torna a
+        // degradacao LEGIVEL em `cron_runs` em vez de invisivel.
+        unique_antiga: uniqueAntiga,
         // Daqui para baixo e o que vai para `cron_runs.result` sobre o e-mail.
         // `email_desligado` e o campo que esta issue existe para criar: sem
         // ele, um canal sem chave de API e um canal funcionando respondem o
