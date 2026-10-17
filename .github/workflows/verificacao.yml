@@ -8575,5 +8575,23 @@ jobs:
       # excecao declarada ao contrario -- a tela do GRUPO continua lendo
       # `status`, porque o grupo nao tem status de pago e a conta paga sai das
       # previstas de proposito.
+      #
+      # HMO-416: sao NOVE leituras e TRES excecoes agora. A nona e a fatura do
+      # cartao (inerte, entrou pela convencao); as duas excecoes novas sao o
+      # fechamento do grupo e a semeadura pela renda, que perguntam pela CONTA.
       - name: As oito leituras da agenda usam o estado da PESSOA
         run: npm run check-as-oito-leituras
+
+      # E O CONTROLE NEGATIVO DAQUELE GUARD (HMO-416). O step de cima sai VERDE
+      # tambem quando o guard parou de medir -- lista vazia, extrator que nao
+      # casa mais, metade do laco desligada --, e verde e exatamente o que se
+      # espera dele, entao o CI nao distinguiria os dois estados. Este step
+      # planta cada defeito numa sombra e exige que o guard REPROVE: a troca de
+      # volta para a coluna do dono, a omissao do filtro, e a coluna da pessoa
+      # aparecendo numa das tres excecoes declaradas.
+      #
+      # O terceiro nivel (`mutantes:as-tres-leituras`, que muta o fonte do guard
+      # e exige ESTE controle vermelho) nao roda em CI -- e ferramenta de quem
+      # mexe no guard. Ultima medicao: 10/10 mortos.
+      - name: ... e aquele guard sabe reprovar
+        run: npm run test:as-tres-leituras

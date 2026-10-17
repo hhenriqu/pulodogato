@@ -158,11 +158,31 @@ export async function GET(request: NextRequest) {
     const idsDosCartoes = faturas.map((f) => f.account_id);
 
     if (idsDosCartoes.length > 0) {
+      // `my_status`, E A TROCA NAO MUDA NUMERO NENHUM (HMO-416)
+      // ------------------------------------------------------
+      // Esta leitura e sobre a PESSOA: ela filtra `user_id = auth.uid()` uma
+      // linha acima, entao toda linha que volta e minha -- e para linha minha a
+      // 055 garante `my_status = status::text`. A igualdade nao e promessa de
+      // comentario: a secao 2 de database/tests/hmo407_* a prende sobre seis
+      // linhas do proprio dono (pendente, vencida e com estado que nao e
+      // pendente), e e ela que autoriza a troca.
+      //
+      // ENTAO POR QUE TROCAR, SE E INERTE? Porque o custo de NAO trocar e a
+      // proxima pessoa descobrindo caso a caso qual rota le qual coluna. A
+      // HMO-411 moveu oito leituras desta view e criou
+      // `npm run check-as-oito-leituras` exatamente para que nao houvesse
+      // metade das rotas numa coluna e metade na outra; esta era a que tinha
+      // ficado de fora. O guard agora a mede junto com as outras.
+      //
+      // E a tela deste cartao ja tinha se mudado: `lib/agenda-do-cartao.ts`
+      // emite `my_status`/`my_effective_status` na fatura aberta sintetizada
+      // desde a HMO-411. A rota era o ultimo lugar do caminho do cartao ainda
+      // na coluna do dono.
       const { data: pendentes, error: erroPendentes } = await supabase
         .from("scheduled_transactions_effective")
         .select("*, category:transaction_categories(*)")
         .eq("user_id", user.id)
-        .eq("status", "pending")
+        .eq("my_status", "pending")
         .in("account_id", idsDosCartoes)
         .order("due_date", { ascending: true });
 

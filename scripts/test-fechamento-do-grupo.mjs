@@ -202,6 +202,50 @@ test("a conta prevista PAGA nao entra: ela ja esta no lado realizado", () => {
   assert.equal(f.linhas.length, 1);
 });
 
+test("a conta prevista paga de OUTRO membro tambem nao entra (o criterio e a CONTA)", () => {
+  // O caso que o de cima nao alcanca, e e o caso que as rotas do grupo vivem:
+  // elas recortam por `group_id` (o fechamento) ou por `user_id IN (membros)`
+  // (a semeadura) e trazem a linha de TODO MUNDO -- nao so a de quem le.
+  //
+  // E E A DISTINCAO QUE DECIDE A HMO-416. `linhaDoPrevisto` le `linha.status`,
+  // que e o estado da CONTA, e por isso descarta a conta que a LAIS pagou
+  // igual a que o HELIO pagou. Se as rotas passassem `my_status` -- a coluna
+  // da PESSOA, que a 055 resolve por `auth.uid()` --, para a conta da LAIS o
+  // valor que chegaria aqui seria `pending` (eu nao tenho linha de pagamento
+  // na conta dela), a prevista NAO seria descartada, somaria em cima da
+  // realizada, e outubro mostraria R$ 319,80 de uma conta de R$ 159,90.
+  //
+  // Por isso as duas rotas estao em `EXCECOES` de
+  // `scripts/check-as-oito-leituras.mjs`, e nao na lista das que trocaram.
+  const pagaPelaLais = linhaDoPrevisto({
+    id: "s3",
+    amount: "159.90",
+    due_date: "2026-10-15",
+    user_id: LAIS,
+    status: "paid",
+    direction: "expense",
+  });
+  assert.equal(pagaPelaLais, null);
+
+  // O CONTROLE: a MESMA linha, a MESMA dona, trocando so o estado da conta.
+  // Sem ele, uma `linhaDoPrevisto` que devolvesse `null` para toda linha de
+  // quem nao le passaria a assercao de cima -- e teria apagado a conta da LAIS
+  // do fechamento inteiro, que e um defeito maior que o que o caso mede.
+  const pendentePelaLais = linhaDoPrevisto({
+    id: "s4",
+    amount: "159.90",
+    due_date: "2026-10-15",
+    user_id: LAIS,
+    status: "pending",
+    direction: "expense",
+  });
+  assert.notEqual(pendentePelaLais, null);
+  assert.equal(pendentePelaLais.pagador_user_id, LAIS);
+
+  const f = fecharMes([pendentePelaLais], membros(HELIO, LAIS), "2026-10");
+  assert.equal(f.total, 159.9);
+});
+
 test("transferencia fica fora: as duas pernas se anulam mas inflariam o total", () => {
   const linhas = [
     { id: "p1", valor: 500, data: "2026-10-10", pagador_user_id: HELIO, origem: "realizado", tipo: "transfer" },
