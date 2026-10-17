@@ -1,0 +1,41 @@
+{
+  "//": [
+    "A paginacao do ramo de INTERVALO (HMO-417).",
+    "",
+    "UM route handler no `include`, e a sonda e da rota e nao de funcao pura",
+    "porque o que se mede aqui NAO esta em funcao nenhuma: a aritmetica e de",
+    "`agregarTransacoesPorMoeda` (lib/periodo-do-painel.ts), que tem suite",
+    "propria e nunca ve a consulta. O laco que pede pagina por pagina e para",
+    "quando a pagina volta incompleta mora no handler, e e so chamando o handler",
+    "que a segunda pagina pode ser exigida no total.",
+    "",
+    "`../app/api/reports/cash-flow/route.ts` -- o ramo `?de=&ate=` e o",
+    "`?cartao=fatura`, que e como o painel principal pergunta.",
+    "",
+    "/api/reports/categories pagina do mesmo jeito e NAO entra aqui: seriam dois",
+    "handlers para provar o mesmo metodo do duble, e o custo de compilacao e por",
+    "alvo. A rota de categorias tem a paginacao dela coberta quando alguem for",
+    "medir o criterio dela -- ver a irma desta issue.",
+    "",
+    "`rootDir` e a raiz do projeto: a rota importa @/lib e @/utils, e com rootDir",
+    "em app/ o tsc reprova com TS6059. O emit espelha a raiz, entao os dois",
+    "passos de resolve-aliases rodam com --espelha-raiz.",
+    "",
+    "utils/supabase/server.ts e compilado junto e DEPOIS sobrescrito pelo",
+    "scripts/monta-duble-de-rota.mjs -- o modulo real importa `next/headers`,",
+    "que nao roda fora do runtime do Next."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-paginacao-do-intervalo",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../app/api/reports/cash-flow/route.ts"]
+}

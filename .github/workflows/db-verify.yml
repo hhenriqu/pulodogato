@@ -3652,6 +3652,37 @@ jobs:
       - name: A parte de grupo no CSV de relatorio bate com a tela
         run: npm run test:parte-do-grupo-no-csv
 
+      # A PAGINACAO DO RAMO DE INTERVALO DE /api/reports/cash-flow (HMO-417)
+      #
+      # Vizinha da de cima de proposito: as duas medem a mesma rota, cada uma
+      # num ramo. A de cima cobre o modo MES (os rollups do 008); esta cobre o
+      # modo INTERVALO, que soma `financial_transactions` crua no JavaScript e e
+      # o ramo que o painel principal usa -- `cartao=fatura` sempre cai nele.
+      #
+      # Aquele ramo nao tinha sonda NENHUMA, e nao por esquecimento: ele pagina
+      # as duas consultas que soma, e o duble de client (duble-de-supabase.mjs)
+      # nao implementava `range`. O sintoma era o modo de falha classico deste
+      # repositorio -- `api.range is not a function` estoura dentro do `try`, o
+      # `catch` da rota devolve 500, e uma assercao sobre a resposta mede o
+      # CAMINHO DE ERRO achando que mede a feature. Medido ao escrever a suite:
+      # com o metodo removido do duble, os 6 casos falham com
+      # `a rota respondeu 500: {"error":"Erro interno"}`.
+      #
+      # O criterio de pronto nao foi "o metodo existe": o fixture tem 1001
+      # linhas, uma a mais que a pagina da rota, e o valor que so existe na
+      # SEGUNDA pagina (777,77) tem de aparecer no total. A secao 0 le a faixa
+      # que a rota PEDIU e reprova se o fixture passar a caber numa pagina --
+      # entao subir `TAMANHO_DA_PAGINA` deixa a suite vermelha pedindo fixture
+      # maior, em vez de verde medindo uma pagina so.
+      #
+      # Os cinco controles negativos, todos medidos, todos vermelhos: `ate`
+      # exclusivo (`slice(de, ate)`), corte aplicado na chamada em vez do
+      # terminador (a rota encadeia `.range()` ANTES do `.eq("user_id")`),
+      # `range` que ignora os argumentos, `count` devolvendo o tamanho da pagina
+      # em vez do total filtrado, e o metodo ausente.
+      - name: A paginacao do intervalo soma as duas paginas
+        run: npm run test:paginacao-do-intervalo
+
       # A aritmetica das opcoes de divisao (HMO-190), o par em TypeScript do
       # teste SQL mais acima. Ela mora no mesmo job porque divide o MESMO
       # dinheiro: as partes tem que fechar o total nos mesmos centavos inteiros
