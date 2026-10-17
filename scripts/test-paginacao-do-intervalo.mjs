@@ -156,21 +156,48 @@ const transacao = (extra) => ({
  * As linhas que NAO podem entrar, ordenadas NA FRENTE do volume ("d-" < "t-").
  *
  * A posicao e a assercao. Se o duble cortasse a faixa antes de aplicar o
- * `.eq("user_id")`/`.is("group_id")` da rota, estas tres entrariam na primeira
- * pagina, a pagina chegaria a rota com 997 linhas uteis, o laco leria "pagina
- * incompleta" e pararia -- e o total do periodo sairia menor sem erro nenhum.
- * Com elas atras do volume, o mesmo defeito nao mudaria numero nenhum.
+ * `.eq("user_id")` da rota, estas tres entrariam na primeira pagina, a pagina
+ * chegaria a rota com 997 linhas uteis, o laco leria "pagina incompleta" e
+ * pararia -- e o total do periodo sairia menor sem erro nenhum. Com elas atras
+ * do volume, o mesmo defeito nao mudaria numero nenhum.
  */
 const RECUSADAS = [
   // A despesa de OUTRO membro, visivel pela RLS de grupo (`OR
-  // is_group_member(...)`) e que nao e dinheiro de EU.
+  // is_group_member(...)`) e que nao e dinheiro de EU. DESDE A HMO-418 O FILTRO
+  // DE USUARIO E O UNICO QUE A SEGURA: a rota perdeu o `is("group_id", null)`.
   transacao({ id: "d-000001", user_id: OUTRO, amount: -500 }),
-  // Despesa de grupo: a linha CHEIA nao entra no relatorio pessoal -- o que
-  // entra e a parte, lida de `group_share_entries` (033).
-  transacao({ id: "d-000002", group_id: GRUPO, amount: -300 }),
+  // A despesa de grupo de OUTRO membro: a linha CHEIA dela e visivel para mim
+  // pela mesma policy do 002 e tambem nao e meu dinheiro. O que eu devo dela e
+  // a MINHA PARTE, que vem de `group_share_entries` (033).
+  transacao({ id: "d-000002", user_id: OUTRO, group_id: GRUPO, amount: -300 }),
   // Fora da janela pedida.
   transacao({ id: "d-000003", transaction_date: DEPOIS, amount: -900 }),
 ];
+
+/**
+ * A despesa de grupo que EU paguei: ela ENTRA, pelo valor CHEIO (HMO-418).
+ *
+ * Ate a HMO-418 esta linha era a segunda das RECUSADAS, com `user_id` meu: a
+ * rota filtrava `group_id IS NULL`, a linha cheia ficava fora inteira, e a
+ * despesa entrava so pela minha parte em `group_share_entries`. O criterio
+ * escolhido na HMO-258 (bruto + reembolso, respondido por uma PESSOA em
+ * 08/10/2026) e o oposto: o que EU paguei conta INTEIRO, e so o que OUTRO pagou
+ * conta pela minha parte.
+ *
+ * Aqui ela e um numero no total, e nao a prova do criterio -- quem prova o
+ * criterio e scripts/test-criterio-do-painel.mjs, com a fixture de maio e os
+ * quatro valores distintos que as quatro combinacoes de filtro produzem. Esta
+ * suite mede PAGINACAO; a linha mudou de lado para o fixture dela parar de
+ * afirmar o criterio antigo.
+ *
+ * Ordenada na frente ("e-" < "t-"), como as RECUSADAS e pela mesma razao: se o
+ * corte da faixa acontecesse antes dos filtros, ela mudaria um numero.
+ */
+const DE_GRUPO_QUE_EU_PAGUEI = transacao({
+  id: "e-000001",
+  group_id: GRUPO,
+  amount: -300,
+});
 
 /** O volume: mil linhas de -1,00 e a ultima diferente. */
 const VOLUME_DE_DESPESA = Array.from({ length: VOLUME }, (_, i) =>
@@ -200,12 +227,13 @@ const EM_DOLAR = transacao({
   currency: "USD",
 });
 
-// 1000 linhas de 1,00 mais a de 777,77.
-const SAIDA_ESPERADA = 1000 + 777.77;
+// 1000 linhas de 1,00, a de 777,77 e os 300,00 da despesa de grupo que EU
+// paguei -- que entra pelo valor CHEIO desde a HMO-418.
+const SAIDA_ESPERADA = 1000 + 777.77 + 300;
 const ENTRADA_ESPERADA = 123.45;
-// O volume mais a linha de entrada. O dolar vira bloco proprio, e as tres
-// RECUSADAS nao entram em nenhum.
-const CONTAGEM_ESPERADA = VOLUME + 1;
+// O volume, a linha de entrada e a despesa de grupo que eu paguei. O dolar vira
+// bloco proprio, e as tres RECUSADAS nao entram em nenhum.
+const CONTAGEM_ESPERADA = VOLUME + 2;
 
 const PERFIS = [{ id: EU, preferences: { moeda: { oficial: "BRL" } } }];
 
@@ -303,7 +331,7 @@ function bloco(corpo, moeda) {
 test("secao 0: o fixture nao cabe numa pagina da rota", TETO, async () => {
   const { resposta, lidas } = await chamar(urlDoIntervalo(), {
     tabelas: {
-      financial_transactions: [...RECUSADAS, ...VOLUME_DE_DESPESA],
+      financial_transactions: [...RECUSADAS, DE_GRUPO_QUE_EU_PAGUEI, ...VOLUME_DE_DESPESA],
     },
   });
 
@@ -356,6 +384,7 @@ test("secao 1: o total do periodo inclui a linha que so existe na 2a pagina", TE
     tabelas: {
       financial_transactions: [
         ...RECUSADAS,
+        DE_GRUPO_QUE_EU_PAGUEI,
         ...VOLUME_DE_DESPESA,
         ENTRADA,
         EM_DOLAR,
@@ -418,6 +447,12 @@ test("secao 2: a parte de grupo tambem pagina, e a 2a pagina entra no total", TE
 
   // `amount` sai POSITIVO da view -- a parte de uma despesa de -400 e 200,00 --
   // e os agregadores aplicam `Math.abs`. Ver lib/parte-do-grupo-realizada.ts.
+  //
+  // `paguei_eu: false` e o default porque, desde a HMO-418, a rota pede
+  // `eq("paguei_eu", false)`: o volume tem de ser de partes do que OUTRO pagou,
+  // que e o que ainda vem desta view. Sem o campo no fixture nenhuma linha
+  // casaria o filtro, a view voltaria uma pagina so e a assercao de paginacao
+  // reprovaria sem que houvesse defeito.
   const parte = (extra) => ({
     user_id: EU,
     transaction_date: DIA,
@@ -425,6 +460,7 @@ test("secao 2: a parte de grupo tambem pagina, e a 2a pagina entra no total", TE
     transaction_type: "expense",
     currency: "BRL",
     category_id: null,
+    paguei_eu: false,
     ...extra,
   });
 
@@ -436,6 +472,10 @@ test("secao 2: a parte de grupo tambem pagina, e a 2a pagina entra no total", TE
     // `OR is_group_member(...)`, entao sem o `eq("user_id")` da rota vem a parte
     // dos OUTROS membros.
     parte({ id: "a-000001", user_id: OUTRO, amount: 900 }),
+    // A MINHA parte de uma despesa que EU paguei (HMO-418). Tambem na frente, e
+    // tambem recusada: o valor cheio dela ja veio de `financial_transactions`, e
+    // somar a parte aqui contaria a mesma despesa duas vezes.
+    parte({ id: "a-000002", paguei_eu: true, amount: 700 }),
     ...Array.from({ length: VOLUME }, (_, i) =>
       parte({
         id: idDaParte(i),
@@ -468,7 +508,8 @@ test("secao 2: a parte de grupo tambem pagina, e a 2a pagina entra no total", TE
     corpo.summary.total_expense,
     esperado,
     `a saida tem de ser ${esperado}. 2010,00 significa que a parte de grupo ` +
-      "parou na primeira pagina; 2965,55, que a parte do OUTRO membro entrou."
+      "parou na primeira pagina; 2965,55, que a parte do OUTRO membro entrou; " +
+      "2765,55, que a minha parte do que EU paguei entrou (dupla contagem)."
   );
 
   assert.equal(
@@ -494,7 +535,7 @@ test("secao 3: sem a 033 colada, o intervalo responde sem a parte de grupo", TET
   for (const code of ["42P01", "PGRST205"]) {
     const { resposta } = await chamar(urlDoIntervalo(), {
       tabelas: {
-        financial_transactions: [...RECUSADAS, ...VOLUME_DE_DESPESA],
+        financial_transactions: [...RECUSADAS, DE_GRUPO_QUE_EU_PAGUEI, ...VOLUME_DE_DESPESA],
       },
       erros: { group_share_entries: { code, message: "nao existe" } },
     });
@@ -530,7 +571,7 @@ test("secao 4: cartao=fatura cai no ramo paginado e soma as duas paginas", TETO,
     `https://exemplo.test/api/reports/cash-flow?${MES_INTEIRO}&cartao=fatura`,
     {
       tabelas: {
-        financial_transactions: [...RECUSADAS, ...VOLUME_DE_DESPESA],
+        financial_transactions: [...RECUSADAS, DE_GRUPO_QUE_EU_PAGUEI, ...VOLUME_DE_DESPESA],
       },
     }
   );

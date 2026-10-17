@@ -24,6 +24,18 @@
 // `/api/reports/cash-flow` devolve `months: []`: uma serie mensal desenhada a
 // partir de um intervalo que corta meses pela metade seria um grafico de meses
 // que nao existiram. Quem consome olha `grao`.
+//
+// O CRITERIO DO CUSTO PESSOAL E O MESMO DO FLUXO DE CAIXA (HMO-258, HMO-418)
+// --------------------------------------------------------------------------
+// Bruto + reembolso: a despesa de grupo que EU paguei conta INTEIRA, a que
+// OUTRO pagou conta pela MINHA PARTE. O cabecalho de
+// `app/api/reports/cash-flow/route.ts` tem a decisao, os quatro numeros medidos
+// e por que os dois filtros do modo intervalo so funcionam juntos.
+//
+// Aqui vale com um agravante: esta rota e o fluxo de caixa tem de ler o MESMO
+// conjunto de linhas, senao o total do periodo deixa de bater com a soma das
+// categorias e a pizza do painel nao fecha em 100%. Os dois filtros estao
+// escritos nos mesmos dois lugares nas duas rotas, de proposito.
 
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
@@ -103,9 +115,21 @@ export async function GET(request: NextRequest) {
           .order("id", { ascending: true })
           .range(inicio, inicio + TAMANHO_DA_PAGINA - 1);
 
+        // SEM `is("group_id", null)` NO CAMINHO PESSOAL (HMO-418), pela mesma
+        // razao e com o mesmo par de filtros de /api/reports/cash-flow: a
+        // despesa de grupo que EU paguei entra INTEIRA, na categoria dela, e so
+        // a parte do que OUTRO pagou vem de `group_share_entries` logo abaixo.
+        //
+        // AS DUAS ROTAS TEM DE MUDAR JUNTAS. O cabecalho de cada uma diz que
+        // elas leem o MESMO conjunto de linhas de proposito: se os filtros
+        // divergirem, o total do fluxo deixa de bater com a soma das categorias
+        // e a pizza do painel nao fecha em 100%. Esta rota nao tem chamador no
+        // modo pessoal hoje (o unico consumidor, `PainelDoGrupo`, sempre passa
+        // `groupId`), e e justamente por isso que a divergencia ficaria dormindo
+        // ate a primeira tela que pedisse categoria por intervalo.
         return groupId
           ? base.eq("group_id", groupId)
-          : base.eq("user_id", user.id).is("group_id", null);
+          : base.eq("user_id", user.id);
       };
 
       // Paginar porque a SOMA e feita no JavaScript sobre as linhas cruas. O
@@ -137,19 +161,26 @@ export async function GET(request: NextRequest) {
         if (lote.length < TAMANHO_DA_PAGINA) break;
       }
 
-      // A MINHA PARTE DAS DESPESAS DE GRUPO, no mesmo intervalo (HMO-202).
+      // A MINHA PARTE DAS DESPESAS QUE OUTRO PAGOU, no mesmo intervalo
+      // (HMO-202, recortada pela HMO-418).
       //
       // Le a MESMA view que o modo intervalo de /api/reports/cash-flow le, pelo
-      // mesmo recorte de datas: e isso que mantem o total do fluxo igual a soma
-      // das categorias quando o periodo corta meses pela metade. Duas consultas
-      // diferentes aqui seriam duas definicoes de "minha parte", e a primeira
-      // divergencia apareceria como uma pizza que nao fecha em 100%.
+      // mesmo recorte de datas E PELO MESMO FILTRO DE `paguei_eu`: e isso que
+      // mantem o total do fluxo igual a soma das categorias quando o periodo
+      // corta meses pela metade. Duas consultas diferentes aqui seriam duas
+      // definicoes de "minha parte", e a primeira divergencia apareceria como
+      // uma pizza que nao fecha em 100%.
       if (!groupId) {
         const paginaDeParte = (inicio: number) =>
           supabase
             .from("group_share_entries")
             .select(COLUNAS_DA_PARTE_DE_GRUPO)
             .eq("user_id", user.id)
+            // A metade 2 do criterio aprovado (HMO-418), espelho do
+            // `WHERE NOT g.paguei_eu` da perna 2 da migration 046. O que EU
+            // paguei ja veio inteiro da consulta de cima; a minha parte dele
+            // aqui contaria a mesma despesa duas vezes, na mesma categoria.
+            .eq("paguei_eu", false)
             .gte("transaction_date", periodo.de)
             .lte("transaction_date", periodo.ate)
             .order("id", { ascending: true })
