@@ -82,7 +82,12 @@ function alertasDoGrupo() {
  *
  * `linhasPorTabela` responde o SELECT; `registro` acumula o que a rota escreveu.
  */
-function montarDuble({ linhasPorTabela = {}, chaveForcada = null } = {}) {
+function montarDuble({
+  linhasPorTabela = {},
+  chaveForcada = null,
+  uniqueDoBanco = null,
+  erroNoUpsert = null,
+} = {}) {
   const registro = {
     upserts: [],
     selects: [],
@@ -147,6 +152,49 @@ function montarDuble({ linhasPorTabela = {}, chaveForcada = null } = {}) {
       },
       upsert(linhas, opcoes) {
         registro.upserts.push({ tabela, linhas, opcoes });
+        const pedida = String(opcoes?.onConflict ?? "")
+          .split(",")
+          .map((c) => c.trim())
+          .filter(Boolean);
+
+        // `erroNoUpsert` devolve um erro QUALQUER -- e para provar que a queda
+        // de volta e recortada pelo 42P10, e nao "qualquer erro, tenta de novo".
+        if (erroNoUpsert) {
+          return {
+            select: () => Promise.resolve({ data: null, error: erroNoUpsert }),
+          };
+        }
+
+        // `uniqueDoBanco` e o duble sabendo QUAL UNIQUE a tabela tem. Quando a
+        // lista pedida nao casa com ela, o Postgres nao "ignora o conflito": ele
+        // levanta 42P10 em `infer_arbiter_indexes`. Medido num Postgres 17 com a
+        // `bill_notifications` do 009:
+        //
+        //   ERROR 42P10: there is no unique or exclusion constraint matching
+        //                the ON CONFLICT specification
+        //
+        // E esse o estado da producao enquanto a 057 nao for colada, e e o unico
+        // jeito honesto de sondar a queda de volta: injetar o erro a mao mediria
+        // a injecao, nao o mecanismo.
+        if (uniqueDoBanco) {
+          const mesmaChave =
+            [...pedida].sort().join(",") === [...uniqueDoBanco].sort().join(",");
+          if (!mesmaChave) {
+            return {
+              select: () =>
+                Promise.resolve({
+                  data: null,
+                  error: {
+                    code: "42P10",
+                    message:
+                      "there is no unique or exclusion constraint matching the " +
+                      "ON CONFLICT specification",
+                  },
+                }),
+            };
+          }
+        }
+
         // O comportamento que importa: o conflito e decidido pelas colunas que
         // `onConflict` NOMEIA. E assim que o banco se comporta, e e o que faz a
         // diferenca entre gravar 3 linhas e gravar 1.
@@ -155,12 +203,7 @@ function montarDuble({ linhasPorTabela = {}, chaveForcada = null } = {}) {
         // rota pediu e colide pela chave do 009. E o unico jeito de provar que
         // o "gravou 3" das assercoes acima vem da CHAVE, e nao de o duble nao
         // saber colidir.
-        const chave =
-          chaveForcada ??
-          String(opcoes?.onConflict ?? "")
-            .split(",")
-            .map((c) => c.trim())
-            .filter(Boolean);
+        const chave = chaveForcada ?? pedida;
         const vistas = new Set();
         const gravadas = [];
         for (const linha of linhas) {
@@ -316,6 +359,90 @@ test("CONTROLE NEGATIVO: com a chave do 009 a MESMA rota grava 1 de 3, sem erro"
     1,
     "com a chave do 009 o fan-out inteiro vira UMA linha gravada"
   );
+});
+
+// =====================================================
+// O DIA ENTRE O DEPLOY E A COLAGEM DA 057
+// =====================================================
+// "Deploy antes da colagem" e o lado certo da ordem, mas ele ABRE uma janela: a
+// rota no ar pede a lista da 057 e o banco ainda tem a UNIQUE do 009. Sem queda
+// de volta, o primeiro dia com conta a avisar nessa janela perde o aviso de TODO
+// MUNDO -- inclusive o do dono, que funciona hoje. Nao e hipotese: foi o estado
+// da producao em 17/10.
+
+const UNIQUE_DO_009 = ["scheduled_transaction_id", "kind", "reference_date"];
+const UNIQUE_DA_057 = [...UNIQUE_DO_009, "user_id"];
+
+test("a 057 NAO colada: o aviso sai pela chave do 009 em vez de perder o dia", async () => {
+  ambienteDoCron();
+  const registro = montarDuble({
+    linhasPorTabela: { bill_alerts: alertasDoGrupo() },
+    uniqueDoBanco: UNIQUE_DO_009,
+  });
+
+  const resposta = await CRON.GET(pedidoDoCron());
+  const corpo = await resposta.json();
+
+  // O que esta sonda existe para impedir: este status era 500, e `avisos` era 0.
+  assert.equal(resposta.status, 200, JSON.stringify(corpo));
+  assert.ok(corpo.avisos >= 1, `o dia nao pode sair sem aviso: ${JSON.stringify(corpo)}`);
+
+  // Duas TENTATIVAS, nesta ordem: a da 057 primeiro (ela e a certa quando o
+  // banco esta em dia), a do 009 so depois do 42P10.
+  assert.equal(registro.upserts.length, 2, "faltou a segunda tentativa");
+  assert.deepEqual(
+    String(registro.upserts[0].opcoes.onConflict).split(",").map((c) => c.trim()).sort(),
+    [...UNIQUE_DA_057].sort(),
+    "a PRIMEIRA tentativa tem de ser a lista da 057"
+  );
+  assert.deepEqual(
+    String(registro.upserts[1].opcoes.onConflict).split(",").map((c) => c.trim()).sort(),
+    [...UNIQUE_DO_009].sort(),
+    "a queda de volta tem de ser exatamente a chave do 009"
+  );
+
+  // E a degradacao tem de DIZER O PROPRIO NOME: sem este campo, `cron_runs`
+  // guardaria um 200 identico ao do dia em que o fan-out funcionou.
+  assert.equal(
+    corpo.unique_antiga,
+    true,
+    "a queda de volta ficou invisivel no registro do cron"
+  );
+});
+
+test("CONTROLE NEGATIVO: com a 057 colada ha UMA tentativa, e unique_antiga e false", async () => {
+  // Sem este controle, a sonda acima passaria tambem numa rota que gravasse
+  // SEMPRE duas vezes, ou que carimbasse `unique_antiga: true` em todo dia.
+  ambienteDoCron();
+  const registro = montarDuble({
+    linhasPorTabela: { bill_alerts: alertasDoGrupo() },
+    uniqueDoBanco: UNIQUE_DA_057,
+  });
+
+  const resposta = await CRON.GET(pedidoDoCron());
+  const corpo = await resposta.json();
+
+  assert.equal(resposta.status, 200, JSON.stringify(corpo));
+  assert.equal(registro.upserts.length, 1, "a queda de volta disparou sem precisar");
+  assert.equal(corpo.avisos, 3, "com a 057 colada os tres destinatarios sao gravados");
+  assert.equal(corpo.unique_antiga, false);
+});
+
+test("CONTROLE NEGATIVO: outro erro de gravacao continua virando 500", async () => {
+  // A queda de volta e recortada pelo 42P10. Um erro de permissao, de rede ou de
+  // coluna inexistente NAO pode ser "tenta de novo de outro jeito": o cron tem
+  // de falhar alto, senao um defeito de verdade vira um 200 com `avisos: 0`.
+  ambienteDoCron();
+  const registro = montarDuble({
+    linhasPorTabela: { bill_alerts: alertasDoGrupo() },
+    erroNoUpsert: { code: "42501", message: "permission denied for table bill_notifications" },
+  });
+
+  const resposta = await CRON.GET(pedidoDoCron());
+  const corpo = await resposta.json();
+
+  assert.equal(resposta.status, 500, JSON.stringify(corpo));
+  assert.equal(registro.upserts.length, 1, "nao devia ter tentado de novo");
 });
 
 test("conta PESSOAL continua rendendo um aviso so", async () => {
