@@ -294,6 +294,26 @@ export async function lerCreditoDosGrupos(
   // (`status = 'paid'`) mora em `linhaDoPrevisto`, e nao num `.neq()` daqui:
   // um filtro de consulta trocado numa refatoracao nao quebra assercao
   // nenhuma, e o defeito que ele cria e um total dobrado que parece plausivel.
+  //
+  // `status`, E NAO `my_status` -- EXCECAO DECLARADA (HMO-416)
+  // ----------------------------------------------------------
+  // A HMO-411 pos o estado POR PESSOA (`my_status`) nas oito leituras de
+  // dinheiro desta view; esta nao e uma delas. O recorte e
+  // `.in("group_id", groupIds)`, entao vem a conta prevista de todos os
+  // membros, e o que `linhaDoPrevisto` pergunta de cada uma e "ja recebeu
+  // baixa?" -- uma pergunta sobre a CONTA. Se recebeu, a transacao real que
+  // nasceu dela ja entrou pelo `realizadoPorGrupo` logo acima, e conta-la
+  // tambem como prevista dobra o credito do grupo.
+  //
+  // `my_status` responderia outra coisa: na conta de outro membro ele e a MINHA
+  // parte (`COALESCE(group_bill_payments.status, 'pending')`), entao a conta que
+  // o dono pagou voltaria como `pending`. E o `select` deixaria de trazer o
+  // campo `status`, fazendo `linhaDoPrevisto` ler `undefined` e nunca descartar
+  // nada -- o mesmo total dobrado, agora em todas as linhas.
+  //
+  // `scripts/check-as-oito-leituras.mjs` confere esta leitura AO CONTRARIO:
+  // ela TEM de continuar trazendo `status` no `select` e NAO pode citar
+  // `my_status`.
   const { data: previstas, error: erroPrevistas } = await supabase
     .from("scheduled_transactions_effective")
     .select(

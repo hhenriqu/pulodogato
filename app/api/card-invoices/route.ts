@@ -157,12 +157,28 @@ export async function GET(request: NextRequest) {
     // cada uma, e nunca somadas a `total`.
     const idsDosCartoes = faturas.map((f) => f.account_id);
 
+    // O ESTADO AQUI E O DA PESSOA (`my_status`), E A TROCA NAO MUDA NUMERO
+    // NENHUM -- ela e de CONVENCAO (HMO-416).
+    //
+    // A HMO-411 trocou as oito leituras de dinheiro desta view de `status` para
+    // `my_status`, e esta aqui ficou de fora. Ela nao era defeito: o
+    // `.eq("user_id", user.id)` logo acima garante que toda linha devolvida e
+    // MINHA, e para linha minha a 055 define `my_status = status::text`. Os dois
+    // filtros recortam exatamente o mesmo conjunto, hoje e sempre.
+    //
+    // Entao por que mexer? Porque "metade das rotas numa coluna e metade na
+    // outra" e o estado que obriga a proxima pessoa a reabrir esta pergunta caso
+    // a caso -- e a resposta "e inerte AQUI porque esta rota filtra `user_id`"
+    // nao esta escrita em lugar nenhum que ela va ler. Com a troca ha UMA
+    // convencao, e `scripts/check-as-oito-leituras.mjs` a torna verificavel: as
+    // leituras que sao sobre a PESSOA usam `my_status`, e as que sao sobre a
+    // CONTA estao na lista de excecoes daquele arquivo, cada uma com o motivo.
     if (idsDosCartoes.length > 0) {
       const { data: pendentes, error: erroPendentes } = await supabase
         .from("scheduled_transactions_effective")
         .select("*, category:transaction_categories(*)")
         .eq("user_id", user.id)
-        .eq("status", "pending")
+        .eq("my_status", "pending")
         .in("account_id", idsDosCartoes)
         .order("due_date", { ascending: true });
 
