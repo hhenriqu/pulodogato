@@ -252,3 +252,89 @@ test("o texto de ajuda distingue conta nova de conta que ja tem historico", () =
     "a conta nova prometeu preservar um historico que ela nao tem"
   );
 });
+
+// ---------------------------------------------------------------------------
+// SOMAR NOS TOTAIS (HMO-431)
+// ---------------------------------------------------------------------------
+// O campo e de TODA conta, e nao de cartao: e o que a issue pede ("o mesmo
+// para todas as contas"). As assercoes abaixo medem o `aria-checked` do
+// switch, e nao a presenca do rotulo -- um switch que renderizasse sempre
+// marcado passaria em qualquer teste que so procurasse o texto na tela.
+
+test("o campo de somar nos totais aparece nas DUAS telas", () => {
+  for (const escopo of ["conta", "cartao"]) {
+    const html = renderizar({ escopo });
+    assert.ok(
+      html.includes("Somar nos totais"),
+      `a tela de ${escopo} ficou sem o campo de somar nos totais`
+    );
+  }
+});
+
+test("o switch reflete o estado, e nao vem sempre marcado", () => {
+  // Este par e o teste que importa. Com o `checked` esquecido no JSX, o Radix
+  // renderiza `aria-checked="false"` nos dois casos; com `checked` cravado em
+  // `true`, renderiza `true` nos dois. Só o PAR distingue.
+  const ligado = renderizar({
+    escopo: "conta",
+    valores: { include_in_total: true },
+  });
+  assert.ok(
+    ligado.includes('aria-checked="true"'),
+    "a conta que soma apareceu com o switch desmarcado"
+  );
+
+  const desligado = renderizar({
+    escopo: "conta",
+    valores: { include_in_total: false },
+  });
+  assert.ok(
+    desligado.includes('aria-checked="false"'),
+    "a conta desligada apareceu com o switch marcado -- o campo nao reflete o estado"
+  );
+});
+
+test("desligado, a tela diz o que NAO muda", () => {
+  // Sem esta frase o campo e indistinguivel de arquivar a conta, que e o botao
+  // ao lado e faz outra coisa. O medo de desmarcar e perder lancamento.
+  const html = renderizar({
+    escopo: "conta",
+    valores: { include_in_total: false },
+  });
+  assert.ok(
+    html.includes("continua recebendo lançamentos"),
+    "a tela nao diz que a conta fora dos totais continua recebendo lancamentos"
+  );
+  assert.ok(
+    html.includes("Fora dos totais"),
+    "a tela nao nomeia o estado de fora dos totais"
+  );
+});
+
+test("ligado, a tela nomeia ONDE a conta entra", () => {
+  // "Somar nos totais" sozinho nao diz em que totais -- e sao quatro leituras
+  // diferentes (saldo, patrimonio, posso gastar, projecao).
+  const html = renderizar({
+    escopo: "conta",
+    valores: { include_in_total: true },
+  });
+  for (const onde of ["saldo total", "patrimônio", "posso gastar", "projeção"]) {
+    assert.ok(
+      html.includes(onde),
+      `a tela nao diz que a conta entra em "${onde}"`
+    );
+  }
+});
+
+test("no cartao, o texto fala de FATURA e nao de conta", () => {
+  // Herdar o vocabulario de conta aqui poria "esta conta entra no saldo total"
+  // em cima de um cartao, que nao tem saldo -- tem fatura.
+  const html = renderizar({
+    escopo: "cartao",
+    valores: { include_in_total: true },
+  });
+  assert.ok(
+    html.includes("fatura entra"),
+    "o cartao fala de conta onde devia falar de fatura"
+  );
+});

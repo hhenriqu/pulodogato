@@ -25,6 +25,7 @@ import {
   resumoDaJanela,
   type ContaBruta,
 } from "@/lib/net-worth";
+import { contasQueSomam } from "@/lib/contas";
 
 export async function GET(request: NextRequest) {
   try {
@@ -51,7 +52,15 @@ export async function GET(request: NextRequest) {
 
     const { data: contas, error: erroContas } = await supabase
       .from("financial_accounts")
-      .select("id, name, account_type, current_balance, is_active, color_hex")
+      .select(
+        // `include_in_total` (HMO-431, migration 058). O recorte acontece
+        // ABAIXO, em `contasQueSomam`, e nao aqui com
+        // `.eq("include_in_total", true)`: um filtro no PostgREST sobre uma
+        // coluna que o banco ainda nao recebeu responde 42703 e derruba a rota
+        // inteira -- e esta coluna acabou de nascer, entao existe janela entre
+        // o deploy do codigo e a colagem do SQL.
+        "id, name, account_type, current_balance, is_active, color_hex, include_in_total"
+      )
       .eq("user_id", user.id)
       .order("current_balance", { ascending: false });
 
@@ -63,7 +72,16 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const consolidado = consolidar((contas ?? []) as ContaBruta[]);
+    // A CONTA DESLIGADA SAI DO PATRIMONIO (HMO-431).
+    //
+    // O recorte e aqui, e nao dentro de `consolidar`, porque `lib/net-worth.ts`
+    // soma o que recebe -- ele nao decide quem entra. Enfiar o criterio la
+    // dentro obrigaria `ContaBruta` a carregar o campo e espalharia a regra por
+    // mais um arquivo; `contasQueSomam` e a unica definicao, e ela mora em
+    // lib/contas.ts.
+    const queSomam = contasQueSomam(contas ?? []);
+
+    const consolidado = consolidar(queSomam as ContaBruta[]);
 
     // A linha do tempo DEGRADA em vez de derrubar a tela. `net_worth_history`
     // nasceu na migration 008; se ela nao estiver aplicada no banco, a leitura

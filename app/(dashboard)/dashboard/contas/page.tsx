@@ -510,7 +510,27 @@ function TelaDeContas() {
                     </CardHeader>
                     <CardContent className="space-y-3">
                       <div>
-                        <p className="text-xs text-muted-foreground">Saldo</p>
+                        {/* "FORA DOS TOTAIS" AO LADO DO ROTULO (HMO-431).
+                            Sem este aviso, a conta desligada aparece na lista
+                            com o saldo dela e NAO aparece no "Saldo total" do
+                            topo -- quem somasse as contas a mao acharia outro
+                            numero e concluiria que o total esta errado. O
+                            marcador e o que torna a diferenca legivel em vez de
+                            parecer defeito.
+
+                            `=== false` E NAO `!...`: conta vinda do cache
+                            offline de antes da 058 nao tem o campo, e um
+                            `!conta.include_in_total` marcaria TODAS elas como
+                            fora dos totais -- justamente quando a tela nao tem
+                            rede para conferir. */}
+                        <p className="text-xs text-muted-foreground">
+                          Saldo
+                          {conta.include_in_total === false ? (
+                            <span className="ml-1 text-warning">
+                              · fora dos totais
+                            </span>
+                          ) : null}
+                        </p>
                         <p
                           className={`text-lg font-semibold ${
                             valor < 0 ? "text-destructive" : ""

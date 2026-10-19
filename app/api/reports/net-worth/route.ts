@@ -15,6 +15,7 @@ import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { janelaDeMeses, completarPatrimonio } from "@/lib/services/reports";
 import { mesesDoPeriodo, periodoDaQuery } from "@/lib/periodo-do-painel";
+import { contasQueSomam } from "@/lib/contas";
 
 export async function GET(request: NextRequest) {
   try {
@@ -91,13 +92,29 @@ export async function GET(request: NextRequest) {
     // do mesmo numero com formatos diferentes.
     const linhas = completarPatrimonio(brutas, janela.inicio, janela.meses);
 
-    const { data: contas } = await supabase
+    const { data: contasBrutas } = await supabase
       .from("financial_accounts")
-      .select("id, name, account_type, current_balance, is_active, color_hex")
+      .select(
+        // `include_in_total` (HMO-431, migration 058). Recorte no JS, nao no
+        // PostgREST: `.eq` sobre coluna ausente responde 42703.
+        "id, name, account_type, current_balance, is_active, color_hex, include_in_total"
+      )
       .eq("user_id", user.id)
       .order("current_balance", { ascending: false });
 
-    const atual = (contas ?? []).reduce(
+    // A CONTA DESLIGADA SAI DO PATRIMONIO DO RELATORIO (HMO-431).
+    //
+    // O MESMO recorte da rota /api/net-worth, de proposito: as duas respondem
+    // "quanto eu tenho", e divergir aqui poria dois numeros diferentes para a
+    // mesma pergunta em duas telas -- o defeito que `contasQueSomam` existe
+    // para impedir.
+    //
+    // E ele vale para o `atual` E para a lista `accounts` devolvida abaixo:
+    // mostrar na tela uma conta que nao esta somada no total faria o leitor
+    // somar na mao e encontrar um numero diferente do que a tela imprime.
+    const contas = contasQueSomam(contasBrutas ?? []);
+
+    const atual = contas.reduce(
       (s, c) => s + Number(c.current_balance ?? 0),
       0
     );

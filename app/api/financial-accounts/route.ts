@@ -100,6 +100,8 @@ export async function POST(request: NextRequest) {
       // Moeda da conta (migration 022). E o padrao que os lancamentos dela
       // herdam -- ver lib/moeda.ts.
       currency,
+      // A conta entra nos totais consolidados? (HMO-431, migration 058)
+      include_in_total,
     } = body;
 
     // Validações
@@ -172,6 +174,17 @@ export async function POST(request: NextRequest) {
         icon,
         closing_day: diaFechamento,
         due_day: diaVencimento,
+        // SO O BOOLEANO `false` DESLIGA, e a comparacao e estrita de proposito.
+        // `include_in_total: "false"` (string, como um form urlencoded ou a
+        // fila offline poderiam mandar) e um valor VERDADEIRO em JavaScript:
+        // um `if (!include_in_total)` ou um `Boolean(...)` aqui gravaria `true`
+        // e o checkbox desmarcado nao teria efeito -- com 200 na resposta.
+        //
+        // Qualquer outra coisa (ausente, `null`, string, numero) cai em
+        // `undefined`, que o supabase-js OMITE do INSERT: a coluna fica com o
+        // `DEFAULT true` da 058. E o que mantem compativel todo cliente que
+        // nao conhece o campo.
+        ...(include_in_total === false ? { include_in_total: false } : {}),
       })
       .select()
       .single();

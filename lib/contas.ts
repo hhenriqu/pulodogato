@@ -127,6 +127,35 @@ export function camposDoEscopo(escopo: EscopoDeConta): CamposDaConta {
 // ---------------------------------------------------------------------------
 
 /**
+ * A CONTA ENTRA NAS SOMAS? (HMO-431)
+ *
+ * Esta e a UNICA definicao de "esta conta conta" no app. Ela existe como funcao
+ * propria, e nao como um `if` dentro de `totalDoEscopo`, porque quem precisa da
+ * resposta nao e so a tela de Contas: o patrimonio, o "posso gastar" e a
+ * projecao fazem a mesma pergunta, cada um em cima da propria lista de contas.
+ * Tres copias de `conta.include_in_total !== false` divergiriam no dia em que a
+ * regra ganhasse um segundo criterio -- e o sintoma seria o total da tela de
+ * Contas discordando do patrimonio, que e o defeito mais caro de diagnosticar
+ * nesta base: duas leituras, as duas plausiveis, e nenhum total que as confronte.
+ *
+ * `!== false`, E NAO `=== true`. A coluna e `NOT NULL DEFAULT true` no banco
+ * (migration 058), entao do Postgres so vem `true` ou `false`. A diferenca
+ * aparece com a resposta que NAO vem do Postgres agora: o cache offline guarda
+ * contas de ANTES da 058, sem o campo, e `undefined === true` e falso -- toda
+ * conta do cache sairia dos totais, e a tela mostraria "R$ 0,00" para quem
+ * abrisse o app sem rede. `!== false` trata "nao sei" como "soma", que e o
+ * default da coluna e o comportamento de antes da feature.
+ *
+ * Generica no item (so o campo interessa) para servir as listas tipadas de cada
+ * leitura sem que nenhuma delas precise importar `FinancialAccount`.
+ */
+export function contasQueSomam<T extends { include_in_total?: boolean | null }>(
+  contas: T[]
+): T[] {
+  return contas.filter((conta) => conta.include_in_total !== false);
+}
+
+/**
  * O total de UMA tela.
  *
  * Contas somam saldo com sinal: uma conta no vermelho tem que puxar o total
@@ -137,15 +166,44 @@ export function camposDoEscopo(escopo: EscopoDeConta): CamposDaConta {
  * Somar os dois escopos separados tem que dar o mesmo que a tela unica somava
  * junta: isto e o que o teste afirma, porque a separacao nao pode mover um
  * centavo de lugar.
+ *
+ * A CONTA DESLIGADA SAI DAQUI (HMO-431), e o recorte vale para os DOIS escopos
+ * -- mas so UM deles tem chamador hoje, e vale dizer qual para ninguem concluir
+ * coisa errada a partir desta funcao:
+ *
+ *   - escopo `conta`: chamado pela tela de Contas (o "Saldo total"). E o
+ *     caminho que esta feature usa de verdade.
+ *   - escopo `cartao`: SEM CHAMADOR em producao. A tela de Cartoes somava
+ *     `totalDoEscopo(ativas, "cartao")` e deixou de somar na HMO-290 -- hoje
+ *     "Faturas em aberto" e a soma das FATURAS do mes, lida de
+ *     `GET /api/card-invoices`, que nao passa por aqui. Ver o cabecalho de
+ *     app/(dashboard)/dashboard/cartoes/page.tsx.
+ *
+ * O recorte fica nos dois de qualquer forma, e nao so no `conta`: deixar o
+ * ramo `cartao` sem ele seria plantar um defeito para o proximo chamador, que
+ * leria a assinatura ("o total do escopo") e nao teria por que suspeitar que o
+ * criterio vale em metade dos casos. O teste cobre os dois ramos.
+ *
+ * E O QUE ISSO IMPLICA PARA A FEATURE: desligar um CARTAO ainda nao tira a
+ * fatura dele de "Faturas em aberto". Aquele total nasce de outra fonte (a view
+ * de faturas do mes), e levar o criterio para la e trabalho proprio -- esta
+ * fora desta mudanca, e esta registrado como pendencia na HMO-431.
  */
 export function totalDoEscopo(
-  contas: Array<Pick<FinancialAccount, "account_type" | "current_balance">>,
+  contas: Array<
+    Pick<FinancialAccount, "account_type" | "current_balance"> & {
+      include_in_total?: boolean | null;
+    }
+  >,
   escopo: EscopoDeConta
 ): number {
-  return contasDoEscopo(contas, escopo).reduce((soma, conta) => {
-    const valor = Number(conta.current_balance ?? 0);
-    return soma + (escopo === "cartao" ? Math.abs(valor) : valor);
-  }, 0);
+  return contasQueSomam(contasDoEscopo(contas, escopo)).reduce(
+    (soma, conta) => {
+      const valor = Number(conta.current_balance ?? 0);
+      return soma + (escopo === "cartao" ? Math.abs(valor) : valor);
+    },
+    0
+  );
 }
 
 /**
@@ -211,7 +269,15 @@ export function contasDoRecorte<T extends { account_type: AccountType }>(
 // O FORMULARIO
 // ---------------------------------------------------------------------------
 
-/** O estado do formulario. Tudo string: e o que sai de um `<input>`. */
+/**
+ * O estado do formulario. Quase tudo string: e o que sai de um `<input>`.
+ *
+ * `include_in_total` E BOOLEANO, e e a unica excecao a regra do "tudo string"
+ * acima. Ele nao vem de um `<input type="text">`, e sim de um checkbox, cujo
+ * estado nativo ja e booleano -- guardar `"true"`/`"false"` aqui obrigaria cada
+ * leitura a comparar com a string certa, e `"false"` e um valor VERDADEIRO em
+ * JavaScript. O defeito seria o checkbox desmarcado continuar somando.
+ */
 export interface ValoresDaConta {
   id?: string;
   name: string;
@@ -222,6 +288,8 @@ export interface ValoresDaConta {
   closing_day: string;
   due_day: string;
   currency: string;
+  /** A conta entra nos totais consolidados? (HMO-431, migration 058) */
+  include_in_total: boolean;
 }
 
 /**
@@ -246,6 +314,10 @@ export function valoresIniciais(
     closing_day: "",
     due_day: "",
     currency: moedaOficial,
+    // Conta nova nasce SOMANDO, igual ao `DEFAULT true` da coluna. Nascer
+    // desligada faria o cadastro criar uma conta que nao aparece em total
+    // nenhum, e quem acabou de cadastrar leria isso como "o app nao salvou".
+    include_in_total: true,
   };
 }
 
@@ -265,6 +337,11 @@ export function valoresDaConta(conta: FinancialAccount): ValoresDaConta {
     // (trocar o nome, corrigir o dia de vencimento) gravar a moeda principal em
     // cima da moeda da conta, sem ninguem tocar nesse campo.
     currency: moedaSugerida({ daConta: conta.currency }),
+    // `!== false` pelo mesmo motivo de `contasQueSomam`: uma conta vinda do
+    // cache offline de antes da 058 nao tem o campo, e abrir a edicao dela
+    // apresentaria o checkbox DESMARCADO -- salvar o nome tiraria a conta dos
+    // totais sem ninguem ter tocado no checkbox.
+    include_in_total: conta.include_in_total !== false,
   };
 }
 
@@ -332,5 +409,10 @@ export function corpoDaConta(
     // configuracoes e editasse o nome -- a conta em dolar voltaria a BRL calada,
     // e o relatorio dela mudaria de balde.
     currency: valores.currency,
+    // Sempre mandado, nos dois escopos, pela mesma razao da moeda: o checkbox
+    // e de TODA conta, e nao de cartao. Mandar so quando visivel faria a conta
+    // voltar a somar no dia em que alguem editasse o nome dela por uma tela que
+    // esconde o campo.
+    include_in_total: valores.include_in_total,
   };
 }

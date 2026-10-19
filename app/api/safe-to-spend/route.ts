@@ -79,6 +79,7 @@ import {
   type ParticipantesPorGrupo,
 } from "@/lib/parte-do-grupo";
 import { direcaoDaAgenda } from "@/lib/previsto-x-realizado";
+import { contasQueSomam } from "@/lib/contas";
 import { lerDividaDoMyBank } from "@/lib/services/divida-do-mybank";
 import {
   calcularQuantoPossoGastar,
@@ -154,9 +155,15 @@ export async function GET() {
     // `is_active` vem junto: a conta arquivada e excluida do disponivel dentro
     // do calculo, e o cartao arquivado continua descontando. Filtrar aqui por
     // is_active tiraria a divida do cartao cancelado da conta.
-    const { data: contas, error: erroContas } = await supabase
+    const { data: contasBrutas, error: erroContas } = await supabase
       .from("financial_accounts")
-      .select("id, name, account_type, current_balance, is_active")
+      .select(
+        // `include_in_total` (HMO-431, migration 058). O recorte e no JS, logo
+        // abaixo, e nao com `.eq("include_in_total", true)`: filtrar no
+        // PostgREST por coluna que o banco ainda nao recebeu responde 42703 e
+        // derruba a rota -- e ha janela entre o deploy e a colagem do SQL.
+        "id, name, account_type, current_balance, is_active, include_in_total"
+      )
       .eq("user_id", user.id);
 
     if (erroContas) {
@@ -166,6 +173,21 @@ export async function GET() {
         { status: 500 }
       );
     }
+
+    // A CONTA DESLIGADA SAI DO "POSSO GASTAR" (HMO-431) -- e sai inteira, dos
+    // DOIS lados da conta.
+    //
+    // Isto importa mais aqui do que nas outras leituras, porque esta rota usa a
+    // lista de contas duas vezes: uma para o saldo disponivel e outra para
+    // levantar os ids dos CARTOES cuja divida vai ser descontada. Tirar a conta
+    // so do primeiro uso deixaria o cartao desligado continuando a descontar
+    // divida de um saldo que ele nao compoe -- o "posso gastar" ficaria MENOR
+    // do que a verdade, que e o erro que custa dinheiro nesta tela
+    // especificamente (ela existe para dizer quanto pode sair).
+    //
+    // Por isso o recorte e feito UMA vez, no nome que o resto da rota usa:
+    // `contas` abaixo e sempre a lista que soma.
+    const contas = contasQueSomam(contasBrutas ?? []);
 
     // A VIEW, e nao a tabela (HMO-308): a tabela nao tem `direction`, e deduzir
     // a direcao do tipo da REGRA faz toda previsao avulsa de receita entrar

@@ -33,6 +33,7 @@ import {
   type EscopoDeConta,
   type ValoresDaConta,
 } from "@/lib/contas";
+import { Switch } from "@/components/ui/switch";
 import { opcoesDeMoeda } from "@/lib/moeda";
 import type { AccountType } from "@/types/financial";
 
@@ -222,6 +223,43 @@ export function CamposDaConta({
           </p>
         </>
       )}
+
+      {/* ------------------------------------------------------------------
+          SOMAR NOS TOTAIS (HMO-431)
+
+          FORA DE `campos.fatura`, e de proposito: o pedido e "o mesmo para
+          TODAS as contas", entao o campo vale nos dois escopos -- conta
+          corrente e cartao. Posto dentro daquele bloco, ele desapareceria da
+          tela de Contas, que e justamente onde o caso real mora (a conta da
+          empresa, a conjunta, a de terceiro).
+
+          O ROTULO E POSITIVO ("Somar nos totais"), apesar de o pedido estar na
+          forma negativa ("optar nao somar"). Um rotulo negativo ao lado de um
+          switch cria a dupla negacao na cabeca de quem le: desligar "Não somar
+          nos totais" passa a querer dizer que soma. A frase de baixo e que
+          carrega o "não" -- uma vez, e em cima da consequencia.
+
+          E A FRASE DIZ O QUE **NAO** MUDA. Esta e a parte que nao pode sair: o
+          medo de desmarcar e perder lancamento, e sem dizer "continua
+          recebendo lancamento e aparecendo no extrato" o campo e
+          indistinguivel de arquivar a conta -- que e o botao ao lado, e faz
+          outra coisa.
+          ------------------------------------------------------------------ */}
+      <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
+        <div className="space-y-1">
+          <Label htmlFor="conta-soma-nos-totais">Somar nos totais</Label>
+          <p className="text-xs text-muted-foreground">
+            {valores.include_in_total
+              ? `Esta ${campos.substantivo === "cartão" ? "fatura entra" : "conta entra"} no saldo total, no patrimônio, no "posso gastar" e na projeção.`
+              : `Fora dos totais. A ${campos.substantivo} continua recebendo lançamentos e aparecendo no extrato — só não entra nas somas.`}
+          </p>
+        </div>
+        <Switch
+          id="conta-soma-nos-totais"
+          checked={valores.include_in_total}
+          onCheckedChange={(marcado) => mudar({ include_in_total: marcado })}
+        />
+      </div>
     </>
   );
 }

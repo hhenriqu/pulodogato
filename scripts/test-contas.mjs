@@ -28,6 +28,7 @@ import {
   camposDoEscopo,
   contasDoEscopo,
   contasDoRecorte,
+  contasQueSomam,
   corpoDaConta,
   escopoDoTipo,
   faltaFatura,
@@ -554,4 +555,147 @@ test("o recorte nao e um segundo filtro de escopo", () => {
   assert.equal(contasDoRecorte(contas, tipoDoRecorte("credit_card")), contas);
   // E o total da tela continua ignorando o cartao, recorte ou nao.
   assert.equal(totalDoEscopo(contas, "conta"), 100);
+});
+
+// =====================================================
+// A CONTA QUE NAO SOMA NOS TOTAIS (HMO-431)
+// =====================================================
+// O checkbox "Somar nos totais" e a coluna `include_in_total` (migration 058).
+//
+// O ORACULO AQUI NAO E "O TOTAL MUDOU", e sim "o total e o da lista que soma".
+// Uma assercao do tipo `total !== totalAntes` fica verde se a funcao subtrair
+// um valor qualquer; as de baixo fixam o numero exato, calculado a mao.
+
+test("a conta desligada sai do total de Contas", () => {
+  const carteira = [
+    conta("checking", 1000),
+    conta("savings", 500, { include_in_total: false }),
+  ];
+  // 1000, e nao 1500: a poupanca esta fora.
+  assert.equal(totalDoEscopo(carteira, "conta"), 1000);
+});
+
+test("o recorte vale no escopo cartao tambem", () => {
+  // CUIDADO AO LER ESTE TESTE: ele NAO prova que o cartao desligado sai de
+  // "Faturas em aberto" na tela. Aquele total deixou de usar `totalDoEscopo` na
+  // HMO-290 e hoje vem da soma das faturas do mes (`GET /api/card-invoices`),
+  // que nao passa por esta funcao -- o escopo `cartao` daqui esta sem chamador
+  // em producao.
+  //
+  // O que ele fixa e que o criterio nao vale em metade dos casos: se algum dia
+  // alguem voltar a somar cartao por aqui, o recorte ja esta certo. Aplicado so
+  // em `conta`, este teste devolveria 1200 (os dois cartoes pelo `Math.abs`).
+  const carteira = [
+    conta("credit_card", -200),
+    conta("credit_card", -1000, { include_in_total: false }),
+  ];
+  assert.equal(totalDoEscopo(carteira, "cartao"), 200);
+});
+
+test("desligar uma conta nao mexe no total do OUTRO escopo", () => {
+  // O cartao desligado nao pode levar dinheiro do saldo embora, e vice-versa:
+  // um filtro aplicado antes do recorte de escopo erraria isto calado.
+  const carteira = [
+    conta("checking", 800),
+    conta("credit_card", -300, { include_in_total: false }),
+  ];
+  assert.equal(totalDoEscopo(carteira, "conta"), 800);
+  assert.equal(totalDoEscopo(carteira, "cartao"), 0);
+});
+
+test("sem o campo, a conta SOMA -- o cache offline de antes da 058", () => {
+  // `=== true` no lugar de `!== false` faria este total dar 0: a resposta
+  // guardada no cache offline nao tem a coluna, e a tela mostraria R$ 0,00
+  // para quem abrisse o app sem rede.
+  const doCache = [{ account_type: "checking", current_balance: 700 }];
+  assert.equal(totalDoEscopo(doCache, "conta"), 700);
+  assert.deepEqual(contasQueSomam(doCache), doCache);
+});
+
+test("`null` tambem soma: so o booleano false desliga", () => {
+  // A coluna e NOT NULL no banco, entao `null` nao vem do Postgres -- mas vem
+  // de JSON montado a mao e da fila offline. Tratar `null` como "nao soma"
+  // tiraria dinheiro do total por causa de um campo que ninguem preencheu.
+  assert.equal(
+    totalDoEscopo([conta("checking", 300, { include_in_total: null })], "conta"),
+    300
+  );
+});
+
+test("contasQueSomam preserva a ordem e nao copia item", () => {
+  // Ela e usada no meio das leituras de patrimonio e projecao, que dependem da
+  // ordem que o banco devolveu (`order by current_balance`). E os itens tem de
+  // ser os MESMOS objetos: as rotas fazem `as ContaBruta[]` em cima do
+  // resultado, e um clone superficial perderia campo que o cast promete.
+  const a = conta("checking", 1);
+  const b = conta("savings", 2, { include_in_total: false });
+  const c = conta("cash", 3);
+  const somam = contasQueSomam([a, b, c]);
+  assert.equal(somam.length, 2);
+  assert.ok(somam[0] === a);
+  assert.ok(somam[1] === c);
+});
+
+test("desligar a conta NAO e arquivar: os dois campos sao independentes", () => {
+  // `is_active` e `include_in_total` decidem coisas diferentes, e `totalDoEscopo`
+  // nao olha `is_active` (quem recorta ativa/arquivada e a tela). Este teste
+  // existe para que ninguem "simplifique" os dois campos em um.
+  const carteira = [
+    conta("checking", 100, { is_active: true, include_in_total: false }),
+    conta("checking", 50, { is_active: false, include_in_total: true }),
+  ];
+  assert.equal(totalDoEscopo(carteira, "conta"), 50);
+});
+
+// -----------------------------------------------------------------------
+// O CAMPO NO FORMULARIO
+// -----------------------------------------------------------------------
+
+test("conta nova nasce somando, igual ao DEFAULT da coluna", () => {
+  assert.equal(valoresIniciais("conta").include_in_total, true);
+  assert.equal(valoresIniciais("cartao").include_in_total, true);
+});
+
+test("reabrir uma conta desligada mostra o campo DESLIGADO", () => {
+  const desligada = valoresDaConta({
+    id: "x",
+    name: "Conta da empresa",
+    account_type: "checking",
+    current_balance: 0,
+    is_active: true,
+    color_hex: "#000",
+    icon: "building",
+    include_in_total: false,
+  });
+  assert.equal(desligada.include_in_total, false);
+});
+
+test("conta antiga, sem o campo gravado, abre LIGADA", () => {
+  // `=== true` aqui faria a edicao de qualquer campo (trocar o nome) gravar
+  // `include_in_total: false` em cima de uma conta que somava -- a conta sairia
+  // dos totais sem ninguem ter tocado no checkbox.
+  const antiga = valoresDaConta({
+    id: "x",
+    name: "Conta de antes da 058",
+    account_type: "checking",
+    current_balance: 0,
+    is_active: true,
+    color_hex: "#000",
+    icon: "building",
+  });
+  assert.equal(antiga.include_in_total, true);
+});
+
+test("o campo vai no corpo das DUAS telas, como booleano", () => {
+  // Pelo mesmo motivo da moeda: ele e de toda conta, nao de cartao. Mandar so
+  // onde o campo aparece faria a conta voltar a somar quando alguem editasse o
+  // nome dela por uma tela que esconde o campo.
+  for (const escopo of ["conta", "cartao"]) {
+    const valores = { ...valoresIniciais(escopo), include_in_total: false };
+    const corpo = corpoDaConta(valores, escopo);
+    assert.equal(corpo.include_in_total, false);
+    // Booleano, e nao a string "false" -- que e um valor VERDADEIRO em JS e
+    // faria o servidor gravar `true`.
+    assert.equal(typeof corpo.include_in_total, "boolean");
+  }
 });

@@ -76,6 +76,22 @@ export async function PATCH(
       patch.last_four_digits = String(body.last_four_digits).trim() || null;
     if (body.is_active !== undefined) patch.is_active = Boolean(body.is_active);
 
+    // A conta entra nos totais consolidados? (HMO-431, migration 058)
+    //
+    // `=== true` E NAO `Boolean(...)`, e esta e a linha onde este campo se
+    // comporta diferente do `is_active` logo acima. A coluna e `NOT NULL`, e
+    // este `patch` vai para um UPDATE -- aqui nao existe "omitir e cair no
+    // DEFAULT" como no INSERT do POST: o que entrar no `patch` e gravado.
+    //
+    // Com `Boolean(body.include_in_total)`, um cliente que mandasse a STRING
+    // `"false"` ligaria a conta de volta (`Boolean("false") === true`), em
+    // silencio e com 200. Com `=== true`, qualquer coisa que nao seja o
+    // booleano `true` desliga -- e desligar e o estado reversivel e visivel na
+    // tela, enquanto religar calado e o que ninguem percebe. Na duvida, o lado
+    // seguro e o que a pessoa consegue ver.
+    if (body.include_in_total !== undefined)
+      patch.include_in_total = body.include_in_total === true;
+
     // A moeda da conta (022). Recusa em vez de corrigir: o CHECK do banco
     // devolveria 23514, que a tela mostra como "Não foi possível atualizar a
     // conta" sem dizer o motivo.
