@@ -4993,3 +4993,33 @@ jobs:
       # migration, este step e quem reprova.
       - name: Nenhuma view escapa da RLS, depois da 057
         run: $PSQL -f database/tests/view_security_invoker_test.sql
+
+      # A TRAVESSA DE ARQUIVAR O GRUPO (HMO-426)
+      # ----------------------------------------
+      # Esta suite NAO tem migration: ela mede `group_member_balances` (007,
+      # recolada na 026) pelo que `lib/services/expense-groups.ts` passou a
+      # perguntar a ela. Por isso ela roda no FIM da cadeia e nao numa posicao
+      # propria -- o que ela precisa e do schema inteiro, nao de um ponto dele.
+      #
+      # Ela e a METADE DE BANCO de um par. A outra e `npm run
+      # test:travessa-de-arquivar` (verificacao.yml), que chama os dois route
+      # handlers com um duble e mede o que a rota faz em cima da resposta. As
+      # duas sao necessarias: a suite de TS tem fixtures escritos a mao, entao
+      # sozinha ela afirma que a rota reage certo a um numero que ninguem
+      # conferiu que o banco produz.
+      #
+      # A assercao central e a secao 2: no MESMO instante e sobre o MESMO grupo,
+      # o criterio novo (saldo) libera o arquivamento e o criterio antigo (parte
+      # 'pending') o travaria para sempre. Depois da HMO-425 nada no app escreve
+      # naquela coluna, entao "para sempre" e literal.
+      #
+      # 23 assercoes. Dois controles negativos EXTERNOS, os dois medidos num
+      # Postgres 17 local antes deste step entrar:
+      #
+      #   * banco parado na 006 (sem a view): reprova na primeira consulta com
+      #     `relation "public.group_member_balances" does not exist`;
+      #   * banco parado na 025 (view do 007, sem o cambio da 026): passa
+      #     inteiro, de proposito -- as colunas de cambio nao mudam o criterio,
+      #     e exigir a 026 aqui faria o arquivo medir a migration errada.
+      - name: Arquivar o grupo e travado por SALDO em aberto, nao por parte pendente
+        run: $PSQL -f database/tests/hmo426_saldo_em_aberto_trava_arquivar_test.sql

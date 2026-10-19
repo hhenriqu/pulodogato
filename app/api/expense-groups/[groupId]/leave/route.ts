@@ -1,7 +1,7 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { conferirEscrita } from "@/lib/escrita-conferida";
-import { divisaoPendenteDoGrupo } from "@/lib/services/expense-groups";
+import { saldoEmAbertoNoGrupo } from "@/lib/services/expense-groups";
 
 // O client nao carrega o generic `Database`, entao nao da para nomear o tipo
 // dele a mao -- mas da para derivar do proprio factory. `Awaited` cobre as duas
@@ -105,32 +105,41 @@ async function archiveEmptyGroup(
   groupId: string,
   userId: string
 ) {
-  // Verificar se há transações pendentes. Ver lib/services/expense-groups.ts:
-  // "não deu para saber" recusa igual a "há", porque arquivar o grupo apaga o
-  // registro de quem devia a quem e isso não tem volta.
-  const pendencia = await divisaoPendenteDoGrupo(supabase, groupId);
+  // Ainda há quem deva a quem? Ver lib/services/expense-groups.ts: "não deu
+  // para saber" recusa igual a "há", porque sair como último membro arquiva o
+  // grupo e esconde o registro da dívida das duas telas -- sem volta pelo app.
+  //
+  // ANTES DE QUALQUER ESCRITA, e não por higiene: a view recorta pelo membro
+  // ATIVO, e quem está saindo ainda é 'active' só até o UPDATE logo abaixo.
+  const saldoEmAberto = await saldoEmAbertoNoGrupo(supabase, groupId);
 
-  if (pendencia.situacao === "nao-deu-para-saber") {
-    console.error("Não deu para verificar as divisões pendentes:", pendencia.erro);
+  if (saldoEmAberto.situacao === "nao-deu-para-saber") {
+    console.error(
+      "Não deu para verificar o saldo em aberto do grupo:",
+      saldoEmAberto.erro
+    );
     return NextResponse.json(
       {
         error:
-          "Não foi possível verificar se há divisões pendentes no grupo. Tente de novo em instantes.",
+          "Não foi possível verificar se há saldo em aberto no grupo. Tente de novo em instantes.",
       },
       { status: 503 }
     );
   }
 
-  if (pendencia.situacao === "ha") {
+  if (saldoEmAberto.situacao === "ha") {
     return NextResponse.json(
       {
         error:
           // "Finalize todas as divisões primeiro" SAIU daqui na HMO-425: a
-          // unica forma de finalizar uma divisão era aprová-la ou recusá-la, e
+          // única forma de finalizar uma divisão era aprová-la ou recusá-la, e
           // esse caminho não existe mais. Pedir uma ação impossível é pior que
-          // não pedir nenhuma. A frase agora diz o que o grupo tem e por que
-          // isso trava -- ver lib/services/expense-groups.ts.
-          "Não é possível sair: este grupo tem despesas lançadas, e sair como último membro arquivaria o registro de quem devia a quem.",
+          // não pedir nenhuma. O que ficou no lugar ("este grupo tem despesas
+          // lançadas") não pedia nada porque o critério ainda era o status da
+          // parte, e com ele grupo nenhum com despesa saía dessa recusa. Agora
+          // o critério é o saldo, e registrar os acertos zera o saldo --
+          // HMO-426, ver lib/services/expense-groups.ts.
+          "Não é possível sair: ainda há saldo em aberto neste grupo, e sair como último membro arquivaria o registro de quem devia a quem. Registre os acertos até todos os saldos ficarem zerados.",
       },
       { status: 400 }
     );

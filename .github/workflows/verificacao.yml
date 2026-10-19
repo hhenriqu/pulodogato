@@ -7596,6 +7596,58 @@ jobs:
       - name: A contagem de transacoes do grupo conta cada despesa uma vez
         run: npm run test:contagem-do-grupo
 
+      # -------------------------------------------------------------------
+      # A TRAVESSA DE ARQUIVAR O GRUPO (HMO-426)
+      # -------------------------------------------------------------------
+      # `lib/services/expense-groups.ts` recusava arquivar o grupo quando alguma
+      # parte estava `status = 'pending'`. A HMO-425 tirou do app o
+      # aprovar/recusar a propria parte, e nenhum caminho nosso escreve mais
+      # nada naquela coluna: toda parte nasce 'pending' e fica. Grupo com
+      # qualquer despesa lancada nao podia mais ser arquivado nem apagado, para
+      # sempre -- e a mensagem de recusa nomeava uma acao que nao existia mais.
+      # O criterio passou a ser saldo diferente de zero em
+      # `group_member_balances`, que e o numero que a tela do grupo mostra.
+      #
+      # A suite chama os DOIS handlers que consultam a travessa -- apagar o
+      # grupo e sair como ultimo membro -- e rele `is_active` na tabela. Os dois
+      # porque cada um tem a SUA copia do bloco de decisao, e o defeito irmao
+      # desta issue (HMO-145) estava escrito duas vezes, nas duas rotas.
+      #
+      # Tres das assercoes sao de AUSENCIA (`escritas: []` nos caminhos de
+      # recusa), e e por isso que elas medem a ordem: a view recorta pelo membro
+      # ATIVO, entao uma travessa consultada DEPOIS do UPDATE que arquiva os
+      # membros responderia "nao ha saldo em aberto" sempre.
+      #
+      # SEM `paths:`, como todo o resto deste workflow. Aqui isso importa mais
+      # que consistencia: o `paths:` do db-verify cita `app/**/expense-groups/**`
+      # mas NAO cita `lib/services/expense-groups.ts`, que e onde o criterio
+      # mora -- um filtro escrito hoje deixaria passar verde exatamente o
+      # arquivo que esta suite existe para cobrir.
+      - name: Arquivar o grupo e travado por SALDO em aberto, nao por parte pendente
+        run: npm run test:travessa-de-arquivar
+
+      # Controle negativo. A metade de BANCO deste par vive no db-verify
+      # (`database/tests/hmo426_saldo_em_aberto_trava_arquivar_test.sql`), e ela
+      # prova que a view produz os numeros; estes mutantes provam que a suite de
+      # cima reprova quando a rota deixa de obedece-los.
+      #
+      # Medido: 10 mutantes, 10 mortos, TODOS por assercao (nenhum caiu no tsc),
+      # com controle positivo verde. Entre eles o defeito restaurado letra por
+      # letra (o criterio volta a ser o status da parte), a comparacao com zero
+      # apagada, `eq` por `neq`, o recorte por grupo apagado, o colapso do erro
+      # de leitura em "nao ha" (o defeito da HMO-145) e, em CADA uma das duas
+      # rotas, a recusa aplicada ao estado errado e o 503 de "nao deu para
+      # saber" removido.
+      #
+      # ANOTADO porque a leitura intuitiva esta errada: o mutante do defeito da
+      # issue NAO morre pelo caso de sucesso. O duble nao emula embed, entao a
+      # consulta velha responde vazio ali e o grupo acertado continua sendo
+      # arquivado. Quem o mata e o lado da PROTECAO (grupo devendo tem de ser
+      # recusado) e a assercao de onde o criterio le. Quem mexer na suite
+      # precisa saber qual assercao e load-bearing antes de "simplificar" essa.
+      - name: Mutantes da travessa de arquivar o grupo
+        run: npm run mutantes:travessa-de-arquivar
+
       # Controle negativo. A suite afirma IGUALDADES sobre numeros pequenos (12,
       # 1, 0), que e o tipo de afirmacao que fica verde de graca -- e o 12 do caso
       # da issue e produzido tambem por `owed_count` sozinho, que esta errado.

@@ -1,6 +1,6 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
-import { divisaoPendenteDoGrupo } from "@/lib/services/expense-groups";
+import { saldoEmAbertoNoGrupo } from "@/lib/services/expense-groups";
 import { moedaDoGrupoParaGravar } from "@/lib/moeda-do-grupo";
 import { conferirEscrita } from "@/lib/escrita-conferida";
 
@@ -353,29 +353,39 @@ export async function DELETE(
       );
     }
 
-    // Verificar se há transações pendentes. Ver lib/services/expense-groups.ts:
-    // "não deu para saber" recusa igual a "há", porque arquivar o grupo apaga o
-    // registro de quem devia a quem e isso não tem volta.
-    const pendencia = await divisaoPendenteDoGrupo(supabase, groupId);
+    // Ainda há quem deva a quem? Ver lib/services/expense-groups.ts: "não deu
+    // para saber" recusa igual a "há", porque arquivar o grupo esconde o
+    // registro da dívida das duas telas e isso não tem volta.
+    //
+    // ANTES DE QUALQUER ESCRITA, e não por higiene: a view recorta pelo membro
+    // ATIVO, então depois do UPDATE que arquiva os membros a mesma leitura
+    // responderia "não há saldo em aberto".
+    const saldoEmAberto = await saldoEmAbertoNoGrupo(supabase, groupId);
 
-    if (pendencia.situacao === "nao-deu-para-saber") {
-      console.error("Não deu para verificar as divisões pendentes:", pendencia.erro);
+    if (saldoEmAberto.situacao === "nao-deu-para-saber") {
+      console.error(
+        "Não deu para verificar o saldo em aberto do grupo:",
+        saldoEmAberto.erro
+      );
       return NextResponse.json(
         {
           error:
-            "Não foi possível verificar se há divisões pendentes no grupo. Tente de novo em instantes.",
+            "Não foi possível verificar se há saldo em aberto no grupo. Tente de novo em instantes.",
         },
         { status: 503 }
       );
     }
 
-    if (pendencia.situacao === "ha") {
+    if (saldoEmAberto.situacao === "ha") {
       return NextResponse.json(
         {
           error:
-            // Mesma troca da rota de sair (HMO-425): "Finalize todas as
-            // divisões primeiro" nomeava o aprovar/recusar, que saiu do app.
-            "Não é possível arquivar: este grupo tem despesas lançadas, e arquivar esconderia o registro de quem devia a quem.",
+            // A frase nomeia uma porta QUE EXISTE (HMO-426). "Finalize todas as
+            // divisões primeiro" nomeava o aprovar/recusar, que saiu do app na
+            // HMO-425; "este grupo tem despesas lançadas" era verdade e não
+            // dizia o que fazer, porque o critério ainda era o status da parte.
+            // Registrar os acertos zera os saldos e libera o arquivamento.
+            "Não é possível arquivar: ainda há saldo em aberto neste grupo. Registre os acertos até todos os saldos ficarem zerados.",
         },
         { status: 400 }
       );
