@@ -227,6 +227,7 @@
     "due_day",
     "icon",
     "id",
+    "include_in_total",
     "is_active",
     "last_four_digits",
     "name",

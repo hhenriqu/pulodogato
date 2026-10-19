@@ -4556,6 +4556,116 @@ jobs:
       - name: A edicao de despesa de grupo sabe falhar (17 mutantes)
         run: PGURL=postgresql://postgres:postgres@localhost:5432 node scripts/mutantes-edicao-de-grupo.mjs
 
+      # =====================================================================
+      # HMO-431 -- A CONTA QUE NAO SOMA NOS TOTAIS (058)
+      # =====================================================================
+      # A 058 e `ADD COLUMN financial_accounts.include_in_total boolean NOT
+      # NULL DEFAULT true`, e nada mais: nenhuma view recolada, nenhum trigger,
+      # nenhum CHECK, nenhum backfill. Por isso NAO ha step de
+      # `view_security_invoker_test.sql` depois dela -- ela nao toca view
+      # nenhuma, e um step a mais ali afirmaria que toca.
+      #
+      # ---------------------------------------------------------------------
+      # POR QUE ESTE BLOCO ESTA AQUI, E NAO NO FIM DO JOB COM A 056 E A 057
+      # ---------------------------------------------------------------------
+      # Esta e a unica decisao deste bloco que nao se le no diff, e ela custou
+      # um vermelho medido antes de entrar.
+      #
+      # Os blocos da 056 e da 057 ficam DEPOIS do passo
+      # `schema-columns.json em dia com as migrations` (logo abaixo). Isso
+      # funciona para elas porque nenhuma das duas CRIA COLUNA: a 056 troca uma
+      # funcao e a 057 recola uma view, entao a lista de colunas de um banco
+      # parado na 055 e identica a de um banco na 057, e o passo fica verde sem
+      # nunca ter visto as duas migrations.
+      #
+      # A 058 cria coluna. Com o bloco no fim do job, o passo abaixo compara um
+      # banco SEM `include_in_total` contra o `schema-columns.json` que JA a
+      # tem, e sai 1:
+      #
+      #     database/schema-columns.json esta fora de sincronia com as migrations.
+      #
+      # Medido, exatamente assim, num Postgres 17 local. E o vermelho acusa o
+      # arquivo gerado -- manda rodar o gerador, que e a unica coisa que nao
+      # resolve -- em vez de acusar a posicao do step, que e o defeito real.
+      #
+      # Entao a regra que este bloco registra para a proxima migration:
+      # migration que CRIA COLUNA (ou tabela, ou view com coluna nova) tem de
+      # ser aplicada ANTES deste passo. Migration que so troca funcao ou recola
+      # view pode ficar no fim.
+      #
+      # ---------------------------------------------------------------------
+      # A ORDEM DOS QUATRO STEPS NAO E NEGOCIAVEL
+      # ---------------------------------------------------------------------
+      #   1. a fixture planta duas contas SEM a coluna (ela ainda nao existe);
+      #   2. a migration -- as duas viram `true`;
+      #   3. a fixture DESLIGA uma delas, e COMITA;
+      #   4. a migration DE NOVO (idempotencia).
+      #
+      # So nessa ordem a secao 5 da suite mede o que ela existe para medir: que
+      # re-colar o arquivo NAO religa a conta que o usuario desligou. Mover o
+      # step 4 para antes do 3 deixa a secao 5 VERDE e sem controlar nada --
+      # exatamente o modo de falha de
+      # `guarda-de-ancora-verde-nao-prova-que-o-mutante-morre`. O cabecalho de
+      # `058_conta_desligada_do_total.sql` repete esta ordem, para quem chegar
+      # pelo arquivo em vez do workflow.
+      #
+      # AS FIXTURES COMITAM, e aqui isso exige mais cuidado do que no fim do
+      # job: as duas contas ficam visiveis para todo step daqui para baixo.
+      # Medido que nenhum deles se incomoda -- os passos de RLS e de `anon` leem
+      # CATALOGO e nao linha; os de deriva constroem banco proprio; o teste da
+      # 056 conta contas recortando pelo `user_id` DELE (`a0560000-...`), e o
+      # usuario desta fixture e outro (`a0580000-...`). O `profiles` desta
+      # fixture nasce `is_public = FALSE` de proposito, senao
+      # `view_security_invoker_test.sql` (que roda mais abaixo, depois da 057)
+      # perde o controle -- a armadilha documentada no cabecalho de
+      # `056_contas_antes_da_056.sql`.
+      - name: Contas plantadas antes da 058
+        run: $PSQL -f database/tests/058_contas_antes_da_058.sql
+
+      - name: 058_conta_fora_dos_totais
+        run: $PSQL -f database/migrations/058_conta_fora_dos_totais.sql
+
+      # Entre as duas colagens, de proposito. Ver a ordem no comentario acima.
+      - name: Uma conta e desligada do total antes do re-run
+        run: $PSQL -f database/tests/058_conta_desligada_do_total.sql
+
+      # Re-executavel: `ADD COLUMN IF NOT EXISTS` e o `COMMENT`, que e
+      # idempotente por natureza. Producao recebe migration por colagem a mao,
+      # e colar duas vezes acontece -- aqui o re-run tem um segundo papel, que
+      # e alimentar a secao 5 da suite.
+      - name: 058 e idempotente
+        run: $PSQL -f database/migrations/058_conta_fora_dos_totais.sql
+
+      # 6 mutantes da 058 medidos num Postgres 17 local antes deste step entrar
+      # (banco TEMPLATE parando na 057 -- a cadeia inteira, inclusive os blocos
+      # da 056 e da 057 que moram no fim do job --, um banco novo por mutante, a
+      # ordem dos quatro steps acima reproduzida em cada um): os 6 morrem e o
+      # controle positivo (a 058 intacta, com um espaco a mais no `COMMENT ON`)
+      # fica verde.
+      #
+      #   * `DEFAULT true` -> `DEFAULT false`             morre na secao 1
+      #   * `NOT NULL` apagado                            morre na secao 1
+      #   * `boolean NOT NULL DEFAULT true` -> `boolean`  morre na secao 1
+      #   * `boolean` -> `text` (com `DEFAULT 'true'`)    morre DUAS vezes: no
+      #     step 3, que compara `include_in_total = FALSE` e estoura "operator
+      #     does not exist: text = boolean", e tambem na secao 1 quando levado
+      #     direto a suite. Medido nas duas posicoes -- a segunda importa
+      #     porque uma fixture que deixasse de comparar booleano tiraria a
+      #     primeira morte sem ninguem notar;
+      #   * `UPDATE ... SET include_in_total = true` acrescentado (o backfill
+      #     "de limpeza")                                 morre na secao 5
+      #   * `COMMENT ON COLUMN` apagado                   morre na secao 7
+      #
+      # O mutante do backfill e o unico que NAO morreria num banco construido
+      # do zero -- e a razao de existirem as duas fixtures. Ver o cabecalho de
+      # `058_contas_antes_da_058.sql` para o porque do vacuo.
+      #
+      # O controle negativo externo do arquivo de teste: contra um banco parado
+      # na 057 ele fica VERMELHO na secao 1, com a string do catalogo vazia
+      # ("esperado boolean / NOT NULL / true, obtido <NULL>"). Medido.
+      - name: A conta pode ficar fora dos totais, e o re-run nao a religa
+        run: $PSQL -f database/tests/058_conta_fora_dos_totais_test.sql
+
       # O guard de deriva de COLUNA (scripts/check-column-drift.mjs) roda no job
       # code-schema-drift, que nao tem Postgres, entao ele le o schema de
       # database/schema-columns.json. Este passo e o que impede aquele arquivo de
