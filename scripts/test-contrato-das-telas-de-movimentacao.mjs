@@ -1556,6 +1556,91 @@ test("a frase de vazio do «Previsto» CONCORDA com o cartao (HMO-379)", () => {
   );
 });
 
+test("a aba Receitas NOMEIA quem deve o reembolso que esta no «Previsto» (HMO-422)", () => {
+  // A TERCEIRA METADE DO MESMO DEFEITO, e ela sobreviveu as duas de cima.
+  //
+  // A HMO-379 fez o cartao DIZER "R$ 508,42 de 2 pessoas em 1 grupo" e a frase
+  // de vazio deixar de afirmar vazio. Nenhuma das duas diz QUEM sao as duas
+  // pessoas nem QUAL e o grupo -- e `lerCreditoDosGrupos` JA DEVOLVIA essas
+  // linhas: `notaDoCreditoAReceber` as colapsava em tres numeros e a rota
+  // jogava o resto fora. Para conferir os R$ 508,42 era preciso trocar de tela
+  // (/dashboard/personal-finance), enquanto a aba DESPESAS lista os
+  // destinatarios da parte simetrica desde a HMO-365.
+  //
+  // O ELO INTEIRO E ASSERCAO AQUI, e nao so uma ponta: o defeito da HMO-379 foi
+  // precisamente a rota mandar um campo que o tipo da tela escondia, entao
+  // "a rota emite" sozinho nao prova entrega nenhuma.
+  assert.match(
+    rota,
+    /quem_me_paga:\s*creditoDosGrupos/,
+    "A rota nao emite `quem_me_paga`. As linhas do credito morrem em " +
+      "`notaDoCreditoAReceber`, e a aba Receitas volta a citar um numero sem " +
+      "dizer de quem ele e."
+  );
+  assert.match(
+    rota,
+    /creditoDosGrupos = leitura\.credito/,
+    "A rota nao guarda `leitura.credito`. Uma SEGUNDA leitura para as linhas " +
+      "seria a segunda implementacao do mesmo credito -- o painel mostraria " +
+      "linhas que nao somam o numero do cartao ao lado."
+  );
+  assert.match(
+    lista,
+    /quem_me_paga\s*\?\?\s*null/,
+    "A lista nao le `quem_me_paga` da resposta: o campo chegaria no corpo e " +
+      "nenhum componente o mencionaria -- o defeito da HMO-379, repetido."
+  );
+  assert.match(
+    lista,
+    /<PainelQuemMePaga credito=\{quemMePaga\} \/>/,
+    "O painel nao e montado com o estado lido da rota."
+  );
+
+  // SO NA ABA RECEITAS, e o `tipo === "income"` ao lado do painel e o que
+  // garante isso. Em Despesas o mesmo valor seria um abatimento da conta a
+  // pagar (o criterio do safe-to-spend, que e outra pergunta e outra tela).
+  assert.match(
+    lista,
+    /tipo === "income" && podeMostrarNumero\(estado\) && \(\s*<PainelQuemMePaga/,
+    "O painel nao esta preso a aba Receitas e ao `podeMostrarNumero`: " +
+      '"a Laís te deve R$ 508,42" dito sobre um cache de ontem pode ja ter ' +
+      "sido pago."
+  );
+
+  // O PAINEL DIZ QUE O VALOR NAO E ACRESCIMO. Sem esta frase a pessoa soma o
+  // total do painel ao «Previsto» de cima e conclui que vai receber o dobro --
+  // a mesma razao de `NOTA_PRA_QUEM_PAGAR` existir do outro lado.
+  //
+  // `semComentarios` e OBRIGATORIO aqui: o cabecalho do componente cita a
+  // frase em prosa, e na fonte crua esta assercao casaria com o comentario e
+  // ficaria verde sobre um JSX que apagou a nota.
+  const painel = semComentarios(
+    readFileSync("components/movimentacoes/PainelQuemMePaga.tsx", "utf8")
+  );
+  assert.match(
+    painel,
+    /já incluído no Previsto acima/,
+    "`NOTA_QUEM_ME_PAGA` perdeu a oracao que importa: a de que este total JA " +
+      "esta dentro do cartao «Previsto»."
+  );
+  assert.match(
+    painel,
+    /\{NOTA_QUEM_ME_PAGA\}/,
+    "O painel nao INTERPOLA a nota -- uma segunda copia da frase no JSX se " +
+      "separa da constante na primeira edicao."
+  );
+  // E O ROTULO DO DEVEDOR VEM DA LIB, nao de um `{linha.devedor}` solto: com o
+  // perfil ilegivel (nenhuma policy de `profiles` olha `group_members`) o
+  // elemento renderizaria NADA, e "R$ 300 · Casa" sem mencao a ninguem se le
+  // como receita propria -- e pior, como receita JA RECEBIDA.
+  assert.match(
+    painel,
+    /devedorNaLinha\(linha\)/,
+    "O painel nao usa `devedorNaLinha`: o devedor de perfil ilegivel ficaria " +
+      "sem rotulo nenhum na linha."
+  );
+});
+
 test("os DOIS numeros que vao discordar levam a legenda de cada um (fase F5)", () => {
   // A aba Despesas responde "quanto sai da sua conta" (bruto) e o cartao
   // «Quanto ainda posso gastar» responde "quanto voce pode gastar" (liquido).

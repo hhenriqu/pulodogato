@@ -77,7 +77,9 @@ import {
 } from "@/components/ui/card";
 import { CartoesDaTela } from "@/components/movimentacoes/CartoesDaTela";
 import { PainelPraQuemPagar } from "@/components/movimentacoes/PainelPraQuemPagar";
+import { PainelQuemMePaga } from "@/components/movimentacoes/PainelQuemMePaga";
 import type { DestinoDoPagamento } from "@/lib/pra-quem-pagar";
+import type { CreditoAReceber } from "@/lib/credito-de-grupo";
 import {
   SecaoDaTela,
   type AcoesDaLinha,
@@ -176,6 +178,19 @@ interface RespostaDaTela {
    * quem nao tem grupo.
    */
   pra_quem_pagar?: DestinoDoPagamento[];
+  /**
+   * QUEM ME PAGA -- HMO-422, so na aba Receitas.
+   *
+   * `CreditoAReceber` inteiro (linhas + `sem_devedor`) e nao so as linhas: o
+   * total do cartao e a soma das LINHAS, e o resto do saldo e escrito em vez de
+   * desaparecer -- ver o cabecalho de `PainelQuemMePaga`.
+   *
+   * Ausente no corpo guardado pelo PWA de antes desta issue, e e por isso que
+   * o estado e `| null` e a leitura usa `?? null`: `[]` ali afirmaria "ninguem
+   * te deve nada" com base num corpo que nunca respondeu isso, debaixo de um
+   * cartao «Previsto» que esta somando o reembolso.
+   */
+  quem_me_paga?: CreditoAReceber | null;
 }
 
 /** 'AAAA-MM-DD' -> 'DD/MM/AAAA', por fatia. Nunca `new Date`. */
@@ -266,6 +281,12 @@ export function ListaDeMovimentacao({
    * ao contrario de `semVencimento`, onde `[]` seria uma afirmacao.
    */
   const [praQuemPagar, setPraQuemPagar] = useState<DestinoDoPagamento[]>([]);
+  /**
+   * QUEM ME PAGA -- HMO-422. `null` e nao `[]`, ao contrario de `praQuemPagar`:
+   * ver `RespostaDaTela.quem_me_paga`. O painel devolve `null` nos dois casos,
+   * mas o tipo preserva a diferenca para quem vier depois.
+   */
+  const [quemMePaga, setQuemMePaga] = useState<CreditoAReceber | null>(null);
   const [estado, setEstado] = useState<EstadoDaLeitura | null>(null);
   const [guardadoEm, setGuardadoEm] = useState<Date | null>(null);
   const [carregando, setCarregando] = useState(true);
@@ -333,6 +354,9 @@ export function ListaDeMovimentacao({
       // um Pix que ja esta na conta de alguem.
       setAcertos(leitura.dados.acertos_do_grupo ?? null);
       setPraQuemPagar(leitura.dados.pra_quem_pagar ?? []);
+      // `?? null` pelo motivo de `setSemVencimento` e de `setAcertos`: resposta
+      // antiga do aparelho nao tem o campo.
+      setQuemMePaga(leitura.dados.quem_me_paga ?? null);
     } else {
       // A leitura falhou: a lista SAI da tela. Deixar a do periodo anterior
       // seria a tela mostrando setembro com o titulo de outubro.
@@ -343,6 +367,10 @@ export function ListaDeMovimentacao({
       // Leticia" sobrevivendo a uma leitura que falhou e uma divida afirmada
       // sobre o periodo ANTERIOR, debaixo do titulo do novo.
       setPraQuemPagar([]);
+      // Pelo MESMO motivo: um painel "a Lais te deve R$ 508,42" sobrevivendo a
+      // uma leitura que falhou e um credito afirmado sobre o periodo ANTERIOR,
+      // debaixo do titulo do novo.
+      setQuemMePaga(null);
     }
 
     setCarregando(false);
@@ -678,6 +706,28 @@ export function ListaDeMovimentacao({
           */}
           {tipo === "expense" && podeMostrarNumero(estado) && (
             <PainelPraQuemPagar destinos={praQuemPagar} />
+          )}
+
+          {/*
+            QUEM ME PAGA (HMO-422) -- O ESPELHO do painel logo acima.
+
+            A issue: o cartao «Previsto» de Receitas dizia R$ 508,42 "de 2
+            pessoas em 1 grupo" e a secao «Previsto no periodo» dizia (0). O
+            numero estava certo (o reembolso entra no previsto desde a HMO-364) e
+            a aba nao dizia QUEM nem de QUAL grupo -- so /dashboard/personal-
+            finance dizia, uma tela de distancia, lendo o MESMO credito.
+
+            Debaixo dos cartoes e NAO como um quarto cartao, e NAO como linha da
+            lista: as tres razoes estao no cabecalho de `PainelQuemMePaga`, e a
+            do meio e a decisao da HMO-379, que esta issue nao reverte.
+
+            `podeMostrarNumero` tambem aqui, e pelo motivo do vencido e do
+            reembolso em `CartoesDaTela`: "a Lais te deve R$ 508,42" dito sobre
+            um cache de ontem pode ja ter sido pago. O componente devolve `null`
+            com `null` e com lista vazia, entao quem nao tem grupo nao ve nada.
+          */}
+          {tipo === "income" && podeMostrarNumero(estado) && (
+            <PainelQuemMePaga credito={quemMePaga} />
           )}
 
           {/*

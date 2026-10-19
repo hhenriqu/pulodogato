@@ -540,6 +540,26 @@ const PainelPraQuemPagar = (props) =>
     : null;
 
 /**
+ * O PAINEL "QUEM TE PAGA" (HMO-422): MARCADOR, irmao exato do de cima.
+ *
+ * Mesmo motivo, palavra por palavra: ele nao e assunto desta suite (a marcacao
+ * dele e medida em \`npm run test:quem-me-paga-na-tela\`, que renderiza o
+ * componente DE VERDADE num Chromium), e existe aqui porque
+ * \`ListaDeMovimentacao\` passou a importa-lo -- um nome que a pagina nao declara
+ * vira \`ReferenceError\` no render, e o sintoma chega DESLOCADO
+ * ("secao ausente: Previsto no período"), que se le como arnes quebrado.
+ *
+ * A GUARDA E A MESMA, e aqui ela e sobre \`credito\` e nao sobre um array: os
+ * corpos de resposta desta suite nao tem \`quem_me_paga\`, entao o estado chega
+ * \`null\` e o componente de verdade devolve \`null\`. Repetir a guarda mantem o
+ * marcador fora da tela onde a producao tambem nao desenha nada.
+ */
+const PainelQuemMePaga = (props) =>
+  props.credito && props.credito.linhas && props.credito.linhas.length > 0
+    ? React.createElement("div", null, "ESBOCO-QUEM-ME-PAGA")
+    : null;
+
+/**
  * O DIALOGO DA CONTA PAGADORA (HMO-310): REGISTRADOR, e nao marcador de texto.
  *
  * Ele e \`@radix-ui/react-dialog\` + \`sonner\` + \`@/components/ui/select\`, e nada

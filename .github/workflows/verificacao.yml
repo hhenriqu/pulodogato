@@ -8098,6 +8098,59 @@ jobs:
         run: npm run mutantes:pra-quem-pagar
 
       # -----------------------------------------------------------------------
+      # Quem te paga -- o espelho do painel de cima, na aba Receitas (HMO-422)
+      # -----------------------------------------------------------------------
+      # A issue: o cartao «Previsto» de Receitas dizia R$ 508,42 "de 2 pessoas
+      # em 1 grupo" e a aba nao dizia, em lugar nenhum, QUEM sao as duas pessoas
+      # nem QUAL e o grupo -- so /dashboard/personal-finance dizia, uma tela de
+      # distancia, lendo o MESMO credito pela MESMA lib. A aba Despesas tinha o
+      # painel simetrico desde a HMO-365; Receitas nao tinha.
+      #
+      # SEM filtro de caminho, como todo o resto deste workflow: a suite nao
+      # toca no Postgres (o componente recebe props), entao ela nao pertence ao
+      # db-verify.
+      #
+      # AS QUATRO COISAS QUE SO O DOM DENUNCIA, e nenhuma delas tem assercao de
+      # funcao pura possivel:
+      #   1. o ROTULO SEM A PESSOA -- `devedor` e `null` quando a RLS nao deixa
+      #      ler o perfil, e um `{linha.devedor}` solto renderiza NADA: "R$ 300
+      #      · Casa" sem mencao a ninguem se le como receita propria, e pior,
+      #      como receita JA RECEBIDA;
+      #   2. a MARCA QUE MENTE -- `full_name` de espacos e verdadeiro em JS, e um
+      #      `data-tem-nome` calculado no JSX diria "sim" sobre um rotulo vazio;
+      #   3. as DUAS LINHAS COLAPSADAS -- a mesma pessoa pode me dever em dois
+      #      grupos, e com a `key` so no devedor o React junta as duas. A
+      #      primeira pintura sai IDENTICA a certa (os dois nos existem), entao
+      #      a evidencia e o aviso do React: a sonda faz patch de
+      #      `console.error` ANTES do UMD e o le;
+      #   4. o SALDO SEM DEVEDOR -- sem a linha final a soma visivel fica abaixo
+      #      do numero que a legenda do cartao cita.
+      #
+      # O ROTULO DE FALLBACK E CALCULADO POR PRODUCAO na pagina da sonda
+      # (`devedorNaLinha` e `DEVEDOR_SEM_NOME` extraidas do .tmp por regex), e
+      # nao entregue pronto no fixture: com o texto literal, os casos B e C
+      # mediriam a si mesmos e ficariam verdes com o fallback inteiramente
+      # quebrado.
+      - name: Quem te paga na tela, no navegador
+        run: npm run test:quem-me-paga-na-tela
+
+      # Controle negativo da suite acima.
+      #
+      # Medido: 12 mutantes, 12 mortos (10 por ASSERCAO, 2 pelo tsc), com
+      # controle positivo. UMA suite so e nao duas como no painel irmao, e isso
+      # esta escrito no cabecalho do runner: a aritmetica do credito NAO e deste
+      # componente (ela sai de lib/credito-de-grupo.ts, que tem
+      # `mutantes:credito-de-grupo` proprio), entao a unica suite que pode matar
+      # um mutante de JSX e a de navegador.
+      #
+      # `chave_so_do_devedor` SOBREVIVEU na primeira volta e o conserto foi na
+      # SUITE, nao no codigo: o React renderiza os dois nos com chave repetida e
+      # so avisa, entao o DOM da primeira pintura nao distinguia o mutante do
+      # original. A sonda passou a coletar o aviso.
+      - name: Mutantes do quem te paga
+        run: npm run mutantes:quem-me-paga
+
+      # -----------------------------------------------------------------------
       # MyBank -- a serie do emprestimo, as rotas e o ciclo do Caso A
       # (HMO-370 e HMO-382)
       # -----------------------------------------------------------------------

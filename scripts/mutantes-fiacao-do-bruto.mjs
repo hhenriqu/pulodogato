@@ -100,6 +100,16 @@ const SAFE = "app/api/safe-to-spend/route.ts";
 const PAINEL = "app/(dashboard)/dashboard/page.tsx";
 const TELA = "components/movimentacoes/TelaDeMovimentacao.tsx";
 const LEGENDAS = "lib/legenda-do-bruto-e-do-liquido.ts";
+/**
+ * A LISTA das duas abas -- alvo novo na HMO-422.
+ *
+ * Ela entra aqui porque o elo que a issue fechou tem DOIS lados: a rota passou
+ * a emitir `quem_me_paga` e a lista passou a ler o campo. Mutar so a rota
+ * deixaria o segundo lado sem controle negativo -- e foi exatamente o lado que
+ * falhou na HMO-379, quando `a_receber_do_mybank` chegava no corpo e o tipo da
+ * tela o escondia.
+ */
+const LISTA = "components/movimentacoes/ListaDeMovimentacao.tsx";
 
 const MUTANTES = [
   // --- F1b: a regra do pagador ligada SO nesta leitura ---------------------
@@ -409,6 +419,49 @@ const MUTANTES = [
     para: '      .eq("service_id", servico.id)',
     medida: CRITERIO,
     caso: "secao 8: a diferenca entre o painel e a aba Despesas e UMA perna",
+  },
+
+  // --- HMO-422: o reembolso do «Previsto» com NOME e GRUPO -----------------
+  //
+  // Os tres mutantes sao os tres elos da mesma entrega, e cada um sozinho
+  // devolve a tela da issue: um numero no cartao sem nada que diga de quem ele
+  // e. Nenhum deles muda um unico valor -- sao mutantes de FIACAO, a familia
+  // que `campo-de-rotulo-passa-pela-suite-de-aritmetica-inteira` descreve.
+  {
+    nome: "hmo422_rota_nao_emite",
+    alvo: ROTA,
+    porque:
+      "a rota volta a jogar fora as linhas do credito. `notaDoCreditoAReceber` " +
+      "colapsa `CreditoAReceber` em tres numeros, e sem este campo o painel da " +
+      "aba Receitas nao tem de onde tirar QUEM deve -- a tela da HMO-422, byte " +
+      "a byte",
+    de: "      quem_me_paga: creditoDosGrupos,",
+    para: "      quem_me_paga: null,",
+    caso: "a aba Receitas NOMEIA quem deve o reembolso que esta no «Previsto»",
+  },
+  {
+    nome: "hmo422_lista_nao_le",
+    alvo: LISTA,
+    porque:
+      "o campo chega no corpo e a tela nao o le. E o defeito da HMO-379 " +
+      "repetido com outro nome: `git grep` acharia `quem_me_paga` na rota, o " +
+      "numero do cartao continuaria certo, e o painel nunca apareceria",
+    de: "      setQuemMePaga(leitura.dados.quem_me_paga ?? null);",
+    para: "      setQuemMePaga(null);",
+    caso: "a aba Receitas NOMEIA quem deve o reembolso que esta no «Previsto»",
+  },
+  {
+    nome: "hmo422_painel_na_aba_errada",
+    alvo: LISTA,
+    porque:
+      "o painel sai na aba DESPESAS. Nenhum numero muda (a rota devolve `null` " +
+      "fora de Receitas, entao o painel renderiza nada nas duas), e por isso " +
+      "ele e o mutante de uma decisao que so a fiacao guarda -- o dia em que a " +
+      "rota passar a emitir o campo nas tres telas, o credito a receber " +
+      "apareceria embaixo dos cartoes de Despesas",
+    de: '          {tipo === "income" && podeMostrarNumero(estado) && (',
+    para: '          {tipo === "expense" && podeMostrarNumero(estado) && (',
+    caso: "a aba Receitas NOMEIA quem deve o reembolso que esta no «Previsto»",
   },
 ];
 
