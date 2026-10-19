@@ -6,13 +6,23 @@
 -- alem de `pending`: a unica rota de aprovacao que existia mexe em
 -- `expense_splits`, que e outra tabela. O cracha era um rotulo morto.
 --
--- A HMO-178 acrescenta `PATCH /api/expense-groups/[groupId]/splits`. Esta
--- suite prova o que a rota ASSUME do banco, e que nenhum teste de TypeScript
--- consegue provar:
+-- A HMO-178 acrescentou `PATCH /api/expense-groups/[groupId]/splits`, e esta
+-- suite provava o que aquela rota ASSUMIA do banco.
+--
+-- A HMO-425 REMOVEU A ROTA, a lib e os botoes da tela -- e a suite FICA, porque
+-- o que ela prova nunca foi da rota: e do banco. O PostgREST segue no ar com o
+-- JWT do usuario, entao a policy de UPDATE do 002 continua sendo o que separa
+-- "mexo na minha parte" de "mexo na parte -- e no saldo -- de outra pessoa".
+-- Tirar a tela nao tira o caminho; tirar esta suite deixaria a policy sem
+-- ninguem exercitando.
+--
+-- Leia o que vem abaixo no passado quando ele falar da rota. O que as assercoes
+-- medem nao mudou:
 --
 --   1. o dono da parte consegue mesmo escrever `approved` -- a policy de
---      UPDATE do 002 nao e um no-op silencioso. Se fosse, a rota responderia
---      200 e o cracha voltaria a "pendente" no proximo carregamento;
+--      UPDATE do 002 nao e um no-op silencioso. Quando a rota existia, se fosse
+--      no-op ela responderia 200 e o cracha voltaria a "pendente" no proximo
+--      carregamento;
 --   2. um membro NAO consegue mexer na parte de outro membro. Esta e a metade
 --      que vale dinheiro: recusar tira o valor de `total_owed`, entao aprovar
 --      pela pessoa errada seria mexer no saldo alheio;
@@ -20,10 +30,10 @@
 --   4. a trava da 024 (HMO-176) deixa de proteger um estado inalcancavel: com
 --      uma parte aprovada pelo caminho normal, editar o valor levanta PDG01;
 --   5. o CONTROLE HONESTO: pela RLS, o admin do grupo TAMBEM consegue mexer na
---      parte alheia. A rota se restringe ao dono de proposito, e essa
---      restricao mora no TypeScript, nao aqui. Este teste documenta a folga em
---      vez de fingir que ela nao existe -- o dia em que alguem escrever outra
---      rota (ou usar o PostgREST direto), o banco deixa.
+--      parte alheia. Quem estreitava isso ao dono era o TypeScript da rota, e
+--      a rota saiu na HMO-425 -- entao pelo banco, HOJE, o admin alcanca, e nao
+--      ha mais nada em cima estreitando. Este teste documenta a folga em vez de
+--      fingir que ela nao existe: quem usar o PostgREST direto, o banco deixa.
 --
 -- Rodar num banco limpo, depois de 001 -> ... -> 027:
 --   psql "$DB_URL" -f database/tests/aprovacao_de_parte_test.sql
