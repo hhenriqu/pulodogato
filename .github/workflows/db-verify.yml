@@ -3756,11 +3756,14 @@ jobs:
       # inteira foi removida: a lib, a rota PATCH e os botoes da tela. Sem
       # chamador, a suite provaria uma regra que nenhum caminho do app aplica.
       #
-      # O que NAO saiu, e continua provado em SQL neste mesmo job (ver
-      # "Aprovar e recusar a propria parte, e o saldo que isso move"): a policy
-      # de UPDATE da 002, o `NOT IN ('rejected','expired')` de `total_owed` e a
-      # trava PDG01 da 024. Esses tres sao do BANCO, e o PostgREST continua
-      # alcancavel com o JWT do usuario -- tirar a tela nao tira o caminho.
+      # O que NAO saiu, e continua provado em SQL neste mesmo job (o step
+      # "O que o banco garante na parte de grupo, e o saldo que isso move", que
+      # roda `database/tests/aprovacao_de_parte_test.sql` -- esta HMO-425
+      # renomeou o step, entao procure pelo arquivo, nao pelo nome antigo): a
+      # policy de UPDATE da 002, o `NOT IN ('rejected','expired')` de
+      # `total_owed` e a trava PDG01 da 024. Esses tres sao do BANCO, e o
+      # PostgREST continua alcancavel com o JWT do usuario -- tirar a tela nao
+      # tira o caminho.
 
       # Os numeros dos relatorios sao provados em SQL logo acima. O que resta
       # para o TypeScript sao duas coisas que erram em silencio: a janela de
