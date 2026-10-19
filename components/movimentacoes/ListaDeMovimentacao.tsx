@@ -726,8 +726,21 @@ export function ListaDeMovimentacao({
             um cache de ontem pode ja ter sido pago. O componente devolve `null`
             com `null` e com lista vazia, entao quem nao tem grupo nao ve nada.
           */}
+          {/*
+            O ROTULO DO PERIODO DESCE PARA O PAINEL (HMO-422, 2a volta).
+
+            "A Letícia te deve R$ 270,62" sem dizer de quando se le como a
+            divida INTEIRA dela -- e o acerto que ela registrou ontem, que
+            aparece poucos blocos acima no mesmo scroll, passa a parecer nao ter
+            entrado. E o MESMO texto que o cabecalho e a frase de vazio desta
+            lista ja usam: duas descricoes do mesmo recorte na mesma tela seriam
+            dois recortes para quem le.
+          */}
           {tipo === "income" && podeMostrarNumero(estado) && (
-            <PainelQuemMePaga credito={quemMePaga} />
+            <PainelQuemMePaga
+              credito={quemMePaga}
+              rotuloDoPeriodo={rotuloDoPeriodo}
+            />
           )}
 
           {/*

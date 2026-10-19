@@ -148,6 +148,12 @@ export function acertosRecebidosPorDevedor(
  * sao os mesmos de `creditoAReceber` de proposito -- duas telas da mesma lista
  * em ordens diferentes se leem como dado diferente.
  *
+ * CADA LINHA SAI COM O `ja_pago` DO PAR (HMO-422). E o unico ponto da cadeia que
+ * tem o mapa de acertos e as linhas na mesma mao, e sem ele a tela mostra o
+ * valor ja abatido sem poder dizer que houve abatimento. Ele e o ACUMULADO do
+ * par, igual ao que entrou no teto -- nao o acerto do periodo, que explicaria
+ * mal um valor que o teto calculou sobre todos os meses.
+ *
  * `sem_devedor` passa INTACTO: ele e o residuo do meu saldo sem devedor nomeado
  * (o centavo de tolerancia de `simplifySettlements`), e o teto e por
  * (grupo, devedor) -- nao ha par a que prende-lo. Inventar um rateio dele aqui
@@ -185,7 +191,28 @@ export function aplicarTetoDoAcerto(params: {
     const cents = Math.min(toCents(linha.valor), tetoCents);
     if (cents <= 0) continue;
 
-    presas.push({ ...linha, cents, valor: toReais(cents) });
+    // O QUE ELA JA PAGOU VIAJA COM A LINHA (HMO-422).
+    //
+    // Este mapa e a unica coisa na cadeia que sabe quanto cada devedor ja pagou
+    // POR PAR, e ate aqui ele morria dentro do `max` acima: a linha saia com o
+    // valor ja abatido e nada na tela dizia que houve abatimento. O sintoma, na
+    // aba Receitas do Helio: "Leticia me pagou (Casa)" num bloco e "Leticia ·
+    // Casa · R$ 270,62" no outro, as duas frases certas, nenhuma das duas
+    // dizendo de que mes falava.
+    //
+    // E O MESMO MAPA QUE PRODUZIU O TETO, e nao uma segunda leitura de
+    // `group_settlements`: duas consultas da mesma coisa divergiriam exatamente
+    // onde o teto morde, e a tela explicaria o numero com um valor que nao foi o
+    // usado para calcula-lo -- a familia de `fontes-consistentes-que-discordam`.
+    //
+    // `toReais` do MESMO centavo, sem arredondar duas vezes: o mapa e inteiro em
+    // centavos desde `acertosRecebidosPorDevedor`.
+    presas.push({
+      ...linha,
+      cents,
+      valor: toReais(cents),
+      ja_pago: toReais(acertos.get(chave) ?? 0),
+    });
   }
 
   const linhas = presas

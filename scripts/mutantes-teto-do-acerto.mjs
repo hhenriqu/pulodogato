@@ -175,6 +175,39 @@ const MUTANTES = [
     de: "    const tetoCents = Math.max(\n      0,\n      (acumuladoPorPar.get(chave) ?? 0) - (acertos.get(chave) ?? 0)\n    );",
     para: "    const tetoCents = Math.max(\n      0,\n      toCents(acumulado.total) - (acertos.get(chave) ?? 0)\n    );",
   },
+  // ---------------------------------------------------------------------------
+  // O CARIMBO DO `ja_pago` -- HMO-422, 2a volta
+  // ---------------------------------------------------------------------------
+  // Ele nao muda um centavo do credito: o que ele muda e a tela poder dizer
+  // QUANTO aquela pessoa ja pagou. Entao os mutantes daqui sao todos do tipo
+  // "o numero sai, mas e o numero errado" -- a familia que passa despercebida,
+  // porque um recibo plausivel embaixo do nome certo nao se le como defeito.
+  {
+    nome: "ja_pago_sempre_zero",
+    porque:
+      "o recibo some da tela: o painel volta a mostrar o valor ja abatido sem " +
+      "dizer que houve abatimento, que e o print que reabriu a HMO-422 " +
+      "(«Letícia me pagou» em cima, «Letícia te deve R$ 270,62» embaixo)",
+    de: "      ja_pago: toReais(acertos.get(chave) ?? 0),",
+    para: "      ja_pago: 0,",
+  },
+  {
+    nome: "ja_pago_pelo_valor_da_linha",
+    porque:
+      "carimba o que ELA AINDA DEVE no lugar do que ela JA PAGOU: a tela " +
+      "escreve 'ja te pagou R$ 15,00' sobre um Pix de R$ 45,00, e os dois " +
+      "numeros sao plausiveis lado a lado",
+    de: "      ja_pago: toReais(acertos.get(chave) ?? 0),",
+    para: "      ja_pago: toReais(cents),",
+  },
+  {
+    nome: "ja_pago_em_centavos",
+    porque:
+      "esquece o `toReais`: o recibo de R$ 45,00 sai como R$ 4.500,00 -- cem " +
+      "vezes o valor, embaixo do nome certo, na moeda certa",
+    de: "      ja_pago: toReais(acertos.get(chave) ?? 0),",
+    para: "      ja_pago: acertos.get(chave) ?? 0,",
+  },
   {
     nome: "soma_em_reais",
     porque:
