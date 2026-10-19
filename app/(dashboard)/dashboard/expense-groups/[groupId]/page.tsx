@@ -58,12 +58,6 @@ import type { BudgetWithConsumption } from "@/types/financial";
 import { CampoDeCotacao } from "@/components/movimentacoes/CampoDeCotacao";
 import { MOEDA_PADRAO, formatarValor, moedaPorCodigo } from "@/lib/dinheiro";
 import { opcoesDeMoeda } from "@/lib/moeda";
-import {
-  acoesDaParte,
-  ehParteDe,
-  rotuloDaAcao,
-  type AcaoDaParte,
-} from "@/lib/aprovacao-de-parte";
 import { cotacaoDigitada, taxaParaGravar, valorEmReais } from "@/lib/cambio";
 import { PixDoMembro, useChavesPixDoGrupo } from "@/components/grupos/PixDoMembro";
 import { PainelDoGrupo } from "@/components/grupos/PainelDoGrupo";
@@ -190,7 +184,16 @@ interface GroupTransaction {
     id: string;
     amount: number;
     percentage: number;
-    status: "pending" | "approved" | "rejected";
+    /**
+     * `status` SAIU DAQUI NA HMO-425, e nao da resposta da rota.
+     *
+     * A tela nao aprova nem recusa parte nenhuma: o campo continua vindo em
+     * `/api/expense-groups/[groupId]/transactions` e continua sendo lido pelo
+     * SQL que soma `total_owed` (`NOT IN ('rejected','expired')`). O que
+     * desapareceu e o LEITOR na tela -- declara-lo aqui sem ninguem usar
+     * convidaria o proximo cracha de status a nascer sem caminho que o mude,
+     * que era exatamente o rotulo morto que a HMO-178 tinha ido consertar.
+     */
     member: {
       id: string;
       full_name: string;
@@ -385,12 +388,6 @@ export default function GroupDetailPage() {
    * volta; membro sem chave cadastrada simplesmente nao aparece no mapa.
    */
   const chavesPix = useChavesPixDoGrupo(balances.map((b) => b.member.id));
-  /**
-   * O id da parte cuja resposta esta em voo, para desabilitar os botoes DELA.
-   * Um booleano global desabilitaria a linha de todo mundo; um id mantem o
-   * resto da tela utilizavel enquanto a requisicao vai e volta.
-   */
-  const [parteEmCurso, setParteEmCurso] = useState<string | null>(null);
   // A barra "quanto ja gastamos da viagem" (HMO-180). `null` = este grupo nao
   // tem teto no mes corrente, e o cartao nem aparece -- mesma regra das
   // Previstas: grupo sem teto continua vendo a tela de antes.
@@ -1009,63 +1006,19 @@ export default function GroupDetailPage() {
     }
   };
 
-  /**
-   * Responde pela propria parte numa despesa do grupo (HMO-178).
+  /*
+   * `handleResponderParte` SAIU AQUI (HMO-425).
    *
-   * Recarrega saldos e sugestoes junto com a lista, e nao so a lista: recusar
-   * tira a parte de `total_owed` em `group_member_balances`. Atualizar so o
-   * cracha deixaria a tela mostrando "recusado" ao lado de um saldo que ainda
-   * cobra aquele valor -- duas afirmacoes contraditorias na mesma tela, sem
-   * erro nenhum aparecer.
+   * Ela era o unico caminho do app para aprovar, recusar ou reabrir a propria
+   * parte numa despesa do grupo (HMO-178), junto com a rota
+   * `PATCH /api/expense-groups/[groupId]/splits`, que saiu tambem.
    *
-   * `residual` costuma ficar diferente de zero depois de uma recusa, e isso
-   * esta certo: a despesa passa a estar rateada por menos gente do que o total.
-   * O aviso que `loadTransfers` ja traz e quem conta isso.
+   * O que isso muda no dinheiro: `group_member_balances` soma em `total_owed`
+   * as partes com `status NOT IN ('rejected','expired')`, e nada mais escreve
+   * `rejected`. Toda parte nova nasce `pending` e CONTA -- cada membro deve a
+   * parte dele, que e a regra que o grupo ja usa em todo o resto da tela
+   * (fechamento, rateio, sugestao de transferencia).
    */
-  const handleResponderParte = async (splitId: string, acao: AcaoDaParte) => {
-    // A recusa e a unica que pede motivo, e o motivo e opcional: cancelar o
-    // prompt (`null`) aborta a acao inteira, string vazia segue sem comentario.
-    let comments: string | undefined;
-    if (acao === "reject") {
-      const motivo = window.prompt(
-        "Por que está recusando esta parte? (opcional)"
-      );
-      if (motivo === null) return;
-      comments = motivo.trim() || undefined;
-    }
-
-    setParteEmCurso(splitId);
-    try {
-      const response = await fetch(`/api/expense-groups/${groupId}/splits`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ splitId, action: acao, comments }),
-      });
-      const data = await response.json();
-
-      if (!response.ok) {
-        toast.error(data.error || "Não foi possível atualizar a parte");
-        // Mesmo no erro a lista e recarregada: o 409 quer dizer que a parte
-        // mudou por baixo, e deixar o cracha velho na tela repetiria o engano.
-        await loadTransactions();
-        return;
-      }
-
-      toast.success(
-        acao === "approve"
-          ? "Parte aprovada"
-          : acao === "reject"
-            ? "Parte recusada"
-            : "Parte reaberta"
-      );
-      await Promise.all([loadTransactions(), loadBalances(), loadTransfers()]);
-    } catch (error) {
-      console.error("Erro ao responder a parte:", error);
-      toast.error("Não foi possível atualizar a parte");
-    } finally {
-      setParteEmCurso(null);
-    }
-  };
 
   const handleAddExpense = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1216,31 +1169,15 @@ export default function GroupDetailPage() {
     return dia && mes && ano ? `${dia}/${mes}/${ano}` : iso;
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "approved":
-        return "bg-success/10 text-success";
-      case "pending":
-        return "bg-warning/10 text-warning";
-      case "rejected":
-        return "bg-destructive/10 text-destructive";
-      default:
-        return "bg-muted text-foreground";
-    }
-  };
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case "approved":
-        return <CheckCircle className="h-3 w-3" />;
-      case "pending":
-        return <Clock className="h-3 w-3" />;
-      case "rejected":
-        return <AlertCircle className="h-3 w-3" />;
-      default:
-        return <Clock className="h-3 w-3" />;
-    }
-  };
+  /*
+   * `getStatusColor` e `getStatusIcon` SAIRAM AQUI (HMO-425).
+   *
+   * As duas pintavam o cracha de status da parte, o unico leitor que elas
+   * tinham. Sem caminho que escreva `approved` ou `rejected`, o cracha mostrava
+   * o relogio de "pendente" em TODA parte de TODA despesa, para sempre -- um
+   * icone sem texto que nao distingue estado nenhum e sugere uma fila de
+   * aprovacao que nao existe mais.
+   */
 
   const toggleSection = (sectionId: string) => {
     setOpenSections((prev) =>
@@ -1469,7 +1406,7 @@ export default function GroupDetailPage() {
             O fechamento do mes (HMO-245), ACIMA das listas.
 
             As secoes abaixo separam "ja aconteceu" de "vai acontecer", e essa
-            separacao esta certa para a lista -- parte aprovavel so existe no
+            separacao esta certa para a lista -- divisao gravada so existe no
             realizado. Mas ela faz a conta de internet vencendo dia 15 nao
             entrar em total nenhum do mes. Este cartao e o total que junta os
             dois e diz quanto cada um paga.
@@ -1487,10 +1424,10 @@ export default function GroupDetailPage() {
               seletor (HMO-248).
 
               Fica separada das outras secoes de proposito. As demais listam
-              despesa que ja aconteceu e tem divisao gravada, que alguem pode
-              aprovar ou recusar; aqui nao ha divisao nenhuma ainda -- ela nasce
-              na baixa da conta prevista. Misturar as duas na mesma lista faria
-              o total do grupo somar dinheiro que ninguem gastou.
+              despesa que ja aconteceu e tem divisao gravada, com uma parte por
+              membro; aqui nao ha divisao nenhuma ainda -- ela nasce na baixa da
+              conta prevista. Misturar as duas na mesma lista faria o total do
+              grupo somar dinheiro que ninguem gastou.
 
               O RECORTE DE MES E O QUE A HMO-248 CONSERTOU. Uma despesa fixa
               nao grava uma linha: grava uma regra e MATERIALIZA uma parcela por
@@ -1794,43 +1731,12 @@ export default function GroupDetailPage() {
                                       moedaDaViagem(transaction.currency)
                                     )}
                                   </span>
-                                  <Badge
-                                    variant="outline"
-                                    className={`text-xs ${getStatusColor(
-                                      split.status
-                                    )}`}
-                                  >
-                                    {getStatusIcon(split.status)}
-                                  </Badge>
-                                  {/* Ate a HMO-178 o cracha ao lado era um
-                                      rotulo que nunca mudava: nenhum caminho do
-                                      app escrevia `approved`. Os botoes so
-                                      aparecem na propria parte -- ver
-                                      `acoesDaParte`. */}
-                                  {acoesDaParte({
-                                    status: split.status,
-                                    ehMinha: ehParteDe(
-                                      split.member?.id,
-                                      user?.id
-                                    ),
-                                  }).map((acao) => (
-                                    <Button
-                                      key={acao}
-                                      size="sm"
-                                      variant={
-                                        acao === "approve"
-                                          ? "default"
-                                          : "outline"
-                                      }
-                                      className="h-6 px-2 text-xs"
-                                      disabled={parteEmCurso === split.id}
-                                      onClick={() =>
-                                        handleResponderParte(split.id, acao)
-                                      }
-                                    >
-                                      {rotuloDaAcao(acao)}
-                                    </Button>
-                                  ))}
+                                  {/* O CRACHA DE STATUS E OS BOTOES DE
+                                      APROVAR/RECUSAR/REABRIR SAIRAM AQUI
+                                      (HMO-425). A linha agora diz o que a
+                                      divisao e: quem, e quanto. Nao ha estado
+                                      intermediario entre a despesa nascer e o
+                                      membro dever a parte dele. */}
                                 </div>
                               </div>
                             ))}

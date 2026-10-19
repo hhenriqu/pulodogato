@@ -38,6 +38,11 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
+// `podeVerItem` NAO entra nesta lista, e a ausencia e deliberada: quem o
+// exercita aqui e `filtrarMenuAgrupado`, que o chama item por item dentro de
+// cada grupo. Importa-lo sem chamar deixava o `lint-tudo` vermelho na main por
+// um aviso de variavel nao usada -- e um aviso que ninguem le e o que faz os
+// outros 696 arquivos pararem de ser conferidos.
 const {
   ehGrupo,
   filtrarMenuAgrupado,
@@ -45,7 +50,6 @@ const {
   itemAtivoDoMenu,
   menuAgrupado,
   navigation,
-  podeVerItem,
 } = await import("../.tmp-menu-agrupado/components/navegacao-do-menu.js");
 
 const { tipoDoRecorte } = await import("../.tmp-menu-agrupado/lib/contas.js");
