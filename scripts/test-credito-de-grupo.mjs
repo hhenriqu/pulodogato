@@ -41,9 +41,11 @@ const { fecharMes, linhaDoPrevisto, linhaDoRealizado } = await import(
 );
 
 const {
+  algumJaPagou,
   creditoAReceber,
   creditoDoFechamento,
   devedorNaLinha,
+  jaPagouNaLinha,
   notaDoCreditoAReceber,
   DEVEDOR_SEM_NOME,
 } = await import("../.tmp-credito-de-grupo/credito-de-grupo.js");
@@ -659,4 +661,77 @@ test("um grupo onde eu nao sou membro ativo nao credita nada a mim", () => {
   // CONTROLE: 90 e o que um credito lido do pagador em vez do saldo daria.
   assert.notEqual(credito.total, 90);
   assert.equal(credito.sem_devedor, 0);
+});
+
+// =============================================================================
+// O RECIBO DA LINHA: `ja_pago` E AS DUAS DECISOES QUE SAEM DELE (HMO-422)
+// =============================================================================
+// Quem PREENCHE o campo e `aplicarTetoDoAcerto` (lib/teto-do-acerto.ts, com
+// suite e mutantes proprios) -- este modulo nao sabe o que e um acerto. O que
+// mora aqui sao as duas decisoes de ROTULO que a tela faz com ele, e a
+// afirmacao de que esta leitura marca o campo como "nao perguntei".
+
+test("quem sai de `creditoAReceber` tem `ja_pago` NULO -- 'nao perguntei'", () => {
+  // `creditoAReceber` nao le `group_settlements`: escrever `0` aqui afirmaria
+  // "ela nao te pagou nada" por conta de uma leitura que nao perguntou, e a
+  // tela diria isso por escrito embaixo do nome de quem acabou de pagar.
+  const outubro = mesDe(
+    CASA,
+    [internetDeOutubro()],
+    membros(HELIO, LAIS, BIA),
+    "2026-10"
+  );
+
+  const credito = creditoAReceber([outubro], HELIO);
+  assert.equal(credito.linhas.length, 2);
+  assert.deepEqual(
+    credito.linhas.map((l) => l.ja_pago),
+    [null, null]
+  );
+  // E o mesmo vale na funcao de uma linha so.
+  for (const linha of creditoDoFechamento(outubro, HELIO)) {
+    assert.equal(linha.ja_pago, null);
+  }
+});
+
+test("`jaPagouNaLinha` cala em nulo, em zero e em negativo -- e so fala em positivo", () => {
+  const base = {
+    group_id: "g-casa",
+    grupo: "Casa",
+    devedor_user_id: LAIS,
+    devedor: "Laís",
+    valor: 300,
+  };
+
+  // "nao perguntei" e "perguntei e ela nao pagou" dao a MESMA tela: nenhuma
+  // frase. "Ja te pagou R$ 0,00" embaixo de quem nunca pagou e um recibo
+  // inventado, que e pior que a omissao que a issue veio consertar.
+  assert.equal(jaPagouNaLinha({ ...base, ja_pago: null }), null);
+  assert.equal(jaPagouNaLinha({ ...base, ja_pago: 0 }), null);
+  // Negativo nao existe hoje (`aplicarTetoDoAcerto` soma centavos positivos),
+  // e e justamente por isso que a guarda esta aqui e nao num `&&` no JSX: um
+  // `linha.ja_pago &&` escreveria "ja te pagou -R$ 10,00" sem nenhum erro.
+  assert.equal(jaPagouNaLinha({ ...base, ja_pago: -10 }), null);
+  // E o caso que a issue nomeia: ela pagou, e a linha diz quanto.
+  assert.equal(jaPagouNaLinha({ ...base, ja_pago: 270.62 }), 270.62);
+});
+
+test("`algumJaPagou` segue o MESMO criterio das linhas", () => {
+  const linha = (ja_pago) => ({
+    group_id: "g-casa",
+    grupo: "Casa",
+    devedor_user_id: LAIS,
+    devedor: "Laís",
+    valor: 300,
+    ja_pago,
+  });
+  const leitura = (linhas) => ({ linhas, total: 300, sem_devedor: 0 });
+
+  // A nota do painel explica por que um pagamento ja feito pode nao ter
+  // baixado o numero do lado. Com os dois criterios separados ela apareceria
+  // em `ja_pago: 0` -- sozinha, explicando pagamento que nenhuma linha
+  // menciona.
+  assert.equal(algumJaPagou(leitura([linha(null), linha(0)])), false);
+  assert.equal(algumJaPagou(leitura([])), false);
+  assert.equal(algumJaPagou(leitura([linha(0), linha(45)])), true);
 });

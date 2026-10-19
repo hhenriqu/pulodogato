@@ -45,6 +45,36 @@
 //     `TelaDeMovimentacao.tsx` importa `next/navigation`, que NAO roda no node,
 //     e um componente que dependa dele nao pode ser medido por sonda nenhuma.
 //
+// A SEGUNDA VOLTA DA MESMA ISSUE: A TELA SE CONTRADIZENDO SOBRE A MESMA PESSOA
+// ----------------------------------------------------------------------------
+// Com o painel no ar, o Helio voltou com o print seguinte -- a MESMA aba, dois
+// blocos de distancia:
+//
+//   > Acerto de grupo recebido
+//   > «Letícia me pagou (Casa 🏠)» — 01/10/2026   [ja esta na sua conta]
+//   > Quem te paga
+//   > Letícia · Casa 🏠 · R$ 270,62               [ainda nao entrou na sua conta]
+//   >
+//   > e isso entao esta errado, nao deveria aparecer ou deveria aparecer o
+//   > valor correto
+//
+// AS DUAS FRASES ESTAVAM CERTAS, e foi medido: o acerto dela quitou um mes
+// ANTERIOR, outubro seguia aberto, e o R$ 270,62 era o que faltava mesmo. O
+// painel ja lia o credito COM o teto aplicado (`aplicarTetoDoAcerto`), ou seja o
+// pagamento dela passou pelo desconto -- so nao mordeu outubro.
+//
+// O defeito nao estava na aritmetica: estava em NENHUMA DAS DUAS FRASES DIZER DE
+// QUE MES FALAVA. Daqui saem as duas coisas que esta volta acrescenta, e nenhuma
+// delas toca dinheiro:
+//
+//   * `FRASE_DO_PERIODO` -- o painel passa a dizer de QUANDO sao os valores,
+//     com o MESMO rotulo que o resto da tela ja usa;
+//   * `FRASE_JA_PAGOU` + `NOTA_DO_ACERTO_NO_PERIODO` -- cada linha passa a
+//     mostrar o que aquela pessoa JA PAGOU naquele grupo, e o painel explica
+//     que o pagamento abate a posicao acumulada e nao o mes. O numero vem de
+//     `CreditoDeGrupo.ja_pago`, que e o MESMO mapa que calculou o teto -- sem
+//     consulta nova e sem uma segunda aritmetica.
+//
 // AS DUAS CLASSES DE DEFEITO QUE SO A MARCACAO DENUNCIA
 // ----------------------------------------------------
 //   1. O ROTULO SEM A PESSOA. `devedor` e `null` quando o perfil nao e legivel,
@@ -66,7 +96,12 @@
 
 import { Card, CardContent } from "@/components/ui/card";
 import { formatCurrency } from "@/lib/utils";
-import { devedorNaLinha, type CreditoAReceber } from "@/lib/credito-de-grupo";
+import {
+  algumJaPagou,
+  devedorNaLinha,
+  jaPagouNaLinha,
+  type CreditoAReceber,
+} from "@/lib/credito-de-grupo";
 
 /**
  * O titulo do painel.
@@ -92,6 +127,60 @@ export const NOTA_QUEM_ME_PAGA =
   "já incluído no Previsto acima — é o reembolso do grupo, e ainda não entrou na sua conta";
 
 /**
+ * DE QUE PERIODO SAO ESTES VALORES -- a segunda metade da HMO-422.
+ *
+ * O painel nasceu dizendo QUEM deve e QUANTO, e calado sobre QUANDO. A conta de
+ * grupo e mensal, o credito e recortado pelos meses da tela (`mesesDoPeriodo` ->
+ * `fecharMes`), e "a Letícia te deve R$ 270,62" sem data se le como a divida
+ * INTEIRA dela -- entao o acerto que ela pagou ontem parece nao ter entrado.
+ *
+ * E FUNCAO E NAO CONSTANTE porque o rotulo do periodo e da tela
+ * (`rotuloDoPeriodo`, lib/periodo-do-painel.ts, que ja escreve "outubro de
+ * 2026", "ano de 2026" ou "01/10/2026 a 15/10/2026"). Escrever um segundo
+ * formato aqui poria duas descricoes do mesmo recorte na mesma tela.
+ */
+export const FRASE_DO_PERIODO = (rotulo: string) => `valores de ${rotulo}`;
+
+/**
+ * POR QUE UM PAGAMENTO JA FEITO PODE NAO TER BAIXADO O NUMERO DO LADO.
+ *
+ * A frase que a HMO-422 pediu, e ela descreve um limite REAL e declarado, nao
+ * um detalhe de implementacao: `aplicarTetoDoAcerto` (lib/teto-do-acerto.ts)
+ * desconta o acerto da posicao ACUMULADA do par -- todos os meses do grupo --
+ * porque `group_settlements` tem UM `settled_on` e nenhum elo com a despesa nem
+ * com o mes que ele quita. Nada no banco diz qual mes o Pix cobriu.
+ *
+ * Consequencia que o Helio viu em producao: a Leticia pagou R$ 270,62 (que
+ * quitaram um mes ANTERIOR), a aba Receitas mostrou o acerto recebido em cima e
+ * continuou pedindo R$ 270,62 dela embaixo -- as duas frases certas, e a tela
+ * se lendo como bug. O conserto exato e o elo acerto <-> divida (migration,
+ * issue propria); o que ESTA frase entrega e a tela parar de se contradizer em
+ * silencio enquanto aquele elo nao existe.
+ *
+ * SO APARECE PARA QUEM TEM ACERTO (ver `algumJaPagou`): um paragrafo sobre um
+ * mecanismo que nao agiu e ruido numa aba que ja tem quatro legendas.
+ */
+export const NOTA_DO_ACERTO_NO_PERIODO =
+  "Quem já te pagou aparece com o valor pago ao lado do nome. O pagamento abate a posição do grupo inteira — todos os meses —, e não este período: um acerto que quitou um mês anterior pode não baixar o valor deste.";
+
+/**
+ * O que ESTA pessoa ja me pagou neste grupo, na linha dela.
+ *
+ * O NUMERO CHEGA FORMATADO, e isso e o que mantem a frase fora da aritmetica:
+ * quem converte centavos em reais e `aplicarTetoDoAcerto`, quem escreve
+ * "R$ 270,62" e `formatCurrency`, e aqui so se escolhe a prosa em volta. A
+ * sonda de navegador chama ESTA funcao com um marcador no lugar do valor, e e
+ * por isso que ela e exportada em vez de ser um template literal no JSX.
+ *
+ * "neste grupo" E NAO "neste periodo", e a palavra e a entrega: o numero e o
+ * acumulado do par (ver `CreditoDeGrupo.ja_pago`). Escrever "neste período"
+ * sobre um valor que soma todos os meses seria a mesma classe de defeito que a
+ * frase existe para fechar.
+ */
+export const FRASE_JA_PAGOU = (valor: string) =>
+  `já te pagou ${valor} neste grupo — o valor ao lado é o que ainda falta`;
+
+/**
  * O painel, ou `null` quando ninguem me deve nada.
  *
  * `null` -- e nao um painel com "R$ 0,00" -- pela razao de
@@ -107,10 +196,28 @@ export const NOTA_QUEM_ME_PAGA =
  */
 export function PainelQuemMePaga({
   credito,
+  rotuloDoPeriodo,
 }: {
   credito: CreditoAReceber | null;
+  /**
+   * O periodo da tela, ja escrito -- `rotuloDoPeriodo(periodo)` da
+   * lib/periodo-do-painel.ts, o MESMO texto que o cabecalho e a frase de vazio
+   * da lista usam.
+   *
+   * Opcional na ASSINATURA e obrigatorio na FIACAO (quem o liga e
+   * `ListaDeMovimentacao`, com assercao em
+   * scripts/test-contrato-das-telas-de-movimentacao.mjs): o painel nao pode
+   * exigir no tipo o que uma sonda de componente precisa poder omitir, e um
+   * rotulo em branco nao pode virar "valores de " na tela -- a familia de
+   * `rotulo-que-mente`, que o `trim()` abaixo fecha.
+   */
+  rotuloDoPeriodo?: string;
 }) {
   if (!credito || credito.linhas.length === 0) return null;
+
+  // O `trim()` e o mesmo cuidado de `devedorNaLinha`: `" "` e verdadeiro em
+  // JavaScript e produziria a frase "valores de " com nada depois.
+  const periodo = (rotuloDoPeriodo ?? "").trim();
 
   return (
     <Card data-painel="quem-me-paga">
@@ -119,6 +226,36 @@ export function PainelQuemMePaga({
         <p className="mt-1 text-xs text-muted-foreground">
           {NOTA_QUEM_ME_PAGA}
         </p>
+
+        {/*
+          DE QUANDO SAO ESTES VALORES. Ver `FRASE_DO_PERIODO`: o credito e
+          recortado pelos meses da tela, e sem a data ele se le como a divida
+          inteira da pessoa -- e dai o acerto pago ontem parece nao ter entrado.
+        */}
+        {periodo !== "" && (
+          <p
+            className="mt-1 text-xs text-muted-foreground"
+            data-periodo={periodo}
+          >
+            {FRASE_DO_PERIODO(periodo)}
+          </p>
+        )}
+
+        {/*
+          E, SO PARA QUEM TEM ACERTO REGISTRADO, por que o pagamento dele pode
+          nao ter baixado o numero. Ver `NOTA_DO_ACERTO_NO_PERIODO` e
+          `algumJaPagou` -- a mesma decisao que escolhe as linhas escolhe a
+          nota, senao ela apareceria explicando pagamento que nenhuma linha
+          menciona.
+        */}
+        {algumJaPagou(credito) && (
+          <p
+            className="mt-2 text-xs text-muted-foreground"
+            data-nota-do-acerto="sim"
+          >
+            {NOTA_DO_ACERTO_NO_PERIODO}
+          </p>
+        )}
 
         <div className="mt-4 space-y-3">
           {credito.linhas.map((linha) => {
@@ -129,6 +266,13 @@ export function PainelQuemMePaga({
             // vazio, e a assercao leria a marca e passaria verde sobre o rotulo
             // em branco. `devedorNaLinha` faz o `trim()` e tem teste.
             const devedor = devedorNaLinha(linha);
+
+            // E O MESMO DESENHO PARA O "JA PAGOU": a decisao de escrever a
+            // frase e o numero escrito saem da MESMA funcao da lib. Um
+            // `linha.ja_pago && (…)` aqui escreveria "ja te pagou -R$ 10,00"
+            // se o campo viesse negativo, e nenhuma assercao de aritmetica
+            // alcanca uma frase.
+            const jaPagou = jaPagouNaLinha(linha);
 
             return (
               <div
@@ -150,6 +294,24 @@ export function PainelQuemMePaga({
                   >
                     {linha.grupo}
                   </p>
+
+                  {/*
+                    O QUE ELA JA PAGOU, NA LINHA DELA -- e nao num total do
+                    painel. O teto e por (grupo, devedor)
+                    (`aplicarTetoDoAcerto`), entao um numero somado em cima
+                    diria "voce ja recebeu R$ 508,42" sem dizer de quem, e a
+                    pessoa nao conseguiria ligar o pagamento a linha que ele
+                    abateu -- que e exatamente a ligacao que faltava na tela do
+                    Helio.
+                  */}
+                  {jaPagou !== null && (
+                    <p
+                      className="text-xs text-muted-foreground"
+                      data-ja-pago={jaPagou}
+                    >
+                      {FRASE_JA_PAGOU(formatCurrency(jaPagou))}
+                    </p>
+                  )}
                 </div>
 
                 <span

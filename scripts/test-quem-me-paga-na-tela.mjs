@@ -215,6 +215,19 @@ const FONTE_DO_ROTULO = daCreditoDeGrupo(
   /^export function devedorNaLinha\([\s\S]*?^\}/m,
   "devedorNaLinha"
 );
+// AS DUAS DECISOES DO "JA PAGOU" (HMO-422, 2a volta), pelo mesmo caminho e pelo
+// mesmo motivo: e `jaPagouNaLinha` quem decide se a frase sai, e `algumJaPagou`
+// quem decide se a nota do painel sai. Reescrever qualquer uma das duas aqui
+// faria a sonda medir a propria copia -- verde com producao escrevendo "ja te
+// pagou R$ 0,00" embaixo de todo devedor do app.
+const FONTE_DO_JA_PAGOU = daCreditoDeGrupo(
+  /^export function jaPagouNaLinha\([\s\S]*?^\}/m,
+  "jaPagouNaLinha"
+);
+const FONTE_DO_ALGUM_JA_PAGOU = daCreditoDeGrupo(
+  /^export function algumJaPagou\([\s\S]*?^\}/m,
+  "algumJaPagou"
+);
 
 /**
  * Uma constante de TEXTO do componente, lida do .js compilado.
@@ -239,6 +252,19 @@ const constanteDoComponente = (nome) => {
 
 const TITULO = constanteDoComponente("TITULO_QUEM_ME_PAGA");
 const NOTA = constanteDoComponente("NOTA_QUEM_ME_PAGA");
+/**
+ * As tres frases da 2a volta. As duas primeiras sao FUNCOES, e por isso elas
+ * chegam aqui pelo mesmo caminho das constantes: o regex de
+ * `constanteDoComponente` casa com a seta inteira e o `new Function` devolve a
+ * funcao, que as assercoes chamam com o MESMO valor que a pagina usou.
+ *
+ * Afirmar sobre um texto escrito aqui mediria a copia: trocar "neste grupo" por
+ * "neste período" em producao -- o defeito de rotulo que a issue reportou --
+ * passaria verde.
+ */
+const NOTA_DO_ACERTO = constanteDoComponente("NOTA_DO_ACERTO_NO_PERIODO");
+const FRASE_DO_PERIODO = constanteDoComponente("FRASE_DO_PERIODO");
+const FRASE_JA_PAGOU = constanteDoComponente("FRASE_JA_PAGOU");
 
 /**
  * O fallback do devedor ilegivel, LIDO DE PRODUCAO para as assercoes.
@@ -267,6 +293,7 @@ const PAGINA = `<!doctype html>
 <html><head><meta charset="utf-8"></head><body>
 <div id="raiz-a"></div><div id="raiz-b"></div><div id="raiz-c"></div>
 <div id="raiz-d"></div><div id="raiz-e"></div>
+<div id="raiz-g"></div><div id="raiz-h"></div><div id="raiz-i"></div>
 <div id="resultado">a pagina nao rodou</div>
 <script>
 // O AVISO DO REACT E ASSERCAO, E A CAPTURA TEM DE VIR ANTES DO UMD.
@@ -327,6 +354,8 @@ const formatCurrency = (valor) => "ESBOCO-VALOR:" + valor;
 // --- o rotulo, CALCULADO POR PRODUCAO ---------------------------------------
 ${FONTE_DO_FALLBACK}
 ${FONTE_DO_ROTULO}
+${FONTE_DO_JA_PAGOU}
+${FONTE_DO_ALGUM_JA_PAGOU}
 
 ${producao}
 
@@ -339,14 +368,22 @@ ${producao}
  * um \`document.querySelector\` devolveria o do PRIMEIRO painel -- uma assercao
  * sobre o caso D leria a arvore do caso A.
  */
-const montar = (raiz, credito) => {
+const montar = (raiz, credito, rotuloDoPeriodo) => {
   const caixa = document.getElementById(raiz);
   // ReactDOM.render (legado) e nao createRoot: o legado renderiza sincrono,
   // entao ler o DOM na linha seguinte ja ve a arvore. Com createRoot a sonda
   // leria uma caixa VAZIA -- e "painel nenhum" e justamente a assercao do caso
   // E, que ficaria verde por acidente para todos os outros.
+  //
+  // \`rotuloDoPeriodo\` e OMITIDO quando nao vem: passar \`undefined\` e nao
+  // passar a prop sao a mesma coisa em React, e os casos A-F foram escritos
+  // antes de a prop existir -- eles continuam medindo o painel sem ela, que e
+  // tambem o controle negativo do caso H.
   ReactDOM.render(
-    React.createElement(PainelQuemMePaga, { credito: credito }),
+    React.createElement(PainelQuemMePaga, {
+      credito: credito,
+      rotuloDoPeriodo: rotuloDoPeriodo
+    }),
     caixa
   );
 
@@ -364,13 +401,21 @@ const montar = (raiz, credito) => {
   };
 };
 
-/** Uma linha de credito, no contrato de \`CreditoDeGrupo\`. */
-const credito = (group_id, grupo, devedor_user_id, devedor, valor) => ({
+/**
+ * Uma linha de credito, no contrato de \`CreditoDeGrupo\`.
+ *
+ * \`ja_pago\` NASCE \`null\` -- o estado de quem nao passou pelo teto
+ * (\`creditoAReceber\` nao le \`group_settlements\`). E com isso os casos A-F,
+ * escritos antes da 2a volta, viram o controle negativo dela: nenhum deles pode
+ * ganhar frase de recibo.
+ */
+const credito = (group_id, grupo, devedor_user_id, devedor, valor, ja_pago) => ({
   group_id: group_id,
   grupo: grupo,
   devedor_user_id: devedor_user_id,
   devedor: devedor,
   valor: valor,
+  ja_pago: ja_pago === undefined ? null : ja_pago,
 });
 
 /** A leitura inteira, no contrato de \`CreditoAReceber\`. */
@@ -428,7 +473,16 @@ r.a = {
   total_da_lib: CREDITO_A.total,
   // Sem saldo orfao, a linha final NAO pode existir: "mais R$ 0,00 sem devedor"
   // e ruido que parece recurso quebrado.
-  tem_sem_devedor: a.caixa.querySelector("[data-sem-devedor]") !== null
+  tem_sem_devedor: a.caixa.querySelector("[data-sem-devedor]") !== null,
+
+  // OS TRES CONTROLES NEGATIVOS DA 2a VOLTA, no caso que a issue nomeia:
+  // \`ja_pago\` nulo e nenhum rotulo de periodo, entao NENHUMA das frases novas
+  // pode aparecer. Sem eles, um painel que escrevesse recibo para todo mundo
+  // passaria verde em G e H -- e "ja te pagou R$ 0,00" embaixo de quem nunca
+  // pagou e pior que a omissao que esta issue veio consertar.
+  tem_ja_pago: a.caixa.querySelector("[data-ja-pago]") !== null,
+  tem_nota_do_acerto: a.caixa.querySelector("[data-nota-do-acerto]") !== null,
+  tem_periodo: a.caixa.querySelector("[data-periodo]") !== null
 };
 
 // =============================================================================
@@ -540,6 +594,75 @@ ReactDOM.render(
   }),
   caixaSemOrfao
 );
+
+// =============================================================================
+// CASO G -- ELA JA ME PAGOU: a linha dela diz quanto, e a do lado NAO diz nada
+// =============================================================================
+// O print que reabriu a HMO-422: "Letícia me pagou (Casa)" num bloco e
+// "Letícia · Casa · R$ 270,62" no outro, sem nada ligando os dois. Aqui a Lais
+// pagou R$ 150,00 do que devia e a Bia nao pagou nada -- os DOIS estados no
+// MESMO painel, que e o que distingue "escreve o recibo certo" de "escreve
+// recibo para todo mundo".
+const g = montar("raiz-g", leitura([
+  credito(CASA, "Casa", LAIS, "Laís", 300, 150),
+  credito(CASA, "Casa", BIA, "Bia", 208.42, 0)
+]), "outubro de 2026");
+
+r.g = {
+  // O RECIBO ESTA NA LINHA DELA, e lido de DENTRO da linha: um
+  // \`querySelectorAll\` solto nao distingue "na linha certa" de "na outra".
+  por_linha: g.todos("[data-devedor]").map(function (el) {
+    const recibo = el.querySelector("[data-ja-pago]");
+    return {
+      devedor: el.getAttribute("data-devedor"),
+      // O valor que o span marca -- e e ele que diz se a linha imprimiu o
+      // proprio \`ja_pago\` ou o de outra pessoa.
+      attr: recibo ? recibo.getAttribute("data-ja-pago") : null,
+      texto: recibo ? recibo.textContent : null,
+      // O valor a receber CONTINUA na linha: o recibo e um acrescimo, nao um
+      // substituto. Trocar um pelo outro apagaria o numero da issue.
+      valor: el.querySelector("[data-valor-do-devedor]").textContent
+    };
+  }),
+  // A NOTA DO PAINEL, que explica por que um pagamento ja feito pode nao ter
+  // baixado o numero do lado.
+  nota_do_acerto: g.caixa.querySelector("[data-nota-do-acerto]") !== null,
+  texto_do_painel: g.caixa.textContent
+};
+
+// =============================================================================
+// CASO H -- DE QUANDO SAO ESTES VALORES
+// =============================================================================
+// A outra metade da 2a volta: "a Laís te deve R$ 300,00" sem data se le como a
+// divida INTEIRA dela, e o acerto pago ontem parece nao ter entrado.
+const h = montar(
+  "raiz-h",
+  leitura([credito(CASA, "Casa", LAIS, "Laís", 300)]),
+  "outubro de 2026"
+);
+
+// E O CONTROLE DO ROTULO EM BRANCO: \`"   "\` e verdadeiro em JavaScript, e sem
+// o \`trim()\` de producao a tela escreveria "valores de " com nada depois --
+// a mesma classe de defeito do \`full_name\` de espacos do caso C.
+const i = montar(
+  "raiz-i",
+  leitura([credito(CASA, "Casa", LAIS, "Laís", 300)]),
+  "   "
+);
+
+r.h = {
+  attr: h.attr("[data-periodo]", "data-periodo"),
+  texto: h.caixa.querySelector("[data-periodo]")
+    ? h.caixa.querySelector("[data-periodo]").textContent
+    : null,
+  // Sem acerto nenhum neste painel, a nota do acerto NAO sai -- o controle
+  // negativo de G dentro de um painel que TEM a frase de periodo.
+  tem_nota_do_acerto: h.caixa.querySelector("[data-nota-do-acerto]") !== null,
+  branco_tem_periodo: i.caixa.querySelector("[data-periodo]") !== null,
+  branco_tem_painel:
+    i.caixa.querySelector("[data-painel='quem-me-paga']") !== null,
+  branco_texto: i.caixa.textContent
+};
 
 r.f = {
   nulo_html: caixaNulo.innerHTML,
@@ -770,6 +893,83 @@ test("F: lista vazia nao desenha painel com R$ 0,00", () => {
   // parece recurso quebrado -- a mesma escolha de `notaDoCreditoAReceber`.
   assert.equal(resultado.f.vazio_html, "");
   assert.equal(resultado.f.vazio_texto, "");
+});
+
+// =============================================================================
+// G -- O RECIBO NA LINHA DE QUEM PAGOU (HMO-422, 2a volta)
+// =============================================================================
+
+test("G: a linha de quem pagou diz QUANTO -- e a de quem nao pagou fica calada", () => {
+  // O defeito que esta assercao fecha e o print da issue: a aba dizia "Letícia
+  // me pagou (Casa)" num bloco e "Letícia · Casa · R$ 270,62" no outro, as duas
+  // frases certas, nenhuma dizendo de que mes falava.
+  //
+  // A FRASE VEM DE PRODUCAO, chamada com o MESMO marcador que a pagina usou:
+  // uma copia escrita aqui ficaria verde depois de alguem trocar "neste grupo"
+  // por "neste período" -- que e o rotulo que mente sobre o recorte.
+  assert.deepEqual(resultado.g.por_linha, [
+    {
+      devedor: LAIS,
+      attr: "150",
+      texto: FRASE_JA_PAGOU("ESBOCO-VALOR:150"),
+      valor: "ESBOCO-VALOR:300",
+    },
+    // `ja_pago: 0` NAO escreve nada. "A Bia já te pagou R$ 0,00" embaixo do
+    // nome de quem nunca pagou e um recibo inventado.
+    { devedor: BIA, attr: null, texto: null, valor: "ESBOCO-VALOR:208.42" },
+  ]);
+});
+
+test("G: o painel explica POR QUE o pagamento pode nao ter baixado o valor", () => {
+  assert.equal(
+    resultado.g.nota_do_acerto,
+    true,
+    "a nota do acerto nao esta na tela"
+  );
+  // O TEXTO, e nao so a marca: o `data-nota-do-acerto` sobreviveria a um
+  // paragrafo vazio, e e a frase que faz a tela parar de se contradizer.
+  assert.ok(
+    resultado.g.texto_do_painel.indexOf(NOTA_DO_ACERTO) >= 0,
+    "a nota do acerto esta marcada mas o texto dela nao saiu"
+  );
+  // E a nota tem de dizer que o abate e do GRUPO INTEIRO, que e o limite
+  // declarado de `aplicarTetoDoAcerto` -- sem isso ela nao explica nada.
+  assert.match(NOTA_DO_ACERTO, /todos os meses/);
+});
+
+// =============================================================================
+// H -- DE QUANDO SAO OS VALORES
+// =============================================================================
+
+test("H: o painel diz o periodo, com o MESMO rotulo do resto da tela", () => {
+  assert.equal(resultado.h.attr, "outubro de 2026");
+  assert.equal(resultado.h.texto, FRASE_DO_PERIODO("outubro de 2026"));
+  // Sem acerto nenhum aqui, a nota do acerto NAO sai: as duas frases novas sao
+  // independentes, e um painel que escrevesse as duas sempre passaria verde em
+  // G sem distinguir nada.
+  assert.equal(resultado.h.tem_nota_do_acerto, false);
+});
+
+test("H: rotulo em BRANCO nao vira 'valores de ' -- o painel cala", () => {
+  // `"   "` e verdadeiro em JavaScript: sem o `trim()` de producao a frase sai
+  // pela metade. A mesma classe do `full_name` de espacos do caso C, e aqui ela
+  // nao tem fallback -- a frase simplesmente nao e dita.
+  assert.equal(resultado.h.branco_tem_periodo, false);
+  // E o painel CONTINUA de pe: perder o rotulo nao pode apagar as linhas.
+  assert.equal(resultado.h.branco_tem_painel, true);
+  assert.ok(
+    resultado.h.branco_texto.indexOf("valores de") < 0,
+    "sobrou um 'valores de' sem periodo nenhum depois"
+  );
+});
+
+test("A: sem acerto e sem periodo, NENHUMA das frases novas aparece", () => {
+  // O CONTROLE NEGATIVO dos dois casos acima, no fixture da issue. `ja_pago`
+  // nulo e a leitura que nao olhou acertos (`creditoAReceber` nao le
+  // `group_settlements`), e ela nao pode produzir recibo nenhum.
+  assert.equal(resultado.a.tem_ja_pago, false);
+  assert.equal(resultado.a.tem_nota_do_acerto, false);
+  assert.equal(resultado.a.tem_periodo, false);
 });
 
 test("F: o CONTROLE NEGATIVO do caso E -- `sem_devedor` zero nao escreve linha", () => {

@@ -199,6 +199,48 @@ const MUTANTES = [
     de: "    grupos: new Set(credito.linhas.map((l) => l.group_id)).size,",
     para: "    grupos: credito.linhas.length,",
   },
+  // ---------------------------------------------------------------------------
+  // O RECIBO DA LINHA -- HMO-422, 2a volta
+  // ---------------------------------------------------------------------------
+  // O campo `ja_pago` e preenchido por `aplicarTetoDoAcerto` (outro modulo,
+  // outro runner). O que e decisao DESTE arquivo e (a) marcar a leitura que nao
+  // olhou acertos como `null` e (b) o criterio unico que decide se a frase sai.
+  {
+    nome: "nao_perguntei_vira_nao_pagou",
+    porque:
+      "a leitura que NAO le `group_settlements` passa a afirmar `ja_pago: 0`, " +
+      "ou seja 'ela nao te pagou nada' por conta de uma pergunta que nao foi " +
+      "feita -- e qualquer tela ligada a esta lista escreveria isso",
+    de: "      ja_pago: null,",
+    para: "      ja_pago: 0,",
+  },
+  {
+    nome: "recibo_em_zero",
+    porque:
+      "`ja_pago: 0` deixa de calar: quem nunca pagou nada ganha a frase 'ja te " +
+      "pagou R$ 0,00' embaixo do nome -- um recibo inventado, pior que a " +
+      "omissao que a HMO-422 veio consertar",
+    de: "  if (!Number.isFinite(pago) || pago <= 0) return null;",
+    para: "  if (!Number.isFinite(pago) || pago < 0) return null;",
+  },
+  {
+    nome: "recibo_negativo",
+    porque:
+      "sem o piso, um `ja_pago` negativo (que um `min` invertido no teto " +
+      "produziria) vira 'ja te pagou -R$ 10,00' na tela -- e nenhuma assercao " +
+      "de aritmetica alcanca uma frase",
+    de: "  if (!Number.isFinite(pago) || pago <= 0) return null;",
+    para: "  if (!Number.isFinite(pago)) return null;",
+  },
+  {
+    nome: "nota_do_acerto_por_criterio_proprio",
+    porque:
+      "a nota do painel passa a ter criterio PROPRIO (`ja_pago !== null`) e " +
+      "discorda das linhas em `ja_pago: 0`: o paragrafo que explica o acerto " +
+      "aparece sozinho, explicando pagamento que nenhuma linha menciona",
+    de: "  return credito.linhas.some((linha) => jaPagouNaLinha(linha) !== null);",
+    para: "  return credito.linhas.some((linha) => linha.ja_pago !== null);",
+  },
   {
     nome: "nota_sempre_existe",
     porque:

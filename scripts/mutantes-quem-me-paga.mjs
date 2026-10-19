@@ -147,6 +147,74 @@ const mutantes = [
   ],
 
   // -------------------------------------------------------------------------
+  // A 2a VOLTA: DE QUANDO E O VALOR, E QUEM JA PAGOU (casos G e H)
+  // -------------------------------------------------------------------------
+  // O print que reabriu a issue tinha «Letícia me pagou (Casa)» num bloco e
+  // «Letícia · Casa · R$ 270,62» no outro, as duas frases CERTAS, nenhuma
+  // dizendo de que mes falava. Os mutantes daqui sao de ROTULO, e por isso
+  // nenhum deles muda um numero: eles produzem telas plausiveis e erradas.
+  [
+    TELA,
+    "periodo_apagado: os valores voltam a aparecer sem dizer de quando sao",
+    "        {periodo !== \"\" && (",
+    "        {false && (",
+  ],
+  [
+    TELA,
+    "periodo_sem_trim: rotulo em branco vira 'valores de ' com nada depois",
+    "  const periodo = (rotuloDoPeriodo ?? \"\").trim();",
+    "  const periodo = rotuloDoPeriodo ?? \"\";",
+  ],
+  [
+    TELA,
+    "recibo_nunca: a linha de quem ja pagou nao diz que pagou -- o defeito da issue",
+    "                  {jaPagou !== null && (",
+    "                  {false && (",
+  ],
+  [
+    // O IRMAO DO `recibo_nunca`, E ELE EXISTE PORQUE AQUELE MORRE NO `tsc`:
+    // apagar o `jaPagou !== null &&` deixa a variavel sem uso e o compilador
+    // reprova antes de qualquer assercao rodar. Isso e um kill legitimo (o
+    // mutante nao embarca), mas nao prova que a FRASE esta medida -- so que a
+    // variavel esta. Este aqui mantem o elemento e esvazia o texto: so a
+    // assercao de conteudo do caso G o mata.
+    TELA,
+    "recibo_mudo: o elemento do recibo fica de pe e a frase dentro dele some",
+    "                      {FRASE_JA_PAGOU(formatCurrency(jaPagou))}",
+    "                      {\"\"}",
+  ],
+  [
+    TELA,
+    "recibo_pelo_campo_cru: `ja_pago: 0` passa a escrever 'ja te pagou R$ 0,00'",
+    "            const jaPagou = jaPagouNaLinha(linha);",
+    "            const jaPagou = linha.ja_pago;",
+  ],
+  [
+    TELA,
+    "recibo_marca_o_valor_a_receber: a marca do recibo leva o que ela AINDA deve",
+    "                      data-ja-pago={jaPagou}",
+    "                      data-ja-pago={linha.valor}",
+  ],
+  [
+    TELA,
+    "recibo_imprime_o_valor_a_receber: a frase diz o que falta como se ja tivesse entrado",
+    "                      {FRASE_JA_PAGOU(formatCurrency(jaPagou))}",
+    "                      {FRASE_JA_PAGOU(formatCurrency(linha.valor))}",
+  ],
+  [
+    TELA,
+    "nota_do_acerto_sempre: explica acerto para quem nunca recebeu acerto nenhum",
+    "        {algumJaPagou(credito) && (",
+    "        {true && (",
+  ],
+  [
+    TELA,
+    "nota_do_acerto_nunca: o recibo aparece e NADA explica por que o valor nao caiu",
+    "        {algumJaPagou(credito) && (",
+    "        {false && (",
+  ],
+
+  // -------------------------------------------------------------------------
   // A PORTA: `null` e lista vazia tem de dar o MESMO nada
   // -------------------------------------------------------------------------
   [

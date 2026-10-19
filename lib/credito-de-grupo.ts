@@ -132,6 +132,33 @@ export interface CreditoDeGrupo {
   devedor: string | null;
   /** BRL, positivo. */
   valor: number;
+  /**
+   * Quanto essa pessoa JA ME PAGOU neste grupo -- a soma de TODOS os acertos do
+   * par em `group_settlements`, em BRL positivo. `null` quando a leitura nao
+   * olhou acertos.
+   *
+   * `null` E 0 SAO ESTADOS DIFERENTES, e a distincao e a mesma que a rota faz
+   * entre `quem_me_paga` ausente e `quem_me_paga: []`: `creditoAReceber` nao le
+   * `group_settlements` -- quem le e `lerCreditoDosGrupos`, e quem preenche este
+   * campo e `aplicarTetoDoAcerto` (lib/teto-do-acerto.ts), que tem o mapa por
+   * par na mao. Escrever `0` aqui dentro de `creditoDoFechamento` afirmaria "ela
+   * nao te pagou nada" sobre uma leitura que nao perguntou, e a tela diria isso
+   * por escrito ao lado do nome de quem acabou de pagar.
+   *
+   * ELE E O ACUMULADO DO PAR, E NAO O ACERTO DO PERIODO. E de proposito: o teto
+   * que produziu `valor` desconta sobre a posicao do grupo INTEIRA
+   * (`aplicarTetoDoAcerto`), entao um numero recortado pelo periodo nao
+   * explicaria o valor que esta ao lado dele -- diria "ela te pagou R$ 0,00" num
+   * mes cujo credito o pagamento de outro mes ja abateu. Quem escreve a frase
+   * que liga os dois e `FRASE_JA_PAGOU` (components/movimentacoes/
+   * PainelQuemMePaga.tsx), e e por isso que a frase diz "neste grupo" e nao
+   * "neste periodo".
+   *
+   * HMO-422: o Helio leu, na MESMA aba, "Leticia me pagou (Casa)" em cima e
+   * "Leticia · Casa · R$ 270,62" embaixo, sem nada dizendo que as duas frases
+   * falam de meses diferentes do mesmo grupo. As duas estavam certas.
+   */
+  ja_pago: number | null;
 }
 
 /**
@@ -205,6 +232,11 @@ export function creditoDoFechamento(
       devedor_user_id: t.from_user_id,
       devedor: t.from_name ?? null,
       valor: Math.abs(Number(t.amount) || 0),
+      // `null`, E NUNCA 0: esta funcao le `fecharMes`, que nao sabe o que e um
+      // acerto. Ver `CreditoDeGrupo.ja_pago` -- um zero daqui seria a tela
+      // afirmando "ela nao te pagou nada" por conta de uma leitura que nao
+      // perguntou.
+      ja_pago: null,
     }));
 }
 
@@ -355,4 +387,46 @@ export function devedorNaLinha(linha: CreditoDeGrupo): {
     texto: limpo || DEVEDOR_SEM_NOME,
     temNome: Boolean(limpo),
   };
+}
+
+/**
+ * Quanto essa pessoa ja me pagou neste grupo, ou `null` quando nao ha o que
+ * dizer -- e sao TRES estados colapsando em dois de proposito (HMO-422).
+ *
+ * `null` (a leitura nao olhou acertos) e `0` (olhou e ela nao pagou nada) dao a
+ * MESMA saida -- nenhuma frase -- porque a tela nao tem o que escrever em
+ * nenhum dos dois: "ja te pagou R$ 0,00" embaixo do nome de quem nunca pagou e
+ * ruido que parece recurso quebrado, a mesma escolha de `notaDoCreditoAReceber`
+ * e da linha de `sem_devedor`. Os dois continuam distintos NO DADO (ver
+ * `CreditoDeGrupo.ja_pago`), que e onde a distincao e barata e onde ela importa.
+ *
+ * E FUNCAO, E NAO UM `linha.ja_pago && …` NO JSX, pelo motivo de
+ * `devedorNaLinha`: a decisao de mostrar e o numero mostrado tem de sair do
+ * MESMO lugar. Um `&&` sobre o campo cru renderizaria a frase para `ja_pago`
+ * negativo (que nao existe hoje, mas um `min` invertido em `aplicarTetoDoAcerto`
+ * produziria) escrevendo "ja te pagou -R$ 10,00", e nenhuma assercao de
+ * aritmetica alcanca uma frase.
+ */
+export function jaPagouNaLinha(linha: CreditoDeGrupo): number | null {
+  const pago = Number(linha.ja_pago ?? 0);
+  if (!Number.isFinite(pago) || pago <= 0) return null;
+  return pago;
+}
+
+/**
+ * Alguem desta lista ja me pagou algo? -- a porta da nota que explica o teto.
+ *
+ * A nota (`NOTA_DO_ACERTO_NO_PERIODO`) so faz sentido para quem TEM pagamento
+ * registrado: ela explica por que um Pix ja feito pode nao ter baixado o numero
+ * do lado. Escreve-la para quem nunca recebeu acerto nenhum poria na tela um
+ * paragrafo sobre um mecanismo que nao agiu, e a aba Receitas ja tem quatro
+ * frases de legenda.
+ *
+ * Ela passa pelo MESMO `jaPagouNaLinha` que decide cada linha -- e nao por um
+ * `.some(l => l.ja_pago)` proprio -- porque os dois criterios discordariam
+ * exatamente em `ja_pago: 0`: a nota apareceria sozinha, explicando pagamentos
+ * que nenhuma linha menciona.
+ */
+export function algumJaPagou(credito: CreditoAReceber): boolean {
+  return credito.linhas.some((linha) => jaPagouNaLinha(linha) !== null);
 }

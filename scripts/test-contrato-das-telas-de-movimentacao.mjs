@@ -1592,7 +1592,7 @@ test("a aba Receitas NOMEIA quem deve o reembolso que esta no «Previsto» (HMO-
   );
   assert.match(
     lista,
-    /<PainelQuemMePaga credito=\{quemMePaga\} \/>/,
+    /<PainelQuemMePaga\s+credito=\{quemMePaga\}/,
     "O painel nao e montado com o estado lido da rota."
   );
 
@@ -1638,6 +1638,64 @@ test("a aba Receitas NOMEIA quem deve o reembolso que esta no «Previsto» (HMO-
     /devedorNaLinha\(linha\)/,
     "O painel nao usa `devedorNaLinha`: o devedor de perfil ilegivel ficaria " +
       "sem rotulo nenhum na linha."
+  );
+});
+
+test("o painel diz DE QUANDO e DE QUEM JA PAGOU -- a 2a volta da HMO-422", () => {
+  // O print que reabriu a issue, na MESMA aba, dois blocos de distancia:
+  //
+  //   «Letícia me pagou (Casa 🏠)» 01/10/2026  -- ja esta na sua conta
+  //   «Letícia · Casa 🏠 · R$ 270,62»          -- ainda nao entrou na sua conta
+  //
+  // As duas frases estavam CERTAS (o acerto dela quitou um mes anterior, e o
+  // teto desconta sobre a posicao acumulada do par, nao sobre o mes). O defeito
+  // era nenhuma das duas dizer de que mes falava.
+  //
+  // A FIACAO DO ROTULO E ASSERCAO AQUI PORQUE O TIPO NAO A COBRA: a prop e
+  // opcional na assinatura do painel (a sonda de componente precisa poder
+  // omiti-la), entao esquecer de liga-la compila, passa no lint, e a tela volta
+  // a mostrar valores sem data -- exatamente o estado que a issue reportou.
+  assert.match(
+    lista,
+    /<PainelQuemMePaga[\s\S]{0,120}rotuloDoPeriodo=\{rotuloDoPeriodo\}/,
+    "A lista nao passa `rotuloDoPeriodo` ao painel: os valores voltam a " +
+      "aparecer sem dizer de que periodo sao, e o acerto pago ontem parece " +
+      "nao ter entrado."
+  );
+
+  const painel = semComentarios(
+    readFileSync("components/movimentacoes/PainelQuemMePaga.tsx", "utf8")
+  );
+
+  // AS TRES FRASES NOVAS, INTERPOLADAS -- `{NOME}` e nao `includes("NOME")`,
+  // que casaria com a linha de declaracao e ficaria verde sobre um JSX que
+  // nunca as escreve.
+  for (const frase of [
+    "{FRASE_DO_PERIODO(periodo)}",
+    "{NOTA_DO_ACERTO_NO_PERIODO}",
+    "{FRASE_JA_PAGOU(formatCurrency(jaPagou))}",
+  ]) {
+    assert.ok(
+      painel.includes(frase),
+      `O painel nao escreve \`${frase}\`. As frases da 2a volta sao a entrega ` +
+        `inteira desta rodada -- o numero nao mudou, a explicacao dele mudou.`
+    );
+  }
+
+  // E AS DUAS DECISOES SAEM DA LIB, nao de um `&&` sobre o campo cru: `0`
+  // ("perguntei e ela nao pagou") e `null` ("nao perguntei") tem de produzir a
+  // MESMA tela, e um `linha.ja_pago &&` distingue os dois -- escrevendo "ja te
+  // pagou R$ 0,00" para quem nunca pagou nada.
+  assert.match(
+    painel,
+    /jaPagouNaLinha\(linha\)/,
+    "O painel nao passa a linha por `jaPagouNaLinha`."
+  );
+  assert.match(
+    painel,
+    /algumJaPagou\(credito\)/,
+    "A nota do acerto nao e decidida por `algumJaPagou`: ela apareceria para " +
+      "quem nunca recebeu acerto nenhum, explicando um mecanismo que nao agiu."
   );
 });
 

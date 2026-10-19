@@ -47,7 +47,7 @@ const { fecharMes, linhaDoPrevisto, linhaDoRealizado } = await import(
   "../.tmp-teto-do-acerto/fechamento-do-grupo.js"
 );
 
-const { creditoAReceber } = await import(
+const { creditoAReceber, jaPagouNaLinha, algumJaPagou } = await import(
   "../.tmp-teto-do-acerto/credito-de-grupo.js"
 );
 
@@ -460,4 +460,136 @@ test("o devedor que nao aparece no acumulado nao inventa credito", () => {
 
   assert.equal(presas.total, 0);
   assert.deepEqual(presas.linhas, []);
+});
+
+// =============================================================================
+// O QUE CADA DEVEDOR JA PAGOU VIAJA COM A LINHA (HMO-422, 2a volta)
+// =============================================================================
+// O print que reabriu a issue, na MESMA aba Receitas:
+//
+//   «Letícia me pagou (Casa 🏠)» 01/10/2026   -- ja esta na sua conta
+//   «Letícia · Casa 🏠 · R$ 270,62»           -- ainda nao entrou na sua conta
+//
+// As duas frases estavam CERTAS (o acerto dela quitou um mes anterior), e a
+// tela nao tinha como dizer isso: o mapa de acertos morria dentro do `max` do
+// teto. Agora cada linha sai com `ja_pago`, que e o MESMO numero que entrou no
+// teto -- e os blocos abaixo trancam as quatro maneiras de essa ligacao mentir.
+// A frase em si e medida na sonda de navegador (test-quem-me-paga-na-tela.mjs).
+
+/** O `ja_pago` da linha de um devedor, ou `undefined` quando ele saiu da lista. */
+const jaPagoDe = (credito, devedor) =>
+  credito.linhas.find((l) => l.devedor_user_id === devedor)?.ja_pago;
+
+test("`ja_pago` e por PAR: o acerto do C nao aparece na linha do D", () => {
+  const presas = aplicarTetoDoAcerto({
+    doPeriodo: creditoEm(CASA, LINHAS_DA_CASA, GENTE, SO_OUTUBRO),
+    acumulado: creditoEm(CASA, LINHAS_DA_CASA, GENTE, MESES_DO_GRUPO),
+    acertos: acertosRecebidosPorDevedor([
+      { group_id: CASA.id, from_user_id: C, amount: "45.00", exchange_rate: 1 },
+    ]),
+  });
+
+  // O C pagou 45 do acumulado de 60: o credito do mes cai de 30 para 15, e a
+  // tela passa a poder dizer POR QUE.
+  assert.equal(valorDe(presas, C), 15);
+  assert.equal(jaPagoDe(presas, C), 45);
+
+  // E O D, QUE NAO PAGOU NADA, SAI COM ZERO -- e nao com os 45 do C nem com
+  // `undefined`. O criterio por GRUPO (reprovado na HMO-404) escreveria "a Dani
+  // ja te pagou R$ 45,00" embaixo do nome de quem nunca pagou: um recibo
+  // inventado, que e pior que a omissao que esta issue veio consertar.
+  assert.equal(valorDe(presas, D), 30);
+  assert.equal(jaPagoDe(presas, D), 0);
+
+  // `0` e `null` NAO sao a mesma coisa no dado, e sao a mesma coisa na frase:
+  // esta leitura PERGUNTOU e a resposta foi zero.
+  assert.equal(jaPagouNaLinha(presas.linhas.find((l) => l.devedor_user_id === D)), null);
+  assert.equal(jaPagouNaLinha(presas.linhas.find((l) => l.devedor_user_id === C)), 45);
+  assert.equal(algumJaPagou(presas), true);
+});
+
+test("O CASO DO HELIO: ela pagou, o valor do mes NAO mudou, e a linha diz os dois", () => {
+  // O caso 2 da medicao da issue, com os numeros do limite declarado: o C deve
+  // 40 (realizado, setembro) + 100 (previsto, outubro) e paga 40, quitando
+  // setembro. Olhando SETEMBRO SOZINHO o teto e no-op -- 140 - 40 = 100, e
+  // min(40, 100) = 40 --, entao a tela continua pedindo os mesmos R$ 40,00 que
+  // ele acabou de pagar.
+  //
+  // E ESSE o print da issue: nenhum numero esta errado, e sem `ja_pago` nao ha
+  // nada na tela ligando as duas frases.
+  const gente = membros(EU, C);
+  const linhas = [
+    realizada("t-set", 80, "2026-09-10"),
+    prevista("s-out", 200, "2026-10-10"),
+  ];
+
+  const soSetembro = aplicarTetoDoAcerto({
+    doPeriodo: creditoEm(CASA, linhas, gente, ["2026-09"]),
+    acumulado: creditoEm(CASA, linhas, gente, MESES_DO_GRUPO),
+    acertos: acertosRecebidosPorDevedor([
+      { group_id: CASA.id, from_user_id: C, amount: "40.00", exchange_rate: 1 },
+    ]),
+  });
+
+  // O teto nao mordeu: o valor e o mesmo de antes do pagamento.
+  assert.equal(valorDe(soSetembro, C), 40);
+  // E A TELA AGORA TEM O QUE DIZER. Sem esta linha a aba Receitas repete
+  // "R$ 40,00 a receber" dois blocos abaixo de "o C te pagou R$ 40,00", que foi
+  // exatamente o que o Helio reportou.
+  assert.equal(jaPagoDe(soSetembro, C), 40);
+});
+
+test("`ja_pago` sai da MESMA conversao de moeda que o teto -- nao da cotacao de hoje", () => {
+  // O acerto de US$ 50 pago a 5,00 vale R$ 250,00, e e esse numero que abate o
+  // teto (`acertosRecebidosPorDevedor` multiplica pela cotacao CONGELADA). Uma
+  // segunda conversao para a frase divergiria exatamente no caso raro, e a tela
+  // diria "ja te pagou R$ 50,00" sobre um abatimento de R$ 250,00.
+  const presas = aplicarTetoDoAcerto({
+    doPeriodo: creditoEm(CASA, LINHAS_DA_CASA, GENTE, SO_OUTUBRO),
+    acumulado: creditoEm(CASA, LINHAS_DA_CASA, GENTE, MESES_DO_GRUPO),
+    acertos: acertosRecebidosPorDevedor([
+      { group_id: CASA.id, from_user_id: C, amount: "10.00", exchange_rate: "4.50" },
+    ]),
+  });
+
+  // 10 * 4,50 = 45, o mesmo numero do bloco do par acima -- e o credito do C
+  // cai para 15 por causa dele.
+  assert.equal(jaPagoDe(presas, C), 45);
+  assert.equal(valorDe(presas, C), 15);
+});
+
+test("sem acerto nenhum ninguem ganha recibo, e `algumJaPagou` fica falso", () => {
+  // O CONTROLE NEGATIVO da nota do painel: num grupo em que ninguem pagou nada,
+  // `ja_pago` e zero em TODAS as linhas e a tela nao escreve paragrafo nenhum
+  // sobre acerto. Sem este bloco, um `ja_pago` preenchido com o valor da linha
+  // (ou com o total) passaria verde nos blocos de cima e poria um recibo falso
+  // embaixo de todo devedor do app.
+  const presas = aplicarTetoDoAcerto({
+    doPeriodo: creditoEm(CASA, LINHAS_DA_CASA, GENTE, SO_OUTUBRO),
+    acumulado: creditoEm(CASA, LINHAS_DA_CASA, GENTE, MESES_DO_GRUPO),
+    acertos: acertosRecebidosPorDevedor([]),
+  });
+
+  assert.deepEqual(
+    presas.linhas.map((l) => l.ja_pago),
+    [0, 0]
+  );
+  assert.equal(algumJaPagou(presas), false);
+  // E o controle nao e vacuo: as linhas existem e valem 30 cada.
+  assert.equal(presas.total, 60);
+});
+
+test("quem NAO passou pelo teto fica com `ja_pago` nulo -- 'nao perguntei' nao e 'nao pagou'", () => {
+  // `creditoAReceber` nao le `group_settlements`: a saida dela e a leitura que
+  // NAO olhou acertos. O campo e `null` ali, e `null` e 0 dao a mesma frase
+  // (nenhuma) de proposito -- a distincao vive no dado, para o dia em que
+  // alguem ligar esta lista a uma tela que precise dos dois estados.
+  const cru = creditoEm(CASA, LINHAS_DA_CASA, GENTE, SO_OUTUBRO);
+
+  assert.deepEqual(
+    cru.linhas.map((l) => l.ja_pago),
+    [null, null]
+  );
+  assert.equal(algumJaPagou(cru), false);
+  assert.equal(jaPagouNaLinha(cru.linhas[0]), null);
 });

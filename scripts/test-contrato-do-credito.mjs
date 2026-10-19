@@ -109,12 +109,16 @@ test("a tela le os tres campos de CreditoAReceber, com o nome que a lib da", () 
 test("a tela le os campos de cada linha, e nao esquece o nome do devedor", () => {
   const campos = camposDaInterface(lib, "CreditoDeGrupo", LIB);
   // O pedido da issue, literal: nome, grupo e valor. `group_id` e o link e
-  // `devedor_user_id` e metade da chave do React.
+  // `devedor_user_id` e metade da chave do React. `ja_pago` e o quanto aquela
+  // pessoa ja me pagou naquele grupo (HMO-422, 2a volta) -- quem o preenche e
+  // `aplicarTetoDoAcerto`, que e o unico ponto da cadeia com o mapa de acertos
+  // e as linhas na mesma mao.
   assert.deepEqual(campos.sort(), [
     "devedor",
     "devedor_user_id",
     "group_id",
     "grupo",
+    "ja_pago",
     "valor",
   ]);
 
@@ -128,10 +132,42 @@ test("a tela le os campos de cada linha, e nao esquece o nome do devedor", () =>
   // `devedor` NAO e lido direto de proposito: quem escreve o rotulo (e o
   // fallback de perfil ilegivel) e `devedorNaLinha`, que tem teste. Ler
   // `linha.devedor` cru na tela e o caminho que produz rotulo em branco.
+  //
+  // `ja_pago` TAMBEM NAO, e pela mesma razao: quem decide se a frase sai e
+  // `jaPagouNaLinha`, porque `0` ("perguntei e ela nao pagou") e `null` ("nao
+  // perguntei") tem de dar a MESMA tela -- nenhuma frase. Um `linha.ja_pago &&`
+  // solto escreveria recibo de valor negativo se o campo viesse negativo.
+  // Este bloco so le os dois campos que a tela usa CRUS.
   assert.ok(
     tela.includes("devedorNaLinha(linha)"),
     "A tela tem de passar a linha por `devedorNaLinha` -- e ela que poe o " +
       "rotulo quando o perfil do devedor nao e legivel, que e caminho NORMAL."
+  );
+});
+
+test("quem preenche `ja_pago` e o teto, e e o MESMO mapa que ele usou", () => {
+  // A 2a volta da HMO-422: o print tinha "Letícia me pagou (Casa)" num bloco e
+  // "Letícia · Casa · R$ 270,62" no outro, as duas frases certas, nenhuma
+  // dizendo de que mes falava. O mapa de acertos existia -- e morria dentro do
+  // `max` do teto.
+  //
+  // UMA SEGUNDA LEITURA DE `group_settlements` PARA A FRASE SERIA O DEFEITO DE
+  // VOLTA, em outro lugar: a tela explicaria o numero com um valor que nao foi
+  // o usado para calcula-lo. Por isso a assercao e sobre o `acertos.get(...)`
+  // DENTRO de `aplicarTetoDoAcerto`, e nao sobre "existe um ja_pago".
+  const teto = semComentarios(readFileSync("lib/teto-do-acerto.ts", "utf8"));
+
+  assert.match(
+    teto,
+    /ja_pago:\s*toReais\(acertos\.get\(chave\)\s*\?\?\s*0\)/,
+    "`aplicarTetoDoAcerto` tem de carimbar `ja_pago` com o MESMO mapa de " +
+      "acertos que produziu o teto -- e em `toReais` do centavo, sem segunda " +
+      "conversao de moeda."
+  );
+  assert.ok(
+    !/from\("group_settlements"\)/.test(teto),
+    "lib/teto-do-acerto.ts nao pode consultar o banco: ele e funcao pura, e " +
+      "uma segunda leitura dos acertos divergiria da que calculou o teto."
   );
 });
 

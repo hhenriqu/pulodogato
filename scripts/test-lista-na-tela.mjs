@@ -584,7 +584,16 @@ const DialogoDePagamentoDaFatura = (props) => {
         linha: props.linha,
         valorFormatado: props.valorFormatado,
         vencimentoFormatado: props.vencimentoFormatado,
-        hoje: props.hoje,
+        // \`hoje\` E UMA FUNCAO DESDE A HMO-315 ("a data de hoje e lida no
+        // CLIQUE, nunca guardada no modulo"), e guardar a funcao crua aqui
+        // quebrava a assercao de um jeito silencioso: o relato da pagina sai
+        // por \`JSON.stringify\`, que DESCARTA funcao, entao \`d.hoje\` chegava
+        // \`undefined\` no node e o bloco H3 ficava vermelho na main inteira,
+        // apontando para a data em vez de para o registrador.
+        //
+        // Chamar AQUI e o que a producao faz no clique -- e o \`typeof\` cobre
+        // as duas formas, porque a prop ja foi string e pode voltar a ser.
+        hoje: typeof props.hoje === "function" ? props.hoje() : props.hoje,
       }
     : null;
   return null;
