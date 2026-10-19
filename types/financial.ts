@@ -77,6 +77,20 @@ export interface FinancialAccount {
   credit_limit?: number;
   current_balance: number;
   is_active: boolean;
+  /**
+   * A conta entra nos totais consolidados? (HMO-431, migration 058)
+   *
+   * `is_active` e `include_in_total` sao coisas DIFERENTES e nao se substituem:
+   * arquivar tira a conta das listas e dos seletores de lancamento -- ela sai do
+   * app; desligar daqui deixa a conta inteira em uso (recebe lancamento, tem
+   * extrato, aparece no seletor) e so a tira das SOMAS. E a conta da empresa, a
+   * conjunta, a de terceiro que a pessoa administra.
+   *
+   * Opcional no tipo porque uma resposta guardada no cache offline de antes da
+   * 058 nao tem o campo. Quem resolve a ausencia e `contasQueSomam` em
+   * lib/contas.ts, que trata ausente como `true` -- o mesmo DEFAULT da coluna.
+   */
+  include_in_total?: boolean;
   color_hex: string;
   icon: string;
   /** Cartao (migration 006): dia do fechamento da fatura. */

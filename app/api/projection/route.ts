@@ -19,6 +19,7 @@ import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { isIsoDate, today } from "@/lib/recurrence";
 import { calcularProjecao, fimDoMes } from "@/lib/projecao";
+import { contasQueSomam } from "@/lib/contas";
 
 export async function GET(request: NextRequest) {
   try {
@@ -44,9 +45,15 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const { data: contas, error: erroContas } = await supabase
+    const { data: contasBrutas, error: erroContas } = await supabase
       .from("financial_accounts")
-      .select("id, name, account_type, current_balance")
+      .select(
+        // `include_in_total` (HMO-431, migration 058). O recorte e no JS, logo
+        // abaixo: `.eq("include_in_total", true)` aqui responderia 42703 num
+        // banco que ainda nao recebeu a 058 e derrubaria a projecao inteira.
+        // O `is_active` continua no PostgREST porque aquela coluna e do 001.
+        "id, name, account_type, current_balance, include_in_total"
+      )
       .eq("user_id", user.id)
       .eq("is_active", true);
 
@@ -57,6 +64,11 @@ export async function GET(request: NextRequest) {
         { status: 500 }
       );
     }
+
+    // A CONTA DESLIGADA SAI DA PROJECAO (HMO-431). O recorte e aqui e nao
+    // dentro de `lib/projecao.ts`, que soma o que recebe -- `contasQueSomam` em
+    // lib/contas.ts e a unica definicao de "esta conta conta".
+    const contas = contasQueSomam(contasBrutas ?? []);
 
     // A VIEW, e nao a tabela (HMO-256): a tabela nao tem `direction`, e deduzir
     // a direcao do tipo da REGRA faz toda receita prevista avulsa entrar como
