@@ -3,7 +3,11 @@
 //
 // O QUE ESTA SUITE PROVA
 // ----------------------
-// Com o modo ligado o menu tem EXATAMENTE 8 rotas; desligado, EXATAMENTE 27.
+// Com o modo ligado o menu tem EXATAMENTE 8 rotas; desligado, EXATAMENTE 29
+// TELAS -- que desde a HMO-423 sao pintadas como 8 entradas de primeiro nivel
+// (duas telas soltas e seis grupos com submenu). Esta suite conta TELAS, pela
+// lista plana `navigation`; quem conta as entradas e os grupos e
+// `npm run test:menu-agrupado`.
 //
 // O "exatamente" (e nao "contem") e o ponto. Com `contem`, a suite fica verde
 // enquanto o menu volta a crescer: o proximo item acrescentado ao array nao
@@ -20,8 +24,8 @@
 // POR QUE A SUITE FIXA O PLANO
 // ----------------------------
 // `podeVerItem` e o PRIMEIRO filtro do menu e ele ja existia. O menu completo
-// so tem 27 itens para quem e `admin`: duas telas declaram `requiredPlans`
-// (Admin e Trading), e a contagem cai para 26 no plano `trader` e para 25 nos
+// so tem 29 telas para quem e `admin`: duas delas declaram `requiredPlans`
+// (Admin e Trading), e a contagem cai para 28 no plano `trader` e para 27 nos
 // outros -- a suite passaria a medir o PLANO em vez do MODO, variando com uma
 // regra que nao e assunto desta issue. Entao o plano entra fixo em todo caso, e
 // ha um caso proprio (`o plano e o OUTRO filtro`) que prende as tres contagens
@@ -32,7 +36,7 @@
 // Comparar a saida do filtro com o `ROTAS_DO_MENU_DE_PAPEL` que o alimenta
 // provaria pouco: a lista estaria conferindo consigo mesma. O que torna a
 // assercao real e que ela so fecha se cada uma das 8 rotas EXISTIR no array de
-// 27 -- uma rota renomeada la derruba a contagem -- e que os NOMES conferidos
+// 29 -- uma rota renomeada la derruba a contagem -- e que os NOMES conferidos
 // (`Dashboard`, `Receitas`, ...) vem do array de navegacao, nao da lista de
 // rotas. Esses nomes sao dado independente.
 //
@@ -75,7 +79,7 @@ const nomes = (itens) => itens.map((item) => item.name);
 // Desligado: o menu inteiro
 // ---------------------------------------------------------------------------
 
-test("desligado, o menu tem EXATAMENTE 28 itens", () => {
+test("desligado, o menu tem EXATAMENTE 29 telas", () => {
   const itens = menu({ plano: "admin", papel: false });
 
   // Se este numero mudou, foi porque alguem acrescentou (ou tirou) um item do
@@ -88,10 +92,22 @@ test("desligado, o menu tem EXATAMENTE 28 itens", () => {
   // resposta a pergunta acima foi NAO -- ele fica FORA do modo papel de pao. O
   // modo e para quem quer o app simples; emprestar dinheiro para si mesmo em 24x
   // nao e uma das cinco telas de dinheiro que ele promete. As oito rotas do modo
-  // continuam as mesmas, e o caso das 20 telas escondidas abaixo e quem prova
+  // continuam as mesmas, e o caso das 21 telas escondidas abaixo e quem prova
   // que a nova esta entre elas.
-  assert.equal(itens.length, 28);
-  assert.equal(navigation.length, 28);
+  //
+  // O 28 VIROU 29 NA HMO-423: entrou "Contas de Investimento"
+  // (`/dashboard/contas?tipo=investment`), e a resposta tambem foi NAO. Ela e a
+  // tela de Contas recortada no tipo, e `/dashboard/contas` -- a tela inteira --
+  // JA E uma das oito do modo: botar as duas no menu reduzido seria ensinar
+  // justamente o modo simples a ter dois itens para a mesma tela.
+  //
+  // O QUE ESTE NUMERO *NAO* MEDE DESDE A HMO-423: quantos itens o menu PINTA.
+  // `navigation` virou a lista PLANA derivada de `menuAgrupado`, e o menu
+  // desligado mostra 8 entradas de primeiro nivel com as 29 telas dentro. As
+  // duas contagens vivem em suites diferentes de proposito -- esta conta TELAS,
+  // que e o que o modo papel filtra; `test:menu-agrupado` conta as entradas.
+  assert.equal(itens.length, 29);
+  assert.equal(navigation.length, 29);
 });
 
 test("desligado, o filtro do modo devolve o MESMO array -- sem copia", () => {
@@ -151,7 +167,7 @@ test("ligado, os 8 itens sao as telas certas -- conferido pelo NOME", () => {
   ]);
 });
 
-test("ligado, as 20 telas restantes saem do menu -- nenhuma sobra", () => {
+test("ligado, as 21 telas restantes saem do menu -- nenhuma sobra", () => {
   const dentro = new Set(hrefs(menu({ plano: "admin", papel: true })));
   const fora = hrefs(menu({ plano: "admin", papel: false })).filter(
     (href) => !dentro.has(href)
@@ -161,10 +177,26 @@ test("ligado, as 20 telas restantes saem do menu -- nenhuma sobra", () => {
   // abaixo e quem prova que ele esta entre as escondidas de verdade -- a
   // contagem sozinha nao distingue "o item novo ficou fora" de "um item antigo
   // saiu e o novo entrou".
-  assert.equal(fora.length, 20);
+  //
+  // 20 -> 21 na HMO-423: "Contas de Investimento". Ela merece assercao PROPRIA
+  // e nao so o +1 da contagem, porque ela e a unica rota do menu com QUERY, e e
+  // o caso em que uma leitura por caminho erraria calada: `noMenuDoPapel`
+  // compara o `href` inteiro, entao `/dashboard/contas?tipo=investment` fica
+  // fora enquanto `/dashboard/contas` fica dentro. Se alguem fizer o predicado
+  // comparar so o caminho, a tela recortada entra no modo simples sem ninguem
+  // pedir -- e as duas linhas abaixo sao as que reprovam.
+  assert.equal(fora.length, 21);
   assert.ok(
     fora.includes("/dashboard/mybank"),
     "o MyBank deveria estar entre as telas escondidas pelo modo"
+  );
+  assert.ok(
+    fora.includes("/dashboard/contas?tipo=investment"),
+    "Contas de Investimento deveria estar escondida pelo modo"
+  );
+  assert.ok(
+    hrefs(menu({ plano: "admin", papel: true })).includes("/dashboard/contas"),
+    "e a tela INTEIRA de Contas deveria continuar dentro do modo"
   );
   // E um controle do `noMenuDoPapel`, nao so aritmetica: cada rota escondida
   // tem de ser reprovada pelo predicado, uma por uma. Uma rota que saisse da
@@ -190,7 +222,7 @@ test("as 8 rotas do modo existem todas no array de navegacao", () => {
 // ---------------------------------------------------------------------------
 
 test("o plano e o OUTRO filtro: cada plano tem a sua contagem", () => {
-  // Este caso existe para que o 27 lá em cima nao seja um numero misterioso. E
+  // Este caso existe para que o 29 lá em cima nao seja um numero misterioso. E
   // e a razao de todos os outros casos fixarem o plano.
   //
   // Sao DOIS os itens restritos, nao um: `Admin` (`["admin"]`) e `Trading`
@@ -206,18 +238,20 @@ test("o plano e o OUTRO filtro: cada plano tem a sua contagem", () => {
   // encontrado (nao causado) na HMO-284, cujo assunto era o menu reduzido, e
   // consertar la mudaria o menu de quem usa o app num PR sobre outra coisa.
   //
-  // As cinco subiram de 1 na HMO-371, e TODAS as cinco: "MyBank" nao declara
+  // As cinco subiram de 1 na HMO-371 e de 1 outra vez na HMO-423 (entraram
+  // "MyBank" e "Contas de Investimento", nenhum dos dois com `requiredPlans`),
+  // e TODAS as cinco nas duas vezes: "MyBank" nao declara
   // `requiredPlans` nenhum (Decisao 5 da HMO-368 -- quem tem conta de
   // investimento tem MyBank), entao ele entra no menu de todo plano, inclusive
   // de quem ainda nao carregou a assinatura. Se um dia alguem gatear a tela, sao
   // estes cinco numeros que deixam de fechar -- e nao um comentario.
-  assert.equal(menu({ plano: "admin", papel: false }).length, 28);
-  assert.equal(menu({ plano: "trader", papel: false }).length, 27);
-  assert.equal(menu({ plano: "invest", papel: false }).length, 26);
-  assert.equal(menu({ plano: "free", papel: false }).length, 26);
+  assert.equal(menu({ plano: "admin", papel: false }).length, 29);
+  assert.equal(menu({ plano: "trader", papel: false }).length, 28);
+  assert.equal(menu({ plano: "invest", papel: false }).length, 27);
+  assert.equal(menu({ plano: "free", papel: false }).length, 27);
   // Sem assinatura carregada ninguem ve item restrito. E o estado dos primeiros
   // quadros, e o menu dele e o do `free`.
-  assert.equal(menu({ plano: undefined, papel: false }).length, 26);
+  assert.equal(menu({ plano: undefined, papel: false }).length, 27);
 
   // A CONTAGEM NAO DIZ QUAIS. Trocar uma tela restrita pela outra -- Trading
   // exigindo so `admin` e Admin passando a aceitar `trader` -- manteria os
@@ -326,7 +360,7 @@ function semComentarios(fonte) {
 test("o Sidebar CHAMA filtrarMenuDoPapel -- nao so importa", () => {
   // Por que este caso existe: `tsconfig.json` nao liga `noUnusedLocals`, entao
   // apagar a CHAMADA e deixar o import nao e erro de tsc nem de lint. O menu
-  // voltaria a ter 27 itens no modo ligado e TODOS os casos acima continuariam
+  // voltaria a ter 29 telas no modo ligado e TODOS os casos acima continuariam
   // verdes -- eles medem a composicao, nao o componente.
   //
   // Por isso a ancora e o CALL SITE, com os comentarios fora: uma assercao
@@ -338,7 +372,10 @@ test("o Sidebar CHAMA filtrarMenuDoPapel -- nao so importa", () => {
   // CONTROLE NOS DOIS SENTIDOS, antes da assercao de verdade.
   //
   // (a) o strip nao comeu codigo: um token que so existe em codigo sobreviveu.
-  assert.match(codigo, /filteredNavigation\.map\(/);
+  //     Era `filteredNavigation.map(` ate a HMO-423, quando o `Sidebar` passou
+  //     a percorrer `entradasDoMenu` -- telas soltas e grupos -- em vez de uma
+  //     lista plana de itens.
+  assert.match(codigo, /entradasDoMenu\.map\(/);
   // (b) o strip funcionou: uma frase que so existe em comentario SUMIU, e
   //     estava no texto cru. Sem este par, um `semComentarios` que devolvesse a
   //     fonte intacta (ou vazia) passaria a assercao de baixo sem sentido.

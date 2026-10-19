@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import type { Route } from "next";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
 import { useSubscription } from "@/lib/hooks/useSubscription";
 import { PlanBadge } from "@/components/subscription/PlanGuards";
@@ -11,11 +11,19 @@ import {
   ID_MENU_MOBILE,
   MobileMenuClose,
 } from "@/components/MobileMenuChrome";
-// O array dos 27 itens e o filtro por plano moraram aqui dentro ate a HMO-284;
-// o cabecalho daquele arquivo explica por que sairam. O item renderizado abaixo
-// e o MESMO objeto dessa lista -- o modo papel nao tem lista propria.
+// O array dos itens e o filtro por plano moraram aqui dentro ate a HMO-284; o
+// cabecalho daquele arquivo explica por que sairam. O item renderizado abaixo e
+// o MESMO objeto dessa lista -- nem o modo papel nem o submenu tem lista
+// propria.
 import {
+  EntradaDoMenu,
+  GrupoDeMenu,
   NavigationItem,
+  ehGrupo,
+  filtrarMenuAgrupado,
+  grupoAberto,
+  itemAtivoDoMenu,
+  menuAgrupado,
   navigation,
   podeVerItem,
 } from "@/components/navegacao-do-menu";
@@ -24,7 +32,7 @@ import { useModoPapel } from "@/components/ModoPapelProvider";
 import { propsSemPuxao } from "@/lib/puxar-para-atualizar";
 import { cn } from "@/lib/utils";
 import { User as UserType } from "@supabase/supabase-js";
-import { LogOut, Lock, Crown } from "lucide-react";
+import { ChevronDown, LogOut, Lock, Crown } from "lucide-react";
 
 interface SidebarProps {
   isMobileMenuOpen?: boolean;
@@ -43,9 +51,26 @@ export default function Sidebar({
   const setIsMobileMenuOpen =
     externalSetIsMobileMenuOpen ?? setInternalMobileMenuOpen;
   const pathname = usePathname();
+  // A QUERY STRING, e nao so o caminho (HMO-423): "Contas de Investimento" e
+  // `/dashboard/contas?tipo=investment`, a mesma rota de "Contas". Sem ler a
+  // query, os dois itens acendem juntos em qualquer uma das duas telas.
+  //
+  // E por isso que o `<Sidebar />` vive dentro de um `<Suspense>` no layout do
+  // painel. Aquela fronteira NAO e exigida hoje (medido: o `next build` passa
+  // sem ela, porque o layout nao renderiza nada enquanto a autenticacao
+  // carrega); o comentario de la diz por que ela fica.
+  const busca = useSearchParams().toString();
   const { hasFeature, subscription, isPremium, planConfig } =
     useSubscription(user);
   const { papel } = useModoPapel();
+  // QUAIS GRUPOS O USUARIO ABRIU OU FECHOU A MAO, por nome. O que NAO esta
+  // aqui nao e "fechado": e "ainda nao mexi", e ai quem decide e a tela atual
+  // (ver `grupoAberto`). Comecar com tudo fechado e um objeto vazio e nao uma
+  // lista -- nao ha estado inicial a inventar, e o menu nao precisa de efeito
+  // nenhum para se abrir no grupo certo depois de navegar.
+  const [gruposMexidos, setGruposMexidos] = useState<Record<string, boolean>>(
+    {}
+  );
 
   useEffect(() => {
     // `createClient()` dentro de quem usa, e nao no corpo do componente: assim
@@ -81,13 +106,20 @@ export default function Sidebar({
     return !!(item.isPremium && !isPremium);
   };
 
-  // OS DOIS FILTROS, sobre o MESMO array, nesta ordem.
+  // O MENU TEM DUAS FORMAS (HMO-423), e quem escolhe e o modo papel de pao.
   //
-  // O primeiro e o plano, que ja existia. O segundo e o modo papel de pao
-  // (HMO-284): com ele ligado sobram 8 itens dos 27 -- eram 5 na HMO-284, 7 com
-  // a HMO-294 e 8 com a HMO-299, e quem manda e `ROTAS_DO_MENU_DE_PAPEL`, nao
-  // este numero. A ordem entre os dois filtros nao muda o resultado -- os dois
-  // so removem -- e esta assim porque le melhor:
+  // DESLIGADO: as 8 entradas de primeiro nivel de `menuAgrupado` -- duas telas
+  // soltas e seis grupos que abrem submenu, com as 29 telas dentro.
+  //
+  // LIGADO: a lista PLANA das 8 telas do modo. Submenu num menu de 8 itens
+  // seria clique a mais para esconder nada, e o modo promete o contrario. E a
+  // lista do modo nao e uma segunda lista: ela sai do mesmo `navigation`, que
+  // por sua vez sai do mesmo `menuAgrupado` (ver o cabecalho daquele arquivo).
+  //
+  // OS DOIS CAMINHOS PASSAM PELO FILTRO DE PLANO, e e o mesmo `podeVerItem` nos
+  // dois -- `filtrarMenuAgrupado` o aplica item por item dentro de cada grupo e
+  // descarta o grupo que ficou vazio. A ordem entre os dois filtros nao muda o
+  // resultado -- os dois so removem -- e esta assim porque le melhor:
   // "do que o plano permite, o que o modo mantem".
   //
   // `papel` e falso enquanto `mounted` for falso, porque e o padrao do
@@ -95,10 +127,149 @@ export default function Sidebar({
   // localStorage, e pintar o menu curto num chute quebraria a hidratacao. Quem
   // usa o modo ve o menu completo por um quadro -- diferente da PELE, que o
   // script inline do `<head>` ja aplicou antes da primeira pintura.
-  const filteredNavigation = filtrarMenuDoPapel(
-    navigation.filter((item) => podeVerItem(item, subscription?.plan)),
-    papel
+  const entradasDoMenu: readonly EntradaDoMenu[] = papel
+    ? filtrarMenuDoPapel(
+        navigation.filter((item) => podeVerItem(item, subscription?.plan)),
+        papel
+      )
+    : filtrarMenuAgrupado(menuAgrupado, subscription?.plan);
+
+  // O ITEM ATIVO E UM SO, e ele e o MAIS ESPECIFICO -- `itemAtivoDoMenu` tem a
+  // regra e o porque. Calculado UMA vez para o menu inteiro: a decisao depende
+  // de todos os `href` juntos (quem ganha de quem), e nao e coisa que cada
+  // linha possa responder sozinha olhando so o proprio `href`.
+  const hrefAtivo = itemAtivoDoMenu(
+    navigation.map((item) => item.href),
+    pathname,
+    busca
   );
+
+  // ABERTO OU FECHADO e regra PURA, e ela mora em `grupoAberto` (o cabecalho
+  // dela tem o porque de cada metade). Aqui fica so a fiacao: o mapa do
+  // `useState` e o item ativo entram, e o booleano sai.
+  const estaAberto = (grupo: GrupoDeMenu) =>
+    grupoAberto(grupo, gruposMexidos, hrefAtivo);
+
+  // O `!grupoAberto(...)` le o mapa que o React entrega ao atualizador, e nao o
+  // `gruposMexidos` fechado nesta renderizacao: dois cliques no mesmo quadro
+  // (ou em dois grupos diferentes) leriam um mapa velho e um deles se perderia.
+  const alternarGrupo = (grupo: GrupoDeMenu) =>
+    setGruposMexidos((mexidos) => ({
+      ...mexidos,
+      [grupo.nome]: !grupoAberto(grupo, mexidos, hrefAtivo),
+    }));
+
+  /**
+   * UMA LINHA DE TELA, de primeiro nivel ou de dentro de submenu.
+   *
+   * Esta funcao existe porque o markup do item estava ESCRITO DUAS VEZES neste
+   * arquivo (uma no menu de desktop, uma na gaveta do celular) e o submenu
+   * acrescentaria uma terceira e uma quarta copia. Duas copias do selo premium
+   * e do cadeado divergem na primeira vez que alguem mexer numa delas -- e o
+   * celular e o lado que ninguem olha.
+   *
+   * `recuado` e a unica diferenca entre o item solto e o item de dentro do
+   * grupo: ele ganha recuo para a esquerda alinhar com o rotulo do grupo.
+   */
+  const linhaDoItem = (
+    item: NavigationItem,
+    { recuado = false, aoClicar }: { recuado?: boolean; aoClicar?: () => void }
+  ) => {
+    const ativo = item.href === hrefAtivo;
+    const semAcesso = isPremiumButNoAccess(item);
+
+    return (
+      <Link
+        key={item.href}
+        href={item.href as Route}
+        onClick={aoClicar}
+        aria-current={ativo ? "page" : undefined}
+        className={cn(
+          ativo
+            ? "bg-primary/10 text-primary"
+            : "text-muted-foreground hover:bg-muted hover:text-foreground",
+          "group flex items-center py-2 text-sm font-medium rounded-md transition-colors",
+          recuado ? "pl-9 pr-3" : "px-3"
+        )}
+      >
+        <item.icon
+          className={cn(
+            ativo ? "text-primary" : "text-muted-foreground group-hover:text-foreground",
+            "mr-3 flex-shrink-0 h-5 w-5"
+          )}
+          aria-hidden="true"
+        />
+        <span className={cn("flex-1", semAcesso && "text-muted-foreground")}>
+          {item.name}
+        </span>
+        <div className="flex items-center gap-1 ml-auto">
+          {item.isPremium && (
+            <Crown
+              className={cn(
+                "h-3 w-3",
+                semAcesso ? "text-muted-foreground" : "text-warning"
+              )}
+            />
+          )}
+          {semAcesso && <Lock className="h-3 w-3 text-muted-foreground" />}
+        </div>
+      </Link>
+    );
+  };
+
+  /**
+   * O MENU INTEIRO: as entradas de primeiro nivel, com os submenus abertos.
+   *
+   * O rotulo do grupo e um `<button>`, nao um link: ele nao navega (o grupo nao
+   * tem `href` -- ver `GrupoDeMenu`), e por isso tambem nao recebe marcacao de
+   * ativo. Quem diz "a tela que voce esta vendo esta aqui dentro" e o item
+   * marcado la dentro, com o grupo aberto.
+   *
+   * O submenu FECHADO nao e renderizado -- nao e `hidden`, nao existe no DOM. Um
+   * `hidden` deixaria os 29 links no HTML, e o leitor de tela anunciaria um menu
+   * de 29 itens para quem ve 8 (`hidden-no-html-nao-some-do-texto`).
+   */
+  const menuRenderizado = (aoNavegar?: () => void) =>
+    entradasDoMenu.map((entrada) => {
+      if (!ehGrupo(entrada)) {
+        return linhaDoItem(entrada, { aoClicar: aoNavegar });
+      }
+
+      const aberto = estaAberto(entrada);
+      const idDoSubmenu = `submenu-${entrada.nome}`;
+
+      return (
+        <div key={entrada.nome}>
+          <button
+            type="button"
+            onClick={() => alternarGrupo(entrada)}
+            aria-expanded={aberto}
+            aria-controls={idDoSubmenu}
+            className="group flex w-full items-center px-3 py-2 text-sm font-medium rounded-md transition-colors text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <entrada.icon
+              className="mr-3 flex-shrink-0 h-5 w-5 text-muted-foreground group-hover:text-foreground"
+              aria-hidden="true"
+            />
+            <span className="flex-1 text-left">{entrada.nome}</span>
+            <ChevronDown
+              className={cn(
+                "h-4 w-4 flex-shrink-0 text-muted-foreground transition-transform",
+                aberto && "rotate-180"
+              )}
+              aria-hidden="true"
+            />
+          </button>
+          {aberto && (
+            <div id={idDoSubmenu} className="mt-1 space-y-1">
+              {entrada.itens.map((item) =>
+                linhaDoItem(item, { recuado: true, aoClicar: aoNavegar })
+              )}
+            </div>
+          )}
+        </div>
+      );
+    });
 
   return (
     <>
@@ -114,57 +285,10 @@ export default function Sidebar({
             )}
           </div>
 
-          <nav className="mt-8 flex-1 px-3 space-y-1">
-            {filteredNavigation.map((item) => {
-              const isActive =
-                pathname === item.href || pathname.startsWith(item.href + "/");
-              return (
-                <Link
-                  key={item.name}
-                  href={item.href as Route}
-                  className={cn(
-                    isActive
-                      ? "bg-primary/10 text-primary border-r-2 border-primary"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                    "group flex items-center px-3 py-2 text-sm font-medium rounded-l-md transition-colors"
-                  )}
-                >
-                  <item.icon
-                    className={cn(
-                      isActive
-                        ? "text-primary"
-                        : "text-muted-foreground group-hover:text-foreground",
-                      "mr-3 flex-shrink-0 h-5 w-5"
-                    )}
-                    aria-hidden="true"
-                  />
-                  <span
-                    className={cn(
-                      "flex-1",
-                      isPremiumButNoAccess(item) && "text-muted-foreground"
-                    )}
-                  >
-                    {item.name}
-                  </span>
-                  <div className="flex items-center gap-1 ml-auto">
-                    {item.isPremium && (
-                      <Crown
-                        className={cn(
-                          "h-3 w-3",
-                          isPremiumButNoAccess(item)
-                            ? "text-muted-foreground"
-                            : "text-warning"
-                        )}
-                      />
-                    )}
-                    {isPremiumButNoAccess(item) && (
-                      <Lock className="h-3 w-3 text-muted-foreground" />
-                    )}
-                  </div>
-                </Link>
-              );
-            })}
-          </nav>
+          {/* O MESMO menu da gaveta do celular, pelo mesmo `menuRenderizado`
+              (HMO-423). O markup do item era copiado aqui e la, e o submenu
+              dobraria as copias para quatro. */}
+          <nav className="mt-8 flex-1 px-3 space-y-1">{menuRenderizado()}</nav>
 
           <div className="flex-shrink-0 p-4">
             <button
@@ -241,58 +365,14 @@ export default function Sidebar({
               )}
             </div>
 
+            {/* Aqui o clique no ITEM fecha a gaveta, e o clique no ROTULO do
+                grupo NAO: abrir submenu nao e navegar, e fechar a gaveta no
+                primeiro clique faria o submenu abrir atras do veu -- o usuario
+                tocaria no grupo e a gaveta sumiria sem ele ter ido a lugar
+                nenhum. Quem sabe dessa diferenca e o `menuRenderizado`: ele
+                passa o `aoNavegar` so para a linha de tela. */}
             <nav className="mt-8 px-3 space-y-1">
-              {filteredNavigation.map((item) => {
-                const isActive =
-                  pathname === item.href ||
-                  pathname.startsWith(item.href + "/");
-                return (
-                  <Link
-                    key={item.name}
-                    href={item.href as Route}
-                    onClick={() => setIsMobileMenuOpen(false)}
-                    className={cn(
-                      isActive
-                        ? "bg-primary/10 text-primary"
-                        : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                      "group flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors"
-                    )}
-                  >
-                    <item.icon
-                      className={cn(
-                        isActive
-                          ? "text-primary"
-                          : "text-muted-foreground group-hover:text-foreground",
-                        "mr-3 flex-shrink-0 h-5 w-5"
-                      )}
-                      aria-hidden="true"
-                    />
-                    <span
-                      className={cn(
-                        "flex-1",
-                        isPremiumButNoAccess(item) && "text-muted-foreground"
-                      )}
-                    >
-                      {item.name}
-                    </span>
-                    <div className="flex items-center gap-1 ml-auto">
-                      {item.isPremium && (
-                        <Crown
-                          className={cn(
-                            "h-3 w-3",
-                            isPremiumButNoAccess(item)
-                              ? "text-muted-foreground"
-                              : "text-warning"
-                          )}
-                        />
-                      )}
-                      {isPremiumButNoAccess(item) && (
-                        <Lock className="h-3 w-3 text-muted-foreground" />
-                      )}
-                    </div>
-                  </Link>
-                );
-              })}
+              {menuRenderizado(() => setIsMobileMenuOpen(false))}
             </nav>
           </div>
 

@@ -1225,6 +1225,45 @@ jobs:
       - name: Os mutantes do menu do papel de pao
         run: node scripts/mutantes-menu-papel.mjs
 
+      # O MENU + SUBMENU (HMO-423). O menu lateral tinha 28 itens de primeiro
+      # nivel; agora tem 8 entradas -- duas telas soltas e seis grupos -- com as
+      # 29 telas dentro. Esta suite conta ENTRADAS e grupos; a de cima conta
+      # TELAS, que e o que o modo papel de pao filtra. Separadas de proposito:
+      # juntas, um numero mudaria por dois motivos e quem fosse reescreve-lo nao
+      # saberia qual deles tinha mudado.
+      #
+      # O que ela prende, e cada um pega um defeito diferente:
+      #   - as 8 entradas, pelo NOME e na ORDEM (uma entrada nova REPROVA, e
+      #     quem a acrescentar decide de proposito se ela merece primeiro nivel);
+      #   - as 28 rotas de antes da issue, uma por uma, numa lista literal:
+      #     agrupar 28 itens a mao perde um pelo caminho SEM NENHUM SINTOMA --
+      #     a tela continua respondendo 200 e so deixa de ser alcancavel
+      #     clicando (foi a HMO-145, e a HMO-124 com Configuracoes dando 404);
+      #   - o pedido da issue: MyBank e a conta de investimento DENTRO de
+      #     Investimentos, com Contas e Cartoes em outra entrada -- e o
+      #     paralelo que a issue pede, e sem a segunda metade ele nao existe;
+      #   - a FIACAO da query: o `?tipo=investment` do item de menu e entregue
+      #     ao `tipoDoRecorte` de lib/contas.ts, que e quem o le na tela. Um
+      #     `?tipo=investments` em qualquer um dos dois lados nao da erro: a
+      #     tela cai calada na lista inteira, com o titulo certo e seis contas
+      #     a mais.
+      - name: O menu tem 8 entradas de primeiro nivel, e nenhuma das 29 telas ficou fora
+        run: npm run test:menu-agrupado
+
+      # A suite acima e feita dos tres tipos de assercao que passam verde sem
+      # medir nada: contagem sobre array, tabela de casos puros e texto-fonte do
+      # Sidebar. Entao os tres levam mutante.
+      #
+      # O runner tem controle positivo (codigo intacto tem de PASSAR), confere
+      # que cada ancora casou -- um replace que nao casa com nada nao muda
+      # arquivo nenhum, e isso se le como "mutante sobreviveu" quando o mutante
+      # nunca existiu -- e tem dois SOBREVIVENTES ESPERADOS (trocar o icone de um
+      # grupo, mexer no recuo do submenu): sem eles o runner cobraria so vermelho
+      # e nao haveria nada denunciando uma suite que passasse a prender
+      # decoracao em vez do conteudo do menu.
+      - name: Os mutantes do menu agrupado
+        run: node scripts/mutantes-menu-agrupado.mjs
+
       # OS DOIS NUMEROS do modo (HMO-286) -- "Salario Previsto" e "Total de
       # contas". E o unico dos tres PRs do modulo que fala de DINHEIRO, e as
       # duas frases sao rotulos NOVOS: nenhuma delas existia no app. Rotulo novo
