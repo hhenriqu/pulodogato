@@ -103,7 +103,10 @@ import {
 import { materializarAgenda } from "@/lib/services/scheduled";
 import { faturasPrevistasDaJanela } from "@/lib/services/fatura-prevista";
 import { lerCreditoDosGrupos } from "@/lib/services/credito-dos-grupos";
-import { notaDoCreditoAReceber } from "@/lib/credito-de-grupo";
+import {
+  notaDoCreditoAReceber,
+  type CreditoAReceber,
+} from "@/lib/credito-de-grupo";
 import { agendaSemCompraNoCartao } from "@/lib/agenda-do-cartao";
 import {
   montarParticipantesPorGrupo,
@@ -484,6 +487,40 @@ export async function GET(request: NextRequest) {
     // do mes por uma tela de erro por causa do reembolso seria o pior dos dois.
     // O `console.error` fica porque "o reembolso desapareceu" e um sintoma que
     // ninguem reporta.
+    /**
+     * AS LINHAS DO MESMO CREDITO -- HMO-422.
+     *
+     * DECLARADA ACIMA DE `reembolso`, E O LUGAR E DE PROPOSITO. O mutante
+     * `f3_em_todas_as_telas` (scripts/mutantes-fiacao-do-bruto.mjs) ancora em
+     * `let reembolso …` SEGUIDO do `if (tela.tipo === "income") {`, e aquela
+     * ancora foi repontada na HMO-379 exatamente porque o `if` sozinho aparece
+     * tres vezes neste arquivo (reembolso, MyBank e acertos). Declarar esta
+     * variavel ENTRE as duas linhas mata a ancora -- medido: o
+     * `check-ancora-de-mutante` acusou `ancora MORTA` na primeira volta desta
+     * issue. Acima, o par continua contiguo e o mutante alheio continua medindo
+     * o que ele diz medir.
+     *
+     * `notaDoCreditoAReceber` COLAPSA `CreditoAReceber` em tres numeros
+     * (`total`, `quantos`, `grupos`) e as linhas morriam aqui. O efeito, medido
+     * na tela do Helio: o cartao «Previsto» dizia R$ 508,42 "de 2 pessoas em 1
+     * grupo" e a aba Receitas nao tinha, em lugar nenhum, QUEM sao as duas
+     * pessoas nem QUAL e o grupo -- enquanto a aba DESPESAS lista os
+     * destinatarios da parte simetrica desde a HMO-365 (`pra_quem_pagar`).
+     * Conferir os R$ 508,42 exigia trocar de tela (/dashboard/personal-finance,
+     * bloco "A receber dos grupos", que le o MESMO credito pela MESMA lib).
+     *
+     * O CAMPO E A LEITURA INTEIRA e nao so `linhas`: `sem_devedor` viaja com
+     * elas porque o total do cartao e a soma das LINHAS, e o resto do saldo
+     * (a tolerancia de um centavo de `simplifySettlements`) nao tem a quem ser
+     * cobrado. Mandar as linhas sem ele deixaria o painel somando menos que o
+     * numero citado na legenda do cartao, sem nada na tela dizendo por que --
+     * exatamente o defeito que `CreditoAReceber.sem_devedor` existe para evitar.
+     *
+     * NAO E UM SEGUNDO SOMADOR: o valor ja esta dentro de `resumo.previsto`
+     * (quem soma e `resumoComReembolsoPrevisto`, com mutante por cima) e o
+     * painel diz isso por escrito, como `NOTA_PRA_QUEM_PAGAR` faz do outro lado.
+     */
+    let creditoDosGrupos: CreditoAReceber | null = null;
     let reembolso: ReembolsoPrevisto | null = null;
 
     if (tela.tipo === "income") {
@@ -508,6 +545,13 @@ export async function GET(request: NextRequest) {
         // conta no cartao de Despesas antes da HMO-275. Ela devolve `null`
         // quando nao ha linha nenhuma, que e o estado de quem nao tem grupo.
         reembolso = notaDoCreditoAReceber(leitura.credito);
+        // AS LINHAS SAEM DA MESMA LEITURA, e isso e o ponto: uma segunda
+        // chamada a `lerCreditoDosGrupos` (ou a `my-credit` por HTTP) seria a
+        // segunda implementacao da mesma leitura, e o painel mostraria linhas
+        // que nao somam o numero do cartao ao lado dele -- a familia de
+        // `fontes-consistentes-que-discordam`, que o cabecalho daquele servico
+        // recusa por escrito.
+        creditoDosGrupos = leitura.credito;
       }
     }
 
@@ -1060,6 +1104,23 @@ export async function GET(request: NextRequest) {
        * somou no «Previsto».
        */
       pra_quem_pagar: destinos,
+      /**
+       * QUEM ME PAGA -- HMO-422, so na aba Receitas (`null` nas outras duas).
+       *
+       * O ESPELHO de `pra_quem_pagar`, e a mesma frase vale com o sinal
+       * trocado: O VALOR DAQUI JA ESTA DENTRO DE `resumo.previsto`. Nao e um
+       * acrescimo -- e o reembolso de grupo que `resumoComReembolsoPrevisto`
+       * somou la, agora com o nome de quem deve e o grupo de cada parcela.
+       *
+       * `null` e nao `{linhas: [], sem_devedor: 0}` nas outras abas, pela razao
+       * de `acertos_do_grupo`: a tela distingue "nenhum credito" (array vazio)
+       * de "esta resposta nao fala de credito" (campo ausente), e a segunda e
+       * tambem o estado de um corpo guardado no aparelho de antes desta issue.
+       * Um `[]` ali afirmaria "ninguem te deve nada" sobre uma resposta que
+       * nunca respondeu isso -- e o cartao «Previsto» ao lado estaria dizendo
+       * R$ 508,42.
+       */
+      quem_me_paga: creditoDosGrupos,
     });
   } catch (error) {
     console.error("Erro na tela de movimentação:", error);
