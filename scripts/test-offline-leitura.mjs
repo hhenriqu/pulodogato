@@ -304,10 +304,59 @@ const QUEM_LE = [
   { rotulo: "lib/hooks/useContas.ts", caminho: "lib/hooks/useContas.ts" },
 ];
 
-/** As telas precacheadas que nao podem ler por conta propria. */
+/** Escrita continua liberada: um POST que falha a pessoa ve falhar. */
+const E_ESCRITA = (trecho) => /method:[^\n]*"(POST|PATCH|PUT|DELETE)"/.test(trecho);
+
+/**
+ * As telas precacheadas que nao podem ler por conta propria.
+ *
+ * `leiturasDeclaradas` E A EXCECAO ESCRITA, e nao a ausencia da guarda.
+ *
+ * Ate a HMO-409 estas duas telas nao tinham `fetch(` nenhum, e a guarda podia
+ * ser "zero chamadas". A HMO-409 pos o ajuste de saldo na linha da conta: duas
+ * ESCRITAS (POST e DELETE), que a regra do `QUEM_LE` acima ja libera pelo mesmo
+ * motivo de la, e UMA LEITURA -- o GET do ajuste do dia.
+ *
+ * A leitura entrou aqui como excecao em vez de ir para dentro de um hook com
+ * `buscarLeitura`, e a razao e que a alternativa seria PIOR, nao mais barata. O
+ * que aquele GET devolve e `saldo_sem_ajuste`: o saldo contra o qual a pessoa
+ * vai declarar "a conta mostra tanto". Servido de cache offline, ele seria um
+ * saldo VELHO em cima do qual se decide dinheiro -- exatamente o "numero
+ * plausivel" que esta guarda existe para impedir, so que no pior lugar
+ * possivel. O caminho certo para esta leitura nao e sobreviver sem rede: e nao
+ * acontecer sem rede.
+ *
+ * E e `premissa` que CONFERE isso, e por isso a excecao nao e um carimbo. Ela
+ * so se sustenta enquanto o gesto que dispara o GET estiver apagado sem rede.
+ * Hoje esta, por dois caminhos: o botao "Ajustar saldo" leva
+ * `disabled={!online}`, e com `estado === "sem-rede"` a lista inteira -- logo o
+ * botao -- nem chega a ser renderizada. A guarda ancora no primeiro, que e o
+ * especifico daquele botao: se alguem tirar o `disabled`, a excecao passa a ser
+ * FALSA e isto fica vermelho, em vez de seguir absolvendo um `fetch(` calado.
+ */
 const QUEM_NAO_LE = [
-  "app/(dashboard)/dashboard/contas/page.tsx",
-  "app/(dashboard)/dashboard/cartoes/page.tsx",
+  {
+    caminho: "app/(dashboard)/dashboard/contas/page.tsx",
+    leiturasDeclaradas: [
+      {
+        apelido: "o GET do ajuste de saldo do dia (HMO-409)",
+        forma: /fetch\(\s*`\/api\/financial-accounts\/ajuste\?account_id=/,
+        premissa: {
+          apelido: 'o botao "Ajustar saldo" fica apagado sem rede',
+          ancora: "onClick={() => abrirAjuste(conta)}",
+          exige: "disabled={!online}",
+        },
+        porque:
+          "ele le `saldo_sem_ajuste`, o saldo contra o qual a pessoa declara o " +
+          "que a conta mostra. De cache, seria saldo velho decidindo dinheiro -- " +
+          "por isso o GESTO exige rede, em vez de a leitura virar offline.",
+      },
+    ],
+  },
+  {
+    caminho: "app/(dashboard)/dashboard/cartoes/page.tsx",
+    leiturasDeclaradas: [],
+  },
 ];
 
 test("quem le por uma tela precacheada nao pode voltar a usar fetch cru", () => {
@@ -327,7 +376,7 @@ test("quem le por uma tela precacheada nao pode voltar a usar fetch cru", () => 
       // `method:` pode vir de um ternario (`form.id ? "PATCH" : "POST"`), por
       // isso o verbo e procurado na linha inteira e nao colado nos dois pontos.
       assert.ok(
-        /method:[^\n]*"(POST|PATCH|PUT|DELETE)"/.test(trecho),
+        E_ESCRITA(trecho),
         `${rotulo} voltou a LER com fetch cru:\n${trecho.split("\n")[0]}`
       );
     }
@@ -341,15 +390,71 @@ test("as telas que delegam a leitura nao buscam por fora do hook", () => {
   // passar por ele.
   const RAIZ = path.join(import.meta.dirname, "..");
 
-  for (const caminho of QUEM_NAO_LE) {
+  for (const { caminho, leiturasDeclaradas } of QUEM_NAO_LE) {
     const fonte = fs.readFileSync(path.join(RAIZ, caminho), "utf8");
-    assert.ok(
-      !/\bfetch\(/.test(fonte),
-      `${caminho} voltou a chamar a API por fora do useContas`
-    );
     assert.ok(
       fonte.includes("useContas"),
       `${caminho} nao le pelo hook que trata a falta de rede`
     );
+
+    // Cada `fetch(` e classificado UMA vez, e as duas conferencias abaixo leem
+    // desta mesma lista -- e o que mantem a excecao medindo a LEITURA. Se o
+    // GET fosse conferido por "existe um fetch com esta forma", a DELETE da
+    // mesma rota (mesma URL, mais `method: "DELETE"`) satisfaria a conferencia
+    // sozinha: o GET poderia ter ido embora e a excecao seguiria "em uso".
+    const chamadas = [...fonte.matchAll(/\bfetch\(/g)].map((chamada) => {
+      const trecho = fonte.slice(chamada.index, chamada.index + 300);
+      return { trecho, primeiraLinha: trecho.split("\n")[0], escrita: E_ESCRITA(trecho) };
+    });
+    const leituras = chamadas.filter((c) => !c.escrita);
+
+    // METADE 1 -- nenhuma LEITURA sem declaracao. Esta e a assercao original
+    // ("zero fetch"), so que agora ela absolve escrita e a excecao escrita.
+    for (const leitura of leituras) {
+      const declarada = leiturasDeclaradas.find((d) => d.forma.test(leitura.trecho));
+      assert.ok(
+        declarada,
+        `${caminho} voltou a chamar a API por fora do useContas:\n` +
+          `  ${leitura.primeiraLinha}\n` +
+          "  se esta leitura tem de existir, declare-a em `leiturasDeclaradas`\n" +
+          "  com o `porque` E a `premissa` que a sustenta -- como a do ajuste."
+      );
+    }
+
+    // METADE 2 -- a excecao declarada e CONFERIDA AO CONTRARIO: ela tem de
+    // continuar existindo como leitura, senao a declaracao e so texto velho
+    // absolvendo um `fetch(` futuro que ninguem decidiu.
+    for (const { apelido, forma, premissa, porque } of leiturasDeclaradas) {
+      assert.ok(
+        leituras.some((l) => forma.test(l.trecho)),
+        `${caminho}: a excecao declarada "${apelido}" nao existe mais como ` +
+          `leitura (${forma.source}).\n` +
+          "  se ela foi para dentro de um hook com `buscarLeitura`, tire a " +
+          "entrada de `leiturasDeclaradas` -- ela nao tem mais o que absolver."
+      );
+
+      // METADE 3 -- E A PREMISSA. A excecao vale por o gesto exigir rede; sem
+      // o `disabled`, o GET passa a sair offline e o motivo escrito fica falso.
+      const ancora = fonte.indexOf(premissa.ancora);
+      assert.ok(
+        ancora !== -1,
+        `${caminho}: nao achei a ancora da premissa de "${apelido}" ` +
+          `(\`${premissa.ancora}\`).\n` +
+          "  o gesto mudou de forma, entao a premissa parou de ser medida -- " +
+          "reancore-a ou reveja a excecao."
+      );
+      // Janela nos DOIS sentidos (a ordem das props nao e garantida), mas
+      // curta: o `disabled` do botao do ajuste esta a 61 chars da ancora, e o
+      // `disabled={!online}` mais proximo que e de OUTRO botao esta a 3376.
+      const janela = fonte.slice(Math.max(0, ancora - 300), ancora + 300);
+      assert.ok(
+        janela.includes(premissa.exige),
+        `${caminho}: ${premissa.apelido} -- e esta premissa CAIU ` +
+          `(\`${premissa.exige}\` nao esta junto da ancora).\n` +
+          `  com isso "${apelido}" deixa de ser excecao e volta a ser leitura ` +
+          "crua sem rede.\n" +
+          `  ${porque}`
+      );
+    }
   }
 });

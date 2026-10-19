@@ -626,3 +626,30 @@ next-env.d.ts
 # renderizado.
 /.tmp-ajuste-da-conta-na-tela/
 /.tmp-ajuste-de-saldo-da-conta/
+
+# E AS QUATRO QUE FALTARAM DE NOVO, pelo mesmo motivo e com o mesmo sintoma da
+# vez anterior (medido em 19/10/2026, HMO-424): `check-artefatos-de-build` ficou
+# VERMELHO na `main` listando estas quatro. Tres sao da HMO-411 e uma da
+# HMO-422 -- nenhuma das duas acrescentou a linha ao fechar, e o check e
+# tudo-ou-nada (ele soma as suites cujo `outDir` nao esta aqui e sai 1), entao
+# declarar tres e deixar uma mantem a guarda vermelha e nao protege nenhuma.
+#
+# As quatro sao emit de suite, nao fonte. Rodar a suite APAGA e reescreve o
+# diretorio: commitado por engano, a proxima volta da suite apaga arquivo
+# rastreado (ver a entrada do .tmp-parcelamento).
+#
+# O emit de lib/conta-de-grupo-na-agenda.ts para a suite da regra de "esta conta
+# de grupo nao e minha" em Contas a Pagar (HMO-411).
+/.tmp-conta-de-grupo-na-agenda/
+
+# O emit do componente da LINHA da conta de grupo em Contas a Pagar, para a
+# sonda de navegador rodar o componente de producao e nao uma copia (HMO-411).
+/.tmp-conta-de-grupo-na-tela/
+
+# O emit da suite do "pago" por pessoa -- o gesto do membro que da a propria
+# baixa, e o leitor que a enxerga (HMO-411).
+/.tmp-minha-baixa/
+
+# O emit do painel "quem te paga" da aba Receitas, para a sonda de navegador
+# montar o COMPONENTE de producao (HMO-422).
+/.tmp-quem-me-paga-na-tela/
