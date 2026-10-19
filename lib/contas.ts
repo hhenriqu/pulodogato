@@ -163,6 +163,51 @@ export function faltaFatura(
 }
 
 // ---------------------------------------------------------------------------
+// O RECORTE DA TELA (HMO-423)
+// ---------------------------------------------------------------------------
+
+/**
+ * O RECORTE DA TELA DE CONTAS, lido do `?tipo=` da barra de endereco.
+ *
+ * Existe para o menu poder dar um caminho PARALELO as contas de investimento
+ * ("Investimentos > Contas de Investimento" aponta para
+ * `/dashboard/contas?tipo=investment`) sem duplicar a tela de cadastro. Uma
+ * segunda tela de contas divergiria da primeira no campo seguinte -- foi o que
+ * a HMO-166 desfez quando separou conta de cartao.
+ *
+ * `null` QUER DIZER "TODAS", e e para onde cai tudo que nao e um tipo de conta
+ * valido: `?tipo=` vazio, `?tipo=banana`, e tambem `?tipo=credit_card`. O
+ * ultimo e o que importa: cartao de credito nao mora nesta tela (escopo
+ * `cartao`), e aceitar o recorte dele pintaria o titulo "Contas de Cartão de
+ * crédito" sobre uma lista sempre vazia. Query invalida volta para a tela
+ * inteira, que e o que a pessoa esperava do item "Contas".
+ */
+export function tipoDoRecorte(valor: string | null | undefined): AccountType | null {
+  if (!valor) return null;
+
+  const tipo = TIPOS_DE_CONTA.find(
+    (t) => t.valor === valor && t.escopo === "conta"
+  );
+
+  return tipo ? tipo.valor : null;
+}
+
+/**
+ * A lista da tela: todas, ou so as de um tipo.
+ *
+ * Generica no item (so o `account_type` interessa) para servir as ativas e as
+ * arquivadas pela mesma regra -- duas regras fariam o recorte valer na lista de
+ * cima e nao na gaveta de baixo.
+ */
+export function contasDoRecorte<T extends { account_type: AccountType }>(
+  contas: T[],
+  tipo: AccountType | null
+): T[] {
+  if (!tipo) return contas;
+  return contas.filter((conta) => conta.account_type === tipo);
+}
+
+// ---------------------------------------------------------------------------
 // O FORMULARIO
 // ---------------------------------------------------------------------------
 

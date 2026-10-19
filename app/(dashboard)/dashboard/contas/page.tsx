@@ -20,8 +20,9 @@
 // confiante, que e pior que numero nenhum. Ver `lib/offline-leitura.ts`.
 // ---------------------------------------------------------------------------
 
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -48,7 +49,9 @@ import {
 } from "lucide-react";
 import type { FinancialAccount } from "@/types/financial";
 import {
+  contasDoRecorte,
   porTipo,
+  tipoDoRecorte,
   totalDoEscopo,
   valoresDaConta,
   valoresIniciais,
@@ -74,7 +77,35 @@ import {
 import { useEstaOnline } from "@/lib/hooks/useEstaOnline";
 import { usePreferenciaDeMoeda } from "@/lib/hooks/usePreferenciaDeMoeda";
 
+/**
+ * A tela le `?tipo=` com `useSearchParams` (HMO-423), e o `<Suspense>` e a
+ * fronteira que o Next pede para o hook em rota estatica.
+ *
+ * ELE NAO E EXIGIDO HOJE -- medido: `next build` passa sem ele, porque o layout
+ * do painel devolve um spinner enquanto `useAuth` carrega e nao renderiza o
+ * `{children}`, entao o hook nunca roda na prerenderizacao. Fica pelo mesmo
+ * motivo do `<Suspense>` que envolve o `Sidebar` naquele layout, que tem a
+ * explicacao inteira: se um dia a casca do painel for pintada durante a carga,
+ * esta fronteira e o que mantem a bailada para o cliente local a esta tela.
+ *
+ * O `fallback` e o MESMO spinner do estado "carregando" da tela, e nao um
+ * esqueleto diferente: quem abre a tela ve um giro so, nao dois seguidos.
+ */
 export default function ContasPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center py-16">
+          <Loader2 className="h-6 w-6 animate-spin text-info" />
+        </div>
+      }
+    >
+      <TelaDeContas />
+    </Suspense>
+  );
+}
+
+function TelaDeContas() {
   const {
     ativas,
     arquivadas,
@@ -88,6 +119,18 @@ export default function ContasPage() {
     reativar,
   } = useContas("conta");
 
+  // O RECORTE DA TELA (HMO-423): `null` e a tela inteira, e e onde cai tudo que
+  // nao e tipo de conta valido -- ver `tipoDoRecorte`.
+  const recorte = tipoDoRecorte(useSearchParams().get("tipo"));
+  // O tipo que uma conta NOVA ganha nesta tela. No recorte e o tipo do recorte:
+  // quem entrou por "Contas de Investimento" e clicou em "Nova conta" nao quer
+  // que o formulario abra em "Conta corrente", cadastre a conta errada e ela
+  // desapareca da lista que ele estava olhando.
+  const tipoPadrao = (moeda?: string) => {
+    const valores = valoresIniciais("conta", moeda);
+    return recorte ? { ...valores, account_type: recorte } : valores;
+  };
+
   const [aberto, setAberto] = useState(false);
   const [form, setForm] = useState<ValoresDaConta>(() =>
     valoresIniciais("conta")
@@ -97,8 +140,27 @@ export default function ContasPage() {
   // nova ganha por padrao. Ver lib/hooks/usePreferenciaDeMoeda.
   const { moeda: preferenciaDeMoeda } = usePreferenciaDeMoeda();
 
+  // A LISTA DA TELA e o recorte das ativas -- sem recorte, as ativas inteiras.
+  // As arquivadas passam pelo MESMO recorte: a gaveta de baixo mostrando contas
+  // de outro tipo contradiria o titulo da tela.
+  const contasDaTela = useMemo(
+    () => contasDoRecorte(ativas, recorte),
+    [ativas, recorte]
+  );
+  const arquivadasDaTela = useMemo(
+    () => contasDoRecorte(arquivadas, recorte),
+    [arquivadas, recorte]
+  );
+
   // Saldo com SINAL: uma conta no vermelho tem que puxar o total para baixo.
-  const saldo = useMemo(() => totalDoEscopo(ativas, "conta"), [ativas]);
+  //
+  // E O TOTAL DO QUE ESTA EM TELA, nao o das contas todas: no recorte o titulo
+  // diz "Contas de Investimento" e o numero tem de ser o daquelas contas.
+  // Somar as oito debaixo de um titulo que promete seis e o numero plausivel e
+  // errado, que nenhuma inspecao visual pega.
+  const saldo = useMemo(() => totalDoEscopo(contasDaTela, "conta"), [
+    contasDaTela,
+  ]);
 
   // -----------------------------------------------------------------------
   // O AJUSTE DE SALDO DA CONTA: A FIACAO (HMO-409)
@@ -271,7 +333,7 @@ export default function ContasPage() {
   }
 
   function abrirNovo() {
-    setForm(valoresIniciais("conta", preferenciaDeMoeda.oficial));
+    setForm(tipoPadrao(preferenciaDeMoeda.oficial));
     setAberto(true);
   }
 
@@ -284,7 +346,7 @@ export default function ContasPage() {
     evento.preventDefault();
     if (await salvar(form)) {
       setAberto(false);
-      setForm(valoresIniciais("conta"));
+      setForm(tipoPadrao());
     }
   }
 
@@ -300,17 +362,36 @@ export default function ContasPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Contas</h1>
-          <p className="text-sm text-muted-foreground">
-            Onde seu dinheiro fica.{" "}
-            <Link
-              href="/dashboard/cartoes"
-              className="underline underline-offset-2 hover:text-foreground"
-            >
-              Cartões de crédito ficam em outra tela
-            </Link>
-            .
-          </p>
+          {/* O TITULO DIZ O RECORTE (HMO-423). Sem isto a tela de
+              "Contas de Investimento" se chamaria "Contas" e mostraria seis de
+              oito contas sem nada na tela explicando o que sumiu -- a lista
+              recortada e indistinguivel de uma lista incompleta. */}
+          <h1 className="text-2xl font-bold text-foreground">
+            {recorte ? `Contas de ${porTipo(recorte).rotulo}` : "Contas"}
+          </h1>
+          {recorte ? (
+            <p className="text-sm text-muted-foreground">
+              Só as contas de {porTipo(recorte).rotulo.toLowerCase()}.{" "}
+              <Link
+                href="/dashboard/contas"
+                className="underline underline-offset-2 hover:text-foreground"
+              >
+                Ver todas as contas
+              </Link>
+              .
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Onde seu dinheiro fica.{" "}
+              <Link
+                href="/dashboard/cartoes"
+                className="underline underline-offset-2 hover:text-foreground"
+              >
+                Cartões de crédito ficam em outra tela
+              </Link>
+              .
+            </p>
+          )}
         </div>
         {/*
           Sem rede o envio falharia no fim. Deixar a pessoa preencher nome e
@@ -343,7 +424,13 @@ export default function ContasPage() {
         <>
           <Card>
             <CardHeader className="pb-2">
-              <CardDescription>Saldo somado das contas</CardDescription>
+              <CardDescription>
+                {recorte
+                  ? `Saldo somado das contas de ${porTipo(
+                      recorte
+                    ).rotulo.toLowerCase()}`
+                  : "Saldo somado das contas"}
+              </CardDescription>
               <CardTitle
                 className={`text-2xl ${
                   podeMostrarNumero(estado) && saldo < 0
@@ -366,15 +453,21 @@ export default function ContasPage() {
             </CardContent>
           </Card>
 
-          {ativas.length === 0 && podeAfirmarVazio(estado) ? (
+          {contasDaTela.length === 0 && podeAfirmarVazio(estado) ? (
             <Card>
               <CardContent className="py-10 text-center">
                 <Wallet className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
                 <p className="font-medium text-foreground">
-                  Você ainda não tem contas
+                  {recorte
+                    ? `Você ainda não tem conta de ${porTipo(
+                        recorte
+                      ).rotulo.toLowerCase()}`
+                    : "Você ainda não tem contas"}
                 </p>
                 <p className="mb-4 text-sm text-muted-foreground">
-                  Cadastre sua conta corrente para começar a lançar.
+                  {recorte
+                    ? "Cadastre uma para acompanhar o que você tem aplicado."
+                    : "Cadastre sua conta corrente para começar a lançar."}
                 </p>
                 <Button onClick={abrirNovo} disabled={!online}>
                   <Plus className="mr-2 h-4 w-4" />
@@ -384,7 +477,7 @@ export default function ContasPage() {
             </Card>
           ) : (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {ativas.map((conta) => {
+              {contasDaTela.map((conta) => {
                 const Icone = iconeDoTipo(conta.account_type);
                 const valor = Number(conta.current_balance ?? 0);
 
@@ -469,7 +562,7 @@ export default function ContasPage() {
             </div>
           )}
 
-          <ContasArquivadas contas={arquivadas} aoReativar={reativar} />
+          <ContasArquivadas contas={arquivadasDaTela} aoReativar={reativar} />
 
           {/*
             A porta para a outra metade. Sem isto, quem cadastrou as contas e

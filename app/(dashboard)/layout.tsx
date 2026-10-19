@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/hooks/useAuth";
 import Sidebar from "@/components/Sidebar";
@@ -59,10 +59,38 @@ export default function DashboardLayout({
           setIsMobileMenuOpen={setIsMobileMenuOpen}
         />
 
-        <Sidebar
-          isMobileMenuOpen={isMobileMenuOpen}
-          setIsMobileMenuOpen={setIsMobileMenuOpen}
-        />
+        {/*
+          O `<Suspense>` esta aqui porque o `Sidebar` le a QUERY STRING desde a
+          HMO-423 (`useSearchParams`): "Contas de Investimento" e
+          `/dashboard/contas?tipo=investment`, a mesma rota de "Contas", e sem a
+          query os dois itens acendem juntos.
+
+          E ELE NAO E EXIGIDO HOJE -- MEDIDO, e o contrario do que a primeira
+          versao deste comentario dizia. `next build` passa sem ele (as 35 rotas
+          saem ○ Static do mesmo jeito), e o motivo e este layout: enquanto
+          `useAuth` carrega ele devolve o spinner e NAO renderiza nem o
+          `Sidebar` nem o `{children}`, entao o hook nunca roda na
+          prerenderizacao e a regra do Next para `useSearchParams` em rota
+          estatica nao e alcancada.
+
+          Fica, mesmo assim, por uma razao especifica e nao por simetria com
+          `/dashboard/transferencias`: o dia em que alguem pintar a casca do
+          painel durante a carga da autenticacao -- uma mudanca razoavel, que se
+          faz neste arquivo e por outro motivo -- o hook passa a rodar na
+          prerenderizacao de TODAS as telas do painel de uma vez. Com a
+          fronteira, o que cai para o cliente e o menu; sem ela, a pagina
+          inteira.
+
+          O `fallback` e `null` de proposito: um esqueleto de menu que aparece e
+          troca de forma pisca em toda navegacao, e o menu nao e o conteudo da
+          tela.
+        */}
+        <Suspense fallback={null}>
+          <Sidebar
+            isMobileMenuOpen={isMobileMenuOpen}
+            setIsMobileMenuOpen={setIsMobileMenuOpen}
+          />
+        </Suspense>
       </div>
 
       {/* Main content */}

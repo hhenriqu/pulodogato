@@ -1,0 +1,47 @@
+{
+  "//": [
+    "O MENU + SUBMENU da HMO-423, para a suite pura.",
+    "",
+    "`components/navegacao-do-menu.ts` tem os grupos, a lista plana derivada, o",
+    "filtro de plano sobre a arvore e o `itemAtivoDoMenu`. `types/subscription.ts`",
+    "entra porque o array tipa `requiredFeature` e `requiredPlans` com ele.",
+    "",
+    "`lib/contas.ts` (com `lib/dinheiro.ts`, `lib/moeda.ts` e",
+    "`types/financial.ts`, que ele importa) entra por um motivo so, e e uma",
+    "assercao de FIACAO: o item 'Contas de Investimento' leva a query",
+    "`?tipo=investment` e quem a le na tela e o `tipoDoRecorte` daquele arquivo.",
+    "Conferir o `href` contra uma string escrita no teste nao provaria nada -- o",
+    "dia em que um dos dois lados virar `?tipo=investments` a tela cai calada na",
+    "lista inteira, com o titulo certo e seis contas a mais. A suite pega a query",
+    "DO MENU e a entrega AO LEITOR DE VERDADE.",
+    "",
+    "O `jsx` nao entra: nenhum dos arquivos tem JSX. O `navegacao-do-menu`",
+    "menciona `React.ElementType` no tipo do icone, e por isso o `types: [react]`",
+    "-- o namespace React global vem de la.",
+    "",
+    "Comentario SO nesta chave, nunca com // no meio do objeto: o tsc aceita",
+    "JSONC, mas o check-tests-in-ci.mjs le este arquivo com JSON.parse e",
+    "estoura com 'Expected double-quoted property name'."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "types": ["react"],
+    "outDir": "../.tmp-menu-agrupado",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../components/navegacao-do-menu.ts",
+    "../lib/contas.ts",
+    "../lib/dinheiro.ts",
+    "../lib/moeda.ts",
+    "../types/financial.ts",
+    "../types/subscription.ts"
+  ]
+}

@@ -27,10 +27,12 @@ import {
   TIPOS_DE_CONTA,
   camposDoEscopo,
   contasDoEscopo,
+  contasDoRecorte,
   corpoDaConta,
   escopoDoTipo,
   faltaFatura,
   porTipo,
+  tipoDoRecorte,
   tipoPadraoDoEscopo,
   tiposDoEscopo,
   totalDoEscopo,
@@ -471,4 +473,85 @@ test("a moeda vai no corpo das DUAS telas, inclusive com o seletor escondido", (
       `a tela de ${escopo} nao mandou a moeda no corpo`
     );
   }
+});
+
+// =====================================================
+// O RECORTE DA TELA (HMO-423)
+// =====================================================
+// A tela de Contas passou a aceitar `?tipo=`, para o menu poder dar um caminho
+// paralelo as contas de investimento ("Investimentos > Contas de
+// Investimento") sem duplicar o cadastro. O que esta em jogo aqui e uma lista
+// recortada ser INDISTINGUIVEL de uma lista incompleta: `?tipo=banana` que
+// filtrasse tudo deixaria a tela dizendo "Você ainda não tem contas" para quem
+// tem oito.
+// =====================================================
+
+test("so tipo de CONTA recorta a tela; o resto cai em 'todas'", () => {
+  // Os cinco que recortam: todos os de escopo `conta`.
+  for (const tipo of tiposDoEscopo("conta")) {
+    assert.equal(
+      tipoDoRecorte(tipo.valor),
+      tipo.valor,
+      `${tipo.valor} deveria recortar a tela de Contas`
+    );
+  }
+
+  // O QUE IMPORTA MAIS: cartao de credito NAO recorta. Ele nao mora nesta tela
+  // (escopo `cartao`), e aceitar o recorte dele pintaria o titulo "Contas de
+  // Cartão de crédito" sobre uma lista sempre vazia -- a tela afirmando que a
+  // pessoa nao tem cartao, na tela errada.
+  for (const tipo of tiposDoEscopo("cartao")) {
+    assert.equal(tipoDoRecorte(tipo.valor), null);
+  }
+
+  // E tudo que nao e tipo: query ausente, vazia, inventada, ou com erro de
+  // digitacao de uma letra -- que e o caso real (`investments` por
+  // `investment`) e o unico que ninguem veria, porque a tela abre certa.
+  for (const valor of [null, undefined, "", "banana", "investments", "INVESTMENT"]) {
+    assert.equal(
+      tipoDoRecorte(valor),
+      null,
+      `?tipo=${valor} nao deveria recortar nada`
+    );
+  }
+});
+
+test("o recorte filtra pelo tipo, e sem recorte devolve a lista inteira", () => {
+  const contas = [
+    { id: "1", account_type: "checking", current_balance: 100 },
+    { id: "2", account_type: "investment", current_balance: 500 },
+    { id: "3", account_type: "investment", current_balance: 300 },
+    { id: "4", account_type: "savings", current_balance: 50 },
+  ];
+
+  assert.deepEqual(
+    contasDoRecorte(contas, "investment").map((c) => c.id),
+    ["2", "3"]
+  );
+  // Sem recorte e a lista inteira -- e o caminho de quem clicou em "Contas",
+  // que e a maioria.
+  assert.equal(contasDoRecorte(contas, null), contas);
+
+  // E O TOTAL ACOMPANHA A LISTA, que e a metade de dinheiro desta feature: o
+  // titulo diz "Contas de Investimento" e o numero tem de ser o daquelas
+  // contas. Somar as quatro debaixo de um titulo que promete duas e o numero
+  // plausivel e errado, que nenhuma inspecao visual pega.
+  assert.equal(totalDoEscopo(contasDoRecorte(contas, "investment"), "conta"), 800);
+  assert.equal(totalDoEscopo(contasDoRecorte(contas, null), "conta"), 950);
+});
+
+test("o recorte nao e um segundo filtro de escopo", () => {
+  // Cartao de credito nao entra na tela de Contas nem com recorte nenhum: quem
+  // decide isso continua sendo o ESCOPO. Se um dia `tipoDoRecorte` aceitar
+  // `credit_card`, este caso mostra o que acontece -- a tela somaria a fatura
+  // junto com os saldos, que e o corte que a HMO-166 desfez.
+  const contas = [
+    { id: "1", account_type: "checking", current_balance: 100 },
+    { id: "2", account_type: "credit_card", current_balance: -700 },
+  ];
+
+  assert.equal(tipoDoRecorte("credit_card"), null);
+  assert.equal(contasDoRecorte(contas, tipoDoRecorte("credit_card")), contas);
+  // E o total da tela continua ignorando o cartao, recorte ou nao.
+  assert.equal(totalDoEscopo(contas, "conta"), 100);
 });

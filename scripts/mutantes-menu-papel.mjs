@@ -100,12 +100,44 @@ const mutantes = [
     para: '"/dashboard/connections"',
   },
   {
-    nome: "um 28o item entra no menu sem passar pelo modo",
+    // A ANCORA MUDOU NA HMO-423, e o mutante continua sendo o mesmo defeito:
+    // uma tela nova entrando no menu sem ninguem decidir se ela aparece no modo
+    // papel. O que mudou e de onde ela entra -- `navigation` virou a lista
+    // PLANA derivada de `menuAgrupado`, e nao se acrescenta item nela sem dizer
+    // em que grupo ele mora. Entao a tela nova entra como ENTRADA SOLTA de
+    // primeiro nivel, que e um `NavigationItem` valido em `EntradaDoMenu`, e o
+    // `flatMap` a leva para a lista plana: 29 viram 30 e a suite reprova.
+    nome: "uma 30a tela entra no menu sem passar pelo modo",
     arquivo: NAVEGACAO,
-    de: "export const navigation: NavigationItem[] = [\n",
+    de: "export const menuAgrupado: EntradaDoMenu[] = [\n",
     para:
-      "export const navigation: NavigationItem[] = [\n" +
+      "export const menuAgrupado: EntradaDoMenu[] = [\n" +
       '  { name: "Novidade", href: "/dashboard/novidade", icon: Settings },\n',
+  },
+  {
+    // E O MESMO DEFEITO UM NIVEL ABAIXO (HMO-423): a tela nova entra DENTRO de
+    // um grupo, que e o caminho mais provavel de todos -- ninguem acrescenta
+    // tela no primeiro nivel de um menu que acabou de ser agrupado. A lista
+    // plana cresce igual, e sem este mutante a suite estaria cega justamente
+    // para o lugar onde as telas novas vao nascer.
+    nome: "uma 30a tela entra DENTRO de um grupo, sem passar pelo modo",
+    arquivo: NAVEGACAO,
+    de: '    nome: "Ferramentas",\n    icon: Calculator,\n    itens: [\n',
+    para:
+      '    nome: "Ferramentas",\n    icon: Calculator,\n    itens: [\n' +
+      '      { name: "Novidade", href: "/dashboard/novidade", icon: Settings },\n',
+  },
+  {
+    // O FLATMAP QUE PERDE OS GRUPOS (HMO-423). `navigation` sai de
+    // `menuAgrupado`, e trocar o `flatMap` por um filtro das entradas soltas
+    // deixa a lista plana com 2 telas em vez de 29 -- o modo papel de pao
+    // passaria a ter 1 item (`/dashboard`) e o menu normal nao teria mais lista
+    // plana nenhuma para filtrar. E o defeito que uma derivacao errada produz,
+    // e ele e silencioso no tsc: o tipo continua `NavigationItem[]`.
+    nome: "a lista plana perde tudo que mora dentro de grupo",
+    arquivo: NAVEGACAO,
+    de: "  ehGrupo(entrada) ? entrada.itens : [entrada]",
+    para: "  ehGrupo(entrada) ? [] : [entrada]",
   },
   // ------------------------------------------------------------------------
   // OS QUATRO MUTANTES DO FILTRO DE PLANO (HMO-292)
@@ -168,16 +200,23 @@ const mutantes = [
     // inteira verde -- o menu voltando a 27 itens no modo ligado.
     nome: "o Sidebar importa o filtro mas NAO o chama",
     arquivo: SIDEBAR,
-    de: "  const filteredNavigation = filtrarMenuDoPapel(\n    navigation.filter((item) => podeVerItem(item, subscription?.plan)),\n    papel\n  );",
+    de:
+      "  const entradasDoMenu: readonly EntradaDoMenu[] = papel\n" +
+      "    ? filtrarMenuDoPapel(\n" +
+      "        navigation.filter((item) => podeVerItem(item, subscription?.plan)),\n" +
+      "        papel\n" +
+      "      )\n" +
+      "    : filtrarMenuAgrupado(menuAgrupado, subscription?.plan);",
     para:
-      "  const filteredNavigation = navigation.filter((item) =>\n" +
-      "    podeVerItem(item, subscription?.plan)\n  );",
+      "  const entradasDoMenu: readonly EntradaDoMenu[] = papel\n" +
+      "    ? navigation.filter((item) => podeVerItem(item, subscription?.plan))\n" +
+      "    : filtrarMenuAgrupado(menuAgrupado, subscription?.plan);",
   },
   {
     nome: "o Sidebar chumba o modo em `false` (interruptor sem efeito)",
     arquivo: SIDEBAR,
-    de: "    papel\n  );",
-    para: "    false\n  );",
+    de: "        papel\n      )",
+    para: "        false\n      )",
   },
 ];
 
