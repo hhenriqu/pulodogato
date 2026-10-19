@@ -373,7 +373,9 @@ export async function DELETE(
       return NextResponse.json(
         {
           error:
-            "Não é possível arquivar grupos com transações pendentes. Finalize todas as divisões primeiro.",
+            // Mesma troca da rota de sair (HMO-425): "Finalize todas as
+            // divisões primeiro" nomeava o aprovar/recusar, que saiu do app.
+            "Não é possível arquivar: este grupo tem despesas lançadas, e arquivar esconderia o registro de quem devia a quem.",
         },
         { status: 400 }
       );

@@ -36,6 +36,26 @@ export type DivisaoPendente =
 /**
  * Ha divisao com `status = 'pending'` em alguma transacao deste grupo?
  *
+ * ATENCAO, O QUE 'pending' QUER DIZER MUDOU NA HMO-425.
+ *
+ * Nao e mais "esperando alguem aprovar": o aprovar/recusar a propria parte saiu
+ * do app (a rota PATCH de `splits`, a lib e os botoes da tela), e nenhum caminho
+ * nosso escreve outro valor nesta coluna. Toda parte nasce 'pending' e fica.
+ *
+ * Em consequencia, esta travessa passa a recusar SEMPRE que o grupo tenha ao
+ * menos uma despesa lancada -- e os dois unicos chamadores dela sao arquivar o
+ * grupo ao sair como ultimo membro e apagar o grupo. O caminho de volta que
+ * existia (aprovar as proprias partes uma por uma e entao arquivar) nao existe
+ * mais; sair de um grupo com outros membros nao passa por aqui e continua
+ * funcionando.
+ *
+ * O criterio CERTO para "ainda ha quem deva a quem" nao e esta coluna: e saldo
+ * diferente de zero em `group_member_balances`, que e o que a tela do grupo ja
+ * mostra. Trocar o criterio mexe em dinheiro e pede teste proprio, entao fica
+ * para a issue que a HMO-425 deixou aberta -- e nao de carona numa remocao de
+ * tela. Ate la o que esta escrito aqui e o que acontece, e nao o que o nome da
+ * coluna sugere.
+ *
  * A leitura parte de `group_transactions`, que e quem tem `group_id`, e exige a
  * divisao pelo embed `!inner`. Confirmado em producao: `200 []` para grupo sem
  * pendencia (a forma da consulta e aceita, nao e um 42703 disfarcado de vazio).

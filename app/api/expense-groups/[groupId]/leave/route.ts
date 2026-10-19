@@ -125,7 +125,12 @@ async function archiveEmptyGroup(
     return NextResponse.json(
       {
         error:
-          "Não é possível sair. Há transações pendentes no grupo. Finalize todas as divisões primeiro.",
+          // "Finalize todas as divisões primeiro" SAIU daqui na HMO-425: a
+          // unica forma de finalizar uma divisão era aprová-la ou recusá-la, e
+          // esse caminho não existe mais. Pedir uma ação impossível é pior que
+          // não pedir nenhuma. A frase agora diz o que o grupo tem e por que
+          // isso trava -- ver lib/services/expense-groups.ts.
+          "Não é possível sair: este grupo tem despesas lançadas, e sair como último membro arquivaria o registro de quem devia a quem.",
       },
       { status: 400 }
     );
