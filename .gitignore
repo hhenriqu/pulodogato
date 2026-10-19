@@ -230,10 +230,6 @@ next-env.d.ts
 # components/ui/card.js, lib/realizado-e-previsao.js e lib/utils.js junto)
 /.tmp-tres-numeros/
 
-# test:aprovacao-de-parte (a regra pura de quem pode aprovar/recusar a propria
-# parte de despesa de grupo, HMO-178 -- lib sem import, compila sozinha)
-/.tmp-aprovacao-de-parte/
-
 # test:fundamento-cvm (a ponte ticker->CNPJ e a leitura dos CSVs da CVM, HMO-194
 # -- leva lib/cvm-zip.js junto; nenhuma das duas importa nada do projeto)
 /.tmp-fundamento-cvm/
