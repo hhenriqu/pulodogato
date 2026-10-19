@@ -649,3 +649,7 @@ next-env.d.ts
 # O emit do painel "quem te paga" da aba Receitas, para a sonda de navegador
 # montar o COMPONENTE de producao (HMO-422).
 /.tmp-quem-me-paga-na-tela/
+
+# O emit das DUAS rotas que consultam a travessa de arquivar o grupo -- apagar
+# o grupo e sair como ultimo membro (HMO-426).
+/.tmp-travessa-de-arquivar/
