@@ -21146,6 +21146,116 @@ COMMIT;
 
 
 -- ---------------------------------------------------------------------------
+-- 58. 058_conta_fora_dos_totais.sql
+-- ---------------------------------------------------------------------------
+-- Cada migration traz o proprio BEGIN/COMMIT: se uma falhar, ela volta atras
+-- inteira e as seguintes nem chegam a rodar.
+-- ===========================================================================
+-- 058 -- A CONTA QUE NAO SOMA NOS TOTAIS (HMO-431)
+-- ===========================================================================
+-- "o mesmo para todas as contas, devem ter um checkbox para voce optar nao
+-- somar ao valores totais."
+--
+-- O CASO REAL: a pessoa tem uma conta que existe no app -- ela recebe
+-- lancamento, tem extrato, aparece no seletor -- mas o dinheiro dela nao e
+-- dinheiro dela para efeito de "quanto eu tenho". Conta da empresa, conta
+-- conjunta, conta de terceiro que ela administra, poupanca de um filho. Hoje
+-- nao ha escolha: toda conta ativa entra em todo total.
+--
+-- O QUE ESTA MIGRATION FAZ, E SO ISSO: uma coluna booleana em
+-- `financial_accounts`. Nenhuma view e recolada, nenhum trigger muda, nenhum
+-- CHECK novo, nenhum backfill de dinheiro. Quem le a coluna e o codigo do app,
+-- num PR que vem DEPOIS deste (ver o bloco "ADITIVA" abaixo).
+--
+-- ===========================================================================
+-- POR QUE A COLUNA E POSITIVA (`include_in_total`) E NAO NEGATIVA
+-- ===========================================================================
+-- O pedido esta escrito na forma negativa ("optar NAO somar"), e a tentacao e
+-- gravar `excluir_dos_totais boolean DEFAULT false`. Duas razoes para nao:
+--
+--   1. TODO LEITOR DESTA COLUNA E UMA SOMA. A pergunta que cada `reduce` e cada
+--      `SUM` faz e "esta conta entra?", e com a coluna negativa a resposta e
+--      `!conta.excluir_dos_totais` -- uma negacao repetida em cada um dos ~8
+--      lugares que somam dinheiro neste app. Negacao duplicada e exatamente o
+--      defeito que `coluna-booleana-anulavel-not-is-false` descreve, e o
+--      sintoma dele e o total INVERTIDO: some so o que devia ter ficado.
+--
+--   2. O DEFAULT FICA SENDO O VALOR "LIGADO". `DEFAULT true` quer dizer "a
+--      conta soma", que e o comportamento de hoje -- e e o que faz este arquivo
+--      ser inofensivo colado sozinho. Com a coluna negativa o default seria
+--      `false`, e um `DEFAULT false` que significa "nao exclua" se le ao
+--      contrario na primeira passada de olho de quem for mexer nisso daqui a
+--      seis meses.
+--
+-- A tela inverte UMA vez, no rotulo do checkbox, e e so la que a palavra
+-- "nao somar" aparece.
+--
+-- ===========================================================================
+-- `NOT NULL`, E O PORQUE DISSO IMPORTAR MAIS DO QUE PARECE
+-- ===========================================================================
+-- Uma booleana anulavel tem TRES estados, e o terceiro (`NULL`) nao tem dono:
+-- `NULL` nao e `true` nem `false`, entao `WHERE include_in_total` DESCARTA a
+-- linha e `WHERE NOT include_in_total` tambem a descarta. Uma conta com `NULL`
+-- aqui sairia dos dois lados da conta -- nao somaria nos totais e tambem nao
+-- apareceria na lista de "contas fora do total". Dinheiro invisivel nas duas
+-- telas que existem para encontra-lo.
+--
+-- `NOT NULL DEFAULT true` fecha isso no banco, e nao na confianca de que todo
+-- INSERT vai preencher a coluna. O app tem varios caminhos de criacao de conta
+-- (o POST da tela, `create_default_accounts` do cadastro, o seed de teste), e
+-- nenhum deles precisa ser editado para a coluna nascer certa.
+--
+-- ORDEM DOS DOIS COMANDOS: o `ADD COLUMN ... DEFAULT true` ja grava `true` em
+-- toda linha existente -- no Postgres 11+ isso nao reescreve a tabela, e o
+-- default vai no catalogo. Por isso NAO ha `UPDATE` de backfill aqui: ele seria
+-- um no-op caro numa tabela que pode ter muitas linhas. E por isso o `NOT NULL`
+-- pode vir junto, na mesma instrucao, sem a dança de "adiciona anulavel ->
+-- backfill -> trava".
+--
+-- ===========================================================================
+-- IDEMPOTENTE
+-- ===========================================================================
+-- `ADD COLUMN IF NOT EXISTS` com o default e o NOT NULL na propria instrucao.
+-- Re-rodar o arquivo inteiro e no-op: a coluna existe, o `IF NOT EXISTS` nao
+-- faz nada, e nada mais no arquivo escreve. Nao ha `UPDATE`, entao nao ha o que
+-- re-aplicar em cima de valor que o usuario ja tenha mudado -- re-colar este
+-- arquivo NAO religa uma conta que a pessoa desligou. (Um backfill
+-- `SET include_in_total = true` faria exatamente isso, calado, e e o segundo
+-- motivo para ele nao existir.)
+--
+-- ===========================================================================
+-- ADITIVA: COLAR ESTE ARQUIVO COM O CODIGO DE HOJE NO AR E INOFENSIVO
+-- ===========================================================================
+-- Nenhum arquivo do repositorio le `include_in_total` no momento em que esta
+-- migration vai para a `main` -- ela vai SOZINHA, na frente do codigo, que e o
+-- que `migration-tem-que-ir-para-main-sozinha` exige. Consequencias de colar
+-- antes do codigo:
+--
+--   - `SELECT *` (o GET de `/api/financial-accounts` usa `select("*")`) passa a
+--     devolver um campo a mais. O cliente ignora campo que nao conhece; o tipo
+--     `FinancialAccount` ainda nao o declara, e TypeScript nao reclama de
+--     propriedade extra vinda de uma resposta de rede.
+--   - Toda conta nasce e permanece `true`, que e "soma nos totais" -- o
+--     comportamento identico ao de hoje. Nenhum total muda de valor pela
+--     colagem.
+--   - Nenhuma view depende da coluna, entao nao ha `CREATE OR REPLACE VIEW`
+--     aqui e nenhum `reloptions`/`security_invoker` corre risco de ser apagado.
+--
+-- A RLS nao precisa de nada: `financial_accounts` ja tem policy por
+-- `user_id` (001_baseline), e policy vale para a linha inteira, nao por coluna
+-- -- a coluna nova herda o recorte do dono. Ver `policy-rls-nao-trava-coluna`
+-- para o inverso (o que a policy NAO protege), que aqui nao se aplica porque
+-- ninguem alem do dono escreve nesta tabela.
+-- ===========================================================================
+
+ALTER TABLE public.financial_accounts
+    ADD COLUMN IF NOT EXISTS include_in_total boolean NOT NULL DEFAULT true;
+
+COMMENT ON COLUMN public.financial_accounts.include_in_total IS
+    'HMO-431: a conta entra nos totais consolidados (saldo da tela de Contas, patrimonio, posso gastar, projecao)? FALSE tira a conta das SOMAS e nao da existencia dela: os lancamentos continuam valendo, o extrato continua completo e o saldo da propria conta continua sendo mantido pelo trigger. Positiva de proposito -- todo leitor e uma soma, e a negacao dupla inverteria o total. Ver o cabecalho da migration 058.';
+
+
+-- ---------------------------------------------------------------------------
 -- 4. Relatorio -- ESTA e a tabela para copiar de volta na issue
 -- ---------------------------------------------------------------------------
 WITH sem_rls AS (
