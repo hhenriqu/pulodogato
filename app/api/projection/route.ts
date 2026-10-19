@@ -48,11 +48,29 @@ export async function GET(request: NextRequest) {
     const { data: contasBrutas, error: erroContas } = await supabase
       .from("financial_accounts")
       .select(
-        // `include_in_total` (HMO-431, migration 058). O recorte e no JS, logo
-        // abaixo: `.eq("include_in_total", true)` aqui responderia 42703 num
-        // banco que ainda nao recebeu a 058 e derrubaria a projecao inteira.
-        // O `is_active` continua no PostgREST porque aquela coluna e do 001.
-        "id, name, account_type, current_balance, include_in_total"
+        // `*` E NAO A LISTA DE COLUNAS, e o motivo e uma ordem de deploy
+        // (HMO-431). Nomear `include_in_total` aqui faz o PostgREST responder
+        //
+        //     42703  column financial_accounts.include_in_total does not exist
+        //
+        // em qualquer banco que ainda nao recebeu a migration 058 -- e a 058 e
+        // colada A MAO no SQL Editor, depois do deploy do codigo. MEDIDO em
+        // producao em 2026-10-19: a coluna respondia 42703 enquanto `is_active`
+        // respondia 42501 (permissao), o que prova que o 42703 e resolucao de
+        // NOME e nao RLS. Com a lista nomeada, esta rota inteira responderia 500
+        // na janela entre o deploy e a colagem.
+        //
+        // `*` nao nomeia coluna nenhuma: ele traz o campo quando ele existe e
+        // simplesmente nao o traz quando nao existe. Ai `include_in_total` chega
+        // `undefined`, e `contasQueSomam` trata ausente como "soma" -- o
+        // comportamento de antes da feature, que e exatamente o que se quer
+        // nessa janela.
+        //
+        // NAO troque por `.eq("include_in_total", true)` tampouco: um filtro tem
+        // o mesmo 42703 do select nomeado, e ainda por cima descartaria a linha
+        // em vez de derrubar a rota -- um total silenciosamente menor e pior que
+        // um 500.
+        "*"
       )
       .eq("user_id", user.id)
       .eq("is_active", true);
