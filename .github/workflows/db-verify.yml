@@ -4780,6 +4780,108 @@ jobs:
       - name: O ativo de investimento so atrela em conta de investimento do proprio dono
         run: $PSQL -f database/tests/hmo432_conta_investimento_test.sql
 
+      # =======================================================================
+      # HMO-443 -- O LANCAMENTO QUE NAO SOMA NOS TOTAIS (060), FASE 1
+      # =======================================================================
+      # `financial_transactions.include_in_total`, e `AND t.include_in_total` no
+      # WHERE de `category_monthly_totals` -- o unico ponto de entrada de uma
+      # cadeia de cinco views.
+      #
+      # POR QUE ESTE BLOCO ESTA AQUI, E NAO NO FIM DO JOB
+      # -------------------------------------------------
+      # Mesma razao da 058 e da 059, e pela terceira vez: esta migration CRIA
+      # COLUNA, e o step `schema-columns.json em dia` (logo abaixo) compara ESTE
+      # banco com o arquivo gerado. Com o bloco no fim do job, aquele step
+      # compararia um banco SEM `include_in_total` contra um
+      # `schema-columns.json` que JA a tem, e o vermelho ACUSARIA O ARQUIVO
+      # GERADO ("rode o gerador", que e a unica coisa que nao resolve) em vez de
+      # acusar a posicao do step.
+      #
+      # A ORDEM DOS QUATRO STEPS NAO E NEGOCIAVEL
+      # -----------------------------------------
+      #   1. a fixture planta QUATRO lancamentos no mesmo mes, e COMITA --
+      #      antes de a coluna existir;
+      #   2. a migration -- os quatro ficam `true`, que e o de hoje;
+      #   3. a fixture DESMARCA dois deles, e COMITA;
+      #   4. a migration DE NOVO (idempotencia).
+      #
+      # So nessa ordem a suite mede o que existe para medir: a secao 2 precisa
+      # de linha que nasceu antes da coluna, as secoes 3 e 4 precisam dos dois
+      # lados (marcado e nao marcado) dentro do MESMO mes, e a secao 7 precisa
+      # que o desmarque tenha acontecido ANTES do re-run. Mover o step 4 para
+      # antes do 3 deixa a secao 7 verde e sem controlar nada. O cabecalho de
+      # `060_lancamento_fora_do_total.sql` repete esta ordem, para quem chegar
+      # pelo arquivo em vez do workflow.
+      #
+      # AS DUAS FIXTURES COMITAM, e aqui isso exige MAIS cuidado do que na 058 e
+      # na 059: aquelas plantam conta e ativo, esta planta LANCAMENTO, e varias
+      # suites contam lancamento. Medido rodando a cadeia completa do db-verify
+      # (todos os 199 passos SQL do banco principal) com estas fixtures dentro:
+      # nenhum passo daqui para baixo muda de resultado. Os passos de RLS e de
+      # `anon` leem CATALOGO e nao linha; os de deriva e o drill de backup
+      # constroem banco proprio; as suites que contam lancamento recortam pelo
+      # `user_id` DELAS, e o usuario desta fixture e proprio (`a0600000-...`,
+      # contra `a0560000-`, `a0580000-` e `a0590000-` das outras tres). O
+      # `profiles` dela nasce `is_public = FALSE` de proposito, senao
+      # `view_security_invoker_test.sql` (que roda mais abaixo, depois da 057)
+      # perde o controle -- a armadilha documentada no cabecalho de
+      # `056_contas_antes_da_056.sql`.
+      - name: Lancamentos plantados antes da 060 (a fixture do "sem backfill")
+        run: $PSQL -f database/tests/060_lancamentos_antes_da_060.sql
+
+      - name: 060_lancamento_fora_dos_totais
+        run: $PSQL -f database/migrations/060_lancamento_fora_dos_totais.sql
+
+      # Entre as duas colagens, de proposito. Ver a ordem no comentario acima.
+      - name: Dois lancamentos saem do total antes do re-run
+        run: $PSQL -f database/tests/060_lancamento_fora_do_total.sql
+
+      # Re-executavel: `ADD COLUMN IF NOT EXISTS`, `CREATE OR REPLACE VIEW`,
+      # `ALTER VIEW ... SET`, `REVOKE`/`GRANT`. Producao recebe migration por
+      # colagem a mao, e colar duas vezes acontece -- aqui o re-run tem um
+      # segundo papel, que e alimentar a secao 7 da suite.
+      - name: 060 e idempotente
+        run: $PSQL -f database/migrations/060_lancamento_fora_dos_totais.sql
+
+      # 12 mutantes da 060 medidos num Postgres 17 local antes deste step entrar
+      # (banco TEMPLATE com os 190 passos SQL desta cadeia ate aqui, um banco
+      # novo por mutante, a ordem dos quatro steps acima reproduzida em cada
+      # um): os 12 morrem, e o controle positivo (a 060 intacta, com um espaco a
+      # mais num comentario) fica verde.
+      #
+      # O SITIO DA MORTE E O MEDIDO, e nao o esperado:
+      #
+      #   * `DEFAULT false`                                 secao 1
+      #   * coluna ANULAVEL sem default                     secao 1
+      #   * `DEFAULT true` mas ANULAVEL                     secao 1
+      #   * coluna `text` em vez de `boolean`               na PROPRIA COLAGEM
+      #     ("argument of AND must be type boolean") -- e so porque a view usa a
+      #     coluna; sem o filtro este mutante chegaria vivo ate a secao 1
+      #   * SEM o `AND t.include_in_total` na view          secao 3 (140.00 /
+      #     1250.00 / 1110.00 / 4) -- o mutante do "checkbox que nao faz nada"
+      #   * SEM o `ALTER VIEW ... SET (security_invoker)`   secao 6
+      #   * filtro nos dois `FILTER` em vez do `WHERE`      secao 3, e SO pelo
+      #     `transaction_count` (40.00 / 250.00 / 210.00 / **4**): o dinheiro sai
+      #     certo e a contagem nao. E a razao de o contador estar na assercao
+      #   * BACKFILL `SET include_in_total = true`          secao 3, depois do
+      #     re-run -- o mutante que re-soma calado o que a pessoa tirou
+      #   * `GROUP BY ... , t.include_in_total`             "more than one row
+      #     returned by a subquery" -- o desmarcado vira LINHA PROPRIA, e a
+      #     soma da tela continua errada com os valores de cada linha certos
+      #   * filtro INVERTIDO (`AND NOT`)                    secao 3 (100.00 /
+      #     1000.00 / 900.00 / 2) -- a negacao dupla que a 058 existe para evitar
+      #   * `GRANT SELECT ... TO anon`                      secao 6
+      #   * `COMMENT` sem a issue                           secao 9
+      #
+      # Os dois de backfill/re-run sao os que NAO morreriam num banco construido
+      # do zero -- e a razao de existirem as duas fixtures.
+      #
+      # O controle negativo externo do arquivo de teste: contra um banco parado
+      # na 059 ele fica VERMELHO na secao 1, com a string do catalogo vazia
+      # ("esperado boolean / NOT NULL / true, obtido <NULL>"). Medido.
+      - name: O lancamento pode ficar fora dos totais, e o re-run nao o re-soma
+        run: $PSQL -f database/tests/060_lancamento_fora_dos_totais_test.sql
+
       # O guard de deriva de COLUNA (scripts/check-column-drift.mjs) roda no job
       # code-schema-drift, que nao tem Postgres, entao ele le o schema de
       # database/schema-columns.json. Este passo e o que impede aquele arquivo de
