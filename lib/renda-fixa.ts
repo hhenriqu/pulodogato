@@ -849,3 +849,101 @@ export function somarProjecoes(projecoes: Projecao[]): {
     semProjecao,
   };
 }
+
+// ---------------------------------------------------------------------------
+// O VALOR DA POSICAO -- onde o rendimento para de ser enfeite (HMO-437)
+// ---------------------------------------------------------------------------
+// Ate aqui este arquivo respondia "quanto rendeu". `somarProjecoes` soma
+// RENDIMENTO, e foi so isso que a tela usou desde a HMO-192: um card ao lado da
+// carteira, com um numero que nao entrava em total nenhum.
+//
+// O que falta para o patrimonio crescer e a soma `principal + bruto` -- o VALOR
+// da posicao, nao o rendimento dela. Parece aritmetica trivial, e e: o motivo de
+// ela morar aqui, exportada e com suite, e que ela e o unico lugar onde esta
+// escrito QUAL dos dois rendimentos entra no valor e o que acontece quando nao
+// ha rendimento nenhum. Essas duas decisoes, espalhadas por duas rotas, sao
+// exatamente como nascem dois totais que discordam.
+//
+// POR QUE `principal + bruto` E NAO O `current_value` DA CARTEIRA
+// --------------------------------------------------------------
+// lib/investments.ts avalia a posicao por `quantidade * preco`, e com a
+// convencao da HMO-439 (`quantity` em reais, `unit_price = 1`) o `current_price`
+// de um CDB e "quanto vale hoje cada real aplicado". Quem informar esse preco a
+// mao ja esta dizendo o valor de hoje -- somar o bruto projetado em cima disso
+// conta o rendimento DUAS VEZES, e as duas parcelas sao plausiveis.
+//
+// Por isso renda fixa e avaliada aqui e o preco informado e IGNORADO para ela: o
+// rendimento projetado e a autoridade, e `lib/investments.ts` ja documenta o
+// outro lado do acordo ("a posicao de renda fixa vale `principal` aqui").
+//
+// POR QUE O BRUTO, E NAO O LIQUIDO (Decisao 2 do plano da HMO-432)
+// ---------------------------------------------------------------
+// O numero do patrimonio e o BRUTO; o liquido vai ao lado, estimado. Nao e
+// preferencia estetica: a aliquota de IR cai nas bordas de 180/360/720 dias
+// (`aliquotaDeIr`), entao um patrimonio exibido pelo liquido SOBE sozinho na
+// virada de um desses dias, sem aporte nenhum e sem nada para explicar o salto.
+// `valorLiquido` existe para a tela mostrar os dois.
+//
+// POR QUE A FALTA DE RENDIMENTO CAI PARA O CUSTO, E NAO PARA ZERO NEM null
+// -----------------------------------------------------------------------
+// Sem boletim do Banco Central (ou sem indexador preenchido) `bruto` e `null`.
+// Zero seria dizer que o CDB nao existe e derrubaria o patrimonio inteiro pelo
+// valor aplicado; `null` propagado obrigaria cada chamador a decidir de novo.
+// O valor cai para o `principal` -- a verdade possivel, a mesma escolha que
+// lib/investments.ts faz quando falta preco -- e `rendeu: false` deixa a tela
+// avisar que aquele numero esta sem o rendimento.
+
+/** O valor de uma posicao de renda fixa, aberto nas parcelas que o formam. */
+export interface ValorProjetado {
+  /** `principal + bruto`. E ESTE que entra no patrimonio. */
+  valor: number;
+  /** `principal + liquido`: o mesmo valor com o IR estimado descontado. */
+  valorLiquido: number;
+  /** O que foi aplicado (o custo da posicao). */
+  principal: number;
+  /** O bruto contado no `valor`. Zero -- e nao `null` -- quando nao rendeu. */
+  rendimento: number;
+  /** false quando o `valor` e so o custo: faltou ingrediente para projetar. */
+  rendeu: boolean;
+  /** O `motivo` da projecao, para a tela dizer qual campo preencher. */
+  motivo: MOTIVO | null;
+}
+
+/**
+ * O valor de mercado de UMA posicao de renda fixa.
+ *
+ * Nunca devolve `null` e nunca lanca: sem rendimento o valor e o principal.
+ */
+export function valorDeMercado(p: Projecao): ValorProjetado {
+  const rendeu = p.motivo === null && p.bruto !== null;
+  const bruto = rendeu ? (p.bruto as number) : 0;
+  // O liquido acompanha o bruto. Quando o papel e isento `aliquotaDeIr` ja
+  // devolveu zero e os dois sao iguais -- nao ha ramo separado para LCI aqui.
+  const liquido = rendeu && p.liquido !== null ? p.liquido : 0;
+
+  return {
+    valor: arredondar(p.principal + bruto),
+    valorLiquido: arredondar(p.principal + liquido),
+    principal: arredondar(p.principal),
+    rendimento: arredondar(bruto),
+    rendeu,
+    motivo: p.motivo,
+  };
+}
+
+/**
+ * O valor de cada posicao de renda fixa, indexado por `asset_id`.
+ *
+ * A chave e o `asset_id` e nao a conta de proposito: este arquivo e uma
+ * calculadora de rendimento e nao conhece conta bancaria -- o mesmo limite que
+ * a HMO-436 ja desenhou ao manter `account_id` FORA de `Projecao`. Quem agrupa
+ * por conta e `valorDaCarteiraPorConta` em lib/investments.ts, que e o arquivo
+ * que sabe o que e uma carteira.
+ */
+export function valorProjetadoPorAtivo(
+  projecoes: Projecao[]
+): Record<string, ValorProjetado> {
+  const mapa: Record<string, ValorProjetado> = {};
+  for (const p of projecoes) mapa[p.asset_id] = valorDeMercado(p);
+  return mapa;
+}

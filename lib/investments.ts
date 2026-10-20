@@ -537,3 +537,174 @@ export function lancamentoDeCarteiraParaGravar(entrada: {
     unitPrice: PRECO_UNITARIO_DA_RENDA_FIXA,
   };
 }
+
+// ---------------------------------------------------------------------------
+// QUANTO A CONTA DE INVESTIMENTO VALE (HMO-437, Decisao 1A da HMO-432)
+// ---------------------------------------------------------------------------
+// Desde a 059 um ativo pode apontar para uma `financial_accounts` do tipo
+// `investment`. A partir dai a conta tem DOIS valores possiveis: o
+// `current_balance` que a pessoa digitou e o que a carteira atrelada vale. Somar
+// os dois conta a mesma aplicacao duas vezes -- e esse defeito nao levanta
+// excecao, ele imprime um patrimonio MAIOR com cara de certo. A decisao aprovada
+// e a 1(A): com ativo atrelado, a carteira SUBSTITUI o saldo digitado; sem ativo
+// atrelado, nada muda. A substituicao em si mora em lib/net-worth.ts; o que mora
+// aqui e o total por conta que ela consome.
+//
+// QUAL VALOR ENTRA, POR TIPO DE ATIVO
+// -----------------------------------
+// Renda fixa entra pelo valor PROJETADO (`principal + bruto`, de
+// lib/renda-fixa.ts) e os outros tipos entram pelo `current_value` desta
+// consolidacao. Nao e inconsistencia: sao as duas respostas para "quanto vale
+// hoje" que este app tem. Acao tem preco informado a mao; CDB nao tem preco, tem
+// indexador, e quem sabe avaliar e a projecao do CDI.
+//
+// A CONSEQUENCIA DE ESQUECER OS OUTROS TIPOS seria grave e silenciosa: uma conta
+// de investimento com uma PETR4 atrelada deixaria de contar o saldo digitado
+// (porque ela TEM ativo atrelado) e nao contaria a acao (porque so renda fixa
+// teria sido somada). O patrimonio cairia pelo valor da posicao, sem nenhuma
+// linha para auditar. Por isso o laco e sobre as posicoes ABERTAS inteiras e o
+// mapa de projecao so decide o valor de QUEM ele conhece.
+//
+// POSICAO ZERADA FICA FORA (`posicoesAbertas`): um CDB resgatado por inteiro nao
+// e mais patrimonio. O resultado realizado dele continua valendo no resumo da
+// carteira, que e outra pergunta.
+
+/**
+ * O valor projetado de um ativo de renda fixa, como `valorDeMercado` o devolve.
+ *
+ * REDECLARADO, e nao importado de `@/lib/renda-fixa`: `test:investments` compila
+ * ESTE arquivo sozinho (`compila.mjs lib/investments.ts`), sem o passo
+ * `resolve-aliases`, e o `@/` de um import sobrevive no JS emitido -- a suite
+ * morreria com ERR_MODULE_NOT_FOUND antes da primeira assercao. A compatibilidade
+ * e estrutural: o `Record` que a rota recebe de lib/renda-fixa.ts entra aqui sem
+ * conversao, e o tsc reprova se os campos divergirem.
+ */
+export interface ValorProjetadoDoAtivo {
+  /** `principal + rendimento bruto`. */
+  valor: number;
+  /** `principal + rendimento liquido estimado`. */
+  valorLiquido: number;
+  principal: number;
+  rendimento: number;
+  /** false quando o valor caiu para o custo por falta de projecao. */
+  rendeu: boolean;
+}
+
+/** O que uma conta vale em carteira -- uma linha por `account_id`. */
+export interface CarteiraDaConta {
+  /** `investment_assets.account_id` (059). `null` = ativo sem conta atrelada. */
+  account_id: string | null;
+  /** O valor de hoje: renda fixa pelo projetado, o resto pelo `current_value`. */
+  valor: number;
+  /** O mesmo valor com o IR estimado do rendimento descontado. */
+  valorLiquido: number;
+  /** O custo das posicoes abertas desta conta. */
+  principal: number;
+  /** O rendimento de renda fixa ja contado no `valor`. */
+  rendimento: number;
+  /** Quantas posicoes abertas a conta tem. */
+  ativos: number;
+  /** Posicoes avaliadas PELO CUSTO por falta de preco informado. */
+  semPreco: number;
+  /** Posicoes de renda fixa que entraram SEM rendimento (projecao nao saiu). */
+  semRendimento: number;
+}
+
+/**
+ * Agrupa o valor das posicoes abertas por conta de investimento.
+ *
+ * `contaPorAtivo` vem da rota (que leu `investment_assets.account_id`) e nao das
+ * posicoes: `Posicao` nao carrega o elo, pelo mesmo motivo que `Projecao` nao
+ * carrega -- estes dois arquivos calculam dinheiro e nao conhecem conta
+ * bancaria.
+ *
+ * O ativo SOLTO (`account_id` nulo ou ausente) nao e descartado: ele sai na
+ * linha de `account_id: null`. Descarta-lo aqui faria o valor dele desaparecer
+ * sem rastro; devolve-lo numa linha propria deixa o chamador dizer em voz alta
+ * que aquele dinheiro esta na carteira e em conta nenhuma -- que e o estado real
+ * de todo ativo cadastrado antes da 059.
+ *
+ * A ordem e determinista (conta por `account_id`, o solto por ultimo) para a
+ * tela e as suites nao dependerem da ordem de insercao do `Map`.
+ */
+export function valorDaCarteiraPorConta(
+  posicoes: Posicao[],
+  contaPorAtivo: Record<string, string | null>,
+  projetado?: Record<string, ValorProjetadoDoAtivo> | null
+): CarteiraDaConta[] {
+  const porConta = new Map<string, CarteiraDaConta>();
+  // `null` nao e chave de Map com tipo `string`; a linha do solto fica numa
+  // variavel separada e e concatenada no fim.
+  const SOLTO = " solto";
+
+  for (const p of posicoesAbertas(posicoes)) {
+    const chave = contaPorAtivo[p.asset_id] ?? null;
+    const mapKey = chave === null ? SOLTO : chave;
+
+    let linha = porConta.get(mapKey);
+    if (!linha) {
+      linha = {
+        account_id: chave,
+        valor: 0,
+        valorLiquido: 0,
+        principal: 0,
+        rendimento: 0,
+        ativos: 0,
+        semPreco: 0,
+        semRendimento: 0,
+      };
+      porConta.set(mapKey, linha);
+    }
+
+    const proj = projetado ? projetado[p.asset_id] : undefined;
+
+    if (proj) {
+      // Renda fixa: o preco informado e IGNORADO e o valor e `principal +
+      // bruto`. O racional esta no cabecalho de lib/renda-fixa.ts -- somar o
+      // bruto em cima de um preco informado a mao conta o rendimento duas vezes.
+      linha.valor += proj.valor;
+      linha.valorLiquido += proj.valorLiquido;
+      linha.principal += proj.principal;
+      linha.rendimento += proj.rendimento;
+      if (!proj.rendeu) linha.semRendimento++;
+    } else {
+      // Os outros tipos: `current_value` ja cai para o custo quando falta preco,
+      // e `has_price` e o que a tela usa para avisar. O valor liquido de uma
+      // acao e o valor dela: o IR de acao e sobre o ganho na VENDA e depende de
+      // isencao mensal, que este app nao modela -- estimar aqui seria chutar.
+      linha.valor += p.current_value;
+      linha.valorLiquido += p.current_value;
+      linha.principal += p.total_invested;
+      if (!p.has_price) linha.semPreco++;
+    }
+
+    linha.ativos++;
+  }
+
+  const comConta: CarteiraDaConta[] = [];
+  let solto: CarteiraDaConta | null = null;
+
+  // `Array.from` e nao iterador direto: o target deste tsconfig e anterior ao
+  // ES2015 -- mesma razao do laco de `evolucaoMensal`.
+  for (const linha of Array.from(porConta.values())) {
+    const fechada: CarteiraDaConta = {
+      ...linha,
+      valor: arredondar(linha.valor),
+      valorLiquido: arredondar(linha.valorLiquido),
+      principal: arredondar(linha.principal),
+      rendimento: arredondar(linha.rendimento),
+    };
+    if (fechada.account_id === null) solto = fechada;
+    else comConta.push(fechada);
+  }
+
+  comConta.sort((a, b) =>
+    (a.account_id as string) < (b.account_id as string)
+      ? -1
+      : (a.account_id as string) > (b.account_id as string)
+        ? 1
+        : 0
+  );
+
+  return solto ? comConta.concat([solto]) : comConta;
+}

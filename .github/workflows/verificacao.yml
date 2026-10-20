@@ -9101,3 +9101,23 @@ jobs:
       # rastreada) e exige que a suite fique vermelha em cada um.
       - name: Os mutantes do elo conta <-> ativo (a suite acima sabe reprovar?)
         run: npm run mutantes:conta-do-ativo
+
+      # O PATRIMONIO QUE VEM DA CARTEIRA (HMO-437, fase 3 da HMO-432).
+      #
+      # O controle negativo das TRES suites puras que decidem o numero grande da
+      # tela de patrimonio: `test:net-worth` (a substituicao do saldo digitado
+      # pela carteira atrelada), `test:investments` (a soma por conta) e
+      # `test:renda-fixa` (o valor da posicao, `principal + bruto`). As tres
+      # rodam no db-verify; o que falta e a prova de que elas SABEM REPROVAR.
+      #
+      # Por que este runner e menos dispensavel que a media: o defeito central
+      # da fase -- contar a mesma aplicacao duas vezes, no saldo digitado e na
+      # carteira -- nao levanta excecao e nao quebra proporcao nenhuma. Ele
+      # imprime um patrimonio MAIOR, plausivel, exatamente igual ao certo mais o
+      # valor da aplicacao. Uma assercao que parasse de alcancar essa soma
+      # imprimiria o mesmo `✔`.
+      #
+      # O runner planta cada mutante numa COPIA em /tmp (nao na arvore
+      # rastreada) e exige que alguma das tres suites fique vermelha em cada um.
+      - name: Os mutantes do patrimonio da carteira (as suites sabem reprovar?)
+        run: npm run mutantes:patrimonio-da-carteira

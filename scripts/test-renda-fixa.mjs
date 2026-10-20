@@ -69,6 +69,8 @@ import {
   primeiraCompraPorAtivo,
   projetarRendimento,
   somarProjecoes,
+  valorDeMercado,
+  valorProjetadoPorAtivo,
 } from "../.tmp-renda-fixa/renda-fixa.js";
 
 import {
@@ -824,4 +826,119 @@ test("produto e indexador fora da lista do CHECK sao recusados", () => {
   const i = lerCamposDeRendaFixa({ ...COMPLETO, indexKind: "cdi+" });
   assert.equal(i.ok, false);
   assert.match(i.erro, /cdi/);
+});
+
+// =====================================================
+// SECAO 9: O VALOR DA POSICAO -- `principal + bruto` (HMO-437)
+// =====================================================
+// Ate a HMO-436 este arquivo respondia so "quanto rendeu", e o rendimento
+// morria num card. O que entra no patrimonio e o VALOR: principal + bruto.
+//
+// Os numeros abaixo reaproveitam os da secao 1 de proposito -- R$ 10.000 a 100%
+// do CDI em 21 dias uteis rendem R$ 107,20 brutos e R$ 83,08 liquidos --, para
+// que uma mudanca na projecao apareca aqui como o MESMO desvio e nao como dois
+// valores independentes que ninguem consegue conciliar.
+
+test("o valor da posicao e principal + bruto, e o liquido vai ao lado", () => {
+  const v = valorDeMercado(projetar(CDB));
+
+  assert.equal(v.valor, 10107.2, "principal + bruto");
+  assert.equal(v.valorLiquido, 10083.08, "principal + liquido");
+  assert.equal(v.principal, 10000);
+  assert.equal(v.rendimento, 107.2);
+  assert.equal(v.rendeu, true);
+  assert.equal(v.motivo, null);
+});
+
+test("o IR nao morde o principal: a diferenca dos dois valores e o IR do RENDIMENTO", () => {
+  const v = valorDeMercado(projetar(CDB));
+  // 22,5% de R$ 107,20 = R$ 24,12. Se o IR incidisse sobre o valor TOTAL a
+  // diferenca seria R$ 2.274,12 -- um erro de dinheiro grande o bastante para
+  // trocar a decisao de quem olha o patrimonio liquido de IR.
+  assert.equal(Math.round((v.valor - v.valorLiquido) * 100) / 100, 24.12);
+});
+
+test("papel isento tem valor BRUTO igual ao liquido", () => {
+  const v = valorDeMercado(projetar({ ...CDB, fixed_income_product: "lci" }));
+  assert.equal(v.valor, 10107.2);
+  assert.equal(v.valorLiquido, 10107.2, "LCI nao paga IR");
+});
+
+test("sem boletim do Banco Central o valor cai para o CUSTO, nao para zero", () => {
+  // Serie vazia = SGS fora do ar (`motivo: "indisponivel"`). O patrimonio nao
+  // pode cair R$ 10.000 porque uma API nao respondeu, e nao pode mostrar zero
+  // para uma aplicacao que existe.
+  const p = projetar(CDB, { serie: [] });
+  assert.equal(p.motivo, "indisponivel");
+  assert.equal(p.bruto, null);
+
+  const v = valorDeMercado(p);
+  assert.equal(v.valor, 10000, "o custo, inteiro");
+  assert.equal(v.valorLiquido, 10000);
+  assert.equal(v.rendimento, 0, "zero, e nao null: o valor nao carrega buraco");
+  assert.equal(v.rendeu, false, "e a tela sabe que falta o rendimento");
+  assert.equal(v.motivo, "indisponivel");
+});
+
+test("ativo sem indexador tambem vale o custo, com o motivo preservado", () => {
+  const v = valorDeMercado(projetar({ ...CDB, index_kind: null }));
+  assert.equal(v.valor, 10000);
+  assert.equal(v.rendeu, false);
+  assert.equal(v.motivo, "sem_indexador");
+});
+
+test("aplicado hoje vale exatamente o principal, com rendeu TRUE", () => {
+  // Zero dia util fechado: `bruto` e 0 e nao `null`. O valor e o principal, mas
+  // `rendeu` tem de ser true -- a projecao SAIU, e nao ha aviso a dar na tela.
+  // Confundir os dois casos faria a tela pedir para preencher um campo que esta
+  // preenchido.
+  const v = valorDeMercado(projetar({ ...CDB, applied_date: HOJE }));
+  assert.equal(v.valor, 10000);
+  assert.equal(v.rendimento, 0);
+  assert.equal(v.rendeu, true);
+  assert.equal(v.motivo, null);
+});
+
+test("o papel VENCIDO vale o que valia no vencimento, e para de crescer", () => {
+  const vencido = valorDeMercado(
+    projetar({ ...CDB, maturity_date: "2026-09-15" })
+  );
+  const vivo = valorDeMercado(projetar(CDB));
+  assert.ok(
+    vencido.valor < vivo.valor,
+    `vencido ${vencido.valor} deveria ser menor que ${vivo.valor}`
+  );
+  assert.equal(vencido.rendeu, true, "vencido nao e falta de ingrediente");
+});
+
+test("valorProjetadoPorAtivo indexa por asset_id, um por ativo", () => {
+  const outro = { ...CDB, id: "a2", symbol: "CDB-B", index_percentage: 110 };
+  const mapa = valorProjetadoPorAtivo([projetar(CDB), projetar(outro)]);
+
+  assert.deepEqual(Object.keys(mapa).sort(), ["a1", "a2"]);
+  assert.equal(mapa["a1"].valor, 10107.2);
+  // 110% do CDI: R$ 117,98 de bruto (secao 1).
+  assert.equal(mapa["a2"].valor, 10117.98);
+});
+
+test("o valor NAO e o somarProjecoes com principal somado por fora", () => {
+  // Esta e a armadilha que a funcao existe para fechar. `somarProjecoes` conta
+  // o ativo SEM projecao em `semProjecao` e NAO soma nada dele -- quem fosse
+  // montar o patrimonio com `soma.bruto + principal_total` acertaria no caso
+  // bom e, no dia do SGS fora do ar, continuaria somando o principal de todos
+  // como se nada tivesse acontecido. Os dois lados tem de dizer a MESMA coisa
+  // sobre o que entrou e o que nao entrou.
+  const bom = projetar(CDB);
+  const sem = projetar({ ...CDB, id: "a2" }, { serie: [] });
+
+  const soma = somarProjecoes([bom, sem]);
+  assert.equal(soma.semProjecao, 1);
+  assert.equal(soma.bruto, 107.2);
+
+  const mapa = valorProjetadoPorAtivo([bom, sem]);
+  const total = mapa["a1"].valor + mapa["a2"].valor;
+  assert.equal(total, 20107.2, "os dois principais + o unico rendimento");
+  assert.equal(mapa["a2"].rendeu, false);
+  // E a soma dos rendimentos contados no valor bate com `somarProjecoes`.
+  assert.equal(mapa["a1"].rendimento + mapa["a2"].rendimento, soma.bruto);
 });

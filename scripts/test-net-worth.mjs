@@ -33,8 +33,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-const { classificarConta, consolidar, comVariacao, resumoDaJanela } =
-  await import("../.tmp-net-worth/net-worth.js");
+const {
+  classificarConta,
+  consolidar,
+  comVariacao,
+  resumoDaJanela,
+  avisoDoPatrimonio,
+  AVISO_DO_SALDO,
+} = await import("../.tmp-net-worth/net-worth.js");
 
 /** Compara dinheiro com tolerancia de um centavo. */
 function perto(recebido, esperado, mensagem) {
@@ -409,4 +415,335 @@ test("carteira completa: patrimonio, classes e composicao", () => {
   perto(classe(c, "investimento").participacao, 48000 / 64250.5, "share investimento");
   assert.equal(classe(c, "liquido").contas.length, 4);
   assert.equal(classe(c, "divida").contas.length, 1);
+});
+
+// =====================================================
+// A ARMADILHA 5: A DUPLA CONTAGEM DA CONTA INVESTIMENTO (HMO-437)
+// =====================================================
+// Estes testes sao ENTREGA da fase, e nao item de revisao. O defeito que eles
+// travam nao levanta excecao, nao quebra proporcao nenhuma e nao deixa linha
+// estranha para auditar: ele imprime um patrimonio MAIOR, plausivel, e
+// exatamente igual ao certo mais o valor da aplicacao atrelada.
+//
+// Os valores esperados foram calculados a mao, como o resto desta suite.
+
+/** Uma linha de `valorDaCarteiraPorConta`, do jeito que `consolidar` a recebe. */
+function carteira(accountId, valor, extras = {}) {
+  const rendimento = extras.rendimento ?? 0;
+  return {
+    account_id: accountId,
+    valor,
+    // Sem IR declarado o liquido e o proprio valor (o caso da LCI isenta).
+    valorLiquido: extras.valorLiquido ?? valor,
+    principal: extras.principal ?? valor - rendimento,
+    rendimento,
+  };
+}
+
+test("a conta com ativo atrelado E saldo digitado aparece UMA vez", () => {
+  // Conta Investimento com R$ 10.000 digitados na mao (o unico jeito que
+  // funcionava antes desta fase) e um CDB de R$ 10.000 atrelado que ja rendeu
+  // R$ 412,35. O patrimonio certo e 2.000 + 10.412,35 = 12.412,35.
+  //
+  // Se as duas parcelas fossem somadas daria 22.412,35 -- e nada na resposta
+  // pareceria errado.
+  const c = consolidar(
+    [conta("corrente", "checking", 2000), conta("inv", "investment", 10000)],
+    [carteira("inv", 10412.35, { rendimento: 412.35, valorLiquido: 10349.49 })]
+  );
+
+  perto(c.patrimonioLiquido, 12412.35, "patrimonio");
+  perto(classe(c, "investimento").total, 10412.35, "total investimento");
+  assert.equal(
+    classe(c, "investimento").contas.length,
+    1,
+    "a conta nao pode aparecer duas vezes"
+  );
+
+  // E o saldo digitado nao foi apagado -- ele saiu do total e continua legivel.
+  const linha = classe(c, "investimento").contas[0];
+  assert.equal(linha.origemDoSaldo, "carteira");
+  perto(linha.saldo, 10412.35, "saldo da linha");
+  perto(linha.saldoInformado, 10000, "saldo informado preservado");
+  perto(linha.carteira.rendimento, 412.35, "rendimento da carteira");
+  perto(c.saldoInformadoIgnorado, 10000, "saldo que parou de contar");
+  perto(c.totalEmCarteira, 10412.35, "parte que veio da carteira");
+});
+
+test("o rendimento SOBE o patrimonio, e e a unica diferenca", () => {
+  // O mesmo CDB sem rendimento nenhum (boletim do Banco Central indisponivel:
+  // o valor cai para o custo) e com rendimento. A diferenca entre os dois
+  // patrimonios tem de ser EXATAMENTE o rendimento -- este e o teste de que
+  // "ver o patrimonio crescer" passou a funcionar sem ninguem editar saldo.
+  const contas = [conta("inv", "investment", 999999)];
+
+  const semRendimento = consolidar(contas, [carteira("inv", 10000)]);
+  const comRendimento = consolidar(contas, [
+    carteira("inv", 10412.35, { rendimento: 412.35 }),
+  ]);
+
+  perto(semRendimento.patrimonioLiquido, 10000, "patrimonio sem rendimento");
+  perto(comRendimento.patrimonioLiquido, 10412.35, "patrimonio com rendimento");
+  perto(
+    comRendimento.patrimonioLiquido - semRendimento.patrimonioLiquido,
+    412.35,
+    "a diferenca e o rendimento"
+  );
+  // E o saldo digitado absurdo (999.999) nao influencia nenhum dos dois.
+});
+
+test("conta SEM ativo atrelado da o total identico ao de antes da fase", () => {
+  // O caso irmao, e o que protege quem nunca vai atrelar nada: a mesma lista de
+  // contas consolidada com carteira VAZIA, com carteira de OUTRA conta e sem o
+  // argumento nenhum tem de devolver o mesmo patrimonio, as mesmas classes e as
+  // mesmas participacoes.
+  const contas = [
+    conta("1", "checking", 3200.5),
+    conta("2", "savings", 12000),
+    conta("3", "investment", 48000),
+    conta("4", "credit_card", -4780.3),
+  ];
+
+  const antes = consolidar(contas);
+  const comListaVazia = consolidar(contas, []);
+  const comNulo = consolidar(contas, null);
+  // Carteira de uma conta que NAO esta na lista (desligada dos totais pelo
+  // `include_in_total`, ou de outro usuario): nao pode entrar por fora.
+  const comContaDeFora = consolidar(contas, [carteira("fantasma", 777777)]);
+
+  for (const [nome, c] of [
+    ["lista vazia", comListaVazia],
+    ["nulo", comNulo],
+    ["conta de fora", comContaDeFora],
+  ]) {
+    perto(c.patrimonioLiquido, antes.patrimonioLiquido, `patrimonio (${nome})`);
+    perto(c.totalAtivos, antes.totalAtivos, `ativos (${nome})`);
+    perto(c.totalDividas, antes.totalDividas, `dividas (${nome})`);
+    perto(c.totalEmCarteira, 0, `nada veio da carteira (${nome})`);
+    perto(c.saldoInformadoIgnorado, 0, `nada parou de contar (${nome})`);
+    perto(c.irEstimado, 0, `sem IR estimado (${nome})`);
+    perto(
+      c.patrimonioDescontandoIr,
+      antes.patrimonioLiquido,
+      `liquido = bruto (${nome})`
+    );
+    for (const nomeDaClasse of ["liquido", "investimento", "divida"]) {
+      perto(
+        classe(c, nomeDaClasse).total,
+        classe(antes, nomeDaClasse).total,
+        `total ${nomeDaClasse} (${nome})`
+      );
+      perto(
+        classe(c, nomeDaClasse).participacao,
+        classe(antes, nomeDaClasse).participacao,
+        `participacao ${nomeDaClasse} (${nome})`
+      );
+    }
+  }
+
+  // E a conta de investimento sem ativo atrelado continua pelo saldo digitado.
+  const linha = classe(antes, "investimento").contas[0];
+  assert.equal(linha.origemDoSaldo, "saldo_informado");
+  perto(linha.saldo, 48000, "saldo pelo informado");
+  perto(linha.saldoInformado, 48000, "saldo informado");
+  assert.equal(linha.carteira, null, "sem parcelas de carteira");
+});
+
+test("o ativo SOLTO (account_id nulo) nao entra em conta nenhuma", () => {
+  // A linha de `account_id: null` e a carteira que ninguem atrelou -- o estado
+  // de todo ativo cadastrado antes da 059. Ela nao pode ser distribuida, nem
+  // somada a conta de investimento que existe por perto.
+  const c = consolidar(
+    [conta("corrente", "checking", 500), conta("inv", "investment", 8000)],
+    [carteira(null, 30000, { rendimento: 1000 })]
+  );
+
+  perto(c.patrimonioLiquido, 8500, "patrimonio sem o solto");
+  perto(c.totalEmCarteira, 0, "nada veio da carteira");
+  perto(c.saldoInformadoIgnorado, 0, "nenhum saldo parou de contar");
+  const linha = classe(c, "investimento").contas[0];
+  assert.equal(linha.origemDoSaldo, "saldo_informado");
+  perto(linha.saldo, 8000, "a conta continua pelo saldo digitado");
+});
+
+test("a carteira NAO substitui saldo de conta que nao e de investimento", () => {
+  // A trava da 059 exige `account_type = 'investment'` no elo. Esta funcao nao
+  // confia nela: ela recebe linhas, nao garantias. Se um elo errado chegasse
+  // aqui, substituir faria a conta corrente perder o saldo dela em silencio.
+  const c = consolidar(
+    [conta("corrente", "checking", 2500)],
+    [carteira("corrente", 99)]
+  );
+
+  perto(c.patrimonioLiquido, 2500, "o saldo da conta corrente foi preservado");
+  perto(c.totalEmCarteira, 0, "nada veio da carteira");
+  assert.equal(classe(c, "liquido").contas[0].origemDoSaldo, "saldo_informado");
+});
+
+test("o patrimonio grande e o BRUTO; o liquido de IR vai ao lado", () => {
+  // Decisao 2 do plano: o numero grande e o bruto. Um CDB de R$ 10.000 que
+  // rendeu R$ 1.000 com 20% de IR vale 11.000 bruto e 10.800 liquido.
+  const c = consolidar(
+    [conta("inv", "investment", 0)],
+    [
+      carteira("inv", 11000, {
+        rendimento: 1000,
+        valorLiquido: 10800,
+        principal: 10000,
+      }),
+    ]
+  );
+
+  perto(c.patrimonioLiquido, 11000, "o numero grande e o bruto");
+  perto(c.irEstimado, 200, "IR estimado");
+  perto(c.patrimonioDescontandoIr, 10800, "o numero de baixo");
+});
+
+test("duas contas de investimento atreladas somam cada uma a sua carteira", () => {
+  const c = consolidar(
+    [
+      conta("a", "investment", 1),
+      conta("b", "investment", 2),
+      conta("c", "investment", 5000, { name: "sem ativo atrelado" }),
+    ],
+    [
+      carteira("a", 1000, { rendimento: 100, valorLiquido: 985 }),
+      carteira("b", 2000, { rendimento: 200, valorLiquido: 1970 }),
+    ]
+  );
+
+  // 1.000 + 2.000 + 5.000 (esta ultima pelo saldo digitado, que nao foi tocado)
+  perto(c.patrimonioLiquido, 8000, "patrimonio");
+  perto(c.totalEmCarteira, 3000, "o que veio da carteira");
+  perto(c.saldoInformadoIgnorado, 3, "os saldos digitados que sairam");
+  perto(c.irEstimado, 45, "IR estimado das duas");
+  perto(c.patrimonioDescontandoIr, 7955, "patrimonio descontando o IR");
+  assert.equal(classe(c, "investimento").contas.length, 3);
+});
+
+test("conta de investimento ARQUIVADA com carteira conta pela carteira", () => {
+  // `totalInativas` existe para a tela dizer quanto do patrimonio esta em conta
+  // arquivada. Se ele continuasse somando o saldo DIGITADO enquanto o
+  // patrimonio soma a carteira, as duas metades da tela discordariam.
+  const c = consolidar(
+    [conta("inv", "investment", 100, { is_active: false })],
+    [carteira("inv", 10412.35, { rendimento: 412.35 })]
+  );
+
+  perto(c.patrimonioLiquido, 10412.35, "patrimonio");
+  perto(c.totalInativas, 10412.35, "arquivado pela carteira");
+});
+
+// =====================================================
+// O AVISO: DE ONDE VEIO CADA PARTE (HMO-437)
+// =====================================================
+// A frase e condicional, e e por isso que ela tem teste: um aviso que fala de
+// carteira para quem nao tem ativo atrelado e tao ruim quanto um total errado --
+// ele ensina a pessoa a nao ler os avisos.
+
+const SEM_CARTEIRA = { carteiraLida: true };
+
+test("sem carteira, o aviso e exatamente o de antes desta fase", () => {
+  const c = consolidar([conta("1", "checking", 1000)]);
+  assert.equal(avisoDoPatrimonio(c, SEM_CARTEIRA), AVISO_DO_SALDO);
+});
+
+test("com carteira, o aviso diz que o saldo informado NAO e somado", () => {
+  const c = consolidar(
+    [conta("inv", "investment", 10000)],
+    [carteira("inv", 10412.35, { rendimento: 412.35, valorLiquido: 10349.49 })]
+  );
+  const aviso = avisoDoPatrimonio(c, SEM_CARTEIRA);
+
+  assert.ok(aviso.indexOf(AVISO_DO_SALDO) === 0, "comeca pelo aviso do saldo");
+  assert.ok(
+    aviso.includes("não é somado"),
+    `o aviso tem de dizer que o saldo informado nao conta: ${aviso}`
+  );
+  assert.ok(
+    aviso.includes("conta duas vezes"),
+    "e tem de nomear a dupla contagem, que e o motivo da regra"
+  );
+  assert.ok(
+    aviso.includes("linha do tempo"),
+    "e avisar que a curva pode ficar menor que o numero de hoje"
+  );
+  assert.ok(aviso.includes("BRUTO"), "e dizer qual dos dois numeros e o grande");
+});
+
+test("o aviso do IR so aparece quando ha IR estimado", () => {
+  // LCI isenta: `valorLiquido` igual ao `valor`, `irEstimado` zero. Dizer "o
+  // numero e o bruto, o liquido desconta o IR" aqui seria falso.
+  const isenta = consolidar(
+    [conta("inv", "investment", 0)],
+    [carteira("inv", 10107.2, { rendimento: 107.2 })]
+  );
+  perto(isenta.irEstimado, 0, "sem IR");
+  assert.ok(!avisoDoPatrimonio(isenta, SEM_CARTEIRA).includes("alíquota"));
+
+  const tributada = consolidar(
+    [conta("inv", "investment", 0)],
+    [carteira("inv", 11000, { rendimento: 1000, valorLiquido: 10800 })]
+  );
+  assert.ok(avisoDoPatrimonio(tributada, SEM_CARTEIRA).includes("alíquota"));
+});
+
+test("o Banco Central ausente e nomeado, com o indice", () => {
+  const c = consolidar([conta("1", "checking", 10)]);
+  const aviso = avisoDoPatrimonio(c, {
+    carteiraLida: true,
+    indexadoresSemBoletim: ["cdi"],
+  });
+  assert.ok(aviso.includes("Banco Central"), aviso);
+  assert.ok(aviso.includes("cdi"), "o indice tem de aparecer");
+  assert.ok(
+    aviso.includes("valor aplicado"),
+    "e a frase tem de dizer por qual valor o papel entrou"
+  );
+});
+
+test("a carteira SOLTA e avisada com o que fazer a respeito", () => {
+  const c = consolidar([conta("1", "checking", 10)]);
+  const aviso = avisoDoPatrimonio(c, {
+    carteiraLida: true,
+    carteiraSolta: 30000,
+  });
+  assert.ok(aviso.includes("sem conta atrelada"), aviso);
+  assert.ok(aviso.includes("NÃO entra"), "e dizer que ele nao esta no total");
+  assert.ok(aviso.includes("atrele"), "com a acao que resolve");
+});
+
+test("carteira solta ZERO nao gera frase", () => {
+  const c = consolidar([conta("1", "checking", 10)]);
+  const aviso = avisoDoPatrimonio(c, { carteiraLida: true, carteiraSolta: 0 });
+  assert.equal(aviso, AVISO_DO_SALDO);
+});
+
+test("a carteira que NAO pode ser lida e dita em voz alta", () => {
+  const c = consolidar([conta("1", "checking", 10)]);
+  const aviso = avisoDoPatrimonio(c, { carteiraLida: false });
+  assert.ok(
+    aviso.includes("não entrou nesta leitura"),
+    `o silencio pareceria "voce nao tem investimento": ${aviso}`
+  );
+});
+
+test("o aviso nunca repete a mesma oracao duas vezes", () => {
+  // As frases sao concatenadas; um `push` duplicado passaria despercebido na
+  // revisao e sairia na tela como paragrafo repetido.
+  const c = consolidar(
+    [conta("inv", "investment", 10000)],
+    [carteira("inv", 11000, { rendimento: 1000, valorLiquido: 10800 })]
+  );
+  const aviso = avisoDoPatrimonio(c, {
+    carteiraLida: true,
+    indexadoresSemBoletim: ["cdi"],
+    carteiraSolta: 500,
+  });
+  const oracoes = aviso.split(". ").map((s) => s.trim());
+  assert.equal(
+    new Set(oracoes).size,
+    oracoes.length,
+    `oracao repetida em: ${aviso}`
+  );
 });
