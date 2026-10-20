@@ -439,6 +439,7 @@
     "transaction_id"
   ],
   "investment_assets": [
+    "account_id",
     "applied_date",
     "created_at",
     "currency",

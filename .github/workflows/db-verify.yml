@@ -4666,6 +4666,120 @@ jobs:
       - name: A conta pode ficar fora dos totais, e o re-run nao a religa
         run: $PSQL -f database/tests/058_conta_fora_dos_totais_test.sql
 
+      # =======================================================================
+      # HMO-432 -- O ELO CONTA DE INVESTIMENTO <-> ATIVO (059), FASE 1
+      # =======================================================================
+      # `investment_assets.account_id`, FK com `ON DELETE SET NULL`, a trigger
+      # `investment_assets_conta_trava` e o indice.
+      #
+      # POR QUE ESTE BLOCO ESTA AQUI, E NAO NO FIM DO JOB
+      # -------------------------------------------------
+      # Porque esta migration CRIA COLUNA. O step `schema-columns.json em dia`
+      # (logo abaixo) e um `--check` que compara ESTE banco com o arquivo
+      # gerado, e os blocos da 056 e da 057 ficam DEPOIS dele -- o que parece
+      # dizer "migration nova vai no fim do job". Funciona para aquelas duas por
+      # acidente: nenhuma cria coluna (a 056 troca uma funcao, a 057 recola uma
+      # view), entao a lista de colunas de um banco parado na 055 e identica a
+      # de um banco na 057.
+      #
+      # Com uma migration que cria coluna no fim do job, aquele step compararia
+      # um banco SEM `account_id` contra o `schema-columns.json` que JA a tem, e
+      # sairia 1 -- e o vermelho ACUSA O ARQUIVO GERADO ("rode o gerador", que e
+      # a unica coisa que nao resolve) em vez de acusar a posicao do step. O
+      # bloco da 058 ja registra esta regra; este a repete porque foi ela que
+      # decidiu a posicao destes quatro steps.
+      #
+      # A ORDEM DOS QUATRO STEPS NAO E NEGOCIAVEL
+      # -----------------------------------------
+      #   1. a fixture planta DOIS ativos soltos e DUAS contas de investimento,
+      #      e COMITA -- antes de a coluna existir;
+      #   2. a migration -- os dois ativos ficam `NULL`, porque ela nao adivinha;
+      #   3. a fixture ATRELA um dos dois a Corretora A, e COMITA;
+      #   4. a migration DE NOVO (idempotencia).
+      #
+      # So nessa ordem as secoes 2 e 5 da suite medem o que existem para medir:
+      # que a migration nao atrelou o que ja existia, e que re-colar o arquivo
+      # nao SOLTA o que a pessoa atrelou. Mover o step 4 para antes do 3 deixa a
+      # secao 5 verde e sem controlar nada. O cabecalho de
+      # `059_ativo_ligado_a_conta.sql` repete esta ordem, para quem chegar pelo
+      # arquivo em vez do workflow.
+      #
+      # AS DUAS FIXTURES COMITAM, e aqui isso exige mais cuidado do que no fim
+      # do job: as linhas ficam visiveis para todo step daqui para baixo. Medido
+      # que nenhum deles se incomoda -- os passos de RLS e de `anon` leem
+      # CATALOGO e nao linha; os de deriva e o drill de backup constroem banco
+      # proprio; o teste da 056 conta contas recortando pelo `user_id` DELE
+      # (`a0560000-...`), o da 058 pelo dele (`a0580000-...`), e o usuario destas
+      # fixtures e outro (`a0590000-...`). O `profiles` delas nasce
+      # `is_public = FALSE` de proposito, senao `view_security_invoker_test.sql`
+      # (que roda mais abaixo, depois da 057) perde o controle -- a armadilha
+      # documentada no cabecalho de `056_contas_antes_da_056.sql`.
+      - name: Ativos plantados antes da 059 (a fixture do "sem backfill")
+        run: $PSQL -f database/tests/059_ativos_antes_da_059.sql
+
+      - name: 059_conta_do_ativo_de_investimento
+        run: $PSQL -f database/migrations/059_conta_do_ativo_de_investimento.sql
+
+      # Entre as duas colagens, de proposito. Ver a ordem no comentario acima.
+      - name: Um ativo e atrelado a Corretora A antes do re-run
+        run: $PSQL -f database/tests/059_ativo_ligado_a_conta.sql
+
+      # Re-executavel: `ADD COLUMN IF NOT EXISTS`, o par `DROP CONSTRAINT IF
+      # EXISTS` + `ADD` (nao existe `ADD CONSTRAINT IF NOT EXISTS` no Postgres),
+      # `CREATE INDEX IF NOT EXISTS`, `CREATE OR REPLACE FUNCTION` e o par
+      # `DROP TRIGGER IF EXISTS` + `CREATE TRIGGER`. Producao recebe migration
+      # por colagem a mao, e colar duas vezes acontece -- aqui o re-run tem um
+      # segundo papel, que e alimentar as secoes 5 e 6 da suite.
+      - name: 059 e idempotente
+        run: $PSQL -f database/migrations/059_conta_do_ativo_de_investimento.sql
+
+      # 14 mutantes da 059 medidos num Postgres 17 local antes deste step entrar
+      # (banco TEMPLATE com os 185 passos SQL desta cadeia ate aqui, um banco
+      # novo por mutante, a ordem dos quatro steps acima reproduzida em cada
+      # um): os 14 morrem, e o controle positivo (a 059 intacta, com um espaco a
+      # mais no `COMMENT ON`) fica verde. A cadeia local foi montada por INDICE
+      # de step, e nao pelo `awk` do 2o shim, que corta os blocos do fim do job.
+      #
+      # O SITIO DA MORTE E O MEDIDO, e nao o esperado -- dois mutantes morreram
+      # numa secao diferente da que eu previ:
+      #
+      #   * trigger AUSENTE (so o `DROP`, sem o `CREATE`)   secao 1, `tgtype` <NULL>
+      #   * `ON DELETE SET NULL` -> `CASCADE`               secao 1, `confdeltype` = c
+      #   * `BEFORE` -> `AFTER`                             secao 1, `tgtype` = 21
+      #   * indice cheio -> parcial                         secao 1
+      #   * `SECURITY DEFINER` -> `INVOKER`                 secao 1, `prosecdef`
+      #   * `REVOKE` apagado                                secao 1, `execute=truetrue`
+      #   * a trava SEM a clausula `IS NULL`                secao 3, no `expect_aceita`
+      #     do ativo de apoio (23514) -- e o `DELETE` da conta nem chega a ser
+      #     tentado, porque a suite aborta antes;
+      #   * a trava SEM `a.user_id = NEW.user_id`           secao 3, outro dono ACEITO
+      #   * a trava SEM `a.account_type = 'investment'`     secao 3, checking ACEITO
+      #   * a trava SEM a janela do `IS NOT DISTINCT FROM`  secao 4, o ativo de uma
+      #     conta que deixou de ser `investment` fica intocavel
+      #   * `COMMENT ON COLUMN` apagado                     secao 7
+      #   * coluna `NOT NULL`                               na PROPRIA COLAGEM
+      #     ("column account_id contains null values") -- e so porque a fixture
+      #     plantou ativo ANTES; num banco do zero este mutante passaria;
+      #   * backfill ADIVINHADO (`SET account_id = (SELECT ... LIMIT 1)`)
+      #                                                     secao 2
+      #   * backfill de LIMPEZA (`SET account_id = NULL`)    secao 5
+      #
+      # Os tres ultimos sao os que NAO morreriam num banco construido do zero --
+      # e a razao de existirem as duas fixtures. Os dois de backfill sao dinheiro:
+      # o primeiro poe a posicao da corretora A dentro da corretora B, o segundo
+      # desatrela a carteira inteira na segunda colagem. Nenhum dos dois tem
+      # sintoma, e e por isso que a migration nao tem `UPDATE` nenhum.
+      #
+      # Que as secoes 1, 2, 5 e 7 leiam o CATALOGO nao as faz suficientes: um
+      # mutante que deixe a trigger EXISTINDO e errada passa por todas elas, e
+      # quem o pega sao as secoes 3 e 4 (os quatro mutantes de trava acima).
+      #
+      # O controle negativo externo do arquivo de teste: contra um banco parado
+      # na 058 ele fica VERMELHO na secao 1, com a string do catalogo vazia
+      # ("esperado uuid / NULAVEL, obtido <NULL>"). Medido.
+      - name: O ativo de investimento so atrela em conta de investimento do proprio dono
+        run: $PSQL -f database/tests/hmo432_conta_investimento_test.sql
+
       # O guard de deriva de COLUNA (scripts/check-column-drift.mjs) roda no job
       # code-schema-drift, que nao tem Postgres, entao ele le o schema de
       # database/schema-columns.json. Este passo e o que impede aquele arquivo de
