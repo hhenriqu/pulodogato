@@ -44,6 +44,37 @@
 //      existe para mostrar tendencia.
 //
 // -----------------------------------------------------------------------
+// A CARTEIRA SUBSTITUI O SALDO DIGITADO (HMO-437, Decisao 1A da HMO-432)
+// -----------------------------------------------------------------------
+// Desde a 059 um ativo da carteira pode apontar para uma conta de
+// investimento. Isso cria um quinto erro possivel, e o mais caro de todos:
+//
+//   5. CONTAR A MESMA APLICACAO DUAS VEZES. Quem mantinha o saldo da Conta
+//      Investimento na mao -- que e o unico jeito que funcionava antes desta
+//      fase -- e agora atrela o CDB a ela tem o mesmo dinheiro no
+//      `current_balance` e na carteira. Somar os dois nao levanta excecao, nao
+//      quebra nenhuma proporcao e nao deixa linha estranha: imprime um
+//      patrimonio MAIOR, plausivel, e exatamente igual ao certo mais o valor da
+//      aplicacao.
+//
+// A regra aprovada: conta de investimento COM ativo atrelado vale o que a
+// carteira vale (`principal + rendimento`), e o `current_balance` dela deixa de
+// entrar no patrimonio -- continua visivel como "saldo informado", com a data,
+// para a pessoa comparar e corrigir o que quiser. Conta SEM ativo atrelado
+// continua exatamente como antes desta fase.
+//
+// Tres recusas deliberadas, cada uma com teste:
+//
+//   - NAO SOMAR as duas (opcao B do plano) -- e a dupla contagem acima;
+//   - NAO ESCREVER `current_balance` por trigger (Decisao 3): as triggers
+//     legadas de saldo deste banco ja perderam dinheiro. O valor e derivado na
+//     LEITURA, aqui, por funcao pura. Nenhuma escrita automatica em saldo;
+//   - NAO SUBSTITUIR conta que nao e de investimento. A trava da 059 exige
+//     `account_type = 'investment'` no elo, mas esta funcao nao confia nela: ela
+//     recebe linhas, nao garantias. Uma conta corrente atrelada por engano
+//     perderia o saldo dela sem nenhum aviso.
+//
+// -----------------------------------------------------------------------
 // O que este arquivo NAO consegue consertar
 // -----------------------------------------------------------------------
 // O NIVEL do patrimonio herda o que estiver em `current_balance` hoje. Se o
@@ -51,6 +82,12 @@
 // classes continua certa, o valor absoluto nao. A rota manda esse aviso junto
 // com os dados e a tela mostra; ver o comentario da view `net_worth_history`
 // na migration 008.
+//
+// E a parte que vem da CARTEIRA nao esta na view `net_worth_history` de jeito
+// nenhum: aquela view reconstroi o passado a partir de `current_balance`. Desde
+// esta fase o numero grande e o ultimo ponto da curva podem divergir pelo valor
+// da carteira atrelada, e isso nao e erro de nenhum dos dois -- e a rota que
+// tem de dizer de onde veio cada parte.
 // =====================================================
 
 /** Os tipos de conta do enum `public.account_type` (001_baseline). */
@@ -75,14 +112,57 @@ export interface ContaBruta {
   color_hex?: string | null;
 }
 
+/**
+ * O que a carteira atrelada a uma conta vale -- uma linha por conta.
+ *
+ * REDECLARADO, e nao importado de `@/lib/investments`: `test:net-worth` compila
+ * ESTE arquivo sozinho (`compila.mjs lib/net-worth.ts`), sem o passo
+ * `resolve-aliases`, e o `@/` de um import sobreviveria no JS emitido -- a suite
+ * morreria com ERR_MODULE_NOT_FOUND. A compatibilidade e estrutural: o que
+ * `valorDaCarteiraPorConta` devolve entra aqui sem conversao.
+ *
+ * O `account_id` e `string | null` porque e assim que ele chega de la (o solto
+ * vem numa linha propria). Linha de `null` e IGNORADA por esta funcao -- ativo
+ * sem conta atrelada nao pertence a conta nenhuma, e a rota diz isso a parte.
+ */
+export interface CarteiraDaConta {
+  account_id: string | null;
+  /** `principal + rendimento bruto` das posicoes abertas da conta. */
+  valor: number;
+  /** O mesmo valor com o IR estimado do rendimento descontado. */
+  valorLiquido: number;
+  principal: number;
+  rendimento: number;
+}
+
+/** De onde saiu o `saldo` de uma conta consolidada. */
+export type OrigemDoSaldo = "saldo_informado" | "carteira";
+
 export interface ContaConsolidada {
   id: string;
   name: string;
   tipo: string;
   classe: ClasseDePatrimonio;
+  /** O valor que ENTROU no patrimonio -- ja e o da carteira, quando houver. */
   saldo: number;
   ativa: boolean;
   color_hex: string | null;
+  /**
+   * `"carteira"` quando a carteira atrelada substituiu o saldo digitado.
+   * Sem carteira o campo e `"saldo_informado"`, e `saldo` e o de sempre.
+   */
+  origemDoSaldo: OrigemDoSaldo;
+  /**
+   * O `current_balance` digitado, SEMPRE -- inclusive quando ele nao conta.
+   *
+   * Ele nao e descartado de proposito: e com ele que a tela mostra "voce
+   * informou X, a carteira vale Y" e a pessoa descobre que o saldo que ela
+   * mantinha na mao estava defasado. Zerar aqui esconderia a unica evidencia de
+   * que a substituicao aconteceu.
+   */
+  saldoInformado: number;
+  /** As parcelas do valor da carteira. `null` quando a carteira nao entrou. */
+  carteira: { valor: number; valorLiquido: number; principal: number; rendimento: number } | null;
 }
 
 export interface TotalDeClasse {
@@ -100,6 +180,25 @@ export interface Consolidado {
   classes: TotalDeClasse[];
   /** Quanto do patrimonio esta em conta arquivada (`is_active = false`). */
   totalInativas: number;
+  /** Quanto do patrimonio veio da CARTEIRA e nao de saldo digitado. */
+  totalEmCarteira: number;
+  /**
+   * A soma dos `current_balance` que PARARAM de contar por substituicao.
+   *
+   * E este numero que prova que a dupla contagem nao aconteceu: sem ele, um
+   * total maior do que o esperado nao se distingue de um saldo que subiu.
+   */
+  saldoInformadoIgnorado: number;
+  /** IR estimado sobre o rendimento que entrou no patrimonio. Zero sem carteira. */
+  irEstimado: number;
+  /**
+   * O patrimonio com o `irEstimado` descontado -- o numero PEQUENO da tela.
+   *
+   * O numero grande e o BRUTO (Decisao 2 do plano): a aliquota de IR cai nas
+   * bordas de 180/360/720 dias, entao um patrimonio exibido pelo liquido SUBIRIA
+   * sozinho na virada de um desses dias, sem aporte nenhum.
+   */
+  patrimonioDescontandoIr: number;
 }
 
 export interface PontoDaLinha {
@@ -147,18 +246,50 @@ const ORDEM: ClasseDePatrimonio[] = ["liquido", "investimento", "divida"];
  * investimento, quando positiva), nunca pelo patrimonio liquido -- ver a
  * armadilha 2 no cabecalho.
  */
-export function consolidar(contas: ContaBruta[]): Consolidado {
+export function consolidar(
+  contas: ContaBruta[],
+  carteira?: CarteiraDaConta[] | null
+): Consolidado {
   const porClasse = new Map<ClasseDePatrimonio, ContaConsolidada[]>(
     ORDEM.map((c) => [c, [] as ContaConsolidada[]])
   );
 
+  // O indice por conta. A linha do ativo SOLTO (`account_id: null`) fica fora:
+  // ela e dinheiro na carteira que nao pertence a conta nenhuma, e enfia-la em
+  // qualquer conta seria inventar um elo que o banco nao tem.
+  const carteiraDaConta = new Map<string, CarteiraDaConta>();
+  for (const linha of carteira ?? []) {
+    if (linha.account_id === null || linha.account_id === "") continue;
+    carteiraDaConta.set(linha.account_id, linha);
+  }
+
   let patrimonioLiquido = 0;
   let totalInativas = 0;
+  let totalEmCarteira = 0;
+  let saldoInformadoIgnorado = 0;
+  let irEstimado = 0;
 
   for (const bruta of contas) {
-    const saldo = saldoDe(bruta);
+    const saldoInformado = saldoDe(bruta);
     const classe = classificarConta(String(bruta.account_type));
     const ativa = bruta.is_active !== false;
+
+    // A substituicao exige as DUAS coisas: ter carteira atrelada E ser conta de
+    // investimento. O segundo teste nao e redundante com a trava da 059 -- ver a
+    // terceira recusa no cabecalho.
+    const daCarteira =
+      classe === "investimento" ? carteiraDaConta.get(bruta.id) : undefined;
+
+    const saldo = daCarteira ? daCarteira.valor : saldoInformado;
+
+    if (daCarteira) {
+      totalEmCarteira += daCarteira.valor;
+      saldoInformadoIgnorado += saldoInformado;
+      // O IR estimado sai da diferenca entre bruto e liquido JA calculada do
+      // outro lado. Recalcular aliquota aqui seria uma segunda implementacao da
+      // regra dos 180/360/720 dias, em um arquivo que nao sabe o prazo de nada.
+      irEstimado += daCarteira.valor - daCarteira.valorLiquido;
+    }
 
     porClasse.get(classe)!.push({
       id: bruta.id,
@@ -168,6 +299,16 @@ export function consolidar(contas: ContaBruta[]): Consolidado {
       saldo,
       ativa,
       color_hex: bruta.color_hex ?? null,
+      origemDoSaldo: daCarteira ? "carteira" : "saldo_informado",
+      saldoInformado,
+      carteira: daCarteira
+        ? {
+            valor: daCarteira.valor,
+            valorLiquido: daCarteira.valorLiquido,
+            principal: daCarteira.principal,
+            rendimento: daCarteira.rendimento,
+          }
+        : null,
     });
 
     // A conta arquivada ENTRA no patrimonio. Uma conta encerrada com saldo
@@ -229,7 +370,121 @@ export function consolidar(contas: ContaBruta[]): Consolidado {
     totalDividas: arredondar(Math.abs(Math.min(divida, 0))),
     classes,
     totalInativas: arredondar(totalInativas),
+    totalEmCarteira: arredondar(totalEmCarteira),
+    saldoInformadoIgnorado: arredondar(saldoInformadoIgnorado),
+    irEstimado: arredondar(irEstimado),
+    patrimonioDescontandoIr: arredondar(patrimonioLiquido - irEstimado),
   };
+}
+
+// ---------------------------------------------------------------------------
+// O AVISO: DE ONDE VEIO CADA PARTE (HMO-437)
+// ---------------------------------------------------------------------------
+// Desde esta fase o numero grande pode ter DUAS origens na mesma soma -- saldo
+// digitado e carteira atrelada -- e pode nao bater com o ultimo ponto da curva,
+// que a view reconstroi so a partir de saldo. Um numero novo sem legenda nao se
+// distingue de bug, e o caminho dessa estranheza termina em alguem
+// "consertando" a conta por fora, editando o saldo a mao: exatamente o trabalho
+// que esta fase existiu para acabar.
+//
+// POR QUE ESTA FRASE E FUNCAO PURA, E NAO UM LITERAL NA ROTA
+// ---------------------------------------------------------
+// Porque ela e CONDICIONAL. Dizer "parte deste total vem da carteira" para quem
+// nao tem ativo atrelado e um aviso falso, e dizer que o patrimonio e bruto para
+// quem nao tem renda fixa nenhuma e ruido. Cada oracao e ligada pelo numero que
+// o proprio consolidado devolveu -- e isso tem suite, porque frase que mente
+// sobre dinheiro custa o mesmo que numero errado.
+//
+// OS VALORES NAO ENTRAM NO TEXTO de proposito: eles ja vao na resposta
+// (`totalEmCarteira`, `saldoInformadoIgnorado`, `irEstimado`), formatados pela
+// tela, que e quem conhece o `Intl` do navegador. Um "R$ 10.412,35" montado aqui
+// seria um segundo formatador de dinheiro, com separador diferente do resto do
+// app no primeiro locale que divergir.
+
+/** O que a rota sabe sobre a leitura da carteira e o consolidado nao. */
+export interface OrigemDasPartes {
+  /**
+   * false SO quando a carteira falhou (banco sem a 059, erro de leitura) -- o
+   * patrimonio sai como antes desta fase, e dizer isso e melhor que um silencio
+   * que parece "voce nao tem investimento".
+   *
+   * CARTEIRA VAZIA E `true`: quem nunca cadastrou um ativo nao tem nada para ser
+   * avisado, e esse e o caso da maioria. Um aviso ai seria ruido permanente na
+   * tela de quem nao usa a carteira -- e ruido permanente e como se aprende a
+   * nao ler avisos.
+   */
+  carteiraLida: boolean;
+  /** Indexadores cujo boletim do Banco Central nao veio. */
+  indexadoresSemBoletim?: string[];
+  /** Valor na carteira sem conta atrelada -- ele NAO entra no patrimonio. */
+  carteiraSolta?: number;
+}
+
+/** O aviso base, que vale com ou sem carteira. */
+export const AVISO_DO_SALDO =
+  "A variação mês a mês vem das transações e é exata. O nível parte do saldo " +
+  "atual das contas, que é mantido por trigger — se o saldo tiver derivado, a " +
+  "curva inteira se desloca junto.";
+
+/**
+ * O `caveat` da rota: uma frase por origem presente no total.
+ *
+ * A ordem e fixa (saldo, carteira, curva, IR, pendencias) para a frase nao
+ * mudar de forma entre duas leituras iguais.
+ */
+export function avisoDoPatrimonio(
+  c: Consolidado,
+  origem: OrigemDasPartes
+): string {
+  const frases: string[] = [AVISO_DO_SALDO];
+
+  if (c.totalEmCarteira > 0) {
+    frases.push(
+      "Parte deste total não vem de saldo digitado: as contas de investimento " +
+        "com ativo atrelado valem o que a carteira vale (valor aplicado mais " +
+        "rendimento bruto), e o saldo informado delas continua visível mas não " +
+        "é somado — é assim que a mesma aplicação não conta duas vezes."
+    );
+    frases.push(
+      "A linha do tempo não conhece a carteira: ela reconstrói o passado a " +
+        "partir do saldo das contas, então o último ponto da curva pode ficar " +
+        "menor que o número de hoje pelo valor da carteira atrelada."
+    );
+  }
+
+  if (c.irEstimado > 0) {
+    frases.push(
+      "O número grande é o BRUTO. O líquido estimado desconta o IR do " +
+        "rendimento de renda fixa; ele muda só por o tempo passar, porque a " +
+        "alíquota cai em 180, 360 e 720 dias."
+    );
+  }
+
+  if ((origem.indexadoresSemBoletim ?? []).length > 0) {
+    frases.push(
+      "O Banco Central não respondeu por " +
+        (origem.indexadoresSemBoletim as string[]).join(", ") +
+        " nesta leitura: os papéis desse índice entram pelo valor aplicado, " +
+        "sem o rendimento do período."
+    );
+  }
+
+  if ((origem.carteiraSolta ?? 0) > 0) {
+    frases.push(
+      "Há investimento na carteira sem conta atrelada. Ele aparece na tela de " +
+        "investimentos e NÃO entra neste patrimônio — atrele o ativo a uma " +
+        "conta de investimento para ele passar a contar."
+    );
+  }
+
+  if (!origem.carteiraLida) {
+    frases.push(
+      "A carteira de investimentos não entrou nesta leitura: o patrimônio " +
+        "saiu só do saldo das contas."
+    );
+  }
+
+  return frases.join(" ");
 }
 
 /**

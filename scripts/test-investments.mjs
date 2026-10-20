@@ -52,6 +52,7 @@ const {
   evolucaoMensal,
   quantidadeDisponivel,
   lancamentoDeCarteiraParaGravar,
+  valorDaCarteiraPorConta,
   PRECO_UNITARIO_DA_RENDA_FIXA,
   ROTULO_TIPO,
 } = await import("../.tmp-investments/investments.js");
@@ -560,4 +561,184 @@ test("a convencao fecha com a aritmetica: dois aportes somam o principal e o med
   assert.equal(p.has_price, false);
   perto(p.current_value, 15000, "avaliada pelo custo");
   perto(p.profit_loss, 0, "nenhum lucro inventado pela carteira");
+});
+
+// =====================================================
+// 10. O VALOR DA CARTEIRA POR CONTA (HMO-437)
+// =====================================================
+// Desde a 059 o ativo aponta para uma conta de investimento, e e esta soma que
+// o patrimonio passa a usar em vez do `current_balance` digitado a mao
+// (Decisao 1A da HMO-432, substituicao em lib/net-worth.ts).
+//
+// O erro que esta secao existe para pegar nao e de aritmetica: e de COBERTURA.
+// Somar aqui so a renda fixa faria a conta com uma acao atrelada perder o valor
+// da acao -- a conta deixaria de contar o saldo digitado (porque TEM ativo
+// atrelado) e nao contaria a posicao (porque so renda fixa teria sido somada).
+// O patrimonio cairia pelo valor da acao, sem nenhuma linha para auditar.
+
+/** O valor projetado de um CDB de R$ 10.000 que rendeu R$ 107,20 (secao 1 de test-renda-fixa). */
+const PROJ_CDB = {
+  valor: 10107.2,
+  valorLiquido: 10083.08,
+  principal: 10000,
+  rendimento: 107.2,
+  rendeu: true,
+};
+
+function carteiraDeTeste() {
+  const ativos = [
+    ativo("cdb1", "CDB-XP", "fixed_income"),
+    ativo("acao1", "PETR4", "stock", 34),
+    ativo("fii1", "HGLG11", "fii"),
+  ];
+  const lancamentos = [
+    // Renda fixa pela convencao da HMO-439: reais em `quantity`, 1 em `unit_price`.
+    lanc("cdb1", "buy", 10000, 1, "2026-09-01"),
+    lanc("acao1", "buy", 100, 30, "2026-09-02"),
+    lanc("fii1", "buy", 10, 100, "2026-09-03"),
+  ];
+  return calcularPosicoes(ativos, lancamentos);
+}
+
+test("a renda fixa entra pelo PROJETADO e os outros tipos pelo valor atual", () => {
+  const posicoes = carteiraDeTeste();
+  // Conta A: o CDB e a acao. Conta nenhuma: o FII.
+  const linhas = valorDaCarteiraPorConta(
+    posicoes,
+    { cdb1: "contaA", acao1: "contaA", fii1: null },
+    { cdb1: PROJ_CDB }
+  );
+
+  assert.equal(linhas.length, 2);
+  const a = linhas[0];
+  assert.equal(a.account_id, "contaA");
+  // 10.107,20 (CDB projetado) + 3.400,00 (100 x R$ 34,00) = 13.507,20
+  perto(a.valor, 13507.2, "valor da conta A");
+  perto(a.valorLiquido, 13483.08, "valor liquido da conta A");
+  perto(a.principal, 13000, "custo das duas posicoes");
+  perto(a.rendimento, 107.2, "so a renda fixa rende");
+  assert.equal(a.ativos, 2);
+  assert.equal(a.semPreco, 0, "a acao tem preco e o CDB nao e avaliado por preco");
+  assert.equal(a.semRendimento, 0);
+});
+
+test("a acao atrelada NAO pode desaparecer da conta", () => {
+  // O mesmo caso de cima, contado de outro jeito: a conta que tem acao atrelada
+  // tem de valer MAIS do que a renda fixa dela sozinha. Se esta assercao cair,
+  // o patrimonio de quem atrelou uma acao a Conta Investimento encolheu em
+  // silencio.
+  const posicoes = carteiraDeTeste();
+  const soRendaFixa = valorDaCarteiraPorConta(
+    posicoes.filter((p) => p.asset_id === "cdb1"),
+    { cdb1: "contaA" },
+    { cdb1: PROJ_CDB }
+  );
+  const comAcao = valorDaCarteiraPorConta(
+    posicoes,
+    { cdb1: "contaA", acao1: "contaA" },
+    { cdb1: PROJ_CDB }
+  );
+
+  perto(soRendaFixa[0].valor, 10107.2, "so o CDB");
+  perto(comAcao[0].valor - soRendaFixa[0].valor, 3400, "a acao entrou inteira");
+});
+
+test("o ativo SOLTO sai numa linha de account_id null, e por ultimo", () => {
+  const linhas = valorDaCarteiraPorConta(
+    carteiraDeTeste(),
+    { cdb1: "contaA", acao1: "contaA", fii1: null },
+    { cdb1: PROJ_CDB }
+  );
+
+  const solto = linhas[linhas.length - 1];
+  assert.equal(solto.account_id, null, "a linha do solto e a ultima");
+  perto(solto.valor, 1000, "10 x R$ 100,00, avaliado pelo custo");
+  assert.equal(solto.semPreco, 1, "FII sem preco informado");
+  assert.equal(solto.ativos, 1);
+});
+
+test("ativo sem entrada no mapa de contas conta como solto", () => {
+  // Ausente e null tem de dar o mesmo resultado: o PostgREST devolve
+  // `account_id: null`, mas um mapa montado so com os ativos atrelados deixaria
+  // os outros FORA -- e `undefined` descartaria o valor em silencio.
+  const linhas = valorDaCarteiraPorConta(carteiraDeTeste(), {}, null);
+  assert.equal(linhas.length, 1);
+  assert.equal(linhas[0].account_id, null);
+  // 10.000 (CDB pelo custo, sem projecao) + 3.400 + 1.000
+  perto(linhas[0].valor, 14400, "tudo solto");
+  assert.equal(linhas[0].ativos, 3);
+});
+
+test("sem mapa de projecao a renda fixa vale o CUSTO, nao zero", () => {
+  const linhas = valorDaCarteiraPorConta(
+    carteiraDeTeste(),
+    { cdb1: "contaA" },
+    null
+  );
+  const a = linhas.find((l) => l.account_id === "contaA");
+  perto(a.valor, 10000, "o custo do CDB");
+  perto(a.rendimento, 0, "nenhum rendimento contado");
+  // Sem projecao o CDB passa pelo ramo dos outros tipos, e la quem avisa e
+  // `semPreco`: ele nao tem preco informado.
+  assert.equal(a.semPreco, 1);
+});
+
+test("projecao que nao saiu conta em semRendimento e vale o principal", () => {
+  const semRendimento = {
+    valor: 10000,
+    valorLiquido: 10000,
+    principal: 10000,
+    rendimento: 0,
+    rendeu: false,
+  };
+  const linhas = valorDaCarteiraPorConta(
+    carteiraDeTeste(),
+    { cdb1: "contaA" },
+    { cdb1: semRendimento }
+  );
+  const a = linhas.find((l) => l.account_id === "contaA");
+  perto(a.valor, 10000, "o custo");
+  assert.equal(a.semRendimento, 1, "a tela tem o que avisar");
+  assert.equal(a.semPreco, 0, "nao e falta de preco: e falta de boletim");
+});
+
+test("a posicao ZERADA nao entra no valor da conta", () => {
+  // Um CDB resgatado por inteiro nao e mais patrimonio. O resultado realizado
+  // dele continua no resumo da carteira, que e outra pergunta.
+  const posicoes = calcularPosicoes(
+    [ativo("cdb1", "CDB-XP", "fixed_income")],
+    [
+      lanc("cdb1", "buy", 10000, 1, "2026-09-01"),
+      lanc("cdb1", "sell", 10000, 1.05, "2026-09-30"),
+    ]
+  );
+  const linhas = valorDaCarteiraPorConta(posicoes, { cdb1: "contaA" }, null);
+  assert.equal(linhas.length, 0, "conta sem posicao aberta nao tem linha");
+});
+
+test("duas contas saem em ordem determinista, cada uma com o seu total", () => {
+  const posicoes = calcularPosicoes(
+    [
+      ativo("x", "CDB-B", "fixed_income"),
+      ativo("y", "CDB-A", "fixed_income"),
+    ],
+    [
+      lanc("x", "buy", 5000, 1, "2026-09-01"),
+      lanc("y", "buy", 7000, 1, "2026-09-01"),
+    ]
+  );
+  // `contaB` vem primeiro no mapa de proposito: a ordem da saida nao pode
+  // depender da ordem de insercao do Map.
+  const linhas = valorDaCarteiraPorConta(posicoes, { x: "contaB", y: "contaA" }, null);
+
+  assert.deepEqual(
+    linhas.map((l) => l.account_id),
+    ["contaA", "contaB"]
+  );
+  perto(linhas[0].valor, 7000, "contaA");
+  perto(linhas[1].valor, 5000, "contaB");
+});
+
+test("carteira vazia devolve lista vazia, e nao uma linha de zeros", () => {
+  assert.deepEqual(valorDaCarteiraPorConta([], {}, null), []);
 });

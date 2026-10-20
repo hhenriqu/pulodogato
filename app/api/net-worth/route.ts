@@ -15,17 +15,42 @@
 // estiver em `current_balance` hoje; se o saldo derivou, a curva inteira se
 // desloca. Esconder isso faria o usuario decidir sobre um numero que o proprio
 // app sabe que pode estar errado.
+//
+// A CARTEIRA ENTRA NO PATRIMONIO (HMO-437)
+// ----------------------------------------
+// Ate esta fase o patrimonio era `financial_accounts.current_balance` e nada
+// mais: o rendimento de renda fixa era calculado, exibido num card e morria ali.
+// Para "ver o patrimonio crescer" era preciso editar o saldo da Conta
+// Investimento a mao.
+//
+// Agora a conta de investimento COM ativo atrelado (migration 059) vale o que a
+// carteira vale -- `principal + rendimento bruto`, derivado na LEITURA, por
+// funcao pura. O `current_balance` dela continua na resposta como
+// `saldoInformado` e para de entrar no total; conta SEM ativo atrelado nao muda
+// em nada. A substituicao e a Decisao 1(A) do plano da HMO-432, e a razao de ela
+// ser substituicao e nao soma e a dupla contagem: somar as duas imprimiria um
+// patrimonio maior com cara de certo.
+//
+// NENHUMA ESCRITA DE SALDO ACONTECE AQUI (Decisao 3). As triggers legadas de
+// saldo deste banco ja perderam dinheiro; esta rota le, soma e responde.
+//
+// A FALHA DA CARTEIRA DEGRADA, como a da linha do tempo: sem a 059 colada, sem
+// Banco Central ou com erro de leitura, o patrimonio volta a sair so dos saldos
+// e o `caveat` diz isso. O numero de hoje e a tela; a carteira e a parte nova.
 
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { janelaDeMeses, completarPatrimonio } from "@/lib/services/reports";
 import {
+  avisoDoPatrimonio,
   consolidar,
   comVariacao,
   resumoDaJanela,
+  type CarteiraDaConta,
   type ContaBruta,
 } from "@/lib/net-worth";
 import { contasQueSomam } from "@/lib/contas";
+import { lerCarteiraDoPatrimonio } from "@/lib/services/carteira-da-conta";
 
 export async function GET(request: NextRequest) {
   try {
@@ -97,7 +122,15 @@ export async function GET(request: NextRequest) {
     // lib/contas.ts.
     const queSomam = contasQueSomam(contas ?? []);
 
-    const consolidado = consolidar(queSomam as ContaBruta[]);
+    // A CARTEIRA, se houver. Ler ANTES de consolidar porque ela decide o saldo
+    // das contas de investimento atreladas -- e nao DEPOIS, somando por fora,
+    // que seria a dupla contagem escrita de outro jeito.
+    const leitura = await lerCarteiraDoPatrimonio(supabase, user.id);
+    const carteira: CarteiraDaConta[] = leitura.ok
+      ? leitura.carteira.porConta
+      : [];
+
+    const consolidado = consolidar(queSomam as ContaBruta[], carteira);
 
     // A linha do tempo DEGRADA em vez de derrubar a tela. `net_worth_history`
     // nasceu na migration 008; se ela nao estiver aplicada no banco, a leitura
@@ -153,13 +186,47 @@ export async function GET(request: NextRequest) {
         total_assets: consolidado.totalAtivos,
         total_debts: consolidado.totalDividas,
         archived_balance: consolidado.totalInativas,
+        // O numero grande e o BRUTO (Decisao 2) e o liquido vai ao lado. O
+        // liquido nao pode ser o numero grande: a aliquota de IR cai nas bordas
+        // de 180/360/720 dias, entao o patrimonio SUBIRIA sozinho na virada de
+        // um desses dias, sem aporte nenhum e sem nada para explicar o salto.
+        net_worth_after_tax: consolidado.patrimonioDescontandoIr,
+        estimated_tax: consolidado.irEstimado,
+        // De onde veio cada parte, em numero e nao em prosa: a tela abre o
+        // numero grande nestas duas parcelas, e `informed_balance_ignored` e a
+        // evidencia de que a substituicao aconteceu -- sem ele, um total maior
+        // que o esperado nao se distingue de um saldo que subiu.
+        portfolio_value: consolidado.totalEmCarteira,
+        informed_balance_ignored: consolidado.saldoInformadoIgnorado,
       },
       classes: consolidado.classes,
+      // A carteira que ninguem atrelou. Ela NAO esta no total -- nem podia
+      // estar, porque nao pertence a conta nenhuma -- e por isso vai separada e
+      // com aviso: e o estado de todo ativo cadastrado antes da 059.
+      portfolio: {
+        available: leitura.ok,
+        reason: leitura.ok ? null : leitura.motivo,
+        unlinked_value: leitura.ok ? (leitura.carteira.solta?.valor ?? 0) : 0,
+        without_yield: leitura.ok ? leitura.carteira.semRendimento : 0,
+        without_price: leitura.ok ? leitura.carteira.semPreco : 0,
+        indexes_unavailable: leitura.ok
+          ? leitura.carteira.indexadoresSemBoletim
+          : [],
+        as_of: leitura.ok ? leitura.carteira.hoje : null,
+      },
       months: comVariacao(linhas),
       window_summary: resumoDaJanela(linhas),
       history_available: historicoDisponivel,
-      caveat:
-        "A variação mês a mês vem das transações e é exata. O nível parte do saldo atual das contas, que é mantido por trigger — se o saldo tiver derivado, a curva inteira se desloca junto.",
+      caveat: avisoDoPatrimonio(consolidado, {
+        // Carteira VAZIA conta como lida: quem nunca cadastrou ativo nao tem o
+        // que ser avisado, e um aviso permanente ali e como se aprende a nao ler
+        // aviso nenhum.
+        carteiraLida: leitura.ok || leitura.motivo === "vazia",
+        indexadoresSemBoletim: leitura.ok
+          ? leitura.carteira.indexadoresSemBoletim
+          : [],
+        carteiraSolta: leitura.ok ? (leitura.carteira.solta?.valor ?? 0) : 0,
+      }),
       window: { from: janela.inicio, to: janela.fim, months: janela.meses },
     });
   } catch (error) {
