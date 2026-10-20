@@ -5,14 +5,25 @@ import {
   camposDeRendaFixaVazios,
   lerCamposDeRendaFixa,
 } from "@/lib/renda-fixa";
+import {
+  conferirContaDeInvestimento,
+  lerContaDoCorpo,
+} from "@/lib/conta-do-ativo";
 
 // =====================================================
 // POST /api/investments/assets
 // =====================================================
 // Cadastra um ativo na carteira do usuario.
-// Body: { symbol, name, type, currency?, currentPrice?,
+// Body: { symbol, name, type, currency?, currentPrice?, accountId?,
 //         fixedIncomeProduct?, indexKind?, indexPercentage?, spreadAnnual?,
 //         appliedDate?, maturityDate? }
+//
+// `accountId` (ou `account_id`) e o elo com a Conta Investimento, criado pela
+// migration 059. Ele e OPCIONAL e continua opcional: ausente quer dizer "ativo
+// solto", que e o estado de todo ativo que ja existe em producao e um estado
+// legitimo e permanente -- nao um pendente de migracao. Quem confere o elo e
+// lib/conta-do-ativo.ts, e o cabecalho dele explica por que a conferencia vive
+// na rota quando a trigger da 059 ja recusaria.
 //
 // Nao ha catalogo global de tickers (ver o cabecalho da migration 021): quem
 // diz que PETR4 existe e o usuario. Entao a validacao aqui e de FORMA, nao de
@@ -114,6 +125,35 @@ export async function POST(request: NextRequest) {
       rendaFixa = leitura.campos;
     }
 
+    // O elo com a Conta Investimento (059). A conferencia vem ANTES do INSERT:
+    // depois dele, a trigger ja teria recusado a linha inteira e a unica coisa
+    // que sobraria para dizer ao usuario seria um 500.
+    const elo = lerContaDoCorpo(body);
+    if (!elo.ok) {
+      return NextResponse.json({ error: elo.erro }, { status: 400 });
+    }
+    // `account_id` so entra no payload quando foi pedido. Mandar `null`
+    // explicito daria no mesmo (o default da coluna e nulo), mas a ausencia e o
+    // que deixa o INSERT desta rota identico ao de antes desta fase para quem
+    // nao usa a feature.
+    const conta: { account_id?: string | null } = {};
+    if (elo.presente) {
+      if (elo.account_id !== null) {
+        const conferida = await conferirContaDeInvestimento(
+          supabase,
+          elo.account_id,
+          user.id
+        );
+        if (!conferida.ok) {
+          return NextResponse.json(
+            { error: conferida.erro },
+            { status: conferida.status }
+          );
+        }
+      }
+      conta.account_id = elo.account_id;
+    }
+
     const { data, error } = await supabase
       .from("investment_assets")
       .insert({
@@ -125,6 +165,7 @@ export async function POST(request: NextRequest) {
         current_price,
         current_price_at,
         ...rendaFixa,
+        ...conta,
       })
       .select()
       .single();

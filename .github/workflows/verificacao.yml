@@ -9074,3 +9074,30 @@ jobs:
       # /tmp e roda `node` puro, sem build e sem banco.
       - name: Os mutantes da convencao my_status (o guard acima sabe reprovar?)
         run: npm run mutantes:as-tres-leituras
+
+      # AS ROTAS DE INVESTIMENTO APRENDEM A CONTA (HMO-436, fase 2 da HMO-432).
+      #
+      # Quatro route handlers sobre o `account_id` que a migration 059 criou: o
+      # POST e o PATCH que atrelam (com validacao na propria rota, para o erro
+      # ser um 400 explicado em vez do `check_violation` da trigger virando
+      # 500), e os dois GET que devolvem o elo e aceitam `?account_id=` para
+      # recortar.
+      #
+      # Os quatro na mesma suite porque a regra e a MESMA nos dois caminhos de
+      # escrita e o recorte e o MESMO nos dois de leitura -- o defeito da
+      # HMO-145 sobreviveu meses justamente por estar escrito duas vezes, com
+      # uma das copias sem teste.
+      - name: O elo conta <-> ativo nas quatro rotas de investimento
+        run: npm run test:conta-do-ativo
+
+      # E O CONTROLE NEGATIVO DAQUELA SUITE. Verde na arvore certa nao prova
+      # nada: os doze defeitos abaixo deixam a rota respondendo 200/201 com
+      # corpo plausivel, e e por isso que eles precisam de um aparelho em vez de
+      # leitura. Entre eles, o que esta fase mais nao pode deixar passar --
+      # `/api/investments` voltando a falar com o Banco Central, que derrubaria a
+      # carteira de quem nao tem renda fixa nenhuma num timeout do SGS.
+      #
+      # O runner planta cada mutante numa COPIA em /tmp (nao na arvore
+      # rastreada) e exige que a suite fique vermelha em cada um.
+      - name: Os mutantes do elo conta <-> ativo (a suite acima sabe reprovar?)
+        run: npm run mutantes:conta-do-ativo
