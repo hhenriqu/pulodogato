@@ -35,6 +35,13 @@
 //                             a compra repetida nao e uma linha estranha na
 //                             lista, e um PRECO MEDIO movido, e dele saem o
 //                             lucro e a rentabilidade do ativo.
+//   `carteira_valor_do_aporte_sobrevive` (HMO-439)
+//                          -- o campo em reais da RENDA FIXA. Naquela tela os
+//                             dois campos de cota nao existem, entao os dois
+//                             mutantes de cima podem continuar mortos com o
+//                             reenvio totalmente aberto: quem barra o segundo
+//                             clique num CDB e ESTE campo, e o aporte repetido
+//                             dobra o principal -- e com ele o CDI projetado.
 //   `grupo_valor_sobrevive` (HMO-251)
 //                          -- O MESMO mutante de dinheiro na despesa de GRUPO,
 //                             onde ele e mais CARO: um trigger do banco rateia
@@ -376,6 +383,18 @@ const MUTANTES = [
     para: `    taxas: valores.taxas,`,
   },
   {
+    nome: "carteira_valor_do_aporte_sobrevive",
+    porque:
+      "O MUTANTE DE DINHEIRO DA RENDA FIXA (HMO-439): naquela tela nao existe " +
+      "quantidade nem preco, so 'Valor do aporte (R$)' -- entao limpar os dois " +
+      "campos de cota e deixar ESTE preenchido nao barra reenvio nenhum, e os " +
+      "tres mutantes de cima continuariam mortos. O segundo clique grava o " +
+      "mesmo aporte: o principal do CDB dobra, e com ele dobra o CDI que " +
+      "lib/renda-fixa.ts projeta sobre esse principal",
+    de: `    valorDoAporte: inicial.valorDoAporte,`,
+    para: `    valorDoAporte: valores.valorDoAporte,`,
+  },
+  {
     nome: "carteira_reset_total",
     porque:
       "limpa tambem o ativo, o tipo e a data: lancar os proventos do mes de um " +
@@ -401,11 +420,13 @@ const MUTANTES = [
     quantidade: inicial.quantidade,
     preco: inicial.preco,
     taxas: inicial.taxas,
+    valorDoAporte: inicial.valorDoAporte,
   };`,
     para: `  Object.assign(valores, {
     quantidade: inicial.quantidade,
     preco: inicial.preco,
     taxas: inicial.taxas,
+    valorDoAporte: inicial.valorDoAporte,
   });
   return valores;`,
   },

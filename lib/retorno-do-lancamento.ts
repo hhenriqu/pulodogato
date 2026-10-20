@@ -319,6 +319,16 @@ export function proximaTransferencia<
  *   taxas       a corretagem e desta operacao. Carregada para a seguinte, ela
  *               soma uma taxa fantasma ao custo -- que e preco medio errado
  *               outra vez, pelo outro lado.
+ *   valorDoAporte
+ *               o campo de RENDA FIXA (HMO-439). Em renda fixa a tela nao mostra
+ *               quantidade nem preco: mostra "Valor do aporte (R$)", e e ele que
+ *               vai para `quantity` (ver a convencao em lib/investments.ts).
+ *               Limpar os outros tres e deixar este na tela nao travaria nada --
+ *               o `required` que barra o reenvio seria justamente o deste campo,
+ *               e o segundo clique gravaria o mesmo aporte, dobrando o PRINCIPAL
+ *               do CDB. E principal errado em renda fixa nao erra so o total: e
+ *               dele que lib/renda-fixa.ts projeta o CDI acumulado, entao o
+ *               rendimento exibido tambem dobra, todo dia, para sempre.
  *
  * O QUE SOBREVIVE
  * ---------------
@@ -327,13 +337,19 @@ export function proximaTransferencia<
  * ou as tres compras do mesmo papel, sem reescolher o ativo a cada volta.
  */
 export function proximaMovimentacaoDeCarteira<
-  V extends { quantidade: string; preco: string; taxas: string }
+  V extends {
+    quantidade: string;
+    preco: string;
+    taxas: string;
+    valorDoAporte: string;
+  }
 >(valores: V, inicial: V): V {
   return {
     ...valores,
     quantidade: inicial.quantidade,
     preco: inicial.preco,
     taxas: inicial.taxas,
+    valorDoAporte: inicial.valorDoAporte,
   };
 }
 

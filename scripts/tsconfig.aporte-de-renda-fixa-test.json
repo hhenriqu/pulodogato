@@ -1,0 +1,48 @@
+{
+  "//": [
+    "Compila o MODAL DE MOVIMENTACAO da carteira para o teste renderizar o",
+    "componente de verdade, e nao uma copia do que ele faria (HMO-439). Mesmo",
+    "desenho de tsconfig.campos-da-conta-test.json: `jsx: react-jsx` e o que",
+    "permite renderizar com react-dom/server no node, sem runner de teste novo.",
+    "",
+    "O include puxa components/ui/* e lib/* juntos porque cada primitivo importa",
+    "lib/utils.ts, e o campo de dinheiro arrasta a calculadora (HMO-171) -- por",
+    "isso o resolve-aliases roda com --espelha-raiz."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-aporte-de-renda-fixa",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../components/investments/ModalDeMovimentacao.tsx",
+    "../components/movimentacoes/ModalDeLancamento.tsx",
+    "../components/movimentacoes/SalvarEContinuar.tsx",
+    "../components/ui/alert.tsx",
+    "../components/ui/button.tsx",
+    "../components/ui/calculadora-de-valor.tsx",
+    "../components/ui/campo-de-data.tsx",
+    "../components/ui/campo-de-valor.tsx",
+    "../components/ui/dialog.tsx",
+    "../components/ui/input.tsx",
+    "../components/ui/label.tsx",
+    "../components/ui/select.tsx",
+    "../components/ui/switch.tsx",
+    "../lib/calculadora-de-campo.ts",
+    "../lib/data-digitada.ts",
+    "../lib/dinheiro.ts",
+    "../lib/investments.ts",
+    "../lib/lancamento.ts",
+    "../lib/moeda.ts",
+    "../lib/retorno-do-lancamento.ts",
+    "../lib/utils.ts"
+  ]
+}

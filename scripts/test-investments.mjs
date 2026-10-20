@@ -51,6 +51,8 @@ const {
   alocacaoPorTipo,
   evolucaoMensal,
   quantidadeDisponivel,
+  lancamentoDeCarteiraParaGravar,
+  PRECO_UNITARIO_DA_RENDA_FIXA,
   ROTULO_TIPO,
 } = await import("../.tmp-investments/investments.js");
 
@@ -448,4 +450,114 @@ test("valores em string (numeric do PostgREST) somam como numero", () => {
   perto(p.total_invested, 3005.9, "custo com valores em string");
   perto(p.current_value, 3250, "valor atual com preco em string");
   assert.equal(p.has_price, true);
+});
+
+// =====================================================
+// 12. O aporte em reais da renda fixa (HMO-439)
+// =====================================================
+// A convencao esta no cabecalho de lib/investments.ts e foi MEDIDA: em producao
+// as duas tabelas estao fisicamente vazias (`relpages = 0`), entao nao havia
+// convencao no dado a preservar -- esta e a que o repo ja usava na fixture de
+// renda fixa da secao 7 (`lanc("a3", "buy", 1000, 1)`) e a unica que sobrevive
+// ao segundo aporte.
+//
+// O que estes casos existem para pegar e a TROCA DAS DUAS COLUNAS, que nao
+// levanta excecao nenhuma e some no custo: `quantity = 1, unit_price = 10000`
+// soma o MESMO R$ 10.000,00 de custo que `quantity = 10000, unit_price = 1`.
+// Por isso as assercoes sao sobre CADA coluna, e nao sobre o custo.
+
+test("renda fixa: o valor do aporte vai para quantity, e unit_price e 1", () => {
+  const par = lancamentoDeCarteiraParaGravar({
+    ehRendaFixa: true,
+    // CONTROLE: os campos de cota VAZIOS, como a tela de renda fixa os deixa --
+    // ela nao monta nenhum dos dois. Se a conversao lesse `quantidade`, o
+    // aporte sairia vazio e a rota recusaria com 400.
+    quantidade: "",
+    preco: "",
+    valorDoAporte: "10000.00",
+  });
+
+  assert.equal(par.quantity, "10000.00", "reais aplicados, nao cotas");
+  assert.equal(par.unitPrice, "1");
+  // A troca das duas somaria o mesmo custo e seria invisivel na tela de totais.
+  assert.notEqual(par.quantity, par.unitPrice);
+  assert.equal(PRECO_UNITARIO_DA_RENDA_FIXA, "1");
+});
+
+test("renda fixa: a string crua passa inteira -- nada de Number() no caminho", () => {
+  // `Number("")` e ZERO, e um zero montado aqui seria um aporte de R$ 0,00
+  // aceito pelo caminho todo (o CHECK do banco e `> 0`, entao ele voltaria 500
+  // ou -- com arredondamento no meio -- gravaria um principal errado).
+  const vazio = lancamentoDeCarteiraParaGravar({
+    ehRendaFixa: true,
+    quantidade: "",
+    preco: "",
+    valorDoAporte: "",
+  });
+  assert.equal(vazio.quantity, "", "quem recusa o vazio e a tela e a rota");
+
+  // Centavos preservados byte a byte: o campo de dinheiro emite notacao plana
+  // ("10000.50"), e qualquer reformatacao no meio deste caminho e dinheiro
+  // perdido em silencio.
+  const comCentavos = lancamentoDeCarteiraParaGravar({
+    ehRendaFixa: true,
+    quantidade: "",
+    preco: "",
+    valorDoAporte: "10000.50",
+  });
+  assert.equal(comCentavos.quantity, "10000.50");
+});
+
+test("acao e FII passam DIRETO: quantidade e preco continuam sendo os dois campos", () => {
+  const par = lancamentoDeCarteiraParaGravar({
+    ehRendaFixa: false,
+    quantidade: "100",
+    preco: "31.50",
+    // O campo de renda fixa preenchido e IGNORADO fora da renda fixa. Os tres
+    // valores sao distintos de proposito: com eles iguais, uma conversao que
+    // mandasse o campo errado passaria verde.
+    valorDoAporte: "10000.00",
+  });
+
+  assert.equal(par.quantity, "100");
+  assert.equal(par.unitPrice, "31.50");
+  assert.notEqual(par.quantity, "10000.00");
+  assert.notEqual(par.unitPrice, "10000.00");
+});
+
+test("a convencao fecha com a aritmetica: dois aportes somam o principal e o medio e 1", () => {
+  // O caso para o qual o formulario existe -- aportes repetidos no mesmo CDB --
+  // e a razao de a convencao ser esta e nao a outra. Com `quantity = 1`, estes
+  // dois aportes dariam `total_quantity = 2` e `average_price = 7500`, um numero
+  // que a tela imprime como "Preco medio" e que nao significa nada.
+  const primeiro = lancamentoDeCarteiraParaGravar({
+    ehRendaFixa: true,
+    quantidade: "",
+    preco: "",
+    valorDoAporte: "10000.00",
+  });
+  const segundo = lancamentoDeCarteiraParaGravar({
+    ehRendaFixa: true,
+    quantidade: "",
+    preco: "",
+    valorDoAporte: "5000.00",
+  });
+
+  const posicoes = calcularPosicoes(
+    [ativo("cdb", "CDB-XP", "fixed_income")],
+    [
+      lanc("cdb", "buy", primeiro.quantity, primeiro.unitPrice, "2026-01-10"),
+      lanc("cdb", "buy", segundo.quantity, segundo.unitPrice, "2026-03-10"),
+    ]
+  );
+
+  const p = porId(posicoes, "cdb");
+  perto(p.total_invested, 15000, "o principal e a soma dos aportes");
+  perto(p.total_quantity, 15000, "quantidade EM REAIS");
+  perto(p.average_price, 1, "um real aplicado custa um real");
+  // Sem preco informado a posicao vale o custo, entao a renda fixa nao inventa
+  // lucro nenhum: o rendimento vem de lib/renda-fixa.ts sobre este principal.
+  assert.equal(p.has_price, false);
+  perto(p.current_value, 15000, "avaliada pelo custo");
+  perto(p.profit_loss, 0, "nenhum lucro inventado pela carteira");
 });

@@ -57,6 +57,7 @@ import {
 import type { LimitesDosCrivos } from "@/lib/crivos";
 import {
   ROTULO_TIPO,
+  lancamentoDeCarteiraParaGravar,
   type AssetType,
   type InvestmentKind,
   type Posicao,
@@ -296,6 +297,34 @@ export default function InvestmentsPage() {
       return "A data do lancamento nao pode ser no futuro.";
     }
 
+    // O APORTE EM REAIS (HMO-439)
+    //
+    // Em renda fixa a tela mostra UM campo de dinheiro, e e ele que vira
+    // `quantity` -- a conversao e `lancamentoDeCarteiraParaGravar`, pura e com
+    // suite, porque e decisao de dinheiro (ver lib/investments.ts).
+    //
+    // A recusa do vazio e aqui, e nao so na rota, pela mesma razao das duas
+    // guardas de data acima: `CampoDeValor` e um input de TEXTO, e a rota
+    // converte com `Number`, onde `Number("")` e ZERO. Sem esta guarda, o aporte
+    // vazio chegaria la como "Quantidade precisa ser um numero positivo" -- uma
+    // frase sobre um campo que esta tela nao mostra.
+    const ehRendaFixa =
+      ativos.find((a) => a.id === valores.assetId)?.type === "fixed_income";
+
+    if (ehRendaFixa) {
+      const valor = Number.parseFloat(valores.valorDoAporte);
+      if (!Number.isFinite(valor) || valor <= 0) {
+        return "Informe o valor em reais, maior que zero.";
+      }
+    }
+
+    const par = lancamentoDeCarteiraParaGravar({
+      ehRendaFixa,
+      quantidade: valores.quantidade,
+      preco: valores.preco,
+      valorDoAporte: valores.valorDoAporte,
+    });
+
     setSalvando(true);
     try {
       const resposta = await fetch("/api/investments/transactions", {
@@ -304,8 +333,8 @@ export default function InvestmentsPage() {
         body: JSON.stringify({
           assetId: valores.assetId,
           kind: valores.kind,
-          quantity: valores.quantidade,
-          unitPrice: valores.preco,
+          quantity: par.quantity,
+          unitPrice: par.unitPrice,
           fees: valores.taxas === "" ? 0 : valores.taxas,
           tradeDate: valores.data,
         }),
