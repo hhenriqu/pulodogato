@@ -222,6 +222,20 @@ export interface Projecao {
   /** Quanto rende HOJE, bruto, na taxa do ultimo boletim. `null` sem fonte. */
   porDia: number | null;
 
+  // A regua de comparacao (HMO-440). Os tres saem do BRUTO, nunca do liquido --
+  // ver o cabecalho da secao "A REGUA DE COMPARACAO".
+  /** Rendimento bruto / principal, em FRACAO (0,0107 = 1,07%). */
+  rentabilidade: number | null;
+  /**
+   * Taxa anual equivalente, em % AO ANO. `null` abaixo de
+   * `PISO_DE_DIAS_UTEIS_PARA_ANUALIZAR` -- e ai a tela mostra o acumulado.
+   */
+  taxaAnual: number | null;
+  /** O que 100% do CDI rendeu na MESMA janela, em FRACAO. `null` sem regua. */
+  rentabilidadeDoCdi: number | null;
+  /** "% do CDI realizado", em % (110 = rendeu 110% do CDI). `null` sem regua. */
+  percentualDoCdi: number | null;
+
   /** Aliquota de IR aplicada, em %. Zero quando isento. */
   aliquota: number;
   isento: boolean;
@@ -463,6 +477,206 @@ export function fatorDoSpread(spread: number, diasUteis: number): number {
 }
 
 // ---------------------------------------------------------------------------
+// A REGUA DE COMPARACAO (HMO-440, fase 6 da HMO-432)
+// ---------------------------------------------------------------------------
+// Bruto, liquido e rendimento por dia dizem QUANTO cada papel rendeu. Nenhum
+// dos tres compara dois papeis: R$ 107 em tres anos e R$ 107 em tres semanas
+// sao o mesmo numero na tela e coisas opostas no bolso, e "110% do CDI" nao se
+// compara com "prefixado 13% a.a." a olho. Esta secao e o que poe os dois na
+// mesma regua.
+//
+// SAO TRES NUMEROS, E CADA UM RESPONDE UMA PERGUNTA DIFERENTE
+// -----------------------------------------------------------
+//   rentabilidade          rendimento / principal. Quanto o dinheiro cresceu,
+//                          sem relacao com o tempo. Nao compara idades;
+//   taxa anual equivalente a rentabilidade esticada para um ano, (1+r)^(252/du).
+//                          Compara idades, mas precisa de prazo (ver o PISO);
+//   % do CDI realizado     a rentabilidade do papel dividida pela que 100% do
+//                          CDI deu NA MESMA JANELA. E este que e a regua.
+//
+// POR QUE A REGUA E O "% DO CDI REALIZADO", E NAO A TAXA ANUAL
+// -------------------------------------------------------------
+// Porque ele NAO anualiza. Ele divide dois rendimentos medidos na mesma janela,
+// e por isso um papel de tres dias e um de tres anos recebem numeros honestos --
+// cada um contra o CDI do SEU periodo. A taxa anual, ao contrario, extrapola:
+// ela precisa de janela grande para dizer algo, e e por isso que a ordenacao da
+// lista sai do % do CDI e nao dela. Ver `ordenarPorPercentualDoCdi`.
+//
+// O PISO DE DIAS UTEIS PARA ANUALIZAR -- O QUE FOI MEDIDO
+// --------------------------------------------------------
+// A anualizacao nao estoura por aritmetica quando o rendimento e um acumulo
+// diario limpo: 1, 2 ou 21 dias uteis a 0,050788% ao dia devolvem 13,65% a.a.
+// nos tres casos. O que o expoente 252/du faz e MULTIPLICAR por 252/du tudo o
+// que nao for acumulo limpo. MEDIDO neste arquivo, com `node`:
+//
+//   um unico boletim a 0,056% (15,2% a.a.) no lugar de 0,050788%
+//     du =  1   13,65% a.a. -> 15,15%   (1,50 ponto de distorcao)
+//     du =  2   13,65% a.a. -> 14,40%   (0,75)
+//     du =  5   13,65% a.a. -> 13,95%   (0,30)
+//     du = 21   13,65% a.a. -> 13,72%   (0,07)  <- 21x de atenuacao
+//
+//   o centavo de arredondamento do proprio `bruto`, em R$ 100 a 100% do CDI
+//     du =  1   13,65% a.a. -> 13,42%
+//     du = 21   13,65% a.a. -> 13,62%
+//
+// E a razao decisiva nao e numerica: uma taxa AO ANO lida de um dia util e uma
+// afirmacao sobre doze meses feita com um dia de evidencia. Vinte e um dias
+// uteis e um mes de calendario brasileiro -- o menor periodo em que "ao ano"
+// deixa de ser extrapolacao de ruido. Abaixo do piso a tela mostra o ACUMULADO,
+// que e a verdade possivel, e nao um numero com cara de certo.
+//
+// O ESTOURO DE VERDADE E OUTRO, E TEM GUARDA PROPRIA
+// ---------------------------------------------------
+// `252 / 0` e `Infinity`, e `Math.pow(1.01, Infinity)` e `Infinity` -- um
+// `Infinity` atravessa `JSON.stringify` como `null` em alguns caminhos e chega
+// como "Infinity%" na tela em outros. E `Math.pow` de base NEGATIVA com expoente
+// fracionario e `NaN`, que e o que acontece se o principal vier negativo (taxa
+// de corretagem maior que o custo numa posicao encerrada). Os dois casos saem
+// como `null` declarado, nao como numero.
+//
+// A REGUA USA O BRUTO, NUNCA O LIQUIDO
+// -------------------------------------
+// Coerente com a Decisao 2 do plano da HMO-432 (patrimonio em bruto, liquido
+// abaixo), mas aqui a razao e mais forte que coerencia: uma LCI e um CDB de 100%
+// do CDI dao o MESMO bruto e liquidos diferentes, porque a LCI e isenta. Medir
+// a regua no liquido faria a LCI "render mais que o CDI" por efeito do IR, e os
+// dois papeis deixariam de ser comparaveis exatamente na comparacao que a
+// pessoa quer fazer. O IR ja tem o seu lugar na tela, uma linha acima.
+// ---------------------------------------------------------------------------
+
+/**
+ * Abaixo de quantos dias uteis a taxa anual equivalente NAO sai.
+ *
+ * Vinte e um e o mes de dias uteis brasileiro. Ver a medicao no cabecalho desta
+ * secao: e em 21 que um boletim fora da curva para de mover a taxa anual em mais
+ * de um decimo de ponto.
+ */
+export const PISO_DE_DIAS_UTEIS_PARA_ANUALIZAR = 21;
+
+/**
+ * Rentabilidade de uma posicao, em FRACAO (0,0107 = 1,07%).
+ *
+ * `null` para principal ausente, zero ou negativo. Zero acontece de verdade --
+ * um ativo de renda fixa inteiramente resgatado continua na lista com
+ * `total_invested = 0` e `bruto = 0`, e `0 / 0` e `NaN`. Negativo acontece
+ * quando a taxa cobrada passa do custo. Nos dois casos nao existe rentabilidade
+ * para mostrar, e `null` e o que a tela sabe ler.
+ */
+export function rentabilidade(
+  rendimento: number | null,
+  principal: number
+): number | null {
+  if (rendimento === null || !Number.isFinite(rendimento)) return null;
+  if (!Number.isFinite(principal) || principal <= 0) return null;
+  return rendimento / principal;
+}
+
+/**
+ * Taxa anual equivalente, em % AO ANO. `null` abaixo do piso de dias uteis.
+ *
+ * `(1 + r) ^ (252 / diasUteis) - 1`, com os mesmos 252 de `fatorDoSpread` -- e
+ * com a MESMA contagem de dias uteis que `fatorDaSerie` usou para produzir o
+ * `r`, que e `diasNoPeriodo(...).length`. Duas contagens diferentes no mesmo
+ * arquivo seriam duas fontes consistentes que discordam: cada uma se defende
+ * sozinha e a razao entre as duas nao e numero nenhum.
+ */
+export function taxaAnualEquivalente(
+  r: number | null,
+  diasUteis: number
+): number | null {
+  if (r === null || !Number.isFinite(r)) return null;
+  // Este teste tambem e a guarda do `252 / 0 = Infinity`: zero e negativo caem
+  // nele antes de chegar na divisao.
+  if (!Number.isFinite(diasUteis) || diasUteis < PISO_DE_DIAS_UTEIS_PARA_ANUALIZAR) {
+    return null;
+  }
+  // Base negativa com expoente fracionario e NaN em Math.pow -- nao e erro, e
+  // resposta. Uma perda de mais de 100% do principal nao e anualizavel.
+  if (1 + r <= 0) return null;
+  return (Math.pow(1 + r, DIAS_UTEIS_NO_ANO / diasUteis) - 1) * 100;
+}
+
+/**
+ * O que 100% do CDI rendeu na janela de UM ativo, em FRACAO -- o denominador da
+ * regua.
+ *
+ * `diasUteis` nao e informativo: ele e CONFERIDO. A serie do CDI tem de cobrir
+ * exatamente os mesmos dias uteis que a serie do indexador do ativo cobriu, e
+ * quando nao cobre a funcao devolve `null` em vez de uma razao. Dois casos reais
+ * em que as contagens separam:
+ *
+ *   - o Banco Central publicou a serie 12 e ainda nao publicou a 11 (ou o
+ *     contrario). Um boletim de diferenca num papel de 21 dias uteis move o
+ *     denominador em ~5% e o "% do CDI realizado" na mesma proporcao -- 110%
+ *     viraria 115%, plausivel e errado;
+ *   - a janela pedida ao SGS para a regua comecou DEPOIS da aplicacao deste
+ *     ativo (quem monta a requisicao erra a borda esquerda). Ai o denominador e
+ *     parcial e o papel aparece rendendo multiplos do CDI.
+ *
+ * "Sem regua" e um estado honesto e a tela tem frase para ele. Um percentual
+ * errado nao tem conserto na leitura.
+ */
+export function rentabilidadeDoCdiNaJanela(
+  serieCdi: DiaDaSerie[] | null | undefined,
+  inicioISO: string,
+  fimISO: string,
+  diasUteis: number
+): number | null {
+  if (!serieCdi || serieCdi.length === 0) return null;
+  const dias = diasNoPeriodo(serieCdi, inicioISO, fimISO);
+  if (dias.length === 0 || dias.length !== diasUteis) return null;
+  return fatorDaSerie(dias, 100) - 1;
+}
+
+/**
+ * "% do CDI realizado", em %. 110 quer dizer "rendeu 110% do que o CDI rendeu".
+ *
+ * REALIZADO e nao contratado, e a diferenca nao e so de palavra: um CDB
+ * cadastrado a 110% do CDI nao devolve 110,00% exatos aqui. O percentual
+ * multiplica a TAXA DO DIA e nao o fator (ver o cabecalho do arquivo), entao
+ * `prod(1 + i*1,10) - 1` nao e `1,10 * (prod(1 + i) - 1)` -- a capitalizacao nao
+ * e linear. Em 21 dias uteis a 0,050788% ao dia a diferenca fica na terceira
+ * casa, e ela CRESCE com o prazo. Quem "arrumar" este numero para bater com o
+ * percentual cadastrado esta trocando o que o papel fez pelo que o cadastro diz.
+ *
+ * `null` quando o CDI rendeu zero ou menos na janela: sem dia util no periodo
+ * nao ha com o que comparar, e dividir daria `Infinity`.
+ */
+export function percentualDoCdiRealizado(
+  r: number | null,
+  rDoCdi: number | null
+): number | null {
+  if (r === null || rDoCdi === null) return null;
+  if (!Number.isFinite(r) || !Number.isFinite(rDoCdi)) return null;
+  if (rDoCdi <= 0) return null;
+  return (r / rDoCdi) * 100;
+}
+
+/**
+ * A lista ordenada pela regua: maior "% do CDI realizado" primeiro.
+ *
+ * Quem NAO tem o percentual vai para o fim, na ordem em que chegou (`sort` e
+ * estavel desde o ES2019, e a rota entrega por `symbol`). Nao ha empate
+ * desfeito por rentabilidade de proposito: cair para a rentabilidade bruta
+ * misturaria duas reguas numa ordenacao so, e comparar rentabilidade de papeis
+ * de idades diferentes e exatamente o erro que esta fase existe para tirar da
+ * tela. "Sem regua, ordem alfabetica" e legivel; "ordenado por dois criterios
+ * que ninguem ve" nao e.
+ *
+ * Nao muta a lista recebida -- a rota soma o resumo da mesma lista.
+ */
+export function ordenarPorPercentualDoCdi(projecoes: Projecao[]): Projecao[] {
+  return projecoes.slice().sort((a, b) => {
+    const x = a.percentualDoCdi;
+    const y = b.percentualDoCdi;
+    if (x === null && y === null) return 0;
+    if (x === null) return 1;
+    if (y === null) return -1;
+    return y - x;
+  });
+}
+
+// ---------------------------------------------------------------------------
 // A projecao
 // ---------------------------------------------------------------------------
 
@@ -472,6 +686,18 @@ export interface EntradaDaProjecao {
   principal: number;
   /** Serie diaria do indexador do ativo, ja normalizada e ordenada. */
   serie?: DiaDaSerie[] | null;
+  /**
+   * Serie 12 (CDI ao dia) cobrindo a janela DESTE ativo -- o denominador da
+   * regua de comparacao. Quem monta a requisicao tem de pedir a faixa a partir
+   * da aplicacao mais antiga da CARTEIRA, e nao da do grupo de indexador: e um
+   * Selic ou um prefixado que mais precisam da regua, e sao justamente eles que
+   * nao trariam a serie do CDI por conta propria.
+   *
+   * Ignorado quando o indexador do ativo JA e `cdi` -- ali `serie` e a regua, e
+   * precisa ser a MESMA serie, senao o "110% do CDI" cadastrado e o "% do CDI
+   * realizado" sairiam de dois instantes diferentes do mesmo boletim.
+   */
+  serieCdi?: DiaDaSerie[] | null;
   /** "YYYY-MM-DD" da primeira COMPRA do ativo, para quando `applied_date` e nula. */
   primeiraCompra?: string | null;
   /** "YYYY-MM-DD" -- hoje. Parametro e nao `new Date()` para a suite congelar o relogio. */
@@ -493,6 +719,10 @@ function projecaoSemNumero(
     bruto: null,
     liquido: null,
     porDia: null,
+    rentabilidade: null,
+    taxaAnual: null,
+    rentabilidadeDoCdi: null,
+    percentualDoCdi: null,
     aliquota: 0,
     isento: isentoDeIr(produto),
     diasCorridos: 0,
@@ -561,6 +791,10 @@ export function projetarRendimento(e: EntradaDaProjecao): Projecao {
     bruto: null,
     liquido: null,
     porDia: null,
+    rentabilidade: null,
+    taxaAnual: null,
+    rentabilidadeDoCdi: null,
+    percentualDoCdi: null,
     aliquota,
     isento,
     diasCorridos,
@@ -619,6 +853,19 @@ export function projetarRendimento(e: EntradaDaProjecao): Projecao {
         ((ultimo.valor / 100) * (percentual / 100) +
           (Math.pow(1 + (spread ?? 0) / 100, 1 / DIAS_UTEIS_NO_ANO) - 1));
 
+  // A regua de comparacao. Tudo a partir do BRUTO e com o MESMO `diasUteis` que
+  // capitalizou o fator -- ver o cabecalho da secao "A REGUA DE COMPARACAO".
+  //
+  // O arredondamento acontece so na SAIDA: a taxa anual e o % do CDI saem dos
+  // valores cheios, nao dos arredondados. Elevar um numero de 8 casas a
+  // `252/diasUteis` e elevar o erro de arredondamento junto, que e o mesmo
+  // mecanismo que o piso de dias uteis existe para conter.
+  const rentDoPapel = rentabilidade(bruto, e.principal);
+  const serieDaRegua = indexador === "cdi" ? serie : e.serieCdi ?? null;
+  const rentDoCdi = rentabilidadeDoCdiNaJanela(serieDaRegua, inicio, fim, diasUteis);
+  const pctDoCdi = percentualDoCdiRealizado(rentDoPapel, rentDoCdi);
+  const anual = taxaAnualEquivalente(rentDoPapel, diasUteis);
+
   return {
     ...base,
     diasUteis,
@@ -626,6 +873,12 @@ export function projetarRendimento(e: EntradaDaProjecao): Projecao {
     bruto: arredondar(bruto),
     liquido: arredondar(liquido),
     porDia: porDia === null ? null : arredondar(porDia),
+    // Fracao em 8 casas e percentual em 2: arredondar uma fracao de 1,07% em 2
+    // casas (0,01) joga fora dois tercos do numero.
+    rentabilidade: rentDoPapel === null ? null : arredondar(rentDoPapel, 8),
+    rentabilidadeDoCdi: rentDoCdi === null ? null : arredondar(rentDoCdi, 8),
+    taxaAnual: anual === null ? null : arredondar(anual),
+    percentualDoCdi: pctDoCdi === null ? null : arredondar(pctDoCdi),
   };
 }
 
@@ -819,18 +1072,57 @@ export function primeiraCompraPorAtivo(
   return mapa;
 }
 
-/** Soma o bruto e o liquido das projecoes que sairam. */
+/**
+ * Soma o bruto e o liquido das projecoes que sairam, e a RENTABILIDADE
+ * CONSOLIDADA da carteira.
+ *
+ * O DENOMINADOR SO TEM QUEM ENTROU NO NUMERADOR
+ * ----------------------------------------------
+ * `principal` soma o principal dos ativos que PROJETARAM, nao o da carteira
+ * inteira. Somar o principal de um IPCA sem projecao (ou de um ativo que o Banco
+ * Central nao respondeu) num numerador que nao tem o rendimento dele diluiria a
+ * rentabilidade da carteira: R$ 100 de rendimento em R$ 10.000 projetados sao
+ * 1,00%, e os mesmos R$ 100 sobre R$ 20.000 com metade sem projecao sairiam como
+ * 0,50% -- metade do numero certo, e sem nada na tela denunciando. O
+ * `semProjecao` ja e o aviso de que o total nao e a carteira toda.
+ *
+ * O % DO CDI DA CARTEIRA E PONDERADO POR DINHEIRO E POR JANELA
+ * -------------------------------------------------------------
+ * Nao e a media dos percentuais de cada papel: uma media simples daria o mesmo
+ * peso a R$ 200 de um mes e a R$ 200.000 de tres anos. E
+ * `soma(bruto) / soma(principal x rentabilidadeDoCdi)` -- o que a carteira
+ * rendeu dividido pelo que 100% do CDI teria rendido sobre o MESMO dinheiro em
+ * cada janela. As duas somas percorrem o MESMO subconjunto (so quem tem regua),
+ * porque bruto no numerador sem o par no denominador inflaria o percentual.
+ *
+ * Nao ha taxa anual consolidada de proposito: anualizar exige UMA janela, e
+ * papeis de idades diferentes nao tem uma. Qualquer escolha de janela estaria
+ * errada para todos menos um.
+ */
 export function somarProjecoes(projecoes: Projecao[]): {
   bruto: number;
   liquido: number;
   porDia: number;
   /** Quantos ativos ficaram sem projecao -- a tela avisa em vez de somar menos. */
   semProjecao: number;
+  /** Principal SO dos que projetaram -- o denominador da consolidada. */
+  principal: number;
+  /** Rentabilidade consolidada, em FRACAO. `null` sem principal projetado. */
+  rentabilidade: number | null;
+  /** "% do CDI realizado" da carteira, em %. `null` quando ninguem tem regua. */
+  percentualDoCdi: number | null;
+  /** Quantos projetaram mas ficaram SEM regua de CDI -- a tela avisa. */
+  semRegua: number;
 } {
   let bruto = 0;
   let liquido = 0;
   let porDia = 0;
   let semProjecao = 0;
+  let principal = 0;
+  // O par da regua, percorrendo so quem tem `rentabilidadeDoCdi`.
+  let brutoComRegua = 0;
+  let cdiEsperado = 0;
+  let semRegua = 0;
 
   for (const p of projecoes) {
     if (p.motivo !== null || p.bruto === null || p.liquido === null) {
@@ -840,13 +1132,31 @@ export function somarProjecoes(projecoes: Projecao[]): {
     bruto += p.bruto;
     liquido += p.liquido;
     porDia += p.porDia ?? 0;
+    principal += p.principal;
+
+    if (p.rentabilidadeDoCdi === null) {
+      semRegua++;
+      continue;
+    }
+    brutoComRegua += p.bruto;
+    cdiEsperado += p.principal * p.rentabilidadeDoCdi;
   }
+
+  // A MESMA funcao da linha, e nao uma divisao solta aqui: e ela que sabe que
+  // principal zero e `null` e nao `NaN`, e carteira sem renda fixa projetada e
+  // o caso comum disso.
+  const consolidada = rentabilidade(bruto, principal);
 
   return {
     bruto: arredondar(bruto),
     liquido: arredondar(liquido),
     porDia: arredondar(porDia),
     semProjecao,
+    principal: arredondar(principal),
+    rentabilidade: consolidada === null ? null : arredondar(consolidada, 8),
+    percentualDoCdi:
+      cdiEsperado > 0 ? arredondar((brutoComRegua / cdiEsperado) * 100) : null,
+    semRegua,
   };
 }
 

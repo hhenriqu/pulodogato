@@ -53,6 +53,7 @@ import assert from "node:assert/strict";
 import {
   DIAS_UTEIS_NO_ANO,
   INDEXADORES_PROJETAVEIS,
+  PISO_DE_DIAS_UTEIS_PARA_ANUALIZAR,
   PRODUTOS_ISENTOS_DE_IR,
   aliquotaDeIr,
   camposDeRendaFixaVazios,
@@ -66,9 +67,14 @@ import {
   isentoDeIr,
   lerCamposDeRendaFixa,
   normalizarSerie,
+  ordenarPorPercentualDoCdi,
+  percentualDoCdiRealizado,
   primeiraCompraPorAtivo,
   projetarRendimento,
+  rentabilidade,
+  rentabilidadeDoCdiNaJanela,
   somarProjecoes,
+  taxaAnualEquivalente,
   valorDeMercado,
   valorProjetadoPorAtivo,
 } from "../.tmp-renda-fixa/renda-fixa.js";
@@ -672,6 +678,15 @@ test("carteira sem renda fixa soma zero sem NaN", () => {
   assert.equal(total.liquido, 0);
   assert.equal(total.porDia, 0);
   assert.equal(total.semProjecao, 0);
+  // Os campos da regua (HMO-440) tambem nao podem sair NaN nem undefined: o
+  // denominador da consolidada e ZERO aqui, e `0 / 0` e NaN. `null` e o que a
+  // tela sabe ler; `NaN` atravessa JSON.stringify como `null` em alguns
+  // caminhos e como `"NaN"` em outros, e um `undefined` em `.toFixed` e
+  // TypeError no cliente.
+  assert.equal(total.principal, 0);
+  assert.equal(total.rentabilidade, null);
+  assert.equal(total.percentualDoCdi, null);
+  assert.equal(total.semRegua, 0);
 });
 
 // =====================================================
@@ -829,7 +844,333 @@ test("produto e indexador fora da lista do CHECK sao recusados", () => {
 });
 
 // =====================================================
-// SECAO 9: O VALOR DA POSICAO -- `principal + bruto` (HMO-437)
+// SECAO 11 - A REGUA DE COMPARACAO (HMO-440, fase 6 da HMO-432)
+// =====================================================
+// O pedido da HMO-432 termina em "vou conseguindo comparar rentabilidade", e
+// bruto, liquido e por dia nao comparam nada: R$ 107 em tres anos e R$ 107 em
+// tres semanas sao o mesmo numero na tela. Esta secao e a regua, e o teste que
+// a justifica e o PAR DA ISSUE: um CDB de 110% do CDI e um prefixado de 13%
+// a.a. saem aqui como 110,06% e 95,49% do CDI -- dois numeros na mesma escala,
+// que e a coisa que nao existia.
+//
+// Os valores sao todos derivados da MESMA taxa medida (0,050788% ao dia) e da
+// MESMA janela das secoes anteriores (01/09 a 30/09/2026, 21 dias uteis), para
+// que uma mudanca na aritmetica apareca aqui e la ao mesmo tempo.
+// =====================================================
+
+/** A janela da issue com 20 dias uteis em vez de 21 -- um dia abaixo do piso. */
+const HOJE_COM_20_UTEIS = "2026-09-29";
+
+const PREFIXADO_13 = {
+  ...CDB,
+  id: "pre",
+  symbol: "LTN-13",
+  name: "Prefixado 13% a.a.",
+  index_kind: "prefixado",
+  index_percentage: null,
+  spread_annual: 13,
+};
+
+test("a regua do CDB da issue: 1,07% no periodo, 13,65% a.a., 100% do CDI", () => {
+  const p = projetar(CDB);
+  // A rentabilidade e FRACAO, nao percentual: 0,01071982 = 1,071982%. Guardar
+  // percentual aqui e multiplicar por 100 duas vezes na tela, ou nenhuma -- e
+  // os dois erros caem dentro do plausivel.
+  assert.equal(p.rentabilidade, 0.01071982);
+  // O denominador da regua e o proprio CDI a 100% na MESMA janela, e por isso
+  // este caso tem de fechar em 100,00 exatos. E o controle da regua: se sair
+  // 99,x ou 100,x, as duas pontas da divisao nao estao vendo os mesmos dias.
+  assert.equal(p.percentualDoCdi, 100);
+  assert.equal(p.rentabilidadeDoCdi, 0.01071982);
+  // 21 dias uteis a 0,050788% ao dia anualizam nos 13,65% da serie 4389 -- a
+  // mesma conferencia cruzada da SECAO 1, agora chegando na tela.
+  assert.equal(p.taxaAnual, 13.65);
+});
+
+test("O PAR DA ISSUE: 110% do CDI e prefixado 13% a.a. na MESMA regua", () => {
+  const a110 = projetar({ ...CDB, index_percentage: 110 });
+  // Prefixado nao tem indice, e por isso a serie 12 chega a ele DUAS vezes: uma
+  // como calendario de dias uteis (`serie`) e uma como regua (`serieCdi`). Sem
+  // a segunda ele renderia numero e nao compararia com nada -- e e exatamente
+  // ele o papel que a issue quer comparar.
+  const pre = projetar(PREFIXADO_13, { serieCdi: SERIE_CDI });
+
+  // Em R$, os dois sao quase iguais -- e e por isso que R$ nao compara:
+  assert.equal(a110.bruto, 117.98);
+  assert.equal(pre.bruto, 102.37);
+
+  // Na regua, a diferenca aparece e tem direcao: o CDI ganha do prefixado neste
+  // mes por quase 15 pontos de CDI.
+  assert.equal(a110.percentualDoCdi, 110.06);
+  assert.equal(pre.percentualDoCdi, 95.49);
+  assert.equal(a110.taxaAnual, 15.11);
+  // O prefixado anualiza de volta na PROPRIA taxa contratada -- 13% a.a. que
+  // entrou como spread sai como 13,00% a.a. Esta assercao e o controle da
+  // formula de anualizacao: ela e a unica em que o numero esperado nao depende
+  // da serie do Banco Central.
+  assert.equal(pre.taxaAnual, 13);
+});
+
+test("`% do CDI realizado` NAO e o percentual cadastrado, e a diferenca cresce", () => {
+  // 110% cadastrado -> 110,06% realizado em 21 dias uteis. A razao esta no
+  // cabecalho do arquivo: o percentual multiplica a TAXA do dia e nao o fator,
+  // e `prod(1 + i*1,10) - 1` nao e `1,10 * (prod(1 + i) - 1)`.
+  const curto = projetar({ ...CDB, index_percentage: 110 });
+  assert.equal(curto.percentualDoCdi, 110.06);
+
+  // Um ano de dias uteis na mesma taxa: 110,72%. A nao-linearidade CRESCE com o
+  // prazo, e e por isso que "arrumar" este numero para bater com o cadastro
+  // trocaria o que o papel fez pelo que o cadastro diz.
+  const ANO = diasEntre("2026-09-01", "2027-09-30")
+    .filter((d) => !fimDeSemana(d))
+    .map((data) => ({ data, valor: TAXA_CDI_DIA }));
+  const longo = projetarRendimento({
+    ativo: { ...CDB, index_percentage: 110, maturity_date: "2030-01-01" },
+    principal: 10000,
+    serie: ANO,
+    hoje: "2027-09-30",
+  });
+  assert.equal(longo.diasUteis, 282, "a janela de um ano e um mes de dias uteis");
+  assert.ok(
+    longo.percentualDoCdi > curto.percentualDoCdi,
+    `a diferenca cresce: ${curto.percentualDoCdi} -> ${longo.percentualDoCdi}`
+  );
+});
+
+test("O PISO: 20 dias uteis NAO anualiza, 21 anualiza", () => {
+  assert.equal(PISO_DE_DIAS_UTEIS_PARA_ANUALIZAR, 21);
+
+  const curto = projetar(CDB, { hoje: HOJE_COM_20_UTEIS });
+  assert.equal(curto.diasUteis, 20, "a janela mais curta tem 20 dias uteis");
+  // O acumulado SAI -- e ele que a tela mostra no lugar.
+  assert.ok(curto.rentabilidade > 0);
+  assert.equal(curto.percentualDoCdi, 100, "a regua nao depende do piso");
+  assert.equal(curto.taxaAnual, null, "abaixo do piso nao se anualiza");
+
+  assert.equal(projetar(CDB).diasUteis, 21);
+  assert.equal(projetar(CDB).taxaAnual, 13.65);
+});
+
+test("MEDIDO: e por isso que o piso e 21 e nao 1", () => {
+  // O expoente 252/du multiplica por 252/du tudo o que nao for acumulo diario
+  // limpo. Aqui o "nao limpo" e UM boletim a 0,056% (15,2% a.a.) no lugar de
+  // 0,050788% -- uma variacao de ciclo de Copom, nao um dado absurdo.
+  const comUmBoletimFora = (dias) => {
+    const serie = diasEntre("2026-09-01", "2026-12-31")
+      .filter((d) => !fimDeSemana(d))
+      .slice(0, dias + 1)
+      .map((data, i) => ({ data, valor: i === dias ? 0.056 : TAXA_CDI_DIA }));
+    const fim = serie[serie.length - 1].data;
+    const limpa = serie.map((d) => ({ ...d, valor: TAXA_CDI_DIA }));
+    const base = { ativo: CDB, principal: 10000, hoje: fim };
+    return {
+      limpa: projetarRendimento({ ...base, serie: limpa }).taxaAnual,
+      suja: projetarRendimento({ ...base, serie }).taxaAnual,
+    };
+  };
+
+  // Com UM dia util a taxa anual nao existe (o piso a barra), e e justamente o
+  // tamanho da distorcao abaixo que justifica barrar. Para medi-la, a conta vai
+  // direto na funcao pura.
+  const umDia = 0.00056; // o boletim fora da curva, como fracao ao dia
+  const anualDe = (r, du) => Math.pow(1 + r, DIAS_UTEIS_NO_ANO / du) - 1;
+  assert.equal(
+    Math.round(anualDe(umDia, 1) * 10000) / 100,
+    15.15,
+    "um dia util a 0,056% anualiza em 15,15% a.a. -- 1,50 ponto acima dos 13,65%"
+  );
+
+  // No piso, o MESMO boletim fora da curva move a taxa anual em 0,07 ponto:
+  // 21x de atenuacao. Este par de numeros e a medicao que escolheu o 21.
+  const em21 = comUmBoletimFora(21);
+  assert.equal(em21.limpa, 13.65);
+  assert.equal(em21.suja, 13.72);
+});
+
+test("diasUteis ZERO nao vira Infinity nem NaN na tela", () => {
+  // `252 / 0` e Infinity e `Math.pow(1.01, Infinity)` tambem. Aplicado hoje:
+  // nenhum dia util fechado, rendimento zero, e os tres numeros da regua saem
+  // DECLARADOS e nao como divisao por zero.
+  const hoje = projetar({ ...CDB, applied_date: HOJE });
+  assert.equal(hoje.diasUteis, 0);
+  assert.equal(hoje.bruto, 0);
+  assert.equal(hoje.rentabilidade, 0, "rendeu zero e rentabilidade zero");
+  assert.equal(hoje.taxaAnual, null);
+  // Zero dia util no periodo nao da regua: o CDI tambem rendeu zero, e a razao
+  // seria 0/0.
+  assert.equal(hoje.percentualDoCdi, null);
+  assert.equal(hoje.rentabilidadeDoCdi, null);
+});
+
+test("principal zero ou negativo nao produz rentabilidade nenhuma", () => {
+  // Posicao inteiramente resgatada: o ativo continua na lista com
+  // `total_invested = 0`, e `0 / 0` e NaN.
+  const zerado = projetar(CDB, { principal: 0 });
+  assert.equal(zerado.bruto, 0);
+  assert.equal(zerado.rentabilidade, null);
+  assert.equal(zerado.taxaAnual, null);
+  assert.equal(zerado.percentualDoCdi, null);
+
+  // Negativo acontece quando a taxa cobrada passa do custo. Nao e rentabilidade
+  // de -X%: e ausencia de rentabilidade.
+  assert.equal(projetar(CDB, { principal: -100 }).rentabilidade, null);
+});
+
+test("a regua usa o BRUTO: a LCI e o CDB de 100% do CDI empatam nela", () => {
+  const cdb = projetar(CDB);
+  const lci = projetar({ ...CDB, id: "a2", fixed_income_product: "lci" });
+
+  // Liquidos DIFERENTES -- a LCI e isenta e o CDB paga 22,5%:
+  assert.equal(cdb.liquido, 83.08);
+  assert.equal(lci.liquido, 107.2);
+  assert.equal(lci.isento, true);
+
+  // E a MESMA regua. Medir no liquido faria a LCI "render 29% mais que o CDI"
+  // por efeito do IR, e os dois papeis deixariam de ser comparaveis exatamente
+  // na comparacao que a pessoa quer fazer.
+  assert.equal(cdb.rentabilidade, lci.rentabilidade);
+  assert.equal(cdb.percentualDoCdi, 100);
+  assert.equal(lci.percentualDoCdi, 100);
+  assert.equal(cdb.taxaAnual, lci.taxaAnual);
+});
+
+test("serie do CDI que nao cobre a janela do ativo sai SEM REGUA, nao com razao inflada", () => {
+  // Um dia util a MENOS no denominador: o CDI "rendeu" 20 dias onde o papel
+  // rendeu 21, e a razao sairia ~5% alta -- 110% viraria 115%, plausivel e
+  // errado. A contagem e conferida, e o estado honesto e "sem regua".
+  const faltandoUmDia = SERIE_CDI.filter((d) => d.data !== "2026-09-15");
+  const p = projetar(PREFIXADO_13, { serieCdi: faltandoUmDia });
+  assert.equal(p.diasUteis, 21);
+  assert.equal(p.bruto, 102.37, "o rendimento do papel nao muda");
+  assert.equal(p.percentualDoCdi, null);
+  assert.equal(p.rentabilidadeDoCdi, null);
+
+  // E a funcao pura diz a mesma coisa, isolada:
+  assert.equal(
+    rentabilidadeDoCdiNaJanela(faltandoUmDia, "2026-09-01", HOJE, 21),
+    null
+  );
+  assert.ok(rentabilidadeDoCdiNaJanela(SERIE_CDI, "2026-09-01", HOJE, 21) > 0);
+});
+
+test("prefixado SEM serie do CDI rende e nao compara -- sem inventar regua", () => {
+  const p = projetar(PREFIXADO_13);
+  assert.equal(p.bruto, 102.37);
+  assert.equal(p.taxaAnual, 13);
+  // Sem o denominador nao ha percentual. O que NAO pode acontecer e a serie do
+  // calendario (que no prefixado e a propria 12) virar regua por descuido: ali
+  // o percentual sairia certo por acidente neste caso e errado num Selic, onde
+  // o calendario e a serie 11.
+  assert.equal(p.percentualDoCdi, null);
+});
+
+test("ordenarPorPercentualDoCdi: maior primeiro, sem-regua no fim, sem mutar", () => {
+  const a110 = projetar({ ...CDB, id: "x110", index_percentage: 110 });
+  const a100 = projetar({ ...CDB, id: "x100" });
+  const pre = projetar({ ...PREFIXADO_13, id: "xpre" }, { serieCdi: SERIE_CDI });
+  const semRegua = projetar({ ...PREFIXADO_13, id: "xsem" });
+  const semProjecao = projetar({ ...CDB, id: "xipca", index_kind: "ipca" });
+
+  const lista = [a100, semRegua, pre, semProjecao, a110];
+  const ordenada = ordenarPorPercentualDoCdi(lista);
+
+  assert.deepEqual(
+    ordenada.map((p) => p.asset_id),
+    ["x110", "x100", "xpre", "xsem", "xipca"],
+    "110,06 > 100,00 > 95,49, e os dois sem percentual mantem a ordem de chegada"
+  );
+  // Nao muta: a rota soma o resumo da MESMA lista, e uma ordenacao in loco
+  // deixaria as duas leituras dependendo de quem rodou primeiro.
+  assert.deepEqual(
+    lista.map((p) => p.asset_id),
+    ["x100", "xsem", "xpre", "xipca", "x110"]
+  );
+});
+
+test("a consolidada divide pelo principal de QUEM PROJETOU, e nao da carteira", () => {
+  const cdb = projetar(CDB);
+  const semFonte = projetar({ ...CDB, id: "a3", index_kind: "ipca" });
+
+  const total = somarProjecoes([cdb, semFonte]);
+  assert.equal(total.bruto, 107.2);
+  assert.equal(total.principal, 10000, "o IPCA nao entra no denominador");
+  // 107,20 / 10.000 = 1,072%. Com os R$ 10.000 do IPCA no denominador sairia
+  // 0,536% -- METADE do numero certo, dentro do plausivel e sem nada na tela
+  // denunciando. O `semProjecao` e que avisa que o total nao e a carteira toda.
+  assert.equal(total.rentabilidade, 0.01072);
+  assert.equal(total.semProjecao, 1);
+  assert.equal(total.percentualDoCdi, 100);
+});
+
+test("o % do CDI da carteira e ponderado por DINHEIRO e por JANELA", () => {
+  // R$ 100.000 a 100% do CDI e R$ 1.000 a 200% do CDI.
+  const grande = projetar(CDB, { principal: 100000 });
+  const pequeno = projetarRendimento({
+    ativo: { ...CDB, id: "a2", index_percentage: 200 },
+    principal: 1000,
+    serie: SERIE_CDI,
+    hoje: HOJE,
+  });
+  assert.equal(grande.percentualDoCdi, 100);
+  assert.equal(pequeno.percentualDoCdi, 201.02);
+
+  const total = somarProjecoes([grande, pequeno]);
+  // A MEDIA SIMPLES dos dois percentuais e 150,51% -- ela daria o mesmo peso a
+  // R$ 1.000 de um papel e a R$ 100.000 do outro, e diria que uma carteira de
+  // R$ 101.000 rendeu meio CDI a mais do que rendeu.
+  assert.equal(total.percentualDoCdi, 101);
+  assert.equal(total.semRegua, 0);
+});
+
+test("quem projetou mas ficou sem regua e CONTADO, e nao poluio percentual", () => {
+  const cdb = projetar(CDB);
+  const semRegua = projetar({ ...PREFIXADO_13, id: "a9" });
+
+  const total = somarProjecoes([cdb, semRegua]);
+  // Os dois entram no bruto e no principal -- os dois projetaram:
+  assert.equal(total.bruto, 209.57);
+  assert.equal(total.principal, 20000);
+  assert.equal(total.semProjecao, 0);
+  assert.equal(total.semRegua, 1);
+  // Mas o percentual da carteira so soma o par (bruto, cdi esperado) de quem
+  // tem regua: os R$ 102,37 do prefixado no numerador sem os R$ 10.000 dele no
+  // denominador inflariam a carteira para ~195% do CDI.
+  assert.equal(total.percentualDoCdi, 100);
+});
+
+test("as tres funcoes puras da regua, isoladas", () => {
+  assert.equal(rentabilidade(107.2, 10000), 0.01072);
+  assert.equal(rentabilidade(null, 10000), null);
+  assert.equal(rentabilidade(107.2, 0), null);
+  assert.equal(rentabilidade(107.2, -1), null);
+
+  // O piso, direto: 20 nao, 21 sim. E zero nao divide por zero.
+  assert.equal(taxaAnualEquivalente(0.01071982, 20), null);
+  assert.ok(taxaAnualEquivalente(0.01071982, 21) > 0);
+  assert.equal(taxaAnualEquivalente(0.01071982, 0), null);
+  assert.equal(taxaAnualEquivalente(0.01071982, -5), null);
+  assert.equal(taxaAnualEquivalente(null, 252), null);
+  // Perda de mais de 100% do principal nao e anualizavel: `Math.pow` de base
+  // negativa com expoente fracionario e NaN, e NaN nao chega na tela como erro.
+  assert.equal(taxaAnualEquivalente(-1.2, 252), null);
+  assert.equal(taxaAnualEquivalente(-1, 252), null);
+  // Um ano inteiro de dias uteis devolve a propria rentabilidade.
+  assert.equal(
+    Math.round(taxaAnualEquivalente(0.1365, DIAS_UTEIS_NO_ANO) * 100) / 100,
+    13.65
+  );
+
+  assert.equal(percentualDoCdiRealizado(0.0107, 0.0107), 100);
+  assert.equal(percentualDoCdiRealizado(0.0107, null), null);
+  assert.equal(percentualDoCdiRealizado(null, 0.0107), null);
+  // CDI zero na janela: a razao seria Infinity, e Infinity% na tela e pior do
+  // que "sem comparacao".
+  assert.equal(percentualDoCdiRealizado(0.0107, 0), null);
+  assert.equal(percentualDoCdiRealizado(0.0107, -0.001), null);
+});
+
+// =====================================================
+// SECAO 12 - O VALOR DA POSICAO -- `principal + bruto` (HMO-437)
 // =====================================================
 // Ate a HMO-436 este arquivo respondia so "quanto rendeu", e o rendimento
 // morria num card. O que entra no patrimonio e o VALOR: principal + bruto.
