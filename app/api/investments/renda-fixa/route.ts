@@ -10,11 +10,17 @@ import {
   type DiaDaSerie,
   type Projecao,
   indexadorValido,
+  ordenarPorPercentualDoCdi,
   primeiraCompraPorAtivo,
   projetarRendimento,
   somarProjecoes,
 } from "@/lib/renda-fixa";
-import { hojeEmBrasilia, serieDoPeriodo } from "@/lib/cdi";
+import {
+  SERIE_CDI_DIARIO,
+  SERIE_DO_INDEXADOR,
+  hojeEmBrasilia,
+  serieDoPeriodo,
+} from "@/lib/cdi";
 
 // =====================================================
 // GET /api/investments/renda-fixa
@@ -37,21 +43,41 @@ import { hojeEmBrasilia, serieDoPeriodo } from "@/lib/cdi";
 // (`node scripts/mutantes-renda-fixa.mjs`). O que mora aqui e o recorte: quem
 // sao os ativos, qual o principal de cada um e qual serie do SGS buscar.
 //
-// UMA REQUISICAO POR INDEXADOR, NAO POR ATIVO
-// -------------------------------------------
+// UMA REQUISICAO POR SERIE DO SGS, NAO POR ATIVO E NEM POR INDEXADOR
+// -------------------------------------------------------------------
 // Cinco CDBs de CDI compartilham a mesma serie 12. Buscar por ativo faria cinco
 // idas ao Banco Central para pedir a mesma coisa -- e, pior, cinco respostas que
 // podem chegar de instantes diferentes, com a tela somando rendimentos de dias
 // diferentes. A faixa pedida comeca na aplicacao MAIS ANTIGA do grupo e
 // `diasNoPeriodo` recorta o resto por ativo.
 //
+// O agrupamento e pela SERIE e nao pelo indexador porque `cdi` e `prefixado`
+// usam os dois a serie 12 -- ver SERIE_DO_INDEXADOR em lib/cdi.ts. Agrupar por
+// indexador traria a mesma serie duas vezes, e o mesmo defeito de instantes
+// diferentes voltaria entre dois ativos da MESMA carteira (HMO-440).
+//
+// A REGUA DE COMPARACAO EXIGE A SERIE 12 SEMPRE
+// ----------------------------------------------
+// O "% do CDI realizado" (HMO-440) divide o rendimento do papel pelo que 100% do
+// CDI deu na mesma janela, e e ele que poe "110% do CDI" e "prefixado 13% a.a."
+// na mesma regua. Uma carteira so de Selic ou so de prefixado nao traria a serie
+// 12 por conta propria, e e justamente ela que mais precisa da regua -- por isso
+// a 12 entra na lista com a borda esquerda de TODAS as series em uso.
+//
 // O RECORTE POR CONTA (?account_id=, HMO-436)
 // -------------------------------------------
 // Mesma leitura de /api/investments, e a mesma funcao: ausente e a renda fixa
 // toda, com valor e so a daquela conta. Aqui o recorte tem um efeito a mais que
 // vale notar -- ele diminui a faixa pedida ao Banco Central, porque
-// `inicioPorIndexador` passa a olhar so os ativos do recorte. Isso e economia,
-// nao mudanca de numero: `diasNoPeriodo` ja recortava por ativo.
+// `inicioPorSerie` passa a olhar so os ativos do recorte. Isso e economia, nao
+// mudanca de numero: `diasNoPeriodo` ja recortava por ativo.
+//
+// A regua tambem sobrevive ao recorte, e por construcao: a borda esquerda e o
+// menor inicio DO RECORTE, entao a serie 12 continua cobrindo a janela de cada
+// ativo que sobrou. O que muda e so o "% do CDI" da CARTEIRA no resumo, que
+// passa a ser o daquela conta -- e e isso que a tela esta pedindo quando
+// recorta. O "% do CDI" de cada LINHA nao muda com o recorte, porque ele e
+// medido na janela do proprio papel.
 // =====================================================
 
 export async function GET(request: NextRequest) {
@@ -120,7 +146,11 @@ export async function GET(request: NextRequest) {
     if (listaAtivos.length === 0) {
       return NextResponse.json({
         projections: [],
-        summary: { bruto: 0, liquido: 0, porDia: 0, semProjecao: 0 },
+        // `somarProjecoes([])` daria o mesmo, e o literal existe so para a rota
+        // nao montar resposta nenhuma quando nao ha ativo. Campo novo no resumo
+        // tem de entrar NOS DOIS lugares, senao a tela le `undefined` aqui e
+        // numero la -- e `undefined` em `.toFixed` e TypeError no cliente.
+        summary: somarProjecoes([]),
         hoje: hojeEmBrasilia(),
       });
     }
@@ -165,35 +195,89 @@ export async function GET(request: NextRequest) {
 
     const hoje = hojeEmBrasilia();
 
-    // Agrupa por indexador e guarda a aplicacao mais antiga de cada grupo -- e
-    // ela que define a borda esquerda da faixa pedida ao SGS.
-    const inicioPorIndexador: Record<string, string> = {};
+    // Agrupa pela SERIE DO SGS e guarda a aplicacao mais antiga de cada grupo --
+    // e ela que define a borda esquerda da faixa pedida.
+    //
+    // Pela SERIE e nao pelo INDEXADOR: `cdi` e `prefixado` apontam os dois para
+    // a serie 12 (ver SERIE_DO_INDEXADOR, em lib/cdi.ts, e o uso da serie como
+    // CALENDARIO de dias uteis no prefixado). Agrupar por indexador pediria a
+    // mesma serie 12 duas vezes, em faixas diferentes, e as duas respostas podem
+    // chegar de instantes diferentes -- a armadilha que o comentario acima
+    // descreve por ativo, um nivel acima: um boletim novo entre as duas chamadas
+    // daria ao prefixado um dia util que o CDB ao lado nao teve.
+    const inicioPorSerie: Record<string, string> = {};
+    // Qual indexador representa cada serie na chamada -- `serieDoPeriodo` recebe
+    // o nome do indexador e mapeia para o numero. O primeiro de
+    // SERIE_DO_INDEXADOR que aponta para a serie serve, e a escolha e
+    // deterministica porque a ordem das chaves do literal e fixa.
+    const representanteDaSerie: Record<string, string> = {};
+
     for (const a of listaAtivos) {
-      const ix = indexadorValido(a.index_kind);
-      if (!ix) continue;
       const inicio = a.applied_date || primeiraCompra[a.id] || null;
       if (!inicio) continue;
-      const atual = inicioPorIndexador[ix];
-      if (!atual || inicio < atual) inicioPorIndexador[ix] = inicio;
+      const ix = indexadorValido(a.index_kind);
+      if (!ix) continue;
+      const numero = SERIE_DO_INDEXADOR[ix];
+      if (!numero) continue;
+      const chave = String(numero);
+      if (!representanteDaSerie[chave]) representanteDaSerie[chave] = ix;
+      const atual = inicioPorSerie[chave];
+      if (!atual || inicio < atual) inicioPorSerie[chave] = inicio;
     }
 
-    const serieDoIndexador: Record<string, DiaDaSerie[]> = {};
+    // A regua de comparacao e o CDI a 100%, e ela vale para TODO ativo que
+    // projeta -- e um Selic ou um prefixado que mais precisam dela, e sao
+    // exatamente os dois que nao trariam a serie 12 por conta propria. Por isso
+    // a serie 12 entra na lista com a borda esquerda de TODAS as series, e nao
+    // com a do grupo dela: um denominador que comeca depois da aplicacao do
+    // ativo e parcial, e a razao sai alta e plausivel.
+    // `rentabilidadeDoCdiNaJanela` confere a contagem e devolve "sem regua"
+    // quando isto nao fecha, mas pedir a faixa certa e aqui.
+    //
+    // A borda sai de `inicioPorSerie` e nao da lista de ativos de proposito: um
+    // IPCA de cinco anos atras nunca vai ter regua (ele responde `sem_fonte`),
+    // e deixa-lo definir a borda pediria cinco anos de serie 12 ao Banco Central
+    // em cada carregamento da tela, para nada.
+    const chaves = Object.keys(inicioPorSerie);
+    if (chaves.length > 0) {
+      let borda = inicioPorSerie[chaves[0]];
+      for (const c of chaves) {
+        if (inicioPorSerie[c] < borda) borda = inicioPorSerie[c];
+      }
+      const chaveDoCdi = String(SERIE_CDI_DIARIO);
+      if (!representanteDaSerie[chaveDoCdi]) {
+        representanteDaSerie[chaveDoCdi] = "cdi";
+      }
+      inicioPorSerie[chaveDoCdi] = borda;
+    }
+
+    const serieDoNumero: Record<string, DiaDaSerie[]> = {};
     // `Object.keys` e nao `for...of` em entries: o target do tsconfig deste
     // projeto e anterior ao ES2017 e `Object.entries` nao esta na lib padrao.
-    for (const ix of Object.keys(inicioPorIndexador)) {
-      const r = await serieDoPeriodo(ix, inicioPorIndexador[ix], hoje);
-      // Falha do Banco Central nao derruba a resposta: o ativo daquele indexador
+    for (const chave of Object.keys(inicioPorSerie)) {
+      const r = await serieDoPeriodo(
+        representanteDaSerie[chave],
+        inicioPorSerie[chave],
+        hoje
+      );
+      // Falha do Banco Central nao derruba a resposta: o ativo daquela serie
       // sai com `motivo: "indisponivel"` -- ver projetarRendimento, que trata
-      // serie vazia assim. A tela diz qual e o caso.
-      if (r.ok) serieDoIndexador[ix] = r.serie;
+      // serie vazia assim. A tela diz qual e o caso. E uma falha SO na serie 12
+      // com a 11 de pe deixa o Selic com rendimento e sem regua, que tambem tem
+      // frase propria.
+      if (r.ok) serieDoNumero[chave] = r.serie;
     }
+
+    const serieCdi = serieDoNumero[String(SERIE_CDI_DIARIO)] || null;
 
     const projections: Projecao[] = listaAtivos.map((ativo) => {
       const ix = indexadorValido(ativo.index_kind);
+      const numero = ix ? SERIE_DO_INDEXADOR[ix] : undefined;
       return projetarRendimento({
         ativo,
         principal: principalPorAtivo[ativo.id] ?? 0,
-        serie: ix ? serieDoIndexador[ix] || [] : [],
+        serie: numero ? serieDoNumero[String(numero)] || [] : [],
+        serieCdi,
         primeiraCompra: primeiraCompra[ativo.id] || null,
         hoje,
       });
@@ -213,8 +297,19 @@ export async function GET(request: NextRequest) {
     const contaPorAtivo: Record<string, string | null> = {};
     for (const a of listaAtivos) contaPorAtivo[a.id] = a.account_id ?? null;
 
+    // A ORDEM vem ANTES do `.map` do `account_id`, e a composicao nao e livre:
+    // `ordenarPorPercentualDoCdi` recebe `Projecao[]` e o `.map` produz um objeto
+    // MAIS LARGO que `Projecao`. Inverter os dois compila (o objeto largo
+    // satisfaz o tipo), ordena certo e nao muda numero nenhum -- mas a ordem
+    // passaria a depender de uma lista que ninguem mais trata como `Projecao[]`,
+    // e e esse tipo de acoplamento silencioso que some numa leitura futura.
+    //
+    // A lista sai ordenada pela regua e nao por `symbol`: o pedido da HMO-432
+    // termina em comparar rentabilidade, e o primeiro passo de comparar e ver os
+    // dois extremos nas pontas. `somarProjecoes` nao depende da ordem, e por
+    // isso ele continua recebendo `projections` como veio.
     return NextResponse.json({
-      projections: projections.map((p) => ({
+      projections: ordenarPorPercentualDoCdi(projections).map((p) => ({
         ...p,
         account_id: contaPorAtivo[p.asset_id] ?? null,
       })),

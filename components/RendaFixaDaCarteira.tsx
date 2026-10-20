@@ -23,6 +23,18 @@
 // faria a tela destacar o numero menos certo dos dois -- e, num isento, os dois
 // numeros sao iguais e o destaque nao diria nada.
 //
+// A REGUA DE COMPARACAO, E POR QUE ELA NAO E A TAXA AO ANO (HMO-440)
+// -------------------------------------------------------------------
+// Bruto, liquido e por dia dizem QUANTO cada papel rendeu, e nenhum dos tres
+// compara dois papeis: R$ 107 em tres anos e R$ 107 em tres semanas sao o mesmo
+// numero aqui. A linha ganhou tres numeros que comparam -- acumulado do periodo,
+// taxa anual equivalente e "% do CDI realizado" -- e e o ULTIMO que ordena a
+// lista, porque e o unico que nao extrapola: ele divide dois rendimentos medidos
+// na MESMA janela, e por isso um papel de tres dias e um de tres anos recebem
+// numeros honestos. A taxa ao ano nao sai abaixo de 21 dias uteis, e no lugar
+// dela a linha diz por que. A aritmetica, o piso e a medicao que o escolheu
+// moram em lib/renda-fixa.ts.
+//
 // A PALAVRA "ESTIMADO" NAO E DECORACAO
 // ------------------------------------
 // Ela e o que separa esta tela de um extrato. A projecao usa a taxa do CDI
@@ -53,9 +65,10 @@ import {
 } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertTriangle, TrendingUp } from "lucide-react";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatCurrency, formatDate, formatPercentage } from "@/lib/utils";
 import {
   INDEXADORES,
+  PISO_DE_DIAS_UTEIS_PARA_ANUALIZAR,
   PRODUTOS,
   ROTULO_INDEXADOR,
   ROTULO_PRODUTO,
@@ -70,6 +83,10 @@ export interface ResumoDeRendaFixa {
   liquido: number;
   porDia: number;
   semProjecao: number;
+  principal: number;
+  rentabilidade: number | null;
+  percentualDoCdi: number | null;
+  semRegua: number;
 }
 
 export interface RendaFixaDaRota {
@@ -118,6 +135,67 @@ export function rotuloDaRemuneracao(p: Projecao): string {
   return partes.join(" ");
 }
 
+/**
+ * A rentabilidade vem em FRACAO e `formatPercentage` espera PERCENTUAL.
+ *
+ * Esta funcao existe para a multiplicacao por 100 morar num lugar so. Passar a
+ * fracao direto nao da erro: 0,0107 sai como "0,01%" -- cem vezes menor, dentro
+ * da faixa do plausivel e sem nada na tela denunciando.
+ */
+function percentualDaFracao(fracao: number): string {
+  return formatPercentage(fracao * 100);
+}
+
+/**
+ * A regua de comparacao de UMA linha (HMO-440).
+ *
+ * Tres numeros, nesta ordem e com estes pesos: o acumulado do periodo (o que de
+ * fato aconteceu), a taxa anual equivalente (o que compara idades) e o % do CDI
+ * realizado em destaque de `Badge` (a regua que poe um 110% do CDI e um
+ * prefixado de 13% a.a. lado a lado).
+ *
+ * Os dois `null` tem FRASE e nao buraco: "sem taxa ao ano" e "sem regua" sao
+ * estados diferentes e com causas diferentes, e um espaco vazio na tela se le
+ * como defeito do app.
+ */
+function ReguaDaLinha({ p }: { p: Projecao }) {
+  if (p.rentabilidade === null) return null;
+
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+      <span className="text-base font-semibold text-foreground">
+        {percentualDaFracao(p.rentabilidade)}
+      </span>
+      <span className="text-xs text-muted-foreground">no período</span>
+
+      {p.taxaAnual !== null ? (
+        <>
+          <span className="text-base font-semibold text-foreground">
+            {formatPercentage(p.taxaAnual)} a.a.
+          </span>
+          <span className="text-xs text-muted-foreground">equivalente</span>
+        </>
+      ) : (
+        <span className="text-xs text-muted-foreground">
+          — menos de {PISO_DE_DIAS_UTEIS_PARA_ANUALIZAR} dias úteis, então a taxa
+          ao ano ainda seria chute: esticar poucos dias para doze meses amplia
+          qualquer oscilação do boletim.
+        </span>
+      )}
+
+      {p.percentualDoCdi !== null ? (
+        <Badge variant="secondary">
+          {formatPercentage(p.percentualDoCdi)} do CDI
+        </Badge>
+      ) : (
+        <span className="text-xs text-muted-foreground">
+          — sem comparação com o CDI nesta janela.
+        </span>
+      )}
+    </div>
+  );
+}
+
 function LinhaDaProjecao({ p }: { p: Projecao }) {
   const temNumero = p.motivo === null && p.bruto !== null && p.liquido !== null;
 
@@ -161,6 +239,8 @@ function LinhaDaProjecao({ p }: { p: Projecao }) {
                 : `líquido estimado, após ${p.aliquota}% de IR`}
             </span>
           </div>
+
+          <ReguaDaLinha p={p} />
 
           <p className="text-xs text-muted-foreground">
             {p.diasUteis === 0
@@ -212,27 +292,65 @@ export function RendaFixaDaCarteira({ dados }: { dados: RendaFixaDaRota | null }
         <CardDescription>
           O rendimento sai da taxa publicada pelo Banco Central e do percentual
           que você cadastrou. O líquido é estimado: ele supõe resgate hoje, e a
-          alíquota de IR cai com o tempo.
+          alíquota de IR cai com o tempo. A lista vem ordenada pelo % do CDI
+          realizado — é esse número que compara um 110% do CDI com um prefixado
+          de 13% a.a., e ele é medido no bruto, para que a isenção da LCI não
+          apareça como rendimento.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {temAlgum && (
-          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-md bg-muted p-3">
-            <span className="text-xs text-muted-foreground">Total</span>
-            <span className="text-2xl font-bold text-success">
-              {formatCurrency(summary.bruto)}
-            </span>
-            <span className="text-xs text-muted-foreground">bruto</span>
-            <span className="text-base font-semibold text-foreground">
-              {formatCurrency(summary.liquido)}
-            </span>
-            <span className="text-xs text-muted-foreground">
-              líquido estimado
-            </span>
-            {summary.porDia > 0 && (
-              <span className="text-xs text-muted-foreground">
-                · {formatCurrency(summary.porDia)} por dia útil
+          <div className="space-y-1 rounded-md bg-muted p-3">
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span className="text-xs text-muted-foreground">Total</span>
+              <span className="text-2xl font-bold text-success">
+                {formatCurrency(summary.bruto)}
               </span>
+              <span className="text-xs text-muted-foreground">bruto</span>
+              <span className="text-base font-semibold text-foreground">
+                {formatCurrency(summary.liquido)}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                líquido estimado
+              </span>
+              {summary.porDia > 0 && (
+                <span className="text-xs text-muted-foreground">
+                  · {formatCurrency(summary.porDia)} por dia útil
+                </span>
+              )}
+            </div>
+
+            {/* A rentabilidade CONSOLIDADA (HMO-440). O denominador e o
+                principal de quem projetou, nao o da carteira -- ver
+                `somarProjecoes`. A frase diz isso em vez de deixar o numero
+                parecer que ele cobre tudo. */}
+            {summary.rentabilidade !== null && (
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <span className="text-base font-semibold text-foreground">
+                  {percentualDaFracao(summary.rentabilidade)}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  sobre os {formatCurrency(summary.principal)} aplicados
+                </span>
+                {summary.percentualDoCdi !== null && (
+                  <Badge variant="secondary">
+                    {formatPercentage(summary.percentualDoCdi)} do CDI
+                  </Badge>
+                )}
+              </div>
+            )}
+
+            {/* Nao ha taxa ao ano consolidada: anualizar exige UMA janela, e a
+                carteira tem uma por papel. A nota explica a ausencia, que de
+                outro modo se le como numero que faltou carregar. */}
+            {summary.percentualDoCdi !== null && (
+              <p className="text-xs text-muted-foreground">
+                O % do CDI da carteira é ponderado pelo dinheiro e pela janela de
+                cada papel — é o que a carteira rendeu dividido pelo que 100% do
+                CDI teria rendido sobre o mesmo dinheiro, no mesmo período.
+                {summary.semRegua > 0 &&
+                  ` ${summary.semRegua} ${summary.semRegua === 1 ? "ativo entrou" : "ativos entraram"} no total mas ${summary.semRegua === 1 ? "ficou" : "ficaram"} fora dessa comparação.`}
+              </p>
             )}
           </div>
         )}
