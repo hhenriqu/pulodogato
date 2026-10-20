@@ -505,6 +505,11 @@ const inicialM = () => ({
   preco: "",
   taxas: "",
   data: "2026-10-08",
+  // O campo de renda fixa (HMO-439). Esta fixture copia o estado do formulario
+  // campo a campo de proposito: faltando aqui, os casos deste bloco passariam
+  // verdes sobre um objeto que nao e o da tela -- inclusive o ultimo, que varre
+  // as chaves do objeto de entrada.
+  valorDoAporte: "",
 });
 
 /** O que a pessoa acabou de lancar: a compra de 100 PETR4 a R$ 31,50. */
@@ -515,6 +520,24 @@ const movimentada = () => ({
   quantidade: "100",
   preco: "31.50",
   taxas: "4.90",
+  data: "2026-03-15",
+});
+
+/**
+ * O aporte de RENDA FIXA: R$ 10.000,00 num CDB, pelo campo em reais (HMO-439).
+ *
+ * Os dois campos de cota ficam vazios, como a tela os deixa -- em renda fixa o
+ * modal nao monta nenhum dos dois. E os valores sao DISTINTOS entre si
+ * (aporte `10000.00`, taxas `12.30`): valor default colapsa campos que a feature
+ * separa, e com aporte e taxas iguais um reset que limpasse so um dos dois
+ * passaria igual.
+ */
+const aportada = () => ({
+  ...inicialM(),
+  assetId: "ativo-cdb",
+  kind: "buy",
+  valorDoAporte: "10000.00",
+  taxas: "12.30",
   data: "2026-03-15",
 });
 
@@ -533,6 +556,30 @@ test("quantidade e preco SAO LIMPOS -- e isso que impede errar o preco medio", (
     "sem quantidade o campo `required` recusa o reenvio em vez de aceita-lo"
   );
   assert.equal(proxima.preco, "");
+});
+
+test("o VALOR DO APORTE de renda fixa tambem e limpo -- o principal do CDB dobraria", () => {
+  const antes = aportada();
+  // CONTROLE: em renda fixa a tela nao tem quantidade nem preco, entao o
+  // `required` que barra o segundo clique e o DESTE campo. Com ele preenchido,
+  // um segundo clique em "Lançar" grava o mesmo aporte: o principal do CDB vira
+  // R$ 20.000 e, de quebra, o CDI que lib/renda-fixa.ts projeta sobre esse
+  // principal dobra tambem -- todo dia, para sempre.
+  assert.equal(antes.valorDoAporte, "10000.00");
+  assert.equal(antes.quantidade, "", "renda fixa nao passa pelo campo de cota");
+  assert.equal(antes.preco, "");
+
+  const proxima = proximaMovimentacaoDeCarteira(antes, inicialM());
+
+  assert.equal(
+    proxima.valorDoAporte,
+    "",
+    "sem valor o campo `required` recusa o reenvio em vez de aceita-lo"
+  );
+  // Limpar os tres de cota e deixar este na tela e o defeito que este caso
+  // existe para pegar: os outros tres JA estavam vazios, logo as assercoes
+  // deles passariam verdes sobre o aporte intacto.
+  assert.equal(proxima.taxas, "");
 });
 
 test("as taxas tambem saem: corretagem herdada e preco medio errado pelo outro lado", () => {

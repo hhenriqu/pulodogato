@@ -3865,6 +3865,135 @@ jobs:
       - name: 'Os campos que cada tela mostra (contas)'
         run: npm run test:campos-da-conta
 
+      # O MESMO defeito de arvore na CARTEIRA (HMO-439): o formulario de
+      # movimentacao pedia quantidade e preco unitario para tudo, inclusive para
+      # um CDB. Alem de absurdo na tela, e perigoso no dado -- o preco medio e
+      # DERIVADO das movimentacoes, entao valor digitado na coluna errada nao
+      # aparece como linha estranha: ele move a media, e dela saem o lucro e a
+      # rentabilidade exibidos.
+      #
+      # A suite renderiza `CamposDaMovimentacao` com react-dom/server e mede,
+      # por tipo de ativo, QUAIS campos aparecem -- sempre com o ativo do outro
+      # tipo como controle no mesmo caso. Roda em segundos, sem banco.
+      - name: 'Os campos que cada tela mostra (aporte de renda fixa)'
+        run: npm run test:aporte-de-renda-fixa
+
+      # Controle negativo das DUAS metades da HMO-439. As suites afirmam sobre
+      # AUSENCIA ("o CDB NAO tem campo de quantidade") e sobre COLUNA ("o valor
+      # foi para `quantity`, nao para `unit_price`"), e as duas formas passam
+      # verdes por acidente: ausencia passa quando a sonda deixa de achar o que
+      # deveria procurar, e as duas colunas trocadas somam o MESMO custo.
+      - name: 'A verificacao sabe falhar (aporte de renda fixa)'
+        run: |
+          set -uo pipefail
+          CAMPOS=components/investments/ModalDeMovimentacao.tsx
+          CONTA=lib/investments.ts
+          cp $CAMPOS $CAMPOS.orig
+          cp $CONTA $CONTA.orig
+          trap 'mv $CAMPOS.orig $CAMPOS; mv $CONTA.orig $CONTA' EXIT
+
+          # O mutador e `node` e nao `sed`: dois dos quatro mutantes precisam de
+          # VARIAS LINHAS para serem inequivocos, e `String.replace` troca so a
+          # primeira ocorrencia -- um trecho repetido mutaria o lugar errado e o
+          # controle negativo ficaria vermelho pelo motivo errado. Aqui a troca
+          # ABORTA quando o trecho nao e unico.
+          cat > /tmp/mutar-aporte.mjs <<'FIM'
+          import { readFileSync, writeFileSync } from "node:fs";
+          const [arquivo, de, para] = process.argv.slice(2);
+          const s = readFileSync(arquivo, "utf8");
+          const n = s.split(de).length - 1;
+          if (n !== 1) {
+            console.error(
+              `::error::O trecho a mutar aparece ${n}x em ${arquivo} -- o controle negativo nao esta medindo nada.`
+            );
+            process.exit(1);
+          }
+          writeFileSync(arquivo, s.replace(de, para));
+          FIM
+
+          # `rm -rf` do .tmp antes de cada volta: o diretorio compilado guarda o
+          # mutante ANTERIOR, e um alvo que reaproveitasse o lote mediria o
+          # codigo errado -- verde com o mutante plantado, pelo motivo mais
+          # difcil de enxergar que existe.
+          reprovaTela() {
+            rm -rf .tmp-aporte-de-renda-fixa
+            if npm run test:aporte-de-renda-fixa > /dev/null 2>&1; then
+              echo "::error::$1"
+              exit 1
+            fi
+            cp $CAMPOS.orig $CAMPOS
+          }
+
+          reprovaConta() {
+            rm -rf .tmp-investments
+            if npm run test:investments > /dev/null 2>&1; then
+              echo "::error::$1"
+              exit 1
+            fi
+            cp $CONTA.orig $CONTA
+          }
+
+          # 1) A RENDA FIXA NUNCA E RECONHECIDA: o CDB volta a pedir quantidade
+          #    e preco unitario. E a issue ao contrario -- o estado de antes dela
+          #    --, e esta aqui para provar que o oraculo esta ligado no que a
+          #    issue pediu.
+          node /tmp/mutar-aporte.mjs $CAMPOS \
+            '  return ativos.some((a) => a.id === assetId && a.type === "fixed_income");' \
+            '  return false;'
+          reprovaTela "Verde com o CDB pedindo quantidade e preco unitario."
+
+          # 2) O DEFEITO OPOSTO: toda tela e renda fixa. Quem abre o modal pelo
+          #    botao do cabecalho, sem ativo escolhido, passa a ver "Valor do
+          #    aporte (R$)" para lancar uma compra de PETR4 -- e o campo de
+          #    quantidade de acoes desaparece do app.
+          node /tmp/mutar-aporte.mjs $CAMPOS \
+            '  return ativos.some((a) => a.id === assetId && a.type === "fixed_income");' \
+            '  return true;'
+          reprovaTela "Verde com a tela de acao pedindo valor de aporte."
+
+          # 3) O ROTULO QUE MENTE: o resgate passa a se chamar aporte. Nenhuma
+          #    conta erra, nenhuma coluna muda -- a tela so pede o valor de uma
+          #    operacao chamando-a pelo nome da operacao oposta, que e como se
+          #    lanca um resgate no lugar de um aporte.
+          node /tmp/mutar-aporte.mjs $CAMPOS \
+            '  sell: "Valor do resgate (R$)",' \
+            '  sell: "Valor do aporte (R$)",'
+          reprovaTela "Verde com o resgate rotulado como aporte."
+
+          # 4) AS DUAS COLUNAS TROCADAS. O mutante de dinheiro: `quantity = 1` e
+          #    `unit_price = 10000` somam o MESMO custo de R$ 10.000,00 que a
+          #    convencao certa, entao nenhum total da tela discorda. O que muda e
+          #    a QUANTIDADE e o PRECO MEDIO -- e e deles que saem o lucro e a
+          #    rentabilidade exibidos daquele papel.
+          #
+          #    A troca sai em DUAS chamadas de uma linha cada, e nao numa de
+          #    duas linhas: um trecho multilinha dentro deste `run:` dedenta
+          #    abaixo da margem do bloco YAML e FECHA o escalar -- o arquivo
+          #    vira outro job, calado. Cada linha e unica no arquivo, e o
+          #    mutador aborta se deixar de ser.
+          node /tmp/mutar-aporte.mjs $CONTA \
+            '    quantity: entrada.valorDoAporte,' \
+            '    quantity: ENTRA_O_PRECO,'
+          node /tmp/mutar-aporte.mjs $CONTA \
+            '    unitPrice: PRECO_UNITARIO_DA_RENDA_FIXA,' \
+            '    unitPrice: entrada.valorDoAporte,'
+          node /tmp/mutar-aporte.mjs $CONTA \
+            '    quantity: ENTRA_O_PRECO,' \
+            '    quantity: PRECO_UNITARIO_DA_RENDA_FIXA,'
+          reprovaConta "Verde com o valor do aporte gravado como preco unitario."
+
+      - name: 'A arvore voltou ao lugar depois de "A verificacao sabe falhar (aporte de renda fixa)"'
+        run: |
+          # O `.tmp-*` compilado guarda o mutante mesmo depois de o `.ts` voltar,
+          # e os passos seguintes rodariam sobre ele.
+          rm -rf .tmp-*
+          git status --porcelain > "$RUNNER_TEMP/arvore-agora.txt"
+          if ! diff -q "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" > /dev/null; then
+            echo "::error::O controle negativo acima nao restaurou a arvore. Os passos seguintes rodariam sobre codigo mutado."
+            diff "$RUNNER_TEMP/arvore-base.txt" "$RUNNER_TEMP/arvore-agora.txt" || true
+            exit 1
+          fi
+
       # O modo offline das duas. A tela antiga era precacheada; as duas novas
       # entraram no lugar dela. Deixar uma de fora apagaria metade do modo
       # offline por um caminho que nao parece com isso -- o menu abriria sem rede

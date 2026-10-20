@@ -37,6 +37,47 @@
 // primeiro ativo -- um numero alarmante e falso. Avaliar pelo custo diz a
 // verdade possivel ("nao sei quanto vale hoje, sei quanto custou") e o aviso da
 // tela cobre o resto.
+//
+// RENDA FIXA NAO TEM COTA: `quantity` SAO REAIS E `unit_price` E 1 (HMO-439)
+// --------------------------------------------------------------------------
+// Um CDB nao se compra em cotas a um preco unitario -- se aplica um VALOR numa
+// data. As duas colunas da 021 continuam servindo, com uma convencao declarada:
+//
+//     aporte de R$ 10.000,00  ->  quantity = 10000, unit_price = 1
+//
+// Ou seja `quantity` passa a ser "quantos reais foram aplicados" e `unit_price`
+// e "quanto vale hoje cada real aplicado". Nada nesta aritmetica muda: `custo`
+// e `quantidade * preco + taxas`, que da os mesmos R$ 10.000,00 que a outra
+// convencao possivel (`quantity = 1`, `unit_price = valor`) daria.
+//
+// POR QUE ESTA E NAO A OUTRA -- a medicao que decidiu (HMO-439, 20/10/2026)
+//
+// 1. NAO HA DADO PARA PRESERVAR. Em producao, `investment_assets` e
+//    `investment_transactions` estao FISICAMENTE VAZIAS: `relpages = 0` nas duas
+//    (leitura de catalogo, imune a RLS, valendo para todos os usuarios), com
+//    `n_tup_ins = n_tup_del` em `pg_stat_user_tables`, e a conta de teste lida
+//    pela propria sessao devolve `[]` nas duas tabelas. Entao escolher aqui nao
+//    reescreve principal de ninguem -- mas escreve a convencao de TODO dado
+//    futuro, e por isso a escolha e declarada e nao implicita.
+// 2. E A CONVENCAO QUE O REPO JA USA. A unica fixture de renda fixa da suite
+//    (`scripts/test-investments.mjs`, o TESOURO da alocacao) e
+//    `lanc("a3", "buy", 1000, 1)` com `current_price: 1` -- R$ 1.000 aplicados.
+// 3. E A UNICA QUE SOBREVIVE AO SEGUNDO APORTE, que e o caso para o qual o
+//    formulario existe. Com `quantity = 1`, dois aportes (R$ 10.000 e R$ 5.000)
+//    deixam `total_quantity = 2` e `average_price = 7.500` -- um numero que a
+//    tela imprime como "Preco medio" e que nao significa nada. Pior: a tela
+//    avalia a posicao como `quantidade * current_price`, entao quem informasse
+//    "este CDB vale hoje R$ 15.200" veria R$ 30.400 na carteira, um erro de
+//    dinheiro PLAUSIVEL (exatamente 2x) e sem linha estranha para auditar.
+//    Com reais em `quantity`, `average_price` e sempre R$ 1,00, e o mesmo erro
+//    de digitacao daria um numero absurdo o suficiente para ser visto.
+//
+// O que esta convencao deliberadamente NAO tenta fazer e guardar o rendimento:
+// a posicao de renda fixa vale `principal` aqui, e o CDI acumulado e PROJETADO
+// por lib/renda-fixa.ts a partir deste mesmo `total_invested`. Um resgate
+// lancado como `sell` baixa principal e nao produz "resultado realizado" --
+// e o certo neste modelo: o rendimento ja esta sendo contado do outro lado, e
+// soma-lo aqui tambem seria o contar duas vezes.
 
 export type AssetType = "stock" | "fii" | "fixed_income" | "international";
 export type InvestmentKind = "buy" | "sell" | "dividend";
@@ -441,4 +482,58 @@ export function quantidadeDisponivel(
 ): number {
   const doAtivo = lancamentos.filter((l) => l.asset_id === assetId);
   return arredondar(replay(doAtivo).quantidade, 8);
+}
+
+// ---------------------------------------------------------------------------
+// O APORTE EM REAIS -> O PAR DE COLUNAS (HMO-439)
+// ---------------------------------------------------------------------------
+
+/**
+ * O preco unitario de toda linha de renda fixa: R$ 1,00 por real aplicado.
+ *
+ * String e nao numero porque e assim que o valor viaja do formulario para o
+ * corpo do POST, e porque `investment_transactions.unit_price` tem CHECK
+ * `> 0` -- um `1` que virasse `0` por conversao em algum lugar do caminho seria
+ * recusado pelo banco, nao gravado em silencio.
+ */
+export const PRECO_UNITARIO_DA_RENDA_FIXA = "1";
+
+/** O par que `POST /api/investments/transactions` recebe. */
+export interface ParDeGravacao {
+  quantity: string;
+  unitPrice: string;
+}
+
+/**
+ * Traduz o que a pessoa digitou para as duas colunas da 021.
+ *
+ * Renda fixa tem UM campo de dinheiro na tela e precisa de DUAS colunas no
+ * banco; os outros tipos tem os dois campos e passam direto. A traducao mora
+ * aqui, e nao no `onSubmit` da tela, por dois motivos:
+ *
+ *   - e uma decisao de dinheiro, e as decisoes de dinheiro deste app moram em
+ *     arquivo puro com suite que compara numero com numero -- ver o cabecalho;
+ *   - escrita na tela, ela seria invisivel para a suite e para os mutantes, e
+ *     um `unitPrice` trocado por `quantity` aqui nao levanta excecao nenhuma:
+ *     grava um CDB de R$ 1,00 com "10.000 de preco unitario", que soma o MESMO
+ *     custo e envenena so a quantidade e o preco medio.
+ *
+ * Nao valida nada: quem recusa o aporte vazio e a tela (com a frase certa) e a
+ * rota (com 400). Devolver a string crua e deliberado -- `Number("")` e ZERO,
+ * e um zero montado aqui seria um aporte de R$ 0,00 aceito pelo caminho todo.
+ */
+export function lancamentoDeCarteiraParaGravar(entrada: {
+  ehRendaFixa: boolean;
+  quantidade: string;
+  preco: string;
+  valorDoAporte: string;
+}): ParDeGravacao {
+  if (!entrada.ehRendaFixa) {
+    return { quantity: entrada.quantidade, unitPrice: entrada.preco };
+  }
+
+  return {
+    quantity: entrada.valorDoAporte,
+    unitPrice: PRECO_UNITARIO_DA_RENDA_FIXA,
+  };
 }

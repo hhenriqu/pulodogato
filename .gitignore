@@ -653,3 +653,9 @@ next-env.d.ts
 # O emit das DUAS rotas que consultam a travessa de arquivar o grupo -- apagar
 # o grupo e sair como ultimo membro (HMO-426).
 /.tmp-travessa-de-arquivar/
+
+# O emit do MODAL DE MOVIMENTACAO da carteira, para a suite renderizar os
+# campos de producao e medir o que a renda fixa mostra (HMO-439). Artefato, nao
+# fonte: um `.tmp-*` fora do .gitignore chega a ser commitado em cima de
+# arquivo de fonte -- ver a entrada do .tmp-parcelamento acima.
+/.tmp-aporte-de-renda-fixa/
