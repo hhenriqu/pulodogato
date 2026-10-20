@@ -272,6 +272,7 @@
     "expected_date",
     "group_id",
     "id",
+    "include_in_total",
     "installment_number",
     "installment_parent_id",
     "installment_total",
