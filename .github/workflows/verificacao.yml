@@ -9121,3 +9121,31 @@ jobs:
       # rastreada) e exige que alguma das tres suites fique vermelha em cada um.
       - name: Os mutantes do patrimonio da carteira (as suites sabem reprovar?)
         run: npm run mutantes:patrimonio-da-carteira
+
+      # A CALCULADORA DOS TRES CAMPOS DO EMPRESTIMO (HMO-446, F2 da HMO-444).
+      #
+      # `lib/juros-do-emprestimo.ts` e pura e nao toca banco nenhum: ela decide o
+      # total a receber a partir da taxa, a taxa a partir do total, e o rateio de
+      # cada parcela entre principal que volta e juro ganho.
+      #
+      # Por que ela tem suite propria: o defeito desta familia nao levanta excecao
+      # e nao quebra CHECK nenhum. `(1 + taxa)` virando `(1 - taxa)` faz o MyBank
+      # emprestar R$ 1.000 a 20% e receber R$ 800 de volta -- a serie soma exato, o
+      # banco aceita (`amount > 0`, `principal > 0`) e nenhuma tela reclama. E o
+      # rateio sem a ultima parcela absorvendo o centavo erra o TOTAL sem errar
+      # linha nenhuma: 12 x 83,33 sao 999,96, e os 4 centavos de principal viram
+      # juro sem que nenhuma das 24 pernas explique por que.
+      - name: A calculadora dos tres campos do emprestimo (juro, total, rateio)
+        run: npm run test:juros-do-emprestimo
+
+      # O controle negativo da suite acima -- ela SABE REPROVAR?
+      #
+      # Os dois mutantes que a issue nomeia estao na lista: `(1 + taxa)` virando
+      # `(1 - taxa)`, e o rateio perdendo a absorcao do centavo. O segundo so morre
+      # numa assercao de SOMA (uma assercao por parcela o absolveria), e por isso o
+      # runner existe em vez de uma leitura do codigo.
+      #
+      # O runner planta cada mutante numa COPIA em /tmp (nao na arvore rastreada) e
+      # exige que a suite fique vermelha em cada um.
+      - name: Os mutantes da calculadora de juros (a suite acima sabe reprovar?)
+        run: npm run mutantes:juros-do-emprestimo

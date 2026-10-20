@@ -234,6 +234,8 @@
     "test:portao-de-conexao": "node scripts/compila.mjs -p scripts/tsconfig.portao-de-conexao-test.json && node scripts/resolve-aliases.mjs .tmp-portao-de-conexao lib --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-portao-de-conexao utils --espelha-raiz && node scripts/resolve-next-subpaths.mjs .tmp-portao-de-conexao && node scripts/monta-duble-de-rota.mjs .tmp-portao-de-conexao && node --test scripts/test-portao-de-conexao.mjs",
     "mutantes:portao-de-conexao": "node scripts/mutantes-portao-de-conexao.mjs",
     "test:emprestimo-do-mybank": "node scripts/compila.mjs -p scripts/tsconfig.emprestimo-do-mybank-test.json && node scripts/resolve-aliases.mjs .tmp-emprestimo-do-mybank lib --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-emprestimo-do-mybank utils --espelha-raiz && node scripts/resolve-next-subpaths.mjs .tmp-emprestimo-do-mybank && node scripts/monta-duble-de-rota.mjs .tmp-emprestimo-do-mybank && node --test scripts/test-emprestimo-do-mybank.mjs",
+    "test:juros-do-emprestimo": "node scripts/compila.mjs lib/juros-do-emprestimo.ts --outDir .tmp-juros-do-emprestimo --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-juros-do-emprestimo.mjs",
+    "mutantes:juros-do-emprestimo": "node scripts/mutantes-juros-do-emprestimo.mjs",
     "test:mybank-na-tela": "node scripts/compila.mjs -p scripts/tsconfig.mybank-na-tela-test.json && node --test scripts/test-mybank-na-tela.mjs",
     "mutantes:emprestimo-do-mybank": "node scripts/mutantes-emprestimo-do-mybank.mjs",
     "mutantes:mybank-na-tela": "node scripts/mutantes-mybank-na-tela.mjs",

@@ -80,6 +80,7 @@ next-env.d.ts
 # saida do `npm run test:recurrence` (tsc avulso, so para o node --test)
 /.tmp-recurrence/
 /.tmp-divisao-ui/
+/.tmp-juros-do-emprestimo/
 /.tmp-settlement/
 /.tmp-reports/
 /.tmp-statement/
