@@ -1,9 +1,13 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { lerCamposDeRendaFixa } from "@/lib/renda-fixa";
+import {
+  conferirContaDeInvestimento,
+  lerContaDoCorpo,
+} from "@/lib/conta-do-ativo";
 
 // =====================================================
-// PATCH /api/investments/assets/:assetId  -- preco atual e renda fixa
+// PATCH /api/investments/assets/:assetId  -- preco atual, renda fixa e conta
 // DELETE /api/investments/assets/:assetId -- remove o ativo e o historico dele
 // =====================================================
 // Enquanto nao houver fonte de cotacao contratada (HMO-141 item 2), o PATCH e o
@@ -17,6 +21,13 @@ import { lerCamposDeRendaFixa } from "@/lib/renda-fixa";
 // erro de digitacao: deixa todo o historico de compras da Petrobras pendurado na
 // Vale, com preco medio somando dois ativos diferentes. O caminho certo para o
 // erro de digitacao e apagar e cadastrar de novo, que e o DELETE abaixo.
+//
+// O QUE O PATCH ACEITA MUDAR DESDE A 059: `accountId` (ou `account_id`), o elo
+// com a Conta Investimento. Ele e o caminho de "atrelar" E de "soltar": um
+// `null` explicito desfaz o elo e devolve o ativo ao estado solto, que e o
+// estado valido de tudo que ja existe em producao. Sem este caminho, os ativos
+// cadastrados desde a 021 nunca ganhariam conta -- so quem cadastrasse de novo,
+// que e o mesmo buraco que a 031 deixou e este PATCH ja tapa para a renda fixa.
 // =====================================================
 
 export async function PATCH(
@@ -121,6 +132,35 @@ export async function PATCH(
         return NextResponse.json({ error: leitura.erro }, { status: 400 });
       }
       Object.assign(patch, leitura.campos);
+    }
+
+    // O elo com a Conta Investimento (059). Mesma funcao que o POST usa, e nao
+    // uma segunda copia da regra: a travessa de arquivar grupo ja mostrou o
+    // custo de escrever a mesma pergunta em dois lugares -- o defeito da
+    // HMO-145 estava nas duas copias, e consertar uma delas deixou a outra
+    // verde por meses.
+    const elo = lerContaDoCorpo(body);
+    if (!elo.ok) {
+      return NextResponse.json({ error: elo.erro }, { status: 400 });
+    }
+    if (elo.presente) {
+      if (elo.account_id !== null) {
+        const conferida = await conferirContaDeInvestimento(
+          supabase,
+          elo.account_id,
+          user.id
+        );
+        if (!conferida.ok) {
+          return NextResponse.json(
+            { error: conferida.erro },
+            { status: conferida.status }
+          );
+        }
+      }
+      // `null` chega ao banco de proposito: e ele que solta o ativo. Por isso o
+      // teste da chave e `elo.presente` e nao `elo.account_id`, que confundiria
+      // "nao pediu" com "pediu para soltar".
+      patch.account_id = elo.account_id;
     }
 
     if (Object.keys(patch).length === 0) {

@@ -1,5 +1,6 @@
 import { createClient } from "@/utils/supabase/server";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { lerRecorteDeConta } from "@/lib/conta-do-ativo";
 import {
   calcularPosicoes,
   type AtivoBruto,
@@ -43,9 +44,17 @@ import { hojeEmBrasilia, serieDoPeriodo } from "@/lib/cdi";
 // podem chegar de instantes diferentes, com a tela somando rendimentos de dias
 // diferentes. A faixa pedida comeca na aplicacao MAIS ANTIGA do grupo e
 // `diasNoPeriodo` recorta o resto por ativo.
+//
+// O RECORTE POR CONTA (?account_id=, HMO-436)
+// -------------------------------------------
+// Mesma leitura de /api/investments, e a mesma funcao: ausente e a renda fixa
+// toda, com valor e so a daquela conta. Aqui o recorte tem um efeito a mais que
+// vale notar -- ele diminui a faixa pedida ao Banco Central, porque
+// `inicioPorIndexador` passa a olhar so os ativos do recorte. Isso e economia,
+// nao mudanca de numero: `diasNoPeriodo` ja recortava por ativo.
 // =====================================================
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const supabase = await createClient();
     const {
@@ -57,16 +66,37 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { data: ativos, error: erroAtivos } = await supabase
+    const recorte = lerRecorteDeConta(
+      new URL(request.url).searchParams.get("account_id")
+    );
+    if (!recorte.ok) {
+      return NextResponse.json({ error: recorte.erro }, { status: 400 });
+    }
+
+    let consultaAtivos = supabase
       .from("investment_assets")
+      // `account_id` (059) vem junto para a tela poder dizer de QUE conta e cada
+      // projecao. Nomear a coluna exige a 059 colada em producao -- a mesma
+      // armadilha de 42703 documentada em /api/investments.
+      //
       // Uma linha so, sem concatenacao: o supabase-js le esta string em tempo de
       // TIPO. `"a, b" + "c, d"` nao e literal, o tipo da resposta cai para
       // `GenericStringError[]`, e o cast abaixo deixa de compilar.
       // prettier-ignore
-      .select("id, symbol, name, type, currency, current_price, current_price_at, fixed_income_product, index_kind, index_percentage, spread_annual, applied_date, maturity_date")
+      .select("id, symbol, name, type, currency, current_price, current_price_at, account_id, fixed_income_product, index_kind, index_percentage, spread_annual, applied_date, maturity_date")
       .eq("user_id", user.id)
-      .eq("type", "fixed_income")
-      .order("symbol", { ascending: true });
+      .eq("type", "fixed_income");
+
+    if (recorte.tipo === "conta") {
+      consultaAtivos = consultaAtivos.eq("account_id", recorte.account_id);
+    } else if (recorte.tipo === "soltos") {
+      consultaAtivos = consultaAtivos.is("account_id", null);
+    }
+
+    const { data: ativos, error: erroAtivos } = await consultaAtivos.order(
+      "symbol",
+      { ascending: true }
+    );
 
     if (erroAtivos) {
       return NextResponse.json(
@@ -77,6 +107,7 @@ export async function GET() {
 
     const listaAtivos = (ativos || []) as Array<
       AtivoBruto & {
+        account_id: string | null;
         fixed_income_product: string | null;
         index_kind: string | null;
         index_percentage: number | string | null;
@@ -168,8 +199,25 @@ export async function GET() {
       });
     });
 
+    // `account_id` entra na resposta AQUI, e nao em `Projecao`.
+    //
+    // lib/renda-fixa.ts e uma calculadora de rendimento: ela sabe de indexador,
+    // dia util e aliquota de IR, e nao tem nada a ver com conta bancaria.
+    // Alargar `Projecao` para carregar o elo faria a assinatura de
+    // `projetarRendimento` pedir um campo que ela nao usa em nenhuma conta --
+    // e aquele arquivo e medido por mutante, entao o custo de mexer nele sem
+    // precisar nao e so de leitura.
+    //
+    // O `somarProjecoes` recebe as projecoes SEM o campo, de proposito: o
+    // resumo soma dinheiro e o elo nao e dinheiro.
+    const contaPorAtivo: Record<string, string | null> = {};
+    for (const a of listaAtivos) contaPorAtivo[a.id] = a.account_id ?? null;
+
     return NextResponse.json({
-      projections,
+      projections: projections.map((p) => ({
+        ...p,
+        account_id: contaPorAtivo[p.asset_id] ?? null,
+      })),
       summary: somarProjecoes(projections),
       hoje,
     });
