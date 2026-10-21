@@ -69,6 +69,7 @@ import {
   MOTIVO_SEM_REDE,
   ROTULO_DE_PAGAR,
   caminhoDeEdicao,
+  motivoSemAcoes,
   rotuloDeConfirmar,
 } from "../.tmp-secao-da-tela/lib/acoes-da-linha.js";
 
@@ -1164,4 +1165,140 @@ test("a LISTA passa acoesApagadas para a faixa -- guarda textual, e por que", ()
     "a faixa da lista perdeu `acoesApagadas`: a frase visivel do cinza nao acende, " +
       "e no iPhone o motivo nao chega por nenhum canal"
   );
+});
+
+// ---------------------------------------------------------------------------
+// 9. A LINHA SEM ACAO NENHUMA DIZ POR QUE -- HMO-457
+// ---------------------------------------------------------------------------
+// "Despesas no IOs nao esta mostrando opcao de editar, pagar ou excluir."
+//
+// POR QUE ESTA SECAO EXISTE, e ela nasceu de um mutante que SOBREVIVEU: o PR
+// que trouxe a frase pos as 9 assercoes dela em `test:acoes-da-linha`, que mede
+// `motivoSemAcoes` -- a FUNCAO. Trocar o `if (!semAcoes) return null` de
+// `BotoesDaLinha` de volta pelo `return null` de antes (ou seja: desfazer a
+// feature inteira, e justamente o defeito desta issue) deixava as duas suites
+// VERDES, 109 testes, zero falhas. A regra estava presa; a FIACAO dela no JSX
+// nao estava presa por nada que o CI rode.
+//
+// E a familia de "coluna declarada e nunca lida": o motivo chegava calculado ao
+// componente e podia morrer ali sem erro, sem log e com o `tsc` verde -- o
+// mesmo desenho do defeito que a HMO-457 foi consertar. A sonda de navegador
+// (`probe-acoes-da-linha-no-iphone.mjs`) mede o span de verdade, mas ela pede
+// Chromium e o CSS de producao: nao roda no CI, e a guarda textual que ela tem
+// no lugar (`CONFERE_A_MARCACAO`) casa com a CLASSE do span, que o mutante
+// acima nem toca -- ele deixa a linha escrita e inalcancavel.
+//
+// A FRASE VEM DA LIB, nao de uma string escrita aqui. Igual nos dois lados, a
+// assercao sobreviveria a um texto trocado no componente E no teste de uma vez
+// -- o defeito que `rotuloDeConfirmar` ja evita na secao 5.
+
+/** A linha de OUTRO MEMBRO do grupo: gravada, minha de ler, nao de escrever. */
+const ALHEIA = linha({
+  id: "l-alheia",
+  descricao: "Aluguel",
+  valor: 900,
+  posso_editar: false,
+});
+
+/** A frase de produccao para a linha alheia -- lida da lib, nunca digitada. */
+const FRASE_SEM_ACOES = motivoSemAcoes(ALHEIA);
+
+test("CONTROLE: a lib tem uma frase para a linha alheia, e ela nao e vazia", () => {
+  // Sem este bloco, uma `motivoSemAcoes` que devolvesse `null` (ou "") faria
+  // TODAS as assercoes abaixo passarem por vacuidade: `texto(html).includes("")`
+  // e verdadeiro em qualquer tela, e e assim que esta secao inteira viraria
+  // enfeite sem ninguem notar.
+  assert.equal(typeof FRASE_SEM_ACOES, "string");
+  assert.ok(FRASE_SEM_ACOES.length > 0, "a lib nao tem frase: secao 9 vacua");
+});
+
+test("a linha de outro membro nao tem botao -- e DIZ por que, na tela", () => {
+  // O POSITIVO desta secao, e o mutante que ela mata: com `return null` no
+  // lugar do `if (!semAcoes)`, a direita da linha volta a ser vazia -- que e
+  // exatamente a tela relatada no iPhone.
+  const html = render({ linhas: [ALHEIA] });
+
+  assert.deepEqual(rotulosDeAcao(html), [], "a linha alheia desenhou acao");
+  assert.ok(!html.includes("<button"), "a linha alheia desenhou botao");
+  assert.ok(
+    texto(html).includes(FRASE_SEM_ACOES),
+    `a linha ficou MUDA (so "${texto(html)}")`
+  );
+});
+
+test("a frase e TEXTO, e nao `title` -- no iPhone nao ha hover", () => {
+  // A metade que o aparelho do relato cobra. Um motivo escrito so no `title`
+  // esta correto no DOM e invisivel em tela de toque: `texto()` tira as TAGS,
+  // entao achar a frase nele prova que ela e conteudo, e nao atributo.
+  const html = render({ linhas: [ALHEIA] });
+
+  assert.ok(texto(html).includes(FRASE_SEM_ACOES));
+  assert.ok(
+    !new RegExp(`title="[^"]*${FRASE_SEM_ACOES}`).test(html),
+    "a frase virou title -- tela de toque nao tem hover"
+  );
+});
+
+test("a linha MINHA continua com os botoes, e SEM a frase", () => {
+  // O NEGATIVO que impede o positivo de ser global: uma frase desenhada em toda
+  // linha passaria nos dois blocos acima e poria "De outro membro" embaixo dos
+  // tres botoes da minha propria despesa.
+  const html = render({ linhas: [linha({})] });
+
+  assert.deepEqual(rotulosDeAcao(html).length > 0, true, "a minha linha ficou sem acao");
+  assert.ok(
+    !texto(html).includes(FRASE_SEM_ACOES),
+    "a minha linha foi chamada de alheia"
+  );
+});
+
+test("a parcela do MyBank nao tem botao e CALA -- ela e divida MINHA", () => {
+  // O erro mais caro que esta frase poderia cometer, e ele e de DINHEIRO, nao
+  // de copy: a parcela devida do MyBank chega `gravada: false` e com
+  // `posso_editar: false` (ela nasce com `user_id: ""` na rota). Chamada de "de
+  // outro membro", a tela diria que uma divida da propria pessoa e de terceiro.
+  const html = render({
+    linhas: [
+      linha({
+        id: "mybank:1",
+        descricao: "Parcela 3/24",
+        gravada: false,
+        posso_editar: false,
+        natureza: "mybank",
+      }),
+    ],
+  });
+
+  assert.ok(!html.includes("<button"), "a parcela do MyBank ganhou botao");
+  assert.ok(
+    !texto(html).includes(FRASE_SEM_ACOES),
+    "a tela chamou a divida DESTA pessoa de 'de outro membro'"
+  );
+  // E ela continua se identificando: o selo da natureza nao e tocado por isto.
+  assert.ok(texto(html).includes("MyBank"), "a parcela perdeu o selo");
+});
+
+test("a fatura alheia ABERTA tambem cala -- e o motivo e `gravada: false`", () => {
+  // `FATURA` e de outro membro E sintetizada. A ordem das guardas de
+  // `motivoSemAcoes` (`!gravada` ANTES de `!posso_editar`) e o que a mantem
+  // muda; invertida, a linha de fatura do proprio cartao viraria "De outro
+  // membro". A secao 5 ja afirma que ela nao tem botao -- aqui o que se afirma
+  // e que ela tambem nao ganhou frase.
+  const html = render({ linhas: [FATURA] });
+
+  assert.ok(!texto(html).includes(FRASE_SEM_ACOES));
+  assert.ok(href(html), "a fatura perdeu o link para o cartao");
+});
+
+test("a frase divide a linha com o valor e com o rotulo do grupo", () => {
+  // A linha alheia de verdade chega com `de_grupo: true` (HMO-303), e os dois
+  // textos sao de lados opostos: "minha parte do grupo" na coluna da esquerda,
+  // a frase na direita, onde estariam os botoes. Os tres na mesma linha e o que
+  // a sonda mede a 320px; aqui o que se afirma e que nenhum come o outro.
+  const html = render({ linhas: [{ ...ALHEIA, de_grupo: true }] });
+  const visivel = texto(html);
+
+  assert.ok(visivel.includes(FRASE_SEM_ACOES), "a frase sumiu com `de_grupo`");
+  assert.ok(visivel.includes("minha parte do grupo"), "o rotulo do grupo sumiu");
+  assert.ok(visivel.includes("900,00"), "o valor sumiu");
 });
