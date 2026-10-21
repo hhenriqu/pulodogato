@@ -48,6 +48,7 @@ const {
   avisoDaExclusao,
   caminhoDeEdicao,
   motivoDoBotaoTravado,
+  motivoSemAcoes,
   motivoSemEditar,
   tituloDoBotao,
   pedidoDeConfirmacao,
@@ -755,6 +756,156 @@ test("a linha REALIZADA e a de outro membro nao chegam ao PATCH da agenda", () =
     assert.ok("erro" in r, JSON.stringify(r));
     assert.match(r.erro, /não pode ser editada/);
   }
+});
+
+// ---------------------------------------------------------------------------
+// 12-A. O MOTIVO VISIVEL DA LINHA SEM ACAO NENHUMA -- HMO-457
+// ---------------------------------------------------------------------------
+// "Despesas no IOs nao esta mostrando opcao de editar, pagar ou excluir."
+//
+// `BotoesDaLinha` devolvia `null` quando as quatro peneiras recusavam, e esse
+// `null` desenha IGUAL a tela quebrada. O caso que o faz aparecer no meio de
+// uma lista normal e a linha de OUTRO MEMBRO do grupo, que o previsto passou a
+// trazer na HMO-303.
+//
+// O QUE CADA BLOCO AQUI PROTEGE: a frase e o SILENCIO sao os dois
+// comportamentos, e o erro caro e dizer "De outro membro" sobre linha que e
+// minha. Por isso os negativos sao mais numerosos que o positivo.
+
+test("a linha de OUTRO MEMBRO do grupo diz por que nao tem botao", () => {
+  const alheia = prevista({
+    posso_editar: false,
+    gravada: true,
+    natureza: "despesa",
+  });
+
+  // O cenario precisa ser o de "nenhum botao", senao o bloco nao mede nada.
+  assert.equal(podeEditar(alheia), false);
+  assert.equal(podeExcluir(alheia), false);
+  assert.equal(podeConfirmar(alheia), false);
+  assert.equal(podePagarAFatura(alheia), false);
+  assert.equal(motivoSemEditar(alheia), null, "e NAO por botao apagado");
+
+  assert.equal(motivoSemAcoes(alheia), "De outro membro");
+});
+
+test("a linha REALIZADA de outro membro tambem diz", () => {
+  assert.equal(
+    motivoSemAcoes(realizada({ posso_editar: false })),
+    "De outro membro"
+  );
+});
+
+test("CONTROLE: a linha que TEM acao nao ganha texto nenhum", () => {
+  // Um termo esquecido no `if` de `motivoSemAcoes` poria "De outro membro" ao
+  // lado de um botao que funciona.
+  assert.equal(motivoSemAcoes(prevista()), null, "prevista minha: tres botoes");
+  assert.equal(
+    motivoSemAcoes(realizada()),
+    null,
+    "realizada minha: dois botoes"
+  );
+  // As duas faturas MINHAS ganham o `Pagar`, e tambem nao levam texto.
+  assert.equal(motivoSemAcoes(faturaAbertaMinha()), null, "fatura aberta minha");
+  assert.equal(motivoSemAcoes(faturaFechada()), null, "fatura fechada minha");
+});
+
+test("o botao Pagar EXIGE `posso_editar` -- e e isso que deixa `motivoSemAcoes` omiti-lo", () => {
+  // ESTE BLOCO E A GUARDA DE UM TERMO QUE NAO EXISTE, e por isso ele existe.
+  //
+  // `motivoSemAcoes` nao cita `podePagarAFatura` no `if` de "ha acao": o
+  // mutante que o acrescenta SOBREVIVE, porque `podePagarAFatura` exige
+  // `posso_editar` e a frase "De outro membro" exige `!posso_editar` -- as duas
+  // condicoes nunca sao verdadeiras na mesma linha, e o termo seria um porteiro
+  // inobservavel.
+  //
+  // O QUE SUSTENTA A OMISSAO E ESSA IMPLICACAO, e ela mora em OUTRA funcao.
+  // Sem este bloco, alguem que afrouxasse `podePagarAFatura` (tirando dela a
+  // regra 4) faria `motivoSemAcoes` passar a escrever "De outro membro" ao lado
+  // de um botao `Pagar` aceso -- e nada no arquivo de `motivoSemAcoes`
+  // reprovaria.
+  const alheiaComFatura = prevista({
+    natureza: "fatura",
+    posso_editar: false,
+    gravada: true,
+  });
+
+  assert.equal(
+    podePagarAFatura(alheiaComFatura),
+    false,
+    "se isto virar `true`, reabra o `if` de `motivoSemAcoes` e ponha o termo de volta"
+  );
+});
+
+test("CONTROLE: a linha SINTETIZADA fica calada -- `gravada` antes de `posso_editar`", () => {
+  // A GUARDA DE ORDEM, E ELA E O MOTIVO DE ESTE BLOCO EXISTIR. A fatura aberta
+  // que nao e minha chega com `gravada: false` E `posso_editar: false`. Trocada
+  // a ordem das duas guardas, a tela chamaria de "De outro membro" uma linha
+  // que nao existe em tabela nenhuma -- e a ausencia de botao nela nunca foi o
+  // defeito desta issue: ela nunca prometeu acao.
+  const sintetizada = faturaAberta();
+  assert.equal(sintetizada.gravada, false, "o caso precisa ser sintetizado");
+  assert.equal(sintetizada.posso_editar, false, "e precisa NAO ser minha");
+
+  assert.equal(motivoSemAcoes(sintetizada), null);
+});
+
+test("CONTROLE: a parcela do MyBank fica calada, e por `gravada`", () => {
+  // Ela e MINHA (`posso_editar: true`, carimbado por `comODonoDaLeitura`) e nao
+  // esta gravada. Chamar a divida da propria pessoa de "De outro membro" seria
+  // uma frase errada sobre dinheiro dela -- o erro mais caro possivel aqui.
+  const parcela = prevista({
+    id: "mybank:cccccccc-0000-0000-0000-000000000003",
+    gravada: false,
+    natureza: "mybank",
+    posso_editar: true,
+  });
+
+  assert.equal(motivoSemAcoes(parcela), null);
+});
+
+test("CONTROLE: a transferencia realizada ja tem o motivo no botao apagado", () => {
+  // Ela cai no OUTRO caminho (`motivoSemEditar` devolve frase, e a tela desenha
+  // o lapis apagado com ela no `title`). Texto aqui diria a mesma coisa duas
+  // vezes na mesma linha.
+  const perna = realizada({ tipo: "transfer" });
+  assert.ok(motivoSemEditar(perna), "o caso precisa ter motivo de botao");
+
+  assert.equal(motivoSemAcoes(perna), null);
+});
+
+test("a perna de transferencia de OUTRO MEMBRO nao leva DUAS explicacoes", () => {
+  // O UNICO CASO EM QUE AS DUAS EXPLICACOES COLIDEM, e e ele que torna o
+  // early-return de `motivoSemEditar` observavel. Sem aquela guarda o mutante
+  // sobrevive: todos os outros caminhos de `motivoSemEditar` tem
+  // `posso_editar: true` e por isso nunca chegariam a frase daqui.
+  //
+  //   * `posso_editar: false` -> nenhum dos tres botoes;
+  //   * `realizado` + `transfer` -> `motivoSemEditar` DEVOLVE frase, entao a
+  //     tela ja desenha o lapis apagado carregando o motivo dela.
+  //
+  // Duas explicacoes na mesma linha competem em vez de informar, e e a do botao
+  // que fica ao lado do gesto recusado. O texto cala.
+  const pernaAlheia = realizada({ tipo: "transfer", posso_editar: false });
+
+  assert.equal(podeEditar(pernaAlheia), false);
+  assert.equal(podeExcluir(pernaAlheia), false);
+  assert.equal(podeConfirmar(pernaAlheia), false);
+  assert.ok(
+    motivoSemEditar(pernaAlheia),
+    "o caso precisa ter motivo de botao E ser de outro membro"
+  );
+
+  assert.equal(motivoSemAcoes(pernaAlheia), null);
+});
+
+test("CONTROLE: a fatura JA PAGA fica calada", () => {
+  // Realizada e natureza fatura: nada a oferecer, e dizer isso seria ruido
+  // numa linha que esta certa.
+  const paga = realizada({ natureza: "fatura" });
+
+  assert.equal(podePagarAFatura(paga), false, "`origem` realizado recusa");
+  assert.equal(motivoSemAcoes(paga), null);
 });
 
 // ---------------------------------------------------------------------------

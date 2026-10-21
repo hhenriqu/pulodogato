@@ -320,6 +320,78 @@ export function tituloDoBotao(rotulo: string, motivo: string | null): string {
   return motivo ? `${rotulo} — ${motivo}` : rotulo;
 }
 
+/**
+ * O MOTIVO VISIVEL de uma linha que nao ganhou acao NENHUMA -- HMO-457.
+ *
+ * "Despesas no IOs nao esta mostrando opcao de editar, pagar ou excluir."
+ *
+ * `BotoesDaLinha` devolvia `null` quando as quatro peneiras recusavam, e esse
+ * `null` e INDISTINGUIVEL de defeito: a linha desenha sem nada a direita e nada
+ * na tela diz por que. Na lista de Despesas isso deixou de ser caso de borda na
+ * HMO-303, quando o previsto passou a trazer a linha de OUTRO MEMBRO do grupo
+ * (`.or(user_id.eq.<eu>,group_id.not.is.null)` em
+ * app/api/movimentacoes/resumo/route.ts): numa conta com grupo, essas linhas
+ * aparecem no meio das minhas, sem botao e sem explicacao. Lido da tela, "a
+ * linha alheia nao se edita" e "a tela quebrou" sao a mesma imagem.
+ *
+ * TEXTO VISIVEL, E NAO `title`/`aria-disabled` NUM BOTAO APAGADO -- e as duas
+ * metades dessa escolha foram medidas:
+ *
+ *   * `title` E INVISIVEL NO CELULAR. O tooltip nasce de `:hover`, e no iPhone
+ *     nao ha hover -- exatamente o aparelho desta issue. Um motivo escrito so
+ *     no `title` nao chega a quem reportou;
+ *   * BOTAO APAGADO AQUI SERIA PIOR, e e decisao ja tomada: `motivoSemEditar`
+ *     devolve `null` para a linha alheia de proposito ("um botao cinza sobre
+ *     linha alheia convidaria a tentar o que a RLS nunca vai deixar", com
+ *     assercao por cima em scripts/test-acoes-da-linha.mjs). O `UPDATE`
+ *     recusado pela RLS volta 200 SEM ALTERAR NADA, entao o convite seria para
+ *     um clique que diz "pronto" e nao fez nada.
+ *
+ * Dai o texto: ele explica sem oferecer, e aparece sem hover.
+ *
+ * `null` -- seguir desenhando nada -- nos casos em que a ausencia JA e o que a
+ * pessoa espera, e a ordem das guardas e o que separa os dois:
+ *
+ *   * `!gravada` vem PRIMEIRO porque a linha sintetizada tambem chega aqui com
+ *     `posso_editar: false`, e por outro motivo: a parcela devida do MyBank
+ *     nasce com `user_id: ""` (ver o `select` de `parcelasDevidas` na rota).
+ *     Ela e divida MINHA, nao de outro membro -- sem esta guarda a tela
+ *     chamaria a minha parcela de "de outro membro", que e uma frase errada
+ *     sobre dinheiro meu, e o erro mais caro que esta funcao poderia cometer;
+ *   * a fatura ja PAGA (`natureza: "fatura"` no realizado) nao tem o que
+ *     oferecer, e dizer isso seria ruido numa linha que esta certa.
+ */
+export function motivoSemAcoes(linha: LinhaAcionavel): string | null {
+  // Ha acao: a tela desenha botao, e nao ha nada a explicar.
+  //
+  // `podePagarAFatura` NAO ENTRA AQUI, E A AUSENCIA E MEDIDA -- o mutante que o
+  // acrescenta sobrevive, e sobrevive com razao. Ele EXIGE `posso_editar`
+  // (regra 4, la na funcao dele), e a unica frase que esta funcao devolve exige
+  // `!posso_editar`: as duas condicoes sao disjuntas, entao o termo nao pode
+  // mudar resposta nenhuma. Escreve-lo seria um porteiro inobservavel -- codigo
+  // que parece carregar a decisao e nao carrega.
+  //
+  // O que torna isso SEGURO de omitir e precisamente aquela implicacao, e ela
+  // esta presa por assercao em scripts/test-acoes-da-linha.mjs ("o botao Pagar
+  // EXIGE posso_editar"). No dia em que `podePagarAFatura` deixar de exigir
+  // `posso_editar`, aquele bloco reprova e manda reabrir este `if`.
+  if (podeEditar(linha) || podeExcluir(linha) || podeConfirmar(linha)) {
+    return null;
+  }
+
+  // O Editar apagado ja carrega o motivo dele no `title`: repetir aqui diria a
+  // mesma coisa duas vezes na mesma linha.
+  if (motivoSemEditar(linha)) return null;
+
+  // ANTES de `posso_editar` -- ver o cabecalho. Linha que nao existe em tabela
+  // nenhuma nunca prometeu acao.
+  if (!linha.gravada) return null;
+
+  if (!linha.posso_editar) return "De outro membro";
+
+  return null;
+}
+
 /** Um pedido HTTP pronto: o metodo, o caminho e o corpo (quando ha). */
 export interface PedidoDaAcao {
   metodo: "POST" | "PATCH" | "DELETE";

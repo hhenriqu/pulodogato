@@ -75,6 +75,7 @@ import {
   ROTULO_DE_EXCLUIR,
   ROTULO_DE_PAGAR,
   motivoDoBotaoTravado,
+  motivoSemAcoes,
   motivoSemEditar,
   podeConfirmar,
   podeEditar,
@@ -299,10 +300,31 @@ function BotoesDaLinha({
   const pagar = podePagarAFatura(linha);
   const motivo = motivoSemEditar(linha);
 
-  // Sem nenhum dos tres nao sai `<div>` nenhum: uma caixa de 0px com gap muda o
-  // espacamento da linha, e a linha sem acao tem de desenhar IGUAL a de antes
-  // desta issue.
-  if (!editar && !excluir && !confirmar && !pagar && !motivo) return null;
+  // SEM NENHUMA ACAO, A LINHA DIZ POR QUE -- HMO-457.
+  //
+  // Aqui era `return null`, e o `null` e indistinguivel de defeito: desde a
+  // HMO-303 a lista de Despesas traz a linha de OUTRO MEMBRO do grupo, e numa
+  // conta com grupo elas aparecem no meio das minhas sem botao e sem uma
+  // palavra. "A linha alheia nao se edita" e "a tela quebrou" desenhavam igual.
+  //
+  // Quem decide a frase e `motivoSemAcoes` (lib/acoes-da-linha.ts), e nao um
+  // `&&` escrito aqui -- mesma razao de todas as outras peneiras desta linha.
+  // Ele devolve `null` de proposito onde a ausencia ja e esperada (a parcela do
+  // MyBank, a fatura ja paga), e nesses casos continua nao saindo `<div>`
+  // nenhum: uma caixa de 0px com gap muda o espacamento da linha.
+  const semAcoes = motivoSemAcoes(linha);
+
+  if (!editar && !excluir && !confirmar && !pagar && !motivo) {
+    if (!semAcoes) return null;
+
+    // TEXTO, e nao botao apagado: no iPhone nao ha hover, entao `title` nunca
+    // aparece -- e um cinza clicavel convidaria a tentar o que a RLS recusa
+    // com 200 sem alterar nada. `shrink-0` como no `<div>` dos botoes, para a
+    // linha com e sem acao alinharem o lado direito igual.
+    return (
+      <span className="shrink-0 text-xs text-muted-foreground">{semAcoes}</span>
+    );
+  }
 
   const rotuloConfirmar = rotuloDeConfirmar(linha.tipo);
 
