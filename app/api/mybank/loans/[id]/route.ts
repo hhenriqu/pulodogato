@@ -121,7 +121,9 @@ import {
   chavesDasPrevisoesDoAjuste,
   chavesDasPrevisoesDoCancelamento,
   ehDataISO,
+  faltaReceberDoAjuste,
   jaRecebidoDaSerie,
+  juroDepoisDoAjuste,
   mensagemDaPrevisaoJaBaixada,
   mensagemDoAjuste,
   mensagemDoCancelamento,
@@ -133,6 +135,7 @@ import {
   previsoesDoAjuste,
   problemaDoAjuste,
   problemaDoCancelamento,
+  problemaDoJuroDoAjuste,
   STATUS_CANCELADO,
   type PedidoDeAjuste,
   type PrevisaoAAjustar,
@@ -528,6 +531,16 @@ async function ajustar(
 
     const mexeNoTotal = pedido.total !== undefined;
 
+    // O JURO RESOLVIDO, ANTES DA CAUDA -- porque e ele que diz sobre QUANTO a
+    // cauda e repartida (HMO-478). `null` quando o pedido nao mexe em juro, e
+    // ai tudo abaixo e o caminho de antes desta issue.
+    //
+    // `null` TAMBEM QUANDO OS CAMPOS NAO SERVEM, e isso NAO vira um ajuste sem
+    // juro por acidente: `problemaDoAjuste` chama `problemaDoJuroDoAjuste` e
+    // recusa com `juro_nao_serve` ANTES de qualquer escrita. A ordem aqui e a
+    // mesma da cauda, que tambem e calculada antes da recusa que a julga.
+    const juro = juroDepoisDoAjuste({ emprestimo, pedido });
+
     // A CAUDA E CALCULADA ANTES DA RECUSA, e isso e a forma de
     // `problemaDoEmprestimo` (que recebe `serie: SerieDeParcelas | null` e
     // devolve `serie_impossivel`): a pergunta "este ajuste serve?" inclui "a
@@ -548,17 +561,19 @@ async function ajustar(
       pendentes.length > 0
         ? caudaRecalculada({
             pendentes,
-            // O QUE FALTA RECEBER, E A CONTA E DO TOTAL PEDIDO MENOS O JA PAGO.
-            // Sem `total` no pedido (o caso "so mover a cauda de mes") a base e
-            // o que as pendentes ja somam -- e nao o `principal`, que inclui as
-            // pagas: usar o principal ali DOBRARIA a divida de quem ja pagou
-            // metade, so por ter pedido para adiar o vencimento.
-            faltaReceber: mexeNoTotal
-              ? Number(pedido.total) - jaRecebido
-              : pendentes.reduce(
-                  (soma, p) => soma + Math.round(Number(p.amount) * 100),
-                  0
-                ) / 100,
+            // O QUE FALTA RECEBER -- OS TRES RAMOS DESCERAM PARA A LIB NA
+            // HMO-478 (`faltaReceberDoAjuste`), e o motivo da mudanca de lugar
+            // esta no JSDoc de la: o ramo novo (`juro.total - jaRecebido`)
+            // escrito aqui ficaria fora do alcance de todo mutante da lib, e
+            // trocar `juro.total` por `pedido.total` e exatamente o estrago que
+            // a issue descreve -- com `{taxa: 30}` o pedido nao traz total
+            // nenhum, e a cauda seria repartida sobre `NaN`.
+            faltaReceber: faltaReceberDoAjuste({
+              pendentes,
+              jaRecebido,
+              pedido,
+              juro,
+            }),
             primeiroVencimentoDaCauda: ehDataISO(
               pedido.primeiroVencimentoDaCauda
             )
@@ -595,6 +610,12 @@ async function ajustar(
             avisadas: avisadasDaSerie(parcelas),
             jaRecebido,
             pendentes: pendentes.length,
+            // A RECUSA DA F2 PERGUNTADA DE NOVO, E NAO GUARDADA DA PRIMEIRA
+            // VEZ: `problemaDoAjuste` nao devolve o motivo do juro, so o
+            // rotulo `juro_nao_serve`. As duas chamadas sao da MESMA funcao
+            // pura sobre os MESMOS argumentos -- nao ha estado entre elas que
+            // as faca divergir.
+            problemaDoJuro: problemaDoJuroDoAjuste({ emprestimo, pedido }),
           }),
           parcelas_ajustadas: 0,
         },
@@ -838,7 +859,11 @@ async function ajustar(
         .from("mybank_loans")
         .update(ajuste.patchDoEmprestimo)
         .eq("id", emprestimo.id)
-        .select("id, lender_user_id, description, principal");
+        // `interest_rate` ENTRA DESDE A HMO-478: num ajuste com juro ele e a
+        // UNICA coluna que muda na linha do emprestimo (o `principal` fica
+        // parado), e sem ele no `.select()` a conferencia da linha ESCRITA nao
+        // alcancaria o campo que o pedido veio mudar.
+        .select("id, lender_user_id, description, principal, interest_rate");
 
       // A LINHA DEVOLVIDA, CONFERIDA DEPOIS -- a mesma pergunta do
       // cancelamento, e pelo mesmo motivo: a do passo 1 foi sobre a linha LIDA,
@@ -871,6 +896,12 @@ async function ajustar(
       previsoesAusentes,
       mudouADescricao,
       mudouOTotal: mexeNoTotal,
+      // O JURO DO AJUSTE SAI DE `ajuste`, e nao do `juro` desta funcao: os dois
+      // sao o mesmo objeto hoje, e o da regra pura e o que acompanha o patch
+      // que foi de fato montado. Ler a variavel local faria a frase e o patch
+      // poderem divergir no dia em que `ajusteDoEmprestimo` resolver o juro de
+      // outro jeito -- e a frase diz dinheiro.
+      juro: ajuste.juro,
       emprestimoAtualizado,
     });
 
@@ -890,6 +921,26 @@ async function ajustar(
           : emprestimo.description,
         total: ajuste.total,
         ja_recebido: ajuste.jaRecebido,
+        // AS TRES GRANDEZAS DO JURO NO CORPO, E O `emprestado` E O CONTROLE
+        // DESTA ISSUE EM FORMA DE CAMPO (HMO-478).
+        //
+        // A medicao em producao confere `emprestado` contra
+        // `mybank_loans.principal` ANTES do pedido: se os dois batem, o ajuste
+        // nao reescreveu o que saiu da conta de investimento. Sem este campo o
+        // unico jeito de ver o defeito seria ler a tabela antes e depois -- e
+        // ele nao tem sintoma nenhum na tela (`SUM(amount) - principal` vira
+        // zero em silencio).
+        //
+        // SO COM JURO: a juro zero nao ha taxa nova a reportar, e um
+        // `taxa: 0` constante faria a medicao nao distinguir "nao mexeu em
+        // juro" de "zerou o juro".
+        ...(ajuste.juro
+          ? {
+              emprestado: ajuste.juro.principal,
+              taxa: ajuste.juro.taxa,
+              juros: ajuste.juro.juros,
+            }
+          : {}),
         parcelas_pedidas: ajuste.parcelas.length,
         parcelas_ajustadas: ajustadas.length,
         numeros: ajustadas.map((p) => p.numero),

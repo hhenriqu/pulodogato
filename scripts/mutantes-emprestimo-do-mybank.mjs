@@ -1117,11 +1117,17 @@ const mutantes = [
   // -------------------------------------------------------------------------
   // A ARITMETICA DA CAUDA
   // -------------------------------------------------------------------------
+  // MUDOU DE ARQUIVO NA HMO-478, E NAO DE SENTIDO: os tres ramos do
+  // `faltaReceber` desceram da rota para `faltaReceberDoAjuste` na lib quando
+  // ganharam o quarto caso (o juro). O mutante segue o alvo -- deixado
+  // apontando para a rota ele viraria ancora MORTA, que `mede-ancora-ambigua`
+  // reprova mas que, se tivesse casado por pouco, passaria verde sem medir nada
+  // (`ancora-de-mutante-casa-no-comentario-e-o-cmp-nao-ve`).
   [
-    AJUSTA,
+    LIB,
     "a cauda e repartida pelo TOTAL e nao pelo que FALTA (quem ja pagou 1 de 4 passa a dever o emprestimo inteiro)",
-    "            faltaReceber: mexeNoTotal\n              ? Number(pedido.total) - jaRecebido",
-    "            faltaReceber: mexeNoTotal\n              ? Number(pedido.total)",
+    "  if (pedido.total !== undefined) return Number(pedido.total) - jaRecebido;",
+    "  if (pedido.total !== undefined) return Number(pedido.total);",
   ],
   [
     LIB,
@@ -1243,23 +1249,74 @@ const mutantes = [
     "      return \"descricao_vazia\";",
     "      return null;",
   ],
+  // -------------------------------------------------------------------------
+  // A ARITMETICA DO AJUSTE COM JURO -- O `principal` FICA PARADO (HMO-478)
+  // -------------------------------------------------------------------------
+  // Aqui estavam `a taxa DO PEDIDO deixa de ser perguntada no ajuste` e `a taxa
+  // DO EMPRESTIMO deixa de ser perguntada no ajuste`, os dois mutantes das
+  // recusas que a F3/F4 deixaram de pe. Eles sairam JUNTO com as duas perguntas
+  // e com a linha que elas sustentavam -- um mutante de uma recusa que nao
+  // existe mais nao e um controle, e um `if (false)` sobre codigo apagado nem
+  // sequer casa (a guarda de ancora morta o reprovaria).
+  //
+  // OS SETE QUE ENTRARAM MEDEM A MESMA COISA POR SETE LADOS: que o ajuste de um
+  // emprestimo com juro NAO reescreve `mybank_loans.principal`. Nenhum deles da
+  // erro em lugar nenhum -- a RLS aceita, as triggers passam, os CHECK passam,
+  // e `SUM(amount) - principal` (que a 062 define como o juro) vira zero em
+  // silencio. A unica coisa que denuncia e comparar o emprestado de antes com o
+  // de depois, e e isso que a suite afirma.
   [
     LIB,
-    "a taxa DO PEDIDO deixa de ser perguntada no ajuste (`principal` recebe o total com juro, e o juro some)",
-    "  if (mexeNaTaxa && Number(pedido.taxa) !== 0) {",
-    "  if (false) {",
+    "o ajuste volta a gravar `principal = total` com juro (a linha que esta issue matou; o juro vira ZERO)",
+    "    patchDoEmprestimo.interest_rate = juro.taxa;",
+    "    patchDoEmprestimo.principal = total;",
   ],
-  // O PAR DO DE CIMA, E ELE E A RECUSA QUE ESTA ISSUE PRECISOU ACRESCENTAR.
-  // A F4 perguntava so pela taxa do PEDIDO, e bastava: nenhum emprestimo podia
-  // ter juro. Esta issue tornou o estado alcancavel, e sem esta segunda
-  // pergunta um `{total}` sozinho sobre emprestimo com juro grava `principal =
-  // total` e apaga o juro. Os dois mutantes sao separados de proposito: um so,
-  // cobrindo as duas linhas, sobreviveria se apenas UMA delas fosse apagada.
   [
     LIB,
-    "a taxa DO EMPRESTIMO deixa de ser perguntada no ajuste (o emprestimo que JA tem juro perde o juro ao ter o total ajustado)",
-    "  if (mexeNoTotal && Number(emprestimo.interest_rate ?? 0) !== 0) {",
-    "  if (false) {",
+    "o `principal` do juro passa a SEGUIR o total pedido (o ajuste reescreve o que saiu da conta de investimento)",
+    "  const principal = Number(emprestimo.principal);\n\n  return pedido.taxa !== undefined\n    ? tresCamposDoEmprestimo({",
+    "  const principal = Number(pedido.total ?? emprestimo.principal);\n\n  return pedido.taxa !== undefined\n    ? tresCamposDoEmprestimo({",
+  ],
+  // O BURACO DA F3 REABERTO PELO LADO DO PORTEIRO. Sem `mexeNoTotal` na
+  // pergunta, um `{total}` sozinho sobre emprestimo COM juro deixa de ser
+  // "ajuste com juro" e cai no caminho de juro zero -- que grava
+  // `principal = total`. E o mesmo estrago do primeiro mutante, por outra
+  // porta, e por isso os dois sao separados.
+  [
+    LIB,
+    "`ajusteMexeNoJuro` deixa de perguntar pelo `total` (o `{total}` sozinho com juro volta ao caminho de juro zero)",
+    "  return pedeTaxaNaoZero || (jaTemJuro && (mexeNaTaxa || mexeNoTotal));",
+    "  return pedeTaxaNaoZero || (jaTemJuro && mexeNaTaxa);",
+  ],
+  [
+    LIB,
+    "a cauda com juro passa a ser repartida sobre o `total` PEDIDO (que no `{taxa}` sozinho nem existe)",
+    "  if (juro) return juro.total - jaRecebido;",
+    "  if (juro) return Number(pedido.total) - jaRecebido;",
+  ],
+  [
+    LIB,
+    "a taxa do ajuste passa a ser lida como FRACAO e nao como percento (`{taxa: 30}` vira 3000%)",
+    "        taxa: fracaoDaTaxaDigitada(String(pedido.taxa)),\n      })\n    : tresCamposDoEmprestimo({ principal, total: Number(pedido.total) });",
+    "        taxa: Number(pedido.taxa),\n      })\n    : tresCamposDoEmprestimo({ principal, total: Number(pedido.total) });",
+  ],
+  [
+    LIB,
+    "`taxa` e `total` juntos deixam de ser recusados (os dois podem discordar, e o ajuste escolhe um calado)",
+    "  if (\n    ajusteMexeNoJuro({ emprestimo, pedido }) &&\n    mexeNaTaxa &&\n    mexeNoTotal\n  ) {",
+    "  if (\n    false &&\n    mexeNaTaxa &&\n    mexeNoTotal\n  ) {",
+  ],
+  [
+    LIB,
+    "`total_menor_que_o_pago` volta a ler o `total` PEDIDO (o `{taxa}` que derruba a divida abaixo do ja recebido passa)",
+    "    const total = totalDepoisDoAjuste({\n      emprestimo,\n      pedido,\n      juro: juroDepoisDoAjuste({ emprestimo, pedido }),\n    });",
+    "    const total = Number(pedido.total);",
+  ],
+  [
+    LIB,
+    "o pedido que so mexe na TAXA deixa de contar como pedido que mexe na serie (sem parcela em aberto, o juro novo nao e cobrado por ninguem)",
+    "  if (!mexeNoTotal && !mexeNoVencimento && !mexeNoJuro) return null;",
+    "  if (!mexeNoTotal && !mexeNoVencimento) return null;",
   ],
   [
     LIB,
