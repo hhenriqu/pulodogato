@@ -68,8 +68,9 @@ const mutantes = [
   // (HMO-334). A linha do `meuUserId` so existe em `parteConfiguradaDoMembro`,
   // e e ela que torna a ancora unica -- o `para` a repete intacta.
   //
-  // `parteDoMembro` segue sem mutante proprio para esta decisao. E lacuna de
-  // cobertura, nao defeito daqui.
+  // `parteDoMembro` ganhou o mutante proprio desta decisao na HMO-338 -- ele
+  // vem logo depois do par abaixo, e a lacuna que esta nota descrevia nao
+  // existe mais.
   [
     "o group_id deixa de ser olhado (toda despesa vira pessoal)",
     '  if (!groupId) return cheio;\n  if (typeof meuUserId !== "string" || meuUserId === "") return cheio;',
@@ -81,6 +82,31 @@ const mutantes = [
     "a despesa PESSOAL passa a ser dividida tambem",
     '  if (!groupId) return cheio;\n  if (typeof meuUserId !== "string" || meuUserId === "") return cheio;',
     '  if (false) return cheio;\n  if (typeof meuUserId !== "string" || meuUserId === "") return cheio;',
+  ],
+
+  // A GEMEA, AGORA MEDIDA (HMO-338). O mutante acima muta
+  // `parteConfiguradaDoMembro`; este muta a MESMA decisao em `parteDoMembro`, a
+  // divisao igual. A ancora leva a linha do `membros`, que so existe aqui.
+  //
+  // E ELE NAO E `if (false)`, E ISSO FOI MEDIDO. A forma naive das duas gemeas
+  // (`if (true)` / `if (false)`) morre no TSC, nao na suite: a guarda estreita
+  // `groupId` de `string | null | undefined` para `string`, e
+  // `ReadonlyMap.get` exige `string`. Trocar a condicao apaga o estreitamento,
+  // o tsc reprova, e o mutante "morre" sem que assercao nenhuma tenha olhado a
+  // regra -- e por isso que as duas de cima aparecem como `(tsc)` no placar.
+  // Medido nesta issue com as duas formas lado a lado: `if(true)` -> tsc,
+  // `if(false)` -> tsc, a de baixo -> asercao.
+  //
+  // Entao o mutante estraga o VALOR devolvido, nao a condicao: fora de grupo a
+  // parte deixa de ser o valor inteiro e passa a ser dividida. O estreitamento
+  // sobrevive, o tsc passa, e quem reprova e o teste "despesa PESSOAL nao se
+  // divide com ninguem". O sentido contrario (despesa de grupo parar de ser
+  // dividida) ja tem mutante: "a parte volta a ser o valor CHEIO", no topo
+  // desta lista, que ancora no `return toReais` desta mesma funcao.
+  [
+    "a despesa PESSOAL passa a ser dividida tambem, em parteDoMembro (divisao IGUAL)",
+    "  if (!groupId) return cheio;\n\n  const membros = membrosAtivosPorGrupo.get(groupId);",
+    "  if (!groupId) return toReais(Math.round(toCents(cheio) / 2));\n\n  const membros = membrosAtivosPorGrupo.get(groupId);",
   ],
 
   // --- a contagem desconhecida, que nao pode virar palpite ---
@@ -99,13 +125,24 @@ const mutantes = [
   // O MESMO CASO: a guarda de status esta em `montarParticipantesPorGrupo` (os
   // PESOS) e em `contarMembrosAtivos` (a CONTAGEM), identica nas duas. Este
   // mutante sempre mutou a primeira, os pesos; a linha do `user_id` so existe
-  // la, e e ela que fixa a ancora. O mutante de `contarMembrosAtivos` que vem
-  // logo abaixo ja ancora no `contagem.set`, que e unico -- entao a contagem
-  // tem cobertura, e o que ficou de fora e so o status DENTRO dela.
+  // la, e e ela que fixa a ancora. O mutante que ancora no `contagem.set` mede
+  // a CONTAGEM, mas nao o status dentro dela -- essa era a segunda lacuna da
+  // HMO-338, e o mutante do meio, abaixo, e o que a fechou (ancora no
+  // `contagem.set`, que so existe em `contarMembrosAtivos`).
   [
     "membro inativo volta a contar (a minha parte fica MENOR do que a real)",
     '    if (linha.status && linha.status !== "active") continue;\n    if (typeof linha.user_id !== "string" || linha.user_id === "") continue;',
     '    if (false) continue;\n    if (typeof linha.user_id !== "string" || linha.user_id === "") continue;',
+  ],
+  // A GEMEA DO STATUS (HMO-338). Aqui o `if (false)` naive serve: nao ha
+  // estreitamento de tipo em jogo, entao o tsc passa e quem reprova e a suite.
+  // O defeito que ele encena e o da familia que o cabecalho persegue -- membro
+  // que saiu do grupo volta a contar, o denominador infla, e A MINHA PARTE SAI
+  // MENOR do que a real. Erro para baixo, o que a tela nao mostra.
+  [
+    "membro inativo volta a CONTAR em contarMembrosAtivos (denominador inflado)",
+    '    if (linha.status && linha.status !== "active") continue;\n    contagem.set(linha.group_id, (contagem.get(linha.group_id) ?? 0) + 1);',
+    '    if (false) continue;\n    contagem.set(linha.group_id, (contagem.get(linha.group_id) ?? 0) + 1);',
   ],
   [
     "a contagem passa a ser por linha e nao por grupo (um grupo herda o total do outro)",
