@@ -43,6 +43,12 @@ import type {
   PreferenciaDeCategoria,
   Subcategoria,
 } from "@/lib/categorias";
+// A MESMA constante que o toast da acao na linha usa, e nao uma copia da frase
+// aqui: as duas entradas da feature (esta checkbox e o botao da lista)
+// respondem a MESMA pergunta sobre a MESMA coluna, e duas copias divergiriam na
+// primeira revisao de copy -- uma dizendo que o patrimonio continua e a outra
+// nao. Ver `AVISO_DO_FLAG_DOS_TOTAIS`.
+import { AVISO_DO_FLAG_DOS_TOTAIS } from "@/lib/acoes-da-linha";
 import {
   camposDoTipo,
   contasDoSeletor,
@@ -54,6 +60,7 @@ import {
   parcelaDigitada,
   resumoDaSerie,
   serieDeParcelas,
+  somaNosTotaisEstaNaTela,
   MAX_MESES_DE_REPETICAO,
   type CategoriaDeLancamento,
   type ContaDeLancamento,
@@ -1101,6 +1108,78 @@ export function CamposDeLancamento({
               : `Ainda não ${
                   tipo === "expense" ? "pagou" : "recebeu"
                 }: vai para Contas Previstas e não mexe no saldo até você confirmar lá.`}
+          </p>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------------
+          NAO SOMAR NOS TOTAIS (HMO-452, F2 da HMO-443)
+
+          "adicionei um ajuste na minha conta investimento, ela entrou como uma
+          receita de ajuste mas nao quero que ela fique somana nos totais."
+
+          O ROTULO E NEGATIVO ("Não somar nos totais"), e isto e o pedido
+          literal da issue-mae -- e a UNICA vez que a frase aparece no app. E e
+          o OPOSTO da escolha que o campo da CONTA fez (058, "Somar nos totais"
+          com um `Switch`): a diferenca nao e descuido.
+
+          Ali o rotulo etiqueta um INTERRUPTOR, e um rotulo negativo ao lado de
+          um interruptor cria a dupla negacao na cabeca de quem le -- desligar
+          "Não somar" passaria a querer dizer que soma. Aqui ele etiqueta uma
+          CHECKBOX, cuja leitura e direta: marcar o que esta escrito FAZ o que
+          esta escrito. Marcada = nao soma.
+
+          A FRASE DE BAIXO DIZ O QUE **NAO** MUDA, e esta e a parte que nao pode
+          sair. A linha desmarcada CONTINUA no saldo da conta, no patrimonio e
+          no grafico de patrimonio -- de proposito: `net_worth_history` (008) le
+          `financial_transactions` direto e nao passa por
+          `category_monthly_totals`, onde o filtro mora. O dinheiro do ajuste
+          ENTROU mesmo na conta, e tirar a linha do patrimonio faria o saldo da
+          tela de Contas discordar dele.
+
+          Sem a frase, a pessoa veria o saldo da conta incluindo o ajuste ao
+          lado de um total de receitas que nao o inclui -- as duas leituras
+          CERTAS, e nenhum numero na tela explicando a diferenca. Indistinguivel
+          de um bug.
+
+          A frase e a MESMA constante que o toast da acao na linha usa
+          (`AVISO_DO_FLAG_DOS_TOTAIS`, lib/acoes-da-linha.ts): as duas entradas
+          respondem a mesma pergunta sobre a mesma coluna, e duas copias
+          divergiriam na primeira revisao de copy.
+
+          CONDICIONAL, e o portao e `somaNosTotaisEstaNaTela` -- a MESMA funcao
+          que `gravarTransacao` chama antes de montar o corpo. A coluna e de
+          `financial_transactions`: na previsao, na regra fixa e na serie de
+          parcelas ela nao existe ou nao e lida pela rota, e uma checkbox ali
+          seria uma promessa descartada em silencio.
+
+          DEPOIS da confirmacao e ANTES das observacoes: ela so faz sentido
+          quando o lancamento JA e uma transacao, e a checkbox acima e a que
+          decide isso.
+          ------------------------------------------------------------------ */}
+      {somaNosTotaisEstaNaTela(tipo, valores, editando) && (
+        <div className="space-y-2 p-4 border rounded-lg bg-muted/20">
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="nao-somar-nos-totais"
+              // `!valores.somaNosTotais`: o ESTADO e positivo (como a coluna) e
+              // o ROTULO e negativo. A inversao mora aqui, num lugar so, e e o
+              // que impede a terceira polaridade da mesma pergunta de existir
+              // no estado do formulario.
+              checked={!valores.somaNosTotais}
+              onChange={(e) =>
+                aoMudar({ somaNosTotais: !e.target.checked })
+              }
+            />
+            <Label htmlFor="nao-somar-nos-totais" className="font-medium">
+              Não somar nos totais
+            </Label>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {valores.somaNosTotais
+              ? "Entra nos relatórios como qualquer lançamento."
+              : AVISO_DO_FLAG_DOS_TOTAIS}
           </p>
         </div>
       )}

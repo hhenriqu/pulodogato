@@ -695,6 +695,33 @@ export interface ValoresDeLancamento {
    * Nasce `true`: o caso comum e anotar o que acabou de acontecer.
    */
   confirmado: boolean;
+  /**
+   * ESTE LANCAMENTO SOMA NOS TOTAIS DE RELATORIO? -- HMO-443 / HMO-452.
+   *
+   * Vai para `financial_transactions.include_in_total` (migration 060). `false`
+   * tira a linha das SOMAS -- fluxo de caixa, total por categoria, previsto x
+   * realizado, painel e os CSVs -- e NAO da existencia dela: ela continua no
+   * extrato, continua na lista e continua mexendo no saldo da conta e no
+   * patrimonio. O caso que originou a coluna e o ajuste de saldo, que vira
+   * receita sem ser renda.
+   *
+   * POSITIVO, como a coluna, e nasce `true`: o caso comum e um lancamento que
+   * soma. A coluna e positiva porque todo leitor dela e uma SOMA e a negacao
+   * dupla inverteria o total (o COMMENT da 060 diz isso com essas palavras) --
+   * um `naoSomarNosTotais` aqui seria a terceira polaridade da mesma pergunta
+   * no mesmo app, e o lugar onde ela se inverte calada. A FORMA NEGATIVA mora
+   * no ROTULO da checkbox, que e onde a issue-mae a pediu, e so la.
+   *
+   * SO VALE NO DESTINO `transacao`, e e por isso que a checkbox e condicional
+   * na tela: a coluna e de `financial_transactions`. A previsao vai para
+   * `scheduled_transactions` e a fixa para `recurring_rules` -- nenhuma das duas
+   * tem a coluna --, e a serie de parcelas vai pela rota de parcelas, que nao
+   * conhece o campo. Em qualquer desses tres, um `false` parado no estado seria
+   * descartado em silencio: a pessoa marcaria a checkbox, veria o toast de
+   * sucesso, e a linha somaria nos totais igual. Ver
+   * `somaNosTotaisEstaNaTela`.
+   */
+  somaNosTotais: boolean;
   notas: string;
 
   /**
@@ -875,6 +902,10 @@ export function valoresIniciais(): ValoresDeLancamento {
     // das duas.
     dataPrevista: hojeISO(),
     confirmado: true,
+    // `true` -- o DEFAULT da coluna (060) e o caso comum: quase todo lancamento
+    // soma. Nascer `false` tiraria dos relatorios tudo o que a pessoa anotasse
+    // sem mexer na checkbox, e o sintoma seria um total que nunca sobe.
+    somaNosTotais: true,
     notas: "",
     natureza: "one_off",
     diaDeVencimento: "",
@@ -1535,6 +1566,47 @@ export function destinoDoLancamento(
   // natureza `card` sai como "previsao".
   if (!campos.dataDeRealizacao) return "previsao";
   return "transacao";
+}
+
+/**
+ * A CHECKBOX "NAO SOMAR NOS TOTAIS" ESTA NA TELA? -- HMO-452, F2 da HMO-443.
+ *
+ * `destino === "transacao"`, e e a MESMA funcao que decide para onde o
+ * lancamento vai -- de proposito, e nao por economia. A coluna
+ * `include_in_total` e de `financial_transactions`, e so este destino escreve
+ * lá:
+ *
+ *   * `previsao` -> `scheduled_transactions`: nao tem a coluna;
+ *   * `regra`    -> `recurring_rules`: nao tem a coluna;
+ *   * `parcelas` -> `financial_transactions`, mas pela rota
+ *     `POST /api/financial-installments`, que NAO conhece o campo. A serie
+ *     inteira nasceria somando.
+ *
+ * Nos tres, uma checkbox na tela seria uma promessa que o salvar descarta em
+ * SILENCIO: a pessoa marca, o toast diz sucesso, e o total continua incluindo a
+ * linha. E o mesmo modo de falha que `camposDoTipo` existe para evitar no
+ * `confirmado` do cartao (HMO-209) -- so que lá o estado parado desviava o
+ * destino, e aqui ele se perde.
+ *
+ * UMA FUNCAO PROPRIA, E NAO UM CAMPO EM `CamposDoTipo`: `camposDoTipo` responde
+ * "o que esta na tela" a partir de tipo, natureza e edicao, e nao enxerga
+ * `parcelado` -- que e justamente um dos tres casos acima. Derivar daqui e o
+ * que mantem a decisao com UM dono; um campo lá exigiria repetir a cadeia de
+ * `destinoDoLancamento` dentro dele, e as duas divergiriam no primeiro destino
+ * novo.
+ *
+ * O QUE ELA NAO FAZ: esconder a checkbox nao basta como trava, e nao e trava. O
+ * estado do formulario e um objeto so, e `somaNosTotais: false` sobrevive a
+ * troca de natureza. Quem impede o valor de atravessar e o PORTAO NO CORPO --
+ * `gravarTransacao` chama esta mesma funcao antes de montar a linha, e e lá que
+ * a decisao e load-bearing.
+ */
+export function somaNosTotaisEstaNaTela(
+  tipo: TipoLancamento,
+  valores: ValoresDeLancamento,
+  editando: boolean
+): boolean {
+  return destinoDoLancamento(tipo, valores, editando) === "transacao";
 }
 
 /**

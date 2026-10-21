@@ -9380,3 +9380,38 @@ jobs:
       # de duas.
       - name: Os mutantes do lancamento fora dos totais (a suite acima sabe reprovar?)
         run: npm run mutantes:fora-dos-totais-no-lancamento
+
+      # ---------------------------------------------------------------------
+      # A FIACAO DO FLAG NO FORMULARIO -- HMO-452 (F2 da HMO-443)
+      # ---------------------------------------------------------------------
+      # Os dois steps acima provam as DUAS ROTAS, e `test:campos-lancamento`
+      # prova a CHECKBOX. O formulario nao passa por nenhum dos dois:
+      # `gravarTransacao` escreve DIRETO pelo supabase-js (`.insert()` /
+      # `.update()` em `financial_transactions`), sem tocar nas rotas.
+      #
+      # Entao a feature pode estar inteira -- rota estrita, 12 mutantes mortos,
+      # checkbox desenhada, selo na lista -- e o Salvar descartar a escolha. Foi
+      # EXATAMENTE o estado desta branch quando este guard nasceu: a checkbox
+      # existia, `somaNosTotais` existia em `ValoresDeLancamento`, o JSDoc de
+      # `somaNosTotaisEstaNaTela` AFIRMAVA que `gravarTransacao` chamava o portao
+      # -- e o campo nao estava no objeto `linha`. A pessoa marcaria, o toast
+      # diria sucesso, e o total continuaria incluindo o ajuste.
+      #
+      # NENHUM DOS TRES MODOS DE FALHA APARECE NO `tsc`: o objeto vai para a
+      # fronteira permissiva do supabase-js (campo faltando nao e erro de tipo),
+      # o campo posto so no ramo do insert compila igual, e a edicao que nao
+      # recarrega o flag gravado e um objeto a menos num spread.
+      #
+      # O guard mede POSICAO tambem, e nao so presenca: `include_in_total:` tem
+      # de vir ANTES de `let transacao`, que e onde o objeto `linha` termina e os
+      # dois ramos comecam. Dentro do insert, marcar funciona na criacao e e
+      # impossivel de desfazer pelo formulario -- metade do pedido.
+      #
+      # Comentario e `import` saem antes da varredura, e aqui isso e
+      # load-bearing de verdade: os arquivos desta feature citam
+      # `include_in_total` e `somaNosTotais` em paragrafos inteiros de prosa, e um
+      # guard sobre o fonte cru leria os proprios comentarios que descrevem o
+      # defeito. Os cinco mutantes (campo fora de `linha`, campo so no insert,
+      # edicao sem recarga, e os dois `!` das inversoes) foram medidos MORTOS.
+      - name: O flag «fora dos totais» esta ligado no formulario (checkbox, corpo e edicao)
+        run: node scripts/check-fora-dos-totais-no-lancamento.mjs

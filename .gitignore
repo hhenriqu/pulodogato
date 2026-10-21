@@ -708,3 +708,11 @@ next-env.d.ts
 # fora do .gitignore chega a ser commitado em cima de arquivo de fonte (ver a
 # entrada do .tmp-parcelamento acima).
 /.tmp-conversa-na-tela/
+
+# Artefato de `test:fora-dos-totais-no-lancamento` (HMO-452, F2 da HMO-443): as
+# duas rotas que escrevem `include_in_total` compiladas com o duble de supabase,
+# para a sonda importar o handler de verdade em vez de uma copia do corpo.
+# Artefato, nao fonte: sem a linha, `check-artefatos-de-build` fica vermelho na
+# `main`, e um `.tmp-*` fora do .gitignore chega a ser commitado em cima de
+# arquivo de fonte -- ver a entrada do .tmp-parcelamento acima.
+/.tmp-fora-dos-totais-no-lancamento/
