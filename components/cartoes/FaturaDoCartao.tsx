@@ -45,6 +45,7 @@ import {
   Pencil,
   Plus,
   Receipt,
+  Sigma,
   Trash2,
 } from "lucide-react";
 import type { FinancialAccount } from "@/types/financial";
@@ -70,11 +71,17 @@ import {
   type CategoriaDeAjuste,
 } from "@/lib/ajuste-de-fatura";
 import {
+  AVISO_DA_FATURA_INTEIRA,
   caminhoDeEdicaoDaLinhaDaFatura,
   ehParcelaDaFatura,
+  faturaTemLinhaForaDosTotais,
   podeAgirNaLinhaDaFatura,
+  podeMudarOsTotaisDaLinhaDaFatura,
   ROTULO_DE_EDITAR_NA_FATURA,
   ROTULO_DE_EXCLUIR_NA_FATURA,
+  rotuloDeMudarOsTotaisDaLinhaDaFatura,
+  seloDaLinhaDaFatura,
+  somaNosTotaisDaFatura,
 } from "@/lib/acoes-da-fatura";
 import {
   ROTULO_DE_EDITAR_A_PREVISAO,
@@ -127,6 +134,22 @@ interface FaturaDoCartaoProps {
    * componente continua sem rede.
    */
   aoExcluirCompra?: (gasto: LinhaDaFatura, ehAjuste: boolean) => void;
+  /**
+   * Alternar "nao somar nos totais" nesta compra (HMO-461).
+   *
+   * TERCEIRO VERBO do pedido da HMO-455, e o unico dos tres que NAO muda o
+   * total impresso em cima da lista -- e por isso que a tela ganha, junto com o
+   * botao, o selo na linha e a frase (`AVISO_DA_FATURA_INTEIRA`). Ver o bloco
+   * "DESCONSIDERAR A COMPRA DO SALDO" em `lib/acoes-da-fatura.ts`.
+   *
+   * `ehAjuste` CHEGA DAQUI pela mesma razao de `aoExcluirCompra`: quem sabe
+   * dizer e `ehLinhaDeAjuste`, que ja respondeu uma vez por linha neste
+   * `map` -- para o selo e para a peneira dos tres botoes.
+   *
+   * OPCIONAL como os outros: sem ele o botao nao aparece, e este componente
+   * continua sem rede nenhuma, renderizavel por `react-dom/server`.
+   */
+  aoMudarOsTotais?: (gasto: LinhaDaFatura, ehAjuste: boolean) => void;
   /**
    * A categoria reservada do ajuste de saldo (HMO-253), como
    * `GET /api/card-invoices` a devolve em `adjustment_category_id`.
@@ -206,6 +229,13 @@ type LinhaDaFatura = {
   transaction_type?: string | null;
   installment_number?: number | null;
   installment_total?: number | null;
+  /**
+   * O flag dos totais (060, publicado pela 061). TRES ESTADOS: `null` e
+   * `undefined` querem dizer "ninguem mexeu", ou seja SOMA.
+   *
+   * Nao se le direto aqui -- `somaNosTotaisDaFatura` resolve os tres.
+   */
+  include_in_total?: boolean | null;
 };
 
 /** '2026-10-14' -> '14/10'. Sem `new Date()`: a ISO seria lida como UTC e, no
@@ -220,6 +250,7 @@ export function FaturaDoCartao({
   aoMudarMes,
   aoApagarParcela,
   aoExcluirCompra,
+  aoMudarOsTotais,
   categoriaDeAjuste,
   aoEditarPrevisao,
   aoExcluirPrevisao,
@@ -385,6 +416,30 @@ export function FaturaDoCartao({
                 ? "1 gasto nesta fatura"
                 : `${gastos.length} gastos nesta fatura`}
             </CardTitle>
+            {/* A FRASE, que e requisito da HMO-461 e nao enfeite.
+
+                O FLUXO SEM ELA SE LE COMO BUG: a pessoa clica "Nao somar nos
+                totais", a tela recarrega a fatura, e o total continua IGUAL ao
+                centavo -- porque e isso que a Opcao A decidiu (a fatura do app
+                tem de bater com a do banco). Nenhum numero na tela explica
+                isso, e o selo na linha nao responde: ele diz que a linha saiu,
+                nao de onde. A conclusao disponivel e "o botao nao funciona", e
+                o passo seguinte do usuario e clicar de novo -- religando a
+                compra -- ou lancar um ajuste para consertar um total correto.
+
+                AQUI E NAO NA LINHA: ela e uma afirmacao sobre O TOTAL (que esta
+                impresso logo acima deste cabecalho), nao sobre uma compra. Na
+                linha ela se repetiria a cada compra marcada.
+
+                CONDICIONAL, pelo pedagio de `faturaTemLinhaForaDosTotais`: a
+                pergunta so existe depois do primeiro clique, e aviso permanente
+                que nao se aplica e o texto que se aprende a nao ler -- bem
+                antes do mes em que ele passa a importar. */}
+            {faturaTemLinhaForaDosTotais(gastos) ? (
+              <p className="pt-1 text-xs text-muted-foreground">
+                {AVISO_DA_FATURA_INTEIRA}
+              </p>
+            ) : null}
           </CardHeader>
           <CardContent className="divide-y divide-border p-0">
             {gastos.map((gasto) => {
@@ -405,6 +460,18 @@ export function FaturaDoCartao({
               const ehParcela = ehParcelaDaFatura(gasto);
               const podeExcluirACompra =
                 podeAgirNaLinhaDaFatura(gasto, ehAjuste) && !ehParcela;
+              // O QUARTO: alternar o flag dos totais (HMO-461).
+              //
+              // NAO exige `!ehParcela`, e a diferenca para a linha de cima e
+              // deliberada: cada parcela e uma linha propria desde a 035 e o
+              // PATCH grava nela sem tocar nas irmas -- o que estraga a serie e
+              // EXCLUIR uma de dez, nao marca-la. Ver
+              // `podeMudarOsTotaisDaLinhaDaFatura`.
+              const podeMudarTotais = podeMudarOsTotaisDaLinhaDaFatura(
+                gasto,
+                ehAjuste
+              );
+              const selo = seloDaLinhaDaFatura(gasto);
 
               return (
               <div
@@ -432,6 +499,34 @@ export function FaturaDoCartao({
                         className="shrink-0 border-info/30 text-info"
                       >
                         Ajuste
+                      </Badge>
+                    ) : null}
+                    {/* O SELO "fora dos totais" (HMO-461).
+
+                        SEM ELE A LINHA E INDISTINGUIVEL DA VIZINHA: ela
+                        continua aqui, com o valor dela, e continua somando no
+                        total impresso em cima -- a diferenca que o flag cria
+                        mora num relatorio em OUTRA tela. Nenhum pixel desta
+                        linha diria que aquela compra nao esta no "total por
+                        categoria" do mes.
+
+                        `seloDaLinhaDaFatura` e nao um `=== false` escrito aqui:
+                        a coluna tem TRES estados e `NULL` quer dizer "soma" --
+                        o `=== true` ingenuo carimbaria o selo em toda fatura
+                        anterior a migration 060. A decisao e a mesma de
+                        `rotuloDeMudarOsTotaisDaLinhaDaFatura`, e as duas tem de
+                        sair da mesma funcao, senao existe o estado "selo sim,
+                        botao dizendo o contrario".
+
+                        `text-warning` e nao `text-destructive`: a linha nao
+                        esta com defeito nem vai ser apagada -- ela esta fora de
+                        uma soma, por escolha de quem clicou. */}
+                    {selo ? (
+                      <Badge
+                        variant="outline"
+                        className="shrink-0 border-warning/30 text-warning"
+                      >
+                        {selo}
                       </Badge>
                     ) : null}
                   </p>
@@ -520,6 +615,44 @@ export function FaturaDoCartao({
                       <Link href={caminhoDeEditar}>
                         <Pencil className="h-4 w-4" />
                       </Link>
+                    </Button>
+                  ) : null}
+
+                  {/* NAO SOMAR NOS TOTAIS (HMO-461)
+                      O terceiro verbo do pedido da HMO-455: "desconsideradas
+                      do saldo". Chama um prop, como os outros -- quem fala com
+                      a rota da HMO-452 e `cartoes/[id]/page.tsx`.
+
+                      ENTRE O EDITAR E O EXCLUIR, de proposito e na mesma ordem
+                      da lista de Despesas: a linha vai do menos destrutivo para
+                      o mais, e o Excluir e o unico que nao volta. Posto depois
+                      dele, este botao ficaria colado no vermelho -- o alvo
+                      errado num toque de celular custa uma compra apagada.
+
+                      O ROTULO MUDA COM O ESTADO e carrega o `aria-label`: a
+                      acao e um interruptor, e um nome fixo mentiria em metade
+                      dos cliques. E e pelo `aria-label` que a suite acha o
+                      botao, ja que ele e so icone.
+
+                      O ICONE FICA `text-warning` QUANDO A LINHA JA ESTA FORA, e
+                      e a unica forma de os dois estados se distinguirem num
+                      botao sem texto -- um sigma identico nos dois casos
+                      deixaria o estado legivel so pelo selo, do outro lado da
+                      linha. (`line-through` num `<span>` nao pinta SVG.) */}
+                  {aoMudarOsTotais && podeMudarTotais ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0"
+                      title={rotuloDeMudarOsTotaisDaLinhaDaFatura(gasto)}
+                      aria-label={rotuloDeMudarOsTotaisDaLinhaDaFatura(gasto)}
+                      onClick={() => aoMudarOsTotais(gasto, ehAjuste)}
+                    >
+                      <Sigma
+                        className={`h-4 w-4 ${
+                          somaNosTotaisDaFatura(gasto) ? "" : "text-warning"
+                        }`}
+                      />
                     </Button>
                   ) : null}
 

@@ -76,6 +76,8 @@ import { rotuloDaFatura } from "@/lib/fatura-do-cartao";
 import {
   avisoDaExclusaoDaLinhaDaFatura,
   pedidoDeExclusaoDaLinhaDaFatura,
+  pedidoDeMudarOsTotaisDaLinhaDaFatura,
+  somaNosTotaisDaFatura,
   type LinhaDaFaturaAcionavel,
 } from "@/lib/acoes-da-fatura";
 import {
@@ -350,6 +352,73 @@ function GastosDoCartao() {
     } catch (erro) {
       console.error("Erro ao excluir a compra da fatura:", erro);
       toast.error("Erro ao excluir a compra");
+    } finally {
+      setApagando(false);
+    }
+  };
+
+  /**
+   * Alternar "nao somar nos totais" nesta compra (HMO-461).
+   *
+   * A FIACAO MORA AQUI e a DECISAO mora em `lib/acoes-da-fatura.ts`, como nas
+   * outras duas acoes: `FaturaDoCartao` nao tem rede.
+   *
+   * A ROTA E A DA HMO-452, CHAMADA E NAO REIMPLEMENTADA. Ela grava
+   * `include_in_total` com teste estrito (`=== true` / `=== false`) e mutantes
+   * proprios; o que esta aqui e o `fetch`, o toast e a releitura.
+   *
+   * SEM `confirm()`, ao contrario do Excluir: a acao e reversivel pelo MESMO
+   * botao, que muda de rotulo. Perguntar antes de uma acao que se desfaz com um
+   * clique treina a pessoa a confirmar sem ler -- e e justamente o que torna o
+   * `confirm()` do Excluir inofensivo.
+   *
+   * O TOAST DIZ O QUE NAO MUDOU, e e a mesma razao da frase na tela: o total da
+   * fatura continua inteiro de proposito, e o unico momento em que a pessoa esta
+   * olhando essa pergunta e agora. A frase na tela cobre quem volta depois; o
+   * toast cobre quem acabou de clicar.
+   */
+  const mudarOsTotaisDaCompra = async (
+    gasto: LinhaDaFaturaAcionavel,
+    ehAjuste: boolean
+  ) => {
+    const pedido = pedidoDeMudarOsTotaisDaLinhaDaFatura(gasto, ehAjuste);
+    if (!pedido) return;
+
+    // Lido ANTES da escrita: depois da releitura a linha ja esta no estado novo,
+    // e o toast descreveria o oposto do que acabou de acontecer.
+    const estavaSomando = somaNosTotaisDaFatura(gasto);
+
+    setApagando(true);
+    try {
+      const resposta = await fetch(pedido.url, {
+        method: pedido.metodo,
+        headers: { "Content-Type": "application/json" },
+        // O booleano vai LITERAL (`true`/`false` nus). A rota testa `=== true`
+        // estrito -- a string "false" e truthy e gravaria o OPOSTO, com 200 e
+        // sem sintoma. Ver `pedidoDeMudarOsTotaisDaLinhaDaFatura`.
+        body: JSON.stringify(pedido.corpo),
+      });
+      const dados = await resposta.json().catch(() => ({}));
+
+      if (!resposta.ok) {
+        toast.error(
+          dados.error || `A alteração foi recusada (HTTP ${resposta.status}).`
+        );
+        return;
+      }
+
+      toast.success(
+        estavaSomando
+          ? "Fora dos totais dos relatórios. O total desta fatura continua inteiro."
+          : "De volta aos totais dos relatórios."
+      );
+      // Recarrega a fatura INTEIRA em vez de remendar a linha na memoria: o
+      // selo, o rotulo do botao e a frase saem todos do mesmo campo, e tres
+      // leituras remendadas a mao divergem na primeira falha de rede.
+      recarregar();
+    } catch (erro) {
+      console.error("Erro ao mudar os totais da compra:", erro);
+      toast.error("Erro ao alterar a compra");
     } finally {
       setApagando(false);
     }
@@ -677,6 +746,7 @@ function GastosDoCartao() {
         aoMudarMes={setMes}
         aoApagarParcela={setParcelaParaApagar}
         aoExcluirCompra={excluirCompra}
+        aoMudarOsTotais={mudarOsTotaisDaCompra}
         categoriaDeAjuste={categoriaDeAjuste}
         aoEditarPrevisao={abrirEdicaoDaPrevisao}
         aoExcluirPrevisao={pedirExclusaoDaPrevisao}
