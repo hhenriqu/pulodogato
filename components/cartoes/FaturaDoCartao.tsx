@@ -39,7 +39,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { ArrowLeft, CreditCard, Plus, Receipt, Trash2 } from "lucide-react";
+import {
+  ArrowLeft,
+  CreditCard,
+  Pencil,
+  Plus,
+  Receipt,
+  Trash2,
+} from "lucide-react";
 import type { FinancialAccount } from "@/types/financial";
 import type { CardInvoice } from "@/types/financial";
 import { formatarValor } from "@/lib/dinheiro";
@@ -62,6 +69,13 @@ import {
   ehLinhaDeAjuste,
   type CategoriaDeAjuste,
 } from "@/lib/ajuste-de-fatura";
+import {
+  caminhoDeEdicaoDaLinhaDaFatura,
+  ehParcelaDaFatura,
+  podeAgirNaLinhaDaFatura,
+  ROTULO_DE_EDITAR_NA_FATURA,
+  ROTULO_DE_EXCLUIR_NA_FATURA,
+} from "@/lib/acoes-da-fatura";
 import { NumeroIndisponivel } from "@/components/SemRede";
 
 interface FaturaDoCartaoProps {
@@ -83,6 +97,31 @@ interface FaturaDoCartaoProps {
    * precisar de nada que mexa em dinheiro.
    */
   aoApagarParcela?: (gasto: LinhaDaFatura) => void;
+  /**
+   * Pedir para excluir uma compra AVULSA desta fatura (HMO-455).
+   *
+   * SEGUNDO PROP, e nao um ramo dentro de `aoApagarParcela`: as duas exclusoes
+   * sao acoes diferentes com rotas diferentes e perguntas diferentes -- a
+   * parcela pergunta o ALCANCE (so esta, desta em diante, ou todas) e a avulsa
+   * pergunta so se e para apagar. Unificar os dois props faria a pagina ter de
+   * redecidir, dentro do handler, o que e parcela -- o segundo lugar a decidir
+   * isso, divergindo do primeiro no dia em que o criterio mudar.
+   *
+   * Os dois sao MUTUAMENTE EXCLUDENTES por construcao (`ehParcelaDaFatura`), e
+   * o teste cobra isso nos dois sentidos: nenhuma linha mostra os dois botoes
+   * de lixeira, e nenhuma linha fica sem nenhum.
+   *
+   * O SEGUNDO ARGUMENTO (`ehAjuste`) E ENTREGUE, E NAO RE-DERIVADO LA.
+   * Quem sabe dizer se a linha e o ajuste de saldo e `ehLinhaDeAjuste`, que
+   * precisa da categoria reservada -- e ela ja foi chamada aqui, uma vez, para
+   * o selo e para a peneira dos botoes. A pagina recalcula-la seria a segunda
+   * resposta para a mesma pergunta sobre a mesma linha, e a divergencia
+   * apareceria como um Excluir que abre a confirmacao e nao faz nada.
+   *
+   * OPCIONAL pela mesma razao do de cima: sem ele o botao nao aparece, e este
+   * componente continua sem rede.
+   */
+  aoExcluirCompra?: (gasto: LinhaDaFatura, ehAjuste: boolean) => void;
   /**
    * A categoria reservada do ajuste de saldo (HMO-253), como
    * `GET /api/card-invoices` a devolve em `adjustment_category_id`.
@@ -115,6 +154,12 @@ interface FaturaDoCartaoProps {
 type LinhaDaFatura = {
   transaction_id: string;
   description: string;
+  /**
+   * 'expense' | 'income'. E ele que escolhe para qual FORMULARIO o Editar
+   * abre (HMO-455) -- abrir um estorno no formulario de despesa o
+   * reclassificaria na primeira gravacao. Ver `rotaDoFormularioDaLinha`.
+   */
+  transaction_type?: string | null;
   installment_number?: number | null;
   installment_total?: number | null;
 };
@@ -130,6 +175,7 @@ export function FaturaDoCartao({
   estado,
   aoMudarMes,
   aoApagarParcela,
+  aoExcluirCompra,
   categoriaDeAjuste,
   blocoDeAjuste,
 }: FaturaDoCartaoProps) {
@@ -294,7 +340,26 @@ export function FaturaDoCartao({
             </CardTitle>
           </CardHeader>
           <CardContent className="divide-y divide-border p-0">
-            {gastos.map((gasto) => (
+            {gastos.map((gasto) => {
+              // AS TRES DECISOES DA LINHA, DERIVADAS UMA VEZ (HMO-455).
+              //
+              // `ehAjuste` ja era chamado aqui dentro para o selo; agora ele
+              // tambem decide se a linha ganha Editar e Excluir, e por isso sai
+              // do JSX para uma constante. Chama-lo duas vezes seria duas
+              // respostas para a mesma pergunta na mesma linha -- e a divergencia
+              // apareceria como uma linha com selo "Ajuste" E com os botoes que
+              // o selo existe para negar.
+              const ehAjuste = ehLinhaDeAjuste(gasto, categoriaDeAjuste);
+              const caminhoDeEditar = caminhoDeEdicaoDaLinhaDaFatura(
+                gasto,
+                ehAjuste,
+                origem
+              );
+              const ehParcela = ehParcelaDaFatura(gasto);
+              const podeExcluirACompra =
+                podeAgirNaLinhaDaFatura(gasto, ehAjuste) && !ehParcela;
+
+              return (
               <div
                 key={gasto.transaction_id}
                 className="flex items-center justify-between gap-3 px-6 py-3"
@@ -314,7 +379,7 @@ export function FaturaDoCartao({
                         depois, uma compra de R$ 50 que ninguem reconhece. O
                         rotulo sai da CATEGORIA reservada, nao da descricao --
                         mesma razao de `rotuloDaParcela` sair das colunas. */}
-                    {ehLinhaDeAjuste(gasto, categoriaDeAjuste) ? (
+                    {ehAjuste ? (
                       <Badge
                         variant="outline"
                         className="shrink-0 border-info/30 text-info"
@@ -373,7 +438,7 @@ export function FaturaDoCartao({
                       proposito -- e isso que permite ao teste renderizar a tela
                       de verdade com `react-dom/server`. Quem abre o dialogo e
                       fala com a rota e `cartoes/[id]/page.tsx`. */}
-                  {aoApagarParcela && gasto.installment_number ? (
+                  {aoApagarParcela && ehParcela ? (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -384,9 +449,59 @@ export function FaturaDoCartao({
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   ) : null}
+
+                  {/* EDITAR A COMPRA (HMO-455)
+                      E um `<Link>` e nao um handler: a edicao e a tela de
+                      lancamento que ja existe, e levar a pessoa ate la nao
+                      precisa de rede nenhuma -- este componente continua
+                      renderizavel por `react-dom/server`.
+
+                      O `origem` dentro do caminho e o que faz Cancelar e Salvar
+                      voltarem PARA ESTA FATURA. Sem ele, corrigir o valor de uma
+                      compra de agosto termina na lista de Lancamentos do mes
+                      corrente, e a pessoa nao ve o numero que ela acabou de
+                      consertar. */}
+                  {caminhoDeEditar ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0"
+                      title={ROTULO_DE_EDITAR_NA_FATURA}
+                      aria-label={ROTULO_DE_EDITAR_NA_FATURA}
+                      asChild
+                    >
+                      <Link href={caminhoDeEditar}>
+                        <Pencil className="h-4 w-4" />
+                      </Link>
+                    </Button>
+                  ) : null}
+
+                  {/* EXCLUIR A COMPRA AVULSA (HMO-455)
+                      NUNCA junto do botao de parcela acima: `podeExcluirACompra`
+                      exige `!ehParcela`, e a parcela sai pela rota de serie, que
+                      pergunta o alcance. Os dois na mesma linha seriam duas
+                      lixeiras lado a lado prometendo coisas diferentes, sem nada
+                      na tela dizendo qual e qual.
+
+                      O titulo diz O QUE SAI. "Excluir" sozinho, numa tela cujo
+                      outro botao de lixeira apaga uma serie inteira, nao
+                      distingue as duas promessas. */}
+                  {aoExcluirCompra && podeExcluirACompra ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      title={`${ROTULO_DE_EXCLUIR_NA_FATURA} esta compra da fatura`}
+                      aria-label={ROTULO_DE_EXCLUIR_NA_FATURA}
+                      onClick={() => aoExcluirCompra(gasto, ehAjuste)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  ) : null}
                 </div>
               </div>
-            ))}
+              );
+            })}
           </CardContent>
         </Card>
       ) : (

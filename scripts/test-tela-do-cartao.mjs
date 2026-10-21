@@ -32,6 +32,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { FaturaDoCartao } from "../.tmp-tela-do-cartao/components/cartoes/FaturaDoCartao.js";
 import { CartaoDaLista } from "../.tmp-tela-do-cartao/components/cartoes/CartaoDaLista.js";
+import {
+  avisoDaExclusaoDaLinhaDaFatura,
+  caminhoDeEdicaoDaLinhaDaFatura,
+  ehParcelaDaFatura,
+  pedidoDeExclusaoDaLinhaDaFatura,
+} from "../.tmp-tela-do-cartao/lib/acoes-da-fatura.js";
 
 const MEU_CARTAO = "11111111-1111-1111-1111-111111111111";
 const OUTRO_CARTAO = "22222222-2222-2222-2222-222222222222";
@@ -288,8 +294,33 @@ test("o botao de lancar aponta para a despesa com o cartao na query", () => {
 test("o link NAO usa a chave id (ela colide sob a rota [id])", () => {
   const html = render();
 
-  assert.ok(!html.includes("despesa?id="), "o link usou ?id=");
-  assert.ok(!html.includes(`&id=${MEU_CARTAO}`), "o link usou &id=");
+  // O QUE ESTA PROIBIDO E O **CARTAO** VIAJAR NA CHAVE `id`, e nao a string
+  // "?id=" existir na arvore. A assercao era `!html.includes("despesa?id=")` --
+  // um grep sobre a pagina inteira -- e ela ficou larga demais na HMO-455: a
+  // linha da fatura ganhou um "Editar" que leva o **LANCAMENTO** em `?id=`,
+  // para `/dashboard/movimentacoes/despesa`, que NAO tem segmento `[id]` e onde
+  // aquela chave e justamente a que `FormularioDeLancamento` le
+  // (`parametros.get("id")`) -- o mesmo caminho que `caminhoDeEdicao` ja monta
+  // em lib/acoes-da-linha.ts. O grep antigo reprovava o link CERTO.
+  //
+  // O alvo agora e o VALOR, ancorado no fim (`&` ou a aspa que fecha o href).
+  // Sem a ancora a guarda voltaria a reprovar o link certo: o
+  // `transaction_id` da fixture comeca com o id do cartao.
+  assert.ok(
+    !html.includes(`id=${MEU_CARTAO}&`),
+    "o cartao viajou na chave id (forma &)"
+  );
+  assert.ok(
+    !html.includes(`id=${MEU_CARTAO}"`),
+    "o cartao viajou na chave id (fim do href)"
+  );
+  // O CONTROLE POSITIVO: o cartao continua indo na chave que a tela de
+  // lancamento sabe ler. Sem esta linha as duas negacoes acima passariam
+  // vacuas numa tela que tivesse perdido o link inteiro.
+  assert.ok(
+    html.includes(`despesa?cartao=${MEU_CARTAO}`),
+    "sumiu o link que leva o cartao em ?cartao="
+  );
 });
 
 test("o vazio tambem oferece lancar (e o caminho de saida da tela vazia)", () => {
@@ -688,6 +719,241 @@ test("sem handler, nem a parcela ganha o botao", () => {
   assert.ok(!html.includes(TITULO_APAGAR), "o botao apareceu sem handler");
   // E o resto da linha continua intacto: o rotulo nao depende do handler.
   assert.ok(html.includes("parcela 3 de 10"));
+});
+
+// ---------------------------------------------------------------------------
+// EDITAR E EXCLUIR A COMPRA, DA PROPRIA FATURA (HMO-455)
+// ---------------------------------------------------------------------------
+// "Contas do cartao tambem podem ser editadas, excluidas e desconsideradas do
+// saldo."
+//
+// Ate esta issue a unica acao da linha era apagar PARCELA. A compra avulsa --
+// a maioria das linhas de qualquer fatura -- nao tinha nem editar nem excluir:
+// o conserto saia pela lista de Despesas, numa tela que nao diz em que fatura
+// aquela compra caiu.
+//
+// A DECISAO esta em `lib/acoes-da-fatura.ts` e tem assercao de unidade logo
+// abaixo; o que se cobra AQUI e que ela chegue na arvore -- um `podeAgir` certo
+// com o botao fora do JSX passa verde em qualquer teste de funcao pura.
+
+const TITULO_EXCLUIR = "Excluir esta compra da fatura";
+const CATEGORIA_DE_AJUSTE = "cat-ajuste";
+
+/** A linha do ajuste de saldo: o que a difere e a CATEGORIA, nao a descricao. */
+const linhaDeAjuste = () => ({
+  ...linha(MEU_CARTAO, "Ajuste de saldo da fatura", 50, "20"),
+  transaction_id: "ajuste-1",
+  category_id: CATEGORIA_DE_AJUSTE,
+});
+
+test("a compra avulsa ganha Editar, apontando para o formulario de despesa", () => {
+  const html = render();
+
+  // O id do LANCAMENTO, e o `de=` de volta para a fatura. Sem o `de=`,
+  // corrigir uma compra de agosto termina na lista do mes corrente.
+  assert.ok(
+    html.includes(`/dashboard/movimentacoes/despesa?id=${MEU_CARTAO}-03`),
+    `o Editar nao aponta para o formulario: ${html.slice(0, 400)}`
+  );
+  assert.ok(
+    html.includes(
+      `origem=${encodeURIComponent(`/dashboard/cartoes/${MEU_CARTAO}`)}`
+    ),
+    "o Editar nao leva a volta para a fatura"
+  );
+});
+
+test("o ESTORNO abre o formulario de RECEITA, nao o de despesa", () => {
+  // Abrir um estorno no formulario de despesa o reclassificaria na primeira
+  // gravacao -- a rota de PATCH re-deriva o tipo pela categoria escolhida. O
+  // estorno de R$ 200 viraria uma compra de R$ 200, e a fatura subiria R$ 400:
+  // dois numeros plausiveis e nada vermelho.
+  const html = render({
+    fatura: {
+      ...FATURA,
+      lines: [
+        { ...linha(MEU_CARTAO, "Estorno da passagem", 200, "09"),
+          transaction_type: "income" },
+      ],
+      line_count: 1,
+    },
+  });
+
+  assert.ok(
+    html.includes("/dashboard/movimentacoes/receita?id="),
+    "o estorno abriria no formulario errado"
+  );
+  assert.ok(
+    !html.includes("/dashboard/movimentacoes/despesa?id="),
+    "o estorno tambem ganhou o link de despesa"
+  );
+});
+
+test("a compra avulsa ganha Excluir quando a pagina passa o handler", () => {
+  const html = render({ aoExcluirCompra: () => {} });
+
+  assert.ok(html.includes(TITULO_EXCLUIR), "a compra avulsa nao ganhou Excluir");
+});
+
+test("sem handler, a compra avulsa NAO ganha Excluir", () => {
+  // O prop e opcional, e e isso que mantem este componente sem rede. Um botao
+  // que aparecesse sempre apareceria tambem onde nao ha nada ligado nele.
+  const html = render();
+
+  assert.ok(!html.includes(TITULO_EXCLUIR), "o Excluir apareceu sem handler");
+});
+
+test("os dois botoes de lixeira sao EXCLUDENTES na mesma linha", () => {
+  // A parcela sai pela rota de SERIE, que pergunta o alcance; a avulsa pela
+  // rota de lancamento, que nao pergunta. Duas lixeiras lado a lado prometendo
+  // coisas diferentes, sem nada dizendo qual e qual, e pior que uma so -- e
+  // apagar uma parcela pela rota da avulsa deixa nove linhas rotuladas
+  // "parcela N de 10" numa serie que agora tem nove.
+  const soParcela = render({
+    fatura: { ...FATURA, lines: [parcela(3, 10, 100)], line_count: 1, total: 100 },
+    aoApagarParcela: () => {},
+    aoExcluirCompra: () => {},
+  });
+
+  assert.ok(soParcela.includes(TITULO_APAGAR), "a parcela perdeu o botao dela");
+  assert.ok(
+    !soParcela.includes(TITULO_EXCLUIR),
+    "a parcela ganhou TAMBEM o Excluir da avulsa"
+  );
+
+  const soAvulsa = render({ aoApagarParcela: () => {}, aoExcluirCompra: () => {} });
+
+  assert.ok(soAvulsa.includes(TITULO_EXCLUIR), "a avulsa perdeu o Excluir");
+  assert.ok(
+    !soAvulsa.includes(TITULO_APAGAR),
+    "a avulsa ganhou TAMBEM o apagar-parcela"
+  );
+});
+
+test("a linha do AJUSTE nao ganha Editar nem Excluir", () => {
+  // Ela ja tem controle proprio um bloco acima ("Ajustar saldo" / "Remover").
+  // E o Editar e pior que redundante: o formulario deixa trocar a CATEGORIA, e
+  // e a categoria reservada que faz aquela linha ser um ajuste. Trocada, o
+  // bloco de cima conclui que a fatura nao tem ajuste e o proximo "Ajustar
+  // saldo" grava um SEGUNDO -- a diferenca contada duas vezes.
+  const html = render({
+    fatura: { ...FATURA, lines: [linhaDeAjuste()], line_count: 1, total: 50 },
+    categoriaDeAjuste: CATEGORIA_DE_AJUSTE,
+    aoExcluirCompra: () => {},
+  });
+
+  assert.ok(texto(html).includes("Ajuste"), "o selo do ajuste sumiu");
+  assert.ok(
+    !html.includes("/dashboard/movimentacoes/despesa?id=ajuste-1"),
+    "o ajuste ganhou Editar"
+  );
+  assert.ok(!html.includes(TITULO_EXCLUIR), "o ajuste ganhou Excluir");
+});
+
+test("a compra COMUM continua com as acoes quando ha um ajuste na fatura", () => {
+  // A negacao do teste acima. Sem ela, uma regra que escondesse os botoes de
+  // TODA linha quando a fatura tem ajuste passaria verde la em cima.
+  const html = render({
+    fatura: {
+      ...FATURA,
+      lines: [linhaDeAjuste(), linha(MEU_CARTAO, "Mercado do mes", 200, "03")],
+      line_count: 2,
+    },
+    categoriaDeAjuste: CATEGORIA_DE_AJUSTE,
+    aoExcluirCompra: () => {},
+  });
+
+  assert.ok(html.includes(TITULO_EXCLUIR), "a compra comum perdeu o Excluir");
+  assert.ok(
+    html.includes(`/dashboard/movimentacoes/despesa?id=${MEU_CARTAO}-03`),
+    "a compra comum perdeu o Editar"
+  );
+});
+
+// ---------------------------------------------------------------------------
+// A DECISAO, SEM ARVORE: lib/acoes-da-fatura.ts
+// ---------------------------------------------------------------------------
+// As assercoes acima provam que a decisao CHEGA na tela. Estas provam a decisao
+// -- inclusive os ramos que a tela nao tem como mostrar (o `null` do pedido,
+// que e o que impede a parcela de cair na rota da avulsa).
+
+test("pedidoDeExclusaoDaLinhaDaFatura devolve null para parcela e para ajuste", () => {
+  const avulsa = { transaction_id: "t1", description: "Mercado" };
+
+  assert.deepEqual(pedidoDeExclusaoDaLinhaDaFatura(avulsa, false), {
+    metodo: "DELETE",
+    url: "/api/personal-finance/transactions/t1",
+  });
+
+  // A PARCELA: `null`, senao ela cairia na rota que nao pergunta o alcance.
+  assert.equal(
+    pedidoDeExclusaoDaLinhaDaFatura(
+      { ...avulsa, installment_number: 3, installment_total: 10 },
+      false
+    ),
+    null
+  );
+
+  // O AJUSTE: `null` mesmo sendo avulso.
+  assert.equal(pedidoDeExclusaoDaLinhaDaFatura(avulsa, true), null);
+});
+
+test("ehParcelaDaFatura nao se deixa enganar pelo par meio preenchido", () => {
+  // O criterio e `installment_number` sozinho -- o mesmo que o botao da
+  // HMO-228 ja usa. Exigir o par abriria uma TERCEIRA classe (numero sem
+  // total) que ganharia o botao da avulsa e cairia na rota errada.
+  assert.equal(ehParcelaDaFatura({ transaction_id: "t", description: "d" }), false);
+  assert.equal(
+    ehParcelaDaFatura({
+      transaction_id: "t",
+      description: "d",
+      installment_number: 3,
+      installment_total: null,
+    }),
+    true
+  );
+});
+
+test("caminhoDeEdicaoDaLinhaDaFatura escapa o id e preserva a origem", () => {
+  const caminho = caminhoDeEdicaoDaLinhaDaFatura(
+    { transaction_id: "a/b", description: "d" },
+    false,
+    "/dashboard/cartoes/x"
+  );
+
+  assert.ok(caminho.includes("?id=a%2Fb"), `id nao escapado: ${caminho}`);
+  assert.ok(caminho.includes("origem=%2Fdashboard%2Fcartoes%2Fx"), caminho);
+
+  // E `null` para o ajuste, que e o que o JSX usa para nao montar o botao.
+  assert.equal(
+    caminhoDeEdicaoDaLinhaDaFatura(
+      { transaction_id: "t", description: "d" },
+      true,
+      null
+    ),
+    null
+  );
+});
+
+test("o aviso da exclusao nomeia a compra e diz o que volta", () => {
+  // "Tem certeza?" nao distingue perder a linha de perder a fatura, e a lista
+  // tem muitas linhas parecidas: confirmar a errada e silencioso.
+  const aviso = avisoDaExclusaoDaLinhaDaFatura({
+    transaction_id: "t",
+    description: "Mercado do mes",
+  });
+
+  assert.ok(aviso.includes("Mercado do mes"), aviso);
+  assert.ok(aviso.includes("saldo do cartão volta"), aviso);
+
+  // Descricao vazia nao vira `Excluir "" desta fatura?`.
+  assert.ok(
+    avisoDaExclusaoDaLinhaDaFatura({
+      transaction_id: "t",
+      description: "   ",
+    }).includes("esta compra"),
+    "a frase ficou com as aspas vazias"
+  );
 });
 
 // ---------------------------------------------------------------------------

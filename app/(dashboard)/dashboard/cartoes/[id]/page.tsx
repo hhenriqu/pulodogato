@@ -73,6 +73,11 @@ import {
   type CategoriaDeAjuste,
 } from "@/lib/ajuste-de-fatura";
 import { rotuloDaFatura } from "@/lib/fatura-do-cartao";
+import {
+  avisoDaExclusaoDaLinhaDaFatura,
+  pedidoDeExclusaoDaLinhaDaFatura,
+  type LinhaDaFaturaAcionavel,
+} from "@/lib/acoes-da-fatura";
 import { formatarValor } from "@/lib/dinheiro";
 import { toast } from "sonner";
 
@@ -267,6 +272,60 @@ function GastosDoCartao() {
     }
   };
 
+  /**
+   * Excluir uma compra AVULSA da fatura (HMO-455).
+   *
+   * A fiacao mora aqui pela mesma razao da exclusao de parcela logo acima:
+   * `FaturaDoCartao` nao tem rede.
+   *
+   * `ehAjuste` CHEGA DO COMPONENTE em vez de ser recalculado aqui: quem sabe
+   * dizer e `ehLinhaDeAjuste`, que precisa da categoria reservada, e ela ja
+   * respondeu uma vez por linha la -- para o selo e para a peneira do botao.
+   * Duas respostas para a mesma pergunta sobre a mesma linha divergiriam, e a
+   * divergencia apareceria como um Excluir que pergunta e nao faz nada.
+   *
+   * O `pedido` nulo, esse sim, e re-conferido aqui, e nao e zelo: e o que
+   * garante que nenhum caminho monte
+   * `/api/personal-finance/transactions/{id}` para uma PARCELA -- ela seria
+   * apagada sem a pergunta do alcance, deixando nove linhas rotuladas "parcela
+   * N de 10" numa serie que agora tem nove.
+   */
+  const excluirCompra = async (
+    gasto: LinhaDaFaturaAcionavel,
+    ehAjuste: boolean
+  ) => {
+    const pedido = pedidoDeExclusaoDaLinhaDaFatura(gasto, ehAjuste);
+    if (!pedido) return;
+
+    // TODA ACAO DESTRUTIVA PERGUNTA ANTES DE SAIR, com a mesma forma que a
+    // lista de Lancamentos ja usa. A frase diz o que sai E o que volta.
+    if (!confirm(avisoDaExclusaoDaLinhaDaFatura(gasto))) return;
+
+    setApagando(true);
+    try {
+      const resposta = await fetch(pedido.url, { method: pedido.metodo });
+      const dados = await resposta.json().catch(() => ({}));
+
+      if (!resposta.ok) {
+        toast.error(
+          dados.error || `A exclusão foi recusada (HTTP ${resposta.status}).`
+        );
+        return;
+      }
+
+      toast.success("Pronto: a compra saiu desta fatura.");
+      // Recarrega a fatura INTEIRA em vez de tirar a linha da memoria: o total
+      // vem da view, e remendar os dois aqui seria uma segunda conta do mesmo
+      // numero -- a que a tela mostra e a que o banco responde.
+      recarregar();
+    } catch (erro) {
+      console.error("Erro ao excluir a compra da fatura:", erro);
+      toast.error("Erro ao excluir a compra");
+    } finally {
+      setApagando(false);
+    }
+  };
+
   // -----------------------------------------------------------------------
   // O AJUSTE DE SALDO: A FIACAO (HMO-253)
   // -----------------------------------------------------------------------
@@ -442,6 +501,7 @@ function GastosDoCartao() {
         estado={estado}
         aoMudarMes={setMes}
         aoApagarParcela={setParcelaParaApagar}
+        aoExcluirCompra={excluirCompra}
         categoriaDeAjuste={categoriaDeAjuste}
         blocoDeAjuste={
           <AjusteDeSaldo

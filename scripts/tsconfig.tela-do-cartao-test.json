@@ -35,6 +35,7 @@
     "../components/ui/badge.tsx",
     "../components/ui/input.tsx",
     "../components/ui/label.tsx",
+    "../lib/acoes-da-fatura.ts",
     "../lib/fatura-do-cartao.ts",
     "../lib/fatura-do-periodo.ts",
     "../lib/offline-leitura.ts",
