@@ -9253,3 +9253,48 @@ jobs:
       # uma garantia que e do tsc.
       - name: Os mutantes do motor da conversa (a suite acima sabe reprovar?)
         run: node scripts/mutantes-conversa-do-papel.mjs
+
+      # A ROTA DA CONVERSA (HMO-481, F3 da HMO-462).
+      #
+      # POST /api/papel-de-pao/conversa grava "Gastei X"/"Ganhei X" em
+      # `financial_transactions`; GET devolve os tres numeros do mes corrente por
+      # `lib/saldo-da-conversa.ts` (F2). A rota nao faz conta nenhuma -- ela
+      # autentica, resolve os tres defaults (data, conta, categoria), grava e
+      # delega.
+      #
+      # Por que ela tem suite propria, com DUBLE e nao com grep: as duas promessas
+      # desta fase sao sobre o OBJETO QUE CHEGOU AO BANCO. `account_id`
+      # PREENCHIDO -- a coluna que /api/personal-finance/transactions nao lista no
+      # insert dele ate hoje, e que e anulavel, entao nada reprova e o
+      # `update_account_balance_trigger` nao move saldo nenhum. E os campos de
+      # divisao de despesa AUSENTES -- uma afirmacao sobre o que NAO esta no
+      # objeto, que nenhum grep prova sozinho (um spread do corpo levaria o campo
+      # de volta sem a palavra aparecer). A suite chama o handler e olha
+      # `escritas` do duble, e tem CONTROLE POSITIVO das chamadas ao duble: sem
+      # ele, uma rota que trocasse o jeito de obter o client deixaria a sonda
+      # vendo "uma resposta qualquer".
+      #
+      # A suite roda nos DOIS fusos porque a data do lancamento e a janela do mes
+      # saem de `today()` (Sao Paulo) e o CI e UTC (HMO-173) -- e um dos testes
+      # CONGELA o relogio em 31/10 as 22:00 de Sao Paulo, porque rodar nos dois
+      # fusos nao distingue `today()` de `toISOString()` em 21 das 24 horas.
+      - name: A rota da conversa do Papel de Pao (sinal, conta, categoria, mes)
+        run: npm run test:rota-da-conversa
+
+      # O controle negativo da suite acima -- ela SABE REPROVAR?
+      #
+      # Os seis que a issue nomeia estao na lista: o sinal invertido, `account_id`
+      # apagado (em DUAS formas -- `null` grava a linha orfa, `undefined` e o que
+      # o PostgREST descarta do payload), `transaction_type` apagado, o `select`
+      # voltando a nomear colunas, `today()` virando `toISOString()` e a categoria
+      # trocando de direcao. Quase nenhum deles da erro em lugar nenhum: a tela
+      # continua dizendo "anotei" com tres numeros bem formatados, e so quem soma
+      # na mao descobre.
+      #
+      # O runner planta cada mutante numa COPIA em /tmp (nao na arvore
+      # rastreada), tem controle positivo (arvore limpa tem de PASSAR) e cobra
+      # ocorrencia UNICA de cada ancora -- um replace que nao casa nao muda
+      # arquivo nenhum, e isso se le como "mutante sobreviveu" quando o mutante
+      # nunca existiu.
+      - name: Os mutantes da rota da conversa (a suite acima sabe reprovar?)
+        run: npm run mutantes:rota-da-conversa
