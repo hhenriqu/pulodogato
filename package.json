@@ -240,6 +240,8 @@
     "mutantes:juros-do-emprestimo": "node scripts/mutantes-juros-do-emprestimo.mjs",
     "test:saldo-da-conversa": "node scripts/compila.mjs -p scripts/tsconfig.saldo-da-conversa-test.json && node scripts/resolve-aliases.mjs .tmp-saldo-da-conversa lib --espelha-raiz && TZ=America/Sao_Paulo node --test scripts/test-saldo-da-conversa.mjs && TZ=UTC node --test scripts/test-saldo-da-conversa.mjs",
     "mutantes:saldo-da-conversa": "node scripts/mutantes-saldo-da-conversa.mjs",
+    "test:rota-da-conversa": "node scripts/compila.mjs -p scripts/tsconfig.rota-da-conversa-test.json && node scripts/resolve-aliases.mjs .tmp-rota-da-conversa lib --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-rota-da-conversa utils --espelha-raiz && node scripts/resolve-next-subpaths.mjs .tmp-rota-da-conversa && node scripts/monta-duble-de-rota.mjs .tmp-rota-da-conversa && TZ=America/Sao_Paulo node --test scripts/test-rota-da-conversa.mjs && TZ=UTC node --test scripts/test-rota-da-conversa.mjs",
+    "mutantes:rota-da-conversa": "node scripts/mutantes-rota-da-conversa.mjs",
     "test:mybank-na-tela": "node scripts/compila.mjs -p scripts/tsconfig.mybank-na-tela-test.json && node --test scripts/test-mybank-na-tela.mjs",
     "mutantes:emprestimo-do-mybank": "node scripts/mutantes-emprestimo-do-mybank.mjs",
     "mutantes:mybank-na-tela": "node scripts/mutantes-mybank-na-tela.mjs",

@@ -685,3 +685,10 @@ next-env.d.ts
 # `main`, e um `.tmp-*` fora do .gitignore chega a ser commitado em cima de
 # arquivo de fonte -- ver a entrada do .tmp-parcelamento acima.
 /.tmp-previa-do-emprestimo/
+
+# A rota da conversa do Papel de Pao (HMO-481, F3 da HMO-462): a suite compila o
+# route handler inteiro para ca e troca o client do Supabase por duble, para
+# chamar o POST/GET de verdade e olhar o objeto que chegou ao insert. Artefato,
+# nao fonte: um `.tmp-*` fora do .gitignore chega a ser commitado em cima de
+# arquivo de fonte -- ver a entrada do .tmp-parcelamento acima.
+/.tmp-rota-da-conversa/
