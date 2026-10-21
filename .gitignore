@@ -668,3 +668,9 @@ next-env.d.ts
 # saida do `npm run test:conta-investimento-na-tela` (HMO-438: as tres linhas
 # do cartao da Conta Investimento, montadas em Chromium)
 /.tmp-conta-investimento-na-tela/
+
+# O emit de lib/saldo-da-conversa.ts com periodo-do-painel junto, para a suite
+# pura dos tres numeros da conversa (HMO-465, F2 da HMO-462). Artefato, nao
+# fonte: um `.tmp-*` fora do .gitignore chega a ser commitado em cima de
+# arquivo de fonte -- ver a entrada do .tmp-parcelamento acima.
+/.tmp-saldo-da-conversa/

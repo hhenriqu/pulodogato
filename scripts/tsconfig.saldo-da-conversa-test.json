@@ -1,0 +1,39 @@
+{
+  "//": [
+    "Os tres numeros da conversa do Papel de Pao (HMO-465, F2 da HMO-462).",
+    "",
+    "O `include` tem UM arquivo e isso basta: o tsc segue o import e emite",
+    "`periodo-do-painel` e o que ela puxa junto (`recurrence`, `dinheiro`,",
+    "`moeda`). E o que a suite quer -- ela mede o MES CORRENTE de verdade, o",
+    "mesmo `periodoCorrente` que o resto do app usa, e nao uma copia escrita no",
+    "teste. `new Date().toISOString()` e UTC e apontaria para o mes seguinte nas",
+    "ultimas tres horas do mes em Sao Paulo (HMO-173).",
+    "",
+    "`rootDir` e `..` e NAO `../lib`: `lib/moeda.ts` e companhia tipam com",
+    "`types/financial.ts`, e um rootDir em lib/ reprova com TS6059 ('not under",
+    "rootDir'), que se le como erro do arquivo e e do include. Por isso o",
+    "resolve-aliases.mjs roda COM `--espelha-raiz`: a arvore emitida fica com o",
+    "prefixo `lib/`, igual a do test:papel-de-pao.",
+    "",
+    "`jsx` nao entra: nao ha JSX em nenhum destes arquivos. A tela da conversa e",
+    "F4 e tem medicao propria, pela mesma razao que o resto do repo separa conta",
+    "de tela.",
+    "",
+    "Comentario SO nesta chave, nunca com // no meio do objeto: o tsc aceita",
+    "JSONC, mas o check-tests-in-ci.mjs le este arquivo com JSON.parse e estoura",
+    "com 'Expected double-quoted property name'."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-saldo-da-conversa",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/saldo-da-conversa.ts", "../types/financial.ts"]
+}

@@ -9185,3 +9185,33 @@ jobs:
 
       - name: Os mutantes da conta prevista do cartao (a suite sabe reprovar?)
         run: npm run mutantes:previsao-do-cartao
+
+      # OS TRES NUMEROS DA CONVERSA (HMO-465, F2 da HMO-462).
+      #
+      # `lib/saldo-da-conversa.ts` e pura e nao toca banco nenhum: ela produz
+      # `ganhei`, `gastei` e `saldo = ganhei - gastei` a partir de linhas de
+      # `financial_transactions` -- REALIZADO, nao previsto. Nenhuma funcao de
+      # `lib/papel-de-pao.ts` entra: aquele le `scheduled_transactions_effective`,
+      # onde a despesa e POSITIVA e quem diz a direcao e a coluna `direction`.
+      #
+      # Por que ela tem suite propria: o defeito desta familia nao levanta excecao
+      # e nao quebra CHECK nenhum. Sem o `group_id IS NULL`, a perna de grupo do
+      # custo pessoal dela entra em `gastei` calada. Sem o `Math.abs`, `gastei`
+      # fica NEGATIVO e `ganhei - gastei` passa a SOMAR as pernas -- 2000 e 1000
+      # certos na tela, e o saldo dizendo 3000. A suite roda nos DOIS fusos porque
+      # o mes corrente vem de Sao Paulo e o CI e UTC (HMO-173).
+      - name: Os tres numeros da conversa do Papel de Pao (ganhei, gastei, saldo)
+        run: npm run test:saldo-da-conversa
+
+      # O controle negativo da suite acima -- ela SABE REPROVAR?
+      #
+      # Os quatro mutantes que a issue nomeia estao na lista: `!== false` virando
+      # `=== true` (a linha do cache offline sai da soma), o `group_id IS NULL`
+      # saindo, o sinal da despesa, e o mes corrente virando horizonte aberto.
+      # Nenhum dos quatro da erro em lugar nenhum -- os tres numeros saem bem
+      # formatados e so quem soma na mao descobre.
+      #
+      # O runner planta cada mutante numa COPIA em /tmp (nao na arvore rastreada) e
+      # exige que a suite fique vermelha em cada um.
+      - name: Os mutantes dos tres numeros da conversa (a suite acima sabe reprovar?)
+        run: npm run mutantes:saldo-da-conversa
