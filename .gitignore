@@ -382,6 +382,9 @@ next-env.d.ts
 # saida do `npm run test:papel-de-pao` (HMO-286)
 /.tmp-papel-de-pao/
 
+# saida do `npm run test:conversa-do-papel` (HMO-464)
+/.tmp-conversa-do-papel/
+
 # HMO-297. As tres abaixo faltavam desde que as suites entraram, e o
 # check-artefatos-de-build.mjs ja reprovava na main por causa delas. Cada uma
 # das tres comeca com `rm -rf` no proprio diretorio: fora do .gitignore, o

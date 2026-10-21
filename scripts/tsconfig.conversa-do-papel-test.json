@@ -1,0 +1,41 @@
+{
+  "//": [
+    "Compila o motor da conversa do modo papel de pao (HMO-464, F1 da HMO-462)",
+    "para a suite pura.",
+    "",
+    "O `include` tem UM arquivo e isso basta: o tsc segue os imports e emite",
+    "`lib/dinheiro.ts`, `lib/periodo-do-painel.ts` e `lib/saldo-da-conversa.ts`",
+    "(mais o que elas puxam: `lib/recurrence.ts`, `lib/moeda.ts`). E o que a",
+    "suite quer -- ela mede o acumulador de dinheiro REAL, o rotulo de mes REAL",
+    "e a janela de mes REAL de F2, nao copias escritas no teste. Um acumulador",
+    "proprio aqui seria a segunda mascara que o comentario do",
+    "`lib/conversa-do-papel.ts` explica por que nao existe, e um `TresNumeros`",
+    "proprio seria a segunda declaracao da convencao de sinal de F2.",
+    "",
+    "`rootDir` e `..` e NAO `../lib`: `lib/moeda.ts` tipa com `types/financial`,",
+    "e um rootDir em lib/ reprova com TS6059 ('not under rootDir'), que se le",
+    "como erro do arquivo e e do include. Por isso o resolve-aliases.mjs roda",
+    "COM `--espelha-raiz`: a arvore emitida fica com o prefixo `lib/`, igual a",
+    "do test:papel-de-pao.",
+    "",
+    "`jsx` nao entra, e e o ponto do arquivo: o motor nao tem React. A tela",
+    "(F4) e medida em outro lugar.",
+    "",
+    "Comentario SO nesta chave, nunca com // no meio do objeto: o tsc aceita",
+    "JSONC, mas o check-tests-in-ci.mjs le este arquivo com JSON.parse e",
+    "estoura com 'Expected double-quoted property name'."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-conversa-do-papel",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/conversa-do-papel.ts"]
+}

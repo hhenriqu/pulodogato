@@ -9215,3 +9215,41 @@ jobs:
       # exige que a suite fique vermelha em cada um.
       - name: Os mutantes dos tres numeros da conversa (a suite acima sabe reprovar?)
         run: npm run mutantes:saldo-da-conversa
+      # O MOTOR DA CONVERSA DO MODO PAPEL DE PAO (HMO-464, F1 da HMO-462).
+      #
+      # O modo mostrava relatorio -- tres numeros, listas que abrem, navegacao
+      # mes a mes. A issue-mae pede CONVERSA: "Ola {Nome}, o que deseja?",
+      # botao Gastei, Ganhei, Saldo, e vai caminhando.
+      # `lib/conversa-do-papel.ts` e a maquina de estados disso, pura: sem
+      # React, sem rede, sem supabase e sem data do sistema lida por dentro --
+      # o relogio entra por parametro.
+      #
+      # Por que ela tem suite propria, e por que a suite roda DUAS VEZES (em
+      # America/Sao_Paulo e em UTC, dentro do proprio alvo): o defeito desta
+      # familia nao levanta excecao. Um `new Date()` escondido no motor faz o
+      # "Saldo" responder por outro mes com a mesma cara de certo, e as 21h do
+      # dia 31 em Sao_Paulo sao o dia 1o em UTC -- com um fuso so, a suite
+      # passaria verde. E a convencao de CENTAVOS do teclado (digitar 1-0-0-0 e
+      # dez reais) nao da erro nenhum quando erra: da um lancamento de valor
+      # plausivel, cem vezes maior ou menor.
+      - name: O motor da conversa do papel de pao (5 estados, o relogio por parametro)
+        run: npm run test:conversa-do-papel
+
+      # O controle negativo da suite acima -- ela SABE REPROVAR?
+      #
+      # A issue pede com estas palavras que cada transicao tenha um mutante que
+      # a suite mate, e aqui isso paga mais que a media: a suite e quase toda
+      # feita de assercao sobre TEXTO (as frases da conversa, os rotulos dos
+      # botoes) e sobre IDENTIDADE de objeto (`proxima === atual`, que e como o
+      # motor diz "nada aconteceu"). Os dois tipos sao os que mais passam verde
+      # sem medir nada.
+      #
+      # O runner planta cada mutante numa COPIA em /tmp (nao na arvore
+      # rastreada), tem controle positivo (codigo intacto tem de PASSAR), cobra
+      # ocorrencia UNICA de cada ancora -- um replace que nao casa nao muda
+      # arquivo nenhum, e isso se le como "mutante sobreviveu" quando o mutante
+      # nunca existiu -- e tem tres SOBREVIVENTES ESPERADOS declarados, que e o
+      # que impede a suite de prender ramo inalcancavel e de cobrar do `.mjs`
+      # uma garantia que e do tsc.
+      - name: Os mutantes do motor da conversa (a suite acima sabe reprovar?)
+        run: node scripts/mutantes-conversa-do-papel.mjs
