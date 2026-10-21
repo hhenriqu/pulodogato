@@ -74,12 +74,37 @@ interface FaixaDadoDoAparelhoProps {
    * evita a pessoa preencher um formulario inteiro para perde-lo no fim.
    */
   soLeitura?: boolean;
+  /**
+   * O PORQUE DOS BOTOES APAGADOS -- HMO-475.
+   *
+   * `true` nas telas cujas LINHAS tem botao de acao (as tres de movimentacao):
+   * ali o estado `do-aparelho` desabilita Confirmar/Editar/Excluir/Pagar, e o
+   * `disabled:opacity-50` os deixa meio transparentes.
+   *
+   * POR QUE ESTA FRASE PRECISA EXISTIR ALEM DO `title` DOS BOTOES: o `title`
+   * nasce de tooltip, e **tela de toque nao tem hover** -- no iPhone, que e o
+   * aparelho do relato da HMO-457, a frase do botao nunca e exibida. Ela
+   * continua valendo como descricao acessivel e no desktop; o canal VISIVEL e
+   * esta faixa.
+   *
+   * OPT-IN e nao embutido no `soLeitura`: as outras seis telas que usam esta
+   * faixa (fluxo de caixa, contas, cartoes, cartao, recorrencias, contas a
+   * pagar) nao tem botao por linha, e dizer "os botoes da linha estao apagados"
+   * nelas apontaria para algo que nao existe na tela. O bloco negativo de
+   * `npm run test:secao-da-tela` e o que protege aquelas seis.
+   *
+   * ZERO PIXEL POR LINHA, que e o que torna isto possivel: tres botoes de 44px
+   * ja ocupam ~140px dos 238px uteis a 320px, entao texto POR LINHA nao cabe
+   * (medido na HMO-457). A faixa diz uma vez por tela.
+   */
+  acoesApagadas?: boolean;
   aoTentarDeNovo?: () => void;
 }
 
 export function FaixaDadoDoAparelho({
   guardadoEm,
   soLeitura = false,
+  acoesApagadas = false,
   aoTentarDeNovo,
 }: FaixaDadoDoAparelhoProps) {
   return (
@@ -89,6 +114,16 @@ export function FaixaDadoDoAparelho({
         Estes numeros sao do que ficou guardado no aparelho,{" "}
         {descreverMomento(guardadoEm)}.
         {soLeitura ? " Da para consultar, nao da para alterar." : ""}
+        {/*
+          A frase vem DEPOIS da de `soLeitura` e nao no lugar dela: aquela diz o
+          que a tela faz, esta diz por que os icones estao apagados. Quem olha a
+          linha ve o cinza antes de ler a faixa, e e essa ligacao que faltava --
+          cinza sem causa dita e indistinguivel de tela quebrada, e a pessoa
+          tenta de novo (ou relata "nao aparece", que foi o que aconteceu).
+        */}
+        {acoesApagadas
+          ? " Os botoes de confirmar, editar e excluir de cada linha estao apagados por isso."
+          : ""}
       </span>
       {aoTentarDeNovo && (
         <Button

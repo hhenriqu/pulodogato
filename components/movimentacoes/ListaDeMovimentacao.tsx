@@ -667,6 +667,11 @@ export function ListaDeMovimentacao({
         <FaixaDadoDoAparelho
           guardadoEm={guardadoEm}
           soLeitura
+          // As LINHAS desta tela tem botao, e o `online = estado === "fresco"`
+          // acima desabilita os quatro. Esta e a unica via VISIVEL do porque:
+          // o `title` dos botoes nao abre tooltip em tela de toque, e o relato
+          // da HMO-457 veio de iPhone.
+          acoesApagadas
           aoTentarDeNovo={carregar}
         />
       )}

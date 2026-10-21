@@ -48,6 +48,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
@@ -1059,4 +1060,108 @@ test("o Editar APAGADO mantem o motivo ESTRUTURAL, mesmo sem rede", () => {
   // dois motivos convivem na mesma linha, e e isso que mostra que o `title` e
   // por BOTAO e nao por linha.
   assert.ok(porRotulo.get("Excluir").titulo.includes(MOTIVO_SEM_REDE));
+});
+
+// ---------------------------------------------------------------------------
+// 7. O CANAL VISIVEL DO CINZA: a faixa do aparelho -- HMO-475
+// ---------------------------------------------------------------------------
+// O bloco 6 prova que cada botao cinza LEVA o motivo. Isto prova o canal que
+// chega ao aparelho do relato.
+//
+// A revisao da HMO-474 pegou o furo do plano original desta issue, e ela esta
+// certa: **o `title` do HTML nasce de tooltip, e tela de toque nao tem hover**.
+// No iPhone -- que e o aparelho da HMO-457 -- um motivo escrito so no `title`
+// nunca e exibido. O `aria-disabled` tambem nao: ele fala com leitor de tela.
+// Entao o `title` fica (ele e a descricao acessivel, e vale no desktop) mas NAO
+// pode ser o unico canal.
+//
+// POR LINHA NAO CABE: tres botoes de 44px ja ocupam ~140px dos 238px uteis a
+// 320px (medido na sonda). Dai a frase morar na faixa, que diz UMA vez por tela
+// e custa zero pixel por linha.
+import { FaixaDadoDoAparelho } from "../.tmp-secao-da-tela/components/SemRede.js";
+
+/** A frase que liga a faixa aos icones apagados. */
+const FRASE_DOS_BOTOES = "botoes de confirmar, editar e excluir";
+
+const faixa = (props) =>
+  texto(
+    renderToStaticMarkup(
+      h(FaixaDadoDoAparelho, { guardadoEm: new Date("2026-08-14T12:00:00Z"), ...props })
+    )
+  );
+
+test("com acoesApagadas a faixa diz por que os icones estao apagados", () => {
+  const t = faixa({ soLeitura: true, acoesApagadas: true });
+
+  assert.ok(t.includes(FRASE_DOS_BOTOES), t);
+  // E a frase do `soLeitura` CONTINUA: as duas dizem coisas diferentes -- uma o
+  // que a tela faz, a outra por que os icones estao cinzas.
+  assert.ok(t.includes("Da para consultar, nao da para alterar"), t);
+  // E a faixa nao perdeu o que ela ja dizia.
+  assert.ok(t.includes("guardado no aparelho"), t);
+});
+
+test("sem acoesApagadas a frase NAO aparece -- as outras seis telas", () => {
+  // O CONTROLE NEGATIVO, e ele nao e zelo: `FaixaDadoDoAparelho` e usada por
+  // fluxo de caixa, contas, cartoes, cartao, recorrencias e contas a pagar --
+  // nenhuma com botao POR LINHA. "Os botoes de cada linha estao apagados" numa
+  // tela de relatorio aponta para algo que nao existe ali, e `test-fluxo-na-tela`
+  // afirma a frase do `soLeitura` daquela tela palavra por palavra.
+  const t = faixa({ soLeitura: true });
+
+  assert.ok(!t.includes(FRASE_DOS_BOTOES), t);
+  assert.ok(t.includes("Da para consultar, nao da para alterar"), t);
+
+  // E o default e o mesmo do ausente: prop esquecida nao acende a frase.
+  assert.ok(!faixa({}).includes(FRASE_DOS_BOTOES));
+});
+
+test("a faixa e TEXTO, nao title -- e por isso ela chega ao iPhone", () => {
+  // A assercao que separa este canal do outro. Se a frase viesse num `title`,
+  // `texto()` (que tira as tags) nao a veria -- e ela estaria no DOM, verde na
+  // suite, e invisivel no celular. Este bloco falha se alguem "arrumar" a faixa
+  // movendo a frase para um atributo.
+  const html = renderToStaticMarkup(
+    h(FaixaDadoDoAparelho, {
+      guardadoEm: new Date("2026-08-14T12:00:00Z"),
+      soLeitura: true,
+      acoesApagadas: true,
+    })
+  );
+
+  assert.ok(texto(html).includes(FRASE_DOS_BOTOES), "a frase nao e texto visivel");
+  assert.ok(
+    !new RegExp(`title="[^"]*${FRASE_DOS_BOTOES}`).test(html),
+    "a frase virou title -- tela de toque nao tem hover"
+  );
+});
+
+test("a LISTA passa acoesApagadas para a faixa -- guarda textual, e por que", () => {
+  // Os tres blocos acima provam a FAIXA. Nenhum deles prova que a LISTA acende a
+  // frase: `acoesApagadas` e opt-in, e o container podendo esquecer a prop e
+  // exatamente o defeito de "dado certo chegando num JSX que nao o le" -- a
+  // faixa apareceria sem a frase, sem erro e com esta suite verde.
+  //
+  // E GUARDA TEXTUAL, nao render, pelo motivo que o tsconfig desta suite ja
+  // explica: `ListaDeMovimentacao.tsx` importa `next/navigation`, que nao roda
+  // no node -- foi por isso que `SecaoDaTela` nasceu em arquivo separado. O
+  // import derrubaria a suite antes da primeira assercao.
+  //
+  // CONTA em vez de procurar: a lista tem UMA faixa. Um `includes` cru ficaria
+  // verde se alguem acrescentasse uma segunda chamada sem a prop.
+  const fonte = readFileSync(
+    new URL("../components/movimentacoes/ListaDeMovimentacao.tsx", import.meta.url),
+    "utf8"
+  );
+
+  const chamadas = fonte.split("<FaixaDadoDoAparelho").length - 1;
+  const comAProp = fonte.split("acoesApagadas").length - 1;
+
+  assert.equal(chamadas, 1, `a lista tem ${chamadas} faixas -- rever esta guarda`);
+  assert.equal(
+    comAProp,
+    1,
+    "a faixa da lista perdeu `acoesApagadas`: a frase visivel do cinza nao acende, " +
+      "e no iPhone o motivo nao chega por nenhum canal"
+  );
 });
