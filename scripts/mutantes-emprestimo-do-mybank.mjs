@@ -107,17 +107,22 @@ const mutantes = [
   // =========================================================================
   // A OUTRA METADE DO MESMO PAR: o recebimento do Caso B
   // =========================================================================
+  // O CASO TROCADO. Desde a HMO-449 ele diz DUAS coisas de uma vez, e as duas
+  // sao dinheiro: o auto-emprestimo ganha uma 3a perna (o dinheiro da parcela
+  // conta duas vezes) E, com juro, ganha uma perna de `income` -- cobrar juro de
+  // mim mesmo passaria a aparecer como ganho, por um dinheiro que so andou entre
+  // duas contas minhas. E a assimetria que a issue manda escrever no codigo.
   [
     LIB,
-    "a perna de entrada nasce no CASO ERRADO (o auto-emprestimo ganha uma 3a perna e conta o dinheiro duas vezes)",
-    '  if (params.caso !== "conexao") return null;',
-    '  if (params.caso !== "auto") return null;',
+    "a perna de entrada nasce no CASO ERRADO (o auto-emprestimo ganha uma 3a perna, conta o dinheiro duas vezes e, com juro, inventa receita)",
+    '  if (params.caso !== "conexao") return [];',
+    '  if (params.caso !== "auto") return [];',
   ],
   [
     PARCELA,
     "o recebimento vira `income`: principal voltando conta como receita 24 vezes",
-    "        ...perna,",
-    '        ...perna,\n        transaction_type: "income" as unknown as "transfer",',
+    "          ...perna.linha,",
+    '          ...perna.linha,\n          transaction_type: "income" as unknown as "transfer",',
   ],
   [
     PARCELA,
@@ -1267,6 +1272,143 @@ const mutantes = [
     "a pendente de patch vazio sai da lista (a passagem que parou no meio deixa a cobranca errada para sempre)",
     "    linhas.push({\n      id: nova.id,",
     "    if (Object.keys(patch).length === 0) continue;\n\n    linhas.push({\n      id: nova.id,",
+  ],
+
+  // =========================================================================
+  // A PERNA DE JUROS DO CASO B -- SO O JURO E RECEITA (HMO-449, F5 da HMO-444)
+  // =========================================================================
+  // OS DOIS QUE A ISSUE PEDE POR NOME SAO OS DOIS PRIMEIROS DESTA SECAO, e os
+  // dois sao a mesma pergunta por lados opostos: "o app sabe quanto da parcela
+  // e ganho?".
+  //
+  //   * `A PERNA CHEIA VAI COMO income`: a parcela inteira de R$ 1.200 entra no
+  //     Realizado de Receitas. O MESMO principal -- dinheiro que ja era meu --
+  //     conta como salario 24 vezes, e um emprestimo de R$ 24.000 vira R$ 28.800
+  //     de "renda" ao longo do ano.
+  //
+  //   * `AS DUAS PARTES INVERTIDAS`: R$ 1.000 de principal vira receita e
+  //     R$ 200 de ganho vira transferencia. **A SOMA CONTINUA FECHANDO** em
+  //     R$ 1.200, o saldo da conta de investimento fica exato e nenhuma linha
+  //     esta obviamente errada -- e por isso ele e o mais perigoso dos dois.
+  //     Ele so morre em assercao que olha CADA PARTE separada
+  //     (`duas-pernas-mantem-o-total-certo`), e e a razao de o teste das duas
+  //     pernas afirmar `principal.amount` e `juros.amount` em assercoes
+  //     distintas em vez de so a soma.
+  //
+  // O MUTANTE DA INVERSAO MORA EM `rateioDoPagamentoDaParcela` E NAO NA
+  // MONTAGEM DAS PERNAS, de proposito: lá a troca e UMA edicao que mantem a
+  // soma, e e a forma em que o defeito pode aparecer de verdade num conserto
+  // futuro do rateio. Mutar a montagem exigiria duas edicoes, e
+  // `mutante-de-varias-edicoes-sobrevive-falso-quando-uma-delas-nao-casa`.
+
+  [
+    LIB,
+    "A PERNA CHEIA VAI COMO `income` (a parcela inteira entra em Receitas: o mesmo principal conta como salario 24 vezes)",
+    "      amount: juros,",
+    "      amount: Math.abs(params.valor),",
+  ],
+
+  [
+    LIB,
+    "a parte-PRINCIPAL tambem vai como `income` (as duas pernas sao receita, e o valor cheio da parcela entra no Realizado)",
+    "      linha: { ...entrada, amount: principal },",
+    "      linha: { ...entrada, amount: principal, transaction_type: \"income\" as const },",
+  ],
+
+  [
+    LIB,
+    "AS DUAS PARTES INVERTIDAS: o principal vira juros e o juros vira principal (a SOMA CONTINUA FECHANDO, e so a assercao por parte ve)",
+    "  return { juroDaSerie: juroEmCentavos / 100, daParcela };",
+    "  return {\n    juroDaSerie: juroEmCentavos / 100,\n    daParcela: {\n      parteDoPrincipal: daParcela.parteDosJuros,\n      parteDosJuros: daParcela.parteDoPrincipal,\n    },\n  };",
+  ],
+
+  // A ABSORCAO DO CENTAVO NAO TEM MUTANTE AQUI, E A AUSENCIA E DELIBERADA.
+  // O defeito "ninguem absorve a sobra" se escreve trocando `rateioDaSerie` por
+  // `rateioDaParcela` chamada N vezes -- o que a propria F2 proibe no cabecalho
+  // dela. Mas `rateioDaParcela` NAO esta importada neste arquivo, entao o
+  // mutante nao COMPILARIA, e mutante que nao compila "morre" por motivo errado
+  // -- o placar sairia cheio sem medir nada
+  // (`mutante-que-nao-compila-morre-por-motivo-errado`). A absorcao e medida
+  // onde ela e observavel: no teste da serie de 3x R$ 400 (a ultima leva
+  // R$ 333,34) e no mutante da ORDEM da leitura, abaixo, que move a absorcao
+  // para a parcela errada sem mexer na aritmetica.
+
+  // O INDICE DA PARCELA NA SERIE. Um rateio de OUTRA posicao e um objeto
+  // perfeitamente valido -- as partes dele somam o `amount` DELA --, entao o
+  // defeito e invisivel em tudo que nao compare a parcela com a posicao. Este
+  // mutante e o que paga a defesa que foi TIRADA de
+  // `rateioDoPagamentoDaParcela` (ver "O QUE NAO ESTA AQUI" no cabecalho dela):
+  // um `if` que nenhuma entrada alcanca contra um mutante que morre.
+  [
+    LIB,
+    "o rateio sai sempre da PRIMEIRA parcela (a ultima deixa de absorver o centavo, e o juro se move entre meses)",
+    "  const daParcela = rateio[indice];",
+    "  const daParcela = rateio[0];",
+  ],
+
+  // A ASSIMETRIA DA ISSUE (o Caso A ganhar perna de `income`) JA TEM MUTANTE, e
+  // ele e `a perna de entrada nasce no CASO ERRADO`, no comeco deste arquivo --
+  // a guarda e a MESMA linha, e dois mutantes sobre ela mediriam a mesma
+  // assercao duas vezes (`mesmo-alvo-nao-prova-coberto-compare-as-ancoras`, pelo
+  // avesso). O que esta secao acrescenta e tudo o que acontece DEPOIS daquela
+  // guarda.
+
+  // A PERNA DE R$ 0,00. A parte-principal zero e alcancavel (`amount > 0` aceita
+  // um centavo), e uma linha de zero reais no extrato e ruido que nenhuma tela
+  // sabe explicar.
+  [
+    LIB,
+    "a parte-principal ZERO vira linha de R$ 0,00 (a parcela de juro puro ganha uma perna que nao move dinheiro)",
+    "  if (principal > 0) {",
+    "  if (principal >= 0) {",
+  ],
+
+  // =========================================================================
+  // A FIACAO DA PERNA DE JUROS NA ROTA DA PARCELA (HMO-449)
+  // =========================================================================
+  // A lib decidir certo nao prova que a rota grava certo: ela podia montar a
+  // linha a mao, chamar a funcao e ignorar metade do retorno, ou resolver a
+  // categoria errada. Estes cinco medem a fiacao, e cada um e dinheiro.
+
+  [
+    PARCELA,
+    "a perna de JUROS e DESCARTADA pela rota (o ganho nunca chega ao banco: cobrar juros nao aparece em Receitas)",
+    "        pernas.map((perna) => ({",
+    "        pernas.slice(0, 1).map((perna) => ({",
+  ],
+
+  [
+    PARCELA,
+    "a perna de juros usa a categoria RESERVADA da transferencia (o ganho fica na tela e desaparece do relatorio por categoria)",
+    "      juros: NOME_DA_CATEGORIA_DO_JURO_RECEBIDO,",
+    "      juros: NOME_DA_CATEGORIA_DE_TRANSFERENCIA,",
+  ],
+
+  // A ORDEM DA SERIE. Sem `installment_number`, "a ultima parcela" passa a ser
+  // uma linha qualquer da ordem fisica da tabela e o centavo da absorcao vai
+  // para o mes errado -- com o total ainda fechando, que e o que esconde.
+  [
+    PARCELA,
+    "a serie e lida SEM ordenar por `installment_number` (o centavo da absorcao cai na parcela errada, e o total continua fechando)",
+    "      .order(\"installment_number\", { ascending: true });",
+    "      .order(\"id\", { ascending: true });",
+  ],
+
+  // O RECORTE POR EMPRESTIMO. Sem o `.eq("loan_id")` as parcelas de OUTRA
+  // divida entram na soma, o "total" cresce e a proporcao principal/juro de
+  // toda parcela sai errada -- com as duas pernas ainda somando o `amount`.
+  [
+    PARCELA,
+    "a serie do rateio nao e recortada pelo emprestimo (as parcelas de outra divida entram na soma e a proporcao sai errada)",
+    "      .eq(\"loan_id\", emprestimo.id)\n      .order(\"installment_number\", { ascending: true });",
+    "      .limit(1000)\n      .order(\"installment_number\", { ascending: true });",
+  ],
+
+  [
+    PARCELA,
+    "`paid_transaction_id` aponta para a perna de JUROS (a coluna que responde `onde este dinheiro entrou` passa a apontar a parte menor)",
+    "      lancamentos[indiceDoPrincipal >= 0 ? indiceDoPrincipal : 0];",
+    "      lancamentos[lancamentos.length - 1];",
   ],
 ];
 
