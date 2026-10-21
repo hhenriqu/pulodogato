@@ -34,7 +34,8 @@
 // O `id` DE CADA ANCORA E PARTE DA ENTREGA
 // ---------------------------------------
 // `mybank-conta`, `mybank-total-emprestado`, `mybank-a-receber`,
-// `mybank-devedor`, `mybank-erro` e os `data-*` das linhas sao lidos pela sonda
+// `mybank-juros-a-receber`, `mybank-devedor`, `mybank-erro` e os `data-*` das
+// linhas sao lidos pela sonda
 // de navegador. Renomear um deles sem mexer na sonda a deixa vermelha -- que e o
 // comportamento certo: a ancora e um contrato, nao um detalhe de estilo.
 //
@@ -972,12 +973,23 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
             ))}
           </select>
 
-          {/* OS DOIS NUMEROS, COM ROTULO PROPRIO CADA UM. Ver
+          {/* OS TRES NUMEROS, COM ROTULO PROPRIO CADA UM. Ver
               `totaisDaContaCredora`: depois da primeira parcela paga de um
               emprestimo de R$ 24.000 o emprestado continua R$ 24.000 e o a
               receber e R$ 23.000 -- um numero so faria quem olha concluir que o
-              outro esta errado. */}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              outro esta errado.
+
+              O TERCEIRO (HMO-450) E A PARTE-JURO DO QUE FALTA RECEBER, e ele
+              existe porque com juro a diferenca entre os dois primeiros passou
+              a misturar "o que ja voltou" com "o ganho que ainda vem". Cada
+              rotulo diz o que o numero E -- ninguem precisa subtrair de cabeca.
+
+              ELE APARECE SEMPRE, inclusive zerado no emprestimo a juro zero: um
+              terceiro numero que some conforme o dado faria a mesma conta ter
+              duas telas, e "sem juro nenhum" e justamente a informacao que o
+              zero carrega. A legenda muda com ele para o zero nao se ler como
+              numero que faltou carregar. */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div className="rounded-lg border p-3">
               <p className="text-xs text-muted-foreground">Total emprestado</p>
               <p
@@ -999,6 +1011,17 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
               <p className="text-xs text-muted-foreground">
                 {totais.quantasParcelasEmAberto} parcela
                 {totais.quantasParcelasEmAberto === 1 ? "" : "s"} em aberto
+              </p>
+            </div>
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground">Juros a receber</p>
+              <p id="mybank-juros-a-receber" className="text-xl font-semibold">
+                {formatCurrency(totais.jurosAReceber)}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {totais.jurosAReceber > 0
+                  ? "já incluído no total a receber"
+                  : "nenhum empréstimo com juros"}
               </p>
             </div>
           </div>
