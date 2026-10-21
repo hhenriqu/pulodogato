@@ -180,17 +180,34 @@ const CONFERE_A_MARCACAO = [
   // -------------------------------------------------------------------------
   // A FIACAO DO MOTIVO -- HMO-475
   // -------------------------------------------------------------------------
-  // Sem estes quatro pedacos a sonda mediria `title` que ela mesma escreveu:
-  // o DOM abaixo e uma reproducao A MAO, e um `title` hard-coded nele passaria
-  // verde com o JSX de producao mandando o rotulo pelado. (QUE O COMPONENTE
-  // de fato use estas funcoes e `npm run test:secao-da-tela`, que renderiza o
-  // arquivo compilado; aqui a guarda e textual de proposito.)
+  // Sem este pedaco a sonda mediria `title` que ela mesma escreveu: o DOM
+  // abaixo e uma reproducao A MAO, e um `title` hard-coded nele passaria verde
+  // com o JSX de producao mandando o rotulo pelado. (QUE O COMPONENTE de fato
+  // use estas funcoes e `npm run test:secao-da-tela`, que renderiza o arquivo
+  // compilado; aqui a guarda e textual de proposito.)
   'const motivoTravado = motivoDoBotaoTravado({',
-  'title={tituloDoBotao(',
-  'aria-disabled={travado || undefined}',
-  // o motivo na CAIXA das acoes: e dele que sai a dica alcancavel pelo mouse,
-  // porque o botao travado tem `pointer-events: none`
-  'title={motivoTravado ?? undefined}',
+];
+
+/**
+ * A FIACAO CONTADA, e nao so presente -- HMO-475.
+ *
+ * MEDIDO: com `title={tituloDoBotao(` na lista de cima, tirar aquele `title` de
+ * UM dos botoes (o Excluir) deixava esta sonda VERDE -- o `includes` continuava
+ * casando nos outros quatro. A sonda seguia medindo um botao que o componente
+ * nao desenha mais, que e precisamente o que o bloco acima existe para impedir.
+ * (Aquele mutante morre em `npm run test:secao-da-tela`, e e de la que vem a
+ * prova da fiacao; o que se conserta aqui e a guarda desta sonda mentir.)
+ *
+ * Os numeros sao os cinco `title` compostos (Pagar, Confirmar, os DOIS Editar e
+ * Excluir), os quatro `aria-disabled` por `travado` -- o quinto Editar, o
+ * apagado, e `aria-disabled` seco porque ele nunca abre -- e o unico `title` da
+ * caixa das acoes. Mexer de proposito em qualquer um deles pede mexer aqui, de
+ * novo de proposito.
+ */
+const CONFERE_A_CONTAGEM = [
+  { trecho: "title={tituloDoBotao(", vezes: 5 },
+  { trecho: "aria-disabled={travado || undefined}", vezes: 4 },
+  { trecho: "title={motivoTravado ?? undefined}", vezes: 1 },
 ];
 
 const fonteDaSecao = readFileSync(
@@ -198,12 +215,21 @@ const fonteDaSecao = readFileSync(
   "utf8",
 );
 const faltando = CONFERE_A_MARCACAO.filter((c) => !fonteDaSecao.includes(c));
-if (faltando.length) {
+
+const contagem = (trecho) => fonteDaSecao.split(trecho).length - 1;
+const desviosDeContagem = CONFERE_A_CONTAGEM.filter(
+  ({ trecho, vezes }) => contagem(trecho) !== vezes,
+).map(
+  ({ trecho, vezes }) =>
+    `  - ${trecho} aparece ${contagem(trecho)}x, e a sonda reproduz ${vezes}x`,
+);
+
+if (faltando.length || desviosDeContagem.length) {
   console.error(
     "ABORTADO: a marcacao de components/movimentacoes/SecaoDaTela.tsx mudou.\n" +
       "Esta sonda reproduz aquele DOM a mao, e sem estes pedacos ela mediria\n" +
       "uma tela que nao existe mais:\n" +
-      faltando.map((c) => `  - ausente: ${c}`).join("\n"),
+      [...faltando.map((c) => `  - ausente: ${c}`), ...desviosDeContagem].join("\n"),
   );
   process.exit(2);
 }
