@@ -133,6 +133,43 @@ export async function PATCH(
     if (notes !== undefined) updateData.notes = notes;
     if (group_id !== undefined) updateData.group_id = group_id || null;
 
+    // -----------------------------------------------------------------------
+    // ESTE LANCAMENTO SOMA NOS TOTAIS? (HMO-443, migration 060)
+    // -----------------------------------------------------------------------
+    // "adicionei um ajuste na minha conta investimento, ela entrou como uma
+    // receita de ajuste mas nao quero que ela fique somando nos totais."
+    //
+    // `=== true` E NAO `Boolean(...)`, E ESTA E A LINHA QUE IMPORTA. A forma e
+    // copiada de `app/api/financial-accounts/[id]/route.ts` (o PATCH da 058),
+    // palavra por palavra, porque a pergunta e a mesma um nivel abaixo -- e a
+    // armadilha tambem: a coluna e `NOT NULL` e isto vai para um UPDATE, onde
+    // nao existe "omitir e cair no DEFAULT" como no INSERT do POST. O que
+    // entrar em `updateData` e GRAVADO.
+    //
+    // Com `Boolean(body.include_in_total)`, um cliente que mandasse a STRING
+    // `"false"` -- um form urlencoded, um `FormData`, um fetch montado a mao --
+    // RELIGARIA o lancamento (`Boolean("false") === true`), em silencio e com
+    // 200: a pessoa clica em "Não somar nos totais", a tela diz pronto, e o
+    // total continua incluindo o ajuste. Com `=== true`, qualquer coisa que nao
+    // seja o booleano `true` DESLIGA -- e desligar e o estado reversivel e
+    // VISIVEL (o selo na linha, HMO-452), enquanto religar calado e o que
+    // ninguem percebe. Na duvida, o lado seguro e o que a pessoa consegue ver.
+    //
+    // LANCAMENTO DE GRUPO PODE SER MARCADO, e a ausencia de recusa e decisao
+    // (secao 6d do plano da HMO-443): o flag vale so para o relatorio PESSOAL
+    // -- o rateio, o acerto e o saldo do grupo ignoram a coluna, porque a perna
+    // de grupo do custo pessoal sai de `group_share_entries`, que nao passa por
+    // `category_monthly_totals`. Recusar `group_id` aqui tiraria a escolha de
+    // quem tem grupo sem proteger numero nenhum.
+    //
+    // NENHUM `.select()` DESTA ROTA NOMEIA A COLUNA, e isso tambem e
+    // deliberado: os dois reads deste handler sao `select("*")` e
+    // `select("*, category:..., expense_splits(...)")`. Um `select` que NOMEIA
+    // coluna ausente faz o PostgREST responder `42703` e o handler cair em 500
+    // -- o defeito plantado no #335 e consertado no #336 com a homonima da 058.
+    if (body.include_in_total !== undefined)
+      updateData.include_in_total = body.include_in_total === true;
+
     // Atualizar transação
     const { error: updateError } = await supabase
       .from("financial_transactions")
