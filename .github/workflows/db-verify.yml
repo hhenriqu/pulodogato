@@ -5113,6 +5113,129 @@ jobs:
       - name: O juro do MyBank entra, com teto, piso e a convencao gravada na linha
         run: $PSQL -f database/tests/062_juros_do_mybank_test.sql
 
+      # =====================================================================
+      # 063 -- o teto da categoria ignora o fora-dos-totais (HMO-453)
+      # =====================================================================
+      # A 063 e SO VIEW: ela recola `budget_consumption` com `AND
+      # t.include_in_total` na perna do valor cheio (decisao B da HMO-443). Nao
+      # cria coluna nenhuma e nao muda a assinatura da view, entao este bloco
+      # NAO precisa ficar acima do `schema-columns.json em dia` pelo motivo que
+      # o da 061 precisava -- `gen-schema-columns.mjs` le a projecao, e a
+      # projecao e a mesma da 049, campo por campo. Ele fica aqui so para
+      # manter a cadeia em ordem numerica.
+      #
+      # A FIXTURE DO `anon` NAO E ENFEITE. Medido: com a cadeia 001 -> 062
+      # montada do zero, `anon` chega SEM privilegio nenhum em
+      # `budget_consumption` (a 049 revogou, e `CREATE OR REPLACE VIEW`
+      # PRESERVA ACL). Entao a assercao "anon nao tem privilegio" do teste
+      # ficava verde com o `REVOKE` da 063 APAGADO -- o mutante M8 sobreviveu
+      # exatamente assim. O step abaixo concede o privilegio e COMITA, e e isso
+      # que transforma aquela linha de enfeite em medida. Se a 063 nao revogar,
+      # dois steps independentes ficam vermelhos: a secao 6 do teste da 063 e o
+      # `anon so pode ler as tabelas de referencia`, mais abaixo.
+      - name: anon recebe SELECT em budget_consumption antes da 063 (a fixture do REVOKE)
+        run: $PSQL -f database/tests/063_anon_com_grant_antes_da_063.sql
+
+      - name: 063_orcamento_ignora_fora_dos_totais
+        run: $PSQL -f database/migrations/063_orcamento_ignora_fora_dos_totais.sql
+
+      # Re-executavel: `CREATE OR REPLACE VIEW`, `COMMENT`, `REVOKE`, `GRANT`,
+      # `ALTER VIEW ... SET` e o `INSERT ... ON CONFLICT DO NOTHING` sao todos
+      # re-aplicaveis. O risco proprio da segunda passada e o REPLACE, que nao
+      # pode derrubar o `security_invoker` -- e a secao 6 do teste, que roda
+      # DEPOIS deste step, mede as duas colagens de uma vez.
+      - name: 063 e idempotente
+        run: $PSQL -f database/migrations/063_orcamento_ignora_fora_dos_totais.sql
+
+      # 10 mutantes da 063 medidos num Postgres 17 local em 2026-10-21: banco
+      # TEMPLATE com a cadeia 001..062 -- os mesmos ~200 passos de SQL que este
+      # job roda antes daqui -- mais a fixture do `anon`, um banco NOVO por
+      # mutante criado desse template, e a ordem dos tres steps acima
+      # reproduzida em cada um. 9 morrem e 1 SOBREVIVE. O controle positivo (a
+      # 063 intacta, com um espaco a mais num comentario) fica verde, e e ele
+      # que separa "o mutante morreu" de "o arranjo esta quebrado".
+      #
+      # O banco de cada mutante e NOVO. Um banco reaproveitado daria
+      # verde-falso: a view que o mutante deveria deixar errada ja estaria
+      # recolada certa da passada anterior.
+      #
+      # O SITIO DA MORTE E O MEDIDO, e nao o esperado -- e o NUMERO que cada um
+      # produz foi anotado porque e ele que diz QUAL metade caiu:
+      #
+      #   * `AND t.include_in_total` da perna 1 apagado    secao 1 (750,00)
+      #   * o mesmo filtro TAMBEM na perna 2               secao 1 (520,00)
+      #   * o filtro SO na perna 2 (metades trocadas)      secao 1 (720,00)
+      #   * polaridade invertida (`NOT t.include_in_total`) secao 1 (250,00)
+      #   * `AND t.include_in_total IS NOT NULL` (sempre
+      #     verdadeiro, a coluna e NOT NULL)               secao 1 (750,00)
+      #   * filtro condicionado a `b.group_id IS NOT NULL
+      #     OR ...` (o teto de GRUPO deixa de honrar)      secao 2 (150,00)
+      #   * `ALTER VIEW ... SET (security_invoker)` apagado secao 6 (a C ve 3
+      #                                                    tetos pessoais
+      #                                                    alheios)
+      #   * `UPDATE ... SET include_in_total = true` de
+      #     "limpeza" acrescentado no fim                  secao 5
+      #   * `REVOKE ALL ... FROM anon` apagado             secao 6
+      #
+      #   * preflight afrouxado (`RAISE EXCEPTION` ->
+      #     `RAISE NOTICE`)                    SOBREVIVE, e esta nesta lista de
+      #     proposito: num banco que JA tem a 060 o preflight nunca dispara,
+      #     entao o mutante e indistinguivel do original NESTA posicao da
+      #     cadeia -- e nenhuma assercao desta suite pode distingui-lo. O que o
+      #     torna observavel foi medido FORA da suite, no CN3 abaixo.
+      #
+      # OS TRES CONTROLES NEGATIVOS EXTERNOS, todos medidos:
+      #   CN1 a suite contra um banco parado ANTES desta migration -> VERMELHA
+      #       na PRIMEIRA assercao ("teto pessoal de maio -> esperado 550.00,
+      #       obtido 750.00"). E o que prova que ela mede a 063 e nao o estado
+      #       basal -- e 750,00 e literalmente o numero que producao mostra
+      #       hoje;
+      #   CN2 a 063 colada num banco parado ANTES da 060 -> o preflight para a
+      #       colagem com `063 nao pode ser aplicado neste banco. Faltando: -
+      #       coluna include_in_total em public.financial_transactions (vem do
+      #       060)`;
+      #   CN3 o MESMO banco com o mutante do preflight -> a colagem passa do
+      #       preflight (NOTICE) e morre adiante com `column t.include_in_total
+      #       does not exist`, que NAO nomeia a migration que falta. E essa
+      #       diferenca -- a mensagem que manda rodar a 060 contra a mensagem
+      #       que manda depurar a view -- a razao de o preflight existir, e e o
+      #       unico lugar em que ela esta medida.
+      - name: O teto da categoria ignora o lancamento fora dos totais
+        run: $PSQL -f database/tests/063_orcamento_ignora_fora_dos_totais_test.sql
+
+      # OS TRES RE-RUNS ABAIXO FORAM RODADOS NESTA POSICAO ANTES DE SEREM
+      # WIRADOS, e os tres deram VERDE -- a ordem que
+      # `re-run-de-suite-da-card-invoice-lines-so-duas-das-tres-servem` manda
+      # seguir, porque "re-rode a suite da view que voce recolou" tem excecao
+      # que so aparece rodando (a suite da 045 crava dinheiro que a 046 mudou;
+      # a da 035 cobra uma tabela que a 052 apagou).
+      #
+      # Por que eles existem: a 063 faz `CREATE OR REPLACE VIEW
+      # budget_consumption`, que exige o corpo INTEIRO -- entao ela carrega uma
+      # copia do corpo da 049, e uma copia escrita a partir da versao errada
+      # REVERTE a 049 sem sintoma nenhum
+      # (`create-or-replace-view-de-pr-aberto-reverte-migration-mergeada`). A
+      # suite da 049 roda na POSICAO dela, 14 migrations acima, e nao ve esta
+      # recolagem.
+      - name: O criterio bruto+reembolso da 049 sobrevive a recolagem da 063
+        run: $PSQL -f database/tests/049_consumo_de_orcamento_do_grupo_test.sql
+
+      # Este guarda a outra propriedade do mesmo corpo: o `LEFT JOIN LATERAL
+      # ... ON TRUE` que mantem na lista o teto SEM gasto nenhum (o teto
+      # recem-criado do mes que vem). Um corpo recolado com `JOIN` em vez de
+      # `LEFT JOIN` faz esses tetos DESAPARECEREM da tela, e nenhuma assercao
+      # de dinheiro pega isso.
+      - name: O teto sem gasto continua na lista, depois da 063
+        run: $PSQL -f database/tests/budget_invoice_test.sql
+
+      # A metade ESTRUTURAL deste arquivo varre o schema inteiro procurando view
+      # sem `security_invoker`. Ele ja roda mais acima na cadeia, mas naquela
+      # posicao a `budget_consumption` ainda nao foi recolada pela 063 -- e e
+      # exatamente a recolagem que apaga a reloption. Conferido verde nesta
+      # posicao.
+      - name: Nenhuma view escapa da RLS, depois da 063
+        run: $PSQL -f database/tests/view_security_invoker_test.sql
+
       - name: schema-columns.json em dia com as migrations
         run: node scripts/gen-schema-columns.mjs --check
 
