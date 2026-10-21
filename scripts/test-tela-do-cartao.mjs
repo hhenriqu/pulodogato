@@ -32,12 +32,23 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { FaturaDoCartao } from "../.tmp-tela-do-cartao/components/cartoes/FaturaDoCartao.js";
 import { CartaoDaLista } from "../.tmp-tela-do-cartao/components/cartoes/CartaoDaLista.js";
+import { EdicaoDaPrevisaoDoCartao } from "../.tmp-tela-do-cartao/components/cartoes/EdicaoDaPrevisaoDoCartao.js";
 import {
   avisoDaExclusaoDaLinhaDaFatura,
   caminhoDeEdicaoDaLinhaDaFatura,
   ehParcelaDaFatura,
   pedidoDeExclusaoDaLinhaDaFatura,
 } from "../.tmp-tela-do-cartao/lib/acoes-da-fatura.js";
+import {
+  ancoraDaPrevisao,
+  avisoDaEdicaoDaPrevisao,
+  avisoDaExclusaoDaPrevisaoAvulsa,
+  edicaoInicialDaPrevisao,
+  ehSerieDaPrevisao,
+  pedidoDeEdicaoDaPrevisaoDoCartao,
+  pedidoDeExclusaoDaPrevisaoDoCartao,
+  valorNoCampoDaPrevisao,
+} from "../.tmp-tela-do-cartao/lib/acoes-da-previsao-do-cartao.js";
 
 const MEU_CARTAO = "11111111-1111-1111-1111-111111111111";
 const OUTRO_CARTAO = "22222222-2222-2222-2222-222222222222";
@@ -1035,4 +1046,404 @@ test("o valor da previsao nao e impresso sem leitura boa", () => {
 
   assert.ok(t.includes("Streaming mensal"), `a linha devia continuar: ${t}`);
   assert.ok(!t.includes("R$ 39,90"), `valor impresso sem leitura boa: ${t}`);
+});
+
+// ---------------------------------------------------------------------------
+// EDITAR E EXCLUIR A CONTA PREVISTA DO CARTAO (HMO-460)
+// ---------------------------------------------------------------------------
+// Fase F3 da HMO-455. Helio respondeu "sim" a segunda pergunta do cartao de
+// decisao: "contas do cartao" INCLUI as contas previstas do cartao.
+//
+// E o buraco mais fechado dos dois. A linha do bloco acima -- a assinatura
+// cadastrada com o cartao como conta -- nao tinha botao NENHUM, e nao aparece em
+// Contas a Pagar (a HMO-209 a tirou de la de proposito, para a mesma despesa
+// nao ser somada ao lado da fatura que ja a contem). Logo: ela nao se editava
+// nem se apagava em lugar NENHUM do app. A compra da fatura (F1) ao menos se
+// editava pela lista de Despesas.
+//
+// A DECISAO esta em `lib/acoes-da-previsao-do-cartao.ts` e tem assercao de
+// unidade mais abaixo; o que se cobra aqui e que ela chegue na arvore.
+
+const PREVISAO_FIXA = {
+  ...PREVISAO,
+  id: "s2",
+  description: "Academia",
+  recurring_rule_id: "regra-1",
+};
+
+const comPrevisoes = (previsoes, props) =>
+  render({ fatura: { ...FATURA, scheduled_pending: previsoes }, ...props });
+
+test("a conta prevista ganha Editar e Excluir quando a pagina passa os handlers", () => {
+  const html = comPrevisoes([PREVISAO], {
+    aoEditarPrevisao: () => {},
+    aoExcluirPrevisao: () => {},
+  });
+
+  // Os TITULOS, e nao o icone: `Pencil` e `Trash2` ja aparecem na lista da
+  // fatura acima, entao procurar o svg nao distingue os dois blocos.
+  assert.ok(
+    html.includes("Editar esta conta prevista"),
+    `a previsao nao ganhou Editar: ${html.slice(-900)}`
+  );
+  assert.ok(
+    html.includes("Excluir esta conta prevista"),
+    "a previsao nao ganhou Excluir"
+  );
+});
+
+test("sem handler, a conta prevista NAO ganha botao nenhum", () => {
+  // O CONTROLE POSITIVO do teste acima: os props sao opcionais, e e isso que
+  // mantem este componente sem rede. Sem esta assercao, um botao renderizado
+  // incondicionalmente passaria verde la em cima.
+  const html = comPrevisoes([PREVISAO]);
+
+  assert.ok(
+    !html.includes("Editar esta conta prevista"),
+    "o Editar da previsao apareceu sem handler"
+  );
+  assert.ok(
+    !html.includes("Excluir esta conta prevista"),
+    "o Excluir da previsao apareceu sem handler"
+  );
+  // E a linha continua na tela: o que falta e a acao, nao a leitura.
+  assert.ok(texto(html).includes("Streaming mensal"), "a previsao sumiu");
+});
+
+test("os botoes da previsao NAO se confundem com os da compra da fatura", () => {
+  // As duas listas estao na mesma tela, as duas tem lapis e lixeira, e as duas
+  // falam com rotas DIFERENTES: a compra sai por
+  // `/api/personal-finance/transactions/{id}` e a previsao por
+  // `/api/scheduled-transactions/{id}`. Titulos iguais fariam o teste (e o
+  // leitor de tela) nao distinguir qual botao e qual.
+  const html = comPrevisoes([PREVISAO], {
+    aoExcluirCompra: () => {},
+    aoEditarPrevisao: () => {},
+    aoExcluirPrevisao: () => {},
+  });
+
+  assert.ok(html.includes(TITULO_EXCLUIR), "a compra perdeu o Excluir dela");
+  assert.ok(
+    html.includes("Excluir esta conta prevista"),
+    "a previsao perdeu o Excluir dela"
+  );
+  assert.notEqual(
+    TITULO_EXCLUIR,
+    "Excluir esta conta prevista",
+    "os dois titulos ficaram iguais"
+  );
+
+  // E o Editar da previsao NAO e um link para o formulario de lancamento: ele
+  // le `?id=` de `financial_transactions`, e a previsao vive em outra tabela --
+  // o link responderia 404 sobre um id que existe.
+  assert.ok(
+    !html.includes("/dashboard/movimentacoes/despesa?id=s1"),
+    "a previsao ganhou link para a tela de lancamento"
+  );
+});
+
+test("o formulario da previsao aparece FORA do bloco das previsoes", () => {
+  // Ele e slot, e a posicao importa: dentro do bloco ele desapareceria -- com o
+  // texto digitado dentro -- no instante em que uma releitura falhasse e
+  // `scheduled_pending` voltasse ausente. Esta e a assercao daquele estado.
+  const semLeitura = render({
+    fatura: FATURA, // sem `scheduled_pending`: a consulta falhou
+    blocoDeEdicaoDaPrevisao: h("p", null, "formulario-aberto"),
+  });
+
+  const t = texto(semLeitura);
+  assert.ok(
+    t.includes("Não foi possível conferir as contas previstas"),
+    `esperava o aviso de leitura falha: ${t}`
+  );
+  assert.ok(
+    t.includes("formulario-aberto"),
+    `o formulario sumiu junto com a lista: ${t}`
+  );
+});
+
+// ---------------------------------------------------------------------------
+// O FORMULARIO DA CONTA PREVISTA: components/cartoes/EdicaoDaPrevisaoDoCartao
+// ---------------------------------------------------------------------------
+
+const renderEdicao = (props) =>
+  renderToStaticMarkup(
+    h(EdicaoDaPrevisaoDoCartao, {
+      previsao: PREVISAO,
+      campos: edicaoInicialDaPrevisao(PREVISAO),
+      aoMudarCampos: () => {},
+      aoSalvar: () => {},
+      aoCancelar: () => {},
+      ...props,
+    })
+  );
+
+test("o formulario abre com os TRES campos e com os valores de hoje", () => {
+  const html = renderEdicao();
+
+  assert.ok(html.includes('id="previsao-descricao"'), "falta a descricao");
+  assert.ok(html.includes('id="previsao-valor"'), "falta o valor");
+  assert.ok(html.includes('id="previsao-vencimento"'), "falta o vencimento");
+
+  assert.ok(html.includes('value="Streaming mensal"'), `descricao fora: ${html}`);
+  // "39,90" E NAO "39.9": o campo e lido com `replace(/\./g, "")` (ponto e
+  // separador de milhar no Brasil), entao um "39.9" aqui viraria R$ 399,00 para
+  // quem clicasse Salvar sem tocar em nada. Dez vezes o valor, com 200 na rota.
+  assert.ok(html.includes('value="39,90"'), `valor fora: ${html}`);
+  assert.ok(!html.includes('value="39.9"'), "o campo veio com PONTO decimal");
+});
+
+test("o vencimento aparece em dd/mm/aaaa, nao em ISO nem no formato do aparelho", () => {
+  // `CampoDeData` e nao o `type="date"` nativo: a ordem dos tres segmentos do
+  // nativo sai do APARELHO, e o mesmo app mostra dd/mm para um usuario e mm/dd
+  // para outro sem nada dizendo qual. Quem digitasse 10 de MARCO gravaria 3 de
+  // OUTUBRO -- data valida, plausivel e sem erro no caminho.
+  const html = renderEdicao();
+
+  // ANCORADO NO CAMPO, e nao um `includes` solto na pagina: `CampoDeData`
+  // carrega um `type="date"` ESCONDIDO ao lado do campo de texto (e ele e quem
+  // abre o calendario nativo), e aquele input leva a ISO de verdade --
+  // `value="2026-10-20"`, por construcao. Um `!includes('value="2026-10-20"')`
+  // na pagina inteira reprovaria o componente certo por causa do picker.
+  assert.match(
+    html,
+    /id="previsao-vencimento"[^>]*value="20\/10\/2026"/,
+    `o campo visivel nao mostra dd/mm/aaaa: ${html}`
+  );
+  assert.ok(
+    !/id="previsao-vencimento"[^>]*value="2026-10-20"/.test(html),
+    "o campo visivel mostrou a ISO crua"
+  );
+});
+
+test("o formulario DIZ que a edicao vale so para esta ocorrencia", () => {
+  const html = texto(renderEdicao());
+
+  assert.ok(
+    html.includes("Vale só para a ocorrência de 20/10/2026"),
+    `falta a frase do alcance: ${html}`
+  );
+});
+
+test("na SERIE o formulario avisa que as proximas ficam com o valor de antes", () => {
+  // `apenas_esta` muda esta ocorrencia e NAO a regra: a assinatura reajustada
+  // so neste mes volta ao valor antigo no proximo. Sem esta frase ninguem liga
+  // uma coisa a outra -- a correcao parece ter sido desfeita sozinha.
+  const serie = texto(
+    renderEdicao({
+      previsao: PREVISAO_FIXA,
+      campos: edicaoInicialDaPrevisao(PREVISAO_FIXA),
+    })
+  );
+
+  assert.ok(
+    serie.includes("as próximas ocorrências continuam com o valor de antes"),
+    `falta o aviso da serie: ${serie}`
+  );
+
+  // O CONTROLE POSITIVO: na avulsa a frase NAO aparece. Ela nao tem proximas, e
+  // dizer que tem ensinaria a pessoa a ignorar a frase na serie, onde ela vale.
+  const avulsa = texto(renderEdicao());
+  assert.ok(
+    !avulsa.includes("as próximas ocorrências continuam"),
+    `o aviso da serie apareceu na avulsa: ${avulsa}`
+  );
+});
+
+test("o formulario tem Salvar e Cancelar, e Salvar apaga enquanto salva", () => {
+  assert.ok(renderEdicao().includes('id="previsao-salvar"'), "falta o Salvar");
+  assert.ok(renderEdicao().includes('id="previsao-cancelar"'), "falta o Cancelar");
+
+  // Sem isto, o duplo clique manda dois PATCH -- e no caminho da exclusao seriam
+  // dois DELETE, o segundo sobre uma linha que ja saiu.
+  //
+  // O ATRIBUTO `disabled=""`, e NAO a palavra "disabled": todo botao e todo
+  // input deste app carrega `disabled:opacity-50` na lista de classes do
+  // Tailwind, entao um `includes("disabled")` casa com o componente PARADO e a
+  // assercao passaria verde sem o `disabled` existir.
+  const contarDisabled = (html) => (html.match(/disabled=""/g) ?? []).length;
+
+  assert.equal(
+    contarDisabled(renderEdicao()),
+    0,
+    "o formulario ja nasce com botao apagado"
+  );
+  // Os DOIS: o Cancelar tambem apaga, senao fechar no meio da gravacao deixaria
+  // o PATCH no ar com o formulario fechado.
+  assert.equal(
+    contarDisabled(renderEdicao({ salvando: true })),
+    2,
+    "Salvar e Cancelar nao apagam durante a gravacao"
+  );
+});
+
+// ---------------------------------------------------------------------------
+// A DECISAO, SEM ARVORE: lib/acoes-da-previsao-do-cartao.ts
+// ---------------------------------------------------------------------------
+// As assercoes acima provam que a decisao CHEGA na tela. Estas provam a decisao
+// -- inclusive os ramos que a tela nao tem como mostrar: o `null` do aviso (que
+// e o que faz a serie abrir o dialogo) e o alcance dentro do corpo.
+
+test("ehSerieDaPrevisao le recurring_rule_id, e string vazia nao e serie", () => {
+  assert.equal(ehSerieDaPrevisao(PREVISAO), false);
+  assert.equal(ehSerieDaPrevisao(PREVISAO_FIXA), true);
+  assert.equal(ehSerieDaPrevisao({ ...PREVISAO, recurring_rule_id: null }), false);
+  // String vazia: `!= null` a aceitaria, e o dialogo abriria sobre uma linha que
+  // a rota vai apagar de vez -- a pessoa escolheria "todas as ocorrencias" e
+  // apagaria uma linha so, sem nada dizendo que as tres opcoes eram iguais.
+  assert.equal(ehSerieDaPrevisao({ ...PREVISAO, recurring_rule_id: "" }), false);
+});
+
+test("o pedido de exclusao leva o alcance ESCOLHIDO no corpo", () => {
+  // A rota le `alcance` de `request.json()` e cai no default `apenas_esta`
+  // quando ele nao vem: um corpo ausente escolheria o alcance mais conservador
+  // em silencio, exatamente no caso em que a pessoa pediu "todas".
+  for (const alcance of ["apenas_esta", "esta_e_proximas", "todas"]) {
+    assert.deepEqual(
+      pedidoDeExclusaoDaPrevisaoDoCartao(PREVISAO_FIXA, alcance),
+      {
+        metodo: "DELETE",
+        url: "/api/scheduled-transactions/s2",
+        corpo: { alcance },
+      },
+      `alcance ${alcance} nao chegou no corpo`
+    );
+  }
+
+  // E a URL e a da AGENDA, nunca a de lancamento: a previsao vive em
+  // `scheduled_transactions`, e `/api/personal-finance/transactions/s2`
+  // responderia 404 sobre um id que existe, em outra tabela.
+  const pedido = pedidoDeExclusaoDaPrevisaoDoCartao(PREVISAO, "apenas_esta");
+  assert.ok(
+    !pedido.url.includes("personal-finance"),
+    `URL de lancamento: ${pedido.url}`
+  );
+});
+
+test("o id vai escapado na URL da exclusao", () => {
+  const pedido = pedidoDeExclusaoDaPrevisaoDoCartao(
+    { ...PREVISAO, id: "a/b" },
+    "apenas_esta"
+  );
+
+  assert.equal(pedido.url, "/api/scheduled-transactions/a%2Fb");
+});
+
+test("o aviso do confirm existe na AVULSA e e null na SERIE", () => {
+  // O `null` e o contrato: ele e o que obriga a tela a abrir o dialogo do
+  // alcance em vez de perguntar duas vezes pela mesma exclusao.
+  assert.equal(avisoDaExclusaoDaPrevisaoAvulsa(PREVISAO_FIXA), null);
+
+  const aviso = avisoDaExclusaoDaPrevisaoAvulsa(PREVISAO);
+  assert.ok(aviso, "a avulsa ficou sem frase de confirmacao");
+  assert.ok(aviso.includes("Streaming mensal"), `falta o nome: ${aviso}`);
+  // Ela diz que NAO VOLTA, e isso e verdade: `planejarExclusao` devolve
+  // `apagarDeVez` para a linha sem regra, nos tres alcances.
+  assert.ok(aviso.includes("não volta"), `falta o que acontece: ${aviso}`);
+
+  // E NAO manda ninguem para Contas a Pagar -- a frase que o ramo da `fixa` de
+  // `avisoDaExclusao` usa. A HMO-209 tirou esta linha daquela tela: mandar a
+  // pessoa para onde a conta nao aparece e pior que nao dizer nada.
+  assert.ok(
+    !aviso.includes("Contas a Pagar"),
+    `aponta para a tela onde a linha nao existe: ${aviso}`
+  );
+});
+
+test("o campo e o parser fecham o ciclo: 39,90 volta 39.9, e nao 399", () => {
+  // O DEFEITO DE 10x, em uma assercao. `pedidoDeEdicaoDaPrevista` le o campo com
+  // `replace(/\./g, "")` porque no Brasil o ponto e separador de MILHAR; um
+  // preenchimento com `String(39.9)` faria aquele replace produzir "399".
+  assert.equal(valorNoCampoDaPrevisao(39.9), "39,90");
+  assert.equal(valorNoCampoDaPrevisao(1234.5), "1234,50");
+
+  const resultado = pedidoDeEdicaoDaPrevisaoDoCartao(
+    PREVISAO,
+    edicaoInicialDaPrevisao(PREVISAO)
+  );
+
+  assert.ok(!("erro" in resultado), `recusou o proprio preenchimento: ${resultado.erro}`);
+  assert.equal(resultado.pedido.corpo.amount, 39.9);
+
+  // O CONTROLE POSITIVO do formato: com o ponto decimal o mesmo caminho daria
+  // 399. Se um dia `valorNoCampoDaPrevisao` voltar a emitir ponto, a assercao de
+  // cima quebra -- e esta prova que ela quebraria pelo motivo certo.
+  const comPonto = pedidoDeEdicaoDaPrevisaoDoCartao(PREVISAO, {
+    ...edicaoInicialDaPrevisao(PREVISAO),
+    valor: "39.9",
+  });
+  assert.equal(comPonto.pedido.corpo.amount, 399);
+});
+
+test("o PATCH leva os tres campos e o alcance apenas_esta", () => {
+  const resultado = pedidoDeEdicaoDaPrevisaoDoCartao(PREVISAO_FIXA, {
+    descricao: "  Academia Smart  ",
+    valor: "129,90",
+    vencimento: "2026-11-05",
+  });
+
+  assert.deepEqual(resultado, {
+    pedido: {
+      metodo: "PATCH",
+      url: "/api/scheduled-transactions/s2",
+      corpo: {
+        description: "Academia Smart",
+        amount: 129.9,
+        due_date: "2026-11-05",
+        // ESCRITO, e nao herdado do default da rota: o alcance decide se a serie
+        // inteira muda, e e a unica coisa que o formulario nao pergunta.
+        alcance: "apenas_esta",
+      },
+    },
+  });
+});
+
+test("a edicao recusa os tres estados ruins antes de sair", () => {
+  const base = edicaoInicialDaPrevisao(PREVISAO);
+
+  // Campo vazio vira `Number("") === 0`, que nao e `NaN` e passa por qualquer
+  // guarda de `isNaN` -- e a rota responde 400 com texto que a tela mostraria
+  // como "erro do servidor".
+  assert.ok("erro" in pedidoDeEdicaoDaPrevisaoDoCartao(PREVISAO, { ...base, valor: "" }));
+  assert.ok("erro" in pedidoDeEdicaoDaPrevisaoDoCartao(PREVISAO, { ...base, valor: "0" }));
+  assert.ok(
+    "erro" in pedidoDeEdicaoDaPrevisaoDoCartao(PREVISAO, { ...base, descricao: "   " })
+  );
+  assert.ok(
+    "erro" in
+      pedidoDeEdicaoDaPrevisaoDoCartao(PREVISAO, { ...base, vencimento: "20/10/2026" }),
+    "aceitou vencimento fora de AAAA-MM-DD"
+  );
+
+  // E o CONTROLE POSITIVO: o preenchimento bom passa. Sem ele, uma recusa que
+  // devolvesse erro para tudo passaria verde nas quatro assercoes acima.
+  assert.ok(!("erro" in pedidoDeEdicaoDaPrevisaoDoCartao(PREVISAO, base)));
+});
+
+test("a ancora do dialogo e dd/mm/aaaa, montada a mao", () => {
+  // A MAO e nao `Intl.DateTimeFormat`: ha Node sem full-icu que devolve o
+  // formato en-US para qualquer locale pedido, e este texto entra em assercao.
+  // E sem `new Date()`: a ISO seria lida como UTC e, no Brasil, voltaria um dia.
+  assert.equal(ancoraDaPrevisao("2026-10-20"), "20/10/2026");
+  assert.equal(ancoraDaPrevisao("2026-01-01"), "01/01/2026");
+
+  // Lixo passa adiante em vez de virar string vazia: um `ancora` vazio deixaria
+  // o dialogo com "Apenas esta ()" -- o rotulo que deveria identificar a linha
+  // identificando nada.
+  assert.equal(ancoraDaPrevisao("sem data"), "sem data");
+});
+
+test("o aviso da edicao nomeia a ocorrencia, e so a serie ganha a segunda frase", () => {
+  const avulsa = avisoDaEdicaoDaPrevisao(PREVISAO);
+  const serie = avisoDaEdicaoDaPrevisao(PREVISAO_FIXA);
+
+  assert.ok(avulsa.includes("20/10/2026"), avulsa);
+  assert.ok(!avulsa.includes("gasto fixo"), `avulsa chamada de fixa: ${avulsa}`);
+  assert.ok(serie.includes("gasto fixo"), `serie sem o aviso: ${serie}`);
+
+  // Nenhuma das duas aponta para Contas a Pagar: nao existe hoje, em tela
+  // nenhuma do app, caminho para alterar o VALOR da serie inteira de uma
+  // previsao apontada para cartao. Prometer um que nao existe e pior que calar.
+  assert.ok(!avulsa.includes("Contas a Pagar"), avulsa);
+  assert.ok(!serie.includes("Contas a Pagar"), serie);
 });
