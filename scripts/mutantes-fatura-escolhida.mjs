@@ -398,6 +398,8 @@ const ARQUIVO_FORM = "components/movimentacoes/FormularioDeLancamento.tsx";
 const ARQUIVO_FILA = "lib/offline-queue.ts";
 const ARQUIVO_ROTA = "app/api/financial-installments/route.ts";
 const ARQUIVO_LANC = "lib/lancamento.ts";
+/** A regra da fatura em aberto (HMO-456). */
+const ARQUIVO_FATURA = "lib/fatura-do-cartao.ts";
 
 // Os tres oraculos, pelo nome com que o bloco os conhece. O guard entra como
 // ORACULO (le a fonte, nao compila nada); os outros dois como SUITE, e dai as
@@ -406,9 +408,12 @@ const ARQUIVO_LANC = "lib/lancamento.ts";
 const GUARD = "check-fatura-no-lancamento";
 const TESTE_FILA = "test:offline-queue";
 const TESTE_LANC = "test:lancamento";
+/** A SUGESTAO DA FATURA EM ABERTO (HMO-456), os dois oraculos dela. */
+const TESTE_FATURA = "test:fatura-do-cartao";
+const TESTE_CAMPOS = "test:campos-lancamento";
 
 const ORACULOS = { [GUARD]: "node scripts/check-fatura-no-lancamento.mjs" };
-const SUITES = [TESTE_FILA, TESTE_LANC];
+const SUITES = [TESTE_FILA, TESTE_LANC, TESTE_FATURA, TESTE_CAMPOS];
 
 const MUTANTES_TS = [
   // ---------------------------------------------------------------------
@@ -544,6 +549,104 @@ const MUTANTES_TS = [
       "esvazia a ultima, e nao aparece como erro: aparece como um mes caro",
     de: "    const mes = somaMeses(mesDaFaturaAncora, k);",
     para: "    const mes = somaMeses(dataDaCompra, k);",
+  },
+  // ---------------------------------------------------------------------
+  // A SUGESTAO DA FATURA EM ABERTO (HMO-456)
+  // ---------------------------------------------------------------------
+  // A HMO-281/289 entregou o seletor; o padrao dele era o mes do CALENDARIO, e
+  // "a fatura que fecha semana que vem" (a frase da propria HMO-281) nao se
+  // descobre sem o `closing_day`. Os seis mutantes abaixo cobrem as duas metades
+  // novas -- a REGRA (`faturaAbertaDoCartao`) e a FIACAO dela -- e todos os seis
+  // compilam, como os de cima.
+  //
+  // O DEFEITO QUE ELES DESCREVEM E SEMPRE O MESMO, e e caro: no dia 20 de um
+  // cartao que fecha dia 5, a sugestao volta a ser OUTUBRO -- uma fatura que ja
+  // fechou e pode ja estar paga -- e o formulario GRAVA esse mes em
+  // `invoice_month_override`. A compra de hoje entra numa fatura fechada, sem
+  // erro, sem log e com o numero parecendo plausivel nas duas telas.
+  // ---------------------------------------------------------------------
+  {
+    nome: "seletor_nao_marca_a_fatura_aberta",
+    arquivo: ARQUIVO_CAMPOS,
+    alvo: TESTE_CAMPOS,
+    porque:
+      "A SUGESTAO MUDA. Sem o marcador, o seletor abre em 'novembro de 2026' e " +
+      "nada na tela diz por que: quem comprou no dia 20 espera ver outubro, le " +
+      "novembro e troca a sugestao CERTA pela fatura que ja fechou. O oraculo e " +
+      "a suite de render, e nao o guard, porque aqui existe arvore para afirmar " +
+      "sobre -- ela reprova pelo texto que falta na opcao, nao pela ausencia de " +
+      "um nome no arquivo",
+    de: '                      {mes === mesDaFaturaEmAberto ? " · em aberto" : ""}\n',
+    para: "",
+  },
+  {
+    nome: "marcador_colado_no_padrao",
+    arquivo: ARQUIVO_CAMPOS,
+    alvo: TESTE_CAMPOS,
+    porque:
+      "O MUTANTE QUE PASSA NO CASO FACIL. `mesPadraoDaFatura` e `mesDaFaturaEmAberto` " +
+      "sao o MESMO mes sempre que ha cartao com fechamento -- entao este mutante " +
+      "sobrevive a qualquer teste que so olhe o caso bom. Ele morre no controle " +
+      "negativo: cartao SEM `closing_day` (e formulario antes de a conta ser " +
+      "escolhida) nao tem fatura aberta, e a tela passaria a afirmar que o mes do " +
+      "calendario esta em aberto naquele cartao",
+    de: '{mes === mesDaFaturaEmAberto ? " · em aberto" : ""}',
+    para: '{mes === mesPadraoDaFatura ? " · em aberto" : ""}',
+  },
+  {
+    nome: "fatura_aberta_perde_a_borda_do_fechamento",
+    arquivo: ARQUIVO_FATURA,
+    alvo: TESTE_FATURA,
+    porque:
+      "A BORDA POR UM DIA, do lado que ninguem confere: com `<` a compra do " +
+      "PROPRIO dia do fechamento passa a ser sugerida na fatura seguinte. Uma vez " +
+      "por mes, num cartao so, com o mes vizinho do certo -- indistinguivel de " +
+      "'eu comprei depois do fechamento'. E a mesma borda que " +
+      "budget_invoice_test.sql:313 crava no banco",
+    de: "  return dia <= closingDay ? mesDaCompra : andarMeses(mesDaCompra, 1);",
+    para: "  return dia < closingDay ? mesDaCompra : andarMeses(mesDaCompra, 1);",
+  },
+  {
+    nome: "padrao_ignora_o_fechamento_do_cartao",
+    arquivo: ARQUIVO_FORM,
+    alvo: GUARD,
+    porque:
+      "A FEATURE INTEIRA DESLIGADA SEM UMA LINHA VERMELHA. Sem o `closingDay` no " +
+      "parametro nomeado, `faturaPadraoDoLancamento` cai na fonte 2 (o periodo da " +
+      "origem) -- que e o comportamento de ANTES desta issue e e perfeitamente " +
+      "plausivel na tela. O `tsc` nao ve: o campo e opcional. E `faturaAbertaDoCartao` " +
+      "continua sendo chamado logo acima, para o marcador, entao o seletor ainda " +
+      "diz 'em aberto' em NOVEMBRO enquanto marca OUTUBRO: as duas metades " +
+      "discordando dentro do mesmo seletor",
+    de: "        closingDay: contaEscolhida?.closing_day,\n",
+    para: "",
+  },
+  {
+    nome: "efeito_so_preenche_o_vazio",
+    arquivo: ARQUIVO_FORM,
+    alvo: GUARD,
+    porque:
+      "A SUGESTAO QUE NUNCA CHEGA. Era assim ate a HMO-456, e a troca e o que faz " +
+      "a feature funcionar: o seletor aparece junto com a NATUREZA, antes de haver " +
+      "cartao escolhido, entao `mesDaFatura` ja esta preenchido com o padrao " +
+      "antigo quando o `closing_day` chega -- e 'so preenche o vazio' nao " +
+      "reescreve. A fatura em aberto apareceria apenas para quem trocasse de " +
+      "cartao com o campo em branco, que nao e ninguem",
+    de: "    if (editando || faturaTocada) return;",
+    para: "    if (editando) return;",
+  },
+  {
+    nome: "cache_offline_perde_o_fechamento",
+    arquivo: ARQUIVO_FORM,
+    alvo: GUARD,
+    porque:
+      "O ESCRITOR MUDO, versao HMO-456 -- o mesmo desenho do " +
+      "`fila_offline_perde_a_fatura` logo acima. Sem o fechamento no catalogo, o " +
+      "formulario SEM REDE volta a sugerir o mes do calendario e o lancamento " +
+      "entra na fila com o override apontando para a fatura fechada. Ele " +
+      "sincroniza, e aceito, e nao ha erro, nem item `falhou`, nem nada na tela",
+    de: "            closing_day: c.closing_day ?? null,\n",
+    para: "",
   },
 ];
 

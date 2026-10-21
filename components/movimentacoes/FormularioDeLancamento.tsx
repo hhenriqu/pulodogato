@@ -66,6 +66,7 @@ import { cotacaoDigitada, taxaParaGravar } from "@/lib/cambio";
 import { avisoDeEdicaoTravada } from "@/lib/grupos";
 import {
   cartaoDaTela,
+  faturaAbertaDoCartao,
   faturaPadraoDoLancamento,
   PARAM_DO_CARTAO,
 } from "@/lib/fatura-do-cartao";
@@ -279,14 +280,44 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
   }, [carregandoMoeda, editando, preferenciaDeMoeda.oficial]);
 
   // ---------------------------------------------------------------------------
-  // A FATURA QUE O SELETOR ABRE MARCADA (HMO-281 / HMO-289)
+  // A FATURA QUE O SELETOR ABRE MARCADA (HMO-281 / HMO-289 / HMO-456)
   // ---------------------------------------------------------------------------
-  // `useMemo` com `[origem]` e NAO uma chamada solta no corpo: a funcao le o
-  // relogio quando nao ha periodo na origem, e recalcular a cada render daria um
-  // padrao que muda debaixo do dedo da pessoa a meia-noite -- e, antes disso,
+  // O CARTAO ESCOLHIDO ENTRA NA CONTA, e e ele que traz o `closing_day`: a
+  // fatura em aberto nao se descobre sem o ciclo do cartao. `cartaoFixado` nao
+  // serve aqui -- ele so existe quando a pessoa entrou pela tela de um cartao, e
+  // o caso comum e ela escolher no seletor.
+  //
+  // `find` por `contaId` e nao `cartaoDaTela`: aquele exige `credit_card` para
+  // travar a tela, e aqui a conta escolhida pode ser conta corrente -- nesse
+  // caso `closing_day` vem `undefined` e `faturaAbertaDoCartao` devolve `null`,
+  // que e a resposta certa (o bloco da fatura nem esta na tela).
+  const contaEscolhida = useMemo(
+    () => contas.find((c) => c.id === valores.contaId) ?? null,
+    [contas, valores.contaId]
+  );
+
+  // A fatura EM ABERTO daquele cartao, ou `null` enquanto nao houver cartao (ou
+  // nao houver fechamento cadastrado). Vai para a tela MARCAR a opcao -- ver
+  // `mesDaFaturaEmAberto` em CamposDeLancamento.
+  const faturaEmAberto = useMemo(
+    () => faturaAbertaDoCartao(valores.data, contaEscolhida?.closing_day),
+    [valores.data, contaEscolhida]
+  );
+
+  // `useMemo` e NAO uma chamada solta no corpo: a funcao le o relogio quando nao
+  // ha fatura em aberto nem periodo na origem, e recalcular a cada render daria
+  // um padrao que muda debaixo do dedo da pessoa a meia-noite -- e, antes disso,
   // uma dependencia instavel no efeito abaixo, que passaria a rodar em todo
   // render.
-  const faturaPadrao = useMemo(() => faturaPadraoDoLancamento(origem), [origem]);
+  const faturaPadrao = useMemo(
+    () =>
+      faturaPadraoDoLancamento({
+        origem,
+        dataDaCompra: valores.data,
+        closingDay: contaEscolhida?.closing_day,
+      }),
+    [origem, valores.data, contaEscolhida]
+  );
 
   // O PADRAO E ESCRITO NO ESTADO, E NAO SO EXIBIDO
   //
@@ -302,16 +333,30 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
   //   - `editando`: o que esta gravado manda. Sem esta guarda, abrir para editar
   //     uma compra SEM override escreveria o padrao no estado, e o Salvar -- sem
   //     a pessoa tocar em nada -- moveria a compra de fatura;
-  //   - `mesDaFatura === ""`: so preenche o vazio. Reescrever o campo apagaria a
-  //     escolha de quem ja mexeu nele toda vez que o efeito rodasse de novo.
+  //   - `faturaTocada`: a escolha da pessoa manda sobre a sugestao, sempre.
+  //
+  // A TERCEIRA GUARDA ERA `mesDaFatura === ""` ATE A HMO-456, e a troca e o que
+  // faz a sugestao CHEGAR. O seletor aparece junto com a natureza, antes de
+  // haver cartao escolhido: o padrao de entao (o mes do calendario) ja estava
+  // escrito no estado quando o `closing_day` finalmente chegou, e "so preenche o
+  // vazio" deixava a sugestao velha na tela -- a fatura em aberto apareceria
+  // somente para quem trocasse de cartao com o campo em branco, que nao e
+  // ninguem. O mesmo valia para quem muda a DATA da compra depois.
+  //
+  // E por isso a guarda nova e um ESTADO proprio, e nao `mesDaFatura !== ""`:
+  // sem ele, "a pessoa escolheu novembro" e "a sugestao anterior escreveu
+  // novembro" sao indistinguiveis, e o efeito reescreveria a escolha dela a cada
+  // troca de cartao ou de data.
+  const [faturaTocada, setFaturaTocada] = useState(false);
+
   useEffect(() => {
-    if (editando) return;
+    if (editando || faturaTocada) return;
     setValores((atual) =>
-      atual.natureza === "card" && atual.mesDaFatura === ""
+      atual.natureza === "card" && atual.mesDaFatura !== faturaPadrao
         ? { ...atual, mesDaFatura: faturaPadrao }
         : atual
     );
-  }, [editando, faturaPadrao, valores.natureza]);
+  }, [editando, faturaTocada, faturaPadrao, valores.natureza]);
 
   // ---------------------------------------------------------------------------
   // O CARTAO QUE A TELA ANTERIOR JA ESCOLHEU (HMO-210)
@@ -371,6 +416,14 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
   const copia = COPIA[tipo];
 
   const aoMudar = useCallback((mudanca: Partial<ValoresDeLancamento>) => {
+    // QUEM TOCOU NA FATURA PASSA A MANDAR (HMO-456). O seletor de fatura e o
+    // UNICO campo com uma sugestao que se recalcula depois do primeiro render
+    // (ela depende do cartao e da data, que mudam), entao ele e o unico que
+    // precisa saber se a pessoa ja respondeu. `in` e nao `!== undefined`: o
+    // `onChange` do `<select>` manda a string vazia quando ela escolhe "pela
+    // data da compra", e essa e uma resposta -- sem o `in`, a sugestao
+    // sobrescreveria justamente quem pediu para nao ter override.
+    if ("mesDaFatura" in mudanca) setFaturaTocada(true);
     setValores((atual) => ({ ...atual, ...mudanca }));
   }, []);
 
@@ -524,6 +577,13 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
             // ainda precisa sugerir a moeda certa, e sem ela toda conta em dolar
             // voltaria a sugerir real assim que a pessoa perdesse o sinal.
             currency: c.currency ?? "",
+            // E o FECHAMENTO, pela mesma razao (HMO-456): sem ele o formulario
+            // offline volta a sugerir o mes do calendario, que num cartao que
+            // fecha dia 5 e uma fatura ja fechada -- e o lancamento vai para a
+            // fila com o override apontando para ela. `?? null` e nao `?? 0`:
+            // zero nao e um dia de fechamento, e `faturaAbertaDoCartao` precisa
+            // distinguir "nao tem" de um numero.
+            closing_day: c.closing_day ?? null,
           })),
           guardadoEm: Date.now(),
         });
@@ -1654,6 +1714,12 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
               // `?origem=`), e `CamposDeLancamento` é de propósito sem URL e sem
               // banco -- é o que permite testá-lo renderizando de verdade.
               mesPadraoDaFatura={faturaPadrao}
+              // QUAL DAQUELES MESES ESTA EM ABERTO (HMO-456). Vem de cá pelo
+              // mesmo motivo: é o `closing_day` do cartão escolhido que
+              // responde, e a conta chega por `fetch`. `undefined` quando não
+              // há cartão (ou ele não tem fechamento) -- e aí nenhuma opção
+              // ganha o marcador, em vez de a primeira ganhar por descuido.
+              mesDaFaturaEmAberto={faturaEmAberto ?? undefined}
               rateio={
                 <SoftFeatureGuard feature="expense_groups" user={user}>
                   <div className="space-y-4 p-4 border rounded-lg bg-muted/20">

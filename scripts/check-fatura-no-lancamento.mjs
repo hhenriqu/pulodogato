@@ -73,11 +73,19 @@ const EXIGENCIAS = [
       "janelaDeFaturas(",
       "rotuloDaFatura(",
       "mesDaFatura: e.target.value",
+      // A COMPARACAO, e nao o nome da prop (HMO-456). `mesDaFaturaEmAberto`
+      // sozinho casa com a DECLARACAO dela na interface e com o default do
+      // destructuring -- os dois ficam no arquivo depois de alguem apagar o
+      // marcador do JSX, e o guard ficaria verde sobre um seletor que nao
+      // sugere nada. Mesma regra do `(` nos nomes de funcao: o alvo e o uso.
+      "mes === mesDaFaturaEmAberto",
     ],
     porque:
       "o seletor precisa EXISTIR, aparecer pelo oraculo (`campos.faturaDoLancamento`), " +
-      "listar a janela e DEVOLVER a escolha. Sem o `onChange` ele e um seletor " +
-      "que nao muda nada -- a pessoa clica, o rotulo troca e o estado fica igual.",
+      "listar a janela, DEVOLVER a escolha e MARCAR qual fatura esta em aberto. " +
+      "Sem o `onChange` ele e um seletor que nao muda nada -- a pessoa clica, o " +
+      "rotulo troca e o estado fica igual; sem o marcador, a sugestao da HMO-456 " +
+      "fica muda e quem compra depois do fechamento 'corrige' a fatura certa.",
   },
   {
     arquivo: "components/movimentacoes/FormularioDeLancamento.tsx",
@@ -99,12 +107,37 @@ const EXIGENCIAS = [
       "mes_da_fatura:",
       "mesDaFatura: valores.mesDaFatura",
       "mesPadraoDaFatura=",
+      // A FIACAO DA SUGESTAO (HMO-456). Os quatro pedacos abaixo sao MUDOS
+      // quando faltam -- o seletor continua na tela, com um mes marcado, e o
+      // lancamento grava; so a sugestao volta a ser o mes do calendario, que
+      // num cartao que fecha dia 5 e uma fatura ja fechada (e possivelmente
+      // paga). Nenhum deles e erro de tipo: `closingDay` e opcional no
+      // parametro nomeado, e prop que deixa de ser passada e `undefined`.
+      "closingDay: contaEscolhida?.closing_day",
+      "faturaAbertaDoCartao(",
+      "mesDaFaturaEmAberto=",
+      // A GUARDA DO EFEITO, A CONDICAO INTEIRA. Sem ela o efeito volta a "so
+      // preenche o vazio" e a sugestao nunca chega: o seletor aparece com a
+      // natureza, ANTES de haver cartao escolhido, entao o campo ja esta
+      // preenchido com o padrao antigo quando o `closing_day` chega.
+      //
+      // `faturaTocada` sozinho NAO SERVE, e isto foi medido: o nome sobrevive no
+      // `useState` e no array de dependencias depois de alguem tirar o `||` da
+      // condicao -- o mutante passou verde. E a mesma armadilha do
+      // `invoice_month_override` sem os dois pontos, duas listas acima.
+      "editando || faturaTocada",
+      // O CACHE OFFLINE. Sem o fechamento guardado, o formulario sem rede volta
+      // a sugerir o mes do calendario e o lancamento entra na FILA com o
+      // override apontando para a fatura errada -- sem erro e sem item
+      // `falhou`, a familia de defeito que este guard existe para pegar.
+      "closing_day: c.closing_day",
     ],
     porque:
       "os TRES escritores da tela: o insert/update (`invoice_month_override`), a " +
       "rota de parcelas (`mes_da_fatura`) e a fila offline (`mesDaFatura`). E o " +
       "padrao tem de ser CALCULADO e PASSADO -- sem `mesPadraoDaFatura` a janela " +
-      "do seletor nasce vazia.",
+      "do seletor nasce vazia, e sem o `closing_day` do cartao escolhido o padrao " +
+      "deixa de ser a fatura EM ABERTO (HMO-456) sem nada mudar na tela.",
   },
   {
     arquivo: "lib/offline-queue.ts",
