@@ -300,7 +300,10 @@ const PEDIDO_VALIDO = {
   contaDePagamentoPedida: CORRENTE,
   contaDePagamento: { id: CORRENTE, account_type: "checking" },
   conexaoAceita: false,
-  juros: 0,
+  // `juros: 0` MORAVA AQUI e saiu junto com a fase 1 (HMO-448). O que entra e o
+  // problema do juro JA APURADO, e `null` e o modo `sem_juros` -- onde nenhuma
+  // pergunta de juro e feita.
+  problemaDoJuro: null,
   parcelas: 24,
 };
 
@@ -348,8 +351,310 @@ test("devedor sem conexao aceita: recusa, e so no caso `conexao`", () => {
   assert.equal(problema({ caso: "auto", conexaoAceita: false }), null);
 });
 
-test("juro diferente de zero: recusado na fase 1", () => {
-  assert.equal(problema({ juros: 0.015 }), "juros_fora_da_fase_1");
+// ---------------------------------------------------------------------------
+// OS JUROS (HMO-448, F3 da HMO-444)
+// ---------------------------------------------------------------------------
+// `juro diferente de zero: recusado na fase 1` MORAVA AQUI. A migration 062
+// soltou a trava, e a recusa que estava no lugar dela ("Nesta fase o MyBank so
+// empresta a juro zero") deixou de existir. O que entrou sao as recusas da F2.
+
+test("juro de verdade NAO e mais recusado (a fase 1 acabou)", () => {
+  // O CONTROLE QUE PROVA QUE A TRAVA SAIU. Sem ele, apagar a feature inteira --
+  // deixar a rota ignorar os juros e gravar 0 -- passaria por toda assercao
+  // abaixo, que so fala de RECUSA.
+  assert.equal(
+    problema({
+      problemaDoJuro: LIB.problemaDoJuroDoPedido({
+        modo: "taxa",
+        emprestado: "1000.00",
+        taxaPercentual: "20",
+        totalARceber: "",
+      }),
+    }),
+    null
+  );
+});
+
+test("as recusas do juro chegam com a frase da F2, e nao com uma copia", () => {
+  const negativa = problema({
+    problemaDoJuro: LIB.problemaDoJuroDoPedido({
+      modo: "taxa",
+      emprestado: "1000.00",
+      taxaPercentual: "-5",
+      totalARceber: "",
+    }),
+  });
+  assert.equal(negativa, "taxa_negativa");
+  assert.match(LIB.mensagemDoProblema(negativa), /não pode ser negativa/i);
+
+  const totalCurto = problema({
+    problemaDoJuro: LIB.problemaDoJuroDoPedido({
+      modo: "total",
+      emprestado: "1000.00",
+      taxaPercentual: "",
+      totalARceber: "900.00",
+    }),
+  });
+  assert.equal(totalCurto, "total_menor_que_o_principal");
+  // A FRASE DIZ A CONSEQUENCIA EM DINHEIRO, e nao so "valor invalido": trocar os
+  // dois campos de lugar e um erro que parece razoavel digitado.
+  assert.match(
+    LIB.mensagemDoProblema(totalCurto),
+    /receber menos de volta/i
+  );
+});
+
+test("modo com juro e o campo em BRANCO: recusa, e nao vira juro zero calado", () => {
+  // O DEFEITO QUE ESTE CASO FECHA: um `?? 0` em `fracaoDaTaxaDigitada` faria o
+  // campo vazio virar um emprestimo a juro zero gravado em silencio -- no modo
+  // em que a pessoa escolheu COBRAR juro. A tela mostraria a previa fechando e
+  // o emprestimo nasceria sem o juro que ela queria.
+  assert.equal(
+    problema({
+      problemaDoJuro: LIB.problemaDoJuroDoPedido({
+        modo: "taxa",
+        emprestado: "1000.00",
+        taxaPercentual: "",
+        totalARceber: "",
+      }),
+    }),
+    "valor_ilegivel"
+  );
+});
+
+test("modo `sem_juros`: NENHUMA pergunta de juro e feita", () => {
+  // Nem com os campos de juro preenchidos com lixo: no modo sem juro eles nao
+  // existem na tela, e deixar `problemaDoJuroDoPedido` olha-los faria o estado
+  // de um campo invisivel recusar um emprestimo legitimo.
+  assert.equal(
+    LIB.problemaDoJuroDoPedido({
+      modo: "sem_juros",
+      emprestado: "",
+      taxaPercentual: "nao e numero",
+      totalARceber: "-5",
+    }),
+    null
+  );
+  assert.equal(
+    LIB.juroDoPedido({
+      modo: "sem_juros",
+      emprestado: "1000.00",
+      taxaPercentual: "20",
+      totalARceber: "",
+    }),
+    null
+  );
+});
+
+test("OS DOIS SENTIDOS: 1000 + 20% da 1200, e 1000 + total 1200 da 20%", () => {
+  // E o pedido literal da issue, na funcao que a tela E a rota chamam.
+  const pelaTaxa = LIB.juroDoPedido({
+    modo: "taxa",
+    emprestado: "1000.00",
+    taxaPercentual: "20",
+    totalARceber: "",
+  });
+  assert.equal(pelaTaxa.principal, 1000);
+  assert.equal(pelaTaxa.total, 1200);
+  assert.equal(pelaTaxa.juros, 200);
+  assert.equal(pelaTaxa.taxa, 0.2);
+
+  const peloTotal = LIB.juroDoPedido({
+    modo: "total",
+    emprestado: "1000.00",
+    taxaPercentual: "",
+    totalARceber: "1200.00",
+  });
+  assert.equal(peloTotal.taxa, 0.2);
+  assert.equal(peloTotal.juros, 200);
+  assert.equal(peloTotal.total, 1200);
+  assert.equal(peloTotal.principal, 1000);
+
+  // A CONVENCAO VAI JUNTO, porque ela e gravada na linha (062, decisao D2).
+  assert.equal(pelaTaxa.convencao, "total_simples");
+  assert.equal(peloTotal.convencao, "total_simples");
+});
+
+test("a taxa entra em PERCENTO e sai em FRACAO -- a divisao por 100 tem um dono", () => {
+  // Feita no componente, a rota receberia o numero no outro formato e gravaria
+  // 2000% -- recusado pelo teto da 062 com um 23514 que a tela mostraria como
+  // "erro interno".
+  const juro = LIB.juroDoPedido({
+    modo: "taxa",
+    emprestado: "1000.00",
+    taxaPercentual: "20",
+    totalARceber: "",
+  });
+  assert.equal(juro.taxa, 0.2, "20 (percento) tem de virar 0.2 (fracao)");
+  assert.notEqual(juro.taxa, 20);
+});
+
+test("A SERIE E MONTADA SOBRE O TOTAL, e o principal fica com o emprestado", () => {
+  // O PONTO EXATO ONDE O DINHEIRO MUDA DE VALOR, e as duas afirmacoes juntas
+  // sao o que torna o mutante visivel: so o `principal` nao denuncia (ele esta
+  // certo nos dois), e so a soma tambem nao (ela fecha nos dois, com valores
+  // diferentes). O par e a medida.
+  const juro = LIB.juroDoPedido({
+    modo: "taxa",
+    emprestado: "1000.00",
+    taxaPercentual: "20",
+    totalARceber: "",
+  });
+
+  const valorDaSerie = LIB.valorQueMontaASerie({
+    modo: "taxa",
+    digitado: "1000.00",
+    juro,
+  });
+  assert.equal(valorDaSerie, "1200.00", "a serie sai do TOTAL, nao do principal");
+
+  const base = LIB.baseQueMontaASerie({ modo: "taxa", daTela: "parcela" });
+  assert.equal(base, "total", "com juro a base e `total` CRAVADO");
+
+  const serie = LIB.serieDoEmprestimo({
+    valor: valorDaSerie,
+    base,
+    parcelas: 12,
+    primeiroVencimento: "2026-11-10",
+  });
+
+  const soma = serie.parcelas.reduce(
+    (acc, p) => acc + Math.round(p.valor * 100),
+    0
+  );
+  assert.equal(soma, 120000, "as 12 parcelas somam o TOTAL (R$ 1.200)");
+  assert.equal(
+    LIB.principalQueVaiParaAColuna({ juro, serie }),
+    1000,
+    "e o principal continua sendo o EMPRESTADO (R$ 1.000)"
+  );
+  // E O JURO E A DIFERENCA -- a definicao que a 062 escreveu no COMMENT.
+  assert.equal(soma / 100 - LIB.principalQueVaiParaAColuna({ juro, serie }), 200);
+});
+
+test("SEM juro o caminho antigo nao muda: principal == soma das parcelas", () => {
+  // O controle que impede o conserto de virar regressao: antes desta issue os
+  // dois numeros eram o mesmo, e sem juro eles continuam sendo.
+  const serie = LIB.serieDoEmprestimo({
+    valor: "1000.00",
+    base: LIB.baseQueMontaASerie({ modo: "sem_juros", daTela: "parcela" }),
+    parcelas: 24,
+    primeiroVencimento: "2026-11-10",
+  });
+  const soma = serie.parcelas.reduce(
+    (acc, p) => acc + Math.round(p.valor * 100),
+    0
+  );
+  assert.equal(LIB.principalQueVaiParaAColuna({ juro: null, serie }), 24000);
+  assert.equal(soma, 2400000, "base `parcela` preservada: 24x de R$ 1.000");
+});
+
+test("A PREVIA mostra as quatro grandezas, e o TOTAL dela sai da SERIE", () => {
+  const juro = LIB.juroDoPedido({
+    modo: "total",
+    emprestado: "1000.00",
+    taxaPercentual: "",
+    totalARceber: "1200.00",
+  });
+  const serie = LIB.serieDoEmprestimo({
+    valor: LIB.valorQueMontaASerie({ modo: "total", digitado: "1000.00", juro }),
+    base: LIB.baseQueMontaASerie({ modo: "total", daTela: "parcela" }),
+    parcelas: 12,
+    primeiroVencimento: "2026-11-10",
+  });
+
+  const previa = LIB.previaDoEmprestimo({ modo: "total", juro, serie });
+  const por = (chave) => previa.find((g) => g.chave === chave).valor;
+
+  assert.equal(por("emprestado"), "R$ 1.000,00");
+  assert.equal(por("juros"), "R$ 200,00");
+  assert.equal(por("total"), "R$ 1.200,00");
+  assert.equal(por("parcela"), "R$ 100,00");
+  // O SENTIDO INVERSO DA ISSUE: digitei o total, vejo quanto estou cobrando.
+  assert.equal(por("taxa"), "20,00%");
+
+  // O ESPACO E O DO TECLADO, e nao o estreito sem quebra do `Intl` pt-BR: uma
+  // sonda que procurasse "R$ 1.200,00" digitado normalmente nunca casaria.
+  assert.ok(
+    por("total").includes("R$ 1.200,00"),
+    "o separador tem de ser espaco comum (U+0020)"
+  );
+  assert.doesNotMatch(por("total"), /[  ]/);
+});
+
+test("A PREVIA aparece TAMBEM sem juro, e ali emprestado == total", () => {
+  // "uma previa que mostra SEMPRE as quatro grandezas" -- o modo sem juro e o
+  // unico em que a pessoa sabe de cor qual numero esperar, e e ele que torna os
+  // outros dois legiveis.
+  const serie = LIB.serieDoEmprestimo({
+    valor: "1000.00",
+    base: "parcela",
+    parcelas: 24,
+    primeiroVencimento: "2026-11-10",
+  });
+  const previa = LIB.previaDoEmprestimo({ modo: "sem_juros", juro: null, serie });
+  const por = (chave) => previa.find((g) => g.chave === chave).valor;
+
+  assert.equal(por("emprestado"), "R$ 24.000,00");
+  assert.equal(por("total"), "R$ 24.000,00");
+  assert.equal(por("juros"), "R$ 0,00");
+  assert.equal(por("taxa"), "0,00%");
+});
+
+test("A PREVIA reporta o total DA SERIE, mesmo quando o juro discorda dela", () => {
+  // ESTE CASO EXISTE PARA TORNAR UMA ESCOLHA OBSERVAVEL, e sem ele ela nao e.
+  //
+  // `previaDoEmprestimo` le `serie.valorTotal` e NAO `juro.total`. Com a fiacao
+  // certa os dois valem o mesmo sempre -- e por isso o mutante que troca um
+  // pelo outro SOBREVIVEU a suite inteira (medido: 109/110, ele era o unico).
+  // Um mutante que so e observavel na presenca de um SEGUNDO defeito nao e
+  // medivel por um runner que aplica um mutante por vez
+  // (`filtro-a-jusante-torna-o-porteiro-inobservavel`).
+  //
+  // A saida nao e apagar o mutante: e dar a ele uma entrada em que os dois
+  // DISCORDAM. Montada a mao, ela e o estado que o mutante da serie produz --
+  // juro dizendo "total 1.200" e parcelas somando 1.000. A previa tem de contar
+  // o que as PARCELAS somam, porque e isso que vai ser gravado e cobrado; dizer
+  // 1.200 seria a tela prometendo um total que o banco nao tem.
+  const serieDoPrincipal = LIB.serieDoEmprestimo({
+    valor: "1000.00",
+    base: "total",
+    parcelas: 12,
+    primeiroVencimento: "2026-11-10",
+  });
+
+  const juroQueDiz1200 = LIB.juroDoPedido({
+    modo: "taxa",
+    emprestado: "1000.00",
+    taxaPercentual: "20",
+    totalARceber: "",
+  });
+  assert.equal(juroQueDiz1200.total, 1200, "o juro calcula 1.200");
+  assert.equal(serieDoPrincipal.valorTotal, 1000, "a serie soma 1.000");
+
+  const previa = LIB.previaDoEmprestimo({
+    modo: "taxa",
+    juro: juroQueDiz1200,
+    serie: serieDoPrincipal,
+  });
+  const por = (chave) => previa.find((g) => g.chave === chave).valor;
+
+  assert.equal(
+    por("total"),
+    "R$ 1.000,00",
+    "a previa tem de dizer o que as PARCELAS somam, nao o total calculado"
+  );
+  // E a parcela confirma de onde o numero saiu: 12x de R$ 1.000 e R$ 83,33.
+  assert.equal(por("parcela"), "R$ 83,33");
+});
+
+test("A PREVIA some quando nao ha serie, em vez de mostrar quatro zeros", () => {
+  // Quatro "R$ 0,00" se leem como um emprestimo de valor zero JA CALCULADO, e
+  // nao como "falta preencher".
+  assert.equal(
+    LIB.previaDoEmprestimo({ modo: "sem_juros", juro: null, serie: null }),
+    null
+  );
 });
 
 test("parcelas fora de 2..60: a frase DIZ os numeros", () => {
@@ -471,6 +776,186 @@ const CONEXAO_ACEITA = {
     { id: "c1", requester_id: EU, requested_id: LAIS, status: "accepted" },
   ],
 };
+
+// ---------------------------------------------------------------------------
+// OS JUROS PELA ROTA (HMO-448) -- o `principal` NAO fecha com a soma, de proposito
+// ---------------------------------------------------------------------------
+// A issue manda afirmar que `principal` DIFERENTE da soma das parcelas foi
+// gravado, e conferir os DOIS numeros. Os dois, e nao um: o duble nao conta
+// sozinho (`duble-nao-sabia-contar-count-vira-zero`), e cada numero isolado
+// sobrevive ao mutante que esta feature existe para matar.
+//
+// O MUTANTE, E POR QUE SO O PAR O MATA
+// ------------------------------------
+// Ele troca `juro.total` por `juro.principal` em `valorQueMontaASerie` -- monta
+// a serie sobre o emprestado em vez do total a receber. Olhando so o
+// `principal` gravado: 1000, CERTO nos dois mundos. Olhando so a soma das
+// parcelas: ela fecha nos dois (1200 no bom, 1000 no mutante), e sem o outro
+// numero ao lado nao ha com o que discordar. O que denuncia e a DIFERENCA entre
+// os dois ser o juro -- e e por isso que a assercao e sobre o par.
+//
+// Nenhuma linha do banco fica invalida no mutante: a 062 apagou de proposito o
+// `COMMENT` da 053 que exigia a soma fechar. Quem cobrou 20% receberia
+// exatamente o que emprestou, uma parcela por mes, sem erro no caminho.
+
+const CORPO_COM_TAXA = {
+  descricao: "Empréstimo com juros",
+  conta_credora_id: INVESTIMENTO,
+  conta_de_pagamento_id: CORRENTE,
+  // O VALOR E O EMPRESTADO, e nao a parcela: com juro a pergunta
+  // `parcela|total` nao e feita (o seletor de modo a substitui na tela).
+  valor: "1000.00",
+  modo_do_juro: "taxa",
+  taxa: "20",
+  parcelas: 12,
+  primeiro_vencimento: "2026-11-10",
+};
+
+/** A soma, em centavos, das parcelas que a rota mandou gravar. */
+function somaDasParcelasGravadas(sessao) {
+  const insert = sessao.escritas.find(
+    (e) => e.tabela === "mybank_installments"
+  );
+  assert.ok(insert, "a rota tem de ter inserido as parcelas");
+  return insert.linhas.reduce((acc, l) => acc + Math.round(l.amount * 100), 0);
+}
+
+test("POST com taxa: `principal` e o EMPRESTADO e a serie soma o TOTAL", async () => {
+  const { status, corpo, sessao } = await criarEmprestimo(CORPO_COM_TAXA);
+
+  assert.equal(status, 201);
+
+  const emprestimo = sessao.escritas.find((e) => e.tabela === "mybank_loans");
+  assert.ok(emprestimo, "a rota tem de ter inserido o emprestimo");
+
+  const principalGravado = emprestimo.linhas[0].principal;
+  const soma = somaDasParcelasGravadas(sessao);
+
+  // OS DOIS NUMEROS, CRAVADOS. Ver o cabecalho desta secao.
+  assert.equal(principalGravado, 1000, "principal = o EMPRESTADO");
+  assert.equal(soma, 120000, "a soma das 12 parcelas = o TOTAL (R$ 1.200)");
+
+  // E A AFIRMACAO QUE A ISSUE PEDE LITERALMENTE: eles sao DIFERENTES, e a
+  // diferenca e o juro. Esta linha e a que o mutante nao sobrevive.
+  assert.notEqual(
+    Math.round(principalGravado * 100),
+    soma,
+    "com juro, principal NAO pode fechar com a soma das parcelas"
+  );
+  assert.equal(soma - Math.round(principalGravado * 100), 20000, "o juro: R$ 200");
+
+  // A TAXA E A CONVENCAO GRAVADAS NA LINHA (062).
+  assert.equal(emprestimo.linhas[0].interest_rate, 0.2);
+  assert.equal(emprestimo.linhas[0].interest_kind, "total_simples");
+
+  // A RESPOSTA DIZ OS MESMOS DOIS NUMEROS QUE FORAM GRAVADOS. As assercoes
+  // acima leem o BANCO (pelo duble) e estas leem o CORPO DA RESPOSTA -- sao
+  // duas fontes, e a tela so ve a segunda. Uma rota que gravasse certo e
+  // respondesse o total no lugar do emprestado passaria em tudo que esta
+  // acima, e o painel mostraria "emprestei R$ 1.200" logo depois de emprestar
+  // R$ 1.000.
+  assert.equal(corpo.principal, 1000, "a resposta diz o EMPRESTADO");
+  assert.equal(corpo.total, 1200, "a resposta diz o TOTAL a receber");
+  assert.equal(corpo.juros, 200, "a resposta diz o JURO");
+});
+
+test("POST com TOTAL (o sentido inverso): a taxa e derivada e gravada", async () => {
+  const { status, corpo, sessao } = await criarEmprestimo({
+    ...CORPO_COM_TAXA,
+    modo_do_juro: "total",
+    taxa: undefined,
+    total: "1200.00",
+  });
+
+  assert.equal(status, 201);
+
+  const emprestimo = sessao.escritas.find((e) => e.tabela === "mybank_loans");
+  // A pessoa NAO digitou taxa nenhuma -- ela sai de `total / principal - 1`.
+  assert.equal(emprestimo.linhas[0].interest_rate, 0.2);
+  assert.equal(emprestimo.linhas[0].principal, 1000);
+  assert.equal(somaDasParcelasGravadas(sessao), 120000);
+
+  // A resposta separa as quatro grandezas, e a tela nao tem de escolher qual
+  // delas chamar de "emprestimo criado".
+  assert.equal(corpo.principal, 1000);
+  assert.equal(corpo.total, 1200);
+  assert.equal(corpo.juros, 200);
+  assert.equal(corpo.taxa, 0.2);
+});
+
+test("POST com taxa: as PREVISOES do Caso A saem do total, nao do principal", async () => {
+  // O LADO QUE CUSTA DINHEIRO DE VERDADE NO CASO A: a previsao e o que vai
+  // para Contas a Pagar. Montada sobre o principal, a pessoa pagaria a si mesma
+  // R$ 1.000 e o juro nunca sairia da conta corrente -- a divida ficaria em
+  // aberto para sempre, com as parcelas pedindo mais do que as previsoes pagam.
+  const { sessao } = await criarEmprestimo(CORPO_COM_TAXA);
+
+  const previsoes = sessao.escritas.find(
+    (e) => e.tabela === "scheduled_transactions"
+  );
+  assert.ok(previsoes, "o Caso A tem de criar as previsoes");
+  assert.equal(previsoes.linhas.length, 12);
+
+  const somaDasPrevisoes = previsoes.linhas.reduce(
+    (acc, l) => acc + Math.round(l.amount * 100),
+    0
+  );
+  assert.equal(
+    somaDasPrevisoes,
+    120000,
+    "as 12 contas a pagar somam o TOTAL, nao o emprestado"
+  );
+});
+
+test("POST com taxa NEGATIVA: 400 com a frase da F2, e nada gravado", async () => {
+  const { status, corpo, sessao } = await criarEmprestimo({
+    ...CORPO_COM_TAXA,
+    taxa: "-5",
+  });
+
+  assert.equal(status, 400);
+  assert.match(corpo.error, /não pode ser negativa/i);
+  // RECUSAR E GRAVAR DE QUALQUER JEITO SERIA O PIOR DOS DOIS MUNDOS.
+  assert.equal(
+    sessao.escritas.some((e) => e.tabela === "mybank_loans"),
+    false
+  );
+});
+
+test("POST com total MENOR que o emprestado: 400, e a frase diz o dinheiro", async () => {
+  const { status, corpo, sessao } = await criarEmprestimo({
+    ...CORPO_COM_TAXA,
+    modo_do_juro: "total",
+    taxa: undefined,
+    total: "900.00",
+  });
+
+  assert.equal(status, 400);
+  assert.match(corpo.error, /receber menos de volta/i);
+  assert.equal(
+    sessao.escritas.some((e) => e.tabela === "mybank_loans"),
+    false
+  );
+});
+
+test("POST SEM modo (o corpo de antes desta issue): juro zero, e nada muda", async () => {
+  // A COMPATIBILIDADE E UMA AFIRMACAO, E NAO UMA ESPERANCA. Quem chega pelo
+  // PostgREST direto, pela fila offline ou por uma sonda escrita antes desta
+  // issue manda o corpo velho -- e o corpo velho descreve um emprestimo a juro
+  // zero perfeitamente valido.
+  const { status, sessao } = await criarEmprestimo(CORPO_AUTO);
+
+  assert.equal(status, 201);
+  const emprestimo = sessao.escritas.find((e) => e.tabela === "mybank_loans");
+
+  // `base: "parcela"` PRESERVADA: 24x de R$ 1.000 e um principal de R$ 24.000.
+  assert.equal(emprestimo.linhas[0].principal, 24000);
+  assert.equal(emprestimo.linhas[0].interest_rate, 0);
+  assert.equal(emprestimo.linhas[0].interest_kind, "total_simples");
+  // E SEM JURO OS DOIS NUMEROS VOLTAM A SER O MESMO -- o controle que impede
+  // esta feature de virar regressao no caminho comum.
+  assert.equal(somaDasParcelasGravadas(sessao), 2400000);
+});
 
 test("POST recusa conta credora que nao e de investimento", async () => {
   const { status, corpo, sessao } = await criarEmprestimo({
@@ -5830,13 +6315,13 @@ test("total e vencimento malformados sao 400, cada um com a frase do campo", asy
   }
 });
 
-test("`taxa` diferente de zero e 400 -- a trava da 053 em forma de frase", async () => {
-  // `mybank_loans_interest_rate_fase_1` e `CHECK (interest_rate = 0)`. Quem a
-  // solta e a 062 (HMO-445), que ESTA em `main` -- e estar em `main` nao e estar
-  // COLADA (`deploy-ships-code-not-schema`). Aceitar `taxa: 2` antes da colagem
-  // derrubaria o UPDATE em 23514 -- e SO depois de as parcelas da cauda ja terem
-  // sido reescritas, porque o emprestimo e o ultimo passo. A conta do juro e da
-  // F3; esta filha recusa a taxa de proposito.
+test("`taxa` diferente de zero e 400 -- o ajuste nao sabe mexer em juro", async () => {
+  // A F4 escreveu esta recusa como "a trava da 053 em forma de frase", com dois
+  // motivos: a 062 nao estava colada, e a aritmetica do juro era da F3. OS DOIS
+  // MORRERAM -- a 062 esta colada em prod (medida 2026-10-21: a trava de fase
+  // sumiu do `pg_constraint` e os tres COMMENT batem em md5 com o arquivo), e a
+  // aritmetica e esta issue. O que sustenta a recusa agora e UMA linha:
+  // `patchDoEmprestimo.principal = total`, certa so a juro zero.
   for (const taxa of [2, 0.5, "1.5"]) {
     const linhas = tabelasDoAjuste();
     const r = await ajustarEmprestimo({
@@ -5845,9 +6330,71 @@ test("`taxa` diferente de zero e 400 -- a trava da 053 em forma de frase", async
     });
 
     assert.equal(r.status, 400, `taxa ${taxa}: ${JSON.stringify(r.corpo)}`);
-    assert.match(r.corpo.error, /juro zero/);
+    assert.match(r.corpo.error, /empréstimo com juro ainda não existe/);
+    // A FRASE ANTIGA NAO PODE VOLTAR: "o MyBank so empresta a juro zero" virou
+    // MENTIRA nesta issue, e quem acabou de criar um emprestimo a 20% leria que
+    // ele nao existe.
+    assert.doesNotMatch(r.corpo.error, /juro zero/);
     assert.equal(r.sessao.escritas.length, 0);
   }
+});
+
+test("o emprestimo que JA TEM juro recusa `total` sozinho -- o buraco que esta issue abriu", async () => {
+  // ESTE CASO ERA INALCANCAVEL ATE AQUI, e e por isso que a F4 nao o viu:
+  // nenhum emprestimo podia ter juro, entao perguntar pela taxa DO PEDIDO
+  // bastava. Agora que se cria um a 20%, um PATCH de `{total}` SEM `taxa`
+  // passa por aquela pergunta (`mexeNaTaxa` e falso) e cai direto em
+  // `patchDoEmprestimo.principal = total` -- gravando 4.600 em `principal` de
+  // um emprestimo de 4.000 com juro, APAGANDO o juro: a 062 define o juro como
+  // `SUM(amount) - principal`, entao iguala-los o zera. Dinheiro sumido, sem
+  // erro em lugar nenhum.
+  for (const taxaDoEmprestimo of [0.2, "0.20", 1.5]) {
+    const linhas = tabelasDoAjuste();
+    linhas.mybank_loans[0].interest_rate = taxaDoEmprestimo;
+
+    const r = await ajustarEmprestimo({
+      corpo: { total: 4600 },
+      tabelas: linhas,
+    });
+
+    assert.equal(
+      r.status,
+      400,
+      `interest_rate ${taxaDoEmprestimo}: ${JSON.stringify(r.corpo)}`
+    );
+    assert.match(r.corpo.error, /empréstimo com juro ainda não existe/);
+    // NENHUMA ESCRITA, e e esta a assercao que importa: o PATCH reescreve a
+    // cauda ANTES do emprestimo, entao uma recusa que chegasse tarde ja teria
+    // mexido nas parcelas.
+    assert.equal(r.sessao.escritas.length, 0);
+  }
+});
+
+test("a DESCRICAO sozinha passa mesmo com juro -- ela nao toca `principal`", async () => {
+  // O contraponto do teste acima, e o que prova que a recusa nova nao e larga
+  // demais: corrigir o texto de um emprestimo com juro e legitimo, porque a
+  // descricao nao chega perto de `principal`. Sem este caso a recusa poderia
+  // ter sido escrita como "emprestimo com juro nao se ajusta" e passaria verde.
+  const linhas = tabelasDoAjuste();
+  linhas.mybank_loans[0].interest_rate = 0.2;
+
+  const r = await ajustarEmprestimo({
+    corpo: { descricao: "Empréstimo para a reforma" },
+    tabelas: linhas,
+  });
+
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+
+  const noEmprestimo = r.sessao.escritas.filter(
+    (e) => e.tabela === "mybank_loans"
+  );
+  assert.equal(noEmprestimo.length, 1);
+  // `update` registra `patch` (e `insert` registra `linhas`) -- ver `escrever`
+  // no duble.
+  assert.equal(noEmprestimo[0].verbo, "update");
+  assert.equal(noEmprestimo[0].patch.description, "Empréstimo para a reforma");
+  // E o `principal` NAO foi junto -- a descricao nao o reescreve.
+  assert.equal(noEmprestimo[0].patch.principal, undefined);
 });
 
 test("`taxa: 0` e `\"0.00\"` passam -- `numeric` chega como STRING do PostgREST", async () => {

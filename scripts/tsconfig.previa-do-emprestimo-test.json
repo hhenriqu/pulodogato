@@ -1,0 +1,53 @@
+{
+  "//": [
+    "Compila o seletor de modo de juro e a previa das quatro grandezas para a",
+    "sonda de navegador rodar os COMPONENTES de producao, e nao copias deles",
+    "(HMO-448, F3 da HMO-444).",
+    "",
+    "`jsx: react` e nao `react-jsx`: a pagina da sonda e um SCRIPT CLASSICO, e",
+    "`react-jsx` emite `import ... from \"react/jsx-runtime\"` -- import e erro",
+    "de sintaxe la, e `<script type=module>` nao funciona com --dump-dom.",
+    "`jsx: react` emite `React.createElement`, que acha o React UMD no global.",
+    "`allowUmdGlobalAccess` acompanha, senao o tsc da TS2686 uma vez por",
+    "elemento JSX num arquivo que nao importa React -- e a alternativa seria",
+    "mudar producao por causa do teste.",
+    "",
+    "O include lista as bibliotecas que os dois componentes usam porque a sonda",
+    "concatena os .js compilados num script so: o que nao for compilado aqui",
+    "vira variavel indefinida DENTRO da pagina, e o sintoma e a sonda inteira",
+    "vermelha com um ReferenceError que nao se parece com um include faltando.",
+    "Import novo nos componentes = entrada nova aqui E em PARTES, no",
+    "test-previa-do-emprestimo-na-tela.mjs.",
+    "",
+    "`lib/transferencia.ts` entra por ARRASTO de `lib/emprestimo-do-mybank.ts`",
+    "(que o importa) e por isso esta no include e em PARTES, mesmo que nenhum",
+    "dos dois componentes o use diretamente.",
+    "",
+    "Comentario SO nesta chave, nunca com // no meio do objeto: o tsc aceita",
+    "JSONC, mas o check-tests-in-ci.mjs le este arquivo com JSON.parse e",
+    "estoura com 'Expected double-quoted property name'."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "jsx": "react",
+    "allowUmdGlobalAccess": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-previa-do-emprestimo",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../components/mybank/CamposDeJuros.tsx",
+    "../components/mybank/PreviaDoEmprestimo.tsx",
+    "../lib/emprestimo-do-mybank.ts",
+    "../lib/juros-do-emprestimo.ts",
+    "../lib/lancamento.ts",
+    "../lib/transferencia.ts",
+    "../lib/dinheiro.ts"
+  ]
+}

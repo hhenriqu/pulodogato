@@ -48,9 +48,11 @@
 // numeros. No dia em que 1x ou 120x virar requisito, o conserto e em
 // `serieDeParcelas`, num lugar so, e nao numa segunda aritmetica aqui.
 //
-// NAO HA IMPORT DE `lib/dinheiro.ts` NEM DE NADA COM `@/` ALEM DE `lancamento`
-// E `transferencia`: os dois sao puros (nenhum import proprio), e e isso que
-// deixa este modulo compilar na suite sem o runtime do Next.
+// NAO HA IMPORT DE `lib/dinheiro.ts` NEM DE NADA COM `@/` ALEM DE `lancamento`,
+// `transferencia` E `juros-do-emprestimo`: os tres sao puros (nenhum import
+// proprio), e e isso que deixa este modulo compilar na suite sem o runtime do
+// Next. `juros-do-emprestimo` entrou na F3 da HMO-444 e e o mais puro dos tres
+// -- ele nao importa NADA, de proposito, porque a suite dele o compila sozinho.
 // ---------------------------------------------------------------------------
 
 import {
@@ -60,6 +62,14 @@ import {
   type BaseDoValorParcelado,
   type SerieDeParcelas,
 } from "@/lib/lancamento";
+import {
+  CONVENCAO_DO_JURO,
+  mensagemDoProblemaDoJuro,
+  problemaDoJuro,
+  tresCamposDoEmprestimo,
+  type ProblemaDoJuro,
+  type TresCamposDoEmprestimo,
+} from "@/lib/juros-do-emprestimo";
 import { pernasDaTransferencia, type PernaDeTransferencia } from "@/lib/transferencia";
 
 /** Os dois casos da issue. Nao sao graus do mesmo: eles escrevem em lugares diferentes. */
@@ -83,8 +93,430 @@ export function casoDoEmprestimo(params: {
 export const MIN_PARCELAS_DO_MYBANK = 2;
 export const MAX_PARCELAS_DO_MYBANK = 60;
 
-/** Juro que a fase 1 aceita -- a mesma trava do `mybank_loans_interest_rate_fase_1`. */
-export const JUROS_DA_FASE_1 = 0;
+// ---------------------------------------------------------------------------
+// OS JUROS: OS DOIS SENTIDOS DO PEDIDO (F3 da HMO-444, issue HMO-448)
+// ---------------------------------------------------------------------------
+// `JUROS_DA_FASE_1 = 0` MORAVA AQUI, e saiu. A trava que ele espelhava
+// (`mybank_loans_interest_rate_fase_1`) foi solta pela migration 062 (F1), e
+// `problemaDoEmprestimo` deixou de recusar juro: no lugar daquela pergunta
+// entraram as recusas da F2 (`lib/juros-do-emprestimo.ts`), que sao sobre a
+// ARITMETICA e nao sobre a fase.
+//
+// O PONTO EXATO ONDE O DINHEIRO MUDA DE VALOR: A SERIE VEM DO **TOTAL**
+// --------------------------------------------------------------------
+// Antes desta issue havia um unico numero, e ele era as duas coisas: o que saiu
+// da conta de investimento e o que as parcelas somam. Com juro eles se separam,
+// e a separacao e a feature inteira:
+//
+//   `mybank_loans.principal`          o que SAIU -- o emprestado
+//   SUM(`mybank_installments.amount`) o que VOLTA -- principal + juro
+//   SUM(amount) - principal           o JURO
+//
+// Entao `serieDoEmprestimo` e chamada com o **total**, e `principal` e gravado
+// a parte. Montar a serie sobre o `principal` e o mutante que a issue nomeia, e
+// ele nao da erro em lugar nenhum: o emprestimo fica gravado com a taxa certa,
+// a tela mostra o total certo na previa, e as parcelas somam o EMPRESTADO. Quem
+// cobrou 20% recebe exatamente o que emprestou, uma parcela por mes, e nenhuma
+// linha do banco esta invalida -- porque a 062 apagou de proposito a unica
+// afirmacao que exigia a soma fechar (o `COMMENT` da 053).
+//
+// POR QUE O MODO E DADO DO PEDIDO, E NAO DEDUZIDO DOS CAMPOS PREENCHIDOS
+// ---------------------------------------------------------------------
+// Daria para olhar `taxa` e `total` e decidir qual veio. Nao da para fazer isso
+// com os DOIS vazios: "sem juros" e "modo taxa com a taxa ainda em branco" sao
+// o mesmo estado de formulario, e as duas respostas certas sao opostas -- a
+// primeira e um emprestimo valido a juro zero, a segunda e "diga a taxa". Sem o
+// modo explicito, quem escolheu cobrar juro e ainda nao digitou a taxa veria o
+// botao Emprestar funcionar e criaria um emprestimo a juro zero sem perceber.
+// `sem_taxa_nem_total` existe na F2 para essa pergunta, e ela so e feita no
+// modo que a admite.
+// ---------------------------------------------------------------------------
+
+/**
+ * Os tres modos do formulario -- o seletor que a issue pede.
+ *
+ * `sem_juros` e o caminho que ja existia e continua valendo INTACTO: o valor
+ * digitado e parcela ou total (a pergunta da HMO-211), e o principal sai da
+ * serie. Nos outros dois o valor digitado e o EMPRESTADO, e a pergunta
+ * `parcela|total` nao se faz -- com juro ela teria tres respostas possiveis
+ * ("parcela do que? total do que?") e nenhuma delas e o que a pessoa quis dizer.
+ */
+export type ModoDoJuro = "sem_juros" | "taxa" | "total";
+
+/** O modo cobra juro? Os dois ramos divergem em QUAL numero monta a serie. */
+export function modoCobraJuro(modo: ModoDoJuro): boolean {
+  return modo === "taxa" || modo === "total";
+}
+
+/**
+ * A convencao gravada na linha. `mybank_loans.interest_kind`, 062.
+ *
+ * Re-exportada da F2 em vez de reescrita: a string tem de ser a MESMA dos dois
+ * lados, e o CHECK da 062 (`interest_kind IN ('total_simples')`) e quem recusa
+ * se ela divergir -- com um 23514 que a tela mostraria como 500.
+ */
+export const CONVENCAO_DO_JURO_DO_EMPRESTIMO = CONVENCAO_DO_JURO;
+
+/**
+ * O juro que a ANTECIPACAO sabe tratar, que e so o juro nenhum.
+ *
+ * ERA `JUROS_DA_FASE_1`, E A TROCA DE NOME E A ENTREGA, NAO ENFEITE
+ * ----------------------------------------------------------------
+ * O numero e o mesmo (0) e o uso em `problemaDaAntecipacao` e o mesmo, mas o
+ * que ele SIGNIFICA mudou de lugar. `JUROS_DA_FASE_1` queria dizer "o unico
+ * juro que este app aceita", e era lido por tres chamadores: a tela, a rota e a
+ * antecipacao. Os dois primeiros passaram a aceitar juro de verdade nesta
+ * issue; o terceiro NAO -- antecipar com juro exige descontar o juro que nao
+ * correu, e essa conta nao existe aqui (ver `juros_impedem_a_antecipacao`).
+ *
+ * Mantido o nome antigo, a constante passaria a dizer uma coisa falsa no
+ * arquivo e a recusa da antecipacao se leria como sobra da fase 1 -- um
+ * `if` que o proximo leitor apagaria junto com o resto, porque o nome dele diz
+ * que a fase acabou. O nome novo diz o LIMITE DA OPERACAO, que e o que ele e, e
+ * sobrevive a fase.
+ */
+export const JURO_QUE_A_ANTECIPACAO_SABE_DESCONTAR = 0;
+
+/**
+ * Os tres campos do juro RESOLVIDOS, mais o que a serie precisa.
+ *
+ * E o retorno de `juroDoPedido`, e as quatro grandezas que a previa da tela
+ * mostra antes do clique saem daqui -- `emprestado`, `juros`, `total` e (com a
+ * serie) o valor da parcela.
+ */
+export interface JuroDoPedido extends TresCamposDoEmprestimo {
+  /** A convencao que vai para `mybank_loans.interest_kind`. */
+  convencao: string;
+}
+
+/**
+ * O JURO DO PEDIDO, NOS DOIS SENTIDOS -- `null` quando os campos nao servem.
+ *
+ * Esta e a funcao que a tela e a rota chamam, e e ELA que faz os dois sentidos
+ * serem o mesmo codigo: `tresCamposDoEmprestimo` (F2) recebe o principal e UM
+ * de `taxa`/`total` e devolve as quatro grandezas. A previa da tela nao tem
+ * aritmetica propria -- `previa-na-tela-tem-que-usar-o-peso-do-fechamento` e
+ * exatamente este defeito, e ali o numero errado era plausivel e fechava.
+ *
+ * `null` NO MODO `sem_juros`, E ISSO NAO E FALHA
+ * ---------------------------------------------
+ * Sem juro nao ha tres campos a resolver: o principal sai da serie (base
+ * `parcela` ou `total`, a pergunta da HMO-211), a taxa e 0 e o total e o
+ * principal. Devolver um objeto aqui obrigaria o chamador a ter o emprestado
+ * ANTES da serie, que e justamente a dependencia invertida daquele modo. Quem
+ * distingue os dois e `modoCobraJuro`, num lugar so.
+ *
+ * A TAXA ENTRA EM PERCENTO E SAI EM FRACAO
+ * ----------------------------------------
+ * O campo da tela diz "20" para 20%, porque e assim que se fala de juro; a
+ * coluna guarda `0.2` (a convencao da F2, e o que `interest_rate` documenta na
+ * 062). A divisao por 100 mora AQUI, num lugar so: feita no componente, a rota
+ * receberia o numero no outro formato e gravaria 2000% -- um emprestimo cem
+ * vezes maior que o pedido, recusado pelo teto da 062 com um 23514 que a tela
+ * mostraria como "erro interno".
+ */
+export function juroDoPedido(entrada: {
+  modo: ModoDoJuro;
+  /** O EMPRESTADO, como veio do campo de valor: string em reais ("1000.00"). */
+  emprestado: string;
+  /** A taxa em PERCENTO, como veio do campo ("20" = 20%). Modo `taxa`. */
+  taxaPercentual: string;
+  /** O total a receber, string em reais. Modo `total`. */
+  totalARceber: string;
+}): JuroDoPedido | null {
+  if (!modoCobraJuro(entrada.modo)) return null;
+
+  const principal = Number.parseFloat(entrada.emprestado);
+  if (!Number.isFinite(principal)) return null;
+
+  const tres =
+    entrada.modo === "taxa"
+      ? tresCamposDoEmprestimo({
+          principal,
+          taxa: fracaoDaTaxaDigitada(entrada.taxaPercentual),
+        })
+      : tresCamposDoEmprestimo({
+          principal,
+          total: Number.parseFloat(entrada.totalARceber),
+        });
+
+  if (!tres) return null;
+
+  return { ...tres, convencao: CONVENCAO_DO_JURO_DO_EMPRESTIMO };
+}
+
+/**
+ * O percento digitado como FRACAO -- `NaN` quando nao da para ler.
+ *
+ * `NaN` e nao `0`, e a diferenca e a recusa: `problemaDoJuro` responde
+ * `valor_ilegivel` para `NaN` e ACEITA 0 como juro zero legitimo. Um `?? 0` aqui
+ * faria o campo da taxa em branco (ou com lixo digitado) virar um emprestimo a
+ * juro zero gravado em silencio, no modo em que a pessoa escolheu cobrar juro.
+ */
+function fracaoDaTaxaDigitada(taxaPercentual: string): number {
+  const percento = Number.parseFloat(taxaPercentual);
+  if (!Number.isFinite(percento)) return NaN;
+  return percento / 100;
+}
+
+/**
+ * O PROBLEMA DO JURO deste pedido -- `null` quando serve, ou o motivo da F2.
+ *
+ * `null` NO MODO `sem_juros`, E O PORQUE E O MESMO DE `juroDoPedido`: ali nao se
+ * faz pergunta nenhuma sobre juro, e `problemaDoJuro` exigiria um principal que
+ * aquele modo so conhece depois da serie. O que recusa valor ilegivel sem juro
+ * continua sendo `serie_impossivel`, como antes desta issue.
+ */
+export function problemaDoJuroDoPedido(entrada: {
+  modo: ModoDoJuro;
+  emprestado: string;
+  taxaPercentual: string;
+  totalARceber: string;
+}): ProblemaDoJuro | null {
+  if (!modoCobraJuro(entrada.modo)) return null;
+
+  const principal = Number.parseFloat(entrada.emprestado);
+
+  return entrada.modo === "taxa"
+    ? problemaDoJuro({
+        principal,
+        taxa: fracaoDaTaxaDigitada(entrada.taxaPercentual),
+      })
+    : problemaDoJuro({
+        principal,
+        total: Number.parseFloat(entrada.totalARceber),
+      });
+}
+
+/**
+ * O QUE MONTA A SERIE -- o total quando ha juro, o digitado quando nao ha.
+ *
+ * Esta funcao de tres linhas existe para que a escolha tenha UM dono. Ela e o
+ * ponto onde o dinheiro muda de valor (ver o cabecalho desta secao), e o mutante
+ * que devolve `principal` em vez de `total` e o que a issue manda matar.
+ *
+ * O `toFixed(2)` NAO E COSMETICO: `serieDeParcelas` recebe STRING e a parseia
+ * com `Number.parseFloat`. `String(1200.0000000000002)` -- que e o que uma
+ * multiplicacao em ponto flutuante pode produzir -- entraria assim na serie. A
+ * F2 ja devolve o total arredondado ao centavo em aritmetica de centavos
+ * inteiros; as duas casas aqui sao o que garante que a string nao reintroduza o
+ * ruido que ela tirou.
+ */
+export function valorQueMontaASerie(params: {
+  modo: ModoDoJuro;
+  /** O que foi digitado no campo de valor. Vale no modo `sem_juros`. */
+  digitado: string;
+  /** O juro resolvido, quando ha. */
+  juro: JuroDoPedido | null;
+}): string {
+  if (!modoCobraJuro(params.modo)) return params.digitado;
+  if (!params.juro) return "";
+  return params.juro.total.toFixed(2);
+}
+
+/**
+ * A BASE da serie -- `total` cravado quando ha juro.
+ *
+ * Com juro a serie e montada sobre o total a receber, entao a base e `total` por
+ * construcao e a pergunta `parcela|total` da tela NAO se aplica (ela e
+ * substituida pelo seletor de modo, que e o que a issue pede). Deixar a base da
+ * tela chegar aqui faria "sou pago em 12 parcelas de R$ 1.200" de um emprestimo
+ * de R$ 1.000 a 20%: `base: "parcela"` multiplicaria o total por 12 e a divida
+ * viraria R$ 14.400, com a taxa gravada dizendo 20%.
+ */
+export function baseQueMontaASerie(params: {
+  modo: ModoDoJuro;
+  /** A base escolhida na tela. Vale no modo `sem_juros`. */
+  daTela: BaseDoValorParcelado | null | undefined;
+}): BaseDoValorParcelado | null | undefined {
+  return modoCobraJuro(params.modo) ? "total" : params.daTela;
+}
+
+/**
+ * O `principal` QUE VAI PARA A COLUNA -- o emprestado, e nao a soma da serie.
+ *
+ * Com juro e `juro.principal` (o que a pessoa digitou como emprestado); sem
+ * juro continua sendo `serie.valorTotal`, que e o que a rota gravava antes desta
+ * issue e continua correto ali -- sem juro o que sai e o que volta.
+ *
+ * O MUTANTE QUE DEVOLVE `serie.valorTotal` NOS DOIS CASOS SOBREVIVE A TUDO QUE
+ * NAO OLHE OS DOIS NUMEROS JUNTOS: o emprestimo fica com `principal` = R$ 1.200
+ * e as parcelas somando R$ 1.200, a soma FECHA, a taxa gravada diz 20% e o juro
+ * (`SUM(amount) - principal`) vira ZERO. Ninguem cobrou juro nenhum, e a unica
+ * coisa que denuncia e comparar o principal com a soma -- que e exatamente o que
+ * a sonda da rota afirma, com os dois valores.
+ */
+export function principalQueVaiParaAColuna(params: {
+  juro: JuroDoPedido | null;
+  serie: SerieDeParcelas;
+}): number {
+  return params.juro ? params.juro.principal : params.serie.valorTotal;
+}
+
+// ---------------------------------------------------------------------------
+// A PREVIA DAS QUATRO GRANDEZAS, ANTES DO CLIQUE
+// ---------------------------------------------------------------------------
+// E o que a issue pede literalmente: "mostrando qual sera o valor total, ou se
+// eu colocar valor total vejo quanto de juros estou cobrando".
+//
+// AS QUATRO SEMPRE, NOS TRES MODOS -- e o "sempre" e a parte que importa. Uma
+// previa que aparecesse so no modo com juro deixaria os dois sentidos sem o
+// terceiro ponto de comparacao (o emprestimo a juro zero, onde emprestado ==
+// total), que e o unico caso em que a pessoa sabe de cor qual numero esperar. E
+// e barato: sem juro as quatro ja existem na serie.
+//
+// O TEXTO MORA AQUI, E NAO NO JSX, PORQUE ASSIM ELE TEM TESTE
+// -----------------------------------------------------------
+// Escritos no componente, os rotulos e os numeros formatados passariam por
+// qualquer suite intactos -- a mesma razao de `avisoDoCancelamento` e
+// `mensagemDoProblema` viverem neste arquivo. O componente
+// (`components/mybank/PreviaDoEmprestimo.tsx`) so desenha a lista que sai daqui.
+//
+// E A PREVIA NAO TEM ARITMETICA PROPRIA: ela recebe o MESMO `juro` e a MESMA
+// `serie` que a rota grava. `previa-na-tela-tem-que-usar-o-peso-do-fechamento` e
+// este defeito exatamente -- lá a tela chamava a funcao certa com o argumento
+// errado, o total fechava, e a diferenca era de 13 centavos por mes.
+// ---------------------------------------------------------------------------
+
+/** Uma linha da previa: o rotulo, o valor formatado, e a chave para a sonda. */
+export interface GrandezaDaPrevia {
+  /**
+   * A chave estavel, para `data-grandeza` no DOM.
+   *
+   * A sonda de navegador le POR ELA e nao pelo rotulo: um rotulo e texto de
+   * produto e muda ("Emprestado" -> "Valor emprestado") sem que nada esteja
+   * errado, e uma sonda ancorada no texto reprovaria a mudanca certa.
+   */
+  chave: "emprestado" | "juros" | "total" | "parcela" | "taxa";
+  rotulo: string;
+  valor: string;
+}
+
+/**
+ * O VALOR FORMATADO A MAO, e nao por `toLocaleString("pt-BR")`.
+ *
+ * Este texto entra em assercao de teste, e depender da base de locale do Node
+ * faz o mesmo teste passar numa maquina e falhar noutra sem nada no codigo ter
+ * mudado (ha Node sem full-icu, que devolve o formato en-US para qualquer locale
+ * pedido). Mesma razao de `resumoDaSerie` em `lib/lancamento.ts` e de `emReais`
+ * na rota.
+ *
+ * E ISSO TAMBEM RESOLVE O NBSP: `Intl` com `pt-BR` separa o "R$" do numero com
+ * ESPACO ESTREITO SEM QUEBRA (U+00A0/U+202F), nao com espaco comum -- uma sonda
+ * que procurasse "R$ 1.200,00" digitado com espaco normal nunca casaria
+ * (`intl-pt-br-separa-o-real-com-nbsp`). Aqui o espaco e o do teclado.
+ */
+function emReaisDaPrevia(valor: number): string {
+  const centavos = Math.round(valor * 100);
+  const negativo = centavos < 0;
+  const absoluto = Math.abs(centavos);
+  const inteiros = String(Math.floor(absoluto / 100)).replace(
+    /\B(?=(\d{3})+(?!\d))/g,
+    "."
+  );
+  const texto = `R$ ${inteiros},${String(absoluto % 100).padStart(2, "0")}`;
+  return negativo ? `-${texto}` : texto;
+}
+
+/**
+ * A taxa em PERCENTO com duas casas -- "20,00%".
+ *
+ * DUAS CASAS PORQUE A F2 GUARDA QUATRO NA FRACAO (`CASAS_DA_TAXA = 4`), e
+ * 4 casas de fracao sao exatamente 2 casas de percento. Mostrar mais casas
+ * exibiria ruido de arredondamento; mostrar menos esconderia a diferenca entre
+ * 20,00% e 20,04%, que em R$ 100.000 sao R$ 40.
+ */
+function emPercentoDaPrevia(taxa: number): string {
+  const centesimos = Math.round(taxa * 100 * 100);
+  const inteiros = Math.floor(Math.abs(centesimos) / 100);
+  const casas = String(Math.abs(centesimos) % 100).padStart(2, "0");
+  return `${centesimos < 0 ? "-" : ""}${inteiros},${casas}%`;
+}
+
+/**
+ * AS QUATRO GRANDEZAS (cinco com a taxa) -- `null` quando ainda nao ha o que
+ * mostrar.
+ *
+ * `null` E NAO UMA LISTA DE ZEROS: o formulario vazio mostraria "R$ 0,00" em
+ * quatro linhas, e quatro zeros se leem como um emprestimo de valor zero ja
+ * calculado, nao como "falta preencher". Quem decide o que a tela faz com o
+ * `null` e o componente, e ele simplesmente nao desenha a previa.
+ *
+ * A TAXA ENTRA NA LISTA, e ela e a quinta grandeza porque e a resposta da
+ * segunda metade da issue: no modo `total` a pessoa NAO digitou taxa nenhuma, e
+ * "vejo quanto de juros estou cobrando" e exatamente este numero. No modo `taxa`
+ * ela e a confirmacao do que foi digitado, ja passada pela inversa -- ou seja, o
+ * que o banco vai GUARDAR, e nao o que foi teclado.
+ */
+export function previaDoEmprestimo(params: {
+  modo: ModoDoJuro;
+  juro: JuroDoPedido | null;
+  serie: SerieDeParcelas | null;
+}): GrandezaDaPrevia[] | null {
+  if (!params.serie) return null;
+
+  // SEM JURO AS QUATRO SAEM DA SERIE, e emprestado == total por definicao: o
+  // que sai e o que volta. A taxa e 0 e entra na lista do mesmo jeito -- ela e o
+  // ponto de comparacao que torna os outros dois modos legiveis.
+  const emprestado = params.juro
+    ? params.juro.principal
+    : params.serie.valorTotal;
+  const juros = params.juro ? params.juro.juros : 0;
+  const taxa = params.juro ? params.juro.taxa : 0;
+
+  // O TOTAL SAI DA SERIE, E NAO DE `juro.total` -- E A DIFERENCA E O PONTO
+  //
+  // Os dois valem o mesmo quando a fiacao esta certa, e e justamente por isso
+  // que a previa le a SERIE: ela e o que vai ser gravado como parcela. Lendo
+  // `juro.total`, a previa mostraria o total CALCULADO enquanto as parcelas
+  // somariam outra coisa -- e o mutante que monta a serie sobre o `principal`
+  // ficaria invisivel na tela, que e onde a pessoa confere antes de clicar.
+  const total = params.serie.valorTotal;
+
+  return [
+    {
+      chave: "emprestado",
+      rotulo: "Você empresta",
+      valor: emReaisDaPrevia(emprestado),
+    },
+    { chave: "juros", rotulo: "Juros", valor: emReaisDaPrevia(juros) },
+    { chave: "taxa", rotulo: "Taxa do empréstimo", valor: emPercentoDaPrevia(taxa) },
+    { chave: "total", rotulo: "Você recebe", valor: emReaisDaPrevia(total) },
+    {
+      chave: "parcela",
+      rotulo: `Parcela (${params.serie.parcelas.length}x)`,
+      valor: emReaisDaPrevia(params.serie.valorDaParcela),
+    },
+  ];
+}
+
+/** O rotulo do campo de valor, que MUDA de significado com o modo. */
+export function rotuloDoCampoDeValor(modo: ModoDoJuro): string {
+  // SEM JURO o campo e ambiguo de proposito -- a pergunta `parcela|total` logo
+  // abaixo e que o desambigua (HMO-211). COM JURO ele e o emprestado, e a
+  // pergunta nao e feita; sem o rotulo dizer isso, quem vinha do modo sem juro
+  // continuaria lendo "Valor" e digitando a parcela.
+  return modoCobraJuro(modo) ? "Valor que você empresta" : "Valor";
+}
+
+/** O rotulo de cada modo no seletor. */
+export function rotuloDoModo(modo: ModoDoJuro): string {
+  switch (modo) {
+    case "sem_juros":
+      return "Sem juros";
+    case "taxa":
+      return "% de juros";
+    case "total":
+      return "Total a receber";
+  }
+}
+
+/** Os tres modos, na ordem do seletor. */
+export const MODOS_DO_JURO: readonly ModoDoJuro[] = [
+  "sem_juros",
+  "taxa",
+  "total",
+];
 
 /**
  * A chave do elo da parcela na perna, em `notes`.
@@ -232,7 +664,23 @@ export function patchDoEstornoDaParcela(): EstornoDaParcela {
   return { status: "pending", paid_date: null, paid_transaction_id: null };
 }
 
-/** Por que este pedido de emprestimo nao serve. */
+/**
+ * Por que este pedido de emprestimo nao serve.
+ *
+ * `juros_fora_da_fase_1` SAIU, E AS RECUSAS DO JURO VEM DA F2
+ * ----------------------------------------------------------
+ * A fase 1 recusava todo juro com uma frase ("Nesta fase o MyBank so empresta a
+ * juro zero"), e a migration 062 acabou com a fase. No lugar dela esta
+ * `ProblemaDoJuro` INTEIRO, por uniao -- taxa negativa, taxa absurda, total
+ * menor que o principal, e as outras tres.
+ *
+ * A UNIAO, E NAO UM `juro_invalido` UNICO QUE EMBRULHASSE OS SEIS: cada recusa
+ * da F2 tem frase propria lá (`mensagemDoProblemaDoJuro`), escrita para dizer a
+ * CONSEQUENCIA EM DINHEIRO -- "você estaria emprestando para receber menos de
+ * volta" nao e derivavel de um codigo generico. Embrulhar os seis obrigaria a
+ * reescrever as seis frases aqui, e duas copias de uma frase sobre dinheiro
+ * divergem na primeira correcao.
+ */
 export type ProblemaDoEmprestimo =
   | "descricao_ausente"
   | "base_do_valor_ausente"
@@ -243,9 +691,9 @@ export type ProblemaDoEmprestimo =
   | "conta_de_pagamento_nao_encontrada"
   | "conta_de_pagamento_e_a_credora"
   | "devedor_sem_conexao"
-  | "juros_fora_da_fase_1"
   | "parcelas_fora_do_alcance"
-  | "serie_impossivel";
+  | "serie_impossivel"
+  | ProblemaDoJuro;
 
 /** O que a validacao precisa saber de uma conta. */
 export interface ContaDoEmprestimo {
@@ -284,7 +732,17 @@ export function problemaDoEmprestimo(params: {
   contaDePagamentoPedida: string | null;
   contaDePagamento: ContaDoEmprestimo | null | undefined;
   conexaoAceita: boolean;
-  juros: number;
+  /**
+   * O problema do juro, JA APURADO por `problemaDoJuroDoPedido` -- `null`
+   * quando serve, e `null` sempre no modo `sem_juros`.
+   *
+   * ELE ENTRA APURADO, E NAO COMO OS CAMPOS CRUS, pela mesma razao de
+   * `contaCredora` entrar como objeto ja lido: quem conhece os campos da tela e
+   * o chamador, e esta funcao nao precisa saber se o juro veio como taxa ou
+   * como total para decidir a ORDEM em que a recusa sai. A ordem e o que ela
+   * decide, e e a parte que importa -- ver o comentario na posicao.
+   */
+  problemaDoJuro: ProblemaDoJuro | null;
   parcelas: number;
   serie: SerieDeParcelas | null;
 }): ProblemaDoEmprestimo | null {
@@ -331,7 +789,18 @@ export function problemaDoEmprestimo(params: {
     }
   }
 
-  if (params.juros !== JUROS_DA_FASE_1) return "juros_fora_da_fase_1";
+  // O JURO FICA NA POSICAO EXATA EM QUE A FASE 1 ESTAVA, e a posicao e uma
+  // escolha sobre qual frase a pessoa le.
+  //
+  // Depois das contas e da conexao, antes das parcelas e da serie. Subir o juro
+  // para cima das contas faria quem errou a taxa ler "a taxa nao pode ser
+  // negativa" antes de "escolha a conta que vai emprestar" -- respondendo pelo
+  // campo errado num formulario vazio, que e o primeiro estado de todos. Descer
+  // para depois da serie seria pior: com juro a serie e montada SOBRE O TOTAL, e
+  // um total ilegivel devolve `serie_impossivel` ("confira o valor e o primeiro
+  // vencimento") para quem digitou um total menor que o emprestado -- mandando
+  // conferir o vencimento por causa de um erro de juro.
+  if (params.problemaDoJuro) return params.problemaDoJuro;
 
   // ANTES DA SERIE, E COM OS NUMEROS NA FRASE
   //
@@ -351,9 +820,27 @@ export function problemaDoEmprestimo(params: {
   return null;
 }
 
-/** A frase que a tela mostra para cada problema. */
+/**
+ * A frase que a tela mostra para cada problema.
+ *
+ * AS SEIS RECUSAS DO JURO SAO DELEGADAS A F2, E O `default` E QUEM AS PEGA
+ * -----------------------------------------------------------------------
+ * `ProblemaDoJuro` entrou na uniao (ver `ProblemaDoEmprestimo`), e as frases
+ * dele moram em `mensagemDoProblemaDoJuro`. Repeti-las aqui seria ter duas
+ * copias de uma frase sobre dinheiro, e a que estivesse errada seria a que a
+ * pessoa le.
+ *
+ * O `default` NAO E UM CATCH-ALL QUE ESCONDE CASO NOVO: `mensagemDoProblemaDoJuro`
+ * recebe um `ProblemaDoJuro` e o `switch` DELA e exaustivo sobre aquele tipo, com
+ * retorno em todos os ramos. Um membro novo em `ProblemaDoJuro` reprova no `tsc`
+ * LA, que e onde ele tem de ser respondido. Um membro novo nos onze daqui
+ * continua reprovando aqui, porque o parametro de `mensagemDoProblemaDoJuro` nao
+ * o aceita.
+ */
 export function mensagemDoProblema(problema: ProblemaDoEmprestimo): string {
   switch (problema) {
+    default:
+      return mensagemDoProblemaDoJuro(problema);
     case "descricao_ausente":
       return "Diga para que é o empréstimo.";
     case "base_do_valor_ausente":
@@ -372,8 +859,6 @@ export function mensagemDoProblema(problema: ProblemaDoEmprestimo): string {
       return "A conta que paga tem que ser diferente da conta que empresta — senão o dinheiro não sai de lugar nenhum.";
     case "devedor_sem_conexao":
       return "Só é possível emprestar para si mesmo ou para uma conexão aceita. Convide a pessoa primeiro.";
-    case "juros_fora_da_fase_1":
-      return "Nesta fase o MyBank só empresta a juro zero.";
     case "parcelas_fora_do_alcance":
       return `O número de parcelas tem que estar entre ${MIN_PARCELAS_DO_MYBANK} e ${MAX_PARCELAS_DO_MYBANK}.`;
     case "serie_impossivel":
@@ -1236,7 +1721,10 @@ export function problemaDaAntecipacao(params: {
   // `Number(...)` e nao `!== 0`: `numeric` chega do PostgREST como STRING
   // ("0.00"), e `"0.00" !== 0` e verdade -- a recusa dispararia em todo
   // emprestimo da fase 1 e a feature inteira seria inalcancavel.
-  if (Number(params.emprestimo.interest_rate ?? 0) !== JUROS_DA_FASE_1) {
+  if (
+    Number(params.emprestimo.interest_rate ?? 0) !==
+    JURO_QUE_A_ANTECIPACAO_SABE_DESCONTAR
+  ) {
     return "juros_impedem_a_antecipacao";
   }
 
@@ -1930,7 +2418,7 @@ export type ProblemaDoAjuste =
   | "descricao_vazia"
   | "total_invalido"
   | "vencimento_invalido"
-  | "juros_fora_da_fase_1"
+  | "ajuste_nao_sabe_mexer_em_juro"
   | "tem_parcela_reportada"
   | "sem_parcela_pendente"
   | "total_menor_que_o_pago"
@@ -2253,31 +2741,52 @@ export function problemaDoAjuste(params: {
     }
   }
 
-  // A TRAVA `mybank_loans_interest_rate_fase_1` (053) EM FORMA DE FRASE.
+  // O AJUSTE NAO SABE MEXER EM JURO -- E AGORA SAO DOIS CASOS, NAO UM.
   //
-  // `CHECK (interest_rate = 0)` e quem a solta e a migration 062 (HMO-445), que
-  // ESTA em `main` -- e isso NAO muda esta recusa, por dois motivos:
+  // A F4 (HMO-447) escreveu esta recusa como "a trava de fase 1 em forma de
+  // frase", com dois motivos: a 062 nao estava colada, e a aritmetica do juro
+  // era da F3. **Os dois morreram.** A 062 esta colada em producao (medida
+  // 2026-10-21: `mybank_loans_interest_rate_fase_1` sumiu do `pg_constraint`,
+  // e os tres `COMMENT ON COLUMN` batem em md5 com o arquivo da `main`), e a
+  // aritmetica do juro e esta issue.
   //
-  //   1. ESTAR EM `main` NAO E ESTAR COLADA. `deploy-ships-code-not-schema`: o
-  //      deploy leva o codigo e nao o schema, e a colagem da 062 em producao nao
-  //      foi medida. Aceitar `taxa: 2` antes dela derrubaria o UPDATE em 23514 --
-  //      e, pior, SO depois de as parcelas da cauda ja terem sido reescritas,
-  //      porque o emprestimo e o ultimo passo da ordem. A propria 062 escreve
-  //      esse risco no cabecalho dela.
-  //   2. A ARITMETICA DO JURO E DA F3, E NAO DESTA FILHA. Com a trava solta,
-  //      `total` passa a ser principal + juros e `principal` deixa de sair do
-  //      `total` (ver o patch do emprestimo). Enquanto essa conta nao existir,
-  //      aceitar a taxa seria gravar um numero sem ninguem para interpreta-lo.
+  // O QUE NAO MORREU E O QUE A RECUSA PROTEGE, e e uma linha so:
   //
-  // A recusa e a mesma escolha da antecipacao, que prefere recusar a calcular
-  // errado. Quem for fazer a F3 muda ESTA linha e a do `principal`, nas duas
-  // pontas, e nao uma so.
+  //     patchDoEmprestimo.principal = total;   // `caudaRecalculada`, abaixo
+  //
+  // Aquela linha so esta certa a juro ZERO, onde o que se empresta e o que se
+  // recebe. Com juro, `total` e `principal + juros`, e grava-lo em `principal`
+  // APAGA O JURO do emprestimo -- a linha passa a afirmar que emprestou 1.200
+  // quando emprestou 1.000, e `SUM(amount) - principal` (que a 062 define como
+  // o juro) vira zero. Dinheiro sumido, sem erro em lugar nenhum.
+  //
+  // ENSINAR O AJUSTE A MEXER EM JURO E UMA ISSUE PROPRIA, nao um apendice
+  // desta: o pedido precisaria dizer QUAL das tres grandezas segurar (mexeu o
+  // total, mantem a taxa e muda o emprestado? mantem o emprestado e muda a
+  // taxa?), e essa pergunta nao tem resposta obvia -- e a mesma escolha da
+  // antecipacao, que prefere recusar a calcular errado.
+  //
+  // O SEGUNDO CASO E O BURACO QUE **ESTA** ISSUE ABRE, e ele nao existia quando
+  // a F4 foi escrita. A recusa da F4 pergunta so pela taxa DO PEDIDO. Antes
+  // desta issue isso bastava, porque nenhum emprestimo podia ter juro: o estado
+  // "emprestimo com juro" era INALCANCAVEL. Agora que se cria um a 20%, um
+  // PATCH de `{total: 1500}` -- sem `taxa` nenhuma, entao `mexeNaTaxa` e falso
+  // e a recusa da F4 nao dispara -- cai direto naquela linha e apaga o juro.
+  // Por isso a segunda pergunta e sobre o EMPRESTIMO, nao sobre o pedido.
+  //
+  // A descricao sozinha continua passando nos dois casos, e e de proposito:
+  // ela nao toca `principal`, e trancar o conserto de um texto por causa de um
+  // juro que ele nao le seria recusar a unica coisa que ainda da para consertar.
   //
   // `Number(...)` E NAO `!== 0`: `numeric` chega do PostgREST como STRING
   // ("0.00"), e quem reenvia a taxa que leu mandaria `"0.00"` -- que `!== 0` e
-  // verdade. A recusa dispararia em todo emprestimo da fase 1.
-  if (mexeNaTaxa && Number(pedido.taxa) !== JUROS_DA_FASE_1) {
-    return "juros_fora_da_fase_1";
+  // verdade. A recusa dispararia em todo emprestimo a juro zero.
+  if (mexeNaTaxa && Number(pedido.taxa) !== 0) {
+    return "ajuste_nao_sabe_mexer_em_juro";
+  }
+
+  if (mexeNoTotal && Number(emprestimo.interest_rate ?? 0) !== 0) {
+    return "ajuste_nao_sabe_mexer_em_juro";
   }
 
   if (mexeNoTotal) {
@@ -2338,8 +2847,16 @@ export function mensagemDoProblemaDoAjuste(
       return "O total a receber tem que ser um valor maior que zero.";
     case "vencimento_invalido":
       return "O primeiro vencimento da cauda tem que ser uma data no formato AAAA-MM-DD.";
-    case "juros_fora_da_fase_1":
-      return "Nesta fase o MyBank só empresta a juro zero — a taxa não pode ser ajustada ainda.";
+    case "ajuste_nao_sabe_mexer_em_juro":
+      // A FRASE ANTIGA ("nesta fase o MyBank só empresta a juro zero") VIROU
+      // MENTIRA nesta issue: o MyBank passou a emprestar com juro, e quem
+      // acabou de criar um empréstimo a 20% leria que ele não existe. A frase
+      // nova diz o que é verdade -- o empréstimo com juro existe, o AJUSTE é
+      // que ainda não sabe mexer nele -- e diz a saída que resta.
+      return (
+        "Ajustar o valor de um empréstimo com juro ainda não existe — seria preciso dizer o que segurar, " +
+        "o emprestado ou a taxa. Por enquanto dá para corrigir a descrição; para mudar o valor, cancele e refaça."
+      );
     case "tem_parcela_reportada":
       // A CONTRACAO VEM NO PROPRIO RAMO, como em
       // `mensagemDaPrevisaoDaCaudaAusente`: a medicao em producao leu "de a
@@ -2436,11 +2953,17 @@ export function ajusteDoEmprestimo(params: {
     patchDoEmprestimo.description = descricao;
   }
 
-  // `principal` E `total` SAO A MESMA COISA ENQUANTO A FASE 1 DURAR, e esta e a
-  // linha que muda quando ela acabar. A juro zero o que se empresta e o que se
-  // recebe; com a 062 colada e a F3 de pe, `total` passa a ser principal + juros
-  // e `principal` deixa de sair daqui -- e `juros_fora_da_fase_1` e a recusa que
-  // garante que ninguem chegue neste ponto com taxa diferente de zero.
+  // `principal` E `total` SAO A MESMA COISA SO A JURO ZERO, e esta linha depende
+  // disso. A juro zero o que se empresta e o que se recebe; com juro, `total` e
+  // `principal + juros`, e grava-lo aqui APAGARIA o juro do emprestimo (ver a
+  // 062: `SUM(amount) - principal` E o juro, entao iguala-los zera o juro).
+  //
+  // QUEM GARANTE QUE NAO SE CHEGA AQUI COM JURO E `ajuste_nao_sabe_mexer_em_juro`,
+  // em `problemaDoAjuste`, e sao as DUAS perguntas de la que sustentam esta
+  // linha -- a do pedido (`taxa` diferente de zero) e a do EMPRESTIMO
+  // (`interest_rate` diferente de zero com `total` no pedido). A segunda e a que
+  // cobre o emprestimo que ja nasceu com juro, que a HMO-448 tornou possivel.
+  // Se um dia esta linha aprender juro, as duas perguntas de la saem junto.
   if (pedido.total !== undefined) {
     patchDoEmprestimo.principal = total;
   }

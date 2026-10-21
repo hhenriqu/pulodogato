@@ -57,21 +57,53 @@
 //   3. no `23505` a linha relida e conferida com `lender_user_id === user.id`.
 //      A policy de SELECT da 053 e `lender OR borrower`: sem esta conferencia um
 //      id colidido devolveria o emprestimo de OUTRA pessoa.
+//
+// OS JUROS, NOS DOIS SENTIDOS (F3 da HMO-444, issue HMO-448)
+// ----------------------------------------------------------
+// O POST passa a receber `modo_do_juro` + `taxa` OU `total`, e a mudanca de
+// dinheiro e uma so: **a serie e montada sobre o TOTAL A RECEBER, e `principal`
+// guarda o EMPRESTADO.** Antes desta issue os dois eram o mesmo numero. A
+// aritmetica e toda da F2 (`lib/juros-do-emprestimo.ts`) e a escolha de qual
+// numero vai onde e das tres funcoes de `lib/emprestimo-do-mybank.ts`
+// (`valorQueMontaASerie`, `baseQueMontaASerie`, `principalQueVaiParaAColuna`).
+//
+// ESTA ROTA EXIGE A MIGRATION 062 COLADA, E A EXIGENCIA E TOTAL -- NAO SO PARA
+// O EMPRESTIMO COM JURO
+// ---------------------------------------------------------------------------
+// O insert do passo 1 NOMEIA `interest_kind`, que e coluna da 062. Com a 062
+// nao colada, o PostgREST responde `PGRST204 Could not find the 'interest_kind'
+// column in the schema cache` -- no cache de schema, ANTES de qualquer RLS ou
+// privilegio -- e TODO emprestimo para de ser criado, inclusive o a juro zero.
+// Familia `select-que-nomeia-coluna-nova-derruba-a-rota-antes-da-colagem`.
+//
+// Isso e deliberado, e e por isso que a issue manda a colagem vir antes do
+// merge: a alternativa (omitir a coluna no caso de juro zero, deixando o
+// `DEFAULT 'total_simples'` responder) trocaria uma falha ALTA e imediata por
+// uma silenciosa -- o emprestimo com juro continuaria quebrado, e no dia em que
+// a 062 ganhar um segundo valor de `interest_kind` o default decidiria a
+// convencao de uma linha cuja aritmetica esta rodando aqui. A rota declara qual
+// convencao ela calculou; ela nao herda uma.
 // ---------------------------------------------------------------------------
 
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 
 import {
+  baseQueMontaASerie,
   casoDoEmprestimo,
+  CONVENCAO_DO_JURO_DO_EMPRESTIMO,
+  juroDoPedido,
   linhasDasParcelas,
   mensagemDoProblema,
   parcelaAConfirmar,
   previsoesDoEmprestimo,
+  principalQueVaiParaAColuna,
   problemaDoEmprestimo,
+  problemaDoJuroDoPedido,
   quemDevePagar,
   serieDoEmprestimo,
-  JUROS_DA_FASE_1,
+  valorQueMontaASerie,
+  type ModoDoJuro,
   type ParcelaGravada,
 } from "@/lib/emprestimo-do-mybank";
 import type { BaseDoValorParcelado } from "@/lib/lancamento";
@@ -145,7 +177,14 @@ export async function POST(request: NextRequest) {
       base,
       parcelas,
       primeiro_vencimento,
-      juros,
+      // OS JUROS, NOS DOIS SENTIDOS (HMO-448). Ver o bloco "OS JUROS" abaixo.
+      //
+      // `juros` (o campo da fase 1, que so aceitava 0) SAIU do contrato: ele
+      // nomeava uma coisa que nao existe mais. O que entra e o MODO e um dos
+      // dois numeros -- `taxa` OU `total`.
+      modo_do_juro,
+      taxa,
+      total,
     } = body as {
       /** A chave do pedido. Ausente = a coluna usa o `DEFAULT gen_random_uuid()`. */
       id?: string | null;
@@ -158,7 +197,20 @@ export async function POST(request: NextRequest) {
       base?: BaseDoValorParcelado;
       parcelas?: number;
       primeiro_vencimento?: string;
-      juros?: number;
+      /**
+       * `sem_juros` (ou ausente) = o caminho de antes desta issue, INTACTO.
+       *
+       * AUSENTE CAI EM `sem_juros` DE PROPOSITO, e isso nao e tolerancia: quem
+       * chega pelo PostgREST direto, pela fila offline ou por uma sonda escrita
+       * antes desta issue manda o corpo velho, e o corpo velho descreve um
+       * emprestimo a juro zero perfeitamente valido. Um `400 modo ausente`
+       * quebraria todos eles por um campo que nao muda o pedido deles.
+       */
+      modo_do_juro?: ModoDoJuro;
+      /** A taxa em PERCENTO ("20" = 20%). Modo `taxa`. */
+      taxa?: string | number;
+      /** O total a receber, em reais. Modo `total`. */
+      total?: string | number;
     };
 
     const contaCredoraPedida = conta_credora_id || null;
@@ -193,12 +245,35 @@ export async function POST(request: NextRequest) {
 
     const numeroDeParcelas = Number(parcelas);
 
+    // -----------------------------------------------------------------------
+    // OS JUROS: O PEDIDO E RESOLVIDO ANTES DA SERIE, PORQUE A SERIE DEPENDE DELE
+    // -----------------------------------------------------------------------
+    // Este e o ponto exato onde o dinheiro muda de valor. Com juro, o que foi
+    // digitado no campo de valor e o EMPRESTADO, e a serie e montada sobre o
+    // TOTAL A RECEBER -- as duas grandezas deixam de ser o mesmo numero, e a
+    // diferenca delas e o juro. As tres funcoes abaixo sao as donas dessa
+    // escolha, e nenhuma delas tem aritmetica: ela toda vive na F2
+    // (`lib/juros-do-emprestimo.ts`), que e a MESMA funcao que a previa da tela
+    // chama antes do clique (`previa-na-tela-tem-que-usar-o-peso-do-fechamento`).
+    const modo: ModoDoJuro = modo_do_juro ?? "sem_juros";
+
+    const juro = juroDoPedido({
+      modo,
+      emprestado: String(valor ?? ""),
+      taxaPercentual: String(taxa ?? ""),
+      totalARceber: String(total ?? ""),
+    });
+
     const serie = serieDoEmprestimo({
-      valor: String(valor ?? ""),
+      // O TOTAL quando ha juro, o digitado quando nao ha. O mutante que troca
+      // isto pelo `principal` e o que a issue manda matar: ele grava a taxa
+      // certa, devolve o total certo na resposta, e as parcelas somam o
+      // EMPRESTADO -- juro nenhum cobrado, e nenhuma linha invalida no banco.
+      valor: valorQueMontaASerie({ modo, digitado: String(valor ?? ""), juro }),
       // `base` ainda pode ser invalida aqui; `problemaDoEmprestimo` e quem
       // recusa com a frase. Passar o valor cru faz `serieDeParcelas` devolver
       // `null`, que e tratado pelo mesmo caminho.
-      base: base as BaseDoValorParcelado,
+      base: baseQueMontaASerie({ modo, daTela: base }) as BaseDoValorParcelado,
       parcelas: numeroDeParcelas,
       primeiroVencimento: String(primeiro_vencimento ?? ""),
     });
@@ -250,14 +325,24 @@ export async function POST(request: NextRequest) {
 
     const problema = problemaDoEmprestimo({
       descricao: String(descricao ?? ""),
-      base,
+      // A BASE EFETIVA, e nao a do corpo: com juro ela e `total` cravado (a
+      // serie e montada sobre o total a receber) e a pergunta `parcela|total`
+      // nao e feita na tela. Passar a do corpo recusaria com
+      // `base_do_valor_ausente` todo pedido com juro que nao mandasse um campo
+      // que aquele modo nao tem.
+      base: baseQueMontaASerie({ modo, daTela: base }),
       caso,
       contaCredoraPedida,
       contaCredora,
       contaDePagamentoPedida,
       contaDePagamento,
       conexaoAceita,
-      juros: juros == null ? JUROS_DA_FASE_1 : Number(juros),
+      problemaDoJuro: problemaDoJuroDoPedido({
+        modo,
+        emprestado: String(valor ?? ""),
+        taxaPercentual: String(taxa ?? ""),
+        totalARceber: String(total ?? ""),
+      }),
       parcelas: numeroDeParcelas,
       serie,
     });
@@ -314,10 +399,22 @@ export async function POST(request: NextRequest) {
     // -----------------------------------------------------------------------
     // 1. O emprestimo
     // -----------------------------------------------------------------------
-    // `principal` e `serieFechada.valorTotal`, e nao o valor digitado: com base
-    // "parcela" o digitado e UMA parcela, e gravar ele como principal poria
-    // R$ 1.000 num emprestimo de R$ 24.000. A soma das parcelas fecha com este
-    // numero por construcao -- e a invariante do comentario da 053.
+    // `principal` E O EMPRESTADO, E COM JURO ELE NAO E MAIS A SOMA DAS PARCELAS
+    // ------------------------------------------------------------------------
+    // Sem juro `principalQueVaiParaAColuna` devolve `serieFechada.valorTotal`,
+    // que e o que esta linha gravava antes desta issue e continua correto ali:
+    // com base "parcela" o digitado e UMA parcela, e gravar o digitado poria
+    // R$ 1.000 num emprestimo de R$ 24.000.
+    //
+    // COM juro ela devolve o emprestado, e a soma das parcelas DEIXA DE FECHAR
+    // com esta coluna -- de proposito, e e a unica mudanca de dinheiro desta
+    // issue. A migration 062 apagou o `COMMENT` da 053 que afirmava o
+    // contrario, porque aquela afirmacao convidava uma guarda "consertando" a
+    // soma, que apagaria o juro de todo emprestimo do sistema.
+    //
+    //   principal          o que SAIU da conta de investimento
+    //   SUM(amount)        o que VOLTA (principal + juro)
+    //   SUM(amount) - principal   o JURO
     const { data: emprestimo, error: erroDoEmprestimo } = await supabase
       .from("mybank_loans")
       .insert({
@@ -333,10 +430,24 @@ export async function POST(request: NextRequest) {
         lender_account_id: credora.id,
         borrower_user_id: devedorId,
         description: String(descricao).trim(),
-        principal: serieFechada.valorTotal,
+        principal: principalQueVaiParaAColuna({ juro, serie: serieFechada }),
         installment_count: numeroDeParcelas,
         first_due_date: serieFechada.parcelas[0].vencimento,
-        interest_rate: JUROS_DA_FASE_1,
+        // A TAXA DERIVADA, e nao o que o cliente digitou.
+        //
+        // No modo `total` a taxa nem foi digitada -- ela sai de
+        // `total / principal - 1` (F2). E no modo `taxa` o que vai para a coluna
+        // tambem passa pela inversa, pela razao escrita em
+        // `tresCamposDoEmprestimo`: a previa mostra a taxa que o banco vai
+        // GUARDAR, e nao uma que o `numeric(9,6)` arredondaria depois.
+        interest_rate: juro ? juro.taxa : 0,
+        // A CONVENCAO GRAVADA NA LINHA (062, decisao D2). Sem ela, o dia em que
+        // entrar juro composto reinterpretaria todo emprestimo velho pela
+        // aritmetica nova -- o total na tela mudaria sozinho, sem ninguem editar
+        // nada e sem nenhuma linha do banco estar invalida.
+        interest_kind: juro
+          ? juro.convencao
+          : CONVENCAO_DO_JURO_DO_EMPRESTIMO,
         status: "active",
       })
       .select("id")
@@ -505,12 +616,23 @@ export async function POST(request: NextRequest) {
         caso,
         total_de_parcelas: parcelasCriadas.length,
         previsoes_criadas: previsoes.length,
-        principal: serieFechada.valorTotal,
+        // AS QUATRO GRANDEZAS, SEPARADAS NA RESPOSTA (HMO-448)
+        //
+        // `principal` deixou de ser `serieFechada.valorTotal`: com juro eles
+        // divergem, e uma resposta que mandasse um numero so faria a tela ter de
+        // escolher qual dos dois ela chama de "empréstimo criado". A sonda da
+        // rota afirma sobre os DOIS, que e o unico jeito de ver o mutante que
+        // monta a serie sobre o principal (ali os dois numeros ficam IGUAIS).
+        principal: principalQueVaiParaAColuna({ juro, serie: serieFechada }),
+        total: serieFechada.valorTotal,
+        juros: juro ? juro.juros : 0,
+        taxa: juro ? juro.taxa : 0,
         valor_da_parcela: serieFechada.valorDaParcela,
         message: mensagemDaCriacao(
           caso,
           parcelasCriadas.length,
-          serieFechada.valorTotal
+          serieFechada.valorDaParcela,
+          juro ? juro.juros : 0
         ),
       },
       { status: 201 }
@@ -531,17 +653,34 @@ export async function POST(request: NextRequest) {
  * criadas") faria o Caso B parecer que criou conta a pagar no meu nome -- que e
  * exatamente o que ele nao faz. Quem leu "voce nao vai ver isso em Despesas" nao
  * vai procurar a despesa que falta.
+ *
+ * O VALOR AGORA E O DA PARCELA, E ANTES DESTA ISSUE ERA O TOTAL
+ * ------------------------------------------------------------
+ * A frase sempre disse "N parcelas de X" e X era `serieFechada.valorTotal`: um
+ * emprestimo de 24x R$ 1.000 anunciava "24 parcelas de R$ 24.000,00". Nenhuma
+ * assercao pegava isso porque nenhuma olhava esta frase, e o numero estava certo
+ * -- era o rotulo dele que estava errado. Com juro a mesma frase ficaria pior
+ * ainda (o total passa a incluir o juro), entao o rotulo foi corrigido junto:
+ * quem le "24 parcelas de R$ 1.000,00" conhece a parcela, e o `total` fica na
+ * oracao do juro, onde ele e a resposta de uma pergunta ("quanto volta").
+ *
+ * E A FRASE DO JURO SO APARECE QUANDO HA JURO. Um "sem juros" escrito em todo
+ * emprestimo a juro zero seria ruido na frase de sucesso do caminho comum.
  */
 function mensagemDaCriacao(
   caso: "auto" | "conexao",
   quantas: number,
-  total: number
+  valorDaParcela: number,
+  juros: number
 ): string {
-  const reais = emReais(total);
+  const reais = emReais(valorDaParcela);
+  const oJuro =
+    juros > 0 ? ` Você vai receber ${emReais(juros)} de juros.` : "";
+
   if (caso === "auto") {
-    return `${quantas} parcelas de ${reais} em Contas a Pagar, como transferência para a conta de investimento.`;
+    return `${quantas} parcelas de ${reais} em Contas a Pagar, como transferência para a conta de investimento.${oJuro}`;
   }
-  return `${quantas} parcelas de ${reais} a receber no MyBank. Isso não entra nas suas despesas — quem paga é a outra pessoa.`;
+  return `${quantas} parcelas de ${reais} a receber no MyBank. Isso não entra nas suas despesas — quem paga é a outra pessoa.${oJuro}`;
 }
 
 /**

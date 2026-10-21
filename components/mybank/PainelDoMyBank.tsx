@@ -121,18 +121,27 @@ import { Label } from "@/components/ui/label";
 import { CampoDeValor } from "@/components/ui/campo-de-valor";
 import { CampoDeData } from "@/components/ui/campo-de-data";
 import { PerguntaDaBaseDoValor } from "@/components/movimentacoes/PerguntaDaBaseDoValor";
+import { CamposDeJuros } from "@/components/mybank/CamposDeJuros";
+import { PreviaDoEmprestimo } from "@/components/mybank/PreviaDoEmprestimo";
 
 import { formatCurrency } from "@/lib/utils";
 import { dataOuMomentoNaTela } from "@/lib/data-na-tela";
 import {
   avisoDoCancelamento,
+  baseQueMontaASerie,
+  juroDoPedido,
   mensagemDoProblema,
   previaDaAntecipacao,
+  previaDoEmprestimo,
   problemaDoEmprestimo,
+  problemaDoJuroDoPedido,
+  rotuloDoCampoDeValor,
   serieDoEmprestimo,
+  valorQueMontaASerie,
   casoDoEmprestimo,
+  modoCobraJuro,
   STATUS_CANCELADO,
-  JUROS_DA_FASE_1,
+  type ModoDoJuro,
   MAX_PARCELAS_DO_MYBANK,
   MIN_PARCELAS_DO_MYBANK,
   SUBTITULO_A_CONFIRMAR_NO_MYBANK,
@@ -190,6 +199,15 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
   const [descricao, setDescricao] = useState("");
   const [valor, setValor] = useState("");
   const [base, setBase] = useState<BaseDoValorParcelado>("parcela");
+
+  // OS JUROS (HMO-448). `sem_juros` e o padrao, e o padrao importa: ele e o
+  // caminho que ja existia, e abrir o formulario cobrando juro mudaria o
+  // significado do campo de valor para quem so queria emprestar.
+  const [modoDoJuro, setModoDoJuro] = useState<ModoDoJuro>("sem_juros");
+  /** A taxa em PERCENTO, como foi digitada ("20"). Ver `juroDoPedido`. */
+  const [taxaDoJuro, setTaxaDoJuro] = useState("");
+  /** O total a receber, plano em reais ("1200.00"). */
+  const [totalDoJuro, setTotalDoJuro] = useState("");
   const [parcelas, setParcelas] = useState(PARCELAS_PADRAO);
   const [primeiroVencimento, setPrimeiroVencimento] = useState("");
   const [quemPaga, setQuemPaga] = useState<QuemPaga>("eu");
@@ -391,18 +409,49 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
 
   const numeroDeParcelas = parcelaDigitada(parcelas);
 
+  /**
+   * O JURO RESOLVIDO, pela MESMA funcao que a rota chama.
+   *
+   * Nao ha `if` de dois sentidos aqui: `juroDoPedido` recebe o modo e os campos
+   * crus e devolve as quatro grandezas, ou `null`. Dois `if` na tela e dois na
+   * rota divergiriam na primeira mudanca, e o sintoma seria a previa mostrando
+   * um total que o banco nao grava.
+   */
+  const juro = useMemo(
+    () =>
+      juroDoPedido({
+        modo: modoDoJuro,
+        emprestado: valor,
+        taxaPercentual: taxaDoJuro,
+        totalARceber: totalDoJuro,
+      }),
+    [modoDoJuro, valor, taxaDoJuro, totalDoJuro]
+  );
+
+  // A SERIE E MONTADA SOBRE O TOTAL QUANDO HA JURO -- o mesmo par de funcoes que
+  // a rota usa. E o ponto exato onde o dinheiro muda de valor, e tela e rota
+  // chegam nele pelo MESMO caminho de propósito: se a tela montasse a serie
+  // sobre o principal, a previa mostraria parcelas menores do que as que vao
+  // ser gravadas, e a conferencia antes do clique deixaria de valer.
   const serie = useMemo(
     () =>
       serieDoEmprestimo({
-        valor,
-        base,
+        valor: valorQueMontaASerie({ modo: modoDoJuro, digitado: valor, juro }),
+        base: baseQueMontaASerie({ modo: modoDoJuro, daTela: base }) as
+          BaseDoValorParcelado,
         parcelas: numeroDeParcelas,
         primeiroVencimento,
       }),
-    [valor, base, numeroDeParcelas, primeiroVencimento]
+    [modoDoJuro, valor, juro, base, numeroDeParcelas, primeiroVencimento]
   );
 
   const resumo = resumoDaSerie(serie);
+
+  /** AS QUATRO GRANDEZAS, SEMPRE -- o que a issue pede ver antes do clique. */
+  const previa = useMemo(
+    () => previaDoEmprestimo({ modo: modoDoJuro, juro, serie }),
+    [modoDoJuro, juro, serie]
+  );
 
   const devedorDoPedido = quemPaga === "conexao" ? devedorId : meuId;
 
@@ -438,7 +487,9 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
    */
   const problema = problemaDoEmprestimo({
     descricao,
-    base,
+    // A BASE EFETIVA: com juro ela e `total` cravado e a pergunta
+    // `parcela|total` nem e desenhada. Ver `baseQueMontaASerie`.
+    base: baseQueMontaASerie({ modo: modoDoJuro, daTela: base }),
     caso,
     contaCredoraPedida: contaEscolhida,
     contaCredora: contasCredoras.find((c) => c.id === contaEscolhida) ?? null,
@@ -451,7 +502,12 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
       quemPaga === "conexao"
         ? devedorTemConexaoAceita(devedoresPossiveis, devedorId)
         : false,
-    juros: JUROS_DA_FASE_1,
+    problemaDoJuro: problemaDoJuroDoPedido({
+      modo: modoDoJuro,
+      emprestado: valor,
+      taxaPercentual: taxaDoJuro,
+      totalARceber: totalDoJuro,
+    }),
     parcelas: numeroDeParcelas,
     serie,
   });
@@ -552,7 +608,14 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
           base,
           parcelas: numeroDeParcelas,
           primeiro_vencimento: primeiroVencimento,
-          juros: JUROS_DA_FASE_1,
+          // OS JUROS VAO CRUS, COM O MODO AO LADO (HMO-448), pela mesma razao
+          // do `valor`/`base` acima: quem faz a conta e o SERVIDOR, com a mesma
+          // funcao pura que montou a previa. Mandar o total ja calculado poria
+          // a aritmetica do dinheiro no cliente -- e a rota gravaria um total
+          // que ela nao teve como conferir.
+          modo_do_juro: modoDoJuro,
+          taxa: taxaDoJuro,
+          total: totalDoJuro,
         }),
       });
 
@@ -608,6 +671,17 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
       setValor("");
       setParcelas(PARCELAS_PADRAO);
       setPrimeiroVencimento("");
+      // OS CAMPOS DO JURO LIMPAM JUNTO, E O MODO VOLTA PARA `sem_juros`.
+      //
+      // Sem isto o proximo emprestimo nasceria com a taxa do anterior ja
+      // preenchida e o modo ainda em "% de juros": quem acabou de emprestar a
+      // 20% e vai emprestar outra coisa a juro zero clicaria em Emprestar com
+      // um juro que ele nao digitou desta vez -- e a previa mostraria o numero
+      // certo para um pedido que a pessoa nao esta lendo, porque ela acabou de
+      // limpar o resto do formulario com os olhos.
+      setModoDoJuro("sem_juros");
+      setTaxaDoJuro("");
+      setTotalDoJuro("");
       await carregar();
     } catch (e) {
       console.error("Erro ao criar o emprestimo:", e);
@@ -1049,20 +1123,45 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
           )}
 
           <div className="space-y-2">
-            <Label htmlFor="mybank-valor">Valor</Label>
+            {/* O ROTULO MUDA COM O MODO: sem juro o campo e ambiguo de
+                proposito (a pergunta abaixo o desambigua); com juro ele e o
+                EMPRESTADO, e sem o rotulo dizer isso quem vinha do outro modo
+                continuaria digitando a parcela. */}
+            <Label htmlFor="mybank-valor">
+              {rotuloDoCampoDeValor(modoDoJuro)}
+            </Label>
             <CampoDeValor id="mybank-valor" value={valor} onChange={setValor} />
           </div>
 
+          {/* O SELETOR DE MODO E OS CAMPOS DO JURO (HMO-448). */}
+          <CamposDeJuros
+            modo={modoDoJuro}
+            aoEscolherModo={setModoDoJuro}
+            taxa={taxaDoJuro}
+            aoDigitarTaxa={setTaxaDoJuro}
+            total={totalDoJuro}
+            aoDigitarTotal={setTotalDoJuro}
+            idPrefixo="mybank_"
+          />
+
           {/* A PERGUNTA DA HMO-211, O MESMO COMPONENTE DO LANCAMENTO.
               `rotuloDoTotal` muda porque "o total da compra" e falso num
-              emprestimo -- nao se compra nada. */}
-          <PerguntaDaBaseDoValor
-            valor={base}
-            aoEscolher={setBase}
-            rotuloDoTotal="o total do empréstimo"
-            idPrefixo="mybank_"
-            nome="mybank_base_do_valor"
-          />
+              emprestimo -- nao se compra nada.
+
+              SO NO MODO SEM JURO: com juro a serie e montada sobre o total a
+              receber, entao a base e `total` por construcao e esta pergunta
+              passaria a oferecer uma escolha que o servidor ignora. E o
+              seletor de modo acima e que ocupa o lugar dela, que e o que a
+              issue pede com estas palavras. */}
+          {!modoCobraJuro(modoDoJuro) && (
+            <PerguntaDaBaseDoValor
+              valor={base}
+              aoEscolher={setBase}
+              rotuloDoTotal="o total do empréstimo"
+              idPrefixo="mybank_"
+              nome="mybank_base_do_valor"
+            />
+          )}
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-2">
@@ -1097,6 +1196,13 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
               {resumo}
             </p>
           )}
+
+          {/* AS QUATRO GRANDEZAS ANTES DO CLIQUE (HMO-448).
+              Ela vem DEPOIS do resumo de propósito: o resumo diz a serie
+              ("12x de R$ 100 · total R$ 1.200"), e a previa diz de onde esse
+              total saiu -- emprestado, juros, taxa. Invertidos, a pessoa leria
+              o total duas vezes antes de saber que ha juro nele. */}
+          <PreviaDoEmprestimo grandezas={previa} />
 
           {erro && (
             <p
