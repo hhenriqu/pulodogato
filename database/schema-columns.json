@@ -69,6 +69,7 @@
     "description",
     "due_day",
     "group_id",
+    "include_in_total",
     "installment_number",
     "installment_total",
     "invoice_amount",
