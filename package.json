@@ -252,7 +252,8 @@
     "check-conta-de-grupo-na-agenda": "node scripts/check-conta-de-grupo-na-agenda.mjs",
     "check-as-oito-leituras": "node scripts/check-as-oito-leituras.mjs",
     "mutantes:as-tres-leituras": "node scripts/mutantes-as-tres-leituras.mjs",
-    "test:conta-de-grupo-na-agenda": "node scripts/compila.mjs lib/conta-de-grupo-na-agenda.ts --outDir .tmp-conta-de-grupo-na-agenda/lib --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-conta-de-grupo-na-agenda.mjs"
+    "test:conta-de-grupo-na-agenda": "node scripts/compila.mjs lib/conta-de-grupo-na-agenda.ts --outDir .tmp-conta-de-grupo-na-agenda/lib --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-conta-de-grupo-na-agenda.mjs",
+    "test:conta-investimento-na-tela": "node scripts/compila.mjs -p scripts/tsconfig.conta-investimento-na-tela-test.json && node scripts/resolve-aliases.mjs .tmp-conta-investimento-na-tela components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-conta-investimento-na-tela lib --espelha-raiz && node --test scripts/test-conta-investimento-na-tela.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

@@ -60,8 +60,11 @@ import {
 import { CamposDaConta } from "@/components/contas/CamposDaConta";
 import { ContasArquivadas } from "@/components/contas/ContasArquivadas";
 import { AjusteDeSaldoDaConta } from "@/components/contas/AjusteDeSaldoDaConta";
+import { CarteiraDaContaDeInvestimento } from "@/components/contas/CarteiraDaContaDeInvestimento";
 import { iconeDoTipo } from "@/components/contas/icone-da-conta";
 import { useContas } from "@/lib/hooks/useContas";
+import { useCarteiraPorConta } from "@/lib/hooks/useCarteiraPorConta";
+import { carteiraDaConta } from "@/lib/carteira-na-tela";
 import { formatarValor } from "@/lib/dinheiro";
 import { diaLocalDe } from "@/lib/ajuste-de-saldo-da-conta";
 import {
@@ -161,6 +164,38 @@ function TelaDeContas() {
   const saldo = useMemo(() => totalDoEscopo(contasDaTela, "conta"), [
     contasDaTela,
   ]);
+
+  // -----------------------------------------------------------------------
+  // A CARTEIRA ATRELADA A CADA CONTA DE INVESTIMENTO (HMO-438)
+  // -----------------------------------------------------------------------
+  // Desligado sem rede: a lista acima vem do catalogo do aparelho nesse estado,
+  // e o catalogo nao guarda carteira. Ver o cabecalho do hook.
+  const { carteira: carteiraPorConta } = useCarteiraPorConta(
+    online && estado !== "sem-rede"
+  );
+
+  // O TOTAL DO TOPO CONTINUA SENDO A SOMA DOS SALDOS INFORMADOS, e isso e uma
+  // escolha -- nao um esquecimento.
+  //
+  // `totalDoEscopo` e pura e tem suite que afirma um invariante entre TELAS
+  // ("somar os dois escopos separados tem que dar o mesmo que a tela unica
+  // somava junta"). Trocar o saldo pela carteira ali move esse invariante e a
+  // soma de `/dashboard/cartoes` junto com ele, o que e trabalho de outra fase.
+  //
+  // O que NAO se pode fazer e deixar os dois numeros discordarem calados: o
+  // cartao passa a mostrar a carteira e o total continua no saldo informado,
+  // entao quem somar os cartoes a mao acha outro numero. A frase abaixo do total
+  // e o que torna a diferenca legivel, e ela so aparece quando ha substituicao
+  // de fato -- um aviso permanente ali e como se aprende a nao ler aviso nenhum.
+  // Ver `duas-metades-certas-dobram-a-linha-sem-total-para-discordar`.
+  const contasComCarteira = useMemo(
+    () =>
+      carteiraPorConta
+        ? contasDaTela.filter((c) => carteiraDaConta(carteiraPorConta, c.id))
+            .length
+        : 0,
+    [contasDaTela, carteiraPorConta]
+  );
 
   // -----------------------------------------------------------------------
   // O AJUSTE DE SALDO DA CONTA: A FIACAO (HMO-409)
@@ -445,11 +480,32 @@ function TelaDeContas() {
                 )}
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-1">
               <p className="text-xs text-muted-foreground">
                 Cartão de crédito fica de fora: ele guarda o que foi gasto, não
                 o que você tem.
               </p>
+              {/* Ver o comentario de `contasComCarteira`, acima. */}
+              {podeMostrarNumero(estado) && contasComCarteira > 0 && (
+                <p
+                  data-aviso="total-pelo-saldo-informado"
+                  className="text-xs text-muted-foreground"
+                >
+                  Este total soma o <strong>saldo informado</strong> de cada
+                  conta.{" "}
+                  {contasComCarteira === 1
+                    ? "Uma conta de investimento tem carteira atrelada e vale o que está no cartão dela"
+                    : `${contasComCarteira} contas de investimento têm carteira atrelada e valem o que está no cartão delas`}{" "}
+                  —{" "}
+                  <Link
+                    href="/dashboard/net-worth"
+                    className="underline underline-offset-2 hover:text-foreground"
+                  >
+                    é esse valor que entra no patrimônio
+                  </Link>
+                  .
+                </p>
+              )}
             </CardContent>
           </Card>
 
@@ -479,7 +535,26 @@ function TelaDeContas() {
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
               {contasDaTela.map((conta) => {
                 const Icone = iconeDoTipo(conta.account_type);
-                const valor = Number(conta.current_balance ?? 0);
+                const saldoInformado = Number(conta.current_balance ?? 0);
+
+                // A CARTEIRA DESTA CONTA, OU `null` (HMO-438).
+                //
+                // `null` nas duas situacoes que tem de ficar IDENTICAS ao
+                // cartao de antes desta fase: conta que nao e de investimento,
+                // e Conta Investimento sem nenhum ativo atrelado. Ver
+                // `carteiraDaConta`.
+                const daCarteira = carteiraPorConta
+                  ? carteiraDaConta(carteiraPorConta, conta.id)
+                  : null;
+
+                // O NUMERO GRANDE: a carteira quando ela substitui o saldo
+                // (Decisao 1A da Fase 3), o saldo informado quando nao.
+                //
+                // Trocar o headline NAO e enfeite -- e o que impede o cartao de
+                // anunciar como "Saldo" um numero que nao conta mais em lugar
+                // nenhum. O rotulo muda junto, senao os dois estados ficam
+                // indistinguiveis (`sumido-da-tela-pode-ser-so-indistinguivel`).
+                const valor = daCarteira ? daCarteira.valor : saldoInformado;
 
                 return (
                   <Card key={conta.id}>
@@ -524,7 +599,18 @@ function TelaDeContas() {
                             fora dos totais -- justamente quando a tela nao tem
                             rede para conferir. */}
                         <p className="text-xs text-muted-foreground">
+                          {/* O ROTULO DIZ DE ONDE O NUMERO VEIO (HMO-438).
+                              "Saldo" para o saldo informado, "Saldo · pela
+                              carteira" quando a carteira atrelada substituiu
+                              ele. Sem a distincao, duas contas de investimento
+                              com o mesmo numero na tela -- uma pela carteira e
+                              outra pelo digitado -- ficam identicas, e o
+                              `data-origem` abaixo e o que a sonda le para
+                              provar que nao ficaram. */}
                           Saldo
+                          {daCarteira ? (
+                            <span className="ml-1">· pela carteira</span>
+                          ) : null}
                           {conta.include_in_total === false ? (
                             <span className="ml-1 text-warning">
                               · fora dos totais
@@ -532,6 +618,9 @@ function TelaDeContas() {
                           ) : null}
                         </p>
                         <p
+                          data-origem={
+                            daCarteira ? "carteira" : "saldo_informado"
+                          }
                           className={`text-lg font-semibold ${
                             valor < 0 ? "text-destructive" : ""
                           }`}
@@ -539,6 +628,18 @@ function TelaDeContas() {
                           {formatarValor(valor)}
                         </p>
                       </div>
+
+                      {/* AS TRES LINHAS (HMO-438). Devolve `null` para toda
+                          conta sem carteira atrelada -- ver o componente. */}
+                      <CarteiraDaContaDeInvestimento
+                        carteira={daCarteira}
+                        saldoInformado={saldoInformado}
+                        atualizadaEm={conta.updated_at}
+                        moeda={conta.currency ?? undefined}
+                        rendimentoIndisponivel={
+                          carteiraPorConta?.rendimentoIndisponivel
+                        }
+                      />
 
                       <div className="flex gap-2 pt-1">
                         <Button

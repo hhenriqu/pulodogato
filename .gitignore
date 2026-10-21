@@ -664,3 +664,7 @@ next-env.d.ts
 # O emit dos quatro route handlers de investimento que aprenderam `account_id`,
 # para a sonda de rota rodar no node com duble de client (HMO-436).
 /.tmp-conta-do-ativo/
+
+# saida do `npm run test:conta-investimento-na-tela` (HMO-438: as tres linhas
+# do cartao da Conta Investimento, montadas em Chromium)
+/.tmp-conta-investimento-na-tela/

@@ -20,7 +20,7 @@
 // sem preco e avaliado pelo custo e entra no aviso do topo. Ver o cabecalho de
 // lib/investments.ts.
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { User } from "@supabase/supabase-js";
 import { createClient } from "@/utils/supabase/client";
 import { SoftFeatureGuard } from "@/components/subscription/SoftFeatureGuard";
@@ -52,8 +52,11 @@ import {
 } from "@/components/investments/ModalDeMovimentacao";
 import {
   ModalDeCadastroDeAtivo,
+  type ContaDeInvestimento,
   type ValoresDoAtivo,
 } from "@/components/investments/ModalDeCadastroDeAtivo";
+import { CarteiraPorConta } from "@/components/investments/CarteiraPorConta";
+import { comporCarteiraPorConta } from "@/lib/carteira-na-tela";
 import type { LimitesDosCrivos } from "@/lib/crivos";
 import {
   ROTULO_TIPO,
@@ -81,6 +84,17 @@ interface AtivoDaTela {
   currency: string | null;
   current_price: number | string | null;
   current_price_at: string | null;
+  /**
+   * A Conta Investimento a que o ativo esta atrelado (059, HMO-436).
+   *
+   * `GET /api/investments` ja NOMEIA esta coluna no `select` desde a HMO-436 --
+   * declarar aqui nao muda a resposta, ela ja vinha. O que muda e a tela poder
+   * ler: coluna que existe na resposta e falta no tipo passa pelo `tsc` em todo
+   * lugar e desaparece em todo uso, e o campo "some da tela" sem um erro em
+   * lugar nenhum. Opcional porque a resposta do cache offline de antes da 059
+   * nao tem o campo.
+   */
+  account_id?: string | null;
   // Os seis campos da migration 031 (HMO-192). Nulos em todo ativo cadastrado
   // antes dela, e e por isso que a edicao existe: o preenchimento e progressivo.
   fixed_income_product?: string | null;
@@ -147,6 +161,14 @@ export default function InvestmentsPage() {
     {}
   );
 
+  // AS CONTAS INVESTIMENTO, para o seletor do cadastro e para o agrupamento
+  // (HMO-438). Lista propria e nao parte de `/api/investments`: aquela rota
+  // responde sobre a CARTEIRA, e uma Conta Investimento recem-criada (ainda sem
+  // ativo) precisa aparecer no seletor -- ela nao sairia de uma resposta que so
+  // conhece ativo. Falha aqui deixa o seletor vazio com a frase que o modal ja
+  // tem, e nao derruba a carteira.
+  const [contas, setContas] = useState<ContaDeInvestimento[]>([]);
+
   const supabase = createClient();
 
   const carregar = useCallback(async () => {
@@ -174,6 +196,41 @@ export default function InvestmentsPage() {
       }
     } catch {
       // Silencio deliberado -- ver acima.
+    }
+  }, []);
+
+  /**
+   * As Contas Investimento ATIVAS do dono, para o seletor do cadastro.
+   *
+   * O recorte por TIPO e aqui e nao na rota porque `/api/financial-accounts`
+   * devolve a lista inteira e e o cliente que filtra por escopo em todo o app
+   * (ver o cabecalho de `useContas`). O recorte por tipo nao e cosmetico: a
+   * trigger da 059 RECUSA conta de outro tipo, entao oferecer a conta corrente
+   * aqui seria oferecer uma opcao que sempre falha.
+   *
+   * ARQUIVADA FICA FORA, e ela e o caso que merece a nota: a 059 nao exige conta
+   * ativa e `conferirContaDeInvestimento` deliberadamente NAO olha `is_active`
+   * -- arquivar e esconder a conta, nao desfazer o elo. Entao o ativo que JA
+   * esta atrelado a uma conta arquivada continua valido e continua somando; o
+   * que esta lista decide e so o que se OFERECE para um ativo novo, e oferecer
+   * uma conta que a pessoa arquivou e oferecer de volta o que ela escondeu.
+   */
+  const carregarContas = useCallback(async () => {
+    try {
+      // SEM `include_inactive=1`: a rota ja devolve so as ativas nesse caminho,
+      // e e esse o recorte que este seletor quer. Ver o doc acima.
+      const resposta = await fetch("/api/financial-accounts");
+      if (!resposta.ok) return;
+      const corpo = (await resposta.json()) as {
+        accounts?: Array<{ id: string; name: string; account_type: string }>;
+      };
+      setContas(
+        (corpo.accounts ?? [])
+          .filter((c) => c.account_type === "investment")
+          .map((c) => ({ id: c.id, name: c.name }))
+      );
+    } catch {
+      // Silencio deliberado: o modal ja diz o que fazer com a lista vazia.
     }
   }, []);
 
@@ -222,12 +279,27 @@ export default function InvestmentsPage() {
         data: { user },
       } = await supabase.auth.getUser();
       setUser(user);
-      if (user) await Promise.all([carregar(), carregarCrivos()]);
+      if (user) {
+        await Promise.all([carregar(), carregarCrivos(), carregarContas()]);
+      }
       setCarregando(false);
     };
     iniciar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // A CARTEIRA AGRUPADA POR CONTA (HMO-438).
+  //
+  // A composicao das DUAS respostas que esta tela ja buscava -- a Fase 2 proibiu
+  // `/api/investments` de falar com o Banco Central, entao e aqui que a posicao
+  // reencontra o rendimento. Ver o cabecalho de lib/carteira-na-tela.ts.
+  //
+  // ANTES do `if (carregando)` abaixo porque e hook: depois de um `return`
+  // condicional, a ordem dos hooks muda entre renders e o React quebra.
+  const carteiraPorConta = useMemo(
+    () => comporCarteiraPorConta(carteira, rendaFixa),
+    [carteira, rendaFixa]
+  );
 
   /**
    * Grava o ativo. Devolve a frase de erro, ou `null` quando gravou.
@@ -250,6 +322,18 @@ export default function InvestmentsPage() {
           name: valores.nome,
           type: valores.tipo,
           currentPrice: valores.preco === "" ? null : valores.preco,
+          // O ELO COM A CONTA (059, HMO-436). `""` chega na rota como "sem
+          // conta" -- `normalizar()` em lib/conta-do-ativo.ts trata `""`,
+          // `null` e ausente do mesmo jeito, que e o mesmo tratamento que
+          // `currentPrice` ja recebe ali.
+          //
+          // A grafia e `accountId` e NAO `account_id`: a rota aceita as duas, e
+          // manda 400 quando chegam as duas DISCORDANDO. `accountId` e a
+          // convencao destas rotas (`currentPrice`, `indexKind`). Mandar a
+          // grafia errada nao daria erro -- o campo seria IGNORADO, a resposta
+          // viria 201, e o ativo ficaria solto com a conta selecionada na tela.
+          // Ver `nome-de-campo-errado-esconde-bug-de-dinheiro`.
+          accountId: valores.accountId,
           // So renda fixa carrega os seis campos: o CHECK
           // `renda_fixa_so_em_fixed_income` da 031 recusa uma PETR4 com
           // indexador, porque ela apareceria na tela rendendo CDI POR CIMA da
@@ -477,6 +561,16 @@ export default function InvestmentsPage() {
   const posicoes = carteira?.positions || [];
   const comExcesso = posicoes.filter((p) => p.exceeded_position);
 
+  // `id -> nome` para o bloco de carteira por conta nomear as linhas.
+  //
+  // Sai de `contas`, que e a lista de contas ATIVAS -- entao uma conta
+  // ARQUIVADA com ativo atrelado nao estaria aqui, e a linha dela cairia no
+  // "Conta" do fallback. Isso e aceitavel e e melhor que o alternativo: a conta
+  // arquivada continua somando (a 059 nao exige conta ativa), entao a linha TEM
+  // de aparecer com o valor dela; o que se perde e o nome, nao o dinheiro.
+  const nomeDaConta: Record<string, string> = {};
+  for (const c of contas) nomeDaConta[c.id] = c.name;
+
   return (
     <SoftFeatureGuard feature="investment_tracking" user={user}>
       <div className="container mx-auto py-6 space-y-6">
@@ -616,6 +710,15 @@ export default function InvestmentsPage() {
             setAtivoDoModal(assetId);
             setMovimentacaoAberta(true);
           }}
+        />
+
+        {/* ONDE CADA ATIVO ESTA (HMO-438). Devolve `null` com a carteira vazia.
+            Fica ACIMA do card de renda fixa de proposito: este responde "onde
+            esta o meu dinheiro", que e a pergunta mais grossa, e aquele abre o
+            rendimento papel por papel. */}
+        <CarteiraPorConta
+          composta={carteiraPorConta}
+          nomeDaConta={nomeDaConta}
         />
 
         {/* Renda fixa que rende sozinha (HMO-192): bruto em destaque, liquido
@@ -768,6 +871,7 @@ export default function InvestmentsPage() {
         {cadastroAberto && (
           <ModalDeCadastroDeAtivo
             salvando={salvando}
+            contas={contas}
             aoFechar={() => setCadastroAberto(false)}
             aoSalvar={cadastrarAtivo}
           />
