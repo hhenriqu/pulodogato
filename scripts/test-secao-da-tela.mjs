@@ -113,6 +113,15 @@ const linha = (extra) => ({
   moeda: null,
   natureza: "despesa",
   fatura: null,
+  // A LINHA SOMA NOS TOTAIS NO CASO BASE -- HMO-452, e a ausencia deste campo
+  // nao e neutra: ela e FALSY, e `seloDaLinha`/`rotuloDeMudarOsTotais` leem
+  // `soma_nos_totais` nu (o tipo o declara `boolean` obrigatorio, e
+  // `linhaRealizada` resolve o "nao sei" com `!== false` UMA vez, no unico
+  // lugar que fala com o banco). Sem esta linha toda fixture desta suite
+  // ganharia o selo "fora dos totais" e o botao sairia com o rotulo INVERSO
+  // ("Voltar a somar nos totais") -- medido: quatro blocos reprovaram assim
+  // quando o campo nasceu.
+  soma_nos_totais: true,
   ...extra,
 });
 
@@ -150,6 +159,7 @@ const ACOES = (extra = {}) => ({
   aoExcluir: () => {},
   aoConfirmar: () => {},
   aoPagarFatura: () => {},
+  aoMudarOsTotais: () => {},
   agindo: null,
   online: true,
   ...extra,
@@ -624,7 +634,13 @@ test("a linha REALIZADA nao tem Confirmar -- e continua com os outros dois", () 
     render({ linhas: [linha({ origem: "realizado", status: null })] })
   );
 
-  assert.deepEqual(rotulos, ["Editar", "Excluir"]);
+  // «NAO SOMAR NOS TOTAIS» ENTROU NA REALIZADA NA HMO-452, e SO nela:
+  // `podeMudarOsTotais` exige `origem === "realizado"` porque a coluna da 060 e
+  // de `financial_transactions` -- o PATCH de uma previsao iria para
+  // `/api/scheduled-transactions/{id}`, que descarta o campo em silencio com
+  // 200. A lista EXATA e o que prende isso: o bloco das tres linhas lá embaixo
+  // mostra a prevista SEM este botao, e um `includes` nao distinguiria os dois.
+  assert.deepEqual(rotulos, ["Editar", "Não somar nos totais", "Excluir"]);
 });
 
 test("a fatura aberta de OUTRO MEMBRO nao tem botao NENHUM", () => {
@@ -794,7 +810,18 @@ test("a transferencia REALIZADA tem o Editar APAGADO, com o motivo no title", ()
     aparencia: TRANSFERENCIAS,
   });
 
-  assert.deepEqual(rotulosDeAcao(html), ["Editar", "Excluir"]);
+  // A PERNA DE TRANSFERENCIA PODE SAIR DOS TOTAIS, e isto nao e descuido: o
+  // criterio e `origem === "realizado"`, e a perna E uma linha de
+  // `financial_transactions` com a coluna. O que ela NAO pode e ser EDITADA por
+  // aqui (abrir uma perna deixaria a outra orfa) -- e desmarcar nao abre perna
+  // nenhuma, nao mexe em valor e nao mexe em elo. `category_monthly_totals` ja
+  // ignora `transfer` no `WHERE`, entao o flag e inerte no total desta linha;
+  // recusar o botao exigiria um quinto criterio para proteger numero nenhum.
+  assert.deepEqual(rotulosDeAcao(html), [
+    "Editar",
+    "Não somar nos totais",
+    "Excluir",
+  ]);
   assert.deepEqual(desabilitados(html), ["Editar"]);
   assert.match(html, /title="[^"]*duas pernas[^"]*"/);
 
@@ -882,12 +909,17 @@ test("cada linha ganha os botoes DELA -- nao os da primeira", () => {
   });
 
   assert.deepEqual(rotulosDeAcao(html), [
-    // a: prevista minha -- os tres
+    // a: prevista minha -- os tres, e NAO o de somar nos totais (HMO-452): a
+    // coluna da 060 e de `financial_transactions`, e uma previsao nao a tem.
     "Confirmar pagamento",
     "Editar",
     "Excluir",
-    // b: realizada minha -- dois
+    // b: realizada minha -- tres, e o de somar nos totais e o que ENTROU aqui.
+    // Este bloco e o unico lugar da suite onde as duas origens aparecem juntas,
+    // e e por isso que ele e a prova do criterio: a lista mostra o botao na
+    // linha `b` e nao na `a`, lado a lado, no MESMO HTML.
     "Editar",
+    "Não somar nos totais",
     "Excluir",
     // c e a fatura -- nenhum
   ]);
@@ -1048,7 +1080,12 @@ test("o Editar APAGADO mantem o motivo ESTRUTURAL, mesmo sem rede", () => {
   });
 
   const porRotulo = new Map(cinzasComMotivo(html).map((c) => [c.rotulo, c]));
-  assert.deepEqual([...porRotulo.keys()], ["Editar", "Excluir"]);
+  // O botao da HMO-452 trava junto e explica junto: ele e escrita, e sem rede
+  // escrita neste caminho FALHA em vez de ficar pendente.
+  assert.deepEqual(
+    [...porRotulo.keys()],
+    ["Editar", "Não somar nos totais", "Excluir"]
+  );
 
   const editar = porRotulo.get("Editar");
   assert.match(editar.titulo, /duas pernas/);

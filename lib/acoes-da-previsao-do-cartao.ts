@@ -188,6 +188,21 @@ export function linhaAcionavelDaPrevisao(
     origem: "previsto",
     tipo: "expense",
     natureza: ehSerieDaPrevisao(previsao) ? "fixa" : "despesa",
+    // `true`, E A ESCOLHA E A MESMA DE `linhaPrevista` -- HMO-452.
+    //
+    // `include_in_total` (migration 060) e coluna de `financial_transactions`.
+    // Uma previsao do cartao e `scheduled_transactions`: a pergunta "esta linha
+    // soma nos totais?" nao tem onde ser gravada nela, e ela nao esta em
+    // `category_monthly_totals` para comecar -- aquela view le a tabela
+    // realizada direto.
+    //
+    // INERTE AQUI, pelo mesmo motivo de `tipo` acima, e por isso vai cravado:
+    // `podeMudarOsTotais` exige `origem === "realizado"`, e este modulo monta
+    // so previsao. O valor nao decide nada nos dois caminhos que ele usa
+    // (`pedidoDeExclusao` e `podeEditar`). Deriva-lo de alguma coisa sugeriria
+    // que ele pesa; cravado com este comentario, quem acrescentar um ramo que o
+    // leia encontra o aviso em vez de uma mentira plausivel.
+    soma_nos_totais: true,
   };
 }
 

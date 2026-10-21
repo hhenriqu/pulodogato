@@ -498,6 +498,41 @@ export interface LinhaDaTela {
    * um botao que a rota recusa com 409 em cima da fatura fechada.
    */
   elo_da_fatura: { accountId: string; mes: string } | null;
+  /**
+   * ESTA LINHA ENTRA NOS TOTAIS DE RELATORIO? -- HMO-443 / HMO-452.
+   *
+   * `false` so em lancamento REALIZADO que a pessoa desmarcou
+   * (`financial_transactions.include_in_total = false`, migration 060). E o que
+   * poe o selo na linha e o que decide o rotulo da acao -- ver
+   * `lib/acoes-da-linha.ts`.
+   *
+   * POSITIVO E JA NORMALIZADO, e as duas metades sao decisao:
+   *
+   *   * POSITIVO como a coluna, que e positiva porque todo leitor dela e uma
+   *     SOMA e a negacao dupla inverteria o total (o COMMENT da 060 diz isso
+   *     com essas palavras). Um `fora_dos_totais` aqui seria a terceira
+   *     polaridade da mesma pergunta no mesmo app, e o lugar onde ela se
+   *     inverte calada;
+   *   * `boolean` e nao `boolean | null | undefined`: quem constroi a linha ja
+   *     resolveu o "nao sei" com `!== false` (ver `linhaRealizada`). Deixar o
+   *     `undefined` chegar na tela faria cada leitor repetir a decisao, e o
+   *     primeiro que escrevesse `!linha.soma_nos_totais` marcaria como fora dos
+   *     totais TODA linha vinda do cache offline de antes da 060 -- justamente
+   *     quando a tela nao tem rede para conferir.
+   *
+   * NAO E `include_in_total`, de proposito. Este tipo nao e a tabela: os campos
+   * derivados dele se chamam `posso_editar`, `de_grupo`, `fatura_suspeita` --
+   * nenhum e nome de coluna. Repetir o nome da coluna aqui convidaria a
+   * atravessa-lo direto para um `.select()`, que e exatamente o defeito do #335
+   * (PostgREST responde `42703` a select que NOMEIA coluna ausente, e a rota cai
+   * em 500 antes da colagem).
+   *
+   * SEMPRE `true` NO PREVISTO, e nao e esquecimento: a coluna e de
+   * `financial_transactions`, e a linha prevista e `scheduled_transactions` --
+   * ela nao tem a coluna, nem a fatura sintetizada, que nao esta em tabela
+   * nenhuma. Ver `linhaPrevista`.
+   */
+  soma_nos_totais: boolean;
 }
 
 /** Uma linha de `financial_transactions`, como a consulta a devolve. */
@@ -519,6 +554,31 @@ export interface RealizadaCrua extends LancamentoComConta {
   exchange_rate?: number | string | null;
   transaction_date?: string | null;
   currency?: string | null;
+  /**
+   * A linha soma nos totais de relatorio? (migration 060, HMO-443)
+   *
+   * OPCIONAL, E A AUSENCIA E UM ESTADO LEGITIMO -- nao a direcao barata de
+   * sempre, e a diferenca importa: `linhaRealizada` resolve a ausencia com
+   * `!== false`, ou seja "nao sei" vira "soma", que e o DEFAULT da coluna e o
+   * comportamento de antes da feature. Os dois caminhos em que ela chega
+   * ausente de verdade:
+   *
+   *   * o banco SEM a 060 colada. Ela e colada a mao no SQL Editor, depois do
+   *     deploy (`deploy-ships-code-not-schema`), e o `select` da rota nao pode
+   *     NOMEAR a coluna antes disso -- o PostgREST responde `42703` e a tela
+   *     inteira cai em 500 (o defeito do #335);
+   *   * o cache offline do aparelho (`lib/offline-cache.ts`). Linha guardada
+   *     antes da 060 nao tem o campo, e e exatamente quando nao ha rede para
+   *     conferir que um `=== true` marcaria TODA linha como fora dos totais.
+   *
+   * O custo da escolha esta nomeado: tirar a coluna do `select` da rota NAO
+   * quebra `tsc` nem teste de unidade nenhum -- a tela simplesmente perde o
+   * selo e a acao em toda linha, em silencio, e volta ao estado de antes desta
+   * issue. Quem impede isso e a sonda textual de
+   * scripts/test-contrato-das-telas-de-movimentacao.mjs, como com
+   * `recurring_rule_id` e `user_id`.
+   */
+  include_in_total?: boolean | null;
   /**
    * A chave canonica da fatura, quando esta linha e uma perna do pagamento dela
    * -- HMO-264.
@@ -1537,6 +1597,21 @@ export function linhaRealizada(
     // `notes` nem existe deste lado -- `financial_transactions` nao tem a
     // coluna.
     elo_da_fatura: null,
+    // O UNICO LUGAR DO APP QUE RESOLVE O "NAO SEI" DESTA COLUNA -- HMO-452.
+    //
+    // `!== false`, E NAO `=== true`, e a razao e a MESMA de `contasQueSomam`
+    // (lib/contas.ts) e de `linhasDaConversa` (lib/saldo-da-conversa.ts): a
+    // coluna e `NOT NULL` no banco, entao do Postgres so vem `true` ou `false`
+    // e os dois testes seriam equivalentes. A diferenca aparece na resposta que
+    // NAO vem do Postgres -- o banco sem a 060 colada e o cache offline do
+    // aparelho, os dois descritos em `RealizadaCrua.include_in_total`. Com
+    // `=== true`, `undefined === true` e falso: TODA linha do cache ganharia o
+    // selo "fora dos totais" e a tela diria que nada soma, justamente quando
+    // nao ha rede para conferir.
+    //
+    // `!== false` trata "nao sei" como "soma", que e o DEFAULT da coluna e o
+    // comportamento de antes da feature. Errar para o lado do app de ontem.
+    soma_nos_totais: crua.include_in_total !== false,
   };
 }
 
@@ -1721,6 +1796,22 @@ export function linhaPrevista(
           idGravado !== null
         )
       : null,
+    // SEMPRE `true` NO PREVISTO, E E A AUSENCIA DE ESCOLHA -- HMO-452.
+    //
+    // A coluna da 060 e de `financial_transactions`. Uma linha prevista e
+    // `scheduled_transactions` (pela view `scheduled_transactions_effective`) e
+    // a fatura aberta nao esta em tabela nenhuma: nas duas, a pergunta "esta
+    // linha soma nos totais?" nao tem onde ser gravada. `true` e o que a tela
+    // ja mostra hoje, e e tambem o que `category_monthly_totals` ja faz -- ela
+    // nunca viu uma linha prevista, porque le `financial_transactions` direto.
+    //
+    // E E POR ISSO QUE A ACAO DA LINHA RECUSA O PREVISTO (`podeMudarOsTotais`
+    // em lib/acoes-da-linha.ts): o PATCH de uma previsao vai para
+    // `/api/scheduled-transactions/{id}`, que NAO conhece este campo -- ele
+    // seria descartado em silencio, com 200, e a pessoa veria o selo nao
+    // aparecer sem nenhuma explicacao. Hard-coded `true` aqui e o que faz essa
+    // recusa ser legivel la em vez de um `undefined` atravessando a tela.
+    soma_nos_totais: true,
   };
 }
 

@@ -270,12 +270,49 @@ export async function GET(request: NextRequest) {
     // daqui agora custa as DUAS leituras: a fatura paga some da aba Despesas e o
     // dinheiro que a conexao pagou some da aba Transferencias -- e esta segunda
     // nao tem nem o sintoma do total, porque a linha e a unica daquele dinheiro.
+    // -----------------------------------------------------------------------
+    // `include_in_total` NA LISTA NOMEADA, E A MEDIDA QUE AUTORIZA ISSO
+    // -----------------------------------------------------------------------
+    // A coluna e a da migration 060 (HMO-443), e ela decide o SELO da linha e a
+    // acao "Não somar nos totais" (HMO-452). Sem ela aqui a tela perde as duas
+    // em TODA linha, em silencio e sem quebrar `tsc` nem teste de unidade -- a
+    // mesma familia de `notes` e `recurring_rule_id` acima.
+    //
+    // NOMEAR UMA COLUNA NUM `select` E A ARMADILHA DO #335: o PostgREST
+    // responde `42703 column ... does not exist` e o handler cai em 500, ou
+    // seja a tela de Despesas e a de Receitas param de carregar inteiras. A 060
+    // e colada A MAO no SQL Editor, depois do deploy
+    // (`deploy-ships-code-not-schema`), e nomear a coluna antes da colagem e
+    // exatamente o defeito que o #336 consertou com a homonima da 058.
+    //
+    // MEDIDO EM PRODUCAO ANTES DE ESCREVER ESTA LINHA, em 2026-10-21, pelo
+    // PostgREST com a chave anon e com CONTROLE NEGATIVO:
+    //
+    //   select=is_shared            -> 401 42501 permission denied   (existe)
+    //   select=include_in_total     -> 401 42501 permission denied   (EXISTE)
+    //   select=include_in_totalz    -> 400 42703 does not exist,
+    //                                  hint: 'Perhaps you meant to reference
+    //                                  the column
+    //                                  "financial_transactions.include_in_total"'
+    //
+    // As tres linhas juntas sao a prova, e nenhuma sozinha serve. O PostgREST
+    // resolve o NOME da coluna antes de checar permissao, entao `42501` ja diz
+    // que o nome existe no catalogo -- e o `42703` do nome inventado e o
+    // controle que impede esta sonda de confirmar o proprio typo
+    // (`sonda-de-coluna-inventada-confirma-o-proprio-typo`). O hint do terceiro
+    // caso e o catalogo NOMEANDO a coluna de volta.
+    //
+    // Por que isto nao fica so no comentario: o guard textual de
+    // scripts/test-contrato-das-telas-de-movimentacao.mjs passou a COBRAR a
+    // coluna neste `select`, do mesmo jeito que cobra `notes` e `user_id`. E e
+    // por isso que esta lista continua NOMEADA em vez de virar `select("*")`:
+    // `*` apagaria aquele guard e os dois irmaos dele, que protegem dinheiro.
     const { data: realizadasCruas, error: erroRealizadas } = await supabase
       .from("financial_transactions")
       .select(
         `
         id, user_id, description, amount, exchange_rate, currency, transaction_date,
-        transaction_type, counterpart_transaction_id, notes,
+        transaction_type, counterpart_transaction_id, notes, include_in_total,
         category:transaction_categories(name, is_expense),
         account:financial_accounts(id, name, account_type)
       `

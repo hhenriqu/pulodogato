@@ -91,11 +91,13 @@ import {
   PainelSemRede,
 } from "@/components/SemRede";
 import {
+  AVISO_DO_FLAG_DOS_TOTAIS,
   avisoDaExclusao,
   caminhoDeEdicao,
   pedidoDeConfirmacao,
   pedidoDeEdicaoDaPrevista,
   pedidoDeExclusao,
+  pedidoDeMudarOsTotais,
   rotuloDeConfirmar,
   type EdicaoDaPrevista,
   type PedidoDaAcao,
@@ -533,6 +535,50 @@ export function ListaDeMovimentacao({
   );
 
   /**
+   * TIRAR (OU DEVOLVER) A LINHA DOS TOTAIS -- HMO-452, F2 da HMO-443.
+   *
+   * NAO PERGUNTA ANTES, ao contrario do Excluir logo acima, e a diferenca e a
+   * que importa: isto e REVERSIVEL pelo mesmo botao, e o estado novo fica
+   * VISIVEL na propria linha (o selo). O `confirm()` existe no Excluir porque
+   * lá nada volta e porque as duas exclusoes possiveis sao indistinguiveis
+   * depois do clique; aqui um dialogo seria atrito sobre uma escolha que a
+   * pessoa desfaz no mesmo lugar em que a fez.
+   *
+   * O TOAST DIZ O QUE **NAO** MUDOU, e e por isso que ele nao e "Pronto".
+   * `AVISO_DO_FLAG_DOS_TOTAIS` e a MESMA frase que o formulario mostra embaixo
+   * da checkbox, de proposito: a linha desmarcada continua no saldo da conta e
+   * no patrimonio (`net_worth_history` le `financial_transactions` direto e nao
+   * passa por `category_monthly_totals`, onde o filtro mora), e quem acabou de
+   * desmarcar vai olhar o saldo da conta em seguida. Sem a frase, ver o saldo
+   * incluir o ajuste ao lado de um total de receitas que nao o inclui e
+   * indistinguivel de um bug -- as duas leituras estao certas, e nenhum numero
+   * na tela explica a diferenca.
+   *
+   * Uma copia da frase aqui divergiria da do formulario na primeira revisao de
+   * copy, e as duas respondem a MESMA pergunta sobre a MESMA coluna.
+   */
+  const aoMudarOsTotais = useCallback(
+    (linha: LinhaDaTela) => {
+      const pedido = pedidoDeMudarOsTotais(linha);
+      // `null` nao acontece pela tela (o botao so existe quando ele e
+      // nao-nulo), e o `if` nao e zelo: ele e o que garante que nenhum caminho
+      // mande este PATCH para uma linha PREVISTA, cuja URL seria
+      // `/api/scheduled-transactions/{id}` -- onde o campo e descartado em
+      // silencio, com 200, e o selo simplesmente nunca aparece.
+      if (!pedido) return;
+
+      void disparar(
+        linha,
+        pedido,
+        linha.soma_nos_totais
+          ? `Fora dos totais. ${AVISO_DO_FLAG_DOS_TOTAIS}`
+          : "De volta aos totais dos relatórios."
+      );
+    },
+    [disparar]
+  );
+
+  /**
    * Abre o dialogo da conta pagadora. NAO ESCREVE NADA -- HMO-311.
    *
    * Nenhuma rede aqui de proposito: a pergunta "de qual conta o dinheiro saiu?"
@@ -690,6 +736,7 @@ export function ListaDeMovimentacao({
       aoExcluir,
       aoConfirmar,
       aoPagarFatura,
+      aoMudarOsTotais,
       agindo,
       online,
       // O ELO DA FATURA RECARREGA A LISTA INTEIRA -- HMO-305, e e `carregar` e
@@ -706,6 +753,7 @@ export function ListaDeMovimentacao({
       aoExcluir,
       aoConfirmar,
       aoPagarFatura,
+      aoMudarOsTotais,
       agindo,
       online,
       carregar,
