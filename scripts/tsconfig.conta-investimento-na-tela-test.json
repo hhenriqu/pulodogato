@@ -1,0 +1,51 @@
+{
+  "//": [
+    "Compila as TRES LINHAS do cartao da Conta Investimento (HMO-438, F4 da",
+    "HMO-432) e a composicao que as alimenta, para a sonda renderizar o",
+    "componente DE VERDADE em Chromium -- e nao uma copia da marcacao dele.",
+    "",
+    "O FECHO DE DEPENDENCIA E PEQUENO DE PROPOSITO.",
+    "CarteiraDaContaDeInvestimento.tsx importa exatamente dois modulos",
+    "(lib/dinheiro e lib/data-na-tela), nenhum componente de ui/ e nenhum icone",
+    "de lucide-react. Isso nao e sorte: cada import novo naquele componente e um",
+    "esboco novo na sonda, ou um ReferenceError no meio do primeiro render que",
+    "nao se le como o que e. Ver o cabecalho do componente.",
+    "",
+    "lib/investments.ts e lib/renda-fixa.ts entram pelo OUTRO lado da suite -- a",
+    "parte pura, que roda no node sem navegador e mede",
+    "comporCarteiraPorConta. Eles NAO vao para a pagina do Chromium: alem de",
+    "serem grandes e terem ancora de mutante, lib/investments.ts carrega um NUL",
+    "literal numa string (o sentinela SOLTO), e enfiar esse byte dentro de um",
+    "<script> inline de um arquivo file:// e uma briga sem premio nenhum.",
+    "",
+    "Os dois nao importam nada (medido: zero `import` em cada um), entao o",
+    "resolve-aliases nao tem o que reescrever neles.",
+    "",
+    "`jsx: react-jsx` e o que permite o componente virar JS que a pagina monta",
+    "com ReactDOM.render -- mesmo desenho do tsconfig.cartoes-da-tela-test.json.",
+    "O resolve-aliases roda com --espelha-raiz porque o componente alcanca lib/",
+    "pelo alias @/ a partir de components/."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-conta-investimento-na-tela",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../components/contas/CarteiraDaContaDeInvestimento.tsx",
+    "../lib/carteira-na-tela.ts",
+    "../lib/data-digitada.ts",
+    "../lib/data-na-tela.ts",
+    "../lib/dinheiro.ts",
+    "../lib/investments.ts",
+    "../lib/renda-fixa.ts"
+  ]
+}

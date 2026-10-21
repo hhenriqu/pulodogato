@@ -50,6 +50,13 @@ export interface ValoresDoAtivo {
   nome: string;
   tipo: AssetType;
   preco: string;
+  /**
+   * A Conta Investimento a que o ativo fica atrelado (059/HMO-436).
+   *
+   * `""` e "nenhuma" -- o ativo nasce SOLTO, que e o estado de todo ativo
+   * cadastrado antes da 059. Ver `SEM_CONTA`.
+   */
+  accountId: string;
   rendaFixa: ValoresDeRendaFixa;
 }
 
@@ -59,12 +66,49 @@ export function valoresDoAtivoVazios(): ValoresDoAtivo {
     nome: "",
     tipo: "stock",
     preco: "",
+    // NASCE VAZIO, E NAO NA PRIMEIRA CONTA DA LISTA.
+    //
+    // Preencher com a primeira conta seria o default obvio e colapsaria a
+    // feature: quem tem duas Contas Investimento cadastraria na errada sem
+    // escolher nada, e o ativo apareceria somando na conta que a pessoa nao
+    // quis -- dinheiro no lugar errado, sem erro em lugar nenhum. O elo e
+    // opcional no banco de proposito (ver o cabecalho de lib/conta-do-ativo.ts),
+    // e aqui ele nasce desse jeito.
+    accountId: "",
     rendaFixa: valoresDeRendaFixaVazios(),
   };
 }
 
+/** A conta como o seletor a recebe. */
+export interface ContaDeInvestimento {
+  id: string;
+  name: string;
+}
+
+/**
+ * O valor da opcao "nenhuma conta" no `<Select>`.
+ *
+ * Ele existe porque o `SelectItem` do Radix RECUSA `value=""` em tempo de
+ * execucao, e "" e justamente como o estado (e a rota) representam "sem conta".
+ * O sentinela fica contido nesta fronteira: o estado continua guardando `""`, e
+ * `corpoDoAtivo` nunca ve esta string. Confundir os dois mandaria
+ * `accountId: "sem-conta"` para a rota, que responderia 400 "Conta invalida" --
+ * uma recusa correta sobre um pedido que a tela montou errado.
+ */
+const SEM_CONTA = "sem-conta";
+
 interface ModalDeCadastroDeAtivoProps {
   salvando: boolean;
+  /**
+   * As Contas Investimento ATIVAS do dono.
+   *
+   * So as de `account_type = 'investment'`: a trigger da 059 recusa qualquer
+   * outra, e a rota traduz a recusa em "nao e uma Conta Investimento". Oferecer
+   * a conta corrente aqui seria oferecer uma opcao que SEMPRE falha -- a pessoa
+   * escolhe, aperta, e leva uma recusa que nao tinha como prever. Quem recorta
+   * e a tela (ver `/dashboard/investments`).
+   */
+  contas: ContaDeInvestimento[];
   aoFechar: () => void;
   /** Grava. Devolve a frase de erro, ou `null` quando gravou. */
   aoSalvar: (valores: ValoresDoAtivo) => Promise<string | null>;
@@ -72,6 +116,7 @@ interface ModalDeCadastroDeAtivoProps {
 
 export function ModalDeCadastroDeAtivo({
   salvando,
+  contas,
   aoFechar,
   aoSalvar,
 }: ModalDeCadastroDeAtivoProps) {
@@ -168,6 +213,45 @@ export function ModalDeCadastroDeAtivo({
               placeholder="31,50"
             />
           </div>
+          {/* A CONTA INVESTIMENTO (HMO-438, F4 da HMO-432).
+              Fora do `sm:grid-cols-2` -- `sm:col-span-2` -- porque o nome da
+              conta e texto livre do usuario e um trilho de metade da largura o
+              trunca; e porque a frase de ajuda abaixo nao cabe em meia coluna
+              sem virar quatro linhas no celular. */}
+          <div className="space-y-2 sm:col-span-2">
+            <Label htmlFor="novo-conta">Conta (opcional)</Label>
+            <Select
+              value={valores.accountId || SEM_CONTA}
+              onValueChange={(v) => campo("accountId", v === SEM_CONTA ? "" : v)}
+              disabled={salvando}
+            >
+              <SelectTrigger id="novo-conta">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {/* "Nenhuma" e uma opcao DE VERDADE e vem primeiro: sem ela o
+                    Radix nao tem caminho de volta para o estado vazio, e quem
+                    escolhesse uma conta por engano ficaria presa nela. */}
+                <SelectItem value={SEM_CONTA}>
+                  Nenhuma — deixar solto na carteira
+                </SelectItem>
+                {contas.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {contas.length === 0
+                ? // O seletor vazio sem dizer por que e um seletor quebrado --
+                  // e o motivo nao e obvio: nao falta ativo, falta uma conta do
+                  // TIPO certo. A frase diz onde cadastrar.
+                  "Você ainda não tem Conta Investimento. Cadastre uma em Contas para atrelar este ativo a ela."
+                : "Atrelar à conta faz o valor deste ativo entrar no saldo dela e no seu patrimônio. Sem conta, ele fica só na carteira."}
+            </p>
+          </div>
+
           {/* Renda fixa pede o que nao existe em acao nenhuma: indexador,
               percentual do indice, data de aplicacao e vencimento (HMO-192).
               Sem estes campos o tipo `fixed_income` funcionava so se a pessoa

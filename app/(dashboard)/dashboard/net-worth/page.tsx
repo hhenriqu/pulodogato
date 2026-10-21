@@ -68,6 +68,26 @@ interface ContaConsolidada {
   saldo: number;
   ativa: boolean;
   color_hex: string | null;
+  /**
+   * De onde veio o `saldo` acima (HMO-437, lido pela tela na HMO-438).
+   *
+   * `"carteira"` quando a carteira atrelada SUBSTITUIU o saldo digitado. A rota
+   * manda este campo desde a Fase 3; esta tela nao o declarava, e o efeito era o
+   * modo de falha caro e silencioso: coluna que existe na resposta e falta no
+   * tipo passa pelo `tsc` e desaparece de todo uso -- o patrimonio mostrava o
+   * numero NOVO (porque o total vem do servidor) sem nada dizendo que a
+   * substituicao aconteceu.
+   */
+  origemDoSaldo?: "saldo_informado" | "carteira";
+  /** O `current_balance` digitado, SEMPRE -- inclusive quando ele nao conta. */
+  saldoInformado?: number;
+  /** As parcelas do valor da carteira. `null`/ausente quando ela nao entrou. */
+  carteira?: {
+    valor: number;
+    valorLiquido: number;
+    principal: number;
+    rendimento: number;
+  } | null;
 }
 
 interface TotalDeClasse {
@@ -487,44 +507,108 @@ export default function NetWorthPage() {
                       <span>{brl(c.total)}</span>
                     </div>
                     {c.contas.map((conta) => (
+                      // A CONTA ABRE NAS PARCELAS DA CARTEIRA (HMO-438).
+                      //
+                      // A BORDA E O `py-2` MUDARAM DE ELEMENTO, e isso nao e
+                      // arrumacao: a abertura precisa ficar DENTRO da mesma
+                      // caixa da linha (senao ela vira irma da linha e o
+                      // `:last-child` do separador passa a casar nela). Com a
+                      // caixa nova, `last:border-0` tinha de subir junto -- na
+                      // linha de dentro ele casaria em TODA linha, porque cada
+                      // uma e filha unica da sua caixa, e os separadores da
+                      // lista inteira desapareceriam.
                       <div
                         key={conta.id}
-                        // `min-w-0` + `truncate` no nome e `shrink-0` no valor:
-                        // esta linha vazava 11px em 320px (medido em producao,
-                        // HMO-185). Onze pixels nao chamam atencao e mexem a
-                        // pagina inteira do mesmo jeito -- o nome da conta e
-                        // livre, entao o piso de min-content da linha cresce
-                        // junto com ele e nao ha largura de celular que baste.
-                        className="flex items-center justify-between gap-2 border-b py-2 text-sm last:border-0"
+                        className="border-b py-2 last:border-0"
                       >
-                        <span className="flex items-center gap-2 min-w-0">
-                          <span
-                            className="h-3 w-3 shrink-0 rounded-sm"
-                            style={{
-                              backgroundColor:
-                                conta.color_hex ?? "currentColor",
-                            }}
-                          />
-                          <span className="truncate">{conta.name}</span>
-                          {!conta.ativa && (
-                            <Badge
-                              variant="outline"
-                              className="text-xs gap-1 shrink-0"
-                            >
-                              <Archive className="h-3 w-3" />
-                              arquivada
-                            </Badge>
-                          )}
-                        </span>
-                        <span
-                          className={
-                            conta.saldo < 0
-                              ? "font-medium text-destructive shrink-0"
-                              : "font-medium shrink-0"
-                          }
+                        <div
+                          // `min-w-0` + `truncate` no nome e `shrink-0` no
+                          // valor: esta linha vazava 11px em 320px (medido em
+                          // producao, HMO-185). Onze pixels nao chamam atencao
+                          // e mexem a pagina inteira do mesmo jeito -- o nome
+                          // da conta e livre, entao o piso de min-content da
+                          // linha cresce junto com ele e nao ha largura de
+                          // celular que baste.
+                          className="flex items-center justify-between gap-2 text-sm"
                         >
-                          {brl(conta.saldo)}
-                        </span>
+                          <span className="flex items-center gap-2 min-w-0">
+                            <span
+                              className="h-3 w-3 shrink-0 rounded-sm"
+                              style={{
+                                backgroundColor:
+                                  conta.color_hex ?? "currentColor",
+                              }}
+                            />
+                            <span className="truncate">{conta.name}</span>
+                            {!conta.ativa && (
+                              <Badge
+                                variant="outline"
+                                className="text-xs gap-1 shrink-0"
+                              >
+                                <Archive className="h-3 w-3" />
+                                arquivada
+                              </Badge>
+                            )}
+                          </span>
+                          <span
+                            className={
+                              conta.saldo < 0
+                                ? "font-medium text-destructive shrink-0"
+                                : "font-medium shrink-0"
+                            }
+                          >
+                            {brl(conta.saldo)}
+                          </span>
+                        </div>
+
+                        {/* AS PARCELAS, so na conta que a carteira substituiu.
+                            A condicao e `conta.carteira` e NAO
+                            `c.classe === "investimento"`: a classe diz o TIPO
+                            da conta, e a Conta Investimento sem ativo atrelado
+                            esta nela e continua valendo o saldo digitado -- a
+                            abertura dela nao existe. Decidir pela classe poria
+                            tres linhas de R$ 0,00 em toda conta de
+                            investimento que ninguem atrelou. */}
+                        {conta.carteira && (
+                          <div
+                            data-parcelas-da-conta={conta.id}
+                            className="mt-1 space-y-0.5 pl-5 text-xs text-muted-foreground"
+                          >
+                            <div className="flex items-baseline justify-between gap-2">
+                              <span className="min-w-0 truncate">
+                                Aplicado
+                              </span>
+                              <span className="shrink-0 tabular-nums">
+                                {brl(conta.carteira.principal)}
+                              </span>
+                            </div>
+                            <div className="flex items-baseline justify-between gap-2">
+                              <span className="min-w-0 truncate">
+                                Rendimento
+                              </span>
+                              <span className="shrink-0 tabular-nums">
+                                {brl(conta.carteira.rendimento)}
+                              </span>
+                            </div>
+                            {/* O SALDO INFORMADO QUE PAROU DE CONTAR.
+                                Ele e a unica evidencia de que a substituicao
+                                aconteceu -- sem esta linha, um total diferente
+                                do esperado nao se distingue de um saldo que
+                                subiu. Aparece so quando ha diferenca: iguais,
+                                a linha seria ruido. */}
+                            {typeof conta.saldoInformado === "number" &&
+                              conta.saldoInformado !== conta.carteira.valor && (
+                                <div className="flex items-baseline justify-between gap-2">
+                                  <span className="min-w-0 truncate">
+                                    Saldo informado · não entra
+                                  </span>
+                                  <span className="shrink-0 tabular-nums">
+                                    {brl(conta.saldoInformado)}
+                                  </span>
+                                </div>
+                              )}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
