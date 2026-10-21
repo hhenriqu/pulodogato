@@ -44,6 +44,10 @@ import assert from "node:assert/strict";
 import { criarDuble } from "./duble-de-supabase.mjs";
 
 const LIB = await import("../.tmp-emprestimo-do-mybank/lib/emprestimo-do-mybank.js");
+// A ARITMETICA DO JURO VEM DA F2, E A SUITE A CHAMA DE LA (e nao reescreve o
+// rateio na fixture): um rateio de 1.000/200 escrito a mao aqui concordaria com
+// qualquer coisa que a lib fizesse, inclusive com a divisao errada.
+const JUROS = await import("../.tmp-emprestimo-do-mybank/lib/juros-do-emprestimo.js");
 const LOANS = await import("../.tmp-emprestimo-do-mybank/app/api/mybank/loans/route.js");
 const PARCELA = await import(
   "../.tmp-emprestimo-do-mybank/app/api/mybank/installments/[id]/route.js"
@@ -55,6 +59,8 @@ const INVESTIMENTO = "conta-investimento";
 const CORRENTE = "conta-corrente";
 const SERVICO = "servico-financas";
 const CATEGORIA_TRANSFER = "categoria-transferencia";
+/** `Investimentos` -- a categoria VISIVEL da perna de juro (seed do 001). */
+const CATEGORIA_JUROS = "categoria-investimentos";
 
 // ---------------------------------------------------------------------------
 // PARTE 1 -- a funcao pura: a serie fecha com o principal
@@ -231,40 +237,308 @@ test("CASO B: NENHUMA perna minha -- a lista de previsoes e vazia", () => {
   assert.deepEqual(previsoes, []);
 });
 
-test("CASO B: o recebimento e perna de ENTRADA de transferencia, nao receita", () => {
-  const perna = LIB.pernaDeEntradaDoPagamento({
+test("CASO B sem juro: UMA perna de ENTRADA de transferencia, nao receita", () => {
+  const pernas = LIB.pernasDoPagamentoDaParcela({
     caso: "conexao",
     contaCredoraId: INVESTIMENTO,
     valor: 1000,
     descricao: "Moto elétrica",
     numero: 3,
     total: 24,
+    rateio: null,
   });
 
-  assert.ok(perna);
+  assert.equal(pernas.length, 1);
+  const [perna] = pernas;
   // `income` faria o MESMO dinheiro contar como renda 24 vezes: principal
   // voltando move dinheiro de volta para dentro do patrimonio, nao o aumenta.
-  assert.equal(perna.transaction_type, "transfer");
-  assert.equal(perna.account_id, INVESTIMENTO);
-  assert.equal(perna.amount, 1000);
-  assert.ok(perna.amount > 0, "a entrada e POSITIVA");
-  assert.equal(perna.description, "Moto elétrica (3/24)");
+  assert.equal(perna.natureza, "principal");
+  assert.equal(perna.linha.transaction_type, "transfer");
+  assert.equal(perna.linha.account_id, INVESTIMENTO);
+  assert.equal(perna.linha.amount, 1000);
+  assert.ok(perna.linha.amount > 0, "a entrada e POSITIVA");
+  assert.equal(perna.linha.description, "Moto elétrica (3/24)");
+  // `natureza` NAO E COLUNA, e e por isso que ela fica FORA de `linha`:
+  // espalhada no insert, o PostgREST recusaria o lote inteiro com PGRST204.
+  assert.deepEqual(Object.keys(perna.linha).sort(), [
+    "account_id",
+    "amount",
+    "description",
+    "transaction_type",
+  ]);
 });
 
-test("CASO A: o recebimento NAO gera perna aqui -- quem paga e Contas a Pagar", () => {
+test("CASO B COM juro: DUAS pernas, e SO o juro e `income`", () => {
+  // R$ 24.000 emprestados, R$ 28.800 a receber (20% no emprestimo todo), 24x de
+  // R$ 1.200. Cada parcela e R$ 1.000 de principal voltando e R$ 200 de ganho.
+  const rateio = JUROS.rateioDaSerie({
+    parcelas: Array.from({ length: 24 }, () => 1200),
+    principal: 24000,
+    total: 28800,
+  });
+  assert.ok(rateio, "a serie de 24x R$ 1.200 tem de ratear");
+
+  const pernas = LIB.pernasDoPagamentoDaParcela({
+    caso: "conexao",
+    contaCredoraId: INVESTIMENTO,
+    valor: 1200,
+    descricao: "Moto elétrica",
+    numero: 3,
+    total: 24,
+    rateio: rateio[2],
+  });
+
+  assert.equal(pernas.length, 2);
+
+  const principal = pernas.find((p) => p.natureza === "principal");
+  const juros = pernas.find((p) => p.natureza === "juros");
+  assert.ok(principal, "a parte-principal tem de ter perna");
+  assert.ok(juros, "a parte-juros tem de ter perna");
+
+  // A PARTE-PRINCIPAL CONTINUA `transfer`: ela e dinheiro meu voltando.
+  assert.equal(principal.linha.transaction_type, "transfer");
+  assert.equal(principal.linha.amount, 1000);
+
+  // SO O JURO E RECEITA. Este par de assercoes e o que mata o mutante que manda
+  // a perna CHEIA como `income` (ali o `amount` seria 1200) e o que INVERTE as
+  // duas partes (ali o `income` seria 1000).
+  assert.equal(juros.linha.transaction_type, "income");
+  assert.equal(juros.linha.amount, 200);
+
+  // EXATAMENTE UMA perna e `income`. A assercao e sobre a CONTAGEM e nao sobre a
+  // perna que eu fui buscar: um desenho que marcasse as duas como receita
+  // passaria pelas duas assercoes de cima.
+  assert.equal(
+    pernas.filter((p) => p.linha.transaction_type === "income").length,
+    1
+  );
+
+  // AS DUAS CAEM NA MESMA CONTA e as duas sao POSITIVAS: o dinheiro entrou
+  // inteiro na conta de investimento, e o que muda entre elas e o TIPO.
+  assert.ok(pernas.every((p) => p.linha.account_id === INVESTIMENTO));
+  assert.ok(pernas.every((p) => p.linha.amount > 0));
+
+  // A SOMA DAS PERNAS FECHA COM O `amount` DA PARCELA -- nao sobra nem falta
+  // centavo. `duas-pernas-mantem-o-total-certo` manda afirmar por COMPONENTE, e
+  // e o que as assercoes de cima fazem; esta fecha a soma.
+  assert.equal(
+    pernas.reduce((a, p) => a + p.linha.amount, 0),
+    1200
+  );
+
+  // A DESCRICAO DISTINGUE AS DUAS. Com a mesma frase o extrato mostraria duas
+  // linhas positivas no mesmo dia na mesma conta sem dizer qual delas entrou em
+  // Receitas.
+  assert.equal(principal.linha.description, "Moto elétrica (3/24)");
+  assert.equal(juros.linha.description, "Juros — Moto elétrica (3/24)");
+  assert.notEqual(principal.linha.description, juros.linha.description);
+});
+
+test("CASO B: a parcela de JURO PURO nao gera perna de R$ 0,00", () => {
+  // Parte-principal ZERO e alcancavel: `mybank_installments_amount_check` aceita
+  // `amount > 0`, e um centavo de uma serie grande rateia
+  // `round(1 x principal / total) = 0`. A perna de zero reais seria ruido no
+  // extrato que nenhuma tela sabe explicar.
+  const pernas = LIB.pernasDoPagamentoDaParcela({
+    caso: "conexao",
+    contaCredoraId: INVESTIMENTO,
+    valor: 0.01,
+    descricao: "Moto elétrica",
+    numero: 24,
+    total: 24,
+    rateio: { parteDoPrincipal: 0, parteDosJuros: 0.01 },
+  });
+
+  assert.equal(pernas.length, 1);
+  assert.equal(pernas[0].natureza, "juros");
+  assert.equal(pernas[0].linha.transaction_type, "income");
+  assert.equal(pernas[0].linha.amount, 0.01);
+});
+
+test("CASO A: o recebimento NAO gera perna aqui -- NEM COM JURO", () => {
   // A parcela do auto-emprestimo ja e uma transferencia prevista, e a baixa
   // dela grava as DUAS pernas. Uma perna aqui faria a conta de investimento
   // receber o valor duas vezes.
-  assert.equal(
-    LIB.pernaDeEntradaDoPagamento({
+  assert.deepEqual(
+    LIB.pernasDoPagamentoDaParcela({
       caso: "auto",
       contaCredoraId: INVESTIMENTO,
       valor: 1000,
       descricao: "Moto elétrica",
       numero: 3,
       total: 24,
+      rateio: null,
+    }),
+    []
+  );
+
+  // E A ASSIMETRIA DA ISSUE, AFIRMADA: com o rateio do juro NA MAO, o Caso A
+  // continua sem perna nenhuma. Cobrar juro de mim mesmo nao gera receita -- as
+  // duas contas sao minhas e o dinheiro so anda da corrente para a de
+  // investimento. Sem esta assercao, "normalizar" os dois casos (dar ao Caso A a
+  // perna de `income` que o Caso B ganhou) passaria verde, e o Realizado de
+  // Receitas subiria todo mes por dinheiro que nunca entrou no patrimonio.
+  assert.deepEqual(
+    LIB.pernasDoPagamentoDaParcela({
+      caso: "auto",
+      contaCredoraId: INVESTIMENTO,
+      valor: 1200,
+      descricao: "Moto elétrica",
+      numero: 3,
+      total: 24,
+      rateio: { parteDoPrincipal: 1000, parteDosJuros: 200 },
+    }),
+    []
+  );
+});
+
+// ---------------------------------------------------------------------------
+// O RATEIO VEM DA SERIE INTEIRA, E A ULTIMA PARCELA ABSORVE O CENTAVO
+// ---------------------------------------------------------------------------
+
+test("o rateio sai da serie, e a ULTIMA parcela absorve o centavo", () => {
+  // R$ 1.000 a 20% em 3x: total R$ 1.200, parcela R$ 400 redonda -- mas o rateio
+  // do principal NAO e redondo: 400 x 1000 / 1200 = 333,33, e tres vezes isso da
+  // R$ 999,99. O centavo que falta e da ULTIMA.
+  const serie = [
+    { id: "p1", amount: 400 },
+    { id: "p2", amount: 400 },
+    { id: "p3", amount: 400 },
+  ];
+
+  const primeira = LIB.rateioDoPagamentoDaParcela({
+    parcelaId: "p1",
+    principal: 1000,
+    serie,
+  });
+  const ultima = LIB.rateioDoPagamentoDaParcela({
+    parcelaId: "p3",
+    principal: 1000,
+    serie,
+  });
+
+  assert.ok(primeira && ultima);
+  assert.equal(primeira.juroDaSerie, 200);
+  assert.equal(primeira.daParcela.parteDoPrincipal, 333.33);
+  assert.equal(primeira.daParcela.parteDosJuros, 66.67);
+
+  // A ABSORCAO: 1000 - 333,33 - 333,33 = 333,34.
+  assert.equal(ultima.daParcela.parteDoPrincipal, 333.34);
+  assert.equal(ultima.daParcela.parteDosJuros, 66.66);
+
+  // AS DUAS SOMAS FECHAM, e sao duas assercoes SEPARADAS de proposito: o total
+  // das parcelas fecharia com o principal e o juro trocados entre si.
+  const todas = serie.map(
+    (p) =>
+      LIB.rateioDoPagamentoDaParcela({
+        parcelaId: p.id,
+        principal: 1000,
+        serie,
+      }).daParcela
+  );
+  assert.equal(
+    todas.reduce((a, r) => a + r.parteDoPrincipal, 0).toFixed(2),
+    "1000.00"
+  );
+  assert.equal(
+    todas.reduce((a, r) => a + r.parteDosJuros, 0).toFixed(2),
+    "200.00"
+  );
+
+  // E A SOMA DAS PARTES FECHA EM CADA POSICAO, e nao so no total da serie. Esta
+  // e a assercao que substitui a re-conferencia que foi TIRADA da lib (ver "O
+  // QUE NAO ESTA AQUI" no cabecalho de `rateioDoPagamentoDaParcela`): um
+  // `rateio[0]` no lugar de `rateio[indice]` devolveria um objeto cujas partes
+  // somam R$ 400 tambem -- o que o pega e a posicao, afirmada acima, e nunca
+  // uma soma.
+  for (const [i, r] of todas.entries()) {
+    assert.equal(
+      (r.parteDoPrincipal + r.parteDosJuros).toFixed(2),
+      "400.00",
+      `as partes da parcela ${i + 1} tem de somar o \`amount\` dela`
+    );
+  }
+});
+
+test("a juro ZERO o rateio devolve `daParcela: null` -- e nao recusa", () => {
+  // O emprestimo a juro zero e o unico que o MyBank sabia fazer antes da HMO-444
+  // e continua valendo: ali a soma das parcelas E o principal, nao ha juro a
+  // ratear, e a parcela e UMA perna do valor cheio. Um `null` inteiro aqui faria
+  // a rota devolver 500 em toda parcela que hoje e paga em producao.
+  const rateio = LIB.rateioDoPagamentoDaParcela({
+    parcelaId: "p2",
+    principal: 24000,
+    serie: Array.from({ length: 24 }, (_, i) => ({
+      id: `p${i + 1}`,
+      amount: 1000,
+    })),
+  });
+
+  assert.ok(rateio);
+  assert.equal(rateio.juroDaSerie, 0);
+  assert.equal(rateio.daParcela, null);
+});
+
+test("o rateio RECUSA quando a parcela nao esta na serie lida", () => {
+  // Alcancavel: a RLS filtrou a leitura, ou a serie veio de outro `loan_id`.
+  // Ratear pela posicao errada moveria juro de uma parcela para outra -- e o
+  // rateio de OUTRA parcela e um objeto perfeitamente valido, entao assercao
+  // nenhuma a jusante o pegaria.
+  assert.equal(
+    LIB.rateioDoPagamentoDaParcela({
+      parcelaId: "parcela-de-outro-emprestimo",
+      principal: 1000,
+      serie: [
+        { id: "p1", amount: 400 },
+        { id: "p2", amount: 400 },
+        { id: "p3", amount: 400 },
+      ],
     }),
     null
+  );
+});
+
+test("o rateio le `amount` em STRING -- e e assim que o PostgREST manda numeric", () => {
+  // `numeric` chega como string no supabase-js. Um `Number(...)` esquecido faria
+  // `"400" + "400"` virar `"400400"` na soma, e o juro da serie explodiria.
+  const rateio = LIB.rateioDoPagamentoDaParcela({
+    parcelaId: "p2",
+    principal: "1000.00",
+    serie: [
+      { id: "p1", amount: "400.00" },
+      { id: "p2", amount: "400.00" },
+      { id: "p3", amount: "400.00" },
+    ],
+  });
+
+  assert.ok(rateio);
+  assert.equal(rateio.juroDaSerie, 200);
+  assert.equal(rateio.daParcela.parteDoPrincipal, 333.33);
+});
+
+test("a frase do recebimento diz onde achar o juro -- e so quando ha juro", () => {
+  const semJuro = LIB.mensagemDoRecebimentoDaParcela({
+    quitado: false,
+    juroDaParcela: 0,
+  });
+  const comJuro = LIB.mensagemDoRecebimentoDaParcela({
+    quitado: false,
+    juroDaParcela: 200,
+  });
+
+  // Sem juro a frase e a de antes desta issue: nada entrou em Receitas.
+  assert.match(semJuro, /não é receita/i);
+  assert.doesNotMatch(semJuro, /Receitas/);
+
+  // Com juro ela DIZ que parte entrou em Receitas, e em qual categoria. Sem isso
+  // quem confirmou ve o Realizado subir e conclui que lancou duas vezes.
+  assert.match(comJuro, /Receitas/);
+  assert.match(comJuro, /Investimentos/);
+  assert.match(comJuro, /juros/i);
+
+  assert.match(
+    LIB.mensagemDoRecebimentoDaParcela({ quitado: true, juroDaParcela: 200 }),
+    /quitado/i
   );
 });
 
@@ -722,6 +996,16 @@ function tabelas(extra = {}) {
         service_id: SERVICO,
         name: "Transferência entre contas",
         is_active: false,
+      },
+      // `Investimentos` -- a categoria da perna de JURO (HMO-449). Seed do
+      // baseline (001), `is_active: true` DE PROPOSITO: a diferenca para a
+      // reservada acima e justamente essa, e e ela que faz o ganho aparecer no
+      // relatorio por categoria em vez de ficar escondido num rotulo interno.
+      {
+        id: CATEGORIA_JUROS,
+        service_id: SERVICO,
+        name: "Investimentos",
+        is_active: true,
       },
     ],
     user_connections: [],
@@ -1548,6 +1832,295 @@ test("o CREDOR confirma: a parcela vira `paid` e nasce a perna de ENTRADA", asyn
   assert.equal(patches[0].patch.paid_transaction_id, "financial_transactions-1");
 
   assert.match(corpo.message, /não é receita/i);
+});
+
+// ---------------------------------------------------------------------------
+// A ROTA COM JURO: DUAS PERNAS, E SO O JURO E RECEITA (F5, HMO-449)
+// ---------------------------------------------------------------------------
+// A SERIE INTEIRA ENTRA NA FIXTURE, e nao so a parcela mexida: o rateio sai da
+// serie (`rateioDaSerie`, para a ultima parcela absorver o centavo), entao uma
+// fixture de uma linha mede outro ramo -- o de "a soma nao passa do principal",
+// que devolve perna unica. Com as 24 linhas o teste mede o caminho de verdade.
+
+/**
+ * As 24 parcelas da Lais. `valor` 1000 e o emprestimo a juro ZERO (24x1000 =
+ * principal 24.000); `valor` 1200 e o mesmo emprestimo a 20% (total 28.800).
+ */
+function serieDaLais(valor, statusDaTerceira = "reported") {
+  return Array.from({ length: 24 }, (_, i) => ({
+    ...PARCELA_DA_LAIS,
+    id: `p${i + 1}`,
+    installment_number: i + 1,
+    amount: valor,
+    status: i === 2 ? statusDaTerceira : "pending",
+  }));
+}
+
+/** As linhas que a rota mandou para `financial_transactions`. */
+function pernasGravadas(sessao) {
+  return sessao.escritas
+    .filter((e) => e.tabela === "financial_transactions" && e.verbo === "insert")
+    .flatMap((e) => e.linhas);
+}
+
+test("a serie a JURO ZERO continua com UMA perna `transfer` -- nada mudou", async () => {
+  const { status, corpo, sessao } = await mexerNaParcela(
+    EU,
+    { status: "paid", data_do_pagamento: "2027-01-12" },
+    { mybank_installments: serieDaLais(1000) }
+  );
+
+  assert.equal(status, 200);
+
+  const pernas = pernasGravadas(sessao);
+  assert.equal(pernas.length, 1, "a juro zero nao ha parte-juros a lancar");
+  assert.equal(pernas[0].transaction_type, "transfer");
+  assert.equal(pernas[0].amount, 1000);
+  assert.equal(pernas[0].category_id, CATEGORIA_TRANSFER);
+  assert.equal(corpo.juros_da_parcela, 0);
+  assert.doesNotMatch(corpo.message, /Receitas/);
+});
+
+test("a serie COM JURO grava DUAS pernas, e SO a de juro e `income`", async () => {
+  // R$ 24.000 emprestados (o `principal` do fixture), 24x de R$ 1.200 = R$
+  // 28.800 a receber. A parcela 3 e R$ 1.000 de principal e R$ 200 de ganho.
+  const { status, corpo, sessao } = await mexerNaParcela(
+    EU,
+    { status: "paid", data_do_pagamento: "2027-01-12" },
+    { mybank_installments: serieDaLais(1200) }
+  );
+
+  assert.equal(status, 200);
+
+  const pernas = pernasGravadas(sessao);
+  assert.equal(pernas.length, 2);
+
+  // UM INSERT SO. Dois inserts seguidos deixariam alcancavel o estado "o
+  // principal entrou e o juro nao" por falha de rede -- e o juro daquele mes
+  // nao existiria em lugar nenhum.
+  assert.equal(
+    sessao.escritas.filter(
+      (e) => e.tabela === "financial_transactions" && e.verbo === "insert"
+    ).length,
+    1
+  );
+
+  const principal = pernas.find((p) => p.transaction_type === "transfer");
+  const juros = pernas.find((p) => p.transaction_type === "income");
+  assert.ok(principal, "a parte-principal tem de ser gravada");
+  assert.ok(juros, "a parte-juros tem de ser gravada");
+
+  assert.equal(principal.amount, 1000);
+  assert.equal(juros.amount, 200);
+
+  // EXATAMENTE UMA linha e `income` -- o mutante que manda a perna cheia como
+  // receita grava UMA linha de 1200 e morre aqui e na soma abaixo.
+  assert.equal(
+    pernas.filter((p) => p.transaction_type === "income").length,
+    1
+  );
+
+  // A SOMA DAS PERNAS FECHA COM O `amount` DA PARCELA: nao sobra nem falta
+  // centavo. R$ 1.200 e o que a Lais pagou, e e o que entrou na conta.
+  assert.equal(
+    pernas.reduce((a, p) => a + p.amount, 0),
+    1200
+  );
+
+  // AS CATEGORIAS SAO DIFERENTES, E ISSO E METADE DA FEATURE: `income` com a
+  // categoria reservada da transferencia (`is_active = false`) poria o ganho na
+  // tela de Receitas e o esconderia do relatorio por categoria.
+  assert.equal(principal.category_id, CATEGORIA_TRANSFER);
+  assert.equal(juros.category_id, CATEGORIA_JUROS);
+  assert.notEqual(principal.category_id, juros.category_id);
+
+  // AS DUAS CAEM NA CONTA DE INVESTIMENTO, as duas POSITIVAS, as duas com o
+  // elo `mybank:p3` e a data do pagamento.
+  assert.ok(pernas.every((p) => p.account_id === INVESTIMENTO));
+  assert.ok(pernas.every((p) => p.amount > 0));
+  assert.ok(pernas.every((p) => p.notes === "mybank:p3"));
+  assert.ok(pernas.every((p) => p.transaction_date === "2027-01-12"));
+  assert.ok(pernas.every((p) => p.group_id === null));
+
+  // NENHUMA CHAVE FOI DESCARTADA pelo lote. O cliente monta as colunas do
+  // comando a partir da PRIMEIRA linha, e uma chave presente so na segunda nao
+  // da erro -- ela grava `null` em silencio. `natureza` chegando ao payload
+  // seria PGRST204 no banco de verdade, e aqui ela apareceria nas linhas.
+  const insert = sessao.escritas.find(
+    (e) => e.tabela === "financial_transactions" && e.verbo === "insert"
+  );
+  assert.deepEqual(insert.descartadas, []);
+  assert.ok(
+    pernas.every((p) => !("natureza" in p)),
+    "`natureza` e pergunta de dominio, nao coluna"
+  );
+
+  // A DESCRICAO DISTINGUE AS DUAS LINHAS do extrato.
+  assert.equal(principal.description, "Moto elétrica (3/24)");
+  assert.equal(juros.description, "Juros — Moto elétrica (3/24)");
+
+  // A PARCELA APONTA PARA A PERNA DO PRINCIPAL -- `paid_transaction_id`
+  // responde "onde este dinheiro entrou", e com duas linhas a resposta e a que
+  // representa a parcela.
+  const patch = sessao.escritas.find(
+    (e) => e.tabela === "mybank_installments" && e.verbo === "update"
+  ).patch;
+  assert.equal(patch.status, "paid");
+  assert.equal(
+    patch.paid_transaction_id,
+    pernas.find((p) => p.transaction_type === "transfer").id
+  );
+
+  // A RESPOSTA DIZ O JURO E ONDE ELE ESTA.
+  assert.equal(corpo.juros_da_parcela, 200);
+  assert.match(corpo.message, /Receitas/);
+  assert.match(corpo.message, /Investimentos/);
+});
+
+test("COM JURO: a ULTIMA parcela absorve o centavo da divisao", async () => {
+  // R$ 1.000 a 20% em 3x: total R$ 1.200, parcelas de R$ 400. O principal NAO
+  // divide redondo (400 x 1000 / 1200 = 333,33), e as tres parcelas por esse
+  // valor somariam R$ 999,99 de principal. A ULTIMA fecha com R$ 333,34.
+  const tresParcelas = (idMexido) =>
+    [1, 2, 3].map((n) => ({
+      ...PARCELA_DA_LAIS,
+      id: n === 3 ? "p3" : `q${n}`,
+      installment_number: n,
+      installment_total: 3,
+      amount: 400,
+      status: "reported",
+    }));
+
+  // `p3` e a TERCEIRA e ultima: o fixture de `mexerNaParcela` mexe em "p3".
+  const { status, sessao } = await mexerNaParcela(
+    EU,
+    { status: "paid" },
+    {
+      mybank_loans: [{ ...EMPRESTIMO_PARA_A_LAIS, principal: 1000 }],
+      mybank_installments: tresParcelas(),
+    }
+  );
+
+  assert.equal(status, 200);
+
+  const pernas = pernasGravadas(sessao);
+  const principal = pernas.find((p) => p.transaction_type === "transfer");
+  const juros = pernas.find((p) => p.transaction_type === "income");
+
+  // A ABSORCAO: 1000 - 333,33 - 333,33 = 333,34, e o juro da ultima e o resto
+  // da parcela (400 - 333,34 = 66,66, um centavo MENOS que as outras duas).
+  assert.equal(principal.amount, 333.34);
+  assert.equal(juros.amount, 66.66);
+  assert.equal(
+    pernas.reduce((a, p) => a + p.amount, 0).toFixed(2),
+    "400.00",
+    "a soma das pernas e o `amount` da parcela, com ou sem sobra"
+  );
+});
+
+test("COM JURO: a rota ORDENA a serie -- a absorcao nao segue a ordem da tabela", async () => {
+  // Sem `.order("installment_number")`, o PostgREST devolve na ordem FISICA da
+  // tabela: "a ultima parcela" passa a ser uma linha qualquer e o centavo da
+  // sobra vai para a parcela errada -- sem que soma nenhuma denuncie, porque o
+  // total continua fechando.
+  //
+  // A ASSERCAO E SOBRE O DINHEIRO E NAO SOBRE A CHAMADA: a fixture chega com a
+  // parcela 3 PRIMEIRO, e o que se exige e que ela receba o centavo da absorcao
+  // de qualquer forma. Uma assercao sobre o `.order()` ter sido chamado passaria
+  // verde com a coluna errada no argumento.
+  const foraDeOrdem = [
+    { ...PARCELA_DA_LAIS, id: "p3", installment_number: 3, installment_total: 3, amount: 400, status: "reported" },
+    { ...PARCELA_DA_LAIS, id: "q1", installment_number: 1, installment_total: 3, amount: 400 },
+    { ...PARCELA_DA_LAIS, id: "q2", installment_number: 2, installment_total: 3, amount: 400 },
+  ];
+
+  const { status, sessao } = await mexerNaParcela(
+    EU,
+    { status: "paid" },
+    {
+      mybank_loans: [{ ...EMPRESTIMO_PARA_A_LAIS, principal: 1000 }],
+      mybank_installments: foraDeOrdem,
+    }
+  );
+
+  assert.equal(status, 200);
+
+  // SEM a ordenacao, a parcela 3 seria a POSICAO 0 da leitura e levaria
+  // R$ 333,33 de principal -- o valor das parcelas do MEIO. Com ela, a 3 e a
+  // ultima e absorve: R$ 333,34.
+  const pernas = pernasGravadas(sessao);
+  assert.equal(
+    pernas.find((p) => p.transaction_type === "transfer").amount,
+    333.34
+  );
+  assert.equal(pernas.find((p) => p.transaction_type === "income").amount, 66.66);
+});
+
+test("COM JURO: a parcela de OUTRO emprestimo nao entra no rateio", async () => {
+  // O `.eq("loan_id")` da leitura da serie e o que separa os emprestimos. Sem
+  // ele, as parcelas de outra divida entrariam na soma, o "total" cresceria e a
+  // proporcao principal/juro de TODA parcela sairia errada -- com as pernas
+  // ainda somando o `amount`, que e o que torna o defeito invisivel.
+  const { status, sessao } = await mexerNaParcela(
+    EU,
+    { status: "paid" },
+    {
+      mybank_installments: [
+        ...serieDaLais(1200),
+        // 24 parcelas de uma divida que nao e desta: se entrarem na soma, o
+        // total vira 57.600 e a parte-principal da parcela 3 cai para R$ 500.
+        ...Array.from({ length: 24 }, (_, i) => ({
+          ...PARCELA_DA_LAIS,
+          id: `outra-${i + 1}`,
+          loan_id: "loan-de-outro",
+          installment_number: i + 1,
+          amount: 1200,
+        })),
+      ],
+    }
+  );
+
+  assert.equal(status, 200);
+
+  const pernas = pernasGravadas(sessao);
+  assert.equal(pernas.find((p) => p.transaction_type === "transfer").amount, 1000);
+  assert.equal(pernas.find((p) => p.transaction_type === "income").amount, 200);
+});
+
+test("sem `principal` no SELECT a rota RECUSA -- nao grava a perna cheia", async () => {
+  // ESTE E O CONTROLE DO SELECT, e ele tem alvo: `principal` entrou no
+  // `.select()` desta rota nesta issue, e tirar aquela coluna e a edicao de um
+  // caractere que ninguem nota num diff. Sem ela nao ha como saber quanto da
+  // parcela e ganho.
+  //
+  // A tentacao e "nao sei ratear, grava a perna cheia como antes". A perna cheia
+  // como `transfer` APAGA o juro do app -- o primeiro dos dois defeitos que esta
+  // filha existe para impedir, e o que nenhum saldo denuncia. Entao a rota
+  // recusa, alto, sem gravar nada: 500 e uma frase dizendo que nada foi lançado.
+  const { status, corpo, sessao } = await mexerNaParcela(
+    EU,
+    { status: "paid" },
+    {
+      // O emprestimo SEM `principal` -- e o que a rota receberia se a coluna
+      // saisse do select (ou se o schema nao a tivesse).
+      mybank_loans: [{ ...EMPRESTIMO_PARA_A_LAIS, principal: undefined }],
+      mybank_installments: serieDaLais(1200),
+    }
+  );
+
+  assert.equal(status, 500);
+  assert.match(corpo.error, /Nada foi lançado/i);
+  assert.equal(
+    pernasGravadas(sessao).length,
+    0,
+    "nenhuma linha de dinheiro pode nascer de um rateio que nao fechou"
+  );
+  // E A PARCELA CONTINUA EM ABERTO: baixar sem lancar seria a divida andando de
+  // graca (a familia HMO-149, "o numero fecha e o fato nao aconteceu").
+  assert.equal(
+    sessao.escritas.filter((e) => e.tabela === "mybank_installments").length,
+    0
+  );
 });
 
 test("CASO A: o credor NAO marca `paid` aqui -- a parcela e pagavel em Contas a Pagar", async () => {

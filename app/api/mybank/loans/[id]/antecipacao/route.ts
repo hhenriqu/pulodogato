@@ -120,8 +120,12 @@
 //
 // As pernas do Caso A sao DUAS (saida da corrente, entrada no investimento) e no
 // Caso B e UMA (o dinheiro vem de fora das minhas contas). E por isso que
-// `pernaDeEntradaDoPagamento` devolve `null` no Caso A: as duas pernas de lá nao
+// `pernasDoPagamentoDaParcela` devolve `[]` no Caso A: as duas pernas de lá nao
 // sao a mesma decisao, e misturar as duas contaria o dinheiro duas vezes.
+//
+// A perna do Caso B continua UMA depois da HMO-449 (que deu duas ao pagamento da
+// parcela quando ha juro) porque esta rota RECUSA emprestimo com juro -- o porque
+// esta no ponto da chamada, e nao aqui.
 // ---------------------------------------------------------------------------
 
 import { createClient } from "@/utils/supabase/server";
@@ -139,7 +143,7 @@ import {
   parcelasDaAntecipacao,
   patchDaBaixaDaParcela,
   patchDaQuitacaoDoEmprestimo,
-  pernaDeEntradaDoPagamento,
+  pernasDoPagamentoDaParcela,
   problemaDaAntecipacao,
   quantasEmAberto,
   ultimoVencimentoEmAberto,
@@ -494,28 +498,55 @@ export async function POST(
       // `income` o mesmo dinheiro contaria como renda uma vez por parcela
       // antecipada -- e a antecipacao lanca varias de uma vez, o que torna o
       // defeito maior aqui do que na parcela avulsa.
-      const perna = pernaDeEntradaDoPagamento({
+      //
+      // `rateio: null` -- UMA PERNA, E AQUI ISSO NAO E SIMPLIFICACAO (HMO-449)
+      // ---------------------------------------------------------------------
+      // A F5 deu DUAS pernas ao pagamento da parcela quando ha juro (`transfer`
+      // do principal, `income` do juro). Esta rota continua com uma, e o motivo
+      // esta a 300 linhas acima: `problemaDaAntecipacao` RECUSA emprestimo com
+      // juro (`juros_impedem_a_antecipacao`, contra
+      // `JURO_QUE_A_ANTECIPACAO_SABE_DESCONTAR = 0`), porque antecipar com juro
+      // exige descontar o juro que nao correu e essa conta nao existe neste
+      // repositorio. Toda parcela que chega aqui e de emprestimo a juro zero,
+      // onde `parteDosJuros` seria 0 e `pernasDoPagamentoDaParcela` devolve a
+      // perna unica de qualquer forma.
+      //
+      // Entao o `null` nao e "nao calculei o rateio": e a afirmacao de que NAO
+      // HA juro a ratear nesta rota. No dia em que a antecipacao souber
+      // descontar o juro, e AQUI que o rateio tem de entrar -- e por isso o
+      // campo e passado explicitamente em vez de omitido.
+      const pernas = pernasDoPagamentoDaParcela({
         caso,
         contaCredoraId: emprestimo.lender_account_id,
         valor: Number(parcela.amount),
         descricao: emprestimo.description,
         numero: parcela.installment_number,
         total: parcela.installment_total,
+        rateio: null,
       });
 
-      if (!perna) {
-        // Inalcancavel: o Caso A saiu por `continue` acima, e so ele devolve
-        // `null`. Chegar aqui quer dizer que a decisao de pernas e esta rota
-        // discordam sobre qual caso e qual, e a resposta certa e nao gravar mais
-        // nada -- uma perna no caso errado daria ao auto-emprestimo uma TERCEIRA
-        // perna e contaria o mesmo dinheiro duas vezes.
+      // UMA, E EXATAMENTE UMA. O `!== 1` e mais apertado que um `length === 0`
+      // de proposito: a recusa do juro acima e o que garante a perna unica, e se
+      // ela algum dia for afrouxada sem este laco aprender a gravar o par, o
+      // estado que aparece aqui e DUAS pernas -- e a de juro seria descartada em
+      // silencio pelo `pernas[0]`, que e o primeiro dos dois defeitos que a F5
+      // existe para impedir (o juro nunca aparece em Receitas).
+      if (pernas.length !== 1) {
+        // Inalcancavel hoje: o Caso A saiu por `continue` acima (e so ele
+        // devolve `[]`), e o juro esta recusado na validacao. Chegar aqui quer
+        // dizer que a decisao de pernas e esta rota discordam, e a resposta certa
+        // e nao gravar mais nada -- uma perna no caso errado daria ao
+        // auto-emprestimo uma TERCEIRA perna e contaria o mesmo dinheiro duas
+        // vezes.
         console.error(
-          "MyBank: pernaDeEntradaDoPagamento devolveu null na antecipacao",
-          { caso, loanId: emprestimo.id }
+          "MyBank: pernasDoPagamentoDaParcela nao devolveu UMA perna na antecipacao",
+          { caso, loanId: emprestimo.id, pernas: pernas.length }
         );
         parouPor = "Não foi possível montar o lançamento do recebimento.";
         break;
       }
+
+      const perna = pernas[0].linha;
 
       const { data: lancamento, error: erroDaPerna } = await supabase
         .from("financial_transactions")

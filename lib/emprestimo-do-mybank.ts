@@ -66,8 +66,10 @@ import {
   CONVENCAO_DO_JURO,
   mensagemDoProblemaDoJuro,
   problemaDoJuro,
+  rateioDaSerie,
   tresCamposDoEmprestimo,
   type ProblemaDoJuro,
+  type RateioDaParcela,
   type TresCamposDoEmprestimo,
 } from "@/lib/juros-do-emprestimo";
 import { pernasDaTransferencia, type PernaDeTransferencia } from "@/lib/transferencia";
@@ -1013,45 +1015,298 @@ export function previsoesDoEmprestimo(params: {
   }));
 }
 
+// ---------------------------------------------------------------------------
+// AS PERNAS DO PAGAMENTO DA PARCELA -- E SO O JURO E RECEITA (F5, HMO-449)
+// ---------------------------------------------------------------------------
+// Esta secao e a que decide se cobrar juros aparece como GANHO no app. Ela tem
+// duas respostas diferentes para os dois casos, e a assimetria e deliberada:
+//
+//   CASO B (a conexao me paga)  -> DUAS pernas quando ha juro:
+//                                  `transfer` da parte-principal
+//                                  `income`   da parte-juros
+//   CASO A (auto-emprestimo)    -> NENHUMA perna aqui, nem com juro.
+//
+// POR QUE O CASO A NAO GANHA PERNA DE JURO -- E O QUE ALGUEM VAI QUERER
+// "NORMALIZAR" DEPOIS
+// ---------------------------------------------------------------------------
+// Cobrar juro de mim mesmo NAO gera receita: as duas contas sao minhas, e o
+// dinheiro so anda da conta corrente para a de investimento. A parcela inteira
+// continua sendo UMA transferencia do valor cheio, gravada pela baixa da
+// previsao (`/api/scheduled-transactions/[id]/pay`, duas pernas que se anulam).
+// Gravar `income` da parte-juros ali inventaria renda do nada: o Realizado de
+// Receitas subiria todo mes por dinheiro que nunca entrou no meu patrimonio --
+// ele apenas trocou de conta DENTRO dele.
+//
+// Essa diferenca entre os dois casos e exatamente o tipo de coisa que o proximo
+// leitor normaliza achando que foi esquecimento ("o Caso A tambem tem juro, por
+// que ele nao tem a perna?"), e e por isso que o porque esta escrito aqui e nao
+// so na issue.
+//
+// OS DOIS DEFEITOS QUE ESTA SECAO EXISTE PARA IMPEDIR, E OS DOIS SAO PLAUSIVEIS
+// ----------------------------------------------------------------------------
+//   * UMA perna `transfer` do valor cheio -> cobrar juros NUNCA aparece em
+//     Receitas. O ganho simplesmente nao existe no app: `category_monthly_totals`
+//     e `monthly_cash_flow` filtram `type IN ('expense','income')`, e nenhuma
+//     linha `transfer` entra. O saldo da conta de investimento fica certo, o
+//     patrimonio fica certo, e o juro de um ano de emprestimo nao esta em
+//     relatorio nenhum.
+//   * UMA perna `income` do valor cheio -> o mesmo principal conta como salario
+//     24 vezes. R$ 24.000 que eram meus voltam somando R$ 28.800 de "renda".
+//
+// As duas somam o mesmo dinheiro na conta, e e por isso que nenhum saldo
+// denuncia nenhuma das duas (`duas-pernas-mantem-o-total-certo`).
+// ---------------------------------------------------------------------------
+
 /**
- * A perna de ENTRADA do pagamento de uma parcela -- a do Caso B, e so dela.
+ * A categoria da perna de JURO. Seed do baseline (001), NAO criada sob demanda.
  *
- * `null` no Caso A, E ISSO EVITA CONTAR O DINHEIRO DUAS VEZES
+ * `Investimentos` / "Dividendos, juros, ganhos" -- a linha que o reference data
+ * ja tem para o servico `personal_finance`, com `is_expense = FALSE` e
+ * `is_active = TRUE`. E a categoria certa por significado: juro recebido de um
+ * emprestimo e ganho de capital emprestado, a mesma familia de dividendo e
+ * rendimento.
+ *
+ * A DIFERENCA PARA `NOME_DA_CATEGORIA_DE_TRANSFERENCIA` E O `is_active`, E ELA
+ * IMPORTA: a categoria reservada da transferencia nasce desativada e sob demanda
+ * (023) justamente para nao aparecer nos seletores -- transferencia nao TEM
+ * categoria. Esta aqui e o contrario: ela e visivel de proposito, porque o juro
+ * recebido E uma receita que a pessoa quer ver classificada na tela de Receitas
+ * e no relatorio por categoria. Criar uma segunda categoria "Juros do MyBank"
+ * reservada esconderia o ganho do relatorio que existe para mostra-lo.
+ *
+ * Por ser seed do baseline ela esta em todo banco deste app, e a rota a LE em
+ * vez de criar: um `insert ... on conflict` aqui poderia fabricar uma segunda
+ * `Investimentos` com outro id no dia em que o seed mudasse de nome.
+ */
+export const NOME_DA_CATEGORIA_DO_JURO_RECEBIDO = "Investimentos";
+
+/** Qual das duas pernas do pagamento e esta -- e, com ela, qual categoria. */
+export type NaturezaDaPernaDoPagamento = "principal" | "juros";
+
+/**
+ * Uma das pernas que a confirmacao do recebimento grava.
+ *
+ * `linha` E `natureza` SAO CAMPOS SEPARADOS, E A SEPARACAO E A DEFESA
+ * ------------------------------------------------------------------
+ * `linha` tem EXATAMENTE as colunas de `financial_transactions` que esta perna
+ * decide, e nada mais -- e e ela que a rota espalha no insert. `natureza` e
+ * pergunta de dominio ("esta perna e principal ou juro?"), e a rota a usa para
+ * resolver o `category_id`.
+ *
+ * Misturadas num objeto so, o `...perna` da rota mandaria `natureza` para o
+ * PostgREST como se fosse coluna -- `PGRST204 Could not find the 'natureza'
+ * column in the schema cache`, que derruba o insert INTEIRO antes de qualquer
+ * RLS. Com a forma de dois campos esse erro nao tem como ser escrito.
+ */
+export interface PernaDoPagamentoDaParcela {
+  natureza: NaturezaDaPernaDoPagamento;
+  linha: PernaDeTransferencia | (Omit<PernaDeTransferencia, "transaction_type"> & {
+    transaction_type: "income";
+  });
+}
+
+/**
+ * A descricao da perna de JURO -- a mesma da parcela, com o rotulo na frente.
+ *
+ * As duas pernas caem na MESMA conta, no MESMO dia, e sao as duas positivas. Com
+ * a mesma descricao o extrato mostraria duas linhas indistinguiveis de
+ * R$ 1.000,00 e R$ 200,00 sem dizer qual e qual -- e a que aparece em Receitas e
+ * so uma delas. O rotulo e o que deixa a pessoa reconhecer o ganho na aba em que
+ * ele aparece (`sumido-da-tela-pode-ser-so-indistinguivel`).
+ *
+ * O texto mora aqui, e nao no JSX nem na rota, pelo mesmo motivo de
+ * `avisoDoCancelamento`: escrito no insert ele passaria por qualquer suite
+ * intacto.
+ */
+export const ROTULO_DO_JURO_DA_PARCELA = "Juros";
+
+export function descricaoDoJuroDaParcela(descricaoDaParcelaGravada: string): string {
+  return `${ROTULO_DO_JURO_DA_PARCELA} — ${descricaoDaParcelaGravada}`;
+}
+
+/** Centavos inteiros. A comparacao de dinheiro nao se faz em ponto flutuante. */
+function emCentavos(valor: number | string): number | null {
+  const numero = typeof valor === "string" ? Number.parseFloat(valor) : valor;
+  if (typeof numero !== "number" || !Number.isFinite(numero)) return null;
+  return Math.round(numero * 100);
+}
+
+/** O rateio desta parcela, com o juro da serie que o decidiu. */
+export interface RateioDoPagamento {
+  /**
+   * O juro da SERIE INTEIRA, em reais: `SUM(amount) - principal`.
+   *
+   * E a definicao que o `COMMENT ON COLUMN mybank_loans.principal` da 062
+   * escreve, e nao `principal x interest_rate`: a serie e montada sobre o total
+   * (F3), entao a soma das parcelas e a fonte e a taxa gravada e so para ler.
+   * As duas discordariam em centavos (`fontes-consistentes-que-discordam`), e
+   * aqui a diferenca decide se existe perna de `income`.
+   */
+  juroDaSerie: number;
+  /** O rateio DESTA parcela, ou `null` quando a serie nao tem juro nenhum. */
+  daParcela: RateioDaParcela | null;
+}
+
+/**
+ * O RATEIO DESTA PARCELA, a partir da SERIE INTEIRA -- `null` quando nao fecha.
+ *
+ * POR QUE A SERIE INTEIRA, E NAO `rateioDaParcela` SOBRE UMA LINHA
+ * ---------------------------------------------------------------
+ * `rateioDaParcela` (F2) e proporcional e NAO absorve o centavo da divisao --
+ * ela nao pode, porque a sobra e propriedade da serie e nao de uma parcela. A
+ * propria F2 escreve o aviso: **quem grava pernas chama `rateioDaSerie`**. 24
+ * chamadas da versao de uma parcela somam o principal com erro de ate 6
+ * centavos, e 6 centavos espalhados em 24 linhas e defeito que ninguem acha
+ * depois. Aqui a serie entra inteira, `rateioDaSerie` fecha as duas somas com a
+ * ULTIMA parcela absorvendo a sobra, e desta funcao sai a posicao desta parcela.
+ *
+ * `juroDaSerie <= 0` DEVOLVE `daParcela: null`, E NAO E FALHA
  * ----------------------------------------------------------
+ * Emprestimo a juro zero e o unico que o MyBank sabia fazer antes da HMO-444 e
+ * continua valendo: ali `SUM(amount) == principal`, nao ha juro a ratear, e a
+ * parcela e UMA perna `transfer` do valor cheio -- exatamente o que esta rota
+ * gravava antes desta issue. O ramo negativo (`< 0`, a soma MENOR que o
+ * principal) cai no mesmo lugar de proposito: e estado torto, nao ha juro nele,
+ * e a resposta conservadora e a perna unica que ja funcionava.
+ *
+ * `null` E RECUSA, E SO QUANDO HA JURO DE VERDADE
+ * ----------------------------------------------
+ * Com juro na serie, nao saber ratear nao pode virar "grava uma perna so": isso
+ * e o primeiro dos dois defeitos do cabecalho desta secao -- o juro desaparece
+ * do app sem erro em lugar nenhum. Entao `null` sai so neste caso, e quem o
+ * recebe nao grava nada.
+ *
+ * OS TRES ESTADOS QUE LEVAM A `null`, E CADA UM E ALCANCAVEL:
+ *
+ *   * `principal` ilegivel -- o estado em que a coluna NAO vem no `select` da
+ *     rota (ou nao existe no schema). Sem o principal nao ha como saber quanto
+ *     da parcela e ganho, e a perna cheia apagaria o juro;
+ *   * a parcela nao esta na serie lida -- a RLS filtrou, ou a leitura veio de
+ *     outro `loan_id`. Ratear pela posicao errada moveria juro de uma parcela
+ *     para outra;
+ *   * `rateioDaSerie` recusou (soma que nao fecha, cauda de centavos menor que
+ *     a sobra a absorver -- os dois casos que ela documenta).
+ *
+ * O QUE **NAO** ESTA AQUI: UMA RE-CONFERENCIA DE QUE AS PARTES SOMAM O `amount`
+ * ---------------------------------------------------------------------------
+ * Ela foi escrita e TIRADA. A invariante e verdadeira por construcao de
+ * `rateioDaSerie` (cada `parteDosJuros` e `amount - parteDoPrincipal`), entao
+ * nenhuma entrada alcanca o `return null` dela -- o mutante que a apaga
+ * SOBREVIVEU a suite inteira, que e a prova de que ela nao e observavel. Defesa
+ * que nenhuma assercao alcanca e codigo que o proximo leitor nao tem como saber
+ * se ainda funciona.
+ *
+ * O que ela protegia de verdade era uma EDICAO futura (`rateio[0]` no lugar de
+ * `rateio[indice]`), e esse e trabalho de teste e nao de `if`: a suite afirma a
+ * soma em CADA posicao da serie, e o mutante `o rateio sai sempre da PRIMEIRA
+ * parcela` morre nela.
+ */
+export function rateioDoPagamentoDaParcela(params: {
+  parcelaId: string;
+  /** `mybank_loans.principal` -- o que SAIU da conta de investimento. */
+  principal: number | string;
+  /** A serie inteira, NA ORDEM de `installment_number`. */
+  serie: { id: string; amount: number | string }[];
+}): RateioDoPagamento | null {
+  const principalEmCentavos = emCentavos(params.principal);
+  if (principalEmCentavos === null) return null;
+
+  const valores: number[] = [];
+  for (const parcela of params.serie) {
+    const c = emCentavos(parcela.amount);
+    if (c === null) return null;
+    valores.push(c);
+  }
+
+  const somaEmCentavos = valores.reduce((a, b) => a + b, 0);
+  const juroEmCentavos = somaEmCentavos - principalEmCentavos;
+
+  if (juroEmCentavos <= 0) {
+    return { juroDaSerie: juroEmCentavos / 100, daParcela: null };
+  }
+
+  const indice = params.serie.findIndex((p) => p.id === params.parcelaId);
+  if (indice < 0) return null;
+
+  const rateio = rateioDaSerie({
+    parcelas: valores.map((c) => c / 100),
+    principal: principalEmCentavos / 100,
+    total: somaEmCentavos / 100,
+  });
+  if (!rateio) return null;
+
+  // `rateio[indice]` E NAO `rateio[0]`: a posicao e o que decide quem absorve o
+  // centavo da divisao. Ver "O QUE NAO ESTA AQUI", no cabecalho -- quem tranca
+  // esta linha e a suite, em cada posicao da serie, e nao um `if` aqui embaixo.
+  const daParcela = rateio[indice];
+  if (!daParcela) return null;
+
+  return { juroDaSerie: juroEmCentavos / 100, daParcela };
+}
+
+/**
+ * AS PERNAS do pagamento de uma parcela -- `[]` no Caso A, e isso evita contar
+ * o dinheiro duas vezes.
+ *
  * No auto-emprestimo a parcela JA e uma transferencia prevista, e quem a paga e
  * `/api/scheduled-transactions/[id]/pay` -- que grava as DUAS pernas de
  * `pernasDaTransferencia` pelo caminho que ja existe. Se confirmar a parcela
- * tambem gravasse uma perna aqui, a conta de investimento receberia o valor
- * duas vezes: a baixa da previsao e a confirmacao do MyBank. E a mesma familia
- * do `pulodogato-fatura-conta-duas-vezes`.
+ * tambem gravasse perna aqui, a conta de investimento receberia o valor duas
+ * vezes: a baixa da previsao e a confirmacao do MyBank. E a mesma familia do
+ * `pulodogato-fatura-conta-duas-vezes`. Ver tambem, no cabecalho desta secao, o
+ * porque de o Caso A nao ter perna de juro NEM com juro.
  *
- * POR QUE `transfer` E NAO `income`, NO CASO B
- * -------------------------------------------
+ * POR QUE A PARTE-PRINCIPAL E `transfer` E NAO `income`
+ * ----------------------------------------------------
  * Principal voltando NAO e receita. Eu emprestei R$ 24.000 que eram meus; a
  * Lais devolvendo R$ 1.000 move dinheiro de volta para dentro do meu
- * patrimonio, nao o aumenta. Gravado como `income`, o mesmo dinheiro contaria
- * como renda 24 vezes -- e o Realizado de Receitas, o relatorio e o
- * `monthly_cash_flow` todos mostrariam um salario que nao existe. Quando
- * houver juro (fase 2), SO o juro e receita.
+ * patrimonio, nao o aumenta. Gravada como `income`, essa parte contaria como
+ * renda 24 vezes -- e o Realizado de Receitas, o relatorio e o
+ * `monthly_cash_flow` todos mostrariam um salario que nao existe.
  *
- * UMA PERNA SO, E ISSO E CORRETO
- * -----------------------------
- * `pernasDaTransferencia` devolve o par, e aqui se usa `entrada`. Nao ha perna
- * de saida porque o dinheiro vem de FORA das minhas contas -- a conta da Lais
- * nao existe neste banco. Uma transferencia de uma perna nao desequilibra nada:
- * `category_monthly_totals` filtra `type IN ('expense','income')`, entao a
- * entrada nao entra como receita de ninguem, e o saldo da conta de investimento
- * sobe pelo valor que entrou nela de verdade.
+ * E POR QUE A PARTE-JUROS E `income`: ela e dinheiro que NAO era meu. Ela e a
+ * unica das duas que aumenta o patrimonio, e e a resposta da pergunta "quanto eu
+ * ganhei emprestando". Sem ela nao ha linha nenhuma desse ganho no app.
+ *
+ * A SOMA DAS PERNAS FECHA COM O `amount` DA PARCELA, SEMPRE
+ * --------------------------------------------------------
+ * E a invariante desta funcao, e ela vale nos tres caminhos: sem juro a perna
+ * unica leva `Math.abs(valor)`; com juro as duas partes somam o `amount` por
+ * construcao de `rateioDaSerie` (conferido de novo por
+ * `rateioDoPagamentoDaParcela`); e a parte de valor ZERO e OMITIDA em vez de
+ * virar linha -- somar zero nao muda a soma, e uma linha de R$ 0,00 em
+ * `financial_transactions` e ruido no extrato que nenhuma tela sabe explicar.
+ *
+ * A parte-principal zero e alcancavel: `mybank_installments_amount_check` aceita
+ * `amount > 0`, ou seja um centavo, e um centavo de uma parcela de emprestimo
+ * grande rateia `round(1 x principal / total) = 0`. E ai a parcela e juro puro,
+ * com uma perna so -- que e o certo.
+ *
+ * UMA PERNA DE ENTRADA SEM SAIDA NAO DESEQUILIBRA NADA
+ * ---------------------------------------------------
+ * Nao ha perna de saida porque o dinheiro vem de FORA das minhas contas -- a
+ * conta da Lais nao existe neste banco. `pernasDaTransferencia` devolve o par e
+ * aqui se usa so a `entrada`; o saldo da conta de investimento sobe pelo que
+ * entrou nela de verdade.
  */
-export function pernaDeEntradaDoPagamento(params: {
+export function pernasDoPagamentoDaParcela(params: {
   caso: CasoDoEmprestimo;
   contaCredoraId: string;
   valor: number;
   descricao: string;
   numero: number;
+  /** Quantas parcelas tem a serie -- o `m` de `n de m`, NAO o total a receber. */
   total: number;
-}): PernaDeTransferencia | null {
-  if (params.caso !== "conexao") return null;
+  /** O rateio desta parcela. `null` quando a serie nao tem juro. */
+  rateio: RateioDaParcela | null;
+}): PernaDoPagamentoDaParcela[] {
+  if (params.caso !== "conexao") return [];
+
+  const descricao = descricaoDaParcela(
+    params.descricao,
+    params.numero,
+    params.total
+  );
 
   const { entrada } = pernasDaTransferencia({
     valor: params.valor,
@@ -1060,10 +1315,71 @@ export function pernaDeEntradaDoPagamento(params: {
     // que um dia passe a ser lido viraria 22P02 em vez de erro de logica.
     origemId: params.contaCredoraId,
     destinoId: params.contaCredoraId,
-    descricao: descricaoDaParcela(params.descricao, params.numero, params.total),
+    descricao,
   });
 
-  return entrada;
+  const juros = params.rateio ? Math.abs(params.rateio.parteDosJuros) : 0;
+
+  // SEM JURO, A PERNA UNICA DO VALOR CHEIO -- o que esta rota gravava antes da
+  // HMO-449, byte a byte. O emprestimo a juro zero nao muda de forma.
+  if (!params.rateio || juros === 0) {
+    return [{ natureza: "principal", linha: entrada }];
+  }
+
+  const principal = Math.abs(params.rateio.parteDoPrincipal);
+  const pernas: PernaDoPagamentoDaParcela[] = [];
+
+  if (principal > 0) {
+    pernas.push({
+      natureza: "principal",
+      linha: { ...entrada, amount: principal },
+    });
+  }
+
+  pernas.push({
+    natureza: "juros",
+    linha: {
+      ...entrada,
+      amount: juros,
+      // AS DUAS COISAS QUE FAZEM O JURO SER GANHO NO APP, e as duas tem de
+      // andar juntas: `income` e o que o põe no Realizado de Receitas, e a
+      // categoria `Investimentos` e o que o classifica no relatorio. `income`
+      // com a categoria reservada da transferencia (que e `is_active = false`)
+      // deixaria o ganho na tela e invisivel no relatorio por categoria.
+      transaction_type: "income",
+      description: descricaoDoJuroDaParcela(descricao),
+    },
+  });
+
+  return pernas;
+}
+
+/**
+ * A frase da resposta da confirmacao -- o que a tela mostra depois do clique.
+ *
+ * ELA DIZ O QUE ACONTECEU COM CADA PARTE, e e por isso que ela e uma funcao e
+ * nao duas constantes: com juro a mesma parcela produz DOIS fatos de dinheiro
+ * (entrou na conta de investimento; parte disso entrou em Receitas), e uma
+ * frase que falasse so do primeiro deixaria quem acabou de confirmar sem saber
+ * onde achar o ganho. A frase sem juro e a de antes desta issue, intacta.
+ *
+ * O texto mora aqui e nao na rota pela razao de sempre neste arquivo: escrito no
+ * `NextResponse.json` ele passaria por qualquer suite intacto.
+ */
+export function mensagemDoRecebimentoDaParcela(params: {
+  quitado: boolean;
+  /** O juro DESTA parcela, em reais. 0 quando nao ha. */
+  juroDaParcela: number;
+}): string {
+  const inicio = params.quitado
+    ? "Última parcela recebida: o empréstimo está quitado e sai da lista A receber."
+    : "Parcela baixada.";
+
+  if (params.juroDaParcela > 0) {
+    return `${inicio} O valor entrou na conta de investimento; o principal como transferência (voltar não é receita) e só a parte de juros em Receitas, na categoria ${NOME_DA_CATEGORIA_DO_JURO_RECEBIDO}.`;
+  }
+
+  return `${inicio} O valor entrou na conta de investimento como transferência — principal voltando não é receita.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1098,15 +1414,30 @@ export const SUBTITULO_A_CONFIRMAR_NO_MYBANK =
   "Quem deve registrou que pagou. Enquanto você não confirmar, o dinheiro não entrou na sua conta de investimento.";
 
 /**
- * POR QUE A PARCELA CONFIRMADA NAO ESTA NO «Realizado» DE RECEITAS.
+ * POR QUE A PARCELA CONFIRMADA (QUASE) NAO ESTA NO «Realizado» DE RECEITAS.
  *
- * A perna e `transfer`, nao `income` -- ver `pernaDeEntradaDoPagamento`. Quem
- * acabou de confirmar precisa ler, na mesma tela, por que o numero grande nao
- * subiu; senao conclui que o app nao registrou e lanca a receita a mao, que e a
- * conta duas vezes de novo.
+ * A parte-principal e `transfer` e nao `income` -- ver `pernasDoPagamentoDaParcela`.
+ * Quem acabou de confirmar precisa ler, na mesma tela, por que o numero grande
+ * nao subiu; senao conclui que o app nao registrou e lanca a receita a mao, que
+ * e a conta duas vezes de novo.
+ *
+ * A SEGUNDA ORACAO ENTROU NA HMO-449, E ELA E CONSERTO E NAO ACRESCIMO
+ * -------------------------------------------------------------------
+ * Ate a F5 esta frase afirmava, sem ressalva, que a parcela fica "fora do
+ * Realizado". Com juro isso passou a ser FALSO na metade que importa: a
+ * parte-juros e gravada `income` e entra no Realizado de Receitas de proposito.
+ * Uma frase que continuasse negando isso mandaria a pessoa que VIU o numero
+ * subir procurar um lancamento duplicado que nao existe -- e e texto sobre
+ * dinheiro, que nenhuma suite reprova por estar errado.
+ *
+ * O bloco e de TODAS as parcelas a confirmar (podem vir de emprestimos
+ * diferentes, com e sem juro), entao a frase diz os dois casos em vez de
+ * escolher um: a alternativa seria levar "este emprestimo tem juro?" por toda a
+ * leitura da tela so para trocar uma legenda, e os totais do cabecalho (F6) sao
+ * quem vai precisar desse dado de verdade.
  */
 export const PARCELA_FORA_DO_REALIZADO =
-  "Já está na sua conta de investimento e fora do Realizado: o principal voltando move dinheiro de lugar e não é receita nova.";
+  "Já está na sua conta de investimento: o principal voltando move dinheiro de lugar e fica fora do Realizado — não é receita nova. Quando há juros, só a parte de juros entra em Receitas.";
 
 /** O selo que a parcela do auto-emprestimo leva em Despesas e em Contas a Pagar. */
 export const SELO_DO_MYBANK = "MyBank";

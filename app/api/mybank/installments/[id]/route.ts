@@ -4,8 +4,31 @@
 // MyBank, F2 da HMO-368 (issue HMO-370). Duas transicoes, uma para cada lado:
 //
 //   DEVEDOR:  `pending -> reported`  ("paguei, confere")
-//   CREDOR:   `reported|pending -> paid`  ("recebi") -- e e ele que grava a
-//             perna de entrada, no Caso B.
+//   CREDOR:   `reported|pending -> paid`  ("recebi") -- e e ele que grava as
+//             pernas de entrada, no Caso B.
+//
+// SO O JURO E RECEITA, E SAO DUAS PERNAS (F5 da HMO-444, issue HMO-449)
+// ---------------------------------------------------------------------
+// Com juro a parcela confirmada grava DUAS linhas na conta de investimento, num
+// insert so:
+//
+//   `transfer` da parte-principal  -- principal voltando move dinheiro de
+//                                     lugar, nao e receita nova
+//   `income`   da parte-juros      -- o ganho, na categoria `Investimentos`
+//
+// O rateio e proporcional e sai da SERIE INTEIRA (`rateioDoPagamentoDaParcela`
+// -> `rateioDaSerie`, F2), com a ultima parcela absorvendo o centavo da
+// divisao. A juro zero nada muda: uma perna `transfer` do valor cheio, como
+// antes desta issue.
+//
+// Os dois defeitos que isso impede -- "cobrar juros nunca aparece em Receitas" e
+// "o mesmo principal conta como salario 24 vezes" -- estao por extenso no
+// cabecalho da secao das pernas em `lib/emprestimo-do-mybank.ts`. Os dois somam
+// o mesmo dinheiro na conta, entao saldo nenhum denuncia nenhum dos dois.
+//
+// ESTA ROTA NAO EXIGE MIGRATION NOVA: ela le `mybank_loans.principal` (053) e
+// grava em `financial_transactions` as colunas que ja existem. A 062 (que soltou
+// a trava de juro zero) e pre-requisito da F3, nao desta.
 //
 // QUEM VE O DINHEIRO CHEGAR E QUEM CONFIRMA (a forma da HMO-366)
 // --------------------------------------------------------------
@@ -58,8 +81,12 @@ import {
   casoDoEmprestimo,
   chaveDaParcelaDoMyBank,
   emprestimoFicouQuitado,
+  mensagemDoRecebimentoDaParcela,
+  NOME_DA_CATEGORIA_DO_JURO_RECEBIDO,
   patchDaQuitacaoDoEmprestimo,
-  pernaDeEntradaDoPagamento,
+  pernasDoPagamentoDaParcela,
+  rateioDoPagamentoDaParcela,
+  type NaturezaDaPernaDoPagamento,
 } from "@/lib/emprestimo-do-mybank";
 import { hojeISO } from "@/lib/lancamento";
 import { NOME_DA_CATEGORIA_DE_TRANSFERENCIA } from "@/lib/transferencia";
@@ -120,9 +147,17 @@ export async function PATCH(
     // `mybank_loans!inner(...)` seria mais curto. Embed que a RLS nao deixa
     // resolver nao devolve `null` neste repositorio -- ele DESCARTA A LINHA --,
     // e o sintoma aqui seria "parcela nao encontrada" numa parcela que existe.
+    // `principal` ENTRA NO SELECT NA HMO-449, e e ele que separa o principal do
+    // juro: `SUM(mybank_installments.amount) - principal` E O JURO do
+    // emprestimo (a definicao que o `COMMENT ON COLUMN` da 062 escreve). Sem
+    // esta coluna nao ha como saber quanto da parcela e ganho, e a rota so
+    // saberia gravar a perna cheia -- que e o defeito de "cobrar juros nunca
+    // aparece em Receitas". A coluna e da 053 e esta em producao desde entao.
     const { data: emprestimo } = await supabase
       .from("mybank_loans")
-      .select("id, lender_user_id, lender_account_id, borrower_user_id, description, status")
+      .select(
+        "id, lender_user_id, lender_account_id, borrower_user_id, description, status, principal"
+      )
       .eq("id", parcela.loan_id)
       .maybeSingle();
 
@@ -251,25 +286,92 @@ export async function PATCH(
         : hojeISO();
 
     // -----------------------------------------------------------------------
-    // A perna de ENTRADA -- e so ela
+    // A SERIE INTEIRA, ANTES DE QUALQUER ESCRITA -- e dela que sai o rateio
     // -----------------------------------------------------------------------
-    // `transfer` e nao `income`: principal voltando nao e receita. Ver
-    // `pernaDeEntradaDoPagamento`, onde esta o porque por extenso.
-    const perna = pernaDeEntradaDoPagamento({
+    // ESTA LEITURA NAO E A DA QUITACAO, e as duas nao podem virar uma. Esta
+    // acontece ANTES de escrever (ela decide o que escrever) e precisa do
+    // `amount` de cada parcela na ORDEM da serie; a da quitacao acontece DEPOIS
+    // da baixa (ela le o estado novo) e so precisa do `status`. Juntadas numa, o
+    // rateio passaria a sair de uma leitura pre-baixa usada para decidir
+    // `settled` -- e a parcela que acabou de ser paga apareceria em aberto.
+    //
+    // A ORDEM E `installment_number` PORQUE A ULTIMA PARCELA ABSORVE O CENTAVO
+    // da divisao (`rateioDaSerie`, F2). Sem `order`, o PostgREST devolve na
+    // ordem fisica da tabela, "a ultima" passa a ser uma linha qualquer, e o
+    // centavo da sobra vai para a parcela errada -- um erro que nenhuma soma
+    // denuncia, porque o TOTAL continua fechando.
+    const { data: serie, error: erroDaSerie } = await supabase
+      .from("mybank_installments")
+      .select("id, installment_number, amount")
+      .eq("loan_id", emprestimo.id)
+      .order("installment_number", { ascending: true });
+
+    if (erroDaSerie || !serie || serie.length === 0) {
+      console.error(
+        "MyBank: nao foi possivel ler a serie para ratear a parcela",
+        { loanId: emprestimo.id, erro: erroDaSerie }
+      );
+      return NextResponse.json(
+        {
+          error:
+            "Não foi possível conferir as parcelas deste empréstimo. Nada foi lançado.",
+        },
+        { status: 500 }
+      );
+    }
+
+    const rateio = rateioDoPagamentoDaParcela({
+      parcelaId: parcela.id,
+      principal: emprestimo.principal,
+      serie,
+    });
+
+    if (!rateio) {
+      // `null` NAO E "nao ha juro": a juro zero a funcao devolve
+      // `daParcela: null` DENTRO de um objeto, e a rota segue com a perna unica.
+      // Aqui chegam os tres estados em que ela nao consegue responder -- o
+      // `principal` ilegivel (a coluna fora do `select`), a parcela ausente da
+      // serie lida, e o rateio que a F2 recusou.
+      //
+      // A resposta certa e NAO gravar. A tentacao e cair na perna cheia "como
+      // antes": como `transfer` ela APAGA o juro do app, e como `income` ela
+      // conta o principal como salario -- os dois defeitos que esta filha existe
+      // para impedir, e os dois invisiveis depois, porque o saldo da conta fica
+      // exato nas duas.
+      console.error("MyBank: o rateio da parcela com juro nao fechou", {
+        loanId: emprestimo.id,
+        parcelaId: parcela.id,
+      });
+      return NextResponse.json(
+        {
+          error:
+            "Não foi possível separar o principal dos juros desta parcela. Nada foi lançado.",
+        },
+        { status: 500 }
+      );
+    }
+
+    // -----------------------------------------------------------------------
+    // AS PERNAS -- uma sem juro, DUAS com juro (`transfer` + `income`)
+    // -----------------------------------------------------------------------
+    // So o juro e receita. O porque das duas, e o porque de o Caso A nao ter
+    // nenhuma, estao por extenso em `pernasDoPagamentoDaParcela`.
+    const pernas = pernasDoPagamentoDaParcela({
       caso,
       contaCredoraId: emprestimo.lender_account_id,
       valor: Number(parcela.amount),
       descricao: emprestimo.description,
       numero: parcela.installment_number,
       total: parcela.installment_total,
+      rateio: rateio.daParcela,
     });
 
-    if (!perna) {
+    if (pernas.length === 0) {
       // Inalcancavel hoje (`caso === "auto"` ja saiu acima), e por isso e 500 e
       // nao uma frase de produto: chegar aqui quer dizer que a decisao de pernas
       // e este ramo discordam, e a resposta certa e nao gravar nada.
       console.error(
-        "MyBank: pernaDeEntradaDoPagamento devolveu null fora do auto-emprestimo",
+        "MyBank: pernasDoPagamentoDaParcela devolveu vazio fora do auto-emprestimo",
         { caso }
       );
       return NextResponse.json(
@@ -291,51 +393,133 @@ export async function PATCH(
       );
     }
 
-    const { data: categoria } = await supabase
-      .from("transaction_categories")
-      .select("id")
-      .eq("service_id", servico.id)
-      .eq("name", NOME_DA_CATEGORIA_DE_TRANSFERENCIA)
-      .maybeSingle();
+    // -----------------------------------------------------------------------
+    // UMA CATEGORIA POR NATUREZA DE PERNA, e as duas sao LIDAS e nunca criadas
+    // -----------------------------------------------------------------------
+    //   principal -> `Transferência entre contas` (023, `is_active = false`):
+    //                transferencia nao TEM categoria, e a reservada e o que
+    //                satisfaz o NOT NULL sem aparecer em seletor nenhum.
+    //   juros     -> `Investimentos` (seed do baseline, `is_active = true`):
+    //                juro recebido E receita, e a categoria e VISIVEL de
+    //                proposito -- e por ela que o ganho aparece no relatorio por
+    //                categoria.
+    //
+    // A categoria do juro e buscada SO QUANDO HA PERNA DE JURO. Buscar as duas
+    // sempre faria o emprestimo a juro zero -- o unico que existe em producao
+    // hoje -- passar a depender de uma linha de seed que ele nao usa: um banco
+    // sem a `Investimentos` deixaria de receber parcela por uma categoria que
+    // nao entra em lancamento nenhum dele.
+    const nomeDaCategoria: Record<NaturezaDaPernaDoPagamento, string> = {
+      principal: NOME_DA_CATEGORIA_DE_TRANSFERENCIA,
+      juros: NOME_DA_CATEGORIA_DO_JURO_RECEBIDO,
+    };
 
-    if (!categoria?.id) {
-      console.error(
-        `A categoria "${NOME_DA_CATEGORIA_DE_TRANSFERENCIA}" nao esta legivel no banco. ` +
-          "Aplique database/migrations/023_categoria_de_transferencia.sql."
-      );
-      return NextResponse.json(
-        {
-          error:
-            "A categoria reservada de transferência não está no banco. Nada foi lançado.",
-        },
-        { status: 500 }
-      );
+    const categoriaPorNatureza: Partial<
+      Record<NaturezaDaPernaDoPagamento, string>
+    > = {};
+
+    // SEM `Set`: o `target` deste tsconfig nao itera `Set` sem
+    // `downlevelIteration` (`typedroutes-so-aparece-no-next-build` e vizinho --
+    // o `tsc --noEmit` do repo e quem pega isto, e so ele). O `indexOf` sobre
+    // duas naturezas e de graca.
+    const naturezas = pernas
+      .map((p) => p.natureza)
+      .filter((n, i, todas) => todas.indexOf(n) === i);
+
+    for (const natureza of naturezas) {
+      const nome = nomeDaCategoria[natureza];
+      const { data: categoria } = await supabase
+        .from("transaction_categories")
+        .select("id")
+        .eq("service_id", servico.id)
+        .eq("name", nome)
+        .maybeSingle();
+
+      if (!categoria?.id) {
+        console.error(
+          `A categoria "${nome}" nao esta legivel no banco. ` +
+            (natureza === "principal"
+              ? "Aplique database/migrations/023_categoria_de_transferencia.sql."
+              : "Ela e seed do baseline (001) -- confira database/seed/reference_data.sql.")
+        );
+        return NextResponse.json(
+          {
+            error: `A categoria "${nome}" não está no banco. Nada foi lançado.`,
+          },
+          { status: 500 }
+        );
+      }
+
+      categoriaPorNatureza[natureza] = categoria.id;
     }
 
-    const { data: lancamento, error: erroDaPerna } = await supabase
-      .from("financial_transactions")
-      .insert({
-        user_id: user.id,
-        service_id: servico.id,
-        category_id: categoria.id,
-        group_id: null,
-        is_shared: false,
-        transaction_date: dataDoPagamento,
-        // A chave canonica do elo, a mesma convencao do `acerto:<id>` da
-        // HMO-366: sem ela nao ha como achar a perna a partir da parcela depois.
-        notes: chaveDaParcelaDoMyBank(parcela.id),
-        ...perna,
-      })
-      .select("id")
-      .single();
+    // -----------------------------------------------------------------------
+    // UM INSERT SO, COM AS DUAS PERNAS -- e o "um" e a parte que importa
+    // -----------------------------------------------------------------------
+    // Dois inserts seguidos deixariam o estado "o principal entrou e o juro
+    // nao" alcancavel por uma falha de rede: a parcela ficaria em aberto com
+    // parte do dinheiro no extrato, e o juro daquele mes nao existiria em lugar
+    // nenhum. Num insert so o PostgREST executa um comando: ou as duas linhas
+    // entram, ou nenhuma entra.
+    //
+    // `...perna.linha` E NAO `...perna`: `natureza` e pergunta de dominio e nao
+    // coluna. Espalhado inteiro, o PostgREST recusaria o lote com PGRST204 --
+    // ver `PernaDoPagamentoDaParcela`.
+    //
+    // AS DUAS LINHAS TEM AS MESMAS CHAVES, e isso nao e coincidencia: o cliente
+    // monta as colunas do lote a partir da PRIMEIRA linha, e uma chave presente
+    // so na segunda e DESCARTADA em silencio. `perna.linha` tem sempre os
+    // mesmos quatro campos, e `category_id` vem do mapa para as duas.
+    const comum = {
+      user_id: user.id,
+      service_id: servico.id,
+      group_id: null,
+      is_shared: false,
+      transaction_date: dataDoPagamento,
+      // A chave canonica do elo, a mesma convencao do `acerto:<id>` da
+      // HMO-366: sem ela nao ha como achar a perna a partir da parcela depois.
+      // AS DUAS pernas a levam, como o par do Caso A ja faz
+      // (`chave-mybank-esta-nas-duas-pernas-no-caso-a`): o elo responde "de que
+      // parcela e esta linha", e as duas sao da mesma parcela.
+      notes: chaveDaParcelaDoMyBank(parcela.id),
+    };
 
-    if (erroDaPerna || !lancamento) {
+    const { data: lancamentos, error: erroDaPerna } = await supabase
+      .from("financial_transactions")
+      .insert(
+        pernas.map((perna) => ({
+          ...comum,
+          category_id: categoriaPorNatureza[perna.natureza] as string,
+          ...perna.linha,
+        }))
+      )
+      .select("id");
+
+    if (erroDaPerna || !lancamentos || lancamentos.length !== pernas.length) {
       console.error("Erro ao lancar a entrada do recebimento:", erroDaPerna);
       return NextResponse.json(
         { error: "Não foi possível lançar o recebimento. A parcela continua em aberto." },
         { status: 500 }
       );
     }
+
+    // `paid_transaction_id` APONTA PARA A PERNA DO PRINCIPAL, e nao para a do
+    // juro: aquela coluna responde "onde este dinheiro entrou", e com duas
+    // linhas a resposta tem de ser a que representa a parcela -- a que
+    // `ehEntradaSoltaDoMyBank` reconhece como a perna da parcela do MyBank. A
+    // perna de juro e uma receita que se le pelo elo em `notes`, como qualquer
+    // outra linha do par.
+    //
+    // O FALLBACK PARA 0 COBRE A PARCELA DE JURO PURO (parte-principal zero,
+    // omitida por `pernasDoPagamentoDaParcela`): ali a unica linha gravada e a
+    // do juro, e e para ela que a parcela aponta. Um `pernas[0]` cru daria a
+    // resposta certa nesse caso e a ERRADA no comum, onde a ordem das pernas e
+    // detalhe de montagem e nao contrato.
+    const indiceDoPrincipal = pernas.findIndex(
+      (p) => p.natureza === "principal"
+    );
+    const lancamento =
+      lancamentos[indiceDoPrincipal >= 0 ? indiceDoPrincipal : 0];
 
     const { data: pagas, error: erroDaBaixa } = await supabase
       .from("mybank_installments")
@@ -348,10 +532,16 @@ export async function PATCH(
       .select("id, status");
 
     if (erroDaBaixa || !pagas || pagas.length === 0) {
-      // A PERNA JA ESTA GRAVADA, e desfaze-la seria apagar dinheiro que entrou
-      // de verdade na conta. O que falhou foi a baixa da parcela: o estado
-      // honesto e "o dinheiro entrou e a parcela continua em aberto", com o id
-      // do lancamento na resposta para quem for consertar.
+      // AS PERNAS JA ESTAO GRAVADAS, e desfaze-las seria apagar dinheiro que
+      // entrou de verdade na conta. O que falhou foi a baixa da parcela: o
+      // estado honesto e "o dinheiro entrou e a parcela continua em aberto",
+      // com o id do lancamento na resposta para quem for consertar.
+      //
+      // `transaction_id` continua SINGULAR no corpo, e aponta a perna do
+      // principal: e a mesma coluna que `paid_transaction_id` guardaria, e quem
+      // achar essa linha acha a de juro pelo elo `mybank:<id>` que as duas
+      // levam. Trocar o nome do campo quebraria o contrato de quem le a
+      // resposta por uma informacao que o elo ja da.
       console.error("Erro ao dar baixa na parcela do MyBank:", erroDaBaixa);
       return NextResponse.json(
         {
@@ -416,9 +606,16 @@ export async function PATCH(
       // explicacao se le como erro. `false` aqui tambem cobre a falha silenciosa
       // acima -- a resposta diz o que ficou, nao o que deveria ter ficado.
       emprestimo_quitado: emprestimoQuitado,
-      message: emprestimoQuitado
-        ? "Última parcela recebida: o empréstimo está quitado e sai da lista A receber. O valor entrou na conta de investimento como transferência — principal voltando não é receita."
-        : "Parcela baixada. O valor entrou na conta de investimento como transferência — principal voltando não é receita.",
+      // O JURO DESTA PARCELA SAI NA RESPOSTA, e ele e o numero que a tela nao
+      // tem de onde derivar: a parcela diz `amount`, e quanto daquilo foi ganho
+      // depende do principal do emprestimo e da posicao na serie. Zero quando
+      // nao ha juro, e nao ausente -- um campo que aparece e desaparece faz a
+      // tela precisar distinguir `undefined` de 0 para saber se a rota e velha.
+      juros_da_parcela: rateio.daParcela?.parteDosJuros ?? 0,
+      message: mensagemDoRecebimentoDaParcela({
+        quitado: emprestimoQuitado,
+        juroDaParcela: rateio.daParcela?.parteDosJuros ?? 0,
+      }),
     });
   } catch (error) {
     console.error("MyBank installments PATCH error:", error);
