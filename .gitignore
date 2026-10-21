@@ -677,3 +677,11 @@ next-env.d.ts
 # fonte: um `.tmp-*` fora do .gitignore chega a ser commitado em cima de
 # arquivo de fonte -- ver a entrada do .tmp-parcelamento acima.
 /.tmp-saldo-da-conversa/
+
+# A sonda de navegador dos DOIS SENTIDOS do juro do MyBank (HMO-448): o
+# `test:previa-do-emprestimo` compila CamposDeJuros, PreviaDoEmprestimo e os
+# quatro `lib/` deles para ca, e a pagina `file://` concatena os `.js`.
+# Artefato, nao fonte: sem a linha, `check-artefatos-de-build` fica vermelho na
+# `main`, e um `.tmp-*` fora do .gitignore chega a ser commitado em cima de
+# arquivo de fonte -- ver a entrada do .tmp-parcelamento acima.
+/.tmp-previa-do-emprestimo/

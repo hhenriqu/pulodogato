@@ -140,7 +140,17 @@ const mutantes = [
   [
     LOANS,
     "`principal` grava o valor DIGITADO: R$ 1.000 num emprestimo de R$ 24.000",
-    "        description: String(descricao).trim(),\n        principal: serieFechada.valorTotal,",
+    // A ANCORA MUDOU NA HMO-448, E O MUTANTE CONTINUA SENDO O MESMO DEFEITO.
+    // A linha deixou de ser `principal: serieFechada.valorTotal` porque com
+    // juro aquele numero e o TOTAL e nao o emprestado -- quem escolhe agora e
+    // `principalQueVaiParaAColuna`. O que este mutante mede nao mudou: gravar o
+    // DIGITADO em vez do resolvido poe R$ 1.000 num emprestimo de R$ 24.000 no
+    // caminho de `base: "parcela"`.
+    //
+    // A ANCORA LEVA A LINHA DE CIMA porque a MESMA chamada aparece duas vezes
+    // na rota -- no insert e na resposta --, e o runner recusa ancora ambigua
+    // (ele mutaria so a primeira). `description:` prende esta no insert.
+    "        description: String(descricao).trim(),\n        principal: principalQueVaiParaAColuna({ juro, serie: serieFechada }),",
     "        description: String(descricao).trim(),\n        principal: Number(valor),",
   ],
 
@@ -649,18 +659,93 @@ const mutantes = [
   // AS RECUSAS -- cada uma e dinheiro saindo da conta sem ter sido pedido
   // -------------------------------------------------------------------------
 
+  // AS DUAS ANCORAS ABAIXO FORAM REESCRITAS NA HMO-448, E NAO SO RENOMEADAS
+  // ------------------------------------------------------------------------
+  // `JUROS_DA_FASE_1` virou `JURO_QUE_A_ANTECIPACAO_SABE_DESCONTAR` (o numero e
+  // o mesmo; o que mudou foi o que ele significa -- ver a constante). Uma ancora
+  // que ficasse com o nome velho simplesmente NAO CASARIA, e o runner reportaria
+  // o mutante como sobrevivente sem nunca ter mudado uma linha:
+  // `ancora-de-mutante-casa-no-comentario-e-o-cmp-nao-ve`.
+  //
+  // E o primeiro rotulo mudou de verdade junto: a recusa que ele muta deixou de
+  // ser hipotetica. Antes desta issue NENHUM emprestimo podia ter juro (a trava
+  // da 053 cravava `interest_rate = 0`), entao aquele `if` era inalcancavel por
+  // construcao e o mutante media uma guarda contra um estado impossivel. Com a
+  // 062 colada e esta rota gravando taxa, ele passa a ser a unica coisa que
+  // impede a antecipacao de somar `amount` de parcelas cujo juro NAO correu.
+
   [
     LIB,
-    "o emprestimo COM JURO passa (somar `amount` cobra juro de um tempo que nao existiu)",
-    "  if (Number(params.emprestimo.interest_rate ?? 0) !== JUROS_DA_FASE_1) {",
-    "  if (false) {",
+    "o emprestimo COM JURO aceita antecipacao (somar `amount` cobra juro de um tempo que nao existiu -- e agora e ALCANCAVEL)",
+    "    Number(params.emprestimo.interest_rate ?? 0) !==\n    JURO_QUE_A_ANTECIPACAO_SABE_DESCONTAR",
+    "    false",
   ],
 
   [
     LIB,
-    "o juro chega como STRING e a recusa dispara em TODO emprestimo da fase 1 (a feature fica inalcancavel)",
-    "  if (Number(params.emprestimo.interest_rate ?? 0) !== JUROS_DA_FASE_1) {",
-    "  if ((params.emprestimo.interest_rate ?? 0) !== JUROS_DA_FASE_1) {",
+    "o juro chega como STRING e a recusa dispara em TODO emprestimo a juro zero (a antecipacao fica inalcancavel)",
+    "    Number(params.emprestimo.interest_rate ?? 0) !==\n    JURO_QUE_A_ANTECIPACAO_SABE_DESCONTAR",
+    "    (params.emprestimo.interest_rate ?? 0) !==\n    JURO_QUE_A_ANTECIPACAO_SABE_DESCONTAR",
+  ],
+
+  // -------------------------------------------------------------------------
+  // OS JUROS (HMO-448, F3 da HMO-444) -- onde o dinheiro muda de valor
+  // -------------------------------------------------------------------------
+
+  [
+    LIB,
+    "A SERIE E MONTADA SOBRE O PRINCIPAL em vez do total (quem cobrou 20% recebe exatamente o que emprestou)",
+    "  return params.juro.total.toFixed(2);",
+    "  return params.juro.principal.toFixed(2);",
+  ],
+
+  [
+    LIB,
+    "`principal` grava a SOMA DA SERIE em vez do emprestado (a soma fecha, a taxa diz 20%, e o juro vira ZERO)",
+    "  return params.juro ? params.juro.principal : params.serie.valorTotal;",
+    "  return params.serie.valorTotal;",
+  ],
+
+  [
+    LIB,
+    "a base com juro vem DA TELA (base `parcela` multiplica o total por N: R$ 1.000 a 20% em 12x vira R$ 14.400)",
+    '  return modoCobraJuro(params.modo) ? "total" : params.daTela;',
+    "  return params.daTela;",
+  ],
+
+  [
+    LIB,
+    "a taxa digitada NAO e dividida por 100 (20% vira 2000%, recusado pelo teto da 062 com um 23514 que a tela mostra como 500)",
+    "  return percento / 100;",
+    "  return percento;",
+  ],
+
+  [
+    LIB,
+    "o campo de taxa em branco vira JURO ZERO calado (no modo em que a pessoa escolheu cobrar juro)",
+    "  if (!Number.isFinite(percento)) return NaN;",
+    "  if (!Number.isFinite(percento)) return 0;",
+  ],
+
+  [
+    LIB,
+    "a recusa do juro some de `problemaDoEmprestimo` (taxa negativa e total menor que o principal passam direto)",
+    "  if (params.problemaDoJuro) return params.problemaDoJuro;",
+    "  if (false) return params.problemaDoJuro;",
+  ],
+
+  [
+    LIB,
+    "a PREVIA le o total CALCULADO em vez da SERIE (a tela promete um total que as parcelas nao somam)",
+    "  const total = params.serie.valorTotal;",
+    "  const total = params.juro ? params.juro.total : params.serie.valorTotal;",
+  ],
+
+  [
+    LOANS,
+    "a rota grava `interest_rate: 0` sempre (a taxa da previa nunca chega na linha)",
+    "        interest_rate: juro ? juro.taxa : 0,",
+    "        interest_rate: 0,",
   ],
 
   [
