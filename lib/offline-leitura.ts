@@ -63,6 +63,38 @@ export type EstadoDaLeitura =
 export const MARCA_DO_APARELHO = "x-pulodogato-do-aparelho";
 export const MARCA_GUARDADO_EM = "x-pulodogato-guardado-em";
 
+/**
+ * O PARAMETRO QUE FAZ A LEITURA NAO CAIR NA COPIA DO APARELHO -- HMO-401.
+ *
+ * `fetch(url, { cache: "reload" })` NAO serve: `cache` fala do cache HTTP do
+ * navegador, e o service worker intercepta de todo jeito -- o `NetworkFirst` de
+ * `lib/pwa-runtime-cache.js` continua caindo na copia do Cache Storage (sete
+ * dias) quando o servidor passa dos dez segundos. O botao devolveria a MESMA
+ * faixa com o MESMO momento, e botao que nao muda nada e pior que botao nenhum:
+ * a pessoa conclui que o app travou. Foi o que aconteceu na HMO-457.
+ *
+ * O que funciona e mudar a CHAVE do cache. Com um parametro novo na URL o
+ * workbox nao acha copia para aquela chave e nao tem para onde cair: ou vem do
+ * servidor, ou a tela diz "sem rede" -- e as duas respostas sao honestas.
+ *
+ * DUAS CONDICOES, e as duas sao parte da decisao:
+ *
+ *   1. **a rota tem de IGNORAR o parametro.** O desvio e do service worker e
+ *      nao deve chegar como regra no servidor. Confira que a rota nao valida a
+ *      querystring de forma estrita antes de usar isto numa tela nova
+ *      (`/api/movimentacoes/resumo` le `tipo`, `de` e `ate` com
+ *      `params.get`, e mais nada);
+ *   2. **nunca em toda carga.** Furar o cache sempre apagaria a leitura
+ *      offline justamente das telas mais pesadas -- que e onde ela mais serve.
+ *      So no gesto explicito da pessoa (o botao "Atualizar" da faixa).
+ *
+ * Mora aqui, e nao em cada tela, porque ja havia DUAS escritas do mesmo nome
+ * para combinar (`cash-flow` e as tres de movimentacao) e o custo da divergencia
+ * e invisivel: um nome diferente nao quebra nada -- a rota ignora os dois --
+ * e so deixa aquela tela furando o cache que ela acha que furou.
+ */
+export const PARAM_SEM_COPIA = "semCopia";
+
 export interface RespostaObservada {
   ok: boolean;
   status: number;

@@ -125,6 +125,7 @@ import {
 } from "@/lib/pagamento-da-fatura";
 import {
   buscarLeitura,
+  PARAM_SEM_COPIA,
   podeAfirmarVazio,
   podeMostrarNumero,
   type EstadoDaLeitura,
@@ -331,52 +332,102 @@ export function ListaDeMovimentacao({
     vencimento: "",
   });
 
-  const carregar = useCallback(async () => {
-    setCarregando(true);
+  /**
+   * A leitura da tela.
+   *
+   * `semCopia` SO e verdadeiro no gesto explicito da pessoa -- o botao
+   * "Atualizar" da faixa de dado do aparelho. Ver `PARAM_SEM_COPIA`: sem ele, a
+   * tela que veio do cache fica TRANCADA em so-leitura, porque o service worker
+   * responde a releitura com a mesma copia e `online` continua falso. Era o
+   * defeito da HMO-457 -- os quatro botoes da linha apagados num iPhone com
+   * rede, e o unico botao que poderia consertar isso devolvendo a mesma tela.
+   *
+   * E ele NUNCA e passado por referencia a um `onClick`: o React entregaria o
+   * `MouseEvent` do clique como primeiro argumento, e um evento e verdadeiro --
+   * entao TODA releitura (depois de confirmar, de editar, de excluir, de pagar)
+   * sairia furando o cache sem ninguem ter pedido, apagando a leitura offline
+   * da tela. Dai os `() => carregar(...)` explicitos la embaixo.
+   */
+  const carregar = useCallback(
+    async (semCopia = false) => {
+      setCarregando(true);
 
-    const leitura = await buscarLeitura<RespostaDaTela>(
-      `/api/movimentacoes/resumo?tipo=${tipo}&${queryDoPeriodo}`
-    );
+      const query = `tipo=${tipo}&${queryDoPeriodo}${
+        semCopia ? `&${PARAM_SEM_COPIA}=${Date.now()}` : ""
+      }`;
 
-    setEstado(leitura.estado);
-    setGuardadoEm(leitura.guardadoEm);
+      const leitura = await buscarLeitura<RespostaDaTela>(
+        `/api/movimentacoes/resumo?${query}`
+      );
 
-    if (leitura.dados) {
-      setResumo(leitura.dados.resumo ?? null);
-      setVencido(leitura.dados.vencido ?? { total: 0, quantidade: 0 });
-      setLinhas(leitura.dados.linhas ?? []);
-      // `?? null` e nao `?? []`: uma resposta guardada no aparelho de antes
-      // desta feature nao tem o campo, e `[]` ali afirmaria "nenhum cartao sem
-      // vencimento" com base num corpo que nunca respondeu isso.
-      setSemVencimento(leitura.dados.fatura_sem_vencimento ?? null);
-      // `?? null` pelo mesmo motivo da linha acima: resposta antiga do aparelho
-      // nao tem o campo, e afirmar "nada a confirmar" com base nela esconderia
-      // um Pix que ja esta na conta de alguem.
-      setAcertos(leitura.dados.acertos_do_grupo ?? null);
-      setPraQuemPagar(leitura.dados.pra_quem_pagar ?? []);
-      // `?? null` pelo motivo de `setSemVencimento` e de `setAcertos`: resposta
-      // antiga do aparelho nao tem o campo.
-      setQuemMePaga(leitura.dados.quem_me_paga ?? null);
-    } else {
-      // A leitura falhou: a lista SAI da tela. Deixar a do periodo anterior
-      // seria a tela mostrando setembro com o titulo de outubro.
-      setResumo(null);
-      setLinhas([]);
-      setAcertos(null);
-      // Pelo MESMO motivo das duas acima: um painel "pague R$ 300 para a
-      // Leticia" sobrevivendo a uma leitura que falhou e uma divida afirmada
-      // sobre o periodo ANTERIOR, debaixo do titulo do novo.
-      setPraQuemPagar([]);
-      // Pelo MESMO motivo: um painel "a Lais te deve R$ 508,42" sobrevivendo a
-      // uma leitura que falhou e um credito afirmado sobre o periodo ANTERIOR,
-      // debaixo do titulo do novo.
-      setQuemMePaga(null);
-    }
+      /**
+       * UM "ATUALIZAR" QUE NAO TROUXE NADA NAO APAGA O QUE ESTA NA TELA.
+       *
+       * O `else` la embaixo limpa a lista de proposito, e o motivo dele e real: a
+       * leitura que falha depois de TROCAR DE PERIODO deixaria setembro na tela
+       * debaixo do titulo de outubro. Mas aqui o periodo e o MESMO -- a pessoa
+       * pediu dado mais novo do mesmo mes -- e `semCopia` garante que nao havia
+       * copia para cair, entao "nao trouxe nada" quer dizer so que a rede nao
+       * respondeu AGORA.
+       *
+       * Limpar neste caminho puniria quem apertou o botao: o dado do aparelho,
+       * que ela ainda podia consultar, sairia da tela e daria lugar ao painel de
+       * sem-rede -- e nao ha como traze-lo de volta sem trocar de mes e voltar.
+       * O `estado` tambem FICA: a tela continua sendo a copia do aparelho, e a
+       * faixa continua dizendo isso com o momento certo.
+       */
+      if (semCopia && !leitura.dados) {
+        toast.error(
+          "Não deu para atualizar agora. Os números continuam sendo os do aparelho."
+        );
+        setCarregando(false);
+        return;
+      }
 
-    setCarregando(false);
-  }, [tipo, queryDoPeriodo]);
+      setEstado(leitura.estado);
+      setGuardadoEm(leitura.guardadoEm);
+
+      if (leitura.dados) {
+        setResumo(leitura.dados.resumo ?? null);
+        setVencido(leitura.dados.vencido ?? { total: 0, quantidade: 0 });
+        setLinhas(leitura.dados.linhas ?? []);
+        // `?? null` e nao `?? []`: uma resposta guardada no aparelho de antes
+        // desta feature nao tem o campo, e `[]` ali afirmaria "nenhum cartao sem
+        // vencimento" com base num corpo que nunca respondeu isso.
+        setSemVencimento(leitura.dados.fatura_sem_vencimento ?? null);
+        // `?? null` pelo mesmo motivo da linha acima: resposta antiga do aparelho
+        // nao tem o campo, e afirmar "nada a confirmar" com base nela esconderia
+        // um Pix que ja esta na conta de alguem.
+        setAcertos(leitura.dados.acertos_do_grupo ?? null);
+        setPraQuemPagar(leitura.dados.pra_quem_pagar ?? []);
+        // `?? null` pelo motivo de `setSemVencimento` e de `setAcertos`: resposta
+        // antiga do aparelho nao tem o campo.
+        setQuemMePaga(leitura.dados.quem_me_paga ?? null);
+      } else {
+        // A leitura falhou: a lista SAI da tela. Deixar a do periodo anterior
+        // seria a tela mostrando setembro com o titulo de outubro.
+        setResumo(null);
+        setLinhas([]);
+        setAcertos(null);
+        // Pelo MESMO motivo das duas acima: um painel "pague R$ 300 para a
+        // Leticia" sobrevivendo a uma leitura que falhou e uma divida afirmada
+        // sobre o periodo ANTERIOR, debaixo do titulo do novo.
+        setPraQuemPagar([]);
+        // Pelo MESMO motivo: um painel "a Lais te deve R$ 508,42" sobrevivendo a
+        // uma leitura que falhou e um credito afirmado sobre o periodo ANTERIOR,
+        // debaixo do titulo do novo.
+        setQuemMePaga(null);
+      }
+
+      setCarregando(false);
+    },
+    [tipo, queryDoPeriodo]
+  );
 
   useEffect(() => {
+    // SEM argumento, e nao `carregar` por referencia: a primeira carga da tela
+    // tem de poder cair na copia do aparelho -- e ela e a razao de a leitura
+    // offline existir.
     carregar();
   }, [carregar]);
 
@@ -672,19 +723,37 @@ export function ListaDeMovimentacao({
           // o `title` dos botoes nao abre tooltip em tela de toque, e o relato
           // da HMO-457 veio de iPhone.
           acoesApagadas
-          aoTentarDeNovo={carregar}
+          // `() => carregar(true)` -- O BOTAO QUE DESTRANCA A TELA.
+          //
+          // `true` e o que faz dele um botao de verdade: a releitura sem o
+          // parametro volta do MESMO cache (NetworkFirst, copia de sete dias),
+          // com a mesma faixa e o mesmo momento, e os botoes da linha seguem
+          // apagados -- a pessoa aperta "Atualizar" e nada muda. Era o defeito
+          // da HMO-457.
+          //
+          // E a seta nao e estilo: `onClick={aoTentarDeNovo}` chama o handler
+          // COM o `MouseEvent`, que e verdadeiro. `aoTentarDeNovo={carregar}`
+          // passaria o evento como `semCopia` e furaria o cache SEMPRE -- aqui
+          // por acidente, e o pior e que a tela pareceria certa.
+          aoTentarDeNovo={() => carregar(true)}
         />
       )}
 
       {estado === "sem-rede" ? (
         <PainelSemRede
           oQue={`as ${tela.titulo.toLowerCase()} do período`}
-          aoTentarDeNovo={carregar}
+          // SEM `true`, ao contrario da faixa: aqui nao ha copia no aparelho --
+          // e e justamente o que `sem-rede` significa -- entao nao ha cache para
+          // furar, e a tentativa normal ja vai na rede. A seta continua sendo
+          // obrigatoria, pelo `MouseEvent` do `onClick`.
+          aoTentarDeNovo={() => carregar()}
         />
       ) : estado === "erro-do-servidor" ? (
         <PainelErroDoServidor
           oQue={`as ${tela.titulo.toLowerCase()} do período`}
-          aoTentarDeNovo={carregar}
+          // SEM `true` pelo motivo da linha de cima: o servidor RESPONDEU (500),
+          // e resposta de erro nao vira copia no cache. Furar nao mudaria nada.
+          aoTentarDeNovo={() => carregar()}
         />
       ) : (
         <>

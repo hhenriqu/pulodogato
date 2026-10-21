@@ -155,6 +155,22 @@ import { tmpdir } from "node:os";
 
 const SAIDA = ".tmp-lista-na-tela";
 
+// --- o contrato do dado guardado no aparelho (HMO-457) -----------------------
+//
+// Os tres nomes estao escritos aqui como LITERAL, e nao importados do modulo
+// compilado, pelo mesmo motivo de `scripts/test-fluxo-na-tela.mjs`: a pagina da
+// sonda e um script CLASSICO, montada por interpolacao de texto, e um `import`
+// nao a alcanca. O preco disso e a sonda poder concordar com um nome que a
+// producao trocou -- entao cada um dos tres tem assercao PROPRIA contra o
+// arquivo compilado, no fim deste .mjs. Sem elas, renomear a constante na
+// producao deixaria esta suite verde medindo um carimbo que ninguem escreve.
+const MARCA_DO_APARELHO = "x-pulodogato-do-aparelho";
+const MARCA_GUARDADO_EM = "x-pulodogato-guardado-em";
+const PARAM_SEM_COPIA = "semCopia";
+
+/** O momento que o carimbo responde. Fixo: a faixa e marcador nesta suite. */
+const GUARDADO_EM = "2026-10-21T09:00:00.000Z";
+
 /**
  * Acha um Chromium: o do `CHROMIUM_BIN`, o que o Playwright baixou, ou o Chrome
  * do sistema (o runner do Actions ja vem com um). Mesma busca das outras
@@ -409,6 +425,9 @@ const PAGINA = `<!doctype html>
 <div id="raiz-n"></div><div id="raiz-n2"></div>
 <!-- As DUAS do caso O (HMO-377): a parcela devida e a despesa comum ao lado. -->
 <div id="raiz-o"></div>
+<!-- As TRES do caso P (HMO-457): o Atualizar que destranca, o que nao destranca
+     e o controle de que a primeira carga nao fura o cache. -->
+<div id="raiz-p"></div><div id="raiz-p2"></div><div id="raiz-p3"></div>
 <div id="resultado">a pagina nao rodou</div>
 <script>${umd("react", "react.development.js")}</script>
 <script>${umd("react-dom", "react-dom.development.js")}</script>
@@ -474,8 +493,34 @@ const toast = {
 /** Os tres cartoes e os paineis de rede: marcadores, fora de toda assercao. */
 const CartoesDaTela = () =>
   React.createElement("div", null, "ESBOCO-CARTOES");
-const FaixaDadoDoAparelho = () =>
-  React.createElement("div", null, "ESBOCO-DO-APARELHO");
+/**
+ * A FAIXA E MARCADOR, MAS O BOTAO DELA E REAL -- HMO-457.
+ *
+ * O esboco das outras tres continua sendo so um \`div\`. Este tem de ter um botao
+ * de verdade, ligado ao \`aoTentarDeNovo\` que a producao passa, porque o caso P
+ * mede exatamente O QUE A PRODUCAO PASSA NELE: um esboco que ignorasse a prop
+ * deixaria o caso verde com a tela trancada, que e o defeito desta issue.
+ *
+ * \`onClick={props.aoTentarDeNovo}\` e NAO \`() => props.aoTentarDeNovo()\`, de
+ * proposito e com assercao em cima: a faixa de verdade (\`components/SemRede.tsx\`)
+ * liga a prop direto no \`onClick\`, e e assim que o \`MouseEvent\` chega como
+ * primeiro argumento de quem a recebe. Um esboco que "limpasse" o evento
+ * apagaria o unico lugar onde o mutante do \`aoTentarDeNovo={carregar}\`
+ * (furar sempre) se manifesta.
+ */
+const FaixaDadoDoAparelho = (props) =>
+  React.createElement(
+    "div",
+    null,
+    "ESBOCO-DO-APARELHO",
+    props.aoTentarDeNovo
+      ? React.createElement(
+          "button",
+          { "aria-label": "Atualizar", onClick: props.aoTentarDeNovo },
+          "Atualizar"
+        )
+      : null
+  );
 const PainelSemRede = () =>
   React.createElement("div", null, "ESBOCO-SEM-REDE");
 const PainelErroDoServidor = () =>
@@ -681,6 +726,21 @@ const resposta = (corpo) => ({
   json: async () => corpo,
 });
 
+/**
+ * A MESMA RESPOSTA, MAS SERVIDA PELO SERVICE WORKER -- HMO-457.
+ *
+ * O carimbo e o que \`classificarLeitura\` le para devolver \`do-aparelho\`, e o
+ * nome dele NAO esta digitado aqui: vem de \`MARCA_DO_APARELHO\`, importado do
+ * modulo de producao la no .mjs e interpolado. Digitar "x-pulodogato-..." nesta
+ * sonda deixaria ela concordando com um nome que a producao podia ter trocado,
+ * e o caso P passaria verde com a faixa nunca aparecendo no aparelho de verdade
+ * -- e exatamente o risco que o JSDoc de \`MARCA_DO_APARELHO\` descreve.
+ */
+const doAparelho = (corpo) => ({ __doAparelho: true, corpo });
+
+/** O \`fetch\` que nao devolve resposta nenhuma: \`buscarLeitura\` -> \`sem-rede\`. */
+const semRede = () => ({ __semRede: true });
+
 window.fetch = async (url, init) => {
   const metodo = (init && init.method) || "GET";
   const corpo = init && init.body ? JSON.parse(init.body) : null;
@@ -691,6 +751,29 @@ window.fetch = async (url, init) => {
     // releitura seguinte, e assim um caso que relê duas vezes nao estoura.
     const atual =
       FILA_DO_RESUMO.length > 1 ? FILA_DO_RESUMO.shift() : FILA_DO_RESUMO[0];
+
+    // O \`fetch\` LANCA, e nao devolve 500: e o unico jeito de \`buscarLeitura\`
+    // chegar em \`sem-rede\` (ela classifica \`resposta: null\`), e e o que o
+    // navegador faz quando o pedido nao sai. Um 500 daria
+    // \`erro-do-servidor\`, que e outro painel e outro caso.
+    if (atual && atual.__semRede) throw new TypeError("Load failed");
+
+    if (atual && atual.__doAparelho) {
+      return {
+        ok: true,
+        status: 200,
+        headers: {
+          get: (nome) =>
+            nome === "${MARCA_DO_APARELHO}"
+              ? "1"
+              : nome === "${MARCA_GUARDADO_EM}"
+                ? "${GUARDADO_EM}"
+                : null,
+        },
+        json: async () => atual.corpo,
+      };
+    }
+
     return resposta(atual);
   }
 
@@ -919,6 +1002,21 @@ function retrato(raiz, titulo) {
       })),
   };
 }
+
+/**
+ * As URLs de LEITURA DO RESUMO, em ordem -- HMO-457.
+ *
+ * So as da rota do resumo, e nao todo GET: o dialogo do acerto le
+ * \`/api/financial-accounts\`, e um \`filter\` por metodo misturaria as duas listas.
+ * O caso P conta pedidos ("o primeiro sem o parametro, o segundo com"), e uma
+ * contagem com URL de outra rota dentro erraria por motivo invisivel.
+ */
+const leiturasDoResumo = () =>
+  CHAMADAS.filter(
+    (c) =>
+      c.metodo === "GET" &&
+      String(c.url).indexOf("/api/movimentacoes/resumo") === 0
+  ).map((c) => c.url);
 
 /** Clica num botao pelo \`aria-label\`, dentro de UMA secao. */
 async function clicar(raiz, titulo, rotulo) {
@@ -1535,6 +1633,89 @@ const out = {};
   const raizO = await montar("raiz-o", [corpo([parcelaDoMyBank, luz])]);
 
   out.o_previsto = retrato(raizO, PREVISTO);
+}
+
+// =========================================================================
+// P. A TELA QUE VEIO DO APARELHO DESTRANCA PELO "ATUALIZAR" -- HMO-457
+// =========================================================================
+// O DEFEITO RELATADO, pelas palavras de quem relatou: "Despesas no IOs nao
+// esta mostrando opcao de editar, pagar ou excluir". Respondido o cartao, o
+// estado era este: os icones APARECEM apagados, a faixa de dado do aparelho
+// APARECE, e o app esta instalado na tela de inicio.
+//
+// Entao a regra que apaga os botoes esta certa (escrita sem rede FALHA neste
+// caminho, ela nao fica pendente) e o que faltava era SAIDA: a releitura sem
+// furar o cache volta da MESMA copia de sete dias do NetworkFirst, com a mesma
+// faixa e o mesmo momento, e a tela fica trancada em so-leitura. O unico botao
+// que poderia consertar devolvia a tela identica.
+//
+// O QUE SO ESTA SONDA MEDE, e por que nao da para medir em lugar mais barato:
+// \`test:offline-leitura\` cobre a CLASSIFICACAO e \`test:secao-da-tela\` cobre a
+// MARCACAO -- as duas passam verdes com o botao ligado em \`carregar\` sem
+// argumento, porque a URL do segundo pedido nao sai no HTML e nao e assunto de
+// nenhuma das duas. A assercao que importa e sobre a SEGUNDA URL, e ela so
+// existe num componente que de fato releu a rede depois de um clique.
+{
+  const aluguel = linha({ id: "s-1", descricao: "Aluguel" });
+
+  // P1. A copia do aparelho, e depois uma resposta FRESCA: o caminho de quem
+  //     apertou Atualizar com rede de verdade.
+  const raizP = await montar("raiz-p", [
+    doAparelho(corpo([aluguel])),
+    corpo([aluguel]),
+  ]);
+
+  out.p_antes = {
+    chamadas: leiturasDoResumo(),
+    previsto: retrato(raizP, PREVISTO),
+    temFaixa: raizP.textContent.indexOf("ESBOCO-DO-APARELHO") !== -1,
+  };
+
+  const atualizar = raizP.querySelector('[aria-label="Atualizar"]');
+  out.p_tem_botao = Boolean(atualizar);
+  if (atualizar) {
+    atualizar.click();
+    await assentar();
+  }
+
+  out.p_depois = {
+    chamadas: leiturasDoResumo(),
+    previsto: retrato(raizP, PREVISTO),
+    temFaixa: raizP.textContent.indexOf("ESBOCO-DO-APARELHO") !== -1,
+  };
+
+  // P2. O MESMO clique, com a rede ainda fora. A faixa FICA, as linhas FICAM, e
+  //     a tela diz que nao deu -- o que ela nao faz e apagar o dado que a
+  //     pessoa ainda podia consultar so porque ela apertou o botao.
+  TOASTS.length = 0;
+  const raizP2 = await montar("raiz-p2", [
+    doAparelho(corpo([aluguel])),
+    semRede(),
+  ]);
+
+  const atualizar2 = raizP2.querySelector('[aria-label="Atualizar"]');
+  if (atualizar2) {
+    atualizar2.click();
+    await assentar();
+  }
+
+  out.p2_depois = {
+    previsto: retrato(raizP2, PREVISTO),
+    temFaixa: raizP2.textContent.indexOf("ESBOCO-DO-APARELHO") !== -1,
+    temSemRede: raizP2.textContent.indexOf("ESBOCO-SEM-REDE") !== -1,
+    toasts: TOASTS.slice(),
+  };
+
+  // P3. O CONTROLE NEGATIVO, e ele e metade do conserto: uma acao comum da
+  //     linha (confirmar) tem de reler SEM furar o cache. O parametro em toda
+  //     releitura apagaria a leitura offline da tela -- e e o que acontece se
+  //     alguem trocar os \`() => carregar(true)\` por \`carregar\` por referencia,
+  //     porque o \`MouseEvent\` do \`onClick\` chega como \`semCopia\`.
+  RESPOSTA_DO_CONFIRM = true;
+  const raizP3 = await montar("raiz-p3", [corpo([aluguel]), corpo([aluguel])]);
+  await clicar(raizP3, PREVISTO, "Confirmar pagamento");
+
+  out.p3_leituras = leiturasDoResumo();
 }
 
 document.getElementById("resultado").textContent =
@@ -2337,4 +2518,163 @@ test("O: a parcela do MyBank nao ganha Editar, Excluir, Confirmar nem Pagar", ()
     "a secao tem botao a mais ou a menos: so a conta de luz deveria ter os " +
       `tres, e a parcela do MyBank nenhum -- ${JSON.stringify(resultado.o_previsto.acoes)}`
   );
+});
+
+// =========================================================================
+// P. O "ATUALIZAR" DA FAIXA DESTRANCA A TELA -- HMO-457
+// =========================================================================
+test("P1: a PRIMEIRA carga NAO fura o cache do aparelho", () => {
+  // A metade que impede o conserto de virar outro defeito. Um parametro que
+  // fosse junto em toda carga apagaria a leitura offline das tres telas de
+  // movimentacao -- e e justamente no aparelho sem rede que ela serve.
+  assert.deepEqual(
+    resultado.p_antes.chamadas.length,
+    1,
+    JSON.stringify(resultado.p_antes.chamadas)
+  );
+  assert.match(
+    resultado.p_antes.chamadas[0],
+    /^\/api\/movimentacoes\/resumo\?tipo=expense&de=2026-10-01&ate=2026-10-31$/
+  );
+});
+
+test("P1: a copia do aparelho chega com a faixa e os botoes APAGADOS", () => {
+  // O estado do relato, reproduzido: e deste retrato que o resto do caso parte.
+  // Sem ele, as assercoes de URL abaixo poderiam estar medindo uma tela que
+  // nunca entrou em so-leitura -- e o botao da faixa nem existiria.
+  assert.equal(resultado.p_antes.temFaixa, true, "a faixa nao apareceu");
+  assert.equal(resultado.p_tem_botao, true, "a faixa nao tem botao Atualizar");
+
+  const acoes = resultado.p_antes.previsto.acoes;
+  assert.deepEqual(
+    acoes.map((a) => a.rotulo).sort(),
+    ["Confirmar pagamento", "Editar", "Excluir"],
+    `os tres botoes tem de EXISTIR: ${JSON.stringify(acoes)}`
+  );
+  // E os tres existem DESABILITADOS -- que e o "aparecem, mas apagados" da
+  // resposta do cartao. A assercao e `every`: um unico botao vivo em cima de
+  // lista do aparelho prometeria uma baixa que vai falhar.
+  for (const acao of acoes) {
+    assert.equal(
+      acao.desabilitado,
+      true,
+      `${acao.rotulo} ficou habilitado sobre dado do aparelho`
+    );
+  }
+});
+
+test("P1: o clique no Atualizar pede a leitura SEM a copia", () => {
+  // O CONSERTO. `cache: "reload"` nao teria efeito sobre o Cache Storage do
+  // service worker: o NetworkFirst continuaria servindo a copia de sete dias, e
+  // o botao devolveria a mesma faixa com o mesmo momento. Um parametro novo
+  // muda a CHAVE do cache, entao nao ha copia para cair.
+  assert.equal(resultado.p_depois.chamadas.length, 2, JSON.stringify(resultado.p_depois.chamadas));
+  const segunda = resultado.p_depois.chamadas[1];
+  assert.match(
+    segunda,
+    new RegExp(
+      `^/api/movimentacoes/resumo\\?tipo=expense&de=2026-10-01&ate=2026-10-31&${PARAM_SEM_COPIA}=\\d+$`
+    ),
+    `a segunda leitura nao furou o cache: ${segunda}`
+  );
+});
+
+test("P1: e a tela DESTRANCA -- a faixa sai e os tres botoes voltam", () => {
+  // A assercao que distingue "pediu certo" de "funcionou", e e a unica que
+  // responde a issue: a releitura fresca tem de desligar o so-leitura. Sem ela,
+  // o caso acima ficaria verde com a URL certa e a tela ainda cinza.
+  assert.equal(
+    resultado.p_depois.temFaixa,
+    false,
+    "a faixa ficou na tela depois da leitura fresca"
+  );
+
+  const acoes = resultado.p_depois.previsto.acoes;
+  assert.deepEqual(acoes.map((a) => a.rotulo).sort(), [
+    "Confirmar pagamento",
+    "Editar",
+    "Excluir",
+  ]);
+  for (const acao of acoes) {
+    assert.equal(
+      acao.desabilitado,
+      false,
+      `${acao.rotulo} continuou apagado depois do Atualizar com rede`
+    );
+  }
+});
+
+test("P2: um Atualizar que nao trouxe nada NAO apaga o que esta na tela", () => {
+  // O conserto nao pode punir quem apertou o botao. Furar o cache sem rede
+  // devolve `sem-rede`, e o caminho normal dessa leitura LIMPA a lista (de
+  // proposito: depois de trocar de periodo, deixar setembro debaixo do titulo
+  // de outubro seria pior). Aqui o periodo e o MESMO, e o dado do aparelho que
+  // ela ainda podia consultar nao tem como voltar sem trocar de mes e voltar.
+  assert.equal(
+    resultado.p2_depois.temSemRede,
+    false,
+    "o painel de sem-rede substituiu a lista depois de um Atualizar que falhou"
+  );
+  assert.ok(resultado.p2_depois.previsto, "a secao Previsto saiu da tela");
+  assert.match(
+    resultado.p2_depois.previsto.texto,
+    /Aluguel/,
+    `a linha foi apagada: ${resultado.p2_depois.previsto.texto}`
+  );
+  // A faixa FICA: a tela continua sendo a copia do aparelho, e e verdade.
+  assert.equal(
+    resultado.p2_depois.temFaixa,
+    true,
+    "a faixa saiu, e a tela continua mostrando dado do aparelho"
+  );
+  // E a tela DIZ que nao deu. Sem isto, o clique seria indistinguivel de um
+  // botao morto -- que e o defeito que esta issue conserta.
+  const erros = resultado.p2_depois.toasts.filter((t) => t.tipo === "error");
+  assert.equal(erros.length, 1, JSON.stringify(resultado.p2_depois.toasts));
+  assert.match(erros[0].texto, /Não deu para atualizar agora/);
+  assert.match(erros[0].texto, /continuam sendo os do aparelho/);
+});
+
+test("P3: CONTROLE -- a releitura de uma ACAO nao fura o cache", () => {
+  // O gemeo do P1, e o que prende o `() => carregar(true)` explicito: a faixa
+  // liga a prop direto no `onClick`, entao `aoTentarDeNovo={carregar}` passaria
+  // o `MouseEvent` como `semCopia`. Isso furaria o cache em TODA releitura --
+  // depois de confirmar, editar, excluir, pagar -- apagando a leitura offline
+  // da tela sem ninguem ter pedido, e com a tela parecendo certa.
+  assert.equal(resultado.p3_leituras.length, 2, JSON.stringify(resultado.p3_leituras));
+  for (const url of resultado.p3_leituras) {
+    assert.ok(
+      !url.includes(PARAM_SEM_COPIA),
+      `a releitura da acao furou o cache: ${url}`
+    );
+  }
+});
+
+test("P: os tres nomes desta sonda sao os que a PRODUCAO escreve", () => {
+  // Sem este caso a sonda e a producao poderiam concordar num nome errado: eu
+  // responderia com o cabecalho que eu mesmo inventei, a tela leria o mesmo, e
+  // o service worker de verdade escreveria outro -- a faixa nunca apareceria no
+  // aparelho e o caso P ficaria verde. O mesmo vale para o parametro: renomeado
+  // na producao, esta suite seguiria afirmando que o botao fura o cache.
+  const doClassificador = readFileSync(
+    join(SAIDA, "lib/offline-leitura.js"),
+    "utf8"
+  );
+  for (const nome of [MARCA_DO_APARELHO, MARCA_GUARDADO_EM, PARAM_SEM_COPIA]) {
+    assert.ok(
+      doClassificador.includes(`"${nome}"`),
+      `lib/offline-leitura nao conhece "${nome}"`
+    );
+  }
+
+  // E o carimbo e o que o SERVICE WORKER de verdade escreve, nao so o que o
+  // classificador le: sao arquivos diferentes, e um nome trocado em so um deles
+  // apaga o aviso de dado velho sem apagar o dado.
+  const doServiceWorker = readFileSync("lib/pwa-runtime-cache.js", "utf8");
+  for (const nome of [MARCA_DO_APARELHO, MARCA_GUARDADO_EM]) {
+    assert.ok(
+      doServiceWorker.includes(`"${nome}"`),
+      `lib/pwa-runtime-cache.js nao escreve "${nome}"`
+    );
+  }
 });

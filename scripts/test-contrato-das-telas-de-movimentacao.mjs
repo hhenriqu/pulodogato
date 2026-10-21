@@ -241,10 +241,26 @@ test("a tela chama a rota com `tipo` e `de`/`ate`, que e o que a rota le", () =>
   // Se um lado escrever `type` e o outro `tipo`, a rota responde 400 e as tres
   // telas abrem no painel de erro -- ou, pior, se houvesse padrao, as tres
   // mostrariam despesa.
+  //
+  // EM DUAS METADES, e nao numa URL literal (HMO-457). A querystring passou a
+  // ser montada numa variavel, porque o botao "Atualizar" da faixa acrescenta
+  // `semCopia` a ela -- e a assercao antiga, que casava
+  // `/api/movimentacoes/resumo?tipo=${tipo}&${queryDoPeriodo}` de uma vez,
+  // REPROVOU o codigo novo e certo. O que esta guarda precisa prender nao e a
+  // forma de montar a URL: e que os nomes dos parametros sejam os que a rota le,
+  // e que a rota chamada seja essa. As duas metades juntas continuam reprovando
+  // um `type=` contra um `get("tipo")`, que e o defeito que ela existe para
+  // pegar -- e a sonda de navegador (`npm run test:lista-na-tela`, caso P) mede
+  // a URL MONTADA, que e a prova que nenhum grep consegue dar.
   assert.match(
     lista,
-    /\/api\/movimentacoes\/resumo\?tipo=\$\{tipo\}&\$\{queryDoPeriodo\}/,
-    "a lista nao chama a rota com ?tipo= e o periodo na querystring"
+    /tipo=\$\{tipo\}&\$\{queryDoPeriodo\}/,
+    "a lista nao monta a querystring com ?tipo= e o periodo"
+  );
+  assert.match(
+    lista,
+    /\/api\/movimentacoes\/resumo\?\$\{query\}/,
+    "a lista nao chama /api/movimentacoes/resumo com a querystring montada"
   );
   // E o container e quem PASSA `queryDoPeriodo` para a lista: sem a prop, a
   // lista leria `undefined` na querystring e a rota responderia o mes
