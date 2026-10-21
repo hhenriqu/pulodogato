@@ -76,6 +76,11 @@ import {
   ROTULO_DE_EDITAR_NA_FATURA,
   ROTULO_DE_EXCLUIR_NA_FATURA,
 } from "@/lib/acoes-da-fatura";
+import {
+  ROTULO_DE_EDITAR_A_PREVISAO,
+  ROTULO_DE_EXCLUIR_A_PREVISAO,
+  type PrevisaoAcionavel,
+} from "@/lib/acoes-da-previsao-do-cartao";
 import { NumeroIndisponivel } from "@/components/SemRede";
 
 interface FaturaDoCartaoProps {
@@ -133,6 +138,45 @@ interface FaturaDoCartaoProps {
    */
   categoriaDeAjuste?: CategoriaDeAjuste;
   /**
+   * Abrir o formulario de uma CONTA PREVISTA deste cartao (HMO-460).
+   *
+   * TERCEIRO PROP de acao, e nao um ramo dos dois de cima: a conta prevista nao
+   * e linha de fatura. Ela vive em `scheduled_transactions`, sai por
+   * `/api/scheduled-transactions/{id}` e se edita em FORMULARIO EM LINHA -- a
+   * tela de lancamento le `?id=` de `financial_transactions` e responderia 404
+   * sobre um id que existe, em outra tabela. E por isso que este e um handler e
+   * o Editar da compra e um `<Link>`.
+   *
+   * OPCIONAL pela mesma razao dos outros: sem ele o botao nao aparece, e este
+   * componente continua sem rede.
+   */
+  aoEditarPrevisao?: (previsao: PrevisaoAcionavel) => void;
+  /**
+   * Pedir para excluir uma CONTA PREVISTA deste cartao (HMO-460).
+   *
+   * Quem decide se a pergunta do alcance e feita e a pagina, pelo `null` de
+   * `avisoDaExclusaoDaPrevisaoAvulsa`: a ocorrencia de gasto fixo abre o
+   * `DialogoDeAlcance` (so esta / esta e as proximas / todas) e a avulsa sai por
+   * um `confirm()` com a frase que aquela funcao devolveu.
+   * Esta decisao NAO mora aqui porque ela e sobre dinheiro e tem ramo que a
+   * arvore nao mostra -- ver `lib/acoes-da-previsao-do-cartao.ts`.
+   */
+  aoExcluirPrevisao?: (previsao: PrevisaoAcionavel) => void;
+  /**
+   * O formulario da conta prevista em edicao, como SLOT (HMO-460).
+   *
+   * Mesmo motivo do `blocoDeAjuste` abaixo: o formulario tem cinco pedacos de
+   * estado (previsao, tres campos, salvando) e atravessa-los por aqui faria
+   * desta tela um intermediario que nao usa nada do que recebe.
+   *
+   * Ele e posicionado ACIMA do bloco das previsoes e FORA dele, e nao dentro da
+   * linha: a releitura troca o array de linhas (esta tela recarrega a fatura
+   * inteira depois de cada acao), e um formulario dentro da lista perderia o
+   * que estava digitado -- ou desapareceria com o texto dentro quando a
+   * releitura falhasse. Ver o cabecalho de `EdicaoDaPrevisaoDoCartao`.
+   */
+  blocoDeEdicaoDaPrevisao?: ReactNode;
+  /**
    * O bloco de ajuste de saldo, como SLOT.
    *
    * Nao sao props de formulario repassadas uma a uma de proposito: o ajuste tem
@@ -177,6 +221,9 @@ export function FaturaDoCartao({
   aoApagarParcela,
   aoExcluirCompra,
   categoriaDeAjuste,
+  aoEditarPrevisao,
+  aoExcluirPrevisao,
+  blocoDeEdicaoDaPrevisao,
   blocoDeAjuste,
 }: FaturaDoCartaoProps) {
   /**
@@ -562,6 +609,15 @@ export function FaturaDoCartao({
           Lista VAZIA (`[]`), sim, nao mostra nada: o normal e o cartao nao ter
           previsao apontada para ele, e um bloco escrito "nenhuma" em todo
           cartao seria ruido permanente. */}
+      {/* O FORMULARIO DA CONTA PREVISTA (HMO-460), acima do bloco e FORA dele.
+
+          Fora porque a releitura troca o array de linhas, e porque ele nao pode
+          depender de `previsoes`: uma releitura que falhe no meio da digitacao
+          faria `previsoes` virar `null`, e um formulario montado dentro do bloco
+          desapareceria com o texto dentro. Ver o cabecalho de
+          `EdicaoDaPrevisaoDoCartao`. */}
+      {blocoDeEdicaoDaPrevisao}
+
       {previsoes === null && (
         <Card>
           <CardContent className="py-4">
@@ -601,15 +657,61 @@ export function FaturaDoCartao({
                     {previsao.category ? ` · ${previsao.category.name}` : ""}
                   </p>
                 </div>
-                {/* O mesmo pedagio do total: valor impresso a partir de uma
-                    leitura que falhou mente com a cara de numero certo. */}
-                <p className="shrink-0 font-semibold">
-                  {podeMostrarNumero(estado) ? (
-                    formatarValor(Number(previsao.amount), conta.currency)
-                  ) : (
-                    <NumeroIndisponivel />
-                  )}
-                </p>
+                <div className="flex shrink-0 items-center gap-2">
+                  {/* O mesmo pedagio do total: valor impresso a partir de uma
+                      leitura que falhou mente com a cara de numero certo. */}
+                  <p className="font-semibold">
+                    {podeMostrarNumero(estado) ? (
+                      formatarValor(Number(previsao.amount), conta.currency)
+                    ) : (
+                      <NumeroIndisponivel />
+                    )}
+                  </p>
+
+                  {/* EDITAR E EXCLUIR A CONTA PREVISTA (HMO-460)
+
+                      Ate esta issue esta linha nao tinha botao NENHUM, e nao
+                      havia outro lugar no app onde ela se editasse: a HMO-209
+                      a tirou de Contas a Pagar de proposito, para a mesma
+                      despesa nao ser somada ao lado da fatura que ja a contem.
+
+                      Os DOIS sao handlers (o Editar da compra, acima, e um
+                      `<Link>`): a conta prevista vive em
+                      `scheduled_transactions`, e a tela de lancamento le `?id=`
+                      de `financial_transactions` -- ela responderia 404 sobre
+                      um id que existe, em outra tabela. Por isso a edicao e um
+                      formulario em linha, e o botao so a abre.
+
+                      Nenhum dos dois faz fetch: este componente nao tem rede.
+                      Quem fala com `/api/scheduled-transactions/{id}` -- e quem
+                      decide se a exclusao pergunta o alcance -- e
+                      `cartoes/[id]/page.tsx`. */}
+                  {aoEditarPrevisao ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0"
+                      title={ROTULO_DE_EDITAR_A_PREVISAO}
+                      aria-label={ROTULO_DE_EDITAR_A_PREVISAO}
+                      onClick={() => aoEditarPrevisao(previsao)}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                  ) : null}
+
+                  {aoExcluirPrevisao ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      title={ROTULO_DE_EXCLUIR_A_PREVISAO}
+                      aria-label={ROTULO_DE_EXCLUIR_A_PREVISAO}
+                      onClick={() => aoExcluirPrevisao(previsao)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  ) : null}
+                </div>
               </div>
             ))}
           </CardContent>

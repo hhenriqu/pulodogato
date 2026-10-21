@@ -9149,3 +9149,32 @@ jobs:
       # exige que a suite fique vermelha em cada um.
       - name: Os mutantes da calculadora de juros (a suite acima sabe reprovar?)
         run: npm run mutantes:juros-do-emprestimo
+
+      # AS CONTAS PREVISTAS DO CARTAO GANHAM EDITAR E EXCLUIR (HMO-460, F3 da
+      # HMO-455).
+      #
+      # O bloco "N contas previstas neste cartao" da tela do cartao lista a
+      # assinatura cadastrada com o cartao como CONTA. Ela nao tinha botao nenhum,
+      # e nao aparece em Contas a Pagar (a HMO-209 a tirou de la de proposito, para
+      # a mesma despesa nao ser somada ao lado da fatura que ja a contem): ela nao
+      # se editava nem se apagava em lugar NENHUM do app.
+      #
+      # Por que o controle negativo existe aqui: os tres defeitos desta familia
+      # respondem 200 e tiram a linha da tela, entao nada no clique os distingue.
+      #
+      #   * o alcance ignorado -- quem escolhe "todas as ocorrencias" perde UM mes
+      #     e recebe os outros de volta, meses depois;
+      #   * o campo de valor preenchido com PONTO -- `replace(/\./g, "")` o le como
+      #     separador de milhar, e Salvar sem tocar em nada grava R$ 399,00 numa
+      #     assinatura de R$ 39,90;
+      #   * a frase da serie apontando para Contas a Pagar -- a tela de onde a
+      #     HMO-209 tirou esta linha.
+      #
+      # Dois dos nove mutantes sao de FIACAO e nao de regra (o botao que aparece
+      # sem handler, o formulario que entra no bloco que a releitura apaga): a
+      # regra pura passa verde com os dois de pe.
+      - name: As acoes da conta prevista do cartao (HMO-460)
+        run: npm run test:tela-do-cartao
+
+      - name: Os mutantes da conta prevista do cartao (a suite sabe reprovar?)
+        run: npm run mutantes:previsao-do-cartao

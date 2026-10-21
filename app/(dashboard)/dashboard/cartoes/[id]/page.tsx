@@ -78,6 +78,16 @@ import {
   pedidoDeExclusaoDaLinhaDaFatura,
   type LinhaDaFaturaAcionavel,
 } from "@/lib/acoes-da-fatura";
+import {
+  ancoraDaPrevisao,
+  avisoDaExclusaoDaPrevisaoAvulsa,
+  edicaoInicialDaPrevisao,
+  pedidoDeEdicaoDaPrevisaoDoCartao,
+  pedidoDeExclusaoDaPrevisaoDoCartao,
+  type PrevisaoAcionavel,
+} from "@/lib/acoes-da-previsao-do-cartao";
+import type { EdicaoDaPrevista } from "@/lib/acoes-da-linha";
+import { EdicaoDaPrevisaoDoCartao } from "@/components/cartoes/EdicaoDaPrevisaoDoCartao";
 import { formatarValor } from "@/lib/dinheiro";
 import { toast } from "sonner";
 
@@ -162,6 +172,25 @@ function GastosDoCartao() {
   const [parcelaParaApagar, setParcelaParaApagar] =
     useState<LinhaParaApagar | null>(null);
   const [apagando, setApagando] = useState(false);
+
+  // ---------------------------------------------------------------------
+  // AS CONTAS PREVISTAS DO CARTAO: EDITAR E EXCLUIR (HMO-460)
+  // ---------------------------------------------------------------------
+  // Estado SEPARADO do `apagando` acima de proposito: ele desabilita o botao da
+  // acao em curso, e as duas listas sao independentes -- excluir uma compra da
+  // fatura nao tem por que apagar os botoes do bloco das previsoes.
+  /** A previsao cuja exclusao espera a pergunta do alcance. `null` = nenhuma. */
+  const [previsaoParaExcluir, setPrevisaoParaExcluir] =
+    useState<PrevisaoAcionavel | null>(null);
+  /** A previsao com o formulario aberto. */
+  const [previsaoEmEdicao, setPrevisaoEmEdicao] =
+    useState<PrevisaoAcionavel | null>(null);
+  const [camposDaPrevisao, setCamposDaPrevisao] = useState<EdicaoDaPrevista>({
+    descricao: "",
+    valor: "",
+    vencimento: "",
+  });
+  const [salvandoPrevisao, setSalvandoPrevisao] = useState(false);
 
   // ---------------------------------------------------------------------
   // O AJUSTE DE SALDO (HMO-253)
@@ -323,6 +352,152 @@ function GastosDoCartao() {
       toast.error("Erro ao excluir a compra");
     } finally {
       setApagando(false);
+    }
+  };
+
+  // -----------------------------------------------------------------------
+  // AS CONTAS PREVISTAS: A FIACAO (HMO-460)
+  // -----------------------------------------------------------------------
+  // Mora aqui porque `FaturaDoCartao` nao tem rede -- ele so chama handlers. A
+  // DECISAO (qual URL, qual corpo, qual pergunta, qual frase) mora em
+  // `lib/acoes-da-previsao-do-cartao.ts`, que tem teste; o que esta aqui e o
+  // fetch, o toast e a releitura.
+
+  /**
+   * Excluir a conta prevista, no alcance escolhido.
+   *
+   * O ALCANCE VAI NO CORPO, e quem o monta e `pedidoDeExclusaoDaPrevisaoDoCartao`:
+   * a rota le `alcance` de `request.json()` e cai no default `apenas_esta`
+   * quando ele nao vem. Um DELETE montado aqui sem corpo escolheria o alcance
+   * mais conservador em silencio -- exatamente no caso em que a pessoa acabou de
+   * pedir "todas as ocorrencias".
+   */
+  const excluirPrevisao = async (
+    previsao: PrevisaoAcionavel,
+    alcance: Alcance
+  ) => {
+    const pedido = pedidoDeExclusaoDaPrevisaoDoCartao(previsao, alcance);
+    if (!pedido) return;
+
+    setSalvandoPrevisao(true);
+    try {
+      const resposta = await fetch(pedido.url, {
+        method: pedido.metodo,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(pedido.corpo),
+      });
+      const dados = await resposta.json().catch(() => ({}));
+
+      if (!resposta.ok) {
+        toast.error(
+          dados.error || `A exclusão foi recusada (HTTP ${resposta.status}).`
+        );
+        return;
+      }
+
+      // A CONTAGEM DO QUE FICOU, como Contas a Pagar ja faz: "nunca mexe no que
+      // ja passou" so tranquiliza quem VE o numero. A rota devolve `preservadas`
+      // nos alcances que alcancam irmas.
+      const aviso = frasePreservadas({
+        preservadas: Number(dados.preservadas ?? 0),
+      });
+      toast.success(
+        aviso
+          ? `${dados.message ?? "Conta prevista removida"} ${aviso}`
+          : (dados.message ?? "Conta prevista removida")
+      );
+
+      setPrevisaoParaExcluir(null);
+      // O FORMULARIO TAMBEM FECHA, quando era esta a previsao em edicao: um
+      // formulario aberto sobre uma linha que acabou de sair da agenda salvaria
+      // num id que a rota responde 404 -- e a frase de erro falaria de servidor,
+      // nao da linha que a propria pessoa apagou.
+      if (previsaoEmEdicao?.id === previsao.id) setPrevisaoEmEdicao(null);
+      recarregar();
+    } catch (erro) {
+      console.error("Erro ao excluir a conta prevista:", erro);
+      toast.error("Erro ao excluir a conta prevista");
+    } finally {
+      setSalvandoPrevisao(false);
+    }
+  };
+
+  /**
+   * Abre a pergunta do alcance -- ou nao abre, quando nao ha serie.
+   *
+   * A assimetria e a regra 1 do modulo: sem `recurring_rule_id` nao ha
+   * "proximas" nem "todas" (a rota apaga de vez nos tres alcances), e perguntar
+   * faria a pessoa procurar a diferenca entre tres opcoes que fazem a mesma
+   * coisa. A avulsa sai por `confirm()`, cuja frase diz que ela nao volta.
+   *
+   * E a mesma decisao que `pedirExclusao` de `bills/page.tsx` toma, pelo mesmo
+   * motivo -- a diferenca e que la a frase da avulsa nao existe.
+   */
+  const pedirExclusaoDaPrevisao = (previsao: PrevisaoAcionavel) => {
+    const aviso = avisoDaExclusaoDaPrevisaoAvulsa(previsao);
+
+    // `null` = ha serie, e quem explica os tres alcances e o dialogo. Um
+    // `confirm()` antes dele seria a mesma pergunta duas vezes, e a primeira sem
+    // a informacao que importa.
+    if (aviso === null) {
+      setPrevisaoParaExcluir(previsao);
+      return;
+    }
+
+    if (!confirm(aviso)) return;
+    void excluirPrevisao(previsao, "apenas_esta");
+  };
+
+  /** Abre o formulario com os valores de hoje, para a pessoa corrigir um so. */
+  const abrirEdicaoDaPrevisao = (previsao: PrevisaoAcionavel) => {
+    // `edicaoInicialDaPrevisao` e nao `String(previsao.amount)`: o campo e lido
+    // com `replace(/\./g, "")` (ponto e separador de milhar no Brasil), e um
+    // "39.9" preenchido aqui viraria R$ 399,00 para quem clicasse Salvar sem
+    // tocar em nada. Ver `valorNoCampoDaPrevisao`.
+    setCamposDaPrevisao(edicaoInicialDaPrevisao(previsao));
+    setPrevisaoEmEdicao(previsao);
+  };
+
+  const salvarPrevisao = async () => {
+    const previsao = previsaoEmEdicao;
+    if (!previsao) return;
+
+    const resultado = pedidoDeEdicaoDaPrevisaoDoCartao(
+      previsao,
+      camposDaPrevisao
+    );
+    if ("erro" in resultado) {
+      // A recusa vem da lib e nao da rota de proposito: as tres sao 400 com
+      // texto, e uma delas e silenciosa de outra forma -- campo vazio vira
+      // `Number("") === 0`, que nao e `NaN` e passa por qualquer `isNaN`.
+      toast.error(resultado.erro);
+      return;
+    }
+
+    setSalvandoPrevisao(true);
+    try {
+      const resposta = await fetch(resultado.pedido.url, {
+        method: resultado.pedido.metodo,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(resultado.pedido.corpo),
+      });
+      const dados = await resposta.json().catch(() => ({}));
+
+      if (!resposta.ok) {
+        toast.error(
+          dados.error || `A alteração foi recusada (HTTP ${resposta.status}).`
+        );
+        return;
+      }
+
+      toast.success("Conta prevista atualizada.");
+      setPrevisaoEmEdicao(null);
+      recarregar();
+    } catch (erro) {
+      console.error("Erro ao alterar a conta prevista:", erro);
+      toast.error("Erro ao alterar a conta prevista");
+    } finally {
+      setSalvandoPrevisao(false);
     }
   };
 
@@ -503,6 +678,20 @@ function GastosDoCartao() {
         aoApagarParcela={setParcelaParaApagar}
         aoExcluirCompra={excluirCompra}
         categoriaDeAjuste={categoriaDeAjuste}
+        aoEditarPrevisao={abrirEdicaoDaPrevisao}
+        aoExcluirPrevisao={pedirExclusaoDaPrevisao}
+        blocoDeEdicaoDaPrevisao={
+          previsaoEmEdicao && (
+            <EdicaoDaPrevisaoDoCartao
+              previsao={previsaoEmEdicao}
+              campos={camposDaPrevisao}
+              aoMudarCampos={setCamposDaPrevisao}
+              aoSalvar={() => void salvarPrevisao()}
+              aoCancelar={() => setPrevisaoEmEdicao(null)}
+              salvando={salvandoPrevisao}
+            />
+          )
+        }
         blocoDeAjuste={
           <AjusteDeSaldo
             rotuloDoMes={rotuloDaFatura(mes)}
@@ -548,6 +737,31 @@ function GastosDoCartao() {
           totalDeParcelas={parcelaParaApagar.installment_total}
           salvando={apagando}
           aoConfirmar={(escolhido) => apagarParcela(escolhido)}
+        />
+      )}
+
+      {/* A PERGUNTA DO ALCANCE DA CONTA PREVISTA (HMO-460)
+
+          O MESMO componente da parcela acima, com `tipo="conta_fixa"`: as
+          consequencias sao outras e as palavras delas moram em
+          `lib/alcance-na-tela.ts` -- "so este mes sai da agenda, o gasto fixo
+          continua ativo" nao e a mesma frase que "so esta parcela e apagada".
+          Com `tipo="parcela"` aqui a tela prometeria sobre o total de uma compra
+          que nao existe.
+
+          So abre quando HA SERIE (`pedirExclusaoDaPrevisao`): a avulsa saiu pelo
+          `confirm()`, porque os tres alcances fazem a mesma coisa nela. */}
+      {previsaoParaExcluir && (
+        <DialogoDeAlcance
+          aberto
+          aoFechar={() => setPrevisaoParaExcluir(null)}
+          tipo="conta_fixa"
+          acao="apagar"
+          ancora={ancoraDaPrevisao(previsaoParaExcluir.due_date)}
+          salvando={salvandoPrevisao}
+          aoConfirmar={(escolhido) =>
+            excluirPrevisao(previsaoParaExcluir, escolhido)
+          }
         />
       )}
     </div>
