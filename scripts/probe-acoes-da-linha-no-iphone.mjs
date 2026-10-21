@@ -177,6 +177,10 @@ const CONFERE_A_MARCACAO = [
   // a coluna do texto e o valor
   'min-w-0 space-y-0.5',
   'shrink-0 font-semibold',
+  // o texto da linha SEM ACAO NENHUMA (HMO-457) -- se ele sair de
+  // SecaoDaTela.tsx, o caso "de outro membro" daqui mede uma tela que nao
+  // existe mais
+  'shrink-0 text-xs text-muted-foreground',
   // -------------------------------------------------------------------------
   // A FIACAO DO MOTIVO -- HMO-475
   // -------------------------------------------------------------------------
@@ -330,6 +334,24 @@ const CASOS = [
     valor: "R$ 1.842,55",
     botoes: ["pagar"],
   },
+  {
+    // A LINHA DE OUTRO MEMBRO DO GRUPO -- HMO-457.
+    //
+    // Ela nao tem botao NENHUM (`posso_editar: false` recusa os tres, e a regra
+    // 4 e deliberada: `UPDATE` recusado pela RLS volta 200 sem alterar nada).
+    // Ate esta issue ela desenhava NADA a direita, e esse nada e
+    // indistinguivel de tela quebrada -- e o relato desta issue.
+    //
+    // Agora ela leva TEXTO, e e o caso mais apertado dos cinco: a frase e mais
+    // larga que um botao de 44px, e ela divide a linha com um valor em reais.
+    // A 320px e aqui que o aperto aparece primeiro, se aparecer.
+    nome: "de outro membro (sem botao, com texto)",
+    descricao: "Supermercado (Leticia)",
+    detalhe: "· 11/10 · Alimentacao · Conta do grupo",
+    valor: "R$ 287,40",
+    botoes: [],
+    semAcoes: "De outro membro",
+  },
 ];
 
 const LARGURAS = [320, 390, 430];
@@ -430,7 +452,17 @@ function linha(caso, indice, estado) {
         </p>
       </div>
       <p class="shrink-0 font-semibold">${caso.valor}</p>
-      <div data-acoes="${indice}" class="flex shrink-0 items-center gap-1"${tituloDaCaixa}>${botoes}</div>
+      ${
+        caso.semAcoes
+          ? // A MARCACAO EXATA do ramo sem acao de BotoesDaLinha -- HMO-457: um
+            // span de texto NO LUGAR da caixa de botoes, e nao um div com o
+            // texto dentro. Ele nao leva tituloDaCaixa porque nao ha botao
+            // travado para explicar: a linha nao tem acao nenhuma, e o motivo
+            // ja E o proprio texto. data-botao entra para a medicao achar o
+            // elemento (ver o ramo matches no script medidor).
+            `<span data-acoes="${indice}" data-botao="${caso.semAcoes}" class="shrink-0 text-xs text-muted-foreground">${caso.semAcoes}</span>`
+          : `<div data-acoes="${indice}" class="flex shrink-0 items-center gap-1"${tituloDaCaixa}>${botoes}</div>`
+      }
     </div>`;
 }
 
@@ -493,7 +525,18 @@ function pagina(largura, estado) {
     }
 
     var botoes = [];
-    var nos = acoes.querySelectorAll('[data-botao]');
+    // O PROPRIO [data-acoes] ENTRA QUANDO ELE E O ALVO -- HMO-457.
+    // A linha sem acao nenhuma nao desenha a caixa com botoes dentro: ela
+    // desenha UM span de texto ("De outro membro"), e aquele span E o
+    // elemento de [data-acoes]. querySelectorAll so olha descendentes,
+    // entao sem este ramo o caso mediria zero elementos e passaria vazio --
+    // verde por vacuidade, que e o modo de falha que esta sonda existe para
+    // nao ter. Embrulhar o span num div so para ser medido seria medir uma
+    // marcacao que producao nao tem.
+    // (Sem acento grave neste bloco: ele vive dentro de um template literal.)
+    var nos = acoes.matches('[data-botao]')
+      ? [acoes]
+      : acoes.querySelectorAll('[data-botao]');
     for (var j = 0; j < nos.length; j++) {
       var r = nos[j].getBoundingClientRect();
       var foraDaViewport = r.right > window.innerWidth;
@@ -523,6 +566,13 @@ function pagina(largura, estado) {
 
       botoes.push({
         rotulo: nos[j].getAttribute('data-botao'),
+        // E BOTAO, OU E O TEXTO DA LINHA SEM ACAO? -- HMO-457.
+        // A linha de outro membro nao desenha botao nenhum: ela desenha um
+        // span de texto, e a guarda do cinza da HMO-475 (title, aria-disabled,
+        // disabled) nao se aplica a ele -- texto visivel nao precisa de dica
+        // de hover, ele JA e a explicacao. Sem esta marca aquela guarda cobra
+        // title de um span e reprova 18 vezes.
+        ehBotao: nos[j].tagName === 'BUTTON',
         esquerda: Math.round(r.left),
         direita: Math.round(r.right),
         largura: Math.round(r.width),
@@ -667,6 +717,21 @@ for (const estado of ESTADOS) {
         // ---------------------------------------------------------------
         const onde = `${estado.nome}/${largura}px/${l.caso}/${b.rotulo}`;
 
+        // O TEXTO DA LINHA SEM ACAO NAO E BOTAO CINZA -- HMO-457.
+        //
+        // A guarda abaixo cobra `title`, `aria-disabled` e `disabled` de todo
+        // `[data-botao]`, porque na HMO-475 todo `[data-botao]` era um
+        // `<button>`. A linha de outro membro quebra essa premissa: ela nao tem
+        // botao nenhum, e o que esta ali e o `<span>` com o MOTIVO ESCRITO.
+        //
+        // Cobrar dele seria cobrar a coisa errada em duas direcoes: ele nao
+        // fica cinza em estado nenhum (nao ha acao para travar -- a recusa e de
+        // DADO, e vale com rede e sem), e `title` nele seria exatamente o que a
+        // HMO-457 existe para nao fazer -- dica de hover, que no iPhone nunca
+        // aparece. O que importa dele e caber na tela, e isso a medicao de
+        // `nivel` acima ja afirma.
+        if (!b.ehBotao) continue;
+
         if (!estado.travado) {
           // O CONTROLE NEGATIVO: com rede o botao nao esta cinza, e nao pode
           // ter motivo nenhum pendurado. Sem este ramo, um `title` que
@@ -762,6 +827,15 @@ if (houveInvisivel) {
       "  2. os botoes nao existem -- `podeAgirNaLinha` recusa a linha por\n" +
       "     `gravada: false` ou `posso_editar: false` (lib/acoes-da-linha.ts).\n" +
       "     Isso e DADO, nao plataforma: medir com a conta de quem reclamou.",
+      "",
+      "     O sabor `posso_editar: false` deste suspeito tem causa conhecida e",
+      "     nenhuma relacao com iOS: desde a HMO-303 o previsto traz a linha de",
+      "     OUTRO MEMBRO do grupo, e ela nao ganha botao de proposito (a RLS",
+      "     recusaria a escrita com 200 sem alterar nada). O que a HMO-457",
+      "     consertou foi o SILENCIO dela -- agora a linha diz `De outro",
+      "     membro` em vez de desenhar nada, e o caso esta medido acima.",
+      "     A ausencia de botao continua certa; o que estava errado era nada",
+      "     na tela distinguir isso de defeito.",
   );
 } else {
   console.log(
