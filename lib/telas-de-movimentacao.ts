@@ -419,7 +419,7 @@ export interface LinhaDaTela {
    * Quem pode editar / excluir / dar baixa nesta linha -- HMO-301.
    *
    * O MESMO campo, com o MESMO nome e a MESMA regra, de
-   * `LinhaDoDetalhe.posso_editar` (lib/papel-de-pao.ts, HMO-300): os dois modos
+   * `LinhaDoDetalhe.posso_editar` (lib/pra-quem-pagar.ts, HMO-300): os dois modos
    * leem listas diferentes e precisam da mesma resposta, e dois nomes para a
    * mesma pergunta divergiriam na primeira mudanca.
    *
@@ -439,7 +439,7 @@ export interface LinhaDaTela {
    * A linha e a MINHA PARTE de uma despesa de grupo -- HMO-303.
    *
    * O MESMO campo, com o MESMO nome, de `LinhaDoDetalhe.de_grupo`
-   * (lib/papel-de-pao.ts, HMO-300). Os dois modos leem listas diferentes e
+   * (lib/pra-quem-pagar.ts, HMO-300). Os dois modos leem listas diferentes e
    * precisam do mesmo rotulo.
    *
    * ELE NAO E ENFEITE. Desde a HMO-303 esta lista inclui conta de grupo que
@@ -468,7 +468,7 @@ export interface LinhaDaTela {
    * ESTA PREVISAO PODE SER A FATURA DE UM CARTAO -- HMO-305.
    *
    * O MESMO campo, com o MESMO nome e o MESMO tipo, de
-   * `LinhaDoDetalhe.fatura_suspeita` (lib/papel-de-pao.ts): as duas telas
+   * `LinhaDoDetalhe.fatura_suspeita` (lib/pra-quem-pagar.ts): as duas telas
    * mostram a mesma suspeita sobre a mesma linha, e quem decide e a MESMA funcao
    * (`suspeitasDeFaturaRepetida`, lib/elo-da-fatura.ts). Dois criterios para a
    * pergunta "esta previsao e a fatura?" dariam duas respostas na mesma sessao.
@@ -487,7 +487,7 @@ export interface LinhaDaTela {
   /**
    * O ELO JA LIGADO, e por isso desfazivel -- HMO-305.
    *
-   * O MESMO campo de `LinhaDoDetalhe.elo_da_fatura` (lib/papel-de-pao.ts), pelo
+   * O MESMO campo de `LinhaDoDetalhe.elo_da_fatura` (lib/pra-quem-pagar.ts), pelo
    * MESMO criterio (`eloDesfazivel`), que e tambem o do `DELETE` da rota.
    *
    * Ele NAO e o mesmo que `fatura` logo acima, e a diferenca e a que importa:

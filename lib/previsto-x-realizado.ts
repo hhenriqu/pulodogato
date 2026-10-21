@@ -184,7 +184,8 @@ export function direcaoDaAgenda(
  * discordariam na primeira mudanca, e a copia esquecida e exatamente o defeito
  * da HMO-187. O preco esta declarado: o painel do modo e o «A vencer» passam a
  * discordar em R$ 500,00 no fixture, DE PROPOSITO, com rotulo nos dois lados --
- * ver `transferencias_fora` em lib/papel-de-pao.ts.
+ * ver `transferencias_fora`, que vivia em lib/papel-de-pao.ts ate a HMO-470
+ * apagar o painel junto com ele.
  *
  * DESCONHECIDO CAI EM `expense`, e nao em `transfer`. E a mesma direcao segura
  * de `direcaoDaAgenda`, e ela importa mais aqui: uma direcao nova no ENUM lida

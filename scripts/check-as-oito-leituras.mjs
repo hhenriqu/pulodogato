@@ -84,6 +84,12 @@ const VIEW = "scheduled_transactions_effective";
  *     somar as linhas em mais de um balde (o «A vencer» separa vencido de a
  *     vencer; o papel de pao tira `skipped`/`cancelled` do previsto).
  */
+// A LEITURA DO PAINEL DO PAPEL DE PAO SAIU NA HMO-470 (F6 do plano da HMO-462).
+// `app/api/papel-de-pao/painel/route.ts` foi apagada junto com a tela que a
+// chamava -- a conversa (`ConversaDePapel`) nao le `scheduled_transactions`,
+// ela le o REALIZADO de `financial_transactions`, e por isso nao entra nesta
+// lista no lugar daquela. A contagem desta guarda sai de `LEITURAS.length`, e
+// nao de um "oito" escrito a mao, entao ela se ajustou sozinha.
 const LEITURAS = [
   ["app/api/scheduled-transactions/route.ts", "a lista de Contas a Pagar", "filtro"],
   [
@@ -93,7 +99,6 @@ const LEITURAS = [
   ],
   ["app/api/dashboard/previsao/route.ts", "a previsao do painel", "filtro"],
   ["app/api/movimentacoes/resumo/route.ts", "as telas de Receitas/Despesas", "select"],
-  ["app/api/papel-de-pao/painel/route.ts", "o painel do modo Papel de Pao", "select"],
   ["app/api/safe-to-spend/route.ts", "o posso gastar", "filtro"],
   ["app/api/projection/route.ts", "a projecao", "filtro"],
   ["app/api/cash-flow/route.ts", "o fluxo de caixa", "filtro"],

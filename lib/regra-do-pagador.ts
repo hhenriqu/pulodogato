@@ -25,7 +25,7 @@
  *
  * AS OUTRAS QUATRO LEITURAS NAO MUDAM, E ISSO FOI DECIDIDO
  * -------------------------------------------------------
- * `papel-de-pao/painel`, `safe-to-spend`, `scheduled-transactions/summary` e
+ * `safe-to-spend`, `scheduled-transactions/summary` e
  * `dashboard/previsao` continuam em `previstasComAMinhaParte`. A secao 4 do plano
  * da HMO-360 pergunta isso em voz alta e responde NAO REVERTER a HMO-306/308: o
  * safe-to-spend responde *"posso gastar isso?"* e e conservador de proposito --

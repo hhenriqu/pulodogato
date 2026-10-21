@@ -29,7 +29,7 @@
  * A INVARIANTE E A ENTREGA, E ELA E HERDADA DA HMO-300
  * ---------------------------------------------------
  * `soma(detalhe) === total`, por destinatario. O cabecalho de `LinhaDoDetalhe`
- * (lib/papel-de-pao.ts) diz por que: *"um chevron que abre uma lista que nao
+ * (logo abaixo, desde a HMO-470) diz por que: *"um chevron que abre uma lista que nao
  * fecha com o numero de cima e pior que cartao nenhum -- ele transforma um numero
  * conferivel num numero desmentido pela propria tela"*. Aqui ela sai DE GRACA, e
  * de proposito: o `total` e a soma das MESMAS linhas que vao para `detalhe`, no
@@ -59,11 +59,121 @@
  * nome": se le como conta minha, e o usuario conclui que a divida e dele.
  */
 
-import type { LinhaDoDetalhe } from "@/lib/papel-de-pao";
+import type { SuspeitaDeFatura } from "@/lib/elo-da-fatura";
 import {
   STATUS_QUE_SAI_DO_PREVISTO,
   valorEmReais,
 } from "@/lib/telas-de-movimentacao";
+
+// -----------------------------------------------------------------------------
+// `LinhaDoDetalhe` MUDOU DE CASA NA HMO-470 (F6 do plano da HMO-462)
+// -----------------------------------------------------------------------------
+// O tipo nasceu em `lib/papel-de-pao.ts` na HMO-300, com o painel do Modo Papel
+// de Pao. A F6 apagou aquele arquivo -- a conversa (`ConversaDePapel`) ocupou o
+// lugar do painel e nao le NENHUMA funcao dele --, mas o tipo NAO morreu junto:
+// quem produz estas linhas hoje e `destinosDoPagamento` logo abaixo, e quem as
+// desenha e `components/papel-de-pao/LinhaDeDetalhe.tsx`, o renderizador que a
+// aba Despesas reusa desde a HMO-365.
+//
+// Ele veio para CA, e nao para um arquivo novo, porque esta e a sua unica fonte
+// restante: tipo e produtor no mesmo arquivo nao podem divergir sem que o tsc
+// veja. O corpo abaixo e o mesmo, sem uma linha de mudanca -- a invariante que
+// ele carrega (`soma(detalhe) === total`) continua sendo a razao do tipo.
+// -----------------------------------------------------------------------------
+
+/**
+ * UMA LINHA DA LISTA QUE O CHEVRON ABRE -- HMO-300 (9/10 do plano da HMO-279).
+ *
+ * A REGRA QUE DECIDE ESTE TIPO INTEIRO: a soma dos `valor` desta lista tem de
+ * ser EXATAMENTE o `total` do numero que a contem. Um chevron que abre uma
+ * lista que nao fecha com o numero de cima e pior que cartao nenhum -- ele
+ * transforma um numero conferivel num numero desmentido pela propria tela.
+ *
+ * Daqui sai a unica decisao nao obvia do tipo: `valor` e a MINHA PARTE, ja
+ * dividida, e nao o valor cheio do grupo. Mostrar tres linhas de R$ 3.000
+ * debaixo de um total de R$ 1.500 e a mesma mentira com mais passos. E e por
+ * isso que `de_grupo` existe: sem o rotulo, o aluguel pela metade se le como
+ * erro de digitacao.
+ */
+export interface LinhaDoDetalhe {
+  /**
+   * O id de banco, ou `null` na fatura sintetizada.
+   *
+   * `null` e load-bearing pela mesma razao de `FaturaPrevista.id`
+   * (lib/agenda-do-cartao.ts): toda URL de acao e montada com ele, e um id
+   * inventado produziria um 404 que, para quem clicou, se le como "o app nao
+   * conseguiu".
+   */
+  id: string | null;
+  /** `false` quando a linha nao existe em tabela nenhuma. */
+  gravada: boolean;
+  descricao: string | null;
+  /** A MINHA parte, JA DIVIDIDA, sempre positiva, em reais. */
+  valor: number;
+  /** O `due_date` da linha. */
+  data: string;
+  /** Linha de grupo: o `valor` acima e uma fracao do que o grupo cobra. */
+  de_grupo: boolean;
+  /**
+   * Quem pode editar/excluir/dar baixa nesta linha -- HMO-300, consumido pela
+   * 10/10.
+   *
+   * Ele nasce aqui porque a lista do chevron pode conter linha de OUTRO membro
+   * do grupo (a policy do 005 libera `group_id IS NOT NULL AND
+   * is_group_member(group_id)`), e um Excluir ali e recusado pela RLS. O modo
+   * de falha pior ja esta medido neste repositorio: `UPDATE` filtrado pela RLS
+   * volta 200 sem alterar nada -- o app diz "pronto" e a linha fica.
+   *
+   * FALHA FECHADO: sem `user_id` na leitura, ou sem `meuUserId` no contexto,
+   * ele e `false` e nenhum botao aparece. Botao ausente e ruim; botao que
+   * aparece e nao funciona e pior.
+   */
+  posso_editar: boolean;
+  /**
+   * O cartao e o mes, SO na fatura aberta sintetizada -- o caminho de volta
+   * que `caminhoDoCartaoNoMes` monta. `null` em toda linha gravada.
+   *
+   * UM OBJETO E NAO DOIS CAMPOS SOLTOS, pela mesma razao de `LinhaDaTela`:
+   * `accountId` sem `mes` monta um link para o mes errado da fatura certa.
+   */
+  fatura: { accountId: string; mes: string } | null;
+  /**
+   * ESTA PREVISAO PODE SER A FATURA DE UM CARTAO -- HMO-305, e e aqui que o
+   * rotulo e a acao da linha nascem.
+   *
+   * `null` em quase toda linha, e e o que se espera: ele so e preenchido na
+   * previsao DIGITADA A MAO que cita o nome de um cartao com fatura ABERTA no
+   * mesmo mes -- "Pagar fatura Nubank" ao lado da fatura do Nubank que o app
+   * sintetizou das compras reais. A mesma divida, em dois lugares, somada duas
+   * vezes.
+   *
+   * ELE NAO MUDA NUMERO NENHUM. O `valor` desta linha continua inteiro e o
+   * `total` continua somando as duas -- a de-duplicacao so acontece depois que a
+   * PESSOA liga o elo (`POST .../elo-de-fatura`), que grava a chave canonica em
+   * `notes` e faz `sintetizarFaturasAbertas` reconhecer a fatura como "ja esta
+   * na agenda". Enquanto nao liga, a tela diz que a suspeita existe e o numero
+   * fica como esta: errar para cima e a direcao barata, porque a conta a vista
+   * e conferivel.
+   *
+   * SOME SOZINHO quando o elo existe: a linha com a chave em `notes` deixa de
+   * ser "previsao digitada" e passa a ser a fatura, para este campo e para o
+   * resto do app. Nao ha segundo criterio para manter em sincronia.
+   */
+  fatura_suspeita: SuspeitaDeFatura | null;
+  /**
+   * O ELO JA LIGADO, e por isso desfazivel -- HMO-305.
+   *
+   * O PAR de `fatura_suspeita`, e os dois nunca estao preenchidos na mesma
+   * linha: `suspeitasDeFaturaRepetida` recusa a linha que ja tem a chave. E
+   * assim que a tela diz que funcionou -- o rotulo de suspeita sai, e no lugar
+   * dele entra "ligada à fatura de março" com o caminho de volta.
+   *
+   * `null` na FATURA FECHADA, que carrega a mesma chave e nao se desfaz por aqui
+   * -- ver `eloDesfazivel` em lib/elo-da-fatura.ts, que e quem decide, e cujo
+   * criterio e o mesmo do `DELETE` da rota.
+   */
+  elo_da_fatura: { accountId: string; mes: string } | null;
+}
 
 /**
  * Duas casas, pelo mesmo motivo e com a mesma linha de `telas-de-movimentacao`

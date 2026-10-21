@@ -29,7 +29,7 @@ import Link from "next/link";
 import { formatCurrency } from "@/lib/utils";
 import { caminhoDoCartaoNoMes } from "@/lib/fatura-do-cartao";
 import { EloDaFatura } from "@/components/fatura/EloDaFatura";
-import type { LinhaDoDetalhe } from "@/lib/papel-de-pao";
+import type { LinhaDoDetalhe } from "@/lib/pra-quem-pagar";
 
 /** "28/03" -- dia e mes, dos COMPONENTES da string ISO. */
 export function diaEMes(data: string): string {

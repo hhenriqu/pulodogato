@@ -1318,16 +1318,13 @@ test("as outras QUATRO leituras do previsto NAO foram ligadas na regra nova", ()
   // A assercao e sobre o IMPORT e sobre a CHAMADA, porque uma sem a outra fica
   // verde pelo lado errado: um import nao usado passa o `includes` da chamada,
   // e uma chamada por outro nome passa a do import.
-  // A ANCORA DO CONTROLE POSITIVO E POR ARQUIVO, e nao uma so para os quatro:
-  // tres chamam `parteConfiguradaDoMembro` direto e o painel do Papel de Pao
-  // DELEGA -- ele passa `pesosPorGrupo` para `painelDePapel`, que divide la
-  // dentro. Uma ancora unica reprovaria o painel sem nada estar errado nele, que
-  // e a pior especie de teste: ela treina quem a ve vermelha a ignorar a suite.
+  // A ANCORA DO CONTROLE POSITIVO E POR ARQUIVO, e nao uma so para as tres:
+  // as tres chamam `parteConfiguradaDoMembro` direto. ERAM QUATRO ate a HMO-470
+  // (F6 do plano da HMO-462) -- a quarta era `app/api/papel-de-pao/painel`, que
+  // DELEGAVA a divisao para `painelDePapel` e por isso tinha ancora propria. A
+  // rota e a lib foram apagadas com o painel; a conversa que entrou no lugar nao
+  // le conta de grupo nenhuma, de proposito (ver o plano da HMO-462).
   const conservadoras = [
-    [
-      "app/api/papel-de-pao/painel/route.ts",
-      /painelDePapel\(\s*linhas,\s*\{[\s\S]*?pesosPorGrupo,/,
-    ],
     ["app/api/safe-to-spend/route.ts", /parteConfiguradaDoMembro\(/],
     [
       "app/api/scheduled-transactions/summary/route.ts",

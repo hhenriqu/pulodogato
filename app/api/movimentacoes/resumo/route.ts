@@ -402,8 +402,8 @@ export async function GET(request: NextRequest) {
     // sem contrapartida e a tela mostra uma divida que nao e minha -- "F1 e F3
     // vao juntas ou nao vao" e a trava central do plano da HMO-360.
     //
-    // AS OUTRAS QUATRO LEITURAS NAO MUDARAM, E ISSO FOI DECIDIDO:
-    // `papel-de-pao/painel`, `safe-to-spend`, `scheduled-transactions/summary`
+    // AS OUTRAS LEITURAS NAO MUDARAM, E ISSO FOI DECIDIDO:
+    // `safe-to-spend`, `scheduled-transactions/summary`
     // e `dashboard/previsao` continuam chamando `parteConfiguradaDoMembro`
     // direto, pela minha parte. A secao 4 do plano pergunta isso em voz alta e
     // responde NAO REVERTER a HMO-306/308: o `safe-to-spend` responde *"posso
