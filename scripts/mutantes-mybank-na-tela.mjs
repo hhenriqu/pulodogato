@@ -694,6 +694,61 @@ const mutantes = [
     "                        {rotuloDoStatusDoEmprestimo(emprestimo)}",
     "                        {emprestimo.status}",
   ],
+
+  // =========================================================================
+  // O TERCEIRO NUMERO DO CABECALHO -- o juro a receber (HMO-450)
+  // =========================================================================
+  // O PRIMEIRO E O QUE A ISSUE NOMEIA, e ele e o unico desta secao que calcula
+  // um numero PLAUSIVEL: `a receber - emprestado` e a conta que qualquer um
+  // escreveria, ela tem a unidade certa, e ela so erra quando alguma parcela ja
+  // foi paga. Num fixture com a serie toda em aberto os dois valores COINCIDEM
+  // -- por isso o controle dele e a conta Tesouro, onde a parcela 1 esta `paid`
+  // e a subtracao da -R$ 450 (juro negativo) contra os R$ 50 certos.
+  //
+  // Os outros erram para ZERO ou para o juro da serie INTEIRA, que sao os dois
+  // jeitos de o terceiro numero existir na tela sem medir nada.
+
+  [
+    LIB,
+    "O JURO A RECEBER VIRA `a receber - emprestado` (a conta que parece certa: coincide com a certa ate a primeira parcela paga, e depois dela da juro NEGATIVO)",
+    "    jurosAReceber: jurosAReceber / 100,",
+    "    jurosAReceber: aReceber - emprestado,",
+  ],
+
+  [
+    LIB,
+    "o juro conta a SERIE INTEIRA e nao so as parcelas em aberto (o cabecalho promete de novo o juro que ja foi recebido)",
+    "    if (!parcelaEmAberto(serie[i])) continue;\n    juros += emCentavos(rateio[i].parteDosJuros);",
+    "    juros += emCentavos(rateio[i].parteDosJuros);",
+  ],
+
+  [
+    LIB,
+    "o rateio recebe o TOTAL no lugar do principal (todo emprestimo vira juro zero, e a tela fica com um terceiro numero que nunca sai de R$ 0,00)",
+    "    principal: emprestimo.principal,",
+    "    principal: total,",
+  ],
+
+  [
+    LIB,
+    "o total da serie vira o PRINCIPAL (o juro some pelo outro lado: a serie deixa de ser o que volta)",
+    "  const total = serie.reduce((soma, p) => soma + emCentavos(p.valor), 0) / 100;",
+    "  const total = emprestimo.principal;",
+  ],
+
+  [
+    PAINEL,
+    "o terceiro numero mostra o A RECEBER (tres caixas, duas dizendo a mesma coisa -- e a de juros mentindo alto)",
+    "                {formatCurrency(totais.jurosAReceber)}",
+    "                {formatCurrency(totais.aReceber)}",
+  ],
+
+  [
+    PAINEL,
+    'o rotulo do terceiro numero repete "Total a receber" (o numero esta certo e o leitor nao tem como saber o que ele e -- que e o defeito que a issue existe para nao criar)',
+    '              <p className="text-xs text-muted-foreground">Juros a receber</p>',
+    '              <p className="text-xs text-muted-foreground">Total a receber</p>',
+  ],
 ];
 
 const SUITE = "test:mybank-na-tela";

@@ -37,6 +37,7 @@
 // ---------------------------------------------------------------------------
 
 import { porTipo } from "@/lib/contas";
+import { rateioDaSerie } from "@/lib/juros-do-emprestimo";
 import {
   parcelaFoiAntecipada,
   parcelasDaAntecipacao,
@@ -238,20 +239,88 @@ export function linhasAReceber(
   );
 }
 
-/** Os dois numeros do cabecalho, para UMA conta de investimento. */
+/** Os TRES numeros do cabecalho, para UMA conta de investimento. */
 export interface TotaisDaContaCredora {
   /** A soma do `principal` dos emprestimos ativos daquela conta. */
   emprestado: number;
   /** A soma das parcelas em aberto daquela conta. */
   aReceber: number;
+  /**
+   * A PARTE-JUROS do que ainda falta receber -- o GANHO que ainda vem.
+   *
+   * NAO e `aReceber - emprestado`. Ver `jurosEmAbertoDoEmprestimo`.
+   */
+  jurosAReceber: number;
   quantosEmprestimos: number;
   quantasParcelasEmAberto: number;
 }
 
+/** Centavos inteiros, pela mesma razao de `lib/juros-do-emprestimo`: somar reais em float junta poeira. */
+function emCentavos(valor: number): number {
+  return Math.round(Number(valor) * 100);
+}
+
 /**
- * O TOTAL EMPRESTADO E O TOTAL A RECEBER DA CONTA ESCOLHIDA.
+ * QUANTO DO QUE AINDA FALTA RECEBER DESTE EMPRESTIMO E JURO.
  *
- * SAO DOIS NUMEROS DIFERENTES, E OS DOIS ESTAO CERTOS
+ * A conta e: ratear a SERIE INTEIRA em parte-principal e parte-juros
+ * (`rateioDaSerie`, a mesma funcao que a rota usa para gravar as pernas do Caso
+ * B), e somar a parte-juros SO das parcelas em aberto.
+ *
+ * POR QUE NAO `aReceber - emprestado`, QUE E A CONTA QUE PARECE CERTA
+ * -------------------------------------------------------------------
+ * Porque ela so acerta enquanto NENHUMA parcela foi paga. Num emprestimo de R$
+ * 400 que volta como 2 x R$ 250 (R$ 100 de juro), depois da primeira parcela
+ * paga o `aReceber` e R$ 250 e o `emprestado` continua R$ 400: a subtracao da
+ * -R$ 150 -- um juro NEGATIVO, num emprestimo que esta ganhando dinheiro. O
+ * certo e R$ 50, que e a parte-juros da unica parcela que falta.
+ *
+ * A subtracao e indistinguivel da conta certa em todo fixture sem parcela paga,
+ * e e por isso que o mutante dela so morre num caso com parcela ja paga.
+ *
+ * A SERIE E ORDENADA POR `numero`, E ISSO IMPORTA: em `rateioDaSerie` e a
+ * ULTIMA parcela da lista que absorve o centavo da divisao. Entregue fora de
+ * ordem, o centavo cairia numa parcela do meio e o rateio das outras mudaria.
+ * `linhasAReceber` ordena por vencimento, que e outra pergunta -- por isso a
+ * ordenacao e refeita aqui em vez de reaproveitada.
+ *
+ * `rateioDaSerie` DEVOLVENDO `null` VIRA ZERO, e nao uma excecao: ele recusa
+ * quando a serie nao fecha com o total (serie incompleta, ou um `principal`
+ * maior que tudo que volta). Nesse estado nao ha juro que se saiba afirmar, e
+ * um zero e a leitura honesta -- derrubar o cabecalho inteiro por causa do
+ * terceiro numero seria trocar um numero ausente por uma tela ausente.
+ */
+export function jurosEmAbertoDoEmprestimo(
+  emprestimo: EmprestimoDoMyBank
+): number {
+  const serie = [...emprestimo.parcelas].sort((a, b) => a.numero - b.numero);
+  if (serie.length === 0) return 0;
+
+  // O TOTAL E A SOMA DA SERIE, e nao uma coluna: `GET /api/mybank/loans` manda
+  // o `principal` (o que saiu) e TODAS as parcelas (o que volta), entao o total
+  // ja esta na mao. O juro do emprestimo e a diferenca entre os dois.
+  const total = serie.reduce((soma, p) => soma + emCentavos(p.valor), 0) / 100;
+
+  const rateio = rateioDaSerie({
+    parcelas: serie.map((p) => p.valor),
+    principal: emprestimo.principal,
+    total,
+  });
+  if (!rateio) return 0;
+
+  let juros = 0;
+  for (let i = 0; i < serie.length; i++) {
+    if (!parcelaEmAberto(serie[i])) continue;
+    juros += emCentavos(rateio[i].parteDosJuros);
+  }
+
+  return juros / 100;
+}
+
+/**
+ * O EMPRESTADO, O A RECEBER E O JURO DA CONTA ESCOLHIDA.
+ *
+ * SAO TRES NUMEROS DIFERENTES, E OS TRES ESTAO CERTOS
  * ---------------------------------------------------
  * "Emprestado" e quanto saiu da conta; "a receber" e quanto ainda falta voltar.
  * Depois da primeira parcela paga de um emprestimo de R$ 24.000, o emprestado
@@ -259,6 +328,15 @@ export interface TotaisDaContaCredora {
  * os dois com rotulo proprio. Um numero so faria quem olha concluir que o outro
  * esta errado, que e exatamente o que `fontes-consistentes-que-discordam`
  * descreve.
+ *
+ * O TERCEIRO EXISTE PORQUE O JURO TORNOU A DIFERENCA AMBIGUA (HMO-450). Antes
+ * da HMO-445 a distancia entre os dois era so "quanto ja voltou", e quem olhava
+ * conseguia reconstrui-la de cabeca. Com juro ela passou a misturar DUAS coisas
+ * -- o que ja voltou e o ganho que ainda vem -- e uma diferenca que mistura
+ * duas coisas nao se desfaz de cabeca: sem o terceiro rotulo a tela fica com
+ * duas leituras que parecem discordar sobre dinheiro
+ * (`duas-leituras-do-previsto-discordam-por-construcao`). Cada numero diz o que
+ * E, e nenhum deles exige subtracao.
  *
  * `status !== 'active'` FICA FORA DOS DOIS: emprestimo quitado ou cancelado nao
  * tem nada a receber, e contar o principal dele no "emprestado" diria que a
@@ -274,10 +352,12 @@ export function totaisDaContaCredora(
 
   let emprestado = 0;
   let aReceber = 0;
+  let jurosAReceber = 0;
   let quantasParcelasEmAberto = 0;
 
   for (const emprestimo of minhas) {
     emprestado += emprestimo.principal;
+    jurosAReceber += emCentavos(jurosEmAbertoDoEmprestimo(emprestimo));
     for (const parcela of emprestimo.parcelas) {
       if (!parcelaEmAberto(parcela)) continue;
       aReceber += parcela.valor;
@@ -288,6 +368,7 @@ export function totaisDaContaCredora(
   return {
     emprestado,
     aReceber,
+    jurosAReceber: jurosAReceber / 100,
     quantosEmprestimos: minhas.length,
     quantasParcelasEmAberto,
   };

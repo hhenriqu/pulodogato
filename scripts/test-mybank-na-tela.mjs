@@ -529,18 +529,62 @@ let LOANS = [
   {
     // OUTRA CONTA: o cabecalho tem de somar SO a conta escolhida. Sem esta
     // linha, um total que ignorasse \`conta_credora_id\` passaria verde.
+    //
+    // E ELE E O EMPRESTIMO COM JURO (HMO-450), COM A SERIE INTEIRA E UMA
+    // PARCELA JA PAGA -- as tres coisas sao necessarias juntas:
+    //
+    //   * COM JURO (R$ 400 emprestados voltando como 2 x R$ 250 = R$ 500), ou
+    //     o terceiro numero do cabecalho seria zero em todo fixture e qualquer
+    //     conta erraria para zero sem ninguem ver;
+    //   * A SERIE INTEIRA, porque \`rateioDaSerie\` so rateia quando a soma das
+    //     parcelas fecha com o total. Os emprestimos da Carteira XP sao
+    //     ABREVIADOS de proposito (3 parcelas de 24) e por isso caem no
+    //     fallback -- eles medem o zero pelo outro caminho, nao este;
+    //   * UMA PARCELA PAGA, que e o que separa a conta certa da conta que
+    //     parece certa. Com tudo em aberto, \`aReceber - emprestado\` daria o
+    //     mesmo R$ 100 e o mutante dela sobreviveria. Com a 1 paga a subtracao
+    //     da -R$ 150 (juro NEGATIVO) e a conta certa da R$ 50.
     id: "l-outra-conta",
     descricao: "Emprestimo do Tesouro",
     conta_credora_id: ${JSON.stringify(TESOURO)},
     caso: "conexao",
     status: "active",
-    principal: 500,
+    principal: 400,
     total_de_parcelas: 2,
     primeiro_vencimento: "2026-10-20",
     quem_deve_pagar: "Bruno",
     devedor_id: ${JSON.stringify(BRUNO)},
     parcelas: [
-      { id: "p-o1", valor: 250, numero: 1, total: 2, rotulo: "1 de 2", vencimento: "2026-10-20", status: "pending", a_confirmar: false },
+      { id: "p-o1", valor: 250, numero: 1, total: 2, rotulo: "1 de 2", vencimento: "2026-10-20", status: "paid", a_confirmar: false, paid_date: "2026-10-20" },
+      { id: "p-o2", valor: 250, numero: 2, total: 2, rotulo: "2 de 2", vencimento: "2026-11-20", status: "pending", a_confirmar: false },
+    ],
+  },
+  {
+    // O CONTROLE DO JURO ZERO, NA MESMA CONTA E COM A SERIE INTEIRA (HMO-450).
+    //
+    // R$ 600 emprestados voltando como 2 x R$ 300: o total FECHA com o
+    // principal, entao \`rateioDaSerie\` rateia de verdade (nao e o fallback) e
+    // toda parte-juros e zero. E o unico caso do fixture que percorre o
+    // caminho feliz do rateio e ainda assim tem de dar zero.
+    //
+    // ELE MORA NA CONTA DO EMPRESTIMO COM JURO DE PROPOSITO: somados, os dois
+    // dao R$ 50 de juro num cabecalho de R$ 1.000 emprestados. Um mutante que
+    // cobrasse juro de todo mundo (ou que ignorasse o \`principal\` e usasse o
+    // total) mudaria esse R$ 50, e nenhuma conta com um emprestimo so
+    // distinguiria isso.
+    id: "l-tesouro-sem-juro",
+    descricao: "Geladeira sem juros",
+    conta_credora_id: ${JSON.stringify(TESOURO)},
+    caso: "conexao",
+    status: "active",
+    principal: 600,
+    total_de_parcelas: 2,
+    primeiro_vencimento: "2026-10-25",
+    quem_deve_pagar: "Bruno",
+    devedor_id: ${JSON.stringify(BRUNO)},
+    parcelas: [
+      { id: "p-s1", valor: 300, numero: 1, total: 2, rotulo: "1 de 2", vencimento: "2026-10-25", status: "paid", a_confirmar: false, paid_date: "2026-10-25" },
+      { id: "p-s2", valor: 300, numero: 2, total: 2, rotulo: "2 de 2", vencimento: "2026-11-25", status: "pending", a_confirmar: false },
     ],
   },
 ];
@@ -934,6 +978,11 @@ const out = {};
     escolhida: seletor.value,
     emprestado: achar("mybank-total-emprestado").textContent,
     aReceber: achar("mybank-a-receber").textContent,
+    jurosAReceber: achar("mybank-juros-a-receber").textContent,
+    // O cabecalho inteiro, para medir que os TRES tem rotulo proprio -- um
+    // numero certo embaixo do rotulo do vizinho e o defeito que a HMO-450
+    // existe para nao criar.
+    cabecalho: achar("mybank-conta").closest("div").textContent,
     // Os emprestimos e as linhas de "A receber" da conta escolhida.
     emprestimos: Array.from(raiz.querySelectorAll("[data-emprestimo]")).map(
       (el) => ({
@@ -966,6 +1015,8 @@ const out = {};
     escolhida: achar("mybank-conta").value,
     emprestado: achar("mybank-total-emprestado").textContent,
     aReceber: achar("mybank-a-receber").textContent,
+    jurosAReceber: achar("mybank-juros-a-receber").textContent,
+    cabecalho: achar("mybank-conta").closest("div").textContent,
     emprestimos: Array.from(raiz.querySelectorAll("[data-emprestimo]")).map(
       (el) => el.getAttribute("data-emprestimo")
     ),
@@ -2481,9 +2532,104 @@ test("A5: trocar de conta troca os dois totais e a lista", () => {
   if (erroDeExecucao) throw erroDeExecucao;
 
   assert.equal(resultado.a_tesouro.escolhida, TESOURO);
-  assert.equal(resultado.a_tesouro.emprestado, "R$ 500,00");
-  assert.equal(resultado.a_tesouro.aReceber, "R$ 250,00");
-  assert.deepEqual(resultado.a_tesouro.emprestimos, ["l-outra-conta"]);
+  // R$ 400 (com juro) + R$ 600 (sem juro) emprestados; a receber, a parcela 2
+  // de cada um: R$ 250 + R$ 300.
+  assert.equal(resultado.a_tesouro.emprestado, "R$ 1.000,00");
+  assert.equal(resultado.a_tesouro.aReceber, "R$ 550,00");
+  assert.deepEqual(resultado.a_tesouro.emprestimos, [
+    "l-outra-conta",
+    "l-tesouro-sem-juro",
+  ]);
+});
+
+// ---------------------------------------------------------------------------
+// A7-A10 (HMO-450) -- o TERCEIRO numero do cabecalho: o juro a receber
+// ---------------------------------------------------------------------------
+
+test("A7: o juro a receber e a parte-juros do que FALTA, e nao `a receber - emprestado`", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // O Tesouro tem R$ 400 emprestados voltando como 2 x R$ 250 (R$ 100 de juro,
+  // R$ 50 por parcela) com a parcela 1 JA PAGA, mais um emprestimo a juro zero.
+  // Falta UMA parcela com juro: R$ 50.
+  //
+  // ESTE E O CONTROLE NEGATIVO QUE A ISSUE NOMEIA. A conta que parece certa --
+  // `a receber - emprestado` -- daria R$ 550 - R$ 1.000 = -R$ 450 aqui: um juro
+  // NEGATIVO numa conta que esta ganhando dinheiro. Ela so coincide com a certa
+  // enquanto nenhuma parcela foi paga, e e por isso que a parcela paga esta no
+  // fixture.
+  assert.equal(resultado.a_tesouro.jurosAReceber, "R$ 50,00");
+});
+
+test("A8: juro zero mostra R$ 0,00 -- e o cabecalho nao fica com um numero pendurado", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // A Carteira XP so tem emprestimo sem juro. O terceiro numero APARECE e vale
+  // zero -- ele nao some, porque um terceiro numero que aparece e desaparece
+  // conforme o dado faz a mesma conta ter duas telas.
+  assert.equal(resultado.a.jurosAReceber, "R$ 0,00");
+
+  // E ele nao e string vazia nem `undefined` impresso, que e como um numero
+  // "pendurado" se parece na tela.
+  assert.ok(
+    /R\$/.test(resultado.a.jurosAReceber),
+    "o terceiro numero saiu sem moeda: " +
+      JSON.stringify(resultado.a.jurosAReceber)
+  );
+});
+
+test("A9: cada um dos tres numeros tem ROTULO PROPRIO, e os tres estao no cabecalho", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // A issue pede que cada rotulo diga o que o numero e, "sem o leitor precisar
+  // subtrair de cabeca". Sem esta assercao, tres numeros certos embaixo de dois
+  // rotulos passariam verde.
+  for (const rotulo of [
+    "Total emprestado",
+    "Total a receber",
+    "Juros a receber",
+  ]) {
+    assert.ok(
+      resultado.a_tesouro.cabecalho.includes(rotulo),
+      "faltou o rotulo " + rotulo + " no cabecalho"
+    );
+  }
+
+  // E os tres VALORES tambem, cada um distinto do outro: tres rotulos
+  // mostrando o mesmo numero seria o defeito oposto.
+  for (const valor of ["R$ 1.000,00", "R$ 550,00", "R$ 50,00"]) {
+    assert.ok(
+      resultado.a_tesouro.cabecalho.includes(valor),
+      "faltou o valor " + valor + " no cabecalho"
+    );
+  }
+});
+
+test("A10: o juro a receber e um PEDACO do a receber, e nunca passa dele", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // A relacao que a legenda afirma ("ja incluido no total a receber"): o juro
+  // esta DENTRO do a receber, e nao somado a ele. Um mutante que devolvesse o
+  // juro da serie INTEIRA (R$ 100, contando a parcela ja paga) continuaria
+  // menor que R$ 550 e passaria por aqui -- quem o mata e A7. Este caso mede a
+  // outra ponta: o juro nunca pode ser maior que o dinheiro que ainda vem.
+  const emReais = (texto) =>
+    Number(
+      texto
+        .replace(/[^0-9,-]/g, "")
+        .split(".")
+        .join("")
+        .replace(",", ".")
+    );
+
+  const aReceber = emReais(resultado.a_tesouro.aReceber);
+  const juros = emReais(resultado.a_tesouro.jurosAReceber);
+
+  assert.ok(juros >= 0, "juro negativo no cabecalho: " + juros);
+  assert.ok(
+    juros <= aReceber,
+    "o juro (" + juros + ") passou o a receber (" + aReceber + ")"
+  );
 });
 
 test("A6: a lista de emprestimos traz o progresso n/m e o devedor", () => {
@@ -3745,11 +3891,15 @@ test("L6: UM encerrado so -- o artigo concorda com o numero (o fixture de produc
 test("L7: controle do outro lado -- conta SEM encerrado nao tem botao nenhum", () => {
   if (erroDeExecucao) throw erroDeExecucao;
 
-  // A conta Tesouro tem um emprestimo `active` e nada mais. Sem este caso, um
-  // botao que aparecesse sempre (dizendo "Mostrar os 0 encerrados") passaria
-  // todas as assercoes de L1 a L6.
-  assert.deepEqual(resultado.a_tesouro.emprestimos, ["l-outra-conta"]);
-  assert.equal(resultado.a_tesouro.resumo, "1 em andamento · 0 encerrados");
+  // A conta Tesouro tem DOIS emprestimos `active` e nada mais (o com juro e o
+  // controle a juro zero da HMO-450). Sem este caso, um botao que aparecesse
+  // sempre (dizendo "Mostrar os 0 encerrados") passaria todas as assercoes de
+  // L1 a L6.
+  assert.deepEqual(resultado.a_tesouro.emprestimos, [
+    "l-outra-conta",
+    "l-tesouro-sem-juro",
+  ]);
+  assert.equal(resultado.a_tesouro.resumo, "2 em andamento · 0 encerrados");
   assert.equal(
     resultado.a_tesouro.temBotaoDeEncerrados,
     false,
