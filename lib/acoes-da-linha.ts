@@ -92,7 +92,13 @@ import type { LinhaDaTela, TipoDaTela } from "@/lib/telas-de-movimentacao";
  */
 export type LinhaAcionavel = Pick<
   LinhaDaTela,
-  "id" | "gravada" | "origem" | "tipo" | "natureza" | "posso_editar"
+  | "id"
+  | "gravada"
+  | "origem"
+  | "tipo"
+  | "natureza"
+  | "posso_editar"
+  | "soma_nos_totais"
 >;
 
 /** O rotulo fixo dos dois botoes que nao mudam de nome por tela. */
@@ -193,6 +199,161 @@ export function podePagarAFatura(linha: LinhaAcionavel): boolean {
   if (linha.origem !== "previsto") return false;
   if (!linha.posso_editar) return false;
   return true;
+}
+
+/**
+ * TIRAR (OU DEVOLVER) A LINHA DOS TOTAIS -- HMO-452, F2 da HMO-443.
+ *
+ * "escolher uma despesa e uma receita pra nao aparecer nos totais, exemplo
+ * adicionei um ajuste na minha conta investimento, ela entrou como uma receita
+ * de ajuste mas nao quero que ela fique somana nos totais."
+ *
+ * OS QUATRO CRITERIOS, e nenhum e redundante com os outros:
+ *
+ *   * `gravada` e `posso_editar` vem da BASE (`podeAgirNaLinha`), e a regra 4
+ *     vale aqui inteira e sem desconto -- esta acao e um `UPDATE`, e **UPDATE
+ *     filtrado pela RLS volta 200 SEM ALTERAR NADA**. Numa linha de outro
+ *     membro do grupo (a policy do 005 libera `group_id IS NOT NULL AND
+ *     is_group_member(group_id)`) o botao diria "pronto", o selo nao
+ *     apareceria, e o total continuaria igual. E o modo de falha mais caro
+ *     desta feature, porque "nao mudou nada" e exatamente o que a tela mostra
+ *     quando a acao FUNCIONA do outro lado da aritmetica: o cartao de Receitas
+ *     cai, e nada na LINHA muda de numero;
+ *
+ *   * `natureza !== "fatura"` vem da base tambem, e aqui a razao e OUTRA (nao a
+ *     regra 5): a linha de fatura PAGA e uma perna de pagamento, e desmarca-la
+ *     tiraria do relatorio metade de um par que se anula -- o mes passaria a
+ *     fechar pelo valor da fatura. A fatura ABERTA cai pelo `gravada`;
+ *
+ *   * `origem === "realizado"` E O CRITERIO PROPRIO DESTA ACAO, e e o unico que
+ *     nao vem da base. A coluna da 060 e de `financial_transactions`. Uma linha
+ *     PREVISTA e `scheduled_transactions`, e o PATCH dela vai para
+ *     `/api/scheduled-transactions/{id}` -- que nao conhece o campo e o
+ *     DESCARTARIA em silencio, com 200. O botao apareceria, a pessoa clicaria,
+ *     e nada aconteceria nunca: o botao da regra 4 com outro nome. (E nao e
+ *     perda nenhuma: a previsao nao esta em `category_monthly_totals`, que le a
+ *     tabela realizada direto -- ela nao soma naqueles totais para comecar.)
+ *
+ * O QUE ESTA FUNCAO **NAO** PERGUNTA, de proposito: se a linha e de GRUPO. A
+ * secao 6d do plano da HMO-443 decidiu que lancamento de grupo PODE ser
+ * marcado, e o flag vale so para o relatorio PESSOAL -- o rateio, o acerto e o
+ * saldo do grupo ignoram a coluna, porque a perna de grupo do custo pessoal sai
+ * de `group_share_entries` (033), que nao passa por `category_monthly_totals`.
+ * Recusar aqui tiraria a escolha de quem tem grupo sem proteger numero nenhum.
+ * O que a linha de grupo ALHEIA perde ja esta coberto pelo `posso_editar`.
+ */
+export function podeMudarOsTotais(linha: LinhaAcionavel): boolean {
+  if (!podeAgirNaLinha(linha)) return false;
+  return linha.origem === "realizado";
+}
+
+/**
+ * O rotulo da acao, pelo estado ATUAL da linha.
+ *
+ * DUAS FRASES PARA UM BOTAO, e nao um rotulo fixo: a acao e um interruptor, e
+ * um nome so (`"Não somar nos totais"`) mentiria exatamente na metade dos casos
+ * -- em cima da linha JA desmarcada ele prometeria desmarcar de novo, e quem
+ * clicasse por engano nao teria como saber que acabou de RELIGAR a linha nos
+ * relatorios. E a mesma razao de `rotuloDeConfirmar` ter tres verbos em vez de
+ * um `??`.
+ *
+ * "NÃO SOMAR NOS TOTAIS" E A FORMA NEGATIVA, e ela e deliberada AQUI, ao
+ * contrario do campo da CONTA (058), que usa o rotulo positivo "Somar nos
+ * totais" num interruptor. A diferenca nao e descuido: ali o rotulo etiqueta um
+ * `Switch`, e um rotulo negativo ao lado de um interruptor cria a dupla negacao
+ * ("desligar «Não somar»" passa a querer dizer que soma). Aqui o rotulo e o
+ * VERBO DE UM BOTAO -- o que a pessoa esta mandando acontecer --, e e o pedido
+ * literal da issue-mae. Botao diz o que faz; etiqueta diz o que a coisa e.
+ */
+export const ROTULO_DE_TIRAR_DOS_TOTAIS = "Não somar nos totais";
+export const ROTULO_DE_VOLTAR_AOS_TOTAIS = "Voltar a somar nos totais";
+
+export function rotuloDeMudarOsTotais(linha: LinhaAcionavel): string {
+  return linha.soma_nos_totais
+    ? ROTULO_DE_TIRAR_DOS_TOTAIS
+    : ROTULO_DE_VOLTAR_AOS_TOTAIS;
+}
+
+/**
+ * O SELO da linha desmarcada, ou `null`.
+ *
+ * SEM O SELO A LINHA SE LE COMO BUG, e esta e a razao de ele existir -- a mesma
+ * da conta fora dos totais na tela de Contas (058): a linha CONTINUA na lista,
+ * com o valor dela, e NAO entra no cartao de «Realizado» em cima. Quem somasse
+ * as linhas a mao acharia outro numero e concluiria que o total esta errado. O
+ * selo e o que torna a diferenca legivel em vez de parecer defeito
+ * (`sumido-da-tela-pode-ser-so-indistinguivel`).
+ *
+ * E A LINHA FICA NA LISTA DE PROPOSITO -- secao 6c do plano, decidida contra o
+ * pedido original ("ela nao precisaria nem aparecer"): esconder a linha deixa o
+ * dinheiro sem lugar NENHUM no app e o total sem explicacao. Lista limpa, se o
+ * Helio quiser depois, e FILTRO da tela -- nao exclusao.
+ *
+ * `null` e nao `""` quando a linha soma: quem desenha nao pode renderizar um
+ * `<span>` vazio, que muda o `gap` da linha sem mostrar nada.
+ */
+export const SELO_FORA_DOS_TOTAIS = "fora dos totais";
+
+export function seloDaLinha(linha: LinhaAcionavel): string | null {
+  return linha.soma_nos_totais ? null : SELO_FORA_DOS_TOTAIS;
+}
+
+/**
+ * O QUE O FLAG **NAO** FAZ -- e esta frase e requisito, nao enfeite.
+ *
+ * A linha desmarcada CONTINUA no saldo da conta, no patrimonio e no grafico de
+ * patrimonio, de proposito (secao 3c do plano, e o cabecalho da migration 060
+ * em extenso): `net_worth_history` (008) le `financial_transactions` DIRETO e
+ * nao passa por `category_monthly_totals`, onde o filtro mora. Isso nao e
+ * esquecimento -- o dinheiro do ajuste ENTROU mesmo na conta, o
+ * `update_account_balance_trigger` ja mexeu no `current_balance`, e tirar a
+ * linha do patrimonio faria o saldo da tela de Contas discordar do patrimonio:
+ * duas telas, o mesmo dinheiro, dois numeros.
+ *
+ * SEM A FRASE, ISSO E INDISTINGUIVEL DE UM BUG. A pessoa ve, na MESMA sessao, o
+ * saldo da conta incluindo o ajuste e um total de receitas que nao o inclui --
+ * e as duas leituras estao certas. Nenhum numero na tela explica a diferenca; a
+ * frase e o unico lugar onde ela pode aparecer.
+ *
+ * UMA LINHA E NAO UM PARAGRAFO: ela mora embaixo da checkbox do formulario, que
+ * e onde a decisao e tomada. "Continua" vem primeiro de proposito -- o medo de
+ * quem desmarca e perder o lancamento, e a primeira palavra responde isso.
+ */
+export const AVISO_DO_FLAG_DOS_TOTAIS =
+  "Continua no extrato, no saldo da conta e no patrimônio — só sai das somas " +
+  "dos relatórios (fluxo de caixa, total por categoria, previsto x realizado " +
+  "e os CSVs).";
+
+/**
+ * O PATCH que liga ou desliga o flag, ou `null`.
+ *
+ * O `null` e o contrato, como em `pedidoDeConfirmacao`: quem chama nao repete a
+ * peneira, e nao tem como montar este pedido para uma linha PREVISTA -- cuja
+ * URL seria `/api/scheduled-transactions/{id}`, onde o campo e descartado em
+ * silencio com 200.
+ *
+ * O CORPO LEVA O BOOLEANO INVERTIDO E NAO UM "alternar", e os dois nao sao a
+ * mesma coisa: um toggle calculado no SERVIDOR leria o estado de novo e dois
+ * cliques concorrentes (ou um clique numa tela com a lista velha) acabariam no
+ * estado oposto ao que a pessoa esta vendo. Mandando o valor explicito, o que
+ * chega ao banco e o que estava escrito no botao.
+ *
+ * E O BOOLEANO VAI LITERAL, nao em string: a rota testa `=== true` / `=== false`
+ * ESTRITO de proposito (`app/api/personal-finance/transactions/[id]`), porque a
+ * string `"false"` e truthy e um `Boolean(...)` do outro lado gravaria o OPOSTO
+ * do pedido. `JSON.stringify` de um booleano devolve `true`/`false` nus, que e
+ * o que aquele teste espera -- este comentario existe para que ninguem
+ * "conserte" o corpo para `String(...)` numa limpeza de tipos.
+ */
+export function pedidoDeMudarOsTotais(
+  linha: LinhaAcionavel
+): PedidoDaAcao | null {
+  if (!podeMudarOsTotais(linha)) return null;
+  return {
+    metodo: "PATCH",
+    url: `/api/personal-finance/transactions/${encodeURIComponent(linha.id)}`,
+    corpo: { include_in_total: !linha.soma_nos_totais },
+  };
 }
 
 /** Regra 1 por cima da base: a baixa so existe do lado previsto. */
@@ -375,6 +536,15 @@ export function motivoSemAcoes(linha: LinhaAcionavel): string | null {
   // esta presa por assercao em scripts/test-acoes-da-linha.mjs ("o botao Pagar
   // EXIGE posso_editar"). No dia em que `podePagarAFatura` deixar de exigir
   // `posso_editar`, aquele bloco reprova e manda reabrir este `if`.
+  //
+  // `podeMudarOsTotais` (HMO-452) TAMBEM NAO ENTRA, e por um argumento mais
+  // forte que o acima: ele e `podeAgirNaLinha(linha) && origem === "realizado"`,
+  // e `podeExcluir` e `podeAgirNaLinha` NU. Entao `podeMudarOsTotais` IMPLICA
+  // `podeExcluir`, que ja esta neste `if` -- acrescenta-lo nao poderia mudar
+  // resposta nenhuma nem no dia em que o criterio dele mudasse, desde que ele
+  // continue saindo da base. Escreve-lo seria um porteiro inobservavel
+  // (`filtro-a-jusante-torna-o-porteiro-inobservavel`), e o mutante que o
+  // acrescenta sobrevive com razao.
   if (podeEditar(linha) || podeExcluir(linha) || podeConfirmar(linha)) {
     return null;
   }

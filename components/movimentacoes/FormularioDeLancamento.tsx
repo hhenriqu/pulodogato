@@ -82,6 +82,7 @@ import {
   parcelaDigitada,
   regraDeRecorrencia,
   rotuloDaParcela,
+  somaNosTotaisEstaNaTela,
   valoresIniciais,
   validarLancamento,
   valorGravado,
@@ -719,6 +720,26 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       // valor e o terceiro cinto, e o que impede a checkbox de aparecer
       // desmarcada se algum dia ela voltar a ser exibida ali.
       confirmado: true,
+      // O FLAG GRAVADO VOLTA PARA A CHECKBOX (HMO-452), E SEM ISTO A EDICAO
+      // RELIGA A LINHA NOS TOTAIS
+      //
+      // `valoresIniciais()` acima da `somaNosTotais: true` -- o default da
+      // coluna e o caso comum. Sem esta linha, EDITAR o ajuste que a pessoa
+      // tirou dos totais (para corrigir a descricao, a conta, qualquer coisa) o
+      // devolveria aos relatorios: o Salvar leva `include_in_total: true` de
+      // volta, o toast diz sucesso, o selo some da lista e o total de receitas
+      // sobe de novo. Exatamente o modo de falha do `subcategoriaId` trinta
+      // linhas acima -- perda de dado em cada edicao, sem erro nenhum --, e
+      // aqui ele mexe num TOTAL.
+      //
+      // `!== false` E NAO `Boolean(...)`: a coluna e anulavel e a linha pode
+      // chegar sem a chave (o cache offline nao a guarda, e a 060 deixa NULL nas
+      // linhas antigas). NULL e ausente querem dizer "soma" -- a polaridade
+      // POSITIVA da coluna existe para que o desconhecido seja o caso comum
+      // (`coluna-booleana-anulavel-not-is-false`). Um `Boolean(undefined)` daria
+      // `false` e abriria TODA linha antiga com a checkbox marcada, prometendo
+      // tirar dos totais o que ja soma.
+      somaNosTotais: linha.include_in_total !== false,
       notas: linha.notes ?? "",
       // Editar nunca cai em "fixa": o que esta gravado e um lancamento, nao uma
       // regra. A regra se edita em Contas Previstas. Aqui so distinguimos se o
@@ -1512,6 +1533,40 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
         campos.faturaDoLancamento && valores.mesDaFatura
           ? `${valores.mesDaFatura}-01`
           : null,
+      // -------------------------------------------------------------------
+      // ESTE LANCAMENTO SOMA NOS TOTAIS? (060, HMO-443 / HMO-452)
+      // -------------------------------------------------------------------
+      // O PORTAO E `somaNosTotaisEstaNaTela`, A MESMA FUNCAO QUE DECIDE A
+      // CHECKBOX, pelo motivo de `invoice_month_override` acima: o estado do
+      // formulario e um objeto so, e `somaNosTotais: false` SOBREVIVE a troca de
+      // natureza. Quem desmarcasse a checkbox numa despesa e depois a mudasse
+      // para "Fixa" ou "Prevista" levaria o `false` para uma tabela que nao tem
+      // a coluna -- e esconder a checkbox nao e trava, so deixa de desenhar.
+      //
+      // DENTRO DE `linha`, e nao no ramo do insert, porque `linha` alimenta os
+      // DOIS (`insert({...linha, ...})` e `update(linhaParaEditar)`) e a EDICAO
+      // e metade da feature: e por ela que a pessoa traz de volta aos totais o
+      // que tirou por engano. Posto so no insert, o flag gravaria na criacao e
+      // seria impossivel de desfazer pelo formulario.
+      //
+      // BOOLEANO LITERAL, SEMPRE PRESENTE, e nao o
+      // `...(x === false ? {...} : {})` que o POST da rota usa. Aquele padrao
+      // existe para a rota sobreviver a JANELA entre o deploy e a colagem da
+      // migration, onde a coluna ainda nao existe. Aqui ele seria um defeito de
+      // DINHEIRO: `undefined` e chave OMITIDA no supabase-js, e coluna omitida
+      // num UPDATE fica como esta -- desmarcar e remarcar a mesma linha
+      // gravaria o `false` e nunca o `true` de volta. O mesmo raciocinio do
+      // `null` em `invoice_month_override`.
+      //
+      // E A JANELA JA ESTA FECHADA, medido: este branch ja nomeia
+      // `include_in_total` no `select` de `app/api/movimentacoes/resumo` --
+      // sonda pelo PostgREST com controle negativo no cabecalho daquele arquivo
+      // --, entao a tela de Despesas inteira ja depende da coluna existir. Um
+      // campo condicional aqui nao compraria seguranca nenhuma que aquele
+      // `select` nao ja tenha gasto.
+      include_in_total: somaNosTotaisEstaNaTela(tipo, valores, editando)
+        ? valores.somaNosTotais
+        : true,
     };
 
     let transacao: { id: string };

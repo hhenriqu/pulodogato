@@ -33,6 +33,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { CamposDeLancamento } from "../.tmp-campos-lancamento/components/movimentacoes/CamposDeLancamento.js";
 import { valoresIniciais } from "../.tmp-campos-lancamento/lib/lancamento.js";
+// A frase do flag dos totais vem da MESMA constante que o componente importa --
+// ver o ultimo bloco deste arquivo.
+import { AVISO_DO_FLAG_DOS_TOTAIS } from "../.tmp-campos-lancamento/lib/acoes-da-linha.js";
 
 const CATEGORIA_DESPESA = { id: "c1", name: "Mercado", is_expense: true };
 const CATEGORIA_RECEITA = { id: "c2", name: "Salário", is_expense: false };
@@ -1649,5 +1652,167 @@ test("a pessoa pode MOVER a compra: o marcador fica na fatura aberta, nao na esc
   assert.ok(
     !/em aberto/.test(dezembro.texto),
     "a fatura escolhida herdou o marcador de 'em aberto'"
+  );
+});
+
+// ---------------------------------------------------------------------------
+// A CHECKBOX "NAO SOMAR NOS TOTAIS" -- HMO-452, F2 da HMO-443
+// ---------------------------------------------------------------------------
+// "adicionei um ajuste na minha conta investimento, ela entrou como uma receita
+// de ajuste mas nao quero que ela fique somana nos totais."
+//
+// O QUE SO SE PROVA AQUI: que o JSX LEIA `somaNosTotaisEstaNaTela`.
+// `test-lancamento.mjs` prova a funcao, e ela passaria verde com a checkbox
+// desenhada em TODA natureza -- ou em nenhuma. A decisao estaria certa e o JSX
+// ignorando ela, que e a familia de defeito do cabecalho deste arquivo.
+//
+// E A POLARIDADE E A PARTE QUE MEXE EM DINHEIRO. O estado e POSITIVO
+// (`somaNosTotais`, como a coluna `include_in_total` da 060) e o rotulo e
+// NEGATIVO ("Não somar nos totais", o pedido literal da issue-mae). A inversao
+// mora no `checked` e no `onChange`, num lugar so, e um deles sem o outro grava
+// o OPOSTO do que a pessoa marcou -- sem erro, sem build vermelho, e visivel
+// so no total do mes seguinte.
+
+/** A despesa normal: o destino e `transacao`, que e onde a coluna existe. */
+const VALORES_DE_TRANSACAO = { natureza: "one_off", contaId: CORRENTE.id };
+
+test("a despesa normal tem a checkbox, com o rotulo NEGATIVO", () => {
+  const html = renderizar({ tipo: "expense", valores: VALORES_DE_TRANSACAO });
+
+  assert.ok(
+    inputPorId(html, "nao-somar-nos-totais"),
+    "a checkbox dos totais nao esta na tela da despesa"
+  );
+  // A FORMA NEGATIVA, e ela e requisito: e o que a issue-mae pediu com estas
+  // palavras, e a UNICA vez que a frase aparece no app. O campo da CONTA (058)
+  // usa a forma POSITIVA ("Somar nos totais") porque la o rotulo etiqueta um
+  // `Switch`, e negativo ao lado de interruptor cria dupla negacao. Aqui ele
+  // etiqueta uma CHECKBOX: marcar o que esta escrito FAZ o que esta escrito.
+  assert.match(html, /Não somar nos totais/);
+});
+
+test("a receita tem a checkbox tambem -- o pedido fala das DUAS", () => {
+  // "escolher uma despesa e uma receita pra nao aparecer nos totais", e o caso
+  // que originou a issue e uma RECEITA (o ajuste de saldo). Sem esta assercao,
+  // um `tipo === "expense"` escrito de boa fe passaria no bloco acima e deixaria
+  // de fora exatamente a linha da queixa.
+  const html = renderizar({ tipo: "income", valores: VALORES_DE_TRANSACAO });
+
+  assert.ok(inputPorId(html, "nao-somar-nos-totais"));
+});
+
+test("a checkbox NASCE desmarcada -- o caso comum e somar", () => {
+  // `valoresIniciais()` da `somaNosTotais: true`, que e o DEFAULT da coluna. A
+  // checkbox e negativa, entao "true" desenha DESMARCADA. Nascer marcada
+  // tiraria dos relatorios tudo o que a pessoa anotasse sem tocar no campo, e o
+  // sintoma seria um total que nunca sobe.
+  const input = inputPorId(
+    renderizar({ tipo: "expense", valores: VALORES_DE_TRANSACAO }),
+    "nao-somar-nos-totais"
+  );
+
+  assert.ok(!/checked/.test(input), input);
+});
+
+test("o estado `false` desenha a checkbox MARCADA -- a inversao do `checked`", () => {
+  // A metade da polaridade que o render ve. Sem esta assercao, um `checked={
+  // valores.somaNosTotais}` (sem o `!`) passaria no caso de cima -- e a pessoa
+  // que tirou a linha dos totais reabriria o formulario com a checkbox
+  // desmarcada, lendo que a linha soma quando ela nao soma.
+  const input = inputPorId(
+    renderizar({
+      tipo: "expense",
+      valores: { ...VALORES_DE_TRANSACAO, somaNosTotais: false },
+    }),
+    "nao-somar-nos-totais"
+  );
+
+  assert.match(input, /checked/, input);
+});
+
+test("marcar a checkbox manda `somaNosTotais: false` -- a outra metade", () => {
+  // O `onChange` nao aparece no HTML (ver o cabecalho de `camposDoInput`), e por
+  // isso este caso anda na arvore de elementos. Sem ele, a inversao do
+  // `onChange` poderia estar FALTANDO -- marcar "Não somar" gravaria `true` e a
+  // linha continuaria nos totais, com o toast dizendo sucesso.
+  const { props, mudancas } = camposDoInput({
+    id: "nao-somar-nos-totais",
+    valores: VALORES_DE_TRANSACAO,
+  });
+
+  props.onChange({ target: { checked: true } });
+  assert.deepEqual(mudancas, [{ somaNosTotais: false }]);
+
+  // E O CAMINHO DE VOLTA. Desmarcar tem de devolver `true`: sem esta metade, um
+  // `onChange` que gravasse `false` cravado passaria na linha de cima, e quem
+  // marcasse por engano nao traria a linha de volta aos relatorios pelo
+  // formulario.
+  const volta = camposDoInput({
+    id: "nao-somar-nos-totais",
+    valores: { ...VALORES_DE_TRANSACAO, somaNosTotais: false },
+  });
+  volta.props.onChange({ target: { checked: false } });
+  assert.deepEqual(volta.mudancas, [{ somaNosTotais: true }]);
+});
+
+test("a PREVISAO, a FIXA e as PARCELAS nao tem a checkbox", () => {
+  // Os tres destinos que NAO escrevem em `financial_transactions.include_in_total`:
+  // a previsao vai para `scheduled_transactions`, a fixa para `recurring_rules`
+  // (nenhuma das duas tem a coluna) e a serie vai pela rota de parcelas, que nao
+  // conhece o campo. Uma checkbox em qualquer um deles seria uma promessa que o
+  // Salvar descarta em SILENCIO: a pessoa marca, o toast diz sucesso, e o total
+  // continua incluindo a linha.
+  const casos = [
+    ["previsao", { ...VALORES_DE_TRANSACAO, confirmado: false }],
+    ["fixa", { ...VALORES_DE_TRANSACAO, natureza: "fixed" }],
+    [
+      "parcelas",
+      {
+        natureza: "card",
+        contaId: CARTAO.id,
+        parcelado: true,
+        valor: "300",
+        totalDeParcelas: "3",
+      },
+    ],
+  ];
+
+  for (const [nome, valores] of casos) {
+    const html = renderizar({ tipo: "expense", valores });
+    assert.equal(
+      inputPorId(html, "nao-somar-nos-totais"),
+      null,
+      `a checkbox dos totais apareceu na ${nome}, onde o Salvar a descarta`
+    );
+    // E O ROTULO SAI JUNTO. Sem isto, mover a checkbox para fora de um `&&` que
+    // ainda esconde o `<input>` deixaria a frase "Não somar nos totais" na tela
+    // sem campo nenhum para marcar.
+    assert.ok(
+      !html.includes("Não somar nos totais"),
+      `o rotulo dos totais ficou na ${nome} sem a checkbox`
+    );
+  }
+});
+
+test("a frase diz o que o flag NAO faz, e e a MESMA do botao da lista", () => {
+  // SEM ESTA FRASE A FEATURE E INDISTINGUIVEL DE UM BUG, e e por isso que ela e
+  // requisito e tem assercao por cima. A linha desmarcada CONTINUA no saldo da
+  // conta e no patrimonio de proposito: `net_worth_history` (008) le
+  // `financial_transactions` direto e nao passa por `category_monthly_totals`,
+  // onde o filtro mora. A pessoa veria, na MESMA sessao, o saldo da conta
+  // incluindo o ajuste e um total de receitas que nao o inclui -- as duas
+  // leituras CERTAS, e nenhum numero na tela explicando a diferenca.
+  //
+  // E A COMPARACAO E COM A CONSTANTE, nao com um trecho escrito aqui: as duas
+  // entradas da feature respondem a mesma pergunta sobre a mesma coluna, e uma
+  // copia da frase no JSX divergiria na primeira revisao de copy.
+  const html = renderizar({
+    tipo: "expense",
+    valores: { ...VALORES_DE_TRANSACAO, somaNosTotais: false },
+  });
+
+  assert.ok(
+    html.includes(AVISO_DO_FLAG_DOS_TOTAIS),
+    `a frase do flag nao saiu na tela: ${AVISO_DO_FLAG_DOS_TOTAIS}`
   );
 });

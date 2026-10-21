@@ -533,6 +533,32 @@ test("a rota TRAZ `notes` do realizado -- sem ele a fatura PAGA desaparece", () 
     "a sonda capturou o bloco errado"
   );
 
+  // `include_in_total` -- HMO-452, e ele e da MESMA familia pelo mesmo motivo.
+  //
+  // `RealizadaCrua.include_in_total` e OPCIONAL de proposito (o banco sem a 060
+  // colada e o cache offline do aparelho chegam sem o campo, e `linhaRealizada`
+  // resolve a ausencia com `!== false`), entao o `tsc` nao pode cobrar. Tira-lo
+  // deste `select` numa limpeza de "campos nao usados" nao quebra compilacao
+  // nem assercao de valor nenhuma: `soma_nos_totais` passa a ser `true` em toda
+  // linha, o SELO "fora dos totais" desaparece da lista e a acao da linha para
+  // de oferecer o inverso -- o estado de antes desta issue, de volta em
+  // silencio. E o sintoma e o pior desta feature: a linha marcada fica na lista
+  // somando ZERO no total acima, sem nada que explique a diferenca
+  // (`sumido-da-tela-pode-ser-so-indistinguivel`).
+  //
+  // ESTA LINHA SO PODE EXISTIR DEPOIS DA COLAGEM DA 060, e a colagem foi
+  // MEDIDA em producao em 2026-10-21 pelo PostgREST com a chave anon e com
+  // controle negativo -- ver o bloco de comentario no proprio `select` da rota.
+  // Nomear coluna ausente faz o PostgREST responder `42703` e o handler cair em
+  // 500: as telas de Despesas e Receitas param de carregar inteiras (#335).
+  assert.match(
+    doRealizado[1],
+    /\binclude_in_total\b/,
+    "o `select` do realizado nao pede `include_in_total`: a lista perde o selo " +
+      "e a acao «Não somar nos totais» em TODA linha, e a linha marcada volta a " +
+      "somar zero no total sem nada explicando por que"
+  );
+
   // E A LIB DE FATO DECIDE POR ELE. Os tres criterios, cada um ancorado no que
   // ele separa -- `ehPagamentoDaFatura` com um deles a menos continua compilando
   // e continua devolvendo `true` na perna de saida.

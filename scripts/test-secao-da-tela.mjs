@@ -113,6 +113,15 @@ const linha = (extra) => ({
   moeda: null,
   natureza: "despesa",
   fatura: null,
+  // A LINHA SOMA NOS TOTAIS NO CASO BASE -- HMO-452, e a ausencia deste campo
+  // nao e neutra: ela e FALSY, e `seloDaLinha`/`rotuloDeMudarOsTotais` leem
+  // `soma_nos_totais` nu (o tipo o declara `boolean` obrigatorio, e
+  // `linhaRealizada` resolve o "nao sei" com `!== false` UMA vez, no unico
+  // lugar que fala com o banco). Sem esta linha toda fixture desta suite
+  // ganharia o selo "fora dos totais" e o botao sairia com o rotulo INVERSO
+  // ("Voltar a somar nos totais") -- medido: quatro blocos reprovaram assim
+  // quando o campo nasceu.
+  soma_nos_totais: true,
   ...extra,
 });
 
@@ -150,6 +159,7 @@ const ACOES = (extra = {}) => ({
   aoExcluir: () => {},
   aoConfirmar: () => {},
   aoPagarFatura: () => {},
+  aoMudarOsTotais: () => {},
   agindo: null,
   online: true,
   ...extra,
@@ -624,7 +634,13 @@ test("a linha REALIZADA nao tem Confirmar -- e continua com os outros dois", () 
     render({ linhas: [linha({ origem: "realizado", status: null })] })
   );
 
-  assert.deepEqual(rotulos, ["Editar", "Excluir"]);
+  // «NAO SOMAR NOS TOTAIS» ENTROU NA REALIZADA NA HMO-452, e SO nela:
+  // `podeMudarOsTotais` exige `origem === "realizado"` porque a coluna da 060 e
+  // de `financial_transactions` -- o PATCH de uma previsao iria para
+  // `/api/scheduled-transactions/{id}`, que descarta o campo em silencio com
+  // 200. A lista EXATA e o que prende isso: o bloco das tres linhas lá embaixo
+  // mostra a prevista SEM este botao, e um `includes` nao distinguiria os dois.
+  assert.deepEqual(rotulos, ["Editar", "Não somar nos totais", "Excluir"]);
 });
 
 test("a fatura aberta de OUTRO MEMBRO nao tem botao NENHUM", () => {
@@ -794,7 +810,18 @@ test("a transferencia REALIZADA tem o Editar APAGADO, com o motivo no title", ()
     aparencia: TRANSFERENCIAS,
   });
 
-  assert.deepEqual(rotulosDeAcao(html), ["Editar", "Excluir"]);
+  // A PERNA DE TRANSFERENCIA PODE SAIR DOS TOTAIS, e isto nao e descuido: o
+  // criterio e `origem === "realizado"`, e a perna E uma linha de
+  // `financial_transactions` com a coluna. O que ela NAO pode e ser EDITADA por
+  // aqui (abrir uma perna deixaria a outra orfa) -- e desmarcar nao abre perna
+  // nenhuma, nao mexe em valor e nao mexe em elo. `category_monthly_totals` ja
+  // ignora `transfer` no `WHERE`, entao o flag e inerte no total desta linha;
+  // recusar o botao exigiria um quinto criterio para proteger numero nenhum.
+  assert.deepEqual(rotulosDeAcao(html), [
+    "Editar",
+    "Não somar nos totais",
+    "Excluir",
+  ]);
   assert.deepEqual(desabilitados(html), ["Editar"]);
   assert.match(html, /title="[^"]*duas pernas[^"]*"/);
 
@@ -882,12 +909,17 @@ test("cada linha ganha os botoes DELA -- nao os da primeira", () => {
   });
 
   assert.deepEqual(rotulosDeAcao(html), [
-    // a: prevista minha -- os tres
+    // a: prevista minha -- os tres, e NAO o de somar nos totais (HMO-452): a
+    // coluna da 060 e de `financial_transactions`, e uma previsao nao a tem.
     "Confirmar pagamento",
     "Editar",
     "Excluir",
-    // b: realizada minha -- dois
+    // b: realizada minha -- tres, e o de somar nos totais e o que ENTROU aqui.
+    // Este bloco e o unico lugar da suite onde as duas origens aparecem juntas,
+    // e e por isso que ele e a prova do criterio: a lista mostra o botao na
+    // linha `b` e nao na `a`, lado a lado, no MESMO HTML.
     "Editar",
+    "Não somar nos totais",
     "Excluir",
     // c e a fatura -- nenhum
   ]);
@@ -1048,7 +1080,12 @@ test("o Editar APAGADO mantem o motivo ESTRUTURAL, mesmo sem rede", () => {
   });
 
   const porRotulo = new Map(cinzasComMotivo(html).map((c) => [c.rotulo, c]));
-  assert.deepEqual([...porRotulo.keys()], ["Editar", "Excluir"]);
+  // O botao da HMO-452 trava junto e explica junto: ele e escrita, e sem rede
+  // escrita neste caminho FALHA em vez de ficar pendente.
+  assert.deepEqual(
+    [...porRotulo.keys()],
+    ["Editar", "Não somar nos totais", "Excluir"]
+  );
 
   const editar = porRotulo.get("Editar");
   assert.match(editar.titulo, /duas pernas/);
@@ -1301,4 +1338,116 @@ test("a frase divide a linha com o valor e com o rotulo do grupo", () => {
   assert.ok(visivel.includes(FRASE_SEM_ACOES), "a frase sumiu com `de_grupo`");
   assert.ok(visivel.includes("minha parte do grupo"), "o rotulo do grupo sumiu");
   assert.ok(visivel.includes("900,00"), "o valor sumiu");
+});
+
+// ---------------------------------------------------------------------------
+// 8. O SELO E O BOTAO DA LINHA FORA DOS TOTAIS -- HMO-452, F2 da HMO-443
+// ---------------------------------------------------------------------------
+// "adicionei um ajuste na minha conta investimento, ela entrou como uma receita
+// de ajuste mas nao quero que ela fique somana nos totais."
+//
+// O QUE SO SE PROVA AQUI, e nao em `test:acoes-da-linha`: que a MARCACAO leia as
+// duas funcoes. `seloDaLinha` e `rotuloDeMudarOsTotais` podem devolver as
+// strings certas e o JSX continuar nao as escrevendo -- sem erro, sem build
+// vermelho e sem mexer um centavo. E a mesma familia de defeito do bloco 6.
+//
+// E O SELO E A PARTE QUE NAO PODE CAIR. A linha desmarcada CONTINUA na lista,
+// com o valor dela, e NAO entra no subtotal da secao: sem o marcador, quem
+// somasse as linhas a mao acharia outro numero e concluiria que o total esta
+// errado -- a linha fica somando ZERO sem nada explicando por que
+// (`sumido-da-tela-pode-ser-so-indistinguivel`). A decisao de MANTER a linha na
+// lista e a secao 6c do plano, tomada contra o pedido original ("ela nao
+// precisaria nem aparecer"): esconder deixa o dinheiro sem lugar nenhum no app.
+
+/** A linha realizada que a pessoa tirou dos totais -- o caso real da issue. */
+const FORA_DOS_TOTAIS = linha({
+  id: "ajuste",
+  descricao: "Ajuste de saldo da conta investimento",
+  valor: 250.5,
+  origem: "realizado",
+  status: null,
+  soma_nos_totais: false,
+});
+
+test("a linha desmarcada mostra o selo «fora dos totais»", () => {
+  const html = render({ linhas: [FORA_DOS_TOTAIS] });
+
+  assert.match(
+    html,
+    /fora dos totais/,
+    "a linha desmarcada nao tem selo: ela fica na lista somando zero no " +
+      "subtotal, e isso se le como bug"
+  );
+
+  // E A LINHA NAO SOME, que e a outra metade da decisao 6c. Sem isto o bloco
+  // passaria sobre uma tela que escondeu a linha e escreveu o selo em algum
+  // canto.
+  assert.match(html, /Ajuste de saldo da conta investimento/);
+  // Com o VALOR: a linha e o unico lugar do app onde este dinheiro aparece
+  // depois de sair dos relatorios.
+  assert.match(html, /250,50/);
+});
+
+test("CONTROLE: a linha que SOMA nao tem o selo", () => {
+  // Sem este controle negativo o bloco de cima nao vale nada: um selo escrito
+  // em TODA linha passaria nele e marcaria como "fora dos totais" a lista
+  // inteira -- inclusive quando ela vem do cache offline sem o campo, que e
+  // exatamente o caso que `linhaRealizada` resolve com `!== false`.
+  const html = render({
+    linhas: [linha({ origem: "realizado", status: null })],
+  });
+
+  assert.ok(
+    !html.includes("fora dos totais"),
+    "o selo apareceu numa linha que SOMA nos totais"
+  );
+});
+
+test("o botao da linha desmarcada oferece o INVERSO", () => {
+  // O rotulo e o estado: sobre a linha ja desmarcada, "Não somar nos totais"
+  // prometeria desmarcar de novo, e quem clicasse por engano a RELIGARIA nos
+  // relatorios sem nada avisando.
+  const rotulos = rotulosDeAcao(render({ linhas: [FORA_DOS_TOTAIS] }));
+
+  assert.deepEqual(rotulos, [
+    "Editar",
+    "Voltar a somar nos totais",
+    "Excluir",
+  ]);
+});
+
+test("o selo FICA na linha alheia desmarcada, e o botao NAO", () => {
+  // As duas metades sao decisoes diferentes sobre a mesma linha, e e por isso
+  // que elas aparecem juntas num bloco:
+  //
+  //   * o SELO fica, porque o flag e da LINHA e nao da permissao -- a linha de
+  //     grupo que o outro membro desmarcou continua fora dos MEUS totais, e sem
+  //     o selo ela somaria zero no meu subtotal sem explicacao;
+  //   * o BOTAO nao sai, pela regra 4: **UPDATE filtrado pela RLS volta 200 SEM
+  //     ALTERAR NADA**, e nesta acao isso e indistinguivel de sucesso -- quando
+  //     ela funciona, o que muda e o total ACIMA, nao a linha.
+  const html = render({
+    linhas: [{ ...FORA_DOS_TOTAIS, posso_editar: false }],
+  });
+
+  assert.match(html, /fora dos totais/);
+  assert.deepEqual(rotulosDeAcao(html), []);
+  // E a linha diz POR QUE nao tem acao, como qualquer linha alheia (HMO-457):
+  // nada de `null` silencioso ao lado de um selo que ela nao pode mudar.
+  assert.match(html, /De outro membro/);
+});
+
+test("sem rede o botao dos totais trava junto, e com motivo", () => {
+  // Escrita sem rede neste caminho FALHA em vez de ficar pendente, e o corpo
+  // leva o booleano INVERTIDO do que a tela mostra -- dois cliques enfileirados
+  // se cancelariam.
+  const html = render({
+    linhas: [FORA_DOS_TOTAIS],
+    acoes: ACOES({ online: false }),
+  });
+
+  const porRotulo = new Map(cinzasComMotivo(html).map((c) => [c.rotulo, c]));
+  const botao = porRotulo.get("Voltar a somar nos totais");
+  assert.ok(botao, [...porRotulo.keys()].join(" | "));
+  assert.match(botao.titulo, /Sem rede/);
 });

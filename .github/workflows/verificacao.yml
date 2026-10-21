@@ -9145,3 +9145,92 @@ jobs:
       # nunca existiu.
       - name: Os mutantes da rota da conversa (a suite acima sabe reprovar?)
         run: npm run mutantes:rota-da-conversa
+
+      # ---------------------------------------------------------------------
+      # O LANCAMENTO QUE NAO SOMA NOS TOTAIS -- HMO-452 (F2 da HMO-443)
+      # ---------------------------------------------------------------------
+      # "adicionei um ajuste na minha conta investimento, ela entrou como uma
+      # receita de ajuste mas nao quero que ela fique somana nos totais."
+      #
+      # A coluna e `financial_transactions.include_in_total` (migration 060),
+      # POSITIVA e `NOT NULL DEFAULT true`. Esta suite mede as DUAS pontas de
+      # escrita dela, que tem formas OPOSTAS de proposito:
+      #
+      #   POST  -- condicional. A coluna so e nomeada no INSERT quando o valor e
+      #            `false`. `true` e o DEFAULT, e nomear coluna ausente faz o
+      #            PostgREST responder 42703 e a rota cair em 500: antes de a 060
+      #            ser colada a mao, NENHUM lancamento seria criado pela API.
+      #   PATCH -- estrito (`body.include_in_total === true`), a forma do PATCH
+      #            da 058. Aqui nao existe omitir e cair no DEFAULT: o que entra
+      #            no patch e gravado.
+      #
+      # Por que sonda de ROTA com duble, e nao grep nem tsc: `request.json()` e
+      # `any`, e o objeto que vai para o `.insert()`/`.update()` do supabase-js
+      # esta na fronteira permissiva do client -- trocar `=== true` por
+      # `Boolean(...)` COMPILA, e as duas rotas respondem 200/201 com o corpo
+      # completo nos dois casos. A resposta nao distingue o defeito; so o payload
+      # que o handler mandou gravar.
+      #
+      # E grep seria pior que inutil: as duas rotas CITAM `Boolean(...)` e
+      # `!include_in_total` nos comentarios, explicando o que nao fazer. Uma
+      # varredura do fonte cru leria a prosa e ficaria verde depois de alguem
+      # trocar o codigo pela forma errada.
+      - name: O lancamento fora dos totais nas duas rotas (PATCH estrito, POST condicional)
+        run: npm run test:fora-dos-totais-no-lancamento
+
+      # O controle negativo da suite acima -- ela SABE REPROVAR?
+      #
+      # O primeiro mutante e o que a HMO-452 pede nominalmente:
+      # `Boolean(body.include_in_total)` no lugar do teste estrito. Ele e o unico
+      # defeito desta feature que grava o OPOSTO do pedido -- `Boolean("false")`
+      # e `true`, e o lancamento que a pessoa acabou de desmarcar volta para os
+      # totais com 200 e sem sintoma na tela.
+      #
+      # Os dois seguintes sao o estado de ANTES da issue (o campo removido de
+      # cada rota), e depois vem o par que TROCA a forma de uma rota pela da
+      # outra: POST incondicional derruba toda criacao pela API antes da colagem;
+      # PATCH condicional deixa desmarcar funcionar e REMARCAR nao -- os dois
+      # respondendo 200.
+      #
+      # As ancoras levam a atribuicao inteira de proposito: as rotas citam as
+      # formas erradas nos comentarios, e uma ancora curta mutaria a prosa, o
+      # codigo ficaria intacto e o mutante "sobreviveria" sem nunca ter existido.
+      # O runner cobra ocorrencia UNICA de cada uma e aborta em vez de mutar a 1a
+      # de duas.
+      - name: Os mutantes do lancamento fora dos totais (a suite acima sabe reprovar?)
+        run: npm run mutantes:fora-dos-totais-no-lancamento
+
+      # ---------------------------------------------------------------------
+      # A FIACAO DO FLAG NO FORMULARIO -- HMO-452 (F2 da HMO-443)
+      # ---------------------------------------------------------------------
+      # Os dois steps acima provam as DUAS ROTAS, e `test:campos-lancamento`
+      # prova a CHECKBOX. O formulario nao passa por nenhum dos dois:
+      # `gravarTransacao` escreve DIRETO pelo supabase-js (`.insert()` /
+      # `.update()` em `financial_transactions`), sem tocar nas rotas.
+      #
+      # Entao a feature pode estar inteira -- rota estrita, 12 mutantes mortos,
+      # checkbox desenhada, selo na lista -- e o Salvar descartar a escolha. Foi
+      # EXATAMENTE o estado desta branch quando este guard nasceu: a checkbox
+      # existia, `somaNosTotais` existia em `ValoresDeLancamento`, o JSDoc de
+      # `somaNosTotaisEstaNaTela` AFIRMAVA que `gravarTransacao` chamava o portao
+      # -- e o campo nao estava no objeto `linha`. A pessoa marcaria, o toast
+      # diria sucesso, e o total continuaria incluindo o ajuste.
+      #
+      # NENHUM DOS TRES MODOS DE FALHA APARECE NO `tsc`: o objeto vai para a
+      # fronteira permissiva do supabase-js (campo faltando nao e erro de tipo),
+      # o campo posto so no ramo do insert compila igual, e a edicao que nao
+      # recarrega o flag gravado e um objeto a menos num spread.
+      #
+      # O guard mede POSICAO tambem, e nao so presenca: `include_in_total:` tem
+      # de vir ANTES de `let transacao`, que e onde o objeto `linha` termina e os
+      # dois ramos comecam. Dentro do insert, marcar funciona na criacao e e
+      # impossivel de desfazer pelo formulario -- metade do pedido.
+      #
+      # Comentario e `import` saem antes da varredura, e aqui isso e
+      # load-bearing de verdade: os arquivos desta feature citam
+      # `include_in_total` e `somaNosTotais` em paragrafos inteiros de prosa, e um
+      # guard sobre o fonte cru leria os proprios comentarios que descrevem o
+      # defeito. Os cinco mutantes (campo fora de `linha`, campo so no insert,
+      # edicao sem recarga, e os dois `!` das inversoes) foram medidos MORTOS.
+      - name: O flag «fora dos totais» esta ligado no formulario (checkbox, corpo e edicao)
+        run: node scripts/check-fora-dos-totais-no-lancamento.mjs

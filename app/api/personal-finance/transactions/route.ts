@@ -126,6 +126,7 @@ export async function POST(request: NextRequest) {
       is_shared,
       group_id,
       transaction_type,
+      include_in_total,
     } = body;
 
     // `body` vem de `request.json()`, que e `any`: o tipo aqui e o que a rota
@@ -256,6 +257,32 @@ export async function POST(request: NextRequest) {
         notes,
         is_shared: is_shared && splits && splits.length > 0,
         group_id: group_id || null,
+        // -------------------------------------------------------------------
+        // NASCER FORA DOS TOTAIS (HMO-443, migration 060)
+        // -------------------------------------------------------------------
+        // A COLUNA SO VAI NO CORPO QUANDO ELA E `false`, e e a MESMA forma que
+        // o POST da 058 usa (`app/api/financial-accounts/route.ts`). Duas
+        // razoes, e as duas sao sobre o caminho em que a coluna nao existe:
+        //
+        //   1. a 060 e colada A MAO no SQL Editor, DEPOIS do deploy do codigo
+        //      (`deploy-ships-code-not-schema`). Nomear a coluna num INSERT
+        //      contra um banco sem ela faz o PostgREST responder `42703` e esta
+        //      rota cair em 500 -- TODO lancamento criado pela API pararia de
+        //      ser criado, nao so o que a pessoa quis tirar dos totais;
+        //   2. `true` e o DEFAULT da coluna, entao omitir e gravar exatamente o
+        //      mesmo valor. O ramo que nao manda nada nao perde nada.
+        //
+        // `=== false` ESTRITO, e nao `!include_in_total`: a chave AUSENTE chega
+        // aqui como `undefined`, e um teste por falsidade a trataria como
+        // "tirar dos totais" -- todo lancamento criado por um cliente que nao
+        // conhece o campo (a fila offline de uma aba antiga, um importador)
+        // nasceria fora dos relatorios, em silencio e com 201. A string
+        // `"false"` tambem nao liga nem desliga nada por aqui: ela nao e `false`
+        // estrito, o campo nao vai no corpo, e a linha cai no DEFAULT `true` --
+        // o lado seguro, porque e o comportamento de antes da feature. Quem
+        // DESLIGA com teste estrito nos dois sentidos e o PATCH de
+        // `[id]/route.ts`, e e por lá que a tela desmarca a linha.
+        ...(include_in_total === false ? { include_in_total: false } : {}),
       })
       .select()
       .single();

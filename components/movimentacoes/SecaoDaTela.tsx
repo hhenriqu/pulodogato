@@ -58,6 +58,13 @@ import {
   Loader2,
   Pencil,
   Repeat,
+  // O SIGMA E A SOMA, e e o unico icone desta linha que diz "total" -- HMO-452.
+  //
+  // `EyeOff` seria o erro facil aqui: ele promete ESCONDER, e a decisao da secao
+  // 6c do plano e justamente a oposta -- a linha CONTINUA na lista, com selo. Um
+  // olho cortado diria que o clique a faz desaparecer, e quem clicasse acharia
+  // que a acao falhou.
+  Sigma,
   Trash2,
   Wallet,
 } from "lucide-react";
@@ -80,8 +87,11 @@ import {
   podeConfirmar,
   podeEditar,
   podeExcluir,
+  podeMudarOsTotais,
   podePagarAFatura,
   rotuloDeConfirmar,
+  rotuloDeMudarOsTotais,
+  seloDaLinha,
   tituloDoBotao,
 } from "@/lib/acoes-da-linha";
 import { caminhoDoCartaoNoMes } from "@/lib/fatura-do-cartao";
@@ -230,6 +240,25 @@ export interface AcoesDaLinha {
    * log e com o `tsc` verde, que e exatamente o estado de antes desta fase.
    */
   aoPagarFatura: (linha: LinhaDaTela) => void;
+  /**
+   * TIRAR (OU DEVOLVER) A LINHA DOS TOTAIS -- HMO-452.
+   *
+   * E o caminho que o pedido da HMO-443 descreve: "preciso poder remover dos
+   * totais" a partir da linha que ja esta na tela.
+   *
+   * OBRIGATORIA, e nao opcional como `aoConcluirElo`, pela razao que a HMO-301
+   * ja escreveu para `aoPagarFatura`: opcional, a acao desapareceria da linha
+   * no dia em que um container novo parasse de passar a funcao -- sem erro, sem
+   * log e com o `tsc` verde, que e exatamente o estado de antes desta issue. E
+   * ha DOIS containers hoje (a lista completa e o modo Papel de Pao), que e o
+   * cenario em que esse esquecimento acontece.
+   *
+   * Quem monta o pedido e `pedidoDeMudarOsTotais` (lib/acoes-da-linha.ts), nao
+   * o container: a URL e a de `financial_transactions`, e uma linha PREVISTA
+   * montaria `/api/scheduled-transactions/{id}`, onde o campo e descartado em
+   * silencio com 200.
+   */
+  aoMudarOsTotais: (linha: LinhaDaTela) => void;
   /** O id da linha cuja acao esta em curso, ou `null`. */
   agindo: string | null;
   /** Sem rede nenhuma acao sai: as tres sao escrita. */
@@ -299,6 +328,7 @@ function BotoesDaLinha({
   const confirmar = podeConfirmar(linha);
   const pagar = podePagarAFatura(linha);
   const motivo = motivoSemEditar(linha);
+  const mudarTotais = podeMudarOsTotais(linha);
 
   // SEM NENHUMA ACAO, A LINHA DIZ POR QUE -- HMO-457.
   //
@@ -314,6 +344,17 @@ function BotoesDaLinha({
   // nenhum: uma caixa de 0px com gap muda o espacamento da linha.
   const semAcoes = motivoSemAcoes(linha);
 
+  // `mudarTotais` NAO ENTRA NESTA CONDICAO, e a ausencia e medida -- HMO-452.
+  //
+  // `podeMudarOsTotais` e `podeAgirNaLinha(linha) && origem === "realizado"`, e
+  // `podeExcluir` e `podeAgirNaLinha` NU: o primeiro IMPLICA o segundo, que ja
+  // esta aqui. Acrescenta-lo nao poderia mudar resposta nenhuma -- seria um
+  // porteiro inobservavel, e o mutante que o escreve sobrevive com razao.
+  //
+  // `pagar` esta aqui porque com ele e DIFERENTE: `podePagarAFatura` aceita
+  // `gravada: false` e exige `natureza === "fatura"`, que `podeAgirNaLinha`
+  // RECUSA. Ele alcanca linha que nenhum dos outros alcanca, e sem o termo a
+  // fatura aberta cairia no `return` de baixo com botao Pagar por desenhar.
   if (!editar && !excluir && !confirmar && !pagar && !motivo) {
     if (!semAcoes) return null;
 
@@ -461,6 +502,59 @@ function BotoesDaLinha({
         )
       )}
 
+      {/*
+        NAO SOMAR NOS TOTAIS -- HMO-452, F2 da HMO-443.
+
+        "preciso poder remover dos totais." Este e o caminho que o pedido
+        descreve: a partir da linha que ja esta na tela.
+
+        O ROTULO VEM DE `rotuloDeMudarOsTotais` E MUDA COM O ESTADO, e isso nao
+        e enfeite: a acao e um interruptor, e um nome fixo mentiria em metade dos
+        cliques -- em cima da linha JA desmarcada, "Não somar nos totais"
+        prometeria desmarcar de novo, e quem clicasse por engano nao saberia que
+        acabou de RELIGAR a linha nos relatorios. O `aria-label` carrega o mesmo
+        rotulo, e e por ele que a sonda de navegador acha o botao.
+
+        ENTRE O EDITAR E O EXCLUIR, de proposito: a ordem da linha vai do menos
+        destrutivo para o mais, e o Excluir e o unico que nao volta. Posto
+        DEPOIS dele, o botao novo ficaria ao lado do vermelho -- o alvo errado
+        num toque de celular custa um lancamento apagado.
+
+        `disabled={travado}` como os outros tres, pelo mesmo motivo: escrita sem
+        rede neste caminho nao fica pendente, ela FALHA; e dois cliques na mesma
+        linha sao duas escritas, que aqui se cancelariam (o corpo leva o
+        booleano INVERTIDO do que a tela esta mostrando -- ver
+        `pedidoDeMudarOsTotais`).
+      */}
+      {mudarTotais && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8 w-8 p-0"
+          disabled={travado}
+          aria-disabled={travado || undefined}
+          onClick={() => acoes.aoMudarOsTotais(linha)}
+          aria-label={rotuloDeMudarOsTotais(linha)}
+          title={tituloDoBotao(rotuloDeMudarOsTotais(linha), motivoTravado)}
+        >
+          {emCurso ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            // RISCADO QUANDO A LINHA JA ESTA FORA, e e a unica forma de os dois
+            // estados se distinguirem SEM texto: o botao e de icone so, e um
+            // sigma identico nos dois casos deixaria a linha desmarcada
+            // indistinguivel da que soma -- com o selo sendo a unica pista, a
+            // seis palavras de distancia. `line-through` num `<span>` em volta
+            // nao funciona em SVG; a cor e o que o CSS de producao carrega.
+            <Sigma
+              className={`h-4 w-4 ${
+                linha.soma_nos_totais ? "" : "text-warning"
+              }`}
+            />
+          )}
+        </Button>
+      )}
+
       {excluir && (
         <Button
           size="sm"
@@ -592,6 +686,32 @@ function LinhaDaSecao({
             textos para ela divergiriam na primeira revisao de copy.
           */}
           {linha.de_grupo && <span>· minha parte do grupo</span>}
+          {/*
+            O SELO DA LINHA QUE NAO SOMA -- HMO-452, e sem ele a linha se le
+            como bug.
+
+            A linha desmarcada CONTINUA aqui, com o valor dela, e NAO entra no
+            cartao de «Realizado» em cima (o filtro mora em
+            `category_monthly_totals`, migration 060). Quem somasse as linhas a
+            mao acharia outro numero e concluiria que o total esta errado -- e e
+            a mesma razao pela qual a tela de Contas poe este marcador na conta
+            fora dos totais (058). O selo torna a diferenca LEGIVEL em vez de
+            parecer defeito.
+
+            E A LINHA FICA NA LISTA DE PROPOSITO. O pedido original dizia "ela
+            nao precisaria nem aparecer", e a secao 6c do plano decidiu manter:
+            esconder a linha deixa o dinheiro sem lugar NENHUM no app e o total
+            sem explicacao. Lista limpa, se ele quiser depois, e FILTRO da tela.
+
+            `seloDaLinha` e nao um `=== false` escrito aqui: a decisao e a mesma
+            que decide o rotulo do botao, e duas copias dela divergiriam -- o
+            sintoma seria o selo dizendo uma coisa e o botao oferecendo a outra
+            na MESMA linha. `text-warning` e o token do marcador da 058, para os
+            dois se lerem como a mesma informacao.
+          */}
+          {seloDaLinha(linha) && (
+            <span className="text-warning">· {seloDaLinha(linha)}</span>
+          )}
           {/*
             O ELO DA FATURA -- HMO-305, o rotulo e a acao.
 
