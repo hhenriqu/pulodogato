@@ -760,8 +760,14 @@ export async function GET() {
 
     const { data: emprestimos, error } = await supabase
       .from("mybank_loans")
+      // `interest_rate` ENTROU NA HMO-480, E A TELA DE AJUSTE NAO FUNCIONA SEM
+      // ELE. `ajusteMexeNoJuro` decide por `jaTemJuro` (a taxa que a linha JA
+      // tem): sem o campo, a previa de um `{total}` sobre um emprestimo com
+      // juro resolveria `juro = null`, mostraria o total certo e **taxa
+      // nenhuma** -- justamente a metade do pedido da HMO-444 que diz "vejo
+      // quanto de juros estou cobrando". A coluna e da 062, colada em prod.
       .select(
-        "id, lender_account_id, borrower_user_id, description, principal, installment_count, first_due_date, status, created_at"
+        "id, lender_account_id, borrower_user_id, description, principal, interest_rate, installment_count, first_due_date, status, created_at"
       )
       .eq("lender_user_id", user.id)
       .order("created_at", { ascending: false });
@@ -830,6 +836,17 @@ export async function GET() {
         caso,
         status: l.status,
         principal: Number(l.principal),
+        // A TAXA GRAVADA, E `Number(...)` PORQUE `numeric` CHEGA COMO STRING
+        // (HMO-480). `ajusteMexeNoJuro` pergunta
+        // `Number(interest_rate ?? 0) !== 0`, entao a string "0.0000" ja
+        // responderia certo -- mas `?? 0` NAO salva a string, e deixar o tipo
+        // oscilar entre string e numero e como a familia
+        // `returns-do-supabase-e-so-tipo-e-mente-quando-o-select-muda` comeca.
+        //
+        // `?? 0` E NAO `?? null`: a coluna e NOT NULL DEFAULT 0 na 062, e um
+        // emprestimo sem juro tem 0 e nao ausencia. Mandar `null` faria a tela
+        // ter dois jeitos de dizer "sem juro".
+        interest_rate: Number(l.interest_rate ?? 0),
         total_de_parcelas: l.installment_count,
         primeiro_vencimento: l.first_due_date,
         /** Um dos tres campos da issue. */

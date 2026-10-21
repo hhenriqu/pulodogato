@@ -142,6 +142,15 @@ export interface EmprestimoDoMyBank {
   caso: "auto" | "conexao";
   status: string;
   principal: number;
+  /**
+   * A TAXA GRAVADA, em FRACAO (0.2 = 20%) -- 0 no emprestimo sem juro.
+   *
+   * Ela existe para a previa do AJUSTE (HMO-480): `ajusteMexeNoJuro` decide por
+   * ela se um `{total}` resolve juro novo. A tela nao a IMPRIME em lugar nenhum
+   * -- o que se le e sempre a resposta de `juroDepoisDoAjuste`, que e o que vai
+   * ser gravado.
+   */
+  interest_rate: number;
   total_de_parcelas: number;
   primeiro_vencimento: string;
   /** Um dos tres campos da issue, resolvido pela rota (`quemDevePagar`). */

@@ -389,7 +389,19 @@ export interface GrandezaDaPrevia {
    * produto e muda ("Emprestado" -> "Valor emprestado") sem que nada esteja
    * errado, e uma sonda ancorada no texto reprovaria a mudanca certa.
    */
-  chave: "emprestado" | "juros" | "total" | "parcela" | "taxa";
+  chave:
+    | "emprestado"
+    | "juros"
+    | "total"
+    | "parcela"
+    | "taxa"
+    // `falta_receber` SO A PREVIA DO AJUSTE USA (HMO-480), e ela e a grandeza
+    // que a previa da CRIACAO nao pode ter: na criacao nada foi recebido
+    // ainda, entao "falta receber" e o total e a linha seria uma repeticao. No
+    // ajuste os dois numeros DISCORDAM de proposito -- o total e a divida
+    // inteira e `falta_receber` e o que sobra para repartir entre as pendentes
+    // (`total - jaRecebido`), que e a base da cauda recalculada.
+    | "falta_receber";
   rotulo: string;
   valor: string;
 }
@@ -407,8 +419,16 @@ export interface GrandezaDaPrevia {
  * ESPACO ESTREITO SEM QUEBRA (U+00A0/U+202F), nao com espaco comum -- uma sonda
  * que procurasse "R$ 1.200,00" digitado com espaco normal nunca casaria
  * (`intl-pt-br-separa-o-real-com-nbsp`). Aqui o espaco e o do teclado.
+ *
+ * EXPORTADAS NA HMO-480 (esta e `emPercentoDaPrevia`), E O MOTIVO E O PARAGRAFO
+ * ACIMA. A previa do AJUSTE (`lib/ajuste-do-emprestimo-na-tela.ts`) mostra as mesmas
+ * grandezas e precisa do mesmo texto; uma copia la seria o SEGUNDO formatador
+ * de real da previa, e as duas divergiriam no primeiro conserto de
+ * arredondamento -- a tela da criacao dizendo "R$ 1.200,00" e a do ajuste
+ * "R$ 1.200,0" para o mesmo numero, sem nada estar errado em nenhuma das duas.
+ * Continua havendo UMA fonte do texto; o que mudou e que ela tem dois leitores.
  */
-function emReaisDaPrevia(valor: number): string {
+export function emReaisDaPrevia(valor: number): string {
   const centavos = Math.round(valor * 100);
   const negativo = centavos < 0;
   const absoluto = Math.abs(centavos);
@@ -428,7 +448,7 @@ function emReaisDaPrevia(valor: number): string {
  * exibiria ruido de arredondamento; mostrar menos esconderia a diferenca entre
  * 20,00% e 20,04%, que em R$ 100.000 sao R$ 40.
  */
-function emPercentoDaPrevia(taxa: number): string {
+export function emPercentoDaPrevia(taxa: number): string {
   const centesimos = Math.round(taxa * 100 * 100);
   const inteiros = Math.floor(Math.abs(centesimos) / 100);
   const casas = String(Math.abs(centesimos) % 100).padStart(2, "0");

@@ -65,6 +65,26 @@ export interface CamposDeJurosProps {
   aoDigitarTotal: (total: string) => void;
   /** `id` unico por documento. */
   idPrefixo?: string;
+  /**
+   * COMO CHAMAR CADA MODO. O padrao e `rotuloDoModo` (a CRIACAO), e o dialogo de
+   * AJUSTE passa `rotuloDoModoDoAjuste` (HMO-480).
+   *
+   * Os tres modos querem dizer outra coisa nos dois lugares: na criacao,
+   * `sem_juros` e um emprestimo a juro zero; no ajuste, e "nao mexer no juro" --
+   * nenhum campo de juro no corpo do PATCH. Mostrar "Sem juros" la seria uma
+   * frase FALSA sobre o que o botao faz, e o custo e dinheiro: quem lesse "Sem
+   * juros" marcado acreditaria estar zerando o juro, e nao estaria.
+   *
+   * UMA PROP E NAO UM SEGUNDO COMPONENTE, porque o que importa aqui e a
+   * EXCLUSIVIDADE -- um modo so, logo um campo so no DOM, logo
+   * `taxa_e_total_juntos` inalcancavel. Um `CamposDeJurosDoAjuste` copiado
+   * teria de reproduzir essa mecanica e divergiria na primeira mudanca.
+   *
+   * O TEXTO CONTINUA EM `lib/`, nos dois casos: a prop escolhe QUAL funcao, nao
+   * carrega frase nenhuma. Escrita no JSX, ela passaria por qualquer suite
+   * intacta.
+   */
+  rotuloDoModo?: (modo: ModoDoJuro) => string;
 }
 
 export function CamposDeJuros({
@@ -75,6 +95,21 @@ export function CamposDeJuros({
   total,
   aoDigitarTotal,
   idPrefixo = "",
+  // RENOMEADA A PROP, E NAO O IMPORT, E A DIFERENCA E MEDIDA (HMO-480)
+  //
+  // O caminho natural era `rotuloDoModo as rotuloDoModoPadrao` no import, com a
+  // prop ficando com o nome bonito. ELE QUEBRA A SONDA DE NAVEGADOR: ela
+  // concatena os `.js` compilados num script classico e TIRA as linhas de
+  // `import` por regex -- entao `rotuloDoModoPadrao` nao e definido por
+  // ninguem, e o `default` so e avaliado quando a prop vem `undefined`, que e
+  // exatamente o caso do formulario de CRIACAO. O sintoma foi o painel inteiro
+  // morrendo no render e os 63 casos reprovando com
+  // "Cannot read properties of null (reading 'options')" -- a sonda procurando
+  // o `<select>` de contas numa arvore que nunca montou.
+  //
+  // Renomeando a PROP, o default aponta para o nome que a lib concatenada de
+  // fato declara. Familia `concatenar-partes-compiladas-num-escopo-mente`.
+  rotuloDoModo: rotuloDoModoDoCampo = rotuloDoModo,
 }: CamposDeJurosProps) {
   return (
     <div className="space-y-3" data-campos-de-juros>
@@ -99,7 +134,7 @@ export function CamposDeJuros({
                 onChange={() => aoEscolherModo(opcao)}
                 className="h-4 w-4"
               />
-              <span>{rotuloDoModo(opcao)}</span>
+              <span>{rotuloDoModoDoCampo(opcao)}</span>
             </label>
           ))}
         </div>

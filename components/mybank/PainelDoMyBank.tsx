@@ -182,6 +182,15 @@ import {
   type ContaNaTelaDoMyBank,
   type EmprestimoDoMyBank,
 } from "@/lib/mybank-na-tela";
+import {
+  parcelasParaAjustar,
+  pedidoAjustaAlgumCampo,
+  pedidoDoAjusteDaTela,
+  previaDoAjuste,
+  rotuloDoModoDoAjuste,
+  FORMULARIO_DO_AJUSTE_VAZIO,
+  type FormularioDoAjuste,
+} from "@/lib/ajuste-do-emprestimo-na-tela";
 
 /** "eu mesmo" ou "uma conexao" -- o radio que a issue pede. */
 type QuemPaga = "eu" | "conexao";
@@ -296,6 +305,44 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
    * duas dividas diferentes em sequencia e legitimo.
    */
   const antecipandoRef = useRef<Set<string>>(new Set());
+
+  /**
+   * QUAL EMPRESTIMO TEM O DIALOGO DE AJUSTAR ABERTO (HMO-480).
+   *
+   * UM SO, pela razao de `antecipando` logo acima, e aqui ela e mais forte: o
+   * formulario do ajuste e UM (`formularioDoAjuste`), com descricao, taxa e
+   * data. Dois dialogos abertos mostrariam duas previas alimentadas pelos
+   * MESMOS campos, e o clique em "Ajustar" de um renomearia a divida com o
+   * texto digitado pensando no outro.
+   */
+  const [ajustando, setAjustando] = useState<string | null>(null);
+
+  /**
+   * O que os campos do ajuste tem AGORA -- vazio quer dizer "nao toquei".
+   *
+   * Um objeto so e nao cinco `useState`: a regra "abrir o dialogo zera tudo" e
+   * sobre o conjunto, e cinco setters num `abrirAjuste` sao cinco lugares de
+   * onde esquecer um campo. `FORMULARIO_DO_AJUSTE_VAZIO` e a mesma constante que
+   * a suite usa como ponto de partida, entao o que a tela abre e o que o teste
+   * mede. Ver A PRESENCA DO CAMPO MANDA em `lib/ajuste-do-emprestimo-na-tela.ts`.
+   */
+  const [formularioDoAjuste, setFormularioDoAjuste] =
+    useState<FormularioDoAjuste>(FORMULARIO_DO_AJUSTE_VAZIO);
+
+  /** Os ajustes em voo -- o `Set` que o `disabled` MOSTRA. A forma de `antecipacoesEmVoo`. */
+  const [ajustesEmVoo, setAjustesEmVoo] = useState<string[]>([]);
+
+  /**
+   * A TRAVA DO AJUSTE -- `useRef`, e por emprestimo.
+   *
+   * A mesma forma de `antecipandoRef`, e o segundo clique custa dinheiro aqui
+   * tambem: o PATCH de ajuste nao tem idempotencia por id, e ele REESCREVE o
+   * valor das pendentes. Dois pedidos iguais em sequencia sao inocuos por
+   * coincidencia (a cauda e recalculada do total, nao incrementada), mas dois
+   * pedidos em voo ao mesmo tempo leem a mesma serie e escrevem em cima um do
+   * outro -- e o segundo le `jaRecebido` de antes do primeiro.
+   */
+  const ajustandoRef = useRef<Set<string>>(new Set());
 
   /**
    * A SECAO DOS ENCERRADOS ESTA ABERTA? (HMO-398). Fechada por padrao.
@@ -895,6 +942,99 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
     }
   }
 
+  /**
+   * ABRIR O DIALOGO DE AJUSTAR (HMO-480).
+   *
+   * OS CAMPOS NASCEM VAZIOS, E NAO COM OS VALORES DE HOJE
+   * ----------------------------------------------------
+   * E a regra inteira desta feature, e ela parece hostil ate se ler o porque:
+   * um campo pre-preenchido viaja no corpo do PATCH, e `{descricao: "Geladeira"}`
+   * sobre um emprestimo que JA se chama "Geladeira" nao e inocuo -- e um ajuste,
+   * que grava, e que a frase da rota reporta. Preencher os quatro faria todo
+   * conserto de typo recalcular a serie inteira.
+   *
+   * O reset na ABERTURA e nao no fechamento, pela razao de `abrirAntecipacao`:
+   * o estado e um so para todos os emprestimos da lista, e um campo deixado
+   * preenchido ao fechar o dialogo do A apareceria no do B -- ali um clique em
+   * "Ajustar" renomearia a divida errada com um texto que a pessoa nem ve, porque
+   * ela abriu o dialogo achando que ele estava limpo.
+   */
+  function abrirAjuste(emprestimo: EmprestimoDoMyBank) {
+    setFormularioDoAjuste(FORMULARIO_DO_AJUSTE_VAZIO);
+    setAjustando(emprestimo.id);
+  }
+
+  /**
+   * AJUSTAR -- o PATCH que a F4 e a F7 entregaram e que nenhuma tela chamava.
+   *
+   * O CORPO SAI DE `pedidoDoAjusteDaTela`, E NAO DE UM LITERAL AQUI
+   * --------------------------------------------------------------
+   * A decisao de qual campo viaja e a feature (ver A PRESENCA DO CAMPO MANDA em
+   * `lib/ajuste-do-emprestimo-na-tela.ts`), e escrita neste handler ela passaria por qualquer
+   * suite intacta -- a sonda de navegador LE o corpo que este `fetch` montou, e
+   * a suite mede a mesma funcao sem navegador.
+   *
+   * AS RECUSAS SAO AS DA ROTA, as 12 de `mensagemDoProblemaDoAjuste`. O
+   * `toast.error(dados.error)` e o mesmo do cancelar e do antecipar, e e o certo:
+   * aquelas frases tem NUMERO que so o servidor sabe depois de ler a serie
+   * ("já foram recebidos R$ 600,00", "a parcela 3/24 está avisada"). Reescritas
+   * aqui, a tela mostraria uma frase e o banco teria outro motivo.
+   *
+   * DUAS DELAS A TELA JA TORNA INALCANCAVEIS, e e por construcao e nao por
+   * validacao: `nada_a_ajustar` (o botao se desabilita sem campo tocado) e
+   * `taxa_e_total_juntos` (o alternador monta um campo so). A rota continua
+   * perguntando pelas duas, porque quem chega pelo PostgREST nao passa por tela.
+   */
+  async function ajustarEmprestimo(emprestimo: EmprestimoDoMyBank) {
+    // A TRAVA POR EMPRESTIMO, NA PRIMEIRA LINHA -- `has`/`add` no mesmo tick,
+    // antes de qualquer `await` e de qualquer `setState`. Ver `ajustandoRef`.
+    if (ajustandoRef.current.has(emprestimo.id)) return;
+    ajustandoRef.current.add(emprestimo.id);
+    setAjustesEmVoo((voando) => [...voando, emprestimo.id]);
+
+    const pedido = pedidoDoAjusteDaTela(formularioDoAjuste);
+
+    try {
+      const resposta = await fetch(`/api/mybank/loans/${emprestimo.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        // SEM `status` NO CORPO, e e isso que faz a rota despachar para o
+        // ajuste: `status` presente e um pedido de CANCELAR (e o unico valor
+        // que ela aceita ali e `cancelled`). Mandar `status: emprestimo.status`
+        // "para completar o corpo" cairia na recusa de status, nao no ajuste.
+        body: JSON.stringify(pedido),
+      });
+
+      const dados = await resposta.json();
+
+      if (!resposta.ok) {
+        toast.error(dados.error ?? "Não foi possível ajustar o empréstimo.");
+        return;
+      }
+
+      // A MENSAGEM DA ROTA, e nao uma frase daqui: e ela que diz quantas
+      // parcelas da cauda foram reescritas, qual passou a ser o total e quanto
+      // ja havia sido recebido.
+      //
+      // O AJUSTE PARCIAL VEM COMO SUCESSO, pela razao do antecipar: a rota
+      // devolve 200 com `success: false` e `parcial` quando o laco parou no
+      // meio, e aquilo e serie JA reescrita. Um toast de erro faria a pessoa
+      // mandar o pedido de novo sobre uma cauda que mudou.
+      toast.success(dados.message ?? "Empréstimo ajustado.");
+      setAjustando(null);
+      await carregar();
+    } catch (e) {
+      console.error("Erro ao ajustar o emprestimo:", e);
+      toast.error("Não foi possível ajustar o empréstimo.");
+    } finally {
+      // A TRAVA E LIBERADA NOS TRES CAMINHOS, pela razao do antecipar: sem o
+      // `delete`, o ajuste que falhou por rede nao teria segunda tentativa --
+      // o botao voltaria a ficar habilitado e nao chamaria rota nenhuma.
+      ajustandoRef.current.delete(emprestimo.id);
+      setAjustesEmVoo((voando) => voando.filter((id) => id !== emprestimo.id));
+    }
+  }
+
   if (carregando) {
     return (
       <div className="flex items-center gap-2 p-6 text-muted-foreground">
@@ -1339,6 +1479,29 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
                       )
                     : null;
 
+                // O PEDIDO E A PREVIA DO AJUSTE, SO PARA A LINHA ABERTA
+                // (HMO-480) -- pela razao da `previa` acima: o formulario e um
+                // estado SO, entao a previa das outras linhas falaria dos
+                // campos digitados NESTA.
+                //
+                // O `pedido` e calculado aqui e nao dentro do `fetch` porque a
+                // tela precisa dele para TRES coisas: a previa, o `disabled` do
+                // botao e a ancora que a sonda le. O que o handler manda e
+                // recalculado da mesma funcao -- de proposito, para que o corpo
+                // do PATCH nao dependa de um render ter acontecido.
+                const pedidoDoAjuste =
+                  ajustando === emprestimo.id
+                    ? pedidoDoAjusteDaTela(formularioDoAjuste)
+                    : null;
+
+                const previaDoAjusteDaLinha = pedidoDoAjuste
+                  ? previaDoAjuste({
+                      emprestimo,
+                      parcelas: parcelasParaAjustar(emprestimo.parcelas),
+                      pedido: pedidoDoAjuste,
+                    })
+                  : null;
+
                 // O MARCADOR DA LINHA ENCERRADA, e ele e um ATRIBUTO proprio
                 // (`data-encerrado`). A posicao na lista nao serve: aberta, os
                 // encerrados vem DEPOIS dos em andamento, e uma assercao por
@@ -1400,15 +1563,63 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
                             Antecipar
                           </Button>
                         )}
+                        {/* O GESTO DE AJUSTAR (HMO-480), E A CONDICAO E O
+                            STATUS -- a mesma do Cancelar, e nao a do
+                            Antecipar.
+
+                            `problemaDoAjuste` recusa `settled` e `cancelled`
+                            com `emprestimo_nao_esta_ativo`, entao fora de
+                            `active` o botao seria um clique cujo unico
+                            resultado possivel e um toast de erro.
+
+                            E ELA NAO PEDE PARCELA EM ABERTO, ao contrario de
+                            `podeAntecipar`: a propria rota diz por que ("a
+                            descricao sozinha nao precisa de parcela pendente
+                            nenhuma"), e trocar o texto de um emprestimo com as
+                            24 parcelas pagas e um conserto legitimo. Quem
+                            recusa o pedido que MEXE NA SERIE sem pendente e
+                            `sem_parcela_pendente`, e ela sabe distinguir os
+                            dois casos; o botao nao. */}
+                        {/* OS DOIS DENTRO DO MESMO `active`, E A UNIAO FOI
+                            MEDIDA (HMO-480).
+
+                            A condicao e a MESMA, e escreve-la duas vezes tem
+                            dois precos. O de produto: duas condicoes identicas
+                            convidam a mexer numa so. O de MEDICAO, que foi o
+                            medido aqui: o mutante "O BOTAO CANCELAR APARECE EM
+                            EMPRESTIMO JA ENCERRADO" de
+                            `mutantes-mybank-na-tela.mjs` ancora exatamente
+                            nesta linha, e com ela repetida a ancora dele vira
+                            AMBIGUA (2 ocorrencias) -- o
+                            `check-ancora-de-mutante` reprova, e um `replace`
+                            que casa duas vezes muta so a PRIMEIRA, medindo um
+                            lugar que o rotulo dele nao descreve
+                            (`funcao-nova-que-copia-criterio-torna-ancora-alheia-ambigua`).
+
+                            Unidos, aquele mutante passa a fazer os DOIS botoes
+                            aparecerem no encerrado -- o que o rotulo dele
+                            segue descrevendo certo, e que as duas assercoes
+                            matam: a dele (`k_com_cancelar`) e a desta filha
+                            (`m_botoes.comAjustar`). */}
                         {emprestimo.status === "active" && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            data-cancelar-emprestimo={emprestimo.id}
-                            onClick={() => cancelarEmprestimo(emprestimo)}
-                          >
-                            Cancelar
-                          </Button>
+                          <>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              data-ajustar-emprestimo={emprestimo.id}
+                              onClick={() => abrirAjuste(emprestimo)}
+                            >
+                              Ajustar
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              data-cancelar-emprestimo={emprestimo.id}
+                              onClick={() => cancelarEmprestimo(emprestimo)}
+                            >
+                              Cancelar
+                            </Button>
+                          </>
                         )}
                       </div>
                     </div>
@@ -1538,6 +1749,175 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
                             size="sm"
                             data-fechar-antecipacao={emprestimo.id}
                             onClick={() => setAntecipando(null)}
+                          >
+                            Voltar
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ====================================================
+                        O DIALOGO DE AJUSTAR -- os quatro campos da rota (HMO-480)
+                        ====================================================
+                        IRMAO DO DE ANTECIPAR LOGO ACIMA: mesmo lugar (dentro da
+                        linha, nao num modal), mesma caixa, mesma disciplina de
+                        `...EmVooRef`, e a mesma razao para nao ser um
+                        `confirm()` -- o gesto PEDE valores, e os numeros que a
+                        pessoa precisa ler mudam com o que ela digita. Um
+                        `confirm()` mostraria o estado de antes da escolha.
+
+                        A CAIXA APARECE PELO `ajustando`, E NAO PELA PREVIA, e a
+                        diferenca e o caso de abertura: `previaDoAjuste` devolve
+                        `null` com o formulario intocado (de proposito), e
+                        condicionar a caixa a ela faria o clique em "Ajustar"
+                        nao abrir nada. O dialogo de antecipar pode se
+                        condicionar a previa porque lá a quantidade ja nasce em
+                        "1"; aqui nascer vazio e a feature. */}
+                    {ajustando === emprestimo.id && (
+                      <div
+                        data-dialogo-ajuste={emprestimo.id}
+                        className="mt-2 space-y-3 rounded-lg border border-warning/40 bg-muted/40 p-3"
+                      >
+                        {/* A FRASE QUE EXPLICA O CAMPO VAZIO.
+                            Sem ela, quatro campos em branco se leem como "a
+                            tela nao carregou os valores" -- e a pessoa
+                            preencheria os quatro para "confirmar" o que ja
+                            esta certo, que e exatamente o pedido que esta
+                            feature evita montar. */}
+                        <p className="text-xs text-muted-foreground">
+                          Preencha só o que quer mudar. Campo em branco fica
+                          como está.
+                        </p>
+
+                        <div className="space-y-1">
+                          <Label
+                            htmlFor={`mybank-ajuste-descricao-${emprestimo.id}`}
+                            className="text-xs"
+                          >
+                            Nova descrição
+                          </Label>
+                          <Input
+                            id={`mybank-ajuste-descricao-${emprestimo.id}`}
+                            data-ajuste-descricao={emprestimo.id}
+                            value={formularioDoAjuste.descricao}
+                            onChange={(e) =>
+                              setFormularioDoAjuste((atual) => ({
+                                ...atual,
+                                descricao: e.target.value,
+                              }))
+                            }
+                            // O PLACEHOLDER MOSTRA O TEXTO DE HOJE, E O `value`
+                            // FICA VAZIO. E o unico jeito de a pessoa LER a
+                            // descricao atual sem que ela viaje no corpo do
+                            // PATCH: `placeholder` nao e valor, nao entra no
+                            // `e.target.value` e nao e lido por
+                            // `pedidoDoAjusteDaTela`.
+                            placeholder={emprestimo.descricao}
+                            autoComplete="off"
+                          />
+                        </div>
+
+                        {/* O ALTERNADOR DA F3, COM OS ROTULOS DO AJUSTE.
+                            `rotuloDoModoDoAjuste` troca "Sem juros" por "Não
+                            mexer nos juros" -- ver ZERAR O JURO em
+                            `lib/ajuste-do-emprestimo-na-tela.ts`. O componente e o mesmo
+                            porque o que importa dele e a EXCLUSIVIDADE: um modo,
+                            logo um campo no DOM, logo `taxa_e_total_juntos`
+                            inalcancavel pela tela. */}
+                        <CamposDeJuros
+                          modo={formularioDoAjuste.modoDoJuro}
+                          aoEscolherModo={(modo) =>
+                            setFormularioDoAjuste((atual) => ({
+                              ...atual,
+                              modoDoJuro: modo,
+                            }))
+                          }
+                          taxa={formularioDoAjuste.taxa}
+                          aoDigitarTaxa={(taxa) =>
+                            setFormularioDoAjuste((atual) => ({
+                              ...atual,
+                              taxa,
+                            }))
+                          }
+                          total={formularioDoAjuste.total}
+                          aoDigitarTotal={(total) =>
+                            setFormularioDoAjuste((atual) => ({
+                              ...atual,
+                              total,
+                            }))
+                          }
+                          // O PREFIXO LEVA O ID DO EMPRESTIMO, e nao e enfeite:
+                          // o `name` dos radios sai dele, e dois dialogos com o
+                          // mesmo `name` seriam UM grupo para o navegador --
+                          // escolher o modo num desmarcaria o do outro.
+                          idPrefixo={`mybank_ajuste_${emprestimo.id}_`}
+                          rotuloDoModo={rotuloDoModoDoAjuste}
+                        />
+
+                        <div className="space-y-1">
+                          <Label
+                            htmlFor={`mybank-ajuste-vencimento-${emprestimo.id}`}
+                            className="text-xs"
+                          >
+                            Novo vencimento da primeira parcela em aberto
+                          </Label>
+                          <CampoDeData
+                            id={`mybank-ajuste-vencimento-${emprestimo.id}`}
+                            value={formularioDoAjuste.primeiroVencimentoDaCauda}
+                            onChange={(data) =>
+                              setFormularioDoAjuste((atual) => ({
+                                ...atual,
+                                primeiroVencimentoDaCauda: data,
+                              }))
+                            }
+                          />
+                          {/* A DATA E DA PRIMEIRA EM ABERTO, E AS OUTRAS
+                              SEGUEM. `caudaRecalculada` remonta a serie a
+                              partir dela de mes em mes; sem esta frase, "novo
+                              vencimento" se leria como "muda so esta
+                              parcela". */}
+                          <p className="text-xs text-muted-foreground">
+                            As seguintes andam de mês em mês a partir dela.
+                          </p>
+                        </div>
+
+                        {/* A PREVIA, E ELA E O MESMO COMPONENTE DA CRIACAO.
+                            `previaDoAjuste` devolve a lista de grandezas e o
+                            componente desenha -- nenhuma conta no JSX. Ver A
+                            PREVIA NAO FAZ CONTA NENHUMA em
+                            `lib/ajuste-do-emprestimo-na-tela.ts`. */}
+                        <div data-previa-ajuste={emprestimo.id}>
+                          <PreviaDoEmprestimo
+                            grandezas={previaDoAjusteDaLinha}
+                          />
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button
+                            size="sm"
+                            data-confirmar-ajuste={emprestimo.id}
+                            // DUAS RAZOES PARA O `disabled`, E AS DUAS SAO
+                            // DIFERENTES: sem campo tocado o corpo seria `{}` e
+                            // a rota responderia `nada_a_ajustar` (um erro que a
+                            // pessoa nao causou -- ela so abriu o dialogo); e
+                            // com o PATCH em voo e o latch de duplo clique, que
+                            // o ref ja segura e este `disabled` MOSTRA.
+                            disabled={
+                              !pedidoAjustaAlgumCampo(
+                                pedidoDoAjuste ?? {}
+                              ) || ajustesEmVoo.includes(emprestimo.id)
+                            }
+                            onClick={() => ajustarEmprestimo(emprestimo)}
+                          >
+                            {ajustesEmVoo.includes(emprestimo.id)
+                              ? "Ajustando…"
+                              : "Ajustar"}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            data-fechar-ajuste={emprestimo.id}
+                            onClick={() => setAjustando(null)}
                           >
                             Voltar
                           </Button>
