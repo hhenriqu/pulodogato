@@ -63,6 +63,9 @@ import { SecaoDaTela } from "../.tmp-secao-da-tela/components/movimentacoes/Seca
 // que decide que a linha realizada vira link e a prevista nao, e um esboco faria
 // as assercoes do `href` medirem a propria sonda.
 import {
+  MOTIVO_ACAO_EM_OUTRA_LINHA,
+  MOTIVO_ACAO_NESTA_LINHA,
+  MOTIVO_SEM_REDE,
   ROTULO_DE_PAGAR,
   caminhoDeEdicao,
   rotuloDeConfirmar,
@@ -886,4 +889,174 @@ test("cada linha ganha os botoes DELA -- nao os da primeira", () => {
     "Excluir",
     // c e a fatura -- nenhum
   ]);
+});
+
+// ---------------------------------------------------------------------------
+// 6. O BOTAO CINZA EXPLICA POR QUE ESTA CINZA -- HMO-475
+// ---------------------------------------------------------------------------
+// A regra NAO muda: os quatro botoes continuam desabilitados nos mesmos casos, e
+// `test:acoes-da-linha` afirma QUAL frase cada estado produz. O que so se prova
+// aqui e que a MARCACAO LEIA aquela frase -- a mesma familia de defeito do bloco
+// 5: `motivoDoBotaoTravado` pode devolver o texto certo para os tres estados e o
+// `title` do botao continuar sendo o rotulo pelado, sem erro, sem build vermelho
+// e sem mexer um centavo.
+//
+// POR QUE ISTO NAO E A SONDA DE NAVEGADOR. `probe-acoes-da-linha-no-iphone.mjs`
+// reproduz este DOM A MAO para medir LAYOUT com o CSS de producao; um `title`
+// escrito naquele HTML seria o `title` que a sonda mesmo escreveu. Aqui o HTML
+// sai do componente compilado, entao a assercao e sobre o JSX de verdade.
+//
+// E O QUE NENHUMA DAS DUAS PROVA: que o `title` APARECA ao passar o dedo. Num
+// iPhone nao ha passar-o-mouse -- o `title` do botao desabilitado e lido por
+// leitor de tela e por inspecao, e quem reclama por escrito ("esta cinza") ja e
+// o caso que esta issue existe para desambiguar. A `FaixaDadoDoAparelho` no topo
+// da lista continua sendo o aviso VISIVEL, e ela nao saiu de la.
+
+/**
+ * Os botoes DESABILITADOS com o `title` e o `aria-disabled` de cada um.
+ *
+ * Irma de `desabilitados` e com o mesmo cuidado dela: o filtro e pelo ATRIBUTO
+ * ` disabled=""`, e nao por `includes("disabled")` -- a classe de todo botao
+ * deste app contem `disabled:pointer-events-none`, e um `includes` devolveria a
+ * lista inteira (ver o comentario de `desabilitados`).
+ */
+const cinzasComMotivo = (html) =>
+  [...html.matchAll(/<button\b[^>]*>/g)]
+    .map((m) => m[0])
+    .filter((tag) => / disabled=""/.test(tag))
+    .map((tag) => ({
+      rotulo: /aria-label="([^"]*)"/.exec(tag)?.[1] ?? "(sem rotulo)",
+      titulo: /title="([^"]*)"/.exec(tag)?.[1] ?? null,
+      ariaDisabled: /aria-disabled="([^"]*)"/.exec(tag)?.[1] ?? null,
+    }));
+
+test("CONTROLE: com rede, o title de cada botao e o ROTULO PELADO", () => {
+  // O controle negativo dos blocos abaixo, e ele pega o defeito oposto deles:
+  // um `title` que levasse o motivo SEMPRE diria "sem rede" para quem esta com
+  // rede, e cada assercao de "o title contem a frase" passaria verde.
+  const html = render({ linhas: [linha({})] });
+
+  assert.deepEqual(cinzasComMotivo(html), [], "nada deveria estar cinza aqui");
+
+  const titulos = [...html.matchAll(/title="([^"]*)"/g)].map((m) => m[1]);
+  assert.deepEqual(titulos, ["Confirmar pagamento", "Editar", "Excluir"]);
+  for (const t of titulos) {
+    assert.ok(!t.includes("—"), `o title ganhou motivo com rede: ${t}`);
+  }
+  assert.ok(
+    !html.includes("aria-disabled"),
+    "botao habilitado saiu com aria-disabled"
+  );
+});
+
+test("sem rede os TRES botoes cinzas dizem por que estao cinzas", () => {
+  // O relato que custou 6h na HMO-457 foi "nao esta mostrando opcao de editar,
+  // pagar ou excluir" -- e cinza-sem-motivo e indistinguivel de nunca-desenhado
+  // para quem olha a linha. Com o motivo colado no botao, o proximo relato ja
+  // chega desambiguado.
+  const html = render({ linhas: [linha({})], acoes: ACOES({ online: false }) });
+  const cinzas = cinzasComMotivo(html);
+
+  assert.deepEqual(
+    cinzas.map((c) => c.rotulo),
+    ["Confirmar pagamento", "Editar", "Excluir"]
+  );
+
+  for (const c of cinzas) {
+    // O ROTULO continua na frente: estes tres botoes nao tem texto nenhum na
+    // tela, e um title que dissesse so o motivo tiraria a unica forma de saber
+    // QUAL botao e aquele.
+    assert.ok(
+      c.titulo?.startsWith(c.rotulo),
+      `${c.rotulo}: o rotulo saiu do title (${c.titulo})`
+    );
+    assert.ok(
+      c.titulo?.includes(MOTIVO_SEM_REDE),
+      `${c.rotulo}: o title nao diz o motivo (${c.titulo})`
+    );
+    assert.equal(c.ariaDisabled, "true", `${c.rotulo}: sem aria-disabled`);
+  }
+
+  // E A OUTRA METADE: a frase do `agindo` NAO aparece. Nada esta em curso, e
+  // "aguarde o fim da acao" prometeria que o app esta tentando algo.
+  assert.ok(!html.includes(MOTIVO_ACAO_NESTA_LINHA), html);
+  assert.ok(!html.includes(MOTIVO_ACAO_EM_OUTRA_LINHA), html);
+});
+
+test("durante uma acao, a linha que age e as OUTRAS dizem motivos diferentes", () => {
+  // O bloco que pega o motivo calculado uma vez para a SECAO. `travado` desliga
+  // a secao inteira de proposito, entao um `motivoTravado` erguido fora do
+  // `map` das linhas passaria em qualquer assercao de uma linha so -- e diria
+  // "em andamento nesta linha" sobre a linha de baixo, que nao esta.
+  const html = render({
+    linhas: [linha({ id: "l1" }), linha({ id: "l2", descricao: "Luz" })],
+    acoes: ACOES({ agindo: "l1" }),
+  });
+
+  const cinzas = cinzasComMotivo(html);
+  assert.equal(cinzas.length, 6, cinzas.map((c) => c.rotulo).join(" | "));
+
+  // Os tres primeiros sao da linha que AGE (a ordem das linhas e a que a secao
+  // recebeu -- bloco 4 acima), os tres ultimos sao da outra.
+  for (const c of cinzas.slice(0, 3)) {
+    assert.ok(
+      c.titulo?.includes(MOTIVO_ACAO_NESTA_LINHA),
+      `l1/${c.rotulo}: ${c.titulo}`
+    );
+  }
+  for (const c of cinzas.slice(3)) {
+    assert.ok(
+      c.titulo?.includes(MOTIVO_ACAO_EM_OUTRA_LINHA),
+      `l2/${c.rotulo}: ${c.titulo}`
+    );
+  }
+
+  // E com rede de verdade nenhum dos seis diz "sem rede".
+  assert.ok(!html.includes(MOTIVO_SEM_REDE), html);
+});
+
+test("sem rede o Pagar da fatura tambem explica -- e ele tem texto", () => {
+  // O quarto botao, e o unico com rotulo visivel. Ele precisa do mesmo
+  // tratamento: `travado` chega nele igual aos outros tres.
+  const html = render({
+    linhas: [FATURA_MINHA],
+    acoes: ACOES({ online: false }),
+  });
+
+  assert.deepEqual(cinzasComMotivo(html), [
+    {
+      rotulo: ROTULO_DE_PAGAR,
+      titulo: `${ROTULO_DE_PAGAR} — ${MOTIVO_SEM_REDE}`,
+      ariaDisabled: "true",
+    },
+  ]);
+});
+
+test("o Editar APAGADO mantem o motivo ESTRUTURAL, mesmo sem rede", () => {
+  // As duas condicoes valem juntas, e a estrutural ganha: esta transferencia
+  // nunca vai abrir por aqui, com rede ou sem ela. "Sem rede" neste botao
+  // prometeria que voltar a ter sinal resolve -- e quem esperasse o sinal
+  // voltaria para o mesmo cinza.
+  const html = render({
+    linhas: [
+      linha({ origem: "realizado", tipo: "transfer", descricao: "Itaú → Nubank" }),
+    ],
+    aparencia: TRANSFERENCIAS,
+    acoes: ACOES({ online: false }),
+  });
+
+  const porRotulo = new Map(cinzasComMotivo(html).map((c) => [c.rotulo, c]));
+  assert.deepEqual([...porRotulo.keys()], ["Editar", "Excluir"]);
+
+  const editar = porRotulo.get("Editar");
+  assert.match(editar.titulo, /duas pernas/);
+  assert.ok(
+    !editar.titulo.includes(MOTIVO_SEM_REDE),
+    `o motivo estrutural foi trocado por "sem rede": ${editar.titulo}`
+  );
+
+  // E o Excluir da MESMA linha, que esta cinza so pela rede, diz a da rede: os
+  // dois motivos convivem na mesma linha, e e isso que mostra que o `title` e
+  // por BOTAO e nao por linha.
+  assert.ok(porRotulo.get("Excluir").titulo.includes(MOTIVO_SEM_REDE));
 });

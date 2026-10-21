@@ -237,6 +237,89 @@ export function motivoSemEditar(linha: LinhaAcionavel): string | null {
   return null;
 }
 
+/**
+ * POR QUE O BOTAO ESTA CINZA -- HMO-475.
+ *
+ * Os quatro botoes da linha (Confirmar, Editar, Excluir, Pagar) recebem
+ * `disabled` de um unico `travado` em `SecaoDaTela`, e `Button` carrega
+ * `disabled:pointer-events-none disabled:opacity-50`: eles ficam meio
+ * transparentes e intocaveis. Ate aqui esta CERTO e continua -- escrita sem rede
+ * neste caminho nao fica pendente, ela FALHA, e dois cliques na mesma baixa sao
+ * duas baixas (a segunda volta 409 depois de a primeira ter dado certo). O
+ * defeito que esta funcao conserta e so a falta de EXPLICACAO colada no botao.
+ *
+ * O QUE ISSO JA CUSTOU, e e por isso que a explicacao vale uma funcao propria:
+ * a HMO-457 ("Despesas no iphone") parou 6h esperando a resposta de UMA
+ * pergunta -- "os botoes estao cinza ou ausentes?". As duas respostas levam a
+ * consertos opostos (cache/cliente vs dado da conta), e cinza-sem-motivo e
+ * indistinguivel de nunca-desenhado para quem olha a linha. Com o motivo no
+ * botao, o relato ja chega desambiguado.
+ *
+ * O `agindo` VEM PRIMEIRO, e nao e ordem arbitraria: as duas condicoes podem
+ * valer juntas (a rede cai no meio de uma escrita) e a mais imediata e a que
+ * esta em curso -- aquele pedido vai terminar ou falhar em segundos, e e o que
+ * explica o giro que a linha ja mostra. "Sem rede" sobre um botao que esta
+ * girando leria como se nada estivesse acontecendo.
+ *
+ * DUAS FRASES PARA O `agindo`, e nao uma: `travado` desliga a secao INTEIRA
+ * enquanto uma linha age, de proposito (uma segunda acao em paralelo chegaria no
+ * meio da releitura da primeira). Uma frase so diria "esta linha está em
+ * andamento" sobre as OUTRAS linhas -- que nao estao, e cujo dono nao tem como
+ * saber que o motivo esta na linha de cima.
+ */
+export const MOTIVO_SEM_REDE =
+  "Sem rede: esta lista é a do aparelho, e está só para leitura.";
+export const MOTIVO_ACAO_NESTA_LINHA =
+  "Ação em andamento nesta linha. Aguarde o fim dela.";
+export const MOTIVO_ACAO_EM_OUTRA_LINHA =
+  "Há uma ação em andamento em outra linha. Aguarde o fim dela.";
+
+/** O estado que trava os botoes -- o mesmo que `AcoesDaLinha` carrega. */
+export interface EstadoDoTravamento {
+  /** `false` quando a lista veio do cache do aparelho: nenhuma escrita sai. */
+  online: boolean;
+  /** O id da linha cuja acao esta em curso, ou `null`. */
+  agindo: string | null;
+  /** O id DESTA linha -- e o que separa as duas frases do `agindo`. */
+  idDaLinha: string;
+}
+
+/**
+ * A frase que explica o cinza, ou `null` quando o botao NAO esta cinza.
+ *
+ * O `null` e o contrato, igual ao de `motivoSemEditar`: quem chama nao repete a
+ * condicao de `travado`, ele pergunta o motivo e recebe `null` quando nao ha.
+ */
+export function motivoDoBotaoTravado(
+  estado: EstadoDoTravamento,
+): string | null {
+  if (estado.agindo !== null) {
+    return estado.agindo === estado.idDaLinha
+      ? MOTIVO_ACAO_NESTA_LINHA
+      : MOTIVO_ACAO_EM_OUTRA_LINHA;
+  }
+  if (!estado.online) return MOTIVO_SEM_REDE;
+  return null;
+}
+
+/**
+ * O `title` de um botao da linha: o rotulo, e o motivo quando ha um.
+ *
+ * O ROTULO CONTINUA NA FRENTE, e nao e enfeite: os tres botoes de icone nao tem
+ * texto nenhum na tela, entao um `title` que dissesse so "Sem rede: ..." tiraria
+ * do passar-o-mouse a unica forma de saber QUAL botao e aquele. O travessao
+ * separa identidade de motivo.
+ *
+ * O `aria-label` NAO recebe o motivo, de proposito: ele e o nome acessivel do
+ * botao e e por ele que as tres suites e as duas sondas acham cada botao
+ * (`rotulosDeAcao`, `desabilitados`, `[aria-label="Pagar"]`). Mudar o nome
+ * conforme o estado faria cada uma delas procurar uma string que so existe
+ * metade do tempo.
+ */
+export function tituloDoBotao(rotulo: string, motivo: string | null): string {
+  return motivo ? `${rotulo} — ${motivo}` : rotulo;
+}
+
 /** Um pedido HTTP pronto: o metodo, o caminho e o corpo (quando ha). */
 export interface PedidoDaAcao {
   metodo: "POST" | "PATCH" | "DELETE";

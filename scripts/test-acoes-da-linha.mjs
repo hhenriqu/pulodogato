@@ -39,12 +39,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 const {
+  MOTIVO_ACAO_EM_OUTRA_LINHA,
+  MOTIVO_ACAO_NESTA_LINHA,
+  MOTIVO_SEM_REDE,
   ROTULO_DE_EDITAR,
   ROTULO_DE_EXCLUIR,
   ROTULO_DE_PAGAR,
   avisoDaExclusao,
   caminhoDeEdicao,
+  motivoDoBotaoTravado,
   motivoSemEditar,
+  tituloDoBotao,
   pedidoDeConfirmacao,
   pedidoDeEdicaoDaPrevista,
   pedidoDeExclusao,
@@ -843,4 +848,130 @@ test("CADEIA: a fatura aberta de OUTRA pessoa nao ganha o botao", () => {
 
   assert.equal(linha.posso_editar, false);
   assert.equal(podePagarAFatura(linha), false);
+});
+
+// ---------------------------------------------------------------------------
+// POR QUE O BOTAO ESTA CINZA -- HMO-475
+// ---------------------------------------------------------------------------
+// Estas funcoes nao mudam regra nenhuma: os botoes continuam desabilitados nos
+// MESMOS casos. O que elas acrescentam e a frase colada no botao, e o motivo de
+// isso valer suite propria esta no cabecalho delas -- a HMO-457 parou 6h
+// esperando a resposta de "cinza ou ausente?", porque cinza-sem-explicacao e
+// indistinguivel de nunca-desenhado para quem olha a linha.
+//
+// O modo de falha que estes blocos cobrem nao e "a frase esta errada": e a
+// frase CERTA no estado ERRADO. Uma `motivoDoBotaoTravado` que devolvesse
+// sempre MOTIVO_SEM_REDE passaria em qualquer assercao de "tem motivo" -- e
+// diria "sem rede" para quem esta com rede e so esperando o clique anterior
+// terminar. Dai cada bloco afirmar QUAL das tres frases, e o ultimo afirmar que
+// as tres sao DIFERENTES entre si.
+
+const TRAVAMENTO = (extra = {}) => ({
+  online: true,
+  agindo: null,
+  idDaLinha: "l1",
+  ...extra,
+});
+
+test("com rede e sem acao em curso NAO ha motivo -- o botao nao esta cinza", () => {
+  // O CONTROLE POSITIVO de todos os blocos abaixo: sem ele, uma funcao que
+  // devolvesse frase SEMPRE passaria em cada um deles, e a tela explicaria um
+  // cinza que nao existe.
+  assert.equal(motivoDoBotaoTravado(TRAVAMENTO()), null);
+});
+
+test("sem rede o motivo diz as tres coisas: sem rede, lista do aparelho, so leitura", () => {
+  const motivo = motivoDoBotaoTravado(TRAVAMENTO({ online: false }));
+
+  assert.equal(motivo, MOTIVO_SEM_REDE);
+  // AS TRES PALAVRAS, e nao `ok(motivo)`: a frase existe para desambiguar o
+  // relato de quem olha a linha, e "indisponivel" desambiguaria nada.
+  assert.match(motivo, /rede/i);
+  assert.match(motivo, /aparelho/i);
+  assert.match(motivo, /leitura/i);
+});
+
+test("agindo NESTA linha e agindo em OUTRA sao frases diferentes", () => {
+  // `travado` desliga a secao INTEIRA enquanto uma linha age, de proposito. Uma
+  // frase so diria "esta linha esta em andamento" sobre as outras linhas -- que
+  // nao estao, e cujo dono nao tem como saber que o motivo esta na linha de
+  // cima.
+  assert.equal(
+    motivoDoBotaoTravado(TRAVAMENTO({ agindo: "l1" })),
+    MOTIVO_ACAO_NESTA_LINHA
+  );
+  assert.equal(
+    motivoDoBotaoTravado(TRAVAMENTO({ agindo: "outra-linha" })),
+    MOTIVO_ACAO_EM_OUTRA_LINHA
+  );
+});
+
+test("sem rede E agindo: quem explica e a acao em curso", () => {
+  // As duas condicoes valem juntas quando a rede cai no meio de uma escrita. A
+  // mais imediata e a que esta em curso: aquele pedido termina ou falha em
+  // segundos, e e ele que explica o giro que a linha JA mostra. "Sem rede" em
+  // cima de um botao girando leria como se nada estivesse acontecendo.
+  assert.equal(
+    motivoDoBotaoTravado(TRAVAMENTO({ online: false, agindo: "l1" })),
+    MOTIVO_ACAO_NESTA_LINHA
+  );
+  assert.equal(
+    motivoDoBotaoTravado(TRAVAMENTO({ online: false, agindo: "outra" })),
+    MOTIVO_ACAO_EM_OUTRA_LINHA
+  );
+});
+
+test("as tres frases sao DISTINTAS e nenhuma e vazia", () => {
+  // O bloco que torna os de cima honestos. Com as tres constantes apontando
+  // para o mesmo texto, cada `assert.equal` acima passaria verde e a tela daria
+  // a MESMA explicacao para tres estados de consertos diferentes -- que e
+  // exatamente a ambiguidade que esta issue existe para tirar.
+  const frases = [
+    MOTIVO_SEM_REDE,
+    MOTIVO_ACAO_NESTA_LINHA,
+    MOTIVO_ACAO_EM_OUTRA_LINHA,
+  ];
+
+  assert.equal(new Set(frases).size, 3, frases.join(" | "));
+  for (const f of frases) assert.ok(f.trim().length > 10, JSON.stringify(f));
+});
+
+test("o title leva o ROTULO na frente, e sem motivo ele e so o rotulo", () => {
+  // Os tres botoes de icone nao tem texto nenhum na tela: um `title` que
+  // dissesse so "Sem rede: ..." tiraria do passar-o-mouse a unica forma de
+  // saber QUAL botao e aquele.
+  assert.equal(tituloDoBotao(ROTULO_DE_EDITAR, null), ROTULO_DE_EDITAR);
+  assert.equal(tituloDoBotao(ROTULO_DE_PAGAR, null), ROTULO_DE_PAGAR);
+
+  const comMotivo = tituloDoBotao(ROTULO_DE_EXCLUIR, MOTIVO_SEM_REDE);
+  assert.ok(
+    comMotivo.startsWith(ROTULO_DE_EXCLUIR),
+    `o rotulo saiu da frente: ${comMotivo}`
+  );
+  assert.ok(comMotivo.includes(MOTIVO_SEM_REDE), comMotivo);
+
+  // E o rotulo sozinho nao ganha travessao pendurado: `title="Editar — "` se le
+  // como texto faltando.
+  assert.ok(!tituloDoBotao(ROTULO_DE_EDITAR, null).includes("—"));
+});
+
+test("o motivo ESTRUTURAL do Editar cabe no mesmo title", () => {
+  // `motivoSemEditar` e a mesma forma -- `string | null` -- e o Editar apagado
+  // da transferencia realizada passa por `tituloDoBotao` igual aos outros. Sem
+  // isto, aquele botao teria um `title` de formato proprio.
+  const linha = {
+    id: "t1",
+    gravada: true,
+    origem: "realizado",
+    tipo: "transfer",
+    natureza: "despesa",
+    posso_editar: true,
+  };
+
+  const motivo = motivoSemEditar(linha);
+  assert.ok(motivo, "o caso perdeu o motivo -- o bloco nao vale");
+
+  const titulo = tituloDoBotao(ROTULO_DE_EDITAR, motivo);
+  assert.ok(titulo.startsWith(ROTULO_DE_EDITAR), titulo);
+  assert.match(titulo, /duas pernas/);
 });
