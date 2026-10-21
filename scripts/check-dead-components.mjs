@@ -73,7 +73,27 @@ const EXT_TOLERADA = ['.css', '.scss', '.svg', '.png', '.woff', '.woff2', '.json
 // `/dashboard/trading` continua no EmDesenvolvimento, de proposito: "sinais de
 // trading em tempo real" e recomendacao de investimento, com implicacao
 // regulatoria (CVM), e nao ha componente esperando por ela.
-const ESPERANDO_TELA = [];
+//
+// O CASO INVERSO, E ELE PRECISA SER DITO (HMO-468, F4 do plano da HMO-462):
+// `PainelDePapel` nao espera uma tela -- ele JA FOI SUBSTITUIDO por uma. A
+// conversa (`components/papel-de-pao/ConversaDePapel.tsx`) entrou no lugar dele
+// em `app/(dashboard)/dashboard/page.tsx`, e o plano-mae separa de proposito a
+// substituicao (F4) da remocao (F6): apagar 656 linhas de tela no mesmo PR que
+// estreia a substituta transformaria "voltar atras" num revert de duas coisas
+// em vez de uma, e a conversa ainda nao foi vista em producao.
+//
+// ENTRAR AQUI NAO E PERDAO -- e o contrario de esquecer. O registro se
+// invalida sozinho: quem fizer a F6 e apagar o arquivo RECEBE o erro "esta no
+// registro e nao existe mais" e tem de tirar esta linha na mesma passada. Um
+// arquivo morto em silencio nao teria esse lembrete, e e so por isso que a
+// lista deixou de estar vazia.
+const ESPERANDO_TELA = [
+  {
+    arquivo: "components/papel-de-pao/PainelDePapel.tsx",
+    tela: "a conversa do papel de pao (ConversaDePapel), que o substituiu",
+    issue: "HMO-468 entrou; a remocao e a F6 do plano da HMO-462",
+  },
+];
 
 function listar(dir) {
   const saida = [];

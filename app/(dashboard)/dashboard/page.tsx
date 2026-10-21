@@ -124,7 +124,12 @@ import {
 // Os dois lados do portao do modo papel de pao (HMO-286). O `useModoPapel` ja
 // esta montado em `app/layout.tsx` pelo `ModoPapelProvider` da HMO-283.
 import { useModoPapel } from "@/components/ModoPapelProvider";
-import { PainelDePapel } from "@/components/papel-de-pao/PainelDePapel";
+// A CONVERSA ENTROU NO LUGAR DO PAINEL (HMO-468, F4 do plano da HMO-462). O
+// `PainelDePapel` continua na arvore e NAO foi apagado -- ele so deixou de ter
+// quem o monte, e a remocao e F6, depois de a conversa estar confirmada em
+// producao. O que NAO mudou: o modo, a pele `.papel`, o `ModoPapelProvider`, o
+// `PapelToggle` e o script de pre-pintura. A conversa substitui o PAINEL.
+import { ConversaDePapel } from "@/components/papel-de-pao/ConversaDePapel";
 
 const moeda = (valor: number) =>
   new Intl.NumberFormat("pt-BR", {
@@ -229,7 +234,7 @@ export default function DashboardPage() {
   const { papel, mounted } = useModoPapel();
 
   if (!mounted) return <Girando />;
-  if (papel) return <PainelDePapel />;
+  if (papel) return <ConversaDePapel />;
 
   return (
     <Suspense fallback={<Girando />}>
