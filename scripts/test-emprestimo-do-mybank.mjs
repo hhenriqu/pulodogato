@@ -847,6 +847,16 @@ test("POST com taxa: `principal` e o EMPRESTADO e a serie soma o TOTAL", async (
   // A TAXA E A CONVENCAO GRAVADAS NA LINHA (062).
   assert.equal(emprestimo.linhas[0].interest_rate, 0.2);
   assert.equal(emprestimo.linhas[0].interest_kind, "total_simples");
+
+  // A RESPOSTA DIZ OS MESMOS DOIS NUMEROS QUE FORAM GRAVADOS. As assercoes
+  // acima leem o BANCO (pelo duble) e estas leem o CORPO DA RESPOSTA -- sao
+  // duas fontes, e a tela so ve a segunda. Uma rota que gravasse certo e
+  // respondesse o total no lugar do emprestado passaria em tudo que esta
+  // acima, e o painel mostraria "emprestei R$ 1.200" logo depois de emprestar
+  // R$ 1.000.
+  assert.equal(corpo.principal, 1000, "a resposta diz o EMPRESTADO");
+  assert.equal(corpo.total, 1200, "a resposta diz o TOTAL a receber");
+  assert.equal(corpo.juros, 200, "a resposta diz o JURO");
 });
 
 test("POST com TOTAL (o sentido inverso): a taxa e derivada e gravada", async () => {
@@ -6305,13 +6315,13 @@ test("total e vencimento malformados sao 400, cada um com a frase do campo", asy
   }
 });
 
-test("`taxa` diferente de zero e 400 -- a trava da 053 em forma de frase", async () => {
-  // `mybank_loans_interest_rate_fase_1` e `CHECK (interest_rate = 0)`. Quem a
-  // solta e a 062 (HMO-445), que ESTA em `main` -- e estar em `main` nao e estar
-  // COLADA (`deploy-ships-code-not-schema`). Aceitar `taxa: 2` antes da colagem
-  // derrubaria o UPDATE em 23514 -- e SO depois de as parcelas da cauda ja terem
-  // sido reescritas, porque o emprestimo e o ultimo passo. A conta do juro e da
-  // F3; esta filha recusa a taxa de proposito.
+test("`taxa` diferente de zero e 400 -- o ajuste nao sabe mexer em juro", async () => {
+  // A F4 escreveu esta recusa como "a trava da 053 em forma de frase", com dois
+  // motivos: a 062 nao estava colada, e a aritmetica do juro era da F3. OS DOIS
+  // MORRERAM -- a 062 esta colada em prod (medida 2026-10-21: a trava de fase
+  // sumiu do `pg_constraint` e os tres COMMENT batem em md5 com o arquivo), e a
+  // aritmetica e esta issue. O que sustenta a recusa agora e UMA linha:
+  // `patchDoEmprestimo.principal = total`, certa so a juro zero.
   for (const taxa of [2, 0.5, "1.5"]) {
     const linhas = tabelasDoAjuste();
     const r = await ajustarEmprestimo({
@@ -6320,9 +6330,71 @@ test("`taxa` diferente de zero e 400 -- a trava da 053 em forma de frase", async
     });
 
     assert.equal(r.status, 400, `taxa ${taxa}: ${JSON.stringify(r.corpo)}`);
-    assert.match(r.corpo.error, /juro zero/);
+    assert.match(r.corpo.error, /empréstimo com juro ainda não existe/);
+    // A FRASE ANTIGA NAO PODE VOLTAR: "o MyBank so empresta a juro zero" virou
+    // MENTIRA nesta issue, e quem acabou de criar um emprestimo a 20% leria que
+    // ele nao existe.
+    assert.doesNotMatch(r.corpo.error, /juro zero/);
     assert.equal(r.sessao.escritas.length, 0);
   }
+});
+
+test("o emprestimo que JA TEM juro recusa `total` sozinho -- o buraco que esta issue abriu", async () => {
+  // ESTE CASO ERA INALCANCAVEL ATE AQUI, e e por isso que a F4 nao o viu:
+  // nenhum emprestimo podia ter juro, entao perguntar pela taxa DO PEDIDO
+  // bastava. Agora que se cria um a 20%, um PATCH de `{total}` SEM `taxa`
+  // passa por aquela pergunta (`mexeNaTaxa` e falso) e cai direto em
+  // `patchDoEmprestimo.principal = total` -- gravando 4.600 em `principal` de
+  // um emprestimo de 4.000 com juro, APAGANDO o juro: a 062 define o juro como
+  // `SUM(amount) - principal`, entao iguala-los o zera. Dinheiro sumido, sem
+  // erro em lugar nenhum.
+  for (const taxaDoEmprestimo of [0.2, "0.20", 1.5]) {
+    const linhas = tabelasDoAjuste();
+    linhas.mybank_loans[0].interest_rate = taxaDoEmprestimo;
+
+    const r = await ajustarEmprestimo({
+      corpo: { total: 4600 },
+      tabelas: linhas,
+    });
+
+    assert.equal(
+      r.status,
+      400,
+      `interest_rate ${taxaDoEmprestimo}: ${JSON.stringify(r.corpo)}`
+    );
+    assert.match(r.corpo.error, /empréstimo com juro ainda não existe/);
+    // NENHUMA ESCRITA, e e esta a assercao que importa: o PATCH reescreve a
+    // cauda ANTES do emprestimo, entao uma recusa que chegasse tarde ja teria
+    // mexido nas parcelas.
+    assert.equal(r.sessao.escritas.length, 0);
+  }
+});
+
+test("a DESCRICAO sozinha passa mesmo com juro -- ela nao toca `principal`", async () => {
+  // O contraponto do teste acima, e o que prova que a recusa nova nao e larga
+  // demais: corrigir o texto de um emprestimo com juro e legitimo, porque a
+  // descricao nao chega perto de `principal`. Sem este caso a recusa poderia
+  // ter sido escrita como "emprestimo com juro nao se ajusta" e passaria verde.
+  const linhas = tabelasDoAjuste();
+  linhas.mybank_loans[0].interest_rate = 0.2;
+
+  const r = await ajustarEmprestimo({
+    corpo: { descricao: "Empréstimo para a reforma" },
+    tabelas: linhas,
+  });
+
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+
+  const noEmprestimo = r.sessao.escritas.filter(
+    (e) => e.tabela === "mybank_loans"
+  );
+  assert.equal(noEmprestimo.length, 1);
+  // `update` registra `patch` (e `insert` registra `linhas`) -- ver `escrever`
+  // no duble.
+  assert.equal(noEmprestimo[0].verbo, "update");
+  assert.equal(noEmprestimo[0].patch.description, "Empréstimo para a reforma");
+  // E o `principal` NAO foi junto -- a descricao nao o reescreve.
+  assert.equal(noEmprestimo[0].patch.principal, undefined);
 });
 
 test("`taxa: 0` e `\"0.00\"` passam -- `numeric` chega como STRING do PostgREST", async () => {

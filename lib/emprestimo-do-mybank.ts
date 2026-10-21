@@ -2418,7 +2418,7 @@ export type ProblemaDoAjuste =
   | "descricao_vazia"
   | "total_invalido"
   | "vencimento_invalido"
-  | "juros_fora_da_fase_1"
+  | "ajuste_nao_sabe_mexer_em_juro"
   | "tem_parcela_reportada"
   | "sem_parcela_pendente"
   | "total_menor_que_o_pago"
@@ -2741,31 +2741,52 @@ export function problemaDoAjuste(params: {
     }
   }
 
-  // A TRAVA `mybank_loans_interest_rate_fase_1` (053) EM FORMA DE FRASE.
+  // O AJUSTE NAO SABE MEXER EM JURO -- E AGORA SAO DOIS CASOS, NAO UM.
   //
-  // `CHECK (interest_rate = 0)` e quem a solta e a migration 062 (HMO-445), que
-  // ESTA em `main` -- e isso NAO muda esta recusa, por dois motivos:
+  // A F4 (HMO-447) escreveu esta recusa como "a trava de fase 1 em forma de
+  // frase", com dois motivos: a 062 nao estava colada, e a aritmetica do juro
+  // era da F3. **Os dois morreram.** A 062 esta colada em producao (medida
+  // 2026-10-21: `mybank_loans_interest_rate_fase_1` sumiu do `pg_constraint`,
+  // e os tres `COMMENT ON COLUMN` batem em md5 com o arquivo da `main`), e a
+  // aritmetica do juro e esta issue.
   //
-  //   1. ESTAR EM `main` NAO E ESTAR COLADA. `deploy-ships-code-not-schema`: o
-  //      deploy leva o codigo e nao o schema, e a colagem da 062 em producao nao
-  //      foi medida. Aceitar `taxa: 2` antes dela derrubaria o UPDATE em 23514 --
-  //      e, pior, SO depois de as parcelas da cauda ja terem sido reescritas,
-  //      porque o emprestimo e o ultimo passo da ordem. A propria 062 escreve
-  //      esse risco no cabecalho dela.
-  //   2. A ARITMETICA DO JURO E DA F3, E NAO DESTA FILHA. Com a trava solta,
-  //      `total` passa a ser principal + juros e `principal` deixa de sair do
-  //      `total` (ver o patch do emprestimo). Enquanto essa conta nao existir,
-  //      aceitar a taxa seria gravar um numero sem ninguem para interpreta-lo.
+  // O QUE NAO MORREU E O QUE A RECUSA PROTEGE, e e uma linha so:
   //
-  // A recusa e a mesma escolha da antecipacao, que prefere recusar a calcular
-  // errado. Quem for fazer a F3 muda ESTA linha e a do `principal`, nas duas
-  // pontas, e nao uma so.
+  //     patchDoEmprestimo.principal = total;   // `caudaRecalculada`, abaixo
+  //
+  // Aquela linha so esta certa a juro ZERO, onde o que se empresta e o que se
+  // recebe. Com juro, `total` e `principal + juros`, e grava-lo em `principal`
+  // APAGA O JURO do emprestimo -- a linha passa a afirmar que emprestou 1.200
+  // quando emprestou 1.000, e `SUM(amount) - principal` (que a 062 define como
+  // o juro) vira zero. Dinheiro sumido, sem erro em lugar nenhum.
+  //
+  // ENSINAR O AJUSTE A MEXER EM JURO E UMA ISSUE PROPRIA, nao um apendice
+  // desta: o pedido precisaria dizer QUAL das tres grandezas segurar (mexeu o
+  // total, mantem a taxa e muda o emprestado? mantem o emprestado e muda a
+  // taxa?), e essa pergunta nao tem resposta obvia -- e a mesma escolha da
+  // antecipacao, que prefere recusar a calcular errado.
+  //
+  // O SEGUNDO CASO E O BURACO QUE **ESTA** ISSUE ABRE, e ele nao existia quando
+  // a F4 foi escrita. A recusa da F4 pergunta so pela taxa DO PEDIDO. Antes
+  // desta issue isso bastava, porque nenhum emprestimo podia ter juro: o estado
+  // "emprestimo com juro" era INALCANCAVEL. Agora que se cria um a 20%, um
+  // PATCH de `{total: 1500}` -- sem `taxa` nenhuma, entao `mexeNaTaxa` e falso
+  // e a recusa da F4 nao dispara -- cai direto naquela linha e apaga o juro.
+  // Por isso a segunda pergunta e sobre o EMPRESTIMO, nao sobre o pedido.
+  //
+  // A descricao sozinha continua passando nos dois casos, e e de proposito:
+  // ela nao toca `principal`, e trancar o conserto de um texto por causa de um
+  // juro que ele nao le seria recusar a unica coisa que ainda da para consertar.
   //
   // `Number(...)` E NAO `!== 0`: `numeric` chega do PostgREST como STRING
   // ("0.00"), e quem reenvia a taxa que leu mandaria `"0.00"` -- que `!== 0` e
-  // verdade. A recusa dispararia em todo emprestimo da fase 1.
-  if (mexeNaTaxa && Number(pedido.taxa) !== JUROS_DA_FASE_1) {
-    return "juros_fora_da_fase_1";
+  // verdade. A recusa dispararia em todo emprestimo a juro zero.
+  if (mexeNaTaxa && Number(pedido.taxa) !== 0) {
+    return "ajuste_nao_sabe_mexer_em_juro";
+  }
+
+  if (mexeNoTotal && Number(emprestimo.interest_rate ?? 0) !== 0) {
+    return "ajuste_nao_sabe_mexer_em_juro";
   }
 
   if (mexeNoTotal) {
@@ -2826,8 +2847,16 @@ export function mensagemDoProblemaDoAjuste(
       return "O total a receber tem que ser um valor maior que zero.";
     case "vencimento_invalido":
       return "O primeiro vencimento da cauda tem que ser uma data no formato AAAA-MM-DD.";
-    case "juros_fora_da_fase_1":
-      return "Nesta fase o MyBank só empresta a juro zero — a taxa não pode ser ajustada ainda.";
+    case "ajuste_nao_sabe_mexer_em_juro":
+      // A FRASE ANTIGA ("nesta fase o MyBank só empresta a juro zero") VIROU
+      // MENTIRA nesta issue: o MyBank passou a emprestar com juro, e quem
+      // acabou de criar um empréstimo a 20% leria que ele não existe. A frase
+      // nova diz o que é verdade -- o empréstimo com juro existe, o AJUSTE é
+      // que ainda não sabe mexer nele -- e diz a saída que resta.
+      return (
+        "Ajustar o valor de um empréstimo com juro ainda não existe — seria preciso dizer o que segurar, " +
+        "o emprestado ou a taxa. Por enquanto dá para corrigir a descrição; para mudar o valor, cancele e refaça."
+      );
     case "tem_parcela_reportada":
       // A CONTRACAO VEM NO PROPRIO RAMO, como em
       // `mensagemDaPrevisaoDaCaudaAusente`: a medicao em producao leu "de a
@@ -2924,11 +2953,17 @@ export function ajusteDoEmprestimo(params: {
     patchDoEmprestimo.description = descricao;
   }
 
-  // `principal` E `total` SAO A MESMA COISA ENQUANTO A FASE 1 DURAR, e esta e a
-  // linha que muda quando ela acabar. A juro zero o que se empresta e o que se
-  // recebe; com a 062 colada e a F3 de pe, `total` passa a ser principal + juros
-  // e `principal` deixa de sair daqui -- e `juros_fora_da_fase_1` e a recusa que
-  // garante que ninguem chegue neste ponto com taxa diferente de zero.
+  // `principal` E `total` SAO A MESMA COISA SO A JURO ZERO, e esta linha depende
+  // disso. A juro zero o que se empresta e o que se recebe; com juro, `total` e
+  // `principal + juros`, e grava-lo aqui APAGARIA o juro do emprestimo (ver a
+  // 062: `SUM(amount) - principal` E o juro, entao iguala-los zera o juro).
+  //
+  // QUEM GARANTE QUE NAO SE CHEGA AQUI COM JURO E `ajuste_nao_sabe_mexer_em_juro`,
+  // em `problemaDoAjuste`, e sao as DUAS perguntas de la que sustentam esta
+  // linha -- a do pedido (`taxa` diferente de zero) e a do EMPRESTIMO
+  // (`interest_rate` diferente de zero com `total` no pedido). A segunda e a que
+  // cobre o emprestimo que ja nasceu com juro, que a HMO-448 tornou possivel.
+  // Se um dia esta linha aprender juro, as duas perguntas de la saem junto.
   if (pedido.total !== undefined) {
     patchDoEmprestimo.principal = total;
   }

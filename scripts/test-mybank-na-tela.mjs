@@ -205,6 +205,13 @@ const PARTES = [
   "lib/moeda.js",
   "lib/lancamento.js",
   "lib/transferencia.js",
+  // A CALCULADORA DO JURO (HMO-446/F2), ANTES DE QUEM A USA. A HMO-448 fez
+  // `lib/emprestimo-do-mybank.ts` passar a ler `CONVENCAO_DO_JURO` dela, e sem
+  // esta linha a pagina morre em `Uncaught ReferenceError: CONVENCAO_DO_JURO is
+  // not defined` -- no NIVEL DO MODULO, nao dentro de um handler, entao o
+  // `<div id="resultado">` fica no texto inicial e TODOS os 63 casos reprovam
+  // de uma vez. Mesma familia da `pedido-de-emprestimo.js` logo abaixo.
+  "lib/juros-do-emprestimo.js",
   "lib/emprestimo-do-mybank.js",
   // A CHAVE DO PEDIDO (HMO-390). Sem esta linha o `PainelDoMyBank` compila e a
   // pagina CARREGA, e `emprestar()` morre em `ReferenceError:
@@ -223,6 +230,18 @@ const PARTES = [
   "components/ui/input.js",
   "components/ui/label.js",
   "components/movimentacoes/PerguntaDaBaseDoValor.js",
+  // OS DOIS CAMPOS DO JURO (HMO-448), ANTES DO PAINEL QUE OS USA. Eles sao
+  // `const` no script classico, e `const` nao sobe: declarados DEPOIS do
+  // painel, o mount morre em `ReferenceError: CamposDeJuros is not defined` --
+  // que e exatamente o que o caso "o navegador rodou" existe para separar de
+  // uma assercao de texto errada.
+  //
+  // As duas JA COMPILAVAM no `.tmp` sem estar no `include` do tsconfig (o tsc
+  // as puxa pelo import do painel); o que faltava era declara-las AQUI.
+  // Compilar e ser servida a pagina sao duas listas diferentes, e so a segunda
+  // da sintoma.
+  "components/mybank/CamposDeJuros.js",
+  "components/mybank/PreviaDoEmprestimo.js",
   "components/mybank/PainelDoMyBank.js",
   "components/mybank/ParcelasDoMyBankQueEuDevo.js",
   // A LINHA DA AGENDA (HMO-386). Ela e a dona da parcela em `/dashboard/bills`
@@ -2692,8 +2711,27 @@ test("B3: controle positivo -- com a conexao ACEITA o POST sai, e com o id dela"
   assert.equal(post.corpo.base, "parcela");
   assert.equal(post.corpo.parcelas, 24);
   assert.equal(post.corpo.primeiro_vencimento, "2026-11-10");
-  // Juro zero na fase 1 -- a trava `mybank_loans_interest_rate_fase_1`.
-  assert.equal(post.corpo.juros, 0);
+
+  // O JURO VAI PELO MODO, E NAO MAIS POR `juros: 0` (HMO-448). O formulario
+  // tinha um unico numero de juro cravado em zero, porque a trava
+  // `mybank_loans_interest_rate_fase_1` nao deixava outro; com a 062 colada a
+  // pergunta virou TRES modos, e o corpo leva o modo mais o campo daquele modo.
+  //
+  // `sem_juros` E O PADRAO, e este controle e que o prova: esta sonda nunca
+  // tocou no seletor de juro, entao o que sai daqui e o que sai de quem
+  // empresta sem pensar em juro -- e tem de continuar sendo um emprestimo a
+  // juro zero. A rota le `modo_do_juro ?? "sem_juros"` e grava
+  // `interest_rate: 0`.
+  assert.equal(post.corpo.modo_do_juro, "sem_juros");
+  assert.equal(post.corpo.taxa, "");
+  assert.equal(post.corpo.total, "");
+  // A CHAVE ANTIGA SAIU DE VERDADE: deixada no corpo junto com o modo, ela
+  // seria um segundo lugar dizendo a mesma coisa -- e os dois divergiriam na
+  // primeira vez que alguem mexesse em um so.
+  assert.ok(
+    !("juros" in post.corpo),
+    `o corpo ainda leva \`juros\`: ${JSON.stringify(post.corpo)}`
+  );
 });
 
 // ---------------------------------------------------------------------------

@@ -1240,8 +1240,20 @@ const mutantes = [
   ],
   [
     LIB,
-    "a trava de juro zero da 053 deixa de ser perguntada (23514 DEPOIS de a cauda ja ter sido reescrita)",
-    "  if (mexeNaTaxa && Number(pedido.taxa) !== JUROS_DA_FASE_1) {",
+    "a taxa DO PEDIDO deixa de ser perguntada no ajuste (`principal` recebe o total com juro, e o juro some)",
+    "  if (mexeNaTaxa && Number(pedido.taxa) !== 0) {",
+    "  if (false) {",
+  ],
+  // O PAR DO DE CIMA, E ELE E A RECUSA QUE ESTA ISSUE PRECISOU ACRESCENTAR.
+  // A F4 perguntava so pela taxa do PEDIDO, e bastava: nenhum emprestimo podia
+  // ter juro. Esta issue tornou o estado alcancavel, e sem esta segunda
+  // pergunta um `{total}` sozinho sobre emprestimo com juro grava `principal =
+  // total` e apaga o juro. Os dois mutantes sao separados de proposito: um so,
+  // cobrindo as duas linhas, sobreviveria se apenas UMA delas fosse apagada.
+  [
+    LIB,
+    "a taxa DO EMPRESTIMO deixa de ser perguntada no ajuste (o emprestimo que JA tem juro perde o juro ao ter o total ajustado)",
+    "  if (mexeNoTotal && Number(emprestimo.interest_rate ?? 0) !== 0) {",
     "  if (false) {",
   ],
   [
