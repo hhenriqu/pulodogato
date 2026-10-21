@@ -1,9 +1,10 @@
 // O MENU REDUZIDO do modo papel de pao -- HMO-284, ampliado pela HMO-294 e pela
-// HMO-299 (plano da HMO-279).
+// HMO-299 (plano da HMO-279), e ENCOLHIDO de 8 para 3 pela HMO-466 (fase 5 do
+// plano da HMO-462).
 //
 // O QUE ESTA SUITE PROVA
 // ----------------------
-// Com o modo ligado o menu tem EXATAMENTE 8 rotas; desligado, EXATAMENTE 29
+// Com o modo ligado o menu tem EXATAMENTE 3 rotas; desligado, EXATAMENTE 29
 // TELAS -- que desde a HMO-423 sao pintadas como 8 entradas de primeiro nivel
 // (duas telas soltas e seis grupos com submenu). Esta suite conta TELAS, pela
 // lista plana `navigation`; quem conta as entradas e os grupos e
@@ -11,15 +12,18 @@
 //
 // O "exatamente" (e nao "contem") e o ponto. Com `contem`, a suite fica verde
 // enquanto o menu volta a crescer: o proximo item acrescentado ao array nao
-// quebraria nada, e o modo reduzido voltaria a ter 9, 10, 11 itens sem ninguem
+// quebraria nada, e o modo reduzido voltaria a ter 4, 5, 6 itens sem ninguem
 // notar. Aqui um item novo REPROVA, e quem o acrescentou tem de decidir de
 // proposito se ele entra ou nao no modo.
 //
-// E foi assim que o 5 virou 7 e o 7 virou 8: a HMO-294 pos
-// `/dashboard/profile` e `/dashboard/settings` na lista, a HMO-299 pos
-// `/dashboard/expense-groups`, e as contagens abaixo tiveram de ser reescritas
-// uma por uma -- de proposito, que e o preco de prender numero exato e tambem o
-// que ele compra.
+// E ELE PRENDE NOS DOIS SENTIDOS, que e o que esta issue exercita: o 5 virou 7
+// e o 7 virou 8 quando a HMO-294 pos `/dashboard/profile` e
+// `/dashboard/settings` na lista e a HMO-299 pos `/dashboard/expense-groups`; o
+// 8 virou 3 agora, quando a issue-mae pediu a conversa. Nas tres vezes as
+// contagens abaixo tiveram de ser reescritas uma por uma -- de proposito, que e
+// o preco de prender numero exato e tambem o que ele compra. Uma guarda que
+// nao reprovasse ENCOLHER o menu seria metade de uma guarda: Grupos poderia
+// ter saido da lista por descuido e nada reclamaria.
 //
 // POR QUE A SUITE FIXA O PLANO
 // ----------------------------
@@ -35,10 +39,10 @@
 // -------------------------------
 // Comparar a saida do filtro com o `ROTAS_DO_MENU_DE_PAPEL` que o alimenta
 // provaria pouco: a lista estaria conferindo consigo mesma. O que torna a
-// assercao real e que ela so fecha se cada uma das 8 rotas EXISTIR no array de
+// assercao real e que ela so fecha se cada uma das 3 rotas EXISTIR no array de
 // 29 -- uma rota renomeada la derruba a contagem -- e que os NOMES conferidos
-// (`Dashboard`, `Receitas`, ...) vem do array de navegacao, nao da lista de
-// rotas. Esses nomes sao dado independente.
+// (`Dashboard`, `Perfil`, `Configuracoes`) vem do array de navegacao, nao da
+// lista de rotas. Esses nomes sao dado independente.
 //
 // O QUE ESTA SUITE NAO PROVA
 // --------------------------
@@ -86,20 +90,28 @@ test("desligado, o menu tem EXATAMENTE 29 telas", () => {
   // array. Isso nao e um erro -- e a pergunta que esta suite existe para
   // forcar: o item novo aparece no modo papel de pao? Se sim, entre com ele em
   // `ROTAS_DO_MENU_DE_PAPEL` e no caso do menu reduzido abaixo; se nao, ajuste
-  // so este 28.
+  // so este 29.
+  //
+  // AS DUAS NOTAS ABAIXO SAO HISTORIA, e falam das 8 rotas que o modo tinha
+  // quando elas foram escritas. A HMO-466 encolheu a lista para 3, entao
+  // `/dashboard/contas` e `/dashboard/cartoes` JA NAO estao mais no modo -- o
+  // que as notas registram e a DECISAO de cada issue, que continua valendo: a
+  // tela nova nao entrou no modo.
   //
   // O 27 VIROU 28 NA HMO-371: entrou "MyBank" (`/dashboard/mybank`), e a
   // resposta a pergunta acima foi NAO -- ele fica FORA do modo papel de pao. O
   // modo e para quem quer o app simples; emprestar dinheiro para si mesmo em 24x
   // nao e uma das cinco telas de dinheiro que ele promete. As oito rotas do modo
-  // continuam as mesmas, e o caso das 21 telas escondidas abaixo e quem prova
+  // continuaram as mesmas, e o caso das telas escondidas abaixo e quem prova
   // que a nova esta entre elas.
   //
   // O 28 VIROU 29 NA HMO-423: entrou "Contas de Investimento"
   // (`/dashboard/contas?tipo=investment`), e a resposta tambem foi NAO. Ela e a
   // tela de Contas recortada no tipo, e `/dashboard/contas` -- a tela inteira --
-  // JA E uma das oito do modo: botar as duas no menu reduzido seria ensinar
-  // justamente o modo simples a ter dois itens para a mesma tela.
+  // ERA entao uma das oito do modo: botar as duas no menu reduzido seria ensinar
+  // justamente o modo simples a ter dois itens para a mesma tela. (Hoje as duas
+  // estao fora, pela HMO-466, e a assercao sobre a rota com QUERY continua de
+  // pe por outro motivo -- ver o caso das 26 escondidas.)
   //
   // O QUE ESTE NUMERO *NAO* MEDE DESDE A HMO-423: quantos itens o menu PINTA.
   // `navigation` virou a lista PLANA derivada de `menuAgrupado`, e o menu
@@ -119,55 +131,48 @@ test("desligado, o filtro do modo devolve o MESMO array -- sem copia", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Ligado: as oito telas
+// Ligado: as tres telas
 // ---------------------------------------------------------------------------
 
-test("ligado, o menu tem EXATAMENTE as 8 rotas, na ordem do menu", () => {
+test("ligado, o menu tem EXATAMENTE as 3 rotas, na ordem do menu", () => {
   const itens = menu({ plano: "admin", papel: true });
 
-  assert.equal(itens.length, 8);
-  // A ORDEM e a do array de navegacao, nao a de `ROTAS_DO_MENU_DE_PAPEL`: la
-  // "Perfil" esta escrito depois de "Configuracoes" na prosa da issue, e aqui
-  // ele vem ANTES, porque e onde ele mora no array. "Grupos" entra entre os
-  // cinco de dinheiro e os dois de conta pelo mesmo motivo -- no array,
-  // `expense-groups` esta depois de `cartoes` e antes de `profile`. Se um dia o
-  // filtro passar a ordenar pela lista de rotas, este caso reprova.
+  assert.equal(itens.length, 3);
+  // A ORDEM e a do array de navegacao, nao a de `ROTAS_DO_MENU_DE_PAPEL`. Aqui
+  // as duas coincidem -- `/dashboard` e a entrada SOLTA que abre o menu, e
+  // "Perfil" e "Configuracoes" moram nesta ordem dentro do grupo "Conta e
+  // Ajustes" --, e isso NAO torna o caso vazio: ele continua sendo o unico
+  // lugar onde a identidade das tres rotas esta escrita por extenso, e o
+  // controle negativo de que o filtro nao ordena pela lista de rotas vive em
+  // `scripts/mutantes-menu-papel.mjs` (o sobrevivente ESPERADO, que troca a
+  // ordem da lista e tem de passar).
   assert.deepEqual(hrefs(itens), [
     "/dashboard",
-    "/dashboard/receitas",
-    "/dashboard/despesas",
-    "/dashboard/contas",
-    "/dashboard/cartoes",
-    "/dashboard/expense-groups",
     "/dashboard/profile",
     "/dashboard/settings",
   ]);
 });
 
-test("ligado, os 8 itens sao as telas certas -- conferido pelo NOME", () => {
+test("ligado, os 3 itens sao as telas certas -- conferido pelo NOME", () => {
   // Os nomes vem do array de navegacao, nao de `ROTAS_DO_MENU_DE_PAPEL`. E o
   // que impede este caso de ser a lista conferindo consigo mesma: uma rota
   // trocada por outra (digamos `/dashboard/transferencias` no lugar de
-  // `/dashboard/contas`) passaria por qualquer assercao de CONTAGEM e por
-  // qualquer assercao que so comparasse rotas com rotas -- e aqui apareceria
-  // como "Transferências" onde se espera "Contas".
+  // `/dashboard`) passaria por qualquer assercao de CONTAGEM e por qualquer
+  // assercao que so comparasse rotas com rotas -- e aqui apareceria como
+  // "Transferências" onde se espera "Dashboard".
   //
   // "Configurações" e o nome do array, com acento e cedilha. Ele e tambem o que
-  // prova que a rota que entrou e a tela do espelho do interruptor, e nao
-  // `/dashboard/connections` (que esta ao lado dela no array).
+  // prova que a rota que ficou e a tela do espelho do interruptor, e nao
+  // `/dashboard/connections` (que esta ENTRE "Perfil" e ela no array, e e por
+  // isso que trocar uma pela outra mantem a contagem em 3).
   assert.deepEqual(nomes(menu({ plano: "admin", papel: true })), [
     "Dashboard",
-    "Receitas",
-    "Despesas",
-    "Contas",
-    "Cartões",
-    "Grupos",
     "Perfil",
     "Configurações",
   ]);
 });
 
-test("ligado, as 21 telas restantes saem do menu -- nenhuma sobra", () => {
+test("ligado, as 26 telas restantes saem do menu -- nenhuma sobra", () => {
   const dentro = new Set(hrefs(menu({ plano: "admin", papel: true })));
   const fora = hrefs(menu({ plano: "admin", papel: false })).filter(
     (href) => !dentro.has(href)
@@ -182,10 +187,23 @@ test("ligado, as 21 telas restantes saem do menu -- nenhuma sobra", () => {
   // e nao so o +1 da contagem, porque ela e a unica rota do menu com QUERY, e e
   // o caso em que uma leitura por caminho erraria calada: `noMenuDoPapel`
   // compara o `href` inteiro, entao `/dashboard/contas?tipo=investment` fica
-  // fora enquanto `/dashboard/contas` fica dentro. Se alguem fizer o predicado
-  // comparar so o caminho, a tela recortada entra no modo simples sem ninguem
-  // pedir -- e as duas linhas abaixo sao as que reprovam.
-  assert.equal(fora.length, 21);
+  // fora. Se alguem fizer o predicado comparar so o caminho, a tela recortada
+  // entra no modo simples sem ninguem pedir -- e a linha abaixo e quem reprova.
+  //
+  // 21 -> 26 NA HMO-466, e os cinco que entraram sao os que a issue-mae pediu
+  // que saissem: as quatro telas de relatorio de dinheiro e GRUPOS. Cada uma
+  // tem assercao propria abaixo, e nao so o +5 da contagem, por dois motivos
+  // diferentes:
+  //
+  // (a) a contagem sozinha nao distingue "as cinco certas sairam" de "sairam
+  //     quatro e uma sexta tela sumiu por descuido" -- 26 fecha nos dois casos;
+  // (b) `/dashboard/expense-groups` e uma REVERSAO DELIBERADA da HMO-299, e o
+  //     unico lugar onde uma reversao assim para de parecer regressao e uma
+  //     assercao que a afirma por extenso. A issue-mae pede "nada de grupos,
+  //     nada de contas divididas"; esta linha e a guarda dessa frase NO MENU.
+  //     ESCONDER NAO E FILTRAR O DINHEIRO: grupo escondido daqui continua
+  //     somando no painel e aceitando lancamento (fases F2 e F3 da HMO-462).
+  assert.equal(fora.length, 26);
   assert.ok(
     fora.includes("/dashboard/mybank"),
     "o MyBank deveria estar entre as telas escondidas pelo modo"
@@ -195,9 +213,21 @@ test("ligado, as 21 telas restantes saem do menu -- nenhuma sobra", () => {
     "Contas de Investimento deveria estar escondida pelo modo"
   );
   assert.ok(
-    hrefs(menu({ plano: "admin", papel: true })).includes("/dashboard/contas"),
-    "e a tela INTEIRA de Contas deveria continuar dentro do modo"
+    fora.includes("/dashboard/expense-groups"),
+    "Grupos deveria estar escondida pelo modo -- a HMO-466 reverte a HMO-299 " +
+      "de proposito, e e esta linha que diz que foi de proposito"
   );
+  for (const relatorio of [
+    "/dashboard/receitas",
+    "/dashboard/despesas",
+    "/dashboard/contas",
+    "/dashboard/cartoes",
+  ]) {
+    assert.ok(
+      fora.includes(relatorio),
+      `${relatorio} deveria sair do menu do modo -- a conversa substitui o relatorio`
+    );
+  }
   // E um controle do `noMenuDoPapel`, nao so aritmetica: cada rota escondida
   // tem de ser reprovada pelo predicado, uma por uma. Uma rota que saisse da
   // lista por outro motivo (um `href` duplicado comendo o Set, por exemplo)
@@ -207,10 +237,10 @@ test("ligado, as 21 telas restantes saem do menu -- nenhuma sobra", () => {
   }
 });
 
-test("as 8 rotas do modo existem todas no array de navegacao", () => {
-  // Redundante com a contagem de 8 acima, e proposital: quando alguem muda o
-  // `href` de uma das oito telas, esta e a mensagem de erro que diz QUAL rota
-  // sumiu, em vez de "esperava 8, recebeu 7".
+test("as 3 rotas do modo existem todas no array de navegacao", () => {
+  // Redundante com a contagem de 3 acima, e proposital: quando alguem muda o
+  // `href` de uma das tres telas, esta e a mensagem de erro que diz QUAL rota
+  // sumiu, em vez de "esperava 3, recebeu 2".
   const todas = new Set(hrefs(navigation));
   for (const rota of ROTAS_DO_MENU_DE_PAPEL) {
     assert.ok(todas.has(rota), `${rota} nao existe no menu`);
@@ -304,41 +334,51 @@ test("ligado, o menu reduzido e o MESMO para qualquer plano", () => {
   // `free` e para quem ainda nao carregou a assinatura -- que e o estado dos
   // primeiros quadros.
   //
-  // E NAO E POR ACIDENTE, e por `podeVerItem`. Ate a HMO-299 dava no mesmo
-  // dizer que "nenhuma das telas do modo e restrita": nenhuma das 7 tinha
-  // campo de acesso nenhum. "Grupos" tem -- ele declara
-  // `requiredFeature: "expense_groups"` no array de navegacao --, e a leitura
-  // de que o menu passou a depender do plano esta errada: `requiredFeature`
-  // NAO E FILTRO DE VISIBILIDADE. Ele alimenta o `isPremiumButNoAccess` do
-  // `Sidebar`, que pinta o selo premium no item; quem decide se o item APARECE
-  // e so o `podeVerItem`, e ele esconde unicamente item que DECLARA
-  // `requiredPlans` sem o plano de quem olha. "Grupos" nao tem `requiredPlans`,
-  // entao sai igual para todo plano -- com selo para quem nao tem a feature,
-  // sem selo para quem tem.
-  //
-  // O que esta invariante trava, portanto: se alguem fizer `podeVerItem` olhar
-  // `requiredFeature` (ou puser `requiredPlans` numa das oito telas), este caso
-  // reprova aqui, antes de o menu do modo virar oito itens para uns e sete para
-  // outros.
+  // E NAO E POR ACIDENTE, e por `podeVerItem`. Ele esconde unicamente item que
+  // DECLARA `requiredPlans` sem o plano de quem olha, e nenhuma das tres telas
+  // do modo declara `requiredPlans` -- e o laco abaixo, mais a premissa
+  // explicita depois dele, e quem amarra isso.
   const esperado = hrefs(menu({ plano: "admin", papel: true }));
   for (const plano of ["free", "invest", "trader", undefined]) {
     assert.deepEqual(hrefs(menu({ plano, papel: true })), esperado);
   }
 
-  // E a premissa disso tudo, explicita em vez de so na prosa: a tela que
-  // DECLARA `requiredFeature` esta mesmo nas oito, e nenhuma das oito declara
-  // `requiredPlans`. Sem este par, o laco acima ficaria verde tambem no dia em
-  // que "Grupos" saisse do menu reduzido por outro motivo -- oito listas
-  // iguais de sete itens passam igual.
+  // A PREMISSA, explicita em vez de so na prosa: nenhuma das tres declara
+  // `requiredPlans`. Sem ela o laco acima ficaria verde tambem no dia em que
+  // uma das tres saisse do menu por outro motivo -- cinco listas iguais de
+  // duas rotas passam igual.
   const noModo = menu({ plano: "admin", papel: true });
-  const grupos = noModo.find((item) => item.href === "/dashboard/expense-groups");
-  assert.ok(grupos, "Grupos deveria estar no menu do modo");
-  assert.equal(grupos.requiredFeature, "expense_groups");
+  assert.equal(noModo.length, 3);
   for (const item of noModo) {
     assert.equal(
       item.requiredPlans,
       undefined,
       `${item.name} declara requiredPlans e o menu do modo passaria a variar com o plano`
+    );
+  }
+
+  // E `requiredFeature` NAO E FILTRO DE VISIBILIDADE -- a premissa que a
+  // HMO-299 trouxe para esta suite e que a HMO-466 nao pode perder de vista so
+  // porque "Grupos" saiu do modo. Ele alimenta o `isPremiumButNoAccess` do
+  // `Sidebar`, que pinta o selo premium no item; quem decide se o item APARECE
+  // e so o `podeVerItem`.
+  //
+  // Com "Grupos" fora do menu reduzido, o lugar onde isso ainda se MEDE e o
+  // menu DESLIGADO: ele declara `requiredFeature: "expense_groups"`, nao
+  // declara `requiredPlans`, e aparece para TODO plano. Se alguem fizer
+  // `podeVerItem` olhar `requiredFeature`, as contagens do caso anterior
+  // desabam -- e este par diz, na mensagem de erro, por que.
+  const completo = menu({ plano: "admin", papel: false });
+  const grupos = completo.find(
+    (item) => item.href === "/dashboard/expense-groups"
+  );
+  assert.ok(grupos, "Grupos deveria continuar no menu DESLIGADO");
+  assert.equal(grupos.requiredFeature, "expense_groups");
+  assert.equal(grupos.requiredPlans, undefined);
+  for (const plano of ["free", "invest", "trader", undefined]) {
+    assert.ok(
+      hrefs(menu({ plano, papel: false })).includes("/dashboard/expense-groups"),
+      `plano ${plano}: Grupos deveria aparecer no menu desligado -- requiredFeature nao esconde item`
     );
   }
 });

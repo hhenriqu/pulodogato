@@ -1186,27 +1186,34 @@ jobs:
       - name: Os mutantes do rotulo do painel de papel
         run: node scripts/mutantes-painel-na-tela.mjs
 
-      # O MENU REDUZIDO do modo (HMO-284, ampliado pela HMO-294). Com o modo
-      # ligado o menu encolhe de 27 itens para 7, por um segundo filtro sobre o
-      # MESMO array de navegacao.
+      # O MENU REDUZIDO do modo (HMO-284, ampliado pela HMO-294, encolhido pela
+      # HMO-466). Com o modo ligado o menu encolhe de 29 telas para 3, por um
+      # segundo filtro sobre o MESMO array de navegacao.
       #
-      # Eram 5 na HMO-284. A HMO-294 acrescentou `/dashboard/profile` e
-      # `/dashboard/settings`, e a segunda conserta um defeito de navegacao: o
-      # espelho do interruptor do modo vive em Configuracoes, e com o modo
-      # ligado aquela tela era INALCANCAVEL pelo menu -- a unica saida do modo
-      # era o papelzinho do cabecalho.
+      # Eram 5 na HMO-284; 7 com a HMO-294 (`/dashboard/profile` e
+      # `/dashboard/settings`); 8 com a HMO-299 (`/dashboard/expense-groups`).
+      # A HMO-466 levou de volta para 3 -- `/dashboard`, `/dashboard/profile` e
+      # `/dashboard/settings` --, porque a issue-mae (HMO-462) pede o modo como
+      # uma CONVERSA e, com essas palavras, "nada de grupos, nada de contas
+      # divididas". A saida de Grupos REVERTE a HMO-299 de proposito.
       #
-      # A suite exige EXATAMENTE 7 e EXATAMENTE 27, e nao "contem": com
+      # AS DUAS QUE SOBRAM AO LADO DA CONVERSA SAO DE NAVEGACAO, nao de feature:
+      # o espelho do interruptor do modo vive em Configuracoes (esconder aquela
+      # tela tranca a pessoa dentro do modo, com o papelzinho do cabecalho como
+      # unica saida), e o nome da saudacao sai do Perfil.
+      #
+      # A suite exige EXATAMENTE 3 e EXATAMENTE 29, e nao "contem": com
       # `contem`, ela ficaria verde enquanto o menu voltasse a crescer -- o
       # proximo item acrescentado ao array entraria no modo sem ninguem decidir.
       # Por isso um item novo REPROVA aqui; a mensagem do teste diz o que fazer.
-      # (Foi o que aconteceu na HMO-294: as quatro contagens tiveram de ser
-      # reescritas uma por uma, de proposito.)
+      # E ela prende nos DOIS sentidos: a HMO-466 teve de reescrever as
+      # contagens uma por uma para ENCOLHER o menu, que e o preco de prender
+      # numero exato e tambem o que ele compra.
       #
       # Ela tambem fixa o plano em todo caso. `podeVerItem` e o primeiro filtro
-      # e ja existia; sem fixar, a contagem de 27 cai para 25 e a suite passaria
+      # e ja existia; sem fixar, a contagem de 29 cai para 27 e a suite passaria
       # a medir o PLANO em vez do MODO.
-      - name: O menu do papel de pao tem 7 itens, e o menu normal tem 27
+      - name: O menu do papel de pao tem 3 itens, e o menu normal tem 29
         run: npm run test:menu-papel
 
       # Dois dos dez casos da suite acima afirmam sobre o TEXTO-FONTE do

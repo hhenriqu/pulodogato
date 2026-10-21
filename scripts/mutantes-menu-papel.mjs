@@ -1,6 +1,7 @@
 // CONTROLE NEGATIVO de `npm run test:menu-papel` -- HMO-284, ampliado pela
 // HMO-294 (as duas rotas que entraram no modo) e pela HMO-292 (os quatro
-// mutantes do filtro de plano, no lugar do unico que havia).
+// mutantes do filtro de plano, no lugar do unico que havia), e REANCORADO pela
+// HMO-466, que encolheu a lista de 8 rotas para 3.
 //
 // A suite do menu reduzido e quase toda feita de contagens e de assercoes sobre
 // texto-fonte, e esses dois tipos sao justamente os que passam verde sem medir
@@ -56,21 +57,32 @@ const mutantes = [
     para: "  return !ROTAS_DO_MENU_DE_PAPEL.includes(href);",
   },
   {
-    nome: "uma 8a rota entra no modo sem ninguem pedir",
+    // AS ANCORAS DOS TRES MUTANTES ABAIXO MUDARAM NA HMO-466, e por um motivo
+    // que e a razao de este runner existir: elas citavam `/dashboard/cartoes` e
+    // `/dashboard/contas`, que SAIRAM da lista. Uma ancora que nao casa com
+    // nada nao muta o arquivo, a suite passa, e o runner imprime "SOBREVIVEU" --
+    // um buraco que se le como buraco na suite quando o buraco esta aqui. (O
+    // guarda de ancora do laco principal e quem distingue os dois casos: ele
+    // diz "ancora nao casou" em vez de so "sobreviveu".)
+    //
+    // Com 3 rotas, `/dashboard` e a unica que nao e coberta por um mutante
+    // proprio mais abaixo -- "Perfil sai" e "Configuracoes sai" cobrem as duas
+    // outras --, entao e nela que os tres passam a ancorar.
+    nome: "uma 4a rota entra no modo sem ninguem pedir",
     arquivo: FILTRO,
-    de: '  "/dashboard/cartoes",',
-    para: '  "/dashboard/cartoes",\n  "/dashboard/investments",',
+    de: '  "/dashboard/profile",',
+    para: '  "/dashboard/profile",\n  "/dashboard/investments",',
   },
   {
-    nome: "uma das 7 rotas sai do modo",
+    nome: "uma das 3 rotas sai do modo (o Dashboard, que e a conversa)",
     arquivo: FILTRO,
-    de: '  "/dashboard/contas",\n',
+    de: '  "/dashboard",\n',
     para: "",
   },
   {
-    nome: "uma das 7 rotas vira outra tela (so o `href` muda)",
+    nome: "uma das 3 rotas vira outra tela (so o `href` muda)",
     arquivo: FILTRO,
-    de: '  "/dashboard/contas",',
+    de: '  "/dashboard",',
     para: '  "/dashboard/transferencias",',
   },
   {
@@ -78,6 +90,10 @@ const mutantes = [
     // so, e o mais provavel dos dois defeitos e esquecer UMA -- `settings` e a
     // que importa mais, porque e a tela do espelho do interruptor: sem ela, a
     // unica saida do modo volta a ser o papelzinho do cabecalho.
+    //
+    // ELES VALEM MAIS DEPOIS DA HMO-466, nao menos: com 8 rotas, perder uma das
+    // duas era perder 1/8 do menu; com 3, e perder a metade do que nao e a
+    // conversa, e e literalmente trancar a pessoa dentro do modo.
     nome: "Configuracoes sai do modo (o espelho do interruptor fica inalcancavel)",
     arquivo: FILTRO,
     de: '  "/dashboard/settings",\n',
@@ -90,14 +106,25 @@ const mutantes = [
     para: "",
   },
   {
-    // A VIZINHA DE ARRAY. `/dashboard/connections` ("Conexões") esta a dois
-    // itens de `/dashboard/settings` no array de navegacao, e trocar uma pela
-    // outra mantem a CONTAGEM em 7 -- este mutante morre no caso que confere
-    // pelo NOME, e so nele. E a razao de aquele caso existir.
-    nome: "Conexoes entra no lugar de Configuracoes (a contagem continua 7)",
+    // A VIZINHA DE ARRAY. `/dashboard/connections` ("Conexões") esta ENTRE
+    // `/dashboard/profile` e `/dashboard/settings` no array de navegacao, e
+    // trocar uma pela outra mantem a CONTAGEM em 3 -- este mutante morre no caso
+    // que confere pelo NOME, e so nele. E a razao de aquele caso existir.
+    nome: "Conexoes entra no lugar de Configuracoes (a contagem continua 3)",
     arquivo: FILTRO,
     de: '"/dashboard/settings"',
     para: '"/dashboard/connections"',
+  },
+  {
+    // A REVERSAO DA HMO-299, DE VOLTA. Este mutante e o controle da decisao
+    // desta issue: se alguem recolocar `/dashboard/expense-groups` na lista --
+    // por merge, por reverter o PR ou por achar que a saida foi descuido --, a
+    // suite tem de reprovar. Sem ele, "nada de grupos" seria so prosa, e um
+    // `git revert` parcial devolveria Grupos ao menu com tudo verde.
+    nome: "Grupos volta ao modo (a HMO-299 desfaz a HMO-466 em silencio)",
+    arquivo: FILTRO,
+    de: '  "/dashboard/profile",\n',
+    para: '  "/dashboard/expense-groups",\n  "/dashboard/profile",\n',
   },
   {
     // A ANCORA MUDOU NA HMO-423, e o mutante continua sendo o mesmo defeito:
@@ -197,7 +224,7 @@ const mutantes = [
     // O mutante central da fiacao: tirar a CHAMADA e deixar o import. Nao e
     // erro de tsc (`noUnusedLocals` esta desligado) nem de lint, e sem o caso
     // "o Sidebar CHAMA filtrarMenuDoPapel" ele sobreviveria com a suite
-    // inteira verde -- o menu voltando a 27 itens no modo ligado.
+    // inteira verde -- o menu voltando a 29 telas no modo ligado.
     nome: "o Sidebar importa o filtro mas NAO o chama",
     arquivo: SIDEBAR,
     de:
@@ -232,10 +259,16 @@ const mutantes = [
  */
 const sobreviventesEsperados = [
   {
+    // A ANCORA MUDOU NA HMO-466 (`/dashboard/receitas` saiu da lista), e o
+    // sobrevivente e MAIS necessario agora: com 3 rotas, a ordem escrita na
+    // lista COINCIDE com a ordem do menu (`/dashboard` solto, depois "Perfil" e
+    // "Configuracoes" dentro de "Conta e Ajustes"). Coincidencia nao e prova --
+    // e sem este mutante, um filtro que passasse a ordenar pela lista de rotas
+    // ficaria verde e ninguem saberia qual das duas ordens a suite prende.
     nome: "a ordem DENTRO de ROTAS_DO_MENU_DE_PAPEL nao e a ordem do menu",
     arquivo: FILTRO,
-    de: '  "/dashboard",\n  "/dashboard/receitas",',
-    para: '  "/dashboard/receitas",\n  "/dashboard",',
+    de: '  "/dashboard",\n  "/dashboard/profile",',
+    para: '  "/dashboard/profile",\n  "/dashboard",',
   },
 ];
 
