@@ -74,12 +74,14 @@ import {
   ROTULO_DE_EDITAR,
   ROTULO_DE_EXCLUIR,
   ROTULO_DE_PAGAR,
+  motivoDoBotaoTravado,
   motivoSemEditar,
   podeConfirmar,
   podeEditar,
   podeExcluir,
   podePagarAFatura,
   rotuloDeConfirmar,
+  tituloDoBotao,
 } from "@/lib/acoes-da-linha";
 import { caminhoDoCartaoNoMes } from "@/lib/fatura-do-cartao";
 import { EloDaFatura } from "@/components/fatura/EloDaFatura";
@@ -272,6 +274,25 @@ function BotoesDaLinha({
   const emCurso = acoes.agindo === linha.id;
   const travado = acoes.agindo !== null || !acoes.online;
 
+  // POR QUE ESTE BOTAO ESTA CINZA -- HMO-475.
+  //
+  // `travado` continua decidindo o `disabled` exatamente como antes; o que
+  // muda e que agora ele vem com a frase. A regra mora em `acoes-da-linha.ts`
+  // e nao num ternario escrito aqui pelo motivo do cabecalho deste arquivo: o
+  // `agindo` tem DOIS motivos (esta linha, ou outra), e dentro do JSX a
+  // diferenca entre eles nao teria assercao nenhuma por cima.
+  //
+  // A redundancia com `travado` e deliberada: se um dia o `disabled` de um
+  // destes botoes deixar de ser `travado`, o motivo ficaria MENTINDO em
+  // silencio -- e um `motivoTravado` que nao olhasse o mesmo estado seria
+  // justamente isso. Os dois leem `acoes.agindo`/`acoes.online`, e
+  // `test:secao-da-tela` afirma os dois juntos (cinza E com motivo).
+  const motivoTravado = motivoDoBotaoTravado({
+    online: acoes.online,
+    agindo: acoes.agindo,
+    idDaLinha: linha.id,
+  });
+
   const editar = podeEditar(linha);
   const excluir = podeExcluir(linha);
   const confirmar = podeConfirmar(linha);
@@ -286,7 +307,29 @@ function BotoesDaLinha({
   const rotuloConfirmar = rotuloDeConfirmar(linha.tipo);
 
   return (
-    <div className="flex shrink-0 items-center gap-1">
+    // O MESMO MOTIVO NA CAIXA, e ele NAO e redundante com o `title` dos botoes
+    // -- HMO-475.
+    //
+    // `Button` carrega `disabled:pointer-events-none`, e botao com
+    // `pointer-events: none` nao recebe evento de mouse: o navegador NAO mostra
+    // o `title` dele ao passar o mouse. O `title` do botao continua valendo (ele
+    // e a descricao acessivel, e e o que leitor de tela anuncia depois do nome),
+    // mas sozinho ele seria uma explicacao que ninguem de mouse alcanca -- a
+    // familia de "o canal existe e fica desligado sem sintoma".
+    //
+    // Com o motivo AQUI, o ponteiro atravessa o botao travado e para nesta
+    // caixa, que tem `pointer-events` normal, e a dica aparece sobre a area
+    // inteira das acoes. A sonda `probe-acoes-da-linha-no-iphone.mjs` mede
+    // exatamente isso com o CSS de producao (`elementFromPoint` no centro de
+    // cada botao), em vez de supor.
+    //
+    // NENHUM NO NOVO: o `title` entra na caixa que ja existia. Um `<span>` de
+    // embrulho por botao mudaria o `gap-1` da linha de 320px, que e o recorte
+    // que a HMO-457 estava medindo.
+    <div
+      className="flex shrink-0 items-center gap-1"
+      title={motivoTravado ?? undefined}
+    >
       {/*
         PAGAR A FATURA -- HMO-311, e ele e o UNICO botao desta linha com TEXTO.
         Os outros tres sao de icone so porque sao tres numa linha de 320px; aqui
@@ -303,9 +346,10 @@ function BotoesDaLinha({
           variant="outline"
           className="h-8 px-2"
           disabled={travado}
+          aria-disabled={travado || undefined}
           onClick={() => acoes.aoPagarFatura(linha)}
           aria-label={ROTULO_DE_PAGAR}
-          title={ROTULO_DE_PAGAR}
+          title={tituloDoBotao(ROTULO_DE_PAGAR, motivoTravado)}
         >
           {emCurso ? (
             <Loader2 className="mr-1 h-4 w-4 animate-spin" />
@@ -322,9 +366,10 @@ function BotoesDaLinha({
           variant="outline"
           className="h-8 w-8 p-0"
           disabled={travado}
+          aria-disabled={travado || undefined}
           onClick={() => acoes.aoConfirmar(linha)}
           aria-label={rotuloConfirmar}
-          title={rotuloConfirmar}
+          title={tituloDoBotao(rotuloConfirmar, motivoTravado)}
         >
           {emCurso ? (
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -367,9 +412,10 @@ function BotoesDaLinha({
             variant="outline"
             className="h-8 w-8 p-0"
             disabled={travado}
+            aria-disabled={travado || undefined}
             onClick={() => acoes.aoEditar(linha)}
             aria-label={ROTULO_DE_EDITAR}
-            title={ROTULO_DE_EDITAR}
+            title={tituloDoBotao(ROTULO_DE_EDITAR, motivoTravado)}
           >
             <Pencil className="h-4 w-4" />
           </Button>
@@ -381,8 +427,12 @@ function BotoesDaLinha({
             variant="outline"
             className="h-8 w-8 p-0"
             disabled
+            aria-disabled
             aria-label={ROTULO_DE_EDITAR}
-            title={motivo}
+            // O MOTIVO ESTRUTURAL GANHA DO `motivoTravado`, e nao por ordem de
+            // escrita: este Editar nunca vai abrir, com rede ou sem ela. "Sem
+            // rede" aqui prometeria que voltar a ter sinal resolve.
+            title={tituloDoBotao(ROTULO_DE_EDITAR, motivo)}
           >
             <Pencil className="h-4 w-4" />
           </Button>
@@ -395,9 +445,10 @@ function BotoesDaLinha({
           variant="outline"
           className="h-8 w-8 p-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
           disabled={travado}
+          aria-disabled={travado || undefined}
           onClick={() => acoes.aoExcluir(linha)}
           aria-label={ROTULO_DE_EXCLUIR}
-          title={ROTULO_DE_EXCLUIR}
+          title={tituloDoBotao(ROTULO_DE_EXCLUIR, motivoTravado)}
         >
           <Trash2 className="h-4 w-4" />
         </Button>
