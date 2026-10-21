@@ -66,6 +66,10 @@ const CANCELA = "app/api/mybank/loans/[id]/route.ts";
 const PARCELA = "app/api/mybank/installments/[id]/route.ts";
 const BAIXA = "app/api/scheduled-transactions/[id]/pay/route.ts";
 const ANTECIPA = "app/api/mybank/loans/[id]/antecipacao/route.ts";
+// O MESMO ARQUIVO QUE `CANCELA`, com nome proprio: desde a HMO-447 aquele
+// `PATCH` tem DOIS verbos, e um rotulo de mutante que diz "CANCELA" sobre uma
+// ancora do ajuste manda quem for consertar ler o passo errado.
+const AJUSTA = CANCELA;
 // A HMO-396 MOVEU os passos 2/2.5/3 da baixa para ca, e a antecipacao do Caso A
 // passou a CHAMA-LOS em vez de reescrever as quarenta linhas de movimentacao de
 // dinheiro. QUATRO ancoras desta lista mudaram de arquivo e NAO de texto -- o
@@ -134,8 +138,8 @@ const mutantes = [
   [
     LIB,
     "a serie comeca na parcela 2: a soma das parcelas deixa de fechar com o principal",
-    "    parcelaAtual: 1,",
-    "    parcelaAtual: 2,",
+    "    parcelaAtual: 1,\n    totalDeParcelas: entrada.parcelas,",
+    "    parcelaAtual: 2,\n    totalDeParcelas: entrada.parcelas,",
   ],
   [
     LOANS,
@@ -450,12 +454,6 @@ const mutantes = [
     "  if (false) {",
   ],
 
-  [
-    CANCELA,
-    "o corpo deixa de ser peneirado: qualquer `status` no pedido cancela o emprestimo",
-    "    if (status !== STATUS_CANCELADO) {",
-    "    if (false) {",
-  ],
 
   [
     CANCELA,
@@ -845,8 +843,8 @@ const mutantes = [
   [
     LIB,
     "o elo do par casa por `includes` (a conta a pagar de OUTRA parcela e baixada: o dinheiro sai pela parcela errada)",
-    "    const previsao = params.previsoes.find((p) => p.notes === chave);",
-    "    const previsao = params.previsoes.find((p) =>\n      String(p.notes ?? \"\").includes(chave)\n    );",
+    "    const previsao = params.previsoes.find((p) => p.notes === chave);\n\n    if (previsao) {",
+    "    const previsao = params.previsoes.find((p) =>\n      String(p.notes ?? \"\").includes(chave)\n    );\n\n    if (previsao) {",
   ],
 
   [
@@ -964,6 +962,214 @@ const mutantes = [
     "o `status` sai do `select` do GET (a tela perde o campo que separa os em andamento dos encerrados)",
     '        "id, lender_account_id, borrower_user_id, description, principal, installment_count, first_due_date, status, created_at"',
     '        "id, lender_account_id, borrower_user_id, description, principal, installment_count, first_due_date, created_at"',
+  ],
+
+  // =========================================================================
+  // O AJUSTE DO EMPRESTIMO ATIVO -- a F4 da HMO-444 (issue HMO-447)
+  // =========================================================================
+  // OS DOIS QUE A ISSUE NOMEIA SAO OS DOIS PRIMEIROS DESTE BLOCO.
+  //
+  // O primeiro -- `O AJUSTE REESCREVE TODAS AS PARCELAS` -- e a classe de
+  // defeito que esta filha existe para impedir, e ele nao da erro em lugar
+  // nenhum: a RLS aceita (o credor manda na parcela dele), a trigger do devedor
+  // devolve NEW sem perguntar nada, e `CHECK (amount > 0)` passa. O que
+  // acontece e que a parcela JA PAGA de R$ 1.000 passa a dizer R$ 1.200 e a
+  // perna de R$ 1.000 que a pagou continua no extrato -- a divida discordando
+  // de um lancamento REALIZADO, sem sintoma nenhum. Ele morre na assercao sobre
+  // a linha `paid` NA TABELA, que e o controle negativo da PARTE 8.
+  //
+  // O segundo -- `A PREVISAO JA BAIXADA DEIXA DE PARAR O AJUSTE` -- e o risco
+  // de dinheiro que a issue descreve: a parcela `pending` cuja conta a pagar ja
+  // foi baixada. O estado da PARCELA nao avisa nada, e o filtro
+  // `.eq("status","pending")` -- que o cancelamento e a antecipacao usam, e com
+  // razao -- esconde exatamente a linha que tem de recusar o pedido.
+  [
+    LIB,
+    "O AJUSTE REESCREVE TODAS AS PARCELAS (a `paid` de R$ 1.000 passa a dizer R$ 1.200 e a perna dela fica no extrato)",
+    "  const porId = new Map(\n    pendentesDaSerie(parcelas).map((p) => [p.id, p])\n  );",
+    "  const porId = new Map(\n    parcelas.map((p) => [p.id, p])\n  );",
+  ],
+  [
+    AJUSTA,
+    "A PREVISAO JA BAIXADA DEIXA DE PARAR O AJUSTE (o filtro de status esconde o lancamento ja realizado)",
+    "        .eq(\"user_id\", user.id)\n        .in(\"notes\", chavesDoAjuste);",
+    "        .eq(\"user_id\", user.id)\n        .eq(\"status\", \"pending\")\n        .in(\"notes\", chavesDoAjuste);",
+  ],
+  [
+    AJUSTA,
+    "a previsao baixada e LIDA e a recusa nao acontece (o 409 cai e o ajuste segue por cima do realizado)",
+    "      if (comPrevisaoBaixada.length > 0) {",
+    "      if (false) {",
+  ],
+  [
+    LIB,
+    "a pergunta da previsao vira `=== paid` (a previsao `skipped` volta a agenda com valor novo)",
+    "    if (previsao.status !== STATUS_PENDENTE_DA_PARCELA) {",
+    "    if (previsao.status === \"paid\") {",
+  ],
+
+  // -------------------------------------------------------------------------
+  // A RECUSA DO AVISO PENDENTE
+  // -------------------------------------------------------------------------
+  [
+    LIB,
+    "a parcela `reported` deixa de barrar o ajuste (o valor muda embaixo de quem acabou de avisar que pagou)",
+    "  if (avisadasDaSerie(parcelas).length > 0) return \"tem_parcela_reportada\";",
+    "  if (false) return \"tem_parcela_reportada\";",
+  ],
+  [
+    LIB,
+    "`reported` passa a contar como recebido (o aviso vira pagamento e a cauda e repartida errado)",
+    "    .filter((p) => p.status === STATUS_PAGO_DA_PARCELA)",
+    "    .filter((p) => p.status !== STATUS_PENDENTE_DA_PARCELA)",
+  ],
+
+  // -------------------------------------------------------------------------
+  // A ARITMETICA DA CAUDA
+  // -------------------------------------------------------------------------
+  [
+    AJUSTA,
+    "a cauda e repartida pelo TOTAL e nao pelo que FALTA (quem ja pagou 1 de 4 passa a dever o emprestimo inteiro)",
+    "            faltaReceber: mexeNoTotal\n              ? Number(pedido.total) - jaRecebido",
+    "            faltaReceber: mexeNoTotal\n              ? Number(pedido.total)",
+  ],
+  [
+    LIB,
+    "a cauda e numerada pela SERIE e nao pela POSICAO (a divida encolhe para uma fracao do que era)",
+    "    parcelaAtual: 1,\n    totalDeParcelas: pendentes.length,",
+    "    parcelaAtual: pendentes[0].installment_number,\n    totalDeParcelas: pendentes.length,",
+  ],
+  [
+    LIB,
+    "a sobra nao-positiva da ultima parcela deixa de ser conferida (duas gravadas, a terceira em 23514)",
+    "  if (cauda.some((p) => !(p.amount > 0))) return null;",
+    "  if (false) return null;",
+  ],
+  [
+    LIB,
+    "o vencimento vem da serie mesmo sem ter sido pedido (as contas a pagar da cauda mudam de mes sem pedido)",
+    "    due_date:\n      primeiroVencimentoDaCauda === null\n        ? String(parcela.due_date)\n        : serie.parcelas[posicao].vencimento,",
+    "    due_date: serie.parcelas[posicao].vencimento,",
+  ],
+  [
+    LIB,
+    "o total que IGUALA o ja recebido passa (sobra R$ 0,00 para a cauda e `amount > 0` recusa cada uma)",
+    "    if (total <= jaRecebido) return \"total_menor_que_o_pago\";",
+    "    if (total < jaRecebido) return \"total_menor_que_o_pago\";",
+  ],
+  [
+    LIB,
+    "o `installment_total` do rotulo vira o tamanho da cauda (a cobranca diz `1/3` de uma parcela `2/4`)",
+    "          atual.installment_total\n        ),",
+    "          pendentesDaSerie(parcelas).length\n        ),",
+  ],
+
+  // -------------------------------------------------------------------------
+  // O QUE A ROTA NAO PODE ESCREVER, E A ORDEM
+  // -------------------------------------------------------------------------
+  [
+    AJUSTA,
+    "o patch da previsao BAIXA a conta a pagar (a cobranca sai da tela sem perna nenhuma ter sido gravada)",
+    "            .update(linha.cobranca)",
+    "            .update({ ...linha.cobranca, status: \"paid\" })",
+  ],
+  [
+    AJUSTA,
+    "o `status = pending` sai do UPDATE da previsao (a baixa feita em outra aba e reescrita)",
+    "            .eq(\"status\", \"pending\")\n            .select(\"id\");",
+    "            .select(\"id\");",
+  ],
+  [
+    AJUSTA,
+    "a guarda do `.length` das chaves cai: o `.in` vazio alcanca a agenda INTEIRA de Contas a Pagar",
+    "    if (chavesDoAjuste.length > 0) {",
+    "    if (true) {",
+  ],
+  [
+    AJUSTA,
+    "o EMPRESTIMO e gravado numa passagem que PAROU (a linha afirma um total que nenhuma parcela sustenta)",
+    "    if (!parouPor && ajuste.patchDoEmprestimo) {",
+    "    if (ajuste.patchDoEmprestimo) {",
+  ],
+  [
+    AJUSTA,
+    "o UPDATE da parcela filtrado pela RLS responde SUCESSO (zero linha, e a resposta diz `ajustei`)",
+    "        if (erroDaParcela || !escritas || escritas.length === 0) {",
+    "        if (erroDaParcela) {",
+  ],
+  [
+    AJUSTA,
+    "a parcela e contada DEPOIS da cobranca (a resposta diz `nada ajustado` sobre uma divida ja reescrita)",
+    "        ajustadas.push({ id: linha.id, numero: linha.numero });\n      }\n",
+    "      }\n",
+  ],
+  [
+    AJUSTA,
+    "a linha devolvida pelo UPDATE do emprestimo nao e conferida (`ajustei` sobre linha de outro credor)",
+    "        atualizados.every((l) => l.lender_user_id === user.id);",
+    "        atualizados.length > 0;",
+  ],
+  [
+    AJUSTA,
+    "`settled` passa a ser declaravel pela rota (emprestimo com parcelas em aberto sai das duas telas)",
+    "  if (status !== undefined && status !== STATUS_CANCELADO) {",
+    "  if (false) {",
+  ],
+  // O DESPACHO TEM UM MUTANTE E NAO DOIS, E O QUE SAIU DAQUI ERA EQUIVALENTE
+  // ------------------------------------------------------------------------
+  // `if (status !== undefined)` no lugar do `===` parece o mutante obvio desta
+  // linha -- "qualquer corpo com `status` cancela" --, e ele e IMATAVEL: a
+  // peneira de cima (o mutante anterior) ja devolveu 400 para todo `status` que
+  // nao e `cancelled`, entao quando a execucao chega aqui `status` so pode ser
+  // `undefined` ou `cancelled` -- e nesses dois os dois testes dao a MESMA
+  // resposta. Ele sobrevivia a suite inteira sem apontar lacuna nenhuma
+  // (`exemplo-canonico-do-criterio-e-barrado-por-outra-guarda`), e sobrevivente
+  // permanente no placar e pior do que mutante nenhum: ele ensina quem le
+  // "sobreviventes: 1" a nao ir ver.
+  //
+  // O QUE FICA NO LUGAR mede a MESMA linha pelo lado que a peneira nao barra:
+  // com `!==`, o pedido de AJUSTE (que chega sem `status`) cai em `cancelar` --
+  // corrigir um typo na descricao cancelaria o emprestimo e a cauda inteira,
+  // que e o defeito mais caro que este `if` pode ter.
+  [
+    AJUSTA,
+    "o despacho manda o AJUSTE para o cancelamento (corrigir a descricao cancela a divida)",
+    "  if (status === STATUS_CANCELADO) {",
+    "  if (status !== STATUS_CANCELADO) {",
+  ],
+
+  // -------------------------------------------------------------------------
+  // AS RECUSAS DE CORPO, E A PENDENTE QUE NAO PODE SAIR DA LISTA
+  // -------------------------------------------------------------------------
+  [
+    LIB,
+    "o corpo vazio passa a ser um ajuste de sucesso (a tela diz `ajustado` sem ter ajustado nada)",
+    "    return \"nada_a_ajustar\";",
+    "    return null;",
+  ],
+  [
+    LIB,
+    "a descricao em branco passa a manter a antiga (o campo apagado na tela volta preenchido)",
+    "      return \"descricao_vazia\";",
+    "      return null;",
+  ],
+  [
+    LIB,
+    "a trava de juro zero da 053 deixa de ser perguntada (23514 DEPOIS de a cauda ja ter sido reescrita)",
+    "  if (mexeNaTaxa && Number(pedido.taxa) !== JUROS_DA_FASE_1) {",
+    "  if (false) {",
+  ],
+  [
+    LIB,
+    "o elo do ajuste casa por `includes` (a cobranca de OUTRA parcela recebe o valor desta)",
+    "    const previsao = params.previsoes.find((p) => p.notes === chave);\n\n    if (!previsao) {",
+    "    const previsao = params.previsoes.find((p) =>\n      String(p.notes ?? \"\").includes(chave)\n    );\n\n    if (!previsao) {",
+  ],
+  [
+    LIB,
+    "a pendente de patch vazio sai da lista (a passagem que parou no meio deixa a cobranca errada para sempre)",
+    "    linhas.push({\n      id: nova.id,",
+    "    if (Object.keys(patch).length === 0) continue;\n\n    linhas.push({\n      id: nova.id,",
   ],
 ];
 

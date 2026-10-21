@@ -2331,12 +2331,22 @@ test("emprestimo com TODAS as parcelas pagas: nao ha `.in` vazio em parcela nenh
   assert.equal(corpo.parcelas_pagas_intactas, 1);
 });
 
-test("corpo sem `status: cancelled` e recusado, e a rota nao edita a divida", async () => {
+test("`status` que nao e `cancelled` e recusado, e nenhum deles encerra a divida", async () => {
+  // A PENEIRA MUDOU DE FORMA NA HMO-447, E NAO DE EFEITO AQUI. Antes a rota SO
+  // cancelava e todo corpo diferente voltava 400; agora o corpo sem `status` e
+  // um pedido de AJUSTE (ver a PARTE 8). O que continua valendo e o que este
+  // teste mede: `status` com qualquer outro valor nao escreve nada, e `settled`
+  // em particular nao e declaravel -- quem o escreve e o ciclo de pagamento,
+  // pela regra `emprestimoFicouQuitado` (HMO-394). Declara-lo aqui tiraria das
+  // duas telas um emprestimo com 20 parcelas em aberto.
   for (const corpo of [
-    {},
     { status: "settled" },
     { status: "active" },
-    // O ataque: encolher a divida pelo mesmo PATCH que encerra.
+    { status: "cancelled!" },
+    // O ataque ORIGINAL: encolher a divida pelo mesmo PATCH que encerra. Ele
+    // continua barrado, e por DOIS motivos agora -- o `status` invalido para
+    // aqui, e `principal`/`installment_count` nao sao lidos em ramo nenhum
+    // deste arquivo nem com `status` ausente (o teste seguinte).
     { status: "cancelled!", principal: 1, installment_count: 1 },
   ]) {
     const linhas = tabelasDoCancelamento();
@@ -2346,6 +2356,43 @@ test("corpo sem `status: cancelled` e recusado, e a rota nao edita a divida", as
     assert.match(r.corpo.error, /cancelled/);
     assert.equal(r.sessao.escritas.length, 0);
     assert.equal(linhas.mybank_loans[0].status, "active");
+  }
+});
+
+test("os NOMES DE COLUNA do banco nao sao campos do corpo -- nem no ajuste", async () => {
+  // A DEFESA QUE SOBREVIVEU A ABERTURA DA ROTA. O ajuste le `descricao`,
+  // `total`, `taxa` e `primeiroVencimentoDaCauda` -- nomes que NAO sao colunas.
+  // `principal`, `installment_count`, `borrower_user_id`, `lender_account_id`,
+  // `amount` e `status` nao sao lidos do corpo em ramo nenhum, e por isso um
+  // cliente que mande a linha do banco de volta nao edita nada: cai em
+  // `nada_a_ajustar`, com 400 e sem escrita.
+  //
+  // Isso e o que impede o ajuste de virar um UPDATE generico. Um
+  // `{...body}` no patch passaria por este mesmo pedido gravando
+  // `installment_count: 1` num emprestimo de 4 parcelas.
+  for (const corpo of [
+    {},
+    { principal: 1 },
+    { installment_count: 1 },
+    { borrower_user_id: LAIS, lender_user_id: LAIS },
+    { lender_account_id: "conta-da-lais" },
+    { amount: 1, description: "sequestrada" },
+  ]) {
+    const linhas = tabelasDoCancelamento();
+    const r = await cancelarEmprestimo({ corpo, tabelas: linhas });
+
+    assert.equal(r.status, 400, JSON.stringify(corpo));
+    assert.match(r.corpo.error, /ajustar/);
+    assert.equal(
+      r.sessao.escritas.length,
+      0,
+      `${JSON.stringify(corpo)} escreveu: ${JSON.stringify(r.sessao.escritas)}`
+    );
+    assert.equal(linhas.mybank_loans[0].status, "active");
+    assert.equal(linhas.mybank_loans[0].principal, 24000);
+    assert.equal(linhas.mybank_loans[0].installment_count, 24);
+    assert.equal(linhas.mybank_loans[0].borrower_user_id, EU);
+    assert.equal(linhas.mybank_loans[0].description, "Moto elétrica");
   }
 });
 
@@ -4997,4 +5044,1413 @@ test("`parcelaFoiAntecipada`: `paid_date` ANTES do vencimento, e nunca no dia", 
     LIB.parcelaFoiAntecipada({ paid_date: "2027-01-10", due_date: "2026-12-20" }),
     false
   );
+});
+
+// ---------------------------------------------------------------------------
+// PARTE 8 -- PATCH /api/mybank/loans/[id] AJUSTANDO: a F4 da HMO-444
+// ---------------------------------------------------------------------------
+// A entrega (1) da issue: "ser possivel ajustar contas que estao acontecendo".
+// Ate aqui a rota so cancelava, e um typo na descricao de um emprestimo de 24
+// meses nao tinha conserto pela tela.
+//
+// AS SEIS SONDAS QUE A ISSUE PEDE: ativo/encerrado x com/sem `reported` x
+// Caso A/B. As tres perguntas sao ortogonais de proposito -- a recusa do
+// `reported` vale nos dois casos e nos dois estados, e e so medindo a grade
+// inteira que se ve que ela nao virou um ramo do Caso A.
+//
+// O CONTROLE NEGATIVO DESTA PARTE E A PARCELA `paid`
+// -------------------------------------------------
+// O fixture tem a parcela 1 PAGA e as 2/3/4 em aberto, e a assercao que importa
+// e sobre a linha dela NA TABELA: `amount` em 1000, `status` em `paid`,
+// `paid_transaction_id` de pe. Sem a parcela paga no fixture, "reescrever as
+// pendentes" e "reescrever a serie" alcancam o MESMO conjunto, e o mutante que
+// troca `pendentesDaSerie` por `parcelas` sobrevive
+// (`mutante-de-ramo-de-passagem-exige-fixture-do-outro-ramo`).
+//
+// E O SEGUNDO E A PREVISAO JA BAIXADA DE UMA PARCELA `pending`
+// -----------------------------------------------------------
+// O risco de dinheiro que a issue nomeia. O fixture do caso tem a parcela 3
+// `pending` e a previsao dela `paid` -- um estado que o app pode alcancar (a
+// baixa que falhou depois das pernas, um estorno pela metade) e que o status DA
+// PARCELA nao denuncia. O ajuste tem de RECUSAR, com nada escrito.
+
+/**
+ * O emprestimo a ajustar: 4x R$ 1.000 do Caso A, com a PRIMEIRA ja paga.
+ *
+ * 4 PARCELAS E NAO 24 porque a grade de sondas e o que custa aqui, e nao o
+ * tamanho da serie: com 4 as somas sao legiveis a olho (R$ 4.000 = 1.000 pagos +
+ * 3 x 1.000) e o recalculo de R$ 4.600 da 3 x R$ 1.200 exato. O caso do centavo
+ * da divisao tem sonda propria, com R$ 4.001.
+ */
+const EMPRESTIMO_A_AJUSTAR = {
+  ...EMPRESTIMO_DO_AUTO,
+  principal: 4000,
+  installment_count: 4,
+};
+
+const EMPRESTIMO_DA_LAIS_A_AJUSTAR = {
+  ...EMPRESTIMO_PARA_A_LAIS,
+  principal: 4000,
+  installment_count: 4,
+};
+
+function parcelaDoAjuste(numero, loanId, extra = {}) {
+  return {
+    id: `aj-${numero}`,
+    loan_id: loanId,
+    installment_number: numero,
+    installment_total: 4,
+    amount: 1000,
+    due_date: `2026-1${numero === 1 ? 1 : 2}-10`,
+    status: "pending",
+    reported_at: null,
+    paid_date: null,
+    paid_transaction_id: null,
+    ...extra,
+  };
+}
+
+/** A serie: a 1 PAGA (o controle negativo), e as 2/3/4 em aberto. */
+function parcelasDoAjuste(loanId = "loan-auto", extra = {}) {
+  return [
+    parcelaDoAjuste(1, loanId, {
+      status: "paid",
+      due_date: "2026-11-10",
+      paid_date: "2026-11-11",
+      paid_transaction_id: "tx-da-1",
+    }),
+    parcelaDoAjuste(2, loanId, { due_date: "2026-12-10" }),
+    parcelaDoAjuste(3, loanId, { due_date: "2027-01-10" }),
+    parcelaDoAjuste(4, loanId, { due_date: "2027-02-10" }),
+    ...(extra.extras ?? []),
+  ];
+}
+
+function previsaoDoAjuste(numero, extra = {}) {
+  return {
+    ...PREVISAO_DO_AUTO,
+    id: `prev-aj-${numero}`,
+    description: `Moto elétrica (${numero}/4)`,
+    amount: 1000,
+    due_date: parcelaDoAjuste(numero, "loan-auto", {}).due_date,
+    notes: `mybank:aj-${numero}`,
+    status: "pending",
+    ...extra,
+  };
+}
+
+/**
+ * As previsoes do Caso A: uma por parcela, a da PAGA ja baixada -- e A VIZINHA.
+ *
+ * A VIZINHA (`notes: null`, `pending`) e o que distingue "ajustar as previsoes
+ * deste emprestimo" de "ajustar a agenda": sem ela as duas alcancam o mesmo
+ * conjunto e o mutante que tira a guarda do `.length` sobrevive. E aqui o
+ * estrago dele seria pior que no cancelamento -- lá a agenda era APAGADA, aqui
+ * cada linha dela viraria uma parcela deste emprestimo, com valor e vencimento
+ * trocados e nenhuma delas podendo ser desfeita pelo valor anterior.
+ */
+function previsoesDoAjusteDoAuto(extra = []) {
+  return [
+    previsaoDoAjuste(1, {
+      due_date: "2026-11-10",
+      status: "paid",
+      paid_date: "2026-11-11",
+      transaction_id: "tx-da-1",
+    }),
+    previsaoDoAjuste(2, { due_date: "2026-12-10" }),
+    previsaoDoAjuste(3, { due_date: "2027-01-10" }),
+    previsaoDoAjuste(4, { due_date: "2027-02-10" }),
+    {
+      ...PREVISAO_DO_AUTO,
+      id: "prev-vizinha",
+      description: "Aluguel",
+      amount: 3200,
+      notes: null,
+      status: "pending",
+    },
+    ...extra,
+  ];
+}
+
+function tabelasDoAjuste(extra = {}) {
+  return tabelas({
+    mybank_loans: [{ ...EMPRESTIMO_A_AJUSTAR }],
+    mybank_installments: parcelasDoAjuste("loan-auto").map((p) => ({ ...p })),
+    scheduled_transactions: previsoesDoAjusteDoAuto().map((p) => ({ ...p })),
+    ...extra,
+  });
+}
+
+/** O Caso B: a mesma serie, e uma agenda minha que NADA aqui pode tocar. */
+function tabelasDoAjusteDaLais(extra = {}) {
+  return tabelas({
+    mybank_loans: [{ ...EMPRESTIMO_DA_LAIS_A_AJUSTAR }],
+    mybank_installments: parcelasDoAjuste("loan-lais").map((p) => ({ ...p })),
+    scheduled_transactions: [
+      { ...PREVISAO_DO_AUTO, id: "prev-aluguel", notes: null, status: "pending" },
+      { ...PREVISAO_DO_AUTO, id: "prev-luz", notes: null, status: "pending" },
+    ],
+    ...extra,
+  });
+}
+
+async function ajustarEmprestimo({
+  quem = EU,
+  loanId = "loan-auto",
+  corpo = {},
+  tabelas: linhas,
+  erros,
+  rlsFiltra,
+} = {}) {
+  const sessao = criarDuble({
+    user: { id: quem },
+    tabelas: linhas ?? tabelasDoAjuste(),
+    ...(erros ? { erros } : {}),
+    ...(rlsFiltra ? { rlsFiltra } : {}),
+  });
+  const registro = { sessao: () => sessao.client };
+  globalThis.__dubleDeSupabase = registro;
+
+  let resposta;
+  try {
+    // A MESMA FUNCAO DO CANCELAMENTO -- e isso e metade do que esta parte mede:
+    // os dois verbos entram pelo mesmo `PATCH`, e e o despacho que os separa.
+    resposta = await CANCELA.PATCH(
+      { json: async () => corpo },
+      { params: { id: loanId } }
+    );
+  } finally {
+    delete globalThis.__dubleDeSupabase;
+  }
+
+  return { status: resposta.status, corpo: await resposta.json(), sessao, registro };
+}
+
+/** O patch que um UPDATE com `.eq(coluna, valor)` mandou, ou `null`. */
+function escritaPorEq(sessao, tabela, coluna, valor) {
+  return (
+    sessao.escritas.find(
+      (e) =>
+        e.tabela === tabela &&
+        e.verbo === "update" &&
+        (e.filtros ?? []).some(
+          ([op, c, v]) => op === "eq" && c === coluna && v === valor
+        )
+    ) ?? null
+  );
+}
+
+// ---------------------------------------------------------------------------
+// A GRADE: ativo/encerrado x com/sem `reported` x Caso A/B
+// ---------------------------------------------------------------------------
+
+test("CASO A ativo e sem aviso: so as pendentes sao reescritas, e a PAGA fica", async () => {
+  const linhas = tabelasDoAjuste();
+  const { status, corpo, sessao } = await ajustarEmprestimo({
+    corpo: { total: 4600 },
+    tabelas: linhas,
+  });
+
+  assert.equal(status, 200, JSON.stringify(corpo));
+
+  const porId = new Map(linhas.mybank_installments.map((p) => [p.id, p]));
+
+  // 1. O CONTROLE NEGATIVO DA ISSUE, lido NA TABELA e nao na resposta. A parcela
+  // paga tem (ou teve) perna em `financial_transactions`: reescrever o `amount`
+  // dela faria a divida discordar de um lancamento REALIZADO, e o extrato
+  // continuaria mostrando os R$ 1.000 que entraram.
+  assert.equal(porId.get("aj-1").amount, 1000);
+  assert.equal(porId.get("aj-1").status, "paid");
+  assert.equal(porId.get("aj-1").paid_date, "2026-11-11");
+  assert.equal(porId.get("aj-1").paid_transaction_id, "tx-da-1");
+  assert.equal(porId.get("aj-1").due_date, "2026-11-10");
+
+  // E A AUSENCIA DO UPDATE, que e a assercao mais forte: um UPDATE que por sorte
+  // nao mudou o valor passaria pela primeira e nao por esta.
+  assert.equal(escritaPorEq(sessao, "mybank_installments", "id", "aj-1"), null);
+
+  // 2. AS TRES EM ABERTO: R$ 4.600 - R$ 1.000 ja pagos = R$ 3.600 / 3.
+  for (const n of [2, 3, 4]) {
+    assert.equal(porId.get(`aj-${n}`).amount, 1200, `parcela ${n}`);
+    assert.equal(porId.get(`aj-${n}`).status, "pending");
+  }
+
+  // A SOMA FECHA COM O NOVO PRINCIPAL -- a invariante da 053.
+  const soma = linhas.mybank_installments.reduce((t, p) => t + p.amount, 0);
+  assert.equal(soma, 4600);
+  assert.equal(linhas.mybank_loans[0].principal, 4600);
+
+  // 3. O PATCH DA PARCELA NAO LEVA MAIS NADA. `status`, `paid_date`,
+  // `installment_number` e `installment_total` fora dele e o que impede este
+  // caminho de encurtar a serie ou de carimbar pagamento.
+  const daParcela2 = escritaPorEq(sessao, "mybank_installments", "id", "aj-2");
+  assert.deepEqual(Object.keys(daParcela2.patch), ["amount"]);
+  assert.equal(daParcela2.linhasAfetadas, 1);
+
+  // O VENCIMENTO NAO MUDOU: o corpo nao pediu, e recalcular as datas de graca
+  // moveria contas a pagar que ninguem pediu para mover.
+  assert.equal(porId.get("aj-2").due_date, "2026-12-10");
+  assert.equal(porId.get("aj-4").due_date, "2027-02-10");
+
+  // 4. AS PREVISOES DO CASO A: as tres das pendentes acompanham.
+  const porPrevisao = new Map(linhas.scheduled_transactions.map((p) => [p.id, p]));
+  for (const n of [2, 3, 4]) {
+    assert.equal(porPrevisao.get(`prev-aj-${n}`).amount, 1200, `previsao ${n}`);
+    assert.equal(
+      porPrevisao.get(`prev-aj-${n}`).description,
+      `Moto elétrica (${n}/4)`
+    );
+    // `status` E `transaction_id` INTACTOS: o patch da previsao nao baixa conta
+    // a pagar nenhuma. Baixar aqui tiraria a cobranca da tela sem nenhuma perna
+    // ter sido gravada -- a pessoa deixaria de ser cobrada por uma divida que
+    // ela ainda deve.
+    assert.equal(porPrevisao.get(`prev-aj-${n}`).status, "pending");
+    assert.equal(porPrevisao.get(`prev-aj-${n}`).transaction_id, null);
+  }
+
+  // A PREVISAO DA PARCELA PAGA NAO E TOCADA, e a VIZINHA tambem nao.
+  assert.equal(porPrevisao.get("prev-aj-1").amount, 1000);
+  assert.equal(porPrevisao.get("prev-aj-1").status, "paid");
+  assert.equal(porPrevisao.get("prev-vizinha").amount, 3200);
+  assert.equal(porPrevisao.get("prev-vizinha").description, "Aluguel");
+  assert.equal(escritaPorEq(sessao, "scheduled_transactions", "id", "prev-vizinha"), null);
+  assert.equal(escritaPorEq(sessao, "scheduled_transactions", "id", "prev-aj-1"), null);
+
+  assert.equal(corpo.caso, "auto");
+  assert.equal(corpo.total, 4600);
+  assert.equal(corpo.ja_recebido, 1000);
+  assert.equal(corpo.parcelas_ajustadas, 3);
+  assert.deepEqual(corpo.numeros, [2, 3, 4]);
+  assert.equal(corpo.parcelas_pagas_intactas, 1);
+  assert.equal(corpo.previsoes_ajustadas, 3);
+  assert.equal(corpo.emprestimo_atualizado, true);
+  assert.equal(corpo.success, true);
+  assert.equal(corpo.parcial, undefined);
+});
+
+test("CASO B ativo e sem aviso: NENHUMA escrita em `scheduled_transactions`", async () => {
+  const linhas = tabelasDoAjusteDaLais();
+  const { status, corpo, sessao } = await ajustarEmprestimo({
+    loanId: "loan-lais",
+    corpo: { total: 4600 },
+    tabelas: linhas,
+  });
+
+  assert.equal(status, 200, JSON.stringify(corpo));
+  assert.equal(corpo.caso, "conexao");
+
+  // A ASSERCAO E A AUSENCIA DO UPDATE, e nao "a agenda nao mudou": um UPDATE
+  // emitido com `.in("notes", [])` alcancaria TODA linha que a RLS entrega, e
+  // num fixture com `notes` nulo nas duas ele passaria pela segunda assercao.
+  assert.equal(
+    sessao.escritas.filter((e) => e.tabela === "scheduled_transactions").length,
+    0
+  );
+  assert.equal(corpo.previsoes_ajustadas, 0);
+  assert.deepEqual(
+    linhas.scheduled_transactions.map((p) => p.amount),
+    [1000, 1000]
+  );
+
+  // E A LEITURA TAMBEM NAO ACONTECE: a guarda do `.length` esta ANTES do
+  // `select`, e e isso que impede a leitura sem `.in` de arrastar a agenda
+  // inteira para o emparelhamento.
+  assert.equal(
+    sessao.lidas.filter((l) => l.tabela === "scheduled_transactions").length,
+    0
+  );
+
+  // E a divida nova chega na tela DELA sem leitor novo: `mybank_due_entries` le
+  // `i.amount` da propria parcela.
+  const porId = new Map(linhas.mybank_installments.map((p) => [p.id, p]));
+  assert.equal(porId.get("aj-1").amount, 1000);
+  assert.equal(porId.get("aj-2").amount, 1200);
+  assert.equal(linhas.mybank_loans[0].principal, 4600);
+  assert.equal(corpo.parcelas_ajustadas, 3);
+});
+
+test("emprestimo ENCERRADO e 409 nos dois casos, com o status na frase", async () => {
+  for (const [rotulo, estado, loanId, linhas] of [
+    ["A/settled", "settled", "loan-auto", () => tabelasDoAjuste()],
+    ["A/cancelled", "cancelled", "loan-auto", () => tabelasDoAjuste()],
+    ["B/settled", "settled", "loan-lais", () => tabelasDoAjusteDaLais()],
+    ["B/cancelled", "cancelled", "loan-lais", () => tabelasDoAjusteDaLais()],
+  ]) {
+    const tabelasDoCaso = linhas();
+    tabelasDoCaso.mybank_loans[0].status = estado;
+
+    const r = await ajustarEmprestimo({
+      loanId,
+      corpo: { total: 4600, descricao: "Outra coisa" },
+      tabelas: tabelasDoCaso,
+    });
+
+    assert.equal(r.status, 409, `${rotulo}: ${JSON.stringify(r.corpo)}`);
+    assert.match(r.corpo.error, new RegExp(estado));
+    assert.equal(r.corpo.parcelas_ajustadas, 0);
+
+    // NADA ESCRITO: ajustar o valor de um emprestimo encerrado reescreveria um
+    // fato. A recusa vem antes da leitura das parcelas inclusive.
+    assert.equal(r.sessao.escritas.length, 0, rotulo);
+    assert.equal(tabelasDoCaso.mybank_loans[0].principal, 4000, rotulo);
+    assert.equal(tabelasDoCaso.mybank_installments[1].amount, 1000, rotulo);
+  }
+});
+
+test("parcela `reported` e 409 nos dois casos, NOMEANDO quais, e nada e escrito", async () => {
+  for (const [rotulo, loanId, monta] of [
+    ["A", "loan-auto", tabelasDoAjuste],
+    ["B", "loan-lais", tabelasDoAjusteDaLais],
+  ]) {
+    const linhas = monta();
+    // A 3 AVISADA: o devedor disse que pagou e o credor nao confirmou.
+    linhas.mybank_installments[2].status = "reported";
+    linhas.mybank_installments[2].reported_at = "2027-01-09T00:00:00Z";
+
+    const r = await ajustarEmprestimo({
+      loanId,
+      corpo: { total: 4600 },
+      tabelas: linhas,
+    });
+
+    assert.equal(r.status, 409, `${rotulo}: ${JSON.stringify(r.corpo)}`);
+    // O NUMERO NA FRASE: sem ele a pessoa nao sabe qual aviso confirmar, e a
+    // unica saida seria abrir as 24 parcelas uma por uma.
+    assert.match(r.corpo.error, /parcela 3/);
+    assert.equal(r.corpo.parcelas_ajustadas, 0);
+    assert.equal(r.sessao.escritas.length, 0, rotulo);
+
+    // O VALOR DA PARCELA AVISADA, INTACTO -- a razao da recusa em forma de
+    // assercao: a pessoa pagou R$ 1.000 contra esta linha, e nada no banco
+    // registra qual era o valor quando ela pagou.
+    assert.equal(linhas.mybank_installments[2].amount, 1000, rotulo);
+    assert.equal(linhas.mybank_installments[1].amount, 1000, rotulo);
+    assert.equal(linhas.mybank_loans[0].principal, 4000, rotulo);
+  }
+});
+
+test("a recusa do `reported` vale para o pedido que SO troca a descricao", async () => {
+  // A RECUSA E SOBRE A SERIE, E NAO SOBRE O CAMPO. Um ramo que soltasse a
+  // descricao daqui pareceria inofensivo -- e a parcela `reported` e um aviso
+  // PENDENTE sobre esta divida, cuja resposta certa e confirmar (ou estornar) o
+  // aviso. Ajustar por cima dele deixa a tela do devedor mudando de nome
+  // enquanto ele espera a confirmacao de um pagamento.
+  const linhas = tabelasDoAjuste();
+  linhas.mybank_installments[1].status = "reported";
+  linhas.mybank_installments[1].reported_at = "2026-12-09T00:00:00Z";
+
+  const { status, corpo, sessao } = await ajustarEmprestimo({
+    corpo: { descricao: "Moto elétrica usada" },
+    tabelas: linhas,
+  });
+
+  assert.equal(status, 409, JSON.stringify(corpo));
+  assert.match(corpo.error, /parcela 2/);
+  assert.equal(sessao.escritas.length, 0);
+  assert.equal(linhas.mybank_loans[0].description, "Moto elétrica");
+});
+
+test("DUAS avisadas: a frase vai no plural e nomeia as duas", async () => {
+  const linhas = tabelasDoAjuste();
+  linhas.mybank_installments[1].status = "reported";
+  linhas.mybank_installments[3].status = "reported";
+
+  const { status, corpo } = await ajustarEmprestimo({
+    corpo: { total: 4600 },
+    tabelas: linhas,
+  });
+
+  assert.equal(status, 409);
+  assert.match(corpo.error, /As parcelas 2, 4/);
+  // E NAO "A parcela 2, 4 esta": a contracao e o acordo vem no proprio ramo,
+  // porque a medicao em producao leu "de a parcela 2" numa frase montada com
+  // `${plural}` (`mensagemDaPrevisaoDaCaudaAusente`).
+  assert.doesNotMatch(corpo.error, /A parcela 2, 4/);
+});
+
+// ---------------------------------------------------------------------------
+// A GUARDA DE DINHEIRO: a previsao JA BAIXADA de uma parcela `pending`
+// ---------------------------------------------------------------------------
+
+test("previsao JA BAIXADA de parcela `pending`: 409, NOMEANDO, e NADA escrito", async () => {
+  // O RISCO QUE A ISSUE NOMEIA. A parcela 3 esta `pending` e a conta a pagar
+  // dela ja foi baixada -- o dinheiro JA SE MOVEU e o status da parcela nao
+  // avisa. Reescrever o `amount` dela mexeria num lancamento REALIZADO.
+  //
+  // E a guarda e CONFERIR A PREVISAO, e nao confiar no status da parcela: e por
+  // isso que a leitura do passo 2.5 NAO filtra `status = 'pending'`. Com o
+  // filtro, esta previsao sairia da leitura, a parcela 3 cairia em "sem
+  // previsao" (que nao e recusa) e o ajuste seguiria.
+  const linhas = tabelasDoAjuste();
+  const previsaoDa3 = linhas.scheduled_transactions.find(
+    (p) => p.id === "prev-aj-3"
+  );
+  previsaoDa3.status = "paid";
+  previsaoDa3.paid_date = "2027-01-11";
+  previsaoDa3.transaction_id = "tx-da-3";
+
+  const { status, corpo, sessao } = await ajustarEmprestimo({
+    corpo: { total: 4600 },
+    tabelas: linhas,
+  });
+
+  assert.equal(status, 409, JSON.stringify(corpo));
+  assert.match(corpo.error, /parcela 3/);
+  assert.match(corpo.error, /Nada foi ajustado/);
+  assert.equal(corpo.parcelas_ajustadas, 0);
+
+  // NADA ESCRITO -- e o "nada" inclui as parcelas 2 e 4, que nao tem problema
+  // nenhum. A recusa e do PEDIDO INTEIRO porque o pedido e um total repartido:
+  // ajustar 2 e 4 e deixar a 3 faria a soma das parcelas nao fechar com nenhum
+  // total -- nem o antigo nem o novo.
+  assert.equal(sessao.escritas.length, 0, JSON.stringify(sessao.escritas));
+  assert.deepEqual(
+    linhas.mybank_installments.map((p) => p.amount),
+    [1000, 1000, 1000, 1000]
+  );
+  assert.equal(linhas.mybank_loans[0].principal, 4000);
+
+  // E A LEITURA NAO TEM O FILTRO DE STATUS -- a parte que faz a recusa ser
+  // possivel. Um `.eq("status","pending")` aqui e o mutante da secao.
+  const leitura = sessao.lidas.find(
+    (l) =>
+      l.tabela === "scheduled_transactions" &&
+      (l.filtros ?? []).some(([op, c]) => op === "in" && c === "notes")
+  );
+  assert.ok(leitura, "a previsao do elo nao foi lida");
+  assert.ok(
+    !(leitura.filtros ?? []).some(
+      ([op, coluna, valor]) =>
+        op === "eq" && coluna === "status" && valor === "pending"
+    ),
+    `a leitura do passo 2.5 filtrou por status e esconderia a previsao baixada: ${JSON.stringify(
+      leitura.filtros
+    )}`
+  );
+});
+
+test("previsao `skipped` tambem para o ajuste -- a pergunta e `!== pending`", async () => {
+  // `skipped` e `cancelled` tambem sao linhas sobre as quais alguem decidiu, e
+  // reescrever o valor de uma previsao PULADA a traria de volta a agenda com um
+  // valor novo. Um criterio `=== "paid"` passaria o teste de cima e falharia
+  // aqui.
+  const linhas = tabelasDoAjuste();
+  linhas.scheduled_transactions.find((p) => p.id === "prev-aj-4").status =
+    "skipped";
+
+  const { status, corpo, sessao } = await ajustarEmprestimo({
+    corpo: { total: 4600 },
+    tabelas: linhas,
+  });
+
+  assert.equal(status, 409, JSON.stringify(corpo));
+  assert.match(corpo.error, /parcela 4/);
+  assert.equal(sessao.escritas.length, 0);
+});
+
+test("previsao AUSENTE nao e recusa: a divida e ajustada e a resposta DIZ", async () => {
+  // A DIRECAO DO ESTRAGO E O QUE SEPARA ESTE CASO DO DE CIMA. Previsao ausente
+  // quer dizer que a conta a pagar daquela parcela ja tinha sido apagada a mao
+  // ANTES deste pedido -- um dano que existe com ou sem o ajuste. Recusar aqui
+  // trancaria o conserto do valor da divida por causa de uma linha que falta em
+  // OUTRA tela. E o oposto da antecipacao, que recusa porque lá a conta de onde
+  // o dinheiro sai mora na previsao; aqui nao se move dinheiro nenhum.
+  const linhas = tabelasDoAjuste({
+    scheduled_transactions: previsoesDoAjusteDoAuto().filter(
+      (p) => p.id !== "prev-aj-3"
+    ),
+  });
+
+  const { status, corpo } = await ajustarEmprestimo({
+    corpo: { total: 4600 },
+    tabelas: linhas,
+  });
+
+  assert.equal(status, 200, JSON.stringify(corpo));
+
+  const porId = new Map(linhas.mybank_installments.map((p) => [p.id, p]));
+  assert.equal(porId.get("aj-3").amount, 1200);
+  assert.equal(corpo.parcelas_ajustadas, 3);
+  assert.equal(corpo.previsoes_ajustadas, 2);
+  assert.deepEqual(corpo.previsoes_ausentes, [3]);
+
+  // E A FRASE DIZ, porque calar faria a pessoa descobrir sozinha, meses depois,
+  // que aquela parcela nunca aparece em Contas a Pagar.
+  assert.match(corpo.message, /não tem conta a pagar/);
+  assert.match(corpo.message, /3/);
+});
+
+// ---------------------------------------------------------------------------
+// A ARITMETICA, A ORDEM E OS CAMPOS
+// ---------------------------------------------------------------------------
+
+test("o centavo da divisao cai na ULTIMA da cauda, e a soma fecha EXATA", async () => {
+  // R$ 4.001 - R$ 1.000 pagos = R$ 3.001 em 3 parcelas. Em ponto flutuante as
+  // tres somariam R$ 3.000,9999999999995; `serieDeParcelas` conta em CENTAVOS
+  // INTEIROS e joga a sobra na ultima, e e por isso que ela e importada em vez
+  // de reescrita aqui.
+  const linhas = tabelasDoAjuste();
+  const { status, corpo } = await ajustarEmprestimo({
+    corpo: { total: 4001 },
+    tabelas: linhas,
+  });
+
+  assert.equal(status, 200, JSON.stringify(corpo));
+
+  const porId = new Map(linhas.mybank_installments.map((p) => [p.id, p]));
+  assert.equal(porId.get("aj-2").amount, 1000.33);
+  assert.equal(porId.get("aj-3").amount, 1000.33);
+  assert.equal(porId.get("aj-4").amount, 1000.34);
+
+  // A SOMA EM CENTAVOS, porque e assim que ela e exata.
+  const centavos = linhas.mybank_installments.reduce(
+    (t, p) => t + Math.round(p.amount * 100),
+    0
+  );
+  assert.equal(centavos, 400100);
+  assert.equal(linhas.mybank_loans[0].principal, 4001);
+});
+
+test("A ORDEM: a parcela antes da cobranca dela, e o EMPRESTIMO POR ULTIMO", async () => {
+  const { sessao } = await ajustarEmprestimo({ corpo: { total: 4600 } });
+
+  const ordem = sessao.escritas.map((e) => `${e.tabela}:${e.verbo}`);
+  const primeiraParcela = ordem.indexOf("mybank_installments:update");
+  const primeiraPrevisao = ordem.indexOf("scheduled_transactions:update");
+  const doEmprestimo = ordem.indexOf("mybank_loans:update");
+
+  assert.ok(
+    primeiraParcela >= 0 && primeiraPrevisao >= 0 && doEmprestimo >= 0,
+    ordem.join(" > ")
+  );
+
+  // A PARCELA E A DIVIDA; A PREVISAO E A COBRANCA DERIVADA DELA. Na ordem
+  // inversa uma falha no meio deixaria a cobranca com um valor que a divida
+  // desmente -- do lado que ninguem confere linha por linha.
+  assert.ok(
+    primeiraParcela < primeiraPrevisao,
+    `a parcela tem de ser ajustada antes da cobranca: ${ordem.join(" > ")}`
+  );
+
+  // O EMPRESTIMO POR ULTIMO, E ISSO E O OPOSTO DO CANCELAMENTO. `principal` e a
+  // afirmacao de um total que a soma das parcelas tem de fechar: grava-lo antes
+  // faria a linha do emprestimo afirmar um numero que nenhuma parcela sustenta
+  // enquanto o laco corre.
+  assert.equal(
+    doEmprestimo,
+    ordem.length - 1,
+    `o emprestimo tem de ser o ULTIMO: ${ordem.join(" > ")}`
+  );
+});
+
+test("so a DESCRICAO: nenhuma parcela e reescrita, e as 3 cobrancas acompanham", async () => {
+  // O CASO QUE ABRE A ISSUE -- o typo. E o que ele mede e que a descricao SOZINHA
+  // move a previsao: sem essa parte da regra, "Motoo (3/4)" ficaria para sempre
+  // em Contas a Pagar enquanto o emprestimo se chamasse outra coisa.
+  const linhas = tabelasDoAjuste();
+  const { status, corpo, sessao } = await ajustarEmprestimo({
+    corpo: { descricao: "  Moto elétrica usada  " },
+    tabelas: linhas,
+  });
+
+  assert.equal(status, 200, JSON.stringify(corpo));
+
+  // NENHUM UPDATE DE PARCELA: o valor e o vencimento nao mudaram, e um
+  // `update({})` no PostgREST e 400 e nao um no-op.
+  assert.equal(
+    sessao.escritas.filter((e) => e.tabela === "mybank_installments").length,
+    0
+  );
+  assert.equal(corpo.parcelas_ajustadas, 0);
+
+  // AS TRES COBRANCAS DAS PENDENTES, com o `trim()` aplicado uma vez so.
+  const porPrevisao = new Map(linhas.scheduled_transactions.map((p) => [p.id, p]));
+  for (const n of [2, 3, 4]) {
+    assert.equal(
+      porPrevisao.get(`prev-aj-${n}`).description,
+      `Moto elétrica usada (${n}/4)`
+    );
+    // O VALOR NAO MUDOU, e ele vai no patch de qualquer jeito: a previsao e
+    // editavel em Contas a Pagar, e mandar os tres campos e o que fecha uma
+    // divergencia anterior em vez de perpetua-la.
+    assert.equal(porPrevisao.get(`prev-aj-${n}`).amount, 1000);
+  }
+
+  // A DA PARCELA PAGA NAO: ela nao e cobranca de nada em aberto.
+  assert.equal(porPrevisao.get("prev-aj-1").description, "Moto elétrica (1/4)");
+
+  assert.equal(linhas.mybank_loans[0].description, "Moto elétrica usada");
+  assert.equal(linhas.mybank_loans[0].principal, 4000);
+  const [doEmprestimo] = escritasEm(sessao, "mybank_loans", "update");
+  assert.deepEqual(Object.keys(doEmprestimo.patch), ["description"]);
+  assert.equal(corpo.previsoes_ajustadas, 3);
+});
+
+test("so o VENCIMENTO: a cauda anda de mes e nenhum valor muda", async () => {
+  const linhas = tabelasDoAjuste();
+  const { status, corpo, sessao } = await ajustarEmprestimo({
+    corpo: { primeiroVencimentoDaCauda: "2027-03-10" },
+    tabelas: linhas,
+  });
+
+  assert.equal(status, 200, JSON.stringify(corpo));
+
+  const porId = new Map(linhas.mybank_installments.map((p) => [p.id, p]));
+  assert.equal(porId.get("aj-2").due_date, "2027-03-10");
+  assert.equal(porId.get("aj-3").due_date, "2027-04-10");
+  assert.equal(porId.get("aj-4").due_date, "2027-05-10");
+
+  // OS VALORES NAO MUDAM, E A BASE DO RECALCULO E O QUE AS PENDENTES JA SOMAM --
+  // e nao o `principal`. Com o principal ali, adiar o vencimento DOBRARIA a
+  // divida de quem ja pagou uma de quatro: R$ 4.000 / 3 = R$ 1.333,33.
+  for (const n of [2, 3, 4]) {
+    assert.equal(porId.get(`aj-${n}`).amount, 1000, `parcela ${n}`);
+  }
+  const daParcela2 = escritaPorEq(sessao, "mybank_installments", "id", "aj-2");
+  assert.deepEqual(Object.keys(daParcela2.patch), ["due_date"]);
+
+  // E A PAGA NAO ANDA: o vencimento dela e historia.
+  assert.equal(porId.get("aj-1").due_date, "2026-11-10");
+
+  // O EMPRESTIMO NAO E TOCADO: nenhum campo dele mudou.
+  assert.equal(escritasEm(sessao, "mybank_loans", "update").length, 0);
+  assert.equal(linhas.mybank_loans[0].principal, 4000);
+  assert.equal(corpo.emprestimo_atualizado, true);
+  assert.equal(corpo.success, true);
+});
+
+test("a cauda de UMA parcela leva o que falta inteiro", async () => {
+  // O RAMO QUE `serieDeParcelas` NAO ALCANCA: ela recusa `m < 2` porque "1x" nao
+  // e um parcelamento. A cauda de uma parcela e um estado comum e legitimo (a
+  // serie 4x com 3 pagas), e sem o ramo proprio este pedido cairia em
+  // `cauda_impossivel`.
+  const linhas = tabelasDoAjuste({
+    mybank_installments: parcelasDoAjuste("loan-auto").map((p, i) =>
+      i < 3
+        ? {
+            ...p,
+            status: "paid",
+            paid_date: "2026-11-11",
+            paid_transaction_id: `tx-${i}`,
+          }
+        : { ...p }
+    ),
+  });
+
+  const { status, corpo } = await ajustarEmprestimo({
+    corpo: { total: 4500 },
+    tabelas: linhas,
+  });
+
+  assert.equal(status, 200, JSON.stringify(corpo));
+
+  const porId = new Map(linhas.mybank_installments.map((p) => [p.id, p]));
+  assert.equal(porId.get("aj-4").amount, 1500);
+  assert.equal(corpo.ja_recebido, 3000);
+  assert.equal(corpo.parcelas_ajustadas, 1);
+  const soma = linhas.mybank_installments.reduce((t, p) => t + p.amount, 0);
+  assert.equal(soma, 4500);
+});
+
+// ---------------------------------------------------------------------------
+// AS RECUSAS DE CORPO E DE VALOR
+// ---------------------------------------------------------------------------
+
+test("total MENOR OU IGUAL ao ja recebido e 409, com o valor na frase", async () => {
+  for (const total of [1000, 999, 400]) {
+    const linhas = tabelasDoAjuste();
+    const r = await ajustarEmprestimo({ corpo: { total }, tabelas: linhas });
+
+    assert.equal(r.status, 409, `total ${total}: ${JSON.stringify(r.corpo)}`);
+    // O NUMERO NA FRASE: "o total e baixo demais" nao diz o que fazer.
+    assert.match(r.corpo.error, /R\$ 1\.000,00/);
+    assert.equal(r.sessao.escritas.length, 0);
+    assert.equal(linhas.mybank_loans[0].principal, 4000);
+  }
+});
+
+test("`R$ 1.000,00` na frase nao usa o espaco invisivel do Intl", async () => {
+  // `toLocaleString("pt-BR")` separa o "R$" do numero com U+00A0, e toda
+  // assercao de `includes` sobre a frase passaria a depender de um byte que
+  // ninguem ve (`intl-pt-br-separa-o-real-com-nbsp`).
+  const { corpo } = await ajustarEmprestimo({ corpo: { total: 500 } });
+  assert.ok(
+    !corpo.error.includes(" "),
+    `a frase tem espaco que nao quebra: ${JSON.stringify(corpo.error)}`
+  );
+});
+
+test("total que nao da valor positivo para cada pendente e 409", async () => {
+  // R$ 1.000,02 - R$ 1.000 = R$ 0,02 em 3 parcelas: a divisao da 1 centavo nas
+  // duas primeiras e ZERO na ultima, e `mybank_installments_amount_check` e
+  // `CHECK (amount > 0)`. Sem a pergunta sobre a cauda MONTADA, as duas
+  // primeiras seriam gravadas e a terceira morreria em 23514.
+  const linhas = tabelasDoAjuste();
+  const { status, corpo, sessao } = await ajustarEmprestimo({
+    corpo: { total: 1000.02 },
+    tabelas: linhas,
+  });
+
+  assert.equal(status, 400, JSON.stringify(corpo));
+  assert.match(corpo.error, /3 parcela/);
+  assert.equal(sessao.escritas.length, 0);
+  assert.deepEqual(
+    linhas.mybank_installments.map((p) => p.amount),
+    [1000, 1000, 1000, 1000]
+  );
+});
+
+test("descricao em branco e 400, e nao `mantem a antiga`", async () => {
+  for (const descricao of ["", "   ", 42, null]) {
+    const linhas = tabelasDoAjuste();
+    const r = await ajustarEmprestimo({ corpo: { descricao }, tabelas: linhas });
+
+    assert.equal(r.status, 400, `${JSON.stringify(descricao)}: ${r.corpo.error}`);
+    assert.equal(r.sessao.escritas.length, 0);
+    assert.equal(linhas.mybank_loans[0].description, "Moto elétrica");
+  }
+});
+
+test("total e vencimento malformados sao 400, cada um com a frase do campo", async () => {
+  const casos = [
+    [{ total: 0 }, /maior que zero/],
+    [{ total: -100 }, /maior que zero/],
+    [{ total: "abacaxi" }, /maior que zero/],
+    [{ primeiroVencimentoDaCauda: "10/03/2027" }, /AAAA-MM-DD/],
+    [{ primeiroVencimentoDaCauda: 20270310 }, /AAAA-MM-DD/],
+  ];
+
+  for (const [corpo, frase] of casos) {
+    const linhas = tabelasDoAjuste();
+    const r = await ajustarEmprestimo({ corpo, tabelas: linhas });
+
+    assert.equal(r.status, 400, `${JSON.stringify(corpo)}: ${JSON.stringify(r.corpo)}`);
+    assert.match(r.corpo.error, frase);
+    assert.equal(r.sessao.escritas.length, 0);
+  }
+});
+
+test("`taxa` diferente de zero e 400 -- a trava da 053 em forma de frase", async () => {
+  // `mybank_loans_interest_rate_fase_1` e `CHECK (interest_rate = 0)`. Quem a
+  // solta e a 062 (HMO-445), que ESTA em `main` -- e estar em `main` nao e estar
+  // COLADA (`deploy-ships-code-not-schema`). Aceitar `taxa: 2` antes da colagem
+  // derrubaria o UPDATE em 23514 -- e SO depois de as parcelas da cauda ja terem
+  // sido reescritas, porque o emprestimo e o ultimo passo. A conta do juro e da
+  // F3; esta filha recusa a taxa de proposito.
+  for (const taxa of [2, 0.5, "1.5"]) {
+    const linhas = tabelasDoAjuste();
+    const r = await ajustarEmprestimo({
+      corpo: { total: 4600, taxa },
+      tabelas: linhas,
+    });
+
+    assert.equal(r.status, 400, `taxa ${taxa}: ${JSON.stringify(r.corpo)}`);
+    assert.match(r.corpo.error, /juro zero/);
+    assert.equal(r.sessao.escritas.length, 0);
+  }
+});
+
+test("`taxa: 0` e `\"0.00\"` passam -- `numeric` chega como STRING do PostgREST", async () => {
+  // Um `!== 0` cru recusaria `"0.00"`, e quem reenvia a taxa que LEU manda
+  // exatamente isso: a recusa dispararia em todo emprestimo da fase 1 e o
+  // formulario nao teria como mandar o campo de volta.
+  for (const taxa of [0, "0", "0.00"]) {
+    const linhas = tabelasDoAjuste();
+    const r = await ajustarEmprestimo({
+      corpo: { total: 4600, taxa },
+      tabelas: linhas,
+    });
+
+    assert.equal(r.status, 200, `taxa ${JSON.stringify(taxa)}: ${JSON.stringify(r.corpo)}`);
+    assert.equal(linhas.mybank_loans[0].principal, 4600);
+    // E `interest_rate` NAO ENTRA NO PATCH: ele ja e zero, e a F3 e quem o
+    // escreve quando a 060 estiver colada.
+    const [doEmprestimo] = escritasEm(r.sessao, "mybank_loans", "update");
+    assert.deepEqual(Object.keys(doEmprestimo.patch), ["principal"]);
+  }
+});
+
+test("emprestimo todo pago: so a descricao passa, e o total e 409", async () => {
+  const todasPagas = () =>
+    tabelasDoAjuste({
+      mybank_installments: parcelasDoAjuste("loan-auto").map((p, i) => ({
+        ...p,
+        status: "paid",
+        paid_date: "2026-11-11",
+        paid_transaction_id: `tx-${i}`,
+      })),
+    });
+
+  // O TOTAL NAO TEM ONDE CAIR: nao ha parcela em aberto para repartir, e
+  // reescrever uma `paid` e o que esta secao inteira existe para impedir.
+  const comTotal = todasPagas();
+  const r1 = await ajustarEmprestimo({ corpo: { total: 5000 }, tabelas: comTotal });
+  assert.equal(r1.status, 409, JSON.stringify(r1.corpo));
+  assert.match(r1.corpo.error, /Só a descrição/);
+  assert.equal(r1.sessao.escritas.length, 0);
+
+  // A DESCRICAO PASSA, e recusa-la seria trancar a unica coisa que sobrou para
+  // consertar num emprestimo que ja acabou de ser pago.
+  const soTexto = todasPagas();
+  const r2 = await ajustarEmprestimo({
+    corpo: { descricao: "Moto elétrica (quitada)" },
+    tabelas: soTexto,
+  });
+  assert.equal(r2.status, 200, JSON.stringify(r2.corpo));
+  assert.equal(soTexto.mybank_loans[0].description, "Moto elétrica (quitada)");
+  // E NENHUMA COBRANCA E TOCADA: nao ha parcela em aberto, entao a lista de
+  // chaves e vazia e a guarda do `.length` impede o `.in` vazio.
+  assert.equal(
+    r2.sessao.escritas.filter((e) => e.tabela === "scheduled_transactions").length,
+    0
+  );
+  assert.equal(r2.corpo.parcelas_ajustadas, 0);
+});
+
+test("o DEVEDOR recebe 403, e nao um sucesso de zero linha", async () => {
+  // `mybank_loans_select` e `lender OR borrower`: o devedor enxerga a linha e
+  // chega aqui com um emprestimo legivel. E UPDATE que a policy filtra volta
+  // 200 com `[]`, sem erro e sem SQLSTATE -- sem esta pergunta ele receberia
+  // "ajustei 3 parcelas" de uma escrita que nao aconteceu.
+  const linhas = tabelasDoAjuste({
+    mybank_loans: [{ ...EMPRESTIMO_QUE_EU_DEVO }],
+  });
+
+  const { status, corpo, sessao } = await ajustarEmprestimo({
+    loanId: "loan-eu-devo",
+    corpo: { total: 100 },
+    tabelas: linhas,
+  });
+
+  assert.equal(status, 403, JSON.stringify(corpo));
+  assert.match(corpo.error, /Só quem emprestou/);
+  assert.equal(sessao.escritas.length, 0);
+  assert.equal(linhas.mybank_loans[0].principal, 1200);
+});
+
+test("emprestimo que nao e meu nem e divida minha volta 404 no ajuste tambem", async () => {
+  const { status, corpo, sessao } = await ajustarEmprestimo({
+    loanId: "loan-de-ninguem",
+    corpo: { total: 4600 },
+  });
+
+  assert.equal(status, 404, JSON.stringify(corpo));
+  assert.equal(sessao.escritas.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// AS FALHAS DE ESCRITA, E A DIRECAO DELAS
+// ---------------------------------------------------------------------------
+
+test("UPDATE de parcela filtrado pela RLS: 500, e o emprestimo NAO e atualizado", async () => {
+  const linhas = tabelasDoAjuste();
+  const { status, corpo, sessao } = await ajustarEmprestimo({
+    corpo: { total: 4600 },
+    tabelas: linhas,
+    rlsFiltra: { mybank_installments: true },
+  });
+
+  assert.equal(status, 500, JSON.stringify(corpo));
+  assert.equal(corpo.parcelas_ajustadas, 0);
+  assert.match(corpo.error, /Nada foi ajustado/);
+
+  // O EMPRESTIMO FICA COMO ESTAVA, e isso e o ponto da ordem invertida em
+  // relacao ao cancelamento: `principal` e a afirmacao de um total que a soma
+  // das parcelas tem de fechar, e gravar R$ 4.600 aqui deixaria a linha
+  // afirmando um numero que nenhuma parcela sustenta.
+  assert.equal(escritasEm(sessao, "mybank_loans", "update").length, 0);
+  assert.equal(linhas.mybank_loans[0].principal, 4000);
+
+  // E A COBRANCA NAO E MEXIDA: a parcela vem antes de proposito.
+  assert.equal(
+    sessao.escritas.filter((e) => e.tabela === "scheduled_transactions").length,
+    0
+  );
+});
+
+test("a cobranca que nao e alcancada deixa o ajuste PARCIAL, e nomeia a parcela", async () => {
+  const linhas = tabelasDoAjuste();
+  const { status, corpo, sessao } = await ajustarEmprestimo({
+    corpo: { total: 4600 },
+    tabelas: linhas,
+    rlsFiltra: { scheduled_transactions: true },
+  });
+
+  // 200 E NAO 500: a parcela 2 FOI ajustada, e um 500 apagaria o corpo que diz
+  // isso. `success: false` e `parcial` sao o que distingue 1-de-3 de 3.
+  assert.equal(status, 200, JSON.stringify(corpo));
+  assert.equal(corpo.success, false);
+  assert.equal(corpo.parcelas_ajustadas, 1);
+  assert.deepEqual(corpo.numeros, [2]);
+  assert.equal(corpo.previsoes_ajustadas, 0);
+  assert.match(corpo.parcial, /parcela 2/);
+
+  // A PARCELA 2 FOI REESCRITA E ESTA NA CONTA -- e esta e a assercao que a ordem
+  // do `push` guarda: contar a parcela so depois da cobranca faria esta resposta
+  // dizer "nada foi ajustado" sobre uma divida que JA mudou no banco.
+  const porId = new Map(linhas.mybank_installments.map((p) => [p.id, p]));
+  assert.equal(porId.get("aj-2").amount, 1200);
+
+  // E O LACO PARA: a 3 e a 4 nao sao tocadas. Insistir depois de uma falha de
+  // escrita so aumenta a chance de parar num estado pior.
+  assert.equal(porId.get("aj-3").amount, 1000);
+  assert.equal(porId.get("aj-4").amount, 1000);
+
+  // O EMPRESTIMO NAO E ATUALIZADO numa passagem que parou.
+  assert.equal(escritasEm(sessao, "mybank_loans", "update").length, 0);
+  assert.equal(linhas.mybank_loans[0].principal, 4000);
+});
+
+test("REPETIR o mesmo pedido termina o servico -- o ajuste e idempotente", async () => {
+  // A RAZAO DE O CONTRATO SER "MANDE O ESTADO QUE VOCE QUER" e nao "mande o que
+  // mudou". Depois de uma passagem que parou na parcela 2, o MESMO corpo
+  // reescreve a 3 e a 4, pula a 2 (que ja esta no valor pedido) e atualiza o
+  // emprestimo no fim. Nada precisa saber o que a primeira alcancou.
+  const linhas = tabelasDoAjuste();
+
+  const parcial = await ajustarEmprestimo({
+    corpo: { total: 4600 },
+    tabelas: linhas,
+    rlsFiltra: { scheduled_transactions: true },
+  });
+  assert.equal(parcial.corpo.parcelas_ajustadas, 1);
+
+  const segunda = await ajustarEmprestimo({
+    corpo: { total: 4600 },
+    tabelas: linhas,
+  });
+
+  assert.equal(segunda.status, 200, JSON.stringify(segunda.corpo));
+  assert.equal(segunda.corpo.success, true);
+
+  const porId = new Map(linhas.mybank_installments.map((p) => [p.id, p]));
+  for (const n of [2, 3, 4]) {
+    assert.equal(porId.get(`aj-${n}`).amount, 1200, `parcela ${n}`);
+  }
+  assert.equal(porId.get("aj-1").amount, 1000);
+  assert.equal(linhas.mybank_loans[0].principal, 4600);
+
+  // A PARCELA 2 NAO E REESCRITA NA SEGUNDA PASSAGEM: ela ja esta no valor
+  // pedido, e o patch dela sai vazio.
+  assert.equal(
+    escritaPorEq(segunda.sessao, "mybank_installments", "id", "aj-2"),
+    null
+  );
+  // MAS A COBRANCA DELA E, porque foi ela que faltou.
+  assert.ok(escritaPorEq(segunda.sessao, "scheduled_transactions", "id", "prev-aj-2"));
+  assert.equal(segunda.corpo.previsoes_ajustadas, 3);
+});
+
+test("UPDATE do emprestimo filtrado pela RLS: a resposta AVISA, e nao mente", async () => {
+  const linhas = tabelasDoAjuste();
+  const { status, corpo } = await ajustarEmprestimo({
+    corpo: { total: 4600 },
+    tabelas: linhas,
+    rlsFiltra: { mybank_loans: true },
+  });
+
+  assert.equal(status, 200, JSON.stringify(corpo));
+  assert.equal(corpo.emprestimo_atualizado, false);
+  assert.equal(corpo.success, false);
+  assert.match(corpo.message, /não — tente de novo/);
+
+  // AS PARCELAS FICAM AJUSTADAS: elas vem antes de proposito, e desfaze-las
+  // exigiria um segundo laco de escrita para voltar a um estado que ninguem
+  // pediu.
+  assert.equal(corpo.parcelas_ajustadas, 3);
+  assert.equal(linhas.mybank_loans[0].principal, 4000);
+});
+
+test("corpo que nao e JSON e 400, e nao `Erro interno do servidor`", async () => {
+  const sessao = criarDuble({ user: { id: EU }, tabelas: tabelasDoAjuste() });
+  globalThis.__dubleDeSupabase = { sessao: () => sessao.client };
+
+  let resposta;
+  try {
+    resposta = await CANCELA.PATCH(
+      {
+        json: async () => {
+          throw new SyntaxError("Unexpected token");
+        },
+      },
+      { params: { id: "loan-auto" } }
+    );
+  } finally {
+    delete globalThis.__dubleDeSupabase;
+  }
+
+  assert.equal(resposta.status, 400);
+  assert.equal(sessao.escritas.length, 0);
+});
+
+test("CONTROLE: a rota do ajuste usou o duble (as ausencias nao sao vacuas)", async () => {
+  // `suite-vermelha-faz-todo-controle-negativo-passar-vacuo`: um
+  // `assert.equal(escritas.length, 0)` passa quando a rota nao chamou o duble
+  // nenhuma vez -- por um import errado, por um 401 inesperado. Este teste e o
+  // que da sentido as outras ausencias desta parte.
+  const { status, corpo, sessao } = await ajustarEmprestimo({
+    corpo: { total: 4600 },
+  });
+
+  assert.equal(status, 200, JSON.stringify(corpo));
+  assert.ok(sessao.lidas.length > 0, "a rota nao leu nada pelo duble");
+  assert.ok(sessao.escritas.length > 0, "a rota nao escreveu nada pelo duble");
+  assert.ok(
+    sessao.lidas.some((l) => l.tabela === "mybank_loans"),
+    "a rota nao leu `mybank_loans`"
+  );
+  assert.ok(
+    sessao.escritas.some((e) => e.tabela === "mybank_installments"),
+    "a rota nao escreveu em `mybank_installments`"
+  );
+});
+
+// ---------------------------------------------------------------------------
+// PARTE 8.5 -- AS GUARDAS DO AJUSTE MEDIDAS NO PROPRIO CONTRATO
+// ---------------------------------------------------------------------------
+// As quatro desta parte sobreviveram a PARTE 8 inteira, e as quatro sao
+// dinheiro. O motivo e sempre o mesmo e tem nome:
+// `filtro-a-jusante-torna-o-porteiro-inobservavel` -- a rota chega nas funcoes
+// com os argumentos JA PENEIRADOS, e o porteiro de dentro nunca ve o caso que
+// ele existe para barrar. Medir pela rota, aqui, e medir a peneira duas vezes.
+//
+// Por isso estas quatro chamam a FUNCAO, com o argumento que a rota nao monta.
+// Nao e preferencia por teste de unidade: e o unico jeito de a assercao cair no
+// lado errado da guarda. Uma delas (`so o TOTAL`) continua sendo de rota --
+// aquela a peneira nao esconde, o que a escondia era o FIXTURE.
+// ---------------------------------------------------------------------------
+
+test("o porteiro do ajuste: a cauda que inclui a PAGA nao a reescreve", () => {
+  // O CONTROLE NEGATIVO QUE A ISSUE NOMEIA, e a PARTE 8 nao o alcanca.
+  //
+  // `CASO A ativo e sem aviso` afirma que `aj-1` (`paid`) fica intacta, e ela
+  // fica -- mas nao e o `porId` de `pendentesDaSerie` que a protege ali. A rota
+  // monta a `cauda` com `caudaRecalculada({ pendentes })`, entao o laco de
+  // `ajusteDoEmprestimo` nunca RECEBE o id de uma parcela paga: trocar aquele
+  // mapa por `parcelas` nao muda nada pela rota, e o mutante que a issue manda
+  // matar passava.
+  //
+  // Aqui a cauda vem A MAO com `aj-1` dentro -- o estado que o cabecalho da
+  // funcao promete sobreviver ("o id que nao esta no mapa simplesmente nao
+  // entra", "a que continua certa se um dia a cauda vier de outro lugar"). E a
+  // promessa, agora, e medida.
+  const parcelas = parcelasDoAjuste("loan-auto");
+
+  const ajuste = LIB.ajusteDoEmprestimo({
+    emprestimo: { description: "Moto elétrica", principal: 4000 },
+    parcelas,
+    pedido: { total: 4600 },
+    cauda: [
+      { id: "aj-1", numero: 1, amount: 1200, due_date: "2026-11-10" },
+      { id: "aj-2", numero: 2, amount: 1200, due_date: "2026-12-10" },
+    ],
+  });
+
+  // SO A `pending` ENTROU. Com o mapa montado sobre `parcelas`, `aj-1` entra e
+  // a resposta manda reescrever de R$ 1.000 para R$ 1.200 uma parcela cuja
+  // perna de R$ 1.000 esta no extrato.
+  assert.deepEqual(
+    ajuste.parcelas.map((p) => p.id),
+    ["aj-2"]
+  );
+  assert.equal(
+    ajuste.parcelas.some((p) => p.id === "aj-1"),
+    false,
+    "a parcela PAGA entrou no ajuste"
+  );
+
+  // E A COBRANCA DELA TAMBEM NAO: no Caso A cada linha da lista vira um UPDATE
+  // em `scheduled_transactions`, e a previsao de `aj-1` ja foi BAIXADA (ela tem
+  // `transaction_id`). Reescrever o valor dela mexeria na conta a pagar de um
+  // lancamento ja realizado.
+  assert.deepEqual(
+    LIB.chavesDasPrevisoesDoAjuste({
+      caso: "auto",
+      parcelasAjustadas: ajuste.parcelas,
+    }),
+    ["mybank:aj-2"]
+  );
+});
+
+test("`jaRecebidoDaSerie` conta so a PAGA -- o aviso nao e dinheiro", () => {
+  // `reported` contado como recebido reparte a cauda sobre o que falta ERRADO.
+  // Pela rota o mutante e invisivel: `problemaDoAjuste` recusa a serie inteira
+  // quando ha uma `reported` (`tem_parcela_reportada`), entao nenhum fixture de
+  // rota chega aqui com uma. A guarda e boa E a funcao tem contrato proprio --
+  // o cabecalho dela diz "`reported` NAO conta, e isso nao e descuido" --, e e
+  // nesse contrato que a medicao cabe.
+  const parcelas = [
+    parcelaDoAjuste(1, "loan-auto", { status: "paid", amount: 1000 }),
+    parcelaDoAjuste(2, "loan-auto", {
+      status: "reported",
+      amount: 1000,
+      reported_at: "2026-12-09T10:00:00Z",
+    }),
+    parcelaDoAjuste(3, "loan-auto", { status: "pending", amount: 1000 }),
+  ];
+
+  // R$ 1.000, E NAO R$ 2.000. "A pessoa avisou" nao e "o dinheiro entrou".
+  assert.equal(LIB.jaRecebidoDaSerie(parcelas), 1000);
+
+  // E A SERIE SEM NENHUMA PAGA NAO TEM NADA RECEBIDO -- o outro lado da mesma
+  // pergunta, que um `!== pending` tambem erraria (ele daria R$ 1.000).
+  assert.equal(
+    LIB.jaRecebidoDaSerie([
+      parcelaDoAjuste(1, "loan-auto", { status: "reported", amount: 1000 }),
+      parcelaDoAjuste(2, "loan-auto", { status: "pending", amount: 1000 }),
+    ]),
+    0
+  );
+});
+
+test("o elo da cobranca casa por IGUALDADE: `mybank:p-1` nao e `mybank:p-10`", () => {
+  // O MESMO DEFEITO QUE A ANTECIPACAO JA MEDE, e que o ajuste nao media: a
+  // chave `mybank:<id>` de uma parcela e PREFIXO da de outra sempre que um id
+  // e prefixo do outro, e `includes` casa prefixo. O estrago e a cobranca de
+  // OUTRA parcela recebendo o valor desta -- e no Caso A ela e uma conta a
+  // pagar de verdade, na agenda da pessoa.
+  //
+  // A PARCELA `p-1` NAO TEM PREVISAO NENHUMA no fixture, e e isso que faz a
+  // medicao cair no lado errado da guarda: por igualdade ela e `semPrevisao`
+  // (que a resposta NOMEIA, e nao recusa); por `includes` ela sequestra a
+  // previsao de `p-10`.
+  const previsaoDaP10 = {
+    id: "prev-p-10",
+    description: "Moto elétrica (10/12)",
+    amount: 1000,
+    due_date: "2027-08-10",
+    notes: "mybank:p-10",
+    status: "pending",
+  };
+
+  const resultado = LIB.previsoesDoAjuste({
+    parcelasAjustadas: [
+      { id: "p-1", numero: 1 },
+      { id: "p-10", numero: 10 },
+    ],
+    previsoes: [previsaoDaP10],
+  });
+
+  // A `p-1` FICA SEM PREVISAO, e a `p-10` fica com a dela.
+  assert.deepEqual(resultado.semPrevisao, [1]);
+  assert.deepEqual(
+    resultado.pares.map((par) => [par.parcela.id, par.previsao.id]),
+    [["p-10", "prev-p-10"]]
+  );
+
+  // E NINGUEM FOI RECUSADO: previsao ausente nao e 409 (ela e um estrago
+  // anterior ao pedido), e confundir as duas respostas e o que faria esta
+  // assercao passar por acidente.
+  assert.deepEqual(resultado.comPrevisaoBaixada, []);
+});
+
+test("so o TOTAL: a cauda de vencimentos IRREGULARES fica com as datas dela", async () => {
+  // O FIXTURE DA PARTE 8 ESCONDIA ESTE DEFEITO, e nao a peneira: lá as
+  // pendentes vencem 2026-12-10, 2027-01-10 e 2027-02-10 -- exatamente de mes
+  // em mes. `serieDeParcelas` partindo da primeira RECALCULA essas mesmas tres
+  // datas, entao ignorar o `primeiroVencimentoDaCauda === null` nao mudava
+  // nenhum valor que a suite lesse. O caso canonico nao distinguia os dois
+  // caminhos (`soma-em-float-coincide-no-numero-canonico-da-feature`).
+  //
+  // CAUDA IRREGULAR E O CASO COMUM, e nao o exotico: o grampeamento de fim de
+  // mes e a parcela reagendada a mao em Contas a Pagar produzem exatamente
+  // isto. Quem manda so `total` quer o valor novo -- mover 21 vencimentos de
+  // graca e, no Caso A, 21 contas a pagar mudando de mes sem pedido.
+  const linhas = tabelasDoAjuste({
+    mybank_installments: [
+      parcelaDoAjuste(1, "loan-auto", {
+        status: "paid",
+        due_date: "2026-11-10",
+        paid_date: "2026-11-11",
+        paid_transaction_id: "tx-da-1",
+      }),
+      parcelaDoAjuste(2, "loan-auto", { due_date: "2026-12-10" }),
+      parcelaDoAjuste(3, "loan-auto", { due_date: "2027-01-15" }),
+      parcelaDoAjuste(4, "loan-auto", { due_date: "2027-02-20" }),
+    ],
+  });
+
+  const { status, corpo } = await ajustarEmprestimo({
+    corpo: { total: 4600 },
+    tabelas: linhas,
+  });
+
+  assert.equal(status, 200, JSON.stringify(corpo));
+
+  const porId = new Map(linhas.mybank_installments.map((p) => [p.id, p]));
+
+  // CADA UMA COM A DATA DELA. A serie calculada a partir de 2026-12-10 daria
+  // 2027-01-10 e 2027-02-10 -- e sao esses dois numeros que o mutante grava.
+  assert.equal(porId.get("aj-2").due_date, "2026-12-10");
+  assert.equal(porId.get("aj-3").due_date, "2027-01-15");
+  assert.equal(porId.get("aj-4").due_date, "2027-02-20");
+
+  // O VALOR MUDOU -- sem isto a assercao das datas passaria tambem numa rota
+  // que nao ajustou nada.
+  for (const n of [2, 3, 4]) {
+    assert.equal(porId.get(`aj-${n}`).amount, 1200, `parcela ${n}`);
+  }
+
+  // E A COBRANCA DO CASO A LEVOU A DATA DA PARCELA, e nao a da serie: a
+  // previsao de `aj-3` nasceu no fixture vencendo 2027-01-10, e o ajuste tem de
+  // traze-la para o 15 -- a cobranca segue a divida.
+  const porPrevisao = new Map(
+    linhas.scheduled_transactions.map((p) => [p.id, p])
+  );
+  assert.equal(porPrevisao.get("prev-aj-3").due_date, "2027-01-15");
+  assert.equal(porPrevisao.get("prev-aj-4").due_date, "2027-02-20");
+});
+
+// ---------------------------------------------------------------------------
+// PARTE 8.6 -- A JANELA ENTRE A LEITURA E A ESCRITA
+// ---------------------------------------------------------------------------
+// Duas guardas do ajuste sao sobre um estado que a leitura NAO VE: o banco
+// mudou entre o passo 2.5 e o passo 3 (`o-banco-muda-no-meio-do-heartbeat`). O
+// duble le e escreve o mesmo array, entao ele nunca produz essa divergencia
+// sozinho -- e os dois mutantes sobreviviam por isso, nao por a guarda ser
+// redundante.
+//
+// A JANELA E ABERTA AQUI E NAO NO DUBLE, de proposito: `criarDuble` e
+// compartilhado por muitas suites, e um gancho novo lá seria uma opcao a mais
+// para todas elas manterem. O que esta sonda faz e envolver o `from` da sessao
+// e mexer no FIXTURE -- que e um array que o teste ja possui -- no primeiro
+// acesso a tabela DEPOIS de ela ter sido lida.
+//
+// O GATILHO E O REGISTRO DA LEITURA, E NAO UMA CONTAGEM DE `from()`:
+// `sessao.lidas` so ganha a entrada quando o TERMINADOR do select resolve,
+// entao o `if` cai exatamente na escrita. Uma contagem (`a 2a chamada`)
+// quebraria calada no dia em que a rota ganhasse uma leitura a mais, e o
+// mutante voltaria a sobreviver sem ninguem notar.
+// ---------------------------------------------------------------------------
+
+async function ajustarComJanela({
+  loanId = "loan-auto",
+  corpo = {},
+  tabelas: linhas,
+  /** A tabela cuja ESCRITA vem depois da leitura que esta sonda intercepta. */
+  tabela,
+  /** O que o banco faz na janela -- chamado UMA vez. */
+  muda,
+} = {}) {
+  const sessao = criarDuble({ user: { id: EU }, tabelas: linhas });
+  const from = sessao.client.from.bind(sessao.client);
+  let abriu = false;
+
+  const client = {
+    ...sessao.client,
+    from(nome) {
+      if (
+        !abriu &&
+        nome === tabela &&
+        sessao.lidas.some((l) => l.tabela === tabela)
+      ) {
+        abriu = true;
+        muda();
+      }
+      return from(nome);
+    },
+  };
+
+  globalThis.__dubleDeSupabase = { sessao: () => client };
+
+  let resposta;
+  try {
+    resposta = await CANCELA.PATCH(
+      { json: async () => corpo },
+      { params: { id: loanId } }
+    );
+  } finally {
+    delete globalThis.__dubleDeSupabase;
+  }
+
+  return {
+    status: resposta.status,
+    corpo: await resposta.json(),
+    sessao,
+    // SEM ISTO A SONDA PODE SER VACUA: uma janela que nunca abriu mediria o
+    // caminho normal e passaria verde afirmando o contrario.
+    abriu: () => abriu,
+  };
+}
+
+test("a previsao BAIXADA na janela nao e reescrita, e o ajuste para", async () => {
+  // O `.eq("status", "pending")` DO PROPRIO PEDIDO DE UPDATE, medido.
+  //
+  // O passo 2.5 leu a previsao da parcela 2 `pending` e aprovou o pedido. ENTRE
+  // aquela leitura e esta escrita ela foi baixada em outra aba: ha uma perna em
+  // `financial_transactions` e a conta a pagar saiu da agenda. Sem o filtro no
+  // pedido, o ajuste reescreve `amount`, `due_date` e `description` de uma
+  // cobranca JA REALIZADA -- e o passo 2.5, que existe para impedir isso, foi
+  // honesto e chegou tarde.
+  const linhas = tabelasDoAjuste();
+  const daDois = linhas.scheduled_transactions.find((p) => p.id === "prev-aj-2");
+
+  const { status, corpo, abriu } = await ajustarComJanela({
+    corpo: { total: 4600 },
+    tabelas: linhas,
+    tabela: "scheduled_transactions",
+    muda: () => {
+      daDois.status = "paid";
+      daDois.paid_date = "2026-12-09";
+      daDois.transaction_id = "tx-de-outra-aba";
+    },
+  });
+
+  assert.equal(abriu(), true, "a janela nao abriu: a sonda seria vacua");
+  assert.equal(status, 200, JSON.stringify(corpo));
+
+  // A COBRANCA JA BAIXADA FICA INTEIRA COMO ESTAVA -- a assercao de dinheiro.
+  assert.equal(daDois.amount, 1000);
+  assert.equal(daDois.description, "Moto elétrica (2/4)");
+  assert.equal(daDois.due_date, "2026-12-10");
+  assert.equal(daDois.status, "paid");
+  assert.equal(daDois.transaction_id, "tx-de-outra-aba");
+
+  // E O PEDIDO PARA, PARCIAL E NOMEANDO: a parcela 2 ja tinha sido reescrita
+  // quando a cobranca dela falhou, e a resposta diz as duas coisas.
+  assert.equal(corpo.success, false);
+  assert.equal(corpo.previsoes_ajustadas, 0);
+  assert.match(corpo.parcial, /parcela 2/);
+
+  const porId = new Map(linhas.mybank_installments.map((p) => [p.id, p]));
+  assert.equal(porId.get("aj-2").amount, 1200);
+  assert.equal(porId.get("aj-3").amount, 1000);
+  assert.equal(porId.get("aj-4").amount, 1000);
+
+  // O EMPRESTIMO NAO E ATUALIZADO numa passagem que parou.
+  assert.equal(linhas.mybank_loans[0].principal, 4000);
+});
+
+test("o UPDATE que devolve linha de OUTRO credor nao conta como sucesso", async () => {
+  // A LINHA ESCRITA, CONFERIDA -- e nao so contada.
+  //
+  // O passo 1 leu o emprestimo e conferiu que ele e meu. A linha que o UPDATE
+  // DEVOLVE e outra leitura, e as duas podem divergir: no banco de verdade a
+  // policy e o `.eq("id")` sao o que deveria garantir que e a mesma, e
+  // `atualizados.every(l => l.lender_user_id === user.id)` e a camada que nao
+  // depende delas. `atualizados.length > 0` nao distingue "gravei na minha
+  // linha" de "gravei em UMA linha" -- e a resposta diria "ajustei" sobre a
+  // divida de outra pessoa.
+  const linhas = tabelasDoAjuste();
+  const emprestimo = linhas.mybank_loans[0];
+
+  const { status, corpo, abriu } = await ajustarComJanela({
+    corpo: { total: 4600 },
+    tabelas: linhas,
+    tabela: "mybank_loans",
+    muda: () => {
+      emprestimo.lender_user_id = LAIS;
+    },
+  });
+
+  assert.equal(abriu(), true, "a janela nao abriu: a sonda seria vacua");
+  assert.equal(status, 200, JSON.stringify(corpo));
+
+  // A RESPOSTA AVISA, e nao mente -- a mesma frase do caso em que a RLS filtra.
+  assert.equal(corpo.emprestimo_atualizado, false);
+  assert.equal(corpo.success, false);
+  assert.match(corpo.message, /não — tente de novo/);
+
+  // E AS PARCELAS FICAM AJUSTADAS: elas vem antes de proposito.
+  assert.equal(corpo.parcelas_ajustadas, 3);
 });
