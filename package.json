@@ -237,6 +237,8 @@
     "test:emprestimo-do-mybank": "node scripts/compila.mjs -p scripts/tsconfig.emprestimo-do-mybank-test.json && node scripts/resolve-aliases.mjs .tmp-emprestimo-do-mybank lib --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-emprestimo-do-mybank utils --espelha-raiz && node scripts/resolve-next-subpaths.mjs .tmp-emprestimo-do-mybank && node scripts/monta-duble-de-rota.mjs .tmp-emprestimo-do-mybank && node --test scripts/test-emprestimo-do-mybank.mjs",
     "test:juros-do-emprestimo": "node scripts/compila.mjs lib/juros-do-emprestimo.ts --outDir .tmp-juros-do-emprestimo --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-juros-do-emprestimo.mjs",
     "mutantes:juros-do-emprestimo": "node scripts/mutantes-juros-do-emprestimo.mjs",
+    "test:saldo-da-conversa": "node scripts/compila.mjs -p scripts/tsconfig.saldo-da-conversa-test.json && node scripts/resolve-aliases.mjs .tmp-saldo-da-conversa lib --espelha-raiz && TZ=America/Sao_Paulo node --test scripts/test-saldo-da-conversa.mjs && TZ=UTC node --test scripts/test-saldo-da-conversa.mjs",
+    "mutantes:saldo-da-conversa": "node scripts/mutantes-saldo-da-conversa.mjs",
     "test:mybank-na-tela": "node scripts/compila.mjs -p scripts/tsconfig.mybank-na-tela-test.json && node --test scripts/test-mybank-na-tela.mjs",
     "mutantes:emprestimo-do-mybank": "node scripts/mutantes-emprestimo-do-mybank.mjs",
     "mutantes:mybank-na-tela": "node scripts/mutantes-mybank-na-tela.mjs",
