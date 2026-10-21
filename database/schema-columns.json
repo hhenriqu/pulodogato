@@ -515,6 +515,7 @@
     "first_due_date",
     "id",
     "installment_count",
+    "interest_kind",
     "interest_rate",
     "lender_account_id",
     "lender_user_id",

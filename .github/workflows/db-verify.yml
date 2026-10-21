@@ -5007,6 +5007,158 @@ jobs:
       #
       # Quem acrescentar coluna numa migration e nao rodar
       # `node scripts/gen-schema-columns.mjs` recebe este passo vermelho.
+      # =======================================================================
+      # HMO-445 -- OS JUROS DO MYBANK (062), FILHA F1 DA HMO-444
+      # =======================================================================
+      # A 062 solta a trava `mybank_loans_interest_rate_fase_1` que a 053
+      # instalou de proposito, grava a convencao de juro na linha
+      # (`interest_kind text NOT NULL DEFAULT 'total_simples'`, catraca de UM
+      # valor), reescreve `mybank_loans_interest_rate_check` com piso E teto
+      # (`0 <= interest_rate <= 10`) e reescreve tres `COMMENT ON COLUMN`.
+      #
+      # Nenhuma view recolada, nenhuma trigger, nenhum backfill -- por isso NAO
+      # ha step de `view_security_invoker_test.sql` depois dela: ela nao toca
+      # view nenhuma, e um step a mais ali afirmaria que toca.
+      #
+      # POR QUE ESTE BLOCO ESTA AQUI, E NAO NO FIM DO JOB
+      # -------------------------------------------------
+      # Porque esta migration CRIA COLUNA (`interest_kind`). O step
+      # `schema-columns.json em dia` (logo abaixo) e um `--check` que compara
+      # ESTE banco com o arquivo gerado; com o bloco no fim do job ele
+      # compararia um banco SEM `interest_kind` contra um JSON que JA a tem, e
+      # sairia 1 -- acusando o arquivo gerado ("rode o gerador", que e a unica
+      # coisa que nao resolve) em vez da posicao do step. Os blocos da 058, da
+      # 059, da 060 e da 061 ja registram esta regra; este e o quinto a
+      # obedece-la -- a 061 tambem esta aqui acima porque o schema-columns.json
+      # inventaria VIEW tambem, e ela acrescentou coluna em card_invoice_lines
+      # (conferido no proprio arquivo gerado).
+      #
+      # A ORDEM DOS QUATRO STEPS NAO E NEGOCIAVEL
+      # -----------------------------------------
+      #   1. a fixture planta um emprestimo SEM juro, com as duas parcelas
+      #      fechando com o principal, e PROVA que `interest_rate = 0.2` era
+      #      recusado -- este e o unico ponto da cadeia em que a trava de fase
+      #      ainda existe. E COMITA;
+      #   2. a migration -- a trava sai e o emprestimo plantado recebe
+      #      `interest_kind = 'total_simples'` pelo DEFAULT, nao por backfill;
+      #   3. a migration DE NOVO (idempotencia);
+      #   4. a suite.
+      #
+      # O step 1 e o que torna a suite capaz de medir a 062: a assercao de que
+      # `interest_rate = 0.2` PASSA ficaria verde tambem contra uma 062 vazia,
+      # num banco onde a trava nunca tivesse sido colada. Sem a prova da recusa
+      # ANTES, o par (falha antes / passa depois) nao existe -- e o modo de
+      # falha de `guarda-de-ancora-verde-nao-prova-que-o-mutante-morre`.
+      #
+      # Nao ha step de "mutar a linha entre as duas colagens" como na 058, na
+      # 059 e na 060: aqui o que a segunda colagem poderia estragar e a propria
+      # linha plantada no step 1 (um `UPDATE ... SET interest_kind` de
+      # "limpeza"), e ela ja esta no banco desde antes da primeira.
+      #
+      # A FIXTURE COMITA, e aqui isso exige mais cuidado do que no fim do job:
+      # as linhas ficam visiveis para todo step daqui para baixo. Medido que
+      # nenhum deles se incomoda -- os passos de RLS e de `anon` leem CATALOGO e
+      # nao linha; os de deriva e o drill de backup constroem banco proprio; a
+      # suite da 053 (a unica que le `mybank_loans`) roda na POSICAO dela, muito
+      # acima; e as suites que contam linha recortam pelo `user_id` DELAS
+      # (`a0560000-`, `a0580000-`, `a0590000-`, `a0600000-`, `a6100000-`),
+      # enquanto o usuario desta fixture e proprio (`a0620000-...`). Esse
+      # prefixo foi TROCADO de `a0600000-` para `a0620000-` junto com a
+      # renumeracao: a fixture da HMO-443 usa `a0600000-`, as duas comitam, e o
+      # `ON CONFLICT DO NOTHING` da minha teria reusado a conta DELA (que nao e
+      # de investimento) calado. A fixture da 061 usa `a6100000-`, que nao
+      # colide com nenhuma das duas (conferido).
+      # O `profiles` dela nasce `is_public = FALSE` de proposito, senao
+      # `view_security_invoker_test.sql` (que roda mais abaixo, depois da 057)
+      # perde o controle -- a armadilha documentada no cabecalho de
+      # `056_contas_antes_da_056.sql`.
+      - name: Emprestimo plantado antes da 062, e o juro ainda recusado
+        run: $PSQL -f database/tests/062_emprestimo_antes_da_062.sql
+
+      - name: 062_juros_do_mybank
+        run: $PSQL -f database/migrations/062_juros_do_mybank.sql
+
+      # Re-executavel: `DROP CONSTRAINT IF EXISTS` nas tres (nao existe
+      # `ADD CONSTRAINT IF NOT EXISTS` no Postgres, entao o par DROP + ADD e a
+      # forma idempotente), `ADD COLUMN IF NOT EXISTS` e `COMMENT ON`, que e
+      # idempotente por natureza. Producao recebe migration por colagem a mao, e
+      # colar duas vezes acontece -- aqui o re-run tem um segundo papel, que e
+      # alimentar a secao 2 da suite (o emprestimo plantado NAO pode ter a
+      # convencao reescrita pela segunda passada).
+      - name: 062 e idempotente
+        run: $PSQL -f database/migrations/062_juros_do_mybank.sql
+
+      # 12 mutantes da 062 medidos num Postgres 17 local (REMEDIDOS em
+      # 2026-10-21, sobre o arquivo ja renumerado para 062: banco TEMPLATE com a
+      # cadeia 001..061 -- os 200 passos de SQL que este job roda antes daqui --,
+      # um banco novo por mutante criado desse template, e a ordem dos quatro
+      # steps acima reproduzida em cada um): 11 morrem e 1 SOBREVIVE. O controle
+      # positivo (a 062 intacta, com um espaco a mais num comentario) fica
+      # verde, e e ele que separa "o mutante morreu" de "o arranjo esta
+      # quebrado".
+      #
+      # O banco de cada mutante e NOVO, criado do template a cada rodada. Um
+      # banco reaproveitado da rodada anterior daria verde-falso: o objeto que o
+      # mutante deveria deixar de criar ja estaria la da passada de antes.
+      #
+      # CADA MUTANTE FOI RODADO DUAS VEZES: como esta, e com o posflight da
+      # migration APAGADO. A primeira passada diz onde o defeito morre de fato;
+      # a segunda mede o que a SUITE pega sozinha -- sem isso, um posflight que
+      # matasse tudo primeiro deixaria a suite inteira sem medicao propria, e
+      # ninguem notaria se ela estivesse vazia. Os 11 morrem nas DUAS passadas.
+      #
+      # O SITIO DA MORTE E O MEDIDO, e nao o esperado:
+      #
+      #                                              com posflight | sem posflight
+      #   * `DROP CONSTRAINT` da trava de fase apagado
+      #                                                  posflight | secao 1, 1a
+      #   * `DEFAULT 'total_simples'` apagado     NA PROPRIA COLAGEM, nas duas
+      #     ("column interest_kind of relation mybank_loans contains null
+      #     values") -- e so porque a fixture plantou emprestimo ANTES; num banco
+      #     do zero este mutante passaria. Medido: ver o CN2 abaixo;
+      #   * `NOT NULL` de interest_kind apagado          posflight | secao 1
+      #   * teto apagado (`>= 0` sozinho, como na 053)   posflight | secao 1
+      #   * piso apagado (`<= 10` sozinho)               posflight | secao 1
+      #   * teto `<= 10` -> `< 10`                       posflight | secao 1
+      #   * teto `<= 10` -> `<= 100`                     posflight | secao 1
+      #   * catraca larga (`IN ('total_simples','total_composto')`)
+      #                                                  posflight | secao 1
+      #   * catraca de interest_kind apagada             posflight | secao 1
+      #   * `COMMENT ON principal` apagado (a frase antiga da 053 sobrevive)
+      #                                                  posflight | secao 7
+      #   * `COMMENT ON interest_kind` apagado           posflight | secao 7
+      #
+      #   * `UPDATE mybank_loans SET interest_kind = 'total_simples'` de
+      #     "limpeza" acrescentado no fim      SOBREVIVE nas duas passadas, e
+      #     por isso ele esta nesta lista: a linha plantada ja vale
+      #     `total_simples`, entao o mutante e indistinguivel do original NESTE
+      #     banco. Ele so se tornaria observavel com um emprestimo de convencao
+      #     DIFERENTE plantado antes -- o que a catraca de um valor so torna
+      #     impossivel hoje. A razao de a migration nao ter `UPDATE` nenhum fica
+      #     argumentada no cabecalho dela, e nao medida aqui: e
+      #     `mutante-sobrevivente-pode-estar-certo` ao contrario -- ele sobrevive
+      #     e continua sendo defeito, no dia em que o segundo valor entrar.
+      #
+      # A secao 1 (catalogo) e quem mata os cinco mutantes de piso/teto/borda na
+      # passada sem posflight, porque ela compara o `pg_get_constraintdef`
+      # INTEIRO e nao "a constraint existe". As secoes 4 e 5 medem o
+      # comportamento (recusa E aceitacao, com as duas bordas do 10) e sao o que
+      # sobra se alguem afrouxar a secao 1 para um `LIKE`.
+      #
+      # OS TRES CONTROLES NEGATIVOS EXTERNOS, todos medidos:
+      #   CN1 a suite contra um banco parado ANTES desta migration -> VERMELHA na
+      #       PRIMEIRA assercao ("a trava de fase NAO existe mais -> esperado 0,
+      #       obtido 1"). E o que prova que ela mede a 062 e nao o estado basal;
+      #   CN2 a 062 colada SEM a fixture (banco do zero) -> a colagem PASSA e a
+      #       suite fica VERMELHA na secao 2 ("o emprestimo pre-existente esta
+      #       VIVO -> esperado 1, obtido 0"). E o que prova que o step 1 nao e
+      #       enfeite;
+      #   CN3 a fixture rodada contra um banco que JA tem a 062 -> VERMELHA
+      #       ("interest_rate = 0.2 foi ACEITO ANTES da 062"). E o que prova que
+      #       a metade (2) dela mede a trava, e nao o tempo.
+      - name: O juro do MyBank entra, com teto, piso e a convencao gravada na linha
+        run: $PSQL -f database/tests/062_juros_do_mybank_test.sql
+
       - name: schema-columns.json em dia com as migrations
         run: node scripts/gen-schema-columns.mjs --check
 
