@@ -31,6 +31,7 @@ import {
 } from "@/lib/variable-spend";
 import {
   buscarLeitura,
+  PARAM_SEM_COPIA,
   podeAfirmarVazio,
   type EstadoDaLeitura,
 } from "@/lib/offline-leitura";
@@ -182,23 +183,15 @@ const CHAVE_AJUSTE_CATEGORIAS = "pulodogato:cash-flow:gasto-por-categoria:v1";
 /** O que a linha "sem categoria" mostra. O calculo so conhece a chave vazia. */
 const ROTULO_SEM_CATEGORIA = "Sem categoria";
 
-/**
- * O parametro que faz o pedido NAO cair na copia guardada no aparelho.
- *
- * `cache: "reload"` no `fetch` nao serve: ele pula o cache HTTP do navegador e
- * nao tem efeito nenhum sobre o Cache Storage do service worker -- a regra
- * NetworkFirst continua servindo a copia quando o servidor passa dos dez
- * segundos, e o botao "Atualizar" devolveria exatamente a mesma faixa com
- * exatamente o mesmo momento. Um botao que nao muda nada e pior que botao
- * nenhum: a pessoa conclui que o app travou.
- *
- * Um parametro novo muda a CHAVE do cache, entao o workbox nao acha copia para
- * esta URL e nao tem para onde cair: ou vem do servidor, ou a tela diz
- * "sem rede" -- que e honesto. A rota ignora o parametro (ela le `dias` e
- * `gastoDiario` e mais nada), e isso e deliberado: o desvio e do service
- * worker, e nao deve chegar como regra no servidor.
- */
-const PARAM_SEM_COPIA = "semCopia";
+// O parametro que faz o pedido NAO cair na copia guardada no aparelho vinha
+// escrito aqui, e agora vem de `lib/offline-leitura` -- o JSDoc inteiro, com o
+// porque de `cache: "reload"` nao servir, mora junto da constante. Esta tela
+// deixou de ser a unica a precisar dele: as tres de movimentacao furam o mesmo
+// cache pelo mesmo botao (HMO-457), e dois literais iguais em dois arquivos sao
+// a forma de a terceira tela nascer com um nome quase igual.
+//
+// A rota desta tela continua ignorando o parametro (ela le `dias` e
+// `gastoDiario` e mais nada), que e a condicao de uso da constante.
 
 function formatarBRL(valor: number): string {
   return Number(valor).toLocaleString("pt-BR", {
