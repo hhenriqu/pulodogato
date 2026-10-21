@@ -21,7 +21,14 @@
     "",
     "lib/acoes-da-linha.ts e lib/retorno-do-lancamento.ts entraram na HMO-301: a",
     "secao tira os botoes das funcoes de la, e o TESTE importa `caminhoDeEdicao`",
-    "de la tambem -- um esboco de href faria a assercao medir a propria sonda."
+    "de la tambem -- um esboco de href faria a assercao medir a propria sonda.",
+    "",
+    "components/SemRede.tsx entrou na HMO-475, e nao por organizacao: a faixa",
+    "FaixaDadoDoAparelho e o unico canal VISIVEL do porque os botoes da linha",
+    "estao apagados (o `title` deles nao abre tooltip em tela de toque, e o",
+    "relato da HMO-457 veio de iPhone). A frase e opt-in pelo `acoesApagadas`",
+    "porque as outras seis telas que usam a faixa nao tem botao por linha, e o",
+    "bloco negativo desta suite e o que protege aquelas seis."
   ],
   "compilerOptions": {
     "target": "es2020",
@@ -42,6 +49,7 @@
   },
   "include": [
     "../components/movimentacoes/SecaoDaTela.tsx",
+    "../components/SemRede.tsx",
     "../components/ui/card.tsx",
     "../lib/acoes-da-linha.ts",
     "../lib/fatura-do-cartao.ts",
