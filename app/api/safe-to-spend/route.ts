@@ -59,8 +59,9 @@
 // COALESCE aqui seria a segunda copia dela, e a copia esquecida e exatamente
 // este defeito; por isso a rota nem le `transaction_type`, que e NULO em parte
 // da base instalada e so vira direcao depois do COALESCE que mora na view.
-// Mesma leitura de /api/papel-de-pao/painel, /api/movimentacoes/resumo e
-// /api/scheduled-transactions/summary.
+// Mesma leitura de /api/movimentacoes/resumo e
+// /api/scheduled-transactions/summary. (Era tambem a de
+// /api/papel-de-pao/painel, apagada na HMO-470 com o painel do modo.)
 //
 // A TRANSFERENCIA NAO MUDOU, e isso e decisao e nao descuido. `direcaoDaAgenda`
 // responde a pergunta de CAIXA e manda tudo que nao e `income` para o lado de

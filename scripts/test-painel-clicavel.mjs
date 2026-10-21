@@ -532,8 +532,17 @@ MODULOS["@/components/dashboard/PrevistoXRealizado"] = {
 MODULOS["@/components/SemRede"] = {
   NumeroIndisponivel: esboco("NUMERO-INDISPONIVEL"),
 };
-MODULOS["@/components/papel-de-pao/PainelDePapel"] = {
-  PainelDePapel: esboco("PAINEL-DE-PAPEL"),
+// O OUTRO RAMO DO PORTAO. Era o PainelDePapel ate a HMO-468; hoje e a conversa,
+// e a HMO-470 apagou o painel. O esboco existe pelo mesmo motivo de antes: o
+// ramo nao e o medido aqui (o useModoPapel abaixo devolve papel: false), mas o
+// import existe no fonte da pagina e a sonda EXIGE que todo modulo importado
+// tenha parte real ou esboco declarado.
+//
+// Sem esta entrada a suite inteira estoura com "a sonda nao montou o modulo",
+// que e o que aconteceu na main entre o merge da F4 (PR #367) e esta PR: 24
+// casos vermelhos de uma vez, nenhum deles sobre o que a suite mede.
+MODULOS["@/components/papel-de-pao/ConversaDePapel"] = {
+  ConversaDePapel: esboco("CONVERSA-DE-PAPEL"),
 };
 // O portao dos dois paineis le o \`localStorage\`, que \`file://\` nega. O ramo
 // medido e o do painel completo, e \`mounted:false\` mostraria so o giro.
@@ -954,9 +963,10 @@ for (const [chave, nome, , temCartao] of CASOS) {
     // importar e que a sonda esbocou calada -- e que pode estar justamente no
     // caminho do que as outras assercoes leem.
     //
-    // SAO DOIS, e nao os cinco declarados em MODULOS: `Progress` so desenha
-    // dentro de uma meta (a rota devolve lista vazia), `NumeroIndisponivel` so
-    // quando uma rota falha em ler, e `PainelDePapel` e o outro ramo do portao.
+    // SAO DOIS, e nao os quatro declarados em MODULOS: `Progress` so desenha
+    // dentro de uma meta (a rota devolve lista vazia) e `NumeroIndisponivel` so
+    // quando uma rota falha em ler. (Eram cinco ate a HMO-470: o quinto era o
+    // `PainelDePapel`, o outro ramo do portao, apagado com o painel.)
     // Esboco declarado e esboco RENDERIZADO sao coisas diferentes, e e o
     // segundo que pode encostar numa assercao.
     assert.deepEqual(resultado[chave].esbocos, [
