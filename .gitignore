@@ -702,3 +702,9 @@ next-env.d.ts
 # .gitignore chega a ser commitado em cima de arquivo de fonte -- ver a entrada
 # do .tmp-parcelamento acima.
 /.tmp-ajuste-do-emprestimo-na-tela/
+
+# Artefato da sonda `scripts/probe-conversa-na-tela.mjs` (HMO-468): a tela da
+# conversa compilada para rodar no Chromium. Artefato, nao fonte -- um `.tmp-*`
+# fora do .gitignore chega a ser commitado em cima de arquivo de fonte (ver a
+# entrada do .tmp-parcelamento acima).
+/.tmp-conversa-na-tela/
