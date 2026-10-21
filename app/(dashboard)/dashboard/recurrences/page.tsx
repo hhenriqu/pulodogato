@@ -21,7 +21,10 @@ import {
   CalendarClock,
 } from "lucide-react";
 import {
+  AVISO_ATUALIZAR_FALHOU,
   buscarLeitura,
+  comSemCopia,
+  ID_DO_AVISO_ATUALIZAR,
   podeAfirmarVazio,
   podeMostrarNumero,
   type EstadoDaLeitura,
@@ -33,6 +36,7 @@ import {
   PainelSemRede,
 } from "@/components/SemRede";
 import { useEstaOnline } from "@/lib/hooks/useEstaOnline";
+import { toast } from "sonner";
 
 // =====================================================
 // Assinaturas e cobrancas recorrentes (HMO-145)
@@ -116,32 +120,68 @@ export default function RecurrencesPage() {
   const [guardadoEm, setGuardadoEm] = useState<Date | null>(null);
   const online = useEstaOnline();
 
-  const carregar = useCallback(async () => {
-    setCarregando(true);
-    setErro(null);
+  const carregar = useCallback(
+    async (semCopia = false) => {
+      // `carregando` troca a lista por "Carregando...". No gesto do botao a
+      // releitura vai POR CIMA do que esta na tela: piscar para o texto de
+      // carregamento e voltar seria a tela se mexendo sem o dado ter mudado, e
+      // se a leitura falhasse o dado do aparelho nao voltaria (HMO-477).
+      if (!semCopia) setCarregando(true);
+      setErro(null);
 
-    const leitura = await buscarLeitura<{
-      recurrences?: Recurrence[];
-      alerts?: Alerta[];
-      monthlyTotal?: number;
-    }>(`/api/recurrences${mostrarIgnoradas ? "?status=all" : ""}`);
+      const leitura = await buscarLeitura<{
+        recurrences?: Recurrence[];
+        alerts?: Alerta[];
+        monthlyTotal?: number;
+      }>(
+        // ESTA e a tela em que o separador nao da para cravar na mao: a URL tem
+        // `?` so quando a pessoa pediu para ver as ignoradas. `comSemCopia`
+        // escolhe `?` ou `&` olhando a URL -- um `&` colado em
+        // `/api/recurrences` viraria outro CAMINHO (404), nao um parametro.
+        //
+        // `semCopia` so no botao "Atualizar" da faixa, e a rota le `status` com
+        // `params.get` e mais nada: o parametro extra passa ignorado (condicao 1
+        // de `PARAM_SEM_COPIA`).
+        comSemCopia(
+          `/api/recurrences${mostrarIgnoradas ? "?status=all" : ""}`,
+          semCopia
+        )
+      );
 
-    setEstado(leitura.estado);
-    setGuardadoEm(leitura.guardadoEm);
+      // UM "ATUALIZAR" QUE NAO TROUXE NADA NAO APAGA O QUE ESTA NA TELA.
+      //
+      // As tres listas acima ja sobrevivem a uma leitura sem corpo, mas o
+      // `estado` nao: com `sem-rede` o painel SUBSTITUI a lista e o total vira
+      // travessao. Escrever o estado novo aqui apagaria da tela as assinaturas
+      // que a pessoa ainda podia consultar -- e elas nao voltam sem recarregar
+      // a pagina. `semCopia` garante que nao havia copia para cair, entao isto
+      // quer dizer so que a rede nao respondeu AGORA.
+      if (semCopia && !leitura.dados) {
+        toast.error(AVISO_ATUALIZAR_FALHOU, { id: ID_DO_AVISO_ATUALIZAR });
+        setCarregando(false);
+        return;
+      }
 
-    // Sem corpo, o que ja estava na tela fica. Zerar aqui faria as
-    // assinaturas sumirem ao perder o sinal, que e o oposto do que a copia
-    // guardada no aparelho existe para permitir.
-    if (leitura.dados) {
-      setRecorrencias(leitura.dados.recurrences || []);
-      setAlertas(leitura.dados.alerts || []);
-      setTotalMensal(leitura.dados.monthlyTotal || 0);
-    }
+      setEstado(leitura.estado);
+      setGuardadoEm(leitura.guardadoEm);
 
-    setCarregando(false);
-  }, [mostrarIgnoradas]);
+      // Sem corpo, o que ja estava na tela fica. Zerar aqui faria as
+      // assinaturas sumirem ao perder o sinal, que e o oposto do que a copia
+      // guardada no aparelho existe para permitir.
+      if (leitura.dados) {
+        setRecorrencias(leitura.dados.recurrences || []);
+        setAlertas(leitura.dados.alerts || []);
+        setTotalMensal(leitura.dados.monthlyTotal || 0);
+      }
+
+      setCarregando(false);
+    },
+    [mostrarIgnoradas]
+  );
 
   useEffect(() => {
+    // SEM argumento: a primeira carga tem de poder cair na copia do aparelho --
+    // ela e a razao de a leitura offline existir.
     carregar();
   }, [carregar]);
 
@@ -219,7 +259,16 @@ export default function RecurrencesPage() {
         <FaixaDadoDoAparelho
           guardadoEm={guardadoEm}
           soLeitura
-          aoTentarDeNovo={carregar}
+          // `() => carregar(true)` -- O BOTAO QUE FURA O CACHE (HMO-477).
+          //
+          // Sem o `true` a releitura volta da MESMA copia do NetworkFirst
+          // (sete dias), com a mesma faixa e o mesmo momento: um botao que nao
+          // muda nada. E a seta nao e estilo -- a faixa liga a prop direto no
+          // `onClick`, e `aoTentarDeNovo={carregar}` passaria o `MouseEvent`
+          // como `semCopia`, que e truthy: a releitura de DEPOIS da varredura e
+          // a de cada "ignorar/confirmar" passariam a furar o cache, apagando a
+          // leitura offline da tela sem ninguem ter pedido.
+          aoTentarDeNovo={() => carregar(true)}
         />
       )}
 
@@ -296,14 +345,19 @@ export default function RecurrencesPage() {
           </CardContent>
         </Card>
       ) : estado === "sem-rede" ? (
+        // SEM `true`, ao contrario da faixa: `sem-rede` significa que nao ha
+        // copia no aparelho, entao nao ha cache para furar e a tentativa normal
+        // ja vai na rede. A seta continua obrigatoria, pelo `MouseEvent`.
         <PainelSemRede
           oQue="suas assinaturas"
-          aoTentarDeNovo={carregar}
+          aoTentarDeNovo={() => carregar()}
         />
       ) : estado === "erro-do-servidor" ? (
+        // SEM `true` pelo motivo de cima: o servidor RESPONDEU (500), e
+        // resposta de erro nao vira copia no cache.
         <PainelErroDoServidor
           oQue="suas assinaturas"
-          aoTentarDeNovo={carregar}
+          aoTentarDeNovo={() => carregar()}
         />
       ) : visiveis.length === 0 && podeAfirmarVazio(estado) ? (
         <Card>

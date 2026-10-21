@@ -95,6 +95,54 @@ export const MARCA_GUARDADO_EM = "x-pulodogato-guardado-em";
  */
 export const PARAM_SEM_COPIA = "semCopia";
 
+/**
+ * A URL da releitura, com o parametro quando a pessoa pediu dado de agora.
+ *
+ * Existe por causa de UMA pegadinha que nao da erro: o separador. As sete telas
+ * que tem o botao "Atualizar" leem URLs de formas diferentes -- umas ja tem
+ * querystring (`/api/card-invoices?month=2026-10`,
+ * `/api/financial-accounts?include_inactive=1`) e outras nao
+ * (`/api/recurrences`, `/api/personal-finance/categories`). E numa delas o
+ * proprio formato MUDA em tempo de execucao: `/api/recurrences` ganha
+ * `?status=all` so quando a pessoa pede para ver as ignoradas.
+ *
+ * Colar `&semCopia=...` numa URL sem `?` NAO produz um parametro -- produz
+ * `/api/recurrences&semCopia=123`, que e outro CAMINHO. A rota responde 404, a
+ * tela cai no painel de erro, e o aviso diz "sem rede" num aparelho com rede.
+ * Colar `?` numa que ja tem `?` erra para o outro lado: o segundo `?` entra no
+ * VALOR do ultimo parametro, a querystring que a rota le se corrompe, e o mes
+ * pedido deixa de ser o mes lido.
+ *
+ * Com cinco telas para ligar na HMO-477, cada uma escolhendo o separador na
+ * mao, e questao de tempo -- e o erro aparece na tela que menos se abre, que e
+ * a que ninguem confere. Aqui a escolha e uma so, e e medida.
+ *
+ * O `agora` e parametro (e nao `Date.now()` solto) para o teste poder cravar o
+ * valor: o que importa e a CHAVE do cache ser nova, nao o relogio.
+ */
+export function comSemCopia(
+  url: string,
+  semCopia: boolean,
+  agora: number = Date.now()
+): string {
+  if (!semCopia) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}${PARAM_SEM_COPIA}=${agora}`;
+}
+
+/**
+ * O que a tela diz quando o "Atualizar" nao trouxe nada.
+ *
+ * UMA escrita para as cinco telas da HMO-477, e o `id` e parte do contrato, nao
+ * enfeite: as duas telas de cartoes fazem DUAS leituras (o cadastro, por
+ * `useContas`, e a fatura do mes) e um unico clique pode ver as duas falharem.
+ * Sem `id`, sonner empilha dois avisos identicos para um gesto so. Com `id`
+ * igual, o segundo ATUALIZA o primeiro e a pessoa ve um aviso -- que e o numero
+ * de coisas que aconteceram.
+ */
+export const AVISO_ATUALIZAR_FALHOU =
+  "Não deu para atualizar agora. Os números continuam sendo os do aparelho.";
+export const ID_DO_AVISO_ATUALIZAR = "atualizar-da-faixa";
+
 export interface RespostaObservada {
   ok: boolean;
   status: number;

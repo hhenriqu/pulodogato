@@ -90,7 +90,10 @@ import {
   somaDasParcelasFuturas,
 } from "@/lib/fatura-do-periodo";
 import {
+  AVISO_ATUALIZAR_FALHOU,
   buscarLeitura,
+  comSemCopia,
+  ID_DO_AVISO_ATUALIZAR,
   podeAfirmarVazio,
   podeMostrarNumero,
   type EstadoDaLeitura,
@@ -103,6 +106,7 @@ import {
 } from "@/components/SemRede";
 import { useEstaOnline } from "@/lib/hooks/useEstaOnline";
 import { usePreferenciaDeMoeda } from "@/lib/hooks/usePreferenciaDeMoeda";
+import { toast } from "sonner";
 
 export default function CartoesPage() {
   const {
@@ -135,25 +139,48 @@ export default function CartoesPage() {
   const [estadoDasFaturas, setEstadoDasFaturas] =
     useState<EstadoDaLeitura | null>(null);
 
-  const carregarFaturas = useCallback(async () => {
-    setEstadoDasFaturas(null);
+  const carregarFaturas = useCallback(
+    async (semCopia = false) => {
+      // `null` e "ainda nao carregou", e ele apaga o total (`podeMostrarNumero`
+      // recusa `null`). No gesto do botao a releitura acontece POR CIMA do que
+      // esta na tela: zerar aqui tiraria o numero do aparelho para devolve-lo
+      // um segundo depois -- e nao devolveria se a leitura falhasse (HMO-477).
+      if (!semCopia) setEstadoDasFaturas(null);
 
-    // SEM `account_id`: aqui se quer a fatura de TODOS os cartoes do mes. A
-    // rota devolve uma entrada por cartao ativo, zerada quando o mes nao teve
-    // compra -- e por isso um cartao AUSENTE da resposta nao e zero, e um
-    // numero que esta tela nao obteve. Ver `lib/fatura-do-periodo`.
-    const leitura = await buscarLeitura<{ invoices?: CardInvoice[] }>(
-      `/api/card-invoices?month=${mes}`
-    );
+      // SEM `account_id`: aqui se quer a fatura de TODOS os cartoes do mes. A
+      // rota devolve uma entrada por cartao ativo, zerada quando o mes nao teve
+      // compra -- e por isso um cartao AUSENTE da resposta nao e zero, e um
+      // numero que esta tela nao obteve. Ver `lib/fatura-do-periodo`.
+      const leitura = await buscarLeitura<{ invoices?: CardInvoice[] }>(
+        // `semCopia` so no botao "Atualizar" da faixa -- ver `comSemCopia`. A
+        // rota le `account_id` e `month` com `params.get` e mais nada, entao o
+        // parametro extra passa ignorado (condicao 1 de `PARAM_SEM_COPIA`).
+        comSemCopia(`/api/card-invoices?month=${mes}`, semCopia)
+      );
 
-    setEstadoDasFaturas(leitura.estado);
-    // So sobrescreve quando houve corpo: zerar no caminho de falha apagaria da
-    // tela a fatura que uma busca anterior ja trouxe -- mesma regra do
-    // `useContas` e da tela de um cartao.
-    if (leitura.dados) setFaturas(leitura.dados.invoices ?? []);
-  }, [mes]);
+      // Um "Atualizar" que nao trouxe nada nao apaga o que esta na tela: o
+      // total volta a ser o travessao e a fatura que uma busca anterior trouxe
+      // sai do lugar. `semCopia` garante que nao havia copia para cair, entao
+      // isto quer dizer so que a rede nao respondeu AGORA. O aviso leva `id`
+      // porque `recarregar` tambem chama o cadastro, e os dois podem falhar no
+      // mesmo clique -- ver `ID_DO_AVISO_ATUALIZAR`.
+      if (semCopia && !leitura.dados) {
+        toast.error(AVISO_ATUALIZAR_FALHOU, { id: ID_DO_AVISO_ATUALIZAR });
+        return;
+      }
+
+      setEstadoDasFaturas(leitura.estado);
+      // So sobrescreve quando houve corpo: zerar no caminho de falha apagaria da
+      // tela a fatura que uma busca anterior ja trouxe -- mesma regra do
+      // `useContas` e da tela de um cartao.
+      if (leitura.dados) setFaturas(leitura.dados.invoices ?? []);
+    },
+    [mes]
+  );
 
   useEffect(() => {
+    // SEM argumento: a primeira carga tem de poder cair na copia do aparelho --
+    // ela e a razao de a leitura offline existir.
     carregarFaturas();
   }, [carregarFaturas]);
 
@@ -161,10 +188,24 @@ export default function CartoesPage() {
   // uma leitura de faturas que falhou.
   const estado = estadoDaTela([estadoDasContas, estadoDasFaturas]);
 
-  const recarregar = useCallback(() => {
-    recarregarContas();
-    carregarFaturas();
-  }, [recarregarContas, carregarFaturas]);
+  /**
+   * As DUAS leituras da tela, juntas.
+   *
+   * `semCopia` atravessa as duas de proposito (HMO-477): o botao "Atualizar" da
+   * faixa aparece por causa do CADASTRO (`estadoDasContas === "do-aparelho"`),
+   * mas quem apertou quer a tela de agora -- e o total vem da fatura. Furar o
+   * cache de so uma deixaria metade da tela parada no mesmo momento de antes.
+   *
+   * As duas se guardam sozinhas contra o "Atualizar" que falha, e o aviso das
+   * duas tem o mesmo `id`: um clique, um aviso, mesmo com as duas falhando.
+   */
+  const recarregar = useCallback(
+    (semCopia = false) => {
+      recarregarContas(semCopia);
+      carregarFaturas(semCopia);
+    },
+    [recarregarContas, carregarFaturas]
+  );
 
   const rotuloDoMes = rotuloDaFatura(mes);
   const idsAtivos = useMemo(() => ativas.map((c) => c.id), [ativas]);
@@ -252,14 +293,30 @@ export default function CartoesPage() {
         <FaixaDadoDoAparelho
           guardadoEm={guardadoEm}
           soLeitura
-          aoTentarDeNovo={recarregar}
+          // `() => recarregar(true)` -- O BOTAO QUE FURA O CACHE (HMO-477).
+          //
+          // Sem o `true` a releitura volta das MESMAS copias do NetworkFirst
+          // (sete dias), com a mesma faixa e o mesmo momento: um botao que nao
+          // muda nada. E a seta nao e estilo -- a faixa liga a prop direto no
+          // `onClick`, e `aoTentarDeNovo={recarregar}` passaria o `MouseEvent`
+          // como `semCopia`, que e truthy: as duas leituras furariam o cache em
+          // TODA releitura, apagando a leitura offline da tela.
+          aoTentarDeNovo={() => recarregar(true)}
         />
       )}
 
       {estadoDasContas === "sem-rede" ? (
-        <PainelSemRede oQue="seus cartões" aoTentarDeNovo={recarregar} />
+        // SEM `true`, ao contrario da faixa: `sem-rede` significa que nao ha
+        // copia no aparelho, entao nao ha cache para furar e a tentativa normal
+        // ja vai na rede. A seta continua obrigatoria, pelo `MouseEvent`.
+        <PainelSemRede oQue="seus cartões" aoTentarDeNovo={() => recarregar()} />
       ) : estadoDasContas === "erro-do-servidor" ? (
-        <PainelErroDoServidor oQue="seus cartões" aoTentarDeNovo={recarregar} />
+        // SEM `true` pelo motivo de cima: o servidor RESPONDEU (500), e
+        // resposta de erro nao vira copia no cache.
+        <PainelErroDoServidor
+          oQue="seus cartões"
+          aoTentarDeNovo={() => recarregar()}
+        />
       ) : (
         <>
           <Card>

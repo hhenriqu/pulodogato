@@ -30,7 +30,10 @@ import {
   type ValoresDaConta,
 } from "@/lib/contas";
 import {
+  AVISO_ATUALIZAR_FALHOU,
   buscarLeitura,
+  comSemCopia,
+  ID_DO_AVISO_ATUALIZAR,
   type EstadoDaLeitura,
 } from "@/lib/offline-leitura";
 import { toast } from "sonner";
@@ -45,7 +48,11 @@ export interface UseContas {
   /** De onde veio o que esta na tela. `null` = ainda nao carregou. */
   estado: EstadoDaLeitura | null;
   guardadoEm: Date | null;
-  carregar: () => Promise<void>;
+  /**
+   * `semCopia` so no gesto explicito da pessoa (o botao "Atualizar" da faixa).
+   * Ver `comSemCopia`, e NUNCA passe esta funcao por referencia a um `onClick`.
+   */
+  carregar: (semCopia?: boolean) => Promise<void>;
   /** `true` quando gravou. O erro ja foi para a tela em forma de mensagem. */
   salvar: (valores: ValoresDaConta) => Promise<boolean>;
   arquivar: (conta: FinancialAccount) => Promise<void>;
@@ -59,13 +66,43 @@ export function useContas(escopo: EscopoDeConta): UseContas {
   const [estado, setEstado] = useState<EstadoDaLeitura | null>(null);
   const [guardadoEm, setGuardadoEm] = useState<Date | null>(null);
 
-  const carregar = useCallback(async () => {
-    setCarregando(true);
+  const carregar = useCallback(async (semCopia = false) => {
+    // O SPINNER NAO ENTRA NO "ATUALIZAR" (HMO-477).
+    //
+    // As tres telas deste hook trocam a tela INTEIRA por um spinner enquanto
+    // `carregando` e verdadeiro (`contas/page.tsx`, `cartoes/page.tsx` e
+    // `cartoes/[id]/page.tsx`). No gesto do botao isso apagaria o dado do
+    // aparelho que a pessoa estava olhando para devolve-lo um segundo depois --
+    // e, se a leitura falhasse, nao devolveria. A releitura pedida a mao
+    // acontece POR CIMA do que ja esta na tela.
+    if (!semCopia) setCarregando(true);
+
     // include_inactive: estas sao as unicas telas que mostram conta arquivada,
     // para poder reativar. O resto do app so enxerga as ativas.
     const leitura = await buscarLeitura<{ accounts?: FinancialAccount[] }>(
-      "/api/financial-accounts?include_inactive=1"
+      // `semCopia` SO e verdadeiro no botao "Atualizar" da faixa -- ver
+      // `PARAM_SEM_COPIA`. Sem ele a releitura volta da MESMA copia do
+      // NetworkFirst (sete dias), com a mesma faixa e o mesmo momento: um botao
+      // que nao muda nada. E ele NUNCA chega por referencia a um `onClick`, que
+      // passaria o `MouseEvent` como primeiro argumento -- um evento e
+      // verdadeiro, e TODA releitura (salvar, arquivar, reativar) passaria a
+      // furar o cache sem ninguem ter pedido.
+      comSemCopia("/api/financial-accounts?include_inactive=1", semCopia)
     );
+
+    // UM "ATUALIZAR" QUE NAO TROUXE NADA NAO APAGA O QUE ESTA NA TELA.
+    //
+    // Nas tres telas o `estado` governa o que se ve: com `sem-rede` o painel
+    // SUBSTITUI o total e a lista. Escrever o estado novo aqui puniria quem
+    // apertou o botao -- as contas que ela ainda podia consultar sairiam da
+    // tela, e nao voltam sem recarregar a pagina. `semCopia` garante que nao
+    // havia copia para cair, entao "nao trouxe nada" quer dizer so que a rede
+    // nao respondeu AGORA. O `estado` tambem FICA: a tela continua sendo a
+    // copia do aparelho, e a faixa continua dizendo isso com o momento certo.
+    if (semCopia && !leitura.dados) {
+      toast.error(AVISO_ATUALIZAR_FALHOU, { id: ID_DO_AVISO_ATUALIZAR });
+      return;
+    }
 
     setEstado(leitura.estado);
     setGuardadoEm(leitura.guardadoEm);

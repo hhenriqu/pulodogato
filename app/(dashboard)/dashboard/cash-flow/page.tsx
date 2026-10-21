@@ -30,7 +30,9 @@ import {
   type CategoriaDoGasto,
 } from "@/lib/variable-spend";
 import {
+  AVISO_ATUALIZAR_FALHOU,
   buscarLeitura,
+  ID_DO_AVISO_ATUALIZAR,
   PARAM_SEM_COPIA,
   podeAfirmarVazio,
   type EstadoDaLeitura,
@@ -40,6 +42,7 @@ import {
   PainelErroDoServidor,
   PainelSemRede,
 } from "@/components/SemRede";
+import { toast } from "sonner";
 
 // =====================================================
 // Previsao de fluxo de caixa (HMO-145)
@@ -712,7 +715,11 @@ export default function CashFlowPage() {
   const carregar = useCallback(
     async (semCopia = false) => {
       if (ajuste === undefined) return;
-      setCarregando(true);
+      // `carregando` troca o grafico por "Calculando...". No gesto do botao a
+      // releitura vai POR CIMA do que esta na tela: piscar para o texto de
+      // carregamento e voltar seria a tela se mexendo sem o dado ter mudado
+      // (HMO-477).
+      if (!semCopia) setCarregando(true);
 
       const query = new URLSearchParams({ dias: String(dias) });
       if (ajuste !== null) query.set("gastoDiario", String(ajuste));
@@ -725,6 +732,24 @@ export default function CashFlowPage() {
         recorrencias_indisponiveis?: boolean;
         gasto_indisponivel?: boolean;
       }>(`/api/cash-flow?${query}`);
+
+      // UM "ATUALIZAR" QUE NAO TROUXE NADA NAO APAGA O QUE ESTA NA TELA.
+      //
+      // Faltava aqui (HMO-477). O `if (leitura.dados)` abaixo ja protegia as
+      // VARIAVEIS, e por isso esta tela passava por consertada -- mas o
+      // `estado` nao estava protegido, e e ele que governa o que se VE: com
+      // `sem-rede` o painel SUBSTITUI o grafico. O dado continuava em `fluxo`,
+      // inalcancavel, e a pessoa que apertou "Atualizar" perdia a previsao que
+      // estava olhando -- sem como traze-la de volta senao recarregando a
+      // pagina.
+      //
+      // `semCopia` garante que nao havia copia para cair, entao "nao trouxe
+      // nada" quer dizer so que a rede nao respondeu AGORA.
+      if (semCopia && !leitura.dados) {
+        toast.error(AVISO_ATUALIZAR_FALHOU, { id: ID_DO_AVISO_ATUALIZAR });
+        setCarregando(false);
+        return;
+      }
 
       setEstado(leitura.estado);
       setGuardadoEm(leitura.guardadoEm);
