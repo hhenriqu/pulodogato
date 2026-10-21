@@ -1,28 +1,42 @@
 // ---------------------------------------------------------------------------
-// PATCH /api/mybank/loans/[id] -- cancelar um emprestimo em atividade
+// PATCH /api/mybank/loans/[id] -- cancelar OU AJUSTAR um emprestimo em atividade
 // ---------------------------------------------------------------------------
-// MyBank, F3 da HMO-383 (issue HMO-391). SEM MIGRATION: a 053 ja aceita
-// `cancelled` nos dois `status_check`, a policy de UPDATE ja e so do credor, e
-// `mybank_loans_trava` de proposito NAO re-exige a conexao num UPDATE que mexe
-// so no status -- cancelar funciona mesmo depois de a conexao ser desfeita.
+// MyBank. O cancelamento e a F3 da HMO-383 (issue HMO-391); o AJUSTE e a F4 da
+// HMO-444 (issue HMO-447). SEM MIGRATION nos dois: a 053 ja aceita `cancelled`
+// nos dois `status_check`, a policy de UPDATE ja e so do credor, e
+// `mybank_loans_trava` de proposito NAO re-exige a conexao num UPDATE que nao
+// mexe em `lender_user_id`, `lender_account_id` nem `borrower_user_id` -- os
+// dois verbos funcionam mesmo depois de a conexao ser desfeita.
 //
-// O QUE NAO EXISTIA: NENHUM CAMINHO DE ENCERRAMENTO
-// -------------------------------------------------
-// `app/api/mybank/` tinha POST e GET de emprestimo, o GET da agenda e o PATCH da
-// parcela. Nao havia PATCH nem DELETE de emprestimo, e por isso a divida
-// duplicada que entrou em producao (o caso que abriu a HMO-383) nao tinha como
-// sair pela propria tela.
+// DOIS VERBOS NUM `PATCH` SO, E O DESPACHO E A PRIMEIRA COISA QUE ACONTECE
+// -----------------------------------------------------------------------
+// Ate a HMO-447 esta rota SO cancelava, e a defesa contra editar o valor da
+// divida era a AUSENCIA do caminho: qualquer corpo que nao fosse
+// `{"status":"cancelled"}` voltava 400. Aquela defesa foi DERRUBADA DE
+// PROPOSITO, porque o custo dela ficou visivel -- um typo na descricao de um
+// emprestimo de 24 meses nao tinha conserto pela tela, e a unica saida era
+// cancelar a divida inteira e criar outra, o que apaga o historico das parcelas
+// ja pagas.
 //
-// A REGRA PURA NAO ESTA AQUI
-// --------------------------
+// O que substitui a ausencia nao e uma validacao a mais: e a REGRA PURA de
+// `ajusteDoEmprestimo`, que decide o que muda em que e nunca devolve patch de
+// `installment_number`, `installment_total`, `status`, `paid_date` nem
+// `paid_transaction_id` -- e os mutantes que tentam fazer isso morrem na suite.
+// A antecipacao (`loans/[id]/antecipacao`) seguiu rota IRMA mesmo assim, e
+// segue certa: o gesto dela nao e editar um campo, e criar N lancamentos e dar
+// N baixas.
+//
+// AS DUAS REGRAS PURAS NAO ESTAO AQUI
+// -----------------------------------
 // `problemaDoCancelamento`, `parcelaSegueOCancelamento`,
-// `chavesDasPrevisoesDoCancelamento` e as frases vivem em
+// `chavesDasPrevisoesDoCancelamento`, `problemaDoAjuste`, `caudaRecalculada`,
+// `ajusteDoEmprestimo`, `previsoesDoAjuste` e as frases vivem em
 // `lib/emprestimo-do-mybank.ts`, com o porque de cada uma e com os mutantes
 // alcancando-as. Aqui ficam a ordem dos passos e o que se faz quando um deles
 // falha -- que e justamente o que funcao pura nenhuma consegue medir.
 //
-// A ORDEM, E ELA E SOBRE DINHEIRO
-// -------------------------------
+// A ORDEM DO CANCELAMENTO, E ELA E SOBRE DINHEIRO
+// -----------------------------------------------
 //   1. ler o emprestimo e conferir que o credor sou eu;
 //   2. `mybank_loans.status = 'cancelled'` -- as duas leituras filtram
 //      `active`, entao a divida sai da tela do credor E da devedora neste passo
@@ -38,6 +52,46 @@
 // da falha parcial e escolhida, e o porque por extenso esta no cabecalho da
 // secao do cancelamento em `lib/emprestimo-do-mybank.ts`.
 //
+// A ORDEM DO AJUSTE E A INVERSA, E O MOTIVO E QUE ELA PODE SER REPETIDA
+// --------------------------------------------------------------------
+//   1. ler o emprestimo e conferir que o credor sou eu, e que ele esta `active`;
+//   2. ler as parcelas; recusar em 409 se alguma esta `reported`, NOMEANDO
+//      quais; recalcular so as `pending` sobre o que falta receber;
+//   2.5. SO NO CASO A: ler as previsoes do elo SEM FILTRAR POR STATUS e recusar,
+//      com NADA gravado, se a de alguma parcela `pending` ja foi BAIXADA -- e
+//      esta e a guarda de dinheiro desta fase (ver abaixo);
+//   3. POR PARCELA: o `amount`/`due_date` dela, e so depois a previsao do Caso A;
+//   4. O EMPRESTIMO POR ULTIMO -- `description` e `principal`.
+//
+// O emprestimo vir por ULTIMO e o oposto do cancelamento, e os dois estao
+// certos porque as falhas parciais sao de naturezas diferentes. Lá parar no meio
+// deixa um estado que NAO se conserta tentando de novo (o emprestimo ja esta
+// `cancelled`, e a segunda chamada cai no 409 de "ja encerrado"). Aqui o corpo
+// do pedido diz O ESTADO QUE SE QUER -- "este emprestimo passa a valer X" --,
+// entao mandar o MESMO pedido de novo termina o servico: as parcelas que ja
+// foram reescritas saem do patch por nao terem mudado, as que faltaram sao
+// reescritas, e o emprestimo e atualizado no fim. Parar no meio e um estado
+// RECUPERAVEL, e e por isso que `principal` nao e gravado numa passagem que
+// parou: ele e a afirmacao de um total que as parcelas ainda nao somam.
+//
+// E E POR ISSO QUE A PRESENCA DO CAMPO MANDA, E NAO A DIFERENCA. Um contrato de
+// "mande o que mudou" faria a segunda tentativa precisar saber o que a primeira
+// alcancou. Ver A PRESENCA DO CAMPO MANDA em `ajusteDoEmprestimo`.
+//
+// A GUARDA DE DINHEIRO DO AJUSTE: A PREVISAO JA BAIXADA DE UMA PARCELA `pending`
+// -----------------------------------------------------------------------------
+// No Caso A a parcela tem previsao emparelhada pelo elo, e os dois estados podem
+// DIVERGIR: a baixa que falhou depois de gravar as pernas, um estorno pela
+// metade. A parcela diz `pending` e o dinheiro JA SE MOVEU. Reescrever o
+// `amount` dela mexeria num lancamento REALIZADO.
+//
+// Por isso o passo 2.5 le as previsoes SEM `.eq("status", "pending")` -- ao
+// contrario do passo 4 do cancelamento e do passo 2.5 da antecipacao, que
+// filtram. O filtro lá protege a linha ja baixada de ser TOCADA; aqui ele
+// esconderia justamente a linha que tem de PARAR o pedido: a previsao baixada
+// sairia da leitura, a parcela cairia em "sem previsao" (que nao e recusa) e o
+// ajuste seguiria. Mesmo elo, criterio oposto, e o oposto e o ponto.
+//
 // A RLS NAO BASTA, E A RAZAO E MEDIDA
 // -----------------------------------
 // `mybank_loans_select` e `lender OR borrower`: o DEVEDOR enxerga a linha e
@@ -45,23 +99,51 @@
 // volta como SUCESSO COM ZERO LINHAS neste app -- 200, corpo `[]`, sem erro e
 // sem SQLSTATE (`update-filtrado-pela-rls-vira-sucesso`, medido em producao).
 // Entao o credor e conferido DUAS vezes: na linha lida ANTES (para a recusa ter
-// frase) e na linha devolvida DEPOIS (para "cancelei" nao ser dito sobre um
-// UPDATE que alcancou nada).
+// frase) e na linha devolvida DEPOIS (para "cancelei" ou "ajustei" nao ser dito
+// sobre um UPDATE que alcancou nada).
+//
+// Do lado da parcela a conferencia e a mesma e por outro motivo tambem:
+// `mybank_installments_trava_do_devedor` (053) devolve `NEW` sem perguntar nada
+// quando quem escreve e o CREDOR, entao o ajuste do credor passa pela trigger --
+// e e a POLICY, que filtra em silencio, a unica coisa entre esta rota e um
+// "ajustei 21 parcelas" sobre zero linha escrita.
 // ---------------------------------------------------------------------------
 
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
+  ajusteDoEmprestimo,
+  avisadasDaSerie,
   casoDoEmprestimo,
+  caudaRecalculada,
+  chavesDasPrevisoesDoAjuste,
   chavesDasPrevisoesDoCancelamento,
+  ehDataISO,
+  jaRecebidoDaSerie,
+  mensagemDaPrevisaoJaBaixada,
+  mensagemDoAjuste,
   mensagemDoCancelamento,
+  mensagemDoProblemaDoAjuste,
   mensagemDoProblemaDoCancelamento,
   parcelaSegueOCancelamento,
   patchDoCancelamentoDaParcela,
+  pendentesDaSerie,
+  previsoesDoAjuste,
+  problemaDoAjuste,
   problemaDoCancelamento,
   STATUS_CANCELADO,
+  type PedidoDeAjuste,
+  type PrevisaoAAjustar,
 } from "@/lib/emprestimo-do-mybank";
+
+/** O que os dois verbos desta rota precisam, lido uma vez pelo `PATCH`. */
+interface ContextoDoPatch {
+  supabase: SupabaseClient;
+  user: { id: string };
+  loanId: string;
+}
 
 export async function PATCH(
   request: NextRequest,
@@ -69,49 +151,74 @@ export async function PATCH(
 ) {
   const supabase = createClient();
 
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+  }
+
+  let body: unknown;
   try {
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
+    body = await request.json();
+  } catch {
+    // CORPO QUE NAO E JSON E 400 E NAO 500. O `await request.json()` ficava
+    // dentro do `try` geral do cancelamento e virava "Erro interno do
+    // servidor" -- a rota culpando o servidor por um pedido malformado.
+    return NextResponse.json(
+      { error: "Mande um corpo JSON." },
+      { status: 400 }
+    );
+  }
 
-    if (authError || !user) {
-      return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
-    }
+  const { status } = (body ?? {}) as { status?: string };
 
-    const body = await request.json();
-    const { status } = body as { status?: string };
+  const contexto: ContextoDoPatch = { supabase, user, loanId: params.id };
 
-    // SO `cancelled`, E O CORPO NAO TEM MAIS NENHUM CAMPO LIDO.
-    //
-    // A defesa e a ausencia, como no PATCH da parcela: `principal`,
-    // `installment_count`, `borrower_user_id` e `lender_account_id` nao sao
-    // lidos em ramo nenhum deste arquivo. Nao ha um `delete patch.principal`
-    // para alguem remover sem querer -- editar a divida nao e uma operacao que
-    // esta rota saiba fazer, e `settled` e estado que o ciclo de pagamento
-    // alcanca, nao que a tela declare.
-    //
-    // E DESDE A HMO-394 O CICLO ALCANCA MESMO: quem escreve `settled` sao o PATCH
-    // da parcela e a baixa da previsao, pela regra `emprestimoFicouQuitado`.
-    // Antes dela esta frase descrevia uma intencao -- ninguem escrevia o status,
-    // e um emprestimo 24/24 pago so saia das telas pelo botao Cancelar.
-    if (status !== STATUS_CANCELADO) {
-      return NextResponse.json(
-        {
-          error:
-            'Esta rota só cancela um empréstimo: mande { "status": "cancelled" }.',
-        },
-        { status: 400 }
-      );
-    }
+  // -------------------------------------------------------------------------
+  // O DESPACHO. `status` DECIDE, e o unico valor que ele aceita e `cancelled`
+  // -------------------------------------------------------------------------
+  // `settled` NAO ENTRA, e esta e a unica parte da antiga peneira que sobrevive
+  // inteira: quem escreve `settled` sao o PATCH da parcela e a baixa da
+  // previsao, pela regra `emprestimoFicouQuitado` (HMO-394). Ele e estado que o
+  // CICLO DE PAGAMENTO alcanca, nao que a tela declare -- declara-lo aqui faria
+  // um emprestimo com 20 parcelas em aberto sair das duas telas como se tivesse
+  // sido pago.
+  if (status !== undefined && status !== STATUS_CANCELADO) {
+    return NextResponse.json(
+      {
+        error:
+          `Esta rota não escreve o status "${status}". Para encerrar, mande ` +
+          '{ "status": "cancelled" }; "settled" é alcançado pelo pagamento das parcelas, não declarado aqui.',
+      },
+      { status: 400 }
+    );
+  }
 
+  if (status === STATUS_CANCELADO) {
+    return cancelar(contexto);
+  }
+
+  // SEM `status`, O PEDIDO E DE AJUSTE. O corpo vazio nao chega a escrever nada:
+  // `problemaDoAjuste` devolve `nada_a_ajustar` e a frase diz quais campos
+  // existem -- que e o que um cliente com um campo escrito errado precisa ler.
+  return ajustar(contexto, (body ?? {}) as PedidoDeAjuste);
+}
+
+// ---------------------------------------------------------------------------
+// CANCELAR -- o corpo da HMO-391, intacto
+// ---------------------------------------------------------------------------
+async function cancelar({ supabase, user, loanId }: ContextoDoPatch) {
+  try {
     // -----------------------------------------------------------------------
     // 1. O emprestimo, e o credor conferido ANTES
     // -----------------------------------------------------------------------
     const { data: emprestimo } = await supabase
       .from("mybank_loans")
       .select("id, lender_user_id, borrower_user_id, description, status")
-      .eq("id", params.id)
+      .eq("id", loanId)
       .maybeSingle();
 
     if (!emprestimo) {
@@ -353,6 +460,462 @@ export async function PATCH(
     });
   } catch (error) {
     console.error("MyBank loan cancel PATCH error:", error);
+    return NextResponse.json(
+      { error: "Erro interno do servidor" },
+      { status: 500 }
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// AJUSTAR -- a entrega (1) da HMO-444: corrigir a divida que esta acontecendo
+// ---------------------------------------------------------------------------
+async function ajustar(
+  { supabase, user, loanId }: ContextoDoPatch,
+  pedido: PedidoDeAjuste
+) {
+  try {
+    // -----------------------------------------------------------------------
+    // 1. O emprestimo, e o credor conferido ANTES
+    // -----------------------------------------------------------------------
+    // `principal` E `interest_rate` ENTRAM NO SELECT: o primeiro e o total de
+    // antes (a base de "passou de X para Y" e o valor que fica quando o pedido
+    // nao manda `total`), e o segundo e o que `juros_fora_da_fase_1` pergunta.
+    // Um select que nao os nomeia faria `ajusteDoEmprestimo` receber `undefined`
+    // e gravar `principal: NaN` -- 22P02 no UPDATE, depois de as parcelas ja
+    // terem sido reescritas.
+    const { data: emprestimo } = await supabase
+      .from("mybank_loans")
+      .select(
+        "id, lender_user_id, borrower_user_id, description, principal, installment_count, status, interest_rate"
+      )
+      .eq("id", loanId)
+      .maybeSingle();
+
+    if (!emprestimo) {
+      // 404 e nao 403, pela mesma razao do cancelamento: a policy de SELECT
+      // deixa os dois lados verem a linha, e dizer "existe mas nao e seu"
+      // confirmaria a existencia do id para quem o chutou.
+      return NextResponse.json(
+        { error: "Empréstimo não encontrado" },
+        { status: 404 }
+      );
+    }
+
+    // -----------------------------------------------------------------------
+    // 2. As parcelas, e o recalculo da cauda pela regra pura
+    // -----------------------------------------------------------------------
+    const { data: parcelas, error: erroDaLeituraDasParcelas } = await supabase
+      .from("mybank_installments")
+      .select(
+        "id, installment_number, installment_total, amount, due_date, status"
+      )
+      .eq("loan_id", emprestimo.id);
+
+    if (erroDaLeituraDasParcelas || !parcelas) {
+      console.error(
+        "Erro ao ler as parcelas do emprestimo a ajustar:",
+        erroDaLeituraDasParcelas
+      );
+      return NextResponse.json(
+        { error: "Não foi possível ler as parcelas. Nada foi ajustado." },
+        { status: 500 }
+      );
+    }
+
+    const pendentes = pendentesDaSerie(parcelas);
+    const jaRecebido = jaRecebidoDaSerie(parcelas);
+
+    const mexeNoTotal = pedido.total !== undefined;
+
+    // A CAUDA E CALCULADA ANTES DA RECUSA, e isso e a forma de
+    // `problemaDoEmprestimo` (que recebe `serie: SerieDeParcelas | null` e
+    // devolve `serie_impossivel`): a pergunta "este ajuste serve?" inclui "a
+    // repartição fecha?", e fecha-la depois obrigaria a rota a decidir sozinha
+    // o que fazer com um `null` que veio de longe.
+    //
+    // `null` QUANDO NAO HA PENDENTE NENHUMA -- o emprestimo todo pago, cuja
+    // descricao ainda pode ser corrigida. `problemaDoAjuste` sabe disso: ele so
+    // pergunta pela cauda depois de ver que o pedido mexe em `total` ou em
+    // `primeiroVencimentoDaCauda`, e SO esses dois exigem serie em aberto.
+    // A CAUDA E MONTADA SEMPRE QUE HA PENDENTE, E NAO SO QUANDO O PEDIDO MEXE
+    // NO VALOR. O ajuste que so troca a descricao nao recalcula nada -- e
+    // precisa da lista das pendentes do mesmo jeito, porque e a COBRANCA de cada
+    // uma que recebe o texto novo ("Moto elétrica (3/4)" em Contas a Pagar).
+    // Com a cauda `null` ali, o typo que abre a issue ficaria consertado no
+    // emprestimo e errado nas 21 contas a pagar dele.
+    const cauda =
+      pendentes.length > 0
+        ? caudaRecalculada({
+            pendentes,
+            // O QUE FALTA RECEBER, E A CONTA E DO TOTAL PEDIDO MENOS O JA PAGO.
+            // Sem `total` no pedido (o caso "so mover a cauda de mes") a base e
+            // o que as pendentes ja somam -- e nao o `principal`, que inclui as
+            // pagas: usar o principal ali DOBRARIA a divida de quem ja pagou
+            // metade, so por ter pedido para adiar o vencimento.
+            faltaReceber: mexeNoTotal
+              ? Number(pedido.total) - jaRecebido
+              : pendentes.reduce(
+                  (soma, p) => soma + Math.round(Number(p.amount) * 100),
+                  0
+                ) / 100,
+            primeiroVencimentoDaCauda: ehDataISO(
+              pedido.primeiroVencimentoDaCauda
+            )
+              ? pedido.primeiroVencimentoDaCauda
+              : null,
+          })
+        : null;
+
+    const problema = problemaDoAjuste({
+      emprestimo,
+      meuId: user.id,
+      parcelas,
+      pedido,
+      cauda,
+    });
+
+    if (problema) {
+      // 403 so para "nao e seu". 400 para corpo malformado, e 409 para o que
+      // conflita com o ESTADO da divida -- a mesma escala da antecipacao.
+      const codigo =
+        problema === "nao_sou_o_credor"
+          ? 403
+          : problema === "emprestimo_nao_esta_ativo" ||
+              problema === "tem_parcela_reportada" ||
+              problema === "sem_parcela_pendente" ||
+              problema === "total_menor_que_o_pago"
+            ? 409
+            : 400;
+
+      return NextResponse.json(
+        {
+          error: mensagemDoProblemaDoAjuste(problema, {
+            status: emprestimo.status,
+            avisadas: avisadasDaSerie(parcelas),
+            jaRecebido,
+            pendentes: pendentes.length,
+          }),
+          parcelas_ajustadas: 0,
+        },
+        { status: codigo }
+      );
+    }
+
+    const caso = casoDoEmprestimo({
+      lenderUserId: emprestimo.lender_user_id,
+      borrowerUserId: emprestimo.borrower_user_id,
+    });
+
+    const ajuste = ajusteDoEmprestimo({ emprestimo, parcelas, pedido, cauda });
+
+    // -----------------------------------------------------------------------
+    // 2.5. CASO A: as previsoes do elo, LIDAS ANTES DA ESCRITA E SEM FILTRO DE
+    //      STATUS -- a guarda de dinheiro desta fase
+    // -----------------------------------------------------------------------
+    // Ver A GUARDA DE DINHEIRO DO AJUSTE, no cabecalho: o filtro
+    // `.eq("status", "pending")` que o cancelamento e a antecipacao usam
+    // ESCONDERIA aqui exatamente a linha que tem de parar o pedido.
+    const previsaoDaParcela = new Map<string, PrevisaoAAjustar>();
+
+    const chavesDoAjuste = chavesDasPrevisoesDoAjuste({
+      caso,
+      parcelasAjustadas: ajuste.parcelas,
+    });
+
+    let previsoesAusentes: number[] = [];
+
+    // A GUARDA DO `.length`, E ELA NAO E ECONOMIA DE CHAMADA -- a MESMA do
+    // cancelamento e da antecipacao. No Caso B a lista e vazia por decisao, e
+    // `.in("notes", [])` NAO FILTRA: a clausula desaparece e a leitura alcanca
+    // TODA previsao que a RLS entrega. Aqui o estrago passaria pela leitura e
+    // chegaria na ESCRITA do passo 3 -- a agenda inteira de Contas a Pagar
+    // virando parcelas deste emprestimo, com valor e vencimento trocados.
+    //
+    // E E POR ISSO QUE A PERGUNTA E `chavesDoAjuste.length`, E NAO `caso === "auto"`:
+    // as duas sao a mesma hoje, e a do `.length` e a que continua certa quando
+    // o pedido nao muda parcela nenhuma (so a descricao de um emprestimo todo
+    // pago), porque ali a lista tambem e vazia.
+    if (chavesDoAjuste.length > 0) {
+      const { data: previsoes, error: erroDasPrevisoes } = await supabase
+        .from("scheduled_transactions")
+        .select("id, description, amount, due_date, notes, status")
+        // `user_id` EXPLICITO, como nas outras duas: `notes` e campo que a
+        // pessoa digita, e nada impede a previsao de outra conta de ter
+        // `mybank:<id>` ali. A RLS tambem barra, e esta e a camada que nao
+        // depende dela.
+        .eq("user_id", user.id)
+        .in("notes", chavesDoAjuste);
+
+      if (erroDasPrevisoes || !previsoes) {
+        console.error(
+          "Erro ao ler as previsoes das parcelas a ajustar:",
+          erroDasPrevisoes
+        );
+        return NextResponse.json(
+          {
+            error:
+              "Não foi possível ler as contas a pagar destas parcelas. Nada foi ajustado.",
+            parcelas_ajustadas: 0,
+          },
+          { status: 500 }
+        );
+      }
+
+      const { pares, comPrevisaoBaixada, semPrevisao } = previsoesDoAjuste({
+        parcelasAjustadas: ajuste.parcelas,
+        previsoes,
+      });
+
+      if (comPrevisaoBaixada.length > 0) {
+        // 409 E NAO 500: o estado do banco e legivel -- a parcela esta em
+        // aberto e a conta a pagar dela ja foi baixada. Nada foi escrito, e a
+        // frase diz quais parcelas e o que fazer antes de tentar de novo.
+        return NextResponse.json(
+          {
+            error: mensagemDaPrevisaoJaBaixada(comPrevisaoBaixada),
+            parcelas_ajustadas: 0,
+          },
+          { status: 409 }
+        );
+      }
+
+      previsoesAusentes = semPrevisao;
+
+      for (const par of pares) {
+        previsaoDaParcela.set(par.parcela.id, par.previsao);
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // 3. POR PARCELA: a divida, e so depois a cobranca dela
+    // -----------------------------------------------------------------------
+    // A parcela ANTES da previsao porque a parcela E a divida: a previsao e a
+    // cobranca derivada dela, e uma cobranca que discorda da divida aparece em
+    // Contas a Pagar com um valor que a tela do emprestimo desmente -- visivel,
+    // e corrigivel ali mesmo. A ordem inversa esconderia a divergencia do lado
+    // que ninguem confere linha por linha.
+    /**
+     * As parcelas cuja LINHA foi reescrita de verdade.
+     *
+     * "Ajustada" aqui e "o UPDATE alcancou a linha", e nao "o pedido mexia
+     * nela": a parcela de patch vazio (a que entrou na lista so porque a
+     * descricao mudou) ja esta no estado pedido e nao e contada. Sem essa
+     * distincao, um pedido que so troca o texto responderia "3 parcelas
+     * ajustadas" sem ter escrito em parcela nenhuma -- e a medicao em producao
+     * iria procurar na tabela tres valores que nao mudaram.
+     */
+    const ajustadas: { id: string; numero: number }[] = [];
+
+    /** O que parou o laco, quando algo parou. */
+    let parouPor: string | null = null;
+
+    let previsoesAjustadas = 0;
+
+    for (const linha of ajuste.parcelas) {
+      // O PATCH VAZIO E UM ESTADO REAL, e nao um erro: e a parcela que JA ESTA no
+      // estado pedido -- porque o pedido nao mexeu no valor dela, ou porque uma
+      // passagem anterior ja a reescreveu. A COBRANCA dela e atualizada de
+      // qualquer jeito (ver TODA PENDENTE ENTRA NA LISTA em
+      // `ajusteDoEmprestimo`); o que se pula e o UPDATE da parcela. Um
+      // `update({})` no PostgREST nao e um no-op: ele e 400 (`PGRST102`), e a
+      // passagem morreria aqui.
+      if (Object.keys(linha.patch).length > 0) {
+        const { data: escritas, error: erroDaParcela } = await supabase
+          .from("mybank_installments")
+          .update(linha.patch)
+          .eq("id", linha.id)
+          .select("id, amount, due_date");
+
+        // `.select()` E A CONTAGEM NAO SAO DECORACAO: a trava da 053 recusa com
+        // excecao, mas a POLICY filtra em silencio -- 200 com `[]`. Sem a
+        // contagem esta rota diria "ajustei 21 parcelas" sobre zero linha.
+        if (erroDaParcela || !escritas || escritas.length === 0) {
+          // NADA E DESFEITO, e isso e deliberado: as parcelas anteriores estao
+          // com o valor que o pedido pediu, e desfaze-las exigiria guardar o
+          // valor antigo de cada uma e reescrever tudo de volta -- um segundo
+          // laco de escrita, com a propria chance de parar no meio, para voltar
+          // a um estado que ninguem pediu. O emprestimo NAO e atualizado (ver a
+          // ordem no cabecalho), e mandar o MESMO pedido de novo termina o
+          // servico.
+          console.error("Erro ao ajustar a parcela do emprestimo:", {
+            parcelaId: linha.id,
+            erro: erroDaParcela,
+          });
+          parouPor = `A parcela ${linha.numero} não pôde ser ajustada.`;
+          break;
+        }
+
+        // A PARCELA ENTRA NA CONTA AQUI, E NAO NO FIM DO LACO. A cobranca dela
+        // vem depois e pode falhar -- e contar a parcela so depois disso faria a
+        // resposta dizer "nada foi ajustado" sobre uma divida que JA foi
+        // reescrita no banco. O que falhou sai em `parcial`, nomeando a parcela.
+        ajustadas.push({ id: linha.id, numero: linha.numero });
+      }
+
+      // ---------------------------------------------------------------------
+      // CASO A: a conta a pagar da parcela acompanha
+      // ---------------------------------------------------------------------
+      // No Caso B nao ha nada a atualizar, e isso NAO e uma lacuna: a view
+      // `mybank_due_entries` le `i.amount` da propria parcela, entao a tela da
+      // devedora ja mostra o valor novo sem leitor nenhum ter mudado.
+      const previsao = previsaoDaParcela.get(linha.id);
+
+      if (previsao) {
+        const { data: previsoesEscritas, error: erroDaPrevisao } =
+          await supabase
+            .from("scheduled_transactions")
+            // OS TRES CAMPOS SAEM DA REGRA PURA, JA MONTADOS. O valor nao sai
+            // do que a previsao tinha: ela e EDITAVEL em Contas a Pagar e as
+            // duas podem divergir. A divida e a parcela -- deixar a previsao
+            // mandar faria a cobranca manter um valor que a divida acabou de
+            // deixar de ter. Ver `cobranca` em `AjusteDoEmprestimo`.
+            .update(linha.cobranca)
+            .eq("id", previsao.id)
+            // `status = pending` NO PROPRIO PEDIDO, E ELE NAO E REDUNDANTE.
+            //
+            // O passo 2.5 ja recusou o pedido inteiro quando alguma previsao
+            // nao estava `pending`, e esta e a camada que nao depende daquela
+            // leitura: entre ela e esta escrita a previsao pode ter sido baixada
+            // em outra aba (`o-banco-muda-no-meio-do-heartbeat`). Sem o filtro,
+            // o ajuste reescreveria o valor de um lancamento ja realizado --
+            // exatamente o que o passo 2.5 existe para impedir.
+            .eq("status", "pending")
+            .select("id");
+
+        if (erroDaPrevisao || !previsoesEscritas || previsoesEscritas.length === 0) {
+          // A PARCELA JA FOI AJUSTADA, e desfaze-la seria devolver a divida ao
+          // valor antigo por causa de uma falha na COBRANCA dela. O estado
+          // honesto e "a divida esta ajustada e esta conta a pagar nao", com o
+          // numero na resposta -- e a frase manda tentar de novo, que e o
+          // gesto que termina o servico.
+          console.error("Erro ao ajustar a conta a pagar da parcela:", {
+            parcelaId: linha.id,
+            previsaoId: previsao.id,
+            erro: erroDaPrevisao,
+          });
+          parouPor =
+            `A parcela ${linha.numero} foi ajustada, mas a conta a pagar dela em Contas a Pagar não.`;
+          break;
+        }
+
+        previsoesAjustadas += 1;
+      }
+    }
+
+    // O LACO PAROU ANTES DE ESCREVER QUALQUER COISA? O mundo esta como antes do
+    // pedido, e a resposta e 500 com `parcelas_ajustadas: 0`.
+    //
+    // A PERGUNTA SOMA AS DUAS TABELAS, e nao so as parcelas: o pedido que so
+    // troca a descricao nao escreve parcela nenhuma: ele escreve PREVISAO. Com a
+    // pergunta so em `ajustadas`, uma passagem que reescreveu as tres contas a
+    // pagar e parou na terceira responderia "nada foi ajustado" -- e quem lesse
+    // isso nao iria conferir em Contas a Pagar.
+    if (parouPor && ajustadas.length === 0 && previsoesAjustadas === 0) {
+      return NextResponse.json(
+        {
+          error: parouPor + " Nada foi ajustado — tente de novo.",
+          parcelas_ajustadas: 0,
+        },
+        { status: 500 }
+      );
+    }
+
+    // -----------------------------------------------------------------------
+    // 4. O EMPRESTIMO, POR ULTIMO -- e SO se a cauda inteira passou
+    // -----------------------------------------------------------------------
+    // `principal` e a afirmacao de um total que a soma das parcelas tem de
+    // fechar (comentario da 053). Gravar o total novo depois de um laco que
+    // parou no meio faria a linha do emprestimo AFIRMAR um numero que nenhuma
+    // parcela sustenta -- e, pior, faria a segunda tentativa recalcular a cauda
+    // a partir de um total que a primeira ja gravou, convergindo para o lugar
+    // certo por acidente. Com o `principal` antigo de pe, repetir o pedido e
+    // deterministico.
+    let emprestimoAtualizado = true;
+
+    if (!parouPor && ajuste.patchDoEmprestimo) {
+      const { data: atualizados, error: erroDoEmprestimo } = await supabase
+        .from("mybank_loans")
+        .update(ajuste.patchDoEmprestimo)
+        .eq("id", emprestimo.id)
+        .select("id, lender_user_id, description, principal");
+
+      // A LINHA DEVOLVIDA, CONFERIDA DEPOIS -- a mesma pergunta do
+      // cancelamento, e pelo mesmo motivo: a do passo 1 foi sobre a linha LIDA,
+      // esta e sobre a linha ESCRITA, e as duas podem divergir.
+      emprestimoAtualizado =
+        !erroDoEmprestimo &&
+        !!atualizados &&
+        atualizados.length > 0 &&
+        atualizados.every((l) => l.lender_user_id === user.id);
+
+      if (!emprestimoAtualizado) {
+        console.error("MyBank: o UPDATE do ajuste nao alcancou o emprestimo.", {
+          loanId: emprestimo.id,
+          erro: erroDoEmprestimo,
+        });
+      }
+    }
+
+    const mudouADescricao = ajuste.patchDoEmprestimo?.description !== undefined;
+
+    const message = mensagemDoAjuste({
+      // AS PARCELAS QUE DE VERDADE ENTRARAM, e nao as escolhidas: o laco pode
+      // ter parado, e dizer "21 ajustadas" de 3 seria a resposta mentindo sobre
+      // a divida que ela mesma reescreveu.
+      quantasParcelas: ajustadas.length,
+      total: ajuste.total,
+      jaRecebido: ajuste.jaRecebido,
+      caso,
+      previsoesAjustadas,
+      previsoesAusentes,
+      mudouADescricao,
+      mudouOTotal: mexeNoTotal,
+      emprestimoAtualizado,
+    });
+
+    return NextResponse.json(
+      {
+        // `parcelas_ajustadas` E O CONTRATO, e nao este booleano: quem le so o
+        // `success` trataria 3-de-21 como 21. A mesma escolha da antecipacao.
+        // `!parouPor` E NAO `ajustadas.length === ajuste.parcelas.length`: as
+        // duas divergem de proposito no pedido que so troca a descricao (3
+        // parcelas na lista, 0 linhas de parcela escritas), e aquela comparacao
+        // responderia `false` a um ajuste que deu certo inteiro.
+        success: !parouPor && emprestimoAtualizado,
+        loan_id: emprestimo.id,
+        caso,
+        descricao: mudouADescricao
+          ? ajuste.patchDoEmprestimo?.description
+          : emprestimo.description,
+        total: ajuste.total,
+        ja_recebido: ajuste.jaRecebido,
+        parcelas_pedidas: ajuste.parcelas.length,
+        parcelas_ajustadas: ajustadas.length,
+        numeros: ajustadas.map((p) => p.numero),
+        // AS `paid` QUE NAO FORAM TOCADAS -- o numero que a medicao confere
+        // contra a tabela. Ele e o controle negativo desta filha em forma de
+        // campo: um ajuste que reescrevesse a serie inteira devolveria o mesmo
+        // `parcelas_ajustadas` e este numero continuaria igual, e por isso a
+        // medicao le a TABELA e nao acredita no campo.
+        parcelas_pagas_intactas: parcelas.filter((p) => p.status === "paid")
+          .length,
+        previsoes_ajustadas: previsoesAjustadas,
+        ...(previsoesAusentes.length > 0
+          ? { previsoes_ausentes: previsoesAusentes }
+          : {}),
+        emprestimo_atualizado: emprestimoAtualizado,
+        ...(parouPor ? { parcial: parouPor } : {}),
+        message,
+      },
+      // 207 NAO EXISTE NESTE APP, e um 500 apagaria o corpo que diz o que
+      // entrou. O ajuste parcial e 200 com `success: false` e `parcial` -- a
+      // mesma forma da antecipacao parcial, para que quem ler o status e quem
+      // ler o corpo cheguem a mesma conclusao.
+      { status: 200 }
+    );
+  } catch (error) {
+    console.error("MyBank loan ajuste PATCH error:", error);
     return NextResponse.json(
       { error: "Erro interno do servidor" },
       { status: 500 }
