@@ -26,8 +26,8 @@
  * Estava dentro de `components/Sidebar.tsx` ate a HMO-284. Saiu de la por um
  * motivo so: o modo papel de pao acrescentou um SEGUNDO filtro sobre este mesmo
  * array (`lib/menu-do-papel.ts`), e a unica forma honesta de provar "com o modo
- * ligado o menu tem EXATAMENTE 8 itens, desligado tem 29" e a suite ler o array
- * de verdade. Compilar o `Sidebar` inteiro para isso arrastaria o cliente do
+ * ligado o menu tem EXATAMENTE 3 itens, desligado tem 29" e a suite ler o array
+ * de verdade. (Eram 8 itens ate a HMO-466; o numero muda, o arranjo nao.) Compilar o `Sidebar` inteiro para isso arrastaria o cliente do
  * Supabase, o `useSubscription` e o `next/navigation` para dentro de um teste de
  * Node que nao renderiza nada; reescrever a lista no teste seria pior ainda --
  * seria a segunda lista que a issue proibe, e ela ficaria verde para sempre

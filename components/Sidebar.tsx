@@ -111,10 +111,11 @@ export default function Sidebar({
   // DESLIGADO: as 8 entradas de primeiro nivel de `menuAgrupado` -- duas telas
   // soltas e seis grupos que abrem submenu, com as 29 telas dentro.
   //
-  // LIGADO: a lista PLANA das 8 telas do modo. Submenu num menu de 8 itens
-  // seria clique a mais para esconder nada, e o modo promete o contrario. E a
-  // lista do modo nao e uma segunda lista: ela sai do mesmo `navigation`, que
-  // por sua vez sai do mesmo `menuAgrupado` (ver o cabecalho daquele arquivo).
+  // LIGADO: a lista PLANA das 3 telas do modo (eram 8 ate a HMO-466). Submenu
+  // num menu de 3 itens seria clique a mais para esconder nada, e o modo promete
+  // o contrario. E a lista do modo nao e uma segunda lista: ela sai do mesmo
+  // `navigation`, que por sua vez sai do mesmo `menuAgrupado` (ver o cabecalho
+  // daquele arquivo).
   //
   // OS DOIS CAMINHOS PASSAM PELO FILTRO DE PLANO, e e o mesmo `podeVerItem` nos
   // dois -- `filtrarMenuAgrupado` o aplica item por item dentro de cada grupo e
