@@ -4882,6 +4882,121 @@ jobs:
       - name: O lancamento pode ficar fora dos totais, e o re-run nao o re-soma
         run: $PSQL -f database/tests/060_lancamento_fora_dos_totais_test.sql
 
+      # =====================================================================
+      # 061 -- a fatura publica include_in_total (HMO-459)
+      # =====================================================================
+      # ESTE BLOCO TEM DE FICAR ACIMA DO `schema-columns.json em dia`, e nao no
+      # fim do job como os blocos da 056/057. A 061 acrescenta coluna na
+      # PROJECAO de uma view, e `gen-schema-columns.mjs` le views junto com
+      # tabelas -- com o bloco embaixo daquele step, o `--check` compararia um
+      # banco SEM a coluna contra um JSON que JA a tem, e o vermelho acusaria o
+      # arquivo gerado em vez da posicao do step
+      # (`bloco-de-migration-que-cria-coluna-vai-antes-do-check-de-schema-columns`).
+      #
+      # A 061 nao tem fixture propria: o teste dela planta e faz ROLLBACK, e
+      # toda contagem dele recorta por `account_id`. Nada vaza para os steps
+      # daqui para baixo.
+      - name: 061_fatura_publica_fora_dos_totais
+        run: $PSQL -f database/migrations/061_fatura_publica_fora_dos_totais.sql
+
+      # Re-executavel: `CREATE OR REPLACE VIEW`, `COMMENT`, `REVOKE`, `GRANT` e
+      # `ALTER VIEW ... SET` sao todos re-aplicaveis. O risco proprio da segunda
+      # passada e o REPLACE: ela nao pode quebrar por a coluna ja estar no fim do
+      # SELECT nem derrubar o `security_invoker`. E a secao 4 do teste, que roda
+      # DEPOIS deste step, e o que mede as duas colagens de uma vez.
+      - name: 061 e idempotente
+        run: $PSQL -f database/migrations/061_fatura_publica_fora_dos_totais.sql
+
+      # A 061 publica `include_in_total` na `card_invoice_lines` e NAO filtra
+      # por ela: desconsiderar uma compra tira a linha so dos RELATORIOS, e o
+      # total da FATURA continua inteiro -- Opcao A da HMO-455, decidida pelo
+      # Helio (interaction `1a40529a`, 2026-10-21), porque a fatura do app tem
+      # de bater com a do banco. A secao 3 do teste e o que prende essa decisao
+      # em numero (1.700,00 com a linha desmarcada dentro).
+      #
+      # O que so o Postgres pega aqui:
+      #
+      #   - `security_invoker`, que o `CREATE OR REPLACE VIEW` APAGA (medido no
+      #     17.11, registrado na 035). Esta migration tem toda a cara de
+      #     aditiva e so fala de permissao no ALTER da ultima linha; sem ele a
+      #     fatura de qualquer usuario vai para qualquer usuario logado, e num
+      #     banco de um usuario so nenhum numero muda e nenhuma suite fica
+      #     vermelha sozinha. O teste mede as DUAS metades -- a reloption no
+      #     catalogo e a linha que volta para cada um dos dois donos da fixture,
+      #     com controle positivo sem RLS no fim;
+      #   - o tipo da coluna. `t.include_in_total::text` compila, mantem a RLS
+      #     de pe e nao muda numero nenhum -- e chega na tela como a string
+      #     "false", que e VERDADEIRA em TypeScript;
+      #   - o valor vir da LINHA. `true AS include_in_total` cravado deixa o
+      #     selo apagado para sempre e passa em qualquer assercao de existencia.
+      #
+      # 9 MUTANTES DA 061 MEDIDOS num Postgres 17 local antes deste step entrar
+      # (banco TEMPLATE com os 195 passos SQL desta cadeia ate a 060, um banco
+      # novo por mutante, a migration colada DUAS vezes em cada um como aqui):
+      # os 9 morrem, o controle positivo (a 061 intacta, com um espaco a mais
+      # num comentario) fica VERDE e o controle negativo (o teste contra o
+      # template sem a 061) fica VERMELHO.
+      #
+      # O SITIO DA MORTE E O MEDIDO, e nao o esperado -- dois dos nove morreram
+      # numa secao ANTERIOR a que eu previa, e esta lista registra onde eles de
+      # fato caem:
+      #
+      #   * `AND t.include_in_total` no WHERE            secao 2, nao a 3: a
+      #     linha desmarcada SAI da view e a coluna volta `<NULL>` antes de a
+      #     soma ser consultada. A secao 3 tambem reprovaria
+      #   * `(-t.amount) * include_in_total::int`        secao 3, e SO ela (a
+      #     contagem continua 2 e a coluna continua `false`). Este mutante
+      #     existe por causa do sitio do de cima: sem ele, o `1700.00` da
+      #     secao 3 -- que e a decisao do Helio em numero -- nao teria nenhuma
+      #     mutacao que so ele mate
+      #   * `true AS include_in_total`                   secao 2 (o notebook)
+      #   * `NOT t.include_in_total`                     secao 2 (a geladeira)
+      #   * `t.include_in_total::text`                   secao 1 ("text")
+      #   * SEM o `ALTER VIEW ... SET (security_invoker)` secao 4 (reloption 0)
+      #   * `GRANT SELECT ... TO anon`                   secao 4 (anon = 1)
+      #   * corpo recolado SEM o COALESCE do mes         secao 3 (2500.00: a
+      #     cadeira volta para a fatura de outubro), antes da secao 5
+      #   * corpo recolado SEM o COALESCE do vencimento  secao 5 (05/11/2026)
+      #
+      # Os dois ultimos sao a reversao da 041, e sao a razao de existir o step
+      # logo abaixo. O runner que produziu estes numeros nao entrou na arvore:
+      # na forma em que estava ele derruba `scripts/mede-ancora-ambigua.mjs` e
+      # `scripts/check-mutantes-in-ci.mjs` (medido), e por essa migration ter de
+      # ir para a `main` sozinha nao cabia aqui o trabalho de canoniza-lo. Para
+      # remedir, a receita esta no cabecalho do arquivo de teste.
+      #
+      # CONTROLE NEGATIVO medido: contra um banco parado na 060 o teste fica
+      # VERMELHO na secao 1 com `obtido "(a view NAO publica a coluna)"`.
+      - name: A fatura publica o fora-dos-totais, e continua somando a linha inteira
+        run: $PSQL -f database/tests/061_fatura_publica_fora_dos_totais_test.sql
+
+      # `CREATE OR REPLACE VIEW` exige o corpo INTEIRO, entao a 061 carrega uma
+      # copia da definicao da 041 -- e o teste da 041 roda na POSICAO DELE, 20
+      # migrations acima, ou seja ANTES desta recolagem
+      # (`create-or-replace-view-de-pr-aberto-reverte-migration-mergeada`). Sem
+      # este step, alguem que recolar este corpo a partir da versao da 035 some
+      # com os dois COALESCE e a compra volta a vencer no mes errado com a
+      # cadeia inteira verde. O arquivo e re-executavel (BEGIN/ROLLBACK), e foi
+      # conferido nesta posicao.
+      #
+      # O teste da 035, que guarda as outras duas colunas da mesma view, NAO
+      # pode ser pendurado aqui: ele le `public.transaction_installments`, que a
+      # 052 APAGOU -- nesta posicao ele morre com `relation does not exist`, que
+      # nao e regressao nenhuma (`suite-em-duas-posicoes-da-cadeia-pergunta-ao-catalogo`).
+      # A cobertura equivalente esta na secao 5 do teste da 061, que pergunta ao
+      # `information_schema` se `installment_number`/`installment_total`
+      # continuam na projecao.
+      - name: A fatura escolhida da 041 sobrevive a recolagem da 061
+        run: $PSQL -f database/tests/041_fatura_escolhida_no_lancamento_test.sql
+
+      # A metade ESTRUTURAL deste arquivo varre o schema inteiro procurando view
+      # sem `security_invoker`. Ele ja roda mais acima na cadeia, mas naquela
+      # posicao a `card_invoice_lines` ainda nao foi recolada pela 061 -- e e
+      # exatamente a recolagem que apaga a reloption. Conferido verde nesta
+      # posicao.
+      - name: Nenhuma view escapa da RLS, depois da 061
+        run: $PSQL -f database/tests/view_security_invoker_test.sql
+
       # O guard de deriva de COLUNA (scripts/check-column-drift.mjs) roda no job
       # code-schema-drift, que nao tem Postgres, entao ele le o schema de
       # database/schema-columns.json. Este passo e o que impede aquele arquivo de
