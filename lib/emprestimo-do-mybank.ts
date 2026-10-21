@@ -2749,7 +2749,13 @@ export type ProblemaDoAjuste =
   | "descricao_vazia"
   | "total_invalido"
   | "vencimento_invalido"
-  | "ajuste_nao_sabe_mexer_em_juro"
+  // `ajuste_nao_sabe_mexer_em_juro` MORREU NA HMO-478, junto com as duas
+  // perguntas que o produziam e com a linha que elas sustentavam. No lugar
+  // dele entraram estes dois, e os dois sao sobre CAMPO e nao sobre fase: o
+  // ajuste passou a saber mexer em juro, e o que ele recusa agora e um pedido
+  // que nao fecha conta.
+  | "taxa_e_total_juntos"
+  | "juro_nao_serve"
   | "tem_parcela_reportada"
   | "sem_parcela_pendente"
   | "total_menor_que_o_pago"
@@ -2950,8 +2956,20 @@ export function caudaRecalculada<P extends ParcelaParaAjustar>(params: {
 
 /** O ajuste decidido: o que muda no emprestimo e o que muda em cada parcela. */
 export interface AjusteDoEmprestimo {
-  /** O patch de `mybank_loans`, ou `null` quando nada da linha muda. */
-  patchDoEmprestimo: { description?: string; principal?: number } | null;
+  /**
+   * O patch de `mybank_loans`, ou `null` quando nada da linha muda.
+   *
+   * `principal` E `interest_rate` NUNCA VEM JUNTOS, e a exclusao e a decisao
+   * desta issue em forma de tipo: com juro o emprestado fica parado e a taxa
+   * muda; sem juro o total E o emprestado e nao ha taxa a escrever. Um patch
+   * com os dois seria o ajuste reescrevendo o que saiu da conta credora E o
+   * combinado -- ver O JURO DO AJUSTE.
+   */
+  patchDoEmprestimo: {
+    description?: string;
+    principal?: number;
+    interest_rate?: number;
+  } | null;
   /**
    * Uma entrada por parcela `pending` que muda. As `paid` NUNCA entram, e as
    * `reported` nao chegam aqui (a recusa vem antes).
@@ -2984,8 +3002,23 @@ export interface AjusteDoEmprestimo {
   }[];
   /** Quanto ja foi recebido, em reais. */
   jaRecebido: number;
-  /** O total depois do ajuste, em reais -- o novo `principal`. */
+  /**
+   * O total depois do ajuste, em reais -- o que as parcelas passam a somar.
+   *
+   * ERA "o novo `principal`" ATE A HMO-478, e a troca do comentario e a
+   * feature: com juro ele deixou de ser o principal (que fica parado) e passou
+   * a ser `principal x (1 + taxa)`. A juro zero os dois continuam sendo o
+   * mesmo numero.
+   */
   total: number;
+  /**
+   * O JURO RESOLVIDO deste ajuste, ou `null` quando o pedido nao mexe em juro.
+   *
+   * Quem chama usa para a frase ("passou a cobrar 30%, R$ 300 de juros"). As
+   * quatro grandezas sao as da F2, com `principal` igual ao da linha -- se um
+   * dia ele sair diferente daqui, e porque a decisao desta issue foi desfeita.
+   */
+  juro: TresCamposDoEmprestimo | null;
 }
 
 /**
@@ -3004,6 +3037,269 @@ export function descricaoDepoisDoAjuste(params: {
   return typeof params.pedida === "string" && params.pedida.trim()
     ? params.pedida.trim()
     : String(params.descricaoAtual ?? "").trim();
+}
+
+// ---------------------------------------------------------------------------
+// O JURO DO AJUSTE -- QUAL DAS TRES GRANDEZAS FICA PARADA (HMO-478)
+// ---------------------------------------------------------------------------
+// A F4 (HMO-447) recusava mexer no valor de um emprestimo com juro, e a F3
+// (HMO-448) acrescentou a segunda metade daquela recusa no momento em que
+// tornou o estado alcancavel. As DUAS sustentavam UMA linha:
+//
+//     patchDoEmprestimo.principal = total;
+//
+// certa so a juro ZERO. Esta secao e a aritmetica que a substitui, e com ela as
+// duas recusas sairam.
+//
+// A DECISAO: O `principal` FICA PARADO, E ELE E O UNICO DOS TRES QUE PODE
+// ----------------------------------------------------------------------
+// Ajustar um emprestimo com juro mexe em tres grandezas ligadas por
+// `total = principal x (1 + taxa)`, e so duas podem ser escolhidas. As tres
+// combinacoes, e por que duas delas estao erradas:
+//
+//   o que a pessoa muda | o que segura | o que sai
+//   --------------------|--------------|-------------------------------------
+//   o total             | a taxa       | o EMPRESTADO muda  <- ERRADO
+//   o total             | o emprestado | a taxa sai sozinha <- e o certo
+//   a taxa              | o emprestado | o total sai        <- e o certo
+//
+// `mybank_loans.principal` e O QUE SAIU DA CONTA DE INVESTIMENTO -- um fato
+// passado, com lancamento proprio no extrato da conta credora (Caso A) ou um
+// dinheiro que ja mudou de mao (Caso B). Deixar um ajuste reescreve-lo e
+// reescrever a historia da conta credora: a linha passa a afirmar que sairam
+// R$ 1.250 de uma conta de onde sairam R$ 1.000, e NENHUM lancamento explica os
+// R$ 250. A taxa e o total nao sao fatos passados -- sao o combinado para o
+// futuro, e e deles que o ajuste vive.
+//
+// Entao a regra tem uma frase: **com juro, ajustar NUNCA reescreve o
+// emprestado.** Mandar `{taxa}` recalcula o total; mandar `{total}` recalcula a
+// taxa; nos dois a cauda em aberto e repartida sobre o que falta receber.
+//
+// A JURO ZERO NADA MUDA, E A ASSIMETRIA E A PARTE PENSADA
+// -------------------------------------------------------
+// Num emprestimo a juro zero `{total: 1500}` continua gravando `principal =
+// 1500`, como antes desta issue. Isso parece contradizer a regra acima, e nao
+// contradiz: a juro zero o total E o principal -- existe UM numero, nao tres, e
+// nao ha segunda grandeza para absorver a mudanca. "O valor estava errado" e a
+// unica leitura possivel daquele pedido.
+//
+// A alternativa (fazer `{total}` criar juro tambem a juro zero) quebraria em
+// silencio o caminho que a F4 entregou: o conserto de um valor digitado errado
+// viraria um emprestimo a 50% que ninguem pediu. E quem QUER cobrar juro num
+// emprestimo que nao tinha tem o caminho explicito -- mandar `{taxa}`.
+//
+// O QUE CONTINUA SEM CAMINHO, E DE PROPOSITO: CONSERTAR O EMPRESTADO
+// ------------------------------------------------------------------
+// "Emprestei 1.200 e nao 1.000, a 20%" nao se pede por esta rota -- nao ha
+// campo para isso, e a ausencia e a defesa (a mesma forma da rota antes da F4).
+// A saida continua sendo cancelar e refazer, que e cara e esta certa: mexer no
+// que saiu da conta de investimento e mexer num lancamento ja realizado, e isso
+// e uma issue com migration e estorno, nao um campo a mais num PATCH.
+//
+// A TAXA DO PEDIDO VEM EM PERCENTO, COMO NO POST -- E ISSO NAO E DETALHE
+// ---------------------------------------------------------------------
+// `{taxa: 20}` e 20%, e a coluna guarda `0.2`. A divisao por 100 mora em
+// `fracaoDaTaxaDigitada`, o MESMO lugar que o POST usa (F3). Se o PATCH
+// recebesse fracao e o POST percento, o formulario que reenvia o que leu da
+// linha (`interest_rate = 0.2`) gravaria 0,2% -- um emprestimo cem vezes menor
+// que o pedido, sem erro em lugar nenhum porque 0.002 passa folgado no dominio
+// da 062.
+// ---------------------------------------------------------------------------
+
+/**
+ * Este ajuste resolve juro? A pergunta que separa o caminho novo do antigo.
+ *
+ * `true` em tres estados, e o terceiro e o que a F3 tornou alcancavel:
+ *
+ *   1. o pedido manda `taxa` diferente de zero -- inclusive sobre um emprestimo
+ *      a juro zero, que e como se passa a cobrar juro de um que nao cobrava;
+ *   2. o emprestimo JA TEM juro e o pedido manda `taxa` (mesmo `0`, que e como
+ *      se PERDOA o juro: o total cai para o emprestado);
+ *   3. o emprestimo JA TEM juro e o pedido manda `total` -- o buraco que a F3
+ *      tapou com uma recusa e que esta funcao passa a resolver.
+ *
+ * `false` NO PEDIDO QUE SO MANDA `{taxa: 0}` A UM EMPRESTIMO SEM JURO, e esse
+ * ramo nao e teorico: `numeric` chega do PostgREST como STRING, e quem reenvia
+ * a taxa que leu manda `"0.00"`. Um `pedido.taxa !== undefined` cru ali faria
+ * todo emprestimo da fase 1 entrar na aritmetica nova para nao mudar nada --
+ * e, pior, faria `{taxa: "0.00", total: 1500}` cair na recusa de
+ * `taxa_e_total_juntos`, que e o corpo que o formulario de hoje monta.
+ *
+ * `false` TAMBEM NO PEDIDO QUE SO MEXE NA DESCRICAO OU NA DATA, com juro ou
+ * sem: nenhum dos dois chega perto de `principal` nem de `interest_rate`, e
+ * fazer o ajuste "resolver juro" ali gravaria `interest_rate` numa passagem que
+ * ninguem pediu.
+ */
+export function ajusteMexeNoJuro(params: {
+  emprestimo: { interest_rate?: number | string | null };
+  pedido: PedidoDeAjuste;
+}): boolean {
+  const { emprestimo, pedido } = params;
+
+  const mexeNaTaxa = pedido.taxa !== undefined;
+  const mexeNoTotal = pedido.total !== undefined;
+
+  // `Number(...)` E NAO `!== 0`, pelo motivo do JSDoc: a STRING "0.00" do
+  // PostgREST e diferente de `0` por identidade e igual por valor.
+  const pedeTaxaNaoZero = mexeNaTaxa && Number(pedido.taxa) !== 0;
+  const jaTemJuro = Number(emprestimo.interest_rate ?? 0) !== 0;
+
+  return pedeTaxaNaoZero || (jaTemJuro && (mexeNaTaxa || mexeNoTotal));
+}
+
+/**
+ * O JURO DEPOIS DO AJUSTE -- as quatro grandezas, com o `principal` PARADO.
+ *
+ * `null` quando o ajuste nao resolve juro nenhum (`ajusteMexeNoJuro` e `false`)
+ * E TAMBEM quando os campos nao servem -- quem diz por que e
+ * `problemaDoJuroDoAjuste`, exatamente como `juroDoPedido` e
+ * `problemaDoJuroDoPedido` se dividem na F3.
+ *
+ * O `principal` ENTRA COMO VEIO DA LINHA E SAI INTACTO. E a frase da decisao em
+ * forma de codigo: `tresCamposDoEmprestimo` recebe o emprestado e UM de
+ * `taxa`/`total` e resolve o terceiro. O que esta funcao NAO faz e a entrega --
+ * ela nunca devolve um `principal` diferente do que recebeu.
+ *
+ * E A ARITMETICA E A DA F2, NAO UMA SEGUNDA. A previa da tela, o POST e este
+ * ajuste chamam a MESMA `tresCamposDoEmprestimo`; uma conta propria aqui
+ * divergiria na primeira mudanca, e o sintoma seria o ajuste gravando uma taxa
+ * que a criacao do mesmo emprestimo nao gravaria
+ * (`previa-na-tela-tem-que-usar-o-peso-do-fechamento`).
+ */
+export function juroDepoisDoAjuste(params: {
+  emprestimo: {
+    principal: number | string;
+    interest_rate?: number | string | null;
+  };
+  pedido: PedidoDeAjuste;
+}): TresCamposDoEmprestimo | null {
+  if (!ajusteMexeNoJuro(params)) return null;
+
+  const { emprestimo, pedido } = params;
+
+  // OS DOIS JUNTOS NAO SE RESOLVEM AQUI, e `tresCamposDoEmprestimo` tambem
+  // devolve `null` para eles (F2): `taxa` e `total` podem DISCORDAR, e escolher
+  // um calado faz a tela apagar um numero que a pessoa digitou. Quem transforma
+  // isto em recusa com frase e `problemaDoJuroDoAjuste`.
+  if (pedido.taxa !== undefined && pedido.total !== undefined) return null;
+
+  const principal = Number(emprestimo.principal);
+
+  return pedido.taxa !== undefined
+    ? tresCamposDoEmprestimo({
+        principal,
+        // PERCENTO -> FRACAO, pela MESMA funcao que o POST usa. Ver A TAXA DO
+        // PEDIDO VEM EM PERCENTO no cabecalho desta secao.
+        taxa: fracaoDaTaxaDigitada(String(pedido.taxa)),
+      })
+    : tresCamposDoEmprestimo({ principal, total: Number(pedido.total) });
+}
+
+/**
+ * Por que o juro deste ajuste nao serve -- a recusa da F2, reusada inteira.
+ *
+ * `null` quando serve, ou quando o ajuste nao resolve juro nenhum.
+ *
+ * AS FRASES SAO AS DA F2, E ISSO E A ENTREGA E NAO ECONOMIA. "A taxa não pode
+ * ser negativa", "Taxa alta demais: o máximo é 1000%" e "O total a receber não
+ * pode ser menor que o valor emprestado" ja existem, ja tem teste e ja sao o
+ * que a tela de CRIACAO mostra. Uma copia aqui faria o mesmo erro ter duas
+ * redacoes conforme a pessoa estivesse criando ou corrigindo.
+ *
+ * O CASO QUE A F2 NAO COBRE E O UNICO ESCRITO AQUI: `taxa` e `total` juntos.
+ * `problemaDoJuro` ACEITA os dois (e `tresCamposDoEmprestimo` que os recusa,
+ * devolvendo `null` sem dizer por que), entao sem esta pergunta o pedido cairia
+ * em `juro_nao_serve` com a frase de um campo ilegivel -- apontando para o
+ * campo errado.
+ */
+export function problemaDoJuroDoAjuste(params: {
+  emprestimo: {
+    principal: number | string;
+    interest_rate?: number | string | null;
+  };
+  pedido: PedidoDeAjuste;
+}): ProblemaDoJuro | null {
+  if (!ajusteMexeNoJuro(params)) return null;
+
+  const { emprestimo, pedido } = params;
+  const principal = Number(emprestimo.principal);
+
+  return pedido.taxa !== undefined
+    ? problemaDoJuro({
+        principal,
+        taxa: fracaoDaTaxaDigitada(String(pedido.taxa)),
+      })
+    : problemaDoJuro({ principal, total: Number(pedido.total) });
+}
+
+/**
+ * O TOTAL DO EMPRESTIMO DEPOIS DO AJUSTE -- os tres casos, num lugar so.
+ *
+ * E o numero que a frase reporta ("o empréstimo passou a valer X") e, a juro
+ * zero, o que vai para `principal`. Os tres ramos:
+ *
+ *   com juro resolvido  -> `juro.total`, que ja saiu da aritmetica da F2;
+ *   sem juro, com `total` no pedido -> o pedido, arredondado ao centavo;
+ *   sem nada disso -> o `principal` que a linha ja tinha.
+ *
+ * O TERCEIRO RAMO NAO E O MESMO NUMERO QUE A CAUDA USA, e confundi-los e o
+ * defeito que `faltaReceberDoAjuste` existe para nao cometer: `principal`
+ * inclui as parcelas JA PAGAS.
+ */
+export function totalDepoisDoAjuste(params: {
+  emprestimo: { principal: number | string };
+  pedido: PedidoDeAjuste;
+  juro: TresCamposDoEmprestimo | null;
+}): number {
+  if (params.juro) return params.juro.total;
+
+  return params.pedido.total !== undefined
+    ? Math.round(Number(params.pedido.total) * 100) / 100
+    : Math.round(Number(params.emprestimo.principal) * 100) / 100;
+}
+
+/**
+ * QUANTO A CAUDA EM ABERTO TEM DE SOMAR -- a base da repartição.
+ *
+ * Tres ramos, e os tres sao numeros DIFERENTES:
+ *
+ *   com juro  -> `juro.total - jaRecebido`;
+ *   com `total` no pedido e sem juro -> `pedido.total - jaRecebido`;
+ *   sem nenhum dos dois -> o que as pendentes JA somam.
+ *
+ * O TERCEIRO RAMO NAO E `principal - jaRecebido`, E A DIFERENCA E DINHEIRO
+ * -----------------------------------------------------------------------
+ * O pedido que so adia o vencimento ("a cauda passa a vencer em marco") nao
+ * mexe em valor nenhum, e a cauda tem de continuar somando o que ela ja soma.
+ * `principal` ali seria quase certo e vinha errado com juro e com parcela paga:
+ * ele inclui o que ja foi recebido, entao adiar o vencimento de um emprestimo
+ * com metade paga DOBRARIA a divida de quem so pediu para mudar uma data.
+ *
+ * Esta funcao MOROU NA ROTA ate esta issue, com o comentario acima. Ela desceu
+ * para ca porque ganhou o terceiro ramo: escrita no `ajustar`, a escolha entre
+ * `juro.total` e `pedido.total` ficaria fora do alcance de todo mutante desta
+ * lib, e trocar um pelo outro e exatamente o estrago que a issue descreve.
+ */
+export function faltaReceberDoAjuste(params: {
+  pendentes: ParcelaParaAjustar[];
+  jaRecebido: number;
+  pedido: PedidoDeAjuste;
+  juro: TresCamposDoEmprestimo | null;
+}): number {
+  const { pendentes, jaRecebido, pedido, juro } = params;
+
+  if (juro) return juro.total - jaRecebido;
+  if (pedido.total !== undefined) return Number(pedido.total) - jaRecebido;
+
+  // SOMA EM CENTAVOS INTEIROS, pelo motivo de `jaRecebidoDaSerie`: `numeric`
+  // chega como STRING e tres parcelas somadas em ponto flutuante dao o centavo
+  // que ninguem explica.
+  return (
+    pendentes.reduce(
+      (soma, p) => soma + Math.round(Number(p.amount) * 100),
+      0
+    ) / 100
+  );
 }
 
 /**
@@ -3033,6 +3329,12 @@ export function problemaDoAjuste(params: {
   emprestimo: {
     lender_user_id: string;
     status: string;
+    // `principal` E OBRIGATORIO DESDE A HMO-478, e nao e enfeite: ele e o lado
+    // PARADO da aritmetica do juro. Um select que nao o nomeie faz
+    // `juroDepoisDoAjuste` receber `undefined`, `Number(undefined)` dar `NaN`,
+    // e `problemaDoJuro` recusar tudo com `valor_ilegivel` -- o ajuste com
+    // juro reprovando sempre, por uma frase que culpa o que a pessoa digitou.
+    principal: number | string;
     interest_rate?: number | string | null;
   };
   meuId: string;
@@ -3072,54 +3374,41 @@ export function problemaDoAjuste(params: {
     }
   }
 
-  // O AJUSTE NAO SABE MEXER EM JURO -- E AGORA SAO DOIS CASOS, NAO UM.
+  // O JURO DO AJUSTE -- AS DUAS RECUSAS DA F3/F4 SAIRAM DAQUI (HMO-478)
   //
-  // A F4 (HMO-447) escreveu esta recusa como "a trava de fase 1 em forma de
-  // frase", com dois motivos: a 062 nao estava colada, e a aritmetica do juro
-  // era da F3. **Os dois morreram.** A 062 esta colada em producao (medida
-  // 2026-10-21: `mybank_loans_interest_rate_fase_1` sumiu do `pg_constraint`,
-  // e os tres `COMMENT ON COLUMN` batem em md5 com o arquivo da `main`), e a
-  // aritmetica do juro e esta issue.
+  // Onde estavam `mexeNaTaxa && Number(pedido.taxa) !== 0` e
+  // `mexeNoTotal && Number(emprestimo.interest_rate ?? 0) !== 0`, as duas
+  // devolvendo `ajuste_nao_sabe_mexer_em_juro`, agora esta a ARITMETICA: o
+  // `principal` fica parado e a grandeza que a pessoa nao mandou sai da F2.
+  // As duas saem JUNTO com a linha que elas sustentavam
+  // (`patchDoEmprestimo.principal = total`), como o comentario de la mandava.
+  // O porque da decisao esta em O JURO DO AJUSTE, acima desta funcao.
   //
-  // O QUE NAO MORREU E O QUE A RECUSA PROTEGE, e e uma linha so:
-  //
-  //     patchDoEmprestimo.principal = total;   // `caudaRecalculada`, abaixo
-  //
-  // Aquela linha so esta certa a juro ZERO, onde o que se empresta e o que se
-  // recebe. Com juro, `total` e `principal + juros`, e grava-lo em `principal`
-  // APAGA O JURO do emprestimo -- a linha passa a afirmar que emprestou 1.200
-  // quando emprestou 1.000, e `SUM(amount) - principal` (que a 062 define como
-  // o juro) vira zero. Dinheiro sumido, sem erro em lugar nenhum.
-  //
-  // ENSINAR O AJUSTE A MEXER EM JURO E UMA ISSUE PROPRIA, nao um apendice
-  // desta: o pedido precisaria dizer QUAL das tres grandezas segurar (mexeu o
-  // total, mantem a taxa e muda o emprestado? mantem o emprestado e muda a
-  // taxa?), e essa pergunta nao tem resposta obvia -- e a mesma escolha da
-  // antecipacao, que prefere recusar a calcular errado.
-  //
-  // O SEGUNDO CASO E O BURACO QUE **ESTA** ISSUE ABRE, e ele nao existia quando
-  // a F4 foi escrita. A recusa da F4 pergunta so pela taxa DO PEDIDO. Antes
-  // desta issue isso bastava, porque nenhum emprestimo podia ter juro: o estado
-  // "emprestimo com juro" era INALCANCAVEL. Agora que se cria um a 20%, um
-  // PATCH de `{total: 1500}` -- sem `taxa` nenhuma, entao `mexeNaTaxa` e falso
-  // e a recusa da F4 nao dispara -- cai direto naquela linha e apaga o juro.
-  // Por isso a segunda pergunta e sobre o EMPRESTIMO, nao sobre o pedido.
-  //
-  // A descricao sozinha continua passando nos dois casos, e e de proposito:
-  // ela nao toca `principal`, e trancar o conserto de um texto por causa de um
-  // juro que ele nao le seria recusar a unica coisa que ainda da para consertar.
-  //
-  // `Number(...)` E NAO `!== 0`: `numeric` chega do PostgREST como STRING
-  // ("0.00"), e quem reenvia a taxa que leu mandaria `"0.00"` -- que `!== 0` e
-  // verdade. A recusa dispararia em todo emprestimo a juro zero.
-  if (mexeNaTaxa && Number(pedido.taxa) !== 0) {
-    return "ajuste_nao_sabe_mexer_em_juro";
+  // O QUE SOBROU DE RECUSA SAO DUAS, E AS DUAS SAO SOBRE OS CAMPOS:
+  const juroNaoServe = problemaDoJuroDoAjuste({ emprestimo, pedido });
+
+  // OS DOIS JUNTOS, E ESTA VEM PRIMEIRO. `taxa` e `total` no mesmo corpo podem
+  // DISCORDAR (emprestado 1.000, taxa 20%, total 1.500), e nao ha resposta
+  // certa -- escolher um calado apaga um numero que a pessoa digitou. Antes de
+  // `juro_nao_serve` porque aquele e sobre um campo, e este e sobre a ESCOLHA
+  // entre dois: dizer "nao consegui ler os valores" a quem preencheu os dois
+  // apontaria para o campo errado.
+  if (
+    ajusteMexeNoJuro({ emprestimo, pedido }) &&
+    mexeNaTaxa &&
+    mexeNoTotal
+  ) {
+    return "taxa_e_total_juntos";
   }
 
-  if (mexeNoTotal && Number(emprestimo.interest_rate ?? 0) !== 0) {
-    return "ajuste_nao_sabe_mexer_em_juro";
-  }
+  if (juroNaoServe) return "juro_nao_serve";
 
+  // `total_invalido` SO VALE NO CAMINHO SEM JURO, e a ordem e que faz isso: com
+  // juro, `problemaDoJuroDoAjuste` ja respondeu acima e com frase MELHOR --
+  // `total_menor_que_o_principal` diz "você estaria emprestando para receber
+  // menos de volta", enquanto "tem que ser maior que zero" e verdade e nao
+  // ajuda. Um `total: 500` sobre um emprestimo de 1.000 a 20% e positivo e
+  // mesmo assim nao serve, e so a recusa da F2 sabe dizer por que.
   if (mexeNoTotal) {
     const total = Number(pedido.total);
     if (!Number.isFinite(total) || total <= 0) return "total_invalido";
@@ -3135,12 +3424,34 @@ export function problemaDoAjuste(params: {
   // parcela pendente nenhuma: trocar o texto de um emprestimo cujas 24 parcelas
   // estao todas pagas e um conserto legitimo, e recusa-lo por "nao ha nada em
   // aberto" seria trancar a unica coisa que sobrou para consertar.
-  if (!mexeNoTotal && !mexeNoVencimento) return null;
+  //
+  // `mexeNoJuro` ENTRA NESTA PERGUNTA, E E A HMO-478 QUE O POE AQUI. Um
+  // `{taxa: 30}` sozinho nao manda `total` nenhum e MUDA O VALOR DA DIVIDA --
+  // sem ele na lista, a funcao devolveria `null` aqui e o ajuste seguiria sem
+  // nunca ter perguntado se ha parcela em aberto para receber a diferenca. O
+  // sintoma seria um emprestimo todo pago ganhando 30% de juro que nenhuma
+  // parcela cobra: `SUM(amount)` continuaria sendo o principal e o juro
+  // gravado viraria uma afirmacao que o extrato desmente.
+  const mexeNoJuro = ajusteMexeNoJuro({ emprestimo, pedido });
+
+  if (!mexeNoTotal && !mexeNoVencimento && !mexeNoJuro) return null;
 
   if (pendentesDaSerie(parcelas).length === 0) return "sem_parcela_pendente";
 
-  if (mexeNoTotal) {
-    const total = Number(pedido.total);
+  if (mexeNoTotal || mexeNoJuro) {
+    // O TOTAL **RESOLVIDO**, E NAO `pedido.total` -- e a diferenca e o caso que
+    // esta issue abre. Com `{taxa: 30}` o pedido nao traz total nenhum, e o
+    // numero que tem de ser maior que o ja recebido e o que a taxa PRODUZ
+    // (`principal x 1,3`). Lendo `pedido.total` ali, um `{taxa: 0}` sobre um
+    // emprestimo com metade paga passaria: o total cairia para o principal, a
+    // cauda teria de somar menos do que ja entrou, e a recusa certa
+    // (`total_menor_que_o_pago`) so apareceria depois, disfarcada de
+    // `cauda_impossivel` -- "confira o total" para quem mexeu na taxa.
+    const total = totalDepoisDoAjuste({
+      emprestimo,
+      pedido,
+      juro: juroDepoisDoAjuste({ emprestimo, pedido }),
+    });
     const jaRecebido = jaRecebidoDaSerie(parcelas);
 
     // `<=` E NAO `<`, E O IGUAL E O CASO QUE IMPORTA. Com `total === jaRecebido`
@@ -3163,6 +3474,15 @@ export function mensagemDoProblemaDoAjuste(
     avisadas: number[];
     jaRecebido: number;
     pendentes: number;
+    /**
+     * O que `problemaDoJuroDoAjuste` respondeu -- a frase de `juro_nao_serve`.
+     *
+     * NO CONTEXTO E NAO RECALCULADO AQUI: esta funcao recebe `ProblemaDoAjuste`
+     * e nao o emprestimo nem o pedido, e dar-lhe os dois so para refazer a
+     * pergunta faria a frase depender de uma segunda avaliacao capaz de
+     * divergir da que produziu a recusa. Quem chama ja tem a resposta.
+     */
+    problemaDoJuro?: ProblemaDoJuro | null;
   }
 ): string {
   switch (problema) {
@@ -3178,16 +3498,30 @@ export function mensagemDoProblemaDoAjuste(
       return "O total a receber tem que ser um valor maior que zero.";
     case "vencimento_invalido":
       return "O primeiro vencimento da cauda tem que ser uma data no formato AAAA-MM-DD.";
-    case "ajuste_nao_sabe_mexer_em_juro":
-      // A FRASE ANTIGA ("nesta fase o MyBank só empresta a juro zero") VIROU
-      // MENTIRA nesta issue: o MyBank passou a emprestar com juro, e quem
-      // acabou de criar um empréstimo a 20% leria que ele não existe. A frase
-      // nova diz o que é verdade -- o empréstimo com juro existe, o AJUSTE é
-      // que ainda não sabe mexer nele -- e diz a saída que resta.
+    case "taxa_e_total_juntos":
+      // A FRASE DIZ QUAL DOS DOIS APAGAR, e não apenas "escolha um": com os
+      // dois preenchidos a pessoa não sabe qual deles o app ia honrar, e é
+      // justamente essa dúvida que a recusa existe para não deixar em pé.
+      // Ela também diz o que o valor emprestado faz ali -- que é NADA, e
+      // saber disso é metade da decisão.
       return (
-        "Ajustar o valor de um empréstimo com juro ainda não existe — seria preciso dizer o que segurar, " +
-        "o emprestado ou a taxa. Por enquanto dá para corrigir a descrição; para mudar o valor, cancele e refaça."
+        "Mande a taxa OU o total a receber, não os dois: eles podem discordar e eu não escolho por você. " +
+        "O valor emprestado não muda num ajuste — é ele que fica parado, e o outro número sai da conta."
       );
+    case "juro_nao_serve":
+      // A FRASE É A DA F2, E ISSO É A ENTREGA. "A taxa não pode ser negativa",
+      // "Taxa alta demais: o máximo é 1000%" e "O total a receber não pode ser
+      // menor que o valor emprestado" já existem, já têm teste e já são o que
+      // a tela de CRIAÇÃO mostra para o mesmo erro. Uma redação própria aqui
+      // faria o mesmo engano ser explicado de dois jeitos conforme a pessoa
+      // estivesse criando ou corrigindo o empréstimo.
+      //
+      // O `??` NÃO É DEFENSIVO À TOA: o tipo deixa `problemaDoJuro` ausente, e
+      // um chamador que esqueça de passá-lo veria `undefined` no lugar da
+      // frase. A alternativa diz o mínimo verdadeiro em vez de quebrar.
+      return contexto.problemaDoJuro
+        ? mensagemDoProblemaDoJuro(contexto.problemaDoJuro)
+        : "Confira o valor emprestado, a taxa e o total a receber.";
     case "tem_parcela_reportada":
       // A CONTRACAO VEM NO PROPRIO RAMO, como em
       // `mensagemDaPrevisaoDaCaudaAusente`: a medicao em producao leu "de a
@@ -3259,7 +3593,11 @@ function emReais(valor: number): string {
  * -- a divida discordando de um lancamento REALIZADO, sem nenhum sintoma.
  */
 export function ajusteDoEmprestimo(params: {
-  emprestimo: { description: string; principal: number | string };
+  emprestimo: {
+    description: string;
+    principal: number | string;
+    interest_rate?: number | string | null;
+  };
   parcelas: ParcelaParaAjustar[];
   pedido: PedidoDeAjuste;
   /** O que `caudaRecalculada` devolveu -- `null` quando o pedido nao mexe na serie. */
@@ -3273,29 +3611,42 @@ export function ajusteDoEmprestimo(params: {
   });
 
   const jaRecebido = jaRecebidoDaSerie(parcelas);
-  const total =
-    pedido.total !== undefined
-      ? Math.round(Number(pedido.total) * 100) / 100
-      : Math.round(Number(emprestimo.principal) * 100) / 100;
 
-  const patchDoEmprestimo: { description?: string; principal?: number } = {};
+  const juro = juroDepoisDoAjuste({ emprestimo, pedido });
+  const total = totalDepoisDoAjuste({ emprestimo, pedido, juro });
+
+  const patchDoEmprestimo: {
+    description?: string;
+    principal?: number;
+    interest_rate?: number;
+  } = {};
 
   if (pedido.descricao !== undefined) {
     patchDoEmprestimo.description = descricao;
   }
 
-  // `principal` E `total` SAO A MESMA COISA SO A JURO ZERO, e esta linha depende
-  // disso. A juro zero o que se empresta e o que se recebe; com juro, `total` e
-  // `principal + juros`, e grava-lo aqui APAGARIA o juro do emprestimo (ver a
-  // 062: `SUM(amount) - principal` E o juro, entao iguala-los zera o juro).
+  // AQUI MORAVA `patchDoEmprestimo.principal = total`, INCONDICIONAL -- a linha
+  // que esta issue veio matar e que as duas recusas da F3/F4 sustentavam.
   //
-  // QUEM GARANTE QUE NAO SE CHEGA AQUI COM JURO E `ajuste_nao_sabe_mexer_em_juro`,
-  // em `problemaDoAjuste`, e sao as DUAS perguntas de la que sustentam esta
-  // linha -- a do pedido (`taxa` diferente de zero) e a do EMPRESTIMO
-  // (`interest_rate` diferente de zero com `total` no pedido). A segunda e a que
-  // cobre o emprestimo que ja nasceu com juro, que a HMO-448 tornou possivel.
-  // Se um dia esta linha aprender juro, as duas perguntas de la saem junto.
-  if (pedido.total !== undefined) {
+  // OS DOIS RAMOS, E ELES SAO EXCLUDENTES DE PROPOSITO
+  // --------------------------------------------------
+  // COM JURO o `principal` NAO ENTRA NO PATCH. Ele e o que SAIU da conta de
+  // investimento -- um fato passado --, e o que o ajuste reescreve e a TAXA.
+  // Gravar `total` ali apagaria o juro: a 062 define o juro como
+  // `SUM(amount) - principal`, entao iguala-los o zera, e a linha passaria a
+  // afirmar que emprestou 1.200 quem emprestou 1.000. Dinheiro sumido, sem
+  // erro em lugar nenhum. Ver O JURO DO AJUSTE para a decisao inteira.
+  //
+  // SEM JURO e o caminho de antes desta issue, INTACTO: a juro zero o total E
+  // o principal (o que se empresta e o que se recebe), e `{total: 1500}` quer
+  // dizer "o valor estava errado". Fazer este pedido virar juro de 50% seria
+  // trocar um conserto de digitacao por um emprestimo que ninguem pediu.
+  if (juro) {
+    // A TAXA, E NAO O TOTAL. `interest_rate` e a fracao com `CASAS_DA_TAXA`
+    // casas que a F2 ja arredondou -- a MESMA que o POST grava, e nao o
+    // percento que chegou no corpo.
+    patchDoEmprestimo.interest_rate = juro.taxa;
+  } else if (pedido.total !== undefined) {
     patchDoEmprestimo.principal = total;
   }
 
@@ -3379,6 +3730,7 @@ export function ajusteDoEmprestimo(params: {
     parcelas: linhas,
     jaRecebido,
     total,
+    juro,
   };
 }
 
@@ -3556,12 +3908,29 @@ export function mensagemDoAjuste(params: {
   previsoesAusentes: number[];
   mudouADescricao: boolean;
   mudouOTotal: boolean;
+  /**
+   * O juro resolvido, quando o ajuste mexeu nele (HMO-478).
+   *
+   * SEM ELE A FRASE ESCONDE METADE DO AJUSTE: quem manda `{taxa: 30}` não
+   * mandou total nenhum, e "o empréstimo passou a valer R$ 1.300" sozinho não
+   * diz que a taxa foi gravada nem quanto de juros isso é. Pior no sentido
+   * inverso -- quem manda `{total: 1300}` NÃO digitou taxa, e a taxa que a
+   * conta produziu (30%) é a única coisa nova na linha: calar sobre ela seria
+   * gravar um número que a pessoa nunca viu.
+   */
+  juro?: TresCamposDoEmprestimo | null;
   /** `false` quando o UPDATE do emprestimo nao alcancou a linha. */
   emprestimoAtualizado: boolean;
 }): string {
   const partes: string[] = [];
 
-  if (params.mudouOTotal) {
+  // `mudouOTotal` E O PEDIDO, `params.juro` E A CONTA -- e com juro só o
+  // segundo existe. Ver `juro` acima: `{taxa: 30}` não traz `total` nenhum e
+  // mesmo assim muda o valor da dívida, então a frase do total tem de sair
+  // pelos DOIS caminhos.
+  const mudouOValor = params.mudouOTotal || !!params.juro;
+
+  if (mudouOValor) {
     partes.push(
       `O empréstimo passou a valer ${emReais(params.total)}` +
         (params.jaRecebido > 0
@@ -3570,6 +3939,20 @@ export function mensagemDoAjuste(params: {
     );
   } else if (params.quantasParcelas > 0) {
     partes.push(`${params.quantasParcelas} parcela(s) em aberto foram atualizadas.`);
+  }
+
+  // AS TRÊS GRANDEZAS DO JURO, E O EMPRESTADO ENTRA DE PROPÓSITO
+  //
+  // "Você continua tendo emprestado R$ 1.000" é a frase que confirma a decisão
+  // desta issue para quem está lendo a tela: o ajuste mexeu no combinado e NÃO
+  // no que saiu da conta de investimento. Sem ela, quem acabou de mudar o total
+  // de 1.200 para 1.300 não tem como saber qual dos dois números o app moveu --
+  // e é justamente essa dúvida que a issue existe para resolver.
+  if (params.juro) {
+    partes.push(
+      `A taxa passou a ser ${emPercentoDaPrevia(params.juro.taxa)} ` +
+        `(${emReais(params.juro.juros)} de juros); você continua tendo emprestado ${emReais(params.juro.principal)}.`
+    );
   }
 
   if (params.mudouADescricao) {

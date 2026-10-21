@@ -6298,6 +6298,46 @@ function escritaPorEq(sessao, tabela, coluna, valor) {
   );
 }
 
+/**
+ * O PATCH que o ajuste mandou para `mybank_loans` -- `{}` quando nao mandou.
+ *
+ * `{}` E NAO `null`, e a escolha e o que faz as assercoes desta parte valerem:
+ * quem chama pergunta `patch.principal === undefined` ("o emprestado nao foi
+ * reescrito"), e um `null` ali explodiria em TypeError em vez de responder. O
+ * teste morreria com a mensagem errada -- "cannot read property of null" no
+ * lugar de "o `principal` entrou no patch".
+ */
+function patchDoEmprestimoAjustado({ sessao }) {
+  return escritaPorEq(sessao, "mybank_loans", "id", "loan-auto")?.patch ?? {};
+}
+
+/** O que as parcelas `pending` somam DEPOIS do ajuste, em reais. */
+function somaDasPendentesDoAjuste(linhas) {
+  return (
+    linhas.mybank_installments
+      .filter((p) => p.status === "pending")
+      // CENTAVOS INTEIROS, pelo motivo de `jaRecebidoDaSerie`: tres parcelas de
+      // R$ 1.266,67 somadas em ponto flutuante dao R$ 3.800,0000000000005, e a
+      // assercao de igualdade falharia sobre uma cauda CERTA.
+      .reduce((soma, p) => soma + Math.round(Number(p.amount) * 100), 0) / 100
+  );
+}
+
+/**
+ * O que a serie INTEIRA soma -- a `paid` junto.
+ *
+ * E o lado esquerdo da invariante da 062: `SUM(amount) - principal` E O JURO.
+ * Sem a `paid` na conta, um ajuste que apagasse o juro passaria verde aqui.
+ */
+function somaDeTodasAsParcelasDoAjuste(linhas) {
+  return (
+    linhas.mybank_installments.reduce(
+      (soma, p) => soma + Math.round(Number(p.amount) * 100),
+      0
+    ) / 100
+  );
+}
+
 // ---------------------------------------------------------------------------
 // A GRADE: ativo/encerrado x com/sem `reported` x Caso A/B
 // ---------------------------------------------------------------------------
@@ -6888,59 +6928,223 @@ test("total e vencimento malformados sao 400, cada um com a frase do campo", asy
   }
 });
 
-test("`taxa` diferente de zero e 400 -- o ajuste nao sabe mexer em juro", async () => {
-  // A F4 escreveu esta recusa como "a trava da 053 em forma de frase", com dois
-  // motivos: a 062 nao estava colada, e a aritmetica do juro era da F3. OS DOIS
-  // MORRERAM -- a 062 esta colada em prod (medida 2026-10-21: a trava de fase
-  // sumiu do `pg_constraint` e os tres COMMENT batem em md5 com o arquivo), e a
-  // aritmetica e esta issue. O que sustenta a recusa agora e UMA linha:
-  // `patchDoEmprestimo.principal = total`, certa so a juro zero.
-  for (const taxa of [2, 0.5, "1.5"]) {
-    const linhas = tabelasDoAjuste();
-    const r = await ajustarEmprestimo({
-      corpo: { total: 4600, taxa },
-      tabelas: linhas,
-    });
+// ---------------------------------------------------------------------------
+// O AJUSTE COM JURO -- O `principal` FICA PARADO (HMO-478)
+// ---------------------------------------------------------------------------
+// Aqui estavam os dois testes das recusas que a F3/F4 deixaram de pe
+// (`ajuste_nao_sabe_mexer_em_juro`). Eles sairam JUNTO com as duas perguntas e
+// com a linha que elas sustentavam (`patchDoEmprestimo.principal = total`), e o
+// que entrou no lugar e a aritmetica.
+//
+// A ASSERCAO QUE VALE DINHEIRO E A MESMA EM TODOS ELES: depois do ajuste,
+// `mybank_loans.principal` CONTINUA SENDO O QUE ERA. Ele e o que saiu da conta
+// de investimento -- um fato passado. Um teste que so conferisse a taxa
+// passaria verde com o principal reescrito, que e exatamente o defeito.
+//
+// O FIXTURE: 4 parcelas de R$ 1.000, a 1 PAGA, `principal` R$ 4.000.
+// ---------------------------------------------------------------------------
 
-    assert.equal(r.status, 400, `taxa ${taxa}: ${JSON.stringify(r.corpo)}`);
-    assert.match(r.corpo.error, /empréstimo com juro ainda não existe/);
-    // A FRASE ANTIGA NAO PODE VOLTAR: "o MyBank so empresta a juro zero" virou
-    // MENTIRA nesta issue, e quem acabou de criar um emprestimo a 20% leria que
-    // ele nao existe.
-    assert.doesNotMatch(r.corpo.error, /juro zero/);
-    assert.equal(r.sessao.escritas.length, 0);
-  }
-});
-
-test("o emprestimo que JA TEM juro recusa `total` sozinho -- o buraco que esta issue abriu", async () => {
-  // ESTE CASO ERA INALCANCAVEL ATE AQUI, e e por isso que a F4 nao o viu:
-  // nenhum emprestimo podia ter juro, entao perguntar pela taxa DO PEDIDO
-  // bastava. Agora que se cria um a 20%, um PATCH de `{total}` SEM `taxa`
-  // passa por aquela pergunta (`mexeNaTaxa` e falso) e cai direto em
-  // `patchDoEmprestimo.principal = total` -- gravando 4.600 em `principal` de
-  // um emprestimo de 4.000 com juro, APAGANDO o juro: a 062 define o juro como
-  // `SUM(amount) - principal`, entao iguala-los o zera. Dinheiro sumido, sem
-  // erro em lugar nenhum.
-  for (const taxaDoEmprestimo of [0.2, "0.20", 1.5]) {
+test("`{total}` num emprestimo COM juro move a TAXA, e o emprestado fica parado", async () => {
+  // O CASO QUE A F3 RECUSAVA, e o buraco que ela tapou com uma frase: um PATCH
+  // de `{total: 4600}` sem `taxa` nenhuma sobre um emprestimo de R$ 4.000 a
+  // 20%. Antes desta issue ele caia em `principal = 4600` e APAGAVA o juro (a
+  // 062 define o juro como `SUM(amount) - principal`, entao iguala-los o zera).
+  // Agora o emprestado fica em 4.000 e a taxa vira 15% -- `4600/4000 - 1`.
+  for (const taxaDoEmprestimo of [0.2, "0.20"]) {
     const linhas = tabelasDoAjuste();
     linhas.mybank_loans[0].interest_rate = taxaDoEmprestimo;
 
-    const r = await ajustarEmprestimo({
-      corpo: { total: 4600 },
-      tabelas: linhas,
-    });
+    const r = await ajustarEmprestimo({ corpo: { total: 4600 }, tabelas: linhas });
 
+    assert.equal(r.status, 200, `interest_rate ${taxaDoEmprestimo}: ${JSON.stringify(r.corpo)}`);
+    assert.equal(r.corpo.taxa, 0.15);
+    assert.equal(r.corpo.emprestado, 4000);
+    assert.equal(r.corpo.juros, 600);
+
+    // O QUE FOI GRAVADO NA LINHA, e nao o que o corpo DIZ: o campo da resposta
+    // e montado pela rota e um patch errado nao o contradiria.
+    const patch = patchDoEmprestimoAjustado(r);
+    assert.equal(patch.interest_rate, 0.15);
     assert.equal(
-      r.status,
-      400,
-      `interest_rate ${taxaDoEmprestimo}: ${JSON.stringify(r.corpo)}`
+      patch.principal,
+      undefined,
+      "o `principal` entrou no patch -- o ajuste reescreveu o que saiu da conta de investimento"
     );
-    assert.match(r.corpo.error, /empréstimo com juro ainda não existe/);
-    // NENHUMA ESCRITA, e e esta a assercao que importa: o PATCH reescreve a
-    // cauda ANTES do emprestimo, entao uma recusa que chegasse tarde ja teria
-    // mexido nas parcelas.
-    assert.equal(r.sessao.escritas.length, 0);
+    assert.equal(linhas.mybank_loans[0].principal, 4000);
+
+    // E A CAUDA SOMA O QUE FALTA: 4.600 - 1.000 ja recebidos = 3.600 em 3.
+    assert.equal(somaDasPendentesDoAjuste(linhas), 3600);
+    // A INVARIANTE DA 062, PERGUNTADA DE VERDADE: SUM(amount) - principal E o
+    // juro. 1.000 pago + 3.600 em aberto - 4.000 emprestados = 600.
+    assert.equal(somaDeTodasAsParcelasDoAjuste(linhas) - 4000, 600);
   }
+});
+
+test("`{taxa}` move o TOTAL, e a taxa do corpo vem em PERCENTO como no POST", async () => {
+  // O SENTIDO INVERSO, e a unidade e a metade do teste. `{taxa: 30}` e 30% e a
+  // coluna guarda 0.3: se o PATCH lesse fracao, este corpo gravaria 3000% --
+  // recusado pelo teto da 062 com um 23514 que a tela mostraria como 500.
+  const linhas = tabelasDoAjuste();
+  linhas.mybank_loans[0].interest_rate = 0.2;
+
+  const r = await ajustarEmprestimo({ corpo: { taxa: 30 }, tabelas: linhas });
+
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.equal(r.corpo.taxa, 0.3);
+  assert.equal(r.corpo.emprestado, 4000);
+  // 4.000 x 1,3 = 5.200.
+  assert.equal(r.corpo.total, 5200);
+  assert.equal(r.corpo.juros, 1200);
+
+  const patch = patchDoEmprestimoAjustado(r);
+  assert.equal(patch.interest_rate, 0.3);
+  assert.equal(patch.principal, undefined);
+  assert.equal(linhas.mybank_loans[0].principal, 4000);
+
+  // A CAUDA ACOMPANHA SEM O PEDIDO TER MANDADO TOTAL NENHUM: 5.200 - 1.000.
+  assert.equal(somaDasPendentesDoAjuste(linhas), 4200);
+
+  // E A FRASE DIZ AS TRES GRANDEZAS. A do emprestado e a que confirma a decisao
+  // desta issue para quem le a tela: o ajuste mexeu no combinado, nao no que
+  // saiu da conta.
+  assert.match(r.corpo.message, /taxa passou a ser 30,00%/);
+  assert.match(r.corpo.message, /continua tendo emprestado R\$ 4\.000,00/);
+});
+
+test("`{taxa}` num emprestimo SEM juro passa a cobrar juro -- e o emprestado fica parado", async () => {
+  // COMO SE COMECA A COBRAR JURO de um emprestimo que nao cobrava. Antes desta
+  // issue este corpo era 400 (`mexeNaTaxa && taxa !== 0`), e a saida era
+  // cancelar a divida inteira e refazer -- o que apaga o historico das pagas.
+  const linhas = tabelasDoAjuste();
+  assert.equal(Number(linhas.mybank_loans[0].interest_rate ?? 0), 0, "o fixture tem de nascer a juro zero");
+
+  const r = await ajustarEmprestimo({ corpo: { taxa: 10 }, tabelas: linhas });
+
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.equal(r.corpo.taxa, 0.1);
+  assert.equal(r.corpo.emprestado, 4000);
+  assert.equal(r.corpo.total, 4400);
+  assert.equal(patchDoEmprestimoAjustado(r).principal, undefined);
+  assert.equal(linhas.mybank_loans[0].principal, 4000);
+  assert.equal(somaDasPendentesDoAjuste(linhas), 3400);
+});
+
+test("`{taxa: 0}` num emprestimo COM juro PERDOA o juro -- o total cai para o emprestado", async () => {
+  // O ramo que `ajusteMexeNoJuro` alcanca por `jaTemJuro && mexeNaTaxa`, e nao
+  // por `taxa !== 0`. Sem ele, zerar a taxa de um emprestimo a 20% cairia no
+  // caminho SEM juro e nao escreveria `interest_rate` nenhum: a linha
+  // continuaria dizendo 20% com as parcelas somando o principal -- a taxa
+  // gravada afirmando um ganho que o extrato desmente.
+  const linhas = tabelasDoAjuste();
+  linhas.mybank_loans[0].interest_rate = 0.2;
+
+  const r = await ajustarEmprestimo({ corpo: { taxa: 0 }, tabelas: linhas });
+
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.equal(r.corpo.taxa, 0);
+  assert.equal(r.corpo.total, 4000);
+  assert.equal(patchDoEmprestimoAjustado(r).interest_rate, 0);
+  assert.equal(linhas.mybank_loans[0].principal, 4000);
+  // 4.000 - 1.000 ja recebidos.
+  assert.equal(somaDasPendentesDoAjuste(linhas), 3000);
+});
+
+test("`taxa` E `total` no mesmo corpo sao 400 -- eles podem DISCORDAR", async () => {
+  // `problemaDoJuro` ACEITA os dois (e `tresCamposDoEmprestimo` que os recusa,
+  // devolvendo `null` sem dizer por que), entao sem a pergunta propria este
+  // corpo cairia em `juro_nao_serve` com a frase de um campo ilegivel --
+  // apontando para o campo errado.
+  const linhas = tabelasDoAjuste();
+  linhas.mybank_loans[0].interest_rate = 0.2;
+
+  const r = await ajustarEmprestimo({
+    corpo: { total: 4600, taxa: 20 },
+    tabelas: linhas,
+  });
+
+  assert.equal(r.status, 400, JSON.stringify(r.corpo));
+  assert.match(r.corpo.error, /taxa OU o total/);
+  // NENHUMA ESCRITA: o PATCH reescreve a cauda ANTES do emprestimo, entao uma
+  // recusa que chegasse tarde ja teria mexido nas parcelas.
+  assert.equal(r.sessao.escritas.length, 0);
+});
+
+test("as recusas do juro no AJUSTE sao as frases da F2, e nao uma copia", async () => {
+  // A MESMA EXIGENCIA QUE A F3 JA FAZ NA CRIACAO: o mesmo engano tem de ser
+  // explicado do mesmo jeito, esteja a pessoa criando ou corrigindo. Uma
+  // redacao propria aqui passaria verde num teste que so olhasse o status.
+  const casos = [
+    // A taxa negativa, com o emprestimo a juro zero: `pedeTaxaNaoZero` e quem
+    // leva este corpo para a aritmetica nova.
+    [{ taxa: -5 }, 0, /não pode ser negativa/],
+    // O teto da 062 alcancado pela TAXA -- 1000% e o maximo.
+    [{ taxa: 2000 }, 0, /Taxa alta demais/],
+    // E alcancado pelo TOTAL: o mesmo absurdo escrito do outro lado.
+    [{ total: 90000 }, 0.2, /Taxa alta demais/],
+    // O total ABAIXO do emprestado num emprestimo com juro. Ele e POSITIVO --
+    // `total_invalido` ("maior que zero") nao o pegaria --, e a frase da F2 e a
+    // unica que diz o que esta errado nele.
+    [{ total: 3500 }, 0.2, /receber menos de volta/],
+  ];
+
+  for (const [corpo, taxaDaLinha, frase] of casos) {
+    const linhas = tabelasDoAjuste();
+    linhas.mybank_loans[0].interest_rate = taxaDaLinha;
+
+    const r = await ajustarEmprestimo({ corpo, tabelas: linhas });
+
+    assert.equal(r.status, 400, `${JSON.stringify(corpo)}: ${JSON.stringify(r.corpo)}`);
+    assert.match(r.corpo.error, frase);
+    assert.equal(r.sessao.escritas.length, 0);
+    assert.equal(linhas.mybank_loans[0].principal, 4000);
+  }
+});
+
+test("`{taxa}` que derruba o total abaixo do JA PAGO e 409, e nao `cauda_impossivel`", async () => {
+  // O pedido nao manda `total` nenhum, e mesmo assim muda o valor da divida: e
+  // por isso que `total_menor_que_o_pago` le o total RESOLVIDO e nao
+  // `pedido.total`. Lendo o pedido, este corpo passaria aquela pergunta e a
+  // recusa so apareceria depois, disfarcada de `cauda_impossivel` -- "confira
+  // o total e o primeiro vencimento" para quem mexeu na TAXA.
+  // Emprestado R$ 1.000 a 20%, e a parcela 1 (R$ 1.000) JA RECEBIDA. Zerar a
+  // taxa derruba o total para R$ 1.000 -- IGUAL ao ja recebido, entao sobra
+  // R$ 0,00 para as tres pendentes e `amount > 0` recusaria cada uma. E o
+  // `<=` da pergunta, e o igual e o caso que importa.
+  const linhas = tabelasDoAjuste();
+  linhas.mybank_loans[0].principal = 1000;
+  linhas.mybank_loans[0].interest_rate = 0.2;
+
+  const r = await ajustarEmprestimo({ corpo: { taxa: 0 }, tabelas: linhas });
+
+  assert.equal(r.status, 409, JSON.stringify(r.corpo));
+  assert.match(r.corpo.error, /Já foram recebidos R\$ 1\.000,00/);
+  assert.doesNotMatch(r.corpo.error, /primeiro vencimento/);
+  assert.equal(r.sessao.escritas.length, 0);
+});
+
+test("CONTROLE: a juro ZERO o `{total}` continua gravando o `principal`", async () => {
+  // O CAMINHO DA F4, INTACTO -- e ele e o controle negativo da decisao desta
+  // issue. A juro zero o total E o principal: existe UM numero, e `{total}`
+  // quer dizer "o valor estava errado". Fazer este pedido virar juro de 15%
+  // seria trocar um conserto de digitacao por um emprestimo que ninguem pediu.
+  //
+  // Sem este teste, a regra "com juro o principal fica parado" poderia ter sido
+  // escrita como "o principal NUNCA muda" e passaria verde em todos os de cima.
+  const linhas = tabelasDoAjuste();
+
+  const r = await ajustarEmprestimo({ corpo: { total: 4600 }, tabelas: linhas });
+
+  assert.equal(r.status, 200, JSON.stringify(r.corpo));
+  assert.equal(patchDoEmprestimoAjustado(r).principal, 4600);
+  assert.equal(
+    patchDoEmprestimoAjustado(r).interest_rate,
+    undefined,
+    "a juro zero o ajuste nao tem taxa a escrever"
+  );
+  // E O CORPO NAO INVENTA AS TRES GRANDEZAS: um `taxa: 0` constante faria a
+  // medicao nao distinguir "nao mexeu em juro" de "zerou o juro".
+  assert.equal(r.corpo.taxa, undefined);
+  assert.equal(r.corpo.emprestado, undefined);
 });
 
 test("a DESCRICAO sozinha passa mesmo com juro -- ela nao toca `principal`", async () => {
