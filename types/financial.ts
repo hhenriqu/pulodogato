@@ -711,6 +711,21 @@ export interface CardInvoiceLine {
    */
   installment_number?: number | null;
   installment_total?: number | null;
+  /**
+   * O `include_in_total` do lancamento (060), publicado pela 061 (HMO-459).
+   *
+   * **PUBLICADO E NAO FILTRADO**, e a distincao e o ponto: `invoice_amount`
+   * desta linha SOMA no `total` da fatura mesmo com o flag em `false`. A fatura
+   * do app tem de bater com a do banco; quem tira a linha das somas e a cadeia
+   * de `category_monthly_totals` (060), em outra tela.
+   *
+   * TRES ESTADOS -- `NULL`/ausente quer dizer "ninguem mexeu no botao", ou seja
+   * SOMA (a coluna e `DEFAULT true` anulavel, e e o estado de toda compra
+   * anterior a 060). Nao leia este campo direto: use
+   * `somaNosTotaisDaFatura` (`lib/acoes-da-fatura.ts`), que resolve os tres com
+   * `!== false`.
+   */
+  include_in_total?: boolean | null;
 }
 
 /** Uma fatura fechada: as linhas de um cartao num mes, com o total. */

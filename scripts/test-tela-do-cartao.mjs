@@ -34,10 +34,19 @@ import { FaturaDoCartao } from "../.tmp-tela-do-cartao/components/cartoes/Fatura
 import { CartaoDaLista } from "../.tmp-tela-do-cartao/components/cartoes/CartaoDaLista.js";
 import { EdicaoDaPrevisaoDoCartao } from "../.tmp-tela-do-cartao/components/cartoes/EdicaoDaPrevisaoDoCartao.js";
 import {
+  AVISO_DA_FATURA_INTEIRA,
   avisoDaExclusaoDaLinhaDaFatura,
   caminhoDeEdicaoDaLinhaDaFatura,
   ehParcelaDaFatura,
+  faturaTemLinhaForaDosTotais,
   pedidoDeExclusaoDaLinhaDaFatura,
+  pedidoDeMudarOsTotaisDaLinhaDaFatura,
+  ROTULO_DE_TIRAR_DOS_TOTAIS_NA_FATURA,
+  ROTULO_DE_VOLTAR_AOS_TOTAIS_NA_FATURA,
+  rotuloDeMudarOsTotaisDaLinhaDaFatura,
+  SELO_FORA_DOS_TOTAIS_NA_FATURA,
+  seloDaLinhaDaFatura,
+  somaNosTotaisDaFatura,
 } from "../.tmp-tela-do-cartao/lib/acoes-da-fatura.js";
 import {
   ancoraDaPrevisao,
@@ -1446,4 +1455,390 @@ test("o aviso da edicao nomeia a ocorrencia, e so a serie ganha a segunda frase"
   // previsao apontada para cartao. Prometer um que nao existe e pior que calar.
   assert.ok(!avulsa.includes("Contas a Pagar"), avulsa);
   assert.ok(!serie.includes("Contas a Pagar"), serie);
+});
+
+// ---------------------------------------------------------------------------
+// 10. DESCONSIDERAR A COMPRA DO SALDO (HMO-461, F2b da HMO-455)
+// ---------------------------------------------------------------------------
+// O terceiro verbo do pedido: "contas do cartao tambem podem ser editadas,
+// excluidas e DESCONSIDERADAS DO SALDO". A semantica e a **Opcao A** escolhida
+// pelo Helio: a linha sai dos RELATORIOS e o total da FATURA continua inteiro.
+//
+// O QUE ESTA SECAO EXISTE PARA PEGAR, e nenhum dos tres da sintoma:
+//
+//   1. o `=== true` ingenuo. A coluna da 060 tem TRES estados e `NULL` quer
+//      dizer "ninguem mexeu no botao" -- ou seja, SOMA. Trocar
+//      `!== false` por `=== true` poria o selo "fora dos totais" e a frase em
+//      TODA fatura anterior a migration, e o botao de toda linha antiga
+//      prometeria "Voltar a somar" algo que nunca saiu;
+//   2. o total da fatura MUDANDO. Se alguem "consertar" a view para filtrar a
+//      linha marcada, a fatura do app passa a discordar da do banco -- e e a do
+//      banco que o Helio confere. Por isso ha assercao sobre o total AQUI, e
+//      nao so sobre o selo;
+//   3. a frase ausente. Sem ela o fluxo inteiro se le como botao quebrado: o
+//      total nao muda e nada na tela diz por que.
+//
+// Cada assercao textual nova vem com CONTROLE POSITIVO -- a mesma arvore, no
+// outro estado do flag -- porque `assert.ok(!html.includes(X))` passa verde
+// tambem quando o render morreu, quando o selo mudou de palavra, e quando o
+// componente inteiro deixou de desenhar a lista.
+
+/** A mesma linha, com o flag no estado pedido. */
+const linhaComFlag = (valor, descricao = "Mercado do mes") => ({
+  ...linha(MEU_CARTAO, descricao, 200, "03"),
+  include_in_total: valor,
+});
+
+/** A fatura com as linhas dadas, mantendo o total IMPRESSO em 320. */
+const faturaCom = (...lines) => ({ ...FATURA, lines, line_count: lines.length });
+
+// --- A resolucao dos tres estados, que e a decisao de baixo de tudo ----------
+
+test("somaNosTotaisDaFatura resolve os TRES estados: NULL e ausente SOMAM", () => {
+  // `!== false`, e nao `=== true`. `NULL` na coluna quer dizer "ninguem mexeu
+  // no botao", que e o estado de toda compra gravada antes da 060 -- e o
+  // `DEFAULT true` da coluna diz que ela soma.
+  assert.equal(somaNosTotaisDaFatura({ include_in_total: true }), true);
+  assert.equal(somaNosTotaisDaFatura({ include_in_total: false }), false);
+  assert.equal(
+    somaNosTotaisDaFatura({ include_in_total: null }),
+    true,
+    "a linha NULL foi tratada como fora dos totais -- e o defeito do `=== true`"
+  );
+  assert.equal(
+    somaNosTotaisDaFatura({}),
+    true,
+    "linha sem o campo (cache antigo, resposta anterior a 061) virou 'fora'"
+  );
+});
+
+test("o selo sai do mesmo campo, e a linha NULL NAO ganha selo", () => {
+  assert.equal(seloDaLinhaDaFatura(linhaComFlag(false)), "fora dos totais");
+  assert.equal(seloDaLinhaDaFatura(linhaComFlag(false)), SELO_FORA_DOS_TOTAIS_NA_FATURA);
+
+  // `null` e nao `""`: quem desenha nao pode renderizar um Badge vazio, que
+  // muda o `gap` da linha sem mostrar nada.
+  assert.equal(seloDaLinhaDaFatura(linhaComFlag(true)), null);
+  assert.equal(
+    seloDaLinhaDaFatura(linhaComFlag(null)),
+    null,
+    "a linha NULL ganhou selo: a fatura antiga inteira apareceria marcada"
+  );
+});
+
+test("o rotulo do botao tem DUAS frases, e a linha NULL oferece TIRAR", () => {
+  // Rotulo fixo mentiria em metade dos cliques: em cima da linha JA desmarcada,
+  // "Nao somar nos totais" prometeria desmarcar de novo.
+  assert.equal(
+    rotuloDeMudarOsTotaisDaLinhaDaFatura(linhaComFlag(true)),
+    ROTULO_DE_TIRAR_DOS_TOTAIS_NA_FATURA
+  );
+  assert.equal(
+    rotuloDeMudarOsTotaisDaLinhaDaFatura(linhaComFlag(false)),
+    ROTULO_DE_VOLTAR_AOS_TOTAIS_NA_FATURA
+  );
+  assert.equal(
+    rotuloDeMudarOsTotaisDaLinhaDaFatura(linhaComFlag(null)),
+    ROTULO_DE_TIRAR_DOS_TOTAIS_NA_FATURA,
+    "a linha NULL prometeria RELIGAR uma compra que nunca saiu"
+  );
+
+  // As duas frases sao DIFERENTES. Um `??` que colapsasse as duas passaria as
+  // duas assercoes de cima se elas comparassem com a mesma constante.
+  assert.notEqual(
+    ROTULO_DE_TIRAR_DOS_TOTAIS_NA_FATURA,
+    ROTULO_DE_VOLTAR_AOS_TOTAIS_NA_FATURA
+  );
+});
+
+// --- O pedido: a rota da HMO-452, com o booleano invertido e LITERAL ---------
+
+test("o PATCH vai para a rota da HMO-452 com o booleano INVERTIDO", () => {
+  const ligada = pedidoDeMudarOsTotaisDaLinhaDaFatura(linhaComFlag(true), false);
+  assert.deepEqual(ligada, {
+    metodo: "PATCH",
+    url: `/api/personal-finance/transactions/${MEU_CARTAO}-03`,
+    corpo: { include_in_total: false },
+  });
+
+  // O inverso, para que um corpo cravado em `false` nao passe verde.
+  const desligada = pedidoDeMudarOsTotaisDaLinhaDaFatura(linhaComFlag(false), false);
+  assert.equal(desligada.corpo.include_in_total, true);
+
+  // A LINHA NULL MANDA `false`: ela esta somando (pelo default), e o clique
+  // pede para tirar. Um `!linha.include_in_total` escrito a mao mandaria `true`
+  // aqui -- a pessoa clica "Nao somar" e a rota recebe "somar".
+  const nula = pedidoDeMudarOsTotaisDaLinhaDaFatura(linhaComFlag(null), false);
+  assert.equal(
+    nula.corpo.include_in_total,
+    false,
+    "o clique na linha NULL pediu o OPOSTO do que o botao prometia"
+  );
+
+  // E o booleano vai LITERAL, nao em string: a rota testa `=== true` estrito, e
+  // a string "false" e truthy -- um `String(...)` aqui gravaria o oposto com
+  // 200 e sem sintoma na tela.
+  assert.equal(typeof ligada.corpo.include_in_total, "boolean");
+  assert.equal(JSON.stringify(ligada.corpo), '{"include_in_total":false}');
+});
+
+test("a linha do AJUSTE nao tem pedido, e a PARCELA tem", () => {
+  // O ajuste de saldo (HMO-253) ja tem controle proprio um bloco acima, e a
+  // categoria reservada e o que faz aquela linha SER um ajuste. Ele existe para
+  // reconciliar o total -- tira-lo do relatorio deixaria a diferenca que ele
+  // representa sem lugar nenhum.
+  assert.equal(
+    pedidoDeMudarOsTotaisDaLinhaDaFatura(linhaComFlag(true), true),
+    null
+  );
+
+  // A PARCELA PODE, e aqui esta a diferenca deliberada para o Excluir (que a
+  // recusa): desde a 035 cada parcela e uma linha propria de
+  // `financial_transactions`, e o PATCH grava nela sem tocar nas irmas. O que
+  // estraga a serie e EXCLUIR uma de dez -- marcar uma nao mexe em rotulo
+  // nenhum.
+  const umaParcela = { ...parcela(3, 10, 300), include_in_total: true };
+  const pedidoDaParcela = pedidoDeMudarOsTotaisDaLinhaDaFatura(umaParcela, false);
+  assert.ok(
+    pedidoDaParcela,
+    "a parcela nao pode ser tirada dos totais -- e a unica forma de tirar uma compra em 10x"
+  );
+  assert.equal(pedidoDaParcela.corpo.include_in_total, false);
+
+  // CONTROLE NEGATIVO da linha de cima: o Excluir continua recusando a parcela.
+  assert.equal(pedidoDeExclusaoDaLinhaDaFatura(umaParcela, false), null);
+});
+
+// --- O pedagio da frase ------------------------------------------------------
+
+test("faturaTemLinhaForaDosTotais nao se acende numa fatura ANTIGA (toda NULL)", () => {
+  assert.equal(faturaTemLinhaForaDosTotais([linhaComFlag(null), linhaComFlag(null)]), false);
+  assert.equal(faturaTemLinhaForaDosTotais([linhaComFlag(true)]), false);
+  assert.equal(faturaTemLinhaForaDosTotais([]), false);
+  assert.equal(faturaTemLinhaForaDosTotais(null), false);
+
+  // CONTROLE POSITIVO: uma linha marcada entre duas que somam acende.
+  assert.equal(
+    faturaTemLinhaForaDosTotais([
+      linhaComFlag(true),
+      linhaComFlag(false),
+      linhaComFlag(null),
+    ]),
+    true
+  );
+});
+
+// --- E agora a ARVORE: a decisao certa com o JSX errado passa verde acima ----
+
+test("o SELO aparece na linha marcada, e so nela", () => {
+  const html = render({
+    fatura: faturaCom(linhaComFlag(false, "Notebook"), linhaComFlag(true, "Farmacia")),
+  });
+  const t = texto(html);
+
+  assert.ok(
+    t.includes(SELO_FORA_DOS_TOTAIS_NA_FATURA),
+    `o selo nao chegou na arvore: ${t.slice(0, 400)}`
+  );
+  // UMA VEZ, e nao duas: o selo e da linha marcada. Duas ocorrencias significam
+  // que a linha que soma tambem ganhou selo.
+  assert.equal(
+    t.split(SELO_FORA_DOS_TOTAIS_NA_FATURA).length - 1,
+    1,
+    `o selo apareceu em mais de uma linha: ${t.slice(0, 500)}`
+  );
+
+  // CONTROLE POSITIVO do `!includes` abaixo: a MESMA arvore, com o flag no
+  // outro estado, desenha as duas compras e NAO traz selo nenhum.
+  const limpa = texto(
+    render({
+      fatura: faturaCom(linhaComFlag(null, "Notebook"), linhaComFlag(true, "Farmacia")),
+    })
+  );
+  assert.ok(limpa.includes("Notebook"), `a lista nem desenhou: ${limpa.slice(0, 300)}`);
+  assert.ok(limpa.includes("Farmacia"), limpa.slice(0, 300));
+  assert.ok(
+    !limpa.includes(SELO_FORA_DOS_TOTAIS_NA_FATURA),
+    `a fatura sem linha marcada ganhou selo: ${limpa.slice(0, 400)}`
+  );
+});
+
+test("A FRASE aparece quando ha linha marcada -- e o total da fatura NAO muda", () => {
+  const html = render({ fatura: faturaCom(linhaComFlag(false, "Notebook")) });
+  const t = texto(html);
+
+  // A frase, que e o item 3 do escopo. Sem ela a pessoa ve o total igual e
+  // conclui que o botao nao funciona.
+  assert.ok(
+    t.includes(texto(AVISO_DA_FATURA_INTEIRA)),
+    `a frase nao chegou na tela: ${t.slice(0, 600)}`
+  );
+
+  // A frase DIZ O QUE CONTINUA e DE ONDE A LINHA SAIU -- "sai dos totais"
+  // sozinho nao e endereco nenhum, e e justamente a duvida que o selo nao
+  // responde.
+  assert.ok(t.includes("continua inteiro"), AVISO_DA_FATURA_INTEIRA);
+  assert.ok(t.includes("relatórios"), AVISO_DA_FATURA_INTEIRA);
+  // E manda para a outra ferramenta: quem marcou a linha querendo mudar o valor
+  // da fatura estava procurando o Ajuste de saldo (HMO-253), um bloco acima.
+  assert.ok(t.includes("Ajuste de saldo"), AVISO_DA_FATURA_INTEIRA);
+
+  // O TOTAL IMPRESSO CONTINUA INTEIRO -- a Opcao A em pixel. Se alguem filtrar
+  // a linha marcada na view, a fatura do app para de bater com a do banco, que
+  // e o numero que o Helio confere com o papel ao lado da tela.
+  assert.ok(
+    t.includes("R$ 320,00"),
+    `o total da fatura mudou por causa do flag: ${t.slice(0, 500)}`
+  );
+});
+
+test("sem linha marcada a frase NAO aparece (e a tela nao fica muda)", () => {
+  // Aviso permanente que nao se aplica e o texto que se aprende a nao ler --
+  // bem antes do mes em que ele passa a importar.
+  const t = texto(render());
+
+  // CONTROLE POSITIVO: a tela desenhou de verdade. Sem ele este teste passa
+  // verde tambem se o componente parar de renderizar a lista inteira.
+  assert.ok(t.includes("Mercado do mes"), `a lista nem desenhou: ${t.slice(0, 300)}`);
+  assert.ok(t.includes("2 gastos nesta fatura"), t.slice(0, 300));
+
+  assert.ok(
+    !t.includes("continua inteiro"),
+    `a frase apareceu numa fatura sem linha marcada: ${t.slice(0, 500)}`
+  );
+});
+
+test("o BOTAO aparece com o rotulo do estado, e some sem o handler", () => {
+  const marcada = render({
+    aoMudarOsTotais: () => {},
+    fatura: faturaCom(linhaComFlag(false, "Notebook")),
+  });
+  assert.ok(
+    marcada.includes(ROTULO_DE_VOLTAR_AOS_TOTAIS_NA_FATURA),
+    `a linha marcada nao oferece voltar: ${marcada.slice(0, 500)}`
+  );
+  assert.ok(
+    !marcada.includes(ROTULO_DE_TIRAR_DOS_TOTAIS_NA_FATURA),
+    "a linha marcada prometeu tirar de novo"
+  );
+
+  const somando = render({
+    aoMudarOsTotais: () => {},
+    fatura: faturaCom(linhaComFlag(null, "Notebook")),
+  });
+  assert.ok(
+    somando.includes(ROTULO_DE_TIRAR_DOS_TOTAIS_NA_FATURA),
+    `a linha NULL nao oferece tirar: ${somando.slice(0, 500)}`
+  );
+  assert.ok(
+    !somando.includes(ROTULO_DE_VOLTAR_AOS_TOTAIS_NA_FATURA),
+    "a linha NULL prometeu RELIGAR uma compra que nunca saiu"
+  );
+
+  // SEM O HANDLER, NENHUM DOS DOIS. O prop e opcional, e e isso que mantem este
+  // componente sem rede -- um botao que aparecesse sempre apareceria tambem
+  // onde nao ha nada ligado nele.
+  const semHandler = render({ fatura: faturaCom(linhaComFlag(false, "Notebook")) });
+  // CONTROLE POSITIVO: a linha continua desenhada, com selo e tudo.
+  assert.ok(semHandler.includes("Notebook"), semHandler.slice(0, 300));
+  assert.ok(texto(semHandler).includes(SELO_FORA_DOS_TOTAIS_NA_FATURA), "o selo sumiu junto");
+  assert.ok(
+    !semHandler.includes(ROTULO_DE_TIRAR_DOS_TOTAIS_NA_FATURA) &&
+      !semHandler.includes(ROTULO_DE_VOLTAR_AOS_TOTAIS_NA_FATURA),
+    "o botao apareceu sem handler atras dele"
+  );
+});
+
+test("a linha do AJUSTE nao ganha o botao dos totais", () => {
+  // Mesma regra da Fase 1, pelo mesmo motivo -- e o item 4 do escopo.
+  //
+  // A FATURA TEM **SO** A LINHA DO AJUSTE, de proposito. Com uma compra comum
+  // ao lado, o `!html.includes(rotulo)` reprovaria pela linha VIZINHA, que
+  // ganha o botao com razao: o grep e da pagina inteira e o rotulo e o mesmo
+  // nas duas linhas. A versao com duas linhas desta assercao foi escrita
+  // primeiro e falhou exatamente assim
+  // (`guarda-que-grepa-a-pagina-inteira-por-fragmento-de-url-reprova-o-link-novo-e-certo`).
+  //
+  // O `include_in_total: false` e o caso adversario: mesmo marcada -- estado
+  // ALCANCAVEL, porque a lista de Despesas (HMO-452) oferece o toggle sem
+  // peneirar a categoria reservada -- a linha do ajuste nao ganha o botao AQUI.
+  const html = render({
+    fatura: faturaCom({ ...linhaDeAjuste(), include_in_total: false }),
+    categoriaDeAjuste: CATEGORIA_DE_AJUSTE,
+    aoMudarOsTotais: () => {},
+  });
+  const t = texto(html);
+
+  // CONTROLE POSITIVO: a linha do ajuste ESTA na tela, com o selo "Ajuste" --
+  // ela fica na lista para a soma fechar com o total impresso em cima. Sem
+  // isto, o `!includes` abaixo passa verde tambem com a tela em branco.
+  assert.ok(t.includes("Ajuste de saldo da fatura"), t.slice(0, 400));
+  assert.ok(t.includes("Ajuste"), t.slice(0, 400));
+
+  assert.ok(
+    !html.includes(ROTULO_DE_TIRAR_DOS_TOTAIS_NA_FATURA) &&
+      !html.includes(ROTULO_DE_VOLTAR_AOS_TOTAIS_NA_FATURA),
+    `o ajuste ganhou o botao dos totais: ${html.slice(0, 600)}`
+  );
+});
+
+test("o ajuste JA marcado mostra o selo -- o botao e que nao vem", () => {
+  // ESTE CASO NAO E ZELO: a primeira versao desta secao afirmava "nem o selo"
+  // no teste acima, e estava errada.
+  //
+  // O estado e ALCANCAVEL. A lista de Despesas da HMO-452 oferece o toggle em
+  // qualquer lancamento realizado e NAO peneira a categoria reservada do
+  // ajuste -- entao existe ajuste com `include_in_total = false` gravado por
+  // outra tela, sem que esta tela tenha oferecido nada.
+  //
+  // E nesse estado o selo esta CERTO: aquele ajuste realmente esta fora dos
+  // relatorios. Esconde-lo aqui -- "o ajuste nao participa desta feature" --
+  // faria a tela mentir sobre dinheiro que de fato saiu das somas, no unico
+  // lugar onde a pessoa teria como descobrir isso. E por isso que
+  // `seloDaLinhaDaFatura` NAO recebe `ehAjuste`: o selo DESCREVE o estado, o
+  // botao e que DECIDE quem pode mexer.
+  const t = texto(
+    render({
+      fatura: faturaCom({ ...linhaDeAjuste(), include_in_total: false }),
+      categoriaDeAjuste: CATEGORIA_DE_AJUSTE,
+    })
+  );
+
+  assert.ok(
+    t.includes(SELO_FORA_DOS_TOTAIS_NA_FATURA),
+    `o ajuste marcado esconde que esta fora dos relatorios: ${t.slice(0, 500)}`
+  );
+  // Os dois selos convivem: "Ajuste" diz o que a linha E, "fora dos totais" diz
+  // onde ela nao esta.
+  assert.ok(t.includes("Ajuste"), t.slice(0, 400));
+
+  // CONTROLE POSITIVO: o ajuste NAO marcado nao ganha o selo -- sem isto, um
+  // selo cravado sempre passaria verde acima.
+  const semMarca = texto(
+    render({
+      fatura: faturaCom(linhaDeAjuste()),
+      categoriaDeAjuste: CATEGORIA_DE_AJUSTE,
+    })
+  );
+  assert.ok(semMarca.includes("Ajuste de saldo da fatura"), semMarca.slice(0, 300));
+  assert.ok(
+    !semMarca.includes(SELO_FORA_DOS_TOTAIS_NA_FATURA),
+    `o ajuste comum ganhou selo de fora dos totais: ${semMarca.slice(0, 400)}`
+  );
+});
+
+test("a compra COMUM continua com o botao quando ha um ajuste na fatura", () => {
+  // O inverso do teste acima: a peneira do ajuste nao pode desligar a feature
+  // nas linhas vizinhas. Sem este caso, `podeMudarOsTotais` cravado em `false`
+  // passaria verde no teste de cima.
+  const html = render({
+    fatura: faturaCom(linhaDeAjuste(), linhaComFlag(true, "Farmacia")),
+    categoriaDeAjuste: CATEGORIA_DE_AJUSTE,
+    aoMudarOsTotais: () => {},
+  });
+
+  assert.ok(
+    html.includes(ROTULO_DE_TIRAR_DOS_TOTAIS_NA_FATURA),
+    `a compra comum perdeu o botao por causa do ajuste: ${html.slice(0, 600)}`
+  );
 });
