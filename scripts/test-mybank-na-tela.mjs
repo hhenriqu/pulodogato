@@ -222,6 +222,19 @@ const PARTES = [
   "lib/pedido-de-emprestimo.js",
   "lib/contas.js",
   "lib/mybank-na-tela.js",
+  // O AJUSTE NA TELA (HMO-480), ANTES DO PAINEL QUE O USA. Ele e a metade pura
+  // do dialogo de Ajustar, e `FORMULARIO_DO_AJUSTE_VAZIO` e uma `const` de
+  // modulo -- `const` NAO SOBE no script classico, entao declarado depois do
+  // painel o mount morre em `ReferenceError: FORMULARIO_DO_AJUSTE_VAZIO is not
+  // defined`, no NIVEL DO MODULO. MEDIDO nesta issue: sem esta linha os 63
+  // casos reprovam DE UMA VEZ, e o relato se le como "a sonda quebrou" ou "o
+  // Chromium nao rodou", nao como "falta uma linha num array".
+  //
+  // Ele JA COMPILAVA no `.tmp` sem estar no `include` do tsconfig (o tsc o puxa
+  // pelo import do painel); o que faltava era declara-lo AQUI. Compilar e ser
+  // servido a pagina sao duas listas diferentes, e so a segunda da sintoma --
+  // `pagina-da-sonda-tem-lista-propria-de-modulos-separada-do-tsconfig`.
+  "lib/ajuste-do-emprestimo-na-tela.js",
   "lib/data-digitada.js",
   "lib/data-na-tela.js",
   "components/ui/button.js",
@@ -324,6 +337,8 @@ const PAGINA = `<!doctype html>
 <div id="raiz-k"></div><div id="raiz-k2"></div><div id="raiz-k3"></div>
 <div id="raiz-k4"></div><div id="raiz-k5"></div><div id="raiz-k6"></div>
 <div id="raiz-l-singular"></div>
+<div id="raiz-m"></div><div id="raiz-m2"></div><div id="raiz-m3"></div>
+<div id="raiz-m4"></div><div id="raiz-m5"></div>
 <div id="resultado">a pagina nao rodou</div>
 <script>${umd("react", "react.development.js")}</script>
 <script>${umd("react-dom", "react-dom.development.js")}</script>
@@ -2364,6 +2379,350 @@ async function preencherEmprestimo(achar, valor) {
   };
 }
 
+// =============================================================================
+// M -- o gesto «Ajustar»: o dialogo que chama o PATCH (HMO-480, F8 da HMO-444)
+// =============================================================================
+// O que esta secao mede, e nenhum item aparece em \`tsc\`, \`lint\` nem \`build\`:
+//
+//   * O DIALOGO EXISTIR. Antes desta issue o PATCH de ajuste estava inteiro no
+//     servidor (F4/F7) e NENHUMA tela o chamava: pelo painel, um emprestimo
+//     ativo so podia ser cancelado. M1 e M2 sao a feature;
+//
+//   * OS CAMPOS NASCEREM VAZIOS, e isso NAO e cosmetica. Campo preenchido
+//     VIAJA no corpo, e \`{descricao: <a mesma de hoje>}\` e um ajuste que grava
+//     e que a frase da rota reporta. A suite pura mede a funcao; so o navegador
+//     mede que o \`value\` do input montado esta vazio -- e M3 mede junto que o
+//     texto atual aparece como PLACEHOLDER, que e como a pessoa o le sem que
+//     ele viaje;
+//
+//   * O CORPO DO PATCH TER SO O QUE FOI TOCADO, lido do \`fetch\` de verdade
+//     (M4/M7). E a assercao inclui \`!("status" in corpo)\`: com \`status\` no
+//     corpo a rota DESPACHA PARA O CANCELAMENTO -- um ajuste que encerrava a
+//     divida seria a pior falha possivel desta tela, e ela nao tem sintoma
+//     nenhum no cliente;
+//
+//   * UM CAMPO DE JURO SO NO DOM (M6). E a recusa \`taxa_e_total_juntos\`
+//     escrita na FORMA da tela, como \`mais_do_que_em_aberto\` esta na forma do
+//     \`<select>\` de K3. Esconder com CSS deixaria o estado preenchido e os dois
+//     viajariam -- e o \`--dump-dom\` nao distingue escondido de ausente
+//     (\`hidden-no-html-nao-some-do-texto\`), entao a assercao CONTA os campos;
+//
+//   * O ROTULO DO MODO INICIAL dizer "Não mexer nos juros" e nao "Sem juros"
+//     (M6). A frase e a entrega: "Sem juros" marcado faria a pessoa acreditar
+//     que esta zerando o juro, e aquele modo nao manda campo nenhum;
+//
+//   * A PREVIA COM O EMPRESTADO PARADO (M5/M7) -- a decisao da HMO-478 lida da
+//     tela, e com \`total\` e \`falta_receber\` DISCORDANDO (o fixture tem parcela
+//     paga, pelo motivo do cabecalho da suite pura);
+//
+//   * O LATCH DE DOIS CLIQUES (M8), dentro de \`unstable_batchedUpdates\` e
+//     lendo o \`disabled\` no instante do segundo, como K8 e G1.
+{
+  // O fixture: DOIS emprestimos, e os dois existem para separar perguntas.
+  LOANS = [
+    {
+      // COM JURO E COM PARCELA PAGA -- o unico estado em que a previa do ajuste
+      // e mensuravel de verdade.
+      //
+      //   emprestado 1.000,00 (\`principal\`), taxa 0,2 -> divida 1.200,00
+      //   4 parcelas de 300,00, a 1 PAGA -> jaRecebido 300,00
+      //
+      // Sem a parcela paga, \`total\` e \`falta_receber\` dariam o MESMO numero e
+      // M5/M7 passariam com as duas grandezas trocadas.
+      id: "l-m-juro",
+      descricao: "Geladeira",
+      conta_credora_id: ${JSON.stringify(CARTEIRA)},
+      caso: "conexao",
+      status: "active",
+      principal: 1000,
+      // A TAXA GRAVADA, e ela e o campo que a HMO-480 acrescentou ao GET. Sem
+      // ela \`ajusteMexeNoJuro\` responderia \`false\` para \`{total}\` e a previa
+      // mostraria o total certo e TAXA NENHUMA -- o fixture tem de ter o campo
+      // porque a rota de producao passou a manda-lo.
+      interest_rate: 0.2,
+      total_de_parcelas: 4,
+      primeiro_vencimento: "2026-10-10",
+      quem_deve_pagar: "Lais",
+      devedor_id: ${JSON.stringify(LAIS)},
+      parcelas: [
+        { id: "p-m1", valor: 300, numero: 1, total: 4, rotulo: "1 de 4", vencimento: "2026-10-10", status: "paid", a_confirmar: false, paid_date: "2026-10-10" },
+        { id: "p-m2", valor: 300, numero: 2, total: 4, rotulo: "2 de 4", vencimento: "2026-11-10", status: "pending", a_confirmar: false, paid_date: null },
+        { id: "p-m3", valor: 300, numero: 3, total: 4, rotulo: "3 de 4", vencimento: "2026-12-10", status: "pending", a_confirmar: false, paid_date: null },
+        { id: "p-m4", valor: 300, numero: 4, total: 4, rotulo: "4 de 4", vencimento: "2027-01-10", status: "pending", a_confirmar: false, paid_date: null },
+      ],
+    },
+    {
+      // \`settled\` -- o controle de M1. O ajuste recusa o que nao esta \`active\`
+      // (\`emprestimo_nao_esta_ativo\`), entao a linha dele NAO pode ter o botao:
+      // seria um clique cujo unico resultado possivel e um toast de erro.
+      id: "l-m-quitado",
+      descricao: "Celular quitado",
+      conta_credora_id: ${JSON.stringify(CARTEIRA)},
+      caso: "conexao",
+      status: "settled",
+      principal: 200,
+      interest_rate: 0,
+      total_de_parcelas: 2,
+      primeiro_vencimento: "2026-05-10",
+      quem_deve_pagar: "Lais",
+      devedor_id: ${JSON.stringify(LAIS)},
+      parcelas: [
+        { id: "p-mq1", valor: 100, numero: 1, total: 2, rotulo: "1 de 2", vencimento: "2026-05-10", status: "paid", a_confirmar: false, paid_date: "2026-05-10" },
+        { id: "p-mq2", valor: 100, numero: 2, total: 2, rotulo: "2 de 2", vencimento: "2026-06-10", status: "paid", a_confirmar: false, paid_date: "2026-06-10" },
+      ],
+    },
+  ];
+
+  /**
+   * A PREVIA DO AJUSTE LIDA DA TELA -- \`{chave: valor}\`, ou \`null\` se nao ha.
+   *
+   * POR \`data-grandeza\` E NAO PELO ROTULO, pela razao que o componente da:
+   * rotulo e texto de produto e muda ("Passa a valer" -> "Novo total") sem que
+   * nada esteja errado, e uma sonda ancorada no texto reprovaria a mudanca
+   * certa. O valor sai do \`[data-valor]\`, que e um elemento de TEXTO -- nunca
+   * de um campo, porque o React escreve \`value\` como propriedade e o
+   * \`--dump-dom\` mostraria o atributo inicial.
+   */
+  const previaDoAjusteNaTela = (raizDoCaso, id) => {
+    const caixa = raizDoCaso.querySelector(
+      '[data-previa-ajuste="' + id + '"] [data-previa]'
+    );
+    if (!caixa) return null;
+
+    const grandezas = {};
+    Array.from(caixa.querySelectorAll("[data-grandeza]")).forEach(function (el) {
+      grandezas[el.getAttribute("data-grandeza")] =
+        el.querySelector("[data-valor]").textContent;
+    });
+    // A ORDEM VAI JUNTO, em array de strings: um objeto nao a preserva de forma
+    // afirmavel, e \`array-de-strings-sobrevive-ao-chunk-e-prova-ordem\`.
+    return {
+      grandezas,
+      ordem: Array.from(caixa.querySelectorAll("[data-grandeza]")).map((el) =>
+        el.getAttribute("data-grandeza")
+      ),
+    };
+  };
+
+  const raiz = await montarPainel("raiz-m");
+
+  // A SECAO DOS ENCERRADOS ABERTA: sem isto a linha do \`settled\` nem estaria no
+  // DOM, e "o quitado nao tem Ajustar" passaria vacuo -- a forma de L7.
+  clicar(raiz.querySelector("[data-encerrados-do-mybank]"));
+  await assentar();
+
+  // M1: QUAIS LINHAS TEM O BOTAO. Sai junto com a lista do Cancelar porque a
+  // condicao e a MESMA (status \`active\`), e junto com a do Antecipar porque
+  // aquela e OUTRA -- a diferenca entre as tres e o que torna cada uma
+  // mensuravel.
+  out.m_botoes = {
+    linhas: Array.from(raiz.querySelectorAll("[data-emprestimo]")).map((el) =>
+      el.getAttribute("data-emprestimo")
+    ),
+    comAjustar: Array.from(
+      raiz.querySelectorAll("[data-ajustar-emprestimo]")
+    ).map((el) => el.getAttribute("data-ajustar-emprestimo")),
+    comCancelar: Array.from(
+      raiz.querySelectorAll("[data-cancelar-emprestimo]")
+    ).map((el) => el.getAttribute("data-cancelar-emprestimo")),
+  };
+
+  // M2/M3: O DIALOGO ABRE SEM CHAMAR ROTA, COM OS CAMPOS VAZIOS E SEM PREVIA.
+  CHAMADAS = [];
+  clicar(raiz.querySelector('[data-ajustar-emprestimo="l-m-juro"]'));
+  await assentar();
+
+  const campoDaDescricao = () =>
+    raiz.querySelector('[data-ajuste-descricao="l-m-juro"]');
+  const camposDeJuro = () =>
+    raiz.querySelectorAll(
+      '[data-dialogo-ajuste="l-m-juro"] [data-campos-de-juros] input[type="text"]'
+    );
+  const botaoDeConfirmar = () =>
+    raiz.querySelector('[data-confirmar-ajuste="l-m-juro"]');
+
+  out.m_abertura = {
+    chamadas: CHAMADAS.map((c) => c.metodo + " " + c.url),
+    temDialogo: Boolean(raiz.querySelector('[data-dialogo-ajuste="l-m-juro"]')),
+    // UM DIALOGO SO: abrir o de uma linha nao pode deixar outro aberto.
+    quantosDialogos: raiz.querySelectorAll("[data-dialogo-ajuste]").length,
+    // O \`value\` E O ESTADO, lido do node -- e nao o atributo, que o
+    // \`--dump-dom\` mostraria desatualizado.
+    descricaoValue: campoDaDescricao().value,
+    // E O TEXTO DE HOJE ESTA NO PLACEHOLDER: e como a pessoa le a descricao
+    // atual sem que ela viaje no corpo.
+    descricaoPlaceholder: campoDaDescricao().getAttribute("placeholder"),
+    // A PREVIA NAO APARECE NO DIALOGO RECEM-ABERTO: nada foi tocado, e uma
+    // lista de zeros se leria como "um ajuste de valor zero ja calculado".
+    temPrevia: Boolean(
+      raiz.querySelector('[data-previa-ajuste="l-m-juro"] [data-previa]')
+    ),
+    // E O BOTAO NASCE CINZA: sem campo tocado o corpo seria \`{}\` e a rota
+    // responderia \`nada_a_ajustar\` -- um erro que a pessoa nao causou.
+    confirmarDesabilitado: botaoDeConfirmar().disabled,
+    // UM CAMPO DE JURO SO -- e no modo inicial, ZERO. Ver M6.
+    quantosCamposDeJuro: camposDeJuro().length,
+    // O ROTULO DO MODO INICIAL. A frase inteira do grupo de radios, para que a
+    // assercao possa afirmar que "Sem juros" NAO esta lá.
+    rotulosDoModo: Array.from(
+      raiz.querySelectorAll(
+        '[data-dialogo-ajuste="l-m-juro"] [data-campos-de-juros] label span'
+      )
+    ).map((el) => el.textContent),
+  };
+
+  // M4: SO A DESCRICAO DIGITADA -> O CORPO TEM SO \`descricao\`.
+  digitar(campoDaDescricao(), "Geladeira nova");
+  await assentar();
+
+  out.m_previa_do_typo = previaDoAjusteNaTela(raiz, "l-m-juro");
+  out.m_confirmar_habilitado_com_typo = botaoDeConfirmar().disabled;
+
+  CHAMADAS = [];
+  clicar(botaoDeConfirmar());
+  await assentar();
+  out.m_patch_do_typo = CHAMADAS.filter((c) => c.metodo === "PATCH").map(
+    (c) => ({ url: c.url, corpo: c.corpo })
+  );
+  // O DIALOGO FECHA NO SUCESSO: deixado aberto, o proximo clique mandaria o
+  // mesmo ajuste sobre uma serie que a tela acabou de recarregar.
+  out.m_dialogo_depois = Boolean(
+    raiz.querySelector('[data-dialogo-ajuste="l-m-juro"]')
+  );
+  // E A LISTA E RECARREGADA: os totais da F6 mudam com o ajuste.
+  out.m_recarregou = CHAMADAS.filter(
+    (c) => c.metodo === "GET" && c.url.indexOf("/api/mybank/loans") === 0
+  ).length;
+
+  // M5/M6/M7: O MODO \`taxa\` -- um campo de juro no DOM, a previa com o
+  // emprestado PARADO, e o corpo com \`taxa\` e sem \`total\`.
+  const raiz2 = await montarPainel("raiz-m2");
+  clicar(raiz2.querySelector('[data-ajustar-emprestimo="l-m-juro"]'));
+  await assentar();
+
+  const radioDoModo = (modo) =>
+    raiz2.querySelector(
+      '[id="mybank_ajuste_l-m-juro_modo_' + modo + '"]'
+    );
+  const camposDeJuro2 = () =>
+    raiz2.querySelectorAll(
+      '[data-dialogo-ajuste="l-m-juro"] [data-campos-de-juros] input[type="text"]'
+    );
+
+  clicar(radioDoModo("taxa"));
+  await assentar();
+  out.m_modo_taxa = {
+    quantosCamposDeJuro: camposDeJuro2().length,
+    // O \`name\` LEVA O ID DO EMPRESTIMO: dois dialogos com o mesmo \`name\`
+    // seriam UM grupo para o navegador, e escolher o modo num desmarcaria o do
+    // outro.
+    name: radioDoModo("taxa").getAttribute("name"),
+  };
+
+  digitar(
+    raiz2.querySelector('[id="mybank_ajuste_l-m-juro_taxa"]'),
+    "50"
+  );
+  await assentar();
+  out.m_previa_da_taxa = previaDoAjusteNaTela(raiz2, "l-m-juro");
+
+  CHAMADAS = [];
+  clicar(raiz2.querySelector('[data-confirmar-ajuste="l-m-juro"]'));
+  await assentar();
+  out.m_patch_da_taxa = CHAMADAS.filter((c) => c.metodo === "PATCH").map(
+    (c) => ({ url: c.url, corpo: c.corpo })
+  );
+
+  // M6b: TROCAR PARA \`total\` troca o campo, e NAO soma um segundo. O gesto
+  // existe porque um \`taxa\` deixado no DOM depois da troca e exatamente como
+  // \`taxa_e_total_juntos\` viraria alcancavel pela tela.
+  const raiz3 = await montarPainel("raiz-m3");
+  clicar(raiz3.querySelector('[data-ajustar-emprestimo="l-m-juro"]'));
+  await assentar();
+  clicar(
+    raiz3.querySelector('[id="mybank_ajuste_l-m-juro_modo_taxa"]')
+  );
+  await assentar();
+  digitar(raiz3.querySelector('[id="mybank_ajuste_l-m-juro_taxa"]'), "50");
+  await assentar();
+  clicar(
+    raiz3.querySelector('[id="mybank_ajuste_l-m-juro_modo_total"]')
+  );
+  await assentar();
+
+  out.m_troca_de_modo = {
+    quantosCamposDeJuro: raiz3.querySelectorAll(
+      '[data-dialogo-ajuste="l-m-juro"] [data-campos-de-juros] input[type="text"]'
+    ).length,
+    temCampoDeTaxa: Boolean(
+      raiz3.querySelector('[id="mybank_ajuste_l-m-juro_taxa"]')
+    ),
+    temCampoDeTotal: Boolean(
+      raiz3.querySelector('[id="mybank_ajuste_l-m-juro_total"]')
+    ),
+    // E O BOTAO VOLTA A FICAR CINZA: a taxa digitada nao viaja mais (o modo
+    // mudou) e o campo de total esta vazio -- logo nao ha nada a ajustar.
+    confirmarDesabilitado: raiz3.querySelector(
+      '[data-confirmar-ajuste="l-m-juro"]'
+    ).disabled,
+  };
+
+  // M8: DOIS CLIQUES NO MESMO TICK -> UM PATCH, e o \`disabled\` ainda era
+  // \`false\` no segundo. Dentro de \`unstable_batchedUpdates\`, como K8: fora
+  // dele o React descarrega entre os dois, o botao ja estaria desabilitado e o
+  // mutante que troca o \`useRef\` por \`useState\` SOBREVIVERIA
+  // (\`latch-de-dois-cliques-so-mede-dentro-de-batchedupdates\`).
+  const raiz4 = await montarPainel("raiz-m4");
+  clicar(raiz4.querySelector('[data-ajustar-emprestimo="l-m-juro"]'));
+  await assentar();
+  digitar(
+    raiz4.querySelector('[data-ajuste-descricao="l-m-juro"]'),
+    "Geladeira nova"
+  );
+  await assentar();
+
+  CHAMADAS = [];
+  let desabilitadoNoSegundo = null;
+  ReactDOM.unstable_batchedUpdates(function () {
+    const botao = raiz4.querySelector('[data-confirmar-ajuste="l-m-juro"]');
+    clicar(botao);
+    desabilitadoNoSegundo = botao.disabled;
+    clicar(botao);
+  });
+  await assentar();
+  out.m_dois_cliques = {
+    desabilitadoNoSegundo,
+    patches: CHAMADAS.filter((c) => c.metodo === "PATCH").length,
+  };
+
+  // M9: REABRIR O DIALOGO ZERA OS CAMPOS -- e o estado e UM para a lista toda,
+  // entao o que ficasse preenchido aqui renomearia a OUTRA divida. O gesto e:
+  // digita, fecha pelo Voltar, reabre.
+  const raiz5 = await montarPainel("raiz-m5");
+  clicar(raiz5.querySelector('[data-ajustar-emprestimo="l-m-juro"]'));
+  await assentar();
+  digitar(
+    raiz5.querySelector('[data-ajuste-descricao="l-m-juro"]'),
+    "texto que nao deve sobrar"
+  );
+  await assentar();
+  clicar(raiz5.querySelector('[data-fechar-ajuste="l-m-juro"]'));
+  await assentar();
+  out.m_fechou = Boolean(
+    raiz5.querySelector('[data-dialogo-ajuste="l-m-juro"]')
+  );
+
+  clicar(raiz5.querySelector('[data-ajustar-emprestimo="l-m-juro"]'));
+  await assentar();
+  out.m_reabertura = {
+    descricaoValue: raiz5.querySelector('[data-ajuste-descricao="l-m-juro"]')
+      .value,
+    confirmarDesabilitado: raiz5.querySelector(
+      '[data-confirmar-ajuste="l-m-juro"]'
+    ).disabled,
+  };
+}
+
 document.getElementById("resultado").textContent =
   "RESULTADO" + JSON.stringify(out) + "FIM";
 } catch (e) {
@@ -3905,4 +4264,261 @@ test("L7: controle do outro lado -- conta SEM encerrado nao tem botao nenhum", (
     false,
     "a conta sem divida encerrada ganhou botao de colapso"
   );
+});
+
+// =============================================================================
+// M -- o gesto «Ajustar» (HMO-480, F8 da HMO-444)
+// =============================================================================
+
+test("M1: o botao Ajustar aparece so no `active`, junto do Cancelar", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // As duas linhas estao na tela (a secao dos encerrados esta aberta), entao
+  // "o quitado nao tem Ajustar" NAO passa vacuo -- a forma de L7.
+  assert.deepEqual(resultado.m_botoes.linhas, ["l-m-juro", "l-m-quitado"]);
+
+  assert.deepEqual(
+    resultado.m_botoes.comAjustar,
+    ["l-m-juro"],
+    "o Ajustar apareceu num emprestimo que a rota recusa com `emprestimo_nao_esta_ativo`"
+  );
+
+  // A MESMA CONDICAO DO CANCELAR, e e deliberado: as duas sao `status` ===
+  // "active", diferente do Antecipar (que pede parcela em aberto tambem).
+  // Corrigir um typo num emprestimo com a serie toda paga e legitimo, e e a
+  // rota que distingue os pedidos que mexem na serie (`sem_parcela_pendente`).
+  assert.deepEqual(resultado.m_botoes.comCancelar, ["l-m-juro"]);
+});
+
+test("M2: o dialogo abre sem chamar rota, com o campo VAZIO e sem previa", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  const a = resultado.m_abertura;
+
+  assert.equal(a.temDialogo, true, "o clique em Ajustar nao abriu dialogo");
+  assert.equal(a.quantosDialogos, 1, "abriu mais de um dialogo de ajuste");
+
+  // ZERO CHAMADAS: abrir o dialogo nao consulta nada. Uma previa que pedisse a
+  // rota para montar o numero seria outra feature.
+  assert.deepEqual(a.chamadas, []);
+
+  // O CAMPO NASCE VAZIO -- a regra inteira desta feature. Preenchido com a
+  // descricao de hoje, ele VIAJARIA no corpo e todo clique em Ajustar seria um
+  // ajuste de descricao que a rota grava e reporta.
+  assert.equal(
+    a.descricaoValue,
+    "",
+    "o campo de descricao nasceu preenchido: o texto de hoje viajaria no PATCH"
+  );
+
+  // E A PREVIA NAO APARECE: nada tocado, nada a mostrar.
+  assert.equal(a.temPrevia, false);
+
+  // E O BOTAO NASCE CINZA: sem campo tocado o corpo seria `{}` e a rota
+  // responderia `nada_a_ajustar` -- um erro que a pessoa nao causou.
+  assert.equal(a.confirmarDesabilitado, true);
+});
+
+test("M3: a descricao de hoje aparece como PLACEHOLDER, nao como valor", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // O par de M2: o campo vazio sozinho esconderia o texto atual, e a pessoa
+  // nao teria onde le-lo. `placeholder` nao e valor -- nao entra no
+  // `e.target.value` e nao e lido pelo montador do corpo.
+  assert.equal(resultado.m_abertura.descricaoPlaceholder, "Geladeira");
+});
+
+test("M4: so o typo digitado -> o corpo tem `descricao` e NADA mais", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  assert.equal(
+    resultado.m_confirmar_habilitado_com_typo,
+    false,
+    "o botao ficou cinza com a descricao digitada"
+  );
+
+  assert.equal(resultado.m_patch_do_typo.length, 1);
+  const [patch] = resultado.m_patch_do_typo;
+
+  assert.equal(patch.url, "/api/mybank/loans/l-m-juro");
+  assert.equal(patch.corpo.descricao, "Geladeira nova");
+
+  // AS TRES AUSENCIAS SAO A ENTREGA, e nenhuma delas tem sintoma no cliente:
+  // com `total` o ajuste recalcularia a cauda inteira, e com a data ele adiaria
+  // o vencimento de quem so queria consertar um texto.
+  assert.ok(!("total" in patch.corpo), "`total` viajou num pedido de typo");
+  assert.ok(!("taxa" in patch.corpo), "`taxa` viajou num pedido de typo");
+  assert.ok(
+    !("primeiroVencimentoDaCauda" in patch.corpo),
+    "a data viajou num pedido de typo"
+  );
+
+  // E A PIOR DE TODAS: `status` no corpo faz a rota DESPACHAR PARA O
+  // CANCELAMENTO (`status !== undefined` e o criterio dela). Um ajuste que
+  // encerrasse a divida nao tem sintoma nenhum aqui -- o toast diria sucesso.
+  assert.ok(
+    !("status" in patch.corpo),
+    "`status` viajou: a rota trataria este ajuste como CANCELAMENTO"
+  );
+
+  // O DIALOGO FECHA E A LISTA RECARREGA: os totais da F6 (emprestado / a
+  // receber / juros) mudam com o ajuste.
+  assert.equal(resultado.m_dialogo_depois, false);
+  assert.ok(
+    resultado.m_recarregou >= 1,
+    "a lista nao foi recarregada depois do 200"
+  );
+});
+
+test("M5: a previa do typo diz que o dinheiro NAO muda, e sem juros nem taxa", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  const p = resultado.m_previa_do_typo;
+  assert.ok(p, "a previa nao apareceu depois de digitar a descricao");
+
+  // 1.000,00 emprestados, e eles nao se movem.
+  assert.equal(p.grandezas.emprestado, "R$ 1.000,00");
+
+  // FALTA RECEBER E O QUE AS PENDENTES SOMAM: 3 x 300,00 = 900,00. Com a
+  // parcela paga no fixture, este numero DISCORDA do total -- e e por isso que
+  // as duas linhas existem.
+  assert.equal(p.grandezas.falta_receber, "R$ 900,00");
+  assert.notEqual(
+    p.grandezas.falta_receber,
+    p.grandezas.total,
+    "total e falta_receber deram o MESMO numero: o fixture perdeu a parcela paga"
+  );
+
+  // E NEM JUROS NEM TAXA: o pedido nao mexe no juro, e "Juros R$ 0,00" ali
+  // diria que o ajuste vai zerar o juro de um emprestimo que segue a 20%.
+  assert.deepEqual(p.ordem, ["emprestado", "total", "falta_receber"]);
+});
+
+test("M6: o modo inicial diz NAO MEXER, e nao ha campo de juro no DOM", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  const a = resultado.m_abertura;
+
+  // A FRASE E A ENTREGA. "Sem juros" marcado faria a pessoa acreditar que
+  // aquele modo zera o juro -- e ele nao manda campo nenhum.
+  assert.deepEqual(a.rotulosDoModo, [
+    "Não mexer nos juros",
+    "% de juros",
+    "Total a receber",
+  ]);
+  assert.ok(
+    a.rotulosDoModo.indexOf("Sem juros") === -1,
+    'o rotulo "Sem juros" sobreviveu no dialogo de ajuste'
+  );
+
+  // ZERO CAMPOS DE JURO NO MODO INICIAL: nao ha o que digitar, logo nao ha o
+  // que viajar.
+  assert.equal(a.quantosCamposDeJuro, 0);
+});
+
+test("M7: no modo `taxa` ha UM campo, o emprestado fica PARADO e o corpo leva `taxa`", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // UM CAMPO SO -- a recusa `taxa_e_total_juntos` escrita na FORMA da tela. A
+  // assercao CONTA os campos em vez de ler visibilidade porque o `--dump-dom`
+  // nao distingue escondido de ausente.
+  assert.equal(resultado.m_modo_taxa.quantosCamposDeJuro, 1);
+
+  // O `name` LEVA O ID: sem ele, dois dialogos seriam um grupo de radios so.
+  assert.equal(
+    resultado.m_modo_taxa.name,
+    "mybank_ajuste_l-m-juro_modo_do_juro"
+  );
+
+  const p = resultado.m_previa_da_taxa;
+  assert.ok(p, "a previa nao apareceu depois de digitar a taxa");
+
+  // A DECISAO DA HMO-478 LIDA DA TELA: o emprestado nao se moveu.
+  assert.equal(
+    p.grandezas.emprestado,
+    "R$ 1.000,00",
+    "o emprestado se moveu com a taxa -- a decisao da HMO-478 (opcao A) nao chegou a tela"
+  );
+
+  // E A DIVIDA SE MOVEU: 100000 x 1,5 = 150000.
+  assert.equal(p.grandezas.total, "R$ 1.500,00");
+  assert.equal(p.grandezas.juros, "R$ 500,00");
+  assert.equal(p.grandezas.taxa, "50,00%");
+  // 150000 - 30000 (a paga) = 120000.
+  assert.equal(p.grandezas.falta_receber, "R$ 1.200,00");
+
+  assert.deepEqual(p.ordem, [
+    "emprestado",
+    "juros",
+    "taxa",
+    "total",
+    "falta_receber",
+  ]);
+
+  // E O CORPO: `taxa` sim, `total` NAO -- os dois juntos sao recusa da rota.
+  assert.equal(resultado.m_patch_da_taxa.length, 1);
+  const [patch] = resultado.m_patch_da_taxa;
+  assert.equal(patch.corpo.taxa, "50");
+  assert.ok(
+    !("total" in patch.corpo),
+    "`total` viajou junto com `taxa`: a rota recusa com `taxa_e_total_juntos`"
+  );
+  assert.ok(!("descricao" in patch.corpo));
+  assert.ok(!("status" in patch.corpo));
+});
+
+test("M7b: trocar de modo TROCA o campo, e nao soma um segundo", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  const t = resultado.m_troca_de_modo;
+
+  // O gesto foi: modo `taxa`, digita 50, troca para `total`. Se o campo de taxa
+  // ficasse no DOM com o valor dentro, `taxa_e_total_juntos` passaria a ser
+  // alcancavel pela tela -- a recusa que esta feature existe para evitar.
+  assert.equal(t.quantosCamposDeJuro, 1);
+  assert.equal(t.temCampoDeTaxa, false, "o campo de taxa sobrou depois da troca");
+  assert.equal(t.temCampoDeTotal, true);
+
+  // E O BOTAO VOLTOU A FICAR CINZA: a taxa digitada nao viaja mais (o modo
+  // mudou) e o total esta vazio -- logo nao ha nada a ajustar. Sem esta linha,
+  // um montador de corpo que ignorasse o modo passaria daqui.
+  assert.equal(
+    t.confirmarDesabilitado,
+    true,
+    "o botao seguiu habilitado: a taxa do modo abandonado ainda viaja"
+  );
+});
+
+test("M8: dois cliques no MESMO tick dao UM PATCH (e o `disabled` nao segurou)", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // O `disabled` AINDA ERA `false` no segundo clique: quem segurou foi o
+  // `useRef`. Sem esta leitura, o caso passaria com o mutante que troca o ref
+  // por estado -- `latch-de-dois-cliques-so-mede-dentro-de-batchedupdates`.
+  assert.equal(
+    resultado.m_dois_cliques.desabilitadoNoSegundo,
+    false,
+    "o botao ja estava desabilitado no segundo clique: o caso nao mede o ref"
+  );
+  assert.equal(
+    resultado.m_dois_cliques.patches,
+    1,
+    "dois cliques no mesmo tick mandaram dois PATCH de ajuste"
+  );
+});
+
+test("M9: reabrir o dialogo ZERA os campos", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  assert.equal(resultado.m_fechou, false, "o Voltar nao fechou o dialogo");
+
+  // O ESTADO E UM PARA A LISTA TODA: um campo deixado preenchido ao fechar o
+  // dialogo de uma divida apareceria no da outra, e um clique em Ajustar
+  // renomearia a divida errada com um texto que a pessoa nem ve.
+  assert.equal(
+    resultado.m_reabertura.descricaoValue,
+    "",
+    "a descricao digitada sobreviveu ao fechar e reabrir"
+  );
+  assert.equal(resultado.m_reabertura.confirmarDesabilitado, true);
 });

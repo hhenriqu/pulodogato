@@ -692,3 +692,13 @@ next-env.d.ts
 # nao fonte: um `.tmp-*` fora do .gitignore chega a ser commitado em cima de
 # arquivo de fonte -- ver a entrada do .tmp-parcelamento acima.
 /.tmp-rota-da-conversa/
+
+# O emit do `test:ajuste-do-emprestimo-na-tela` (HMO-480, F8 da HMO-444): a
+# suite pura do corpo do PATCH de ajuste e da previa dele. O NOME E LONGO DE
+# PROPOSITO -- `.tmp-ajuste-na-tela` ja e do ajuste de saldo do CARTAO
+# (HMO-253), e a primeira versao desta filha usou o nome curto e sobrescreveu
+# os arquivos daquela suite. Artefato, nao fonte: sem a linha,
+# `check-artefatos-de-build` fica vermelho na `main`, e um `.tmp-*` fora do
+# .gitignore chega a ser commitado em cima de arquivo de fonte -- ver a entrada
+# do .tmp-parcelamento acima.
+/.tmp-ajuste-do-emprestimo-na-tela/

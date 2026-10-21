@@ -8609,6 +8609,34 @@ jobs:
         run: npm run mutantes:mybank-na-tela
 
       # -----------------------------------------------------------------------
+      # MyBank F8 -- o dialogo de AJUSTAR (HMO-480)
+      # -----------------------------------------------------------------------
+      # A F4 e a F7 entregaram o `PATCH /api/mybank/loans/[id]` inteiro e
+      # NENHUMA tela o chamava: pelo painel, um emprestimo ativo so podia ser
+      # cancelado, e corrigir um typo na descricao exigia `curl`.
+      #
+      # O que esta suite guarda e a PRESENCA DO CAMPO: campo nao tocado nao vai
+      # no corpo. Mandar `descricao` igual a atual nao e inocuo -- vira ajuste,
+      # grava, e a frase da rota reporta uma mudanca que nao mudou nada. Nenhuma
+      # assercao de VALOR pega isso; so as de `!("x" in pedido)`.
+      #
+      # O NOME NAO E `ajuste-na-tela`, E ISSO FOI MEDIDO: aquele ja e o do
+      # ajuste de saldo do CARTAO (HMO-253). A primeira versao desta filha usou
+      # o nome curto, sobrescreveu os dois arquivos daquela suite e criou uma
+      # chave DUPLICADA no package.json -- que JSON.parse resolve pela ultima,
+      # calado.
+      - name: MyBank -- o corpo do PATCH de ajuste do emprestimo e a previa dele
+        run: npm run test:ajuste-do-emprestimo-na-tela
+
+      # Controle negativo do step acima: 28 mutantes, 28 mortos.
+      #
+      # Os mais caros sao os que trocam `total` por `falta_receber` na previa:
+      # os dois numeros COINCIDEM no emprestimo sem nada pago, entao eles so
+      # morrem porque todo fixture de previa da suite tem parcela paga.
+      - name: Mutantes do ajuste do emprestimo na tela
+        run: npm run mutantes:ajuste-do-emprestimo-na-tela
+
+      # -----------------------------------------------------------------------
       # MyBank F4 -- as sete leituras de dinheiro (HMO-372)
       # -----------------------------------------------------------------------
       # SEM `paths:`, como todo o resto deste workflow, e aqui isso e a entrega:

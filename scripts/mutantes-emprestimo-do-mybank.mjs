@@ -1050,8 +1050,14 @@ const mutantes = [
   [
     LOANS,
     "o `status` sai do `select` do GET (a tela perde o campo que separa os em andamento dos encerrados)",
-    '        "id, lender_account_id, borrower_user_id, description, principal, installment_count, first_due_date, status, created_at"',
-    '        "id, lender_account_id, borrower_user_id, description, principal, installment_count, first_due_date, created_at"',
+    // `interest_rate` ENTROU NA ANCORA NA HMO-480, e nao e drive-by: aquela
+    // issue acrescentou a coluna ao `select` deste GET (a previa do ajuste
+    // precisa saber se o emprestimo JA tem juro). Sem atualizar este texto a
+    // ancora ficaria MORTA -- o mutante nao aplicaria, o runner sairia 1 com
+    // "ANCORA MORTA", e o campo `status` ficaria sem controle negativo nenhum.
+    // Familia `mutante-cuja-ancora-a-feature-apagou`.
+    '        "id, lender_account_id, borrower_user_id, description, principal, interest_rate, installment_count, first_due_date, status, created_at"',
+    '        "id, lender_account_id, borrower_user_id, description, principal, interest_rate, installment_count, first_due_date, created_at"',
   ],
 
   // =========================================================================
