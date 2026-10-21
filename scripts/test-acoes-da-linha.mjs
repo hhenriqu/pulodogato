@@ -58,8 +58,16 @@ const {
   podeConfirmar,
   podeEditar,
   podeExcluir,
+  podeMudarOsTotais,
   podePagarAFatura,
   rotuloDeConfirmar,
+  rotuloDeMudarOsTotais,
+  seloDaLinha,
+  pedidoDeMudarOsTotais,
+  ROTULO_DE_TIRAR_DOS_TOTAIS,
+  ROTULO_DE_VOLTAR_AOS_TOTAIS,
+  SELO_FORA_DOS_TOTAIS,
+  AVISO_DO_FLAG_DOS_TOTAIS,
 } = await import("../.tmp-acoes-da-linha/lib/acoes-da-linha.js");
 
 // A CADEIA DE PRODUCAO INTEIRA, e nao uma fixture escrita a mao -- HMO-311.
@@ -1125,4 +1133,243 @@ test("o motivo ESTRUTURAL do Editar cabe no mesmo title", () => {
   const titulo = tituloDoBotao(ROTULO_DE_EDITAR, motivo);
   assert.ok(titulo.startsWith(ROTULO_DE_EDITAR), titulo);
   assert.match(titulo, /duas pernas/);
+});
+
+// ---------------------------------------------------------------------------
+// 7. TIRAR (OU DEVOLVER) A LINHA DOS TOTAIS -- HMO-452, F2 da HMO-443
+// ---------------------------------------------------------------------------
+// "preciso poder remover dos totais."
+//
+// A coluna e `financial_transactions.include_in_total` (migration 060). Os
+// quatro criterios de `podeMudarOsTotais` falham de formas diferentes e so um
+// deles e visivel na tela:
+//
+//   * `posso_editar` -- a regra 4, e o pior modo de falha desta feature inteira.
+//     **UPDATE filtrado pela RLS volta 200 SEM ALTERAR NADA**, e nesta acao isso
+//     e indistinguivel de SUCESSO: quando ela funciona, o que muda e o cartao de
+//     «Realizado» em cima -- a LINHA nao muda de numero. Botao que aparece e nao
+//     funciona e pior que botao ausente;
+//   * `origem === "realizado"` -- o criterio PROPRIO. Uma previsao e
+//     `scheduled_transactions`, e o PATCH dela iria para
+//     `/api/scheduled-transactions/{id}`, que nao conhece o campo e o descarta
+//     em silencio com 200: o selo nunca apareceria e nada diria por que;
+//   * `gravada` e `natureza !== "fatura"` -- herdados da base, cada um por uma
+//     razao propria (ver `podeMudarOsTotais`).
+//
+// E O ROTULO E METADE DA FEATURE. A acao e um interruptor, e um nome fixo
+// mentiria em metade dos cliques.
+
+test("a linha REALIZADA minha pode sair dos totais", () => {
+  assert.equal(
+    podeMudarOsTotais({
+      id: "t1",
+      gravada: true,
+      origem: "realizado",
+      tipo: "expense",
+      natureza: "despesa",
+      posso_editar: true,
+      soma_nos_totais: true,
+    }),
+    true
+  );
+});
+
+test("a linha PREVISTA nao pode -- a coluna nao existe em scheduled_transactions", () => {
+  // O criterio PROPRIO desta acao. Sem ele o botao apareceria na conta prevista,
+  // o PATCH iria para a rota da agenda, o campo seria DESCARTADO e a resposta
+  // seria 200: clique que nunca faz nada, sem erro e sem explicacao.
+  assert.equal(
+    podeMudarOsTotais({
+      id: "s1",
+      gravada: true,
+      origem: "previsto",
+      tipo: "expense",
+      natureza: "despesa",
+      posso_editar: true,
+      soma_nos_totais: true,
+    }),
+    false
+  );
+});
+
+test("a linha de OUTRO MEMBRO nao pode -- a RLS volta 200 sem alterar nada", () => {
+  // A regra 4 inteira e sem desconto, e nesta acao ela e mais cara que nas
+  // outras tres: o sucesso desta operacao NAO muda a linha (muda o total acima),
+  // entao "a RLS recusou" e "funcionou" desenham exatamente igual.
+  assert.equal(
+    podeMudarOsTotais({
+      id: "t2",
+      gravada: true,
+      origem: "realizado",
+      tipo: "expense",
+      natureza: "despesa",
+      posso_editar: false,
+      soma_nos_totais: true,
+    }),
+    false
+  );
+});
+
+test("a fatura e a linha NAO GRAVADA nao podem -- os dois criterios da base", () => {
+  const base = {
+    id: "t3",
+    gravada: true,
+    origem: "realizado",
+    tipo: "expense",
+    posso_editar: true,
+    soma_nos_totais: true,
+  };
+
+  // A fatura PAGA e uma perna de um par que se anula: desmarcar METADE dele
+  // faria o mes fechar pelo valor da fatura.
+  assert.equal(podeMudarOsTotais({ ...base, natureza: "fatura" }), false);
+  // A fatura ABERTA nao existe em tabela nenhuma -- nao ha linha para o PATCH
+  // atualizar, e aquela URL responderia 404.
+  assert.equal(
+    podeMudarOsTotais({ ...base, natureza: "fatura", gravada: false }),
+    false
+  );
+});
+
+test("a linha DE GRUPO pode -- a decisao 6d, e a ausencia de criterio e medida", () => {
+  // `podeMudarOsTotais` NAO pergunta por grupo, e isso e escolha: o flag vale so
+  // para o relatorio PESSOAL, e o rateio sai de `group_share_entries` (033), que
+  // nao passa por `category_monthly_totals`. O que a linha de grupo ALHEIA perde
+  // ja esta coberto pelo `posso_editar` (bloco acima). Sem esta assercao, um
+  // criterio `!de_grupo` escrito de boa fe passaria sem nada reprovar.
+  assert.equal(
+    podeMudarOsTotais({
+      id: "t4",
+      gravada: true,
+      origem: "realizado",
+      tipo: "expense",
+      natureza: "despesa",
+      posso_editar: true,
+      soma_nos_totais: true,
+      de_grupo: true,
+    }),
+    true
+  );
+});
+
+test("o rotulo INVERTE com o estado -- um nome fixo mentiria em metade dos cliques", () => {
+  const base = {
+    id: "t5",
+    gravada: true,
+    origem: "realizado",
+    tipo: "expense",
+    natureza: "despesa",
+    posso_editar: true,
+  };
+
+  assert.equal(
+    rotuloDeMudarOsTotais({ ...base, soma_nos_totais: true }),
+    ROTULO_DE_TIRAR_DOS_TOTAIS
+  );
+  assert.equal(
+    rotuloDeMudarOsTotais({ ...base, soma_nos_totais: false }),
+    ROTULO_DE_VOLTAR_AOS_TOTAIS
+  );
+
+  // E OS DOIS SAO DIFERENTES. Sem isto, as duas constantes poderiam ser a MESMA
+  // string e os dois `assert` acima passariam -- o botao prometeria desmarcar
+  // uma linha ja desmarcada, e quem clicasse por engano a RELIGARIA nos
+  // relatorios sem saber.
+  assert.notEqual(ROTULO_DE_TIRAR_DOS_TOTAIS, ROTULO_DE_VOLTAR_AOS_TOTAIS);
+
+  // A FORMA NEGATIVA E O PEDIDO LITERAL DA ISSUE-MAE, e ela vale AQUI porque
+  // este rotulo e o VERBO DE UM BOTAO -- o que a pessoa esta mandando
+  // acontecer. O campo da CONTA (058) usa a forma positiva ("Somar nos totais")
+  // porque lá o rotulo etiqueta um `Switch`, e negativo ao lado de interruptor
+  // cria dupla negacao. Botao diz o que faz; etiqueta diz o que a coisa e.
+  assert.match(ROTULO_DE_TIRAR_DOS_TOTAIS, /^Não somar nos totais$/);
+});
+
+test("o selo aparece SO na linha desmarcada, e `null` nas outras", () => {
+  // `null` e nao `""`: quem desenha nao pode renderizar um `<span>` vazio, que
+  // muda o `gap` da linha sem mostrar nada.
+  const base = {
+    id: "t6",
+    gravada: true,
+    origem: "realizado",
+    tipo: "expense",
+    natureza: "despesa",
+    posso_editar: true,
+  };
+
+  assert.equal(seloDaLinha({ ...base, soma_nos_totais: true }), null);
+  assert.equal(
+    seloDaLinha({ ...base, soma_nos_totais: false }),
+    SELO_FORA_DOS_TOTAIS
+  );
+
+  // O SELO VALE PARA QUEM NAO PODE AGIR TAMBEM, e isto nao e descuido: a linha
+  // de outro membro do grupo que ELE desmarcou continua fora dos MEUS totais --
+  // o flag e da linha, nao da permissao. Sem o selo ali, a linha alheia somaria
+  // zero no meu total sem nada explicando por que, que e exatamente o defeito
+  // que o selo existe para evitar. Quem recusa a ACAO e `podeMudarOsTotais`.
+  assert.equal(
+    seloDaLinha({ ...base, posso_editar: false, soma_nos_totais: false }),
+    SELO_FORA_DOS_TOTAIS
+  );
+});
+
+test("o pedido leva o booleano INVERTIDO, literal, para a rota de lancamento", () => {
+  const base = {
+    id: "t7",
+    gravada: true,
+    origem: "realizado",
+    tipo: "expense",
+    natureza: "despesa",
+    posso_editar: true,
+  };
+
+  const tirar = pedidoDeMudarOsTotais({ ...base, soma_nos_totais: true });
+  assert.equal(tirar.metodo, "PATCH");
+  // A ROTA DE `financial_transactions`, e nao a da agenda: a URL e metade da
+  // decisao, e `/api/scheduled-transactions/t7` responderia 200 descartando o
+  // campo.
+  assert.equal(tirar.url, "/api/personal-finance/transactions/t7");
+  // `false` LITERAL e nao `"false"`: a rota testa `=== true` / `=== false`
+  // ESTRITO de proposito, porque a string `"false"` e truthy e um `Boolean(...)`
+  // do outro lado gravaria o OPOSTO do pedido. Este bloco e o que impede uma
+  // "limpeza de tipos" de embrulhar o valor em `String(...)`.
+  assert.equal(tirar.corpo.include_in_total, false);
+  assert.equal(typeof tirar.corpo.include_in_total, "boolean");
+
+  // E O CAMINHO DE VOLTA EXISTE. Sem esta metade o corpo poderia ser `false`
+  // cravado e a assercao de cima passaria: quem desmarcou por engano nunca
+  // traria a linha de volta.
+  const voltar = pedidoDeMudarOsTotais({ ...base, soma_nos_totais: false });
+  assert.equal(voltar.corpo.include_in_total, true);
+
+  // `null` na linha que a peneira recusa -- o contrato de `pedidoDeConfirmacao`,
+  // e o que torna impossivel montar a URL da agenda a partir de uma previsao.
+  assert.equal(
+    pedidoDeMudarOsTotais({ ...base, origem: "previsto" }),
+    null
+  );
+});
+
+test("o aviso diz o que o flag NAO faz -- as tres coisas que continuam", () => {
+  // SEM ESTA FRASE A FEATURE E INDISTINGUIVEL DE UM BUG, e e por isso que ela e
+  // requisito e tem assercao por cima. A linha desmarcada continua no saldo da
+  // conta e no patrimonio de PROPOSITO: `net_worth_history` (008) le
+  // `financial_transactions` direto e nao passa por `category_monthly_totals`,
+  // onde o filtro mora -- o dinheiro do ajuste ENTROU mesmo na conta, e tirar a
+  // linha do patrimonio faria o saldo da tela de Contas discordar dele.
+  //
+  // A pessoa ve, na MESMA sessao, o saldo da conta incluindo o ajuste e um total
+  // de receitas que nao o inclui. As duas leituras estao certas e nenhum numero
+  // na tela explica a diferenca.
+  for (const palavra of ["extrato", "saldo da conta", "patrimônio"]) {
+    assert.ok(
+      AVISO_DO_FLAG_DOS_TOTAIS.includes(palavra),
+      `o aviso nao diz que "${palavra}" CONTINUA: ${AVISO_DO_FLAG_DOS_TOTAIS}`
+    );
+  }
+
+  // "Continua" PRIMEIRO: o medo de quem desmarca e perder o lancamento, e a
+  // primeira palavra responde isso.
+  assert.match(AVISO_DO_FLAG_DOS_TOTAIS, /^Continua\b/);
 });
