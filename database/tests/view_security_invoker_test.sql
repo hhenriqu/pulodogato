@@ -75,14 +75,29 @@ DECLARE
   v_tabela  integer;
   v_view    integer;
   v_alheio  integer;
+  v_vistos  text;
 BEGIN
   -- Controle: a RLS da tabela funciona. Se este numero nao for 1, o problema
   -- nao e a view e a comparacao abaixo nao significaria nada.
+  --
+  -- A MENSAGEM LISTA AS LINHAS, E ISSO NAO E ENFEITE: ela tem DUAS causas
+  -- possiveis e a versao anterior afirmava so uma ("a RLS da tabela mudou").
+  -- Na HMO-458 o job ficou vermelho na main e esse texto mandou a investigacao
+  -- procurar afrouxamento de policy -- a RLS estava intacta, e o que havia era
+  -- um step ANTERIOR do db-verify.yml comitando um `profiles` com
+  -- `is_public = true` no banco compartilhado. Como a consulta de baixo tambem
+  -- roda sob a RLS, com o claim do C, o que ela imprime e exatamente o que o C
+  -- enxerga -- e `is_public=t` numa linha que nao e a dele resolve a duvida na
+  -- primeira leitura do log, sem subir Postgres nenhum.
   SELECT count(*) INTO v_tabela FROM public.profiles;
   IF v_tabela <> 1 THEN
+    SELECT string_agg(format('%s/%s/is_public=%s', p.id, p.full_name, p.is_public),
+                      '; ' ORDER BY p.full_name)
+      INTO v_vistos
+      FROM public.profiles p;
     RAISE EXCEPTION
-      'Controle falhou: profiles devolveu % linha(s) para o usuario C, esperado 1. A RLS da tabela mudou, entao este teste nao consegue isolar o comportamento da view.',
-      v_tabela;
+      'Controle falhou: profiles devolveu % linha(s) para o usuario C, esperado 1 -- o C enxerga [%]. Duas causas, e a lista diz qual: (a) a RLS de profiles afrouxou, e e vazamento de dado pessoal; ou (b) um step anterior do job COMITOU um profile com is_public = true, que a profiles_select_own_or_public mostra para todo mundo de forma legitima -- toda fixture que comita na cadeia usa is_public = FALSE exatamente por isso.',
+      v_tabela, v_vistos;
   END IF;
 
   SELECT count(*) INTO v_view FROM public.user_subscription_details;
