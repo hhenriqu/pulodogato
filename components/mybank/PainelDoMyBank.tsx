@@ -183,6 +183,7 @@ import {
   type EmprestimoDoMyBank,
 } from "@/lib/mybank-na-tela";
 import {
+  fraseDoEmprestadoNoAjuste,
   parcelasParaAjustar,
   pedidoAjustaAlgumCampo,
   pedidoDoAjusteDaTela,
@@ -1502,6 +1503,21 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
                     })
                   : null;
 
+                // A FRASE DO EMPRESTADO (HMO-479), e ela vem da MESMA funcao
+                // pura que a previa -- nao de um `juro ? ... : ...` escrito no
+                // JSX logo abaixo. Escrita la, ela ficaria fora do alcance de
+                // todo mutante desta lib e a suite nao veria a troca de ramo
+                // (`provar-handler-react-em-chromium-commitado`), que e
+                // exatamente o estrago: a frase do ramo errado AFIRMA que o
+                // emprestado nao muda no unico ramo em que ele muda.
+                const fraseDoEmprestado = pedidoDoAjuste
+                  ? fraseDoEmprestadoNoAjuste({
+                      emprestimo,
+                      parcelas: parcelasParaAjustar(emprestimo.parcelas),
+                      pedido: pedidoDoAjuste,
+                    })
+                  : null;
+
                 // O MARCADOR DA LINHA ENCERRADA, e ele e um ATRIBUTO proprio
                 // (`data-encerrado`). A posicao na lista nao serve: aberta, os
                 // encerrados vem DEPOIS dos em andamento, e uma assercao por
@@ -1890,6 +1906,26 @@ export function PainelDoMyBank({ meuId }: { meuId: string }) {
                           <PreviaDoEmprestimo
                             grandezas={previaDoAjusteDaLinha}
                           />
+                          {/* A FRASE DO EMPRESTADO (HMO-479, item 4 da issue).
+                              DENTRO da caixa da previa e nao acima do dialogo:
+                              ela fala do R$ da linha `emprestado` que esta logo
+                              acima dela, e os dois numeros tem de ser lidos
+                              juntos -- separados pelos tres campos, a frase
+                              viraria texto de ajuda que ninguem liga ao valor.
+
+                              `null` NAO DESENHA O PARAGRAFO, pela razao da
+                              propria funcao: o pedido que so troca a descricao
+                              nao tem noticia sobre o emprestado, e um `<p>`
+                              vazio deixaria o espaco reservado piscando entre
+                              os ramos. */}
+                          {fraseDoEmprestado && (
+                            <p
+                              data-frase-do-emprestado={emprestimo.id}
+                              className="mt-2 text-xs text-muted-foreground"
+                            >
+                              {fraseDoEmprestado}
+                            </p>
+                          )}
                         </div>
 
                         <div className="flex flex-wrap items-center gap-2">

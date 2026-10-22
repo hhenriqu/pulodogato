@@ -21,30 +21,39 @@
 //      para sempre num fixture ingenuo. Os mutantes 13 a 18 so morrem porque
 //      TODO fixture de previa da suite tem parcela paga.
 //
-// O MUTANTE QUE NAO ESTA NA LISTA, E O PORQUE
-// -------------------------------------------
-// Falta de proposito o mais obvio de todos:
+// O MUTANTE QUE "NAO ESTAVA NA LISTA" -- E A RAZAO ERA FALSA (HMO-479)
+// --------------------------------------------------------------------
+// Ate a HMO-479 este cabecalho dizia que o mais obvio de todos faltava de
+// proposito:
 //
 //     const emprestado = juro ? juro.principal : Number(emprestimo.principal);
 //  -> const emprestado = Number(emprestimo.principal);
 //
-// Ele e EQUIVALENTE hoje, e nao por descuido da suite: `juroDepoisDoAjuste`
-// devolve o `principal` que recebeu, intacto e por decisao (HMO-478, opcao A).
-// As duas leituras dao o mesmo numero em TODO estado alcancavel, entao nenhum
-// fixture pode distingui-las -- e inventar um teste que "o mate" exigiria
-// inventar uma funcao que move o principal, que e justamente o que ela nao faz.
+// ...por ser "EQUIVALENTE hoje", com o argumento de que `juroDepoisDoAjuste`
+// devolve o `principal` intacto (HMO-478, opcao A) e que portanto "as duas
+// leituras dao o mesmo numero em TODO estado alcancavel".
 //
-// A razao de preferir `juro.principal` e OUTRA, e esta escrita no cabecalho do
-// modulo: ela e de MEDICAO FUTURA. No dia em que alguem fizer o ajuste mover o
-// principal, a previa lendo a resposta da funcao mostra o numero movido (e um
-// teste pega), e a previa lendo o fixture continua dizendo "parado" (e nada
-// pega). Poe-lo na lista como se morresse seria
-// `guarda-de-ancora-verde-nao-prova-que-o-mutante-morre` ao contrario: um
-// SOBREVIVEU permanente que alguem "consertaria" afrouxando a suite.
+// A SEGUNDA METADE DAQUELA FRASE ERA FALSA, e e por ela que o defeito passou.
+// O ramo em que as duas DISCORDAM nao era futuro: era alcancavel desde a F4.
+// Num emprestimo SEM juro, `{total}` faz `ajusteMexeNoJuro` devolver `false`
+// (logo `juro === null`) e a rota gravar `principal = total` no
+// `patchDoEmprestimo`. Ali `Number(emprestimo.principal)` e o valor ANTIGO, e o
+// emprestado e justamente o que se move. Medido no cenario do caso D7 (4x250,00
+// sem juro, novo total 1.200,00): a tela dizia "Você emprestou R$ 1.000,00" e o
+// patch levava `{principal: 1200}`.
 //
-// O que a lista TEM no lugar dele sao os mutantes 13 e 14, que leem a grandeza
-// errada do MESMO objeto (`juro.total`, `juro.juros`) -- esses mudam numero e
-// morrem.
+// O raciocinio errou por olhar so a funcao do juro: ela de fato nunca move o
+// principal, mas ela NAO E o unico caminho que grava a coluna. "Equivalente"
+// foi concluido do ramo com juro e aplicado aos tres.
+//
+// Entao o mutante 29 e exatamente aquele codigo, agora na lista e MORTO pelo
+// caso E1 -- que nao crava so um R$ escolhido a mao: ele pergunta ao
+// `patchDoEmprestimo` o que vai ser gravado. A licao fica anotada aqui porque o
+// cheiro era bom e a conclusao nao: um mutante declarado equivalente POR
+// ARGUMENTO, e nao por medicao, e um defeito com justificativa escrita.
+//
+// A lista TEM TAMBEM os mutantes 13 e 14, que leem a grandeza errada do MESMO
+// objeto (`juro.total`, `juro.juros`) -- esses mudam numero e morrem.
 //
 // A FORMA DA LISTA: tupla `[ALVO, rotulo, de, para]`, com `de` sempre
 // contendo codigo e nunca so texto que tambem existe em comentario -- este
@@ -157,18 +166,23 @@ const mutantes = [
   // C -- A PREVIA LE A GRANDEZA ERRADA (familia B do cabecalho)
   // =========================================================================
 
+  // OS DOIS PROXIMOS ANCORAM NO TERNARIO DE TRES RAMOS, e a ancora e as DUAS
+  // primeiras linhas dele: a HMO-479 trocou aquele `const` de uma linha por
+  // cinco, e um `de` com a forma antiga sairia 1 em ANCORA NAO ENCONTRADA
+  // (`ancora-de-mutante-casa-no-comentario-e-o-cmp-nao-ve`). `? juro.principal`
+  // sozinho nao serve de ancora: a string aparece tambem no JSDoc da funcao.
   [
     LIB,
     "13 O EMPRESTADO MOSTRA A DIVIDA: o `principal` parado desaparece da tela",
-    "  const emprestado = juro ? juro.principal : Number(emprestimo.principal);",
-    "  const emprestado = juro ? juro.total : Number(emprestimo.principal);",
+    "  const emprestado = juro\n    ? juro.principal",
+    "  const emprestado = juro\n    ? juro.total",
   ],
 
   [
     LIB,
     "14 O EMPRESTADO MOSTRA O JURO: o numero grande vira o pequeno",
-    "  const emprestado = juro ? juro.principal : Number(emprestimo.principal);",
-    "  const emprestado = juro ? juro.juros : Number(emprestimo.principal);",
+    "  const emprestado = juro\n    ? juro.principal",
+    "  const emprestado = juro\n    ? juro.juros",
   ],
 
   [
@@ -279,6 +293,58 @@ const mutantes = [
     "28 O FORMULARIO ABRE COM DESCRICAO: o dialogo nasce com um ajuste dentro",
     '  descricao: "",',
     '  descricao: "Empréstimo",',
+  ],
+
+  // =========================================================================
+  // G -- O EMPRESTADO QUE MUDA, E A FRASE QUE O EXPLICA (HMO-479)
+  // =========================================================================
+
+  // O MUTANTE QUE ESTE CABECALHO CHAMAVA DE EQUIVALENTE. Ele e o codigo que
+  // estava em producao ate a HMO-479; morre no caso E1, que compara a previa com
+  // o `patchDoEmprestimo` da rota em vez de confiar no ramo com juro.
+  [
+    LIB,
+    "29 O EMPRESTADO IGNORA O CONSERTO: sem juro, {total} mostra o valor ANTIGO",
+    "  const emprestado = juro\n    ? juro.principal\n    : pedido.total !== undefined\n      ? total\n      : Number(emprestimo.principal);",
+    "  const emprestado = Number(emprestimo.principal);",
+  ],
+
+  [
+    LIB,
+    "30 A FRASE DIZ 'CONTINUA' SEMPRE: ela mente no ramo em que o emprestado muda",
+    "  if (params.pedido.total !== undefined) {\n    return `Isto corrige o valor emprestado para ${emprestado.valor}.`;",
+    "  if (false) {\n    return `Isto corrige o valor emprestado para ${emprestado.valor}.`;",
+  ],
+
+  [
+    LIB,
+    "31 A FRASE TROCA OS RAMOS: o conserto promete taxa e o juro promete conserto",
+    "  if (juro) {\n    return `Você continua tendo emprestado",
+    "  if (!juro) {\n    return `Você continua tendo emprestado",
+  ],
+
+  [
+    LIB,
+    "32 A FRASE PERDE O 'CONTINUA': sobra um fato, sem a noticia de que ele NAO muda",
+    "    return `Você continua tendo emprestado ${emprestado.valor}",
+    "    return `Você tem emprestado ${emprestado.valor}",
+  ],
+
+  // A FRASE LENDO UMA SEGUNDA FONTE -- o defeito de `previa-na-tela-tem-que-usar-
+  // o-peso-do-fechamento` na sua forma menor: a frase e a linha `emprestado` tem
+  // de dizer o MESMO R$, e aqui a frase passa a falar da divida.
+  [
+    LIB,
+    "33 A FRASE LE O TOTAL: o numero da frase discorda da linha logo acima dela",
+    '  const emprestado = grandezas.find((g) => g.chave === "emprestado");',
+    '  const emprestado = grandezas.find((g) => g.chave === "total");',
+  ],
+
+  [
+    LIB,
+    "34 A FRASE APARECE NO PEDIDO SEM NOTICIA: a descricao nova 'move a taxa'",
+    "  // frase, e o preco disso se paga nos dois ramos acima.\n  return null;",
+    "  // frase, e o preco disso se paga nos dois ramos acima.\n  return `Você continua tendo emprestado ${emprestado.valor}.`;",
   ],
 ];
 
