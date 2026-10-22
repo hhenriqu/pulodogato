@@ -9234,3 +9234,86 @@ jobs:
       # edicao sem recarga, e os dois `!` das inversoes) foram medidos MORTOS.
       - name: O flag «fora dos totais» esta ligado no formulario (checkbox, corpo e edicao)
         run: node scripts/check-fora-dos-totais-no-lancamento.mjs
+
+      # ---------------------------------------------------------------------
+      # AS SETE SOMAS EM JAVASCRIPT -- HMO-453 (F3 da HMO-443)
+      # ---------------------------------------------------------------------
+      # A 060 pos `AND t.include_in_total` em `category_monthly_totals`, e dali
+      # ele propaga para a cadeia de cinco views e para os cinco leitores delas.
+      # A 063 fez o mesmo em `budget_consumption`, que tem o `SUM` dela proprio
+      # (e e medida no db-verify.yml, com banco de pe). Esta suite e a OUTRA
+      # METADE: as somas que percorrem as LINHAS CRUAS em JavaScript e nao
+      # herdam nada de view nenhuma.
+      #
+      # O INVENTARIO FOI FEITO PELA TABELA, E E ISSO QUE TORNA ESTE STEP
+      # NECESSARIO. `git grep -l financial_transactions` nas duas metades
+      # (codigo e `database/migrations`), nao pelo nome da coluna nova --
+      # levantar leitores pelo nome acha `app/` e `lib/` e PERDE as views,
+      # porque uma view que soma a mesma tabela nao cita a coluna nova nem roda
+      # em JS. Foi a licao caro da HMO-431 e o que custou a HMO-441: o numero
+      # grande honrando o flag e o grafico logo abaixo nao.
+      #
+      # A ARMADILHA QUE ESTA SUITE EXISTE PARA MEDIR: MENSAL x INTERVALO.
+      # Fluxo de Caixa e Categorias tem DOIS ramos cada -- mes inteiro (as
+      # views, ja filtradas e ja em producao) e intervalo livre (estas somas em
+      # JS). Consertar so um faz "setembro inteiro" e "01/09 a 30/09" darem
+      # numeros DIFERENTES, que e pior que o defeito original: as duas leituras
+      # discordam sem nada que arbitre.
+      #
+      # E A SONDA QUE MEDE COM MES INTEIRO CAI NO RAMO MENSAL: o duble nao
+      # preenche `personal_monthly_cash_flow`, a resposta sai
+      # `total_expense = 0` com status 200, e esse zero se le como "a regra
+      # descartou todas as linhas". Por isso TODO periodo da suite vai de
+      # 2026-04-20 a 2026-05-31 -- um intervalo que CORTA MES nas duas pontas,
+      # e que cai no ramo de intervalo SEM depender de `cartao=fatura`. Ha um
+      # caso COM o parametro tambem, porque e como o painel principal pergunta
+      # e porque e o unico caminho que usa `COLUNAS_DO_REALIZADO_DE_CAIXA`.
+      #
+      # 17 blocos. Os quatro que nenhuma outra suite alcanca: o predicado nos
+      # QUATRO estados (true/false/ausente/null), as duas rotas pelo ramo de
+      # intervalo, a HERANCA de `resumoComPartesDeGrupo` medida pelo numero (a
+      # issue pede "confirmar, nao assumir"), e o bloco que afirma que as duas
+      # rotas FECHAM ENTRE SI na mesma fixture -- sem ele, a pizza do painel
+      # pode deixar de fechar com o numero grande em cima dela e as duas suites
+      # de rota continuariam verdes cada uma por conta propria.
+      - name: As sete somas em JS honram include_in_total (mensal E intervalo)
+        run: npm run test:fora-dos-totais-nas-somas
+
+      # 17 mutantes, 17 MORTOS -- medidos em 2026-10-21. Eles rodam SEIS suites
+      # (a de cima mais `test:movimentacoes`, `test:telas-de-movimentacao`,
+      # `test:categorias-do-periodo`, `test:realizado-do-caixa` e
+      # `test:variable-spend`), com controle positivo em cada uma: uma suite ja
+      # vermelha faria todo mutante dela aparecer como MORTO sem medir nada.
+      #
+      # A ISSUE PEDE ESTE RUNNER NOMINALMENTE: "mutante por cima de cada filtro
+      # novo. Um filtro de opt-out sem mutante e o caso tipico do sobrevivente
+      # que ninguem ve -- o teste passa com o filtro APAGADO se a fixture nao
+      # tiver linha marcada". Toda fixture tocada por esta fase ganhou UMA linha
+      # marcada e UMA nao marcada, e e este arquivo que mede se isso bastou.
+      #
+      # AS QUATRO FAMILIAS:
+      #   * o FILTRO APAGADO, um por sitio (6) -- o estado de antes da issue;
+      #   * a POLARIDADE do predicado (5) -- `=== true`, `Boolean(...)`,
+      #     `!campo`, sempre-verdadeiro e invertido. Os tres primeiros sao o
+      #     MESMO defeito escrito de tres formas, e e o pior desta feature: na
+      #     janela entre o deploy e a colagem -- e no cache offline -- o campo
+      #     chega `undefined`, e os tres fazem `undefined` significar "nao
+      #     soma". O relatorio inteiro esvazia, sem erro e com o tsc verde;
+      #   * a COLUNA FORA DO `select` (4) -- o filtro vira no-op SEM que uma
+      #     linha de codigo mude. Observavel no duble porque ele PROJETA so as
+      #     colunas nomeadas;
+      #   * o CONSERTO ZELOSO (2) -- filtrar onde a secao 3c do plano mandou NAO
+      #     filtrar: dentro de `realizadoComCartaoPelaFatura` (segundo filtro no
+      #     mesmo caminho, sem mutante que morra) e nas CONTAGENS de
+      #     `resumoDaTela`, onde a frase "N lançamento(s)" passaria a discordar
+      #     da lista ao lado dela.
+      #
+      # As ancoras levam a LINHA DE CODIGO inteira, com indentacao e `;`: os sete
+      # arquivos citam `=== true`, `!linha.include_in_total` e `!== false` em
+      # prosa, e `lib/fora-dos-totais.ts` tem um bloco inteiro so sobre isso. Uma
+      # ancora curta mutaria o comentario e o mutante "sobreviveria" sem nunca
+      # ter existido. O runner cobra ocorrencia UNICA e aborta em vez de mutar a
+      # 1a de duas -- `lib/variable-spend.ts` e `lib/categorias-do-periodo.ts`
+      # tem o MESMO `for (const t of apenasNosTotais(transacoes))`.
+      - name: Os mutantes das sete somas (as seis suites sabem reprovar?)
+        run: npm run mutantes:fora-dos-totais-nas-somas

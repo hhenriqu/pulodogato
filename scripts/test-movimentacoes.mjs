@@ -502,3 +502,114 @@ test("a edicao nao reclassifica uma perna de transferencia", () => {
     "o PATCH nao preserva a direcao da perna"
   );
 });
+
+// ---------------------------------------------------------------------------
+// O LANCAMENTO FORA DOS TOTAIS (HMO-453, F3 da HMO-443)
+// ---------------------------------------------------------------------------
+// Os tres cartoes de Financas Pessoais somam linhas CRUAS em JavaScript, entao
+// eles nao herdam o `WHERE t.include_in_total` que a 060 pos na cadeia de
+// views. `resumoDoPeriodo` passou a filtrar; `filtrarLancamentos` e
+// `contarPorFiltro` NAO, e as duas metades sao decisao (C do plano): a linha
+// marcada sai do NUMERO e fica na LISTA, com selo.
+//
+// TODA FIXTURE DESTA SECAO TEM UMA LINHA MARCADA E UMA NAO MARCADA. Sem as
+// duas, o filtro pode ser apagado e a assercao continua verde.
+
+test("a despesa desmarcada nao entra no cartao de Despesas", () => {
+  const r = resumoDoPeriodo([
+    despesa(-500, { include_in_total: true }),
+    despesa(-200, { include_in_total: false }),
+  ]);
+  assert.equal(r.despesas, 500);
+  // 700 e o numero de antes da feature. Ele nomeia o defeito na mensagem.
+  assert.notEqual(r.despesas, 700);
+});
+
+test("a receita desmarcada nao entra no cartao de Receitas -- o caso da HMO-443", () => {
+  // "adicionei um ajuste na minha conta investimento, ela entrou como uma
+  // receita de ajuste mas nao quero que ela fique somada nos totais."
+  const r = resumoDoPeriodo([
+    receita(3000, { include_in_total: true }),
+    receita(1000, { include_in_total: false }),
+  ]);
+  assert.equal(r.receitas, 3000);
+  assert.notEqual(r.receitas, 4000);
+});
+
+test("o saldo sai dos dois numeros JA filtrados, e nao de uma terceira soma", () => {
+  // O cartao de Saldo diz, por escrito, "Receitas - Despesas". Um filtro
+  // aplicado so numa das duas parcelas deixaria os tres cartoes se
+  // contradizendo na mesma tela.
+  const r = resumoDoPeriodo([
+    receita(3000, { include_in_total: true }),
+    receita(1000, { include_in_total: false }),
+    despesa(-500, { include_in_total: true }),
+    despesa(-200, { include_in_total: false }),
+  ]);
+  assert.equal(r.receitas, 3000);
+  assert.equal(r.despesas, 500);
+  assert.equal(r.saldo, 2500);
+});
+
+test("a transferencia desmarcada sai das DUAS metades, nao de meia", () => {
+  // As duas pernas nascem com o mesmo `include_in_total` (a rota grava as
+  // duas), entao marcar uma transferencia tira o valor E a contagem. Filtrar
+  // uma metade so deixaria "1 transferência" ao lado de R$ 0,00 movidos.
+  const pernas = (flag) => [
+    { amount: -1000, transaction_type: "transfer", include_in_total: flag },
+    { amount: 1000, transaction_type: "transfer", include_in_total: flag },
+  ];
+
+  const marcada = resumoDoPeriodo(pernas(false));
+  assert.equal(marcada.transferido, 0);
+  assert.equal(marcada.transferencias, 0);
+
+  const normal = resumoDoPeriodo(pernas(true));
+  assert.equal(normal.transferido, 1000);
+  assert.equal(normal.transferencias, 2);
+});
+
+test("o campo AUSENTE soma, que e o comportamento de antes da 060", () => {
+  // A janela entre o deploy e a colagem, e o cache offline de antes da feature:
+  // nos dois o campo chega `undefined`. Com `=== true` ou
+  // `!mov.include_in_total` no lugar do `!== false`, estes dois numeros viram
+  // ZERO -- o app zerado, sem erro e com o tsc verde.
+  const r = resumoDoPeriodo([
+    despesa(-80),
+    despesa(-20, { include_in_total: null }),
+    receita(200),
+  ]);
+  assert.equal(r.despesas, 100);
+  assert.equal(r.receitas, 200);
+});
+
+test("a linha desmarcada CONTINUA na lista e na contagem da barra (decisao C)", () => {
+  // Esta e a metade que o filtro NAO alcanca, e e deliberado: esconder a linha
+  // deixaria o dinheiro sem lugar nenhum no app e o total sem explicacao. O
+  // selo (HMO-452) e quem diz onde ela foi.
+  const linhas = [
+    despesa(-500, { include_in_total: true }),
+    despesa(-200, { include_in_total: false }),
+  ];
+
+  assert.equal(filtrarLancamentos(linhas, "todos").length, 2);
+  assert.equal(filtrarLancamentos(linhas, "expense").length, 2);
+
+  const contagem = contarPorFiltro(linhas);
+  assert.equal(contagem.todos, 2);
+  assert.equal(contagem.expense, 2);
+});
+
+test("a linha desmarcada mantem a CLASSIFICACAO dela", () => {
+  // O flag e de soma, nao de natureza: uma despesa desmarcada continua sendo
+  // despesa, com o rotulo e a cor dela na lista. Se `classificarMovimentacao`
+  // olhasse o flag, a linha mudaria de aba.
+  assert.equal(
+    classificarMovimentacao(despesa(-200, { include_in_total: false })),
+    "expense"
+  );
+  assert.equal(
+    classificarMovimentacao(receita(1000, { include_in_total: false })),
+    "income"
+  );
+});

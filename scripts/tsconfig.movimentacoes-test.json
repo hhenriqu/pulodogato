@@ -1,0 +1,14 @@
+{
+  "//": "Build so do teste de lib/movimentacoes.ts. ELE PASSOU A PRECISAR DE TSCONFIG na HMO-453: antes o npm script compilava o arquivo sozinho com flags de linha de comando, e isso deixou de servir quando `resumoDoPeriodo` passou a importar @/lib/fora-dos-totais -- sem `paths` o tsc nao resolve o alias (TS2307) e, resolvendo, ainda NAO o reescreve no JS emitido, por isso o npm script tem um passo de resolve-aliases depois. `include` lista so o ponto de entrada: o tsc emite o fechamento transitivo dos imports sozinho, e `fora-dos-totais.js` aparece no outDir junto. Ver scripts/test-movimentacoes.mjs.",
+  "compilerOptions": {
+    "outDir": "../.tmp-movimentacoes",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/movimentacoes.ts"]
+}

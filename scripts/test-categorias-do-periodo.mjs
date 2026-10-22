@@ -170,3 +170,76 @@ test("centavos nao acumulam residuo de ponto flutuante", () => {
   ]);
   assert.equal(linhas[0].expense, 0.3);
 });
+
+// ---------------------------------------------------------------------------
+// O LANCAMENTO FORA DOS TOTAIS (HMO-453, F3 da HMO-443)
+// ---------------------------------------------------------------------------
+// Esta funcao e o gemeo em JavaScript de `category_monthly_totals`, e aquela
+// view ganhou `AND t.include_in_total` na 060. As duas respondem a MESMA
+// pergunta -- a view no ramo de MES inteiro, esta funcao no ramo de INTERVALO
+// livre --, e consertar so uma faz "setembro inteiro" e "01/09 a 30/09" darem
+// numeros diferentes, sem total nenhum para arbitrar.
+//
+// TODA FIXTURE DAQUI PARA BAIXO TEM UMA LINHA MARCADA E UMA NAO MARCADA. Com
+// so um dos dois lados, o filtro pode ser APAGADO e a assercao continua verde
+// -- o sobrevivente que ninguem ve.
+
+test("a linha desmarcada nao entra no gasto da categoria", () => {
+  const linhas = linhasDeCategoria([
+    { category_id: "x", amount: -100, transaction_type: "expense", include_in_total: true },
+    { category_id: "x", amount: -400, transaction_type: "expense", include_in_total: false },
+  ]);
+  assert.equal(linhas[0].expense, 100);
+  // 500 e o numero de antes da feature: se ele aparecer, o filtro nao esta la.
+  assert.notEqual(linhas[0].expense, 500);
+});
+
+test("a linha desmarcada sai TAMBEM da contagem, como na view", () => {
+  // O filtro entra onde a 060 o pos: no `WHERE`, e nao em cada `FILTER (WHERE
+  // ...)`. Uma categoria que diz "2 lancamentos" ao lado de um total de um e a
+  // contradicao visivel que nada na pizza explica.
+  const linhas = linhasDeCategoria([
+    { category_id: "x", amount: -100, transaction_type: "expense", include_in_total: true },
+    { category_id: "x", amount: -400, transaction_type: "expense", include_in_total: false },
+  ]);
+  assert.equal(linhas[0].transaction_count, 1);
+});
+
+test("a receita desmarcada tambem sai -- e o caso que abriu a HMO-443", () => {
+  // "adicionei um ajuste na minha conta investimento, ela entrou como uma
+  // receita de ajuste mas nao quero que ela fique somada nos totais."
+  const linhas = linhasDeCategoria([
+    { category_id: "inv", amount: 250, transaction_type: "income", include_in_total: true },
+    { category_id: "inv", amount: 1000, transaction_type: "income", include_in_total: false },
+  ]);
+  assert.equal(linhas[0].income, 250);
+  assert.equal(linhas[0].transaction_count, 1);
+});
+
+test("o campo AUSENTE conta, que e o comportamento de antes da 060", () => {
+  // A janela entre o deploy e a colagem, e o cache offline de antes da feature:
+  // nos dois o campo chega `undefined`, e `undefined` tem de significar "soma"
+  // -- o DEFAULT da coluna. Com `=== true` no lugar do `!== false` este numero
+  // viraria ZERO e o relatorio inteiro esvaziaria, sem erro nenhum.
+  const linhas = linhasDeCategoria([
+    { category_id: "x", amount: -80, transaction_type: "expense" },
+    { category_id: "x", amount: -20, transaction_type: "expense", include_in_total: null },
+  ]);
+  assert.equal(linhas[0].expense, 100);
+  assert.equal(linhas[0].transaction_count, 2);
+});
+
+test("a linha desmarcada nao apaga a categoria inteira da pizza", () => {
+  // Uma categoria que fica SO com linha desmarcada sai da lista (nao ha mais o
+  // que somar nela), mas uma categoria com as duas continua -- com o numero
+  // menor. O defeito oposto seria a categoria desaparecer por ter uma linha
+  // marcada, que e o que um `filter` posto na chave do Map produziria.
+  const linhas = linhasDeCategoria([
+    { category_id: "fica", amount: -10, transaction_type: "expense", include_in_total: true },
+    { category_id: "fica", amount: -90, transaction_type: "expense", include_in_total: false },
+    { category_id: "sai", amount: -70, transaction_type: "expense", include_in_total: false },
+  ]);
+  assert.equal(linhas.length, 1);
+  assert.equal(acharCategoria(linhas, "fica").expense, 10);
+  assert.equal(acharCategoria(linhas, "sai"), undefined);
+});

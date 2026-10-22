@@ -106,7 +106,25 @@ export async function GET(request: NextRequest) {
       const pagina = (inicio: number) => {
         const base = supabase
           .from("financial_transactions")
-          .select("category_id, amount, transaction_type, currency")
+          // `include_in_total` (060, HMO-443) e quem faz este ramo concordar
+          // com `category_monthly_totals` no ramo de MES: a view ganhou
+          // `AND t.include_in_total` e aqui quem filtra e `linhasDeCategoria`.
+          // Sem a coluna no `select` o campo chega `undefined`, o predicado
+          // `!== false` deixa tudo passar, e o intervalo volta a contar a linha
+          // desmarcada -- "setembro inteiro" e "01/09 a 30/09" dando numeros
+          // diferentes, sem erro nenhum.
+          //
+          // Nomear coluna num `select` e a armadilha do #335 (o PostgREST
+          // responde 42703 e o handler cai em 500 antes da colagem). A medida
+          // que autoriza isto esta no bloco homonimo de
+          // app/api/movimentacoes/resumo/route.ts: sondado em producao em
+          // 2026-10-21 pelo PostgREST com a chave anon, `include_in_total`
+          // respondeu 42501 (existe, a RLS barrou) e um nome inventado
+          // respondeu 42703 com hint apontando a coluna de verdade -- a 060
+          // esta colada.
+          .select(
+            "category_id, amount, transaction_type, currency, include_in_total"
+          )
           .gte("transaction_date", periodo.de)
           // `lte` e nao `lt`: o periodo e fechado nos dois extremos, e o
           // ultimo dia escolhido pelo usuario tem que entrar.

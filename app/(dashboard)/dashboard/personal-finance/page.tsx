@@ -170,6 +170,27 @@ interface FinancialTransaction {
    */
   installment_number?: number | null;
   installment_total?: number | null;
+  /**
+   * Este lancamento entra nos totais de relatorio? (migration 060, HMO-443)
+   *
+   * E A COLUNA QUE OS TRES CARTOES DESTA TELA PRECISAM LER, e e por isso que
+   * ela esta aqui e nao so em `types/financial.ts`: quem soma e
+   * `resumoComPartesDeGrupo` -> `resumoDoPeriodo` (lib/movimentacoes.ts), e o
+   * parametro dele e `MovimentacaoBruta`, que declara o campo. Sem a
+   * declaracao NESTA interface o `tsc` continua verde -- um campo a mais no
+   * objeto nunca e erro -- e o filtro le `undefined` em toda linha: a linha
+   * desmarcada volta a somar nos cartoes, e nada denuncia.
+   *
+   * E exatamente o aviso escrito em `installment_number` acima ("quem for
+   * acrescentar a proxima coluna precisa saber que ela tem de ser escrita em
+   * DOIS lugares"), cobrado pela primeira vez.
+   *
+   * OPCIONAL: antes da colagem da 060 o campo nao chega, e `undefined` tem de
+   * significar "soma". O predicado tem UM dono -- `entraNosTotais` em
+   * lib/fora-dos-totais.ts --, e nenhum leitor desta tela escreve
+   * `!transaction.include_in_total`.
+   */
+  include_in_total?: boolean;
 }
 
 interface ExpenseSplit {

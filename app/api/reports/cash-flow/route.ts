@@ -127,6 +127,7 @@ import {
   realizadoComCartaoPelaFatura,
   type LinhaDoRealizado,
 } from "@/lib/realizado-do-caixa";
+import { apenasNosTotais } from "@/lib/fora-dos-totais";
 
 interface LinhaFluxo {
   month: string;
@@ -227,10 +228,22 @@ export async function GET(request: NextRequest) {
           // COLUNAS_DO_REALIZADO_DE_CAIXA. Elas NAO sao pedidas sempre porque o
           // embed da conta custa um join em toda linha do periodo, e o caminho
           // sem o parametro nao tem o que fazer com ele.
+          //
+          // `include_in_total` (060, HMO-443) entra nas DUAS listas: nesta
+          // literal e dentro de COLUNAS_DO_REALIZADO_DE_CAIXA. Sem ela o campo
+          // chega `undefined`, o predicado `!== false` deixa tudo passar, e
+          // este ramo volta a contar a linha desmarcada -- enquanto o ramo
+          // MENSAL, que le as views que a 060 filtrou, nao conta. "Setembro
+          // inteiro" e "01/09 a 30/09" dariam numeros diferentes, sem erro.
+          //
+          // Nomear coluna num `select` e a armadilha do #335; a medida que
+          // autoriza isto (42501 em prod contra 42703 do nome inventado,
+          // 2026-10-21) esta no bloco homonimo de
+          // app/api/movimentacoes/resumo/route.ts.
           .select(
             cartaoPelaFatura
               ? COLUNAS_DO_REALIZADO_DE_CAIXA
-              : "amount, transaction_type, currency"
+              : "amount, transaction_type, currency, include_in_total"
           )
           .gte("transaction_date", periodo.de)
           // `lte` e nao `lt`: o periodo e fechado nos dois extremos, e o ultimo
@@ -307,8 +320,30 @@ export async function GET(request: NextRequest) {
         // consegue inferir a forma da linha. A fronteira NAO e verificada pelo
         // tsc, e e por isso que `contaDaLinha` em lib/realizado-do-caixa.ts
         // trata o embed vindo objeto OU array em vez de confiar no tipo.
-        for (const linha of lote)
-          linhas.push(linha as unknown as LinhaDoRealizado);
+        //
+        // O FILTRO DO FORA-DOS-TOTAIS ENTRA AQUI, E O LUGAR E ESCOLHIDO
+        // (HMO-453). Aqui e o leitor da TABELA -- antes da parte de grupo ser
+        // anexada e antes da regra do cartao --, e as tres consequencias sao as
+        // desejadas:
+        //
+        //   * a linha desmarcada sai do total e da `transaction_count` dos dois
+        //     caminhos deste ramo (com e sem `cartao=fatura`), do mesmo jeito
+        //     que a 060 a tirou do `WHERE` de `category_monthly_totals` e nao
+        //     de cada `FILTER`;
+        //   * `partesComoTransacoes` e anexada DEPOIS e nao passa por aqui, o
+        //     que e a decisao D: o que eu devo nao muda porque quem lancou
+        //     escondeu a linha do relatorio dele. (Aquelas linhas tambem nao
+        //     tem a coluna, entao `apenasNosTotais` as deixaria passar de
+        //     qualquer forma -- mas a POSICAO e que faz disso uma escolha e nao
+        //     um acidente.)
+        //   * a perna de saida do pagamento de fatura desmarcada tambem sai,
+        //     ANTES de `realizadoComCartaoPelaFatura` promove-la a 'expense'.
+        //     Promover primeiro e filtrar depois daria o mesmo resultado hoje;
+        //     filtrar primeiro e o que mantem UMA porta.
+        for (const linha of apenasNosTotais(
+          lote as unknown as LinhaDoRealizado[]
+        ))
+          linhas.push(linha);
         // Pagina incompleta = acabou. Uma pagina cheia pode ser a ultima, e
         // nesse caso a proxima volta vazia e o laco encerra do mesmo jeito.
         if (lote.length < TAMANHO_DA_PAGINA) break;

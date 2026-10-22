@@ -44,7 +44,7 @@
     "test:card-invoice": "node scripts/compila.mjs -p scripts/tsconfig.card-invoice-test.json && node scripts/resolve-aliases.mjs .tmp-card-invoice lib && node --test scripts/test-card-invoice.mjs",
     "test:transferencia": "node scripts/compila.mjs -p scripts/tsconfig.transferencia-test.json && node scripts/resolve-aliases.mjs .tmp-transferencia lib && node --test scripts/test-transferencia.mjs",
     "test:materializacao": "node scripts/compila.mjs -p scripts/tsconfig.materializacao-test.json && node scripts/resolve-aliases.mjs .tmp-materializacao lib --espelha-raiz && node --test scripts/test-materializacao.mjs",
-    "test:movimentacoes": "node scripts/compila.mjs lib/movimentacoes.ts --outDir .tmp-movimentacoes --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-movimentacoes.mjs",
+    "test:movimentacoes": "node scripts/compila.mjs -p scripts/tsconfig.movimentacoes-test.json && node scripts/resolve-aliases.mjs .tmp-movimentacoes lib && node --test scripts/test-movimentacoes.mjs",
     "test:dinheiro": "node scripts/compila.mjs lib/dinheiro.ts --outDir .tmp-dinheiro --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-dinheiro.mjs",
     "test:data-na-tela": "rm -rf .tmp-data-na-tela && tsc -p scripts/tsconfig.data-na-tela-test.json && node scripts/resolve-aliases.mjs .tmp-data-na-tela lib && TZ=America/Sao_Paulo node --test scripts/test-data-na-tela.mjs && TZ=UTC node --test scripts/test-data-na-tela.mjs",
     "test:data-digitada": "node scripts/compila.mjs lib/data-digitada.ts lib/lancamento.ts --outDir .tmp-data-digitada/lib --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-data-digitada.mjs",
@@ -127,7 +127,7 @@
     "mutantes:fatura-escolhida": "node scripts/mutantes-fatura-escolhida.mjs",
     "test:puxar-para-atualizar": "node scripts/compila.mjs lib/puxar-para-atualizar.ts --outDir .tmp-puxar-para-atualizar --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-puxar-para-atualizar.mjs",
     "test:puxar-no-menu-dom": "node scripts/compila.mjs lib/puxar-para-atualizar.ts lib/puxar-para-atualizar-dom.ts --outDir .tmp-puxar-dom --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-puxar-no-menu-dom.mjs",
-    "test:categorias-do-periodo": "node scripts/compila.mjs lib/categorias-do-periodo.ts --outDir .tmp-categorias-do-periodo --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-categorias-do-periodo.mjs",
+    "test:categorias-do-periodo": "node scripts/compila.mjs -p scripts/tsconfig.categorias-do-periodo-test.json && node scripts/resolve-aliases.mjs .tmp-categorias-do-periodo lib && node --test scripts/test-categorias-do-periodo.mjs",
     "test:painel-do-grupo": "node --test scripts/test-painel-do-grupo.mjs",
     "test:divisao-do-grupo": "node scripts/compila.mjs -p scripts/tsconfig.divisao-do-grupo-test.json && node scripts/resolve-aliases.mjs .tmp-divisao-do-grupo lib && node --test scripts/test-divisao-do-grupo.mjs",
     "test:divisao-ui-dom": "node scripts/compila.mjs -p scripts/tsconfig.divisao-ui-test.json && node --test scripts/test-divisao-ui-dom.mjs",
@@ -262,7 +262,9 @@
     "mutantes:as-tres-leituras": "node scripts/mutantes-as-tres-leituras.mjs",
     "test:conta-de-grupo-na-agenda": "node scripts/compila.mjs lib/conta-de-grupo-na-agenda.ts --outDir .tmp-conta-de-grupo-na-agenda/lib --module es2020 --target es2020 --moduleResolution node --skipLibCheck && node --test scripts/test-conta-de-grupo-na-agenda.mjs",
     "test:conta-investimento-na-tela": "node scripts/compila.mjs -p scripts/tsconfig.conta-investimento-na-tela-test.json && node scripts/resolve-aliases.mjs .tmp-conta-investimento-na-tela components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-conta-investimento-na-tela lib --espelha-raiz && node --test scripts/test-conta-investimento-na-tela.mjs",
-    "test:previa-do-emprestimo": "node scripts/compila.mjs -p scripts/tsconfig.previa-do-emprestimo-test.json && node --test scripts/test-previa-do-emprestimo-na-tela.mjs"
+    "test:previa-do-emprestimo": "node scripts/compila.mjs -p scripts/tsconfig.previa-do-emprestimo-test.json && node --test scripts/test-previa-do-emprestimo-na-tela.mjs",
+    "test:fora-dos-totais-nas-somas": "node scripts/compila.mjs -p scripts/tsconfig.fora-dos-totais-nas-somas-test.json && node scripts/resolve-aliases.mjs .tmp-fora-dos-totais-nas-somas lib --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-fora-dos-totais-nas-somas utils --espelha-raiz && node scripts/resolve-next-subpaths.mjs .tmp-fora-dos-totais-nas-somas && node scripts/monta-duble-de-rota.mjs .tmp-fora-dos-totais-nas-somas && node --test scripts/test-fora-dos-totais-nas-somas.mjs",
+    "mutantes:fora-dos-totais-nas-somas": "node scripts/mutantes-fora-dos-totais-nas-somas.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

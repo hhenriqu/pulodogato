@@ -2088,6 +2088,30 @@ export interface ResumoDaTela {
  * que uma quarta classificacao apareca como diferenca. Aqui nao ha quarta
  * origem possivel -- `LinhaDaTela.origem` e uma uniao de dois -- e uma terceira
  * contagem independente so poderia discordar por bug.
+ *
+ * O LANCAMENTO FORA DOS TOTAIS SAI DO DINHEIRO E FICA NA CONTAGEM (HMO-453)
+ * -------------------------------------------------------------------------
+ * `soma_nos_totais === false` tira a linha de `previsto`, de `realizado` e,
+ * por consequencia, de `total`. Ela NAO sai de `quantidade`,
+ * `quantidadePrevista` nem `quantidadeRealizada`, e a assimetria e deliberada:
+ *
+ *   * as contagens descrevem a LISTA, e a linha marcada continua na lista, com
+ *     selo (decisao C da HMO-443, entregue na F2). O rodape do cartao Total diz
+ *     "previsto + realizado · N lançamento(s)", e esse N ao lado de uma lista
+ *     com N+1 linhas e uma contradicao visivel que nada na tela explica;
+ *   * e e a mesma convencao que o reembolso de grupo ja usa nesta familia: o
+ *     bloco "O REEMBOLSO ENTRA DEPOIS DE `resumoDaTela`" em
+ *     app/api/movimentacoes/resumo/route.ts diz, por escrito, que
+ *     `quantidadePrevista` NAO sobe junto com o valor, porque a frase conta
+ *     linhas e nao parcelas do numero. Aqui o sinal e o oposto e a regra e a
+ *     mesma.
+ *
+ * `!== false` E NAO `!linha.soma_nos_totais`, mesmo o campo sendo `boolean`
+ * estrito no tipo: uma resposta GUARDADA NO APARELHO de antes da F2 nao tem o
+ * campo, e o `tsc` nao olha o cache. `!undefined` e `true`, entao a forma
+ * negativa marcaria como fora dos totais TODA linha vinda do cache offline --
+ * justamente quando a tela nao tem rede para conferir. O aviso ja esta escrito
+ * no campo `soma_nos_totais` la em cima; esta e a primeira soma a cobra-lo.
  */
 export function resumoDaTela(linhas: readonly LinhaDaTela[]): ResumoDaTela {
   let previsto = 0;
@@ -2096,11 +2120,13 @@ export function resumoDaTela(linhas: readonly LinhaDaTela[]): ResumoDaTela {
   let quantidadeRealizada = 0;
 
   for (const linha of linhas) {
+    const soma = linha.soma_nos_totais !== false;
+
     if (linha.origem === "previsto") {
-      previsto += linha.valor;
+      if (soma) previsto += linha.valor;
       quantidadePrevista += 1;
     } else {
-      realizado += linha.valor;
+      if (soma) realizado += linha.valor;
       quantidadeRealizada += 1;
     }
   }

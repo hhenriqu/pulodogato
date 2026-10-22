@@ -41,6 +41,7 @@ import {
 } from "@/lib/anomalies";
 import { lerPreferenciaDeMoeda } from "@/lib/moeda";
 import { formatarValor } from "@/lib/dinheiro";
+import { apenasNosTotais } from "@/lib/fora-dos-totais";
 
 /** O `kind` de bill_notifications, na familia do resumo (migration 017). */
 export const KIND_RESUMO = "monthly_summary" as const;
@@ -60,9 +61,33 @@ export const MAX_TRANSACOES = 5000;
 /** Quantos meses de historico a anomalia olha para tras. */
 export const MESES_DE_HISTORICO = 7;
 
-/** As colunas de financial_transactions que o calculo precisa -- nada alem. */
+/**
+ * As colunas de financial_transactions que o calculo precisa -- nada alem.
+ *
+ * TRES LEITORES COMPARTILHAM ESTA LISTA, e e por isso que ela e uma constante:
+ * `anomaliasDoUsuario` logo abaixo, `/api/cash-flow` (a mediana de gasto que
+ * decide a data de mergulho) e `/api/dashboard/previsao`. Uma coluna
+ * acrescentada aqui chega aos tres de uma vez; uma coluna tirada desaparece dos
+ * tres sem um erro em lugar nenhum.
+ *
+ * `include_in_total` (060, HMO-453) e a quinta, e ela e load-bearing pelos dois
+ * agregadores que a LEEM e nao pelo que a pede: `calcularGastoVariavel`
+ * (lib/variable-spend.ts) e `anomaliasDoUsuario`. Sem ela aqui o campo chega
+ * `undefined`, o predicado `!== false` deixa tudo passar, e as tres leituras
+ * voltam a contar a linha desmarcada -- enquanto o resumo mensal ao lado, que
+ * sai das views que a 060 filtrou, nao a conta. A anomalia e o pior dos tres
+ * sintomas: um ajuste de saldo desmarcado dispararia "voce gastou 3x o normal
+ * em Investimentos" por e-mail.
+ *
+ * Nomear coluna num `select` e a armadilha do #335 (o PostgREST responde 42703
+ * e o handler cai em 500 antes da colagem). A medida que autoriza isto esta no
+ * bloco homonimo de app/api/movimentacoes/resumo/route.ts: sondado em producao
+ * em 2026-10-21 pelo PostgREST com a chave anon, `include_in_total` respondeu
+ * 42501 (existe, a RLS barrou) e um nome inventado respondeu 42703 com hint
+ * apontando a coluna de verdade -- a 060 esta colada.
+ */
 export const COLUNAS_DA_TRANSACAO =
-  "transaction_date, amount, transaction_type, category_id, description";
+  "transaction_date, amount, transaction_type, category_id, description, include_in_total";
 
 /** 'YYYY-MM-01' do mes que comeca `meses` antes do mes de `iso`. */
 export function inicioDoHistorico(iso: string, meses: number): string {
@@ -105,7 +130,16 @@ export async function anomaliasDoUsuario(
 
   if (error) throw error;
 
-  const transacoes = (data ?? []) as unknown as TransacaoParaAnomalia[];
+  // `apenasNosTotais` (HMO-453): a anomalia e uma SOMA sobre as linhas cruas e
+  // nao herda nada da cadeia de views que a 060 filtrou. Sem o filtro, um
+  // ajuste de saldo que a pessoa tirou dos relatorios dispararia "voce gastou
+  // 3x o normal nesta categoria" -- por e-mail, sobre dinheiro que ela acabou
+  // de dizer que nao e gasto dela. E o mesmo resumo mensal traria, no paragrafo
+  // de cima, os totais SEM aquela linha: duas frases do mesmo e-mail
+  // discordando sem nada que arbitre.
+  const transacoes = apenasNosTotais(
+    (data ?? []) as unknown as TransacaoParaAnomalia[]
+  );
 
   const nomesDeCategoria = await nomesDasCategorias(client);
 

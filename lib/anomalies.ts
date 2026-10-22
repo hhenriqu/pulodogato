@@ -67,6 +67,7 @@
 // =====================================================
 
 import { mediana, normalizeMerchant } from "@/lib/recurrence-detector";
+import type { LinhaComTotais } from "@/lib/fora-dos-totais";
 
 /**
  * Meses anteriores COM MOVIMENTO exigidos antes de avaliar uma chave.
@@ -99,8 +100,18 @@ export const EXCESSO_MINIMO = 50;
 /** Quantas categorias que mais cresceram o resumo do mes mostra. */
 export const TOP_CRESCIMENTOS = 3;
 
-/** Uma transacao do jeito que o PostgREST entrega. */
-export interface TransacaoParaAnomalia {
+/**
+ * Uma transacao do jeito que o PostgREST entrega.
+ *
+ * `include_in_total` vem de `LinhaComTotais` e chega pelo
+ * `COLUNAS_DA_TRANSACAO` de lib/services/monthly-summary.ts. ESTE ARQUIVO NAO
+ * FILTRA por ela: quem filtra sao os dois agregadores que recebem a lista --
+ * `calcularGastoVariavel` (lib/variable-spend.ts) e `anomaliasDoUsuario` --,
+ * porque e la que a soma acontece. `gastoDaTransacao` continua respondendo
+ * "quanto esta linha gastou", que e pergunta sobre a LINHA e nao sobre o
+ * relatorio.
+ */
+export interface TransacaoParaAnomalia extends LinhaComTotais {
   transaction_date: string;
   /** Despesa e NEGATIVA aqui. Ninguem le este campo direto -- ver `gastoDaTransacao`. */
   amount: number | string;
