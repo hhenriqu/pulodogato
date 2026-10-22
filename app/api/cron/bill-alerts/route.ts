@@ -40,6 +40,11 @@
 // torna o ramo legivel depois, como `email_desligado` e `unique_antiga` ja
 // fazem.
 //
+// A contagem do ramo ocioso ja andou, e por isso ela tambem datilha o deploy:
+// 3 chaves ate 08/10/2026, 5 de 09/10 a 22/10, 8 a partir da instrumentacao da
+// HMO-486 (`b5f5a2f`). Ler um `result` sem conferir quantas chaves ele tem e
+// concluir sobre codigo que nao rodou.
+//
 // O QUE IMPEDE O SPAM
 // -------------------
 // A view ja traz `already_notified`, e o INSERT bate na UNIQUE
@@ -291,29 +296,69 @@ export async function GET(request: NextRequest) {
       // resposta so apareceria no primeiro dia com vencimento -- e o relatorio
       // de meses tranquilos nao diria nada sobre o e-mail.
       //
-      // E O MESMO MOTIVO TRAZ AS DUAS CONTAGENS ABAIXO.
+      // E O MESMO MOTIVO TRAZ AS CONTAGENS ABAIXO.
       // `avisos: 0` e AMBIGUO DE PROPOSITO: ele e o dia tranquilo (correto) e e
       // tambem a leitura que voltou vazia (defeito), e os dois gravam o mesmo
-      // 200. Em producao isso custou 27 execucoes verdes entre 25/09 e 21/10,
-      // todas com `avisos: 0`, enquanto a MESMA view devolvia 2 linhas para o
+      // 200. Em producao isso custou 28 execucoes verdes entre 25/09 e 22/10,
+      // todas com `avisos: 0`, enquanto a MESMA view devolvia linha para o
       // dono -- e `bill_notifications` nunca recebeu uma linha deste job.
       //
-      // As duas contagens desempatam as tres explicacoes de uma vez:
+      // O FILTRO `already_notified` NAO E SUSPEITO -- ISSO FOI MEDIDO (HMO-489)
+      // ----------------------------------------------------------------------
+      // Uma versao anterior deste comentario dizia que `already_notified` "nao
+      // correlaciona por `user_id`" e que lido pela service_role ele significa
+      // "alguem ja foi avisado". **Isso era verdade na cadeia 001->056 e e
+      // FALSO no schema que esta no ar.** Medido no catalogo de producao em
+      // 22/10/2026, com a 057 colada:
+      //
+      //   - `pg_get_viewdef('public.bill_alerts')` traz
+      //     `n.user_id = d.user_id` dentro do `EXISTS` -- a coluna e POR
+      //     DESTINATARIO, igual para a service_role e para o dono;
+      //   - `bill_notifications_unique` e
+      //     `(scheduled_transaction_id, user_id, kind, reference_date)`;
+      //   - `pg_stat_user_tables` da `bill_notifications`: `n_live_tup = 0` e
+      //     `n_tup_ins = 1` na vida inteira -- a tabela esta VAZIA.
+      //
+      // Tabela vazia => o `EXISTS` e `false` em toda linha, para todo leitor =>
+      // `.eq("already_notified", false)` nao descarta nada. Entao
+      // **`lista_bruta` e `lista.length` sao a mesma contagem por construcao**,
+      // e chegar aqui com `lista_bruta > 0` seria uma contradicao do PostgREST,
+      // nao o filtro trabalhando. O mundo "quem zera e o `already_notified`"
+      // (3a linha da tabela antiga, HMO-414) nao existe no ar.
+      //
+      // O QUE AS DUAS CONTAGENS DESEMPATAM, ENTAO
+      // -----------------------------------------
+      // A terceira linha da tabela antiga cai junto com o filtro: ela mandava a
+      // leitura para a HMO-414, que e um defeito de outra cadeia de schema.
+      // Sobra uma tabela de DUAS linhas -- e uma terceira celula que, se
+      // aparecer, nao e um mundo e sim uma contradicao a investigar no
+      // PostgREST, nao no schema:
       //
       //   lista_bruta | st_pendentes | o que e
       //   ------------|--------------|--------------------------------------
       //        0      |      0       | este processo nao esta vendo o banco
-      //               |              | de producao (veja `projeto`)
+      //               |              | de producao -- veja `projeto`. Em
+      //               |              | 22/10/2026 a tabela crua de producao
+      //               |              | tinha 136 linhas vivas, entao
+      //               |              | `st_pendentes: 0` aqui nao e "nao ha
+      //               |              | conta prevista"
       //        0      |     > 0      | a view filtra para ESTE leitor -- a
-      //               |              | linha existe e `bill_alerts` a esconde
-      //      > 0      |     > 0      | quem zera e o filtro
-      //               |              | `already_notified` (HMO-414)
+      //               |              | linha existe e `bill_alerts` a esconde.
+      //               |              | Como o catalogo diz que o WHERE dela le
+      //               |              | a coluna CRUA `s.status` e que o fan-out
+      //               |              | sai de `s.user_id` (nenhum dos dois
+      //               |              | depende de `auth.uid()`), o suspeito
+      //               |              | aqui nao e a RLS: e `CURRENT_DATE`, o
+      //               |              | LEFT JOIN de `notification_preferences`,
+      //               |              | ou a view resolvida nao ser a do
+      //               |              | catalogo (`search_path`/`db-schemas`)
+      //      > 0      |     > 0      | CONTRADICAO, nao mundo: a leitura
+      //               |              | filtrada e a contagem da mesma view
+      //               |              | discordam com um filtro que nao
+      //               |              | descarta nada
       //
-      // `lista_bruta` e a MESMA view SEM o filtro, porque e o filtro que esta
-      // sob suspeita: `already_notified` nao correlaciona por `user_id`, e lido
-      // pela service_role ele significa "alguem ja foi avisado", nao "este
-      // destinatario ja foi". `st_pendentes` nao passa pela view nenhuma -- e a
-      // tabela crua, e e so por isso que ela consegue acusar a view.
+      // `st_pendentes` nao passa pela view nenhuma -- e a tabela crua, e e so
+      // por isso que ela consegue acusar a view.
       //
       // CUSTO: duas consultas `head: true` (nenhuma linha trafega) e SO no dia
       // ocioso. O dia com aviso a dar nao paga nada disso.

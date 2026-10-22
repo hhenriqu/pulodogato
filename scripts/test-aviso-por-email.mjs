@@ -726,17 +726,42 @@ test("a rota reporta o desligamento tambem no dia ocioso", async () => {
   // disser nada sobre o e-mail, o estado do canal so apareceria no primeiro dia
   // com vencimento -- e meses de `cron_runs` tranquilos nao responderiam "o
   // e-mail estava ligado?".
+  //
+  // A JANELA E ESTRUTURAL, E NAO UM ORCAMENTO DE CARACTERES (HMO-489)
+  // ----------------------------------------------------------------
+  // A primeira versao desta assercao recortava o bloco com
+  // `/avisos:\s*0[\s\S]{0,160}?\}/` -- 160 caracteres a partir de `avisos: 0`.
+  // Isso casa com o corpo ocioso de ENTAO, nao com o corpo ocioso. A HMO-486
+  // acrescentou `lista_bruta`, `st_pendentes` e `projeto` ao mesmo objeto, o
+  // `}` de fechamento saiu para ~210 caracteres, o `match` passou a devolver
+  // `null` e esta suite ficou VERMELHA na main por um dia inteiro sem ninguem
+  // ver (a franquia do Actions nao roda). Uma janela por contagem de
+  // caracteres e uma data de validade escondida: ela expira quando o codigo
+  // que ela protege cresce, que e exatamente quando a guarda importa.
+  //
+  // Agora o recorte vai de `avisos: 0,` ate o fechamento do objeto `body`
+  // (`\n        },`), igual ao que a assercao do dia COM avisos ja fazia. Os
+  // comentarios saem ANTES do recorte: a explicacao acima cita
+  // `email_desligado` e sem o corte a assercao passaria a casar com ela --
+  // apagar o campo do codigo continuaria verde.
   const { readFileSync } = await import("node:fs");
   const rota = readFileSync(
     new URL("../app/api/cron/bill-alerts/route.ts", import.meta.url),
     "utf8"
-  );
+  ).replace(/\/\/.*$/gm, "");
 
-  const ocioso = rota.match(/avisos:\s*0[\s\S]{0,160}?\}/);
+  const ocioso = rota.match(/avisos:\s*0,[\s\S]*?\n        \},/);
   assert.ok(ocioso, "nao achei o early-return de 'nada a avisar'");
   assert.match(
     ocioso[0],
     /email_desligado/,
     "o corpo do dia ocioso precisa dizer se o canal de e-mail esta ligado"
+  );
+  // O controle da propria janela: se o recorte parar antes do fim do objeto,
+  // ele volta a medir um pedaco arbitrario do corpo em vez do corpo.
+  assert.match(
+    ocioso[0],
+    /projeto:/,
+    "o recorte tem de chegar ao fim do objeto `body`, nao parar no meio"
   );
 });
