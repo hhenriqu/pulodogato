@@ -74,7 +74,27 @@ const PERMITIDO = "components/ui/campo-de-data.tsx";
  * lancamento de investimento, despesa de grupo) + 2 da HMO-192 (renda fixa da
  * carteira) + 1 da HMO-324 (linha de edicao da lista) + 1 da HMO-371 (o 1o
  * vencimento do emprestimo do MyBank) + 1 da HMO-460 (o vencimento na edicao da
- * conta prevista do cartao, `components/cartoes/EdicaoDaPrevisaoDoCartao.tsx`).
+ * conta prevista do cartao, `components/cartoes/EdicaoDaPrevisaoDoCartao.tsx`)
+ * + 1 da HMO-480 (o "Novo vencimento da primeira parcela em aberto", no dialogo
+ * de ajustar o emprestimo ativo -- o SEGUNDO campo de
+ * `components/mybank/PainelDoMyBank.tsx`, que antes tinha so o 1o vencimento da
+ * HMO-371).
+ *
+ * O 16o SUBIU AQUI COM ATRASO, E O ATRASO E A LICAO (HMO-483). A HMO-480
+ * (PR #365) acrescentou o campo e nao mexeu neste numero, entao este guard
+ * ficou VERMELHO na `main` -- e ninguem viu, por duas cegueiras empilhadas:
+ *
+ *   1. o `pre-commit` e uma corrente de `&&` e morria ANTES daqui, em
+ *      `check-mutacao-no-lugar`. Passo que nao e alcancado nao reprova nem
+ *      reporta -- exatamente a doenca que a HMO-483 consertou DENTRO do
+ *      `mede-ancora-ambigua` (que abortava no 7o runner e calava sobre os
+ *      outros 76), um nivel acima;
+ *   2. este guard so tem step no `verificacao.yml`, que esta acima de 512.000
+ *      bytes e nao da partida (HMO-473).
+ *
+ * Ou seja: o guard fez exatamente o que foi desenhado para fazer -- falhar ALTO
+ * na direcao do campo NOVO -- e nao havia quem escutasse. A igualdade nao e o
+ * problema; a corrente que para antes dela e.
  *
  * O numero ACOMPANHA a arvore, e campo novo obriga a subir ele aqui.
  * A versao anterior dizia o contrario -- "tela nova sobe o numero e nao tem por
@@ -92,7 +112,7 @@ const PERMITIDO = "components/ui/campo-de-data.tsx";
  * silencio, do mesmo jeito. Igualdade falha ALTO nas duas direcoes e obriga a
  * decisao a passar por aqui, com o motivo, sempre.
  */
-const CHAMADAS_ESPERADAS = 15;
+const CHAMADAS_ESPERADAS = 16;
 
 const ATRIBUTO_DE_DATA = /type\s*=\s*(?:["']date["']|\{\s*["']date["']\s*\})/gi;
 

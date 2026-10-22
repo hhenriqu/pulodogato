@@ -67,11 +67,23 @@ const mutantes = [
     "  if (!config) return desligado();",
     "  const config2 = config ?? { apiKey: '', remetente: '', sandbox: false };\n  if (!config2) return desligado();",
   ],
+  // A ANCORA NOMEIA A LINHA DO CAMPO, NAO O OBJETO INTEIRO (HMO-483).
+  //
+  // Ela era o `body: { ... }` ocioso escrito em UMA linha. A HMO-486 (PR #384)
+  // abriu aquele objeto em varias linhas e lhe acrescentou tres campos de
+  // instrumentacao (`lista_bruta`, `st_pendentes`, `projeto`), e a ancora
+  // MORREU -- o mutante seguia no placar como morto sem nunca ter mudado a
+  // rota. Ancora que spela um objeto inteiro morre no primeiro campo que entra
+  // nele; a que nomeia a linha do campo sobrevive. Mesma licao que a lista de
+  // colunas do `select` em mutantes-realizado-do-caixa (HMO-487).
+  //
+  // O `\n` no `de` e o que faz o `para: ""` levar a linha INTEIRA embora, em vez
+  // de deixar uma linha em branco no meio do objeto.
   [
     ROTA,
     "o dia ocioso para de dizer se o canal esta ligado",
-    "body: { ok: true, avisos: 0, push: 0, email: 0, email_desligado: !configuracaoDeEmail() },",
-    "body: { ok: true, avisos: 0, push: 0, email: 0 },",
+    "          email_desligado: !configuracaoDeEmail(),\n",
+    "",
   ],
   [
     ROTA,

@@ -16,14 +16,21 @@
 // le como "o mutante sobreviveu", o relatorio confiante e errado. Por isso cada
 // edicao conta as substituicoes e aborta em zero.
 //
-// RESTAURA DE UMA COPIA, e nao com `git checkout`: os arquivos desta fase ainda
-// nao estao commitados, e `git checkout --` os APAGARIA em vez de reverte-los.
+// NAO MUTA A ARVORE: MUTA UMA SOMBRA EM /tmp (HMO-483)
+// ----------------------------------------------------
+// Este runner mutava o arquivo rastreado no lugar e restaurava de uma copia --
+// o que deixa o mutante GRAVADO na arvore quando o processo morre por timeout
+// ou cancelamento (e `test:tela-do-cartao` e suite de navegador, uma volta por
+// mutante). Agora a mutacao vai para a sombra de `criarBlocoDeMutantes`, que
+// sobrevive a SIGTERM e a SIGKILL porque nao ha o que restaurar. O porque longo
+// esta no bloco do driver, abaixo da lista.
 // =====================================================
 
-import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync, mkdtempSync, copyFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
+
+import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
+
+const SUITE = "test:tela-do-cartao";
 
 const LIB = "lib/acoes-da-previsao-do-cartao.ts";
 const TELA = "components/cartoes/FaturaDoCartao.tsx";
@@ -111,70 +118,112 @@ const MUTANTES = [
   },
 ];
 
-const guardados = mkdtempSync(join(tmpdir(), "mutantes-previsao-"));
-for (const arquivo of [LIB, TELA, FORM]) {
-  copyFileSync(arquivo, join(guardados, arquivo.replace(/\//g, "_")));
-}
-const restaurar = () => {
-  for (const arquivo of [LIB, TELA, FORM]) {
-    copyFileSync(join(guardados, arquivo.replace(/\//g, "_")), arquivo);
-  }
+// A SOMBRA EM /tmp, E NAO A ARVORE (HMO-483, divida da HMO-337)
+// -------------------------------------------------------------
+// Este driver gravava o mutante no arquivo RASTREADO -- uma escrita do `fs`
+// direto no caminho do alvo -- e restaurava de uma copia.
+// `check-mutacao-no-lugar` reprovava por isso, e o runner nao estava declarado
+// na divida conhecida.
+//
+// A FRASE ACIMA NAO SOLETRA A CHAMADA DE PROPOSITO: `check-mutacao-no-lugar`
+// procura o padrao no TEXTO do arquivo, sem descontar comentario. Descrever o
+// defeito antigo com a sintaxe exata da chamada faz a guarda acusar o runner ja
+// consertado -- falso vermelho que custou uma volta de medicao aqui.
+//
+// O MODO DE FALHA NAO E TEORICO, e o cabecalho de `check-mutacao-no-lugar.mjs`
+// o descreve: morto por timeout ou cancelamento, o runner deixa o mutante
+// GRAVADO na arvore -- e dali em diante toda medicao le o arquivo errado, com
+// nada no placar dizendo isso. Este runner roda a `test:tela-do-cartao` (suite
+// de navegador) uma vez por mutante, que e justamente o perfil que estoura
+// timeout.
+//
+// E NAO SE CONSERTA COM HANDLER DE SINAL: num laco sincrono o handler de
+// `SIGTERM` nunca roda (o event loop nao recebe o controle) e ainda ENGOLE o
+// sinal, deixando o runner vivo e mutando -- medido na HMO-327, e o remedio
+// fabrica o defeito mais caro. O unico conserto e nao mutar a arvore.
+//
+// A LISTA ACIMA NAO FOI TOCADA, de proposito: o risco desta migracao e errar a
+// LISTA, nao errar o driver, e com ela parada o `git diff` e a prova. Conferido
+// por `git show`: as 7 entradas saem byte a byte iguais.
+//
+// O QUE A CONVERSAO GANHA DE GRACA, e nao e cosmetico: `bloco.rodar` distingue
+// o mutante que morre no TSC do que morre na ASSERCAO. Um mutante que nao
+// compila nao chega em producao, mas tambem nao prova que a suite mediu a regra
+// -- e o driver antigo, que so sabia "a suite reprovou", contava os dois como a
+// mesma morte.
+const bloco = criarBlocoDeMutantes({
+  rotulo: "previsao-do-cartao",
+  suites: [SUITE],
+});
+process.on("exit", () => bloco.fechar());
+
+/** As fontes intactas dos tres arquivos, lidas UMA vez. */
+const originais = {
+  [LIB]: readFileSync(LIB, "utf8"),
+  [TELA]: readFileSync(TELA, "utf8"),
+  [FORM]: readFileSync(FORM, "utf8"),
 };
 
-const suiteReprova = () => {
-  try {
-    execFileSync("npm", ["run", "test:tela-do-cartao"], { stdio: "pipe" });
-    return false;
-  } catch {
-    return true;
-  }
-};
-
-// A SUITE INTACTA PRIMEIRO. Suite vermelha faz TODO mutante "morrer" por um
-// motivo que nao e o dele, e o runner inteiro passa vacuo.
+// O CONTROLE POSITIVO, PELO MESMO `bloco.rodar` DOS MUTANTES. Pelo mesmo
+// aparelho e deliberado: so assim ele pega erro NO APARELHO (sombra incompleta,
+// alias nao resolvido), que senao faria todo mutante "morrer" e o placar sairia
+// cheio sem que uma assercao tivesse medido nada.
+//
+// Suite vermelha faz TODO controle negativo passar vacuo, e e por isso que isto
+// vem antes e aborta.
 process.stdout.write("controle: a suite intacta passa ... ");
-if (suiteReprova()) {
+const controle = bloco.rodar("controle", originais, SUITE);
+if (!controle.verde) {
   console.log("NAO");
   console.error(
-    "\nA suite reprova ANTES de qualquer mutacao. Todo mutante abaixo 'morreria'\n" +
-      "sem provar nada. Conserte a suite primeiro."
+    `\nA suite reprova ANTES de qualquer mutacao (${controle.como}):\n` +
+      `${controle.saida}\n\n` +
+      "Todo mutante abaixo 'morreria' sem provar nada. Conserte a suite primeiro."
   );
   process.exit(1);
 }
 console.log("sim");
 
 let sobreviventes = 0;
+let porTsc = 0;
 
 for (const m of MUTANTES) {
-  const original = readFileSync(m.arquivo, "utf8");
+  const original = originais[m.arquivo];
 
+  // A ANCORA TEM DE CASAR UMA VEZ SO, E ISSO SEGUE CONFERIDO. Mutante cuja
+  // ancora nao casa deixa o arquivo intacto e a suite verde -- que se le como
+  // "sobreviveu", o relatorio confiante e errado. Ancora AMBIGUA (duas
+  // ocorrencias) e igualmente ruim: o `replace` troca a primeira e o rotulo
+  // passa a mentir sobre onde mediu.
   const pedacos = original.split(m.de);
   if (pedacos.length !== 2) {
-    restaurar();
     console.error(
       `\nANCORA NAO CASOU (${pedacos.length - 1} ocorrencias) em ${m.arquivo}:\n` +
-        `  ${m.de}\n\nSem casar, o arquivo fica intacto e a suite verde se leria\n` +
-        "como mutante sobrevivente. Conserte a ancora."
+        `  ${m.de}\n\nSem casar exatamente uma vez, o placar nao vale. Conserte a ancora.`
     );
     process.exit(1);
   }
 
-  writeFileSync(m.arquivo, pedacos.join(m.para));
   process.stdout.write(`mutante: ${m.nome} ... `);
-  const morreu = suiteReprova();
-  restaurar();
+  const r = bloco.rodar(m.nome, { [m.arquivo]: pedacos.join(m.para) }, SUITE);
 
-  if (morreu) {
-    console.log("morreu");
+  if (!r.verde) {
+    if (r.como === "tsc") porTsc += 1;
+    console.log(`morreu (${r.como === "tsc" ? "tsc" : "assercao"})`);
   } else {
     sobreviventes += 1;
     console.log("SOBREVIVEU");
     console.error(`  o que ele estraga: ${m.porque}`);
+    if (r.mudouASaida === false) {
+      console.error("  (saida compilada identica a da arvore limpa: EQUIVALENTE)");
+    }
   }
 }
 
 console.log(
-  `\n${MUTANTES.length - sobreviventes}/${MUTANTES.length} mutantes mortos.`
+  `\n${MUTANTES.length - sobreviventes}/${MUTANTES.length} mutantes mortos` +
+    (porTsc > 0 ? ` (${porTsc} no tsc, ${MUTANTES.length - sobreviventes - porTsc} na assercao)` : "") +
+    "."
 );
 
 if (sobreviventes > 0) {

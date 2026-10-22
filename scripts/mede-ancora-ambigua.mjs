@@ -193,6 +193,8 @@ import {
   mioloDeVariosAlvos,
   nomesDasListas,
   elementosDaPrimeiraEntrada,
+  ehListaPorPush,
+  mioloDaListaPorPush,
 } from "./converte-mutantes-em-bloco.mjs";
 
 const RAIZ = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -301,18 +303,66 @@ async function lerMutantesDoPainel(fonte) {
  * `edicao-de-grupo` e `minha-parte-no-realizado` seria uma escolha entre DUAS
  * (`ALVO` e `TESTE`) decidida pela ordem de declaracao -- certa hoje e por
  * acidente.
+ *
+ * A ARIDADE 5 E A 4 COM A SUITE NO FIM (HMO-483). `[arquivo, rotulo, de, para,
+ * suite]` -- a forma que `mutantes-fora-dos-totais-nas-somas.mjs` usa porque os
+ * mutantes dele estao espalhados por SETE somas com suites diferentes, e a suite
+ * que tem de ficar vermelha muda de entrada para entrada. As TRES primeiras
+ * posicoes sao as mesmas da aridade 4, e e so delas que esta medicao vive: o
+ * `para` e a `suite` sao assunto do driver do runner, nao da ancora.
+ *
+ * Ela entra JUNTO com a 4 e nao em ramo proprio de proposito: um ramo proprio
+ * que repetisse o mesmo destructure seria a familia
+ * `unificar-criterio-duplicado-apaga-a-medicao-do-outro-modulo` de novo. O que
+ * NAO se pode e deixar a 5 cair no ramo da aridade 3 -- la ela buscava uma
+ * `const ALVO` que este runner nao tem, e saia "aridade 3 sem `const ALVO`".
  */
 async function lerMutantesDaTupla(fonte) {
   const { miolo } = mioloDaTupla(fonte);
   const lista = await listaDoMiolo(miolo);
   const aridade = elementosDaPrimeiraEntrada(miolo);
 
-  if (aridade === 4) {
+  if (aridade === 4 || aridade === 5) {
     return lista.map(([arquivo, nome, de]) => ({ nome, arquivo, de }));
   }
   const mAlvo = /^const ALVO = "([^"]+)";$/m.exec(miolo);
   if (!mAlvo) throw new Error("aridade 3 sem `const ALVO` -- nao sei contra qual arquivo medir");
   return lista.map(([nome, de]) => ({ nome, arquivo: mAlvo[1], de }));
+}
+
+/**
+ * A lista de um runner que a constroi por `push`, normalizada para a mesma
+ * forma.
+ *
+ * A ORDEM DA TUPLA AQUI E `[nome, arquivo, de, para]`, E NAO A DA FAMILIA TUPLA
+ * (HMO-483). A aridade 4 da familia tupla e `[alvo, rotulo, de, para]` -- o
+ * ARQUIVO primeiro. Este runner poe o nome primeiro, e e a ordem que o proprio
+ * driver dele destructura (`for (const [nome, arquivo, de, para] of
+ * mutantes)`), a mesma de `mutantes-sugestao-de-divisao`.
+ *
+ * Ler na ordem errada nao da erro: da as ANCORAS TODAS MORTAS, porque o rotulo
+ * do mutante e procurado como trecho dentro de um caminho de arquivo. Isso ja
+ * aconteceu neste repositorio (esta no cabecalho de
+ * `runner-fora-da-forma-canonica-derruba-a-guarda-de-ancora`), e e o motivo de a
+ * ordem sair do DRIVER do runner e nao de uma convencao suposta.
+ */
+async function lerMutantesDaListaPorPush(fonte) {
+  const { miolo } = mioloDaListaPorPush(fonte);
+  const lista = await listaDoMiolo(miolo);
+
+  // A TRAVA CONTRA O MIOLO QUE CARREGA E NAO ACUMULA NADA. Um recorte que
+  // perdesse os `push` carrega sem erro (a lista existe, vazia) e devolveria
+  // zero mutantes. O `lerMutantes...` de fora converte zero em
+  // "a leitura da lista quebrou", mas a mensagem dali nao diz ONDE -- e aqui eu
+  // sei dizer.
+  if (lista.length === 0) {
+    throw new Error(
+      "o miolo carregou mas a lista saiu VAZIA -- o recorte perdeu os " +
+        "`mutantes.push([`, e um runner medido com zero ancoras e pior que um nao lido",
+    );
+  }
+
+  return lista.map(([nome, arquivo, de]) => ({ nome, arquivo, de }));
 }
 
 /**
@@ -420,9 +470,38 @@ async function lerMutantesDeVariosAlvos(fonte) {
     const mapaDeAlvos = temMapaDeAlvos ? modulo.ALVOS : null;
 
     for (const m of modulo[nomeDaLista]) {
+      const arquivo = alvoDoMutante(m, arquivoFonte, mapaDeAlvos);
+
+      // O MUTANTE DE VARIAS EDICOES RENDE UMA ANCORA POR EDICAO (HMO-483).
+      //
+      // `edicoes: [[de, para], ...]` e a forma dos runners de migration SQL que
+      // plantam o defeito em mais de um lugar do mesmo arquivo -- as duas
+      // pontas de um `FILTER`, por exemplo. UMA ancora por mutante nao serve
+      // aqui, e o motivo e o modo de falha proprio desta forma: quando so UMA
+      // das edicoes deixa de casar, o mutante ainda muda o arquivo, a suite
+      // ainda fica vermelha, e ele entra no placar como MORTO -- medindo metade
+      // do que o `porque` dele afirma. Medir a primeira edicao e deixar as
+      // outras sem dono seria a mesma mentira em escala menor.
+      //
+      // O INDICE VAI NO ROTULO, e nao e cosmetico: sem ele duas edicoes do
+      // mesmo mutante aparecem com o mesmo nome na saida e quem le nao sabe
+      // QUAL das pontas morreu -- que e a unica coisa que a linha precisa
+      // dizer.
+      if (Array.isArray(m.edicoes)) {
+        m.edicoes.forEach(([de], i) => {
+          lidos.push({
+            nome: `${m.nome} [edicao ${i + 1}/${m.edicoes.length}]`,
+            arquivo,
+            de,
+            todas: Boolean(m.todas),
+          });
+        });
+        continue;
+      }
+
       lidos.push({
         nome: m.nome,
-        arquivo: alvoDoMutante(m, arquivoFonte, mapaDeAlvos),
+        arquivo,
         de: m.de,
         todas: Boolean(m.todas),
       });
@@ -524,6 +603,13 @@ const FAMILIAS = [
   // sempre teve as tres; esta lista tinha duas, e a familia ausente nao dava
   // erro -- ela era DESCARTADA EM SILENCIO pelo `.filter` logo abaixo.
   { nome: "hmo246", reconhece: ehHmo246, ler: lerMutantesDoHmo246 },
+  // A QUARTA (HMO-483): a lista construida por `push`.
+  //
+  // VEM DEPOIS DA `tupla` E NAO COLIDE COM ELA: `ehTupla` casa
+  // `^const mutantes = \[$` -- com o `$` logo depois do `[`, que e a lista
+  // ABERTA -- e este predicado casa `^const mutantes = \[\];$`, a lista VAZIA e
+  // fechada na mesma linha. As duas nao podem casar o mesmo arquivo.
+  { nome: "push", reconhece: ehListaPorPush, ler: lerMutantesDaListaPorPush },
 ];
 
 function familiaDoArquivo(caminho) {
@@ -594,40 +680,94 @@ let ambiguas = 0;
 let ausentes = 0;
 let mortas = 0;
 let total = 0;
-const lidosPorFamilia = { painel: 0, tupla: 0, hmo246: 0 };
+// O CONTADOR SAI DA TABELA `FAMILIAS`, E NAO DE UMA LISTA A MAO (HMO-483).
+//
+// Escrito a mao, este objeto e um segundo lugar que tem de aprender toda familia
+// nova -- e esquece-lo nao da erro nenhum: a familia e lida, os mutantes entram
+// no `total`, e o `lidosPorFamilia[familia.nome]++` cria a chave em silencio. O
+// que se perde e a TRAVA DA VARREDURA VAZIA logo abaixo, que so cobra as chaves
+// que existem ANTES do laco: uma familia ausente daqui nunca e cobrada por
+// "nenhum runner lido", que e exactamente o defeito que aquela trava existe para
+// pegar (e que a HMO-389 ja pagou uma vez, com a `hmo246` DESCARTADA EM
+// SILENCIO por estar fora da lista de familias).
+//
+// Derivado, a tabela e a unica fonte: familia nova nasce contada e nasce
+// coberta pela trava.
+const lidosPorFamilia = Object.fromEntries(FAMILIAS.map((f) => [f.nome, 0]));
+
+// OS RUNNERS QUE ESTA VARREDURA NAO CONSEGUIU LER -- `{ runner, motivo }`.
+//
+// A POLITICA MUDOU NA HMO-483, E O QUE MUDOU FOI O *QUANDO*, NAO O *SE*.
+// Ler um runner da familia e falhar continua sendo reprovacao: segue saindo 1,
+// segue nomeando o arquivo, segue alto. O que nao pode mais acontecer e a
+// varredura MORRER ali.
+//
+// O defeito medido: `mutantes-fora-dos-totais-nas-somas.mjs` nao carregava
+// (`MOVIMENTACOES is not defined`, consertado em `mioloDaTupla`), e a guarda
+// subia a excecao no MEIO da varredura alfabetica. Tudo depois dele no alfabeto
+// -- `previsao-do-cartao`, `realizado-do-caixa`, `rota-da-conversa`,
+// `saldo-da-conversa`, `telas-de-movimentacao` e outras dezenas -- nunca era
+// medido. A guarda existe para reprovar ancora morta e ambigua, e reprovava por
+// UM motivo calando sobre o resto do repositorio.
+//
+// O que o acumulo revelou na primeira varredura completa: 81 runners e 1614
+// mutantes (contra os ~40 runners que a varredura alcancava antes de morrer), e
+// DUAS ancoras mortas a mais -- `select_sem_o_embed_da_conta` e `select_sem_notes`,
+// as duas em `lib/realizado-do-caixa.ts`, as duas depois do runner que abortava.
+// Elas estavam no repositorio o tempo todo; o que faltava era chegar nelas.
+//
+// UM GUARD QUE ABORTA NO PRIMEIRO PROBLEMA MEDE O PRIMEIRO PROBLEMA, NAO O
+// REPOSITORIO.
+const naoLidos = [];
+
+// QUANTOS RUNNERS CADA FAMILIA TEM NO DISCO, pelo predicado dela (HMO-483).
+//
+// A trava da varredura vazia precisa dos DOIS numeros. Com so o de lidos ela
+// cobra que TODA familia da tabela apareca em TODA varredura -- e isso reprova
+// por um motivo falso em dois casos reais: a arvore de fixture da suite desta
+// guarda (3 a 5 runners, nunca um de cada familia) e o dia em que o unico
+// runner de uma familia for apagado. Guard que reprova quando nada esta errado
+// e guard que se aprende a ignorar.
+//
+// O numero que acusa de verdade e "a familia TEM runner no disco e nao leu
+// NENHUM" -- predicado que parou de casar, ou normalizador que quebrou para a
+// familia inteira.
+const esperadosPorFamilia = Object.fromEntries(FAMILIAS.map((f) => [f.nome, 0]));
 
 for (const runner of runners) {
   const familia = familiaDoArquivo(runner);
   if (!familia) {
-    console.error(`ABORTADO: ${runner} nao e de familia nenhuma que eu saiba ler.`);
-    process.exit(1);
+    naoLidos.push({ runner, motivo: "nao e de familia nenhuma que eu saiba ler" });
+    continue;
   }
+  esperadosPorFamilia[familia.nome]++;
   const fonte = readFileSync(path.resolve(RAIZ, runner), "utf8");
-  // Deixar a excecao SUBIR e deliberado: um runner da familia que o
+  // A FALHA DE LEITURA E RELATADA, NUNCA SILENCIADA: um runner da familia que o
   // normalizador nao consegue ler ou mudou de forma (e entao pertence ao
   // `FORMA_PROPRIA`, com o motivo escrito) ou quebrou. As duas coisas tem de
   // aparecer, e nenhuma delas pode virar "0 ambiguas".
   //
-  // MAS A EXCECAO CRUA NAO DIZ DE QUAL RUNNER SE TRATA (HMO-392). O `throw` sai
+  // MAS A EXCECAO CRUA NAO DIZ DE QUAL RUNNER SE TRATA (HMO-392). O `throw` saia
   // de dentro do normalizador, que recebe a FONTE e nao o caminho, e o stack
-  // trace que chega ao terminal cita `mede-ancora-ambigua.mjs` e
+  // trace que chegava ao terminal citava `mede-ancora-ambigua.mjs` e
   // `converte-mutantes-em-bloco.mjs` -- nunca o arquivo com o defeito. E a
   // mesma reclamacao que o `try/catch` do ENOENT logo abaixo faz em voz alta
   // ("o stack trace esconde de qual runner e qual mutante se trata"), e ela
   // valia aqui tambem: ler `nao achei const MUTANTES = [` sem saber ONDE manda
   // procurar em 67 arquivos.
   //
-  // O re-throw NAO engole nada: ele prefixa o nome, mantem a causa em `cause`
-  // e deixa a excecao subir igual.
+  // O NOME DO RUNNER E A FAMILIA ENTRAM NO MOTIVO pelo mesmo motivo de antes --
+  // o `e.message` sozinho nao localiza nada.
   let mutantes;
   try {
     mutantes = await familia.ler(fonte);
   } catch (e) {
-    throw new Error(`${runner} (familia ${familia.nome}): ${e.message}`, { cause: e });
+    naoLidos.push({ runner, motivo: `(familia ${familia.nome}) ${e.message}` });
+    continue;
   }
   if (mutantes.length === 0) {
-    console.error(`ABORTADO: ${runner} rendeu ZERO mutantes -- a leitura da lista quebrou.`);
-    process.exit(1);
+    naoLidos.push({ runner, motivo: "rendeu ZERO mutantes -- a leitura da lista quebrou" });
+    continue;
   }
   total += mutantes.length;
   lidosPorFamilia[familia.nome]++;
@@ -703,28 +843,88 @@ for (const runner of runners) {
   }
 }
 
+// OS RUNNERS QUE NAO FORAM LIDOS, TODOS, COM O MOTIVO DE CADA UM (HMO-483).
+//
+// VEM ANTES DAS OUTRAS DUAS TRAVAS DE PROPOSITO. Quando o que falhou foi a
+// LEITURA de todos os runners de uma familia, a trava de "familia vazia" logo
+// abaixo tambem dispara -- e ela descreve o SINTOMA ("nenhum runner lido da
+// familia tupla"), enquanto esta descreve a CAUSA (qual arquivo, qual erro).
+// Imprimir o sintoma primeiro manda a investigacao para o predicado de familia,
+// que esta correto, em vez de para o runner que quebrou.
+if (naoLidos.length > 0) {
+  console.error(
+    `\nFALHA: ${naoLidos.length} de ${runners.length} runner(s) nao puderam ser LIDOS -- ` +
+      "a ancora deles nao tem medicao nenhuma nesta varredura:",
+  );
+  for (const { runner, motivo } of naoLidos) console.error(`   NAO LIDO  ${runner}: ${motivo}`);
+  console.error(
+    "\nCada um ou mudou de forma (e entao pertence a `FORMA_PROPRIA`, com o motivo\n" +
+      "escrito) ou quebrou. O boletim mede os OUTROS runners e a varredura reprova\n" +
+      "no fim -- ela nao para aqui para que um runner ilegivel nunca mais esconda a\n" +
+      "ancora morta dos que vem depois dele no alfabeto.",
+  );
+}
+
 // A TRAVA CONTRA A VARREDURA VAZIA, agora por FAMILIA. "0 ambiguas" sobre zero
 // runners de uma familia e um boletim limpo que nao mediu nada -- e seria o
 // resultado de um predicado que parasse de casar (a HMO-328 ja viu `ehDoPainel`
 // deixar de reconhecer um runner por uma mudanca de forma). Com duas familias, a
 // contagem total nao basta: a do painel sozinha passaria por "mediu tudo".
+//
+// A COMPARACAO E CONTRA O DISCO, E NAO CONTRA A TABELA DE FAMILIAS (HMO-483):
+// acusa a familia que TEM runner no disco e nao leu nenhum. Ver
+// `esperadosPorFamilia`.
 if (!alvos.length) {
-  const vazias = Object.entries(lidosPorFamilia).filter(([, n]) => n === 0);
+  const vazias = Object.entries(lidosPorFamilia).filter(
+    ([nome, n]) => n === 0 && esperadosPorFamilia[nome] > 0,
+  );
   if (vazias.length > 0) {
     console.error(
-      `\nABORTADO: nenhum runner lido da familia ${vazias.map(([n]) => n).join(", ")} -- ` +
-        "a varredura nao mediu essa familia.",
+      `\nABORTADO: nenhum runner lido da familia ${vazias
+        .map(([n]) => `${n} (${esperadosPorFamilia[n]} no disco)`)
+        .join(", ")} -- a varredura nao mediu essa familia.`,
     );
     process.exit(1);
   }
+
+  // A FAMILIA SEM RUNNER NO DISCO NAO REPROVA, MAS NAO PASSA CALADA. Zero no
+  // disco e zero lidos e consistente -- e tambem e o que um predicado que parou
+  // de casar produz, porque o runner que ele deixou de reconhecer e reportado
+  // na secao de falha de leitura acima (que JA reprova, por nome). Dizer o
+  // numero deixa as duas leituras possiveis a vista de quem le o boletim, em vez
+  // de escolher uma.
+  //
+  // A FRASE NAO REPETE OS MARCADORES DO BOLETIM (`NAO LIDO`, `ancora MORTA`) de
+  // proposito: eles sao o que a suite desta guarda grepa para afirmar que um
+  // runner especifico nao foi lido, e marcador em prosa faz a assercao casar
+  // sobre texto que nao e um achado -- `guarda-que-grepa-a-pagina-inteira-por-
+  // fragmento`. Esta linha custou exatamente esse falso vermelho quando nasceu.
+  const semRunner = Object.keys(lidosPorFamilia).filter((n) => esperadosPorFamilia[n] === 0);
+  if (semRunner.length > 0) {
+    console.log(
+      `\nfamilia sem runner nenhum no disco: ${semRunner.join(", ")} -- ` +
+        "nada a medir (se isso for surpresa, o predicado dela parou de casar, e " +
+        "entao os runners dela estao sendo reportados acima, um por um).",
+    );
+  }
 }
 
+// O BOLETIM CONTA OS RUNNERS MEDIDOS, NAO OS TENTADOS (HMO-483).
+//
+// `runners.length` aqui seria a mesma `assercao que mente` que a HMO-389
+// consertou uma linha abaixo: "1614 mutantes lidos em 81 runners" com tres
+// deles ilegiveis le-se como censo completo de 81. O numero que importa para
+// quem le e quantos foram de fato ABERTOS, e os nao lidos aparecem ao lado --
+// nunca subtraidos em silencio.
+const medidos = runners.length - naoLidos.length;
+
 console.log(
-  `\n${total} mutantes lidos em ${runners.length} runners ` +
+  `\n${total} mutantes lidos em ${medidos} runners ` +
     `(${Object.entries(lidosPorFamilia).map(([n, q]) => `${n}:${q}`).join(" ")}), ` +
     `${ambiguas} com ancora ambigua (>1 ocorrencia)` +
     `, ${mortas} com ancora MORTA (0 ocorrencias)` +
-    (ausentes > 0 ? `, ${ausentes} apontando para arquivo AUSENTE` : ""),
+    (ausentes > 0 ? `, ${ausentes} apontando para arquivo AUSENTE` : "") +
+    (naoLidos.length > 0 ? `, ${naoLidos.length} NAO LIDOS (acima)` : ""),
 );
 
 // O QUE NAO FOI MEDIDO, DITO NA MESMA RESPIRACAO -- e esta linha e metade do
@@ -734,10 +934,18 @@ console.log(
 // mencionava, e foi lido como "a guarda olhou tudo".
 if (!alvos.length) {
   console.log(
-    `${noDisco.length} runners no disco, ${runners.length} medidos, ` +
+    `${noDisco.length} runners no disco, ${medidos} medidos, ` +
       `${excluidosPorNome.length} excluidos pelo NOME (com motivo escrito em ` +
-      "APARELHO/FORMA_PROPRIA) -- estes NAO tem medicao de ancora:",
+      "APARELHO/FORMA_PROPRIA)" +
+      (naoLidos.length > 0 ? `, ${naoLidos.length} ILEGIVEIS` : "") +
+      " -- estes NAO tem medicao de ancora:",
   );
   for (const f of excluidosPorNome) console.log(`   sem medir  ${f}`);
+  for (const { runner } of naoLidos) console.log(`   sem medir  ${runner}  (NAO LIDO)`);
 }
-process.exit(ambiguas === 0 && mortas === 0 && ausentes === 0 ? 0 : 1);
+// O RUNNER ILEGIVEL REPROVA, e e por isso que ele pode deixar de abortar: a
+// varredura mede tudo e DEPOIS soma o placar. Tirar `naoLidos` daqui seria
+// trocar um guard que mede pouco e reprova por um que mede tudo e cala.
+process.exit(
+  ambiguas === 0 && mortas === 0 && ausentes === 0 && naoLidos.length === 0 ? 0 : 1,
+);

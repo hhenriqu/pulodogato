@@ -952,6 +952,80 @@ export function converterPainel(fonte, rotulo) {
 export const ehTupla = (fonte) =>
   /^const mutantes = \[$/m.test(fonte) && /^ {2}\[$/m.test(fonte);
 
+// ===========================================================================
+// A QUARTA FAMILIA: A LISTA CONSTRUIDA POR `push` (HMO-483)
+// ===========================================================================
+//
+// `mutantes-atualizar-nas-cinco-telas.mjs` declara `const mutantes = [];` VAZIA
+// e a preenche com `mutantes.push([...])` -- parte em laco sobre uma tabela de
+// telas, parte uma a uma. A lista nao e um literal, entao nenhum dos tres
+// recortes existentes a acha: `ehTupla` exige `^const mutantes = \[$` (sem o
+// `];`) e uma entrada abrindo em `  [`, e aqui nao ha nem uma nem outra.
+//
+// ELA ERA `NAO LIDO` NA VARREDURA, o que significa que as ancoras das sete
+// telas -- `aoTentarDeNovo={() => leitura(true)}` por arquivo, a prop que a
+// HMO-477 criou -- nao tinham medicao estatica nenhuma. E e justamente a forma
+// em que uma ancora morre mais facil: o `de` de cada entrada e montado por
+// TEMPLATE a partir do nome do leitor, entao renomear a prop ou o leitor de UMA
+// tela mata a ancora daquela tela e deixa as outras seis vivas -- o placar cai
+// de 7 para 6 mortos sem nada dizer que o que mudou foi a ancora.
+//
+// POR QUE O RECORTE PODE IR ATE `criarBlocoDeMutantes` E PARAR ALI: essa
+// chamada e a primeira linha do DRIVER em todo runner convertido para bloco, e
+// tudo acima dela neste runner e declaracao de dados (`const SUITE`, as duas
+// tabelas de telas, `const LIB`, a lista vazia e os `push`). O miolo e
+// importado SEM os imports do runner (ver a secao da HMO-403 acima), entao o
+// que nao pode entrar nele e declaracao que CHAME funcao -- e `import` e a
+// unica deste arquivo, que fica de fora por construcao.
+// Exportado como os outros predicados: quem escolhe a familia (o conversor e a
+// guarda de ancora) tem de usar o MESMO criterio, e reescreve-lo a mao ja deu
+// errado uma vez neste arquivo.
+export const ehListaPorPush = (fonte) =>
+  /^const mutantes = \[\];$/m.test(fonte) && /^mutantes\.push\(\[$/m.test(fonte);
+
+/**
+ * Recorta o miolo de um runner que constroi a lista por `push`: da PRIMEIRA
+ * declaracao `const` ate a linha do `criarBlocoDeMutantes` do driver.
+ *
+ * Diferente dos outros tres recortes, este NAO termina num `];` -- ele termina
+ * onde o driver comeca. Procurar um `];` aqui acharia o da tabela `TELAS`, e o
+ * miolo sairia sem os `push` (ou seja, com a lista VAZIA): o runner entraria no
+ * censo como MEDIDO com zero ancoras, que e pior que `NAO LIDO`.
+ */
+export function mioloDaListaPorPush(fonte) {
+  const mLista = /^const mutantes = \[\];$/m.exec(fonte);
+  if (!mLista) throw new Error("nao achei `const mutantes = [];`");
+
+  const mPrimeira = /^const [A-Z][A-Z_0-9]* = /m.exec(fonte);
+  if (!mPrimeira) {
+    throw new Error('nao achei nenhuma `const NOME = ` antes da lista');
+  }
+
+  const mDriver = /^const bloco = criarBlocoDeMutantes\(\{$/m.exec(fonte);
+  if (!mDriver) {
+    throw new Error(
+      "nao achei `const bloco = criarBlocoDeMutantes({` -- sem o inicio do " +
+        "driver nao sei onde o miolo de dados termina",
+    );
+  }
+  if (mDriver.index < mLista.index) {
+    throw new Error("o driver comeca ANTES da lista -- o recorte sairia vazio");
+  }
+
+  // A TRAVA CONTRA O RECORTE QUE PERDE OS `push`: o ultimo `push` tem de estar
+  // DENTRO do miolo. Sem ela, um runner que monte a lista depois de abrir o
+  // bloco sai com a lista vazia e e contado como medido.
+  const ultimoPush = fonte.lastIndexOf("\nmutantes.push([");
+  if (ultimoPush === -1 || ultimoPush > mDriver.index) {
+    throw new Error(
+      "o ultimo `mutantes.push([` esta DEPOIS do `criarBlocoDeMutantes` -- o " +
+        "miolo sairia com a lista incompleta, e medir metade e pior que nao medir",
+    );
+  }
+
+  return { miolo: fonte.slice(mPrimeira.index, mDriver.index) };
+}
+
 /**
  * 3 (`[nome, de, para]`, um alvo) ou 4 (`[alvo, nome, de, para]`, multi-alvo).
  *
@@ -997,18 +1071,38 @@ export function mioloDaTupla(fonte) {
   if (!mLista) throw new Error("nao achei `const mutantes = [`");
 
   const antesDaLista = fonte.slice(0, mLista.index);
+  const todasAsConstantes = [
+    ...antesDaLista.matchAll(/^const ([A-Z][A-Z_0-9]*) = "([^"]+)";$/gm),
+  ];
   // O filtro do `test:` cobre as duas formas em que a suite aparece como
-  // constante de string: `"test:x"` e `"npm run test:x"`. Sem ele, um runner com
-  // `const SUITE` declarada ANTES do `const ALVO` teria o miolo comecando na
-  // linha da suite -- e `divisao-configurada` declara exatamente nessa ordem.
-  const constantes = [...antesDaLista.matchAll(/^const ([A-Z][A-Z_0-9]*) = "([^"]+)";$/gm)].filter(
-    (m) => !/^(npm run )?test:/.test(m[2]),
-  );
+  // constante de string: `"test:x"` e `"npm run test:x"`. Ele separa as
+  // constantes de ARQUIVO das de SUITE, e e a lista de arquivos (o `arquivos:`
+  // do retorno) que nao pode ter nome de suite dentro: quem consome esse campo
+  // le cada item como caminho no disco.
+  const constantes = todasAsConstantes.filter((m) => !/^(npm run )?test:/.test(m[2]));
   if (constantes.length === 0) {
     throw new Error('nao achei nenhuma `const NOME = "caminho";` antes da lista');
   }
 
-  let miolo = fonte.slice(constantes[0].index, fimDaLista(fonte, mLista.index));
+  // O RECORTE COMECA NA PRIMEIRA CONSTANTE DE QUALQUER TIPO, E NAO NA PRIMEIRA
+  // DE ARQUIVO (HMO-483). Comecar pela de arquivo era o mesmo filtro servindo a
+  // dois propositos, e no segundo ele apagava declaracao VIVA: um runner que
+  // declare as suites ANTES dos arquivos tem o miolo comecando DEPOIS delas, e
+  // se a lista as referencia por nome o miolo nao CARREGA.
+  //
+  // Medido em `mutantes-fora-dos-totais-nas-somas.mjs`, que declara seis
+  // `const SOMAS/MOVIMENTACOES/TELAS/... = "test:..."` nas linhas 66-71 e usa
+  // cada uma como 5o elemento das suas entradas: a guarda morria com
+  // `MOVIMENTACOES is not defined` -- excecao, no meio da varredura alfabetica,
+  // levando consigo a medicao de todo runner depois dele.
+  //
+  // E SEGURO PARA O CASO QUE O FILTRO PROTEGIA, porque quem protege aquele caso
+  // e o `removerDeclaracao(miolo, "SUITE")` logo abaixo, nao o inicio do
+  // recorte: `mutantes-orcamento-de-grupo.mjs` declara `const SUITE` na linha
+  // 52, antes de todo `const` de arquivo, e o miolo dele sai sem ela do mesmo
+  // jeito. (A `const SUITE` singular e a unica forma que a conversao descarta;
+  // suite com NOME PROPRIO e dado que a lista usa e tem de sobreviver.)
+  let miolo = fonte.slice(todasAsConstantes[0].index, fimDaLista(fonte, mLista.index));
 
   miolo = removerDeclaracao(miolo, "SUITE");
   miolo = removerDeclaracao(miolo, "original");
