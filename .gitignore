@@ -725,3 +725,9 @@ next-env.d.ts
 # .gitignore chega a ser commitado em cima de arquivo de fonte -- ver a entrada
 # do .tmp-parcelamento acima.
 /.tmp-fora-dos-totais-nas-somas/
+
+# HMO-486: o retorno ocioso do cron de vencimento compilado para o node --test
+# poder importar a rota de verdade (e nao uma copia das contagens). Artefato,
+# nao fonte: um `.tmp-*` fora do .gitignore chega a ser commitado em cima de
+# arquivo de fonte -- ver a entrada do .tmp-parcelamento acima.
+/.tmp-cron-le-zero/

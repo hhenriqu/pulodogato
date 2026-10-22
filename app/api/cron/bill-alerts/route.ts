@@ -21,6 +21,25 @@
 // bill_notifications barrar. A UNIQUE e a segunda linha de defesa; o segredo e
 // a primeira.
 //
+// O CONJUNTO DE CHAVES DA RESPOSTA E A ASSINATURA DO RAMO (HMO-486)
+// -----------------------------------------------------------------
+// `cron_runs.result` e o unico registro durável do que este job fez, e
+// `avisos: 0` nao diz em qual `return` ele passou. O que diz e o CONJUNTO de
+// chaves, porque ele e uma propriedade do codigo e nao do dado:
+//
+//   ramo                                    | chaves
+//   ----------------------------------------|-------
+//   `if (error)` na leitura da view         |   2  (error, erro_leitura)
+//   `if (lista.length === 0)` -> ocioso     |   8  (+ lista_bruta, st_pendentes, projeto)
+//   caminho completo, depois do upsert      |  13
+//
+// Foi contando chaves que a HMO-486 provou que as 27 execucoes de producao
+// paravam no retorno ocioso -- as 5 chaves de entao nao podiam ter vindo do
+// caminho completo. **Quem acrescentar um `return` aqui tem de atualizar esta
+// tabela**, e dar a ele pelo menos um campo exclusivo: e o campo exclusivo que
+// torna o ramo legivel depois, como `email_desligado` e `unique_antiga` ja
+// fazem.
+//
 // O QUE IMPEDE O SPAM
 // -------------------
 // A view ja traz `already_notified`, e o INSERT bate na UNIQUE
@@ -102,6 +121,60 @@ function semIndiceParaOnConflict(erro: { code?: string; message?: string }): boo
     erro.code === "42P10" ||
     /no unique or exclusion constraint matching/i.test(erro.message ?? "")
   );
+}
+
+/**
+ * Uma contagem para o livro-razao -- OU o motivo de ela nao ter saido.
+ *
+ * O tipo de retorno e `number | string` de proposito, e e a parte que importa.
+ * Uma contagem que devolvesse `0` quando a consulta FALHA fabricaria exatamente
+ * o numero que o diagnostico desta issue le como "o cliente nao esta vendo o
+ * banco" -- e mandaria a investigacao conferir URL e chave por causa de um erro
+ * de permissao. Zero tem de significar "contei, e nao ha linha"; qualquer outra
+ * coisa diz o proprio nome em `cron_runs`.
+ *
+ * `count: null` com `error: null` tambem e um caso: o PostgREST responde assim
+ * quando o cabecalho `Prefer: count` nao volta, e isso NAO e zero linhas.
+ */
+async function contar(
+  consulta: PromiseLike<{
+    count: number | null;
+    error: { code?: string; message?: string } | null;
+  }>
+): Promise<number | string> {
+  try {
+    const { count, error } = await consulta;
+    if (error) {
+      return `${error.code ?? "sem code"}: ${error.message ?? "sem mensagem"}`;
+    }
+    if (count === null || count === undefined) {
+      return "o PostgREST nao devolveu count";
+    }
+    return count;
+  } catch (e) {
+    return `excecao: ${e instanceof Error ? e.message : String(e)}`;
+  }
+}
+
+/**
+ * O `ref` do projeto Supabase que este processo esta de fato usando.
+ *
+ * So o subdominio, e NUNCA a chave: `NEXT_PUBLIC_SUPABASE_URL` ja viaja no
+ * bundle do navegador, entao o ref nao e segredo -- a `SUPABASE_SERVICE_ROLE_KEY`
+ * e, e nao entra aqui nem truncada.
+ *
+ * Existe porque a primeira linha da tabela de diagnostico da HMO-486
+ * ("`lista_bruta` 0 e `st_pendentes` 0") junta TRES causas numa celula:
+ * env, URL e chave. O ref separa a do meio sozinho -- se o que esta gravado em
+ * `cron_runs` nao for o projeto de producao, a investigacao acaba em uma
+ * execucao em vez de passar pelas outras duas.
+ */
+function refDoProjeto(url: string): string {
+  try {
+    return new URL(url).hostname.split(".")[0] || "host sem subdominio";
+  } catch {
+    return "NEXT_PUBLIC_SUPABASE_URL nao e uma URL";
+  }
 }
 
 /**
@@ -193,19 +266,79 @@ export async function GET(request: NextRequest) {
 
     if (error) {
       console.error("Cron: erro ao ler bill_alerts:", error);
-      return { status: 500, body: { error: "Falha ao ler os vencimentos" } };
+      // `erro_leitura` no CORPO, e nao so no console (HMO-486). O log da funcao
+      // da Vercel tem retencao curta e nao e consultavel por SQL; `cron_runs` e
+      // o registro que sobrevive. Sem este campo, uma falha de leitura so
+      // aparecia como um 500 sem causa -- e a causa e justamente o que separa
+      // "permissao" de "coluna que nao existe mais" de "banco fora".
+      return {
+        status: 500,
+        body: {
+          error: "Falha ao ler os vencimentos",
+          erro_leitura: `${error.code ?? "sem code"}: ${error.message ?? "sem mensagem"}`,
+        },
+      };
     }
 
     const lista = (alertas ?? []) as BillAlert[];
     if (lista.length === 0) {
+      // =====================================================
+      // O RETORNO OCIOSO, E POR QUE ELE PRECISA CONTAR DUAS VEZES (HMO-486)
+      // =====================================================
       // `email_desligado` tambem no caminho ocioso: o dia normal deste cron e
       // o dia sem nada a avisar, e e justamente nele que "o canal esta
       // configurado?" precisa continuar aparecendo em `cron_runs`. Sem isto a
       // resposta so apareceria no primeiro dia com vencimento -- e o relatorio
       // de meses tranquilos nao diria nada sobre o e-mail.
+      //
+      // E O MESMO MOTIVO TRAZ AS DUAS CONTAGENS ABAIXO.
+      // `avisos: 0` e AMBIGUO DE PROPOSITO: ele e o dia tranquilo (correto) e e
+      // tambem a leitura que voltou vazia (defeito), e os dois gravam o mesmo
+      // 200. Em producao isso custou 27 execucoes verdes entre 25/09 e 21/10,
+      // todas com `avisos: 0`, enquanto a MESMA view devolvia 2 linhas para o
+      // dono -- e `bill_notifications` nunca recebeu uma linha deste job.
+      //
+      // As duas contagens desempatam as tres explicacoes de uma vez:
+      //
+      //   lista_bruta | st_pendentes | o que e
+      //   ------------|--------------|--------------------------------------
+      //        0      |      0       | este processo nao esta vendo o banco
+      //               |              | de producao (veja `projeto`)
+      //        0      |     > 0      | a view filtra para ESTE leitor -- a
+      //               |              | linha existe e `bill_alerts` a esconde
+      //      > 0      |     > 0      | quem zera e o filtro
+      //               |              | `already_notified` (HMO-414)
+      //
+      // `lista_bruta` e a MESMA view SEM o filtro, porque e o filtro que esta
+      // sob suspeita: `already_notified` nao correlaciona por `user_id`, e lido
+      // pela service_role ele significa "alguem ja foi avisado", nao "este
+      // destinatario ja foi". `st_pendentes` nao passa pela view nenhuma -- e a
+      // tabela crua, e e so por isso que ela consegue acusar a view.
+      //
+      // CUSTO: duas consultas `head: true` (nenhuma linha trafega) e SO no dia
+      // ocioso. O dia com aviso a dar nao paga nada disso.
+      const [listaBruta, stPendentes] = await Promise.all([
+        contar(admin.from("bill_alerts").select("*", { count: "exact", head: true })),
+        contar(
+          admin
+            .from("scheduled_transactions")
+            .select("*", { count: "exact", head: true })
+            .eq("status", "pending")
+        ),
+      ]);
+
       return {
         status: 200,
-        body: { ok: true, avisos: 0, push: 0, email: 0, email_desligado: !configuracaoDeEmail() },
+        body: {
+          ok: true,
+          avisos: 0,
+          push: 0,
+          email: 0,
+          email_desligado: !configuracaoDeEmail(),
+          lista_bruta: listaBruta,
+          st_pendentes: stPendentes,
+          projeto: refDoProjeto(env.url),
+        },
       };
     }
 
