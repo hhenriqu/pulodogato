@@ -366,6 +366,37 @@ export function montarParticipantesPorGrupo(
  * assercoes dela existirem. Mesmo argumento de `ratearCentavos` em
  * lib/fechamento-do-grupo.ts.
  *
+ * ZERO CHAMADORES DE PRODUCAO, E ISSO FOI MEDIDO E NAO SUPOSTO -- HMO-338
+ * ----------------------------------------------------------------------
+ * `git grep parteDoMembro` em 2026-10-22: nenhuma ocorrencia em `app/`, e em
+ * `lib/` so as linhas de prosa que a citam. Quem a chama e
+ * `scripts/test-parte-do-grupo.mjs`, e mais ninguem. A HMO-338 abriu com a
+ * hipotese de que isso a tornava CODIGO MORTO a remover, e o veredito foi o
+ * contrario, por duas razoes:
+ *
+ *   1. o paragrafo acima e uma decisao com argumento, nao um resto de
+ *      refatoracao: a funcao e o oraculo da divisao igual, e o degrau do 0/0 e
+ *      o caminho da MAIORIA DA BASE INSTALADA (grupo que nunca abriu a tela de
+ *      divisao tem soma de pesos zero -- ver o cabecalho deste arquivo);
+ *   2. `ratearCentavos`, o precedente que o paragrafo cita, esta no MESMO
+ *      estado -- definicao em lib/, chamador so na suite. Apagar esta e deixar
+ *      aquela seria escolher por inconsistencia; apagar as duas e uma decisao
+ *      maior do que a HMO-338, e ela tem de ser tomada medindo o que a suite
+ *      perde, nao pela contagem de chamadores.
+ *
+ * O QUE A HMO-338 CONSERTOU, ENTAO, FOI A MEDICAO e nao o codigo: a guarda
+ * `!groupId` daqui e a de `status` em `contarMembrosAtivos` nunca tinham tido
+ * mutante PROPRIO. Os tres mutantes que pareciam cobri-las ancoravam em texto
+ * que se repete nas duas funcoes, e `String.replace` muta a PRIMEIRA -- entao
+ * mediam sempre as gemeas (`parteConfiguradaDoMembro` e
+ * `montarParticipantesPorGrupo`). A hipotese da issue era que daqui nenhuma
+ * ASSERCAO cobria a decisao, e essa parte estava errada: os dois mutantes novos
+ * morrem na assercao (`npm run test:parte-do-grupo`), nao no `tsc`. A lacuna
+ * era so do runner.
+ *
+ * `contarMembrosAtivos`, no fim deste arquivo, esta no mesmo estado e pela
+ * mesma razao: ela e a contagem que alimenta esta funcao nas assercoes.
+ *
  * Fora de grupo (`group_id` nulo) a parte e o valor inteiro -- despesa pessoal
  * nao se divide com ninguem.
  *

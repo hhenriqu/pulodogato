@@ -62,8 +62,25 @@
 // `montarParticipantesPorGrupo` e em `contarMembrosAtivos`. O runner antigo
 // mutava a primeira ocorrencia das duas e dava os tres por mortos, sem dizer
 // qual funcao havia medido. Os tres `de` foram estendidos para casar so o
-// trecho que ele ja mutava; as funcoes GEMEAS seguem sem mutante proprio, e isso
-// e uma lacuna de cobertura com issue propria -- nao um defeito da conversao.
+// trecho que ele ja mutava; as funcoes GEMEAS ficaram sem mutante proprio, e isso
+// era uma lacuna de cobertura com issue propria -- nao um defeito da conversao.
+//
+// A LACUNA DAS GEMEAS FECHOU NA HMO-338, e o que ela mediu desmente metade da
+// hipotese: `parteDoMembro` tem ZERO chamadores de producao (so a suite), mas
+// NAO e codigo morto a remover -- ela e o oraculo da divisao igual, no mesmo
+// estado de `ratearCentavos`, e o porque esta no doc dela em
+// lib/parte-do-grupo.ts. As duas guardas ganharam mutante proprio, com a ancora
+// estendida pela linha SEGUINTE de cada funcao (`membrosAtivosPorGrupo.get` numa,
+// `contagem.set` na outra), e `mutantes-parte-do-grupo` passou de 14/14 para
+// 16/16 mortos com esta varredura em 0 ambigua e 0 morta.
+//
+// O DETALHE QUE CUSTOU A MEDICAO, e que vale para toda gemea desta forma: os
+// dois mutantes ORIGINAIS do `!groupId` morrem no TSC, nao na assercao. Apagar a
+// guarda apaga o estreitamento de tipo de `groupId` e a linha seguinte deixa de
+// compilar, entao `if (true)`/`if (false)` nunca chegam a suite. O mutante novo
+// troca o VALOR que a guarda devolve em vez de apagar a guarda -- os tipos
+// seguem validos e quem reprova e a assercao, que e a pergunta que se queria
+// responder.
 //
 // Medido em 2026-10-12, as TRES familias, na main (5739b26) -- HMO-375: 1060
 // mutantes em 50 runners, 0 ambigua e ZERO MORTA. As NOVE ancoras mortas da
