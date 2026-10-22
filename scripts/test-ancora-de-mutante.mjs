@@ -922,6 +922,339 @@ console.log("13. `todas: true` passa com 2 ocorrencias e REPROVA com zero");
   );
 }
 
+// =====================================================
+// 14. O RUNNER ILEGIVEL NAO ESCONDE A ANCORA MORTA DOS OUTROS (HMO-483)
+// =====================================================
+// ESTE E O CONTROLE NEGATIVO DO DEFEITO QUE DEIXOU A PRE-COMMIT DA MAIN
+// VERMELHA E CEGA AO MESMO TEMPO.
+//
+// `mutantes-fora-dos-totais-nas-somas.mjs` nao carregava (`MOVIMENTACOES is not
+// defined`), e a guarda SUBIA A EXCECAO ali mesmo, no meio da varredura. Todo
+// runner depois dele nunca era medido. Na main isso escondia duas ancoras mortas
+// de verdade -- `select_sem_o_embed_da_conta` e `select_sem_notes`, as duas em
+// `lib/realizado-do-caixa.ts`.
+//
+// A ARVORE TEM OS DOIS DEFEITOS DE UMA VEZ, e e disso que o caso vive: um runner
+// que NAO CARREGA (familia reconhecida, miolo com constante nao declarada) e um
+// OUTRO runner, separado, cuja ancora esta morta. A guarda consertada tem de
+// relatar OS DOIS NA MESMA VARREDURA.
+//
+// A ASSERCAO NAO DEPENDE DA ORDEM DO `readdirSync`, de proposito: `exigir os dois`
+// e verdade em qualquer ordem com o acumulo, e e falsa em ALGUMA ordem sem ele.
+// Amarrar o teste a uma ordem que o SO nao promete seria um verde que viaja.
+console.log("14. runner ilegivel nao esconde a ancora morta dos outros (HMO-483)");
+{
+  // Familia tupla (tem `const mutantes = [` e entrada que abre em `  [`), mas o
+  // miolo referencia uma constante que nao existe -- exatamente a forma do
+  // defeito: a leitura quebra no import do miolo, nao no predicado de familia.
+  const RUNNER_ILEGIVEL = `#!/usr/bin/env node
+const ALVO = "lib/exemplo-da-ancora.ts";
+
+const mutantes = [
+  [
+    "tupla_que_nao_carrega",
+    NAO_DECLARADA_EM_LUGAR_NENHUM,
+    "  if (false) return 0;",
+  ],
+];
+
+console.log(mutantes.length);
+`;
+
+  // O SEGUNDO DEFEITO, em runner proprio: ancora que nao casa com o alvo.
+  const RUNNER_COM_ANCORA_MORTA = `#!/usr/bin/env node
+const ALVO = "lib/exemplo-da-ancora.ts";
+
+const mutantes = [
+  [
+    "a_morta_que_vinha_depois",
+    "  if (saldo < -999999) return 0;",
+    "  if (false) return 0;",
+  ],
+];
+
+console.log(mutantes.length);
+`;
+
+  const raiz = arvoreDaVarredura("ilegivel-nao-esconde", ALVO_INTACTO, {
+    "mutantes-aaa-ilegivel.mjs": RUNNER_ILEGIVEL,
+    "mutantes-zzz-ancora-morta.mjs": RUNNER_COM_ANCORA_MORTA,
+  });
+  const { codigo, saida } = varrer(raiz);
+
+  afirmar("sai != 0", codigo !== 0, `saiu ${codigo}, deveria reprovar:\n${saida}`);
+  afirmar(
+    "nomeia o runner que nao soube LER",
+    /mutantes-aaa-ilegivel\.mjs/.test(saida),
+    `o runner ilegivel nao aparece na saida:\n${saida}`,
+  );
+  afirmar(
+    "diz que o motivo foi a LEITURA, com a causa",
+    /NAO LIDO {2}scripts\/mutantes-aaa-ilegivel\.mjs: .*NAO_DECLARADA_EM_LUGAR_NENHUM/.test(saida),
+    `nao disse POR QUE nao leu:\n${saida}`,
+  );
+  // A ASSERCAO QUE SO O CONSERTO SATISFAZ. Com o `throw`, a varredura morria no
+  // runner ilegivel e esta linha nunca era impressa.
+  afirmar(
+    "AINDA mede o outro runner e acha a ancora morta dele",
+    /ancora MORTA {2}a_morta_que_vinha_depois/.test(saida),
+    `O DEFEITO DA HMO-483: o runner ilegivel levou embora a medicao dos outros:\n${saida}`,
+  );
+  // O boletim nao pode contar o ilegivel como medido -- `assercao que mente`.
+  // A arvore tem CINCO runners (os tres fixtures de familia mais os dois deste
+  // caso) e um deles nao le: o censo honesto e "4 medidos, 1 nao lido", nunca 5.
+  afirmar(
+    "o boletim conta os MEDIDOS, nao os tentados",
+    /mutantes lidos em 4 runners/.test(saida) &&
+      /1 NAO LIDOS/.test(saida) &&
+      /5 runners no disco, 4 medidos/.test(saida),
+    `o censo somou o runner que nao leu (5 em vez de 4):\n${saida}`,
+  );
+}
+
+// =====================================================
+// 15. SUITE COM NOME PROPRIO ANTES DOS ARQUIVOS SOBREVIVE AO RECORTE (HMO-483)
+// =====================================================
+// A CAUSA do caso 14, medida sozinha. `mioloDaTupla` escolhia o inicio do
+// recorte pela primeira constante de ARQUIVO, filtrando as de `test:`. Um runner
+// que declare as suites ANTES dos arquivos -- e use cada uma como 5o elemento
+// das entradas, porque seus mutantes caem em suites diferentes -- tinha o miolo
+// comecando DEPOIS delas, e nao carregava.
+//
+// A aridade 5 e a 4 com a suite no fim; as tres primeiras posicoes, que e de
+// onde a ancora sai, sao as mesmas.
+console.log("15. suite com nome proprio antes dos arquivos sobrevive ao recorte (HMO-483)");
+{
+  const RUNNER_ARIDADE_5 = `#!/usr/bin/env node
+const UMA = "test:uma-suite";
+const OUTRA = "test:outra-suite";
+
+const ALVO = "lib/exemplo-da-ancora.ts";
+
+const mutantes = [
+  [
+    ALVO,
+    "aridade5_guarda_do_saldo",
+    ${JSON.stringify(ANCORA)},
+    "  if (false) return 0;",
+    UMA,
+  ],
+  [
+    ALVO,
+    "aridade5_segunda_suite",
+    ${JSON.stringify(ANCORA)},
+    "  if (true) return 0;",
+    OUTRA,
+  ],
+];
+
+console.log(mutantes.length);
+`;
+
+  const raiz = arvoreDaVarredura("aridade-5", ALVO_INTACTO, {
+    "mutantes-exemplo-da-aridade-5.mjs": RUNNER_ARIDADE_5,
+  });
+  const { codigo, saida } = varrer(raiz);
+
+  afirmar(
+    "le o runner em vez de morrer com `UMA is not defined`",
+    !/NAO LIDO/.test(saida) && !/is not defined/.test(saida),
+    `o recorte levou as suites embora:\n${saida}`,
+  );
+  afirmar(
+    "le os DOIS mutantes da aridade 5",
+    /mutantes-exemplo-da-aridade-5\.mjs: 2 mutantes/.test(saida),
+    `a lista nao foi lida inteira:\n${saida}`,
+  );
+  afirmar("arvore intacta sai 0", codigo === 0, `saiu ${codigo}:\n${saida}`);
+
+  // A METADE NEGATIVA: a ancora da aridade 5 e MEDIDA de verdade, nao so lida.
+  // Sem isto, "2 mutantes" passaria igual com a medicao desligada.
+  const semAncora = varrer(
+    arvoreDaVarredura("aridade-5-morta", ALVO_INTACTO.replace(ANCORA, "  return saldo * 2;"), {
+      "mutantes-exemplo-da-aridade-5.mjs": RUNNER_ARIDADE_5,
+    }),
+  );
+  afirmar(
+    "a ancora da aridade 5 reprova quando morre",
+    semAncora.codigo !== 0 &&
+      /ancora MORTA {2}aridade5_guarda_do_saldo/.test(semAncora.saida),
+    `a aridade 5 foi lida mas nao medida:\n${semAncora.saida}`,
+  );
+}
+
+// =====================================================
+// 16. A LISTA CONSTRUIDA POR `push` E LIDA -- E MEDIDA (HMO-483)
+// =====================================================
+// A QUARTA FAMILIA. `mutantes-atualizar-nas-cinco-telas.mjs` declara
+// `const mutantes = [];` VAZIA e a enche com `mutantes.push([...])`, parte em
+// laco sobre uma tabela de telas. Nenhum dos tres recortes anteriores a achava,
+// e ela era `NAO LIDO` na varredura -- 29 ancoras sem medicao nenhuma.
+//
+// AS DUAS METADES IMPORTAM, e a segunda e a que o repo aprendeu a cobrar: ler a
+// lista nao prova que a ancora foi MEDIDA
+// (`guarda-de-ancora-verde-nao-prova-que-o-mutante-morre`). O caso roda a
+// varredura DUAS vezes -- arvore intacta e arvore com a ancora removida -- e
+// exige verde na primeira e vermelho NOMEADO na segunda.
+//
+// A ENTRADA VINDA DO LACO E A QUE SE CONFERE, nao a escrita a mao: e o laco que
+// monta o `de` por TEMPLATE, e e a forma em que uma ancora morre sem o placar
+// mudar de tamanho (renomear o leitor de UMA tela mata a ancora daquela tela e
+// deixa as outras vivas).
+console.log("16. a lista construida por `push` e lida -- e medida (HMO-483)");
+{
+  const RUNNER_POR_PUSH = `#!/usr/bin/env node
+import { criarBlocoDeMutantes } from "./mutantes-em-bloco.mjs";
+
+const SUITE = "test:exemplo";
+
+const TELAS = [
+  ["uma tela", "lib/exemplo-da-ancora.ts"],
+];
+
+/** \`[nome, arquivo, de, para]\` */
+const mutantes = [];
+
+for (const [rotulo, arquivo] of TELAS) {
+  mutantes.push([
+    \`push_do_laco: \${rotulo}\`,
+    arquivo,
+    ${JSON.stringify(ANCORA)},
+    "  if (false) return 0;",
+  ]);
+}
+
+mutantes.push([
+  "push_escrito_a_mao",
+  "lib/exemplo-da-ancora.ts",
+  ${JSON.stringify(ANCORA)},
+  "  if (true) return 0;",
+]);
+
+const bloco = criarBlocoDeMutantes({
+  rotulo: "exemplo",
+  suites: [SUITE],
+});
+
+for (const [nome, arquivo, de, para] of mutantes) {
+  console.log(nome, arquivo, de, para);
+}
+`;
+
+  const raiz = arvoreDaVarredura("lista-por-push", ALVO_INTACTO, {
+    "mutantes-exemplo-por-push.mjs": RUNNER_POR_PUSH,
+  });
+  const { codigo, saida } = varrer(raiz);
+
+  afirmar(
+    "le o runner em vez de o reportar como ilegivel",
+    !/NAO LIDO/.test(saida),
+    `a familia por push nao foi reconhecida:\n${saida}`,
+  );
+  afirmar(
+    "le os DOIS mutantes (o do laco e o escrito a mao)",
+    /mutantes-exemplo-por-push\.mjs: 2 mutantes/.test(saida),
+    `a lista nao foi lida inteira -- o recorte provavelmente perdeu os push:\n${saida}`,
+  );
+  afirmar("arvore intacta sai 0", codigo === 0, `saiu ${codigo}:\n${saida}`);
+  afirmar(
+    "a familia `push` aparece no boletim com a contagem dela",
+    /push:1/.test(saida),
+    `a familia nova nao entrou no censo por familia:\n${saida}`,
+  );
+
+  // A METADE NEGATIVA: sem ela, "2 mutantes" passaria igual com a medicao
+  // desligada. A ancora que morre e a que o LACO montou.
+  const semAncora = varrer(
+    arvoreDaVarredura("lista-por-push-morta", ALVO_INTACTO.replace(ANCORA, "  return saldo * 2;"), {
+      "mutantes-exemplo-por-push.mjs": RUNNER_POR_PUSH,
+    }),
+  );
+  afirmar(
+    "a ancora montada pelo laco reprova quando morre",
+    semAncora.codigo !== 0 && /ancora MORTA {2}push_do_laco: uma tela/.test(semAncora.saida),
+    `a lista por push foi lida mas nao medida:\n${semAncora.saida}`,
+  );
+}
+
+// =====================================================
+// 17. O MUTANTE DE VARIAS EDICOES RENDE UMA ANCORA POR EDICAO (HMO-483)
+// =====================================================
+// `edicoes: [[de, para], ...]` e a forma dos runners de migration SQL que
+// plantam o defeito em mais de um lugar do mesmo arquivo (as duas pontas de um
+// `FILTER`). Antes desta medicao a leitura pegava `m.de`, que nestes mutantes e
+// `undefined` -- e `mutantes-patrimonio-fora-dos-totais.mjs` nem chegava la,
+// porque a lista dele em minuscula nao casava com familia nenhuma.
+//
+// O CASO QUE DA NOME A ISTO: a SEGUNDA edicao morta, a primeira viva. O mutante
+// ainda muda o arquivo, a suite ainda fica vermelha, e ele entra no placar como
+// MORTO medindo metade do que o `porque` dele afirma
+// (`mutante-de-varias-edicoes-sobrevive-falso-quando-uma-delas-nao-casa`). Uma
+// ancora por mutante nao ve isso; uma por edicao ve, e diz QUAL.
+console.log("17. o mutante de varias edicoes rende uma ancora por edicao (HMO-483)");
+{
+  const SEGUNDA = "  if (saldo > 1000) return saldo;";
+  const ALVO_DE_DUAS = `export function sobra(saldo: number): number {
+${ANCORA}
+${SEGUNDA}
+  return saldo;
+}
+`;
+
+  const RUNNER_EDICOES = `#!/usr/bin/env node
+const ALVO = "lib/exemplo-da-ancora.ts";
+
+const PRIMEIRA_PONTA = ${JSON.stringify(ANCORA)};
+const SEGUNDA_PONTA = ${JSON.stringify(SEGUNDA)};
+
+const MUTANTES = [
+  {
+    nome: "as_duas_pontas",
+    edicoes: [
+      [PRIMEIRA_PONTA, "  if (false) return 0;"],
+      [SEGUNDA_PONTA, "  if (false) return saldo;"],
+    ],
+  },
+];
+
+console.log(MUTANTES.length);
+`;
+
+  const raiz = arvoreDaVarredura("edicoes", ALVO_DE_DUAS, {
+    "mutantes-exemplo-das-edicoes.mjs": RUNNER_EDICOES,
+  });
+  const { codigo, saida } = varrer(raiz);
+
+  afirmar(
+    "conta DUAS ancoras para UM mutante de duas edicoes",
+    /mutantes-exemplo-das-edicoes\.mjs: 2 mutantes/.test(saida),
+    `as edicoes nao renderam uma ancora cada:\n${saida}`,
+  );
+  afirmar("as duas vivas saem 0", codigo === 0, `saiu ${codigo}:\n${saida}`);
+
+  // A METADE QUE DA NOME AO CASO: so a SEGUNDA ponta morre.
+  const soASegunda = varrer(
+    arvoreDaVarredura("edicoes-segunda-morta", ALVO_DE_DUAS.replace(SEGUNDA, "  if (saldo > 2000) return saldo;"), {
+      "mutantes-exemplo-das-edicoes.mjs": RUNNER_EDICOES,
+    }),
+  );
+  afirmar(
+    "a SEGUNDA edicao morta reprova",
+    soASegunda.codigo !== 0,
+    `a edicao morta passou:\n${soASegunda.saida}`,
+  );
+  afirmar(
+    "e a saida diz QUAL edicao morreu",
+    /ancora MORTA {2}as_duas_pontas \[edicao 2\/2\]/.test(soASegunda.saida),
+    `nao disse qual das pontas morreu:\n${soASegunda.saida}`,
+  );
+  afirmar(
+    "e NAO acusa a primeira, que esta viva",
+    !/as_duas_pontas \[edicao 1\/2\]/.test(soASegunda.saida),
+    `acusou a ponta viva tambem:\n${soASegunda.saida}`,
+  );
+}
+
 rmSync(raizTmp, { recursive: true, force: true });
 
 if (falhas > 0) {

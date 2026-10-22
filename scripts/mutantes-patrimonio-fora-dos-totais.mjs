@@ -67,7 +67,21 @@ const PREFLIGHT = "    RAISE EXCEPTION E'064 nao pode ser aplicado neste banco."
 const COMMENT_LANCAMENTO =
   "NAO ignora o LANCAMENTO fora dos totais (financial_transactions.include_in_total = false, HMO-443/060)";
 
-const mutantes = [
+// A LISTA SE CHAMA `MUTANTES` PARA A GUARDA DE ANCORA A LER (HMO-483).
+//
+// O predicado da familia `hmo246` e a CAIXA ALTA (`^const MUTANTES = \[$`), e
+// com a lista em minuscula este runner nao casava com familia nenhuma:
+// `mede-ancora-ambigua` o reportava como `NAO LIDO` e as 17 ancoras das 15
+// entradas daqui nao tinham medicao estatica nenhuma. Renomear e o conserto que
+// a HMO-389 ja aplicou aos dois runners que chamavam a lista de `MUTACOES` --
+// nenhum predicado novo, e a forma do arquivo passa a ser a que o leitor conhece
+// (`const ALVO` de modulo + objetos).
+//
+// A medicao PROPRIA deste runner (o estado `ANCORA MORTA` do driver abaixo)
+// continua valendo e nao e substituida: ela roda o psql e so existe com PGURL.
+// A da guarda e estatica, roda no `pre-commit` e nao precisa de banco -- as duas
+// medem a mesma coisa em momentos diferentes.
+const MUTANTES = [
   // -------------------------------------------------------------------------
   // 1-2. O FILTRO APAGADO, uma ponta por vez. E literalmente o estado de
   // ANTES desta migration, ponta por ponta -- e o que producao mostra hoje.
@@ -391,9 +405,9 @@ montarTemplate();
   }
 }
 
-console.log(`\nrodando ${mutantes.length} mutantes...\n`);
+console.log(`\nrodando ${MUTANTES.length} mutantes...\n`);
 
-const resultados = mutantes.map((m) => {
+const resultados = MUTANTES.map((m) => {
   const r = rodarMutante(m);
   const marca =
     r.estado === "morto"

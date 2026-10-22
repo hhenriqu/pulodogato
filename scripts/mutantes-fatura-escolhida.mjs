@@ -477,10 +477,28 @@ const MUTANTES_TS = [
       "OMITE a chave `undefined` do corpo, e coluna omitida num UPDATE fica " +
       "como esta -- entao DESFAZER uma escolha errada passa a ser impossivel, " +
       "com o toast de sucesso aparecendo do mesmo jeito. Grava igual, apaga nunca",
-    de: `          : null,
-    };`,
-    para: `          : undefined,
-    };`,
+    // A ANCORA NOMEIA O CAMPO, E ISSO E A TRAVA (HMO-483).
+    //
+    // Ela era `: null,` seguido de `    };` -- duas linhas que so se
+    // distinguiam das outras tres `: null,` do arquivo pelo `};` do FIM do
+    // objeto. A HMO-443 acrescentou `include_in_total` DEPOIS de
+    // `invoice_month_override`, o `};` deixou de vir em seguida, e a ancora
+    // MORREU: o mutante seguiu no placar como morto sem nunca ter mudado o
+    // arquivo (`replace` de trecho que nao existe nao troca nada, e o `cmp` nao
+    // ve diferenca). Placar inflado, e invisivel -- a guarda de ancora que o
+    // acusaria estava atras do aborto da varredura.
+    //
+    // Agora ela e a mesma do mutante ACIMA, que sobreviveu aquela mudanca
+    // justamente porque nomeia `invoice_month_override:` em vez de depender de
+    // quem vem depois. Campo novo no objeto nao a alcanca.
+    de: `      invoice_month_override:
+        campos.faturaDoLancamento && valores.mesDaFatura
+          ? \`\${valores.mesDaFatura}-01\`
+          : null,`,
+    para: `      invoice_month_override:
+        campos.faturaDoLancamento && valores.mesDaFatura
+          ? \`\${valores.mesDaFatura}-01\`
+          : undefined,`,
   },
   {
     nome: "data_da_compra_vira_o_mes",
