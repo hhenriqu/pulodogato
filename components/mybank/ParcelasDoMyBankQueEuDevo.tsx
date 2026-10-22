@@ -211,7 +211,20 @@ export function ParcelasDoMyBankQueEuDevo() {
                 <span>vence {dataOuMomentoNaTela(parcela.vencimento)}</span>
               </div>
             </div>
-            <div className="flex items-center gap-3">
+            {/* `flex-wrap` AQUI TAMBEM, e nao so na linha de fora (HMO-463).
+
+                O valor e um token sem espaco nenhum e o botao e
+                `whitespace-nowrap`: sem a quebra, os dois juntos nao encolhem
+                e empurram a linha para fora do cartao. MEDIDO em 320px (o
+                iPhone SE, a largura que aperta): a partir de R$ 45.000.000,00
+                o grupo passava 1px da borda, e no teto que a coluna aceita
+                (`numeric(15,2)`, treze digitos inteiros) passava 54px. Com a
+                quebra o botao desce uma linha e o cartao continua inteiro.
+
+                Ninguem tinha visto porque a sonda media 469px e nao 320: o
+                headless clampa `--window-size` em 500px, e o caso que dizia
+                "nada estoura a largura de 390px" media a janela clampada. */}
+            <div className="flex flex-wrap items-center gap-3">
               <span data-valor className="font-semibold">
                 {formatCurrency(parcela.valor)}
               </span>

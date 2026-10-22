@@ -749,6 +749,30 @@ const mutantes = [
     '              <p className="text-xs text-muted-foreground">Juros a receber</p>',
     '              <p className="text-xs text-muted-foreground">Total a receber</p>',
   ],
+
+  // =========================================================================
+  // O RECORTE DO IPHONE, EM 320px (HMO-463)
+  // =========================================================================
+  // OS DOIS SO MORREM EM 320. Em 390 as duas linhas cabem sem quebrar, e o
+  // caso `C6-390` passa verde com a quebra e sem ela -- medido. E esse o
+  // motivo de a sonda medir as duas larguras: ate a HMO-463 ela media a
+  // janela, que o headless clampa em 500px, e NENHUM destes dois morreria.
+  //
+  // Eles nao morrem no `tsc`: trocar uma string de `className` compila.
+
+  [
+    PAINEL,
+    "A LINHA DO EMPRESTIMO PERDE A QUEBRA (Badge + Antecipar + Ajustar + Cancelar num trilho so: em 320px a linha passa 44px da borda do cartao)",
+    '                    <div className="flex flex-wrap items-center justify-between gap-2">',
+    '                    <div className="flex items-center justify-between gap-2">',
+  ],
+
+  [
+    DEVEDOR,
+    "O VALOR E O BOTAO DA PARCELA PERDEM A QUEBRA (o valor nao tem espaco e o botao e `whitespace-nowrap`: no teto de `numeric(15,2)` o par passa 54px da borda em 320px)",
+    '            <div className="flex flex-wrap items-center gap-3">',
+    '            <div className="flex items-center gap-3">',
+  ],
 ];
 
 const SUITE = "test:mybank-na-tela";
