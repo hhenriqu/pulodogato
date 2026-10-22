@@ -25,6 +25,7 @@
     "../lib/periodo-do-painel.ts",
     "../lib/recurrence.ts",
     "../lib/dinheiro.ts",
-    "../lib/moeda.ts"
+    "../lib/moeda.ts",
+    "../lib/fora-dos-totais.ts"
   ]
 }

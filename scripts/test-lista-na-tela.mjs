@@ -103,9 +103,12 @@
 //     (clsx + tailwind-merge + cva), nao comportamento, e nenhuma assercao daqui
 //     fala de classe -- quem cobra cor e `npm run check-color-tokens`. Com eles
 //     o Button de PRODUCAO entra de verdade;
-//   - os onze icones do lucide: viram `<svg>` vazio. Icone novo num dos
-//     componentes estoura alto e claro ("ReferenceError: X is not defined"),
-//     pelo `try/catch` que a pagina tem;
+//   - os doze icones do lucide: viram `<svg>` vazio. Icone novo num dos
+//     componentes estoura "ReferenceError: X is not defined" DENTRO do render
+//     -- e NAO pelo `try/catch` da pagina, que nao alcanca o render do React
+//     (HMO-487 pagou essa conta com `Sigma`). Quem o torna legivel e o teste
+//     "NENHUM erro escapou do render do React", que carrega o erro de volta
+//     pelos ouvintes de `error`/`unhandledrejection`;
 //   - `Link`: respeita o contrato do next/link (um `<a href>` que envolve os
 //     filhos). O que fica provado e o MEU lado do fio -- que o href montado por
 //     `caminhoDeEdicao` chega no DOM; que o Next intercepte o clique, nao;
@@ -447,6 +450,35 @@ const PAGINA = `<!doctype html>
 // calendario nativo escondido para poder chamar \`showPicker()\` nele.
 const { useCallback, useEffect, useMemo, useRef, useState } = React;
 
+// O QUE O \`try/catch\` DA PAGINA **NAO** PEGA, E POR QUE ISSO CUSTOU UMA ISSUE
+// --------------------------------------------------------------------------
+// HMO-487. O cabecalho prometia que icone novo "estoura alto e claro pelo
+// \`try/catch\` que a pagina tem". **Nao estoura.** O React chama o render dentro
+// do \`invokeGuardedCallback\` dele e re-lanca o erro num macrotask proprio, fora
+// da pilha do \`await montar(...)\` -- entao o \`catch\` da IIFE nunca ve nada, a
+// pagina reporta RESULTADO normalmente, e a unica marca que sobra e a raiz
+// DESMONTADA (o React joga a arvore toda fora quando o render lanca).
+//
+// O sintoma que chega em quem le, entao, nao e o ReferenceError: e
+// \`retrato()\` devolvendo \`null\` porque a secao sumiu, e tres casos reprovando
+// com "Cannot read properties of null (reading 'acoes')" -- que se le como
+// fixture quebrada. Foi exatamente o que aconteceu com \`Sigma\`: a mensagem
+// mandou a investigacao para a montagem da linha, e o defeito estava na lista
+// de esbocos de icone.
+//
+// Daqui para a frente o erro viaja junto do resultado e tem teste proprio, que
+// o nomeia. Dois ouvintes porque sao dois caminhos distintos: \`error\` para o
+// que o React re-lanca, \`unhandledrejection\` para promessa de handler.
+const ERROS_DA_PAGINA = [];
+window.addEventListener("error", (ev) => {
+  const e = ev.error;
+  ERROS_DA_PAGINA.push(String(e && e.stack ? e.stack : ev.message));
+});
+window.addEventListener("unhandledrejection", (ev) => {
+  const r = ev.reason;
+  ERROS_DA_PAGINA.push("unhandledrejection: " + String(r && r.stack ? r.stack : r));
+});
+
 // --- os esbocos (ver o cabecalho do .mjs) ------------------------------------
 
 /** clsx + tailwind-merge: junta o que nao e falso. Calculo de string. */
@@ -461,7 +493,11 @@ const Slot = React.forwardRef(function Slot(props, ref) {
   return React.cloneElement(children, { ...resto, ref });
 });
 
-/** Os onze icones. Icone novo estoura como ReferenceError, e isso e bom. */
+/**
+ * Os doze icones. Icone novo estoura como ReferenceError -- e quem torna esse
+ * estouro LEGIVEL e o teste "NENHUM erro escapou do render do React", e nao o
+ * \`try/catch\` da pagina: ver o cabecalho dele. HMO-487.
+ */
 const icone = (nome) => (props) =>
   React.createElement("svg", { "data-icone": nome, className: props.className });
 const AlertCircle = icone("AlertCircle");
@@ -474,6 +510,16 @@ const CreditCard = icone("CreditCard");
 const Loader2 = icone("Loader2");
 const Pencil = icone("Pencil");
 const Repeat = icone("Repeat");
+/**
+ * A SOMA, o selo de "fora dos totais" -- HMO-452, e o que faltava aqui (HMO-487).
+ *
+ * \`SecaoDaTela\` passou a importar \`Sigma\` do lucide e esta lista nao andou
+ * junto, entao toda linha que monta os botoes da acao estourava
+ * \`ReferenceError: Sigma is not defined\` DENTRO do render. Tres casos (A2, A4 e
+ * B) reprovavam desreferenciando \`null\`, porque o React desmonta a raiz inteira
+ * quando o render lanca -- e nao por nada que a fixture deles tivesse de errado.
+ */
+const Sigma = icone("Sigma");
 const Trash2 = icone("Trash2");
 const Wallet = icone("Wallet");
 
@@ -823,6 +869,17 @@ const linha = (extra) =>
       moeda: null,
       natureza: "despesa",
       fatura: null,
+      // \`true\` E O DEFAULT DE PRODUCAO, E OMITI-LO MENTIA EM TODA LINHA -- HMO-487.
+      //
+      // Esta fixture monta a forma que \`linhasDaTela\` DEVOLVE, e la o campo
+      // nunca vem ausente: \`soma_nos_totais: crua.include_in_total !== false\`
+      // (lib/telas-de-movimentacao.ts), ou seja "nao sei" e o DEFAULT da coluna
+      // viram \`true\`. Sem o campo aqui ele chegava \`undefined\` ao componente,
+      // que e FALSY -- entao toda linha desta sonda pintava o selo «fora dos
+      // totais» e o botao dos totais com o verbo INVERTIDO ("Voltar a somar"
+      // onde producao diz "Nao somar"). Nenhuma assercao cobrava isso, e a
+      // sonda media um estado que a rota nao produz.
+      soma_nos_totais: true,
     },
     extra
   );
@@ -1718,6 +1775,7 @@ const out = {};
   out.p3_leituras = leiturasDoResumo();
 }
 
+out.erros_da_pagina = ERROS_DA_PAGINA.slice();
 document.getElementById("resultado").textContent =
   "RESULTADO" + JSON.stringify(out) + "FIM";
 } catch (e) {
@@ -1811,6 +1869,28 @@ test("o navegador rodou e a pagina reportou", () => {
   assert.ok(resultado, "sem resultado da pagina");
 });
 
+test("NENHUM erro escapou do render do React", () => {
+  // HMO-487 -- O TESTE QUE DIZ A CAUSA EM VEZ DE DEIXAR O SINTOMA FALAR.
+  //
+  // Um erro lancado DENTRO do render nao sobe pela pilha do `await montar(...)`
+  // (ver o bloco dos ouvintes, no topo do <script> da pagina): o React o
+  // re-lanca num macrotask proprio e desmonta a raiz. A pagina reporta
+  // RESULTADO como se tudo tivesse ido bem, e o que reprova e um `retrato()`
+  // nulo tres testes adiante -- com mensagem que aponta para a fixture.
+  //
+  // ELE NAO SUBSTITUI AS ASSERCOES, ELE AS EXPLICA: este teste e a CAUSA, e
+  // continuar deixando os casos A2/A4/B rodarem preserva o sinal de cada um.
+  // Por isso aqui nao se aborta a suite -- so se nomeia o erro.
+  assert.deepEqual(
+    resultado.erros_da_pagina,
+    [],
+    `a pagina lancou ${resultado.erros_da_pagina.length} erro(s) fora da ` +
+      `pilha da sonda, e o React desmontou a raiz de cada caso afetado -- ` +
+      `toda assercao que le uma secao vai reprovar com "null". A CAUSA e esta, ` +
+      `e nao a fixture:\n${resultado.erros_da_pagina.join("\n---\n")}`
+  );
+});
+
 test("CONTROLE: a lista PINTOU as duas secoes, com a linha dentro", () => {
   // O controle que da sentido a toda assercao negativa desta suite. Sem drenar
   // os microtasks a leitura fica na fase `carregando` e a lista nao pinta NADA
@@ -1890,16 +1970,32 @@ test("A3: a releitura ACONTECEU -- duas leituras do resumo, nao uma", () => {
   assert.equal(leituras.length, 2, JSON.stringify(leituras));
 });
 
-test("A4: a linha confirmada perde o Confirmar e mantem os outros dois", () => {
+// OS DOIS DEEPEQUAL ABAIXO GANHARAM UM TERCEIRO ROTULO -- HMO-487.
+//
+// A HMO-452 deu a linha REALIZADA o botao dos totais (`podeMudarOsTotais`: so
+// `origem === "realizado"`, em lib/acoes-da-linha.ts), e estes dois esperavam
+// dois rotulos. Eles NAO reprovaram por isso na epoca: a mesma issue trouxe o
+// `Sigma` que faltava nos esbocos de icone, o render passou a lancar antes de
+// montar botao nenhum, e os dois morriam desreferenciando `null` -- o rotulo
+// novo so apareceu quando o estouro foi consertado.
+//
+// E o VERBO e "Nao somar": a fixture agora traz `soma_nos_totais: true`, o
+// default de producao. Cravar o rotulo (em vez de contar tres) e o que faz este
+// par recusar a polaridade invertida, que e o modo de falha barato aqui.
+test("A4: a linha confirmada perde o Confirmar e mantem os outros tres", () => {
   // O estado DEPOIS, pelos botoes: a linha realizada nao tem o que confirmar.
   const rotulos = resultado.a_depois.realizado.acoes.map((a) => a.rotulo);
-  assert.deepEqual(rotulos, ["Editar", "Excluir"], JSON.stringify(rotulos));
+  assert.deepEqual(
+    rotulos,
+    ["Editar", "Não somar nos totais", "Excluir"],
+    JSON.stringify(rotulos)
+  );
 });
 
-test("B: a linha realizada nao tem Confirmar -- e tem os outros dois", () => {
+test("B: a linha realizada nao tem Confirmar -- e tem os outros tres", () => {
   const rotulos = resultado.b.realizado.acoes.map((a) => a.rotulo);
 
-  assert.deepEqual(rotulos, ["Editar", "Excluir"]);
+  assert.deepEqual(rotulos, ["Editar", "Não somar nos totais", "Excluir"]);
   // O Editar dela e um `<a href>` com o `?id=` e a origem de volta.
   const editar = resultado.b.realizado.acoes.find((a) => a.rotulo === "Editar");
   assert.equal(editar.tag, "A");
