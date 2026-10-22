@@ -30,18 +30,38 @@ import { mapaDeCobertura, TETO_DE_BYTES_DO_WORKFLOW } from "./mapa-de-cobertura.
 /**
  * O TETO da divida herdada: quantos alvos podem estar INERTE ou ORFAO.
  *
- * MEDIDO em 2026-10-22 na main `67b4ff8`: 80 inertes + 7 orfaos = 87.
+ * MEDIDO em 2026-10-22 na main `bb7803c`: **0 inertes + 7 orfaos = 7**.
  *
- * ESTE NUMERO SO DESCE. Ele nao e uma meta, e um catraca: enquanto a HMO-473
- * nao baixar o `verificacao.yml` para menos de 512.000 bytes, os 87 continuam
- * parados -- e o que esta guarda impede e o 88o. Era exatamente essa a
- * regressao das HMO-448, HMO-471 e HMO-482: cada uma registrou step novo no
- * `verificacao.yml` porque aquele e o lugar "natural" (junto da suite irma), o
- * `check-tests-in-ci` passou, e a suite nasceu morta.
+ * ESTE NUMERO SO DESCE, e em 24 horas ele caiu de 87 para 7 -- vale registrar
+ * como a catraca andou, porque e o unico jeito de saber que ela nao e decorativa:
+ *
+ *   87  na `67b4ff8`, quando esta guarda nasceu: 80 inertes + 7 orfaos. Os 80
+ *       estavam declarados SO no `verificacao.yml`, que tinha 529.779 bytes e
+ *       por isso nao dava partida (HMO-473).
+ *    7  na `bb7803c`, depois do PR #388 tirar 231.702 bytes de prosa YAML para
+ *       `verificacao-notas.md` e levar o arquivo a 319.724 bytes. Os 80
+ *       voltaram a rodar sem nenhuma mudanca aqui -- era exatamente o que o
+ *       mapa previa, e e a prova de que o diagnostico estava certo: nao faltava
+ *       teste, faltava partida.
+ *
+ * Os 7 que sobram sao ORFAOS, e sao divida de outra natureza: nenhum workflow
+ * os cita, nem morto, entao consertar tamanho de arquivo nao os alcanca. Cada
+ * um precisa de step proprio (ver HMO-494).
  *
  * Em 0 o teto deixa de ser placar e vira proibicao, que e a forma mais forte.
+ *
+ * O que esta guarda impede e o 8o: registrar suite nova num workflow que nao da
+ * partida. Era a regressao das HMO-448, HMO-471 e HMO-482 -- cada uma pos step
+ * no `verificacao.yml` porque aquele e o lugar "natural" (junto da suite irma),
+ * o `check-tests-in-ci` passou, e a suite nasceu morta.
+ *
+ * IRMA, E NAO A MESMA: o `check-tamanho-dos-workflows.mjs` (PR #388) vigia o
+ * BYTE COUNT, com alarme antes do teto, e roda no `build.yml`. Ele impede a
+ * CAUSA. Esta guarda conta os alvos que de fato nao rodam, qualquer que seja o
+ * motivo -- inclusive orfao, que tamanho nenhum explica. As duas juntas cobrem
+ * a causa e o efeito; nenhuma substitui a outra.
  */
-const TETO_DE_ALVOS_PARADOS = 87;
+const TETO_DE_ALVOS_PARADOS = 7;
 
 const mapa = mapaDeCobertura();
 
