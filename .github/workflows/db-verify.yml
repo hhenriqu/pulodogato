@@ -5330,6 +5330,184 @@ jobs:
       - name: Nenhuma view escapa da RLS, depois da 063
         run: $PSQL -f database/tests/view_security_invoker_test.sql
 
+      # =====================================================================
+      # 064 -- o patrimonio mes a mes ignora a CONTA fora dos totais (HMO-441)
+      # =====================================================================
+      # A 058 deu a toda conta um `include_in_total` e quatro leituras de SALDO
+      # ja o honravam; a LINHA DO TEMPO (`net_worth_history`, 008:453) nao. Na
+      # mesma tela de Patrimonio, com uma conta desligada, o numero grande
+      # EXCLUIA a conta e o grafico ao lado a INCLUIA -- duas leituras do mesmo
+      # dinheiro discordando na mesma tela.
+      #
+      # ESTE BLOCO FICA ACIMA do `schema-columns.json em dia` por simetria com
+      # os blocos da 059/060/061, e nao por necessidade: a 064 NAO mexe na
+      # projecao da view (as quatro colunas -- `user_id`, `month`, `net_change`,
+      # `net_worth` -- sao as da 008). Conferido: `gen-schema-columns.mjs
+      # --check` passa com a 064 colada e o JSON intacto, e por isso este PR nao
+      # regenera `database/schema-columns.json`.
+      #
+      # A FIXTURE VEM ANTES DA COLAGEM, e ela e o que torna o filtro
+      # observavel: num banco do zero nao existe conta com `include_in_total =
+      # false`, e TODA assercao desta suite ficaria verde com o filtro APAGADO
+      # (`prod-vazia-invalida-prova-por-efeito-colateral`). Ela planta
+      # R$ 7.700,00 numa conta fora dos totais -- exatamente a diferenca que
+      # producao mostra hoje entre o grafico e o numero grande -- e dois
+      # usuarios: um com conta que soma + conta que nao soma, e um com SO conta
+      # desligada (o caso que separa `FILTER` de `WHERE` no `saldo_hoje`).
+      #
+      # Os dois `profiles` dela nascem `is_public = FALSE` de proposito: perfil
+      # publico plantado aqui reprova `view_security_invoker_test.sql` e a suite
+      # de RLS steps abaixo, e a causa aparece longe da causa (HMO-458,
+      # f6aa720). O `user_id` e proprio (`a0640000-`, contra `a0560000-`,
+      # `a0580000-`, `a0590000-` e `a0600000-` das outras fixtures), entao
+      # nenhuma suite que conte lancamento recortando pelo `user_id` DELA muda
+      # de resultado.
+      - name: Contas e lancamentos plantados antes da 064 (a fixture do patrimonio)
+        run: $PSQL -f database/tests/064_contas_antes_da_064.sql
+
+      - name: 064_patrimonio_ignora_conta_fora_dos_totais
+        run: $PSQL -f database/migrations/064_patrimonio_ignora_conta_fora_dos_totais.sql
+
+      # Re-executavel: `CREATE OR REPLACE VIEW`, `COMMENT`, `ALTER VIEW ... SET`,
+      # `REVOKE` e `GRANT` sao todos re-aplicaveis. O risco proprio da segunda
+      # passada e o REPLACE, que nao pode derrubar o `security_invoker` -- e a
+      # secao 9 da suite, que roda DEPOIS deste step, mede as duas colagens de
+      # uma vez. Medido: a 2a colagem sai 0 e a reloption continua
+      # `{security_invoker=true}`.
+      - name: 064 e idempotente
+        run: $PSQL -f database/migrations/064_patrimonio_ignora_conta_fora_dos_totais.sql
+
+      # 31 assercoes, 11 secoes. A central e a secao 3, e ela nao crava os dois
+      # lados: o consolidado e RECALCULADO como `/api/net-worth` o calcula e tem
+      # de bater com o ultimo ponto da serie -- "as duas telas concordam" medido
+      # como concordancia, e nao como dois numeros que eu escrevi.
+      #
+      # 15 mutantes da 064 medidos num Postgres 17 local em 2026-10-22 (banco
+      # TEMPLATE com a cadeia 001..063 mais a fixture, um banco NOVO por
+      # mutante, 18s no total): 13 MORREM e 2 sobrevivem POR CONSTRUCAO, ambos
+      # declarados no runner. O controle positivo (a 064 intacta) fica verde e e
+      # ele que separa "o mutante morreu" de "o arranjo esta quebrado".
+      #
+      # O SITIO DA MORTE E O MEDIDO, e nao o esperado -- e o NUMERO de cada um
+      # diz QUAL metade caiu:
+      #
+      #   * `FILTER` do `saldo_hoje` apagado            secao 3 (8.950,00)
+      #   * `FILTER` do `movimento` apagado             secao 4 (8.050,00)
+      #   * `saldo_hoje` com `WHERE` em vez de `FILTER` secao 8 (o usuario de
+      #                                                 contas todas desligadas
+      #                                                 PERDE a serie: 1 -> 0)
+      #   * `movimento` com `WHERE` em vez de `FILTER`  secao 6 (julho
+      #                                                 DESAPARECE: 1 -> 0)
+      #   * polaridade invertida no `saldo_hoje`        secao 3 (7.700,00)
+      #   * polaridade invertida no `movimento`         secao 4 (7.000,00)
+      #   * `include_in_total IS NOT NULL` (sempre
+      #     verdadeiro, a coluna e NOT NULL)            secao 4 (8.050,00)
+      #   * `WHERE t.account_id IS NOT NULL` da 008
+      #     apagado                                    secao 7 (agosto passa a
+      #                                                 ter linha: 0 -> 1)
+      #   * o "conserto" zeloso -- filtrar TAMBEM
+      #     `t.include_in_total`, o flag da 060         secao 5 (1.000,00)
+      #   * `COALESCE` do `saldo_hoje` apagado          secao 8 (patrimonio
+      #                                                 `<NULL>` em vez de 0)
+      #   * `ALTER VIEW ... SET (security_invoker)`
+      #     apagado                                    secao 9 (catalogo)
+      #   * `GRANT SELECT ... TO anon`                  secao 10
+      #   * `COMMENT` sem a politica do LANCAMENTO      secao 11
+      #
+      # OS DOIS SOBREVIVENTES SAO DECLARADOS, e o runner falha se aparecer um
+      # terceiro:
+      #   * preflight afrouxado (`RAISE EXCEPTION` -> `RAISE NOTICE`): num banco
+      #     que JA tem a 058 o preflight nunca dispara, entao o mutante e
+      #     indistinguivel do original NESTA posicao e nenhuma assercao desta
+      #     suite pode distingui-lo. Observavel so no CN3 abaixo;
+      #   * `LEFT JOIN` -> `JOIN`: sob o `WHERE t.account_id IS NOT NULL` logo
+      #     abaixo, toda linha que chega tem conta e a FK garante que a conta
+      #     existe -- os dois sao EQUIVALENTES neste corpo. O `LEFT JOIN` esta
+      #     escrito por defesa, para quem apagar o `WHERE` amanha. Mutante
+      #     equivalente DECLARADO e melhor que equivalente escondido
+      #     (`mutante-sobrevivente-pode-estar-certo`).
+      #
+      # OS TRES CONTROLES NEGATIVOS EXTERNOS, todos medidos:
+      #   CN1 a suite contra um banco parado na 063 -> VERMELHA na assercao
+      #       central ("o ultimo ponto da serie e IGUAL ao consolidado ->
+      #       esperado 1250.00, obtido 8950.00"). A diferenca e 7.700,00, que e
+      #       EXATAMENTE o saldo da conta desligada -- e e o numero que o
+      #       grafico de producao desenha hoje ao lado de um numero grande que
+      #       diz 1.250,00. E o que prova que a suite mede a 064 e nao o estado
+      #       basal;
+      #   CN2 a 064 colada num banco parado antes da 058 -> o preflight para a
+      #       colagem com `064 nao pode ser aplicado neste banco. Faltando: -
+      #       coluna include_in_total em public.financial_accounts (vem do 058)`;
+      #   CN3 o MESMO banco com o mutante do preflight -> a colagem passa do
+      #       preflight (NOTICE) e morre adiante com `column a.include_in_total
+      #       does not exist`, que NAO nomeia a migration que falta. E essa
+      #       diferenca -- a mensagem que manda rodar a 058 contra a mensagem
+      #       que manda depurar a view -- a razao de o preflight existir, e e o
+      #       unico lugar em que ela esta medida.
+      - name: O patrimonio mes a mes ignora a conta fora dos totais
+        run: $PSQL -f database/tests/064_patrimonio_ignora_conta_fora_dos_totais_test.sql
+
+      # OS QUATRO RE-RUNS ABAIXO FORAM RODADOS NESTA POSICAO ANTES DE SEREM
+      # WIRADOS, e os quatro deram VERDE -- a ordem que
+      # `re-run-de-suite-da-card-invoice-lines-so-duas-das-tres-servem` manda
+      # seguir, porque "re-rode a suite da view que voce recolou" tem excecao
+      # que so aparece rodando.
+      #
+      # Por que eles existem: a 064 faz `CREATE OR REPLACE VIEW
+      # net_worth_history`, que exige o corpo INTEIRO -- entao ela carrega uma
+      # copia do corpo da 008, e uma copia escrita a partir da versao errada
+      # REVERTE a 008 sem sintoma nenhum
+      # (`create-or-replace-view-de-pr-aberto-reverte-migration-mergeada`). As
+      # quatro suites abaixo leem esta view e rodam em posicoes ACIMA desta, 56
+      # migrations antes no caso da 008: nenhuma delas ve esta recolagem.
+      #
+      # O PRIMEIRO E O MAIS IMPORTANTE DOS QUATRO. A secao 5 da suite da 060
+      # fixa que `net_worth_history` CONTA o lancamento desmarcado -- o flag do
+      # LANCAMENTO e de RELATORIO, nao de SALDO -- e o cabecalho da 060 diz que
+      # ela "reprova se alguem consertar a omissao". A 064 honra a outra coluna
+      # homonima (a da CONTA, que e de saldo) e tem de deixar essa ressalva de
+      # pe. Esta e a UNICA posicao da cadeia em que "a 064 atropelou a 060" e
+      # observavel. Medido verde, com a assercao dela em 1.110,00.
+      - name: A ressalva da 060 sobrevive a recolagem da 064
+        run: $PSQL -f database/tests/060_lancamento_fora_dos_totais_test.sql
+
+      # A suite do 008 e a dona do corpo que a 064 recolou: ela guarda a janela
+      # sem `ORDER BY` e a reconstrucao de tras para frente, que e a parte do
+      # calculo que uma recolagem erra calado.
+      - name: O patrimonio do 008 sobrevive a recolagem da 064
+        run: $PSQL -f database/tests/goals_reports_test.sql
+
+      # A suite do ajuste de saldo (HMO-431, a mesma familia da 058) crava
+      # `net_worth` lido desta view com datas fixas.
+      - name: O ajuste de saldo continua fechando com o patrimonio, depois da 064
+        run: $PSQL -f database/tests/ajuste_de_saldo_da_conta_test.sql
+
+      # E esta crava `net_change` desta view para o pagamento de fatura, que
+      # espelha o trigger de saldo.
+      - name: O pagamento de fatura continua no patrimonio, depois da 064
+        run: $PSQL -f database/tests/card_invoice_payment_test.sql
+
+      # Mesma razao do step homonimo da 063, logo acima: a metade ESTRUTURAL
+      # deste arquivo varre o schema inteiro procurando view sem
+      # `security_invoker`, e naquela posicao a `net_worth_history` ainda nao
+      # tinha sido recolada pela 064 -- e e exatamente a recolagem que apaga a
+      # reloption. Conferido verde nesta posicao.
+      - name: Nenhuma view escapa da RLS, depois da 064
+        run: $PSQL -f database/tests/view_security_invoker_test.sql
+
+      # O runner monta banco TEMPLATE proprio (001 -> 063 + a fixture) e um
+      # banco NOVO por mutante, com `CREATE DATABASE ... TEMPLATE`; a mutacao
+      # vai para uma sombra em /tmp e a arvore NUNCA e tocada -- um runner que
+      # escreve no arquivo rastreado deixa o mutante GRAVADO se morrer no meio,
+      # e dali em diante toda medicao le a migration errada.
+      #
+      # Ele tem step (e nao declaracao em `declaracao-de-mutantes-fora-do-ci`)
+      # porque `precisa-de-banco` saiu do vocabulario de motivos na HMO-322: o
+      # endereco de runner que precisa de Postgres e este job, que ja tem banco
+      # de pe. 18s medidos.
+      - name: O patrimonio sabe falhar (15 mutantes, 13 mortos e 2 declarados)
+        run: PGURL=postgresql://postgres:postgres@localhost:5432 node scripts/mutantes-patrimonio-fora-dos-totais.mjs
+
       - name: schema-columns.json em dia com as migrations
         run: node scripts/gen-schema-columns.mjs --check
 
