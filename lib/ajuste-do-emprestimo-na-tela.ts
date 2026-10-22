@@ -88,6 +88,31 @@
 // sobre si mesma em vez de uma medicao do que vai ser gravado, e o unico jeito
 // de ver o defeito seria ler `mybank_loans` antes e depois (ele nao tem sintoma
 // na tela: `SUM(amount) - principal` vira zero em silencio).
+//
+// ...MAS HA UM TERCEIRO RAMO, E NELE O EMPRESTADO **MUDA** (HMO-479)
+// -----------------------------------------------------------------
+// O paragrafo acima descreve dois ramos e a rota tem TRES, porque
+// `montaAjuste` escolhe o `patchDoEmprestimo` assim:
+//
+//   com juro resolvido           -> grava `interest_rate`; o `principal` NAO
+//                                   entra no patch, logo fica parado;
+//   SEM juro e com `total`       -> grava `principal = total` (o caminho da F4:
+//                                   a juro zero o total E o principal, e o
+//                                   pedido quer dizer "o valor estava errado");
+//   nenhum dos dois              -> nao toca a linha do emprestimo.
+//
+// O segundo ramo e o unico em que o emprestado se MOVE, e era exatamente onde a
+// previa mentia: com `juro === null` ela caia em `Number(emprestimo.principal)`
+// e imprimia o valor ANTIGO. Medido na HMO-479, no cenario do caso D7 (4x250,00
+// sem juro, novo total 1.200,00): a tela dizia "Você emprestou R$ 1.000,00" e o
+// `patchDoEmprestimo` levava `{principal: 1200}`. A tela afirmava um numero que
+// o banco nao ia guardar, no UNICO ramo em que aquele numero era noticia.
+//
+// E o defeito era invisivel para a suite inteira: o D7 media `total`,
+// `falta_receber` e a AUSENCIA de `taxa`/`juros` -- nunca o `emprestado`. Por
+// isso o `emprestado` agora sai do MESMO `total` que a rota grava, e nao de uma
+// segunda conta (`previa-na-tela-tem-que-usar-o-peso-do-fechamento`: a funcao
+// certa com o argumento errado da um numero plausivel e errado).
 // ---------------------------------------------------------------------------
 
 import {
@@ -305,7 +330,19 @@ export function previaDoAjuste(params: {
   // O EMPRESTADO, E ELE VEM DA RESPOSTA DA FUNCAO. Ver E O `emprestado` SAI DE
   // `juro.principal` no cabecalho: e a decisao da HMO-478 sendo MEDIDA na tela,
   // e nao repetida por ela.
-  const emprestado = juro ? juro.principal : Number(emprestimo.principal);
+  //
+  // OS TRES RAMOS SAO OS TRES DO `patchDoEmprestimo`, NA MESMA ORDEM, e o do
+  // meio e o da HMO-479: sem juro e com `total` no pedido a rota grava
+  // `principal = total`, entao o emprestado DEPOIS do ajuste e aquele `total` --
+  // o mesmo que `totalDepoisDoAjuste` acabou de resolver, e nao um
+  // `Number(pedido.total)` recalculado aqui (o arredondamento ao centavo mora
+  // naquela funcao, e repeti-lo seria a segunda conta que divergiria na
+  // primeira mudanca). Ver ...MAS HA UM TERCEIRO RAMO no cabecalho.
+  const emprestado = juro
+    ? juro.principal
+    : pedido.total !== undefined
+      ? total
+      : Number(emprestimo.principal);
 
   const grandezas: GrandezaDaPrevia[] = [
     {
@@ -343,4 +380,71 @@ export function previaDoAjuste(params: {
   });
 
   return grandezas;
+}
+
+/**
+ * A FRASE DO EMPRESTADO -- o que o ajuste faz com o que saiu da conta (HMO-479).
+ *
+ * A previa acima mostra os NUMEROS; esta frase diz o que eles querem dizer, e e
+ * o item 4 da issue com as palavras dela: "você continua tendo emprestado R$ X".
+ * Sem ela a tela mostra "Você emprestou R$ 1.000,00" ao lado de "Passa a valer
+ * R$ 1.300,00" e deixa a pergunta mais cara sem resposta -- *o 1.000 tambem
+ * mudou?* --, que e justamente a decisao que a F7 tomou (o emprestado fica
+ * parado, a taxa se move) e que nenhum rotulo de linha afirma.
+ *
+ * ELA E CONDICIONAL PORQUE O FATO E CONDICIONAL, E ESSE E O PONTO
+ * --------------------------------------------------------------
+ * "Você continua tendo emprestado" e FALSO no ramo sem juro com `total`: ali a
+ * rota grava `principal = total` e o emprestado e exatamente o que muda. Uma
+ * frase fixa no JSX seria uma mentira em um dos tres ramos -- e a mentira cairia
+ * no ramo do conserto de digitacao, onde a pessoa esta mexendo no valor DE
+ * PROPOSITO e seria informada de que ele nao vai mudar.
+ *
+ * Por isso os tres ramos devolvem tres coisas, e `null` e uma delas: o pedido
+ * que so troca a descricao ou so adia o vencimento nao tem noticia sobre o
+ * emprestado, e imprimir "continua tendo emprestado" ali seria responder uma
+ * pergunta que ninguem fez -- ruido que ensina a ignorar a frase justamente
+ * antes do ramo em que ela importa.
+ *
+ * E O NUMERO SAI DA PREVIA, NAO DE UMA SEGUNDA LEITURA. As duas tem de dizer o
+ * mesmo R$: a frase e a linha `emprestado` lado a lado na mesma caixa, e um
+ * `Number(emprestimo.principal)` aqui reintroduziria, so na frase, o defeito que
+ * a HMO-479 acabou de tirar da linha.
+ */
+export function fraseDoEmprestadoNoAjuste(params: {
+  emprestimo: {
+    principal: number | string;
+    interest_rate?: number | string | null;
+  };
+  parcelas: ParcelaParaAjustar[];
+  pedido: PedidoDeAjuste;
+}): string | null {
+  const grandezas = previaDoAjuste(params);
+  if (!grandezas) return null;
+
+  const emprestado = grandezas.find((g) => g.chave === "emprestado");
+  if (!emprestado) return null;
+
+  // OS TRES RAMOS SAO OS DO `patchDoEmprestimo`, E A PERGUNTA E PELO JURO E PELO
+  // PEDIDO -- nunca comparando o R$ formatado com o de hoje, porque dois ramos
+  // diferentes podem dar o MESMO numero: `{total: 1000}` sobre um emprestimo de
+  // 1.000 sem juro E um conserto (a rota grava `principal`), e uma comparacao de
+  // strings leria "nao mudou" e devolveria a frase do ramo errado.
+  const juro = juroDepoisDoAjuste({
+    emprestimo: params.emprestimo,
+    pedido: params.pedido,
+  });
+
+  if (juro) {
+    return `Você continua tendo emprestado ${emprestado.valor} — o ajuste move a taxa, não o que saiu da sua conta.`;
+  }
+
+  if (params.pedido.total !== undefined) {
+    return `Isto corrige o valor emprestado para ${emprestado.valor}.`;
+  }
+
+  // SO DESCRICAO E/OU VENCIMENTO: nenhuma noticia sobre o emprestado. Ver ELA E
+  // CONDICIONAL no JSDoc -- a frase que nao informa nada ensina a ignorar a
+  // frase, e o preco disso se paga nos dois ramos acima.
+  return null;
 }

@@ -4,7 +4,7 @@
 //   npm run test:ajuste-do-emprestimo-na-tela
 //
 // Roda o JS compilado de `lib/ajuste-do-emprestimo-na-tela.ts` (F8 da HMO-444). Sem navegador:
-// as cinco funcoes aqui sao puras, e o que elas decidem e (a) quais campos
+// as seis funcoes aqui sao puras, e o que elas decidem e (a) quais campos
 // viajam no corpo do PATCH e (b) que numeros a pessoa le antes de clicar.
 //
 // O QUE ESTA SUITE EXISTE PARA PEGAR
@@ -81,12 +81,22 @@ import assert from "node:assert/strict";
 
 const {
   FORMULARIO_DO_AJUSTE_VAZIO,
+  fraseDoEmprestadoNoAjuste,
   parcelasParaAjustar,
   pedidoAjustaAlgumCampo,
   pedidoDoAjusteDaTela,
   previaDoAjuste,
   rotuloDoModoDoAjuste,
 } = await import("../.tmp-ajuste-do-emprestimo-na-tela/lib/ajuste-do-emprestimo-na-tela.js");
+
+// `ajusteDoEmprestimo` E A ROTA, E ELA ENTRA NESTA SUITE DE PROPOSITO (HMO-479).
+// O caso E1 nao afirma um R$ escolhido a mao: ele compara a previa com o
+// `patchDoEmprestimo` que o servidor vai gravar. Um valor cravado nos dois lados
+// passaria a verde no dia em que a rota mudasse de ramo
+// (`suite-de-view-com-valor-cravado-nao-se-re-roda`, mesma familia).
+const { ajusteDoEmprestimo } = await import(
+  "../.tmp-ajuste-do-emprestimo-na-tela/lib/emprestimo-do-mybank.js"
+);
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -569,4 +579,138 @@ test("D11: taxa e total juntos no pedido nao produzem previa de juro", () => {
 
   assert.equal(grandeza(previa, "taxa"), undefined);
   assert.equal(grandeza(previa, "juros"), undefined);
+});
+
+// ---------------------------------------------------------------------------
+// E. O EMPRESTADO QUE MUDA, E A FRASE QUE O EXPLICA (HMO-479)
+// ---------------------------------------------------------------------------
+// O bloco D mediu a previa em cinco cenarios e NAO mediu o `emprestado` no
+// unico ramo em que ele se move: sem juro, com `total` no pedido, a rota grava
+// `principal = total` e a previa imprimia o valor ANTIGO (o D7 afirmava
+// `total`, `falta_receber` e a ausencia de taxa/juros -- nunca o emprestado).
+//
+// O E1 fecha aquele buraco e nao fecha so o numero: ele pergunta a ROTA o que
+// vai ser gravado e exige que a tela diga a mesma coisa.
+// ---------------------------------------------------------------------------
+
+/** O `principal` que o PATCH vai gravar, ou `undefined` se a coluna nao entra. */
+function principalGravado({ emprestimo, parcelas, pedido }) {
+  const ajuste = ajusteDoEmprestimo({
+    emprestimo: { description: "Geladeira", ...emprestimo },
+    parcelas,
+    pedido,
+    cauda: null,
+  });
+  return ajuste.patchDoEmprestimo?.principal;
+}
+
+test("E1: SEM juro, {total} -- o emprestado da previa e o que a ROTA grava", () => {
+  // O cenario do D7, letra por letra: 4x250,00 (1.000,00), 1 paga, sem juro,
+  // novo total 1.200,00. Antes da HMO-479 a tela dizia "R$ 1.000,00" aqui e o
+  // `patchDoEmprestimo` levava `{principal: 1200}`.
+  const parcelas = parcelasBase().map((p) => ({ ...p, amount: "250.00" }));
+  const emprestimo = { principal: 1000, interest_rate: 0 };
+  const pedido = pedidoDoAjusteDaTela(form({ modoDoJuro: "total", total: "1200" }));
+
+  const gravado = principalGravado({ emprestimo, parcelas, pedido });
+
+  // A ROTA MEXE NO EMPRESTADO NESTE RAMO, E PARA 1200 -- se isto falhar, o ramo
+  // mudou de lado e a assercao abaixo passou a falar de outra coisa.
+  //
+  // O 1200 ESTA ESCRITO NOS DOIS LADOS DE PROPOSITO, e nao derivado de um para o
+  // outro: `assert.equal(previa, emReais(gravado))` usaria a lib como seu proprio
+  // conferidor e concordaria com qualquer aritmetica
+  // (`sonda-que-se-mede-a-si-mesma`, a regra do cabecalho desta suite). O que liga
+  // as duas afirmacoes e o numero cravado no meio.
+  assert.equal(gravado, 1200, "a rota deveria gravar principal = total");
+
+  const previa = previaDoAjuste({ emprestimo, parcelas, pedido });
+  assert.equal(valorDa(previa, "emprestado"), "R$ 1.200,00");
+
+  // E O TOTAL CONTINUA SENDO O MESMO NUMERO, que e o que "a juro zero o total E
+  // o principal" quer dizer. As duas linhas coincidirem aqui NAO e redundancia:
+  // e a prova de que a previa nao passou a somar juro nenhum.
+  assert.equal(valorDa(previa, "total"), "R$ 1.200,00");
+  assert.equal(valorDa(previa, "falta_receber"), "R$ 950,00");
+});
+
+test("E2: COM juro, {total} -- o emprestado fica PARADO e a rota nao toca a coluna", () => {
+  // O outro lado da mesma moeda, e e a decisao da F7: com juro, `{total}`
+  // recalcula a TAXA e o `principal` NAO entra no patch.
+  const emprestimo = emprestimoBase();
+  const parcelas = parcelasBase();
+  const pedido = pedidoDoAjusteDaTela(form({ modoDoJuro: "total", total: "1500" }));
+
+  assert.equal(
+    principalGravado({ emprestimo, parcelas, pedido }),
+    undefined,
+    "com juro o principal nao pode entrar no patch"
+  );
+
+  const previa = previaDoAjuste({ emprestimo, parcelas, pedido });
+  assert.equal(valorDa(previa, "emprestado"), "R$ 1.000,00");
+  assert.equal(valorDa(previa, "total"), "R$ 1.500,00");
+});
+
+test("E3: a frase diz CONTINUA no ramo com juro, e nomeia o emprestado parado", () => {
+  const frase = fraseDoEmprestadoNoAjuste({
+    emprestimo: emprestimoBase(),
+    parcelas: parcelasBase(),
+    pedido: pedidoDoAjusteDaTela(form({ modoDoJuro: "total", total: "1500" })),
+  });
+
+  assert.match(frase, /continua tendo emprestado/);
+  // O R$ DA FRASE E O DA LINHA `emprestado`, e nao o total que a pessoa digitou.
+  assert.match(frase, /R\$ 1\.000,00/);
+  assert.doesNotMatch(frase, /R\$ 1\.500,00/);
+});
+
+test("E4: a frase NAO diz CONTINUA quando o emprestado muda -- ela seria falsa", () => {
+  // O ramo do E1. Uma frase fixa no JSX mentiria exatamente aqui, e mentiria no
+  // ramo em que a pessoa esta mexendo no valor DE PROPOSITO.
+  const frase = fraseDoEmprestadoNoAjuste({
+    emprestimo: { principal: 1000, interest_rate: 0 },
+    parcelas: parcelasBase().map((p) => ({ ...p, amount: "250.00" })),
+    pedido: pedidoDoAjusteDaTela(form({ modoDoJuro: "total", total: "1200" })),
+  });
+
+  assert.doesNotMatch(frase, /continua/);
+  assert.match(frase, /corrige o valor emprestado/);
+  // O NUMERO E O NOVO, e nao o de hoje: a frase acompanha a linha corrigida.
+  assert.match(frase, /R\$ 1\.200,00/);
+  assert.doesNotMatch(frase, /R\$ 1\.000,00/);
+});
+
+test("E5: a frase e `null` quando o pedido nao tem noticia sobre o emprestado", () => {
+  // So descricao, e so data: nenhum dos dois chega perto de `principal`.
+  const so = (mudancas) =>
+    fraseDoEmprestadoNoAjuste({
+      emprestimo: emprestimoBase(),
+      parcelas: parcelasBase(),
+      pedido: pedidoDoAjusteDaTela(form(mudancas)),
+    });
+
+  assert.equal(so({ descricao: "Geladeira nova" }), null);
+  assert.equal(so({ primeiroVencimentoDaCauda: "2026-06-10" }), null);
+  // E o formulario INTOCADO tambem, pela mesma porta que a previa usa.
+  assert.equal(so({}), null);
+});
+
+test("E6: {taxa: 0} perdoa o juro e o emprestado CONTINUA parado", () => {
+  // Zerar o juro e o ramo em que o total CAI, e a tentacao de ler "o emprestado
+  // tambem caiu" e maxima: com juro 0 o total passa a valer o emprestado.
+  const emprestimo = emprestimoBase();
+  const parcelas = parcelasBase();
+  const pedido = pedidoDoAjusteDaTela(form({ modoDoJuro: "taxa", taxa: "0" }));
+
+  assert.equal(
+    principalGravado({ emprestimo, parcelas, pedido }),
+    undefined,
+    "perdoar o juro nao move o principal"
+  );
+
+  const previa = previaDoAjuste({ emprestimo, parcelas, pedido });
+  assert.equal(valorDa(previa, "emprestado"), "R$ 1.000,00");
+  assert.equal(valorDa(previa, "total"), "R$ 1.000,00");
+  assert.match(fraseDoEmprestadoNoAjuste({ emprestimo, parcelas, pedido }), /continua/);
 });

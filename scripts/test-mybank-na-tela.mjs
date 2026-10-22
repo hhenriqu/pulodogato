@@ -436,6 +436,7 @@ const PAGINA = `<!doctype html>
 <div id="raiz-l-singular"></div>
 <div id="raiz-m"></div><div id="raiz-m2"></div><div id="raiz-m3"></div>
 <div id="raiz-m4"></div><div id="raiz-m5"></div>
+<div id="raiz-m6"></div><div id="raiz-m7"></div>
 <div id="raiz-n1"></div><div id="raiz-n2"></div>
 <div id="resultado">a pagina nao rodou</div>
 <script>${umd("react", "react.development.js")}</script>
@@ -2671,6 +2672,36 @@ async function preencherEmprestimo(achar, valor) {
       ],
     },
     {
+      // O EMPRESTIMO SEM JURO, E ELE EXISTE PARA O RAMO EM QUE O EMPRESTADO
+      // MUDA (HMO-479). Ativo e a juro ZERO: aqui \`{total}\` nao recalcula taxa
+      // nenhuma -- a rota grava \`principal = total\` (o caminho da F4), e e o
+      // unico ramo dos tres em que a frase do emprestado NAO pode dizer
+      // "continua".
+      //
+      //   emprestado 1.000,00, taxa 0 -> divida 1.000,00
+      //   4 parcelas de 250,00, a 1 PAGA -> jaRecebido 250,00
+      //
+      // A PARCELA PAGA PELA MESMA RAZAO DO \`l-m-juro\`: sem ela \`total\` e
+      // \`falta_receber\` coincidem e M10 passaria com as duas trocadas.
+      id: "l-m-sem-juro",
+      descricao: "Bicicleta",
+      conta_credora_id: ${JSON.stringify(CARTEIRA)},
+      caso: "conexao",
+      status: "active",
+      principal: 1000,
+      interest_rate: 0,
+      total_de_parcelas: 4,
+      primeiro_vencimento: "2026-10-10",
+      quem_deve_pagar: "Lais",
+      devedor_id: ${JSON.stringify(LAIS)},
+      parcelas: [
+        { id: "p-s1", valor: 250, numero: 1, total: 4, rotulo: "1 de 4", vencimento: "2026-10-10", status: "paid", a_confirmar: false, paid_date: "2026-10-10" },
+        { id: "p-s2", valor: 250, numero: 2, total: 4, rotulo: "2 de 4", vencimento: "2026-11-10", status: "pending", a_confirmar: false, paid_date: null },
+        { id: "p-s3", valor: 250, numero: 3, total: 4, rotulo: "3 de 4", vencimento: "2026-12-10", status: "pending", a_confirmar: false, paid_date: null },
+        { id: "p-s4", valor: 250, numero: 4, total: 4, rotulo: "4 de 4", vencimento: "2027-01-10", status: "pending", a_confirmar: false, paid_date: null },
+      ],
+    },
+    {
       // \`settled\` -- o controle de M1. O ajuste recusa o que nao esta \`active\`
       // (\`emprestimo_nao_esta_ativo\`), entao a linha dele NAO pode ter o botao:
       // seria um clique cujo unico resultado possivel e um toast de erro.
@@ -2790,11 +2821,29 @@ async function preencherEmprestimo(achar, valor) {
     ).map((el) => el.textContent),
   };
 
+  /**
+   * A FRASE DO EMPRESTADO LIDA DA TELA (HMO-479) -- o texto, ou \`null\`.
+   *
+   * POR \`data-frase-do-emprestado\` E NAO PELO TEXTO: a frase e justamente o que
+   * muda de ramo, e procura-la por \`textContent.includes("continua")\` acharia a
+   * frase ERRADA tao bem quanto a certa. A ancora diz ONDE ela esta; o que ela
+   * DIZ e a assercao.
+   */
+  const fraseDoEmprestadoNaTela = (raizDoCaso, id) => {
+    const el = raizDoCaso.querySelector(
+      '[data-frase-do-emprestado="' + id + '"]'
+    );
+    return el ? el.textContent : null;
+  };
+
   // M4: SO A DESCRICAO DIGITADA -> O CORPO TEM SO \`descricao\`.
   digitar(campoDaDescricao(), "Geladeira nova");
   await assentar();
 
   out.m_previa_do_typo = previaDoAjusteNaTela(raiz, "l-m-juro");
+  // E A FRASE NAO APARECE NO PEDIDO QUE SO TROCA O TEXTO: o typo nao tem
+  // noticia sobre o emprestado.
+  out.m_frase_do_typo = fraseDoEmprestadoNaTela(raiz, "l-m-juro");
   out.m_confirmar_habilitado_com_typo = botaoDeConfirmar().disabled;
 
   CHAMADAS = [];
@@ -2844,6 +2893,9 @@ async function preencherEmprestimo(achar, valor) {
   );
   await assentar();
   out.m_previa_da_taxa = previaDoAjusteNaTela(raiz2, "l-m-juro");
+  // A FRASE NO RAMO COM JURO: "continua tendo emprestado". E a decisao da F7
+  // dita na tela -- a taxa se move, o que saiu da conta nao.
+  out.m_frase_da_taxa = fraseDoEmprestadoNaTela(raiz2, "l-m-juro");
 
   CHAMADAS = [];
   clicar(raiz2.querySelector('[data-confirmar-ajuste="l-m-juro"]'));
@@ -2939,6 +2991,47 @@ async function preencherEmprestimo(achar, valor) {
     confirmarDesabilitado: raiz5.querySelector(
       '[data-confirmar-ajuste="l-m-juro"]'
     ).disabled,
+  };
+
+  // M10/M11: O RAMO EM QUE O EMPRESTADO MUDA, NA TELA (HMO-479)
+  // -----------------------------------------------------------
+  // O MESMO GESTO nos dois emprestimos -- modo \`total\`, 1.200,00 digitado -- e e
+  // o contraste que torna o caso mensuravel: COM juro o emprestado fica em
+  // 1.000,00 e a taxa se move; SEM juro a rota grava \`principal = 1200\` e o
+  // emprestado passa a 1.200,00. Antes da HMO-479 a tela dizia 1.000,00 nos
+  // DOIS, e a segunda era uma promessa que o banco nao ia cumprir.
+  //
+  // Medir os dois no mesmo gesto e o que impede a familia de
+  // \`duas-metades-certas-dobram-a-linha\`: um fixture so nao distingue "le o
+  // principal" de "le o total do pedido".
+  const raiz6 = await montarPainel("raiz-m6");
+  clicar(raiz6.querySelector('[data-ajustar-emprestimo="l-m-juro"]'));
+  await assentar();
+  clicar(raiz6.querySelector('[id="mybank_ajuste_l-m-juro_modo_total"]'));
+  await assentar();
+  // "120000" E NAO "1200": o campo de total e a MASCARA de \`lib/dinheiro.ts\`, e
+  // a convencao dela e CENTAVOS -- digitar "1200" da R$ 12,00 (medido na
+  // HMO-479, e o primeiro verde falso desta sonda).
+  digitar(raiz6.querySelector('[id="mybank_ajuste_l-m-juro_total"]'), "120000");
+  await assentar();
+  out.m_com_juro_total = {
+    previa: previaDoAjusteNaTela(raiz6, "l-m-juro"),
+    frase: fraseDoEmprestadoNaTela(raiz6, "l-m-juro"),
+  };
+
+  const raiz7 = await montarPainel("raiz-m7");
+  clicar(raiz7.querySelector('[data-ajustar-emprestimo="l-m-sem-juro"]'));
+  await assentar();
+  clicar(raiz7.querySelector('[id="mybank_ajuste_l-m-sem-juro_modo_total"]'));
+  await assentar();
+  digitar(
+    raiz7.querySelector('[id="mybank_ajuste_l-m-sem-juro_total"]'),
+    "120000"
+  );
+  await assentar();
+  out.m_sem_juro_total = {
+    previa: previaDoAjusteNaTela(raiz7, "l-m-sem-juro"),
+    frase: fraseDoEmprestadoNaTela(raiz7, "l-m-sem-juro"),
   };
 }
 
@@ -4608,11 +4701,17 @@ test("M1: o botao Ajustar aparece so no `active`, junto do Cancelar", () => {
 
   // As duas linhas estao na tela (a secao dos encerrados esta aberta), entao
   // "o quitado nao tem Ajustar" NAO passa vacuo -- a forma de L7.
-  assert.deepEqual(resultado.m_botoes.linhas, ["l-m-juro", "l-m-quitado"]);
+  // O `l-m-sem-juro` entrou na HMO-479 (o ramo em que o emprestado muda), e por
+  // ser ATIVO ele soma as tres listas -- as duas de botao inclusive.
+  assert.deepEqual(resultado.m_botoes.linhas, [
+    "l-m-juro",
+    "l-m-sem-juro",
+    "l-m-quitado",
+  ]);
 
   assert.deepEqual(
     resultado.m_botoes.comAjustar,
-    ["l-m-juro"],
+    ["l-m-juro", "l-m-sem-juro"],
     "o Ajustar apareceu num emprestimo que a rota recusa com `emprestimo_nao_esta_ativo`"
   );
 
@@ -4620,7 +4719,56 @@ test("M1: o botao Ajustar aparece so no `active`, junto do Cancelar", () => {
   // "active", diferente do Antecipar (que pede parcela em aberto tambem).
   // Corrigir um typo num emprestimo com a serie toda paga e legitimo, e e a
   // rota que distingue os pedidos que mexem na serie (`sem_parcela_pendente`).
-  assert.deepEqual(resultado.m_botoes.comCancelar, ["l-m-juro"]);
+  assert.deepEqual(resultado.m_botoes.comCancelar, ["l-m-juro", "l-m-sem-juro"]);
+});
+
+test("M10: COM juro, {total} na tela -- o emprestado fica PARADO e a frase diz CONTINUA", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  const { previa, frase } = resultado.m_com_juro_total;
+
+  // 1.000,00 emprestado, total pedido 1.200,00 -> a TAXA vira 20%, e o
+  // emprestado nao se move. 1 parcela de 300,00 paga -> falta 900,00.
+  assert.equal(previa.grandezas.emprestado, "R$ 1.000,00");
+  assert.equal(previa.grandezas.total, "R$ 1.200,00");
+  assert.equal(previa.grandezas.taxa, "20,00%");
+  assert.equal(previa.grandezas.falta_receber, "R$ 900,00");
+
+  assert.match(frase, /continua tendo emprestado/);
+  assert.match(frase, /R\$ 1\.000,00/);
+});
+
+test("M11: SEM juro, {total} na tela -- o emprestado MUDA e a frase nao diz CONTINUA", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  const { previa, frase } = resultado.m_sem_juro_total;
+
+  // O RAMO DA F4: a rota grava `principal = 1200`. Antes da HMO-479 esta linha
+  // dizia "R$ 1.000,00" -- o valor que o banco NAO ia guardar.
+  assert.equal(previa.grandezas.emprestado, "R$ 1.200,00");
+  assert.equal(previa.grandezas.total, "R$ 1.200,00");
+  // SEM TAXA NEM JUROS: a juro zero, mudar o total nao e cobrar juro.
+  assert.equal(previa.grandezas.taxa, undefined);
+  assert.equal(previa.grandezas.juros, undefined);
+  // 1 parcela de 250,00 paga -> 1200 - 250 = 950,00.
+  assert.equal(previa.grandezas.falta_receber, "R$ 950,00");
+
+  // E A FRASE TROCA DE RAMO, porque aqui "continua" seria FALSO.
+  assert.doesNotMatch(frase, /continua/);
+  assert.match(frase, /corrige o valor emprestado/);
+  assert.match(frase, /R\$ 1\.200,00/);
+});
+
+test("M12: a frase do emprestado NAO aparece no pedido que so troca o texto", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // O typo nao tem noticia sobre o emprestado, e uma frase ali ensinaria a
+  // ignorar a frase justamente antes dos dois ramos em que ela importa.
+  assert.equal(resultado.m_frase_do_typo, null);
+
+  // CONTROLE: no modo `taxa` ela ESTA lá -- sem isto, M12 passaria com a frase
+  // apagada da tela inteira (`sumido-da-tela-pode-ser-so-indistinguivel`).
+  assert.match(resultado.m_frase_da_taxa, /continua tendo emprestado/);
 });
 
 test("M2: o dialogo abre sem chamar rota, com o campo VAZIO e sem previa", () => {
