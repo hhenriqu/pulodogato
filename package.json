@@ -264,7 +264,8 @@
     "test:conta-investimento-na-tela": "node scripts/compila.mjs -p scripts/tsconfig.conta-investimento-na-tela-test.json && node scripts/resolve-aliases.mjs .tmp-conta-investimento-na-tela components --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-conta-investimento-na-tela lib --espelha-raiz && node --test scripts/test-conta-investimento-na-tela.mjs",
     "test:previa-do-emprestimo": "node scripts/compila.mjs -p scripts/tsconfig.previa-do-emprestimo-test.json && node --test scripts/test-previa-do-emprestimo-na-tela.mjs",
     "test:fora-dos-totais-nas-somas": "node scripts/compila.mjs -p scripts/tsconfig.fora-dos-totais-nas-somas-test.json && node scripts/resolve-aliases.mjs .tmp-fora-dos-totais-nas-somas lib --espelha-raiz && node scripts/resolve-aliases.mjs .tmp-fora-dos-totais-nas-somas utils --espelha-raiz && node scripts/resolve-next-subpaths.mjs .tmp-fora-dos-totais-nas-somas && node scripts/monta-duble-de-rota.mjs .tmp-fora-dos-totais-nas-somas && node --test scripts/test-fora-dos-totais-nas-somas.mjs",
-    "mutantes:fora-dos-totais-nas-somas": "node scripts/mutantes-fora-dos-totais-nas-somas.mjs"
+    "mutantes:fora-dos-totais-nas-somas": "node scripts/mutantes-fora-dos-totais-nas-somas.mjs",
+    "check-cartao-fora-dos-totais": "node scripts/check-cartao-fora-dos-totais.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

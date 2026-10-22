@@ -13,6 +13,7 @@ import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { primeiroDiaDoMes, mesCorrente } from "@/lib/services/budget";
 import { ehFatura } from "@/lib/card-invoice";
+import { contasQueSomam } from "@/lib/contas";
 import { NOME_DA_CATEGORIA_DE_AJUSTE } from "@/lib/ajuste-de-fatura";
 import type {
   CardInvoice,
@@ -94,9 +95,18 @@ export async function GET(request: NextRequest) {
     // Um cartao sem nenhum lancamento no mes nao aparece na view -- e ele
     // precisa aparecer na tela, com fatura zerada, senao some do painel e o
     // usuario acha que perdeu o cartao.
+    //
+    // `include_in_total` ENTROU NO SELECT (HMO-434). A view `card_invoice_lines`
+    // nao publica a coluna -- e acrescenta-la exigiria `CREATE OR REPLACE VIEW`,
+    // que apaga as reloptions e levaria embora o `security_invoker = true`
+    // (medido na 035: a fatura de todo mundo para qualquer usuario logado). Esta
+    // consulta de `financial_accounts` ja estava a mao e e por ela que o flag
+    // chega. Medido em prod hoje: `boolean NOT NULL DEFAULT true`, entao nomear
+    // a coluna aqui nao corre o risco de 42703 de
+    // `select-que-nomeia-coluna-nova-derruba-a-rota-antes-da-colagem`.
     let cartoesQuery = supabase
       .from("financial_accounts")
-      .select("id, name, closing_day, due_day")
+      .select("id, name, closing_day, due_day, include_in_total")
       .eq("user_id", user.id)
       .eq("account_type", "credit_card")
       .eq("is_active", true);
@@ -106,7 +116,14 @@ export async function GET(request: NextRequest) {
     const { data: cartoes } = await cartoesQuery;
 
     for (const cartao of cartoes ?? []) {
-      if (porCartao.has(cartao.id)) continue;
+      // O CARTAO QUE JA TEM FATURA SO GANHA O FLAG, e nao uma entrada nova: a
+      // fatura dele veio da view, com as linhas e o total dela. Era um
+      // `continue` seco aqui, e e por isso que o `if` virou `get`/`else`.
+      const jaMontada = porCartao.get(cartao.id);
+      if (jaMontada) {
+        jaMontada.include_in_total = cartao.include_in_total ?? undefined;
+        continue;
+      }
       faturas.push({
         account_id: cartao.id,
         account_name: cartao.name,
@@ -117,6 +134,7 @@ export async function GET(request: NextRequest) {
         total: 0,
         line_count: 0,
         lines: [],
+        include_in_total: cartao.include_in_total ?? undefined,
       });
     }
 
@@ -238,10 +256,33 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // -----------------------------------------------------------------------
+    // O `total` DO TOPO HONRA O FLAG (HMO-434)
+    // -----------------------------------------------------------------------
+    // Ele somava `faturas` inteiras. HOJE NINGUEM O LE -- os tres consumidores
+    // (`cartoes/page.tsx`, `cartoes/[id]/page.tsx`, `budgets/page.tsx`) pegam
+    // so `invoices`, e o total da tela de Cartoes e somado no cliente por
+    // `somaDasFaturas`, que recorta pelos ids de `idsDasContasQueSomam`. E
+    // justamente por nao ter leitor que ele precisava mudar junto: um campo
+    // publicado chamado `total`, cego ao flag, e a proxima pessoa somando
+    // `dados.total` em vez de `invoices` -- e o numero dela discordaria da tela
+    // do lado, sem nada entre os dois para denunciar qual esta certo.
+    //
+    // `contasQueSomam` SOBRE FATURAS, e nao um `!== false` escrito aqui: a
+    // funcao e generica no item (so `include_in_total` interessa) exatamente
+    // para isto. O nome fala de "conta" porque o flag e da conta -- a fatura
+    // apenas carrega o do cartao dela.
+    //
+    // O CARTAO INATIVO CONTINUA SOMANDO, e isso e o lado seguro de um caso de
+    // borda: a consulta de cima filtra `is_active = true`, entao um cartao
+    // arquivado que ainda tem linha na view do mes nao recebe o flag e chega
+    // aqui com `undefined`. `!== false` o trata como "soma", que e o
+    // comportamento de antes desta mudanca -- o contrario sumiria com dinheiro
+    // por causa de um campo que a consulta nao pediu.
     return NextResponse.json({
       month: mes,
       invoices: faturas,
-      total: faturas.reduce((soma, f) => soma + f.total, 0),
+      total: contasQueSomam(faturas).reduce((soma, f) => soma + f.total, 0),
       ...(erroCategoria
         ? {}
         : { adjustment_category_id: categoriaDeAjuste?.id ?? null }),
