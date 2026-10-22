@@ -96,6 +96,26 @@ const DEPENDENCIAS = [
   "lib/recurrence.ts",
   "lib/dinheiro.ts",
   "lib/moeda.ts",
+  // A TERCEIRA, PELO MESMO MOTIVO E PELA MESMA ROTA -- HMO-487.
+  //
+  // `fora-dos-totais` nasceu na HMO-452/453 e passou a ser importada por DOIS
+  // arquivos desta arvore: `realizado-do-caixa.ts` (o tipo `LinhaComTotais`) e
+  // `movimentacoes.ts`. Nos dois casos e `import type`, e e por isso que a
+  // ausencia dela nao deixa rastro no JS emitido -- mas o tsc precisa do
+  // arquivo para RESOLVER o tipo, entao a arvore isolada nao compila e o
+  // controle positivo abortou com dois TS2307 desde que a HMO-453 mergeou.
+  //
+  // O ESTRAGO AQUI NAO FOI PLACAR INFLADO, FOI PLACAR NENHUM: o controle
+  // positivo abortou antes de qualquer mutante, exatamente como o bloco acima
+  // descreve, e os 12 mutantes deste modulo ficaram sem rodar. `import type`
+  // conta como import para este guard justamente porque o tsc nao distingue na
+  // hora de resolver.
+  //
+  // E O QUE O ABORTO ESCONDIA, alem dos 12: DOIS deles (`select_sem_notes` e
+  // `select_sem_o_embed_da_conta`) tinham a ancora velha, porque a MESMA
+  // HMO-452 que trouxe este import tambem pos `include_in_total` no
+  // `COLUNAS_DO_REALIZADO_DE_CAIXA`. Re-ancorados na HMO-487.
+  "lib/fora-dos-totais.ts",
 ];
 const SAIDA = ".tmp-realizado-do-caixa";
 const TESTE = "scripts/test-realizado-do-caixa.mjs";
@@ -254,7 +274,7 @@ const MUTANTES = [
       "a consulta para de pedir `account_type` -- a regra recebe `undefined` em " +
       "toda linha, nenhuma casa com credit_card, e o painel volta ao defeito " +
       "desta issue. Foi exatamente este o modo de falha da HMO-260",
-    de: '  "amount, transaction_type, currency, notes, counterpart_transaction_id, account:financial_accounts(account_type)";',
+    de: '  "amount, transaction_type, currency, notes, counterpart_transaction_id, include_in_total, account:financial_accounts(account_type)";',
     para: '  "amount, transaction_type, currency, notes, counterpart_transaction_id";',
   },
   {
@@ -262,7 +282,7 @@ const MUTANTES = [
     porque:
       "a consulta para de pedir `notes`: nenhuma perna de pagamento e " +
       "reconhecida como fatura, e o cartao desaparece do Realizado",
-    de: '  "amount, transaction_type, currency, notes, counterpart_transaction_id, account:financial_accounts(account_type)";',
+    de: '  "amount, transaction_type, currency, notes, counterpart_transaction_id, include_in_total, account:financial_accounts(account_type)";',
     para: '  "amount, transaction_type, currency, counterpart_transaction_id, account:financial_accounts(account_type)";',
   },
 ];
