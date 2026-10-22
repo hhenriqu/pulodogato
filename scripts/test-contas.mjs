@@ -25,6 +25,7 @@ import assert from "node:assert/strict";
 
 import {
   TIPOS_DE_CONTA,
+  avisoDosCartoesForaDosTotais,
   camposDoEscopo,
   contasDoEscopo,
   contasDoRecorte,
@@ -32,7 +33,9 @@ import {
   corpoDaConta,
   escopoDoTipo,
   faltaFatura,
+  idsDasContasQueSomam,
   porTipo,
+  quantasForaDosTotais,
   tipoDoRecorte,
   tipoPadraoDoEscopo,
   tiposDoEscopo,
@@ -582,6 +585,12 @@ test("o recorte vale no escopo cartao tambem", () => {
   // que nao passa por esta funcao -- o escopo `cartao` daqui esta sem chamador
   // em producao.
   //
+  // O RECORTE DA TELA DE CARTOES JA EXISTE, e nao e este: quem o faz e
+  // `idsDasContasQueSomam`, coberta na secao "O CARTAO FORA DOS TOTAIS NA TELA
+  // DE CARTOES" mais abaixo neste mesmo arquivo (HMO-434). Antes dela este
+  // aviso dizia que a tela nao tinha recorte nenhum; hoje ele diz so que o
+  // recorte nao passa por AQUI.
+  //
   // O que ele fixa e que o criterio nao vale em metade dos casos: se algum dia
   // alguem voltar a somar cartao por aqui, o recorte ja esta certo. Aplicado so
   // em `conta`, este teste devolveria 1200 (os dois cartoes pelo `Math.abs`).
@@ -645,6 +654,143 @@ test("desligar a conta NAO e arquivar: os dois campos sao independentes", () => 
     conta("checking", 50, { is_active: false, include_in_total: true }),
   ];
   assert.equal(totalDoEscopo(carteira, "conta"), 50);
+});
+
+// -----------------------------------------------------------------------
+// O CARTAO FORA DOS TOTAIS NA TELA DE CARTOES (HMO-434)
+// -----------------------------------------------------------------------
+// A pendencia que a HMO-431 registrou de proposito: o checkbox "Somar nos
+// totais" aparecia no formulario do cartao, gravava certo, e nao tinha efeito
+// em "Faturas em aberto". Aquele total nao passa por `totalDoEscopo` -- ele e a
+// soma das FATURAS do mes, somada no cliente por `somaDasFaturas`, que recebe
+// uma lista de IDS.
+//
+// O QUE ESTA SUITE ALCANCA, E O QUE NAO: aqui mora o CRITERIO (quais ids
+// entram, quantos ficaram de fora, e a frase). A FIACAO -- que
+// `cartoes/page.tsx` passa `idsDasContasQueSomam(ativas)` para `somaDasFaturas`
+// e nao `ativas.map(...)` -- nao se prova daqui, porque aquela pagina e cliente
+// com hooks e nao renderiza em `react-dom/server`. E justamente por isso que o
+// criterio e funcao pura NESTE arquivo em vez de um `filter` na pagina: do
+// contrario a feature inteira ficaria sem nenhuma assercao
+// (`formulario-de-lancamento-grava-direto-e-escapa-da-suite-de-rota`). O selo
+// no card tem assercao de HTML em test-tela-do-cartao.mjs.
+
+const cartao = (id, extra = {}) => ({
+  id,
+  account_type: "credit_card",
+  current_balance: 0,
+  ...extra,
+});
+
+test("os ids do total saem SEM o cartao desligado", () => {
+  // O caso da issue, em uma linha: o cartao desligado nao pode entrar na lista
+  // de ids que `somaDasFaturas` percorre.
+  const carteira = [
+    cartao("nubank"),
+    cartao("empresa", { include_in_total: false }),
+    cartao("itau"),
+  ];
+  assert.deepEqual(idsDasContasQueSomam(carteira), ["nubank", "itau"]);
+});
+
+test("a ordem do cadastro se preserva nos ids", () => {
+  // `somaDasFaturas` nao depende da ordem, mas trocar o `map` por um `sort` ou
+  // um `Set` aqui mudaria a ordem sem que nenhum total mudasse -- e o proximo
+  // leitor da lista (uma frase que nomeasse os cartoes, por exemplo) herdaria
+  // uma ordem que nao e a da tela.
+  const carteira = [cartao("c"), cartao("a"), cartao("b")];
+  assert.deepEqual(idsDasContasQueSomam(carteira), ["c", "a", "b"]);
+});
+
+test("SEM o campo, o cartao entra nos ids -- o cache offline de antes da 058", () => {
+  // O MUTANTE QUE ESTE TESTE MATA e `=== true` no lugar de `!== false`. Com ele
+  // a lista de ids viria VAZIA para toda carteira guardada no aparelho antes da
+  // feature, e `somaDasFaturas(faturas, [])` devolve 0 -- nao `null`. Ou seja a
+  // tela imprimiria "Faturas de outubro: R$ 0,00" com fatura em todo cartao, e
+  // o pedagio do `null` nao salvaria: zero confiante, sem rede, sem erro.
+  const doCache = [{ id: "nubank", account_type: "credit_card" }];
+  assert.deepEqual(idsDasContasQueSomam(doCache), ["nubank"]);
+});
+
+test("`null` tambem entra nos ids: so o booleano false desliga", () => {
+  const carteira = [cartao("nubank", { include_in_total: null })];
+  assert.deepEqual(idsDasContasQueSomam(carteira), ["nubank"]);
+});
+
+test("carteira inteira desligada da lista VAZIA, e nao a lista toda", () => {
+  // O controle negativo do filtro: sem ele, um `contasQueSomam` que devolvesse
+  // a entrada intacta passaria nos testes acima.
+  const carteira = [
+    cartao("a", { include_in_total: false }),
+    cartao("b", { include_in_total: false }),
+  ];
+  assert.deepEqual(idsDasContasQueSomam(carteira), []);
+});
+
+test("a contagem dos que ficaram de fora e a subtracao, e conta so o false", () => {
+  assert.equal(quantasForaDosTotais([]), 0);
+  assert.equal(quantasForaDosTotais([cartao("a")]), 0);
+  assert.equal(
+    quantasForaDosTotais([cartao("a"), cartao("b", { include_in_total: false })]),
+    1
+  );
+  assert.equal(
+    quantasForaDosTotais([
+      cartao("a", { include_in_total: false }),
+      cartao("b", { include_in_total: false }),
+      cartao("c", { include_in_total: null }),
+      { id: "d", account_type: "credit_card" },
+    ]),
+    2
+  );
+});
+
+test("a frase NAO aparece quando nenhum cartao esta fora -- o controle negativo", () => {
+  // Aviso permanente que nao se aplica e o tipo de texto que se aprende a nao
+  // ler, justamente antes do mes em que ele passa a importar. `null` e nao "".
+  assert.equal(avisoDosCartoesForaDosTotais([]), null);
+  assert.equal(avisoDosCartoesForaDosTotais([cartao("a"), cartao("b")]), null);
+  assert.equal(
+    avisoDosCartoesForaDosTotais([{ id: "a", account_type: "credit_card" }]),
+    null,
+    "a carteira do cache offline ganhou um aviso que nao se aplica a ela"
+  );
+});
+
+test("a frase diz as DUAS coisas: que nao soma, e que a fatura e cobrada inteira", () => {
+  // AS DUAS METADES SAO REQUISITO, e cada uma responde uma pergunta diferente.
+  // Sem a primeira, nada na tela explica por que o total nao fecha com os cards
+  // embaixo. Sem a SEGUNDA, a pessoa conclui que marcou o checkbox e deixou de
+  // dever -- e e a decisao da HMO-455 (Opcao A) que esta frase publica: o flag
+  // diz quem SOMA, nunca o que o cartao cobra.
+  const frase = avisoDosCartoesForaDosTotais([
+    cartao("a"),
+    cartao("empresa", { include_in_total: false }),
+  ]);
+
+  assert.match(frase, /fora dos totais/);
+  assert.match(frase, /não entra nesta soma/);
+  assert.match(
+    frase,
+    /fatura dele continua sendo cobrada por inteiro/,
+    `a frase deixou de prometer a fatura inteira: ${frase}`
+  );
+});
+
+test("uma so fala no singular, duas no plural -- e o numero aparece", () => {
+  const uma = avisoDosCartoesForaDosTotais([
+    cartao("empresa", { include_in_total: false }),
+  ]);
+  const duas = avisoDosCartoesForaDosTotais([
+    cartao("empresa", { include_in_total: false }),
+    cartao("socio", { include_in_total: false }),
+  ]);
+
+  assert.match(uma, /^1 cartão está fora dos totais/);
+  assert.match(duas, /^2 cartões estão fora dos totais/);
+  // O plural tem de falar das faturas no plural tambem: um "a fatura dele" com
+  // dois cartoes e a frase montada pela metade.
+  assert.match(duas, /as faturas deles continuam sendo cobradas por inteiro/);
 });
 
 // -----------------------------------------------------------------------

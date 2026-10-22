@@ -769,6 +769,24 @@ export interface CardInvoice {
   total: number;
   line_count: number;
   lines: CardInvoiceLine[];
+  /**
+   * O cartao desta fatura entra nos totais consolidados? (HMO-434, migration 058)
+   *
+   * E o flag da CONTA, nao da fatura nem das linhas dela: a fatura so carrega o
+   * do cartao a que pertence. Com `false`, esta fatura sai do `total` do topo da
+   * resposta e de "Faturas em aberto" na tela -- e o `total` DESTA entrada
+   * continua inteiro, porque o flag diz quem soma e nunca o que o cartao cobra
+   * (Opcao A da HMO-455). Nao confundir com `CardInvoiceLine.include_in_total`,
+   * que e o flag do LANCAMENTO (060) e e outra pergunta.
+   *
+   * OPCIONAL de proposito, e a ausencia tem dois caminhos legitimos: a view
+   * `card_invoice_lines` nao publica a coluna, entao quem preenche isto e a
+   * consulta de `financial_accounts` da rota -- que filtra `is_active = true`.
+   * Um cartao ARQUIVADO com linha no mes chega sem o campo. Leia sempre por
+   * `contasQueSomam` / `!== false`, nunca `=== true`: ausente significa "soma",
+   * que e o default da coluna.
+   */
+  include_in_total?: boolean;
   /** Preenchido quando a fatura ja virou conta prevista (scheduled_transactions). */
   scheduled_transaction_id?: string;
   /**

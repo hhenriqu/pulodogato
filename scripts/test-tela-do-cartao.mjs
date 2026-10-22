@@ -470,6 +470,85 @@ test("cartao sem dias na lista mostra a tarja", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 6a. O SELO DO CARTAO FORA DOS TOTAIS (HMO-434)
+// ---------------------------------------------------------------------------
+// O checkbox "Somar nos totais" (058) aparecia no formulario do cartao, gravava
+// certo no banco, e nao tinha efeito nenhum em "Faturas em aberto". Quem tirou
+// o cartao da soma foi `idsDasContasQueSomam` (criterio e testes em
+// test-contas.mjs); o que se afirma AQUI e a outra metade da decisao, a que so
+// se le do HTML.
+//
+// A ESCOLHA FOI A (b) DO ESCOPO: o cartao CONTINUA na lista, com a fatura dele
+// inteira, e o que ele deixa de fazer e somar no topo. A opcao (a) -- esconder
+// o card -- foi descartada porque deixaria a divida sem lugar nenhum no app.
+// Entao sao DUAS afirmacoes, e uma sem a outra e meia entrega:
+//
+//   1. o selo aparece (senao o card se le como defeito do total);
+//   2. a fatura do card NAO encolhe (senao a entrega contradiz a Opcao A da
+//      HMO-455 e a fatura do app deixa de bater com a do banco).
+//
+// `sumido-da-tela-pode-ser-so-indistinguivel`: o controle negativo do item 1 e
+// o cartao LIGADO, que nao pode ganhar selo nenhum.
+
+test("o cartao desligado ganha o selo «fora dos totais»", () => {
+  const t = texto(listaHtml({ ...CONTA, include_in_total: false }));
+
+  assert.ok(
+    t.includes("fora dos totais"),
+    `o cartao desligado ficou indistinguivel do que soma: ${t}`
+  );
+});
+
+test("o cartao que SOMA nao ganha selo nenhum -- o controle negativo", () => {
+  // Sem esta assercao, um selo impresso em TODO card passaria no teste acima.
+  // E o defeito tem dois jeitos de nascer, os dois aqui: `include_in_total:
+  // true` (o caso comum) e o campo AUSENTE, que e a carteira guardada no
+  // aparelho de antes da 058 -- um `!conta.include_in_total` no JSX marcaria
+  // todos eles, justamente quando a tela nao tem rede para conferir.
+  for (const conta of [
+    { ...CONTA, include_in_total: true },
+    CONTA,
+    { ...CONTA, include_in_total: null },
+  ]) {
+    const t = texto(listaHtml(conta));
+    assert.ok(
+      !t.includes("fora dos totais"),
+      `selo em cartao que soma (include_in_total: ${String(
+        conta.include_in_total
+      )}): ${t}`
+    );
+  }
+});
+
+test("o selo NAO encolhe a fatura do card -- ela continua inteira", () => {
+  // A decisao da HMO-455 (Opcao A), do lado da tela: o flag diz quem SOMA,
+  // nunca o que o cartao cobra. Se algum dia alguem "completar" a feature
+  // zerando o numero do card desligado, a fatura do app para de bater com a do
+  // banco e o Ajuste de saldo passa a brigar pelo mesmo numero.
+  const t = texto(listaHtml({ ...CONTA, include_in_total: false }));
+
+  assert.ok(
+    t.includes("R$ 320,00"),
+    `a fatura do cartao desligado encolheu na tela: ${t}`
+  );
+});
+
+test("o selo sobrevive ao numero indisponivel", () => {
+  // O selo le o CADASTRO, que esta tela abre sem rede; o numero le a fatura.
+  // Passar o selo pelo pedagio do numero (`mostraTotal`) esconderia a
+  // explicacao exatamente quando o valor ao lado e `<NumeroIndisponivel />` --
+  // duas ausencias na mesma linha e nenhuma causa visivel.
+  const t = texto(
+    listaHtml({ ...CONTA, include_in_total: false }, { fatura: null })
+  );
+
+  assert.ok(
+    t.includes("fora dos totais"),
+    `o selo foi embora junto com o numero: ${t}`
+  );
+});
+
+// ---------------------------------------------------------------------------
 // 6b. O CARD DA LISTA DIZ A FATURA DO PERIODO, E NAO A DIVIDA INTEIRA (HMO-290)
 // ---------------------------------------------------------------------------
 // O defeito: o card imprimia `Math.abs(current_balance)` sob o rotulo "Fatura

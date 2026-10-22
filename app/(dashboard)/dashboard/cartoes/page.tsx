@@ -47,6 +47,26 @@
 // Cartoes nao move um centavo, e aquela afirmacao continua valendo -- a tela de
 // Contas segue somando saldo com sinal, que e o que o rotulo DELA promete.
 // Saldo e saldo; so o rotulo que promete fatura trocou de fonte.
+//
+// O CARTAO FORA DOS TOTAIS (HMO-434)
+// ----------------------------------
+// Consequencia direta da troca acima: o checkbox "Somar nos totais" (058) e de
+// TODA conta e aparece no formulario do cartao, mas o unico recorte da feature
+// morava em `totalDoEscopo` -- que esta tela deixou de chamar. O cartao
+// desmarcado gravava certo no banco e continuava somando aqui. Quem recorta
+// agora e `idsDasContasQueSomam`, no bloco do `useMemo` abaixo, com o MESMO
+// criterio (`contasQueSomam`) das outras quatro leituras da feature.
+//
+// A ESCOLHA FOI A (b): o cartao continua na lista, com a fatura dele inteira e
+// um selo "· fora dos totais" no card (ver CartaoDaLista), e o que ele deixa de
+// fazer e somar no total do topo. O flag diz quem SOMA, nunca o que o cartao
+// cobra -- Opcao A da HMO-455. E porque o numero de cima nao explica a propria
+// falta, a tela DIZ EM PALAVRAS que ha cartao fora da soma; sem essa frase o
+// total nao fecha com os cards embaixo e a tela se le como defeito.
+//
+// A fiacao desta pagina nao cabe em suite nenhuma (tres hooks de dados, nao
+// renderiza em `react-dom/server`): quem a prova e
+// `scripts/check-cartao-fora-dos-totais.mjs`.
 // ---------------------------------------------------------------------------
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -68,7 +88,9 @@ import {
 import { CreditCard, Loader2, Plus, Wallet } from "lucide-react";
 import type { CardInvoice, FinancialAccount } from "@/types/financial";
 import {
+  avisoDosCartoesForaDosTotais,
   faltaFatura,
+  idsDasContasQueSomam,
   valoresDaConta,
   valoresIniciais,
   type ValoresDaConta,
@@ -208,18 +230,54 @@ export default function CartoesPage() {
   );
 
   const rotuloDoMes = rotuloDaFatura(mes);
-  const idsAtivos = useMemo(() => ativas.map((c) => c.id), [ativas]);
 
-  // `null` quando falta a fatura de qualquer cartao da lista: uma soma parcial
+  // ---------------------------------------------------------------------
+  // O CARTAO DESLIGADO SAI DAQUI (HMO-434)
+  // ---------------------------------------------------------------------
+  // Eram `ativas.map((c) => c.id)` -- TODOS os cartoes ativos. O checkbox
+  // "Somar nos totais" (058) aparecia no formulario do cartao, gravava certo
+  // no banco, e nao tinha efeito nenhum neste total: o unico recorte da
+  // feature morava em `totalDoEscopo`, que esta tela deixou de chamar na
+  // HMO-290. Era a pendencia que a HMO-431 registrou de proposito.
+  //
+  // O CRITERIO NAO E ESCRITO AQUI. `idsDasContasQueSomam` deriva de
+  // `contasQueSomam`, o mesmo predicado do "Saldo total" de Contas, do
+  // patrimonio, do "posso gastar" e da projecao -- ver o bloco dele em
+  // lib/contas.ts. Um `ativas.filter((c) => c.include_in_total !== false)`
+  // nesta linha estaria certo hoje e seria a copia que fica para tras.
+  //
+  // E ISSO MUDA A POLITICA DO `null`, de um jeito que vale dizer em voz alta:
+  // `somaDasFaturas` devolve `null` quando falta a fatura de QUALQUER id da
+  // lista. Com a lista recortada, o cartao desligado que a resposta nao
+  // trouxe deixa de anular o total -- e isso esta certo, porque ele nao
+  // contribuiria com centavo nenhum: o total continua sendo ou completo ou
+  // `null`, so que "completo" passou a ser "todos os que somam". O que seria
+  // ERRADO e o inverso -- somar sobre a lista inteira e descontar depois --,
+  // que publicaria uma soma parcial no mes em que a fatura de um cartao
+  // desligado faltasse.
+  const idsQueSomam = useMemo(() => idsDasContasQueSomam(ativas), [ativas]);
+
+  // `null` quando falta a fatura de qualquer cartao que SOMA: uma soma parcial
   // sob o rotulo "Faturas em aberto" e um numero menor que o certo, plausivel,
   // e sem nada na tela dizendo que falta uma parcela dela.
   const fatura = useMemo(
-    () => somaDasFaturas(faturas, idsAtivos),
-    [faturas, idsAtivos]
+    () => somaDasFaturas(faturas, idsQueSomam),
+    [faturas, idsQueSomam]
   );
+  // As parcelas futuras seguem o MESMO recorte, e nao o da lista inteira: elas
+  // sao a continuacao deste total ("+ R$ X nos meses seguintes"), impressas
+  // logo abaixo dele. Recortar um e nao o outro faria a nota prometer
+  // comprometimento de um cartao que o numero de cima nao conta.
   const parcelasFuturas = useMemo(
-    () => somaDasParcelasFuturas(faturas, idsAtivos),
-    [faturas, idsAtivos]
+    () => somaDasParcelasFuturas(faturas, idsQueSomam),
+    [faturas, idsQueSomam]
+  );
+
+  // A frase que explica a falta no total. `null` quando nenhum cartao esta
+  // fora -- ver `avisoDosCartoesForaDosTotais`.
+  const avisoForaDosTotais = useMemo(
+    () => avisoDosCartoesForaDosTotais(ativas),
+    [ativas]
   );
 
   const semDiasDeFatura = useMemo(
@@ -360,6 +418,24 @@ export default function CartoesPage() {
                 O que os cartões ativos cobram no mês escolhido. Não entra no
                 saldo: é dívida, não dinheiro que você tem.
               </p>
+
+              {/* A FRASE DO CARTAO FORA DOS TOTAIS (HMO-434).
+                  REQUISITO, nao enfeite -- ver `avisoDosCartoesForaDosTotais`.
+                  Sem ela a tela imprime "Faturas de outubro: R$ 400,00" com
+                  dois cards de R$ 400 embaixo: o selo no card diz QUE aquele
+                  cartao saiu, e nada ao lado do TOTAL diz que e dele que vem a
+                  falta. A conclusao disponivel e "o total esta errado".
+
+                  QUEM A LIBERA E O CADASTRO (`estadoDasContas`), e nao o estado
+                  combinado: ela e uma afirmacao sobre a LISTA de cartoes, igual
+                  ao contador de "ainda nao fecha fatura" logo abaixo. Amarra-la
+                  a `mostraTotal` esconderia a explicacao justamente no mes cuja
+                  fatura nao carregou -- e, pior, a esconderia junto com o
+                  numero que ela explica, que e quando ela menos custa e mais
+                  tarde se procura. */}
+              {podeMostrarNumero(estadoDasContas) && avisoForaDosTotais && (
+                <p className="text-xs text-warning">{avisoForaDosTotais}</p>
+              )}
 
               {/* O QUE AS PARCELAS AINDA VAO COBRAR (HMO-290).
                   Antes desta troca o total exagerava a fatura somando a divida

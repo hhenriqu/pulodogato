@@ -155,6 +155,102 @@ export function contasQueSomam<T extends { include_in_total?: boolean | null }>(
   return contas.filter((conta) => conta.include_in_total !== false);
 }
 
+// ---------------------------------------------------------------------------
+// O MESMO CRITERIO, NAS DUAS FORMAS QUE A TELA DE CARTOES PEDE (HMO-434)
+// ---------------------------------------------------------------------------
+// "Faturas em aberto" nao soma `current_balance` e por isso nao passa por
+// `totalDoEscopo` -- ele e a soma das FATURAS do mes, lida de
+// `GET /api/card-invoices` e totalizada por `somaDasFaturas`, que recebe uma
+// lista de IDS de cartao. Entao a tela de Cartoes precisa do criterio em duas
+// formas que a de Contas nunca precisou: a lista de ids que entram na soma, e a
+// CONTAGEM dos que ficaram de fora, que e o pedagio da frase na tela.
+//
+// AS DUAS DERIVAM DE `contasQueSomam`, E ISSO E O PONTO. A tentacao obvia era
+// escrever `ativas.filter((c) => c.include_in_total !== false).map(...)` na
+// pagina e `ativas.filter((c) => c.include_in_total === false).length` ao lado,
+// e as duas estariam certas hoje -- mas seriam a segunda e a terceira copia do
+// predicado, nenhuma delas no arquivo onde o comentario de `contasQueSomam`
+// explica por que ele e `!== false`. No dia em que a regra ganhar um segundo
+// criterio (uma conta de grupo que nao soma para quem nao e dono, por exemplo),
+// a tela de Cartoes seria a que ficaria para tras -- e o sintoma seria o total
+// dela discordando do de Contas sem nada na tela confrontando os dois, que e
+// exatamente o defeito que `contasQueSomam` existe para nao deixar nascer.
+//
+// Por isso tambem a contagem e uma SUBTRACAO e nao um filtro proprio: o
+// complemento de "soma" nao pode ser escrito a mao sem reabrir a pergunta do
+// `!== false` versus `=== false`. `length - length` nao tem como discordar.
+// ---------------------------------------------------------------------------
+
+/**
+ * Os ids dos cartoes que entram em "Faturas em aberto".
+ *
+ * Existe aqui, e nao na pagina, por uma razao de PROVA: `cartoes/page.tsx` e um
+ * componente de cliente cheio de hooks (`useContas`, `useEstaOnline`,
+ * `usePreferenciaDeMoeda`) e nao da para renderizar em `react-dom/server` --
+ * logica escrita la escapa da suite inteira, que e a armadilha de
+ * `formulario-de-lancamento-grava-direto-e-escapa-da-suite-de-rota`. Funcao
+ * pura aqui, uma linha de fiacao la, e `test-contas.mjs` cobre o criterio.
+ *
+ * `id` ENTROU NO GENERICO, e e a unica diferenca em relacao a
+ * `contasQueSomam`: quem consome isto e `somaDasFaturas`, que casa fatura com
+ * cartao por `account_id`.
+ */
+export function idsDasContasQueSomam<
+  T extends { id: string; include_in_total?: boolean | null }
+>(contas: T[]): string[] {
+  return contasQueSomam(contas).map((conta) => conta.id);
+}
+
+/**
+ * Quantas contas da lista estao FORA dos totais.
+ *
+ * E a subtracao de proposito -- ver o bloco acima. Serve de pedagio para a
+ * frase da tela: sem ela o aviso apareceria em toda carteira, inclusive nas que
+ * nao usam o recurso, e aviso permanente que nao se aplica e o tipo de texto
+ * que se aprende a nao ler justamente antes do mes em que ele passa a importar
+ * (mesma razao de `faturaTemLinhaForaDosTotais` em lib/acoes-da-fatura.ts).
+ */
+export function quantasForaDosTotais<
+  T extends { include_in_total?: boolean | null }
+>(contas: T[]): number {
+  return contas.length - contasQueSomam(contas).length;
+}
+
+/**
+ * A FRASE DA TELA DE CARTOES, e ela e REQUISITO desta issue -- nao enfeite.
+ *
+ * Sem ela o fluxo inteiro se le como defeito, e de um jeito pior que na tela de
+ * Contas. Lá o selo "· fora dos totais" fica ao lado do saldo que saiu, e o
+ * "Saldo total" em cima e a soma visivel das linhas abaixo: quem soma a mao
+ * acha a diferenca e o selo a explica. Aqui o numero de cima responde por um
+ * MES escolhido num seletor, e a fatura do cartao desligado continua impressa
+ * inteira no card dele -- entao a pessoa ve "Faturas de outubro: R$ 800,00" com
+ * dois cards de R$ 400 embaixo e nenhum selo ao lado do TOTAL dizendo de onde
+ * vem a falta. A conclusao disponivel e "o total esta errado", e o proximo
+ * passo e lancar um ajuste para "consertar" um numero que esta certo.
+ *
+ * "NAO ENTRA NESTA SOMA" VEM PRIMEIRO, e a fatura inteira depois, na ordem das
+ * duas perguntas: a primeira e "por que o total nao fecha", a segunda e "eu
+ * mexi na fatura que vou pagar?". A segunda metade e a mesma promessa de
+ * `AVISO_DA_FATURA_INTEIRA` (HMO-461) e da decisao da HMO-455 -- o flag nunca
+ * mexe no que o cartao cobra, so em quem o soma.
+ *
+ * `null` e nao `""` quando nenhum cartao esta fora: quem desenha nao pode
+ * renderizar um `<p>` vazio, que muda o espacamento do bloco sem dizer nada.
+ */
+export function avisoDosCartoesForaDosTotais<
+  T extends { include_in_total?: boolean | null }
+>(contas: T[]): string | null {
+  const quantos = quantasForaDosTotais(contas);
+  if (quantos <= 0) return null;
+
+  return quantos === 1
+    ? "1 cartão está fora dos totais e não entra nesta soma — a fatura dele " +
+        "continua sendo cobrada por inteiro."
+    : `${quantos} cartões estão fora dos totais e não entram nesta soma — as ` +
+        "faturas deles continuam sendo cobradas por inteiro.";
+}
+
 /**
  * O total de UMA tela.
  *
@@ -184,10 +280,18 @@ export function contasQueSomam<T extends { include_in_total?: boolean | null }>(
  * leria a assinatura ("o total do escopo") e nao teria por que suspeitar que o
  * criterio vale em metade dos casos. O teste cobre os dois ramos.
  *
- * E O QUE ISSO IMPLICA PARA A FEATURE: desligar um CARTAO ainda nao tira a
- * fatura dele de "Faturas em aberto". Aquele total nasce de outra fonte (a view
- * de faturas do mes), e levar o criterio para la e trabalho proprio -- esta
- * fora desta mudanca, e esta registrado como pendencia na HMO-431.
+ * E O QUE ISSO IMPLICA PARA A FEATURE -- JA RESOLVIDO, E NAO AQUI (HMO-434):
+ * desligar um CARTAO tira a fatura dele de "Faturas em aberto", mas o recorte
+ * nao passa por esta funcao e nem podia. Aquele total nasce de outra fonte (a
+ * view de faturas do mes, por `GET /api/card-invoices`) e de outra grandeza
+ * (`invoice_amount` de um mes, nao `current_balance`), entao quem o recorta e
+ * `idsDasContasQueSomam` logo acima, consumida por `somaDasFaturas` em
+ * lib/fatura-do-periodo.ts. O criterio e o MESMO (`contasQueSomam`); o que
+ * muda e a forma -- lista de ids em vez de lista de contas.
+ *
+ * O ramo `cartao` daqui segue sem chamador, e o teste dele segue valendo pela
+ * razao escrita no proprio teste: ele fixa que o criterio nao vale em metade
+ * dos casos, para o dia em que alguem voltar a somar cartao por aqui.
  */
 export function totalDoEscopo(
   contas: Array<

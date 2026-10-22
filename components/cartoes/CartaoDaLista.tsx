@@ -148,6 +148,43 @@ export function CartaoDaLista({
                 que o seletor escolheu -- que nem sempre e o corrente. */}
             <p className="text-xs text-muted-foreground">
               {rotuloDoMes ? `Fatura de ${rotuloDoMes}` : "Fatura"}
+              {/* "FORA DOS TOTAIS" AO LADO DO ROTULO (HMO-434).
+                  Mesma decisao da tela de Contas (HMO-431), e por isso o selo
+                  cai no mesmo lugar: ao lado do ROTULO, nao do numero. A
+                  escolha foi a (b) do escopo da issue -- o cartao CONTINUA na
+                  lista, com a fatura dele inteira, e o que ele deixa de fazer e
+                  somar em "Faturas em aberto" no topo.
+
+                  POR QUE A FATURA NAO ENCOLHE: o flag diz quem SOMA, nunca o
+                  que o cartao cobra. A fatura do app tem de bater com a do
+                  banco, e para reconciliar diferenca de verdade existe o Ajuste
+                  de saldo -- as duas ferramentas brigariam pelo mesmo numero.
+                  Mesma semantica da Opcao A da HMO-455 e de
+                  `AVISO_DA_FATURA_INTEIRA`. Por isso a opcao (a) do escopo
+                  (esconder o cartao da lista) foi descartada: ela deixaria a
+                  divida sem lugar nenhum no app, que e pior que o total nao
+                  fechar.
+
+                  `=== false` E NAO `!...`: cartao vindo do cache offline de
+                  antes da 058 nao tem o campo, e um `!conta.include_in_total`
+                  marcaria TODOS eles como fora dos totais -- justamente quando
+                  a tela nao tem rede para conferir. Mesmo aviso do bloco de
+                  `contasQueSomam` em lib/contas.ts.
+
+                  O SELO NAO TEM PEDAGIO DE ESTADO, ao contrario do numero
+                  abaixo: ele le o CADASTRO (`conta`), que esta tela abre sem
+                  rede, e nao a fatura. Passa-lo por `mostraTotal` esconderia a
+                  explicacao exatamente quando o numero ao lado e
+                  `<NumeroIndisponivel />` -- duas ausencias sem causa visivel.
+
+                  As palavras sao as de `SELO_FORA_DOS_TOTAIS`, e o literal esta
+                  inline aqui pelo mesmo motivo que esta inline na tela de
+                  Contas: as duas descrevem o flag da CONTA (058), e aqueles
+                  constantes homonimos descrevem o da LINHA (060), em modulos
+                  que esta arvore nao importa. */}
+              {conta.include_in_total === false ? (
+                <span className="ml-1 text-warning">· fora dos totais</span>
+              ) : null}
             </p>
             <p className="text-lg font-semibold">
               {mostraTotal ? (
