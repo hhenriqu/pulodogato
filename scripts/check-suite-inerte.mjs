@@ -46,7 +46,7 @@ import { mapaDeCobertura, TETO_DE_BYTES_DO_WORKFLOW } from "./mapa-de-cobertura.
  *
  * Os 7 que sobram sao ORFAOS, e sao divida de outra natureza: nenhum workflow
  * os cita, nem morto, entao consertar tamanho de arquivo nao os alcanca. Cada
- * um precisa de step proprio (ver HMO-494).
+ * um precisa de step proprio, ou de ser aposentado do `package.json` (HMO-499).
  *
  * Em 0 o teto deixa de ser placar e vira proibicao, que e a forma mais forte.
  *
