@@ -129,8 +129,17 @@ const mutantes = [
   ],
 
   // =========================================================================
-  // A ESCADA DA CONTA -- E O CARTAO, QUE DOBRA O DINHEIRO
+  // A ESCADA DA CONTA -- O CARTAO DOBRA O DINHEIRO, A DE INVESTIMENTO O CONTA
+  // POR DUAS FONTES QUE DISCORDAM
   // =========================================================================
+  // OS NUMEROS 19, 20 E 21 ESTAO NO MEIO DA LISTA de proposito: eles sao da
+  // HMO-482 e entraram depois: o numero e rotulo para quem le a saida, e a
+  // ORDEM e tematica. Renumerar os dezoito de cima trocaria o rotulo de cada
+  // linha de placar ja registrada em issue, para nao ganhar nada.
+  //
+  // Os tres medem o MESMO trecho por tres lados que uma assercao so nao
+  // distingue: o tipo que sai da lista, a linha de UM tipo, e a catraca que
+  // decide o tipo que o app ainda nao conhece.
 
   [
     ROTA,
@@ -139,8 +148,12 @@ const mutantes = [
       (conta) =>
         conta.account_type === "checking" && conta.name === NOME_DA_CONTA_PADRAO
     ) ??
-    ativas.find((conta) => escopoDoTipo(conta.account_type) === "conta") ??`,
-    `    ativas.find((conta) => escopoDoTipo(conta.account_type) === "conta") ??
+    ativas.find(
+      (conta) => ACEITA_LANCAMENTO_DA_CONVERSA[conta.account_type] === true
+    ) ??`,
+    `    ativas.find(
+      (conta) => ACEITA_LANCAMENTO_DA_CONVERSA[conta.account_type] === true
+    ) ??
     ativas.find(
       (conta) =>
         conta.account_type === "checking" && conta.name === NOME_DA_CONTA_PADRAO
@@ -149,9 +162,43 @@ const mutantes = [
 
   [
     ROTA,
-    "8. o criterio de escopo sai: o CARTAO entra, o dinheiro conta agora e outra vez na fatura",
-    '    ativas.find((conta) => escopoDoTipo(conta.account_type) === "conta") ??',
+    "8. o criterio de TIPO sai inteiro: o CARTAO entra, e o dinheiro conta agora e outra vez na fatura",
+    `    ativas.find(
+      (conta) => ACEITA_LANCAMENTO_DA_CONVERSA[conta.account_type] === true
+    ) ??`,
     "    ativas.find(() => true) ??",
+  ],
+
+  [
+    ROTA,
+    "19. a CONTA DE INVESTIMENTO volta a aceitar lancamento: o saldo dela discorda da carteira",
+    "  investment: false,",
+    "  investment: true,",
+  ],
+
+  // O criterio de escopo que a HMO-481 entregou, LITERAL, no lugar da catraca.
+  // E o unico mutante que reproduz o defeito que esta issue foi aberta para
+  // decidir, e ele e o controle de que a troca nao foi cosmetica: ele passa
+  // pelo cartao e deixa a conta de investimento entrar, porque
+  // `escopoDoTipo("investment")` e "conta".
+  [
+    ROTA,
+    "20. a catraca volta a ser o ESCOPO DA TELA: o cartao segue fora e a conta de investimento entra",
+    `    ativas.find(
+      (conta) => ACEITA_LANCAMENTO_DA_CONVERSA[conta.account_type] === true
+    ) ??`,
+    `    ativas.find((conta) => conta.account_type !== "credit_card") ??`,
+  ],
+
+  // `=== true` para `!== false` e a armadilha da booleana de tres estados, do
+  // lado em que ela custa dinheiro: o tipo que o `Record` nao tem da
+  // `undefined`, e `undefined !== false` e VERDADE. O valor novo do ENUM
+  // voltaria a nascer ELEGIVEL -- o filtro por omissao que esta issue tirou.
+  [
+    ROTA,
+    "21. `=== true` vira `!== false`: o account_type DESCONHECIDO volta a nascer elegivel",
+    "      (conta) => ACEITA_LANCAMENTO_DA_CONVERSA[conta.account_type] === true",
+    "      (conta) => ACEITA_LANCAMENTO_DA_CONVERSA[conta.account_type] !== false",
   ],
 
   [

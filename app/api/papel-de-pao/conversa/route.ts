@@ -112,7 +112,8 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextResponse, type NextRequest } from "next/server";
 import { today } from "@/lib/recurrence";
-import { escopoDoTipo } from "@/lib/contas";
+// `escopoDoTipo` NAO entra aqui: o escopo diz em qual TELA o tipo se lista, e
+// nao se ele recebe lancamento. Ver `ACEITA_LANCAMENTO_DA_CONVERSA` (HMO-482).
 import type { AccountType } from "@/types/financial";
 import type { Direcao } from "@/lib/conversa-do-papel";
 import {
@@ -207,6 +208,69 @@ interface ContaElegivel {
 const NOME_DA_CONTA_PADRAO = "Conta Corrente";
 
 /**
+ * ONDE "GASTEI X" PODE CAIR -- UM VALOR DO ENUM POR LINHA (HMO-482).
+ *
+ * POR QUE NAO `escopoDoTipo(...) === "conta"`, QUE ERA O CRITERIO ATE AQUI
+ * ----------------------------------------------------------------------
+ * O escopo de `lib/contas.ts` responde outra pergunta: "em qual das DUAS TELAS
+ * este tipo se cadastra e se lista". Ele e a resposta certa para aquilo e a
+ * resposta errada para esta, e as duas so pareciam a mesma porque o cartao --
+ * o unico caso que a HMO-481 tinha em maos -- cai do lado certo nas duas.
+ *
+ * `investment` e o caso que separa as duas perguntas. Ele tem escopo `"conta"`
+ * de proposito (ela se cadastra e se lista em Contas, e o menu "Contas de
+ * Investimento" aponta para `/dashboard/contas?tipo=investment`, que so existe
+ * porque `tipoDoRecorte` exige escopo `"conta"`), e MESMO ASSIM nao recebe
+ * lancamento da conversa: ela e conta de ATIVO (migration 059). O valor dela
+ * vem das movimentacoes da carteira, nao do extrato, e dinheiro que sai dela e
+ * RESGATE, nao gasto. Um "Gastei 1000" ali move `current_balance` pelo
+ * `update_account_balance_trigger` (001:2033) enquanto a carteira continua
+ * dizendo outra coisa: duas leituras plausiveis que discordam, sem erro nenhum
+ * e sem um terceiro numero que as confronte.
+ *
+ * Mudar o escopo de `investment` em `lib/contas.ts` resolveria a classe inteira
+ * e QUEBRARIA as telas de Contas: o tipo sairia do seletor do cadastro
+ * (`tiposDoEscopo("conta")`) e `tipoDoRecorte("investment")` passaria a devolver
+ * `null`, levando o item do menu para a lista inteira. Por isso o criterio e
+ * daqui, e `escopoDoTipo` fica intocado.
+ *
+ * POR QUE UM `Record` EXAUSTIVO, E NAO UM `if` NEM UM `Set`
+ * ---------------------------------------------------------
+ * E a CATRACA. `Record<AccountType, boolean>` nao compila faltando um valor do
+ * ENUM, entao o nono `account_type` que alguem acrescentar em
+ * `types/financial.ts` PARA O BUILD ate uma pessoa decidir de que lado ele cai.
+ * O criterio antigo tinha o defeito oposto, e por omissao: tipo desconhecido
+ * caia em `porTipo` -> `"other"` -> escopo `"conta"`, logo nascia ELEGIVEL sem
+ * ninguem decidir.
+ *
+ * E a leitura em runtime cai do lado seguro pelo mesmo motivo: um
+ * `account_type` que o banco grave e o union ainda nao conheca da `undefined`
+ * aqui, que e falso -- nasce INELEGIVEL, e a rota recusa com 409 em vez de
+ * escrever num lugar que ninguem escolheu.
+ *
+ * `other` E `true` DE PROPOSITO, e esta e a linha que registra a escolha: "Outra"
+ * e conta de saldo comum, o que sai dela saiu de verdade. Nao e o default de
+ * antes sobrevivendo por inercia -- agora e uma decisao escrita, que o
+ * `Record` obriga a tomar.
+ */
+const ACEITA_LANCAMENTO_DA_CONVERSA: Record<AccountType, boolean> = {
+  checking: true,
+  savings: true,
+  // A fatura tem mes de competencia proprio (`card_invoice_month()`, 006) e a
+  // despesa so se REALIZA no pagamento. Ver a escada abaixo.
+  credit_card: false,
+  // Nao tem fatura: o dinheiro sai da conta na hora. Ver o cabecalho de
+  // `lib/contas.ts`.
+  debit_card: true,
+  cash: true,
+  digital: true,
+  // Conta de ATIVO (059): o valor vem da carteira, e a saida e resgate. Ver o
+  // bloco acima.
+  investment: false,
+  other: true,
+};
+
+/**
  * A CONTA EM QUE A CONVERSA GRAVA, ou `null` quando nao ha nenhuma elegivel.
  *
  * O plano foi alem do texto da issue-mae ("conta = a conta padrao dela") porque
@@ -219,17 +283,27 @@ const NOME_DA_CONTA_PADRAO = "Conta Corrente";
  *   1. conta ativa de `account_type = 'checking'` chamada `Conta Corrente` -- a
  *      que ela tem sem nunca ter cadastrado nada;
  *   2. senao, a MAIS ANTIGA (`created_at`, ordenado pela consulta) ativa cujo
- *      `escopoDoTipo` e "conta" -- reusando `lib/contas.ts`, o unico lugar do
- *      app que decide o que e conta e o que e cartao;
+ *      `account_type` esta em `ACEITA_LANCAMENTO_DA_CONVERSA` -- a catraca por
+ *      enumeracao do bloco acima, que e desta rota e nao do catalogo de telas;
  *   3. senao, `null`, e quem chama RECUSA com 409.
  *
- * NUNCA CARTAO, e e o degrau 2 que garante: `escopoDoTipo("credit_card")` e
- * "cartao". Gasto em cartao NAO e dinheiro saindo hoje -- ele vira linha de
- * fatura, com mes de competencia proprio (`card_invoice_month()`, 006), e a
- * despesa so se REALIZA no pagamento da fatura. A conversa le
- * `financial_transactions` direto, entao o dinheiro seria contado AGORA e OUTRA
- * VEZ no pagamento: "Gastei" maior do que ela gastou, com os outros dois numeros
- * certos.
+ * NUNCA CARTAO NEM CONTA DE INVESTIMENTO, e e o degrau 2 que garante -- os dois
+ * pelo mesmo motivo de fundo, que e o dinheiro ser contado duas vezes ou por
+ * duas fontes que discordam:
+ *
+ *   * CARTAO: gasto em cartao nao e dinheiro saindo hoje. Ele vira linha de
+ *     fatura, com mes de competencia proprio (`card_invoice_month()`, 006), e a
+ *     despesa so se REALIZA no pagamento da fatura. A conversa le
+ *     `financial_transactions` direto, entao o dinheiro seria contado AGORA e
+ *     OUTRA VEZ no pagamento: "Gastei" maior do que ela gastou, com os outros
+ *     dois numeros certos;
+ *   * INVESTIMENTO: o valor da conta vem da carteira (059), nao do extrato.
+ *     O lancamento move `current_balance` e a carteira segue dizendo outra
+ *     coisa. Ver o bloco de `ACEITA_LANCAMENTO_DA_CONVERSA`.
+ *
+ * A diferenca entre os dois esta em QUAL TELA os lista, e e por isso que o
+ * criterio nao pode ser o escopo: o cartao mora na tela de Cartoes, a conta de
+ * investimento mora na tela de Contas, lado a lado com a conta corrente.
  *
  * `is_active !== false`, e nao `=== true`: a coluna e ANULAVEL com default
  * `true` (001:1106), entao `NULL` quer dizer "ninguem mexeu" e conta como ativa
@@ -247,7 +321,9 @@ function contaDaConversa(contas: ContaElegivel[]): ContaElegivel | null {
       (conta) =>
         conta.account_type === "checking" && conta.name === NOME_DA_CONTA_PADRAO
     ) ??
-    ativas.find((conta) => escopoDoTipo(conta.account_type) === "conta") ??
+    ativas.find(
+      (conta) => ACEITA_LANCAMENTO_DA_CONVERSA[conta.account_type] === true
+    ) ??
     null
   );
 }

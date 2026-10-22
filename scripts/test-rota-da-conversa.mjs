@@ -642,6 +642,83 @@ test("so cartao de credito cadastrado: 409 e NENHUM insert", async () => {
   assert.ok(r.corpo.error, "o 409 veio sem frase para a tela mostrar");
 });
 
+// ---------------------------------------------------------------------------
+// A CONTA DE INVESTIMENTO -- O GEMEO DO CARTAO, E O QUE O ESCOPO NAO PEGAVA
+// ---------------------------------------------------------------------------
+// Os dois casos abaixo sao os do cartao, acima, com `account_type:
+// 'investment'`. Eles existem separados, e nao como mais uma conta nos casos do
+// cartao, porque o cartao e a conta de investimento caem do MESMO lado desta
+// rota por MOTIVOS diferentes, e o criterio que pegava um nao pegava o outro:
+// `escopoDoTipo("credit_card")` e "cartao", mas `escopoDoTipo("investment")` e
+// "conta" -- de proposito, porque ela se cadastra e se lista na tela de Contas.
+// Com o criterio de escopo, que e o que a HMO-481 entregou, estes dois testes
+// REPROVAM (HMO-482).
+//
+// E conta de ATIVO (migration 059): o valor dela vem das movimentacoes da
+// carteira, nao do extrato, e dinheiro que sai dela e RESGATE, nao gasto. Um
+// "Gastei 1000" ali move `current_balance` pelo
+// `update_account_balance_trigger` e a carteira segue dizendo outra coisa --
+// duas leituras plausiveis que discordam, sem erro nenhum.
+
+test("CONTA DE INVESTIMENTO nunca recebe o lancamento, mesmo sendo a mais antiga", async () => {
+  const r = await postar(
+    { direcao: "gastei", valor: 1000 },
+    {
+      contas: [
+        conta({ id: "clear", name: "Conta Corrente", account_type: "investment", created_at: "2010-01-01T00:00:00Z" }),
+        conta({ id: "corrente", name: "Itaú", account_type: "checking", created_at: "2026-01-01T00:00:00Z" }),
+      ],
+    }
+  );
+
+  // Igual ao caso do cartao: ela esta com o NOME do degrau 1 e e a mais antiga,
+  // logo ganharia os dois degraus se o criterio fosse so nome ou so idade. E,
+  // diferente do cartao, ela tambem passaria pelo criterio de ESCOPO.
+  assert.equal(lancamentoGravado(r.escritas).account_id, "corrente");
+});
+
+test("so conta de INVESTIMENTO cadastrada: 409 e NENHUM insert", async () => {
+  const r = await postar(
+    { direcao: "gastei", valor: 1000 },
+    {
+      contas: [
+        conta({ id: "clear", name: "Clear", account_type: "investment" }),
+      ],
+    }
+  );
+
+  assert.equal(r.status, 409, JSON.stringify(r.corpo));
+  // O mesmo ponto do gemeo do cartao: 409 e NENHUMA escrita. Cair no insert com
+  // `account_id` da conta de investimento seria pior que o orfao -- a linha
+  // moveria o saldo de uma conta cujo valor nasce na carteira.
+  assert.deepEqual(r.escritas, [], `gravou na conta de investimento: ${JSON.stringify(r.escritas)}`);
+  assert.ok(r.corpo.error, "o 409 veio sem frase para a tela mostrar");
+});
+
+// A CATRACA, e nao o filtro por omissao. O criterio velho mandava o tipo
+// desconhecido para `porTipo` -> "other" -> escopo "conta", logo um valor novo
+// do ENUM `account_type` nascia ELEGIVEL sem ninguem decidir. Hoje o criterio e
+// um `Record<AccountType, boolean>` exaustivo: o build para no nono valor, e em
+// runtime o tipo que o union nao conhece da `undefined`, que e falso.
+//
+// O teste precisa mentir sobre o tipo de proposito -- e exatamente a linha que o
+// banco pode gravar e o union ainda nao conhecer.
+test("account_type que o app nao conhece nasce INELEGIVEL: 409 e NENHUM insert", async () => {
+  const r = await postar(
+    { direcao: "gastei", valor: 1000 },
+    {
+      contas: [
+        conta({ id: "novo", name: "Conta Corrente", account_type: "tipo_que_o_enum_ganhou_depois" }),
+      ],
+    }
+  );
+
+  // Nao e "o degrau 1 nao casou": a conta esta com o nome do degrau 1. O tipo e
+  // que a derruba, nos DOIS degraus.
+  assert.equal(r.status, 409, JSON.stringify(r.corpo));
+  assert.deepEqual(r.escritas, [], `o tipo desconhecido gravou: ${JSON.stringify(r.escritas)}`);
+});
+
 test("nenhuma conta cadastrada: 409 e NENHUM insert", async () => {
   const r = await postar({ direcao: "gastei", valor: 10 }, { contas: [] });
 
