@@ -19,6 +19,8 @@
     "test:causa-da-reprovacao": "node --test scripts/test-causa-da-reprovacao.mjs",
     "mutantes:causa-da-reprovacao": "node scripts/mutantes-causa-da-reprovacao.mjs",
     "check-sed-dos-workflows": "node scripts/check-sed-dos-workflows.mjs",
+    "check-tamanho-dos-workflows": "node scripts/check-tamanho-dos-workflows.mjs",
+    "test:tamanho-dos-workflows": "node scripts/test-tamanho-dos-workflows.mjs",
     "check-profiles-is-public": "node scripts/check-profiles-is-public.mjs",
     "test:profiles-is-public": "node scripts/test-profiles-is-public.mjs",
     "test:sed-dos-workflows": "node scripts/test-sed-dos-workflows.mjs",
