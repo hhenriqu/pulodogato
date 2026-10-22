@@ -51,6 +51,11 @@ import { Trash2, Users } from "lucide-react";
 import { CamposDeLancamento } from "@/components/movimentacoes/CamposDeLancamento";
 import { DialogoDeAlcance } from "@/components/series/DialogoDeAlcance";
 import {
+  PerguntaDoVinculo,
+  buscarPrevistasCorrespondentes,
+  type PrevistaSugerida,
+} from "@/components/vinculo/PerguntaDoVinculo";
+import {
   movimentoPedidoNaTela,
   novosValoresDasParcelas,
   planejarAlteracaoDeParcelas,
@@ -244,6 +249,15 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
   } | null>(null);
   /** O alcance pedido e ainda nao respondido, com o Salvar esperando. */
   const [perguntandoAlcance, setPerguntandoAlcance] = useState(false);
+  /**
+   * "Isso e o pagamento de <prevista>?" -- o lancamento novo ja gravado e as
+   * contas previstas que ele parece pagar. Enquanto nao e `null`, o fim do
+   * Salvar (`terminar`) espera a resposta. Ver components/vinculo/.
+   */
+  const [perguntaDoVinculo, setPerguntaDoVinculo] = useState<{
+    transacaoId: string;
+    previstas: PrevistaSugerida[];
+  } | null>(null);
   /**
    * "Salvar e continuar" (HMO-249): o modal nao fecha depois de gravar.
    *
@@ -1394,7 +1408,20 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
             setPerguntandoAlcance(true);
             return;
           }
-          await gravarTransacao();
+          {
+            const gravada = await gravarTransacao();
+            // A PERGUNTA DO VINCULO, so no lancamento NOVO: a edicao nao cria
+            // dinheiro, entao nao ha despesa nova para contar duas vezes. Se o
+            // lancamento parece pagar uma conta prevista em aberto, o Salvar
+            // espera a pessoa dizer sim ou nao -- nunca vincula sozinho.
+            if (!editando) {
+              const previstas = await buscarPrevistasCorrespondentes(gravada.id);
+              if (previstas.length > 0) {
+                setPerguntaDoVinculo({ transacaoId: gravada.id, previstas });
+                return;
+              }
+            }
+          }
           terminar();
           return;
       }
@@ -1671,6 +1698,7 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
     }
 
     toast.success(editando ? copia.atualizado : copia.salvo);
+    return transacao;
   };
 
   const percentualUsado = valores.rateios.reduce(
@@ -2005,6 +2033,17 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
         só para esta parcela", e desde a HMO-361 isso e falso -- os dois seguem o
         alcance escolhido, como o movimento.
       */}
+      {/* Irmao do formulario pelo mesmo motivo do dialogo do alcance, logo
+          abaixo: um segundo Dialog dentro do `DialogContent` do primeiro
+          empilharia dois donos para o Esc e o clique fora. */}
+      <PerguntaDoVinculo
+        pergunta={perguntaDoVinculo}
+        aoTerminar={() => {
+          setPerguntaDoVinculo(null);
+          terminar();
+        }}
+      />
+
       {parcelaAberta && (
         <DialogoDeAlcance
           aberto={perguntandoAlcance}

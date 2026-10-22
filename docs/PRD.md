@@ -250,6 +250,19 @@ a tela não pode contorná-las. As marcadas **(tela)** vivem em TypeScript testa
 - RN006.1 Regra de recorrência gera a próxima ocorrência; a data é decidida em
   TypeScript, o banco só garante que a **mesma** data não duplica (índice único).
 - RN006.2 Detector de recorrência sugere assinaturas a partir do histórico.
+- RN006.3 Uma conta prevista em aberto pode ser **vinculada a um lançamento que
+  já existe** ("Já lancei"): ela fica paga, com a data do lançamento, e o
+  lançamento não muda. Só lançamento do mesmo dono, na mesma direção, sem outro
+  vínculo e até 31 dias do vencimento. Fatura de cartão e transferência ficam
+  de fora (continuam pelo pagar).
+- RN006.4 Ao lançar, se o lançamento parece pagar uma prevista do mesmo dono
+  (valor ±1%, vencimento ±7 dias, mesma categoria ou descrição), o app
+  **pergunta**. Nenhum vínculo é criado sem confirmação.
+- RN006.5 Excluir o lançamento vinculado devolve a prevista para pendente
+  (migration 065).
+- RN006.6 Conta prevista de grupo que o dono já quitou sai da **Previsão** do
+  painel de todos os membros: a parte de cada um já está no Realizado pelo
+  rateio. O que o membro ainda deve ao dono continua no «A pagar» da agenda.
 
 ### RN007 — Divisão de despesa em grupo ✅ **(banco)**
 

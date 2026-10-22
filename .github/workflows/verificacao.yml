@@ -3243,6 +3243,11 @@ jobs:
       - name: As regras de um lancamento
         run: npm run test:lancamento
 
+      # O vinculo da conta prevista a um lancamento que ja existe: a regra da
+      # sugestao ("isso e o pagamento de <prevista>?") e a do clique explicito.
+      - name: O vinculo da prevista ao lancamento existente
+        run: npm run test:vinculo-da-prevista
+
       # nota: verificacao-notas.md -> "'A verificacao sabe falhar (lancamento)'"
       - name: 'A verificacao sabe falhar (lancamento)'
         run: |
