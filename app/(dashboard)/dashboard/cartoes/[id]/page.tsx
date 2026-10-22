@@ -49,7 +49,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import type { CardInvoice } from "@/types/financial";
 import { useContas } from "@/lib/hooks/useContas";
-import { buscarLeitura, type EstadoDaLeitura } from "@/lib/offline-leitura";
+import {
+  AVISO_ATUALIZAR_FALHOU,
+  buscarLeitura,
+  comSemCopia,
+  ID_DO_AVISO_ATUALIZAR,
+  type EstadoDaLeitura,
+} from "@/lib/offline-leitura";
 import {
   cartaoDaTela,
   estadoDaTela,
@@ -215,40 +221,81 @@ function GastosDoCartao() {
     [ativas, arquivadas, idDoCartao]
   );
 
-  const carregarFatura = useCallback(async () => {
-    if (!idDoCartao) return;
+  const carregarFatura = useCallback(
+    async (semCopia = false) => {
+      if (!idDoCartao) return;
 
-    setEstadoDaFatura(null);
-    const leitura = await buscarLeitura<RespostaDeFaturas>(
-      `/api/card-invoices?account_id=${encodeURIComponent(
-        idDoCartao
-      )}&month=${mes}`
-    );
+      // `null` aqui nao e so "sem numero": o guarda de carregamento la embaixo
+      // e `carregandoContas || estadoDaFatura === null`, entao zerar troca a
+      // TELA INTEIRA por um spinner. No gesto do botao isso apagaria o cartao
+      // que a pessoa estava olhando -- e nao o devolveria se a leitura
+      // falhasse. A releitura pedida a mao vai POR CIMA do que ja esta na tela
+      // (HMO-477).
+      if (!semCopia) setEstadoDaFatura(null);
 
-    setEstadoDaFatura(leitura.estado);
-    // So sobrescreve quando houve corpo: zerar no caminho de falha apagaria da
-    // tela a fatura que uma busca anterior ja tinha trazido, e a lista sumiria
-    // ao perder o sinal -- mesma regra do `useContas`.
-    if (leitura.dados) {
-      setFaturas(leitura.dados.invoices ?? []);
-      // SEM `?? null` aqui, de proposito: o campo vem AUSENTE quando a consulta
-      // da categoria reservada falhou, e `undefined` e o que diz "nao da para
-      // conferir". Trocar por `null` transformaria a falha em "nao tem ajuste",
-      // que e a afirmacao que a tela nao pode fazer.
-      setCategoriaDeAjuste(leitura.dados.adjustment_category_id);
-    }
-  }, [idDoCartao, mes]);
+      const leitura = await buscarLeitura<RespostaDeFaturas>(
+        // `semCopia` so no botao "Atualizar" da faixa -- ver `comSemCopia`. A
+        // rota le `account_id` e `month` com `params.get` e mais nada, entao o
+        // parametro extra passa ignorado (condicao 1 de `PARAM_SEM_COPIA`).
+        comSemCopia(
+          `/api/card-invoices?account_id=${encodeURIComponent(
+            idDoCartao
+          )}&month=${mes}`,
+          semCopia
+        )
+      );
+
+      // Um "Atualizar" que nao trouxe nada nao apaga o que esta na tela. Aqui a
+      // consequencia e maior que nas outras: `estado` e o combinado das duas
+      // leituras, e com `sem-rede` a FAIXA sai da tela (ela so aparece em
+      // `do-aparelho`) levando com ela o unico botao que poderia tentar de
+      // novo. `semCopia` garante que nao havia copia para cair, entao isto quer
+      // dizer so que a rede nao respondeu AGORA.
+      if (semCopia && !leitura.dados) {
+        toast.error(AVISO_ATUALIZAR_FALHOU, { id: ID_DO_AVISO_ATUALIZAR });
+        return;
+      }
+
+      setEstadoDaFatura(leitura.estado);
+      // So sobrescreve quando houve corpo: zerar no caminho de falha apagaria da
+      // tela a fatura que uma busca anterior ja tinha trazido, e a lista sumiria
+      // ao perder o sinal -- mesma regra do `useContas`.
+      if (leitura.dados) {
+        setFaturas(leitura.dados.invoices ?? []);
+        // SEM `?? null` aqui, de proposito: o campo vem AUSENTE quando a consulta
+        // da categoria reservada falhou, e `undefined` e o que diz "nao da para
+        // conferir". Trocar por `null` transformaria a falha em "nao tem ajuste",
+        // que e a afirmacao que a tela nao pode fazer.
+        setCategoriaDeAjuste(leitura.dados.adjustment_category_id);
+      }
+    },
+    [idDoCartao, mes]
+  );
 
   useEffect(() => {
+    // SEM argumento: a primeira carga tem de poder cair na copia do aparelho.
     carregarFatura();
   }, [carregarFatura]);
 
   const estado = estadoDaTela([estadoDasContas, estadoDaFatura]);
 
-  const recarregar = useCallback(() => {
-    recarregarContas();
-    carregarFatura();
-  }, [recarregarContas, carregarFatura]);
+  /**
+   * As DUAS leituras da tela, juntas.
+   *
+   * `semCopia` atravessa as duas (HMO-477): o cabecalho vem do CADASTRO e os
+   * gastos vem da FATURA, e `estado` e a mais pessimista das duas. Furar o
+   * cache de so uma deixaria a faixa na tela apontando para o momento da outra.
+   *
+   * As duas se guardam sozinhas contra o "Atualizar" que falha, e o aviso das
+   * duas tem o mesmo `id`: um clique, um aviso, mesmo com as duas falhando.
+   */
+  const recarregar = useCallback(
+    (semCopia = false) => {
+      recarregarContas(semCopia);
+      carregarFatura(semCopia);
+    },
+    [recarregarContas, carregarFatura]
+  );
 
   /**
    * Apagar uma parcela desta fatura, no alcance escolhido (HMO-228).
@@ -705,11 +752,22 @@ function GastosDoCartao() {
   // contaria a um estranho que aquele id existe.
   if (!conta) {
     if (estado === "sem-rede") {
-      return <PainelSemRede oQue="este cartão" aoTentarDeNovo={recarregar} />;
+      // SEM `true`, ao contrario da faixa: `sem-rede` significa que nao ha
+      // copia no aparelho, entao nao ha cache para furar e a tentativa normal
+      // ja vai na rede. A seta e obrigatoria de todo jeito, pelo `MouseEvent`
+      // que o `onClick` passaria como `semCopia`.
+      return (
+        <PainelSemRede oQue="este cartão" aoTentarDeNovo={() => recarregar()} />
+      );
     }
     if (estado === "erro-do-servidor") {
+      // SEM `true` pelo motivo de cima: o servidor RESPONDEU (500), e resposta
+      // de erro nao vira copia no cache.
       return (
-        <PainelErroDoServidor oQue="este cartão" aoTentarDeNovo={recarregar} />
+        <PainelErroDoServidor
+          oQue="este cartão"
+          aoTentarDeNovo={() => recarregar()}
+        />
       );
     }
 
@@ -734,7 +792,16 @@ function GastosDoCartao() {
         <FaixaDadoDoAparelho
           guardadoEm={guardadoEm}
           soLeitura
-          aoTentarDeNovo={recarregar}
+          // `() => recarregar(true)` -- O BOTAO QUE FURA O CACHE (HMO-477).
+          //
+          // Sem o `true` as duas releituras voltam das MESMAS copias do
+          // NetworkFirst (sete dias), com a mesma faixa e o mesmo momento: um
+          // botao que nao muda nada. E a seta nao e estilo -- a faixa liga a
+          // prop direto no `onClick`, e `aoTentarDeNovo={recarregar}` passaria
+          // o `MouseEvent` como `semCopia`, que e truthy: as duas leituras
+          // furariam o cache em TODA releitura (apagar parcela, ajustar), sem
+          // ninguem ter pedido.
+          aoTentarDeNovo={() => recarregar(true)}
         />
       )}
 

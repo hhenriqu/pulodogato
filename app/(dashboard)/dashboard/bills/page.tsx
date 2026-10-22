@@ -106,7 +106,10 @@ import {
 } from "@/lib/agenda-do-cartao";
 import { copiaDaPrevisao, direcaoDaAgenda } from "@/lib/previsto-x-realizado";
 import {
+  AVISO_ATUALIZAR_FALHOU,
   buscarLeitura,
+  comSemCopia,
+  ID_DO_AVISO_ATUALIZAR,
   podeAfirmarVazio,
   podeMostrarNumero,
   type EstadoDaLeitura,
@@ -323,7 +326,7 @@ export default function BillsPage() {
     setDialogAvulsa(aberto);
   }, []);
 
-  const carregar = useCallback(async () => {
+  const carregar = useCallback(async (semCopia = false) => {
     // Seis buscas, e o `Promise.all` de `fetch` cru tinha um efeito que nao
     // se ve lendo o codigo: basta UMA rejeitar para o catch engolir as outras
     // cinco. Sem rede as seis rejeitam, mas online bastava a rede oscilar em
@@ -331,25 +334,61 @@ export default function BillsPage() {
     //
     // `buscarLeitura` nao rejeita: cada busca volta com o seu proprio estado,
     // e uma nao derruba mais as outras.
+    //
+    // AS SEIS FURAM O CACHE JUNTAS quando `semCopia` (HMO-477). Nao e zelo: as
+    // tres secoes e os dois totais desta tela sao montados cruzando as seis
+    // respostas (a agenda com as contas, com as categorias, com os grupos).
+    // Furar o cache de so uma entregaria uma tela MISTA -- a agenda de agora
+    // explicada por um cadastro de ontem -- que e pior que a copia inteira de
+    // ontem, porque nada na tela diz que as partes sao de momentos diferentes.
+    //
+    // As seis rotas leem a querystring com `params.get` (`status`, `months`) ou
+    // nao leem nenhuma, entao o parametro extra passa ignorado nas seis -- e a
+    // condicao 1 de `PARAM_SEM_COPIA`, conferida rota por rota.
+    //
+    // E `comSemCopia` escolhe o separador: tres destas URLs ja tem `?` e tres
+    // nao tem, e um `&` colado numa sem `?` viraria outro CAMINHO (404).
     const [agenda, regras, cats, contas, resumo, gruposResp] = await Promise.all([
       buscarLeitura<{
         scheduled?: LinhaDaAgendaOuFatura[];
         cards_without_due_day?: FaturaSemVencimento[];
         /** Quem esta olhando (HMO-411) -- ver o `setMeuUserId` abaixo. */
         meu_user_id?: string;
-      }>("/api/scheduled-transactions?status=open"),
-      buscarLeitura<{ rules?: RecurringRule[] }>("/api/recurring-rules"),
-      buscarLeitura<{ categories?: TransactionCategory[] }>(
-        "/api/personal-finance/categories"
+      }>(comSemCopia("/api/scheduled-transactions?status=open", semCopia)),
+      buscarLeitura<{ rules?: RecurringRule[] }>(
+        comSemCopia("/api/recurring-rules", semCopia)
       ),
-      buscarLeitura<{ accounts?: FinancialAccount[] }>("/api/financial-accounts"),
+      buscarLeitura<{ categories?: TransactionCategory[] }>(
+        comSemCopia("/api/personal-finance/categories", semCopia)
+      ),
+      buscarLeitura<{ accounts?: FinancialAccount[] }>(
+        comSemCopia("/api/financial-accounts", semCopia)
+      ),
       buscarLeitura<{ fixed_monthly_cost?: number }>(
-        "/api/scheduled-transactions/summary?months=1"
+        comSemCopia("/api/scheduled-transactions/summary?months=1", semCopia)
       ),
       buscarLeitura<{ groups?: { id: string; name: string }[] }>(
-        "/api/expense-groups"
+        comSemCopia("/api/expense-groups", semCopia)
       ),
     ]);
+
+    // UM "ATUALIZAR" QUE NAO TROUXE NADA NAO APAGA O QUE ESTA NA TELA.
+    //
+    // A guarda olha a AGENDA, e nao as seis: e a agenda que governa o `estado`
+    // da pagina, e e com `sem-rede` que o painel SUBSTITUI as tres secoes e os
+    // dois totais. As outras cinco ja sobrevivem sozinhas a uma leitura sem
+    // corpo (`if (x.dados)` em cada uma), entao uma delas falhar sozinha nao
+    // apaga nada -- so deixa aquela parte com o dado de antes, que e o que a
+    // tela ja fazia.
+    //
+    // `semCopia` garante que nao havia copia para cair, entao "nao trouxe
+    // nada" quer dizer so que a rede nao respondeu AGORA. Limpar aqui puniria
+    // quem apertou o botao: as contas previstas que ela ainda podia consultar
+    // sairiam da tela, e nao voltam sem recarregar a pagina.
+    if (semCopia && !agenda.dados) {
+      toast.error(AVISO_ATUALIZAR_FALHOU, { id: ID_DO_AVISO_ATUALIZAR });
+      return;
+    }
 
     // A agenda e a tela: e dela que saem as tres secoes e os dois totais. O
     // estado dela e o estado da pagina.
@@ -1268,19 +1307,34 @@ export default function BillsPage() {
         <FaixaDadoDoAparelho
           guardadoEm={guardadoEm}
           soLeitura
-          aoTentarDeNovo={carregar}
+          // `() => carregar(true)` -- O BOTAO QUE FURA O CACHE (HMO-477).
+          //
+          // Sem o `true` as seis releituras voltam das MESMAS copias do
+          // NetworkFirst (sete dias), com a mesma faixa e o mesmo momento: um
+          // botao que nao muda nada. E a seta nao e estilo -- a faixa liga a
+          // prop direto no `onClick`, e `aoTentarDeNovo={carregar}` passaria o
+          // `MouseEvent` como `semCopia`, que e truthy: as seis leituras
+          // furariam o cache em TODA releitura (confirmar, pagar fatura, criar
+          // avulsa, mexer em regra fixa), apagando a leitura offline da tela
+          // mais pesada do app -- que e justamente onde ela mais serve.
+          aoTentarDeNovo={() => carregar(true)}
         />
       )}
 
       {estado === "sem-rede" ? (
+        // SEM `true`, ao contrario da faixa: `sem-rede` significa que nao ha
+        // copia no aparelho, entao nao ha cache para furar e a tentativa normal
+        // ja vai na rede. A seta continua obrigatoria, pelo `MouseEvent`.
         <PainelSemRede
           oQue="as contas previstas"
-          aoTentarDeNovo={carregar}
+          aoTentarDeNovo={() => carregar()}
         />
       ) : estado === "erro-do-servidor" ? (
+        // SEM `true` pelo motivo de cima: o servidor RESPONDEU (500), e
+        // resposta de erro nao vira copia no cache.
         <PainelErroDoServidor
           oQue="as contas previstas"
-          aoTentarDeNovo={carregar}
+          aoTentarDeNovo={() => carregar()}
         />
       ) : (
         <>

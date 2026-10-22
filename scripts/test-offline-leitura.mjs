@@ -20,7 +20,7 @@
 // modo offline subiu sem as categorias no PR #57.
 // =====================================================
 
-import test from "node:test";
+import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -32,8 +32,12 @@ const {
   podeAfirmarVazio,
   descreverMomento,
   buscarLeitura,
+  comSemCopia,
   MARCA_DO_APARELHO,
   MARCA_GUARDADO_EM,
+  PARAM_SEM_COPIA,
+  AVISO_ATUALIZAR_FALHOU,
+  ID_DO_AVISO_ATUALIZAR,
 } = await import("../.tmp-offline-leitura/offline-leitura.js");
 
 /** Uma resposta como `classificarLeitura` a enxerga. */
@@ -302,10 +306,46 @@ const QUEM_LE = [
     caminho: "app/(dashboard)/dashboard/recurrences/page.tsx",
   },
   { rotulo: "lib/hooks/useContas.ts", caminho: "lib/hooks/useContas.ts" },
+  // As DUAS telas de cartoes leem a fatura por conta propria, alem do cadastro
+  // que vem do hook. Elas estavam fora das duas listas -- nem aqui, nem em
+  // `QUEM_NAO_LE` -- e por isso eram as unicas telas precacheadas onde um
+  // `fetch(` de leitura podia voltar sem nada reprovar (achado na HMO-477).
+  {
+    rotulo: "cartoes/page.tsx (a fatura do mes)",
+    caminho: "app/(dashboard)/dashboard/cartoes/page.tsx",
+  },
+  {
+    rotulo: "cartoes/[id]/page.tsx (a fatura do cartao)",
+    caminho: "app/(dashboard)/dashboard/cartoes/[id]/page.tsx",
+  },
 ];
 
-/** Escrita continua liberada: um POST que falha a pessoa ve falhar. */
-const E_ESCRITA = (trecho) => /method:[^\n]*"(POST|PATCH|PUT|DELETE)"/.test(trecho);
+/**
+ * Escrita continua liberada: um POST que falha a pessoa ve falhar.
+ *
+ * A regra e pela NEGATIVA -- "tem `method:` e nao e `"GET"`" -- e nao por uma
+ * lista de verbos. A lista (`"(POST|PATCH|PUT|DELETE)"`) exigia o verbo como
+ * TEXTO no proprio `fetch`, e por isso nao via a forma em que ele chega por
+ * variavel:
+ *
+ *     const resposta = await fetch(pedido.url, { method: pedido.metodo });
+ *
+ * Esse e o Excluir da tela de um cartao, e `pedido.metodo` e tipado como o
+ * literal `"DELETE"` (`lib/acoes-da-fatura.ts`) -- escrita, sem duvida. Com a
+ * lista de verbos ele era classificado como LEITURA CRUA, e a unica razao pela
+ * qual nada reprovava e que aquele arquivo nao estava em nenhuma das duas
+ * listas (achado ao inclui-lo, HMO-477).
+ *
+ * Pela negativa a classificacao segue a pergunta que a guarda faz de verdade
+ * ("isto e uma leitura que deveria passar por `buscarLeitura`?"), e de brinde
+ * cobre `HEAD` e qualquer verbo novo sem precisar reeditar a lista.
+ */
+const E_ESCRITA = (trecho) => {
+  const comMetodo = trecho.match(/method:\s*([^,\n}]+)/);
+  // Sem `method:`, `fetch` e GET -- e GET e leitura.
+  if (!comMetodo) return false;
+  return !/^["'`]GET["'`]$/.test(comMetodo[1].trim());
+};
 
 /**
  * As telas precacheadas que nao podem ler por conta propria.
@@ -353,6 +393,10 @@ const QUEM_NAO_LE = [
       },
     ],
   },
+  // Esta tela esta nas DUAS listas, e nao e engano: ela DELEGA o cadastro ao
+  // `useContas` (que e o que se mede aqui) e le a FATURA do mes por conta
+  // propria, com `buscarLeitura` (que e o que se mede em `QUEM_LE`). As duas
+  // assercoes falam de buscas diferentes do mesmo arquivo.
   {
     caminho: "app/(dashboard)/dashboard/cartoes/page.tsx",
     leiturasDeclaradas: [],
@@ -456,5 +500,444 @@ test("as telas que delegam a leitura nao buscam por fora do hook", () => {
           `  ${porque}`
       );
     }
+  }
+});
+
+// =========================================================================
+// O "ATUALIZAR" DAS SETE TELAS -- HMO-477
+// =========================================================================
+// A HMO-401 ligou o botao no fluxo de caixa e a HMO-457 nas tres telas de
+// movimentacao. A HMO-477 ligou as cinco que faltavam, e dai nasceu o problema
+// que estas guardas medem: a fiacao e IGUAL em sete arquivos, cada um com a sua
+// suite, e nenhuma delas olha para os outros seis. Um botao desligado nao quebra
+// teste nenhum -- ele so devolve a mesma tela com o mesmo momento.
+//
+// Sao tres decisoes por tela, e as tres falham CALADAS:
+//
+//   1. a URL leva o parametro (senao o NetworkFirst devolve a copia de sete
+//      dias e o botao nao muda nada);
+//   2. o handler vai dentro de uma SETA (senao o `MouseEvent` do `onClick`
+//      chega como `semCopia` e TODA releitura fura o cache);
+//   3. um "Atualizar" que falha nao apaga o que esta na tela.
+
+/**
+ * As sete telas que tem o botao, e o nome da funcao que o botao chama.
+ *
+ * O nome MUDA por tela (`carregar` nas cinco de uma leitura, `recarregar` nas
+ * duas de cartoes, que juntam o cadastro e a fatura), e e por isso que ele e
+ * dado aqui em vez de procurado: uma guarda que aceitasse "qualquer nome"
+ * passaria verde com a seta chamando a funcao errada.
+ */
+const TELAS_COM_ATUALIZAR = [
+  {
+    rotulo: "fluxo de caixa (HMO-401)",
+    caminho: "app/(dashboard)/dashboard/cash-flow/page.tsx",
+    leitor: "carregar",
+  },
+  {
+    rotulo: "despesas/receitas/transferencias (HMO-457)",
+    caminho: "components/movimentacoes/ListaDeMovimentacao.tsx",
+    leitor: "carregar",
+  },
+  {
+    rotulo: "contas a pagar",
+    caminho: "app/(dashboard)/dashboard/bills/page.tsx",
+    leitor: "carregar",
+  },
+  {
+    rotulo: "cartoes",
+    caminho: "app/(dashboard)/dashboard/cartoes/page.tsx",
+    leitor: "recarregar",
+  },
+  {
+    rotulo: "um cartao",
+    caminho: "app/(dashboard)/dashboard/cartoes/[id]/page.tsx",
+    leitor: "recarregar",
+  },
+  {
+    rotulo: "recorrencias",
+    caminho: "app/(dashboard)/dashboard/recurrences/page.tsx",
+    leitor: "carregar",
+  },
+  {
+    rotulo: "contas",
+    caminho: "app/(dashboard)/dashboard/contas/page.tsx",
+    leitor: "carregar",
+  },
+];
+
+const RAIZ_DO_REPO = path.join(import.meta.dirname, "..");
+const fonteDe = (caminho) =>
+  fs.readFileSync(path.join(RAIZ_DO_REPO, caminho), "utf8");
+
+/**
+ * A fonte SEM as linhas de comentario.
+ *
+ * Nao e capricho: os sete arquivos explicam o defeito EM PROSA, e a prosa cita
+ * a forma errada com todas as letras (``aoTentarDeNovo={carregar}` passaria o
+ * MouseEvent`). Uma guarda que lesse o arquivo cru acharia a forma proibida no
+ * comentario de quem a proibiu, e reprovaria o codigo certo -- ou, pior, acharia
+ * a forma CERTA num comentario e absolveria a fiacao errada.
+ */
+const semComentarios = (fonte) =>
+  fonte
+    .split("\n")
+    .filter((linha) => {
+      const t = linha.trim();
+      return !t.startsWith("//") && !t.startsWith("*") && !t.startsWith("/*");
+    })
+    .join("\n");
+
+/** O bloco JSX de uma tag, da abertura ao `/>` que a fecha. */
+function blocoDaTag(fonte, tag) {
+  const abre = fonte.indexOf(`<${tag}`);
+  if (abre === -1) return null;
+  const fecha = fonte.indexOf("/>", abre);
+  return fecha === -1 ? null : fonte.slice(abre, fecha + 2);
+}
+
+test("as sete telas chamam o Atualizar dentro de uma SETA", () => {
+  // DECISAO 2, e ela vale para TODO `aoTentarDeNovo` do arquivo -- a faixa e os
+  // dois paineis. `FaixaDadoDoAparelho` liga a prop direto no `onClick`
+  // (`onClick={aoTentarDeNovo}`), entao passar a funcao por referencia a chama
+  // COM o `MouseEvent` do clique. Um evento e truthy: `semCopia` chegaria
+  // verdadeiro em toda releitura -- depois de confirmar, pagar, editar,
+  // arquivar -- e cada uma apagaria a leitura offline da tela. Nada quebra, e a
+  // tela parece certa.
+  for (const { rotulo, caminho } of TELAS_COM_ATUALIZAR) {
+    const codigo = semComentarios(fonteDe(caminho));
+
+    for (const linha of codigo.split("\n")) {
+      if (!linha.includes("aoTentarDeNovo=")) continue;
+      assert.ok(
+        linha.includes("aoTentarDeNovo={() =>"),
+        `${rotulo}: ${caminho} passa o handler por REFERENCIA -- o ` +
+          "`MouseEvent` do onClick vira `semCopia` e toda releitura fura o " +
+          `cache:\n  ${linha.trim()}`
+      );
+    }
+  }
+});
+
+test("nas sete, o botao da FAIXA pede a leitura sem a copia", () => {
+  // DECISAO 1, e a assercao e ancorada no bloco da FAIXA de proposito. Uma
+  // guarda que procurasse `(true)` no arquivo inteiro ficaria verde com o
+  // `true` no painel de sem-rede e a faixa sem ele -- e a faixa e a unica das
+  // tres que precisa dele, porque e a unica que aparece quando HA copia no
+  // aparelho para o NetworkFirst servir de novo.
+  for (const { rotulo, caminho, leitor } of TELAS_COM_ATUALIZAR) {
+    const codigo = semComentarios(fonteDe(caminho));
+    const faixa = blocoDaTag(codigo, "FaixaDadoDoAparelho");
+
+    assert.ok(faixa, `${rotulo}: nao achei o bloco de <FaixaDadoDoAparelho`);
+    assert.ok(
+      faixa.includes(`aoTentarDeNovo={() => ${leitor}(true)}`),
+      `${rotulo}: o "Atualizar" da faixa NAO fura o cache.\n` +
+        `  esperado \`aoTentarDeNovo={() => ${leitor}(true)}\`\n` +
+        `  sem o \`true\` a releitura volta da MESMA copia do NetworkFirst ` +
+        "(sete dias), com a mesma faixa e o mesmo momento -- um botao que nao " +
+        `muda nada.\n  achado:${faixa.split("\n").filter((l) => l.includes("aoTentarDeNovo")).join("")}`
+    );
+  }
+
+  // E o `true` e SO da faixa. Nos dois paineis nao ha copia para furar --
+  // `sem-rede` quer dizer que nao ha, e `erro-do-servidor` quer dizer que o
+  // servidor respondeu (e resposta de erro nao vira copia) -- entao um `true`
+  // ali seria fiacao que ninguem decidiu, escondida num arquivo que ja passou.
+  for (const { rotulo, caminho, leitor } of TELAS_COM_ATUALIZAR) {
+    const codigo = semComentarios(fonteDe(caminho));
+    const comTrue = codigo
+      .split("\n")
+      .filter((l) => l.includes(`aoTentarDeNovo={() => ${leitor}(true)}`));
+    assert.equal(
+      comTrue.length,
+      1,
+      `${rotulo}: o \`(true)\` tem de estar em UM lugar so (a faixa), e esta ` +
+        `em ${comTrue.length}:\n${comTrue.join("\n")}`
+    );
+  }
+});
+
+/**
+ * Como o parametro chega na URL, por arquivo QUE LE.
+ *
+ * Nao e a lista das telas: as tres de cartoes e contas leem pelo
+ * `useContas`, e as tres de movimentacao dividem um componente. A guarda segue
+ * o arquivo onde o `fetch` mora, que e o unico lugar onde a regressao cabe.
+ *
+ * `comSemCopia` e a forma de agora, e ela existe pelo SEPARADOR: metade destas
+ * URLs ja tem `?` e metade nao, e um `&` colado numa sem `?` nao produz
+ * parametro nenhum -- produz outro caminho, que responde 404.
+ *
+ * As duas primeiras montam a querystring na mao e estao declaradas como
+ * EXCECAO, com a forma exata: elas vieram antes do helper (HMO-401 e HMO-457) e
+ * nas duas a URL tem `?` por construcao, entao o separador nunca foi escolha.
+ * A declaracao e conferida como as outras -- se alguem reescrever aquela linha,
+ * isto fica vermelho e a decisao volta para a mesa em vez de a tela passar a
+ * nunca furar o cache calada.
+ */
+const COMO_FURA = [
+  {
+    caminho: "app/(dashboard)/dashboard/cash-flow/page.tsx",
+    forma: "query.set(PARAM_SEM_COPIA, String(Date.now()))",
+    porque:
+      "a URL e montada com URLSearchParams, que ja resolve o separador sozinho",
+  },
+  {
+    caminho: "components/movimentacoes/ListaDeMovimentacao.tsx",
+    forma: "`&${PARAM_SEM_COPIA}=${Date.now()}`",
+    porque:
+      "a query desta tela SEMPRE tem `tipo=` antes, entao o `&` e correto por " +
+      "construcao",
+  },
+  { caminho: "app/(dashboard)/dashboard/bills/page.tsx", forma: "comSemCopia(" },
+  { caminho: "app/(dashboard)/dashboard/cartoes/page.tsx", forma: "comSemCopia(" },
+  {
+    caminho: "app/(dashboard)/dashboard/cartoes/[id]/page.tsx",
+    forma: "comSemCopia(",
+  },
+  {
+    caminho: "app/(dashboard)/dashboard/recurrences/page.tsx",
+    forma: "comSemCopia(",
+  },
+  { caminho: "lib/hooks/useContas.ts", forma: "comSemCopia(" },
+];
+
+test("cada arquivo que le declara COMO o parametro entra na URL", () => {
+  for (const { caminho, forma, porque } of COMO_FURA) {
+    const codigo = semComentarios(fonteDe(caminho));
+    assert.ok(
+      codigo.includes(forma),
+      `${caminho}: a forma declarada de furar o cache nao esta mais la ` +
+        `(\`${forma}\`).\n` +
+        (porque ? `  ela era excecao porque ${porque}.\n` : "") +
+        "  se a tela passou a usar `comSemCopia`, atualize a declaracao -- e " +
+        "se ela parou de furar, o botao Atualizar voltou a nao mudar nada."
+    );
+  }
+});
+
+test("um Atualizar que falha nao apaga o que esta na tela, nos sete", () => {
+  // DECISAO 3, e e a que a HMO-477 teve de ler UMA A UMA: nao ha regra geral.
+  //
+  // Nas sete o `if (leitura.dados)` ja protegia as VARIAVEIS, e e por isso que
+  // o defeito passava por consertado. Mas quem governa o que se VE e o
+  // `estado`: com `sem-rede` o painel SUBSTITUI a lista, o total e o grafico. O
+  // dado continuava na memoria, inalcancavel, e quem apertou "Atualizar"
+  // perdia a tela que estava olhando -- sem como traze-la de volta senao
+  // recarregando a pagina.
+  //
+  // O nome da leitura muda (em `bills` sao SEIS buscas, e quem manda e a
+  // `agenda`), por isso ele e declarado em vez de procurado.
+  const QUEM_GUARDA = [
+    { caminho: "app/(dashboard)/dashboard/cash-flow/page.tsx", leitura: "leitura" },
+    {
+      caminho: "components/movimentacoes/ListaDeMovimentacao.tsx",
+      leitura: "leitura",
+    },
+    { caminho: "app/(dashboard)/dashboard/bills/page.tsx", leitura: "agenda" },
+    { caminho: "app/(dashboard)/dashboard/cartoes/page.tsx", leitura: "leitura" },
+    {
+      caminho: "app/(dashboard)/dashboard/cartoes/[id]/page.tsx",
+      leitura: "leitura",
+    },
+    {
+      caminho: "app/(dashboard)/dashboard/recurrences/page.tsx",
+      leitura: "leitura",
+    },
+    { caminho: "lib/hooks/useContas.ts", leitura: "leitura" },
+  ];
+
+  for (const { caminho, leitura } of QUEM_GUARDA) {
+    const codigo = semComentarios(fonteDe(caminho));
+
+    assert.ok(
+      codigo.includes(`if (semCopia && !${leitura}.dados)`),
+      `${caminho}: perdeu a guarda do "Atualizar" que falha ` +
+        `(\`if (semCopia && !${leitura}.dados)\`).\n` +
+        "  sem ela, o clique que nao trouxe nada escreve `sem-rede` no " +
+        "`estado` e o painel substitui o que a pessoa estava olhando."
+    );
+
+    // E a guarda tem de AVISAR. Calada, o clique fica indistinguivel de um
+    // botao morto -- que e exatamente o defeito que a HMO-457 relatou.
+    //
+    // A ancora e a CHAMADA (`toast.error(AVISO_...`), e nao o nome solto: o
+    // nome aparece tambem na linha de `import`, e com ele esta guarda ficaria
+    // VERDE para um arquivo que importa a constante e nunca a usa -- que e
+    // exatamente o estado em que o aviso desaparece da tela. Medido: o mutante
+    // que apaga so a linha do `toast.error` sobrevivia a versao anterior
+    // desta assercao.
+    assert.ok(
+      codigo.includes("toast.error(AVISO_ATUALIZAR_FALHOU"),
+      `${caminho}: a guarda ficou CALADA -- sem o aviso, o clique que nao ` +
+        "trouxe nada e indistinguivel de um botao que nao funciona."
+    );
+
+    // E o aviso leva o `id`: nas duas telas de cartoes um clique dispara DUAS
+    // leituras, e sem ele sonner empilha dois avisos identicos para um gesto.
+    assert.ok(
+      codigo.includes("{ id: ID_DO_AVISO_ATUALIZAR }"),
+      `${caminho}: o aviso perdeu o \`id\` -- nas telas de duas leituras um ` +
+        "clique passa a empilhar dois avisos iguais."
+    );
+  }
+});
+
+test("o aviso do Atualizar tem UMA escrita, e um id para nao duplicar", () => {
+  // As duas telas de cartoes fazem DUAS leituras (cadastro e fatura) e um
+  // clique so pode ver as duas falharem. O `id` igual faz sonner ATUALIZAR o
+  // aviso em vez de empilhar dois identicos para um gesto unico.
+  assert.equal(typeof ID_DO_AVISO_ATUALIZAR, "string");
+  assert.ok(ID_DO_AVISO_ATUALIZAR.length > 0);
+  assert.match(AVISO_ATUALIZAR_FALHOU, /Não deu para atualizar agora/);
+  assert.match(AVISO_ATUALIZAR_FALHOU, /continuam sendo os do aparelho/);
+
+  // E ninguem reescreve a frase a mao. Duas escritas da mesma frase divergem na
+  // primeira revisao, e a que divergir sera a da tela que menos se abre.
+  for (const { caminho } of COMO_FURA) {
+    const codigo = semComentarios(fonteDe(caminho));
+    assert.ok(
+      !codigo.includes(`"${AVISO_ATUALIZAR_FALHOU}"`),
+      `${caminho} escreve a frase do aviso a mao em vez de importar ` +
+        "`AVISO_ATUALIZAR_FALHOU` -- duas escritas divergem, e o `id` " +
+        "compartilhado para de colapsar os dois avisos num."
+    );
+  }
+});
+
+// -------------------------------------------------------------------------
+// O SEPARADOR, QUE E A RAZAO DE `comSemCopia` EXISTIR
+// -------------------------------------------------------------------------
+
+test("comSemCopia nao mexe na URL quando nao pediram", () => {
+  // A metade que impede o conserto de virar outro defeito: um parametro que
+  // fosse junto em toda carga apagaria a leitura offline das telas mais
+  // pesadas -- que e exatamente onde ela serve. E a condicao 2 do JSDoc.
+  for (const url of [
+    "/api/recurrences",
+    "/api/card-invoices?month=2026-10",
+    "/api/financial-accounts?include_inactive=1",
+  ]) {
+    assert.equal(comSemCopia(url, false), url);
+    assert.ok(!comSemCopia(url, false).includes(PARAM_SEM_COPIA));
+  }
+});
+
+test("comSemCopia escolhe ? ou & olhando a URL -- as 8 rotas de verdade", () => {
+  // A tabela e das URLs REAIS das sete telas, e nao de exemplos: e o caso
+  // `/api/recurrences` (sem `?`) que o helper existe para nao errar. Um `&`
+  // colado nela daria `/api/recurrences&semCopia=1`, que nao e um parametro --
+  // e outro CAMINHO, e a rota responde 404. A tela cairia no painel de erro e
+  // o relato seria "sem rede" num aparelho com rede.
+  const CASOS = [
+    // Sem querystring: tem de ganhar `?`.
+    ["/api/recurrences", "/api/recurrences?semCopia=777"],
+    ["/api/recurring-rules", "/api/recurring-rules?semCopia=777"],
+    [
+      "/api/personal-finance/categories",
+      "/api/personal-finance/categories?semCopia=777",
+    ],
+    ["/api/financial-accounts", "/api/financial-accounts?semCopia=777"],
+    ["/api/expense-groups", "/api/expense-groups?semCopia=777"],
+    // Com querystring: tem de ganhar `&`.
+    [
+      "/api/recurrences?status=all",
+      "/api/recurrences?status=all&semCopia=777",
+    ],
+    [
+      "/api/scheduled-transactions?status=open",
+      "/api/scheduled-transactions?status=open&semCopia=777",
+    ],
+    [
+      "/api/scheduled-transactions/summary?months=1",
+      "/api/scheduled-transactions/summary?months=1&semCopia=777",
+    ],
+    [
+      "/api/financial-accounts?include_inactive=1",
+      "/api/financial-accounts?include_inactive=1&semCopia=777",
+    ],
+    [
+      "/api/card-invoices?month=2026-10",
+      "/api/card-invoices?month=2026-10&semCopia=777",
+    ],
+    [
+      "/api/card-invoices?account_id=abc&month=2026-10",
+      "/api/card-invoices?account_id=abc&month=2026-10&semCopia=777",
+    ],
+  ];
+
+  for (const [url, esperado] of CASOS) {
+    assert.equal(comSemCopia(url, true, 777), esperado, `separador errado em ${url}`);
+  }
+});
+
+test("a URL furada continua sendo LIDA do mesmo jeito pela rota", () => {
+  // A prova de que o desvio e do service worker e nao chega como regra no
+  // servidor (condicao 1 do JSDoc). `URLSearchParams` aqui faz o papel do
+  // `params.get` das oito rotas: o que elas leem nao pode mudar.
+  const antes = new URL("http://x/api/card-invoices?account_id=abc&month=2026-10");
+  const depois = new URL(
+    `http://x${comSemCopia("/api/card-invoices?account_id=abc&month=2026-10", true, 777)}`
+  );
+
+  assert.equal(depois.pathname, antes.pathname, "o CAMINHO mudou");
+  for (const chave of ["account_id", "month"]) {
+    assert.equal(
+      depois.searchParams.get(chave),
+      antes.searchParams.get(chave),
+      `a rota passaria a ler outro \`${chave}\``
+    );
+  }
+  assert.equal(depois.searchParams.get(PARAM_SEM_COPIA), "777");
+
+  // E o caso que mais importa: sem `?`, o parametro entra como PARAMETRO e nao
+  // como parte do caminho.
+  const semQuery = new URL(`http://x${comSemCopia("/api/recurrences", true, 777)}`);
+  assert.equal(semQuery.pathname, "/api/recurrences");
+  assert.equal(semQuery.searchParams.get(PARAM_SEM_COPIA), "777");
+});
+
+test("a chave do cache MUDA entre dois cliques", () => {
+  // O parametro existe para trocar a chave do Cache Storage. Dois cliques com o
+  // mesmo valor cairiam na copia que o PRIMEIRO acabou de guardar, e o segundo
+  // "Atualizar" voltaria a nao mudar nada.
+  assert.notEqual(
+    comSemCopia("/api/recurrences", true, 1),
+    comSemCopia("/api/recurrences", true, 2)
+  );
+});
+
+test("e o valor PADRAO e o relogio, nao uma constante", () => {
+  // ESTE CASO NASCEU DE UM MUTANTE SOBREVIVENTE (HMO-477).
+  //
+  // O caso acima passa `agora` a mao, nos dois lados -- e por isso ele ficava
+  // VERDE com o padrao trocado por `agora: number = 0`. Mas quem chama em
+  // producao nao passa `agora`: as sete telas chamam `comSemCopia(url,
+  // semCopia)` e dependem do padrao. Com uma constante ali, TODO clique monta a
+  // mesma URL, o segundo "Atualizar" cai na copia que o primeiro acabou de
+  // guardar, e o botao volta a nao mudar nada -- o defeito da issue, de volta,
+  // por uma linha que nenhuma assercao olhava.
+  //
+  // O relogio e congelado (`mock.timers`) e nao lido duas vezes: dois
+  // `Date.now()` seguidos cabem no MESMO milissegundo, e um `notEqual` entre
+  // eles seria um teste que falha as vezes. Ver o relato de
+  // "relogio congelado em teste node".
+  mock.timers.enable({ apis: ["Date"], now: 1_700_000_000_000 });
+  try {
+    assert.equal(
+      comSemCopia("/api/recurrences", true),
+      `/api/recurrences?${PARAM_SEM_COPIA}=1700000000000`,
+      "o padrao de `agora` nao e o relogio -- a chave do cache ficou fixa"
+    );
+
+    // E ele ANDA: a mesma chamada, um segundo depois, pede outra chave.
+    mock.timers.tick(1000);
+    assert.equal(
+      comSemCopia("/api/recurrences", true),
+      `/api/recurrences?${PARAM_SEM_COPIA}=1700000001000`
+    );
+  } finally {
+    mock.timers.reset();
   }
 });

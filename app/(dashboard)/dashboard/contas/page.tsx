@@ -442,7 +442,21 @@ function TelaDeContas() {
         <FaixaDadoDoAparelho
           guardadoEm={guardadoEm}
           soLeitura
-          aoTentarDeNovo={carregar}
+          // `() => carregar(true)` -- O BOTAO QUE FURA O CACHE (HMO-477).
+          //
+          // `true` e o que faz dele um botao de verdade: a releitura sem o
+          // parametro volta do MESMO cache (NetworkFirst, copia de sete dias),
+          // com a mesma faixa e o mesmo momento -- a pessoa aperta "Atualizar"
+          // e nada muda. Era o defeito da HMO-457, medido tambem aqui.
+          //
+          // E a seta nao e estilo: a faixa liga a prop direto no `onClick`,
+          // entao `aoTentarDeNovo={carregar}` chamaria o handler COM o
+          // `MouseEvent`. Um evento e verdadeiro, logo `semCopia` chegaria
+          // truthy e TODA releitura (salvar, arquivar, reativar, que passam
+          // pelo mesmo `carregar`) furaria o cache -- apagando a leitura
+          // offline da tela sem ninguem ter pedido, e com a tela parecendo
+          // certa.
+          aoTentarDeNovo={() => carregar(true)}
         />
       )}
 
@@ -452,9 +466,18 @@ function TelaDeContas() {
         tela, e numero na tela e lido.
       */}
       {estado === "sem-rede" ? (
-        <PainelSemRede oQue="suas contas" aoTentarDeNovo={carregar} />
+        // SEM `true`, ao contrario da faixa: aqui nao ha copia no aparelho -- e
+        // e justamente o que `sem-rede` significa -- entao nao ha cache para
+        // furar, e a tentativa normal ja vai na rede. A seta continua sendo
+        // obrigatoria, pelo `MouseEvent` do `onClick`.
+        <PainelSemRede oQue="suas contas" aoTentarDeNovo={() => carregar()} />
       ) : estado === "erro-do-servidor" ? (
-        <PainelErroDoServidor oQue="suas contas" aoTentarDeNovo={carregar} />
+        // SEM `true` pelo motivo da linha de cima: o servidor RESPONDEU (500),
+        // e resposta de erro nao vira copia no cache. Furar nao mudaria nada.
+        <PainelErroDoServidor
+          oQue="suas contas"
+          aoTentarDeNovo={() => carregar()}
+        />
       ) : (
         <>
           <Card>

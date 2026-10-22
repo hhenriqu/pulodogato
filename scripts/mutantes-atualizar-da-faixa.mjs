@@ -82,22 +82,17 @@ const mutantes = [
     "aoTentarDeNovo={() => carregar(true)}",
     "aoTentarDeNovo={() => carregar()}",
   ],
+  // As ancoras 4 e 5 seguiram a frase para `lib/offline-leitura` na HMO-477
+  // (`AVISO_ATUALIZAR_FALHOU` e `ID_DO_AVISO_ATUALIZAR`): as sete telas dizem a
+  // mesma coisa, e duas escritas divergiriam. O que se mede nao mudou.
   [
     "4. o Atualizar que falha volta a APAGAR a lista do aparelho",
-    `      if (semCopia && !leitura.dados) {
-        toast.error(
-          "Não deu para atualizar agora. Os números continuam sendo os do aparelho."
-        );
-        setCarregando(false);
-        return;
-      }`,
-    "",
+    `      if (semCopia && !leitura.dados) {`,
+    `      if (false) {`,
   ],
   [
     "5. o Atualizar que falha fica CALADO (a guarda fica, o aviso sai)",
-    `        toast.error(
-          "Não deu para atualizar agora. Os números continuam sendo os do aparelho."
-        );`,
+    "        toast.error(AVISO_ATUALIZAR_FALHOU, { id: ID_DO_AVISO_ATUALIZAR });",
     "",
   ],
   [

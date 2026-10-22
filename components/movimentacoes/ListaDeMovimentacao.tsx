@@ -126,7 +126,9 @@ import {
   linhaParaPagarDaTela,
 } from "@/lib/pagamento-da-fatura";
 import {
+  AVISO_ATUALIZAR_FALHOU,
   buscarLeitura,
+  ID_DO_AVISO_ATUALIZAR,
   PARAM_SEM_COPIA,
   podeAfirmarVazio,
   podeMostrarNumero,
@@ -379,9 +381,12 @@ export function ListaDeMovimentacao({
        * faixa continua dizendo isso com o momento certo.
        */
       if (semCopia && !leitura.dados) {
-        toast.error(
-          "Não deu para atualizar agora. Os números continuam sendo os do aparelho."
-        );
+        // A frase e o `id` moram em `lib/offline-leitura` desde a HMO-477: as
+        // sete telas dizem isto, e duas escritas da mesma frase divergem na
+        // primeira revisao. O `id` tambem nao e enfeite -- nas telas de cartoes
+        // um clique dispara DUAS leituras, e sem ele sonner empilharia dois
+        // avisos identicos para um gesto so.
+        toast.error(AVISO_ATUALIZAR_FALHOU, { id: ID_DO_AVISO_ATUALIZAR });
         setCarregando(false);
         return;
       }
