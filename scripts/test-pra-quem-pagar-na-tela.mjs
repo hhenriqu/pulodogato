@@ -557,7 +557,17 @@ try {
       "--headless",
       "--no-sandbox",
       "--disable-gpu",
-      "--window-size=390,844", // iPhone: e onde esta tela e usada
+      // iPhone: e onde esta tela e usada
+      //
+      // E A JANELA NAO E DE 390px (HMO-463): o headless desta maquina clampa a
+      // viewport em 500px -- medido, `--window-size=390,844` e
+      // `--window-size=320,844` dao os dois `innerWidth` 500, e 800 da 800.
+      // Nada nesta sonda afirma sobre LARGURA, entao nenhuma assercao daqui
+      // mente; mas uma medida de recorte escrita sobre esta receita mediria
+      // 500px com o nome de 390. Quem for medir recorte crava a largura no
+      // CSS da caixa e le `getBoundingClientRect().width` de volta, como
+      // `scripts/test-mybank-na-tela.mjs` faz.
+      "--window-size=390,844",
       "--dump-dom",
       `file://${paginaEscrita}`,
     ],

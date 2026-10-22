@@ -319,12 +319,109 @@ const PARCELA_QUE_EU_DEVO = "f1111111-1111-4111-b111-111111111111";
 const PARCELA_NA_AGENDA = "f2222222-2222-4222-b222-222222222222";
 const PARCELA_NA_AGENDA_AVISADA = "f3333333-3333-4333-b333-333333333333";
 
+// ---------------------------------------------------------------------------
+// O CSS DO RECORTE -- as utilitarias a mao (HMO-463)
+// ---------------------------------------------------------------------------
+// ATE A HMO-463 ESTA PAGINA NAO TINHA CSS NENHUM, e C6 media uma tela sem
+// geometria: `getComputedStyle(.flex).display` respondia `block` e
+// `box-sizing` respondia `content-box` -- MEDIDO. Toda classe do Tailwind era
+// INERTE, entao o `flex`, o `truncate` e o `min-w-0` que fazem a linha caber
+// nao participavam da medida. Um `scrollWidth <= clientWidth` ali falava de
+// paragrafos empilhados, e nao da tela que o app publica.
+//
+// O QUE ESTA AQUI, E DE ONDE SAIU: as 74 classes que as tres montagens medidas
+// renderizam foram lidas do DOM (`classList` de cada no de `raiz-a`, `raiz-c` e
+// `raiz-e`), e deste conjunto ficaram as que mexem com LARGURA. Cor, sombra,
+// anel de foco e `space-y-*` (vertical) ficaram de fora de proposito: elas
+// alongariam o arquivo sem mudar um pixel horizontal.
+//
+// AS DUAS REGRAS DE CIMA SAO O PREFLIGHT DO TAILWIND, e nao enfeite:
+//
+//   * `box-sizing: border-box` no `*` -- sem ele o `p-6` do `<Card>` somaria
+//     por FORA e a medida acusaria um estouro que o app nao tem;
+//   * `button, input, select { font-family: inherit; font-size: 100%; padding:
+//     0 }` -- MEDIDO: sem essa linha os botoes ficam com a fonte e o padding
+//     padrao do Chromium (nao os do app), e a linha de acoes do emprestimo
+//     estourava 288px em 10px. Um "defeito" que era do estilo do agente de
+//     usuario, e nao da tela. O app nao tem esse estouro porque o preflight
+//     zera esse padding.
+//
+// O `sm:` ESTA AUSENTE DE PROPOSITO: o breakpoint e 640px e aqui se mede 390 e
+// 320, entao `sm:grid-cols-3` TEM de ser inerte -- declara-lo faria a medida
+// falar de um tablet.
+//
+// A FONTE E `sans-serif`, e o app usa Inter (`next/font/google`). As larguras
+// de texto nao batem no pixel; a `sans-serif` desta maquina (DejaVu) e mais
+// LARGA que a Inter, entao a medida erra para o lado seguro -- cabe aqui, cabe
+// no app.
+const CSS_DO_IPHONE = `
+*, *::before, *::after { box-sizing: border-box; border-width: 0; border-style: solid; }
+body { margin: 0; font-family: sans-serif; font-size: 16px; line-height: 1.5; }
+button, input, select, textarea { font-family: inherit; font-size: 100%; line-height: inherit; color: inherit; margin: 0; padding: 0; }
+
+.flex { display: flex; }
+.inline-flex { display: inline-flex; }
+.grid { display: grid; }
+.grid-cols-1 { grid-template-columns: repeat(1, minmax(0, 1fr)); }
+.flex-col { flex-direction: column; }
+.flex-wrap { flex-wrap: wrap; }
+.items-center { align-items: center; }
+.justify-between { justify-content: space-between; }
+.justify-center { justify-content: center; }
+.gap-2 { gap: 0.5rem; }
+.gap-3 { gap: 0.75rem; }
+.min-w-0 { min-width: 0px; }
+.shrink-0 { flex-shrink: 0; }
+.w-full { width: 100%; }
+.w-4 { width: 1rem; }
+.h-4 { height: 1rem; }
+.h-9 { height: 2.25rem; }
+.h-10 { height: 2.5rem; }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.whitespace-nowrap { white-space: nowrap; }
+
+.border { border-width: 1px; }
+.border-dashed { border-style: dashed; }
+.p-3 { padding: 0.75rem; }
+.p-4 { padding: 1rem; }
+.p-6 { padding: 1.5rem; }
+.pb-3 { padding-bottom: 0.75rem; }
+.pt-0 { padding-top: 0px; }
+.px-2\\.5 { padding-left: 0.625rem; padding-right: 0.625rem; }
+.px-3 { padding-left: 0.75rem; padding-right: 0.75rem; }
+.px-4 { padding-left: 1rem; padding-right: 1rem; }
+.py-0\\.5 { padding-top: 0.125rem; padding-bottom: 0.125rem; }
+.py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+
+.text-xs { font-size: 0.75rem; line-height: 1rem; }
+.text-sm { font-size: 0.875rem; line-height: 1.25rem; }
+.text-base { font-size: 1rem; line-height: 1.5rem; }
+.text-xl { font-size: 1.25rem; line-height: 1.75rem; }
+.text-2xl { font-size: 1.5rem; line-height: 2rem; }
+.font-medium { font-weight: 500; }
+.font-semibold { font-weight: 600; }
+.font-bold { font-weight: 700; }
+.tracking-tight { letter-spacing: -0.025em; }
+`;
+
+/**
+ * AS DUAS LARGURAS DO IPHONE, do lado do node (HMO-463).
+ *
+ * Elas viajam para dentro da pagina por interpolacao -- um literal escrito nos
+ * dois lugares deixaria a assercao comparar a medida com ela mesma.
+ *
+ *   viewport do aparelho  390 (iPhone 12/13/14) e 320 (iPhone SE)
+ *   - 32px                o `px-4` do `<main>` do painel, dos dois lados
+ *                         (app/(dashboard)/layout.tsx)
+ */
+const LARGURA_DA_RAIZ = { 390: 390 - 32, 320: 320 - 32 };
+
 // A pagina e montada com template literal, e NUNCA com `String.replace`: o
 // bundle do React tem `$$typeof` dentro, e numa string de substituicao `$$`
 // vira `$` -- o bundle chega corrompido e o erro e "React is not defined", que
 // nao se le como o que e.
 const PAGINA = `<!doctype html>
-<html><head><meta charset="utf-8"></head><body>
+<html><head><meta charset="utf-8"><style>${CSS_DO_IPHONE}</style></head><body>
 <div id="raiz-a"></div><div id="raiz-b"></div><div id="raiz-c"></div>
 <div id="raiz-e"></div><div id="raiz-f"></div>
 <div id="raiz-g1"></div><div id="raiz-g2"></div><div id="raiz-g3"></div>
@@ -339,6 +436,7 @@ const PAGINA = `<!doctype html>
 <div id="raiz-l-singular"></div>
 <div id="raiz-m"></div><div id="raiz-m2"></div><div id="raiz-m3"></div>
 <div id="raiz-m4"></div><div id="raiz-m5"></div>
+<div id="raiz-n1"></div><div id="raiz-n2"></div>
 <div id="resultado">a pagina nao rodou</div>
 <script>${umd("react", "react.development.js")}</script>
 <script>${umd("react-dom", "react-dom.development.js")}</script>
@@ -728,6 +826,63 @@ const DIVIDA_COMPRIDA = Array.from({ length: 25 }, function (_, i) {
   };
 });
 
+// ---------------------------------------------------------------------------
+// O FIXTURE QUE APERTA O RECORTE -- treze digitos (HMO-463)
+// ---------------------------------------------------------------------------
+// NAO MEXA nestes valores para baixo sem reler isto. Medir o recorte com o
+// fixture modesto das outras secoes (R$ 450, "Geladeira") da verde que nao
+// prova nada: nada precisa encolher, entao a medida nao fala do mecanismo que
+// a tela usa para caber.
+//
+// O QUE APERTA UMA LINHA DESTAS E O VALOR. "R$ 9.876.543.210.987,65" e um
+// token sem espaco nenhum -- ele nao quebra, nao encolhe, e empurra a linha
+// inteira. E ele NAO e absurdo de propriedade: \`loans.principal\` e
+// \`installments.amount\` sao \`numeric(15,2)\` no banco, entao treze digitos
+// inteiros sao o TETO que a coluna aceita e a tela tem de aguentar.
+//
+// A DESCRICAO E COMPRIDA MAS TEM ESPACOS, de proposito: e assim que a pessoa
+// digita, e o que o \`truncate\`/\`min-w-0\` do bloco tem de fazer caber. Um token
+// de 47 letras sem espaco mediria uma entrada que ninguem produz.
+const VALOR_DE_TREZE_DIGITOS = 9876543210987.65;
+const DESCRICAO_COMPRIDA =
+  "Reforma da cozinha com marcenaria planejada e eletrica";
+
+/** O que \`/api/mybank/loans\` responde na secao N -- a mesma forma, no teto. */
+const LOANS_ENORMES = [
+  {
+    id: "l-enorme",
+    descricao: DESCRICAO_COMPRIDA,
+    conta_credora_id: ${JSON.stringify(CARTEIRA)},
+    caso: "conexao",
+    status: "active",
+    principal: VALOR_DE_TREZE_DIGITOS,
+    total_de_parcelas: 2,
+    primeiro_vencimento: "2026-10-10",
+    quem_deve_pagar: "Lais Nogueira de Albuquerque",
+    devedor_id: ${JSON.stringify(LAIS)},
+    parcelas: [
+      { id: "p-en1", valor: VALOR_DE_TREZE_DIGITOS / 2, numero: 1, total: 2, rotulo: "1 de 2", vencimento: "2026-10-10", status: "pending", a_confirmar: false },
+      { id: "p-en2", valor: VALOR_DE_TREZE_DIGITOS / 2, numero: 2, total: 2, rotulo: "2 de 2", vencimento: "2026-11-10", status: "pending", a_confirmar: false },
+    ],
+  },
+];
+
+/** O que \`/api/mybank/due\` responde na secao N -- o lado de quem deve. */
+const DEVO_ENORME = [
+  {
+    id: "f-enorme",
+    loan_id: "l-enorme-do-marcos",
+    descricao: DESCRICAO_COMPRIDA,
+    valor: VALOR_DE_TREZE_DIGITOS,
+    vencimento: "2026-10-15",
+    status: "pending",
+    numero: 11,
+    total: 24,
+    rotulo: "11 de 24",
+    quem_emprestou: "Marcos Vinicius de Andrade",
+  },
+];
+
 /**
  * O QUE \`/api/mybank/due\` RESPONDE AGORA -- trocado entre os casos.
  *
@@ -943,6 +1098,29 @@ function clicar(el) {
 }
 
 /**
+ * A LARGURA MEDIDA VEM DO CSS, E NAO DE \`--window-size\` (HMO-463).
+ *
+ * MEDIDO nesta maquina (Chromium 1248): o headless CLAMPA a viewport em 500px.
+ * Com \`--window-size=390,844\` o \`innerWidth\` responde 500; com 320, tambem 500.
+ * Abaixo de 500 todo valor e ignorado, acima passa. Ate a HMO-463 este arquivo
+ * confiava na janela e o caso C6 se chamava "nada estoura a largura de 390px"
+ * medindo uma raiz de 469px (500 - 15 da barra - 16 da margem do \`<body>\`).
+ *
+ * Entao a largura e CRAVADA na caixa, e derivada assim:
+ *
+ *   viewport do aparelho  390 (iPhone 12/13/14) e 320 (iPhone SE)
+ *   - 32px                o \`px-4\` do \`<main>\` do painel, dos dois lados
+ *                         (app/(dashboard)/layout.tsx)
+ *   = a largura da RAIZ, que e onde \`PainelDoMyBank\` e montado -- o \`p-4\` do
+ *     proprio componente fica DENTRO dela, por \`border-box\`.
+ *
+ * 320 E A LARGURA QUE APERTA, e nunca tinha sido medida em sonda nenhuma deste
+ * repo. Em 390 a tela do MyBank cabe com folga; e em 320 que a linha de acoes
+ * do emprestimo (Badge + Antecipar + Ajustar + Cancelar) chega na borda.
+ */
+const LARGURA_DA_RAIZ = ${JSON.stringify(LARGURA_DA_RAIZ)};
+
+/**
  * O RECORTE DO IPHONE, EM PIXELS -- e nao em classes.
  *
  * \`scrollWidth > clientWidth\` e o criterio de \`scripts/probe-mobile-overflow.mjs\`:
@@ -952,25 +1130,59 @@ function clicar(el) {
  * cabecalho dela diz o limite: "se alguem adicionar uma terceira acao no
  * cabecalho e estourar 320px de novo, este teste continua verde".
  *
- * Aqui ha navegador, e a janela ja e 390x844 -- entao o recorte da tela NOVA e
- * medido de verdade, uma vez, em CI. A medida e da RAIZ e nao do
- * \`documentElement\`: as tres montagens vivem no mesmo documento, e a
+ * Aqui ha navegador e ha CSS (ver \`CSS_DO_IPHONE\`), entao o recorte e medido de
+ * verdade, em CI, nas DUAS larguras. A medida e da RAIZ e nao do
+ * \`documentElement\`: as montagens vivem no mesmo documento, e a
  * \`<div id="resultado">\` guarda um JSON de milhares de caracteres que estouraria
  * a largura e reprovaria tudo por causa da propria sonda.
  *
  * E a medida tem de sair ANTES do relatorio, pelo mesmo motivo.
  */
-function recorteDe(raiz) {
-  return {
+function medirEm(raiz, largura) {
+  // A largura entra e SAI: a raiz volta ao que era, porque os gestos que vem
+  // depois (clicar, digitar, medir altura) tem de acontecer na mesma tela de
+  // antes. O \`offsetWidth\` forca o layout -- sem ele a leitura seguinte poderia
+  // sair da caixa velha.
+  const antes = raiz.style.width;
+  raiz.style.width = LARGURA_DA_RAIZ[largura] + "px";
+  void raiz.offsetWidth;
+
+  const borda = raiz.getBoundingClientRect();
+  const medida = {
+    // A LARGURA QUE FOI MEDIDA DE FATO, lida da caixa e nao da janela: e ela
+    // que prova que as duas voltas falam de telas DIFERENTES.
+    larguraDaRaiz: borda.width,
     scrollWidth: raiz.scrollWidth,
     clientWidth: raiz.clientWidth,
-    // O mais largo que passar da borda, com o nome -- transforma "a tela esta
-    // torta" em um alvo, como a sonda de producao faz.
+    // O mais largo que passar da borda, com o nome e com o quanto passou --
+    // transforma "a tela esta torta" em um alvo, como a sonda de producao faz.
+    //
+    // A COMPARACAO E COM A BORDA DIREITA DA RAIZ, e nao com \`clientWidth\`: o
+    // \`right\` do \`getBoundingClientRect\` e relativo a JANELA, e compara-lo com
+    // uma LARGURA acusava todo filho de largura cheia (a raiz comeca em x>0).
+    // Ate a HMO-463 esta lista vinha populada mesmo com a tela cabendo.
     estourando: Array.from(raiz.querySelectorAll("*"))
-      .filter((el) => el.getBoundingClientRect().right > raiz.clientWidth + 1)
+      .filter((el) => el.getBoundingClientRect().right > borda.right + 1)
       .slice(0, 5)
-      .map((el) => el.tagName + "." + String(el.className).slice(0, 60)),
+      .map(
+        (el) =>
+          el.tagName +
+          "." +
+          String(el.className).slice(0, 60) +
+          " (+" +
+          Math.round(el.getBoundingClientRect().right - borda.right) +
+          "px)"
+      ),
   };
+
+  raiz.style.width = antes;
+  void raiz.offsetWidth;
+  return medida;
+}
+
+/** As duas larguras do iPhone, na mesma raiz e no mesmo estado da tela. */
+function recorteDe(raiz) {
+  return { 390: medirEm(raiz, 390), 320: medirEm(raiz, 320) };
 }
 
 const out = {};
@@ -1181,14 +1393,21 @@ const out = {};
   await assentar();
   out.e_aberto = ler();
 
+  // O RECORTE SAI COM O BLOCO ABERTO, e nao depois de refechar (HMO-463): e o
+  // estado de 25 linhas que o caso C6 DIZ medir -- ate aqui a medida saia no
+  // fim, com o bloco ja fechado, e falava de 5 linhas.
+  //
+  // E ele sai NO MEIO de proposito: \`medirEm\` crava a largura na raiz e a
+  // devolve ao que era, e o retrato de \`e_refechado\` logo abaixo e o que prova
+  // que devolveu -- a altura dele tem de bater com a de \`e_fechado\`.
+  out.e_recorte = recorteDe(raiz);
+
   // E DE VOLTA: o botao aberto tem de fechar. Sem este terceiro retrato, um
   // botao que so abre passaria verde -- e o bloco aberto e o que a issue veio
   // encurtar.
   clicar(raiz.querySelector("[data-expandir]"));
   await assentar();
   out.e_refechado = ler();
-
-  out.e_recorte = recorteDe(raiz);
 }
 
 // =============================================================================
@@ -2723,6 +2942,34 @@ async function preencherEmprestimo(achar, valor) {
   };
 }
 
+// =============================================================================
+// N -- o recorte sob pressao: treze digitos nas duas telas (HMO-463)
+// =============================================================================
+// AS DUAS MONTAGENS VEM POR ULTIMO porque elas TROCAM os dois fixtures globais
+// (\`LOANS\` e \`DEVIDO_AGORA\`) e nao os devolvem -- qualquer secao depois desta
+// mediria a tela da secao N sem dizer isso.
+{
+  LOANS = LOANS_ENORMES;
+  DEVIDO_AGORA = DEVO_ENORME;
+
+  const raizPainel = await montarPainel("raiz-n1");
+  out.n_painel = {
+    // O TEXTO VIAJA JUNTO e e o controle do fixture: se o painel filtrasse
+    // estes emprestimos (conta errada, status errado), o cartao viria quase
+    // vazio e o recorte passaria verde medindo uma tela que nao existe.
+    texto: raizPainel.textContent,
+    recorte: recorteDe(raizPainel),
+  };
+
+  const raizDevo = document.getElementById("raiz-n2");
+  ReactDOM.render(React.createElement(ParcelasDoMyBankQueEuDevo), raizDevo);
+  await assentar();
+  out.n_devo = {
+    texto: raizDevo.textContent,
+    recorte: recorteDe(raizDevo),
+  };
+}
+
 document.getElementById("resultado").textContent =
   "RESULTADO" + JSON.stringify(out) + "FIM";
 } catch (e) {
@@ -3076,40 +3323,126 @@ test("C5: nenhum esboco aparece no texto da tela", () => {
   );
 });
 
-test("C6: o recorte do iPhone -- nada estoura a largura de 390px", () => {
+/** As montagens que a medida do recorte atravessa, com o nome que a reprova diz. */
+const AS_TELAS_DO_RECORTE = () => [
+  ["a tela do MyBank", resultado.a.recorte],
+  ["o bloco do devedor", resultado.c.recorte],
+  // ABERTO, com 25 linhas: o botao do colapso e o `w-full` dele sao largura
+  // nova no bloco, e e o estado aberto que tem mais conteudo para estourar.
+  ["o bloco do devedor com a divida comprida", resultado.e_recorte],
+  // SOB PRESSAO: valores de treze digitos, que a coluna `numeric(15,2)` aceita
+  // e nenhum outro caso desta sonda tem. Ver a secao N da pagina.
+  ["a tela do MyBank com valores de treze digitos", resultado.n_painel.recorte],
+  ["o bloco do devedor com valores de treze digitos", resultado.n_devo.recorte],
+];
+
+for (const largura of [390, 320]) {
+  test(`C6-${largura}: o recorte do iPhone -- nada estoura a largura em ${largura}px`, () => {
+    if (erroDeExecucao) throw erroDeExecucao;
+
+    // O criterio e o da sonda de producao
+    // (`scripts/probe-mobile-overflow.mjs`): se o conteudo e mais largo do que
+    // a caixa, a tela anda para o lado.
+    //
+    // E isto e PIXEL, nao classe. A guarda que roda em todo PR
+    // (`npm run test:mobile-overflow`) afirma sobre as classes que PRODUZEM a
+    // geometria, e o cabecalho dela diz o limite: uma acao a mais no cabecalho
+    // estoura 320px de novo e ela continua verde.
+    //
+    // A LARGURA VEM DO CSS E NAO DA JANELA (HMO-463) -- ver `LARGURA_DA_RAIZ`.
+    // E 320 TEM DENTE: MEDIDO, tirar o `flex-wrap` da linha do emprestimo
+    // (`PainelDoMyBank.tsx`, o `<div className="flex flex-wrap items-center
+    // justify-between gap-2">`) estoura 288px em 44px e reprova este caso --
+    // e passa verde em 390. Uma sonda so na largura larga nao teria dente
+    // nenhum, e era essa a sonda ate aqui.
+    for (const [nome, recorte] of AS_TELAS_DO_RECORTE()) {
+      const medida = recorte[largura];
+
+      // CONTROLE DO CLAMP: a caixa tem a largura que o caso DIZ ter. Sem esta
+      // linha, o headless clampando a viewport em 500px devolveria a mesma
+      // tela nas duas voltas e os dois casos passariam falando de 500.
+      assert.equal(
+        medida.larguraDaRaiz,
+        LARGURA_DA_RAIZ[largura],
+        `${nome}: a raiz mediu ${medida.larguraDaRaiz}px, e o caso fala de ` +
+          `${LARGURA_DA_RAIZ[largura]}px`
+      );
+      // CONTROLE DA MEDIDA VACUA: raiz sem largura mediria scrollWidth 0 <=
+      // clientWidth 0 e passaria dizendo que a tela cabe.
+      assert.ok(
+        medida.clientWidth > 150,
+        `${nome}: a raiz nao tem largura (${medida.clientWidth}px) -- a medida seria vacua`
+      );
+      assert.ok(
+        medida.scrollWidth <= medida.clientWidth,
+        `${nome} anda para o lado em ${largura}px: scrollWidth ` +
+          `${medida.scrollWidth} > clientWidth ${medida.clientWidth}. ` +
+          `Estourando: ${JSON.stringify(medida.estourando)}`
+      );
+    }
+  });
+}
+
+test("C6-2: o fixture de treze digitos CHEGOU na tela", () => {
   if (erroDeExecucao) throw erroDeExecucao;
 
-  // A JANELA DO CHROMIUM E 390x844 (`--window-size`), que e o iPhone onde este
-  // app e usado. O criterio e o da sonda de producao
-  // (`scripts/probe-mobile-overflow.mjs`): se o conteudo e mais largo do que a
-  // caixa, a tela anda para o lado.
+  // SEM ESTE CASO, a secao N e uma medida vacua disfarcada: um painel que
+  // descartasse os emprestimos de `LOANS_ENORMES` (conta errada, status
+  // errado, forma mudada) renderizaria um cartao quase vazio, e um cartao
+  // quase vazio CABE em 288px com folga. As duas telas de C6 passariam verdes
+  // justamente por nao terem medido nada.
   //
-  // E isto e PIXEL, nao classe. A guarda que roda em todo PR
-  // (`npm run test:mobile-overflow`) afirma sobre as classes que PRODUZEM a
-  // geometria, e o cabecalho dela diz o limite: uma acao a mais no cabecalho
-  // estoura 320px de novo e ela continua verde. Aqui ha navegador, entao a tela
-  // nova e medida de verdade.
-  for (const [nome, recorte] of [
-    ["a tela do MyBank", resultado.a.recorte],
-    ["o bloco do devedor", resultado.c.recorte],
-    // ABERTO, com 25 linhas: o botao do colapso e o `w-full` dele sao largura
-    // nova no bloco, e e o estado aberto que tem mais conteudo para estourar.
-    ["o bloco do devedor com a divida comprida", resultado.e_recorte],
-  ]) {
-    // CONTROLE: a caixa tem largura de verdade. Com `clientWidth` 0 (raiz
-    // oculta, render que nao aconteceu) a comparacao de baixo passaria vacua.
-    assert.ok(
-      recorte.clientWidth > 300,
-      `${nome}: a raiz nao tem largura (${recorte.clientWidth}px) -- a medida seria vacua`
-    );
-    assert.ok(
-      recorte.scrollWidth <= recorte.clientWidth,
-      `${nome} anda para o lado: scrollWidth ${recorte.scrollWidth} > ` +
-        `clientWidth ${recorte.clientWidth}. Estourando: ${JSON.stringify(
-          recorte.estourando
-        )}`
+  // O numero e o da tela, com o NBSP do pt-BR ja desescapado pelo leitor do
+  // dump (ver `rodarPagina`).
+  const noTeto = "9.876.543.210.987,65";
+  assert.ok(
+    resultado.n_painel.texto.includes(noTeto),
+    `o painel sob pressao nao mostrou ${noTeto}: ${resultado.n_painel.texto.slice(0, 300)}`
+  );
+  assert.ok(
+    resultado.n_devo.texto.includes(noTeto),
+    `o bloco do devedor sob pressao nao mostrou ${noTeto}: ${resultado.n_devo.texto.slice(0, 300)}`
+  );
+  // E A DESCRICAO COMPRIDA TAMBEM: ela e o outro lado da linha que o
+  // `truncate`/`min-w-0` tem de encolher.
+  assert.ok(
+    resultado.n_devo.texto.includes("Reforma da cozinha com marcenaria"),
+    resultado.n_devo.texto.slice(0, 300)
+  );
+});
+
+test("C6-0: as duas voltas mediram telas de larguras DIFERENTES", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // O CONTROLE CONTRA A SONDA MEDIR A MESMA TELA DUAS VEZES, e ele existe
+  // porque esta sonda fazia exatamente isso ate a HMO-463: ela confiava em
+  // `--window-size=390,844`, que o headless desta maquina IGNORA abaixo de
+  // 500px. As duas larguras seriam a mesma e ninguem veria.
+  assert.notEqual(LARGURA_DA_RAIZ[390], LARGURA_DA_RAIZ[320]);
+  for (const [nome, recorte] of AS_TELAS_DO_RECORTE()) {
+    assert.notEqual(
+      recorte[390].larguraDaRaiz,
+      recorte[320].larguraDaRaiz,
+      `${nome}: as duas voltas mediram ${recorte[390].larguraDaRaiz}px`
     );
   }
+});
+
+test("C6-1: a largura entra e SAI -- a tela medida continua a de antes", () => {
+  if (erroDeExecucao) throw erroDeExecucao;
+
+  // `medirEm` crava a largura na raiz e a devolve ao que era. Se ela nao
+  // devolvesse, todo gesto e toda altura medidos DEPOIS falariam de uma tela
+  // de 288px -- e o caso que mais sentiria isso e o colapso da divida
+  // comprida (E), que compara alturas.
+  //
+  // A prova e indireta de proposito: `e_fechado` e lido ANTES do recorte e
+  // `e_refechado` DEPOIS, e os dois tem de dar a mesma altura.
+  assert.equal(
+    resultado.e_refechado.altura,
+    resultado.e_fechado.altura,
+    "o bloco refechado nao voltou a altura de antes -- a largura cravada vazou"
+  );
 });
 
 // ---------------------------------------------------------------------------
