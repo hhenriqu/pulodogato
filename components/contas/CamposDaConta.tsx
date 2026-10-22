@@ -244,6 +244,21 @@ export function CamposDaConta({
           recebendo lancamento e aparecendo no extrato" o campo e
           indistinguivel de arquivar a conta -- que e o botao ao lado, e faz
           outra coisa.
+
+          OS DOIS RAMOS ENUMERAM AS MESMAS QUATRO LEITURAS (HMO-488). O ramo
+          desligado dizia o generico "so nao entra nas somas", que se le como
+          TODAS as somas -- e nao e: o interruptor vale para as quatro leituras
+          de SALDO (saldo total, patrimonio, "posso gastar", projecao), e o
+          lancamento da conta desligada CONTINUA contando nos relatorios de
+          gasto (fluxo de caixa, total por categoria, resumo mensal, anomalias,
+          previsto x realizado). Isso foi decidido, nao esquecido: um
+          interruptor so nao consegue separar a conta de terceiro -- cujo gasto
+          nao e meu -- da conta conjunta, cujo gasto e meu mesmo; e tirar o
+          gasto do relatorio erraria do lado silencioso, sumindo com linha sem
+          sintoma na tela. Quem quer excluir um lancamento especifico tem o
+          `include_in_total` por lancamento (migration 060). Entao a frase
+          precisa NOMEAR as quatro, nos dois ramos: generalizar aqui foi a
+          causa da duvida.
           ------------------------------------------------------------------ */}
       <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
         <div className="space-y-1">
@@ -251,7 +266,7 @@ export function CamposDaConta({
           <p className="text-xs text-muted-foreground">
             {valores.include_in_total
               ? `Esta ${campos.substantivo === "cartão" ? "fatura entra" : "conta entra"} no saldo total, no patrimônio, no "posso gastar" e na projeção.`
-              : `Fora dos totais. A ${campos.substantivo} continua recebendo lançamentos e aparecendo no extrato — só não entra nas somas.`}
+              : `Fora dos totais. A ${campos.substantivo === "cartão" ? "fatura" : "conta"} continua recebendo lançamentos, aparecendo no extrato e contando nos relatórios de gasto — só não entra no saldo total, no patrimônio, no "posso gastar" nem na projeção.`}
           </p>
         </div>
         <Switch
