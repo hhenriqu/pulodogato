@@ -63,6 +63,7 @@ import {
   TIPO_CARTAO,
   TIPOS_QUE_ENTRAM_NA_FATURA,
 } from "@/lib/telas-de-movimentacao";
+import type { LinhaComTotais } from "@/lib/fora-dos-totais";
 
 /**
  * Uma linha somavel pelos agregadores de fluxo, com o que esta regra precisa
@@ -74,7 +75,7 @@ import {
  * nem `notes`, nem elo. Elas atravessam este modulo intactas -- a minha parte de
  * uma despesa de grupo nao e compra no cartao nem pagamento de fatura.
  */
-export interface LinhaDoRealizado {
+export interface LinhaDoRealizado extends LinhaComTotais {
   amount: number | string;
   transaction_type: string | null;
   currency?: string | null;
@@ -227,6 +228,16 @@ export function realizadoComCartaoPelaFatura<T extends LinhaDoRealizado>(
  * `amount`, `transaction_type` e `currency` eram o que a rota ja pedia.
  * `transaction_date` nao entra aqui: ela nao e desta regra -- e o recorte de
  * periodo da rota, que existia antes.
+ *
+ * `include_in_total` (060, HMO-453) e a QUINTA, e ela e load-bearing do mesmo
+ * jeito e por quem NAO esta neste arquivo: quem filtra e a rota, no laco de
+ * paginacao (`apenasNosTotais`). Sem a coluna aqui, o caminho `cartao=fatura`
+ * -- e SO ele, porque e o unico que usa esta lista -- receberia o campo
+ * `undefined` em toda linha, o predicado `!== false` deixaria tudo passar, e o
+ * Realizado do painel voltaria a contar a linha desmarcada. Nenhum `tsc`
+ * reclama (o campo e opcional) e nenhum teste de unidade desta funcao nota, o
+ * que faz dela a mais facil de perder numa limpeza de "campos nao usados" --
+ * exatamente o que aconteceu com `account_type` na HMO-260.
  */
 export const COLUNAS_DO_REALIZADO_DE_CAIXA =
-  "amount, transaction_type, currency, notes, counterpart_transaction_id, account:financial_accounts(account_type)";
+  "amount, transaction_type, currency, notes, counterpart_transaction_id, include_in_total, account:financial_accounts(account_type)";

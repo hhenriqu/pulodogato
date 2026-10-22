@@ -38,8 +38,10 @@
  * conferivel sem banco.
  */
 
+import { apenasNosTotais, type LinhaComTotais } from "@/lib/fora-dos-totais";
+
 /** Uma transacao crua, como ela vem de `financial_transactions`. */
-export interface TransacaoDeCategoria {
+export interface TransacaoDeCategoria extends LinhaComTotais {
   category_id: string | null;
   amount: number | string;
   transaction_type: string | null;
@@ -79,6 +81,29 @@ export const CATEGORIA_AUSENTE = "sem-categoria";
  * -- um numero que nao esta em moeda nenhuma, com cara de total e para mais.
  * Foi exatamente esse defeito que a migration 022 foi a producao corrigir nas
  * views, e ele volta por esta porta se a chave for so a categoria.
+ *
+ * O LANCAMENTO FORA DOS TOTAIS SAI DAQUI TAMBEM, E PRECISA SAIR (HMO-453)
+ * ----------------------------------------------------------------------
+ * Esta funcao e o GEMEO EM JAVASCRIPT de `category_monthly_totals`, e aquela
+ * view ganhou `AND t.include_in_total` na 060. As duas respondem a MESMA
+ * pergunta por caminhos diferentes -- a view no ramo de MES inteiro, esta
+ * funcao no ramo de INTERVALO livre -- e consertar so uma faz "setembro
+ * inteiro" e "01/09 a 30/09" darem numeros diferentes. Esse defeito e pior que
+ * o original: as duas leituras discordam sem que exista um terceiro total para
+ * arbitrar (`duas-leituras-do-previsto-discordam-por-construcao`).
+ *
+ * `apenasNosTotais` vem ANTES do laco e nao dentro dele, no mesmo lugar em que
+ * a view poe o filtro: no `WHERE`, e nao em cada `FILTER (WHERE ...)`. Isso faz
+ * a linha desmarcada sair TAMBEM do `transaction_count`, exatamente como la --
+ * uma categoria que diz "3 lancamentos" ao lado de um total de dois e a
+ * contradicao visivel que nao se explica, e e o `COUNT(*) FILTER` da 060 que ja
+ * decidiu isso do lado do banco. As duas contagens nao podem discordar: elas
+ * alimentam a mesma pizza.
+ *
+ * A linha de `partesComoTransacoes` (lib/parte-do-grupo-realizada.ts) atravessa
+ * intacta: ela vem de `group_share_entries`, nao tem a coluna, e
+ * `undefined !== false` e `true`. E a resposta certa pela decisao D -- o que eu
+ * devo nao muda porque quem lancou escondeu a linha do relatorio dele.
  */
 export function linhasDeCategoria(
   transacoes: readonly TransacaoDeCategoria[],
@@ -86,7 +111,7 @@ export function linhasDeCategoria(
 ): LinhaDeCategoria[] {
   const acumulado = new Map<string, LinhaDeCategoria>();
 
-  for (const t of transacoes) {
+  for (const t of apenasNosTotais(transacoes)) {
     // `transfer` -- e qualquer tipo que o app venha a ganhar -- fica fora da
     // conta E fora da contagem, igual ao `COUNT(*) FILTER` da view.
     if (t.transaction_type !== "income" && t.transaction_type !== "expense") {

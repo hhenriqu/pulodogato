@@ -21,6 +21,8 @@
 // receita nem despesa. Sai das duas somas e e contada em separado.
 // ---------------------------------------------------------------------------
 
+import { apenasNosTotais, type LinhaComTotais } from "@/lib/fora-dos-totais";
+
 /** Os tres tipos que o ENUM `transaction_financial_type` admite no banco. */
 export type TipoMovimentacao = "income" | "expense" | "transfer";
 
@@ -29,8 +31,14 @@ export type TipoMovimentacao = "income" | "expense" | "transfer";
  *
  * `transaction_type` e opcional porque ha linhas gravadas antes da coluna ser
  * preenchida em todo caminho de escrita -- ver `classificarMovimentacao`.
+ *
+ * `include_in_total` vem de `LinhaComTotais` (lib/fora-dos-totais.ts) e e
+ * opcional pela mesma razao, com uma diferenca que importa: ele NAO entra na
+ * classificacao. Uma linha fora dos totais continua sendo receita, despesa ou
+ * transferencia, continua na lista e continua com o rotulo dela -- o que ela
+ * nao faz e somar. Ver `resumoDoPeriodo` e `filtrarLancamentos`.
  */
-export interface MovimentacaoBruta {
+export interface MovimentacaoBruta extends LinhaComTotais {
   amount: number;
   transaction_type?: string | null;
   category?: { is_expense?: boolean } | null;
@@ -90,6 +98,24 @@ export function classificarMovimentacao(
  * uma despesa gravada com sinal trocado DIMINUIRIA o total de despesas em vez
  * de aparecer -- o erro se esconderia dentro do proprio numero que deveria
  * denuncia-lo.
+ *
+ * O LANCAMENTO FORA DOS TOTAIS SAI DAQUI, E SO DAQUI (HMO-453)
+ * ------------------------------------------------------------
+ * `apenasNosTotais` descarta o que a pessoa desmarcou -- os tres cartoes de
+ * Financas Pessoais sao a soma de linhas CRUAS em JavaScript, entao eles nao
+ * herdam nada do `WHERE` que a 060 pos em `category_monthly_totals`.
+ *
+ * O filtro entra NESTA funcao e nao em `filtrarLancamentos` nem em
+ * `contarPorFiltro`, que ficam intactas de proposito: a linha marcada CONTINUA
+ * na lista, com selo (decisao C da HMO-443). Tirar ela da lista deixaria o
+ * dinheiro sem lugar nenhum no app e o total sem explicacao -- e a frase "N
+ * lançamento(s)" da tela conta a LISTA, nao a soma.
+ *
+ * `transferido` e `transferencias` tambem passam pelo filtro, e isso e
+ * deliberado: as duas pernas de uma transferencia nascem com o mesmo
+ * `include_in_total` (a rota grava as duas), entao marcar uma transferencia a
+ * tira das duas metades ao mesmo tempo e nenhuma frase do cartao de saldo fica
+ * contando meia transferencia.
  */
 export function resumoDoPeriodo(
   movimentacoes: MovimentacaoBruta[]
@@ -99,7 +125,7 @@ export function resumoDoPeriodo(
   let transferido = 0;
   let transferencias = 0;
 
-  for (const mov of movimentacoes) {
+  for (const mov of apenasNosTotais(movimentacoes)) {
     const valor = Math.abs(mov.amount);
 
     switch (classificarMovimentacao(mov)) {

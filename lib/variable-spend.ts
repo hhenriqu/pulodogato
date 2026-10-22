@@ -154,6 +154,7 @@
 
 import { mediana, normalizeMerchant } from "@/lib/recurrence-detector";
 import { gastoDaTransacao, mesDe, mesAnterior, type TransacaoParaAnomalia } from "@/lib/anomalies";
+import { apenasNosTotais } from "@/lib/fora-dos-totais";
 
 /** Quantos meses FECHADOS a janela olha para tras, por padrao. */
 export const MESES_JANELA_PADRAO = 6;
@@ -344,7 +345,24 @@ export function calcularGastoVariavel(entrada: EntradaDoGastoVariavel): GastoVar
   const descartadas = new Set<string>();
   let totalComprometidoDescartado = 0;
 
-  for (const t of transacoes) {
+  // `apenasNosTotais` ANTES DO LACO, E DE PROPOSITO NESTA FUNCAO (HMO-453).
+  //
+  // O gasto variavel e a mediana do que sai sem conta pedindo, e ela alimenta
+  // DUAS telas: a data de mergulho de /api/cash-flow e a previsao de
+  // /api/dashboard/previsao. As duas leem a MESMA lista pelo mesmo
+  // `COLUNAS_DA_TRANSACAO`, entao o filtro aqui cobre as duas de uma vez --
+  // duas copias nas rotas divergiriam na primeira mudanca, e o sintoma seria a
+  // data de mergulho discordando da previsao sobre o mesmo historico.
+  //
+  // E ele cobre tambem a ABERTURA POR CATEGORIA, que sai deste mesmo laco: o
+  // invariante `soma(categorias.porMes) + residuoPorMes === porMes` (ver o
+  // cabecalho) quebraria se o total filtrasse e a abertura nao.
+  //
+  // `totalComprometidoDescartado` NAO conta a linha desmarcada, e esta certo:
+  // aquele numero existe para explicar ao usuario por que a media e menor que o
+  // extrato *por causa de assinatura ja comprometida*. Misturar nele o que a
+  // pessoa tirou dos relatorios daria um valor sem rotulo na tela.
+  for (const t of apenasNosTotais(transacoes)) {
     // Unico lugar que toca `amount`: filtra `expense` e devolve ABS. Receita,
     // `transfer` e qualquer coisa que nao seja despesa saem com zero aqui.
     const valor = gastoDaTransacao(t);

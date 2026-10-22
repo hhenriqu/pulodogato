@@ -1,0 +1,14 @@
+{
+  "//": "Build so do teste de lib/categorias-do-periodo.ts. ELE PASSOU A PRECISAR DE TSCONFIG na HMO-453, pela mesma razao do tsconfig.movimentacoes-test.json: `linhasDeCategoria` passou a importar @/lib/fora-dos-totais, e o alias nao se resolve sem `paths` nem se reescreve no emit sem o passo de resolve-aliases do npm script. Ver scripts/test-categorias-do-periodo.mjs.",
+  "compilerOptions": {
+    "outDir": "../.tmp-categorias-do-periodo",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/categorias-do-periodo.ts"]
+}

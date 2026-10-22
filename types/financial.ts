@@ -182,6 +182,34 @@ export interface FinancialTransaction {
    * moeda nenhuma.
    */
   currency?: string;
+  /**
+   * Este lancamento entra nos totais de relatorio? (migration 060, HMO-443)
+   *
+   * `false` tira a linha das SOMAS -- fluxo de caixa, total por categoria,
+   * previsto x realizado, os tres cartoes de Lancamentos, o teto do orcamento
+   * (063) e os CSVs -- e NAO da existencia dela: ela continua no extrato,
+   * continua na lista com selo e continua mexendo no saldo da conta e no
+   * patrimonio. O flag e de RELATORIO, nao de SALDO.
+   *
+   * OPCIONAL, E A AUSENCIA E UM ESTADO LEGITIMO: antes da colagem da 060 o
+   * campo nao chega, e `undefined` tem de significar "soma", que e o DEFAULT da
+   * coluna. Quem le isto NAO escreve `!linha.include_in_total` nem `=== true`
+   * -- o predicado tem UM dono, `entraNosTotais` em lib/fora-dos-totais.ts, e o
+   * porque esta no cabecalho dele.
+   *
+   * NAO CONFUNDIR com a homonima de `FinancialAccount` (058): aquela desliga
+   * uma CONTA do patrimonio; esta tira UM LANCAMENTO dos relatorios. Mesma
+   * polaridade, assuntos diferentes.
+   *
+   * E ELA EXISTE NAS DUAS `FinancialTransaction` DO REPOSITORIO. A outra esta
+   * em app/(dashboard)/dashboard/personal-finance/page.tsx e sombreia esta
+   * naquela pagina -- que e justamente onde os tres cartoes somam. Declarar so
+   * aqui faria o filtro ler `undefined` em toda linha daquela tela, sem um erro
+   * em lugar nenhum: o `select("*")` de la traz a coluna em runtime e o
+   * compilador nao a ve. Ver o comentario de `installment_number` acima, que e
+   * a mesma armadilha ja paga uma vez.
+   */
+  include_in_total?: boolean;
   created_at: string;
   updated_at: string;
 

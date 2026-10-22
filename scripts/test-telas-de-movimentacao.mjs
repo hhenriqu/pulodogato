@@ -2576,3 +2576,105 @@ test("a resposta ANTIGA do aparelho, sem as duas chaves, nao quebra", () => {
   // por acidente, ate alguem "simplificar" a comparacao.
   assert.equal(previstoSemLinha({ ...RESUMO_BASE }), 0);
 });
+
+// ---------------------------------------------------------------------------
+// O LANCAMENTO FORA DOS TOTAIS NOS TRES NUMEROS (HMO-453, F3 da HMO-443)
+// ---------------------------------------------------------------------------
+// `resumoDaTela` tem aritmetica propria sobre `LinhaDaTela` -- ela nao le view
+// nenhuma e nao herda o `WHERE` que a 060 pos em `category_monthly_totals`.
+//
+// A ASSIMETRIA QUE ESTES BLOCOS PRENDEM: o dinheiro sai, a CONTAGEM fica.
+// `previsto`, `realizado` e `total` perdem a linha marcada; `quantidade`,
+// `quantidadePrevista` e `quantidadeRealizada` continuam contando, porque elas
+// descrevem a LISTA -- e a linha marcada continua na lista, com selo (decisao
+// C). O rodape do cartao Total diz "previsto + realizado · N lançamento(s)", e
+// um N ao lado de uma lista com N+1 linhas e contradicao visivel.
+//
+// A FIXTURE TEM SEMPRE UMA MARCADA E UMA NAO MARCADA. Com so um dos lados o
+// filtro pode ser apagado e o bloco continua verde.
+
+test("a despesa realizada desmarcada sai do Realizado, e nao da contagem", () => {
+  const linhas = daTela(
+    [
+      realizada({ id: "t1", amount: -500, include_in_total: true }),
+      realizada({ id: "t2", amount: -200, include_in_total: false }),
+    ],
+    [],
+    "expense"
+  );
+
+  // CONTROLE: as duas linhas ESTAO na lista. Sem isto, um bloco que medisse so
+  // `realizado === 500` passaria tambem com a linha escondida da tela -- que e
+  // o defeito oposto, e e o que a decisao C recusou.
+  assert.equal(linhas.length, 2);
+
+  const r = resumoDaTela(linhas);
+  assert.equal(r.realizado, 500);
+  assert.notEqual(r.realizado, 700, "700 e o numero de antes da 060");
+  assert.equal(r.quantidadeRealizada, 2);
+  assert.equal(r.quantidade, 2);
+});
+
+test("o Total e previsto + realizado JA filtrados, e nao uma terceira varredura", () => {
+  const linhas = daTela(
+    [
+      realizada({ id: "t1", amount: -500, include_in_total: true }),
+      realizada({ id: "t2", amount: -200, include_in_total: false }),
+    ],
+    [prevista({ id: "s1", amount: "300.00" })],
+    "expense"
+  );
+
+  const r = resumoDaTela(linhas);
+  assert.equal(r.realizado, 500);
+  assert.equal(r.previsto, 300);
+  assert.equal(r.total, 800);
+  // As tres linhas continuam na frase do rodape.
+  assert.equal(r.quantidade, 3);
+});
+
+test("a linha PREVISTA nunca e marcada: a coluna e de financial_transactions", () => {
+  // `scheduled_transactions` nao tem `include_in_total`, e `linhaPrevista`
+  // grava `soma_nos_totais: true` sempre. Se este bloco ficar vermelho, alguem
+  // passou a derivar o campo de uma fonte que nao o tem -- e o Previsto
+  // inteiro cairia a zero.
+  const linhas = daTela([], [prevista({ id: "s1", amount: "300.00" })], "expense");
+  assert.equal(linhas[0].soma_nos_totais, true);
+  assert.equal(resumoDaTela(linhas).previsto, 300);
+});
+
+test("a receita desmarcada sai do Realizado de Receitas -- o caso da HMO-443", () => {
+  const linhas = daTela(
+    [
+      realizada({ id: "t1", amount: 3000, transaction_type: "income", include_in_total: true }),
+      realizada({
+        id: "t2",
+        description: "Ajuste de saldo",
+        amount: 1000,
+        transaction_type: "income",
+        include_in_total: false,
+      }),
+    ],
+    [],
+    "income"
+  );
+
+  const r = resumoDaTela(linhas);
+  assert.equal(r.realizado, 3000);
+  assert.notEqual(r.realizado, 4000);
+});
+
+test("o campo AUSENTE soma: o cache offline de antes da F2 nao zera a tela", () => {
+  // `linhaRealizada` resolve a ausencia com `!== false`, e `resumoDaTela`
+  // repete a forma sobre `soma_nos_totais` -- porque uma resposta GUARDADA no
+  // aparelho de antes da F2 chega sem o campo, e o `tsc` nao olha o cache. Com
+  // `!linha.soma_nos_totais` este numero viraria ZERO, offline, justamente
+  // quando nao ha rede para conferir.
+  const daCrua = daTela([realizada({ id: "t1", amount: -80 })], [], "expense");
+  assert.equal(daCrua[0].soma_nos_totais, true);
+  assert.equal(resumoDaTela(daCrua).realizado, 80);
+
+  // E a LinhaDaTela crua, como ela sai de um cache de antes do campo existir.
+  const doCache = [{ ...daCrua[0], soma_nos_totais: undefined }];
+  assert.equal(resumoDaTela(doCache).realizado, 80);
+});

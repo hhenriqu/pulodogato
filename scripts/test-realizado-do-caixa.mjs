@@ -340,8 +340,8 @@ test("a lista de entrada nao e alterada", () => {
 // As colunas que a consulta precisa pedir
 // ---------------------------------------------------------------------------
 
-test("as quatro colunas load-bearing estao na lista que a rota pede", () => {
-  // Nenhuma das quatro aparece na tela, e tirar qualquer uma do `select` nao
+test("as cinco colunas load-bearing estao na lista que a rota pede", () => {
+  // Nenhuma das cinco aparece na tela, e tirar qualquer uma do `select` nao
   // quebra tsc nem assercao de unidade: a regra passa a receber `undefined`,
   // deixa de casar, e o painel volta ao defeito. Este bloco e o que torna o
   // `select` parte do contrato.
@@ -351,6 +351,16 @@ test("as quatro colunas load-bearing estao na lista que a rota pede", () => {
     "currency",
     "notes",
     "counterpart_transaction_id",
+    // HMO-453: quem FILTRA por ela e a ROTA (`apenasNosTotais` no laco de
+    // paginacao de /api/reports/cash-flow), nao este modulo -- mas e esta
+    // lista que a pede, e so o caminho `cartao=fatura` a usa. Sem a coluna
+    // aqui, o Realizado do painel recebe o campo `undefined` em toda linha, o
+    // predicado `!== false` deixa tudo passar, e a linha que a pessoa tirou
+    // dos relatorios volta a contar. Nenhum `tsc` e nenhuma assercao de
+    // unidade DESTE arquivo nota, que e o que faz dela a mais facil de perder
+    // numa limpeza de "campos nao usados" -- foi o que aconteceu com
+    // `account_type` na HMO-260.
+    "include_in_total",
     "account_type",
   ]) {
     assert.ok(
@@ -494,4 +504,47 @@ test("os dois leitores da fatura paga concordam, linha por linha", () => {
       `a tela de Despesas discorda da funcao dona em: ${caso.nome}`
     );
   }
+});
+
+// ---------------------------------------------------------------------------
+// O LANCAMENTO FORA DOS TOTAIS -- O QUE ESTE MODULO *NAO* FAZ (HMO-453)
+// ---------------------------------------------------------------------------
+// `realizadoComCartaoPelaFatura` NAO filtra por `include_in_total`, e isso e
+// decisao e nao esquecimento: o filtro vive UMA PORTA ACIMA, no laco de
+// paginacao de /api/reports/cash-flow, porque so la ele cobre os DOIS caminhos
+// do ramo de intervalo (com e sem `cartao=fatura`). Um segundo filtro aqui
+// seria codigo morto no unico chamador que existe -- e codigo morto nao tem
+// mutante que morra.
+//
+// Os dois blocos abaixo prendem a decisao pelos dois lados. Se alguem
+// acrescentar o filtro aqui, o primeiro fica vermelho; se alguem tirar o filtro
+// da rota, e `test:fora-dos-totais-nas-somas` que fica.
+
+test("a regra do cartao atravessa a linha desmarcada INTACTA", () => {
+  // A linha chega aqui ja filtrada pela rota. Receber uma desmarcada e o
+  // estado de um chamador novo que esqueceu `apenasNosTotais` -- e a resposta
+  // certa deste modulo e nao inventar um segundo criterio: ele responde sobre
+  // CARTAO e FATURA, nao sobre relatorio.
+  const desmarcada = {
+    amount: -200,
+    transaction_type: "expense",
+    include_in_total: false,
+    account: { account_type: "checking" },
+  };
+
+  const saida = realizadoComCartaoPelaFatura([desmarcada]);
+  assert.equal(saida.length, 1);
+  assert.equal(saida[0].include_in_total, false);
+});
+
+test("e o flag sobrevive a PROMOCAO do pagamento da fatura", () => {
+  // A perna de saida e reescrita para 'expense' por copia (`{ ...linha }`).
+  // Se a copia perdesse `include_in_total`, a rota -- que filtra ANTES -- nao
+  // notaria, mas um chamador novo que filtrasse DEPOIS passaria a contar toda
+  // fatura paga desmarcada. O campo tem de atravessar.
+  const original = saidaDaFatura({ include_in_total: false });
+
+  const [promovida] = realizadoComCartaoPelaFatura([original]);
+  assert.equal(promovida.transaction_type, "expense");
+  assert.equal(promovida.include_in_total, false);
 });

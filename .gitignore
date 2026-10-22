@@ -716,3 +716,12 @@ next-env.d.ts
 # `main`, e um `.tmp-*` fora do .gitignore chega a ser commitado em cima de
 # arquivo de fonte -- ver a entrada do .tmp-parcelamento acima.
 /.tmp-fora-dos-totais-no-lancamento/
+
+# Artefato de `test:fora-dos-totais-nas-somas` (HMO-453, F3 da HMO-443): as tres
+# rotas que somam as linhas cruas (os dois relatorios e a data de mergulho) mais
+# as quatro libs de soma, compiladas com o duble de supabase, para a sonda medir
+# o ramo de INTERVALO pelo handler de verdade. Artefato, nao fonte: sem a linha,
+# `check-artefatos-de-build` fica vermelho na `main`, e um `.tmp-*` fora do
+# .gitignore chega a ser commitado em cima de arquivo de fonte -- ver a entrada
+# do .tmp-parcelamento acima.
+/.tmp-fora-dos-totais-nas-somas/
