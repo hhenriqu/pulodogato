@@ -20,6 +20,8 @@
     "mutantes:causa-da-reprovacao": "node scripts/mutantes-causa-da-reprovacao.mjs",
     "check-sed-dos-workflows": "node scripts/check-sed-dos-workflows.mjs",
     "check-tamanho-dos-workflows": "node scripts/check-tamanho-dos-workflows.mjs",
+    "mutantes:atualizar-da-faixa": "node scripts/mutantes-atualizar-da-faixa.mjs",
+    "mutantes:atualizar-nas-cinco-telas": "node scripts/mutantes-atualizar-nas-cinco-telas.mjs",
     "test:tamanho-dos-workflows": "node scripts/test-tamanho-dos-workflows.mjs",
     "check-profiles-is-public": "node scripts/check-profiles-is-public.mjs",
     "test:profiles-is-public": "node scripts/test-profiles-is-public.mjs",

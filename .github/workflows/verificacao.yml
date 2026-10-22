@@ -4097,6 +4097,12 @@ jobs:
       - name: Nenhum total, nenhuma frase de vazio sem dado que os sustente
         run: npm run test:offline-leitura
 
+      # nota: verificacao-notas.md -> "Os dois controles negativos do Atualizar (HMO-477)"
+      - name: Os dois controles negativos do Atualizar (HMO-477)
+        run: |
+          npm run mutantes:atualizar-da-faixa
+          npm run mutantes:atualizar-nas-cinco-telas
+
       # nota: verificacao-notas.md -> "A peneira da origem e o reset do formulario"
       - name: A peneira da origem e o reset do formulario
         run: npm run test:retorno-lancamento

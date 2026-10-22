@@ -4723,3 +4723,30 @@ ter existido. O runner cobra ocorrencia UNICA e aborta em vez de mutar a
 1a de duas -- `lib/variable-spend.ts` e `lib/categorias-do-periodo.ts`
 tem o MESMO `for (const t of apenasNosTotais(transacoes))`.
 ~~~~~~
+
+## Os dois controles negativos do Atualizar (HMO-477)
+
+~~~~~~
+CONTROLE NEGATIVO DOS DOIS RUNNERS DO "Atualizar" (HMO-477, ligados pela HMO-491).
+
+A HMO-477 escreveu estes dois runners no mesmo dia e NAO lhes deu step. O
+`check-mutantes-in-ci` os acusou -- "runner de mutante que nenhum workflow roda
+e ninguem declarou" -- e, como ele e o step 14 desta fila, o job inteiro morria
+ali: 13 de 295 steps rodavam. Foi o primeiro vermelho que apareceu depois que
+a HMO-491 devolveu a PARTIDA ao workflow.
+
+Por que ganharam step em vez de declaracao: o `nao-triado` tem TETO e o teto
+hoje e ZERO (ver `TETO_NAO_TRIADO` no guard) -- de proposito, para que declarar
+nao seja o jeito educado de arquivar o problema. E apagar seria jogar fora
+controle negativo escrito no mesmo dia, de proposito, para duas suites que JA
+estao no CI (`test:lista-na-tela` e `test:offline-leitura`).
+
+Os dois num step so, e medidos antes de entrar:
+
+    mutantes:atualizar-da-faixa          7/7  mutantes mortos   37s
+    mutantes:atualizar-nas-cinco-telas  29/29 mutantes mortos   13s
+
+50s somados para 36 mutantes -- barato porque os dois usam o bloco da HMO-319,
+que compartilha uma compilacao entre os mutantes do bloco em vez de recompilar
+o programa por mutante.
+~~~~~~
