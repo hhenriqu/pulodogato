@@ -45,6 +45,30 @@ jobs:
           node-version: "20"
           cache: npm
 
+      # ESTES DOIS STEPS VEM ANTES DO `npm ci`, E A ORDEM E A RAZAO DE ELES
+      # EXISTIREM (HMO-473, medida pela HMO-491).
+      #
+      # O `verificacao.yml` passou de 512.000 bytes em 2026-10-20 e o GitHub
+      # parou de DAR PARTIDA nele: nao reprova um step -- nao abre job nenhum,
+      # devolve `jobs: 0` e um vermelho sem log. As 163 assercoes e os 98
+      # controles negativos daquele workflow ficaram 12 dias sem rodar NENHUMA
+      # vez, e ninguem viu, porque "o CI esta vermelho" e o estado normal deste
+      # repositorio ha tempo demais para chamar atencao.
+      #
+      # A guarda mora AQUI, e nao no `verificacao.yml`, porque o `build.yml` e o
+      # unico workflow sem filtro de `paths:` e que esta verde -- o unico que
+      # sempre da partida. Pedir ao arquivo doente que diagnostique a propria
+      # doenca nao funcionaria: acima do teto ele nao abre job.
+      #
+      # E antes do `npm ci` porque nao depende de `node_modules` (le `fs` e mais
+      # nada), custa milissegundos, e a noticia "a verificacao esta desligada"
+      # nao pode ficar atras de uma instalacao que pode falhar por outro motivo.
+      - name: Nenhum workflow perto dos 512.000 bytes em que o GitHub nao da partida
+        run: npm run check-tamanho-dos-workflows
+
+      - name: A guarda de tamanho sabe reprovar (controle negativo)
+        run: npm run test:tamanho-dos-workflows
+
       - run: npm ci --include=dev
 
       # AS DUAS CHAVES PUBLICAS SAO EXIGIDAS NO BUILD, NAO SO EM RUNTIME.
