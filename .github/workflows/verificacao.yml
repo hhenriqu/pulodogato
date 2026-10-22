@@ -2361,7 +2361,13 @@ jobs:
           # 13) O ROTULO "Ajuste" FORA DA LINHA. A linha fica na lista (para a
           #     soma fechar com o total) e sem rotulo: um ajuste de R$ 50
           #     indistinguivel de uma compra de R$ 50 tres meses depois.
-          sed -i 's#                    {ehLinhaDeAjuste(gasto, categoriaDeAjuste) ? (#                    {false ? (#' $TELA
+          #
+          #     A ANCORA E O RAMO DO JSX, E NAO A CHAMADA (HMO-469). A HMO-455
+          #     tirou `ehLinhaDeAjuste(...)` do JSX para `const ehAjuste`, a
+          #     ancora velha parou de casar e este controle media a arvore
+          #     INTACTA. Mutar a CONSTANTE seria mais largo que o defeito (ela
+          #     tambem decide Editar e Excluir); a indentacao ancora no selo.
+          sed -i 's#                    {ehAjuste ? (#                    {false ? (#' $TELA
           mutou $TELA 13
           if npm run test:ajuste-na-tela > /dev/null 2>&1; then
             echo "::error::Verde com a linha do ajuste sem rotulo nenhum."
@@ -2679,7 +2685,13 @@ jobs:
           # 1) O botao de apagar parcela aparecendo em TODA linha da fatura, e
           #    nao so nas parcelas. Apagar uma compra avulsa cairia na rota de
           #    serie, que responde 400 sobre a linha que a pessoa clicou.
-          sed -i 's#{aoApagarParcela && gasto.installment_number ? (#{aoApagarParcela ? (#' "$TELA"
+          #
+          #    A SEGUNDA METADE DA CONDICAO E `ehParcela`, E NAO
+          #    `gasto.installment_number` (HMO-469) -- mesma refatoracao da
+          #    HMO-455 que mexeu o mutante 13 do passo do ajuste-de-saldo. O
+          #    defeito plantado nao muda; a ancora velha e que parou de casar, e
+          #    este controle passou a medir a arvore INTACTA.
+          sed -i 's#{aoApagarParcela && ehParcela ? (#{aoApagarParcela ? (#' "$TELA"
           mutou "$TELA" 1
           if npm run test:tela-do-cartao > /dev/null 2>&1; then
             echo "::error::Verde com o botao de apagar parcela em toda linha da fatura."
@@ -2985,7 +2997,14 @@ jobs:
 
           # 2) A SEGUNDA LEITURA removida "para simplificar". Duas chamadas onde
           #    havia uma parecem desperdicio, e o total volta a sair do saldo.
-          sed -i 's#somaDasFaturas(faturas, idsAtivos)#totalDoEscopo(ativas, "cartao")#' "$TELA"
+          #
+          #    O SEGUNDO ARGUMENTO E `idsQueSomam`, E NAO `idsAtivos` (HMO-469):
+          #    a HMO-434 tirou o cartao fora dos totais de "Faturas em aberto".
+          #    A assercao que este mutante derruba (`exigido(TELA,
+          #    "somaDasFaturas(faturas,")`) esta truncada no argumento justamente
+          #    para sobreviver a renomeacoes; a ancora do `sed` nao pode ser,
+          #    porque ela troca a chamada inteira por outra.
+          sed -i 's#somaDasFaturas(faturas, idsQueSomam)#totalDoEscopo(ativas, "cartao")#' "$TELA"
           if ! cmp -s "$TELA" "$TELA.orig"; then
             if npm run check-fatura-escolhida > /dev/null 2>&1; then
               echo "::error::Verde com a tela somando current_balance de novo."
