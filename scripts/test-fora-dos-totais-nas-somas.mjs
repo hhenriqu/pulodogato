@@ -636,6 +636,54 @@ test("cartao=fatura: o mes inteiro cai no ramo de intervalo, e o filtro vale la 
   // Maio: o mercado de 500 soma, o ajuste de 200 nao, a compra no cartao de 350
   // sai pela regra da fatura. A linha de 77 e as duas de abril estao fora do
   // periodo.
+  // A ASSERCAO QUE O `lidas` FOI DESTRUCTURADO PARA FAZER, E QUE FICOU PELA
+  // METADE (HMO-483).
+  //
+  // O titulo deste caso afirma que o mes inteiro "cai no ramo de intervalo" e
+  // nada aqui afirmava isso: `lidas` saia do `chamar` e nunca era conferido. O
+  // lint acusava `'lidas' is assigned a value but never used`, e a saida facil
+  // (`_lidas`) calaria o aviso preservando o buraco -- num teste, variavel de
+  // leitura atribuida e nunca conferida costuma ser assercao que ficou pela
+  // metade, nao sobra de refatoracao. O comentario no topo deste bloco ja dizia
+  // qual era ("a assercao que importa aqui e sobre a CONSULTA"); faltava ela.
+  //
+  // O RAMO E ESCOLHIDO EM route.ts:211, por
+  // `periodo.modo === "intervalo" || cartaoPelaFatura`. Os dois ramos leem
+  // lugares DIFERENTES, e e isso que torna a escolha observavel: o mensal
+  // responde pela view `monthly_cash_flow`, e este soma `financial_transactions`
+  // crua entre duas datas.
+  //
+  // ELA VEM ANTES DAS ASSERCOES DE TOTAL, E ISSO E O PONTO -- MEDIDO, NAO
+  // SUPOSTO. Rodei os dois mutantes que esta assercao parecia existir para
+  // pegar, e o TOTAL pega os dois primeiro:
+  //
+  //   `|| cartaoPelaFatura` apagado da condicao do ramo  ->  total 0 (esperado 500)
+  //   `.gte("transaction_date", periodo.de)` apagado     ->  total 577 (esperado 500)
+  //
+  // Ou seja: isto NAO e um detector novo, e escrever que era seria assercao que
+  // mente. E um CONTROLE POSITIVO -- o mesmo papel que o `lidas` cumpre no caso
+  // do `MERGULHO` logo abaixo -- e o que ele acrescenta e o NOME do defeito na
+  // mensagem: "a rota nao leu financial_transactions" em vez de "esperado 500,
+  // obtido 0", que nao diz se o que caiu foi o ramo, o filtro ou o laco. Posta
+  // DEPOIS do total, ela nunca falaria, porque o total falha primeiro.
+  //
+  // O dia em que a fixture do ramo mensal ganhar linhas, os dois totais podem
+  // coincidir e ela passa a ser tambem o unico detector. Hoje nao e, e o
+  // comentario diz hoje.
+  const consulta = lidas.find((l) => l.tabela === "financial_transactions");
+  assert.ok(
+    consulta,
+    "a rota nao leu `financial_transactions`: `cartao=fatura` nao levou ao ramo " +
+      "de intervalo, e o total abaixo seria medido sobre outro caminho"
+  );
+  assert.ok(
+    consulta.filtros.some(([op, coluna]) => op === "gte" && coluna === "transaction_date"),
+    "a leitura de `financial_transactions` nao tem `gte` em `transaction_date` -- " +
+      `o recorte do periodo nao chegou a consulta (filtros: ${JSON.stringify(
+        consulta.filtros
+      )})`
+  );
+
   const corpo = await resposta.json();
   assert.equal(corpo.summary.total_expense, 500);
   assert.notEqual(

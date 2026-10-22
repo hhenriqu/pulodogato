@@ -1981,7 +1981,13 @@ test("COM JURO: a ULTIMA parcela absorve o centavo da divisao", async () => {
   // R$ 1.000 a 20% em 3x: total R$ 1.200, parcelas de R$ 400. O principal NAO
   // divide redondo (400 x 1000 / 1200 = 333,33), e as tres parcelas por esse
   // valor somariam R$ 999,99 de principal. A ULTIMA fecha com R$ 333,34.
-  const tresParcelas = (idMexido) =>
+  // SEM PARAMETRO, E ISSO E DELIBERADO (HMO-483). Ele nascia como
+  // `(idMexido) =>` e nunca era usado -- o unico chamador e logo abaixo, sem
+  // argumento, e o id da parcela mexida esta CRAVADO em "p3" porque o fixture
+  // de `mexerNaParcela` mexe em "p3" (o comentario abaixo diz isso). Aqui o
+  // aviso do lint era sobra de refatoracao de verdade, e nao assercao pela
+  // metade: nao havia o que conferir com o parametro, so o que apagar.
+  const tresParcelas = () =>
     [1, 2, 3].map((n) => ({
       ...PARCELA_DA_LAIS,
       id: n === 3 ? "p3" : `q${n}`,
