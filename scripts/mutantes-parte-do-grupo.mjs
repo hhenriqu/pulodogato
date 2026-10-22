@@ -68,8 +68,9 @@ const mutantes = [
   // (HMO-334). A linha do `meuUserId` so existe em `parteConfiguradaDoMembro`,
   // e e ela que torna a ancora unica -- o `para` a repete intacta.
   //
-  // `parteDoMembro` segue sem mutante proprio para esta decisao. E lacuna de
-  // cobertura, nao defeito daqui.
+  // A GEMEA GANHOU MUTANTE PROPRIO NA HMO-338, logo abaixo destes dois. Nao e
+  // repeticao: estes dois medem a guarda de `parteConfiguradaDoMembro` e o de
+  // baixo mede a de `parteDoMembro`, que e outra linha de codigo.
   [
     "o group_id deixa de ser olhado (toda despesa vira pessoal)",
     '  if (!groupId) return cheio;\n  if (typeof meuUserId !== "string" || meuUserId === "") return cheio;',
@@ -81,6 +82,31 @@ const mutantes = [
     "a despesa PESSOAL passa a ser dividida tambem",
     '  if (!groupId) return cheio;\n  if (typeof meuUserId !== "string" || meuUserId === "") return cheio;',
     '  if (false) return cheio;\n  if (typeof meuUserId !== "string" || meuUserId === "") return cheio;',
+  ],
+
+  // --- A MESMA DECISAO NA GEMEA: `parteDoMembro`, a divisao IGUAL (HMO-338) ---
+  //
+  // A ancora leva a linha do `membrosAtivosPorGrupo.get`, que so existe nesta
+  // funcao -- e o que a torna unica, do mesmo jeito que a linha do `meuUserId`
+  // fixa a dos dois acima.
+  //
+  // E O `para` NAO E `if (true)` NEM `if (false)`, de proposito, e esta e a
+  // parte que custou a medicao: os dois mutantes acima morrem no TSC e nao na
+  // assercao. Tirar a guarda tira a estreitamento de tipo de `groupId` (que e
+  // `string | null | undefined`), e a linha seguinte passa `groupId` para um
+  // `Map.get` que quer `string` -- erro de tipo antes de qualquer teste rodar.
+  // Morrer no tsc e morrer, mas nao responde a pergunta desta issue, que e se a
+  // SUITE pega a regra. Entao o mutante troca o VALOR devolvido pela guarda em
+  // vez de apagar a guarda: os tipos seguem validos, o `!groupId` segue
+  // estreitando, e quem tem de reprovar e a assercao.
+  //
+  // O `/ 2` e a forma que este runner ja usa no mutante do grupo desconhecido,
+  // logo abaixo, e e o defeito como a tela o mostraria: uma despesa PESSOAL de
+  // R$ 3.000 saindo como R$ 1.500, dividida com ninguem.
+  [
+    "a despesa PESSOAL passa a ser dividida na divisao IGUAL (`parteDoMembro`)",
+    "  if (!groupId) return cheio;\n\n  const membros = membrosAtivosPorGrupo.get(groupId);",
+    "  if (!groupId) return toReais(Math.round(toCents(cheio) / 2));\n\n  const membros = membrosAtivosPorGrupo.get(groupId);",
   ],
 
   // --- a contagem desconhecida, que nao pode virar palpite ---
@@ -99,9 +125,11 @@ const mutantes = [
   // O MESMO CASO: a guarda de status esta em `montarParticipantesPorGrupo` (os
   // PESOS) e em `contarMembrosAtivos` (a CONTAGEM), identica nas duas. Este
   // mutante sempre mutou a primeira, os pesos; a linha do `user_id` so existe
-  // la, e e ela que fixa a ancora. O mutante de `contarMembrosAtivos` que vem
-  // logo abaixo ja ancora no `contagem.set`, que e unico -- entao a contagem
-  // tem cobertura, e o que ficou de fora e so o status DENTRO dela.
+  // la, e e ela que fixa a ancora. O mutante do `contagem.set` ja ancorava no
+  // unico -- entao a CONTAGEM tinha cobertura, e o que ficava de fora era so o
+  // status DENTRO dela. A HMO-338 fechou isso: o terceiro mutante deste bloco
+  // ancora na guarda de status MAIS a linha do `contagem.set`, e esse par so
+  // existe em `contarMembrosAtivos`.
   [
     "membro inativo volta a contar (a minha parte fica MENOR do que a real)",
     '    if (linha.status && linha.status !== "active") continue;\n    if (typeof linha.user_id !== "string" || linha.user_id === "") continue;',
@@ -111,6 +139,18 @@ const mutantes = [
     "a contagem passa a ser por linha e nao por grupo (um grupo herda o total do outro)",
     "    contagem.set(linha.group_id, (contagem.get(linha.group_id) ?? 0) + 1);",
     '    contagem.set(linha.group_id, (contagem.get("todos") ?? 0) + 1);',
+  ],
+  [
+    // A GEMEA DA GUARDA DE STATUS (HMO-338) -- a de dentro de
+    // `contarMembrosAtivos`, que e a que infla o DENOMINADOR. Quem saiu do grupo
+    // voltando a contar faz a minha parte sair MENOR do que a real: o aluguel de
+    // R$ 3.000 que duas pessoas dividem vira R$ 750 em vez de R$ 1.500 quando as
+    // duas linhas `removed`/`pending` entram na conta. E o erro para BAIXO, que e
+    // a familia que o cabecalho deste arquivo persegue -- custo fixo subestimado
+    // alimenta o safe-to-spend.
+    "membro inativo volta a contar na CONTAGEM (`contarMembrosAtivos`)",
+    '    if (linha.status && linha.status !== "active") continue;\n    contagem.set(linha.group_id, (contagem.get(linha.group_id) ?? 0) + 1);',
+    "    if (false) continue;\n    contagem.set(linha.group_id, (contagem.get(linha.group_id) ?? 0) + 1);",
   ],
 
   // --- centavos ---
