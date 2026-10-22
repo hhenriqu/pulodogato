@@ -326,6 +326,59 @@ test("ligado, a tela nomeia ONDE a conta entra", () => {
   }
 });
 
+test("desligado, a tela nomeia as MESMAS quatro leituras -- nao 'as somas'", () => {
+  // HMO-488. O ramo desligado dizia o generico "so nao entra nas somas", que se
+  // le como TODAS as somas. Nao e: o interruptor vale para as quatro leituras de
+  // SALDO, e so para elas. Se os dois ramos nao enumerarem a mesma lista, o ramo
+  // desligado volta a prometer mais do que o campo faz.
+  const html = renderizar({
+    escopo: "conta",
+    valores: { include_in_total: false },
+  });
+  for (const onde of ["saldo total", "patrimônio", "posso gastar", "projeção"]) {
+    assert.ok(
+      html.includes(onde),
+      `desligado, a tela nao diz que a conta sai de "${onde}"`
+    );
+  }
+});
+
+test("desligado, a tela avisa que o gasto CONTINUA nos relatorios", () => {
+  // Esta e a decisao da HMO-488, e a parte que nenhuma outra assercao cobre:
+  // desligar a conta a tira do patrimonio, NAO do relatorio de gasto. Quem le
+  // "fora dos totais" e supoe o contrario vai concluir que o relatorio esta
+  // somando errado. Para o lancamento avulso existe o include_in_total por
+  // lancamento (migration 060) -- nao este campo.
+  for (const escopo of ["conta", "cartao"]) {
+    const html = renderizar({ escopo, valores: { include_in_total: false } });
+    assert.ok(
+      html.includes("relatórios de gasto"),
+      `em ${escopo}, a tela nao diz que o gasto continua nos relatorios`
+    );
+    assert.ok(
+      !html.includes("só não entra nas somas"),
+      `em ${escopo}, a tela voltou a generalizar "so nao entra nas somas"`
+    );
+  }
+});
+
+test("no cartao, o ramo desligado tambem fala de FATURA", () => {
+  // O ramo desligado concordava com `campos.substantivo` em vez de trocar o
+  // vocabulario: dava "A cartão continua recebendo lançamentos".
+  const html = renderizar({
+    escopo: "cartao",
+    valores: { include_in_total: false },
+  });
+  assert.ok(
+    html.includes("A fatura continua"),
+    "o cartao desligado nao fala de fatura"
+  );
+  assert.ok(
+    !html.includes("A cartão continua"),
+    "voltou o 'A cartão continua' -- o ramo desligado concorda com o substantivo errado"
+  );
+});
+
 test("no cartao, o texto fala de FATURA e nao de conta", () => {
   // Herdar o vocabulario de conta aqui poria "esta conta entra no saldo total"
   // em cima de um cartao, que nao tem saldo -- tem fatura.
