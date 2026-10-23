@@ -317,6 +317,7 @@ next-env.d.ts
 /.tmp-fechamento-do-grupo/
 /.tmp-fechamento-por-periodo/
 /.tmp-acerto-do-fechamento/
+/.tmp-divisao-com-pessoa/
 /.tmp-fechamento-no-resultado/
 
 # Build do `npm run test:telas-de-movimentacao` (HMO-246, as tres telas de

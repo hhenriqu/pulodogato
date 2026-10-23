@@ -1,0 +1,38 @@
+{
+  "//": [
+    "A divisao com pessoa pelo lancamento (RN020, fase 5, migration 070).",
+    "",
+    "Compila lib/conta-da-divisao.ts (o que a edicao grava, a recusa da divisao",
+    "ja paga) e as quatro rotas em volta das contas que a 070 cria: a edicao e",
+    "a exclusao da conta prevista recusam a conta da divisao, a baixa comum a",
+    "aceita, e a edicao do lancamento e a recusa da parte traduzem o PDG02 em",
+    "409. O tsc puxa sozinho as dependencias de cada rota.",
+    "",
+    "`rootDir` e a raiz do projeto: as rotas importam @/lib e @/utils, e com",
+    "rootDir em app/ o tsc reprova com TS6059. O emit espelha a raiz, entao o",
+    "passo do resolve-aliases roda com --espelha-raiz.",
+    "",
+    "utils/supabase/server.ts e compilado junto e DEPOIS sobrescrito pelo",
+    "scripts/monta-duble-de-rota.mjs -- o modulo real importa `next/headers`, que",
+    "nao roda fora do runtime do Next."
+  ],
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "../.tmp-divisao-com-pessoa",
+    "rootDir": "..",
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": [
+    "../lib/conta-da-divisao.ts",
+    "../app/api/scheduled-transactions/[id]/route.ts",
+    "../app/api/scheduled-transactions/[id]/pay/route.ts",
+    "../app/api/personal-finance/transactions/[id]/route.ts",
+    "../app/api/personal-finance/splits/route.ts"
+  ]
+}

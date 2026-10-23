@@ -70,6 +70,11 @@ import { moedaSugerida } from "@/lib/moeda";
 import { cotacaoDigitada, taxaParaGravar } from "@/lib/cambio";
 import { avisoDeEdicaoTravada } from "@/lib/grupos";
 import {
+  avisoDaDivisaoPaga,
+  mudancasDaDivisao,
+  type ParteGravada,
+} from "@/lib/conta-da-divisao";
+import {
   cartaoDaTela,
   faturaAbertaDoCartao,
   faturaPadraoDoLancamento,
@@ -207,6 +212,16 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
   const [catalogoDe, setCatalogoDe] = useState<number | null>(null);
   const [valores, setValores] = useState<ValoresDeLancamento>(valoresIniciais);
   const [editando, setEditando] = useState(false);
+  /**
+   * AS PARTES DA DIVISAO COM PESSOA COMO ESTAO GRAVADAS, NA EDICAO (070)
+   *
+   * O Salvar grava so a diferenca entre elas e o formulario
+   * (`mudancasDaDivisao`). `null` quer dizer "nao sei o que esta gravado": a
+   * leitura falhou, e o Salvar deixa a divisao como esta em vez de adivinhar.
+   */
+  const [divisaoGravada, setDivisaoGravada] = useState<ParteGravada[] | null>(
+    []
+  );
   /**
    * A SERIE DA PARCELA QUE ESTA ABERTA PARA EDICAO (HMO-357)
    *
@@ -704,6 +719,26 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
     if (linha.installment_number) {
       void carregarSerieDaParcela(id);
     }
+    // A DIVISAO COM PESSOA VOLTA PARA O FORMULARIO (070)
+    //
+    // Antes ela nao voltava: a tela abria com "Dividir" marcado e a lista
+    // vazia, e o Salvar apagava as partes -- toda edicao desfazia a divisao,
+    // sem aviso. Desde a 070 a parte carrega as contas dos dois lados, e apagar
+    // a parte de quem ja pagou e recusado.
+    const { data: partes, error: erroDasPartes } = await supabase
+      .from("expense_splits")
+      .select("id, participant_id, percentage")
+      .eq("transaction_id", id);
+    if (erroDasPartes) {
+      console.error("Erro ao ler a divisão do lançamento:", erroDasPartes);
+      toast.error(
+        "Não consegui ler a divisão deste lançamento. Ela fica como está ao salvar."
+      );
+    }
+    const partesGravadas: ParteGravada[] | null = erroDasPartes
+      ? null
+      : partes ?? [];
+    setDivisaoGravada(partesGravadas);
     setValores({
       ...valoresIniciais(),
       descricao: linha.description ?? "",
@@ -785,6 +820,10 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
         : "",
       compartilhado: Boolean(linha.is_shared),
       grupoId: linha.group_id ?? "",
+      rateios: (partesGravadas ?? []).map((parte) => ({
+        participanteId: parte.participant_id,
+        percentual: Number(parte.percentage),
+      })),
       // A moeda GRAVADA ganha da moeda atual da conta -- e por isso
       // `doLancamento` vem primeiro. Ler a da conta aqui faria a edicao de uma
       // conta que trocou de moeda reabrir todo lancamento antigo dela na moeda
@@ -1432,7 +1471,7 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       // grupo cuja parte alguem ja aprovou. Vem ANTES da fila offline de
       // proposito -- guardar no aparelho para reenviar depois so adiaria a
       // mesma recusa, e a pessoa levaria o erro duas vezes.
-      const travada = avisoDeEdicaoTravada(erro);
+      const travada = avisoDeEdicaoTravada(erro) ?? avisoDaDivisaoPaga(erro);
       if (travada) {
         toast.error(travada);
         return;
@@ -1597,6 +1636,9 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
     };
 
     let transacao: { id: string };
+    // As partes a inserir: todas no lancamento novo; na edicao, so as que
+    // entraram (ver a divisao com pessoa abaixo).
+    let partesNovas = temRateio && !temGrupo ? valores.rateios : [];
 
     // OS CAMPOS QUE A ROTA DA SERIE JA GRAVOU SAEM DAQUI (HMO-361)
     //
@@ -1628,10 +1670,36 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
       if (error) throw error;
       transacao = data;
 
-      await supabase
-        .from("expense_splits")
-        .delete()
-        .eq("transaction_id", idParaEditar);
+      // A DIVISAO COM PESSOA: SO O QUE MUDOU (070)
+      //
+      // Aqui havia um `delete` de todas as partes, sem olhar o erro, e o
+      // insert abaixo as recriava. Desde a 070 cada parte carrega as contas
+      // dos dois lados: apagar e recriar refaria as contas a cada correcao de
+      // descricao, e seria recusado quando um dos lados ja pagou. Com grupo, a
+      // divisao com pessoa sai inteira -- o grupo ja diz quem paga.
+      if (divisaoGravada) {
+        const { inserir, atualizar, apagar } = mudancasDaDivisao(
+          divisaoGravada,
+          temRateio && !temGrupo ? valores.rateios : []
+        );
+        if (apagar.length > 0) {
+          const { error: erroAoApagar } = await supabase
+            .from("expense_splits")
+            .delete()
+            .in("id", apagar);
+          if (erroAoApagar) throw erroAoApagar;
+        }
+        for (const parte of atualizar) {
+          const { error: erroAoAtualizar } = await supabase
+            .from("expense_splits")
+            .update({ percentage: parte.percentual })
+            .eq("id", parte.id);
+          if (erroAoAtualizar) throw erroAoAtualizar;
+        }
+        partesNovas = inserir;
+      } else {
+        partesNovas = [];
+      }
     } else {
       const { data, error } = await supabase
         .from("financial_transactions")
@@ -1683,9 +1751,9 @@ export function FormularioDeLancamento({ tipo }: { tipo: TipoLancamento }) {
     // gasto zero. Nao vale um caminho de escrita paralelo para sustentar isso.
 
     // Rateio com conexoes individuais (fora de grupo).
-    if (temRateio && !temGrupo) {
+    if (partesNovas.length > 0) {
       const { error } = await supabase.from("expense_splits").insert(
-        valores.rateios.map((rateio) => ({
+        partesNovas.map((rateio) => ({
           transaction_id: transacao.id,
           participant_id: rateio.participanteId,
           percentage: rateio.percentual,

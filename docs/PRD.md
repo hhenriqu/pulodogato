@@ -5,7 +5,7 @@
 > **Documento de referência do produto.** Descreve o que o Pulo do Gato é, as
 > regras de negócio que valem, e o que ainda é requisito não implementado.
 
-**Versão:** 2.2
+**Versão:** 2.3
 **Data:** 23 de outubro de 2026
 **Projeto:** Pulo do Gato — gestão financeira familiar
 **Tipo:** Progressive Web App (PWA)
@@ -21,6 +21,7 @@
 | 2.0 | 29/09/2026 | **Reescrita para o produto que existe** (HMO-119) | pendente |
 | 2.1 | 23/10/2026 | **Modelo novo das movimentações** (RN016 a RN021); regras antigas marcadas com a fase em que saem | Helio (decisões D1 a D5) |
 | 2.2 | 23/10/2026 | Fases 2 a 4 implantadas: fechamento do grupo, acerto que dá baixa e a leitura nova nos totais (RN018.13 e RN018.14 novas) | Helio (decisões D1 a D5) |
+| 2.3 | 23/10/2026 | Fase 5, primeira parte: divisão com pessoa pelo lançamento (RN020, com RN020.6 e RN020.7 novas). O acerto da RN019 fica só para o grupo | Helio (decisões D1 a D5) |
 
 > **O que a versão 2.0 corrigiu.** Até aqui esta PRD descrevia um app de carteira
 > de investimentos: o problema era "investidores pessoa física", as personas eram
@@ -298,7 +299,7 @@ a tela não pode contorná-las. As marcadas **(tela)** vivem em TypeScript testa
 > ↪ A partir da fase 4, a divisão de cada lançamento (RN007.2 a RN007.5) deixa
 > de ser o que conta no Resultado de cada membro. O que conta é o fechamento do
 > período (RN018). RN007.1, RN007.6, RN007.7 e RN007.9 continuam, e a RN007.8
-> é substituída pela RN020 na fase 5.
+> foi substituída pela RN020 na fase 5.
 
 - RN007.1 Só **despesa** é divisível.
 - RN007.2 A divisão é feita pelo **banco**, por trigger, no momento do
@@ -315,8 +316,9 @@ a tela não pode contorná-las. As marcadas **(tela)** vivem em TypeScript testa
   "Dividido com você") e entra no realizado dele pelo mesmo caminho da parte de
   grupo (`group_share_entries`, migration 066). Quem pagou segue o critério da
   RN do custo pessoal (HMO-258): conta o valor inteiro.
-  ↪ Substituída pela RN020 na fase 5: a parte do outro vira uma conta a pagar
-  e uma a receber, no lançamento, e a perna de pessoa da 066 sai.
+  ↪ Substituída pela RN020 na fase 5 (migration 070): a parte do outro vira
+  uma conta a pagar e uma a receber, no lançamento, e a perna de pessoa da 066
+  saiu.
 - RN007.9 Uma despesa nunca entra pelas duas divisões: com `group_id`, só a
   parte de grupo conta.
 
@@ -402,8 +404,9 @@ nas contas que o fechamento gerou.
 
 ### RN017 — O que é Despesa e o que é Receita 🚧 — fases 4 a 6
 
-Na fase 4 entraram o pagamento a grupo e o a receber de grupos. A pessoa e o
-MyBank entram na fase 5, e a fatura do cartão na fase 6.
+Na fase 4 entraram o pagamento a grupo e o a receber de grupos, e na fase 5 o
+pagamento a pessoa e o a receber de pessoas (RN020). Falta o MyBank, que é a
+segunda parte da fase 5, e a fatura do cartão, na fase 6.
 
 - RN017.1 **Despesas** = gastos fixos + gastos aleatórios + fatura do cartão +
   pagamento a grupo + pagamento a pessoa, mais os juros do MyBank de quem pegou
@@ -423,8 +426,8 @@ MyBank entram na fase 5, e a fatura do cartão na fase 6.
   grupos + a receber de pessoas + outras receitas, mais os juros do MyBank de
   quem emprestou (RN021.3).
 - RN017.6 O que um grupo ou uma pessoa me deve é receita desde que a conta a
-  receber existe (RN018.5, RN020.2): prevista até o acerto, realizada no
-  acerto. A conta vira realizada quando o acerto a quita inteira, e conta no
+  receber existe (RN018.5, RN020.2): prevista até ser quitada, realizada na
+  quitação (o acerto, no grupo; a baixa, na pessoa). A conta vira realizada quando o acerto a quita inteira, e conta no
   mês do vencimento dela, que é o dia do fechamento (decisão D3, RN018.10).
   Acerto parcial aparece no Saldo de contas pela transferência, e a conta
   continua prevista pelo valor inteiro até a quitação.
@@ -489,8 +492,9 @@ O Resultado de cada um fecha na responsabilidade, e a soma dá os R$ 2.000.
 ### RN019 — Acerto ✅ **(banco)** — fase 3
 
 - RN019.1 O acerto (o Pix entre duas pessoas) **quita** contas geradas pelo
-  fechamento do grupo (RN018) ou pela divisão com pessoa (RN020): a conta a
-  pagar de quem pagou e a conta a receber de quem recebeu.
+  fechamento do grupo (RN018): a conta a pagar de quem pagou e a conta a
+  receber de quem recebeu. A conta da divisão com pessoa não passa pelo acerto:
+  cada lado a quita com a baixa de sempre (RN020.6).
 - RN019.2 Ele não é receita nem despesa nova. O valor acertado é a realização
   das contas que já existiam.
 - RN019.3 Registrado por um lado, ele dá baixa nos dois, numa operação só do
@@ -500,7 +504,7 @@ O Resultado de cada um fecha na responsabilidade, e a soma dá os R$ 2.000.
 - RN019.5 No grupo, o acerto é entre dois membros: quem deve paga a quem tem a
   receber. A tela sugere os pares, como o fechamento mensal de hoje (HMO-245).
 
-### RN020 — Divisão com pessoa 📋 **(banco)** — fase 5
+### RN020 — Divisão com pessoa ✅ **(banco)** — fase 5
 
 - RN020.1 Uma despesa sem grupo pode ser dividida com uma conexão aceita
   (RN010.1). Ela funciona como um grupo de duas pessoas, sem período.
@@ -508,13 +512,23 @@ O Resultado de cada um fecha na responsabilidade, e a soma dá os R$ 2.000.
   inteira e ganha uma **"A receber de <pessoa>"** (receita) pela parte do
   outro. O outro ganha uma **"Pagamento a <pessoa>"** (despesa) do mesmo valor.
   As duas vencem na data do lançamento.
-- RN020.3 Editar o valor ou a parte refaz as duas contas, e apagar o lançamento
-  remove as duas. Conta já quitada por acerto não é refeita em silêncio.
+- RN020.3 Editar o valor, a data ou a parte refaz as duas contas, e apagar o
+  lançamento, tirar a pessoa da divisão ou a pessoa recusar a parte remove as
+  duas. Conta já quitada não é refeita em silêncio: se um dos lados já deu
+  baixa, o banco recusa a mudança até a baixa ser desfeita. A conta da divisão
+  não se edita nem se apaga pela agenda, só pelo lançamento.
 - RN020.4 Uma despesa nunca entra pelas duas divisões: com grupo, vale só o
   fechamento do grupo (RN007.9).
 - RN020.5 Exemplo: a Lais pagou R$ 79,86 e dividiu 90% com o Helio. A Lais fica
   com despesa de R$ 79,86 e a receber de R$ 71,87, e o Resultado dela é
   −R$ 7,99. O Helio fica com um pagamento a pessoa de R$ 71,87.
+- RN020.6 Cada lado quita a própria conta com a baixa de sempre: Pagar ou
+  Receber, ou "Já lancei" quando o Pix já está lançado. Quitar um lado não
+  quita o outro. A conta a receber nasce na conta de onde saiu a despesa,
+  quando ela não é cartão, e a conta a pagar na primeira conta corrente ativa
+  do outro. Ninguém escolhe conta de outra pessoa.
+- RN020.7 Despesa em outra moeda divide pelo valor convertido na cotação do
+  lançamento, e as duas contas são em reais.
 
 ### RN021 — MyBank 📋 — fase 5
 
@@ -675,8 +689,8 @@ planos e limites; modo noturno por token; CI de build, schema, cor e PWA.
 
 ### Próximo
 
-- Implantar o modelo novo das movimentações (RN016 a RN021): faltam as fases 5
-  (divisão com pessoa e MyBank) e 6 (cartão pela fatura).
+- Implantar o modelo novo das movimentações (RN016 a RN021): faltam o MyBank
+  (RN021, segunda parte da fase 5) e a fase 6 (cartão pela fatura).
 - Zerar o backlog de 142 warnings de lint.
 - Fechar o módulo de investimentos (rentabilidade consolidada).
 - Fechar a experiência multi-moeda.

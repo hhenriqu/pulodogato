@@ -1,5 +1,6 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
+import { avisoDaDivisaoPaga } from "@/lib/conta-da-divisao";
 
 // A consulta e `select("*")` com embeds, entao declarar coluna por coluna aqui
 // so criaria uma segunda verdade para divergir da tabela. O tipo nomeia o UNICO
@@ -187,6 +188,15 @@ export async function PATCH(request: NextRequest) {
 
     if (updateError) {
       console.error("Update error:", updateError);
+
+      // Recusar a parte apaga as contas da divisao dos dois lados (070). Se um
+      // deles ja pagou a dele, o banco recusa com PDG02, e a frase diz o que
+      // fazer antes.
+      const divisaoPaga = avisoDaDivisaoPaga(updateError);
+      if (divisaoPaga) {
+        return NextResponse.json({ error: divisaoPaga }, { status: 409 });
+      }
+
       return NextResponse.json(
         { error: "Failed to update split" },
         { status: 500 }
