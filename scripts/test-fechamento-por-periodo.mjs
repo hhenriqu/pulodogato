@@ -305,7 +305,7 @@ test("periodo sem despesa fecha em zero, sem conta nenhuma", () => {
 // -----------------------------------------------------
 // A leitura: o que ainda nao fechou
 // -----------------------------------------------------
-function dubleDaCasa({ rpc } = {}) {
+function dubleDaCasa({ rpc, acertosExtras = [], alocacoes = [] } = {}) {
   const d = criarDuble({
     tabelas: {
       group_closing_items: [
@@ -327,7 +327,9 @@ function dubleDaCasa({ rpc } = {}) {
       group_settlements: [
         { id: "s-fechado", group_id: CASA, from_user_id: LAIS, to_user_id: HELIO, amount: 30, exchange_rate: 1, settled_on: "2026-09-30" },
         { id: "s-aberto", group_id: CASA, from_user_id: LETICIA, to_user_id: HELIO, amount: 40, exchange_rate: 1, settled_on: "2026-10-25" },
+        ...acertosExtras,
       ],
+      group_settlement_allocations: alocacoes,
       group_members: [
         { group_id: CASA, user_id: HELIO, joined_at: "2026-01-01", percentage: 50, status: "active" },
         { group_id: CASA, user_id: LAIS, joined_at: "2026-01-02", percentage: 30, status: "active" },
@@ -365,6 +367,48 @@ test("lerOQueNaoFechou: so despesa do grupo, ainda nao fechada; so acerto ainda 
   assert.deepEqual(
     r.acertos.map((a) => a.settlement_id),
     ["s-aberto"]
+  );
+});
+
+test("lerOQueNaoFechou: do acerto que deu baixa (068), so a sobra entra; o consumido inteiro sai", async () => {
+  const { client } = dubleDaCasa({
+    acertosExtras: [
+      // R$ 300 da Lais ao Helio: R$ 250 quitaram as contas, sobram 50.
+      { id: "s-parcial", group_id: CASA, from_user_id: LAIS, to_user_id: HELIO, amount: 300, exchange_rate: 1, settled_on: "2026-10-26" },
+      // R$ 100 da Leticia a Lais, consumidos inteiros pela baixa.
+      { id: "s-baixado", group_id: CASA, from_user_id: LETICIA, to_user_id: LAIS, amount: 100, exchange_rate: 1, settled_on: "2026-10-27" },
+      // US$ 10 a 5,20 do Helio a Leticia: R$ 52, R$ 20,01 de baixa, sobram 31,99.
+      { id: "s-cambio", group_id: CASA, from_user_id: HELIO, to_user_id: LETICIA, amount: 10, exchange_rate: 5.2, settled_on: "2026-10-28" },
+    ],
+    alocacoes: [
+      // A baixa e simetrica: o mesmo valor do lado de quem paga e de quem
+      // recebe. So o lado do pagador pode ser descontado, senao conta dobrado.
+      { group_id: CASA, kind: "acerto", settlement_id: "s-parcial", user_id: LAIS, amount: 200 },
+      { group_id: CASA, kind: "acerto", settlement_id: "s-parcial", user_id: LAIS, amount: "50.00" },
+      { group_id: CASA, kind: "acerto", settlement_id: "s-parcial", user_id: HELIO, amount: 250 },
+      { group_id: CASA, kind: "acerto", settlement_id: "s-baixado", user_id: LETICIA, amount: 100 },
+      { group_id: CASA, kind: "acerto", settlement_id: "s-baixado", user_id: LAIS, amount: 100 },
+      { group_id: CASA, kind: "acerto", settlement_id: "s-cambio", user_id: HELIO, amount: 20.01 },
+      { group_id: CASA, kind: "acerto", settlement_id: "s-cambio", user_id: LETICIA, amount: 20.01 },
+      // A compensacao do mesmo membro nao tem acerto e nao desconta nada.
+      { group_id: CASA, kind: "compensacao", settlement_id: null, user_id: HELIO, amount: 70 },
+      // Uma baixa de OUTRO grupo apontando para s-aberto (impossivel no banco,
+      // de proposito aqui): sem o recorte do grupo, s-aberto perderia os 40.
+      { group_id: OUTRO, kind: "acerto", settlement_id: "s-aberto", user_id: LETICIA, amount: 40 },
+    ],
+  });
+  const r = await lerOQueNaoFechou(client, CASA);
+  // Controles: sem o desconto, s-parcial entraria com 300 e s-baixado com 100
+  // (o banco recusaria o fechamento); descontando os dois lados, s-parcial
+  // ficaria em -200 e sumiria; sem o filtro de zero, s-baixado entraria com 0;
+  // sem o recorte do grupo, s-aberto zeraria e sumiria.
+  assert.deepEqual(
+    r.acertos.map((a) => [a.settlement_id, a.valor]),
+    [
+      ["s-aberto", 40],
+      ["s-parcial", 50],
+      ["s-cambio", 31.99],
+    ]
   );
 });
 
