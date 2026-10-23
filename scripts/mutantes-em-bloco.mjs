@@ -461,7 +461,16 @@ export function criarBlocoDeMutantes({ suites = [], oraculos = {}, rotulo = "blo
       });
       if (r.status !== 0) {
         const saida = String(r.stdout ?? "") + String(r.stderr ?? "");
-        return { verde: false, como: "teste", saida: resumoDaReprovacao(saida), mudouASaida };
+        // `crua` vai junto para quem precisa do NOME do caso que caiu: no CI
+        // (Node 20, sem TTY) o `node --test` sai em TAP (`not ok N - nome`), e
+        // o resumo acima so le o `✖` do reporter spec.
+        return {
+          verde: false,
+          como: "teste",
+          saida: resumoDaReprovacao(saida),
+          crua: saida,
+          mudouASaida,
+        };
       }
     }
 

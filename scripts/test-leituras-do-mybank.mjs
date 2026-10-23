@@ -1158,3 +1158,21 @@ test("a linha da agenda carrega os DOIS status: o de dinheiro e o da tela", () =
   assert.equal(pendente.mybank_status, "pending");
   assert.equal(avisada.mybank_status, "reported");
 });
+
+test("leitura da agenda: a parcela VENCIDA sai `overdue` no `effective_status`, ao lado do `my_effective_status`", () => {
+  // `effective_status` e o que a tela de Contas Previstas le para destacar o
+  // atraso (`conta.effective_status === "overdue"`). As leituras 1b e 4 acima
+  // passam pelas rotas, que leem o par `my_*` -- sem esta assercao, um
+  // `effective_status: "pending"` fixo passaria a suite inteira e a parcela
+  // atrasada do MyBank perderia o destaque so naquela tela.
+  const [vencida] = LEITURAS.parcelasDevidasNaAgenda(
+    [{ ...DIVIDA_DA_LAIS, due_date: "2026-03-01" }],
+    HOJE
+  );
+  const [aVencer] = LEITURAS.parcelasDevidasNaAgenda([DIVIDA_DA_LAIS], HOJE);
+
+  assert.equal(vencida.effective_status, "overdue");
+  assert.equal(vencida.my_effective_status, "overdue");
+  assert.equal(aVencer.effective_status, "pending");
+  assert.equal(aVencer.my_effective_status, "pending");
+});
