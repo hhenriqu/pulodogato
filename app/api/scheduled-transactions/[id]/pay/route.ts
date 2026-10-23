@@ -58,6 +58,10 @@ import {
   patchDoEstornoDaParcela,
 } from "@/lib/emprestimo-do-mybank";
 import { baixaDaTransferenciaPrevista } from "@/lib/services/baixa-da-transferencia-prevista";
+import {
+  ehContaDoFechamento,
+  MENSAGEM_DA_CONTA_DO_FECHAMENTO,
+} from "@/lib/conta-do-fechamento";
 
 export async function POST(
   request: NextRequest,
@@ -105,6 +109,14 @@ export async function POST(
       return NextResponse.json(
         { error: "Conta prevista não encontrada" },
         { status: 404 }
+      );
+    }
+
+    // A conta do fechamento do grupo se quita pelo acerto (068, RN019).
+    if (ehContaDoFechamento(conta)) {
+      return NextResponse.json(
+        { error: MENSAGEM_DA_CONTA_DO_FECHAMENTO },
+        { status: 409 }
       );
     }
 
