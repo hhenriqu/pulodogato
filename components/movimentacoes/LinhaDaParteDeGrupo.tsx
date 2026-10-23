@@ -67,14 +67,11 @@ export function LinhaDaParteDeGrupo({
   parte: LancamentoDeTerceiro;
   nomeDoGrupo: Record<string, string>;
 }) {
-  const grupo = nomeDoGrupo[parte.groupId];
+  const grupo = parte.groupId ? nomeDoGrupo[parte.groupId] : undefined;
   const pagador = pagadorNaLinha(parte.pagador);
 
-  return (
-    <Link
-      href={`/dashboard/expense-groups/${parte.groupId}`}
-      className="flex items-center justify-between gap-3 p-3 border rounded-lg border-dashed transition-colors hover:bg-muted/50"
-    >
+  const conteudo = (
+    <>
       {/*
         `min-w-0` nos dois niveis e `truncate` na descricao, como na linha comum:
         sem eles o minimo de min-content de um item flex estoura a largura do
@@ -113,7 +110,12 @@ export function LinhaDaParteDeGrupo({
                 informacao, nao informacao errada -- a mesma regra do selo da
                 linha comum.
               */}
-              {grupo || "Grupo"}
+              {/*
+                A divisao com PESSOA (066) nao tem grupo: o selo diz isso em vez
+                de cair no "Grupo" generico, que apontaria para um grupo que nao
+                existe.
+              */}
+              {parte.groupId ? grupo || "Grupo" : "Dividido com você"}
             </Badge>
             {/*
               QUEM PAGOU (HMO-274).
@@ -176,6 +178,27 @@ export function LinhaDaParteDeGrupo({
           de {formatCurrency(Math.abs(parte.totalDaDespesa))}
         </p>
       </div>
+    </>
+  );
+
+  const classe =
+    "flex items-center justify-between gap-3 p-3 border rounded-lg border-dashed transition-colors";
+
+  // Sem grupo nao ha tela para onde levar: a linha e so leitura.
+  if (!parte.groupId) {
+    return (
+      <div className={classe} data-divisao="pessoa">
+        {conteudo}
+      </div>
+    );
+  }
+
+  return (
+    <Link
+      href={`/dashboard/expense-groups/${parte.groupId}`}
+      className={`${classe} hover:bg-muted/50`}
+    >
+      {conteudo}
     </Link>
   );
 }

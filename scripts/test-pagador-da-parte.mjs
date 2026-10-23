@@ -54,6 +54,7 @@ const { LinhaDaParteDeGrupo } = await import(
 
 const {
   PAGADOR_SEM_NOME,
+  completarComADespesaDaView,
   nomesDosPagadores,
   pagadorNaLinha,
   partesDeTerceirosNaLista,
@@ -378,6 +379,93 @@ test("a ponta a ponta: nome do mapa de perfis chega ao HTML da linha", () => {
     })
   );
   assert.equal(seloDoPagador(html).texto, "Pago por Ana Souza");
+});
+
+// ---------------------------------------------------------------------------
+// A DIVISAO COM PESSOA (066)
+// ---------------------------------------------------------------------------
+// A Lais lanca "Agropecuaria" R$ 79,86 PESSOAL e divide com o Helio, 90%. A
+// parte dele chega pela perna de pessoa de `group_share_entries`, com
+// `group_id` nulo -- e a despesa NAO vem na segunda consulta, porque a RLS de
+// `financial_transactions` nao entrega ao Helio uma linha pessoal da Lais. A
+// view traz `pago_por`, `descricao` e `valor_total` para cobrir esse buraco.
+// ---------------------------------------------------------------------------
+
+const LAIS = "u-lais";
+const AGRO = "t-agro";
+
+const parteDePessoa = {
+  id: "es-7fd3c576",
+  transaction_id: AGRO,
+  group_id: null,
+  transaction_date: "2026-10-22",
+  category_id: "c-agro",
+  transaction_type: "expense",
+  currency: "BRL",
+  amount: 71.87,
+  split_status: "pending",
+  paguei_eu: false,
+  pago_por: LAIS,
+  descricao: "Agropecuaria",
+  valor_total: "-79.86",
+};
+
+test("a parte de pessoa entra na lista com a despesa que a view trouxe", () => {
+  const despesas = completarComADespesaDaView([parteDePessoa], new Map());
+  const { linhas, semDescricao } = partesDeTerceirosNaLista(
+    [parteDePessoa],
+    despesas,
+    new Map([[LAIS, "Lais"]])
+  );
+  assert.equal(semDescricao, 0);
+  assert.equal(linhas.length, 1);
+  assert.equal(linhas[0].description, "Agropecuaria");
+  assert.equal(linhas[0].groupId, null);
+  assert.equal(linhas[0].pagadorId, LAIS);
+  assert.equal(linhas[0].pagador, "Lais");
+  assert.equal(linhas[0].amount, -71.87);
+  assert.equal(linhas[0].totalDaDespesa, -79.86);
+});
+
+test("sem o que a view traz, a parte continua descartada (controle negativo)", () => {
+  const semAView = { ...parteDePessoa, pago_por: null, descricao: null };
+  const despesas = completarComADespesaDaView([semAView], new Map());
+  const { linhas, semDescricao } = partesDeTerceirosNaLista(
+    [semAView],
+    despesas,
+    new Map()
+  );
+  assert.equal(linhas.length, 0);
+  assert.equal(semDescricao, 1);
+});
+
+test("a despesa lida de financial_transactions vence a da view", () => {
+  // A lida traz a categoria com nome; a da view nao traz categoria nenhuma.
+  const lida = { ...despesaLida, id: AGRO, description: "Agropecuaria Sao Joao" };
+  const despesas = completarComADespesaDaView(
+    [parteDePessoa],
+    new Map([[AGRO, lida]])
+  );
+  assert.equal(despesas.get(AGRO).description, "Agropecuaria Sao Joao");
+  assert.deepEqual(despesas.get(AGRO).category, lida.category);
+});
+
+test("a linha da parte de pessoa nao linka grupo e diz que foi dividida com voce", () => {
+  const despesas = completarComADespesaDaView([parteDePessoa], new Map());
+  const { linhas } = partesDeTerceirosNaLista(
+    [parteDePessoa],
+    despesas,
+    new Map([[LAIS, "Lais"]])
+  );
+  const html = renderToStaticMarkup(
+    h(LinhaDaParteDeGrupo, { parte: linhas[0], nomeDoGrupo: { [GRUPO]: "Praia" } })
+  );
+  assert.equal(seloDoPagador(html).texto, "Pago por Lais");
+  assert.ok(html.includes('data-divisao="pessoa"'));
+  assert.ok(!html.includes("/dashboard/expense-groups/"));
+  assert.ok(html.includes("Dividido com você"));
+  // Controle: a linha de GRUPO continua sendo link para o grupo.
+  assert.ok(renderizar().includes(`/dashboard/expense-groups/${GRUPO}`));
 });
 
 // ---------------------------------------------------------------------------
