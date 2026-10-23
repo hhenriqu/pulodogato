@@ -1,6 +1,7 @@
 import { createClient } from "@/utils/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { normalizarLancamento } from "@/lib/movimentacoes";
+import { avisoDaDivisaoPaga } from "@/lib/conta-da-divisao";
 
 export async function PATCH(
   request: NextRequest,
@@ -190,6 +191,13 @@ export async function PATCH(
         return NextResponse.json({ error: updateError.message }, { status: 409 });
       }
 
+      // PDG02 e a recusa da 070: um dos lados da divisao com pessoa ja pagou a
+      // conta dele, e mudar o valor ou a data deixaria a baixa com outro numero.
+      const divisaoPaga = avisoDaDivisaoPaga(updateError);
+      if (divisaoPaga) {
+        return NextResponse.json({ error: divisaoPaga }, { status: 409 });
+      }
+
       return NextResponse.json(
         { error: "Failed to update transaction" },
         { status: 500 }
@@ -295,6 +303,13 @@ export async function DELETE(
 
     if (deleteError) {
       console.error("Transaction deletion error:", deleteError);
+
+      // A mesma recusa da 070 no PATCH: apagar o lancamento apagaria a conta
+      // que um dos lados ja pagou.
+      const divisaoPaga = avisoDaDivisaoPaga(deleteError);
+      if (divisaoPaga) {
+        return NextResponse.json({ error: divisaoPaga }, { status: 409 });
+      }
       return NextResponse.json(
         { error: "Failed to delete transaction" },
         { status: 500 }

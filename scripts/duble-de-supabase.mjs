@@ -266,7 +266,15 @@ function consulta(
    * a linha, e a sonda do caminho 200 mediria o ramo errado -- verde pelo
    * motivo oposto ao que ela afirma.
    */
-  erroDeInsert = null
+  erroDeInsert = null,
+  /**
+   * O erro que SO o `update` ou o `delete` desta tabela devolve:
+   * `{ update: {...}, delete: {...} }`. Mesmo motivo do `erroDeInsert`: o
+   * trigger que recusa a escrita (o PDG02 da 070, por exemplo) deixa a tabela
+   * LEGIVEL, e a rota le a linha antes de escrever. Com `erros` a leitura
+   * falharia junto e a sonda mediria o 404 em vez da recusa.
+   */
+  erroDeEscrita = null
 ) {
   let filtradas = [...linhas];
   let colunas = null;
@@ -483,6 +491,14 @@ function consulta(
      * exatamente uma vez e registrar exatamente uma escrita.
      */
     function concluir() {
+      // A escrita recusada nao aplica nada e nao entra em `escritas`, como o
+      // `insert-recusado`: "a rota escreveu" tem de distinguir gravado de
+      // recusado.
+      const recusa = erroDeEscrita?.[verbo];
+      if (recusa) {
+        registro(tabela, filtros, `${verbo}-recusado`);
+        return Promise.resolve({ data: null, error: recusa });
+      }
       const atingidas = alcancadas();
       aplicar(atingidas);
       // A projecao sai DEPOIS de aplicar, e serve aos dois verbos: o
@@ -1018,6 +1034,8 @@ export function criarDuble({
    * para o porque de nao dar para usar `erros` aqui.
    */
   errosDeInsert = {},
+  /** `{ expense_splits: { update: { code: "PDG02", ... } } }`. Ver `erroDeEscrita`. */
+  errosDeEscrita = {},
 } = {}) {
   /** Toda consulta que passou por aqui, para a sonda conferir o que foi lido. */
   const lidas = [];
@@ -1113,7 +1131,8 @@ export function criarDuble({
           // novo, e um contador local a ele voltaria a 1 em cada chamada --
           // exatamente o empate que a sequencia existe para desfazer.
           sequencias,
-          errosDeInsert[tabela] ?? null
+          errosDeInsert[tabela] ?? null,
+          errosDeEscrita[tabela] ?? null
         );
       },
       rpc(nome, args) {

@@ -51,6 +51,10 @@ import {
   ehContaDoFechamento,
   MENSAGEM_DA_CONTA_DO_FECHAMENTO,
 } from "@/lib/conta-do-fechamento";
+import {
+  ehContaDaDivisaoComPessoa,
+  MENSAGEM_DA_CONTA_DA_DIVISAO,
+} from "@/lib/conta-da-divisao";
 
 const STATUS_MANUAIS = ["pending", "skipped", "cancelled"];
 
@@ -156,9 +160,15 @@ export async function PATCH(
     // `due_date` e `recurring_rule_id` entram no select por causa do alcance: a
     // data e a barreira do que conta como "proximas", e sem a regra nao ha
     // serie para propagar.
+    //
+    // `*` e nao a lista: `expense_split_id` e da 070, e o deploy chega antes da
+    // colagem. Nomear a coluna faria o PostgREST recusar a leitura nessa janela,
+    // e toda edicao da agenda viraria 404 (familia
+    // `select-que-nomeia-coluna-nova-derruba-a-rota-antes-da-colagem`). Sem a
+    // coluna nenhuma conta e da divisao, e a conferencia abaixo da `false`.
     const { data: atual } = await supabase
       .from("scheduled_transactions")
-      .select("status, due_date, recurring_rule_id, group_closing_id")
+      .select("*")
       .eq("id", params.id)
       .eq("user_id", user.id)
       .single();
@@ -171,6 +181,14 @@ export async function PATCH(
     if (ehContaDoFechamento(atual)) {
       return NextResponse.json(
         { error: MENSAGEM_DA_CONTA_DO_FECHAMENTO },
+        { status: 409 }
+      );
+    }
+
+    // Nem a da divisao com pessoa: ela muda pelo lancamento (070, RN020.3).
+    if (ehContaDaDivisaoComPessoa(atual)) {
+      return NextResponse.json(
+        { error: MENSAGEM_DA_CONTA_DA_DIVISAO },
         { status: 409 }
       );
     }
@@ -378,9 +396,10 @@ export async function DELETE(
     }
     const alcance: AlcanceDaEdicao = alcanceRecebido;
 
+    // `*` pelo mesmo motivo do PATCH: `expense_split_id` e da 070.
     const { data: atual } = await supabase
       .from("scheduled_transactions")
-      .select("status, due_date, recurring_rule_id, group_closing_id")
+      .select("*")
       .eq("id", params.id)
       .eq("user_id", user.id)
       .single();
@@ -393,6 +412,14 @@ export async function DELETE(
     if (ehContaDoFechamento(atual)) {
       return NextResponse.json(
         { error: MENSAGEM_DA_CONTA_DO_FECHAMENTO },
+        { status: 409 }
+      );
+    }
+
+    // Nem a da divisao com pessoa: ela muda pelo lancamento (070, RN020.3).
+    if (ehContaDaDivisaoComPessoa(atual)) {
+      return NextResponse.json(
+        { error: MENSAGEM_DA_CONTA_DA_DIVISAO },
         { status: 409 }
       );
     }

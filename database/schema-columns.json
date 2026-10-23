@@ -727,6 +727,7 @@
     "description",
     "destination_account_id",
     "due_date",
+    "expense_split_id",
     "group_closing_id",
     "group_id",
     "id",
