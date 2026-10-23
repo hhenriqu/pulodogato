@@ -1,0 +1,15 @@
+{
+  "//": "Build so do teste: lib/fechamento-por-periodo.ts e lib/services/fechamento-dos-grupos.ts importam lib/settlement, lib/fechamento-do-grupo, lib/recurrence e lib/divisao-configurada pelo alias @/. O tsc resolve o alias por causa de `paths` mas NAO o reescreve no JS emitido -- por isso o npm script tem o passo resolve-aliases depois. Ver scripts/test-fechamento-por-periodo.mjs.",
+  "compilerOptions": {
+    "outDir": "../.tmp-fechamento-por-periodo",
+    "rootDir": "../lib",
+    "module": "es2020",
+    "target": "es2020",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "baseUrl": "..",
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["../lib/fechamento-por-periodo.ts", "../lib/services/fechamento-dos-grupos.ts"]
+}

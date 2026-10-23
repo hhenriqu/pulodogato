@@ -28,6 +28,7 @@
 --      conta com elo, e a baixa continua livre;
 --   9. apagar o fechamento solta o elo das contas (o ON DELETE SET NULL passa
 --      pela trava).
+--  10. o livro-razao dos crons aceita o job `group-closings`.
 --
 -- Rodar num banco limpo, depois de 001 -> ... -> 067:
 --   psql "$DB_URL" -f database/tests/067_fechamento_do_grupo_test.sql
@@ -602,5 +603,19 @@ SELECT pg_temp.expect('as contas do periodo 2 ficaram sem elo',
 SELECT pg_temp.expect('os itens do periodo 2 foram junto',
   (SELECT count(*) FROM public.group_closing_items
     WHERE closing_id = (SELECT id FROM ids WHERE nome = 'p2')), 0);
+
+-- =====================================================
+-- SECAO 11: o livro-razao aceita o job do fechamento
+-- =====================================================
+RESET request.jwt.claim.sub;
+
+INSERT INTO public.cron_runs (job, status, http_status, result) VALUES
+  ('group-closings', 'ok', 200, '{"ok":true,"grupos":0,"fechados":0}'::jsonb);
+SELECT pg_temp.expect('cron_runs aceitou group-closings',
+  (SELECT count(*) FROM public.cron_runs WHERE job = 'group-closings'), 1);
+SELECT pg_temp.expect_erro_com('cron_runs continua recusando nome errado',
+  $$INSERT INTO public.cron_runs (job, status, http_status, result)
+    VALUES ('group-closing', 'ok', 200, '{}'::jsonb)$$,
+  'cron_runs_job_check');
 
 ROLLBACK;

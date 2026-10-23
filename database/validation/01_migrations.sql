@@ -23437,6 +23437,7 @@ GRANT SELECT ON public.group_share_entries TO authenticated;
 --   SECAO 6  `scheduled_transactions.group_closing_id` e a trava da conta gerada
 --   SECAO 7  `registrar_fechamento_do_grupo`: a escrita, numa transacao so
 --   SECAO 8  RLS e grants
+--   SECAO 9  `cron_runs` aceita o job `group-closings`
 --
 -- POR QUE O ITEM FECHADO GANHA UMA LINHA PROPRIA (SECAO 5)
 -- --------------------------------------------------------
@@ -24027,6 +24028,30 @@ GRANT SELECT ON public.group_closings TO authenticated;
 GRANT SELECT ON public.group_closing_items TO authenticated;
 GRANT ALL ON public.group_closings TO service_role;
 GRANT ALL ON public.group_closing_items TO service_role;
+
+-- ===========================================================================
+-- SECAO 9: O LIVRO-RAZAO DOS CRONS ACEITA O JOB NOVO
+-- ===========================================================================
+-- O CHECK da 019 lista os jobs pelo nome, e o cron do fechamento grava em
+-- `cron_runs` como `group-closings`. Sem isto a PRIMEIRA execucao dele
+-- terminaria sem registro -- `gravarLinha` engole o erro para nao derrubar a
+-- resposta --, e a auditoria leria "nunca rodou". Refeito com a lista inteira,
+-- porque CHECK nao se edita.
+DO $$
+BEGIN
+  IF to_regclass('public.cron_runs') IS NOT NULL THEN
+    ALTER TABLE public.cron_runs DROP CONSTRAINT IF EXISTS cron_runs_job_check;
+    ALTER TABLE public.cron_runs
+      ADD CONSTRAINT cron_runs_job_check
+      CHECK (job IN (
+        'recurrence-scan',
+        'recurrence-alerts',
+        'bill-alerts',
+        'monthly-summary',
+        'group-closings'
+      ));
+  END IF;
+END $$;
 
 
 -- ---------------------------------------------------------------------------
