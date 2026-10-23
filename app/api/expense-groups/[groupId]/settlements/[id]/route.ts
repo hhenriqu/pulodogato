@@ -74,6 +74,37 @@ export async function DELETE(
       );
     }
 
+    // O ACERTO QUE JA ENTROU NUM FECHAMENTO NAO SE DESFAZ (068, SECAO 6).
+    //
+    // O banco recusa o DELETE dele, mas so no passo de baixo -- depois de a
+    // perna ja ter sido apagada aqui. Conferir antes e o que impede o estado
+    // "lancamento sumiu, acerto continua", o mesmo motivo da leitura acima. O
+    // fechamento ja abateu este acerto das contas que gerou; desfaze-lo agora
+    // deixaria as contas menores do que a divida.
+    const { data: noFechamento, error: erroDoFechamento } = await supabase
+      .from("group_closing_items")
+      .select("id")
+      .eq("settlement_id", id)
+      .limit(1);
+
+    if (erroDoFechamento) {
+      console.error("Erro ao conferir o fechamento do acerto:", erroDoFechamento);
+      return NextResponse.json(
+        { error: "Nao foi possivel desfazer o acerto" },
+        { status: 500 }
+      );
+    }
+
+    if ((noFechamento ?? []).length > 0) {
+      return NextResponse.json(
+        {
+          error:
+            "Este acerto já entrou no fechamento do grupo e não pode mais ser desfeito.",
+        },
+        { status: 409 }
+      );
+    }
+
     // A perna de quem esta desfazendo. A RLS de `financial_transactions` ja
     // limita a `user_id = auth.uid()`, entao este DELETE nao alcanca a perna da
     // contraparte -- e isso e o certo, nao uma limitacao: a perna dela mexeu no

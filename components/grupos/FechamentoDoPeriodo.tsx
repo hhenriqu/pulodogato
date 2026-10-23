@@ -13,7 +13,11 @@
  *      periodo fechasse com o que ja foi lancado. E a mesma conta que o
  *      fechamento grava (a rota usa `fecharPeriodo`, igual ao cron), entao a
  *      previa e o fechamento nao tem como discordar;
- *   3. os fechamentos ja feitos, com o que cada um ficou devendo ou tendo a
+ *   3. o que ainda esta EM ABERTO das contas que os fechamentos geraram, e os
+ *      Pix que quitam tudo (RN019.5, fase 3). O botao "Acertar" abre o mesmo
+ *      dialogo de acerto da aba de saldos: o acerto registrado da baixa nas
+ *      duas contas (068);
+ *   4. os fechamentos ja feitos, com o que cada um ficou devendo ou tendo a
  *      receber.
  *
  * Fica na aba de Membros, logo abaixo da divisao da conta: o % de cada um e o
@@ -53,13 +57,33 @@ interface FechamentoGravado {
   members: PosicaoNoPeriodo[];
 }
 
+interface EmAbertoDoMembro {
+  user_id: string;
+  saldo: number;
+}
+
+interface ParDoAcerto {
+  de_user_id: string;
+  para_user_id: string;
+  valor: number;
+}
+
 interface RespostaDoPeriodo {
   closing_day: number | null;
   periodo: { inicio: string; fim: string } | null;
   previa: { total: number; membros: PosicaoNoPeriodo[]; fecha: boolean } | null;
   fechamentos: FechamentoGravado[];
+  em_aberto: EmAbertoDoMembro[];
+  pares: ParDoAcerto[];
   nomes: Record<string, string | null>;
   viewer_user_id: string;
+}
+
+/** O Pix sugerido, com os nomes, para a tela abrir o dialogo de acerto. */
+export interface AcertoSugerido {
+  de: { id: string; nome: string };
+  para: { id: string; nome: string };
+  valor: number;
 }
 
 /** O valor do Select para "o grupo nao fecha". `""` nao e valor valido no Radix. */
@@ -73,9 +97,18 @@ const DIAS = Array.from(
 export function FechamentoDoPeriodo({
   groupId,
   ehAdmin,
+  aoAcertar,
+  versao = 0,
 }: {
   groupId: string;
   ehAdmin: boolean;
+  /** Abre o dialogo de acerto da tela do grupo com o Pix sugerido. */
+  aoAcertar?: (acerto: AcertoSugerido) => void;
+  /**
+   * Muda quando a tela registra ou desfaz um acerto: o que esta em aberto
+   * mudou junto, e o cartao recarrega.
+   */
+  versao?: number;
 }) {
   const [dados, setDados] = useState<RespostaDoPeriodo | null>(null);
   const [carregando, setCarregando] = useState(true);
@@ -106,7 +139,7 @@ export function FechamentoDoPeriodo({
 
   useEffect(() => {
     carregar();
-  }, [carregar]);
+  }, [carregar, versao]);
 
   const gravar = async () => {
     setGravando(true);
@@ -211,7 +244,70 @@ export function FechamentoDoPeriodo({
         </div>
       )}
 
-      {/* 3. Os fechamentos feitos */}
+      {/* 3. O que esta em aberto, e quem paga quem */}
+      {(dados.em_aberto ?? []).length > 0 && (
+        <div className="space-y-2">
+          <h4 className="text-sm font-semibold">Em aberto</h4>
+          <p className="text-xs text-muted-foreground">
+            O que os fechamentos geraram e ainda não foi acertado. O acerto quita a conta
+            de quem paga e a de quem recebe ao mesmo tempo.
+          </p>
+          <div className="space-y-1">
+            {dados.em_aberto.map((m) => (
+              <div key={m.user_id} className="flex items-center justify-between gap-3 text-sm">
+                <p className="truncate font-medium">{nomeDe(m.user_id)}</p>
+                <p
+                  className={`shrink-0 text-xs font-medium ${
+                    m.saldo > 0 ? "text-success" : "text-warning"
+                  }`}
+                >
+                  {m.saldo > 0
+                    ? `A receber ${formatarValor(m.saldo)}`
+                    : `A pagar ${formatarValor(Math.abs(m.saldo))}`}
+                </p>
+              </div>
+            ))}
+          </div>
+          {(dados.pares ?? []).length > 0 && (
+            <div className="space-y-2 pt-1">
+              {dados.pares.map((par) => {
+                const souParte =
+                  par.de_user_id === dados.viewer_user_id ||
+                  par.para_user_id === dados.viewer_user_id;
+                return (
+                  <div
+                    key={`${par.de_user_id}->${par.para_user_id}`}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-2 text-sm"
+                  >
+                    <p className="min-w-0">
+                      <span className="font-medium">{nomeDe(par.de_user_id)}</span> paga{" "}
+                      <span className="font-medium">{formatarValor(par.valor)}</span> a{" "}
+                      <span className="font-medium">{nomeDe(par.para_user_id)}</span>
+                    </p>
+                    {souParte && aoAcertar && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          aoAcertar({
+                            de: { id: par.de_user_id, nome: nomeDe(par.de_user_id) },
+                            para: { id: par.para_user_id, nome: nomeDe(par.para_user_id) },
+                            valor: par.valor,
+                          })
+                        }
+                      >
+                        Acertar
+                      </Button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 4. Os fechamentos feitos */}
       {dados.fechamentos.length > 0 && (
         <div className="space-y-3">
           <h4 className="text-sm font-semibold">Fechamentos</h4>

@@ -47,6 +47,10 @@ import {
   type AlcanceDaEdicao,
 } from "@/lib/recorrencia-edicao";
 import { encerrarRegra } from "@/lib/services/scheduled";
+import {
+  ehContaDoFechamento,
+  MENSAGEM_DA_CONTA_DO_FECHAMENTO,
+} from "@/lib/conta-do-fechamento";
 
 const STATUS_MANUAIS = ["pending", "skipped", "cancelled"];
 
@@ -154,13 +158,21 @@ export async function PATCH(
     // serie para propagar.
     const { data: atual } = await supabase
       .from("scheduled_transactions")
-      .select("status, due_date, recurring_rule_id")
+      .select("status, due_date, recurring_rule_id, group_closing_id")
       .eq("id", params.id)
       .eq("user_id", user.id)
       .single();
 
     if (!atual) {
       return NextResponse.json({ error: "Conta prevista não encontrada" }, { status: 404 });
+    }
+
+    // A conta do fechamento do grupo nao se edita nem se apaga (068, RN019).
+    if (ehContaDoFechamento(atual)) {
+      return NextResponse.json(
+        { error: MENSAGEM_DA_CONTA_DO_FECHAMENTO },
+        { status: 409 }
+      );
     }
 
     if (atual.status === "paid") {
@@ -368,13 +380,21 @@ export async function DELETE(
 
     const { data: atual } = await supabase
       .from("scheduled_transactions")
-      .select("status, due_date, recurring_rule_id")
+      .select("status, due_date, recurring_rule_id, group_closing_id")
       .eq("id", params.id)
       .eq("user_id", user.id)
       .single();
 
     if (!atual) {
       return NextResponse.json({ error: "Conta prevista não encontrada" }, { status: 404 });
+    }
+
+    // A conta do fechamento do grupo nao se edita nem se apaga (068, RN019).
+    if (ehContaDoFechamento(atual)) {
+      return NextResponse.json(
+        { error: MENSAGEM_DA_CONTA_DO_FECHAMENTO },
+        { status: 409 }
+      );
     }
 
     if (atual.status === "paid") {

@@ -416,6 +416,16 @@
     "updated_at",
     "user_id"
   ],
+  "group_settlement_allocations": [
+    "amount",
+    "created_at",
+    "group_id",
+    "id",
+    "kind",
+    "scheduled_id",
+    "settlement_id",
+    "user_id"
+  ],
   "group_settlements": [
     "amount",
     "created_at",

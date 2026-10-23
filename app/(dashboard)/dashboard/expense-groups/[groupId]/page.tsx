@@ -67,7 +67,10 @@ import {
   type MembroDaDivisao,
 } from "@/components/grupos/DivisaoDoGrupo";
 import { FechamentoDoMes } from "@/components/grupos/FechamentoDoMes";
-import { FechamentoDoPeriodo } from "@/components/grupos/FechamentoDoPeriodo";
+import {
+  FechamentoDoPeriodo,
+  type AcertoSugerido,
+} from "@/components/grupos/FechamentoDoPeriodo";
 import { today } from "@/lib/recurrence";
 import { dataNaTela } from "@/lib/data-na-tela";
 import {
@@ -429,6 +432,12 @@ export default function GroupDetailPage() {
   // pagamentos repetidos de proposito (duas parcelas de R$ 50 sao um fato
   // possivel), entao a protecao contra o clique acidental e aqui.
   const [settling, setSettling] = useState<string | null>(null);
+  /**
+   * Sobe a cada acerto registrado ou desfeito. O cartao do fechamento le o que
+   * esta em aberto por conta propria, e a baixa da 068 muda esse numero junto
+   * com o acerto.
+   */
+  const [versaoDoFechamento, setVersaoDoFechamento] = useState(0);
   /**
    * O acerto que o dialogo esta pedindo a conta (HMO-245, fase 11).
    *
@@ -865,10 +874,17 @@ export default function GroupDetailPage() {
       const onde = data.lancamento?.account_name
         ? ` Lançado em ${data.lancamento.account_name}.`
         : "";
+      // A baixa da 068: quanto do acerto quitou conta gerada pelo fechamento.
+      const baixa = Number(data.baixa) || 0;
+      const quitou =
+        baixa > 0 ? ` Quitou ${formatarValor(baixa)} das contas do fechamento.` : "";
       toast.success(
-        sobra ? `Acerto registrado.${onde} ${sobra}` : `Acerto registrado.${onde}`
+        sobra
+          ? `Acerto registrado.${onde}${quitou} ${sobra}`
+          : `Acerto registrado.${onde}${quitou}`
       );
       setAcertoEmCurso(null);
+      setVersaoDoFechamento((v) => v + 1);
       await Promise.all([loadBalances(), loadTransfers(), loadSettlements()]);
     } catch (error) {
       console.error("Erro ao registrar acerto:", error);
@@ -901,6 +917,7 @@ export default function GroupDetailPage() {
       } else {
         toast.success("Acerto desfeito");
       }
+      setVersaoDoFechamento((v) => v + 1);
       await Promise.all([loadBalances(), loadTransfers(), loadSettlements()]);
     } catch (error) {
       console.error("Erro ao desfazer acerto:", error);
@@ -2465,7 +2482,18 @@ export default function GroupDetailPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <FechamentoDoPeriodo groupId={groupId} ehAdmin={souAdmin} />
+                <FechamentoDoPeriodo
+                  groupId={groupId}
+                  ehAdmin={souAdmin}
+                  versao={versaoDoFechamento}
+                  aoAcertar={(sugerido: AcertoSugerido) =>
+                    handleLiquidar({
+                      from: { id: sugerido.de.id, full_name: sugerido.de.nome },
+                      to: { id: sugerido.para.id, full_name: sugerido.para.nome },
+                      amount: sugerido.valor,
+                    })
+                  }
+                />
               </CardContent>
             </Card>
           )}

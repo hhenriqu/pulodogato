@@ -46,7 +46,7 @@ export interface OQueNaoFechou {
 
 /**
  * As despesas realizadas e os acertos do grupo que ainda nao entraram em
- * fechamento nenhum.
+ * fechamento nenhum. Do acerto, so o que sobrou da baixa da 068.
  *
  * "Nao entrou" e lido de `group_closing_items`, e nao de uma data: a despesa de
  * data antiga lancada depois do fechamento dela tem de entrar no proximo
@@ -114,15 +114,43 @@ export async function lerOQueNaoFechou(
     .eq("group_id", groupId);
   if (erroLiquidacoes) throw new Error(`group_settlements: ${erroLiquidacoes.message}`);
 
+  // A BAIXA DA 068 (RN019). O acerto que quitou conta gerada ja virou dinheiro
+  // daquele fechamento; o que entra aqui e so a SOBRA. A baixa e do mesmo
+  // valor dos dois lados, entao basta somar o lado de quem pagou. Levar o
+  // valor cheio contaria duas vezes -- e o banco recusaria o fechamento
+  // (`group_closing_items_confere_acerto`).
+  const { data: baixas, error: erroBaixas } = await client
+    .from("group_settlement_allocations")
+    .select("settlement_id, user_id, amount")
+    .eq("group_id", groupId);
+  if (erroBaixas) throw new Error(`group_settlement_allocations: ${erroBaixas.message}`);
+
+  const pagadorDoAcerto = new Map<string, string>();
+  for (const s of liquidacoes ?? []) pagadorDoAcerto.set(s.id, s.from_user_id);
+
+  const baixaEmCentavos = new Map<string, number>();
+  for (const b of baixas ?? []) {
+    if (pagadorDoAcerto.get(b.settlement_id) !== b.user_id) continue;
+    baixaEmCentavos.set(
+      b.settlement_id,
+      (baixaEmCentavos.get(b.settlement_id) ?? 0) + Math.round(Number(b.amount) * 100)
+    );
+  }
+
   const acertos: AcertoDoPeriodo[] = (liquidacoes ?? [])
     .filter((s) => !acertoFechado.has(s.id))
     .map((s) => ({
       settlement_id: s.id,
       de_user_id: s.from_user_id,
       para_user_id: s.to_user_id,
-      valor: valorDoFechamento(s.amount, s.exchange_rate),
+      valor:
+        (Math.round(valorDoFechamento(s.amount, s.exchange_rate) * 100) -
+          (baixaEmCentavos.get(s.id) ?? 0)) /
+        100,
       data: s.settled_on,
-    }));
+    }))
+    // O acerto que a baixa consumiu inteiro nao sobra para fechamento nenhum.
+    .filter((a) => a.valor > 0);
 
   return { despesas, acertos };
 }
