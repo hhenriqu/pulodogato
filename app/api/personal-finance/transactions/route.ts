@@ -315,52 +315,18 @@ export async function POST(request: NextRequest) {
         .maybeSingle();
 
       if (!groupTransaction) {
-        // Banco sem a 007: mantem o caminho antigo para nao deixar a despesa
-        // sem rateio nenhum.
-        const { data: criada, error: groupTransactionError } = await supabase
-          .from("group_transactions")
-          .insert({
-            group_id: group_id,
-            transaction_id: transaction.id,
-            split_type: "equal",
-          })
-          .select("id")
-          .single();
-
-        if (groupTransactionError) {
-          console.error(
-            "Group transaction creation error:",
-            groupTransactionError
-          );
-        } else {
-          const { data: members } = await supabase
-            .from("group_members")
-            .select("id")
-            .eq("group_id", group_id)
-            .eq("status", "active")
-            .returns<{ id: string }[]>();
-
-          if (members && members.length > 0) {
-            const splitAmount = Math.abs(finalAmount) / members.length;
-            const splitPercentage = 100 / members.length;
-
-            const { error: groupSplitsError } = await supabase
-              .from("group_expense_splits")
-              .insert(
-                members.map((member) => ({
-                  group_transaction_id: criada.id,
-                  member_id: member.id,
-                  percentage: splitPercentage,
-                  amount: splitAmount,
-                  status: "pending",
-                }))
-              );
-
-            if (groupSplitsError) {
-              console.error("Group splits creation error:", groupSplitsError);
-            }
-          }
-        }
+        // O RATEIO E SO DO BANCO. Aqui havia um "caminho antigo" para banco sem
+        // a 007, que inseria `group_transactions` e um `group_expense_splits`
+        // por membro com divisao IGUAL (`100 / members.length`). Ele estava
+        // morto -- a 007 esta em producao e o trigger sempre cria a linha -- e,
+        // se acordasse, gravaria um rateio que discorda do percentual do grupo
+        // (042): os dados de producao mostram 85,44 / 7,75 / 6,81, que so o
+        // trigger produz. Sem a linha de grupo, o certo e avisar, nao inventar
+        // uma segunda divisao.
+        console.error(
+          "Despesa de grupo sem group_transactions depois do insert: o trigger auto_create_group_transaction nao agiu.",
+          { transactionId: transaction.id, groupId: group_id }
+        );
       }
     }
 

@@ -422,15 +422,18 @@
     "amount",
     "category_id",
     "currency",
+    "descricao",
     "group_id",
     "id",
     "month",
+    "pago_por",
     "paguei_eu",
     "split_status",
     "transaction_date",
     "transaction_id",
     "transaction_type",
-    "user_id"
+    "user_id",
+    "valor_total"
   ],
   "group_transactions": [
     "created_at",

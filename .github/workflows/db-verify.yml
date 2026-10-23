@@ -5585,6 +5585,33 @@ jobs:
       - name: O patrimonio sabe falhar (15 mutantes, 13 mortos e 2 declarados)
         run: PGURL=postgresql://postgres:postgres@localhost:5432 node scripts/mutantes-patrimonio-fora-dos-totais.mjs
 
+      # =====================================================================
+      # 066 -- a parte da divisao com pessoa chega a quem a recebe
+      # =====================================================================
+      # `group_share_entries` ganha a perna de `expense_splits` (sem grupo),
+      # filtrada por auth.uid() numa funcao SECURITY DEFINER. Controle negativo
+      # medido: a suite contra um banco parado na 064 fica VERMELHA na primeira
+      # assercao ("o Helio tem UMA parte de pessoa -> esperado 1, obtido 0").
+      - name: 066_parte_recebida_de_divisao_com_pessoa
+        run: $PSQL -f database/migrations/066_parte_recebida_de_divisao_com_pessoa.sql
+
+      - name: 066 e idempotente
+        run: $PSQL -f database/migrations/066_parte_recebida_de_divisao_com_pessoa.sql
+
+      - name: A parte recebida de divisao com pessoa entra no realizado de quem recebe
+        run: $PSQL -f database/tests/066_parte_recebida_de_divisao_com_pessoa_test.sql
+
+      # A 066 recola `group_share_entries`, e estas suites leem a view (e as
+      # que dependem dela) em posicoes acima. Rodadas verdes nesta posicao.
+      - name: O criterio de custo pessoal da 046 sobrevive a recolagem da 066
+        run: $PSQL -f database/tests/046_um_criterio_de_custo_pessoal_test.sql
+
+      - name: O consumo de orcamento do grupo sobrevive a recolagem da 066
+        run: $PSQL -f database/tests/063_orcamento_ignora_fora_dos_totais_test.sql
+
+      - name: Nenhuma view escapa da RLS, depois da 066
+        run: $PSQL -f database/tests/view_security_invoker_test.sql
+
       - name: schema-columns.json em dia com as migrations
         run: node scripts/gen-schema-columns.mjs --check
 

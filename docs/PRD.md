@@ -262,6 +262,14 @@ a tela não pode contorná-las. As marcadas **(tela)** vivem em TypeScript testa
 - RN007.5 Editar uma despesa de grupo **refaz** a divisão.
 - RN007.6 Membro inativo não entra na divisão automática.
 - RN007.7 Apagar grupo **arquiva**; não remove histórico de dinheiro.
+- RN007.8 **Divisão com pessoa** (sem grupo) continua disponível mesmo entre
+  quem tem grupo em comum — a família divide umas contas entre os três e outras
+  só em par. A parte recebida aparece para quem a recebe ("Pago por <nome>",
+  "Dividido com você") e entra no realizado dele pelo mesmo caminho da parte de
+  grupo (`group_share_entries`, migration 066). Quem pagou segue o critério da
+  RN do custo pessoal (HMO-258): conta o valor inteiro.
+- RN007.9 Uma despesa nunca entra pelas duas divisões: com `group_id`, só a
+  parte de grupo conta.
 
 ### RN008 — Acerto do grupo ✅ **(banco)**
 

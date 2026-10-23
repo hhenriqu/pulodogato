@@ -61,10 +61,14 @@ import {
  * `amount` chega POSITIVO -- ver o item 1 do cabecalho.
  */
 export interface ParteDeGrupoBruta {
-  /** `group_expense_splits.id`. NAO e um id de `financial_transactions`. */
+  /**
+   * `group_expense_splits.id` na perna do grupo, `expense_splits.id` na perna
+   * da pessoa (066). NAO e um id de `financial_transactions`.
+   */
   id: string;
   transaction_id: string;
-  group_id: string;
+  /** NULO na parte de divisao com PESSOA (066): ela nao tem grupo. */
+  group_id: string | null;
   /** YYYY-MM-DD. */
   transaction_date: string;
   category_id: string | null;
@@ -73,6 +77,15 @@ export interface ParteDeGrupoBruta {
   amount: number;
   split_status: string;
   paguei_eu: boolean;
+  /**
+   * Quem pagou, a descricao e o valor cheio, direto da view (066). Na parte de
+   * PESSOA sao a unica fonte: a despesa e linha pessoal de quem pagou, e a RLS
+   * de `financial_transactions` nao a entrega a mim. Ver
+   * `completarComADespesaDaView`.
+   */
+  pago_por?: string | null;
+  descricao?: string | null;
+  valor_total?: number | string | null;
 }
 
 /** O que a consulta de descricao devolve para cada despesa de grupo. */
@@ -203,7 +216,8 @@ export interface LancamentoDeTerceiro {
   id: string;
   /** O id da despesa de grupo, para a tela linkar o grupo. */
   transactionId: string;
-  groupId: string;
+  /** `null` na divisao com pessoa: nao ha grupo para linkar. */
+  groupId: string | null;
   description: string;
   /** A MINHA parte, negativa (convencao de despesa do banco). */
   amount: number;
@@ -246,6 +260,39 @@ export interface LancamentoDeTerceiro {
  * trouxe a pessoa aqui. O que falta e um pedaco, e o pedaco que falta e DITO
  * (ver `pagadorNaLinha`), nao escondido.
  */
+/**
+ * As despesas lidas de `financial_transactions`, completadas com o que a VIEW
+ * ja traz para as partes cuja despesa nao veio.
+ *
+ * E o caminho da divisao com PESSOA (066): a despesa da Lais e linha pessoal
+ * dela, a RLS nao a entrega ao Helio, e sem isto a parte dele seria DESCARTADA
+ * como "sem descricao" -- o defeito que a 066 existe para consertar, de volta
+ * pela lista. A despesa lida continua tendo precedencia (ela traz a categoria
+ * com nome e cor); a da view so preenche o buraco, sem categoria, porque a
+ * categoria de quem pagou pode ser uma categoria propria dele que eu nao leio.
+ */
+export function completarComADespesaDaView(
+  partes: ParteDeGrupoBruta[],
+  despesas: Map<string, DespesaDeGrupoLida>
+): Map<string, DespesaDeGrupoLida> {
+  const completas = new Map(despesas);
+
+  for (const parte of partes) {
+    if (completas.has(parte.transaction_id)) continue;
+    if (!parte.pago_por || !parte.descricao) continue;
+
+    completas.set(parte.transaction_id, {
+      id: parte.transaction_id,
+      description: parte.descricao,
+      user_id: parte.pago_por,
+      amount: Number(parte.valor_total ?? parte.amount),
+      category: null,
+    });
+  }
+
+  return completas;
+}
+
 export function partesDeTerceirosNaLista(
   partes: ParteDeGrupoBruta[],
   despesas: Map<string, DespesaDeGrupoLida>,

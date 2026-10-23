@@ -27,6 +27,7 @@ import {
   type SubcategoriaDoRotulo,
 } from "@/lib/rotulo-da-categoria";
 import {
+  completarComADespesaDaView,
   linhasDaLista,
   nomesDosPagadores,
   notaDasPartesDeTerceiros,
@@ -736,7 +737,7 @@ function Lancamentos() {
       const { data: partes, error } = await supabase
         .from("group_share_entries")
         .select(
-          "id, transaction_id, group_id, transaction_date, category_id, transaction_type, currency, amount, split_status, paguei_eu"
+          "id, transaction_id, group_id, transaction_date, category_id, transaction_type, currency, amount, split_status, paguei_eu, pago_por, descricao, valor_total"
         )
         .eq("user_id", userId)
         .eq("paguei_eu", false)
@@ -767,8 +768,14 @@ function Lancamentos() {
 
       if (erroDaDescricao) throw erroDaDescricao;
 
-      const porId = new Map<string, DespesaDeGrupoLida>(
-        (despesas || []).map((d) => [d.id, d])
+      // A parte de divisao com PESSOA (066) nao volta na consulta acima -- a
+      // despesa e linha pessoal de quem pagou --, e a view ja traz a descricao
+      // e quem pagou. Ver `completarComADespesaDaView`.
+      const porId = completarComADespesaDaView(
+        partes as ParteDeGrupoBruta[],
+        new Map<string, DespesaDeGrupoLida>(
+          (despesas || []).map((d) => [d.id, d])
+        )
       );
 
       const { linhas, semDescricao } = partesDeTerceirosNaLista(
