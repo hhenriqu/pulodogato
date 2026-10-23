@@ -510,6 +510,19 @@ console.log("");
 let falhas = 0;
 
 console.log("MUTANTES");
+/**
+ * Os nomes dos casos que REPROVARAM, nas duas saidas do `node --test`: TAP
+ * (`not ok N - nome`, o que o CI imprime sem TTY) e spec (`✖ nome (12ms)`).
+ * Procurar o `caso` na saida inteira casaria tambem com o `ok N - nome` de
+ * quem PASSOU.
+ */
+function casosQueCairam(saida) {
+  return [
+    ...[...saida.matchAll(/^\s*not ok \d+ - (.+)$/gm)].map((x) => x[1]),
+    ...[...saida.matchAll(/✖ (.+?) \(/g)].map((x) => x[1]),
+  ];
+}
+
 for (const m of MUTANTES) {
   const original = ORIGINAIS.get(m.alvo);
 
@@ -536,7 +549,7 @@ for (const m of MUTANTES) {
   // deveria quebrar. Um mutante que derruba outro caso qualquer mediria a
   // suite, e nao a afirmacao -- e e assim que um runner fica com placar cheio
   // medindo outra coisa.
-  const matouOCaso = !r.verde && r.saida.includes(m.caso);
+  const matouOCaso = !r.verde && casosQueCairam(r.crua ?? r.saida).some((c) => c.includes(m.caso));
 
   if (matouOCaso) {
     console.log(`OK    morre          ${m.nome}  ->  "${m.caso}" [${medida}]`);
