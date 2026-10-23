@@ -5629,6 +5629,36 @@ jobs:
       - name: Nenhuma view escapa da RLS, depois da 066
         run: $PSQL -f database/tests/view_security_invoker_test.sql
 
+      # =====================================================================
+      # 067 -- o fechamento do grupo por periodo (RN018, fase 2)
+      # =====================================================================
+      # Dia de fechamento, o fechamento com os itens e as contas geradas, numa
+      # funcao so de service_role que confere as somas, e a trava da conta
+      # gerada. Controle negativo medido: a suite contra um banco parado na 066
+      # fica VERMELHA na primeira assercao da 067 ("dia 0 e recusado" ->
+      # "barrado, mas por outro motivo": a coluna nem existe). Cada recusa da
+      # suite confere O MOTIVO, nao so que houve erro.
+      - name: 067_fechamento_do_grupo
+        run: $PSQL -f database/migrations/067_fechamento_do_grupo.sql
+
+      - name: 067 e idempotente
+        run: $PSQL -f database/migrations/067_fechamento_do_grupo.sql
+
+      - name: O fechamento do grupo gera as contas do periodo uma vez so
+        run: $PSQL -f database/tests/067_fechamento_do_grupo_test.sql
+
+      # A 067 poe uma trava em `scheduled_transactions` e uma policy em
+      # `transaction_categories`; estas suites escrevem nas duas tabelas em
+      # posicoes acima. Rodadas verdes nesta posicao.
+      - name: O vinculo da prevista sobrevive a trava da 067
+        run: $PSQL -f database/tests/065_vinculo_da_prevista_ao_lancamento_test.sql
+
+      - name: O pagamento de conta de grupo sobrevive a trava da 067
+        run: $PSQL -f database/tests/hmo407_pagamento_de_conta_de_grupo_test.sql
+
+      - name: As previstas continuam isoladas por usuario, depois da 067
+        run: $PSQL -f database/tests/scheduled_rls_test.sql
+
       - name: schema-columns.json em dia com as migrations
         run: node scripts/gen-schema-columns.mjs --check
 
