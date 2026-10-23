@@ -2292,7 +2292,7 @@ jobs:
           #    posso gastar", e os R$ 900,00 dele sao descontados duas vezes --
           #    uma em cada carteira.
           estragar_rota \
-            's/\.eq\("user_id", user\.id\)\n(\s+\.eq\("status", "pending"\))/.or("user_id.eq." + user.id + ",group_id.not.is.null")\n$1/' \
+            's/\.eq\("user_id", user\.id\)\n(\s+\.eq\("my_status", "pending"\))/.or("user_id.eq." + user.id + ",group_id.not.is.null")\n$1/' \
             'o filtro de user_id cai -- a conta do outro membro entra na minha'
 
           # ---------------------------------------------------------------
