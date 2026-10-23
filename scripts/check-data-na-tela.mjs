@@ -145,8 +145,12 @@ const FUNCOES_CERTAS = ["dataNaTela", "dataCurtaNaTela"];
  * INICIO e o FIM dele, e cada fechamento ja gravado mostra o dele -- o dia do
  * fechamento e a data que decide em que periodo uma despesa entra, entao a
  * tela tem de escrever o dia que o banco guardou, nao o da vespera.
+ *
+ * DE 12 PARA 13: a conta do fechamento quitada na lista da Financas Pessoais
+ * (fase 4, `components/movimentacoes/LinhaDaContaDoFechamento.tsx`). A data e
+ * o dia do fechamento, que decide o mes do Resultado em que ela conta.
  */
-const CHAMADAS_ESPERADAS = 12;
+const CHAMADAS_ESPERADAS = 13;
 
 /**
  * `formatDate` de lib/utils.ts, que recebe `settled_on` e `today_rate_date`

@@ -120,6 +120,11 @@ import {
   MAX_TRANSACOES,
   nomesDasCategorias,
 } from "@/lib/services/monthly-summary";
+import { lerEstimativasDoFechamento } from "@/lib/services/fechamento-no-resultado";
+import {
+  descricaoDaEstimativa,
+  PREFIXO_DA_ESTIMATIVA_DO_FECHAMENTO,
+} from "@/lib/fechamento-no-resultado";
 
 interface LinhaPrevistaEfetiva {
   id: string;
@@ -362,6 +367,38 @@ export async function GET(request: NextRequest) {
         // `direcaoNoPainel` porque nao ha direcao a resolver.
         tipo: "expense",
       });
+    }
+
+    // A ESTIMATIVA DO PERIODO ABERTO DOS GRUPOS QUE FECHAM (RN018.7, fase 4).
+    //
+    // No grupo com dia de fechamento a parte de cada despesa nao conta mais no
+    // Realizado de quem nao a pagou (069): o que ele deve vira a conta do
+    // fechamento, no dia do fechamento. Ate la, o saldo dele no periodo aberto
+    // e PREVISAO -- a pagar ou a receber -- e entra aqui com o vencimento da
+    // conta que vai gerar. Sem ela, o Total esperado de quem pagou o aluguel
+    // do grupo mostraria o aluguel inteiro e nada do que os outros vao devolver.
+    //
+    // A conta e a da previa da tela do grupo e a do cron
+    // (`lerEstimativasDoFechamento`). Falhar nao derruba a Previsao: ela segue
+    // sem a estimativa e registra o motivo, como a fatura aberta acima.
+    const estimativas = await lerEstimativasDoFechamento(supabase, user.id, hoje);
+    if (!estimativas.ok) {
+      console.error("Previsao seguiu sem a estimativa do fechamento:", estimativas.mensagem);
+    } else {
+      for (const e of estimativas.estimativas) {
+        if (e.vencimento > janela.ate) continue;
+        paraCalculo.push({
+          // Chave com prefixo, como a da fatura aberta: nao colide com o uuid
+          // de nenhuma linha gravada nem com as assinaturas detectadas.
+          id: `${PREFIXO_DA_ESTIMATIVA_DO_FECHAMENTO}${e.group_id}:${e.vencimento}`,
+          description: descricaoDaEstimativa(e),
+          // Sem `parteConfiguradaDoMembro`: a estimativa JA e a minha posicao
+          // no grupo, e dividi-la de novo pelo rateio a encolheria.
+          amount: e.valor,
+          due_date: e.vencimento,
+          tipo: e.tipo,
+        });
+      }
     }
 
     // As assinaturas que o detector achou sozinho. `IGNORED` e `CANCELLED`

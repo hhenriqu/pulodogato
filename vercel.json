@@ -18,6 +18,10 @@
     {
       "path": "/api/cron/monthly-summary",
       "schedule": "0 12 1 * *"
+    },
+    {
+      "path": "/api/cron/group-closings",
+      "schedule": "0 10 * * *"
     }
   ]
 }

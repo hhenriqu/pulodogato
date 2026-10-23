@@ -332,6 +332,19 @@
     "updated_at",
     "user_id"
   ],
+  "group_closing_entries": [
+    "amount",
+    "category_id",
+    "closing_id",
+    "currency",
+    "descricao",
+    "group_id",
+    "id",
+    "month",
+    "transaction_date",
+    "transaction_type",
+    "user_id"
+  ],
   "group_closing_items": [
     "amount",
     "closing_id",

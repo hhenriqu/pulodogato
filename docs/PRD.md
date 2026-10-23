@@ -5,7 +5,7 @@
 > **Documento de referência do produto.** Descreve o que o Pulo do Gato é, as
 > regras de negócio que valem, e o que ainda é requisito não implementado.
 
-**Versão:** 2.1
+**Versão:** 2.2
 **Data:** 23 de outubro de 2026
 **Projeto:** Pulo do Gato — gestão financeira familiar
 **Tipo:** Progressive Web App (PWA)
@@ -20,6 +20,7 @@
 | 1.2 | 23/09/2025 | Finanças pessoais + sistema de divisão de gastos | Equipe Dev |
 | 2.0 | 29/09/2026 | **Reescrita para o produto que existe** (HMO-119) | pendente |
 | 2.1 | 23/10/2026 | **Modelo novo das movimentações** (RN016 a RN021); regras antigas marcadas com a fase em que saem | Helio (decisões D1 a D5) |
+| 2.2 | 23/10/2026 | Fases 2 a 4 implantadas: fechamento do grupo, acerto que dá baixa e a leitura nova nos totais (RN018.13 e RN018.14 novas) | Helio (decisões D1 a D5) |
 
 > **O que a versão 2.0 corrigiu.** Até aqui esta PRD descrevia um app de carteira
 > de investimentos: o problema era "investidores pessoa física", as personas eram
@@ -163,8 +164,10 @@ Criação de grupo, convites, membros, rateio por lançamento, saldo entre membr
 acerto de contas, arquivamento e regras de saída. Divisão igual, por percentual e
 proporcional à renda (tabela `group_member_proportions`).
 
-Muda nas fases 2 a 4 (RN018 e RN019): o grupo ganha dia de fechamento, e o
-fechamento gera para cada membro uma conta a pagar ou a receber.
+Desde as fases 2 a 4 (RN018 e RN019), o grupo pode ter dia de fechamento: o
+fechamento gera para cada membro uma conta a pagar ou a receber, e é ela que
+conta no Resultado de cada um. O grupo sem dia de fechamento continua pelo
+rateio de cada lançamento.
 
 ### Planejamento ✅
 
@@ -376,7 +379,7 @@ nas contas que o fechamento gerou.
 - RN015.3 No plano Hobby da Vercel o horário tem tolerância de ±59 min: a ordem
   entre dois jobs do mesmo dia **não** é garantida.
 
-### RN016 — Saldo de contas e Resultado do mês 📋 **(tela)** — fase 4
+### RN016 — Saldo de contas e Resultado do mês 🚧 **(tela)** — fase 4 (o cartão na fase 6)
 
 - RN016.1 **Saldo de contas** = saldo inicial da conta + receitas realizadas +
   despesas realizadas (com o sinal da RN002), somado nas contas que entram nos
@@ -397,7 +400,10 @@ nas contas que o fechamento gerou.
   (RN003.3, RN021.2).
 - RN016.6 Conta marcada fora dos totais (058) aparece na lista e não soma.
 
-### RN017 — O que é Despesa e o que é Receita 📋 — fases 4 e 6
+### RN017 — O que é Despesa e o que é Receita 🚧 — fases 4 a 6
+
+Na fase 4 entraram o pagamento a grupo e o a receber de grupos. A pessoa e o
+MyBank entram na fase 5, e a fatura do cartão na fase 6.
 
 - RN017.1 **Despesas** = gastos fixos + gastos aleatórios + fatura do cartão +
   pagamento a grupo + pagamento a pessoa, mais os juros do MyBank de quem pegou
@@ -418,9 +424,12 @@ nas contas que o fechamento gerou.
   quem emprestou (RN021.3).
 - RN017.6 O que um grupo ou uma pessoa me deve é receita desde que a conta a
   receber existe (RN018.5, RN020.2): prevista até o acerto, realizada no
-  acerto.
+  acerto. A conta vira realizada quando o acerto a quita inteira, e conta no
+  mês do vencimento dela, que é o dia do fechamento (decisão D3, RN018.10).
+  Acerto parcial aparece no Saldo de contas pela transferência, e a conta
+  continua prevista pelo valor inteiro até a quitação.
 
-### RN018 — Grupo: o fechamento 📋 **(banco)** — fases 2 e 4
+### RN018 — Grupo: o fechamento ✅ **(banco)** — fases 2 e 4
 
 - RN018.1 Qualquer membro ativo lança uma conta no grupo. Ela é despesa de quem
   pagou, pelo valor inteiro, porque saiu da conta dele.
@@ -459,6 +468,13 @@ nas contas que o fechamento gerou.
   pela conta do fechamento.
 - RN018.12 Conta gerada pelo fechamento não muda de valor, de tipo nem de dono
   depois de criada. O que muda nela é só a baixa.
+- RN018.13 Conta prevista do grupo que fecha, ainda não paga, entra no previsto
+  de cada membro pela parte dele, inclusive no de quem a lançou. Não há
+  reembolso previsto nem "Paguei minha parte" nesse grupo: o que cada um deve
+  sai do fechamento. Quando alguém paga a conta, ela sai do previsto de todos.
+- RN018.14 Só o grupo com dia de fechamento segue esta regra. O grupo sem dia
+  de fechamento continua pelo rateio de cada lançamento (RN007), e tirar o dia
+  de fechamento não devolve ao rateio o que já entrou num fechamento.
 
 Exemplo: grupo Casa, % de 50/30/20, R$ 2.000 de contas no período.
 
@@ -470,7 +486,7 @@ Exemplo: grupo Casa, % de 50/30/20, R$ 2.000 de contas no período.
 
 O Resultado de cada um fecha na responsabilidade, e a soma dá os R$ 2.000.
 
-### RN019 — Acerto 📋 **(banco)** — fase 3
+### RN019 — Acerto ✅ **(banco)** — fase 3
 
 - RN019.1 O acerto (o Pix entre duas pessoas) **quita** contas geradas pelo
   fechamento do grupo (RN018) ou pela divisão com pessoa (RN020): a conta a
@@ -659,7 +675,8 @@ planos e limites; modo noturno por token; CI de build, schema, cor e PWA.
 
 ### Próximo
 
-- Implantar o modelo novo das movimentações (RN016 a RN021), nas fases 2 a 6.
+- Implantar o modelo novo das movimentações (RN016 a RN021): faltam as fases 5
+  (divisão com pessoa e MyBank) e 6 (cartão pela fatura).
 - Zerar o backlog de 142 warnings de lint.
 - Fechar o módulo de investimentos (rentabilidade consolidada).
 - Fechar a experiência multi-moeda.

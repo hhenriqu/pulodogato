@@ -118,7 +118,7 @@ export async function GET(request: NextRequest) {
         *,
         category:transaction_categories(*),
         account:financial_accounts(id, name, account_type, color_hex),
-        group:expense_groups(id, name, group_code)
+        group:expense_groups(id, name, group_code, closing_day)
       `
       )
       .gte("due_date", de)
